@@ -480,7 +480,7 @@ describe('package-mac script helpers', () => {
       node: expect.stringContaining('>=24'),
       pnpm: expect.stringContaining('>=10'),
     });
-    expect(rootPackage.license).toBe('MIT');
+    expect(rootPackage.license).toBe('Apache-2.0');
     expect(rootPackage.repository).toEqual({
       type: 'git',
       url: 'git+https://github.com/imchenway/zeus.git',
