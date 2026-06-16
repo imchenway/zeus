@@ -1,0 +1,16 @@
+{
+  "name": "@zeus/storage",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@zeus/shared": "workspace:*",
+    "nanoid": "^5.1.5",
+    "sql.js": "^1.13.0"
+  }
+}

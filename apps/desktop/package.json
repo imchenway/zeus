@@ -1,0 +1,25 @@
+{
+  "name": "@zeus/desktop",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "dist/main/main.js",
+  "scripts": {
+    "dev": "../../script/build_and_run.sh",
+    "test": "vitest run",
+    "build": "vite build && tsc -p tsconfig.preload.json && tsc -p tsconfig.main.json",
+    "package:mac": "node ../../scripts/package-mac.mjs"
+  },
+  "dependencies": {
+    "@xterm/xterm": "^6.0.0",
+    "@xyflow/react": "^12.11.0",
+    "@zeus/diagram-engine": "workspace:*",
+    "@zeus/local-server": "workspace:*",
+    "@zeus/shared": "workspace:*",
+    "graphology": "^0.26.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "sigma": "^3.0.3"
+  },
+  "description": "Zeus local-first macOS AI development workbench",
+  "author": "Zeus Contributors"
+}

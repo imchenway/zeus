@@ -1,0 +1,50 @@
+{
+  "files": [],
+  "references": [
+    {
+      "path": "packages/shared"
+    },
+    {
+      "path": "packages/task-core"
+    },
+    {
+      "path": "packages/storage"
+    },
+    {
+      "path": "packages/code-indexer"
+    },
+    {
+      "path": "packages/graph-engine"
+    },
+    {
+      "path": "packages/project-core"
+    },
+    {
+      "path": "packages/local-server"
+    },
+    {
+      "path": "packages/diagram-engine"
+    },
+    {
+      "path": "apps/desktop"
+    },
+    {
+      "path": "packages/terminal-core"
+    },
+    {
+      "path": "packages/ai-runtime"
+    },
+    {
+      "path": "packages/git-core"
+    },
+    {
+      "path": "packages/security-core"
+    },
+    {
+      "path": "packages/telegram-adapter"
+    },
+    {
+      "path": "packages/release-core"
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+appId: dev.hypha.zeus
+productName: Zeus
+artifactName: Zeus-${version}-${arch}.${ext}
+electronVersion: 42.4.0
+directories:
+  output: ../../dist
+files:
+  - dist/**
+  - assets/**
+  - package.json
+mac:
+  category: public.app-category.developer-tools
+  icon: assets/icon.icns
+  target:
+    - dmg
+    - zip
+  identity: null
+dmg:
+  title: Zeus
+  artifactName: Zeus-${version}-${arch}.dmg
+publish: null

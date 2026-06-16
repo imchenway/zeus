@@ -1,0 +1,12 @@
+node_modules
+.pnpm-store
+dist
+.tmp
+coverage
+**/dist
+**/*.tsbuildinfo
+pnpm-lock.yaml
+Casks/*.rb
+script/*.sh
+scripts/*.sh
+*.md

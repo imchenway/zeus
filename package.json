@@ -1,0 +1,69 @@
+{
+  "name": "zeus",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "pnpm --filter @zeus/desktop dev",
+    "lint": "eslint .",
+    "typecheck": "tsc -b",
+    "test": "vitest run",
+    "test:real-scan": "bash scripts/test-real-scan.sh",
+    "build": "pnpm -r --if-present build",
+    "package:mac": "pnpm --filter @zeus/desktop package:mac",
+    "verify:release": "bash scripts/verify-release.sh",
+    "verify:acceptance-matrix": "node scripts/verify-acceptance-matrix.mjs --check",
+    "format": "prettier --write \"**/*.{ts,tsx,cts,mjs,js,json,yml,yaml}\" --ignore-path .prettierignore",
+    "format:check": "prettier --check \"**/*.{ts,tsx,cts,mjs,js,json,yml,yaml}\" --ignore-path .prettierignore",
+    "security:audit": "pnpm audit --audit-level=moderate",
+    "verify:quick": "pnpm lint && pnpm typecheck && pnpm test && pnpm format:check && pnpm security:audit"
+  },
+  "dependencies": {
+    "@fastify/websocket": "^11.0.1",
+    "@vitejs/plugin-react-swc": "^4.3.1",
+    "fastify": "^5.4.0",
+    "nanoid": "^5.1.5",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "simple-git": "^3.28.0",
+    "sql.js": "^1.13.0",
+    "tsx": "^4.20.3",
+    "ws": "^8.18.2",
+    "zustand": "^5.0.5"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.29.0",
+    "@types/node": "^24.0.1",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@types/sql.js": "^1.4.11",
+    "@vitejs/plugin-react": "^6.0.2",
+    "electron": "42.4.0",
+    "electron-builder": "^26.0.12",
+    "eslint": "^9.29.0",
+    "prettier": "^3.5.3",
+    "typescript": "^5.8.3",
+    "typescript-eslint": "^8.34.0",
+    "vite": "^8.0.16",
+    "vitest": "^3.2.3"
+  },
+  "packageManager": "pnpm@10.31.0",
+  "engines": {
+    "node": ">=24 <26",
+    "pnpm": ">=10 <11"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/imchenway/zeus.git"
+  },
+  "bugs": {
+    "url": "https://github.com/imchenway/zeus/issues"
+  },
+  "homepage": "https://github.com/imchenway/zeus#readme",
+  "pnpm": {
+    "overrides": {
+      "esbuild": "0.28.1"
+    }
+  }
+}

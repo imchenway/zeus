@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="Zeus app icon">
+  <defs>
+    <linearGradient id="zeus-surface" x1="184" y1="96" x2="840" y2="928" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#f6f4ff"/>
+      <stop offset="0.54" stop-color="#ebeafa"/>
+      <stop offset="1" stop-color="#dcdff5"/>
+    </linearGradient>
+    <linearGradient id="zeus-accent" x1="300" y1="240" x2="724" y2="784" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#6155d8"/>
+      <stop offset="1" stop-color="#7a6ff0"/>
+    </linearGradient>
+  </defs>
+  <rect x="88" y="88" width="848" height="848" rx="214" fill="url(#zeus-surface)"/>
+  <rect x="116" y="116" width="792" height="792" rx="192" fill="none" stroke="#ffffff" stroke-opacity="0.62" stroke-width="22"/>
+  <path d="M318 310h388L390 714h340" fill="none" stroke="url(#zeus-accent)" stroke-width="104" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M620 254 492 506h156L428 782" fill="none" stroke="#33314f" stroke-width="42" stroke-linecap="round" stroke-linejoin="round" opacity="0.92"/>
+</svg>

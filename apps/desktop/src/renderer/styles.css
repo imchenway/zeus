@@ -1,0 +1,3496 @@
+:root {
+  color: #1d1d1f;
+  background: #ffffff;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  margin: 0;
+  min-width: 980px;
+  min-height: 720px;
+  background: #ffffff;
+  overflow: hidden;
+}
+
+button,
+a {
+  font: inherit;
+}
+
+.zeus-shell {
+  display: grid;
+  grid-template-columns: 248px 1fr;
+  min-height: 100vh;
+}
+
+.ai-native-shell {
+  grid-template-columns: 236px minmax(0, 1fr);
+  background: oklch(96.8% 0.006 265);
+}
+
+.zeus-sidebar {
+  border-right: 1px solid oklch(88% 0.012 270);
+  background: oklch(94.8% 0.009 268);
+  padding: 22px 16px;
+}
+
+.ai-sidebar {
+  display: grid;
+  align-content: start;
+  gap: 18px;
+  background: oklch(95.4% 0.007 268);
+  padding: 18px 12px;
+}
+
+.brand-block {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 28px;
+}
+
+.brand-mark {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border-radius: 13px;
+  color: oklch(98% 0.004 260);
+  background: oklch(49% 0.17 274);
+  font-weight: 760;
+}
+
+.brand-block strong,
+.brand-block span {
+  display: block;
+}
+
+.brand-block strong {
+  font-size: 15px;
+}
+
+.brand-block span {
+  margin-top: 2px;
+  color: oklch(50% 0.025 268);
+  font-size: 12px;
+}
+
+nav {
+  display: grid;
+  gap: 4px;
+}
+
+.nav-group {
+  display: grid;
+  gap: 3px;
+}
+
+.sidebar-context,
+.sidebar-waiting {
+  border: 1px solid oklch(88% 0.011 270);
+  border-radius: 14px;
+  background: oklch(97.3% 0.006 265);
+  display: grid;
+  gap: 5px;
+  padding: 11px;
+}
+
+.sidebar-context strong {
+  color: oklch(28% 0.024 268);
+  font-size: 13px;
+}
+
+.sidebar-context small,
+.sidebar-waiting small {
+  color: oklch(50% 0.025 268);
+  line-height: 1.45;
+}
+
+nav a {
+  border-radius: 10px;
+  color: oklch(38% 0.028 268);
+  padding: 9px 10px;
+  text-decoration: none;
+}
+
+nav a:hover,
+nav a:focus-visible {
+  background: oklch(91.5% 0.018 270);
+  outline: none;
+}
+
+nav a.active {
+  color: oklch(41% 0.16 274);
+  background: oklch(91% 0.046 274);
+  font-weight: 650;
+}
+
+.workspace {
+  padding: 30px 34px;
+}
+
+.ai-workspace {
+  min-width: 0;
+  padding: 22px 28px;
+}
+
+.topbar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 28px;
+  margin-bottom: 28px;
+}
+
+.workspace-header {
+  align-items: center;
+  border-bottom: 1px solid oklch(89% 0.01 270);
+  margin-bottom: 18px;
+  padding-bottom: 18px;
+}
+
+.topbar h1 {
+  margin: 0;
+  font-size: 30px;
+  letter-spacing: -0.025em;
+}
+
+.workspace-header h1 {
+  font-size: 24px;
+}
+
+.topbar p {
+  max-width: 72ch;
+  margin: 8px 0 0;
+  color: oklch(47% 0.026 268);
+  line-height: 1.55;
+}
+
+.primary-action,
+.empty-state button {
+  border: 0;
+  border-radius: 11px;
+  color: oklch(98% 0.004 260);
+  background: oklch(49% 0.17 274);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 660;
+  padding: 10px 14px;
+}
+
+.command-composer {
+  border: 1px solid oklch(86% 0.014 270);
+  border-radius: 18px;
+  background: oklch(98.5% 0.004 265);
+  display: grid;
+  gap: 14px;
+  margin-bottom: 16px;
+  padding: 16px;
+}
+
+.composer-copy p {
+  color: oklch(47% 0.024 268);
+  line-height: 1.5;
+  margin: 6px 0 0;
+}
+
+.composer-input {
+  display: grid;
+  gap: 7px;
+}
+
+.composer-input span {
+  color: oklch(42% 0.028 268);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.composer-input textarea {
+  min-height: 82px;
+  resize: vertical;
+}
+
+.composer-actions,
+.prompt-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.composer-actions button,
+.prompt-actions button {
+  border: 1px solid oklch(84% 0.02 274);
+  border-radius: 10px;
+  background: oklch(93.5% 0.028 274);
+  color: oklch(36% 0.13 274);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 680;
+  padding: 8px 11px;
+}
+
+.composer-actions button:hover,
+.prompt-actions button:hover {
+  background: oklch(90.5% 0.04 274);
+}
+
+.composer-actions button:disabled,
+.prompt-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.activity-stream {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.stream-header {
+  display: grid;
+  gap: 3px;
+}
+
+.stream-item {
+  border-bottom: 1px solid oklch(90% 0.01 270);
+  display: grid;
+  gap: 4px;
+  padding: 11px 2px;
+}
+
+.stream-item span {
+  color: oklch(42% 0.12 274);
+  font-size: 11px;
+  font-weight: 720;
+}
+
+.stream-item strong {
+  color: oklch(29% 0.026 268);
+  font-size: 13px;
+}
+
+.stream-item small {
+  color: oklch(50% 0.025 268);
+}
+
+.ai-workflow-strip {
+  display: grid;
+  gap: 10px;
+}
+
+.empty-prompt,
+.inline-notice {
+  border: 1px solid oklch(88% 0.012 270);
+  border-radius: 14px;
+  background: oklch(98.8% 0.004 265);
+  display: grid;
+  gap: 7px;
+  padding: 13px;
+}
+
+.empty-prompt strong,
+.inline-notice strong {
+  color: oklch(30% 0.028 268);
+  font-size: 13px;
+}
+
+.empty-prompt p,
+.inline-notice span {
+  color: oklch(48% 0.025 268);
+  line-height: 1.5;
+  margin: 0;
+}
+
+.inline-notice.warn {
+  border-color: oklch(83% 0.055 82);
+  background: oklch(96.8% 0.018 82);
+}
+
+.inline-notice.ok {
+  border-color: oklch(82% 0.052 150);
+  background: oklch(96.8% 0.018 150);
+}
+
+.inspector-section {
+  border: 1px solid oklch(88% 0.011 270);
+  border-radius: 14px;
+  background: oklch(98.4% 0.004 265);
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+}
+
+.inspector-section span {
+  color: oklch(48% 0.024 268);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.inspector-section strong {
+  color: oklch(29% 0.026 268);
+  font-size: 13px;
+}
+
+.inspector-section p {
+  color: oklch(49% 0.024 268);
+  font-size: 12px;
+  line-height: 1.48;
+  margin: 0;
+}
+
+.primary-action:hover,
+.empty-state button:hover {
+  background: oklch(43% 0.18 274);
+}
+
+.status-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.client-status {
+  border: 1px solid oklch(84% 0.035 274);
+  border-radius: 16px;
+  background: oklch(96.5% 0.018 274);
+  color: oklch(34% 0.055 268);
+  display: grid;
+  gap: 5px;
+  margin-bottom: 18px;
+  padding: 13px 15px;
+}
+
+.client-status strong {
+  font-size: 14px;
+}
+
+.client-status span,
+.client-status em {
+  color: oklch(45% 0.03 268);
+  font-size: 12px;
+  font-style: normal;
+  line-height: 1.5;
+}
+
+.client-status.failed {
+  border-color: oklch(78% 0.075 28);
+  background: oklch(96% 0.022 28);
+}
+
+.status-panel {
+  border: 1px solid oklch(88% 0.012 270);
+  border-radius: 16px;
+  background: oklch(99% 0.004 265);
+  padding: 15px;
+}
+
+.status-panel span {
+  display: block;
+  color: oklch(48% 0.025 268);
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+
+.status-panel strong {
+  display: block;
+  font-size: 17px;
+  margin-bottom: 8px;
+}
+
+.status-panel p,
+.empty-state p {
+  margin: 0;
+  color: oklch(48% 0.025 268);
+  line-height: 1.48;
+}
+
+.launch-readiness {
+  align-items: stretch;
+  border: 1px solid oklch(87% 0.014 270);
+  border-radius: 18px;
+  background: oklch(98.6% 0.005 265);
+  display: grid;
+  gap: 18px;
+  grid-template-columns: minmax(240px, 0.8fr) minmax(420px, 1.4fr);
+  margin-bottom: 20px;
+  padding: 16px;
+}
+
+.launch-copy {
+  border-radius: 14px;
+  background: oklch(94.5% 0.022 274);
+  padding: 15px;
+}
+
+.launch-copy span {
+  color: oklch(42% 0.13 274);
+  font-size: 12px;
+  font-weight: 720;
+}
+
+.launch-copy h2 {
+  color: oklch(29% 0.035 268);
+  font-size: 19px;
+  letter-spacing: -0.016em;
+  margin: 6px 0 8px;
+}
+
+.launch-copy p {
+  color: oklch(46% 0.025 268);
+  line-height: 1.5;
+  margin: 0;
+}
+
+.launch-checks {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.launch-checks li {
+  border: 1px solid oklch(88% 0.012 270);
+  border-radius: 14px;
+  background: oklch(99% 0.004 265);
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+}
+
+.launch-checks li::before {
+  border-radius: 999px;
+  content: "";
+  height: 7px;
+  width: 7px;
+}
+
+.launch-checks li[data-state="ready"]::before {
+  background: oklch(56% 0.12 158);
+}
+
+.launch-checks li[data-state="waiting"]::before {
+  background: oklch(64% 0.12 74);
+}
+
+.launch-checks strong {
+  color: oklch(30% 0.03 268);
+  font-size: 13px;
+}
+
+.launch-checks span {
+  color: oklch(49% 0.024 268);
+  font-size: 12px;
+  line-height: 1.42;
+}
+
+.status-panel.ok strong {
+  color: oklch(42% 0.12 158);
+}
+
+.status-panel.warn strong {
+  color: oklch(55% 0.13 70);
+}
+
+.dashboard-recent {
+  border: 1px solid oklch(88% 0.012 270);
+  border-radius: 18px;
+  background: oklch(99% 0.004 265);
+  margin-bottom: 20px;
+  padding: 16px;
+}
+
+.dashboard-recent-header {
+  align-items: baseline;
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.dashboard-recent-header h2 {
+  color: oklch(31% 0.03 268);
+  font-size: 16px;
+  margin: 0;
+}
+
+.dashboard-recent-header span {
+  color: oklch(50% 0.025 268);
+  font-size: 12px;
+}
+
+.dashboard-recent-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.dashboard-recent .timeline {
+  border: 1px solid oklch(90% 0.01 270);
+  border-radius: 14px;
+  margin-top: 0;
+  padding: 12px;
+}
+
+.first-run-guide {
+  align-items: start;
+  border: 1px solid oklch(86% 0.018 270);
+  border-radius: 18px;
+  background: linear-gradient(135deg, oklch(98.5% 0.006 265), oklch(94.5% 0.028 274));
+  display: grid;
+  gap: 18px;
+  grid-template-columns: minmax(220px, 0.9fr) minmax(320px, 1.4fr) auto;
+  margin-bottom: 20px;
+  padding: 18px;
+}
+
+.guide-summary span {
+  color: oklch(42% 0.13 274);
+  font-size: 12px;
+  font-weight: 720;
+}
+
+.guide-summary h2 {
+  color: oklch(29% 0.035 268);
+  font-size: 20px;
+  letter-spacing: -0.018em;
+  margin: 5px 0 8px;
+}
+
+.guide-summary p {
+  color: oklch(48% 0.025 268);
+  line-height: 1.5;
+  margin: 0;
+}
+
+.guide-steps {
+  display: grid;
+  gap: 9px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.guide-steps li {
+  border: 1px solid oklch(88% 0.012 270);
+  border-radius: 12px;
+  background: oklch(99% 0.004 265);
+  display: grid;
+  gap: 4px;
+  padding: 9px 11px;
+}
+
+.guide-steps li[data-state='done'] {
+  background: oklch(96% 0.028 158);
+  border-color: oklch(83% 0.05 158);
+}
+
+.guide-steps li[data-state='locked'] {
+  opacity: 0.72;
+}
+
+.guide-steps strong {
+  color: oklch(32% 0.032 268);
+  font-size: 13px;
+}
+
+.guide-steps span {
+  color: oklch(49% 0.024 268);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.guide-actions {
+  display: grid;
+  gap: 8px;
+  justify-items: stretch;
+}
+
+.guide-actions button {
+  border: 0;
+  border-radius: 10px;
+  background: oklch(49% 0.17 274);
+  color: oklch(98% 0.004 260);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 680;
+  padding: 9px 12px;
+  white-space: nowrap;
+}
+
+.guide-actions button:hover,
+.guide-actions button:focus-visible {
+  background: oklch(43% 0.18 274);
+  outline: none;
+}
+
+.guide-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.empty-layout {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.empty-state {
+  min-height: 230px;
+  border: 1px solid oklch(88% 0.012 270);
+  border-radius: 16px;
+  background: oklch(98.6% 0.004 265);
+  padding: 16px;
+}
+
+.empty-glyph {
+  display: none;
+}
+
+.empty-state h2 {
+  margin: 0 0 8px;
+  font-size: 18px;
+}
+
+.empty-state button {
+  margin-top: 18px;
+  color: oklch(39% 0.16 274);
+  background: oklch(92% 0.05 274);
+}
+
+.empty-state button:hover {
+  color: oklch(98% 0.004 260);
+}
+
+.fact-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.fact-strip span {
+  border: 1px solid oklch(88% 0.012 270);
+  border-radius: 999px;
+  background: oklch(99% 0.004 265);
+  color: oklch(42% 0.032 268);
+  font-size: 12px;
+  font-weight: 620;
+  padding: 5px 9px;
+}
+
+.data-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+}
+
+.data-panel {
+  min-height: 220px;
+}
+
+.data-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.evidence-row {
+  display: grid;
+  gap: 3px;
+  border: 1px solid oklch(90% 0.01 270);
+  border-radius: 12px;
+  background: oklch(97.8% 0.006 265);
+  padding: 10px;
+}
+
+.evidence-row strong {
+  color: oklch(31% 0.03 268);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.evidence-row span,
+.evidence-row em {
+  color: oklch(50% 0.025 268);
+  font-size: 12px;
+  font-style: normal;
+  overflow-wrap: anywhere;
+}
+
+.empty-state button:disabled,
+.primary-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+.timeline {
+  border-top: 1px solid oklch(90% 0.01 270);
+  margin-top: 12px;
+  padding-top: 12px;
+}
+
+.timeline h3 {
+  color: oklch(34% 0.03 268);
+  font-size: 13px;
+  margin: 0 0 8px;
+}
+
+.timeline-event {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px;
+  color: oklch(48% 0.025 268);
+  font-size: 12px;
+  padding: 5px 0;
+}
+
+.timeline-event span,
+.timeline-event small {
+  overflow-wrap: anywhere;
+}
+
+.graph-history-toolbar {
+  align-items: end;
+  border: 1px solid oklch(89% 0.012 270);
+  border-radius: 13px;
+  background: oklch(97.4% 0.007 265);
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(160px, 1fr) auto auto auto;
+  margin-bottom: 8px;
+  padding: 10px;
+}
+
+.graph-history-toolbar label {
+  color: oklch(46% 0.026 268);
+  display: grid;
+  font-size: 11px;
+  font-weight: 650;
+  gap: 4px;
+}
+
+.graph-history-toolbar input {
+  border: 1px solid oklch(86% 0.014 270);
+  border-radius: 8px;
+  background: oklch(99% 0.004 265);
+  color: oklch(28% 0.025 268);
+  font: inherit;
+  min-width: 0;
+  padding: 6px 8px;
+}
+
+.graph-history-toolbar button {
+  border: 0;
+  border-radius: 8px;
+  background: oklch(92% 0.05 274);
+  color: oklch(39% 0.16 274);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 680;
+  padding: 7px 10px;
+}
+
+.graph-history-toolbar button:hover,
+.graph-history-toolbar button:focus-visible,
+.graph-history-toolbar input:focus-visible {
+  outline: 2px solid oklch(86% 0.05 274);
+}
+
+.graph-history-toolbar span {
+  color: oklch(48% 0.025 268);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.graph-conversation-detail {
+  border: 1px solid oklch(89% 0.012 270);
+  border-radius: 12px;
+  background: oklch(97.2% 0.008 265);
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 10px;
+}
+
+.graph-conversation-detail h4 {
+  color: oklch(32% 0.03 268);
+  font-size: 13px;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.graph-conversation-detail > small {
+  color: oklch(52% 0.024 268);
+  font-size: 11px;
+}
+.task-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.task-controls button {
+  border: 1px solid oklch(86% 0.014 270);
+  border-radius: 8px;
+  background: oklch(96% 0.012 270);
+  color: oklch(38% 0.08 274);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 620;
+  padding: 4px 8px;
+}
+
+.task-controls button:hover,
+.task-controls button:focus-visible {
+  background: oklch(91% 0.046 274);
+  outline: none;
+}
+
+.code-map-view {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.graph-view-switcher {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.graph-view-switcher button {
+  border: 1px solid oklch(86% 0.014 270);
+  border-radius: 999px;
+  background: oklch(98% 0.006 265);
+  color: oklch(42% 0.032 268);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 650;
+  padding: 5px 9px;
+}
+
+.graph-view-switcher button:hover,
+.graph-view-switcher button:focus-visible {
+  border-color: oklch(70% 0.06 274);
+  outline: 2px solid oklch(88% 0.04 274);
+}
+
+.graph-view-switcher button[aria-pressed="true"] {
+  background: oklch(92% 0.052 274);
+  border-color: oklch(68% 0.09 274);
+  color: oklch(34% 0.14 274);
+}
+
+.graph-node-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.graph-canvas {
+  border: 1px solid oklch(88% 0.012 270);
+  border-radius: 14px;
+  background: oklch(98.2% 0.006 265);
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+}
+
+.graph-canvas-header {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.graph-canvas h3 {
+  color: oklch(30% 0.03 268);
+  font-size: 13px;
+  margin: 0;
+}
+
+.graph-canvas-header span,
+.graph-canvas p {
+  color: oklch(50% 0.025 268);
+  font-size: 11px;
+  margin: 0;
+}
+
+.graph-canvas-svg {
+  border: 1px solid oklch(90% 0.01 270);
+  border-radius: 12px;
+  background:
+    radial-gradient(circle at 50% 50%, oklch(94.5% 0.018 274) 0 1px, transparent 1px 100%),
+    oklch(99% 0.004 265);
+  background-size: 28px 28px;
+  display: block;
+  min-height: 230px;
+  width: 100%;
+}
+
+.graph-canvas-edge line {
+  marker-end: url("#graph-arrow");
+  stroke: oklch(69% 0.035 268);
+  stroke-width: 1.4;
+}
+
+.graph-canvas-edge text {
+  fill: oklch(45% 0.03 268);
+  font-size: 10px;
+  font-weight: 620;
+  paint-order: stroke;
+  stroke: oklch(99% 0.004 265);
+  stroke-width: 4px;
+  text-anchor: middle;
+}
+
+.graph-canvas-svg marker path {
+  fill: oklch(69% 0.035 268);
+}
+
+.graph-canvas-node circle {
+  fill: oklch(96.8% 0.012 274);
+  stroke: oklch(62% 0.11 274);
+  stroke-width: 1.5;
+}
+
+.graph-canvas-node.function circle {
+  fill: oklch(96% 0.018 232);
+  stroke: oklch(58% 0.09 232);
+}
+
+.graph-canvas-node.package circle {
+  fill: oklch(96% 0.02 155);
+  stroke: oklch(55% 0.09 155);
+}
+
+.graph-canvas-node text {
+  text-anchor: middle;
+}
+
+.graph-canvas-node-name {
+  fill: oklch(29% 0.03 268);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.graph-canvas-node-type {
+  fill: oklch(49% 0.025 268);
+  font-size: 10px;
+  font-weight: 620;
+}
+
+.graph-canvas-sources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.graph-canvas-sources span {
+  border: 1px solid oklch(88% 0.012 270);
+  border-radius: 999px;
+  color: oklch(47% 0.025 268);
+  font-size: 10px;
+  max-width: 220px;
+  overflow: hidden;
+  padding: 3px 7px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.graph-runtime-canvas {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.graph-runtime-pane {
+  border: 1px solid oklch(88% 0.012 270);
+  border-radius: 14px;
+  background: oklch(98.4% 0.006 265);
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px;
+}
+
+.graph-runtime-pane h3 {
+  color: oklch(30% 0.03 268);
+  font-size: 13px;
+  margin: 0;
+}
+
+.graph-runtime-pane p {
+  color: oklch(50% 0.025 268);
+  font-size: 11px;
+  margin: 0;
+}
+
+.graph-runtime-mount {
+  border: 1px solid oklch(90% 0.01 270);
+  border-radius: 12px;
+  background: oklch(99% 0.004 265);
+  display: grid;
+  gap: 6px;
+  min-height: 180px;
+  overflow: hidden;
+  padding: 8px;
+}
+
+.graph-runtime-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.graph-runtime-facts span,
+.graph-runtime-facts small,
+.react-flow-node-summary {
+  border: 1px solid oklch(88% 0.012 270);
+  border-radius: 999px;
+  color: oklch(47% 0.025 268);
+  font-size: 10px;
+  padding: 3px 7px;
+}
+
+.react-flow-node-summary {
+  border-radius: 10px;
+  display: grid;
+  gap: 2px;
+}
+
+.react-flow-node-summary strong {
+  color: oklch(30% 0.03 268);
+  font-size: 11px;
+}
+
+.graph-node,
+.graph-edge,
+.graph-detail {
+  border: 1px solid oklch(89% 0.012 270);
+  border-radius: 12px;
+  background: oklch(97.6% 0.007 265);
+  padding: 9px 10px;
+}
+
+.graph-node strong,
+.graph-edge strong,
+.graph-detail strong {
+  display: block;
+  color: oklch(31% 0.03 268);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.graph-node span,
+.graph-edge span,
+.graph-detail span,
+.graph-node small,
+.graph-detail small {
+  display: block;
+  color: oklch(50% 0.025 268);
+  font-size: 11px;
+  line-height: 1.4;
+  margin-top: 3px;
+  overflow-wrap: anywhere;
+}
+
+.graph-edge-list {
+  display: grid;
+  gap: 6px;
+}
+
+.graph-edge small {
+  border-radius: 999px;
+  background: oklch(94.5% 0.018 274);
+  color: oklch(39% 0.11 274);
+  display: inline-block;
+  font-weight: 680;
+  margin-top: 6px;
+  padding: 3px 7px;
+}
+
+.graph-detail {
+  background: oklch(96.8% 0.012 274);
+}
+
+.graph-node button {
+  border: 1px solid oklch(86% 0.014 270);
+  border-radius: 8px;
+  background: oklch(95.5% 0.018 274);
+  color: oklch(39% 0.12 274);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 650;
+  margin-top: 8px;
+  padding: 5px 8px;
+}
+
+.graph-node button:hover,
+.graph-node button:focus-visible {
+  background: oklch(91% 0.046 274);
+  outline: none;
+}
+
+.graph-node-menu {
+  border: 1px solid oklch(86% 0.014 270);
+  border-radius: 10px;
+  background: oklch(98% 0.006 265);
+  display: grid;
+  gap: 4px;
+  margin-top: 6px;
+  padding: 6px;
+}
+
+.graph-node-menu[hidden] {
+  display: none;
+}
+
+.graph-ai-summary {
+  border-top: 1px solid oklch(88% 0.012 270);
+  display: grid;
+  gap: 5px;
+  margin-top: 10px;
+  padding-top: 9px;
+}
+
+.graph-ai-summary strong {
+  color: oklch(34% 0.03 268);
+  font-size: 11px;
+}
+
+.graph-ai-summary span {
+  color: oklch(43% 0.025 268);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.graph-recent-tasks {
+  border-top: 1px solid oklch(88% 0.012 270);
+  display: grid;
+  gap: 4px;
+  margin-top: 10px;
+  padding-top: 9px;
+}
+
+.graph-recent-tasks strong {
+  color: oklch(34% 0.03 268);
+  font-size: 11px;
+}
+
+.graph-risk-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 9px;
+}
+
+.graph-risk-tags span {
+  border: 1px solid oklch(84% 0.035 78);
+  border-radius: 999px;
+  background: oklch(94% 0.03 78);
+  color: oklch(44% 0.09 78);
+  font-size: 10px;
+  font-weight: 650;
+  padding: 3px 7px;
+}
+
+.graph-search-bar {
+  align-items: end;
+  border: 1px solid oklch(89% 0.012 270);
+  border-radius: 13px;
+  background: oklch(97.4% 0.007 265);
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(150px, 1fr) 105px 105px 96px auto auto;
+  padding: 10px;
+}
+
+.graph-search-bar label {
+  color: oklch(46% 0.026 268);
+  display: grid;
+  font-size: 11px;
+  font-weight: 650;
+  gap: 4px;
+}
+
+.graph-search-bar input,
+.graph-search-bar select {
+  border: 1px solid oklch(86% 0.014 270);
+  border-radius: 8px;
+  background: oklch(99% 0.004 265);
+  color: oklch(28% 0.025 268);
+  font: inherit;
+  padding: 6px 8px;
+}
+
+.graph-search-bar input:focus-visible,
+.graph-search-bar select:focus-visible {
+  border-color: oklch(58% 0.14 274);
+  outline: 2px solid oklch(86% 0.05 274);
+}
+
+.graph-search-bar button {
+  border: 0;
+  border-radius: 8px;
+  background: oklch(92% 0.05 274);
+  color: oklch(39% 0.16 274);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 680;
+  padding: 7px 10px;
+}
+
+.graph-search-bar > span {
+  color: oklch(48% 0.025 268);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.graph-edge-detail,
+.graph-neighborhood {
+  border: 1px solid oklch(89% 0.012 270);
+  border-radius: 12px;
+  background: oklch(97.2% 0.008 265);
+  display: grid;
+  gap: 4px;
+  padding: 9px 10px;
+}
+
+.graph-edge-detail strong,
+.graph-neighborhood strong {
+  color: oklch(31% 0.03 268);
+  font-size: 12px;
+}
+
+.graph-edge-detail span,
+.graph-edge-detail small,
+.graph-neighborhood span {
+  color: oklch(50% 0.025 268);
+  font-size: 11px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.graph-neighborhood {
+  border-top-color: oklch(84% 0.024 274);
+  margin-top: 10px;
+}
+
+.edit-form {
+  border: 1px solid oklch(89% 0.012 270);
+  border-radius: 12px;
+  background: oklch(97.2% 0.007 265);
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 10px;
+}
+
+.edit-form label {
+  color: oklch(46% 0.026 268);
+  display: grid;
+  font-size: 11px;
+  font-weight: 650;
+  gap: 4px;
+}
+
+.edit-form input,
+.edit-form textarea {
+  border: 1px solid oklch(86% 0.014 270);
+  border-radius: 8px;
+  background: oklch(99% 0.004 265);
+  color: oklch(28% 0.025 268);
+  font: inherit;
+  line-height: 1.45;
+  padding: 6px 8px;
+}
+
+.edit-form textarea {
+  min-height: 62px;
+  resize: vertical;
+}
+
+.edit-form input:focus-visible,
+.edit-form textarea:focus-visible {
+  border-color: oklch(58% 0.14 274);
+  outline: 2px solid oklch(86% 0.05 274);
+}
+
+.edit-form small {
+  color: oklch(50% 0.025 268);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+
+.xterm-runtime-pane {
+  border: 1px solid oklch(34% 0.035 268);
+  border-radius: 12px;
+  background: oklch(21% 0.035 268);
+  min-height: 210px;
+  overflow: hidden;
+  padding: 8px;
+}
+
+.runtime-log-line {
+  border: 1px solid rgba(100, 116, 139, 0.35);
+  border-radius: 8px;
+  padding-inline: 8px;
+}
+
+.runtime-log-line.error {
+  border-color: #c2410c;
+  background: rgba(254, 215, 170, 0.35);
+}
+
+.runtime-log-line.command {
+  border-color: #2563eb;
+  background: rgba(191, 219, 254, 0.28);
+}
+
+.runtime-log-line.ai {
+  border-color: #7c3aed;
+  background: rgba(221, 214, 254, 0.3);
+}
+
+.log-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.git-commit-message {
+  border: 1px solid oklch(88% 0.012 270);
+  border-radius: 12px;
+  background: oklch(97.5% 0.008 268);
+  color: oklch(34% 0.028 268);
+  display: grid;
+  font-size: 12px;
+  font-weight: 650;
+  gap: 6px;
+  margin-top: 10px;
+  padding: 10px;
+}
+
+.git-commit-message input {
+  border: 1px solid oklch(85% 0.014 270);
+  border-radius: 9px;
+  background: oklch(99% 0.004 265);
+  color: oklch(24% 0.03 268);
+  font: inherit;
+  padding: 7px 9px;
+}
+
+.git-commit-message input:focus-visible {
+  border-color: oklch(58% 0.12 274);
+  outline: 2px solid oklch(86% 0.05 274);
+}
+
+.git-commit-message small {
+  color: oklch(50% 0.025 268);
+  font-weight: 500;
+}
+
+.git-advanced-operations {
+  border: 1px solid oklch(88% 0.012 270);
+  border-radius: 12px;
+  background: oklch(97% 0.009 268);
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 10px;
+  padding: 10px;
+}
+
+.git-advanced-operations h3 {
+  color: oklch(31% 0.03 268);
+  font-size: 13px;
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
+.git-advanced-operations label {
+  color: oklch(45% 0.03 268);
+  display: grid;
+  font-size: 11px;
+  font-weight: 650;
+  gap: 4px;
+}
+
+.git-advanced-operations input {
+  border: 1px solid oklch(85% 0.014 270);
+  border-radius: 8px;
+  background: oklch(99% 0.004 265);
+  color: oklch(24% 0.03 268);
+  font: inherit;
+  padding: 6px 8px;
+}
+
+.git-advanced-operations input:focus-visible {
+  border-color: oklch(58% 0.12 274);
+  outline: 2px solid oklch(86% 0.05 274);
+}
+
+.git-review-panel {
+  border: 1px solid oklch(87% 0.014 270);
+  border-radius: 14px;
+  background: oklch(97.2% 0.01 268);
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 12px;
+}
+
+.git-review-panel h3 {
+  color: oklch(31% 0.03 268);
+  font-size: 13px;
+  margin: 0;
+}
+
+.git-hunk-decision {
+  align-items: center;
+  border: 1px solid oklch(89% 0.012 270);
+  border-radius: 11px;
+  background: oklch(99% 0.004 265);
+  display: grid;
+  gap: 6px;
+  grid-template-columns: minmax(160px, 1fr) minmax(220px, 1.4fr) auto auto;
+  padding: 8px 9px;
+}
+
+.git-hunk-decision strong {
+  color: oklch(29% 0.03 268);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.git-hunk-decision span {
+  color: oklch(48% 0.026 268);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.git-hunk-decision button {
+  border: 1px solid oklch(84% 0.018 270);
+  border-radius: 8px;
+  background: oklch(93% 0.035 274);
+  color: oklch(35% 0.08 274);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 650;
+  padding: 5px 8px;
+}
+
+.git-hunk-decision button:hover,
+.git-hunk-decision button:focus-visible {
+  background: oklch(89% 0.055 274);
+  outline: none;
+}
+
+.graph-performance-strip {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.graph-performance-strip span {
+  border: 1px solid oklch(88% .012 270);
+  border-radius: 999px;
+  background: #f6f8fd;
+  color: #4c5363;
+  font-size: 11px;
+  font-weight: 650;
+  padding: 4px 8px;
+}
+
+/* 主题偏好必须真实影响界面，而不是只保存在设置表单里。 */
+.zeus-shell.theme-light {
+  color-scheme: light;
+}
+
+.zeus-shell.theme-dark {
+  color-scheme: dark;
+  background: oklch(19% 0.018 270);
+  color: oklch(91% 0.014 270);
+}
+
+.zeus-shell.theme-dark .zeus-sidebar {
+  background: oklch(23% 0.02 270);
+  border-right-color: oklch(34% 0.026 270);
+}
+
+.zeus-shell.theme-dark .workspace,
+.zeus-shell.theme-dark .data-panel,
+.zeus-shell.theme-dark .status-panel,
+.zeus-shell.theme-dark .dashboard-recent,
+.zeus-shell.theme-dark .timeline,
+.zeus-shell.theme-dark .edit-form,
+.zeus-shell.theme-dark .graph-node,
+.zeus-shell.theme-dark .graph-edge,
+.zeus-shell.theme-dark .graph-detail,
+.zeus-shell.theme-dark .graph-edge-detail,
+.zeus-shell.theme-dark .terminal-log {
+  background: oklch(24% 0.018 270);
+  border-color: oklch(36% 0.028 270);
+  color: oklch(91% 0.014 270);
+}
+
+.zeus-shell.theme-dark .first-run-guide,
+.zeus-shell.theme-dark .guide-steps li,
+.zeus-shell.theme-dark .timeline-event,
+.zeus-shell.theme-dark .evidence-row,
+.zeus-shell.theme-dark .graph-canvas,
+.zeus-shell.theme-dark .graph-runtime-pane,
+.zeus-shell.theme-dark .graph-runtime-mount,
+.zeus-shell.theme-dark .graph-mermaid-preview {
+  background: oklch(27% 0.022 270);
+  border-color: oklch(38% 0.03 270);
+  color: oklch(91% 0.014 270);
+}
+
+.zeus-shell.theme-dark p,
+.zeus-shell.theme-dark span,
+.zeus-shell.theme-dark small,
+.zeus-shell.theme-dark em,
+.zeus-shell.theme-dark label,
+.zeus-shell.theme-dark .brand-block span,
+.zeus-shell.theme-dark .topbar p,
+.zeus-shell.theme-dark .status-panel p,
+.zeus-shell.theme-dark .empty-state p,
+.zeus-shell.theme-dark .guide-summary p,
+.zeus-shell.theme-dark .guide-steps span {
+  color: oklch(77% 0.016 270);
+}
+
+.zeus-shell.theme-dark nav a {
+  color: oklch(82% 0.018 270);
+}
+
+.zeus-shell.theme-dark nav a:hover,
+.zeus-shell.theme-dark nav a:focus-visible {
+  background: oklch(31% 0.03 274);
+}
+
+.zeus-shell.theme-dark nav a.active {
+  color: oklch(88% 0.05 274);
+  background: oklch(34% 0.07 274);
+}
+
+.zeus-shell.theme-dark input,
+.zeus-shell.theme-dark select,
+.zeus-shell.theme-dark textarea {
+  background: oklch(20% 0.018 270);
+  border-color: oklch(42% 0.03 270);
+  color: oklch(92% 0.012 270);
+}
+
+@media (prefers-color-scheme: dark) {
+  .zeus-shell.theme-system {
+    color-scheme: dark;
+    background: oklch(19% 0.018 270);
+    color: oklch(91% 0.014 270);
+  }
+
+  .zeus-shell.theme-system .zeus-sidebar,
+  .zeus-shell.theme-system .workspace,
+  .zeus-shell.theme-system .data-panel,
+  .zeus-shell.theme-system .status-panel,
+  .zeus-shell.theme-system .timeline,
+  .zeus-shell.theme-system .edit-form {
+    background: oklch(24% 0.018 270);
+    border-color: oklch(36% 0.028 270);
+    color: oklch(91% 0.014 270);
+  }
+}
+
+/* macOS App 重构层：用线程、Inspector 和图谱舞台替代网页卡片网格。 */
+@keyframes zeusThreadEnter {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.992);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes zeusGraphFocus {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.985);
+    filter: saturate(0.84);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: saturate(1);
+  }
+}
+
+@keyframes zeusInspectorReveal {
+  from {
+    opacity: 0;
+    transform: translateX(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.macos-ai-app {
+  background: #ffffff;
+  color: #1d1d1f;
+  grid-template-columns: 236px minmax(0, 1fr);
+  height: 100vh;
+  overflow: hidden;
+}
+
+.macos-ai-app .ai-sidebar {
+  background: #f7f7f8;
+  border-right: 1px solid rgba(0, 0, 0, 0.08);
+  box-shadow: none;
+  height: 100vh;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.macos-ai-app .brand-mark {
+  border-radius: 10px;
+  box-shadow: 0 10px 24px oklch(45% 0.12 274 / 0.18);
+}
+
+.macos-ai-app nav a {
+  border-radius: 8px;
+  transition: background 180ms ease-out, color 180ms ease-out, transform 180ms ease-out;
+}
+
+.macos-ai-app nav a:hover,
+.macos-ai-app nav a:focus-visible {
+  background: oklch(88.8% 0.018 274);
+  transform: translateX(2px);
+}
+
+.macos-ai-app nav a.active {
+  background: oklch(88.2% 0.046 274);
+  color: oklch(38% 0.16 274);
+}
+
+.macos-ai-app .ai-workspace {
+  height: 100vh;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 20px 26px 40px;
+  scroll-behavior: smooth;
+}
+
+.macos-ai-app .workspace-header {
+  background: #ffffff;
+  border-bottom: 1px solid oklch(86% 0.01 270);
+  margin: -20px -26px 18px;
+  padding: 18px 26px;
+  position: sticky;
+  top: 0;
+  z-index: 4;
+}
+
+.macos-ai-app .workspace-header h1 {
+  font-size: 22px;
+  letter-spacing: -0.024em;
+}
+
+.macos-ai-app .fact-strip span,
+.macos-ai-app .graph-performance-strip span,
+.macos-ai-app .graph-runtime-facts span,
+.macos-ai-app .graph-runtime-facts small,
+.macos-ai-app .react-flow-node-summary {
+  background: transparent;
+  border: 1px solid oklch(83.5% 0.012 270);
+  border-radius: 999px;
+}
+
+.command-composer,
+.codex-section,
+.spatial-graph-stage,
+.graph-canvas,
+.graph-runtime-pane,
+.graph-mermaid-preview,
+.graph-edge-detail,
+.graph-neighborhood,
+.edit-form,
+.git-review-panel,
+.git-advanced-operations,
+.git-commit-message,
+.client-status,
+.empty-prompt,
+.inline-notice,
+.inspector-section,
+.graph-conversation-detail {
+  background: oklch(97.4% 0.005 268 / 0.82);
+  border: 1px solid oklch(84.5% 0.011 270);
+  border-radius: 12px;
+  box-shadow: none;
+}
+
+.command-composer {
+  animation: zeusThreadEnter 260ms cubic-bezier(0.22, 1, 0.36, 1);
+  border-radius: 16px;
+  gap: 12px;
+}
+
+.command-composer:focus-within {
+  border-color: oklch(64% 0.12 274);
+  box-shadow: 0 0 0 3px oklch(84% 0.05 274 / 0.55);
+}
+
+.composer-input textarea,
+.graph-search-bar input,
+.graph-search-bar select,
+.graph-history-toolbar input,
+.edit-form input,
+.edit-form textarea,
+.edit-form select,
+.git-commit-message input,
+.git-advanced-operations input {
+  border-radius: 8px;
+  transition: border-color 160ms ease-out, box-shadow 160ms ease-out, background 160ms ease-out;
+}
+
+.primary-action:hover:not(:disabled),
+.composer-actions button:hover:not(:disabled),
+.prompt-actions button:hover:not(:disabled),
+.task-controls button:hover:not(:disabled),
+.graph-search-bar button:hover:not(:disabled),
+.graph-history-toolbar button:hover:not(:disabled),
+.thread-action-row button:hover:not(:disabled),
+.graph-view-switcher button:hover:not(:disabled),
+.graph-node button:hover:not(:disabled),
+.git-hunk-decision button:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+.primary-action:active:not(:disabled),
+.composer-actions button:active:not(:disabled),
+.prompt-actions button:active:not(:disabled),
+.task-controls button:active:not(:disabled),
+.graph-search-bar button:active:not(:disabled),
+.graph-history-toolbar button:active:not(:disabled),
+.thread-action-row button:active:not(:disabled),
+.graph-view-switcher button:active:not(:disabled),
+.graph-node button:active:not(:disabled),
+.git-hunk-decision button:active:not(:disabled) {
+  transform: translateY(0) scale(0.985);
+}
+
+.codex-section {
+  animation: zeusThreadEnter 240ms cubic-bezier(0.22, 1, 0.36, 1);
+  display: grid;
+  gap: 14px;
+  margin-bottom: 14px;
+  min-height: 0;
+  padding: 0;
+}
+
+.codex-section[hidden] {
+  display: none;
+}
+
+.codex-section-header {
+  border-bottom: 1px solid oklch(87% 0.01 270);
+  display: grid;
+  gap: 5px;
+  padding: 14px 16px 12px;
+}
+
+.codex-section-header span {
+  color: oklch(45% 0.03 270);
+  font-size: 11px;
+  font-weight: 720;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.codex-section-header h2 {
+  color: oklch(25% 0.025 270);
+  font-size: 17px;
+  letter-spacing: -0.014em;
+  margin: 0;
+}
+
+.codex-section-header p {
+  color: oklch(47% 0.024 270);
+  line-height: 1.5;
+  margin: 0;
+}
+
+.thread-evidence-list {
+  margin: 0;
+  padding: 0 12px;
+}
+
+.thread-action-row {
+  align-items: center;
+  border-top: 1px solid oklch(87% 0.01 270);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: space-between;
+  padding: 12px 16px;
+}
+
+.thread-action-row small {
+  color: oklch(51% 0.022 270);
+  font-size: 11px;
+}
+
+.evidence-row,
+.timeline-event,
+.stream-item,
+.graph-node,
+.graph-edge,
+.graph-detail,
+.git-hunk-decision {
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid oklch(88% 0.01 270);
+  border-radius: 0;
+  padding: 10px 4px;
+}
+
+.evidence-row:last-child,
+.timeline-event:last-child,
+.stream-item:last-child,
+.graph-node:last-child,
+.graph-edge:last-child,
+.graph-detail:last-child,
+.git-hunk-decision:last-child {
+  border-bottom: 0;
+}
+
+.evidence-row:hover,
+.stream-item:hover,
+.graph-node:hover,
+.graph-edge:hover,
+.graph-detail:hover,
+.timeline-event:hover {
+  background: oklch(94.5% 0.014 274 / 0.62);
+}
+
+.spatial-graph-stage {
+  animation: zeusGraphFocus 280ms cubic-bezier(0.22, 1, 0.36, 1);
+  background:
+    radial-gradient(circle at 20% 10%, oklch(87% 0.05 274 / 0.48), transparent 34%),
+    linear-gradient(145deg, oklch(96.8% 0.006 268), oklch(91.8% 0.016 274));
+  display: grid;
+  gap: 16px;
+  grid-template-columns: minmax(240px, 1fr) auto;
+  margin-bottom: 12px;
+  padding: 15px 16px;
+}
+
+.graph-stage-command span,
+.graph-stage-lanes span {
+  color: oklch(41% 0.12 274);
+  font-size: 11px;
+  font-weight: 760;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.graph-stage-command h3 {
+  color: oklch(25% 0.03 270);
+  font-size: 18px;
+  letter-spacing: -0.016em;
+  margin: 4px 0 5px;
+}
+
+.graph-stage-command p {
+  color: oklch(45% 0.024 270);
+  line-height: 1.48;
+  margin: 0;
+}
+
+.graph-stage-lanes {
+  align-content: center;
+  display: grid;
+  gap: 7px;
+  justify-items: end;
+}
+
+.graph-stage-lanes span {
+  border: 1px solid oklch(79% 0.035 274);
+  border-radius: 999px;
+  background: oklch(96% 0.014 274 / 0.68);
+  padding: 5px 9px;
+  text-transform: none;
+}
+
+.graph-canvas {
+  overflow: hidden;
+}
+
+.graph-canvas-svg {
+  background:
+    radial-gradient(circle at 50% 50%, oklch(88% 0.014 274) 0 1px, transparent 1px 100%),
+    linear-gradient(180deg, oklch(97% 0.004 268), oklch(94% 0.006 268));
+  background-size: 26px 26px, auto;
+}
+
+.graph-runtime-pane,
+.graph-runtime-mount {
+  border-radius: 10px;
+}
+
+/* 深色模式同步新壳层，避免新区域在 system/dark 下退回网页卡片感。 */
+.zeus-shell.theme-dark.macos-ai-app,
+.zeus-shell.theme-system.macos-ai-app {
+  color-scheme: light dark;
+}
+
+.zeus-shell.theme-dark .codex-section-header,
+.zeus-shell.theme-dark .thread-action-row,
+.zeus-shell.theme-dark .evidence-row,
+.zeus-shell.theme-dark .timeline-event,
+.zeus-shell.theme-dark .stream-item,
+.zeus-shell.theme-dark .graph-node,
+.zeus-shell.theme-dark .graph-edge,
+.zeus-shell.theme-dark .graph-detail {
+  border-color: oklch(36% 0.028 270);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 1ms !important;
+  }
+}
+
+/* Codex 无卡片布局覆盖层：最终视觉只保留 macOS 分栏、线程分隔线和输入控件。 */
+.command-composer,
+.codex-section,
+.empty-state,
+.dashboard-recent,
+.first-run-guide,
+.inspector-section {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.sidebar-context,
+.sidebar-waiting,
+.guide-steps li {
+  background: transparent;
+  border: 0;
+  border-block-start: 1px solid oklch(84% 0.012 270);
+  border-radius: 0;
+  box-shadow: none;
+  padding-inline: 0;
+}
+
+.command-composer,
+.codex-section,
+.empty-state,
+.dashboard-recent,
+.first-run-guide,
+.spatial-graph-stage,
+.graph-history-toolbar,
+.client-status,
+.empty-prompt,
+.inline-notice,
+.edit-form,
+.git-review-panel,
+.git-advanced-operations,
+.git-commit-message,
+.graph-conversation-detail,
+.graph-runtime-pane,
+.graph-mermaid-preview,
+.graph-edge-detail,
+.graph-neighborhood {
+  background: transparent;
+  border: 0;
+  border-block-start: 1px solid oklch(84.5% 0.011 270);
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.command-composer {
+  gap: 13px;
+  margin-bottom: 10px;
+  padding: 20px 0 22px;
+}
+
+.command-composer:focus-within {
+  border-color: oklch(84.5% 0.011 270);
+  box-shadow: none;
+}
+
+.codex-section {
+  margin-bottom: 0;
+  padding: 0;
+}
+
+.codex-section-header,
+.thread-action-row {
+  padding-inline: 0;
+}
+
+.codex-section-header {
+  border-bottom: 0;
+}
+
+.thread-action-row {
+  border-top: 0;
+  padding-top: 8px;
+}
+
+.empty-layout {
+  display: grid;
+  gap: 0;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.empty-state {
+  min-height: auto;
+  padding: 18px 0;
+}
+
+.empty-state + .empty-state,
+.dashboard-recent .timeline,
+.guide-steps li + li {
+  border-block-start: 1px solid oklch(88% 0.01 270);
+}
+
+.empty-prompt,
+.inline-notice,
+.client-status {
+  padding: 14px 0;
+}
+
+.first-run-guide {
+  grid-template-columns: minmax(220px, 0.88fr) minmax(320px, 1.28fr) auto;
+  margin-bottom: 12px;
+  padding: 18px 0;
+}
+
+.guide-steps li {
+  padding-block: 10px;
+}
+
+.spatial-graph-stage {
+  background:
+    radial-gradient(circle at 16% 12%, oklch(88% 0.045 274 / 0.36), transparent 32%),
+    linear-gradient(90deg, transparent, oklch(91% 0.012 274 / 0.7), transparent);
+  margin-bottom: 2px;
+  padding: 18px 0;
+}
+
+.graph-history-toolbar,
+.git-advanced-operations,
+.git-hunk-decision {
+  padding-inline: 0;
+}
+
+.graph-canvas,
+.graph-runtime-pane,
+.graph-mermaid-preview,
+.graph-edge-detail,
+.graph-neighborhood,
+.edit-form,
+.git-review-panel,
+.git-commit-message,
+.graph-conversation-detail {
+  padding-inline: 0;
+}
+
+.evidence-row,
+.timeline-event,
+.stream-item,
+.graph-node,
+.graph-edge,
+.graph-detail,
+.git-hunk-decision,
+.dashboard-recent .timeline {
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid oklch(88% 0.01 270);
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.macos-ai-app .fact-strip span,
+.macos-ai-app .graph-performance-strip span,
+.macos-ai-app .graph-runtime-facts span,
+.macos-ai-app .graph-runtime-facts small,
+.macos-ai-app .react-flow-node-summary {
+  background: transparent;
+}
+
+.zeus-shell.theme-dark .command-composer,
+.zeus-shell.theme-dark .codex-section,
+.zeus-shell.theme-dark .empty-state,
+.zeus-shell.theme-dark .dashboard-recent,
+.zeus-shell.theme-dark .first-run-guide,
+.zeus-shell.theme-dark .spatial-graph-stage,
+.zeus-shell.theme-dark .graph-history-toolbar,
+.zeus-shell.theme-dark .client-status,
+.zeus-shell.theme-dark .empty-prompt,
+.zeus-shell.theme-dark .inline-notice,
+.zeus-shell.theme-dark .inspector-section,
+.zeus-shell.theme-dark .edit-form,
+.zeus-shell.theme-dark .git-review-panel,
+.zeus-shell.theme-dark .git-advanced-operations,
+.zeus-shell.theme-dark .git-commit-message,
+.zeus-shell.theme-dark .graph-conversation-detail,
+.zeus-shell.theme-dark .graph-runtime-pane,
+.zeus-shell.theme-dark .graph-mermaid-preview {
+  background: transparent;
+  border-color: oklch(36% 0.028 270);
+}
+
+/* Zeus macOS 窄窗口适配：保持桌面分栏语义，但在竖屏/小屏窗口里收起 Inspector、图谱单列并允许源码路径换行。 */
+.code-map-view,
+.code-map-view > *,
+.thread-evidence-list > *,
+.data-grid > *,
+.data-list > *,
+.graph-view-switcher,
+.graph-stage-command,
+.graph-stage-lanes,
+.graph-canvas,
+.graph-canvas-svg,
+.graph-runtime-canvas,
+.graph-runtime-pane,
+.graph-runtime-mount,
+.graph-search-bar,
+.graph-history-toolbar,
+.graph-node-list,
+.graph-visibility-toolbar,
+.graph-edge-list,
+.graph-mermaid-preview,
+.graph-mermaid-preview pre,
+.task-controls,
+.timeline,
+.edit-form,
+.graph-conversation-detail {
+  box-sizing: border-box;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.react-flow-node-summary,
+.graph-runtime-facts span,
+.graph-runtime-facts small,
+.graph-canvas-sources span,
+.graph-node,
+.graph-edge,
+.graph-detail {
+  max-width: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.graph-canvas-svg {
+  height: clamp(260px, 38vh, 520px);
+  max-height: 520px;
+}
+
+.graph-mermaid-preview pre {
+  max-height: 240px;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+@media (max-width: 1180px) {
+  body {
+    min-width: 0;
+  }
+
+  .macos-ai-app {
+    grid-template-columns: 184px minmax(0, 1fr);
+  }
+
+  .macos-ai-app .ai-sidebar {
+    padding-inline: 10px;
+  }
+
+  .macos-ai-app .ai-workspace {
+    padding-inline: 18px;
+  }
+
+  .macos-ai-app .workspace-header {
+    margin-inline: -18px;
+    padding-inline: 18px;
+  }
+
+  .topbar,
+  .workspace-header,
+  .thread-action-row,
+  .graph-canvas-header,
+  .dashboard-recent-header {
+    align-items: stretch;
+    display: grid;
+    gap: 10px;
+    justify-content: stretch;
+  }
+
+  .spatial-graph-stage {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .graph-stage-lanes {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    justify-items: start;
+  }
+
+  .graph-search-bar {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .graph-history-toolbar {
+    grid-template-columns: minmax(0, 1fr) minmax(0, auto);
+  }
+
+  .graph-runtime-canvas {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .graph-node-list,
+  .empty-layout,
+  .dashboard-recent-grid,
+  .first-run-guide,
+  .launch-readiness,
+  .launch-checks {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+
+/* Codex 纯白 Apple 风格覆盖层：对齐参考图的白色内容区、浅灰侧栏和轻分隔线。 */
+.macos-ai-app {
+  background: #ffffff;
+  color: #1d1d1f;
+}
+
+.macos-ai-app .workspace-header {
+  background: #ffffff;
+}
+
+.macos-ai-app .ai-sidebar {
+  background: #f7f7f8;
+}
+
+.nav-group a {
+  display: grid;
+  gap: 1px;
+}
+
+.nav-group a strong {
+  font-size: 13px;
+  font-weight: 590;
+}
+
+.nav-group a small {
+  color: #86868b;
+  font-size: 11px;
+}
+
+.settings-search input {
+  width: 100%;
+}
+
+.settings-group {
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 12px;
+  display: grid;
+  overflow: hidden;
+}
+
+.settings-group > h3,
+.settings-group > p,
+.settings-group > small,
+.settings-group > label,
+.settings-group > .task-controls {
+  margin: 0;
+  padding: 12px;
+}
+
+.settings-group .evidence-row {
+  padding: 12px;
+}
+
+/* Codex 全局控件统一风格：按钮、下拉、输入和开关都使用 macOS 原生浅色控件语言。 */
+button,
+select,
+input,
+textarea {
+  border-radius: 10px;
+}
+
+/* Apple 白色扁平控件体系：白底、细边、轻阴影，避免紫色渐变胶囊和旧式灰块。 */
+button {
+  appearance: none;
+  background: oklch(99.6% 0.003 255);
+  border: 1px solid oklch(84% 0.011 255);
+  box-shadow: inset 0 1px 0 oklch(100% 0 0 / 0.78), 0 1px 2px oklch(23% 0.018 255 / 0.07);
+  color: oklch(25% 0.018 255);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 590;
+  min-block-size: 32px;
+  padding: 0 12px;
+  transition: background-color 150ms ease-out, border-color 150ms ease-out, box-shadow 150ms ease-out, color 150ms ease-out, transform 120ms ease-out;
+}
+
+input,
+textarea,
+select {
+  appearance: none;
+  background: oklch(99.7% 0.003 255);
+  border: 1px solid oklch(84.5% 0.01 255);
+  box-shadow: inset 0 1px 2px oklch(22% 0.018 255 / 0.055);
+  color: oklch(24% 0.018 255);
+  font: inherit;
+  min-block-size: 32px;
+  padding: 0 10px;
+  transition: background-color 150ms ease-out, border-color 150ms ease-out, box-shadow 150ms ease-out;
+}
+
+textarea {
+  line-height: 1.45;
+  min-block-size: 76px;
+  padding-block: 8px;
+  resize: vertical;
+}
+
+select {
+  background-image: linear-gradient(45deg, transparent 50%, oklch(44% 0.018 255) 50%), linear-gradient(135deg, oklch(44% 0.018 255) 50%, transparent 50%);
+  background-position: calc(100% - 14px) 50%, calc(100% - 9px) 50%;
+  background-repeat: no-repeat;
+  background-size: 5px 5px, 5px 5px;
+  padding-right: 30px;
+}
+
+button:hover:not(:disabled) {
+  background: oklch(98.2% 0.004 255);
+  border-color: oklch(77% 0.014 255);
+  box-shadow: inset 0 1px 0 oklch(100% 0 0 / 0.9), 0 3px 8px oklch(23% 0.018 255 / 0.09);
+  transform: translateY(-0.5px);
+}
+
+button:active:not(:disabled) {
+  background: oklch(95.8% 0.006 255);
+  box-shadow: inset 0 1px 3px oklch(20% 0.018 255 / 0.1);
+  transform: translateY(0);
+}
+
+button:focus-visible,
+select:focus-visible,
+input:focus-visible,
+textarea:focus-visible {
+  border-color: oklch(62% 0.16 252);
+  box-shadow: 0 0 0 3px oklch(62% 0.16 252 / 0.18);
+  outline: none;
+}
+
+button:disabled,
+select:disabled,
+input:disabled,
+textarea:disabled {
+  color: oklch(64% 0.012 255);
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+
+.workspace-quick-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: -6px 0 12px;
+}
+
+.workspace-quick-actions button {
+  background: oklch(99.6% 0.003 255);
+  border: 1px solid oklch(84% 0.011 255);
+  box-shadow: inset 0 1px 0 oklch(100% 0 0 / 0.78), 0 1px 2px oklch(23% 0.018 255 / 0.07);
+  color: #1d1d1f;
+  font-size: 12px;
+  font-weight: 590;
+  padding: 7px 10px;
+}
+
+/* Codex App 返修最终覆盖：无顶部 hero、无卡片、右侧 Inspector 纯白、内容按当前入口单独渲染。 */
+.macos-ai-app .ai-workspace {
+  background: #ffffff;
+  padding: 22px 28px 96px;
+}
+
+.codex-section,
+.empty-prompt,
+.inline-notice,
+.client-status,
+.settings-group,
+.spatial-graph-stage,
+.graph-history-toolbar,
+.graph-runtime-pane,
+.graph-mermaid-preview,
+.graph-edge-detail,
+.graph-neighborhood,
+.edit-form,
+.git-review-panel,
+.git-advanced-operations,
+.git-commit-message,
+.graph-conversation-detail {
+  background: transparent;
+  border: 0;
+  border-block-start: 1px solid rgba(0, 0, 0, 0.12);
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.codex-section {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  min-height: 0;
+  padding: 0 0 18px;
+}
+
+.codex-section[hidden] {
+  display: none;
+}
+
+.codex-section-header {
+  border: 0;
+  display: grid;
+  gap: 5px;
+  padding: 18px 0 8px;
+}
+
+.codex-section-header span {
+  color: #6e6e73;
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.codex-section-header h2 {
+  color: #1d1d1f;
+  font-size: 19px;
+  letter-spacing: -0.015em;
+  margin: 0;
+}
+
+.codex-section-header p {
+  color: #6e6e73;
+  line-height: 1.5;
+  margin: 0;
+}
+
+.codex-composer-dock {
+  background: #ffffff;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: 16px;
+  bottom: 18px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.045);
+  display: grid;
+  gap: 10px;
+  margin-top: 18px;
+  padding: 12px;
+  position: sticky;
+  z-index: 3;
+}
+
+.codex-composer-dock textarea {
+  background: #ffffff;
+  border: 0;
+  min-height: 58px;
+  resize: vertical;
+}
+
+.codex-thread-setup {
+  display: grid;
+  gap: 0;
+}
+
+.activity-stream {
+  display: grid;
+  gap: 0;
+}
+
+.stream-header {
+  padding: 18px 0 8px;
+}
+
+.macos-ai-app .inline-notice,
+.macos-ai-app .inline-notice.ok,
+.macos-ai-app .inline-notice.warn,
+.macos-ai-app .inline-notice.neutral {
+  background: transparent;
+  border: 0;
+  border-block-start: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 0;
+  padding: 12px 0;
+}
+
+.data-grid {
+  gap: 0;
+}
+
+/* Codex 无卡片布局覆盖层：测试锁定块，禁止恢复卡片式容器。 */
+.codex-section,
+.empty-state,
+.dashboard-recent,
+.first-run-guide,
+.inspector-section {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+/* 页面文案言简意赅：隐藏解释性长文，只保留功能名称、状态值与必要控件。 */
+.macos-ai-app p,
+.macos-ai-app em,
+.macos-ai-app small,
+.macos-ai-app .codex-section-header p,
+.macos-ai-app .thread-action-row small,
+.macos-ai-app .evidence-row em,
+.macos-ai-app .timeline-event small,
+.macos-ai-app .sidebar-context small,
+.macos-ai-app .nav-group a small,
+.macos-ai-app .sidebar-waiting small,
+.macos-ai-app .inspector-section p {
+  display: none !important;
+}
+
+.macos-ai-app .settings-search {
+  grid-column: 1 / -1;
+}
+
+.macos-ai-app .settings-search input {
+  background: #f5f5f6;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 10px;
+  height: 30px;
+  padding: 0 10px;
+}
+
+.macos-ai-app .thread-evidence-list {
+  padding: 0;
+}
+
+.macos-ai-app .data-list > .timeline,
+.macos-ai-app .data-list > .edit-form {
+  grid-column: 1 / -1;
+}
+
+.macos-ai-app .graph-search-bar {
+  align-items: end;
+  background: transparent;
+  border: 0;
+  border-block-start: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 0;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(180px, 1fr) repeat(3, minmax(120px, 0.45fr)) auto;
+  padding: 10px 0;
+}
+
+.macos-ai-app .settings-group > label,
+.macos-ai-app .edit-form > label,
+.macos-ai-app .graph-search-bar label {
+  color: #1d1d1f;
+  display: grid;
+  font-size: 13px;
+  font-weight: 560;
+  gap: 6px;
+  margin: 0;
+  padding: 8px 0;
+}
+
+.macos-ai-app .evidence-row {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-block-start: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 0;
+  box-shadow: none;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(180px, 1fr) auto;
+  min-height: 42px;
+  padding: 9px 0;
+}
+
+.macos-ai-app .evidence-row:first-child {
+  border-block-start: 0;
+}
+
+.macos-ai-app .evidence-row strong {
+  color: #1d1d1f;
+  font-size: 13px;
+  font-weight: 590;
+}
+
+.macos-ai-app .evidence-row span {
+  color: #6e6e73;
+  font-size: 12px;
+  justify-self: end;
+  text-align: right;
+}
+
+.macos-ai-app .evidence-row .task-controls {
+  grid-column: 1 / -1;
+  justify-content: flex-end;
+}
+
+.macos-ai-app .task-controls {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+}
+
+.macos-ai-app .task-controls button,
+.macos-ai-app .composer-actions button,
+.macos-ai-app .workspace-quick-actions button {
+  background: #f2f2f3;
+  border: 0;
+  border-radius: 8px;
+  color: #1d1d1f;
+  font-size: 12px;
+  font-weight: 590;
+  min-height: 28px;
+  padding: 0 10px;
+}
+
+.macos-ai-app .task-controls button:hover:not(:disabled),
+.macos-ai-app .composer-actions button:hover:not(:disabled),
+.macos-ai-app .workspace-quick-actions button:hover:not(:disabled) {
+  background: #e8e8ea;
+}
+
+.macos-ai-app .task-controls button:active:not(:disabled),
+.macos-ai-app .composer-actions button:active:not(:disabled),
+.macos-ai-app .workspace-quick-actions button:active:not(:disabled) {
+  transform: scale(0.985);
+}
+
+.macos-ai-app .data-grid {
+  display: grid;
+  gap: 0;
+  margin: 0 auto;
+  max-width: 920px;
+}
+
+/* Codex macOS 隐藏标题栏避让：标题栏由 BrowserWindow 隐藏，侧栏内容为红黄绿窗口按钮留出空间。 */
+.macos-ai-app .ai-sidebar {
+  padding-top: 58px;
+}
+
+/* Codex macOS 隐藏标题栏手动拖拽区：用显式顶部命中层接收 pointer 事件，再由 Main 进程移动窗口。 */
+.macos-ai-app .window-drag-strip {
+  position: fixed;
+  inset: 0 0 auto 0;
+  height: 56px;
+  z-index: 30;
+  pointer-events: auto;
+  user-select: none;
+}
+
+/* 只有真实交互控件退出窗口拖拽，避免整列 no-drag 抵消顶部透明拖拽层。 */
+.macos-ai-app :where(button, a, input, select, textarea, summary, label) {
+  app-region: no-drag;
+  -webkit-app-region: no-drag;
+}
+
+/* 2026-06-16: 一屏式产品工作区。左侧导航切换菜单，主区内部按列表/详情分栏滚动，避免所有内容纵向平铺。 */
+.macos-ai-app .ai-workspace {
+  block-size: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.macos-ai-app .data-grid {
+  flex: 1 1 auto;
+  inline-size: 100%;
+  max-inline-size: none;
+  min-block-size: 0;
+  overflow: hidden;
+}
+
+.macos-ai-app .data-grid > .codex-section {
+  display: flex;
+  flex-direction: column;
+  min-block-size: 0;
+  overflow: hidden;
+}
+
+.macos-ai-app .data-grid > .codex-section > .data-list {
+  flex: 1 1 auto;
+  min-block-size: 0;
+  overflow: auto;
+}
+
+.macos-ai-app .workspace-view-projects {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.macos-ai-app .project-browser {
+  align-self: stretch;
+  display: grid;
+  gap: 8px;
+  grid-auto-rows: min-content;
+  min-block-size: 0;
+  overflow: auto;
+  padding-inline-end: 12px;
+}
+
+.macos-ai-app .project-uniqueness-note {
+  color: oklch(47% 0.026 268);
+  display: block;
+  font-size: 12px;
+  line-height: 1.45;
+  margin-block: 2px 6px;
+}
+
+.sr-only {
+  block-size: 1px;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  inline-size: 1px;
+  overflow: hidden;
+  position: absolute;
+  white-space: nowrap;
+}
+
+/* 2026-06-16 收纳式壳层：左侧只保留项目/对话/设置，右侧按操作路径递进展示。 */
+.macos-ai-app .ai-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  overflow-y: auto;
+}
+
+.macos-ai-app .sidebar-product-mark {
+  color: #1d1d1f;
+  font-size: 15px;
+  font-weight: 650;
+  padding: 0 14px;
+}
+
+.macos-ai-app .ai-sidebar nav {
+  block-size: 100%;
+  display: flex;
+  flex-direction: column;
+  min-block-size: 0;
+}
+
+.macos-ai-app .nav-group-main,
+.macos-ai-app .nav-group-bottom {
+  display: grid;
+  gap: 4px;
+}
+
+.macos-ai-app .nav-group-bottom {
+  margin-block-start: auto;
+}
+
+.macos-ai-app .workspace-view {
+  block-size: 100%;
+  display: grid;
+  gap: 0;
+  min-block-size: 0;
+  overflow: hidden;
+}
+
+.macos-ai-app .workspace-view-projects,
+.macos-ai-app .workspace-view-conversations {
+  grid-template-columns: minmax(260px, 0.34fr) minmax(0, 1fr);
+}
+
+.macos-ai-app .workspace-view-settings {
+  grid-template-columns: minmax(220px, 0.28fr) minmax(0, 1fr);
+}
+
+.macos-ai-app .workspace-list-pane,
+.macos-ai-app .settings-category-list {
+  border-inline-end: 1px solid #e5e5e7;
+  display: flex;
+  flex-direction: column;
+  min-block-size: 0;
+  overflow: auto;
+  padding: 18px;
+}
+
+.macos-ai-app .workspace-detail-pane,
+.macos-ai-app .settings-detail-pane {
+  display: flex;
+  flex-direction: column;
+  min-block-size: 0;
+  overflow: auto;
+  padding: 22px 26px;
+}
+
+.macos-ai-app .pane-toolbar,
+.macos-ai-app .primary-action-row,
+.macos-ai-app .secondary-action-row,
+.macos-ai-app .drawer-header-row,
+.macos-ai-app .integration-state-strip {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.macos-ai-app .integration-state-strip {
+  border-block-end: 1px solid #e8e8ea;
+  color: #5f636d;
+  font-size: 12px;
+  margin-block-end: 14px;
+  padding-block-end: 10px;
+}
+
+.macos-ai-app .compact-field {
+  display: grid;
+  gap: 6px;
+}
+
+.macos-ai-app .object-list {
+  display: grid;
+  gap: 2px;
+  margin-block-start: 14px;
+}
+
+.macos-ai-app .object-row {
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  color: #1d1d1f;
+  display: grid;
+  gap: 3px;
+  padding: 9px 10px;
+  text-align: left;
+}
+
+.macos-ai-app .object-row:hover,
+.macos-ai-app .object-row.selected,
+.macos-ai-app .settings-category-list button:hover,
+.macos-ai-app .settings-category-list button.selected {
+  background: #f0f1f6;
+}
+
+.macos-ai-app .object-row strong,
+.macos-ai-app .object-summary > strong,
+.macos-ai-app .thread-summary > strong {
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.macos-ai-app .object-row span,
+.macos-ai-app .object-row small,
+.macos-ai-app .status-list,
+.macos-ai-app .thread-summary span,
+.macos-ai-app .thread-summary p {
+  color: #5f636d;
+  font-size: 12px;
+}
+
+.macos-ai-app .object-summary,
+.macos-ai-app .thread-summary,
+.macos-ai-app .thread-body,
+.macos-ai-app .settings-form {
+  border-block-start: 1px solid #e8e8ea;
+  display: grid;
+  gap: 12px;
+  padding-block: 16px;
+}
+
+.macos-ai-app .object-summary:first-child,
+.macos-ai-app .thread-summary:first-child,
+.macos-ai-app .settings-form:first-child {
+  border-block-start: 0;
+  padding-block-start: 0;
+}
+
+.macos-ai-app .status-list {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 0;
+}
+
+.macos-ai-app .status-list div {
+  display: grid;
+  gap: 2px;
+}
+
+.macos-ai-app .status-list dt {
+  color: #6e7280;
+  font-size: 11px;
+  font-weight: 590;
+}
+
+.macos-ai-app .status-list dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.macos-ai-app .workspace-drawer-backdrop {
+  background: rgba(24, 27, 35, 0.18);
+  bottom: 0;
+  left: 236px;
+  position: fixed;
+  right: 0;
+  top: 56px;
+  z-index: 38;
+}
+
+.macos-ai-app .workspace-drawer {
+  background: #fbfbfc;
+  border-inline-start: 1px solid #dedfe5;
+  bottom: 0;
+  box-shadow: -18px 0 48px rgba(15, 18, 26, 0.16);
+  display: flex;
+  flex-direction: column;
+  inline-size: min(820px, calc(100vw - 236px));
+  min-inline-size: 420px;
+  overflow: hidden;
+  position: fixed;
+  right: 0;
+  top: 56px;
+}
+
+.macos-ai-app .workspace-drawer-chrome {
+  align-items: center;
+  border-block-end: 1px solid #e6e7eb;
+  display: flex;
+  flex: 0 0 auto;
+  justify-content: space-between;
+  padding: 14px 18px;
+}
+
+.macos-ai-app .workspace-drawer-chrome strong {
+  color: #1d1d1f;
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.macos-ai-app .workspace-drawer-content {
+  flex: 1 1 auto;
+  min-block-size: 0;
+  overflow: auto;
+  padding: 18px;
+}
+
+.macos-ai-app .drawer-section,
+.macos-ai-app .settings-form,
+.macos-ai-app .edit-form {
+  display: grid;
+  gap: 12px;
+  max-inline-size: 980px;
+}
+
+.macos-ai-app .settings-category-list {
+  gap: 3px;
+}
+
+.macos-ai-app .settings-category-list button {
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  color: #1d1d1f;
+  min-block-size: 32px;
+  padding: 0 10px;
+  text-align: left;
+}
+
+.macos-ai-app .composer-dock {
+  border-block-start: 1px solid #e8e8ea;
+  display: grid;
+  gap: 10px;
+  margin-block-start: auto;
+  padding-block-start: 14px;
+}
+
+.macos-ai-app .danger-zone {
+  background: #fff7f7;
+  border: 1px solid #f0c8c8;
+  border-radius: 10px;
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+}
+
+@media (max-width: 1120px) {
+  .macos-ai-app .workspace-view-projects,
+  .macos-ai-app .workspace-view-conversations,
+  .macos-ai-app .workspace-view-settings {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .macos-ai-app .workspace-list-pane,
+  .macos-ai-app .settings-category-list {
+    border-block-end: 1px solid #e5e5e7;
+    border-inline-end: 0;
+    max-block-size: 38vh;
+  }
+}
+
+
+/* 收纳式壳层最终约束：桌面端始终保持左列表/右详情，不恢复旧三栏或 1120px 纵向平铺。 */
+.macos-ai-app,
+.ai-native-shell {
+  grid-template-columns: 236px minmax(0, 1fr);
+}
+
+.macos-ai-app .ai-workspace {
+  padding: 0;
+}
+
+@media (max-width: 760px) {
+  .macos-ai-app .workspace-drawer-backdrop {
+    left: 0;
+  }
+
+  .macos-ai-app .workspace-drawer {
+    inline-size: 100vw;
+    min-inline-size: 0;
+  }
+
+  .macos-ai-app .workspace-view-projects,
+  .macos-ai-app .workspace-view-conversations,
+  .macos-ai-app .workspace-view-settings {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .macos-ai-app .workspace-list-pane,
+  .macos-ai-app .settings-category-list {
+    border-block-end: 1px solid #e5e5e7;
+    border-inline-end: 0;
+    max-block-size: 34vh;
+  }
+}
+
+
+/* Apple 白色扁平控件体系最终覆盖：所有可点控件共享白底、细边、轻阴影和克制动效。 */
+.macos-ai-app button,
+.macos-ai-app .task-controls button,
+.macos-ai-app .composer-actions button,
+.macos-ai-app .workspace-quick-actions button,
+.macos-ai-app .graph-history-toolbar button,
+.macos-ai-app .graph-search-bar button,
+.macos-ai-app .graph-node button,
+.macos-ai-app .git-hunk-decision button,
+.macos-ai-app .workspace-drawer-chrome button,
+.macos-ai-app .settings-category-list button,
+.macos-ai-app .object-row {
+  background: oklch(99.6% 0.003 255);
+  border: 1px solid oklch(84% 0.011 255);
+  border-radius: 10px;
+  box-shadow: inset 0 1px 0 oklch(100% 0 0 / 0.78), 0 1px 2px oklch(23% 0.018 255 / 0.07);
+  color: oklch(25% 0.018 255);
+  min-block-size: 30px;
+  padding: 0 11px;
+  transition: background-color 150ms ease-out, border-color 150ms ease-out, box-shadow 150ms ease-out, color 150ms ease-out, transform 120ms ease-out;
+}
+
+.macos-ai-app button:hover:not(:disabled),
+.macos-ai-app .task-controls button:hover:not(:disabled),
+.macos-ai-app .composer-actions button:hover:not(:disabled),
+.macos-ai-app .workspace-quick-actions button:hover:not(:disabled),
+.macos-ai-app .graph-history-toolbar button:hover:not(:disabled),
+.macos-ai-app .graph-search-bar button:hover:not(:disabled),
+.macos-ai-app .graph-node button:hover:not(:disabled),
+.macos-ai-app .git-hunk-decision button:hover:not(:disabled),
+.macos-ai-app .workspace-drawer-chrome button:hover:not(:disabled),
+.macos-ai-app .settings-category-list button:hover,
+.macos-ai-app .object-row:hover {
+  background: oklch(98.2% 0.004 255);
+  border-color: oklch(77% 0.014 255);
+  box-shadow: inset 0 1px 0 oklch(100% 0 0 / 0.9), 0 3px 8px oklch(23% 0.018 255 / 0.09);
+  transform: translateY(-0.5px);
+}
+
+.macos-ai-app button:active:not(:disabled),
+.macos-ai-app .task-controls button:active:not(:disabled),
+.macos-ai-app .composer-actions button:active:not(:disabled),
+.macos-ai-app .workspace-quick-actions button:active:not(:disabled) {
+  background: oklch(95.8% 0.006 255);
+  box-shadow: inset 0 1px 3px oklch(20% 0.018 255 / 0.1);
+  transform: translateY(0);
+}
+
+.macos-ai-app .primary-action-row button:first-child {
+  background: oklch(99.6% 0.003 255);
+  border-color: oklch(76% 0.072 252);
+  box-shadow: inset 0 1px 0 oklch(100% 0 0 / 0.84), 0 2px 7px oklch(38% 0.08 252 / 0.11);
+  color: oklch(47% 0.16 252);
+  font-weight: 650;
+}
+
+.macos-ai-app .primary-action-row button:first-child:hover:not(:disabled) {
+  background: oklch(97.8% 0.012 252);
+  border-color: oklch(66% 0.11 252);
+  color: oklch(43% 0.17 252);
+}
+
+.macos-ai-app .composer-dock button,
+.macos-ai-app .empty-state button,
+.macos-ai-app .guide-actions button {
+  background: oklch(99.6% 0.003 255);
+  border-color: oklch(76% 0.072 252);
+  color: oklch(47% 0.16 252);
+  font-weight: 650;
+}
+
+.macos-ai-app .danger-action,
+.macos-ai-app .danger-zone button {
+  background: oklch(99.2% 0.006 24);
+  border-color: oklch(82% 0.05 24);
+  color: oklch(44% 0.14 24);
+}
+
+.macos-ai-app .danger-action:hover:not(:disabled),
+.macos-ai-app .danger-zone button:hover:not(:disabled) {
+  background: oklch(97.5% 0.014 24);
+  border-color: oklch(73% 0.08 24);
+}
+
+.macos-ai-app input,
+.macos-ai-app textarea,
+.macos-ai-app select,
+.macos-ai-app .settings-search input {
+  background: oklch(99.7% 0.003 255);
+  border: 1px solid oklch(84.5% 0.01 255);
+  border-radius: 10px;
+  box-shadow: inset 0 1px 2px oklch(22% 0.018 255 / 0.055);
+  color: oklch(24% 0.018 255);
+}
+
+.macos-ai-app input:hover:not(:disabled),
+.macos-ai-app textarea:hover:not(:disabled),
+.macos-ai-app select:hover:not(:disabled) {
+  border-color: oklch(77% 0.014 255);
+  box-shadow: inset 0 1px 2px oklch(22% 0.018 255 / 0.06), 0 1px 2px oklch(23% 0.018 255 / 0.04);
+}
+
+.macos-ai-app nav a:hover,
+.macos-ai-app .object-row:hover,
+.macos-ai-app .settings-category-list button:hover {
+  background: oklch(96.6% 0.005 255);
+}
+
+.macos-ai-app nav a.active,
+.macos-ai-app .object-row.selected,
+.macos-ai-app .settings-category-list button.selected {
+  background: oklch(95.2% 0.012 252);
+  color: oklch(43% 0.13 252);
+}
+
+.macos-ai-app .workspace-drawer,
+.macos-ai-app .codex-composer-dock,
+.macos-ai-app .danger-zone {
+  background: oklch(99.2% 0.003 255);
+  box-shadow: 0 18px 48px oklch(23% 0.018 255 / 0.12);
+}
+
+.macos-ai-app .workspace-drawer-backdrop {
+  background: oklch(20% 0.012 255 / 0.16);
+}
+
+/* Codex macOS 设置组件对齐：把列表、设置项、按钮、选择器和开关统一到同一套圆角行组体系。 */
+.macos-ai-app {
+  --zeus-native-surface: oklch(99.2% 0.004 255);
+  --zeus-native-page: oklch(97.4% 0.004 255);
+  --zeus-native-control: oklch(95.4% 0.004 255);
+  --zeus-native-control-hover: oklch(93.4% 0.005 255);
+  --zeus-native-row-hover: oklch(96.6% 0.005 255);
+  --zeus-native-row-selected: oklch(95.2% 0.012 252);
+  --zeus-native-row-separator: oklch(89.5% 0.004 255);
+  --zeus-native-border: oklch(87.6% 0.006 255);
+  --zeus-native-text: oklch(24% 0.018 255);
+  --zeus-native-muted: oklch(51% 0.016 255);
+  --zeus-native-accent: oklch(60% 0.16 252);
+}
+
+.macos-ai-app .workspace-detail-pane,
+.macos-ai-app .settings-detail-pane,
+.macos-ai-app .workspace-list-pane,
+.macos-ai-app .settings-category-list {
+  background: var(--zeus-native-page);
+}
+
+.macos-ai-app .native-settings-stack {
+  border-block-start: 0;
+  display: grid;
+  gap: 18px;
+  max-inline-size: 980px;
+  padding: 0;
+}
+
+.macos-ai-app .settings-current-category {
+  color: var(--zeus-native-text);
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin-block-end: 6px;
+}
+
+.macos-ai-app .native-settings-card,
+.macos-ai-app .native-list-card {
+  background: var(--zeus-native-surface);
+  border: 1px solid var(--zeus-native-border);
+  border-radius: 14px;
+  box-shadow: 0 1px 2px oklch(22% 0.016 255 / 0.035);
+  overflow: hidden;
+}
+
+.macos-ai-app .native-settings-card {
+  border-radius: 14px;
+  display: grid;
+  gap: 0;
+}
+
+.macos-ai-app .native-list-card {
+  border-radius: 14px;
+}
+
+.macos-ai-app .native-control-row {
+  align-items: center;
+  display: grid;
+  gap: 18px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-block-size: 58px;
+  padding: 11px 14px;
+}
+
+.macos-ai-app .native-control-row + .native-control-row,
+.macos-ai-app .native-settings-card > :not(.native-control-row) + :not(.native-control-row),
+.macos-ai-app .native-settings-card > .native-control-row + :not(.native-control-row),
+.macos-ai-app .native-settings-card > :not(.native-control-row) + .native-control-row {
+  border-block-start: 1px solid var(--zeus-native-row-separator);
+}
+
+.macos-ai-app .native-control-copy {
+  display: grid;
+  gap: 3px;
+  min-inline-size: 0;
+}
+
+.macos-ai-app .native-control-copy strong {
+  color: var(--zeus-native-text);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.macos-ai-app .native-control-description {
+  color: var(--zeus-native-muted);
+  font-size: 12px;
+  line-height: 1.38;
+}
+
+.macos-ai-app .native-control-slot {
+  align-items: center;
+  display: inline-flex;
+  gap: 8px;
+  justify-self: end;
+}
+
+.macos-ai-app .native-control-slot button,
+.macos-ai-app .native-control-slot select,
+.macos-ai-app .native-control-slot input:not(.native-switch-input) {
+  background: var(--zeus-native-control);
+  border: 0;
+  border-radius: 9px;
+  box-shadow: none;
+  min-block-size: 30px;
+}
+
+.macos-ai-app .native-control-slot select {
+  font-weight: 620;
+  min-inline-size: 178px;
+}
+
+.macos-ai-app .native-control-slot button:hover:not(:disabled),
+.macos-ai-app .native-control-slot select:hover:not(:disabled) {
+  background: var(--zeus-native-control-hover);
+  box-shadow: none;
+  transform: none;
+}
+
+.macos-ai-app .native-switch {
+  display: inline-grid;
+  place-items: center;
+}
+
+.macos-ai-app .native-switch-input {
+  appearance: none;
+  background: oklch(88% 0.004 255);
+  border: 0;
+  border-radius: 999px;
+  box-shadow: inset 0 1px 2px oklch(20% 0.012 255 / 0.14);
+  cursor: pointer;
+  inline-size: 38px;
+  min-block-size: 0;
+  block-size: 22px;
+  padding: 0;
+  position: relative;
+  transition: background-color 160ms ease-out, box-shadow 160ms ease-out;
+}
+
+.macos-ai-app .native-switch-input::before {
+  background: oklch(99.4% 0.002 255);
+  border-radius: 999px;
+  box-shadow: 0 1px 3px oklch(20% 0.012 255 / 0.18);
+  content: "";
+  inline-size: 18px;
+  block-size: 18px;
+  inset-block-start: 2px;
+  inset-inline-start: 2px;
+  position: absolute;
+  transition: transform 160ms ease-out;
+}
+
+.macos-ai-app .native-switch-input:checked {
+  background: var(--zeus-native-accent);
+}
+
+.macos-ai-app .native-switch-input:checked::before {
+  transform: translateX(16px);
+}
+
+.macos-ai-app .native-switch-input:focus-visible {
+  box-shadow: 0 0 0 3px oklch(62% 0.16 252 / 0.18);
+}
+
+.macos-ai-app .native-switch-track {
+  display: none;
+}
+
+.macos-ai-app .native-list-card {
+  display: grid;
+  gap: 0;
+  margin-block-start: 14px;
+}
+
+.macos-ai-app .native-list-row {
+  align-items: center;
+  background: var(--zeus-native-surface);
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  min-block-size: 56px;
+  padding: 10px 14px;
+}
+
+.macos-ai-app .native-list-row + .native-list-row {
+  border-block-start: 1px solid var(--zeus-native-row-separator);
+}
+
+.macos-ai-app .native-list-row:hover:not(:disabled) {
+  background: var(--zeus-native-row-hover);
+  box-shadow: none;
+  transform: none;
+}
+
+.macos-ai-app .native-list-row.selected {
+  background: var(--zeus-native-row-selected);
+  color: oklch(43% 0.13 252);
+}
+
+.macos-ai-app .native-folder-icon {
+  border: 1.5px solid oklch(51% 0.016 255);
+  border-radius: 3px;
+  block-size: 12px;
+  inline-size: 15px;
+  position: relative;
+}
+
+.macos-ai-app .native-folder-icon::before {
+  background: var(--zeus-native-surface);
+  border-block-start: 1.5px solid oklch(51% 0.016 255);
+  border-inline-start: 1.5px solid oklch(51% 0.016 255);
+  border-radius: 2px 2px 0 0;
+  content: "";
+  inline-size: 6px;
+  block-size: 3px;
+  inset-block-start: -5px;
+  inset-inline-start: 1px;
+  position: absolute;
+}
+
+.macos-ai-app .native-list-main {
+  display: grid;
+  gap: 3px;
+  min-inline-size: 0;
+}
+
+.macos-ai-app .native-list-main strong {
+  color: var(--zeus-native-text);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.macos-ai-app .native-list-subtitle {
+  color: var(--zeus-native-muted);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.macos-ai-app .native-list-trailing {
+  color: var(--zeus-native-muted);
+  font-size: 12px;
+  justify-self: end;
+}
+
+.macos-ai-app .settings-category-list button {
+  box-shadow: none;
+}
+
+.macos-ai-app .native-settings-card > label,
+.macos-ai-app .native-settings-card > .evidence-row,
+.macos-ai-app .native-settings-card > .task-controls,
+.macos-ai-app .native-settings-card > details,
+.macos-ai-app .native-settings-card > .danger-zone,
+.macos-ai-app .native-settings-card > button,
+.macos-ai-app .native-settings-card > span {
+  margin: 0;
+  padding: 11px 14px;
+}

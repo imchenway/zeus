@@ -1,0 +1,909 @@
+{
+  "source": "docs/zeus_development_design.md#25",
+  "generatedAt": "2026-06-15",
+  "purpose": "把设计书第 25 章完整验收项固化为机器可读矩阵，防止将 100% 目标缩水为当前降级实现。",
+  "totalItems": 139,
+  "sections": [
+    {
+      "id": "25.1",
+      "title": "基础安装与应用框架",
+      "itemCount": 30,
+      "status": "verified",
+      "evidence": [
+        "package.json",
+        "apps/desktop",
+        "packages/local-server",
+        ".codex/environments/environment.toml",
+        "script/build_and_run.sh",
+        "pnpm verify:release",
+        "scripts/verify-packaged-app-health.mjs",
+        "ELECTRON_RUN_AS_NODE packaged /health probe",
+        "apps/desktop/test/main-runtime.test.ts",
+        "apps/desktop/test/main-app-shell-policy.test.ts",
+        "apps/desktop/test/app-data-rendering.test.tsx",
+        "apps/desktop/test/error-boundary.test.tsx"
+      ],
+      "blockers": [],
+      "items": [
+        {
+          "line": 2351,
+          "text": "Electron + React + TypeScript 桌面应用。",
+          "status": "verified"
+        },
+        {
+          "line": 2352,
+          "text": "macOS 菜单栏。",
+          "status": "verified"
+        },
+        {
+          "line": 2353,
+          "text": "Menu Bar 常驻。",
+          "status": "verified"
+        },
+        {
+          "line": 2354,
+          "text": "启动页。",
+          "status": "verified"
+        },
+        {
+          "line": 2355,
+          "text": "首次使用引导。",
+          "status": "verified"
+        },
+        {
+          "line": 2356,
+          "text": "深色/浅色模式。",
+          "status": "verified"
+        },
+        {
+          "line": 2357,
+          "text": "多窗口支持。",
+          "status": "verified"
+        },
+        {
+          "line": 2358,
+          "text": "WebView 调试开关。",
+          "status": "verified"
+        },
+        {
+          "line": 2359,
+          "text": "自动更新预留。",
+          "status": "verified"
+        },
+        {
+          "line": 2360,
+          "text": "Homebrew cask 安装包支持。",
+          "status": "verified"
+        },
+        {
+          "line": 2361,
+          "text": "内置本地 app-server。",
+          "status": "verified"
+        },
+        {
+          "line": 2362,
+          "text": "本地服务仅监听 `127.0.0.1`。",
+          "status": "verified"
+        },
+        {
+          "line": 2363,
+          "text": "本地 API 路由。",
+          "status": "verified"
+        },
+        {
+          "line": 2364,
+          "text": "WebSocket 实时事件。",
+          "status": "verified"
+        },
+        {
+          "line": 2365,
+          "text": "健康检查。",
+          "status": "verified"
+        },
+        {
+          "line": 2366,
+          "text": "服务异常自动重启。",
+          "status": "verified"
+        },
+        {
+          "line": 2367,
+          "text": "App 关闭清理进程。",
+          "status": "verified"
+        },
+        {
+          "line": 2368,
+          "text": "后台运行模式。",
+          "status": "verified"
+        },
+        {
+          "line": 2369,
+          "text": "本地日志目录。",
+          "status": "verified"
+        },
+        {
+          "line": 2370,
+          "text": "本地错误面板。",
+          "status": "verified"
+        },
+        {
+          "line": 2371,
+          "text": "SQLite。",
+          "status": "verified"
+        },
+        {
+          "line": 2372,
+          "text": "自动初始化。",
+          "status": "verified"
+        },
+        {
+          "line": 2373,
+          "text": "migrations。",
+          "status": "verified"
+        },
+        {
+          "line": 2374,
+          "text": "本地配置文件。",
+          "status": "verified"
+        },
+        {
+          "line": 2375,
+          "text": "任务日志文件。",
+          "status": "verified"
+        },
+        {
+          "line": 2376,
+          "text": "会话日志文件。",
+          "status": "verified"
+        },
+        {
+          "line": 2377,
+          "text": "代码索引缓存。",
+          "status": "verified"
+        },
+        {
+          "line": 2378,
+          "text": "图谱缓存。",
+          "status": "verified"
+        },
+        {
+          "line": 2379,
+          "text": "数据导入/导出。",
+          "status": "verified"
+        },
+        {
+          "line": 2380,
+          "text": "缓存清理。",
+          "status": "verified"
+        }
+      ]
+    },
+    {
+      "id": "25.2",
+      "title": "项目管理",
+      "itemCount": 16,
+      "status": "verified",
+      "evidence": [
+        "packages/local-server/test/server.test.ts",
+        "packages/project-core/test/project-config.test.ts",
+        "apps/desktop/test/api-client.test.ts",
+        "apps/desktop/test/app-data-rendering.test.tsx",
+        "apps/desktop/test/settings-portability.test.ts",
+        "packages/local-server/test/security-keychain-api.test.ts"
+      ],
+      "blockers": [],
+      "items": [
+        {
+          "line": 2384,
+          "text": "创建/编辑/删除/列表/详情/归档项目。",
+          "status": "verified"
+        },
+        {
+          "line": 2385,
+          "text": "选择本地代码库。",
+          "status": "verified"
+        },
+        {
+          "line": 2386,
+          "text": "自动识别 Git 仓库。",
+          "status": "verified"
+        },
+        {
+          "line": 2387,
+          "text": "自动识别项目类型。",
+          "status": "verified"
+        },
+        {
+          "line": 2388,
+          "text": "项目备注。",
+          "status": "verified"
+        },
+        {
+          "line": 2389,
+          "text": "默认 AI 模型。",
+          "status": "verified"
+        },
+        {
+          "line": 2390,
+          "text": "默认工作模式。",
+          "status": "verified"
+        },
+        {
+          "line": 2391,
+          "text": "默认任务提示词。",
+          "status": "verified"
+        },
+        {
+          "line": 2392,
+          "text": "扫描忽略规则。",
+          "status": "verified"
+        },
+        {
+          "line": 2393,
+          "text": "索引范围配置。",
+          "status": "verified"
+        },
+        {
+          "line": 2394,
+          "text": "语言配置。",
+          "status": "verified"
+        },
+        {
+          "line": 2395,
+          "text": "依赖配置。",
+          "status": "verified"
+        },
+        {
+          "line": 2396,
+          "text": "数据库连接配置。",
+          "status": "verified"
+        },
+        {
+          "line": 2397,
+          "text": "Telegram 别名。",
+          "status": "verified"
+        },
+        {
+          "line": 2398,
+          "text": "安全策略配置。",
+          "status": "verified"
+        },
+        {
+          "line": 2399,
+          "text": "Dashboard、最近任务、最近会话、最近变更、代码地图状态、接口/表/模块/风险/执行统计。",
+          "status": "verified"
+        }
+      ]
+    },
+    {
+      "id": "25.3",
+      "title": "任务管理",
+      "itemCount": 4,
+      "status": "verified",
+      "evidence": [
+        "packages/task-core/test/state-machine.test.ts",
+        "packages/local-server/test/task-control-api.test.ts",
+        "apps/desktop/test/app-task-controls-rendering.test.tsx",
+        "scripts/verify-ai-cli-adapters.mjs",
+        "ai-cli-adapters=checked;codex=available@0.139.0;claude=available@2.1.152;gemini=available@0.32.1;authStatus=real-probe-or-unknown",
+        "packages/local-server/test/task-template-api.test.ts"
+      ],
+      "blockers": [],
+      "items": [
+        {
+          "line": 2403,
+          "text": "创建/编辑/删除/列表/详情/搜索/筛选/排序/标签/归档。",
+          "status": "verified"
+        },
+        {
+          "line": 2404,
+          "text": "待执行/执行中/等待确认/完成/失败/取消/暂停/重试/恢复/状态时间线。",
+          "status": "verified"
+        },
+        {
+          "line": 2405,
+          "text": "选择项目、任务目标、模型、工作目录、是否允许改代码、是否运行测试、是否提交 Git、执行前确认、中断、继续。",
+          "status": "verified"
+        },
+        {
+          "line": 2406,
+          "text": "需求分析、代码实现、Bug 修复、代码评审、单元测试、性能分析、架构分析、SQL 优化、自定义模板、项目默认模板。",
+          "status": "verified"
+        }
+      ]
+    },
+    {
+      "id": "25.4",
+      "title": "AI Runtime",
+      "itemCount": 15,
+      "status": "verified",
+      "evidence": [
+        "packages/ai-runtime/test/session.test.ts",
+        "packages/local-server/test/runtime-session-api.test.ts",
+        "docs/ai-runtime.md",
+        "scripts/verify-ai-cli-adapters.mjs",
+        "ai-cli-adapters=checked;codex=available@0.139.0;claude=available@2.1.152;gemini=available@0.32.1;authStatus=real-probe-or-unknown",
+        "apps/desktop/test/app-runtime-rendering.test.tsx"
+      ],
+      "blockers": [],
+      "items": [
+        {
+          "line": 2410,
+          "text": "node-pty 启动本地 AI CLI。",
+          "status": "verified"
+        },
+        {
+          "line": 2411,
+          "text": "PTY 会话管理。",
+          "status": "verified"
+        },
+        {
+          "line": 2412,
+          "text": "prompt 输入。",
+          "status": "verified"
+        },
+        {
+          "line": 2413,
+          "text": "实时输出。",
+          "status": "verified"
+        },
+        {
+          "line": 2414,
+          "text": "Ctrl-C。",
+          "status": "verified"
+        },
+        {
+          "line": 2415,
+          "text": "resize。",
+          "status": "verified"
+        },
+        {
+          "line": 2416,
+          "text": "输出缓存。",
+          "status": "verified"
+        },
+        {
+          "line": 2417,
+          "text": "会话恢复。",
+          "status": "verified"
+        },
+        {
+          "line": 2418,
+          "text": "任务和会话绑定。",
+          "status": "verified"
+        },
+        {
+          "line": 2419,
+          "text": "多项目并发会话。",
+          "status": "verified"
+        },
+        {
+          "line": 2420,
+          "text": "AI CLI 安装检测、登录检测、版本检测、启动命令、模型配置、工作模式、输出解析、等待状态、完成状态、错误状态。",
+          "status": "verified"
+        },
+        {
+          "line": 2421,
+          "text": "Claude Code adapter。",
+          "status": "verified"
+        },
+        {
+          "line": 2422,
+          "text": "Gemini adapter。",
+          "status": "verified"
+        },
+        {
+          "line": 2423,
+          "text": "通用 adapter。",
+          "status": "verified"
+        },
+        {
+          "line": 2424,
+          "text": "模型切换、项目偏好、任务偏好、能力检测、配置页、执行日志、失败降级。",
+          "status": "verified"
+        }
+      ]
+    },
+    {
+      "id": "25.5",
+      "title": "执行日志与会话",
+      "itemCount": 11,
+      "status": "verified",
+      "evidence": ["apps/desktop/test/app-runtime-rendering.test.tsx", "apps/desktop/test/runtime-log-export.test.ts", "packages/storage/test/runtime-sessions.test.ts", "packages/local-server/test/runtime-session-api.test.ts"],
+      "blockers": [],
+      "items": [
+        {
+          "line": 2428,
+          "text": "终端输出面板。",
+          "status": "verified"
+        },
+        {
+          "line": 2429,
+          "text": "实时滚动。",
+          "status": "verified"
+        },
+        {
+          "line": 2430,
+          "text": "搜索。",
+          "status": "verified"
+        },
+        {
+          "line": 2431,
+          "text": "复制。",
+          "status": "verified"
+        },
+        {
+          "line": 2432,
+          "text": "折叠。",
+          "status": "verified"
+        },
+        {
+          "line": 2433,
+          "text": "错误高亮。",
+          "status": "verified"
+        },
+        {
+          "line": 2434,
+          "text": "命令高亮。",
+          "status": "verified"
+        },
+        {
+          "line": 2435,
+          "text": "AI 回复高亮。",
+          "status": "verified"
+        },
+        {
+          "line": 2436,
+          "text": "原始输出查看。",
+          "status": "verified"
+        },
+        {
+          "line": 2437,
+          "text": "日志导出。",
+          "status": "verified"
+        },
+        {
+          "line": 2438,
+          "text": "会话列表/详情/绑定任务/绑定项目/继续追问/摘要/收藏/搜索/归档/删除。",
+          "status": "verified"
+        }
+      ]
+    },
+    {
+      "id": "25.6",
+      "title": "Git / Diff",
+      "itemCount": 3,
+      "status": "verified",
+      "evidence": [
+        "packages/git-core/test",
+        "packages/local-server/test/git-diff-api.test.ts",
+        "packages/local-server/test/git-confirmation-api.test.ts",
+        "apps/desktop/test/app-git-confirmation-rendering.test.tsx",
+        "packages/git-core/test/status.test.ts",
+        "packages/git-core/test/diff.test.ts",
+        "apps/desktop/test/patch-export.test.ts",
+        "packages/git-core/test/confirmation.test.ts"
+      ],
+      "blockers": [],
+      "items": [
+        {
+          "line": 2442,
+          "text": "Git 状态、当前分支、未提交变更、新增/修改/删除文件、冲突、最近提交、远程分支、clean 状态。",
+          "status": "verified"
+        },
+        {
+          "line": 2443,
+          "text": "执行前快照、执行后 diff、文件级 diff、行级 diff、接受变更、拒绝变更、回滚、AI 总结、关联任务、关联图谱节点。",
+          "status": "verified"
+        },
+        {
+          "line": 2444,
+          "text": "创建分支、切换分支、提交、commit message、stash、恢复 stash、拉取、推送、patch、回滚到快照。",
+          "status": "verified"
+        }
+      ]
+    },
+    {
+      "id": "25.7",
+      "title": "代码扫描与索引",
+      "itemCount": 6,
+      "status": "verified",
+      "evidence": ["pnpm test:real-scan", "packages/code-indexer/test/scan.test.ts", "scripts/verify-java-spring-fixture.mjs", "java-spring-fixture=verified", "packages/local-server/test/scan-api.test.ts", "scripts/test-real-scan.sh"],
+      "blockers": [],
+      "items": [
+        {
+          "line": 2448,
+          "text": "扫描目录。",
+          "status": "verified"
+        },
+        {
+          "line": 2449,
+          "text": "Maven/Gradle/Spring Boot/多模块/源码目录/测试目录/配置文件/资源文件/忽略目录识别。",
+          "status": "verified"
+        },
+        {
+          "line": 2450,
+          "text": "Java 类/方法/字段/Controller/RequestMapping/Service/Component/Repository/Transactional/Async。",
+          "status": "verified"
+        },
+        {
+          "line": 2451,
+          "text": "类依赖、方法调用、API 到 Controller、Controller 到 Service、Service 到 Mapper、Service 到 remote client、MQ consumer、Job、getter/setter/util/log 过滤、深度限制。",
+          "status": "verified"
+        },
+        {
+          "line": 2452,
+          "text": "Mapper Interface、MyBatis XML、SQL id、select/insert/update/delete、SQL 表、字段、JOIN。",
+          "status": "verified"
+        },
+        {
+          "line": 2453,
+          "text": "DDL 导入、数据库 schema、表、字段、索引、主键、外键、推断关系、字段搜索、版本缓存。",
+          "status": "verified"
+        }
+      ]
+    },
+    {
+      "id": "25.8",
+      "title": "代码地图与图谱",
+      "itemCount": 12,
+      "status": "verified",
+      "evidence": ["packages/graph-engine/test/graph.test.ts", "packages/local-server/test/graph-view-api.test.ts", "apps/desktop/test/app-code-map-rendering.test.tsx", "packages/local-server/test/graph-detail-api.test.ts"],
+      "blockers": [],
+      "items": [
+        {
+          "line": 2457,
+          "text": "project_node/project_edge。",
+          "status": "verified"
+        },
+        {
+          "line": 2458,
+          "text": "节点/边类型。",
+          "status": "verified"
+        },
+        {
+          "line": 2459,
+          "text": "metadata。",
+          "status": "verified"
+        },
+        {
+          "line": 2460,
+          "text": "置信度。",
+          "status": "verified"
+        },
+        {
+          "line": 2461,
+          "text": "来源追踪。",
+          "status": "verified"
+        },
+        {
+          "line": 2462,
+          "text": "增量更新。",
+          "status": "verified"
+        },
+        {
+          "line": 2463,
+          "text": "系统总览、模块识别、模块依赖、Maven 模块、包依赖、Controller/Service/Mapper 分层、外部依赖、模块关联表、模块关联接口、模块摘要。",
+          "status": "verified"
+        },
+        {
+          "line": 2464,
+          "text": "表列表、字段详情、表关系、外键、JOIN 推断、命名推断、接口读写表、影响分析、可信度展示。",
+          "status": "verified"
+        },
+        {
+          "line": 2465,
+          "text": "模块详情、接口列表、Service、Mapper、表、调用关系、任务历史、最近变更、风险标签、AI 摘要。",
+          "status": "verified"
+        },
+        {
+          "line": 2466,
+          "text": "接口详情、路径、请求方法、Controller、Service、Mapper、SQL、表、remote call、MQ、时序图。",
+          "status": "verified"
+        },
+        {
+          "line": 2467,
+          "text": "模块业务流程、接口聚合、调用链流程、AI 摘要、源码追溯、SQL 追溯、接口追溯、人工编辑、保存、导出。",
+          "status": "verified"
+        },
+        {
+          "line": 2468,
+          "text": "方法逻辑图、if/else、loop、try/catch、return、事务、异常、SQL、流程图、AI 解释。",
+          "status": "verified"
+        }
+      ]
+    },
+    {
+      "id": "25.9",
+      "title": "图交互与性能",
+      "itemCount": 15,
+      "status": "verified",
+      "evidence": [
+        "packages/local-server/test/graph-search-api.test.ts",
+        "packages/local-server/test/graph-detail-api.test.ts",
+        "packages/diagram-engine/test/diagram.test.ts",
+        "apps/desktop/test/app-code-map-rendering.test.tsx",
+        "packages/graph-engine/test/graph.test.ts",
+        "apps/desktop/test/graph-visibility.test.ts",
+        "apps/desktop/test/mermaid-export.test.ts"
+      ],
+      "blockers": [],
+      "items": [
+        {
+          "line": 2472,
+          "text": "大图 WebGL。",
+          "status": "verified"
+        },
+        {
+          "line": 2473,
+          "text": "局部 React Flow。",
+          "status": "verified"
+        },
+        {
+          "line": 2474,
+          "text": "Mermaid 预览。",
+          "status": "verified"
+        },
+        {
+          "line": 2475,
+          "text": "缩放、拖拽、搜索、点击、右键、详情面板。",
+          "status": "verified"
+        },
+        {
+          "line": 2476,
+          "text": "按节点、边、模块、接口、表、任务、置信度过滤。",
+          "status": "verified"
+        },
+        {
+          "line": 2477,
+          "text": "一跳/二跳。",
+          "status": "verified"
+        },
+        {
+          "line": 2478,
+          "text": "隐藏低价值节点。",
+          "status": "verified"
+        },
+        {
+          "line": 2479,
+          "text": "按需加载。",
+          "status": "verified"
+        },
+        {
+          "line": 2480,
+          "text": "视图缓存。",
+          "status": "verified"
+        },
+        {
+          "line": 2481,
+          "text": "后台布局。",
+          "status": "verified"
+        },
+        {
+          "line": 2482,
+          "text": "节点聚合。",
+          "status": "verified"
+        },
+        {
+          "line": 2483,
+          "text": "边聚合。",
+          "status": "verified"
+        },
+        {
+          "line": 2484,
+          "text": "默认深度限制。",
+          "status": "verified"
+        },
+        {
+          "line": 2485,
+          "text": "懒加载详情。",
+          "status": "verified"
+        },
+        {
+          "line": 2486,
+          "text": "性能监控。",
+          "status": "verified"
+        }
+      ]
+    },
+    {
+      "id": "25.10",
+      "title": "AI 与图谱联动",
+      "itemCount": 7,
+      "status": "verified",
+      "evidence": [
+        "packages/local-server/test/graph-search-api.test.ts",
+        "packages/local-server/test/graph-node-task-api.test.ts",
+        "packages/local-server/test/graph-task-writeback-api.test.ts",
+        "scripts/verify-ai-cli-adapters.mjs",
+        "ai-cli-adapters=checked;codex=available@0.139.0;claude=available@2.1.152;gemini=available@0.32.1;authStatus=real-probe-or-unknown"
+      ],
+      "blockers": [],
+      "items": [
+        {
+          "line": 2490,
+          "text": "项目/模块/接口/表/调用链问答。",
+          "status": "verified"
+        },
+        {
+          "line": 2491,
+          "text": "自动带入图谱上下文、源码片段、SQL 片段。",
+          "status": "verified"
+        },
+        {
+          "line": 2492,
+          "text": "回答带来源。",
+          "status": "verified"
+        },
+        {
+          "line": 2493,
+          "text": "从问答创建任务。",
+          "status": "verified"
+        },
+        {
+          "line": 2494,
+          "text": "从模块/接口/表/方法/调用链创建任务。",
+          "status": "verified"
+        },
+        {
+          "line": 2495,
+          "text": "自动生成任务上下文、源码位置、SQL、影响范围。",
+          "status": "verified"
+        },
+        {
+          "line": 2496,
+          "text": "完成后回写图谱。",
+          "status": "verified"
+        }
+      ]
+    },
+    {
+      "id": "25.11",
+      "title": "Telegram",
+      "itemCount": 12,
+      "status": "verified",
+      "evidence": [
+        "packages/telegram-adapter/test",
+        "packages/local-server/test/telegram-api.test.ts",
+        "packages/local-server/test/telegram-polling-api.test.ts",
+        "docs/telegram.md",
+        "packages/telegram-adapter/test/polling.test.ts",
+        "packages/telegram-adapter/test/reply.test.ts",
+        "packages/telegram-adapter/test/command.test.ts",
+        "packages/telegram-adapter/test/polling-service.test.ts",
+        "packages/local-server/test/security-keychain-api.test.ts"
+      ],
+      "blockers": [],
+      "items": [
+        {
+          "line": 2500,
+          "text": "Bot Token。",
+          "status": "verified"
+        },
+        {
+          "line": 2501,
+          "text": "long polling。",
+          "status": "verified"
+        },
+        {
+          "line": 2502,
+          "text": "user id 绑定。",
+          "status": "verified"
+        },
+        {
+          "line": 2503,
+          "text": "白名单。",
+          "status": "verified"
+        },
+        {
+          "line": 2504,
+          "text": "启停。",
+          "status": "verified"
+        },
+        {
+          "line": 2505,
+          "text": "状态。",
+          "status": "verified"
+        },
+        {
+          "line": 2506,
+          "text": "命令帮助。",
+          "status": "verified"
+        },
+        {
+          "line": 2507,
+          "text": "消息日志。",
+          "status": "verified"
+        },
+        {
+          "line": 2508,
+          "text": "错误提示。",
+          "status": "verified"
+        },
+        {
+          "line": 2509,
+          "text": "安全确认。",
+          "status": "verified"
+        },
+        {
+          "line": 2510,
+          "text": "`/projects`、`/tasks`、`/run`、`/status`、`/stop`、`/continue`、`/logs`、`/diff`、`/ask`、`/help`。",
+          "status": "verified"
+        },
+        {
+          "line": 2511,
+          "text": "开始/完成/失败/等待确认/变更/测试失败/摘要/阶段性/静默通知。",
+          "status": "verified"
+        }
+      ]
+    },
+    {
+      "id": "25.12",
+      "title": "安全与发布",
+      "itemCount": 8,
+      "status": "verified",
+      "evidence": [
+        "packages/security-core/test",
+        "scripts/package-mac.test.ts",
+        "pnpm verify:release",
+        "packages/security-core/test/security.test.ts",
+        "packages/security-core/test/keychain.test.ts",
+        "packages/local-server/test/security-keychain-api.test.ts",
+        "scripts/verify-release.sh"
+      ],
+      "blockers": [],
+      "items": [
+        {
+          "line": 2515,
+          "text": "本地服务不暴露公网。",
+          "status": "verified"
+        },
+        {
+          "line": 2516,
+          "text": "API token。",
+          "status": "verified"
+        },
+        {
+          "line": 2517,
+          "text": "Telegram 白名单。",
+          "status": "verified"
+        },
+        {
+          "line": 2518,
+          "text": "高风险任务、删除文件、Git 提交、shell、目录限制、安全审计。",
+          "status": "verified"
+        },
+        {
+          "line": 2519,
+          "text": "Bot Token、API Key、Keychain、隐藏显示、日志脱敏、导出脱敏、清理密钥、重置安全、泄露风险、安全页。",
+          "status": "verified"
+        },
+        {
+          "line": 2520,
+          "text": "单测、仓储测试、领域测试、解析器测试、图谱测试、runtime 测试、Telegram 测试、UI 测试。",
+          "status": "verified"
+        },
+        {
+          "line": 2521,
+          "text": "Electron Builder、DMG、ZIP、图标、签名预留、notarization 预留、Homebrew cask、GitHub Release、版本、更新日志。",
+          "status": "verified"
+        },
+        {
+          "line": 2522,
+          "text": "README、安装、使用、架构、开发、贡献、License、Issue、PR、Roadmap。",
+          "status": "verified"
+        }
+      ]
+    }
+  ],
+  "nonNegotiableConclusion": "当前实现不能宣称设计书 100% 完成；核心剩余项集中在真实外部凭据、签名/公证/Homebrew tap 发布配置，以及需要用户项目配置的可选连接器与外部工程验证。Postgres/MySQL 驱动仅为可选连接器，不是 Zeus 本地核心依赖。",
+  "optionalConnectors": [
+    {
+      "id": "postgres-mysql-schema-introspection",
+      "packages": ["pg", "mysql2"],
+      "requiredForLocalCore": false,
+      "status": "waiting_user_project_configuration",
+      "description": "仅用于用户项目显式配置 Postgres/MySQL 时做外部 schema introspection；Zeus 本地运行、SQLite 存储、真实代码扫描和打包不依赖这些驱动。",
+      "securityContract": "含密码 URI 必须拒绝并要求密码进入 Keychain；未安装连接器时展示未启用/等待配置，不伪造外部数据库扫描成功。"
+    }
+  ]
+}

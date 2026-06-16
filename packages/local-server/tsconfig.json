@@ -1,0 +1,41 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist",
+    "composite": true
+  },
+  "references": [
+    {
+      "path": "../storage"
+    },
+    {
+      "path": "../ai-runtime"
+    },
+    {
+      "path": "../git-core"
+    },
+    {
+      "path": "../security-core"
+    },
+    {
+      "path": "../telegram-adapter"
+    },
+    {
+      "path": "../code-indexer"
+    },
+    {
+      "path": "../graph-engine"
+    },
+    {
+      "path": "../task-core"
+    },
+    {
+      "path": "../project-core"
+    },
+    {
+      "path": "../release-core"
+    }
+  ],
+  "include": ["src/**/*.ts"]
+}

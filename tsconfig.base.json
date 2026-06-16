@@ -1,0 +1,32 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "baseUrl": ".",
+    "paths": {
+      "@zeus/shared": ["packages/shared/src/index.ts"],
+      "@zeus/task-core": ["packages/task-core/src/index.ts"],
+      "@zeus/storage": ["packages/storage/src/index.ts"],
+      "@zeus/project-core": ["packages/project-core/src/index.ts"],
+      "@zeus/code-indexer": ["packages/code-indexer/src/index.ts"],
+      "@zeus/graph-engine": ["packages/graph-engine/src/index.ts"],
+      "@zeus/local-server": ["packages/local-server/src/index.ts"],
+      "@zeus/ai-runtime": ["packages/ai-runtime/src/index.ts"],
+      "@zeus/git-core": ["packages/git-core/src/index.ts"],
+      "@zeus/security-core": ["packages/security-core/src/index.ts"],
+      "@zeus/telegram-adapter": ["packages/telegram-adapter/src/index.ts"],
+      "@zeus/terminal-core": ["packages/terminal-core/src/index.ts"],
+      "@zeus/release-core": ["packages/release-core/src/index.ts"],
+      "@zeus/diagram-engine": ["packages/diagram-engine/src/index.ts"]
+    }
+  }
+}
