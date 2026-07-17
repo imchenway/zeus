@@ -64,6 +64,12 @@ export interface ProjectGraphEdge {
 }
 
 export type GraphViewType = 'architecture' | 'module' | 'table' | 'module_detail' | 'api_sequence' | 'module_flow' | 'method_logic';
+const ARCHITECTURE_VIEW_NODE_LIMIT = 250;
+const MODULE_VIEW_NODE_LIMIT = 1200;
+const TABLE_VIEW_NODE_LIMIT = 1200;
+const MODULE_DETAIL_VIEW_NODE_LIMIT = 250;
+const MODULE_FLOW_VIEW_NODE_LIMIT = 220;
+const METHOD_LOGIC_VIEW_NODE_LIMIT = 6000;
 
 export interface ProjectGraphView {
   id: string;
@@ -164,22 +170,31 @@ function toGraphNode(symbol: CodeSymbolFact): ProjectGraphNode {
 /** 生成设计书要求的多类图谱视图；所有节点和边都来自真实扫描事实。 */
 function buildGraphViews(projectName: string, nodes: ProjectGraphNode[], edges: ProjectGraphEdge[]): ProjectGraphView[] {
   const nodeIds = nodes.map((node) => node.id);
-  const edgeIds = edges.map((edge) => edge.id);
+  const architectureNodeIds = nodeIds.slice(0, ARCHITECTURE_VIEW_NODE_LIMIT);
+  // 架构图节点有上限时，边必须跟随可见节点二次裁剪；否则大型仓库会把不可见端点交给 Graphology/Sigma 导致渲染崩溃。
+  const architectureEdgeIds = pickEdgesForNodes(edges, architectureNodeIds).slice(0, 500);
+  // 模块图和表关系图也必须在服务端裁剪；真实 Java 大仓可能有上万文件/表字段，不能把超大 payload 交给 Electron 渲染进程。
+  const moduleNodeIds = pickNodeIdsByTypePriority(nodes, ['package', 'file', 'class', 'interface', 'type']).slice(0, MODULE_VIEW_NODE_LIMIT);
+  const tableNodeIds = pickSqlNodeIds(nodes).slice(0, TABLE_VIEW_NODE_LIMIT);
+  const moduleDetailNodeIds = pickNodeIds(nodes, ['file', 'function', 'class', 'interface', 'type']).slice(0, MODULE_DETAIL_VIEW_NODE_LIMIT);
+  const moduleFlowNodeIds = pickNodeIds(nodes, ['package', 'file', 'function']).slice(0, MODULE_FLOW_VIEW_NODE_LIMIT);
+  const methodLogicNodeIds = pickMethodLogicNodeIds(nodes, edges).slice(0, METHOD_LOGIC_VIEW_NODE_LIMIT);
   return [
-    makeGraphView(projectName, 'architecture', '系统架构图', nodeIds.slice(0, 250), edgeIds.slice(0, 500)),
-    makeGraphView(projectName, 'module', '模块图', pickNodeIds(nodes, ['package', 'file', 'class', 'interface', 'type']), pickModuleViewEdgeIds(edges, pickNodeIds(nodes, ['package', 'file', 'class', 'interface', 'type'])).slice(0, 500)),
-    makeGraphView(projectName, 'table', '表关系图', pickSqlNodeIds(nodes), pickEdgesForNodes(edges, pickSqlNodeIds(nodes)).slice(0, 1000)),
+    makeGraphView(projectName, 'architecture', '系统架构图', architectureNodeIds, architectureEdgeIds),
+    makeGraphView(projectName, 'module', '模块图', moduleNodeIds, pickModuleViewEdgeIds(edges, moduleNodeIds).slice(0, 500)),
+    makeGraphView(projectName, 'table', '表关系图', tableNodeIds, pickEdgesForNodes(edges, tableNodeIds).slice(0, 1000)),
     makeGraphView(
       projectName,
       'module_detail',
       '模块详情图',
-      pickNodeIds(nodes, ['file', 'function', 'class', 'interface', 'type']).slice(0, 250),
-      pickEdgesForNodes(edges, pickNodeIds(nodes, ['file', 'function', 'class', 'interface', 'type'])).slice(0, 500),
+      moduleDetailNodeIds,
+      // 所有带节点上限的视图都必须按最终可见节点裁剪边，避免扫描大仓库后画布拿到悬空边直接崩溃。
+      pickEdgesForNodes(edges, moduleDetailNodeIds).slice(0, 500),
     ),
     makeApiSequenceGraphView(projectName, nodes, edges),
-    makeGraphView(projectName, 'module_flow', '模块流程图', pickNodeIds(nodes, ['package', 'file', 'function']).slice(0, 220), pickEdgesForNodes(edges, pickNodeIds(nodes, ['package', 'file', 'function'])).slice(0, 440)),
-    // 方法逻辑图的节点来自真实源码控制流；大型仓库新增配置代码后，5000 上限会把小型核心包的守卫分支挤出视图。
-    makeGraphView(projectName, 'method_logic', '方法逻辑图', pickMethodLogicNodeIds(nodes).slice(0, 8000), pickMethodLogicEdgeIds(edges, pickMethodLogicNodeIds(nodes)).slice(0, 20000)),
+    makeGraphView(projectName, 'module_flow', '模块流程图', moduleFlowNodeIds, pickEdgesForNodes(edges, moduleFlowNodeIds).slice(0, 440)),
+    // 方法逻辑图保留真实源码控制流，但默认视图不能把整仓控制流全量交给 Electron；先按证据优先级选节点，再用可见节点裁剪边。
+    makeGraphView(projectName, 'method_logic', '方法逻辑图', methodLogicNodeIds, pickMethodLogicEdgeIds(edges, methodLogicNodeIds).slice(0, 20000)),
   ];
 }
 
@@ -232,6 +247,10 @@ function pickNodeIds(nodes: ProjectGraphNode[], nodeTypes: string[]): string[] {
   return nodes.filter((node) => allowedTypes.has(node.nodeType)).map((node) => node.id);
 }
 
+function pickNodeIdsByTypePriority(nodes: ProjectGraphNode[], nodeTypes: string[]): string[] {
+  return nodeTypes.flatMap((nodeType) => nodes.filter((node) => node.nodeType === nodeType).map((node) => node.id));
+}
+
 function pickApiSequenceNodeIds(nodes: ProjectGraphNode[]): string[] {
   const apiNodes = nodes.filter((node) => node.nodeType === 'api');
   const apiSourceRefs = new Set(apiNodes.map((node) => node.sourceRef));
@@ -239,15 +258,31 @@ function pickApiSequenceNodeIds(nodes: ProjectGraphNode[]): string[] {
   const apiSourceFileNodes = nodes.filter((node) => node.nodeType === 'file' && apiSourceRefs.has(node.sourceRef));
   const apiHandlerNodes = nodes.filter((node) => node.nodeType === 'function' && apiHandlerQualifiedNames.has(node.qualifiedName));
   const apiHandlerCallNodes = nodes.filter((node) => node.nodeType === 'function_call' && typeof node.metadata.ownerQualifiedName === 'string' && apiHandlerQualifiedNames.has(node.metadata.ownerQualifiedName));
+  const resolvedApiHandlerCallNodes = apiHandlerCallNodes.filter((node) => typeof node.metadata.targetQualifiedName === 'string');
+  const unresolvedApiHandlerCallNodes = apiHandlerCallNodes.filter((node) => typeof node.metadata.targetQualifiedName !== 'string');
   const resolvedTargetQualifiedNames = new Set(apiHandlerCallNodes.map((node) => node.metadata.targetQualifiedName).filter((value): value is string => typeof value === 'string'));
   const transitiveTargetCallNodes = collectApiSequenceTransitiveCallNodes(nodes, resolvedTargetQualifiedNames);
+  const resolvedTransitiveTargetCallNodes = transitiveTargetCallNodes.filter((node) => typeof node.metadata.targetQualifiedName === 'string');
+  const unresolvedTransitiveTargetCallNodes = transitiveTargetCallNodes.filter((node) => typeof node.metadata.targetQualifiedName !== 'string');
   const resolvedTargetNodes = nodes.filter((node) => node.nodeType === 'function' && resolvedTargetQualifiedNames.has(node.qualifiedName));
   const resolvedTargetSqlNodes = nodes.filter((node) => node.nodeType === 'sql_call' && typeof node.metadata.ownerQualifiedName === 'string' && resolvedTargetQualifiedNames.has(node.metadata.ownerQualifiedName));
   const resolvedTargetTableQualifiedNames = new Set(resolvedTargetSqlNodes.flatMap((node) => metadataStringArray(node.metadata.tableQualifiedNames)));
   const resolvedTargetTableNodes = nodes.filter((node) => node.nodeType === 'table' && resolvedTargetTableQualifiedNames.has(node.qualifiedName));
   const handlerLikeNodes = nodes.filter((node) => ['function', 'class'].includes(node.nodeType));
-  // API 时序图有节点数量上限；导入目标和递归调用链是设计书要求的关键证据，必须优先于大量普通 handler 调用点。
-  return uniqueNodeIds([...apiNodes, ...apiSourceFileNodes, ...apiHandlerNodes, ...resolvedTargetNodes, ...transitiveTargetCallNodes, ...resolvedTargetSqlNodes, ...resolvedTargetTableNodes, ...apiHandlerCallNodes, ...handlerLikeNodes]);
+  // API 时序图有节点数量上限；先保留入口、直接调用和目标数据影响，再用剩余额度展开递归调用链。
+  return uniqueNodeIds([
+    ...apiNodes,
+    ...apiSourceFileNodes,
+    ...apiHandlerNodes,
+    ...resolvedTargetNodes,
+    ...resolvedApiHandlerCallNodes,
+    ...resolvedTransitiveTargetCallNodes,
+    ...resolvedTargetSqlNodes,
+    ...resolvedTargetTableNodes,
+    ...unresolvedApiHandlerCallNodes,
+    ...unresolvedTransitiveTargetCallNodes,
+    ...handlerLikeNodes,
+  ]);
 }
 
 /** 按设计书默认深度 3 展开 API 调用链，并用已访问集合避免循环调用导致视图失控。 */
@@ -273,12 +308,13 @@ function collectApiSequenceTransitiveCallNodes(nodes: ProjectGraphNode[], resolv
   return transitiveCallNodes;
 }
 
-function pickMethodLogicNodeIds(nodes: ProjectGraphNode[]): string[] {
+function pickMethodLogicNodeIds(nodes: ProjectGraphNode[], edges: ProjectGraphEdge[]): string[] {
   const logicNodes = nodes.filter((node) => ['control_flow', 'sql_call'].includes(node.nodeType));
   const awaitedCallNodes = nodes.filter((node) => node.nodeType === 'function_call' && node.metadata.isAwaited === true);
   const promiseChainCallNodes = nodes.filter((node) => node.nodeType === 'function_call' && node.metadata.isPromiseChainRoot === true);
   const sqlCallNodes = logicNodes.filter((node) => node.nodeType === 'sql_call');
   const promiseControlNodes = logicNodes.filter((node) => ['promise_catch', 'promise_then'].includes(String(node.metadata.controlType)));
+  const cleanupBranchControlNodes = logicNodes.filter((node) => node.nodeType === 'control_flow' && ['catch', 'finally', 'continue', 'break'].includes(String(node.metadata.controlType)));
   const representativeControlNodes = pickRepresentativeControlFlowNodesByOwner(logicNodes);
   const remainingLogicNodes = logicNodes.filter((node) => node.nodeType !== 'sql_call' && !['promise_catch', 'promise_then'].includes(String(node.metadata.controlType)));
   const logicSourceRefs = new Set(logicNodes.map((node) => node.sourceRef));
@@ -291,24 +327,68 @@ function pickMethodLogicNodeIds(nodes: ProjectGraphNode[]): string[] {
   const impactedTableNodes = nodes.filter((node) => node.nodeType === 'table' && impactedTableQualifiedNames.has(node.qualifiedName));
   const impactedColumnNodes = nodes.filter((node) => node.nodeType === 'column' && impactedColumnQualifiedNames.has(node.qualifiedName));
   const functionNodes = nodes.filter((node) => node.nodeType === 'function');
+  const nodeById = new Map(nodes.map((node) => [node.id, node]));
+  const evidenceEdgeTypes = new Set<ProjectGraphEdge['edgeType']>([
+    'loop_back',
+    'loop_continue',
+    'loop_break',
+    'try_catch',
+    'try_finally',
+    'promise_catch',
+    'promise_then',
+    'awaits_call',
+    'executes_sql',
+    'reads_table',
+    'writes_table',
+    'uses_column',
+  ]);
+  const edgeBackedEvidenceNodes = edges
+    .filter((edge) => evidenceEdgeTypes.has(edge.edgeType))
+    .flatMap((edge) => [nodeById.get(edge.sourceNodeId), nodeById.get(edge.targetNodeId)])
+    .filter((node): node is ProjectGraphNode => node !== undefined);
+  const edgeBackedEvidenceNodeIds = new Set(edgeBackedEvidenceNodes.map((node) => node.id));
+  // 没有语义边的孤立 SQL 仍保留少量样本，避免它们无限占用方法逻辑图额度并挤掉成对的控制流证据。
+  const orphanSqlCallNodes = sqlCallNodes.filter((node) => !edgeBackedEvidenceNodeIds.has(node.id)).slice(0, 64);
+  const evidenceOwnerQualifiedNames = new Set(edgeBackedEvidenceNodes.map((node) => node.metadata.ownerQualifiedName).filter((value): value is string => typeof value === 'string'));
+  const evidenceOwnerFunctionNodes = nodes.filter((node) => node.nodeType === 'function' && evidenceOwnerQualifiedNames.has(node.qualifiedName));
+  const controlCountsByOwner = new Map<string, number>();
+  const evidenceControlNodesByOwner = new Map<string, ProjectGraphNode[]>();
+  for (const node of logicNodes) {
+    if (node.nodeType !== 'control_flow' || typeof node.metadata.ownerQualifiedName !== 'string') continue;
+    controlCountsByOwner.set(node.metadata.ownerQualifiedName, (controlCountsByOwner.get(node.metadata.ownerQualifiedName) ?? 0) + 1);
+    if (evidenceOwnerQualifiedNames.has(node.metadata.ownerQualifiedName)) {
+      evidenceControlNodesByOwner.set(node.metadata.ownerQualifiedName, [...(evidenceControlNodesByOwner.get(node.metadata.ownerQualifiedName) ?? []), node]);
+    }
+  }
+  const completeSmallOwnerControlNodes = logicNodes.filter((node) => node.nodeType === 'control_flow' && typeof node.metadata.ownerQualifiedName === 'string' && (controlCountsByOwner.get(node.metadata.ownerQualifiedName) ?? 0) <= 3);
+  const leadingEvidenceControlNodes = [...evidenceControlNodesByOwner.values()].flatMap((ownerNodes) =>
+    [...ownerNodes].sort((left, right) => Number(left.metadata.lineStart) - Number(right.metadata.lineStart) || left.qualifiedName.localeCompare(right.qualifiedName)).slice(0, 2),
+  );
   // 关键证据节点必须优先进入方法逻辑图；否则大型项目中普通控制流节点会在视图上限前挤掉 SQL 字段或 Promise 链证据。
+  // 以真实语义边为最小完整单元，并保留小函数的完整控制链；仓库增长后也不能只留下 catch/finally 而截掉对应 try。
   return uniqueNodeIds([
+    ...edgeBackedEvidenceNodes,
+    ...orphanSqlCallNodes,
+    ...evidenceOwnerFunctionNodes,
     ...logicSourceFileNodes,
-    ...ownerFunctionNodes,
-    ...awaitedCallNodes,
-    ...promiseChainCallNodes,
+    ...completeSmallOwnerControlNodes,
+    ...leadingEvidenceControlNodes,
     ...promiseControlNodes,
-    ...sqlCallNodes,
+    ...cleanupBranchControlNodes,
+    ...promiseChainCallNodes,
+    ...awaitedCallNodes,
     ...impactedTableNodes,
     ...impactedColumnNodes,
+    ...sqlCallNodes,
     ...representativeControlNodes,
+    ...ownerFunctionNodes,
     ...remainingLogicNodes,
     ...functionNodes,
   ]);
 }
 
 function pickRepresentativeControlFlowNodesByOwner(logicNodes: ProjectGraphNode[]): ProjectGraphNode[] {
-  const maxPerOwner = 5;
+  const maxPerOwner = 3;
   const countsByOwner = new Map<string, number>();
   const representatives: ProjectGraphNode[] = [];
   for (const node of logicNodes) {

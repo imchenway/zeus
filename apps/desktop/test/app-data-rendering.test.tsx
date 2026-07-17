@@ -1,7 +1,8 @@
+import { readFileSync } from 'node:fs';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { App } from '../src/renderer/App.js';
-import type { DashboardSnapshot, GitDiffSummary, ProjectConfig, SecurityAuditLogEntry } from '../src/renderer/apiClient.js';
+import type { AppShellSettings, DashboardSnapshot, GitDiffSummary, ProjectConfig, SecurityAuditLogEntry } from '../src/renderer/apiClient.js';
 
 function createSnapshot(overrides: Partial<DashboardSnapshot> = {}): DashboardSnapshot {
   return {
@@ -38,14 +39,43 @@ function createSnapshot(overrides: Partial<DashboardSnapshot> = {}): DashboardSn
   };
 }
 
+function createAppShellSettings(appLanguage: AppShellSettings['appLanguage']): AppShellSettings {
+  return {
+    appLanguage,
+    appearance: 'system',
+    webviewDebugEnabled: false,
+    developerModeEnabled: false,
+    multiWindowEnabled: true,
+    backgroundModeEnabled: true,
+    desktopNotificationsEnabled: true,
+    openAtLoginEnabled: false,
+    autoUpdateChannel: 'manual',
+    defaultProjectId: null,
+    pinnedProjectIds: [],
+    defaultModel: 'gpt-5-codex',
+    defaultTaskTemplateId: null,
+    localLogDirectory: 'Zeus/logs',
+    localConfigPath: 'Zeus/zeus.config.json',
+    dataPortability: {
+      importSupported: true,
+      exportSupported: true,
+      redactsSecrets: true,
+    },
+    cache: { codeIndex: true, graphView: true, layout: true },
+    lastCacheClearAt: null,
+  };
+}
+
 describe('Zeus App data rendering', () => {
   it('renders real task data in the conversation workspace without exposing project internals on the first layer', () => {
     const html = renderToStaticMarkup(<App snapshot={createSnapshot()} initialMainNavTarget="tasks" />);
 
-    expect(html).toContain('workspace-view-conversations');
+    expect(html).toContain('workspace-view-project-tasks');
     expect(html).toContain('分析当前项目结构');
-    expect(html).toContain('推送到 CLI 对话');
-    expect(html).toContain('要求后续变更');
+    expect(html).toContain('任务管理');
+    expect(html).toContain('task-table-only-layout');
+    expect(html).not.toContain('运行任务');
+    expect(html).not.toContain('任务状态变更');
     expect(html).not.toContain('项目详情');
     expect(html).not.toContain('审查工作区');
   });
@@ -83,9 +113,9 @@ describe('Zeus App data rendering', () => {
       />,
     );
 
-    expect(html).toContain('workspace-view-projects');
+    expect(html).toContain('project-first-sidebar');
     expect(html).toContain('项目列表');
-    expect(html).toContain('当前项目状态');
+    expect(html).toContain('workspace-view-project-code');
     expect(html).toContain('扫描项目');
     expect(html).toContain('打开图谱');
     expect(html).toContain('查看变更');
@@ -125,7 +155,7 @@ describe('Zeus App data rendering', () => {
 
     const html = renderToStaticMarkup(<App snapshot={createSnapshot()} initialMainNavTarget="git-diff" initialGitDiff={diff} />);
 
-    expect(html).toContain('workspace-view-projects');
+    expect(html).toContain('workspace-view-project-code');
     expect(html).toContain('代码变更');
     expect(html).toContain('导出 Patch');
     expect(html).toContain('apps/desktop/src/renderer/App.tsx');
@@ -157,8 +187,9 @@ describe('Zeus App data rendering', () => {
     );
 
     expect(html).toContain('workspace-view-settings');
-    expect(html).toContain('当前分类：安全与 Keychain');
-    expect(html).toContain('外部 API Key');
+    expect(html).not.toContain('当前分类：安全与钥匙串');
+    expect(html).not.toContain('settings-current-category');
+    expect(html).toContain('外部接口密钥');
     expect(html).toContain('重置安全设置');
     expect(html).toContain('security.secret.external_api_key.saved');
     expect(html).not.toContain('telegram-token-real');
@@ -181,11 +212,67 @@ describe('Zeus App data rendering', () => {
       />,
     );
 
-    expect(html).toContain('workspace-view-projects');
+    expect(html).toContain('project-first-sidebar');
     expect(html).toContain('归档项目');
     expect(html).toContain('恢复项目');
     expect(html).toContain('/Users/david/hypha/zeus-archive');
     expect(html).not.toContain('归档任务为空');
+  });
+
+  it('normalizes archived project recovery into a compact restore workbench instead of readonly object rows', () => {
+    const html = renderToStaticMarkup(
+      <App
+        initialArchivedProjects={[
+          {
+            id: 'project_archived',
+            name: 'Zeus Archive',
+            localPath: '/Users/david/hypha/zeus-archive-with-a-very-long-local-path-for-layout-hardening',
+            scanStatus: 'completed',
+          },
+        ]}
+        snapshot={createSnapshot({ projects: [], tasks: [] })}
+      />,
+    );
+    const source = readFileSync(new URL('../src/renderer/App.tsx', import.meta.url), 'utf8');
+    const css = readFileSync(new URL('../src/renderer/styles.css', import.meta.url), 'utf8');
+
+    expect(html).toContain('project-archive-workbench');
+    expect(html).toContain('project-archive-row');
+    expect(html).toContain('project-archive-copy');
+    expect(html).toContain('project-archive-command-rail');
+    expect(html).toContain('Zeus Archive');
+    expect(html).toContain('zeus-archive-with-a-very-long-local-path-for-layout-hardening');
+    expect(source).toContain('function ProjectArchiveWorkbench');
+    expect(source).toContain('project-archive-empty-row');
+    expect(source).not.toContain('className="object-row readonly" key={project.id}');
+    expect(css).toContain('项目归档抽屉最终覆盖');
+    expect(css).toMatch(/\.macos-ai-app \.project-archive-workbench\s*\{[\s\S]*gap:\s*0/);
+    expect(css).toMatch(/\.macos-ai-app \.project-archive-row\s*\{[\s\S]*grid-template-columns:\s*minmax\(0,\s*1fr\) auto/);
+  });
+
+  it('renames project archive actions into an explicit restore command rail', () => {
+    const html = renderToStaticMarkup(
+      <App
+        initialArchivedProjects={[
+          {
+            id: 'project_archived',
+            name: 'Zeus Archive',
+            localPath: '/Users/david/hypha/zeus-archive',
+            scanStatus: 'completed',
+          },
+        ]}
+        snapshot={createSnapshot({ projects: [], tasks: [] })}
+      />,
+    );
+    const source = readFileSync(new URL('../src/renderer/App.tsx', import.meta.url), 'utf8');
+    const css = readFileSync(new URL('../src/renderer/styles.css', import.meta.url), 'utf8');
+
+    expect(source).not.toContain('project-archive-actions');
+    expect(css).not.toContain('project-archive-actions');
+    expect(html).toContain('project-archive-command-rail');
+    expect(source).toContain('project-archive-command-rail');
+    expect(css).toContain('项目归档恢复命令 rail 命名最终覆盖');
+    expect(css).toMatch(/\.macos-ai-app \.project-archive-command-rail\s*\{[\s\S]*justify-content:\s*flex-end/);
   });
 
   it('renders task templates from the new conversation menu drawer instead of fake tasks', () => {
@@ -211,7 +298,7 @@ describe('Zeus App data rendering', () => {
       />,
     );
 
-    expect(html).toContain('workspace-view-conversations');
+    expect(html).toContain('workspace-view-project-sessions');
     expect(html).toContain('任务模板');
     expect(html).toContain('Bug 修复');
     expect(html).toContain('代码评审');
@@ -233,9 +320,25 @@ describe('Zeus App data rendering', () => {
     expect(html).toContain('Runtime 请求失败 token=[REDACTED] Bearer [REDACTED]');
     expect(html).not.toContain('telegram-token-real');
     expect(html).not.toContain('sk-real-secret');
+
+    const enHtml = renderToStaticMarkup(
+      <App
+        initialAppShellSettings={createAppShellSettings('en-US')}
+        initialLocalError={{
+          action: 'load-runtime',
+          message: 'Runtime failed token=telegram-token-real Bearer sk-real-secret',
+          occurredAt: '2026-06-14T00:00:00.000Z',
+        }}
+      />,
+    );
+    expect(enHtml).toContain('Local operation failed');
+    expect(enHtml).not.toContain('本地操作失败');
+    expect(enHtml).toContain('Runtime failed token=[REDACTED] Bearer [REDACTED]');
+    expect(enHtml).not.toContain('telegram-token-real');
+    expect(enHtml).not.toContain('sk-real-secret');
   });
 
-  it('renders project configuration in the project drawer without creating fake runtime data', () => {
+  it('renders project configuration in the project settings workspace without creating fake runtime data', () => {
     const projectConfig: ProjectConfig = {
       projectId: 'project_real',
       defaultModel: 'gpt-5.1-codex',
@@ -259,6 +362,7 @@ describe('Zeus App data rendering', () => {
     const html = renderToStaticMarkup(
       <App
         snapshot={createSnapshot({ tasks: [] })}
+        initialMainNavTarget="projects"
         initialProjectConfig={projectConfig}
         initialProjectDatabaseSecret={{
           connectionName: 'local-sqlite',
@@ -267,13 +371,16 @@ describe('Zeus App data rendering', () => {
       />,
     );
 
+    expect(html).toContain('workspace-view-project-settings');
     expect(html).toContain('项目配置');
     expect(html).toContain('默认 AI 模型');
     expect(html).toContain('gpt-5.1-codex');
     expect(html).toContain('扫描忽略规则');
     expect(html).toContain('node_modules, dist');
     expect(html).toContain('postgresql://zeus:***@localhost:5432/app');
-    expect(html).toContain('密码状态：已安全保存');
+    expect(html).toContain('密码状态');
+    expect(html).toContain('已安全保存');
+    expect(html).toContain('project-config-row-list');
     expect(html).toContain('保存项目配置');
     expect(html).not.toContain('secret-password');
   });
@@ -291,6 +398,7 @@ describe('Zeus App data rendering', () => {
           openAtLoginEnabled: false,
           autoUpdateChannel: 'manual',
           defaultProjectId: null,
+          pinnedProjectIds: [],
           defaultModel: null,
           defaultTaskTemplateId: null,
           localLogDirectory: '/Users/david/Library/Application Support/Zeus/logs',

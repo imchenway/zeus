@@ -1,0 +1,548 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>代码时序：Codex 依靠 threadId 与 rollout 原生续接</title>
+    <style>
+      :root {
+        --ink: #102033;
+        --muted: #5a6c80;
+        --paper: #fbfdff;
+        --panel: rgba(255, 255, 255, 0.9);
+        --line: #8db3d8;
+        --blue: #1f6fb2;
+        --blue-soft: #e8f3ff;
+        --green: #17785a;
+        --green-soft: #e9f8f2;
+        --amber: #986506;
+        --amber-soft: #fff6de;
+        --red: #a63a3a;
+        --red-soft: #fff0f0;
+        --violet: #6254ad;
+        --violet-soft: #f1efff;
+        --shadow: 0 16px 42px rgba(20, 57, 92, 0.085);
+        --radius: 20px;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        color: var(--ink);
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'PingFang SC', 'Microsoft YaHei', Arial, sans-serif;
+        background:
+          radial-gradient(circle at 18% 3%, rgba(214, 233, 255, 0.78), transparent 30rem), radial-gradient(circle at 78% 6%, rgba(228, 246, 239, 0.8), transparent 28rem), linear-gradient(rgba(93, 133, 173, 0.045) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(93, 133, 173, 0.045) 1px, transparent 1px), linear-gradient(180deg, #fff 0%, #f7fbff 54%, #fbfdff 100%);
+        background-size:
+          auto,
+          auto,
+          28px 28px,
+          28px 28px,
+          auto;
+        overflow-x: clip;
+      }
+
+      main {
+        width: min(1240px, calc(100vw - 32px));
+        margin: 0 auto;
+        padding: 22px 0 40px;
+      }
+      .task-code {
+        display: inline-flex;
+        margin-bottom: 8px;
+        border: 1px solid rgba(31, 111, 178, 0.3);
+        border-radius: 999px;
+        background: var(--blue-soft);
+        color: var(--blue);
+        font-size: 12px;
+        font-weight: 750;
+        padding: 4px 9px;
+      }
+      h1 {
+        margin: 0 0 10px;
+        font-size: clamp(24px, 2.8vw, 32px);
+        line-height: 1.18;
+        letter-spacing: -0.025em;
+      }
+      h2 {
+        margin: 0;
+        font-size: 18px;
+      }
+      p {
+        line-height: 1.65;
+      }
+      .summary {
+        margin: 0 0 16px;
+        color: var(--muted);
+      }
+      code,
+      pre {
+        font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+      }
+      code {
+        color: #174d7b;
+      }
+
+      .template-layout {
+        border: 1px solid rgba(141, 179, 216, 0.48);
+        border-radius: 24px;
+        background: rgba(255, 255, 255, 0.78);
+        box-shadow: var(--shadow);
+        padding: 18px;
+      }
+
+      .participant-timeline {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 12px;
+      }
+      .lifeline {
+        position: relative;
+        display: grid;
+        grid-template-rows: auto 1fr;
+        min-width: 0;
+      }
+      .lifeline::after {
+        content: '';
+        width: 2px;
+        min-height: 100%;
+        background: linear-gradient(var(--line), rgba(141, 179, 216, 0.15));
+        justify-self: center;
+      }
+      .actor,
+      .step,
+      .rule,
+      .evidence-row {
+        border: 1px solid rgba(141, 179, 216, 0.58);
+        border-radius: 16px;
+        background: rgba(255, 255, 255, 0.96);
+        padding: 11px 12px;
+        overflow-wrap: anywhere;
+      }
+      .actor {
+        position: relative;
+        z-index: 2;
+        min-height: 76px;
+        text-align: center;
+      }
+      .actor b,
+      .step b,
+      .rule b {
+        display: block;
+        font-size: 13px;
+        line-height: 1.35;
+      }
+      .actor span,
+      .step span,
+      .rule span {
+        display: block;
+        margin-top: 4px;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.5;
+      }
+      .actor.client {
+        background: linear-gradient(180deg, #fff, var(--violet-soft));
+        border-color: rgba(98, 84, 173, 0.45);
+      }
+      .actor.bridge {
+        background: linear-gradient(180deg, #fff, var(--blue-soft));
+        border-color: rgba(31, 111, 178, 0.48);
+      }
+      .actor.server {
+        background: linear-gradient(180deg, #fff, var(--green-soft));
+        border-color: rgba(23, 120, 90, 0.45);
+      }
+      .actor.store {
+        background: linear-gradient(180deg, #fff, var(--amber-soft));
+        border-color: rgba(152, 101, 6, 0.42);
+      }
+
+      .message-stack {
+        grid-column: 1 / 5;
+        display: grid;
+        gap: 12px;
+        margin-top: 4px;
+      }
+      .phase {
+        border: 1px solid rgba(141, 179, 216, 0.42);
+        border-radius: 18px;
+        background: rgba(255, 255, 255, 0.72);
+        padding: 12px;
+        display: grid;
+        gap: 9px;
+      }
+      .phase-title {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        color: var(--blue);
+        font-size: 13px;
+        font-weight: 800;
+      }
+      .phase-title::before {
+        content: '';
+        width: 9px;
+        height: 9px;
+        border-radius: 999px;
+        background: currentColor;
+      }
+      .sequence-row {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        align-items: stretch;
+        gap: 10px;
+      }
+      .step {
+        position: relative;
+        min-height: 74px;
+      }
+      .step::after {
+        content: '→';
+        position: absolute;
+        right: -17px;
+        top: 50%;
+        translate: 0 -50%;
+        color: var(--blue);
+        font-weight: 900;
+        z-index: 3;
+      }
+      .step:last-child::after,
+      .step.no-arrow::after {
+        content: none;
+      }
+      .step.core {
+        background: var(--blue-soft);
+        border-color: rgba(31, 111, 178, 0.48);
+      }
+      .step.data {
+        background: var(--green-soft);
+        border-color: rgba(23, 120, 90, 0.42);
+      }
+      .step.ops {
+        background: var(--amber-soft);
+        border-color: rgba(152, 101, 6, 0.42);
+      }
+      .step.risk {
+        background: var(--red-soft);
+        border-color: rgba(166, 58, 58, 0.42);
+      }
+      .span-2 {
+        grid-column: span 2;
+      }
+      .span-3 {
+        grid-column: span 3;
+      }
+      .at-2 {
+        grid-column: 2;
+      }
+      .at-3 {
+        grid-column: 3;
+      }
+      .at-4 {
+        grid-column: 4;
+      }
+      .return::after {
+        content: '←';
+        left: -17px;
+        right: auto;
+      }
+
+      .notes {
+        display: grid;
+        gap: 14px;
+        margin-top: 16px;
+      }
+      .rules {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 12px;
+      }
+      .rule.native {
+        background: var(--green-soft);
+        border-color: rgba(23, 120, 90, 0.42);
+      }
+      .rule.fork {
+        background: var(--violet-soft);
+        border-color: rgba(98, 84, 173, 0.42);
+      }
+      .rule.legacy {
+        background: var(--red-soft);
+        border-color: rgba(166, 58, 58, 0.42);
+      }
+      .evidence {
+        border: 1px solid rgba(141, 179, 216, 0.42);
+        border-radius: 18px;
+        background: var(--panel);
+        padding: 14px;
+      }
+      .evidence-grid {
+        display: grid;
+        gap: 8px;
+        margin-top: 10px;
+      }
+      .evidence-row {
+        display: grid;
+        grid-template-columns: 48px minmax(0, 1fr);
+        gap: 10px;
+        font-size: 12px;
+        line-height: 1.55;
+      }
+      .evidence-row strong {
+        color: var(--blue);
+      }
+      .protocol {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        margin-top: 10px;
+        border-radius: 12px;
+        background: #102033;
+        color: #eaf4ff;
+        padding: 11px 12px;
+      }
+      .protocol code {
+        color: inherit;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+      }
+      button {
+        min-height: 30px;
+        border: 1px solid rgba(255, 255, 255, 0.35);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.12);
+        color: #fff;
+        cursor: pointer;
+        padding: 4px 9px;
+      }
+      button:focus-visible,
+      a:focus-visible {
+        outline: 3px solid rgba(31, 111, 178, 0.25);
+        outline-offset: 2px;
+      }
+      a {
+        color: var(--blue);
+      }
+
+      @media (max-width: 780px) {
+        main {
+          width: min(100vw - 20px, 760px);
+        }
+        .participant-timeline,
+        .sequence-row,
+        .rules {
+          grid-template-columns: 1fr;
+        }
+        .message-stack,
+        .span-2,
+        .span-3,
+        .at-2,
+        .at-3,
+        .at-4 {
+          grid-column: auto;
+        }
+        .lifeline::after {
+          min-height: 22px;
+        }
+        .step::after,
+        .step.return::after {
+          content: '↓';
+          left: 50%;
+          right: auto;
+          top: auto;
+          bottom: -19px;
+          translate: -50% 0;
+        }
+        .step:last-child::after,
+        .step.no-arrow::after {
+          content: none;
+        }
+        .evidence-row {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          scroll-behavior: auto !important;
+          transition: none !important;
+          animation: none !important;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main data-diagram-type="code-sequence" data-template-family="code-sequence" data-template-id="participant-timeline" data-template-layout="participant-timeline">
+      <span class="task-code">TASK_20260714_001</span>
+      <h1 data-slot="title">代码时序：Codex 依靠 threadId 与 rollout 原生续接</h1>
+      <p class="summary" data-slot="summary">Codex 不靠常驻模型进程，也不靠把最近消息重新拼进 prompt。真正的连续会话由持久 <code>threadId</code> 标识，历史写入本地 rollout；同进程直接追加 turn，跨进程先恢复 thread，再追加 turn。</p>
+
+      <section class="template-layout participant-timeline" aria-label="Codex 原生会话续接参与者与时序">
+        <div class="lifeline">
+          <div class="actor client">
+            <b>产品客户端</b><span>Codex App / Zeus Renderer<br />持有并选择 conversation</span>
+          </div>
+        </div>
+        <div class="lifeline">
+          <div class="actor bridge">
+            <b>客户端桥接层</b><span>Zeus Manager / Coordinator<br />保存 providerThreadId</span>
+          </div>
+        </div>
+        <div class="lifeline">
+          <div class="actor server">
+            <b>Codex app-server</b><span>JSON-RPC：thread/*、turn/*<br />维护当前加载状态</span>
+          </div>
+        </div>
+        <div class="lifeline">
+          <div class="actor store">
+            <b>持久会话</b><span><code>~/.codex/sessions/.../rollout-*.jsonl</code><br />保存 thread 历史</span>
+          </div>
+        </div>
+
+        <div class="message-stack">
+          <section class="phase">
+            <div class="phase-title">A · 首次创建并物化历史</div>
+            <div class="sequence-row">
+              <div class="step">
+                <b>1. 初始化连接</b><span><code>initialize → initialized</code></span>
+              </div>
+              <div class="step core">
+                <b>2. 创建 thread</b><span><code>thread/start</code><br />携带 cwd、model、sandbox</span>
+              </div>
+              <div class="step data">
+                <b>3. 返回身份</b><span>返回稳定 <code>thread.id</code>；客户端必须持久化</span>
+              </div>
+              <div class="step ops no-arrow"><b>4. 尚未必可恢复</b><span>只有空 thread、没有真实 turn 时，可能还没有 rollout</span></div>
+            </div>
+            <div class="sequence-row">
+              <div class="step"><b>5. 用户发消息</b><span>输入属于同一个会话</span></div>
+              <div class="step core">
+                <b>6. 开始 turn</b><span><code>turn/start(threadId, input)</code></span>
+              </div>
+              <div class="step data">
+                <b>7. 流式事件</b><span><code>turn/started</code>、<code>item/*</code>、<code>turn/completed</code></span>
+              </div>
+              <div class="step ops no-arrow"><b>8. 持久化 rollout</b><span>thread、turn、item 与上下文落盘，可供以后恢复</span></div>
+            </div>
+          </section>
+
+          <section class="phase">
+            <div class="phase-title">B · 同一 app-server 进程内继续</div>
+            <div class="sequence-row">
+              <div class="step"><b>1. 选择历史 thread</b><span>thread 当前为 loaded / idle</span></div>
+              <div class="step core span-2">
+                <b>2. 直接追加新 turn</b><span>无需再次 resume；继续调用 <code>turn/start</code>，仍使用原 <code>threadId</code></span>
+              </div>
+              <div class="step data no-arrow">
+                <b>3. 连续对话</b><span>每轮 <code>turnId</code> 不同，但 <code>threadId</code> 不变</span>
+              </div>
+            </div>
+          </section>
+
+          <section class="phase">
+            <div class="phase-title">C · app-server 退出或 thread 已卸载后继续</div>
+            <div class="sequence-row">
+              <div class="step"><b>1. 新进程初始化</b><span>新的 generation，内存中没有旧 thread</span></div>
+              <div class="step core">
+                <b>2. 请求恢复</b><span><code>thread/resume({threadId, cwd})</code></span>
+              </div>
+              <div class="step data"><b>3. 加载历史</b><span>app-server 按 threadId 找到 rollout，恢复模型可见状态</span></div>
+              <div class="step ops no-arrow">
+                <b>4. 返回同一 thread</b><span>返回的 <code>thread.id</code> 仍是原值，并重新订阅事件</span>
+              </div>
+            </div>
+            <div class="sequence-row">
+              <div class="step">
+                <b>5. 客户端对账</b><span>可用 <code>thread/read(includeTurns)</code> 校准本地 snapshot</span>
+              </div>
+              <div class="step core span-2">
+                <b>6. 继续新一轮</b><span>恢复完成后再次调用 <code>turn/start</code>；新 turn 追加到原 thread</span>
+              </div>
+              <div class="step data no-arrow"><b>7. 更新时间</b><span>单独 resume 不更新 updatedAt；真正开始 turn 后才更新</span></div>
+            </div>
+          </section>
+
+          <section class="phase">
+            <div class="phase-title">D · 边界：续接、分叉与 legacy 不是一回事</div>
+            <div class="sequence-row">
+              <div class="step data">
+                <b>原生续接</b><span><code>thread/resume</code> 返回同一 threadId；后续 turn 追加到原历史</span>
+              </div>
+              <div class="step core">
+                <b>原生分叉</b><span><code>thread/fork</code> 复制已存历史，但创建新的 threadId</span>
+              </div>
+              <div class="step risk span-2 no-arrow">
+                <b>Zeus legacy 不能原生续接</b
+                ><span>旧记录只有 <code>ai-session-*</code> 或 null，没有 Codex <code>threadId</code>；不能伪装 <code>thread/resume</code>。保真路径只能是保留旧记录，并显式迁移上下文到新的 native thread。</span>
+              </div>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section class="notes" data-slot="evidence-and-notes">
+        <div class="rules" aria-label="续接语义判断规则">
+          <div class="rule native">
+            <b>能真正续接</b><span>存在真实 provider <code>threadId</code>，且对应 rollout 可读取；恢复后继续使用同一 threadId。</span>
+          </div>
+          <div class="rule fork">
+            <b>能分叉但不是续接</b><span>源对象本身是 Codex 持久 thread；<code>thread/fork</code> 创建新 threadId，并保留来源关系。</span>
+          </div>
+          <div class="rule legacy"><b>不能原生续接</b><span>只有展示消息、旧 Runtime sessionId 或普通数据库行；缺少 provider thread 身份时不能声称 resume。</span></div>
+        </div>
+
+        <div class="evidence">
+          <h2>证据与 Zeus 映射</h2>
+          <div class="evidence-grid">
+            <div class="evidence-row">
+              <strong>E1</strong><span>OpenAI 官方 app-server 文档：<code>thread/resume</code> 按已记录的 <code>thread.id</code> 恢复，后续 <code>turn/start</code> 追加到同一 thread；<code>thread/read</code> 只读，不加载、不订阅。</span>
+            </div>
+            <div class="evidence-row">
+              <strong>E2</strong
+              ><span><code>packages/ai-runtime/src/codexAppServerManager.ts:515-553</code>：Zeus 对 <code>thread/start</code>、<code>thread/resume</code>、<code>thread/read</code> 和 <code>turn/start</code> 的真实 JSON-RPC 封装。</span>
+            </div>
+            <div class="evidence-row">
+              <strong>E3</strong><span><code>packages/local-server/src/codexNativeConversationCoordinator.ts:1016-1027</code>：每次新 app-server generation 会对已绑定 conversation 执行 resume + read 对账。</span>
+            </div>
+            <div class="evidence-row">
+              <strong>E4</strong><span><code>packages/ai-runtime/test/codex-app-server-live.test.ts:96-145</code>：真实 live probe 创建三轮 turn，关闭首个 manager 后以新 generation 恢复同一 threadId。</span>
+            </div>
+            <div class="evidence-row">
+              <strong>E5</strong><span>当前 <code>tc-app-core</code> 四条历史均为 <code>legacy_cli</code> 且 <code>provider_thread_id IS NULL</code>，因此它们不具备上述原生续接前提。</span>
+            </div>
+          </div>
+          <div class="protocol">
+            <code id="protocol-example">initialize → thread/resume({ threadId }) → thread/read({ includeTurns: true }) → turn/start({ threadId, input })</code>
+            <button type="button" data-copy-target="protocol-example">复制时序</button>
+          </div>
+          <p>官方依据：<a href="https://developers.openai.com/codex/app-server">OpenAI Codex App Server</a>。本图结论同时经过 Zeus 仓库源码与本机 live probe 交叉验证。</p>
+        </div>
+      </section>
+    </main>
+
+    <script>
+      document.querySelectorAll('[data-copy-target]').forEach((button) => {
+        button.addEventListener('click', async () => {
+          const target = document.getElementById(button.getAttribute('data-copy-target') || '');
+          if (!target) return;
+          try {
+            await navigator.clipboard.writeText(target.textContent || '');
+            const original = button.textContent;
+            button.textContent = '已复制';
+            window.setTimeout(() => {
+              button.textContent = original;
+            }, 1200);
+          } catch {
+            button.textContent = '复制失败';
+          }
+        });
+      });
+    </script>
+  </body>
+</html>

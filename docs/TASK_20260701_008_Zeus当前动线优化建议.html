@@ -1,0 +1,548 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>页面设计稿：Zeus 当前动线优化建议（含代码页）</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --window: oklch(98.7% 0.004 255);
+      --chrome: oklch(95.8% 0.004 255);
+      --sidebar: oklch(96.5% 0.004 255);
+      --pane: oklch(99.1% 0.003 255);
+      --pane-soft: oklch(97.4% 0.003 255);
+      --canvas: oklch(99.4% 0.002 255);
+      --line: oklch(87% 0.003 255 / 0.72);
+      --line-soft: oklch(90% 0.003 255 / 0.48);
+      --ink: oklch(23% 0.006 255);
+      --ink-2: oklch(38% 0.005 255);
+      --muted: oklch(53% 0.004 255);
+      --quiet: oklch(66% 0.003 255);
+      --accent: oklch(55.5% 0.145 254);
+      --accent-soft: oklch(94.6% 0.022 254);
+      --success: oklch(49% 0.078 145);
+      --warn: oklch(56% 0.108 76);
+      --danger: oklch(47% 0.105 28);
+      --shadow: 0 16px 48px oklch(36% 0.014 255 / 0.12);
+      --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+      --mono: "SFMono-Regular", "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { min-height: 100%; }
+    body {
+      margin: 0;
+      font-family: var(--font);
+      color: var(--ink);
+      background: linear-gradient(180deg, var(--window), oklch(96.8% 0.004 255));
+      overflow-x: hidden;
+    }
+
+    .desktop {
+      width: min(1380px, calc(100vw - 32px));
+      margin: 24px auto;
+      border-radius: 18px;
+      overflow: hidden;
+      background: var(--pane);
+      box-shadow: var(--shadow);
+      outline: 1px solid oklch(89% 0.003 255 / 0.72);
+    }
+
+    .titlebar {
+      height: 38px;
+      display: grid;
+      grid-template-columns: 140px minmax(0, 1fr) 260px;
+      align-items: center;
+      gap: 12px;
+      padding: 0 14px;
+      background: var(--chrome);
+      border-bottom: 1px solid var(--line-soft);
+    }
+    .traffic { display: flex; gap: 7px; align-items: center; }
+    .dot { width: 11px; height: 11px; border-radius: 999px; box-shadow: inset 0 0 0 1px oklch(35% 0.01 255 / 0.14); }
+    .red { background: oklch(70% 0.16 27); }
+    .yellow { background: oklch(78% 0.12 82); }
+    .green { background: oklch(70% 0.12 145); }
+    .titlebar h1 {
+      margin: 0;
+      text-align: center;
+      font-size: 13px;
+      line-height: 1;
+      font-weight: 650;
+      letter-spacing: -0.01em;
+      color: var(--ink-2);
+    }
+    .titlebar .meta {
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .workspace {
+      display: grid;
+      grid-template-columns: 208px minmax(0, 1fr);
+      min-height: calc(100vh - 86px);
+      max-height: none;
+      background: var(--pane);
+    }
+
+    .outline {
+      padding: 14px 10px;
+      background: var(--sidebar);
+      border-right: 1px solid var(--line-soft);
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .outline-title {
+      margin: 0 0 5px 8px;
+      color: var(--quiet);
+      font-size: 10px;
+      font-weight: 760;
+      letter-spacing: 0.055em;
+      text-transform: uppercase;
+    }
+    .outline-row {
+      min-height: 28px;
+      display: grid;
+      grid-template-columns: 18px minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 8px;
+      padding: 0 8px;
+      border-radius: 8px;
+      color: var(--ink-2);
+      font-size: 12px;
+      text-decoration: none;
+    }
+    .outline-row.active { background: oklch(91.4% 0.006 255 / 0.86); color: var(--ink); font-weight: 650; }
+    .outline-row span:first-child { color: var(--quiet); text-align: center; }
+    .outline-row small { color: var(--quiet); font-size: 10px; }
+    .outline-note {
+      margin-top: auto;
+      padding: 10px 8px 0;
+      border-top: 1px solid var(--line-soft);
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.55;
+    }
+
+    .board {
+      min-width: 0;
+      padding: 18px 20px 22px;
+      background:
+        linear-gradient(var(--line-soft) 1px, transparent 1px),
+        linear-gradient(90deg, var(--line-soft) 1px, transparent 1px),
+        var(--pane);
+      background-size: 36px 36px;
+    }
+
+    .brief-strip {
+      min-height: 64px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 210px 210px;
+      gap: 16px;
+      align-items: center;
+      padding: 12px 14px;
+      border-radius: 12px;
+      background: oklch(99.1% 0.003 255 / 0.94);
+      border: 1px solid var(--line-soft);
+      margin-bottom: 16px;
+    }
+    .brief-strip h2 { margin: 0 0 5px; font-size: 16px; letter-spacing: -0.018em; }
+    .brief-strip p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+    .brief-fact { padding-left: 12px; border-left: 1px solid var(--line-soft); }
+    .brief-fact strong { display: block; margin-bottom: 3px; font-size: 12px; }
+    .brief-fact span { color: var(--muted); font-size: 11px; line-height: 1.45; }
+
+    .handoff {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 1px;
+      overflow: hidden;
+      border-radius: 12px;
+      border: 1px solid var(--line-soft);
+      background: var(--line-soft);
+      margin-bottom: 16px;
+    }
+    .handoff div {
+      min-height: 72px;
+      padding: 11px 12px;
+      background: oklch(98.6% 0.003 255 / 0.92);
+    }
+    .handoff small { display: block; margin-bottom: 7px; color: var(--accent); font: 760 10px/1 var(--mono); }
+    .handoff strong { display: block; margin-bottom: 4px; font-size: 12px; }
+    .handoff span { color: var(--muted); font-size: 11px; line-height: 1.38; }
+
+    .screens {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+      align-items: start;
+    }
+    .spec {
+      min-width: 0;
+      border-radius: 14px;
+      overflow: hidden;
+      border: 1px solid var(--line-soft);
+      background: var(--pane);
+      box-shadow: 0 8px 20px oklch(36% 0.014 255 / 0.055);
+    }
+    .spec-head {
+      height: 38px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 12px;
+      padding: 0 12px;
+      border-bottom: 1px solid var(--line-soft);
+      background: var(--pane-soft);
+    }
+    .spec-head strong { font-size: 12px; letter-spacing: -0.01em; }
+    .spec-head small { color: var(--muted); font-size: 11px; }
+    .spec-body { min-height: 470px; display: grid; grid-template-columns: 126px minmax(0, 1fr); background: var(--pane); }
+    .mini-side {
+      padding: 10px 8px;
+      border-right: 1px solid var(--line-soft);
+      background: var(--sidebar);
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .mini-row {
+      min-height: 24px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 6px;
+      padding: 0 7px;
+      border-radius: 7px;
+      color: var(--ink-2);
+      font-size: 11px;
+    }
+    .mini-row.active { background: oklch(91.2% 0.006 255 / 0.86); color: var(--ink); font-weight: 650; }
+    .mini-row small { color: var(--quiet); font-size: 10px; }
+    .mini-title { margin: 4px 0 3px 7px; color: var(--quiet); font-size: 9px; font-weight: 760; text-transform: uppercase; letter-spacing: 0.05em; }
+    .mini-main { min-width: 0; padding: 12px; }
+    .toolline { min-height: 30px; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; margin-bottom: 10px; }
+    .toolline h3 { margin: 0; font-size: 13px; letter-spacing: -0.012em; }
+    .toolline small { display: block; margin-top: 2px; color: var(--muted); font-size: 10px; }
+    .btn { min-height: 24px; display: inline-flex; align-items: center; justify-content: center; border: 0; border-radius: 7px; padding: 0 8px; background: oklch(92.8% 0.004 255 / 0.9); color: var(--ink-2); font: 650 10px/1 var(--font); }
+    .btn.primary { background: var(--accent); color: oklch(98% 0.004 255); }
+    .tabs { display: flex; gap: 4px; margin-bottom: 9px; overflow: hidden; }
+    .tab { min-height: 23px; display: inline-flex; align-items: center; border-radius: 7px; padding: 0 8px; color: var(--muted); background: oklch(94.7% 0.003 255 / 0.8); font-size: 10px; font-weight: 620; white-space: nowrap; }
+    .tab.active { color: var(--ink); background: oklch(90.8% 0.006 255 / 0.9); }
+
+    .task-table, .chat-list, .node-list { display: grid; border-top: 1px solid var(--line-soft); }
+    .task-row {
+      min-height: 50px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 70px;
+      gap: 8px;
+      align-items: center;
+      border-bottom: 1px solid var(--line-soft);
+      font-size: 11px;
+    }
+    .task-row strong, .chat-message strong, .node-row strong { display: block; margin-bottom: 2px; color: var(--ink); font-size: 11px; }
+    .task-row small, .chat-message small, .node-row small { color: var(--muted); font-size: 10px; line-height: 1.35; }
+    .pill { justify-self: start; border-radius: 999px; padding: 3px 7px; color: var(--accent); background: var(--accent-soft); font-size: 10px; font-weight: 720; }
+    .pill.warn { color: var(--warn); background: oklch(95% 0.026 76); }
+
+    .drawer-lite {
+      margin-top: 10px;
+      border-radius: 10px;
+      border: 1px solid var(--line-soft);
+      background: oklch(98.8% 0.003 255 / 0.9);
+      padding: 9px 10px;
+    }
+    .drawer-lite strong { display: block; margin-bottom: 4px; font-size: 11px; }
+    .drawer-lite p { margin: 0 0 8px; color: var(--muted); font-size: 10px; line-height: 1.38; }
+    .drawer-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+
+    .chat-spec .spec-body { grid-template-columns: 150px minmax(0, 1fr); }
+    .chat-list { border-top: 0; gap: 6px; }
+    .chat-item { min-height: 42px; padding: 7px 8px; border-radius: 8px; color: var(--ink-2); font-size: 11px; }
+    .chat-item.active { background: oklch(91.2% 0.006 255 / 0.86); color: var(--ink); }
+    .chat-item strong { display: block; margin-bottom: 2px; }
+    .chat-item small { color: var(--muted); font-size: 10px; }
+    .chat-message { max-width: 82%; margin-bottom: 11px; font-size: 11px; line-height: 1.45; }
+    .chat-message.user { margin-left: auto; text-align: right; }
+    .composer { margin-top: 20px; border-radius: 11px; border: 1px solid var(--line-soft); background: var(--canvas); overflow: hidden; }
+    .composer-text { min-height: 48px; padding: 9px 10px; color: var(--muted); font-size: 11px; }
+    .composer-bar { min-height: 30px; display: flex; align-items: center; gap: 5px; padding: 0 7px; border-top: 1px solid var(--line-soft); background: var(--pane-soft); }
+    .chip { height: 20px; display: inline-flex; align-items: center; border-radius: 999px; padding: 0 7px; background: oklch(92.8% 0.004 255 / 0.88); color: var(--muted); font-size: 9px; font-weight: 650; }
+    .spacer { flex: 1; }
+
+    .code-spec .spec-body { grid-template-columns: 126px minmax(0, 1fr); }
+    .canvas-layout { display: grid; grid-template-columns: minmax(0, 1fr) 112px; gap: 9px; min-height: 330px; }
+    .graph-canvas {
+      position: relative;
+      min-height: 330px;
+      border-radius: 11px;
+      border: 1px solid var(--line-soft);
+      background:
+        linear-gradient(var(--line-soft) 1px, transparent 1px),
+        linear-gradient(90deg, var(--line-soft) 1px, transparent 1px),
+        var(--canvas);
+      background-size: 26px 26px;
+      overflow: hidden;
+    }
+    .graph-node {
+      position: absolute;
+      width: 54px;
+      height: 54px;
+      border-radius: 999px;
+      display: grid;
+      place-items: center;
+      background: oklch(95.4% 0.018 254);
+      border: 1px solid oklch(78% 0.05 254 / 0.72);
+      color: var(--accent);
+      font-size: 10px;
+      font-weight: 760;
+    }
+    .graph-node.n1 { left: 26px; top: 52px; }
+    .graph-node.n2 { left: 132px; top: 122px; }
+    .graph-node.n3 { left: 234px; top: 70px; }
+    .graph-node.n4 { left: 185px; top: 226px; }
+    .graph-edge {
+      position: absolute;
+      height: 1px;
+      background: oklch(68% 0.05 254 / 0.55);
+      transform-origin: left center;
+    }
+    .e1 { left: 78px; top: 88px; width: 112px; transform: rotate(34deg); }
+    .e2 { left: 183px; top: 150px; width: 104px; transform: rotate(-28deg); }
+    .e3 { left: 184px; top: 176px; width: 94px; transform: rotate(67deg); }
+    .inspector {
+      border-radius: 11px;
+      border: 1px solid var(--line-soft);
+      background: var(--pane-soft);
+      padding: 9px;
+      font-size: 10px;
+    }
+    .inspector strong { display: block; margin-bottom: 5px; font-size: 11px; }
+    .inspector p { margin: 0 0 8px; color: var(--muted); line-height: 1.4; }
+    .node-row { min-height: 36px; padding: 7px 0; border-bottom: 1px solid var(--line-soft); }
+    .context-rule {
+      margin-top: 10px;
+      border-radius: 10px;
+      border: 1px solid var(--line-soft);
+      background: oklch(98.8% 0.003 255 / 0.9);
+      padding: 9px 10px;
+      color: var(--muted);
+      font-size: 10px;
+      line-height: 1.4;
+    }
+
+    .decision {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      gap: 14px;
+      margin-top: 16px;
+    }
+    .decision-pane {
+      min-height: 132px;
+      border-radius: 12px;
+      border: 1px solid var(--line-soft);
+      background: oklch(99.1% 0.003 255 / 0.94);
+      padding: 12px 14px;
+    }
+    .decision-pane h3 { margin: 0 0 9px; font-size: 13px; }
+    .decision-pane ul { margin: 0; padding-left: 17px; color: var(--muted); font-size: 11px; line-height: 1.65; }
+    code { font-family: var(--mono); font-size: 0.94em; color: var(--ink-2); }
+
+    button, a, [tabindex] { outline: none; }
+    button:focus-visible, a:focus-visible, [tabindex]:focus-visible {
+      box-shadow: 0 0 0 3px oklch(62% 0.16 252 / 0.2), inset 0 0 0 1px oklch(62% 0.16 252 / 0.55);
+    }
+    button { cursor: default; }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+    }
+
+    @media (max-width: 1160px) {
+      .desktop { width: min(100vw - 24px, 1040px); }
+      .screens { grid-template-columns: 1fr; }
+      .spec-body { min-height: 420px; }
+      .brief-strip { grid-template-columns: 1fr; }
+      .handoff { grid-template-columns: 1fr; }
+      .decision { grid-template-columns: 1fr; }
+    }
+
+    @media (max-width: 720px) {
+      .desktop { width: 100%; margin: 0; min-height: 100vh; border-radius: 0; }
+      .titlebar { grid-template-columns: 80px minmax(0, 1fr); }
+      .titlebar .meta { display: none; }
+      .workspace { grid-template-columns: 1fr; }
+      .outline { display: none; }
+      .board { padding: 12px; }
+      .spec-body, .chat-spec .spec-body, .code-spec .spec-body { grid-template-columns: 1fr; }
+      .mini-side { display: none; }
+      .canvas-layout { grid-template-columns: 1fr; }
+      .graph-node.n3 { left: 210px; }
+      .graph-node.n4 { left: 150px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="desktop" aria-label="Zeus 当前动线优化规格板">
+    <div class="titlebar">
+      <div class="traffic" aria-hidden="true"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span></div>
+      <h1>Zeus 当前动线优化建议，含代码页</h1>
+      <div class="meta"><span>macOS 软件规格板</span><span>非网页式展示</span></div>
+    </div>
+
+    <div class="workspace">
+      <aside class="outline" aria-label="设计稿目录">
+        <div>
+          <p class="outline-title">Scope</p>
+          <a class="outline-row active" href="#"><span>·</span><span>保留现有动线</span><small>当前</small></a>
+          <a class="outline-row" href="#"><span>·</span><span>任务页</span><small>A</small></a>
+          <a class="outline-row" href="#"><span>·</span><span>会话页</span><small>B</small></a>
+          <a class="outline-row" href="#"><span>·</span><span>代码页</span><small>C</small></a>
+        </div>
+        <div>
+          <p class="outline-title">Rules</p>
+          <a class="outline-row" href="#"><span>1</span><span>不做网页感</span><small></small></a>
+          <a class="outline-row" href="#"><span>2</span><span>不堆一个页面</span><small></small></a>
+          <a class="outline-row" href="#"><span>3</span><span>代码页保留主位</span><small></small></a>
+        </div>
+        <p class="outline-note">本版是对 TASK_008 的返修：不是新产品方案，而是把当前任务、会话、代码三条页面动线补齐并软件化。</p>
+      </aside>
+
+      <section class="board">
+        <section class="brief-strip" aria-label="本轮修正结论">
+          <div>
+            <h2>修正：代码页必须在当前动线里有完整位置</h2>
+            <p>代码页不是附录。它仍是项目内“理解代码并生成任务上下文”的主页面，和任务页、会话页并列存在，只是不抢任务执行主路径。</p>
+          </div>
+          <div class="brief-fact"><strong>视觉修正</strong><span>去掉网页报告感，改成 macOS 软件规格板：小标题、紧凑窗体、系统控件、低阴影。</span></div>
+          <div class="brief-fact"><strong>动线修正</strong><span>任务页执行，代码页理解，会话页连续对话。三者互相跳转，不合成驾驶舱。</span></div>
+        </section>
+
+        <section class="handoff" aria-label="当前动线交接">
+          <div><small>01</small><strong>任务页</strong><span>创建、筛选、打开任务详情。默认列强调下一步和 AI 执行。</span></div>
+          <div><small>02</small><strong>任务抽屉</strong><span>显示状态、主操作、最近事件。推送 CLI 后进入会话页。</span></div>
+          <div><small>03</small><strong>会话页</strong><span>承接当前任务，持续补充要求、暂停、继续、完成。</span></div>
+          <div><small>04</small><strong>代码页</strong><span>图谱画布主位，节点、问答、源码入口都能创建任务或引用到任务。</span></div>
+          <div><small>05</small><strong>证据回流</strong><span>任务事件、Runtime、Git diff、图谱来源回到任务详情。</span></div>
+        </section>
+
+        <section class="screens" aria-label="三个当前页面优化稿">
+          <article class="spec" aria-label="任务页优化稿">
+            <header class="spec-head"><strong>A · 任务页</strong><small>工作队列，不是报表页</small></header>
+            <div class="spec-body">
+              <nav class="mini-side" aria-label="任务页项目导航">
+                <div class="mini-row"><span>新对话</span><small></small></div>
+                <div class="mini-row"><span>搜索</span><small>⌘K</small></div>
+                <p class="mini-title">项目</p>
+                <div class="mini-row active"><span>Zeus E2E</span><small>2</small></div>
+                <div class="mini-row active"><span>任务</span><small>当前</small></div>
+                <div class="mini-row"><span>代码</span><small></small></div>
+                <div class="mini-row"><span>会话</span><small></small></div>
+              </nav>
+              <section class="mini-main">
+                <div class="toolline"><div><h3>Zeus E2E · 任务</h3><small>默认列：任务 / 下一步 / AI 执行 / 更新时间</small></div><button class="btn primary">新任务</button></div>
+                <div class="tabs"><span class="tab active">全部</span><span class="tab">可继续</span><span class="tab">等待</span><span class="tab">完成</span></div>
+                <div class="task-table" role="listbox" aria-label="任务列表">
+                  <div class="task-row" role="option" aria-selected="true"><div><strong>重构 Zeus 当前动线</strong><small>用户反馈：补代码页，减少网页感</small></div><span class="pill">推送 CLI</span></div>
+                  <div class="task-row" role="option"><div><strong>代码图谱节点影响确认</strong><small>由代码页创建</small></div><span class="pill warn">等待</span></div>
+                  <div class="task-row" role="option"><div><strong>清理旧版任务列噪音</strong><small>证据已归档</small></div><span class="pill">完成</span></div>
+                </div>
+                <div class="drawer-lite" aria-label="任务详情摘要抽屉">
+                  <strong>任务详情抽屉：主操作上移</strong>
+                  <p>状态：待开始。下一步：推送到 CLI 对话。最近事件：任务已创建。</p>
+                  <div class="drawer-actions"><button class="btn primary">推送 CLI</button><button class="btn">标记完成</button><button class="btn">取消</button></div>
+                </div>
+              </section>
+            </div>
+          </article>
+
+          <article class="spec chat-spec" aria-label="会话页优化稿">
+            <header class="spec-head"><strong>B · 会话页</strong><small>承接任务，不另起心智</small></header>
+            <div class="spec-body">
+              <aside class="mini-side" aria-label="会话列表">
+                <div class="mini-row active"><span>对话搜索</span><small></small></div>
+                <div class="chat-list">
+                  <div class="chat-item active"><strong>重构 Zeus 当前动线</strong><small>待开始 · Zeus E2E</small></div>
+                  <div class="chat-item"><strong>图谱节点影响确认</strong><small>等待确认</small></div>
+                </div>
+              </aside>
+              <section class="mini-main">
+                <div class="toolline"><div><h3>重构 Zeus 当前动线</h3><small>ZEU-000014 · 待开始 · Zeus E2E</small></div><button class="btn primary">推送 CLI</button></div>
+                <div class="tabs"><span class="tab active">对话</span><span class="tab">上下文</span><span class="tab">Diff</span><span class="tab">事件</span></div>
+                <div class="chat-message user"><strong>用户要求</strong><small>代码页呢？不要网页感，这是一个软件。</small></div>
+                <div class="chat-message"><strong>Zeus / Codex</strong><small>已补齐代码页，并把设计稿改成软件规格板。任务、会话、代码各自独立。</small></div>
+                <div class="composer" aria-label="任务连续输入">
+                  <div class="composer-text">继续要求、补充约束，或让 Codex 推进当前任务...</div>
+                  <div class="composer-bar"><span class="chip">Codex CLI</span><span class="chip">Zeus E2E</span><span class="spacer"></span><button class="btn">附件</button><button class="btn primary">发送</button></div>
+                </div>
+              </section>
+            </div>
+          </article>
+
+          <article class="spec code-spec" aria-label="代码页优化稿">
+            <header class="spec-head"><strong>C · 代码页</strong><small>图谱主位，任务上下文出口</small></header>
+            <div class="spec-body">
+              <nav class="mini-side" aria-label="代码页项目导航">
+                <div class="mini-row"><span>新对话</span><small></small></div>
+                <div class="mini-row"><span>搜索</span><small>⌘K</small></div>
+                <p class="mini-title">项目</p>
+                <div class="mini-row active"><span>Zeus E2E</span><small>2</small></div>
+                <div class="mini-row"><span>任务</span><small></small></div>
+                <div class="mini-row active"><span>代码</span><small>当前</small></div>
+                <div class="mini-row"><span>会话</span><small></small></div>
+              </nav>
+              <section class="mini-main">
+                <div class="toolline"><div><h3>Zeus E2E · 代码</h3><small>真实来源 · 250 节点 / 408 边 · 服务端布局</small></div><button class="btn">扫描</button></div>
+                <div class="tabs" role="tablist" aria-label="图谱视图"><span class="tab active">系统架构图</span><span class="tab">模块图</span><span class="tab">表关系图</span><span class="tab">接口时序图</span></div>
+                <div class="canvas-layout">
+                  <div class="graph-canvas" aria-label="代码图谱画布">
+                    <span class="graph-edge e1"></span><span class="graph-edge e2"></span><span class="graph-edge e3"></span>
+                    <span class="graph-node n1">文件</span><span class="graph-node n2">模块</span><span class="graph-node n3">接口</span><span class="graph-node n4">任务</span>
+                  </div>
+                  <aside class="inspector" aria-label="图谱检查器">
+                    <strong>当前对象</strong>
+                    <p>.github/dependabot.yml · 文件 · 行 1-12</p>
+                    <button class="btn primary">从节点创建任务</button>
+                    <div class="node-list">
+                      <div class="node-row"><strong>打开源码</strong><small>带 projectRoot</small></div>
+                      <div class="node-row"><strong>引用到任务</strong><small>补充上下文</small></div>
+                      <div class="node-row"><strong>图谱问答</strong><small>可转任务</small></div>
+                    </div>
+                  </aside>
+                </div>
+                <div class="context-rule"><strong>代码页规则：</strong>图谱画布继续是代码页主角；问答、节点、Mermaid 不进入任务页常驻，只通过“创建任务 / 引用到任务”把理解结果回流到任务。</div>
+              </section>
+            </div>
+          </article>
+        </section>
+
+        <section class="decision" aria-label="实现建议与证据">
+          <div class="decision-pane">
+            <h3>实现顺序，推荐小切片</h3>
+            <ul>
+              <li>先改任务页默认列和抽屉顶部主操作。</li>
+              <li>再改会话页标题和 composer 状态承接。</li>
+              <li>最后补代码页“引用到任务”的显性出口。</li>
+              <li>不新增 Home，不合并页面，不做网页式 dashboard。</li>
+            </ul>
+          </div>
+          <div class="decision-pane">
+            <h3>证据锚点</h3>
+            <ul>
+              <li><code>DESIGN.md:17</code> 代码页以真实扫描图谱为核心。</li>
+              <li><code>DESIGN.md:176-180</code> graph-canvas 是代码页主角。</li>
+              <li><code>apps/desktop/src/renderer/App.tsx:5805</code> 当前代码页由 CodeMapView 承载。</li>
+              <li><code>App.tsx:10465-10470</code> 问答可创建任务；<code>App.tsx:10665-10668</code> 节点可创建任务。</li>
+            </ul>
+          </div>
+        </section>
+      </section>
+    </div>
+  </main>
+</body>
+</html>

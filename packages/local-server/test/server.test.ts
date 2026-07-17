@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { createLocalServer, zeusLocalServerHost } from '../src/index.js';
+import { createZeusDatabase, ProjectRepository } from '../../storage/src/index.js';
 
 describe('Zeus local server', () => {
   it('exposes health and keeps the host limited to localhost', async () => {
@@ -51,6 +52,40 @@ describe('Zeus local server', () => {
         version: '9.8.7-real',
         database: 'ok',
         runtime: 'ok',
+      });
+      await server.close();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('recovers interrupted project scan status on startup so a crashed scan can be retried', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'zeus-server-scan-recovery-'));
+    const dbPath = join(dir, 'zeus.db');
+    try {
+      const db = await createZeusDatabase(dbPath);
+      const projects = new ProjectRepository(db);
+      const project = projects.create({
+        name: 'tc-app-core',
+        localPath: '/Users/david/cckg/tcapp/Back-End/tc-app-core',
+      });
+      projects.updateScanStatus(project.id, 'scanning');
+      await db.save();
+
+      const server = await createLocalServer({
+        dbPath,
+        apiToken: 'test-token',
+      });
+      const statusResponse = await server.inject({
+        method: 'GET',
+        url: `/api/projects/${project.id}/scan-status`,
+        headers: { authorization: 'Bearer test-token' },
+      });
+
+      expect(statusResponse.statusCode).toBe(200);
+      expect(statusResponse.json()).toMatchObject({
+        projectId: project.id,
+        scanStatus: 'failed',
       });
       await server.close();
     } finally {
@@ -621,6 +656,7 @@ describe('Zeus local server', () => {
         openAtLoginEnabled: false,
         autoUpdateChannel: 'manual',
         defaultProjectId: null,
+        pinnedProjectIds: [],
         defaultModel: null,
         defaultTaskTemplateId: null,
       });
@@ -633,6 +669,10 @@ describe('Zeus local server', () => {
         importSupported: true,
         exportSupported: true,
         redactsSecrets: true,
+      });
+      expect(initialResponse.json().taskTableColumns).toEqual({
+        visibleColumnKeys: ['code', 'intent', 'nextAction', 'aiExecution', 'source', 'signals', 'updatedAt'],
+        columnOrder: ['code', 'intent', 'nextAction', 'aiExecution', 'source', 'signals', 'updatedAt', 'createdAt', 'template', 'project', 'priority', 'description', 'runtimeSession', 'rawId', 'createdFrom'],
       });
 
       const savedResponse = await server.inject({
@@ -649,8 +689,13 @@ describe('Zeus local server', () => {
           openAtLoginEnabled: true,
           autoUpdateChannel: 'manual',
           defaultProjectId: projectId,
+          pinnedProjectIds: [projectId, 'missing-project', projectId],
           defaultModel: 'gpt-5.1-codex',
           defaultTaskTemplateId: 'task_template_bug_fix',
+          taskTableColumns: {
+            visibleColumnKeys: ['intent', 'priority', 'owner', 'intent', 'code'],
+            columnOrder: ['priority', 'intent', 'assignee', 'code'],
+          },
         },
       });
       expect(savedResponse.statusCode).toBe(200);
@@ -663,8 +708,47 @@ describe('Zeus local server', () => {
         desktopNotificationsEnabled: false,
         openAtLoginEnabled: true,
         defaultProjectId: projectId,
+        pinnedProjectIds: [projectId, 'missing-project'],
         defaultModel: 'gpt-5.1-codex',
         defaultTaskTemplateId: 'task_template_bug_fix',
+      });
+      expect(savedResponse.json().taskTableColumns).toEqual({
+        visibleColumnKeys: ['intent', 'priority', 'code'],
+        columnOrder: ['priority', 'intent', 'code', 'nextAction', 'aiExecution', 'source', 'signals', 'updatedAt', 'createdAt', 'template', 'project', 'description', 'runtimeSession', 'rawId', 'createdFrom'],
+      });
+      expect(JSON.stringify(savedResponse.json().taskTableColumns)).not.toContain('owner');
+      expect(JSON.stringify(savedResponse.json().taskTableColumns)).not.toContain('assignee');
+
+      const visibleOnlyResponse = await server.inject({
+        method: 'PUT',
+        url: '/api/settings/app-shell',
+        headers: { authorization: 'Bearer test-token' },
+        payload: {
+          taskTableColumns: {
+            visibleColumnKeys: ['code', 'intent'],
+          },
+        },
+      });
+      expect(visibleOnlyResponse.statusCode).toBe(200);
+      expect(visibleOnlyResponse.json().taskTableColumns).toEqual({
+        visibleColumnKeys: ['code', 'intent'],
+        columnOrder: ['priority', 'intent', 'code', 'nextAction', 'aiExecution', 'source', 'signals', 'updatedAt', 'createdAt', 'template', 'project', 'description', 'runtimeSession', 'rawId', 'createdFrom'],
+      });
+
+      const orderOnlyResponse = await server.inject({
+        method: 'PUT',
+        url: '/api/settings/app-shell',
+        headers: { authorization: 'Bearer test-token' },
+        payload: {
+          taskTableColumns: {
+            columnOrder: ['createdFrom', 'priority', 'code', 'intent'],
+          },
+        },
+      });
+      expect(orderOnlyResponse.statusCode).toBe(200);
+      expect(orderOnlyResponse.json().taskTableColumns).toEqual({
+        visibleColumnKeys: ['code', 'intent'],
+        columnOrder: ['createdFrom', 'priority', 'code', 'intent', 'nextAction', 'aiExecution', 'source', 'signals', 'updatedAt', 'createdAt', 'template', 'project', 'description', 'runtimeSession', 'rawId'],
       });
 
       const scanResponse = await server.inject({
@@ -722,6 +806,7 @@ describe('Zeus local server', () => {
           webviewDebugEnabled: true,
           desktopNotificationsEnabled: false,
           openAtLoginEnabled: true,
+          pinnedProjectIds: ['project_exported', 'missing-project'],
         },
       });
       await server.inject({
@@ -788,6 +873,7 @@ describe('Zeus local server', () => {
             webviewDebugEnabled: true,
             desktopNotificationsEnabled: false,
             openAtLoginEnabled: true,
+            pinnedProjectIds: ['project_exported', 'missing-project'],
           },
           runtime: {
             defaultAdapterId: 'claude',
@@ -822,6 +908,7 @@ describe('Zeus local server', () => {
               multiWindowEnabled: false,
               backgroundModeEnabled: false,
               autoUpdateChannel: 'manual',
+              pinnedProjectIds: ['project_imported'],
             },
             runtime: {
               defaultAdapterId: 'gemini',
@@ -872,6 +959,7 @@ describe('Zeus local server', () => {
         appearance: 'light',
         webviewDebugEnabled: false,
         multiWindowEnabled: false,
+        pinnedProjectIds: ['project_imported'],
       });
       const runtimeResponse = await server.inject({
         method: 'GET',

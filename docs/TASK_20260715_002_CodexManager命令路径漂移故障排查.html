@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>故障排查：新建会话混用两套 Codex runtime 身份</title>
+  <style>
+    :root{--ink:#102033;--muted:#5a6c80;--paper:#fbfdff;--panel:rgba(255,255,255,.9);--line:#8db3d8;--blue:#1f6fb2;--blue-soft:#e8f3ff;--green:#17785a;--green-soft:#e9f8f2;--amber:#986506;--amber-soft:#fff6de;--red:#a63a3a;--red-soft:#fff0f0;--violet:#6254ad;--violet-soft:#f1efff;--shadow:0 16px 42px rgba(20,57,92,.085);--radius:20px}
+    *{box-sizing:border-box}body{margin:0;color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",Arial,sans-serif;background:radial-gradient(circle at 18% 3%,rgba(214,233,255,.78),transparent 30rem),radial-gradient(circle at 78% 6%,rgba(228,246,239,.8),transparent 28rem),linear-gradient(rgba(93,133,173,.045) 1px,transparent 1px),linear-gradient(90deg,rgba(93,133,173,.045) 1px,transparent 1px),linear-gradient(180deg,#fff 0%,#f7fbff 54%,#fbfdff 100%);background-size:auto,auto,28px 28px,28px 28px,auto;overflow-x:clip}main{width:min(1180px,calc(100vw - 32px));margin:0 auto;padding:20px 0 40px}.task-code{display:inline-block;margin-bottom:10px;padding:4px 9px;border:1px solid rgba(31,111,178,.32);border-radius:999px;color:var(--blue);background:rgba(255,255,255,.86);font-size:12px;font-weight:750}h1{font-size:clamp(24px,2.8vw,32px);line-height:1.18;letter-spacing:-.025em;margin:0 0 10px}h2{font-size:17px;margin:0 0 12px}.summary{margin:0 0 16px;color:var(--muted);line-height:1.65}.template-layout,.panel{border:1px solid rgba(141,179,216,.48);border-radius:24px;background:rgba(255,255,255,.82);box-shadow:var(--shadow);padding:18px}.debugging-sequence{display:grid;gap:14px}.actors,.sequence-row{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.actor,.step,.decision{min-height:74px;border:1px solid rgba(141,179,216,.58);border-radius:16px;background:#fff;padding:11px 12px;overflow-wrap:anywhere}.actor{text-align:center;background:linear-gradient(180deg,#fff,var(--blue-soft))}.actor b,.step b,.decision b{display:block;font-size:13px;line-height:1.3}.actor span,.step span,.decision span{display:block;margin-top:5px;color:var(--muted);font-size:12px;line-height:1.5}.timeline{display:grid;gap:10px;position:relative}.timeline:before{content:"";position:absolute;left:12.5%;right:12.5%;top:0;bottom:0;background:linear-gradient(90deg,transparent 0,transparent calc(25% - 1px),rgba(31,111,178,.2) calc(25% - 1px),rgba(31,111,178,.2) calc(25% + 1px),transparent calc(25% + 1px),transparent calc(50% - 1px),rgba(31,111,178,.2) calc(50% - 1px),rgba(31,111,178,.2) calc(50% + 1px),transparent calc(50% + 1px),transparent calc(75% - 1px),rgba(31,111,178,.2) calc(75% - 1px),rgba(31,111,178,.2) calc(75% + 1px),transparent calc(75% + 1px));pointer-events:none}.step{position:relative;z-index:1}.empty{border-color:transparent;background:transparent;box-shadow:none}.flow-arrow{grid-column:1/-1;text-align:center;color:var(--blue);font-size:12px;font-weight:800}.flow-arrow:after{content:" ↓"}.root{border:2px solid rgba(166,58,58,.62);background:linear-gradient(180deg,#fff,var(--red-soft))}.fix{border:2px solid rgba(23,120,90,.55);background:linear-gradient(180deg,#fff,var(--green-soft))}.gate{border:2px solid rgba(152,101,6,.5);background:linear-gradient(180deg,#fff,var(--amber-soft))}.evidence-steps{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;border:1px solid rgba(141,179,216,.42);border-radius:18px;background:rgba(255,255,255,.68);padding:12px}.decision{min-height:120px}.evidence-steps .root{border-width:2px}.sections{display:grid;grid-template-columns:1.1fr .9fr;gap:16px;margin-top:16px}.panel{box-shadow:none}.option{padding:12px 0;border-top:1px solid rgba(141,179,216,.3)}.option:first-of-type{border-top:0;padding-top:0}.option strong{display:block;font-size:13px}.option p,.panel li{color:var(--muted);font-size:12px;line-height:1.58}.recommended{color:var(--green)}code{font-family:"SFMono-Regular",Consolas,monospace;font-size:.92em;background:rgba(31,111,178,.08);padding:.1em .3em;border-radius:5px}.status{font-weight:800;color:var(--green)}.blocked{font-weight:800;color:var(--amber)}ul{margin:8px 0 0;padding-left:20px}li+li{margin-top:6px}:focus-visible{outline:3px solid rgba(31,111,178,.28);outline-offset:2px}@media(max-width:780px){main{width:min(100vw - 20px,760px)}.actors{display:none}.sequence-row,.evidence-steps,.sections{grid-template-columns:1fr}.timeline:before{left:50%;right:auto;width:2px;background:rgba(31,111,178,.2)}.empty{display:none}.flow-arrow{grid-column:auto}.template-layout,.panel{padding:14px}.step,.decision{min-height:auto}}@media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important;animation:none!important}}
+  </style>
+</head>
+<body>
+<main data-diagram-type="fault-debugging" data-template-family="fault-debugging" data-template-id="debugging-sequence" data-template-layout="debugging-sequence">
+  <span class="task-code">TASK_20260715_002</span>
+  <h1>故障排查：新建会话混用两套 Codex runtime 身份</h1>
+  <p class="summary">结论：manager 的“运行期不可换 runtime 身份”约束工作正常；Zeus 在缺省模型查询处分叉回旧 CLI 路径，并遗漏 <code>externalAgentHome</code>。现已统一复用随包 runtime 的完整身份，正式 App 新建 thread 与 turn 均验证通过。</p>
+
+  <section class="template-layout debugging-sequence" aria-label="Codex manager 命令路径漂移排障时序图">
+    <div class="actors">
+      <div class="actor"><b>用户 / Renderer</b><span>在“新建会话”输入首条消息</span></div>
+      <div class="actor"><b>Electron Main</b><span>解析并校验随包 Codex runtime</span></div>
+      <div class="actor"><b>Local Server</b><span>创建 native coordinator 与解析默认 model</span></div>
+      <div class="actor"><b>Codex Manager</b><span>单实例持有不可变 commandPath + externalAgentHome</span></div>
+    </div>
+    <div class="timeline">
+      <div class="sequence-row"><div class="step"><b>触发</b><span>点击“开始并发送”后，请求创建 native thread。</span></div><div class="empty"></div><div class="empty"></div><div class="empty"></div></div>
+      <div class="flow-arrow">应用启动阶段</div>
+      <div class="sequence-row"><div class="empty"></div><div class="step"><b>E1 · 正式 runtime</b><span><code>main.ts:601-608</code> 得到 <code>.../Resources/codex/codex</code> 并传入本地服务。</span></div><div class="step"><b>E2 · 单一启动源</b><span><code>index.ts:1082-1097</code> 把同一路径交给 coordinator / migration。</span></div><div class="step"><b>manager 已激活</b><span>真实进程 PID 26645 正从正式 App 包内运行。</span></div></div>
+      <div class="flow-arrow">新建会话阶段</div>
+      <div class="sequence-row"><div class="step"><b>没有显式 model</b><span>项目与全局均未配置模型，需要向 app-server 查询 supportedModels。</span></div><div class="empty"></div><div class="step root"><b>根因 R1 · runtime 身份分叉</b><span><code>index.ts:9064</code> 读取旧 CLI 路径并回退为 <code>codex</code>，且未携带已冻结的 <code>externalAgentHome</code>。</span></div><div class="step root"><b>E3 · fail-closed</b><span><code>codexAppServerManager.ts:563-571</code> 先后拒绝 commandPath 与 externalAgentHome 漂移。</span></div></div>
+      <div class="flow-arrow">用户可见结果</div>
+      <div class="sequence-row"><div class="step root"><b>连接失败</b><span>第一次显示 commandPath changed；修正路径后，真实 GUI 又暴露 external-agent home changed。</span></div><div class="empty"></div><div class="step fix"><b>已实施 F1</b><span>缺省 model 查询统一使用创建服务时冻结的 <code>codexRuntimeCommandPath</code> 与 <code>codexExternalAgentHome</code>。</span></div><div class="step gate"><b>保留安全约束</b><span>未放宽 manager 校验，不接受运行期切换 binary 或 agent home。</span></div></div>
+    </div>
+    <div class="evidence-steps" aria-label="证据裁决与验证闭环">
+      <div class="decision"><b>现象</b><span>正式重打包 App 中，新建会话稳定报 command path changed。</span></div>
+      <div class="decision"><b>证据</b><span>本机 DB 的 <code>adapterCliPaths={}</code>；正式包内 app-server 进程真实存在；GUI 两次 fail-closed 错误依次命中两个身份字段。</span></div>
+      <div class="decision root"><b>根因已确认</b><span>因为 E1+E2+E3，所以不是用户配置污染，也不是 runtime 缺失。</span></div>
+      <div class="decision fix"><b>修法</b><span>一个 manager、一个已校验 binary、一个完整 runtime identity 来源。</span></div>
+      <div class="decision gate"><b>验证已完成</b><span>RED/GREEN；100/100 聚焦；1357 passed；正式 package:mac；GUI thread/turn 完成。</span></div>
+    </div>
+  </section>
+
+  <div class="sections">
+    <section class="panel">
+      <h2>方案裁决</h2>
+      <div class="option"><strong class="recommended">A 🌟 统一 native runtime 权威来源（已实施）</strong><p>只改 model capability 查询的 commandPath 与 externalAgentHome 来源并补回归测试。最小影响，符合随包固定 Codex app-server 的既定边界。</p></div>
+      <div class="option"><strong>B 在 manager 内规范化或放宽路径比较</strong><p>会掩盖两个真实 binary 来源，可能把错误配置当成同一 runtime；不推荐。</p></div>
+      <div class="option"><strong>C 恢复从全局 CLI 设置启动 native manager</strong><p>破坏 pinned runtime、checksum 与版本一致性，不符合 Codex App 对齐目标；排除。</p></div>
+    </section>
+    <section class="panel">
+      <h2>Readiness 与验收</h2>
+      <ul>
+        <li><span class="status">VERIFICATION: PASSED</span>：源码、测试、正式包和真实 GUI 均有成功证据。</li>
+        <li>AC1：未配置 model 时，新建会话不再出现 command path / external-agent home changed。</li>
+        <li>AC2：所有 native <code>ensureReady</code> 调用均使用同一 runtime identity。</li>
+        <li>AC3：manager 的路径不可变校验、显式 model 和 legacy import 行为保持不变。</li>
+        <li>无 DB migration、依赖、配置格式或 UI 结构变更。</li>
+        <li>GUI：新 thread/turn 完成，Codex 返回 <code>ZEUS_RUNTIME_IDENTITY_FIX_OK</code>，会话恢复“已就绪”。</li>
+        <li>回滚：撤销一处 runtime identity 来源修改和对应回归测试。</li>
+      </ul>
+    </section>
+  </div>
+</main>
+</body>
+</html>

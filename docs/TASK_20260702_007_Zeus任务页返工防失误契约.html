@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>需求决策：Zeus 任务页返工防失误契约</title>
+  <style>
+    :root {
+      --ink: #102033;
+      --muted: #5a6c80;
+      --paper: #fbfdff;
+      --panel: rgba(255,255,255,.9);
+      --line: #8db3d8;
+      --blue: #1f6fb2;
+      --blue-soft: #e8f3ff;
+      --green: #17785a;
+      --green-soft: #e9f8f2;
+      --amber: #986506;
+      --amber-soft: #fff6de;
+      --red: #a63a3a;
+      --red-soft: #fff0f0;
+      --violet: #6254ad;
+      --violet-soft: #f1efff;
+      --shadow: 0 16px 42px rgba(20, 57, 92, .085);
+      --radius: 20px;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      font: 14px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      background:
+        radial-gradient(circle at 18% 3%, rgba(214,233,255,.78), transparent 30rem),
+        radial-gradient(circle at 78% 6%, rgba(228,246,239,.8), transparent 28rem),
+        linear-gradient(rgba(93,133,173,.045) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(93,133,173,.045) 1px, transparent 1px),
+        linear-gradient(180deg, #fff 0%, #f7fbff 54%, #fbfdff 100%);
+      background-size: auto, auto, 28px 28px, 28px 28px, auto;
+    }
+    main { width: min(1120px, calc(100vw - 36px)); margin: 32px auto 56px; }
+    .pill { display: inline-flex; padding: 4px 9px; border: 1px solid rgba(31,111,178,.22); border-radius: 999px; color: var(--blue); background: var(--blue-soft); font-size: 12px; font-weight: 800; }
+    h1 { margin: 12px 0 8px; font-size: clamp(24px, 2.8vw, 32px); line-height: 1.18; letter-spacing: -.025em; }
+    .lead { max-width: 84ch; color: var(--muted); margin: 0 0 22px; }
+    .truth { display: grid; gap: 10px; padding: 14px 16px; border: 1px solid rgba(166,58,58,.28); border-radius: 16px; background: var(--red-soft); margin: 18px 0; }
+    .truth strong { color: var(--red); }
+    .flow { border: 1px solid rgba(141,179,216,.68); border-radius: var(--radius); background: var(--panel); box-shadow: var(--shadow); padding: 18px; }
+    .track { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; align-items: stretch; }
+    .node { position: relative; min-height: 154px; border: 1px solid rgba(141,179,216,.62); border-radius: 16px; background: rgba(255,255,255,.94); padding: 14px; overflow-wrap: anywhere; }
+    .node:not(:last-child)::after { content: "→"; position: absolute; right: -13px; top: 50%; transform: translateY(-50%); color: var(--blue); font-weight: 900; background: var(--paper); border: 1px solid rgba(141,179,216,.45); border-radius: 999px; inline-size: 24px; block-size: 24px; display: grid; place-items: center; z-index: 2; }
+    .node h2 { font-size: 14px; margin: 0 0 8px; color: var(--blue); }
+    .node p { margin: 0; color: var(--muted); font-size: 12px; }
+    .gate { display: inline-flex; margin-bottom: 8px; padding: 2px 7px; border-radius: 999px; font-size: 11px; font-weight: 800; background: var(--amber-soft); color: var(--amber); border: 1px solid rgba(152,101,6,.24); }
+    .stop { background: var(--red-soft); color: var(--red); border-color: rgba(166,58,58,.22); }
+    .pass { background: var(--green-soft); color: var(--green); border-color: rgba(23,120,90,.22); }
+    .matrix { margin-top: 18px; border: 1px solid rgba(141,179,216,.62); border-radius: 18px; overflow: hidden; background: rgba(255,255,255,.92); }
+    .row, .head { display: grid; grid-template-columns: .9fr 1.3fr 1.25fr 1.1fr; }
+    .head { background: linear-gradient(180deg, #f7fbff, #eef6ff); color: var(--muted); font-size: 12px; font-weight: 800; }
+    .head div, .cell { padding: 12px; border-right: 1px solid rgba(141,179,216,.32); border-bottom: 1px solid rgba(141,179,216,.28); min-width: 0; }
+    .head div:last-child, .cell:last-child { border-right: 0; }
+    .row:last-child .cell { border-bottom: 0; }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; padding: 1px 5px; border-radius: 7px; border: 1px solid rgba(141,179,216,.35); background: #f3f7fb; }
+    @media (max-width: 900px) {
+      .track, .row, .head { grid-template-columns: 1fr; }
+      .node:not(:last-child)::after { content: "↓"; right: 50%; top: auto; bottom: -16px; transform: translateX(50%); }
+      .head { display: none; }
+      .cell { border-right: 0; }
+      .cell::before { content: attr(data-label); display: block; color: var(--muted); font-size: 11px; font-weight: 800; margin-bottom: 4px; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <span class="pill">TASK_20260702_007</span>
+    <h1>需求决策：Zeus 任务页返工防失误契约</h1>
+    <p class="lead">不能保证“绝不失误”。能保证的是：下一轮不再用测试通过、AX 树可达或功能存在冒充视觉还原；每个场景必须先有设计稿截图对照，再有实际窗口截图/AX 证据，差异未清零就不说还原。</p>
+
+    <section class="truth" aria-label="不可承诺与可承诺">
+      <div><strong>不可承诺：</strong>我不能承诺零错误，尤其不能在没有逐场景对照时承诺 100% 高还原。</div>
+      <div><strong>可承诺：</strong>我可以把错误暴露在交付前：差异清单、截图对照、阻断条件、反向搜索旧错误、重新打包后现场复核。</div>
+    </section>
+
+    <section class="flow" aria-label="防失误决策树">
+      <div class="track">
+        <article class="node">
+          <span class="gate stop">Gate 0 停止旧口径</span>
+          <h2>禁止先写“完成/高还原”</h2>
+          <p>没做设计稿 vs 实际页面逐项对照前，只能写“待复核”或“差异未清”。测试通过不能替代视觉还原。</p>
+        </article>
+        <article class="node">
+          <span class="gate">Gate 1 冻结目标</span>
+          <h2>锁定 TASK_005 场景</h2>
+          <p>逐场景抽取原型：空任务、新任务 modal、加载、错误、筛选无结果、批量选择、自定义列、小窗口。</p>
+        </article>
+        <article class="node">
+          <span class="gate">Gate 2 先列差异</span>
+          <h2>先出差异账本再改代码</h2>
+          <p>每个场景记录：位置、尺寸、密度、层级、文案、交互、滚动、可访问性。无法量化就截图标注。</p>
+        </article>
+        <article class="node">
+          <span class="gate">Gate 3 逐场景修</span>
+          <h2>一次只收敛一个场景</h2>
+          <p>每次修一个场景，先 RED 测试，再实现，再打包后窗口复核；不再把多个视觉问题捆成一句“优化”。</p>
+        </article>
+        <article class="node">
+          <span class="gate pass">Gate 4 才能收口</span>
+          <h2>证据齐了才说结果</h2>
+          <p>必须同时有：自动化测试、设计稿对照、真实窗口截图/AX 树、反向搜索旧坏模式、package:mac。</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="matrix" aria-label="验收阻断条件">
+      <div class="head"><div>检查项</div><div>不允许再犯</div><div>证据要求</div><div>未满足时动作</div></div>
+      <div class="row">
+        <div class="cell" data-label="检查项"><strong>视觉还原</strong></div>
+        <div class="cell" data-label="不允许再犯">只看 AX 树或单截图就宣布还原。</div>
+        <div class="cell" data-label="证据要求">设计稿截图、实际窗口截图、逐项差异表。</div>
+        <div class="cell" data-label="未满足时动作">停止收口，继续返修。</div>
+      </div>
+      <div class="row">
+        <div class="cell" data-label="检查项"><strong>多场景</strong></div>
+        <div class="cell" data-label="不允许再犯">只验当前有数据页面，漏掉空、错、加载、筛选无结果。</div>
+        <div class="cell" data-label="证据要求">状态注入测试 + 打包窗口可复核场景说明。</div>
+        <div class="cell" data-label="未满足时动作">标“未覆盖”，不得说完成。</div>
+      </div>
+      <div class="row">
+        <div class="cell" data-label="检查项"><strong>旧错误反查</strong></div>
+        <div class="cell" data-label="不允许再犯"><code>72vh</code> 空白、提前折行、大横条、弹层顶开表格、隐藏右列。</div>
+        <div class="cell" data-label="证据要求"><code>grep</code> / CSS 断言 / 渲染测试三者至少两项。</div>
+        <div class="cell" data-label="未满足时动作">先修旧模式，不继续做新外观。</div>
+      </div>
+      <div class="row">
+        <div class="cell" data-label="检查项"><strong>最终措辞</strong></div>
+        <div class="cell" data-label="不允许再犯">把“测试通过”说成“高还原完成”。</div>
+        <div class="cell" data-label="证据要求">最终只按证据写：已验证、未覆盖、待确认。</div>
+        <div class="cell" data-label="未满足时动作">删除结论，重写验收账本。</div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

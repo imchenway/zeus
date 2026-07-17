@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createLocalServer } from '../src/index.js';
 import { AuditLogRepository, createZeusDatabase } from '@zeus/storage';
-import { createAiRuntimeSessionManager, type AiRuntimeProcessHandle, type AiRuntimeSpawn } from '@zeus/ai-runtime';
+import { createAiRuntimeSessionManager, type AiRuntimeProcessHandle, type AiRuntimeSpawn, type CodexAppServerManager } from '@zeus/ai-runtime';
 import type { SecretStore } from '@zeus/security-core';
 import type { TelegramLongPollingClient, TelegramMessageSender } from '@zeus/telegram-adapter';
 
@@ -521,7 +521,7 @@ describe('Telegram polling local API', () => {
       payload: {
         projectId: project.id,
         taskId,
-        command: 'codex',
+        command: 'claude',
         cwd: '/Users/david/hypha/zeus',
       },
     });
@@ -669,7 +669,7 @@ describe('Telegram polling local API', () => {
       payload: {
         projectId: project.id,
         taskId,
-        command: 'codex',
+        command: 'claude',
         cwd: '/Users/david/hypha/zeus',
       },
     });
@@ -1046,6 +1046,126 @@ describe('Telegram polling local API', () => {
     expect(runtimeInvocations[0].args.join('\n')).toContain('"source":"telegram-run-test"');
   });
 
+  it('routes confirmed Codex run through native and keeps continue choice-safe without spawning a CLI', async () => {
+    const sent: Array<{ chatId: number; text: string }> = [];
+    const threadStarts: unknown[] = [];
+    const turnStarts: unknown[] = [];
+    let cliSpawnCount = 0;
+    let projectId = '';
+    let taskId = '';
+    let pollStep = 0;
+    let runConfirmationId = '';
+    let continueConfirmationId = '';
+    const capabilities = {
+      generationId: 'telegram-native-generation',
+      initializedAt: '2026-07-13T00:00:00.000Z',
+      models: [],
+      supportedModels: ['gpt-5.4'],
+    };
+    const codexManager: CodexAppServerManager = {
+      async ensureReady() {
+        return capabilities;
+      },
+      async startThread(input) {
+        threadStarts.push(input);
+        return { id: 'telegram-native-thread', turns: [] };
+      },
+      async resumeThread(input) {
+        return { id: input.threadId, turns: [] };
+      },
+      async readThread(input) {
+        return { id: input.threadId, turns: [] };
+      },
+      async startTurn(input) {
+        turnStarts.push(input);
+        return { id: 'telegram-native-turn', threadId: input.threadId, items: [] };
+      },
+      async steerTurn(input) {
+        return { turnId: input.turnId };
+      },
+      async interruptTurn() {},
+      async respondToServerRequest() {},
+      subscribe() {
+        return () => {};
+      },
+      getState() {
+        return { type: 'ready', generationId: capabilities.generationId, capabilities };
+      },
+      async prepareForShutdown() {},
+      async close() {},
+    };
+    const client: TelegramLongPollingClient = {
+      poll: async () => {
+        pollStep += 1;
+        if (pollStep === 1) return [{ updateId: 81, chatId: 1001, userId: 42, text: `/run ${projectId} ${taskId}` }];
+        if (pollStep === 2) return [{ updateId: 82, chatId: 1001, userId: 42, text: `/confirm ${runConfirmationId}` }];
+        if (pollStep === 3) return [{ updateId: 83, chatId: 1001, userId: 42, text: `/continue ${taskId}` }];
+        if (pollStep === 4) return [{ updateId: 84, chatId: 1001, userId: 42, text: `/confirm ${continueConfirmationId}` }];
+        return [];
+      },
+    };
+    const sender: TelegramMessageSender = {
+      sendMessage: async (chatId, text) => {
+        sent.push({ chatId, text });
+      },
+    };
+    const server = await createLocalServer({
+      dbPath: await createTmpDb(),
+      apiToken: 'test-token',
+      projectRoot: '/Users/david/hypha/zeus',
+      telegramAllowedUserIds: [42],
+      secretStore: createMemorySecretStore('telegram-token-real'),
+      telegramPollingClient: client,
+      telegramMessageSender: sender,
+      codexAppServerManager: codexManager,
+      aiRuntimeSpawn: () => {
+        cliSpawnCount += 1;
+        throw new Error('Codex Telegram must not spawn a CLI');
+      },
+    });
+    const project = (
+      await server.inject({
+        method: 'POST',
+        url: '/api/projects',
+        headers: { authorization: 'Bearer test-token' },
+        payload: { name: 'Telegram native', localPath: '/Users/david/hypha/zeus' },
+      })
+    ).json();
+    projectId = project.id;
+    const task = (
+      await server.inject({
+        method: 'POST',
+        url: '/api/tasks',
+        headers: { authorization: 'Bearer test-token' },
+        payload: { projectId, title: 'Telegram Codex native', description: '不得降级 CLI', sourceContext: { source: 'telegram-native-test' } },
+      })
+    ).json();
+    taskId = task.id;
+    expect((await server.inject({ method: 'PUT', url: '/api/runtime/settings', headers: { authorization: 'Bearer test-token' }, payload: { defaultAdapterId: 'codex' } })).statusCode).toBe(200);
+    await server.inject({ method: 'POST', url: '/api/telegram/polling/start', headers: { authorization: 'Bearer test-token' } });
+
+    await server.inject({ method: 'POST', url: '/api/telegram/polling/poll-once', headers: { authorization: 'Bearer test-token' } });
+    runConfirmationId = sent[0]?.text.match(/\/confirm ([0-9a-f-]+)/u)?.[1] ?? '';
+    await server.inject({ method: 'POST', url: '/api/telegram/polling/poll-once', headers: { authorization: 'Bearer test-token' } });
+    await server.inject({ method: 'POST', url: '/api/telegram/polling/poll-once', headers: { authorization: 'Bearer test-token' } });
+    continueConfirmationId = sent[2]?.text.match(/\/confirm ([0-9a-f-]+)/u)?.[1] ?? '';
+    await server.inject({ method: 'POST', url: '/api/telegram/polling/poll-once', headers: { authorization: 'Bearer test-token' } });
+    const finalTask = await server.inject({ method: 'GET', url: `/api/tasks/${taskId}`, headers: { authorization: 'Bearer test-token' } });
+    const runtimeSessions = await server.inject({ method: 'GET', url: `/api/runtime/sessions?taskId=${taskId}`, headers: { authorization: 'Bearer test-token' } });
+
+    expect(runConfirmationId).not.toBe('');
+    expect(sent[1]?.text).toContain('已启动 Codex native 会话');
+    expect(continueConfirmationId).not.toBe('');
+    expect(sent[3]?.text).toContain('远程操作未执行');
+    expect(sent[3]?.text).toContain('显式选择');
+    expect(threadStarts).toHaveLength(1);
+    expect(turnStarts).toHaveLength(1);
+    expect(cliSpawnCount).toBe(0);
+    expect(runtimeSessions.json()).toHaveLength(0);
+    expect(finalTask.json().status).toBe('cancelled');
+    await server.close();
+  });
+
   it('cancels pending Telegram runtime confirmation without starting a session', async () => {
     const sent: Array<{ chatId: number; text: string }> = [];
     let projectId = '';
@@ -1328,6 +1448,12 @@ describe('Telegram polling local API', () => {
       telegramPollingClient: client,
       telegramMessageSender: sender,
       aiRuntimeSpawn: spawn,
+    });
+    await server.inject({
+      method: 'PUT',
+      url: '/api/runtime/settings',
+      headers: { authorization: 'Bearer test-token' },
+      payload: { defaultAdapterId: 'claude' },
     });
     const projectResponse = await server.inject({
       method: 'POST',

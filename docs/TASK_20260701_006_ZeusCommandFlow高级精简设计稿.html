@@ -1,0 +1,960 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>页面设计稿：Zeus Command Flow 高级精简整体设计稿</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --window: oklch(98.7% 0.004 255);
+      --surface: oklch(99.1% 0.003 255 / 0.92);
+      --surface-2: oklch(96.8% 0.005 255 / 0.82);
+      --surface-3: oklch(94.6% 0.007 255 / 0.58);
+      --rail: oklch(96% 0.004 255 / 0.86);
+      --ink: oklch(22% 0.008 255);
+      --ink-2: oklch(36% 0.007 255);
+      --muted: oklch(52% 0.006 255);
+      --soft: oklch(66% 0.005 255);
+      --hairline: oklch(86% 0.004 255 / 0.48);
+      --hairline-soft: oklch(88% 0.004 255 / 0.22);
+      --accent: oklch(56% 0.145 254);
+      --accent-soft: oklch(94.6% 0.022 254 / 0.88);
+      --accent-quiet: oklch(88.5% 0.032 254 / 0.52);
+      --success: oklch(50% 0.082 145);
+      --warning: oklch(56% 0.108 76);
+      --danger: oklch(48% 0.11 28);
+      --shadow-soft: 0 18px 48px oklch(38% 0.015 255 / 0.10);
+      --shadow-float: 0 30px 80px oklch(38% 0.015 255 / 0.14);
+      --radius-xl: 28px;
+      --radius-lg: 20px;
+      --radius-md: 14px;
+      --radius-sm: 10px;
+      --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+      --mono: "SFMono-Regular", "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+      --ease: cubic-bezier(0.22, 1, 0.36, 1);
+    }
+
+    * { box-sizing: border-box; }
+    html { min-height: 100%; background: var(--window); }
+    body {
+      margin: 0;
+      min-height: 100%;
+      font-family: var(--font);
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 15% -8%, oklch(93.6% 0.026 254 / 0.62), transparent 34rem),
+        radial-gradient(circle at 82% 0%, oklch(94.3% 0.014 275 / 0.54), transparent 30rem),
+        linear-gradient(180deg, oklch(98.9% 0.004 255), oklch(96.9% 0.004 255));
+      overflow-x: hidden;
+    }
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      background-image:
+        linear-gradient(oklch(70% 0.003 255 / 0.045) 1px, transparent 1px),
+        linear-gradient(90deg, oklch(70% 0.003 255 / 0.035) 1px, transparent 1px);
+      background-size: 44px 44px;
+      mask-image: linear-gradient(180deg, black, transparent 78%);
+    }
+
+    .page {
+      position: relative;
+      width: min(1440px, calc(100vw - 48px));
+      margin: 0 auto;
+      padding: 42px 0 56px;
+    }
+
+    header.hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 360px;
+      gap: 32px;
+      align-items: end;
+      margin-bottom: 28px;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 650;
+      letter-spacing: 0.02em;
+      margin-bottom: 14px;
+    }
+    .eyebrow::before {
+      content: "";
+      width: 7px;
+      height: 7px;
+      border-radius: 999px;
+      background: var(--accent);
+      box-shadow: 0 0 0 5px var(--accent-soft);
+    }
+    h1 {
+      margin: 0;
+      max-width: 900px;
+      color: var(--ink);
+      font-size: 42px;
+      line-height: 1.06;
+      letter-spacing: -0.045em;
+      font-weight: 760;
+    }
+    .lead {
+      margin: 18px 0 0;
+      max-width: 760px;
+      color: var(--ink-2);
+      font-size: 15px;
+      line-height: 1.65;
+      letter-spacing: -0.01em;
+    }
+    .brief-note {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.6;
+      padding: 6px 0 0 24px;
+      border-left: 1px solid var(--hairline);
+    }
+    .brief-note strong {
+      display: block;
+      color: var(--ink);
+      font-size: 13px;
+      margin-bottom: 6px;
+    }
+
+    .design-law {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 1px;
+      margin: 20px 0 28px;
+      background: var(--hairline-soft);
+      border-radius: 22px;
+      overflow: hidden;
+      box-shadow: var(--shadow-soft);
+    }
+    .law-item {
+      min-height: 92px;
+      padding: 18px 20px;
+      background: oklch(98.4% 0.004 255 / 0.82);
+    }
+    .law-item span {
+      display: block;
+      margin-bottom: 8px;
+      color: var(--accent);
+      font: 650 11px/1 var(--font);
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    .law-item strong {
+      display: block;
+      margin-bottom: 5px;
+      font-size: 14px;
+      letter-spacing: -0.012em;
+    }
+    .law-item p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    .mock-window {
+      overflow: hidden;
+      border-radius: var(--radius-xl);
+      background: linear-gradient(180deg, oklch(99.3% 0.003 255 / 0.96), oklch(97.6% 0.004 255 / 0.94));
+      box-shadow: var(--shadow-float);
+      outline: 1px solid oklch(92% 0.004 255 / 0.54);
+    }
+    .traffic {
+      height: 42px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 0 18px;
+      background: oklch(97.2% 0.004 255 / 0.78);
+      box-shadow: inset 0 -1px 0 var(--hairline-soft);
+    }
+    .dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 999px;
+      box-shadow: inset 0 0 0 1px oklch(50% 0.01 255 / 0.12);
+    }
+    .red { background: oklch(70% 0.16 27); }
+    .yellow { background: oklch(78% 0.12 82); }
+    .green { background: oklch(70% 0.12 145); }
+    .traffic-title {
+      flex: 1;
+      text-align: center;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 560;
+      margin-right: 60px;
+    }
+
+    .app-shell {
+      display: grid;
+      grid-template-columns: 222px minmax(0, 1fr) 292px;
+      min-height: 820px;
+    }
+
+    .source-list {
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+      padding: 18px 14px 16px;
+      background: linear-gradient(180deg, var(--rail), oklch(94.8% 0.004 255 / 0.82));
+      box-shadow: inset -1px 0 0 var(--hairline-soft);
+    }
+    .quick-actions { display: grid; gap: 6px; }
+    .quick-row, .project-row, .sub-row {
+      min-height: 34px;
+      display: grid;
+      grid-template-columns: 22px minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 8px;
+      color: var(--ink-2);
+      border-radius: 9px;
+      padding: 0 8px;
+      font-size: 13px;
+      text-decoration: none;
+    }
+    .quick-row.current, .project-row.current, .sub-row.current {
+      background: oklch(90.8% 0.008 255 / 0.74);
+      color: var(--ink);
+      font-weight: 650;
+    }
+    .glyph {
+      width: 18px;
+      height: 18px;
+      display: grid;
+      place-items: center;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .count {
+      min-width: 20px;
+      height: 18px;
+      display: inline-grid;
+      place-items: center;
+      padding: 0 6px;
+      border-radius: 999px;
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-size: 11px;
+      font-weight: 700;
+    }
+    .label-title {
+      margin: 0 0 7px 8px;
+      color: var(--soft);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+    .project-group { display: grid; gap: 3px; }
+    .sub-row {
+      min-height: 28px;
+      grid-template-columns: 22px minmax(0, 1fr) auto;
+      margin-left: 20px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .sub-row.current { color: var(--ink); }
+    .settings-row { margin-top: auto; }
+
+    .workspace {
+      min-width: 0;
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr) auto;
+      background:
+        linear-gradient(180deg, oklch(98.9% 0.003 255 / 0.92), oklch(97.4% 0.004 255 / 0.92));
+    }
+    .command-bar {
+      padding: 16px 22px 13px;
+      display: grid;
+      grid-template-columns: minmax(320px, 1fr) auto;
+      gap: 18px;
+      align-items: center;
+      box-shadow: inset 0 -1px 0 var(--hairline-soft);
+    }
+    .command-field {
+      min-height: 40px;
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 10px;
+      border-radius: 14px;
+      background: oklch(96.2% 0.004 255 / 0.96);
+      box-shadow: inset 0 0 0 1px oklch(86% 0.004 255 / 0.48), 0 1px 0 oklch(100% 0 0 / 0.62);
+      padding: 0 12px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .kbd {
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--muted);
+      padding: 3px 6px;
+      border-radius: 6px;
+      background: oklch(92.8% 0.004 255 / 0.82);
+      box-shadow: inset 0 0 0 1px var(--hairline-soft);
+    }
+    .server-status {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+    .pulse {
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: var(--success);
+      box-shadow: 0 0 0 5px oklch(89% 0.028 145 / 0.5);
+    }
+
+    .stage {
+      min-width: 0;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 260px;
+      gap: 22px;
+      padding: 24px 22px 18px;
+    }
+    .stage-main { min-width: 0; }
+    .stage-title {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 18px;
+      margin-bottom: 18px;
+    }
+    .stage-title h2 {
+      margin: 0;
+      font-size: 24px;
+      line-height: 1.1;
+      letter-spacing: -0.035em;
+      font-weight: 740;
+    }
+    .stage-title p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+      max-width: 340px;
+      text-align: right;
+    }
+
+    .flowline {
+      position: relative;
+      margin: 16px 4px 22px;
+      padding: 10px 0 2px;
+    }
+    .flowline::before {
+      content: "";
+      position: absolute;
+      left: 7%;
+      right: 7%;
+      top: 31px;
+      height: 3px;
+      border-radius: 999px;
+      background: linear-gradient(90deg, transparent, var(--accent-quiet), oklch(80% 0.05 252 / 0.6), var(--accent-quiet), transparent);
+    }
+    .flow-steps {
+      position: relative;
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .flow-step {
+      display: grid;
+      justify-items: center;
+      text-align: center;
+      gap: 8px;
+      min-width: 0;
+    }
+    .node {
+      width: 44px;
+      height: 44px;
+      display: grid;
+      place-items: center;
+      border-radius: 999px;
+      background: radial-gradient(circle at 35% 28%, oklch(99.5% 0.004 255), oklch(92% 0.018 254));
+      box-shadow: inset 0 0 0 1px oklch(86% 0.01 254 / 0.72), 0 10px 24px oklch(54% 0.11 254 / 0.12);
+      color: var(--accent);
+      font-weight: 780;
+      font-size: 12px;
+    }
+    .flow-step strong {
+      font-size: 12px;
+      color: var(--ink);
+      letter-spacing: -0.01em;
+    }
+    .flow-step small {
+      display: block;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.35;
+      max-width: 118px;
+    }
+
+    .task-lanes {
+      display: grid;
+      gap: 1px;
+      overflow: hidden;
+      border-radius: 18px;
+      background: var(--hairline-soft);
+      box-shadow: 0 1px 0 oklch(100% 0 0 / 0.54), var(--shadow-soft);
+    }
+    .lane {
+      display: grid;
+      grid-template-columns: 134px minmax(0, 1.4fr) 128px 142px 88px;
+      align-items: center;
+      gap: 14px;
+      min-height: 70px;
+      padding: 0 18px;
+      background: oklch(98.2% 0.003 255 / 0.88);
+    }
+    .lane.active {
+      background: linear-gradient(90deg, oklch(96.2% 0.012 254 / 0.96), oklch(98.7% 0.003 255 / 0.94));
+    }
+    .project-name {
+      display: grid;
+      gap: 4px;
+      font-size: 13px;
+      font-weight: 720;
+      letter-spacing: -0.015em;
+    }
+    .project-name small, .task-text small, .lane-meta small {
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 520;
+      line-height: 1.35;
+    }
+    .task-text {
+      min-width: 0;
+      display: grid;
+      gap: 4px;
+      font-size: 13px;
+      font-weight: 660;
+    }
+    .task-text span {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .status-pill {
+      justify-self: start;
+      border-radius: 999px;
+      padding: 5px 9px;
+      background: oklch(93.8% 0.012 254 / 0.9);
+      color: var(--accent);
+      font-size: 11px;
+      font-weight: 730;
+    }
+    .status-pill.wait { background: oklch(95% 0.025 78 / 0.86); color: var(--warning); }
+    .status-pill.ok { background: oklch(94.4% 0.022 145 / 0.86); color: var(--success); }
+    .lane-meta { display: grid; gap: 2px; color: var(--ink-2); font-size: 12px; }
+    .primary-action {
+      min-height: 30px;
+      border: 0;
+      border-radius: 999px;
+      padding: 0 12px;
+      background: var(--accent);
+      color: oklch(98% 0.004 255);
+      font: 690 12px/1 var(--font);
+      box-shadow: 0 10px 22px oklch(56% 0.145 254 / 0.18);
+    }
+    .secondary-action {
+      min-height: 30px;
+      border: 0;
+      border-radius: 999px;
+      padding: 0 12px;
+      background: oklch(91.5% 0.006 255 / 0.86);
+      color: var(--ink-2);
+      font: 650 12px/1 var(--font);
+    }
+
+    .composer-dock {
+      margin-top: 20px;
+      border-radius: 22px;
+      background: oklch(99.4% 0.002 255 / 0.96);
+      box-shadow: inset 0 0 0 1px var(--hairline-soft), 0 24px 52px oklch(44% 0.012 255 / 0.10);
+      overflow: hidden;
+    }
+    .composer-input {
+      min-height: 90px;
+      padding: 18px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+    .composer-bottom {
+      min-height: 44px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 0 12px;
+      background: oklch(96.6% 0.004 255 / 0.92);
+      box-shadow: inset 0 1px 0 var(--hairline-soft);
+    }
+    .context-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      height: 24px;
+      border-radius: 999px;
+      padding: 0 9px;
+      color: var(--muted);
+      background: oklch(92.8% 0.004 255 / 0.66);
+      font-size: 11px;
+      font-weight: 620;
+    }
+    .composer-bottom .spacer { flex: 1; }
+
+    .today-panel {
+      padding-top: 44px;
+      display: grid;
+      gap: 14px;
+    }
+    .panel-title {
+      margin: 0;
+      color: var(--muted);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.055em;
+      font-weight: 760;
+    }
+    .quiet-list {
+      display: grid;
+      gap: 10px;
+      padding: 0;
+      margin: 0;
+      list-style: none;
+    }
+    .quiet-list li {
+      position: relative;
+      padding-left: 15px;
+      color: var(--ink-2);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+    .quiet-list li::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 0.55em;
+      width: 5px;
+      height: 5px;
+      border-radius: 999px;
+      background: var(--accent);
+      opacity: 0.64;
+    }
+    .truth-note {
+      margin-top: 16px;
+      padding: 14px 0 0;
+      box-shadow: inset 0 1px 0 var(--hairline-soft);
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.55;
+    }
+    .truth-note strong { color: var(--ink); }
+
+    .inspector {
+      min-width: 0;
+      padding: 18px 16px;
+      background: linear-gradient(180deg, oklch(97.6% 0.004 255 / 0.9), oklch(95.8% 0.004 255 / 0.86));
+      box-shadow: inset 1px 0 0 var(--hairline-soft);
+    }
+    .lens {
+      display: grid;
+      gap: 18px;
+      min-height: 100%;
+      align-content: start;
+    }
+    .lens-head h3 {
+      margin: 0 0 6px;
+      font-size: 15px;
+      letter-spacing: -0.018em;
+    }
+    .lens-head p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.55;
+    }
+    .mini-map {
+      position: relative;
+      height: 186px;
+      border-radius: 18px;
+      background:
+        radial-gradient(circle at 26% 36%, oklch(91.8% 0.026 254 / 0.86) 0 28px, transparent 29px),
+        radial-gradient(circle at 64% 34%, oklch(94.4% 0.016 255 / 0.92) 0 22px, transparent 23px),
+        radial-gradient(circle at 51% 70%, oklch(90.5% 0.022 252 / 0.7) 0 18px, transparent 19px),
+        linear-gradient(180deg, oklch(98.8% 0.002 255 / 0.78), oklch(95.4% 0.006 255 / 0.6));
+      box-shadow: inset 0 0 0 1px var(--hairline-soft);
+      overflow: hidden;
+    }
+    .mini-map::before,
+    .mini-map::after {
+      content: "";
+      position: absolute;
+      height: 2px;
+      border-radius: 999px;
+      background: oklch(72% 0.05 254 / 0.34);
+      transform-origin: left center;
+    }
+    .mini-map::before { width: 110px; left: 72px; top: 72px; transform: rotate(-2deg); }
+    .mini-map::after { width: 92px; left: 92px; top: 118px; transform: rotate(14deg); }
+    .lens-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 0;
+      box-shadow: inset 0 -1px 0 var(--hairline-soft);
+    }
+    .lens-row strong { font-size: 12px; letter-spacing: -0.01em; }
+    .lens-row small { color: var(--muted); font-size: 11px; }
+    .lens-row span { color: var(--accent); font-size: 11px; font-weight: 720; }
+
+    .evidence-strip {
+      padding: 12px 22px 16px;
+      display: grid;
+      grid-template-columns: 1fr auto auto auto;
+      align-items: center;
+      gap: 16px;
+      box-shadow: inset 0 1px 0 var(--hairline-soft);
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .evidence-strip strong { color: var(--ink-2); }
+    .low-noise-btn {
+      min-height: 28px;
+      border: 0;
+      border-radius: 8px;
+      padding: 0 10px;
+      background: oklch(92.8% 0.004 255 / 0.7);
+      color: var(--ink-2);
+      font: 650 12px/1 var(--font);
+    }
+
+    .below {
+      display: grid;
+      grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+      gap: 28px;
+      margin-top: 30px;
+    }
+    .section-block {
+      padding: 24px 4px 0;
+    }
+    .section-block h2 {
+      margin: 0 0 14px;
+      font-size: 20px;
+      line-height: 1.18;
+      letter-spacing: -0.026em;
+    }
+    .section-block p {
+      margin: 0 0 18px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.65;
+      max-width: 64ch;
+    }
+    .flow-spec {
+      display: grid;
+      gap: 1px;
+      overflow: hidden;
+      border-radius: 18px;
+      background: var(--hairline-soft);
+    }
+    .spec-row {
+      display: grid;
+      grid-template-columns: 34px minmax(0, 1fr) minmax(0, 1.25fr);
+      gap: 14px;
+      padding: 15px 18px;
+      background: oklch(98.4% 0.003 255 / 0.72);
+      align-items: start;
+    }
+    .spec-row .index {
+      font: 760 12px/1 var(--mono);
+      color: var(--accent);
+    }
+    .spec-row strong { font-size: 13px; }
+    .spec-row span { color: var(--muted); font-size: 12px; line-height: 1.5; }
+
+    .token-table {
+      display: grid;
+      gap: 12px;
+    }
+    .token-row {
+      display: grid;
+      grid-template-columns: 150px minmax(0, 1fr);
+      gap: 16px;
+      padding-bottom: 12px;
+      box-shadow: inset 0 -1px 0 var(--hairline-soft);
+    }
+    .token-row strong { font-size: 13px; }
+    .token-row span { color: var(--muted); font-size: 12px; line-height: 1.55; }
+
+    .evidence {
+      margin-top: 28px;
+      padding: 20px 22px;
+      border-radius: 22px;
+      background: oklch(97.6% 0.004 255 / 0.74);
+      box-shadow: inset 0 0 0 1px var(--hairline-soft);
+    }
+    .evidence h2 { margin: 0 0 12px; font-size: 17px; letter-spacing: -0.018em; }
+    .evidence ul { margin: 0; padding-left: 18px; color: var(--muted); font-size: 12px; line-height: 1.7; }
+    .evidence strong { color: var(--ink-2); }
+    code { font-family: var(--mono); font-size: 0.92em; color: var(--ink-2); }
+
+    button, a, [tabindex] { outline: none; }
+    button:focus-visible, a:focus-visible, [tabindex]:focus-visible {
+      box-shadow: 0 0 0 3px oklch(62% 0.16 252 / 0.2), inset 0 0 0 1px oklch(62% 0.16 252 / 0.55);
+    }
+    button { cursor: default; }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+    }
+
+    @media (max-width: 1080px) {
+      .page { width: min(100vw - 28px, 980px); padding-top: 28px; }
+      header.hero, .below { grid-template-columns: 1fr; }
+      .brief-note { padding-left: 0; border-left: 0; }
+      .app-shell { grid-template-columns: 190px minmax(0, 1fr); }
+      .inspector { grid-column: 1 / -1; box-shadow: inset 0 1px 0 var(--hairline-soft); }
+      .stage { grid-template-columns: 1fr; }
+      .today-panel { padding-top: 4px; }
+      .lane { grid-template-columns: 112px minmax(0, 1fr) 110px 74px; }
+      .lane-meta { display: none; }
+    }
+
+    @media (max-width: 760px) {
+      .page { width: 100%; padding: 16px 12px 34px; }
+      h1 { font-size: 30px; }
+      .lead { font-size: 14px; }
+      .design-law { grid-template-columns: 1fr; }
+      .mock-window { border-radius: 22px; }
+      .traffic-title { display: none; }
+      .app-shell { display: block; min-height: auto; }
+      .source-list { min-height: auto; }
+      .project-group { grid-template-columns: 1fr; }
+      .command-bar { grid-template-columns: 1fr; padding: 14px; }
+      .server-status { justify-content: space-between; }
+      .stage { padding: 18px 14px; }
+      .stage-title { display: block; }
+      .stage-title p { margin-top: 8px; text-align: left; }
+      .flowline::before { display: none; }
+      .flow-steps { grid-template-columns: 1fr; gap: 10px; }
+      .flow-step { grid-template-columns: 44px minmax(0, 1fr); justify-items: start; text-align: left; }
+      .flow-step small { max-width: none; }
+      .task-lanes { border-radius: 16px; }
+      .lane { grid-template-columns: 1fr; gap: 7px; min-height: auto; padding: 15px; }
+      .task-text span { white-space: normal; }
+      .primary-action, .secondary-action { width: max-content; }
+      .composer-bottom { flex-wrap: wrap; padding: 9px; }
+      .inspector { padding: 16px 14px; }
+      .evidence-strip { grid-template-columns: 1fr; }
+      .spec-row, .token-row { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <header class="hero">
+      <div>
+        <div class="eyebrow">定向返修 · Apple / Codex 质感 · 多项目执行动线</div>
+        <h1>页面设计稿：Zeus Command Flow，让多项目任务在一个安静工作台里连续推进</h1>
+        <p class="lead">这一版我收回 Orbit 的强隐喻与黑白交错，改成更像 Codex 与 Apple 工具的低噪音材质：少边框、少卡片、少戏剧化对比。代码库问答和制图降级为“理解项目的 Context Lens”，真正主角是跨项目创建任务、推送到本地 app-server、连续对话、更新状态和保留证据。</p>
+      </div>
+      <aside class="brief-note" aria-label="本轮设计 brief">
+        <strong>不发散候选的原因</strong>
+        本轮是对 TASK_005 的明确返修，不再给三套方向。目标是把视觉收敛到高级精简，把信息架构从“代码理解中心”改回“多项目任务执行中心”。
+      </aside>
+    </header>
+
+    <section class="design-law" aria-label="本轮纠偏原则">
+      <div class="law-item"><span>Cut 01</span><strong>不要黑白撞色</strong><p>大面积底色使用冷中性珍珠白和雾灰，黑只保留为深灰文字，白也带轻微冷色。</p></div>
+      <div class="law-item"><span>Cut 02</span><strong>代码图谱不是主导航终点</strong><p>图谱、问答、Mermaid 是 Context Lens：辅助理解项目，不能抢走任务执行动线。</p></div>
+      <div class="law-item"><span>Cut 03</span><strong>主路径是连续推进任务</strong><p>项目切换、新建任务、运行 / 继续、状态变更、证据沉淀必须在同一条工作流里。</p></div>
+    </section>
+
+    <section class="mock-window" aria-label="Zeus Command Flow 主设计稿">
+      <div class="traffic" aria-hidden="true">
+        <span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span>
+        <span class="traffic-title">Zeus · Local Command Flow</span>
+      </div>
+      <div class="app-shell">
+        <nav class="source-list" aria-label="项目优先导航">
+          <div class="quick-actions" aria-label="快捷入口">
+            <a class="quick-row current" href="#"><span class="glyph">✦</span><span>新任务</span><span class="kbd">T</span></a>
+            <a class="quick-row" href="#"><span class="glyph">⌕</span><span>搜索</span><span class="kbd">⌘K</span></a>
+          </div>
+          <div>
+            <p class="label-title">Projects</p>
+            <div class="project-group">
+              <a class="project-row current" href="#"><span class="glyph">⌁</span><span>Zeus E2E</span><span class="count">3</span></a>
+              <a class="sub-row current" href="#"><span></span><span>任务</span><span>当前</span></a>
+              <a class="sub-row" href="#"><span></span><span>代码理解</span><span></span></a>
+              <a class="sub-row" href="#"><span></span><span>会话</span><span></span></a>
+            </div>
+            <div class="project-group" style="margin-top: 8px;">
+              <a class="project-row" href="#"><span class="glyph">⌁</span><span>tc-app-core</span><span class="count">2</span></a>
+              <a class="sub-row" href="#"><span></span><span>任务</span><span></span></a>
+              <a class="sub-row" href="#"><span></span><span>代码理解</span><span></span></a>
+            </div>
+            <div class="project-group" style="margin-top: 8px;">
+              <a class="project-row" href="#"><span class="glyph">⌁</span><span>fawnStudio</span><span class="count">1</span></a>
+            </div>
+          </div>
+          <a class="quick-row settings-row" href="#"><span class="glyph">⚙</span><span>设置</span><span></span></a>
+        </nav>
+
+        <section class="workspace" aria-label="多项目任务工作台">
+          <div class="command-bar">
+            <div class="command-field" role="search" aria-label="全局命令输入">
+              <span class="glyph">⌘</span>
+              <span>创建任务、切项目、继续 CLI 对话、查看等待确认...</span>
+              <span class="kbd">Return</span>
+            </div>
+            <div class="server-status" aria-label="本地 app-server 状态">
+              <span class="pulse" aria-hidden="true"></span>
+              <span>app-server 本机运行</span>
+              <span>Codex CLI 可用</span>
+            </div>
+          </div>
+
+          <div class="stage">
+            <div class="stage-main">
+              <div class="stage-title">
+                <h2>今天要推进的项目任务</h2>
+                <p>任务不再躲在表格或会话页里。每一行就是一个可继续的本机工作流，状态、对话和证据在同一视野内。</p>
+              </div>
+
+              <div class="flowline" aria-label="主交互动线">
+                <div class="flow-steps">
+                  <div class="flow-step"><span class="node">1</span><div><strong>选项目</strong><small>左侧项目是工作切换器，不是目录树。</small></div></div>
+                  <div class="flow-step"><span class="node">2</span><div><strong>创建任务</strong><small>标题、意图、附件、上下文一次收齐。</small></div></div>
+                  <div class="flow-step"><span class="node">3</span><div><strong>推送 app-server</strong><small>本地 API 启动或继续 Runtime。</small></div></div>
+                  <div class="flow-step"><span class="node">4</span><div><strong>连续对话</strong><small>在任务内补充要求、暂停、继续。</small></div></div>
+                  <div class="flow-step"><span class="node">5</span><div><strong>状态与证据</strong><small>完成、取消、Git diff、事件流可追溯。</small></div></div>
+                </div>
+              </div>
+
+              <div class="task-lanes" role="list" aria-label="跨项目任务列表">
+                <div class="lane active" role="listitem">
+                  <div class="project-name">Zeus E2E<small>/Users/david/hypha/zeus</small></div>
+                  <div class="task-text"><span>重构任务页：让 AI 执行和状态切换成为主路径</span><small>最近消息：继续按新的 Command Flow 调整</small></div>
+                  <span class="status-pill">可继续</span>
+                  <div class="lane-meta"><span>CLI 对话 18m</span><small>2 个变更待验</small></div>
+                  <button class="primary-action" type="button">继续</button>
+                </div>
+                <div class="lane" role="listitem">
+                  <div class="project-name">tc-app-core<small>/Back-End/tc-app-core</small></div>
+                  <div class="task-text"><span>排查库存冲抵异常，先读取运行证据</span><small>等待：外部服务日志或用户确认</small></div>
+                  <span class="status-pill wait">等待</span>
+                  <div class="lane-meta"><span>Runtime 暂停</span><small>1 个附件</small></div>
+                  <button class="secondary-action" type="button">查看</button>
+                </div>
+                <div class="lane" role="listitem">
+                  <div class="project-name">fawnStudio<small>/Users/david/hypha/fawnStudio</small></div>
+                  <div class="task-text"><span>验收创作链路的移动端空态和失败态</span><small>证据：截图、日志、任务事件</small></div>
+                  <span class="status-pill ok">已完成</span>
+                  <div class="lane-meta"><span>已归档</span><small>可复查 diff</small></div>
+                  <button class="secondary-action" type="button">证据</button>
+                </div>
+              </div>
+
+              <div class="composer-dock" aria-label="任务连续对话输入">
+                <div class="composer-input">告诉 Zeus 下一步：继续这个任务、补充约束、要求验证，或把当前项目的代码理解结果带入任务...</div>
+                <div class="composer-bottom">
+                  <span class="context-chip">Zeus E2E</span>
+                  <span class="context-chip">任务 ZEU-000014</span>
+                  <span class="context-chip">Codex CLI</span>
+                  <span class="spacer"></span>
+                  <button class="secondary-action" type="button">附件</button>
+                  <button class="primary-action" type="button">发送</button>
+                </div>
+              </div>
+            </div>
+
+            <aside class="today-panel" aria-label="今日执行摘要">
+              <p class="panel-title">Working memory</p>
+              <ul class="quiet-list">
+                <li>3 个项目有活动任务，1 个任务等待外部输入。</li>
+                <li>所有任务动作通过本地 app-server，失败时只显示真实失败态。</li>
+                <li>代码理解作为上下文插入任务，不作为默认主路径。</li>
+              </ul>
+              <p class="truth-note"><strong>大胆指出：</strong>现在的设计如果把“代码图谱”继续放在主体验中心，会把 Zeus 误导成代码可视化工具。它真正有价值的是把多个项目的 AI 执行、状态和证据持续串起来。</p>
+            </aside>
+          </div>
+
+          <div class="evidence-strip" aria-label="底部证据与低频操作">
+            <span><strong>证据链：</strong>任务事件 12 · Runtime 日志 4 · Git diff 2 files · 本机 SQLite</span>
+            <button class="low-noise-btn" type="button">打开 Diff</button>
+            <button class="low-noise-btn" type="button">导出 Patch</button>
+            <button class="low-noise-btn" type="button">更多</button>
+          </div>
+        </section>
+
+        <aside class="inspector" aria-label="代码理解上下文 Lens">
+          <div class="lens">
+            <div class="lens-head">
+              <h3>Context Lens</h3>
+              <p>代码库问答和制图只负责回答“这个任务会影响哪里”。不再和任务执行抢主舞台。</p>
+            </div>
+            <div class="mini-map" aria-label="代码图谱缩略理解视图"></div>
+            <div class="lens-row"><div><strong>系统架构图</strong><br><small>真实扫描来源，按需打开</small></div><span>理解</span></div>
+            <div class="lens-row"><div><strong>图谱问答</strong><br><small>答案可转成任务上下文</small></div><span>引用</span></div>
+            <div class="lens-row"><div><strong>创建跟进任务</strong><br><small>从节点、问答或会话生成</small></div><span>转入主线</span></div>
+          </div>
+        </aside>
+      </div>
+    </section>
+
+    <section class="below" aria-label="交互与样式细化">
+      <div class="section-block">
+        <h2>新的整体交互动线</h2>
+        <p>Zeus 不应该让用户在任务、会话、代码、设置之间反复找入口。它应该把项目当工作容器，把任务当主对象，把 app-server / Runtime / CLI 对话当任务推进方式。</p>
+        <div class="flow-spec">
+          <div class="spec-row"><span class="index">01</span><strong>全局命令入口</strong><span>⌘K 或左上新任务可以跨项目创建、搜索、继续、切状态。用户先表达“要推进什么”，再决定是否需要代码理解。</span></div>
+          <div class="spec-row"><span class="index">02</span><strong>项目任务 Lane</strong><span>首页不展示功能卡片，而展示各项目当前可行动任务。每条 Lane 都有下一步、Runtime 状态、证据摘要和主操作。</span></div>
+          <div class="spec-row"><span class="index">03</span><strong>任务内连续对话</strong><span>推送到 app-server 后，任务页就是对话页。继续、暂停、取消、标记完成都在同一个底部 composer 和状态 rail 内完成。</span></div>
+          <div class="spec-row"><span class="index">04</span><strong>代码理解降级为 Lens</strong><span>图谱和问答只在任务需要影响范围、依赖、表结构、方法逻辑时打开。输出回填到任务上下文，不独立成另一条工作线。</span></div>
+          <div class="spec-row"><span class="index">05</span><strong>证据优先收口</strong><span>每次执行沉淀任务事件、Runtime 日志、Git diff、附件和测试证据。完成不是按钮文案，而是证据链闭合。</span></div>
+        </div>
+      </div>
+      <div class="section-block">
+        <h2>高级精简样式规则</h2>
+        <p>不要靠粗边框和多卡片建立结构。用材质层级、行密度、轻量阴影、hairline 分割和单一蓝紫强调色组织注意力。</p>
+        <div class="token-table">
+          <div class="token-row"><strong>Material</strong><span>珍珠白主工作区、雾灰 source-list、半透明工具条。避免纯黑纯白，也避免黑白块相交。</span></div>
+          <div class="token-row"><strong>Chrome</strong><span>边框只作为 hairline 分隔，不给每块内容套完整框。低频信息用 drawer / lens 收纳。</span></div>
+          <div class="token-row"><strong>Typography</strong><span>全系统字体，13px 主体、12px metadata、24px 工作区标题。靠字重和密度区分层级。</span></div>
+          <div class="token-row"><strong>Motion</strong><span>120 到 200ms，只表达状态变化：任务进入运行、Runtime 等待、证据追加。reduced-motion 下取消 transform。</span></div>
+          <div class="token-row"><strong>A11y</strong><span>项目导航 aria-current，任务 Lane role=list/listitem，状态 aria-live，按钮不小于 28px 高并有 focus-visible。</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="evidence" aria-label="证据锚点和验证计划">
+      <h2>证据锚点与后续实现边界</h2>
+      <ul>
+        <li><strong>产品定位：</strong><code>PRODUCT.md:7-13</code> 说明 Zeus 是本地优先 macOS AI 研发工作台，覆盖项目管理、代码扫描、AI CLI 执行、Git Diff 和 Telegram 远程控制。</li>
+        <li><strong>任务与本地服务：</strong><code>apps/desktop/src/main/localServerRuntime.ts:55-83</code> 说明 Electron Main 启动本地服务并给 Renderer 暴露 baseUrl / 临时 token。</li>
+        <li><strong>任务控制 API：</strong><code>apps/desktop/src/renderer/apiClient.ts:1072-1098</code> 包含 createTask、runTask、continueTask、cancelTask、retryTask、updateTaskStatus、loadTaskEvents。</li>
+        <li><strong>前端任务控制：</strong><code>apps/desktop/src/renderer/App.tsx:6238-6274</code> 显示状态更新和 Runtime 控制会刷新真实快照与任务事件。</li>
+        <li><strong>连续对话动作：</strong><code>apps/desktop/src/renderer/App.tsx:8311-8358</code> 当前会话页已有推送、暂停、继续、标记完成、取消任务的动作基础。</li>
+        <li><strong>代码理解降级依据：</strong><code>PRODUCT.md:17</code> 与 <code>DESIGN.md:17</code> 证明代码图谱是 Aha Moment 和理解能力，但本轮根据用户反馈调整为任务主线的上下文 Lens。</li>
+        <li><strong>未修改源码：</strong>本轮只新增设计稿与说明文档，未改 Zeus 运行代码。若进入实现，需先拆 Component Spec、测试契约和打包门禁。</li>
+      </ul>
+    </section>
+  </main>
+</body>
+</html>

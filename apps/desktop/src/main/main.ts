@@ -1,10 +1,16 @@
-import { app, BrowserWindow, Menu, Tray, ipcMain, dialog, shell, Notification, nativeImage } from 'electron';
+import { app, BrowserWindow, Menu, Tray, ipcMain, dialog, shell, Notification, nativeImage, clipboard } from 'electron';
+import { execFile as execFileCallback } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { basename, dirname, join, resolve, sep } from 'node:path';
+import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
-import { createBeforeQuitCleanupHandler, startDesktopLocalServer, type DesktopLocalServerRuntime } from './localServerRuntime.js';
-import { exportMermaidDiagramToFile } from './mermaidExport.js';
+import { promisify } from 'node:util';
+import { createBeforeQuitCleanupHandler, parseCodexNativeEnabled, startDesktopLocalServer, type DesktopLocalServerRuntime } from './localServerRuntime.js';
+import { createStartupCoordinator } from './startupCoordinator.js';
+import { terminateAfterFatalStartup } from './fatalStartup.js';
+import { createRendererBootstrapMonitor } from './rendererBootstrapMonitor.js';
+import { resolveCodexRuntimePath } from './codexRuntimePath.js';
+import { exportMermaidDiagramToFile, exportPlantUmlDiagramToFile } from './mermaidExport.js';
 import { exportPatchToFile } from './patchExport.js';
 import { exportRuntimeLogsToFile } from './runtimeLogExport.js';
 import { chooseProjectDirectory } from './projectDirectoryPicker.js';
@@ -13,12 +19,22 @@ import { openGraphSourceLocation, type GraphSourceLocation } from './sourceOpen.
 import { buildAppShellMenuTemplate, buildLoginItemSettings, buildMenuBarTrayTemplate, shouldQuitWhenAllWindowsClosed, shouldUseSystemNotifications, type MainAppShellSettings } from './appShellPolicy.js';
 import { createSystemNotificationBridge, type SystemNotificationBridge } from './systemNotifications.js';
 import { openLocalLogDirectory } from './localLogDirectory.js';
+import { openExternalHttpsUrl } from './externalOpen.js';
+import {
+  buildTaskAttachmentPreviewDataUrl,
+  coerceTaskClipboardAttachmentBuffer,
+  inferTaskClipboardAttachmentMimeType,
+  readTaskAttachmentFilePathPayloads,
+  readTaskClipboardAttachmentsFromClipboard,
+  type TaskClipboardAttachmentPayload,
+} from './taskClipboard.js';
 
 let mainWindow: BrowserWindow | undefined;
 const windows = new Set<BrowserWindow>();
 let tray: Tray | undefined;
 let localServerRuntime: DesktopLocalServerRuntime | undefined;
 let systemNotificationBridge: SystemNotificationBridge | undefined;
+let fatalStartup = false;
 let appShellSettings: MainAppShellSettings = {
   webviewDebugEnabled: false,
   multiWindowEnabled: true,
@@ -27,18 +43,46 @@ let appShellSettings: MainAppShellSettings = {
   openAtLoginEnabled: false,
 };
 const manualWindowDragStates = new Map<number, { pointerX: number; pointerY: number; windowX: number; windowY: number }>();
+const execFile = promisify(execFileCallback);
+
+/**
+ * 移除 Chromium Safe Storage 对 macOS 钥匙串的读取申请。
+ * 用户已明确要求 Zeus 不再弹出 `@zeus/desktop Safe Storage` 授权框；
+ * 代价是 Chromium profile 内依赖系统钥匙串加密的浏览器态会降级为 mock keychain。
+ */
+function disableChromiumSafeStorageKeychainPrompt(): void {
+  if (process.platform !== 'darwin') return;
+  app.commandLine.appendSwitch('use-mock-keychain');
+}
+
+disableChromiumSafeStorageKeychainPrompt();
 
 function desktopRoot(): string {
   return process.env.ZEUS_DESKTOP_DIR ?? app.getAppPath();
+}
+
+function resolveMainProjectRoot(): string {
+  // packaged App 从 Finder 启动时 process.cwd() 可能是 "/"；禁止把全局 scan-current 兜底到整机根目录。
+  return process.env.ZEUS_PROJECT_ROOT ?? (app.isPackaged ? desktopRoot() : process.cwd());
 }
 
 function revealMainWindow(window: BrowserWindow): void {
   if (window.isDestroyed()) return;
   // macOS 直接启动、open 启动和 Codex Run 启动都必须把真实主窗口带到前台；
   // 否则用户会看到进程存在但没有可交互窗口，功能验证也无法继续。
+  if (window.isMinimized()) window.restore();
   window.show();
   window.focus();
   app.focus({ steal: true });
+}
+
+/** macOS 再次点击 Dock/Finder 或第二个进程启动时，优先恢复已有窗口；没有窗口才新建。 */
+async function revealOrCreateMainWindow(): Promise<void> {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    revealMainWindow(mainWindow);
+    return;
+  }
+  await createWindow();
 }
 
 function normalizeDragPoint(point: unknown): { screenX: number; screenY: number } | undefined {
@@ -77,16 +121,16 @@ function configureWindowSecurity(window: BrowserWindow, rendererUrl: string): vo
 /** 创建 Zeus 主窗口；preload 会读取 Main 中启动的本地服务配置。 */
 async function createWindow(): Promise<void> {
   if (!appShellSettings.multiWindowEnabled && mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.show();
-    mainWindow.focus();
+    revealMainWindow(mainWindow);
     return;
   }
 
   const window = new BrowserWindow({
     width: 1240,
     height: 820,
-    minWidth: 980,
-    minHeight: 720,
+    // 2026-06-18 窗口根层响应式最终覆盖：允许紧凑窗口真实触发 renderer 的窄屏结构，而不是在 Main 进程强制桌面最小尺寸。
+    minWidth: 360,
+    minHeight: 560,
     title: 'Zeus',
     // 隐藏 macOS 原生标题栏，让内容贴近窗口顶部；标题仅保留给系统菜单与辅助功能。
     titleBarStyle: 'hiddenInset',
@@ -102,9 +146,27 @@ async function createWindow(): Promise<void> {
     },
   });
 
+  rendererBootstrapMonitor.watch(window);
+
+  window.webContents.once('preload-error', (_event, preloadPath, error) => {
+    const detail = error instanceof Error ? error.message : String(error);
+    rendererBootstrapMonitor.fail(window, new Error(`Renderer preload failed (${preloadPath}): ${detail}`));
+  });
+  window.webContents.once('render-process-gone', (_event, details) => {
+    rendererBootstrapMonitor.fail(window, new Error(`Renderer process exited during bootstrap (${details.reason}, exit ${details.exitCode})`));
+  });
+  window.on('unresponsive', () => {
+    rendererBootstrapMonitor.fail(window, new Error('Renderer became unresponsive during bootstrap'));
+  });
+  window.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+    if (!isMainFrame || errorCode === -3) return;
+    rendererBootstrapMonitor.fail(window, new Error(`Renderer failed to load ${validatedURL}: ${errorDescription} (${errorCode})`));
+  });
+
   windows.add(window);
   mainWindow = window;
   window.on('closed', () => {
+    rendererBootstrapMonitor.dispose(window);
     windows.delete(window);
     if (mainWindow === window) mainWindow = [...windows].at(-1);
   });
@@ -133,8 +195,8 @@ function setupMenu(): void {
     Menu.buildFromTemplate(
       buildAppShellMenuTemplate({
         settings: appShellSettings,
-        createWindow: () => {
-          void createWindow();
+        createNewConversation: () => {
+          void startNewConversationFromMenu();
         },
         toggleDevTools: () => mainWindow?.webContents.toggleDevTools(),
         openSettings: () => {
@@ -147,12 +209,7 @@ function setupMenu(): void {
           void openLogsDirectoryFromMenu();
         },
         showMainWindow: () => {
-          if (mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.show();
-            mainWindow.focus();
-          } else {
-            void createWindow();
-          }
+          void requestMainWindow();
         },
         quit: () => app.quit(),
       }) as Electron.MenuItemConstructorOptions[],
@@ -160,25 +217,24 @@ function setupMenu(): void {
   );
 }
 
+/** Cmd+N 是会话级动作：恢复主窗口并通知 Renderer 打开新会话草稿，不再创建额外窗口。 */
+async function startNewConversationFromMenu(): Promise<void> {
+  await requestMainWindow();
+  if (fatalStartup) return;
+  mainWindow?.webContents.send('zeus:native-new-conversation');
+}
+
 /** 从 macOS 原生 Settings 菜单进入设置区域；只跳转页面锚点，不伪造任何设置状态。 */
 async function openSettingsFromMenu(): Promise<void> {
-  if (!mainWindow || mainWindow.isDestroyed()) {
-    await createWindow();
-  } else {
-    mainWindow.show();
-    mainWindow.focus();
-  }
+  await requestMainWindow();
+  if (fatalStartup) return;
   await mainWindow?.webContents.executeJavaScript('globalThis.location.hash = "#settings-general";', true).catch(() => undefined);
 }
 
 /** 从 macOS 原生菜单进入发布与签名区域；只展示手动更新和等待项，不伪造在线更新 feed。 */
 async function openReleaseStatusFromMenu(): Promise<void> {
-  if (!mainWindow || mainWindow.isDestroyed()) {
-    await createWindow();
-  } else {
-    mainWindow.show();
-    mainWindow.focus();
-  }
+  await requestMainWindow();
+  if (fatalStartup) return;
   await mainWindow?.webContents.executeJavaScript('globalThis.location.hash = "#settings-about";', true).catch(() => undefined);
 }
 
@@ -200,6 +256,31 @@ function setupIpc(): void {
       throw new Error('Zeus local server is not ready');
     }
     return localServerRuntime.config;
+  });
+  ipcMain.on('zeus:renderer-bootstrap-failed', (event, message: unknown) => {
+    const requestingWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow)) return;
+    const detail = typeof message === 'string' && message.trim() ? message.trim().slice(0, 500) : 'Renderer bootstrap failed without detail';
+    rendererBootstrapMonitor.fail(requestingWindow, new Error(`Renderer bootstrap failed: ${detail}`));
+  });
+  ipcMain.on('zeus:renderer-bootstrap-ready', (event) => {
+    const requestingWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow)) return;
+    rendererBootstrapMonitor.markReady(requestingWindow);
+  });
+  ipcMain.on('zeus:renderer-runtime-failed', (event, message: unknown) => {
+    const requestingWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow) || !rendererBootstrapMonitor.isReady(requestingWindow)) return;
+    const detail = typeof message === 'string' && message.trim() ? message.trim().slice(0, 500) : 'Renderer runtime failed without detail';
+    void startupCoordinator.fail(new Error(`Renderer runtime failed: ${detail}`));
+  });
+  ipcMain.handle('zeus:open-external-https-url', (event, url: unknown) => {
+    const requestingWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow)) return { opened: false, error: 'external_open_untrusted_sender' };
+    return openExternalHttpsUrl({
+      url,
+      openExternal: (url) => shell.openExternal(url),
+    });
   });
   ipcMain.handle('zeus:window-drag-start', (event, point: unknown) => {
     const window = BrowserWindow.fromWebContents(event.sender);
@@ -238,6 +319,29 @@ function setupIpc(): void {
       }),
     ),
   );
+  ipcMain.handle('zeus:choose-task-attachments', async () => {
+    const selected = await dialog.showOpenDialog({
+      title: '选择任务图片或附件',
+      properties: ['openFile', 'multiSelections'],
+      filters: [
+        { name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'heic'] },
+        { name: 'All Files', extensions: ['*'] },
+      ],
+    });
+    if (selected.canceled) return [];
+    return saveTaskAttachmentPayloads(await readTaskAttachmentFilePathPayloads(selected.filePaths));
+  });
+  ipcMain.handle('zeus:read-task-clipboard-attachments', () => readTaskClipboardAttachmentsFromNativeClipboard());
+  ipcMain.handle('zeus:save-task-clipboard-attachments', async () => saveTaskAttachmentPayloads(await readTaskClipboardAttachmentsFromNativeClipboard()));
+  ipcMain.handle('zeus:read-task-clipboard-image', async () => {
+    const [firstAttachment] = await readTaskClipboardAttachmentsFromNativeClipboard();
+    return firstAttachment ?? null;
+  });
+  ipcMain.handle('zeus:save-task-pasted-attachments', async (_event, attachments: Array<{ name: string; type: string; data: ArrayBuffer | Uint8Array }>) => {
+    return saveTaskAttachmentPayloads(Array.isArray(attachments) ? attachments : []);
+  });
+  ipcMain.handle('zeus:get-task-attachment-preview', (_event, path: string) => loadSavedTaskAttachmentPreview(path));
+  ipcMain.handle('zeus:open-task-attachment', (_event, path: string) => openSavedTaskAttachment(path));
   ipcMain.handle('zeus:export-settings-snapshot', (_event, snapshot: unknown) =>
     exportSettingsSnapshotToFile({
       snapshot,
@@ -286,7 +390,7 @@ function setupIpc(): void {
   );
   ipcMain.handle('zeus:open-graph-source', (_event, source: GraphSourceLocation) =>
     openGraphSourceLocation({
-      projectRoot: process.env.ZEUS_PROJECT_ROOT ?? process.cwd(),
+      projectRoot: resolveMainProjectRoot(),
       source,
       // 只检查文件存在性，不读取内容；打开动作交由 macOS 默认编辑器或文件关联处理。
       fileExists: async (filePath) => {
@@ -312,6 +416,22 @@ function setupIpc(): void {
           title: '导出 Mermaid 源码',
           defaultPath: (payload as { fileName?: string }).fileName ?? 'zeus-graph.mmd',
           filters: [{ name: 'Mermaid Diagram', extensions: ['mmd'] }],
+        }),
+      writeTextFile: (path, content) => writeFile(path, content, 'utf8'),
+    }),
+  );
+  ipcMain.handle('zeus:export-plantuml-diagram', (_event, payload: unknown) =>
+    exportPlantUmlDiagramToFile({
+      payload: payload as {
+        fileName: string;
+        mimeType: string;
+        content: string;
+      },
+      chooseFile: () =>
+        dialog.showSaveDialog({
+          title: '导出 PlantUML 源码',
+          defaultPath: (payload as { fileName?: string }).fileName ?? 'zeus-graph.puml',
+          filters: [{ name: 'PlantUML Diagram', extensions: ['puml', 'plantuml'] }],
         }),
       writeTextFile: (path, content) => writeFile(path, content, 'utf8'),
     }),
@@ -375,15 +495,13 @@ function setupTray(): void {
       buildMenuBarTrayTemplate({
         settings: appShellSettings,
         showMainWindow: () => {
-          if (mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.show();
-            mainWindow.focus();
-          } else {
-            void createWindow();
-          }
+          void requestMainWindow();
         },
         createWindow: () => {
-          void createWindow();
+          if (fatalStartup) return;
+          void createWindow().catch((error: unknown) => {
+            void startupCoordinator.fail(error);
+          });
         },
         quit: () => app.quit(),
       }) as Electron.MenuItemConstructorOptions[],
@@ -401,12 +519,139 @@ function setupTraySafely(): void {
   }
 }
 
-app.whenReady().then(async () => {
+function isImageAttachmentPath(filePath: string): boolean {
+  return ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.heic'].includes(extname(filePath).toLowerCase());
+}
+
+function taskAttachmentDirectory(): string {
+  return join(app.getPath('userData'), 'task-attachments');
+}
+
+function isInsideTaskAttachmentDirectory(filePath: string): boolean {
+  const directory = taskAttachmentDirectory();
+  const resolvedDirectory = resolve(directory);
+  const resolvedFilePath = resolve(filePath);
+  const relativePath = relative(resolvedDirectory, resolvedFilePath);
+  return relativePath.length > 0 && !relativePath.startsWith('..') && !isAbsolute(relativePath);
+}
+
+function sanitizeTaskAttachmentFileName(fileName: string): string {
+  const safeName = basename(fileName)
+    .replace(/[^\p{L}\p{N}._ -]+/gu, '-')
+    .replace(/\s+/gu, ' ')
+    .trim();
+  // 文件名为空或只有非法字符时保留稳定 fallback，避免 userData 附件目录出现不可读文件。
+  return safeName || 'pasted-task-attachment';
+}
+
+function readTaskClipboardAttachmentsFromNativeClipboard(): Promise<TaskClipboardAttachmentPayload[]> {
+  return readTaskClipboardAttachmentsFromClipboard(
+    {
+      readImage: () => clipboard.readImage(),
+      availableFormats: () => clipboard.availableFormats(),
+      readBuffer: (format) => clipboard.readBuffer(format),
+      readText: () => clipboard.readText(),
+      readHTML: () => clipboard.readHTML(),
+    },
+    {
+      readSystemFileReferences: readMacOSClipboardFileReferences,
+    },
+  );
+}
+
+async function readMacOSClipboardFileReferences(): Promise<string[]> {
+  if (process.platform !== 'darwin') return [];
+  try {
+    const { stdout } = await execFile(
+      '/usr/bin/osascript',
+      [
+        '-e',
+        `try
+  set fileReference to the clipboard as «class furl»
+  return POSIX path of fileReference
+on error
+  return ""
+end try`,
+      ],
+      { timeout: 1000, maxBuffer: 64 * 1024 },
+    );
+    return stdout
+      .split(/\r?\n/gu)
+      .map((line) => line.trim())
+      .filter((line) => line.startsWith('/'));
+  } catch {
+    // Finder 复制文件时 Electron 可能只暴露文件图标；osascript 读不到 furl 时继续走 bitmap 回退。
+    return [];
+  }
+}
+
+async function loadSavedTaskAttachmentPreview(path: string): Promise<{ previewUrl: string; mimeType: string } | null> {
+  if (typeof path !== 'string' || !isInsideTaskAttachmentDirectory(path)) return null;
+  const mimeType = inferTaskClipboardAttachmentMimeType(path);
+  if (!mimeType.startsWith('image/')) return null;
+  const data = await readFile(path);
+  const previewUrl = buildTaskAttachmentPreviewDataUrl(data, mimeType);
+  return previewUrl ? { previewUrl, mimeType } : null;
+}
+
+async function openSavedTaskAttachment(path: string): Promise<{ opened: boolean; error?: string }> {
+  if (typeof path !== 'string' || !isInsideTaskAttachmentDirectory(path)) return { opened: false, error: 'attachment_not_allowed' };
+  try {
+    const openError = await shell.openPath(path);
+    return openError ? { opened: false, error: openError } : { opened: true };
+  } catch (error) {
+    return { opened: false, error: error instanceof Error ? error.message : 'open_attachment_failed' };
+  }
+}
+
+async function saveTaskAttachmentPayloads(attachments: Array<{ name: string; type: string; data: ArrayBuffer | Uint8Array }>): Promise<Array<{ path: string; name: string; kind: 'image' | 'file'; mimeType?: string; previewUrl?: string }>> {
+  if (attachments.length === 0) return [];
+  const attachmentDirectory = taskAttachmentDirectory();
+  await mkdir(attachmentDirectory, { recursive: true });
+  const createdAt = Date.now();
+  const savedAttachments: Array<{ path: string; name: string; kind: 'image' | 'file'; mimeType?: string; previewUrl?: string }> = [];
+  for (const [index, attachment] of attachments.entries()) {
+    const attachmentBuffer = coerceTaskClipboardAttachmentBuffer(attachment?.data);
+    if (!attachment || !attachmentBuffer) continue;
+    const safeName = sanitizeTaskAttachmentFileName(attachment.name || `pasted-task-attachment-${index + 1}`);
+    const filePath = join(attachmentDirectory, `${createdAt}-${index}-${safeName}`);
+    // 粘贴得到的是剪贴板二进制内容；Main 进程落到本机 userData 后，只把路径回传给任务上下文。
+    await writeFile(filePath, attachmentBuffer);
+    const mimeType = attachment.type || inferTaskClipboardAttachmentMimeType(filePath);
+    const kind = mimeType.startsWith('image/') || isImageAttachmentPath(filePath) ? 'image' : 'file';
+    savedAttachments.push({
+      path: filePath,
+      name: safeName,
+      kind,
+      mimeType,
+      ...(kind === 'image' ? { previewUrl: buildTaskAttachmentPreviewDataUrl(attachmentBuffer, mimeType) } : {}),
+    });
+  }
+  return savedAttachments;
+}
+
+async function initializeApplication(): Promise<void> {
+  await app.whenReady();
+  const userDataPath = app.getPath('userData');
+  const mainProjectRoot = resolveMainProjectRoot();
+  const codexNativeEnabled = parseCodexNativeEnabled(process.env.ZEUS_CODEX_NATIVE_ENABLED);
+  const codexRuntimeCommandPath = codexNativeEnabled
+    ? await resolveCodexRuntimePath({
+        isPackaged: app.isPackaged,
+        resourcesPath: process.resourcesPath,
+        projectRoot: mainProjectRoot,
+        arch: process.arch,
+      })
+    : undefined;
   localServerRuntime = await startDesktopLocalServer({
-    userDataPath: app.getPath('userData'),
-    projectRoot: process.env.ZEUS_PROJECT_ROOT ?? process.cwd(),
+    userDataPath,
+    projectRoot: mainProjectRoot,
     telegramToken: process.env.ZEUS_TELEGRAM_BOT_TOKEN,
     telegramAllowedUserIds: parseTelegramAllowedUserIds(process.env.ZEUS_TELEGRAM_ALLOWED_USER_IDS),
+    codexNativeEnabled,
+    codexRuntimeCommandPath,
+    codexLegacyImportRoot: join(userDataPath, 'codex-legacy-import'),
+    taskAttachmentRoot: join(userDataPath, 'task-attachments'),
     onRestarted: () => {
       // 本地服务异常重启后，依赖旧 WebSocket 的系统通知桥必须重建，避免继续挂在旧端口。
       applySystemNotificationBridge();
@@ -418,8 +663,44 @@ app.whenReady().then(async () => {
   setupIpc();
   setupTraySafely();
   applySystemNotificationBridge();
-  await createWindow();
+}
+
+function handleFatalStartupError(error: unknown): void {
+  fatalStartup = true;
+  terminateAfterFatalStartup({
+    error,
+    reportError: (message, detail) => console.error(message, detail),
+    showGenericError: () => dialog.showErrorBox('Zeus', 'Zeus 无法启动，请重新打开应用。'),
+    quitApplication: () => app.quit(),
+    forceExit: (code) => app.exit(code),
+  });
+}
+
+const startupCoordinator = createStartupCoordinator({
+  initialize: initializeApplication,
+  revealOrCreateMainWindow,
+  onFatalStartupError: handleFatalStartupError,
 });
+const rendererBootstrapMonitor = createRendererBootstrapMonitor<BrowserWindow>({
+  onFailure: (_window, error) => {
+    void startupCoordinator.fail(error);
+  },
+});
+
+function requestMainWindow(): Promise<void> {
+  if (fatalStartup) return Promise.resolve();
+  return startupCoordinator.requestMainWindow();
+}
+
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
+if (!hasSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    void requestMainWindow();
+  });
+  void requestMainWindow();
+}
 
 app.on(
   'before-quit',
@@ -446,8 +727,8 @@ app.on('window-all-closed', () => {
     app.quit();
 });
 
-app.on('activate', async () => {
-  if (!mainWindow || mainWindow.isDestroyed()) await createWindow();
+app.on('activate', () => {
+  void requestMainWindow();
 });
 
 async function loadMainAppShellSettings(config: { baseUrl: string; apiToken: string }): Promise<MainAppShellSettings> {

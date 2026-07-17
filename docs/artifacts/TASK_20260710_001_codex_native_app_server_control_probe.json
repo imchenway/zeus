@@ -1,0 +1,107 @@
+{
+  "taskId": "TASK_20260710_001",
+  "probeKind": "codex_native_app_server_control_requests",
+  "probeAt": "2026-07-10T09:25:44+08:00",
+  "codexVersion": "0.143.0",
+  "model": "gpt-5.4-mini",
+  "transport": "stdio://",
+  "cwdKind": "temporary_empty_git_repository",
+  "repositorySourceModified": false,
+  "interrupt": {
+    "requiredSequence": ["turn/start response", "turn/started notification", "turn/interrupt request", "turn/completed status=interrupted"],
+    "earlyInterruptError": {
+      "code": -32600,
+      "message": "no active turn to interrupt"
+    },
+    "successfulTurn": {
+      "threadId": "019f49a1-7203-7c00-a3aa-f6627cd91c7c",
+      "turnId": "019f49a1-727b-71f2-97e3-68b5fc99a2ed",
+      "status": "interrupted",
+      "error": null,
+      "text": ""
+    }
+  },
+  "commandApproval": {
+    "method": "item/commandExecution/requestApproval",
+    "requestId": 0,
+    "threadId": "019f49a3-471f-7ec0-ad58-45419de302c8",
+    "turnId": "019f49a3-478f-7b72-8242-308a8a563505",
+    "itemId": "call_9gYX266dKXa6KSe6cZq1oTK7",
+    "command": "/bin/zsh -lc \"python3 -c 'print(\\\"ZEUS-COMMAND-APPROVAL\\\")'\"",
+    "availableDecisions": [
+      "accept",
+      {
+        "acceptWithExecpolicyAmendment": {
+          "execpolicy_amendment": ["python3", "-c", "print(\"ZEUS-COMMAND-APPROVAL\")"]
+        }
+      },
+      "cancel"
+    ],
+    "response": {
+      "decision": "accept"
+    },
+    "completedTurn": {
+      "threadId": "019f49a3-471f-7ec0-ad58-45419de302c8",
+      "turnId": "019f49a3-478f-7b72-8242-308a8a563505",
+      "status": "completed",
+      "error": null,
+      "text": "COMMAND-APPROVED-ZEUS-COMMAND-APPROVAL"
+    }
+  },
+  "requestUserInput": {
+    "defaultMode": {
+      "requestObserved": false,
+      "stderr": "request_user_input is unavailable in Default mode",
+      "risk": "模型仍可能生成看似已选择的自然语言结果，不能据此误判工具闭环成功"
+    },
+    "planMode": {
+      "method": "item/tool/requestUserInput",
+      "requestId": 0,
+      "threadId": "019f49a5-dfff-7ed2-8e0e-b810f507ab60",
+      "turnId": "019f49a5-e0b7-7342-9ef1-7d2d0ef9f105",
+      "itemId": "call_v7TgYpTlIlYdTIdlAKocC759",
+      "questions": [
+        {
+          "id": "probe_choice",
+          "header": "Probe",
+          "question": "Choose one option.",
+          "isOther": true,
+          "isSecret": false,
+          "options": [
+            {
+              "label": "ALPHA",
+              "description": "Select ALPHA."
+            },
+            {
+              "label": "BETA",
+              "description": "Select BETA."
+            }
+          ]
+        }
+      ],
+      "response": {
+        "answers": {
+          "probe_choice": {
+            "answers": ["ALPHA"]
+          }
+        }
+      },
+      "completedTurn": {
+        "threadId": "019f49a5-dfff-7ed2-8e0e-b810f507ab60",
+        "turnId": "019f49a5-e0b7-7342-9ef1-7d2d0ef9f105",
+        "status": "completed",
+        "error": null,
+        "text": "RUI-ALPHA"
+      }
+    }
+  },
+  "checks": {
+    "interruptAfterStarted": true,
+    "commandApprovalRequestObserved": true,
+    "commandApprovalCompleted": true,
+    "requestUserInputPlanModeObserved": true,
+    "requestUserInputAnswerReflected": true,
+    "noProtocolParseErrors": true
+  },
+  "knownRemainingGaps": ["file change approval 尚未执行真实闭环", "permissions approval 尚未执行真实闭环", "审批拒绝、取消、超时、重复响应与重启恢复尚未验证", "Zeus 源码与 UI 尚未接入"]
+}

@@ -1,0 +1,1326 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>技术设计：Zeus 会话页与 Codex App Server 对齐实现与验证</title>
+    <style>
+      :root {
+        --ink: #222529;
+        --muted: #6f7277;
+        --faint: #96999e;
+        --canvas: #ffffff;
+        --sidebar: #fcfcfc;
+        --surface: #f8f8f8;
+        --surface-strong: #f1f2f2;
+        --line: #e0e0e0;
+        --line-strong: #c9cbce;
+        --accent: #222529;
+        --blue: #2f6fe4;
+        --blue-soft: #edf3ff;
+        --green: #17735a;
+        --green-soft: #eaf7f1;
+        --amber: #8b650d;
+        --amber-soft: #fff7df;
+        --red: #a33a42;
+        --red-soft: #fff0f1;
+        --violet: #6655a8;
+        --violet-soft: #f2efff;
+        --shadow: 0 18px 55px rgba(18, 22, 28, 0.08);
+        --radius: 18px;
+        --thread-content-max-width: 48rem;
+        --markdown-content-max-width: 40rem;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+      html {
+        scroll-behavior: smooth;
+      }
+      body {
+        margin: 0;
+        color: var(--ink);
+        background: linear-gradient(rgba(34, 37, 41, 0.025) 1px, transparent 1px), linear-gradient(90deg, rgba(34, 37, 41, 0.025) 1px, transparent 1px), var(--canvas);
+        background-size:
+          28px 28px,
+          28px 28px,
+          auto;
+        font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', 'PingFang SC', sans-serif;
+        line-height: 1.55;
+        overflow-x: clip;
+      }
+
+      button,
+      a,
+      summary {
+        font: inherit;
+      }
+      button,
+      summary {
+        cursor: pointer;
+      }
+      :focus-visible {
+        outline: 3px solid rgba(47, 111, 228, 0.35);
+        outline-offset: 3px;
+      }
+
+      main {
+        width: min(1180px, calc(100vw - 32px));
+        margin: 0 auto;
+        padding: 22px 0 64px;
+      }
+
+      .task-chip {
+        display: inline-flex;
+        align-items: center;
+        min-height: 26px;
+        margin-bottom: 10px;
+        padding: 3px 9px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.94);
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 650;
+        letter-spacing: 0.035em;
+      }
+
+      h1 {
+        max-width: 900px;
+        margin: 0 0 8px;
+        font-size: clamp(24px, 3vw, 30px);
+        line-height: 1.2;
+        letter-spacing: -0.025em;
+      }
+
+      h2 {
+        margin: 0 0 14px;
+        font-size: clamp(19px, 2.2vw, 24px);
+        line-height: 1.3;
+        letter-spacing: -0.015em;
+      }
+
+      h3 {
+        margin: 0 0 7px;
+        font-size: 15px;
+        line-height: 1.35;
+      }
+      p {
+        overflow-wrap: anywhere;
+      }
+      .summary {
+        margin: 0;
+        color: var(--muted);
+        font-size: 14px;
+      }
+
+      .decision-strip {
+        display: grid;
+        grid-template-columns: auto 1fr;
+        gap: 12px;
+        align-items: center;
+        margin: 18px 0 28px;
+        padding: 12px 14px;
+        border: 1px solid var(--line);
+        border-left: 3px solid var(--green);
+        border-radius: 12px;
+        background: rgba(255, 255, 255, 0.92);
+      }
+
+      .status-label {
+        padding: 4px 8px;
+        border-radius: 6px;
+        background: var(--green-soft);
+        color: var(--green);
+        font-size: 12px;
+        font-weight: 750;
+        white-space: nowrap;
+      }
+
+      .decision-strip p {
+        margin: 0;
+        font-size: 13px;
+        color: var(--muted);
+      }
+
+      section {
+        margin-top: 40px;
+        scroll-margin-top: 20px;
+      }
+      .section-note {
+        margin: -7px 0 16px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .template-layout {
+        border: 1px solid var(--line);
+        border-radius: 22px;
+        background: rgba(255, 255, 255, 0.96);
+        box-shadow: var(--shadow);
+        padding: 18px;
+      }
+
+      .current-target-flow {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 128px minmax(0, 1fr);
+        gap: 16px;
+        align-items: stretch;
+      }
+
+      .flow-lane {
+        min-width: 0;
+        padding: 14px;
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        background: var(--sidebar);
+      }
+
+      .flow-lane.target {
+        background: #fff;
+        border-color: var(--line-strong);
+      }
+      .lane-title {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        margin-bottom: 14px;
+      }
+      .lane-title strong {
+        font-size: 14px;
+      }
+      .lane-title span {
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .flow-node {
+        position: relative;
+        min-height: 96px;
+        padding: 12px 13px;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: #fff;
+        overflow-wrap: anywhere;
+      }
+
+      .flow-node + .flow-arrow {
+        height: 28px;
+        position: relative;
+      }
+      .flow-node + .flow-arrow::before {
+        content: '';
+        position: absolute;
+        left: 50%;
+        top: 3px;
+        width: 1.5px;
+        height: 17px;
+        background: var(--line-strong);
+      }
+      .flow-node + .flow-arrow::after {
+        content: '';
+        position: absolute;
+        left: calc(50% - 4px);
+        top: 17px;
+        width: 7px;
+        height: 7px;
+        border-right: 1.5px solid var(--line-strong);
+        border-bottom: 1.5px solid var(--line-strong);
+        transform: rotate(45deg);
+      }
+
+      .flow-node b {
+        display: block;
+        margin-bottom: 5px;
+        font-size: 14px;
+      }
+      .flow-node p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .flow-node.problem {
+        border-color: rgba(163, 58, 66, 0.34);
+        background: var(--red-soft);
+      }
+      .flow-node.goal {
+        border-color: rgba(23, 115, 90, 0.34);
+        background: var(--green-soft);
+      }
+      .flow-node.control {
+        border-color: rgba(47, 111, 228, 0.32);
+        background: var(--blue-soft);
+      }
+      .node-tag {
+        display: inline-block;
+        margin-bottom: 7px;
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 750;
+        letter-spacing: 0.02em;
+      }
+
+      .diff-axis {
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: stretch;
+        gap: 10px;
+        text-align: center;
+      }
+
+      .diff-axis::before,
+      .diff-axis::after {
+        content: '';
+        width: 1px;
+        height: 38px;
+        margin: 0 auto;
+        background: var(--line-strong);
+      }
+      .diff-pill {
+        padding: 7px 8px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #fff;
+        font-size: 11px;
+        font-weight: 700;
+      }
+      .diff-pill.add {
+        color: var(--green);
+      }
+      .diff-pill.change {
+        color: var(--blue);
+      }
+      .diff-pill.remove {
+        color: var(--red);
+      }
+
+      .app-window {
+        display: grid;
+        grid-template-columns: 230px minmax(0, 1fr);
+        min-height: 610px;
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        background: #fff;
+        box-shadow: var(--shadow);
+      }
+
+      .app-sidebar {
+        padding: 16px 11px;
+        border-right: 1px solid var(--line);
+        background: var(--sidebar);
+      }
+
+      .sidebar-action,
+      .thread-link {
+        display: block;
+        width: 100%;
+        min-height: 36px;
+        border: 0;
+        border-radius: 8px;
+        background: transparent;
+        color: var(--ink);
+        text-align: left;
+        padding: 8px 10px;
+        font-size: 13px;
+      }
+
+      .sidebar-action {
+        font-weight: 700;
+      }
+      .sidebar-rule {
+        height: 1px;
+        margin: 12px 7px;
+        background: var(--line);
+      }
+      .sidebar-section-label {
+        margin: 12px 10px 5px;
+        color: var(--faint);
+        font-size: 11px;
+        font-weight: 700;
+      }
+      .thread-link[aria-current='page'] {
+        background: var(--surface-strong);
+      }
+      .thread-link small {
+        display: block;
+        margin-top: 2px;
+        color: var(--muted);
+      }
+
+      .thread-view {
+        position: relative;
+        min-width: 0;
+        background: #fff;
+      }
+      .thread-scroll {
+        min-height: 610px;
+        padding: 48px 20px 190px;
+      }
+
+      .thread-content {
+        width: min(100%, var(--thread-content-max-width));
+        margin: 0 auto;
+      }
+      .thread-title {
+        margin-bottom: 34px;
+        text-align: center;
+      }
+      .thread-title strong {
+        display: block;
+        font-size: 18px;
+      }
+      .thread-title span {
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .message-row {
+        display: flex;
+        margin: 18px 0;
+      }
+      .message-row.user {
+        justify-content: flex-end;
+      }
+      .user-message {
+        max-width: 77%;
+        padding: 8px 12px;
+        border-radius: 16px;
+        background: rgba(34, 37, 41, 0.05);
+        font-size: 13px;
+      }
+
+      .assistant-message {
+        width: min(100%, var(--markdown-content-max-width));
+        font-size: 13px;
+      }
+      .assistant-message p {
+        margin: 0;
+      }
+      .work-state {
+        margin-bottom: 8px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .verified {
+        color: var(--green);
+        font-weight: 700;
+      }
+
+      .approval-surface {
+        margin: 20px 0;
+        padding: 13px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: var(--sidebar);
+      }
+      .approval-surface p {
+        margin: 0 0 10px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .inline-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+      .mini-button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 32px;
+        padding: 6px 10px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #fff;
+        color: var(--ink);
+        font-size: 12px;
+      }
+      .mini-button.primary {
+        border-color: var(--ink);
+        background: var(--ink);
+        color: #fff;
+      }
+
+      .composer-shell {
+        position: absolute;
+        left: 50%;
+        bottom: 22px;
+        width: min(calc(100% - 36px), 650px);
+        transform: translateX(-50%);
+      }
+      .queue-strip {
+        margin: 0 10px 7px;
+        padding: 8px 10px;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: rgba(252, 252, 252, 0.98);
+        color: var(--muted);
+        font-size: 11px;
+      }
+      .composer {
+        min-height: 108px;
+        padding: 14px;
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        background: rgba(255, 255, 255, 0.98);
+        box-shadow: 0 13px 38px rgba(18, 22, 28, 0.12);
+      }
+      .composer-placeholder {
+        min-height: 42px;
+        color: var(--faint);
+        font-size: 13px;
+      }
+      .composer-rail {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .composer-rail .spacer {
+        flex: 1;
+      }
+      .rail-label {
+        color: var(--muted);
+        font-size: 11px;
+      }
+      .send-button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 32px;
+        height: 32px;
+        border: 0;
+        border-radius: 50%;
+        background: var(--ink);
+        color: #fff;
+        font-size: 11px;
+        font-weight: 750;
+      }
+
+      .state-machine {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        align-items: center;
+        gap: 10px;
+        padding: 18px;
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        background: #fff;
+      }
+      .state-node {
+        min-height: 112px;
+        padding: 12px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: var(--sidebar);
+      }
+      .state-node.active {
+        border-color: rgba(47, 111, 228, 0.35);
+        background: var(--blue-soft);
+      }
+      .state-node.wait {
+        border-color: rgba(139, 101, 13, 0.35);
+        background: var(--amber-soft);
+      }
+      .state-node.done {
+        border-color: rgba(23, 115, 90, 0.35);
+        background: var(--green-soft);
+      }
+      .state-node b {
+        display: block;
+        margin-bottom: 5px;
+        font-size: 13px;
+      }
+      .state-node span {
+        display: block;
+        color: var(--muted);
+        font-size: 11px;
+      }
+      .state-arrow {
+        text-align: center;
+        color: var(--line-strong);
+        font-size: 19px;
+      }
+      .branch-row {
+        grid-column: 1 / -1;
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 10px;
+        margin-top: 6px;
+        padding-top: 16px;
+        border-top: 1px dashed var(--line-strong);
+      }
+      .branch-row .state-node {
+        min-height: 92px;
+      }
+
+      .contract-stack {
+        display: grid;
+        gap: 0;
+      }
+      .contract-layer {
+        display: grid;
+        grid-template-columns: 190px 1fr 1fr;
+        gap: 12px;
+        align-items: stretch;
+        padding: 15px;
+        border: 1px solid var(--line);
+        background: #fff;
+      }
+      .contract-layer:first-child {
+        border-radius: 16px 16px 0 0;
+      }
+      .contract-layer:last-child {
+        border-radius: 0 0 16px 16px;
+      }
+      .contract-layer + .contract-layer {
+        border-top: 0;
+      }
+      .layer-name {
+        font-size: 13px;
+        font-weight: 750;
+      }
+      .layer-name small {
+        display: block;
+        margin-top: 4px;
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 500;
+      }
+      .contract-cell {
+        padding-left: 12px;
+        border-left: 1px solid var(--line);
+        font-size: 12px;
+      }
+      .contract-cell b {
+        display: block;
+        margin-bottom: 4px;
+        font-size: 12px;
+      }
+      .contract-cell p {
+        margin: 0;
+        color: var(--muted);
+      }
+
+      .motion-track {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        gap: 10px;
+      }
+      .motion-step {
+        position: relative;
+        min-height: 126px;
+        padding: 12px;
+        border-top: 3px solid var(--ink);
+        background: #fff;
+      }
+      .motion-step:not(:last-child)::after {
+        content: '';
+        position: absolute;
+        right: -11px;
+        top: -3px;
+        width: 12px;
+        height: 3px;
+        background: var(--ink);
+      }
+      .motion-step time {
+        color: var(--blue);
+        font-size: 12px;
+        font-weight: 800;
+      }
+      .motion-step b {
+        display: block;
+        margin: 6px 0 4px;
+        font-size: 13px;
+      }
+      .motion-step p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .table-wrap {
+        overflow-x: auto;
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        background: #fff;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12px;
+      }
+      th,
+      td {
+        padding: 10px 11px;
+        border-bottom: 1px solid var(--line);
+        text-align: left;
+        vertical-align: top;
+        overflow-wrap: anywhere;
+      }
+      th {
+        background: var(--sidebar);
+        color: var(--muted);
+        font-weight: 750;
+      }
+      tr:last-child td {
+        border-bottom: 0;
+      }
+      .must {
+        color: var(--red);
+        font-weight: 750;
+      }
+      .pending {
+        color: var(--amber);
+        font-weight: 750;
+      }
+
+      .release-track {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 12px;
+        align-items: stretch;
+      }
+      .release-step {
+        position: relative;
+        padding: 14px;
+        border: 1px solid var(--line);
+        border-radius: 13px;
+        background: #fff;
+        min-height: 140px;
+      }
+      .release-step:not(:last-child)::after {
+        content: '→';
+        position: absolute;
+        right: -20px;
+        top: 50%;
+        z-index: 2;
+        color: var(--line-strong);
+        font-size: 18px;
+        transform: translateY(-50%);
+      }
+      .release-step b {
+        display: block;
+        margin-bottom: 6px;
+        font-size: 13px;
+      }
+      .release-step p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 11px;
+      }
+      .rollback-line {
+        margin-top: 12px;
+        padding: 13px;
+        border: 1px dashed rgba(163, 58, 66, 0.38);
+        border-radius: 12px;
+        background: var(--red-soft);
+        font-size: 12px;
+      }
+
+      details {
+        margin-top: 10px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: rgba(255, 255, 255, 0.94);
+      }
+      summary {
+        padding: 10px 12px;
+        font-size: 12px;
+        font-weight: 700;
+      }
+      .evidence-body {
+        padding: 0 12px 12px;
+        color: var(--muted);
+        font-size: 11px;
+      }
+      .evidence-body code {
+        color: var(--ink);
+        overflow-wrap: anywhere;
+      }
+      footer {
+        margin-top: 34px;
+        color: var(--faint);
+        font-size: 11px;
+      }
+
+      @media (max-width: 900px) {
+        .current-target-flow {
+          grid-template-columns: 1fr;
+        }
+        .diff-axis {
+          flex-direction: row;
+          flex-wrap: wrap;
+          justify-content: center;
+        }
+        .diff-axis::before,
+        .diff-axis::after {
+          width: 44px;
+          height: 1px;
+          margin: auto 0;
+        }
+        .state-machine {
+          grid-template-columns: 1fr;
+        }
+        .state-arrow {
+          transform: rotate(90deg);
+        }
+        .branch-row {
+          grid-template-columns: 1fr 1fr;
+        }
+        .motion-track {
+          grid-template-columns: 1fr 1fr;
+        }
+        .motion-step:not(:last-child)::after {
+          display: none;
+        }
+        .release-track {
+          grid-template-columns: 1fr 1fr;
+        }
+        .release-step:not(:last-child)::after {
+          display: none;
+        }
+      }
+
+      @media (max-width: 700px) {
+        main {
+          width: min(100vw - 20px, 680px);
+          padding-top: 14px;
+        }
+        .decision-strip {
+          grid-template-columns: 1fr;
+        }
+        .app-window {
+          grid-template-columns: 1fr;
+        }
+        .app-sidebar {
+          border-right: 0;
+          border-bottom: 1px solid var(--line);
+        }
+        .app-sidebar .thread-link:not([aria-current='page']),
+        .sidebar-rule,
+        .sidebar-section-label {
+          display: none;
+        }
+        .thread-scroll {
+          min-height: 650px;
+          padding: 34px 12px 178px;
+        }
+        .composer-shell {
+          bottom: 12px;
+          width: calc(100% - 20px);
+        }
+        .contract-layer {
+          grid-template-columns: 1fr;
+        }
+        .contract-cell {
+          padding: 10px 0 0;
+          border-left: 0;
+          border-top: 1px solid var(--line);
+        }
+        .motion-track,
+        .release-track,
+        .branch-row {
+          grid-template-columns: 1fr;
+        }
+        .motion-step {
+          border-top: 0;
+          border-left: 3px solid var(--ink);
+        }
+        .user-message {
+          max-width: 88%;
+        }
+        .table-wrap {
+          overflow: visible;
+        }
+        table,
+        tbody,
+        tr,
+        td {
+          display: block;
+          width: 100%;
+        }
+        thead {
+          position: absolute;
+          width: 1px;
+          height: 1px;
+          padding: 0;
+          margin: -1px;
+          overflow: hidden;
+          clip: rect(0 0 0 0);
+          white-space: nowrap;
+          border: 0;
+        }
+        tr {
+          padding: 10px 0;
+          border-bottom: 1px solid var(--line);
+        }
+        tr:last-child {
+          border-bottom: 0;
+        }
+        td {
+          padding: 5px 10px;
+          border: 0;
+          font-size: 12px;
+        }
+        td::before {
+          display: inline-block;
+          width: 7.4em;
+          color: var(--faint);
+          font-size: 11px;
+          font-weight: 700;
+        }
+        td:nth-child(1)::before {
+          content: '编号';
+        }
+        td:nth-child(2)::before {
+          content: '必须满足';
+        }
+        td:nth-child(3)::before {
+          content: '自动化';
+        }
+        td:nth-child(4)::before {
+          content: '真实运行';
+        }
+        td:nth-child(5)::before {
+          content: '状态';
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          scroll-behavior: auto !important;
+          animation-duration: 0.01ms !important;
+          animation-iteration-count: 1 !important;
+          transition-duration: 0.01ms !important;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main data-diagram-type="feature-iteration" data-template-family="feature-iteration" data-template-id="current-target-flow" data-template-layout="current-target-flow">
+      <span class="task-chip">TASK_20260710_001</span>
+      <h1 data-slot="title">技术设计：Zeus 会话页与 Codex App Server 对齐实现与验证</h1>
+      <p class="summary" data-slot="summary">唯一核心目标：让用户在 Zeus 会话页获得由真实 native thread / turn / item 驱动、可连续追问且与 Codex App 行为和视觉一致的桌面对话体验。</p>
+
+      <div class="decision-strip" role="status" aria-label="设计门禁状态">
+        <span class="status-label">native 垂直实现已落地 · 发布验证未闭环</span>
+        <p>
+          native manager、持久化、REST / WS、会话状态机与响应式页面已实现；17 文件 518 项分层测试、静态检查、构建与多视口渲染通过。最新 live provider、完整 Electron、VoiceOver、打包及 16 项 Graph 全量测试失败仍待闭环，不能声称全部完成。
+        </p>
+      </div>
+
+      <section aria-labelledby="compare-title">
+        <h2 id="compare-title">实施前链路与当前 native 链路</h2>
+        <p class="section-note">左侧保留实施前基线，右侧是本轮已落地的 native 垂直链路；两者不能混作当前状态。</p>
+        <div class="template-layout current-target-flow" aria-label="当前流程与目标流程对照">
+          <div class="flow-lane current boundary">
+            <div class="lane-title"><strong>实施前基线</strong><span>已移出 Codex 写路径</span></div>
+            <div class="flow-node problem" data-slot="current-entry">
+              <span class="node-tag">入口</span><b>任务列表被当作会话列表</b>
+              <p>会话页左侧渲染 `visibleTasks`；选中 Task 后自动取最新 conversation，用户不能明确选择历史 thread。</p>
+            </div>
+            <div class="flow-arrow" aria-hidden="true"></div>
+            <div class="flow-node problem" data-slot="current-action">
+              <span class="node-tag">启动</span><b>每次启动走 `codex exec` / PTY</b>
+              <p>run / continue 可无条件创建 conversation；缺少幂等键和 provider threadId，重复请求会制造平行历史。</p>
+            </div>
+            <div class="flow-arrow" aria-hidden="true"></div>
+            <div class="flow-node problem" data-slot="current-result">
+              <span class="node-tag">跟进</span><b>最近 12 条消息重放冒充续接</b>
+              <p>Runtime 丢失时重新执行 `codex exec`；附件 UI 已存在，但 follow-up 只发送正文。</p>
+            </div>
+            <div class="flow-arrow" aria-hidden="true"></div>
+            <div class="flow-node problem" data-slot="current-risk">
+              <span class="node-tag">结果 / 风险</span><b>stdout 复制为消息，Renderer 整体刷新</b>
+              <p>没有 turn / item / approval / request_user_input / queue / steer 状态；WebSocket 端口变化后无重连退避。</p>
+            </div>
+          </div>
+
+          <div class="diff-axis" aria-label="差异映射">
+            <span class="diff-pill remove">删除：Codex PTY 续接</span>
+            <span class="diff-pill add">新增：thread / turn / item</span>
+            <span class="diff-pill change">修改：REST / WS 增量契约</span>
+            <span class="diff-pill add">新增：状态机与幂等</span>
+          </div>
+
+          <div class="flow-lane target boundary">
+            <div class="lane-title"><strong>当前已实现</strong><span>真实 thread、事件增量</span></div>
+            <div class="flow-node goal" data-slot="target-entry">
+              <span class="node-tag">入口</span><b>显式选择续接、新建或引用 legacy</b>
+              <p>真实 conversation 列表进入会话页；native 历史用 `thread/resume`，legacy 只能只读或显式引用后创建新 thread。</p>
+            </div>
+            <div class="flow-arrow" aria-hidden="true"></div>
+            <div class="flow-node control" data-slot="target-action">
+              <span class="node-tag">发送</span><b>空闲或队列调度创建 turn，Steer 追加当前 turn</b>
+              <p>`clientUserMessageId + idempotencyKey` 防重；默认 Queue 后续生成新 turn，Steer 明确绑定 active turn；Stop / 双 Esc 调用 `turn/interrupt`。</p>
+            </div>
+            <div class="flow-arrow" aria-hidden="true"></div>
+            <div class="flow-node control" data-slot="target-result">
+              <span class="node-tag">运行</span><b>Main 托管应用级 app-server 单例</b>
+              <p>一个 stdio 连接承载多 thread；Fastify 换端口不杀进程；审批、用户提问、delta、完成和错误按 requestId / itemId 路由。</p>
+            </div>
+            <div class="flow-arrow" aria-hidden="true"></div>
+            <div class="flow-node goal" data-slot="target-risk">
+              <span class="node-tag">结果 / 闭环</span><b>增量持久化并广播，UI 原位演进</b>
+              <p>同一 thread 连续追问；用户上滚不被抢回底部；turn 完成只回 idle，Task 仍由用户显式完成。</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section aria-labelledby="page-title">
+        <h2 id="page-title">目标会话页首层与交互收纳</h2>
+        <p class="section-note">页面首层只服务“阅读当前 thread 并继续对话”；项目、模型、强度和附件收纳进 composer rail，审批与提问只在流中按需出现。</p>
+        <div class="app-window" data-static-mock="true" aria-label="Codex App 对齐的 Zeus 会话页静态结构示意，示意控件不可操作">
+          <aside class="app-sidebar" aria-label="会话导航">
+            <span class="sidebar-action">新建对话</span>
+            <div class="sidebar-rule"></div>
+            <div class="sidebar-section-label">会话</div>
+            <span class="thread-link" aria-current="page">App Server 双轮取证<small>当前 · native thread</small></span>
+            <span class="thread-link">Legacy 历史<small>只读 · 可显式引用</small></span>
+            <span class="thread-link">同一任务的另一会话<small>idle · 可续接</small></span>
+          </aside>
+
+          <div class="thread-view">
+            <div class="thread-scroll">
+              <div class="thread-content">
+                <div class="thread-title"><strong>App Server 双轮取证</strong><span>gpt-5.6-sol · /tmp/codex-ui-parity-probe</span></div>
+                <div class="message-row user"><div class="user-message">Reply exactly: UI-PARITY-ACK</div></div>
+                <div class="message-row assistant">
+                  <div class="assistant-message">
+                    <div class="work-state">Worked for 2.8s · <span class="verified">真实探针已验证</span></div>
+                    <p>UI-PARITY-ACK</p>
+                  </div>
+                </div>
+                <div class="message-row user"><div class="user-message">Continue this same conversation. Reply exactly: UI-PARITY-SECOND</div></div>
+                <div class="message-row assistant">
+                  <div class="assistant-message">
+                    <div class="work-state">Worked for 2.5s · same thread</div>
+                    <p>UI-PARITY-SECOND</p>
+                  </div>
+                </div>
+                <div class="approval-surface" data-codex-approval-surface="example">
+                  <h3>流内一等状态：审批 / 用户提问</h3>
+                  <p>仅在 app-server 发出真实 request 时出现；按 generation + requestId 防重复提交，并优先消费 Esc。file 只允许 one-shot 决议。</p>
+                  <div class="inline-actions" aria-label="审批按钮静态示意"><span class="mini-button primary">仅本次允许</span><span class="mini-button">拒绝</span><span class="mini-button">取消</span></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="composer-shell">
+              <div class="queue-strip">Queue 1 · 可拖动排序、编辑、删除、立即 Steer；中断后进入暂停态</div>
+              <div class="composer">
+                <div class="composer-placeholder">向当前 thread 继续提问…</div>
+                <div class="composer-rail"><span class="mini-button">添加</span><span class="rail-label">gpt-5.6-sol</span><span class="rail-label">极高</span><span class="spacer"></span><span class="send-button">Stop</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section aria-labelledby="state-title">
+        <h2 id="state-title">一个 turn 的状态机</h2>
+        <p class="section-note">UI 不直接猜测“模型正在做什么”，只由 app-server 响应、通知和活动 request 推进状态。</p>
+        <div class="state-machine" aria-label="Native turn 状态机">
+          <div class="state-node"><b>idle</b><span>Send 可用；可编辑最后一条用户消息；thread 允许下一轮。</span></div>
+          <div class="state-arrow" aria-hidden="true">→</div>
+          <div class="state-node active"><b>submitting</b><span>POST turn；按钮 spinner、50% 透明；相同 idempotencyKey 不重复创建。</span></div>
+          <div class="state-arrow" aria-hidden="true">→</div>
+          <div class="state-node active"><b>prework</b><span>turn/started、commentary、工具或工作状态；可 Stop、Queue 或 Steer。</span></div>
+          <div class="state-arrow" aria-hidden="true">→</div>
+          <div class="state-node done"><b>final_answer → idle</b><span>agentMessage delta 增量渲染；turn/completed 后保留 thread，Task 不自动完成。</span></div>
+
+          <div class="branch-row" aria-label="Turn 旁路状态">
+            <div class="state-node wait"><b>waitingOnApproval</b><span>命令、文件、网络、权限决议；file 永久过滤 acceptForSession；generation + requestId 防重。</span></div>
+            <div class="state-node wait"><b>waitingOnUserInput</b><span>exact 五键 envelope；选项和自由输入并存；畸形请求不取得 UI authority。</span></div>
+            <div class="state-node"><b>queued / steered</b><span>默认 queue；Steer 注入当前 turn；中断后暂停队列并显式 Resume。</span></div>
+            <div class="state-node problem"><b>reconnecting / error / stopped</b><span>显示尝试次数和 429 特殊状态；Stop 终止当前 turn，不删除历史或 thread。</span></div>
+          </div>
+        </div>
+      </section>
+
+      <section aria-labelledby="contract-title">
+        <h2 id="contract-title">目标运行契约与一致性边界</h2>
+        <p class="section-note">Electron Main 拥有 app-server 生命周期；Fastify 只做代理、授权和领域编排；Renderer 只消费 Zeus 归一化事件。</p>
+        <div class="contract-stack" aria-label="目标模块、契约与数据拓扑">
+          <div class="contract-layer">
+            <div class="layer-name">Renderer<small>会话页 + 状态机</small></div>
+            <div class="contract-cell">
+              <b>写入口</b>
+              <p>选择 thread、新建/引用 legacy、start/queue/steer/interrupt、resolve request；所有用户动作携带稳定 client id。</p>
+            </div>
+            <div class="contract-cell">
+              <b>读模型</b>
+              <p>conversation/turn/item、active request、queue、connection、settings/model/effort、token usage、rate limits、MCP startup；WebSocket 断线后补快照。</p>
+            </div>
+          </div>
+          <div class="contract-layer">
+            <div class="layer-name">Zeus Fastify<small>REST + WebSocket 门面</small></div>
+            <div class="contract-cell">
+              <b>领域约束</b>
+              <p>鉴权、Task/conversation 归属、idempotency、legacy 引用确认、附件校验、错误码和事件序号；真实 settings/usage/rate/MCP 通知映射为 typed event。</p>
+            </div>
+            <div class="contract-cell">
+              <b>兼容边界</b>
+              <p>旧客户端在迁移期可读取历史；Codex 写路径只允许 native；Claude/Gemini/Generic 继续 CLI/PTY。</p>
+            </div>
+          </div>
+          <div class="contract-layer">
+            <div class="layer-name">AppServerManager<small>Electron Main 应用级单例</small></div>
+            <div class="contract-cell">
+              <b>JSON-RPC</b>
+              <p>initialize、model/list、thread/start|resume、turn/start|steer|interrupt、审批与 user input response；按 id/threadId/turnId/itemId 路由。</p>
+            </div>
+            <div class="contract-cell">
+              <b>生命周期</b>
+              <p>惰性启动、版本/能力协商、崩溃退避、未决 request 收口、Fastify 换端口存活、Zeus 退出统一关闭。</p>
+            </div>
+          </div>
+          <div class="contract-layer">
+            <div class="layer-name">Storage<small>增量迁移、可恢复</small></div>
+            <div class="contract-cell">
+              <b>身份与状态</b>
+              <p>conversation ↔ provider thread；turn、item、active request、queued input、idempotency record；provider id 建唯一约束。</p>
+            </div>
+            <div class="contract-cell">
+              <b>一致性</b>
+              <p>先落状态再广播事件；delta 可合并但完成态必须持久化；重启按 snapshot + native resume 恢复，绝不靠 12 条消息重放。</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section aria-labelledby="motion-title">
+        <h2 id="motion-title">Codex App 动效节奏</h2>
+        <p class="section-note">实现已采用这些可观察节奏，并通过 CSS / CDP reduced-motion 检查；与当前 Codex GUI 的逐像素、真实发送后动效对照仍待补测。</p>
+        <div class="motion-track" aria-label="关键动画时间轴">
+          <div class="motion-step">
+            <time>150ms</time><b>Markdown 块流入</b>
+            <p>`cubic-bezier(.37,.55,.86,.88)`；不对每个 token 做位移动画，避免抖动。</p>
+          </div>
+          <div class="motion-step">
+            <time>180ms</time><b>图片 / 队列进退</b>
+            <p>图片 ease-out、scale .98→1；队列使用 height + opacity，拖拽激活阈值 6px。</p>
+          </div>
+          <div class="motion-step">
+            <time>180 / 280ms</time><b>新会话标题切换</b>
+            <p>退出 180ms、进入 280ms，`cubic-bezier(.23,1,.32,1)`，wait 模式。</p>
+          </div>
+          <div class="motion-step">
+            <time>500ms</time><b>最新 turn 定位</b>
+            <p>无 bounce；仅离底不超过 300px 时自动定位，24px 为“已在底部”容差。</p>
+          </div>
+          <div class="motion-step">
+            <time>600 / 1000 / 4000ms</time><b>Thinking 节奏扫光</b>
+            <p>600ms 后首次、扫光 1s、每 4s 一次；reduced-motion 下完全关闭。</p>
+          </div>
+        </div>
+      </section>
+
+      <section aria-labelledby="acceptance-title">
+        <h2 id="acceptance-title">需求到证据的验收矩阵</h2>
+        <p class="section-note">自动化与本地渲染已经覆盖核心实现；“通过”只表示本列证据成立，不能替代仍标注待补的 live、Electron、VoiceOver 与打包现场。</p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>AC</th>
+                <th>必须满足</th>
+                <th>自动化证据</th>
+                <th>真实运行证据</th>
+                <th>当前状态</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>AC01</td>
+                <td>同一 conversation 映射同一 native thread，连续两轮无需消息重放。</td>
+                <td>manager + local-server contract test</td>
+                <td>相同 threadId 的三轮历史 probe；最新 probe 待补</td>
+                <td class="pending">实现与自动化通过；最新 live 未闭环</td>
+              </tr>
+              <tr>
+                <td>AC02</td>
+                <td>一个应用级 stdio 单例承载多个 thread，Fastify 换端口仍存活。</td>
+                <td>lifecycle / restart test</td>
+                <td>Desktop 重启 local server 现场</td>
+                <td class="pending">实现与自动化通过；Electron 现场待补</td>
+              </tr>
+              <tr>
+                <td>AC03</td>
+                <td>重复 start / turn 请求按 idempotencyKey 返回同一结果，不重复建 thread/turn。</td>
+                <td>并发与重放测试</td>
+                <td>故意重放 HTTP</td>
+                <td class="verified">实现与自动化通过</td>
+              </tr>
+              <tr>
+                <td>AC04</td>
+                <td>legacy 只读；显式引用会创建新 native thread 并记录来源，绝不伪装 resume。</td>
+                <td>storage + API migration test</td>
+                <td>真实旧 DB 回归</td>
+                <td class="pending">实现与自动化通过；正式旧 DB 现场待补</td>
+              </tr>
+              <tr>
+                <td>AC05</td>
+                <td>delta 按 item 增量显示，不因每个 chunk 刷新整段 conversation。</td>
+                <td>reducer / WS sequencing test</td>
+                <td>长回答流式观察</td>
+                <td class="pending">实现与自动化通过；真实长回答待补</td>
+              </tr>
+              <tr>
+                <td>AC06</td>
+                <td>Send → pending → Stop 原位切换；双 Esc 2 秒确认且浮层优先消费。</td>
+                <td>Vitest 键盘与时钟测试</td>
+                <td>浏览器键盘 / focus 回归</td>
+                <td class="verified">实现、自动化与渲染通过</td>
+              </tr>
+              <tr>
+                <td>AC07</td>
+                <td>响应中支持 Queue / Steer；队列可编辑、删除、排序、暂停、恢复。</td>
+                <td>队列状态机与持久化测试</td>
+                <td>中断后恢复现场</td>
+                <td class="pending">实现与自动化通过；真实模型恢复待补</td>
+              </tr>
+              <tr>
+                <td>AC08</td>
+                <td>command/file/network/permission 审批、request_user_input 与 MCP elicitation 可决议、防重、可恢复；畸形 canonical envelope / schema / date-time 或越权 accept 必须 fail-closed。</td>
+                <td>Renderer + authority bypass + identity/RUI recovery contract test</td>
+                <td>既有 command/file/RUI probe；permissions 待补</td>
+                <td class="pending">实现与自动化通过；permissions live 待补</td>
+              </tr>
+              <tr>
+                <td>AC09</td>
+                <td>用户主动上滚后不抢底；≤300px 的新 turn 定位、24px 底部阈值、回到底部按钮。</td>
+                <td>scroll controller 单测</td>
+                <td>长会话本地渲染</td>
+                <td class="verified">实现、自动化与渲染通过</td>
+              </tr>
+              <tr>
+                <td>AC10</td>
+                <td>断线显示尝试次数；429 独立文案；恢复后补 snapshot 且不重复消息。</td>
+                <td>WS backoff / gap test</td>
+                <td>杀进程与恢复演练</td>
+                <td class="pending">实现与自动化通过；真实杀进程待补</td>
+              </tr>
+              <tr>
+                <td>AC11</td>
+                <td>turn/completed 只使 thread idle；Task 仅由用户显式完成。</td>
+                <td>task + turn lifecycle test</td>
+                <td>连续追问后手工完成</td>
+                <td class="pending">实现与自动化通过；Electron 现场待补</td>
+              </tr>
+              <tr>
+                <td>AC12</td>
+                <td>内容 48rem、Markdown 40rem、用户消息 77%、助手正文流、650px composer。</td>
+                <td>DOM / token snapshot</td>
+                <td>1440 / 768 / 375 / 320 本地渲染</td>
+                <td class="pending">实现与多视口通过；Codex 同视口对照待补</td>
+              </tr>
+              <tr>
+                <td>AC13</td>
+                <td>所有关键动画按时间基线；reduced-motion 下即时完成且无自动平滑滚动。</td>
+                <td>fake timer + media query test</td>
+                <td>CDP reduced-motion 回归</td>
+                <td class="pending">实现与 CDP 渲染通过；系统现场待补</td>
+              </tr>
+              <tr>
+                <td>AC14</td>
+                <td>键盘导航、可见焦点、语义状态、非颜色提示和点击目标满足 WCAG 2.2 AA。</td>
+                <td>语义 / keyboard / focus tests</td>
+                <td>VoiceOver 冒烟</td>
+                <td class="pending">键盘与焦点通过；VoiceOver 待补</td>
+              </tr>
+              <tr>
+                <td>AC15</td>
+                <td>打包应用发现受支持 Codex CLI；不连接或接管 Codex Desktop 自有 app-server。</td>
+                <td>binary discovery / version test</td>
+                <td>Finder 风格受限 PATH capability probe</td>
+                <td class="pending">受限 PATH 通过；打包 App 待补</td>
+              </tr>
+              <tr>
+                <td>AC16</td>
+                <td>settings/model/effort、token usage、account rate limits、MCP startup 状态均可增量更新并在重连快照恢复。</td>
+                <td>coordinator / reducer / snapshot test</td>
+                <td>当前 MCP 单条通知形状已接入</td>
+                <td class="pending">实现与自动化通过；重连现场待补</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section aria-labelledby="release-title">
+        <h2 id="release-title">发布、观测与回滚轨道</h2>
+        <p class="section-note">发布按可独立验收的垂直切片推进；任何阶段失败都回到“可读不可写”，不回退到伪连续 Codex CLI。</p>
+        <div class="release-track" aria-label="发布阶段">
+          <div class="release-step">
+            <b>1 · 协议与存储</b>
+            <p>先落 app-server client、provider 身份表、turn/item/request/idempotency；使用 fake server + 当前 binary contract probe。</p>
+          </div>
+          <div class="release-step">
+            <b>2 · REST / WS 垂直闭环</b>
+            <p>完成 create/resume/start/delta/completed/interrupt；事件带 sequence，断线可补 snapshot。</p>
+          </div>
+          <div class="release-step">
+            <b>3 · 会话页状态机</b>
+            <p>替换任务列表语义，接入流、Stop、Esc、滚动、审批、提问、Queue/Steer 和错误恢复。</p>
+          </div>
+          <div class="release-step">
+            <b>4 · 真实 App 验收</b>
+            <p>同视口视觉对照、真实 app-server 多轮、崩溃恢复、legacy DB、打包、VoiceOver 和 reduced-motion。</p>
+          </div>
+        </div>
+        <div class="rollback-line">
+          <strong>回滚：</strong>停止 Codex native 写入口并保留只读会话；关闭 Zeus 私有 app-server；不删除新表、不抹除 provider threadId、不回放 12 条消息、不恢复 `codex exec` 作为 Codex 连续对话。下一次启用从持久化 snapshot 和
+          `thread/resume` 继续。
+        </div>
+      </section>
+
+      <section aria-labelledby="evidence-title" data-slot="evidence-and-notes">
+        <h2 id="evidence-title">证据与未覆盖边界</h2>
+        <details open>
+          <summary>Zeus native 当前实现锚点</summary>
+          <div class="evidence-body">
+            <p>
+              <code>packages/ai-runtime/src/codexAppServerManager.ts</code>：stdio manager 与 thread / turn；<code>packages/storage/src/index.ts#migrateCodexNativeConversationSchema</code>：provider
+              identity、turn、item、request、submission、idempotency；<code>packages/local-server/src/codexNativeConversationCoordinator.ts</code>：调度、恢复、附件 provider input、identity conflict / malformed RUI 的 durable authority 终止、file
+              <code>grantRoot</code> fail-closed 与 MCP own-property 校验；<code>apps/desktop/src/main/externalOpen.ts</code>：无凭据 HTTPS 外开边界；<code>apps/desktop/src/renderer/session/</code>：typed controller、reducer、scroll、resolved request tombstone、file one-shot scope 与页面组件。
+            </p>
+          </div>
+        </details>
+        <details>
+          <summary>最终综合审查与回归</summary>
+          <div class="evidence-body">
+            <p>
+              最终综合审查结论为 <strong>Approved</strong>，当前审查范围无 Critical / Important / Minor；5 文件 focused 为 153 项通过，17 文件核心分层为 518 项通过。request refresh 竞态探针在 resolved 后及迟到详情返回后均保持空 authority。该结论是源码审查与 deterministic gate，不替代真实 provider / Electron / 发布验收。
+            </p>
+          </div>
+        </details>
+        <details>
+          <summary>Codex App 与 app-server 证据</summary>
+          <div class="evidence-body">
+            <p>
+              当前安装版本在取证期从 26.707.41301 更新到 26.707.51957；关键行为已在当前 <code>/Applications/Codex.app/Contents/Resources/app.asar</code> 重新确认。当前 bundled CLI 为
+              <code>codex-cli 0.144.0-alpha.4</code>。真实双轮探针：<code>/tmp/codex-ui-parity-live-probe.json</code>。
+            </p>
+          </div>
+        </details>
+        <details>
+          <summary>已接受但不能隐去的限制</summary>
+          <div class="evidence-body">
+            <p>
+              全量测试为 79 文件中 77 通过、2 失败；1301 通过、16 失败、3 跳过。16 项失败均为 Graph self-scan 固定 cap / real-repo 夹具裁掉目标端点。最新模型安全 live probe 的 4 项本地 guardrail 通过，但真实场景在 180000ms 超时，另有 2 项跳过；完整 Electron 主路径、VoiceOver、Codex GUI 同视口逐像素对照、package/codesign、人工回滚，以及 manager stdout → coordinator recovery 真集成测试均未执行。未补齐前不能声称“全部完成”或“全部视觉与交互完全一致”。
+            </p>
+          </div>
+        </details>
+      </section>
+
+      <footer>文档阶段：IMPLEMENTATION + VERIFICATION。核心 native 垂直链路已实现；发布验证仍不完整。Telegram 主交付为本项目内此 .html 文件附件，不需要 PNG，也不以 file:// 作为主入口。</footer>
+    </main>
+  </body>
+</html>

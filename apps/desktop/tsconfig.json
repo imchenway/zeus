@@ -5,11 +5,13 @@
     "rootDir": "src",
     "outDir": "dist",
     "composite": true,
+    "allowJs": true,
+    "checkJs": true,
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "baseUrl": ".",
     "paths": {}
   },
-  "include": ["src/renderer/**/*.ts", "src/renderer/**/*.tsx", "src/preload/**/*.ts"],
+  "include": ["src/renderer/**/*.ts", "src/renderer/**/*.tsx", "src/preload/**/*.ts", "src/preload/**/*.cts", "src/preload/**/*.cjs"],
   "references": [
     {
       "path": "../../packages/diagram-engine"

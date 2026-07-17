@@ -1,0 +1,172 @@
+{
+  "taskId": "TASK_20260710_001",
+  "probeKind": "codex_native_app_server_file_approval_and_permissions_schema",
+  "probeAt": "2026-07-10T09:43:00+08:00",
+  "codexVersion": "0.144.0",
+  "transport": "stdio://",
+  "cwdKind": "temporary_empty_git_repository",
+  "repositorySourceModified": false,
+  "versionBoundary": {
+    "previousLiveArtifacts": "0.143.0",
+    "thisProbe": "0.144.0",
+    "reason": "本机 /opt/homebrew/bin/codex 在两组 probe 之间发生版本漂移；证据按版本隔离"
+  },
+  "fileChangeApprovalLive": {
+    "method": "item/fileChange/requestApproval",
+    "requestId": 0,
+    "threadId": "019f49b1-3caa-71d3-b23b-9f6e8d92d55d",
+    "turnId": "019f49b1-3d28-7842-86e7-e2e5250e4045",
+    "itemId": "call_rP0rUQi7NPoKwmcyT5mDhYkk",
+    "params": {
+      "startedAtMs": 1783647900197,
+      "reason": null,
+      "grantRoot": null
+    },
+    "response": {
+      "decision": "accept"
+    },
+    "eventSequence": [
+      {
+        "method": "item/started",
+        "itemType": "fileChange",
+        "status": "inProgress"
+      },
+      {
+        "method": "thread/status/changed",
+        "status": "active",
+        "activeFlags": ["waitingOnApproval"]
+      },
+      {
+        "method": "item/fileChange/requestApproval",
+        "requestId": 0
+      },
+      {
+        "direction": "client_to_server",
+        "response": {
+          "id": 0,
+          "result": {
+            "decision": "accept"
+          }
+        }
+      },
+      {
+        "method": "serverRequest/resolved",
+        "requestId": 0
+      },
+      {
+        "method": "thread/status/changed",
+        "status": "active",
+        "activeFlags": []
+      },
+      {
+        "method": "item/completed",
+        "itemType": "fileChange",
+        "status": "completed"
+      },
+      {
+        "method": "thread/status/changed",
+        "status": "idle"
+      },
+      {
+        "method": "turn/completed",
+        "status": "completed"
+      }
+    ],
+    "fileResult": {
+      "exists": true,
+      "content": "FILE-APPROVAL-ACCEPTED\n",
+      "gitStatus": "?? APPROVED.txt"
+    },
+    "turn": {
+      "status": "completed",
+      "durationMs": 122797,
+      "error": null
+    },
+    "serverLaunchFlags": ["--listen", "stdio://", "--enable", "request_permissions_tool", "--enable", "exec_permission_approvals"],
+    "threadSettings": {
+      "model": "gpt-5.4-mini",
+      "approvalPolicy": "untrusted",
+      "approvalsReviewer": "user",
+      "sandbox": {
+        "type": "readOnly",
+        "networkAccess": false
+      },
+      "turnEffortOverride": "low"
+    },
+    "itemChange": {
+      "relativePath": "APPROVED.txt",
+      "kind": "add",
+      "diff": "FILE-APPROVAL-ACCEPTED\n",
+      "startedStatus": "inProgress",
+      "completedStatus": "completed"
+    },
+    "agentText": "FILE-APPROVAL-DONE",
+    "patchUpdatedObserved": false,
+    "patchUpdatedBoundary": "本次 changes 直接随 item/started 与 item/completed 到达；客户端不能依赖 item/fileChange/patchUpdated 必达"
+  },
+  "permissionsApprovalSchemaOnly": {
+    "method": "item/permissions/requestApproval",
+    "jsonSchema": {
+      "requestRequired": ["threadId", "turnId", "itemId", "startedAtMs", "cwd", "permissions"],
+      "requestOptionalOrDefaulted": ["environmentId", "reason"],
+      "responseRequired": ["permissions"],
+      "responseDefaulted": ["scope=turn"]
+    },
+    "typescriptBinding": {
+      "requestNonOptional": ["threadId", "turnId", "itemId", "environmentId", "startedAtMs", "cwd", "reason", "permissions"],
+      "responseNonOptional": ["permissions", "scope"]
+    },
+    "schemaConflict": "0.144.0 同次生成的 JSON Schema 与 TypeScript binding 对 environmentId、reason、scope 的必填性不一致；真实 wire 未验证前必须 fail-closed",
+    "permissions": {
+      "network": {
+        "enabled": "boolean|null"
+      },
+      "fileSystem": {
+        "read": "string[]|null (deprecated)",
+        "write": "string[]|null (deprecated)",
+        "globScanMaxDepth": "uint?",
+        "entries": "FileSystemSandboxEntry[]?"
+      }
+    },
+    "responseShape": {
+      "permissions": "GrantedPermissionProfile",
+      "scope": ["turn", "session"],
+      "strictAutoReview": "boolean?"
+    },
+    "decisionBoundary": "该 response 不含 accept/decline/cancel decision，不能复用 command/file approval 的 decision 状态机",
+    "liveRoundTripObserved": false
+  },
+  "checks": {
+    "fileApprovalRequestObserved": true,
+    "waitingOnApprovalObserved": true,
+    "serverRequestResolvedObserved": true,
+    "fileChangeCompleted": true,
+    "fileCreatedWithExactContent": true,
+    "turnCompleted": true,
+    "noProtocolParseErrors": true,
+    "agentAckExact": true,
+    "schemaOutputsConflictObserved": true
+  },
+  "transportObservation": {
+    "websocketRetriesBeforeHttpFallback": true,
+    "durationMs": 122797
+  },
+  "knownRemainingGaps": [
+    "permissions approval 仅确认 0.144.0 schema，且同次生成的 TS/JSON 必填性冲突；尚未执行真实闭环",
+    "file/command approval 的 decline、cancel、timeout、duplicate response 与重启恢复尚未验证",
+    "permissions grant 的 turn/session scope、strictAutoReview 与最小权限裁剪尚未验证",
+    "Zeus 源码与 UI 尚未接入"
+  ],
+  "compatibilityObservations": {
+    "inheritedEffortRejected": {
+      "value": "max",
+      "message": "Invalid value: 'max'. Supported values are: 'none', 'minimal', 'low', 'medium', 'high', and 'xhigh'."
+    },
+    "successfulEffort": "low",
+    "binarySha256": "978740e6bcbd9af2f850823b723fb74f16d8d1e44de05f7dd6737ae631f72017",
+    "generatedCounts": {
+      "typescriptFiles": 671,
+      "jsonSchemaFiles": 337
+    }
+  }
+}

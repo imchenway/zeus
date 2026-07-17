@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>TASK_20260627_005 Zeus 任务页空态与字段弹层设计返修</title>
+  <style>
+    * { box-sizing: border-box; }
+    :root {
+      color-scheme: light;
+      --bg: #f7f8fa;
+      --panel: #ffffff;
+      --panel-soft: #f3f6f9;
+      --line: #d8dee6;
+      --line-soft: #e9edf2;
+      --text: #20242a;
+      --muted: #66707c;
+      --accent: #1976d2;
+      --danger: #b54b40;
+      --ok: #1f7a4d;
+      --warn: #a56918;
+      --shadow: 0 18px 48px rgba(31, 41, 55, 0.08);
+    }
+    body {
+      margin: 0;
+      background: radial-gradient(circle at 20% 0%, #ffffff 0, #f8fafc 34%, var(--bg) 100%);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+    main {
+      inline-size: min(1180px, calc(100vw - 32px));
+      margin: 0 auto;
+      padding: 28px 0 34px;
+    }
+    header.hero {
+      display: grid;
+      gap: 6px;
+      margin-block-end: 18px;
+    }
+    h1 {
+      font-size: clamp(20px, 2.4vw, 28px);
+      line-height: 1.2;
+      margin: 0;
+      letter-spacing: -0.02em;
+    }
+    .subtitle {
+      color: var(--muted);
+      margin: 0;
+      max-inline-size: 880px;
+    }
+    .diagram {
+      background: color-mix(in srgb, var(--panel) 94%, transparent);
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      box-shadow: var(--shadow);
+      display: grid;
+      gap: 18px;
+      padding: 20px;
+    }
+    .storyline {
+      align-items: stretch;
+      display: grid;
+      gap: 12px;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+    }
+    .node {
+      appearance: none;
+      background: var(--panel);
+      border: 1px solid var(--line-soft);
+      border-radius: 16px;
+      color: inherit;
+      cursor: pointer;
+      display: grid;
+      gap: 6px;
+      min-block-size: 132px;
+      padding: 14px;
+      text-align: start;
+      overflow-wrap: anywhere;
+    }
+    .node:focus-visible {
+      outline: 3px solid rgba(25, 118, 210, 0.2);
+      outline-offset: 2px;
+    }
+    .node .tag {
+      align-items: center;
+      border-radius: 999px;
+      display: inline-flex;
+      font-size: 11px;
+      font-weight: 700;
+      inline-size: fit-content;
+      padding: 2px 8px;
+    }
+    .tag.issue { background: #fff0ee; color: var(--danger); }
+    .tag.root { background: #fff7e9; color: var(--warn); }
+    .tag.fix { background: #eef6ff; color: var(--accent); }
+    .tag.done { background: #edf8f1; color: var(--ok); }
+    .node strong { font-size: 15px; line-height: 1.25; }
+    .node small { color: var(--muted); font-size: 12px; line-height: 1.4; }
+    .arrow {
+      color: var(--muted);
+      display: none;
+    }
+    .matrix {
+      border: 1px solid var(--line-soft);
+      border-radius: 16px;
+      display: grid;
+      overflow: hidden;
+    }
+    .row {
+      display: grid;
+      grid-template-columns: 1fr 1.1fr 1fr;
+    }
+    .row:not(:last-child) { border-block-end: 1px solid var(--line-soft); }
+    .cell {
+      display: grid;
+      gap: 3px;
+      min-block-size: 72px;
+      padding: 12px;
+      overflow-wrap: anywhere;
+    }
+    .cell:not(:last-child) { border-inline-end: 1px solid var(--line-soft); }
+    .cell b { font-size: 12px; }
+    .cell span { color: var(--muted); font-size: 12px; }
+    .row.head .cell {
+      background: var(--panel-soft);
+      min-block-size: auto;
+    }
+    .checks {
+      display: grid;
+      gap: 10px;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+    .check {
+      background: var(--panel-soft);
+      border: 1px solid var(--line-soft);
+      border-radius: 14px;
+      display: grid;
+      gap: 4px;
+      padding: 12px;
+    }
+    .check b { color: var(--ok); font-size: 12px; }
+    .check span { color: var(--muted); font-size: 12px; }
+    .modal-backdrop {
+      align-items: center;
+      background: rgba(17, 24, 39, 0.18);
+      display: none;
+      inset: 0;
+      justify-content: center;
+      padding: 24px;
+      position: fixed;
+      z-index: 10;
+    }
+    .modal-backdrop[data-open="true"] { display: flex; }
+    .modal {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      box-shadow: 0 24px 70px rgba(15, 23, 42, 0.22);
+      display: grid;
+      gap: 10px;
+      inline-size: min(520px, 100%);
+      padding: 18px;
+    }
+    .modal header {
+      align-items: start;
+      display: flex;
+      gap: 12px;
+      justify-content: space-between;
+    }
+    .modal h2 { font-size: 18px; margin: 0; }
+    .modal p { color: var(--muted); margin: 0; }
+    .modal button {
+      background: var(--panel-soft);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      color: var(--text);
+      cursor: pointer;
+      min-block-size: 32px;
+      padding: 0 10px;
+    }
+    @media (max-width: 860px) {
+      .storyline { grid-template-columns: minmax(0, 1fr); }
+      .node { min-block-size: auto; }
+      .row { grid-template-columns: minmax(0, 1fr); }
+      .cell:not(:last-child) { border-inline-end: 0; border-block-end: 1px solid var(--line-soft); }
+      .checks { grid-template-columns: minmax(0, 1fr); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header class="hero">
+      <h1>Zeus 任务页空态与字段弹层设计返修</h1>
+      <p class="subtitle">核心结论：截图反馈成立；本轮把“空白占位”和“被裁切字段白板”改为可执行 starter surface 与有边界的字段 popover。</p>
+    </header>
+
+    <section class="diagram" aria-label="返修闭环图">
+      <section class="storyline" aria-label="故障故事线">
+        <button class="node" data-title="现象" data-detail="空任务页在宽屏中只显示一行很小的提示，字段弹层在小窗口中被裁切，视觉与可用性都不达标。">
+          <span class="tag issue">现象</span>
+          <strong>空白画布 + 裁切弹层</strong>
+          <small>截图中两个区域都像工程占位，不像可用产品界面。</small>
+        </button>
+        <button class="node" data-title="影响" data-detail="用户无法快速理解下一步；字段过多时无法稳定管理列显示、顺序和恢复默认字段。">
+          <span class="tag issue">影响</span>
+          <strong>主路径不清晰</strong>
+          <small>任务页缺少创建任务的起点，字段设置缺少可用边界。</small>
+        </button>
+        <button class="node" data-title="根因" data-detail="空态只复用轻量行；字段弹层把所有字段直接铺开，没有 header/list/footer 与滚动列表。">
+          <span class="tag root">根因</span>
+          <strong>只有 DOM，没有产品结构</strong>
+          <small>此前测试未锁定 starter surface 和 bounded popover。</small>
+        </button>
+        <button class="node" data-title="修法" data-detail="空态增加新任务主按钮与结果预览；字段弹层固定标题说明、滚动列表和底部恢复动作。">
+          <span class="tag fix">修法</span>
+          <strong>Starter surface + Popover</strong>
+          <small>控制信息密度，保留任务页单一主路径。</small>
+        </button>
+        <button class="node" data-title="验证" data-detail="新增红灯测试后转绿；任务控件 41 条通过；task/empty/project 壳层相关 69 条通过；类型、lint、格式已通过，最终仍需 package:mac。">
+          <span class="tag done">验证</span>
+          <strong>红灯转绿 + 回归通过</strong>
+          <small>最终门禁：退出 Zeus 并执行 mac 打包。</small>
+        </button>
+      </section>
+
+      <section class="matrix" aria-label="改动矩阵">
+        <div class="row head">
+          <div class="cell"><b>区域</b></div>
+          <div class="cell"><b>修改后</b></div>
+          <div class="cell"><b>不变边界</b></div>
+        </div>
+        <div class="row">
+          <div class="cell"><b>空任务页</b><span>由一行提示变为居中 starter surface。</span></div>
+          <div class="cell"><b>新增</b><span>新任务主按钮、状态/AI/证据结果预览、移动端纵向降级。</span></div>
+          <div class="cell"><b>不变</b><span>列表页仍不展示详情面板，不恢复右侧停车场。</span></div>
+        </div>
+        <div class="row">
+          <div class="cell"><b>字段弹层</b><span>由普通白板变为有边界 popover。</span></div>
+          <div class="cell"><b>新增</b><span>标题、说明、独立滚动列表、底部恢复默认。</span></div>
+          <div class="cell"><b>不变</b><span>Escape、外部点击关闭、焦点返回继续沿用原有逻辑。</span></div>
+        </div>
+      </section>
+
+      <section class="checks" aria-label="验证状态">
+        <div class="check"><b>已通过</b><span>app-task-controls-rendering：41/41</span></div>
+        <div class="check"><b>已通过</b><span>app-shell-layout task/empty/project：69 通过</span></div>
+        <div class="check"><b>已通过</b><span>typecheck / lint / format:check</span></div>
+        <div class="check"><b>待收口</b><span>退出运行中的 Zeus 后执行 package:mac</span></div>
+      </section>
+    </section>
+  </main>
+
+  <div class="modal-backdrop" id="modalBackdrop" aria-hidden="true">
+    <section class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+      <header>
+        <h2 id="modalTitle">节点详情</h2>
+        <button type="button" id="modalClose">关闭</button>
+      </header>
+      <p id="modalDetail"></p>
+    </section>
+  </div>
+
+  <script>
+    const backdrop = document.getElementById('modalBackdrop');
+    const title = document.getElementById('modalTitle');
+    const detail = document.getElementById('modalDetail');
+    const closeButton = document.getElementById('modalClose');
+    let lastTrigger = null;
+    function closeModal() {
+      backdrop.dataset.open = 'false';
+      backdrop.setAttribute('aria-hidden', 'true');
+      if (lastTrigger) lastTrigger.focus();
+    }
+    document.querySelectorAll('.node').forEach((node) => {
+      node.addEventListener('click', () => {
+        lastTrigger = node;
+        title.textContent = node.dataset.title || '节点详情';
+        detail.textContent = node.dataset.detail || '';
+        backdrop.dataset.open = 'true';
+        backdrop.setAttribute('aria-hidden', 'false');
+        closeButton.focus();
+      });
+    });
+    closeButton.addEventListener('click', closeModal);
+    backdrop.addEventListener('click', (event) => {
+      if (event.target === backdrop) closeModal();
+    });
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && backdrop.dataset.open === 'true') closeModal();
+    });
+  </script>
+</body>
+</html>

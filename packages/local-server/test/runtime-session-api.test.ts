@@ -82,6 +82,125 @@ function createHangingSpawn(started: Array<{ command: string }>): AiRuntimeSpawn
 }
 
 describe('AI runtime session API', () => {
+  it.each([[['--version']], [['exec', 'legacy-write']]])('rejects direct Codex Runtime starts before spawning for args %j', async (args) => {
+    const dir = await mkdtemp(join(tmpdir(), 'zeus-runtime-codex-start-reject-'));
+    let spawnCount = 0;
+    try {
+      const server = await createLocalServer({
+        dbPath: join(dir, 'zeus.db'),
+        apiToken: 'test-token',
+        projectRoot: '/Users/david/hypha/zeus',
+        aiRuntimeSpawn: () => {
+          spawnCount += 1;
+          return createImmediateSpawn()('codex', args, { cwd: '/Users/david/hypha/zeus', env: {} });
+        },
+      });
+
+      const response = await server.inject({
+        method: 'POST',
+        url: '/api/runtime/sessions',
+        headers: { authorization: 'Bearer test-token' },
+        payload: { projectId: 'project-1', command: 'codex', args, cwd: '/Users/david/hypha/zeus' },
+      });
+
+      expect(response.statusCode).toBe(409);
+      expect(response.json()).toMatchObject({ error: 'ZEUS_CODEX_NATIVE_APP_SERVER_REQUIRED' });
+      expect(spawnCount).toBe(0);
+      await server.close();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects input to an upgraded legacy Codex PTY while allowing interrupt and stop cleanup', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'zeus-runtime-codex-input-reject-'));
+    const writes: string[] = [];
+    const signals: NodeJS.Signals[] = [];
+    try {
+      const aiRuntimeManager = createAiRuntimeSessionManager({
+        allowedRoot: '/Users/david/hypha/zeus',
+        spawn: () => {
+          const handle: AiRuntimeProcessHandle = {
+            pid: 701,
+            on() {
+              return handle;
+            },
+            write(input) {
+              writes.push(input);
+            },
+            kill(signal) {
+              if (signal) signals.push(signal);
+            },
+          };
+          return handle;
+        },
+      });
+      const legacyCodexSession = await aiRuntimeManager.startSession({
+        projectId: 'project-1',
+        command: 'codex',
+        args: ['exec', 'legacy-write'],
+        cwd: '/Users/david/hypha/zeus',
+      });
+      const configuredCodexSession = await aiRuntimeManager.startSession({
+        projectId: 'project-1',
+        command: '/opt/zeus/custom-openai-cli',
+        args: ['legacy-write'],
+        cwd: '/Users/david/hypha/zeus',
+      });
+      const server = await createLocalServer({
+        dbPath: join(dir, 'zeus.db'),
+        apiToken: 'test-token',
+        projectRoot: '/Users/david/hypha/zeus',
+        aiRuntimeManager,
+      });
+      const configured = await server.inject({
+        method: 'PUT',
+        url: '/api/runtime/settings',
+        headers: { authorization: 'Bearer test-token' },
+        payload: {
+          defaultAdapterId: 'codex',
+          adapterModels: {},
+          adapterDefaultArgs: {},
+          adapterCliPaths: { codex: '/opt/zeus/custom-openai-cli' },
+          terminalEnv: {},
+          shell: { path: null, login: false },
+          concurrency: { maxPerProject: 1, maxGlobal: 2 },
+          executionTimeoutSeconds: 3600,
+          logRetentionDays: 30,
+          autoConfirmationPolicy: 'never',
+        },
+      });
+
+      const input = await server.inject({
+        method: 'POST',
+        url: `/api/runtime/sessions/${legacyCodexSession.id}/input`,
+        headers: { authorization: 'Bearer test-token' },
+        payload: { input: 'must-not-write' },
+      });
+      const configuredInput = await server.inject({
+        method: 'POST',
+        url: `/api/runtime/sessions/${configuredCodexSession.id}/input`,
+        headers: { authorization: 'Bearer test-token' },
+        payload: { input: 'must-not-write-configured-codex' },
+      });
+      const interrupt = await server.inject({ method: 'POST', url: `/api/runtime/sessions/${legacyCodexSession.id}/interrupt`, headers: { authorization: 'Bearer test-token' } });
+      const stop = await server.inject({ method: 'POST', url: `/api/runtime/sessions/${legacyCodexSession.id}/stop`, headers: { authorization: 'Bearer test-token' } });
+
+      expect(configured.statusCode).toBe(200);
+      expect(input.statusCode).toBe(409);
+      expect(input.json()).toMatchObject({ error: 'ZEUS_CODEX_NATIVE_APP_SERVER_REQUIRED' });
+      expect(configuredInput.statusCode).toBe(409);
+      expect(configuredInput.json()).toMatchObject({ error: 'ZEUS_CODEX_NATIVE_APP_SERVER_REQUIRED' });
+      expect(writes).toEqual([]);
+      expect(interrupt.statusCode).toBe(200);
+      expect(stop.statusCode).toBe(200);
+      expect(signals).toEqual(['SIGINT', 'SIGTERM']);
+      await server.close();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it('creates a runtime session and exposes real collected logs through token-protected APIs', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'zeus-runtime-api-'));
     try {
@@ -104,7 +223,7 @@ describe('AI runtime session API', () => {
         payload: {
           projectId: 'project-1',
           taskId: 'task-1',
-          command: 'codex',
+          command: 'claude',
           args: ['--version'],
           cwd: '/Users/david/hypha/zeus',
         },
@@ -150,7 +269,7 @@ it('enforces default runtime concurrency limits for direct sessions without star
       headers: { authorization: 'Bearer test-token' },
       payload: {
         projectId: 'project-1',
-        command: 'codex',
+        command: 'claude',
         cwd: '/Users/david/hypha/zeus',
       },
     });
@@ -160,7 +279,7 @@ it('enforces default runtime concurrency limits for direct sessions without star
       headers: { authorization: 'Bearer test-token' },
       payload: {
         projectId: 'project-1',
-        command: 'codex',
+        command: 'claude',
         cwd: '/Users/david/hypha/zeus',
       },
     });
@@ -170,7 +289,7 @@ it('enforces default runtime concurrency limits for direct sessions without star
       headers: { authorization: 'Bearer test-token' },
       payload: {
         projectId: 'project-2',
-        command: 'codex',
+        command: 'claude',
         cwd: '/Users/david/hypha/zeus',
       },
     });
@@ -180,7 +299,7 @@ it('enforces default runtime concurrency limits for direct sessions without star
       headers: { authorization: 'Bearer test-token' },
       payload: {
         projectId: 'project-3',
-        command: 'codex',
+        command: 'claude',
         cwd: '/Users/david/hypha/zeus',
       },
     });
@@ -215,6 +334,12 @@ it('keeps task runtime requests ready when concurrency is exhausted instead of s
       apiToken: 'test-token',
       projectRoot: '/Users/david/hypha/zeus',
       aiRuntimeSpawn: createHangingSpawn(started),
+    });
+    await server.inject({
+      method: 'PUT',
+      url: '/api/runtime/settings',
+      headers: { authorization: 'Bearer test-token' },
+      payload: { defaultAdapterId: 'claude' },
     });
     const projectResponse = await server.inject({
       method: 'POST',
@@ -295,7 +420,7 @@ it('searches and paginates persisted runtime logs by text and stream without loa
       payload: {
         projectId: 'project-1',
         taskId: 'task-1',
-        command: 'codex',
+        command: 'claude',
         args: ['run'],
         cwd: '/Users/david/hypha/zeus',
       },
@@ -341,7 +466,7 @@ it('restores persisted runtime sessions and logs after reopening the local serve
       headers: { authorization: 'Bearer test-token' },
       payload: {
         projectId: 'project-1',
-        command: 'codex',
+        command: 'claude',
         args: ['--version'],
         cwd: '/Users/david/hypha/zeus',
       },
@@ -393,7 +518,7 @@ it('marks unfinished runtime sessions as lost after restart when their PID no lo
       payload: {
         projectId: 'project-1',
         taskId: 'task-1',
-        command: 'codex',
+        command: 'claude',
         args: ['run'],
         cwd: '/Users/david/hypha/zeus',
       },
@@ -451,7 +576,7 @@ it('marks unfinished runtime sessions as orphan_detected after restart when thei
       payload: {
         projectId: 'project-1',
         taskId: 'task-1',
-        command: 'codex',
+        command: 'claude',
         args: ['run'],
         cwd: '/Users/david/hypha/zeus',
       },
@@ -509,7 +634,7 @@ it('terminates orphan_detected runtime sessions by PID and persists stopped stat
       headers: { authorization: 'Bearer test-token' },
       payload: {
         projectId: 'project-1',
-        command: 'codex',
+        command: 'claude',
         args: ['run'],
         cwd: '/Users/david/hypha/zeus',
       },
@@ -564,7 +689,7 @@ it('manages runtime session search, summary, favorite, archive, and delete throu
       headers: { authorization: 'Bearer test-token' },
       payload: {
         projectId: 'project-1',
-        command: 'codex',
+        command: 'claude',
         args: ['--version'],
         cwd: '/Users/david/hypha/zeus',
       },
@@ -673,6 +798,15 @@ it('persists runtime adapter settings with per-adapter models and rejects invali
         adapterCliPaths: { claude: 'relative/claude' },
       },
     });
+    const crossAdapterCliPathResponse = await firstServer.inject({
+      method: 'PUT',
+      url: '/api/runtime/settings',
+      headers: { authorization: 'Bearer test-token' },
+      payload: {
+        defaultAdapterId: 'claude',
+        adapterCliPaths: { claude: '/usr/local/bin/codex' },
+      },
+    });
     const saveResponse = await firstServer.inject({
       method: 'PUT',
       url: '/api/runtime/settings',
@@ -708,6 +842,8 @@ it('persists runtime adapter settings with per-adapter models and rejects invali
     expect(invalidAutoConfirmationResponse.json().error).toBe('ZEUS_INVALID_RUNTIME_SETTINGS');
     expect(invalidCliPathResponse.statusCode).toBe(400);
     expect(invalidCliPathResponse.json().error).toBe('ZEUS_INVALID_RUNTIME_SETTINGS');
+    expect(crossAdapterCliPathResponse.statusCode).toBe(400);
+    expect(crossAdapterCliPathResponse.json().error).toBe('ZEUS_INVALID_RUNTIME_SETTINGS');
     expect(saveResponse.json()).toEqual({
       defaultAdapterId: 'claude',
       adapterModels: { claude: 'claude-sonnet-real' },
@@ -868,7 +1004,7 @@ it('persists runtime terminal environment and shell settings and injects them in
       headers: { authorization: 'Bearer test-token' },
       payload: {
         projectId: 'project-1',
-        command: 'codex',
+        command: 'claude',
         cwd: '/Users/david/hypha/zeus',
       },
     });
@@ -1584,7 +1720,7 @@ it('sends Telegram runtime progress summaries from real logs for long running ta
       payload: {
         projectId: project.id,
         taskId: task.id,
-        command: 'codex',
+        command: 'claude',
         args: ['run'],
         cwd: '/Users/david/hypha/zeus',
       },
@@ -1633,7 +1769,7 @@ it('restores archived runtime sessions and creates a follow-up task from a real 
       headers: { authorization: 'Bearer test-token' },
       payload: {
         projectId: project.id,
-        command: 'codex',
+        command: 'claude',
         args: ['--version'],
         cwd: '/Users/david/hypha/zeus',
       },
@@ -1755,7 +1891,7 @@ it('accepts runtime input, interrupt, resize, and exposes terminal snapshot thro
       headers: { authorization: 'Bearer test-token' },
       payload: {
         projectId: 'project-1',
-        command: 'codex',
+        command: 'claude',
         cwd: '/Users/david/hypha/zeus',
       },
     });
@@ -1818,7 +1954,7 @@ it('accepts runtime input, interrupt, resize, and exposes terminal snapshot thro
     expect(metadata).toMatchObject({
       sessionId: session.id,
       projectId: 'project-1',
-      command: 'codex',
+      command: 'claude',
       cwd: '/Users/david/hypha/zeus',
     });
     await server.close();

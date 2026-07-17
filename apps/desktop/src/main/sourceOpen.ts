@@ -1,6 +1,7 @@
 import { relative, resolve } from 'node:path';
 
 export interface GraphSourceLocation {
+  projectRoot?: string;
   sourceRef: string;
   lineStart?: number;
 }
@@ -20,7 +21,8 @@ export interface OpenGraphSourceLocationResult {
 
 /** 打开图谱节点对应的真实源码文件；只允许访问项目根目录内路径，避免图谱 sourceRef 被滥用为任意文件跳转。 */
 export async function openGraphSourceLocation(options: OpenGraphSourceLocationOptions): Promise<OpenGraphSourceLocationResult> {
-  const projectRoot = resolve(options.projectRoot);
+  // 项目代码图谱的 sourceRef 是相对“被扫描项目”的路径；优先使用 Renderer 从当前项目行带回的真实本地根目录。
+  const projectRoot = resolve(options.source.projectRoot ?? options.projectRoot);
   const filePath = resolve(projectRoot, options.source.sourceRef);
   const relativePath = relative(projectRoot, filePath);
   if (relativePath.startsWith('..') || relativePath === '' || relativePath.includes('\0')) {

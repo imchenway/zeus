@@ -1,0 +1,589 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>故障排查：会话历史选择门禁与运行包前后端错配</title>
+  <style>
+    :root {
+      --ink: #102033;
+      --muted: #5a6c80;
+      --paper: #fbfdff;
+      --panel: rgba(255,255,255,.9);
+      --line: #8db3d8;
+      --blue: #1f6fb2;
+      --blue-soft: #e8f3ff;
+      --green: #17785a;
+      --green-soft: #e9f8f2;
+      --amber: #986506;
+      --amber-soft: #fff6de;
+      --red: #a63a3a;
+      --red-soft: #fff0f0;
+      --violet: #6254ad;
+      --violet-soft: #f1efff;
+      --shadow: 0 16px 42px rgba(20, 57, 92, .085);
+      --radius: 20px;
+    }
+
+    * { box-sizing: border-box; }
+
+    html { color-scheme: light; }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      background:
+        radial-gradient(circle at 18% 3%, rgba(214,233,255,.78), transparent 30rem),
+        radial-gradient(circle at 78% 6%, rgba(228,246,239,.8), transparent 28rem),
+        linear-gradient(rgba(93,133,173,.045) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(93,133,173,.045) 1px, transparent 1px),
+        linear-gradient(180deg, #fff 0%, #f7fbff 54%, #fbfdff 100%);
+      background-size: auto, auto, 28px 28px, 28px 28px, auto;
+      overflow-x: clip;
+    }
+
+    button, code { font: inherit; }
+
+    main {
+      width: min(1240px, calc(100vw - 32px));
+      margin: 0 auto;
+      padding: 22px 0 48px;
+    }
+
+    .task-code {
+      display: inline-flex;
+      margin-bottom: 10px;
+      padding: 4px 9px;
+      border: 1px solid rgba(31,111,178,.28);
+      border-radius: 999px;
+      color: var(--blue);
+      background: rgba(232,243,255,.78);
+      font: 700 11px/1.25 ui-monospace, SFMono-Regular, Menlo, monospace;
+      letter-spacing: .04em;
+    }
+
+    h1 {
+      margin: 0 0 10px;
+      font-size: clamp(24px, 2.8vw, 32px);
+      line-height: 1.18;
+      letter-spacing: -.025em;
+    }
+
+    h2 {
+      margin: 0 0 12px;
+      font-size: 18px;
+      line-height: 1.35;
+    }
+
+    h3 {
+      margin: 0;
+      font-size: 14px;
+      line-height: 1.4;
+    }
+
+    p, li, dd, dt, summary {
+      font-size: 13px;
+      line-height: 1.65;
+      overflow-wrap: anywhere;
+    }
+
+    .summary {
+      max-width: 980px;
+      margin: 0 0 16px;
+      color: var(--muted);
+    }
+
+    .verdict-line {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      margin: 0 0 16px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .status {
+      display: inline-flex;
+      align-items: center;
+      min-height: 25px;
+      padding: 3px 9px;
+      border-radius: 999px;
+      border: 1px solid rgba(23,120,90,.35);
+      color: var(--green);
+      background: var(--green-soft);
+      font-weight: 800;
+    }
+
+    .template-layout {
+      border: 1px solid rgba(141,179,216,.48);
+      border-radius: 24px;
+      background: rgba(255,255,255,.82);
+      box-shadow: var(--shadow);
+      padding: 18px;
+      min-height: 520px;
+      gap: 12px;
+    }
+
+    .debugging-sequence {
+      display: grid;
+      grid-template-columns: minmax(0,1fr) 76px minmax(0,1fr) 76px minmax(0,1fr) 76px minmax(0,1fr);
+      grid-template-rows: auto auto auto;
+      align-items: stretch;
+    }
+
+    .lifeline {
+      position: relative;
+      min-width: 0;
+      padding: 0 6px 18px;
+    }
+
+    .lifeline:nth-child(1) { grid-column: 1; }
+    .lifeline:nth-child(2) { grid-column: 3; }
+    .lifeline:nth-child(3) { grid-column: 5; }
+    .lifeline:nth-child(4) { grid-column: 7; }
+
+    .lifeline::after {
+      content: "";
+      position: absolute;
+      left: 50%;
+      top: 74px;
+      bottom: -14px;
+      width: 1px;
+      border-left: 1px dashed rgba(31,111,178,.30);
+      pointer-events: none;
+    }
+
+    .slot {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      grid-template-rows: auto auto;
+      align-content: center;
+      justify-items: center;
+      gap: 5px;
+      min-height: 70px;
+      padding: 11px 12px;
+      border: 1px solid rgba(141,179,216,.58);
+      border-radius: 16px;
+      text-align: center;
+      background: rgba(255,255,255,.97);
+      overflow-wrap: anywhere;
+    }
+
+    .slot b { font-size: 13px; line-height: 1.25; }
+    .slot span { color: var(--muted); font-size: 12px; line-height: 1.45; }
+    .core { border-color: rgba(31,111,178,.56); background: linear-gradient(180deg,#fff,var(--blue-soft)); }
+    .support { border-color: rgba(98,84,173,.45); background: linear-gradient(180deg,#fff,var(--violet-soft)); }
+    .data { border-color: rgba(23,120,90,.45); background: linear-gradient(180deg,#fff,var(--green-soft)); }
+    .risk { border-color: rgba(166,58,58,.42); background: linear-gradient(180deg,#fff,var(--red-soft)); }
+    .ops { border-color: rgba(152,101,6,.42); background: linear-gradient(180deg,#fff,var(--amber-soft)); }
+
+    .timeline-flow {
+      grid-column: 1 / 8;
+      position: relative;
+      z-index: 2;
+      display: grid;
+      gap: 9px;
+      padding: 4px 6px 16px;
+    }
+
+    .timeline-row {
+      display: grid;
+      grid-template-columns: minmax(0,1fr) 76px minmax(0,1fr) 76px minmax(0,1fr) 76px minmax(0,1fr);
+      align-items: center;
+      min-height: 64px;
+    }
+
+    .event-node {
+      position: relative;
+      z-index: 2;
+      min-height: 46px;
+      padding: 8px 10px;
+      border: 1px solid rgba(141,179,216,.62);
+      border-radius: 12px;
+      background: #fff;
+      box-shadow: 0 7px 18px rgba(20,57,92,.06);
+      font-size: 12px;
+      line-height: 1.45;
+      overflow-wrap: anywhere;
+    }
+
+    .event-node strong { display: block; margin-bottom: 2px; }
+    .event-node code { color: var(--blue); font-size: 11px; }
+    .event-node.red { border-color: rgba(166,58,58,.46); background: var(--red-soft); }
+    .event-node.green { border-color: rgba(23,120,90,.46); background: var(--green-soft); }
+    .event-node.amber { border-color: rgba(152,101,6,.46); background: var(--amber-soft); }
+
+    .message-arrow {
+      position: relative;
+      align-self: center;
+      height: 22px;
+      margin: 0 5px;
+      border-top: 2px solid var(--blue);
+      color: var(--muted);
+      text-align: center;
+      font-size: 11px;
+      font-weight: 750;
+    }
+
+    .message-arrow::after {
+      content: "";
+      position: absolute;
+      right: -1px;
+      top: -6px;
+      border-left: 9px solid var(--blue);
+      border-top: 5px solid transparent;
+      border-bottom: 5px solid transparent;
+    }
+
+    .message-arrow.reverse::after {
+      right: auto;
+      left: -1px;
+      transform: rotate(180deg);
+    }
+
+    .message-arrow span {
+      position: absolute;
+      left: 50%;
+      top: 5px;
+      display: block;
+      width: 72px;
+      padding: 1px 3px;
+      transform: translateX(-50%);
+      background: #fff;
+      overflow-wrap: anywhere;
+    }
+
+    .at-1 { grid-column: 1; }
+    .at-2 { grid-column: 3; }
+    .at-3 { grid-column: 5; }
+    .at-4 { grid-column: 7; }
+    .from-1-to-2 { grid-column: 2; }
+    .from-2-to-3 { grid-column: 4; }
+    .from-3-to-4 { grid-column: 6; }
+    .from-4-to-3 { grid-column: 6; }
+    .from-3-to-2 { grid-column: 4; }
+    .from-2-to-1 { grid-column: 2; }
+
+    .boundary {
+      border: 1px solid rgba(141,179,216,.42);
+      border-radius: 18px;
+      background: rgba(255,255,255,.75);
+      padding: 12px;
+    }
+
+    .evidence-steps {
+      grid-column: 1 / 8;
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .evidence-steps .slot { min-height: 100px; }
+
+    .notes {
+      display: grid;
+      gap: 16px;
+      margin-top: 18px;
+    }
+
+    .notes-section {
+      border: 1px solid rgba(141,179,216,.42);
+      border-radius: var(--radius);
+      background: var(--panel);
+      box-shadow: 0 10px 28px rgba(20,57,92,.055);
+      padding: 16px;
+    }
+
+    .evidence-ledger,
+    .hypothesis-ledger,
+    .acceptance-ledger {
+      display: grid;
+      gap: 8px;
+      margin: 0;
+    }
+
+    .ledger-row {
+      display: grid;
+      grid-template-columns: 70px minmax(180px,.9fr) minmax(0,1.7fr);
+      gap: 12px;
+      align-items: start;
+      padding: 10px 0;
+      border-top: 1px solid rgba(141,179,216,.26);
+    }
+
+    .ledger-row:first-child { border-top: 0; }
+    .ledger-row dt, .ledger-row dd { margin: 0; }
+    .ledger-row dt { font-weight: 850; color: var(--blue); }
+    .ledger-row .confirmed { color: var(--green); }
+    .ledger-row .rejected { color: var(--muted); }
+    .ledger-row .pending { color: var(--amber); }
+
+    .path-line {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 9px 0;
+      border-top: 1px solid rgba(141,179,216,.26);
+    }
+
+    .path-line:first-of-type { border-top: 0; }
+
+    .path-line code {
+      min-width: 0;
+      color: var(--blue);
+      font: 600 11px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
+      overflow-wrap: anywhere;
+    }
+
+    .copy-button {
+      flex: 0 0 auto;
+      min-height: 30px;
+      padding: 5px 9px;
+      border: 1px solid rgba(31,111,178,.28);
+      border-radius: 8px;
+      color: var(--blue);
+      background: var(--blue-soft);
+      cursor: pointer;
+    }
+
+    .copy-button:hover { border-color: rgba(31,111,178,.56); }
+
+    button:focus-visible,
+    summary:focus-visible {
+      outline: 3px solid rgba(31,111,178,.22);
+      outline-offset: 2px;
+    }
+
+    details {
+      margin-top: 12px;
+      border-top: 1px solid rgba(141,179,216,.26);
+      padding-top: 10px;
+    }
+
+    summary { cursor: pointer; font-weight: 800; color: var(--blue); }
+
+    pre {
+      max-width: 100%;
+      margin: 10px 0 0;
+      padding: 12px;
+      border: 1px solid rgba(141,179,216,.34);
+      border-radius: 12px;
+      color: #17324d;
+      background: #f6faff;
+      font: 11px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+
+    .ac-list {
+      display: grid;
+      gap: 7px;
+      margin: 0;
+      padding-left: 20px;
+    }
+
+    .decision {
+      border-color: rgba(152,101,6,.40);
+      background: linear-gradient(180deg, rgba(255,255,255,.96), rgba(255,246,222,.72));
+    }
+
+    .decision strong { color: var(--amber); }
+
+    @media (max-width: 780px) {
+      main { width: min(100vw - 20px, 760px); padding-top: 14px; }
+      .template-layout { padding: 12px; }
+      .debugging-sequence { grid-template-columns: 1fr; grid-template-rows: auto; }
+      .lifeline { grid-column: auto !important; padding-bottom: 4px; }
+      .lifeline::after { display: none; }
+      .timeline-flow, .evidence-steps { grid-column: auto !important; }
+      .timeline-row { display: grid; grid-template-columns: 1fr; gap: 8px; }
+      .timeline-row > * { grid-column: auto !important; }
+      .message-arrow {
+        width: 2px;
+        height: 28px;
+        margin: 0 auto;
+        border-top: 0;
+        border-left: 2px solid var(--blue);
+      }
+      .message-arrow::after,
+      .message-arrow.reverse::after {
+        left: -6px;
+        right: auto;
+        top: 22px;
+        transform: none;
+        border-left: 6px solid transparent;
+        border-right: 6px solid transparent;
+        border-top: 9px solid var(--blue);
+        border-bottom: 0;
+      }
+      .message-arrow span {
+        top: 4px;
+        left: 10px;
+        width: min(260px, calc(100vw - 80px));
+        max-width: none;
+        text-align: left;
+      }
+      .evidence-steps { grid-template-columns: 1fr; }
+      .ledger-row { grid-template-columns: 58px 1fr; }
+      .ledger-row dd:last-child { grid-column: 1 / 3; }
+      .path-line { flex-direction: column; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; }
+    }
+  </style>
+</head>
+<body>
+  <main data-diagram-type="fault-debugging"
+        data-template-family="fault-debugging"
+        data-template-id="debugging-sequence"
+        data-template-layout="debugging-sequence">
+    <span class="task-code">TASK_20260710_001</span>
+    <h1 data-slot="title">故障排查：会话历史选择门禁与运行包前后端错配</h1>
+    <p class="summary" data-slot="summary">顶部 409 不是 native thread 续接失败；运行包中的旧 Renderer 仍调用兼容 <code>/run</code>，而同包新 local-server 已正确要求有历史时必须显式选择。两端契约错位已修正；随后出现的“会话历史展开到项目侧栏”布局回归也已恢复为项目导航、中栏会话列表和右侧当前对话。</p>
+    <p class="verdict-line"><span class="status">VERIFIED: PACKAGE + GUI</span><span>2026-07-14：新包已验证会话中栏、legacy 只读详情与跨项目隔离</span></p>
+
+    <section class="template-layout debugging-sequence" aria-label="会话历史选择门禁排障时序图">
+      <div class="lifeline">
+        <div class="slot support" data-slot="debug-actor-1"><b>用户现场</b><span><code>tc-app-core</code> 会话页<br />Task 处于 ready</span></div>
+      </div>
+      <div class="lifeline">
+        <div class="slot data" data-slot="debug-actor-2"><b>运行包旧 Renderer</b><span><code>index-DVCvYTUG.js</code><br />无 conversation-choice UI</span></div>
+      </div>
+      <div class="lifeline">
+        <div class="slot risk" data-slot="debug-actor-3"><b>运行包新 local-server</b><span><code>ZEUS_CONVERSATION_CHOICE_REQUIRED</code><br />fail-closed 门禁</span></div>
+      </div>
+      <div class="lifeline">
+        <div class="slot ops" data-slot="debug-actor-4"><b>SQLite / Codex provider</b><span>2 条 failed legacy 历史<br />0 条 native thread</span></div>
+      </div>
+
+      <div class="timeline-flow" aria-label="故障调用链">
+        <div class="timeline-row">
+          <div class="event-node at-1"><strong>S1 用户触发</strong>点击“创建 app-server 会话”</div>
+          <div class="message-arrow from-1-to-2"><span>旧 run 动作</span></div>
+          <div class="event-node at-2"><strong>S2 Renderer</strong><code>client.runTask(taskId)</code></div>
+        </div>
+        <div class="timeline-row">
+          <div class="event-node at-2"><strong>S3 兼容 API</strong><code>POST /api/tasks/:taskId/run</code><br />没有 mode 或 conversationId</div>
+          <div class="message-arrow from-2-to-3"><span>缺少 mode</span></div>
+          <div class="event-node at-3"><strong>S4 Codex 分支</strong>先检查 Task 会话历史</div>
+        </div>
+        <div class="timeline-row">
+          <div class="event-node at-3"><strong>S5 查询</strong><code>listTaskConversationHistory</code></div>
+          <div class="message-arrow from-3-to-4"><span>查 Task 历史</span></div>
+          <div class="event-node green at-4"><strong>E3 真实数据</strong>2 条 <code>legacy_cli / failed</code><br /><code>provider_thread_id = NULL</code></div>
+        </div>
+        <div class="timeline-row">
+          <div class="event-node at-4"><strong>S6 结果</strong><code>history.length = 2</code></div>
+          <div class="message-arrow reverse from-4-to-3"><span>2 条 legacy</span></div>
+          <div class="event-node red at-3"><strong>R1 根因落点</strong>后端必须要求用户选择；旧 Renderer 没有这个界面</div>
+        </div>
+        <div class="timeline-row">
+          <div class="event-node red at-3"><strong>S7 预期保护</strong><code>409 ZEUS_CONVERSATION_CHOICE_REQUIRED</code></div>
+          <div class="message-arrow reverse from-3-to-2"><span>409 原文</span></div>
+          <div class="event-node amber at-2"><strong>S8 产品降级</strong>错误被收敛到全局 <code>localError</code></div>
+        </div>
+        <div class="timeline-row">
+          <div class="event-node red at-1"><strong>用户可见结果</strong>顶部英文“本地操作失败”，没有 resume / reference legacy / new 选择</div>
+          <div class="message-arrow reverse from-2-to-1"><span>全局 banner</span></div>
+          <div class="event-node at-2"><strong>E1 截图</strong>文案与 <code>/run</code> 专用 409 完全一致</div>
+        </div>
+      </div>
+
+      <div class="evidence-steps boundary">
+        <div class="slot risk" data-slot="symptom"><b>现象</b><span>预期选择流程被显示为全局 409 错误</span></div>
+        <div class="slot data" data-slot="evidence"><b>证据 E1–E6</b><span>截图、SQLite、源码、283 项相关回归、新 app.asar 与真实 GUI</span></div>
+        <div class="slot risk" data-slot="hypothesis"><b>根因 R1</b><span>旧 Renderer + 新 local-server 在同一运行包中契约错位</span></div>
+        <div class="slot support" data-slot="fix"><b>修法 F1（已实现）</b><span>Task run 旁路已阻断；会话树恢复到独立中栏；重新打包成功</span></div>
+        <div class="slot core" data-slot="verify"><b>验证 V1（已完成）</b><span>新包真实点击 legacy 只读详情、中栏布局与跨项目清空均符合预期</span></div>
+      </div>
+    </section>
+
+    <div class="notes" data-slot="evidence-and-notes">
+      <section class="notes-section" aria-labelledby="evidence-title">
+        <h2 id="evidence-title">证据账本</h2>
+        <dl class="evidence-ledger">
+          <div class="ledger-row"><dt>E1</dt><dd>用户截图</dd><dd>错误原文仅由 Codex 兼容 <code>/run</code> 的 history guard 产生，与现场 banner 完全一致。</dd></div>
+          <div class="ledger-row"><dt>E2</dt><dd>运行 <code>app.asar</code></dd><dd>mtime 为 <code>2026-07-13 17:52:42 +0800</code>；Renderer 不含 <code>/conversation-choices</code>、<code>session-start-surface</code>、<code>session-codex-parity-v1</code>，local-server 却含完整 409 门禁。</dd></div>
+          <div class="ledger-row"><dt>E3</dt><dd>真实 <code>zeus.db</code></dd><dd><code>task_p-vaz0t3C-OV</code> 有两条未归档 failed legacy 历史；两者的 <code>session_id</code> 和 <code>provider_thread_id</code> 都为 NULL，native 运行表数量为 0。</dd></div>
+          <div class="ledger-row"><dt>E4</dt><dd>当前源码契约</dd><dd><code>run</code> 先进入统一 chooser；批量 ready → running 已禁止；服务端保留 409。相关回归为 <code>4 files / 152 tests passed</code>。</dd></div>
+          <div class="ledger-row"><dt>E5</dt><dd>新打包产物</dd><dd><code>pnpm package:mac</code> 成功；新 Renderer 同时包含 conversation choices、start surface、legacy 引用文案与 <code>conversation_chooser</code>，包内健康检查及 codesign 通过。</dd></div>
+          <div class="ledger-row"><dt>E6</dt><dd>真实 GUI</dd><dd>全局项目侧栏只保留项目入口；<code>tc-app-core</code> 历史位于独立中栏；点击 legacy 行后右侧展示只读消息；切换到 <code>Zeus E2E</code> 后旧详情清空。</dd></div>
+        </dl>
+      </section>
+
+      <section class="notes-section" aria-labelledby="hypothesis-title">
+        <h2 id="hypothesis-title">候选根因裁决</h2>
+        <dl class="hypothesis-ledger">
+          <div class="ledger-row"><dt class="confirmed">R1 确认</dt><dd>运行包前后端契约错位</dd><dd>能同时解释旧按钮、<code>/run</code> 请求、新 409 门禁和缺少选择器四项现场。</dd></div>
+          <div class="ledger-row"><dt class="rejected">H1 排除</dt><dd>native <code>thread/resume</code> 失败</dd><dd>该 Task 没有 provider threadId，请求在进入 Codex provider 之前已返回 409。</dd></div>
+          <div class="ledger-row"><dt class="rejected">H2 排除</dt><dd>服务端误命中其他 Task 历史</dd><dd>SQLite 行的 project_id / task_id 与截图对象精确一致；代码也按 taskId 过滤。</dd></div>
+          <div class="ledger-row"><dt class="rejected">H3 排除</dt><dd>旧 cwd 权限错误导致本次 banner</dd><dd>cwd 错误是 2026-07-09 的持久化历史消息；本次 409 在 Runtime 启动前就返回。</dd></div>
+          <div class="ledger-row"><dt class="confirmed">H4 已收口</dt><dd>当前源码第二入口</dd><dd>Task 详情 <code>run</code> 已改走纯路由函数与统一 chooser；review 发现的批量 ready 旁路也已禁止。</dd></div>
+        </dl>
+      </section>
+
+      <section class="notes-section" aria-labelledby="anchors-title">
+        <h2 id="anchors-title">代码与文档锚点</h2>
+        <div class="path-line"><code>/Users/david/hypha/zeus/packages/local-server/src/index.ts:2914</code><button class="copy-button" type="button" data-copy="/Users/david/hypha/zeus/packages/local-server/src/index.ts:2914">复制</button></div>
+        <div class="path-line"><code>/Users/david/hypha/zeus/apps/desktop/src/renderer/apiClient.ts:1510</code><button class="copy-button" type="button" data-copy="/Users/david/hypha/zeus/apps/desktop/src/renderer/apiClient.ts:1510">复制</button></div>
+        <div class="path-line"><code>/Users/david/hypha/zeus/apps/desktop/src/renderer/App.tsx:6738</code><button class="copy-button" type="button" data-copy="/Users/david/hypha/zeus/apps/desktop/src/renderer/App.tsx:6738">复制</button></div>
+        <div class="path-line"><code>/Users/david/hypha/zeus/apps/desktop/src/renderer/task/taskWorkspaceModel.ts:13</code><button class="copy-button" type="button" data-copy="/Users/david/hypha/zeus/apps/desktop/src/renderer/task/taskWorkspaceModel.ts:13">复制</button></div>
+        <div class="path-line"><code>/Users/david/hypha/zeus/apps/desktop/src/renderer/session/SessionWorkspace.tsx:881</code><button class="copy-button" type="button" data-copy="/Users/david/hypha/zeus/apps/desktop/src/renderer/session/SessionWorkspace.tsx:881">复制</button></div>
+        <div class="path-line"><code>/Users/david/hypha/zeus/docs/TASK_20260710_001_Zeus任务创建推送与AppServer连续对话全场景盘点.md:655</code><button class="copy-button" type="button" data-copy="/Users/david/hypha/zeus/docs/TASK_20260710_001_Zeus任务创建推送与AppServer连续对话全场景盘点.md:655">复制</button></div>
+        <details>
+          <summary>展开只读验证命令与结果</summary>
+          <pre>stat -f '%Sm %N' dist/mac-arm64/Zeus.app/Contents/Resources/app.asar
+sqlite3 -readonly "$HOME/Library/Application Support/@zeus/desktop/zeus.db" ...
+pnpm vitest run apps/desktop/test/app-task-controls-rendering.test.tsx apps/desktop/test/task-workspace-model.test.ts apps/desktop/test/session-workspace.test.tsx packages/local-server/test/codex-native-conversation-api.test.ts
+pnpm typecheck
+pnpm package:mac
+
+结果：4 个相关测试文件、283 项通过；完整 Renderer 71 项通过；typecheck、打包、新 app.asar 静态契约、包内健康检查与真实 GUI 通过。
+边界：verify:release 仍有 16 项既有图谱失败，因此不宣称完整 release gate 通过。</pre>
+        </details>
+      </section>
+
+      <section class="notes-section" aria-labelledby="acceptance-title">
+        <h2 id="acceptance-title">修复后的最小验收闭环</h2>
+        <ol class="ac-list">
+          <li>无历史 Task：显式创建新 native conversation/thread，不产生重复行。</li>
+          <li>有 native 历史：仅续接用户精确选中的 provider threadId。</li>
+          <li>有 legacy 历史：旧会话只读；仅引用用户勾选的消息创建新 native thread。</li>
+          <li>显式新建：在已有历史时也可创建第二条 conversation/thread，但不能静默发生。</li>
+          <li>任务页、会话页和侧边栏入口都进入同一选择契约；预期分支不再显示为全局英文错误。</li>
+          <li>重新打包后检查 app.asar 同时包含新 Renderer 选择器和后端 fail-closed 门禁，再做真实 Electron 全链路验收。</li>
+        </ol>
+      </section>
+
+      <section class="notes-section decision" aria-labelledby="decision-title">
+        <h2 id="decision-title">VERIFIED: SESSION MIDDLE COLUMN RESTORED IN PACKAGED GUI</h2>
+        <p><strong>已实现：</strong>不改服务端 409 安全契约；Task run 与批量 ready 旁路均已收口；项目侧栏不再展开历史，会话页恢复独立中栏和右侧详情。</p>
+        <p><strong>已验收：</strong>新包真实点击确认 legacy 只读详情、中栏布局、跨项目详情清空、包内健康检查和签名验证均符合预期。</p>
+        <p><strong>回滚：</strong>关闭 native 写入后只保留历史只读；不回退到静默选最新会话、<code>codex exec</code> 或最近消息重放。</p>
+      </section>
+    </div>
+  </main>
+
+  <script>
+    document.querySelectorAll('[data-copy]').forEach((button) => {
+      button.addEventListener('click', async () => {
+        const value = button.getAttribute('data-copy') || '';
+        try {
+          await navigator.clipboard.writeText(value);
+          const original = button.textContent;
+          button.textContent = '已复制';
+          window.setTimeout(() => { button.textContent = original; }, 1200);
+        } catch {
+          button.textContent = '复制失败';
+        }
+      });
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Zeus 任务页多场景原型高还原返工</title>
+  <style>
+    :root { color-scheme: light; --blue:#0a84ff; --ink:#1f2937; --muted:#667085; --line:#d9e2ec; --bg:#f5f9ff; --card:#fff; --ok:#16833a; --warn:#a15c00; }
+    *{box-sizing:border-box} body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",sans-serif;background:linear-gradient(180deg,#f7fbff 0%,#fff 42%);color:var(--ink);line-height:1.55}
+    main{max-width:1180px;margin:0 auto;padding:40px 24px 64px} h1{font-size:34px;margin:0 0 8px;font-weight:800;letter-spacing:-.03em} .lead{color:var(--muted);margin:0 0 24px}.status{display:inline-flex;gap:8px;align-items:center;border:1px solid #b7e1c1;background:#ecfff1;color:var(--ok);border-radius:999px;padding:8px 12px;font-weight:700;margin:10px 0 28px}.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin:18px 0 30px}.card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:18px;box-shadow:0 18px 48px rgba(15,23,42,.06)}.card h2,.card h3{margin:0 0 10px}.card h2{font-size:20px}.card h3{font-size:16px}.card p{margin:6px 0;color:var(--muted)}.wide{grid-column:1/-1}.matrix{width:100%;border-collapse:collapse;border:1px solid var(--line);border-radius:14px;overflow:hidden;background:#fff}th,td{padding:11px 12px;text-align:left;border-bottom:1px solid #eef2f7;vertical-align:top}th{background:#f3f7fb;font-size:13px;color:#344054}td{font-size:14px}.ok{color:var(--ok);font-weight:800}.warn{color:var(--warn);font-weight:800}.code{font-family:"SF Mono",Menlo,monospace;background:#f6f8fb;border:1px solid #e6ebf2;border-radius:8px;padding:2px 6px}.mock{border:1px solid #d6e0ea;border-radius:18px;overflow:hidden;background:#fff}.toolbar{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center;border-bottom:1px solid #e5e7eb;padding:14px 16px}.search{height:34px;border:1px solid #d0d7de;border-radius:10px;padding:0 12px;color:#98a2b3;min-width:240px}.segments,.actions{display:flex;gap:6px;align-items:center}.pill{border:1px solid #d0d7de;border-radius:999px;padding:6px 12px;background:#fff;font-weight:700}.primary{background:var(--blue);color:#fff;border-color:#006ed6}.subbar{display:flex;justify-content:space-between;padding:10px 16px;border-bottom:1px solid #edf1f5;color:#475467;font-size:13px}.tablewrap{padding:0 16px 18px;overflow-x:auto;block-size:auto}.table{min-width:980px}.row{display:grid;grid-template-columns:110px 170px 170px 130px 150px 140px 150px;gap:10px;align-items:center;border-bottom:1px solid #eef2f7;padding:10px 0}.head{font-weight:800;color:#475467}.empty{min-width:980px;display:grid;place-items:center;text-align:center;padding:26px 16px;border-bottom:1px solid #eef2f7}.popover{position:relative;margin:12px 0 0 auto;width:min(420px,calc(100vw - 40px));border:1px solid #b7d9ff;border-radius:14px;background:#f7fbff;box-shadow:0 18px 44px rgba(2,74,150,.18);padding:14px}.popover-row{display:grid;grid-template-columns:1fr auto;gap:12px;border-top:1px solid #dbeafe;padding:10px 0}.modal-demo{margin-top:16px;display:grid;grid-template-columns:240px minmax(0,1fr);border:1px solid #d6e0ea;border-radius:18px;overflow:hidden;background:#fff}.side{background:#f3f4f6;padding:16px;color:#111827}.modal-layer{padding:16px;background:linear-gradient(90deg,rgba(248,250,252,.75),rgba(255,255,255,.96));}.modal{max-width:560px;margin:0 auto;background:#fff;border-left:1px solid #d9dee7;border-right:1px solid #d9dee7;padding:16px 18px}.field{height:34px;border:1px solid #d0d7de;border-radius:9px;margin:6px 0 10px;padding:7px 10px;color:#667085}.textarea{height:86px}.note{border-left:4px solid var(--blue);background:#eff6ff;padding:12px 14px;border-radius:10px;color:#344054}.files li{margin:6px 0}.footer{margin-top:24px;color:#667085;font-size:13px}@media(max-width:900px){.grid{grid-template-columns:1fr}.toolbar{grid-template-columns:1fr}.modal-demo{grid-template-columns:1fr}.side{display:none}}
+  </style>
+</head>
+<body>
+<main>
+  <h1>Zeus 任务页多场景原型高还原返工</h1>
+  <p class="lead">本页是本轮返工的验收入口：对照多场景设计稿，记录实现范围、反向旧问题排查、自动化验证、打包门禁与 GUI 抽查证据。</p>
+  <div class="status">2026-07-03 已返修并重新打包：More 仅保留动作菜单</div>
+
+  <section class="grid">
+    <article class="card"><h2>1. 防遗漏契约</h2><p>不只改截图表层：默认列表、空项目、筛选无结果、加载、读取失败、自定义列浮层、新任务弹窗路径全部纳入。</p></article>
+    <article class="card"><h2>2. 反向旧问题</h2><p>禁止恢复右侧列不可达、72vh/100% 撑高滚动区、自定义列占文档流、无结果态诱导新建等旧模式。</p></article>
+    <article class="card"><h2>3. 交付门禁</h2><p>退出 Zeus 后重新打包，打包产物为 <span class="code">dist/mac-arm64/Zeus.app</span>。</p></article>
+  </section>
+
+  <section class="card wide">
+    <h2>高还原目标示意</h2>
+    <div class="mock" aria-label="任务页高还原结构示意">
+      <div class="toolbar">
+        <strong>Zeus E2E · 任务 0/0 · 全部状态</strong>
+        <div class="actions"><div class="search">搜索任务</div><span class="pill">全部</span><span class="pill">就绪</span><span class="pill">运行中</span><span class="pill primary">新任务</span></div>
+      </div>
+      <div class="subbar"><span><strong>视图控制：</strong>排序 标题 · 标签 全部</span><span class="segments"><span class="pill">批量</span><span class="pill">列</span><span class="pill">更多</span></span></div>
+      <div class="tablewrap">
+        <div class="table">
+          <div class="row head"><span>任务编码</span><span>任务 / 意图</span><span>状态 / 下一步</span><span>AI 执行</span><span>上下文来源</span><span>证据</span><span>更新时间</span></div>
+          <div class="empty"><div><strong>还没有任务</strong><p>用“新任务”创建第一条研发任务；创建后会显示状态、AI 执行入口、证据和更新时间。</p><span class="pill primary">新任务</span> <span class="pill">查看项目代码</span></div></div>
+        </div>
+      </div>
+    </div>
+    <p class="note">滚动策略：只有表格内容横向溢出时出现一条横向兜底滚动，不再用大块空白高度换滚动条位置。</p>
+  </section>
+
+  <section class="card wide">
+    <h2>关键场景覆盖矩阵</h2>
+    <table class="matrix"><thead><tr><th>场景</th><th>本轮实现</th><th>验证口径</th></tr></thead><tbody>
+      <tr><td>默认任务列表</td><td>保留 7 个默认列，右侧列不再被当作剩余列隐藏。</td><td class="ok">测试 + GUI AX</td></tr>
+      <tr><td>没有任何任务</td><td>保留工具条和表头，只显示紧凑空状态，不出现空白停车场。</td><td class="ok">测试 + GUI AX</td></tr>
+      <tr><td>筛选无结果</td><td>显示清除筛选、查看全部状态，不误导用户创建新任务。</td><td class="ok">测试</td></tr>
+      <tr><td>局部加载</td><td>只替换表格内容为骨架，不遮蔽工具条，不撑出双滚动。</td><td class="ok">测试</td></tr>
+      <tr><td>读取失败</td><td>错误作为表格内 inline notice，提供重试/项目设置恢复路径。</td><td class="ok">测试</td></tr>
+      <tr><td>自定义列</td><td>浮层 overlay，不向下挤压任务行；保留字段显示和窄/中/宽控制。</td><td class="ok">测试 + GUI AX</td></tr>
+      <tr><td>新任务弹窗</td><td>保留浮层弹窗路径，不压住表格布局；表单字段和运行时提示继续存在。</td><td class="ok">源码 + 回归测试</td></tr>
+    </tbody></table>
+  </section>
+
+  <section class="card wide">
+    <h2>自定义列浮层与新任务弹窗口径</h2>
+    <div class="popover"><h3>自定义任务字段</h3><p>显示、隐藏或调整任务表格字段。固定列不能隐藏。</p><div class="popover-row"><strong>任务编码<br><small>固定列，不能隐藏</small></strong><span>窄　中　宽</span></div><div class="popover-row"><strong>更新时间<br><small>默认显示</small></strong><span>窄　中　宽</span></div></div>
+    <div class="modal-demo"><div class="side"><strong>项目</strong><p>Zeus E2E</p><p>✓ 任务 当前</p></div><div class="modal-layer"><div class="modal"><h3>新任务</h3><strong>任务标题</strong><div class="field">例如：修复任务表格列可见性</div><strong>任务要求 / 意图</strong><div class="field textarea">描述期望行为、验收口径、必要上下文。</div><strong>优先级 / 标签</strong><div class="field">normal　　可选，逗号分隔</div><div class="note">AI Runtime 未配置时仍可创建任务；“推送到 CLI”保持不可用或后续提示配置。</div></div></div></div>
+  </section>
+
+
+  <section class="card wide">
+    <h2>2026-07-03 追加返修：More 是动作菜单，不是排序 / 标签表单</h2>
+    <p class="note">现场问题：点击“更多”后仍出现排序下拉框和标签输入框。根因是上一轮只缩小面板，没有删除错误的信息架构。</p>
+    <table class="matrix"><thead><tr><th>修复点</th><th>当前口径</th><th>验证</th></tr></thead><tbody>
+      <tr><td>菜单语义</td><td><span class="code">aria-haspopup="menu"</span> + <span class="code">role="menu"</span>，内部只放动作型 <span class="code">menuitem</span>。</td><td class="ok">测试锁定</td></tr>
+      <tr><td>内部结构</td><td>只保留 <span class="code">清除筛选</span> 与 <span class="code">恢复默认列</span>；不再出现排序下拉框或标签输入框。</td><td class="ok">反向测试锁定</td></tr>
+      <tr><td>旧模式禁止</td><td>反向禁止 <span class="code">task-toolbar-select</span>、<span class="code">task-toolbar-tags</span>、<span class="code">task-table-more-menu-input</span>、<span class="code">task-table-more-menu-select</span>。</td><td class="ok">源码 + CSS 扫描</td></tr>
+    </tbody></table>
+    <div class="popover" style="margin-left:auto;width:min(220px,calc(100vw - 40px))"><h3>更多</h3><div class="popover-row"><strong>清除筛选</strong><small>重置搜索、状态和标签筛选</small></div><div class="popover-row"><strong>恢复默认列</strong><small>恢复默认任务列视图</small></div></div>
+  </section>
+
+  <section class="card wide">
+    <h2>验证结果</h2>
+    <table class="matrix"><thead><tr><th>验证项</th><th>结果</th><th>摘要</th></tr></thead><tbody>
+      <tr><td>任务页渲染测试</td><td class="ok">通过</td><td>61 tests passed；action-only menu 聚焦测试通过</td></tr>
+      <tr><td>目标回归测试</td><td class="ok">通过</td><td>任务页 / 壳层 / renderer：307 tests passed</td></tr>
+      <tr><td>类型检查</td><td class="ok">通过</td><td>pnpm typecheck</td></tr>
+      <tr><td>代码规范</td><td class="ok">通过</td><td>pnpm lint</td></tr>
+      <tr><td>格式检查</td><td class="ok">通过</td><td>pnpm format:check</td></tr>
+      <tr><td>全量测试</td><td class="ok">通过</td><td>66 files / 1018 tests passed</td></tr>
+      <tr><td>打包门禁</td><td class="ok">通过</td><td>退出 Zeus 后 package:mac，App valid on disk</td></tr>
+      <tr><td>GUI 抽查</td><td class="ok">通过</td><td>打包 App #project-tasks：更多为 role=menu，仅含清除筛选、恢复默认列；无排序 combo box / 标签 text field</td></tr>
+    </tbody></table>
+  </section>
+
+  <section class="card wide">
+    <h2>文件锚点</h2>
+    <ul class="files">
+      <li><span class="code">/Users/david/hypha/zeus/apps/desktop/src/renderer/task/TaskWorkspace.tsx</span>：工具条、更多菜单、自定义列入口、空/无结果态。</li>
+      <li><span class="code">/Users/david/hypha/zeus/apps/desktop/src/renderer/App.tsx</span>：中英文文案与无结果操作。</li>
+      <li><span class="code">/Users/david/hypha/zeus/apps/desktop/src/renderer/styles.css</span>：分组工具条、浮层、表格滚动、空/加载/错误态。</li>
+      <li><span class="code">/Users/david/hypha/zeus/apps/desktop/test/app-task-controls-rendering.test.tsx</span>：默认列、工具条、空态、无结果态、自定义列与反向旧规则测试。</li>
+      <li><span class="code">/Users/david/hypha/zeus/docs/TASK_20260702_008_Zeus任务页多场景原型高还原返工.md</span>：长期任务记录。</li>
+    </ul>
+  </section>
+
+
+  <section class="card wide">
+    <h2>追加返修最终收口</h2>
+    <table class="matrix"><thead><tr><th>门禁</th><th>结果</th><th>备注</th></tr></thead><tbody>
+      <tr><td>目标回归</td><td class="ok">通过</td><td>任务页、壳层、renderer：307 focused tests passed；模型测试包含在全量测试内</td></tr>
+      <tr><td>全量测试</td><td class="ok">通过</td><td>66 files / 1018 tests passed</td></tr>
+      <tr><td>typecheck / lint / format</td><td class="ok">通过</td><td>均已执行</td></tr>
+      <tr><td>package:mac</td><td class="ok">通过</td><td>退出 Zeus 后重新打包，App valid on disk</td></tr>
+      <tr><td>GUI 可见窗口抽查</td><td class="ok">通过</td><td>Computer Use 读取重新打包后的 Zeus：更多菜单只暴露动作项，不再暴露排序/标签表单控件。</td></tr>
+    </tbody></table>
+  </section>
+
+  <p class="footer">本轮 GUI 证据来自重新打包后的 Zeus 可见窗口与无障碍树；最终像素仍可由你继续目视复核。</p>
+
+    <section class="card">
+      <h2>2026-07-03 追加返修：无动作时禁止 More 死悬浮</h2>
+      <p>默认空任务、无筛选、默认列状态下，<strong>更多</strong> 不再打开任何浮层；只有存在可执行动作时才渲染动作菜单。</p>
+      <ul>
+        <li>有搜索 / 状态 / 标签筛选时：显示 <code>清除筛选</code>。</li>
+        <li>列显隐、顺序或宽度偏离默认时：显示 <code>恢复默认列</code>。</li>
+        <li>默认状态：按钮禁用，不渲染 <code>task-table-view-more-panel</code>，避免死悬浮遮挡表格和空态。</li>
+      </ul>
+      <table>
+        <tr><th>验证</th><th>结果</th></tr>
+        <tr><td>默认状态不渲染 More 浮层红绿测试</td><td>通过</td></tr>
+        <tr><td>More 不回退排序 / 标签表单</td><td>通过</td></tr>
+        <tr><td>app-task-controls-rendering.test.tsx</td><td>62/62 通过</td></tr>
+      </table>
+    </section>
+
+  
+    <section class="card">
+      <h2>2026-07-03 追加返修：空任务态去色块割裂与重复按钮</h2>
+      <p>空任务态只保留说明文案，顶部工具条的 <strong>新任务</strong> 是唯一主入口；空态内不再重复放 <code>新任务</code> / <code>查看项目代码</code>。</p>
+      <ul>
+        <li>移除空任务态 <code>task-empty-state-action-rail</code>。</li>
+        <li>空任务态背景改为 <code>transparent</code>，边框归零，避免和工作区底色割裂。</li>
+        <li>筛选无结果仍保留恢复筛选动作，区别于真实空任务。</li>
+      </ul>
+    </section>
+
+  </main>
+</body>
+</html>

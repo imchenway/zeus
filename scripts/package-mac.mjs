@@ -6,6 +6,7 @@ import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { execFileSync, spawn } from 'node:child_process';
+import { verifyPackagedApp } from './verify-packaged-app-health.mjs';
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const rootDir = resolve(scriptDir, '..');
@@ -17,6 +18,18 @@ export function electronZipFileName(version, arch) {
 
 export function electronDistDirName(version, arch) {
   return `electron-v${version}-darwin-${arch}`;
+}
+
+export function packagedAppPathForArch(arch) {
+  return join(rootDir, 'dist', arch === 'arm64' ? 'mac-arm64' : 'mac', 'Zeus.app');
+}
+
+export function buildAdHocCodesignArgs(appPath) {
+  return ['--force', '--deep', '--sign', '-', appPath];
+}
+
+export function buildCodesignVerifyArgs(appPath) {
+  return ['--verify', '--deep', '--strict', '--verbose=2', appPath];
 }
 
 async function readElectronVersion() {
@@ -105,6 +118,14 @@ async function assertPackagedAppIsNotRunning(appPath) {
   }
 }
 
+async function adHocSignPackagedApp(appPath) {
+  if (process.platform !== 'darwin') return;
+  // electron-builder 在 identity: null 时会跳过正式签名；自定义 Electron 分发仍可能带残留签名。
+  // 这里使用本机 ad-hoc 签名重封 bundle 资源，确保 Finder/Dock 可以稳定启动未公证的本地产物。
+  await run('/usr/bin/codesign', buildAdHocCodesignArgs(appPath));
+  await run('/usr/bin/codesign', buildCodesignVerifyArgs(appPath));
+}
+
 async function prepareElectronDist(version, arch) {
   const zipName = electronZipFileName(version, arch);
   const cacheRoot = join(homedir(), 'Library', 'Caches', 'electron');
@@ -130,9 +151,12 @@ export async function packageMac() {
   const arch = process.arch === 'x64' ? 'x64' : 'arm64';
   const version = await readElectronVersion();
   const electronDist = await prepareElectronDist(version, arch);
-  await assertPackagedAppIsNotRunning(join(rootDir, 'dist', arch === 'arm64' ? 'mac-arm64' : 'mac', 'Zeus.app'));
+  const appPath = packagedAppPathForArch(arch);
+  await assertPackagedAppIsNotRunning(appPath);
   await run('pnpm', ['build'], { cwd: desktopDir });
   await run('pnpm', ['--filter', '@zeus/desktop', 'exec', 'electron-builder', '--mac', 'dmg', 'zip', '--config', 'electron-builder.yml', `--config.electronDist=${electronDist}`], { cwd: rootDir, env: buildMacNativeDependencyEnv() });
+  verifyPackagedApp(appPath);
+  await adHocSignPackagedApp(appPath);
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {

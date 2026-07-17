@@ -1,4 +1,4 @@
-import { defineConfig } from 'vitest/config';
+import { configDefaults, defineConfig } from 'vitest/config';
 import { resolve } from 'node:path';
 
 export default defineConfig({
@@ -6,6 +6,8 @@ export default defineConfig({
     passWithNoTests: false,
     // 真实代码扫描与图谱验证会读取当前仓库源码；在发布门禁并行运行时，Vitest 默认 5s 容易把真实 I/O 判成超时失败。
     testTimeout: 15_000,
+    // Rust runtime 的可复现构建缓存包含上游 Jest 测试；它不是 Zeus test suite，也不能污染真实仓库扫描。
+    exclude: [...configDefaults.exclude, '**/.tmp/**'],
   },
   resolve: {
     alias: {

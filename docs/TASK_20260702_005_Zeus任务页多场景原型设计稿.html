@@ -1,0 +1,500 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>页面设计稿：Zeus 任务页多场景原型设计稿</title>
+    <style>
+      :root {
+        --ink: #102033;
+        --muted: #5a6c80;
+        --paper: #fbfdff;
+        --panel: rgba(255,255,255,.9);
+        --line: #8db3d8;
+        --blue: #1f6fb2;
+        --blue-soft: #e8f3ff;
+        --green: #17785a;
+        --green-soft: #e9f8f2;
+        --amber: #986506;
+        --amber-soft: #fff6de;
+        --red: #a63a3a;
+        --red-soft: #fff0f0;
+        --violet: #6254ad;
+        --violet-soft: #f1efff;
+        --shadow: 0 16px 42px rgba(20, 57, 92, .085);
+        --radius: 20px;
+        --z-bg: oklch(98.4% 0.002 255);
+        --z-window: oklch(99.2% 0.002 255);
+        --z-side: oklch(96.4% 0.003 255);
+        --z-panel: oklch(99.8% 0.001 255);
+        --z-panel-muted: oklch(98.4% 0.001 255);
+        --z-line: oklch(89% 0.002 255);
+        --z-soft: oklch(93% 0.001 255);
+        --z-text: oklch(23% 0.003 255);
+        --z-secondary: oklch(48% 0.003 255);
+        --z-subtle: oklch(60% 0.002 255);
+        --z-accent: oklch(55% 0.155 252);
+        --z-accent-soft: oklch(94.5% 0.008 252);
+        --z-hover: oklch(93.2% 0.002 255);
+        --z-selected: oklch(90.2% 0.003 255);
+      }
+      * { box-sizing: border-box; overflow-wrap: anywhere; }
+      html { scroll-behavior: smooth; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        color: var(--ink);
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+        background:
+          radial-gradient(circle at 18% 3%, rgba(214,233,255,.78), transparent 30rem),
+          radial-gradient(circle at 78% 6%, rgba(228,246,239,.8), transparent 28rem),
+          linear-gradient(rgba(93,133,173,.045) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(93,133,173,.045) 1px, transparent 1px),
+          linear-gradient(180deg, #fff 0%, #f7fbff 54%, #fbfdff 100%);
+        background-size: auto, auto, 28px 28px, 28px 28px, auto;
+      }
+      main { max-width: 1280px; margin: 0 auto; padding: 28px 22px 64px; }
+      .code { display: inline-flex; width: fit-content; border: 1px solid rgba(31,111,178,.18); background: var(--blue-soft); color: var(--blue); border-radius: 999px; padding: 4px 10px; font-size: 12px; font-weight: 760; }
+      h1 { margin: 12px 0 8px; font-size: clamp(24px, 2.8vw, 32px); line-height: 1.18; letter-spacing: -.025em; }
+      .lead { margin: 0; max-width: 960px; color: var(--muted); font-size: 14px; line-height: 1.72; }
+      h2 { margin: 0; font-size: 18px; line-height: 1.28; letter-spacing: -.01em; }
+      h3 { margin: 0 0 8px; font-size: 14px; line-height: 1.35; }
+      p { margin: 0; }
+      code { font-family: 'SFMono-Regular', 'SF Mono', Consolas, 'Liberation Mono', Menlo, monospace; font-size: 11px; background: rgba(232,243,255,.78); color: #28435d; border-radius: 6px; padding: 1px 4px; }
+      .hero-grid { display: grid; grid-template-columns: 1.15fr .85fr; gap: 14px; margin: 18px 0; align-items: stretch; }
+      .panel { border: 1px solid rgba(141,179,216,.42); background: rgba(255,255,255,.9); border-radius: var(--radius); box-shadow: var(--shadow); padding: 16px; }
+      .panel.soft { background: rgba(251,253,255,.82); }
+      .panel-title { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+      .panel-title span { color: var(--muted); font-size: 12px; line-height: 1.5; }
+      .rule-list { display: grid; gap: 10px; }
+      .rule { display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 10px; align-items: start; border: 1px solid rgba(141,179,216,.28); background: rgba(255,255,255,.72); border-radius: 14px; padding: 10px; }
+      .rule b { display: grid; place-items: center; inline-size: 26px; block-size: 26px; border-radius: 8px; background: var(--blue-soft); color: var(--blue); font-size: 13px; }
+      .rule strong { display: block; margin-bottom: 2px; color: var(--ink); font-size: 13px; }
+      .rule span { color: var(--muted); font-size: 12px; line-height: 1.55; }
+      .scene-map { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+      .scene-link { min-height: 78px; border: 1px solid rgba(141,179,216,.34); background: rgba(255,255,255,.78); border-radius: 15px; padding: 10px 11px; text-decoration: none; color: var(--ink); display: block; }
+      .scene-link strong { display: block; color: var(--blue); font-size: 12px; margin-bottom: 4px; }
+      .scene-link span { display: block; color: var(--muted); font-size: 12px; line-height: 1.48; }
+      .scene { margin-top: 18px; }
+      .scene-head { border: 1px solid rgba(141,179,216,.42); border-radius: 18px 18px 0 0; background: rgba(232,243,255,.74); padding: 12px 14px; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: center; }
+      .scene-head .eyebrow { color: var(--blue); font-size: 12px; font-weight: 780; margin-bottom: 4px; }
+      .scene-head p { color: var(--muted); font-size: 12px; line-height: 1.55; }
+      .tag { display: inline-flex; align-items: center; min-height: 24px; padding: 0 9px; border-radius: 999px; border: 1px solid rgba(141,179,216,.45); background: rgba(255,255,255,.78); color: var(--muted); font-size: 11px; font-weight: 700; white-space: nowrap; }
+      .tag.green { border-color: rgba(23,120,90,.22); background: var(--green-soft); color: var(--green); }
+      .tag.amber { border-color: rgba(152,101,6,.24); background: var(--amber-soft); color: var(--amber); }
+      .tag.red { border-color: rgba(166,58,58,.24); background: var(--red-soft); color: var(--red); }
+      .tag.violet { border-color: rgba(98,84,173,.24); background: var(--violet-soft); color: var(--violet); }
+      .mock-shell { border: 1px solid rgba(141,179,216,.42); border-top: 0; border-radius: 0 0 18px 18px; background: rgba(255,255,255,.82); padding: 14px; }
+      .app-window { border: 1px solid var(--z-line); border-radius: 18px; overflow: hidden; background: var(--z-window); display: grid; grid-template-columns: 220px minmax(0, 1fr); min-height: 520px; box-shadow: 0 12px 30px rgba(16,32,51,.045); }
+      .app-window.compact { min-height: 430px; }
+      .sidebar { background: var(--z-side); border-right: 1px solid var(--z-line); padding: 18px 12px; display: grid; grid-template-rows: auto auto 1fr auto; gap: 16px; }
+      .lights { display: flex; gap: 8px; margin-bottom: 14px; }
+      .light { inline-size: 12px; block-size: 12px; border-radius: 50%; background: #ff5f57; }
+      .light:nth-child(2) { background: #ffbd2e; }
+      .light:nth-child(3) { background: #28c840; }
+      .navline { min-height: 26px; border-radius: 8px; display: flex; align-items: center; gap: 8px; padding: 0 8px; color: var(--z-text); font-size: 12px; font-weight: 660; }
+      .project-label { margin: 12px 0 6px; color: var(--z-subtle); font-size: 12px; font-weight: 760; }
+      .project-title { min-height: 32px; display: flex; align-items: center; gap: 8px; padding: 0 8px; font-weight: 760; font-size: 13px; color: var(--z-text); }
+      .subnav { margin-left: 22px; border-left: 1px solid var(--z-line); padding-left: 8px; display: grid; gap: 4px; }
+      .subitem { min-height: 28px; border-radius: 8px; padding: 0 8px; display: flex; align-items: center; justify-content: space-between; font-size: 12px; font-weight: 660; color: var(--z-text); }
+      .subitem.active { background: var(--z-selected); }
+      .workspace { position: relative; padding: 18px 20px 22px; min-width: 0; display: grid; grid-template-rows: auto auto auto 1fr; align-content: start; gap: 8px; }
+      .toolbar { min-height: 34px; display: grid; grid-template-columns: minmax(150px, 1fr) minmax(220px, 320px) auto auto; gap: 8px; align-items: center; }
+      .object-title { min-width: 0; color: var(--z-secondary); font-size: 12px; font-weight: 760; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .search { height: 30px; border: 1px solid var(--z-line); border-radius: 9px; background: var(--z-panel); display: flex; align-items: center; color: var(--z-secondary); padding: 0 11px; font-size: 12px; font-weight: 560; }
+      .segmented { height: 30px; border: 1px solid var(--z-line); border-radius: 10px; background: var(--z-panel); display: inline-flex; overflow: hidden; white-space: nowrap; }
+      .segmented span { display: inline-flex; align-items: center; padding: 0 11px; border-left: 1px solid var(--z-soft); color: var(--z-secondary); font-size: 12px; font-weight: 650; }
+      .segmented span:first-child { border-left: 0; color: var(--z-text); background: var(--z-accent-soft); font-weight: 760; }
+      .primary { height: 32px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid oklch(45% 0.15 252); border-radius: 9px; color: white; background: var(--z-accent); padding: 0 13px; font-size: 12px; font-weight: 760; white-space: nowrap; }
+      .viewbar { min-height: 30px; border-block: 1px solid var(--z-soft); display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 10px; }
+      .viewcopy { color: var(--z-secondary); font-size: 12px; min-width: 0; }
+      .viewcopy b { color: var(--z-text); }
+      .actions { display: inline-flex; gap: 7px; align-items: center; }
+      .pill { min-height: 24px; display: inline-flex; align-items: center; border: 1px solid var(--z-soft); border-radius: 999px; padding: 0 10px; background: var(--z-panel-muted); color: var(--z-secondary); font-size: 11px; font-weight: 690; white-space: nowrap; }
+      .pill.strong { color: var(--z-text); background: var(--z-panel); }
+      .pill.blue { border-color: rgba(31,111,178,.24); background: var(--blue-soft); color: var(--blue); }
+      .status-line { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; min-height: 24px; color: var(--z-secondary); font-size: 11px; }
+      .status-line strong { color: var(--z-text); }
+      .batchbar { min-height: 34px; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: center; border: 1px solid rgba(31,111,178,.18); background: var(--blue-soft); color: var(--blue); border-radius: 10px; padding: 6px 8px; font-size: 12px; font-weight: 700; }
+      .table-scroll { border-top: 1px solid var(--z-soft); overflow-x: auto; overflow-y: visible; min-width: 0; }
+      .table-grid { min-width: 0; display: grid; align-items: center; column-gap: 12px; grid-template-columns: 28px 104px minmax(170px, 1.35fr) 128px 98px 118px 116px 122px; }
+      .table-grid.wide { min-width: 980px; grid-template-columns: 28px 112px minmax(190px, 1.2fr) 128px 98px 118px 116px 122px 210px; }
+      .head { min-height: 34px; color: var(--z-secondary); font-size: 12px; font-weight: 760; }
+      .row { min-height: 44px; border-top: 1px solid var(--z-soft); color: var(--z-text); font-size: 12px; }
+      .row:hover { background: var(--z-hover); }
+      .check { inline-size: 16px; block-size: 16px; border: 1px solid var(--z-line); border-radius: 5px; background: var(--z-panel); }
+      .check.on { background: var(--z-accent); border-color: var(--z-accent); position: relative; }
+      .check.on::after { content: '✓'; color: white; font-size: 11px; position: absolute; inset: 0; display: grid; place-items: center; }
+      .cell-main { color: var(--z-text); font-size: 13px; font-weight: 760; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .cell-sub { color: var(--z-secondary); font-size: 11px; line-height: 1.2; margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .right { text-align: right; }
+      .scroll-note { min-height: 24px; display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--z-subtle); font-size: 11px; border-top: 1px solid transparent; }
+      .scroll-note strong { color: var(--z-secondary); }
+      .xrail { height: 8px; border-radius: 999px; background: oklch(92% 0.002 255); position: relative; overflow: hidden; flex: 0 0 min(520px, 62%); }
+      .xrail::after { content: ''; position: absolute; inset-block: 1px; inset-inline-start: 8%; inline-size: 54%; border-radius: inherit; background: oklch(72% 0.002 255); }
+      .empty-block { border-top: 1px solid var(--z-soft); min-height: 118px; display: grid; place-items: center; text-align: center; padding: 22px; color: var(--z-secondary); }
+      .empty-block strong { display: block; color: var(--z-text); font-size: 14px; margin-bottom: 5px; }
+      .empty-block .empty-actions { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; margin-top: 12px; }
+      .ghost { min-height: 28px; border: 1px solid var(--z-line); border-radius: 8px; background: var(--z-panel); color: var(--z-text); padding: 0 11px; font-size: 12px; font-weight: 700; display: inline-flex; align-items: center; }
+      .skeleton { display: grid; gap: 8px; padding: 10px 0 0; border-top: 1px solid var(--z-soft); }
+      .sline { height: 26px; border-radius: 8px; background: linear-gradient(90deg, oklch(94% 0.002 255), oklch(98% 0.001 255), oklch(94% 0.002 255)); }
+      .notice-row { border-top: 1px solid var(--z-soft); min-height: 86px; display: flex; align-items: center; gap: 12px; padding: 14px 2px; }
+      .notice-icon { inline-size: 32px; block-size: 32px; border-radius: 10px; display: grid; place-items: center; flex: 0 0 auto; font-weight: 780; }
+      .notice-icon.error { background: var(--red-soft); color: var(--red); }
+      .notice-copy strong { display: block; color: var(--z-text); font-size: 13px; margin-bottom: 4px; }
+      .notice-copy span { color: var(--z-secondary); font-size: 12px; line-height: 1.5; }
+      .column-popover { position: absolute; z-index: 6; inset-block-start: 86px; inset-inline-end: 20px; width: min(420px, calc(100% - 40px)); border: 1px solid var(--z-line); background: rgba(255,255,255,.96); border-radius: 14px; box-shadow: 0 16px 34px rgba(16,32,51,.12); padding: 12px; margin: 0; }
+      .column-popover h3 { margin: 0 0 4px; }
+      .column-popover p { color: var(--z-secondary); font-size: 12px; margin-bottom: 10px; }
+      .column-row { min-height: 40px; display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; gap: 8px; align-items: center; border-top: 1px solid var(--z-soft); color: var(--z-text); font-size: 12px; }
+      .width-set { display: inline-flex; gap: 4px; }
+      .width-set span { min-width: 26px; height: 24px; display: grid; place-items: center; border-radius: 7px; color: var(--z-secondary); font-size: 11px; font-weight: 700; }
+      .width-set .active { border: 1px solid rgba(31,111,178,.32); background: var(--blue-soft); color: var(--blue); }
+      .modal-layer { position: absolute; z-index: 7; inset: 0; display: grid; place-items: center; padding: 26px; background: rgba(251,253,255,.58); backdrop-filter: blur(2px); }
+      .task-modal { width: min(560px, 100%); border: 1px solid var(--z-line); border-radius: 16px; background: rgba(255,255,255,.98); box-shadow: 0 24px 56px rgba(16,32,51,.16); overflow: hidden; }
+      .modal-head { padding: 14px 16px 12px; border-bottom: 1px solid var(--z-soft); display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 10px; align-items: start; }
+      .modal-head h3 { margin: 0 0 4px; font-size: 15px; }
+      .modal-head p { color: var(--z-secondary); font-size: 12px; line-height: 1.5; }
+      .modal-body { padding: 14px 16px; display: grid; gap: 10px; }
+      .field { display: grid; gap: 5px; }
+      .field label { color: var(--z-text); font-size: 12px; font-weight: 720; }
+      .input-like, .textarea-like { border: 1px solid var(--z-line); background: var(--z-panel); border-radius: 9px; color: var(--z-secondary); font-size: 12px; padding: 8px 10px; }
+      .input-like { min-height: 32px; display: flex; align-items: center; }
+      .textarea-like { min-height: 86px; line-height: 1.55; }
+      .field-help { color: var(--z-subtle); font-size: 11px; line-height: 1.45; }
+      .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 10px; }
+      .modal-note { border: 1px solid rgba(152,101,6,.22); background: var(--amber-soft); color: var(--amber); border-radius: 10px; padding: 8px 10px; font-size: 12px; line-height: 1.45; }
+      .modal-foot { padding: 12px 16px; border-top: 1px solid var(--z-soft); display: flex; justify-content: flex-end; gap: 8px; }
+      .phone-board { width: min(430px, 100%); margin: 0 auto; border: 1px solid var(--z-line); border-radius: 24px; background: var(--z-window); overflow: hidden; box-shadow: 0 12px 30px rgba(16,32,51,.05); }
+      .phone-top { padding: 14px; border-bottom: 1px solid var(--z-soft); display: grid; gap: 8px; }
+      .phone-title { display: flex; justify-content: space-between; gap: 8px; align-items: center; font-size: 13px; font-weight: 780; }
+      .phone-controls { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
+      .phone-list { padding: 10px 14px 14px; display: grid; gap: 8px; }
+      .task-card { border: 1px solid var(--z-soft); background: var(--z-panel); border-radius: 12px; padding: 10px; display: grid; gap: 7px; }
+      .task-card strong { font-size: 13px; }
+      .task-meta { display: flex; flex-wrap: wrap; gap: 6px; color: var(--z-secondary); font-size: 11px; }
+      .timeline { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 14px; margin-top: 10px; }
+      .flow-node { position: relative; border: 1px solid rgba(141,179,216,.34); background: rgba(255,255,255,.82); border-radius: 15px; padding: 12px; min-height: 130px; }
+      .flow-node:not(:last-child)::after { content: '→'; position: absolute; right: -13px; top: 50%; transform: translateY(-50%); color: var(--blue); font-weight: 800; }
+      .flow-node strong { display: block; color: var(--blue); font-size: 13px; margin-bottom: 5px; }
+      .flow-node span { color: var(--muted); font-size: 12px; line-height: 1.52; }
+      .matrix { display: grid; grid-template-columns: 160px 1fr 1fr 1fr; border: 1px solid rgba(141,179,216,.42); border-radius: 16px; overflow: hidden; background: rgba(255,255,255,.82); }
+      .matrix div { padding: 10px 12px; border-top: 1px solid rgba(141,179,216,.24); border-left: 1px solid rgba(141,179,216,.24); color: var(--muted); font-size: 12px; line-height: 1.55; }
+      .matrix div:nth-child(-n+4) { border-top: 0; background: var(--blue-soft); color: var(--blue); font-weight: 760; }
+      .matrix div:nth-child(4n+1) { border-left: 0; color: var(--ink); font-weight: 700; }
+      .do-dont { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+      .list { margin: 0; padding-left: 18px; color: var(--muted); font-size: 12px; line-height: 1.7; }
+      .list li + li { margin-top: 4px; }
+      @media (max-width: 980px) {
+        main { padding: 22px 14px 46px; }
+        .hero-grid, .scene-map, .timeline, .do-dont { grid-template-columns: 1fr; }
+        .scene-head { grid-template-columns: 1fr; }
+        .app-window { grid-template-columns: 1fr; min-height: auto; }
+        .sidebar { display: none; }
+        .workspace { padding: 14px; }
+        .toolbar, .viewbar, .status-line, .batchbar { grid-template-columns: 1fr; }
+        .segmented, .actions { width: 100%; flex-wrap: wrap; }
+        .segmented span { flex: 1; justify-content: center; }
+        .table-grid { grid-template-columns: 28px 96px minmax(140px, 1fr) 104px; }
+        .table-grid > :nth-child(n+5) { display: none; }
+        .table-grid.wide { min-width: 0; grid-template-columns: 28px 96px minmax(140px, 1fr) 104px; }
+        .table-grid.wide > :nth-child(n+5) { display: none; }
+        .xrail { display: none; }
+        .scroll-note { justify-content: flex-start; }
+        .column-popover { inset-block-start: 126px; inset-inline-end: 14px; width: min(420px, calc(100% - 28px)); }
+        .modal-layer { padding: 14px; align-items: start; }
+        .form-grid { grid-template-columns: 1fr; }
+        .matrix { grid-template-columns: 1fr; }
+        .matrix div { border-left: 0; }
+        .flow-node:not(:last-child)::after { content: '↓'; right: auto; top: auto; left: 50%; bottom: -17px; transform: translateX(-50%); }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="code">TASK_20260702_005</div>
+      <h1>页面设计稿：Zeus 任务页多场景原型设计稿</h1>
+      <p class="lead">上一版只有一个首屏场景，确实缺了空任务、无结果、加载、错误、批量、列设置和新任务弹窗等原型。这里补成多场景设计稿，并把滚动策略改成硬规则：任务页生产界面不出现两个纵向滚动条；横向滚动只在表格列真的溢出时出现。</p>
+
+      <section class="hero-grid" aria-label="设计原则与场景地图">
+        <div class="panel">
+          <div class="panel-title"><h2>单滚动原则</h2><span>直接回应“双滚动条”问题</span></div>
+          <div class="rule-list">
+            <div class="rule"><b>1</b><div><strong>纵向只交给一个容器</strong><span>生产页要么由工作区滚动，要么由列表区域滚动，不允许外层页面和表格内部同时纵向滚动。</span></div></div>
+            <div class="rule"><b>2</b><div><strong>默认态不展示假横向条</strong><span>7 个默认列能完整展示时，不画灰色横条；只有自定义宽列、扩展字段或窄宽度导致溢出时才出现横向兜底。</span></div></div>
+            <div class="rule"><b>3</b><div><strong>空态 / 无结果 / 加载 / 错误不制造滚动条</strong><span>这些状态没有宽表内容，不应出现横向条，也不应把列表撑成 72vh 之类的大空白。</span></div></div>
+            <div class="rule"><b>4</b><div><strong>列设置弹层不被表格裁切</strong><span>列面板属于工具条弹层层级，不依赖表格滚动容器；宽列选择后才让表格内容出现单一横向兜底。</span></div></div>
+            <div class="rule"><b>5</b><div><strong>仓库约束来源</strong><span>本轮未发现 AGENTS.md、PROJECT-STYLE.md、CODE-GUIDELINES.md；设计约束遵循 <code>DESIGN.md</code> 的任务页主工作区、真实状态和空态规则。</span></div></div>
+            <div class="rule"><b>6</b><div><strong>弹层不参与文档流</strong><span>列设置和新任务都必须是 overlay：覆盖当前表格，不把任务行往下顶，也不改变表格行高和滚动位置。</span></div></div>
+          </div>
+        </div>
+        <div class="panel soft">
+          <div class="panel-title"><h2>多场景原型地图</h2><span>全部纵向展开，不用 tab 藏状态</span></div>
+          <nav class="scene-map" aria-label="场景导航">
+            <a class="scene-link" href="#scene-default"><strong>默认</strong><span>2 个真实任务，默认 7 列完整可读。</span></a>
+            <a class="scene-link" href="#scene-new-task"><strong>新任务</strong><span>点击新任务后出现悬浮创建弹窗。</span></a>
+            <a class="scene-link" href="#scene-empty"><strong>空任务</strong><span>没有任何任务时给第一步动作。</span></a>
+            <a class="scene-link" href="#scene-no-results"><strong>无结果</strong><span>筛选后为空，优先清除筛选。</span></a>
+            <a class="scene-link" href="#scene-loading"><strong>加载</strong><span>局部骨架，不遮住工作台框架。</span></a>
+            <a class="scene-link" href="#scene-error"><strong>错误</strong><span>说明影响范围和恢复方式。</span></a>
+            <a class="scene-link" href="#scene-batch"><strong>批量</strong><span>选择后出现批量动作条。</span></a>
+            <a class="scene-link" href="#scene-columns"><strong>列设置</strong><span>弹层完整可见，宽列触发横向兜底。</span></a>
+            <a class="scene-link" href="#scene-narrow"><strong>窄屏</strong><span>收敛成任务卡片，不靠横拖阅读。</span></a>
+          </nav>
+        </div>
+      </section>
+
+      <section class="scene" id="scene-default" aria-labelledby="default-title">
+        <div class="scene-head">
+          <div><div class="eyebrow">场景 01 · 默认任务列表</div><h2 id="default-title">默认 7 列完整可见，不用灰色横条占位</h2><p>这是主路径：搜索、状态分段、新任务在第一层；排序、标签、批量、列和更多进入视图控制条。表格本体只负责读任务，不再被一个假滚动条抢注意力。</p></div>
+          <span class="tag green">默认无横向条</span>
+        </div>
+        <div class="mock-shell">
+          <div class="app-window">
+            <aside class="sidebar" aria-label="项目导航">
+              <div><div class="lights"><span class="light"></span><span class="light"></span><span class="light"></span></div><div class="navline">⌘ 新对话</div><div class="navline">⌕ 搜索</div></div>
+              <div><div class="project-label">项目</div><div class="project-title">▣ Zeus E2E</div><div class="subnav"><div class="subitem active">✓ 任务 <span>当前</span></div><div class="subitem">⌘ 代码</div><div class="subitem">◦ 会话</div></div></div>
+              <div><div class="project-title">▣ tc-app-core</div></div>
+              <div class="navline">⚙ 设置</div>
+            </aside>
+            <section class="workspace" aria-label="任务工作区默认场景">
+              <div class="toolbar"><div class="object-title">Zeus E2E · 任务 2/2 · 全部状态</div><div class="search">搜索任务</div><div class="segmented"><span>全部</span><span>就绪</span><span>运行中</span></div><div class="primary">新任务</div></div>
+              <div class="viewbar"><div class="viewcopy"><b>视图控制</b>：排序 标题 · 标签 全部</div><div class="actions"><span class="pill">批量</span><span class="pill strong">列</span><span class="pill">更多</span></div></div>
+              <div class="status-line"><span><strong>默认视图</strong> · 任务编码、任务 / 意图、状态 / 下一步、AI 执行、上下文来源、证据、更新时间</span><span>2 项任务</span></div>
+              <div class="table-scroll">
+                <div class="table-grid head"><div><span class="check"></span></div><div>任务编码</div><div>任务 / 意图</div><div class="right">状态 / 下一步</div><div>AI 执行</div><div>上下文来源</div><div>证据</div><div>更新时间</div></div>
+                <div class="table-grid row"><div><span class="check"></span></div><div><div class="cell-main">ZEU-000001</div><div class="cell-sub">序号 1</div></div><div><div class="cell-main">123</div><div class="cell-sub">123</div></div><div class="right"><div class="cell-main">可启动 AI</div><div class="cell-sub">状态：就绪</div></div><div>AI 未配置</div><div>手动创建</div><div>优先级 normal</div><div>2026-07-01 02:38</div></div>
+                <div class="table-grid row"><div><span class="check"></span></div><div><div class="cell-main">ZEU-000002</div><div class="cell-sub">序号 2</div></div><div><div class="cell-main">带图任务</div></div><div class="right"><div class="cell-main">可启动 AI</div><div class="cell-sub">状态：就绪</div></div><div>AI 未配置</div><div>手动创建</div><div>优先级 normal</div><div>2026-07-02 05:52</div></div>
+              </div>
+              <div class="scroll-note"><span><strong>滚动策略：</strong>默认态没有可见横条；列溢出时才出现单一横向滚动。</span></div>
+            </section>
+          </div>
+        </div>
+      </section>
+
+      <section class="scene" id="scene-new-task" aria-labelledby="new-task-title">
+        <div class="scene-head">
+          <div><div class="eyebrow">场景 02 · 新任务弹窗</div><h2 id="new-task-title">新任务是悬浮创建弹窗，不挤压任务表格</h2><p>点击主按钮后，弹窗覆盖在当前任务工作区之上。背景表格保持原位置，用户取消或创建后焦点回到“新任务”按钮。</p></div>
+          <span class="tag green">悬浮 overlay</span>
+        </div>
+        <div class="mock-shell">
+          <div class="app-window compact">
+            <aside class="sidebar" aria-label="项目导航"><div><div class="lights"><span class="light"></span><span class="light"></span><span class="light"></span></div><div class="navline">⌘ 新对话</div><div class="navline">⌕ 搜索</div></div><div><div class="project-label">项目</div><div class="project-title">▣ Zeus E2E</div><div class="subnav"><div class="subitem active">✓ 任务 <span>当前</span></div><div class="subitem">⌘ 代码</div><div class="subitem">◦ 会话</div></div></div><div><div class="project-title">▣ tc-app-core</div></div><div class="navline">⚙ 设置</div></aside>
+            <section class="workspace" aria-label="新任务弹窗工作区">
+              <div class="toolbar"><div class="object-title">Zeus E2E · 任务 2/2 · 全部状态</div><div class="search">搜索任务</div><div class="segmented"><span>全部</span><span>就绪</span><span>运行中</span></div><div class="primary">新任务</div></div>
+              <div class="viewbar"><div class="viewcopy"><b>视图控制</b>：排序 标题 · 标签 全部</div><div class="actions"><span class="pill">批量</span><span class="pill strong">列</span><span class="pill">更多</span></div></div>
+              <div class="status-line"><span><strong>背景表格保持原位</strong> · 弹窗不参与表格布局</span><span>2 项任务</span></div>
+              <div class="table-scroll">
+                <div class="table-grid head"><div><span class="check"></span></div><div>任务编码</div><div>任务 / 意图</div><div class="right">状态 / 下一步</div><div>AI 执行</div><div>上下文来源</div><div>证据</div><div>更新时间</div></div>
+                <div class="table-grid row"><div><span class="check"></span></div><div><div class="cell-main">ZEU-000001</div><div class="cell-sub">序号 1</div></div><div><div class="cell-main">123</div><div class="cell-sub">123</div></div><div class="right"><div class="cell-main">可启动 AI</div><div class="cell-sub">状态：就绪</div></div><div>AI 未配置</div><div>手动创建</div><div>优先级 normal</div><div>2026-07-01 02:38</div></div>
+                <div class="table-grid row"><div><span class="check"></span></div><div><div class="cell-main">ZEU-000002</div><div class="cell-sub">序号 2</div></div><div><div class="cell-main">带图任务</div></div><div class="right"><div class="cell-main">可启动 AI</div><div class="cell-sub">状态：就绪</div></div><div>AI 未配置</div><div>手动创建</div><div>优先级 normal</div><div>2026-07-02 05:52</div></div>
+              </div>
+              <div class="scroll-note"><span><strong>弹窗策略：</strong>新任务弹窗用 overlay 层，打开时不改变行高、列宽和滚动位置。</span></div>
+              <div class="modal-layer">
+                <div class="task-modal" role="dialog" aria-label="新任务">
+                  <div class="modal-head"><div><h3>新任务</h3><p>把一个可执行研发意图记录到当前项目。创建后进入就绪态，可再推送到 CLI。</p></div><span class="pill">Esc 关闭</span></div>
+                  <div class="modal-body">
+                    <div class="field"><label>任务标题</label><div class="input-like">例如：修复任务表格列可见性</div><div class="field-help">必填，保存后作为任务列表主标题。</div></div>
+                    <div class="field"><label>任务要求 / 意图</label><div class="textarea-like">描述期望行为、验收口径、必要上下文。支持粘贴用户原始要求，不在这里启动 AI。</div></div>
+                    <div class="form-grid"><div class="field"><label>优先级</label><div class="input-like">normal</div></div><div class="field"><label>标签</label><div class="input-like">可选，逗号分隔</div></div></div>
+                    <div class="field"><label>上下文来源</label><div class="input-like">当前项目 Zeus E2E · 手动创建</div><div class="field-help">真实项目上下文自动带入；不写假路径或假执行结果。</div></div>
+                    <div class="modal-note">AI Runtime 未配置时仍可创建任务；“推送到 CLI”保持不可用或后续提示配置。</div>
+                  </div>
+                  <div class="modal-foot"><span class="ghost">取消</span><span class="primary">创建任务</span></div>
+                </div>
+              </div>
+            </section>
+          </div>
+        </div>
+      </section>
+
+      <section class="scene" id="scene-empty" aria-labelledby="empty-title">
+        <div class="scene-head">
+          <div><div class="eyebrow">场景 03 · 没有任何任务</div><h2 id="empty-title">空任务不是空白页，而是表格工作台的第一步</h2><p>当项目没有任务时，保留同一套工具条和表头，让用户知道“这里未来会出现任务”；正文只给一个紧凑空态，不预留右侧详情停车场。</p></div>
+          <span class="tag amber">无横向条</span>
+        </div>
+        <div class="mock-shell">
+          <div class="app-window compact">
+            <aside class="sidebar" aria-label="项目导航"><div><div class="lights"><span class="light"></span><span class="light"></span><span class="light"></span></div><div class="navline">⌘ 新对话</div><div class="navline">⌕ 搜索</div></div><div><div class="project-label">项目</div><div class="project-title">▣ Zeus E2E</div><div class="subnav"><div class="subitem active">✓ 任务 <span>当前</span></div><div class="subitem">⌘ 代码</div><div class="subitem">◦ 会话</div></div></div><div></div><div class="navline">⚙ 设置</div></aside>
+            <section class="workspace" aria-label="空任务工作区">
+              <div class="toolbar"><div class="object-title">Zeus E2E · 任务 0/0 · 全部状态</div><div class="search">搜索任务</div><div class="segmented"><span>全部</span><span>就绪</span><span>运行中</span></div><div class="primary">新任务</div></div>
+              <div class="viewbar"><div class="viewcopy"><b>视图控制</b>：排序 标题 · 标签 全部</div><div class="actions"><span class="pill">批量</span><span class="pill strong">列</span><span class="pill">更多</span></div></div>
+              <div class="status-line"><span><strong>当前项目还没有任务</strong> · 创建后会按任务编码进入表格</span><span>0 项任务</span></div>
+              <div class="table-scroll"><div class="table-grid head"><div><span class="check"></span></div><div>任务编码</div><div>任务 / 意图</div><div class="right">状态 / 下一步</div><div>AI 执行</div><div>上下文来源</div><div>证据</div><div>更新时间</div></div><div class="empty-block"><div><strong>还没有任务</strong><span>用“新任务”创建第一条研发任务；创建后会显示状态、AI 执行入口、证据和更新时间。</span><div class="empty-actions"><span class="primary">新任务</span><span class="ghost">查看项目代码</span></div></div></div></div>
+              <div class="scroll-note"><span><strong>滚动策略：</strong>无表格内容，不出现横向滚动条，也不撑高到屏幕底部。</span></div>
+            </section>
+          </div>
+        </div>
+      </section>
+
+      <section class="scene" id="scene-no-results" aria-labelledby="no-results-title">
+        <div class="scene-head">
+          <div><div class="eyebrow">场景 04 · 筛选后无结果</div><h2 id="no-results-title">无结果要保留筛选上下文，并给清除路径</h2><p>这里不是项目空态，而是“筛选条件太窄”。首要动作是清除搜索或重置状态，不要引导用户误以为需要新建任务。</p></div>
+          <span class="tag violet">筛选空态</span>
+        </div>
+        <div class="mock-shell">
+          <div class="app-window compact">
+            <aside class="sidebar" aria-label="项目导航"><div><div class="lights"><span class="light"></span><span class="light"></span><span class="light"></span></div><div class="navline">⌘ 新对话</div><div class="navline">⌕ 搜索</div></div><div><div class="project-label">项目</div><div class="project-title">▣ Zeus E2E</div><div class="subnav"><div class="subitem active">✓ 任务 <span>当前</span></div><div class="subitem">⌘ 代码</div><div class="subitem">◦ 会话</div></div></div><div></div><div class="navline">⚙ 设置</div></aside>
+            <section class="workspace" aria-label="无结果工作区">
+              <div class="toolbar"><div class="object-title">Zeus E2E · 任务 0/2 · 运行中</div><div class="search">搜索任务：release</div><div class="segmented"><span>运行中</span><span>就绪</span><span>全部</span></div><div class="primary">新任务</div></div>
+              <div class="viewbar"><div class="viewcopy"><b>视图控制</b>：排序 标题 · 标签 全部</div><div class="actions"><span class="pill blue">清除筛选</span><span class="pill strong">列</span><span class="pill">更多</span></div></div>
+              <div class="status-line"><span><strong>没有匹配任务</strong> · 当前搜索 release，状态运行中</span><span>0 / 2</span></div>
+              <div class="table-scroll"><div class="table-grid head"><div><span class="check"></span></div><div>任务编码</div><div>任务 / 意图</div><div class="right">状态 / 下一步</div><div>AI 执行</div><div>上下文来源</div><div>证据</div><div>更新时间</div></div><div class="empty-block"><div><strong>没有符合筛选的任务</strong><span>放宽状态、清除搜索词或切回全部状态后再查看现有任务。</span><div class="empty-actions"><span class="primary">清除筛选</span><span class="ghost">查看全部状态</span></div></div></div></div>
+              <div class="scroll-note"><span><strong>滚动策略：</strong>筛选空态同样不显示横向条，避免误以为还有被裁掉的列。</span></div>
+            </section>
+          </div>
+        </div>
+      </section>
+
+      <section class="scene" id="scene-loading" aria-labelledby="loading-title">
+        <div class="scene-head">
+          <div><div class="eyebrow">场景 05 · 局部加载</div><h2 id="loading-title">加载态只替换表格内容，不遮住工具条</h2><p>用户仍然能看到当前项目和可用控件。加载骨架高度跟短列表一致，不用整页遮罩，也不出现滚动条占位。</p></div>
+          <span class="tag">局部骨架</span>
+        </div>
+        <div class="mock-shell">
+          <div class="app-window compact">
+            <aside class="sidebar" aria-label="项目导航"><div><div class="lights"><span class="light"></span><span class="light"></span><span class="light"></span></div><div class="navline">⌘ 新对话</div><div class="navline">⌕ 搜索</div></div><div><div class="project-label">项目</div><div class="project-title">▣ Zeus E2E</div><div class="subnav"><div class="subitem active">✓ 任务 <span>当前</span></div><div class="subitem">⌘ 代码</div><div class="subitem">◦ 会话</div></div></div><div></div><div class="navline">⚙ 设置</div></aside>
+            <section class="workspace" aria-label="加载中工作区">
+              <div class="toolbar"><div class="object-title">Zeus E2E · 任务加载中</div><div class="search">搜索任务</div><div class="segmented"><span>全部</span><span>就绪</span><span>运行中</span></div><div class="primary">新任务</div></div>
+              <div class="viewbar"><div class="viewcopy"><b>视图控制</b>：排序 标题 · 标签 全部</div><div class="actions"><span class="pill">批量</span><span class="pill strong">列</span><span class="pill">更多</span></div></div>
+              <div class="status-line"><span><strong>正在读取任务</strong> · 保留当前视图框架</span><span>等待本机数据</span></div>
+              <div class="table-scroll"><div class="table-grid head"><div><span class="check"></span></div><div>任务编码</div><div>任务 / 意图</div><div class="right">状态 / 下一步</div><div>AI 执行</div><div>上下文来源</div><div>证据</div><div>更新时间</div></div><div class="skeleton" aria-label="任务列表加载骨架"><div class="sline"></div><div class="sline"></div><div class="sline"></div></div></div>
+              <div class="scroll-note"><span><strong>滚动策略：</strong>骨架不创造表格溢出，也不额外出现内部纵向滚动。</span></div>
+            </section>
+          </div>
+        </div>
+      </section>
+
+      <section class="scene" id="scene-error" aria-labelledby="error-title">
+        <div class="scene-head">
+          <div><div class="eyebrow">场景 06 · 读取失败 / 权限问题</div><h2 id="error-title">错误态要说清影响范围和恢复方式</h2><p>错误行不暴露堆栈和敏感路径，不用弹窗挡住工作台；用户可以重试、返回项目设置或检查本机路径权限。</p></div>
+          <span class="tag red">可恢复错误</span>
+        </div>
+        <div class="mock-shell">
+          <div class="app-window compact">
+            <aside class="sidebar" aria-label="项目导航"><div><div class="lights"><span class="light"></span><span class="light"></span><span class="light"></span></div><div class="navline">⌘ 新对话</div><div class="navline">⌕ 搜索</div></div><div><div class="project-label">项目</div><div class="project-title">▣ Zeus E2E</div><div class="subnav"><div class="subitem active">✓ 任务 <span>当前</span></div><div class="subitem">⌘ 代码</div><div class="subitem">◦ 会话</div></div></div><div></div><div class="navline">⚙ 设置</div></aside>
+            <section class="workspace" aria-label="错误工作区">
+              <div class="toolbar"><div class="object-title">Zeus E2E · 任务暂不可用</div><div class="search">搜索任务</div><div class="segmented"><span>全部</span><span>就绪</span><span>运行中</span></div><div class="primary">新任务</div></div>
+              <div class="viewbar"><div class="viewcopy"><b>视图控制</b>：排序 标题 · 标签 全部</div><div class="actions"><span class="pill">批量</span><span class="pill strong">列</span><span class="pill">更多</span></div></div>
+              <div class="status-line"><span><strong>任务列表读取失败</strong> · 不影响项目导航</span><span>可重试</span></div>
+              <div class="table-scroll"><div class="table-grid head"><div><span class="check"></span></div><div>任务编码</div><div>任务 / 意图</div><div class="right">状态 / 下一步</div><div>AI 执行</div><div>上下文来源</div><div>证据</div><div>更新时间</div></div><div class="notice-row"><div class="notice-icon error">!</div><div class="notice-copy"><strong>无法读取任务列表</strong><span>请重试，或在项目设置中确认本机路径权限。错误详情只进入本机日志，不在普通界面暴露堆栈。</span><div class="empty-actions" style="justify-content:flex-start"><span class="primary">重试</span><span class="ghost">项目设置</span></div></div></div></div>
+              <div class="scroll-note"><span><strong>滚动策略：</strong>错误态是一行 inline notice，不展示横条，不预留详情右栏。</span></div>
+            </section>
+          </div>
+        </div>
+      </section>
+
+      <section class="scene" id="scene-batch" aria-labelledby="batch-title">
+        <div class="scene-head">
+          <div><div class="eyebrow">场景 07 · 批量选择</div><h2 id="batch-title">批量动作只在选择后出现，不常驻抢主路径</h2><p>默认工具条保持低噪音；当用户选择任务后，批量条进入表格上方，说明选中数量和动作，清除选择后消失。</p></div>
+          <span class="tag green">选择驱动</span>
+        </div>
+        <div class="mock-shell">
+          <div class="app-window compact">
+            <aside class="sidebar" aria-label="项目导航"><div><div class="lights"><span class="light"></span><span class="light"></span><span class="light"></span></div><div class="navline">⌘ 新对话</div><div class="navline">⌕ 搜索</div></div><div><div class="project-label">项目</div><div class="project-title">▣ Zeus E2E</div><div class="subnav"><div class="subitem active">✓ 任务 <span>当前</span></div><div class="subitem">⌘ 代码</div><div class="subitem">◦ 会话</div></div></div><div></div><div class="navline">⚙ 设置</div></aside>
+            <section class="workspace" aria-label="批量选择工作区">
+              <div class="toolbar"><div class="object-title">Zeus E2E · 任务 2/2 · 全部状态</div><div class="search">搜索任务</div><div class="segmented"><span>全部</span><span>就绪</span><span>运行中</span></div><div class="primary">新任务</div></div>
+              <div class="viewbar"><div class="viewcopy"><b>视图控制</b>：排序 标题 · 标签 全部</div><div class="actions"><span class="pill blue">批量</span><span class="pill strong">列</span><span class="pill">更多</span></div></div>
+              <div class="batchbar"><span>已选择 2 项任务</span><div class="actions"><span class="pill strong">标记完成</span><span class="pill strong">推送到 CLI</span><span class="pill">取消选择</span></div></div>
+              <div class="table-scroll"><div class="table-grid head"><div><span class="check on"></span></div><div>任务编码</div><div>任务 / 意图</div><div class="right">状态 / 下一步</div><div>AI 执行</div><div>上下文来源</div><div>证据</div><div>更新时间</div></div><div class="table-grid row"><div><span class="check on"></span></div><div><div class="cell-main">ZEU-000001</div><div class="cell-sub">序号 1</div></div><div><div class="cell-main">123</div><div class="cell-sub">123</div></div><div class="right"><div class="cell-main">可启动 AI</div><div class="cell-sub">状态：就绪</div></div><div>AI 未配置</div><div>手动创建</div><div>优先级 normal</div><div>2026-07-01 02:38</div></div><div class="table-grid row"><div><span class="check on"></span></div><div><div class="cell-main">ZEU-000002</div><div class="cell-sub">序号 2</div></div><div><div class="cell-main">带图任务</div></div><div class="right"><div class="cell-main">可启动 AI</div><div class="cell-sub">状态：就绪</div></div><div>AI 未配置</div><div>手动创建</div><div>优先级 normal</div><div>2026-07-02 05:52</div></div></div>
+              <div class="scroll-note"><span><strong>滚动策略：</strong>批量条占据一行，不改变列表滚动模型。</span></div>
+            </section>
+          </div>
+        </div>
+      </section>
+
+      <section class="scene" id="scene-columns" aria-labelledby="columns-title">
+        <div class="scene-head">
+          <div><div class="eyebrow">场景 08 · 自定义列和宽字段</div><h2 id="columns-title">列设置是悬浮弹层，不把任务行往下撑</h2><p>列设置从工具条“列”按钮展开，覆盖在当前表格之上，不参与表格布局、不改变行位置。用户选择扩展字段或宽列后，横向滚动只出现在表格内容底部。</p></div>
+          <span class="tag amber">这里允许单一横向条</span>
+        </div>
+        <div class="mock-shell">
+          <div class="app-window">
+            <aside class="sidebar" aria-label="项目导航"><div><div class="lights"><span class="light"></span><span class="light"></span><span class="light"></span></div><div class="navline">⌘ 新对话</div><div class="navline">⌕ 搜索</div></div><div><div class="project-label">项目</div><div class="project-title">▣ Zeus E2E</div><div class="subnav"><div class="subitem active">✓ 任务 <span>当前</span></div><div class="subitem">⌘ 代码</div><div class="subitem">◦ 会话</div></div></div><div></div><div class="navline">⚙ 设置</div></aside>
+            <section class="workspace" aria-label="列设置工作区">
+              <div class="toolbar"><div class="object-title">Zeus E2E · 任务 2/2 · 全部状态</div><div class="search">搜索任务</div><div class="segmented"><span>全部</span><span>就绪</span><span>运行中</span></div><div class="primary">新任务</div></div>
+              <div class="viewbar"><div class="viewcopy"><b>视图控制</b>：排序 标题 · 标签 全部</div><div class="actions"><span class="pill">批量</span><span class="pill strong">列</span><span class="pill">更多</span></div></div>
+              <div class="column-popover" role="dialog" aria-label="自定义任务字段">
+                <h3>自定义任务字段</h3><p>显示、隐藏或调整任务表格字段。固定列不能隐藏。</p>
+                <div class="column-row"><span class="check on"></span><div><strong>任务编码</strong><div class="cell-sub">固定列，不能隐藏</div></div><div class="width-set"><span>窄</span><span class="active">中</span><span>宽</span></div></div>
+                <div class="column-row"><span class="check on"></span><div><strong>任务 / 意图</strong><div class="cell-sub">默认显示</div></div><div class="width-set"><span>窄</span><span class="active">中</span><span>宽</span></div></div>
+                <div class="column-row"><span class="check on"></span><div><strong>更新时间</strong><div class="cell-sub">默认显示，避免被当作剩余列隐藏</div></div><div class="width-set"><span>窄</span><span class="active">中</span><span>宽</span></div></div>
+                <div class="column-row"><span class="check on"></span><div><strong>扩展字段：关联会话</strong><div class="cell-sub">宽字段，可能触发表格横向兜底</div></div><div class="width-set"><span>窄</span><span>中</span><span class="active">宽</span></div></div>
+              </div>
+              <div class="table-scroll"><div class="table-grid wide head"><div><span class="check"></span></div><div>任务编码</div><div>任务 / 意图</div><div class="right">状态 / 下一步</div><div>AI 执行</div><div>上下文来源</div><div>证据</div><div>更新时间</div><div>关联会话</div></div><div class="table-grid wide row"><div><span class="check"></span></div><div><div class="cell-main">ZEU-000001</div><div class="cell-sub">序号 1</div></div><div><div class="cell-main">123</div><div class="cell-sub">123</div></div><div class="right"><div class="cell-main">可启动 AI</div><div class="cell-sub">状态：就绪</div></div><div>AI 未配置</div><div>手动创建</div><div>优先级 normal</div><div>2026-07-01 02:38</div><div>当前无会话</div></div></div>
+              <div class="scroll-note"><span><strong>滚动策略：</strong>只有这一类宽列场景出现一条横向兜底。</span><div class="xrail" aria-hidden="true"></div></div>
+            </section>
+          </div>
+        </div>
+      </section>
+
+      <section class="scene" id="scene-narrow" aria-labelledby="narrow-title">
+        <div class="scene-head">
+          <div><div class="eyebrow">场景 09 · 窄屏 / 小窗口</div><h2 id="narrow-title">窄屏改为任务摘要卡，不把横拖当唯一阅读路径</h2><p>在小窗口下，项目侧栏可收起，工具条换行，任务以卡片摘要承载关键字段；列设置和更多操作仍可达。</p></div>
+          <span class="tag green">无横向依赖</span>
+        </div>
+        <div class="mock-shell">
+          <div class="phone-board" role="img" aria-label="窄屏任务页原型">
+            <div class="phone-top"><div class="phone-title"><span>Zeus E2E · 任务 2/2</span><span class="primary">新任务</span></div><div class="phone-controls"><div class="search">搜索任务</div><div class="pill strong">列</div></div><div class="segmented"><span>全部</span><span>就绪</span><span>运行中</span></div></div>
+            <div class="phone-list"><div class="task-card"><strong>ZEU-000001 · 123</strong><div class="task-meta"><span>状态：就绪</span><span>AI 未配置</span><span>优先级 normal</span><span>2026-07-01 02:38</span></div></div><div class="task-card"><strong>ZEU-000002 · 带图任务</strong><div class="task-meta"><span>状态：就绪</span><span>AI 未配置</span><span>优先级 normal</span><span>2026-07-02 05:52</span></div></div></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel" aria-labelledby="flow-title" style="margin-top:18px">
+        <div class="panel-title"><h2 id="flow-title">主路径页面流</h2><span>从进入任务页到异常恢复</span></div>
+        <div class="timeline" role="img" aria-label="任务页主路径流程">
+          <div class="flow-node"><strong>进入任务页</strong><span>左侧项目导航选中任务，右侧只呈现一个工作区。</span></div>
+          <div class="flow-node"><strong>默认列表</strong><span>读取任务成功时显示 7 列表格；默认不显示横向条。</span></div>
+          <div class="flow-node"><strong>新任务弹窗</strong><span>点击新任务后覆盖当前表格，不挤压任务行；取消或创建后焦点返回按钮。</span></div>
+          <div class="flow-node"><strong>空任务</strong><span>项目没有任务时展示紧凑空态和“新任务”第一步。</span></div>
+          <div class="flow-node"><strong>筛选无结果</strong><span>保留筛选上下文，主动作是清除筛选。</span></div>
+          <div class="flow-node"><strong>批量处理</strong><span>选择后出现批量条，取消后回到低噪音工具条。</span></div>
+          <div class="flow-node"><strong>列设置</strong><span>弹层在工具条层级悬浮覆盖，宽列时出现唯一横向兜底。</span></div>
+          <div class="flow-node"><strong>错误恢复</strong><span>局部错误说明影响范围、重试和项目设置入口。</span></div>
+        </div>
+      </section>
+
+      <section class="panel" aria-labelledby="accept-title" style="margin-top:18px">
+        <div class="panel-title"><h2 id="accept-title">实现验收清单</h2><span>把设计问题变成可测试约束</span></div>
+        <div class="matrix" role="table" aria-label="实现验收矩阵">
+          <div>约束</div><div>必须满足</div><div>禁止回退</div><div>建议测试</div>
+          <div>默认列</div><div>7 列 header 和 row 都存在，证据、更新时间不能被隐藏成“剩余列”。</div><div>不能靠裁切右侧列来制造无滚动的错觉。</div><div>断言 header/cell 文本存在，并覆盖证据与更新时间。</div>
+          <div>滚动模型</div><div>非空短列表高度自适应；横向滚动只在列溢出时出现。</div><div>禁止恢复 <code>block-size: min(72vh, 760px)</code>、<code>block-size: 100%</code> 这类撑高滚动区。</div><div>样式断言：短列表不强制 72vh；宽列启用 overflow-x。</div>
+          <div>空态</div><div>0 任务、筛选无结果、加载、错误都要有独立文案和下一步。</div><div>不能用大空白或右栏停车场表示空态。</div><div>渲染测试分别覆盖 empty / no-results / loading / error。</div>
+          <div>新任务弹窗</div><div>点击新任务后弹窗覆盖当前工作区；创建 / 取消后焦点返回触发按钮。</div><div>不能把弹窗插入表格流导致任务行下移。</div><div>断言 dialog 存在、焦点 trap、取消恢复焦点、提交中禁用重复点击。</div>
+          <div>列设置</div><div>弹层完整可见，不被表格边界裁切；固定列不可隐藏；不把任务行往下撑。</div><div>不能把弹层放进会裁切的 table scroller，也不能参与表格文档流。</div><div>弹层定位测试 + 键盘焦点返回触发器。</div>
+          <div>窄屏</div><div>小窗口改为摘要卡或四列以下重点表，不把横拖作为唯一阅读路径。</div><div>不能让 body 出现不可控横向溢出。</div><div>390px 宽度无页面级横向溢出。</div>
+        </div>
+      </section>
+
+      <section class="panel" aria-labelledby="decision-title" style="margin-top:18px">
+        <div class="panel-title"><h2 id="decision-title">本轮对上一版的修正</h2><span>明确哪些地方要改掉</span></div>
+        <div class="do-dont">
+          <div>
+            <h3>应该保留</h3>
+            <ul class="list">
+              <li>分组工具条优先：搜索、状态、新任务是首层主路径。</li>
+              <li>视图控制条：排序、标签、批量、列、更多在第二层低噪音呈现。</li>
+              <li>默认 7 列完整渲染，任务页仍以表格工作台为主角。</li>
+              <li>新任务和列设置都用悬浮 overlay，独立于表格滚动容器。</li>
+            </ul>
+          </div>
+          <div>
+            <h3>必须去掉</h3>
+            <ul class="list">
+              <li>默认列表底部的假灰色滚动条。</li>
+              <li>外层页面滚动 + 内层列表纵向滚动的双滚动条。</li>
+              <li>短列表为了把滚动条推到底部而撑出的空白高度。</li>
+              <li>空态、无结果、加载、错误都只用默认场景含糊带过。</li>
+              <li>把列设置或新任务弹窗插入文档流，导致任务行被往下顶。</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>交付验收：Zeus 任务页多场景原型高还原开发</title>
+  <style>
+    :root {
+      --ink: #102033;
+      --muted: #5a6c80;
+      --paper: #fbfdff;
+      --panel: rgba(255,255,255,.92);
+      --line: #8db3d8;
+      --blue: #1f6fb2;
+      --blue-soft: #e8f3ff;
+      --green: #17785a;
+      --green-soft: #e9f8f2;
+      --amber: #986506;
+      --amber-soft: #fff6de;
+      --red: #a63a3a;
+      --red-soft: #fff0f0;
+      --shadow: 0 16px 42px rgba(20, 57, 92, .085);
+      --radius: 20px;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      font: 14px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      background:
+        radial-gradient(circle at 18% 3%, rgba(214,233,255,.78), transparent 30rem),
+        radial-gradient(circle at 78% 6%, rgba(228,246,239,.8), transparent 28rem),
+        linear-gradient(rgba(93,133,173,.045) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(93,133,173,.045) 1px, transparent 1px),
+        linear-gradient(180deg, #fff 0%, #f7fbff 54%, #fbfdff 100%);
+      background-size: auto, auto, 28px 28px, 28px 28px, auto;
+    }
+    main { width: min(1180px, calc(100vw - 36px)); margin: 32px auto 56px; }
+    .code { display:inline-flex; padding: 4px 9px; border:1px solid rgba(31,111,178,.2); border-radius:999px; background:var(--blue-soft); color:var(--blue); font-weight:700; font-size:12px; }
+    h1 { margin: 12px 0 8px; font-size: clamp(24px, 2.8vw, 32px); line-height: 1.18; letter-spacing: -.025em; }
+    .lead { color: var(--muted); max-width: 88ch; margin: 0 0 22px; }
+    .notice { display: grid; gap: 10px; margin: 18px 0 22px; padding: 14px 16px; border: 1px solid rgba(141,179,216,.6); border-radius: 16px; background: var(--panel); box-shadow: var(--shadow); }
+    .notice strong { color: var(--blue); }
+    .ledger { border:1px solid rgba(141,179,216,.68); border-radius: var(--radius); background: rgba(255,255,255,.92); box-shadow: var(--shadow); overflow:hidden; }
+    .ledger-head, .row { display:grid; grid-template-columns: 1.05fr 1.25fr 1.65fr .72fr 1fr; }
+    .ledger-head { background: linear-gradient(180deg, #f7fbff, #eef6ff); color: var(--muted); font-size: 12px; font-weight: 800; }
+    .ledger-head div, .cell { padding: 12px 14px; border-right:1px solid rgba(141,179,216,.36); border-bottom:1px solid rgba(141,179,216,.32); min-width:0; overflow-wrap:anywhere; }
+    .ledger-head div:last-child, .cell:last-child { border-right: 0; }
+    .row:last-child .cell { border-bottom: 0; }
+    .rid { font-weight: 850; color: var(--blue); margin-bottom: 4px; }
+    .small { color: var(--muted); font-size: 12px; }
+    .status { display:inline-flex; align-items:center; gap:6px; padding:4px 8px; border-radius:999px; font-size:12px; font-weight:800; border:1px solid transparent; white-space:nowrap; }
+    .pass { color: var(--green); background: var(--green-soft); border-color: rgba(23,120,90,.22); }
+    .warn { color: var(--amber); background: var(--amber-soft); border-color: rgba(152,101,6,.22); }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; background: #f3f7fb; border:1px solid rgba(141,179,216,.35); border-radius: 7px; padding: 1px 5px; }
+    .checks { display:grid; grid-template-columns: 1fr 1fr; gap:14px; margin-top:18px; }
+    .panel { border:1px solid rgba(141,179,216,.55); border-radius: 18px; background: var(--panel); padding: 14px 16px; box-shadow: var(--shadow); }
+    .panel h2 { margin:0 0 8px; font-size:16px; }
+    ul { margin: 8px 0 0; padding-left: 18px; }
+    li + li { margin-top: 5px; }
+    a { color: var(--blue); font-weight: 700; }
+    @media (max-width: 860px) {
+      main { width: min(100vw - 24px, 720px); }
+      .ledger-head { display:none; }
+      .row { display:block; border-bottom: 1px solid rgba(141,179,216,.4); }
+      .row:last-child { border-bottom: 0; }
+      .cell { border-right:0; border-bottom:1px solid rgba(141,179,216,.24); }
+      .cell::before { content: attr(data-label); display:block; color:var(--muted); font-size:11px; font-weight:800; margin-bottom:4px; }
+      .checks { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <span class="code">TASK_20260702_006</span>
+    <h1>交付验收：Zeus 任务页多场景原型高还原开发</h1>
+    <p class="lead">本轮把任务页多场景原型落到 Zeus 实现，并针对浏览器 5 条批注返修：工具条对齐、空任务首步、新任务弹窗细节、读取失败恢复、加载骨架。验收不只看截图，包含组件状态测试、CSS 反查、全量测试、重新打包和打包后 GUI/可访问性树复核。</p>
+
+    <section class="notice" aria-label="交付说明">
+      <div><strong>改动入口：</strong><code>TaskWorkspace.tsx</code>、<code>App.tsx</code>、<code>styles.css</code>、任务页渲染测试、任务文档。</div>
+      <div><strong>影响范围：</strong>项目任务页、空任务态、加载态、错误恢复态、自定义列 popover、新任务 modal。</div>
+      <div><strong>当前产物：</strong><code>/Users/david/hypha/zeus/dist/mac-arm64/Zeus.app</code>（package:mac 已重新生成）。</div>
+    </section>
+
+    <section class="ledger" aria-label="浏览器批注到证据验收账本">
+      <div class="ledger-head"><div>批注</div><div>交付变更</div><div>验证证据</div><div>判定</div><div>剩余边界</div></div>
+      <div class="row">
+        <div class="cell" data-label="批注"><div class="rid">C1 工具条对齐</div><div class="small">空任务场景下项目元信息、搜索、状态分段、新任务需要像原型一样同一紧凑行。</div></div>
+        <div class="cell" data-label="交付变更"><code>styles.css:13715-13771</code> 锁定 4 轨 grid；<code>TaskWorkspace.tsx:308-328</code> 区分 loading/error/empty 顶部状态。</div>
+        <div class="cell" data-label="验证证据"><code>app-task-controls-rendering.test.tsx:668-684</code> 断言 DOM 顺序；<code>app-task-controls-rendering.test.tsx:660-665</code> 反查 980px 提前折行旧规则。</div>
+        <div class="cell" data-label="判定"><span class="status pass">✓ 代码验证通过</span></div>
+        <div class="cell" data-label="剩余边界">真实像素以打包后窗口复核为准。</div>
+      </div>
+      <div class="row">
+        <div class="cell" data-label="批注"><div class="rid">C2 空任务块</div><div class="small">需要“还没有任务”与第一步动作，不是空白页。</div></div>
+        <div class="cell" data-label="交付变更"><code>TaskWorkspace.tsx:652-673</code> 渲染说明、<code>新任务</code>、<code>查看项目代码</code>；删除旧 outcome-grid 假结果预览。</div>
+        <div class="cell" data-label="验证证据"><code>app-task-controls-rendering.test.tsx:679-683</code> 覆盖文案、次级动作和旧结构反查。</div>
+        <div class="cell" data-label="判定"><span class="status pass">✓ 代码验证通过</span></div>
+        <div class="cell" data-label="剩余边界">真实项目已有任务时该状态只能通过自动化状态注入验收。</div>
+      </div>
+      <div class="row">
+        <div class="cell" data-label="批注"><div class="rid">C3 新任务弹窗细节</div><div class="small">字段顺序、边距、辅助文案、上下文来源和 Runtime 提示需要对齐原型。</div></div>
+        <div class="cell" data-label="交付变更"><code>App.tsx:4749-4808</code> 调整字段结构；<code>styles.css:14062-14120</code> 锁定 modal 尺寸、14px body padding、10px gap。</div>
+        <div class="cell" data-label="验证证据"><code>app-task-controls-rendering.test.tsx:1937-1959</code> 覆盖字段顺序、辅助文案、runtime notice 和 CSS 间距。</div>
+        <div class="cell" data-label="判定"><span class="status pass">✓ 代码验证通过</span></div>
+        <div class="cell" data-label="剩余边界">打包后需打开 modal 做可访问性树复核，不创建任务。</div>
+      </div>
+      <div class="row">
+        <div class="cell" data-label="批注"><div class="rid">C4 错误恢复态</div><div class="small">读取失败要有恢复方式，不暴露堆栈。</div></div>
+        <div class="cell" data-label="交付变更"><code>TaskWorkspace.tsx:633-651</code> 增加 inline recovery；<code>App.tsx:8351-8352</code> 接上重试与项目设置入口。</div>
+        <div class="cell" data-label="验证证据"><code>app-task-controls-rendering.test.tsx:698-704</code> 断言错误文案、按钮和无 <code>Error:</code> / <code>stack</code>。</div>
+        <div class="cell" data-label="判定"><span class="status pass">✓ 代码验证通过</span></div>
+        <div class="cell" data-label="剩余边界">真实错误需通过本机权限或服务故障触发，本轮不人为破坏用户数据。</div>
+      </div>
+      <div class="row">
+        <div class="cell" data-label="批注"><div class="rid">C5 加载态</div><div class="small">加载态需要保留工具条与列头，只替换表格内容。</div></div>
+        <div class="cell" data-label="交付变更"><code>TaskWorkspace.tsx:620-632</code> 增加 loading skeleton；<code>styles.css:13961-14000</code> 固化骨架样式。</div>
+        <div class="cell" data-label="验证证据"><code>app-task-controls-rendering.test.tsx:686-707</code> 覆盖 loading/error 双状态与 CSS display grid。</div>
+        <div class="cell" data-label="判定"><span class="status pass">✓ 代码验证通过</span></div>
+        <div class="cell" data-label="剩余边界">加载闪现时间取决于本机数据加载速度。</div>
+      </div>
+    </section>
+
+    <section class="checks" aria-label="最终验证">
+      <div class="panel">
+        <h2>自动化验证</h2>
+        <ul>
+          <li><code>vitest app-task-controls + task-workspace-model + app-shell-layout</code>：252 tests passed。</li>
+          <li><code>vitest renderer + app-task-controls + app-shell-layout</code>：305 tests passed。</li>
+          <li><code>pnpm lint</code>：passed。</li>
+          <li><code>pnpm typecheck</code>：passed。</li>
+          <li><code>pnpm format:check</code>：passed。</li>
+          <li><code>pnpm test</code>：66 files / 1016 tests passed。</li>
+          <li><code>git diff --check</code>：passed。</li>
+        </ul>
+      </div>
+      <div class="panel">
+        <h2>打包与现场验收</h2>
+        <ul>
+          <li><code>package:mac</code>：passed，已重新生成 <code>dist/mac-arm64/Zeus.app</code>、DMG 与 ZIP。</li>
+          <li>GUI/可访问性树：已检查真实打包窗口、空任务表头、空任务块、自定义列悬浮层、新任务 modal；未创建任务、未改用户数据。</li>
+          <li>签名边界：仍为 unsigned 打包，既有 <code>identity explicitly is set to null</code> 边界。</li>
+        </ul>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

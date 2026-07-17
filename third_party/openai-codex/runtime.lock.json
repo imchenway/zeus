@@ -1,0 +1,55 @@
+{
+  "repository": "https://github.com/openai/codex.git",
+  "tag": "rust-v0.144.2",
+  "tagObject": "06eee5f70addf0b8cf331d5c6721f0414e7d2ae6",
+  "commit": "a6645b6b8a656360fa16fb7e1c6721d0697d3d6a",
+  "sourceArchive": {
+    "url": "https://codeload.github.com/openai/codex/tar.gz/a6645b6b8a656360fa16fb7e1c6721d0697d3d6a",
+    "sha256": "a18d8d1ab77fa7dab9636ce679f812f884dfaddfad9a3ee830bf9ff64a4594e7"
+  },
+  "rustToolchain": {
+    "version": "1.95.0",
+    "components": {
+      "rustc": {
+        "aarch64-apple-darwin": {
+          "url": "https://static.rust-lang.org/dist/rustc-1.95.0-aarch64-apple-darwin.tar.xz",
+          "sha256": "149e85a285b6eba58eb6c8bdf7deb1b93763890598e62cb635a712e3a8454f04"
+        },
+        "x86_64-apple-darwin": {
+          "url": "https://static.rust-lang.org/dist/rustc-1.95.0-x86_64-apple-darwin.tar.xz",
+          "sha256": "33db457715446a69ed6f69f78f5fbb9ca8e17a16585d1d7a0060479bfe4c7afc"
+        }
+      },
+      "cargo": {
+        "aarch64-apple-darwin": {
+          "url": "https://static.rust-lang.org/dist/cargo-1.95.0-aarch64-apple-darwin.tar.xz",
+          "sha256": "6c2ffed8e1ac9cf4dc9e80f282a869a6b237a153e7c55cca039d33de29d80aaf"
+        },
+        "x86_64-apple-darwin": {
+          "url": "https://static.rust-lang.org/dist/cargo-1.95.0-x86_64-apple-darwin.tar.xz",
+          "sha256": "e2e1131ade2dddc0d779e0ab3a6a990085c7a654951235742823c3a1ce0f190f"
+        }
+      },
+      "rustStd": {
+        "aarch64-apple-darwin": {
+          "url": "https://static.rust-lang.org/dist/rust-std-1.95.0-aarch64-apple-darwin.tar.xz",
+          "sha256": "9b30089b0f767cb91b2190ffec55a9beeb2a21a1405d8da0f664d7e09d08e6d8"
+        },
+        "x86_64-apple-darwin": {
+          "url": "https://static.rust-lang.org/dist/rust-std-1.95.0-x86_64-apple-darwin.tar.xz",
+          "sha256": "2be13c14122b8d4d09b7f7c434fca9ae7215ec72049944189c88c4d9128ce504"
+        }
+      }
+    }
+  },
+  "normalizedCargoLock": {
+    "fromVersion": "0.0.0",
+    "toVersion": "0.144.2",
+    "replacements": 132,
+    "sha256": "947f356f56fb96a6beb5029c0d70fe7a31825d7cc9123991f1a1fd4fe69a04e7"
+  },
+  "binaryVersion": "0.144.2",
+  "arches": ["aarch64-apple-darwin", "x86_64-apple-darwin"],
+  "patches": ["patches/0001-zeus-legacy-session-source.patch"],
+  "license": "Apache-2.0"
+}

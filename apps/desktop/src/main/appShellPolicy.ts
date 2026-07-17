@@ -9,7 +9,7 @@ export interface MainAppShellSettings {
 
 export interface AppShellMenuActions {
   settings: MainAppShellSettings;
-  createWindow: () => void | Promise<void>;
+  createNewConversation: () => void | Promise<void>;
   toggleDevTools: () => void;
   showMainWindow: () => void;
   openSettings: () => void | Promise<void>;
@@ -69,10 +69,9 @@ export function buildAppShellMenuTemplate(actions: AppShellMenuActions): AppShel
       label: 'File',
       submenu: [
         {
-          label: 'New Window',
+          label: 'New Chat',
           accelerator: 'CommandOrControl+N',
-          enabled: actions.settings.multiWindowEnabled,
-          click: actions.createWindow,
+          click: actions.createNewConversation,
         },
       ],
     },

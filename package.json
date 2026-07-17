@@ -13,8 +13,8 @@
     "package:mac": "pnpm --filter @zeus/desktop package:mac",
     "verify:release": "bash scripts/verify-release.sh",
     "verify:acceptance-matrix": "node scripts/verify-acceptance-matrix.mjs --check",
-    "format": "prettier --write \"**/*.{ts,tsx,cts,mjs,js,json,yml,yaml}\" --ignore-path .prettierignore",
-    "format:check": "prettier --check \"**/*.{ts,tsx,cts,mjs,js,json,yml,yaml}\" --ignore-path .prettierignore",
+    "format": "prettier --write \"**/*.{ts,tsx,cts,cjs,mjs,js,json,yml,yaml}\" --ignore-path .prettierignore",
+    "format:check": "prettier --check \"**/*.{ts,tsx,cts,cjs,mjs,js,json,yml,yaml}\" --ignore-path .prettierignore",
     "security:audit": "pnpm audit --audit-level=moderate",
     "verify:quick": "pnpm lint && pnpm typecheck && pnpm test && pnpm format:check && pnpm security:audit"
   },

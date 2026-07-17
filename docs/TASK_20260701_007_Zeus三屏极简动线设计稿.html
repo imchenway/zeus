@@ -1,0 +1,587 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>页面设计稿：Zeus 三屏极简动线设计稿</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: oklch(98.4% 0.004 255);
+      --paper: oklch(99.2% 0.003 255);
+      --paper-2: oklch(96.8% 0.004 255);
+      --paper-3: oklch(94.6% 0.005 255);
+      --ink: oklch(23% 0.006 255);
+      --ink-2: oklch(38% 0.005 255);
+      --muted: oklch(54% 0.004 255);
+      --quiet: oklch(66% 0.003 255);
+      --line: oklch(86.5% 0.004 255 / 0.62);
+      --line-soft: oklch(89% 0.003 255 / 0.38);
+      --accent: oklch(56% 0.145 254);
+      --accent-soft: oklch(94.4% 0.024 254);
+      --success: oklch(49% 0.078 145);
+      --warn: oklch(55% 0.11 76);
+      --danger: oklch(46% 0.105 28);
+      --shadow: 0 20px 58px oklch(36% 0.014 255 / 0.12);
+      --soft-shadow: 0 12px 34px oklch(36% 0.014 255 / 0.08);
+      --radius-xl: 26px;
+      --radius-lg: 18px;
+      --radius-md: 12px;
+      --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+      --mono: "SFMono-Regular", "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { min-height: 100%; }
+    body {
+      margin: 0;
+      font-family: var(--font);
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 12% -10%, oklch(93.8% 0.024 254 / 0.58), transparent 32rem),
+        radial-gradient(circle at 90% 4%, oklch(95% 0.012 280 / 0.48), transparent 30rem),
+        linear-gradient(180deg, var(--bg), oklch(96.9% 0.004 255));
+      overflow-x: hidden;
+    }
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      background-image: linear-gradient(oklch(72% 0.003 255 / 0.035) 1px, transparent 1px);
+      background-size: 1px 36px;
+      mask-image: linear-gradient(180deg, black, transparent 80%);
+    }
+
+    .page {
+      position: relative;
+      width: min(1380px, calc(100vw - 48px));
+      margin: 0 auto;
+      padding: 44px 0 58px;
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 340px;
+      gap: 36px;
+      align-items: end;
+      margin-bottom: 26px;
+    }
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 14px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    .eyebrow::before {
+      content: "";
+      width: 7px;
+      height: 7px;
+      border-radius: 999px;
+      background: var(--accent);
+      box-shadow: 0 0 0 5px var(--accent-soft);
+    }
+    h1 {
+      margin: 0;
+      max-width: 880px;
+      font-size: 40px;
+      line-height: 1.08;
+      letter-spacing: -0.045em;
+      font-weight: 760;
+    }
+    .lead {
+      margin: 16px 0 0;
+      max-width: 780px;
+      color: var(--ink-2);
+      font-size: 15px;
+      line-height: 1.65;
+      letter-spacing: -0.012em;
+    }
+    .correction {
+      padding: 2px 0 2px 20px;
+      border-left: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.65;
+    }
+    .correction strong {
+      display: block;
+      margin-bottom: 6px;
+      color: var(--ink);
+      font-size: 13px;
+    }
+
+    .principle {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 1px;
+      overflow: hidden;
+      border-radius: 20px;
+      background: var(--line-soft);
+      box-shadow: var(--soft-shadow);
+      margin-bottom: 28px;
+    }
+    .principle div {
+      background: oklch(98.7% 0.003 255 / 0.82);
+      padding: 18px 20px;
+      min-height: 92px;
+    }
+    .principle span {
+      display: block;
+      margin-bottom: 8px;
+      color: var(--accent);
+      font-size: 11px;
+      font-weight: 740;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+    .principle strong { display: block; font-size: 14px; margin-bottom: 5px; }
+    .principle p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.55; }
+
+    .route {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 28px minmax(0, 1fr) 28px minmax(0, 1fr);
+      align-items: stretch;
+      gap: 12px;
+      margin-bottom: 26px;
+    }
+    .route-node {
+      min-height: 112px;
+      border-radius: 20px;
+      background: oklch(98.9% 0.003 255 / 0.76);
+      box-shadow: inset 0 0 0 1px var(--line-soft), var(--soft-shadow);
+      padding: 18px 18px 16px;
+    }
+    .route-node small {
+      display: block;
+      margin-bottom: 10px;
+      color: var(--quiet);
+      font-size: 11px;
+      font-weight: 720;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+    .route-node strong { display: block; font-size: 16px; letter-spacing: -0.02em; margin-bottom: 8px; }
+    .route-node p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.52; }
+    .arrow {
+      display: grid;
+      place-items: center;
+      color: var(--quiet);
+      font-size: 20px;
+    }
+
+    .gallery {
+      display: grid;
+      gap: 28px;
+    }
+    .screen-block {
+      display: grid;
+      grid-template-columns: 270px minmax(0, 1fr);
+      gap: 26px;
+      align-items: start;
+    }
+    .screen-note {
+      position: sticky;
+      top: 24px;
+      padding-top: 8px;
+    }
+    .screen-note .num {
+      display: inline-grid;
+      place-items: center;
+      width: 30px;
+      height: 30px;
+      border-radius: 999px;
+      margin-bottom: 12px;
+      background: var(--accent-soft);
+      color: var(--accent);
+      font: 760 12px/1 var(--mono);
+    }
+    .screen-note h2 {
+      margin: 0 0 10px;
+      font-size: 21px;
+      line-height: 1.18;
+      letter-spacing: -0.028em;
+    }
+    .screen-note p {
+      margin: 0 0 14px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.62;
+    }
+    .screen-note ul {
+      margin: 0;
+      padding-left: 17px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.65;
+    }
+
+    .window {
+      overflow: hidden;
+      border-radius: var(--radius-xl);
+      background: var(--paper);
+      box-shadow: var(--shadow);
+      outline: 1px solid oklch(91% 0.004 255 / 0.62);
+    }
+    .traffic {
+      height: 38px;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      padding: 0 16px;
+      background: oklch(96.8% 0.004 255 / 0.9);
+      box-shadow: inset 0 -1px 0 var(--line-soft);
+    }
+    .dot { width: 11px; height: 11px; border-radius: 999px; box-shadow: inset 0 0 0 1px oklch(40% 0.01 255 / 0.12); }
+    .red { background: oklch(70% 0.16 27); }
+    .yellow { background: oklch(78% 0.12 82); }
+    .green { background: oklch(70% 0.12 145); }
+    .win-title { flex: 1; text-align: center; margin-right: 54px; color: var(--muted); font-size: 12px; font-weight: 600; }
+
+    .app {
+      min-height: 470px;
+      display: grid;
+      grid-template-columns: 184px minmax(0, 1fr);
+      background: linear-gradient(180deg, oklch(99.1% 0.003 255), oklch(97.7% 0.004 255));
+    }
+    .side {
+      padding: 14px 10px;
+      background: var(--paper-2);
+      box-shadow: inset -1px 0 0 var(--line-soft);
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .nav-row, .project-row {
+      min-height: 28px;
+      display: grid;
+      grid-template-columns: 18px minmax(0, 1fr) auto;
+      gap: 8px;
+      align-items: center;
+      padding: 0 8px;
+      border-radius: 8px;
+      color: var(--ink-2);
+      font-size: 12px;
+      text-decoration: none;
+    }
+    .nav-row.active, .project-row.active {
+      background: oklch(91.4% 0.006 255 / 0.86);
+      color: var(--ink);
+      font-weight: 650;
+    }
+    .icon { color: var(--quiet); text-align: center; }
+    .badge { color: var(--quiet); font-size: 11px; }
+    .side-title { margin: 0 0 6px 8px; color: var(--quiet); font-size: 10px; font-weight: 760; letter-spacing: 0.05em; text-transform: uppercase; }
+    .settings { margin-top: auto; }
+
+    .main {
+      min-width: 0;
+      padding: 20px 24px;
+    }
+    .topline {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+    .topline h3 { margin: 0; font-size: 20px; letter-spacing: -0.03em; }
+    .topline p { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
+    .button {
+      min-height: 30px;
+      display: inline-flex;
+      align-items: center;
+      border: 0;
+      border-radius: 999px;
+      padding: 0 12px;
+      background: var(--accent);
+      color: oklch(98% 0.004 255);
+      font: 680 12px/1 var(--font);
+      box-shadow: 0 10px 22px oklch(56% 0.145 254 / 0.16);
+    }
+    .ghost {
+      background: oklch(92.8% 0.004 255 / 0.86);
+      color: var(--ink-2);
+      box-shadow: none;
+    }
+
+    .resume {
+      max-width: 620px;
+      padding: 22px 0 20px;
+      border-top: 1px solid var(--line-soft);
+      border-bottom: 1px solid var(--line-soft);
+    }
+    .resume small { color: var(--quiet); font-size: 11px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
+    .resume h4 { margin: 10px 0 8px; font-size: 24px; line-height: 1.14; letter-spacing: -0.035em; }
+    .resume p { margin: 0 0 16px; color: var(--muted); font-size: 13px; line-height: 1.58; }
+    .simple-list { margin: 22px 0 0; padding: 0; list-style: none; display: grid; gap: 1px; max-width: 680px; background: var(--line-soft); border-radius: 14px; overflow: hidden; }
+    .simple-list li { min-height: 46px; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 14px; padding: 0 14px; background: oklch(98.8% 0.003 255 / 0.88); }
+    .simple-list strong { display: block; font-size: 13px; }
+    .simple-list small { color: var(--muted); font-size: 11px; }
+
+    .table-head, .task-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 118px 118px 84px;
+      gap: 14px;
+      align-items: center;
+    }
+    .table-head {
+      min-height: 32px;
+      color: var(--quiet);
+      font-size: 11px;
+      font-weight: 720;
+      border-bottom: 1px solid var(--line-soft);
+    }
+    .task-list { display: grid; }
+    .task-row {
+      min-height: 58px;
+      border-bottom: 1px solid var(--line-soft);
+      font-size: 12px;
+    }
+    .task-row strong { display: block; color: var(--ink); font-size: 13px; margin-bottom: 3px; }
+    .task-row small { color: var(--muted); font-size: 11px; }
+    .status { justify-self: start; border-radius: 999px; padding: 4px 8px; background: var(--accent-soft); color: var(--accent); font-size: 11px; font-weight: 720; }
+    .status.wait { background: oklch(95% 0.026 76); color: var(--warn); }
+    .status.done { background: oklch(94.4% 0.024 145); color: var(--success); }
+
+    .tabs { display: flex; gap: 4px; margin-bottom: 18px; }
+    .tab { min-height: 28px; padding: 0 10px; border-radius: 8px; display: inline-flex; align-items: center; color: var(--muted); font-size: 12px; font-weight: 620; }
+    .tab.active { background: oklch(91.4% 0.006 255 / 0.82); color: var(--ink); }
+
+    .chat-app { grid-template-columns: 0 minmax(0, 1fr); }
+    .chat-app .side { display: none; }
+    .chat-shell { min-height: 500px; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; }
+    .chat-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-bottom: 14px; border-bottom: 1px solid var(--line-soft); }
+    .chat-head h3 { margin: 0; font-size: 18px; letter-spacing: -0.02em; }
+    .chat-head small { color: var(--muted); font-size: 12px; }
+    .chat-actions { display: flex; gap: 8px; }
+    .messages { padding: 24px 0; display: grid; align-content: start; gap: 16px; }
+    .msg { max-width: 70%; font-size: 13px; line-height: 1.58; }
+    .msg small { display: block; margin-bottom: 5px; color: var(--quiet); font-size: 11px; font-weight: 700; }
+    .msg.user { margin-left: auto; color: var(--ink); }
+    .msg.ai { color: var(--ink-2); }
+    .composer { border-radius: 18px; background: oklch(99.1% 0.003 255); box-shadow: inset 0 0 0 1px var(--line-soft), var(--soft-shadow); overflow: hidden; }
+    .composer-text { min-height: 84px; padding: 15px 16px; color: var(--muted); font-size: 13px; }
+    .composer-bar { min-height: 40px; display: flex; align-items: center; gap: 8px; padding: 0 10px; background: oklch(96.6% 0.004 255); border-top: 1px solid var(--line-soft); }
+    .chip { height: 24px; display: inline-flex; align-items: center; padding: 0 8px; border-radius: 999px; background: oklch(92.6% 0.004 255 / 0.82); color: var(--muted); font-size: 11px; font-weight: 620; }
+    .spacer { flex: 1; }
+
+    .states {
+      margin-top: 30px;
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 1px;
+      overflow: hidden;
+      border-radius: 18px;
+      background: var(--line-soft);
+    }
+    .state { background: oklch(98.7% 0.003 255 / 0.82); padding: 15px; min-height: 88px; }
+    .state strong { display: block; margin-bottom: 6px; font-size: 13px; }
+    .state p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.52; }
+
+    .evidence {
+      margin-top: 28px;
+      border-radius: 22px;
+      background: oklch(97.6% 0.004 255 / 0.76);
+      box-shadow: inset 0 0 0 1px var(--line-soft);
+      padding: 20px 22px;
+    }
+    .evidence h2 { margin: 0 0 12px; font-size: 17px; letter-spacing: -0.018em; }
+    .evidence ul { margin: 0; padding-left: 18px; color: var(--muted); font-size: 12px; line-height: 1.75; }
+    .evidence strong { color: var(--ink-2); }
+    code { font-family: var(--mono); font-size: 0.92em; color: var(--ink-2); }
+
+    button, a, [tabindex] { outline: none; }
+    button:focus-visible, a:focus-visible, [tabindex]:focus-visible {
+      box-shadow: 0 0 0 3px oklch(62% 0.16 252 / 0.2), inset 0 0 0 1px oklch(62% 0.16 252 / 0.55);
+    }
+    button { cursor: default; }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+    }
+
+    @media (max-width: 1080px) {
+      .page { width: min(100vw - 28px, 980px); }
+      .hero, .screen-block { grid-template-columns: 1fr; }
+      .screen-note { position: static; }
+      .route { grid-template-columns: 1fr; }
+      .arrow { transform: rotate(90deg); min-height: 20px; }
+    }
+
+    @media (max-width: 720px) {
+      .page { width: 100%; padding: 20px 12px 36px; }
+      h1 { font-size: 30px; }
+      .principle, .states { grid-template-columns: 1fr; }
+      .app { grid-template-columns: 1fr; }
+      .side { display: none; }
+      .main { padding: 16px; }
+      .topline { display: block; }
+      .topline .button { margin-top: 12px; }
+      .table-head { display: none; }
+      .task-row { grid-template-columns: 1fr; gap: 7px; padding: 12px 0; }
+      .msg { max-width: 92%; }
+      .chat-actions, .composer-bar { flex-wrap: wrap; padding: 8px 10px; }
+      .win-title { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <header class="hero">
+      <div>
+        <div class="eyebrow">返工结论 · 不做大一统工作台</div>
+        <h1>页面设计稿：Zeus 三屏极简动线，每个页面只做一件事</h1>
+        <p class="lead">你说得对，上一版越做越复杂，问题就是把项目、任务、会话、代码理解、证据全塞进一张“大驾驶舱”。这一版改成三层：入口只负责继续，项目页只负责任务队列，任务页只负责连续对话与状态推进。代码理解只在需要时进入，不常驻。</p>
+      </div>
+      <aside class="correction" aria-label="本轮纠偏">
+        <strong>我对上一版的直接判断</strong>
+        Command Flow 的方向是对的，但呈现错了：它不应该是一个承载全部信息的页面，而应该是一条轻量路由。用户每一步只看到当前该做的事。
+      </aside>
+    </header>
+
+    <section class="principle" aria-label="三条纠偏原则">
+      <div><span>Rule 01</span><strong>一个页面，一个主动作</strong><p>入口继续任务，项目页管理任务，任务页推进对话。不要把全部对象并列展示。</p></div>
+      <div><span>Rule 02</span><strong>默认不显示代码图谱</strong><p>代码问答和制图是 Context，不是首页，也不是任务页的常驻右栏。</p></div>
+      <div><span>Rule 03</span><strong>减少面板，保留路径</strong><p>Apple / Codex 质感来自安静、克制和清晰路由，不来自更多模块。</p></div>
+    </section>
+
+    <section class="route" aria-label="三屏路由图">
+      <div class="route-node"><small>Screen 1</small><strong>Home: 继续或创建</strong><p>显示下一个最该做的动作和最近项目。没有任务详情，没有图谱，没有证据墙。</p></div>
+      <div class="arrow" aria-hidden="true">→</div>
+      <div class="route-node"><small>Screen 2</small><strong>Project: 任务队列</strong><p>只看当前项目任务列表、筛选、新建。代码理解是一个 Tab 或按需入口。</p></div>
+      <div class="arrow" aria-hidden="true">→</div>
+      <div class="route-node"><small>Screen 3</small><strong>Task: 连续对话</strong><p>推送到 app-server 后进入任务对话页。这里才出现运行、暂停、完成和证据。</p></div>
+    </section>
+
+    <section class="gallery" aria-label="三屏设计稿">
+      <article class="screen-block">
+        <div class="screen-note">
+          <span class="num">01</span>
+          <h2>Home 不是 Dashboard</h2>
+          <p>首页只回答一个问题：我现在该继续哪个任务？它不展示代码图谱、表格、设置、证据矩阵。</p>
+          <ul>
+            <li>首层：一个继续动作。</li>
+            <li>收纳：项目列表与全局搜索。</li>
+            <li>空态：引导选择项目或创建任务。</li>
+          </ul>
+        </div>
+        <div class="window" aria-label="Home screen mockup">
+          <div class="traffic"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span><span class="win-title">Zeus · Home</span></div>
+          <div class="app">
+            <nav class="side" aria-label="项目导航">
+              <a class="nav-row active" href="#"><span class="icon">✦</span><span>新任务</span><span class="badge">T</span></a>
+              <a class="nav-row" href="#"><span class="icon">⌕</span><span>搜索</span><span class="badge">⌘K</span></a>
+              <div><p class="side-title">Projects</p><a class="project-row active" href="#"><span class="icon">⌁</span><span>Zeus E2E</span><span class="badge">2</span></a><a class="project-row" href="#"><span class="icon">⌁</span><span>tc-app-core</span><span class="badge">1</span></a></div>
+              <a class="nav-row settings" href="#"><span class="icon">⚙</span><span>设置</span><span></span></a>
+            </nav>
+            <section class="main" aria-label="首页继续任务">
+              <div class="topline"><div><h3>今天继续</h3><p>本机 app-server 可用 · Codex CLI 已配置</p></div><button class="button" type="button">新任务</button></div>
+              <div class="resume">
+                <small>Next action</small>
+                <h4>继续 Zeus E2E 的设计重构任务</h4>
+                <p>上次停在“将多项目任务动线拆成独立页面”。继续后直接进入任务对话，不在首页展开所有上下文。</p>
+                <button class="button" type="button">继续任务</button>
+              </div>
+              <ul class="simple-list" aria-label="最近项目">
+                <li><div><strong>Zeus E2E</strong><small>2 个任务 · 1 个等待反馈</small></div><span class="badge">打开</span></li>
+                <li><div><strong>tc-app-core</strong><small>1 个任务 · 等待运行证据</small></div><span class="badge">打开</span></li>
+              </ul>
+            </section>
+          </div>
+        </div>
+      </article>
+
+      <article class="screen-block">
+        <div class="screen-note">
+          <span class="num">02</span>
+          <h2>Project 只管理项目任务</h2>
+          <p>项目页可以有任务、代码、会话三个入口，但首屏只服务当前入口。选中任务时进入任务页，不在项目页展开完整会话。</p>
+          <ul>
+            <li>首层：任务列表与新建任务。</li>
+            <li>收纳：代码理解、会话、项目设置。</li>
+            <li>错误态：只提示当前项目状态。</li>
+          </ul>
+        </div>
+        <div class="window" aria-label="Project tasks screen mockup">
+          <div class="traffic"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span><span class="win-title">Zeus · Project</span></div>
+          <div class="app">
+            <nav class="side" aria-label="项目导航">
+              <a class="nav-row" href="#"><span class="icon">✦</span><span>新任务</span><span class="badge">T</span></a>
+              <a class="nav-row" href="#"><span class="icon">⌕</span><span>搜索</span><span class="badge">⌘K</span></a>
+              <div><p class="side-title">Projects</p><a class="project-row active" href="#"><span class="icon">⌁</span><span>Zeus E2E</span><span class="badge">2</span></a><a class="project-row" href="#"><span class="icon">⌁</span><span>tc-app-core</span><span class="badge">1</span></a></div>
+              <a class="nav-row settings" href="#"><span class="icon">⚙</span><span>设置</span><span></span></a>
+            </nav>
+            <section class="main" aria-label="项目任务队列">
+              <div class="topline"><div><h3>Zeus E2E</h3><p>/Users/david/hypha/zeus · 本地项目</p></div><button class="button" type="button">新任务</button></div>
+              <div class="tabs" role="tablist" aria-label="项目入口"><span class="tab active" role="tab" aria-selected="true">任务</span><span class="tab" role="tab">代码理解</span><span class="tab" role="tab">会话</span><span class="tab" role="tab">设置</span></div>
+              <div class="table-head"><span>任务</span><span>状态</span><span>AI 执行</span><span>动作</span></div>
+              <div class="task-list" role="listbox" aria-label="任务列表">
+                <div class="task-row" role="option" aria-selected="true"><div><strong>重构 Zeus 设计动线</strong><small>最近更新 2 分钟前</small></div><span class="status">可继续</span><small>Codex CLI</small><button class="button ghost" type="button">打开</button></div>
+                <div class="task-row" role="option"><div><strong>验证项目代码图谱状态</strong><small>从代码理解入口创建</small></div><span class="status wait">等待</span><small>外部确认</small><button class="button ghost" type="button">查看</button></div>
+                <div class="task-row" role="option"><div><strong>清理旧版任务表格噪音</strong><small>证据已归档</small></div><span class="status done">完成</span><small>已停止</small><button class="button ghost" type="button">证据</button></div>
+              </div>
+            </section>
+          </div>
+        </div>
+      </article>
+
+      <article class="screen-block">
+        <div class="screen-note">
+          <span class="num">03</span>
+          <h2>Task 才是连续对话</h2>
+          <p>点击“打开任务”后才进入对话和状态推进。这里可以推送 app-server、继续 CLI、标记完成、查看证据，但不再同时展示项目全局列表。</p>
+          <ul>
+            <li>首层：消息、状态、composer。</li>
+            <li>收纳：代码上下文、Git diff、附件证据。</li>
+            <li>危险动作：取消、回滚进入确认抽屉。</li>
+          </ul>
+        </div>
+        <div class="window" aria-label="Task conversation screen mockup">
+          <div class="traffic"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span><span class="win-title">Zeus · Task</span></div>
+          <div class="app chat-app">
+            <section class="main chat-shell" aria-label="任务连续对话">
+              <header class="chat-head">
+                <div><h3>重构 Zeus 设计动线</h3><small>Zeus E2E · ZEU-000014 · 可继续</small></div>
+                <div class="chat-actions"><button class="button ghost" type="button">上下文</button><button class="button ghost" type="button">Diff</button><button class="button" type="button">继续</button></div>
+              </header>
+              <div class="messages" aria-label="任务消息">
+                <div class="msg user"><small>用户要求</small>不要把所有功能堆到一个页面，重新拆成交互动线。</div>
+                <div class="msg ai"><small>Zeus / Codex</small>已调整为三屏：Home 继续、Project 任务队列、Task 连续对话。代码理解改为按需上下文。</div>
+              </div>
+              <div class="composer" aria-label="任务后续输入">
+                <div class="composer-text">继续要求、补充约束，或让 Codex 基于当前任务继续执行...</div>
+                <div class="composer-bar"><span class="chip">Codex CLI</span><span class="chip">app-server local</span><span class="chip">Context 按需</span><span class="spacer"></span><button class="button ghost" type="button">暂停</button><button class="button ghost" type="button">标记完成</button><button class="button" type="button">发送</button></div>
+              </div>
+            </section>
+          </div>
+        </div>
+      </article>
+    </section>
+
+    <section class="states" aria-label="状态覆盖">
+      <div class="state"><strong>Default</strong><p>每屏只显示当前主对象和一个主动作，减少用户在同屏做选择的数量。</p></div>
+      <div class="state"><strong>Empty</strong><p>Home 引导创建任务；Project 引导新任务；Task 引导输入第一条要求。</p></div>
+      <div class="state"><strong>External wait</strong><p>AI CLI、Telegram、凭据等待只在相关屏出现，不铺到所有页面。</p></div>
+      <div class="state"><strong>Error</strong><p>错误解释影响范围和恢复动作，不暴露 token、堆栈或完整终端输出。</p></div>
+    </section>
+
+    <section class="evidence" aria-label="证据与实现边界">
+      <h2>证据锚点与这版删掉的东西</h2>
+      <ul>
+        <li><strong>产品定位：</strong><code>PRODUCT.md:7-13</code> 证明 Zeus 同时做项目管理、真实代码扫描、AI CLI 执行、Git Diff 和远程控制，本版把它们拆进不同屏，而不是同屏堆叠。</li>
+        <li><strong>任务主线：</strong><code>DESIGN.md:16</code> 明确 Task / Task Detail 以状态机、执行前检查、Runtime 会话、事件时间线、Git diff 和测试结果为中心。</li>
+        <li><strong>代码理解边界：</strong><code>DESIGN.md:17</code> 说明 Code Map 是真实扫描图谱核心，本版保留为项目内入口和任务上下文，不放首页常驻。</li>
+        <li><strong>组件契约：</strong><code>DESIGN.md:145-190</code> 已有 source-list、composer、decision-rail、graph-canvas、drawer 语义，三屏拆分可以沿用这些契约。</li>
+        <li><strong>这版删除：</strong>删除全屏跨项目任务 Lane、常驻右侧 Context Lens、底部证据 Strip、Working memory、代码图谱缩略图和“驾驶舱”式多模块同屏。</li>
+        <li><strong>未修改源码：</strong>本轮只新增设计稿与说明文档，未改 Zeus 运行代码。</li>
+      </ul>
+    </section>
+  </main>
+</body>
+</html>

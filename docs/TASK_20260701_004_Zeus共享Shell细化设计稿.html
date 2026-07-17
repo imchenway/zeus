@@ -1,0 +1,1021 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>页面设计稿：Zeus 共享 Shell 细化设计稿</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --window: oklch(99.2% 0.002 255);
+      --sidebar: oklch(96.4% 0.003 255);
+      --workspace: oklch(98.4% 0.002 255);
+      --panel: oklch(99.8% 0.001 255);
+      --panel-muted: oklch(98.4% 0.001 255);
+      --canvas: oklch(99.6% 0.001 255);
+      --ink: oklch(23% 0.003 255);
+      --secondary: oklch(48% 0.003 255);
+      --subtle: oklch(60% 0.002 255);
+      --disabled: oklch(58% 0.002 255);
+      --line: oklch(89% 0.002 255);
+      --line-soft: oklch(93% 0.001 255);
+      --separator: oklch(90.6% 0.001 255);
+      --accent: oklch(55% 0.155 252);
+      --accent-soft: oklch(94.5% 0.008 252);
+      --success: oklch(52% 0.08 145);
+      --success-soft: oklch(96% 0.02 145);
+      --warning: oklch(52% 0.12 70);
+      --warning-soft: oklch(96% 0.03 70);
+      --danger: oklch(42% 0.095 28);
+      --danger-soft: oklch(96.5% 0.024 28);
+      --violet: oklch(48% 0.10 292);
+      --violet-soft: oklch(95.2% 0.018 292);
+      --focus: 0 0 0 3px oklch(62% 0.16 252 / 0.16);
+      --shadow: 0 18px 64px oklch(23% 0.003 255 / 0.12);
+      --shadow-soft: 0 10px 30px oklch(23% 0.003 255 / 0.08);
+      --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Segoe UI", system-ui, sans-serif;
+      --mono: "SFMono-Regular", "SF Mono", Consolas, Menlo, monospace;
+      --r-control: 7px;
+      --r-row: 8px;
+      --r-panel: 14px;
+      --r-drawer: 16px;
+      --r-sheet: 24px;
+    }
+
+    * { box-sizing: border-box; overflow-wrap: anywhere; }
+    html { min-height: 100%; }
+    body {
+      margin: 0;
+      min-height: 100%;
+      font-family: var(--font);
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 16% 8%, oklch(55% 0.155 252 / 0.10), transparent 33%),
+        radial-gradient(circle at 88% 12%, oklch(52% 0.08 145 / 0.08), transparent 28%),
+        repeating-linear-gradient(0deg, oklch(23% 0.003 255 / 0.025) 0 1px, transparent 1px 24px),
+        repeating-linear-gradient(90deg, oklch(23% 0.003 255 / 0.02) 0 1px, transparent 1px 24px),
+        linear-gradient(135deg, #fbfcfb, #eef2f0 74%);
+      line-height: 1.45;
+    }
+
+    button, input, select, textarea { font: inherit; }
+    code { font-family: var(--mono); }
+    a { color: inherit; }
+    :focus-visible { outline: 3px solid oklch(62% 0.16 252 / 0.38); outline-offset: 3px; }
+
+    .sheet {
+      width: min(1480px, calc(100% - 36px));
+      margin: 0 auto;
+      padding: 34px 0 60px;
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(280px, 440px);
+      gap: 24px;
+      align-items: end;
+      margin-bottom: 22px;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 28px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: oklch(99.8% 0.001 255 / 0.80);
+      padding: 5px 10px;
+      color: var(--secondary);
+      font-size: 13px;
+      font-weight: 700;
+    }
+    .eyebrow::before {
+      content: "";
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--success);
+      box-shadow: 0 0 0 4px oklch(52% 0.08 145 / 0.14);
+      flex: 0 0 auto;
+    }
+
+    h1 {
+      margin: 14px 0 12px;
+      max-width: 1080px;
+      font-size: clamp(32px, 5vw, 66px);
+      letter-spacing: -0.062em;
+      line-height: 0.96;
+    }
+    .lead {
+      margin: 0;
+      max-width: 900px;
+      color: oklch(34% 0.008 255);
+      font-size: clamp(16px, 1.35vw, 20px);
+    }
+
+    .brief-card {
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      background: oklch(99.8% 0.001 255 / 0.76);
+      box-shadow: var(--shadow-soft);
+      padding: 18px;
+    }
+    .brief-card h2, .section-title h2, .panel h3 { margin: 0; letter-spacing: -0.024em; }
+    .brief-card h2 { font-size: 17px; }
+    .brief-card p { margin: 8px 0 0; color: var(--secondary); font-size: 13px; }
+
+    .principles {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+      margin: 18px 0 30px;
+    }
+    .principle {
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: oklch(99.8% 0.001 255 / 0.72);
+      padding: 14px;
+      min-height: 126px;
+    }
+    .principle strong { display: block; font-size: 13px; }
+    .principle span { display: block; margin-top: 7px; color: var(--secondary); font-size: 12px; }
+
+    .section-title {
+      display: flex;
+      justify-content: space-between;
+      align-items: end;
+      gap: 18px;
+      margin: 30px 0 14px;
+    }
+    .section-title h2 { font-size: 20px; }
+    .section-title p { margin: 5px 0 0; max-width: 850px; color: var(--secondary); font-size: 13px; }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: oklch(99.8% 0.001 255 / 0.78);
+      min-height: 30px;
+      padding: 6px 10px;
+      font-size: 12px;
+      color: oklch(32% 0.006 255);
+      font-weight: 750;
+      white-space: nowrap;
+    }
+    .pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
+    .pill.good::before { background: var(--success); }
+    .pill.wait::before { background: var(--warning); }
+    .pill.danger::before { background: var(--danger); }
+    .pill.neutral::before { background: var(--subtle); }
+
+    .mock-shell {
+      border: 1px solid var(--line);
+      border-radius: 30px;
+      background: linear-gradient(180deg, oklch(99.8% 0.001 255 / 0.90), oklch(97.8% 0.002 255 / 0.84));
+      box-shadow: var(--shadow);
+      padding: 12px;
+      overflow: hidden;
+      margin-bottom: 18px;
+    }
+
+    .app-window {
+      min-height: 780px;
+      border: 1px solid var(--separator);
+      border-radius: 24px;
+      background: var(--window);
+      overflow: hidden;
+      display: grid;
+      grid-template-columns: 236px minmax(0, 1fr);
+    }
+
+    .source-list {
+      background: var(--sidebar);
+      border-right: 1px solid var(--separator);
+      padding: 10px 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      min-width: 0;
+    }
+    .traffic { display: flex; gap: 7px; padding: 3px 8px 8px; }
+    .traffic span { width: 12px; height: 12px; border-radius: 50%; border: 1px solid oklch(30% 0.01 255 / 0.10); }
+    .traffic span:nth-child(1) { background: #ff6058; }
+    .traffic span:nth-child(2) { background: #ffbd2e; }
+    .traffic span:nth-child(3) { background: #28c840; }
+
+    .quick-actions, .nav-section { display: grid; gap: 4px; }
+    .nav-label {
+      color: var(--subtle);
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      padding: 0 8px;
+    }
+    .nav-row {
+      min-height: 28px;
+      border: 0;
+      border-radius: 8px;
+      background: transparent;
+      color: var(--ink);
+      text-align: left;
+      padding: 5px 8px;
+      display: grid;
+      grid-template-columns: 14px 1fr auto;
+      gap: 7px;
+      align-items: center;
+      font-size: 13px;
+      text-decoration: none;
+    }
+    .nav-row:hover { background: oklch(94.8% 0.003 255); }
+    .nav-row[aria-current="page"], .nav-row.active { background: oklch(91.8% 0.004 255); font-weight: 650; }
+    .nav-glyph { color: var(--secondary); font-size: 12px; text-align: center; font-family: var(--mono); }
+    .nav-meta { color: var(--secondary); font-size: 11px; font-family: var(--mono); }
+    .subnav { display: grid; gap: 2px; margin-left: 16px; border-left: 1px solid var(--line); padding-left: 6px; }
+    .source-footer { margin-top: auto; display: grid; gap: 5px; border-top: 1px solid var(--separator); padding-top: 8px; }
+
+    .workspace {
+      min-width: 0;
+      display: grid;
+      grid-template-rows: 58px minmax(0, 1fr);
+      background: var(--workspace);
+    }
+    .object-toolbar {
+      border-bottom: 1px solid var(--separator);
+      background: var(--panel);
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 12px;
+      align-items: center;
+      padding: 9px 14px;
+    }
+    .object-title { min-width: 0; }
+    .object-title strong { display: block; font-size: 15px; line-height: 20px; }
+    .object-title span { display: block; margin-top: 2px; color: var(--secondary); font-size: 11px; font-family: var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .toolbar-actions { display: flex; gap: 7px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+    .btn {
+      border: 1px solid var(--line);
+      border-radius: var(--r-control);
+      background: var(--panel);
+      color: var(--ink);
+      min-height: 28px;
+      padding: 5px 10px;
+      font-size: 12px;
+      font-weight: 650;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      white-space: nowrap;
+    }
+    .btn.primary { background: var(--accent); color: white; border-color: var(--accent); }
+    .btn.danger { background: var(--danger-soft); color: var(--danger); border-color: oklch(82.5% 0.05 28); }
+    .btn[aria-disabled="true"] { color: var(--disabled); background: var(--panel-muted); }
+
+    .stage-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 318px;
+      min-height: 720px;
+      min-width: 0;
+    }
+    .stage {
+      min-width: 0;
+      padding: 14px;
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr) auto;
+      gap: 12px;
+    }
+    .mode-rail {
+      min-height: 36px;
+      border: 1px solid var(--line);
+      border-radius: var(--r-panel);
+      background: var(--panel);
+      padding: 6px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 10px;
+      align-items: center;
+    }
+    .mode-tabs { display: flex; gap: 5px; flex-wrap: wrap; }
+    .mode-tab {
+      border: 0;
+      border-radius: 999px;
+      background: transparent;
+      padding: 4px 8px;
+      color: var(--secondary);
+      font-size: 12px;
+      font-weight: 650;
+    }
+    .mode-tab.active { background: var(--accent-soft); color: var(--accent); }
+    .status-copy { color: var(--secondary); font-size: 11px; text-align: right; }
+
+    .inspector {
+      border-left: 1px solid var(--separator);
+      background: var(--panel);
+      padding: 14px;
+      display: grid;
+      align-content: start;
+      gap: 12px;
+      min-width: 0;
+    }
+    .inspector h3 { margin: 0; font-size: 15px; line-height: 21px; letter-spacing: -0.01em; }
+    .inspector small { color: var(--secondary); font-size: 11px; }
+    .inspector-section {
+      border: 1px solid var(--line-soft);
+      border-radius: var(--r-panel);
+      background: var(--panel-muted);
+      padding: 12px;
+      display: grid;
+      gap: 8px;
+    }
+    .kv { display: grid; grid-template-columns: 82px minmax(0, 1fr); gap: 8px; color: var(--secondary); font-size: 12px; }
+    .kv code { color: var(--ink); font-size: 11px; }
+
+    .decision-rail {
+      border: 1px solid var(--line);
+      border-radius: var(--r-panel);
+      background: var(--panel);
+      padding: 10px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 10px;
+      align-items: center;
+    }
+    .decision-rail strong { display: block; font-size: 13px; }
+    .decision-rail span { display: block; color: var(--secondary); font-size: 12px; margin-top: 2px; }
+
+    .graph-canvas {
+      position: relative;
+      min-height: 520px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background:
+        radial-gradient(circle at 42% 35%, oklch(55% 0.155 252 / 0.08), transparent 28%),
+        radial-gradient(circle at 74% 72%, oklch(52% 0.08 145 / 0.07), transparent 24%),
+        var(--canvas);
+      overflow: hidden;
+    }
+    .graph-links { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+    .graph-links path { stroke: oklch(55% 0.02 255 / 0.46); stroke-width: 2; fill: none; stroke-linecap: round; }
+    .graph-links .active-link { stroke: oklch(55% 0.155 252 / 0.55); stroke-width: 2.6; }
+    .graph-node {
+      position: absolute;
+      width: 170px;
+      min-height: 70px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: oklch(99.8% 0.001 255 / 0.92);
+      padding: 10px;
+      box-shadow: 0 8px 24px oklch(23% 0.003 255 / 0.08);
+      display: grid;
+      align-content: start;
+      gap: 3px;
+      font-size: 11px;
+    }
+    .graph-node b { font-size: 12px; }
+    .graph-node span { color: var(--secondary); }
+    .graph-node.selected { border-color: oklch(62% 0.16 252 / 0.62); box-shadow: var(--focus), 0 10px 26px oklch(23% 0.003 255 / 0.10); }
+    .graph-node.n1 { left: 8%; top: 18%; }
+    .graph-node.n2 { left: 36%; top: 12%; }
+    .graph-node.n3 { right: 12%; top: 24%; }
+    .graph-node.n4 { left: 34%; top: 48%; }
+    .graph-node.n5 { left: 10%; bottom: 16%; }
+    .graph-node.n6 { right: 12%; bottom: 15%; }
+    .graph-caption {
+      position: absolute;
+      left: 16px;
+      right: 16px;
+      bottom: 12px;
+      border: 1px solid var(--line-soft);
+      border-radius: 12px;
+      background: oklch(99.8% 0.001 255 / 0.84);
+      padding: 8px 10px;
+      color: var(--secondary);
+      font-size: 11px;
+    }
+
+    .task-stage {
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr) auto;
+      gap: 10px;
+      min-height: 520px;
+    }
+    .task-filter {
+      display: grid;
+      grid-template-columns: minmax(180px, 1fr) 120px 120px 120px auto;
+      gap: 8px;
+    }
+    .field {
+      min-height: 30px;
+      border: 1px solid var(--line);
+      border-radius: var(--r-control);
+      background: var(--panel);
+      padding: 6px 9px;
+      color: var(--secondary);
+      font-size: 12px;
+    }
+    .workline {
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: var(--canvas);
+      display: grid;
+      grid-template-columns: minmax(240px, 0.78fr) minmax(0, 1.22fr);
+      overflow: hidden;
+      min-height: 460px;
+    }
+    .task-list { border-right: 1px solid var(--separator); padding: 10px; display: grid; align-content: start; gap: 7px; background: var(--panel-muted); }
+    .task-row {
+      border: 1px solid var(--line-soft);
+      border-radius: 11px;
+      background: var(--panel);
+      padding: 9px;
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      gap: 8px;
+      align-items: start;
+      font-size: 12px;
+    }
+    .task-row.selected { border-color: oklch(62% 0.16 252 / 0.42); box-shadow: var(--focus); }
+    .task-row b { display: block; }
+    .task-row span { display: block; color: var(--secondary); margin-top: 2px; }
+    .check { width: 14px; height: 14px; border-radius: 4px; border: 1px solid var(--line); margin-top: 2px; }
+    .status-chip { border: 1px solid var(--line); border-radius: 999px; padding: 2px 7px; color: var(--secondary); font-size: 11px; white-space: nowrap; }
+    .timeline { padding: 16px; display: grid; grid-template-rows: auto 1fr auto; gap: 12px; min-width: 0; }
+    .timeline-head { display: flex; align-items: start; justify-content: space-between; gap: 12px; }
+    .timeline-head h3 { margin: 0; font-size: 18px; letter-spacing: -0.02em; }
+    .timeline-head p { margin: 4px 0 0; color: var(--secondary); font-size: 12px; }
+    .event-list { display: grid; align-content: start; gap: 10px; }
+    .event {
+      position: relative;
+      border: 1px solid var(--line-soft);
+      border-radius: 13px;
+      background: var(--panel);
+      padding: 10px 12px 10px 34px;
+      font-size: 12px;
+    }
+    .event::before {
+      content: "";
+      position: absolute;
+      left: 13px;
+      top: 14px;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--accent);
+    }
+    .event + .event::after {
+      content: "";
+      position: absolute;
+      left: 16px;
+      top: -11px;
+      width: 2px;
+      height: 11px;
+      background: var(--line);
+    }
+    .event strong { display: block; }
+    .event span { display: block; margin-top: 3px; color: var(--secondary); }
+    .composer {
+      border: 1px solid var(--line);
+      border-radius: var(--r-panel);
+      background: var(--panel);
+      min-height: 118px;
+      display: grid;
+      grid-template-rows: 1fr auto;
+      overflow: hidden;
+    }
+    .composer textarea {
+      border: 0;
+      resize: none;
+      background: transparent;
+      min-height: 72px;
+      padding: 11px;
+      color: var(--ink);
+    }
+    .composer-bar {
+      border-top: 1px solid var(--line-soft);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 9px;
+      color: var(--secondary);
+      font-size: 12px;
+    }
+
+    .config-grid {
+      display: grid;
+      grid-template-columns: 250px minmax(0, 1fr);
+      gap: 12px;
+      min-height: 520px;
+    }
+    .config-nav {
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: var(--panel);
+      padding: 8px;
+      display: grid;
+      gap: 4px;
+      align-content: start;
+    }
+    .config-row {
+      border: 0;
+      border-radius: 10px;
+      background: transparent;
+      padding: 9px 10px;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 8px;
+      text-align: left;
+      font-size: 12px;
+      color: var(--ink);
+    }
+    .config-row span { color: var(--secondary); font-size: 11px; margin-top: 2px; display: block; }
+    .config-row.active { background: var(--accent-soft); color: var(--accent); font-weight: 700; }
+    .config-main { display: grid; gap: 10px; align-content: start; min-width: 0; }
+    .config-summary {
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: var(--panel);
+      padding: 14px;
+      display: grid;
+      grid-template-columns: minmax(260px, 1fr) repeat(3, 78px);
+      gap: 12px;
+      align-items: center;
+    }
+    .config-summary h3 { margin: 0; font-size: 16px; }
+    .config-summary p { margin: 3px 0 0; color: var(--secondary); font-size: 12px; }
+    .metric { border-left: 1px solid var(--line); padding-left: 12px; }
+    .metric b { display: block; font-size: 16px; }
+    .metric span { color: var(--secondary); font-size: 11px; line-height: 1.25; }
+    .settings-group {
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: var(--panel);
+      overflow: hidden;
+    }
+    .settings-group > header {
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line-soft);
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+    }
+    .settings-group h3 { margin: 0; font-size: 14px; }
+    .settings-group p { margin: 2px 0 0; color: var(--secondary); font-size: 12px; }
+    .setting-line {
+      display: grid;
+      grid-template-columns: minmax(220px, 1fr) minmax(180px, 260px) auto;
+      gap: 12px;
+      align-items: center;
+      padding: 11px 14px;
+      border-top: 1px solid var(--line-soft);
+      font-size: 12px;
+    }
+    .setting-line:first-of-type { border-top: 0; }
+    .setting-line strong { display: block; }
+    .setting-line span { display: block; color: var(--secondary); margin-top: 2px; }
+    .select-fake, .toggle-fake {
+      min-height: 28px;
+      border: 1px solid var(--line);
+      border-radius: var(--r-control);
+      background: var(--panel-muted);
+      padding: 5px 8px;
+      color: var(--ink);
+      font-size: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .toggle-fake { justify-content: flex-end; }
+    .toggle-fake::before { content: ""; width: 36px; height: 20px; border-radius: 999px; background: var(--accent); box-shadow: inset -16px 0 0 #fff; }
+
+    .spec-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .panel {
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: oklch(99.8% 0.001 255 / 0.76);
+      padding: 14px;
+      box-shadow: var(--shadow-soft);
+    }
+    .panel h3 { font-size: 14px; }
+    .panel p { margin: 8px 0 0; color: var(--secondary); font-size: 12px; }
+    .panel ul { margin: 10px 0 0; padding-left: 18px; color: var(--secondary); font-size: 12px; }
+    .panel li + li { margin-top: 6px; }
+
+    .state-strip {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .state {
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: oklch(99.8% 0.001 255 / 0.76);
+      padding: 13px;
+      min-height: 142px;
+      display: grid;
+      align-content: start;
+      gap: 8px;
+    }
+    .state-visual { min-height: 36px; border: 1px solid var(--line-soft); border-radius: 10px; background: var(--panel-muted); position: relative; overflow: hidden; }
+    .state.loading .state-visual::before { content: ""; position: absolute; inset: 0; background: linear-gradient(90deg, transparent, oklch(100% 0 0 / 0.72), transparent); animation: shimmer 1.6s infinite; }
+    .state.error .state-visual { background: var(--danger-soft); border-color: oklch(82.5% 0.05 28); }
+    .state.wait .state-visual { background: var(--warning-soft); border-color: oklch(84% 0.07 70); }
+    .state.success .state-visual { background: var(--success-soft); border-color: oklch(82% 0.05 145); }
+    .state strong { font-size: 13px; }
+    .state span { color: var(--secondary); font-size: 12px; }
+    @keyframes shimmer { to { transform: translateX(100%); } }
+
+    .mobile-strip {
+      display: grid;
+      grid-template-columns: 1.1fr 0.9fr 0.9fr;
+      gap: 12px;
+    }
+    .device {
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      background: oklch(99.8% 0.001 255 / 0.76);
+      padding: 14px;
+    }
+    .device h3 { margin: 0 0 10px; font-size: 14px; }
+    .device p { margin: 10px 0 0; color: var(--secondary); font-size: 12px; }
+    .mini-wire { min-height: 180px; border: 1px solid var(--line-soft); border-radius: 16px; background: var(--panel); display: grid; gap: 8px; padding: 8px; }
+    .mini-row { border: 1px solid var(--line-soft); border-radius: 8px; background: var(--panel-muted); min-height: 22px; }
+    .mini-cols { display: grid; grid-template-columns: 1fr 2fr 1.1fr; gap: 8px; min-height: 116px; }
+    .mini-cols .mini-row { min-height: 100%; }
+    .mini-mobile { max-width: 250px; margin: 0 auto; }
+    .mini-mobile .mini-cols { grid-template-columns: 1fr; grid-template-rows: 34px 1fr 46px; }
+
+    .evidence-list {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .evidence {
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: oklch(99.8% 0.001 255 / 0.72);
+      padding: 12px;
+      color: var(--secondary);
+      font-size: 12px;
+    }
+    .evidence strong { color: var(--ink); }
+    .evidence code { color: var(--ink); font-size: 11px; }
+
+    .no-candidates {
+      border: 1px dashed oklch(52% 0.12 70 / 0.42);
+      background: oklch(96% 0.03 70 / 0.48);
+      color: oklch(40% 0.09 70);
+      border-radius: 18px;
+      padding: 13px 14px;
+      font-size: 13px;
+      margin-top: 12px;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition: none !important; scroll-behavior: auto !important; }
+    }
+
+    @media (max-width: 1180px) {
+      .hero, .principles, .spec-grid, .state-strip, .mobile-strip { grid-template-columns: 1fr 1fr; }
+      .stage-grid { grid-template-columns: 1fr; }
+      .inspector { border-left: 0; border-top: 1px solid var(--separator); grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .task-filter { grid-template-columns: 1fr 1fr; }
+      .workline, .config-grid, .config-summary { grid-template-columns: 1fr; }
+      .setting-line { grid-template-columns: 1fr; }
+    }
+
+    @media (max-width: 760px) {
+      .sheet { width: min(100% - 18px, 640px); padding-top: 18px; }
+      .hero, .principles, .spec-grid, .state-strip, .mobile-strip, .evidence-list { grid-template-columns: 1fr; }
+      .section-title { align-items: flex-start; flex-direction: column; }
+      .mock-shell { padding: 8px; border-radius: 22px; }
+      .app-window { grid-template-columns: 1fr; min-height: auto; }
+      .source-list { border-right: 0; border-bottom: 1px solid var(--separator); }
+      .source-footer { margin-top: 0; }
+      .workspace { grid-template-rows: auto minmax(0, 1fr); }
+      .object-toolbar, .mode-rail, .decision-rail { grid-template-columns: 1fr; align-items: start; }
+      .toolbar-actions { justify-content: flex-start; }
+      .graph-canvas { min-height: auto; display: grid; gap: 8px; padding: 10px; }
+      .graph-links { display: none; }
+      .graph-node { position: static; width: 100%; min-height: auto; box-shadow: none; }
+      .graph-caption { position: static; }
+      .inspector { grid-template-columns: 1fr; }
+      .workline { grid-template-columns: 1fr; }
+      .task-list { border-right: 0; border-bottom: 1px solid var(--separator); }
+      .config-summary { gap: 8px; }
+      .metric { border-left: 0; border-top: 1px solid var(--line); padding-left: 0; padding-top: 8px; }
+      .mini-cols, .mini-mobile .mini-cols { grid-template-columns: 1fr; grid-template-rows: none; }
+    }
+  </style>
+</head>
+<body>
+  <main class="sheet">
+    <section class="hero" aria-labelledby="page-title">
+      <div>
+        <span class="eyebrow">细化设计稿 · 共享 Shell · 不改源码</span>
+        <h1 id="page-title">页面设计稿：Zeus 共享 Shell 细化稿，三个页面共用同一套“对象与行动”语法</h1>
+        <p class="lead">这版把上一轮建议落到可评审的页面结构：Code Map 成为项目作战室主舞台，Tasks 和 Sessions 合成执行线，Settings 变成状态驱动配置工作台。设计保持当前 Zeus 的克制 macOS 工具感，不做换皮。</p>
+      </div>
+      <aside class="brief-card" aria-label="设计 brief">
+        <h2>Brief 已锁定</h2>
+        <p>产品：Zeus 本地优先 macOS AI 研发工作台。视觉来源：用户提供的最新截图、PRODUCT.md、DESIGN.md。交互级别：静态细化稿，带关键状态与响应式口径，暂不进入源码实现。</p>
+      </aside>
+    </section>
+
+    <section class="principles" aria-label="设计原则">
+      <div class="principle"><strong>visual thesis</strong><span>浅色优先、冷中性、低疲劳；像可靠的本机开发工具，而不是营销型 SaaS。</span></div>
+      <div class="principle"><strong>content plan</strong><span>首屏固定四件事：当前项目、当前对象、状态、下一步。长证据进入 inspector。</span></div>
+      <div class="principle"><strong>interaction thesis</strong><span>选择图谱节点、任务或设置组时，只刷新右侧上下文；主舞台不跳页。</span></div>
+      <div class="principle"><strong>accessibility thesis</strong><span>所有 icon-only 操作都有名称，焦点顺序固定，状态有文本，reduced-motion 下无装饰动效。</span></div>
+    </section>
+
+    <div class="no-candidates"><strong>不发散候选：</strong>用户要求继续细化已认可的方向，本稿不提供 A/B/C 视觉方向，而是把推荐方向拆成三张高保真页面稿与组件规则。</div>
+
+    <section aria-labelledby="workspace-title">
+      <div class="section-title">
+        <div>
+          <h2 id="workspace-title">Artboard 1：Project Workspace Shell，Code Map 主舞台</h2>
+          <p>目标动作：用户进入项目后先看真实代码图谱，选中节点后从右侧 inspector 打开源码、创建任务或提问。首屏不再让底部来源 chips、二级工具和设置动作抢图谱层级。</p>
+        </div>
+        <span class="pill good">主路径：扫描结果 → 选节点 → 创建任务</span>
+      </div>
+
+      <div class="mock-shell">
+        <section class="app-window" aria-label="Project Workspace Shell 细化稿">
+          <aside class="source-list" aria-label="项目优先导航">
+            <div class="traffic" aria-hidden="true"><span></span><span></span><span></span></div>
+            <nav class="quick-actions" aria-label="快捷入口">
+              <a class="nav-row" href="#"><span class="nav-glyph">N</span><span>新对话</span><span class="nav-meta">⌘N</span></a>
+              <a class="nav-row" href="#"><span class="nav-glyph">S</span><span>搜索</span><span class="nav-meta">⌘K</span></a>
+            </nav>
+            <nav class="nav-section" aria-label="项目列表">
+              <div class="nav-label">项目</div>
+              <a class="nav-row active" href="#"><span class="nav-glyph">F</span><span>Zeus E2E</span><span class="nav-meta">本机</span></a>
+              <div class="subnav" aria-label="Zeus E2E 项目入口">
+                <a class="nav-row" href="#"><span class="nav-glyph">T</span><span>任务</span><span class="nav-meta">1</span></a>
+                <a class="nav-row" aria-current="page" href="#"><span class="nav-glyph">C</span><span>代码</span><span class="nav-meta">当前</span></a>
+                <a class="nav-row" href="#"><span class="nav-glyph">M</span><span>会话</span><span class="nav-meta">0</span></a>
+              </div>
+              <a class="nav-row" href="#"><span class="nav-glyph">F</span><span>tc-app-core</span><span class="nav-meta">java</span></a>
+            </nav>
+            <div class="source-footer"><a class="nav-row" href="#"><span class="nav-glyph">G</span><span>设置</span><span class="nav-meta"></span></a></div>
+          </aside>
+
+          <section class="workspace" aria-label="代码图谱工作台">
+            <header class="object-toolbar">
+              <div class="object-title">
+                <strong>Zeus E2E · 系统架构图</strong>
+                <span>/Users/david/hypha/zeus · 扫描已完成 · 250 个节点 / 408 条边 · 当前对象 .github/dependabot.yml</span>
+              </div>
+              <div class="toolbar-actions">
+                <span class="pill good">真实来源</span>
+                <a class="btn" href="#">扫描项目</a>
+                <a class="btn" href="#">打开图谱</a>
+                <a class="btn primary" href="#">从节点创建任务</a>
+              </div>
+            </header>
+
+            <div class="stage-grid">
+              <section class="stage" aria-label="图谱主舞台">
+                <div class="mode-rail">
+                  <div class="mode-tabs" role="tablist" aria-label="图谱类型">
+                    <button class="mode-tab active" type="button" role="tab" aria-selected="true">系统架构图</button>
+                    <button class="mode-tab" type="button" role="tab">模块图</button>
+                    <button class="mode-tab" type="button" role="tab">接口时序图</button>
+                    <button class="mode-tab" type="button" role="tab">方法逻辑图</button>
+                  </div>
+                  <div class="status-copy">层级布局 · 已隐藏 0 个节点</div>
+                </div>
+
+                <div class="graph-canvas" aria-label="代码图谱画布">
+                  <svg class="graph-links" viewBox="0 0 1000 520" preserveAspectRatio="none" aria-hidden="true">
+                    <path class="active-link" d="M210 125 C330 90, 370 95, 460 125"></path>
+                    <path d="M585 145 C690 150, 748 170, 820 205"></path>
+                    <path d="M505 185 C510 260, 500 300, 495 360"></path>
+                    <path d="M442 405 C330 425, 240 420, 180 390"></path>
+                    <path d="M565 405 C670 426, 765 415, 825 385"></path>
+                  </svg>
+                  <div class="graph-node n1 selected"><b>.github/dependabot.yml</b><span>文件 · 行 1-12 · 当前对象</span><span>来源：真实扫描节点</span></div>
+                  <div class="graph-node n2"><b>bug_report.md</b><span>文件 · Issue 模板</span><span>声明关系 1.00</span></div>
+                  <div class="graph-node n3"><b>现象</b><span>heading · 来源节点</span><span>聚合边</span></div>
+                  <div class="graph-node n4"><b>聚合 243 个节点</b><span>大图谱折叠组</span><span>点击后展开子图</span></div>
+                  <div class="graph-node n5"><b>任务候选</b><span>从节点生成任务草案</span><span>不自动伪造 AI 结果</span></div>
+                  <div class="graph-node n6"><b>Git Diff</b><span>后续审查出口</span><span>高风险动作需确认</span></div>
+                  <div class="graph-caption">画布细化：图谱节点放大，来源与边详情进入右侧；底部 chips 只保留当前选中路径，不与图谱争夺主视觉。</div>
+                </div>
+
+                <div class="decision-rail" aria-label="从图谱到任务的行动条">
+                  <div><strong>下一步建议：为 .github/dependabot.yml 创建任务</strong><span>任务会自动带上节点来源、边关系、扫描时间和项目路径，进入任务执行线。</span></div>
+                  <div class="toolbar-actions"><a class="btn" href="#">打开源码</a><a class="btn primary" href="#">创建任务</a></div>
+                </div>
+              </section>
+
+              <aside class="inspector" aria-label="图谱对象检查器">
+                <div><small>当前对象</small><h3>.github/dependabot.yml</h3><small>节点详情 · 文件 · 真实来源</small></div>
+                <section class="inspector-section">
+                  <div class="kv"><span>路径</span><code>/Users/david/hypha/zeus/.github/dependabot.yml</code></div>
+                  <div class="kv"><span>范围</span><code>行 1-12</code></div>
+                  <div class="kv"><span>置信度</span><code>1.00</code></div>
+                </section>
+                <section class="inspector-section">
+                  <h3>可行动项</h3>
+                  <a class="btn primary" href="#">从当前节点创建任务</a>
+                  <a class="btn" href="#">问图谱：这个节点影响哪里</a>
+                  <a class="btn" href="#">导出当前视图 Mermaid</a>
+                </section>
+                <section class="inspector-section">
+                  <h3>收纳区</h3>
+                  <div class="kv"><span>边详情</span><span>声明关系、来源文件、聚合边列表</span></div>
+                  <div class="kv"><span>二级工具</span><span>搜索、过滤、运行时预览放在折叠工具区</span></div>
+                </section>
+              </aside>
+            </div>
+          </section>
+        </section>
+      </div>
+    </section>
+
+    <section aria-labelledby="task-title">
+      <div class="section-title">
+        <div>
+          <h2 id="task-title">Artboard 2：Work Queue Shell，任务与会话合成执行线</h2>
+          <p>目标动作：用户从任务列表选中任务后，在同一屏看到事件时间线、环境状态、后续输入和危险操作。会话不再像独立聊天页，而是任务执行的沟通层。</p>
+        </div>
+        <span class="pill wait">主路径：选任务 → 看证据 → 推送到 CLI</span>
+      </div>
+
+      <div class="mock-shell">
+        <section class="app-window" aria-label="Work Queue Shell 细化稿">
+          <aside class="source-list" aria-label="项目优先导航">
+            <div class="traffic" aria-hidden="true"><span></span><span></span><span></span></div>
+            <nav class="quick-actions"><a class="nav-row" href="#"><span class="nav-glyph">N</span><span>新对话</span><span class="nav-meta">⌘N</span></a><a class="nav-row" href="#"><span class="nav-glyph">S</span><span>搜索</span><span class="nav-meta">⌘K</span></a></nav>
+            <nav class="nav-section"><div class="nav-label">项目</div><a class="nav-row active" href="#"><span class="nav-glyph">F</span><span>Zeus E2E</span><span class="nav-meta">本机</span></a><div class="subnav"><a class="nav-row" aria-current="page" href="#"><span class="nav-glyph">T</span><span>任务</span><span class="nav-meta">当前</span></a><a class="nav-row" href="#"><span class="nav-glyph">C</span><span>代码</span><span class="nav-meta"></span></a><a class="nav-row" href="#"><span class="nav-glyph">M</span><span>会话</span><span class="nav-meta"></span></a></div></nav>
+            <div class="source-footer"><a class="nav-row" href="#"><span class="nav-glyph">G</span><span>设置</span><span class="nav-meta"></span></a></div>
+          </aside>
+
+          <section class="workspace" aria-label="任务执行线工作台">
+            <header class="object-toolbar">
+              <div class="object-title"><strong>Zeus E2E · 任务执行线</strong><span>ZEU-000001 · 123 · 待开始 · AI CLI 未配置 · Runtime 未启动</span></div>
+              <div class="toolbar-actions"><span class="pill wait">外部等待</span><a class="btn" href="#">标记完成</a><a class="btn danger" href="#">取消任务</a><a class="btn primary" aria-disabled="true" href="#">运行任务</a></div>
+            </header>
+
+            <div class="stage-grid">
+              <section class="stage" aria-label="任务列表和执行线">
+                <div class="task-filter" aria-label="任务筛选">
+                  <div class="field">搜索任务</div><div class="field">状态：全部</div><div class="field">排序：更新时间</div><div class="field">标签</div><a class="btn primary" href="#">新任务</a>
+                </div>
+                <div class="workline">
+                  <div class="task-list" aria-label="任务列表">
+                    <div class="task-row selected"><span class="check"></span><div><b>ZEU-000001</b><span>123 · 手动创建</span></div><span class="status-chip">可启动 AI</span></div>
+                    <div class="task-row"><span class="check"></span><div><b>从图谱节点创建</b><span>待确认 · 来源 .github/dependabot.yml</span></div><span class="status-chip">草案</span></div>
+                    <div class="task-row"><span class="check"></span><div><b>扫描状态复核</b><span>Runtime 未启动</span></div><span class="status-chip">阻塞</span></div>
+                  </div>
+                  <div class="timeline" aria-label="任务事件时间线">
+                    <div class="timeline-head"><div><h3>123</h3><p>project_bNc-FlR9MhtV · 待开始 · 上下文来源：手动创建</p></div><span class="pill wait">AI CLI 未配置</span></div>
+                    <div class="event-list">
+                      <div class="event"><strong>任务已创建</strong><span>2026-07-01T02:38:45.843Z · 用户要求：123</span></div>
+                      <div class="event"><strong>执行前检查</strong><span>AI CLI 未配置，Runtime 未启动；运行按钮禁用并显示原因。</span></div>
+                      <div class="event"><strong>下一步输入</strong><span>用户可继续补充要求；输入会绑定到当前任务和项目。</span></div>
+                    </div>
+                    <div class="composer" aria-label="任务后续输入">
+                      <textarea aria-label="要求后续变更">123</textarea>
+                      <div class="composer-bar"><span>上下文：ZEU-000001 · Zeus E2E · Codex CLI</span><a class="btn primary" href="#">发送到任务</a></div>
+                    </div>
+                  </div>
+                </div>
+                <div class="decision-rail"><div><strong>危险操作在 decision-rail 中确认</strong><span>取消任务、Git 写操作、远程触发 Runtime 都需要二次确认和本机审计记录。</span></div><a class="btn danger" href="#">确认取消</a></div>
+              </section>
+
+              <aside class="inspector" aria-label="任务上下文检查器">
+                <div><small>当前任务</small><h3>ZEU-000001 · 123</h3><small>待开始 · 可启动 AI，但外部配置未完成</small></div>
+                <section class="inspector-section"><h3>环境状态</h3><div class="kv"><span>变更</span><code>0</code></div><div class="kv"><span>Git</span><span>main</span></div><div class="kv"><span>AI CLI</span><span>未配置</span></div><div class="kv"><span>Telegram</span><span>未启用</span></div></section>
+                <section class="inspector-section"><h3>证据</h3><div class="kv"><span>来源</span><span>手动创建</span></div><div class="kv"><span>路径</span><code>/Users/david/hypha/zeus</code></div><div class="kv"><span>优先级</span><span>normal</span></div></section>
+                <section class="inspector-section"><h3>二级动作</h3><a class="btn" href="#">打开关联图谱</a><a class="btn" href="#">查看 Git Diff</a><a class="btn" href="#">复制诊断信息</a></section>
+              </aside>
+            </div>
+          </section>
+        </section>
+      </div>
+    </section>
+
+    <section aria-labelledby="settings-title">
+      <div class="section-title">
+        <div>
+          <h2 id="settings-title">Artboard 3：Configuration Shell，设置页状态化</h2>
+          <p>目标动作：用户进入设置页时先看到哪些配置已完成、哪些外部等待、哪些会影响当前任务。横向 tabs 改为左侧配置组，右侧每组先显示状态，再进入控件。</p>
+        </div>
+        <span class="pill neutral">主路径：看状态 → 配置缺项 → 保存反馈</span>
+      </div>
+
+      <div class="mock-shell">
+        <section class="app-window" aria-label="Configuration Shell 细化稿">
+          <aside class="source-list" aria-label="项目优先导航">
+            <div class="traffic" aria-hidden="true"><span></span><span></span><span></span></div>
+            <nav class="quick-actions"><a class="nav-row" href="#"><span class="nav-glyph">N</span><span>新对话</span><span class="nav-meta">⌘N</span></a><a class="nav-row" href="#"><span class="nav-glyph">S</span><span>搜索</span><span class="nav-meta">⌘K</span></a></nav>
+            <nav class="nav-section"><div class="nav-label">项目</div><a class="nav-row" href="#"><span class="nav-glyph">F</span><span>Zeus E2E</span><span class="nav-meta"></span></a><div class="subnav"><a class="nav-row" href="#"><span class="nav-glyph">T</span><span>任务</span><span></span></a><a class="nav-row" href="#"><span class="nav-glyph">C</span><span>代码</span><span></span></a><a class="nav-row" href="#"><span class="nav-glyph">M</span><span>会话</span><span></span></a></div></nav>
+            <div class="source-footer"><a class="nav-row active" aria-current="page" href="#"><span class="nav-glyph">G</span><span>设置</span><span class="nav-meta">当前</span></a></div>
+          </aside>
+
+          <section class="workspace" aria-label="设置工作台">
+            <header class="object-toolbar">
+              <div class="object-title"><strong>设置 · 本机配置状态</strong><span>只保存本机偏好；外部 CLI、Telegram、发布凭据显示真实等待项。</span></div>
+              <div class="toolbar-actions"><span class="pill good">已遵循减少动态效果</span><a class="btn" href="#">重置本组</a><a class="btn primary" href="#">保存设置</a></div>
+            </header>
+            <div class="stage-grid">
+              <section class="stage" aria-label="设置配置组">
+                <div class="config-grid">
+                  <nav class="config-nav" aria-label="设置分组">
+                    <button class="config-row active" type="button"><span><b>通用</b><span>语言、主题、通知</span></span><span class="status-chip">已保存</span></button>
+                    <button class="config-row" type="button"><span><b>AI CLI / Runtime</b><span>Codex、Claude、运行环境</span></span><span class="status-chip">待配置</span></button>
+                    <button class="config-row" type="button"><span><b>Telegram</b><span>Bot Token、白名单</span></span><span class="status-chip">未启用</span></button>
+                    <button class="config-row" type="button"><span><b>安全与钥匙串</b><span>凭据、敏感信息</span></span><span class="status-chip">安全</span></button>
+                    <button class="config-row" type="button"><span><b>Git 确认</b><span>危险操作确认</span></span><span class="status-chip">启用</span></button>
+                    <button class="config-row" type="button"><span><b>发布与更新</b><span>签名、公证、Homebrew</span></span><span class="status-chip">等待</span></button>
+                  </nav>
+
+                  <div class="config-main">
+                    <section class="config-summary" aria-label="配置摘要">
+                      <div><h3>通用设置</h3><p>当前组已保存；桌面通知已启用。外部等待项在左侧分组中直接暴露，不需要点进每个 tab 才知道。</p></div>
+                      <div class="metric"><b>3</b><span>本组设置</span></div>
+                      <div class="metric"><b>2</b><span>外部等待</span></div>
+                      <div class="metric"><b>0</b><span>未保存变更</span></div>
+                    </section>
+
+                    <section class="settings-group" aria-label="通用设置组">
+                      <header><div><h3>界面偏好</h3><p>只影响本机 UI，不影响项目、任务或 Runtime 会话。</p></div><span class="pill good">已保存</span></header>
+                      <div class="setting-line"><div><strong>应用语言</strong><span>选择 Zeus 使用的界面语言</span></div><div class="select-fake">简体中文 <span>展开</span></div><a class="btn" href="#">恢复默认</a></div>
+                      <div class="setting-line"><div><strong>深色/浅色模式</strong><span>跟随系统，或固定为浅色、深色</span></div><div class="select-fake">跟随系统 <span>展开</span></div><a class="btn" href="#">预览</a></div>
+                      <div class="setting-line"><div><strong>桌面通知</strong><span>本机任务、Runtime 和 Telegram 状态变化时提醒</span></div><div class="toggle-fake" aria-label="桌面通知已启用"></div><a class="btn" href="#">测试通知</a></div>
+                    </section>
+
+                    <div class="decision-rail"><div><strong>保存反馈固定在工作区底部</strong><span>保存中禁用重复点击；失败时保留输入并说明影响范围。</span></div><a class="btn primary" href="#">保存设置</a></div>
+                  </div>
+                </div>
+              </section>
+
+              <aside class="inspector" aria-label="配置状态检查器">
+                <div><small>配置状态</small><h3>外部等待项</h3><small>不会伪造成功，只给下一步动作</small></div>
+                <section class="inspector-section"><h3>AI CLI</h3><div class="kv"><span>状态</span><span>未配置</span></div><div class="kv"><span>影响</span><span>任务无法直接运行</span></div><a class="btn" href="#">查看安装指引</a></section>
+                <section class="inspector-section"><h3>Telegram</h3><div class="kv"><span>状态</span><span>未启用</span></div><div class="kv"><span>影响</span><span>远程控制不可用</span></div><a class="btn" href="#">配置白名单</a></section>
+                <section class="inspector-section"><h3>安全说明</h3><div class="kv"><span>凭据</span><span>不展示明文 token</span></div><div class="kv"><span>存储</span><span>本机钥匙串或本机路径</span></div></section>
+              </aside>
+            </div>
+          </section>
+        </section>
+      </div>
+    </section>
+
+    <section aria-labelledby="component-title">
+      <div class="section-title"><div><h2 id="component-title">组件细化规则</h2><p>后续如果进入开发，先把这些规则落到组件契约，再逐页替换，不要用 CSS 隐藏旧结构冒充完成。</p></div></div>
+      <div class="spec-grid">
+        <article class="panel"><h3>object-toolbar</h3><p>每页第一行稳定回答：当前项目、当前对象、真实状态、主操作。</p><ul><li>高度 58px，可紧凑双行。</li><li>低频操作进更多菜单。</li><li>状态用文本 + 色点，不只靠颜色。</li></ul></article>
+        <article class="panel"><h3>context-inspector</h3><p>承载选中节点、任务、配置组的证据与二级动作。</p><ul><li>桌面右侧 318px。</li><li>平板下沉，移动端在对象后方。</li><li>长日志和来源清单折叠。</li></ul></article>
+        <article class="panel"><h3>decision-rail</h3><p>统一任务运行、Git 写操作、取消任务和保存反馈。</p><ul><li>危险动作必须说明影响。</li><li>二次确认与审计记录不可省。</li><li>失败保留用户输入。</li></ul></article>
+        <article class="panel"><h3>composer</h3><p>会话、任务续写、图谱问答共用底部输入语法。</p><ul><li>显示当前上下文。</li><li>发送按钮必须说明去向。</li><li>禁用态显示原因。</li></ul></article>
+      </div>
+    </section>
+
+    <section aria-labelledby="states-title">
+      <div class="section-title"><div><h2 id="states-title">关键状态细化</h2><p>所有页面都必须有这些状态，不以假数据填充界面。</p></div></div>
+      <div class="state-strip">
+        <article class="state loading"><div class="state-visual"></div><strong>loading</strong><span>局部骨架，不遮住已有真实数据。</span></article>
+        <article class="state"><div class="state-visual"></div><strong>empty</strong><span>说明这里会出现什么、为什么重要、下一步怎么做。</span></article>
+        <article class="state error"><div class="state-visual"></div><strong>error</strong><span>说明影响范围和恢复方式，不暴露敏感堆栈。</span></article>
+        <article class="state wait"><div class="state-visual"></div><strong>external wait</strong><span>AI CLI、Telegram、签名凭据等待用户配置。</span></article>
+        <article class="state success"><div class="state-visual"></div><strong>saved / ready</strong><span>保存、扫描完成、运行就绪都显示更新时间和来源。</span></article>
+      </div>
+    </section>
+
+    <section aria-labelledby="responsive-title">
+      <div class="section-title"><div><h2 id="responsive-title">响应式细化</h2><p>桌面是主场景，窄屏不把整张图缩成缩略图，而是改成纵向对象链路。</p></div></div>
+      <div class="mobile-strip">
+        <article class="device"><h3>Desktop</h3><div class="mini-wire"><div class="mini-row"></div><div class="mini-cols"><div class="mini-row"></div><div class="mini-row"></div><div class="mini-row"></div></div></div><p>source-list 常驻，stage 居中，inspector 常驻；适合外接屏和长时间研发。</p></article>
+        <article class="device"><h3>Tablet</h3><div class="mini-wire"><div class="mini-row"></div><div class="mini-cols" style="grid-template-columns:1fr 2fr"><div class="mini-row"></div><div class="mini-row"></div></div><div class="mini-row"></div></div><p>inspector 下沉或变二列，避免主舞台被压窄。</p></article>
+        <article class="device"><h3>Narrow 390px</h3><div class="mini-wire mini-mobile"><div class="mini-row"></div><div class="mini-cols"><div class="mini-row"></div><div class="mini-row"></div><div class="mini-row"></div></div></div><p>图谱节点转纵向列表，详情紧跟当前对象，不依赖横向滚动。</p></article>
+      </div>
+    </section>
+
+    <section aria-labelledby="evidence-title">
+      <div class="section-title"><div><h2 id="evidence-title">依据与边界</h2><p>本稿是细化设计，不是实现验收；未修改源码。</p></div></div>
+      <div class="evidence-list">
+        <div class="evidence"><strong>产品定位</strong><br><code>PRODUCT.md:7</code> Zeus 是本地优先 macOS AI 研发工作台；<code>PRODUCT.md:17</code> Aha Moment 是真实扫描代码图谱。</div>
+        <div class="evidence"><strong>真实状态原则</strong><br><code>PRODUCT.md:42-48</code> 本地优先、无真实来源不展示业务数据、外部工具缺失时显示需要配置。</div>
+        <div class="evidence"><strong>设计契约</strong><br><code>DESIGN.md:5-9</code> 克制、清晰、可信；<code>DESIGN.md:65-69</code> 当前对象、状态、主操作必须一眼可见。</div>
+        <div class="evidence"><strong>组件语义</strong><br><code>DESIGN.md:146-213</code> source-list、object-toolbar、composer、decision-rail、mode-rail、graph-canvas。</div>
+        <div class="evidence"><strong>实现锚点</strong><br><code>apps/desktop/src/renderer/App.tsx:8436-8503</code> 新会话；<code>apps/desktop/src/renderer/App.tsx:9859-10214</code> CodeMapView；<code>apps/desktop/src/renderer/App.tsx:11200-11320</code> GraphCanvas。</div>
+        <div class="evidence"><strong>任务锚点</strong><br><code>apps/desktop/src/renderer/task/TaskWorkspace.tsx:177-260</code> 任务工作区；<code>TaskWorkspace.tsx:520-566</code> 任务行渲染。</div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

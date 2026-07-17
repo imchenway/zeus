@@ -1,0 +1,913 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Zeus 与 Codex 会话持久化：为什么不能只复制 JSONL</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --page: #f5f7fa;
+        --paper: #ffffff;
+        --ink: #1f2328;
+        --muted: #66717e;
+        --line: #d8dee6;
+        --line-strong: #b8c1cc;
+        --blue: #2463c7;
+        --blue-soft: #eef4ff;
+        --green: #17724d;
+        --green-soft: #eaf7f0;
+        --amber: #8a5a06;
+        --amber-soft: #fff6df;
+        --red: #a13535;
+        --red-soft: #fff0f0;
+        --violet: #6551a8;
+        --violet-soft: #f3f0ff;
+        --shadow: 0 16px 38px rgba(31, 35, 40, 0.07);
+        --radius: 18px;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        color: var(--ink);
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+        line-height: 1.55;
+        background: radial-gradient(circle at 16% 0%, rgba(36, 99, 199, 0.1), transparent 27rem), radial-gradient(circle at 84% 0%, rgba(23, 114, 77, 0.09), transparent 25rem), var(--page);
+      }
+
+      main {
+        width: min(1220px, calc(100vw - 32px));
+        margin: 0 auto;
+        padding: 24px 0 44px;
+      }
+
+      h1,
+      h2,
+      h3,
+      p {
+        margin-top: 0;
+      }
+
+      h1 {
+        max-width: 920px;
+        margin-bottom: 10px;
+        font-size: clamp(27px, 4vw, 43px);
+        line-height: 1.13;
+        letter-spacing: -0.035em;
+      }
+
+      h2 {
+        margin-bottom: 14px;
+        font-size: 19px;
+        letter-spacing: -0.01em;
+      }
+
+      h3 {
+        margin-bottom: 5px;
+        font-size: 14px;
+      }
+
+      code {
+        color: #174d91;
+        font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+        overflow-wrap: anywhere;
+      }
+
+      .eyebrow {
+        display: inline-flex;
+        margin-bottom: 9px;
+        padding: 4px 9px;
+        border: 1px solid rgba(36, 99, 199, 0.25);
+        border-radius: 999px;
+        color: var(--blue);
+        background: var(--blue-soft);
+        font-size: 11px;
+        font-weight: 750;
+      }
+
+      .lead {
+        max-width: 940px;
+        margin-bottom: 17px;
+        color: var(--muted);
+        font-size: 15px;
+      }
+
+      .verdict {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr);
+        gap: 12px;
+        align-items: start;
+        margin-bottom: 18px;
+        padding: 14px 16px;
+        border: 1px solid rgba(23, 114, 77, 0.35);
+        border-radius: 15px;
+        background: linear-gradient(135deg, #fff, var(--green-soft));
+        box-shadow: var(--shadow);
+      }
+
+      .verdict-mark {
+        display: grid;
+        width: 27px;
+        height: 27px;
+        place-items: center;
+        border-radius: 50%;
+        color: #fff;
+        background: var(--green);
+        font-weight: 800;
+      }
+
+      .verdict p {
+        margin: 0;
+      }
+
+      .section {
+        margin-top: 17px;
+        padding: 18px;
+        border: 1px solid var(--line);
+        border-radius: 22px;
+        background: rgba(255, 255, 255, 0.93);
+        box-shadow: var(--shadow);
+      }
+
+      .legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px 15px;
+        margin-bottom: 14px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .legend span {
+        display: inline-flex;
+        gap: 6px;
+        align-items: center;
+      }
+
+      .dot {
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+        background: var(--blue);
+      }
+
+      .dot.green {
+        background: var(--green);
+      }
+
+      .dot.red {
+        background: var(--red);
+      }
+
+      .architecture {
+        display: grid;
+        grid-template-columns: minmax(220px, 0.8fr) 72px minmax(440px, 1.7fr);
+        gap: 12px;
+        align-items: stretch;
+      }
+
+      .system,
+      .node,
+      .route,
+      .fact {
+        min-width: 0;
+        border: 1px solid var(--line);
+        border-radius: 15px;
+        background: var(--paper);
+      }
+
+      .system {
+        padding: 14px;
+      }
+
+      .system.zeus {
+        border-color: rgba(36, 99, 199, 0.4);
+        background: linear-gradient(180deg, #fff, var(--blue-soft));
+      }
+
+      .system.codex {
+        border-color: rgba(23, 114, 77, 0.4);
+        background: linear-gradient(180deg, #fff, var(--green-soft));
+      }
+
+      .system-head {
+        margin-bottom: 12px;
+        padding-bottom: 9px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .system-head strong {
+        display: block;
+        font-size: 16px;
+      }
+
+      .system-head span {
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .node-stack {
+        display: grid;
+        gap: 8px;
+      }
+
+      .node {
+        padding: 10px 11px;
+      }
+
+      .node strong,
+      .route strong,
+      .fact strong {
+        display: block;
+        font-size: 13px;
+      }
+
+      .node span,
+      .route span,
+      .fact span {
+        display: block;
+        margin-top: 3px;
+        color: var(--muted);
+        font-size: 11.5px;
+      }
+
+      .boundary {
+        display: grid;
+        gap: 8px;
+        place-content: center;
+        text-align: center;
+        color: var(--blue);
+      }
+
+      .boundary .arrow {
+        font-size: 28px;
+        font-weight: 800;
+      }
+
+      .boundary small {
+        color: var(--muted);
+        font-size: 10px;
+      }
+
+      .internal-flow {
+        display: grid;
+        grid-template-columns: repeat(7, minmax(0, 1fr));
+        gap: 7px;
+        align-items: stretch;
+      }
+
+      .internal-flow .node {
+        grid-column: span 2;
+        background: rgba(255, 255, 255, 0.9);
+      }
+
+      .internal-flow .arrow-cell {
+        display: grid;
+        place-items: center;
+        color: var(--green);
+        font-size: 20px;
+        font-weight: 800;
+      }
+
+      .thread-store {
+        border-width: 2px;
+        border-color: rgba(23, 114, 77, 0.45);
+      }
+
+      .store-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 7px;
+        margin-top: 10px;
+      }
+
+      .store-grid .node {
+        background: rgba(255, 255, 255, 0.82);
+      }
+
+      .why-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 44px minmax(0, 1fr) 44px minmax(0, 1fr);
+        gap: 8px;
+        align-items: stretch;
+      }
+
+      .why-reason {
+        min-width: 0;
+        padding: 15px;
+        border: 1px solid var(--line);
+        border-radius: 15px;
+        background: linear-gradient(180deg, #fff, var(--green-soft));
+      }
+
+      .why-reason strong {
+        display: block;
+        margin: 8px 0 5px;
+        font-size: 14px;
+      }
+
+      .why-reason p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 11.5px;
+      }
+
+      .reason-index {
+        display: inline-grid;
+        width: 25px;
+        height: 25px;
+        place-items: center;
+        border-radius: 50%;
+        color: #fff;
+        background: var(--green);
+        font-size: 11px;
+        font-weight: 850;
+      }
+
+      .why-arrow {
+        display: grid;
+        place-items: center;
+        color: var(--green);
+        font-size: 24px;
+        font-weight: 850;
+      }
+
+      .why-bottom {
+        display: grid;
+        grid-template-columns: 1fr 1.5fr;
+        gap: 10px;
+        margin-top: 12px;
+      }
+
+      .why-note {
+        padding: 12px 13px;
+        border: 1px solid var(--line);
+        border-radius: 13px;
+        background: var(--paper);
+        font-size: 11.5px;
+      }
+
+      .why-note strong {
+        display: block;
+        margin-bottom: 4px;
+      }
+
+      .why-note.inference {
+        border-color: rgba(184, 130, 23, 0.42);
+        background: var(--amber-soft);
+      }
+
+      .routes {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 11px;
+      }
+
+      .route {
+        position: relative;
+        padding: 14px;
+        overflow: hidden;
+      }
+
+      .route::before {
+        content: '';
+        position: absolute;
+        inset: 0 auto 0 0;
+        width: 4px;
+        background: var(--line-strong);
+      }
+
+      .route.good {
+        background: linear-gradient(180deg, #fff, var(--green-soft));
+      }
+
+      .route.good::before {
+        background: var(--green);
+      }
+
+      .route.bad {
+        background: linear-gradient(180deg, #fff, var(--red-soft));
+      }
+
+      .route.bad::before {
+        background: var(--red);
+      }
+
+      .route.target {
+        background: linear-gradient(180deg, #fff, var(--violet-soft));
+      }
+
+      .route.target::before {
+        background: var(--violet);
+      }
+
+      .route-label {
+        display: inline-flex;
+        margin-bottom: 10px;
+        padding: 3px 7px;
+        border-radius: 999px;
+        color: var(--muted);
+        background: rgba(255, 255, 255, 0.85);
+        font-size: 10.5px;
+        font-weight: 750;
+      }
+
+      .mini-flow {
+        display: grid;
+        gap: 6px;
+        margin-top: 11px;
+      }
+
+      .mini-step {
+        padding: 8px 9px;
+        border: 1px solid rgba(184, 193, 204, 0.68);
+        border-radius: 10px;
+        background: rgba(255, 255, 255, 0.9);
+        font-size: 11.5px;
+      }
+
+      .mini-arrow {
+        height: 12px;
+        color: var(--muted);
+        text-align: center;
+        line-height: 12px;
+      }
+
+      .result {
+        margin-top: 10px;
+        padding-top: 9px;
+        border-top: 1px solid rgba(184, 193, 204, 0.65);
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+      .bad .result {
+        color: var(--red);
+      }
+
+      .good .result {
+        color: var(--green);
+      }
+
+      .target .result {
+        color: var(--violet);
+      }
+
+      .facts {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 9px;
+      }
+
+      .fact {
+        padding: 12px;
+      }
+
+      .fact b {
+        display: block;
+        margin-bottom: 3px;
+        font-size: 24px;
+        line-height: 1.1;
+      }
+
+      .fact.native b {
+        color: var(--green);
+      }
+
+      .fact.legacy b {
+        color: var(--amber);
+      }
+
+      .matrix-wrap {
+        overflow-x: auto;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+      }
+
+      table {
+        width: 100%;
+        min-width: 820px;
+        border-collapse: collapse;
+        background: var(--paper);
+      }
+
+      th,
+      td {
+        padding: 10px 11px;
+        border-bottom: 1px solid var(--line);
+        text-align: left;
+        vertical-align: top;
+        font-size: 12px;
+      }
+
+      th {
+        background: var(--blue-soft);
+        font-weight: 750;
+      }
+
+      tr:last-child td {
+        border-bottom: 0;
+      }
+
+      .yes {
+        color: var(--green);
+        font-weight: 750;
+      }
+
+      .no {
+        color: var(--red);
+        font-weight: 750;
+      }
+
+      details {
+        margin-top: 9px;
+        border-top: 1px solid var(--line);
+        padding-top: 9px;
+      }
+
+      summary {
+        cursor: pointer;
+        color: var(--blue);
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+      .evidence-list {
+        display: grid;
+        gap: 8px;
+        margin: 10px 0 0;
+        padding: 0;
+        list-style: none;
+      }
+
+      .evidence-list li {
+        padding: 9px 10px;
+        border: 1px solid var(--line);
+        border-radius: 11px;
+        color: var(--muted);
+        background: var(--paper);
+        font-size: 11.5px;
+      }
+
+      .footer-note {
+        margin: 16px 2px 0;
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      @media (max-width: 900px) {
+        main {
+          width: min(100vw - 20px, 900px);
+          padding-top: 16px;
+        }
+
+        .architecture,
+        .why-grid,
+        .why-bottom,
+        .routes,
+        .facts {
+          grid-template-columns: 1fr;
+        }
+
+        .why-arrow {
+          min-height: 20px;
+          transform: rotate(90deg);
+        }
+
+        .boundary {
+          grid-template-columns: auto auto;
+        }
+
+        .boundary .arrow {
+          transform: rotate(90deg);
+        }
+
+        .internal-flow {
+          grid-template-columns: 1fr;
+        }
+
+        .internal-flow .node {
+          grid-column: auto;
+        }
+
+        .internal-flow .arrow-cell {
+          min-height: 18px;
+          transform: rotate(90deg);
+        }
+      }
+
+      @media (max-width: 560px) {
+        .section {
+          padding: 13px;
+          border-radius: 16px;
+        }
+
+        .verdict {
+          grid-template-columns: 1fr;
+        }
+
+        .store-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      @media (prefers-color-scheme: dark) {
+        :root {
+          color-scheme: dark;
+          --page: #15181c;
+          --paper: #1f2328;
+          --ink: #edf1f5;
+          --muted: #a9b2bd;
+          --line: #3a424c;
+          --line-strong: #596574;
+          --blue: #83aef8;
+          --blue-soft: #1d2b43;
+          --green: #71c69f;
+          --green-soft: #173329;
+          --amber: #e5ba65;
+          --amber-soft: #3a2d15;
+          --red: #ef9696;
+          --red-soft: #3b2020;
+          --violet: #b4a3ef;
+          --violet-soft: #2b2543;
+          --shadow: 0 16px 38px rgba(0, 0, 0, 0.2);
+        }
+
+        code {
+          color: #9fc1ff;
+        }
+
+        .section,
+        .system,
+        .node,
+        .why-reason,
+        .why-note,
+        .route,
+        .fact,
+        table,
+        .verdict {
+          background-color: var(--paper);
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          scroll-behavior: auto !important;
+          transition: none !important;
+          animation: none !important;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main data-diagram-type="architecture-comparison" data-task="TASK_20260714_002">
+      <span class="eyebrow">TASK_20260714_002 · Codex App 26.707.71524 / app-server 0.144.2 现场对照</span>
+      <h1>Zeus 与 Codex 会话持久化：为什么不能只复制一个 JSONL</h1>
+      <p class="lead">可以复制 Codex App 的实现边界，但“复制实现”不是让 Zeus 手写 rollout 文件，也不是在对话框里增加续接模式按钮；正确路径是显式导入一次，再由同一个 Rust ThreadStore 维护 rollout、metadata、状态索引和幂等账本。</p>
+
+      <div class="verdict" role="note" aria-label="核心结论">
+        <span class="verdict-mark" aria-hidden="true">✓</span>
+        <p>
+          <strong>当前 Codex App 的真实路径：</strong>onboarding / Settings 显式选择 Chat sessions → <code>externalAgentConfig/detect</code> → <code>externalAgentConfig/import</code> → 等待匹配 <code>importId</code> 的 completed → 取得
+          native threadId → 刷新普通会话列表。Zeus 应复用同一协议和 ThreadStore，只增加专用 <code>zeus-legacy</code> source provider。
+        </p>
+      </div>
+
+      <section class="section" aria-labelledby="boundary-title">
+        <h2 id="boundary-title">一张图看懂真正的边界</h2>
+        <div class="legend" aria-label="图例">
+          <span><i class="dot"></i>Zeus 所有</span>
+          <span><i class="dot green"></i>Codex 内部所有</span>
+          <span><i class="dot red"></i>不能跨边界直接调用</span>
+        </div>
+
+        <div class="architecture">
+          <article class="system zeus">
+            <div class="system-head">
+              <strong>Zeus · TypeScript / Electron</strong>
+              <span>产品对象、任务关系、UI 投影</span>
+            </div>
+            <div class="node-stack">
+              <div class="node">
+                <strong>zeus.db</strong><span><code>conversations</code>、<code>conversation_messages</code>、provider threadId/path</span>
+              </div>
+              <div class="node">
+                <strong>CodexAppServerManager</strong><span>通过 stdio RPC 调用 <code>thread/*</code>、<code>turn/*</code> 与 <code>externalAgentConfig/*</code></span>
+              </div>
+              <div class="node"><strong>当前旧消息</strong><span>legacy 记录只有 SQLite 消息；没有 Codex ThreadStore 身份</span></div>
+            </div>
+          </article>
+
+          <div class="boundary" aria-label="RPC 边界">
+            <span class="arrow" aria-hidden="true">⇄</span>
+            <small>app-server<br />RPC 边界</small>
+          </div>
+
+          <article class="system codex">
+            <div class="system-head">
+              <strong>Codex · Rust app-server 内部</strong>
+              <span>原生 thread 的唯一持久化所有者</span>
+            </div>
+            <div class="internal-flow" aria-label="Codex 原版导入链路">
+              <div class="node"><strong>records parser</strong><span>解析 user / assistant / tool blocks</span></div>
+              <div class="arrow-cell" aria-hidden="true">→</div>
+              <div class="node"><strong>RolloutItem exporter</strong><span>生成 synthetic turn、ResponseItem、completed event</span></div>
+              <div class="arrow-cell" aria-hidden="true">→</div>
+              <div class="node thread-store">
+                <strong>ThreadStore</strong><span><code>create_thread</code> + <code>append_items</code> + <code>persist_thread</code></span>
+              </div>
+            </div>
+            <div class="store-grid" aria-label="Codex 持久化产物">
+              <div class="node"><strong>rollout JSONL</strong><span>模型可见历史与事件</span></div>
+              <div class="node"><strong>thread metadata / state</strong><span>title、cwd、model provider、索引状态</span></div>
+              <div class="node"><strong>import ledger</strong><span>source path + SHA-256 + imported threadId</span></div>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section class="section" aria-labelledby="why-rust-title">
+        <h2 id="why-rust-title">为什么会话机制属于 Rust app-server？</h2>
+        <div class="why-grid" aria-label="会话机制归属 Rust app-server 的因果链">
+          <article class="why-reason">
+            <span class="reason-index">1</span>
+            <strong>会话不是 UI 文本列表</strong>
+            <p>一个 thread 同时包含模型上下文、turn/item 事件、工具调用、审批、cwd、sandbox、模型配置与运行状态。</p>
+          </article>
+          <div class="why-arrow" aria-hidden="true">→</div>
+          <article class="why-reason">
+            <span class="reason-index">2</span>
+            <strong>这些状态由 Agent Runtime 产生</strong>
+            <p>真正知道某个 item 何时开始、完成、取消或需要恢复的是运行模型与工具循环的 Codex Core，而不是 Electron Renderer。</p>
+          </article>
+          <div class="why-arrow" aria-hidden="true">→</div>
+          <article class="why-reason">
+            <span class="reason-index">3</span>
+            <strong>持久化必须与运行状态同源</strong>
+            <p>Rust ThreadStore 在同一边界内追加 rollout、更新 metadata/state，并提供 start、resume、fork、archive 等一致语义。</p>
+          </article>
+        </div>
+        <div class="why-bottom">
+          <div class="why-note">
+            <strong>已确认事实</strong>
+            OpenAI 将 app-server 定义为富客户端的认证、会话历史、审批与流式 Agent 事件接口；Codex App 通过协议使用它，而不是自己解释 rollout。
+          </div>
+          <div class="why-note inference">
+            <strong>工程推断，不是 OpenAI 官方动机声明</strong>
+            选择 Rust 不是因为“JSONL 只有 Rust 能写”，而是 Codex Core 本身已经用 Rust 实现。把 ThreadStore 留在同一进程，可避免 Electron 与 Runtime
+            各维护一套状态机、协议类型和崩溃恢复逻辑。类型安全、并发与单二进制部署是附加收益，不是唯一原因。
+          </div>
+        </div>
+      </section>
+
+      <section class="section" aria-labelledby="routes-title">
+        <h2 id="routes-title">三条路径的结果差异</h2>
+        <div class="routes">
+          <article class="route good">
+            <span class="route-label">现有 3 条 native 会话</span>
+            <h3>已有 threadId + rollout</h3>
+            <span>不需要导入，也不需要模式按钮。</span>
+            <div class="mini-flow">
+              <div class="mini-step">Zeus 读取 <code>provider_thread_id</code></div>
+              <div class="mini-arrow" aria-hidden="true">↓</div>
+              <div class="mini-step"><code>thread/resume</code></div>
+              <div class="mini-arrow" aria-hidden="true">↓</div>
+              <div class="mini-step"><code>turn/start</code> 追加新一轮</div>
+            </div>
+            <div class="result">结果：同一 thread，真实续接。</div>
+          </article>
+
+          <article class="route bad">
+            <span class="route-label">错误的“直接照抄文件”</span>
+            <h3>Zeus 自己写 rollout JSONL</h3>
+            <span>只复制文件格式，绕过 Codex 的持久化事务。</span>
+            <div class="mini-flow">
+              <div class="mini-step">SQLite messages → 拼 JSONL</div>
+              <div class="mini-arrow" aria-hidden="true">↓</div>
+              <div class="mini-step">缺 metadata / state index / ledger</div>
+              <div class="mini-arrow" aria-hidden="true">↓</div>
+              <div class="mini-step">Codex 可能无法发现、resume 或安全升级</div>
+            </div>
+            <div class="result">结果：文件存在 ≠ 原生 thread，存在损坏风险。</div>
+          </article>
+
+          <article class="route target">
+            <span class="route-label">当前 Codex App 的真实导入</span>
+            <h3>显式 import + ThreadStore</h3>
+            <span>不新增会话正文模式；在 Settings/onboarding 显式导入一次。</span>
+            <div class="mini-flow">
+              <div class="mini-step"><code>externalAgentConfig/detect</code> 列出 Chat sessions</div>
+              <div class="mini-arrow" aria-hidden="true">↓</div>
+              <div class="mini-step"><code>externalAgentConfig/import</code> → <code>importId</code></div>
+              <div class="mini-arrow" aria-hidden="true">↓</div>
+              <div class="mini-step">completed.success.target → native threadId</div>
+            </div>
+            <div class="result">结果：刷新列表；以后打开直接发送即 resume。</div>
+          </article>
+        </div>
+      </section>
+
+      <section class="section" aria-labelledby="current-title">
+        <h2 id="current-title">当前真实数据意味着什么</h2>
+        <div class="facts">
+          <div class="fact native"><b>3</b><strong>native 会话</strong><span>全部已有 threadId 和真实 rollout JSONL；直接续接。</span></div>
+          <div class="fact legacy"><b>2</b><strong>活跃 legacy 会话</strong><span>只有 Zeus SQLite 消息，没有 provider threadId/path。</span></div>
+          <div class="fact"><b>2</b><strong>已归档 legacy</strong><span>保留审计历史，不应自动恢复成 native。</span></div>
+          <div class="fact"><b>1</b><strong>正确导入所有者</strong><span>Codex ThreadStore，而不是 Renderer 或 Zeus SQLite 层。</span></div>
+        </div>
+      </section>
+
+      <section class="section" aria-labelledby="matrix-title">
+        <h2 id="matrix-title">实现选择矩阵</h2>
+        <div class="matrix-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>路径</th>
+                <th>是否复用原版转换</th>
+                <th>是否维护完整 thread 状态</th>
+                <th>升级风险</th>
+                <th>结论</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>现有 native：<code>thread/resume</code></td>
+                <td class="yes">是</td>
+                <td class="yes">是</td>
+                <td>最低</td>
+                <td>当前直接使用</td>
+              </tr>
+              <tr>
+                <td>Zeus 手写 rollout JSONL</td>
+                <td class="no">否</td>
+                <td class="no">否</td>
+                <td>最高</td>
+                <td class="no">禁止</td>
+              </tr>
+              <tr>
+                <td><code>additionalContext</code> 首轮注入</td>
+                <td class="no">否</td>
+                <td class="no">不是历史 thread</td>
+                <td>中</td>
+                <td>语义近似，不是导入</td>
+              </tr>
+              <tr>
+                <td>内置 app-server + <code>zeus-legacy</code> provider + <code>externalAgentConfig/import</code></td>
+                <td class="yes">是</td>
+                <td class="yes">是</td>
+                <td>需要固定版本并跟随上游升级</td>
+                <td class="yes">采用：与 Codex App 同一流程</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="section" aria-labelledby="evidence-title">
+        <h2 id="evidence-title">源码证据与验收边界</h2>
+        <ul class="evidence-list">
+          <li>
+            <strong>OpenAI App Server 文档：</strong><a href="https://learn.chatgpt.com/docs/app-server">Codex App Server</a> — 明确说明 app-server 为富客户端提供认证、会话历史、审批与流式 Agent 事件，并把 thread / turn / item
+            定义为核心对象。
+          </li>
+          <li>
+            <strong>当前 App 现场：</strong><code>/Applications/Codex.app/Contents/Resources/codex</code> 为 <code>codex-cli 0.144.2</code>；App bundle 的 onboarding / Settings 只在用户显式选择 Chat sessions 后调用 import，并等待 matching
+            completed。
+          </li>
+          <li>
+            <strong>0.144.2 真实 schema：</strong><code>codex app-server generate-ts</code> 生成 <code>externalAgentConfig/detect</code>、<code>externalAgentConfig/import</code>、progress/completed/readHistories，以及 success.target
+            threadId。
+          </li>
+          <li>
+            <strong>Codex 0.144.2 官方 release：</strong><code>rust-v0.144.2</code> 指向 commit <code>a6645b6b8a656360fa16fb7e1c6721d0697d3d6a</code>；公开 diff 只回滚 Guardian prompting 并更新 workspace version，因此会话 importer
+            沿用已核对的 0.144.1 ThreadStore 边界。
+          </li>
+          <li>
+            <strong>Zeus RPC 边界：</strong><code>/Users/david/hypha/zeus/packages/ai-runtime/src/codexAppServerManager.ts:223-235,515-599</code> — 当前已启动 app-server 并暴露 start/resume/read/turn，但还没有 externalAgentConfig import
+            lifecycle。
+          </li>
+          <li><strong>Zeus 消息存储：</strong><code>/Users/david/hypha/zeus/packages/storage/src/index.ts:948-956,2185-2217</code> — conversation messages 主存储为 SQLite，不是 Codex rollout。</li>
+        </ul>
+        <details>
+          <summary>“复制 Codex”需要承担哪些工程成本？</summary>
+          <ul class="evidence-list">
+            <li>随 Zeus 分发固定版本、按架构构建并签名的 Codex Rust app-server，同步 Apache 2.0 attribution。</li>
+            <li>增加窄范围 <code>zeus-legacy</code> source provider，复用现有 <code>externalAgentConfig/*</code> 协议，不向 Zeus 暴露 ThreadStore 文件细节。</li>
+            <li>为 Codex 版本升级建立 schema fingerprint、binary checksum、导入幂等、跨版本 resume 和回滚验证。</li>
+            <li>失败时保留 legacy SQLite 记录；只有新 thread 已持久化且可 resume 后才绑定并归档来源。</li>
+          </ul>
+        </details>
+      </section>
+
+      <p class="footer-note">本图使用 vibe-diagram 规则更新，只说明已取证的实现边界。当前仍在 PLAN：尚未批准修改 Rust/Electron 源码、构建依赖、应用包或用户数据。</p>
+    </main>
+  </body>
+</html>

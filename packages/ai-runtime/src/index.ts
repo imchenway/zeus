@@ -1,8 +1,13 @@
 import { access } from 'node:fs/promises';
 import { spawn as nodeSpawn } from 'node:child_process';
-import { delimiter, resolve, relative } from 'node:path';
+import { basename, delimiter, resolve, relative } from 'node:path';
 import { createRequire } from 'node:module';
 import { normalizeTerminalChunk } from '@zeus/terminal-core';
+import { expandCliSearchPath } from './cliSearchPath.js';
+
+export * from './codexAppServerManager.js';
+export * from './codexAppServerProtocol.js';
+export { expandCliSearchPath } from './cliSearchPath.js';
 
 export interface AiCliDescriptor {
   name: string;
@@ -21,6 +26,8 @@ export interface AiCliAdapterDescriptor extends AiCliDescriptor {
   displayName: string;
   capabilities: string[];
 }
+
+export type NonCodexAiCliAdapterId = Exclude<AiCliAdapterDescriptor['id'], 'codex'>;
 
 export interface AiCliAdapterStatus extends AiCliStatus {
   id: AiCliAdapterDescriptor['id'];
@@ -54,7 +61,7 @@ export interface AiRuntimePromptInput {
 }
 
 export interface AiCliAdapterInvocation {
-  adapterId: AiCliAdapterDescriptor['id'];
+  adapterId: NonCodexAiCliAdapterId;
   command: string;
   args: string[];
 }
@@ -102,6 +109,7 @@ const AI_CLI_ADAPTERS: AiCliAdapterDescriptor[] = [
     capabilities: ['detect', 'prompt', 'logs', 'stop'],
   },
 ];
+const AI_CLI_ADAPTER_COMMAND_BASENAMES = new Set(AI_CLI_ADAPTERS.map((adapter) => adapter.command));
 
 /** 返回设计书要求的 AI CLI adapter 清单；这里只暴露能力声明，不伪造安装状态。 */
 export function listAiCliAdapters(): AiCliAdapterDescriptor[] {
@@ -131,20 +139,48 @@ export function buildAiRuntimePrompt(input: AiRuntimePromptInput): string {
   ].join('\n');
 }
 
-/** 为不同 AI CLI 生成启动命令；只负责命令契约，不检测或伪造外部工具可用性。 */
-export function createAiCliAdapterInvocation(adapterId: AiCliAdapterDescriptor['id'], prompt: string, options: AiCliAdapterInvocationOptions = {}): AiCliAdapterInvocation {
-  const adapter = AI_CLI_ADAPTERS.find((candidate) => candidate.id === adapterId);
-  if (!adapter) throw new Error(`AI CLI adapter not found: ${adapterId}`);
+export function isNonCodexAiCliAdapterId(value: unknown): value is NonCodexAiCliAdapterId {
+  return value === 'claude' || value === 'gemini' || value === 'generic';
+}
+
+/** 只为明确的非 Codex adapter 生成 CLI 启动命令；Codex 写路径必须使用 native app-server。 */
+export function createNonCodexAiCliAdapterInvocation(adapterId: NonCodexAiCliAdapterId, prompt: string, options: AiCliAdapterInvocationOptions = {}): AiCliAdapterInvocation {
+  // 该 satisfies 仅是编译期门禁；参数一旦重新包含 Codex，默认 pnpm typecheck 必须失败。
+  const runtimeAdapterId: unknown = adapterId satisfies Extract<typeof adapterId, 'codex'> extends never ? typeof adapterId : never;
+  if (!isNonCodexAiCliAdapterId(runtimeAdapterId)) {
+    if (runtimeAdapterId === 'codex') throw createCodexNativeTransportRequiredError();
+    throw new Error(`AI CLI adapter not found: ${String(runtimeAdapterId)}`);
+  }
+  const adapter = AI_CLI_ADAPTERS.find((candidate) => candidate.id === runtimeAdapterId);
+  if (!adapter) throw new Error(`AI CLI adapter not found: ${runtimeAdapterId}`);
   const modelArgs = options.model?.trim() ? ['--model', options.model.trim()] : [];
   const defaultArgs = options.defaultArgs ?? [];
-  const argsByAdapter: Record<AiCliAdapterDescriptor['id'], string[]> = {
-    codex: ['exec', ...defaultArgs, ...modelArgs, prompt],
+  const argsByAdapter: Record<NonCodexAiCliAdapterId, string[]> = {
     claude: ['-p', ...defaultArgs, prompt, ...modelArgs],
     gemini: ['-p', ...defaultArgs, prompt, ...modelArgs],
     generic: ['-lc', prompt],
   };
   const command = options.commandPath?.trim() || adapter.command;
-  return { adapterId, command, args: argsByAdapter[adapter.id] };
+  const commandBasename = basename(command);
+  if (AI_CLI_ADAPTER_COMMAND_BASENAMES.has(commandBasename) && commandBasename !== adapter.command) {
+    throw Object.assign(new Error(`AI CLI adapter command identity mismatch: ${runtimeAdapterId} cannot use ${commandBasename}`), {
+      code: 'AI_CLI_ADAPTER_COMMAND_IDENTITY_MISMATCH',
+    });
+  }
+  return { adapterId: runtimeAdapterId, command, args: argsByAdapter[runtimeAdapterId] };
+}
+
+/** 兼容旧调用点；Codex 在运行时继续 fail-closed，非 Codex 委托给严格 builder。 */
+export function createAiCliAdapterInvocation(adapterId: AiCliAdapterDescriptor['id'], prompt: string, options: AiCliAdapterInvocationOptions = {}): AiCliAdapterInvocation {
+  if (adapterId === 'codex') throw createCodexNativeTransportRequiredError();
+  if (!isNonCodexAiCliAdapterId(adapterId)) throw new Error(`AI CLI adapter not found: ${String(adapterId)}`);
+  return createNonCodexAiCliAdapterInvocation(adapterId, prompt, options);
+}
+
+function createCodexNativeTransportRequiredError(): Error & { code: string } {
+  return Object.assign(new Error('Codex requires the native app-server transport.'), {
+    code: 'CODEX_NATIVE_APP_SERVER_REQUIRED',
+  });
 }
 
 /** 从真实 CLI 输出中识别粗粒度状态，供 UI/通知层提示，不把解析结果当作 AI 结论。 */
@@ -386,6 +422,7 @@ export interface AiRuntimeSessionManager {
 
 export interface CreateAiRuntimeSessionManagerOptions {
   allowedRoot: string;
+  allowedRoots?: readonly string[] | (() => readonly string[]);
   spawn?: AiRuntimeSpawn;
   now?: () => string;
   onSessionChange?: (session: AiRuntimeSession) => void;
@@ -409,7 +446,7 @@ export async function detectAiCli(descriptor: AiCliDescriptor): Promise<AiCliSta
 }
 
 async function findCommandOnPath(command: string): Promise<string | null> {
-  const pathEntries = (process.env.PATH ?? '').split(delimiter).filter(Boolean);
+  const pathEntries = expandCliSearchPath().split(delimiter).filter(Boolean);
   for (const entry of pathEntries) {
     const candidate = resolve(entry, command);
     try {
@@ -494,6 +531,11 @@ export function createAiRuntimeSessionManager(options: CreateAiRuntimeSessionMan
   const spawn = options.spawn ?? spawnWithNodeChildProcess;
   const now = options.now ?? (() => new Date().toISOString());
 
+  function resolveAllowedRoots(): readonly string[] {
+    const dynamicAllowedRoots = typeof options.allowedRoots === 'function' ? options.allowedRoots() : (options.allowedRoots ?? []);
+    return [options.allowedRoot, ...dynamicAllowedRoots];
+  }
+
   function appendLog(sessionId: string, stream: AiRuntimeLogStream, text: string): void {
     const entries = logs.get(sessionId) ?? [];
     const entry = {
@@ -520,7 +562,7 @@ export function createAiRuntimeSessionManager(options: CreateAiRuntimeSessionMan
 
   return {
     async startSession(input) {
-      assertCwdInsideAllowedRoot(input.cwd, options.allowedRoot);
+      assertCwdInsideAllowedRoots(input.cwd, resolveAllowedRoots());
       const session: AiRuntimeSession = {
         id: `ai-session-${Date.now()}-${Math.random().toString(16).slice(2)}`,
         projectId: input.projectId,
@@ -645,13 +687,16 @@ function spawnWithNodeChildProcess(command: string, args: string[], options: AiR
   };
 }
 
-function assertCwdInsideAllowedRoot(cwd: string, allowedRoot: string): void {
+function assertCwdInsideAllowedRoots(cwd: string, allowedRoots: readonly string[]): void {
   const resolvedCwd = resolve(cwd);
-  const resolvedRoot = resolve(allowedRoot);
-  const relativePath = relative(resolvedRoot, resolvedCwd);
-  if (relativePath.startsWith('..') || relativePath === '..' || resolve(resolvedCwd) !== resolvedCwd) {
-    throw new Error('AI Runtime 工作目录必须位于允许的项目目录内。');
+  for (const allowedRoot of allowedRoots) {
+    const resolvedRoot = resolve(allowedRoot);
+    const relativePath = relative(resolvedRoot, resolvedCwd);
+    if (!relativePath.startsWith('..') && relativePath !== '..' && resolve(resolvedCwd) === resolvedCwd) {
+      return;
+    }
   }
+  throw new Error('AI Runtime 工作目录必须位于允许的项目目录内。');
 }
 
 function normalizeProcessChunk(value: unknown): string {

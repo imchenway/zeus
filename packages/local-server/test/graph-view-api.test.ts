@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -15,6 +15,194 @@ afterEach(async () => {
 });
 
 describe('graph view API', () => {
+  it('returns the selected project graph view instead of the first cached project with the same view type', async () => {
+    const firstRoot = join(tempDir, 'first-project');
+    const secondRoot = join(tempDir, 'second-project');
+    await mkdir(join(firstRoot, 'src'), { recursive: true });
+    await mkdir(join(secondRoot, 'src'), { recursive: true });
+    await writeFile(join(firstRoot, 'src', 'first.ts'), 'export function firstProjectOnly() { return 1; }\n', 'utf8');
+    await writeFile(join(secondRoot, 'src', 'second.ts'), 'export function secondProjectOnly() { return 2; }\n', 'utf8');
+    const server = await createLocalServer({
+      dbPath: join(tempDir, 'zeus.db'),
+      apiToken: 'token',
+      projectRoot: firstRoot,
+    });
+    const firstProjectResponse = await server.inject({
+      method: 'POST',
+      url: '/api/projects',
+      headers: { authorization: 'Bearer token' },
+      payload: { name: 'First Graph Project', localPath: firstRoot },
+    });
+    const secondProjectResponse = await server.inject({
+      method: 'POST',
+      url: '/api/projects',
+      headers: { authorization: 'Bearer token' },
+      payload: { name: 'Second Graph Project', localPath: secondRoot },
+    });
+    const firstProject = firstProjectResponse.json() as { id: string };
+    const secondProject = secondProjectResponse.json() as { id: string };
+
+    await server.inject({
+      method: 'POST',
+      url: `/api/projects/${firstProject.id}/scan`,
+      headers: { authorization: 'Bearer token' },
+    });
+    await server.inject({
+      method: 'POST',
+      url: `/api/projects/${secondProject.id}/scan`,
+      headers: { authorization: 'Bearer token' },
+    });
+
+    const response = await server.inject({
+      method: 'GET',
+      url: `/api/projects/${secondProject.id}/graph/views/architecture`,
+      headers: { authorization: 'Bearer token' },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const view = response.json();
+    expect(view.title).toContain('Second Graph Project');
+    expect(JSON.stringify(view)).toContain('secondProjectOnly');
+    expect(JSON.stringify(view)).not.toContain('firstProjectOnly');
+    await server.close();
+  });
+
+  it('keeps project graph caches isolated by project id when two projects share the same display name', async () => {
+    const firstRoot = join(tempDir, 'same-name-first-project');
+    const secondRoot = join(tempDir, 'same-name-second-project');
+    await mkdir(join(firstRoot, 'src'), { recursive: true });
+    await mkdir(join(secondRoot, 'src'), { recursive: true });
+    await writeFile(join(firstRoot, 'src', 'first.ts'), 'export function firstSameNameProjectOnly() { return 1; }\n', 'utf8');
+    await writeFile(join(secondRoot, 'src', 'second.ts'), 'export function secondSameNameProjectOnly() { return 2; }\n', 'utf8');
+    const server = await createLocalServer({
+      dbPath: join(tempDir, 'zeus.db'),
+      apiToken: 'token',
+      projectRoot: firstRoot,
+    });
+    const firstProjectResponse = await server.inject({
+      method: 'POST',
+      url: '/api/projects',
+      headers: { authorization: 'Bearer token' },
+      payload: { name: 'Shared Display Name', localPath: firstRoot },
+    });
+    const secondProjectResponse = await server.inject({
+      method: 'POST',
+      url: '/api/projects',
+      headers: { authorization: 'Bearer token' },
+      payload: { name: 'Shared Display Name', localPath: secondRoot },
+    });
+    const firstProject = firstProjectResponse.json() as { id: string };
+    const secondProject = secondProjectResponse.json() as { id: string };
+
+    await server.inject({
+      method: 'POST',
+      url: `/api/projects/${firstProject.id}/scan`,
+      headers: { authorization: 'Bearer token' },
+    });
+    await server.inject({
+      method: 'POST',
+      url: `/api/projects/${secondProject.id}/scan`,
+      headers: { authorization: 'Bearer token' },
+    });
+
+    const firstViewResponse = await server.inject({
+      method: 'GET',
+      url: `/api/projects/${firstProject.id}/graph/views/architecture`,
+      headers: { authorization: 'Bearer token' },
+    });
+    const secondViewResponse = await server.inject({
+      method: 'GET',
+      url: `/api/projects/${secondProject.id}/graph/views/architecture`,
+      headers: { authorization: 'Bearer token' },
+    });
+    const firstViewBody = firstViewResponse.body;
+    const secondViewBody = secondViewResponse.body;
+
+    expect(firstViewResponse.statusCode).toBe(200);
+    expect(secondViewResponse.statusCode).toBe(200);
+    expect(firstViewBody).toContain('firstSameNameProjectOnly');
+    expect(firstViewBody).not.toContain('secondSameNameProjectOnly');
+    expect(secondViewBody).toContain('secondSameNameProjectOnly');
+    expect(secondViewBody).not.toContain('firstSameNameProjectOnly');
+    await server.close();
+  });
+
+  it('returns a recoverable 404 for a project graph view before any graph cache table exists', async () => {
+    const projectRoot = join(tempDir, 'fresh-unscanned-project');
+    await mkdir(join(projectRoot, 'src'), { recursive: true });
+    await writeFile(join(projectRoot, 'src', 'fresh.ts'), 'export function freshOnly() { return 1; }\n', 'utf8');
+    const server = await createLocalServer({
+      dbPath: join(tempDir, 'zeus.db'),
+      apiToken: 'token',
+      projectRoot: join(tempDir, 'zeus-root'),
+    });
+    const projectResponse = await server.inject({
+      method: 'POST',
+      url: '/api/projects',
+      headers: { authorization: 'Bearer token' },
+      payload: { name: 'tc-app-core', localPath: projectRoot },
+    });
+    const project = projectResponse.json() as { id: string };
+
+    const response = await server.inject({
+      method: 'GET',
+      url: `/api/projects/${project.id}/graph/views/architecture`,
+      headers: { authorization: 'Bearer token' },
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json()).toMatchObject({
+      error: 'ZEUS_GRAPH_VIEW_NOT_FOUND',
+      message: 'Graph view not found. Scan the project first.',
+    });
+    expect(response.body).not.toContain('Internal Server Error');
+    await server.close();
+  });
+
+  it('does not reuse the global Zeus current-repo graph for an unscanned project alias', async () => {
+    const projectRoot = join(tempDir, 'current-root-alias');
+    await mkdir(join(projectRoot, 'src'), { recursive: true });
+    await writeFile(join(projectRoot, 'src', 'alias.ts'), 'export function aliasProjectOnly() { return 1; }\n', 'utf8');
+    const server = await createLocalServer({
+      dbPath: join(tempDir, 'zeus.db'),
+      apiToken: 'token',
+      projectRoot,
+    });
+    const projectResponse = await server.inject({
+      method: 'POST',
+      url: '/api/projects',
+      headers: { authorization: 'Bearer token' },
+      payload: { name: 'tc-app-core', localPath: projectRoot },
+    });
+    const project = projectResponse.json() as { id: string };
+
+    await server.inject({
+      method: 'POST',
+      url: '/api/graph/scan-current',
+      headers: { authorization: 'Bearer token' },
+    });
+
+    const viewResponse = await server.inject({
+      method: 'GET',
+      url: `/api/projects/${project.id}/graph/views/architecture`,
+      headers: { authorization: 'Bearer token' },
+    });
+    const listResponse = await server.inject({
+      method: 'GET',
+      url: `/api/projects/${project.id}/graph/views`,
+      headers: { authorization: 'Bearer token' },
+    });
+
+    expect(viewResponse.statusCode).toBe(404);
+    expect(viewResponse.json()).toMatchObject({
+      error: 'ZEUS_GRAPH_VIEW_NOT_FOUND',
+    });
+    expect(viewResponse.body).not.toContain('Zeus 系统架构图');
+    expect(listResponse.statusCode).toBe(200);
+    expect((listResponse.json() as { views: unknown[] }).views).toEqual([]);
+    await server.close();
+  });
+
   it('returns a real graph view with sourced nodes and edges after scanning the current repository', async () => {
     const server = await createLocalServer({
       dbPath: join(tempDir, 'zeus.db'),
@@ -763,22 +951,23 @@ describe('graph view API', () => {
 
     expect(response.statusCode).toBe(200);
     const view = response.json();
-    const whenReadyCallNode = view.nodes.find(
-      (node: { nodeType: string; sourceRef: string; metadata: { calleeExpression?: string; promiseChainHandler?: string } }) =>
-        node.nodeType === 'function_call' && node.sourceRef === '/Users/david/hypha/zeus/apps/desktop/src/main/main.ts' && node.metadata.calleeExpression === 'app.whenReady' && node.metadata.promiseChainHandler === 'then',
+    const startupCoordinatorPath = '/Users/david/hypha/zeus/apps/desktop/src/main/startupCoordinator.ts';
+    const promiseThenCallNode = view.nodes.find(
+      (node: { nodeType: string; sourceRef: string; metadata: { calleeExpression?: string; promiseChainHandler?: string; lineStart?: number } }) =>
+        node.nodeType === 'function_call' && node.sourceRef === startupCoordinatorPath && node.metadata.calleeExpression === 'Promise.resolve' && node.metadata.promiseChainHandler === 'then',
     );
     const promiseThenNode = view.nodes.find(
-      (node: { nodeType: string; sourceRef: string; metadata: { controlType?: string } }) =>
-        node.nodeType === 'control_flow' && node.sourceRef === '/Users/david/hypha/zeus/apps/desktop/src/main/main.ts' && node.metadata.controlType === 'promise_then',
+      (node: { nodeType: string; sourceRef: string; metadata: { controlType?: string; lineStart?: number } }) =>
+        node.nodeType === 'control_flow' && node.sourceRef === startupCoordinatorPath && node.metadata.controlType === 'promise_then' && node.metadata.lineStart === promiseThenCallNode?.metadata.lineStart,
     );
 
-    expect(whenReadyCallNode).toBeDefined();
+    expect(promiseThenCallNode).toBeDefined();
     expect(promiseThenNode).toBeDefined();
     expect(view.edges).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           edgeType: 'promise_then',
-          sourceNodeId: whenReadyCallNode.id,
+          sourceNodeId: promiseThenCallNode.id,
           targetNodeId: promiseThenNode.id,
           confidence: 0.6,
         }),

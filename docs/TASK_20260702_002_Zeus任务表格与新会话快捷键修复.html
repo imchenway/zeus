@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>交付验收：Zeus 任务表格与新会话快捷键修复</title>
+    <style>
+      :root {
+        --ink: #102033;
+        --muted: #5a6c80;
+        --paper: #fbfdff;
+        --panel: rgba(255, 255, 255, 0.92);
+        --line: #8db3d8;
+        --blue: #1f6fb2;
+        --blue-soft: #e8f3ff;
+        --green: #17785a;
+        --green-soft: #e9f8f2;
+        --amber: #986506;
+        --amber-soft: #fff6de;
+        --red: #a63a3a;
+        --red-soft: #fff0f0;
+        --violet: #6254ad;
+        --violet-soft: #f1efff;
+        --shadow: 0 16px 42px rgba(20, 57, 92, 0.085);
+        --radius: 20px;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+        color: var(--ink);
+        background:
+          radial-gradient(circle at 18% 3%, rgba(214, 233, 255, 0.78), transparent 30rem),
+          radial-gradient(circle at 78% 6%, rgba(228, 246, 239, 0.8), transparent 28rem),
+          linear-gradient(rgba(93, 133, 173, 0.045) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(93, 133, 173, 0.045) 1px, transparent 1px),
+          linear-gradient(180deg, #fff 0%, #f7fbff 54%, #fbfdff 100%);
+        background-size: auto, auto, 28px 28px, 28px 28px, auto;
+      }
+      * { box-sizing: border-box; overflow-wrap: anywhere; }
+      body { margin: 0; min-height: 100vh; }
+      main { max-width: 1180px; margin: 0 auto; padding: 34px 22px 54px; }
+      header { display: grid; gap: 12px; margin-bottom: 20px; }
+      h1 { margin: 0; font-size: clamp(24px, 2.8vw, 32px); line-height: 1.18; letter-spacing: -0.025em; }
+      .lead { margin: 0; max-width: 930px; color: var(--muted); font-size: 15px; line-height: 1.7; }
+      .panel { background: var(--panel); border: 1px solid rgba(141, 179, 216, 0.42); border-radius: var(--radius); box-shadow: var(--shadow); padding: 18px; margin-top: 16px; }
+      .summary { display: grid; grid-template-columns: 190px minmax(0, 1fr); gap: 10px 16px; }
+      .summary strong { color: var(--blue); }
+      .summary span { color: var(--muted); line-height: 1.55; }
+      .ledger { display: grid; gap: 10px; }
+      .row { display: grid; grid-template-columns: 130px 1.15fr 1.3fr 112px 1fr; gap: 0; border: 1px solid rgba(141, 179, 216, 0.42); border-radius: 14px; overflow: hidden; background: rgba(255, 255, 255, 0.78); }
+      .row.head { background: var(--blue-soft); font-weight: 700; color: var(--blue); }
+      .cell { padding: 12px; border-left: 1px solid rgba(141, 179, 216, 0.28); font-size: 13px; line-height: 1.5; }
+      .cell:first-child { border-left: 0; font-weight: 700; }
+      code { font-family: 'SFMono-Regular', 'SF Mono', Consolas, monospace; font-size: 12px; color: #28435d; background: rgba(232, 243, 255, 0.72); border-radius: 6px; padding: 1px 4px; }
+      .tag { display: inline-flex; align-items: center; gap: 6px; border-radius: 999px; padding: 3px 8px; font-size: 12px; font-weight: 700; }
+      .pass { color: var(--green); background: var(--green-soft); }
+      .warn { color: var(--amber); background: var(--amber-soft); }
+      .cols { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+      .mini h2, .panel h2 { margin: 0 0 10px; font-size: 16px; line-height: 1.3; }
+      ul { margin: 0; padding-left: 18px; color: var(--muted); line-height: 1.65; }
+      .timeline { display: grid; gap: 10px; }
+      .time { border-left: 3px solid var(--line); padding: 4px 0 4px 12px; color: var(--muted); line-height: 1.55; }
+      .time strong { display: block; color: var(--ink); margin-bottom: 2px; }
+      .note { border: 1px solid rgba(152, 101, 6, 0.28); background: var(--amber-soft); color: var(--amber); border-radius: 14px; padding: 12px; line-height: 1.6; }
+      @media (max-width: 880px) {
+        .summary, .row, .cols { grid-template-columns: 1fr; }
+        .cell { border-left: 0; border-top: 1px solid rgba(141, 179, 216, 0.28); }
+        .cell:first-child { border-top: 0; }
+      }
+      @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>交付验收：Zeus 任务表格与新会话快捷键修复</h1>
+        <p class="lead">结论：已按最新“列可见性 / 可达性”返修计划修正。默认 7 列不再因为隐藏滚动条而把右侧 <code>证据</code>、<code>更新时间</code> 裁掉；非空表格恢复横向滚动兜底，但保持内容高度，不再制造 72vh 大块空白。已退出 Zeus 并重新 <code>package:mac</code> 通过。</p>
+      </header>
+
+      <section class="panel summary" aria-label="交付说明">
+        <strong>最新返修重点</strong><span>问题不是列未渲染，而是默认表格关闭横向滚动后右侧列不可达；本轮改为非空列表 <code>overflow-x: auto</code>，同时保留 <code>block-size: auto</code>。</span>
+        <strong>保持不变</strong><span>不新增公开 API，不改任务字段偏好数据结构；继续使用 <code>visibleColumnKeys</code>、<code>columnOrder</code>、<code>columnWidths</code>。</span>
+        <strong>用户脚本 / 重启</strong><span>无需执行脚本；已按授权退出 Zeus 并重新打包，用户只需重新打开打包后的 Zeus。</span>
+        <strong>验证方式</strong><span>红灯测试 → 聚焦测试 → lint/typecheck → full test 66 files / 1010 passed → 退出 Zeus → <code>package:mac</code> passed。</span>
+        <strong>剩余未覆盖</strong><span>未做 GUI 点击 / 截图复核；最终像素效果仍需用户在重新打包后的 App 中确认。</span>
+      </section>
+
+      <section class="panel ledger" aria-label="需求到证据验收账本">
+        <div class="row head"><div class="cell">需求</div><div class="cell">交付变更</div><div class="cell">验证证据</div><div class="cell">判定</div><div class="cell">动作 / 回滚</div></div>
+        <div class="row"><div class="cell">R1 更新时间列</div><div class="cell"><code>updatedAt</code> / <code>createdAt</code> 只输出格式化主文本，不再泄漏 raw ISO。</div><div class="cell"><code>taskWorkspaceModel.test.ts:191</code> 与任务表格渲染测试覆盖。</div><div class="cell"><span class="tag pass">✓ 通过</span></div><div class="cell">回滚模型层时间单元格变更即可。</div></div>
+        <div class="row"><div class="cell">R2 Cmd+N</div><div class="cell">原生菜单从新窗口改为新会话事件，Renderer 打开新会话草稿。</div><div class="cell"><code>main-app-shell-policy</code>、<code>main-runtime</code> 聚焦测试通过。</div><div class="cell"><span class="tag pass">✓ 通过</span></div><div class="cell">回滚 main / preload / App 相关订阅。</div></div>
+        <div class="row"><div class="cell">R3 行高和列自定义</div><div class="cell">44px 命中区；列显隐、排序、窄 / 中 / 宽；默认列轨道收敛，来源路径不进默认行。</div><div class="cell"><code>app-task-controls-rendering.test.tsx:692</code>、<code>:745</code>、<code>TaskWorkspace.tsx:176</code>、<code>:463</code>。</div><div class="cell"><span class="tag pass">✓ 通过</span></div><div class="cell">回滚 TaskWorkspace / model / API client 对列偏好的变更。</div></div>
+        <div class="row"><div class="cell">R4 自定义列弹层</div><div class="cell">弹层短视口、同排宽控、父级不裁切，弹层 z-index 提升。</div><div class="cell"><code>styles.css:12110</code>、<code>app-task-controls-rendering.test.tsx:755</code>。</div><div class="cell"><span class="tag pass">✓ 通过</span></div><div class="cell">像素仍待用户现场确认；自动化覆盖结构边界。</div></div>
+        <div class="row"><div class="cell">R5 空白高度</div><div class="cell">禁止恢复 <code>block-size: min(72vh, 760px)</code> 或列表 <code>block-size: 100%</code> 这类撑高滚动区方案。</div><div class="cell"><code>styles.css:12130</code>、<code>app-task-controls-rendering.test.tsx:768</code>。</div><div class="cell"><span class="tag pass">✓ 通过</span></div><div class="cell">旧 72vh 方案已被测试反向锁住。</div></div>
+        <div class="row"><div class="cell">R6 列可见性</div><div class="cell">默认 7 列完整渲染；非空任务列表横向可达；宽列 / 扩展字段仍保留滚动标记。</div><div class="cell"><code>styles.css:12141</code>、<code>app-task-controls-rendering.test.tsx:781</code> 覆盖 <code>证据</code>、<code>更新时间</code>。</div><div class="cell"><span class="tag pass">✓ 通过</span></div><div class="cell">不是隐藏剩余列；必要时由内容区横向滚动到达右侧列。</div></div>
+        <div class="row"><div class="cell">R7 发布门禁</div><div class="cell">按用户授权退出 Zeus 后重新打包。</div><div class="cell"><code>pnpm package:mac</code> passed；<code>Zeus.app valid on disk</code> 且 <code>satisfies its Designated Requirement</code>。</div><div class="cell"><span class="tag pass">✓ 通过</span></div><div class="cell">无需用户脚本；请重新打开已打包 App 做视觉确认。</div></div>
+      </section>
+
+      <section class="panel cols" aria-label="验证与风险">
+        <div class="mini"><h2>已通过</h2><ul><li>任务表格聚焦测试：53 passed。</li><li>任务表格 / 模型 / Shell 布局聚焦测试：3 files / 246 passed。</li><li>悬空 settings 选择器回归：1 test passed。</li><li>全量测试：66 files / 1010 passed。</li><li>重新打包：passed。</li></ul></div>
+        <div class="mini"><h2>待观察</h2><ul><li>未操作 GUI，因此没有新的截图复核证据。</li><li>列宽目前是窄 / 中 / 宽三档，不是拖拽任意列宽。</li><li><code>format:check</code> 仍有 <code>App.tsx</code> 历史格式告警。</li></ul></div>
+        <div class="mini"><h2>回滚</h2><ul><li>任务表格：回滚 <code>apiClient.ts</code>、<code>taskWorkspaceModel.ts</code>、<code>TaskWorkspace.tsx</code>、<code>styles.css</code> 与对应测试。</li><li>Cmd+N：回滚 Main / preload / Renderer 新会话事件链。</li></ul></div>
+      </section>
+
+      <section class="panel timeline" aria-label="关键验证时间线">
+        <div class="time"><strong>红灯</strong><span>新增测试先失败，证明当时默认右侧列不可达且缺少横向滚动兜底。</span></div>
+        <div class="time"><strong>最小修复</strong><span>只调整任务表格末端 CSS：非空列表允许横向滚动，但保持内容高度；宽列 / 扩展字段继续保留显式滚动标记。</span></div>
+        <div class="time"><strong>反向锁定</strong><span>测试明确禁止旧的 <code>任务表格横向滚动条底部返修最终覆盖</code> + <code>block-size: min(72vh, 760px)</code> 回来。</span></div>
+        <div class="time"><strong>回归门禁</strong><span>lint/typecheck 通过；full test 66 files / 1010 passed；package:mac passed。</span></div>
+        <div class="note">重要说明：本轮没有再打开、点击或截图 Zeus；只按交付门禁退出运行中的 Zeus 并重新打包。</div>
+      </section>
+    </main>
+  </body>
+</html>

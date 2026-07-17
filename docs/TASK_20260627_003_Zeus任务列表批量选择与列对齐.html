@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>TASK_20260627_003 Zeus 任务列表批量选择与列对齐</title>
+  <style>
+    :root {
+      color: oklch(24% 0.006 255);
+      background: oklch(98.6% 0.002 255);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      --line: oklch(88% 0.004 255);
+      --soft: oklch(94.5% 0.003 255);
+      --panel: oklch(99.4% 0.001 255);
+      --muted: oklch(50% 0.004 255);
+      --accent: oklch(54% 0.14 252);
+      --danger: oklch(45% 0.12 28);
+      --ok: oklch(48% 0.1 145);
+      --warn: oklch(55% 0.13 76);
+    }
+    * { box-sizing: border-box; overflow-wrap: anywhere; }
+    body { margin: 0; min-height: 100vh; }
+    main { inline-size: min(1180px, calc(100vw - 28px)); margin: 0 auto; padding: 24px 0 32px; }
+    header { display: grid; gap: 8px; margin-block-end: 16px; }
+    h1 { font-size: clamp(20px, 3vw, 28px); line-height: 1.16; margin: 0; letter-spacing: -0.02em; }
+    .subtitle { color: var(--muted); font-size: 13px; margin: 0; }
+    .summary { align-items: stretch; display: grid; gap: 10px; grid-template-columns: repeat(4, minmax(0, 1fr)); margin-block: 14px; }
+    .summary > section { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; display: grid; gap: 6px; padding: 12px; }
+    .summary strong { font-size: 14px; }
+    .summary span { color: var(--muted); font-size: 12px; line-height: 1.45; }
+    .board { background: var(--panel); border: 1px solid var(--line); border-radius: 18px; padding: 18px; box-shadow: 0 18px 42px oklch(35% 0.006 255 / 0.08); }
+    .flow { align-items: stretch; display: grid; gap: 12px; grid-template-columns: 1fr 44px 1fr 44px 1fr; }
+    .node { appearance: none; background: oklch(99.8% 0.001 255); border: 1px solid var(--line); border-radius: 14px; color: inherit; cursor: pointer; display: grid; gap: 8px; min-block-size: 138px; padding: 14px; text-align: start; width: 100%; }
+    .node:focus-visible { outline: none; box-shadow: 0 0 0 3px oklch(62% 0.16 252 / 0.18); }
+    .node b { font-size: 15px; }
+    .node small { color: var(--muted); font-size: 12px; line-height: 1.45; }
+    .node .tag { border-radius: 999px; color: var(--muted); display: inline-flex; font-size: 11px; font-weight: 650; justify-self: start; padding: 3px 8px; background: var(--soft); }
+    .node.current { border-color: oklch(78% 0.02 28); background: oklch(98% 0.012 28); }
+    .node.target { border-color: oklch(78% 0.045 145); background: oklch(98.2% 0.016 145); }
+    .node.recommend { border-color: oklch(76% 0.06 252); background: oklch(97.6% 0.012 252); }
+    .arrow { align-items: center; color: var(--muted); display: grid; font-size: 28px; justify-items: center; }
+    .matrix { display: grid; gap: 12px; grid-template-columns: 1.08fr 0.92fr; margin-block-start: 14px; }
+    .panel { background: oklch(99.2% 0.001 255); border: 1px solid var(--line); border-radius: 14px; padding: 14px; }
+    .panel h2 { font-size: 15px; margin: 0 0 10px; }
+    table { border-collapse: collapse; inline-size: 100%; font-size: 12px; }
+    th, td { border-block-start: 1px solid var(--line); padding: 8px 6px; text-align: start; vertical-align: top; }
+    th { color: var(--muted); font-size: 11px; font-weight: 720; }
+    .ok { color: var(--ok); font-weight: 680; }
+    .warn { color: var(--warn); font-weight: 680; }
+    .danger { color: var(--danger); font-weight: 680; }
+    .steps { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+    .steps li { align-items: start; display: grid; gap: 8px; grid-template-columns: 28px minmax(0, 1fr); }
+    .steps i { align-items: center; background: var(--soft); border-radius: 999px; color: var(--muted); display: inline-flex; font-size: 11px; font-style: normal; font-weight: 720; justify-content: center; min-block-size: 24px; min-inline-size: 24px; }
+    .steps span { font-size: 12px; line-height: 1.45; }
+    .decision { display: grid; gap: 8px; margin-block-start: 14px; }
+    .decision-row { align-items: start; background: oklch(98.8% 0.004 252); border: 1px solid oklch(86% 0.018 252); border-radius: 12px; display: grid; gap: 6px; padding: 10px 12px; }
+    .decision-row strong { font-size: 13px; }
+    .decision-row span { color: var(--muted); font-size: 12px; line-height: 1.45; }
+    dialog { border: 0; border-radius: 16px; box-shadow: 0 22px 60px oklch(20% 0.006 255 / 0.22); inline-size: min(560px, calc(100vw - 32px)); padding: 0; }
+    dialog::backdrop { background: oklch(20% 0.006 255 / 0.22); }
+    .modal { display: grid; gap: 10px; padding: 18px; }
+    .modal h3 { margin: 0; font-size: 17px; }
+    .modal p { color: var(--muted); font-size: 13px; line-height: 1.55; margin: 0; }
+    .modal dl { display: grid; gap: 8px; margin: 0; }
+    .modal dt { color: var(--muted); font-size: 11px; font-weight: 720; }
+    .modal dd { font-size: 13px; margin: 0; }
+    .close { align-items: center; background: var(--soft); border: 1px solid var(--line); border-radius: 9px; color: inherit; cursor: pointer; display: inline-flex; justify-content: center; justify-self: end; min-block-size: 30px; padding: 0 10px; }
+    .close:focus-visible { outline: none; box-shadow: 0 0 0 3px oklch(62% 0.16 252 / 0.18); }
+    @media (max-width: 860px) {
+      main { inline-size: min(100vw - 18px, 720px); padding-block-start: 14px; }
+      .summary, .matrix, .flow { grid-template-columns: minmax(0, 1fr); }
+      .arrow { min-block-size: 24px; transform: rotate(90deg); }
+      .board { padding: 12px; }
+    }
+    @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; transition: none !important; } }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Zeus 任务列表：批量选择与列对齐设计</h1>
+      <p class="subtitle">目标：把任务页从“整行按钮列表”收敛成可选择、可批量管理、列轨道稳定的数据表工作台。</p>
+    </header>
+
+    <section class="summary" aria-label="关键结论">
+      <section><strong>现象</strong><span>无批量选择；列头和字段视觉不齐。</span></section>
+      <section><strong>根因</strong><span>任务行是整行 button，无法安全容纳 checkbox；列轨道分散到独立 grid。</span></section>
+      <section><strong>推荐</strong><span>改为可选择表格行 + 批量操作栏，复用现有单任务 API。</span></section>
+      <section><strong>边界</strong><span>不改 DB，不新增依赖；批量删除不进首轮默认入口。</span></section>
+    </section>
+
+    <section class="board" aria-label="主设计图">
+      <div class="flow">
+        <button class="node current" data-title="当前结构" data-type="现状" data-detail="TaskWorkspace 当前用 button.role=row 承担整行打开详情。这个结构阻碍行内 checkbox，也让 header 与 row 各自作为独立 grid 维护列轨道。" data-risk="继续叠加批量选择会造成嵌套交互、点击冒泡、键盘焦点混乱。">
+          <span class="tag">当前</span>
+          <b>整行按钮表格</b>
+          <small>行点击打开详情；没有选择列；列轨道分散。</small>
+        </button>
+        <div class="arrow" aria-hidden="true">→</div>
+        <button class="node target" data-title="目标结构" data-type="目标" data-detail="任务列表增加固定选择列。行内容仍可打开详情，checkbox 独立处理选择。header 与 rows 共享同一个 CSS grid template 变量，字段配置后仍对齐。" data-risk="需要测试锁定 checkbox 不触发行打开详情，以及列隐藏/移动后的对齐契约。">
+          <span class="tag">目标</span>
+          <b>可选择数据表</b>
+          <small>选择列 + 统一列轨道 + 行内容打开详情。</small>
+        </button>
+        <div class="arrow" aria-hidden="true">→</div>
+        <button class="node recommend" data-title="批量管理" data-type="推荐方案" data-detail="选择后出现轻量批量操作栏。首轮支持批量状态修改和批量删除。状态修改逐项按状态机过滤；删除必须二次确认，默认跳过正在运行或等待确认的任务。" data-risk="删除必须确认并显示数量。批量运行/继续/暂停不纳入默认入口，避免一次启动多个 Runtime。">
+          <span class="tag">推荐</span>
+          <b>选择后出现批量栏</b>
+          <small>不把批量按钮常驻堆在 toolbar；危险动作先确认。</small>
+        </button>
+      </div>
+
+      <section class="matrix">
+        <section class="panel" aria-label="批量动作矩阵">
+          <h2>批量动作矩阵</h2>
+          <table>
+            <thead><tr><th>动作</th><th>适用状态</th><th>处理</th></tr></thead>
+            <tbody>
+              <tr><td class="ok">状态修改</td><td>按状态机逐项判断</td><td>目标状态下拉，合法项调用 updateTaskStatus 或专用运行控制 API</td></tr>
+              <tr><td class="danger">删除</td><td>默认排除 running / waiting_confirmation</td><td>二次确认后调用 deleteTask，失败项保留选择</td></tr>
+            </tbody>
+          </table>
+        </section>
+        <section class="panel" aria-label="实施顺序">
+          <h2>实施顺序</h2>
+          <ol class="steps">
+            <li><i>1</i><span>先补红灯测试：选择模型、bulk eligibility、列轨道统一。</span></li>
+            <li><i>2</i><span>改 TaskWorkspace 行结构：checkbox 独立，行内容打开详情。</span></li>
+            <li><i>3</i><span>App 层保存 selectedTaskIds，批量动作限并发执行。</span></li>
+            <li><i>4</i><span>CSS 最终覆盖：选择列固定，header/row 同轨道。</span></li>
+            <li><i>5</i><span>跑任务页回归、typecheck、打包门禁。</span></li>
+          </ol>
+        </section>
+      </section>
+
+      <section class="decision" aria-label="待决策">
+        <div class="decision-row"><strong>D1 首轮批量动作范围：已更新为 A</strong><span>A = 批量状态修改 + 批量删除。删除必须二次确认。</span></div>
+        <div class="decision-row"><strong>D2 实现层级：推荐 A</strong><span>A = 前端批量编排复用现有 API。无需改 DB/API，风险更低。</span></div>
+        <div class="decision-row"><strong>D3 选择范围：推荐 A</strong><span>A = 只选择当前筛选结果，不跨项目、不跨归档列表。</span></div>
+        <div class="decision-row"><strong>D4 批量删除边界：推荐 A</strong><span>A = 默认跳过 running / waiting_confirmation。若需要强删所有状态，需输入确认短语。</span></div>
+      </section>
+    </section>
+  </main>
+
+  <dialog id="detailDialog" aria-label="节点详情">
+    <div class="modal">
+      <button class="close" type="button">关闭</button>
+      <h3 id="dialogTitle">节点详情</h3>
+      <p id="dialogType"></p>
+      <dl>
+        <dt>说明</dt><dd id="dialogDetail"></dd>
+        <dt>风险/验证</dt><dd id="dialogRisk"></dd>
+      </dl>
+    </div>
+  </dialog>
+
+  <script>
+    const dialog = document.getElementById('detailDialog');
+    const title = document.getElementById('dialogTitle');
+    const type = document.getElementById('dialogType');
+    const detail = document.getElementById('dialogDetail');
+    const risk = document.getElementById('dialogRisk');
+    let lastTrigger = null;
+    document.querySelectorAll('.node').forEach((node) => {
+      node.addEventListener('click', () => {
+        lastTrigger = node;
+        title.textContent = node.dataset.title || '节点详情';
+        type.textContent = node.dataset.type || '';
+        detail.textContent = node.dataset.detail || '';
+        risk.textContent = node.dataset.risk || '';
+        dialog.showModal();
+      });
+    });
+    document.querySelector('.close').addEventListener('click', () => dialog.close());
+    dialog.addEventListener('click', (event) => {
+      if (event.target === dialog) dialog.close();
+    });
+    dialog.addEventListener('close', () => {
+      if (lastTrigger) lastTrigger.focus();
+    });
+  </script>
+</body>
+</html>

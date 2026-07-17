@@ -1,0 +1,82 @@
+{
+  "taskId": "TASK_20260710_001",
+  "probeKind": "codex_native_app_server_live_protocol",
+  "probeAt": "2026-07-10T09:13:09+08:00",
+  "codexVersion": "0.143.0",
+  "transport": "stdio://",
+  "cwdKind": "temporary_empty_git_repository",
+  "repositorySourceModified": false,
+  "configuredModelRejected": {
+    "model": "gpt-5.6-sol",
+    "evidence": "model/list 未声明该模型；stderr 报告 Unknown model；所有 turn 均失败"
+  },
+  "successfulModel": "gpt-5.4-mini",
+  "advertisedModels": ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex-spark"],
+  "thread": {
+    "id": "019f4995-ebaa-73a0-9319-92eb975cd311",
+    "historyMode": "legacy",
+    "rolloutPath": "/Users/david/.codex/sessions/2026/07/10/rollout-2026-07-10T09-13-09-019f4995-ebaa-73a0-9319-92eb975cd311.jsonl"
+  },
+  "sequentialTurns": [
+    {
+      "threadId": "019f4995-ebaa-73a0-9319-92eb975cd311",
+      "turnId": "019f4995-ec28-7bf3-95cf-8571d3f1596f",
+      "status": "completed",
+      "text": "ACK-9JLTQLFRKA"
+    },
+    {
+      "threadId": "019f4995-ebaa-73a0-9319-92eb975cd311",
+      "turnId": "019f4997-ad7f-7a81-bab2-dceaa1237e81",
+      "status": "completed",
+      "text": "RECALL-9JLTQLFRKA"
+    },
+    {
+      "threadId": "019f4995-ebaa-73a0-9319-92eb975cd311",
+      "turnId": "019f4997-bcc1-7430-9c5a-50310bda2107",
+      "status": "completed",
+      "text": "RESUMED-9JLTQLFRKA"
+    }
+  ],
+  "resume": {
+    "newAppServerProcess": true,
+    "sameThreadId": true,
+    "loadedTurnCount": 2
+  },
+  "concurrency": {
+    "secondThreadId": "019f4999-8599-74b1-8f49-4f2cc337182c",
+    "bothStartedBeforeFirstCompletion": true,
+    "results": [
+      {
+        "threadId": "019f4995-ebaa-73a0-9319-92eb975cd311",
+        "turnId": "019f4999-861b-7451-a41d-005a356dee26",
+        "status": "completed",
+        "text": "THREAD-A-A49N57T8"
+      },
+      {
+        "threadId": "019f4999-8599-74b1-8f49-4f2cc337182c",
+        "turnId": "019f4999-861a-79a0-86c1-d6ba3132d701",
+        "status": "completed",
+        "text": "THREAD-B-B72F5W0R"
+      }
+    ]
+  },
+  "checks": {
+    "sameThreadThreeTurns": true,
+    "distinctTurnIds": true,
+    "allCompleted": true,
+    "nonceRememberedAcrossTurn": true,
+    "nonceRememberedAcrossProcessResume": true,
+    "resumeSameThread": true,
+    "concurrentThreadIdsDistinct": true,
+    "concurrentResponsesRouted": true,
+    "bothStartedBeforeFirstCompletion": true,
+    "noProtocolParseErrors": true
+  },
+  "knownRemainingGaps": [
+    "尚未对 command/file/permissions approval 路由执行真实协议验证",
+    "尚未对 request_user_input 路由执行真实协议验证",
+    "尚未对 turn/interrupt 执行真实协议验证",
+    "尚未实现 Zeus 源码集成与真实 GUI 链路",
+    "Responses WebSocket 握手超时并回退 HTTP，导致明显延迟"
+  ]
+}

@@ -1,8 +1,46 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+
+type AsarFixtureNode = {
+  files?: Record<string, AsarFixtureNode>;
+  size?: number;
+  offset?: string;
+};
+
+function buildAsarFixture(files: Record<string, string>): Buffer {
+  const root: AsarFixtureNode = { files: {} };
+  const payloads: Buffer[] = [];
+  let offset = 0;
+
+  for (const [filePath, content] of Object.entries(files).sort(([left], [right]) => left.localeCompare(right))) {
+    const parts = filePath.split('/').filter(Boolean);
+    let parent = root;
+    for (const part of parts.slice(0, -1)) {
+      parent.files ??= {};
+      parent.files[part] ??= { files: {} };
+      parent = parent.files[part];
+    }
+    const payload = Buffer.from(content, 'utf8');
+    parent.files ??= {};
+    parent.files[parts.at(-1)!] = { size: payload.length, offset: String(offset) };
+    payloads.push(payload);
+    offset += payload.length;
+  }
+
+  const header = Buffer.from(JSON.stringify(root), 'utf8');
+  const rawContentStart = 16 + header.length;
+  const contentStart = rawContentStart + ((4 - (rawContentStart % 4)) % 4);
+  const prefix = Buffer.alloc(contentStart);
+  prefix.writeUInt32LE(4, 0);
+  prefix.writeUInt32LE(contentStart - 8, 4);
+  prefix.writeUInt32LE(header.length + 6, 8);
+  prefix.writeUInt32LE(header.length, 12);
+  header.copy(prefix, 16);
+  return Buffer.concat([prefix, ...payloads]);
+}
 
 describe('package-mac script helpers', () => {
   it('builds deterministic Electron cache names for macOS packaging', async () => {
@@ -32,6 +70,17 @@ describe('package-mac script helpers', () => {
     expect(findRunningPackagedAppProcesses(psOutput, appPath)).toHaveLength(0);
   });
 
+  it('ad-hoc signs the unsigned macOS app bundle after packaging so Finder can launch it', async () => {
+    const { buildAdHocCodesignArgs, buildCodesignVerifyArgs, packagedAppPathForArch } = await import('./package-mac.mjs');
+    const packageScript = readFileSync(join(process.cwd(), 'scripts', 'package-mac.mjs'), 'utf8');
+    const appPath = join(process.cwd(), 'dist', 'mac-arm64', 'Zeus.app');
+
+    expect(packagedAppPathForArch('arm64')).toBe(appPath);
+    expect(buildAdHocCodesignArgs(appPath)).toEqual(['--force', '--deep', '--sign', '-', appPath]);
+    expect(buildCodesignVerifyArgs(appPath)).toEqual(['--verify', '--deep', '--strict', '--verbose=2', appPath]);
+    expect(packageScript).toContain('await adHocSignPackagedApp(appPath);');
+  });
+
   it('uses Zeus branded macOS icon assets instead of the default Electron icon', () => {
     const config = readFileSync(join(process.cwd(), 'apps', 'desktop', 'electron-builder.yml'), 'utf8');
     const trayIcon = readFileSync(join(process.cwd(), 'apps', 'desktop', 'assets', 'trayTemplate.png'));
@@ -54,7 +103,8 @@ describe('package-mac script helpers', () => {
     expect(mainSource).toContain('nativeImage.createFromBuffer(readFileSync(trayIconPath))');
     expect(mainSource).toContain('托盘图标缺失或 macOS 拒绝创建 Tray 时，不阻断设置保存和主窗口功能。');
     expect(mainSource).toMatch(/ipcMain\.handle\('zeus:app-shell-settings-changed'[\s\S]*setupTraySafely\(\);[\s\S]*return \{ applied: true \};/);
-    expect(mainSource).toMatch(/app\.whenReady\(\)\.then\(async \(\) => \{[\s\S]*setupTraySafely\(\);[\s\S]*await createWindow\(\);/);
+    expect(mainSource).toMatch(/async function initializeApplication\(\): Promise<void> \{[\s\S]*setupTraySafely\(\);[\s\S]*applySystemNotificationBridge\(\);/);
+    expect(mainSource).toContain('initialize: initializeApplication');
   });
 
   it('uses a hidden macOS titlebar so Zeus content reaches the window top like Codex', () => {
@@ -113,6 +163,40 @@ describe('package-mac script helpers', () => {
     expect(healthScript).toContain('root-relative asset URL');
   });
 
+  it('verifies the packaged renderer keeps the text-free Zeus startup shell', () => {
+    const rendererHtml = readFileSync(join(process.cwd(), 'apps', 'desktop', 'index.html'), 'utf8');
+    const healthScript = readFileSync(join(process.cwd(), 'scripts', 'verify-packaged-app-health.mjs'), 'utf8');
+
+    expect(rendererHtml).toContain('zeus-startup-loader');
+    expect(rendererHtml).toContain('./assets/icon.svg');
+    expect(rendererHtml).toContain('prefers-reduced-motion');
+    expect(healthScript).toContain('zeus-startup-loader');
+    expect(healthScript).toContain('forbiddenStartupCopy');
+  });
+
+  it.each([
+    ['the retired Chinese connecting copy in HTML', '正在连接本地服务', 'console.log("healthy")'],
+    ['forbidden infrastructure copy in a built JavaScript asset', '', 'console.log("Local service unavailable")'],
+  ])('rejects %s', async (_label, htmlCopy, javascript) => {
+    const { assertPackagedRendererEntrypoint } = await import('./verify-packaged-app-health.mjs');
+    const dir = await mkdtemp(join(tmpdir(), 'zeus-packaged-copy-'));
+    try {
+      const asarPath = join(dir, 'app.asar');
+      const html = `<!doctype html><div class="zeus-startup-loader">${htmlCopy}</div><style>@media (prefers-reduced-motion: reduce){}</style><script src="./assets/index.js"></script>`;
+      await writeFile(
+        asarPath,
+        buildAsarFixture({
+          'dist/renderer/index.html': html,
+          'dist/renderer/assets/index.js': javascript,
+        }),
+      );
+
+      expect(() => assertPackagedRendererEntrypoint(asarPath)).toThrow(/forbidden startup infrastructure copy/);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it('loads Electron preload as a CommonJS bridge in packaged macOS builds', () => {
     const mainSource = readFileSync(join(process.cwd(), 'apps', 'desktop', 'src', 'main', 'main.ts'), 'utf8');
     const preloadConfig = readFileSync(join(process.cwd(), 'apps', 'desktop', 'tsconfig.preload.json'), 'utf8');
@@ -122,6 +206,45 @@ describe('package-mac script helpers', () => {
     expect(mainSource).toContain('app.focus({ steal: true })');
     expect(preloadConfig).toContain('"src/preload/**/*.cts"');
     expect(existsSync(join(process.cwd(), 'apps', 'desktop', 'src', 'preload', 'index.cts'))).toBe(true);
+  });
+
+  it('bundles the sandboxed Electron preload into one file without local CommonJS dependencies', () => {
+    const rootPackage = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf8')) as { devDependencies: Record<string, string> };
+    const desktopPackage = JSON.parse(readFileSync(join(process.cwd(), 'apps', 'desktop', 'package.json'), 'utf8')) as { scripts: Record<string, string> };
+    const bundleScript = readFileSync(join(process.cwd(), 'apps', 'desktop', 'scripts', 'bundle-preload.mjs'), 'utf8');
+    const packageScript = readFileSync(join(process.cwd(), 'scripts', 'package-mac.mjs'), 'utf8');
+
+    expect(rootPackage.devDependencies).not.toHaveProperty('esbuild');
+    expect(desktopPackage.scripts.build).toContain('node scripts/bundle-preload.mjs');
+    expect(bundleScript).toContain("import { build } from 'vite'");
+    expect(bundleScript).toContain("formats: ['cjs']");
+    expect(bundleScript).toContain("external: ['electron']");
+    expect(packageScript).toContain('verifyPackagedApp(appPath)');
+  });
+
+  it('rejects a packaged sandbox preload that still requires a relative module', async () => {
+    const { verifyPackagedApp } = await import('./verify-packaged-app-health.mjs');
+    const dir = await mkdtemp(join(tmpdir(), 'zeus-packaged-preload-'));
+    const appPath = join(dir, 'Zeus.app');
+    const resourcesPath = join(appPath, 'Contents', 'Resources');
+    try {
+      await mkdir(resourcesPath, { recursive: true });
+      await writeFile(
+        join(resourcesPath, 'app.asar'),
+        buildAsarFixture({
+          'dist/main/main.js': 'console.log("main")',
+          'dist/preload/index.cjs': 'require("./rendererBootstrapState.cjs")',
+          'dist/preload/rendererBootstrapState.cjs': 'module.exports = {}',
+          'dist/renderer/assets/index.js': 'console.log("renderer")',
+          'dist/renderer/index.html': '<!doctype html><div class="zeus-startup-loader"></div><style>@media (prefers-reduced-motion: reduce){}</style><script src="./assets/index.js"></script>',
+          'package.json': JSON.stringify({ name: '@zeus/desktop', main: 'dist/main/main.js' }),
+        }),
+      );
+
+      expect(() => verifyPackagedApp(appPath)).toThrow(/sandboxed preload contains relative CommonJS require/);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   it('provides a manual macOS window drag bridge when app-region drag is ignored', () => {
@@ -627,6 +750,11 @@ describe('package-mac script helpers', () => {
     expect(codeMap).toContain('搜索、过滤、节点详情、边详情、一跳/二跳、视图缓存、后台布局、节点聚合、边聚合');
     expect(codeMap).toContain('## AI 与图谱联动');
     expect(codeMap).toContain('回答必须带来源，从图谱节点/问答创建任务，任务完成后回写图谱');
+    expect(codeMap).toContain('## 开源方案评估');
+    expect(codeMap).toContain('Tree-sitter / AST 工具');
+    expect(codeMap).toContain('Mermaid sequence / PlantUML / SequenceDiagram');
+    expect(codeMap).toContain('Graphviz / Dagre / ELK / React Flow / Sigma WebGL');
+    expect(codeMap).toContain('许可证、包体、风险与回滚');
     expect(codeMap).toContain('## 等待项与禁止项');
     expect(codeMap).toContain('React Flow / Sigma 已作为设计书指定的大图/局部图渲染依赖接入');
     expect(codeMap).toContain('不生成无来源节点、无来源边、假图表或假 AI 摘要');

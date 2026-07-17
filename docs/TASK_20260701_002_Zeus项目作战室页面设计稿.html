@@ -1,0 +1,1103 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>页面设计稿：Zeus 项目作战室</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f7f8f7;
+      --bg-2: #eef1ef;
+      --surface: rgba(255, 255, 255, 0.86);
+      --surface-strong: #ffffff;
+      --ink: #171a1f;
+      --muted: #68707d;
+      --quiet: #8b93a0;
+      --line: rgba(31, 35, 41, 0.11);
+      --line-strong: rgba(31, 35, 41, 0.18);
+      --blue: #315fc7;
+      --blue-soft: #e9efff;
+      --teal: #147768;
+      --teal-soft: #e7f5f1;
+      --amber: #976307;
+      --amber-soft: #fff4dc;
+      --red: #b13e3e;
+      --red-soft: #fff0ef;
+      --green: #277348;
+      --green-soft: #eaf6ee;
+      --shadow: 0 22px 70px rgba(31, 35, 41, 0.12);
+      --shadow-soft: 0 12px 36px rgba(31, 35, 41, 0.08);
+      --radius-xl: 30px;
+      --radius-lg: 22px;
+      --radius-md: 16px;
+      --radius-sm: 11px;
+      --font: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Segoe UI", sans-serif;
+      --mono: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+    }
+
+    * { box-sizing: border-box; overflow-wrap: anywhere; }
+
+    html { min-height: 100%; }
+
+    body {
+      margin: 0;
+      min-height: 100%;
+      font-family: var(--font);
+      color: var(--ink);
+      background:
+        linear-gradient(135deg, rgba(255,255,255,0.78), rgba(239,243,241,0.94)),
+        radial-gradient(circle at 22% 8%, rgba(74, 106, 185, 0.10), transparent 34%),
+        radial-gradient(circle at 78% 18%, rgba(20, 119, 104, 0.09), transparent 28%),
+        repeating-linear-gradient(0deg, rgba(31,35,41,0.026) 0 1px, transparent 1px 24px),
+        repeating-linear-gradient(90deg, rgba(31,35,41,0.022) 0 1px, transparent 1px 24px),
+        var(--bg);
+      line-height: 1.45;
+    }
+
+    a { color: inherit; }
+
+    .sheet {
+      width: min(1440px, calc(100% - 36px));
+      margin: 0 auto;
+      padding: 34px 0 56px;
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(280px, 420px);
+      gap: 24px;
+      align-items: end;
+      margin-bottom: 22px;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 10px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: rgba(255,255,255,0.72);
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.01em;
+    }
+
+    .eyebrow::before {
+      content: "";
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: var(--green);
+      box-shadow: 0 0 0 4px rgba(39,115,72,0.12);
+      flex: 0 0 auto;
+    }
+
+    h1 {
+      margin: 16px 0 12px;
+      font-size: clamp(32px, 5vw, 64px);
+      letter-spacing: -0.055em;
+      line-height: 0.96;
+      max-width: 980px;
+    }
+
+    .lead {
+      max-width: 880px;
+      margin: 0;
+      color: #39404b;
+      font-size: clamp(16px, 1.55vw, 20px);
+    }
+
+    .decision-card {
+      border: 1px solid var(--line);
+      border-radius: var(--radius-lg);
+      background: rgba(255,255,255,0.72);
+      box-shadow: var(--shadow-soft);
+      padding: 18px;
+    }
+
+    .decision-card h2,
+    .section-title h2,
+    .notes h2 {
+      margin: 0;
+      font-size: 16px;
+      letter-spacing: -0.02em;
+    }
+
+    .decision-card p { margin: 8px 0 0; color: var(--muted); font-size: 13px; }
+
+    .principles {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+      margin: 18px 0 26px;
+    }
+
+    .principle {
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: rgba(255,255,255,0.70);
+      padding: 14px;
+      min-height: 120px;
+    }
+
+    .principle strong { display: block; font-size: 13px; }
+    .principle span { display: block; margin-top: 7px; color: var(--muted); font-size: 12px; }
+
+    .section-title {
+      display: flex;
+      justify-content: space-between;
+      align-items: end;
+      gap: 18px;
+      margin: 30px 0 14px;
+    }
+
+    .section-title p { margin: 0; color: var(--muted); font-size: 13px; max-width: 720px; }
+
+    .mockup-shell {
+      border: 1px solid rgba(31,35,41,0.14);
+      border-radius: 32px;
+      background: linear-gradient(180deg, rgba(255,255,255,0.95), rgba(245,247,246,0.92));
+      box-shadow: var(--shadow);
+      padding: 12px;
+      overflow: hidden;
+    }
+
+    .app-window {
+      min-height: 840px;
+      border: 1px solid var(--line);
+      border-radius: 25px;
+      background: #fbfcfb;
+      overflow: hidden;
+      display: grid;
+      grid-template-columns: 256px minmax(0, 1fr);
+    }
+
+    .source-list {
+      background: linear-gradient(180deg, #f1f3f2 0%, #e8ecea 100%);
+      border-right: 1px solid var(--line);
+      padding: 14px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .traffic {
+      display: flex;
+      gap: 7px;
+      padding: 4px 4px 8px;
+      align-items: center;
+    }
+
+    .traffic span {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      border: 1px solid rgba(0,0,0,0.08);
+    }
+    .traffic span:nth-child(1) { background: #ff6b60; }
+    .traffic span:nth-child(2) { background: #ffbd44; }
+    .traffic span:nth-child(3) { background: #2ec65b; }
+
+    .source-action {
+      min-height: 42px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      border: 1px solid rgba(49,95,199,0.18);
+      border-radius: 14px;
+      background: rgba(255,255,255,0.74);
+      padding: 10px 12px;
+      color: #25324b;
+      font-size: 13px;
+      font-weight: 800;
+    }
+
+    .source-action small {
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .nav-group { display: grid; gap: 5px; }
+
+    .nav-label {
+      padding: 0 8px;
+      color: var(--quiet);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      font-size: 10px;
+      font-weight: 900;
+    }
+
+    .nav-item {
+      display: grid;
+      grid-template-columns: 12px 1fr auto;
+      align-items: center;
+      gap: 8px;
+      min-height: 36px;
+      border-radius: 12px;
+      padding: 8px;
+      color: #313843;
+      font-size: 13px;
+      text-decoration: none;
+    }
+
+    .nav-item .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--quiet);
+    }
+
+    .nav-item .badge {
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 11px;
+    }
+
+    .nav-item.active {
+      background: rgba(49,95,199,0.10);
+      color: #173a8f;
+      font-weight: 800;
+    }
+
+    .nav-item.active .dot { background: var(--blue); }
+
+    .sidebar-footer {
+      margin-top: auto;
+      border-top: 1px solid var(--line);
+      padding-top: 12px;
+      display: grid;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .project-chip {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: rgba(255,255,255,0.58);
+      padding: 10px;
+    }
+
+    .project-chip strong { display: block; color: var(--ink); font-size: 13px; }
+    .project-chip code { display: block; margin-top: 4px; color: var(--muted); font-size: 11px; }
+
+    .workspace {
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      min-width: 0;
+    }
+
+    .toolbar {
+      min-height: 74px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(255,255,255,0.78);
+      backdrop-filter: blur(16px);
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 16px;
+      align-items: center;
+      padding: 13px 18px;
+    }
+
+    .object-title {
+      min-width: 0;
+    }
+
+    .object-title strong {
+      display: block;
+      font-size: 18px;
+      letter-spacing: -0.02em;
+    }
+
+    .object-title span {
+      display: block;
+      margin-top: 3px;
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 12px;
+    }
+
+    .toolbar-actions {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+
+    .pill,
+    .button {
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: rgba(255,255,255,0.86);
+      min-height: 34px;
+      padding: 7px 11px;
+      color: #2a313d;
+      font-size: 12px;
+      font-weight: 800;
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      text-decoration: none;
+    }
+
+    .pill.status::before {
+      content: "";
+      width: 7px;
+      height: 7px;
+      border-radius: 999px;
+      background: var(--green);
+    }
+
+    .button.primary {
+      background: #1f2937;
+      color: #fff;
+      border-color: #1f2937;
+    }
+
+    .button.ghost { background: rgba(255,255,255,0.62); }
+
+    .main-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 332px;
+      min-height: 766px;
+      min-width: 0;
+    }
+
+    .canvas-area {
+      min-width: 0;
+      padding: 16px;
+      display: grid;
+      grid-template-rows: auto minmax(470px, 1fr) auto;
+      gap: 14px;
+      background:
+        linear-gradient(180deg, rgba(255,255,255,0.52), rgba(247,248,247,0.88)),
+        repeating-linear-gradient(0deg, rgba(31,35,41,0.026) 0 1px, transparent 1px 28px),
+        repeating-linear-gradient(90deg, rgba(31,35,41,0.022) 0 1px, transparent 1px 28px);
+    }
+
+    .context-band {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 12px;
+      align-items: center;
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      background: rgba(255,255,255,0.76);
+      padding: 12px 14px;
+    }
+
+    .context-band strong { display: block; font-size: 14px; }
+    .context-band span { display: block; margin-top: 3px; color: var(--muted); font-size: 12px; }
+
+    .mode-switch {
+      display: inline-flex;
+      gap: 5px;
+      padding: 4px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: #f1f3f2;
+    }
+
+    .mode-switch span {
+      padding: 5px 9px;
+      border-radius: 999px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 800;
+    }
+    .mode-switch .on { background: #fff; color: var(--blue); box-shadow: 0 1px 4px rgba(0,0,0,0.08); }
+
+    .graph-stage {
+      position: relative;
+      min-height: 545px;
+      border: 1px solid rgba(31,35,41,0.10);
+      border-radius: 26px;
+      background: rgba(255,255,255,0.63);
+      overflow: hidden;
+    }
+
+    .graph-stage::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background:
+        radial-gradient(circle at 32% 30%, rgba(49,95,199,0.10), transparent 28%),
+        radial-gradient(circle at 74% 66%, rgba(20,119,104,0.09), transparent 24%);
+      pointer-events: none;
+    }
+
+    .links {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 1;
+    }
+
+    .links path,
+    .links line {
+      stroke: rgba(49, 64, 82, 0.30);
+      stroke-width: 2;
+      fill: none;
+      stroke-linecap: round;
+    }
+
+    .links .primary-link { stroke: rgba(49,95,199,0.48); stroke-width: 2.7; }
+    .links .task-link { stroke: rgba(20,119,104,0.46); stroke-dasharray: 8 7; }
+
+    .node {
+      position: absolute;
+      z-index: 2;
+      width: min(220px, calc(100% - 32px));
+      min-height: 76px;
+      border: 1px solid rgba(31,35,41,0.13);
+      border-radius: 18px;
+      background: rgba(255,255,255,0.92);
+      box-shadow: 0 10px 28px rgba(31,35,41,0.10);
+      padding: 12px;
+      text-align: left;
+      color: inherit;
+      font: inherit;
+      cursor: pointer;
+    }
+
+    .node:hover { transform: translateY(-1px); box-shadow: 0 14px 34px rgba(31,35,41,0.13); }
+    .node[aria-pressed="true"] { border-color: rgba(49,95,199,0.46); box-shadow: 0 0 0 4px rgba(49,95,199,0.10), 0 14px 34px rgba(31,35,41,0.13); }
+    .node .kind { color: var(--muted); font-family: var(--mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; font-weight: 900; }
+    .node strong { display: block; margin-top: 4px; font-size: 14px; letter-spacing: -0.02em; }
+    .node span { display: block; margin-top: 5px; color: var(--muted); font-size: 11px; line-height: 1.35; }
+
+    .node.app { left: 8%; top: 12%; }
+    .node.map { left: 39%; top: 8%; }
+    .node.graph { left: 38%; top: 40%; }
+    .node.task { left: 8%; top: 64%; }
+    .node.runtime { right: 8%; top: 16%; }
+    .node.diff { right: 8%; top: 62%; }
+    .node.storage { left: 56%; top: 73%; }
+
+    .node.graph {
+      background: linear-gradient(180deg, #ffffff, #f6f8ff);
+      border-color: rgba(49,95,199,0.42);
+    }
+
+    .canvas-caption {
+      position: absolute;
+      left: 18px;
+      bottom: 14px;
+      z-index: 3;
+      max-width: 560px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: rgba(255,255,255,0.82);
+      padding: 10px 12px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .task-runway {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .runway-step {
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: rgba(255,255,255,0.76);
+      padding: 12px;
+      min-height: 112px;
+    }
+
+    .runway-step b {
+      display: inline-flex;
+      min-width: 24px;
+      min-height: 24px;
+      align-items: center;
+      justify-content: center;
+      border-radius: 50%;
+      background: var(--blue-soft);
+      color: var(--blue);
+      font-family: var(--mono);
+      font-size: 12px;
+    }
+
+    .runway-step strong { display: block; margin-top: 10px; font-size: 13px; }
+    .runway-step span { display: block; margin-top: 5px; color: var(--muted); font-size: 12px; }
+
+    .inspector {
+      border-left: 1px solid var(--line);
+      background: linear-gradient(180deg, rgba(255,255,255,0.82), rgba(244,246,245,0.78));
+      padding: 16px;
+      display: grid;
+      align-content: start;
+      gap: 13px;
+      min-width: 0;
+    }
+
+    .inspector-header {
+      border-bottom: 1px solid var(--line);
+      padding-bottom: 12px;
+    }
+
+    .inspector-header .label { color: var(--quiet); font-size: 11px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.08em; }
+    .inspector-header h3 { margin: 7px 0 5px; font-size: 22px; letter-spacing: -0.04em; }
+    .inspector-header p { margin: 0; color: var(--muted); font-size: 12px; }
+
+    .inspector-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+
+    .detail-block {
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: rgba(255,255,255,0.68);
+      padding: 13px;
+      display: grid;
+      gap: 10px;
+    }
+
+    .detail-block h4 {
+      margin: 0;
+      font-size: 13px;
+      letter-spacing: -0.01em;
+    }
+
+    .detail-row {
+      display: grid;
+      grid-template-columns: 84px minmax(0, 1fr);
+      gap: 8px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .detail-row code {
+      color: #303846;
+      font-family: var(--mono);
+      font-size: 11px;
+    }
+
+    .mini-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+    .mini-list li {
+      border: 1px solid rgba(31,35,41,0.09);
+      border-radius: 13px;
+      padding: 9px;
+      background: rgba(255,255,255,0.55);
+      font-size: 12px;
+      color: #363f4b;
+    }
+
+    .state-strip {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 10px;
+      margin: 16px 0 0;
+    }
+
+    .state-tile {
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      background: rgba(255,255,255,0.72);
+      padding: 14px;
+      min-height: 142px;
+      display: grid;
+      align-content: start;
+      gap: 9px;
+    }
+
+    .state-tile .state-visual {
+      min-height: 36px;
+      border-radius: 12px;
+      border: 1px solid rgba(31,35,41,0.08);
+      background: #f3f5f4;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .state-tile.loading .state-visual::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(90deg, transparent, rgba(255,255,255,0.88), transparent);
+      transform: translateX(-100%);
+      animation: shimmer 1.8s infinite;
+    }
+
+    .state-tile.empty .state-visual { background: linear-gradient(135deg, #f8faf9, #eef2f0); }
+    .state-tile.error .state-visual { background: var(--red-soft); border-color: rgba(177,62,62,0.20); }
+    .state-tile.permission .state-visual { background: var(--amber-soft); border-color: rgba(151,99,7,0.22); }
+    .state-tile.external .state-visual { background: var(--teal-soft); border-color: rgba(20,119,104,0.22); }
+
+    .state-tile strong { font-size: 13px; }
+    .state-tile span { color: var(--muted); font-size: 12px; }
+
+    @keyframes shimmer {
+      to { transform: translateX(100%); }
+    }
+
+    .responsive-board {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .device {
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      background: rgba(255,255,255,0.72);
+      padding: 14px;
+      min-height: 270px;
+    }
+
+    .device h3 { margin: 0 0 10px; font-size: 14px; }
+    .wire {
+      border: 1px solid rgba(31,35,41,0.10);
+      border-radius: 18px;
+      min-height: 170px;
+      background: #fbfcfb;
+      padding: 9px;
+      display: grid;
+      gap: 8px;
+    }
+
+    .wire-row { border: 1px solid rgba(31,35,41,0.08); border-radius: 10px; background: #f3f5f4; min-height: 24px; }
+    .wire-grid { display: grid; grid-template-columns: 1fr 2fr 1fr; gap: 8px; min-height: 118px; }
+    .wire-grid .wire-row { min-height: 100%; }
+    .wire.mobile { max-width: 250px; margin: 0 auto; }
+    .wire.mobile .wire-grid { grid-template-columns: 1fr; grid-template-rows: 35px 1fr 45px; }
+    .device p { margin: 10px 0 0; color: var(--muted); font-size: 12px; }
+
+    .notes {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-top: 14px;
+    }
+
+    .note-panel {
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      background: rgba(255,255,255,0.72);
+      padding: 16px;
+    }
+
+    .note-panel h3 { margin: 0 0 10px; font-size: 15px; }
+    .note-panel ul { margin: 0; padding-left: 18px; color: var(--muted); font-size: 13px; }
+    .note-panel li + li { margin-top: 7px; }
+
+    .matrix {
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      background: rgba(255,255,255,0.76);
+      overflow: hidden;
+      margin-top: 14px;
+    }
+
+    .matrix-row {
+      display: grid;
+      grid-template-columns: 1.05fr 1fr 1fr 1fr 0.85fr;
+      border-top: 1px solid var(--line);
+    }
+
+    .matrix-row:first-child { border-top: 0; background: rgba(31,35,41,0.035); font-weight: 900; color: #313943; }
+    .matrix-cell { padding: 12px; font-size: 12px; color: var(--muted); }
+    .matrix-cell strong { color: var(--ink); }
+    .matrix-cell.recommend { background: rgba(39,115,72,0.08); color: #245b3d; font-weight: 800; }
+
+    .evidence-list {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 14px;
+    }
+
+    .evidence {
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: rgba(255,255,255,0.68);
+      padding: 13px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .evidence code { color: #303846; font-family: var(--mono); font-size: 11px; }
+
+    .kbd {
+      font-family: var(--mono);
+      border: 1px solid rgba(31,35,41,0.18);
+      border-radius: 6px;
+      padding: 1px 5px;
+      background: #fff;
+      color: #3b4350;
+      font-size: 11px;
+      white-space: nowrap;
+    }
+
+    button:focus-visible,
+    a:focus-visible,
+    [tabindex]:focus-visible {
+      outline: 3px solid rgba(49,95,199,0.44);
+      outline-offset: 3px;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: 0.001ms !important;
+        animation-iteration-count: 1 !important;
+        scroll-behavior: auto !important;
+        transition: none !important;
+      }
+      .node:hover { transform: none; }
+    }
+
+    @media (max-width: 1120px) {
+      .hero { grid-template-columns: 1fr; }
+      .principles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .app-window { grid-template-columns: 220px minmax(0, 1fr); }
+      .main-grid { grid-template-columns: 1fr; }
+      .inspector { border-left: 0; border-top: 1px solid var(--line); grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
+      .inspector-header { grid-column: 1 / -1; }
+      .state-strip { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      .responsive-board, .notes { grid-template-columns: 1fr; }
+    }
+
+    @media (max-width: 760px) {
+      .sheet { width: min(100% - 18px, 640px); padding-top: 18px; }
+      .principles { grid-template-columns: 1fr; }
+      .mockup-shell { padding: 8px; border-radius: 24px; }
+      .app-window { grid-template-columns: 1fr; min-height: auto; }
+      .source-list { border-right: 0; border-bottom: 1px solid var(--line); }
+      .nav-group.projects { display: none; }
+      .toolbar { grid-template-columns: 1fr; align-items: start; }
+      .toolbar-actions { justify-content: flex-start; }
+      .context-band { grid-template-columns: 1fr; }
+      .graph-stage { min-height: auto; padding: 14px; display: grid; gap: 10px; }
+      .links, .graph-stage::before { display: none; }
+      .node { position: static; width: 100%; min-height: auto; }
+      .canvas-caption { position: static; max-width: none; margin-top: 4px; }
+      .task-runway, .state-strip, .inspector { grid-template-columns: 1fr; }
+      .matrix { overflow: visible; }
+      .matrix-row { grid-template-columns: 1fr; }
+      .matrix-row:first-child { display: none; }
+      .matrix-cell { border-top: 1px solid var(--line); }
+      .evidence-list { grid-template-columns: 1fr; }
+      .section-title { align-items: start; flex-direction: column; }
+    }
+  </style>
+</head>
+<body>
+  <main class="sheet">
+    <section class="hero" aria-labelledby="page-title">
+      <div>
+        <span class="eyebrow">单稿页面设计 · 不依赖旧截图</span>
+        <h1 id="page-title">页面设计稿：Zeus 项目作战室，把代码图谱变成下一步行动</h1>
+        <p class="lead">这不是给旧截图换皮，而是把 Zeus 的真实产品边界重新组织成一个“先理解项目，再进入任务”的工作台：左侧是项目源，中央是可追溯代码图谱，右侧是选中对象的证据与动作，底部把理解结果接到任务、运行和 Git Diff。</p>
+      </div>
+      <aside class="decision-card" aria-label="设计判断">
+        <h2>不发散候选的理由</h2>
+        <p>用户当前要求“画出你的设计来”，前一轮已收敛到“项目作战室”方向；本轮输出一个可评审的最终稿，而不是 A/B/C 换色稿。已明确剔除过期截图，依据只来自当前仓库文档与代码锚点。</p>
+      </aside>
+    </section>
+
+    <section class="principles" aria-label="设计原则">
+      <div class="principle"><strong>Visual thesis</strong><span>克制、冷静、低疲劳的 macOS 工具界面；白瓷底、轻网格、少量蓝绿状态色，不做营销式高饱和。</span></div>
+      <div class="principle"><strong>Content plan</strong><span>首屏只服务一条主路径：选择真实项目 → 阅读代码图谱 → 选中节点 → 创建任务或打开源码。</span></div>
+      <div class="principle"><strong>Interaction thesis</strong><span>图谱节点点击驱动右侧 inspector；任务动作从当前对象生成；搜索、运行、Diff 作为上下文动作而非独立页面噪音。</span></div>
+      <div class="principle"><strong>Accessibility thesis</strong><span>所有主操作可键盘触达；焦点外显；状态不只靠颜色；reduced-motion 下关闭漂移动效和 shimmer。</span></div>
+    </section>
+
+    <section aria-labelledby="mockup-title">
+      <div class="section-title">
+        <div>
+          <h2 id="mockup-title">主 Artboard：项目作战室首屏</h2>
+          <p>桌面端首屏把 source-list、object-toolbar、graph-canvas、context-inspector 和 task-runway 放在同一个决策空间里；这是页面结构稿，节点文案为基于当前代码锚点的示意，不代表实时扫描结果。</p>
+        </div>
+        <span class="pill status">真实扫描优先 · 无假数据填充</span>
+      </div>
+
+      <div class="mockup-shell">
+        <div class="app-window" role="img" aria-label="Zeus 项目作战室页面设计稿：左侧项目源列表，中间代码图谱，右侧上下文检查器，底部任务闭环">
+          <aside class="source-list" aria-label="source-list 项目导航">
+            <div class="traffic" aria-hidden="true"><span></span><span></span><span></span></div>
+            <a class="source-action" href="#" aria-label="开始新会话">
+              <span>New Chat</span><small>⌘N</small>
+            </a>
+            <nav class="nav-group" aria-label="当前项目入口">
+              <div class="nav-label">Current project</div>
+              <a class="nav-item active" href="#" aria-current="page"><span class="dot"></span><span>Zeus / Code Map</span><span class="badge">live</span></a>
+              <a class="nav-item" href="#"><span class="dot"></span><span>Tasks</span><span class="badge">12</span></a>
+              <a class="nav-item" href="#"><span class="dot"></span><span>Runtime</span><span class="badge">ready</span></a>
+              <a class="nav-item" href="#"><span class="dot"></span><span>Git Diff</span><span class="badge">dirty</span></a>
+            </nav>
+            <nav class="nav-group projects" aria-label="其他项目">
+              <div class="nav-label">Pinned sources</div>
+              <a class="nav-item" href="#"><span class="dot"></span><span>tc-app-core2</span><span class="badge">java</span></a>
+              <a class="nav-item" href="#"><span class="dot"></span><span>fawnStudio</span><span class="badge">mini</span></a>
+              <a class="nav-item" href="#"><span class="dot"></span><span>vibego</span><span class="badge">tools</span></a>
+            </nav>
+            <div class="sidebar-footer">
+              <div class="project-chip">
+                <strong>Local-first source</strong>
+                <code>/Users/david/hypha/zeus</code>
+              </div>
+              <a class="nav-item" href="#"><span class="dot"></span><span>Settings</span><span class="badge">⌘,</span></a>
+            </div>
+          </aside>
+
+          <section class="workspace" aria-label="项目作战室主工作区">
+            <header class="toolbar" aria-label="object-toolbar 当前对象与主操作">
+              <div class="object-title">
+                <strong>Zeus · 本地代码图谱</strong>
+                <span>真实仓库扫描 · 节点可追溯 · 当前对象：apps/desktop/src/renderer/App.tsx</span>
+              </div>
+              <div class="toolbar-actions" aria-label="主操作">
+                <span class="pill status">Scan ready</span>
+                <a class="button ghost" href="#">Search graph</a>
+                <a class="button ghost" href="#">Open source</a>
+                <a class="button primary" href="#">Create task from node</a>
+              </div>
+            </header>
+
+            <div class="main-grid">
+              <section class="canvas-area" aria-label="代码图谱与任务闭环">
+                <div class="context-band">
+                  <div>
+                    <strong>先回答一个问题：这个项目下一步应该改哪里？</strong>
+                    <span>图谱只展示与当前问题相关的模块；工具和证据收纳在右侧，不把所有功能平铺在首屏。</span>
+                  </div>
+                  <div class="mode-switch" aria-label="图谱视图模式">
+                    <span class="on">Architecture</span><span>Flow</span><span>Diff</span>
+                  </div>
+                </div>
+
+                <div class="graph-stage" aria-label="graph-canvas 代码图谱主画布">
+                  <svg class="links" viewBox="0 0 1000 560" preserveAspectRatio="none" aria-hidden="true">
+                    <defs>
+                      <marker id="arrow" markerWidth="10" markerHeight="10" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
+                        <path d="M0,0 L0,6 L8,3 z" fill="rgba(49,64,82,0.38)"></path>
+                      </marker>
+                    </defs>
+                    <path class="primary-link" d="M205 115 C300 82, 365 80, 450 100" marker-end="url(#arrow)"></path>
+                    <path class="primary-link" d="M505 170 C520 220, 505 260, 495 300" marker-end="url(#arrow)"></path>
+                    <path d="M630 125 C720 115, 760 145, 810 175" marker-end="url(#arrow)"></path>
+                    <path d="M610 345 C720 350, 770 325, 825 375" marker-end="url(#arrow)"></path>
+                    <path class="task-link" d="M250 405 C330 390, 385 375, 450 355" marker-end="url(#arrow)"></path>
+                    <path class="task-link" d="M520 410 C545 455, 575 480, 645 492" marker-end="url(#arrow)"></path>
+                  </svg>
+
+                  <button class="node app" type="button" aria-pressed="false" data-title="App.tsx" data-subtitle="主壳与 CodeMapView 入口" data-meta="apps/desktop/src/renderer/App.tsx:9859-9961" data-rel="把 graphView、task、runtime、git 状态汇入同一工作区。">
+                    <span class="kind">shell</span><strong>App.tsx</strong><span>承载会话、设置、Code Map 与工作区状态。</span>
+                  </button>
+                  <button class="node map" type="button" aria-pressed="false" data-title="CodeMapView" data-subtitle="图谱工作台结构" data-meta="apps/desktop/src/renderer/App.tsx:10118-10214" data-rel="当前设计保留主画布 + 右侧 inspector，但把动作闭环前移。">
+                    <span class="kind">view</span><strong>CodeMapView</strong><span>主图谱、工具条、检查器与二级工具的容器。</span>
+                  </button>
+                  <button class="node graph" type="button" aria-pressed="true" data-title="GraphCanvas" data-subtitle="当前选中的图谱画布" data-meta="apps/desktop/src/renderer/App.tsx:11200-11895" data-rel="节点点击驱动 inspector；键盘可浏览节点；图谱不再被卡片列表稀释。">
+                    <span class="kind">canvas</span><strong>GraphCanvas</strong><span>真实扫描节点的主舞台；选择节点后进入证据和任务。</span>
+                  </button>
+                  <button class="node task" type="button" aria-pressed="false" data-title="TaskWorkspace" data-subtitle="从图谱生成任务队列" data-meta="apps/desktop/src/renderer/task/TaskWorkspace.tsx:177-234" data-rel="任务不再是孤立表格，而是绑定来源节点、验收证据和 Diff。">
+                    <span class="kind">task</span><strong>TaskWorkspace</strong><span>把选中节点转成可执行任务与验收字段。</span>
+                  </button>
+                  <button class="node runtime" type="button" aria-pressed="false" data-title="Runtime" data-subtitle="本地服务与运行状态" data-meta="PRODUCT.md:21-24" data-rel="只展示真实运行状态；未配置时显示外部等待或空状态。">
+                    <span class="kind">runtime</span><strong>Local runtime</strong><span>服务状态、日志和可复现操作只在需要时展开。</span>
+                  </button>
+                  <button class="node diff" type="button" aria-pressed="false" data-title="Git Diff" data-subtitle="变更审查出口" data-meta="PRODUCT.md:21-24" data-rel="从任务闭环进入 Diff 审查，高风险动作保留确认。">
+                    <span class="kind">review</span><strong>Git Diff</strong><span>把理解、修改、验收连接到本地变更审查。</span>
+                  </button>
+                  <button class="node storage" type="button" aria-pressed="false" data-title="SQLite / local data" data-subtitle="本地优先数据边界" data-meta="PRODUCT.md:42-48" data-rel="本地优先，不默认上传代码；所有上下文可追溯。">
+                    <span class="kind">local</span><strong>SQLite + project path</strong><span>项目、任务、扫描结果与运行状态落在本机语义里。</span>
+                  </button>
+
+                  <div class="canvas-caption">画布策略：第一眼看关系结构；细节不堆卡片，进入右侧 inspector；旧截图不作为依据，本稿只依赖当前文档与代码锚点。</div>
+                </div>
+
+                <div class="task-runway" aria-label="从图谱到任务的三步闭环">
+                  <div class="runway-step"><b>1</b><strong>选中真实节点</strong><span>节点必须能指向文件、行号、扫描来源或“待确认”。</span></div>
+                  <div class="runway-step"><b>2</b><strong>在 inspector 决策</strong><span>打开源码、生成任务、查看一跳依赖，不把动作散落到多个页面。</span></div>
+                  <div class="runway-step"><b>3</b><strong>进入验证与 Diff</strong><span>任务从节点继承证据，最终回到 Runtime 与 Git Diff。</span></div>
+                </div>
+              </section>
+
+              <aside class="inspector" aria-label="context inspector 选中对象详情">
+                <div class="inspector-header">
+                  <span class="label">Selected object</span>
+                  <h3 id="inspectorTitle">GraphCanvas</h3>
+                  <p id="inspectorSubtitle">当前选中的图谱画布</p>
+                </div>
+                <div class="inspector-actions" aria-label="对象操作">
+                  <a class="button primary" href="#">Open source</a>
+                  <a class="button ghost" href="#">Ask about node</a>
+                  <a class="button ghost" href="#">Create task</a>
+                </div>
+                <section class="detail-block" aria-label="证据">
+                  <h4>Traceability</h4>
+                  <div class="detail-row"><span>Source</span><code id="inspectorMeta">apps/desktop/src/renderer/App.tsx:11200-11895</code></div>
+                  <div class="detail-row"><span>State</span><span>真实扫描节点；示意内容需由当前扫描结果确认。</span></div>
+                  <div class="detail-row"><span>Keyboard</span><span><span class="kbd">Tab</span> 聚焦节点，<span class="kbd">Enter</span> 打开 inspector。</span></div>
+                </section>
+                <section class="detail-block" aria-label="相关关系">
+                  <h4>One-hop relationships</h4>
+                  <ul class="mini-list" id="inspectorRel">
+                    <li>节点点击驱动 inspector；键盘可浏览节点；图谱不再被卡片列表稀释。</li>
+                    <li>与 TaskWorkspace、Runtime、Git Diff 形成任务闭环。</li>
+                  </ul>
+                </section>
+                <section class="detail-block" aria-label="收纳区">
+                  <h4>Collapsed details</h4>
+                  <ul class="mini-list">
+                    <li>日志、SQL、长命令、边详情放入可展开区；首屏只保留判断所需事实。</li>
+                    <li>危险操作进入二次确认；不可用动作展示原因，而不是隐藏。</li>
+                  </ul>
+                </section>
+              </aside>
+            </div>
+          </section>
+        </div>
+      </div>
+    </section>
+
+    <section aria-labelledby="state-title">
+      <div class="section-title">
+        <div>
+          <h2 id="state-title">主要状态在首层可见</h2>
+          <p>Zeus 的产品原则要求没有真实数据就展示空、失败、未配置或等待状态；因此设计稿把这些状态作为系统部件，而不是事后补丁。</p>
+        </div>
+      </div>
+      <div class="state-strip" aria-label="状态缩略图">
+        <div class="state-tile loading"><div class="state-visual"></div><strong>Loading</strong><span>局部骨架保留已有真实数据，不整页遮罩。</span></div>
+        <div class="state-tile empty"><div class="state-visual"></div><strong>Empty</strong><span>说明这里会出现什么、为什么重要、下一步怎么做。</span></div>
+        <div class="state-tile error"><div class="state-visual"></div><strong>Error</strong><span>显示原因、恢复动作和可复制诊断信息。</span></div>
+        <div class="state-tile permission"><div class="state-visual"></div><strong>Permission denied</strong><span>说明本地权限边界与授权路径。</span></div>
+        <div class="state-tile external"><div class="state-visual"></div><strong>External wait</strong><span>等待 CLI、Telegram 或本地服务时显示来源与下一步。</span></div>
+      </div>
+    </section>
+
+    <section aria-labelledby="responsive-title">
+      <div class="section-title">
+        <div>
+          <h2 id="responsive-title">响应式口径</h2>
+          <p>桌面是主生产力场景；窄屏不把整张图缩成不可读缩略图，而是改为“节点列表 + inspector 抽屉 + 任务闭环”的纵向节奏。</p>
+        </div>
+      </div>
+      <div class="responsive-board">
+        <article class="device">
+          <h3>Desktop ≥ 1180px</h3>
+          <div class="wire"><div class="wire-row"></div><div class="wire-grid"><div class="wire-row"></div><div class="wire-row"></div><div class="wire-row"></div></div></div>
+          <p>左源列表常驻，中间图谱主舞台，右侧 inspector 常驻；适合长时间研发。</p>
+        </article>
+        <article class="device">
+          <h3>Tablet 760–1179px</h3>
+          <div class="wire"><div class="wire-row"></div><div class="wire-grid" style="grid-template-columns: 1fr 2fr;"><div class="wire-row"></div><div class="wire-row"></div></div><div class="wire-row"></div></div>
+          <p>inspector 下沉为横向分区，避免主画布过窄；source-list 可缩短。</p>
+        </article>
+        <article class="device">
+          <h3>Mobile / narrow 390px</h3>
+          <div class="wire mobile"><div class="wire-row"></div><div class="wire-grid"><div class="wire-row"></div><div class="wire-row"></div><div class="wire-row"></div></div></div>
+          <p>图谱转纵向节点链路；详情抽屉在节点之后出现；不依赖横向拖动理解页面。</p>
+        </article>
+      </div>
+    </section>
+
+    <section aria-labelledby="recommend-title">
+      <div class="section-title">
+        <div>
+          <h2 id="recommend-title">推荐项与边界</h2>
+          <p>这是单稿推荐矩阵，用来明确本稿的优点、缺点、适用边界和调整成本。</p>
+        </div>
+      </div>
+      <div class="matrix" role="table" aria-label="单稿推荐矩阵">
+        <div class="matrix-row" role="row"><div class="matrix-cell" role="columnheader">方案</div><div class="matrix-cell" role="columnheader">优点</div><div class="matrix-cell" role="columnheader">代价</div><div class="matrix-cell" role="columnheader">适用边界</div><div class="matrix-cell" role="columnheader">建议</div></div>
+        <div class="matrix-row" role="row"><div class="matrix-cell" role="cell"><strong>项目作战室单稿</strong><br>source-list + graph-canvas + inspector + task-runway</div><div class="matrix-cell" role="cell">保留 Zeus 的真实代码图谱核心，把任务、运行、Diff 接到同一条主路径。</div><div class="matrix-cell" role="cell">需要统一 inspector、任务创建入口与图谱选择状态；不是单纯改颜色。</div><div class="matrix-cell" role="cell">适合本地优先、代码扫描、长时间研发和任务验收；不适合营销落地页。</div><div class="matrix-cell recommend" role="cell">🌟 推荐作为下一轮实现蓝图</div></div>
+      </div>
+    </section>
+
+    <section class="notes" aria-label="设计说明">
+      <article class="note-panel">
+        <h3>收纳与不平铺</h3>
+        <ul>
+          <li>首层只展示当前项目、当前对象、当前状态和主操作。</li>
+          <li>日志、长证据、二级工具和危险动作进入 inspector 或折叠区。</li>
+          <li>不使用重复同款卡片网格，不把任务、设置、会话信息架构混在一屏。</li>
+        </ul>
+      </article>
+      <article class="note-panel">
+        <h3>可访问性与状态</h3>
+        <ul>
+          <li>节点、按钮、导航全部可键盘聚焦，并有可见焦点环。</li>
+          <li>aria-current、aria-pressed、状态文本与颜色同时表达选择和异常。</li>
+          <li>reduced-motion 下禁用节点漂移和 loading 动效；正文字号不小于 12px。</li>
+        </ul>
+      </article>
+    </section>
+
+    <section aria-labelledby="evidence-title">
+      <div class="section-title">
+        <div>
+          <h2 id="evidence-title">依据与排除项</h2>
+          <p>本稿是设计提案，尚未改 Zeus 源码。事实依据为当前仓库文档与源码锚点；不能确认的实时扫描内容均标为示意或待确认。</p>
+        </div>
+      </div>
+      <div class="evidence-list">
+        <div class="evidence"><strong>产品定位</strong><br><code>PRODUCT.md:7</code> 本地优先 macOS AI 研发工作台；<code>PRODUCT.md:17</code> Aha Moment 是真实仓库扫描后的代码图谱。</div>
+        <div class="evidence"><strong>产品边界</strong><br><code>PRODUCT.md:21-24</code> 当前覆盖本地 app-server、SQLite、真实扫描、任务、Runtime、Git Diff、Telegram；无真实数据时显示空/失败/未配置/等待。</div>
+        <div class="evidence"><strong>设计原则</strong><br><code>DESIGN.md:5-9</code> 克制、清晰、可信的 macOS 工具 UI；<code>DESIGN.md:65-69</code> 页面一眼看出当前对象、状态和主操作。</div>
+        <div class="evidence"><strong>组件语义</strong><br><code>DESIGN.md:146-180</code> source-list、object-toolbar、composer、decision-rail、mode-rail、graph-canvas 等语义；<code>DESIGN.md:198-213</code> 必须覆盖状态、无卡片堆、无假数据。</div>
+        <div class="evidence"><strong>当前实现锚点</strong><br><code>apps/desktop/src/renderer/App.tsx:9859-9961</code> CodeMapView 状态入口；<code>App.tsx:10118-10214</code> 主画布与右侧 inspector；<code>App.tsx:11200-11895</code> GraphCanvas。</div>
+        <div class="evidence"><strong>已排除</strong><br>用户指出旧截图已经不是最新 Zeus；因此旧截图不作为本稿依据，不把历史视觉误判写成事实。</div>
+      </div>
+    </section>
+
+    <section aria-labelledby="verify-title">
+      <div class="section-title">
+        <div>
+          <h2 id="verify-title">本轮自检</h2>
+          <p>这里只记录设计稿本身的交付自检；没有修改 Zeus 源码，也没有声明产品实现已经完成。</p>
+        </div>
+      </div>
+      <div class="evidence-list">
+        <div class="evidence"><strong>单文件结构</strong><br>已检查：HTML 以 doctype 开头，CSS/JS 均内联，无外部 CDN、远程字体或远程图片依赖。</div>
+        <div class="evidence"><strong>旧截图排除</strong><br>已检查：本稿保留“旧截图已排除”说明，不引用过期截图文件作为设计事实。</div>
+        <div class="evidence"><strong>桌面渲染</strong><br>Chrome headless 视口 1440×1100：scrollWidth=1440、clientWidth=1440、图谱节点数=7，无控制台错误。</div>
+        <div class="evidence"><strong>窄屏渲染</strong><br>Chrome headless 视口 390×1200：scrollWidth=390、clientWidth=390、图谱节点纵向降级，无横向溢出。</div>
+      </div>
+    </section>
+
+  </main>
+
+  <script>
+    (function () {
+      const nodes = Array.from(document.querySelectorAll('.node'));
+      const title = document.getElementById('inspectorTitle');
+      const subtitle = document.getElementById('inspectorSubtitle');
+      const meta = document.getElementById('inspectorMeta');
+      const rel = document.getElementById('inspectorRel');
+      function activate(node) {
+        nodes.forEach((item) => item.setAttribute('aria-pressed', item === node ? 'true' : 'false'));
+        title.textContent = node.dataset.title || 'Selected node';
+        subtitle.textContent = node.dataset.subtitle || '当前选中对象';
+        meta.textContent = node.dataset.meta || '待确认';
+        const relation = node.dataset.rel || '待确认。';
+        rel.innerHTML = '';
+        [relation, '从当前对象继续进入源码、任务、运行或 Diff。'].forEach((text) => {
+          const li = document.createElement('li');
+          li.textContent = text;
+          rel.appendChild(li);
+        });
+      }
+      nodes.forEach((node) => {
+        node.addEventListener('click', () => activate(node));
+        node.addEventListener('keydown', (event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            activate(node);
+          }
+        });
+      });
+    })();
+  </script>
+</body>
+</html>

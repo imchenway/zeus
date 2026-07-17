@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Zeus 默认任务误创建来源排查与修复闭环</title>
+  <style>
+    * { box-sizing: border-box; overflow-wrap: anywhere; }
+    :root {
+      color-scheme: light;
+      --bg: #f6f8fb;
+      --panel: #ffffff;
+      --line: #dfe6ee;
+      --soft-line: #edf1f6;
+      --text: #20242a;
+      --muted: #64707d;
+      --accent: #1d74d4;
+      --accent-soft: #edf5ff;
+      --danger: #ad463a;
+      --danger-soft: #fff0ee;
+      --warn: #9a6415;
+      --warn-soft: #fff7e8;
+      --ok: #1f754a;
+      --ok-soft: #edf8f1;
+      --shadow: 0 18px 48px rgba(31, 41, 55, .08);
+    }
+    body {
+      margin: 0;
+      background: radial-gradient(circle at 10% 0, #eef5ff 0, transparent 280px), var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    }
+    main { inline-size: min(1160px, calc(100vw - 32px)); margin: 0 auto; padding: 28px 0; }
+    header { display: grid; gap: 6px; margin-block-end: 16px; }
+    h1 { font-size: clamp(20px, 2.4vw, 26px); line-height: 1.18; margin: 0; letter-spacing: -.02em; }
+    p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.55; }
+    .panel { background: color-mix(in srgb, var(--panel) 96%, transparent); border: 1px solid var(--line); border-radius: 20px; box-shadow: var(--shadow); padding: 18px; }
+    .summary { display: grid; gap: 12px; grid-template-columns: 1.1fr .9fr; margin-block-end: 16px; }
+    .summary-card { border: 1px solid var(--soft-line); border-radius: 16px; padding: 14px; background: #fff; display: grid; gap: 8px; }
+    .summary-card b { font-size: 14px; }
+    .summary-card span { color: var(--muted); font-size: 12px; line-height: 1.45; }
+    .tag { align-items: center; border-radius: 999px; display: inline-flex; font-size: 11px; font-weight: 700; inline-size: fit-content; padding: 3px 8px; }
+    .tag.bad { background: var(--danger-soft); color: var(--danger); }
+    .tag.warn { background: var(--warn-soft); color: var(--warn); }
+    .tag.fix { background: var(--accent-soft); color: var(--accent); }
+    .tag.ok { background: var(--ok-soft); color: var(--ok); }
+    .diagram { display: grid; gap: 14px; }
+    .lane { border: 1px solid var(--soft-line); border-radius: 18px; overflow: hidden; background: #fff; }
+    .lane-heading { align-items: center; background: #f8fafc; border-block-end: 1px solid var(--soft-line); display: flex; gap: 8px; justify-content: space-between; padding: 10px 12px; }
+    .lane-heading strong { font-size: 13px; }
+    .steps { display: grid; gap: 10px; grid-template-columns: repeat(5, minmax(0, 1fr)); padding: 12px; }
+    .step { border: 1px solid var(--soft-line); border-radius: 14px; min-block-size: 126px; padding: 12px; display: grid; gap: 6px; align-content: start; position: relative; background: #fff; }
+    .step:not(:last-child)::after { content: "→"; position: absolute; inset-inline-end: -13px; inset-block-start: 50%; translate: 0 -50%; color: #8a96a3; font-weight: 700; z-index: 1; }
+    .step b { font-size: 13px; line-height: 1.35; }
+    .step span { color: var(--muted); font-size: 12px; line-height: 1.42; }
+    .step.danger { border-color: #f2c2bc; background: linear-gradient(180deg, #fff, #fff8f7); }
+    .step.fix { border-color: #bfd7f5; background: linear-gradient(180deg, #fff, #f7fbff); }
+    .step.ok { border-color: #bfe3cd; background: linear-gradient(180deg, #fff, #f7fcf9); }
+    button.step { text-align: start; cursor: pointer; font: inherit; color: inherit; }
+    button.step:focus-visible { outline: 3px solid rgba(29, 116, 212, .18); outline-offset: 2px; }
+    .matrix { margin-block-start: 16px; border: 1px solid var(--soft-line); border-radius: 16px; overflow: hidden; background: #fff; }
+    .row { display: grid; grid-template-columns: 190px minmax(0, 1fr) minmax(0, 1fr); }
+    .row + .row { border-block-start: 1px solid var(--soft-line); }
+    .cell { padding: 10px 12px; font-size: 12px; line-height: 1.45; }
+    .cell:first-child { background: #f8fafc; font-weight: 700; color: #343b43; }
+    code { background: #f3f6f9; border: 1px solid #e6ebf1; border-radius: 6px; font-family: SFMono-Regular, "SF Mono", Consolas, monospace; font-size: 11px; padding: 1px 5px; }
+    .modal-backdrop { align-items: center; background: rgba(15, 23, 42, .18); display: none; inset: 0; justify-content: center; padding: 18px; position: fixed; z-index: 10; }
+    .modal-backdrop.open { display: flex; }
+    .modal { background: #fff; border: 1px solid var(--line); border-radius: 18px; box-shadow: 0 28px 80px rgba(15, 23, 42, .18); inline-size: min(520px, 100%); padding: 16px; display: grid; gap: 10px; }
+    .modal header { align-items: start; display: flex; justify-content: space-between; gap: 12px; margin: 0; }
+    .modal h2 { font-size: 16px; margin: 0; }
+    .modal button { border: 1px solid var(--line); border-radius: 10px; background: #f8fafc; padding: 6px 10px; }
+    .modal dl { display: grid; gap: 8px; margin: 0; }
+    .modal dt { color: var(--muted); font-size: 11px; font-weight: 700; text-transform: uppercase; }
+    .modal dd { margin: 0; font-size: 13px; line-height: 1.5; }
+    @media (max-width: 860px) {
+      main { inline-size: min(100vw - 20px, 720px); padding-block: 18px; }
+      .summary, .steps, .row { grid-template-columns: minmax(0, 1fr); }
+      .step:not(:last-child)::after { content: "↓"; inset-inline-end: 14px; inset-block-start: auto; inset-block-end: -14px; translate: 0 0; }
+      .row .cell + .cell { border-block-start: 1px solid var(--soft-line); }
+    }
+    @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; transition: none !important; } }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Zeus 默认任务误创建来源排查与修复闭环</h1>
+      <p>结论：误任务来自会话入口复用任务创建链路；本轮已拆开，只有任务页“新任务”继续创建正式任务。</p>
+    </header>
+
+    <section class="panel" aria-label="修复闭环图">
+      <section class="summary" aria-label="关键结论">
+        <article class="summary-card">
+          <span class="tag bad">已确认根因</span>
+          <b>“新对话”误绑定到默认任务创建</b>
+          <span>会话页入口调用 <code>createDefaultTask()</code>，最终写入 <code>POST /api/tasks</code>，生成 <code>ZEU-000001</code>。</span>
+        </article>
+        <article class="summary-card">
+          <span class="tag ok">已修复契约</span>
+          <b>任务只能从明确任务入口创建</b>
+          <span>会话入口只打开本地草稿；任务页 <code>onCreateTask={createTaskFromTaskToolbar}</code> 保留正式创建。</span>
+        </article>
+      </section>
+
+      <section class="diagram" aria-label="前后差异">
+        <section class="lane" aria-label="修复前链路">
+          <div class="lane-heading"><strong>修复前：会话入口会落任务表</strong><span class="tag bad">错误</span></div>
+          <div class="steps">
+            <button class="step danger" data-title="会话入口" data-kind="入口" data-duty="新对话、空列表新对话、发送、完成一次项目任务。" data-risk="用户以为创建会话，实际创建任务。"><span class="tag bad">入口</span><b>新对话 / 发送</b><span>非任务入口被当作任务入口。</span></button>
+            <button class="step danger" data-title="createDefaultTask" data-kind="前端函数" data-duty="调用 createProjectDefaultTask。" data-risk="函数名与 UI 语义脱节，复用导致误写库。"><span class="tag warn">函数</span><b>createDefaultTask()</b><span>继续进入任务创建。</span></button>
+            <button class="step danger" data-title="默认草稿" data-kind="任务草稿" data-duty="buildDefaultTaskDraft 固定生成“分析当前项目结构”。" data-risk="多次触发会重复出现同类任务。"><span class="tag warn">草稿</span><b>分析当前项目结构</b><span>默认标题固定。</span></button>
+            <button class="step danger" data-title="POST /api/tasks" data-kind="本地 API" data-duty="写入 tasks 表，并记录 task.created。" data-risk="后端只看到 user 来源，无法区分新对话误触发。"><span class="tag warn">API</span><b>写入任务表</b><span><code>created_from=user</code></span></button>
+            <button class="step danger" data-title="ZEU-000001" data-kind="结果" data-duty="北京时间 2026-06-27 11:08:58 写入本机数据库。" data-risk="任务列表出现用户不认识的任务。"><span class="tag bad">结果</span><b>ZEU-000001</b><span>任务列表多出默认任务。</span></button>
+          </div>
+        </section>
+
+        <section class="lane" aria-label="修复后链路">
+          <div class="lane-heading"><strong>修复后：会话草稿与任务创建分离</strong><span class="tag ok">已落地</span></div>
+          <div class="steps">
+            <button class="step fix" data-title="新对话" data-kind="会话入口" data-duty="调用 prepareNewConversationDraft。" data-risk="当前只是前端草稿态，尚未新增独立 conversation 持久化。"><span class="tag fix">会话</span><b>新对话</b><span>只打开草稿，不写任务。</span></button>
+            <button class="step fix" data-title="会话草稿" data-kind="前端状态" data-duty="conversationDraftOpen 控制新对话空态，避免自动回退到第一条任务。" data-risk="发送不会生成正式任务；后续需独立会话 API。"><span class="tag fix">状态</span><b>conversationDraftOpen</b><span>隔离会话草稿。</span></button>
+            <button class="step ok" data-title="任务页新任务" data-kind="保留入口" data-duty="任务页 onCreateTask 仍调用 createTaskFromTaskToolbar。" data-risk="这是唯一保留的默认任务创建主入口。"><span class="tag ok">任务</span><b>任务页“新任务”</b><span>明确任务动作才创建。</span></button>
+            <button class="step ok" data-title="测试锁定" data-kind="回归测试" data-duty="断言会话入口不再含 createDefaultTask 绑定。" data-risk="若未来误改，app-shell-layout 测试会失败。"><span class="tag ok">测试</span><b>回归测试</b><span>锁死误绑定。</span></button>
+            <button class="step ok" data-title="结果" data-kind="行为结果" data-duty="新对话不再生成 ZEU 编号；已误建任务仍需走正式删除。" data-risk="旧数据未直接删除，避免绕过审计。"><span class="tag ok">结果</span><b>不再误创建</b><span>旧任务走 UI 删除。</span></button>
+          </div>
+        </section>
+      </section>
+
+      <section class="matrix" aria-label="验证矩阵">
+        <div class="row"><div class="cell">入口</div><div class="cell">修改后契约</div><div class="cell">验证</div></div>
+        <div class="row"><div class="cell">会话“新对话”</div><div class="cell">只打开本地会话草稿。</div><div class="cell"><code>keeps new chat and session shortcuts...</code></div></div>
+        <div class="row"><div class="cell">新对话发送</div><div class="cell">不再调用任务创建链路。</div><div class="cell">同一回归测试断言无 <code>onClick={createDefaultTask}</code></div></div>
+        <div class="row"><div class="cell">完成一次项目任务</div><div class="cell">跳转任务页，由用户明确点“新任务”。</div><div class="cell">断言 <code>setActiveProjectSection('tasks')</code></div></div>
+        <div class="row"><div class="cell">任务页“新任务”</div><div class="cell">继续创建正式任务。</div><div class="cell">断言 <code>onCreateTask={createTaskFromTaskToolbar}</code></div></div>
+      <div class="row"><div class="cell">打包门禁</div><div class="cell">退出运行中的 Zeus 后重新打包。</div><div class="cell"><code>pnpm package:mac</code> 通过，<code>Zeus.app: valid on disk</code></div></div>
+        <div class="row"><div class="cell">全量测试现状</div><div class="cell">本轮链路通过；全量仍有既有 CSS 契约失败。</div><div class="cell">缺 3 个 CSS token，且 <code>.ai-sidebar</code> inset 旧预期不一致</div></div>
+      </section>
+    </section>
+  </main>
+
+  <div class="modal-backdrop" id="modalBackdrop" aria-hidden="true">
+    <section class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+      <header><h2 id="modalTitle">节点详情</h2><button type="button" id="modalClose">关闭</button></header>
+      <dl>
+        <dt>类型</dt><dd id="modalKind">-</dd>
+        <dt>职责</dt><dd id="modalDuty">-</dd>
+        <dt>风险 / 边界</dt><dd id="modalRisk">-</dd>
+      </dl>
+    </section>
+  </div>
+
+  <script>
+    const backdrop = document.getElementById('modalBackdrop');
+    const closeButton = document.getElementById('modalClose');
+    const title = document.getElementById('modalTitle');
+    const kind = document.getElementById('modalKind');
+    const duty = document.getElementById('modalDuty');
+    const risk = document.getElementById('modalRisk');
+    let lastTrigger = null;
+    function openModal(button) {
+      lastTrigger = button;
+      title.textContent = button.dataset.title || '节点详情';
+      kind.textContent = button.dataset.kind || '-';
+      duty.textContent = button.dataset.duty || '-';
+      risk.textContent = button.dataset.risk || '-';
+      backdrop.classList.add('open');
+      backdrop.setAttribute('aria-hidden', 'false');
+      closeButton.focus();
+    }
+    function closeModal() {
+      backdrop.classList.remove('open');
+      backdrop.setAttribute('aria-hidden', 'true');
+      if (lastTrigger) lastTrigger.focus();
+    }
+    document.querySelectorAll('button.step').forEach((button) => button.addEventListener('click', () => openModal(button)));
+    closeButton.addEventListener('click', closeModal);
+    backdrop.addEventListener('click', (event) => { if (event.target === backdrop) closeModal(); });
+    window.addEventListener('keydown', (event) => { if (event.key === 'Escape' && backdrop.classList.contains('open')) closeModal(); });
+  </script>
+</body>
+</html>

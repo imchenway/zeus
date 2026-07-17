@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>需求决策：Zeus 设计优化应收敛为项目作战室</title>
+  <style>
+    * { box-sizing: border-box; overflow-wrap: anywhere; }
+    :root {
+      color-scheme: light;
+      --bg: oklch(98.8% 0.002 255);
+      --paper: oklch(99.7% 0.001 255);
+      --paper-soft: oklch(97.8% 0.002 255);
+      --ink: oklch(23% 0.004 255);
+      --muted: oklch(50% 0.004 255);
+      --subtle: oklch(61% 0.003 255);
+      --line: oklch(89% 0.002 255);
+      --line-soft: oklch(93% 0.001 255);
+      --accent: oklch(55% 0.155 252);
+      --accent-soft: oklch(94.6% 0.011 252);
+      --green: oklch(50% 0.085 145);
+      --green-soft: oklch(96.5% 0.024 145);
+      --amber: oklch(56% 0.12 70);
+      --amber-soft: oklch(96.8% 0.028 70);
+      --red: oklch(45% 0.11 28);
+      --red-soft: oklch(96.5% 0.026 28);
+      --shadow: 0 18px 56px oklch(20% 0.012 255 / 0.08);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    }
+    html, body { margin: 0; min-height: 100%; }
+    body {
+      color: var(--ink);
+      background:
+        linear-gradient(90deg, oklch(91% 0.002 255 / 0.32) 1px, transparent 1px),
+        linear-gradient(0deg, oklch(91% 0.002 255 / 0.28) 1px, transparent 1px),
+        radial-gradient(circle at 14px 14px, oklch(85% 0.003 255 / 0.22) 1px, transparent 1.2px),
+        linear-gradient(120deg, oklch(100% 0 0 / 0.9), oklch(97.8% 0.003 255 / 0.96)),
+        var(--bg);
+      background-size: 32px 32px, 32px 32px, 32px 32px, auto, auto;
+      line-height: 1.5;
+    }
+    .page { width: min(1240px, calc(100vw - 32px)); margin: 0 auto; padding: 28px 0 44px; }
+    header { display: grid; gap: 10px; margin-bottom: 18px; }
+    .eyebrow { color: var(--accent); font-size: 12px; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
+    h1 { font-size: clamp(22px, 3vw, 34px); line-height: 1.14; letter-spacing: -0.035em; margin: 0; }
+    .lead { color: var(--muted); font-size: 14px; max-width: 84ch; margin: 0; }
+    .status-strip { display: flex; flex-wrap: wrap; gap: 8px; }
+    .pill { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 999px; background: oklch(100% 0 0 / 0.76); color: var(--muted); font-size: 12px; font-weight: 650; padding: 5px 9px; }
+    .pill.good { color: var(--green); border-color: oklch(80% 0.06 145); background: var(--green-soft); }
+    .pill.warn { color: var(--amber); border-color: oklch(80% 0.08 70); background: var(--amber-soft); }
+    .decision-canvas { border: 1px solid var(--line); border-radius: 22px; background: oklch(99.6% 0.001 255 / 0.92); box-shadow: var(--shadow); overflow: hidden; }
+    .map { display: grid; grid-template-columns: 1fr 1.18fr 1fr; min-height: 640px; }
+    .lane { border-right: 1px solid var(--line-soft); padding: 18px; display: grid; align-content: start; gap: 14px; position: relative; }
+    .lane:last-child { border-right: 0; }
+    .lane-title { display: grid; gap: 4px; }
+    .lane-title strong { font-size: 14px; }
+    .lane-title span { color: var(--muted); font-size: 12px; }
+    .flow { display: grid; gap: 16px; position: relative; }
+    .node { border: 1px solid var(--line); border-radius: 16px; background: var(--paper); padding: 13px; min-height: 88px; position: relative; }
+    .node::after { content: "↓"; position: absolute; left: 50%; bottom: -18px; transform: translateX(-50%); color: var(--subtle); font-weight: 800; }
+    .node:last-child::after { display: none; }
+    .node strong { display: block; font-size: 13px; line-height: 1.25; margin-bottom: 5px; }
+    .node p { margin: 0; color: var(--muted); font-size: 12px; }
+    .node small { display: block; color: var(--subtle); font-size: 11px; margin-top: 7px; }
+    .hot { background: var(--accent-soft); border-color: oklch(80% 0.06 252); }
+    .keep { background: var(--green-soft); border-color: oklch(80% 0.06 145); }
+    .risk { background: var(--amber-soft); border-color: oklch(80% 0.08 70); }
+    .reject { background: var(--red-soft); border-color: oklch(82% 0.052 28); }
+    .roadmap { display: grid; gap: 12px; }
+    .step { display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 10px; align-items: start; padding: 10px; border: 1px solid var(--line-soft); border-radius: 14px; background: oklch(100% 0 0 / 0.66); }
+    .num { inline-size: 26px; block-size: 26px; border-radius: 50%; display: grid; place-items: center; background: var(--accent); color: white; font-size: 12px; font-weight: 800; }
+    .step strong { display: block; font-size: 13px; margin-bottom: 3px; }
+    .step span { color: var(--muted); font-size: 12px; }
+    .option-grid { display: grid; gap: 10px; }
+    .option { border: 1px solid var(--line); border-radius: 15px; padding: 12px; background: var(--paper); }
+    .option.recommended { border-color: oklch(76% 0.08 252); background: linear-gradient(180deg, oklch(99.8% 0.001 255), var(--accent-soft)); box-shadow: 0 0 0 3px oklch(62% 0.16 252 / 0.08); }
+    .option b { display: block; font-size: 13px; margin-bottom: 5px; }
+    .option span { color: var(--muted); font-size: 12px; display: block; }
+    .evidence-row { margin-top: 18px; display: grid; grid-template-columns: 1.1fr .9fr; gap: 16px; }
+    section.panel { border: 1px solid var(--line); border-radius: 18px; background: oklch(99.7% 0.001 255 / 0.86); box-shadow: var(--shadow); padding: 16px; }
+    h2 { font-size: 16px; line-height: 1.25; margin: 0 0 10px; letter-spacing: -0.015em; }
+    table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    th, td { border-top: 1px solid var(--line-soft); padding: 9px 8px; text-align: left; vertical-align: top; }
+    tr:first-child th, tr:first-child td { border-top: 0; }
+    th { color: var(--muted); font-weight: 750; background: oklch(98% 0.001 255 / 0.7); }
+    code { font-family: "SFMono-Regular", "SF Mono", Consolas, monospace; font-size: .92em; color: oklch(33% 0.05 252); background: var(--accent-soft); border-radius: 6px; padding: 1px 5px; }
+    .limits { display: grid; gap: 8px; }
+    .limit { display: grid; gap: 3px; border-left: 3px solid var(--amber); padding: 8px 10px; background: var(--amber-soft); border-radius: 10px; }
+    .limit strong { font-size: 12px; }
+    .limit span { color: var(--muted); font-size: 12px; }
+    footer { color: var(--muted); font-size: 12px; margin-top: 16px; border: 1px solid var(--line); border-radius: 16px; background: oklch(99.5% 0.001 255 / 0.72); padding: 14px; }
+    footer div + div { margin-top: 4px; }
+    :focus-visible { outline: 3px solid oklch(62% 0.16 252 / 0.24); outline-offset: 2px; }
+    details { border: 1px solid var(--line-soft); border-radius: 12px; padding: 9px 10px; background: oklch(100% 0 0 / .58); }
+    details + details { margin-top: 8px; }
+    summary { cursor: pointer; font-size: 12px; font-weight: 750; }
+    details p { color: var(--muted); font-size: 12px; margin: 8px 0 0; }
+    @media (max-width: 900px) {
+      .page { width: min(100vw - 20px, 760px); padding-top: 20px; }
+      .map { grid-template-columns: 1fr; min-height: 0; }
+      .lane { border-right: 0; border-bottom: 1px solid var(--line-soft); }
+      .lane:last-child { border-bottom: 0; }
+      .evidence-row { grid-template-columns: 1fr; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <header>
+      <div class="eyebrow">TASK_20260701_001 · Product Design review</div>
+      <h1>需求决策：Zeus 设计优化应收敛为项目作战室</h1>
+      <p class="lead">我的优化方向不是再调一轮颜色和圆角，而是把真实仓库扫描后的代码图谱做成 Aha 主轴：用户从「选择仓库」进入「看懂结构」，再自然进入任务、Runtime、Git Diff 与远程控制。</p>
+      <div class="status-strip" aria-label="本轮判断状态">
+        <span class="pill good">🌟 推荐：项目作战室主线</span>
+        <span class="pill">依据：PRODUCT.md / DESIGN.md / App.tsx</span>
+        <span class="pill warn">旧截图已剔除，不作为依据</span>
+        <span class="pill warn">限制：未重新捕获当前 Electron 截图</span>
+      </div>
+    </header>
+
+    <section class="decision-canvas" aria-label="Zeus 设计优化决策图">
+      <div class="map">
+        <div class="lane">
+          <div class="lane-title"><strong>现状证据</strong><span>仅来自当前仓库契约与代码入口；旧截图不作为依据</span></div>
+          <div class="flow">
+            <div class="node keep"><strong>产品核心是本地优先研发工作台</strong><p>真实仓库、真实扫描、真实任务、真实 Runtime 和 Git 证据链，而不是 SaaS 营销页。</p><small>PRODUCT.md:7, 42-48</small></div>
+            <div class="node hot"><strong>Aha Moment 是真实代码图谱</strong><p>第一次选择本地仓库并完成扫描后，用户看到可追溯的系统架构、表关系、接口时序与方法逻辑。</p><small>PRODUCT.md:17；DESIGN.md:17</small></div>
+            <div class="node risk"><strong>页面必须有唯一核心目标</strong><p>代码页是图谱画布，任务页是执行队列，设置页是配置状态，会话页才是对话输入。</p><small>DESIGN.md:211-213</small></div>
+            <div class="node"><strong>现有代码已有可收敛基础</strong><p>CodeMapView、TaskWorkspace、新建会话 composer、设置页分类已经具备拆分点。</p><small>App.tsx:9859、10118、8436、9006；TaskWorkspace.tsx:177</small></div>
+          </div>
+        </div>
+
+        <div class="lane">
+          <div class="lane-title"><strong>推荐主路径</strong><span>把功能集合改造成一条可追溯项目工作流</span></div>
+          <div class="roadmap" aria-label="推荐优化路线">
+            <div class="step"><span class="num">1</span><span><strong>项目入口只问一件事</strong><span>选择真实本地仓库；缺数据时解释为什么为空和下一步怎么扫描。</span></span></div>
+            <div class="step"><span class="num">2</span><span><strong>代码图谱做首屏主角</strong><span>画布占主要视域，当前对象 inspector 解释来源、边、路径和下一步。</span></span></div>
+            <div class="step"><span class="num">3</span><span><strong>图谱节点接任务</strong><span>打开源码、创建任务、问图谱、导出 Mermaid/PlantUML 是从节点延伸，而不是底部功能堆。</span></span></div>
+            <div class="step"><span class="num">4</span><span><strong>任务页变执行队列</strong><span>表格、筛选、批量和详情抽屉服务“要做什么、谁在跑、证据在哪”。</span></span></div>
+            <div class="step"><span class="num">5</span><span><strong>会话页保持上下文输入</strong><span>composer 展示项目、Runtime、附件和真实建议入口，不用假 prompt 填热闹。</span></span></div>
+            <div class="step"><span class="num">6</span><span><strong>设置页改健康检查</strong><span>必须配置、可选增强、危险确认、发布状态分层，比横向 tab 表单更像产品。</span></span></div>
+          </div>
+        </div>
+
+        <div class="lane">
+          <div class="lane-title"><strong>方案取舍</strong><span>保留 3 个选项，推荐项突出但不隐藏风险</span></div>
+          <div class="option-grid">
+            <div class="option recommended"><b>🌟 A. 项目作战室主线</b><span>优点：直接强化 Zeus 的 Aha Moment 和真实证据链；符合现有设计契约。风险：需要逐页收敛信息架构和测试。</span></div>
+            <div class="option"><b>B. 只做视觉抛光</b><span>优点：最快。缺点：颜色、圆角、阴影无法解决用户从图谱到任务的路径问题。</span></div>
+            <div class="option"><b>C. 新手向导优先</b><span>优点：降低第一次使用门槛。缺点：如果图谱和任务主路径不稳，向导结束后仍迷路。</span></div>
+            <div class="option reject"><b>不建议：营销化或卡片 KPI 首页</b><span>Zeus 是长时间使用的 macOS 工具，不应把控制台做成 hero、大屏或重复卡片。</span></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <div class="evidence-row">
+      <section class="panel">
+        <h2>落地优先级</h2>
+        <table aria-label="设计优化优先级矩阵">
+          <tr><th>优先级</th><th>优化点</th><th>验收口径</th></tr>
+          <tr><td>P0</td><td>项目入口与 Code Map Aha 主轴</td><td>2 秒内能读出当前项目、图谱状态、可追溯来源、下一步动作。</td></tr>
+          <tr><td>P0</td><td>每页唯一核心目标</td><td>去掉功能平铺；代码页不抢任务页，设置页不冒充对话页。</td></tr>
+          <tr><td>P1</td><td>状态和空态产品化</td><td>loading、empty、error、permission denied、external wait 都有影响范围和恢复动作。</td></tr>
+          <tr><td>P1</td><td>低频工具收纳</td><td>搜索、问答、导出、节点列表、发布检查等按需出现，首屏不堆满。</td></tr>
+          <tr><td>P2</td><td>组件语义与 token 收敛</td><td>source-list、object-toolbar、composer、decision-rail、graph-canvas 统一视觉和状态。</td></tr>
+          <tr><td>P2</td><td>可访问性与窄屏门禁</td><td>focus-visible、键盘路径、aria-current/selected、reduced-motion、390px 宽度不横溢。</td></tr>
+        </table>
+      </section>
+
+      <section class="panel">
+        <h2>证据与限制</h2>
+        <div class="limits">
+          <div class="limit"><strong>本轮不是正式截图审计</strong><span>用户已确认旧截图不是最新 Zeus；我已将旧截图从依据中剔除。本轮没有重新打开当前 Electron 窗口捕获截图，所以视觉结论只基于仓库契约、当前代码入口和历史任务文档。</span></div>
+          <div class="limit"><strong>不改源码，所以不跑打包门禁</strong><span>本轮只新增 HTML 与任务文档。若进入实施，Zeus 代码变更仍需退出应用并执行 <code>pnpm package:mac</code>。</span></div>
+        </div>
+        <details open>
+          <summary>关键文件锚点</summary>
+          <p><code>PRODUCT.md:7,17,21-24,42-48</code>；<code>DESIGN.md:5-9,17,30-35,39-45,65-69,146-180,198-205,211-213</code>；<code>apps/desktop/src/renderer/App.tsx:9859-10214,11200-11895,8436-8503,9006-9510</code>；<code>apps/desktop/src/renderer/task/TaskWorkspace.tsx:177-234</code>。旧截图工件已明确排除。</p>
+        </details>
+        <details>
+          <summary>反向排除</summary>
+          <p>不做营销 hero、大面积渐变、重复 KPI 卡片、假项目/假任务/假图谱、纯换皮控件、只用 CSS 隐藏旧结构。</p>
+        </details>
+      </section>
+    </div>
+
+    <footer>
+      <div>任务编码：TASK_20260701_001；任务名称：Zeus 设计优化建议。</div>
+      <div>本次使用的 skill：Product Design、superpowers、frontend-skill、impeccable、accessibility、vibe-diagram、verification-before-completion。</div>
+      <div>本次修改的影响功能点：仅新增设计建议 HTML 与文档；未修改源码、测试或构建配置。</div>
+      <div>待用户重启服务或待执行脚本：无；若后续进入实施，再运行对应测试与 <code>pnpm package:mac</code>。</div>
+    </footer>
+  </main>
+</body>
+</html>

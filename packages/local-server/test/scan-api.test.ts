@@ -3,9 +3,40 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import initSqlJs from 'sql.js';
-import { startZeusLocalServer } from '../src/index.js';
+import { isUnsafeCodeMapScanRoot, startZeusLocalServer } from '../src/index.js';
 
 describe('Zeus graph scan API', () => {
+  it('rejects filesystem root as a code map scan root before global scan can walk the whole machine', () => {
+    expect(isUnsafeCodeMapScanRoot('/')).toBe(true);
+    expect(isUnsafeCodeMapScanRoot('/Users/david/hypha/zeus')).toBe(false);
+  });
+
+  it('returns a recoverable error instead of scanning the whole machine when global project root is filesystem root', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'zeus-root-scan-guard-'));
+    try {
+      const running = await startZeusLocalServer({
+        dbPath: join(dir, 'zeus.db'),
+        apiToken: 'scan-token',
+        projectRoot: '/',
+      });
+
+      const scanResponse = await fetch(`${running.baseUrl}/api/graph/scan-current`, {
+        method: 'POST',
+        headers: { authorization: 'Bearer scan-token' },
+      });
+      const scan = await scanResponse.json();
+
+      expect(scanResponse.status).toBe(400);
+      expect(scan).toMatchObject({
+        error: 'ZEUS_UNSAFE_GRAPH_SCAN_ROOT',
+      });
+      expect(scan.message).toContain('Choose a real project directory');
+      await running.close();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it('scans a real project through project-scoped scan, status, and overview APIs', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'zeus-project-scan-api-'));
     const serviceRoot = join(dir, 'service-root');
@@ -45,6 +76,12 @@ describe('Zeus graph scan API', () => {
       });
       const status = await statusResponse.json();
       const overview = await overviewResponse.json();
+      const viewResponse = await fetch(`${running.baseUrl}/api/projects/${project.id}/graph/views/architecture`, {
+        headers: { authorization: 'Bearer scan-token' },
+      });
+      const view = await viewResponse.json();
+      const viewNodeIds = new Set((view.nodes as Array<{ id: string }>).map((node) => node.id));
+      const danglingEdges = (view.edges as Array<{ sourceNodeId: string; targetNodeId: string }>).filter((edge) => !viewNodeIds.has(edge.sourceNodeId) || !viewNodeIds.has(edge.targetNodeId));
 
       expect(scanResponse.status).toBe(200);
       expect(statusResponse.status).toBe(200);
@@ -61,7 +98,76 @@ describe('Zeus graph scan API', () => {
       });
       expect(overview.graph.nodeCount).toBe(scan.nodeCount);
       expect(overview.graph.edgeCount).toBe(scan.edgeCount);
+      expect(viewResponse.status).toBe(200);
+      expect(view).toMatchObject({
+        projectId: project.id,
+        projectName: 'Scoped Scan Project',
+        title: 'Scoped Scan Project 系统架构图',
+        viewType: 'architecture',
+      });
+      expect(danglingEdges).toHaveLength(0);
       expect(overview.git.isRepository).toBe(false);
+      await running.close();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('compacts oversized project graph persistence so a large project scan cannot keep every raw symbol in the Electron process', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'zeus-project-scan-compaction-'));
+    const serviceRoot = join(dir, 'service-root');
+    const projectRoot = join(dir, 'large-project-root');
+    try {
+      await mkdir(serviceRoot, { recursive: true });
+      await mkdir(projectRoot, { recursive: true });
+      await writeFile(join(projectRoot, 'large.ts'), Array.from({ length: 7005 }, (_, index) => `export function largeProjectOnly${index}() { return ${index}; }`).join('\n'));
+      const running = await startZeusLocalServer({
+        dbPath: join(dir, 'zeus.db'),
+        apiToken: 'scan-token',
+        projectRoot: serviceRoot,
+      });
+      const projectResponse = await fetch(`${running.baseUrl}/api/projects`, {
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer scan-token',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          name: 'Large Scan Project',
+          localPath: projectRoot,
+        }),
+      });
+      const project = (await projectResponse.json()) as { id: string };
+
+      const scanResponse = await fetch(`${running.baseUrl}/api/projects/${project.id}/scan`, {
+        method: 'POST',
+        headers: { authorization: 'Bearer scan-token' },
+      });
+      const scan = (await scanResponse.json()) as {
+        symbolCount: number;
+        fullNodeCount: number;
+        retainedNodeCount: number;
+        nodeCount: number;
+        fullEdgeCount: number;
+        retainedEdgeCount: number;
+        edgeCount: number;
+      };
+      const overviewResponse = await fetch(`${running.baseUrl}/api/projects/${project.id}/overview`, {
+        headers: { authorization: 'Bearer scan-token' },
+      });
+      const overview = (await overviewResponse.json()) as {
+        graph: { nodeCount: number; edgeCount: number; viewCount: number };
+      };
+
+      expect(scanResponse.status).toBe(200);
+      expect(scan.symbolCount).toBeGreaterThan(7000);
+      expect(scan.fullNodeCount).toBe(scan.symbolCount);
+      expect(scan.retainedNodeCount).toBe(scan.nodeCount);
+      expect(scan.retainedEdgeCount).toBe(scan.edgeCount);
+      expect(scan.retainedNodeCount).toBeLessThan(scan.fullNodeCount);
+      expect(scan.retainedEdgeCount).toBeLessThanOrEqual(scan.fullEdgeCount);
+      expect(overview.graph.nodeCount).toBe(scan.retainedNodeCount);
+      expect(overview.graph.edgeCount).toBe(scan.retainedEdgeCount);
       await running.close();
     } finally {
       await rm(dir, { recursive: true, force: true });

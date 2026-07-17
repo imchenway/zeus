@@ -2,13 +2,48 @@ import { describe, expect, it } from 'vitest';
 import { scanProjectSource } from '../../code-indexer/src/index.js';
 import { buildProjectGraph, assertNonEmptyGraph } from '../src/index.js';
 
+let realProjectGraphPromise: ReturnType<typeof loadRealProjectGraph> | undefined;
+
+async function loadRealProjectGraph() {
+  const scan = await scanProjectSource({
+    rootPath: '/Users/david/hypha/zeus',
+    projectName: 'Zeus',
+  });
+  return buildProjectGraph(scan);
+}
+
+function getRealProjectGraph() {
+  realProjectGraphPromise ??= loadRealProjectGraph();
+  return realProjectGraphPromise;
+}
+
+type GraphViewSelection = { nodeIds: string[]; edgeIds: string[] };
+const visibleNodeIdsByView = new WeakMap<GraphViewSelection, Set<string>>();
+const visibleEdgeIdsByView = new WeakMap<GraphViewSelection, Set<string>>();
+
+function viewContainsNode(view: GraphViewSelection | undefined, nodeId: string): boolean {
+  if (!view) return false;
+  let visibleNodeIds = visibleNodeIdsByView.get(view);
+  if (!visibleNodeIds) {
+    visibleNodeIds = new Set(view.nodeIds);
+    visibleNodeIdsByView.set(view, visibleNodeIds);
+  }
+  return visibleNodeIds.has(nodeId);
+}
+
+function viewContainsEdge(view: GraphViewSelection | undefined, edgeId: string): boolean {
+  if (!view) return false;
+  let visibleEdgeIds = visibleEdgeIdsByView.get(view);
+  if (!visibleEdgeIds) {
+    visibleEdgeIds = new Set(view.edgeIds);
+    visibleEdgeIdsByView.set(view, visibleEdgeIds);
+  }
+  return visibleEdgeIds.has(edgeId);
+}
+
 describe('real project graph engine', () => {
   it('builds non-empty graph nodes and edges from real scan facts', async () => {
-    const scan = await scanProjectSource({
-      rootPath: '/Users/david/hypha/zeus',
-      projectName: 'Zeus',
-    });
-    const graph = buildProjectGraph(scan);
+    const graph = await getRealProjectGraph();
     assertNonEmptyGraph(graph);
     expect(graph.nodes.length).toBeGreaterThan(0);
     expect(graph.edges.length).toBeGreaterThan(0);
@@ -16,11 +51,7 @@ describe('real project graph engine', () => {
   });
 
   it('generates all design-book code map views from sourced graph facts only', async () => {
-    const scan = await scanProjectSource({
-      rootPath: '/Users/david/hypha/zeus',
-      projectName: 'Zeus',
-    });
-    const graph = buildProjectGraph(scan);
+    const graph = await getRealProjectGraph();
     const viewTypes = graph.views.map((view) => view.viewType);
 
     expect(viewTypes).toEqual(['architecture', 'module', 'table', 'module_detail', 'api_sequence', 'module_flow', 'method_logic']);
@@ -33,12 +64,211 @@ describe('real project graph engine', () => {
     }
   });
 
-  it('precomputes deterministic layout coordinates for every cached graph view', async () => {
-    const scan = await scanProjectSource({
-      rootPath: '/Users/david/hypha/zeus',
-      projectName: 'Zeus',
-    });
+  it('filters architecture view edges to visible nodes so large project scans cannot crash graph renderers', () => {
+    const sourceRef = '/real/large/src/index.ts';
+    const scan = {
+      projectName: 'Large Project',
+      rootPath: '/real/large',
+      symbols: [graphTestSymbol('file', 'index.ts', 'src/index.ts', sourceRef, {}), ...Array.from({ length: 300 }, (_, index) => graphTestSymbol('function', `handler${index}`, `src/index.ts#handler${index}`, sourceRef, {}))],
+    };
+
     const graph = buildProjectGraph(scan);
+    const architectureView = graph.views.find((view) => view.viewType === 'architecture');
+    const visibleNodeIds = new Set(architectureView?.nodeIds ?? []);
+    const visibleEdges = graph.edges.filter((edge) => viewContainsEdge(architectureView, edge.id));
+
+    expect(architectureView?.nodeIds.length).toBe(250);
+    expect(visibleEdges.length).toBeGreaterThan(0);
+    expect(visibleEdges.every((edge) => visibleNodeIds.has(edge.sourceNodeId) && visibleNodeIds.has(edge.targetNodeId))).toBe(true);
+  });
+
+  it('filters every capped graph view edge to visible nodes so project scans cannot crash graph renderers', () => {
+    const sourceRef = '/real/large/src/index.ts';
+    const scan = {
+      projectName: 'Large Project',
+      rootPath: '/real/large',
+      symbols: [
+        graphTestSymbol('file', 'index.ts', 'src/index.ts', sourceRef, {}),
+        ...Array.from({ length: 900 }, (_, index) => graphTestSymbol('function', `handler${index}`, `src/index.ts#handler${index}`, sourceRef, {})),
+        ...Array.from({ length: 900 }, (_, index) =>
+          graphTestSymbol('control_flow', `if branch ${index}`, `src/index.ts#handler${index}:if:${index}`, sourceRef, {
+            ownerQualifiedName: `src/index.ts#handler${index}`,
+            controlKind: 'if',
+          }),
+        ),
+      ],
+    };
+
+    const graph = buildProjectGraph(scan);
+    const cappedViews = graph.views.filter((view) => ['module_detail', 'module_flow', 'method_logic'].includes(view.viewType));
+
+    for (const view of cappedViews) {
+      const visibleNodeIds = new Set(view.nodeIds);
+      const visibleEdges = graph.edges.filter((edge) => viewContainsEdge(view, edge.id));
+
+      expect(
+        visibleEdges.every((edge) => visibleNodeIds.has(edge.sourceNodeId) && visibleNodeIds.has(edge.targetNodeId)),
+        `${view.viewType} contains edges that point outside its visible node set`,
+      ).toBe(true);
+    }
+  });
+
+  it('caps module and table graph views before they reach the renderer so large project scans cannot freeze the app', () => {
+    const sourceRef = '/real/large/src/index.ts';
+    const scan = {
+      projectName: 'Large Project',
+      rootPath: '/real/large',
+      symbols: [
+        ...Array.from({ length: 1800 }, (_, index) => graphTestSymbol('file', `File${index}.ts`, `src/File${index}.ts`, `/real/large/src/File${index}.ts`, {})),
+        ...Array.from({ length: 1400 }, (_, index) => graphTestSymbol('table', `table_${index}`, `schema.sql#table:table_${index}`, sourceRef, {})),
+        ...Array.from({ length: 1400 }, (_, index) => graphTestSymbol('column', `column_${index}`, `schema.sql#table:table_${index}#column:column_${index}`, sourceRef, {})),
+      ],
+    };
+
+    const graph = buildProjectGraph(scan);
+    const moduleView = graph.views.find((view) => view.viewType === 'module');
+    const tableView = graph.views.find((view) => view.viewType === 'table');
+
+    expect(moduleView?.nodeIds.length).toBeLessThanOrEqual(1200);
+    expect(tableView?.nodeIds.length).toBeLessThanOrEqual(1200);
+    for (const view of [moduleView, tableView]) {
+      const visibleNodeIds = new Set(view?.nodeIds ?? []);
+      const visibleEdges = graph.edges.filter((edge) => viewContainsEdge(view, edge.id));
+      expect(
+        visibleEdges.every((edge) => visibleNodeIds.has(edge.sourceNodeId) && visibleNodeIds.has(edge.targetNodeId)),
+        `${view?.viewType} contains edges that point outside its capped node set`,
+      ).toBe(true);
+    }
+  });
+
+  it('caps the default method logic view after priority evidence nodes so large scans do not ship the full control-flow payload', () => {
+    const sourceRef = '/real/large/src/service.ts';
+    const scan = {
+      projectName: 'Large Method Logic',
+      rootPath: '/real/large',
+      symbols: [
+        graphTestSymbol('file', 'service.ts', 'src/service.ts', sourceRef, {}),
+        ...Array.from({ length: 7200 }, (_, index) =>
+          graphTestSymbol('control_flow', `if branch ${index}`, `src/service.ts#handler${index}:if:${index}`, sourceRef, {
+            ownerQualifiedName: `src/service.ts#handler${index}`,
+            controlType: 'if',
+          }),
+        ),
+        ...Array.from({ length: 80 }, (_, index) =>
+          graphTestSymbol('sql_call', `SELECT order_${index}`, `src/service.ts#sql_call:SELECT:${index}`, sourceRef, {
+            ownerQualifiedName: `src/service.ts#handler${index}`,
+            tableQualifiedNames: [`schema.sql#table:orders_${index}`],
+          }),
+        ),
+      ],
+    };
+
+    const graph = buildProjectGraph(scan);
+    const methodLogicView = graph.views.find((view) => view.viewType === 'method_logic');
+    const visibleNodeIds = new Set(methodLogicView?.nodeIds ?? []);
+    const visibleEdges = graph.edges.filter((edge) => viewContainsEdge(methodLogicView, edge.id));
+    const visibleNodes = graph.nodes.filter((node) => visibleNodeIds.has(node.id));
+
+    expect(methodLogicView?.nodeIds.length).toBeLessThanOrEqual(6000);
+    expect(visibleNodes.some((node) => node.nodeType === 'sql_call')).toBe(true);
+    expect(
+      visibleEdges.every((edge) => visibleNodeIds.has(edge.sourceNodeId) && visibleNodeIds.has(edge.targetNodeId)),
+      'method_logic contains edges that point outside its capped node set',
+    ).toBe(true);
+  });
+
+  it('keeps complete exception evidence in a capped method logic view after unrelated control-flow growth', () => {
+    const sourceRef = '/real/large/src/service.ts';
+    const scan = {
+      projectName: 'Large Exception Evidence',
+      rootPath: '/real/large',
+      symbols: [
+        graphTestSymbol('file', 'service.ts', 'src/service.ts', sourceRef, {}),
+        ...Array.from({ length: 6200 }, (_, index) =>
+          graphTestSymbol('control_flow', `noise ${index}`, `src/service.ts#noise${index}:if`, sourceRef, {
+            ownerQualifiedName: `src/service.ts#noise${index}`,
+            controlType: 'if',
+            lineStart: index + 1,
+          }),
+        ),
+        graphTestSymbol('control_flow', 'try import', 'src/service.ts#import:try', sourceRef, {
+          ownerQualifiedName: 'src/service.ts#import',
+          controlType: 'try',
+          lineStart: 7001,
+        }),
+        graphTestSymbol('control_flow', 'catch import', 'src/service.ts#import:catch', sourceRef, {
+          ownerQualifiedName: 'src/service.ts#import',
+          controlType: 'catch',
+          lineStart: 7002,
+        }),
+      ],
+    };
+
+    const graph = buildProjectGraph(scan);
+    const view = graph.views.find((candidate) => candidate.viewType === 'method_logic');
+    const tryNode = graph.nodes.find((node) => node.qualifiedName === 'src/service.ts#import:try');
+    const catchNode = graph.nodes.find((node) => node.qualifiedName === 'src/service.ts#import:catch');
+    const edge = graph.edges.find((candidate) => candidate.edgeType === 'try_catch' && candidate.sourceNodeId === tryNode?.id && candidate.targetNodeId === catchNode?.id);
+
+    expect(view?.nodeIds.length).toBeLessThanOrEqual(6000);
+    expect(view?.nodeIds).toEqual(expect.arrayContaining([tryNode?.id, catchNode?.id]));
+    expect(view?.edgeIds).toContain(edge?.id);
+  });
+
+  it('prioritizes module structure nodes over declarations before applying the module view cap', () => {
+    const sourceRef = '/real/large/src/noise.ts';
+    const scan = {
+      projectName: 'Large Module Structure',
+      rootPath: '/real/large',
+      symbols: [
+        ...Array.from({ length: 1200 }, (_, index) => graphTestSymbol('class', `Noise${index}`, `src/noise.ts#Noise${index}`, sourceRef, {})),
+        graphTestSymbol('file', 'critical.ts', 'src/critical.ts', '/real/large/src/critical.ts', {}),
+      ],
+    };
+
+    const graph = buildProjectGraph(scan);
+    const view = graph.views.find((candidate) => candidate.viewType === 'module');
+    const criticalFile = graph.nodes.find((node) => node.qualifiedName === 'src/critical.ts');
+
+    expect(view?.nodeIds.length).toBeLessThanOrEqual(1200);
+    expect(view?.nodeIds).toContain(criticalFile?.id);
+  });
+
+  it('prioritizes direct API handler calls over transitive expansion before applying the API sequence cap', () => {
+    const sourceRef = '/real/large/src/api.ts';
+    const scan = {
+      projectName: 'Large API Sequence',
+      rootPath: '/real/large',
+      symbols: [
+        graphTestSymbol('file', 'api.ts', 'src/api.ts', sourceRef, {}),
+        graphTestSymbol('api', 'GET /items', 'src/api.ts#api:GET:/items', sourceRef, { handlerQualifiedName: 'src/api.ts#handler' }),
+        graphTestSymbol('function', 'handler', 'src/api.ts#handler', sourceRef, {}),
+        graphTestSymbol('function', 'target', 'src/api.ts#target', sourceRef, {}),
+        graphTestSymbol('function_call', 'target()', 'src/api.ts#handler:call:target', sourceRef, {
+          ownerQualifiedName: 'src/api.ts#handler',
+          calleeExpression: 'target',
+          targetQualifiedName: 'src/api.ts#target',
+        }),
+        ...Array.from({ length: 2100 }, (_, index) =>
+          graphTestSymbol('function_call', `expanded${index}()`, `src/api.ts#target:call:expanded${index}`, sourceRef, {
+            ownerQualifiedName: 'src/api.ts#target',
+            calleeExpression: `expanded${index}`,
+          }),
+        ),
+      ],
+    };
+
+    const graph = buildProjectGraph(scan);
+    const view = graph.views.find((candidate) => candidate.viewType === 'api_sequence');
+    const directCall = graph.nodes.find((node) => node.qualifiedName === 'src/api.ts#handler:call:target');
+    const target = graph.nodes.find((node) => node.qualifiedName === 'src/api.ts#target');
+
+    expect(view?.nodeIds.length).toBeLessThanOrEqual(2000);
+    expect(view?.nodeIds).toEqual(expect.arrayContaining([directCall?.id, target?.id]));
+  });
+
+  it('precomputes deterministic layout coordinates for every cached graph view', async () => {
+    const graph = await getRealProjectGraph();
     const architectureView = graph.views.find((view) => view.viewType === 'architecture');
 
     expect(architectureView?.layout).toMatchObject({
@@ -55,14 +285,10 @@ describe('real project graph engine', () => {
   });
 
   it('adds real table nodes and inferred table relationship edges to the table view', async () => {
-    const scan = await scanProjectSource({
-      rootPath: '/Users/david/hypha/zeus',
-      projectName: 'Zeus',
-    });
-    const graph = buildProjectGraph(scan);
+    const graph = await getRealProjectGraph();
     const tableView = graph.views.find((view) => view.viewType === 'table');
-    const tableNodes = graph.nodes.filter((node) => tableView?.nodeIds.includes(node.id));
-    const tableEdges = graph.edges.filter((edge) => tableView?.edgeIds.includes(edge.id));
+    const tableNodes = graph.nodes.filter((node) => viewContainsNode(tableView, node.id));
+    const tableEdges = graph.edges.filter((edge) => viewContainsEdge(tableView, edge.id));
 
     expect(tableNodes.map((node) => node.name)).toContain('projects');
     expect(tableNodes.map((node) => node.name)).toContain('tasks');
@@ -174,7 +400,7 @@ describe('real project graph engine', () => {
     const tableView = graph.views.find((view) => view.viewType === 'table');
     const users = graph.nodes.find((node) => node.name === 'users');
     const orders = graph.nodes.find((node) => node.name === 'orders');
-    const tableEdges = graph.edges.filter((edge) => tableView?.edgeIds.includes(edge.id));
+    const tableEdges = graph.edges.filter((edge) => viewContainsEdge(tableView, edge.id));
 
     expect(tableEdges).toEqual(
       expect.arrayContaining([
@@ -195,14 +421,10 @@ describe('real project graph engine', () => {
   });
 
   it('adds real API route nodes and exposes_api edges to the API sequence view', async () => {
-    const scan = await scanProjectSource({
-      rootPath: '/Users/david/hypha/zeus',
-      projectName: 'Zeus',
-    });
-    const graph = buildProjectGraph(scan);
+    const graph = await getRealProjectGraph();
     const apiSequenceView = graph.views.find((view) => view.viewType === 'api_sequence');
-    const apiNodes = graph.nodes.filter((node) => apiSequenceView?.nodeIds.includes(node.id) && node.nodeType === 'api');
-    const apiEdges = graph.edges.filter((edge) => apiSequenceView?.edgeIds.includes(edge.id));
+    const apiNodes = graph.nodes.filter((node) => viewContainsNode(apiSequenceView, node.id) && node.nodeType === 'api');
+    const apiEdges = graph.edges.filter((edge) => viewContainsEdge(apiSequenceView, edge.id));
     const dashboardApiNode = apiNodes.find((node) => node.name === 'GET /api/dashboard');
     const dashboardHandlerNode = graph.nodes.find((node) => node.qualifiedName === 'packages/local-server/src/index.ts#handler:GET:/api/dashboard');
 
@@ -227,14 +449,10 @@ describe('real project graph engine', () => {
   });
 
   it('adds real control-flow nodes and edges to the method logic view', async () => {
-    const scan = await scanProjectSource({
-      rootPath: '/Users/david/hypha/zeus',
-      projectName: 'Zeus',
-    });
-    const graph = buildProjectGraph(scan);
+    const graph = await getRealProjectGraph();
     const methodLogicView = graph.views.find((view) => view.viewType === 'method_logic');
-    const controlFlowNodes = graph.nodes.filter((node) => methodLogicView?.nodeIds.includes(node.id) && node.nodeType === 'control_flow');
-    const controlFlowEdges = graph.edges.filter((edge) => methodLogicView?.edgeIds.includes(edge.id));
+    const controlFlowNodes = graph.nodes.filter((node) => viewContainsNode(methodLogicView, node.id) && node.nodeType === 'control_flow');
+    const controlFlowEdges = graph.edges.filter((edge) => viewContainsEdge(methodLogicView, edge.id));
 
     expect(controlFlowNodes.map((node) => node.metadata.controlType)).toEqual(expect.arrayContaining(['if', 'return', 'try']));
     expect(controlFlowEdges).toEqual(
@@ -249,13 +467,9 @@ describe('real project graph engine', () => {
   });
 
   it('adds else loop and throw nodes to the method logic view', async () => {
-    const scan = await scanProjectSource({
-      rootPath: '/Users/david/hypha/zeus',
-      projectName: 'Zeus',
-    });
-    const graph = buildProjectGraph(scan);
+    const graph = await getRealProjectGraph();
     const methodLogicView = graph.views.find((view) => view.viewType === 'method_logic');
-    const controlFlowNodes = graph.nodes.filter((node) => methodLogicView?.nodeIds.includes(node.id) && node.nodeType === 'control_flow');
+    const controlFlowNodes = graph.nodes.filter((node) => viewContainsNode(methodLogicView, node.id) && node.nodeType === 'control_flow');
 
     expect(controlFlowNodes.map((node) => node.metadata.controlType)).toEqual(expect.arrayContaining(['else', 'loop', 'throw']));
     expect(controlFlowNodes).toEqual(
@@ -274,16 +488,12 @@ describe('real project graph engine', () => {
   });
 
   it('connects method logic control-flow nodes to their owning function', async () => {
-    const scan = await scanProjectSource({
-      rootPath: '/Users/david/hypha/zeus',
-      projectName: 'Zeus',
-    });
-    const graph = buildProjectGraph(scan);
+    const graph = await getRealProjectGraph();
     const methodLogicView = graph.views.find((view) => view.viewType === 'method_logic');
     const createLocalServerNode = graph.nodes.find((node) => node.qualifiedName === 'packages/local-server/src/index.ts#createLocalServer');
-    const ownedControlFlowNodes = graph.nodes.filter((node) => methodLogicView?.nodeIds.includes(node.id) && node.nodeType === 'control_flow' && node.metadata.ownerFunction === 'createLocalServer');
+    const ownedControlFlowNodes = graph.nodes.filter((node) => viewContainsNode(methodLogicView, node.id) && node.nodeType === 'control_flow' && node.metadata.ownerFunction === 'createLocalServer');
     const ownedControlFlowNodeIds = new Set(ownedControlFlowNodes.map((node) => node.id));
-    const functionControlFlowEdges = graph.edges.filter((edge) => methodLogicView?.edgeIds.includes(edge.id) && edge.sourceNodeId === createLocalServerNode?.id && ownedControlFlowNodeIds.has(edge.targetNodeId));
+    const functionControlFlowEdges = graph.edges.filter((edge) => viewContainsEdge(methodLogicView, edge.id) && edge.sourceNodeId === createLocalServerNode?.id && ownedControlFlowNodeIds.has(edge.targetNodeId));
 
     expect(createLocalServerNode).toBeDefined();
     expect(ownedControlFlowNodes.length).toBeGreaterThan(0);
@@ -299,18 +509,14 @@ describe('real project graph engine', () => {
   });
 
   it('connects control-flow nodes in source order inside the same function', async () => {
-    const scan = await scanProjectSource({
-      rootPath: '/Users/david/hypha/zeus',
-      projectName: 'Zeus',
-    });
-    const graph = buildProjectGraph(scan);
+    const graph = await getRealProjectGraph();
     const methodLogicView = graph.views.find((view) => view.viewType === 'method_logic');
     const createLocalServerControlNodes = graph.nodes
-      .filter((node) => methodLogicView?.nodeIds.includes(node.id) && node.nodeType === 'control_flow' && node.metadata.ownerFunction === 'createLocalServer')
+      .filter((node) => viewContainsNode(methodLogicView, node.id) && node.nodeType === 'control_flow' && node.metadata.ownerFunction === 'createLocalServer')
       .sort((a, b) => Number(a.metadata.lineStart) - Number(b.metadata.lineStart));
 
     expect(createLocalServerControlNodes.length).toBeGreaterThan(1);
-    expect(graph.edges.filter((edge) => methodLogicView?.edgeIds.includes(edge.id))).toEqual(
+    expect(graph.edges.filter((edge) => viewContainsEdge(methodLogicView, edge.id))).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           edgeType: 'next_control_flow',
@@ -323,30 +529,26 @@ describe('real project graph engine', () => {
   });
 
   it('adds loop continue and break edges for loop control-flow nodes in method logic views', async () => {
-    const scan = await scanProjectSource({
-      rootPath: '/Users/david/hypha/zeus',
-      projectName: 'Zeus',
-    });
-    const graph = buildProjectGraph(scan);
+    const graph = await getRealProjectGraph();
     const methodLogicView = graph.views.find((view) => view.viewType === 'method_logic');
     const walkLoopNode = graph.nodes.find(
-      (node) => methodLogicView?.nodeIds.includes(node.id) && node.nodeType === 'control_flow' && node.metadata.ownerQualifiedName === 'packages/code-indexer/src/index.ts#walk' && node.metadata.controlType === 'loop',
+      (node) => viewContainsNode(methodLogicView, node.id) && node.nodeType === 'control_flow' && node.metadata.ownerQualifiedName === 'packages/code-indexer/src/index.ts#walk' && node.metadata.controlType === 'loop',
     );
     const walkContinueNode = graph.nodes.find(
-      (node) => methodLogicView?.nodeIds.includes(node.id) && node.nodeType === 'control_flow' && node.metadata.ownerQualifiedName === 'packages/code-indexer/src/index.ts#walk' && node.metadata.controlType === 'continue',
+      (node) => viewContainsNode(methodLogicView, node.id) && node.nodeType === 'control_flow' && node.metadata.ownerQualifiedName === 'packages/code-indexer/src/index.ts#walk' && node.metadata.controlType === 'continue',
     );
     const collectLoopNode = graph.nodes.find(
-      (node) => methodLogicView?.nodeIds.includes(node.id) && node.nodeType === 'control_flow' && node.metadata.ownerQualifiedName === 'packages/code-indexer/src/index.ts#collectSqlStatementSnippet' && node.metadata.controlType === 'loop',
+      (node) => viewContainsNode(methodLogicView, node.id) && node.nodeType === 'control_flow' && node.metadata.ownerQualifiedName === 'packages/code-indexer/src/index.ts#collectSqlStatementSnippet' && node.metadata.controlType === 'loop',
     );
     const collectBreakNode = graph.nodes.find(
-      (node) => methodLogicView?.nodeIds.includes(node.id) && node.nodeType === 'control_flow' && node.metadata.ownerQualifiedName === 'packages/code-indexer/src/index.ts#collectSqlStatementSnippet' && node.metadata.controlType === 'break',
+      (node) => viewContainsNode(methodLogicView, node.id) && node.nodeType === 'control_flow' && node.metadata.ownerQualifiedName === 'packages/code-indexer/src/index.ts#collectSqlStatementSnippet' && node.metadata.controlType === 'break',
     );
 
     expect(walkLoopNode).toBeDefined();
     expect(walkContinueNode).toBeDefined();
     expect(collectLoopNode).toBeDefined();
     expect(collectBreakNode).toBeDefined();
-    expect(graph.edges.filter((edge) => methodLogicView?.edgeIds.includes(edge.id))).toEqual(
+    expect(graph.edges.filter((edge) => viewContainsEdge(methodLogicView, edge.id))).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           edgeType: 'loop_continue',
@@ -365,22 +567,18 @@ describe('real project graph engine', () => {
   });
 
   it('adds try-to-catch exception branch edges in method logic views', async () => {
-    const scan = await scanProjectSource({
-      rootPath: '/Users/david/hypha/zeus',
-      projectName: 'Zeus',
-    });
-    const graph = buildProjectGraph(scan);
+    const graph = await getRealProjectGraph();
     const methodLogicView = graph.views.find((view) => view.viewType === 'method_logic');
     const taskStatusTryNode = graph.nodes.find(
       (node) =>
-        methodLogicView?.nodeIds.includes(node.id) &&
+        viewContainsNode(methodLogicView, node.id) &&
         node.nodeType === 'control_flow' &&
         node.metadata.ownerQualifiedName === 'packages/local-server/src/index.ts#handler:PATCH:/api/tasks/:taskId/status' &&
         node.metadata.controlType === 'try',
     );
     const taskStatusCatchNode = graph.nodes.find(
       (node) =>
-        methodLogicView?.nodeIds.includes(node.id) &&
+        viewContainsNode(methodLogicView, node.id) &&
         node.nodeType === 'control_flow' &&
         node.metadata.ownerQualifiedName === 'packages/local-server/src/index.ts#handler:PATCH:/api/tasks/:taskId/status' &&
         node.metadata.controlType === 'catch',
@@ -388,7 +586,7 @@ describe('real project graph engine', () => {
 
     expect(taskStatusTryNode).toBeDefined();
     expect(taskStatusCatchNode).toBeDefined();
-    expect(graph.edges.filter((edge) => methodLogicView?.edgeIds.includes(edge.id))).toEqual(
+    expect(graph.edges.filter((edge) => viewContainsEdge(methodLogicView, edge.id))).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           edgeType: 'try_catch',
@@ -401,22 +599,18 @@ describe('real project graph engine', () => {
   });
 
   it('adds try-to-finally cleanup branch edges in method logic views', async () => {
-    const scan = await scanProjectSource({
-      rootPath: '/Users/david/hypha/zeus',
-      projectName: 'Zeus',
-    });
-    const graph = buildProjectGraph(scan);
+    const graph = await getRealProjectGraph();
     const methodLogicView = graph.views.find((view) => view.viewType === 'method_logic');
     const selectTryNode = graph.nodes.find(
-      (node) => methodLogicView?.nodeIds.includes(node.id) && node.nodeType === 'control_flow' && node.metadata.ownerQualifiedName === 'packages/storage/src/index.ts#ZeusDatabase.select' && node.metadata.controlType === 'try',
+      (node) => viewContainsNode(methodLogicView, node.id) && node.nodeType === 'control_flow' && node.metadata.ownerQualifiedName === 'packages/storage/src/index.ts#ZeusDatabase.select' && node.metadata.controlType === 'try',
     );
     const selectFinallyNode = graph.nodes.find(
-      (node) => methodLogicView?.nodeIds.includes(node.id) && node.nodeType === 'control_flow' && node.metadata.ownerQualifiedName === 'packages/storage/src/index.ts#ZeusDatabase.select' && node.metadata.controlType === 'finally',
+      (node) => viewContainsNode(methodLogicView, node.id) && node.nodeType === 'control_flow' && node.metadata.ownerQualifiedName === 'packages/storage/src/index.ts#ZeusDatabase.select' && node.metadata.controlType === 'finally',
     );
 
     expect(selectTryNode).toBeDefined();
     expect(selectFinallyNode).toBeDefined();
-    expect(graph.edges.filter((edge) => methodLogicView?.edgeIds.includes(edge.id))).toEqual(
+    expect(graph.edges.filter((edge) => viewContainsEdge(methodLogicView, edge.id))).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           edgeType: 'try_finally',
@@ -429,18 +623,14 @@ describe('real project graph engine', () => {
   });
 
   it('adds loop back edges for loop control-flow nodes in method logic views', async () => {
-    const scan = await scanProjectSource({
-      rootPath: '/Users/david/hypha/zeus',
-      projectName: 'Zeus',
-    });
-    const graph = buildProjectGraph(scan);
+    const graph = await getRealProjectGraph();
     const methodLogicView = graph.views.find((view) => view.viewType === 'method_logic');
     const scanProjectLoopNode = graph.nodes.find(
-      (node) => methodLogicView?.nodeIds.includes(node.id) && node.nodeType === 'control_flow' && node.metadata.ownerQualifiedName === 'packages/code-indexer/src/index.ts#scanProjectSource' && node.metadata.controlType === 'loop',
+      (node) => viewContainsNode(methodLogicView, node.id) && node.nodeType === 'control_flow' && node.metadata.ownerQualifiedName === 'packages/code-indexer/src/index.ts#scanProjectSource' && node.metadata.controlType === 'loop',
     );
 
     expect(scanProjectLoopNode).toBeDefined();
-    expect(graph.edges.filter((edge) => methodLogicView?.edgeIds.includes(edge.id))).toEqual(
+    expect(graph.edges.filter((edge) => viewContainsEdge(methodLogicView, edge.id))).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           edgeType: 'loop_back',
@@ -453,26 +643,22 @@ describe('real project graph engine', () => {
   });
 
   it('adds true and false branch edges for guard-style if statements in method logic views', async () => {
-    const scan = await scanProjectSource({
-      rootPath: '/Users/david/hypha/zeus',
-      projectName: 'Zeus',
-    });
-    const graph = buildProjectGraph(scan);
+    const graph = await getRealProjectGraph();
     const methodLogicView = graph.views.find((view) => view.viewType === 'method_logic');
     const taskStatusIfNode = graph.nodes.find(
-      (node) => methodLogicView?.nodeIds.includes(node.id) && node.nodeType === 'control_flow' && node.metadata.ownerQualifiedName === 'packages/task-core/src/index.ts#getNextTaskStatus' && node.metadata.controlType === 'if',
+      (node) => viewContainsNode(methodLogicView, node.id) && node.nodeType === 'control_flow' && node.metadata.ownerQualifiedName === 'packages/task-core/src/index.ts#getNextTaskStatus' && node.metadata.controlType === 'if',
     );
     const taskStatusThrowNode = graph.nodes.find(
-      (node) => methodLogicView?.nodeIds.includes(node.id) && node.nodeType === 'control_flow' && node.metadata.ownerQualifiedName === 'packages/task-core/src/index.ts#getNextTaskStatus' && node.metadata.controlType === 'throw',
+      (node) => viewContainsNode(methodLogicView, node.id) && node.nodeType === 'control_flow' && node.metadata.ownerQualifiedName === 'packages/task-core/src/index.ts#getNextTaskStatus' && node.metadata.controlType === 'throw',
     );
     const taskStatusReturnNode = graph.nodes.find(
-      (node) => methodLogicView?.nodeIds.includes(node.id) && node.nodeType === 'control_flow' && node.metadata.ownerQualifiedName === 'packages/task-core/src/index.ts#getNextTaskStatus' && node.metadata.controlType === 'return',
+      (node) => viewContainsNode(methodLogicView, node.id) && node.nodeType === 'control_flow' && node.metadata.ownerQualifiedName === 'packages/task-core/src/index.ts#getNextTaskStatus' && node.metadata.controlType === 'return',
     );
 
     expect(taskStatusIfNode).toBeDefined();
     expect(taskStatusThrowNode).toBeDefined();
     expect(taskStatusReturnNode).toBeDefined();
-    expect(graph.edges.filter((edge) => methodLogicView?.edgeIds.includes(edge.id))).toEqual(
+    expect(graph.edges.filter((edge) => viewContainsEdge(methodLogicView, edge.id))).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           edgeType: 'branch_true',
@@ -491,16 +677,12 @@ describe('real project graph engine', () => {
   });
 
   it('adds SQL call nodes and function execution edges to the method logic view', async () => {
-    const scan = await scanProjectSource({
-      rootPath: '/Users/david/hypha/zeus',
-      projectName: 'Zeus',
-    });
-    const graph = buildProjectGraph(scan);
+    const graph = await getRealProjectGraph();
     const methodLogicView = graph.views.find((view) => view.viewType === 'method_logic');
     const getJsonNode = graph.nodes.find((node) => node.qualifiedName === 'packages/storage/src/index.ts#SettingRepository.getJson');
-    const getJsonSqlNodes = graph.nodes.filter((node) => methodLogicView?.nodeIds.includes(node.id) && node.nodeType === 'sql_call' && node.metadata.ownerFunction === 'SettingRepository.getJson');
+    const getJsonSqlNodes = graph.nodes.filter((node) => viewContainsNode(methodLogicView, node.id) && node.nodeType === 'sql_call' && node.metadata.ownerFunction === 'SettingRepository.getJson');
     const getJsonSqlNodeIds = new Set(getJsonSqlNodes.map((node) => node.id));
-    const sqlEdges = graph.edges.filter((edge) => methodLogicView?.edgeIds.includes(edge.id) && edge.sourceNodeId === getJsonNode?.id && getJsonSqlNodeIds.has(edge.targetNodeId));
+    const sqlEdges = graph.edges.filter((edge) => viewContainsEdge(methodLogicView, edge.id) && edge.sourceNodeId === getJsonNode?.id && getJsonSqlNodeIds.has(edge.targetNodeId));
 
     expect(getJsonNode).toBeDefined();
     expect(getJsonSqlNodes).toEqual(
@@ -527,16 +709,12 @@ describe('real project graph engine', () => {
   });
 
   it('adds awaited function calls to method logic views', async () => {
-    const scan = await scanProjectSource({
-      rootPath: '/Users/david/hypha/zeus',
-      projectName: 'Zeus',
-    });
-    const graph = buildProjectGraph(scan);
+    const graph = await getRealProjectGraph();
     const methodLogicView = graph.views.find((view) => view.viewType === 'method_logic');
     const scanProjectSourceNode = graph.nodes.find((node) => node.qualifiedName === 'packages/code-indexer/src/index.ts#scanProjectSource');
     const awaitedListSourceFilesCall = graph.nodes.find(
       (node) =>
-        methodLogicView?.nodeIds.includes(node.id) &&
+        viewContainsNode(methodLogicView, node.id) &&
         node.nodeType === 'function_call' &&
         node.metadata.ownerQualifiedName === 'packages/code-indexer/src/index.ts#scanProjectSource' &&
         node.metadata.calleeExpression === 'listSourceFiles' &&
@@ -545,7 +723,7 @@ describe('real project graph engine', () => {
 
     expect(scanProjectSourceNode).toBeDefined();
     expect(awaitedListSourceFilesCall).toBeDefined();
-    expect(graph.edges.filter((edge) => methodLogicView?.edgeIds.includes(edge.id))).toEqual(
+    expect(graph.edges.filter((edge) => viewContainsEdge(methodLogicView, edge.id))).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           edgeType: 'awaits_call',
@@ -558,27 +736,23 @@ describe('real project graph engine', () => {
   });
 
   it('adds promise catch branch edges to method logic views', async () => {
-    const scan = await scanProjectSource({
-      rootPath: '/Users/david/hypha/zeus',
-      projectName: 'Zeus',
-    });
-    const graph = buildProjectGraph(scan);
+    const graph = await getRealProjectGraph();
     const methodLogicView = graph.views.find((view) => view.viewType === 'method_logic');
     const mainCallNode = graph.nodes.find(
       (node) =>
-        methodLogicView?.nodeIds.includes(node.id) &&
+        viewContainsNode(methodLogicView, node.id) &&
         node.nodeType === 'function_call' &&
         node.sourceRef === '/Users/david/hypha/zeus/packages/code-indexer/src/cli.ts' &&
         node.metadata.calleeExpression === 'main' &&
         node.metadata.promiseChainHandler === 'catch',
     );
     const promiseCatchNode = graph.nodes.find(
-      (node) => methodLogicView?.nodeIds.includes(node.id) && node.nodeType === 'control_flow' && node.sourceRef === '/Users/david/hypha/zeus/packages/code-indexer/src/cli.ts' && node.metadata.controlType === 'promise_catch',
+      (node) => viewContainsNode(methodLogicView, node.id) && node.nodeType === 'control_flow' && node.sourceRef === '/Users/david/hypha/zeus/packages/code-indexer/src/cli.ts' && node.metadata.controlType === 'promise_catch',
     );
 
     expect(mainCallNode).toBeDefined();
     expect(promiseCatchNode).toBeDefined();
-    expect(graph.edges.filter((edge) => methodLogicView?.edgeIds.includes(edge.id))).toEqual(
+    expect(graph.edges.filter((edge) => viewContainsEdge(methodLogicView, edge.id))).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           edgeType: 'promise_catch',
@@ -591,31 +765,29 @@ describe('real project graph engine', () => {
   });
 
   it('adds promise then continuation edges to method logic views', async () => {
-    const scan = await scanProjectSource({
-      rootPath: '/Users/david/hypha/zeus',
-      projectName: 'Zeus',
-    });
-    const graph = buildProjectGraph(scan);
+    const graph = await getRealProjectGraph();
     const methodLogicView = graph.views.find((view) => view.viewType === 'method_logic');
-    const whenReadyCallNode = graph.nodes.find(
+    const startupCoordinatorPath = '/Users/david/hypha/zeus/apps/desktop/src/main/startupCoordinator.ts';
+    const promiseThenCallNode = graph.nodes.find(
       (node) =>
-        methodLogicView?.nodeIds.includes(node.id) &&
-        node.nodeType === 'function_call' &&
-        node.sourceRef === '/Users/david/hypha/zeus/apps/desktop/src/main/main.ts' &&
-        node.metadata.calleeExpression === 'app.whenReady' &&
-        node.metadata.promiseChainHandler === 'then',
+        viewContainsNode(methodLogicView, node.id) && node.nodeType === 'function_call' && node.sourceRef === startupCoordinatorPath && node.metadata.calleeExpression === 'Promise.resolve' && node.metadata.promiseChainHandler === 'then',
     );
     const promiseThenNode = graph.nodes.find(
-      (node) => methodLogicView?.nodeIds.includes(node.id) && node.nodeType === 'control_flow' && node.sourceRef === '/Users/david/hypha/zeus/apps/desktop/src/main/main.ts' && node.metadata.controlType === 'promise_then',
+      (node) =>
+        viewContainsNode(methodLogicView, node.id) &&
+        node.nodeType === 'control_flow' &&
+        node.sourceRef === startupCoordinatorPath &&
+        node.metadata.controlType === 'promise_then' &&
+        node.metadata.lineStart === promiseThenCallNode?.metadata.lineStart,
     );
 
-    expect(whenReadyCallNode).toBeDefined();
+    expect(promiseThenCallNode).toBeDefined();
     expect(promiseThenNode).toBeDefined();
-    expect(graph.edges.filter((edge) => methodLogicView?.edgeIds.includes(edge.id))).toEqual(
+    expect(graph.edges.filter((edge) => viewContainsEdge(methodLogicView, edge.id))).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           edgeType: 'promise_then',
-          sourceNodeId: whenReadyCallNode?.id,
+          sourceNodeId: promiseThenCallNode?.id,
           targetNodeId: promiseThenNode?.id,
           confidence: 0.6,
         }),
@@ -624,18 +796,14 @@ describe('real project graph engine', () => {
   });
 
   it('adds column nodes and SQL field impact edges to method logic views', async () => {
-    const scan = await scanProjectSource({
-      rootPath: '/Users/david/hypha/zeus',
-      projectName: 'Zeus',
-    });
-    const graph = buildProjectGraph(scan);
+    const graph = await getRealProjectGraph();
     const methodLogicView = graph.views.find((view) => view.viewType === 'method_logic');
-    const projectSearchSqlNode = graph.nodes.find((node) => methodLogicView?.nodeIds.includes(node.id) && node.nodeType === 'sql_call' && node.metadata.ownerFunction === 'ProjectRepository.search' && node.metadata.operation === 'SELECT');
-    const slugColumnNode = graph.nodes.find((node) => methodLogicView?.nodeIds.includes(node.id) && node.nodeType === 'column' && node.qualifiedName === 'packages/storage/src/index.ts#table:projects#column:slug');
+    const projectSearchSqlNode = graph.nodes.find((node) => viewContainsNode(methodLogicView, node.id) && node.nodeType === 'sql_call' && node.metadata.ownerFunction === 'ProjectRepository.search' && node.metadata.operation === 'SELECT');
+    const slugColumnNode = graph.nodes.find((node) => viewContainsNode(methodLogicView, node.id) && node.nodeType === 'column' && node.qualifiedName === 'packages/storage/src/index.ts#table:projects#column:slug');
 
     expect(projectSearchSqlNode).toBeDefined();
     expect(slugColumnNode).toBeDefined();
-    expect(graph.edges.filter((edge) => methodLogicView?.edgeIds.includes(edge.id))).toEqual(
+    expect(graph.edges.filter((edge) => viewContainsEdge(methodLogicView, edge.id))).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           edgeType: 'uses_column',
@@ -648,18 +816,14 @@ describe('real project graph engine', () => {
   });
 
   it('connects repository SQL calls to the tables they read in the method logic view', async () => {
-    const scan = await scanProjectSource({
-      rootPath: '/Users/david/hypha/zeus',
-      projectName: 'Zeus',
-    });
-    const graph = buildProjectGraph(scan);
+    const graph = await getRealProjectGraph();
     const methodLogicView = graph.views.find((view) => view.viewType === 'method_logic');
-    const projectSearchSqlNode = graph.nodes.find((node) => methodLogicView?.nodeIds.includes(node.id) && node.nodeType === 'sql_call' && node.metadata.ownerFunction === 'ProjectRepository.search' && node.metadata.operation === 'SELECT');
-    const projectsTableNode = graph.nodes.find((node) => methodLogicView?.nodeIds.includes(node.id) && node.nodeType === 'table' && node.qualifiedName === 'packages/storage/src/index.ts#table:projects');
+    const projectSearchSqlNode = graph.nodes.find((node) => viewContainsNode(methodLogicView, node.id) && node.nodeType === 'sql_call' && node.metadata.ownerFunction === 'ProjectRepository.search' && node.metadata.operation === 'SELECT');
+    const projectsTableNode = graph.nodes.find((node) => viewContainsNode(methodLogicView, node.id) && node.nodeType === 'table' && node.qualifiedName === 'packages/storage/src/index.ts#table:projects');
 
     expect(projectSearchSqlNode).toBeDefined();
     expect(projectsTableNode).toBeDefined();
-    expect(graph.edges.filter((edge) => methodLogicView?.edgeIds.includes(edge.id))).toEqual(
+    expect(graph.edges.filter((edge) => viewContainsEdge(methodLogicView, edge.id))).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           edgeType: 'reads_table',
@@ -672,18 +836,14 @@ describe('real project graph engine', () => {
   });
 
   it('connects API handlers to their real internal function calls', async () => {
-    const scan = await scanProjectSource({
-      rootPath: '/Users/david/hypha/zeus',
-      projectName: 'Zeus',
-    });
-    const graph = buildProjectGraph(scan);
+    const graph = await getRealProjectGraph();
     const apiSequenceView = graph.views.find((view) => view.viewType === 'api_sequence');
     const projectsHandlerNode = graph.nodes.find((node) => node.qualifiedName === 'packages/local-server/src/index.ts#handler:GET:/api/projects');
-    const projectsSearchCallNode = graph.nodes.find((node) => apiSequenceView?.nodeIds.includes(node.id) && node.nodeType === 'function_call' && node.metadata.calleeExpression === 'projects.search');
+    const projectsSearchCallNode = graph.nodes.find((node) => viewContainsNode(apiSequenceView, node.id) && node.nodeType === 'function_call' && node.metadata.calleeExpression === 'projects.search');
 
     expect(projectsHandlerNode).toBeDefined();
     expect(projectsSearchCallNode).toBeDefined();
-    expect(graph.edges.filter((edge) => apiSequenceView?.edgeIds.includes(edge.id))).toEqual(
+    expect(graph.edges.filter((edge) => viewContainsEdge(apiSequenceView, edge.id))).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           edgeType: 'calls',
@@ -696,18 +856,14 @@ describe('real project graph engine', () => {
   });
 
   it('connects function call nodes to resolved class method targets', async () => {
-    const scan = await scanProjectSource({
-      rootPath: '/Users/david/hypha/zeus',
-      projectName: 'Zeus',
-    });
-    const graph = buildProjectGraph(scan);
+    const graph = await getRealProjectGraph();
     const apiSequenceView = graph.views.find((view) => view.viewType === 'api_sequence');
-    const projectsSearchCallNode = graph.nodes.find((node) => apiSequenceView?.nodeIds.includes(node.id) && node.nodeType === 'function_call' && node.metadata.calleeExpression === 'projects.search');
+    const projectsSearchCallNode = graph.nodes.find((node) => viewContainsNode(apiSequenceView, node.id) && node.nodeType === 'function_call' && node.metadata.calleeExpression === 'projects.search');
     const projectRepositorySearchNode = graph.nodes.find((node) => node.qualifiedName === 'packages/storage/src/index.ts#ProjectRepository.search');
 
     expect(projectsSearchCallNode).toBeDefined();
     expect(projectRepositorySearchNode).toBeDefined();
-    expect(graph.edges.filter((edge) => apiSequenceView?.edgeIds.includes(edge.id))).toEqual(
+    expect(graph.edges.filter((edge) => viewContainsEdge(apiSequenceView, edge.id))).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           edgeType: 'resolves_to',
@@ -720,22 +876,18 @@ describe('real project graph engine', () => {
   });
 
   it('extends API sequence views from resolved repository methods to SQL table impacts', async () => {
-    const scan = await scanProjectSource({
-      rootPath: '/Users/david/hypha/zeus',
-      projectName: 'Zeus',
-    });
-    const graph = buildProjectGraph(scan);
+    const graph = await getRealProjectGraph();
     const apiSequenceView = graph.views.find((view) => view.viewType === 'api_sequence');
-    const projectRepositorySearchNode = graph.nodes.find((node) => apiSequenceView?.nodeIds.includes(node.id) && node.qualifiedName === 'packages/storage/src/index.ts#ProjectRepository.search');
+    const projectRepositorySearchNode = graph.nodes.find((node) => viewContainsNode(apiSequenceView, node.id) && node.qualifiedName === 'packages/storage/src/index.ts#ProjectRepository.search');
     const projectSearchSqlNode = graph.nodes.find(
-      (node) => apiSequenceView?.nodeIds.includes(node.id) && node.nodeType === 'sql_call' && node.metadata.ownerQualifiedName === 'packages/storage/src/index.ts#ProjectRepository.search' && node.metadata.operation === 'SELECT',
+      (node) => viewContainsNode(apiSequenceView, node.id) && node.nodeType === 'sql_call' && node.metadata.ownerQualifiedName === 'packages/storage/src/index.ts#ProjectRepository.search' && node.metadata.operation === 'SELECT',
     );
-    const projectsTableNode = graph.nodes.find((node) => apiSequenceView?.nodeIds.includes(node.id) && node.qualifiedName === 'packages/storage/src/index.ts#table:projects');
+    const projectsTableNode = graph.nodes.find((node) => viewContainsNode(apiSequenceView, node.id) && node.qualifiedName === 'packages/storage/src/index.ts#table:projects');
 
     expect(projectRepositorySearchNode).toBeDefined();
     expect(projectSearchSqlNode).toBeDefined();
     expect(projectsTableNode).toBeDefined();
-    expect(graph.edges.filter((edge) => apiSequenceView?.edgeIds.includes(edge.id))).toEqual(
+    expect(graph.edges.filter((edge) => viewContainsEdge(apiSequenceView, edge.id))).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           edgeType: 'executes_sql',
@@ -752,11 +904,7 @@ describe('real project graph engine', () => {
   });
 
   it('connects files through real import dependency edges in the module view', async () => {
-    const scan = await scanProjectSource({
-      rootPath: '/Users/david/hypha/zeus',
-      projectName: 'Zeus',
-    });
-    const graph = buildProjectGraph(scan);
+    const graph = await getRealProjectGraph();
     const moduleView = graph.views.find((view) => view.viewType === 'module');
     const appNode = graph.nodes.find((node) => node.qualifiedName === 'apps/desktop/src/renderer/App.tsx');
     const apiClientNode = graph.nodes.find((node) => node.qualifiedName === 'apps/desktop/src/renderer/apiClient.ts');
@@ -765,7 +913,7 @@ describe('real project graph engine', () => {
     expect(apiClientNode).toBeDefined();
     expect(moduleView?.nodeIds).toContain(appNode?.id);
     expect(moduleView?.nodeIds).toContain(apiClientNode?.id);
-    expect(graph.edges.filter((edge) => moduleView?.edgeIds.includes(edge.id))).toEqual(
+    expect(graph.edges.filter((edge) => viewContainsEdge(moduleView, edge.id))).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           edgeType: 'module_depends_on',
@@ -778,18 +926,14 @@ describe('real project graph engine', () => {
   });
 
   it('connects modules through re-export dependencies resolved from tsconfig paths', async () => {
-    const scan = await scanProjectSource({
-      rootPath: '/Users/david/hypha/zeus',
-      projectName: 'Zeus',
-    });
-    const graph = buildProjectGraph(scan);
+    const graph = await getRealProjectGraph();
     const moduleView = graph.views.find((view) => view.viewType === 'module');
     const taskCoreNode = graph.nodes.find((node) => node.qualifiedName === 'packages/task-core/src/index.ts');
     const sharedNode = graph.nodes.find((node) => node.qualifiedName === 'packages/shared/src/index.ts');
 
     expect(taskCoreNode).toBeDefined();
     expect(sharedNode).toBeDefined();
-    expect(graph.edges.filter((edge) => moduleView?.edgeIds.includes(edge.id))).toEqual(
+    expect(graph.edges.filter((edge) => viewContainsEdge(moduleView, edge.id))).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           edgeType: 'module_depends_on',
@@ -802,24 +946,20 @@ describe('real project graph engine', () => {
   });
 
   it('connects same-file direct function calls to their resolved targets in API sequence views', async () => {
-    const scan = await scanProjectSource({
-      rootPath: '/Users/david/hypha/zeus',
-      projectName: 'Zeus',
-    });
-    const graph = buildProjectGraph(scan);
+    const graph = await getRealProjectGraph();
     const apiSequenceView = graph.views.find((view) => view.viewType === 'api_sequence');
     const searchGraphCallNode = graph.nodes.find(
       (node) =>
-        apiSequenceView?.nodeIds.includes(node.id) &&
+        viewContainsNode(apiSequenceView, node.id) &&
         node.nodeType === 'function_call' &&
         node.metadata.calleeExpression === 'searchCurrentGraphNodes' &&
         node.metadata.ownerQualifiedName === 'packages/local-server/src/index.ts#handler:GET:/api/graph/search',
     );
-    const searchGraphFunctionNode = graph.nodes.find((node) => apiSequenceView?.nodeIds.includes(node.id) && node.qualifiedName === 'packages/local-server/src/index.ts#searchCurrentGraphNodes');
+    const searchGraphFunctionNode = graph.nodes.find((node) => viewContainsNode(apiSequenceView, node.id) && node.qualifiedName === 'packages/local-server/src/index.ts#searchCurrentGraphNodes');
 
     expect(searchGraphCallNode).toBeDefined();
     expect(searchGraphFunctionNode).toBeDefined();
-    expect(graph.edges.filter((edge) => apiSequenceView?.edgeIds.includes(edge.id))).toEqual(
+    expect(graph.edges.filter((edge) => viewContainsEdge(apiSequenceView, edge.id))).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           edgeType: 'resolves_to',
@@ -832,24 +972,20 @@ describe('real project graph engine', () => {
   });
 
   it('connects API handlers to imported bare function targets in sequence views', async () => {
-    const scan = await scanProjectSource({
-      rootPath: '/Users/david/hypha/zeus',
-      projectName: 'Zeus',
-    });
-    const graph = buildProjectGraph(scan);
+    const graph = await getRealProjectGraph();
     const apiSequenceView = graph.views.find((view) => view.viewType === 'api_sequence');
     const statusCallNode = graph.nodes.find(
       (node) =>
-        apiSequenceView?.nodeIds.includes(node.id) &&
+        viewContainsNode(apiSequenceView, node.id) &&
         node.nodeType === 'function_call' &&
         node.metadata.calleeExpression === 'getNextTaskStatus' &&
         node.metadata.ownerQualifiedName === 'packages/local-server/src/index.ts#handler:PATCH:/api/tasks/:taskId/status',
     );
-    const targetFunctionNode = graph.nodes.find((node) => apiSequenceView?.nodeIds.includes(node.id) && node.qualifiedName === 'packages/task-core/src/index.ts#getNextTaskStatus');
+    const targetFunctionNode = graph.nodes.find((node) => viewContainsNode(apiSequenceView, node.id) && node.qualifiedName === 'packages/task-core/src/index.ts#getNextTaskStatus');
 
     expect(statusCallNode).toBeDefined();
     expect(targetFunctionNode).toBeDefined();
-    expect(graph.edges.filter((edge) => apiSequenceView?.edgeIds.includes(edge.id))).toEqual(
+    expect(graph.edges.filter((edge) => viewContainsEdge(apiSequenceView, edge.id))).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           edgeType: 'resolves_to',
@@ -862,26 +998,22 @@ describe('real project graph engine', () => {
   });
 
   it('expands API sequence views one hop beyond imported function targets', async () => {
-    const scan = await scanProjectSource({
-      rootPath: '/Users/david/hypha/zeus',
-      projectName: 'Zeus',
-    });
-    const graph = buildProjectGraph(scan);
+    const graph = await getRealProjectGraph();
     const apiSequenceView = graph.views.find((view) => view.viewType === 'api_sequence');
-    const getNextTaskStatusNode = graph.nodes.find((node) => apiSequenceView?.nodeIds.includes(node.id) && node.qualifiedName === 'packages/task-core/src/index.ts#getNextTaskStatus');
+    const getNextTaskStatusNode = graph.nodes.find((node) => viewContainsNode(apiSequenceView, node.id) && node.qualifiedName === 'packages/task-core/src/index.ts#getNextTaskStatus');
     const canTransitionCallNode = graph.nodes.find(
       (node) =>
-        apiSequenceView?.nodeIds.includes(node.id) &&
+        viewContainsNode(apiSequenceView, node.id) &&
         node.nodeType === 'function_call' &&
         node.metadata.calleeExpression === 'canTransitionTaskStatus' &&
         node.metadata.ownerQualifiedName === 'packages/task-core/src/index.ts#getNextTaskStatus',
     );
-    const canTransitionTargetNode = graph.nodes.find((node) => apiSequenceView?.nodeIds.includes(node.id) && node.qualifiedName === 'packages/task-core/src/index.ts#canTransitionTaskStatus');
+    const canTransitionTargetNode = graph.nodes.find((node) => viewContainsNode(apiSequenceView, node.id) && node.qualifiedName === 'packages/task-core/src/index.ts#canTransitionTaskStatus');
 
     expect(getNextTaskStatusNode).toBeDefined();
     expect(canTransitionCallNode).toBeDefined();
     expect(canTransitionTargetNode).toBeDefined();
-    expect(graph.edges.filter((edge) => apiSequenceView?.edgeIds.includes(edge.id))).toEqual(
+    expect(graph.edges.filter((edge) => viewContainsEdge(apiSequenceView, edge.id))).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           edgeType: 'calls',
@@ -931,12 +1063,12 @@ describe('real project graph engine', () => {
 
     const graph = buildProjectGraph(scan);
     const apiSequenceView = graph.views.find((view) => view.viewType === 'api_sequence');
-    const thirdCallNode = graph.nodes.find((node) => apiSequenceView?.nodeIds.includes(node.id) && node.nodeType === 'function_call' && node.metadata.calleeExpression === 'third');
-    const thirdFunctionNode = graph.nodes.find((node) => apiSequenceView?.nodeIds.includes(node.id) && node.qualifiedName === 'packages/example/src/api.ts#third');
+    const thirdCallNode = graph.nodes.find((node) => viewContainsNode(apiSequenceView, node.id) && node.nodeType === 'function_call' && node.metadata.calleeExpression === 'third');
+    const thirdFunctionNode = graph.nodes.find((node) => viewContainsNode(apiSequenceView, node.id) && node.qualifiedName === 'packages/example/src/api.ts#third');
 
     expect(thirdCallNode).toBeDefined();
     expect(thirdFunctionNode).toBeDefined();
-    expect(graph.edges.filter((edge) => apiSequenceView?.edgeIds.includes(edge.id))).toEqual(
+    expect(graph.edges.filter((edge) => viewContainsEdge(apiSequenceView, edge.id))).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           edgeType: 'calls',

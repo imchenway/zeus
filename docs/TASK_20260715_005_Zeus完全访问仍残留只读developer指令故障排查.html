@@ -1,0 +1,772 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>故障排查：Zeus 完全访问仍残留只读 developer 指令</title>
+  <style>
+    :root {
+      --ink: #102033;
+      --muted: #5a6c80;
+      --paper: #fbfdff;
+      --panel: rgba(255,255,255,.9);
+      --line: #8db3d8;
+      --blue: #1f6fb2;
+      --blue-soft: #e8f3ff;
+      --green: #17785a;
+      --green-soft: #e9f8f2;
+      --amber: #986506;
+      --amber-soft: #fff6de;
+      --red: #a63a3a;
+      --red-soft: #fff0f0;
+      --violet: #6254ad;
+      --violet-soft: #f1efff;
+      --shadow: 0 16px 42px rgba(20, 57, 92, .085);
+      --radius: 20px;
+    }
+
+    * { box-sizing: border-box; }
+
+    html { color-scheme: light; }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
+      background:
+        radial-gradient(circle at 18% 3%, rgba(214,233,255,.78), transparent 30rem),
+        radial-gradient(circle at 78% 6%, rgba(228,246,239,.8), transparent 28rem),
+        linear-gradient(rgba(93,133,173,.045) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(93,133,173,.045) 1px, transparent 1px),
+        linear-gradient(180deg, #fff 0%, #f7fbff 54%, #fbfdff 100%);
+      background-size: auto, auto, 28px 28px, 28px 28px, auto;
+      overflow-x: hidden;
+    }
+
+    button, code, pre { font: inherit; }
+    code, pre { font-family: "SFMono-Regular", "SF Mono", Consolas, "Liberation Mono", Menlo, monospace; }
+
+    main {
+      width: min(1240px, calc(100vw - 32px));
+      margin: 0 auto;
+      padding: 22px 0 44px;
+    }
+
+    .task-code {
+      display: inline-flex;
+      margin-bottom: 8px;
+      color: var(--blue);
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: .08em;
+    }
+
+    h1 {
+      max-width: 1000px;
+      margin: 0 0 10px;
+      font-size: clamp(24px, 2.8vw, 32px);
+      line-height: 1.18;
+      letter-spacing: -.025em;
+    }
+
+    h2, h3, p { margin-top: 0; }
+    h2 { font-size: 16px; line-height: 1.35; }
+    h3 { font-size: 14px; line-height: 1.4; }
+
+    .summary {
+      max-width: 1040px;
+      margin: 0 0 12px;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.7;
+    }
+
+    .status-line {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      min-height: 26px;
+      padding: 4px 9px;
+      border: 1px solid rgba(141,179,216,.52);
+      border-radius: 999px;
+      background: rgba(255,255,255,.82);
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 750;
+    }
+
+    .tag.confirmed { border-color: rgba(166,58,58,.4); background: var(--red-soft); color: var(--red); }
+    .tag.evidence { border-color: rgba(23,120,90,.4); background: var(--green-soft); color: var(--green); }
+    .tag.pending { border-color: rgba(152,101,6,.4); background: var(--amber-soft); color: var(--amber); }
+
+    .template-layout {
+      border: 1px solid rgba(141,179,216,.48);
+      border-radius: 24px;
+      background: rgba(255,255,255,.78);
+      box-shadow: var(--shadow);
+      padding: 18px;
+      min-height: 600px;
+      gap: 12px;
+    }
+
+    .debugging-sequence {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      grid-template-rows: auto auto auto;
+      align-items: start;
+    }
+
+    .lifeline {
+      position: relative;
+      z-index: 3;
+      display: grid;
+      grid-template-rows: auto 22px;
+      justify-items: center;
+      min-width: 0;
+    }
+
+    .participant {
+      width: 100%;
+      min-height: 72px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 5px;
+      padding: 10px 12px;
+      border: 1px solid rgba(141,179,216,.58);
+      border-radius: 16px;
+      background: rgba(255,255,255,.97);
+      text-align: center;
+      overflow-wrap: anywhere;
+    }
+
+    .participant b { font-size: 13px; line-height: 1.3; }
+    .participant span { color: var(--muted); font-size: 12px; line-height: 1.45; }
+    .participant.user { border-color: rgba(98,84,173,.44); background: linear-gradient(180deg,#fff,var(--violet-soft)); }
+    .participant.ui { border-color: rgba(23,120,90,.44); background: linear-gradient(180deg,#fff,var(--green-soft)); }
+    .participant.coordinator { border-color: rgba(166,58,58,.42); background: linear-gradient(180deg,#fff,var(--red-soft)); }
+    .participant.provider { border-color: rgba(152,101,6,.42); background: linear-gradient(180deg,#fff,var(--amber-soft)); }
+
+    .v-edge {
+      width: 2px;
+      min-height: 22px;
+      background: rgba(31,111,178,.5);
+    }
+
+    .sequence-stage {
+      position: relative;
+      z-index: 1;
+      grid-column: 1 / 5;
+      display: grid;
+      gap: 12px;
+      padding: 8px 0 4px;
+      border-top: 1px solid rgba(141,179,216,.34);
+    }
+
+    .lane-guides {
+      position: absolute;
+      inset: 0;
+      z-index: -1;
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      pointer-events: none;
+    }
+
+    .lane-guides span {
+      width: 1px;
+      height: 100%;
+      justify-self: center;
+      background: linear-gradient(180deg, rgba(31,111,178,.28), rgba(31,111,178,.06));
+    }
+
+    .seq-block {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      grid-template-rows: auto auto;
+      gap: 8px 14px;
+      min-height: 96px;
+      padding: 8px 0 10px;
+      border-bottom: 1px dashed rgba(141,179,216,.32);
+    }
+
+    .seq-block:last-of-type { border-bottom: 0; }
+
+    .message-line {
+      position: relative;
+      align-self: center;
+      min-height: 26px;
+      padding: 0 14px 6px;
+      border-bottom: 2px solid var(--blue);
+      color: var(--blue);
+      font-size: 11px;
+      font-weight: 800;
+      line-height: 1.35;
+      text-align: center;
+      overflow-wrap: anywhere;
+    }
+
+    .message-line.forward::after {
+      content: "";
+      position: absolute;
+      right: -1px;
+      bottom: -7px;
+      border-left: 10px solid var(--blue);
+      border-top: 6px solid transparent;
+      border-bottom: 6px solid transparent;
+    }
+
+    .message-line.reverse::before {
+      content: "";
+      position: absolute;
+      left: -1px;
+      bottom: -7px;
+      border-right: 10px solid var(--blue);
+      border-top: 6px solid transparent;
+      border-bottom: 6px solid transparent;
+    }
+
+    .from-1-to-2 { grid-column: 1 / 3; grid-row: 1; }
+    .from-2-to-4 { grid-column: 2 / 5; grid-row: 1; }
+    .from-2-to-3 { grid-column: 2 / 4; grid-row: 1; }
+    .from-3-to-4 { grid-column: 3 / 5; grid-row: 1; }
+    .from-4-to-1 { grid-column: 1 / 5; grid-row: 1; }
+
+    .event-node {
+      position: relative;
+      z-index: 2;
+      align-self: stretch;
+      min-width: 0;
+      min-height: 62px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 4px;
+      padding: 10px 11px;
+      border: 1px solid rgba(141,179,216,.6);
+      border-radius: 14px;
+      background: rgba(255,255,255,.98);
+      box-shadow: 0 8px 20px rgba(20,57,92,.055);
+      overflow-wrap: anywhere;
+    }
+
+    .event-node b { font-size: 12px; line-height: 1.35; }
+    .event-node span { color: var(--muted); font-size: 11px; line-height: 1.5; }
+    .event-node code { font-size: 10.5px; }
+    .event-node.risk { border: 2px solid rgba(166,58,58,.58); background: var(--red-soft); }
+    .event-node.data { border-color: rgba(23,120,90,.46); background: var(--green-soft); }
+    .event-node.ops { border-color: rgba(152,101,6,.46); background: var(--amber-soft); }
+    .event-node.core { border-color: rgba(31,111,178,.52); background: var(--blue-soft); }
+
+    .col-1 { grid-column: 1; grid-row: 2; }
+    .col-2 { grid-column: 2; grid-row: 2; }
+    .col-3 { grid-column: 3; grid-row: 2; }
+    .col-4 { grid-column: 4; grid-row: 2; }
+    .col-2-3 { grid-column: 2 / 4; grid-row: 2; }
+
+    .root-cause {
+      position: relative;
+    }
+
+    .root-cause::before {
+      content: "根因 R1";
+      position: absolute;
+      top: -11px;
+      right: 9px;
+      padding: 3px 7px;
+      border-radius: 999px;
+      background: var(--red);
+      color: #fff;
+      font-size: 10px;
+      font-weight: 900;
+      letter-spacing: .04em;
+    }
+
+    .evidence-steps {
+      grid-column: 1 / 5;
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 4px;
+      padding: 12px;
+      border: 1px solid rgba(141,179,216,.42);
+      border-radius: 18px;
+      background: rgba(255,255,255,.68);
+    }
+
+    .evidence-step {
+      min-height: 90px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 5px;
+      padding: 10px;
+      border: 1px solid rgba(141,179,216,.5);
+      border-radius: 14px;
+      background: rgba(255,255,255,.96);
+      overflow-wrap: anywhere;
+    }
+
+    .evidence-step strong { color: var(--blue); font-size: 12px; }
+    .evidence-step span { color: var(--muted); font-size: 11px; line-height: 1.45; }
+    .evidence-step.root { border: 2px solid rgba(166,58,58,.55); background: var(--red-soft); }
+    .evidence-step.root strong { color: var(--red); }
+
+    .evidence-button {
+      width: fit-content;
+      margin-top: 2px;
+      padding: 4px 7px;
+      border: 1px solid rgba(31,111,178,.34);
+      border-radius: 7px;
+      background: var(--blue-soft);
+      color: var(--blue);
+      font-size: 10.5px;
+      font-weight: 800;
+      cursor: pointer;
+    }
+
+    .evidence-button:hover { border-color: var(--blue); }
+    .evidence-button:focus-visible, summary:focus-visible, dialog button:focus-visible { outline: 3px solid rgba(31,111,178,.22); outline-offset: 2px; }
+
+    .support-grid {
+      display: grid;
+      grid-template-columns: 1.1fr .9fr;
+      gap: 14px;
+      margin-top: 14px;
+    }
+
+    .panel {
+      border: 1px solid rgba(141,179,216,.46);
+      border-radius: var(--radius);
+      background: var(--panel);
+      box-shadow: var(--shadow);
+      padding: 16px;
+    }
+
+    .panel > header {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 10px;
+    }
+
+    .panel > header h2 { margin: 0; }
+    .panel > header small { color: var(--muted); font-size: 11px; }
+
+    .verdict-flow {
+      display: grid;
+      grid-template-columns: 1fr 44px 1fr 44px 1.2fr;
+      align-items: stretch;
+      gap: 8px;
+    }
+
+    .verdict {
+      min-height: 116px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 6px;
+      padding: 12px;
+      border: 1px solid rgba(141,179,216,.5);
+      border-radius: 15px;
+      background: #fff;
+      overflow-wrap: anywhere;
+    }
+
+    .verdict b { font-size: 12px; line-height: 1.4; }
+    .verdict span { color: var(--muted); font-size: 11px; line-height: 1.5; }
+    .verdict.excluded { border-color: rgba(23,120,90,.38); background: var(--green-soft); }
+    .verdict.confirmed { border: 2px solid rgba(166,58,58,.54); background: var(--red-soft); }
+
+    .mini-arrow {
+      position: relative;
+      align-self: center;
+      height: 2px;
+      background: var(--blue);
+    }
+
+    .mini-arrow::after {
+      content: "";
+      position: absolute;
+      right: -1px;
+      top: -5px;
+      border-left: 9px solid var(--blue);
+      border-top: 6px solid transparent;
+      border-bottom: 6px solid transparent;
+    }
+
+    .action-track {
+      display: grid;
+      gap: 10px;
+    }
+
+    .action {
+      position: relative;
+      padding: 11px 12px 11px 38px;
+      border-left: 3px solid var(--amber);
+      background: var(--amber-soft);
+      border-radius: 0 12px 12px 0;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.55;
+      overflow-wrap: anywhere;
+    }
+
+    .action::before {
+      content: attr(data-step);
+      position: absolute;
+      left: 10px;
+      top: 10px;
+      width: 19px;
+      height: 19px;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      background: var(--amber);
+      color: #fff;
+      font-size: 10px;
+      font-weight: 900;
+    }
+
+    .action strong { display: block; margin-bottom: 3px; color: var(--ink); font-size: 12px; }
+
+    .verification {
+      margin-top: 14px;
+      display: grid;
+      grid-template-columns: 1.1fr .9fr;
+      gap: 14px;
+    }
+
+    .evidence-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 11px;
+      line-height: 1.5;
+    }
+
+    .evidence-table th, .evidence-table td {
+      padding: 9px 8px;
+      border-bottom: 1px solid rgba(141,179,216,.3);
+      text-align: left;
+      vertical-align: top;
+      overflow-wrap: anywhere;
+    }
+
+    .evidence-table th { color: var(--muted); font-weight: 800; }
+    .evidence-table td:first-child { width: 38px; color: var(--blue); font-weight: 900; }
+
+    .final-state {
+      display: grid;
+      gap: 10px;
+    }
+
+    .state-row {
+      padding: 11px 12px;
+      border: 1px solid rgba(141,179,216,.42);
+      border-radius: 13px;
+      background: #fff;
+      font-size: 11px;
+      line-height: 1.55;
+      overflow-wrap: anywhere;
+    }
+
+    .state-row strong { display: block; margin-bottom: 4px; font-size: 12px; }
+    .state-row.ok { border-color: rgba(23,120,90,.42); background: var(--green-soft); }
+    .state-row.warn { border-color: rgba(152,101,6,.42); background: var(--amber-soft); }
+
+    dialog {
+      width: min(760px, calc(100vw - 28px));
+      max-height: min(78vh, 720px);
+      padding: 0;
+      border: 1px solid rgba(141,179,216,.56);
+      border-radius: 18px;
+      background: var(--paper);
+      color: var(--ink);
+      box-shadow: 0 30px 90px rgba(16,32,51,.24);
+    }
+
+    dialog::backdrop { background: rgba(16,32,51,.38); }
+    .dialog-body { padding: 18px; }
+    .dialog-head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
+    .dialog-head h2 { margin: 0; }
+    .dialog-head button { border: 0; border-radius: 8px; background: var(--blue-soft); color: var(--blue); padding: 6px 9px; cursor: pointer; }
+    #evidence-detail { margin: 14px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--muted); font-size: 12px; line-height: 1.65; }
+
+    @media (max-width: 900px) {
+      .support-grid, .verification { grid-template-columns: 1fr; }
+      .verdict-flow { grid-template-columns: 1fr; }
+      .mini-arrow { width: 2px; height: 24px; justify-self: center; }
+      .mini-arrow::after { right: -5px; top: 18px; border-left: 6px solid transparent; border-right: 6px solid transparent; border-top: 9px solid var(--blue); border-bottom: 0; }
+    }
+
+    @media (max-width: 780px) {
+      main { width: min(100vw - 20px, 760px); padding-top: 14px; }
+      .template-layout { display: grid; grid-template-columns: 1fr; grid-template-rows: auto; padding: 12px; }
+      .lifeline { display: none; }
+      .sequence-stage, .evidence-steps { grid-column: 1; }
+      .lane-guides { display: none; }
+      .seq-block { display: grid; grid-template-columns: 1fr; grid-template-rows: auto; gap: 8px; min-height: 0; }
+      .seq-block > * { grid-column: 1 !important; grid-row: auto !important; }
+      .message-line {
+        width: 100%;
+        min-height: 52px;
+        padding: 0 8px 36px;
+        border: 0;
+        background: linear-gradient(var(--blue), var(--blue)) center bottom 10px / 2px 22px no-repeat;
+        justify-self: stretch;
+        color: var(--blue);
+      }
+      .message-line.forward::after, .message-line.reverse::before {
+        left: calc(50% - 6px);
+        right: auto;
+        bottom: 0;
+        border-left: 6px solid transparent;
+        border-right: 6px solid transparent;
+        border-top: 10px solid var(--blue);
+        border-bottom: 0;
+      }
+      .evidence-steps { grid-template-columns: 1fr; }
+      .event-node { width: 100%; }
+      .evidence-button, .dialog-head button { min-height: 44px; padding-inline: 12px; }
+      .panel > header { align-items: flex-start; flex-direction: column; gap: 4px; }
+      .evidence-table { display: block; overflow-x: auto; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; animation: none !important; transition: none !important; }
+    }
+  </style>
+</head>
+<body>
+<main data-diagram-type="fault-debugging"
+      data-template-family="fault-debugging"
+      data-template-id="debugging-sequence"
+      data-template-layout="debugging-sequence">
+  <div class="task-code">TASK_20260715_005</div>
+  <h1 data-slot="title">故障排查：Zeus 完全访问仍残留只读 developer 指令</h1>
+  <p class="summary" data-slot="summary">结论已由截图、正式运行库、原生 rollout JSONL 与当前代码交叉确认：Zeus 已把后续轮次切到 <code>danger-full-access / never</code>，但复用的 Codex thread 仍保留创建时注入的“只读任务”developer 文本。动态工具权限与持久线程指令形成两个互相冲突的事实源，模型因此继续按只读行为约束执行。</p>
+  <div class="status-line" aria-label="排查状态">
+    <span class="tag confirmed">根因已确认</span>
+    <span class="tag evidence">运行态证据闭环</span>
+    <span class="tag pending">修复未实施 · DEVELOP 未授权</span>
+  </div>
+
+  <section class="template-layout debugging-sequence" aria-label="Zeus 权限模式切换与线程指令残留排障时序图">
+    <div class="lifeline">
+      <div class="participant user"><b>用户 / 任务</b><span>截图操作与 task 能力字段</span></div>
+      <div class="v-edge"></div>
+    </div>
+    <div class="lifeline">
+      <div class="participant ui"><b>Zeus UI + SQLite</b><span>permission_mode 显示与持久化</span></div>
+      <div class="v-edge"></div>
+    </div>
+    <div class="lifeline">
+      <div class="participant coordinator"><b>Zeus Coordinator</b><span>thread/start 与 turn/start 组装</span></div>
+      <div class="v-edge"></div>
+    </div>
+    <div class="lifeline">
+      <div class="participant provider"><b>Codex thread / 模型</b><span>持久 developer 消息 + 每轮权限</span></div>
+      <div class="v-edge"></div>
+    </div>
+
+    <div class="sequence-stage">
+      <div class="lane-guides" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+
+      <div class="seq-block">
+        <div class="message-line forward from-1-to-2">T0 · 2026-07-15 15:38 创建会话</div>
+        <article class="event-node ops col-1">
+          <b>任务能力字段全部为 0</b>
+          <span><code>allow_code_changes=0</code>、<code>allow_tests=0</code>、<code>allow_git_commit=0</code>。</span>
+        </article>
+        <article class="event-node data col-2">
+          <b>新会话默认只读</b>
+          <span>当时的会话从任务能力映射成 read-only；provider thread 尚未存在。</span>
+        </article>
+      </div>
+
+      <div class="seq-block">
+        <div class="message-line forward from-2-to-4">T1 · thread/start 同时发送沙箱与 developerInstructions</div>
+        <article class="event-node risk col-3">
+          <b>Zeus 注入模式相关高优先级文本</b>
+          <span><code>只读任务：不得修改代码或文件。</code><br /><code>不得运行会修改项目状态的测试。</code></span>
+        </article>
+        <article class="event-node ops col-4">
+          <b>thread 持久保存创建时上下文</b>
+          <span>rollout 第 3 行记录 role=developer；第一、二轮为 <code>untrusted / read-only</code>。</span>
+        </article>
+      </div>
+
+      <div class="seq-block">
+        <div class="message-line forward from-1-to-2">T2 · 用户把既有会话切到“完全访问”</div>
+        <article class="event-node core col-1">
+          <b>截图底部显示“完全访问”</b>
+          <span>这不是视觉误读；正式数据库中的会话值也为 <code>full-access</code>。</span>
+        </article>
+        <article class="event-node data col-2">
+          <b>PATCH 只更新 permission_mode</b>
+          <span><code>UPDATE conversations SET permission_mode = ...</code>；没有 thread 指令迁移或轮换。</span>
+        </article>
+      </div>
+
+      <div class="seq-block">
+        <div class="message-line forward from-2-to-3">T3a · 下一轮从 SQLite 读取 full-access</div>
+        <article class="event-node data col-2">
+          <b>UI / snapshot 已一致</b>
+          <span>会话空闲态允许切换，后续 submit 使用最新 <code>conversation.permissionMode</code>。</span>
+        </article>
+        <article class="event-node core col-3">
+          <b>权限映射本身正确</b>
+          <span><code>full-access → dangerFullAccess + approvalPolicy: never</code>。</span>
+        </article>
+      </div>
+
+      <div class="seq-block">
+        <div class="message-line forward from-3-to-4">T3b · turn/start 只发送新沙箱，不发送 developerInstructions</div>
+        <article class="event-node risk root-cause col-3">
+          <b>已有 providerThreadId 时跳过 thread/start</b>
+          <span><code>developerInstructionsFor(context)</code> 只出现在首次 <code>startThread</code>；后续 <code>startTurn</code> 没有该字段。</span>
+        </article>
+        <article class="event-node risk col-4">
+          <b>同一 thread 同时拥有两套冲突事实</b>
+          <span>新：<code>danger-full-access / never</code>。旧：developer 仍写“只读任务”。历史高优先级文本没有被撤销。</span>
+        </article>
+      </div>
+
+      <div class="seq-block">
+        <div class="message-line reverse from-4-to-1">T4 · 18:46–19:21 四轮均已完全访问，但模型仍按旧 developer 文本拒绝写入</div>
+        <article class="event-node core col-1">
+          <b>用户看到“系统层面仍只读”</b>
+          <span>截图中的回答明确引用线程创建时的原文，并错误地把它当成仍有效的唯一权限事实。</span>
+        </article>
+        <article class="event-node risk col-4">
+          <b>行为结果：工具可写，模型自我约束为只读</b>
+          <span>这不是当前 filesystem sandbox 在拦截，而是 Zeus 留在 thread 内的陈旧 developer 指令在约束模型。</span>
+        </article>
+      </div>
+    </div>
+
+    <div class="evidence-steps" aria-label="证据到根因闭环">
+      <div class="evidence-step">
+        <strong>E1 · 截图</strong>
+        <span>19:39 UI 为“完全访问”，回答仍引用“只读任务”。</span>
+        <button class="evidence-button" type="button" data-evidence="E1" data-detail="截图：/Users/david/Library/Containers/com.wiheads.paste/Data/tmp/images/Zeus 2026-07-15 19.39.30.png&#10;&#10;可见事实：composer 权限选择器为“完全访问”；同屏 assistant 回答仍引用“只读任务：不得修改代码或文件”。">查看原始锚点</button>
+      </div>
+      <div class="evidence-step">
+        <strong>E2 · SQLite</strong>
+        <span>会话为 full-access；关联任务三个 allow 字段均为 0。</span>
+        <button class="evidence-button" type="button" data-evidence="E2" data-detail="数据库：/Users/david/Library/Application Support/@zeus/desktop/zeus.db&#10;&#10;conversation_id=conversation_f6f2cd95664f2efa257b1b80&#10;permission_mode=full-access&#10;provider_thread_id=019f64b6-46a7-7f33-9626-be5b7f12b290&#10;task_id=task_p-vaz0t3C-OV&#10;allow_code_changes=0&#10;allow_tests=0&#10;allow_git_commit=0">查看原始锚点</button>
+      </div>
+      <div class="evidence-step">
+        <strong>E3 · JSONL</strong>
+        <span>第 3 行持久化旧 developer 文本；后四轮是 danger-full-access。</span>
+        <button class="evidence-button" type="button" data-evidence="E3" data-detail="rollout：/Users/david/.codex/sessions/2026/07/15/rollout-2026-07-15T15-38-15-019f64b6-46a7-7f33-9626-be5b7f12b290.jsonl&#10;&#10;line 3：role=developer，包含“只读任务：不得修改代码或文件”。&#10;line 8、18：untrusted / read-only。&#10;line 259：新一轮 permissions instructions 已是 danger-full-access。&#10;line 262、272、299、309：approval_policy=never，sandbox_policy=danger-full-access。">查看原始锚点</button>
+      </div>
+      <div class="evidence-step root">
+        <strong>R1 · 状态事实源分裂</strong>
+        <span>动态 permission_mode 能改 turn 权限，不能改已持久化的 thread developer 指令。</span>
+        <button class="evidence-button" type="button" data-evidence="R1" data-detail="代码链：&#10;packages/local-server/src/index.ts:1734-1755 仅更新 permission_mode。&#10;packages/storage/src/index.ts:2268-2273 仅执行 conversations UPDATE。&#10;packages/local-server/src/codexNativeConversationCoordinator.ts:477-486 只有首次 thread/start 注入 developerInstructions。&#10;packages/local-server/src/codexNativeConversationCoordinator.ts:507-520 后续 turn/start 只下发 sandbox/approval。&#10;packages/ai-runtime/src/codexAppServerManager.ts:647-659 turn/start RPC 无 developerInstructions 字段。">查看代码锚点</button>
+      </div>
+      <div class="evidence-step">
+        <strong>V0 · 当前状态</strong>
+        <span>根因确认；未改源码、未运行行为测试、未声称修复。</span>
+      </div>
+    </div>
+  </section>
+
+  <section class="support-grid" data-slot="evidence-and-notes">
+    <article class="panel">
+      <header><h2>候选根因裁决</h2><small>因为 E1 + E2 + E3，所以 R1 成立</small></header>
+      <div class="verdict-flow">
+        <div class="verdict excluded">
+          <b>H1 排除 · 当前 sandbox 仍是只读</b>
+          <span>JSONL 后四轮明确记录 <code>approval_policy=never</code>、<code>sandbox_policy=danger-full-access</code>。</span>
+        </div>
+        <div class="mini-arrow" aria-hidden="true"></div>
+        <div class="verdict excluded">
+          <b>H2 排除 · 仓库 AGENTS.md 注入只读</b>
+          <span>截图原文出现在 rollout 的 role=developer 消息；当前 Zeus 仓库也不存在这段旧字面量。</span>
+        </div>
+        <div class="mini-arrow" aria-hidden="true"></div>
+        <div class="verdict confirmed">
+          <b>R1 成立 · thread 创建态与 turn 运行态未同步</b>
+          <span>首次 <code>thread/start</code> 固化模式文本；切换权限只更新数据库和后续 <code>turn/start</code>，旧 developer 文本随线程永久复用。</span>
+        </div>
+      </div>
+    </article>
+
+    <article class="panel">
+      <header><h2>修复方向</h2><small>PLAN 结论 · 尚未实施</small></header>
+      <div class="action-track">
+        <div class="action" data-step="1"><strong>推荐：thread 级 developer 文本只保留稳定边界</strong>项目根、Git 历史动作等稳定约束可保留；会随 permission_mode 变化的“只读 / 自动 / 完全访问”不要固化到 thread 历史。</div>
+        <div class="action" data-step="2"><strong>每轮权限只由同一 permission profile 驱动</strong><code>turn/start</code> 的 sandbox / approval policy 与 UI、SQLite 使用同一事实源；若协议要求文字提示，必须使用可随 turn 更新的受支持字段。</div>
+        <div class="action" data-step="3"><strong>既有线程需要显式迁移策略</strong>历史 developer 消息不可假装已删除。可选择新建 provider thread 并保留可审计引用，或在模式变更时提示“该线程需重建”；不得静默显示成功却继续复用旧指令。</div>
+      </div>
+    </article>
+  </section>
+
+  <section class="verification">
+    <article class="panel">
+      <header><h2>证据索引</h2><small>本轮只读取证</small></header>
+      <table class="evidence-table">
+        <thead><tr><th>ID</th><th>来源</th><th>观察</th><th>指向</th></tr></thead>
+        <tbody>
+          <tr><td>E1</td><td>用户截图</td><td>同屏出现“完全访问”和旧只读 developer 原文。</td><td>UI 状态与模型行为冲突。</td></tr>
+          <tr><td>E2</td><td><code>zeus.db</code></td><td>会话 <code>permission_mode=full-access</code>；task allow 字段均为 0。</td><td>初始只读来源与当前会话状态均可确认。</td></tr>
+          <tr><td>E3</td><td>原生 rollout JSONL</td><td>旧文本在 role=developer；后四轮上下文已是 danger-full-access / never。</td><td>排除当前工具沙箱仍只读。</td></tr>
+          <tr><td>E4</td><td><code>codexNativeConversationCoordinator.ts:477-520</code></td><td>developerInstructions 只随首次 thread/start；复用线程只发 turn/start 权限。</td><td>锁定状态分裂发生点。</td></tr>
+          <tr><td>E5</td><td><code>codexAppServerManager.ts:647-659</code></td><td>turn/start 参数没有 developerInstructions。</td><td>确认后续轮次无法覆盖 thread 旧文本。</td></tr>
+        </tbody>
+      </table>
+    </article>
+
+    <article class="panel">
+      <header><h2>验收、风险与回滚</h2><small>本轮没有行为写入</small></header>
+      <div class="final-state">
+        <div class="state-row ok"><strong>已确认</strong>这不是 Codex 当前系统沙箱仍只读，也不是仓库 AGENTS.md；是 Zeus 在同一 native thread 中保留了模式切换前的 developer 指令。</div>
+        <div class="state-row warn"><strong>未验证 / 未实施</strong>尚未建立“read-only 创建 → 切 full-access → 下一轮可写且不再自称只读”的红灯测试，也未修改 instruction 生命周期。</div>
+        <div class="state-row"><strong>未来验收必须覆盖</strong>新建三种模式、既有线程三向切换、应用重启后 resume、旧版本线程迁移、Git 禁止项保持、真实正式包 JSONL 与 UI 同源。</div>
+        <div class="state-row"><strong>回滚边界</strong>本轮仅新增此诊断 HTML，无源码回滚项；未来修复应能独立回滚 instruction 生命周期，不改写原始 rollout 或历史 conversation item。</div>
+      </div>
+    </article>
+  </section>
+</main>
+
+<dialog id="evidence-dialog" aria-labelledby="evidence-title">
+  <div class="dialog-body">
+    <div class="dialog-head">
+      <h2 id="evidence-title">证据详情</h2>
+      <button type="button" id="evidence-close">关闭</button>
+    </div>
+    <pre id="evidence-detail"></pre>
+  </div>
+</dialog>
+
+<script>
+  (() => {
+    const dialog = document.getElementById('evidence-dialog');
+    const title = document.getElementById('evidence-title');
+    const detail = document.getElementById('evidence-detail');
+    const close = document.getElementById('evidence-close');
+
+    document.querySelectorAll('[data-evidence]').forEach((button) => {
+      button.addEventListener('click', () => {
+        title.textContent = `${button.dataset.evidence} · 证据详情`;
+        detail.textContent = button.dataset.detail || '无补充内容。';
+        dialog.showModal();
+      });
+    });
+
+    close.addEventListener('click', () => dialog.close());
+    dialog.addEventListener('click', (event) => {
+      if (event.target === dialog) dialog.close();
+    });
+  })();
+</script>
+</body>
+</html>

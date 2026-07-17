@@ -1,4 +1,5 @@
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -25,6 +26,64 @@ describe('real project scanner', () => {
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
+  });
+
+  it('skips generated Java and IDE directories by default so project scans do not ingest build output', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'zeus-scan-java-generated-ignore-'));
+    try {
+      await mkdir(join(dir, 'src', 'main', 'java'), { recursive: true });
+      await mkdir(join(dir, 'target', 'generated-sources'), { recursive: true });
+      await mkdir(join(dir, 'build', 'generated'), { recursive: true });
+      await mkdir(join(dir, '.gradle', 'cache'), { recursive: true });
+      await mkdir(join(dir, '.idea'), { recursive: true });
+      await writeFile(join(dir, 'src', 'main', 'java', 'RealService.java'), 'class RealService { void run() {} }');
+      await writeFile(join(dir, 'target', 'generated-sources', 'GeneratedTarget.java'), 'class GeneratedTarget { void run() {} }');
+      await writeFile(join(dir, 'build', 'generated', 'GeneratedBuild.java'), 'class GeneratedBuild { void run() {} }');
+      await writeFile(join(dir, '.gradle', 'cache', 'GeneratedGradle.java'), 'class GeneratedGradle { void run() {} }');
+      await writeFile(join(dir, '.idea', 'workspace.xml'), '<project><component name="GeneratedIdea"/></project>');
+
+      const result = await scanProjectSource({
+        rootPath: dir,
+        projectName: 'Java Generated Ignore Fixture',
+      });
+
+      expect(result.files.map((file) => file.relativePath)).toEqual(['src/main/java/RealService.java']);
+      expect(result.symbols.map((symbol) => symbol.name)).toContain('RealService');
+      expect(result.symbols.map((symbol) => symbol.name)).not.toContain('GeneratedTarget');
+      expect(result.symbols.map((symbol) => symbol.name)).not.toContain('GeneratedBuild');
+      expect(result.symbols.map((symbol) => symbol.name)).not.toContain('GeneratedGradle');
+      expect(result.symbols.map((symbol) => symbol.name)).not.toContain('GeneratedIdea');
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('precomputes Java import targets once instead of rebuilding the Java file set for every source file', () => {
+    const source = readFileSync(new URL('../src/index.ts', import.meta.url), 'utf8');
+
+    expect(source).toContain('const knownRelativePaths = buildKnownRelativePathSet(files);');
+    expect(source).toContain('extractSymbols(input.rootPath, file, content, knownRelativePaths, importTargets, javaImportTargets)');
+    expect(source).toContain('const javaImportTargets = buildJavaImportTargetMap(files);');
+    expect(source).toContain('extractJavaImportSymbols(file, content, language, javaImportTargets)');
+    expect(source).not.toContain('function extractImportExportSymbols(file: ScannedFile, content: string, language: string, allFiles: ScannedFile[]');
+    expect(source).not.toContain("new Set(allFiles.filter((item) => item.extension === '.java')");
+  });
+
+  it('reads source files once through a bounded concurrent content loader instead of blocking scan on serial double reads', () => {
+    const source = readFileSync(new URL('../src/index.ts', import.meta.url), 'utf8');
+
+    expect(source).toContain('const fileContents = await readScannedFilesWithContent(fileCandidates);');
+    expect(source).toContain('async function readScannedFilesWithContent');
+    expect(source).toContain('SCAN_FILE_READ_CONCURRENCY');
+    expect(source).not.toContain("const content = await readFile(file.absolutePath, 'utf8');");
+  });
+
+  it('uses line-bounded Java method extraction so DTO classes do not trigger catastrophic regex backtracking', () => {
+    const source = readFileSync(new URL('../src/index.ts', import.meta.url), 'utf8');
+
+    expect(source).toContain('function extractJavaMethodMatches');
+    expect(source).toContain('const signatureMatch = line.match(javaMethodSignaturePattern);');
+    expect(source).not.toContain('classBody.matchAll(/((?:@\\w+(?:\\([^)]*\\))?\\s*)*)\\bpublic\\s+(?:[\\w<>?,\\s]+\\s+)+');
   });
 
   it('scans the current Zeus repository and returns source-backed symbols', async () => {
@@ -361,8 +420,9 @@ describe('real project scanner', () => {
       rootPath: '/Users/david/hypha/zeus',
       projectName: 'Zeus',
     });
-    const promiseThenControls = result.symbols.filter((symbol) => symbol.symbolType === 'control_flow' && symbol.filePath === '/Users/david/hypha/zeus/apps/desktop/src/main/main.ts' && symbol.metadata.controlType === 'promise_then');
-    const promiseThenCalls = result.symbols.filter((symbol) => symbol.symbolType === 'function_call' && symbol.filePath === '/Users/david/hypha/zeus/apps/desktop/src/main/main.ts' && symbol.metadata.promiseChainHandler === 'then');
+    const startupCoordinatorPath = '/Users/david/hypha/zeus/apps/desktop/src/main/startupCoordinator.ts';
+    const promiseThenControls = result.symbols.filter((symbol) => symbol.symbolType === 'control_flow' && symbol.filePath === startupCoordinatorPath && symbol.metadata.controlType === 'promise_then');
+    const promiseThenCalls = result.symbols.filter((symbol) => symbol.symbolType === 'function_call' && symbol.filePath === startupCoordinatorPath && symbol.metadata.promiseChainHandler === 'then');
 
     expect(promiseThenControls).toEqual(
       expect.arrayContaining([
@@ -379,7 +439,7 @@ describe('real project scanner', () => {
       expect.arrayContaining([
         expect.objectContaining({
           metadata: expect.objectContaining({
-            calleeExpression: 'app.whenReady',
+            calleeExpression: 'Promise.resolve',
             promiseChainHandler: 'then',
             isPromiseChainRoot: true,
           }),

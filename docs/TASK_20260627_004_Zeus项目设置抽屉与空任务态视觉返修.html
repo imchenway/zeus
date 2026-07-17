@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>TASK_20260627_004 Zeus项目设置抽屉与空任务态视觉返修</title>
+  <style>
+    * { box-sizing: border-box; }
+    :root {
+      color-scheme: light;
+      --bg: oklch(98.6% 0.002 255);
+      --panel: oklch(99.6% 0.001 255);
+      --muted: oklch(50% 0.004 255);
+      --text: oklch(24% 0.004 255);
+      --line: oklch(88% 0.003 255);
+      --soft: oklch(95.5% 0.003 255);
+      --accent: oklch(56% 0.145 252);
+      --danger: oklch(52% 0.12 28);
+      --ok: oklch(52% 0.08 145);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    }
+    body { margin: 0; background: var(--bg); color: var(--text); }
+    main { max-width: 1180px; margin: 0 auto; padding: 28px; }
+    header { display: grid; gap: 6px; margin-bottom: 18px; }
+    h1 { font-size: clamp(20px, 2.4vw, 28px); line-height: 1.18; margin: 0; letter-spacing: -0.02em; }
+    .subtitle { color: var(--muted); font-size: 13px; margin: 0; }
+    .story { background: var(--panel); border: 1px solid var(--line); border-radius: 18px; display: grid; gap: 14px; padding: 18px; box-shadow: 0 18px 40px oklch(35% 0.006 255 / 0.06); }
+    .lane { display: grid; gap: 10px; grid-template-columns: 1fr auto 1fr auto 1fr auto 1fr; align-items: stretch; }
+    .node { background: var(--soft); border: 1px solid var(--line); border-radius: 14px; padding: 12px; min-width: 0; text-align: left; color: inherit; font: inherit; cursor: pointer; }
+    .node strong { display: block; font-size: 14px; margin-bottom: 4px; overflow-wrap: anywhere; }
+    .node small { color: var(--muted); display: block; font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
+    .node.root { border-color: color-mix(in oklch, var(--danger) 42%, var(--line)); background: color-mix(in oklch, var(--danger) 7%, var(--panel)); }
+    .node.fix { border-color: color-mix(in oklch, var(--accent) 34%, var(--line)); background: color-mix(in oklch, var(--accent) 6%, var(--panel)); }
+    .node.ok { border-color: color-mix(in oklch, var(--ok) 34%, var(--line)); background: color-mix(in oklch, var(--ok) 7%, var(--panel)); }
+    .arrow { align-self: center; color: var(--muted); font-weight: 700; padding-inline: 2px; }
+    .evidence { display: grid; gap: 10px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .card { border-top: 1px solid var(--line); padding-top: 12px; min-width: 0; }
+    .card h2 { font-size: 13px; margin: 0 0 7px; }
+    .card ul { margin: 0; padding-left: 18px; color: var(--muted); font-size: 12px; line-height: 1.55; }
+    .matrix { border-collapse: collapse; width: 100%; font-size: 12px; }
+    .matrix th, .matrix td { border-top: 1px solid var(--line); padding: 8px; text-align: left; vertical-align: top; }
+    .matrix th { color: var(--muted); font-weight: 650; }
+    .tag { display: inline-flex; align-items: center; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); font-size: 11px; padding: 2px 7px; }
+    .dialog { border: 0; border-radius: 16px; box-shadow: 0 24px 80px oklch(20% 0.006 255 / 0.18); max-width: min(560px, calc(100vw - 32px)); padding: 0; }
+    .dialog article { padding: 18px; display: grid; gap: 8px; }
+    .dialog h3 { margin: 0; font-size: 16px; }
+    .dialog p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.55; }
+    .dialog button { justify-self: end; border: 1px solid var(--line); background: var(--panel); border-radius: 8px; min-height: 30px; padding: 0 10px; }
+    button:focus-visible { outline: 3px solid oklch(62% 0.16 252 / 0.2); outline-offset: 2px; }
+    @media (max-width: 760px) {
+      main { padding: 16px; }
+      .lane { grid-template-columns: minmax(0, 1fr); }
+      .arrow { text-align: center; transform: rotate(90deg); }
+      .evidence { grid-template-columns: minmax(0, 1fr); }
+    }
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Zeus 项目设置抽屉与空任务态视觉返修</h1>
+      <p class="subtitle">故障故事线：截图反馈 → 根因定位 → 专属 UI 契约 → 测试闭环。节点可点击查看详情。</p>
+    </header>
+    <section class="story" aria-label="故障排查图">
+      <div class="lane">
+        <button class="node" data-title="现象" data-detail="项目设置抽屉像后台表单：满宽、顶部重复标题、字段右侧裁切。任务空态只有一条满宽灰底标题，没有下一步说明。">
+          <strong>现象</strong><small>抽屉不自适应；空态粗糙。</small>
+        </button>
+        <span class="arrow" aria-hidden="true">→</span>
+        <button class="node" data-title="影响" data-detail="普通窗口宽度下配置项难以阅读和编辑；空任务页没有告诉用户从哪里开始，降低任务页可用性。">
+          <strong>影响</strong><small>编辑受阻；新用户缺少下一步。</small>
+        </button>
+        <span class="arrow" aria-hidden="true">→</span>
+        <button class="node root" data-title="根因" data-detail="抽屉继承全局 980px 宽度和 viewport 断点，项目配置行又被全局表单行覆盖。空态复用通用 inline recovery row，没有任务页专属信息架构。">
+          <strong>根因</strong><small>错误继承全局抽屉/表单样式。</small>
+        </button>
+        <span class="arrow" aria-hidden="true">→</span>
+        <button class="node fix" data-title="修法" data-detail="项目抽屉改为 760px 窄幅 sheet，使用 container query 在 680px 下单列回退；空态增加说明文案与收窄布局，不重复堆按钮。">
+          <strong>修法</strong><small>窄幅 sheet + 专属 empty state。</small>
+        </button>
+      </div>
+      <div class="evidence" aria-label="证据和验证">
+        <section class="card">
+          <h2>证据阶梯</h2>
+          <ul>
+            <li>E1：用户截图显示抽屉控件右侧裁切。</li>
+            <li>E2：CSS 中全局 drawer 宽度为 980px。</li>
+            <li>E3：空态 DOM 只有标题，没有帮助文案。</li>
+          </ul>
+        </section>
+        <section class="card">
+          <h2>行动闭环</h2>
+          <ul>
+            <li>新增 `adapts the project configuration drawer`。</li>
+            <li>新增 `purposeful compact state`。</li>
+            <li>RED 后再写样式和 copy。</li>
+          </ul>
+        </section>
+        <section class="card">
+          <h2>验证状态</h2>
+          <ul>
+            <li><span class="tag">已通过</span> 项目抽屉聚焦测试。</li>
+            <li><span class="tag">已通过</span> 空任务态聚焦测试。</li>
+            <li><span class="tag">待最终</span> typecheck / lint / package。</li>
+          </ul>
+        </section>
+      </div>
+      <table class="matrix" aria-label="测试矩阵">
+        <thead><tr><th>范围</th><th>修改后</th><th>回滚</th></tr></thead>
+        <tbody>
+          <tr><td>项目设置抽屉</td><td>760px sheet，680px 容器内单列，控件不撑破。</td><td>删除项目抽屉最终覆盖 CSS。</td></tr>
+          <tr><td>任务空状态</td><td>标题 + 下一步说明，内容收窄，仍保留 toolbar 主操作。</td><td>删除 task-empty-state 结构与样式。</td></tr>
+          <tr><td>后端/API/DB</td><td>不变。</td><td>无需迁移回滚。</td></tr>
+        </tbody>
+      </table>
+    </section>
+  </main>
+  <dialog class="dialog" id="nodeDialog">
+    <article>
+      <h3 id="dialogTitle"></h3>
+      <p id="dialogBody"></p>
+      <button type="button" id="dialogClose">关闭</button>
+    </article>
+  </dialog>
+  <script>
+    const dialog = document.getElementById('nodeDialog');
+    const title = document.getElementById('dialogTitle');
+    const body = document.getElementById('dialogBody');
+    const closeButton = document.getElementById('dialogClose');
+    let lastTrigger = null;
+    document.querySelectorAll('.node').forEach((node) => {
+      node.addEventListener('click', () => {
+        lastTrigger = node;
+        title.textContent = node.dataset.title || '';
+        body.textContent = node.dataset.detail || '';
+        dialog.showModal();
+        closeButton.focus();
+      });
+    });
+    function closeDialog() {
+      dialog.close();
+      if (lastTrigger) lastTrigger.focus();
+    }
+    closeButton.addEventListener('click', closeDialog);
+    dialog.addEventListener('click', (event) => { if (event.target === dialog) closeDialog(); });
+    dialog.addEventListener('cancel', (event) => { event.preventDefault(); closeDialog(); });
+  </script>
+</body>
+</html>

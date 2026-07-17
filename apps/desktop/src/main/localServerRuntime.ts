@@ -1,7 +1,8 @@
 import { randomBytes } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { startZeusLocalServer, type RunningZeusLocalServer } from '@zeus/local-server';
+import { createCodexAppServerManager, type CodexAppServerManager } from '@zeus/ai-runtime';
+import { hasCodexFinalizationOwnershipClaim, startZeusLocalServer, type RunningZeusLocalServer } from '@zeus/local-server';
 
 export interface RendererLocalServerConfig {
   baseUrl: string;
@@ -21,6 +22,12 @@ export interface StartDesktopLocalServerOptions {
   projectRoot: string;
   telegramToken?: string;
   telegramAllowedUserIds?: number[];
+  codexNativeEnabled?: boolean;
+  codexRuntimeCommandPath?: string;
+  codexLegacyImportRoot?: string;
+  taskAttachmentRoot?: string;
+  codexAppServerManagerFactory?: () => CodexAppServerManager;
+  localServerFactory?: typeof startZeusLocalServer;
   restartDelayMs?: number;
   onRestarted?: (config: RendererLocalServerConfig) => void | Promise<void>;
 }
@@ -32,6 +39,10 @@ export interface DesktopLocalAppConfigFile {
   localLogDirectory: string;
   localServerHost: '127.0.0.1';
   updatedAt: string;
+}
+
+export function parseCodexNativeEnabled(value: string | undefined): boolean {
+  return value !== '0';
 }
 
 /**
@@ -58,33 +69,71 @@ export async function startDesktopLocalServer(options: StartDesktopLocalServerOp
   const dbPath = join(options.userDataPath, 'zeus.db');
   const configPath = join(options.userDataPath, 'zeus.config.json');
   const restartDelayMs = options.restartDelayMs ?? 1_000;
+  const localServerFactory = options.localServerFactory ?? startZeusLocalServer;
+  const codexAppServerManager = (options.codexAppServerManagerFactory ?? createCodexAppServerManager)();
   let closingIntentionally = false;
   let restartTimer: ReturnType<typeof setTimeout> | undefined;
+  let restartPromise: Promise<void> | undefined;
+  let closePromise: Promise<void> | undefined;
+  let shutdownOwner: RunningZeusLocalServer | undefined;
+  let shutdownOwnerFinalized = false;
   await writeDesktopLocalAppConfig({
     configPath,
     userDataPath: options.userDataPath,
     projectRoot: options.projectRoot,
     dbPath,
   });
-  let currentServer = await launchServer();
+  let currentServer: RunningZeusLocalServer;
+  try {
+    currentServer = await launchServer();
+  } catch (launchError) {
+    const cleanupErrors: unknown[] = [];
+    try {
+      await codexAppServerManager.prepareForShutdown();
+    } catch (error) {
+      cleanupErrors.push(error);
+    }
+    try {
+      await codexAppServerManager.close();
+    } catch (error) {
+      cleanupErrors.push(error);
+    }
+    if (cleanupErrors.length > 0) throw new AggregateError([launchError, ...cleanupErrors], 'Initial Zeus local-server launch and manager cleanup failed.');
+    throw launchError;
+  }
   const config: RendererLocalServerConfig = {
     baseUrl: currentServer.baseUrl,
     apiToken,
   };
 
   async function launchServer(): Promise<RunningZeusLocalServer> {
-    const server = await startZeusLocalServer({
+    const server = await localServerFactory({
       dbPath,
       localConfigPath: configPath,
       apiToken,
       projectRoot: options.projectRoot,
       telegramToken: options.telegramToken,
       telegramAllowedUserIds: options.telegramAllowedUserIds,
+      codexNativeEnabled: options.codexNativeEnabled ?? true,
+      codexRuntimeCommandPath: options.codexRuntimeCommandPath,
+      codexLegacyImportRoot: options.codexLegacyImportRoot,
+      taskAttachmentRoot: options.taskAttachmentRoot,
+      codexAppServerManager,
     });
     server.server.server.once('close', () => {
       if (closingIntentionally) return;
       restartTimer = setTimeout(() => {
-        void restartAfterUnexpectedClose();
+        restartTimer = undefined;
+        if (restartPromise) return;
+        const restarting = restartAfterUnexpectedClose().catch((error: unknown) => {
+          if (hasCodexFinalizationOwnershipClaim(error)) shutdownOwnerFinalized = true;
+          throw error;
+        });
+        const trackedRestart = restarting.finally(() => {
+          if (restartPromise === trackedRestart) restartPromise = undefined;
+        });
+        restartPromise = trackedRestart;
+        void restartPromise.catch(() => undefined);
       }, restartDelayMs);
     });
     return server;
@@ -92,8 +141,26 @@ export async function startDesktopLocalServer(options: StartDesktopLocalServerOp
 
   async function restartAfterUnexpectedClose(): Promise<void> {
     if (closingIntentionally) return;
-    currentServer = await launchServer();
-    config.baseUrl = currentServer.baseUrl;
+    const restartedServer = await launchServer();
+    if (closingIntentionally) {
+      const errors: unknown[] = [];
+      shutdownOwner = restartedServer;
+      try {
+        await restartedServer.prepareForShutdown();
+      } catch (error) {
+        errors.push(error);
+      }
+      try {
+        await restartedServer.close();
+      } catch (error) {
+        errors.push(error);
+      }
+      shutdownOwnerFinalized = true;
+      throwCollectedCleanupErrors(errors, 'Late Zeus local-server restart cleanup failed.');
+      return;
+    }
+    currentServer = restartedServer;
+    config.baseUrl = restartedServer.baseUrl;
     await options.onRestarted?.(config);
   }
 
@@ -104,12 +171,66 @@ export async function startDesktopLocalServer(options: StartDesktopLocalServerOp
       return currentServer;
     },
     config,
-    close: async () => {
-      closingIntentionally = true;
-      if (restartTimer) clearTimeout(restartTimer);
-      await currentServer.close();
+    close: () => {
+      if (closePromise) return closePromise;
+      closePromise = (async () => {
+        closingIntentionally = true;
+        const errors: unknown[] = [];
+        if (restartTimer) {
+          clearTimeout(restartTimer);
+          restartTimer = undefined;
+        }
+        const pendingRestart = restartPromise;
+        if (pendingRestart) {
+          try {
+            await pendingRestart;
+          } catch (error) {
+            if (hasCodexFinalizationOwnershipClaim(error)) shutdownOwnerFinalized = true;
+            collectCleanupError(errors, error);
+          }
+        }
+        if (!shutdownOwnerFinalized) {
+          const finalizationOwner = shutdownOwner ?? currentServer;
+          try {
+            await finalizationOwner.prepareForShutdown();
+          } catch (error) {
+            errors.push(error);
+          }
+          try {
+            await finalizationOwner.close();
+          } catch (error) {
+            errors.push(error);
+          }
+        }
+        try {
+          await codexAppServerManager.prepareForShutdown();
+        } catch (error) {
+          errors.push(error);
+        }
+        try {
+          await codexAppServerManager.close();
+        } catch (error) {
+          errors.push(error);
+        }
+        throwCollectedCleanupErrors(errors, 'Zeus desktop local-server shutdown failed.');
+      })();
+      return closePromise;
     },
   };
+}
+
+function collectCleanupError(errors: unknown[], error: unknown): void {
+  if (error instanceof AggregateError) {
+    errors.push(...error.errors);
+    return;
+  }
+  errors.push(error);
+}
+
+function throwCollectedCleanupErrors(errors: unknown[], message: string): void {
+  if (errors.length === 0) return;
+  if (errors.length === 1) throw errors[0];
+  throw new AggregateError(errors, message);
 }
 
 export interface BeforeQuitCleanupEvent {

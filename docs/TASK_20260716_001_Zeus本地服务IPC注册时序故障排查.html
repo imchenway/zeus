@@ -1,0 +1,938 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>故障排查：Zeus 首个窗口早于 IPC 注册</title>
+  <style>
+    :root {
+      --ink: #102033;
+      --muted: #5a6c80;
+      --paper: #fbfdff;
+      --panel: rgba(255,255,255,.9);
+      --line: #8db3d8;
+      --blue: #1f6fb2;
+      --blue-soft: #e8f3ff;
+      --green: #17785a;
+      --green-soft: #e9f8f2;
+      --amber: #986506;
+      --amber-soft: #fff6de;
+      --red: #a63a3a;
+      --red-soft: #fff0f0;
+      --violet: #6254ad;
+      --violet-soft: #f1efff;
+      --shadow: 0 16px 42px rgba(20, 57, 92, .085);
+      --radius: 20px;
+    }
+
+    * { box-sizing: border-box; }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
+      background:
+        radial-gradient(circle at 18% 3%, rgba(214,233,255,.78), transparent 30rem),
+        radial-gradient(circle at 78% 6%, rgba(228,246,239,.8), transparent 28rem),
+        linear-gradient(rgba(93,133,173,.045) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(93,133,173,.045) 1px, transparent 1px),
+        linear-gradient(180deg, #fff 0%, #f7fbff 54%, #fbfdff 100%);
+      background-size: auto, auto, 28px 28px, 28px 28px, auto;
+      overflow-x: clip;
+    }
+
+    a { color: var(--blue); text-underline-offset: 3px; }
+    code, pre { font-family: "SFMono-Regular", "SF Mono", Consolas, "Liberation Mono", Menlo, monospace; }
+    code { overflow-wrap: anywhere; }
+
+    button {
+      min-height: 30px;
+      border: 1px solid rgba(31, 111, 178, .3);
+      border-radius: 8px;
+      background: #fff;
+      color: var(--blue);
+      font: inherit;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    button:hover { background: var(--blue-soft); }
+    button:focus-visible, a:focus-visible, summary:focus-visible { outline: 3px solid rgba(31, 111, 178, .28); outline-offset: 2px; }
+
+    main {
+      width: min(1240px, calc(100vw - 32px));
+      margin: 0 auto;
+      padding: 22px 0 48px;
+    }
+
+    .task-code {
+      display: inline-flex;
+      margin-bottom: 8px;
+      border: 1px solid rgba(31, 111, 178, .25);
+      border-radius: 999px;
+      background: rgba(255, 255, 255, .78);
+      padding: 5px 9px;
+      color: var(--blue);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: .04em;
+    }
+
+    h1 {
+      max-width: 980px;
+      margin: 0 0 9px;
+      font-size: clamp(24px, 2.8vw, 32px);
+      line-height: 1.18;
+      letter-spacing: -.025em;
+    }
+
+    h2 { margin: 0 0 12px; font-size: 18px; line-height: 1.35; }
+    h3 { margin: 0 0 7px; font-size: 14px; line-height: 1.4; }
+    p { margin: 0; }
+
+    .summary {
+      max-width: 980px;
+      margin-bottom: 16px;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.7;
+    }
+
+    .verdict {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      align-items: start;
+      gap: 12px;
+      margin-bottom: 18px;
+      border-left: 4px solid var(--red);
+      border-radius: 14px;
+      background: rgba(255, 240, 240, .84);
+      padding: 13px 15px;
+      box-shadow: var(--shadow);
+    }
+
+    .verdict strong {
+      border-radius: 999px;
+      background: var(--red);
+      padding: 4px 8px;
+      color: #fff;
+      font-size: 11px;
+      line-height: 1.3;
+    }
+
+    .verdict p { font-size: 13px; line-height: 1.65; }
+
+    .template-layout {
+      border: 1px solid rgba(141, 179, 216, .48);
+      border-radius: 24px;
+      background: rgba(255, 255, 255, .78);
+      box-shadow: var(--shadow);
+      padding: 18px;
+      min-height: 520px;
+    }
+
+    .debugging-sequence { display: block; }
+
+    .actor-grid {
+      display: grid;
+      grid-template-columns: 110px repeat(4, minmax(0, 1fr));
+      gap: 10px;
+      align-items: stretch;
+    }
+
+    .time-head {
+      display: grid;
+      place-items: center;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+    }
+
+    .slot {
+      display: grid;
+      grid-template-rows: auto auto;
+      align-content: center;
+      justify-items: center;
+      gap: 4px;
+      min-height: 66px;
+      border: 1px solid rgba(141, 179, 216, .58);
+      border-radius: 16px;
+      background: rgba(255, 255, 255, .97);
+      padding: 10px 12px;
+      text-align: center;
+      overflow-wrap: anywhere;
+    }
+
+    .slot b { display: block; font-size: 13px; line-height: 1.25; }
+    .slot span { display: block; color: var(--muted); font-size: 12px; line-height: 1.45; }
+    .support { border-color: rgba(98, 84, 173, .45); background: linear-gradient(180deg, #fff, var(--violet-soft)); }
+    .data { border-color: rgba(23, 120, 90, .45); background: linear-gradient(180deg, #fff, var(--green-soft)); }
+    .risk { border-color: rgba(166, 58, 58, .42); background: linear-gradient(180deg, #fff, var(--red-soft)); }
+    .ops { border-color: rgba(152, 101, 6, .42); background: linear-gradient(180deg, #fff, var(--amber-soft)); }
+    .core { border-color: rgba(31, 111, 178, .56); background: linear-gradient(180deg, #fff, var(--blue-soft)); }
+
+    .timeline {
+      position: relative;
+      display: grid;
+      grid-template-columns: 110px repeat(4, minmax(0, 1fr));
+      gap: 0 10px;
+      margin-top: 8px;
+      padding: 10px 0 4px;
+    }
+
+    .tracks {
+      position: absolute;
+      inset: 0 0 0 120px;
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      pointer-events: none;
+    }
+
+    .track { position: relative; }
+    .track::before {
+      content: "";
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      left: 50%;
+      width: 1px;
+      background: repeating-linear-gradient(to bottom, rgba(31, 111, 178, .27) 0 7px, transparent 7px 13px);
+    }
+
+    .moment {
+      z-index: 1;
+      display: grid;
+      grid-template-columns: subgrid;
+      grid-column: 1 / 6;
+      min-height: 78px;
+      align-items: center;
+    }
+
+    .time {
+      grid-column: 1;
+      align-self: start;
+      padding-top: 8px;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 800;
+      line-height: 1.35;
+      text-align: right;
+    }
+
+    .message {
+      position: relative;
+      display: grid;
+      grid-template-rows: auto 14px;
+      align-items: end;
+      min-width: 0;
+      padding: 3px 16px 0;
+    }
+
+    .message .label {
+      justify-self: center;
+      max-width: min(100%, 560px);
+      border: 1px solid rgba(141, 179, 216, .48);
+      border-radius: 11px;
+      background: #fff;
+      padding: 7px 10px;
+      font-size: 12px;
+      line-height: 1.5;
+      text-align: center;
+      box-shadow: 0 7px 18px rgba(20, 57, 92, .06);
+      overflow-wrap: anywhere;
+    }
+
+    .message .label b { color: var(--blue); }
+    .message .wire { position: relative; height: 2px; background: var(--blue); }
+    .message .wire::after {
+      content: "";
+      position: absolute;
+      right: -1px;
+      top: -5px;
+      border-left: 9px solid var(--blue);
+      border-top: 6px solid transparent;
+      border-bottom: 6px solid transparent;
+    }
+
+    .message.reverse .wire::after {
+      right: auto;
+      left: -1px;
+      border-right: 9px solid var(--blue);
+      border-left: 0;
+    }
+
+    .message.failure .label { border-color: rgba(166, 58, 58, .48); background: var(--red-soft); }
+    .message.failure .wire { background: var(--red); }
+    .message.failure .wire::after { border-left-color: var(--red); }
+    .message.failure.reverse .wire::after { border-right-color: var(--red); border-left-color: transparent; }
+    .message.success .label { border-color: rgba(23, 120, 90, .48); background: var(--green-soft); }
+    .message.success .wire { background: var(--green); }
+    .message.success .wire::after { border-left-color: var(--green); }
+
+    .m-1-2 { grid-column: 2 / 4; }
+    .m-2-4 { grid-column: 3 / 6; }
+    .m-2-3 { grid-column: 3 / 5; }
+    .m-2 { grid-column: 3; }
+    .m-3-2 { grid-column: 3 / 5; }
+
+    .root-pin {
+      z-index: 2;
+      grid-column: 3 / 5;
+      margin: 2px 16px 16px;
+      border: 2px solid rgba(166, 58, 58, .58);
+      border-radius: 16px;
+      background: rgba(255, 240, 240, .96);
+      padding: 11px 13px;
+      font-size: 12px;
+      line-height: 1.55;
+      box-shadow: 0 12px 26px rgba(166, 58, 58, .11);
+    }
+
+    .root-pin b { display: block; margin-bottom: 3px; color: var(--red); font-size: 13px; }
+
+    .boundary {
+      margin-top: 16px;
+      border: 1px solid rgba(141, 179, 216, .42);
+      border-radius: 18px;
+      background: rgba(255, 255, 255, .66);
+      padding: 12px;
+    }
+
+    .evidence-steps {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .section {
+      margin-top: 18px;
+      border: 1px solid rgba(141, 179, 216, .45);
+      border-radius: var(--radius);
+      background: var(--panel);
+      padding: 17px;
+      box-shadow: var(--shadow);
+    }
+
+    .section-lead { margin: -4px 0 13px; color: var(--muted); font-size: 13px; line-height: 1.6; }
+
+    .evidence-list { display: grid; gap: 9px; }
+
+    details {
+      border: 1px solid rgba(141, 179, 216, .38);
+      border-radius: 13px;
+      background: rgba(255, 255, 255, .88);
+      padding: 10px 12px;
+    }
+
+    summary {
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 750;
+      line-height: 1.5;
+    }
+
+    details p, details li { margin-top: 7px; color: var(--muted); font-size: 12px; line-height: 1.65; }
+    details ul { margin: 4px 0 0; padding-left: 20px; }
+
+    .evidence-id {
+      display: inline-grid;
+      place-items: center;
+      min-width: 29px;
+      margin-right: 7px;
+      border-radius: 7px;
+      background: var(--blue-soft);
+      color: var(--blue);
+      font-size: 11px;
+      font-weight: 900;
+    }
+
+    .path-row {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 8px;
+      align-items: center;
+      margin-top: 8px;
+      border-radius: 9px;
+      background: #f6f9fc;
+      padding: 8px 9px;
+    }
+
+    .path-row code { color: var(--ink); font-size: 11px; line-height: 1.5; }
+
+    .hypothesis-table, .verification-table {
+      width: 100%;
+      border-collapse: separate;
+      border-spacing: 0;
+      overflow: hidden;
+      border: 1px solid rgba(141, 179, 216, .42);
+      border-radius: 13px;
+      background: #fff;
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    th, td { padding: 10px 11px; border-bottom: 1px solid rgba(141, 179, 216, .25); vertical-align: top; text-align: left; overflow-wrap: anywhere; }
+    th { background: #f3f8fd; color: var(--muted); font-size: 11px; letter-spacing: .02em; }
+    tr:last-child td { border-bottom: 0; }
+
+    .badge {
+      display: inline-block;
+      border-radius: 999px;
+      padding: 3px 7px;
+      font-size: 10px;
+      font-weight: 900;
+      white-space: nowrap;
+    }
+
+    .confirmed { background: var(--red-soft); color: var(--red); }
+    .excluded { background: var(--green-soft); color: var(--green); }
+    .pending { background: var(--amber-soft); color: var(--amber); }
+    .passed { background: var(--green-soft); color: var(--green); }
+
+    .action-flow {
+      display: grid;
+      grid-template-columns: 1fr 42px 1fr 42px 1fr;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .action-node {
+      min-height: 118px;
+      border: 1px solid rgba(31, 111, 178, .35);
+      border-radius: 15px;
+      background: #fff;
+      padding: 12px;
+    }
+
+    .action-node b { display: block; margin-bottom: 5px; color: var(--blue); font-size: 13px; }
+    .action-node p { color: var(--muted); font-size: 12px; line-height: 1.62; }
+
+    .startup-comparison {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 54px minmax(0, 1fr);
+      gap: 14px;
+      align-items: stretch;
+      margin: 16px 0;
+    }
+
+    .flow-lane {
+      display: flex;
+      min-width: 0;
+      flex-direction: column;
+      align-items: center;
+      gap: 0;
+      border: 1px solid rgba(141, 179, 216, .42);
+      border-radius: 16px;
+      background: rgba(255,255,255,.82);
+      padding: 13px;
+    }
+
+    .flow-lane h3 {
+      width: 100%;
+      margin: 0 0 11px;
+      color: var(--ink);
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    .flow-event,
+    .flow-activity,
+    .flow-decision {
+      width: min(100%, 360px);
+      height: auto;
+      min-height: 52px;
+      overflow-wrap: anywhere;
+      color: var(--ink);
+      font-size: 12px;
+      line-height: 1.52;
+      text-align: center;
+    }
+
+    .flow-event {
+      display: grid;
+      min-height: 38px;
+      place-items: center;
+      border: 2px solid var(--blue);
+      border-radius: 999px;
+      background: var(--blue-soft);
+      padding: 7px 13px;
+      font-weight: 850;
+    }
+
+    .flow-activity {
+      border: 1px solid rgba(31, 111, 178, .38);
+      border-radius: 12px;
+      background: #fff;
+      padding: 9px 11px;
+    }
+
+    .flow-activity b,
+    .flow-decision b { display: block; margin-bottom: 3px; color: var(--blue); }
+
+    .flow-activity.failure {
+      border-color: rgba(166, 58, 58, .42);
+      background: var(--red-soft);
+    }
+
+    .flow-activity.failure b { color: var(--red); }
+
+    .flow-activity.success {
+      border-color: rgba(23, 120, 90, .38);
+      background: var(--green-soft);
+    }
+
+    .flow-activity.success b { color: var(--green); }
+
+    .flow-decision {
+      display: grid;
+      min-height: 64px;
+      place-items: center;
+      border: 1px solid rgba(152, 101, 6, .5);
+      border-radius: 16px;
+      background: var(--amber-soft);
+      padding: 10px 13px;
+    }
+
+    .flow-arrow-down {
+      position: relative;
+      width: 2px;
+      height: 27px;
+      background: var(--blue);
+    }
+
+    .flow-arrow-down::after {
+      content: "";
+      position: absolute;
+      left: -5px;
+      bottom: -1px;
+      border-top: 8px solid var(--blue);
+      border-right: 6px solid transparent;
+      border-left: 6px solid transparent;
+    }
+
+    .flow-arrow-down span {
+      position: absolute;
+      top: 4px;
+      left: 10px;
+      width: max-content;
+      max-width: 92px;
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 800;
+    }
+
+    .comparison-shift {
+      display: grid;
+      place-items: center;
+      color: var(--violet);
+      font-size: 11px;
+      font-weight: 900;
+      text-align: center;
+    }
+
+    .comparison-shift::before {
+      content: "";
+      width: 34px;
+      height: 2px;
+      background: var(--violet);
+      box-shadow: 8px -5px 0 -4px var(--violet), 8px 5px 0 -4px var(--violet);
+    }
+
+    .arrow {
+      position: relative;
+      height: 2px;
+      background: var(--blue);
+    }
+
+    .arrow::after {
+      content: "";
+      position: absolute;
+      right: -1px;
+      top: -5px;
+      border-left: 9px solid var(--blue);
+      border-top: 6px solid transparent;
+      border-bottom: 6px solid transparent;
+    }
+
+    .note {
+      margin-top: 12px;
+      border-left: 3px solid var(--amber);
+      background: var(--amber-soft);
+      padding: 9px 11px;
+      color: #694700;
+      font-size: 12px;
+      line-height: 1.6;
+    }
+
+    .footer-meta {
+      margin-top: 16px;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.65;
+    }
+
+    @media (max-width: 860px) {
+      main { width: min(100vw - 20px, 840px); }
+      .actor-grid { display: none; }
+      .timeline { display: block; padding-left: 20px; }
+      .timeline::before { content: ""; position: absolute; top: 12px; bottom: 8px; left: 7px; width: 2px; background: var(--blue); }
+      .tracks { display: none; }
+      .moment { display: grid; grid-template-columns: 74px 1fr; min-height: 0; margin-bottom: 14px; }
+      .time { grid-column: 1; padding: 8px 8px 0 0; text-align: left; }
+      .message, .m-1-2, .m-2-4, .m-2-3, .m-2, .m-3-2 { grid-column: 2; display: block; padding: 0; }
+      .message .label { max-width: none; text-align: left; }
+      .message .wire { display: none; }
+      .root-pin { grid-column: auto; margin: 0 0 14px 74px; }
+      .evidence-steps { grid-template-columns: 1fr; }
+      .slot { min-height: 0; justify-items: start; text-align: left; }
+      .action-flow { grid-template-columns: 1fr; }
+      .startup-comparison { grid-template-columns: 1fr; }
+      .comparison-shift { min-height: 36px; }
+      .comparison-shift::before { width: 2px; height: 28px; box-shadow: -5px 8px 0 -4px var(--violet), 5px 8px 0 -4px var(--violet); }
+      .arrow { width: 2px; height: 28px; margin: auto; }
+      .arrow::after { right: -5px; top: 22px; border-left: 6px solid transparent; border-right: 6px solid transparent; border-top: 9px solid var(--blue); border-bottom: 0; }
+      .hypothesis-table, .verification-table { display: block; overflow: visible; border: 0; background: transparent; }
+      .hypothesis-table thead, .verification-table thead { display: none; }
+      .hypothesis-table tbody, .verification-table tbody { display: grid; gap: 10px; }
+      .hypothesis-table tr, .verification-table tr {
+        display: grid;
+        gap: 0;
+        overflow: hidden;
+        border: 1px solid rgba(141, 179, 216, .42);
+        border-radius: 13px;
+        background: #fff;
+      }
+      .hypothesis-table td, .verification-table td {
+        display: grid;
+        grid-template-columns: minmax(82px, .34fr) minmax(0, 1fr);
+        gap: 10px;
+        padding: 9px 10px;
+        border-bottom: 1px solid rgba(141, 179, 216, .22);
+      }
+      .hypothesis-table td:last-child, .verification-table td:last-child { border-bottom: 0; }
+      .hypothesis-table td::before, .verification-table td::before {
+        content: attr(data-label);
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 800;
+      }
+    }
+
+    @media (max-width: 520px) {
+      .template-layout, .section { padding: 13px; border-radius: 16px; }
+      .verdict { grid-template-columns: 1fr; }
+      .moment { grid-template-columns: 1fr; }
+      .time, .message { grid-column: 1; }
+      .time { padding: 0 0 5px; }
+      .root-pin { margin-left: 0; }
+      .path-row { grid-template-columns: 1fr; }
+      .path-row button { min-height: 44px; justify-self: start; padding-inline: 12px; }
+      .hypothesis-table td, .verification-table td { grid-template-columns: 1fr; gap: 4px; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; }
+    }
+  </style>
+</head>
+<body>
+<main data-diagram-type="fault-debugging"
+      data-template-family="fault-debugging"
+      data-template-id="debugging-sequence"
+      data-template-layout="debugging-sequence">
+  <div class="task-code">TASK_20260716_001</div>
+  <h1 data-slot="title">故障排查：Zeus 首个窗口早于 IPC 注册</h1>
+  <p class="summary" data-slot="summary">结论与结果：截图中的“本地服务连接失败”由 macOS <code>activate</code> 首窗早于 <code>setupIpc()</code> 的启动竞态造成，不是本地 HTTP API 自身先挂。修复已于 2026-07-17 完成：所有显示主窗口入口共享唯一 Main 初始化门禁和窗口请求，Renderer 启动阶段只保留无文字 Zeus 品牌壳，真实致命错误只进入系统通用提示与日志。最终正式包 <code>dist/mac-arm64/Zeus.app</code> 已通过 ASAR 健康检查、严格签名校验和真实冷启动；首次与第二实例触发后均保持 1 个主窗口、1 个 Renderer，禁用技术文案与启动错误日志命中均为 0。</p>
+
+  <div class="verdict" role="status" aria-label="根因裁决">
+    <strong>根因 R1 · 已确认</strong>
+    <p><b>启动时序竞态：</b><code>app.on('activate')</code> 可在异步 <code>app.whenReady().then(...)</code> 初始化链完成前调用 <code>createWindow()</code>；Renderer 随即执行 <code>ipcRenderer.invoke('zeus:get-local-server-config')</code>，当时 Main 还没有执行 <code>ipcMain.handle(...)</code>。</p>
+  </div>
+
+  <section class="template-layout debugging-sequence" aria-label="Zeus IPC 启动竞态排障时序图">
+    <div class="actor-grid" aria-hidden="true">
+      <div class="time-head">时间 / 证据</div>
+      <div class="slot support" data-slot="debug-actor-1"><b>macOS 生命周期</b><span>首次启动会触发 activate</span></div>
+      <div class="slot data" data-slot="debug-actor-2"><b>Electron Main</b><span>初始化、IPC 注册、窗口创建</span></div>
+      <div class="slot ops" data-slot="debug-actor-3"><b>本地服务 / Codex</b><span>校验 runtime、启动 API、加载设置</span></div>
+      <div class="slot risk" data-slot="debug-actor-4"><b>Preload / Renderer</b><span>取配置并 hydration</span></div>
+    </div>
+
+    <div class="timeline">
+      <div class="tracks" aria-hidden="true"><div class="track"></div><div class="track"></div><div class="track"></div><div class="track"></div></div>
+
+      <div class="moment">
+        <div class="time">10:58:24<br />E4 / E7</div>
+        <div class="message m-1-2">
+          <div class="label"><b>首次启动触发 activate</b><br />回调直接进入 <code>revealOrCreateMainWindow()</code></div>
+          <div class="wire"></div>
+        </div>
+      </div>
+
+      <div class="moment">
+        <div class="time">10:58:24.869<br />E5</div>
+        <div class="message m-2-4">
+          <div class="label"><b>第一个 Renderer（PID 9657）提前创建</b><br />加载当前 packaged <code>index.html</code></div>
+          <div class="wire"></div>
+        </div>
+      </div>
+
+      <div class="moment">
+        <div class="time">紧接着<br />E1 / E6</div>
+        <div class="message m-2-4 reverse failure">
+          <div class="label"><b>IPC invoke 返回 “No handler registered”</b><br />一次性 hydration catch 渲染“本地服务连接失败”</div>
+          <div class="wire"></div>
+        </div>
+      </div>
+
+      <div class="moment">
+        <div class="time">并行等待<br />E4</div>
+        <div class="message m-2-3">
+          <div class="label"><b>Main 初始化仍未完成</b><br />runtime SHA 校验 → 本地 API 启动 → 设置加载</div>
+          <div class="wire"></div>
+        </div>
+      </div>
+
+      <div class="root-pin">
+        <b>根因断点 R1 · E4 + E5 + E7</b>
+        窗口创建路径没有等待同一个 initialization promise；同时 <code>setupIpc()</code> 被放在三个异步等待之后。第一个窗口因此观察到“handler 尚不存在”，而不是“handler 内部返回服务未就绪”。
+      </div>
+
+      <div class="moment">
+        <div class="time">约 +3.85s<br />E2 / E3</div>
+        <div class="message m-2 success">
+          <div class="label"><b>setupIpc() 终于注册 handler</b><br />源码与当前 <code>app.asar</code> 均包含注册代码</div>
+          <div class="wire"></div>
+        </div>
+      </div>
+
+      <div class="moment">
+        <div class="time">10:58:28.717<br />E5</div>
+        <div class="message m-2-4 success">
+          <div class="label"><b>初始化尾部又创建第二个 Renderer（PID 10656）</b><br />此时 handler 已存在；第一个错误窗口不会自动重新 hydration</div>
+          <div class="wire"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="evidence-steps boundary">
+      <div class="slot risk" data-slot="symptom"><b>现象</b><span>首窗显示 No handler registered；顶部被泛化成“本地服务连接失败”</span></div>
+      <div class="slot data" data-slot="evidence"><b>证据</b><span>同次启动产生两个 Renderer，间隔约 3.85 秒；包内 handler 确实存在</span></div>
+      <div class="slot risk" data-slot="hypothesis"><b>根因 R1</b><span>activate 创建首窗早于 setupIpc，属于 Main 生命周期竞态</span></div>
+      <div class="slot support" data-slot="fix"><b>修法 F1 · 已实现</b><span>单例 initialization / window promise；所有显示主窗口入口等待 IPC ready，且只创建一窗</span></div>
+      <div class="slot core" data-slot="verify"><b>验证 V1 · 已通过</b><span>1410 项测试通过；正式包冷启动和第二实例后均为单窗口、单 Renderer</span></div>
+    </div>
+  </section>
+
+  <section class="section" data-slot="evidence-and-notes" aria-labelledby="evidence-title">
+    <h2 id="evidence-title">证据裁决</h2>
+    <p class="section-lead">根因来自用户截图、故障版本源码与 <code>app.asar</code>、2026-07-16 unified log 交叉验证；修复结论再由 2026-07-17 的测试、最终 <code>app.asar</code>、真实进程、辅助功能树和 unified log 闭环，不把静态测试通过等同于正式完成。</p>
+    <div class="evidence-list">
+      <details open>
+        <summary><span class="evidence-id">E1</span>用户现场：Renderer 能调用 preload，但 Main 返回没有同名 handler</summary>
+        <p>原始错误：<code>Error invoking remote method 'zeus:get-local-server-config': Error: No handler registered for 'zeus:get-local-server-config'</code>。这与“handler 已注册但 <code>localServerRuntime</code> 未就绪”是两种不同错误；后者源码会返回 <code>Zeus local server is not ready</code>。</p>
+      </details>
+
+      <details open>
+        <summary><span class="evidence-id">E2</span>修复前源码：handler 已存在，但注册位于异步初始化尾部</summary>
+        <p><code>setupIpc()</code> 在 Main 中定义了 <code>ipcMain.handle('zeus:get-local-server-config')</code>；然而调用点排在 runtime 校验、本地服务启动和设置加载之后。</p>
+        <div class="path-row"><code>/Users/david/hypha/zeus/apps/desktop/src/main/main.ts:228</code><button type="button" data-copy="/Users/david/hypha/zeus/apps/desktop/src/main/main.ts:228">复制</button></div>
+        <div class="path-row"><code>/Users/david/hypha/zeus/apps/desktop/src/main/main.ts:597</code><button type="button" data-copy="/Users/david/hypha/zeus/apps/desktop/src/main/main.ts:597">复制</button></div>
+      </details>
+
+      <details>
+        <summary><span class="evidence-id">E3</span>故障打包产物：不是漏打 Main 代码</summary>
+        <p>从 <code>dist/mac-arm64/Zeus.app/Contents/Resources/app.asar</code> 解出的 <code>dist/main/main.js</code> 在 207—213 行包含同名 handler；它与工作目录的 <code>apps/desktop/dist/main/main.js</code> SHA-256 完全一致：<code>97be703c3309e3c322776fd786c7567b27bf40f4f8ef56419d80f0ccbe277835</code>。</p>
+        <div class="path-row"><code>/Users/david/hypha/zeus/dist/mac-arm64/Zeus.app/Contents/Resources/app.asar</code><button type="button" data-copy="/Users/david/hypha/zeus/dist/mac-arm64/Zeus.app/Contents/Resources/app.asar">复制</button></div>
+      </details>
+
+      <details open>
+        <summary><span class="evidence-id">E4</span>修复前代码时序：activate 路径绕过 initialization readiness</summary>
+        <p><code>app.on('activate')</code> 在 649—651 行直接调用 <code>revealOrCreateMainWindow()</code>；该函数在没有窗口时立即 <code>createWindow()</code>。另一边 <code>app.whenReady().then(async ...)</code> 要到 618 行才执行 <code>setupIpc()</code>。两条路径没有共享 ready promise。</p>
+        <div class="path-row"><code>/Users/david/hypha/zeus/apps/desktop/src/main/main.ts:649</code><button type="button" data-copy="/Users/david/hypha/zeus/apps/desktop/src/main/main.ts:649">复制</button></div>
+      </details>
+
+      <details open>
+        <summary><span class="evidence-id">E5</span>运行现场：同一 Main 启动先后拉起两个 Renderer</summary>
+        <ul>
+          <li><code>10:58:24.869</code>：Zeus Helper (Renderer) PID <code>9657</code> 出现，对应截图中的首窗。</li>
+          <li><code>10:58:28.717</code>：第二个 Zeus Helper (Renderer) PID <code>10656</code> 出现。</li>
+          <li>间隔约 <code>3.848s</code>，对应 Main 等待 runtime / local-server / settings 后，再从 621 行执行一次 <code>createWindow()</code>。</li>
+        </ul>
+        <div class="path-row"><code>/usr/bin/log show --start '2026-07-16 10:58:23' --end '2026-07-16 10:58:30'</code><button type="button" data-copy="/usr/bin/log show --style compact --start '2026-07-16 10:58:23' --end '2026-07-16 10:58:30' --predicate '(process == &quot;Zeus Helper (Renderer)&quot;)'">复制</button></div>
+      </details>
+
+      <details>
+        <summary><span class="evidence-id">E6</span>修复前错误为何留在首窗：Renderer hydration 失败后只渲染错误态</summary>
+        <p><code>hydrateDashboard()</code> 只在模块启动时调用一次；catch 在 314—321 行直接渲染 <code>localClientStatus="failed"</code>，没有在 Main 后续完成 IPC 注册时自动重试。界面把所有 hydration 异常统一包装成“本地服务连接失败 / 本机 API 暂不可用”，所以可见标题比底层原因更笼统。</p>
+        <div class="path-row"><code>/Users/david/hypha/zeus/apps/desktop/src/renderer/main.tsx:303</code><button type="button" data-copy="/Users/david/hypha/zeus/apps/desktop/src/renderer/main.tsx:303">复制</button></div>
+        <div class="path-row"><code>/Users/david/hypha/zeus/apps/desktop/src/renderer/App.tsx:597</code><button type="button" data-copy="/Users/david/hypha/zeus/apps/desktop/src/renderer/App.tsx:597">复制</button></div>
+      </details>
+
+      <details>
+        <summary><span class="evidence-id">E7</span>Electron 官方生命周期契约</summary>
+        <p>Electron 官方说明：macOS <code>activate</code> 可由“首次启动”触发；官方首个应用教程还明确建议只在应用初始化完成后监听 <code>activate</code>。当前 Zeus 把 listener 放在顶层，却没有让它等待自定义异步初始化完成。</p>
+        <p><a href="https://www.electronjs.org/docs/latest/api/app#event-activate-macos">Electron app: activate event</a> · <a href="https://www.electronjs.org/docs/latest/tutorial/tutorial-first-app#open-a-window-if-none-are-open-macos">Electron tutorial: initialize before activate listener</a></p>
+      </details>
+
+      <details open>
+        <summary><span class="evidence-id">E8</span>本机 Codex App 参考：后端内部化，启动页不暴露技术状态</summary>
+        <p>本机 Codex App <code>26.707.72221</code>（bundle build <code>5307</code>）把 app-server 与 SQLite 初始化留在 Main 内部，并在确保主窗口前等待连接；其 <code>app.asar</code> 内置启动页只呈现居中的无文字品牌图标，标记 <code>aria-hidden="true"</code>，在 <code>prefers-reduced-motion</code> 下关闭动画。该证据只用于确认体验原则，不复制 Codex 品牌或实现源码。</p>
+        <div class="path-row"><code>/Applications/Codex.app/Contents/Resources/app.asar</code><button type="button" data-copy="/Applications/Codex.app/Contents/Resources/app.asar">复制</button></div>
+      </details>
+
+      <details open>
+        <summary><span class="evidence-id">E9</span>启动门禁实现：所有“显示主窗口”入口共用同一初始化与窗口请求</summary>
+        <p><code>startupCoordinator</code> 持有唯一 initialization promise、唯一在途主窗口 promise 与唯一 fatal promise。首次启动、<code>activate</code>、<code>second-instance</code>、菜单和 Tray 的“显示主窗口”路径均调用 <code>requestMainWindow()</code>；只有用户显式“新建窗口”保留独立窗口语义。Renderer bootstrap monitor 只响应真实 preload / load / renderer failure，不使用任意硬超时判定慢启动为失败。</p>
+        <div class="path-row"><code>/Users/david/hypha/zeus/apps/desktop/src/main/startupCoordinator.ts</code><button type="button" data-copy="/Users/david/hypha/zeus/apps/desktop/src/main/startupCoordinator.ts">复制</button></div>
+        <div class="path-row"><code>/Users/david/hypha/zeus/apps/desktop/src/main/main.ts</code><button type="button" data-copy="/Users/david/hypha/zeus/apps/desktop/src/main/main.ts">复制</button></div>
+      </details>
+
+      <details open>
+        <summary><span class="evidence-id">E10</span>Renderer 与错误边界：无文字启动壳、ready/failure 分流、通用原生提示</summary>
+        <p><code>index.html</code> 的静态 Zeus 图标无文字、<code>aria-hidden</code>、不可聚焦并遵循减少动态效果；React 首次 commit 后才上报 ready。启动前失败与 ready 后 runtime fatal 使用不同 IPC 通道，普通图片资源失败不会退出应用。Main 仅向用户显示“Zeus 无法启动，请重新打开应用。”，技术详情保留在日志；原页面中的 local-server / 本机 API 状态组件与文案已删除。</p>
+        <div class="path-row"><code>/Users/david/hypha/zeus/apps/desktop/index.html</code><button type="button" data-copy="/Users/david/hypha/zeus/apps/desktop/index.html">复制</button></div>
+        <div class="path-row"><code>/Users/david/hypha/zeus/apps/desktop/src/preload/rendererBootstrapState.cjs</code><button type="button" data-copy="/Users/david/hypha/zeus/apps/desktop/src/preload/rendererBootstrapState.cjs">复制</button></div>
+      </details>
+
+      <details open>
+        <summary><span class="evidence-id">E11</span>真实包反证补洞：sandbox preload 必须是单文件 bundle</summary>
+        <p>第一次正式冷启动时，用户看到了预期的通用系统提示；Main 日志给出硬失败：<code>Renderer preload failed ... module not found: ./rendererBootstrapState.cjs</code>。文件实际存在于 ASAR，但 <code>sandbox: true</code> 的 preload 不能运行时加载项目内相对 CommonJS 模块。修复使用仓库现有 Vite 将 preload 内联为单个 <code>index.cjs</code>，未新增依赖；发布健康检查现在会拒绝任何相对 <code>require()</code>，并由 <code>package:mac</code> 在签名前自动执行。</p>
+        <div class="path-row"><code>/Users/david/hypha/zeus/apps/desktop/scripts/bundle-preload.mjs</code><button type="button" data-copy="/Users/david/hypha/zeus/apps/desktop/scripts/bundle-preload.mjs">复制</button></div>
+        <div class="path-row"><code>/Users/david/hypha/zeus/scripts/verify-packaged-app-health.mjs</code><button type="button" data-copy="/Users/david/hypha/zeus/scripts/verify-packaged-app-health.mjs">复制</button></div>
+      </details>
+
+      <details open>
+        <summary><span class="evidence-id">E12</span>自动化与静态门禁：88 个文件、1410 通过、4 跳过</summary>
+        <p>最终源码状态运行 <code>pnpm test</code>：88 个测试文件全部通过，1410 项通过、4 项按既有条件跳过；<code>pnpm typecheck</code>、<code>pnpm lint</code>、<code>pnpm format:check</code> 与 <code>git diff --check</code> 均为退出码 0。包测试包含真实临时 ASAR 负例，证明带相对 preload 依赖或禁用启动文案的包会被拒绝；两轮独立只读代码复审均为 CRITICAL 0、HIGH 0。</p>
+      </details>
+
+      <details open>
+        <summary><span class="evidence-id">E13</span>最终正式包与冷启动：单窗口、单 Renderer、零禁用文案、零启动错误</summary>
+        <p>最终 <code>app.asar</code> 时间为 <code>2026-07-17 10:19:11 +0800</code>；健康输出为 <code>packaged-health=Zeus;rendererAssets=2;main=dist/main/main.js;preload=dist/preload/index.cjs</code>，相对 preload require 数为 0，<code>codesign --verify --deep --strict</code> 通过。冷启动辅助功能树只有 1 个 standard window，进程取证为 1 个 Main、1 个 Renderer；再次直接启动可执行文件触发 <code>second-instance</code> 后计数仍为 1/1。七条禁用文案命中 0，<code>No handler registered</code>、<code>Renderer preload failed</code>、<code>Zeus startup failed</code> 与 hydration failure 日志命中 0。</p>
+        <p><b>独立观察：</b>验收实例在 <code>⌘Q</code> 后 10 秒仍存活，随后精确 PID 的 <code>SIGTERM</code> 在第 2 次检查前完成退出；这是正常退出清理链的独立缺陷，不属于本次“启动前 IPC 门禁”范围，未将其伪装成本次启动验收失败或静默忽略。</p>
+        <div class="path-row"><code>/Users/david/hypha/zeus/dist/mac-arm64/Zeus.app</code><button type="button" data-copy="/Users/david/hypha/zeus/dist/mac-arm64/Zeus.app">复制</button></div>
+      </details>
+    </div>
+  </section>
+
+  <section class="section" aria-labelledby="hypothesis-title">
+    <h2 id="hypothesis-title">候选根因裁决</h2>
+    <table class="hypothesis-table">
+      <thead><tr><th>候选</th><th>裁决</th><th>依据</th></tr></thead>
+      <tbody>
+        <tr><td data-label="候选">H1：源码或 app.asar 根本没有注册 handler</td><td data-label="裁决"><span class="badge excluded">已排除</span></td><td data-label="依据">E2 + E3：源码和实际包内 Main 均包含同名 <code>ipcMain.handle</code>。</td></tr>
+        <tr><td data-label="候选">H2：本地 HTTP API 自身先崩溃</td><td data-label="裁决"><span class="badge excluded">已排除为主因</span></td><td data-label="依据">E1：Electron 明确返回 “No handler registered”；请求尚未到 handler，更没有到 HTTP API。</td></tr>
+        <tr><td data-label="候选">H3：旧 Main 进程加载新 Renderer</td><td data-label="裁决"><span class="badge excluded">已排除于本次现场</span></td><td data-label="依据">E3 + E5：本次是 10:58:24 新启动的 Main，实际包内也含 handler；双 Renderer 时间线可由当前代码完整解释。</td></tr>
+        <tr><td data-label="候选">H4：activate 首窗早于 setupIpc</td><td data-label="裁决"><span class="badge confirmed">已确认根因 R1</span></td><td data-label="依据">E4 + E5 + E7：代码存在无门禁并发路径，现场恰好出现“首窗 → 3.85 秒 → 第二窗”。</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="section" aria-labelledby="action-title">
+    <h2 id="action-title">已实施修法与验证闭环</h2>
+    <p class="section-lead">用户确认的方案 1 已落地：不让尚未可用的工作区抢先出现，也不在业务页面解释本地服务、IPC 或 app-server。Main 负责就绪门禁，Renderer 只负责安静的品牌过渡。</p>
+
+    <table class="hypothesis-table" aria-label="已确认设计输入与范围">
+      <thead><tr><th>维度</th><th>已确认规则</th><th>边界</th></tr></thead>
+      <tbody>
+        <tr><td data-label="维度">目标与主路径</td><td data-label="已确认规则">用户启动 Zeus 后，只经历无文字品牌过渡并进入一个真实可用的工作区。</td><td data-label="边界">不把 local-server、IPC、API 或 app-server 作为用户需要理解的产品概念。</td></tr>
+        <tr><td data-label="维度">生命周期入口</td><td data-label="已确认规则">首次启动、<code>activate</code> 与 <code>second-instance</code> 共享同一初始化门禁和窗口创建门禁。</td><td data-label="边界">就绪前窗口数必须为 0；就绪后并发入口最终只有一个窗口。</td></tr>
+        <tr><td data-label="维度">异常与恢复</td><td data-label="已确认规则">初始化或 Renderer bootstrap 真正失败时，只显示一次系统原生通用提示，然后退出；重新打开是用户恢复路径。</td><td data-label="边界">错误详情只写日志；不在页面展示技术文案、堆栈或重试控件。</td></tr>
+        <tr><td data-label="维度">可访问性</td><td data-label="已确认规则">启动图标无文字、无焦点、<code>aria-hidden</code>；遵循减少动态效果设置。</td><td data-label="边界">正常工作区接管后继续使用现有语义与键盘行为，不新增可交互启动控件。</td></tr>
+        <tr><td data-label="维度">变更范围</td><td data-label="已确认规则">只调整 Electron Main 启动协调、Renderer bootstrap、相关测试和打包契约。</td><td data-label="边界">不改数据库、HTTP API、Codex 协议、权限模型、配置格式或数据迁移；preload 单文件构建复用现有 Vite，不新增依赖。</td></tr>
+      </tbody>
+    </table>
+
+    <div class="startup-comparison" role="group" aria-label="当前故障启动流程与已确认目标流程对照">
+      <div class="flow-lane">
+        <h3>修复前故障流程 · 窗口早于就绪</h3>
+        <div class="flow-event">首次启动 / activate</div>
+        <div class="flow-arrow-down" aria-hidden="true"><span>直接进入</span></div>
+        <div class="flow-decision"><b>初始化完成了吗？</b>当前窗口入口没有共享门禁</div>
+        <div class="flow-arrow-down" aria-hidden="true"><span>未完成也继续</span></div>
+        <div class="flow-activity failure"><b>提前创建 Renderer</b>页面立即请求本地配置</div>
+        <div class="flow-arrow-down" aria-hidden="true"></div>
+        <div class="flow-activity failure"><b>调用尚未注册的 IPC</b>首窗被一次性固化成错误态</div>
+        <div class="flow-arrow-down" aria-hidden="true"></div>
+        <div class="flow-event">错误首窗 + 约 3.85 秒后的第二 Renderer</div>
+      </div>
+
+      <div class="comparison-shift" aria-hidden="true">切断竞态</div>
+
+      <div class="flow-lane">
+        <h3>已实现启动流程 · 内部就绪后单窗</h3>
+        <div class="flow-event">首次启动 / activate / second-instance</div>
+        <div class="flow-arrow-down" aria-hidden="true"><span>共同等待</span></div>
+        <div class="flow-decision"><b>共享 initialization Promise</b>未完成就等待；失败则进入统一致命错误出口</div>
+        <div class="flow-arrow-down" aria-hidden="true"><span>成功后</span></div>
+        <div class="flow-activity success"><b>Main 内部完成就绪</b>local-server、设置与 IPC 均可用</div>
+        <div class="flow-arrow-down" aria-hidden="true"></div>
+        <div class="flow-activity success"><b>共享 window creation Promise</b>并发入口只创建、聚焦同一窗口</div>
+        <div class="flow-arrow-down" aria-hidden="true"></div>
+        <div class="flow-activity success"><b>无文字 Zeus 图标 → 正常工作区</b>失败只显示系统通用提示并退出，细节写日志</div>
+        <div class="flow-arrow-down" aria-hidden="true"></div>
+        <div class="flow-event">单一可用窗口</div>
+      </div>
+    </div>
+
+    <div class="action-flow" role="group" aria-label="从初始化门禁到无文字启动壳再到冷启动验证的已确认流程">
+      <div class="action-node">
+        <b>修法 F1 · 单例启动门禁</b>
+        <p>Main 只拥有一个 initialization promise；初次启动、<code>activate</code>、<code>second-instance</code> 全部等待它。初始化完成前不存在 BrowserWindow；创建阶段再由一个 window promise 合并并发请求。</p>
+      </div>
+      <div class="arrow" aria-hidden="true"></div>
+      <div class="action-node">
+        <b>修法 F2 · Codex 式无文字启动壳</b>
+        <p><code>index.html</code> 先呈现静态 Zeus 图标，再由正常工作区接管；不渲染半成品 <code>App</code>，不展示连接中、服务失败或本机 API 等技术文案。减少动态效果时图标保持静态、无焦点且对辅助技术隐藏。</p>
+      </div>
+      <div class="arrow" aria-hidden="true"></div>
+      <div class="action-node">
+        <b>验证 V1 · RED → GREEN → package</b>
+        <p>先用可控 deferred 初始化复现并发入口，再修 Main；随后覆盖无技术文案、减少动态效果、致命错误出口、打包契约与真实冷启动，确认只有一个 Renderer 且没有 No handler。</p>
+      </div>
+    </div>
+    <div class="note"><b>当前状态：</b>源码、测试、打包契约与正式包验收均已完成。初始化或 Renderer bootstrap 真正失败时只弹一次系统原生通用提示“Zeus 无法启动，请重新打开应用。”，错误详情只写日志；慢启动不由任意超时误判。回滚边界仍限定为 Main 启动协调、Renderer bootstrap、UI 状态清理与打包门禁，不涉及数据库、HTTP API、Codex 协议、配置或迁移。</div>
+    <div class="note"><b>TDD 实施记录：</b><a href="./superpowers/plans/2026-07-16-zeus-ipc-startup-gate.md">Zeus IPC 启动门禁 Implementation Plan</a> 的 6 个任务已执行。过程包含协调器、fatal、bootstrap reporter、资源错误分类与真实 ASAR preload 依赖的 RED→GREEN；正式冷启动发现的 sandbox preload 问题也先补负例再修复。未执行 git commit、push、merge 或历史改写。</div>
+  </section>
+
+  <section class="section" aria-labelledby="verification-title">
+    <h2 id="verification-title">最终验收矩阵</h2>
+    <table class="verification-table">
+      <thead><tr><th>层级</th><th>可测试验收标准</th><th>计划命令 / 证据</th><th>当前状态</th></tr></thead>
+      <tbody>
+        <tr><td data-label="层级">单元 / 生命周期</td><td data-label="可测试验收标准">deferred 初始化期间并发触发首次启动、<code>activate</code> 与 <code>second-instance</code>：初始化只执行一次，resolve 前创建窗口数为 0，resolve 后窗口数为 1。</td><td data-label="命令 / 证据"><code>pnpm test</code>；<code>startup-coordinator.test.ts</code> 7 项、<code>main-runtime.test.ts</code> 32 项通过</td><td data-label="当前状态"><span class="badge passed">通过</span></td></tr>
+        <tr><td data-label="层级">Renderer bootstrap</td><td data-label="可测试验收标准"><code>index.html</code> 启动壳只有无文字 Zeus 图标；首次 commit 后 ready；减少动态效果、辅助技术与普通资源错误边界正确。</td><td data-label="命令 / 证据"><code>renderer-bootstrap-monitor/reporter</code>、<code>error-boundary</code> 与 Renderer 契约测试全部通过</td><td data-label="当前状态"><span class="badge passed">通过</span></td></tr>
+        <tr><td data-label="层级">致命错误出口</td><td data-label="可测试验收标准">Main 初始化或 Renderer bootstrap 失败时只出现一次系统原生通用提示并退出；页面不展示服务名、IPC、堆栈或错误详情，日志保留可诊断信息。</td><td data-label="命令 / 证据"><code>fatal-startup.test.ts</code> 3 项通过；用户截图验证提示为通用文案</td><td data-label="当前状态"><span class="badge passed">通过</span></td></tr>
+        <tr><td data-label="层级">打包契约</td><td data-label="可测试验收标准">包内 Main、单文件 sandbox Preload、Renderer 同版本；保留无文字启动壳并拒绝七条禁用文案。</td><td data-label="命令 / 证据"><code>pnpm package:mac</code>、<code>verify-packaged-app-health.mjs</code>、<code>codesign --verify --deep --strict</code> 均通过</td><td data-label="当前状态"><span class="badge passed">通过</span></td></tr>
+        <tr><td data-label="层级">真实冷启动</td><td data-label="可测试验收标准">正式包首次启动只出现一个 Renderer；没有技术状态文案，进入可用工作区；第二实例不新增窗口；无启动错误日志。</td><td data-label="命令 / 证据">辅助功能树 1 窗口；进程 1 Main / 1 Renderer；second-instance 后仍为 1/1；禁用文案与错误日志 0 命中</td><td data-label="当前状态"><span class="badge passed">通过</span></td></tr>
+        <tr><td data-label="层级">反向搜索</td><td data-label="可测试验收标准">不存在绕过 initialization readiness 的“显示主窗口”路径；生产 UI 不再包含用户明确拒绝的技术状态文案。</td><td data-label="命令 / 证据"><code>rg</code> 扫描窗口入口、七条禁用文案、旧 <code>LocalClientStatus</code> 与构建后相对 preload require；不允许项均 0 命中</td><td data-label="当前状态"><span class="badge passed">通过</span></td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <p class="footer-meta">取证范围：用户提供的 2026-07-16 故障 Appshot 与 2026-07-17 通用失败提示截图、当前工作区、最终 <code>dist/mac-arm64/Zeus.app</code>、真实进程与辅助功能树、本机 unified log，以及本机 Codex App <code>26.707.72221</code>（build <code>5307</code>）的启动体验参考。仓库根目录未发现直接生效的本地 <code>AGENTS.md</code>、<code>PROJECT-STYLE.md</code> 或 <code>CODE-GUIDELINES.md</code>；本轮遵循会话提供的 AGENTS 约束并保留用户既有 dirty worktree。Codex 参考只用于“内部等待、无文字品牌过渡、技术细节不进入页面”的体验原则。Vibe Diagram skill 在声明路径中缺失，因此本轮沿用并更新已有单文件 HTML 工件，没有伪称调用成功。未执行 git commit、push、merge 或历史改写。</p>
+</main>
+
+<script>
+  document.querySelectorAll('[data-copy]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const value = button.getAttribute('data-copy') || '';
+      try {
+        await navigator.clipboard.writeText(value);
+        const previous = button.textContent;
+        button.textContent = '已复制';
+        window.setTimeout(() => { button.textContent = previous; }, 1200);
+      } catch {
+        button.textContent = '复制失败';
+      }
+    });
+  });
+</script>
+</body>
+</html>

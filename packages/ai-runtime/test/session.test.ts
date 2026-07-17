@@ -3,6 +3,7 @@ import {
   buildAiRuntimePrompt,
   checkAiCliAdapter,
   createAiCliAdapterInvocation,
+  createNonCodexAiCliAdapterInvocation,
   createAiRuntimeSessionManager,
   createNodePtyRuntimeSpawn,
   createOptionalNodePtyRuntimeSpawn,
@@ -54,7 +55,7 @@ describe('AI runtime session manager', () => {
     const session = await manager.startSession({
       projectId: 'project-1',
       taskId: 'task-1',
-      command: 'codex',
+      command: 'claude',
       args: ['--version'],
       cwd: '/Users/david/hypha/zeus',
     });
@@ -63,7 +64,7 @@ describe('AI runtime session manager', () => {
     const updated = manager.getSession(session.id);
     expect(updated?.status).toBe('exited');
     expect(updated?.exitCode).toBe(0);
-    expect(manager.getLogs(session.id).map((entry) => `${entry.stream}:${entry.text}`)).toEqual(['system:启动 AI Runtime 会话：codex --version', 'stdout:真实 stdout', 'stderr:真实 stderr', 'system:AI Runtime 会话已退出：0']);
+    expect(manager.getLogs(session.id).map((entry) => `${entry.stream}:${entry.text}`)).toEqual(['system:启动 AI Runtime 会话：claude --version', 'stdout:真实 stdout', 'stderr:真实 stderr', 'system:AI Runtime 会话已退出：0']);
   });
 
   it('rejects sessions outside the allowed workspace root', async () => {
@@ -76,7 +77,7 @@ describe('AI runtime session manager', () => {
     await expect(
       manager.startSession({
         projectId: 'project-1',
-        command: 'codex',
+        command: 'claude',
         cwd: '/private/tmp',
       }),
     ).rejects.toThrow('必须位于允许的项目目录内');
@@ -108,7 +109,7 @@ describe('AI runtime session manager', () => {
 
     const session = await manager.startSession({
       projectId: 'project-1',
-      command: 'codex',
+      command: 'claude',
       cwd: '/Users/david/hypha/zeus',
     });
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -151,7 +152,7 @@ describe('AI runtime session manager', () => {
 
     const session = await manager.startSession({
       projectId: 'project-1',
-      command: 'codex',
+      command: 'claude',
       cwd: '/Users/david/hypha/zeus',
     });
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -185,7 +186,7 @@ it('notifies persistence hooks when sessions and logs change', async () => {
 
   await manager.startSession({
     projectId: 'project-1',
-    command: 'codex',
+    command: 'claude',
     cwd: '/Users/david/hypha/zeus',
   });
   await new Promise((resolve) => setTimeout(resolve, 0));
@@ -254,25 +255,41 @@ it('builds source-backed runtime prompts and adapter startup commands without fa
       file: 'apps/desktop/src/renderer/App.tsx',
     },
   });
-  const codex = createAiCliAdapterInvocation('codex', prompt);
-  const claude = createAiCliAdapterInvocation('claude', prompt);
-  const gemini = createAiCliAdapterInvocation('gemini', prompt);
+  const claude = createNonCodexAiCliAdapterInvocation('claude', prompt);
+  const gemini = createNonCodexAiCliAdapterInvocation('gemini', prompt);
+  const generic = createNonCodexAiCliAdapterInvocation('generic', prompt);
 
   expect(prompt).toContain('任务：修复登录 Bug');
   expect(prompt).toContain('项目路径：/Users/david/hypha/zeus');
   expect(prompt).toContain('只能基于真实仓库、真实日志、真实错误输出行动');
   expect(prompt).toContain('"file":"apps/desktop/src/renderer/App.tsx"');
   expect(prompt).not.toContain('假设已经');
-  expect(codex).toMatchObject({ command: 'codex', args: ['exec', prompt] });
+  expect(() => createAiCliAdapterInvocation('codex', prompt)).toThrow(
+    expect.objectContaining({
+      code: 'CODEX_NATIVE_APP_SERVER_REQUIRED',
+      message: 'Codex requires the native app-server transport.',
+    }),
+  );
   expect(claude).toMatchObject({ command: 'claude', args: ['-p', prompt] });
   expect(gemini).toMatchObject({ command: 'gemini', args: ['-p', prompt] });
+  expect(generic).toMatchObject({ command: 'sh', args: ['-lc', prompt] });
+});
+
+it('fails closed when an untyped caller passes Codex to the strict invocation builder', () => {
+  expect(() => createNonCodexAiCliAdapterInvocation('codex' as never, '真实任务 prompt')).toThrow(
+    expect.objectContaining({
+      code: 'CODEX_NATIVE_APP_SERVER_REQUIRED',
+      message: 'Codex requires the native app-server transport.',
+    }),
+  );
+});
+
+it.each(['unknown', null, undefined])('keeps compatibility-wrapper adapter-not-found errors for untyped value %s', (adapterId) => {
+  expect(() => createAiCliAdapterInvocation(adapterId as never, '真实任务 prompt')).toThrow(`AI CLI adapter not found: ${String(adapterId)}`);
 });
 
 it('adds user-configured model arguments to adapter invocations without changing prompt content', () => {
   const prompt = '真实任务 prompt';
-  const codex = createAiCliAdapterInvocation('codex', prompt, {
-    model: 'gpt-5.1-codex',
-  });
   const claude = createAiCliAdapterInvocation('claude', prompt, {
     model: 'claude-sonnet-real',
   });
@@ -280,10 +297,11 @@ it('adds user-configured model arguments to adapter invocations without changing
     model: 'gemini-pro-real',
   });
 
-  expect(codex).toMatchObject({
-    command: 'codex',
-    args: ['exec', '--model', 'gpt-5.1-codex', prompt],
-  });
+  expect(() =>
+    createAiCliAdapterInvocation('codex', prompt, {
+      model: 'gpt-5.1-codex',
+    }),
+  ).toThrow(expect.objectContaining({ code: 'CODEX_NATIVE_APP_SERVER_REQUIRED' }));
   expect(claude).toMatchObject({
     command: 'claude',
     args: ['-p', prompt, '--model', 'claude-sonnet-real'],
@@ -292,10 +310,7 @@ it('adds user-configured model arguments to adapter invocations without changing
     command: 'gemini',
     args: ['-p', prompt, '--model', 'gemini-pro-real'],
   });
-  expect(createAiCliAdapterInvocation('codex', prompt)).toMatchObject({
-    command: 'codex',
-    args: ['exec', prompt],
-  });
+  expect(() => createAiCliAdapterInvocation('codex', prompt)).toThrow(expect.objectContaining({ code: 'CODEX_NATIVE_APP_SERVER_REQUIRED' }));
 });
 
 it('uses a user-configured absolute CLI path for adapter invocations without changing adapter args', () => {
@@ -308,6 +323,18 @@ it('uses a user-configured absolute CLI path for adapter invocations without cha
     command: '/opt/homebrew/bin/claude',
     args: ['-p', prompt],
   });
+});
+
+it.each([
+  ['claude', '/usr/local/bin/codex'],
+  ['gemini', '/usr/local/bin/claude'],
+  ['generic', '/usr/local/bin/codex'],
+] as const)('rejects a %s command path whose known executable basename belongs to another adapter', (adapterId, commandPath) => {
+  expect(() => createNonCodexAiCliAdapterInvocation(adapterId, '真实任务 prompt', { commandPath })).toThrow(
+    expect.objectContaining({
+      code: 'AI_CLI_ADAPTER_COMMAND_IDENTITY_MISMATCH',
+    }),
+  );
 });
 
 it('parses runtime output states for waiting input, completed, and error signals', () => {
@@ -344,7 +371,7 @@ it('records parsed runtime output states as system logs without fabricating resu
 
   const session = await manager.startSession({
     projectId: 'project-1',
-    command: 'codex',
+    command: 'claude',
     cwd: '/Users/david/hypha/zeus',
   });
   await new Promise((resolve) => setTimeout(resolve, 0));
@@ -384,7 +411,7 @@ it('writes input, sends interrupt, resizes PTY-capable handles, and exposes term
   });
   const session = await manager.startSession({
     projectId: 'project-1',
-    command: 'codex',
+    command: 'claude',
     cwd: '/Users/david/hypha/zeus',
   });
 
@@ -457,8 +484,8 @@ it('adapts a node-pty process to runtime output, input, resize, and exit contrac
 
   const session = await manager.startSession({
     projectId: 'project-1',
-    command: 'codex',
-    args: ['exec', '真实任务'],
+    command: 'claude',
+    args: ['-p', '真实任务'],
     cwd: '/Users/david/hypha/zeus',
     env: { ZEUS_REAL: '1' },
   });
@@ -470,8 +497,8 @@ it('adapts a node-pty process to runtime output, input, resize, and exit contrac
 
   expect(spawnCalls).toEqual([
     {
-      command: 'codex',
-      args: ['exec', '真实任务'],
+      command: 'claude',
+      args: ['-p', '真实任务'],
       options: expect.objectContaining({
         cwd: '/Users/david/hypha/zeus',
         name: 'xterm-256color',
@@ -522,7 +549,7 @@ it('reports optional node-pty availability without requiring the native dependen
 
   const session = await manager.startSession({
     projectId: 'project-1',
-    command: 'codex',
+    command: 'claude',
     cwd: '/Users/david/hypha/zeus',
   });
   dataCallback?.('optional PTY output');

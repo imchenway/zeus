@@ -21,6 +21,18 @@ export interface ScannedFile {
   sourceHash: string;
 }
 
+interface ScannedFileCandidate {
+  absolutePath: string;
+  relativePath: string;
+  extension: string;
+  size: number;
+}
+
+interface ScannedFileWithContent {
+  file: ScannedFile;
+  content: string;
+}
+
 export interface CodeSymbolFact {
   id: string;
   symbolType: 'package' | 'function' | 'class' | 'interface' | 'type' | 'enum' | 'file' | 'heading' | 'table' | 'column' | 'api' | 'control_flow' | 'sql_call' | 'function_call' | 'import' | 'export' | 'config' | 'dependency';
@@ -41,8 +53,9 @@ export interface ProjectScanResult {
   symbols: CodeSymbolFact[];
 }
 
-const defaultIgnoredDirectories = ['.git', 'node_modules', 'dist', '.tmp', 'coverage', '.DS_Store'];
+const defaultIgnoredDirectories = ['.git', 'node_modules', 'dist', '.tmp', 'coverage', '.DS_Store', 'target', 'build', 'out', '.gradle', '.idea', '.vscode'];
 const supportedExtensions = new Set(['.ts', '.tsx', '.js', '.jsx', '.json', '.md', '.xml', '.sql', '.java', '.gradle', '.kts', '.yml', '.yaml', '.properties']);
+const SCAN_FILE_READ_CONCURRENCY = 32;
 
 interface ImportResolution {
   resolvedRelativePath?: string;
@@ -63,15 +76,27 @@ type ImportTarget = {
 };
 
 type ImportTargetMap = Map<string, ImportTarget>;
+type JavaImportTargetMap = Map<string, string>;
+type JavaMethodMatch = {
+  annotationsBlock: string;
+  methodName: string;
+  parameters: string;
+  absoluteIndex: number;
+  methodBodyOpenIndex: number;
+};
 
 /** 扫描真实项目目录，所有事实都带文件路径和源码 hash。 */
 export async function scanProjectSource(input: ScanProjectInput): Promise<ProjectScanResult> {
-  const files = await listSourceFiles(input.rootPath, input.ignoreDirectories, input.additionalFiles);
-  const importTargets = await readImportTargets(input.rootPath, files);
+  const fileCandidates = await listSourceFiles(input.rootPath, input.ignoreDirectories, input.additionalFiles);
+  const fileContents = await readScannedFilesWithContent(fileCandidates);
+  const files = fileContents.map(({ file }) => file);
+  const contentByAbsolutePath = buildScannedFileContentMap(fileContents);
+  const importTargets = await readImportTargets(input.rootPath, files, contentByAbsolutePath);
+  const knownRelativePaths = buildKnownRelativePathSet(files);
+  const javaImportTargets = buildJavaImportTargetMap(files);
   const symbols: CodeSymbolFact[] = [];
-  for (const file of files) {
-    const content = await readFile(file.absolutePath, 'utf8');
-    symbols.push(...extractSymbols(input.rootPath, file, content, files, importTargets));
+  for (const { file, content } of fileContents) {
+    symbols.push(...extractSymbols(input.rootPath, file, content, knownRelativePaths, importTargets, javaImportTargets));
   }
   return {
     projectName: input.projectName,
@@ -81,9 +106,9 @@ export async function scanProjectSource(input: ScanProjectInput): Promise<Projec
   };
 }
 
-async function listSourceFiles(rootPath: string, ignoreDirectories: string[] = [], additionalFiles: ScanProjectInput['additionalFiles'] = []): Promise<ScannedFile[]> {
+async function listSourceFiles(rootPath: string, ignoreDirectories: string[] = [], additionalFiles: ScanProjectInput['additionalFiles'] = []): Promise<ScannedFileCandidate[]> {
   const ignoredDirectories = new Set([...defaultIgnoredDirectories, ...ignoreDirectories.filter(isSafeIgnoredDirectoryName)]);
-  const results: ScannedFile[] = [];
+  const results: ScannedFileCandidate[] = [];
   async function walk(directory: string): Promise<void> {
     const entries = await readdir(directory, { withFileTypes: true });
     for (const entry of entries) {
@@ -97,13 +122,11 @@ async function listSourceFiles(rootPath: string, ignoreDirectories: string[] = [
       const extension = extname(entry.name);
       if (!supportedExtensions.has(extension)) continue;
       const info = await stat(absolutePath);
-      const bytes = await readFile(absolutePath);
       results.push({
         absolutePath,
         relativePath: relative(rootPath, absolutePath),
         extension,
         size: info.size,
-        sourceHash: createHash('sha256').update(bytes).digest('hex'),
       });
     }
   }
@@ -115,18 +138,47 @@ async function listSourceFiles(rootPath: string, ignoreDirectories: string[] = [
     if (!supportedExtensions.has(extension)) continue;
     const info = await stat(additionalFile.absolutePath);
     if (!info.isFile()) continue;
-    const bytes = await readFile(additionalFile.absolutePath);
     results.push({
       absolutePath: additionalFile.absolutePath,
       // 用户导入的 DDL 可能位于 src 扫描范围外；保留相对项目根的真实来源，避免显示 ../schema 这类实现细节。
       relativePath: normalize(additionalFile.relativePath),
       extension,
       size: info.size,
-      sourceHash: createHash('sha256').update(bytes).digest('hex'),
     });
     seenAbsolutePaths.add(additionalFile.absolutePath);
   }
   return results.sort((a, b) => a.relativePath.localeCompare(b.relativePath));
+}
+
+/** 并发读取源码并一次性产出内容与 hash，避免大仓扫描在串行二次读文件时卡住主流程。 */
+async function readScannedFilesWithContent(fileCandidates: ScannedFileCandidate[]): Promise<ScannedFileWithContent[]> {
+  const results: ScannedFileWithContent[] = [];
+  let cursor = 0;
+  async function worker(): Promise<void> {
+    while (cursor < fileCandidates.length) {
+      const index = cursor;
+      cursor += 1;
+      const candidate = fileCandidates[index];
+      if (!candidate) continue;
+      const bytes = await readFile(candidate.absolutePath);
+      const content = bytes.toString('utf8');
+      results[index] = {
+        file: {
+          ...candidate,
+          sourceHash: createHash('sha256').update(bytes).digest('hex'),
+        },
+        content,
+      };
+    }
+  }
+
+  const workerCount = Math.min(SCAN_FILE_READ_CONCURRENCY, fileCandidates.length);
+  await Promise.all(Array.from({ length: workerCount }, () => worker()));
+  return results.filter((item): item is ScannedFileWithContent => Boolean(item));
+}
+
+function buildScannedFileContentMap(fileContents: ScannedFileWithContent[]): Map<string, string> {
+  return new Map(fileContents.map(({ file, content }) => [file.absolutePath, content]));
 }
 
 function isSafeIgnoredDirectoryName(value: string): boolean {
@@ -134,8 +186,8 @@ function isSafeIgnoredDirectoryName(value: string): boolean {
 }
 
 /** 读取 tsconfig paths 作为 workspace 包解析依据，避免在扫描器里维护易漂移的硬编码入口表。 */
-async function readImportTargets(rootPath: string, files: ScannedFile[]): Promise<ImportTargetMap> {
-  return new Map([...(await readWorkspacePackageExportAliases(rootPath, files)), ...(await readWorkspaceTsconfigPathAliases(rootPath, files)), ...(await readTsconfigPathAliases(rootPath))]);
+async function readImportTargets(rootPath: string, files: ScannedFile[], contentByAbsolutePath: Map<string, string>): Promise<ImportTargetMap> {
+  return new Map([...(await readWorkspacePackageExportAliases(rootPath, files, contentByAbsolutePath)), ...(await readWorkspaceTsconfigPathAliases(rootPath, files)), ...(await readTsconfigPathAliases(rootPath))]);
 }
 
 async function readTsconfigPathAliases(rootPath: string): Promise<ImportTargetMap> {
@@ -349,11 +401,12 @@ function splitPackageExtendsValue(extendsValue: string): {
   };
 }
 
-async function readWorkspacePackageExportAliases(rootPath: string, files: ScannedFile[]): Promise<ImportTargetMap> {
+async function readWorkspacePackageExportAliases(rootPath: string, files: ScannedFile[], contentByAbsolutePath: Map<string, string>): Promise<ImportTargetMap> {
   const aliases: ImportTargetMap = new Map();
   for (const file of files.filter((item) => item.relativePath.endsWith('package.json'))) {
     try {
-      const content = await readFile(file.absolutePath, 'utf8');
+      const content = contentByAbsolutePath.get(file.absolutePath);
+      if (!content) continue;
       const parsed = JSON.parse(content) as {
         name?: string;
         exports?: unknown;
@@ -527,7 +580,7 @@ function resolvePackageExportTargets(
   };
 }
 
-function extractSymbols(rootPath: string, file: ScannedFile, content: string, allFiles: ScannedFile[], importTargets: ImportTargetMap): CodeSymbolFact[] {
+function extractSymbols(rootPath: string, file: ScannedFile, content: string, knownRelativePaths: Set<string>, importTargets: ImportTargetMap, javaImportTargets: JavaImportTargetMap): CodeSymbolFact[] {
   const language = detectLanguage(file.extension);
   const symbols: CodeSymbolFact[] = [
     makeSymbol('file', file.relativePath, file.relativePath, file.absolutePath, 1, Math.max(1, content.split('\n').length), language, file.sourceHash, {
@@ -545,8 +598,8 @@ function extractSymbols(rootPath: string, file: ScannedFile, content: string, al
       // package.json 解析失败时只保留 file fact，避免伪造包信息。
     }
   }
-  symbols.push(...extractImportExportSymbols(file, content, language, allFiles, importTargets));
-  symbols.push(...extractJavaImportSymbols(file, content, language, allFiles));
+  symbols.push(...extractImportExportSymbols(file, content, language, knownRelativePaths, importTargets));
+  symbols.push(...extractJavaImportSymbols(file, content, language, javaImportTargets));
   symbols.push(...extractSqlTableSymbols(file, content, language));
   symbols.push(...extractFastifyApiSymbols(file, content, language));
   symbols.push(...extractJavaSpringSymbols(file, content, language));
@@ -718,12 +771,12 @@ function extractJavaSpringSymbols(file: ScannedFile, content: string, language: 
     const classBody = content.slice(classStart, nextClassStart);
     const classBasePath = requestMappingPath(annotations);
     const classQualifiedName = `${file.relativePath}#${className}`;
-    const methodMatches = [...classBody.matchAll(/((?:@\w+(?:\([^)]*\))?\s*)*)\bpublic\s+(?:[\w<>?,\s]+\s+)+([A-Za-z_$][\w$]*)\s*\(([^)]*)\)\s*\{/gu)];
+    const methodMatches = extractJavaMethodMatches(classBody, classStart);
     for (const methodMatch of methodMatches) {
-      const methodAnnotations = parseJavaAnnotations(methodMatch[1] ?? '');
-      const methodName = methodMatch[2] ?? '';
-      const absoluteIndex = classStart + (methodMatch.index ?? 0);
-      const methodBodyOpenIndex = absoluteIndex + methodMatch[0].lastIndexOf('{');
+      const methodAnnotations = parseJavaAnnotations(methodMatch.annotationsBlock);
+      const methodName = methodMatch.methodName;
+      const absoluteIndex = methodMatch.absoluteIndex;
+      const methodBodyOpenIndex = methodMatch.methodBodyOpenIndex;
       const lineNo = lineNumberAt(content, absoluteIndex);
       const methodQualifiedName = `${classQualifiedName}.${methodName}`;
       const methodEndLine = findJavaBlockEndLineFromOpenBrace(content, methodBodyOpenIndex);
@@ -733,7 +786,7 @@ function extractJavaSpringSymbols(file: ScannedFile, content: string, language: 
           packageName,
           className,
           methodName,
-          parameters: methodMatch[3]?.trim() ?? '',
+          parameters: methodMatch.parameters,
           annotations: methodAnnotations,
           // Spring 方法级事务与异步注解是设计书要求的真实代码图谱事实，显式结构化后方便视图和搜索过滤。
           ...javaMethodBehaviorForAnnotations(methodAnnotations),
@@ -781,6 +834,42 @@ function extractJavaSpringSymbols(file: ScannedFile, content: string, language: 
 interface ParsedJavaAnnotation {
   name: string;
   value?: string;
+}
+
+function extractJavaMethodMatches(classBody: string, classStart: number): JavaMethodMatch[] {
+  const matches: JavaMethodMatch[] = [];
+  const javaMethodSignaturePattern = /^\s*public\s+(?:[A-Za-z_$][\w$]*(?:<[^>\n]+>)?(?:\[\])?\s+)+([A-Za-z_$][\w$]*)\s*\(([^)\n]*)\)\s*\{/u;
+  const lines = classBody.split('\n');
+  let offset = 0;
+  let annotationsBlock = '';
+  let annotationsStartOffset = 0;
+
+  for (const line of lines) {
+    const trimmedLine = line.trim();
+    if (trimmedLine.startsWith('@')) {
+      if (!annotationsBlock) annotationsStartOffset = offset;
+      annotationsBlock += `${line}\n`;
+      offset += line.length + 1;
+      continue;
+    }
+
+    const signatureMatch = line.match(javaMethodSignaturePattern);
+    if (signatureMatch?.[1]) {
+      const methodBodyOpenIndex = line.indexOf('{');
+      matches.push({
+        annotationsBlock,
+        methodName: signatureMatch[1],
+        parameters: signatureMatch[2]?.trim() ?? '',
+        absoluteIndex: classStart + (annotationsBlock ? annotationsStartOffset : offset),
+        methodBodyOpenIndex: classStart + offset + methodBodyOpenIndex,
+      });
+    }
+
+    if (trimmedLine && !trimmedLine.startsWith('//')) annotationsBlock = '';
+    offset += line.length + 1;
+  }
+
+  return matches;
 }
 
 function parseJavaAnnotations(block: string): ParsedJavaAnnotation[] {
@@ -1313,10 +1402,13 @@ function isSqlKeyword(value: string): boolean {
 }
 
 /** 抽取 TS/JS import/export 事实，模块依赖图只使用真实文件或 workspace 包映射。 */
-function extractImportExportSymbols(file: ScannedFile, content: string, language: string, allFiles: ScannedFile[], importTargets: ImportTargetMap): CodeSymbolFact[] {
+function buildKnownRelativePathSet(files: ScannedFile[]): Set<string> {
+  return new Set(files.map((item) => item.relativePath));
+}
+
+function extractImportExportSymbols(file: ScannedFile, content: string, language: string, knownRelativePaths: Set<string>, importTargets: ImportTargetMap): CodeSymbolFact[] {
   if (!['typescript', 'javascript'].includes(language)) return [];
   const symbols: CodeSymbolFact[] = [];
-  const knownRelativePaths = new Set(allFiles.map((item) => item.relativePath));
   const importPattern = /import\s+(?:type\s+)?(?:([^'";]+?)\s+from\s+)?['"]([^'"]+)['"]/gu;
   for (const match of content.matchAll(importPattern)) {
     const importSource = match[2];
@@ -1348,15 +1440,25 @@ function extractImportExportSymbols(file: ScannedFile, content: string, language
 }
 
 /** 抽取 Java import 依赖事实，支撑包依赖/外部依赖图谱；只按真实 import 语句和仓库内 Java 文件路径解析。 */
-function extractJavaImportSymbols(file: ScannedFile, content: string, language: string, allFiles: ScannedFile[]): CodeSymbolFact[] {
+function buildJavaImportTargetMap(files: ScannedFile[]): JavaImportTargetMap {
+  const targets: JavaImportTargetMap = new Map();
+  for (const file of files) {
+    if (file.extension !== '.java') continue;
+    const javaSourceIndex = file.relativePath.lastIndexOf('/java/');
+    const packageRelativePath = javaSourceIndex >= 0 ? file.relativePath.slice(javaSourceIndex + '/java/'.length) : file.relativePath;
+    if (!targets.has(packageRelativePath)) targets.set(packageRelativePath, file.relativePath);
+  }
+  return targets;
+}
+
+function extractJavaImportSymbols(file: ScannedFile, content: string, language: string, javaImportTargets: JavaImportTargetMap): CodeSymbolFact[] {
   if (language !== 'java') return [];
-  const knownJavaFiles = new Set(allFiles.filter((item) => item.extension === '.java').map((item) => item.relativePath));
   const symbols: CodeSymbolFact[] = [];
   for (const match of content.matchAll(/\bimport\s+(static\s+)?([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+)(\.\*)?\s*;/gu)) {
     const importSource = match[2];
     if (!importSource) continue;
     const lineNo = content.slice(0, match.index ?? 0).split('\n').length;
-    const resolvedRelativePath = resolveJavaImportPath(importSource, knownJavaFiles);
+    const resolvedRelativePath = resolveJavaImportPath(importSource, javaImportTargets);
     const importedName = match[3] ? '*' : (importSource.split('.').at(-1) ?? importSource);
     symbols.push(
       makeSymbol('import', importSource, `${file.relativePath}#java_import:${sanitizeQualifiedName(importSource)}:L${lineNo}`, file.absolutePath, lineNo, lineNo, language, file.sourceHash, {
@@ -1374,10 +1476,9 @@ function extractJavaImportSymbols(file: ScannedFile, content: string, language: 
   return symbols;
 }
 
-function resolveJavaImportPath(importSource: string, knownJavaFiles: Set<string>): string | undefined {
+function resolveJavaImportPath(importSource: string, javaImportTargets: JavaImportTargetMap): string | undefined {
   const candidate = `${importSource.replace(/\./gu, '/')}.java`;
-  const matched = Array.from(knownJavaFiles).find((relativePath) => relativePath.endsWith(candidate));
-  return matched;
+  return javaImportTargets.get(candidate);
 }
 
 function javaPackageDependencyMetadata(importSource: string): {

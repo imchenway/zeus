@@ -1,37 +1,30 @@
+import { useEffect } from 'react';
 import { createRoot } from 'react-dom/client';
-import { App } from './App.js';
+import { App, buildGraphConversationTaskIntent, buildGraphNodeTaskIntent, buildProjectDirectoryResolution, buildTemplateTaskDraft } from './App.js';
 import { RendererErrorBoundary } from './ErrorBoundary.js';
 import { createDashboardClient, type DashboardClient } from './apiClient.js';
 import { openGraphSourceInMain } from './appShellBridge.js';
 
-const root = document.getElementById('root');
-if (!root) {
-  throw new Error('Zeus renderer root element is missing');
-}
-
-const reactRoot = createRoot(root);
-reactRoot.render(
-  <RendererErrorBoundary>
-    <App localClientStatus="connecting" />
-  </RendererErrorBoundary>,
-);
-
 /** 选择真实仓库失败或取消时保留现有列表；开源分发包不能内置维护者本机路径。 */
-function resolveProjectDirectoryForCreation(selectedPath: string | null | undefined): { path: string | null; description: string } {
-  if (selectedPath) return { path: selectedPath, description: '用户选择的真实本地仓库' };
-  return { path: null, description: '用户取消选择，已保留当前项目列表' };
+function resolveProjectDirectoryForCreation(selectedPath: string | null | undefined, appLanguage: Parameters<typeof buildProjectDirectoryResolution>[1]): { path: string | null; description: string } {
+  return buildProjectDirectoryResolution(selectedPath, appLanguage);
 }
 
 async function renderWithClient(client: DashboardClient): Promise<void> {
   const snapshot = await client.loadDashboard();
+  const appShellSettings = await client.loadAppShellSettings();
+  const root = document.getElementById('root');
+  if (!root) throw new Error('Zeus renderer root element is missing');
+  const reactRoot = createRoot(root);
   reactRoot.render(
-    <RendererErrorBoundary>
+    <RendererErrorBoundary appLanguage={appShellSettings.appLanguage} onFatalError={reportRendererFatalFailure}>
       <App
-        localClientStatus="ready"
+        initialAppShellSettings={appShellSettings}
         snapshot={snapshot}
+        nativeConversationClient={client}
         onCreateCurrentProject={async (defaults) => {
           const selectedPath = await window.zeus?.chooseProjectDirectory?.();
-          const resolved = resolveProjectDirectoryForCreation(selectedPath);
+          const resolved = resolveProjectDirectoryForCreation(selectedPath, appShellSettings.appLanguage);
           if (!resolved.path) return client.loadDashboard();
           await client.createProject({
             name: resolved.path.split('/').filter(Boolean).at(-1) ?? 'Zeus',
@@ -71,31 +64,41 @@ async function renderWithClient(client: DashboardClient): Promise<void> {
           await client.setProjectDefaultTemplate(projectId, templateId);
           return client.loadDashboard();
         }}
+        onSaveTaskPastedAttachments={(attachments) => window.zeus?.saveTaskPastedAttachments?.(attachments) ?? Promise.resolve([])}
+        onSaveTaskClipboardAttachments={() => window.zeus?.saveTaskClipboardAttachments?.() ?? Promise.resolve([])}
+        onLoadTaskAttachmentPreview={(path) => window.zeus?.getTaskAttachmentPreview?.(path) ?? Promise.resolve(null)}
+        onOpenTaskAttachment={(path) => window.zeus?.openTaskAttachment?.(path) ?? Promise.resolve({ opened: false, error: 'open_attachment_unavailable' })}
+        onReadTaskClipboardAttachments={() => window.zeus?.readTaskClipboardAttachments?.() ?? Promise.resolve([])}
+        onReadTaskClipboardImage={() => window.zeus?.readTaskClipboardImage?.() ?? Promise.resolve(null)}
         onCreateTaskFromGraphNode={async (nodeId, projectId) => {
           await client.createTaskFromGraphNode(nodeId, {
             projectId,
-            intent: '分析该图谱节点的实现风险、影响范围和建议测试范围',
+            intent: buildGraphNodeTaskIntent(appShellSettings.appLanguage),
           });
           return client.loadDashboard();
         }}
         onCreateTaskFromTemplate={async (templateId, projectId) => {
+          const templateTaskDraft = buildTemplateTaskDraft(appShellSettings.appLanguage);
           await client.createTaskFromTemplate(templateId, {
             projectId,
-            title: '从模板创建的任务',
+            title: templateTaskDraft.title,
             variables: {
               project_path: snapshot.projects.find((project) => project.id === projectId)?.localPath ?? snapshot.projects[0]?.localPath ?? '',
-              goal: '基于模板补充真实任务目标',
+              ...templateTaskDraft.variables,
             },
           });
           return client.loadDashboard();
         }}
-        onCreateDefaultTask={async (projectId) => {
+        onChooseTaskAttachments={() => window.zeus?.chooseTaskAttachments?.() ?? Promise.resolve([])}
+        onCreateTaskDraft={async (projectId, draft) => {
           await client.createTask({
             projectId,
-            title: '分析当前项目结构',
-            description: '基于真实扫描和 Git 状态分析当前 Zeus 仓库',
+            title: draft.title,
+            description: draft.description,
+            tags: draft.tags,
             sourceContext: {
               path: snapshot.projects.find((project) => project.id === projectId)?.localPath ?? snapshot.projects[0]?.localPath ?? '',
+              attachments: draft.attachments,
             },
           });
           return client.loadDashboard();
@@ -124,16 +127,26 @@ async function renderWithClient(client: DashboardClient): Promise<void> {
           return client.loadDashboard();
         }}
         onRunTask={async (taskId) => {
-          await client.runTask(taskId);
-          return client.loadDashboard();
+          const result = await client.runTask(taskId);
+          return {
+            snapshot: await client.loadDashboard(),
+            task: result.task,
+            conversation: result.conversation,
+            runtimeError: result.runtimeError,
+          };
         }}
         onPauseTask={async (taskId) => {
           await client.pauseTask(taskId);
           return client.loadDashboard();
         }}
         onContinueTask={async (taskId) => {
-          await client.continueTask(taskId);
-          return client.loadDashboard();
+          const result = await client.continueTask(taskId);
+          return {
+            snapshot: await client.loadDashboard(),
+            task: result.task,
+            conversation: result.conversation,
+            runtimeError: result.runtimeError,
+          };
         }}
         onCancelTask={async (taskId) => {
           await client.cancelTask(taskId);
@@ -149,17 +162,29 @@ async function renderWithClient(client: DashboardClient): Promise<void> {
         }}
         onLoadGraphView={(viewType) => client.loadGraphView(viewType ?? 'architecture')}
         onSearchGraph={(query, nodeType, edgeType, minConfidence) => client.searchGraph({ query, nodeType, edgeType, minConfidence })}
+        onScanProjectGraph={async (projectId) => {
+          await client.scanProject(projectId);
+          return client.loadDashboard();
+        }}
+        onLoadProjectGraphView={(projectId, viewType) => client.loadProjectGraphView(projectId, viewType ?? 'architecture')}
+        onSearchProjectGraph={(projectId, query, nodeType, edgeType, minConfidence) => client.searchProjectGraph(projectId, { query, nodeType, edgeType, minConfidence })}
         onAskGraph={(projectId, question) => client.askGraph(projectId, { question })}
         onLoadGraphConversations={(projectId, input) => client.loadGraphConversations(projectId, input)}
         onLoadGraphConversation={(projectId, conversationId) => client.loadGraphConversation(projectId, conversationId)}
+        onSendConversationMessage={(projectId, conversationId, content) => client.sendConversationMessage(projectId, conversationId, content)}
+        onSubscribeRealtimeEvents={(onEvent) => {
+          const socket = client.connectEvents(onEvent);
+          return () => socket.close();
+        }}
         onArchiveGraphConversation={(projectId, conversationId) => client.archiveGraphConversation(projectId, conversationId)}
         onRestoreGraphConversation={(projectId, conversationId) => client.restoreGraphConversation(projectId, conversationId)}
         onCreateTaskFromGraphConversation={async (projectId, conversationId) => {
-          await client.createTaskFromGraphConversation(projectId, conversationId, { intent: '基于这次图谱问答创建可执行跟进任务' });
+          await client.createTaskFromGraphConversation(projectId, conversationId, { intent: buildGraphConversationTaskIntent(appShellSettings.appLanguage) });
           return client.loadDashboard();
         }}
         onOpenGraphSource={(source) => openGraphSourceInMain({ zeus: window.zeus, source })}
         onExportMermaidDiagramFile={(payload) => window.zeus?.exportMermaidDiagramToFile?.(payload) ?? Promise.resolve({ saved: false, filePath: null })}
+        onExportPlantUmlDiagramFile={(payload) => window.zeus?.exportPlantUmlDiagramToFile?.(payload) ?? Promise.resolve({ saved: false, filePath: null })}
         onLoadTaskTemplates={(projectId) => client.loadTaskTemplates(projectId)}
         onLoadGitDiff={() => client.loadGitDiff()}
         onExportGitPatch={() => client.exportGitPatch()}
@@ -173,6 +198,8 @@ async function renderWithClient(client: DashboardClient): Promise<void> {
         onSaveCodeMapSettings={(input) => client.saveCodeMapSettings(input)}
         onLoadAppShellSettings={() => client.loadAppShellSettings()}
         onSaveAppShellSettings={(input) => client.saveAppShellSettings(input)}
+        onLoadCodexLegacyImports={() => client.loadCodexLegacyImports()}
+        onStartCodexLegacyImport={(sourceConversationIds) => client.startCodexLegacyImport(sourceConversationIds)}
         onClearLocalCaches={() => client.clearLocalCaches()}
         onExportLocalSettings={() => client.exportLocalSettings()}
         onImportLocalSettings={(input) => client.importLocalSettings(input)}
@@ -246,8 +273,17 @@ async function renderWithClient(client: DashboardClient): Promise<void> {
         onRejectGitOperation={(confirmationId, reason) => client.rejectGitOperation(confirmationId, reason)}
         onExecuteGitOperation={(input) => client.executeGitOperation(input)}
       />
+      <RendererBootstrapReady />
     </RendererErrorBoundary>,
   );
+}
+
+/** React 首次 commit 后再通知 Main；在此之前的模块、加载和渲染异常都由启动监控器兜底。 */
+function RendererBootstrapReady(): null {
+  useEffect(() => {
+    window.zeus?.reportRendererBootstrapReady?.();
+  }, []);
+  return null;
 }
 
 function gitOperationReason(operation: string): string {
@@ -277,12 +313,12 @@ async function hydrateDashboard(): Promise<void> {
 
 hydrateDashboard().catch((error: unknown) => {
   console.error('Zeus dashboard hydration failed', error);
-  reactRoot.render(
-    <RendererErrorBoundary>
-      <App localClientStatus="failed" localClientError={formatHydrationError(error)} />
-    </RendererErrorBoundary>,
-  );
+  reportRendererFatalFailure(error);
 });
+
+function reportRendererFatalFailure(error: unknown): void {
+  window.zeus?.reportRendererFatalFailure?.(formatHydrationError(error));
+}
 
 function formatHydrationError(error: unknown): string {
   if (error instanceof Error && error.message.trim()) return error.message.split('\n')[0]?.slice(0, 180) ?? '未知错误';

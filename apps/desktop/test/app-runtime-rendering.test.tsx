@@ -1,7 +1,8 @@
 import { renderToString } from 'react-dom/server';
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { App, GENERIC_SHELL_CRITICAL_CONFIRMATION_PHRASE, classifyGenericShellCommandRisk, isGenericShellCriticalConfirmationSatisfied, resolveRuntimeNormalizedLogPath } from '../src/renderer/App.js';
-import type { AiRuntimeAdapterDescriptor, AiRuntimeAdapterStatus, AiRuntimeLogEntry, AiRuntimeSession, DashboardSnapshot, ReleaseUpdateStatusSnapshot, RuntimeOperationConfirmation } from '../src/renderer/apiClient.js';
+import { App, GENERIC_SHELL_CRITICAL_CONFIRMATION_PHRASE, buildRuntimeSessionTaskDraft, classifyGenericShellCommandRisk, isGenericShellCriticalConfirmationSatisfied, resolveRuntimeNormalizedLogPath } from '../src/renderer/App.js';
+import type { AiRuntimeAdapterDescriptor, AiRuntimeAdapterStatus, AiRuntimeLogEntry, AiRuntimeSession, AppShellSettings, DashboardSnapshot, ReleaseUpdateStatusSnapshot, RuntimeOperationConfirmation } from '../src/renderer/apiClient.js';
 
 function createSnapshot(): DashboardSnapshot {
   return {
@@ -25,21 +26,57 @@ function createSnapshot(): DashboardSnapshot {
   };
 }
 
+function createAppShellSettings(appLanguage: AppShellSettings['appLanguage']): AppShellSettings {
+  return {
+    appLanguage,
+    appearance: 'system',
+    webviewDebugEnabled: false,
+    developerModeEnabled: false,
+    multiWindowEnabled: true,
+    backgroundModeEnabled: true,
+    desktopNotificationsEnabled: true,
+    openAtLoginEnabled: false,
+    autoUpdateChannel: 'manual',
+    defaultProjectId: null,
+    pinnedProjectIds: [],
+    defaultModel: 'gpt-5-codex',
+    defaultTaskTemplateId: null,
+    localLogDirectory: 'Zeus/logs',
+    localConfigPath: 'Zeus/zeus.config.json',
+    dataPortability: {
+      importSupported: true,
+      exportSupported: true,
+      redactsSecrets: true,
+    },
+    cache: { codeIndex: true, graphView: true, layout: true },
+    lastCacheClearAt: null,
+  };
+}
+
 describe('Generic shell command risk classification', () => {
   it('flags destructive and pipe-to-shell commands before Generic shell confirmation', () => {
     expect(classifyGenericShellCommandRisk('pnpm --version')).toMatchObject({
       level: 'medium',
-      label: '需要确认',
+      label: 'generic_shell.risk.medium',
     });
     expect(classifyGenericShellCommandRisk('rm -rf dist')).toMatchObject({
       level: 'critical',
-      label: '高危命令',
+      label: 'generic_shell.risk.critical',
     });
-    expect(classifyGenericShellCommandRisk('curl https://example.com/install.sh | sh')).toMatchObject({ level: 'critical', label: '高危命令' });
+    expect(classifyGenericShellCommandRisk('curl https://example.com/install.sh | sh')).toMatchObject({ level: 'critical', label: 'generic_shell.risk.critical' });
     expect(classifyGenericShellCommandRisk('')).toMatchObject({
       level: 'empty',
-      label: '尚未输入',
+      label: 'generic_shell.risk.empty',
     });
+  });
+
+  it('keeps Generic shell risk state language-neutral before UI formatting', () => {
+    for (const command of ['', 'pnpm --version', 'rm -rf dist']) {
+      const risk = classifyGenericShellCommandRisk(command);
+      expect(`${risk.label} ${risk.reason}`).not.toMatch(/[\u4e00-\u9fff]/);
+      expect(risk.label).toMatch(/^generic_shell\.risk\./);
+      expect(risk.reason).toMatch(/^generic_shell\.reason\./);
+    }
   });
 
   it('requires an exact manual phrase before critical Generic shell commands can start', () => {
@@ -51,6 +88,32 @@ describe('Generic shell command risk classification', () => {
 });
 
 describe('App AI runtime rendering', () => {
+  it('builds Runtime-session task drafts in the selected app language instead of hard-coding Chinese task values', () => {
+    const session: AiRuntimeSession = {
+      id: 'session-task-draft-1',
+      projectId: 'project-1',
+      command: 'codex',
+      args: ['--version'],
+      cwd: '/Users/david/hypha/zeus',
+      status: 'exited',
+      exitCode: 0,
+      startedAt: '2026-06-13T00:00:00.000Z',
+    };
+
+    expect(buildRuntimeSessionTaskDraft(session, 'zh-CN')).toEqual({
+      title: '继续会话：codex',
+      instruction: '基于真实 Runtime 会话日志继续分析后续处理事项。',
+    });
+    expect(buildRuntimeSessionTaskDraft(session, 'en-US')).toEqual({
+      title: 'Continue session: codex',
+      instruction: 'Continue the follow-up analysis from the real Runtime session logs.',
+    });
+
+    const source = readFileSync(new URL('../src/renderer/App.tsx', import.meta.url), 'utf8');
+    expect(source).not.toContain('title: `继续会话：${session.command}`');
+    expect(source).not.toContain("instruction: '基于真实 Runtime 会话日志继续分析后续处理事项。'");
+  });
+
   it('derives the complete normalized terminal log path from terminal event chunk indexes', () => {
     expect(
       resolveRuntimeNormalizedLogPath([
@@ -124,6 +187,37 @@ it('renders runtime session management controls and real summary fields', () => 
   expect(html).toContain('生成摘要');
   expect(html).toContain('归档会话');
   expect(html).toContain('删除会话');
+});
+
+it('normalizes runtime session actions into compact primary and secondary groups', () => {
+  const session: AiRuntimeSession = {
+    id: 'session-actions-1',
+    projectId: 'project-1',
+    command: 'codex',
+    args: ['exec'],
+    cwd: '/Users/david/hypha/zeus',
+    status: 'exited',
+    exitCode: 0,
+    summary: '真实 Runtime 摘要',
+    favorite: false,
+    archived: false,
+    startedAt: '2026-06-13T00:00:00.000Z',
+  };
+
+  const html = renderToString(<App snapshot={createSnapshot()} initialRuntimeSessions={[session]} />);
+  const source = readFileSync(new URL('../src/renderer/App.tsx', import.meta.url), 'utf8');
+  const css = readFileSync(new URL('../src/renderer/styles.css', import.meta.url), 'utf8');
+
+  expect(html).toContain('runtime-session-action-rail');
+  expect(html).toContain('runtime-session-primary-command-rail');
+  expect(html).toContain('runtime-session-secondary-command-rail');
+  expect(html).toContain('生成摘要');
+  expect(html).toContain('从会话创建任务');
+  expect(html).toContain('删除会话');
+  expect(source).not.toContain('className="task-controls runtime-session-actions"');
+  expect(css).toContain('Runtime 会话操作栏最终覆盖');
+  expect(css).toMatch(/\.macos-ai-app \.runtime-session-action-rail\s*\{[\s\S]*grid-template-rows:\s*auto auto/);
+  expect(css).toMatch(/\.macos-ai-app \.runtime-session-secondary-command-rail\s*\{[\s\S]*justify-content:\s*flex-end/);
 });
 
 it('renders runtime restore and follow-up task actions for archived session view', () => {
@@ -201,13 +295,17 @@ it('renders Generic shell runtime high-risk confirmation controls without making
     />,
   );
 
-  expect(html).toContain('Generic shell 高风险确认');
-  expect(html).toContain('Generic shell 命令');
+  expect(html).toContain('通用 Shell 高风险确认');
+  expect(html).not.toContain('Generic shell 高风险确认');
+  expect(html).toContain('通用 Shell 命令');
+  expect(html).not.toContain('Generic shell 命令');
   expect(html).toContain('例如 pnpm --version');
   expect(html).toContain('命令预览');
   expect(html).toContain('尚未输入 shell 命令');
-  expect(html).toContain('创建 Generic shell 确认');
-  expect(html).toContain('确认并启动 Generic shell');
+  expect(html).toContain('创建通用 Shell 确认');
+  expect(html).not.toContain('创建 Generic shell 确认');
+  expect(html).toContain('确认并启动通用 Shell');
+  expect(html).not.toContain('确认并启动 Generic shell');
   expect(html).toContain('确认只绑定本次 sh -lc');
 });
 
@@ -282,7 +380,8 @@ it('renders pending Generic shell runtime confirmation with an explicit reject a
     />,
   );
 
-  expect(html).toContain('拒绝 Generic shell 确认');
+  expect(html).toContain('拒绝通用 Shell 确认');
+  expect(html).not.toContain('拒绝 Generic shell 确认');
   expect(html).toContain('拒绝后不会启动 Runtime 会话');
   expect(html).toContain('确认只绑定本次 sh -lc');
 });
@@ -318,9 +417,11 @@ it('renders rejected Generic shell runtime confirmation as a terminal safe state
 
   const html = renderToString(<App snapshot={createSnapshot()} initialRuntimeAdapters={adapters} initialRuntimeGenericShellCommand="pnpm --version" initialRuntimeConfirmation={confirmation} />);
 
-  expect(html).toContain('已拒绝 Generic shell 确认');
+  expect(html).toContain('已拒绝通用 Shell 确认');
+  expect(html).not.toContain('已拒绝 Generic shell 确认');
   expect(html).toContain('不会启动 Runtime 会话');
   expect(html).toContain('用户拒绝 Generic shell');
+  expect(html).not.toContain('确认并启动通用 Shell</button>');
   expect(html).not.toContain('确认并启动 Generic shell</button>');
 });
 
@@ -414,7 +515,10 @@ it('renders runtime adapter registry without claiming unavailable tools are conf
 
   const html = renderToString(<App snapshot={createSnapshot()} initialRuntimeAdapters={adapters} />);
 
-  expect(html).toContain('Runtime Adapters');
+  expect(html).toContain('Runtime 适配器');
+  expect(html).toContain('检测适配器');
+  expect(html).not.toContain('Runtime Adapters');
+  expect(html).not.toContain('检测 adapter');
   expect(html).toContain('OpenAI Codex CLI');
   expect(html).toContain('Claude Code CLI');
   expect(html).toContain('Gemini CLI');
@@ -451,11 +555,14 @@ it('renders the persisted default runtime adapter setting without claiming avail
     />,
   );
 
-  expect(html).toContain('默认 Runtime Adapter');
-  expect(html).toContain('默认 Adapter 模型');
+  expect(html).toContain('默认 Runtime 适配器');
+  expect(html).not.toContain('默认 Runtime Adapter');
+  expect(html).toContain('默认适配器模型');
+  expect(html).not.toContain('默认 Adapter 模型');
   expect(html).toContain('默认参数');
   expect(html).toContain('--ask-for-approval never');
-  expect(html).toContain('保存默认 Adapter');
+  expect(html).toContain('保存默认适配器');
+  expect(html).not.toContain('保存默认 Adapter');
   expect(html).toContain('当前默认：Claude Code CLI');
   expect(html).toContain('claude-sonnet-real');
 });
@@ -502,7 +609,8 @@ it('renders runtime execution settings for concurrency, shell, and terminal envi
   expect(html).toContain('保留 14 天');
   expect(html).toContain('自动确认策略');
   expect(html).toContain('仅低风险');
-  expect(html).toContain('不会绕过 Generic shell、Git 写入、删除文件等高风险确认。');
+  expect(html).toContain('不会绕过通用 Shell、Git 写入、删除文件等高风险确认。');
+  expect(html).not.toContain('不会绕过 Generic shell、Git 写入、删除文件等高风险确认。');
   expect(html).toContain('Shell 路径');
   expect(html).toContain('/bin/zsh');
   expect(html).toContain('作为 login shell 启动');
@@ -526,9 +634,81 @@ it('renders runtime terminal control actions for a running session', () => {
 
   expect(html).toContain('Runtime 输入');
   expect(html).toContain('发送 Runtime 输入');
-  expect(html).toContain('Interrupt');
+  expect(html).toContain('中断');
   expect(html).toContain('调整终端尺寸');
   expect(html).toContain('读取终端快照');
+  expect(html).not.toContain('>Interrupt<');
+});
+
+it('localizes runtime session status labels instead of leaking storage enum values', () => {
+  const session: AiRuntimeSession = {
+    id: 'session-localized-status-1',
+    projectId: 'project-1',
+    command: 'codex',
+    args: ['exec'],
+    cwd: '/Users/david/hypha/zeus',
+    status: 'running',
+    startedAt: '2026-06-13T00:00:00.000Z',
+  };
+
+  const zhHtml = renderToString(<App snapshot={createSnapshot()} initialRuntimeSessions={[session]} />);
+  const enHtml = renderToString(<App snapshot={createSnapshot()} initialAppShellSettings={createAppShellSettings('en-US')} initialRuntimeSessions={[session]} />);
+
+  expect(zhHtml).toMatch(/运行中(?:<!-- -->)? · (?:<!-- -->)?\/Users\/david\/hypha\/zeus/);
+  expect(zhHtml).not.toContain('running · /Users/david/hypha/zeus');
+  expect(enHtml).toMatch(/Running(?:<!-- -->)? · (?:<!-- -->)?\/Users\/david\/hypha\/zeus/);
+  expect(enHtml).not.toContain('running · /Users/david/hypha/zeus');
+});
+
+it('normalizes running runtime controls into an input dock and terminal action rail', () => {
+  const session: AiRuntimeSession = {
+    id: 'session-running-controls-1',
+    projectId: 'project-1',
+    command: 'codex',
+    args: ['exec'],
+    cwd: '/Users/david/hypha/zeus',
+    status: 'running',
+    startedAt: '2026-06-13T00:00:00.000Z',
+  };
+
+  const html = renderToString(<App snapshot={createSnapshot()} initialRuntimeSessions={[session]} />);
+  const source = readFileSync(new URL('../src/renderer/App.tsx', import.meta.url), 'utf8');
+  const css = readFileSync(new URL('../src/renderer/styles.css', import.meta.url), 'utf8');
+
+  expect(html).toContain('runtime-session-live-controls');
+  expect(html).toContain('runtime-session-compose-row');
+  expect(html).toContain('runtime-session-terminal-command-rail');
+  expect(html).toContain('发送 Runtime 输入');
+  expect(html).toContain('读取终端快照');
+  expect(source).not.toContain('className="edit-form runtime-session-control-row" aria-label="Runtime 输入"');
+  expect(css).toContain('Runtime 运行中控制栏最终覆盖');
+  expect(css).toMatch(/\.macos-ai-app \.runtime-session-live-controls\s*\{[\s\S]*grid-template-columns:\s*minmax\(0,\s*1fr\) auto/);
+  expect(css).toMatch(/\.macos-ai-app \.runtime-session-terminal-command-rail\s*\{[\s\S]*justify-content:\s*flex-end/);
+});
+
+it('normalizes running runtime input dock into explicit compose rows instead of label wrapped controls', () => {
+  const session: AiRuntimeSession = {
+    id: 'session-running-compose-1',
+    projectId: 'project-1',
+    command: 'codex',
+    args: ['exec'],
+    cwd: '/Users/david/hypha/zeus',
+    status: 'running',
+    startedAt: '2026-06-13T00:00:00.000Z',
+  };
+
+  const html = renderToString(<App snapshot={createSnapshot()} initialRuntimeSessions={[session]} />);
+  const source = readFileSync(new URL('../src/renderer/App.tsx', import.meta.url), 'utf8');
+  const css = readFileSync(new URL('../src/renderer/styles.css', import.meta.url), 'utf8');
+
+  expect(html).toContain('runtime-session-compose-row');
+  expect(html).toContain('runtime-session-compose-copy');
+  expect(html).toContain('runtime-session-compose-field');
+  expect(html).toContain('发送 Runtime 输入');
+  expect(source).not.toContain('<label className="runtime-session-input-dock">');
+  expect(css).toContain('Runtime 会话输入控件行最终覆盖');
+  expect(css).toMatch(/\.macos-ai-app \.runtime-session-compose-row\s*\{[\s\S]*grid-template-columns:\s*minmax\(0,\s*1fr\) minmax\(220px,\s*1fr\)/);
+  expect(css).toMatch(/\.macos-ai-app \.runtime-session-compose-field\s*\{[\s\S]*display:\s*grid/);
 });
 
 it('renders a terminate action for orphan detected runtime sessions without showing input controls', () => {
@@ -545,9 +725,39 @@ it('renders a terminate action for orphan detected runtime sessions without show
 
   const html = renderToString(<App snapshot={createSnapshot()} initialRuntimeSessions={[session]} />);
 
-  expect(html).toContain('orphan_detected');
+  expect(html).toContain('孤儿会话');
+  expect(html).not.toContain('orphan_detected');
   expect(html).toContain('终止孤儿会话');
   expect(html).not.toContain('发送 Runtime 输入');
+});
+
+it('normalizes orphan runtime sessions into a compact risk row instead of a form control pile', () => {
+  const session: AiRuntimeSession = {
+    id: 'session-orphan-compact-1',
+    projectId: 'project-1',
+    command: 'codex',
+    args: ['exec'],
+    cwd: '/Users/david/hypha/zeus',
+    status: 'orphan_detected',
+    pid: 444,
+    startedAt: '2026-06-13T00:00:00.000Z',
+  };
+
+  const html = renderToString(<App snapshot={createSnapshot()} initialRuntimeSessions={[session]} />);
+  const source = readFileSync(new URL('../src/renderer/App.tsx', import.meta.url), 'utf8');
+  const css = readFileSync(new URL('../src/renderer/styles.css', import.meta.url), 'utf8');
+
+  expect(html).toContain('runtime-session-orphan-controls');
+  expect(html).toContain('runtime-session-orphan-copy');
+  expect(html).toContain('runtime-session-orphan-command-rail');
+  expect(html).toContain('终止孤儿会话');
+  expect(html).toContain('进程');
+  expect(html).toContain('444');
+  expect(html).toContain('已脱离当前 Runtime 控制');
+  expect(source).not.toContain('className="edit-form runtime-session-control-row" aria-label="Runtime 孤儿会话控制"');
+  expect(css).toContain('Runtime 孤儿会话控制最终覆盖');
+  expect(css).toMatch(/\.macos-ai-app \.runtime-session-orphan-controls\s*\{[\s\S]*grid-template-columns:\s*minmax\(0,\s*1fr\) auto/);
+  expect(css).toMatch(/\.macos-ai-app \.runtime-session-orphan-command-rail\s*\{[\s\S]*justify-content:\s*flex-end/);
 });
 
 it('renders runtime log search collapse copy and semantic highlights for collected logs', () => {
@@ -599,6 +809,152 @@ it('renders runtime log search collapse copy and semantic highlights for collect
   expect(html).toContain('runtime-log-line ai');
 });
 
+it('normalizes runtime log semantic highlights into low-noise log tokens', () => {
+  const css = readFileSync(new URL('../src/renderer/styles.css', import.meta.url), 'utf8');
+
+  expect(css).toContain('Runtime 日志语义色最终覆盖');
+  ['--zeus-log-line-bg', '--zeus-log-line-border', '--zeus-log-line-text', '--zeus-log-error-bg', '--zeus-log-error-line', '--zeus-log-command-bg', '--zeus-log-command-line', '--zeus-log-ai-bg', '--zeus-log-ai-line'].forEach((token) => {
+    expect(css).toContain(token);
+  });
+  expect(css).toMatch(/\.macos-ai-app \.runtime-log-line\s*\{[\s\S]*background:\s*var\(--zeus-log-line-bg\)/);
+  expect(css).toMatch(/\.macos-ai-app \.runtime-log-line\s*\{[\s\S]*border:\s*1px solid var\(--zeus-log-line-border\)/);
+  expect(css).toMatch(/\.macos-ai-app \.runtime-log-line\s*\{[\s\S]*color:\s*var\(--zeus-log-line-text\)/);
+  expect(css).toMatch(/\.macos-ai-app \.runtime-log-line\.error\s*\{[\s\S]*background:\s*var\(--zeus-log-error-bg\)/);
+  expect(css).toMatch(/\.macos-ai-app \.runtime-log-line\.error\s*\{[\s\S]*border-color:\s*var\(--zeus-log-error-line\)/);
+  expect(css).toMatch(/\.macos-ai-app \.runtime-log-line\.command\s*\{[\s\S]*background:\s*var\(--zeus-log-command-bg\)/);
+  expect(css).toMatch(/\.macos-ai-app \.runtime-log-line\.command\s*\{[\s\S]*border-color:\s*var\(--zeus-log-command-line\)/);
+  expect(css).toMatch(/\.macos-ai-app \.runtime-log-line\.ai\s*\{[\s\S]*background:\s*var\(--zeus-log-ai-bg\)/);
+  expect(css).toMatch(/\.macos-ai-app \.runtime-log-line\.ai\s*\{[\s\S]*border-color:\s*var\(--zeus-log-ai-line\)/);
+  expect(css).not.toMatch(/\.macos-ai-app \.runtime-log-line\.error\s*\{[\s\S]*?(?:oklch\(50% 0\.17 39\)|oklch\(88% 0\.06 62 \/ 0\.35\))/);
+  expect(css).not.toMatch(/\.macos-ai-app \.runtime-log-line\.command\s*\{[\s\S]*?(?:oklch\(55% 0\.18 257\)|oklch\(87% 0\.045 252 \/ 0\.28\))/);
+  expect(css).not.toMatch(/\.macos-ai-app \.runtime-log-line\.ai\s*\{[\s\S]*?(?:oklch\(55% 0\.2 292\)|oklch\(86% 0\.055 292 \/ 0\.3\))/);
+});
+
+it('normalizes runtime logs into a compact drawer workbench instead of loose details and action piles', () => {
+  const session: AiRuntimeSession = {
+    id: 'session-log-workbench',
+    projectId: 'project-1',
+    command: 'codex',
+    args: ['exec'],
+    cwd: '/Users/david/hypha/zeus',
+    status: 'exited',
+    exitCode: 0,
+    startedAt: '2026-06-13T00:00:00.000Z',
+  };
+  const logs: AiRuntimeLogEntry[] = [
+    {
+      id: 'log-workbench',
+      sessionId: session.id,
+      stream: 'stdout',
+      text: '真实 Runtime 日志',
+      createdAt: '2026-06-13T00:00:00.000Z',
+    },
+  ];
+
+  const html = renderToString(<App snapshot={createSnapshot()} initialRuntimeSessions={[session]} initialRuntimeLogs={logs} />);
+  const source = readFileSync(new URL('../src/renderer/App.tsx', import.meta.url), 'utf8');
+  const css = readFileSync(new URL('../src/renderer/styles.css', import.meta.url), 'utf8');
+
+  expect(html).toContain('runtime-log-workbench');
+  expect(html).not.toContain('runtime-log-panel');
+  expect(source).not.toContain('runtime-log-panel');
+  expect(css).not.toContain('runtime-log-panel');
+  expect(html).toContain('runtime-log-toolbar');
+  expect(html).toContain('runtime-log-search-control-row');
+  expect(html).toContain('runtime-log-command-rail');
+  expect(html).toContain('runtime-log-state-row');
+  expect(html).toContain('runtime-log-stream');
+  expect(source).not.toContain('<details>\n                            <summary>原始输出查看</summary>');
+  expect(source).not.toContain('<summary>原始输出查看</summary>');
+  expect(source).not.toContain('className="task-controls runtime-log-actions"');
+  expect(css).toContain('Runtime 日志抽屉最终覆盖');
+  expect(css).toMatch(/\.macos-ai-app \.runtime-log-toolbar\s*\{[\s\S]*grid-template-columns:\s*minmax\(0,\s*1fr\) auto/);
+  expect(css).toMatch(/\.macos-ai-app \.runtime-log-stream\s*\{[\s\S]*overflow:\s*auto/);
+});
+
+it('normalizes runtime terminal and log toolbars into compact action rails', () => {
+  const runningSession: AiRuntimeSession = {
+    id: 'session-action-rail-running',
+    projectId: 'project-1',
+    command: 'codex',
+    args: ['exec'],
+    cwd: '/Users/david/hypha/zeus',
+    status: 'running',
+    startedAt: '2026-06-13T00:00:00.000Z',
+  };
+  const logSession: AiRuntimeSession = {
+    id: 'session-action-rail-log',
+    projectId: 'project-1',
+    command: 'codex',
+    args: ['run'],
+    cwd: '/Users/david/hypha/zeus',
+    status: 'exited',
+    exitCode: 0,
+    startedAt: '2026-06-13T00:00:00.000Z',
+  };
+  const logs: AiRuntimeLogEntry[] = [
+    {
+      id: 'log-action-rail',
+      sessionId: logSession.id,
+      stream: 'stdout',
+      text: '真实 Runtime 日志',
+      createdAt: '2026-06-13T00:00:00.000Z',
+    },
+  ];
+
+  const html = renderToString(<App snapshot={createSnapshot()} initialRuntimeSessions={[runningSession, logSession]} initialRuntimeLogs={logs} />);
+  const css = readFileSync(new URL('../src/renderer/styles.css', import.meta.url), 'utf8');
+
+  expect(html).toContain('runtime-session-terminal-command-rail');
+  expect(html).toContain('runtime-log-command-rail');
+  expect(html).toContain('停止会话');
+  expect(html).toContain('导出当前日志');
+  expect(css).toContain('Runtime 日志命令 rail 最终覆盖');
+  expect(css).toContain('--zeus-action-rail-bg');
+  expect(css).toContain('--zeus-action-rail-line');
+  expect(css).toContain('--zeus-action-rail-button-bg');
+  expect(css).toContain('--zeus-action-rail-button-text');
+  expect(css).toMatch(/\.macos-ai-app :where\(\.runtime-session-terminal-command-rail,\s*\.runtime-log-command-rail\)\s*\{[\s\S]*background:\s*var\(--zeus-action-rail-bg\)/);
+  expect(css).toMatch(/\.macos-ai-app :where\(\.runtime-session-terminal-command-rail,\s*\.runtime-log-command-rail\)\s*\{[\s\S]*border:\s*1px solid var\(--zeus-action-rail-line\)/);
+  expect(css).toMatch(/\.macos-ai-app :where\(\.runtime-session-terminal-command-rail,\s*\.runtime-log-command-rail\) button\s*\{[\s\S]*background:\s*var\(--zeus-action-rail-button-bg\)/);
+  expect(css).toMatch(/\.macos-ai-app :where\(\.runtime-session-stop-action,\s*\.runtime-session-orphan-stop-action\)\s*\{[\s\S]*background:\s*var\(--zeus-control-danger-bg\)/);
+});
+
+it('normalizes runtime log search into explicit control rows instead of label wrapped inputs', () => {
+  const session: AiRuntimeSession = {
+    id: 'session-log-search-control',
+    projectId: 'project-1',
+    command: 'codex',
+    args: ['exec'],
+    cwd: '/Users/david/hypha/zeus',
+    status: 'exited',
+    exitCode: 0,
+    startedAt: '2026-06-13T00:00:00.000Z',
+  };
+  const logs: AiRuntimeLogEntry[] = [
+    {
+      id: 'log-search-control',
+      sessionId: session.id,
+      stream: 'stdout',
+      text: '真实 Runtime 日志',
+      createdAt: '2026-06-13T00:00:00.000Z',
+    },
+  ];
+
+  const html = renderToString(<App snapshot={createSnapshot()} initialRuntimeSessions={[session]} initialRuntimeLogs={logs} />);
+  const source = readFileSync(new URL('../src/renderer/App.tsx', import.meta.url), 'utf8');
+  const css = readFileSync(new URL('../src/renderer/styles.css', import.meta.url), 'utf8');
+
+  expect(html).toContain('runtime-log-search-control-row');
+  expect(html).toContain('runtime-log-search-copy');
+  expect(html).toContain('runtime-log-search-field');
+  expect(html).toContain('搜索日志');
+  expect(source).not.toContain('<label className="runtime-log-search-row">');
+  expect(css).toContain('Runtime 日志搜索控件行最终覆盖');
+  expect(css).toMatch(/\.macos-ai-app \.runtime-log-search-control-row\s*\{[\s\S]*grid-template-columns:\s*minmax\(0,\s*1fr\) minmax\(200px,\s*1fr\)/);
+  expect(css).toMatch(/\.macos-ai-app \.runtime-log-search-field\s*\{[\s\S]*display:\s*grid/);
+});
+
 it('renders release configuration status without claiming signing or notarization success', () => {
   const releaseUpdateStatus: ReleaseUpdateStatusSnapshot = {
     status: 'available',
@@ -629,7 +985,7 @@ it('renders release configuration status without claiming signing or notarizatio
         homebrewCask: { configured: true, label: '已检测到 Casks/zeus.rb' },
         releaseWorkflow: {
           configured: true,
-          label: '已检测到 GitHub Release workflow',
+          label: '已检测到 GitHub Release 工作流',
         },
         readiness: {
           canBuildUnsignedArtifacts: true,
@@ -656,14 +1012,20 @@ it('renders release configuration status without claiming signing or notarizatio
   expect(html).toContain('等待 Apple 签名证书');
   expect(html).toContain('等待 Apple 公证凭据');
   expect(html).toContain('已检测到 Casks/zeus.rb');
-  expect(html).toContain('不会伪造签名或 notarization 成功');
-  expect(html).toContain('unsigned 构建可用');
-  expect(html).toContain('Apple signing certificate');
-  expect(html).toContain('Apple notarization credentials');
+  expect(html).toContain('不会伪造签名或公证成功');
+  expect(html).toContain('未签名构建可用');
+  expect(html).toContain('等待 Apple 签名证书');
+  expect(html).toContain('等待 Apple 公证凭据');
   expect(html).toContain('自动更新预留');
   expect(html).toContain('手动更新 · 0.1.0');
   expect(html).toContain('docs/release.md');
-  expect(html).toContain('signed and notarized artifacts');
+  expect(html).toContain('需要已签名和公证的发布产物');
+  expect(html).not.toContain('Apple signing certificate');
+  expect(html).not.toContain('Apple notarization credentials');
+  expect(html).not.toContain('signed and notarized artifacts');
+  expect(html).not.toContain('notarization 成功');
+  expect(html).not.toContain('unsigned 构建可用');
+  expect(html).not.toContain('GitHub Release workflow');
   expect(html).toContain('检查更新');
   expect(html).toContain('当前版本：0.1.0');
   expect(html).toContain('最新版本：0.2.0');

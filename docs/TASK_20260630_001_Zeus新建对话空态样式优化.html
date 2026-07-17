@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>交付验收：Zeus 新建对话空态样式优化</title>
+  <style>
+    * { box-sizing: border-box; }
+    :root {
+      color-scheme: light;
+      --bg: oklch(98.8% 0.002 255);
+      --panel: oklch(99.7% 0.001 255);
+      --panel-soft: oklch(97.8% 0.002 255);
+      --line: oklch(89.5% 0.002 255);
+      --line-soft: oklch(93% 0.001 255);
+      --text: oklch(23% 0.004 255);
+      --muted: oklch(49% 0.004 255);
+      --accent: oklch(55% 0.155 252);
+      --accent-soft: oklch(94.5% 0.012 252);
+      --success: oklch(50% 0.085 145);
+      --warn: oklch(54% 0.12 70);
+      --shadow: 0 18px 42px oklch(20% 0.012 255 / 0.08);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--text);
+      background:
+        linear-gradient(120deg, oklch(100% 0 0 / 0.86), oklch(97.8% 0.003 255 / 0.94)),
+        radial-gradient(circle at 12% 0%, oklch(96.5% 0.012 252 / 0.8), transparent 32rem),
+        repeating-linear-gradient(0deg, transparent 0 23px, oklch(91% 0.002 255 / 0.28) 24px),
+        repeating-linear-gradient(90deg, transparent 0 23px, oklch(91% 0.002 255 / 0.2) 24px),
+        var(--bg);
+      line-height: 1.55;
+    }
+    main { width: min(1120px, calc(100% - 32px)); margin: 0 auto; padding: 34px 0 48px; }
+    header { display: grid; gap: 10px; margin-bottom: 18px; }
+    .eyebrow { color: var(--accent); font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+    h1 { margin: 0; font-size: clamp(22px, 3vw, 29px); line-height: 1.18; letter-spacing: -0.03em; }
+    .lead { margin: 0; color: var(--muted); max-width: 76ch; }
+    .status-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+    .pill { display: inline-flex; align-items: center; gap: 6px; padding: 5px 9px; border: 1px solid var(--line); border-radius: 999px; background: oklch(100% 0 0 / 0.72); color: var(--muted); font-size: 12px; font-weight: 650; }
+    .pill.good { color: var(--success); border-color: oklch(80% 0.06 145); background: oklch(96.7% 0.028 145); }
+    .pill.wait { color: var(--warn); border-color: oklch(80% 0.08 70); background: oklch(96.8% 0.028 70); }
+    .grid { display: grid; grid-template-columns: 1.1fr .9fr; gap: 16px; align-items: start; }
+    section, .panel { border: 1px solid var(--line); border-radius: 18px; background: oklch(99.7% 0.001 255 / 0.88); box-shadow: var(--shadow); }
+    section { padding: 18px; }
+    h2 { margin: 0 0 12px; font-size: 16px; line-height: 1.28; letter-spacing: -0.015em; }
+    h3 { margin: 0 0 8px; font-size: 13px; color: var(--muted); }
+    ul { margin: 0; padding-left: 18px; color: var(--muted); }
+    li + li { margin-top: 6px; }
+    code { font-family: "SFMono-Regular", "SF Mono", Consolas, monospace; font-size: .92em; color: oklch(32% 0.05 252); background: var(--accent-soft); border-radius: 6px; padding: 1px 5px; }
+    .flow { display: grid; gap: 14px; }
+    .lane { display: grid; grid-template-columns: 126px minmax(0, 1fr); gap: 12px; align-items: stretch; }
+    .lane-label { display: grid; place-items: center; border-radius: 14px; border: 1px solid var(--line-soft); background: var(--panel-soft); color: var(--muted); font-size: 12px; font-weight: 700; text-align: center; padding: 10px; }
+    .nodes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; position: relative; }
+    .node { min-height: 94px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); padding: 12px; position: relative; overflow-wrap: anywhere; }
+    .node::after { content: "→"; position: absolute; right: -14px; top: 50%; transform: translateY(-50%); color: oklch(61% 0.003 255); font-weight: 700; }
+    .node:last-child::after { display: none; }
+    .node strong { display: block; font-size: 13px; margin-bottom: 5px; }
+    .node p { margin: 0; color: var(--muted); font-size: 12px; }
+    .node.hot { border-color: oklch(79% 0.05 252); background: linear-gradient(180deg, oklch(99.8% 0.002 255), oklch(96.6% 0.012 252)); }
+    .node.keep { border-color: oklch(84% 0.018 255); background: oklch(98.8% 0.002 255); }
+    .node.good { border-color: oklch(78% 0.06 145); background: oklch(97% 0.025 145); }
+    .matrix { display: grid; gap: 8px; }
+    .row { display: grid; grid-template-columns: 145px minmax(0,1fr) 86px; gap: 10px; align-items: center; padding: 10px 0; border-top: 1px solid var(--line-soft); }
+    .row:first-child { border-top: 0; }
+    .row b { font-size: 12px; }
+    .row span { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+    .badge { justify-self: end; font-size: 12px; font-weight: 700; color: var(--success); border: 1px solid oklch(80% 0.06 145); background: oklch(96.5% 0.028 145); padding: 3px 8px; border-radius: 999px; white-space: nowrap; }
+    .badge.warn { color: var(--warn); border-color: oklch(80% 0.08 70); background: oklch(96.8% 0.028 70); }
+    .cards { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 12px; }
+    .card { border: 1px solid var(--line-soft); border-radius: 14px; padding: 12px; background: oklch(100% 0 0 / 0.66); }
+    .card p { margin: 0; color: var(--muted); font-size: 12px; }
+    .footer { margin-top: 16px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 16px; background: oklch(99.5% 0.001 255 / 0.74); color: var(--muted); font-size: 12px; }
+    .footer div + div { margin-top: 4px; }
+    @media (max-width: 820px) {
+      main { width: min(100% - 20px, 720px); padding-top: 22px; }
+      .grid, .cards { grid-template-columns: 1fr; }
+      .lane { grid-template-columns: 1fr; }
+      .nodes { grid-template-columns: 1fr; }
+      .node::after { content: "↓"; right: 50%; top: auto; bottom: -18px; transform: translateX(50%); }
+      .row { grid-template-columns: 1fr; gap: 4px; }
+      .badge { justify-self: start; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div class="eyebrow">TASK_20260630_001 · visual repair</div>
+      <h1>交付验收：保留 Zeus E2E，移除两处分割线</h1>
+      <p class="lead">本轮视觉返修只处理截图红框中的两条常驻线：输入区内层浅线、建议入口之间的横线；项目归属条继续保留。</p>
+      <div class="status-row" aria-label="验收状态">
+        <span class="pill good">✓ Zeus E2E 保留</span>
+        <span class="pill good">✓ 两处分割线已移除</span>
+        <span class="pill good">✓ 全量门禁通过</span>
+        <span class="pill good">✓ macOS 打包通过</span>
+      </div>
+    </header>
+
+    <div class="grid">
+      <section>
+        <h2>主路径：只删两条线，不动项目归属</h2>
+        <div class="flow">
+          <div class="lane">
+            <div class="lane-label">截图红框</div>
+            <div class="nodes">
+              <div class="node hot"><strong>输入区内层浅线</strong><p>来源是 textarea 仍继承全局输入控件背景、边框或内阴影。</p></div>
+              <div class="node keep"><strong>▣ Zeus E2E</strong><p>这是项目归属，不删除，继续显示当前真实项目上下文。</p></div>
+              <div class="node hot"><strong>建议入口横线</strong><p>来源是 suggestion row 默认 `border-block-start` 分隔线。</p></div>
+            </div>
+          </div>
+          <div class="lane">
+            <div class="lane-label">返修后</div>
+            <div class="nodes">
+              <div class="node good"><strong>textarea 透明</strong><p>`background: transparent`、`border: 0`、`box-shadow: none`。</p></div>
+              <div class="node keep"><strong>项目条保留</strong><p>`conversation-new-chat-project-strip` 不删除，仍展示项目名。</p></div>
+              <div class="node good"><strong>分隔线取消</strong><p>suggestion rows 无常驻边线，hover / focus 才出现轻反馈。</p></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>代码影响点</h2>
+        <div class="matrix">
+          <div class="row"><b>样式</b><span><code>apps/desktop/src/renderer/styles.css</code> 调整 textarea 与 suggestion rows。</span><em class="badge">已改</em></div>
+          <div class="row"><b>测试</b><span><code>apps/desktop/test/app-shell-layout.test.tsx</code> 锁定项目条保留与两处分割线移除。</span><em class="badge">已补</em></div>
+          <div class="row"><b>业务行为</b><span>三条建议入口继续绑定当前真实动作；项目上下文不变。</span><em class="badge">不变</em></div>
+          <div class="row"><b>仓库状态</b><span>仓库已有大量未提交变更；本轮只做局部返修。</span><em class="badge warn">注意</em></div>
+        </div>
+      </section>
+    </div>
+
+    <section style="margin-top:16px">
+      <h2>验证闭环</h2>
+      <div class="cards">
+        <div class="card"><h3>TDD 与局部回归</h3><p>新断言先因 textarea 未透明失败；实现后定向测试通过，完整 <code>app-shell-layout.test.tsx</code> 170 个测试通过。</p></div>
+        <div class="card"><h3>全量质量门禁</h3><p><code>pnpm lint && pnpm typecheck && pnpm format:check && pnpm test && git diff --check</code> 通过，66 个测试文件 / 995 个测试通过。</p></div>
+        <div class="card"><h3>打包门禁</h3><p>已发现并退出运行中的 Zeus；随后 <code>pnpm package:mac</code> 通过，生成 macOS arm64 zip / dmg。</p></div>
+        <div class="card"><h3>剩余风险</h3><p>真实 Electron 窗口截图仍建议人工核对，但静态契约已覆盖两条常驻线。</p></div>
+      </div>
+    </section>
+
+    <section style="margin-top:16px">
+      <h2>保留与回滚</h2>
+      <div class="cards">
+        <div class="card"><h3>明确保留</h3><p><code>▣ Zeus E2E</code> 项目归属条完整保留，避免丢失当前真实项目上下文。</p></div>
+        <div class="card"><h3>回滚方式</h3><p>撤回本轮 textarea 与 suggestion row 样式，再恢复对应测试断言即可。</p></div>
+      </div>
+    </section>
+
+    <div class="footer" role="contentinfo">
+      <div>任务编码：TASK_20260630_001；任务名称：Zeus 新建对话空态样式优化；</div>
+      <div>本次使用的skill：executing-plans、test-driven-development、frontend-skill、impeccable、accessibility、verification-before-completion；</div>
+      <div>本次修改的影响点：新建对话空态 textarea 内层轮廓、三条建议入口常驻分隔线、布局回归测试与任务文档；</div>
+      <div>待用户重启服务或待执行脚本：本轮已退出运行中的 Zeus 并执行 <code>pnpm package:mac</code>；如正在使用旧构建，请重新打开最新打包产物。</div>
+    </div>
+  </main>
+</body>
+</html>

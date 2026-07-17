@@ -1,0 +1,1582 @@
+.session-codex-parity-v1 {
+  --session-canvas: rgb(255 255 255);
+  --session-sidebar: rgb(252 252 252);
+  --session-text: rgb(34 37 41);
+  --session-text-muted: rgb(104 108 115);
+  --session-selected: rgb(241 242 242);
+  --session-line: rgb(227 228 229);
+  --session-line-soft: rgb(238 239 240);
+  --session-control: rgb(250 250 250);
+  --session-control-hover: rgb(244 245 245);
+  --session-focus: rgb(64 104 180 / 0.28);
+  --session-focus-outline: rgb(65 105 180 / 0.72);
+  --session-accent: rgb(45 83 150);
+  --session-composer-focus-line: rgb(168 172 178);
+  --session-danger: rgb(148 55 55);
+  --session-warning: rgb(126 85 30);
+  --session-header: rgb(255 255 255 / 0.94);
+  --session-code: rgb(247 248 248);
+  --session-shimmer: rgb(255 255 255 / 0.72);
+  --session-shadow: rgb(34 37 41 / 0.09);
+  --session-shadow-soft: rgb(34 37 41 / 0.05);
+  --session-gutter: clamp(16px, 4.2vw, 48px);
+  --session-thread-max: 48rem;
+  --session-markdown-max: 40rem;
+  --session-composer-max: 650px;
+  --session-ease-out: cubic-bezier(0.19, 1, 0.22, 1);
+  /* 会话页的全局 source rail 与 native thread 共用同一套明暗 token，避免 dark shell 仍消费旧浅色产品变量。 */
+  --zeus-product-canvas: var(--session-canvas);
+  --zeus-product-panel: var(--session-sidebar);
+  --zeus-product-panel-muted: var(--session-control);
+  --zeus-product-list: var(--session-sidebar);
+  --zeus-product-line: var(--session-line);
+  --zeus-product-line-soft: var(--session-line-soft);
+  --zeus-product-text: var(--session-text);
+  --zeus-product-muted: var(--session-text-muted);
+  --zeus-product-subtle: var(--session-text-muted);
+  --zeus-product-text-subtle: var(--session-text-muted);
+  --zeus-product-selected: var(--session-selected);
+  --zeus-source-sidebar: var(--session-sidebar);
+  --zeus-source-list-selected: var(--session-selected);
+  --zeus-native-row-hover: var(--session-control-hover);
+  --zeus-project-menu-selected-bg: var(--session-selected);
+  --zeus-project-menu-line: var(--session-line);
+  color: var(--session-text);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  font-size: 14px;
+}
+
+.session-codex-parity-v1 .session-workspace-root {
+  background: var(--session-canvas);
+  color: var(--session-text);
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  inline-size: 100%;
+  min-block-size: 0;
+  min-inline-size: 0;
+  overflow: hidden;
+}
+
+.theme-dark.session-codex-parity-v1,
+.theme-dark .session-codex-parity-v1 {
+  --session-canvas: rgb(24 26 29);
+  --session-sidebar: rgb(30 32 36);
+  --session-text: rgb(235 237 240);
+  --session-text-muted: rgb(167 172 180);
+  --session-selected: rgb(47 50 55);
+  --session-line: rgb(72 76 83);
+  --session-line-soft: rgb(57 61 67);
+  --session-control: rgb(39 42 47);
+  --session-control-hover: rgb(50 54 60);
+  --session-focus: rgb(123 164 240 / 0.28);
+  --session-focus-outline: rgb(148 184 248 / 0.88);
+  --session-accent: rgb(145 181 244);
+  --session-composer-focus-line: rgb(103 108 117);
+  --session-danger: rgb(246 157 157);
+  --session-warning: rgb(234 190 119);
+  --session-header: rgb(24 26 29 / 0.94);
+  --session-code: rgb(36 39 43);
+  --session-shimmer: rgb(235 237 240 / 0.2);
+  --session-shadow: rgb(0 0 0 / 0.32);
+  --session-shadow-soft: rgb(0 0 0 / 0.2);
+}
+
+.macos-ai-app.zeus-shell.theme-dark.session-codex-parity-v1 :where(input:not([type='radio']):not([type='checkbox']), textarea),
+.macos-ai-app.zeus-shell.theme-dark .session-codex-parity-v1 :where(input:not([type='radio']):not([type='checkbox']), textarea) {
+  background: var(--session-canvas);
+  border-color: var(--session-line);
+  color: var(--session-text);
+}
+
+.macos-ai-app.zeus-shell.theme-dark.session-codex-parity-v1 .session-composer-input-frame > textarea,
+.macos-ai-app.zeus-shell.theme-dark .session-codex-parity-v1 .session-composer-input-frame > textarea {
+  background: transparent;
+  border: 0;
+}
+
+@media (prefers-color-scheme: dark) {
+  .theme-system.session-codex-parity-v1,
+  .theme-system .session-codex-parity-v1 {
+    --session-canvas: rgb(24 26 29);
+    --session-sidebar: rgb(30 32 36);
+    --session-text: rgb(235 237 240);
+    --session-text-muted: rgb(167 172 180);
+    --session-selected: rgb(47 50 55);
+    --session-line: rgb(72 76 83);
+    --session-line-soft: rgb(57 61 67);
+    --session-control: rgb(39 42 47);
+    --session-control-hover: rgb(50 54 60);
+    --session-focus: rgb(123 164 240 / 0.28);
+    --session-focus-outline: rgb(148 184 248 / 0.88);
+    --session-accent: rgb(145 181 244);
+    --session-composer-focus-line: rgb(103 108 117);
+    --session-danger: rgb(246 157 157);
+    --session-warning: rgb(234 190 119);
+    --session-header: rgb(24 26 29 / 0.94);
+    --session-code: rgb(36 39 43);
+    --session-shimmer: rgb(235 237 240 / 0.2);
+    --session-shadow: rgb(0 0 0 / 0.32);
+    --session-shadow-soft: rgb(0 0 0 / 0.2);
+  }
+
+  .macos-ai-app.zeus-shell.theme-system.session-codex-parity-v1 :where(input:not([type='radio']):not([type='checkbox']), textarea),
+  .macos-ai-app.zeus-shell.theme-system .session-codex-parity-v1 :where(input:not([type='radio']):not([type='checkbox']), textarea) {
+    background: var(--session-canvas);
+    border-color: var(--session-line);
+    color: var(--session-text);
+  }
+
+  .macos-ai-app.zeus-shell.theme-system.session-codex-parity-v1 .session-composer-input-frame > textarea,
+  .macos-ai-app.zeus-shell.theme-system .session-codex-parity-v1 .session-composer-input-frame > textarea {
+    background: transparent;
+    border: 0;
+  }
+}
+
+.session-codex-parity-v1 *,
+.session-codex-parity-v1 *::before,
+.session-codex-parity-v1 *::after {
+  box-sizing: border-box;
+}
+
+.macos-ai-app.zeus-shell.session-codex-parity-v1 .project-first-sidebar .project-sidebar-list {
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.session-codex-parity-v1 button,
+.session-codex-parity-v1 input,
+.session-codex-parity-v1 textarea {
+  color: inherit;
+  font: inherit;
+}
+
+.session-codex-parity-v1 button {
+  min-block-size: 28px;
+  min-inline-size: 28px;
+}
+
+.session-codex-parity-v1 button:focus-visible,
+.session-codex-parity-v1 input:focus-visible,
+.session-codex-parity-v1 textarea:focus-visible,
+.session-codex-parity-v1 a:focus-visible {
+  outline: 2px solid var(--session-focus-outline);
+  outline-offset: 2px;
+}
+
+.session-codex-parity-v1 button:disabled,
+.session-codex-parity-v1 input:disabled,
+.session-codex-parity-v1 textarea:disabled {
+  cursor: not-allowed;
+  opacity: 0.52;
+}
+
+.session-codex-parity-v1 .session-sr-only {
+  block-size: 1px;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  inline-size: 1px;
+  overflow: hidden;
+  position: absolute;
+  white-space: nowrap;
+}
+
+.session-codex-parity-v1 .session-thread-header {
+  align-items: center;
+  background: var(--session-header);
+  border-block-end: 1px solid var(--session-line-soft);
+  display: flex;
+  flex: 0 0 auto;
+  gap: 16px;
+  justify-content: space-between;
+  min-block-size: 58px;
+  padding: 10px var(--session-gutter);
+  z-index: 3;
+}
+
+.session-codex-parity-v1 .session-thread-header[data-motion-title='entered'] {
+  animation: session-title-enter 280ms var(--session-ease-out) both;
+}
+
+.session-codex-parity-v1 .session-thread-header[data-motion-title='exiting'] {
+  animation: session-title-exit 180ms ease-in both;
+}
+
+.session-codex-parity-v1 .session-thread-title-copy {
+  display: grid;
+  gap: 1px;
+  min-inline-size: 0;
+}
+
+.session-codex-parity-v1 .session-thread-title-copy strong {
+  font-size: 15px;
+  font-weight: 620;
+  letter-spacing: -0.012em;
+  line-height: 20px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-codex-parity-v1 .session-thread-title-copy small {
+  color: var(--session-text-muted);
+  font-size: 11px;
+  line-height: 15px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-codex-parity-v1 .session-thread-status {
+  align-items: center;
+  color: var(--session-text-muted);
+  display: inline-flex;
+  flex: 0 0 auto;
+  font-size: 12px;
+  gap: 6px;
+}
+
+.session-codex-parity-v1 .session-thread-status-warning {
+  color: var(--session-warning);
+}
+
+.session-codex-parity-v1 .session-thread-status-error {
+  color: var(--session-danger);
+}
+
+.session-codex-parity-v1 .session-status-symbol {
+  align-items: center;
+  block-size: 16px;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  display: inline-flex;
+  inline-size: 16px;
+  justify-content: center;
+  line-height: 1;
+}
+
+.session-codex-parity-v1 .session-thread-body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-block-size: 0;
+  min-inline-size: 0;
+  overflow: hidden;
+  position: relative;
+}
+
+.session-codex-parity-v1 .session-transcript-shell {
+  display: flex;
+  flex: 1 1 auto;
+  min-block-size: 0;
+  min-inline-size: 0;
+  position: relative;
+}
+
+.session-codex-parity-v1 .session-transcript-shell > .session-transcript {
+  flex: 1 1 auto;
+}
+
+.session-codex-parity-v1 .session-loading,
+.session-codex-parity-v1 .session-transport-failure {
+  align-self: center;
+  display: grid;
+  gap: 10px;
+  inline-size: min(var(--session-thread-max), calc(100% - (2 * var(--session-gutter))));
+  margin-block: auto;
+  padding-block: 48px;
+  text-align: center;
+}
+
+.session-codex-parity-v1 .session-loading-line {
+  animation: session-loading-pulse 1000ms ease-in-out infinite alternate;
+  background: var(--session-selected);
+  border-radius: 5px;
+  block-size: 12px;
+  inline-size: min(32rem, 74%);
+  justify-self: center;
+}
+
+.session-codex-parity-v1 .session-loading-line:nth-child(2) {
+  animation-delay: 140ms;
+  inline-size: min(24rem, 56%);
+}
+
+.session-codex-parity-v1 .session-reconnect-notice {
+  align-items: center;
+  align-self: center;
+  background: var(--session-selected);
+  border-radius: 8px;
+  color: var(--session-text-muted);
+  display: inline-flex;
+  font-size: 12px;
+  gap: 7px;
+  margin: 8px auto 0;
+  padding: 6px 10px;
+  position: absolute;
+  z-index: 4;
+}
+
+.session-codex-parity-v1 .session-runtime-details {
+  background: var(--session-canvas);
+  border-block-end: 1px solid var(--session-line-soft);
+  color: var(--session-text-muted);
+  flex: 0 0 auto;
+  font-size: 11px;
+}
+
+.session-codex-parity-v1 .session-runtime-details > summary {
+  align-items: center;
+  cursor: pointer;
+  display: flex;
+  gap: 10px;
+  min-block-size: 30px;
+  overflow-x: auto;
+  padding: 5px var(--session-gutter);
+  scrollbar-width: none;
+  white-space: nowrap;
+}
+
+.session-codex-parity-v1 .session-runtime-details > summary::-webkit-scrollbar {
+  display: none;
+}
+
+.session-codex-parity-v1 .session-runtime-details > summary::marker {
+  color: var(--session-text-muted);
+}
+
+.session-codex-parity-v1 .session-runtime-severity {
+  align-items: center;
+  display: inline-flex;
+  gap: 4px;
+  margin-inline-start: auto;
+}
+
+.session-codex-parity-v1 .session-runtime-details[data-severity='warning'] .session-runtime-severity {
+  color: var(--session-warning);
+}
+
+.session-codex-parity-v1 .session-runtime-details > dl {
+  background: var(--session-control);
+  border-block-start: 1px solid var(--session-line-soft);
+  display: grid;
+  gap: 6px 18px;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  margin: 0;
+  padding: 9px var(--session-gutter) 11px;
+}
+
+.session-codex-parity-v1 .session-runtime-details > dl > div {
+  display: grid;
+  gap: 2px;
+  min-inline-size: 0;
+}
+
+.session-codex-parity-v1 .session-runtime-details :where(dt, dd) {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.session-codex-parity-v1 .session-runtime-details dt {
+  color: var(--session-text);
+  font-weight: 620;
+}
+
+.session-codex-parity-v1 .session-error-details {
+  border-block: 1px solid var(--session-line-soft);
+  color: var(--session-text-muted);
+  padding-block: 8px;
+  text-align: start;
+}
+
+.session-codex-parity-v1 .session-error-details summary {
+  cursor: pointer;
+  font-weight: 620;
+}
+
+.session-codex-parity-v1 .session-error-details p {
+  margin-block: 7px 0;
+  overflow-wrap: anywhere;
+}
+
+.session-codex-parity-v1 .session-transport-failure > button {
+  background: var(--session-text);
+  border: 1px solid var(--session-text);
+  border-radius: 7px;
+  color: var(--session-canvas);
+  justify-self: center;
+  padding-inline: 12px;
+}
+
+.session-codex-parity-v1 .session-transcript {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 22px;
+  min-block-size: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 28px var(--session-gutter) 24px;
+  position: relative;
+  scroll-behavior: smooth;
+  scrollbar-gutter: stable;
+}
+
+.session-codex-parity-v1 .session-transcript > :where(.session-thread-item, .session-transcript-empty, .session-latest-turn-spacer) {
+  inline-size: min(var(--session-thread-max), 100%);
+  margin-inline: auto;
+}
+
+.session-codex-parity-v1 .session-transcript-empty {
+  color: var(--session-text-muted);
+  margin-block: auto;
+  max-inline-size: 36rem;
+  text-align: center;
+}
+
+.session-codex-parity-v1 .session-thread-item {
+  animation: session-markdown-block-reveal 150ms var(--session-ease-out) both;
+  min-inline-size: 0;
+}
+
+.session-codex-parity-v1 .session-thread-item.is-latest {
+  animation: session-latest-turn-enter 500ms var(--session-ease-out) both;
+}
+
+.session-codex-parity-v1 .session-thread-item-user {
+  align-self: flex-end;
+  background: var(--session-selected);
+  border-radius: 14px;
+  inline-size: fit-content !important;
+  margin-inline-end: max(var(--session-gutter), calc((100% - var(--session-thread-max)) / 2)) !important;
+  max-inline-size: min(77%, var(--session-markdown-max));
+  padding: 10px 13px;
+}
+
+.session-codex-parity-v1 .session-thread-item-assistant,
+.session-codex-parity-v1 .session-thread-item-commentary,
+.session-codex-parity-v1 .session-thread-item-tool,
+.session-codex-parity-v1 .session-thread-item-file,
+.session-codex-parity-v1 .session-thread-item-request,
+.session-codex-parity-v1 .session-thread-item-error,
+.session-codex-parity-v1 .session-thread-item-unknown {
+  padding-inline: 2px;
+}
+
+.session-codex-parity-v1 .session-thread-item-commentary,
+.session-codex-parity-v1 .session-thread-item-tool,
+.session-codex-parity-v1 .session-thread-item-file,
+.session-codex-parity-v1 .session-thread-item-unknown,
+.session-codex-parity-v1 .session-thread-item-request {
+  color: var(--session-text-muted);
+}
+
+.session-codex-parity-v1 .session-thread-item-error {
+  color: var(--session-danger);
+}
+
+.session-codex-parity-v1 .session-thread-item-meta {
+  align-items: center;
+  color: var(--session-text-muted);
+  display: flex;
+  font-size: 11px;
+  gap: 8px;
+  margin-block-end: 5px;
+}
+
+.session-codex-parity-v1 .session-thread-item-meta strong {
+  color: inherit;
+  font-weight: 610;
+}
+
+.session-codex-parity-v1 .session-item-state {
+  align-items: center;
+  display: inline-flex;
+  gap: 4px;
+}
+
+.session-codex-parity-v1 .session-markdown {
+  inline-size: min(var(--session-markdown-max), 100%);
+  line-height: 1.58;
+  overflow-wrap: anywhere;
+}
+
+.session-codex-parity-v1 .session-thread-item-user .session-markdown {
+  inline-size: 100%;
+}
+
+.session-codex-parity-v1 .session-markdown :where(h1, h2, h3, h4, p, ul, ol, blockquote, pre) {
+  margin-block: 0 12px;
+}
+
+.session-codex-parity-v1 .session-markdown :where(h1, h2, h3, h4) {
+  color: var(--session-text);
+  font-weight: 650;
+  letter-spacing: -0.015em;
+}
+
+.session-codex-parity-v1 .session-markdown h1 {
+  font-size: 20px;
+  line-height: 1.3;
+}
+
+.session-codex-parity-v1 .session-markdown h2 {
+  font-size: 17px;
+  line-height: 1.35;
+}
+
+.session-codex-parity-v1 .session-markdown h3 {
+  font-size: 15px;
+  line-height: 1.4;
+}
+
+.session-codex-parity-v1 .session-markdown h4 {
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.session-codex-parity-v1 .session-markdown hr {
+  border: 0;
+  border-block-start: 1px solid var(--session-line);
+  margin-block: 14px;
+}
+
+.session-codex-parity-v1 .session-code-block {
+  position: relative;
+}
+
+.session-codex-parity-v1 .session-code-block > button {
+  background: var(--session-control);
+  border: 1px solid var(--session-line);
+  border-radius: 6px;
+  color: var(--session-text-muted);
+  font-size: 10px;
+  inset-block-start: 7px;
+  inset-inline-end: 7px;
+  opacity: 0;
+  position: absolute;
+  transition: opacity 120ms ease-out;
+  z-index: 1;
+}
+
+.session-codex-parity-v1 .session-code-block:hover > button,
+.session-codex-parity-v1 .session-code-block:focus-within > button {
+  opacity: 1;
+}
+
+.session-codex-parity-v1 .session-markdown :where(ul, ol) {
+  padding-inline-start: 22px;
+}
+
+.session-codex-parity-v1 .session-markdown li + li {
+  margin-block-start: 4px;
+}
+
+.session-codex-parity-v1 .session-markdown blockquote {
+  border-inline-start: 1px solid var(--session-line);
+  color: var(--session-text-muted);
+  padding-inline-start: 12px;
+}
+
+.session-codex-parity-v1 .session-markdown pre {
+  background: var(--session-code);
+  border: 1px solid var(--session-line-soft);
+  border-radius: 8px;
+  font-family: 'SFMono-Regular', 'SF Mono', Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  overflow: auto;
+  padding: 11px 12px;
+  white-space: pre;
+}
+
+.session-codex-parity-v1 .session-markdown :not(pre) > code {
+  background: var(--session-control-hover);
+  border-radius: 4px;
+  font-family: 'SFMono-Regular', 'SF Mono', Consolas, monospace;
+  font-size: 0.91em;
+  padding: 1px 4px;
+}
+
+.session-codex-parity-v1 .session-markdown a {
+  color: var(--session-accent);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
+.session-codex-parity-v1 .session-thread-item-actions {
+  align-items: center;
+  display: flex;
+  gap: 4px;
+  margin-block-start: 4px;
+  min-block-size: 28px;
+  opacity: 0;
+  transition: opacity 120ms ease-out;
+}
+
+.session-codex-parity-v1 .session-thread-item:hover .session-thread-item-actions,
+.session-codex-parity-v1 .session-thread-item:focus-within .session-thread-item-actions {
+  opacity: 1;
+}
+
+.session-codex-parity-v1 .session-thread-item-actions button {
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: var(--session-text-muted);
+  font-size: 11px;
+  padding-inline: 7px;
+}
+
+.session-codex-parity-v1 .session-thread-item-actions button:hover {
+  background: var(--session-control-hover);
+  color: var(--session-text);
+}
+
+.session-codex-parity-v1 .session-item-images {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(128px, 220px));
+  margin-block-start: 10px;
+}
+
+.session-codex-parity-v1 .session-item-images img {
+  animation: session-image-enter 180ms var(--session-ease-out) both;
+  border-radius: 9px;
+  block-size: auto;
+  inline-size: 100%;
+}
+
+.session-codex-parity-v1 .session-thinking-indicator {
+  animation: session-thinking-enter 600ms var(--session-ease-out) both;
+  color: var(--session-text-muted);
+  display: inline-block;
+  overflow: hidden;
+  position: relative;
+}
+
+.session-codex-parity-v1 .session-transcript-thinking {
+  align-items: center;
+  color: var(--session-text-muted);
+  display: flex;
+  gap: 8px;
+  inline-size: min(var(--session-thread-max), calc(100% - (2 * var(--session-gutter))));
+  margin: 8px auto;
+}
+
+.session-codex-parity-v1 .session-thinking-pulse {
+  animation: session-loading-pulse 900ms ease-in-out infinite alternate;
+  background: currentColor;
+  block-size: 6px;
+  border-radius: 999px;
+  inline-size: 6px;
+}
+
+.session-codex-parity-v1 .session-thinking-indicator::after {
+  animation: session-thinking-shimmer 5000ms linear infinite;
+  background: linear-gradient(90deg, transparent, var(--session-shimmer), transparent);
+  content: '';
+  inset: 0;
+  position: absolute;
+  transform: translateX(-110%);
+}
+
+.session-codex-parity-v1 .session-return-latest {
+  background: var(--session-control);
+  border: 1px solid var(--session-line);
+  border-radius: 999px;
+  bottom: 12px;
+  box-shadow: 0 4px 14px var(--session-shadow);
+  color: var(--session-text);
+  left: 50%;
+  padding: 5px 11px;
+  position: absolute;
+  transform: translateX(-50%);
+  z-index: 3;
+}
+
+.session-codex-parity-v1 .session-command-item {
+  display: grid;
+  gap: 8px;
+}
+
+.session-codex-parity-v1 .session-command-line {
+  align-items: start;
+  background: var(--session-code);
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding: 9px 10px;
+}
+
+.session-codex-parity-v1 .session-command-line code {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.session-codex-parity-v1 .session-command-line button {
+  background: transparent;
+  border: 0;
+  color: var(--session-text-muted);
+  font-size: 11px;
+  padding: 1px 3px;
+}
+
+.session-codex-parity-v1 .session-command-meta {
+  color: var(--session-text-muted);
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 11px;
+  gap: 5px 12px;
+  margin: 0;
+}
+
+.session-codex-parity-v1 .session-command-meta > div {
+  display: flex;
+  gap: 4px;
+}
+
+.session-codex-parity-v1 .session-command-meta :where(dt, dd) {
+  margin: 0;
+}
+
+.session-codex-parity-v1 .session-command-meta dt::after {
+  content: ':';
+}
+
+.session-codex-parity-v1 .session-command-output {
+  border-block-start: 1px solid var(--session-line-soft);
+  padding-block-start: 6px;
+}
+
+.session-codex-parity-v1 .session-command-output > summary {
+  color: var(--session-text-muted);
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.session-codex-parity-v1 .session-command-output pre {
+  background: var(--session-code);
+  border-radius: 7px;
+  max-block-size: 260px;
+  overflow: auto;
+  padding: 8px;
+  white-space: pre-wrap;
+}
+
+.session-codex-parity-v1 .session-pending-request-stack {
+  display: grid;
+  gap: 10px;
+  inline-size: min(var(--session-thread-max), calc(100% - (2 * var(--session-gutter))));
+  margin: 0 auto 8px;
+  position: relative;
+  z-index: 4;
+}
+
+.session-codex-parity-v1 .session-pending-request,
+.session-codex-parity-v1 .session-legacy-banner,
+.session-codex-parity-v1 .session-transport-failure {
+  background: var(--session-sidebar);
+  border: 1px solid var(--session-line);
+  border-radius: 12px;
+  box-shadow: 0 6px 24px var(--session-shadow-soft);
+}
+
+.session-codex-parity-v1 .session-pending-request {
+  inline-size: min(var(--session-thread-max), 100%);
+  margin-inline: auto;
+  padding: 14px;
+}
+
+.session-codex-parity-v1 .session-request-invalid {
+  color: var(--session-danger);
+  display: grid;
+  gap: 3px;
+}
+
+.session-codex-parity-v1 .session-pending-request fieldset {
+  border: 0;
+  margin: 0;
+  min-inline-size: 0;
+  padding: 0;
+}
+
+.session-codex-parity-v1 .session-pending-request > fieldset > legend,
+.session-codex-parity-v1 .session-pending-request > fieldset > fieldset:first-of-type > legend {
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 20px;
+  padding: 0;
+}
+
+.session-codex-parity-v1 .session-request-impact {
+  display: grid;
+  gap: 2px;
+}
+
+.session-codex-parity-v1 .session-request-impact strong,
+.session-codex-parity-v1 .session-secret-hint {
+  color: var(--session-text-muted);
+  font-size: 11px;
+}
+
+.session-codex-parity-v1 .session-request-preview {
+  background: var(--session-selected);
+  border-radius: 7px;
+  font-family: 'SFMono-Regular', 'SF Mono', Consolas, monospace;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+  padding: 9px;
+  white-space: pre-wrap;
+}
+
+.session-codex-parity-v1 .session-mcp-response {
+  display: grid;
+  gap: 6px;
+}
+
+.session-codex-parity-v1 .session-mcp-response > span,
+.session-codex-parity-v1 .session-mcp-url {
+  color: var(--session-text-muted);
+  font-size: 12px;
+}
+
+.session-codex-parity-v1 .session-mcp-url {
+  appearance: none;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  display: inline-flex;
+  inline-size: fit-content;
+  min-block-size: 24px;
+  padding: 0;
+  align-items: center;
+  text-align: start;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.session-codex-parity-v1 .session-mcp-response textarea {
+  font-family: 'SFMono-Regular', 'SF Mono', Consolas, monospace;
+  min-block-size: 96px;
+  resize: vertical;
+}
+
+.session-codex-parity-v1 .session-request-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-block-start: 12px;
+}
+
+.session-codex-parity-v1 .session-request-actions button {
+  background: var(--session-text);
+  border: 1px solid var(--session-text);
+  border-radius: 7px;
+  color: var(--session-canvas);
+  padding-inline: 12px;
+}
+
+.session-codex-parity-v1 .session-request-actions .session-request-decline {
+  background: transparent;
+  border-color: var(--session-line);
+  color: var(--session-text);
+}
+
+.session-codex-parity-v1 .session-rui-question {
+  border-block-start: 1px solid var(--session-line-soft) !important;
+  margin-block-start: 12px !important;
+  padding-block-start: 12px !important;
+}
+
+.session-codex-parity-v1 .session-rui-options {
+  display: grid;
+  gap: 6px;
+}
+
+.session-codex-parity-v1 .session-rui-options label {
+  align-items: flex-start;
+  border-radius: 8px;
+  display: flex;
+  gap: 9px;
+  padding: 7px;
+}
+
+.session-codex-parity-v1 .session-rui-options label:hover {
+  background: var(--session-selected);
+}
+
+.session-codex-parity-v1 .session-rui-options label span {
+  display: grid;
+  gap: 1px;
+}
+
+.session-codex-parity-v1 .session-rui-options small {
+  color: var(--session-text-muted);
+}
+
+.session-codex-parity-v1 .session-rui-other-option span > input {
+  margin-block-start: 5px;
+  min-block-size: 32px;
+  inline-size: min(24rem, 100%);
+}
+
+.session-codex-parity-v1 .session-rui-freeform {
+  display: grid;
+  gap: 6px;
+}
+
+.session-codex-parity-v1 .session-rui-freeform input {
+  background: var(--session-canvas);
+  border: 1px solid var(--session-line);
+  border-radius: 7px;
+  min-block-size: 34px;
+  padding-inline: 9px;
+}
+
+.session-codex-parity-v1 .session-composer-shell {
+  display: grid;
+  flex: 0 0 auto;
+  gap: 8px;
+  inline-size: min(var(--session-composer-max), calc(100% - (2 * var(--session-gutter))));
+  margin: 0 auto 16px;
+  padding-block-end: env(safe-area-inset-bottom, 0);
+  position: relative;
+  z-index: 5;
+}
+
+.session-codex-parity-v1 .session-composer-input-frame {
+  background: var(--session-sidebar);
+  border: 1px solid var(--session-line);
+  border-radius: 14px;
+  box-shadow:
+    0 8px 28px var(--session-shadow),
+    0 1px 2px var(--session-shadow-soft);
+  display: grid;
+  gap: 6px;
+  min-block-size: 96px;
+  padding: 9px;
+  transition:
+    border-color 120ms ease-out,
+    box-shadow 120ms ease-out;
+}
+
+.session-codex-parity-v1 .session-composer-input-frame:focus-within {
+  border-color: var(--session-composer-focus-line);
+  box-shadow:
+    0 8px 28px var(--session-shadow),
+    0 1px 2px var(--session-shadow-soft);
+}
+
+.session-codex-parity-v1 .session-composer-input-frame > textarea {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  line-height: 1.45;
+  max-block-size: 34vh;
+  min-block-size: 48px;
+  outline: 0;
+  padding: 4px 5px;
+  resize: none;
+}
+
+.session-codex-parity-v1 .session-composer-command-row,
+.session-codex-parity-v1 .session-composer-leading-actions,
+.session-codex-parity-v1 .session-composer-trailing-actions,
+.session-codex-parity-v1 .session-delivery-mode {
+  align-items: center;
+  display: flex;
+  gap: 5px;
+}
+
+.session-codex-parity-v1 .session-composer-command-row {
+  justify-content: space-between;
+}
+
+.session-codex-parity-v1 .session-composer-command-row button,
+.session-codex-parity-v1 .session-delivery-mode button {
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  color: var(--session-text-muted);
+  padding-inline: 7px;
+}
+
+.session-codex-parity-v1 .session-delivery-mode button[aria-pressed='true'] {
+  background: var(--session-selected);
+  color: var(--session-text);
+  font-weight: 600;
+}
+
+.session-codex-parity-v1 .session-composer-model {
+  align-items: center;
+  color: var(--session-text-muted);
+  display: inline-flex;
+  font-size: 11px;
+  gap: 5px;
+  max-inline-size: 220px;
+}
+
+.session-codex-parity-v1 .session-composer-model span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-codex-parity-v1 .session-permission-control {
+  display: inline-flex;
+  position: relative;
+}
+
+.session-codex-parity-v1 .session-permission-control select {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  color: var(--session-text-muted);
+  cursor: pointer;
+  font: inherit;
+  min-block-size: 28px;
+  padding: 4px 22px 4px 7px;
+}
+
+.session-codex-parity-v1 .session-permission-control label::after {
+  color: var(--session-text-muted);
+  content: '⌄';
+  pointer-events: none;
+  position: absolute;
+  right: 7px;
+  top: 5px;
+}
+
+.session-codex-parity-v1 .session-permission-control select:hover:not(:disabled) {
+  background: var(--session-selected);
+  color: var(--session-text);
+}
+
+.session-codex-parity-v1 .session-permission-control select:focus-visible {
+  box-shadow: 0 0 0 3px var(--session-focus);
+  outline: 0;
+}
+
+.session-codex-parity-v1 .session-permission-control select:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.session-codex-parity-v1 .session-permission-confirmation {
+  background: var(--session-canvas);
+  border: 1px solid var(--session-line);
+  border-radius: 10px;
+  bottom: calc(100% + 8px);
+  box-shadow: 0 10px 30px var(--session-shadow);
+  color: var(--session-text);
+  display: grid;
+  font-size: 12px;
+  gap: 10px;
+  inline-size: min(320px, calc(100vw - 32px));
+  left: 0;
+  line-height: 1.45;
+  padding: 12px;
+  position: absolute;
+  z-index: 4;
+}
+
+.session-codex-parity-v1 .session-permission-confirmation-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.session-codex-parity-v1 .session-permission-confirmation-actions button {
+  min-block-size: 30px;
+}
+
+.session-codex-parity-v1 .session-primary-command-slot,
+.session-codex-parity-v1 .session-primary-command-slot button,
+.session-codex-parity-v1 .session-active-draft-submit {
+  block-size: 30px;
+  inline-size: 30px;
+}
+
+.session-codex-parity-v1 .session-primary-command-slot button,
+.session-codex-parity-v1 .session-active-draft-submit {
+  align-items: center;
+  background: var(--session-text) !important;
+  border: 0;
+  border-radius: 999px !important;
+  color: var(--session-canvas) !important;
+  display: inline-flex;
+  justify-content: center;
+  padding: 0 !important;
+}
+
+.session-codex-parity-v1 .session-stop-button > span {
+  background: currentColor;
+  border-radius: 2px;
+  block-size: 9px;
+  inline-size: 9px;
+}
+
+.session-codex-parity-v1 .session-command-spinner {
+  animation: session-spinner 700ms linear infinite;
+  block-size: 12px;
+  border: 1.5px solid currentColor;
+  border-inline-end-color: transparent;
+  border-radius: 50%;
+  display: inline-block;
+  inline-size: 12px;
+}
+
+.session-codex-parity-v1 .session-composer-attachments,
+.session-codex-parity-v1 .session-queue ol {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.session-codex-parity-v1 .session-composer-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.session-codex-parity-v1 .session-composer-attachments li {
+  align-items: center;
+  background: var(--session-selected);
+  border-radius: 8px;
+  display: inline-flex;
+  gap: 6px;
+  max-inline-size: 240px;
+  padding: 4px 5px 4px 8px;
+}
+
+.session-codex-parity-v1 .session-composer-attachments li > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-codex-parity-v1 .session-composer-attachments small {
+  color: var(--session-text-muted);
+  white-space: nowrap;
+}
+
+.session-codex-parity-v1 .session-composer-attachments button {
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+}
+
+.session-codex-parity-v1 .session-queue {
+  animation: session-queue-enter 180ms var(--session-ease-out) both;
+  background: var(--session-sidebar);
+  border: 1px solid var(--session-line);
+  border-radius: 11px;
+  box-shadow: 0 4px 16px var(--session-shadow-soft);
+  max-block-size: min(36vh, 280px);
+  overflow: auto;
+  padding: 8px;
+}
+
+.session-codex-parity-v1 .session-queue > header,
+.session-codex-parity-v1 .session-queue li,
+.session-codex-parity-v1 .session-queue-actions {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+}
+
+.session-codex-parity-v1 .session-queue > header {
+  justify-content: space-between;
+  padding: 2px 4px 6px;
+}
+
+.session-codex-parity-v1 .session-queue li {
+  border-block-start: 1px solid var(--session-line-soft);
+  justify-content: space-between;
+  min-block-size: 38px;
+  padding: 6px 4px;
+}
+
+.session-codex-parity-v1 .session-queue-drag-handle {
+  color: var(--session-text-muted);
+  cursor: grab;
+  flex: 0 0 auto;
+  padding-inline: 2px;
+  touch-action: none;
+  user-select: none;
+}
+
+.session-codex-parity-v1 .session-queue-copy {
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-codex-parity-v1 .session-queue-actions {
+  flex: 0 0 auto;
+}
+
+.session-codex-parity-v1 .session-queue-actions button,
+.session-codex-parity-v1 .session-queue > header button {
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: var(--session-text-muted);
+  font-size: 11px;
+}
+
+.session-codex-parity-v1 .session-queue-action-icon {
+  display: none;
+}
+
+.session-codex-parity-v1 .session-progress-details,
+.session-codex-parity-v1 .session-item-facts {
+  border-block-start: 1px solid var(--session-line-soft);
+  margin-block-start: 6px;
+  padding-block-start: 6px;
+}
+
+.session-codex-parity-v1 :where(.session-progress-details, .session-item-facts) > summary {
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 610;
+}
+
+.session-codex-parity-v1 .session-item-facts dl {
+  display: grid;
+  gap: 4px;
+}
+
+.session-codex-parity-v1 .session-item-facts dl > div {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(90px, auto) minmax(0, 1fr);
+}
+
+.session-codex-parity-v1 .session-item-facts :where(dt, dd) {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.session-codex-parity-v1 .session-item-facts pre {
+  background: var(--session-code);
+  border-radius: 7px;
+  max-block-size: 240px;
+  overflow: auto;
+  padding: 8px;
+  white-space: pre-wrap;
+}
+
+.session-codex-parity-v1 .session-item-attachments ul,
+.session-codex-parity-v1 .session-legacy-transcript {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.session-codex-parity-v1 .session-item-attachments li {
+  display: flex;
+  gap: 8px;
+}
+
+.session-codex-parity-v1 .session-queue-editor {
+  display: grid;
+  flex: 1 1 auto;
+  gap: 6px;
+  inline-size: 100%;
+}
+
+.session-codex-parity-v1 .session-queue-editor textarea {
+  background: var(--session-canvas);
+  border: 1px solid var(--session-line);
+  border-radius: 7px;
+  min-block-size: 56px;
+  padding: 7px;
+  resize: none;
+}
+
+.session-codex-parity-v1 .session-interrupt-confirm {
+  color: var(--session-warning);
+  font-size: 11px;
+  margin: 0;
+  text-align: center;
+}
+
+.session-codex-parity-v1 .session-legacy-banner {
+  align-items: flex-start;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  inline-size: min(var(--session-thread-max), calc(100% - (2 * var(--session-gutter))));
+  margin: auto;
+  padding: 16px;
+}
+
+.session-codex-parity-v1 .session-legacy-banner p {
+  color: var(--session-text-muted);
+  line-height: 1.5;
+  margin-block: 5px 0;
+  max-inline-size: var(--session-markdown-max);
+}
+
+.session-codex-parity-v1 .session-legacy-banner button {
+  background: transparent;
+  border: 1px solid var(--session-line);
+  border-radius: 7px;
+  padding-inline: 10px;
+}
+
+.session-codex-parity-v1 .session-legacy-load-status {
+  align-items: center;
+  align-self: center;
+  color: var(--session-text-muted);
+  display: inline-flex;
+  font-size: 12px;
+  gap: 7px;
+  margin: 10px auto;
+}
+
+.session-codex-parity-v1 .session-legacy-load-error {
+  color: var(--session-danger);
+}
+
+.session-codex-parity-v1 .session-legacy-transcript {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 18px;
+  inline-size: min(var(--session-thread-max), calc(100% - (2 * var(--session-gutter))));
+  margin-inline: auto;
+  overflow-y: auto;
+  padding-block: 20px;
+}
+
+.session-codex-parity-v1 .session-legacy-message {
+  border-block-end: 1px solid var(--session-line-soft);
+  padding-block-end: 12px;
+}
+
+.session-codex-parity-v1 .session-nonresumable-notice {
+  inline-size: min(var(--session-thread-max), calc(100% - (2 * var(--session-gutter))));
+  margin-inline: auto;
+}
+
+.session-codex-parity-v1 .session-nonresumable-notice {
+  border-block-end: 1px solid var(--session-line-soft);
+  padding: 10px 0;
+}
+
+.session-codex-parity-v1 .session-new-conversation {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  inline-size: 100%;
+  min-block-size: 0;
+  min-inline-size: 0;
+  overflow: hidden;
+}
+
+.session-codex-parity-v1 .session-new-conversation-spacer {
+  flex: 1 1 auto;
+  min-block-size: 24px;
+}
+
+.session-codex-parity-v1 .session-new-conversation-composer {
+  max-inline-size: 100%;
+}
+
+.session-codex-parity-v1 .session-new-conversation-error {
+  color: var(--session-danger);
+  line-height: 1.4;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.session-codex-parity-v1 .session-request-mode {
+  color: var(--session-text-muted);
+  display: flex;
+  font-size: 12px;
+  gap: 6px;
+  margin: 0;
+}
+
+.session-codex-parity-v1 .session-request-mode strong {
+  color: var(--session-text);
+}
+
+@keyframes session-title-enter {
+  from {
+    opacity: 0;
+    transform: translateY(-5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes session-title-exit {
+  to {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
+}
+
+@keyframes session-queue-enter {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+@keyframes session-markdown-block-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+}
+
+@keyframes session-image-enter {
+  from {
+    opacity: 0;
+    transform: scale(0.985);
+  }
+}
+
+@keyframes session-latest-turn-enter {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes session-thinking-enter {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes session-thinking-shimmer {
+  0% {
+    transform: translateX(-110%);
+  }
+  20% {
+    transform: translateX(110%);
+  }
+  100% {
+    transform: translateX(110%);
+  }
+}
+
+@keyframes session-spinner {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes session-loading-pulse {
+  from {
+    opacity: 0.45;
+  }
+  to {
+    opacity: 0.82;
+  }
+}
+
+@media (max-width: 759px) {
+  .session-codex-parity-v1 {
+    --session-gutter: 16px;
+  }
+
+  .session-codex-parity-v1 .session-thread-header {
+    min-block-size: 52px;
+    padding-inline-start: 126px;
+  }
+
+  .session-codex-parity-v1 .session-thread-item-user {
+    margin-inline-end: 0 !important;
+    max-inline-size: 88%;
+  }
+
+  .session-codex-parity-v1 .session-transcript {
+    padding-block-start: 20px;
+  }
+
+  .session-codex-parity-v1 .session-composer-shell {
+    margin-block-end: max(10px, env(safe-area-inset-bottom, 0px));
+  }
+
+  .session-codex-parity-v1 .session-legacy-banner {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .session-codex-parity-v1 .session-legacy-banner button {
+    grid-column: 1 / -1;
+    justify-self: stretch;
+  }
+}
+
+@media (max-width: 559px) {
+  .session-codex-parity-v1 .session-thread-title-copy small,
+  .session-codex-parity-v1 .session-composer-model > span,
+  .session-codex-parity-v1 .session-composer-model > small {
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    inline-size: 1px;
+    overflow: hidden;
+    position: absolute;
+    white-space: nowrap;
+  }
+
+  .session-codex-parity-v1 .session-thread-header {
+    padding-inline: 126px 16px;
+  }
+
+  .session-codex-parity-v1 .session-delivery-mode button {
+    padding-inline: 5px;
+  }
+
+  .session-codex-parity-v1 .session-queue-actions button:nth-of-type(-n + 3) {
+    max-inline-size: 30px;
+    padding-inline: 5px;
+  }
+
+  .session-codex-parity-v1 .session-queue-actions button:nth-of-type(-n + 3) .session-queue-action-icon {
+    display: inline;
+  }
+
+  .session-codex-parity-v1 .session-queue-actions button:nth-of-type(-n + 3) .session-queue-action-label {
+    block-size: 1px;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    inline-size: 1px;
+    overflow: hidden;
+    position: absolute;
+    white-space: nowrap;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .session-codex-parity-v1,
+  .session-codex-parity-v1 * {
+    scroll-behavior: auto !important;
+  }
+
+  .session-codex-parity-v1 *,
+  .session-codex-parity-v1 *::before,
+  .session-codex-parity-v1 *::after {
+    animation: none !important;
+    transition-duration: 0.01ms !important;
+  }
+}

@@ -6,8 +6,10 @@
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "composite": false,
+    "allowJs": true,
+    "checkJs": true,
     "baseUrl": ".",
     "paths": {}
   },
-  "include": ["src/preload/**/*.cts"]
+  "include": ["src/preload/**/*.cts", "src/preload/**/*.cjs"]
 }

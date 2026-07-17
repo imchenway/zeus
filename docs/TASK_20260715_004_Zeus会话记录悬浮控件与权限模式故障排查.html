@@ -1,0 +1,329 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Zeus 会话记录、悬浮控件与权限模式故障链</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #102033;
+      --muted: #5a6c80;
+      --paper: #f8fbfe;
+      --panel: rgba(255, 255, 255, 0.94);
+      --line: #94b5d5;
+      --line-soft: rgba(85, 123, 159, 0.2);
+      --blue: #176fb8;
+      --blue-soft: #e9f4ff;
+      --green: #14785a;
+      --green-soft: #e8f8f1;
+      --amber: #8d5d05;
+      --amber-soft: #fff5d9;
+      --red: #a33b3b;
+      --red-soft: #fff0f0;
+      --violet: #6254ad;
+      --violet-soft: #f1efff;
+      --shadow: 0 18px 48px rgba(23, 57, 89, 0.09);
+      --radius: 20px;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
+      background:
+        radial-gradient(circle at 14% 0%, rgba(213, 233, 255, 0.88), transparent 31rem),
+        radial-gradient(circle at 86% 8%, rgba(224, 247, 238, 0.82), transparent 28rem),
+        linear-gradient(rgba(93, 133, 173, 0.045) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(93, 133, 173, 0.045) 1px, transparent 1px),
+        linear-gradient(180deg, #fff 0%, var(--paper) 62%, #fff 100%);
+      background-size: auto, auto, 28px 28px, 28px 28px, auto;
+      overflow-x: clip;
+    }
+
+    main { width: min(1320px, calc(100vw - 32px)); margin: 0 auto; padding: 24px 0 56px; }
+    h1 { margin: 0; font-size: clamp(25px, 3vw, 36px); line-height: 1.16; letter-spacing: -0.028em; }
+    h2 { margin: 0; font-size: 18px; letter-spacing: -0.012em; }
+    h3 { margin: 0; font-size: 14px; }
+    p { line-height: 1.65; }
+    code { font-family: "SFMono-Regular", "SF Mono", Consolas, monospace; font-size: 0.91em; }
+
+    .summary { max-width: 980px; margin: 10px 0 18px; color: var(--muted); }
+    .status-line { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+    .tag { display: inline-flex; align-items: center; min-height: 25px; border: 1px solid var(--line-soft); border-radius: 999px; padding: 3px 9px; color: var(--muted); background: rgba(255,255,255,.72); font-size: 12px; font-weight: 680; }
+    .tag.red { color: var(--red); border-color: rgba(163,59,59,.3); background: var(--red-soft); }
+    .tag.green { color: var(--green); border-color: rgba(20,120,90,.3); background: var(--green-soft); }
+
+    .template-layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 86px minmax(0, 1fr);
+      gap: 14px;
+      align-items: stretch;
+      padding: 18px;
+      border: 1px solid rgba(148, 181, 213, 0.48);
+      border-radius: 24px;
+      background: rgba(255, 255, 255, 0.8);
+      box-shadow: var(--shadow);
+    }
+
+    .boundary { display: grid; grid-template-rows: auto; gap: 10px; align-content: start; padding: 14px; border: 1px solid rgba(148,181,213,.42); border-radius: 20px; background: rgba(255,255,255,.68); }
+    .boundary > header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 2px 2px 6px; }
+    .boundary > header small { color: var(--muted); font-size: 11px; }
+    .slot { display: grid; align-content: center; min-height: 94px; border: 1px solid rgba(148,181,213,.58); border-radius: 16px; padding: 12px 14px; background: rgba(255,255,255,.97); overflow-wrap: anywhere; }
+    .slot b { display: block; margin-bottom: 5px; font-size: 13px; line-height: 1.35; }
+    .slot span { display: block; color: var(--muted); font-size: 12px; line-height: 1.55; }
+    .slot code { color: inherit; }
+    .core { border-color: rgba(23,111,184,.52); background: linear-gradient(180deg,#fff,var(--blue-soft)); }
+    .support { border-color: rgba(98,84,173,.42); background: linear-gradient(180deg,#fff,var(--violet-soft)); }
+    .data { border-color: rgba(20,120,90,.44); background: linear-gradient(180deg,#fff,var(--green-soft)); }
+    .risk { border-color: rgba(163,59,59,.42); background: linear-gradient(180deg,#fff,var(--red-soft)); }
+    .ops { border-color: rgba(141,93,5,.42); background: linear-gradient(180deg,#fff,var(--amber-soft)); }
+
+    .flow-arrow { display: grid; place-items: center; min-height: 32px; color: var(--muted); font-size: 11px; font-weight: 720; position: relative; }
+    .flow-arrow::before { content: ""; width: 2px; height: 27px; background: var(--blue); }
+    .flow-arrow::after { content: ""; position: absolute; bottom: 1px; border-left: 6px solid transparent; border-right: 6px solid transparent; border-top: 9px solid var(--blue); }
+
+    .compare-axis { display: grid; align-content: center; justify-items: center; gap: 9px; color: var(--muted); text-align: center; }
+    .compare-axis::before, .compare-axis::after { content: ""; width: 1px; height: 88px; background: linear-gradient(transparent, var(--line), transparent); }
+    .compare-axis strong { writing-mode: vertical-rl; letter-spacing: .12em; font-size: 12px; }
+
+    .evidence-grid { display: grid; grid-template-columns: 1.15fr .85fr; gap: 14px; margin-top: 16px; }
+    .panel { border: 1px solid rgba(148,181,213,.45); border-radius: 20px; background: var(--panel); box-shadow: 0 10px 28px rgba(23,57,89,.055); padding: 16px; }
+    .panel > header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+    .panel > header small { color: var(--muted); }
+    .evidence-list { display: grid; gap: 10px; }
+    .evidence { display: grid; grid-template-columns: 36px minmax(0,1fr); gap: 10px; padding: 10px 0; border-top: 1px solid var(--line-soft); }
+    .evidence:first-child { border-top: 0; padding-top: 0; }
+    .evidence-id { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 50%; color: #fff; background: var(--blue); font-size: 11px; font-weight: 760; }
+    .evidence b { display: block; font-size: 13px; margin-bottom: 3px; }
+    .evidence p { margin: 0; color: var(--muted); font-size: 12px; }
+    .path { display: block; margin-top: 4px; color: var(--blue); font-size: 11px; overflow-wrap: anywhere; }
+
+    .verdicts { display: grid; gap: 9px; }
+    .verdict { border-left: 3px solid var(--line); padding: 7px 10px; background: rgba(248,251,254,.85); }
+    .verdict.confirmed { border-left-color: var(--green); }
+    .verdict.excluded { border-left-color: var(--muted); }
+    .verdict strong { display: block; font-size: 12px; }
+    .verdict span { display: block; margin-top: 2px; color: var(--muted); font-size: 12px; line-height: 1.5; }
+
+    .mode-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    .mode-table th, .mode-table td { padding: 9px 8px; border-top: 1px solid var(--line-soft); text-align: left; vertical-align: top; }
+    .mode-table th { border-top: 0; color: var(--muted); font-size: 11px; }
+    .mode-table td:first-child { font-weight: 720; white-space: nowrap; }
+    .mode-table .feature { color: var(--violet); }
+    .mode-table .danger { color: var(--red); }
+
+    .acceptance { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 10px; }
+    .acceptance section { padding: 12px; border: 1px solid var(--line-soft); border-radius: 14px; background: rgba(248,251,254,.72); }
+    .acceptance h3 { margin-bottom: 6px; }
+    .acceptance ul { margin: 0; padding-left: 18px; color: var(--muted); font-size: 12px; line-height: 1.65; }
+    .footer-note { margin: 14px 2px 0; color: var(--muted); font-size: 12px; }
+
+    details { margin-top: 12px; border-top: 1px solid var(--line-soft); padding-top: 10px; }
+    summary { cursor: pointer; color: var(--muted); font-size: 12px; font-weight: 700; }
+    details pre { max-height: 280px; overflow: auto; border-radius: 12px; padding: 12px; background: #0e1c2b; color: #dceafa; font: 11px/1.55 "SFMono-Regular", "SF Mono", Consolas, monospace; white-space: pre-wrap; }
+
+    @media (max-width: 880px) {
+      main { width: min(100vw - 20px, 820px); padding-top: 16px; }
+      .template-layout { grid-template-columns: 1fr; padding: 12px; }
+      .compare-axis { grid-template-columns: 1fr auto 1fr; }
+      .compare-axis::before, .compare-axis::after { width: 100%; height: 1px; background: linear-gradient(90deg,transparent,var(--line),transparent); }
+      .compare-axis strong { writing-mode: horizontal-tb; }
+      .evidence-grid, .acceptance { grid-template-columns: 1fr; }
+      .mode-table { display: block; overflow-x: auto; }
+    }
+
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation: none !important; transition: none !important; } }
+  </style>
+</head>
+<body>
+<main data-diagram-type="fault-debugging"
+      data-template-family="fault-debugging"
+      data-template-id="before-after-flow"
+      data-template-layout="before-after-flow">
+  <h1 data-slot="title">Zeus 会话记录、悬浮控件与权限模式故障链</h1>
+  <p class="summary" data-slot="summary">现场不是一个“按钮难看”的孤立问题，而是展示投影、滚动锚点与权限状态三条链同时偏离 Codex App：空 provider item 被当正文、滚动按钮参与内容流、审批 UI 与真正执行策略互相矛盾。</p>
+  <div class="status-line" aria-label="排查状态">
+    <span class="tag red">4 个用户可见故障</span>
+    <span class="tag green">根因已由源码 + SQLite + Codex App bundle 交叉确认</span>
+    <span class="tag">当前仅完成 PLAN，源码未修改</span>
+  </div>
+
+  <section class="template-layout before-after-flow" aria-label="Zeus 当前故障流程与 Codex App 对齐后的目标流程">
+    <div class="before boundary">
+      <header><h2>Before · 当前故障逻辑</h2><small>截图中的真实链路</small></header>
+      <div class="slot risk" data-slot="current-1">
+        <b>输入：provider item 与任务权限进入同一会话</b>
+        <span>SQLite 保存空 reasoning 壳、完整 commandExecution payload；任务 <code>allow_code_changes=0</code>。</span>
+      </div>
+      <div class="flow-arrow">无展示投影</div>
+      <div class="slot risk" data-slot="breakpoint">
+        <b>根因 R1 · 所有 item 都生成可见 article</b>
+        <span>空 reasoning 仍显示“工作记录”；命令虽有 command/cwd/status/output，却退化成“工具调用 + 技术详情 + raw JSON”。E1 + E2</span>
+      </div>
+      <div class="flow-arrow">DOM 继续堆高</div>
+      <div class="slot risk">
+        <b>根因 R2 · 返回按钮位于滚动内容内部</b>
+        <span><code>session-return-latest</code> 排在 transcript item 与 pending request 之间，并使用 <code>position: sticky; bottom:118px</code>，所以随内容流漂移。E3</span>
+      </div>
+      <div class="flow-arrow">用户被打断</div>
+      <div class="slot ops" data-slot="current-risk">
+        <b>根因 R3 · UI 审批与服务端策略不一致</b>
+        <span>thread/turn 固定 <code>untrusted + user</code>；只读任务先天拒绝 grant，含 shell/pipe 的请求也会被强制 decline，但 UI 仍展示“允许一次”。E4 + E5</span>
+      </div>
+      <div class="flow-arrow">产生矛盾反馈</div>
+      <div class="slot risk" data-slot="current-result">
+        <b>结果：空白、漂移、低信息密度、伪可操作审批</b>
+        <span>用户无法判断工作进度；滚动位置被悬浮控件遮挡；点击“允许”也不能改变结果；设置页没有真正的权限控件。</span>
+      </div>
+    </div>
+
+    <div class="compare-axis" aria-label="前后对照中轴"><strong>删除错投影 · 新增模式源 · 保留真实事件</strong></div>
+
+    <div class="after boundary">
+      <header><h2>After · Codex App 对齐目标</h2><small>同一状态源驱动 UI 与 RPC</small></header>
+      <div class="slot core" data-slot="target-1">
+        <b>输入：会话 permission profile 成为 native 权限事实源</b>
+        <span>composer 提供 Codex Agent Mode；新 thread 使用项目默认，既有 thread 显示当前 mode，变更作用于下一 turn。</span>
+      </div>
+      <div class="flow-arrow">映射一次</div>
+      <div class="slot support" data-slot="fix-point">
+        <b>修法 F1 · 原样采用 Codex mode → RPC 映射</b>
+        <span><code>read-only</code>、<code>auto</code>、<code>full-access</code>；<code>granular / guardian</code> 仅在 app-server capability/config requirements 允许时出现。F1</span>
+      </div>
+      <div class="flow-arrow">建立展示投影</div>
+      <div class="slot data">
+        <b>修法 F2 · 真实事件不丢失，空壳不占行</b>
+        <span>空 reasoning 保留在持久化层但不渲染；有摘要的 reasoning 合并为一个轻量“工作进度”；命令显示动作、状态、耗时和按需输出，不默认暴露 raw JSON。</span>
+      </div>
+      <div class="flow-arrow">控件退出内容流</div>
+      <div class="slot core">
+        <b>修法 F3 · 滚动控制属于 viewport overlay</b>
+        <span>“返回最新消息”锚定 transcript viewport / composer 上沿，绝不作为消息 item 排版；只有离开底部阈值时出现，回到底部立即消失。</span>
+      </div>
+      <div class="flow-arrow">审批与策略一致</div>
+      <div class="slot data" data-slot="rollback">
+        <b>输出：只有真正可执行的审批，且结果不被静默改写</b>
+        <span>UI 只展示 app-server advertised decisions；用户选择经 schema/path 校验后原样发送。Full access 使用 <code>dangerFullAccess + never</code>，不再生成普通命令审批。</span>
+      </div>
+      <div class="slot ops" data-slot="target-risk">
+        <b>回滚点 / 安全边界</b>
+        <span>mode、投影、overlay 可分别回滚；Full access 必须显式选择、醒目风险提示、不得设为静默默认；不修改 provider JSONL/SQLite 原始 item。</span>
+      </div>
+    </div>
+  </section>
+
+  <section class="evidence-grid" data-slot="evidence-and-notes">
+    <article class="panel">
+      <header><h2>证据阶梯</h2><small>2026-07-15 真实运行态</small></header>
+      <div class="evidence-list">
+        <div class="evidence">
+          <span class="evidence-id">E1</span>
+          <div><b>SQLite 中 reasoning 确实是空壳，不是文字丢失</b><p><code>conversation_f6f2…</code> 多条 reasoning 的 <code>text_len=0</code>，payload 为 <code>summary:[] / content:[]</code>。</p><span class="path">~/Library/Application Support/@zeus/desktop/zeus.db · conversation_items</span></div>
+        </div>
+        <div class="evidence">
+          <span class="evidence-id">E2</span>
+          <div><b>命令数据完整，低信息展示发生在 Renderer</b><p>commandExecution payload 已有 command、cwd、status、commandActions、aggregatedOutput、exitCode、durationMs；<code>ThreadItemView</code> 仍统一输出标题和 raw payload details。</p><span class="path">apps/desktop/src/renderer/session/ThreadItemView.tsx:65-117, 315-390</span></div>
+        </div>
+        <div class="evidence">
+          <span class="evidence-id">E3</span>
+          <div><b>“返回最新消息”真实参与 transcript 内容排版</b><p>按钮在 item/spacer 后、tail request 前渲染；CSS 使用 sticky + bottom，故位置随滚动内容和 pending request 改变。</p><span class="path">apps/desktop/src/renderer/session/ConversationTranscript.tsx:72-127 · session.css:655-667</span></div>
+        </div>
+        <div class="evidence">
+          <span class="evidence-id">E4</span>
+          <div><b>权限不是可配置状态，而是硬编码</b><p>thread/start 与 turn/start 均固定 <code>approvalPolicy:'untrusted'</code>、<code>approvalsReviewer:'user'</code>；sandbox 只由 task 的 allowCodeChanges 二值决定。</p><span class="path">packages/local-server/src/codexNativeConversationCoordinator.ts:469-510, 1793-1795</span></div>
+        </div>
+        <div class="evidence">
+          <span class="evidence-id">E5</span>
+          <div><b>截图中的“允许一次”实际上无法成立</b><p>任务三个 allow 字段均为 0；<code>rg … | sed</code> 请求最终落库为 <code>{decision:'decline'}</code>。服务端在 read-only task 和 shell/meta 两层 fail-close。</p><span class="path">zeus.db · tasks / conversation_server_requests · coordinator.ts:2276-2285</span></div>
+        </div>
+        <div class="evidence">
+          <span class="evidence-id">E6</span>
+          <div><b>Codex App 使用 permission profile，而不是固定 untrusted</b><p>本机 Codex App 26.707.71524 bundle 映射 read-only/auto/granular/guardian/full-access，并随 thread/turn 发送 approvalPolicy、reviewer 和 sandbox/permissions。</p><span class="path">/Applications/Codex.app/Contents/Resources/app.asar · gwqc41kz-CnQKtQ6U.js · permission profile mapping</span></div>
+        </div>
+      </div>
+    </article>
+
+    <div class="panel">
+      <header><h2>假设裁决</h2><small>至少两个候选根因</small></header>
+      <div class="verdicts">
+        <div class="verdict excluded"><strong>H1 排除 · provider 文本在持久化时丢失</strong><span>reasoning 的 upstream payload 本身为空；command payload 反而完整。E1、E2。</span></div>
+        <div class="verdict confirmed"><strong>R1 成立 · Renderer 缺少可见性投影</strong><span>空 item 无条件生成 article/header；typed payload 又只做通用事实表。E1、E2。</span></div>
+        <div class="verdict confirmed"><strong>R2 成立 · 漂移由错误的 DOM/CSS 锚点造成</strong><span>按钮属于滚动内容子项且 sticky 定位，不是 viewport overlay。E3。</span></div>
+        <div class="verdict excluded"><strong>H2 排除 · “允许一次”只是前端按钮失效</strong><span>真实响应已到服务端并落库，但被 policy guard 重写为 decline。E4、E5。</span></div>
+        <div class="verdict confirmed"><strong>R3 成立 · 权限事实源分裂</strong><span>Settings 是只读状态文字，UI 显示 advertised decision，coordinator 另用隐藏 task gate 和固定 untrusted 裁决。E4、E5。</span></div>
+      </div>
+
+      <details>
+        <summary>现场关键数据（节选）</summary>
+        <pre>task_p-vaz0t3C-OV
+allow_code_changes=0 · allow_tests=0 · allow_git_commit=0
+
+reasoning payload
+{"type":"reasoning","summary":[],"content":[]} · text_len=0
+
+approval request
+/bin/zsh -lc "rg --files tc-app-doc docs 2&gt;/dev/null | sed -n '1,240p'"
+
+persisted response
+{"type":"command","decision":"decline"}</pre>
+      </details>
+    </div>
+  </section>
+
+  <section class="panel" style="margin-top:14px">
+    <header><h2>Codex App 权限模式映射</h2><small>Zeus 不再另造命名与策略</small></header>
+    <table class="mode-table">
+      <thead><tr><th>Mode</th><th>Sandbox</th><th>Approval policy</th><th>Reviewer</th><th>Zeus 目标交互</th></tr></thead>
+      <tbody>
+        <tr><td>read-only</td><td>readOnly · network=false</td><td>on-request</td><td>user</td><td>可读仓库；需要越权时显示真实审批。</td></tr>
+        <tr><td>auto</td><td>workspaceWrite · project root · network=false</td><td>on-request</td><td>user</td><td>默认 Agent 模式；项目内工作自动执行，越界才询问。</td></tr>
+        <tr><td class="feature">granular</td><td>workspaceWrite · project root</td><td>granular permission profile</td><td>user</td><td>仅当 pinned app-server capability/config requirements 支持时显示。</td></tr>
+        <tr><td class="feature">guardian-approvals</td><td>workspaceWrite（或配置要求的 readOnly）</td><td>on-request</td><td>guardian_subagent</td><td>功能门禁模式；不在 Zeus 自行模拟 reviewer。</td></tr>
+        <tr><td class="danger">full-access</td><td>dangerFullAccess</td><td>never</td><td>user</td><td>显式高风险选择；不生成普通命令审批，不允许静默默认。</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="panel" style="margin-top:14px">
+    <header><h2>验收与回滚闭环</h2><small>2026-07-15 已执行</small></header>
+    <div class="acceptance">
+      <section><h3>V1 · Transcript</h3><ul><li>空 reasoning 不生成可见行。</li><li>连续 reasoning 合并为一个工作进度。</li><li>command row 显示动作、状态、耗时；输出按需展开。</li><li>普通界面不默认显示 raw provider JSON。</li></ul></section>
+      <section><h3>V2 · Scroll / Accessibility</h3><ul><li>返回按钮锚定 viewport/composer，不改变消息流高度。</li><li>离底出现、回底消失，键盘与 VoiceOver 可操作。</li><li>不遮挡 pending request 或 composer。</li><li>reduced-motion 下不强制平滑滚动。</li></ul></section>
+      <section><h3>V3 · Permission</h3><ul><li>composer 显示当前 mode，切换写入会话事实源。</li><li>thread/start、turn/start 与恢复会话映射一致。</li><li>审批只显示可执行 decision，不静默改写 accept。</li><li>full-access 有显式风险提示和独立回归。</li></ul></section>
+      <section><h3>测试命令</h3><ul><li><code>pnpm vitest run apps/desktop/test/session-workspace.test.tsx</code></li><li><code>pnpm vitest run apps/desktop/test/pending-request-surface.test.tsx</code></li><li><code>pnpm vitest run packages/local-server/test/codex-native-conversation-coordinator.test.ts</code></li></ul></section>
+      <section><h3>完整门禁</h3><ul><li><code>pnpm lint</code>、<code>pnpm typecheck</code>、<code>pnpm format:check</code></li><li><code>pnpm test</code>、<code>git diff --check</code></li><li>优雅退出 Zeus 后执行 <code>pnpm build &amp;&amp; pnpm package:mac</code>。</li><li>重启正式 dist，以真实 read-only / auto / full-access 会话截图验收。</li></ul></section>
+      <section><h3>回滚</h3><ul><li>投影过滤、command row、overlay、permission profile 分四个独立切片回滚。</li><li>不迁移或改写原始 conversation_items。</li><li>若 full-access 协议验证失败，保持该 mode 不可选并 fail-closed，不回退固定 untrusted。</li></ul></section>
+    </div>
+    <p class="footer-note"><strong>VERIFICATION PASSED:</strong> SOURCE、TESTS、OFFICIAL PACKAGE 与正式包 UI 交互均已验证；未执行 git commit、push、merge 或其他历史修改。</p>
+  </section>
+
+  <section class="panel" style="margin-top:14px">
+    <header><h2>Develop 与真实验收记录</h2><small>正式 dist · 2026-07-15</small></header>
+    <div class="acceptance">
+      <section><h3>展示投影</h3><ul><li>空 reasoning 仅保留在 SQLite，不再生成可见 article；有真实 summary 时才作为 Codex 工作进度显示。</li><li>commandExecution 使用命令、工作目录、状态、耗时、退出码和按需输出，不再重复“工具调用 / 技术详情”空壳。</li><li>active turn 首个 provider item 到达前显示非持久化“正在思考”。</li></ul></section>
+      <section><h3>滚动控件</h3><ul><li><code>session-return-latest</code> 已移到 transcript shell overlay，计算样式为 <code>position:absolute</code>。</li><li>正式包中人工滚离底部后按钮出现；点击后回到底部并消失。</li><li>按钮不再占据消息流高度，也不使用 <code>bottom:118px</code> 魔数。</li></ul></section>
+      <section><h3>权限事实源</h3><ul><li>SQLite conversation 新增 <code>permission_mode</code>，支持 <code>read-only / auto / full-access</code>。</li><li>thread/start 与 turn/start 分别映射为 readOnly/on-request、workspaceWrite/on-request、dangerFullAccess/never。</li><li>provider 已 advertised 的用户决定不再被 task <code>allowCodeChanges</code> 静默改写；schema、路径与未声明决定仍 fail-closed。</li></ul></section>
+      <section><h3>正式包 UI</h3><ul><li>正式 <code>dist/mac-arm64/Zeus.app</code> 的现有会话显示“只读 / 自动 / 完全访问”原生选择器。</li><li>选择完全访问只打开风险确认层；取消后 mode 保持 <code>read-only</code>，焦点回到权限选择器。</li><li>真实会话 DOM：95 条 typed command row、0 条空 reasoning、0 个“工作记录”、0 个重复“工具调用”标题。</li></ul></section>
+      <section><h3>命令证据</h3><ul><li><code>pnpm lint</code>、<code>pnpm typecheck</code>、<code>pnpm format:check</code>、<code>git diff --check</code>：通过。</li><li><code>pnpm test</code>：84 个测试文件，1368 passed、4 skipped。</li><li><code>pnpm build &amp;&amp; pnpm package:mac</code>：通过；Zeus.app valid on disk 且 satisfies its Designated Requirement。</li></ul></section>
+      <section><h3>剩余边界</h3><ul><li>macOS 当时处于锁屏，Computer Use 无法读取窗口；改由正式包 <code>--remote-debugging-port</code> 连接同一 packaged Renderer，执行真实 DOM 交互与截图。</li><li>未确认 full-access 按钮，避免改变用户真实会话权限；确认层、取消、焦点恢复与 mode 不变均已验证。</li><li>构建仍有既有的单 chunk 超过 500 kB 警告，不属于本次会话交互修复。</li></ul></section>
+    </div>
+  </section>
+
+  <section class="panel" style="margin-top:14px">
+    <header><h2>会话页视觉与项目侧栏交互收敛</h2><small>正式 dist · 2026-07-15</small></header>
+    <div class="acceptance">
+      <section><h3>项目侧栏</h3><ul><li>默认 <code>248px</code>，范围 <code>200–420px</code>；<code>1px</code> separator 已计入 <code>520px</code> 主工作区保护。</li><li>鼠标拖动、双击复位、方向键、Shift 加速、Home/End 和完整 separator ARIA 均已实现。</li><li>preferred width 与窄窗显示值分离；损坏存储值回退默认值。</li><li>设置页与小于 760px 的单列布局不显示拖动入口。</li></ul></section>
+      <section><h3>生命周期硬化</h3><ul><li>拖动状态机按 <code>pointerId</code> 隔离，外来 pointer 不会移动或结束当前拖动。</li><li><code>pointercancel</code>、blur、lostpointercapture 与重入恢复最后已提交偏好。</li><li>无有效移动、窗口边界无效拖动和键盘无效操作不会覆盖持久化偏好。</li><li>最终独立 review：0 Critical、0 Important，Ready: Yes。</li></ul></section>
+      <section><h3>图标与输入焦点</h3><ul><li>项目“会话”入口使用单线气泡 SVG：<code>13px / 1.35px</code>，不可聚焦，已删除 <code>◌</code>。</li><li>composer focus-within 只保留主题适配的单层中性边界。</li><li>textarea 显式 <code>box-shadow:none</code>，内部按钮与模式控件仍保留键盘焦点。</li><li>中间会话列表宽度保持原有规则。</li></ul></section>
+      <section><h3>自动验证</h3><ul><li>目标测试：2 个文件、214 passed。</li><li>全仓：84 个测试文件，1375 passed、4 skipped。</li><li><code>pnpm lint</code>、<code>pnpm typecheck</code>、<code>pnpm format:check</code>、<code>git diff --check</code>：通过。</li><li><code>pnpm build &amp;&amp; pnpm package:mac</code> 与严格 codesign 校验：通过。</li></ul></section>
+      <section><h3>正式包 UI</h3><ul><li>拖动 248→320、键盘 328、双击 248；刷新与应用重启均恢复已保存的 312。</li><li>740px 隐藏 separator；760px 显示 239、仍保存 312；恢复 1240px 后回到 312。</li><li>浅色、深色、跟随系统逐一保存并聚焦真实 composer，textarea 均无 box-shadow；最终恢复系统主题与 248px 默认宽度。</li><li>锁屏导致 Computer Use 不可用，以上操作连接本轮正式包 remote-debugging target 完成，不是源码预览。</li></ul></section>
+      <section><h3>风险与回滚</h3><ul><li>极端 capture 拒绝且宿主不发送 pointerup/blur 的路径为非阻塞剩余风险；正常取消路径已覆盖。</li><li>回滚仅撤销 width state/ref/状态机、separator、localStorage、SVG、焦点 CSS 与测试。</li><li>不修改或回滚 native thread、legacy 记录、权限模式、数据库和会话协议。</li></ul></section>
+    </div>
+    <p class="footer-note"><strong>VERIFICATION PASSED:</strong> SOURCE、TESTS、OFFICIAL PACKAGE 与正式包 UI 交互均已验证；未执行 git commit、push、merge 或其他历史修改。</p>
+  </section>
+</main>
+</body>
+</html>

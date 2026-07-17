@@ -19,7 +19,7 @@ describe('Zeus App snapshot rendering', () => {
     };
     const html = renderToStaticMarkup(<App snapshot={snapshot} />);
 
-    expect(html).toContain('workspace-view-projects');
+    expect(html).toContain('project-first-sidebar');
     expect(html).toContain('选择真实本地代码库');
     expect(html).not.toContain('真实工作流时间线');
     expect(html).not.toContain('127.0.0.1:49152');

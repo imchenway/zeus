@@ -1,9 +1,9 @@
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { startZeusLocalServer } from '../../../packages/local-server/src/index.js';
-import { createDashboardClient } from '../src/renderer/apiClient.js';
+import { createDashboardClient, ZeusApiError } from '../src/renderer/apiClient.js';
 import type { SecretStore } from '@zeus/security-core';
 import type { AiRuntimeProcessHandle, AiRuntimeSpawn } from '@zeus/ai-runtime';
 
@@ -43,7 +43,151 @@ function createGraphAnswerSpawn(): AiRuntimeSpawn {
   };
 }
 
+async function selectLegacyCliTestAdapter(client: ReturnType<typeof createDashboardClient>): Promise<void> {
+  const settings = await client.loadRuntimeSettings();
+  await client.saveRuntimeSettings({ ...settings, defaultAdapterId: 'claude' });
+}
+
 describe('renderer dashboard API client', () => {
+  it('loads and starts project-scoped conversations without routing through task APIs', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (_input, init) => {
+      if (init?.method === 'POST') {
+        return new Response(JSON.stringify({ operation: { status: 'accepted' }, conversation: { id: 'project-conversation-1', taskId: null }, submission: { id: 'submission-1' } }), {
+          status: 202,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      return new Response(JSON.stringify({ projectId: 'project-1', choices: [], items: [] }), { status: 200, headers: { 'content-type': 'application/json' } });
+    });
+    try {
+      const client = createDashboardClient({ baseUrl: 'http://127.0.0.1:3210', apiToken: 'client-token' });
+      await client.loadProjectConversationChoices('project-1');
+      await client.startProjectConversation('project-1', {
+        mode: 'create',
+        content: '自由输入项目问题',
+        attachments: [],
+        permissionMode: 'auto',
+        idempotencyKey: 'project-start-key',
+        clientUserMessageId: 'project-client-message',
+      });
+
+      expect(fetchMock.mock.calls[0]?.[0]).toBe('http://127.0.0.1:3210/api/projects/project-1/conversation-choices');
+      expect(fetchMock.mock.calls[1]?.[0]).toBe('http://127.0.0.1:3210/api/projects/project-1/conversations');
+      expect(fetchMock.mock.calls[1]?.[1]).toEqual(
+        expect.objectContaining({
+          method: 'POST',
+          headers: expect.objectContaining({ 'idempotency-key': 'project-start-key' }),
+        }),
+      );
+      expect(JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit).body))).toEqual({
+        mode: 'create',
+        content: '自由输入项目问题',
+        attachments: [],
+        permissionMode: 'auto',
+        clientUserMessageId: 'project-client-message',
+      });
+      expect(fetchMock.mock.calls.flatMap(([url]) => String(url))).not.toContain('/api/tasks/');
+    } finally {
+      fetchMock.mockRestore();
+    }
+  });
+
+  it('sends stable native identities in the header and body without widening Graph conversation types', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ operation: { status: 'active' }, conversation: { id: 'conversation-1' }, submission: { id: 'submission-1' } }), {
+        status: 202,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    try {
+      const client = createDashboardClient({ baseUrl: 'http://127.0.0.1:3210', apiToken: 'client-token' });
+      await client.sendNativeMessage('project-1', 'conversation-1', {
+        content: 'continue the same thread',
+        attachments: [],
+        delivery: 'queue',
+        idempotencyKey: 'stable-idempotency',
+        clientUserMessageId: 'stable-client-message',
+      });
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        'http://127.0.0.1:3210/api/projects/project-1/conversations/conversation-1/messages',
+        expect.objectContaining({
+          method: 'POST',
+          headers: expect.objectContaining({ authorization: 'Bearer client-token', 'idempotency-key': 'stable-idempotency' }),
+        }),
+      );
+      const body = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body));
+      expect(body).toEqual({ content: 'continue the same thread', attachments: [], delivery: 'queue', clientUserMessageId: 'stable-client-message' });
+    } finally {
+      fetchMock.mockRestore();
+    }
+  });
+
+  it('forwards the real local-server pending-request response wire schema unchanged', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(
+      async () =>
+        new Response(JSON.stringify({ operation: { status: 'responded' }, request: { id: 'request-1', status: 'resolved' } }), {
+          status: 202,
+          headers: { 'content-type': 'application/json' },
+        }),
+    );
+    try {
+      const client = createDashboardClient({ baseUrl: 'http://127.0.0.1:3210', apiToken: 'client-token' });
+      const responses = [
+        { type: 'userInput', answers: { scope: { answers: ['workspace'] } } },
+        { type: 'MCP', action: 'decline', content: null, _meta: null },
+        { type: 'permissions', permissions: {}, scope: 'turn' },
+      ];
+      for (const response of responses) await client.respondToNativeRequest('project-1', 'conversation-1', 'request-1', response);
+
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+      for (const [index, response] of responses.entries()) {
+        expect(fetchMock.mock.calls[index]?.[0]).toBe('http://127.0.0.1:3210/api/projects/project-1/conversations/conversation-1/requests/request-1/respond');
+        expect(JSON.parse(String((fetchMock.mock.calls[index]?.[1] as RequestInit).body))).toEqual(response);
+      }
+    } finally {
+      fetchMock.mockRestore();
+    }
+  });
+
+  it('preserves typed native API status, error code, and recoveryRequired metadata', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ error: 'ZEUS_CODEX_REQUEST_GENERATION_STALE', message: 'retired generation', recoveryRequired: true }), {
+        status: 409,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    try {
+      const client = createDashboardClient({ baseUrl: 'http://127.0.0.1:3210', apiToken: 'client-token' });
+      const failure = await client.loadNativeConversation('project-1', 'conversation-1').catch((error: unknown) => error);
+      expect(failure).toBeInstanceOf(ZeusApiError);
+      expect(failure).toMatchObject({ status: 409, error: 'ZEUS_CODEX_REQUEST_GENERATION_STALE', recoveryRequired: true, message: 'retired generation' });
+    } finally {
+      fetchMock.mockRestore();
+    }
+  });
+
+  it('fail-closes an idempotency recovery response from its code and operation status even when the boolean is absent', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error: 'ZEUS_IDEMPOTENCY_RECOVERY_REQUIRED',
+          message: 'provider outcome is unknown',
+          operation: { id: 'operation-1', status: 'recovery_required', idempotencyKey: 'stable-key' },
+        }),
+        { status: 409, headers: { 'content-type': 'application/json' } },
+      ),
+    );
+    try {
+      const client = createDashboardClient({ baseUrl: 'http://127.0.0.1:3210', apiToken: 'client-token' });
+      const failure = await client.loadNativeConversation('project-1', 'conversation-1').catch((error: unknown) => error);
+      expect(failure).toBeInstanceOf(ZeusApiError);
+      expect(failure).toMatchObject({ status: 409, error: 'ZEUS_IDEMPOTENCY_RECOVERY_REQUIRED', recoveryRequired: true, message: 'provider outcome is unknown' });
+    } finally {
+      fetchMock.mockRestore();
+    }
+  });
+
   it('connects to the local WebSocket event stream with token subprotocols', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'zeus-client-events-'));
     try {
@@ -183,6 +327,12 @@ describe('renderer dashboard API client', () => {
 
       expect(snapshot.app).toBe('Zeus');
       expect(snapshot.localServer.port).toBe(new URL(second.baseUrl).port ? Number(new URL(second.baseUrl).port) : null);
+      const events: string[] = [];
+      const socket = client.connectEvents((event) => events.push(event.type), { afterEventId: 'last-native-event' });
+      await vi.waitFor(() => expect(events).toContain('server.connected'));
+      expect(socket.url).toContain(second.baseUrl.replace(/^http/u, 'ws'));
+      expect(socket.url).toContain('afterEventId=last-native-event');
+      socket.close();
       await second.close();
     } finally {
       await rm(dir, { recursive: true, force: true });
@@ -926,6 +1076,7 @@ describe('renderer dashboard API client', () => {
         baseUrl: running.baseUrl,
         apiToken: 'client-token',
       });
+      await selectLegacyCliTestAdapter(client);
       const project = await client.createProject({
         name: 'Zeus',
         localPath: '/Users/david/hypha/zeus',
@@ -1911,6 +2062,7 @@ describe('renderer dashboard API client', () => {
         baseUrl: running.baseUrl,
         apiToken: 'client-token',
       });
+      await selectLegacyCliTestAdapter(client);
       const project = await client.createProject({
         name: 'Zeus',
         localPath: '/Users/david/hypha/zeus',
@@ -1974,6 +2126,7 @@ describe('renderer dashboard API client', () => {
         baseUrl: running.baseUrl,
         apiToken: 'client-token',
       });
+      await selectLegacyCliTestAdapter(client);
       const project = await client.createProject({
         name: 'Zeus',
         localPath: '/Users/david/hypha/zeus',
@@ -2017,6 +2170,7 @@ describe('renderer dashboard API client', () => {
         baseUrl: running.baseUrl,
         apiToken: 'client-token',
       });
+      await selectLegacyCliTestAdapter(client);
       const project = await client.createProject({
         name: 'Zeus',
         localPath: '/Users/david/hypha/zeus',
@@ -2078,7 +2232,7 @@ describe('renderer dashboard API client', () => {
         name: 'Client Project Graph',
         localPath: '/Users/david/hypha/zeus',
       });
-      await client.scanCurrentGraph();
+      await client.scanProject(project.id);
 
       const view = await client.loadProjectGraphView(project.id, 'architecture');
       const node = view.nodes[0];
@@ -2114,7 +2268,7 @@ describe('renderer dashboard API client', () => {
         name: 'Client Project Graph Task',
         localPath: '/Users/david/hypha/zeus',
       });
-      await client.scanCurrentGraph();
+      await client.scanProject(project.id);
       const view = await client.loadProjectGraphView(project.id, 'architecture');
       const node = view.nodes[0];
       const nodeTask = await client.createProjectTaskFromGraphNode(project.id, node.id, { intent: '项目级节点任务' });
@@ -2166,7 +2320,7 @@ describe('renderer dashboard API client', () => {
         name: 'Client Semantic Code Map',
         localPath: '/Users/david/hypha/zeus',
       });
-      await client.scanCurrentGraph();
+      await client.scanProject(project.id);
 
       const apis = await client.loadProjectApis(project.id);
       const api = apis.items.find((item) => item.name === 'GET /api/dashboard')!;
@@ -2357,10 +2511,11 @@ describe('renderer AI runtime API client', () => {
         baseUrl: running.baseUrl,
         apiToken: 'client-token',
       });
+      await selectLegacyCliTestAdapter(client);
 
       const session = await client.startRuntimeSession({
         projectId: 'project-1',
-        command: 'codex',
+        command: 'claude',
         args: ['--version'],
         cwd: '/Users/david/hypha/zeus',
       });
@@ -2389,9 +2544,10 @@ describe('renderer AI runtime API client', () => {
         baseUrl: running.baseUrl,
         apiToken: 'client-token',
       });
+      await selectLegacyCliTestAdapter(client);
       const session = await client.startRuntimeSession({
         projectId: 'project-1',
-        command: 'codex',
+        command: 'claude',
         args: ['--version'],
         cwd: '/Users/david/hypha/zeus',
       });
@@ -2435,9 +2591,10 @@ it('manages runtime session search, summary, favorite, archive, and delete throu
       baseUrl: running.baseUrl,
       apiToken: 'client-token',
     });
+    await selectLegacyCliTestAdapter(client);
     const session = await client.startRuntimeSession({
       projectId: 'project-1',
-      command: 'codex',
+      command: 'claude',
       args: ['--version'],
       cwd: '/Users/david/hypha/zeus',
     });
@@ -2572,9 +2729,10 @@ it('sends runtime input, interrupt, resize, and loads terminal snapshot through 
       baseUrl: running.baseUrl,
       apiToken: 'client-token',
     });
+    await selectLegacyCliTestAdapter(client);
     const session = await client.startRuntimeSession({
       projectId: 'project-1',
-      command: 'codex',
+      command: 'claude',
       cwd: '/Users/david/hypha/zeus',
     });
 
@@ -2618,13 +2776,14 @@ it('restores archived runtime sessions and creates a follow-up task through the 
       baseUrl: running.baseUrl,
       apiToken: 'client-token',
     });
+    await selectLegacyCliTestAdapter(client);
     const project = await client.createProject({
       name: 'Zeus',
       localPath: '/Users/david/hypha/zeus',
     });
     const session = await client.startRuntimeSession({
       projectId: project.id,
-      command: 'codex',
+      command: 'claude',
       args: ['--version'],
       cwd: project.localPath,
     });
@@ -2677,6 +2836,7 @@ it('loads and saves app shell operations settings through the renderer client', 
       openAtLoginEnabled: true,
       autoUpdateChannel: 'manual',
       defaultProjectId: project.id,
+      pinnedProjectIds: [project.id],
       defaultModel: 'gpt-5.1-codex',
       defaultTaskTemplateId: 'task_template_bug_fix',
     });
@@ -2689,6 +2849,7 @@ it('loads and saves app shell operations settings through the renderer client', 
       redactsSecrets: true,
     });
     expect(initial.defaultProjectId).toBeNull();
+    expect(initial.pinnedProjectIds).toEqual([]);
     expect(initial.defaultModel).toBeNull();
     expect(initial.defaultTaskTemplateId).toBeNull();
     expect(initial.appLanguage).toBe('zh-CN');
@@ -2701,6 +2862,7 @@ it('loads and saves app shell operations settings through the renderer client', 
       desktopNotificationsEnabled: false,
       openAtLoginEnabled: true,
       defaultProjectId: project.id,
+      pinnedProjectIds: [project.id],
       defaultModel: 'gpt-5.1-codex',
       defaultTaskTemplateId: 'task_template_bug_fix',
     });
@@ -2751,6 +2913,7 @@ it('exports and imports redacted local settings through the renderer client', as
           desktopNotificationsEnabled: true,
           openAtLoginEnabled: false,
           autoUpdateChannel: 'manual',
+          pinnedProjectIds: ['project_imported'],
         },
       },
     });
@@ -2764,6 +2927,7 @@ it('exports and imports redacted local settings through the renderer client', as
       multiWindowEnabled: false,
       desktopNotificationsEnabled: true,
       openAtLoginEnabled: false,
+      pinnedProjectIds: ['project_imported'],
     });
     await running.close();
   } finally {

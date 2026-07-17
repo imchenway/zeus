@@ -1,0 +1,361 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Zeus 钥匙串反复授权提示故障排查图</title>
+  <style>
+    * { box-sizing: border-box; }
+    :root {
+      color-scheme: light;
+      --bg: #f7f9fc;
+      --panel: #ffffff;
+      --line: #d8e0eb;
+      --line-strong: #9fb2c9;
+      --text: #1f2937;
+      --muted: #5f6f82;
+      --blue: #2563eb;
+      --blue-soft: #eaf1ff;
+      --green: #17803d;
+      --green-soft: #eaf8ef;
+      --amber: #9a6700;
+      --amber-soft: #fff6dc;
+      --red: #b42318;
+      --red-soft: #fff0ee;
+      --shadow: 0 18px 48px rgba(31, 41, 55, 0.12);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    }
+    body {
+      margin: 0;
+      background: radial-gradient(circle at top left, #eef5ff, transparent 38%), var(--bg);
+      color: var(--text);
+    }
+    main {
+      width: min(1180px, 100%);
+      margin: 0 auto;
+      padding: 28px 18px 36px;
+    }
+    header {
+      margin-bottom: 18px;
+    }
+    h1 {
+      margin: 0 0 6px;
+      font-size: clamp(20px, 3vw, 28px);
+      line-height: 1.2;
+      letter-spacing: -0.02em;
+    }
+    .subtitle {
+      margin: 0;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.5;
+    }
+    .board {
+      background: rgba(255, 255, 255, 0.82);
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      padding: 18px;
+      box-shadow: var(--shadow);
+    }
+    .storyline {
+      display: grid;
+      grid-template-columns: repeat(7, minmax(0, 1fr));
+      gap: 10px;
+      align-items: stretch;
+    }
+    .node {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 12px 10px;
+      min-height: 118px;
+      background: var(--panel);
+      text-align: left;
+      color: inherit;
+      font: inherit;
+      cursor: pointer;
+      position: relative;
+      overflow-wrap: anywhere;
+    }
+    .node::after {
+      content: "→";
+      position: absolute;
+      right: -14px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--line-strong);
+      font-weight: 700;
+      pointer-events: none;
+    }
+    .node:last-child::after { content: ""; }
+    .node:hover { border-color: var(--blue); background: #fbfdff; }
+    .node:focus-visible { outline: 3px solid rgba(37, 99, 235, 0.2); outline-offset: 2px; }
+    .node h2 {
+      margin: 7px 0 7px;
+      font-size: 14px;
+      line-height: 1.25;
+    }
+    .node p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      border-radius: 999px;
+      padding: 3px 7px;
+      font-size: 11px;
+      line-height: 1.2;
+      font-weight: 650;
+      color: var(--blue);
+      background: var(--blue-soft);
+    }
+    .tag.warn { color: var(--amber); background: var(--amber-soft); }
+    .tag.root { color: var(--red); background: var(--red-soft); }
+    .tag.ok { color: var(--green); background: var(--green-soft); }
+    .evidence {
+      margin-top: 16px;
+      display: grid;
+      grid-template-columns: 1.1fr 0.9fr;
+      gap: 14px;
+    }
+    section.card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 14px;
+    }
+    section.card h3 {
+      margin: 0 0 10px;
+      font-size: 15px;
+      line-height: 1.3;
+    }
+    .evidence-list, .decision-list {
+      display: grid;
+      gap: 8px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+    .evidence-list li, .decision-list li {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 8px;
+      align-items: start;
+      padding: 9px;
+      border: 1px solid #edf1f6;
+      border-radius: 12px;
+      background: #fbfcfe;
+      font-size: 12px;
+      line-height: 1.45;
+      overflow-wrap: anywhere;
+    }
+    .badge {
+      min-width: 28px;
+      text-align: center;
+      border-radius: 8px;
+      padding: 2px 6px;
+      background: #eef3f9;
+      color: #36516f;
+      font-weight: 700;
+      font-size: 11px;
+    }
+    .matrix {
+      margin-top: 14px;
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .option {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 12px;
+      background: #fff;
+      min-height: 126px;
+      overflow-wrap: anywhere;
+    }
+    .option.recommended { border-color: #8fb6ff; background: #f5f9ff; }
+    .option strong { display: block; font-size: 13px; margin-bottom: 6px; }
+    .option p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 18px;
+      background: rgba(15, 23, 42, 0.24);
+      z-index: 10;
+    }
+    .modal-backdrop[data-open="true"] { display: flex; }
+    .modal {
+      width: min(560px, 100%);
+      max-height: min(72vh, 680px);
+      overflow: auto;
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      box-shadow: var(--shadow);
+      padding: 18px;
+    }
+    .modal header { margin: 0 0 10px; display: flex; justify-content: space-between; gap: 10px; align-items: start; }
+    .modal h2 { margin: 0; font-size: 18px; line-height: 1.3; }
+    .modal p, .modal li { color: var(--muted); font-size: 13px; line-height: 1.55; }
+    .modal ul { padding-left: 18px; }
+    .close {
+      border: 1px solid var(--line);
+      background: #f8fafc;
+      border-radius: 10px;
+      min-width: 34px;
+      min-height: 30px;
+      cursor: pointer;
+      font-size: 16px;
+    }
+    .close:focus-visible { outline: 3px solid rgba(37, 99, 235, 0.2); outline-offset: 2px; }
+    @media (max-width: 980px) {
+      .storyline { grid-template-columns: 1fr; }
+      .node { min-height: auto; }
+      .node::after { content: "↓"; right: 18px; top: auto; bottom: -18px; transform: none; }
+      .evidence, .matrix { grid-template-columns: 1fr; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      * { scroll-behavior: auto !important; transition: none !important; animation: none !important; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Zeus 每次启动弹出钥匙串密码：故障排查图</h1>
+      <p class="subtitle">主结论：弹窗来自 Electron/Chromium Safe Storage；当前重复提示最可能与“只点允许”或未正式签名/ad-hoc 构建身份不稳定有关。</p>
+    </header>
+    <div class="board" aria-label="故障故事线与证据闭环">
+      <div class="storyline">
+        <button class="node" data-title="现象" data-detail="macOS 弹窗提示 Zeus 想读取钥匙串中的 @zeus/desktop Safe Storage，并要求输入 login 钥匙串密码。按钮包含 拒绝、允许、始终允许。">
+          <span class="tag warn">现象</span>
+          <h2>启动即要密码</h2>
+          <p>读取 `@zeus/desktop Safe Storage` 前触发系统授权。</p>
+        </button>
+        <button class="node" data-title="影响" data-detail="用户会误以为 Zeus 在索取业务密码；若拒绝，Electron profile 内依赖 Safe Storage 的数据可能无法解密，但 Zeus SQLite 主数据不等价于此密钥。">
+          <span class="tag warn">影响</span>
+          <h2>造成安全疑虑</h2>
+          <p>不是 Zeus 业务登录密码，而是 macOS Keychain 授权。</p>
+        </button>
+        <button class="node" data-title="证据 E1/E3/E4" data-detail="截图 item 名称是 @zeus/desktop Safe Storage；apps/desktop/package.json 包名为 @zeus/desktop；运行进程参数显示 user-data-dir 位于 ~/Library/Application Support/@zeus/desktop。">
+          <span class="tag">证据</span>
+          <h2>名称指向 Electron profile</h2>
+          <p>`@zeus/desktop` 来自包名与用户数据目录。</p>
+        </button>
+        <button class="node" data-title="排除 E2" data-detail="Zeus 自定义 SecretStore 在 packages/security-core/src/index.ts 中默认 service 是 Zeus；保存 Telegram Bot Token、外部 API Key、数据库密码时会使用 Zeus 服务名，不是截图中的 Safe Storage item。">
+          <span class="tag ok">排除</span>
+          <h2>不是业务密钥链路</h2>
+          <p>Bot/API/database secret 服务名应是 `Zeus`。</p>
+        </button>
+        <button class="node" data-title="高可疑根因 E5/E6" data-detail="当前 electron-builder.yml 配置 identity: null；codesign 输出 Signature=adhoc、TeamIdentifier=not set。ad-hoc 包适合本地启动校验，但不提供稳定 Developer ID 身份。重新打包或 binary hash 改变后，Keychain 可能重新要求授权。">
+          <span class="tag root">高可疑根因</span>
+          <h2>未正式签名身份不稳</h2>
+          <p>ad-hoc 签名 + 常重新打包，会削弱“始终允许”的稳定性。</p>
+        </button>
+        <button class="node" data-title="短期处理" data-detail="如果启动的是同一个未改动 App，输入 macOS 登录钥匙串密码并点击 始终允许，通常可停止当前 bundle 的重复提示。若只点 允许，则下次仍可能再问。">
+          <span class="tag">短期</span>
+          <h2>同一包点“始终允许”</h2>
+          <p>只点“允许”是单次授权，下次仍可能提示。</p>
+        </button>
+        <button class="node" data-title="长期修法" data-detail="稳定 app name/userData 命名，并使用 Apple Developer ID 签名与 notarization。若旧 ACL 损坏，可清理 @zeus/desktop Safe Storage item 后重建，但不要误删服务名 Zeus 的业务密钥。">
+          <span class="tag ok">闭环</span>
+          <h2>签名/公证才是正解</h2>
+          <p>稳定可信身份让 Keychain 记住授权。</p>
+        </button>
+      </div>
+
+      <div class="evidence">
+        <section class="card" aria-labelledby="evidence-title">
+          <h3 id="evidence-title">证据阶梯</h3>
+          <ul class="evidence-list">
+            <li><span class="badge">E1</span><span>截图 item：`@zeus/desktop Safe Storage`，符合 Electron/Chromium Safe Storage 命名。</span></li>
+            <li><span class="badge">E2</span><span>`packages/security-core/src/index.ts` 自定义 Keychain service 默认是 `Zeus`，与截图不同。</span></li>
+            <li><span class="badge">E3</span><span>`apps/desktop/package.json` 包名是 `@zeus/desktop`。</span></li>
+            <li><span class="badge">E4</span><span>运行进程使用 `~/Library/Application Support/@zeus/desktop` 作为 user data。</span></li>
+            <li><span class="badge">E5</span><span>`apps/desktop/electron-builder.yml` 配置 `identity: null`。</span></li>
+            <li><span class="badge">E6</span><span>当前 `Zeus.app` 为 `Signature=adhoc`、`TeamIdentifier=not set`。</span></li>
+            <li><span class="badge">E7</span><span>login keychain 当前 `no-timeout`，暂不支持“定时锁定导致每次问”的主因判断。</span></li>
+          </ul>
+        </section>
+        <section class="card" aria-labelledby="decision-title">
+          <h3 id="decision-title">假设裁决</h3>
+          <ul class="decision-list">
+            <li><span class="badge">成立</span><span>截图来源是 Electron/Chromium Safe Storage，而不是 Zeus 自定义 SecretStore。</span></li>
+            <li><span class="badge">高疑</span><span>未正式签名/ad-hoc 构建和频繁重新打包导致 Keychain 反复授权。</span></li>
+            <li><span class="badge">高疑</span><span>如果每次点的是“允许”，macOS 只授权本次访问。</span></li>
+            <li><span class="badge">待验</span><span>若点过“始终允许”仍在同一个未变 app 上复现，需要检查 Safe Storage item ACL 是否异常。</span></li>
+          </ul>
+        </section>
+      </div>
+
+      <div class="matrix" aria-label="处理选项矩阵">
+        <div class="option">
+          <strong>A. 临时处理</strong>
+          <p>同一 App bundle 上点“始终允许”。最快；重新打包后可能再问。</p>
+        </div>
+        <div class="option">
+          <strong>B. 清理旧 item</strong>
+          <p>只删除 `@zeus/desktop Safe Storage` 后重建。注意不要删服务名 `Zeus` 的业务密钥。</p>
+        </div>
+        <div class="option">
+          <strong>C. 稳定命名/profile</strong>
+          <p>把 app name/userData 收敛为 `Zeus`，需要迁移和一次新授权。</p>
+        </div>
+        <div class="option recommended">
+          <strong>D. 正式签名/公证 🌟</strong>
+          <p>Developer ID + notarization 提供稳定身份，是长期日用和发布正解。</p>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <div class="modal-backdrop" id="modalBackdrop" role="presentation">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+      <header>
+        <h2 id="modalTitle">详情</h2>
+        <button class="close" id="modalClose" type="button" aria-label="关闭详情">×</button>
+      </header>
+      <p id="modalDetail"></p>
+    </div>
+  </div>
+
+  <script>
+    const backdrop = document.getElementById('modalBackdrop');
+    const modalTitle = document.getElementById('modalTitle');
+    const modalDetail = document.getElementById('modalDetail');
+    const closeButton = document.getElementById('modalClose');
+    let lastTrigger = null;
+
+    function openModal(button) {
+      lastTrigger = button;
+      modalTitle.textContent = button.dataset.title || '详情';
+      modalDetail.textContent = button.dataset.detail || '';
+      backdrop.dataset.open = 'true';
+      closeButton.focus();
+    }
+
+    function closeModal() {
+      backdrop.dataset.open = 'false';
+      if (lastTrigger) lastTrigger.focus();
+      lastTrigger = null;
+    }
+
+    document.querySelectorAll('.node').forEach((button) => {
+      button.addEventListener('click', () => openModal(button));
+    });
+    closeButton.addEventListener('click', closeModal);
+    backdrop.addEventListener('click', (event) => {
+      if (event.target === backdrop) closeModal();
+    });
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && backdrop.dataset.open === 'true') closeModal();
+    });
+  </script>
+</body>
+</html>

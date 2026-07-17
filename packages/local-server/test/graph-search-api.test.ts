@@ -2,7 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { AiRuntimeProcessHandle, AiRuntimeSpawn } from '@zeus/ai-runtime';
+import type { AiRuntimeProcessHandle, AiRuntimeSpawn, CodexAppServerEvent, CodexAppServerManager, CodexThreadStartInput, CodexTurnStartInput } from '@zeus/ai-runtime';
 import { createZeusDatabase } from '@zeus/storage';
 import { createLocalServer } from '../src/index';
 
@@ -25,6 +25,84 @@ function createGraphAnswerSpawn(): AiRuntimeSpawn {
     });
     return handle;
   };
+}
+
+class GraphNativeCodexManager implements CodexAppServerManager {
+  readonly threadStarts: CodexThreadStartInput[] = [];
+  readonly turnStarts: CodexTurnStartInput[] = [];
+  private readonly listeners = new Set<(event: CodexAppServerEvent) => unknown>();
+  private sequence = 0;
+
+  async ensureReady() {
+    return { generationId: 'graph-native-generation', initializedAt: '2026-07-13T00:00:00.000Z', models: [], supportedModels: ['project-codex-model'] };
+  }
+  async startThread(input: CodexThreadStartInput) {
+    this.threadStarts.push(input);
+    return { id: 'graph-native-thread', turns: [] };
+  }
+  async resumeThread(input: { threadId: string }) {
+    return { id: input.threadId, turns: [] };
+  }
+  async readThread(input: { threadId: string }) {
+    return { id: input.threadId, turns: [] };
+  }
+  async startTurn(input: CodexTurnStartInput) {
+    this.turnStarts.push(input);
+    setTimeout(() => {
+      void this.emit('item/completed', {
+        threadId: input.threadId,
+        turnId: 'graph-native-turn',
+        item: { id: 'graph-answer-item', type: 'agentMessage', status: 'completed', phase: 'final_answer', text: 'AI 图谱回答：local-server 来源已核验' },
+      }).then(() => this.emit('turn/completed', { threadId: input.threadId, turn: { id: 'graph-native-turn', status: 'completed' } }));
+    }, 0);
+    return { id: 'graph-native-turn', threadId: input.threadId, items: [] };
+  }
+  async steerTurn() {
+    return { turnId: 'graph-native-turn' };
+  }
+  async interruptTurn() {}
+  async respondToServerRequest() {}
+  subscribe(listener: (event: CodexAppServerEvent) => void) {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+  getState() {
+    return { type: 'ready' as const, generationId: 'graph-native-generation', capabilities: { generationId: 'graph-native-generation', initializedAt: '2026-07-13T00:00:00.000Z', models: [], supportedModels: ['project-codex-model'] } };
+  }
+  async prepareForShutdown() {}
+  async close() {}
+  private async emit(method: string, params: unknown) {
+    const event: CodexAppServerEvent = { generationId: 'graph-native-generation', sequence: ++this.sequence, method, params, receivedAt: `2026-07-13T00:00:0${this.sequence}.000Z` };
+    await Promise.all([...this.listeners].map((listener) => listener(event)));
+  }
+}
+
+class FailingGraphNativeCodexManager extends GraphNativeCodexManager {
+  override async startTurn(input: CodexTurnStartInput): Promise<never> {
+    this.turnStarts.push(input);
+    throw new Error('native graph dispatch failed');
+  }
+}
+
+async function configureLegacyGraphRuntime(server: Awaited<ReturnType<typeof createLocalServer>>, defaultAdapterId: 'claude' | 'gemini' = 'claude'): Promise<void> {
+  const response = await server.inject({
+    method: 'PUT',
+    url: '/api/runtime/settings',
+    headers: { authorization: 'Bearer token' },
+    payload: {
+      defaultAdapterId,
+      adapterModels: {},
+      adapterDefaultArgs: {},
+      adapterCliPaths: {},
+      terminalEnv: {},
+      shell: { path: null, login: false },
+      concurrency: { maxPerProject: 1, maxGlobal: 2 },
+      executionTimeoutSeconds: 3600,
+      logRetentionDays: 30,
+      autoConfirmationPolicy: 'never',
+    },
+  });
+  expect(response.statusCode).toBe(200);
 }
 
 let tempDir: string;
@@ -129,15 +207,17 @@ describe('graph search API', () => {
   });
 
   it('answers a project graph question through AI Runtime with sourced graph context', async () => {
-    const started: Array<{ command: string; args: string[] }> = [];
+    const codexManager = new GraphNativeCodexManager();
+    let cliSpawnCount = 0;
     const server = await createLocalServer({
       dbPath: join(tempDir, 'zeus.db'),
       apiToken: 'token',
       projectRoot: '/Users/david/hypha/zeus',
-      aiRuntimeSpawn: ((command, args, options) => {
-        started.push({ command, args });
+      codexAppServerManager: codexManager,
+      aiRuntimeSpawn: (command, args, options) => {
+        cliSpawnCount += 1;
         return createGraphAnswerSpawn()(command, args, options);
-      }) satisfies AiRuntimeSpawn,
+      },
     });
     await server.inject({
       method: 'PUT',
@@ -182,16 +262,126 @@ describe('graph search API', () => {
     const answer = response.json();
     expect(answer.answer).toContain('AI 图谱回答');
     expect(answer.answer).toContain('local-server 来源已核验');
-    expect(answer.sessionId).toMatch(/^ai-session-/);
+    expect(answer.sessionId).toBeNull();
+    expect(answer.conversationId).toMatch(/^conversation_/);
     expect(answer.sources.nodes.length).toBeGreaterThan(0);
     expect(answer.sources.nodes[0].sourceRef).toContain('local-server');
     expect(answer.sources.nodes[0].sourceRef).not.toContain('mock');
-    expect(started[0].args).toContain('--model');
-    expect(started[0].args).toContain('project-codex-model');
-    expect(started[0].args).not.toContain('global-codex-model');
-    const promptArg = started[0].args.find((arg) => arg.includes('图谱问答：local-server')) ?? '';
-    expect(promptArg).toContain('项目默认工作模式：review');
-    expect(promptArg).toContain('项目默认任务提示词：图谱问答也必须继承项目默认提示词');
+    expect(codexManager.threadStarts[0]).toMatchObject({ model: 'project-codex-model', cwd: '/Users/david/hypha/zeus', ephemeral: true, sandbox: { type: 'readOnly', networkAccess: false } });
+    expect(codexManager.turnStarts[0]?.input).toEqual([{ type: 'text', text: expect.stringContaining('图谱问答：local-server') }]);
+    const promptText = String(codexManager.turnStarts[0]?.input[0]?.text ?? '');
+    expect(promptText).toContain('项目默认工作模式：review');
+    expect(promptText).toContain('项目默认任务提示词：图谱问答也必须继承项目默认提示词');
+    expect(cliSpawnCount).toBe(0);
+    await server.close();
+  });
+
+  it('maps the disabled native Codex graph route to 409 while leaving a non-Codex graph provider available', async () => {
+    const codexManager = new GraphNativeCodexManager();
+    let cliSpawnCount = 0;
+    const server = await createLocalServer({
+      dbPath: join(tempDir, 'zeus.db'),
+      apiToken: 'token',
+      projectRoot: '/Users/david/hypha/zeus',
+      codexNativeEnabled: false,
+      codexAppServerManager: codexManager,
+      aiRuntimeSpawn: (command, args, options) => {
+        cliSpawnCount += 1;
+        return createGraphAnswerSpawn()(command, args, options);
+      },
+    });
+    await server.inject({
+      method: 'PUT',
+      url: '/api/runtime/settings',
+      headers: { authorization: 'Bearer token' },
+      payload: { defaultAdapterId: 'codex', adapterModels: { codex: 'project-codex-model' } },
+    });
+    const project = (
+      await server.inject({
+        method: 'POST',
+        url: '/api/projects',
+        headers: { authorization: 'Bearer token' },
+        payload: { name: 'Zeus', localPath: '/Users/david/hypha/zeus' },
+      })
+    ).json();
+    await server.inject({ method: 'POST', url: '/api/graph/scan-current', headers: { authorization: 'Bearer token' } });
+
+    const disabled = await server.inject({
+      method: 'POST',
+      url: `/api/projects/${project.id}/ask`,
+      headers: { authorization: 'Bearer token' },
+      payload: { question: 'local-server' },
+    });
+
+    expect(disabled.statusCode).toBe(409);
+    expect(disabled.json()).toMatchObject({ error: 'ZEUS_CODEX_NATIVE_DISABLED' });
+    expect(codexManager.threadStarts).toHaveLength(0);
+    expect(codexManager.turnStarts).toHaveLength(0);
+    expect(cliSpawnCount).toBe(0);
+
+    await configureLegacyGraphRuntime(server);
+    const legacy = await server.inject({
+      method: 'POST',
+      url: `/api/projects/${project.id}/ask`,
+      headers: { authorization: 'Bearer token' },
+      payload: { question: 'local-server' },
+    });
+    expect(legacy.statusCode).toBe(200);
+    expect(legacy.json()).toMatchObject({ answer: expect.stringContaining('local-server 来源已核验') });
+    expect(cliSpawnCount).toBe(1);
+    await server.close();
+  });
+
+  it('does not fall back to a CLI when native Codex graph dispatch fails', async () => {
+    const codexManager = new FailingGraphNativeCodexManager();
+    let cliSpawnCount = 0;
+    const server = await createLocalServer({
+      dbPath: join(tempDir, 'zeus.db'),
+      apiToken: 'token',
+      projectRoot: '/Users/david/hypha/zeus',
+      codexAppServerManager: codexManager,
+      aiRuntimeSpawn: (command, args, options) => {
+        cliSpawnCount += 1;
+        return createGraphAnswerSpawn()(command, args, options);
+      },
+    });
+    await server.inject({ method: 'PUT', url: '/api/runtime/settings', headers: { authorization: 'Bearer token' }, payload: { defaultAdapterId: 'codex', adapterModels: { codex: 'project-codex-model' } } });
+    const project = (await server.inject({ method: 'POST', url: '/api/projects', headers: { authorization: 'Bearer token' }, payload: { name: 'Zeus', localPath: '/Users/david/hypha/zeus' } })).json();
+    await server.inject({ method: 'POST', url: '/api/graph/scan-current', headers: { authorization: 'Bearer token' } });
+
+    const response = await server.inject({ method: 'POST', url: `/api/projects/${project.id}/ask`, headers: { authorization: 'Bearer token' }, payload: { question: 'local-server' } });
+
+    expect(response.statusCode).toBeGreaterThanOrEqual(500);
+    expect(codexManager.threadStarts).toHaveLength(1);
+    expect(codexManager.turnStarts).toHaveLength(1);
+    expect(cliSpawnCount).toBe(0);
+    await server.close();
+  });
+
+  it.each([
+    ['claude', 'claude'],
+    ['gemini', 'gemini'],
+  ] as const)('dispatches %s graph questions only through the matching non-Codex CLI', async (adapterId, expectedCommand) => {
+    const invocations: Array<{ command: string; args: string[] }> = [];
+    const answerSpawn = createGraphAnswerSpawn();
+    const server = await createLocalServer({
+      dbPath: join(tempDir, 'zeus.db'),
+      apiToken: 'token',
+      projectRoot: '/Users/david/hypha/zeus',
+      aiRuntimeSpawn: (command, args, options) => {
+        invocations.push({ command, args });
+        return answerSpawn(command, args, options);
+      },
+    });
+    await configureLegacyGraphRuntime(server, adapterId);
+    const project = (await server.inject({ method: 'POST', url: '/api/projects', headers: { authorization: 'Bearer token' }, payload: { name: 'Zeus', localPath: '/Users/david/hypha/zeus' } })).json();
+    await server.inject({ method: 'POST', url: '/api/graph/scan-current', headers: { authorization: 'Bearer token' } });
+
+    const response = await server.inject({ method: 'POST', url: `/api/projects/${project.id}/ask`, headers: { authorization: 'Bearer token' }, payload: { question: 'local-server' } });
+
+    expect(response.statusCode).toBe(200);
+    expect(invocations).toHaveLength(1);
+    expect(invocations[0]?.command).toBe(expectedCommand);
     await server.close();
   });
 
@@ -202,6 +392,7 @@ describe('graph search API', () => {
       projectRoot: '/Users/david/hypha/zeus',
       aiRuntimeSpawn: createGraphAnswerSpawn(),
     });
+    await configureLegacyGraphRuntime(server);
     const projectResponse = await server.inject({
       method: 'POST',
       url: '/api/projects',
@@ -254,6 +445,7 @@ describe('graph search API', () => {
       projectRoot: '/Users/david/hypha/zeus',
       aiRuntimeSpawn: createGraphAnswerSpawn(),
     });
+    await configureLegacyGraphRuntime(server);
     const projectResponse = await server.inject({
       method: 'POST',
       url: '/api/projects',
@@ -297,6 +489,7 @@ describe('graph search API', () => {
       projectRoot: '/Users/david/hypha/zeus',
       aiRuntimeSpawn: createGraphAnswerSpawn(),
     });
+    await configureLegacyGraphRuntime(server);
     const projectResponse = await server.inject({
       method: 'POST',
       url: '/api/projects',
@@ -389,6 +582,7 @@ describe('graph search API', () => {
       projectRoot: '/Users/david/hypha/zeus',
       aiRuntimeSpawn: createGraphAnswerSpawn(),
     });
+    await configureLegacyGraphRuntime(server);
     const projectResponse = await server.inject({
       method: 'POST',
       url: '/api/projects',
@@ -448,6 +642,7 @@ describe('graph search API', () => {
       projectRoot: '/Users/david/hypha/zeus',
       aiRuntimeSpawn: createGraphAnswerSpawn(),
     });
+    await configureLegacyGraphRuntime(server);
     const projectResponse = await server.inject({
       method: 'POST',
       url: '/api/projects',

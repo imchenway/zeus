@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>需求决策：Zeus 创建任务改为弹窗</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: oklch(99.2% 0.002 255);
+      --panel: oklch(99.8% 0.001 255);
+      --panel-2: oklch(97.8% 0.003 255);
+      --text: oklch(24% 0.004 255);
+      --muted: oklch(49% 0.004 255);
+      --line: oklch(89.5% 0.002 255);
+      --soft-line: oklch(93.2% 0.001 255);
+      --accent: oklch(55% 0.155 252);
+      --accent-soft: oklch(94.5% 0.018 252);
+      --danger: oklch(45% 0.12 28);
+      --danger-soft: oklch(96.5% 0.024 28);
+      --ok: oklch(46% 0.09 145);
+      --ok-soft: oklch(96% 0.025 145);
+      --warn: oklch(52% 0.11 75);
+      --warn-soft: oklch(96.2% 0.028 80);
+      --shadow: 0 18px 50px oklch(32% 0.01 255 / 0.10);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      color: var(--text);
+      background:
+        linear-gradient(90deg, oklch(88% 0.003 255 / 0.22) 1px, transparent 1px),
+        linear-gradient(0deg, oklch(88% 0.003 255 / 0.18) 1px, transparent 1px),
+        radial-gradient(circle at 12% 0%, oklch(97% 0.012 252), transparent 28%),
+        var(--bg);
+      background-size: 28px 28px, 28px 28px, auto, auto;
+      overflow-wrap: anywhere;
+    }
+    a { color: inherit; }
+    .page { width: min(1180px, calc(100vw - 32px)); margin: 0 auto; padding: 24px 0 44px; }
+    header { display: grid; gap: 6px; padding: 8px 0 18px; border-bottom: 1px solid var(--line); }
+    .eyebrow { color: var(--muted); font-size: 12px; font-weight: 650; letter-spacing: .02em; }
+    h1 { margin: 0; font-size: clamp(22px, 3vw, 28px); line-height: 1.15; letter-spacing: -0.03em; }
+    .subtitle { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.5; max-width: 76ch; }
+    .legend { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+    .chip { display: inline-flex; align-items: center; gap: 6px; min-height: 26px; padding: 4px 9px; border: 1px solid var(--line); border-radius: 999px; background: oklch(99.6% 0.001 255 / .86); color: var(--muted); font-size: 12px; font-weight: 600; }
+    .dot { inline-size: 9px; block-size: 9px; border-radius: 999px; background: var(--accent); }
+    .dot.before { background: var(--warn); }
+    .dot.after { background: var(--ok); }
+    .dot.risk { background: var(--danger); }
+
+    main { display: grid; gap: 22px; padding-top: 22px; }
+    .compare { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 18px; align-items: stretch; }
+    .lane { position: relative; min-height: 560px; padding: 18px; border: 1px solid var(--line); border-radius: 22px; background: oklch(99.7% 0.001 255 / 0.88); box-shadow: 0 1px 0 oklch(100% 0 0 / .7) inset; }
+    .lane h2 { margin: 0 0 14px; font-size: 15px; line-height: 1.3; letter-spacing: -0.015em; }
+    .lane.before h2 { color: var(--warn); }
+    .lane.after h2 { color: var(--ok); }
+    .flow { display: grid; gap: 14px; }
+    .node, .event, .decision, .modal-node, .end-node { position: relative; border: 1px solid var(--line); background: var(--panel); box-shadow: 0 1px 0 oklch(100% 0 0 / .8) inset; }
+    .node, .modal-node { border-radius: 14px; padding: 12px 14px; }
+    .event, .end-node { border-radius: 999px; padding: 10px 14px; text-align: center; }
+    .decision { width: min(250px, 90%); min-height: 94px; margin: 0 auto; padding: 20px 18px; transform: rotate(45deg); border-radius: 18px; display: grid; place-items: center; background: var(--warn-soft); }
+    .decision > span { transform: rotate(-45deg); display: block; text-align: center; font-weight: 700; font-size: 13px; line-height: 1.35; }
+    .modal-node { background: linear-gradient(180deg, oklch(99.8% 0.001 255), oklch(98.8% 0.003 255)); border-color: oklch(82% 0.03 252); box-shadow: var(--shadow); }
+    .node strong, .event strong, .modal-node strong, .end-node strong { display: block; font-size: 13px; line-height: 1.35; letter-spacing: -0.01em; }
+    .node small, .event small, .modal-node small, .end-node small { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; line-height: 1.45; }
+    .node.problem { border-color: oklch(79% 0.055 28); background: var(--danger-soft); }
+    .node.keep { border-color: oklch(84% 0.045 145); background: var(--ok-soft); }
+    .arrow { position: relative; height: 28px; display: grid; place-items: center; color: var(--muted); font-size: 11px; font-weight: 700; }
+    .arrow::before { content: ""; position: absolute; top: 0; bottom: 0; width: 1px; background: var(--line); }
+    .arrow::after { content: ""; position: absolute; bottom: 0; width: 8px; height: 8px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); transform: rotate(45deg); background: transparent; }
+    .arrow span { position: relative; z-index: 1; padding: 2px 8px; border: 1px solid var(--soft-line); border-radius: 999px; background: var(--panel); }
+    .modal-wireframe { margin-top: 10px; border: 1px solid var(--line); border-radius: 16px; overflow: hidden; background: var(--panel); box-shadow: 0 12px 30px oklch(30% 0.01 255 / 0.12); }
+    .modal-top, .modal-bottom { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 10px 12px; background: var(--panel-2); border-bottom: 1px solid var(--soft-line); }
+    .modal-bottom { border-top: 1px solid var(--soft-line); border-bottom: 0; }
+    .control-line { height: 28px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); margin: 10px 12px; }
+    .control-line.area { height: 58px; }
+    .button { display: inline-flex; min-height: 28px; align-items: center; justify-content: center; border-radius: 8px; padding: 0 12px; border: 1px solid var(--line); font-size: 12px; font-weight: 700; background: var(--panel); }
+    .button.primary { border-color: oklch(54% 0.145 252); background: var(--accent); color: white; }
+    .ribbon { display: grid; gap: 12px; grid-template-columns: 1.1fr 1fr 1fr; align-items: stretch; border: 1px solid var(--line); border-radius: 18px; background: oklch(99.7% 0.001 255 / 0.9); padding: 14px; }
+    .ribbon > section { padding: 12px; border-left: 1px solid var(--soft-line); }
+    .ribbon > section:first-child { border-left: 0; }
+    .ribbon h3 { margin: 0 0 8px; font-size: 13px; line-height: 1.3; }
+    .ribbon ul { margin: 0; padding-left: 18px; color: var(--muted); font-size: 12px; line-height: 1.65; }
+    .matrix { border: 1px solid var(--line); border-radius: 18px; overflow: hidden; background: var(--panel); }
+    table { width: 100%; border-collapse: collapse; font-size: 12px; line-height: 1.5; }
+    th, td { padding: 11px 12px; text-align: left; border-bottom: 1px solid var(--soft-line); vertical-align: top; }
+    tr:last-child td { border-bottom: 0; }
+    th { background: var(--panel-2); font-size: 11px; color: var(--muted); letter-spacing: .02em; }
+    .callout { border: 1px solid oklch(84% 0.04 252); border-radius: 18px; background: var(--accent-soft); padding: 14px 16px; display: grid; gap: 6px; }
+    .callout strong { font-size: 14px; }
+    .callout p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.55; }
+    .node:focus-visible, .modal-node:focus-visible, button:focus-visible { outline: 3px solid oklch(62% 0.16 252 / .22); outline-offset: 2px; }
+    button.node, button.modal-node, button.event, button.end-node { text-align: left; color: inherit; cursor: pointer; font: inherit; }
+    button.event, button.end-node { text-align: center; width: 100%; }
+    dialog { width: min(540px, calc(100vw - 32px)); border: 1px solid var(--line); border-radius: 18px; padding: 0; box-shadow: var(--shadow); background: var(--panel); color: var(--text); }
+    dialog::backdrop { background: transparent; }
+    .dialog-head { display: flex; justify-content: space-between; gap: 12px; align-items: center; padding: 14px 16px; border-bottom: 1px solid var(--line); }
+    .dialog-head h2 { margin: 0; font-size: 15px; }
+    .dialog-body { padding: 14px 16px 16px; color: var(--muted); font-size: 13px; line-height: 1.55; }
+    .dialog-body dl { margin: 0; display: grid; gap: 10px; }
+    .dialog-body dt { color: var(--text); font-weight: 700; }
+    .dialog-body dd { margin: 2px 0 0; }
+    .dialog-close { border: 1px solid var(--line); background: var(--panel-2); border-radius: 8px; min-height: 28px; padding: 0 10px; }
+    @media (max-width: 860px) {
+      .compare { grid-template-columns: 1fr; }
+      .ribbon { grid-template-columns: 1fr; }
+      .ribbon > section { border-left: 0; border-top: 1px solid var(--soft-line); }
+      .ribbon > section:first-child { border-top: 0; }
+      .lane { min-height: 0; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header>
+      <div class="eyebrow">Zeus / Tasks / 参考 giraffe 但不复制实现</div>
+      <h1>需求决策：Zeus 创建任务改为弹窗</h1>
+      <p class="subtitle">核心判断：任务创建是提交真实记录的承诺动作，不能点击即落库，也不能预填假默认值；最新口径为保留极轻透明遮罩，点击弹窗外空白处可关闭；任务说明粘贴同时读取 files 与 items，剪贴板截图也会转成本机附件证据。</p>
+      <div class="legend" aria-label="图例">
+        <span class="chip"><span class="dot before"></span>当前：直接创建默认任务</span>
+        <span class="chip"><span class="dot after"></span>目标：轻遮罩弹窗 + 空白关闭 + 说明粘贴图片</span>
+        <span class="chip"><span class="dot risk"></span>风险：只读 files 会漏掉剪贴板图片 items</span>
+      </div>
+    </header>
+
+    <main>
+      <section class="compare" aria-label="前后流程对照">
+        <article class="lane before">
+          <h2>当前流程：点击即创建，用户先被动产生任务</h2>
+          <div class="flow">
+            <button class="event" data-detail-title="入口" data-detail-body="任务页 toolbar 和空态中的「新任务」都直接走同一个 onCreateTask 入口。"><strong>开始：点击「新任务」</strong><small>toolbar / 空任务态</small></button>
+            <div class="arrow"><span>立即执行</span></div>
+            <button class="node" data-detail-title="旧动作" data-detail-body="App.tsx 中 createTaskFromTaskToolbar 直接调用 createProjectDefaultTask({ openCreatedTaskDrawer: true })。"><strong>调用默认创建函数</strong><small>没有创建前表单</small></button>
+            <div class="arrow"><span>落真实记录</span></div>
+            <div class="decision" aria-label="问题判断"><span>用户还没确认标题/说明，任务已创建？</span></div>
+            <div class="arrow"><span>是</span></div>
+            <button class="node problem" data-detail-title="问题 P1" data-detail-body="这会制造默认任务，再让用户到详情抽屉里补内容。用户反馈要求参考 giraffe，先用弹窗承载创建意图。"><strong>问题 P1：默认任务先落库</strong><small>创建与编辑顺序反了</small></button>
+            <div class="arrow"><span>事后补救</span></div>
+            <button class="end-node" data-detail-title="旧反馈" data-detail-body="旧逻辑创建成功后会清空筛选并打开详情抽屉，这个反馈闭环值得保留，但应放在弹窗提交成功之后。"><strong>结束：打开详情抽屉</strong><small>反馈保留，时机后移</small></button>
+          </div>
+        </article>
+
+        <article class="lane after">
+          <h2>目标流程：2.5% 轻遮罩弹窗确认，再创建并打开详情</h2>
+          <div class="flow">
+            <button class="event" data-detail-title="目标入口" data-detail-body="toolbar 和空态入口都只打开同一个创建弹窗，不再直接调用创建 API。"><strong>开始：点击「新任务」</strong><small>只打开弹窗</small></button>
+            <div class="arrow"><span>打开</span></div>
+            <button class="modal-node" data-detail-title="修法 F1" data-detail-body="弹窗使用 Zeus 原生 macOS 产品控件，不引入 Ant Design，不复制 giraffe 品牌样式。字段只保留标题、说明、标签、图片/附件和只读项目来源；标题与说明不再预填默认值；弹窗提升到 body portal，遮罩降为 2.5%；说明 textarea 支持直接粘贴截图或文件，无文件项时走 Electron 原生 clipboard.readImage() 兜底。"><strong>修法 F1：Zeus 创建任务弹窗</strong><small>2.5% 极轻透明遮罩，空白点击关闭；说明粘贴支持原生剪贴板图片兜底</small>
+              <div class="modal-wireframe" aria-hidden="true">
+                <div class="modal-top"><strong>创建任务</strong><span class="button">关闭</span></div>
+                <div class="control-line"></div>
+                <div class="control-line area"></div>
+                <div class="control-line"></div>
+                <div class="control-line"></div>
+                <div class="modal-bottom"><span class="button">取消</span><span class="button primary">创建任务</span></div>
+              </div>
+            </button>
+            <div class="arrow"><span>校验</span></div>
+            <div class="decision" aria-label="标题校验"><span>标题有效？</span></div>
+            <div class="arrow"><span>有效</span></div>
+            <button class="node keep" data-detail-title="创建动作" data-detail-body="仍复用现有 client.createTask(CreateTaskRequest)，不新增数据库迁移；sourceContext.path 从当前项目路径生成；选择附件保存原路径，粘贴附件先复制到 userData/task-attachments 再保存本机路径元数据。"><strong>创建真实任务</strong><small>复用现有 createTask API</small></button>
+            <div class="arrow"><span>成功</span></div>
+            <button class="end-node" data-detail-title="验证 V1" data-detail-body="成功后清空本地筛选、刷新任务列表、选中新任务、打开详情抽屉。验证重点是没有提交前不应出现新任务。"><strong>验证 V1：关闭弹窗并打开详情抽屉</strong><small>保留现有反馈闭环</small></button>
+          </div>
+        </article>
+      </section>
+
+      <section class="ribbon" aria-label="影响面摘要">
+        <section>
+          <h3>受影响目录</h3>
+          <ul>
+            <li>App.tsx：空表单、说明粘贴附件、附件选择、提交、创建后反馈</li>
+            <li>TaskWorkspace.tsx：新任务入口改为打开弹窗</li>
+            <li>styles.css：Zeus 原生 modal 样式；极轻透明遮罩与空白点击关闭</li>
+            <li>desktop tests：红灯与回归测试</li>
+          </ul>
+        </section>
+        <section>
+          <h3>契约不变</h3>
+          <ul>
+            <li>不改 SQLite 表结构</li>
+            <li>不新增后端接口，description 可空；粘贴附件走 Electron IPC 保存本机文件</li>
+            <li>不影响图谱/模板/Runtime 来源创建</li>
+            <li>不引入 Ant Design 或新依赖</li>
+          </ul>
+        </section>
+        <section>
+          <h3>giraffe 只借鉴什么</h3>
+          <ul>
+            <li>点击先打开弹窗</li>
+            <li>弹窗内填写并提交</li>
+            <li>取消不落库</li>
+            <li>成功后进入新任务上下文</li>
+          </ul>
+        </section>
+      </section>
+
+      <section class="callout" aria-label="现场二次返修结论">
+        <strong>最终返修结论：2.5% 轻遮罩 + body portal + 原生剪贴板图片兜底</strong>
+        <p>创建任务弹窗提升到 `document.body`，遮罩降为 2.5% 极轻透明层，点击空白处关闭。任务说明粘贴先读取 `clipboardData.files/items/getAsFile()`，没有文件项时通过 Main 进程 `clipboard.readImage()` 读取 macOS/Paste.app 原生剪贴板截图，再保存为本机附件路径。</p>
+      </section>
+
+      <section class="matrix" aria-label="测试矩阵">
+        <table>
+          <thead><tr><th>验证点</th><th>期望</th><th>测试方式</th></tr></thead>
+          <tbody>
+            <tr><td>点击新任务</td><td>只打开 `task-create-modal`，不直接创建默认任务</td><td>TDD 红灯：源码/渲染契约</td></tr>
+            <tr><td>弹窗可用性</td><td>标题无默认值，说明可空，支持标签、图片/附件、取消、创建、提交中状态；有极轻透明遮罩，点击空白处关闭</td><td>组件渲染测试</td></tr>
+            <tr><td>可访问性</td><td>role=dialog、aria-modal、Esc、焦点恢复、错误提示关联</td><td>源码契约 + 视觉/交互自检</td></tr>
+            <tr><td>任务说明粘贴</td><td>在说明框直接粘贴图片/文件会从 files、items 或 Electron 原生剪贴板图片槽提取文件，转为本机附件证据，不把二进制内容塞进文本</td><td>Renderer + Main IPC 契约测试</td></tr>
+            <tr><td>提交成功</td><td>刷新列表、清筛选、选中新任务、打开详情抽屉，并展示附件路径证据</td><td>App 回归测试</td></tr>
+            <tr><td>发布门禁</td><td>lint/typecheck/format/diff check/package:mac 通过</td><td>Zeus 质量门禁</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section class="callout" aria-label="推荐决策">
+        <strong>推荐：选 A，做 Zeus 原生创建弹窗。</strong>
+        <p>理由：它解决用户指出的根问题，同时保留现有创建成功反馈；最新返修后无默认值、2.5% 极轻透明遮罩、body portal、无背景 blur、点击空白处可关闭，并支持在任务说明里直接粘贴剪贴板截图/附件；macOS/Paste.app 原生图片剪贴板也会保存为本机路径证据，比照搬 giraffe 完整表单更符合 Zeus 本地个人 AI 工作台。</p>
+      </section>
+    </main>
+  </div>
+
+  <dialog id="detailDialog" aria-labelledby="detailTitle">
+    <div class="dialog-head">
+      <h2 id="detailTitle">节点详情</h2>
+      <button class="dialog-close" type="button" id="closeDialog">关闭</button>
+    </div>
+    <div class="dialog-body"><dl><dt id="detailType">说明</dt><dd id="detailBody">-</dd></dl></div>
+  </dialog>
+
+  <script>
+    const dialog = document.getElementById('detailDialog');
+    const title = document.getElementById('detailTitle');
+    const body = document.getElementById('detailBody');
+    const closeButton = document.getElementById('closeDialog');
+    let lastTrigger = null;
+    document.querySelectorAll('[data-detail-title]').forEach((node) => {
+      node.addEventListener('click', () => {
+        lastTrigger = node;
+        title.textContent = node.getAttribute('data-detail-title') || '节点详情';
+        body.textContent = node.getAttribute('data-detail-body') || '暂无补充说明。';
+        if (dialog && typeof dialog.showModal === 'function') dialog.showModal();
+      });
+    });
+    function closeDialog() {
+      if (dialog?.open) dialog.close();
+      if (lastTrigger && typeof lastTrigger.focus === 'function') lastTrigger.focus();
+    }
+    closeButton?.addEventListener('click', closeDialog);
+    dialog?.addEventListener('click', (event) => { if (event.target === dialog) closeDialog(); });
+    dialog?.addEventListener('cancel', (event) => { event.preventDefault(); closeDialog(); });
+  </script>
+<section style="max-width:1100px;margin:24px auto;padding:16px;border:1px solid #dfe5ee;border-radius:14px;background:#fff"><h2>现场五次返修：任务说明粘贴图片无反应</h2><p>根因：旧逻辑只读浏览器文件项和 Electron bitmap，未覆盖 macOS/Finder/Paste.app 常见的 file-url、uri-list、HTML file src/href、本地路径文本，以及 typed-array IPC 载荷。</p><p>修法：新增原生剪贴板附件解析，创建任务表单级 paste 处理；普通文字不拦截，图片/文件引用转为本机附件路径。</p></section>
+<section style="max-width:1100px;margin:14px auto 24px;padding:16px;border:1px solid #dfe5ee;border-radius:14px;background:#fff"><h2>现场六次返修：粘贴入口不再猜测，补齐 Paste.app 私有格式</h2><p>根因：renderer 仍在猜 clipboardData 是否像附件；Paste.app/macOS 可能只把图片文件路径藏在原生私有格式里，浏览器 paste 事件看起来像普通文本。</p><p>修法：创建任务文本控件粘贴时先读原生附件；读不到附件再按原光标位置插回普通文字。Main 进程补齐 native image buffer、HTML data:image、未知小体积私有格式、嵌入 file:// 与 /Users/... 路径解析。</p><p>验证：新增私有剪贴板红绿测试；聚焦回归 6 passed；typecheck/lint/format/diff check 通过；全量测试 66 files / 987 tests 通过；package:mac 与产物 codesign 校验通过。</p></section>
+<section style="max-width:1100px;margin:14px auto 24px;padding:16px;border:1px solid #dfe5ee;border-radius:14px;background:#fff"><h2>现场七次返修：原生剪贴板改为 Main 进程直接保存</h2><p>现场证据：当前 macOS 剪贴板是 public.png；Electron 可读到 image/png，readImage 非空，并能解析出 PNG 附件。</p><p>根因判断：图片读取已成立，风险在旧链路让二进制在 Main → renderer → Main 往返，失败时界面没有附件反馈。</p><p>修法：新增 zeus:save-task-clipboard-attachments，由 Main 进程直接读取原生剪贴板并保存到 userData/task-attachments，renderer 只接收本机路径并合并附件列表。</p><p>验证：聚焦回归 6 passed；静态门禁通过；全量测试 66 files / 987 tests 通过；package:mac、产物检查与 codesign 通过。</p></section>
+<section style="max-width:1100px;margin:14px auto 24px;padding:16px;border:1px solid #dfe5ee;border-radius:14px;background:#fff"><h2>现场八次返修：本地图片文件粘贴没有 DOM paste 事件</h2><p>现场证据：在打包产物中聚焦 <code>#task-create-description-input</code>，捕获级 paste 监听记录仍为 <code>pasteEvents: []</code>；旧逻辑只在 <code>onPaste</code> 中工作，因此本地图片文件按 <code>⌘V</code> 时没有任何触发点。</p><p>修法：创建任务弹窗新增 <code>Cmd/Ctrl+V</code> 键盘兜底，不阻止默认粘贴；如果短暂等待后没有 DOM paste 事件，就直接调用 Main 进程 <code>saveTaskClipboardAttachments()</code> 保存原生剪贴板图片/文件。</p><p>真实电脑验证：复制本地 PNG 文件（剪贴板类型 <code>«class furl»</code>）后向真实 Zeus 窗口发送 <code>⌘V</code>；DOM 仍无 paste 事件，但附件列表出现 <code>pasted-task-screenshot-*.png</code>，保存路径位于本机 <code>Application Support/@zeus/desktop/task-attachments</code>，无错误提示。</p><p>验证：TDD 红灯命中缺少 <code>pasteShortcutFallbackTokenRef</code>；修复后聚焦回归 6 passed，typecheck/lint/format/diff check 通过，全量测试 66 files / 987 tests 通过，package:mac 通过。</p></section></body>
+</html>

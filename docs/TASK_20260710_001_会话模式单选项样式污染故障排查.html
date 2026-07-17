@@ -1,0 +1,548 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>故障排查：会话模式单选项被输入框样式污染</title>
+  <style>
+    :root {
+      --ink: #102033;
+      --muted: #5a6c80;
+      --paper: #fbfdff;
+      --panel: rgba(255,255,255,.9);
+      --line: #8db3d8;
+      --blue: #1f6fb2;
+      --blue-soft: #e8f3ff;
+      --green: #17785a;
+      --green-soft: #e9f8f2;
+      --amber: #986506;
+      --amber-soft: #fff6de;
+      --red: #a63a3a;
+      --red-soft: #fff0f0;
+      --violet: #6254ad;
+      --violet-soft: #f1efff;
+      --shadow: 0 16px 42px rgba(20, 57, 92, .085);
+      --radius: 20px;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
+      background:
+        radial-gradient(circle at 18% 3%, rgba(214,233,255,.78), transparent 30rem),
+        radial-gradient(circle at 78% 6%, rgba(228,246,239,.8), transparent 28rem),
+        linear-gradient(rgba(93,133,173,.045) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(93,133,173,.045) 1px, transparent 1px),
+        linear-gradient(180deg, #fff 0%, #f7fbff 54%, #fbfdff 100%);
+      background-size: auto, auto, 28px 28px, 28px 28px, auto;
+      overflow-x: clip;
+    }
+
+    main {
+      width: min(1240px, calc(100vw - 32px));
+      margin: 0 auto;
+      padding: 24px 0 48px;
+    }
+
+    .task-code {
+      display: inline-flex;
+      margin-block-end: 10px;
+      border: 1px solid rgba(31,111,178,.24);
+      border-radius: 999px;
+      background: rgba(232,243,255,.84);
+      color: var(--blue);
+      font-size: 12px;
+      font-weight: 760;
+      letter-spacing: .04em;
+      padding: 5px 9px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(24px, 2.8vw, 32px);
+      line-height: 1.18;
+      letter-spacing: -.025em;
+    }
+
+    .summary {
+      max-width: 920px;
+      margin: 10px 0 18px;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.7;
+    }
+
+    .status-line {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-block-end: 14px;
+    }
+
+    .status {
+      border: 1px solid currentColor;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 750;
+      padding: 5px 9px;
+    }
+
+    .status.confirmed { color: var(--red); background: var(--red-soft); }
+    .status.pending { color: var(--amber); background: var(--amber-soft); }
+    .status.safe { color: var(--green); background: var(--green-soft); }
+
+    .template-layout {
+      border: 1px solid rgba(141,179,216,.48);
+      border-radius: 24px;
+      background: rgba(255,255,255,.8);
+      box-shadow: var(--shadow);
+      padding: 18px;
+      min-height: 420px;
+    }
+
+    .debugging-sequence {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .lifeline {
+      position: relative;
+      min-width: 0;
+    }
+
+    .lifeline::after {
+      content: "";
+      position: absolute;
+      inset-block: 72px 0;
+      inset-inline-start: 50%;
+      width: 1px;
+      background: repeating-linear-gradient(to bottom, rgba(31,111,178,.42) 0 6px, transparent 6px 12px);
+      z-index: 0;
+    }
+
+    .actor,
+    .flow-node {
+      position: relative;
+      z-index: 1;
+      overflow-wrap: anywhere;
+    }
+
+    .actor {
+      display: grid;
+      place-items: center;
+      min-height: 64px;
+      border: 1px solid rgba(98,84,173,.36);
+      border-radius: 16px;
+      background: rgba(241,239,255,.94);
+      padding: 10px;
+      text-align: center;
+    }
+
+    .actor b,
+    .flow-node b {
+      display: block;
+      font-size: 13px;
+      line-height: 1.3;
+    }
+
+    .actor span,
+    .flow-node span {
+      display: block;
+      margin-block-start: 4px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    .trace {
+      grid-column: 1 / 5;
+      display: grid;
+      grid-template-columns: minmax(0,1fr) 34px minmax(0,1fr) 34px minmax(0,1fr) 34px minmax(0,1fr);
+      align-items: center;
+      gap: 8px;
+      margin-block-start: 8px;
+      padding: 16px;
+      border: 1px solid rgba(141,179,216,.42);
+      border-radius: 18px;
+      background: rgba(255,255,255,.72);
+      min-width: 0;
+    }
+
+    .flow-node {
+      min-height: 126px;
+      min-width: 0;
+      display: grid;
+      align-content: center;
+      border: 1px solid rgba(141,179,216,.58);
+      border-radius: 16px;
+      background: rgba(255,255,255,.96);
+      padding: 13px;
+      text-align: center;
+    }
+
+    .flow-node.trigger { border-color: rgba(152,101,6,.46); background: var(--amber-soft); }
+    .flow-node.root { border: 2px solid rgba(166,58,58,.62); background: var(--red-soft); }
+    .flow-node.output { border-color: rgba(98,84,173,.44); background: var(--violet-soft); }
+
+    .arrow {
+      position: relative;
+      height: 2px;
+      background: var(--blue);
+    }
+
+    .arrow::after {
+      content: "";
+      position: absolute;
+      inset-inline-end: -1px;
+      inset-block-start: -5px;
+      border-inline-start: 10px solid var(--blue);
+      border-block: 6px solid transparent;
+    }
+
+    .arrow em {
+      position: absolute;
+      inset-block-end: 8px;
+      inset-inline: -8px;
+      color: var(--muted);
+      font-size: 11px;
+      font-style: normal;
+      font-weight: 750;
+      text-align: center;
+    }
+
+    .bad-radio {
+      width: 100%;
+      height: 25px;
+      margin: 10px auto 0;
+      border: 1px solid #aeb8c2;
+      border-radius: 8px;
+      background: #f5f6f7;
+      box-shadow: inset 0 1px 1px rgba(0,0,0,.05);
+    }
+
+    .evidence-steps {
+      grid-column: 1 / 5;
+      display: grid;
+      grid-template-columns: minmax(0,1fr) 28px minmax(0,1fr) 28px minmax(0,1fr) 28px minmax(0,1fr) 28px minmax(0,1fr);
+      align-items: center;
+      gap: 6px;
+      margin-block-start: 4px;
+      padding: 14px;
+      border: 1px solid rgba(141,179,216,.42);
+      border-radius: 18px;
+      background: rgba(255,255,255,.68);
+      min-width: 0;
+    }
+
+    .slot {
+      min-height: 96px;
+      min-width: 0;
+      display: grid;
+      align-content: center;
+      justify-items: center;
+      border: 1px solid rgba(141,179,216,.58);
+      border-radius: 14px;
+      background: rgba(255,255,255,.96);
+      padding: 10px;
+      text-align: center;
+      overflow-wrap: anywhere;
+    }
+
+    .slot b { font-size: 13px; line-height: 1.3; }
+    .slot span { margin-block-start: 4px; color: var(--muted); font-size: 12px; line-height: 1.45; }
+    .slot.symptom { background: var(--red-soft); border-color: rgba(166,58,58,.42); }
+    .slot.evidence { background: var(--green-soft); border-color: rgba(23,120,90,.42); }
+    .slot.root { background: var(--red-soft); border: 2px solid rgba(166,58,58,.62); }
+    .slot.fix { background: var(--blue-soft); border-color: rgba(31,111,178,.46); }
+    .slot.verify { background: var(--amber-soft); border-color: rgba(152,101,6,.42); }
+
+    .details-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.25fr) minmax(280px, .75fr);
+      gap: 16px;
+      margin-block-start: 18px;
+    }
+
+    .detail-panel {
+      border: 1px solid rgba(141,179,216,.42);
+      border-radius: var(--radius);
+      background: var(--panel);
+      box-shadow: var(--shadow);
+      padding: 18px;
+      overflow-wrap: anywhere;
+    }
+
+    h2 {
+      margin: 0 0 12px;
+      font-size: 17px;
+      letter-spacing: -.012em;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    th,
+    td {
+      padding: 9px 8px;
+      border-block-end: 1px solid rgba(141,179,216,.28);
+      text-align: start;
+      vertical-align: top;
+    }
+
+    th { color: var(--muted); font-weight: 750; }
+    code {
+      color: #254b70;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 11px;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }
+
+    .decision-list {
+      display: grid;
+      gap: 10px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .decision-list li {
+      position: relative;
+      padding-inline-start: 22px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    .decision-list li::before {
+      content: "";
+      position: absolute;
+      inset-inline-start: 0;
+      inset-block-start: .45em;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 0 3px var(--green-soft);
+    }
+
+    .decision-list li.pending::before { background: var(--amber); box-shadow: 0 0 0 3px var(--amber-soft); }
+
+    .acceptance-flow {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0,1fr));
+      gap: 10px;
+      margin-block-start: 16px;
+    }
+
+    .acceptance-flow > div {
+      min-height: 116px;
+      border: 1px solid rgba(141,179,216,.44);
+      border-radius: 14px;
+      background: rgba(255,255,255,.94);
+      padding: 13px;
+    }
+
+    .acceptance-flow b { display: block; margin-block-end: 6px; font-size: 13px; }
+    .acceptance-flow p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.55; }
+
+    .footnote {
+      margin: 16px 2px 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    :focus-visible { outline: 3px solid rgba(31,111,178,.34); outline-offset: 3px; }
+
+    @media (max-width: 820px) {
+      main { width: min(100vw - 20px, 800px); padding-block-start: 16px; }
+      .debugging-sequence { grid-template-columns: 1fr; }
+      .lifeline { display: none; }
+      .trace,
+      .evidence-steps {
+        grid-column: 1;
+        grid-template-columns: 1fr;
+      }
+      .arrow { width: 2px; height: 26px; margin: 0 auto; }
+      .arrow::after {
+        inset-inline-start: -5px;
+        inset-block-start: 20px;
+        border-inline: 6px solid transparent;
+        border-block-start: 10px solid var(--blue);
+        border-block-end: 0;
+      }
+      .arrow em { inset-block-end: 6px; inset-inline-start: 12px; width: 110px; text-align: start; }
+      .details-grid,
+      .acceptance-flow { grid-template-columns: 1fr; }
+      .detail-panel { padding: 14px; }
+      th:nth-child(3), td:nth-child(3) { display: none; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; }
+    }
+  </style>
+</head>
+<body>
+  <main
+    data-diagram-type="fault-debugging"
+    data-template-family="fault-debugging"
+    data-template-id="debugging-sequence"
+    data-template-layout="debugging-sequence"
+  >
+    <span class="task-code">TASK_20260710_001</span>
+    <h1 data-slot="title">故障排查：会话模式单选项被输入框样式污染</h1>
+    <p class="summary" data-slot="summary">
+      用户点击任务“＋”后，原生 radio 被两组全局输入控件规则改造成横向空白输入框。根因已由截图、JSX 语义和 CSS 选择器共同确认；局部修复、自动测试和打包已完成，真实窗口验收等待解锁 Mac。
+    </p>
+    <div class="status-line" aria-label="当前裁决状态">
+      <span class="status confirmed">R1 根因已确认</span>
+      <span class="status safe">F1 修法已实施</span>
+      <span class="status safe">201 个相关测试通过</span>
+      <span class="status pending">GUI 待解锁验收</span>
+    </div>
+
+    <section class="template-layout debugging-sequence" aria-label="会话模式单选项样式污染排障时序图">
+      <div class="lifeline" data-slot="debug-actor-1">
+        <div class="actor"><b>用户现场</b><span>Zeus 打包窗口<br />任务“＋”入口</span></div>
+      </div>
+      <div class="lifeline" data-slot="debug-actor-2">
+        <div class="actor"><b>React 语义</b><span>SessionWorkspace<br />input[type=radio]</span></div>
+      </div>
+      <div class="lifeline" data-slot="debug-actor-3">
+        <div class="actor"><b>全局样式层</b><span>styles.css<br />宽泛 input 规则</span></div>
+      </div>
+      <div class="lifeline" data-slot="debug-actor-4">
+        <div class="actor"><b>会话局部样式</b><span>session.css<br />只设计外层 label</span></div>
+      </div>
+
+      <div class="trace" aria-label="当前故障链路">
+        <div class="flow-node">
+          <b>1 · 打开开始会话面板</b>
+          <span>有历史时出现 create、resume、reference 三个原生 radio。</span>
+        </div>
+        <div class="arrow" aria-hidden="true"><em>DOM 命中</em></div>
+        <div class="flow-node trigger">
+          <b>2 · 全局输入规则覆盖</b>
+          <span>E2：<code>appearance:none</code>、<code>inline-size:100%</code>、边框与 padding 同时应用。</span>
+        </div>
+        <div class="arrow" aria-hidden="true"><em>局部未复位</em></div>
+        <div class="flow-node root">
+          <b>根因 R1 · radio 失去原生外观</b>
+          <span>因为 E1 + E2 + E3，radio 被按文本输入框绘制；置信度：高，状态：已确认。</span>
+        </div>
+        <div class="arrow" aria-hidden="true"><em>浏览器绘制</em></div>
+        <div class="flow-node output">
+          <b>4 · 用户看到横向空白框</b>
+          <span>圆点消失、控件占满一行，标签文字被挤到右侧。</span>
+          <div class="bad-radio" aria-hidden="true"></div>
+        </div>
+      </div>
+
+      <div class="evidence-steps" data-slot="evidence-and-notes" aria-label="从现象到验证的行动闭环">
+        <div class="slot symptom" data-slot="symptom"><b>现象</b><span>三个模式显示成宽输入框，不是紧凑单选行。</span></div>
+        <div class="arrow" aria-hidden="true"></div>
+        <div class="slot evidence" data-slot="evidence"><b>证据 E1–E3</b><span>截图 + JSX radio + 全局/局部 CSS 选择器相互印证。</span></div>
+        <div class="arrow" aria-hidden="true"></div>
+        <div class="slot root" data-slot="hypothesis"><b>根因 R1</b><span>全局 input chrome 污染 radio，局部 CSS 没有复位。</span></div>
+        <div class="arrow" aria-hidden="true"></div>
+        <div class="slot fix" data-slot="fix"><b>修法 F1 · 已实施</b><span>增加局部类；14px 圆点；两列 grid；整行 focus/disabled；长标题可换行。</span></div>
+        <div class="arrow" aria-hidden="true"></div>
+        <div class="slot verify" data-slot="verify"><b>验证 V1 · 部分完成</b><span>RED/GREEN、静态门禁、package:mac、签名与包健康通过；GUI 待解锁。</span></div>
+      </div>
+    </section>
+
+    <section class="details-grid" aria-label="证据与裁决详情">
+      <article class="detail-panel">
+        <h2>证据账本</h2>
+        <table>
+          <thead>
+            <tr><th>编号</th><th>真实依据</th><th>观察</th><th>裁决</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>E1</td>
+              <td>用户提供的 Zeus 打包窗口截图</td>
+              <td>radio 位置出现三个横向空白输入框。</td>
+              <td>确认用户可见现象。</td>
+            </tr>
+            <tr>
+              <td>E2</td>
+              <td><code>apps/desktop/src/renderer/styles.css:1503-1515</code></td>
+              <td>所有 input 获得 appearance none、100% 宽度、输入框边框和 padding。</td>
+              <td>确认污染来源。</td>
+            </tr>
+            <tr>
+              <td>E3</td>
+              <td><code>apps/desktop/src/renderer/session/session.css:1234-1263</code></td>
+              <td>局部规则只布局 label，没有恢复 radio 尺寸与形状。</td>
+              <td>确认局部缺口。</td>
+            </tr>
+            <tr>
+              <td>E4</td>
+              <td><code>apps/desktop/src/renderer/session/SessionWorkspace.tsx:881-918</code></td>
+              <td>语义仍是同名原生 radio，业务 state 分支未显示异常。</td>
+              <td>排除 provider/迁移为本视觉故障根因。</td>
+            </tr>
+            <tr>
+              <td>E5</td>
+              <td><code>pnpm vitest run ...session-workspace... ...app-shell-layout...</code></td>
+              <td>相关回归为 2 files / 201 tests passed。</td>
+              <td>确认 DOM、CSS 与会话布局契约通过。</td>
+            </tr>
+            <tr>
+              <td>E6</td>
+              <td><code>pnpm package:mac</code>、<code>codesign --verify</code>、packaged health</td>
+              <td>三项 exit 0；新 app.asar、DMG、ZIP 已生成。</td>
+              <td>确认构建与包结构通过，GUI 仍待验收。</td>
+            </tr>
+          </tbody>
+        </table>
+      </article>
+
+      <article class="detail-panel">
+        <h2>假设裁决</h2>
+        <ul class="decision-list">
+          <li><strong>成立：</strong>全局 input 规则污染 radio。绑定 E1、E2、E3。</li>
+          <li><strong>排除：</strong>创建、续接、引用业务分支导致控件变形。E4 表明结构仍为 radio。</li>
+          <li><strong>排除：</strong>legacy 迁移或 app-server provider 导致本视觉问题。故障在浏览器样式层即可完整解释。</li>
+          <li><strong>已验证：</strong>局部 DOM/CSS 契约、201 个相关测试、typecheck、lint、format、diff check、package、签名与包健康通过。</li>
+          <li class="pending"><strong>待解锁验证：</strong>真实窗口中的默认、hover、selected、键盘 focus、disabled 与窄窗口状态。</li>
+        </ul>
+      </article>
+    </section>
+
+    <section class="detail-panel" style="margin-block-start:16px" aria-label="修法验收与回滚">
+      <h2>F1 修法、V1 验收与回滚边界</h2>
+      <div class="acceptance-flow">
+        <div>
+          <b>已实施修法 F1</b>
+          <p>只为会话模式 radio 增加局部类；固定为 14px 圆点；label 改为 <code>18px minmax(0,1fr)</code> 两列 grid；整行呈现 focus-visible 与 disabled。</p>
+        </div>
+        <div>
+          <b>验证 V1 · GUI 待完成</b>
+          <p>RED/GREEN、201 个相关测试、typecheck、lint、format、diff check、package:mac、签名和包健康均已通过；Mac 锁屏阻塞真实窗口验收。</p>
+        </div>
+        <div>
+          <b>回滚 B1</b>
+          <p>仅撤销局部类名、grid/radio/focus/disabled CSS 与对应测试；不得触碰历史选择门禁、native thread、legacy 归档或数据库。</p>
+        </div>
+      </div>
+    </section>
+
+    <p class="footnote">
+      设计依据：<code>docs/superpowers/specs/2026-07-14-session-start-choice-row-design.md</code>；实施计划：<code>docs/superpowers/plans/2026-07-14-session-start-choice-row-visual-fix.md</code>。当前状态为 verification，生产源码已修改，真实 packaged GUI 等待解锁 Mac 后验收。
+    </p>
+  </main>
+</body>
+</html>

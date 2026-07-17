@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>交付验收：Zeus 设置页按钮与 Git 确认布局修复</title>
+  <script>document.documentElement.classList.add('js');</script>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: oklch(98.6% 0.002 255);
+      --panel: oklch(99.8% 0.001 255);
+      --text: oklch(22% 0.004 255);
+      --muted: oklch(48% 0.004 255);
+      --line: oklch(88% 0.003 255);
+      --soft: oklch(95% 0.002 255);
+      --pass: oklch(47% 0.085 145);
+      --warn: oklch(52% 0.12 70);
+      --fail: oklch(45% 0.12 28);
+      --accent: oklch(55% 0.155 252);
+      --shadow: 0 18px 52px oklch(25% 0.01 255 / 0.08);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background:
+        linear-gradient(var(--line) 1px, transparent 1px),
+        linear-gradient(90deg, var(--line) 1px, transparent 1px),
+        var(--bg);
+      background-size: 36px 36px;
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      line-height: 1.55;
+    }
+    .page { inline-size: min(1180px, calc(100% - 40px)); margin: 0 auto; padding: 32px 0 48px; }
+    .task-code { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; background: var(--panel); color: var(--muted); padding: 4px 10px; font-size: 12px; font-weight: 700; }
+    h1 { margin: 12px 0 8px; font-size: clamp(26px, 4vw, 42px); line-height: 1.1; letter-spacing: -0.03em; }
+    .subtitle { margin: 0 0 20px; color: var(--muted); max-inline-size: 760px; }
+    .tabs { display: flex; flex-wrap: wrap; gap: 8px; margin: 18px 0; }
+    .tabs button { border: 1px solid var(--line); border-radius: 999px; background: var(--panel); color: var(--text); cursor: pointer; font: inherit; font-size: 13px; font-weight: 700; padding: 7px 12px; }
+    .tabs button[aria-selected="true"] { border-color: oklch(78% 0.05 252); background: oklch(94.5% 0.008 252); color: oklch(36% 0.09 252); }
+    .notice-rail { display: grid; gap: 8px; border: 1px solid var(--line); border-radius: 16px; background: var(--panel); box-shadow: var(--shadow); padding: 14px; margin: 18px 0 24px; }
+    .notice-item { display: grid; grid-template-columns: 130px minmax(0, 1fr); gap: 12px; border-block-start: 1px solid var(--soft); padding-block-start: 8px; }
+    .notice-item:first-child { border-block-start: 0; padding-block-start: 0; }
+    .notice-item strong { font-size: 12px; color: var(--muted); }
+    .notice-item span { font-size: 13px; }
+    .panel { display: block; border: 1px solid var(--line); border-radius: 18px; background: color-mix(in oklch, var(--panel), transparent 3%); box-shadow: var(--shadow); overflow: hidden; margin-block-end: 16px; }
+    .js .panel { display: none; }
+    .js .panel.active { display: block; }
+    .panel-head { display: grid; gap: 4px; padding: 18px 20px; border-block-end: 1px solid var(--line); background: var(--panel); }
+    .panel-head h2 { margin: 0; font-size: 19px; letter-spacing: -0.012em; }
+    .panel-head p { margin: 0; color: var(--muted); font-size: 13px; }
+    .ledger { display: grid; grid-template-columns: 0.5fr 1fr 1fr 1fr 0.7fr; min-inline-size: 920px; }
+    .ledger-wrap { overflow-x: auto; }
+    .cell { border-block-end: 1px solid var(--line); border-inline-end: 1px solid var(--line); padding: 12px; min-block-size: 72px; font-size: 13px; }
+    .cell:nth-child(5n) { border-inline-end: 0; }
+    .head-cell { background: var(--soft); color: var(--muted); font-size: 12px; font-weight: 800; min-block-size: auto; }
+    .rid { font-weight: 800; color: var(--accent); }
+    .status { display: inline-flex; align-items: center; gap: 6px; border-radius: 999px; border: 1px solid currentColor; padding: 2px 8px; font-size: 12px; font-weight: 800; white-space: nowrap; }
+    .pass { color: var(--pass); }
+    .warn { color: var(--warn); }
+    .fail { color: var(--fail); }
+    code { background: var(--soft); border: 1px solid var(--line); border-radius: 7px; padding: 1px 5px; font-family: "SFMono-Regular", "SF Mono", Consolas, monospace; font-size: 12px; }
+    .swim { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 0; }
+    .lane-title { border-block-end: 1px solid var(--line); border-inline-end: 1px solid var(--line); background: var(--soft); padding: 14px; font-weight: 800; }
+    .lane-body { border-block-end: 1px solid var(--line); padding: 14px; }
+    .lane-body ol { margin: 0; padding-inline-start: 20px; }
+    .board { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0; }
+    .board-col { border-inline-end: 1px solid var(--line); min-block-size: 360px; padding: 14px; }
+    .board-col:last-child { border-inline-end: 0; }
+    .board-col h3 { margin: 0 0 10px; font-size: 15px; }
+    .board-col ul { margin: 0; padding-inline-start: 18px; color: var(--muted); }
+    .timeline { padding: 18px 22px 26px; }
+    .time-row { display: grid; grid-template-columns: 130px minmax(0, 1fr); gap: 14px; position: relative; padding: 0 0 18px; }
+    .time-row::before { content: ""; position: absolute; inset-block: 8px -8px; inset-inline-start: 65px; border-inline-start: 1px solid var(--line); }
+    .time-row:last-child::before { display: none; }
+    .time { z-index: 1; align-self: start; justify-self: start; border-radius: 999px; background: var(--panel); border: 1px solid var(--line); padding: 3px 8px; font-size: 12px; font-weight: 800; color: var(--muted); }
+    .time-body { border: 1px solid var(--line); border-radius: 12px; background: var(--panel); padding: 12px; }
+    .time-body strong { display: block; margin-block-end: 4px; }
+    .time-body p { margin: 0; color: var(--muted); font-size: 13px; }
+    @media (max-width: 760px) {
+      .page { inline-size: min(100% - 24px, 1180px); padding-block-start: 20px; }
+      .notice-item, .swim, .time-row { grid-template-columns: 1fr; }
+      .board { grid-template-columns: 1fr; }
+      .board-col { border-inline-end: 0; border-block-end: 1px solid var(--line); }
+      .time-row::before { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <span class="task-code">TASK_20260702_001</span>
+    <h1>交付验收：Zeus 设置页按钮与 Git 确认布局修复</h1>
+    <p class="subtitle">结论：R1-R4 已有自动化和打包证据；R5 为格式门禁未收敛，原因是 App.tsx 存在既有大范围 Prettier 差异，本轮未夹带千行级重排；R6 需要用户重新打开打包后的 Zeus 做肉眼截图确认。</p>
+
+    <section class="notice-rail" aria-label="交付说明栏">
+      <div class="notice-item"><strong>改了什么</strong><span>Git 设置 pane 加入深层布局类；Settings 动作按钮移除渐变/内阴影；Git 风险行增加专属列宽；新增回归测试。</span></div>
+      <div class="notice-item"><strong>影响入口</strong><span>Zeus 桌面端“设置 → 发布与更新”和“设置 → Git 确认”。不改变 Git 写操作、Release 检查或安全确认业务逻辑。</span></div>
+      <div class="notice-item"><strong>验证方式</strong><span>已执行聚焦 RED/GREEN、settings 布局测试、全量 lint/typecheck/test、退出应用后的 package:mac。</span></div>
+      <div class="notice-item"><strong>脚本/重启</strong><span>无需用户执行数据库或迁移脚本；若要看新包，请重新打开 <code>dist/mac-arm64/Zeus.app</code>。</span></div>
+      <div class="notice-item"><strong>未覆盖点</strong><span>未采集新的 GUI 截图；<code>format:check</code> 仍因 <code>App.tsx</code> 既有格式差异失败。</span></div>
+    </section>
+
+    <div class="tabs" role="tablist" aria-label="验收图候选">
+      <button id="tab-ledger" role="tab" aria-selected="true" aria-controls="panel-ledger">验收账本</button>
+      <button id="tab-evidence" role="tab" aria-selected="false" aria-controls="panel-evidence">证据泳道图</button>
+      <button id="tab-risk" role="tab" aria-selected="false" aria-controls="panel-risk">风险动作板</button>
+      <button id="tab-timeline" role="tab" aria-selected="false" aria-controls="panel-timeline">交付时间线</button>
+    </div>
+
+    <section class="panel active" id="panel-ledger" role="tabpanel" aria-labelledby="tab-ledger">
+      <div class="panel-head"><h2>验收账本</h2><p>阅读顺序：原始要求 → 交付变更 → 验证证据 → 判定 → 动作/回滚。</p></div>
+      <div class="ledger-wrap"><div class="ledger">
+        <div class="cell head-cell">R#</div><div class="cell head-cell">原始要求 / AC</div><div class="cell head-cell">交付变更</div><div class="cell head-cell">验证证据</div><div class="cell head-cell">判定 / 动作</div>
+        <div class="cell rid">R1</div><div class="cell">发布更新页动作按钮不应出现截图箭头所指的异常边缘、渐变或投影噪声。</div><div class="cell"><code>styles.css:13396-13416</code> 改为 token 平面按钮，移除 <code>linear-gradient</code> 与 <code>inset</code> 投影。</div><div class="cell"><code>app-shell-layout.test.tsx:2156-2174</code> 断言按钮块包含 <code>box-shadow: none</code> 且不含渐变。</div><div class="cell"><span class="status pass">✓ 通过</span></div>
+        <div class="cell rid">R2</div><div class="cell">Git 确认页风险说明、目标分支和按钮不能再互相覆盖。</div><div class="cell"><code>App.tsx:9607-9610</code> 加入 <code>deep-settings-pane git-settings-pane</code>；<code>styles.css:13437-13442</code> 增加 Git 风险行三列列宽。</div><div class="cell">RED 先失败于缺少 <code>git-settings-pane</code>；GREEN 后聚焦测试通过。</div><div class="cell"><span class="status pass">✓ 通过</span></div>
+        <div class="cell rid">R3</div><div class="cell">设置页不回退到旧卡片/松散按钮/重投影模式。</div><div class="cell">保留 native settings pane 与 reference shell；只调整按钮视觉和 Git 行列宽。</div><div class="cell"><code>app-shell-layout.test.tsx</code> 175 passed；旧模式反查包含不含 <code>linear-gradient</code>、不含 <code>inset 0 1px</code>。</div><div class="cell"><span class="status pass">✓ 通过</span></div>
+        <div class="cell rid">R4</div><div class="cell">改代码后必须退出 Zeus 并执行 macOS 打包门禁。</div><div class="cell">执行 <code>osascript ... quit</code> 后用 pnpm 10.31.0 打包。</div><div class="cell"><code>PATH=/opt/homebrew/bin:$PATH /opt/homebrew/bin/pnpm package:mac</code> 成功，生成 DMG/ZIP，并显示 app valid on disk。</div><div class="cell"><span class="status pass">✓ 通过</span></div>
+        <div class="cell rid">R5</div><div class="cell">格式门禁。</div><div class="cell">未执行全文件 Prettier 重排，避免夹带既有大范围 App.tsx 格式变更。</div><div class="cell"><code>/opt/homebrew/bin/pnpm format:check</code> 失败，仅列出 <code>apps/desktop/src/renderer/App.tsx</code>。</div><div class="cell"><span class="status warn">! 未收敛</span></div>
+        <div class="cell rid">R6</div><div class="cell">截图级视觉复核。</div><div class="cell">本轮未重新启动 GUI 截图，只通过源码/CSS/自动化/打包验证。</div><div class="cell">建议用户打开 <code>dist/mac-arm64/Zeus.app</code> 到两个设置页复查。</div><div class="cell"><span class="status warn">! 待人工确认</span></div>
+      </div></div>
+    </section>
+
+    <section class="panel" id="panel-evidence" role="tabpanel" aria-labelledby="tab-evidence">
+      <div class="panel-head"><h2>证据泳道图</h2><p>阅读顺序：每条证据泳道尾部都连回对应 R#。</p></div>
+      <div class="swim">
+        <div class="lane-title">TDD RED/GREEN</div><div class="lane-body"><ol><li>RED：聚焦测试先失败，缺少 <code>native-settings-pane deep-settings-pane git-settings-pane</code>。</li><li>GREEN：App 与 CSS 修改后，聚焦测试通过。证明 R2 可被测试捕获。</li></ol></div>
+        <div class="lane-title">设置布局测试</div><div class="lane-body"><ol><li><code>app-shell-layout.test.tsx</code> 175 passed，覆盖 R1-R3。</li><li>新增断言锁定按钮无渐变、无内阴影，Git 风险行具备 Settings 专属列宽。</li></ol></div>
+        <div class="lane-title">全量自动化</div><div class="lane-body"><ol><li><code>lint</code> 通过。</li><li><code>typecheck</code> 通过。</li><li><code>pnpm test</code>：66 test files / 1000 tests passed。</li></ol></div>
+        <div class="lane-title">打包门禁</div><div class="lane-body"><ol><li>先退出运行中的 Zeus。</li><li><code>package:mac</code> 成功，DMG/ZIP 和 <code>dist/mac-arm64/Zeus.app</code> 生成。</li></ol></div>
+        <div class="lane-title">未通过证据</div><div class="lane-body"><ol><li><code>format:check</code> 仍因 <code>App.tsx</code> 失败，绑定 R5。</li><li>未采集新 GUI 截图，绑定 R6。</li></ol></div>
+      </div>
+    </section>
+
+    <section class="panel" id="panel-risk" role="tabpanel" aria-labelledby="tab-risk">
+      <div class="panel-head"><h2>风险动作板</h2><p>阅读顺序：通过项可验收；警告项是后续动作，不阻塞本轮代码与打包。</p></div>
+      <div class="board">
+        <div class="board-col"><h3><span class="status pass">✓ 通过</span></h3><ul><li>R1 按钮视觉噪声移除。</li><li>R2 Git 确认行进入深层布局。</li><li>R3 旧渐变/投影回归被测试反查。</li><li>R4 打包门禁已执行。</li></ul></div>
+        <div class="board-col"><h3><span class="status warn">! 待观察</span></h3><ul><li>未做 GUI 截图，只能说自动化与打包通过。</li><li>Vite chunk size 警告仍存在，非本轮引入。</li></ul></div>
+        <div class="board-col"><h3><span class="status warn">! 用户动作</span></h3><ul><li>如需肉眼确认，打开 <code>dist/mac-arm64/Zeus.app</code>。</li><li>检查“设置 → 发布与更新 / Git 确认”。</li></ul></div>
+        <div class="board-col"><h3><span class="status fail">↩ 回滚</span></h3><ul><li>撤销 App.tsx 的 Git pane class hunk。</li><li>撤销 styles.css 按钮与 Git 风险行 hunk。</li><li>撤销 app-shell-layout.test.tsx 新断言。</li></ul></div>
+      </div>
+    </section>
+
+    <section class="panel" id="panel-timeline" role="tabpanel" aria-labelledby="tab-timeline">
+      <div class="panel-head"><h2>交付时间线</h2><p>阅读顺序：用户截图 → 根因 → 测试 → 修复 → 验证 → 待确认。</p></div>
+      <div class="timeline">
+        <div class="time-row"><span class="time">截图输入</span><div class="time-body"><strong>按钮与 Git 确认行问题被标注</strong><p>发布更新按钮边缘异常，Git 确认页文本与按钮挤压。</p></div></div>
+        <div class="time-row"><span class="time">根因</span><div class="time-body"><strong>按钮旧渐变 + Git pane 缺深层布局</strong><p>CSS 与 pane class 缺口共同导致截图中的视觉问题。</p></div></div>
+        <div class="time-row"><span class="time">RED</span><div class="time-body"><strong>先写回归测试并看到失败</strong><p>失败点锁定 Git pane 缺少深层设置类。</p></div></div>
+        <div class="time-row"><span class="time">实现</span><div class="time-body"><strong>最小修复</strong><p>只改 App.tsx、styles.css 和 app-shell-layout.test.tsx，不新增依赖，不改业务逻辑。</p></div></div>
+        <div class="time-row"><span class="time">验证</span><div class="time-body"><strong>自动化与打包通过</strong><p>lint/typecheck/test 通过；退出 Zeus 后 package:mac 成功。</p></div></div>
+        <div class="time-row"><span class="time">剩余</span><div class="time-body"><strong>格式与截图两项待处理</strong><p>format:check 的 App.tsx 既有差异未收敛；新 GUI 截图未采集。</p></div></div>
+      </div>
+    </section>
+  </main>
+  <script>
+    const tabs = Array.from(document.querySelectorAll('[role="tab"]'));
+    const panels = Array.from(document.querySelectorAll('[role="tabpanel"]'));
+    function activate(tab) {
+      tabs.forEach((item) => item.setAttribute('aria-selected', String(item === tab)));
+      panels.forEach((panel) => panel.classList.toggle('active', panel.id === tab.getAttribute('aria-controls')));
+      history.replaceState(null, '', '#' + tab.id.replace('tab-', ''));
+    }
+    tabs.forEach((tab, index) => {
+      tab.addEventListener('click', () => activate(tab));
+      tab.addEventListener('keydown', (event) => {
+        const key = event.key;
+        if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(key)) return;
+        event.preventDefault();
+        const nextIndex = key === 'Home' ? 0 : key === 'End' ? tabs.length - 1 : key === 'ArrowRight' ? (index + 1) % tabs.length : (index - 1 + tabs.length) % tabs.length;
+        tabs[nextIndex].focus();
+        activate(tabs[nextIndex]);
+      });
+    });
+    const hash = location.hash.replace('#', '');
+    const initial = tabs.find((tab) => tab.id === 'tab-' + hash);
+    if (initial) activate(initial);
+  </script>
+</body>
+</html>

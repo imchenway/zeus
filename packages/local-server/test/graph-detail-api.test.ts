@@ -97,7 +97,7 @@ describe('graph detail API', () => {
     const project = projectResponse.json() as { id: string };
     await server.inject({
       method: 'POST',
-      url: '/api/graph/scan-current',
+      url: `/api/projects/${project.id}/scan`,
       headers: { authorization: 'Bearer token' },
     });
 
@@ -240,7 +240,7 @@ describe('graph detail API', () => {
     const project = projectResponse.json() as { id: string };
     await server.inject({
       method: 'POST',
-      url: '/api/graph/scan-current',
+      url: `/api/projects/${project.id}/scan`,
       headers: { authorization: 'Bearer token' },
     });
 
@@ -269,6 +269,8 @@ describe('graph detail API', () => {
     });
 
     expect(view.viewType).toBe('architecture');
+    expect(view.projectId).toBe(project.id);
+    expect(view.projectName).toBe('Project Graph Alias');
     expect(searchResponse.statusCode).toBe(200);
     expect(searchResponse.json().nodes.some((item: { id: string }) => item.id === node.id)).toBe(true);
     expect(nodeResponse.statusCode).toBe(200);

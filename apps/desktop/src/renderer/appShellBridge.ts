@@ -7,6 +7,7 @@ export interface MainAppShellSettingsChange {
 }
 
 export interface GraphSourceOpenRequest {
+  projectRoot?: string;
   sourceRef: string;
   lineStart?: number;
 }
@@ -17,10 +18,17 @@ export interface GraphSourceOpenResult {
   lineStart?: number | null;
 }
 
+export interface ExternalHttpsOpenResult {
+  opened: boolean;
+  url?: string;
+  error?: string;
+}
+
 export interface AppShellBridgeWindow {
   zeus?: {
     notifyAppShellSettingsChanged?: (settings: MainAppShellSettingsChange) => Promise<{ applied: boolean }>;
     openGraphSource?: (source: GraphSourceOpenRequest) => Promise<GraphSourceOpenResult>;
+    openExternalHttpsUrl?: (url: string) => Promise<ExternalHttpsOpenResult>;
   };
 }
 
@@ -39,4 +47,23 @@ export async function openGraphSourceInMain(input: { zeus: AppShellBridgeWindow[
       lineStart: input.source.lineStart ?? null,
     };
   return input.zeus.openGraphSource(input.source);
+}
+
+/** Renderer 先拒绝非 HTTPS/含凭据 URL；Main 进程仍会独立复验后才打开系统浏览器。 */
+export async function openExternalHttpsUrlInMain(input: { zeus: AppShellBridgeWindow['zeus']; url: unknown }): Promise<ExternalHttpsOpenResult> {
+  const url = normalizeRendererExternalHttpsUrl(input.url);
+  if (!url) return { opened: false, error: 'external_url_not_allowed' };
+  if (!input.zeus?.openExternalHttpsUrl) return { opened: false, error: 'external_open_unavailable' };
+  return input.zeus.openExternalHttpsUrl(url);
+}
+
+function normalizeRendererExternalHttpsUrl(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'https:' || url.username || url.password) return null;
+    return url.href;
+  } catch {
+    return null;
+  }
 }

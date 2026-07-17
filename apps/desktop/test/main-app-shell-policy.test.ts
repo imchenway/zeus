@@ -10,11 +10,12 @@ describe('Electron main app shell policy', () => {
     openAtLoginEnabled: false,
   };
 
-  it('enables New Window only when multi-window support is enabled', () => {
+  it('routes Command+N to New Chat instead of opening another window', () => {
     const createWindow = vi.fn();
+    const createNewConversation = vi.fn();
     const multiWindowMenu = buildAppShellMenuTemplate({
       settings: { ...baseSettings, multiWindowEnabled: true },
-      createWindow,
+      createNewConversation,
       toggleDevTools: vi.fn(),
       showMainWindow: vi.fn(),
       openSettings: vi.fn(),
@@ -24,7 +25,7 @@ describe('Electron main app shell policy', () => {
     });
     const singleWindowMenu = buildAppShellMenuTemplate({
       settings: { ...baseSettings, multiWindowEnabled: false },
-      createWindow,
+      createNewConversation,
       toggleDevTools: vi.fn(),
       showMainWindow: vi.fn(),
       openSettings: vi.fn(),
@@ -33,18 +34,21 @@ describe('Electron main app shell policy', () => {
       quit: vi.fn(),
     });
 
-    const multiWindowItem = findMenuItem(multiWindowMenu, 'New Window');
-    const singleWindowItem = findMenuItem(singleWindowMenu, 'New Window');
+    const multiWindowItem = findMenuItem(multiWindowMenu, 'New Chat');
+    const singleWindowItem = findMenuItem(singleWindowMenu, 'New Chat');
 
-    expect(multiWindowItem?.enabled).toBe(true);
-    expect(singleWindowItem?.enabled).toBe(false);
+    expect(multiWindowItem?.accelerator).toBe('CommandOrControl+N');
+    expect(multiWindowItem?.click).toBe(createNewConversation);
+    expect(singleWindowItem?.click).toBe(createNewConversation);
+    expect(createWindow).not.toHaveBeenCalled();
+    expect(findMenuItem(multiWindowMenu, 'New Window')).toBeUndefined();
   });
 
   it('exposes a native Settings menu entry with the standard macOS shortcut', () => {
     const openSettings = vi.fn();
     const menu = buildAppShellMenuTemplate({
       settings: baseSettings,
-      createWindow: vi.fn(),
+      createNewConversation: vi.fn(),
       toggleDevTools: vi.fn(),
       showMainWindow: vi.fn(),
       openSettings,
@@ -63,7 +67,7 @@ describe('Electron main app shell policy', () => {
     const openReleaseStatus = vi.fn();
     const menu = buildAppShellMenuTemplate({
       settings: baseSettings,
-      createWindow: vi.fn(),
+      createNewConversation: vi.fn(),
       toggleDevTools: vi.fn(),
       showMainWindow: vi.fn(),
       openSettings: vi.fn(),
@@ -82,7 +86,7 @@ describe('Electron main app shell policy', () => {
     const openLogsDirectory = vi.fn();
     const menu = buildAppShellMenuTemplate({
       settings: baseSettings,
-      createWindow: vi.fn(),
+      createNewConversation: vi.fn(),
       toggleDevTools: vi.fn(),
       showMainWindow: vi.fn(),
       openSettings: vi.fn(),
@@ -100,7 +104,7 @@ describe('Electron main app shell policy', () => {
   it('hides the DevTools toggle when WebView debugging is disabled', () => {
     const debugMenu = buildAppShellMenuTemplate({
       settings: { ...baseSettings, webviewDebugEnabled: true },
-      createWindow: vi.fn(),
+      createNewConversation: vi.fn(),
       toggleDevTools: vi.fn(),
       showMainWindow: vi.fn(),
       openSettings: vi.fn(),
@@ -110,7 +114,7 @@ describe('Electron main app shell policy', () => {
     });
     const productionMenu = buildAppShellMenuTemplate({
       settings: { ...baseSettings, webviewDebugEnabled: false },
-      createWindow: vi.fn(),
+      createNewConversation: vi.fn(),
       toggleDevTools: vi.fn(),
       showMainWindow: vi.fn(),
       openSettings: vi.fn(),

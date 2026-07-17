@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Codex 如何续接已经停止运行的旧会话</title>
+  <style>
+    :root{--ink:#102033;--muted:#5d6d7e;--paper:#f7fbff;--panel:#fff;--line:#b8d1e8;--blue:#1769aa;--blue-soft:#eaf4ff;--green:#14775a;--green-soft:#e9f8f1;--amber:#946205;--amber-soft:#fff5d9;--red:#a33b3b;--red-soft:#fff0f0;--shadow:0 16px 42px rgba(20,57,92,.09)}
+    *{box-sizing:border-box}body{margin:0;color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;background:radial-gradient(circle at 15% 0,#deeeff 0,transparent 31rem),linear-gradient(180deg,#fff,var(--paper));line-height:1.55}main{width:min(1180px,calc(100vw - 28px));margin:auto;padding:22px 0 36px}h1{font-size:clamp(25px,3.2vw,38px);line-height:1.18;letter-spacing:-.025em;margin:4px 0 10px}.lead{max-width:920px;color:var(--muted);margin:0}.tag{display:inline-flex;padding:5px 9px;border-radius:999px;background:var(--blue-soft);color:var(--blue);font-size:11px;font-weight:800}.statuses{display:flex;flex-wrap:wrap;gap:8px;margin:15px 0}.status{padding:6px 10px;border:1px solid var(--line);border-radius:999px;background:#fff;font-size:12px;font-weight:750}.ok{color:var(--green)}.warn{color:var(--amber)}.section{margin-top:16px;padding:17px;border:1px solid rgba(118,159,198,.42);border-radius:20px;background:rgba(255,255,255,.9);box-shadow:var(--shadow)}h2{margin:0 0 12px;font-size:18px}.sequence{display:grid;grid-template-columns:repeat(9,minmax(0,1fr));gap:8px;align-items:stretch}.step{grid-column:span 2;min-height:112px;padding:12px;border:1px solid var(--line);border-radius:16px;background:var(--panel);font-size:12px}.step strong{display:block;margin-bottom:5px;font-size:13px}.step code,.evidence code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:#16507c;overflow-wrap:anywhere}.arrow{display:grid;place-items:center;color:var(--blue);font-weight:900;font-size:24px}.data{background:linear-gradient(180deg,#fff,var(--green-soft));border-color:#9fd0be}.core{background:linear-gradient(180deg,#fff,var(--blue-soft));border-color:#9cc5e7}.risk{background:linear-gradient(180deg,#fff,var(--red-soft));border-color:#e0b1b1}.decision{background:linear-gradient(180deg,#fff,var(--amber-soft));border-color:#dfc885}.lanes{display:grid;grid-template-columns:1fr 1fr;gap:12px}.lane{border:1px solid var(--line);border-radius:17px;padding:13px;background:#fff}.lane h3{margin:0 0 9px;font-size:14px}.lane ol{margin:0;padding-left:20px}.lane li{margin:7px 0;color:var(--muted);font-size:13px}.matrix{overflow-x:auto;border:1px solid var(--line);border-radius:16px}table{border-collapse:collapse;width:100%;min-width:760px}th,td{padding:10px 11px;text-align:left;vertical-align:top;border-bottom:1px solid #dce9f4;font-size:12px}th{background:var(--blue-soft)}tr:last-child td{border-bottom:0}.evidence-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.evidence{padding:12px;border:1px solid var(--line);border-radius:15px;background:#fff;font-size:12px;color:var(--muted)}.evidence b{display:block;color:var(--ink);margin-bottom:4px}.conclusion{border:2px solid rgba(23,105,170,.32);background:linear-gradient(135deg,#fff,var(--blue-soft))}.conclusion p{margin:0;color:var(--muted)}
+    @media(max-width:780px){main{width:min(100vw - 18px,760px)}.sequence,.lanes,.evidence-grid{grid-template-columns:1fr}.sequence>*{grid-column:auto}.arrow{min-height:24px;transform:rotate(90deg)}.section{padding:13px}}
+    @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important}}
+  </style>
+</head>
+<body>
+<main data-diagram-type="runtime-resume-sequence" data-template-family="sequence" data-template-id="thread-resume-flow">
+  <span class="tag">TASK_20260710_001 · native app-server</span>
+  <h1>Codex 如何续接已经停止运行的旧会话</h1>
+  <p class="lead">Codex 不为每个会话长期保留一个模型进程。稳定身份是 threadId，持久事实是磁盘 rollout；旧会话再次发送消息时，app-server 先恢复或复用 thread，再在同一 thread 上创建新的 turn。</p>
+  <div class="statuses" aria-label="结论状态">
+    <span class="status ok">同 thread 连续多轮已实测</span>
+    <span class="status ok">跨 app-server 进程 resume 已实测</span>
+    <span class="status warn">没有 threadId/rollout 就不能真实 resume</span>
+  </div>
+
+  <section class="section">
+    <h2>停止后再次发送消息的真实顺序</h2>
+    <div class="sequence" aria-label="Codex 旧会话续接时序">
+      <div class="step core"><strong>1 · 用户打开旧任务</strong>客户端从持久化关系取回 provider <code>threadId</code>。</div>
+      <div class="arrow" aria-hidden="true">→</div>
+      <div class="step decision"><strong>2 · 判断 thread 状态</strong>已加载且 idle：直接复用；未加载或 app-server 已重启：调用 <code>thread/resume</code>。</div>
+      <div class="arrow" aria-hidden="true">→</div>
+      <div class="step data"><strong>3 · 从 rollout 恢复</strong>app-server 按 threadId 读取 <code>~/.codex/sessions/.../rollout-...jsonl</code>，恢复 turns、上下文与配置。</div>
+      <div class="arrow" aria-hidden="true">→</div>
+      <div class="step core"><strong>4 · 新建本轮</strong>客户端发送 <code>turn/start</code>：threadId 不变，产生新的 turnId 与 clientUserMessageId。</div>
+      <div class="arrow" aria-hidden="true">→</div>
+      <div class="step data"><strong>5 · 流式执行并回 idle</strong>接收 item/delta/completed；<code>turn/completed</code> 后 thread 回 idle，之后仍可继续下一轮。</div>
+    </div>
+  </section>
+
+  <section class="section">
+    <h2>两种“停止”的差异</h2>
+    <div class="lanes">
+      <div class="lane">
+        <h3>Turn 已结束，但 app-server 仍运行</h3>
+        <ol>
+          <li>thread 只是 <code>idle</code>，没有会话专属进程需要重启。</li>
+          <li>客户端可直接在同一 threadId 上调用 <code>turn/start</code>。</li>
+          <li>每条新消息获得新的 turnId。</li>
+        </ol>
+      </div>
+      <div class="lane">
+        <h3>Codex/App-server 整体已退出或 thread 未加载</h3>
+        <ol>
+          <li>新 app-server 进程启动并完成 initialize。</li>
+          <li>优先用 threadId 调用 <code>thread/resume</code>；普通客户端不应依赖不稳定的 rollout path。</li>
+          <li>resume 返回同一 thread 及已恢复 turns，再调用 <code>turn/start</code>。</li>
+        </ol>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <h2>什么可以续接，什么不能</h2>
+    <div class="matrix">
+      <table>
+        <thead><tr><th>历史类型</th><th>持久事实</th><th>再次发送</th><th>真实性边界</th></tr></thead>
+        <tbody>
+          <tr><td>已完成过真实 turn 的 native thread</td><td>threadId + rollout JSONL</td><td><code>thread/resume</code> → <code>turn/start</code></td><td>真实续接，同一 threadId</td></tr>
+          <tr><td>同进程内 idle thread</td><td>app-server 内存状态 + rollout</td><td>直接 <code>turn/start</code></td><td>真实续接，同一 threadId</td></tr>
+          <tr><td>只调用过空 <code>thread/start</code></td><td>可能尚无物化 rollout</td><td>resume 可能返回 <code>no rollout found</code></td><td>不能宣称可恢复</td></tr>
+          <tr><td>Zeus legacy <code>ai-session-*</code></td><td>旧 conversation/messages，没有 provider threadId</td><td>只能查看，或经用户确认引用历史后新建 native thread</td><td>新 thread，不得伪装成 resume</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="section">
+    <h2>本任务的直接证据</h2>
+    <div class="evidence-grid">
+      <div class="evidence"><b>0.143.0 真实跨进程 resume</b>同一 threadId 在新 app-server 进程加载 2 个既有 turn，第三轮成功回忆 nonce。<br><code>/Users/david/hypha/zeus/docs/artifacts/TASK_20260710_001_codex_native_app_server_live_probe.json</code></div>
+      <div class="evidence"><b>真实 rollout 仍在磁盘</b><code>/Users/david/.codex/sessions/2026/07/10/rollout-2026-07-10T09-13-09-019f4995-ebaa-73a0-9319-92eb975cd311.jsonl</code></div>
+      <div class="evidence"><b>0.144.0 当前 schema</b><code>ThreadResumeParams</code> 明确优先使用 threadId；可从 threadId、history 或 path 恢复，普通客户端应优先 threadId。</div>
+    </div>
+  </section>
+
+  <section class="section conclusion">
+    <h2>对 Zeus 的结论</h2>
+    <p>未来由 Zeus 创建的 native conversation 可以与 Codex 完全同构：持久化 provider threadId，停止后按需 <code>thread/resume</code>，然后在同一 thread 上启动新 turn。当前 4 个 legacy conversation 没有 threadId，只能保留为历史，或由用户显式确认引用后开启新的 native thread。</p>
+  </section>
+</main>
+</body>
+</html>

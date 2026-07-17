@@ -1,4 +1,27 @@
+import type {
+  CodexTaskPushCapabilities,
+  NativeConversationChoicesSnapshot,
+  NativeConversationSnapshot,
+  NativeOperationAcceptance,
+  NativePendingRequest,
+  NativePermissionMode,
+  NativeProjectConversationChoicesSnapshot,
+  NativeQueueSnapshot,
+  SendNativeMessageRequest,
+  StartNativeConversationRequest,
+  StartProjectConversationRequest,
+  StartTaskModelPushRequest,
+} from './session/sessionTypes.js';
+
 export type TaskStatus = 'draft' | 'ready' | 'running' | 'paused' | 'waiting_confirmation' | 'completed' | 'failed' | 'cancelled';
+export type TaskTableColumnKey = 'code' | 'intent' | 'nextAction' | 'aiExecution' | 'source' | 'signals' | 'updatedAt' | 'createdAt' | 'template' | 'project' | 'priority' | 'description' | 'runtimeSession' | 'rawId' | 'createdFrom';
+export type TaskTableColumnWidth = 'compact' | 'standard' | 'wide';
+
+export interface TaskTableColumnPreferences {
+  visibleColumnKeys: TaskTableColumnKey[];
+  columnOrder: TaskTableColumnKey[];
+  columnWidths?: Partial<Record<TaskTableColumnKey, TaskTableColumnWidth>>;
+}
 
 export interface ProjectRecord {
   id: string;
@@ -52,11 +75,18 @@ export type SaveProjectConfigRequest = Omit<ProjectConfig, 'projectId' | 'vcs'> 
 export interface TaskRecord {
   id: string;
   projectId: string;
+  taskCode?: string;
+  taskSequence?: number | null;
   title: string;
   description?: string;
   status: TaskStatus;
+  priority?: string;
   templateId?: string | null;
   tags?: string[];
+  createdFrom?: string;
+  sourceContextJson?: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface TaskTemplateRecord {
@@ -301,8 +331,10 @@ export interface AppShellSettings {
   openAtLoginEnabled: boolean;
   autoUpdateChannel: 'manual';
   defaultProjectId: string | null;
+  pinnedProjectIds: string[];
   defaultModel: string | null;
   defaultTaskTemplateId: string | null;
+  taskTableColumns?: TaskTableColumnPreferences;
   localLogDirectory: string;
   localConfigPath: string;
   dataPortability: {
@@ -323,8 +355,10 @@ export type UpdateAppShellSettingsRequest = Pick<
   'appLanguage' | 'appearance' | 'webviewDebugEnabled' | 'developerModeEnabled' | 'multiWindowEnabled' | 'backgroundModeEnabled' | 'desktopNotificationsEnabled' | 'openAtLoginEnabled' | 'autoUpdateChannel'
 > & {
   defaultProjectId?: string | null;
+  pinnedProjectIds?: string[];
   defaultModel?: string | null;
   defaultTaskTemplateId?: string | null;
+  taskTableColumns?: Partial<TaskTableColumnPreferences>;
 };
 
 export interface ClearLocalCachesResult {
@@ -570,7 +604,13 @@ export interface CreateTaskFromRuntimeSessionRequest {
 
 export interface TaskRuntimeControlResult {
   task: TaskRecord;
-  runtimeSession: AiRuntimeSession;
+  conversation: GraphConversationHistoryItem;
+  runtimeSession?: AiRuntimeSession;
+  runtimeError?: {
+    message: string;
+  };
+  queued?: true;
+  reason?: string;
 }
 
 export interface GraphViewNode {
@@ -596,6 +636,8 @@ export type GraphViewType = 'architecture' | 'module' | 'table' | 'module_detail
 
 export interface GraphViewSnapshot {
   id: string;
+  projectId?: string;
+  projectName?: string;
   title: string;
   viewType: GraphViewType | string;
   layout?: {
@@ -662,6 +704,12 @@ export interface GraphConversationHistoryItem {
   updatedAt: string;
   archived: boolean;
   messages: GraphConversationMessage[];
+}
+
+export interface SendConversationMessageResult {
+  conversation: GraphConversationHistoryItem;
+  runtimeSession?: AiRuntimeSession;
+  runtimeError?: { message: string };
 }
 
 export interface GraphConversationHistoryPage {
@@ -890,6 +938,7 @@ export interface LoadTasksRequest {
 export interface UpdateTaskRequest {
   title?: string;
   description?: string;
+  sourceContext?: Record<string, unknown>;
 }
 
 export interface CreateTaskFromGraphNodeRequest {
@@ -927,11 +976,58 @@ export interface DashboardClientOptions {
   refreshLocalServerConfig?: () => Promise<DashboardClientOptions>;
 }
 
+export class ZeusApiError extends Error {
+  readonly status: number;
+  readonly error: string | null;
+  readonly recoveryRequired: boolean;
+
+  constructor(input: { status: number; error?: string | null; message: string; recoveryRequired?: boolean }) {
+    super(input.message);
+    this.name = 'ZeusApiError';
+    this.status = input.status;
+    this.error = input.error ?? null;
+    this.recoveryRequired = input.recoveryRequired ?? false;
+  }
+}
+
 export interface ZeusRealtimeEvent {
   id: string;
   type: string;
   payload: Record<string, unknown>;
   createdAt: string;
+}
+
+export type CodexLegacyImportRunStatus = 'prepared' | 'waiting' | 'completed' | 'failed';
+
+export interface CodexLegacyImportEligibleSession {
+  sourceConversationId: string;
+  title: string;
+  cwd: string;
+}
+
+export interface CodexLegacyImportRun {
+  id: string;
+  importId: string | null;
+  sourceConversationId: string;
+  targetConversationId: string | null;
+  status: CodexLegacyImportRunStatus;
+  targetThreadId: string | null;
+  failureStage: string | null;
+  failureMessage: string | null;
+  createdAt: string;
+  updatedAt: string;
+  completedAt: string | null;
+}
+
+export interface CodexLegacyImportSnapshot {
+  eligible: CodexLegacyImportEligibleSession[];
+  runs: CodexLegacyImportRun[];
+}
+
+export interface CodexLegacyImportResult {
+  importId: string;
+  status: 'waiting' | 'completed' | 'failed';
+  runs: CodexLegacyImportRun[];
 }
 
 export interface ProjectArchiveConfirmation {
@@ -941,7 +1037,26 @@ export interface ProjectArchiveConfirmation {
 }
 
 export interface DashboardClient {
-  connectEvents: (onEvent: (event: ZeusRealtimeEvent) => void) => WebSocket;
+  connectEvents: (onEvent: (event: ZeusRealtimeEvent) => void, options?: { afterEventId?: string }) => WebSocket;
+  loadProjectConversationChoices: (projectId: string) => Promise<NativeProjectConversationChoicesSnapshot>;
+  startProjectConversation: (projectId: string, input: StartProjectConversationRequest) => Promise<NativeOperationAcceptance>;
+  loadTaskConversationChoices: (taskId: string) => Promise<NativeConversationChoicesSnapshot>;
+  startNativeConversation: (taskId: string, input: StartNativeConversationRequest) => Promise<NativeOperationAcceptance>;
+  loadCodexTaskPushCapabilities: (projectId: string) => Promise<CodexTaskPushCapabilities>;
+  startTaskModelPush: (taskId: string, input: StartTaskModelPushRequest) => Promise<NativeOperationAcceptance>;
+  loadNativeConversation: (projectId: string, conversationId: string) => Promise<NativeConversationSnapshot>;
+  updateNativePermissionMode: (projectId: string, conversationId: string, permissionMode: NativePermissionMode) => Promise<NativeConversationSnapshot>;
+  loadCodexLegacyImports: () => Promise<CodexLegacyImportSnapshot>;
+  startCodexLegacyImport: (sourceConversationIds: string[]) => Promise<CodexLegacyImportResult>;
+  loadCodexLegacyImport: (importId: string) => Promise<CodexLegacyImportResult>;
+  sendNativeMessage: (projectId: string, conversationId: string, input: SendNativeMessageRequest) => Promise<NativeOperationAcceptance>;
+  editNativeQueuedSubmission: (projectId: string, conversationId: string, submissionId: string, content: string) => Promise<NativeQueueSnapshot>;
+  deleteNativeQueuedSubmission: (projectId: string, conversationId: string, submissionId: string) => Promise<NativeQueueSnapshot>;
+  sendNativeQueuedNow: (projectId: string, conversationId: string, submissionId: string) => Promise<NativeOperationAcceptance>;
+  interruptNativeTurn: (projectId: string, conversationId: string, turnId: string) => Promise<NativeOperationAcceptance>;
+  respondToNativeRequest: (projectId: string, conversationId: string, requestId: string, response: Record<string, unknown>) => Promise<{ operation: Record<string, unknown>; request: NativePendingRequest }>;
+  resumeNativeQueue: (projectId: string, conversationId: string) => Promise<NativeQueueSnapshot>;
+  reorderNativeQueue: (projectId: string, conversationId: string, orderedSubmissionIds: string[]) => Promise<NativeQueueSnapshot>;
   loadDashboard: () => Promise<DashboardSnapshot>;
   loadRuntimeStatus: () => Promise<RuntimeStatusSnapshot>;
   loadRuntimeSettings: () => Promise<RuntimeSettings>;
@@ -1027,6 +1142,7 @@ export interface DashboardClient {
   askGraph: (projectId: string, input: AskGraphRequest) => Promise<GraphQuestionAnswer>;
   loadGraphConversations: (projectId: string, input?: LoadGraphConversationsRequest) => Promise<GraphConversationHistoryPage>;
   loadGraphConversation: (projectId: string, conversationId: string) => Promise<GraphConversationHistoryItem>;
+  sendConversationMessage: (projectId: string, conversationId: string, content: string) => Promise<SendConversationMessageResult>;
   archiveGraphConversation: (projectId: string, conversationId: string) => Promise<GraphConversationHistoryItem>;
   restoreGraphConversation: (projectId: string, conversationId: string) => Promise<GraphConversationHistoryItem>;
   createTaskFromGraphConversation: (projectId: string, conversationId: string, input?: CreateTaskFromGraphConversationRequest) => Promise<TaskRecord>;
@@ -1121,16 +1237,95 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
     });
     if (!response.ok) {
       const errorPayload = (await response.json().catch(() => null)) as {
+        error?: string;
         message?: string;
+        recoveryRequired?: boolean;
+        operation?: { status?: string };
       } | null;
+      const recoveryRequired = errorPayload?.recoveryRequired === true || errorPayload?.error === 'ZEUS_IDEMPOTENCY_RECOVERY_REQUIRED' || errorPayload?.operation?.status === 'recovery_required';
       // 本地 API 的错误消息已经过服务端脱敏，renderer 优先展示可操作原因，避免只暴露状态码。
-      throw new Error(errorPayload?.message ?? `Zeus local API request failed: ${path} ${response.status}`);
+      throw new ZeusApiError({
+        status: response.status,
+        error: errorPayload?.error,
+        message: errorPayload?.message ?? `Zeus local API request failed: ${path} ${response.status}`,
+        recoveryRequired,
+      });
     }
     return (await response.json()) as T;
   }
 
   return {
-    connectEvents: (onEvent) => connectZeusEvents(options, onEvent),
+    connectEvents: (onEvent, eventOptions) => connectZeusEvents(currentOptions, onEvent, eventOptions),
+    loadProjectConversationChoices: (projectId) => request<NativeProjectConversationChoicesSnapshot>(`/api/projects/${encodeURIComponent(projectId)}/conversation-choices`),
+    startProjectConversation: (projectId, input) => {
+      const { idempotencyKey, ...body } = input;
+      return request<NativeOperationAcceptance>(`/api/projects/${encodeURIComponent(projectId)}/conversations`, {
+        method: 'POST',
+        headers: { 'idempotency-key': idempotencyKey },
+        body: JSON.stringify(body),
+      });
+    },
+    loadTaskConversationChoices: (taskId) => request<NativeConversationChoicesSnapshot>(`/api/tasks/${encodeURIComponent(taskId)}/conversation-choices`),
+    loadCodexTaskPushCapabilities: (projectId) => request<CodexTaskPushCapabilities>(`/api/projects/${encodeURIComponent(projectId)}/codex-task-push-capabilities`),
+    startTaskModelPush: (taskId, input) => {
+      const { idempotencyKey, ...body } = input;
+      return request<NativeOperationAcceptance>(`/api/tasks/${encodeURIComponent(taskId)}/conversations`, {
+        method: 'POST',
+        headers: { 'idempotency-key': idempotencyKey },
+        body: JSON.stringify(body),
+      });
+    },
+    startNativeConversation: (taskId, input) => {
+      const { idempotencyKey, ...body } = input;
+      return request<NativeOperationAcceptance>(`/api/tasks/${encodeURIComponent(taskId)}/conversations`, {
+        method: 'POST',
+        headers: { 'idempotency-key': idempotencyKey },
+        body: JSON.stringify(body),
+      });
+    },
+    loadNativeConversation: (projectId, conversationId) => request<NativeConversationSnapshot>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}`),
+    updateNativePermissionMode: (projectId, conversationId, permissionMode) =>
+      request<NativeConversationSnapshot>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/permission-mode`, {
+        method: 'PATCH',
+        body: JSON.stringify({ permissionMode }),
+      }),
+    loadCodexLegacyImports: () => request<CodexLegacyImportSnapshot>('/api/codex-native/import'),
+    startCodexLegacyImport: (sourceConversationIds) =>
+      request<CodexLegacyImportResult>('/api/codex-native/import', {
+        method: 'POST',
+        body: JSON.stringify({ sourceConversationIds }),
+      }),
+    loadCodexLegacyImport: (importId) => request<CodexLegacyImportResult>(`/api/codex-native/import/${encodeURIComponent(importId)}`),
+    sendNativeMessage: (projectId, conversationId, input) => {
+      const { idempotencyKey, ...body } = input;
+      return request<NativeOperationAcceptance>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/messages`, {
+        method: 'POST',
+        headers: { 'idempotency-key': idempotencyKey },
+        body: JSON.stringify(body),
+      });
+    },
+    editNativeQueuedSubmission: (projectId, conversationId, submissionId, content) =>
+      request<NativeQueueSnapshot>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/queue/${encodeURIComponent(submissionId)}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ content }),
+      }),
+    deleteNativeQueuedSubmission: (projectId, conversationId, submissionId) =>
+      request<NativeQueueSnapshot>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/queue/${encodeURIComponent(submissionId)}`, { method: 'DELETE' }),
+    sendNativeQueuedNow: (projectId, conversationId, submissionId) =>
+      request<NativeOperationAcceptance>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/queue/${encodeURIComponent(submissionId)}/send-now`, { method: 'POST' }),
+    interruptNativeTurn: (projectId, conversationId, turnId) =>
+      request<NativeOperationAcceptance>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/turns/${encodeURIComponent(turnId)}/interrupt`, { method: 'POST' }),
+    respondToNativeRequest: (projectId, conversationId, requestId, response) =>
+      request<{ operation: Record<string, unknown>; request: NativePendingRequest }>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/requests/${encodeURIComponent(requestId)}/respond`, {
+        method: 'POST',
+        body: JSON.stringify(response),
+      }),
+    resumeNativeQueue: (projectId, conversationId) => request<NativeQueueSnapshot>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/queue/resume`, { method: 'POST' }),
+    reorderNativeQueue: (projectId, conversationId, orderedSubmissionIds) =>
+      request<NativeQueueSnapshot>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/queue/reorder`, {
+        method: 'POST',
+        body: JSON.stringify({ orderedSubmissionIds }),
+      }),
     loadDashboard: () => request<DashboardSnapshot>('/api/dashboard'),
     loadRuntimeStatus: () => request<RuntimeStatusSnapshot>('/api/settings/runtime-status'),
     loadRuntimeSettings: () => request<RuntimeSettings>('/api/runtime/settings'),
@@ -1319,6 +1514,11 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
       }),
     loadGraphConversations: (projectId, input) => request<GraphConversationHistoryPage>(`/api/projects/${projectId}/conversations${toGraphConversationQuery(input)}`),
     loadGraphConversation: (projectId, conversationId) => request<GraphConversationHistoryItem>(`/api/projects/${projectId}/conversations/${conversationId}`),
+    sendConversationMessage: (projectId, conversationId, content) =>
+      request<SendConversationMessageResult>(`/api/projects/${projectId}/conversations/${conversationId}/messages`, {
+        method: 'POST',
+        body: JSON.stringify({ content }),
+      }),
     archiveGraphConversation: (projectId, conversationId) => request<GraphConversationHistoryItem>(`/api/projects/${projectId}/conversations/${conversationId}/archive`, { method: 'POST' }),
     restoreGraphConversation: (projectId, conversationId) => request<GraphConversationHistoryItem>(`/api/projects/${projectId}/conversations/${conversationId}/restore`, { method: 'POST' }),
     createTaskFromGraphConversation: (projectId, conversationId, input) => request<TaskRecord>(`/api/projects/${projectId}/conversations/${conversationId}/tasks`, { method: 'POST', body: JSON.stringify(input ?? {}) }),
@@ -1472,9 +1672,10 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
   };
 }
 
-function connectZeusEvents(options: DashboardClientOptions, onEvent: (event: ZeusRealtimeEvent) => void): WebSocket {
-  const wsUrl = `${options.baseUrl.replace(/^http/u, 'ws')}/api/events`;
-  const socket = new WebSocket(wsUrl, buildZeusWebSocketProtocol(options.apiToken));
+function connectZeusEvents(options: DashboardClientOptions, onEvent: (event: ZeusRealtimeEvent) => void, eventOptions?: { afterEventId?: string }): WebSocket {
+  const wsUrl = new URL(`${options.baseUrl.replace(/^http/u, 'ws')}/api/events`);
+  if (eventOptions?.afterEventId) wsUrl.searchParams.set('afterEventId', eventOptions.afterEventId);
+  const socket = new WebSocket(wsUrl.toString(), buildZeusWebSocketProtocol(options.apiToken));
   socket.addEventListener('message', (message) => {
     void decodeWebSocketMessage(message.data).then((text) => {
       if (!text) return;

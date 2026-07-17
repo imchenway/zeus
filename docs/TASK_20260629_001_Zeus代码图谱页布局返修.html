@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>故障排查：Zeus 代码图谱页布局退化成拼盘</title>
+  <style>
+    * { box-sizing: border-box; }
+    :root {
+      color-scheme: light;
+      --bg: oklch(98.8% 0.003 255);
+      --paper: oklch(99.5% 0.002 255);
+      --ink: oklch(24% 0.006 255);
+      --muted: oklch(52% 0.006 255);
+      --line: oklch(88% 0.004 255);
+      --line-soft: oklch(93% 0.003 255);
+      --blue: oklch(55% 0.15 252);
+      --blue-soft: oklch(95% 0.014 252);
+      --red: oklch(48% 0.13 28);
+      --red-soft: oklch(96% 0.026 28);
+      --amber: oklch(58% 0.12 72);
+      --amber-soft: oklch(96% 0.026 72);
+      --green: oklch(52% 0.095 145);
+      --green-soft: oklch(96% 0.024 145);
+      --shadow: 0 18px 60px oklch(20% 0.01 255 / 0.08);
+    }
+    body {
+      margin: 0;
+      min-width: 0;
+      background:
+        linear-gradient(90deg, oklch(92% 0.002 255 / 0.34) 1px, transparent 1px),
+        linear-gradient(0deg, oklch(92% 0.002 255 / 0.34) 1px, transparent 1px),
+        radial-gradient(circle at 16px 16px, oklch(86% 0.004 255 / 0.28) 1px, transparent 1.2px),
+        var(--bg);
+      background-size: 32px 32px, 32px 32px, 32px 32px, auto;
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      line-height: 1.5;
+    }
+    .page { inline-size: min(1180px, calc(100vw - 32px)); margin: 0 auto; padding: 22px 0 40px; }
+    header { display: grid; gap: 8px; margin-block-end: 18px; }
+    h1 { font-size: clamp(20px, 2.2vw, 28px); line-height: 1.18; margin: 0; letter-spacing: -0.025em; }
+    .lede { color: var(--muted); font-size: 13px; margin: 0; max-inline-size: 82ch; }
+    .legend { display: flex; flex-wrap: wrap; gap: 8px; margin-block-start: 8px; }
+    .pill { align-items: center; border: 1px solid var(--line); border-radius: 999px; display: inline-flex; font-size: 12px; gap: 6px; padding: 5px 9px; background: oklch(99.5% 0.001 255 / 0.78); }
+    .dot { block-size: 9px; border-radius: 999px; inline-size: 9px; }
+    .dot.red { background: var(--red); } .dot.blue { background: var(--blue); } .dot.green { background: var(--green); } .dot.amber { background: var(--amber); }
+    .canvas { background: oklch(99.6% 0.001 255 / 0.92); border: 1px solid var(--line); border-radius: 18px; box-shadow: var(--shadow); overflow: hidden; }
+    .swim { display: grid; grid-template-columns: 148px minmax(0, 1fr); border-block-end: 1px solid var(--line-soft); min-block-size: 118px; }
+    .swim:last-child { border-block-end: 0; }
+    .lane { align-items: center; background: oklch(97.2% 0.002 255 / 0.72); border-inline-end: 1px solid var(--line-soft); color: var(--muted); display: grid; font-size: 13px; font-weight: 700; padding: 16px; }
+    .flow { align-items: center; display: grid; gap: 12px; grid-template-columns: repeat(4, minmax(0, 1fr)); padding: 18px; position: relative; }
+    .flow.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .flow.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .node, .event, .decision { appearance: none; background: var(--paper); border: 1px solid var(--line); color: var(--ink); cursor: pointer; font: inherit; min-block-size: 86px; padding: 12px; position: relative; text-align: left; transition: transform 120ms ease, border-color 120ms ease, box-shadow 120ms ease; overflow-wrap: anywhere; }
+    .node { border-radius: 14px; }
+    .event { align-items: center; border-radius: 999px; display: grid; justify-items: center; min-block-size: 84px; text-align: center; }
+    .decision { aspect-ratio: 1 / 1; border-radius: 12px; margin: 0 auto; max-inline-size: 112px; min-block-size: 112px; transform: rotate(45deg); }
+    .decision > span { display: grid; gap: 3px; transform: rotate(-45deg); }
+    .node:hover, .event:hover, .decision:hover, .node:focus-visible, .event:focus-visible, .decision:focus-visible { border-color: var(--blue); box-shadow: 0 0 0 3px oklch(62% 0.16 252 / 0.14); outline: none; transform: translateY(-1px); }
+    .decision:hover, .decision:focus-visible { transform: rotate(45deg) translateY(-1px); }
+    .node strong, .event strong, .decision strong { display: block; font-size: 13px; line-height: 1.25; }
+    .node small, .event small, .decision small { color: var(--muted); display: block; font-size: 11px; line-height: 1.35; margin-block-start: 4px; }
+    .bad { background: var(--red-soft); border-color: oklch(82% 0.05 28); }
+    .root { background: var(--amber-soft); border-color: oklch(82% 0.065 72); }
+    .fix { background: var(--blue-soft); border-color: oklch(80% 0.065 252); }
+    .verify { background: var(--green-soft); border-color: oklch(82% 0.055 145); }
+    .arrow { color: var(--muted); font-size: 12px; font-weight: 700; position: absolute; text-align: center; }
+    .a1 { left: 25%; top: 50%; transform: translate(-50%, -50%); } .a2 { left: 50%; top: 50%; transform: translate(-50%, -50%); } .a3 { left: 75%; top: 50%; transform: translate(-50%, -50%); }
+    .evidence { display: grid; gap: 8px; grid-template-columns: repeat(4, minmax(0, 1fr)); padding: 14px 18px 18px; border-block-start: 1px solid var(--line-soft); }
+    .evidence button { background: transparent; border: 1px dashed var(--line); border-radius: 12px; color: var(--muted); cursor: pointer; font: inherit; font-size: 12px; padding: 10px; text-align: left; }
+    .matrix { margin-block-start: 18px; background: oklch(99.3% 0.001 255 / 0.88); border: 1px solid var(--line); border-radius: 16px; overflow: hidden; }
+    table { border-collapse: collapse; inline-size: 100%; font-size: 12px; }
+    th, td { border-block-end: 1px solid var(--line-soft); padding: 10px 12px; text-align: left; vertical-align: top; }
+    th { background: oklch(97.2% 0.002 255); color: var(--muted); font-weight: 700; }
+    tr:last-child td { border-block-end: 0; }
+    .modal-backdrop { align-items: center; background: oklch(18% 0.01 255 / 0.28); display: none; inset: 0; justify-content: center; padding: 24px; position: fixed; z-index: 10; }
+    .modal-backdrop.open { display: flex; }
+    .modal { background: var(--paper); border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--shadow); inline-size: min(560px, 100%); padding: 18px; }
+    .modal h2 { font-size: 17px; margin: 0 0 8px; }
+    .modal p { color: var(--muted); font-size: 13px; margin: 0 0 12px; }
+    .modal dl { display: grid; gap: 8px; margin: 0; }
+    .modal div { display: grid; gap: 2px; }
+    .modal dt { color: var(--muted); font-size: 11px; font-weight: 700; text-transform: uppercase; }
+    .modal dd { margin: 0; font-size: 13px; overflow-wrap: anywhere; }
+    .close { background: var(--blue); border: 0; border-radius: 9px; color: white; cursor: pointer; font: inherit; font-weight: 700; margin-block-start: 14px; padding: 8px 12px; }
+    .close:focus-visible { outline: 3px solid oklch(62% 0.16 252 / 0.24); outline-offset: 2px; }
+    @media (max-width: 820px) {
+      .page { inline-size: min(100vw - 20px, 760px); padding-block-start: 14px; }
+      .swim { grid-template-columns: 1fr; }
+      .lane { border-block-end: 1px solid var(--line-soft); border-inline-end: 0; }
+      .flow, .flow.three, .flow.two, .evidence { grid-template-columns: 1fr; }
+      .arrow { display: none; }
+      .decision { aspect-ratio: auto; max-inline-size: none; min-block-size: 86px; transform: none; }
+      .decision > span { transform: none; }
+      .decision:hover, .decision:focus-visible { transform: translateY(-1px); }
+    }
+    @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; transition-duration: 1ms !important; } }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <header>
+      <h1>故障排查：Zeus 代码图谱页布局退化成拼盘</h1>
+      <p class="lede">结论：截图问题不是配色问题，而是代码页把主图、检查器、运行时预览、工具区和项目动作全部摊在首屏，导致“图谱是主角”的产品契约失效。</p>
+      <div class="legend" aria-label="图例">
+        <span class="pill"><span class="dot red"></span>现象/影响</span>
+        <span class="pill"><span class="dot amber"></span>根因 R</span>
+        <span class="pill"><span class="dot blue"></span>修法 F</span>
+        <span class="pill"><span class="dot green"></span>验证 V</span>
+      </div>
+    </header>
+
+    <section class="canvas" aria-label="故障故事线">
+      <div class="swim">
+        <div class="lane">故障故事线</div>
+        <div class="flow">
+          <button class="event bad" data-title="现象" data-type="用户可见" data-input="真实截图" data-output="首屏像功能垃圾堆" data-risk="用户无法快速理解图谱" data-evidence="截图中主画布空白、节点缩小、右栏和底部工具同时出现。"><strong>开始：截图反馈</strong><small>“一堆垃圾”</small></button>
+          <span class="arrow a1">→</span>
+          <button class="node bad" data-title="影响" data-type="体验退化" data-input="代码页" data-output="图谱主角失效" data-risk="用户需要在多个区域间找主路径" data-evidence="8 个节点缩成小团，底部工具和预览挤占首屏。"><strong>P0 图谱不可读</strong><small>主画布有巨大无效空白</small></button>
+          <span class="arrow a2">→</span>
+          <button class="decision root" data-title="根因 R1" data-type="已由源码确认" data-input="CodeMapView 渲染树" data-output="能力全摊开" data-risk="继续局部调 CSS 会反复回到拼盘" data-evidence="GraphCanvas、GraphRuntimeCanvas、inspector、secondary tools 同屏渲染。"><span><strong>根因 R1</strong><small>信息架构平铺</small></span></button>
+          <span class="arrow a3">→</span>
+          <button class="node fix" data-title="修法 F1" data-type="推荐方案 A" data-input="单主路径工作台" data-output="图谱画布 + 可收纳检查器" data-risk="需要改 App.tsx、styles.css 和测试" data-evidence="将低频 Sigma/React Flow、Mermaid、搜索、问答收进二级工具。"><strong>修法 F1</strong><small>重构为一屏图谱工作台</small></button>
+        </div>
+      </div>
+      <div class="swim">
+        <div class="lane">证据阶梯</div>
+        <div class="flow three">
+          <button class="node" data-title="证据 E1" data-type="截图" data-input="用户附件" data-output="可视化问题成立" data-risk="截图是当前体验证据" data-evidence="主图居中极小、底部区域挤压、右栏卡片空白。"><strong>E1 截图</strong><small>空白、重叠、挤压</small></button>
+          <span class="arrow a1">→</span>
+          <button class="node" data-title="证据 E2" data-type="源码" data-input="apps/desktop/src/renderer/App.tsx" data-output="多区域同屏" data-risk="DOM 结构本身就鼓励平铺" data-evidence="CodeMapView 默认同时渲染 GraphCanvas、GraphRuntimeCanvas、aside、secondary tools。"><strong>E2 源码</strong><small>同屏渲染过多</small></button>
+          <span class="arrow a2">→</span>
+          <button class="node" data-title="证据 E3" data-type="CSS 与测试" data-input="styles.css + vitest baseline" data-output="坏布局被测试固化" data-risk="只跑测试仍会误判为好" data-evidence="baseline 5 passed；CSS 锁定 58vh 画布、170px runtime rail、常驻二级工具。"><strong>E3 测试通过但体验失败</strong><small>5 passed / 95 skipped</small></button>
+        </div>
+      </div>
+      <div class="swim">
+        <div class="lane">假设裁决</div>
+        <div class="flow three">
+          <button class="node root" data-title="成立 H1" data-type="根因" data-input="E1+E2" data-output="功能平铺成立" data-risk="必须结构修复" data-evidence="所有辅助工具同屏，截图中用户无法识别主路径。"><strong>成立：功能平铺</strong><small>R1 高置信</small></button>
+          <button class="node root" data-title="成立 H2" data-type="根因" data-input="E1+CSS" data-output="画布缩放失衡成立" data-risk="需要内容感知 viewBox" data-evidence="小图谱在大 SVG 视窗中以固定节点尺寸绘制。"><strong>成立：缩放失衡</strong><small>R2 高置信</small></button>
+          <button class="node" data-title="排除 H3" data-type="非主要根因" data-input="设计契约" data-output="不是单纯配色问题" data-risk="只换颜色无效" data-evidence="Zeus Design Contract 的冷中性方向没问题，问题是主路径和层级。"><strong>排除：只是配色差</strong><small>不是主因</small></button>
+        </div>
+      </div>
+      <div class="swim">
+        <div class="lane">行动闭环</div>
+        <div class="flow four">
+          <button class="node fix" data-title="F1 单对象栏" data-type="修复动作" data-input="顶部重复区域" data-output="一个紧凑对象栏" data-risk="需避免重复大标题" data-evidence="项目名、路径、视图、计数、主操作合并。"><strong>F1 收敛顶部</strong><small>只留一个对象栏</small></button>
+          <span class="arrow a1">→</span>
+          <button class="node fix" data-title="F2 画布放大" data-type="修复动作" data-input="小图谱节点 bounds" data-output="内容感知 viewBox" data-risk="大图谱不能撑爆窗口" data-evidence="小图谱按边界加 padding；大图谱保留保护。"><strong>F2 图谱可读</strong><small>小图放大，大图保护</small></button>
+          <span class="arrow a2">→</span>
+          <button class="node fix" data-title="F3 收纳低频工具" data-type="修复动作" data-input="运行时预览、搜索、问答、导出" data-output="右侧 tabs / 抽屉 / 更多菜单" data-risk="入口仍需可发现" data-evidence="默认不再占首屏。"><strong>F3 收纳辅助区</strong><small>不再首屏摊开</small></button>
+          <span class="arrow a3">→</span>
+          <button class="node verify" data-title="V1 验证" data-type="测试与交付" data-input="红灯测试 + 视觉 QA + package:mac" data-output="本轮切片完成" data-risk="未跑 package 不声明完成" data-evidence="确认后按 TDD：红灯、实现、聚焦回归、截图 QA、打包门禁。"><strong>验证 V1</strong><small>TDD + 视觉 QA + 打包</small></button>
+        </div>
+      </div>
+      <div class="evidence" aria-label="证据索引">
+        <button data-title="E1 截图证据" data-type="截图" data-input="/var/folders/.../codex-clipboard.png" data-output="布局退化肉眼可见" data-risk="主路径不可读" data-evidence="顶部、右栏、底部被红框标注；中间图谱缩成小团。">E1：用户截图证据</button>
+        <button data-title="E2 源码证据" data-type="源码" data-input="App.tsx" data-output="多区域常驻" data-risk="局部 CSS 无法根治" data-evidence="CodeMapView 同屏渲染 GraphCanvas、GraphRuntimeCanvas、inspector 和 secondary tools。">E2：CodeMapView 渲染树</button>
+        <button data-title="E3 CSS 证据" data-type="样式" data-input="styles.css" data-output="固定尺寸与低频常驻" data-risk="小图谱和底部工具被锁定" data-evidence="graph-canvas-svg 58vh；graph-runtime-canvas max 170px；secondary tools 常驻。">E3：CSS 固化问题</button>
+        <button data-title="E4 Baseline" data-type="测试" data-input="vitest 聚焦 baseline" data-output="5 passed / 95 skipped" data-risk="测试通过不代表体验合格" data-evidence="当前测试只验 DOM/CSS 字面量，没验截图级主路径。">E4：测试没挡住坏体验</button>
+      </div>
+    </section>
+
+    <section class="matrix" aria-label="修复测试矩阵">
+      <table>
+        <thead><tr><th>验证点</th><th>当前失败口径</th><th>目标口径</th></tr></thead>
+        <tbody>
+          <tr><td>默认运行时预览</td><td>Sigma/React Flow 常驻首屏</td><td>默认收纳，用户主动打开才展示</td></tr>
+          <tr><td>小图谱可读性</td><td>节点缩在大画布中间，标签重叠</td><td>内容感知 viewBox，节点与标签可直接阅读</td></tr>
+          <tr><td>二级工具</td><td>底部 tabs 与表单常驻挤压</td><td>进入右侧工具区、抽屉或更多菜单</td></tr>
+          <tr><td>顶部层级</td><td>对象栏、状态条、视图 tabs 重复</td><td>一个对象栏 + 必要分段控件</td></tr>
+          <tr><td>交付门禁</td><td>测试通过可能误报完成</td><td>截图 QA 后退出 Zeus 并跑 package:mac</td></tr>
+        </tbody>
+      </table>
+    </section>
+  </main>
+
+  <div class="modal-backdrop" id="modalBackdrop" aria-hidden="true">
+    <section class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+      <h2 id="modalTitle">节点详情</h2>
+      <p id="modalSummary">补充信息</p>
+      <dl>
+        <div><dt>类型</dt><dd id="modalType"></dd></div>
+        <div><dt>输入</dt><dd id="modalInput"></dd></div>
+        <div><dt>输出</dt><dd id="modalOutput"></dd></div>
+        <div><dt>风险</dt><dd id="modalRisk"></dd></div>
+        <div><dt>证据</dt><dd id="modalEvidence"></dd></div>
+      </dl>
+      <button class="close" id="modalClose" type="button">关闭</button>
+    </section>
+  </div>
+  <script>
+    const backdrop = document.getElementById('modalBackdrop');
+    const title = document.getElementById('modalTitle');
+    const summary = document.getElementById('modalSummary');
+    const type = document.getElementById('modalType');
+    const input = document.getElementById('modalInput');
+    const output = document.getElementById('modalOutput');
+    const risk = document.getElementById('modalRisk');
+    const evidence = document.getElementById('modalEvidence');
+    const close = document.getElementById('modalClose');
+    let lastTrigger = null;
+    function openModal(trigger) {
+      lastTrigger = trigger;
+      title.textContent = trigger.dataset.title || '节点详情';
+      summary.textContent = trigger.dataset.evidence || '补充信息';
+      type.textContent = trigger.dataset.type || '未标注';
+      input.textContent = trigger.dataset.input || '未标注';
+      output.textContent = trigger.dataset.output || '未标注';
+      risk.textContent = trigger.dataset.risk || '未标注';
+      evidence.textContent = trigger.dataset.evidence || '未标注';
+      backdrop.classList.add('open');
+      backdrop.setAttribute('aria-hidden', 'false');
+      close.focus();
+    }
+    function closeModal() {
+      backdrop.classList.remove('open');
+      backdrop.setAttribute('aria-hidden', 'true');
+      if (lastTrigger) lastTrigger.focus();
+    }
+    document.querySelectorAll('[data-title]').forEach((button) => button.addEventListener('click', () => openModal(button)));
+    close.addEventListener('click', closeModal);
+    backdrop.addEventListener('click', (event) => { if (event.target === backdrop) closeModal(); });
+    window.addEventListener('keydown', (event) => { if (event.key === 'Escape' && backdrop.classList.contains('open')) closeModal(); });
+  </script>
+</body>
+</html>

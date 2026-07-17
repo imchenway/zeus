@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>故障排查：Turn 已开始但对话区没有思考中反馈</title>
+  <style>
+    :root{--ink:#102033;--muted:#5a6c80;--paper:#fbfdff;--panel:rgba(255,255,255,.9);--line:#8db3d8;--blue:#1f6fb2;--blue-soft:#e8f3ff;--green:#17785a;--green-soft:#e9f8f2;--amber:#986506;--amber-soft:#fff6de;--red:#a63a3a;--red-soft:#fff0f0;--violet:#6254ad;--violet-soft:#f1efff;--shadow:0 16px 42px rgba(20,57,92,.085);--radius:20px}
+    *{box-sizing:border-box}body{margin:0;color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",Arial,sans-serif;background:radial-gradient(circle at 18% 3%,rgba(214,233,255,.78),transparent 30rem),radial-gradient(circle at 78% 6%,rgba(228,246,239,.8),transparent 28rem),linear-gradient(rgba(93,133,173,.045) 1px,transparent 1px),linear-gradient(90deg,rgba(93,133,173,.045) 1px,transparent 1px),linear-gradient(180deg,#fff 0%,#f7fbff 54%,#fbfdff 100%);background-size:auto,auto,28px 28px,28px 28px,auto;overflow-x:clip}main{width:min(1280px,calc(100vw - 32px));margin:0 auto;padding:20px 0 36px}.task-code{display:inline-block;margin-bottom:10px;color:var(--blue);font-size:12px;font-weight:800;letter-spacing:.06em}h1{font-size:clamp(24px,2.8vw,32px);line-height:1.18;letter-spacing:-.025em;margin:0 0 10px}.summary{max-width:78ch;margin:0 0 14px;color:var(--muted);line-height:1.65}.template-layout{border:1px solid rgba(141,179,216,.48);border-radius:24px;background:rgba(255,255,255,.78);box-shadow:var(--shadow);padding:18px;min-height:520px;gap:12px}.slot{display:grid;grid-template-rows:auto auto;align-content:center;justify-items:center;gap:4px;text-align:center;min-height:66px;border:1px solid rgba(141,179,216,.58);border-radius:16px;background:rgba(255,255,255,.95);padding:10px 12px;overflow-wrap:anywhere}.slot b{display:block;max-width:100%;font-size:13px;line-height:1.3}.slot span{display:block;max-width:100%;margin-top:0;color:var(--muted);font-size:12px;line-height:1.5}.slot code{font-size:11px}.core{border-color:rgba(31,111,178,.56);background:linear-gradient(180deg,#fff,var(--blue-soft))}.support{border-color:rgba(98,84,173,.45);background:linear-gradient(180deg,#fff,var(--violet-soft))}.data{border-color:rgba(23,120,90,.45);background:linear-gradient(180deg,#fff,var(--green-soft))}.risk{border-color:rgba(166,58,58,.42);background:linear-gradient(180deg,#fff,var(--red-soft))}.ops{border-color:rgba(152,101,6,.42);background:linear-gradient(180deg,#fff,var(--amber-soft))}.v-edge{width:2px;min-height:24px;background:var(--blue);justify-self:center;position:relative}.v-edge::after{content:"";position:absolute;bottom:-1px;left:-5px;border-left:6px solid transparent;border-right:6px solid transparent;border-top:9px solid var(--blue)}.boundary,.lifeline{border:1px solid rgba(141,179,216,.42);border-radius:18px;background:rgba(255,255,255,.66);padding:12px;display:grid;gap:10px}.debugging-sequence{display:grid;grid-template-columns:repeat(4,1fr);grid-template-rows:auto 1fr}.debugging-sequence .evidence-steps{grid-column:1/5;grid-template-columns:repeat(5,1fr)}.lifeline{align-content:start}.line-label{color:var(--muted);font-size:11px;font-weight:800;text-align:center}.notes{margin-top:18px;display:grid;gap:18px}.notes h2{font-size:17px;margin:0 0 10px}.notes p,.notes li{color:var(--muted);font-size:13px;line-height:1.65}.notes table{width:100%;border-collapse:collapse;background:rgba(255,255,255,.8);border:1px solid rgba(141,179,216,.42)}.notes th,.notes td{padding:10px 12px;border-bottom:1px solid rgba(141,179,216,.32);text-align:left;vertical-align:top;font-size:12px;line-height:1.5}.notes th{color:var(--ink);background:rgba(232,243,255,.58)}.status{font-weight:800}.status.confirmed{color:var(--red)}.status.ready{color:var(--green)}code{font-family:"SFMono-Regular","SF Mono",Consolas,monospace;overflow-wrap:anywhere}.decision{border-top:1px solid rgba(141,179,216,.42);padding-top:16px}.decision ol{padding-left:22px}.decision strong{color:var(--ink)}
+    @media(max-width:780px){main{width:min(100vw - 20px,760px)}.template-layout{display:grid!important;grid-template-columns:1fr!important;grid-template-rows:auto!important}.template-layout>*{grid-column:auto!important;grid-row:auto!important}.debugging-sequence .evidence-steps{grid-template-columns:1fr}.notes{overflow-x:auto}.v-edge{min-height:28px}}
+    @media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;animation:none!important;transition:none!important}}
+  </style>
+</head>
+<body>
+<main data-diagram-type="fault-debugging" data-template-family="fault-debugging" data-template-id="debugging-sequence" data-template-layout="debugging-sequence">
+  <span class="task-code">TASK_20260715_003</span>
+  <h1 data-slot="title">故障排查：Turn 已开始但对话区没有思考中反馈</h1>
+  <p class="summary" data-slot="summary">结论：请求已经开始，且最终完成。故障发生在 Renderer 的首个 provider item 空窗期：状态机知道 turn 正在运行，但对话记录只渲染真实 item，没有 turn 级近场占位，因此用户在约 113 秒内只能从远处的顶部状态推断运行情况。</p>
+
+  <section class="template-layout debugging-sequence" aria-label="Codex turn 思考状态缺失排障时序图">
+    <div class="lifeline">
+      <div class="slot support" data-slot="debug-actor-1"><b>用户与会话区</b><span>07:38:11 创建会话<br />07:38:30 用户消息入库</span></div>
+      <div class="v-edge"></div>
+      <div class="slot core"><b>发送“？？？”</b><span>消息气泡可见，停止按钮出现</span></div>
+      <div class="v-edge"></div>
+      <div class="slot risk"><b>可见故障</b><span>07:39:46 截图时，对话区没有“正在思考”</span></div>
+    </div>
+
+    <div class="lifeline">
+      <div class="slot data" data-slot="debug-actor-2"><b>Renderer 状态机</b><span><code>conversation.turn.started</code><br />进入 <code>active_prework</code></span></div>
+      <div class="v-edge"></div>
+      <div class="slot data"><b>远处反馈存在</b><span>顶部“正在处理”<br />列表“正在响应”</span></div>
+      <div class="v-edge"></div>
+      <div class="slot risk"><b>根因 R1</b><span><code>ConversationTranscript</code> 只遍历 item；没有 turn 级占位</span></div>
+    </div>
+
+    <div class="lifeline">
+      <div class="slot risk" data-slot="debug-actor-3"><b>Thread item 渲染</b><span>“正在思考”只在空 assistant item 且未完成时渲染</span></div>
+      <div class="v-edge"></div>
+      <div class="slot ops"><b>首 item 空窗</b><span>07:38:30 至 07:40:09<br />尚无 reasoning / assistant item</span></div>
+      <div class="v-edge"></div>
+      <div class="slot support"><b>修法 F1</b><span>仅在视图层根据 active turn 显示近场占位；不伪造 provider item</span></div>
+    </div>
+
+    <div class="lifeline">
+      <div class="slot ops" data-slot="debug-actor-4"><b>Codex app-server / SQLite</b><span>turn 07:38:15 启动<br />07:40:11 完成</span></div>
+      <div class="v-edge"></div>
+      <div class="slot data"><b>E1 运行证据</b><span>reasoning item 07:40:09 才开始；随后 assistant item 到达</span></div>
+      <div class="v-edge"></div>
+      <div class="slot core"><b>验证 V1</b><span>首 item 前显示，真实 item 到达后立即消失；idle / waiting / failed 不显示</span></div>
+    </div>
+
+    <div class="evidence-steps boundary">
+      <div class="slot risk" data-slot="symptom"><b>现象</b><span>请求已运行，但消息附近没有反馈</span></div>
+      <div class="slot data" data-slot="evidence"><b>证据 E1 + E2</b><span>SQLite 时间线 + 源码渲染条件共同成立</span></div>
+      <div class="slot ops" data-slot="hypothesis"><b>候选裁决</b><span>H1 UI 漏渲染：成立<br />H2 provider 未启动：排除</span></div>
+      <div class="slot support" data-slot="fix"><b>计划修法</b><span>turn 级、只读、非持久化的 inline thinking 占位</span></div>
+      <div class="slot core" data-slot="verify"><b>当前状态</b><span>READINESS: READY<br />尚未修改源码</span></div>
+    </div>
+  </section>
+
+  <section class="notes" data-slot="evidence-and-notes">
+    <div>
+      <h2>证据裁决</h2>
+      <table>
+        <thead><tr><th>编号</th><th>真实依据</th><th>裁决</th></tr></thead>
+        <tbody>
+          <tr><td>E1</td><td>SQLite：turn <code>019f64b6-4927-7372-9d48-6d45fe11c28f</code> 于 07:38:15 启动，07:40:11 完成；截图时间 07:39:46 位于 active 区间。</td><td class="status ready">请求确实已开始</td></tr>
+          <tr><td>E2</td><td>SQLite：首个 reasoning item 于 07:40:09 开始，assistant item 于 07:40:10 开始。截图发生在任何非用户 item 出现之前。</td><td class="status confirmed">存在约 113 秒首 item 空窗</td></tr>
+          <tr><td>E3</td><td><code>ConversationTranscript.tsx:24,88-100</code> 只按 <code>itemOrder</code> 渲染；<code>ThreadItemView.tsx:94-96</code> 仅对已存在的空 assistant item 展示“正在思考”。</td><td class="status confirmed">R1 已确认</td></tr>
+          <tr><td>E4</td><td>当前 Codex App 26.707.71524 包仍存在 working dots / loading shimmer，并对 <code>prefers-reduced-motion</code> 关闭动画；既有任务证据也记录 Thinking 首次等待反馈。</td><td>目标行为有可观察依据</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div>
+      <h2>方案裁决与验收</h2>
+      <table>
+        <thead><tr><th>方案</th><th>影响</th><th>结论</th></tr></thead>
+        <tbody>
+          <tr><td>A：视图层 turn 占位</td><td>active turn 且当前 turn 尚无非用户可见 item 时，在消息流末尾显示“Codex 正在思考”；真实 item 到达即移除。不写 DB，不伪造 provider 事件。</td><td class="status ready">推荐，符合 Codex App 可见语义</td></tr>
+          <tr><td>B：服务端合成 assistant item</td><td>会污染真实 thread / turn / item 证据链，重连与持久化还要处理 synthetic identity。</td><td>排除</td></tr>
+          <tr><td>C：只保留顶部状态</td><td>维持当前远场反馈，无法回答“消息是否已开始处理”。</td><td>排除</td></tr>
+        </tbody>
+      </table>
+      <ul>
+        <li>AC1：<code>starting_turn / active_prework / active_final_answer</code> 的首 item 空窗，在最新用户消息下方显示近场状态。</li>
+        <li>AC2：首个真实 reasoning、assistant、tool 或 request 内容出现后，通用占位立即消失，且不与现有空 assistant item 的 thinking 重复。</li>
+        <li>AC3：idle、waiting、failed、interrupting、只读历史会话不显示；审批和用户提问继续使用现有一等交互面。</li>
+        <li>AC4：动态状态使用 <code>role="status"</code> / <code>aria-live="polite"</code>，reduced-motion 下无扫光或位移动画。</li>
+        <li>AC5：补 Renderer 回归测试，并在代码变更后退出 Zeus、正式构建打包、重启真实 App 复测。</li>
+      </ul>
+    </div>
+
+    <div class="decision">
+      <h2>进入 develop 前的唯一动作</h2>
+      <p><strong>待用户确认：</strong>按方案 A 进入 develop。回滚只需撤销 Renderer 占位、样式和测试，无数据库迁移、依赖、协议或服务端状态变更。</p>
+    </div>
+  </section>
+</main>
+</body>
+</html>

@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import WebSocket from 'ws';
 import { describe, expect, it } from 'vitest';
 import { createLocalServer } from '../src/index.js';
-import type { AiRuntimeProcessHandle, AiRuntimeSpawn } from '@zeus/ai-runtime';
+import type { AiRuntimeProcessHandle, AiRuntimeSpawn, CodexAppServerEvent, CodexAppServerManager, CodexTransportState, CodexTurnStartInput, CodexTurnSteerInput } from '@zeus/ai-runtime';
 
 interface ZeusEventMessage {
   id: string;
@@ -15,14 +15,19 @@ interface ZeusEventMessage {
 
 function waitForMessage(socket: WebSocket, predicate: (message: ZeusEventMessage) => boolean, timeoutMs = 2_000): Promise<ZeusEventMessage> {
   return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error('Timed out waiting for Zeus WebSocket event')), timeoutMs);
-    socket.on('message', (raw) => {
+    const timeout = setTimeout(() => {
+      socket.off('message', onMessage);
+      reject(new Error('Timed out waiting for Zeus WebSocket event'));
+    }, timeoutMs);
+    const onMessage = (raw: WebSocket.RawData) => {
       const message = JSON.parse(raw.toString()) as ZeusEventMessage;
       if (predicate(message)) {
         clearTimeout(timeout);
+        socket.off('message', onMessage);
         resolve(message);
       }
-    });
+    };
+    socket.on('message', onMessage);
   });
 }
 
@@ -70,7 +75,379 @@ function createCompletingRuntimeSpawn(): AiRuntimeSpawn {
   };
 }
 
+class EventCodexManager implements CodexAppServerManager {
+  private readonly listeners = new Set<(event: CodexAppServerEvent) => unknown>();
+  private turnSequence = 0;
+  readonly state: CodexTransportState = {
+    type: 'ready',
+    generationId: 'generation-ws',
+    capabilities: { generationId: 'generation-ws', initializedAt: '2026-07-13T07:00:00.000Z', models: [], supportedModels: ['gpt-5.4'] },
+  };
+
+  async ensureReady() {
+    return this.state.capabilities;
+  }
+  async startThread() {
+    return { id: 'thread-ws', turns: [] };
+  }
+  async resumeThread(input: { threadId: string }) {
+    return { id: input.threadId, turns: [] };
+  }
+  async readThread(input: { threadId: string }) {
+    return { id: input.threadId, turns: [] };
+  }
+  async startTurn(input: CodexTurnStartInput) {
+    this.turnSequence += 1;
+    return { id: this.turnSequence === 1 ? 'turn-ws' : `turn-ws-${this.turnSequence}`, threadId: input.threadId, items: [] };
+  }
+  async steerTurn(input: CodexTurnSteerInput) {
+    return { turnId: input.turnId };
+  }
+  async interruptTurn() {}
+  async respondToServerRequest() {}
+  subscribe(listener: (event: CodexAppServerEvent) => unknown) {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+  getState() {
+    return this.state;
+  }
+  async prepareForShutdown() {}
+  async close() {}
+
+  async emit(method: string, params: unknown, sequence: number, requestId?: string | number) {
+    const event: CodexAppServerEvent = {
+      generationId: 'generation-ws',
+      sequence,
+      method,
+      params,
+      receivedAt: `2026-07-13T07:00:${String(sequence).padStart(2, '0')}.000Z`,
+      ...(requestId === undefined ? {} : { requestId }),
+    };
+    await Promise.all([...this.listeners].map((listener) => listener(event)));
+  }
+}
+
 describe('Zeus local event WebSocket', () => {
+  it('broadcasts an authoritative typed queue snapshot after every queue mutation route', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'zeus-native-queue-events-ws-'));
+    const manager = new EventCodexManager();
+    const server = await createLocalServer({ dbPath: join(dir, 'zeus.db'), apiToken: 'test-token', projectRoot: dir, codexAppServerManager: manager });
+    try {
+      await server.listen({ host: '127.0.0.1', port: 0 });
+      const address = server.server.address();
+      if (!address || typeof address === 'string') throw new Error('Expected TCP server address');
+      const baseUrl = `http://127.0.0.1:${address.port}`;
+      const headers = { authorization: 'Bearer test-token', 'content-type': 'application/json' };
+      const project = (await (await fetch(`${baseUrl}/api/projects`, { method: 'POST', headers, body: JSON.stringify({ name: 'Queue WS', localPath: dir }) })).json()) as { id: string };
+      const task = (await (
+        await fetch(`${baseUrl}/api/tasks`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ projectId: project.id, title: 'Queue WS', description: 'queue route events', allowCodeChanges: false, allowTests: false, allowGitCommit: false }),
+        })
+      ).json()) as { id: string };
+      const socket = new WebSocket(`ws://127.0.0.1:${address.port}/api/events`, { headers: { authorization: 'Bearer test-token' } });
+      await waitForMessage(socket, (message) => message.type === 'server.connected');
+      const created = (await (
+        await fetch(`${baseUrl}/api/tasks/${task.id}/conversations`, {
+          method: 'POST',
+          headers: { ...headers, 'idempotency-key': 'queue-ws-parent' },
+          body: JSON.stringify({ mode: 'create', content: 'active parent' }),
+        })
+      ).json()) as { conversation: { id: string } };
+      const conversationUrl = `${baseUrl}/api/projects/${project.id}/conversations/${created.conversation.id}`;
+      const queue = async (key: string, content: string) => {
+        const changed = waitForMessage(socket, (message) => message.type === 'conversation.queue.changed');
+        const response = await fetch(`${conversationUrl}/messages`, {
+          method: 'POST',
+          headers: { ...headers, 'idempotency-key': key },
+          body: JSON.stringify({ content, delivery: 'queue' }),
+        });
+        expect(response.status).toBe(202);
+        await changed;
+        return (await response.json()) as { submission: { id: string } };
+      };
+      const first = await queue('queue-ws-first', 'first');
+      const second = await queue('queue-ws-second', 'second');
+      const third = await queue('queue-ws-third', 'third');
+
+      const editedEvent = waitForMessage(socket, (message) => message.type === 'conversation.queue.changed');
+      const edited = await fetch(`${conversationUrl}/queue/${first.submission.id}`, { method: 'PATCH', headers, body: JSON.stringify({ content: 'first edited' }) });
+      expect(edited.status).toBe(200);
+      await expect(editedEvent).resolves.toMatchObject({
+        payload: {
+          projectId: project.id,
+          conversationId: created.conversation.id,
+          generationId: expect.stringMatching(/^zeus-local-/u),
+          sequence: expect.any(Number),
+          queue: { submissions: expect.arrayContaining([expect.objectContaining({ id: first.submission.id, content: 'first edited' })]) },
+        },
+      });
+
+      const reorderedEvent = waitForMessage(socket, (message) => message.type === 'conversation.queue.changed');
+      const reordered = await fetch(`${conversationUrl}/queue/reorder`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ orderedSubmissionIds: [third.submission.id, first.submission.id, second.submission.id] }),
+      });
+      expect(reordered.status).toBe(200);
+      expect(((await reorderedEvent).payload.queue as { submissions: Array<{ id: string }> }).submissions.map((submission) => submission.id)).toEqual([third.submission.id, first.submission.id, second.submission.id]);
+
+      const deletedEvent = waitForMessage(socket, (message) => message.type === 'conversation.queue.changed');
+      const deleted = await fetch(`${conversationUrl}/queue/${second.submission.id}`, { method: 'DELETE', headers: { authorization: 'Bearer test-token' } });
+      expect(deleted.status).toBe(200);
+      expect(((await deletedEvent).payload.queue as { submissions: Array<{ id: string }> }).submissions.map((submission) => submission.id)).toEqual([third.submission.id, first.submission.id]);
+
+      const sentEvent = waitForMessage(socket, (message) => message.type === 'conversation.queue.changed');
+      const sent = await fetch(`${conversationUrl}/queue/${third.submission.id}/send-now`, { method: 'POST', headers: { authorization: 'Bearer test-token' } });
+      expect(sent.status).toBe(202);
+      expect(((await sentEvent).payload.queue as { submissions: Array<{ id: string }> }).submissions.map((submission) => submission.id)).toEqual([first.submission.id]);
+
+      const interrupted = await fetch(`${conversationUrl}/turns/turn-ws/interrupt`, { method: 'POST', headers: { authorization: 'Bearer test-token' } });
+      expect(interrupted.status).toBe(202);
+      await manager.emit('turn/completed', { threadId: 'thread-ws', turn: { id: 'turn-ws', status: 'interrupted' } }, 40);
+      const resumedEvent = waitForMessage(socket, (message) => message.type === 'conversation.queue.changed');
+      const resumed = await fetch(`${conversationUrl}/queue/resume`, { method: 'POST', headers: { authorization: 'Bearer test-token' } });
+      expect(resumed.status).toBe(202);
+      await expect(resumedEvent).resolves.toMatchObject({
+        payload: {
+          projectId: project.id,
+          conversationId: created.conversation.id,
+          generationId: expect.stringMatching(/^zeus-local-/u),
+          sequence: expect.any(Number),
+          queue: { state: { type: 'active', turnId: 'turn-ws-2' }, submissions: [] },
+        },
+      });
+      socket.close();
+    } finally {
+      await server.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('uses a distinct local event generation for every Fastify server instance', async () => {
+    const captureLocalGeneration = async (dir: string, key: string) => {
+      const manager = new EventCodexManager();
+      const server = await createLocalServer({ dbPath: join(dir, 'zeus.db'), apiToken: 'test-token', projectRoot: dir, codexAppServerManager: manager });
+      try {
+        await server.listen({ host: '127.0.0.1', port: 0 });
+        const address = server.server.address();
+        if (!address || typeof address === 'string') throw new Error('Expected TCP server address');
+        const baseUrl = `http://127.0.0.1:${address.port}`;
+        const headers = { authorization: 'Bearer test-token', 'content-type': 'application/json' };
+        const project = (await (await fetch(`${baseUrl}/api/projects`, { method: 'POST', headers, body: JSON.stringify({ name: key, localPath: dir }) })).json()) as { id: string };
+        const task = (await (
+          await fetch(`${baseUrl}/api/tasks`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({ projectId: project.id, title: key, description: key, allowCodeChanges: false, allowTests: false, allowGitCommit: false }),
+          })
+        ).json()) as { id: string };
+        const socket = new WebSocket(`ws://127.0.0.1:${address.port}/api/events`, { headers: { authorization: 'Bearer test-token' } });
+        await waitForMessage(socket, (message) => message.type === 'server.connected');
+        const transportChanged = waitForMessage(socket, (message) => message.type === 'conversation.transport.changed');
+        const threadChanged = waitForMessage(socket, (message) => message.type === 'conversation.thread.changed');
+        const turnStarted = waitForMessage(socket, (message) => message.type === 'conversation.turn.started');
+        const response = await fetch(`${baseUrl}/api/tasks/${task.id}/conversations`, {
+          method: 'POST',
+          headers: { ...headers, 'idempotency-key': key },
+          body: JSON.stringify({ mode: 'create', content: key }),
+        });
+        expect(response.status).toBe(202);
+        const events = await Promise.all([transportChanged, threadChanged, turnStarted]);
+        socket.close();
+        return {
+          generationId: events[0]!.payload.generationId,
+          sequences: events.map((event) => event.payload.sequence),
+        };
+      } finally {
+        await server.close();
+      }
+    };
+
+    const firstDir = await mkdtemp(join(tmpdir(), 'zeus-native-local-generation-a-'));
+    const secondDir = await mkdtemp(join(tmpdir(), 'zeus-native-local-generation-b-'));
+    try {
+      const first = await captureLocalGeneration(firstDir, 'local-generation-a');
+      const second = await captureLocalGeneration(secondDir, 'local-generation-b');
+      expect(first.generationId).toMatch(/^zeus-local-/u);
+      expect(second.generationId).toMatch(/^zeus-local-/u);
+      expect(second.generationId).not.toBe(first.generationId);
+      expect(first.sequences).toEqual([1, 2, 3]);
+      expect(second.sequences).toEqual([1, 2, 3]);
+    } finally {
+      await Promise.all([rm(firstDir, { recursive: true, force: true }), rm(secondDir, { recursive: true, force: true })]);
+    }
+  });
+
+  it('streams typed native conversation events and exposes a reconnect-authoritative snapshot', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'zeus-native-events-ws-'));
+    const manager = new EventCodexManager();
+    const server = await createLocalServer({
+      dbPath: join(dir, 'zeus.db'),
+      apiToken: 'test-token',
+      projectRoot: dir,
+      codexAppServerManager: manager,
+    });
+    try {
+      await server.listen({ host: '127.0.0.1', port: 0 });
+      const address = server.server.address();
+      if (!address || typeof address === 'string') throw new Error('Expected TCP server address');
+      const baseUrl = `http://127.0.0.1:${address.port}`;
+      const headers = { authorization: 'Bearer test-token', 'content-type': 'application/json' };
+      const project = (await (await fetch(`${baseUrl}/api/projects`, { method: 'POST', headers, body: JSON.stringify({ name: 'Native WS', localPath: dir }) })).json()) as { id: string };
+      const task = (await (
+        await fetch(`${baseUrl}/api/tasks`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ projectId: project.id, title: 'Native WS', description: 'typed events', allowCodeChanges: false, allowTests: false, allowGitCommit: false }),
+        })
+      ).json()) as { id: string };
+      const socket = new WebSocket(`ws://127.0.0.1:${address.port}/api/events`, { headers: { authorization: 'Bearer test-token' } });
+      await waitForMessage(socket, (message) => message.type === 'server.connected');
+
+      const transportChanged = waitForMessage(socket, (message) => message.type === 'conversation.transport.changed');
+      const threadChanged = waitForMessage(socket, (message) => message.type === 'conversation.thread.changed');
+      const turnStarted = waitForMessage(socket, (message) => message.type === 'conversation.turn.started');
+      const createResponse = await fetch(`${baseUrl}/api/tasks/${task.id}/conversations`, {
+        method: 'POST',
+        headers: { ...headers, 'idempotency-key': 'ws-create' },
+        body: JSON.stringify({ mode: 'create', content: 'start typed stream' }),
+      });
+      expect(createResponse.status).toBe(202);
+      const created = (await createResponse.json()) as { conversation: { id: string } };
+      await expect(transportChanged).resolves.toMatchObject({ payload: { projectId: project.id, conversationId: created.conversation.id, generationId: expect.stringMatching(/^zeus-local-/u) } });
+      await expect(threadChanged).resolves.toMatchObject({ payload: { projectId: project.id, conversationId: created.conversation.id, threadId: 'thread-ws', generationId: expect.stringMatching(/^zeus-local-/u) } });
+      await expect(turnStarted).resolves.toMatchObject({
+        type: 'conversation.turn.started',
+        payload: {
+          projectId: project.id,
+          conversationId: created.conversation.id,
+          threadId: 'thread-ws',
+          turnId: 'turn-ws',
+          generationId: expect.stringMatching(/^zeus-local-/u),
+          sequence: expect.any(Number),
+        },
+      });
+
+      const queueChanged = waitForMessage(socket, (message) => message.type === 'conversation.queue.changed');
+      const queuedResponse = await fetch(`${baseUrl}/api/projects/${project.id}/conversations/${created.conversation.id}/messages`, {
+        method: 'POST',
+        headers: { ...headers, 'idempotency-key': 'ws-queued' },
+        body: JSON.stringify({ content: 'queued from websocket test', delivery: 'queue' }),
+      });
+      expect(queuedResponse.status).toBe(202);
+      await expect(queueChanged).resolves.toMatchObject({
+        payload: { projectId: project.id, conversationId: created.conversation.id, generationId: expect.stringMatching(/^zeus-local-/u), queue: { submissions: expect.any(Array) } },
+      });
+
+      const itemStarted = waitForMessage(socket, (message) => message.type === 'conversation.item.started');
+      await manager.emit('item/started', { threadId: 'thread-ws', turnId: 'turn-ws', item: { id: 'item-ws', type: 'agentMessage', status: 'in_progress', content: [{ type: 'output_text', text: '' }] } }, 9);
+      await expect(itemStarted).resolves.toMatchObject({
+        payload: {
+          projectId: project.id,
+          conversationId: created.conversation.id,
+          threadId: 'thread-ws',
+          turnId: 'turn-ws',
+          itemId: 'item-ws',
+          itemType: 'agentMessage',
+          itemPayload: { id: 'item-ws', type: 'agentMessage', status: 'in_progress', content: [{ type: 'output_text', text: '' }] },
+          generationId: 'generation-ws',
+          sequence: 9,
+        },
+      });
+
+      const delta = waitForMessage(socket, (message) => message.type === 'conversation.item.delta');
+      await manager.emit('item/agentMessage/delta', { threadId: 'thread-ws', turnId: 'turn-ws', itemId: 'item-ws', delta: 'draft' }, 10);
+      await expect(delta).resolves.toMatchObject({
+        payload: {
+          projectId: project.id,
+          conversationId: created.conversation.id,
+          threadId: 'thread-ws',
+          turnId: 'turn-ws',
+          itemId: 'item-ws',
+          itemType: 'agentMessage',
+          itemPayload: { threadId: 'thread-ws', turnId: 'turn-ws', itemId: 'item-ws', delta: 'draft' },
+          generationId: 'generation-ws',
+          sequence: 10,
+        },
+      });
+
+      const completed = waitForMessage(socket, (message) => message.type === 'conversation.item.completed');
+      await manager.emit(
+        'item/completed',
+        { threadId: 'thread-ws', turnId: 'turn-ws', item: { id: 'item-ws', type: 'agentMessage', status: 'completed', text: 'final', phase: 'final_answer', citations: [{ url: 'https://example.test' }] } },
+        11,
+      );
+      await expect(completed).resolves.toMatchObject({
+        payload: {
+          itemId: 'item-ws',
+          itemType: 'agentMessage',
+          itemPayload: {
+            id: 'item-ws',
+            type: 'agentMessage',
+            status: 'completed',
+            text: 'final',
+            phase: 'final_answer',
+            citations: [{ url: 'https://example.test' }],
+          },
+          generationId: 'generation-ws',
+          sequence: 11,
+        },
+      });
+
+      const settingsChanged = waitForMessage(socket, (message) => message.type === 'conversation.settings.changed');
+      const tokenUsageChanged = waitForMessage(socket, (message) => message.type === 'conversation.tokenUsage.changed');
+      const rateLimitsChanged = waitForMessage(socket, (message) => message.type === 'conversation.rateLimits.changed');
+      const mcpStartupChanged = waitForMessage(socket, (message) => message.type === 'conversation.mcpStartup.changed');
+      await manager.emit('thread/settings/updated', { threadId: 'thread-ws', model: 'gpt-5.4', effort: 'high' }, 12);
+      await manager.emit('thread/tokenUsage/updated', { threadId: 'thread-ws', tokenUsage: { inputTokens: 5, outputTokens: 3, totalTokens: 8 } }, 13);
+      await manager.emit('account/rateLimits/updated', { rateLimits: { primary: { remaining: 66 } } }, 14);
+      await manager.emit('mcpServer/startupStatus/updated', { statuses: { filesystem: 'ready' } }, 15);
+      await expect(settingsChanged).resolves.toMatchObject({ payload: { conversationId: created.conversation.id, generationId: 'generation-ws', sequence: 12 } });
+      await expect(tokenUsageChanged).resolves.toMatchObject({ payload: { conversationId: created.conversation.id, generationId: 'generation-ws', sequence: 13 } });
+      await expect(rateLimitsChanged).resolves.toMatchObject({ payload: { conversationId: created.conversation.id, generationId: 'generation-ws', sequence: 14 } });
+      await expect(mcpStartupChanged).resolves.toMatchObject({ payload: { conversationId: created.conversation.id, generationId: 'generation-ws', sequence: 15 } });
+
+      const requestCreated = waitForMessage(socket, (message) => message.type === 'conversation.request.created');
+      await manager.emit('item/commandExecution/requestApproval', { threadId: 'thread-ws', turnId: 'turn-ws', command: '/bin/pwd' }, 16, 'request-ws');
+      const createdRequestEvent = await requestCreated;
+      expect(createdRequestEvent).toMatchObject({
+        payload: { projectId: project.id, conversationId: created.conversation.id, turnId: 'turn-ws', generationId: 'generation-ws', sequence: 16, requestKind: 'command' },
+      });
+      const requestId = createdRequestEvent.payload.requestId as string;
+      const requestResolved = waitForMessage(socket, (message) => message.type === 'conversation.request.resolved');
+      const respond = await fetch(`${baseUrl}/api/projects/${project.id}/conversations/${created.conversation.id}/requests/${requestId}/respond`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ type: 'command', decision: 'decline' }),
+      });
+      expect(respond.status).toBe(202);
+      await expect(requestResolved).resolves.toMatchObject({
+        payload: { projectId: project.id, conversationId: created.conversation.id, requestId, generationId: expect.stringMatching(/^zeus-local-/u), sequence: expect.any(Number) },
+      });
+
+      const turnCompleted = waitForMessage(socket, (message) => message.type === 'conversation.turn.completed');
+      await manager.emit('turn/completed', { threadId: 'thread-ws', turn: { id: 'turn-ws', status: 'completed' } }, 17);
+      await expect(turnCompleted).resolves.toMatchObject({
+        payload: { projectId: project.id, conversationId: created.conversation.id, threadId: 'thread-ws', turnId: 'turn-ws', generationId: 'generation-ws', sequence: 17 },
+      });
+
+      socket.close();
+      const snapshot = (await (await fetch(`${baseUrl}/api/projects/${project.id}/conversations/${created.conversation.id}`, { headers: { authorization: 'Bearer test-token' } })).json()) as Record<string, unknown>;
+      expect(snapshot).toMatchObject({
+        providerSettings: { model: 'gpt-5.4', effort: 'high' },
+        tokenUsage: { totalTokens: 8 },
+        rateLimits: { value: { primary: { remaining: 66 } } },
+        mcpStartup: { value: { filesystem: 'ready' } },
+      });
+    } finally {
+      await server.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it('streams authenticated local events without exposing the API token in payloads', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'zeus-events-ws-'));
     const server = await createLocalServer({
@@ -181,7 +558,7 @@ describe('Zeus local event WebSocket', () => {
         body: JSON.stringify({
           projectId: 'project-1',
           taskId: 'task-1',
-          command: 'codex',
+          command: 'claude',
           args: ['--version'],
           cwd: '/Users/david/hypha/zeus',
         }),
@@ -195,7 +572,7 @@ describe('Zeus local event WebSocket', () => {
           sessionId: session.id,
           projectId: 'project-1',
           taskId: 'task-1',
-          command: 'codex',
+          command: 'claude',
           status: 'running',
         },
       });
@@ -252,7 +629,7 @@ describe('Zeus local event WebSocket', () => {
         body: JSON.stringify({
           projectId: 'project-1',
           taskId: 'task-1',
-          command: 'codex',
+          command: 'claude',
           args: ['--version'],
           cwd: '/Users/david/hypha/zeus',
         }),

@@ -201,19 +201,20 @@ function buildCliGraphViews(
   edgeIds: string[];
 }> {
   const allNodeIds = nodes.map((node) => String(node.id));
-  const allEdgeIds = edges.map((edge) => String(edge.id));
+  const architectureNodeIds = allNodeIds.slice(0, 250);
   const moduleNodeIds = pickCliNodeIds(nodes, ['package', 'file', 'class', 'interface', 'type']);
   const tableNodeIds = nodes.filter((node) => ['table', 'column'].includes(String(node.node_type)) || String(node.source_ref).endsWith('.sql') || cliMetadataLanguage(node) === 'sql').map((node) => String(node.id));
-  const detailNodeIds = pickCliNodeIds(nodes, ['file', 'function', 'class', 'interface', 'type']);
-  const apiNodeIds = pickCliApiSequenceNodeIds(nodes);
-  const flowNodeIds = pickCliNodeIds(nodes, ['package', 'file', 'function']);
-  const methodNodeIds = pickCliMethodLogicNodeIds(nodes);
+  const detailNodeIds = pickCliNodeIds(nodes, ['file', 'function', 'class', 'interface', 'type']).slice(0, 250);
+  const apiNodeIds = pickCliApiSequenceNodeIds(nodes).slice(0, 1000);
+  const flowNodeIds = pickCliNodeIds(nodes, ['package', 'file', 'function']).slice(0, 220);
+  const methodNodeIds = pickCliMethodLogicNodeIds(nodes).slice(0, 5000);
   return [
     {
       viewType: 'architecture',
       title: `${projectName} 系统架构图`,
-      nodeIds: allNodeIds.slice(0, 250),
-      edgeIds: allEdgeIds.slice(0, 500),
+      nodeIds: architectureNodeIds,
+      // CLI 导入路径也按最终可见节点裁剪边，避免生成会让桌面画布崩溃的悬空边。
+      edgeIds: pickCliEdgeIds(edges, architectureNodeIds).slice(0, 500),
     },
     {
       viewType: 'module',
@@ -230,25 +231,25 @@ function buildCliGraphViews(
     {
       viewType: 'module_detail',
       title: `${projectName} 模块详情图`,
-      nodeIds: detailNodeIds.slice(0, 250),
+      nodeIds: detailNodeIds,
       edgeIds: pickCliEdgeIds(edges, detailNodeIds).slice(0, 500),
     },
     {
       viewType: 'api_sequence',
       title: `${projectName} 接口时序图`,
-      nodeIds: apiNodeIds.slice(0, 1000),
+      nodeIds: apiNodeIds,
       edgeIds: pickCliApiSequenceEdgeIds(edges, apiNodeIds).slice(0, 5000),
     },
     {
       viewType: 'module_flow',
       title: `${projectName} 模块流程图`,
-      nodeIds: flowNodeIds.slice(0, 220),
+      nodeIds: flowNodeIds,
       edgeIds: pickCliEdgeIds(edges, flowNodeIds).slice(0, 440),
     },
     {
       viewType: 'method_logic',
       title: `${projectName} 方法逻辑图`,
-      nodeIds: methodNodeIds.slice(0, 5000),
+      nodeIds: methodNodeIds,
       edgeIds: pickCliMethodLogicEdgeIds(edges, methodNodeIds).slice(0, 20000),
     },
   ];

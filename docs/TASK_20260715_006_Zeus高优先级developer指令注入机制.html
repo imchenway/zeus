@@ -1,0 +1,408 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>代码时序：Zeus 与 Codex App 的 developer 指令机制对比</title>
+  <style>
+    :root {
+      --ink:#102033; --muted:#596b7e; --paper:#f7fbff; --panel:rgba(255,255,255,.92);
+      --line:#8db3d8; --blue:#1f6fb2; --blue-soft:#e8f3ff; --green:#17785a;
+      --green-soft:#e9f8f2; --amber:#986506; --amber-soft:#fff6de; --red:#a63a3a;
+      --red-soft:#fff0f0; --violet:#6254ad; --violet-soft:#f1efff;
+      --shadow:0 18px 50px rgba(20,57,92,.09); --radius:22px;
+    }
+    * { box-sizing:border-box; }
+    html { scroll-behavior:smooth; }
+    body {
+      margin:0; color:var(--ink); overflow-x:hidden;
+      font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",Arial,sans-serif;
+      background:
+        radial-gradient(circle at 12% 2%,rgba(210,231,255,.82),transparent 30rem),
+        radial-gradient(circle at 88% 5%,rgba(225,247,238,.86),transparent 28rem),
+        linear-gradient(rgba(93,133,173,.045) 1px,transparent 1px),
+        linear-gradient(90deg,rgba(93,133,173,.045) 1px,transparent 1px),
+        linear-gradient(180deg,#fff 0%,var(--paper) 55%,#fbfdff 100%);
+      background-size:auto,auto,28px 28px,28px 28px,auto;
+    }
+    a { color:var(--blue); text-underline-offset:3px; }
+    code {
+      font-family:"SFMono-Regular",Consolas,"Liberation Mono",monospace;
+      font-size:.91em; background:#eef4fa; border:1px solid #dce8f2;
+      border-radius:7px; padding:.08rem .34rem; overflow-wrap:anywhere;
+    }
+    main { width:min(1240px,calc(100vw - 32px)); margin:0 auto; padding:26px 0 52px; }
+    .eyebrow { color:var(--blue); font-size:12px; font-weight:850; letter-spacing:.12em; }
+    h1 { margin:8px 0 10px; max-width:970px; font-size:clamp(28px,4vw,46px); line-height:1.12; letter-spacing:-.035em; overflow-wrap:anywhere; }
+    .summary { margin:0; max-width:940px; color:var(--muted); font-size:16px; line-height:1.75; overflow-wrap:anywhere; }
+    .hero-answer {
+      margin:22px 0 18px; padding:18px 20px; border:1px solid rgba(31,111,178,.35);
+      border-radius:20px; background:linear-gradient(135deg,#fff,var(--blue-soft)); box-shadow:var(--shadow);
+      font-size:clamp(17px,2vw,21px); line-height:1.65; font-weight:720; overflow-wrap:anywhere;
+    }
+    .hero-answer em { color:var(--blue); font-style:normal; }
+    .section {
+      margin-top:18px; border:1px solid rgba(141,179,216,.48); border-radius:24px;
+      background:var(--panel); box-shadow:var(--shadow); padding:18px;
+    }
+    .section-head { display:flex; align-items:baseline; justify-content:space-between; gap:14px; margin-bottom:14px; }
+    h2 { margin:0; font-size:20px; letter-spacing:-.015em; }
+    .section-head small { color:var(--muted); font-weight:720; }
+    .template-layout {
+      border:1px solid rgba(141,179,216,.42); border-radius:20px;
+      background:rgba(255,255,255,.7); padding:14px; min-height:360px; gap:10px;
+    }
+    .participant-timeline { display:grid; grid-template-columns:repeat(4,1fr); grid-template-rows:auto 1fr; }
+    .lifeline { position:relative; display:grid; grid-template-rows:auto 42px; justify-items:stretch; min-width:0; }
+    .v-edge { width:2px; height:42px; background:linear-gradient(var(--line),rgba(141,179,216,.08)); justify-self:center; }
+    .slot {
+      min-height:62px; padding:10px 12px; border:1px solid rgba(141,179,216,.58);
+      border-radius:15px; background:#fff; text-align:center; overflow-wrap:anywhere;
+    }
+    .slot b { display:block; font-size:13px; line-height:1.25; }
+    .slot span { display:block; margin-top:4px; color:var(--muted); font-size:12px; line-height:1.45; }
+    .support { border-color:rgba(98,84,173,.43); background:linear-gradient(180deg,#fff,var(--violet-soft)); }
+    .core { border-color:rgba(31,111,178,.5); background:linear-gradient(180deg,#fff,var(--blue-soft)); }
+    .data { border-color:rgba(23,120,90,.43); background:linear-gradient(180deg,#fff,var(--green-soft)); }
+    .ops { border-color:rgba(152,101,6,.43); background:linear-gradient(180deg,#fff,var(--amber-soft)); }
+    .message-stack { grid-column:1/5; display:grid; gap:9px; padding:2px 0 0; min-width:0; }
+    .step {
+      position:relative; display:grid; grid-template-columns:62px 1fr 150px; gap:12px; align-items:start;
+      border:1px solid rgba(141,179,216,.38); border-radius:16px; padding:12px 14px;
+      background:rgba(255,255,255,.92);
+    }
+    .step::before { content:""; position:absolute; top:-10px; left:30px; width:2px; height:10px; background:var(--line); }
+    .step:first-child::before { display:none; }
+    .step-no {
+      display:grid; place-items:center; width:42px; height:42px; border-radius:50%;
+      color:#fff; background:var(--blue); font-weight:850; box-shadow:0 6px 18px rgba(31,111,178,.22);
+    }
+    .step h3 { margin:0 0 5px; font-size:15px; }
+    .step p { margin:0; color:var(--muted); font-size:13px; line-height:1.6; }
+    .step > div { min-width:0; }
+    .step h3,.step p,.route { overflow-wrap:anywhere; }
+    .route { align-self:center; min-width:0; color:var(--blue); font-size:12px; font-weight:820; text-align:right; }
+    .route::after { content:"  →"; }
+    .step.persist { border-color:rgba(98,84,173,.35); background:linear-gradient(90deg,#fff,var(--violet-soft)); }
+    .step.priority { border-color:rgba(23,120,90,.35); background:linear-gradient(90deg,#fff,var(--green-soft)); }
+    .step.split { border-color:rgba(166,58,58,.32); background:linear-gradient(90deg,#fff,var(--red-soft)); }
+    .two-col { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:14px; }
+    .explain {
+      min-width:0; max-width:100%; border:1px solid rgba(141,179,216,.4); border-radius:18px; background:#fff; padding:16px;
+    }
+    .explain h3 { margin:0 0 9px; font-size:16px; }
+    .explain p { margin:0; color:var(--muted); line-height:1.65; font-size:14px; }
+    .authority { display:grid; gap:8px; margin-top:13px; }
+    .authority-row {
+      display:grid; grid-template-columns:120px 1fr; gap:12px; align-items:center;
+      border-radius:13px; padding:10px 12px; border:1px solid rgba(141,179,216,.36);
+    }
+    .authority-row b { font-size:13px; }
+    .authority-row span { color:var(--muted); font-size:13px; line-height:1.5; }
+    .authority-row.host { background:var(--violet-soft); }
+    .authority-row.dev { background:var(--blue-soft); }
+    .authority-row.user { background:#f7fafc; }
+    .boundary-note {
+      margin-top:12px; padding:12px 14px; border-left:4px solid var(--amber);
+      border-radius:10px; background:var(--amber-soft); color:#5f4b23; font-size:13px; line-height:1.6;
+    }
+    pre {
+      margin:12px 0 0; padding:14px; overflow:auto; border-radius:14px;
+      color:#dcecff; background:#102033; font:12px/1.6 "SFMono-Regular",Consolas,monospace;
+    }
+    .compare { width:100%; border-collapse:separate; border-spacing:0; overflow:hidden; border:1px solid #dce7f0; border-radius:16px; }
+    .compare th,.compare td { padding:11px 12px; text-align:left; vertical-align:top; border-bottom:1px solid #e4edf4; font-size:13px; line-height:1.55; }
+    .compare th { color:#385269; background:#f1f6fa; font-size:12px; letter-spacing:.02em; }
+    .compare tr:last-child td { border-bottom:0; }
+    .yes { color:var(--green); font-weight:800; }
+    .no { color:var(--red); font-weight:800; }
+    .evidence-list { display:grid; gap:9px; }
+    .evidence {
+      display:grid; grid-template-columns:44px minmax(220px,.9fr) 1.6fr; gap:12px; align-items:start;
+      padding:11px 12px; border:1px solid #dfe9f1; border-radius:14px; background:#fff;
+    }
+    .tag { display:inline-grid; place-items:center; height:28px; border-radius:999px; background:var(--blue-soft); color:var(--blue); font-size:11px; font-weight:900; }
+    .path { font-size:12px; line-height:1.55; overflow-wrap:anywhere; }
+    .evidence p { margin:0; color:var(--muted); font-size:13px; line-height:1.55; }
+    .takeaway {
+      display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin-top:14px;
+    }
+    .takeaway div { border-radius:15px; padding:13px; border:1px solid rgba(141,179,216,.36); background:#fff; }
+    .takeaway b { display:block; font-size:13px; margin-bottom:5px; }
+    .takeaway span { color:var(--muted); font-size:12px; line-height:1.5; }
+    .shared-protocol {
+      display:grid; grid-template-columns:1fr auto 1fr auto 1fr; gap:10px; align-items:center;
+      margin-bottom:14px; padding:14px; border:1px solid rgba(31,111,178,.35);
+      border-radius:18px; background:linear-gradient(135deg,#fff,var(--blue-soft));
+    }
+    .shared-node {
+      min-width:0; padding:11px 12px; border:1px solid rgba(141,179,216,.52);
+      border-radius:14px; background:#fff; text-align:center;
+    }
+    .shared-node b { display:block; font-size:13px; }
+    .shared-node span { display:block; margin-top:4px; color:var(--muted); font-size:12px; line-height:1.45; }
+    .shared-arrow { color:var(--blue); font-weight:900; }
+    .lifecycle-grid { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+    .lifecycle-lane {
+      min-width:0; border:1px solid rgba(141,179,216,.42); border-radius:18px;
+      overflow:hidden; background:#fff;
+    }
+    .lane-head { padding:14px 15px; border-bottom:1px solid rgba(141,179,216,.35); }
+    .lane-head b { display:block; font-size:16px; }
+    .lane-head span { display:block; margin-top:5px; color:var(--muted); font-size:12px; line-height:1.5; }
+    .lane-head.app { background:linear-gradient(135deg,#fff,var(--green-soft)); }
+    .lane-head.zeus { background:linear-gradient(135deg,#fff,var(--red-soft)); }
+    .lane-flow { display:grid; gap:0; padding:12px; counter-reset:lane-step; }
+    .lane-step {
+      position:relative; padding:10px 10px 10px 44px; border-radius:13px;
+      color:var(--muted); font-size:12px; line-height:1.55;
+    }
+    .lane-step::before {
+      counter-increment:lane-step; content:counter(lane-step); position:absolute; left:8px; top:10px;
+      display:grid; place-items:center; width:24px; height:24px; border-radius:50%;
+      color:#fff; background:var(--blue); font-size:11px; font-weight:900;
+    }
+    .lane-step + .lane-step::after {
+      content:""; position:absolute; left:19px; top:-5px; width:2px; height:14px; background:var(--line);
+    }
+    .lane-step b { color:var(--ink); }
+    .lane-result { margin:2px 12px 12px; padding:10px 12px; border-radius:12px; font-size:12px; line-height:1.55; }
+    .lane-result.good { color:#175d49; background:var(--green-soft); border:1px solid rgba(23,120,90,.26); }
+    .lane-result.risk { color:#7f3030; background:var(--red-soft); border:1px solid rgba(166,58,58,.24); }
+    .status { margin-top:18px; color:var(--muted); font-size:12px; line-height:1.6; }
+    @media (max-width:800px) {
+      main { width:min(100vw - 20px,760px); padding-top:18px; }
+      .participant-timeline { grid-template-columns:1fr 1fr; }
+      .message-stack { grid-column:1/3; }
+      .lifeline { grid-template-rows:auto 16px; }
+      .v-edge { height:16px; }
+      .step { grid-template-columns:48px 1fr; }
+      .route { grid-column:2; text-align:left; }
+      .two-col,.takeaway { grid-template-columns:1fr; }
+      .lifecycle-grid { grid-template-columns:1fr; }
+      .shared-protocol { grid-template-columns:1fr; }
+      .shared-arrow { transform:rotate(90deg); justify-self:center; }
+      .evidence { grid-template-columns:40px 1fr; }
+      .evidence p { grid-column:2; }
+      .compare,.compare tbody,.compare tr,.compare td { display:block; width:100%; }
+      .compare { border:0; overflow:visible; }
+      .compare thead { display:none; }
+      .compare tbody { display:grid; gap:10px; }
+      .compare tr { border:1px solid #dce7f0; border-radius:14px; overflow:hidden; background:#fff; }
+      .compare td {
+        display:grid; grid-template-columns:106px minmax(0,1fr); gap:10px;
+        padding:9px 11px; border-bottom:1px solid #e4edf4; overflow-wrap:anywhere;
+      }
+      .compare td::before { content:attr(data-label); color:#52697d; font-size:11px; font-weight:850; }
+      .compare td > span { min-width:0; overflow-wrap:anywhere; }
+      .compare tr:last-child td { border-bottom:1px solid #e4edf4; }
+      .compare tr td:last-child { border-bottom:0; }
+      pre { white-space:pre-wrap; overflow-wrap:anywhere; }
+    }
+    @media (max-width:500px) {
+      main { width:calc(100vw - 14px); }
+      .section { padding:12px; border-radius:18px; }
+      .template-layout { padding:9px; }
+      .participant-timeline { grid-template-columns:1fr; }
+      .message-stack { grid-column:1; }
+      .step { grid-template-columns:42px minmax(0,1fr); gap:8px; padding:10px; }
+      .section-head { display:block; }
+      .section-head small { display:block; margin-top:5px; }
+      .authority-row { grid-template-columns:1fr; gap:4px; }
+    }
+  </style>
+</head>
+<body>
+<main data-diagram-type="code-sequence"
+      data-template-family="code-sequence"
+      data-template-id="participant-timeline"
+      data-template-layout="participant-timeline">
+  <div class="eyebrow">TASK_20260715_006 · VERIFIED / 已实现并完成真实运行时验收</div>
+  <h1 data-slot="title">代码时序：Zeus 与 Codex App 的 developer 指令机制对比</h1>
+  <p class="summary" data-slot="summary">两者底层协议相同：宿主把文本交给 Codex Core，Core 构造成 <code>developer</code> 角色消息。Zeus 已移除线程级静态 developer 指令中的可变权限副本；当前权限只由 permission profile、sandbox、approval 与 Core 权限更新维护。</p>
+
+  <div class="hero-answer">
+    实施结果：<em>Zeus 的权限生命周期现在与 Codex App 保持一致</em>。线程级 <code>developerInstructions</code> 只保留稳定任务限制；可变权限由结构化状态与 Codex Core 更新。新打包 App 已在同一原生 thread 中完成“只读 → 完全访问”双轮验收，没有残留 Zeus 旧只读文字。
+  </div>
+
+  <section class="section" aria-labelledby="flow-title">
+    <div class="section-head"><h2 id="flow-title">实际注入时序</h2><small>参与者列 + 时间向下</small></div>
+    <div class="template-layout participant-timeline" aria-label="Zeus developer 指令注入代码时序">
+      <div class="lifeline"><div class="slot support" data-slot="actor-1"><b>Zeus Coordinator</b><span>生成产品约束文本</span></div><div class="v-edge"></div></div>
+      <div class="lifeline"><div class="slot core" data-slot="actor-2"><b>App Server Manager</b><span>组装 JSON-RPC</span></div><div class="v-edge"></div></div>
+      <div class="lifeline"><div class="slot data" data-slot="actor-3"><b>Codex Rust Core</b><span>线程配置与消息角色</span></div><div class="v-edge"></div></div>
+      <div class="lifeline"><div class="slot ops" data-slot="actor-4"><b>模型 + 工具运行时</b><span>指令裁决与命令执行</span></div><div class="v-edge"></div></div>
+
+      <div class="message-stack">
+        <article class="step">
+          <div class="step-no">1</div>
+          <div><h3>首次提交时生成稳定任务说明</h3><p><code>developerInstructionsFor(context)</code> 只根据测试和 Git 的稳定任务开关生成负向约束，不再复制项目根或 permission mode。只有没有 <code>providerThreadId</code> 时才走这一步。</p></div>
+          <div class="route">Coordinator → Manager</div>
+        </article>
+        <article class="step">
+          <div class="step-no">2</div>
+          <div><h3>放入结构化字段，而非混进用户问题</h3><p><code>startThread()</code> 调用 <code>thread/start</code>，把文本放在 <code>params.developerInstructions</code>；用户问题稍后通过 <code>turn/start.params.input</code> 发送。</p></div>
+          <div class="route">JSON-RPC → App Server</div>
+        </article>
+        <article class="step persist">
+          <div class="step-no">3</div>
+          <div><h3>Codex 将字段写入线程配置</h3><p>Rust App Server 解构 <code>developer_instructions</code>，写入 <code>ConfigOverrides</code>，再进入 thread / turn context。它因此不是 UI 标签，而是模型可见的线程配置。</p></div>
+          <div class="route">App Server → Core</div>
+        </article>
+        <article class="step priority">
+          <div class="step-no">4</div>
+          <div><h3>Core 构造成 developer 角色消息</h3><p>Core 把文本加入 <code>developer_sections</code>，再调用 <code>build_text_message("developer", ...)</code>。这一步决定了它的模型语义优先级。</p></div>
+          <div class="route">Core → Model context</div>
+        </article>
+        <article class="step priority">
+          <div class="step-no">5</div>
+          <div><h3>模型按角色解决冲突</h3><p>OpenAI 官方规则明确：<code>developer</code> 消息优先于 <code>user</code> 消息。因此用户后来在聊天中说“忽略只读限制”，不能覆盖同一上下文中的 developer 约束。</p></div>
+          <div class="route">角色权威 → 行为</div>
+        </article>
+        <article class="step split">
+          <div class="step-no">6</div>
+          <div><h3>工具权限走另一条执行链</h3><p><code>sandboxPolicy</code> 决定工具能否触碰文件，<code>approvalPolicy</code> 决定是否需要审批。developer 文本只指导模型，不等同于文件系统 ACL。</p></div>
+          <div class="route">Runtime → OS / Tool</div>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" aria-labelledby="app-compare-title">
+    <div class="section-head"><h2 id="app-compare-title">修复前根因：同一协议，不同生命周期</h2><small>本机 Codex App 26.707.71524 · bundled CLI 0.144.2</small></div>
+    <div class="shared-protocol" aria-label="Codex App 与 Zeus 共用的 developer 指令协议">
+      <div class="shared-node"><b>宿主构造说明</b><span><code>developerInstructions</code></span></div>
+      <div class="shared-arrow" aria-hidden="true">→</div>
+      <div class="shared-node"><b>Codex Core 组装</b><span><code>developer_sections</code></span></div>
+      <div class="shared-arrow" aria-hidden="true">→</div>
+      <div class="shared-node"><b>模型上下文</b><span><code>role: "developer"</code></span></div>
+    </div>
+    <div class="lifecycle-grid">
+      <article class="lifecycle-lane">
+        <div class="lane-head app"><b>Codex App 当前实现</b><span>稳定说明与可变权限各有单一来源</span></div>
+        <div class="lane-flow">
+          <div class="lane-step"><b>App 侧 developerInstructions：</b>宿主按项目组装 base、Git、workspace、工具等工作流说明。</div>
+          <div class="lane-step"><b>权限单独传递：</b><code>read-only</code>、<code>workspace-write</code>、<code>danger-full-access</code> 是结构化 permission profile；approval 也是独立字段。</div>
+          <div class="lane-step"><b>Core 生成权限 developer 段：</b>首次上下文由当前 profile 渲染 <code>PermissionsInstructions</code>，再与 App 说明分别加入 developer sections。</div>
+          <div class="lane-step"><b>切换时主动更新：</b><code>build_permissions_update_item</code> 比较前后 profile / approval；变化时构造新的 developer 权限更新。</div>
+        </div>
+        <div class="lane-result good"><strong>结果：</strong>权限语义来自当前结构化状态；App 自己的稳定说明不再维护第二份会过期的权限副本。</div>
+      </article>
+      <article class="lifecycle-lane">
+        <div class="lane-head zeus"><b>Zeus 修复前实现</b><span>同一权限曾被结构化状态与静态文字重复表达</span></div>
+        <div class="lane-flow">
+          <div class="lane-step"><b>首次建线程：</b><code>developerInstructionsFor(context)</code> 把 permission mode、测试限制与 Git 约束一起拼入静态文字。</div>
+          <div class="lane-step"><b>同时传结构化权限：</b>thread / turn 另有 sandbox 与 approval；此处与 Codex App 一样。</div>
+          <div class="lane-step"><b>后续切换：</b>Zeus 更新 sandbox / approval，但不会重建或替换首次注入的 developerInstructions。</div>
+          <div class="lane-step"><b>Core 如实补发新权限：</b>新的权限 developer 段出现，但它不会自动撤销 Zeus 自己那句独立的“只读任务”。</div>
+        </div>
+        <div class="lane-result risk"><strong>历史故障：</strong>旧静态只读文案与新完全访问状态同时存在；这不是 Codex App 的正常权限切换设计，而是 Zeus 的状态重复与失同步。本次修复已删除这份可变权限副本。</div>
+      </article>
+    </div>
+  </section>
+
+  <section class="section" aria-labelledby="implementation-title">
+    <div class="section-head"><h2 id="implementation-title">实施与真实运行时验收</h2><small>2026-07-15 · 新打包 Zeus.app</small></div>
+    <table class="compare">
+      <thead><tr><th>验收项</th><th>证据</th><th>结果</th></tr></thead>
+      <tbody>
+        <tr><td data-label="验收项"><span><strong>最小源码修复</strong></span></td><td data-label="证据"><span><code>codexNativeConversationCoordinator.ts:1841-1846</code> 仅保留 <code>allowTests=false</code> 与 <code>allowGitCommit=false</code> 的稳定负向约束。</span></td><td data-label="结果" class="yes"><span>可变权限只有一个事实源</span></td></tr>
+        <tr><td data-label="验收项"><span><strong>TDD 红绿闭环</strong></span></td><td data-label="证据"><span>新增测试先因旧权限文字按预期失败；独立 review 后扩成三种 permission mode × 稳定开关矩阵，定向测试 4/4、coordinator 测试 53/53，local-server 23 个文件、312/312 项通过。</span></td><td data-label="结果" class="yes"><span>通过</span></td></tr>
+        <tr><td data-label="验收项"><span><strong>独立代码 review</strong></span></td><td data-label="证据"><span>初审唯一 Minor 是测试矩阵不完整；补齐 12 个运行组合后复审关闭，Critical / Important / Minor 均为 0。</span></td><td data-label="结果" class="yes"><span>Ready to merge</span></td></tr>
+        <tr><td data-label="验收项"><span><strong>同 thread 切换权限</strong></span></td><td data-label="证据"><span>会话 <code>conversation_7f8616505e5413c6e38e4094</code> 的两轮都使用 provider thread <code>019f65de-5178-7501-a08d-9ba002b568c5</code>。</span></td><td data-label="结果" class="yes"><span>未 fork、未重建</span></td></tr>
+        <tr><td data-label="验收项"><span><strong>权限状态随轮次更新</strong></span></td><td data-label="证据"><span>rollout 第 8 行是 <code>read-only / on-request</code>；第 20 行是 <code>danger-full-access / never</code>。两次 App developer 段均不含 Zeus 旧权限文案。</span></td><td data-label="结果" class="yes"><span>与 Codex App 一致</span></td></tr>
+        <tr><td data-label="验收项"><span><strong>正式产物</strong></span></td><td data-label="证据"><span><code>dist/mac-arm64/Zeus.app</code> 打包成功，严格深度代码签名校验通过；真实验收由该产物启动的本地服务执行。</span></td><td data-label="结果" class="yes"><span>通过</span></td></tr>
+      </tbody>
+    </table>
+    <div class="takeaway">
+      <div><b>新 thread</b><span>立即使用修复后的稳定 developerInstructions，权限切换随结构化状态更新。</span></div>
+      <div><b>旧 thread</b><span>历史 rollout 不会被源码修改自动重写；为保留审计真实性，不静默修改或 fork 旧线程。</span></div>
+      <div><b>审计入口</b><span>Zeus 任务 <code>task_-iV4q5EOaavo</code> 与真实 rollout 均保留，便于复核。</span></div>
+    </div>
+  </section>
+
+  <section class="section" aria-labelledby="priority-title">
+    <div class="section-head"><h2 id="priority-title">所谓“高优先级”，具体高在哪里</h2><small>语义权威 ≠ 系统权限</small></div>
+    <div class="two-col">
+      <div class="explain">
+        <h3>模型侧：角色权威</h3>
+        <p>简化理解为：宿主/平台边界先定义可接受行为，应用通过 developer 消息定义业务规则，用户再给本次输入。冲突时，用户输入必须服从 developer 规则。</p>
+        <div class="authority">
+          <div class="authority-row host"><b>宿主 / base</b><span>运行环境与平台给出的更上层边界，应用和用户均不能覆盖。</span></div>
+          <div class="authority-row dev"><b>developer</b><span>应用开发者注入的规则；OpenAI 官方定义其优先于 user。</span></div>
+          <div class="authority-row user"><b>user</b><span>最终用户的任务输入；在上层规则允许的范围内执行。</span></div>
+        </div>
+      </div>
+      <div class="explain">
+        <h3>运行时：强制权限</h3>
+        <p>如果要真正阻止写文件，不能只靠一句 developer 文本，还要配置 sandbox / permission profile。前者是“模型应当怎么做”，后者是“工具实际上能做什么”。</p>
+        <pre>{
+  "method": "thread/start",
+  "params": {
+    "developerInstructions": "只读任务：不得修改…",
+    "sandbox": "read-only",
+    "approvalPolicy": "on-request"
+  }
+}</pre>
+        <div class="boundary-note"><strong>安全边界：</strong>角色优先级是模型行为控制，不应单独充当安全隔离。涉及不可逆或越权动作时，必须由 sandbox、审批策略和宿主侧工具策略共同约束。</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" aria-labelledby="split-title">
+    <div class="section-head"><h2 id="split-title">三种机制不要混为一谈</h2><small>对应你截图里的冲突</small></div>
+    <table class="compare">
+      <thead><tr><th>机制</th><th>载体</th><th>影响</th><th>是不是硬权限</th><th>当前现场</th></tr></thead>
+      <tbody>
+        <tr><td data-label="机制"><span><strong>developer 指令</strong></span></td><td data-label="载体"><span><code>role: developer</code></span></td><td data-label="影响"><span>模型如何理解任务、如何处理与 user 的冲突</span></td><td data-label="硬权限" class="no"><span>不是</span></td><td data-label="当前现场"><span>故障旧 thread 仍保留历史只读文字；新 thread 已无此副本</span></td></tr>
+        <tr><td data-label="机制"><span><strong>sandbox</strong></span></td><td data-label="载体"><span><code>read-only</code> / <code>danger-full-access</code></span></td><td data-label="影响"><span>工具调用在文件系统和网络上的实际能力</span></td><td data-label="硬权限" class="yes"><span>是执行边界</span></td><td data-label="当前现场"><span>新验收 thread 已按轮次从只读切到完全访问</span></td></tr>
+        <tr><td data-label="机制"><span><strong>approval</strong></span></td><td data-label="载体"><span><code>on-request</code> / <code>never</code></span></td><td data-label="影响"><span>命令是否需要用户确认，以及确认如何处理</span></td><td data-label="硬权限" class="yes"><span>是执行流程</span></td><td data-label="当前现场"><span>新验收 thread 已按轮次从 <code>on-request</code> 切到 <code>never</code></span></td></tr>
+      </tbody>
+    </table>
+    <div class="takeaway">
+      <div><b>为什么用户消息关不掉</b><span>它是 <code>user</code> 层输入，不能覆盖同线程里的 <code>developer</code> 规则。</span></div>
+      <div><b>为什么 UI 可写但模型仍拒绝</b><span>UI 改了 sandbox/approval；旧 developer 文本仍在影响模型行为。</span></div>
+      <div><b>本次采用的工程做法</b><span>稳定规则放 thread developer；会变化的权限状态随当前 turn 的结构化 profile 更新。</span></div>
+    </div>
+  </section>
+
+  <section class="section" aria-labelledby="parity-title">
+    <div class="section-head"><h2 id="parity-title">逐项对比</h2><small>“一样”与“不一样”的边界</small></div>
+    <table class="compare">
+      <thead><tr><th>维度</th><th>Codex App</th><th>Zeus 修复后</th><th>判断</th></tr></thead>
+      <tbody>
+        <tr><td data-label="维度"><span><strong>模型消息协议</strong></span></td><td data-label="Codex App"><span><code>developerInstructions → role: developer</code></span></td><td data-label="Zeus"><span>同样走 <code>thread/start.developerInstructions</code></span></td><td data-label="判断" class="yes"><span>一样</span></td></tr>
+        <tr><td data-label="维度"><span><strong>硬权限控制</strong></span></td><td data-label="Codex App"><span>permission profile + sandbox + approval</span></td><td data-label="Zeus"><span>同样向 thread / turn 传 sandbox + approval</span></td><td data-label="判断" class="yes"><span>一样</span></td></tr>
+        <tr><td data-label="维度"><span><strong>App 级 developer 内容</strong></span></td><td data-label="Codex App"><span>当前版本主要组装稳定的项目与工作流说明</span></td><td data-label="Zeus"><span>只保留稳定的测试与 Git 任务限制，不复制 permission mode</span></td><td data-label="判断" class="yes"><span>状态所有权一致</span></td></tr>
+        <tr><td data-label="维度"><span><strong>权限切换生命周期</strong></span></td><td data-label="Codex App"><span>Core 根据前后结构化状态生成权限更新</span></td><td data-label="Zeus"><span>每轮传当前 sandbox / approval，由 Core 生成权限更新</span></td><td data-label="判断" class="yes"><span>一致</span></td></tr>
+      </tbody>
+    </table>
+    <div class="boundary-note"><strong>实施结论：</strong>Zeus 已从线程级 <code>developerInstructionsFor</code> 移除 permission mode、项目根硬限制和“允许运行验证”等可变能力文字，只保留稳定的负向任务约束；权限语义交给实时 permission profile 与 Codex Core 更新机制。</div>
+  </section>
+
+  <section class="section" aria-labelledby="evidence-title" data-slot="evidence-and-notes">
+    <div class="section-head"><h2 id="evidence-title">代码与运行现场锚点</h2><small>事实 / 推断边界</small></div>
+    <div class="evidence-list">
+      <div class="evidence"><span class="tag">Z1</span><div class="path"><code>packages/local-server/src/codexNativeConversationCoordinator.ts:477-520</code></div><p>首次 thread 注入 <code>developerInstructions</code>；后续 turn 只发送输入、sandbox 与 approval。</p></div>
+      <div class="evidence"><span class="tag">Z2</span><div class="path"><code>packages/local-server/src/codexNativeConversationCoordinator.ts:1802-1846</code></div><p>权限 profile 单独映射三种模式；developer helper 只保留稳定任务限制，已消除可变权限的重复状态源。</p></div>
+      <div class="evidence"><span class="tag">T1</span><div class="path"><code>packages/local-server/test/codex-native-conversation-coordinator.test.ts:239-261</code></div><p>参数化回归覆盖 read-only / auto / full-access 与两个稳定开关的全部组合，明确禁止可变权限文字进入线程 developerInstructions，并验证允许状态下相应限制消失。</p></div>
+      <div class="evidence"><span class="tag">Z3</span><div class="path"><code>packages/ai-runtime/src/codexAppServerManager.ts:581-600</code></div><p><code>thread/start</code> 的 JSON-RPC 参数明确包含 <code>developerInstructions</code>。</p></div>
+      <div class="evidence"><span class="tag">C1</span><div class="path"><code>.tmp/openai-codex-patch-verify/codex-rs/app-server/src/request_processors/thread_processor.rs:945-985, 1378-1403</code></div><p>本仓 OpenAI Codex 源码快照把该字段写入 <code>ConfigOverrides.developer_instructions</code>。</p></div>
+      <div class="evidence"><span class="tag">C2</span><div class="path"><code>.tmp/openai-codex-patch-verify/codex-rs/core/src/session/mod.rs:3264-3269, 3452-3456</code><br /><code>…/context_manager/updates.rs:193-195</code></div><p>文本进入 <code>developer_sections</code>，最终由 <code>build_text_message("developer", ...)</code> 构造成 developer 角色消息。</p></div>
+      <div class="evidence"><span class="tag">A1</span><div class="path"><code>/Applications/Codex.app/Contents/Info.plist</code><br /><code>/Applications/Codex.app/Contents/Resources/codex --version</code></div><p>本机安装包为 Codex App <code>26.707.71524</code>，内置 CLI 为 <code>0.144.2</code>；下述比对限定于该版本。</p></div>
+      <div class="evidence"><span class="tag">A2</span><div class="path"><code>/Applications/Codex.app/Contents/Resources/app.asar::webview/assets/…-CnQKtQ6U.js @ char 1716966-1717346</code><br /><code>…/app-initial~app-main~page-kMhXWEru.js @ char 1151341-1151376</code></div><p>Renderer 从 host 取回 <code>developer-instructions</code>，写入 <code>developerInstructions</code>，随后通过 <code>thread/start</code> 发送。</p></div>
+      <div class="evidence"><span class="tag">A3</span><div class="path"><code>/Applications/Codex.app/Contents/Resources/app.asar::.vite/build/main-DcVqMbYE.js @ char 581926, 601942</code></div><p><code>getProjectAwareDeveloperInstructions</code> 组装 base、Git、workspace、工具等项目说明；当前函数未把 sandbox / permission mode 当作其状态源。</p></div>
+      <div class="evidence"><span class="tag">A4</span><div class="path"><code>/Applications/Codex.app/Contents/Resources/app.asar::.vite/build/src-HagpvBpE.js @ char 239984</code></div><p>App 把只读、自动、完全访问定义成独立 permission profile，分别映射到 sandboxMode 与 approvalPolicy。</p></div>
+      <div class="evidence"><span class="tag">C3</span><div class="path"><code>.tmp/openai-codex-patch-verify/codex-rs/core/src/session/mod.rs:3232-3268</code></div><p>与 App 内置 CLI 版本一致的 Core 源码先按当前 permission profile 渲染权限段，再单独加入宿主的 developerInstructions。</p></div>
+      <div class="evidence"><span class="tag">C4</span><div class="path"><code>.tmp/openai-codex-patch-verify/codex-rs/core/src/context_manager/updates.rs:22-62, 240-267</code></div><p>前后 permission profile / approval 变化时，Core 构造新的 developer 权限更新；这是 Codex App 权限切换可保持同步的关键。</p></div>
+      <div class="evidence"><span class="tag">R1</span><div class="path"><code>~/.codex/sessions/2026/07/15/rollout-…019f64b6….jsonl:3,259,262</code></div><p>第 3 行落盘了旧只读文本且角色为 developer；第 259/262 行以后 sandbox 已切到完全访问，现场由此出现状态分裂。</p></div>
+      <div class="evidence"><span class="tag">R2</span><div class="path"><code>~/.codex/sessions/2026/07/15/rollout-…019f6593….jsonl:1,4</code></div><p>当前对话由 <code>Codex Desktop / CLI 0.144.2</code> 创建；第 4 行的 developer 权限段来自当前 <code>danger-full-access + never</code> 状态。</p></div>
+      <div class="evidence"><span class="tag">R3</span><div class="path"><code>~/.codex/sessions/2026/07/15/rollout-2026-07-15T21-01-36-019f65de-5178-7501-a08d-9ba002b568c5.jsonl:3,8,17,20</code></div><p>新打包 App 的真实双轮验收：同一 thread 的 App developer 段无旧 Zeus 权限文案，turn_context 从 <code>read-only / on-request</code> 更新为 <code>danger-full-access / never</code>。</p></div>
+      <div class="evidence"><span class="tag">O1</span><div class="path"><a href="https://learn.chatgpt.com/docs/mcp-server#running-codex-as-an-mcp-server">Codex MCP Server 官方文档</a></div><p>官方说明 <code>developer-instructions</code> 会注入为 developer-role message，并把 sandbox 列为独立参数。</p></div>
+      <div class="evidence"><span class="tag">O2</span><div class="path"><a href="https://developers.openai.com/api/docs/guides/text#message-roles-and-instruction-following">OpenAI 消息角色官方文档</a></div><p>官方明确 developer messages 优先于 user messages；这就是“高优先级”的协议语义。</p></div>
+    </div>
+    <p class="status"><strong>结论状态：VERIFIED。</strong>源码、TDD、独立 review、完整 local-server 测试、workspace 构建、macOS 正式打包、真实 rollout 与 1440 / 768 / 375 三档文档视觉检查已交叉确认。结论限定于本机 Codex App <code>26.707.71524</code> / CLI <code>0.144.2</code>。旧线程为何残留已在 <code>TASK_20260715_005</code> 中单独取证；本次不改写历史 rollout、不静默 fork 旧线程。</p>
+  </section>
+</main>
+</body>
+</html>
