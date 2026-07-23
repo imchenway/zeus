@@ -1,6 +1,7 @@
-import { useEffect, useId, useRef, useState } from 'react';
-import type { NativePermissionMode } from './sessionTypes.js';
-import type { SessionUiLanguage } from './ThreadItemView.js';
+import {useEffect, useId, useRef, useState} from 'react';
+import {ComposerDropdown} from './ComposerDropdown.js';
+import type {NativePermissionMode} from './sessionTypes.js';
+import type {SessionUiLanguage} from './ThreadItemView.js';
 
 export interface PermissionModeControlProps {
   language: SessionUiLanguage;
@@ -40,12 +41,17 @@ export function PermissionModeControl(props: PermissionModeControlProps) {
   const copy = labels[props.language];
   const [confirmingFullAccess, setConfirmingFullAccess] = useState(false);
   const warningId = useId();
-  const selectRef = useRef<HTMLSelectElement | null>(null);
+    const triggerRef = useRef<HTMLButtonElement | null>(null);
   const confirmButtonRef = useRef<HTMLButtonElement | null>(null);
+    const options = [
+        {value: 'read-only', label: copy.readOnly},
+        {value: 'auto', label: copy.auto},
+        {value: 'full-access', label: copy.fullAccess},
+    ] as const;
 
   function closeConfirmation(next?: NativePermissionMode): void {
     setConfirmingFullAccess(false);
-    selectRef.current?.focus();
+      triggerRef.current?.focus();
     if (next) void props.onChange(next);
   }
 
@@ -59,29 +65,22 @@ export function PermissionModeControl(props: PermissionModeControlProps) {
 
   return (
     <span className="session-permission-control">
-      <label>
-        <span className="session-sr-only">{copy.label}</span>
-        <select
-          ref={selectRef}
-          aria-label={copy.label}
+      <ComposerDropdown
+          triggerRef={triggerRef}
+          label={copy.label}
           title={props.disabled ? copy.locked : undefined}
           value={props.value}
+          options={options}
           disabled={props.disabled}
-          onChange={(event) => {
-            const next = event.currentTarget.value as NativePermissionMode;
-            if (requiresPermissionModeConfirmation(props.value, next)) {
-              setConfirmingFullAccess(true);
-              return;
-            }
-            setConfirmingFullAccess(false);
-            void props.onChange(next);
+          onChange={(next) => {
+              if (requiresPermissionModeConfirmation(props.value, next)) {
+                  setConfirmingFullAccess(true);
+                  return;
+              }
+              setConfirmingFullAccess(false);
+              void props.onChange(next);
           }}
-        >
-          <option value="read-only">{copy.readOnly}</option>
-          <option value="auto">{copy.auto}</option>
-          <option value="full-access">{copy.fullAccess}</option>
-        </select>
-      </label>
+      />
       {confirmingFullAccess ? (
         <span className="session-permission-confirmation" role="alertdialog" aria-label={copy.confirm} aria-describedby={warningId}>
           <span id={warningId}>{copy.warning}</span>

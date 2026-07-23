@@ -29,7 +29,7 @@ Runtime 会话状态必须覆盖 created、running、waiting、ended、failed、
 任务 prompt 必须包含任务标题、任务描述、项目路径、图谱上下文、源码路径和行号、SQL/表、Git 状态摘要、测试要求、安全要求。
 
 - 项目默认模型优先于全局默认模型；任务选择优先于项目默认。
-- 工作模式、允许改代码、是否运行测试、是否允许 Git 写操作必须进入 prompt 或执行前检查。
+- 工作模式、允许改代码、是否执行验证命令、是否允许 Git 写操作必须进入 prompt 或执行前检查。
 - 图谱上下文必须来自真实 node/edge/sourceRef；缺少来源时不写入 prompt。
 - Git 状态摘要必须来自真实 status/diff，不得编造 clean 或 dirty 状态。
 - 安全要求必须明确禁止泄露 token、API Key、数据库密码、Bot Token 和 `.env` 敏感值。

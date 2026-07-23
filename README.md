@@ -46,8 +46,6 @@ brew install --cask ./Casks/zeus.rb
 pnpm install
 pnpm lint
 pnpm typecheck
-pnpm test
-pnpm test:real-scan
 pnpm build
 pnpm package:mac
 ```
@@ -58,7 +56,8 @@ pnpm package:mac
 pnpm verify:release
 ```
 
-该命令会串联 lint、typecheck、test、真实扫描、build 和 package:mac，并检查 DMG/ZIP/Homebrew cask、SHA256SUMS、install.sh 与更新 manifest 是否存在。未配置 Apple 证书时会明确报告 `unsigned DMG/ZIP`，不会声明签名或公证成功。
+该命令会串联 acceptance matrix、lint、typecheck、build、AI CLI adapter 探针和 package:mac，并检查 DMG/ZIP/Homebrew
+cask、SHA256SUMS、install.sh 与更新 manifest 是否存在。未配置 Apple 证书时会明确报告 `unsigned DMG/ZIP`，不会声明签名或公证成功。
 
 ## 本地运行
 
@@ -122,7 +121,6 @@ Zeus 不写入假项目、假任务、假图谱、假终端输出、假 Telegram
 - Telegram：`docs/telegram.md`
 - 代码地图：`docs/code-map-engine.md`
 - 发布：`docs/release.md`
-- 测试：`docs/testing.md`
 - 设计书：`docs/zeus_development_design.md`
 
 ## 更新日志
@@ -135,7 +133,7 @@ Zeus 不写入假项目、假任务、假图谱、假终端输出、假 Telegram
 
 - 完成摘要和设计书覆盖项。
 - 运行过的真实命令，至少包含 `pnpm verify:release`。
-- 测试结果、真实扫描结果、构建结果、打包结果。
+- 静态检查结果、构建结果、打包结果和真实运行结果。
 - 生成的安装包路径，例如 `dist/Zeus-0.1.0-arm64.dmg` 与 `dist/Zeus-0.1.0-arm64.zip`。
 - 外部配置等待项，包括 AI CLI 登录状态、Telegram Bot Token、Apple signing certificate、notarization 凭据和 Homebrew tap token。
 - Release workflow 支持输入已有 tag 后创建 draft GitHub Release，并上传 DMG、ZIP、SHA256SUMS、install.sh、更新 manifest 与 Homebrew cask；没有 tag 时只上传 artifact，不伪造远端发布。

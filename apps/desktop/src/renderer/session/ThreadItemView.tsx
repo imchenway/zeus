@@ -1,5 +1,18 @@
-import { Fragment, useState, type ReactNode } from 'react';
-import type { NativeSessionItemBuffer } from './sessionTypes.js';
+import {
+    type FormEvent,
+    Fragment,
+    type KeyboardEvent,
+    type ReactNode,
+    useEffect,
+    useLayoutEffect,
+    useRef,
+    useState
+} from 'react';
+import {CopyIcon as Copy} from '@phosphor-icons/react/dist/csr/Copy';
+import {TerminalWindowIcon as TerminalWindow} from '@phosphor-icons/react/dist/csr/TerminalWindow';
+import {MessageCheckIcon, MessageEditIcon, MessageExpandIcon, MessageThumbIcon} from './SessionMessageIcons.js';
+import type {NativeSessionItemBuffer} from './sessionTypes.js';
+import {autosizeTextarea} from './textareaAutosize.js';
 
 export type SessionUiLanguage = 'zh-CN' | 'en-US';
 export type ThreadItemRole = 'user' | 'assistant' | 'commentary' | 'tool' | 'file' | 'request' | 'error' | 'unknown';
@@ -22,10 +35,19 @@ const copy = {
     expand: '展开完整消息',
     collapse: '收起消息',
     copy: '复制消息',
+      copied: '已复制',
+      copyCommand: '复制命令',
     copyCode: '复制代码',
-    edit: '复用并编辑',
+      edit: '编辑并重新发送',
+      editInput: '在原消息中编辑',
+      cancelEdit: '取消',
+      sendEdit: '发送编辑内容',
+      editFailed: '发送失败，编辑内容已保留。',
+      good: '好的回答',
+      bad: '不好的回答',
+      expandMessage: '展开消息',
+      collapseMessage: '收起消息',
     image: '会话图片',
-    progress: '展开工作进度',
     attachments: '附件',
     details: '技术详情',
     complexityTruncated: '内容过于复杂，已截断',
@@ -43,10 +65,19 @@ const copy = {
     expand: 'Expand full message',
     collapse: 'Collapse message',
     copy: 'Copy message',
+      copied: 'Copied',
+      copyCommand: 'Copy command',
     copyCode: 'Copy code',
     edit: 'Edit and resend',
+      editInput: 'Edit in the original message',
+      cancelEdit: 'Cancel',
+      sendEdit: 'Send edited message',
+      editFailed: 'Send failed. Your edited message is preserved.',
+      good: 'Good response',
+      bad: 'Bad response',
+      expandMessage: 'Expand message',
+      collapseMessage: 'Collapse message',
     image: 'Conversation image',
-    progress: 'Show work progress',
     attachments: 'Attachments',
     details: 'Technical details',
     complexityTruncated: 'Content complexity truncated',
@@ -57,14 +88,22 @@ export interface ThreadItemViewProps {
   item: NativeSessionItemBuffer;
   language: SessionUiLanguage;
   isLatest?: boolean;
+    showAssistantActions?: boolean;
   isLatestUser?: boolean;
-  onEdit?: (item: NativeSessionItemBuffer) => void;
+    onEdit?: (item: NativeSessionItemBuffer, content: string) => void | Promise<void>;
   onRetry?: (item: NativeSessionItemBuffer) => void;
 }
 
 export function ThreadItemView(props: ThreadItemViewProps) {
   const labels = copy[props.language];
   const [expanded, setExpanded] = useState(false);
+    const [messageExpanded, setMessageExpanded] = useState(false);
+    const [feedback, setFeedback] = useState<'good' | 'bad' | null>(null);
+    const [editing, setEditing] = useState(false);
+    const [editDraft, setEditDraft] = useState('');
+    const [editError, setEditError] = useState<string | null>(null);
+    const [submittingEdit, setSubmittingEdit] = useState(false);
+    const editTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const role = itemRole(props.item);
   const itemText = transcriptItemText(props.item);
   const longUserMessage = role === 'user' && itemText.length > 640;
@@ -75,11 +114,62 @@ export function ThreadItemView(props: ThreadItemViewProps) {
   const accessibleLabel = command ? (props.language === 'zh-CN' ? '命令执行' : 'Command execution') : label;
   const showVisibleRoleLabel = role !== 'user' && role !== 'assistant' && role !== 'commentary';
   const showMeta = !command && (showVisibleRoleLabel || props.item.optimistic);
-  const hasActions = Boolean(visibleText) || longUserMessage || (role === 'user' && props.isLatestUser && props.onEdit);
+    const messageTimestamp = formatMessageTimestamp(props.item, props.language);
+    const timestampSource = props.item.updatedAt ?? primitiveText(props.item.payload.createdAt);
+    const canEdit = role === 'user' && props.isLatestUser && Boolean(props.onEdit) && !props.item.optimistic;
+    const showRoleActions = role === 'user' || (role === 'assistant' && Boolean(props.showAssistantActions ?? props.isLatest));
+    const hasActions = !editing && showRoleActions && (Boolean(visibleText) || longUserMessage || Boolean(messageTimestamp) || canEdit);
+
+    useEffect(() => {
+        if (!editing) return;
+        const textarea = editTextareaRef.current;
+        if (!textarea) return;
+        textarea.focus();
+        textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+    }, [editing]);
+
+    useLayoutEffect(() => {
+        if (!editing || !editTextareaRef.current) return;
+        autosizeTextarea(editTextareaRef.current, 72, 0.48);
+    }, [editDraft, editing]);
+
+    async function submitEditedMessage(event: FormEvent<HTMLFormElement>): Promise<void> {
+        event.preventDefault();
+        if (!props.onEdit || !editDraft.trim() || submittingEdit) return;
+        setEditError(null);
+        setSubmittingEdit(true);
+        try {
+            await props.onEdit(props.item, editDraft);
+            setEditing(false);
+        } catch {
+            setEditError(labels.editFailed);
+        } finally {
+            setSubmittingEdit(false);
+        }
+    }
+
+    function cancelEditing(): void {
+        setEditing(false);
+        setEditError(null);
+        setEditDraft('');
+    }
+
+    function handleEditKeyDown(event: KeyboardEvent<HTMLTextAreaElement>): void {
+        if (event.key === 'Escape') {
+            event.preventDefault();
+            event.stopPropagation();
+            cancelEditing();
+            return;
+        }
+        if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+            event.preventDefault();
+            event.currentTarget.form?.requestSubmit();
+        }
+    }
 
   return (
     <article
-      className={`session-thread-item session-thread-item-${role}${props.isLatest ? ' is-latest' : ''}`}
+        className={`session-thread-item session-thread-item-${role}${props.isLatest ? ' is-latest' : ''}${role === 'assistant' && props.showAssistantActions ? ' is-latest-assistant' : ''}${messageExpanded ? ' is-message-expanded' : ''}${hasActions ? ' has-message-actions' : ''}${editing ? ' is-editing' : ''}`}
       data-item-status={props.item.status}
       data-item-phase={props.item.phase}
       data-item-type={props.item.type}
@@ -92,13 +182,37 @@ export function ThreadItemView(props: ThreadItemViewProps) {
           {props.item.optimistic ? <span className="session-item-state">{props.language === 'zh-CN' ? '发送中' : 'Sending'}</span> : null}
         </header>
       ) : null}
-      {command ? (
+        {editing ? (
+            <form className="session-user-message-editor" onSubmit={(event) => void submitEditedMessage(event)}>
+                <label className="session-sr-only" htmlFor={`session-edit-${props.item.itemId}`}>
+                    {labels.editInput}
+                </label>
+                <textarea
+                    id={`session-edit-${props.item.itemId}`}
+                    ref={editTextareaRef}
+                    aria-keyshortcuts="Meta+Enter Control+Enter Escape"
+                    value={editDraft}
+                    disabled={submittingEdit}
+                    onChange={(event) => setEditDraft(event.currentTarget.value)}
+                    onKeyDown={handleEditKeyDown}
+                />
+                <footer>
+                    {editError ? <small role="alert">{editError}</small> : <span/>}
+                    <button type="button" onClick={cancelEditing} disabled={submittingEdit}>
+                        {labels.cancelEdit}
+                    </button>
+                    <button type="submit" className="session-user-message-editor-submit"
+                            disabled={!editDraft.trim() || submittingEdit}>
+                        {labels.sendEdit}
+                    </button>
+                </footer>
+            </form>
+        ) : command ? (
         <CommandExecutionItem item={props.item} language={props.language} />
       ) : commentary && visibleText ? (
-        <details className="session-progress-details">
-          <summary>{labels.progress}</summary>
+            <div className="session-commentary-flow">
           <SafeMarkdown text={visibleText} language={props.language} />
-        </details>
+            </div>
       ) : visibleText ? (
         <SafeMarkdown text={visibleText} language={props.language} />
       ) : role === 'assistant' && props.item.status !== 'completed' ? (
@@ -108,21 +222,46 @@ export function ThreadItemView(props: ThreadItemViewProps) {
       <ItemAttachments item={props.item} label={labels.attachments} />
       <ItemImages item={props.item} label={labels.image} />
       {hasActions ? (
-        <footer className="session-thread-item-actions">
-          {visibleText ? (
-            <button type="button" onClick={() => void copyText(itemText)}>
-              {labels.copy}
-            </button>
+          <footer className="session-thread-item-actions" data-message-actions={role}>
+              {role === 'user' && messageTimestamp && timestampSource ?
+                  <MessageTimestamp dateTime={timestampSource} value={messageTimestamp}/> : null}
+              {visibleText ? <CopyIconButton label={labels.copy} copiedLabel={labels.copied} text={itemText}/> : null}
+              {role === 'assistant' ? (
+                  <>
+                      <MessageIconButton label={labels.good} pressed={feedback === 'good'}
+                                         onClick={() => setFeedback((current) => (current === 'good' ? null : 'good'))}>
+                          <MessageThumbIcon direction="up" selected={feedback === 'good'}/>
+                      </MessageIconButton>
+                      <MessageIconButton label={labels.bad} pressed={feedback === 'bad'}
+                                         onClick={() => setFeedback((current) => (current === 'bad' ? null : 'bad'))}>
+                          <MessageThumbIcon direction="down" selected={feedback === 'bad'}/>
+                      </MessageIconButton>
+                      <MessageIconButton label={messageExpanded ? labels.collapseMessage : labels.expandMessage}
+                                         expanded={messageExpanded}
+                                         onClick={() => setMessageExpanded((current) => !current)}>
+                          <MessageExpandIcon collapsed={messageExpanded}/>
+                      </MessageIconButton>
+                      {messageTimestamp && timestampSource ?
+                          <MessageTimestamp dateTime={timestampSource} value={messageTimestamp}/> : null}
+                  </>
           ) : null}
-          {longUserMessage ? (
-            <button type="button" aria-expanded={expanded} onClick={() => setExpanded((current) => !current)}>
-              {expanded ? labels.collapse : labels.expand}
-            </button>
+              {role === 'user' && longUserMessage ? (
+                  <MessageIconButton label={expanded ? labels.collapse : labels.expand} expanded={expanded}
+                                     onClick={() => setExpanded((current) => !current)}>
+                      <MessageExpandIcon collapsed={expanded}/>
+                  </MessageIconButton>
           ) : null}
-          {role === 'user' && props.isLatestUser && props.onEdit ? (
-            <button type="button" onClick={() => props.onEdit?.(props.item)}>
-              {labels.edit}
-            </button>
+              {canEdit ? (
+                  <MessageIconButton
+                      label={labels.edit}
+                      onClick={() => {
+                          setEditDraft(itemText);
+                          setEditError(null);
+                          setEditing(true);
+                      }}
+                  >
+                      <MessageEditIcon/>
+                  </MessageIconButton>
           ) : null}
         </footer>
       ) : null}
@@ -133,7 +272,7 @@ export function ThreadItemView(props: ThreadItemViewProps) {
 export function SafeMarkdown(props: { text: string; language?: SessionUiLanguage }) {
   const bounded = boundedMarkdownText(props.text);
   const labels = copy[props.language ?? 'en-US'];
-  const rendered = markdownBlocks(bounded.text, labels.copyCode, labels.complexityTruncated);
+    const rendered = markdownBlocks(bounded.text, labels.copyCode, labels.copied, labels.complexityTruncated);
   return (
     <div className="session-markdown" data-truncated={bounded.truncated || rendered.truncated || undefined}>
       {rendered.blocks}
@@ -157,7 +296,10 @@ interface MarkdownComplexityBudget {
   truncated: boolean;
 }
 
-function markdownBlocks(text: string, copyCodeLabel: string, complexityTruncatedLabel: string): { blocks: ReactNode[]; truncated: boolean } {
+function markdownBlocks(text: string, copyCodeLabel: string, copiedLabel: string, complexityTruncatedLabel: string): {
+    blocks: ReactNode[];
+    truncated: boolean
+} {
   const lines = text.replace(/\r\n?/g, '\n').split('\n');
   const blocks: ReactNode[] = [];
   const budget: MarkdownComplexityBudget = { blocks: 0, nodes: 0, truncated: false };
@@ -184,9 +326,7 @@ function markdownBlocks(text: string, copyCodeLabel: string, complexityTruncated
       const code = `${codeLines.join('\n')}${characters > MAX_MARKDOWN_BLOCK_CHARACTERS ? '\n[code block truncated]' : ''}`;
       blocks.push(
         <div className="session-code-block" key={`code-${index}`}>
-          <button type="button" aria-label={copyCodeLabel} onClick={() => void copyText(code)}>
-            {copyCodeLabel}
-          </button>
+            <CopyIconButton label={copyCodeLabel} copiedLabel={copiedLabel} text={code}/>
           <pre data-language={language || undefined}>
             <code>{code}</code>
           </pre>
@@ -337,6 +477,7 @@ export function itemRole(item: NativeSessionItemBuffer): ThreadItemRole {
 }
 
 export function transcriptItemText(item: NativeSessionItemBuffer): string {
+    if (typeof item.payload.displayText === 'string' && item.payload.displayText.trim()) return item.payload.displayText;
   if (item.text.trim()) return item.text;
   if (itemRole(item) !== 'commentary') return item.text;
   return transcriptTextFragments([item.payload.summary, item.payload.content]).join('\n\n');
@@ -387,52 +528,122 @@ function CommandExecutionItem(props: { item: NativeSessionItemBuffer; language: 
   const exitCode = primitiveText(payload.exitCode);
   const duration = typeof payload.durationMs === 'number' && Number.isFinite(payload.durationMs) ? `${Math.max(0, Math.round(payload.durationMs))} ms` : null;
   const output = primitiveText(payload.aggregatedOutput ?? payload.output ?? payload.stdout ?? payload.stderr);
-  const copyLabel = copy[props.language].copy;
+    const copyLabel = copy[props.language].copyCommand;
   const outputLabel = props.language === 'zh-CN' ? '命令输出' : 'Command output';
   const cwdLabel = props.language === 'zh-CN' ? '工作目录' : 'Working directory';
 
   return (
     <section className="session-command-item" aria-label={props.language === 'zh-CN' ? '命令执行' : 'Command execution'}>
-      {command ? (
-        <div className="session-command-line">
-          <code>{command}</code>
-          <button type="button" aria-label={copyLabel} onClick={() => void copyText(command)}>
-            {copyLabel}
-          </button>
-        </div>
-      ) : null}
-      <dl className="session-command-meta">
-        {cwd ? (
-          <div>
-            <dt>{cwdLabel}</dt>
-            <dd>{cwd}</dd>
-          </div>
-        ) : null}
-        <div>
-          <dt>{props.language === 'zh-CN' ? '状态' : 'Status'}</dt>
-          <dd>{status}</dd>
-        </div>
-        {duration ? (
-          <div>
-            <dt>{props.language === 'zh-CN' ? '耗时' : 'Duration'}</dt>
-            <dd>{duration}</dd>
-          </div>
-        ) : null}
-        {exitCode ? (
-          <div>
-            <dt>{props.language === 'zh-CN' ? '退出码' : 'Exit code'}</dt>
-            <dd>{exitCode}</dd>
-          </div>
-        ) : null}
-      </dl>
-      {output ? (
-        <details className="session-command-output">
-          <summary>{outputLabel}</summary>
-          <pre>{output}</pre>
+        <details className="session-command-disclosure">
+            <summary className="session-command-summary">
+          <span className="session-command-terminal-icon" aria-hidden="true">
+            <TerminalWindow weight="regular"/>
+          </span>
+                <span className="session-command-summary-copy">
+            <strong>{props.language === 'zh-CN' ? '命令执行' : 'Command execution'}</strong>
+                    {command ? <code>{command}</code> : null}
+          </span>
+                <span className="session-command-status" data-status={status}>
+            {status}
+          </span>
+            </summary>
+            <div className="session-command-body">
+                {command ? <code className="session-command-line">{command}</code> : null}
+                <dl className="session-command-meta">
+                    {cwd ? (
+                        <div>
+                            <dt>{cwdLabel}</dt>
+                            <dd>{cwd}</dd>
+                        </div>
+                    ) : null}
+                    <div>
+                        <dt>{props.language === 'zh-CN' ? '状态' : 'Status'}</dt>
+                        <dd>{status}</dd>
+                    </div>
+                    {duration ? (
+                        <div>
+                            <dt>{props.language === 'zh-CN' ? '耗时' : 'Duration'}</dt>
+                            <dd>{duration}</dd>
+                        </div>
+                    ) : null}
+                    {exitCode ? (
+                        <div>
+                            <dt>{props.language === 'zh-CN' ? '退出码' : 'Exit code'}</dt>
+                            <dd>{exitCode}</dd>
+                        </div>
+                    ) : null}
+                </dl>
+                {output ? (
+                    <section className="session-command-output" aria-label={outputLabel}>
+                        <strong>{outputLabel}</strong>
+                        <pre>{output}</pre>
+                    </section>
+                ) : null}
+            </div>
         </details>
-      ) : null}
+        {command ? <CopyIconButton label={copyLabel} copiedLabel={copy[props.language].copied} text={command}/> : null}
     </section>
   );
+}
+
+function CopyIconButton(props: { label: string; copiedLabel: string; text: string }) {
+    const [copied, setCopied] = useState(false);
+    useEffect(() => {
+        if (!copied) return;
+        const timer = setTimeout(() => setCopied(false), 1400);
+        return () => clearTimeout(timer);
+    }, [copied]);
+    return (
+        <button
+            type="button"
+            className="session-copy-button"
+            aria-label={copied ? props.copiedLabel : props.label}
+            title={copied ? props.copiedLabel : props.label}
+            data-copied={copied || undefined}
+            onClick={async () => setCopied(await copyText(props.text))}
+        >
+            {copied ? <MessageCheckIcon/> : <Copy aria-hidden="true" weight="regular"/>}
+        </button>
+    );
+}
+
+function MessageIconButton(props: {
+    label: string;
+    pressed?: boolean;
+    expanded?: boolean;
+    onClick: () => void;
+    children: ReactNode
+}) {
+    return (
+        <button
+            type="button"
+            className="session-message-action-button"
+            aria-label={props.label}
+            title={props.label}
+            aria-pressed={props.pressed === undefined ? undefined : props.pressed}
+            aria-expanded={props.expanded === undefined ? undefined : props.expanded}
+            data-selected={props.pressed || undefined}
+            onClick={props.onClick}
+        >
+            {props.children}
+        </button>
+    );
+}
+
+function MessageTimestamp(props: { dateTime: string; value: string }) {
+    return (
+        <time className="session-message-timestamp" dateTime={props.dateTime}>
+            {props.value}
+        </time>
+    );
+}
+
+function formatMessageTimestamp(item: NativeSessionItemBuffer, language: SessionUiLanguage): string | null {
+    const source = item.updatedAt ?? primitiveText(item.payload.createdAt);
+    if (!source) return null;
+    const date = new Date(source);
+    if (Number.isNaN(date.getTime())) return null;
+    return new Intl.DateTimeFormat(language, {hour: '2-digit', minute: '2-digit', hour12: false}).format(date);
 }
 
 function commandText(value: unknown): string | null {
@@ -530,10 +741,51 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function isSafeLink(href: string): boolean {
   return /^(https?:|mailto:)/i.test(href);
 }
-async function copyText(text: string): Promise<void> {
+
+export async function copyText(
+    text: string,
+    services: {
+        writeNative?: (value: string) => Promise<{ written: boolean } | undefined>;
+        writeWeb?: (value: string) => Promise<void>;
+        writeLegacy?: (value: string) => boolean;
+    } = {},
+): Promise<boolean> {
+    const writeNative = services.writeNative ?? ((value: string) => globalThis.window?.zeus?.writeClipboardText?.(value));
+    try {
+        const result = await writeNative(text);
+        if (result?.written) return true;
+    } catch {
+        // 原生桥不可用时继续尝试浏览器与选区兜底。
+    }
+    const writeWeb = services.writeWeb ?? globalThis.navigator?.clipboard?.writeText?.bind(globalThis.navigator.clipboard);
   try {
-    await navigator.clipboard?.writeText(text);
+      if (writeWeb) {
+          await writeWeb(text);
+          return true;
+      }
   } catch {
-    /* 剪贴板不可用时，消息仍可由用户手动选择。 */
+      // file:// 页面通常没有 Clipboard API 权限，继续使用同步选区兜底。
   }
+    return (services.writeLegacy ?? copyTextWithSelection)(text);
+}
+
+function copyTextWithSelection(text: string): boolean {
+    if (typeof document === 'undefined' || !document.body || typeof document.execCommand !== 'function') return false;
+    const activeElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.readOnly = true;
+    textarea.style.inset = '0 auto auto -10000px';
+    textarea.style.opacity = '0';
+    textarea.style.position = 'fixed';
+    document.body.append(textarea);
+    textarea.select();
+    let copied = false;
+    try {
+        copied = document.execCommand('copy');
+    } finally {
+        textarea.remove();
+        activeElement?.focus();
+    }
+    return copied;
 }

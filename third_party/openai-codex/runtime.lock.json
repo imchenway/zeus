@@ -1,11 +1,11 @@
 {
   "repository": "https://github.com/openai/codex.git",
-  "tag": "rust-v0.144.2",
-  "tagObject": "06eee5f70addf0b8cf331d5c6721f0414e7d2ae6",
-  "commit": "a6645b6b8a656360fa16fb7e1c6721d0697d3d6a",
+  "tag": "rust-v0.145.0-alpha.30",
+  "tagObject": "104fc3cff2250d78f38ddbbfbc7a6cf405e5f5e5",
+  "commit": "3b61fac9b7d7b003183ff1b73c28df6abeb062a4",
   "sourceArchive": {
-    "url": "https://codeload.github.com/openai/codex/tar.gz/a6645b6b8a656360fa16fb7e1c6721d0697d3d6a",
-    "sha256": "a18d8d1ab77fa7dab9636ce679f812f884dfaddfad9a3ee830bf9ff64a4594e7"
+    "url": "https://codeload.github.com/openai/codex/tar.gz/3b61fac9b7d7b003183ff1b73c28df6abeb062a4",
+    "sha256": "7c7c9fea10e45553a2c4b143a6df9fa7a5e52a7cca57d7216ebe4e0c3eceef62"
   },
   "rustToolchain": {
     "version": "1.95.0",
@@ -44,11 +44,11 @@
   },
   "normalizedCargoLock": {
     "fromVersion": "0.0.0",
-    "toVersion": "0.144.2",
-    "replacements": 132,
-    "sha256": "947f356f56fb96a6beb5029c0d70fe7a31825d7cc9123991f1a1fd4fe69a04e7"
+    "toVersion": "0.145.0-alpha.30",
+    "replacements": 130,
+    "sha256": "e66668244188f36d0fc12bc758e64ac92867962ca60755e4aa4655207edd4b31"
   },
-  "binaryVersion": "0.144.2",
+  "binaryVersion": "0.145.0-alpha.30",
   "arches": ["aarch64-apple-darwin", "x86_64-apple-darwin"],
   "patches": ["patches/0001-zeus-legacy-session-source.patch"],
   "license": "Apache-2.0"

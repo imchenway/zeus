@@ -227,10 +227,10 @@
 ### 实现证据
 
 - `apps/desktop/src/renderer/task/TaskModelPushModal.tsx`
-  - 新增模型推送弹窗、三阶段进度、任务正文只读预览、完整附件列表和补充信息输入。
+    - 新增模型推送弹窗、任务正文只读预览、完整附件列表和补充信息输入；2026-07-20 已移除内部创建步骤展示。
   - 新增项目级成功选择记忆；不支持的旧模型自动回退到项目首选/服务端首选模型，并使用新模型默认 effort。
 - `apps/desktop/src/renderer/App.tsx`
-  - `run` 路由改为 `model_push`；确认成功前不切换 tab。
+    - `run` 路由改为 `model_push`；2026-07-20 起确认后先进入会话并显示乐观消息，再等待后台接受结果。
   - 首轮 active 时保存项目记忆；已有 provider thread 的恢复态仍导航到真实会话，无 thread 时留在弹窗并显示错误。
 - `packages/local-server/src/index.ts`
   - 新增项目级 Codex 推送能力读取 API。
@@ -246,11 +246,300 @@
 
 - `pnpm lint`：通过。
 - `pnpm typecheck`：通过。
-- 定向回归：`pnpm vitest run packages/local-server/test/codex-native-conversation-api.test.ts packages/local-server/test/codex-native-conversation-coordinator.test.ts apps/desktop/test/app-task-controls-rendering.test.tsx`
-  - 结果：3 个测试文件、166 个用例通过。
+- 定向回归：
+  `pnpm vitest run packages/local-server/test/codex-native-conversation-api.test.ts packages/local-server/test/codex-native-conversation-coordinator.test.ts apps/desktop/test/app-task-controls-rendering.test.tsx apps/desktop/test/app-task-events-rendering.test.tsx apps/desktop/test/task-workspace-model.test.ts apps/desktop/test/app-shell-layout.test.tsx`
+    - 结果：6 个测试文件、357 个用例通过。
   - 覆盖能力读取零 provider 写、托管附件真实输入、附件缺失整单失败、旧并发满仍直接推送、项目选择记忆、首轮失败保留 thread、模型完成后任务不自动完成。
-- `pnpm vitest run apps/desktop/test/app-shell-layout.test.tsx`：169 个用例通过。
+- `pnpm vitest run apps/desktop/test/app-shell-layout.test.tsx`：视觉收口前 169 个用例通过；新增“推送弹窗不得横向溢出”防回归后为
+  170 个用例通过。
 - 全量 `pnpm test` 当前仅剩 `packages/graph-engine/test/graph.test.ts` 的 1 个真实仓库扫描顺序断言失败；该测试按当前脏工作树扫描 `createLocalServer` 的前两个控制流节点，新增业务源码后基准发生变化，与本次推送链路的定向测试无失败关联。
+
+### 正式包与真实运行验收
+
+- 已先退出旧 Zeus 进程，再执行 `pnpm package:mac`；`dist/mac-arm64/Zeus.app` 构建成功。
+- `codesign --verify --deep --strict --verbose=2 dist/mac-arm64/Zeus.app`：通过，产物 `valid on disk` 且满足 Designated
+  Requirement。
+- 正式包内 `app.asar` 已检出 `codex-task-push-capabilities` 与 `source=task_push` 新服务端链路；正式窗口 URL 指向
+  `dist/mac-arm64/Zeus.app/Contents/Resources/app.asar/dist/renderer/index.html`，不是源码开发页。
+- 在正式包 `Zeus E2E / ZEU-000001` 任务详情中确认：主按钮为“推送到模型”；点击后原地打开临时弹窗，模型为 `GPT-5.6-Sol`
+  、effort 为 `low`、工作模式为 `Default`；项目无成功记忆时权限真实回退为“只读”；补充信息、标准任务正文和完整附件计数均可见。
+- 首次视觉验收发现表单控件的 content-box 宽度导致弹窗底部出现横向滚动条；已将弹窗控件统一为
+  border-box、正文限制为只纵向滚动，并在再次退出、重打 `pnpm package:mac`、重启正式包后确认横向滚动条消失。
+- 使用补充信息 `MODEL_PUSH_OK` 执行真实首发后，Renderer 创建并选中了新原生会话；数据库会话为
+  `conversation_161b00b442b53b1322dd29ad`，provider thread 为 `019f6f04-a83e-7611-8ff7-cd5c1a788f37`，
+  `provider_state=ready`、`permission_mode=read-only`、`provider_model=gpt-5.6-sol`。
+- 首轮真实输入包含标准任务正文以及独立的“本次推送补充信息”段落，模型返回完成；app-server 启动期仍出现既有的
+  `Secret-like provider field rejected: snapshot.openai-api-key-local-confirmation` 诊断项，但未阻断
+  turn，最终会话从短暂错误态转为“已就绪”。
+- 首轮完成后任务仍为 `running`、`completed_at IS NULL`，并记录两条 `task.model_push.started` 事件；没有自动标记完成，符合人工验收口径。
+- Chromium Local Storage 已写入项目级成功选择：`gpt-5.6-sol / low / default / read-only`；`PRAGMA quick_check=ok`。
+
+## 2026-07-20 MCP 服务标识误报修复
+
+### 真实根因
+
+- 正式包推送后的当前会话出现 `Secret-like provider field rejected: snapshot.openai-api-key-local-confirmation`
+  ，但同一页面仍显示“运行时状态正常”。
+- app-server 的 `mcpServer/startupStatus/updated` 事件把 `params.name` 作为 MCP 服务标识；已安装 OpenAI Developers 插件的
+  `.mcp.json` 确实注册了名为 `openai-api-key-local-confirmation` 的 MCP 服务。
+- Coordinator 将该名称规范化为 MCP 启动状态映射的顶层键；Storage 原校验递归检查所有键名，因名称含 `api-key` 将服务标识误判为凭据字段。
+- Provider 事件兜底错误处理又把该校验异常写成当前执行轮次的持久化 `error` item，因此用户看到红色“本轮错误”；这不是模型生成或
+  app-server 连接失败。
+- 当前正式数据库存在多条同文本误报，`PRAGMA quick_check=ok`；既有 MCP 状态快照因对应事件被拒绝而未包含该服务。
+
+### 已确认的领域与安全边界
+
+- `MCP 服务标识` 是状态映射的身份标签，不是 provider 负载字段；服务名可以合法包含 `api-key` 等文本。
+- 只停止对 MCP 状态映射顶层服务标识应用敏感字段名规则；每个服务的状态内容仍执行 secret-like 递归校验和严格结构校验。
+- Rate limits、provider settings、token usage 以及 MCP 状态对象内部的 `apiKey`、`token`、`cookie`、`credential` 等规则均不放宽。
+- 历史修复只删除 `item_type=error`、`provider_item_id` 为 provider event error、且文本与本误报完全相等的记录；诊断设置也只移除
+  method 和 error message 同时精确匹配的条目，其他真实错误保留。
+
+### 实现与回归
+
+- `packages/storage/src/index.ts`：MCP 快照按“服务标识 → 状态”分层校验；新增
+  `20260720_0005_mcp_server_identifier_false_positive_cleanup` 幂等迁移清理历史误报。
+- `packages/storage/test/storage.test.ts`：覆盖合法服务名持久化、状态内部 secret 继续拒绝、迁移精确清理以及真实错误保留。
+- `packages/local-server/test/codex-native-conversation-coordinator.test.ts`：覆盖真实单服务事件合并、snapshot/broadcast
+  持久化且不生成 `conversation.native.error` 或错误 item。
+- RED：修改实现前两个相关测试文件共 85 个用例中 4 个失败，分别锁定服务名误拒绝、Coordinator 未更新、迁移未登记和历史误报未清理。
+- GREEN：实现后两个相关测试文件共 85 个用例全部通过。
+
+### 质量门禁与正式包验收
+
+- `pnpm lint`、`pnpm typecheck`、`pnpm format:check`、`git diff --check`：通过。
+-
+`pnpm vitest run packages/storage/test/storage.test.ts packages/local-server/test/codex-native-conversation-coordinator.test.ts packages/local-server/test/codex-native-conversation-api.test.ts`
+：3 个测试文件、127 个用例全部通过。
+- `pnpm verify:acceptance-matrix`：12 sections / 139 items 通过。
+- 全量 `pnpm test`：1441 passed / 4 skipped；仅仓库既有的 2 个真实仓库控制流顺序断言失败，失败仍位于 `graph.test.ts` 与
+  `graph-view-api.test.ts`，与 MCP snapshot、provider event 和迁移无关。
+- 优雅退出旧 Zeus 后执行 `pnpm package:mac` 成功；`codesign --verify --deep --strict --verbose=2 dist/mac-arm64/Zeus.app`
+  返回 `valid on disk` 且 `satisfies its Designated Requirement`。
+- 新正式包启动后迁移 `20260720_0005_mcp_server_identifier_false_positive_cleanup` 已落库；误报 conversation item 数为 `0`
+  、误报 provider diagnostics 数为 `0`，其他真实 provider error item 仍保留 `10` 条，`PRAGMA quick_check=ok`。
+- 在用户原报错的 `tc-app-core / 分析当前项目结构` 会话中现场确认：红色“本轮错误”不再出现，页面显示“已就绪”“运行时状态正常”，运行时详情包含
+  `Openai api key local confirmation status: ready`。
+- 同一正式运行现场的持久化 MCP snapshot 为新 generation，服务 `openai-api-key-local-confirmation` 的状态为 `ready`、error
+  为 `null`；证明真实 app-server 事件已通过新校验，不是只在 mock 测试中通过。
+- 反向扫描 production 源码后，该历史错误文本只存在于一次性精确清理迁移中，不存在继续生成该误报的分支。
+
+`VERIFICATION PASSED: ROOT CAUSE, SECURITY BOUNDARY, TESTS, OFFICIAL PACKAGE, LIVE PROVIDER SNAPSHOT, PACKAGED UI AND DATABASE CLEANUP`
+
+## 2026-07-20 推送交互去过程化与乐观首发
+
+### 产品口径
+
+- “推送到模型”弹窗不再展示“连接 app-server / 创建新会话 / 发送任务与附件”三步过程；用户只需要确认模型、模型等级、工作模式、权限、补充信息和实际发送内容。
+- 四个配置字段统一使用 `ZeusSelect`，保留明确的下拉箭头、当前值、选中勾选和键盘交互；短选项列表不显示搜索区。
+- `ZeusSelect` 展开层固定从触发区下方出现，宽度与触发区严格相等；移除全局 `280px` 和任务工具栏 `210px` 的强制最小宽度，避免展开层左右越界。
+- 用户点击“确认推送”后，Renderer 立即进入项目会话页并显示完整首条用户消息，不等待 `thread/start` 和首个 `turn/start` 返回。
+- 后台接受成功后，用真实 conversation/thread 无闪退接管乐观消息；真实会话快照加载完成前继续保留已显示的首条消息，同时暂不开放下一条消息输入。
+- 后台接受失败时不返回弹窗；当前会话原位显示失败原因和“重试发送”，重试复用原 `idempotencyKey` 与 `clientUserMessageId`，避免
+  unknown outcome 创建重复 thread。
+
+### 实现证据
+
+- `apps/desktop/src/renderer/task/TaskModelPushModal.tsx`
+    - 删除三步进度条；四个原生 `<select>` 全部替换为 `ZeusSelect`。
+    - `buildTaskModelPushMessage()` 统一拼接服务端标准任务正文与本次补充信息，弹窗预览和乐观消息使用同一文本。
+- `apps/desktop/src/renderer/task/TaskModelPushPendingWorkspace.tsx`
+    - 通过 `sessionReducer(send_started)` 创建包含首条用户消息和附件的临时会话状态。
+    - 提供提交中、失败、重试和真实接受桥接状态；失败消息留在会话页，不退回创建过程。
+- `apps/desktop/src/renderer/App.tsx`
+    - 提交事件先插入临时 conversation choice、选中会话并切换到 `#project-sessions`，随后才异步调用 `startTaskModelPush()`。
+    - choices 协调器新增 `forget()`，真实 acceptance 到达后移除临时 choice 并保留真实 choice，防止并发历史刷新把当前选择覆盖掉。
+- `apps/desktop/src/renderer/session/SessionWorkspace.tsx`
+    - 真实会话快照加载期间使用乐观状态兜底，避免首条消息短暂消失；兜底期间隐藏 composer，避免在真实会话尚未可写时误发第二条消息。
+- `packages/local-server/src/index.ts`
+    - 能力读取接口增加任务身份校验并返回 `canonicalPrompt`；Renderer 因此可以在 provider 返回前显示与服务端实际发送一致的标准任务正文。
+- `apps/desktop/src/renderer/styles.css`
+    - `zeus-select-popover` 统一为 `inline-size / min-inline-size / max-inline-size: 100%`，并显式使用 `border-box`。
+
+### 阶段性自动化验证
+
+- `pnpm typecheck`：通过。
+-
+`pnpm vitest run apps/desktop/test/app-task-controls-rendering.test.tsx apps/desktop/test/app-shell-layout.test.tsx packages/local-server/test/codex-native-conversation-api.test.ts`
+    - 结果：3 个测试文件、283 个用例通过。
+    - 覆盖无三步过程、四个 `ZeusSelect`、展开层等宽、标准任务正文能力读取、先导航后请求、首条消息乐观展示、失败原位重试和临时
+      choice 清理。
+- `git diff --check`：通过。
+- `pnpm lint`：通过。
+- `pnpm format:check`：通过。
+- `pnpm verify:acceptance-matrix`：通过，12 个章节、139 项。
+- `pnpm test`：1441 passed、4 skipped、2 failed。
+    - 两个失败分别为 `packages/graph-engine/test/graph.test.ts` 与 `packages/local-server/test/graph-view-api.test.ts`
+      的当前真实仓库控制流顺序断言；两者都扫描当前脏工作树并假设 `createLocalServer` 的前两个控制流节点存在固定边，和本次任务推送、下拉框及乐观会话链路无关。
+- 已优雅退出旧 Zeus 后执行 `pnpm package:mac`：通过。
+- `codesign --verify --deep --strict --verbose=2 dist/mac-arm64/Zeus.app`：通过，正式包 `valid on disk` 且满足 Designated
+  Requirement。
+- 正式包 `app.asar` 已核对包含任务级 `codex-task-push-capabilities?taskId`、`pending-task-push` 乐观会话、立即进入会话文案和原位重试逻辑；包内
+  Renderer 不包含旧 `task-model-push-progress` 与 `210px/280px` 强制下拉宽度规则。
+- 正式包已重新启动；用户后续现场已证实推送后立即进入会话并显示首条消息，本轮又在同一 packaged App 中确认 MCP 服务状态为
+  ready 且历史红色误报消失。
+
+### 2026-07-20 首条消息空快照交接竞态修复
+
+- 现场会话 `conversation_05d1085d669817f02abdda10` 在 `10:49:31.006Z` 创建提交、`10:49:32.748Z` 开始执行；用户截图位于
+  `10:49:39.130Z`，provider 确认的首条用户消息直到 `10:49:47.659Z` 才落库。截图正好位于“执行已开始、provider userMessage
+  尚未确认”的窗口内，消息事实没有丢失。
+- 真实根因不是后端延迟本身，而是 Renderer 把“任意真实快照已加载”误当成乐观状态交接完成：首个快照按 provider-confirmed
+  契约合法返回空 `messages`，外层 `fallbackState` 却立即失效，导致首条消息短暂消失；provider item 到达后又重新出现。
+- `apps/desktop/src/renderer/session/useSessionController.ts`：真实 controller 创建时只接管同 conversation 的乐观
+  item；不继承临时快照、队列、错误或 transport 状态。首个空快照进入现有 `hydrateSnapshot()` 后，乐观 item 继续保留。
+- `apps/desktop/src/renderer/session/sessionSelectors.ts`：新增 provider 确认选择器，只认非乐观 user item 且
+  `clientUserMessageId` / `durableClientUserMessageId` 精确匹配。
+- `apps/desktop/src/renderer/session/SessionWorkspace.tsx`：移除“整份 fallback 状态覆盖真实 controller”的双状态源；每个
+  conversation 只在 controller 初始化时接管一次乐观状态，真实快照到达前继续隐藏 composer。
+- `apps/desktop/src/renderer/App.tsx`：conversation 以真实 id 隔离 controller 生命周期；不再因 `state.snapshot` 存在或
+  transport 失败就清理 task-push pending，只有匹配的 provider user item 确认后才清理。
+- 后端 `conversation_messages` 的 provider-confirmed 持久化契约保持不变；没有为了消除闪烁提前伪造持久化用户消息。
+- RED：新增 controller 回归后，首个空快照把 user item 清空，聚焦测试稳定得到 `1 failed / 34 passed`。
+- GREEN：实现接管与身份确认后，`session-reducer.test.ts` 为 `35 passed`；结合 `app-task-controls-rendering.test.tsx` 共
+  `106 passed`。
+- 扩展回归：`session-workspace.test.tsx`、`app-task-events-rendering.test.tsx`、`api-client.test.ts` 共 `127 passed`；
+  `pnpm typecheck`、`pnpm lint`、相关文件 Prettier 检查、`git diff --check` 均通过。
+- `pnpm format:check`、`pnpm verify:acceptance-matrix` 通过，后者为 12 个章节、139 项；反向扫描确认 production 源码不再包含
+  `fallbackState && !state.snapshot`、旧 `fallbackState=` 传递和“快照存在或 transport 失败即清理 pending”的分支。
+- 全量 `pnpm test` 的本次运行只剩 `packages/graph-engine/test/graph.test.ts` 中“同一函数内控制流节点按源码顺序连接”的 1
+  个当前真实仓库扫描断言失败；任务推送、Session controller 与 Workspace 相关测试均通过。
+- 已优雅退出旧正式 App 并执行 `pnpm package:mac`：通过，生成 `dist/mac-arm64/Zeus.app`、`dist/Zeus-0.1.0-arm64.dmg` 和
+  `dist/Zeus-0.1.0-arm64.zip`；正式 App 与 `app.asar` 构建时间为 `2026-07-20 19:14:05 +0800`。
+- `codesign --verify --deep --strict --verbose=2 dist/mac-arm64/Zeus.app`：通过，产物 `valid on disk` 且满足 Designated
+  Requirement；包内检出新 controller 接管和 provider 确认逻辑，旧 fallback gate 与旧 pending 清理模式计数均为 `0`。
+- 正式包真实验收使用 `Zeus E2E / ZEU-000002 / 乐观消息空快照交接验收 20260720`：确认推送后首条用户消息立即显示；2.5
+  秒后页面已经进入真实 conversation、运行时详情与真实 composer 已加载，但 provider 尚未确认的首条消息仍保持可见并显示“发送中”，准确覆盖原故障窗口。
+- 最终页面显示“已就绪”，首条用户消息只出现 1 次、`发送中` 消失，模型回复 `OPTIMISTIC_HANDOFF_OK` 只出现 1 次，没有消息消失或重复。
+- 正式数据库进一步确认：submission 在 `11:17:29.138Z` 创建、`11:17:30.682Z` 派发，provider user message 到 `11:17:45.601Z`
+  才持久化，确认窗口长达约 16.5 秒；最终 submission 与 turn 均为 `completed`，同一 conversation 仅持久化 1 条 user message
+  和 1 条 assistant message，user message 的 `client_message_id=f42c2617-e8c7-4693-894f-755982e20c49` 与 submission 精确一致，
+  `PRAGMA quick_check=ok`。
+
+`VERIFICATION PASSED: EMPTY SNAPSHOT HANDOFF, PROVIDER IDENTITY CONFIRMATION, TESTS, OFFICIAL PACKAGE, TEMPORAL UI CHECK AND DATABASE CONVERGENCE`
+
+## 2026-07-21 Codex App 归档导致旧会话待发送卡住修复
+
+### 现场事实与真实根因
+
+- 用户现场会话 `conversation_05d1085d669817f02abdda10` 绑定 provider thread `019f7f25-32a2-7a63-8f59-a433f245ab2b`；Codex
+  App 已将该 thread 移入 `archived_sessions`，但 Zeus 数据库仍记录 `provider_state=ready`。
+- app-server 对该 thread 执行 `thread/resume` 返回：
+  `session ... is archived. Run codex unarchive ... to unarchive it first.`；这不是并发队列、模型繁忙或普通网络失败。
+- 原 Coordinator 将所有 resume 失败统一记为 `recovery_required`，且只暂停 `dispatching/active` submission，没有处理仍为
+  `queued` 的消息；REST 快照又把“只有 queued submission”的会话推断为 `idle`，因此 UI 同时显示“会话就绪”和“待发送”，形成无出口假状态。
+- 新正式包启动后的权威快照确认该会话为 `providerState=archived`、队列为 `paused/provider_archived`，原消息“画图给我看”为
+  `paused/provider_archived`，没有丢失或重复发送。
+
+### 领域边界与产品口径
+
+- Zeus 业务归档与 Codex provider thread 归档是两个不同状态；本次新增的是 provider 状态 `archived`，不会把 Zeus
+  会话主记录设为业务归档。
+- 检出 Codex App 归档后，所有 queued/dispatching/active submission 转为 `paused/provider_archived`，队列不再自动重试，也不再显示
+  ready。
+- Zeus 不静默撤销用户在 Codex App 中做出的归档操作。只有用户点击“恢复并继续”后才调用 `thread/unarchive`，随后 resume/read
+  同一 thread，并按原队列顺序续发已有消息。
+- 恢复失败时继续保持 archived 和原队列，不把未知结果伪装成成功，也不创建新 thread。
+
+### 实现证据
+
+- `packages/ai-runtime/src/codexAppServerManager.ts`
+    - 新增 typed `unarchiveThread()`，严格调用 app-server `thread/unarchive`。
+- `packages/storage/src/index.ts`
+    - `ConversationProviderState` 新增 `archived`，沿用现有 TEXT 字段，无需破坏性迁移；provider-archived binding
+      仍参与启动恢复，以便识别用户从其他 Codex 客户端取消归档后的真实状态。
+- `packages/local-server/src/codexNativeConversationCoordinator.ts`
+    - 精确识别 app-server archived 错误，持久化 `archived/provider_archived`，暂停原队列并广播 thread/queue 权威变化。
+    - 新增显式 `restoreArchivedConversation()`：unarchive → resume → read → 恢复原 paused submission 为 queued → 按既有队列调度。
+- `packages/local-server/src/index.ts`
+    - 新增 `POST /api/projects/:projectId/conversations/:conversationId/provider-thread/restore`。
+    - 会话快照优先把 provider archived 映射为 `paused/provider_archived`；conversation choice 不再把 archived 会话标为
+      resumable。
+- `apps/desktop/src/renderer/session/*`
+    - 当前会话显示“已归档”和“此会话已在 Codex App 中归档”，composer 只读，并提供“恢复并继续”。
+    - 左侧 source tree 显示“会话已归档”，不再误报“会话就绪”；恢复响应使用权威快照重新 hydrate，同一页面继续工作。
+
+### 自动化验证
+
+- RED：
+    - manager 测试稳定失败为 `manager.unarchiveThread is not a function`。
+    - Coordinator 重启恢复测试稳定失败为 provider state 仍是 `ready`。
+    - REST 测试稳定失败为恢复端点 `404`。
+    - Renderer 测试稳定失败为无恢复动作、无归档提示，仍显示通用“此会话已不能继续”。
+- GREEN 聚焦回归：
+    - ai-runtime 22 个用例通过。
+    - storage provider-archived binding 用例通过。
+    - local-server Coordinator/API 103 个用例通过。
+    - desktop controller/workspace/API client 197 个用例通过。
+- `pnpm typecheck`：通过。
+- `pnpm lint`：通过。
+- `git diff --check`：通过。
+- 全量 `pnpm test`：全部通过；本次运行覆盖 70 余个测试文件，Codex live 测试按既有条件跳过 4 个，无失败。
+- `pnpm build`：通过。
+
+### 正式包与运行现场验收
+
+- 已正常退出旧 Zeus，执行 `pnpm package:mac` 成功；产物为 `dist/mac-arm64/Zeus.app`、`dist/Zeus-0.1.0-arm64.dmg`、
+  `dist/Zeus-0.1.0-arm64.zip`，最终构建时间为 `2026-07-21 13:47:45 +0800` 起。
+- `codesign --verify --deep --strict --verbose=2 dist/mac-arm64/Zeus.app`：通过，正式 App `valid on disk` 且满足
+  Designated Requirement。
+- 正式包 `app.asar` 已检出 `thread/unarchive`、`ZEUS_CODEX_THREAD_ARCHIVED` 和 `/provider-thread/restore`，证明不是只改源码未进包。
+- 新正式包通过 Electron 调试现场确认：`tc-app-core` 左侧多条由 Codex App
+  归档的会话均显示“会话已归档”；原问题会话标题状态为“已归档”，正文提示真实原因，按钮为“恢复并继续”，composer 为 disabled。
+- 同一运行现场通过本地权威 API 确认原问题会话仍保留 submission “画图给我看”，状态为 `paused/provider_archived`。
+- 为遵守“只有显式用户操作才撤销 Codex App 归档”的边界，本次验收没有代替用户点击真实会话的“恢复并继续”；unarchive 和原消息续发已由
+  manager、Coordinator、REST 与 Renderer 分层测试覆盖。
+
+`VERIFICATION PASSED: PROVIDER ARCHIVE CLASSIFICATION, DURABLE QUEUE PAUSE, EXPLICIT UNARCHIVE, ORIGINAL MESSAGE RESUME, FULL TESTS, OFFICIAL PACKAGE AND PACKAGED ELECTRON UI`
+
+## 2026-07-22 会话可继续性透明化收口
+
+### 用户确认的产品语义
+
+- 用户只需知道消息是否待发送、发送中或暂时无法发送，不需要知道 provider thread 是否归档。
+- “归档”、“恢复并继续”和 `thread/unarchive` 均是内部存储与运行机制，不再投影成会话页用户术语。
+- 已有待发送消息时，Zeus 自动执行 `unarchive → resume/read → 原队列续发`；没有待发送消息时，在用户下一次发送前透明执行同一链路。
+- 透明恢复失败时保留原始 submission 和排队顺序，界面只显示“待发送”与“重试发送”，技术原因继续留在内部状态与日志中。
+- 本节覆盖上一节“必须显式点击恢复”的 UI 决策；provider 状态仍持久化，用于日志、幂等与失败诊断。
+
+### 实现收口
+
+- `packages/local-server/src/codexNativeConversationCoordinator.ts`
+    - 启动恢复完成后自动查找带有待发送 submission 的内部归档 thread，恢复后交给现有公平队列调度。
+    - 新消息提交时若已知底层状态，先透明恢复再派发；若 `turn/start` 现场才发现状态变化，则恢复后只重试一次，防止循环写入。
+    - 自动恢复失败依旧标记 `paused/provider_archived`，不丢失、不重复发送、不新建 thread。
+- `packages/local-server/src/index.ts`
+    - provider 归档不再把 native conversation choice 标记为不可续接；业务归档、`closed` 和 `failed` 仍保持原边界。
+- `apps/desktop/src/renderer/session/*`
+    - source tree 只显示“会话就绪”或“待发送”，会话标题区不再显示“已归档”。
+    - 移除顶部归档说明和“恢复并继续”按钮，composer 保持可写；自动恢复失败时，待发送区提供不暴露内部状态的“重试发送”。
+
+### 验证证据
+
+- RED：Coordinator 新用例在旧实现下稳定得到 `manager.unarchives=[]`；Renderer 新用例稳定读到“会话已归档”、“恢复并继续”与
+  disabled composer。
+- GREEN 聚焦回归：Coordinator/API/Workspace/Reducer/Controller 共 `239 passed`；另有 renderer API client `71 passed`。
+- `pnpm typecheck`：通过。
+- `pnpm lint`：通过。
+- `pnpm format:check`：通过。
+- `pnpm verify:acceptance-matrix`：通过，12 个章节、139 项。
+- `pnpm test`：`1496 passed`、`4 skipped`，共 90 个测试文件，无失败。
+- `pnpm build`：通过；Vite 仅保留现有大 chunk 告警，不影响构建成功。
+- `git diff --check`：通过。
+- 经用户授权正常退出旧 Zeus 后，`pnpm package:mac`：通过；正式产物已更新为 `dist/mac-arm64/Zeus.app`、
+  `dist/Zeus-0.1.0-arm64.dmg`、`dist/Zeus-0.1.0-arm64.zip`，`app.asar` 构建时间为 `2026-07-22 14:38:43 +0800`。
+- `codesign --verify --deep --strict --verbose=2 dist/mac-arm64/Zeus.app`：通过，App `valid on disk` 且满足 Designated
+  Requirement；当前为 arm64 ad-hoc 签名，未做 Developer ID 分发签名和 notarization，不把本地验签等同于可对外分发。
+- 正式包 `app.asar` 只检出新降级文案“重试发送”，未检出“恢复并继续”、“此会话已在 Codex App 中归档”和“会话已归档”。
+- 新正式包已从 `dist/mac-arm64/Zeus.app` 拉起，主进程与 Renderer 进程均真实运行，macOS 可访问性树确认存在 1 个标题为
+  `Zeus` 的窗口。
+- 打开 `tc-app-core → 会话 → 了解发货链路` 后，原待发送消息“画图给我看”已自动成为 14:40 的用户消息，原会话进入“正在处理”；页面未显示
+  provider 归档或恢复提示，证明“启动恢复 → 原队列续发”在正式包真实运行现场闭环。
+- 运行现场截图：
+  `/Users/david/.codex/visualizations/2026/07/22/019f8875-c2c2-7771-aad1-4f2e780f5ea0/zeus-auto-continue-runtime.png`。
+- macOS 统一日志未发现本次 Zeus 业务链路的崩溃、未处理异常或 fatal；仅出现系统 StoreKit 远端队列查询错误，与本次会话恢复链路无关。
+
+`VERIFICATION PASSED: TRANSPARENT PROVIDER RECOVERY, ORIGINAL QUEUE RESUME, FULL TESTS, OFFICIAL PACKAGE AND PACKAGED ELECTRON UI`
 
 ## 风险与回滚
 

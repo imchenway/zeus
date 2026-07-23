@@ -1,7 +1,16 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
-import { openExternalHttpsUrlInMain } from '../appShellBridge.js';
-import type { NativePendingRequest, NativePermissionMode } from './sessionTypes.js';
-import type { SessionUiLanguage } from './ThreadItemView.js';
+import {type KeyboardEvent, useEffect, useMemo, useRef, useState} from 'react';
+import {ArrowRightIcon as ArrowRight} from '@phosphor-icons/react/dist/csr/ArrowRight';
+import {CheckIcon as Check} from '@phosphor-icons/react/dist/csr/Check';
+import {CaretDownIcon as CaretDown} from '@phosphor-icons/react/dist/csr/CaretDown';
+import {FileTextIcon as FileText} from '@phosphor-icons/react/dist/csr/FileText';
+import {InfoIcon as Info} from '@phosphor-icons/react/dist/csr/Info';
+import {PencilSimpleIcon as PencilSimple} from '@phosphor-icons/react/dist/csr/PencilSimple';
+import {QuestionIcon as Question} from '@phosphor-icons/react/dist/csr/Question';
+import {TerminalWindowIcon as TerminalWindow} from '@phosphor-icons/react/dist/csr/TerminalWindow';
+import {XIcon as X} from '@phosphor-icons/react/dist/csr/X';
+import {openExternalHttpsUrlInMain} from '../appShellBridge.js';
+import type {NativePendingRequest, NativePermissionMode} from './sessionTypes.js';
+import type {SessionUiLanguage} from './ThreadItemView.js';
 
 export interface RequestQuestionOption {
   label: string;
@@ -19,7 +28,12 @@ export interface RequestQuestion {
 }
 
 export type PendingRequestKind = 'command' | 'file' | 'permissions' | 'request_user_input' | 'mcp' | 'unknown';
-export type SupportedRequestDecision = 'accept' | 'acceptForSession' | 'decline' | 'cancel';
+export type SupportedRequestDecision =
+    'accept'
+    | 'acceptWithExecpolicyAmendment'
+    | 'acceptForSession'
+    | 'decline'
+    | 'cancel';
 
 export interface PendingRequestSurfaceProps {
   request: NativePendingRequest;
@@ -29,22 +43,25 @@ export interface PendingRequestSurfaceProps {
   autoFocus?: boolean;
   onRespond: (requestId: string, response: Record<string, unknown>) => void | Promise<void>;
   permissionMode?: NativePermissionMode;
+    onSnooze?: () => void | Promise<void>;
 }
 
 const OTHER_ANSWER = '__other__';
-const supportedDecisionOrder: SupportedRequestDecision[] = ['accept', 'acceptForSession', 'decline', 'cancel'];
+const supportedDecisionOrder: SupportedRequestDecision[] = ['accept', 'acceptWithExecpolicyAmendment', 'acceptForSession', 'decline', 'cancel'];
 
 const labels = {
   'zh-CN': {
     approval: '需要审批',
     input: '需要你的回答',
     accept: '允许一次',
+      acceptWithExecpolicyAmendment: '允许类似命令',
     acceptForSession: '本会话允许',
+      allowAllEdits: '允许所有编辑',
     decline: '拒绝',
     cancel: '取消',
     submit: '提交回答',
     other: '其他',
-    otherPlaceholder: '输入其他回答',
+      otherPlaceholder: '否，并告诉 Codex 应该如何做得不同',
     loading: '正在读取请求详情，详情完整前不能决策。',
     impact: '影响',
     secret: '敏感回答仅发送给当前本机 app-server，不会显示在会话记录中。',
@@ -61,17 +78,24 @@ const labels = {
     cwd: '工作目录',
     mode: '当前模式',
     required: '必填',
+      terminal: '终端',
+      fileChange: '文件变更',
+      grantOptions: '授权选项',
+      similarCommandRule: '适用规则',
+      allEditScope: '本会话仅对已审批文件免重复询问；新文件仍可能再次申请。',
   },
   'en-US': {
     approval: 'Approval required',
     input: 'Input required',
     accept: 'Allow once',
+      acceptWithExecpolicyAmendment: 'Allow similar commands',
     acceptForSession: 'Allow for session',
+      allowAllEdits: 'Allow all edits',
     decline: 'Decline',
     cancel: 'Cancel',
     submit: 'Submit answers',
     other: 'Other',
-    otherPlaceholder: 'Enter another answer',
+      otherPlaceholder: 'No, tell Codex what to do differently',
     loading: 'Loading request details. Decisions remain unavailable until details are complete.',
     impact: 'Impact',
     secret: 'Secret answers are sent only to the current local app-server and are not shown in the transcript.',
@@ -88,6 +112,11 @@ const labels = {
     cwd: 'Working directory',
     mode: 'Current mode',
     required: 'Required',
+      terminal: 'Terminal',
+      fileChange: 'File changes',
+      grantOptions: 'Grant options',
+      similarCommandRule: 'Applies to',
+      allEditScope: 'Previously approved files are remembered for this session; new files may still ask again.',
   },
 } as const;
 
@@ -95,8 +124,6 @@ export function PendingRequestSurface(props: PendingRequestSurfaceProps) {
   const copy = labels[props.language];
   const kind = requestKind(props.request);
   const questions = useMemo(() => normalizeRequestQuestions(props.request), [props.request]);
-  const [answers, setAnswers] = useState<Record<string, string[]>>({});
-  const [otherAnswers, setOtherAnswers] = useState<Record<string, string>>({});
   const [mcpResponseJson, setMcpResponseJson] = useState('{}');
   const [mcpUrlError, setMcpUrlError] = useState<string | null>(null);
   const firstControlRef = useRef<HTMLInputElement | HTMLButtonElement | null>(null);
@@ -104,18 +131,11 @@ export function PendingRequestSurface(props: PendingRequestSurfaceProps) {
   const hasDetails = isRui ? questions.length > 0 : Object.keys(props.request.payload).length > 0;
   const decisions = supportedRequestDecisions(props.request);
   const autofocusDecision = defaultAutofocusDecision(decisions);
-  const answersComplete = areRequiredRequestAnswersComplete(questions, answers, otherAnswers);
 
   useEffect(() => {
     if (props.autoFocus === false) return;
     firstControlRef.current?.focus();
   }, [autofocusDecision, hasDetails, props.autoFocus, props.request.id, questions.length]);
-
-  async function submit(event: FormEvent): Promise<void> {
-    event.preventDefault();
-    if (!hasDetails || props.busy || !answersComplete) return;
-    await props.onRespond(props.request.id, buildPendingRequestResponse(props.request, answers, otherAnswers));
-  }
 
   async function openMcpUrl(url: string): Promise<void> {
     setMcpUrlError(null);
@@ -148,12 +168,28 @@ export function PendingRequestSurface(props: PendingRequestSurfaceProps) {
   }
 
   if (!isRui) {
+      if (kind === 'command' || kind === 'file') {
+          const incompleteApproval = !hasCompleteApprovalDetails(props.request);
+          return (
+              <CompactApprovalPanel
+                  request={props.request}
+                  kind={kind}
+                  language={props.language}
+                  decisions={decisions}
+                  busy={props.busy === true}
+                  error={props.error}
+                  autoFocus={props.autoFocus !== false}
+                  incompleteApproval={incompleteApproval}
+                  permissionMode={props.permissionMode ?? 'read-only'}
+                  onDecision={(decision) => void props.onRespond(props.request.id, buildPendingRequestResponse(props.request, {decision: [decision]}))}
+              />
+          );
+      }
     const canonicalMcpMode = kind === 'mcp' ? mcpRequestMode(props.request) : null;
     const acceptsMcpJson = canonicalMcpMode === 'form' || canonicalMcpMode === 'openai/form';
     const mcpUrl = canonicalMcpMode === 'url' ? safeMcpUrl(props.request) : null;
     const mcpResponseValid = !acceptsMcpJson || isMcpResponseContentValid(props.request, mcpResponseJson);
     const invalidMcp = kind === 'mcp' && (!hasValidMcpResponsePayload(props.request) || !mcpResponseValid);
-    const incompleteApproval = (kind === 'command' || kind === 'file') && !hasCompleteApprovalDetails(props.request);
     return (
       <section className="session-pending-request session-approval-request" aria-busy={props.busy || undefined}>
         <fieldset disabled={props.busy}>
@@ -185,12 +221,6 @@ export function PendingRequestSurface(props: PendingRequestSurfaceProps) {
               <span>{copy.invalidMcpHelp}</span>
             </p>
           ) : null}
-          {incompleteApproval ? (
-            <p className="session-request-invalid" role="alert">
-              <strong>{copy.incompleteApproval}</strong>
-              <span>{copy.incompleteApprovalHelp}</span>
-            </p>
-          ) : null}
           {props.error ? <p role="alert">{props.error}</p> : null}
           <div className="session-request-actions">
             {decisions.map((decision) => (
@@ -211,84 +241,527 @@ export function PendingRequestSurface(props: PendingRequestSurfaceProps) {
     );
   }
 
+    return <RequestUserInputPanel {...props} questions={questions}/>;
+}
+
+interface CompactApprovalPanelProps {
+    request: NativePendingRequest;
+    kind: 'command' | 'file';
+    language: SessionUiLanguage;
+    decisions: SupportedRequestDecision[];
+    busy: boolean;
+    error?: string | null;
+    autoFocus: boolean;
+    incompleteApproval: boolean;
+    permissionMode: NativePermissionMode;
+    onDecision: (decision: SupportedRequestDecision) => void;
+}
+
+function CompactApprovalPanel(props: CompactApprovalPanelProps) {
+    const copy = labels[props.language];
+    const [menuOpen, setMenuOpen] = useState(false);
+    const rootRef = useRef<HTMLDivElement | null>(null);
+    const menuTriggerRef = useRef<HTMLButtonElement | null>(null);
+    const failClosedRef = useRef<HTMLButtonElement | null>(null);
+    const menuItemRefs = useRef<Array<HTMLButtonElement | null>>([]);
+    const grantDecisions = props.decisions.filter((decision) => !isFailClosedDecision(decision));
+    const hasAllowOnce = grantDecisions.includes('accept');
+    const amendment = advertisedExecpolicyAmendmentDecision(props.request);
+    const failClosedDecision = props.decisions.includes('decline') ? 'decline' : props.decisions.includes('cancel') ? 'cancel' : null;
+    const menuDecisions: SupportedRequestDecision[] = [...grantDecisions, ...(props.kind === 'command' && props.decisions.includes('cancel') && failClosedDecision !== 'cancel' ? (['cancel'] as const) : [])];
+    const extraFailClosedDecision = grantDecisions.length === 0 && failClosedDecision === 'decline' && props.decisions.includes('cancel') ? 'cancel' : null;
+
+    useEffect(() => {
+        if (props.autoFocus) failClosedRef.current?.focus();
+    }, [props.autoFocus, props.request.id]);
+
+    useEffect(() => {
+        if (!menuOpen) return;
+        const closeOnOutsidePointer = (event: PointerEvent) => {
+            if (rootRef.current?.contains(event.target as Node)) return;
+            setMenuOpen(false);
+        };
+        document.addEventListener('pointerdown', closeOnOutsidePointer);
+        return () => document.removeEventListener('pointerdown', closeOnOutsidePointer);
+    }, [menuOpen]);
+
+    function openMenu(): void {
+        setMenuOpen(true);
+        window.requestAnimationFrame(() => menuItemRefs.current[0]?.focus());
+    }
+
+    function choose(decision: SupportedRequestDecision): void {
+        setMenuOpen(false);
+        props.onDecision(decision);
+    }
+
+    function handleMenuKeyDown(event: KeyboardEvent<HTMLDivElement>): void {
+        if (event.key === 'Escape') {
+            event.preventDefault();
+            setMenuOpen(false);
+            menuTriggerRef.current?.focus();
+            return;
+        }
+        if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+        const items = menuItemRefs.current.filter((item): item is HTMLButtonElement => Boolean(item));
+        if (items.length === 0) return;
+        event.preventDefault();
+        const current = items.indexOf(document.activeElement as HTMLButtonElement);
+        if (event.key === 'Home') items[0]?.focus();
+        else if (event.key === 'End') items.at(-1)?.focus();
+        else {
+            const delta = event.key === 'ArrowDown' ? 1 : -1;
+            items[(current + delta + items.length) % items.length]?.focus();
+        }
+    }
+
+    const preview = requestPreview(props.request, copy.cwd);
+    const mode = permissionModeLabel(props.permissionMode, props.language);
+    const Icon = props.kind === 'command' ? TerminalWindow : FileText;
   return (
-    <form className="session-pending-request session-rui-request" onSubmit={(event) => void submit(event)} aria-busy={props.busy || undefined}>
+      <section className="session-pending-request session-approval-request is-compact-approval"
+               aria-busy={props.busy || undefined}>
       <fieldset disabled={props.busy}>
-        <legend>{copy.input}</legend>
-        {questions.map((question, questionIndex) => (
-          <fieldset className="session-rui-question" key={question.id}>
-            <legend>
-              {question.header || question.question} <small>{copy.required}</small>
-            </legend>
-            {question.header && question.question ? <p>{question.question}</p> : null}
-            {question.options.length > 0 ? (
-              <div className="session-rui-options">
-                {question.options.map((option, optionIndex) => {
-                  const checked = answers[question.id]?.includes(option.label) ?? false;
-                  return (
-                    <label key={option.label}>
-                      <input
-                        ref={questionIndex === 0 && optionIndex === 0 ? (firstControlRef as React.RefObject<HTMLInputElement>) : undefined}
-                        type={question.kind === 'multiple' ? 'checkbox' : 'radio'}
-                        name={`request-${props.request.id}-${question.id}`}
-                        value={option.label}
-                        checked={checked}
-                        onChange={(event) => setAnswers((current) => updateQuestionAnswers(current, question, option.label, event.currentTarget.checked))}
-                      />
-                      <span>
-                        <strong>{option.label}</strong>
-                        {option.description ? <small>{option.description}</small> : null}
-                      </span>
-                    </label>
-                  );
-                })}
-                {question.allowOther ? (
-                  <label className="session-rui-other-option">
-                    <input
-                      type={question.kind === 'multiple' ? 'checkbox' : 'radio'}
-                      name={`request-${props.request.id}-${question.id}`}
-                      value={otherAnswerControlValue(question)}
-                      checked={answers[question.id]?.includes(otherAnswerControlValue(question)) ?? false}
-                      onChange={(event) => setAnswers((current) => updateQuestionAnswers(current, question, otherAnswerControlValue(question), event.currentTarget.checked))}
-                    />
-                    <span>
-                      <strong>{copy.other}</strong>
-                      <input
-                        aria-label={`${copy.other}: ${question.header || question.question}`}
-                        {...answerInputSecurityAttributes(question.secret)}
-                        disabled={!answers[question.id]?.includes(otherAnswerControlValue(question))}
-                        value={otherAnswers[question.id] ?? ''}
-                        placeholder={copy.otherPlaceholder}
-                        onChange={(event) => setOtherAnswers((current) => ({ ...current, [question.id]: event.currentTarget.value }))}
-                      />
-                    </span>
-                  </label>
-                ) : null}
+          <legend className="sr-only">{copy.approval}</legend>
+          <header className="session-compact-approval-heading">
+              <Icon aria-hidden="true"/>
+              <span>{props.kind === 'command' ? copy.terminal : copy.fileChange}</span>
+          </header>
+          <p className="session-compact-approval-impact">{requestImpact(props.request, props.language)}</p>
+          <pre className="session-request-preview">{preview}</pre>
+          <p className="session-compact-approval-mode">
+              {copy.mode}: {mode}
+          </p>
+          {props.incompleteApproval ? (
+              <p className="session-request-invalid" role="alert">
+                  <strong>{copy.incompleteApproval}</strong>
+                  <span>{copy.incompleteApprovalHelp}</span>
+              </p>
+          ) : null}
+          {props.error ? <p role="alert">{props.error}</p> : null}
+          <div ref={rootRef} className="session-compact-approval-actions" role="group" aria-label={copy.approval}>
+              {failClosedDecision ? (
+                  <button ref={failClosedRef} type="button" className="session-request-decline"
+                          onClick={() => choose(failClosedDecision)}>
+                      {copy[failClosedDecision]}
+                  </button>
+              ) : null}
+              <div className="session-approval-grant-control">
+                  {hasAllowOnce ? (
+                      <button type="button" className="session-request-accept" onClick={() => choose('accept')}>
+                          {props.busy ? copy.responding : copy.accept}
+                      </button>
+                  ) : grantDecisions.length > 0 ? (
+                      <button ref={menuTriggerRef} type="button" className="session-request-grant-menu-trigger"
+                              aria-expanded={menuOpen} aria-haspopup="menu"
+                              onClick={() => (menuOpen ? setMenuOpen(false) : openMenu())}>
+                          {copy.grantOptions}
+                          <CaretDown aria-hidden="true"/>
+                      </button>
+                  ) : null}
+                  {hasAllowOnce && menuDecisions.length > 1 ? (
+                      <button ref={menuTriggerRef} type="button" className="session-request-grant-chevron"
+                              aria-label={copy.grantOptions} aria-expanded={menuOpen} aria-haspopup="menu"
+                              onClick={() => (menuOpen ? setMenuOpen(false) : openMenu())}>
+                          <CaretDown aria-hidden="true"/>
+                      </button>
+                  ) : null}
+                  {menuDecisions.length > (hasAllowOnce ? 1 : 0) ? (
+                      <div className="session-approval-grant-menu" role="menu" hidden={!menuOpen}
+                           onKeyDown={handleMenuKeyDown}>
+                          {menuDecisions.map((decision, index) => (
+                              <button
+                                  key={decision}
+                                  ref={(element) => {
+                                      menuItemRefs.current[index] = element;
+                                  }}
+                                  type="button"
+                                  role="menuitem"
+                                  onClick={() => choose(decision)}
+                              >
+                                  <span>{props.kind === 'file' && decision === 'acceptForSession' ? copy.allowAllEdits : copy[decision]}</span>
+                                  {decision === 'acceptWithExecpolicyAmendment' && amendment ? (
+                                      <small>
+                                          <Info aria-hidden="true"/>
+                                          {copy.similarCommandRule}: {amendment.acceptWithExecpolicyAmendment.execpolicy_amendment.join(' ')}
+                                      </small>
+                                  ) : null}
+                                  {props.kind === 'file' && decision === 'acceptForSession' ? (
+                                      <small>
+                                          <Info aria-hidden="true"/>
+                                          {copy.allEditScope}
+                                      </small>
+                                  ) : null}
+                              </button>
+                          ))}
+                      </div>
+                  ) : null}
               </div>
-            ) : (
-              <label className="session-rui-freeform">
-                <span>{question.question || question.header}</span>
-                <input
-                  ref={questionIndex === 0 ? (firstControlRef as React.RefObject<HTMLInputElement>) : undefined}
-                  {...answerInputSecurityAttributes(question.secret)}
-                  required
-                  value={answers[question.id]?.[0] ?? ''}
-                  onChange={(event) => setAnswers((current) => ({ ...current, [question.id]: [event.currentTarget.value] }))}
-                />
-              </label>
-            )}
-            {question.secret ? <small className="session-secret-hint">{copy.secret}</small> : null}
-          </fieldset>
-        ))}
-        {props.error ? <p role="alert">{props.error}</p> : null}
-        <div className="session-request-actions">
-          <button type="submit" disabled={!answersComplete}>
-            {props.busy ? copy.responding : copy.submit}
-          </button>
-        </div>
+              {extraFailClosedDecision ? (
+                  <button type="button" className="session-request-decline"
+                          onClick={() => choose(extraFailClosedDecision)}>
+                      {copy[extraFailClosedDecision]}
+                  </button>
+              ) : null}
+          </div>
       </fieldset>
-    </form>
+      </section>
   );
+}
+
+function RequestUserInputPanel(props: PendingRequestSurfaceProps & { questions: RequestQuestion[] }) {
+    const zh = props.language === 'zh-CN';
+    const copy = labels[props.language];
+    const restored = useMemo(() => restoreRuiDraft(props.request.id, props.questions), [props.questions, props.request.id]);
+    const [answers, setAnswers] = useState<Record<string, string[]>>(restored.answers);
+    const [otherAnswers, setOtherAnswers] = useState<Record<string, string>>(restored.otherAnswers);
+    const [questionIndex, setQuestionIndex] = useState(0);
+    const [remainingMs, setRemainingMs] = useState(() => requestRemainingMs(props.request));
+    const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
+    const freeformRef = useRef<HTMLInputElement | HTMLTextAreaElement | null>(null);
+    const snoozedRef = useRef(props.request.autoResolutionState === 'snoozed');
+    const snoozePromiseRef = useRef<Promise<void> | null>(null);
+    const [, setLocallySnoozed] = useState(snoozedRef.current);
+    const currentQuestion = props.questions[Math.min(questionIndex, props.questions.length - 1)]!;
+    const selectedValues = answers[currentQuestion.id] ?? [];
+    const currentComplete = questionAnswerComplete(currentQuestion, selectedValues, otherAnswers[currentQuestion.id]);
+    const allComplete = areRequiredRequestAnswersComplete(props.questions, answers, otherAnswers);
+
+    useEffect(() => {
+        if (props.autoFocus === false) return;
+        if (currentQuestion.kind === 'freeform') freeformRef.current?.focus();
+        else optionRefs.current[0]?.focus();
+    }, [currentQuestion.id, currentQuestion.kind, props.autoFocus, props.request.id]);
+
+    useEffect(() => {
+        persistRuiDraft(props.request.id, props.questions, answers, otherAnswers);
+    }, [answers, otherAnswers, props.questions, props.request.id]);
+
+    useEffect(() => {
+        if (!props.request.expiresAt || props.request.autoResolutionState !== 'scheduled') return;
+        const update = () => setRemainingMs(requestRemainingMs(props.request));
+        update();
+        const timer = window.setInterval(update, 1_000);
+        return () => window.clearInterval(timer);
+    }, [props.request]);
+
+    function snooze(): Promise<void> {
+        if (snoozePromiseRef.current) return snoozePromiseRef.current;
+        if (snoozedRef.current || props.request.autoResolutionState !== 'scheduled' || !props.onSnooze) return Promise.resolve();
+        snoozedRef.current = true;
+        setLocallySnoozed(true);
+        const pending = Promise.resolve(props.onSnooze()).catch(() => undefined);
+        snoozePromiseRef.current = pending;
+        return pending;
+    }
+
+    async function finish(nextAnswers = answers, nextOtherAnswers = otherAnswers): Promise<void> {
+        await (snoozePromiseRef.current ?? Promise.resolve());
+        clearRuiDraft(props.request.id);
+        await props.onRespond(props.request.id, buildPendingRequestResponse(props.request, nextAnswers, nextOtherAnswers));
+    }
+
+    function advance(nextAnswers = answers, nextOtherAnswers = otherAnswers): void {
+        if (questionIndex < props.questions.length - 1) setQuestionIndex((value) => value + 1);
+        else if (areRequiredRequestAnswersComplete(props.questions, nextAnswers, nextOtherAnswers)) void finish(nextAnswers, nextOtherAnswers);
+    }
+
+    function selectOption(optionLabel: string): void {
+        snooze();
+        const checked = !selectedValues.includes(optionLabel);
+        const nextAnswers = updateQuestionAnswers(answers, currentQuestion, optionLabel, checked);
+        setAnswers(nextAnswers);
+        if (currentQuestion.kind === 'single' && optionLabel !== otherAnswerControlValue(currentQuestion)) advance(nextAnswers, otherAnswers);
+    }
+
+    function handleKeyboard(event: KeyboardEvent<HTMLElement>): void {
+        if (event.key === 'Escape') {
+            event.preventDefault();
+            event.stopPropagation();
+            void skip();
+            return;
+        }
+        if (event.key >= '1' && event.key <= '9') {
+            const index = Number(event.key) - 1;
+            const option = optionRefs.current[index];
+            if (option) {
+                event.preventDefault();
+                option.click();
+            }
+            return;
+        }
+        if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+        const available = optionRefs.current.filter((entry): entry is HTMLButtonElement => Boolean(entry));
+        if (available.length === 0) return;
+        event.preventDefault();
+        const activeIndex = available.indexOf(document.activeElement as HTMLButtonElement);
+        const delta = event.key === 'ArrowDown' ? 1 : -1;
+        available[(activeIndex + delta + available.length) % available.length]?.focus();
+    }
+
+    async function skip(): Promise<void> {
+        await (snoozePromiseRef.current ?? Promise.resolve());
+        clearRuiDraft(props.request.id);
+        await props.onRespond(props.request.id, {type: 'userInput', answers: {}});
+    }
+
+    return (
+        <section className="session-request-user-input-surface" onKeyDown={handleKeyboard}>
+            <p className="session-question-status" role="status">
+                <Question aria-hidden="true"/>
+                {zh ? `正在询问 ${props.questions.length} 个问题` : `Asking ${props.questions.length} question${props.questions.length === 1 ? '' : 's'}`}
+                {props.questions.length > 1 ? (
+                    <small>
+                        {questionIndex + 1}/{props.questions.length}
+                    </small>
+                ) : null}
+                {remainingMs !== null && !snoozedRef.current ?
+                    <small>{zh ? `${Math.max(0, Math.ceil(remainingMs / 1_000))} 秒后自动跳过` : `Auto-skip in ${Math.max(0, Math.ceil(remainingMs / 1_000))}s`}</small> : null}
+            </p>
+            <form
+                className="session-question-panel session-rui-request"
+                aria-busy={props.busy || undefined}
+                data-inline-footer={(props.questions.length === 1 && currentQuestion.allowOther) || undefined}
+                data-error={Boolean(props.error) || undefined}
+                onSubmit={(event) => {
+                    event.preventDefault();
+                    if (currentComplete && !props.busy) advance();
+                }}
+            >
+                <fieldset disabled={props.busy}>
+                    <header>
+                        <strong>{currentQuestion.question}</strong>
+                        <button type="button" aria-label={zh ? '关闭' : 'Close'} onClick={() => void skip()}>
+                            <X aria-hidden="true"/>
+                        </button>
+                    </header>
+                    <div className="session-question-options">
+                        {currentQuestion.options.map((option, optionIndex) => {
+                            const checked = selectedValues.includes(option.label);
+                            const presentation = recommendedOption(option.label);
+                            return (
+                                <button
+                                    ref={(element) => {
+                                        optionRefs.current[optionIndex] = element;
+                                    }}
+                                    key={option.label}
+                                    type="button"
+                                    value={option.label}
+                                    className={`session-question-option${presentation.recommended ? ' is-recommended' : ''}`}
+                                    aria-pressed={checked}
+                                    onClick={() => selectOption(option.label)}
+                                >
+                                    <span className="session-question-index">{optionIndex + 1}</span>
+                                    <span className="session-question-option-copy">
+                    <strong>{presentation.label}</strong>
+                                        {presentation.recommended ? <em>{zh ? '推荐' : 'Recommended'}</em> : null}
+                                        {option.description ? <small>{option.description}</small> : null}
+                  </span>
+                                    {currentQuestion.kind === 'multiple' ? (
+                                        <span className="session-question-check" aria-hidden="true">
+                      {checked ? <Check/> : null}
+                    </span>
+                                    ) : (
+                                        <ArrowRight aria-hidden="true"/>
+                                    )}
+                                </button>
+                            );
+                        })}
+                        {currentQuestion.allowOther ? (
+                            <div className="session-question-other"
+                                 data-selected={selectedValues.includes(otherAnswerControlValue(currentQuestion)) || undefined}>
+                                <button
+                                    ref={(element) => {
+                                        optionRefs.current[currentQuestion.options.length] = element;
+                                    }}
+                                    type="button"
+                                    value={otherAnswerControlValue(currentQuestion)}
+                                    className="session-question-index"
+                                    aria-label={zh ? '其他回答' : 'Other answer'}
+                                    onClick={() => selectOption(otherAnswerControlValue(currentQuestion))}
+                                >
+                                    <PencilSimple aria-hidden="true"/>
+                                </button>
+                                {currentQuestion.secret ? (
+                                    <input
+                                        aria-label={`${zh ? '其他' : 'Other'}: ${currentQuestion.header}`}
+                                        {...answerInputSecurityAttributes(true)}
+                                        value={otherAnswers[currentQuestion.id] ?? ''}
+                                        placeholder={copy.otherPlaceholder}
+                                        disabled={!selectedValues.includes(otherAnswerControlValue(currentQuestion))}
+                                        onChange={(event) => {
+                                            void snooze();
+                                            setOtherAnswers((current) => ({
+                                                ...current,
+                                                [currentQuestion.id]: event.currentTarget.value
+                                            }));
+                                        }}
+                                        onKeyDown={(event) => {
+                                            if (event.key === 'Enter') {
+                                                event.preventDefault();
+                                                event.currentTarget.form?.requestSubmit();
+                                            }
+                                        }}
+                                    />
+                                ) : (
+                                    <textarea
+                                        aria-label={`${zh ? '其他' : 'Other'}: ${currentQuestion.header}`}
+                                        value={otherAnswers[currentQuestion.id] ?? ''}
+                                        placeholder={copy.otherPlaceholder}
+                                        disabled={!selectedValues.includes(otherAnswerControlValue(currentQuestion))}
+                                        onChange={(event) => {
+                                            void snooze();
+                                            setOtherAnswers((current) => ({
+                                                ...current,
+                                                [currentQuestion.id]: event.currentTarget.value
+                                            }));
+                                        }}
+                                        onKeyDown={(event) => {
+                                            if (event.key === 'Enter' && !event.shiftKey) {
+                                                event.preventDefault();
+                                                event.currentTarget.form?.requestSubmit();
+                                            }
+                                        }}
+                                    />
+                                )}
+                            </div>
+                        ) : null}
+                        {currentQuestion.kind === 'freeform' ? (
+                            currentQuestion.secret ? (
+                                <input
+                                    ref={freeformRef as React.RefObject<HTMLInputElement>}
+                                    className="session-question-freeform"
+                                    {...answerInputSecurityAttributes(true)}
+                                    value={selectedValues[0] ?? ''}
+                                    onChange={(event) => {
+                                        void snooze();
+                                        setAnswers((current) => ({
+                                            ...current,
+                                            [currentQuestion.id]: [event.currentTarget.value]
+                                        }));
+                                    }}
+                                />
+                            ) : (
+                                <textarea
+                                    ref={freeformRef as React.RefObject<HTMLTextAreaElement>}
+                                    className="session-question-freeform"
+                                    value={selectedValues[0] ?? ''}
+                                    onChange={(event) => {
+                                        void snooze();
+                                        setAnswers((current) => ({
+                                            ...current,
+                                            [currentQuestion.id]: [event.currentTarget.value]
+                                        }));
+                                    }}
+                                    onKeyDown={(event) => {
+                                        if (event.key === 'Enter' && !event.shiftKey) {
+                                            event.preventDefault();
+                                            event.currentTarget.form?.requestSubmit();
+                                        }
+                                    }}
+                                />
+                            )
+                        ) : null}
+                    </div>
+                    {currentQuestion.secret ? <small
+                        className="session-secret-hint">{zh ? '敏感回答仅发送给本机 app-server，不写入会话或草稿。' : 'Secret answers are sent locally and are never stored in the transcript or draft.'}</small> : null}
+                    {props.error ? <p role="alert">{props.error}</p> : null}
+                    <footer>
+            <span>
+              {questionIndex > 0 ? (
+                  <button
+                      type="button"
+                      onClick={() => {
+                          void snooze();
+                          setQuestionIndex((value) => Math.max(0, value - 1));
+                      }}
+                  >
+                      {zh ? '上一个' : 'Previous'}
+                  </button>
+              ) : null}
+            </span>
+                        <span>
+              <button type="button" onClick={() => void skip()}>
+                {zh ? '跳过' : 'Skip'}
+              </button>
+                            {(currentQuestion.kind !== 'single' || selectedValues.includes(otherAnswerControlValue(currentQuestion))) && (
+                                <button type="submit"
+                                        disabled={!currentComplete || (questionIndex === props.questions.length - 1 && !allComplete)}>
+                                    {props.busy ? (zh ? '正在提交' : 'Submitting') : questionIndex === props.questions.length - 1 ? (zh ? '提交' : 'Submit') : zh ? '继续' : 'Continue'}
+                                </button>
+                            )}
+            </span>
+                    </footer>
+                </fieldset>
+            </form>
+        </section>
+  );
+}
+
+function recommendedOption(label: string): { label: string; recommended: boolean } {
+    const suffix = /\s*(?:\(Recommended\)|（推荐）|\(推荐\))\s*$/iu;
+    const recommended = suffix.test(label);
+    return {label: recommended ? label.replace(suffix, '') : label, recommended};
+}
+
+function questionAnswerComplete(question: RequestQuestion, values: string[], other: string | undefined): boolean {
+    if (values.length === 0 || values.some((value) => !value.trim())) return false;
+    return !values.includes(otherAnswerControlValue(question)) || Boolean(other?.trim());
+}
+
+function requestRemainingMs(request: NativePendingRequest): number | null {
+    if (!request.expiresAt) return null;
+    const deadline = Date.parse(request.expiresAt);
+    return Number.isFinite(deadline) ? deadline - Date.now() : null;
+}
+
+function ruiDraftStorageKey(requestId: string): string {
+    return `zeus.request-user-input-draft:v1:${requestId}`;
+}
+
+function restoreRuiDraft(requestId: string, questions: RequestQuestion[]): {
+    answers: Record<string, string[]>;
+    otherAnswers: Record<string, string>
+} {
+    if (typeof window === 'undefined') return {answers: {}, otherAnswers: {}};
+    try {
+        const parsed = JSON.parse(window.localStorage.getItem(ruiDraftStorageKey(requestId)) ?? '{}') as {
+            answers?: Record<string, string[]>;
+            otherAnswers?: Record<string, string>
+        };
+        const allowed = new Set(questions.filter((question) => !question.secret).map((question) => question.id));
+        return {
+            answers: Object.fromEntries(Object.entries(parsed.answers ?? {}).filter(([id, values]) => allowed.has(id) && Array.isArray(values) && values.every((value) => typeof value === 'string'))),
+            otherAnswers: Object.fromEntries(Object.entries(parsed.otherAnswers ?? {}).filter(([id, value]) => allowed.has(id) && typeof value === 'string')),
+        };
+    } catch {
+        return {answers: {}, otherAnswers: {}};
+    }
+}
+
+function persistRuiDraft(requestId: string, questions: RequestQuestion[], answers: Record<string, string[]>, otherAnswers: Record<string, string>): void {
+    if (typeof window === 'undefined') return;
+    const allowed = new Set(questions.filter((question) => !question.secret).map((question) => question.id));
+    try {
+        window.localStorage.setItem(
+            ruiDraftStorageKey(requestId),
+            JSON.stringify({
+                answers: Object.fromEntries(Object.entries(answers).filter(([id]) => allowed.has(id))),
+                otherAnswers: Object.fromEntries(Object.entries(otherAnswers).filter(([id]) => allowed.has(id)))
+            }),
+        );
+    } catch {
+        // 草稿恢复是增强能力；存储不可用时不阻断当前回答。
+    }
+}
+
+function clearRuiDraft(requestId: string): void {
+    if (typeof window === 'undefined') return;
+    try {
+        window.localStorage.removeItem(ruiDraftStorageKey(requestId));
+    } catch {
+        // 请求已经解决；无法清理旧草稿不影响权威状态。
+    }
 }
 
 function permissionModeLabel(permissionMode: NativePermissionMode, language: SessionUiLanguage): string {
@@ -369,6 +842,12 @@ export function buildPendingRequestResponse(request: NativePendingRequest, answe
   }
   if (kind === 'mcp' && requestedDecision === 'acceptForSession') throw new Error('acceptForSession is not available for MCP requests.');
   if (!isSupportedRequestDecision(requestedDecision) || !supportedRequestDecisions(request).includes(requestedDecision)) throw new Error('The requested decision is not safely available.');
+    if (requestedDecision === 'acceptWithExecpolicyAmendment') {
+        if (kind !== 'command') throw new Error('Execpolicy amendments are only available for command approvals.');
+        const decision = advertisedExecpolicyAmendmentDecision(request);
+        if (!decision) throw new Error('The requested execpolicy amendment is not safely available.');
+        return {type: 'command', decision};
+    }
   const decision = requestedDecision;
   if (kind === 'mcp') {
     if (decision !== 'accept') return { type: 'MCP', action: decision, content: null, _meta: null };
@@ -446,19 +925,35 @@ export function supportedRequestDecisions(request: NativePendingRequest): Suppor
     return [stringValue(entry.decision) ?? stringValue(entry.id) ?? stringValue(entry.value) ?? stringValue(entry.name)].filter((value): value is string => Boolean(value));
   });
   let decisions = supportedDecisionOrder.filter((decision) => advertised.includes(decision));
+    if (kind === 'command' && advertisedExecpolicyAmendmentDecision(request)) decisions.push('acceptWithExecpolicyAmendment');
+    decisions = supportedDecisionOrder.filter((decision) => decisions.includes(decision));
   if (kind === 'mcp') {
     const requestValid = hasValidMcpResponsePayload(request);
     decisions = decisions.length > 0 ? decisions.filter((decision) => decision !== 'acceptForSession' && (requestValid || decision !== 'accept')) : requestValid ? ['accept', 'decline', 'cancel'] : ['decline', 'cancel'];
     return ensureFailClosedDecisions(decisions);
   }
   if (kind === 'file') {
-    decisions = decisions.filter((decision) => decision !== 'acceptForSession');
-    if (request.payload.grantRoot !== undefined && request.payload.grantRoot !== null) decisions = decisions.filter((decision) => decision !== 'accept');
+      if (request.payload.grantRoot !== undefined && request.payload.grantRoot !== null) decisions = decisions.filter((decision) => decision !== 'accept' && decision !== 'acceptForSession');
   }
-  if (kind === 'file' && decisions.length === 0 && advertised.length === 0 && hasCanonicalLinkedFileApprovalDetails(request)) decisions = ['accept', 'decline', 'cancel'];
+    if (kind === 'file' && decisions.length === 0 && advertised.length === 0 && hasCanonicalLinkedFileApprovalDetails(request)) decisions = ['accept', 'acceptForSession', 'decline', 'cancel'];
   if (decisions.length === 0) decisions = ['decline', 'cancel'];
   if (!hasCompleteApprovalDetails(request)) return ensureFailClosedDecisions(decisions.filter(isFailClosedDecision));
   return ensureFailClosedDecisions(decisions);
+}
+
+export function advertisedExecpolicyAmendmentDecision(request: NativePendingRequest): {
+    acceptWithExecpolicyAmendment: { execpolicy_amendment: string[] }
+} | null {
+    if (requestKind(request) !== 'command' || !Array.isArray(request.payload.availableDecisions)) return null;
+    const candidates = request.payload.availableDecisions.flatMap((entry) => {
+        if (!isRecord(entry) || !hasOnlyKeys(entry, ['acceptWithExecpolicyAmendment'])) return [];
+        const value = entry.acceptWithExecpolicyAmendment;
+        if (!isRecord(value) || !hasOnlyKeys(value, ['execpolicy_amendment'])) return [];
+        const rule = value.execpolicy_amendment;
+        if (!Array.isArray(rule) || rule.length === 0 || !rule.every((part) => typeof part === 'string' && Boolean(part.trim()))) return [];
+        return [{acceptWithExecpolicyAmendment: {execpolicy_amendment: [...rule]}}];
+    });
+    return candidates.length === 1 ? candidates[0]! : null;
 }
 
 export function defaultAutofocusDecision(decisions: readonly SupportedRequestDecision[]): SupportedRequestDecision | null {

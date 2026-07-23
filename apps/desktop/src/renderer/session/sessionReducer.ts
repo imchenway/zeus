@@ -1,19 +1,21 @@
 import type {
-  ConversationState,
-  NativeConversationAttachment,
-  NativeConversationEvent,
-  NativeConversationSnapshot,
-  NativeItemSnapshot,
-  NativePendingRequest,
-  NativeProviderSettingsSnapshot,
-  NativeProviderValueSnapshot,
-  NativeQueueSnapshot,
-  NativeSessionError,
-  NativeSessionItemBuffer,
-  NativeSessionState,
-  NativeTokenUsageSnapshot,
-  NativeTurnSnapshot,
-  TransportState,
+    ConversationState,
+    NativeConversationAttachment,
+    NativeConversationEvent,
+    NativeConversationSnapshot,
+    NativeItemSnapshot,
+    NativePendingRequest,
+    NativePlanImplementationRequest,
+    NativeProviderSettingsSnapshot,
+    NativeProviderValueSnapshot,
+    NativeQueueSnapshot,
+    NativeSessionError,
+    NativeSessionItemBuffer,
+    NativeSessionState,
+    NativeTokenUsageSnapshot,
+    NativeTurnPlanSnapshot,
+    NativeTurnSnapshot,
+    TransportState,
 } from './sessionTypes.js';
 
 export type NativeSessionAction =
@@ -71,6 +73,7 @@ export function createInitialSessionState(): NativeSessionState {
     itemOrder: [],
     queue: null,
     pendingRequests: [],
+      planImplementationRequests: [],
     providerSettings: null,
     tokenUsage: null,
     rateLimits: null,
@@ -256,6 +259,7 @@ function hydrateSnapshot(state: NativeSessionState, snapshot: NativeConversation
     itemOrder,
     queue: snapshot.queue,
     pendingRequests,
+      planImplementationRequests: snapshot.planImplementationRequests ?? [],
     providerSettings: snapshot.providerSettings ?? null,
     tokenUsage: snapshot.tokenUsage ?? null,
     rateLimits: snapshot.rateLimits ?? null,
@@ -313,6 +317,20 @@ function reduceNativeEvent(state: NativeSessionState, event: NativeConversationE
         conversationState: status === 'failed' ? 'turn_failed' : 'native_idle',
       };
     }
+      case 'conversation.turn.plan.updated': {
+          const turnId = stringValue(payload.turnId);
+          const plan = nativeTurnPlanFrom(payload.plan);
+          const turn = turnId ? base.turnsByProviderId[turnId] : undefined;
+          if (!turnId || !turn || !plan) return base;
+          return {
+              ...base,
+              turnsByProviderId: {
+                  ...base.turnsByProviderId,
+                  [turnId]: {...turn, plan, updatedAt: event.createdAt},
+              },
+              transcriptRevision: base.transcriptRevision + 1,
+          };
+      }
     case 'conversation.item.started':
     case 'conversation.item.delta':
     case 'conversation.item.completed':
@@ -350,6 +368,58 @@ function reduceNativeEvent(state: NativeSessionState, event: NativeConversationE
         conversationState: requestConversationState(pendingRequests) ?? conversationStateWithoutRequests(base),
       };
     }
+      case 'conversation.request.snoozed': {
+          const requestId = stringValue(payload.requestId);
+          if (!requestId) return base;
+          return {
+              ...base,
+              pendingRequests: base.pendingRequests.map((request) => (request.id === requestId ? {
+                  ...request,
+                  autoResolutionState: 'snoozed',
+                  expiresAt: null
+              } : request)),
+          };
+      }
+      case 'conversation.plan_implementation_request.changed': {
+          const requestId = stringValue(payload.requestId);
+          const status = planImplementationStatus(payload.status);
+          if (!requestId || !status) return base;
+          const existing = base.planImplementationRequests.find((request) => request.id === requestId);
+          const updated: NativePlanImplementationRequest = existing
+              ? {
+                  ...existing,
+                  status,
+                  submissionId: stringValue(payload.submissionId) ?? existing.submissionId,
+                  resolvedAt: status === 'pending' ? null : event.createdAt,
+                  updatedAt: event.createdAt
+              }
+              : {
+                  id: requestId,
+                  conversationId: base.conversationId ?? '',
+                  turnId: stringValue(payload.turnId) ?? '',
+                  planItemId: stringValue(payload.planItemId) ?? '',
+                  status,
+                  submissionId: stringValue(payload.submissionId),
+                  createdAt: event.createdAt,
+                  resolvedAt: status === 'pending' ? null : event.createdAt,
+                  updatedAt: event.createdAt,
+              };
+          return {
+              ...base,
+              planImplementationRequests: [...base.planImplementationRequests.filter((request) => request.id !== requestId), updated],
+              snapshot: base.snapshot
+                  ? {
+                      ...base.snapshot,
+                      collaborationMode: payload.collaborationMode === 'plan' || payload.collaborationMode === 'default' ? payload.collaborationMode : base.snapshot.collaborationMode,
+                  }
+                  : base.snapshot,
+          };
+      }
+      case 'conversation.collaboration_mode.changed':
+          return base.snapshot && (payload.collaborationMode === 'default' || payload.collaborationMode === 'plan') ? {
+              ...base,
+              snapshot: {...base.snapshot, collaborationMode: payload.collaborationMode}
+          } : base;
     case 'conversation.native.error':
       return {
         ...base,
@@ -359,6 +429,10 @@ function reduceNativeEvent(state: NativeSessionState, event: NativeConversationE
     default:
       return base;
   }
+}
+
+function planImplementationStatus(value: unknown): NativePlanImplementationRequest['status'] | null {
+    return value === 'pending' || value === 'dismissed' || value === 'implemented' || value === 'refinement_requested' || value === 'superseded' ? value : null;
 }
 
 function reduceItemEvent(state: NativeSessionState, event: NativeConversationEvent): NativeSessionState {
@@ -668,6 +742,18 @@ function providerValueFrom(payload: Record<string, unknown>): NativeProviderValu
     ...(numberValue(payload.sequence) !== null ? { sequence: numberValue(payload.sequence)! } : {}),
     value: isRecord(payload.value) ? payload.value : {},
   };
+}
+
+function nativeTurnPlanFrom(value: unknown): NativeTurnPlanSnapshot | null {
+    if (!isRecord(value) || !(value.explanation === null || typeof value.explanation === 'string') || !Array.isArray(value.steps)) return null;
+    const steps = value.steps.flatMap((candidate) => {
+        if (!isRecord(candidate) || typeof candidate.step !== 'string' || !candidate.step.trim()) return [];
+        const statusValue = candidate.status;
+        if (statusValue !== 'pending' && statusValue !== 'inProgress' && statusValue !== 'completed') return [];
+        return [{step: candidate.step, status: statusValue as 'pending' | 'inProgress' | 'completed'}];
+    });
+    if (steps.length !== value.steps.length) return null;
+    return {explanation: value.explanation, steps};
 }
 
 function stringValue(value: unknown): string | null {

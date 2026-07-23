@@ -1,32 +1,74 @@
-import { app, BrowserWindow, Menu, Tray, ipcMain, dialog, shell, Notification, nativeImage, clipboard } from 'electron';
-import { execFile as execFileCallback } from 'node:child_process';
-import { readFileSync } from 'node:fs';
-import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
-import { pathToFileURL } from 'node:url';
-import { promisify } from 'node:util';
-import { createBeforeQuitCleanupHandler, parseCodexNativeEnabled, startDesktopLocalServer, type DesktopLocalServerRuntime } from './localServerRuntime.js';
-import { createStartupCoordinator } from './startupCoordinator.js';
-import { terminateAfterFatalStartup } from './fatalStartup.js';
-import { createRendererBootstrapMonitor } from './rendererBootstrapMonitor.js';
-import { resolveCodexRuntimePath } from './codexRuntimePath.js';
-import { exportMermaidDiagramToFile, exportPlantUmlDiagramToFile } from './mermaidExport.js';
-import { exportPatchToFile } from './patchExport.js';
-import { exportRuntimeLogsToFile } from './runtimeLogExport.js';
-import { chooseProjectDirectory } from './projectDirectoryPicker.js';
-import { exportSettingsSnapshotToFile, importBusinessDataSnapshotFromFile, importSettingsSnapshotFromFile } from './settingsPortability.js';
-import { openGraphSourceLocation, type GraphSourceLocation } from './sourceOpen.js';
-import { buildAppShellMenuTemplate, buildLoginItemSettings, buildMenuBarTrayTemplate, shouldQuitWhenAllWindowsClosed, shouldUseSystemNotifications, type MainAppShellSettings } from './appShellPolicy.js';
-import { createSystemNotificationBridge, type SystemNotificationBridge } from './systemNotifications.js';
-import { openLocalLogDirectory } from './localLogDirectory.js';
-import { openExternalHttpsUrl } from './externalOpen.js';
 import {
-  buildTaskAttachmentPreviewDataUrl,
-  coerceTaskClipboardAttachmentBuffer,
-  inferTaskClipboardAttachmentMimeType,
-  readTaskAttachmentFilePathPayloads,
-  readTaskClipboardAttachmentsFromClipboard,
-  type TaskClipboardAttachmentPayload,
+    app,
+    BrowserWindow,
+    clipboard,
+    dialog,
+    ipcMain,
+    Menu,
+    nativeImage,
+    Notification,
+    screen,
+    shell,
+    Tray
+} from 'electron';
+import {execFile as execFileCallback} from 'node:child_process';
+import {readFileSync} from 'node:fs';
+import {basename, dirname, extname, isAbsolute, join, relative, resolve, sep} from 'node:path';
+import {access, mkdir, readFile, writeFile} from 'node:fs/promises';
+import {pathToFileURL} from 'node:url';
+import {promisify} from 'node:util';
+import {
+    createBeforeQuitCleanupHandler,
+    type DesktopLocalServerRuntime,
+    parseCodexNativeEnabled,
+    startDesktopLocalServer
+} from './localServerRuntime.js';
+import {createStartupCoordinator} from './startupCoordinator.js';
+import {terminateAfterFatalStartup} from './fatalStartup.js';
+import {createRendererBootstrapMonitor} from './rendererBootstrapMonitor.js';
+import {resolveCodexRuntimePath} from './codexRuntimePath.js';
+import {exportMermaidDiagramToFile, exportPlantUmlDiagramToFile} from './mermaidExport.js';
+import {exportPatchToFile} from './patchExport.js';
+import {exportRuntimeLogsToFile} from './runtimeLogExport.js';
+import {chooseProjectDirectory} from './projectDirectoryPicker.js';
+import {
+    exportSettingsSnapshotToFile,
+    importBusinessDataSnapshotFromFile,
+    importSettingsSnapshotFromFile
+} from './settingsPortability.js';
+import {type GraphSourceLocation, openGraphSourceLocation} from './sourceOpen.js';
+import {
+    buildAppShellMenuTemplate,
+    buildLoginItemSettings,
+    buildMenuBarTrayTemplate,
+    type MainAppShellSettings,
+    shouldQuitWhenAllWindowsClosed,
+    shouldUseSystemNotifications
+} from './appShellPolicy.js';
+import {createSystemNotificationBridge, type SystemNotificationBridge} from './systemNotifications.js';
+import {openLocalLogDirectory} from './localLogDirectory.js';
+import {openExternalHttpsUrl} from './externalOpen.js';
+import {
+    createPersistedMainWindowState,
+    findSavedWindowDisplay,
+    type PersistedMainWindowState,
+    readPersistedMainWindowState,
+    resolveMainWindowState,
+    writePersistedMainWindowState
+} from './windowState.js';
+import {
+    applyRestoredMainWindowPlacement,
+    createWindowStatePersistenceGate,
+    waitForSavedWindowDisplay,
+    type WindowStatePersistenceGate
+} from './windowRestoration.js';
+import {
+    buildTaskAttachmentPreviewDataUrl,
+    coerceTaskClipboardAttachmentBuffer,
+    inferTaskClipboardAttachmentMimeType,
+    readTaskAttachmentFilePathPayloads,
+    readTaskClipboardAttachmentsFromClipboard,
+    type TaskClipboardAttachmentPayload,
 } from './taskClipboard.js';
 
 let mainWindow: BrowserWindow | undefined;
@@ -43,7 +85,13 @@ let appShellSettings: MainAppShellSettings = {
   openAtLoginEnabled: false,
 };
 const manualWindowDragStates = new Map<number, { pointerX: number; pointerY: number; windowX: number; windowY: number }>();
+const windowStateSaveTimers = new Map<number, ReturnType<typeof setTimeout>>();
+const windowStateActivationTimers = new Map<number, ReturnType<typeof setTimeout>>();
+const windowStatePersistenceGates = new Map<number, WindowStatePersistenceGate>();
 const execFile = promisify(execFileCallback);
+const windowStateSaveDelayMs = 250;
+const windowStateActivationDelayMs = 500;
+const savedDisplayAvailabilityTimeoutMs = 2_000;
 
 /**
  * 移除 Chromium Safe Storage 对 macOS 钥匙串的读取申请。
@@ -57,6 +105,14 @@ function disableChromiumSafeStorageKeychainPrompt(): void {
 
 disableChromiumSafeStorageKeychainPrompt();
 
+function applyExplicitUserDataDirectory(): void {
+    const configured = process.env.ZEUS_USER_DATA_DIR?.trim();
+    if (configured) app.setPath('userData', resolve(configured));
+}
+
+// 打包验收可用隔离资料目录运行，禁止污染用户正在使用的 Zeus 数据。
+applyExplicitUserDataDirectory();
+
 function desktopRoot(): string {
   return process.env.ZEUS_DESKTOP_DIR ?? app.getAppPath();
 }
@@ -64,6 +120,88 @@ function desktopRoot(): string {
 function resolveMainProjectRoot(): string {
   // packaged App 从 Finder 启动时 process.cwd() 可能是 "/"；禁止把全局 scan-current 兜底到整机根目录。
   return process.env.ZEUS_PROJECT_ROOT ?? (app.isPackaged ? desktopRoot() : process.cwd());
+}
+
+function mainWindowStatePath(): string {
+    return join(app.getPath('userData'), 'main-window-state.json');
+}
+
+function persistMainWindowState(window: BrowserWindow): boolean {
+    if (window.isDestroyed()) return false;
+    const bounds = window.getNormalBounds();
+    const display = screen.getDisplayMatching(bounds);
+    const state = createPersistedMainWindowState({
+        bounds,
+        display,
+        isMaximized: window.isMaximized(),
+        isFullScreen: window.isFullScreen(),
+    });
+    if (!state || !writePersistedMainWindowState(mainWindowStatePath(), state)) return false;
+    windowStatePersistenceGates.get(window.id)?.markPersisted();
+    return true;
+}
+
+function flushMainWindowState(window: BrowserWindow): void {
+    const timer = windowStateSaveTimers.get(window.id);
+    if (timer) clearTimeout(timer);
+    windowStateSaveTimers.delete(window.id);
+    if (!windowStatePersistenceGates.get(window.id)?.shouldPersist()) return;
+    persistMainWindowState(window);
+}
+
+function scheduleMainWindowStateSave(window: BrowserWindow): void {
+    if (!windowStatePersistenceGates.get(window.id)?.recordChange()) return;
+    const pendingTimer = windowStateSaveTimers.get(window.id);
+    if (pendingTimer) clearTimeout(pendingTimer);
+    const timer = setTimeout(() => {
+        windowStateSaveTimers.delete(window.id);
+        persistMainWindowState(window);
+    }, windowStateSaveDelayMs);
+    timer.unref();
+    windowStateSaveTimers.set(window.id, timer);
+}
+
+function registerMainWindowStatePersistence(window: BrowserWindow): void {
+    windowStatePersistenceGates.set(window.id, createWindowStatePersistenceGate());
+    const scheduleSave = () => scheduleMainWindowStateSave(window);
+    window.on('move', scheduleSave);
+    window.on('resize', scheduleSave);
+    window.on('maximize', scheduleSave);
+    window.on('unmaximize', scheduleSave);
+    window.on('enter-full-screen', scheduleSave);
+    window.on('leave-full-screen', scheduleSave);
+    window.on('close', () => flushMainWindowState(window));
+}
+
+function activateMainWindowStatePersistence(window: BrowserWindow): void {
+    const pendingTimer = windowStateActivationTimers.get(window.id);
+    if (pendingTimer) clearTimeout(pendingTimer);
+    const timer = setTimeout(() => {
+        windowStateActivationTimers.delete(window.id);
+        if (!window.isDestroyed()) windowStatePersistenceGates.get(window.id)?.activate();
+    }, windowStateActivationDelayMs);
+    timer.unref();
+    windowStateActivationTimers.set(window.id, timer);
+}
+
+async function resolveMainWindowStateForLaunch(persisted: PersistedMainWindowState | undefined) {
+    const displays = screen.getAllDisplays();
+    if (persisted && !findSavedWindowDisplay(persisted, displays)) {
+        await waitForSavedWindowDisplay({
+            persisted,
+            getDisplays: () => screen.getAllDisplays(),
+            subscribe: (listener) => {
+                screen.on('display-added', listener);
+                screen.on('display-metrics-changed', listener);
+                return () => {
+                    screen.off('display-added', listener);
+                    screen.off('display-metrics-changed', listener);
+                };
+            },
+            timeoutMs: savedDisplayAvailabilityTimeoutMs,
+        });
+    }
+    return resolveMainWindowState(persisted, screen.getAllDisplays(), screen.getPrimaryDisplay());
 }
 
 function revealMainWindow(window: BrowserWindow): void {
@@ -125,9 +263,10 @@ async function createWindow(): Promise<void> {
     return;
   }
 
+    const persistedWindowState = windows.size === 0 ? readPersistedMainWindowState(mainWindowStatePath()) : undefined;
+    const restoredWindowState = await resolveMainWindowStateForLaunch(persistedWindowState);
   const window = new BrowserWindow({
-    width: 1240,
-    height: 820,
+      ...restoredWindowState.bounds,
     // 2026-06-18 窗口根层响应式最终覆盖：允许紧凑窗口真实触发 renderer 的窄屏结构，而不是在 Main 进程强制桌面最小尺寸。
     minWidth: 360,
     minHeight: 560,
@@ -145,6 +284,8 @@ async function createWindow(): Promise<void> {
       allowRunningInsecureContent: false,
     },
   });
+
+    registerMainWindowStatePersistence(window);
 
   rendererBootstrapMonitor.watch(window);
 
@@ -166,6 +307,13 @@ async function createWindow(): Promise<void> {
   windows.add(window);
   mainWindow = window;
   window.on('closed', () => {
+      const timer = windowStateSaveTimers.get(window.id);
+      if (timer) clearTimeout(timer);
+      windowStateSaveTimers.delete(window.id);
+      const activationTimer = windowStateActivationTimers.get(window.id);
+      if (activationTimer) clearTimeout(activationTimer);
+      windowStateActivationTimers.delete(window.id);
+      windowStatePersistenceGates.delete(window.id);
     rendererBootstrapMonitor.dispose(window);
     windows.delete(window);
     if (mainWindow === window) mainWindow = [...windows].at(-1);
@@ -175,7 +323,23 @@ async function createWindow(): Promise<void> {
   const revealMainWindowOnce = () => {
     if (didRevealMainWindow) return;
     didRevealMainWindow = true;
-    revealMainWindow(window);
+      const placement = applyRestoredMainWindowPlacement({
+          window,
+          restored: restoredWindowState,
+          getDisplayMatching: (bounds) => screen.getDisplayMatching(bounds),
+          reveal: () => revealMainWindow(window),
+      });
+      activateMainWindowStatePersistence(window);
+      console.info(
+          'Zeus main window restoration',
+          JSON.stringify({
+              matchKind: restoredWindowState.matchKind,
+              targetDisplayId: restoredWindowState.targetDisplayId ?? null,
+              actualDisplayId: placement.actualDisplayId ?? null,
+              corrected: placement.corrected,
+              bounds: window.getBounds(),
+          }),
+      );
   };
 
   window.once('ready-to-show', revealMainWindowOnce);
@@ -333,6 +497,11 @@ function setupIpc(): void {
   });
   ipcMain.handle('zeus:read-task-clipboard-attachments', () => readTaskClipboardAttachmentsFromNativeClipboard());
   ipcMain.handle('zeus:save-task-clipboard-attachments', async () => saveTaskAttachmentPayloads(await readTaskClipboardAttachmentsFromNativeClipboard()));
+    ipcMain.handle('zeus:write-clipboard-text', (_event, text: unknown) => {
+        if (typeof text !== 'string') throw new TypeError('Clipboard text must be a string.');
+        clipboard.writeText(text);
+        return {written: clipboard.readText() === text};
+    });
   ipcMain.handle('zeus:read-task-clipboard-image', async () => {
     const [firstAttachment] = await readTaskClipboardAttachmentsFromNativeClipboard();
     return firstAttachment ?? null;

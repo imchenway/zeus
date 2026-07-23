@@ -84,6 +84,8 @@ export function validateCanonicalRequestUserInputAnswers(payload: unknown, answe
   if (!isRecord(answers)) return 'request_user_input answers must be an object.';
 
   const answerIds = Object.keys(answers);
+    // Codex App 将关闭、Escape、跳过和自动解决统一编码为空 answers；非空回答仍必须完整。
+    if (answerIds.length === 0) return null;
   const questionIds = parsed.questions.map((question) => question.id);
   if (answerIds.length !== questionIds.length || answerIds.some((id) => !questionIds.includes(id))) {
     return 'request_user_input answer ids must exactly match the canonical question ids.';

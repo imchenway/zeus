@@ -1,0 +1,694 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
+    <title>Zeus 会话页 Codex 交互与样式收口验收账本</title>
+    <style>
+        :root {
+            --ink: #17202a;
+            --muted: #66707c;
+            --paper: #f7f8fa;
+            --panel: #fff;
+            --line: #dfe3e8;
+            --soft: #f1f3f5;
+            --blue: #315e9e;
+            --blue-soft: #edf3fb;
+            --green: #287653;
+            --green-soft: #edf8f2;
+            --amber: #8a6114;
+            --amber-soft: #fff7e6;
+            --shadow: 0 14px 38px rgba(27, 36, 47, .08)
+        }
+
+        * {
+            box-sizing: border-box
+        }
+
+        body {
+            margin: 0;
+            background: linear-gradient(180deg, #fff, var(--paper));
+            color: var(--ink);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif
+        }
+
+        main {
+            width: min(1320px, calc(100vw - 32px));
+            margin: 0 auto;
+            padding: 38px 0 56px
+        }
+
+        h1 {
+            font-size: clamp(26px, 3vw, 38px);
+            letter-spacing: -.035em;
+            line-height: 1.15;
+            margin: 0
+        }
+
+        .summary {
+            color: var(--muted);
+            font-size: 15px;
+            line-height: 1.75;
+            margin: 12px 0 22px;
+            max-width: 900px
+        }
+
+        .meta {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-bottom: 18px
+        }
+
+        .pill {
+            background: var(--soft);
+            border: 1px solid var(--line);
+            border-radius: 999px;
+            color: var(--muted);
+            font-size: 12px;
+            padding: 5px 10px
+        }
+
+        .template-layout {
+            background: var(--panel);
+            border: 1px solid var(--line);
+            border-radius: 18px;
+            box-shadow: var(--shadow);
+            overflow: hidden
+        }
+
+        .ledger-head, .ledger-row {
+            display: grid;
+            grid-template-columns:.9fr 1.35fr 1.3fr .7fr 1.1fr
+        }
+
+        .ledger-head {
+            background: #20262d;
+            color: #fff
+        }
+
+        .cell {
+            align-content: start;
+            border-bottom: 1px solid var(--line);
+            border-right: 1px solid var(--line);
+            display: grid;
+            gap: 6px;
+            min-width: 0;
+            padding: 14px
+        }
+
+        .cell:last-child {
+            border-right: 0
+        }
+
+        .cell b {
+            font-size: 13px;
+            line-height: 1.35
+        }
+
+        .cell span, .cell code {
+            color: var(--muted);
+            font-size: 12px;
+            line-height: 1.55;
+            overflow-wrap: anywhere
+        }
+
+        .ledger-head .cell {
+            border-color: #3b424b
+        }
+
+        .ledger-head .cell span {
+            color: #c9cfd6
+        }
+
+        .req {
+            background: var(--blue-soft)
+        }
+
+        .status-pass {
+            color: var(--green) !important;
+            font-weight: 700
+        }
+
+        .status-attention {
+            color: var(--amber) !important;
+            font-weight: 700
+        }
+
+        .evidence {
+            display: grid;
+            grid-template-columns:1fr 1fr;
+            gap: 14px;
+            margin-top: 18px
+        }
+
+        .panel {
+            background: var(--panel);
+            border: 1px solid var(--line);
+            border-radius: 16px;
+            padding: 18px
+        }
+
+        .panel h2 {
+            font-size: 16px;
+            margin: 0 0 12px
+        }
+
+        .panel ul {
+            display: grid;
+            gap: 9px;
+            margin: 0;
+            padding-left: 20px
+        }
+
+        .panel li {
+            color: var(--muted);
+            font-size: 13px;
+            line-height: 1.6
+        }
+
+        .panel code {
+            background: var(--soft);
+            border-radius: 5px;
+            color: var(--ink);
+            font-size: 12px;
+            padding: 2px 5px;
+            overflow-wrap: anywhere
+        }
+
+        .decision {
+            background: var(--green-soft);
+            border-color: #cde8d9
+        }
+
+        .attention {
+            background: var(--amber-soft);
+            border-color: #eddbb0
+        }
+
+        .flow {
+            display: grid;
+            gap: 8px;
+            grid-template-columns:repeat(5, 1fr);
+            margin-top: 18px
+        }
+
+        .step {
+            background: var(--panel);
+            border: 1px solid var(--line);
+            border-radius: 14px;
+            display: grid;
+            gap: 5px;
+            padding: 14px;
+            position: relative
+        }
+
+        .step:not(:last-child)::after {
+            background: var(--blue);
+            content: "";
+            height: 1px;
+            position: absolute;
+            right: -9px;
+            top: 50%;
+            width: 9px
+        }
+
+        .step b {
+            font-size: 12px
+        }
+
+        .step span {
+            color: var(--muted);
+            font-size: 11px;
+            line-height: 1.5
+        }
+
+        @media (max-width: 820px) {
+            main {
+                width: min(100vw - 20px, 760px);
+                padding-top: 24px
+            }
+
+            .ledger-head {
+                display: none
+            }
+
+            .ledger-row {
+                border-bottom: 8px solid var(--paper);
+                display: grid;
+                grid-template-columns:1fr
+            }
+
+            .cell {
+                border-right: 0;
+                padding: 12px
+            }
+
+            .cell::before {
+                color: var(--muted);
+                content: attr(data-mobile-label);
+                font-size: 10px;
+                font-weight: 700;
+                letter-spacing: .08em;
+                text-transform: uppercase
+            }
+
+            .evidence, .flow {
+                grid-template-columns:1fr
+            }
+
+            .step:not(:last-child)::after {
+                bottom: -9px;
+                height: 9px;
+                left: 50%;
+                right: auto;
+                top: auto;
+                width: 1px
+            }
+        }
+    </style>
+    <style data-adaptive-viewport-kernel="1">
+        [data-diagram-canvas][data-diagram-contract="1"] {
+            --diagram-scale: 1;
+            box-sizing: border-box;
+            max-inline-size: 100%;
+            min-inline-size: 0;
+            transform-origin: top left;
+        }
+
+        [data-diagram-width="contained"] {
+            inline-size: min(100%, 72rem);
+            margin-inline: auto;
+        }
+
+        [data-diagram-width="auto"] {
+            inline-size: 100%;
+        }
+
+        [data-diagram-width="wide"] {
+            inline-size: max-content;
+            min-inline-size: 100%;
+        }
+
+        [data-diagram-height="flow"] {
+            block-size: auto;
+        }
+
+        [data-diagram-height="auto"] {
+            max-block-size: clamp(32.5rem, 75vh, 56.25rem);
+            overflow: auto;
+        }
+
+        [data-diagram-height="scroll"] {
+            max-block-size: clamp(32.5rem, 75vh, 56.25rem);
+            overflow: auto;
+        }
+
+        [data-diagram-scaled="true"] > [data-diagram-stage] {
+            transform: scale(var(--diagram-scale));
+            transform-origin: top left;
+        }
+
+        [data-diagram-controls] {
+            display: flex;
+            flex-wrap: wrap;
+            gap: .5rem;
+            margin-block: 0 1rem;
+        }
+
+        [data-diagram-controls] button {
+            min-block-size: 2.75rem;
+            padding-inline: .8rem;
+        }
+
+        [data-diagram-controls] button[aria-pressed="true"] {
+            outline: 2px solid currentColor;
+        }
+
+        .diagram-fallback {
+            display: none;
+        }
+
+        @media (max-width: 48rem) {
+            [data-diagram-mobile="stack"] [data-diagram-group-id] {
+                position: static;
+            }
+
+            [data-diagram-mobile="summary"] + [data-fallback-for] {
+                display: block;
+            }
+        }
+
+        @media print {
+            [data-diagram-canvas] {
+                max-block-size: none;
+                overflow: visible;
+                transform: none;
+            }
+
+            [data-diagram-controls] {
+                display: none !important;
+            }
+
+            .diagram-fallback {
+                display: block;
+            }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            [data-diagram-canvas] {
+                scroll-behavior: auto;
+            }
+        }
+    </style>
+</head>
+<body>
+<main data-diagram-type="delivery-acceptance" data-template-family="delivery-acceptance"
+      data-template-id="acceptance-ledger" data-template-layout="acceptance-ledger">
+    <h1 data-slot="title">Zeus 会话页 Codex 交互与样式收口验收账本</h1>
+    <p class="summary" data-slot="summary">对齐 Codex App
+        的会话密度与控制层级：在既有消息操作栏、命令摘要、上弹设置和焦点样式基础上，补齐项目会话列表、完成未读、等待批准/用户输入状态，以及命令和文件审批的紧凑授权面板。</p>
+    <div class="meta"><span class="pill">更新于 2026-07-22</span><span class="pill">Codex App 视觉对齐</span><span
+            class="pill">持久化完成未读</span><span class="pill">审批协议闭环</span></div>
+
+    <div data-diagram-canvas data-diagram-contract="1" data-diagram-id="acceptance-ledger" data-diagram-profile="ledger"
+         data-diagram-width="auto" data-diagram-height="flow" data-diagram-mobile="stack">
+        <section data-diagram-stage data-reading-guide="按需求、改动、证据、结论和边界逐行验收"
+                 class="template-layout acceptance-ledger" aria-label="Zeus 会话页验收账本">
+            <div class="ledger-head">
+                <div class="cell"><b>需求</b><span>用户可见问题</span></div>
+                <div class="cell"><b>改动</b><span>交互与实现</span></div>
+                <div class="cell"><b>真实证据</b><span>代码、测试、运行态</span></div>
+                <div class="cell"><b>结论</b><span>验收状态</span></div>
+                <div class="cell"><b>边界</b><span>风险与后续动作</span></div>
+            </div>
+            <div class="ledger-row">
+                <div class="cell req" data-mobile-label="需求"><b>1.
+                    用户消息底部大块空白</b><span>气泡高度应只由消息内容决定。</span></div>
+                <div class="cell" data-mobile-label="改动"><b>消息 action rail 改为绝对定位</b><span>去掉隐藏 footer 的 28px 最小高度；悬停或聚焦时再显示。</span>
+                </div>
+                <div class="cell" data-mobile-label="证据"><b>样式反向断言 + 正式包截图</b><span><code>session-workspace.test.tsx</code> 校验 <code>position:absolute</code> 且无 <code>min-block-size</code>。</span>
+                </div>
+                <div class="cell" data-mobile-label="结论"><b
+                        class="status-pass">通过</b><span>气泡底部空白已消失。</span></div>
+                <div class="cell" data-mobile-label="边界">
+                    <b>保留可访问性</b><span>按钮仍在 AX 树中，键盘聚焦会显示。</span></div>
+            </div>
+            <div class="ledger-row">
+                <div class="cell req" data-mobile-label="需求"><b>2.
+                    命令输出样式杂乱</b><span>命令多时不应把会话主线切碎。</span></div>
+                <div class="cell" data-mobile-label="改动"><b>单行命令摘要 + 可展开详情</b><span>摘要只显示终端图标、命令预览、状态与复制；工作目录、耗时、退出码和输出在展开层。</span>
+                </div>
+                <div class="cell" data-mobile-label="证据"><b>正式包真实展开/收起</b><span>AX 树确认 <code>disclosure triangle</code>；展开后显示完整元数据和输出。</span>
+                </div>
+                <div class="cell" data-mobile-label="结论"><b class="status-pass">通过</b><span>默认密度明显降低。</span>
+                </div>
+                <div class="cell" data-mobile-label="边界"><b>不丢证据</b><span>完整 stdout/stderr 仍可查看，没有删减 provider 事实。</span>
+                </div>
+            </div>
+            <div class="ledger-row">
+                <div class="cell req" data-mobile-label="需求"><b>3. 收发消息按钮按 Codex App 复刻</b><span>用户与 Codex 消息需要不同的操作顺序和相同的轻量线性图标语言。</span>
+                </div>
+                <div class="cell" data-mobile-label="改动"><b>两套 28px action rail</b><span>Codex：复制、赞、踩、展开、时间；用户：时间、复制、编辑。改为与参考图一致的 1.7px 线性 SVG，保留选中、展开和复制反馈。</span>
+                </div>
+                <div class="cell" data-mobile-label="证据"><b>参考图同屏对比 + 正式包 AX</b><span><code>docs/evidence/zeus-assistant-actions-comparison-20260720.png</code> 与 <code>zeus-user-actions-comparison-20260720.png</code>；AX 确认按钮顺序与 toggle 状态。</span>
+                </div>
+                <div class="cell" data-mobile-label="结论"><b
+                        class="status-pass">通过</b><span>图标形状、顺序、灰度与时间位置均已收口。</span></div>
+                <div class="cell" data-mobile-label="边界"><b>反馈作用域</b><span>赞/踩是当前消息的本地交互反馈，不伪造服务端持久化；复制由 Electron Main 写入并回读一致后才显示“已复制”。</span>
+                </div>
+            </div>
+            <div class="ledger-row">
+                <div class="cell req" data-mobile-label="需求"><b>4. 模型、推理、权限不可切换</b><span>需要真实影响后续会话，不是只改本地文字。</span>
+                </div>
+                <div class="cell" data-mobile-label="改动"><b>实时能力选项 + 自定义上弹列表</b><span>模型/推理选项来自 app-server 当前 generation；三类菜单统一固定在触发器上方，当前值始终留在下方可见；权限仍沿用真实 PATCH 链路。</span>
+                </div>
+                <div class="cell" data-mobile-label="证据"><b>状态链测试 + 正式包菜单截图</b><span>121 项会话聚焦测试通过；<code>docs/evidence/zeus-model-dropdown-packaged-20260720.jpeg</code> 显示完整列表在触发器上方，AX 暴露真实 listbox/options。</span>
+                </div>
+                <div class="cell" data-mobile-label="结论"><b
+                        class="status-pass">通过</b><span>空闲态可切换，忙碌态保持安全锁定。</span></div>
+                <div class="cell" data-mobile-label="边界"><b>切换时机</b><span><code>steer_now</code> 不支持中途换模型；只在新轮次发送时生效。</span>
+                </div>
+            </div>
+            <div class="ledger-row">
+                <div class="cell req" data-mobile-label="需求"><b>5.
+                    右上角就绪图标粗糙</b><span>状态要轻量、语义明确。</span></div>
+                <div class="cell" data-mobile-label="改动"><b>CSS
+                    语义状态图标</b><span>移除原始字符 <code>· / ◌ / ×</code>；就绪为环+内点，忙碌为旋转环，警告/错误使用伪元素。</span>
+                </div>
+                <div class="cell" data-mobile-label="证据"><b>无原始 glyph 的渲染断言</b><span>正式包右上角已显示环形就绪状态，文本仍为“已就绪”。</span>
+                </div>
+                <div class="cell" data-mobile-label="结论"><b
+                        class="status-pass">通过</b><span>与 Codex App 顶部密度一致。</span></div>
+                <div class="cell" data-mobile-label="边界">
+                    <b>减少动效</b><span>系统开启 reduced motion 时保留静态语义。</span></div>
+            </div>
+            <div class="ledger-row">
+                <div class="cell req" data-mobile-label="需求"><b>6.
+                    输入框选中时去除黑色边线</b><span>聚焦不应让整个对话框突然变重。</span></div>
+                <div class="cell" data-mobile-label="改动"><b>聚焦态保持同一边框
+                    token</b><span><code>:focus-within</code> 不再切换独立深色边框；键盘焦点继续由具体按钮的可访问 outline 承担。</span>
+                </div>
+                <div class="cell" data-mobile-label="证据"><b>反向搜索 + 正式包聚焦截图</b><span>源码已无 <code>session-composer-focus-line</code>；<code>docs/evidence/zeus-composer-focus-packaged-20260720.jpeg</code> 中聚焦前后外框一致。</span>
+                </div>
+                <div class="cell" data-mobile-label="结论"><b
+                        class="status-pass">通过</b><span>黑色焦点边线已移除。</span></div>
+                <div class="cell" data-mobile-label="边界"><b>不牺牲键盘可见性</b><span>下拉选项和动作按钮仍有独立 focus-visible 指示。</span>
+                </div>
+            </div>
+            <div class="ledger-row">
+                <div class="cell req" data-mobile-label="需求"><b>7. 用户操作栏与下一条内容太挤</b><span>操作栏不能与下一条消息正文争抢同一段垂直空间。</span>
+                </div>
+                <div class="cell" data-mobile-label="改动"><b>为绝对定位操作栏预留独立尾部间距</b><span>有操作栏的消息增加 <code>has-message-actions</code> 语义类和 18px 尾部留白；按钮与气泡保持 5px 距离。</span>
+                </div>
+                <div class="cell" data-mobile-label="证据"><b>最终正式包截图</b><span><code>docs/evidence/zeus-session-message-actions-final.png</code>；正文、操作栏、下一条消息三层不再重叠。</span>
+                </div>
+                <div class="cell" data-mobile-label="结论"><b class="status-pass">通过</b><span>间距已从偶然的 flex gap 变为显式布局约束。</span>
+                </div>
+                <div class="cell" data-mobile-label="边界">
+                    <b>不恢复气泡内空白</b><span>留白位于消息外部，不重新撑高用户气泡。</span></div>
+            </div>
+            <div class="ledger-row">
+                <div class="cell req" data-mobile-label="需求"><b>8. 图标粗糙且复制疑似无效</b><span>图标要接近 Codex 参考图，复制必须作用于真实系统剪贴板。</span>
+                </div>
+                <div class="cell" data-mobile-label="改动"><b>定制线性 SVG + 原生剪贴板桥</b><span>复制、赞踩、展开、编辑统一 1.7px 圆角线条；Renderer 经 Preload IPC 调用 Electron <code>clipboard.writeText</code>，Main 随即 <code>readText</code> 校验。</span>
+                </div>
+                <div class="cell" data-mobile-label="证据"><b>真实按钮状态 + 写后回读</b><span>最终包 AX 从“复制消息”切换为“已复制”；只有 Main 回读与目标文本一致才会进入成功态。</span>
+                </div>
+                <div class="cell" data-mobile-label="结论"><b class="status-pass">通过</b><span>不再依赖 file:// 页面不稳定的 Clipboard API。</span>
+                </div>
+                <div class="cell" data-mobile-label="边界"><b>三层兜底</b><span>原生桥不可用时才尝试浏览器 Clipboard API 与选区复制；失败保持原标签。</span>
+                </div>
+            </div>
+            <div class="ledger-row">
+                <div class="cell req" data-mobile-label="需求"><b>9. 编辑必须发生在原对话气泡内</b><span>点击铅笔后不能把内容跳转到底部输入框。</span>
+                </div>
+                <div class="cell" data-mobile-label="改动"><b>气泡原位切换为编辑表单</b><span>保留完整原文，自动聚焦并增高；提供取消和发送编辑内容；Escape 取消，Command/Ctrl+Enter 提交。</span>
+                </div>
+                <div class="cell" data-mobile-label="证据"><b>最终包原位编辑截图</b><span><code>docs/evidence/zeus-session-inline-edit-final.png</code>；AX 显示编辑文本域、取消、发送编辑内容均位于原用户消息容器。</span>
+                </div>
+                <div class="cell" data-mobile-label="结论"><b
+                        class="status-pass">通过</b><span>编辑过程不离开原气泡。</span></div>
+                <div class="cell" data-mobile-label="边界">
+                    <b>失败保留草稿</b><span>重新发送失败时编辑器不关闭，并给出文字错误提示。</span></div>
+            </div>
+            <div class="ledger-row">
+                <div class="cell req" data-mobile-label="需求"><b>10. 底部输入框应随内容自动增高</b><span>多行内容不能继续挤在固定的单行高度中。</span>
+                </div>
+                <div class="cell" data-mobile-label="改动"><b>按 scrollHeight 自适应</b><span>草稿、输入事件和窗口尺寸变化都会重新计算高度；最小 48px，最大为视口 34%，超过上限后才启用内部滚动。</span>
+                </div>
+                <div class="cell" data-mobile-label="证据"><b>纯函数边界测试 + 正式包截图</b><span><code>resolveAutosizeTextareaHeight</code> 覆盖最小值、中间值与上限；<code>docs/evidence/zeus-session-composer-autogrow-final.png</code> 显示 6 行内容完整展开。</span>
+                </div>
+                <div class="cell" data-mobile-label="结论"><b
+                        class="status-pass">通过</b><span>控制行始终位于内容下方。</span></div>
+                <div class="cell" data-mobile-label="边界">
+                    <b>防止遮挡会话</b><span>达到视口上限后保持固定高度并滚动，不无限推高输入框。</span></div>
+            </div>
+            <div class="ledger-row">
+                <div class="cell req" data-mobile-label="需求"><b>11. Command+A 应触发全选</b><span>macOS 用户在输入区需要标准编辑快捷键。</span>
+                </div>
+                <div class="cell" data-mobile-label="改动"><b>补齐原生 Edit 菜单角色</b><span>应用菜单新增 undo、redo、cut、copy、paste、selectAll 标准 role；输入框同时暴露 Meta+A / Control+A 快捷键语义。</span>
+                </div>
+                <div class="cell" data-mobile-label="证据">
+                    <b>最终包整段替换</b><span>先输入 <code>alpha beta gamma</code>，按 Command+A 后输入 <code>ZEUS_SELECT_ALL_OK</code>，AX 最终值只剩新文本；菜单栏可见 Edit。</span>
+                </div>
+                <div class="cell" data-mobile-label="结论"><b
+                        class="status-pass">通过</b><span>恢复 macOS 标准全选行为。</span></div>
+                <div class="cell" data-mobile-label="边界"><b>全应用受益</b><span>使用 Electron 原生 role，不把快捷键硬编码到单个输入框。</span>
+                </div>
+            </div>
+            <div class="ledger-row">
+                <div class="cell req" data-mobile-label="需求"><b>12. 会话列表按 Codex App 扁平展示</b><span>项目下不再显示任务分组和摘要；任务会话统一显示“任务编码：任务名称”。</span>
+                </div>
+                <div class="cell" data-mobile-label="改动"><b>项目级扁平时间序列</b><span>项目会话保留自身标题；任务会话由真实任务编码和名称生成单行标题，同一任务的多会话允许标题相同。</span>
+                </div>
+                <div class="cell" data-mobile-label="证据">
+                    <b>组件渲染断言</b><span><code>ProjectConversationTree.tsx</code> 与 <code>session-workspace.test.tsx</code> 覆盖扁平顺序、无摘要、无任务组和键盘 roving tab。</span>
+                </div>
+                <div class="cell" data-mobile-label="结论"><b class="status-pass">实现并通过自动化验证</b><span>列表语义与截图一致。</span>
+                </div>
+                <div class="cell" data-mobile-label="边界"><b>标题不是会话 ID</b><span>相同标题通过内部 conversation id 独立选择，不伪造序号。</span>
+                </div>
+            </div>
+            <div class="ledger-row">
+                <div class="cell req" data-mobile-label="需求"><b>13. 蓝点只表示模型成功完成且尚未打开</b><span>失败、中断、运行中和当前已打开会话都不能误显示完成蓝点。</span>
+                </div>
+                <div class="cell" data-mobile-label="改动"><b>持久化完成未读 +
+                    幂等确认</b><span>成功非临时轮次写入 <code>completion_unread</code>；选中会话通过独立 PUT 确认清除，不改 <code>updated_at</code>。</span>
+                </div>
+                <div class="cell" data-mobile-label="证据"><b>存储、协调器、REST、Renderer 四层测试</b><span>覆盖成功/失败/中断、重启恢复、后台事件、当前会话抑制和重复确认。</span>
+                </div>
+                <div class="cell" data-mobile-label="结论"><b class="status-pass">实现并通过自动化验证</b><span>蓝点拥有独立持久化语义。</span>
+                </div>
+                <div class="cell" data-mobile-label="边界">
+                    <b>活跃状态优先</b><span>正在响应、等待批准或等待输入时隐藏旧蓝点，避免两个互斥状态同时出现。</span>
+                </div>
+            </div>
+            <div class="ledger-row">
+                <div class="cell req" data-mobile-label="需求"><b>14. 等待批准与需要用户输入使用截图状态</b><span>审批为绿色胶囊，用户输入为蓝色胶囊；连接和响应完成前使用灰色旋转环。</span>
+                </div>
+                <div class="cell" data-mobile-label="改动"><b>拆分权威运行状态</b><span>选中会话读取 controller；后台会话由持久化 <code>pendingRequestKind</code> 区分 approval 与 user input。</span>
+                </div>
+                <div class="cell" data-mobile-label="证据"><b>状态映射与 SSR 断言</b><span>测试验证两种胶囊文案、旋转环、ready 无尾部状态，以及 reduced-motion 静态回退。</span>
+                </div>
+                <div class="cell" data-mobile-label="结论"><b class="status-pass">实现并通过自动化验证</b><span>不再用模糊的“等待操作”。</span>
+                </div>
+                <div class="cell" data-mobile-label="边界">
+                    <b>失败保持显式</b><span>错误和旧会话仍使用单独的低噪声图标/文字，不冒充完成状态。</span></div>
+            </div>
+            <div class="ledger-row">
+                <div class="cell req" data-mobile-label="需求"><b>15. 命令/文件审批复刻紧凑授权面板</b><span>主操作为“允许一次”，下拉可选类似命令，右侧独立“拒绝”。</span>
+                </div>
+                <div class="cell" data-mobile-label="改动"><b>Phosphor 图标 + fail-closed 菜单</b><span>终端/文件图标、上弹授权菜单、Escape/方向键/外部点击和拒绝优先焦点；只接受 provider 精确广告的 execpolicy amendment 对象并原样发送。</span>
+                </div>
+                <div class="cell" data-mobile-label="证据"><b>Renderer、REST、协调器、app-server manager 测试</b><span>覆盖合法对象原样透传、规则可见、空数组/额外字段/规则篡改拒绝，以及文件审批仅一次授权。</span>
+                </div>
+                <div class="cell" data-mobile-label="结论"><b class="status-pass">实现并通过自动化验证</b><span>MCP、permissions 和用户询问继续使用原有专用表单。</span>
+                </div>
+                <div class="cell" data-mobile-label="边界"><b>不扩权</b><span>“允许类似命令”不是整会话放行；没有精确 provider 规则时绝不显示该选项。</span>
+                </div>
+            </div>
+        </section>
+    </div>
+    <details class="diagram-fallback" data-fallback-for="acceptance-ledger">
+        <summary>会话页交付验收顺序</summary>
+        <ol>
+            <li>消息气泡空白</li>
+            <li>命令输出密度</li>
+            <li>收发消息操作栏</li>
+            <li>模型推理权限设置</li>
+            <li>就绪状态图标</li>
+            <li>输入框聚焦边框</li>
+            <li>操作栏与下一条内容间距</li>
+            <li>线性图标与系统剪贴板</li>
+            <li>原气泡编辑</li>
+            <li>输入框自动增高</li>
+            <li>Command+A 全选</li>
+        </ol>
+    </details>
+
+    <section class="flow" aria-label="模型与推理设置真实链路">
+        <div class="step"><b>1. 空闲会话</b><span>控件解锁</span></div>
+        <div class="step"><b>2. 实时能力</b><span>读取 model/effort</span></div>
+        <div class="step"><b>3. Send envelope</b><span>持久化用户选择</span></div>
+        <div class="step"><b>4. 服务端校验</b><span>防止过期选项</span></div>
+        <div class="step"><b>5. turn/start</b><span>下一轮真实生效</span></div>
+    </section>
+
+    <section class="evidence" data-slot="evidence-and-notes">
+        <article class="panel decision"><h2>2026-07-22 增量交付证据</h2>
+            <ul>
+                <li><code>pnpm test</code> 全仓 90 个测试文件通过：1520 项通过、4 项跳过、0 项失败。</li>
+                <li><code>pnpm lint</code>、<code>pnpm format:check</code>、<code>pnpm typecheck</code>、<code>git diff
+                    --check</code> 均通过。
+                </li>
+                <li><code>pnpm package:mac</code> 成功；<code>dist/mac-arm64/Zeus.app</code> 通过 on-disk 与 Designated
+                    Requirement 校验。
+                </li>
+                <li><code>docs/evidence/session-styles-comparison-final.png</code> 同屏保留四张 Codex App 参考图与真实
+                    React 组件实现；会话列表、审批面板和窄屏另有聚焦截图。
+                </li>
+                <li>浏览器键盘验收覆盖任务菜单与授权菜单的打开、方向键、Escape、焦点归还；控制台 error 0、warning 0。</li>
+                <li>主要入口：<code>ProjectConversationTree.tsx</code>、<code>PendingRequestSurface.tsx</code>、<code>SessionWorkspace.tsx</code>、<code>codexNativeConversationCoordinator.ts</code>、<code>packages/storage/src/index.ts</code>。
+                </li>
+            </ul>
+        </article>
+        <article class="panel attention"><h2>未隐藏的边界</h2>
+            <ul>
+                <li>本轮视觉验收使用真实 React 组件和正式 CSS，仅由 QA 壳层注入固定状态数据。</li>
+                <li>验收时 macOS
+                    处于锁屏状态，因此没有把打包应用窗口截图冒充为已完成；正式包仅由构建、签名校验和磁盘产物证明。
+                </li>
+                <li>完整设计验收记录见仓库根目录 <code>design-qa.md</code>。未执行 git commit / push / merge / revert。
+                </li>
+            </ul>
+        </article>
+    </section>
+</main>
+<script data-adaptive-viewport-kernel="1">
+    (() => {
+        "use strict";
+        const allowed = new Set(["fit", "0.75", "0.9", "1"]);
+        const reset = (canvas) => {
+            canvas.style.removeProperty("--diagram-scale");
+            canvas.removeAttribute("data-diagram-scaled");
+        };
+        const apply = (canvas, requested = "fit") => {
+            reset(canvas);
+            if (!allowed.has(requested)) return false;
+            const stage = canvas.querySelector(":scope > [data-diagram-stage]");
+            if (!stage || !canvas.clientWidth || !stage.scrollWidth) return false;
+            const scale = requested === "fit"
+                ? Math.min(1, canvas.clientWidth / stage.scrollWidth)
+                : Number(requested);
+            if (!Number.isFinite(scale) || scale < 0.75 || scale > 1) return false;
+            canvas.style.setProperty("--diagram-scale", String(scale));
+            canvas.setAttribute("data-diagram-scaled", "true");
+            return true;
+        };
+        const reflect = (controls, requested, applied) => {
+            controls.querySelectorAll("[data-diagram-zoom-control]").forEach((button) => {
+                button.setAttribute(
+                    "aria-pressed",
+                    String(button.dataset.diagramZoomControl === requested && applied)
+                );
+            });
+            const status = controls.querySelector("[data-diagram-zoom-status]");
+            if (status) status.value = applied ? (requested === "fit" ? "Fit width" : `${Number(requested) * 100}%`) : "Scroll";
+        };
+        const bind = (root = document) => {
+            root.querySelectorAll("[data-diagram-controls]").forEach((controls) => {
+                const id = controls.dataset.diagramControls;
+                const canvas = id ? root.querySelector(`[data-diagram-id="${CSS.escape(id)}"]`) : null;
+                if (!canvas || controls.dataset.diagramBound === "true") return;
+                controls.dataset.diagramBound = "true";
+                controls.addEventListener("click", (event) => {
+                    const button = event.target.closest("[data-diagram-zoom-control]");
+                    if (!button || !controls.contains(button)) return;
+                    const requested = button.dataset.diagramZoomControl;
+                    const applied = apply(canvas, requested);
+                    reflect(controls, requested, applied);
+                });
+            });
+        };
+        const enhance = (root = document) => {
+            bind(root);
+            root.querySelectorAll('[data-diagram-canvas][data-diagram-contract="1"]')
+                .forEach((canvas) => {
+                    try {
+                        apply(canvas, canvas.dataset.diagramZoom || "fit");
+                    } catch (_error) {
+                        reset(canvas);
+                    }
+                });
+        };
+        globalThis.VibeDiagramViewport = Object.freeze({apply, bind, enhance, reset});
+        if (document.readyState === "loading") {
+            document.addEventListener("DOMContentLoaded", () => enhance(), {once: true});
+        } else {
+            enhance();
+        }
+    })();
+</script>
+</body>
+</html>

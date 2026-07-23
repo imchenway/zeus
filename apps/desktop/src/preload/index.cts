@@ -1,5 +1,5 @@
-import { contextBridge, ipcRenderer } from 'electron';
-import { createRendererBootstrapReporter, shouldReportRendererWindowError } from './rendererBootstrapState.cjs';
+import {contextBridge, ipcRenderer} from 'electron';
+import {createRendererBootstrapReporter, shouldReportRendererWindowError} from './rendererBootstrapState.cjs';
 
 const rendererBootstrapReporter = createRendererBootstrapReporter({
   send: (channel, message) => {
@@ -29,6 +29,7 @@ contextBridge.exposeInMainWorld('zeus', {
   chooseTaskAttachments: () => ipcRenderer.invoke('zeus:choose-task-attachments'),
   readTaskClipboardAttachments: () => ipcRenderer.invoke('zeus:read-task-clipboard-attachments'),
   readTaskClipboardImage: () => ipcRenderer.invoke('zeus:read-task-clipboard-image'),
+    writeClipboardText: (text: string) => ipcRenderer.invoke('zeus:write-clipboard-text', text),
   saveTaskClipboardAttachments: () => ipcRenderer.invoke('zeus:save-task-clipboard-attachments'),
   saveTaskPastedAttachments: (attachments: Array<{ name: string; type: string; data: ArrayBuffer }>) => ipcRenderer.invoke('zeus:save-task-pasted-attachments', attachments),
   getTaskAttachmentPreview: (path: string) => ipcRenderer.invoke('zeus:get-task-attachment-preview', path),

@@ -1,21 +1,33 @@
-import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { ThreadItemView, itemRole, transcriptItemText, type SessionUiLanguage } from './ThreadItemView.js';
-import type { NativePendingRequest, NativeSessionItemBuffer, NativeSessionState } from './sessionTypes.js';
-import { useThreadScrollController } from './useThreadScrollController.js';
+import {Fragment, type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState} from 'react';
+import {isOperationalActivityItem, SessionActivityGroup, SessionTurnDuration} from './SessionActivity.js';
+import {itemRole, type SessionUiLanguage, ThreadItemView, transcriptItemText} from './ThreadItemView.js';
+import {PlanSummary} from './PlanSummary.js';
+import type {
+    NativePendingRequest,
+    NativePlanImplementationRequest,
+    NativeSessionItemBuffer,
+    NativeSessionState
+} from './sessionTypes.js';
+import {useThreadScrollController} from './useThreadScrollController.js';
 
 export interface ConversationTranscriptProps {
   state: NativeSessionState;
   language: SessionUiLanguage;
-  onEditUserItem?: (item: NativeSessionItemBuffer) => void;
+    onEditUserItem?: (item: NativeSessionItemBuffer, content: string) => void | Promise<void>;
   onRetryItem?: (item: NativeSessionItemBuffer) => void;
   pendingRequests?: NativePendingRequest[];
   renderPendingRequest?: (request: NativePendingRequest, index: number) => ReactNode;
+    planImplementationRequests?: NativePlanImplementationRequest[];
+    renderPlanImplementationRequest?: (request: NativePlanImplementationRequest, index: number) => ReactNode;
+    openPlanItemId?: string | null;
+    onOpenPlan?: (item: NativeSessionItemBuffer) => void;
 }
 
 export function ConversationTranscript(props: ConversationTranscriptProps) {
   const containerRef = useRef<HTMLElement | null>(null);
   const previousTurnIdRef = useRef<string | null>(null);
   const pendingTurnPositionRef = useRef(false);
+    const previousRequestSurfaceRevisionRef = useRef('');
   const scrollController = useThreadScrollController();
   const [returnToLatestVisible, setReturnToLatestVisible] = useState(false);
   const [turnSpacerHeight, setTurnSpacerHeight] = useState(0);
@@ -23,9 +35,24 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   const completedAnnouncementTrackerRef = useRef<CompletedItemAnnouncementTracker>({ hydrated: false, lastCompletedKey: null });
   const items = useMemo(() => props.state.itemOrder.map((key) => props.state.items[key]).filter((entry): entry is NativeSessionItemBuffer => Boolean(entry) && isVisibleTranscriptItem(entry)), [props.state.itemOrder, props.state.items]);
   const lastUserKey = [...items].reverse().find((entry) => `${entry.type}`.toLocaleLowerCase().includes('user'))?.key;
-  const pendingRequests = props.pendingRequests ?? [];
+    const lastAssistantKey = [...items].reverse().find((entry) => itemRole(entry) === 'assistant')?.key;
+    // Codex App 只展开队首请求；后续请求保留在权威快照中，待前一项解决后再展示。
+    const pendingRequests = (props.pendingRequests ?? []).slice(0, 1);
   const anchoredRequests = useMemo(() => anchorPendingRequests(items, pendingRequests), [items, pendingRequests]);
   const requestsById = useMemo(() => new Map(pendingRequests.map((request) => [request.id, request])), [pendingRequests]);
+    const planRequests = props.planImplementationRequests ?? [];
+    const requestSurfaceRevision = [...pendingRequests.map((request) => `${request.id}:${request.status}`), ...planRequests.map((request) => `${request.id}:${request.status}`)].join('|');
+    const planRequestsByItem = useMemo(() => {
+        const result: Record<string, NativePlanImplementationRequest[]> = {};
+        for (const request of planRequests) {
+            const item = items.find((candidate) => candidate.localItemId === request.planItemId || candidate.itemId === request.planItemId);
+            if (item) (result[item.key] ??= []).push(request);
+        }
+        return result;
+    }, [items, planRequests]);
+    const anchoredPlanRequestIds = useMemo(() => new Set(Object.values(planRequestsByItem).flatMap((requests) => requests.map((request) => request.id))), [planRequestsByItem]);
+    const transcriptRows = useMemo(() => projectTranscriptRows(items, anchoredRequests.afterItem), [anchoredRequests.afterItem, items]);
+    const lastItemKeyByTurn = useMemo(() => Object.fromEntries(items.map((item) => [item.turnId, item.key])), [items]);
   const showThinking = shouldShowTranscriptThinking(props.state, items);
 
   useEffect(() => {
@@ -65,10 +92,12 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
-    const effect = scrollController.onDelta(metrics(container), Date.now());
+      const interactionSurfaceAdded = Boolean(requestSurfaceRevision) && requestSurfaceRevision !== previousRequestSurfaceRevisionRef.current;
+      previousRequestSurfaceRevisionRef.current = requestSurfaceRevision;
+      const effect = interactionSurfaceAdded ? scrollController.onInteractionSurfaceAdded() : scrollController.onDelta(metrics(container), Date.now());
     if (effect.type !== 'scroll_to_bottom') return;
     container.scrollTo({ top: container.scrollHeight, behavior: prefersReducedMotion() ? 'auto' : 'smooth' });
-  }, [props.state.transcriptRevision, scrollController]);
+  }, [props.state.transcriptRevision, requestSurfaceRevision, scrollController]);
 
   return (
     <>
@@ -88,15 +117,50 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
           }}
         >
           {items.length > 0 ? (
-            items.map((entry, index) => (
-              <Fragment key={entry.key}>
-                <ThreadItemView item={entry} language={props.language} isLatest={index === items.length - 1 && !showThinking} isLatestUser={entry.key === lastUserKey} onEdit={props.onEditUserItem} onRetry={props.onRetryItem} />
-                {(anchoredRequests.afterItem[entry.key] ?? []).map((requestId) => {
-                  const request = requestsById.get(requestId);
-                  return request ? <Fragment key={request.id}>{props.renderPendingRequest?.(request, pendingRequests.indexOf(request))}</Fragment> : null;
-                })}
-              </Fragment>
-            ))
+              transcriptRows.map((row) => {
+                  const rowItems = row.kind === 'item' ? [row.item] : row.items;
+                  const lastRowItem = rowItems[rowItems.length - 1]!;
+                  const turn = props.state.turnsByProviderId[lastRowItem.turnId];
+                  const closesVisibleTurn = lastItemKeyByTurn[lastRowItem.turnId] === lastRowItem.key;
+                  return (
+                      <Fragment key={row.key}>
+                          {row.kind === 'item' ? (
+                              row.item.type === 'plan' ? (
+                                  <PlanSummary item={row.item} language={props.language}
+                                               panelOpen={props.openPlanItemId === (row.item.localItemId ?? row.item.itemId)}
+                                               onOpenPanel={props.onOpenPlan}/>
+                              ) : (
+                                  <ThreadItemView
+                                      item={row.item}
+                                      language={props.language}
+                                      isLatest={row.item.key === items[items.length - 1]?.key && !showThinking}
+                                      showAssistantActions={row.item.key === lastAssistantKey && !showThinking}
+                                      isLatestUser={row.item.key === lastUserKey}
+                                      onEdit={props.onEditUserItem}
+                                      onRetry={props.onRetryItem}
+                                  />
+                              )
+                          ) : (
+                              <SessionActivityGroup items={row.items} language={props.language}/>
+                          )}
+                          {rowItems
+                              .flatMap((entry) => anchoredRequests.afterItem[entry.key] ?? [])
+                              .map((requestId) => {
+                                  const request = requestsById.get(requestId);
+                                  return request ? <Fragment
+                                      key={request.id}>{props.renderPendingRequest?.(request, pendingRequests.indexOf(request))}</Fragment> : null;
+                              })}
+                          {rowItems
+                              .flatMap((entry) => planRequestsByItem[entry.key] ?? [])
+                              .map((request) => (
+                                  <Fragment
+                                      key={request.id}>{props.renderPlanImplementationRequest?.(request, planRequests.indexOf(request))}</Fragment>
+                              ))}
+                          {closesVisibleTurn && turn ?
+                              <SessionTurnDuration turn={turn} language={props.language}/> : null}
+                      </Fragment>
+                  );
+              })
           ) : !showThinking ? (
             <p className="session-transcript-empty">{props.language === 'zh-CN' ? '发送第一条消息后，真实 app-server 对话会显示在这里。' : 'Send the first message to begin the real app-server transcript.'}</p>
           ) : null}
@@ -118,24 +182,66 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
               </section>
             ) : null;
           })}
+            {planRequests
+                .filter((request) => !anchoredPlanRequestIds.has(request.id))
+                .map((request) => (
+                    <Fragment
+                        key={request.id}>{props.renderPlanImplementationRequest?.(request, planRequests.indexOf(request))}</Fragment>
+                ))}
         </section>
-        {returnToLatestVisible ? (
           <button
-            type="button"
-            className="session-return-latest"
-            onClick={() => {
-              const container = containerRef.current;
-              if (!container) return;
-              container.scrollTo({ top: container.scrollHeight, behavior: prefersReducedMotion() ? 'auto' : 'smooth' });
-              setReturnToLatestVisible(false);
-            }}
+              type="button"
+              className="session-return-latest"
+              data-visible={returnToLatestVisible || undefined}
+              aria-hidden={!returnToLatestVisible}
+              tabIndex={returnToLatestVisible ? 0 : -1}
+              onClick={() => {
+                  const container = containerRef.current;
+                  if (!container) return;
+                  container.scrollTo({
+                      top: container.scrollHeight,
+                      behavior: prefersReducedMotion() ? 'auto' : 'smooth'
+                  });
+                  setReturnToLatestVisible(false);
+              }}
           >
-            {props.language === 'zh-CN' ? '返回最新消息' : 'Return to latest'}
+              {props.language === 'zh-CN' ? '返回最新消息' : 'Return to latest'}
           </button>
-        ) : null}
       </div>
     </>
   );
+}
+
+export type TranscriptRow = { kind: 'item'; key: string; item: NativeSessionItemBuffer } | {
+    kind: 'activity';
+    key: string;
+    items: NativeSessionItemBuffer[]
+};
+
+export function projectTranscriptRows(items: readonly NativeSessionItemBuffer[], afterItem: Record<string, string[]> = {}): TranscriptRow[] {
+    const rows: TranscriptRow[] = [];
+    let activity: NativeSessionItemBuffer[] = [];
+    const flushActivity = () => {
+        if (activity.length === 0) return;
+        rows.push({
+            kind: 'activity',
+            key: `activity:${activity[0]!.key}:${activity[activity.length - 1]!.key}`,
+            items: activity
+        });
+        activity = [];
+    };
+    for (const item of items) {
+        if (!isOperationalActivityItem(item)) {
+            flushActivity();
+            rows.push({kind: 'item', key: item.key, item});
+            continue;
+        }
+        if (activity.length > 0 && activity[activity.length - 1]!.turnId !== item.turnId) flushActivity();
+        activity.push(item);
+        if ((afterItem[item.key] ?? []).length > 0) flushActivity();
+    }
+    flushActivity();
+    return rows;
 }
 
 export function isVisibleTranscriptItem(item: NativeSessionItemBuffer): boolean {

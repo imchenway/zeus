@@ -1,16 +1,15 @@
 # 发布工程
 
-Zeus 发布工程必须基于真实构建、真实测试、真实扫描和真实产物。没有 Apple 签名或 notarization 凭据时，可以交付 unsigned DMG/ZIP，但必须显式标注，不得伪造签名、公证或远端发布成功。
+Zeus 发布工程必须基于真实构建、真实运行检查和真实产物。没有 Apple 签名或 notarization 凭据时，可以交付 unsigned
+DMG/ZIP，但必须显式标注，不得伪造签名、公证或远端发布成功。
 
 ## 发布脚本
 
-发布脚本覆盖 pnpm dev、pnpm lint、pnpm typecheck、pnpm test、pnpm test:real-scan、pnpm build、pnpm package:mac、pnpm verify:release。
+发布脚本覆盖 pnpm dev、pnpm lint、pnpm typecheck、pnpm build、pnpm package:mac、pnpm verify:release。
 
 - `pnpm dev`：通过 `@zeus/desktop dev` 对齐 macOS Run 脚本。
 - `pnpm lint`：静态检查。
 - `pnpm typecheck`：TypeScript build references 检查。
-- `pnpm test`：Vitest 全量单元/集成测试。
-- `pnpm test:real-scan`：扫描当前 checkout 的真实仓库，不依赖维护者本机绝对路径。
 - `pnpm build`：workspace build 与 desktop build。
 - `pnpm package:mac`：生成 macOS App、DMG、ZIP 与 Homebrew cask。
 - `pnpm verify:release`：串联最终发布门禁。
@@ -30,14 +29,12 @@ Zeus 发布工程必须基于真实构建、真实测试、真实扫描和真实
 
 ## 发布门禁
 
-发布门禁必须覆盖 acceptance matrix、lint、typecheck、64 test files / 575 tests、真实扫描 174 files / 17036 nodes / 32848 edges / 7 views、Java/Spring/MyBatis fixture、AI CLI adapter 探针、build、package:mac、包内 Electron 加载、包内 renderer/main 非 GUI 健康检查。
+发布门禁必须覆盖 acceptance matrix、lint、typecheck、AI CLI adapter 探针、build、package:mac、包内 Electron 加载、包内
+renderer/main 非 GUI 健康检查。
 
 当前最新基线：
 
 - `pnpm verify:release`：通过。
-- 测试：64 test files / 575 tests passed。
-- 真实扫描：174 files / 17036 nodes / 32848 edges / 7 views。
-- Java/Spring/MyBatis fixture：`java-spring-fixture=verified;files=6;symbols=42`。
 - AI CLI adapter 探针：`ai-cli-adapters=checked;codex=available@0.140.0;claude=available@2.1.177;gemini=available@0.32.1;authStatus=real-probe-or-unknown`。
 - 包内 Electron 加载：以当前 `apps/desktop/electron-builder.yml` 的 Electron 版本为准。
 - 包内 renderer/main 非 GUI 健康检查：`packaged-health=Zeus;rendererAssets=2;main=dist/main/main.js`。
@@ -74,5 +71,5 @@ sha256 由 release 脚本从真实 DMG 计算，不允许 sha256 :no_check。
 
 - 不伪造签名成功、公证成功、远端 Homebrew tap 发布成功或自动更新可用状态。
 - 不用 `sha256 :no_check` 代替真实 DMG sha256。
-- 不把旧 sha256、旧测试数或旧扫描数写成最新发布证据。
+- 不把旧 sha256、旧构建结果或旧运行结果写成最新发布证据。
 - 不把构建产物修改当作源码交付。

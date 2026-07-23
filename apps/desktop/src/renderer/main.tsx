@@ -1,9 +1,15 @@
-import { useEffect } from 'react';
-import { createRoot } from 'react-dom/client';
-import { App, buildGraphConversationTaskIntent, buildGraphNodeTaskIntent, buildProjectDirectoryResolution, buildTemplateTaskDraft } from './App.js';
-import { RendererErrorBoundary } from './ErrorBoundary.js';
-import { createDashboardClient, type DashboardClient } from './apiClient.js';
-import { openGraphSourceInMain } from './appShellBridge.js';
+import {useEffect} from 'react';
+import {createRoot} from 'react-dom/client';
+import {
+    App,
+    buildGraphConversationTaskIntent,
+    buildGraphNodeTaskIntent,
+    buildProjectDirectoryResolution,
+    buildTemplateTaskDraft
+} from './App.js';
+import {RendererErrorBoundary} from './ErrorBoundary.js';
+import {createDashboardClient, type DashboardClient} from './apiClient.js';
+import {openGraphSourceInMain} from './appShellBridge.js';
 
 /** 选择真实仓库失败或取消时保留现有列表；开源分发包不能内置维护者本机路径。 */
 function resolveProjectDirectoryForCreation(selectedPath: string | null | undefined, appLanguage: Parameters<typeof buildProjectDirectoryResolution>[1]): { path: string | null; description: string } {
@@ -103,11 +109,11 @@ async function renderWithClient(client: DashboardClient): Promise<void> {
           });
           return client.loadDashboard();
         }}
-        onLoadTasks={async (projectId, query, status, tag, sortBy) =>
+        onLoadTasks={async (projectId, query, managementStatus, tag, sortBy) =>
           client.loadTasks({
             projectId,
             query,
-            status,
+              managementStatus,
             tag,
             sortBy,
             sortDirection: 'asc',
@@ -253,6 +259,10 @@ async function renderWithClient(client: DashboardClient): Promise<void> {
         onUpdateTaskStatus={async (taskId, status) => {
           await client.updateTaskStatus(taskId, status);
           return client.loadDashboard();
+        }}
+        onUpdateTaskManagementStatus={async (taskId, status) => {
+            await client.updateTaskManagementStatus(taskId, status);
+            return client.loadDashboard();
         }}
         onArchiveTask={async (taskId) => {
           await client.archiveTask(taskId);

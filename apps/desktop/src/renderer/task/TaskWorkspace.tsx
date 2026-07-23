@@ -1,15 +1,34 @@
-import { useCallback, useEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent } from 'react';
-import type { AiRuntimeSession, RuntimeStatusSnapshot, TaskRecord, TaskStatus, TaskTableColumnKey, TaskTableColumnPreferences, TaskTableColumnWidth } from '../apiClient.js';
-import { ZeusSelect } from '../ZeusSelect.js';
 import {
-  createTaskWorkspaceViewModel,
-  defaultTaskTableColumnOrder,
-  defaultVisibleTaskTableColumns,
-  moveTaskTableColumn,
-  normalizeTaskTableColumnPreferences,
-  setTaskTableColumnWidth,
-  toggleTaskTableColumn,
-  type TaskSortKey,
+    type CSSProperties,
+    type KeyboardEvent as ReactKeyboardEvent,
+    useCallback,
+    useEffect,
+    useRef,
+    useState
+} from 'react';
+import type {
+    AiRuntimeSession,
+    RuntimeStatusSnapshot,
+    TaskManagementStatus,
+    TaskRecord,
+    TaskTableColumnKey,
+    TaskTableColumnPreferences,
+    TaskTableColumnWidth
+} from '../apiClient.js';
+import type {NativeConversationChoice} from '../session/sessionTypes.js';
+import {ZeusSelect} from '../ZeusSelect.js';
+import {
+    createTaskWorkspaceViewModel,
+    defaultTaskTableColumnOrder,
+    defaultVisibleTaskTableColumns,
+    formatTaskManagementStatus,
+    moveTaskTableColumn,
+    normalizeTaskTableColumnPreferences,
+    setTaskTableColumnWidth,
+    type TaskAgentRunStatus,
+    taskManagementStatuses,
+    type TaskSortKey,
+    toggleTaskTableColumn,
 } from './taskWorkspaceModel.js';
 
 export interface TaskWorkspaceCopy {
@@ -63,10 +82,9 @@ export interface TaskWorkspaceCopy {
   allState: string;
   codeColumnTitle: string;
   intentColumnTitle: string;
-  nextActionColumnTitle: string;
-  aiExecutionColumnTitle: string;
+    managementStatusColumnTitle: string;
+    runStatusColumnTitle: string;
   sourceColumnTitle: string;
-  signalsColumnTitle: string;
   createdAtColumnTitle: string;
   updatedAtColumnTitle: string;
   priorityColumnTitle: string;
@@ -107,16 +125,19 @@ export interface TaskWorkspaceProps {
   selectedTaskId?: string;
   selectedTaskIds?: readonly string[];
   searchQuery: string;
-  statusFilter: TaskStatus | '';
+    statusFilter: TaskManagementStatus | '';
   tagFilter: string;
   sortBy: TaskSortKey;
-  statusOptions: readonly (TaskStatus | '')[];
+    statusOptions: readonly (TaskManagementStatus | '')[];
   sortOptions: readonly TaskSortKey[];
-  statusLabels: Record<TaskStatus | '', string>;
+    statusLabels: Record<TaskManagementStatus | '', string>;
+    runStatusLabels: Record<TaskAgentRunStatus, string>;
   sortLabels: Record<TaskSortKey, string>;
   copy: TaskWorkspaceCopy;
   runtime: RuntimeStatusSnapshot;
   runtimeSessions: AiRuntimeSession[];
+    taskConversations?: Record<string, NativeConversationChoice[]>;
+    conversationRunStatuses?: Record<string, TaskAgentRunStatus>;
   taskTableColumns?: Partial<TaskTableColumnPreferences>;
   creatingTaskBusy: boolean;
   bulkActionBusy?: boolean;
@@ -124,7 +145,7 @@ export interface TaskWorkspaceProps {
   listState?: TaskWorkspaceListState;
   activeProjectId?: string;
   onSearchChange: (value: string) => void;
-  onStatusFilterChange: (value: TaskStatus | '') => void;
+    onStatusFilterChange: (value: TaskManagementStatus | '') => void;
   onTagFilterChange: (value: string) => void;
   onSortChange: (value: TaskSortKey) => void;
   onTaskTableColumnsChange: (value: TaskTableColumnPreferences) => void;
@@ -133,7 +154,7 @@ export interface TaskWorkspaceProps {
   onToggleTaskSelection?: (taskId: string, selected: boolean) => void;
   onToggleAllVisibleTaskSelection?: (taskIds: string[], selected: boolean) => void;
   onClearTaskSelection?: () => void;
-  onBulkTaskStatusChange?: (targetStatus: TaskStatus, taskIds: string[]) => void;
+    onBulkTaskStatusChange?: (targetStatus: TaskManagementStatus, taskIds: string[]) => void;
   onBulkTaskDelete?: (taskIds: string[]) => void;
   onRetryTaskList?: () => void;
   onOpenProjectSettings?: () => void;
@@ -144,12 +165,11 @@ export interface TaskWorkspaceProps {
 const taskTableColumnGrid: Record<TaskTableColumnKey, string> = {
   code: 'minmax(88px, 0.42fr)',
   intent: 'minmax(168px, 1.1fr)',
-  nextAction: 'minmax(96px, 0.5fr)',
-  aiExecution: 'minmax(96px, 0.5fr)',
+    managementStatus: 'minmax(92px, 0.46fr)',
+    runStatus: 'minmax(112px, 0.56fr)',
   source: 'minmax(96px, 0.5fr)',
-  signals: 'minmax(88px, 0.4fr)',
-  updatedAt: 'minmax(112px, 0.5fr)',
-  createdAt: 'minmax(112px, 0.5fr)',
+    updatedAt: 'minmax(128px, 0.55fr)',
+    createdAt: 'minmax(128px, 0.55fr)',
   template: 'minmax(128px, 0.55fr)',
   project: 'minmax(128px, 0.55fr)',
   priority: 'minmax(112px, 0.45fr)',
@@ -163,10 +183,9 @@ const taskTableColumnGridByWidth: Record<TaskTableColumnWidth, Record<TaskTableC
   compact: {
     code: 'minmax(88px, 0.34fr)',
     intent: 'minmax(180px, 1fr)',
-    nextAction: 'minmax(112px, 0.52fr)',
-    aiExecution: 'minmax(112px, 0.52fr)',
+      managementStatus: 'minmax(96px, 0.44fr)',
+      runStatus: 'minmax(112px, 0.52fr)',
     source: 'minmax(116px, 0.52fr)',
-    signals: 'minmax(104px, 0.45fr)',
     updatedAt: 'minmax(112px, 0.42fr)',
     createdAt: 'minmax(112px, 0.42fr)',
     template: 'minmax(104px, 0.42fr)',
@@ -181,10 +200,9 @@ const taskTableColumnGridByWidth: Record<TaskTableColumnWidth, Record<TaskTableC
   wide: {
     code: 'minmax(132px, 0.58fr)',
     intent: 'minmax(320px, 1.78fr)',
-    nextAction: 'minmax(176px, 0.86fr)',
-    aiExecution: 'minmax(176px, 0.86fr)',
+      managementStatus: 'minmax(152px, 0.72fr)',
+      runStatus: 'minmax(176px, 0.86fr)',
     source: 'minmax(184px, 0.86fr)',
-    signals: 'minmax(168px, 0.78fr)',
     updatedAt: 'minmax(176px, 0.72fr)',
     createdAt: 'minmax(176px, 0.72fr)',
     template: 'minmax(160px, 0.68fr)',
@@ -204,19 +222,33 @@ function getTaskTableColumnTrack(columnKey: TaskTableColumnKey, preferences: Tas
   return taskTableColumnGridByWidth[width]?.[columnKey] ?? taskTableColumnGrid[columnKey];
 }
 
+const taskTableColumnAlignment: Record<TaskTableColumnKey, 'start' | 'end'> = {
+    code: 'start',
+    intent: 'start',
+    managementStatus: 'start',
+    runStatus: 'start',
+    source: 'start',
+    updatedAt: 'end',
+    createdAt: 'end',
+    template: 'start',
+    project: 'start',
+    priority: 'start',
+    description: 'start',
+    runtimeSession: 'start',
+    rawId: 'start',
+    createdFrom: 'start',
+};
+
 function taskTableCellClassName(columnKey: TaskTableColumnKey, rowCell = false): string {
   const legacyColumnClass: Partial<Record<TaskTableColumnKey, string>> = {
     intent: 'task-table-title-cell',
-    nextAction: 'task-table-status-cell',
-    signals: 'task-table-tags-cell',
-    aiExecution: 'task-table-runtime-cell',
+      managementStatus: 'task-table-task-status-cell',
     updatedAt: 'task-table-updated-cell',
   };
   const legacyRowClass: Partial<Record<TaskTableColumnKey, string>> = {
     intent: 'task-list-copy',
-    nextAction: 'task-list-meta',
   };
-  return ['task-table-cell', legacyColumnClass[columnKey], rowCell ? legacyRowClass[columnKey] : undefined, `task-table-${columnKey}-cell`].filter(Boolean).join(' ');
+    return ['task-table-cell', legacyColumnClass[columnKey], rowCell ? legacyRowClass[columnKey] : undefined, `task-table-align-${taskTableColumnAlignment[columnKey]}`, `task-table-${columnKey}-cell`].filter(Boolean).join(' ');
 }
 
 function focusRelativeTaskRow(currentTarget: HTMLElement, currentElement: HTMLElement, direction: 1 | -1 | 'first' | 'last'): void {
@@ -255,7 +287,7 @@ function TaskSelectionCheckbox(props: { ariaLabel: string; checked: boolean; mix
 export function TaskWorkspace(props: TaskWorkspaceProps) {
   const [fieldSettingsOpen, setFieldSettingsOpen] = useState(false);
   const [moreSettingsOpen, setMoreSettingsOpen] = useState(false);
-  const [bulkTargetStatus, setBulkTargetStatus] = useState<TaskStatus>(() => props.statusOptions.find((status): status is TaskStatus => Boolean(status)) ?? 'ready');
+    const [bulkTargetStatus, setBulkTargetStatus] = useState<TaskManagementStatus>('todo');
   const fieldSettingsTriggerRef = useRef<HTMLButtonElement | null>(null);
   const fieldSettingsPopoverRef = useRef<HTMLElement | null>(null);
   const moreSettingsTriggerRef = useRef<HTMLButtonElement | null>(null);
@@ -278,16 +310,19 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
     selectedTaskIds: props.selectedTaskIds,
     runtimeAiAvailable: props.runtime.aiCli.available,
     runtimeSessions: props.runtimeSessions,
+      taskConversations: props.taskConversations,
+      conversationRunStatuses: props.conversationRunStatuses,
+      managementStatusLabels: props.statusLabels,
+      runStatusLabels: props.runStatusLabels,
     projectName: props.projectName,
     taskTableColumns: props.taskTableColumns,
   });
   const columnLabels: Record<TaskTableColumnKey, string> = {
     code: props.copy.codeColumnTitle,
     intent: props.copy.intentColumnTitle,
-    nextAction: props.copy.nextActionColumnTitle,
-    aiExecution: props.copy.aiExecutionColumnTitle,
+      managementStatus: props.copy.managementStatusColumnTitle,
+      runStatus: props.copy.runStatusColumnTitle,
     source: props.copy.sourceColumnTitle,
-    signals: props.copy.signalsColumnTitle,
     createdAt: props.copy.createdAtColumnTitle,
     updatedAt: props.copy.updatedAtColumnTitle,
     priority: props.copy.priorityColumnTitle,
@@ -298,7 +333,9 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
     rawId: props.copy.rawIdColumnTitle,
     createdFrom: props.copy.createdFromColumnTitle,
   };
-  const bulkStatusOptions = props.statusOptions.filter((status): status is TaskStatus => Boolean(status));
+    const configuredStatusOptions = props.statusOptions.filter((status): status is TaskManagementStatus => taskManagementStatuses.includes(status as TaskManagementStatus));
+    const bulkStatusOptions = configuredStatusOptions.length > 0 ? configuredStatusOptions : taskManagementStatuses;
+    const statusLabel = (status: TaskManagementStatus | '') => (status === '' ? props.statusLabels[''] || (props.copy.taskCountPrefix === 'Tasks' ? 'All' : '全部') : props.statusLabels[status] || formatTaskManagementStatus(status));
   const bulkTargetEligibility = model.bulkStatusEligibility[bulkTargetStatus];
   const selectedVisibleCount = model.selectedVisibleTaskIds.length;
   const bulkActionBusy = Boolean(props.bulkActionBusy);
@@ -307,8 +344,8 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
   const taskListLoading = taskListState === 'loading';
   const taskListError = taskListState === 'error';
   const showEmptyState = !taskListLoading && !taskListError && model.visibleTasks.length === 0;
-  // visual thesis: 任务表格像 macOS 原生工作台，选择列稳定，批量栏只在选择后低噪音出现。
-  // content plan: 顶部仍只服务筛选与新建；选择后追加批量状态、删除与结果提示；单任务详情继续收纳到抽屉。
+    // visual thesis: 任务表格像 macOS 原生工作台，选择列稳定，批量栏只在选择后低噪音出现，任务列表空态必须保持轻量行。
+    // content plan: 顶部仍只服务筛选与新建；选择后追加批量状态、删除与结果提示；单任务详情在右侧悬浮抽屉中展开。
   // interaction thesis: checkbox 只负责选择，行内容负责打开详情，执行反馈通过 aria-live 告知而不打断表格浏览。
   const taskTableContentGridTemplate = model.visibleColumns.map((columnKey) => getTaskTableColumnTrack(columnKey, model.columnPreferences)).join(' ');
   // 动态列由模型偏好决定，并和选择列一起写入单一 CSS 变量，header/row 共用同一条轨道。
@@ -331,7 +368,7 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
     taskListLoading || taskListError
       ? `${props.projectName ?? props.copy.noProjectSelected} · ${taskListLoading ? props.copy.taskListLoadingToolbarStatus : props.copy.taskListErrorToolbarStatus}`
       : `${props.projectName ?? props.copy.noProjectSelected} · ${props.copy.taskCountPrefix} ${model.visibleCount}/${model.totalCount} · ${model.hasActiveFilters ? props.copy.filteredState : props.copy.allState}`;
-  const statusSegmentOptions = props.statusOptions.filter((status) => status === '' || status === 'ready' || status === 'running').slice(0, 3);
+    const statusSegmentOptions: Array<TaskManagementStatus | ''> = [...(props.statusOptions.includes('') ? ([''] as const) : []), ...bulkStatusOptions].slice(0, 4);
   const isEnglishCopy = props.copy.taskCountPrefix === 'Tasks';
   const viewControlLabel = isEnglishCopy ? 'View controls' : '视图控制';
   const defaultViewLabel = isEnglishCopy ? 'Default view' : '默认视图';
@@ -342,13 +379,13 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
     model.emptyState === 'no-results'
       ? props.searchQuery.trim()
         ? `${props.copy.searchTitle}: ${props.searchQuery.trim()}`
-        : `${props.copy.statusTitle}: ${props.statusLabels[props.statusFilter]}`
+            : `${props.copy.statusTitle}: ${statusLabel(props.statusFilter)}`
       : isEnglishCopy
         ? 'New tasks will appear in the table with task codes.'
         : '创建后会按任务编码进入表格';
   const statusLineHelp = taskListLoading ? props.copy.taskListLoadingHelp : taskListError ? props.copy.taskListErrorHelp : model.visibleCount > 0 ? visibleColumnSummary : emptyStatusLineHelp;
   const visibleTaskCountLabel = taskListLoading ? props.copy.taskListLoadingMeta : taskListError ? props.copy.taskListErrorRetry : isEnglishCopy ? `${model.visibleCount} tasks` : `${model.visibleCount} 项任务`;
-  const tagViewLabel = props.tagFilter.trim() || props.statusLabels[''];
+    const tagViewLabel = props.tagFilter.trim() || statusLabel('');
   const batchViewActionLabel = isEnglishCopy ? 'Batch' : '批量';
   const columnViewActionLabel = isEnglishCopy ? 'Columns' : '列';
   const moreViewActionLabel = isEnglishCopy ? 'More' : '更多';
@@ -468,7 +505,7 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
             <span className="sr-only">{props.copy.statusTitle}</span>
             {statusSegmentOptions.map((status) => (
               <button className="task-table-status-segment" type="button" aria-pressed={props.statusFilter === status} key={status || 'all'} onClick={() => props.onStatusFilterChange(status)}>
-                {props.statusLabels[status]}
+                  {statusLabel(status)}
               </button>
             ))}
           </div>
@@ -669,7 +706,7 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
                 searchable={false}
                 options={bulkStatusOptions.map((status) => ({
                   value: status,
-                  label: props.statusLabels[status],
+                    label: statusLabel(status),
                 }))}
               />
             </label>
@@ -797,7 +834,10 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
                   tabIndex={task.id === keyboardEntryTaskId ? 0 : -1}
                   data-source-list-item="true"
                   data-task-row-action={row.action}
-                  onClick={() => props.onOpenTaskDetail(task.id)}
+                  onClick={(event) => {
+                      event.currentTarget.focus();
+                      props.onOpenTaskDetail(task.id);
+                  }}
                   onKeyDown={(event) => {
                     if (event.target !== event.currentTarget) return;
                     if (event.key !== 'Enter' && event.key !== ' ') return;
@@ -805,15 +845,17 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
                     props.onOpenTaskDetail(task.id);
                   }}
                 >
-                  {/* 任务列表是任务页布局主角：点击任务行打开详情抽屉，首屏不再塞 Runtime、完成、取消等推进按钮。 */}
+                    {/* 任务列表是任务页布局主角：点击任务行打开右侧悬浮详情抽屉，列表本身不提前塞入 Runtime、完成、取消等推进按钮。 */}
                   <span className="task-table-cell task-table-select-cell" role="gridcell" onClick={(event) => event.stopPropagation()}>
                     <TaskSelectionCheckbox ariaLabel={props.copy.selectTaskAria(task.title)} checked={row.bulkSelected} disabled={bulkActionBusy} onChange={(selected) => props.onToggleTaskSelection?.(task.id, selected)} />
                   </span>
                   {model.visibleColumns.map((columnKey) => {
                     const cell = row.cells[columnKey];
                     return (
-                      <span className={taskTableCellClassName(columnKey, true)} role="gridcell" key={columnKey}>
-                        <strong>{cell.primary}</strong>
+                        <span className={taskTableCellClassName(columnKey, true)} role="gridcell" key={columnKey}
+                              data-column-label={columnLabels[columnKey]}>
+                        {columnKey === 'intent' ? <span className="task-table-title-text">{cell.primary}</span> :
+                            <strong>{cell.primary}</strong>}
                         {cell.secondary ? <small>{cell.secondary}</small> : null}
                       </span>
                     );

@@ -1,5 +1,5 @@
-import { useRef } from 'react';
-import type { ThreadFollowMode } from './sessionTypes.js';
+import {useRef} from 'react';
+import type {ThreadFollowMode} from './sessionTypes.js';
 
 export interface ThreadScrollMetrics {
   scrollTop: number;
@@ -18,6 +18,8 @@ export interface ThreadScrollController {
   getState(): ThreadScrollState;
   onUserScroll(metrics: ThreadScrollMetrics): ThreadScrollState;
   onDelta(metrics: ThreadScrollMetrics, now: number): ThreadScrollEffect;
+
+    onInteractionSurfaceAdded(): ThreadScrollEffect;
   onTurnStarted(metrics: ThreadScrollMetrics, now: number): ThreadScrollEffect;
 }
 
@@ -27,7 +29,8 @@ const MIN_NEW_TURN_SPACER_PX = 240;
 const BOUNCE_SUPPRESSION_MS = 500;
 
 export function createThreadScrollController(): ThreadScrollController {
-  let state: ThreadScrollState = { mode: 'static', suppressBounceUntil: 0 };
+    // 进入会话默认定位到最新内容；只有真实用户滚动离开底部后才切换为 static。
+    let state: ThreadScrollState = {mode: 'user_follow', suppressBounceUntil: 0};
 
   return {
     getState: () => state,
@@ -44,6 +47,11 @@ export function createThreadScrollController(): ThreadScrollController {
         if (now < state.suppressBounceUntil) return { type: 'none' };
         state = { ...state, mode: 'prework_follow' };
       }
+        return {type: 'scroll_to_bottom'};
+    },
+      onInteractionSurfaceAdded() {
+          if (state.mode === 'static') return {type: 'none'};
+          state = {mode: 'user_follow', suppressBounceUntil: 0};
       return { type: 'scroll_to_bottom' };
     },
     onTurnStarted(metrics, now) {

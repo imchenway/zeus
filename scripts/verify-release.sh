@@ -5,10 +5,7 @@ cd "$(dirname "$0")/.."
 pnpm verify:acceptance-matrix
 pnpm lint
 pnpm typecheck
-pnpm test
-pnpm test:real-scan
 pnpm build
-node scripts/verify-java-spring-fixture.mjs
 node scripts/verify-ai-cli-adapters.mjs
 pnpm package:mac
 

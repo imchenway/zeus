@@ -1,14 +1,21 @@
-import type { CodexServerRequestResponse } from '@zeus/ai-runtime';
-import type { ConversationPermissionMode } from '@zeus/storage';
+import type {CodexServerRequestResponse} from '@zeus/ai-runtime';
+import type {ConversationCollaborationMode, ConversationPermissionMode} from '@zeus/storage';
 
 export type NativeConversationRunState =
   | { type: 'idle' }
   | { type: 'dispatching'; submissionId: string }
   | { type: 'active'; turnId: string; phase: 'prework' | 'final_answer' }
   | { type: 'waiting'; turnId: string; requestId: string; reason: 'approval' | 'user_input' }
-  | { type: 'paused'; reason: 'interrupted' | 'transport_unavailable' | 'recovery_required' };
+    | { type: 'paused'; reason: 'interrupted' | 'transport_unavailable' | 'provider_archived' | 'recovery_required' };
 
-export type NativeOperationStatus = 'queued' | 'active' | 'steered' | 'interrupted' | 'responded' | 'recovery_required';
+export type NativeOperationStatus =
+    'queued'
+    | 'active'
+    | 'steered'
+    | 'interrupted'
+    | 'responded'
+    | 'provider_archived'
+    | 'recovery_required';
 
 export interface NativeAcceptedOperation {
   operationId: string;
@@ -90,6 +97,7 @@ export interface StartProjectConversationInput {
   model: string;
   effort?: string;
   permissionMode?: ConversationPermissionMode;
+    collaborationMode?: ConversationCollaborationMode;
   idempotencyKey: string;
   clientUserMessageId: string;
   attachments?: NativeConversationAttachmentInput[];
@@ -101,9 +109,19 @@ export interface SubmitNativeMessageInput {
   submissionId?: string;
   content: string;
   attachments?: NativeConversationAttachmentInput[];
+    model?: string;
+    effort?: string;
+    collaborationMode?: ConversationCollaborationMode;
   idempotencyKey: string;
   clientUserMessageId: string;
   providerWriteLifecycle?: NativeProviderWriteLifecycle;
+}
+
+export interface RespondPlanImplementationRequestInput {
+    conversationId: string;
+    requestId: string;
+    action: 'implement' | 'refine' | 'dismiss';
+    feedback?: string;
 }
 
 export interface EditQueuedSubmissionInput {
@@ -132,6 +150,10 @@ export interface ResumeNativeQueueInput {
   conversationId: string;
 }
 
+export interface RestoreArchivedConversationInput {
+    conversationId: string;
+}
+
 export interface InterruptNativeTurnInput {
   conversationId: string;
   providerTurnId: string;
@@ -144,6 +166,10 @@ export interface RespondNativeRequestInput {
   requestId: string;
   response: NativeServerRequestResponse;
   providerWriteLifecycle?: NativeProviderWriteLifecycle;
+}
+
+export interface SnoozeNativeRequestInput {
+    requestId: string;
 }
 
 export interface StartNativeEphemeralConversationInput {
@@ -180,8 +206,14 @@ export interface CodexNativeConversationCoordinator {
   reorderQueue(input: ReorderNativeQueueInput): Promise<NativeQueueSnapshot>;
   sendQueuedNow(input: SendQueuedNowInput): Promise<NativeAcceptedOperation>;
   resumeInterruptedQueue(input: ResumeNativeQueueInput): Promise<NativeQueueSnapshot>;
+
+    restoreArchivedConversation(input: RestoreArchivedConversationInput): Promise<NativeQueueSnapshot>;
   interruptTurn(input: InterruptNativeTurnInput): Promise<NativeAcceptedOperation>;
   respondToRequest(input: RespondNativeRequestInput): Promise<NativeAcceptedOperation>;
+
+    snoozeRequest(input: SnoozeNativeRequestInput): Promise<void>;
+
+    respondToPlanImplementationRequest(input: RespondPlanImplementationRequestInput): Promise<NativeAcceptedOperation>;
   recover(): Promise<void>;
   capacityChanged(): Promise<void>;
   close(): Promise<void>;

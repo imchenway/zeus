@@ -7,7 +7,7 @@
 - 默认忽略 `.git`、`node_modules`、`dist`、`.tmp`、构建产物和缓存目录。
 - 扫描必须保留文件路径、行号、source hash 或其他可追溯来源。
 - 当前支持 TypeScript/JavaScript/JSON/Markdown/Java/XML/SQL/DDL 等事实抽取；当前仓库无某类语言时不得伪造对应节点。
-- `pnpm test:real-scan` 必须扫描 `/Users/david/hypha/zeus` 当前真实仓库并断言图谱非空。
+- 真实图谱验收必须使用用户选定的真实仓库，并保留扫描路径、文件数量、节点数量、边数量和视图数量作为运行证据。
 
 ## 扫描阶段
 

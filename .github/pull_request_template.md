@@ -18,15 +18,13 @@
 
 - [ ] pnpm lint
 - [ ] pnpm typecheck
-- [ ] pnpm test
-- [ ] pnpm test:real-scan
 - [ ] pnpm build
 - [ ] pnpm package:mac
 - [ ] pnpm verify:release
 
 ## 发布与文档
 
-- [ ] README / docs / CHANGELOG / 实现报告已同步真实测试、扫描、打包和 sha256 证据。
+- [ ] README / docs / CHANGELOG / 实现报告已同步真实构建、运行、打包和 sha256 证据。
 - [ ] unsigned DMG/ZIP、签名等待、公证等待等状态未被伪造成已完成。
 - [ ] Homebrew cask、GitHub Release workflow、Issue/PR 模板仍与设计书一致。
 

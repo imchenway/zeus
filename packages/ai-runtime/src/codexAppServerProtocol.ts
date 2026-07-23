@@ -44,6 +44,8 @@ export interface ExternalAgentConfigMigrationItem {
 export interface ExternalAgentConfigDetectParams {
   includeHome?: boolean;
   cwds?: string[] | null;
+    source?: string | null;
+    migrationSource?: string | null;
 }
 
 export interface ExternalAgentConfigDetectResponse {
@@ -53,6 +55,7 @@ export interface ExternalAgentConfigDetectResponse {
 export interface ExternalAgentConfigImportParams {
   migrationItems: ExternalAgentConfigMigrationItem[];
   source?: string | null;
+    migrationSource?: string | null;
 }
 
 export interface ExternalAgentConfigImportResponse {

@@ -1,13 +1,34 @@
-import type { AiRuntimeSession, AiRuntimeSessionStatus, TaskRecord, TaskStatus, TaskTableColumnKey, TaskTableColumnPreferences, TaskTableColumnWidth } from '../apiClient.js';
+import type {
+    AiRuntimeSession,
+    AiRuntimeSessionStatus,
+    TaskManagementStatus,
+    TaskRecord,
+    TaskStatus,
+    TaskTableColumnKey,
+    TaskTableColumnPreferences,
+    TaskTableColumnWidth
+} from '../apiClient.js';
+import type {NativeConversationChoice, NativeSessionState} from '../session/sessionTypes.js';
 
-export type TaskSortKey = 'createdAt' | 'updatedAt' | 'title' | 'status';
+export type TaskSortKey = 'createdAt' | 'updatedAt' | 'title' | 'managementStatus';
 export type TaskWorkspaceEmptyState = 'empty' | 'no-results' | undefined;
 export type TaskRowAction = 'open-detail';
 export type TaskTableColumnMoveDirection = 'up' | 'down';
 export type TaskNextActionLabels = Partial<Record<TaskStatus, string>>;
 export type TaskSourceLabels = Partial<Record<string, string>>;
+export type TaskAgentRunStatus =
+    'not_started'
+    | 'connecting'
+    | 'reconnecting'
+    | 'running'
+    | 'waiting_user'
+    | 'waiting_approval'
+    | 'paused'
+    | 'idle'
+    | 'failed'
+    | 'legacy_readonly';
 
-const taskStatuses: TaskStatus[] = ['draft', 'ready', 'running', 'paused', 'waiting_confirmation', 'completed', 'failed', 'cancelled'];
+export const taskManagementStatuses: TaskManagementStatus[] = ['todo', 'in_development', 'in_testing', 'awaiting_acceptance', 'blocked', 'completed', 'cancelled'];
 const allowedTaskStatusTransitions: Record<TaskStatus, readonly TaskStatus[]> = {
   draft: ['ready', 'cancelled'],
   // ready -> running 会创建 Runtime 会话，必须逐任务进入显式 conversation chooser，不能作为批量状态迁移。
@@ -23,10 +44,26 @@ const allowedTaskStatusTransitions: Record<TaskStatus, readonly TaskStatus[]> = 
 export const defaultTaskTableColumnOrder: TaskTableColumnKey[] = [
   'code',
   'intent',
-  'nextAction',
-  'aiExecution',
+    'managementStatus',
+    'runStatus',
   'source',
-  'signals',
+    'createdAt',
+    'updatedAt',
+    'template',
+    'project',
+    'priority',
+    'description',
+    'runtimeSession',
+    'rawId',
+    'createdFrom',
+];
+export const defaultVisibleTaskTableColumns: TaskTableColumnKey[] = ['code', 'intent', 'managementStatus', 'runStatus', 'source', 'createdAt', 'updatedAt'];
+const previousDefaultTaskTableColumnOrder: TaskTableColumnKey[] = [
+    'code',
+    'intent',
+    'managementStatus',
+    'runStatus',
+    'source',
   'updatedAt',
   'createdAt',
   'template',
@@ -37,13 +74,14 @@ export const defaultTaskTableColumnOrder: TaskTableColumnKey[] = [
   'rawId',
   'createdFrom',
 ];
-export const defaultVisibleTaskTableColumns: TaskTableColumnKey[] = ['code', 'intent', 'nextAction', 'aiExecution', 'source', 'signals', 'updatedAt'];
+const previousDefaultVisibleTaskTableColumns: TaskTableColumnKey[] = ['code', 'intent', 'managementStatus', 'runStatus', 'source', 'updatedAt'];
 const taskTableColumnKeySet = new Set<TaskTableColumnKey>(defaultTaskTableColumnOrder);
 const taskTableColumnWidthSet = new Set<TaskTableColumnWidth>(['compact', 'standard', 'wide']);
+const legacyTaskTableColumnKeySet = new Set(['nextAction', 'aiExecution', 'signals']);
 
 export interface TaskWorkspaceFilters {
   query: string;
-  status: TaskStatus | '';
+    status: TaskManagementStatus | '';
   tag: string;
   sortBy: TaskSortKey;
 }
@@ -54,6 +92,10 @@ export interface TaskWorkspaceViewModelInput extends TaskWorkspaceFilters {
   selectedTaskIds?: readonly string[];
   runtimeAiAvailable?: boolean;
   runtimeSessions?: AiRuntimeSession[];
+    taskConversations?: Record<string, NativeConversationChoice[]>;
+    conversationRunStatuses?: Record<string, TaskAgentRunStatus>;
+    managementStatusLabels?: Partial<Record<TaskManagementStatus, string>>;
+    runStatusLabels?: Partial<Record<TaskAgentRunStatus, string>>;
   projectName?: string;
   taskTableColumns?: unknown;
 }
@@ -74,7 +116,7 @@ export interface TaskRowViewModel {
 }
 
 export interface TaskBulkStatusEligibility {
-  targetStatus: TaskStatus;
+    targetStatus: TaskManagementStatus;
   eligibleTaskIds: string[];
   skippedTaskIds: string[];
 }
@@ -92,7 +134,7 @@ export interface TaskWorkspaceViewModel {
   selectedVisibleTaskIds: string[];
   allVisibleSelected: boolean;
   someVisibleSelected: boolean;
-  bulkStatusEligibility: Record<TaskStatus, TaskBulkStatusEligibility>;
+    bulkStatusEligibility: Record<TaskManagementStatus, TaskBulkStatusEligibility>;
   bulkDeleteEligibility: TaskBulkDeleteEligibility;
   rows: TaskRowViewModel[];
   emptyState: TaskWorkspaceEmptyState;
@@ -104,16 +146,58 @@ export interface TaskWorkspaceViewModel {
 
 export function normalizeTaskTableColumnPreferences(input?: unknown): TaskTableColumnPreferences {
   const preferences = isRecord(input) ? input : {};
-  const visible = normalizeColumnKeys(preferences.visibleColumnKeys, defaultVisibleTaskTableColumns);
-  const visibleWithRequired = Array.from(new Set<TaskTableColumnKey>([...visible, 'code', 'intent']));
-  const order = normalizeColumnKeys(preferences.columnOrder, defaultTaskTableColumnOrder);
+    const hasLegacyColumns = containsLegacyTaskTableColumnKeys(preferences.visibleColumnKeys) || containsLegacyTaskTableColumnKeys(preferences.columnOrder);
+    const visible = normalizeColumnKeys(migrateLegacyTaskTableColumnKeys(preferences.visibleColumnKeys), defaultVisibleTaskTableColumns);
+    let visibleWithRequired = Array.from(new Set<TaskTableColumnKey>([...visible, 'code', 'intent']));
+    const order = normalizeColumnKeys(migrateLegacyTaskTableColumnKeys(preferences.columnOrder), defaultTaskTableColumnOrder);
+    if (hasLegacyColumns) visibleWithRequired = placeStatusColumnsAfterIntent(visibleWithRequired);
+    let migratedOrder = hasLegacyColumns ? placeStatusColumnsAfterIntent(order) : order;
+    const usesPreviousDefault = arraysEqual(visibleWithRequired, previousDefaultVisibleTaskTableColumns) && arraysEqual(migratedOrder, previousDefaultTaskTableColumnOrder);
+    if (usesPreviousDefault) {
+        visibleWithRequired = [...defaultVisibleTaskTableColumns];
+        migratedOrder = [...defaultTaskTableColumnOrder];
+    }
   const columnWidths = normalizeColumnWidths(preferences.columnWidths);
   const normalized: TaskTableColumnPreferences = {
     visibleColumnKeys: visibleWithRequired,
-    columnOrder: [...order, ...defaultTaskTableColumnOrder.filter((key) => !order.includes(key))],
+      columnOrder: [...migratedOrder, ...defaultTaskTableColumnOrder.filter((key) => !migratedOrder.includes(key))],
   };
   if (columnWidths) normalized.columnWidths = columnWidths;
   return normalized;
+}
+
+function arraysEqual(left: readonly TaskTableColumnKey[], right: readonly TaskTableColumnKey[]): boolean {
+    return left.length === right.length && left.every((key, index) => key === right[index]);
+}
+
+function containsLegacyTaskTableColumnKeys(value: unknown): boolean {
+    return Array.isArray(value) && value.some((item) => typeof item === 'string' && legacyTaskTableColumnKeySet.has(item));
+}
+
+function placeStatusColumnsAfterIntent(keys: TaskTableColumnKey[]): TaskTableColumnKey[] {
+    const withoutStatusColumns = keys.filter((key) => key !== 'managementStatus' && key !== 'runStatus');
+    const intentIndex = withoutStatusColumns.indexOf('intent');
+    const insertIndex = intentIndex >= 0 ? intentIndex + 1 : 0;
+    return [...withoutStatusColumns.slice(0, insertIndex), 'managementStatus', 'runStatus', ...withoutStatusColumns.slice(insertIndex)];
+}
+
+function migrateLegacyTaskTableColumnKeys(value: unknown): unknown {
+    if (!containsLegacyTaskTableColumnKeys(value)) return value;
+    if (!Array.isArray(value)) return value;
+    const migrated: string[] = [];
+    let insertedStatusColumns = false;
+    for (const item of value) {
+        if (typeof item !== 'string') continue;
+        if (legacyTaskTableColumnKeySet.has(item)) {
+            if (!insertedStatusColumns) {
+                migrated.push('managementStatus', 'runStatus');
+                insertedStatusColumns = true;
+            }
+            continue;
+        }
+        migrated.push(item);
+    }
+    return migrated;
 }
 
 export function toggleTaskTableColumn(preferences: TaskTableColumnPreferences, columnKey: TaskTableColumnKey, visible: boolean): TaskTableColumnPreferences {
@@ -183,19 +267,19 @@ export function hasActiveTaskFilters(filters: TaskWorkspaceFilters): boolean {
   return Boolean(filters.query.trim() || filters.status || filters.tag.trim());
 }
 
-export function filterVisibleTasks(tasks: TaskRecord[], query: string, status: TaskStatus | '', tag: string, sortBy: TaskSortKey): TaskRecord[] {
+export function filterVisibleTasks(tasks: TaskRecord[], query: string, status: TaskManagementStatus | '', tag: string, sortBy: TaskSortKey): TaskRecord[] {
   const normalizedQuery = query.trim().toLowerCase();
   const normalizedTag = tag.trim().toLowerCase();
   const filtered = tasks.filter((task) => {
     const matchesQuery =
       !normalizedQuery || [task.taskCode ?? '', task.title, task.description ?? '', task.id, task.createdFrom ?? '', task.sourceContextJson ?? '', task.priority ?? ''].some((value) => value.toLowerCase().includes(normalizedQuery));
-    const matchesStatus = !status || task.status === status;
+      const matchesStatus = !status || resolveTaskManagementStatus(task) === status;
     const matchesTag = !normalizedTag || task.tags?.some((item) => item.toLowerCase().includes(normalizedTag));
     return matchesQuery && matchesStatus && matchesTag;
   });
   return [...filtered].sort((left, right) => {
     if (sortBy === 'title') return left.title.localeCompare(right.title);
-    if (sortBy === 'status') return left.status.localeCompare(right.status);
+      if (sortBy === 'managementStatus') return resolveTaskManagementStatus(left).localeCompare(resolveTaskManagementStatus(right));
     if (sortBy === 'createdAt') return (left.createdAt ?? left.id).localeCompare(right.createdAt ?? right.id);
     if (sortBy === 'updatedAt') return (left.updatedAt ?? left.id).localeCompare(right.updatedAt ?? right.id);
     return left.id.localeCompare(right.id);
@@ -232,7 +316,7 @@ export function createTaskWorkspaceViewModel(input: TaskWorkspaceViewModelInput)
       // macOS 表格行仍保持至少 44px 命中区，保证鼠标与键盘访问都不被压缩。
       minHitArea: 44,
       // 行模型一次性产出所有已知列的稳定文本，后续 UI 可安全按偏好显示且不破坏读屏列名。
-      cells: buildTaskTableCells(task, input.runtimeAiAvailable, input.runtimeSessions ?? [], input.projectName),
+        cells: buildTaskTableCells(task, input.runtimeSessions ?? [], input.projectName, input.taskConversations?.[task.id] ?? [], input.conversationRunStatuses ?? {}, input.managementStatusLabels, input.runStatusLabels),
     })),
     emptyState,
     hasActiveFilters,
@@ -242,20 +326,20 @@ export function createTaskWorkspaceViewModel(input: TaskWorkspaceViewModelInput)
   };
 }
 
-function buildBulkStatusEligibility(tasks: TaskRecord[]): Record<TaskStatus, TaskBulkStatusEligibility> {
-  return taskStatuses.reduce<Record<TaskStatus, TaskBulkStatusEligibility>>(
+function buildBulkStatusEligibility(tasks: TaskRecord[]): Record<TaskManagementStatus, TaskBulkStatusEligibility> {
+    return taskManagementStatuses.reduce<Record<TaskManagementStatus, TaskBulkStatusEligibility>>(
     (eligibility, targetStatus) => {
       const eligibleTaskIds: string[] = [];
       const skippedTaskIds: string[] = [];
       for (const task of tasks) {
-        // 批量状态修改必须先在前端按同一套状态机做预判，避免把明显非法迁移打到本地服务。
-        if (canTransitionTaskStatusInWorkspace(task.status, targetStatus)) eligibleTaskIds.push(task.id);
+          // 项目管理阶段与 Agent 状态解耦；除当前值外均可由用户显式调整。
+          if (resolveTaskManagementStatus(task) !== targetStatus) eligibleTaskIds.push(task.id);
         else skippedTaskIds.push(task.id);
       }
       eligibility[targetStatus] = { targetStatus, eligibleTaskIds, skippedTaskIds };
       return eligibility;
     },
-    {} as Record<TaskStatus, TaskBulkStatusEligibility>,
+        {} as Record<TaskManagementStatus, TaskBulkStatusEligibility>,
   );
 }
 
@@ -359,20 +443,24 @@ export function formatRuntimeSessionStatus(session: AiRuntimeSession | undefined
   return labels?.[session.status] ?? defaultLabels[session.status];
 }
 
-function buildTaskTableCells(task: TaskRecord, runtimeAiAvailable: boolean | undefined, runtimeSessions: AiRuntimeSession[], projectName?: string): Record<TaskTableColumnKey, TaskTableCellViewModel> {
+function buildTaskTableCells(
+    task: TaskRecord,
+    runtimeSessions: AiRuntimeSession[],
+    projectName: string | undefined,
+    conversations: NativeConversationChoice[],
+    conversationRunStatuses: Record<string, TaskAgentRunStatus>,
+    managementStatusLabels?: Partial<Record<TaskManagementStatus, string>>,
+    runStatusLabels?: Partial<Record<TaskAgentRunStatus, string>>,
+): Record<TaskTableColumnKey, TaskTableCellViewModel> {
   const taskRuntimeSession = findLinkedRuntimeSession(task, runtimeSessions);
-  const runningSession = taskRuntimeSession?.status === 'running' ? taskRuntimeSession : undefined;
   const displayProjectName = projectName?.trim() || '当前项目';
+    const runStatus = resolveTaskAgentRunStatus(conversations, conversationRunStatuses);
   return {
-    code: { primary: task.taskCode || task.id, secondary: task.taskSequence ? `序号 ${task.taskSequence}` : undefined },
-    intent: { primary: task.title, secondary: task.description },
-    nextAction: { primary: formatTaskNextAction(task), secondary: `状态：${formatTaskStatusLabel(task.status)}` },
-    aiExecution: formatAiExecutionCell(runtimeAiAvailable, runningSession),
+      code: {primary: task.taskCode || task.id},
+      intent: {primary: task.title},
+      managementStatus: {primary: formatTaskManagementStatus(resolveTaskManagementStatus(task), managementStatusLabels)},
+      runStatus: {primary: formatTaskAgentRunStatus(runStatus, runStatusLabels)},
     source: { primary: formatTaskSource(task) },
-    signals: {
-      primary: task.tags?.length ? `标签 ${task.tags.join(' / ')}` : task.priority ? `优先级 ${task.priority}` : '暂无证据',
-      secondary: task.tags?.length && task.priority ? `优先级 ${task.priority}` : undefined,
-    },
     updatedAt: { primary: formatTaskUpdatedAt(task.updatedAt) },
     createdAt: { primary: formatTaskUpdatedAt(task.createdAt) },
     template: { primary: task.templateId ?? '未绑定模板' },
@@ -388,10 +476,72 @@ function buildTaskTableCells(task: TaskRecord, runtimeAiAvailable: boolean | und
   };
 }
 
-function formatAiExecutionCell(runtimeAiAvailable: boolean | undefined, runningSession?: AiRuntimeSession): TaskTableCellViewModel {
-  if (runningSession) return { primary: 'AI 运行中', secondary: runningSession.command };
-  if (runtimeAiAvailable === false) return { primary: 'AI 未配置' };
-  return { primary: '未启动 AI' };
+export function taskAgentRunStatusFromSession(state: NativeSessionState): TaskAgentRunStatus {
+    if (state.error || state.transportState === 'failed' || state.conversationState === 'turn_failed') return 'failed';
+    if (state.transportState === 'reconnecting') return 'reconnecting';
+    if (state.transportState === 'connecting' || state.transportState === 'hydrating' || state.transportState === 'disconnected') return 'connecting';
+    if (state.queue?.state.type === 'paused') return 'paused';
+    if (state.conversationState === 'waiting_user_input') return 'waiting_user';
+    if (state.conversationState === 'waiting_approval') return 'waiting_approval';
+    if (state.conversationState === 'legacy_readonly') return 'legacy_readonly';
+    if (state.conversationState === 'native_idle') return 'idle';
+    return 'running';
+}
+
+export function resolveTaskAgentRunStatus(conversations: NativeConversationChoice[], liveStatuses: Record<string, TaskAgentRunStatus>): TaskAgentRunStatus {
+    if (conversations.length === 0) return 'not_started';
+    const latest = conversations.reduce((current, candidate) => (candidate.updatedAt.localeCompare(current.updatedAt) > 0 ? candidate : current));
+    const liveStatus = liveStatuses[latest.id];
+    if (liveStatus) return liveStatus;
+    if (latest.readOnly || latest.transportKind !== 'codex_native') return 'legacy_readonly';
+    const providerState = `${latest.providerState ?? ''}`.toLowerCase();
+    const recordState = latest.status.toLowerCase();
+    if (providerState.includes('failed') || providerState.includes('error') || recordState.includes('failed') || recordState.includes('error')) return 'failed';
+    if (providerState.includes('reconnect')) return 'reconnecting';
+    if (providerState.includes('connect') || providerState.includes('hydrat') || providerState.includes('disconnected')) return 'connecting';
+    if (providerState.includes('user_input') || providerState.includes('user input')) return 'waiting_user';
+    if (providerState.includes('approval')) return 'waiting_approval';
+    if (providerState.includes('waiting')) return 'waiting_user';
+    if (providerState.includes('paused')) return 'paused';
+    if (providerState.includes('active') || providerState.includes('running') || providerState.includes('starting')) return 'running';
+    return 'idle';
+}
+
+export function formatTaskManagementStatus(status: TaskManagementStatus, labels?: Partial<Record<TaskManagementStatus, string>>): string {
+    const defaultLabels: Record<TaskManagementStatus, string> = {
+        todo: '待开始',
+        in_development: '开发中',
+        in_testing: '测试中',
+        awaiting_acceptance: '待验收',
+        blocked: '已阻塞',
+        completed: '已完成',
+        cancelled: '已取消',
+    };
+    return labels?.[status] ?? defaultLabels[status];
+}
+
+export function resolveTaskManagementStatus(task: Pick<TaskRecord, 'managementStatus' | 'status'>): TaskManagementStatus {
+    if (task.managementStatus) return task.managementStatus;
+    if (task.status === 'completed') return 'completed';
+    if (task.status === 'cancelled') return 'cancelled';
+    if (task.status === 'running' || task.status === 'paused' || task.status === 'waiting_confirmation' || task.status === 'failed') return 'in_development';
+    return 'todo';
+}
+
+export function formatTaskAgentRunStatus(status: TaskAgentRunStatus, labels?: Partial<Record<TaskAgentRunStatus, string>>): string {
+    const defaultLabels: Record<TaskAgentRunStatus, string> = {
+        not_started: '未启动',
+        connecting: '正在连接',
+        reconnecting: '正在重连',
+        running: '运行中',
+        waiting_user: '等待用户回复',
+        waiting_approval: '等待授权',
+        paused: '已暂停',
+        idle: '等待新指令',
+        failed: '运行失败',
+        legacy_readonly: '旧会话只读',
+    };
+    return labels?.[status] ?? defaultLabels[status];
 }
 
 function formatTaskSourceType(value: string, labels?: TaskSourceLabels): string | undefined {
@@ -408,20 +558,6 @@ function formatTaskSourceType(value: string, labels?: TaskSourceLabels): string 
   };
   // 来源可能来自 createdFrom 或 sourceContextJson.type，统一映射后再进入可访问表格文本，避免 raw enum 被读屏直接读出。
   return sourceLabels[value];
-}
-
-function formatTaskStatusLabel(status: TaskStatus): string {
-  const labels: Record<TaskStatus, string> = {
-    draft: '草稿',
-    ready: '就绪',
-    running: '运行中',
-    paused: '已暂停',
-    waiting_confirmation: '待确认',
-    completed: '已完成',
-    failed: '失败',
-    cancelled: '已取消',
-  };
-  return labels[status];
 }
 
 export function parseTaskSourceContext(value?: string): Record<string, unknown> {

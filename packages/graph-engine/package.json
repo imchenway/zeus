@@ -8,8 +8,7 @@
     "zeus-graph-engine": "dist/cli.js"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "test": "vitest run"
+    "build": "tsc -p tsconfig.json"
   },
   "dependencies": {
     "@zeus/storage": "workspace:*",

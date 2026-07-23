@@ -1,20 +1,40 @@
 import type {
-  CodexTaskPushCapabilities,
-  NativeConversationChoicesSnapshot,
-  NativeConversationSnapshot,
-  NativeOperationAcceptance,
-  NativePendingRequest,
-  NativePermissionMode,
-  NativeProjectConversationChoicesSnapshot,
-  NativeQueueSnapshot,
-  SendNativeMessageRequest,
-  StartNativeConversationRequest,
-  StartProjectConversationRequest,
-  StartTaskModelPushRequest,
+    CodexConversationCapabilities,
+    CodexTaskPushCapabilities,
+    NativeCollaborationMode,
+    NativeConversationChoicesSnapshot,
+    NativeConversationSnapshot,
+    NativeOperationAcceptance,
+    NativePendingRequest,
+    NativePermissionMode,
+    NativePlanImplementationRequest,
+    NativeProjectConversationChoicesSnapshot,
+    NativeQueueSnapshot,
+    SendNativeMessageRequest,
+    StartNativeConversationRequest,
+    StartProjectConversationRequest,
+    StartTaskModelPushRequest,
 } from './session/sessionTypes.js';
+import type {TaskManagementStatus} from '@zeus/shared';
+
+export type {TaskManagementStatus} from '@zeus/shared';
 
 export type TaskStatus = 'draft' | 'ready' | 'running' | 'paused' | 'waiting_confirmation' | 'completed' | 'failed' | 'cancelled';
-export type TaskTableColumnKey = 'code' | 'intent' | 'nextAction' | 'aiExecution' | 'source' | 'signals' | 'updatedAt' | 'createdAt' | 'template' | 'project' | 'priority' | 'description' | 'runtimeSession' | 'rawId' | 'createdFrom';
+export type TaskTableColumnKey =
+    'code'
+    | 'intent'
+    | 'managementStatus'
+    | 'runStatus'
+    | 'source'
+    | 'updatedAt'
+    | 'createdAt'
+    | 'template'
+    | 'project'
+    | 'priority'
+    | 'description'
+    | 'runtimeSession'
+    | 'rawId'
+    | 'createdFrom';
 export type TaskTableColumnWidth = 'compact' | 'standard' | 'wide';
 
 export interface TaskTableColumnPreferences {
@@ -79,6 +99,7 @@ export interface TaskRecord {
   taskSequence?: number | null;
   title: string;
   description?: string;
+    managementStatus?: TaskManagementStatus;
   status: TaskStatus;
   priority?: string;
   templateId?: string | null;
@@ -929,9 +950,9 @@ export interface CreateTaskRequest {
 export interface LoadTasksRequest {
   projectId: string;
   query?: string;
-  status?: TaskStatus;
+    managementStatus?: TaskManagementStatus;
   tag?: string;
-  sortBy?: 'createdAt' | 'updatedAt' | 'title' | 'status';
+    sortBy?: 'createdAt' | 'updatedAt' | 'title' | 'managementStatus';
   sortDirection?: 'asc' | 'desc';
 }
 
@@ -1042,10 +1063,14 @@ export interface DashboardClient {
   startProjectConversation: (projectId: string, input: StartProjectConversationRequest) => Promise<NativeOperationAcceptance>;
   loadTaskConversationChoices: (taskId: string) => Promise<NativeConversationChoicesSnapshot>;
   startNativeConversation: (taskId: string, input: StartNativeConversationRequest) => Promise<NativeOperationAcceptance>;
-  loadCodexTaskPushCapabilities: (projectId: string) => Promise<CodexTaskPushCapabilities>;
+    loadCodexTaskPushCapabilities: (projectId: string, taskId: string) => Promise<CodexTaskPushCapabilities>;
+    loadCodexConversationCapabilities: (projectId: string) => Promise<CodexConversationCapabilities>;
   startTaskModelPush: (taskId: string, input: StartTaskModelPushRequest) => Promise<NativeOperationAcceptance>;
   loadNativeConversation: (projectId: string, conversationId: string) => Promise<NativeConversationSnapshot>;
+    acknowledgeNativeConversationCompletion: (projectId: string, conversationId: string) => Promise<void>;
+    restoreArchivedNativeConversation: (projectId: string, conversationId: string) => Promise<NativeConversationSnapshot>;
   updateNativePermissionMode: (projectId: string, conversationId: string, permissionMode: NativePermissionMode) => Promise<NativeConversationSnapshot>;
+    updateNativeCollaborationMode: (projectId: string, conversationId: string, collaborationMode: NativeCollaborationMode) => Promise<NativeConversationSnapshot>;
   loadCodexLegacyImports: () => Promise<CodexLegacyImportSnapshot>;
   startCodexLegacyImport: (sourceConversationIds: string[]) => Promise<CodexLegacyImportResult>;
   loadCodexLegacyImport: (importId: string) => Promise<CodexLegacyImportResult>;
@@ -1055,6 +1080,19 @@ export interface DashboardClient {
   sendNativeQueuedNow: (projectId: string, conversationId: string, submissionId: string) => Promise<NativeOperationAcceptance>;
   interruptNativeTurn: (projectId: string, conversationId: string, turnId: string) => Promise<NativeOperationAcceptance>;
   respondToNativeRequest: (projectId: string, conversationId: string, requestId: string, response: Record<string, unknown>) => Promise<{ operation: Record<string, unknown>; request: NativePendingRequest }>;
+    snoozeNativeRequest: (projectId: string, conversationId: string, requestId: string) => Promise<{
+        request: NativePendingRequest
+    }>;
+    respondToPlanImplementationRequest: (
+        projectId: string,
+        conversationId: string,
+        requestId: string,
+        input: { action: 'implement' | 'refine' | 'dismiss'; feedback?: string },
+    ) => Promise<{
+        operation: NativeOperationAcceptance['operation'];
+        request: NativePlanImplementationRequest;
+        conversation: NativeConversationSnapshot
+    }>;
   resumeNativeQueue: (projectId: string, conversationId: string) => Promise<NativeQueueSnapshot>;
   reorderNativeQueue: (projectId: string, conversationId: string, orderedSubmissionIds: string[]) => Promise<NativeQueueSnapshot>;
   loadDashboard: () => Promise<DashboardSnapshot>;
@@ -1191,6 +1229,7 @@ export interface DashboardClient {
   exportGitPatch: () => Promise<GitPatchExport>;
   loadTaskEvents: (taskId: string) => Promise<TaskEventRecord[]>;
   updateTaskStatus: (taskId: string, status: TaskStatus) => Promise<TaskRecord>;
+    updateTaskManagementStatus: (taskId: string, status: TaskManagementStatus) => Promise<TaskRecord>;
   archiveTask: (taskId: string) => Promise<TaskRecord>;
   restoreTask: (taskId: string) => Promise<TaskRecord>;
   createGitConfirmation: (input: CreateGitConfirmationRequest) => Promise<GitOperationConfirmation>;
@@ -1251,6 +1290,7 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
         recoveryRequired,
       });
     }
+      if (response.status === 204) return undefined as T;
     return (await response.json()) as T;
   }
 
@@ -1266,7 +1306,8 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
       });
     },
     loadTaskConversationChoices: (taskId) => request<NativeConversationChoicesSnapshot>(`/api/tasks/${encodeURIComponent(taskId)}/conversation-choices`),
-    loadCodexTaskPushCapabilities: (projectId) => request<CodexTaskPushCapabilities>(`/api/projects/${encodeURIComponent(projectId)}/codex-task-push-capabilities`),
+      loadCodexTaskPushCapabilities: (projectId, taskId) => request<CodexTaskPushCapabilities>(`/api/projects/${encodeURIComponent(projectId)}/codex-task-push-capabilities?taskId=${encodeURIComponent(taskId)}`),
+      loadCodexConversationCapabilities: (projectId) => request<CodexConversationCapabilities>(`/api/projects/${encodeURIComponent(projectId)}/codex-conversation-capabilities`),
     startTaskModelPush: (taskId, input) => {
       const { idempotencyKey, ...body } = input;
       return request<NativeOperationAcceptance>(`/api/tasks/${encodeURIComponent(taskId)}/conversations`, {
@@ -1284,11 +1325,19 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
       });
     },
     loadNativeConversation: (projectId, conversationId) => request<NativeConversationSnapshot>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}`),
+      acknowledgeNativeConversationCompletion: (projectId, conversationId) => request<void>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/completion-acknowledgement`, {method: 'PUT'}),
+      restoreArchivedNativeConversation: (projectId, conversationId) =>
+          request<NativeConversationSnapshot>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/provider-thread/restore`, {method: 'POST'}),
     updateNativePermissionMode: (projectId, conversationId, permissionMode) =>
       request<NativeConversationSnapshot>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/permission-mode`, {
         method: 'PATCH',
         body: JSON.stringify({ permissionMode }),
       }),
+      updateNativeCollaborationMode: (projectId, conversationId, collaborationMode) =>
+          request<NativeConversationSnapshot>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/collaboration-mode`, {
+              method: 'PATCH',
+              body: JSON.stringify({collaborationMode}),
+          }),
     loadCodexLegacyImports: () => request<CodexLegacyImportSnapshot>('/api/codex-native/import'),
     startCodexLegacyImport: (sourceConversationIds) =>
       request<CodexLegacyImportResult>('/api/codex-native/import', {
@@ -1320,6 +1369,19 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
         method: 'POST',
         body: JSON.stringify(response),
       }),
+      snoozeNativeRequest: (projectId, conversationId, requestId) =>
+          request<{
+              request: NativePendingRequest
+          }>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/requests/${encodeURIComponent(requestId)}/snooze`, {method: 'POST'}),
+      respondToPlanImplementationRequest: (projectId, conversationId, requestId, input) =>
+          request<{
+              operation: NativeOperationAcceptance['operation'];
+              request: NativePlanImplementationRequest;
+              conversation: NativeConversationSnapshot
+          }>(
+              `/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/plan-implementation-requests/${encodeURIComponent(requestId)}/respond`,
+              {method: 'POST', body: JSON.stringify(input)},
+          ),
     resumeNativeQueue: (projectId, conversationId) => request<NativeQueueSnapshot>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/queue/resume`, { method: 'POST' }),
     reorderNativeQueue: (projectId, conversationId, orderedSubmissionIds) =>
       request<NativeQueueSnapshot>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/queue/reorder`, {
@@ -1577,7 +1639,7 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
       }),
     loadTasks: (input) =>
       request<TaskRecord[]>(
-        `/api/tasks?projectId=${encodeURIComponent(input.projectId)}${input.query ? `&query=${encodeURIComponent(input.query)}` : ''}${input.status ? `&status=${encodeURIComponent(input.status)}` : ''}${input.tag ? `&tag=${encodeURIComponent(input.tag)}` : ''}${input.sortBy ? `&sortBy=${encodeURIComponent(input.sortBy)}` : ''}${input.sortDirection ? `&sortDirection=${encodeURIComponent(input.sortDirection)}` : ''}`,
+          `/api/tasks?projectId=${encodeURIComponent(input.projectId)}${input.query ? `&query=${encodeURIComponent(input.query)}` : ''}${input.managementStatus ? `&managementStatus=${encodeURIComponent(input.managementStatus)}` : ''}${input.tag ? `&tag=${encodeURIComponent(input.tag)}` : ''}${input.sortBy ? `&sortBy=${encodeURIComponent(input.sortBy)}` : ''}${input.sortDirection ? `&sortDirection=${encodeURIComponent(input.sortDirection)}` : ''}`,
       ),
     loadTask: (taskId) => request<TaskRecord>(`/api/tasks/${taskId}`),
     updateTask: (taskId, input) =>
@@ -1641,6 +1703,11 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
       request<TaskRecord>(`/api/tasks/${taskId}/status`, {
         method: 'PATCH',
         body: JSON.stringify({ status }),
+      }),
+      updateTaskManagementStatus: (taskId, status) =>
+          request<TaskRecord>(`/api/tasks/${taskId}/management-status`, {
+              method: 'PATCH',
+              body: JSON.stringify({status}),
       }),
     archiveTask: (taskId) => request<TaskRecord>(`/api/tasks/${taskId}/archive`, { method: 'POST' }),
     restoreTask: (taskId) => request<TaskRecord>(`/api/tasks/${taskId}/restore`, { method: 'POST' }),

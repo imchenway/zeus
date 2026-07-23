@@ -1,35 +1,41 @@
-diff --git a/codex-rs/app-server/src/config/external_agent_config.rs b/codex-rs/app-server/src/config/external_agent_config.rs
---- a/codex-rs/app-server/src/config/external_agent_config.rs
-+++ b/codex-rs/app-server/src/config/external_agent_config.rs
-@@ -35,6 +35,7 @@ use toml::Value as TomlValue;
- const EXTERNAL_AGENT_CONFIG_DETECT_METRIC: &str = "codex.external_agent_config.detect";
- const EXTERNAL_AGENT_CONFIG_IMPORT_METRIC: &str = "codex.external_agent_config.import";
- const EXTERNAL_AGENT_DIR: &str = ".claude";
+diff --git a/codex-rs/external-agent-migration/src/service.rs b/codex-rs/external-agent-migration/src/service.rs
+--- a/codex-rs/external-agent-migration/src/service.rs
++++ b/codex-rs/external-agent-migration/src/service.rs
+@@ -58,0 +59,1 @@
 +const ZEUS_EXTERNAL_AGENT_HOME_ENV: &str = "ZEUS_CODEX_EXTERNAL_AGENT_HOME";
- const EXTERNAL_AGENT_CONFIG_MD: &str = "CLAUDE.md";
- const EXTERNAL_OFFICIAL_MARKETPLACE_NAME: &str = "claude-plugins-official";
- const EXTERNAL_OFFICIAL_MARKETPLACE_SOURCE: &str = "anthropics/claude-plugins-official";
-@@ -180,7 +181,11 @@ pub(crate) struct ExternalAgentConfigService {
- 
- impl ExternalAgentConfigService {
-     pub(crate) fn new(codex_home: PathBuf) -> Self {
--        let external_agent_home = default_external_agent_home();
+@@ -74,7 +75,12 @@ impl ExternalAgentConfigService {
+         state_db: Option<StateDbHandle>,
+     ) -> Self {
+         let source = ExternalAgentSource::default();
+-        let external_agent_home = default_external_agent_home(source);
 +        let external_agent_home = resolve_external_agent_home(
 +            &codex_home,
++            source,
 +            std::env::var_os(ZEUS_EXTERNAL_AGENT_HOME_ENV),
 +            std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")),
 +        );
+         let connector_metadata_roots = source.connector_metadata_roots(&external_agent_home);
          Self {
              codex_home,
-             external_agent_home,
-@@ -1263,8 +1268,21 @@ impl ExternalAgentConfigService {
-     }
- }
- 
--fn default_external_agent_home() -> PathBuf {
+@@ -89,6 +95,11 @@ impl ExternalAgentConfigService {
+     pub fn with_migration_source(&self, migration_source: Option<&str>) -> Self {
+         let source = ExternalAgentSource::from_migration_source(migration_source);
+-        let external_agent_home = default_external_agent_home(source);
++        let external_agent_home = resolve_external_agent_home(
++            &self.codex_home,
++            source,
++            std::env::var_os(ZEUS_EXTERNAL_AGENT_HOME_ENV),
++            std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")),
++        );
+         let connector_metadata_roots = source.connector_metadata_roots(&external_agent_home);
+         Self {
+             codex_home: self.codex_home.clone(),
+@@ -718,4 +729,18 @@ impl ExternalAgentConfigService {
+-fn default_external_agent_home(source: ExternalAgentSource) -> PathBuf {
 -    if let Some(home) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) {
 +fn resolve_external_agent_home(
 +    codex_home: &Path,
++    source: ExternalAgentSource,
 +    override_home: Option<OsString>,
 +    user_home: Option<OsString>,
 +) -> PathBuf {
@@ -43,16 +49,12 @@ diff --git a/codex-rs/app-server/src/config/external_agent_config.rs b/codex-rs/
 +    }
 +
 +    if let Some(home) = user_home {
-         return PathBuf::from(home).join(EXTERNAL_AGENT_DIR);
+         return PathBuf::from(home).join(source.config_dir());
      }
- 
-diff --git a/codex-rs/app-server/src/config/external_agent_config_tests.rs b/codex-rs/app-server/src/config/external_agent_config_tests.rs
---- a/codex-rs/app-server/src/config/external_agent_config_tests.rs
-+++ b/codex-rs/app-server/src/config/external_agent_config_tests.rs
-@@ -25,6 +25,37 @@ fn service_for_paths(
-     ExternalAgentConfigService::new_for_test(codex_home, external_agent_home)
- }
- 
+diff --git a/codex-rs/external-agent-migration/src/service_tests.rs b/codex-rs/external-agent-migration/src/service_tests.rs
+--- a/codex-rs/external-agent-migration/src/service_tests.rs
++++ b/codex-rs/external-agent-migration/src/service_tests.rs
+@@ -27,0 +28,49 @@
 +#[test]
 +fn resolves_an_absolute_zeus_external_agent_home_override() {
 +    let root = TempDir::new().expect("create tempdir");
@@ -62,6 +64,7 @@ diff --git a/codex-rs/app-server/src/config/external_agent_config_tests.rs b/cod
 +    assert_eq!(
 +        resolve_external_agent_home(
 +            &codex_home,
++            ExternalAgentSource::default(),
 +            Some(zeus_home.clone().into_os_string()),
 +            Some(root.path().join("user-home").into_os_string()),
 +        ),
@@ -70,20 +73,34 @@ diff --git a/codex-rs/app-server/src/config/external_agent_config_tests.rs b/cod
 +}
 +
 +#[test]
-+fn rejects_a_relative_zeus_external_agent_home_override_without_falling_back_to_claude() {
++fn keeps_the_zeus_override_when_reselecting_the_default_migration_source() {
++    let root = TempDir::new().expect("create tempdir");
++    let codex_home = root.path().join(".codex");
++    let zeus_home = root.path().join("Zeus").join("codex-import");
++
++    assert_eq!(
++        resolve_external_agent_home(
++            &codex_home,
++            ExternalAgentSource::from_migration_source(None),
++            Some(zeus_home.clone().into_os_string()),
++            None,
++        ),
++        zeus_home,
++    );
++}
++
++#[test]
++fn rejects_a_relative_zeus_external_agent_home_override_without_falling_back() {
 +    let root = TempDir::new().expect("create tempdir");
 +    let codex_home = root.path().join(".codex");
 +
 +    assert_eq!(
 +        resolve_external_agent_home(
 +            &codex_home,
++            ExternalAgentSource::default(),
 +            Some("relative/import-root".into()),
 +            Some(root.path().join("user-home").into_os_string()),
 +        ),
 +        codex_home.join("invalid-zeus-external-agent-home"),
 +    );
 +}
-+
- fn github_plugin_details() -> MigrationDetails {
-     MigrationDetails {
-         plugins: vec![PluginsMigration {

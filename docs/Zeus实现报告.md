@@ -13,8 +13,6 @@ Zeus 已实现为本地优先的 macOS AI 研发工作台。当前仓库包含 E
 | `pnpm install` | 已由现有工作区依赖与 lockfile 支撑 | `pnpm verify:release` 可完整执行依赖命令 |
 | `pnpm lint` | 通过 | `pnpm verify:release` 内执行成功 |
 | `pnpm typecheck` | 通过 | `tsc -b` 成功 |
-| `pnpm test` | 通过 | 63 test files / 548 tests passed |
-| `pnpm test:real-scan` | 通过 | 扫描 `/Users/david/hypha/zeus` 真实代码库 |
 | `pnpm build` | 通过 | workspace build 与 desktop build 成功 |
 | `pnpm package:mac` | 通过 | 生成 Zeus.app、DMG、ZIP |
 | `node scripts/verify-ai-cli-adapters.mjs` | 通过 | AI CLI adapter 非侵入式探针输出 `ai-cli-adapters=checked;codex=available@0.139.0;claude=available@2.1.152;gemini=available@0.32.1;authStatus=real-probe-or-unknown`；只检测真实命令/版本/登录输出，不启动任务、不伪造已登录 |
@@ -126,7 +124,8 @@ Zeus 已实现为本地优先的 macOS AI 研发工作台。当前仓库包含 E
 - 支持只读 Git status/diff。
 - 支持项目级只读 Git status/diff/snapshot/patch export，其中 patch export 只生成补丁文本并记录审计，不执行 Git 写操作。
 - 支持 Git confirmation 创建和确认记录。
-- 支持确认后受控执行 commit、stash、apply_stash、branch、pull、push、rollback 等白名单 Git 写操作；测试通过注入 runner 验证参数，不在当前仓库执行 Git 写命令。
+- 支持确认后受控执行 commit、stash、apply_stash、branch、pull、push、rollback 等白名单 Git 写操作；当前报告仅记录代码边界，不在当前仓库执行
+  Git 写命令。
 - 不提供任意 git 子命令入口。
 - Git 快照和变更可进入本地持久化证据链。
 
@@ -163,7 +162,7 @@ Zeus 已实现为本地优先的 macOS AI 研发工作台。当前仓库包含 E
 
 ## 风险与后续建议
 
-- Java/Spring/MyBatis/Maven/Gradle 解析已通过临时真实源码与构建文件测试，并新增 release gate fixture：`java-spring-fixture=verified;files=6;symbols=42`；当前仓库自扫描仍以 TypeScript/Electron/SQLite 为主要真实样本。
+- Java/Spring/MyBatis/Maven/Gradle 解析能力保留在源码中；原 release gate fixture 已随自动化测试体系退役，后续结论只能基于新的真实项目运行证据。
 - 当前图谱解析以轻量源码规则为主，不等价于完整 TypeScript AST 或 SQL parser；复杂动态 import、复杂 SQL、跨行 Promise 链仍建议后续增强。
 - 大型项目图谱需要继续增强分页、聚焦查询、缓存和 WebGL 大图交互。
 - 完整签名、公证和自动 Homebrew tap 发布需要用户提供外部账号与凭据后再执行。

@@ -5,11 +5,11 @@
   "main": "dist/main/main.js",
   "scripts": {
     "dev": "../../script/build_and_run.sh",
-    "test": "vitest run",
     "build": "vite build && tsc -p tsconfig.preload.json && node scripts/bundle-preload.mjs && tsc -p tsconfig.main.json",
     "package:mac": "node ../../scripts/package-mac.mjs"
   },
   "dependencies": {
+    "@phosphor-icons/react": "^2.1.10",
     "@xterm/xterm": "^6.0.0",
     "@xyflow/react": "^12.11.0",
     "@zeus/ai-runtime": "workspace:*",

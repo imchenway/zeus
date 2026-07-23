@@ -1,4 +1,4 @@
-import type { DashboardClientOptions, LocalBusinessDataSnapshot, LocalSettingsExportSnapshot } from './apiClient.js';
+import type {DashboardClientOptions, LocalBusinessDataSnapshot, LocalSettingsExportSnapshot} from './apiClient.js';
 
 declare global {
   interface Window {
@@ -11,6 +11,7 @@ declare global {
       chooseTaskAttachments: () => Promise<Array<{ path: string; name: string; kind: 'image' | 'file'; mimeType?: string; previewUrl?: string }>>;
       readTaskClipboardAttachments: () => Promise<Array<{ name: string; type: string; data: ArrayBuffer }>>;
       readTaskClipboardImage: () => Promise<{ name: string; type: 'image/png'; data: ArrayBuffer } | null>;
+        writeClipboardText: (text: string) => Promise<{ written: boolean }>;
       saveTaskClipboardAttachments: () => Promise<Array<{ path: string; name: string; kind: 'image' | 'file'; mimeType?: string; previewUrl?: string }>>;
       saveTaskPastedAttachments: (attachments: Array<{ name: string; type: string; data: ArrayBuffer }>) => Promise<Array<{ path: string; name: string; kind: 'image' | 'file'; mimeType?: string; previewUrl?: string }>>;
       getTaskAttachmentPreview: (path: string) => Promise<{ previewUrl: string; mimeType: string } | null>;

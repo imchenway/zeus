@@ -1,4 +1,4 @@
-import { nanoid } from 'nanoid';
+import {nanoid} from 'nanoid';
 
 interface CodeSymbolFact {
   id: string;
@@ -276,9 +276,9 @@ function pickApiSequenceNodeIds(nodes: ProjectGraphNode[]): string[] {
     ...apiHandlerNodes,
     ...resolvedTargetNodes,
     ...resolvedApiHandlerCallNodes,
-    ...resolvedTransitiveTargetCallNodes,
     ...resolvedTargetSqlNodes,
     ...resolvedTargetTableNodes,
+      ...resolvedTransitiveTargetCallNodes,
     ...unresolvedApiHandlerCallNodes,
     ...unresolvedTransitiveTargetCallNodes,
     ...handlerLikeNodes,

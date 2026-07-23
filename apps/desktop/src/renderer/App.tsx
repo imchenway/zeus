@@ -1,28 +1,160 @@
 import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ClipboardEvent as ReactClipboardEvent,
-  type FormEvent,
-  type KeyboardEvent as ReactKeyboardEvent,
-  type PointerEvent as ReactPointerEvent,
-  type ReactNode,
-  type CSSProperties,
-  type RefObject,
+    type ClipboardEvent as ReactClipboardEvent,
+    type CSSProperties,
+    type FormEvent,
+    type KeyboardEvent as ReactKeyboardEvent,
+    type PointerEvent as ReactPointerEvent,
+    type ReactNode,
+    type RefObject,
+    useCallback,
+    useEffect,
+    useMemo,
+    useRef,
+    useState,
 } from 'react';
-import { createPortal } from 'react-dom';
+import {createPortal} from 'react-dom';
 import {
-  buildMermaidDiagramExport,
-  buildMermaidDiagramSource,
-  buildPlantUmlDiagramExport,
-  buildPlantUmlDiagramSource,
-  toReactFlowElements,
-  toSigmaGraph,
-  type MermaidDiagramExportFile,
-  type PlantUmlDiagramExportFile,
+    buildMermaidDiagramExport,
+    buildMermaidDiagramSource,
+    buildPlantUmlDiagramExport,
+    buildPlantUmlDiagramSource,
+    type MermaidDiagramExportFile,
+    type PlantUmlDiagramExportFile,
+    toReactFlowElements,
+    toSigmaGraph,
 } from '@zeus/diagram-engine';
+import '@xterm/xterm/css/xterm.css';
+import '@xyflow/react/dist/style.css';
+import './styles.css';
+import './session/session.css';
+import {notifyMainAppShellSettingsChanged} from './appShellBridge.js';
+import {TaskAttachmentPreviewList} from './task/TaskAttachmentPreviewList.js';
+import {
+    type ConversationTreeRuntimeState,
+    conversationTreeRuntimeStateFromSession,
+    type ProjectConversationGroup,
+    ProjectConversationTree
+} from './session/ProjectConversationTree.js';
+import {
+    ConnectedSessionWorkspace,
+    createNativeConversationStartEnvelopeManager,
+    createProjectConversationStartEnvelopeManager,
+    loadLegacyConversationDetail,
+    nativeConversationChoiceFromAcceptance,
+    type NativeConversationStartStorage,
+    type ProjectSessionWorkspaceStartInput,
+    SessionWorkspace,
+    type SessionWorkspaceStartInput,
+    type SessionWorkspaceTask,
+    startNativeConversationWithDurableAcceptance,
+    startProjectConversationWithDurableAcceptance,
+} from './session/SessionWorkspace.js';
+import type {
+    CodexTaskPushCapabilities,
+    NativeConversationAttachment,
+    NativeConversationChoice,
+    NativeConversationChoicesSnapshot,
+    NativeProjectConversationChoicesSnapshot,
+    NativeSessionState,
+    SessionConversationOwner,
+    StartTaskModelPushRequest,
+} from './session/sessionTypes.js';
+import {selectHasConfirmedUserMessage} from './session/sessionSelectors.js';
+import type {SessionControllerClient} from './session/useSessionController.js';
+import {TaskDetailPaneContent} from './task/TaskDetailPaneContent.js';
+import {
+    buildTaskModelPushMessage,
+    readTaskModelPushPreferences,
+    resolveTaskModelPushInitialForm,
+    type TaskModelPushForm,
+    TaskModelPushModal,
+    type TaskModelPushModalStatus,
+    writeTaskModelPushPreferences,
+} from './task/TaskModelPushModal.js';
+import {
+    acceptTaskModelPushPendingState,
+    createTaskModelPushPendingState,
+    failTaskModelPushPendingState,
+    retryTaskModelPushPendingState,
+    type TaskModelPushPendingState,
+    TaskModelPushPendingWorkspace,
+} from './task/TaskModelPushPendingWorkspace.js';
+import {TaskWorkspace} from './task/TaskWorkspace.js';
+import {LegacyChatImportSettings} from './settings/LegacyChatImportSettings.js';
+import {type TaskAttachmentView, toPersistedTaskAttachment} from './task/taskAttachments.js';
+import {
+    filterVisibleTasks,
+    normalizeTaskTableColumnPreferences,
+    resolveTaskManagementStatus,
+    type TaskAgentRunStatus,
+    taskAgentRunStatusFromSession,
+    taskManagementStatuses,
+    type TaskSortKey
+} from './task/taskWorkspaceModel.js';
+import {ZeusSelect} from './ZeusSelect.js';
+import {
+    type AiRuntimeAdapterDescriptor,
+    type AiRuntimeAdapterStatus,
+    type AiRuntimeLogEntry,
+    type AiRuntimeSession,
+    type AiRuntimeSessionStatus,
+    type AiRuntimeTerminalEvent,
+    type AiRuntimeTerminalSnapshot,
+    type AppShellSettings,
+    type CodeMapSettings,
+    type CodexLegacyImportResult,
+    type CodexLegacyImportSnapshot,
+    createEmptyDashboardSnapshot,
+    type CreateProjectRequest,
+    type DashboardClient,
+    type DashboardSnapshot,
+    type ExecutedGitOperationResult,
+    type ExecuteGitOperationRequest,
+    type GitDiffHunk,
+    type GitDiffSummary,
+    type GitOperationConfirmation,
+    type GitPatchExport,
+    type GraphConversationHistoryItem,
+    type GraphConversationHistoryPage,
+    type GraphQuestionAnswer,
+    type GraphSearchResult,
+    type GraphViewSnapshot,
+    type GraphViewType,
+    type HighRiskGitOperation,
+    type ImportLocalBusinessDataResult,
+    type ImportLocalSettingsRequest,
+    type ImportLocalSettingsResult,
+    type LoadRuntimeSessionsRequest,
+    type LocalBusinessDataSnapshot,
+    type LocalSettingsExportSnapshot,
+    type ProjectArchiveConfirmation,
+    type ProjectConfig,
+    type ProjectDatabaseSecretSnapshot,
+    type ProjectRecord,
+    type ReleaseStatusSnapshot,
+    type ReleaseUpdateStatusSnapshot,
+    type RuntimeOperationConfirmation,
+    type RuntimeSettings,
+    type RuntimeStatusSnapshot,
+    type SaveProjectConfigRequest,
+    type SecurityAuditLogEntry,
+    type SecurityResetResult,
+    type SecuritySecretsSnapshot,
+    type SendConversationMessageResult,
+    type TaskEventRecord,
+    type TaskManagementStatus,
+    type TaskRecord,
+    type TaskStatus,
+    type TaskTableColumnPreferences,
+    type TaskTemplateRecord,
+    type TelegramNotificationSettings,
+    type TelegramPollingLogEntry,
+    type TelegramPollingStatus,
+    type TelegramSecuritySettings,
+    type TelegramTestConnectionResult,
+    type ZeusRealtimeEvent,
+} from './apiClient.js';
+
 export {
   buildMermaidDiagramExport,
   buildMermaidDiagramSource,
@@ -33,106 +165,6 @@ export {
   type MermaidDiagramExportFile,
   type PlantUmlDiagramExportFile,
 } from '@zeus/diagram-engine';
-import '@xterm/xterm/css/xterm.css';
-import '@xyflow/react/dist/style.css';
-import './styles.css';
-import './session/session.css';
-import { notifyMainAppShellSettingsChanged } from './appShellBridge.js';
-import { TaskAttachmentPreviewList } from './task/TaskAttachmentPreviewList.js';
-import { ProjectConversationTree, conversationTreeRuntimeStateFromSession, type ConversationTreeRuntimeState, type ProjectConversationGroup } from './session/ProjectConversationTree.js';
-import {
-  ConnectedSessionWorkspace,
-  SessionWorkspace,
-  createNativeConversationStartEnvelopeManager,
-  createProjectConversationStartEnvelopeManager,
-  nativeConversationChoiceFromAcceptance,
-  loadLegacyConversationDetail,
-  startProjectConversationWithDurableAcceptance,
-  startNativeConversationWithDurableAcceptance,
-  type NativeConversationStartStorage,
-  type ProjectSessionWorkspaceStartInput,
-  type SessionWorkspaceStartInput,
-  type SessionWorkspaceTask,
-} from './session/SessionWorkspace.js';
-import type {
-  CodexTaskPushCapabilities,
-  NativeConversationAttachment,
-  NativeConversationChoice,
-  NativeConversationChoicesSnapshot,
-  NativeProjectConversationChoicesSnapshot,
-  NativeSessionState,
-  SessionConversationOwner,
-  StartTaskModelPushRequest,
-} from './session/sessionTypes.js';
-import type { SessionControllerClient } from './session/useSessionController.js';
-import { TaskDetailDrawerContent } from './task/TaskDetailDrawerContent.js';
-import { TaskModelPushModal, readTaskModelPushPreferences, resolveTaskModelPushInitialForm, writeTaskModelPushPreferences, type TaskModelPushForm, type TaskModelPushModalStatus } from './task/TaskModelPushModal.js';
-import { TaskWorkspace } from './task/TaskWorkspace.js';
-import { LegacyChatImportSettings } from './settings/LegacyChatImportSettings.js';
-import { toPersistedTaskAttachment, type TaskAttachmentView } from './task/taskAttachments.js';
-import { canTransitionTaskStatusInWorkspace, filterVisibleTasks, normalizeTaskTableColumnPreferences, type TaskSortKey } from './task/taskWorkspaceModel.js';
-import { ZeusSelect } from './ZeusSelect.js';
-import {
-  createEmptyDashboardSnapshot,
-  type AiRuntimeAdapterDescriptor,
-  type AppShellSettings,
-  type AiRuntimeAdapterStatus,
-  type AiRuntimeLogEntry,
-  type AiRuntimeSession,
-  type AiRuntimeSessionStatus,
-  type AiRuntimeTerminalEvent,
-  type AiRuntimeTerminalSnapshot,
-  type CodeMapSettings,
-  type CodexLegacyImportResult,
-  type CodexLegacyImportSnapshot,
-  type DashboardSnapshot,
-  type DashboardClient,
-  type ExecuteGitOperationRequest,
-  type ExecutedGitOperationResult,
-  type HighRiskGitOperation,
-  type GitDiffHunk,
-  type GitDiffSummary,
-  type GitPatchExport,
-  type GitOperationConfirmation,
-  type GraphConversationHistoryItem,
-  type GraphConversationHistoryPage,
-  type GraphQuestionAnswer,
-  type GraphSearchResult,
-  type GraphViewSnapshot,
-  type GraphViewType,
-  type ImportLocalBusinessDataResult,
-  type ImportLocalSettingsRequest,
-  type ImportLocalSettingsResult,
-  type LoadRuntimeSessionsRequest,
-  type LocalBusinessDataSnapshot,
-  type LocalSettingsExportSnapshot,
-  type ProjectArchiveConfirmation,
-  type ProjectConfig,
-  type ProjectDatabaseSecretSnapshot,
-  type CreateProjectRequest,
-  type ProjectRecord,
-  type ReleaseStatusSnapshot,
-  type ReleaseUpdateStatusSnapshot,
-  type RuntimeOperationConfirmation,
-  type RuntimeSettings,
-  type RuntimeStatusSnapshot,
-  type SaveProjectConfigRequest,
-  type SecurityAuditLogEntry,
-  type SecurityResetResult,
-  type SecuritySecretsSnapshot,
-  type SendConversationMessageResult,
-  type TelegramNotificationSettings,
-  type TelegramTestConnectionResult,
-  type TelegramPollingLogEntry,
-  type TelegramPollingStatus,
-  type TelegramSecuritySettings,
-  type TaskEventRecord,
-  type TaskRecord,
-  type TaskStatus,
-  type TaskTableColumnPreferences,
-  type TaskTemplateRecord,
-  type ZeusRealtimeEvent,
-} from './apiClient.js';
 
 type MainNavTarget = 'projects' | 'conversations' | 'settings';
 type LegacyMainNavTarget = MainNavTarget | 'dashboard' | 'tasks' | 'code-map' | 'runtime' | 'git-diff' | 'telegram' | 'settings-data';
@@ -168,7 +200,10 @@ type TaskCreateFormState = { title: string; description: string; tags: string; a
 type TaskCreateTextField = Extract<keyof TaskCreateFormState, 'title' | 'description' | 'tags'>;
 type TaskCreateDraft = { title: string; description: string; tags: string[]; attachments: ReturnType<typeof toPersistedTaskAttachment>[] };
 type NativeConversationAppClient = SessionControllerClient &
-  Pick<DashboardClient, 'loadProjectConversationChoices' | 'startProjectConversation' | 'loadTaskConversationChoices' | 'startNativeConversation' | 'loadCodexTaskPushCapabilities' | 'startTaskModelPush'>;
+    Pick<
+        DashboardClient,
+        'loadProjectConversationChoices' | 'startProjectConversation' | 'loadTaskConversationChoices' | 'startNativeConversation' | 'loadCodexTaskPushCapabilities' | 'startTaskModelPush' | 'acknowledgeNativeConversationCompletion'
+    >;
 type NativeConversationChoiceLoadState = 'empty' | 'loading' | 'ready' | 'error';
 
 export interface NativeConversationChoiceTaskLoadState {
@@ -194,6 +229,8 @@ export interface NativeConversationChoiceLoadCoordinator {
   begin(taskId: string): number;
   isCurrent(taskId: string, requestVersion: number): boolean;
   preserveAccepted(choice: NativeConversationChoice): void;
+
+    forget(taskId: string, conversationId: string): void;
   commit(taskId: string, requestVersion: number, snapshot: NativeConversationChoicesSnapshot): NativeConversationChoicesSnapshot | null;
 }
 
@@ -215,6 +252,12 @@ export function createNativeConversationChoiceLoadCoordinator(): NativeConversat
       accepted.set(choice.id, choice);
       acceptedByTask.set(choice.taskId, accepted);
     },
+      forget(taskId, conversationId) {
+          const accepted = acceptedByTask.get(taskId);
+          if (!accepted) return;
+          accepted.delete(conversationId);
+          if (accepted.size === 0) acceptedByTask.delete(taskId);
+      },
     commit(taskId, requestVersion, snapshot) {
       if (!isCurrent(taskId, requestVersion)) return null;
       const loadedIds = new Set(snapshot.choices.map((choice) => choice.id));
@@ -454,11 +497,78 @@ export function resolveSelectedNativeConversationForProject(choices: NativeConve
   return choices.find((conversation) => conversation.id === selectedConversationId && conversation.projectId === activeProjectId) ?? null;
 }
 
+export function resolveTaskConversationToView(snapshot: NativeConversationChoicesSnapshot | undefined): NativeConversationChoice | null {
+    if (!snapshot?.choices.length) return null;
+    return snapshot.choices.reduce((latest, candidate) => (candidate.updatedAt.localeCompare(latest.updatedAt) > 0 ? candidate : latest));
+}
+
+export function updateConversationChoiceCompletionUnread<Snapshot extends {
+    choices: NativeConversationChoice[];
+    items: NativeConversationChoice[]
+}>(snapshot: Snapshot, conversationId: string, hasUnreadCompletion: boolean): Snapshot {
+    const update = (choice: NativeConversationChoice) => (choice.id === conversationId && choice.hasUnreadCompletion !== hasUnreadCompletion ? {
+        ...choice,
+        hasUnreadCompletion
+    } : choice);
+    const choices = snapshot.choices.map(update);
+    const items = snapshot.items.map(update);
+    if (choices.every((choice, index) => choice === snapshot.choices[index]) && items.every((choice, index) => choice === snapshot.items[index])) return snapshot;
+    return {...snapshot, choices, items};
+}
+
 const GRAPH_NODE_TASK_SUCCESS_DISMISS_MS = 2200;
 const GRAPH_SOURCE_OPEN_FEEDBACK_DISMISS_MS = 2400;
 const workModeValues = ['plan', 'develop', 'review', 'debug'] as const;
-const taskStatusFilterValues = ['', 'draft', 'ready', 'running', 'paused', 'waiting_confirmation', 'completed', 'failed', 'cancelled'] as const;
-const taskSortValues = ['title', 'status', 'createdAt', 'updatedAt'] as const satisfies readonly TaskSortKey[];
+const taskStatusFilterValues = ['', ...taskManagementStatuses] as const;
+const taskSortValues = ['title', 'managementStatus', 'createdAt', 'updatedAt'] as const satisfies readonly TaskSortKey[];
+const taskManagementStatusLabels: Record<AppLanguage, Record<TaskManagementStatus | '', string>> = {
+    'zh-CN': {
+        '': '全部',
+        todo: '待开始',
+        in_development: '开发中',
+        in_testing: '测试中',
+        awaiting_acceptance: '待验收',
+        blocked: '已阻塞',
+        completed: '已完成',
+        cancelled: '已取消'
+    },
+    'en-US': {
+        '': 'All',
+        todo: 'To do',
+        in_development: 'In development',
+        in_testing: 'In testing',
+        awaiting_acceptance: 'Awaiting acceptance',
+        blocked: 'Blocked',
+        completed: 'Completed',
+        cancelled: 'Cancelled'
+    },
+};
+const taskAgentRunStatusLabels: Record<AppLanguage, Record<TaskAgentRunStatus, string>> = {
+    'zh-CN': {
+        not_started: '未启动',
+        connecting: '正在连接',
+        reconnecting: '正在重连',
+        running: '运行中',
+        waiting_user: '等待用户回复',
+        waiting_approval: '等待授权',
+        paused: '已暂停',
+        idle: '等待新指令',
+        failed: '运行失败',
+        legacy_readonly: '旧会话只读',
+    },
+    'en-US': {
+        not_started: 'Not started',
+        connecting: 'Connecting',
+        reconnecting: 'Reconnecting',
+        running: 'Running',
+        waiting_user: 'Waiting for user',
+        waiting_approval: 'Waiting for approval',
+        paused: 'Paused',
+        idle: 'Waiting for instructions',
+        failed: 'Run failed',
+        legacy_readonly: 'Legacy read-only',
+    },
+};
 const graphNodeTypeFilterValues = ['', 'file', 'function', 'package', 'api', 'table', 'column', 'control_flow', 'aggregate'] as const;
 const graphEdgeTypeFilterValues = [
   '',
@@ -589,7 +699,7 @@ const languageCopy = {
     },
     taskSorts: {
       title: '标题',
-      status: '状态',
+        managementStatus: '任务状态',
       createdAt: '创建时间',
       updatedAt: '更新时间',
     },
@@ -744,7 +854,7 @@ const languageCopy = {
       taskCreateSubmitFailed: '创建任务失败，请保留输入后重试。',
       today: '今天',
       emptyTitle: '还没有任务',
-      emptyHelp: '用“新任务”创建第一条研发任务；创建后会显示状态、AI 执行入口、证据和更新时间。',
+        emptyHelp: '用“新任务”创建第一条研发任务；创建后会显示任务状态、运行状态和更新时间。',
       emptySecondaryAction: '查看项目代码',
       emptyOutcomeStatus: '状态会随任务推进更新',
       emptyOutcomeAi: 'AI Runtime 连接后显示执行状态',
@@ -836,24 +946,22 @@ const languageCopy = {
       commandDockAria: '任务推进命令',
       statusActionsAria: '任务状态操作',
       runTask: '推送到模型',
-      pauseRuntime: '暂停 Runtime',
-      continueRuntime: '继续 Runtime',
+        viewConversation: '查看会话',
       markComplete: '标记完成',
       cancelTask: '取消任务',
       retryTask: '重试任务',
-      drawerLabel: '任务详情',
-      drawerBackdrop: '关闭任务详情',
-      drawerClose: '关闭',
+        detailPaneLabel: '任务详情',
+        detailPaneBackdrop: '关闭任务详情',
+        detailPaneClose: '关闭',
       openTaskDetail: '打开任务详情',
       taskCountPrefix: '任务',
       filteredState: '已筛选',
       allState: '全部状态',
       codeColumnTitle: '任务编码',
-      intentColumnTitle: '任务 / 意图',
-      nextActionColumnTitle: '状态 / 下一步',
-      aiExecutionColumnTitle: 'AI 执行',
+        intentColumnTitle: '任务',
+        managementStatusColumnTitle: '任务状态',
+        runStatusColumnTitle: '运行状态',
       sourceColumnTitle: '上下文来源',
-      signalsColumnTitle: '证据',
       createdAtColumnTitle: '创建时间',
       updatedAtColumnTitle: '更新时间',
       priorityColumnTitle: '优先级',
@@ -950,8 +1058,6 @@ const languageCopy = {
       inputDockAria: '任务下一步与对话输入',
       statusActionsAria: '任务状态操作',
       sendToConversation: '推送到模型',
-      pauseRuntime: '暂停 Runtime',
-      continueRuntime: '继续 Runtime',
       markComplete: '标记完成',
       cancelTask: '取消任务',
       followUpAria: '要求后续变更',
@@ -1963,7 +2069,7 @@ const languageCopy = {
     },
     taskSorts: {
       title: 'Title',
-      status: 'Status',
+        managementStatus: 'Task status',
       createdAt: 'Created',
       updatedAt: 'Updated',
     },
@@ -2118,7 +2224,7 @@ const languageCopy = {
       taskCreateSubmitFailed: 'Task creation failed. Your input is preserved for retry.',
       today: 'Today',
       emptyTitle: 'No tasks yet',
-      emptyHelp: 'Create the first engineering task with New task. Status, AI execution, evidence, and updated time will appear after creation.',
+        emptyHelp: 'Create the first engineering task with New task. Task status, run status, and updated time will appear after creation.',
       emptySecondaryAction: 'View project code',
       emptyOutcomeStatus: 'Status updates as work moves',
       emptyOutcomeAi: 'AI Runtime state appears after launch',
@@ -2210,24 +2316,22 @@ const languageCopy = {
       commandDockAria: 'Task progress commands',
       statusActionsAria: 'Task status actions',
       runTask: 'Push to model',
-      pauseRuntime: 'Pause Runtime',
-      continueRuntime: 'Continue Runtime',
+        viewConversation: 'View conversation',
       markComplete: 'Mark complete',
       cancelTask: 'Cancel task',
       retryTask: 'Retry task',
-      drawerLabel: 'Task details',
-      drawerBackdrop: 'Close task details',
-      drawerClose: 'Close',
+        detailPaneLabel: 'Task details',
+        detailPaneBackdrop: 'Close task details',
+        detailPaneClose: 'Close',
       openTaskDetail: 'Open task details',
       taskCountPrefix: 'Tasks',
       filteredState: 'Filtered',
       allState: 'All states',
       codeColumnTitle: 'Task code',
-      intentColumnTitle: 'Task / intent',
-      nextActionColumnTitle: 'Status / next step',
-      aiExecutionColumnTitle: 'AI execution',
+        intentColumnTitle: 'Task',
+        managementStatusColumnTitle: 'Task status',
+        runStatusColumnTitle: 'Run status',
       sourceColumnTitle: 'Context source',
-      signalsColumnTitle: 'Evidence',
       createdAtColumnTitle: 'Created',
       updatedAtColumnTitle: 'Updated',
       priorityColumnTitle: 'Priority',
@@ -2324,8 +2428,6 @@ const languageCopy = {
       inputDockAria: 'Next step and conversation input',
       statusActionsAria: 'Task status actions',
       sendToConversation: 'Push to model',
-      pauseRuntime: 'Pause Runtime',
-      continueRuntime: 'Continue Runtime',
       markComplete: 'Mark complete',
       cancelTask: 'Cancel task',
       followUpAria: 'Request follow-up',
@@ -3410,24 +3512,22 @@ const languageCopy = {
       commandDockAria: string;
       statusActionsAria: string;
       runTask: string;
-      pauseRuntime: string;
-      continueRuntime: string;
+        viewConversation: string;
       markComplete: string;
       cancelTask: string;
       retryTask: string;
-      drawerLabel: string;
-      drawerBackdrop: string;
-      drawerClose: string;
+        detailPaneLabel: string;
+        detailPaneBackdrop: string;
+        detailPaneClose: string;
       openTaskDetail: string;
       taskCountPrefix: string;
       filteredState: string;
       allState: string;
       codeColumnTitle: string;
       intentColumnTitle: string;
-      nextActionColumnTitle: string;
-      aiExecutionColumnTitle: string;
+        managementStatusColumnTitle: string;
+        runStatusColumnTitle: string;
       sourceColumnTitle: string;
-      signalsColumnTitle: string;
       createdAtColumnTitle: string;
       updatedAtColumnTitle: string;
       priorityColumnTitle: string;
@@ -3534,8 +3634,6 @@ const languageCopy = {
       inputDockAria: string;
       statusActionsAria: string;
       sendToConversation: string;
-      pauseRuntime: string;
-      continueRuntime: string;
       markComplete: string;
       cancelTask: string;
       followUpAria: string;
@@ -4386,6 +4484,7 @@ function normalizeRendererAppShellSettings(settings: AppShellSettings): AppShell
 }
 
 export function toAppShellSettingsSavePayload(settings: AppShellSettings): AppShellSettingsSavePayload {
+    const taskTableColumns = normalizeTaskTableColumnPreferences(settings.taskTableColumns);
   return {
     appLanguage: settings.appLanguage,
     appearance: settings.appearance,
@@ -4401,7 +4500,11 @@ export function toAppShellSettingsSavePayload(settings: AppShellSettings): AppSh
     defaultModel: settings.defaultModel,
     defaultTaskTemplateId: settings.defaultTaskTemplateId,
     // 任务字段偏好属于本机 app shell 设置；任何通用设置保存都必须带上，避免后续保存把字段配置丢掉。
-    taskTableColumns: normalizeTaskTableColumnPreferences(settings.taskTableColumns),
+      taskTableColumns: {
+          ...taskTableColumns,
+          // 空对象是“恢复默认列宽”的显式协议；省略字段表示局部保存时继续沿用已存列宽。
+          columnWidths: taskTableColumns.columnWidths ?? {},
+      },
   };
 }
 
@@ -4825,7 +4928,15 @@ const codeMapToolPanels: Array<{ id: CodeMapToolPanel }> = [{ id: 'runtime' }, {
 
 const workspaceDrawerCloseAnimationMs = 180;
 
-function WorkspaceDrawer(props: { label: string; backdropLabel: string; closeLabel: string; className?: string; onClose: () => void; children: ReactNode }) {
+function WorkspaceDrawer(props: {
+    label: string;
+    backdropLabel: string;
+    closeLabel: string;
+    className?: string;
+    portalStyle?: CSSProperties;
+    onClose: () => void;
+    children: ReactNode
+}) {
   const workspaceDrawerRef = useRef<HTMLElement | null>(null);
   const previousFocusedElementRef = useRef<HTMLElement | null>(null);
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -4859,7 +4970,7 @@ function WorkspaceDrawer(props: { label: string; backdropLabel: string; closeLab
     requestWorkspaceDrawerClose();
   };
   const drawerSurface = (
-    <div className="macos-ai-app workspace-drawer-portal-root">
+      <div className="macos-ai-app workspace-drawer-portal-root" style={props.portalStyle}>
       <div className="workspace-drawer-backdrop" aria-label={props.backdropLabel} data-motion-surface="backdrop" data-motion-state={isClosing ? 'closing' : 'open'} onClick={requestWorkspaceDrawerClose}>
         <aside
           className={`workspace-drawer ${props.className ?? ''}`}
@@ -5322,7 +5433,7 @@ export function App(props: {
   onReadTaskClipboardAttachments?: () => Promise<TaskCreatePastedAttachment[]>;
   onReadTaskClipboardImage?: () => Promise<TaskCreatePastedAttachment | null>;
   onCreateTaskDraft?: (projectId: string, draft: TaskCreateDraft) => Promise<DashboardSnapshot>;
-  onLoadTasks?: (projectId: string, query?: string, status?: TaskStatus, tag?: string, sortBy?: 'createdAt' | 'updatedAt' | 'title' | 'status') => Promise<TaskRecord[]>;
+    onLoadTasks?: (projectId: string, query?: string, managementStatus?: TaskManagementStatus, tag?: string, sortBy?: 'createdAt' | 'updatedAt' | 'title' | 'managementStatus') => Promise<TaskRecord[]>;
   onLoadTask?: (taskId: string) => Promise<TaskRecord>;
   onUpdateTask?: (taskId: string, input: { title: string; description?: string; sourceContext?: Record<string, unknown> }) => Promise<DashboardSnapshot>;
   onUpdateTaskTags?: (taskId: string, tags: string[]) => Promise<DashboardSnapshot>;
@@ -5445,6 +5556,7 @@ export function App(props: {
   onLoadTaskTemplates?: (projectId?: string) => Promise<TaskTemplateRecord[]>;
   onLoadTaskEvents?: (taskId: string) => Promise<TaskEventRecord[]>;
   onUpdateTaskStatus?: (taskId: string, status: TaskStatus) => Promise<DashboardSnapshot>;
+    onUpdateTaskManagementStatus?: (taskId: string, status: TaskManagementStatus) => Promise<DashboardSnapshot>;
   onArchiveTask?: (taskId: string) => Promise<DashboardSnapshot>;
   onRestoreTask?: (taskId: string) => Promise<DashboardSnapshot>;
   onCreateGitConfirmation?: (operation: HighRiskGitOperation, message?: string) => Promise<GitOperationConfirmation>;
@@ -5515,8 +5627,10 @@ export function App(props: {
     Object.fromEntries((props.initialNativeProjectConversationChoices ?? []).map((snapshot) => [snapshot.projectId, completeNativeConversationChoiceTaskLoad(undefined)])),
   );
   const [selectedNativeConversationId, setSelectedNativeConversationId] = useState<string | null>(() => props.initialSelectedNativeConversationId ?? null);
+    const selectedNativeConversationIdRef = useRef<string | null>(props.initialSelectedNativeConversationId ?? null);
   const [newConversationFocusRequest, setNewConversationFocusRequest] = useState(0);
   const [nativeConversationRuntimeStates, setNativeConversationRuntimeStates] = useState<Record<string, ConversationTreeRuntimeState>>({});
+    const [nativeConversationTaskRunStatuses, setNativeConversationTaskRunStatuses] = useState<Record<string, TaskAgentRunStatus>>({});
   const [sessionSourceRailOpen, setSessionSourceRailOpen] = useState(false);
   const [compactSessionViewport, setCompactSessionViewport] = useState(() => typeof window !== 'undefined' && window.matchMedia?.('(max-width: 759px)').matches === true);
   const [projectSidebarViewportWidth, setProjectSidebarViewportWidth] = useState(() => (typeof window === 'undefined' ? 1440 : window.innerWidth));
@@ -5581,14 +5695,14 @@ export function App(props: {
   const [conversationDraftOpen, setConversationDraftOpen] = useState(false);
   const [projectDetail, setProjectDetail] = useState<ProjectRecord | undefined>(() => props.snapshot?.projects[0]);
   const [taskDetail, setTaskDetail] = useState<TaskRecord | undefined>(() => props.snapshot?.tasks[0]);
-  const [taskDrawerTaskId, setTaskDrawerTaskId] = useState<string | undefined>();
+    const [taskDetailPaneTaskId, setTaskDetailPaneTaskId] = useState<string | undefined>();
   const [createProjectConfigForm] = useState(() => ({
     defaultModel: '',
     defaultWorkMode: 'plan' as ProjectConfig['defaultWorkMode'],
     defaultTaskPrompt: '',
   }));
   const [taskSearchQuery, setTaskSearchQuery] = useState('');
-  const [taskStatusFilter, setTaskStatusFilter] = useState<TaskStatus | ''>('');
+    const [taskStatusFilter, setTaskStatusFilter] = useState<TaskManagementStatus | ''>('');
   const [taskTagFilter, setTaskTagFilter] = useState('');
   const [taskSortBy, setTaskSortBy] = useState<TaskSortKey>('title');
   const [selectedTaskIds, setSelectedTaskIds] = useState<string[]>([]);
@@ -5701,6 +5815,7 @@ export function App(props: {
   const [taskModelPushForm, setTaskModelPushForm] = useState<TaskModelPushForm>({ model: '', effort: '', workMode: 'default', permissionMode: 'read-only', supplementalInfo: '' });
   const [taskModelPushStatus, setTaskModelPushStatus] = useState<TaskModelPushModalStatus>('loading');
   const [taskModelPushError, setTaskModelPushError] = useState<string | null>(null);
+    const [taskModelPushPending, setTaskModelPushPending] = useState<TaskModelPushPendingState | null>(null);
   const taskModelPushCapabilityRequestRef = useRef(0);
   const taskModelPushEnvelopeRef = useRef<{ fingerprint: string; request: StartTaskModelPushRequest } | null>(null);
   const taskCreateTitleInputRef = useRef<HTMLInputElement | null>(null);
@@ -5911,6 +6026,7 @@ export function App(props: {
     resetGraphWorkspace(activeProjectId);
   }, [activeProjectId, graphProjectId]);
   const currentProjectTasks = useMemo(() => (activeProjectId ? snapshot.tasks.filter((task) => task.projectId === activeProjectId) : snapshot.tasks), [activeProjectId, snapshot.tasks]);
+    const currentTaskConversationChoices = useMemo(() => Object.fromEntries(currentProjectTasks.map((task) => [task.id, nativeConversationChoicesByTask[task.id]?.choices ?? []])), [currentProjectTasks, nativeConversationChoicesByTask]);
   const nativeConversationChoices = useMemo(
     () => [...Object.values(nativeConversationChoicesByProject), ...Object.values(nativeConversationChoicesByTask)].flatMap((entry) => entry.choices).sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
     [nativeConversationChoicesByProject, nativeConversationChoicesByTask],
@@ -5919,6 +6035,32 @@ export function App(props: {
     () => resolveSelectedNativeConversationForProject(nativeConversationChoices, selectedNativeConversationId, activeProjectId),
     [activeProjectId, nativeConversationChoices, selectedNativeConversationId],
   );
+    useEffect(() => {
+        selectedNativeConversationIdRef.current = selectedNativeConversationId;
+    }, [selectedNativeConversationId]);
+
+    const setNativeConversationCompletionUnread = useCallback((conversationId: string, hasUnreadCompletion: boolean): void => {
+        setNativeConversationChoicesByProject((current) => Object.fromEntries(Object.entries(current).map(([projectId, snapshot]) => [projectId, updateConversationChoiceCompletionUnread(snapshot, conversationId, hasUnreadCompletion)])));
+        setNativeConversationChoicesByTask((current) => Object.fromEntries(Object.entries(current).map(([taskId, snapshot]) => [taskId, updateConversationChoiceCompletionUnread(snapshot, conversationId, hasUnreadCompletion)])));
+    }, []);
+
+    const acknowledgeNativeConversationCompletion = useCallback(
+        (projectId: string, conversationId: string): void => {
+            const client = props.nativeConversationClient;
+            if (!client) return;
+            setNativeConversationCompletionUnread(conversationId, false);
+            void client.acknowledgeNativeConversationCompletion(projectId, conversationId).catch((error: unknown) => {
+                setNativeConversationCompletionUnread(conversationId, true);
+                recordLocalError('conversation-completion-acknowledgement', error);
+            });
+        },
+        [props.nativeConversationClient, setNativeConversationCompletionUnread],
+    );
+
+    useEffect(() => {
+        if (!selectedNativeConversation?.hasUnreadCompletion) return;
+        acknowledgeNativeConversationCompletion(selectedNativeConversation.projectId, selectedNativeConversation.id);
+    }, [acknowledgeNativeConversationCompletion, selectedNativeConversation]);
   const nativeConversationGroups = useMemo<ProjectConversationGroup[]>(
     () =>
       orderedProjects.map((project) => ({
@@ -5929,6 +6071,7 @@ export function App(props: {
           .filter((task) => task.projectId === project.id)
           .map((task) => ({
             taskId: task.id,
+              taskCode: task.taskCode?.trim() || task.id,
             taskTitle: task.title,
             conversations: [...(nativeConversationChoicesByTask[task.id]?.choices ?? [])].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
           })),
@@ -5938,11 +6081,16 @@ export function App(props: {
   const recordNativeConversationRuntimeState = useCallback((conversationId: string, state: NativeSessionState): void => {
     const runtimeState = conversationTreeRuntimeStateFromSession(state);
     setNativeConversationRuntimeStates((current) => (current[conversationId] === runtimeState ? current : { ...current, [conversationId]: runtimeState }));
+      const taskRunStatus = taskAgentRunStatusFromSession(state);
+      setNativeConversationTaskRunStatuses((current) => (current[conversationId] === taskRunStatus ? current : {
+          ...current,
+          [conversationId]: taskRunStatus
+      }));
   }, []);
 
   useEffect(() => {
     const client = props.nativeConversationClient;
-    if (!client || activeProjectSection !== 'sessions' || !activeProjectId) return;
+      if (!client || (activeProjectSection !== 'sessions' && activeProjectSection !== 'tasks') || !activeProjectId) return;
     let cancelled = false;
     const projectId = activeProjectId;
     const projectRequestVersion = nativeProjectConversationChoiceLoadCoordinator.begin(projectId);
@@ -6037,8 +6185,20 @@ export function App(props: {
   useEffect(() => {
     const subscribeRealtimeEvents = props.onSubscribeRealtimeEvents;
     const loadGraphConversation = props.onLoadGraphConversation;
-    if (!subscribeRealtimeEvents || !loadGraphConversation) return;
+      if (!subscribeRealtimeEvents) return;
     const unsubscribe = subscribeRealtimeEvents((event) => {
+        if (event.type === 'conversation.turn.completed' && typeof event.payload.conversationId === 'string') {
+            const conversationId = event.payload.conversationId;
+            const hasUnreadCompletion = event.payload.status === 'completed' && event.payload.hasUnreadCompletion !== false;
+            if (hasUnreadCompletion) {
+                const selected = selectedNativeConversationIdRef.current === conversationId;
+                setNativeConversationCompletionUnread(conversationId, !selected);
+                if (selected && typeof event.payload.projectId === 'string') {
+                    acknowledgeNativeConversationCompletion(event.payload.projectId, conversationId);
+                }
+            }
+        }
+        if (!loadGraphConversation) return;
       if (!shouldRefreshConversationForRuntimeEvent(event, selectedTaskConversationRef.current)) return;
       const conversation = selectedTaskConversationRef.current;
       if (!conversation) return;
@@ -6055,9 +6215,10 @@ export function App(props: {
     return () => {
       if (unsubscribe) unsubscribe();
     };
-  }, [props.onLoadGraphConversation, props.onSubscribeRealtimeEvents]);
+  }, [acknowledgeNativeConversationCompletion, props.onLoadGraphConversation, props.onSubscribeRealtimeEvents, setNativeConversationCompletionUnread]);
 
-  const taskDrawerTask = taskDrawerTaskId ? (taskDetail?.id === taskDrawerTaskId ? taskDetail : snapshot.tasks.find((task) => task.id === taskDrawerTaskId)) : undefined;
+    const taskDetailPaneTask = taskDetailPaneTaskId ? (taskDetail?.id === taskDetailPaneTaskId ? taskDetail : snapshot.tasks.find((task) => task.id === taskDetailPaneTaskId)) : undefined;
+    const taskDetailPaneConversation = taskDetailPaneTask ? resolveTaskConversationToView(nativeConversationChoicesByTask[taskDetailPaneTask.id]) : null;
   const currentRuntimeAdapterDisplayName = formatRuntimeAdapterDisplayName(runtimeSettings.defaultAdapterId, runtimeAdapters, settingsWorkspaceCopy.runtime);
   const changedFiles = gitDiff?.files ?? snapshot.git.changedFiles;
 
@@ -6099,16 +6260,30 @@ export function App(props: {
     }
   }
 
-  async function openTaskDetailDrawer(taskId: string): Promise<void> {
-    // 点击任务行打开详情抽屉：首屏保持纯表格，任务详情、事件与推进动作只在二级层出现。
-    setTaskDrawerTaskId(taskId);
-    await loadTaskDetail(taskId);
-    if (!props.onLoadTaskEvents) return;
-    try {
-      setTaskEvents(await props.onLoadTaskEvents(taskId));
-    } catch (error) {
-      recordLocalError('renderer-action', error);
+    async function openTaskDetailPane(taskId: string): Promise<void> {
+        // 点击任务行从右侧打开悬浮详情抽屉；透明点击层保留列表原貌，并让用户点击抽屉外空白处立即关闭。
+        setTaskDetailPaneTaskId(taskId);
+        const pending: Promise<void>[] = [loadTaskDetail(taskId)];
+        if (props.onLoadTaskEvents) {
+            pending.push(
+                props
+                    .onLoadTaskEvents(taskId)
+                    .then(setTaskEvents)
+                    .catch((error: unknown) => {
+                        recordLocalError('renderer-action', error);
+                    }),
+            );
     }
+        if (props.nativeConversationClient) {
+            pending.push(
+                refreshNativeConversationChoices(taskId)
+                    .then(() => undefined)
+                    .catch((error: unknown) => {
+                        recordLocalError('task-conversation-choice-load', error);
+                    }),
+            );
+        }
+        await Promise.all(pending);
   }
 
   async function loadProjectConfig(projectId: string): Promise<void> {
@@ -6630,7 +6805,7 @@ export function App(props: {
           tags: createdTask.tags?.join(', ') ?? '',
         });
         setActiveProjectSection('tasks');
-        setTaskDrawerTaskId(createdTask.id);
+          setTaskDetailPaneTaskId(createdTask.id);
         if (props.onLoadTaskEvents) {
           setTaskEvents(await props.onLoadTaskEvents(createdTask.id));
         }
@@ -6782,7 +6957,9 @@ export function App(props: {
     const task = conversation.taskId ? snapshot.tasks.find((candidate) => candidate.id === conversation.taskId) : undefined;
     if (task) setTaskDetail(task);
     else setTaskDetail(undefined);
+      selectedNativeConversationIdRef.current = conversation.id;
     setSelectedNativeConversationId(conversation.id);
+      if (conversation.hasUnreadCompletion) acknowledgeNativeConversationCompletion(conversation.projectId, conversation.id);
     setConversationDraftOpen(false);
     setActiveNavTarget('conversations');
     setActiveProjectSection('sessions');
@@ -6821,6 +6998,23 @@ export function App(props: {
     }
   }
 
+    async function openTaskConversation(taskId: string): Promise<void> {
+        const conversation = resolveTaskConversationToView(nativeConversationChoicesByTask[taskId]);
+        if (!conversation) return;
+        const targetProject = snapshot.projects.find((project) => project.id === conversation.projectId);
+        if (targetProject) {
+            activeProjectIdRef.current = targetProject.id;
+            setProjectDetail(targetProject);
+        }
+        setTaskDetailPaneTaskId(undefined);
+        setConversationDrawer(undefined);
+        await selectNativeConversation(conversation);
+        if (typeof window !== 'undefined') {
+            window.history.replaceState(null, '', '#project-sessions');
+        }
+        workspaceScrollRef.current?.scrollTo({top: 0, behavior: 'smooth'});
+    }
+
   function prepareNativeConversationForTask(taskId: string): void {
     const task = snapshot.tasks.find((candidate) => candidate.id === taskId);
     if (!task) return;
@@ -6836,7 +7030,7 @@ export function App(props: {
     setActiveNavTarget('conversations');
     setActiveProjectSection('sessions');
     setConversationDrawer(undefined);
-    setTaskDrawerTaskId(undefined);
+      setTaskDetailPaneTaskId(undefined);
     if (typeof window !== 'undefined') {
       window.history.replaceState(null, '', '#project-sessions');
     }
@@ -6965,7 +7159,7 @@ export function App(props: {
     setNewConversationFocusRequest((current) => current + 1);
     setSelectedNativeConversationId(null);
     setConversationDrawer(undefined);
-    setTaskDrawerTaskId(undefined);
+      setTaskDetailPaneTaskId(undefined);
     setTaskSearchQuery('');
     setTaskStatusFilter('');
     setTaskTagFilter('');
@@ -7018,7 +7212,7 @@ export function App(props: {
     }
     try {
       // 与 Codex App 一致：打开 composer 时只连接并读取能力，不提前创建 thread/turn。
-      const capabilities = await client.loadCodexTaskPushCapabilities(task.projectId);
+        const capabilities = await client.loadCodexTaskPushCapabilities(task.projectId, task.id);
       if (taskModelPushCapabilityRequestRef.current !== requestVersion) return;
       const remembered = readTaskModelPushPreferences(browserNativeConversationStartStorage(), task.projectId);
       setTaskModelPushCapabilities(capabilities);
@@ -7041,7 +7235,7 @@ export function App(props: {
     setTaskModelPushError(null);
   }
 
-  async function submitTaskModelPush(event: FormEvent<HTMLFormElement>): Promise<void> {
+    function submitTaskModelPush(event: FormEvent<HTMLFormElement>): void {
     event.preventDefault();
     const task = snapshot.tasks.find((candidate) => candidate.id === taskModelPushTaskId);
     const client = props.nativeConversationClient;
@@ -7065,52 +7259,94 @@ export function App(props: {
     taskModelPushEnvelopeRef.current = { fingerprint, request };
     setTaskModelPushStatus('submitting');
     setTaskModelPushError(null);
-    try {
-      const acceptance = await client.startTaskModelPush(task.id, request);
-      if (acceptance.operation.status !== 'accepted' || acceptance.operation.idempotencyKey !== request.idempotencyKey) {
-        throw new Error('Task model push did not return a durable accepted operation.');
-      }
-      taskModelPushEnvelopeRef.current = null;
-      const provider = typeof acceptance.conversation.provider === 'object' && acceptance.conversation.provider !== null ? (acceptance.conversation.provider as Record<string, unknown>) : {};
-      const providerThreadId = (typeof acceptance.conversation.providerThreadId === 'string' && acceptance.conversation.providerThreadId) || (typeof provider.threadId === 'string' && provider.threadId) || null;
-      if (!providerThreadId) {
-        setTaskModelPushStatus('error');
-        setTaskModelPushError(appShellSettings.appLanguage === 'zh-CN' ? 'app-server 未能创建真实会话，任务尚未推送。请检查连接后重试。' : 'app-server did not create a real conversation. Check the connection and retry.');
-        return;
-      }
+        const targetProject = snapshot.projects.find((project) => project.id === task.projectId);
+        const pending = createTaskModelPushPendingState({
+            task,
+            projectName: targetProject?.name ?? task.projectId,
+            request,
+            form: taskModelPushForm,
+            prompt: buildTaskModelPushMessage(taskModelPushCapabilities.canonicalPrompt, taskModelPushForm.supplementalInfo),
+        });
+        nativeConversationChoiceLoadCoordinator.preserveAccepted(pending.choice);
+        setNativeConversationChoicesByTask((current) => {
+            const prior = current[task.id];
+            const choices = [pending.choice, ...(prior?.choices ?? []).filter((candidate) => candidate.id !== pending.choice.id)];
+            return {
+                ...current,
+                [task.id]: {
+                    taskId: task.id,
+                    projectId: task.projectId,
+                    hasHistory: true,
+                    requiresChoice: choices.length > 1,
+                    choices,
+                    items: choices
+                }
+            };
+        });
+        setTaskModelPushPending(pending);
+        if (targetProject) {
+            activeProjectIdRef.current = targetProject.id;
+            setProjectDetail(targetProject);
+        }
+        setTaskDetail(task);
+        setSelectedNativeConversationId(pending.choice.id);
+        setConversationDraftOpen(false);
+        setTaskDetailPaneTaskId(undefined);
+        setConversationDrawer(undefined);
+        taskModelPushCapabilityRequestRef.current += 1;
+        setTaskModelPushTaskId(null);
+        setTaskModelPushCapabilities(null);
+        setActiveNavTarget('conversations');
+        setActiveProjectSection('sessions');
+        if (typeof window !== 'undefined') window.history.replaceState(null, '', '#project-sessions');
+        workspaceScrollRef.current?.scrollTo({top: 0, behavior: 'smooth'});
+        void dispatchTaskModelPush(pending);
+    }
 
-      const choice = nativeConversationChoiceFromAcceptance(acceptance, task);
-      nativeConversationChoiceLoadCoordinator.preserveAccepted(choice);
-      setNativeConversationChoicesByTask((current) => {
-        const prior = current[task.id];
-        const choices = [choice, ...(prior?.choices ?? []).filter((candidate) => candidate.id !== choice.id)];
-        return { ...current, [task.id]: { taskId: task.id, projectId: task.projectId, hasHistory: true, requiresChoice: choices.length > 1, choices, items: choices } };
-      });
-      const submissionStatus = typeof acceptance.submission?.status === 'string' ? acceptance.submission.status : null;
-      if (submissionStatus === 'active') {
-        // 只有 thread/start 与首个 turn/start 都成功后，才更新项目级选择记忆。
-        writeTaskModelPushPreferences(browserNativeConversationStartStorage(), task.projectId, taskModelPushForm);
-      }
-      const targetProject = snapshot.projects.find((project) => project.id === task.projectId);
-      if (targetProject) {
-        activeProjectIdRef.current = targetProject.id;
-        setProjectDetail(targetProject);
-      }
-      setTaskDetail(task);
-      setSelectedNativeConversationId(choice.id);
-      setConversationDraftOpen(false);
-      setTaskDrawerTaskId(undefined);
-      setConversationDrawer(undefined);
-      setTaskModelPushTaskId(null);
-      setTaskModelPushCapabilities(null);
-      setActiveNavTarget('conversations');
-      setActiveProjectSection('sessions');
-      window.history.replaceState(null, '', '#project-sessions');
-      workspaceScrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
-      void refreshNativeConversationChoices(task.id).catch((error: unknown) => recordLocalError('task-model-push-history-refresh', error));
+    async function dispatchTaskModelPush(pending: TaskModelPushPendingState): Promise<void> {
+        const client = props.nativeConversationClient;
+        if (!client) return;
+        try {
+            const acceptance = await client.startTaskModelPush(pending.task.id, pending.request);
+            if (acceptance.operation.status !== 'accepted' || acceptance.operation.idempotencyKey !== pending.request.idempotencyKey) {
+                throw new Error('Task model push did not return a durable accepted operation.');
+            }
+            taskModelPushEnvelopeRef.current = null;
+            const provider = typeof acceptance.conversation.provider === 'object' && acceptance.conversation.provider !== null ? (acceptance.conversation.provider as Record<string, unknown>) : {};
+            const providerThreadId = (typeof acceptance.conversation.providerThreadId === 'string' && acceptance.conversation.providerThreadId) || (typeof provider.threadId === 'string' && provider.threadId) || null;
+            if (!providerThreadId) {
+                throw new Error(appShellSettings.appLanguage === 'zh-CN' ? 'app-server 未能创建真实会话，消息尚未发送。请检查连接后重试。' : 'app-server did not create a real conversation. Check the connection and retry.');
+            }
+
+            const choice = nativeConversationChoiceFromAcceptance(acceptance, pending.task);
+            nativeConversationChoiceLoadCoordinator.forget(pending.task.id, pending.choice.id);
+            nativeConversationChoiceLoadCoordinator.preserveAccepted(choice);
+            setNativeConversationChoicesByTask((current) => {
+                const prior = current[pending.task.id];
+                const choices = [choice, ...(prior?.choices ?? []).filter((candidate) => candidate.id !== choice.id && candidate.id !== pending.choice.id)];
+                return {
+                    ...current,
+                    [pending.task.id]: {
+                        taskId: pending.task.id,
+                        projectId: pending.task.projectId,
+                        hasHistory: true,
+                        requiresChoice: choices.length > 1,
+                        choices,
+                        items: choices
+                    }
+                };
+            });
+            setSelectedNativeConversationId(choice.id);
+            setTaskModelPushPending((current) => (current?.request.idempotencyKey === pending.request.idempotencyKey ? acceptTaskModelPushPendingState(current, choice) : current));
+            const submissionStatus = typeof acceptance.submission?.status === 'string' ? acceptance.submission.status : null;
+            if (submissionStatus === 'active') {
+                // 只有 thread/start 与首个 turn/start 都成功后，才更新项目级选择记忆。
+                writeTaskModelPushPreferences(browserNativeConversationStartStorage(), pending.task.projectId, pending.form);
+            }
+            void refreshNativeConversationChoices(pending.task.id).catch((error: unknown) => recordLocalError('task-model-push-history-refresh', error));
       if (props.onLoadTask) {
         void props
-          .onLoadTask(task.id)
+            .onLoadTask(pending.task.id)
           .then((updatedTask) => {
             setTaskDetail(updatedTask);
             setSnapshot((current) => ({ ...current, tasks: current.tasks.map((candidate) => (candidate.id === updatedTask.id ? updatedTask : candidate)) }));
@@ -7118,11 +7354,51 @@ export function App(props: {
           .catch((error: unknown) => recordLocalError('task-model-push-task-refresh', error));
       }
     } catch (error) {
-      setTaskModelPushStatus('error');
-      setTaskModelPushError(redactLocalUiErrorMessage(errorToLocalUiMessage(error)));
+            const message = redactLocalUiErrorMessage(errorToLocalUiMessage(error));
+            const failed = failTaskModelPushPendingState(pending, message);
+            nativeConversationChoiceLoadCoordinator.preserveAccepted(failed.choice);
+            setNativeConversationChoicesByTask((current) => {
+                const prior = current[pending.task.id];
+                const choices = [failed.choice, ...(prior?.choices ?? []).filter((candidate) => candidate.id !== failed.choice.id)];
+                return {
+                    ...current,
+                    [pending.task.id]: {
+                        taskId: pending.task.id,
+                        projectId: pending.task.projectId,
+                        hasHistory: true,
+                        requiresChoice: choices.length > 1,
+                        choices,
+                        items: choices
+                    }
+                };
+            });
+            setTaskModelPushPending((current) => (current?.request.idempotencyKey === pending.request.idempotencyKey ? failed : current));
       recordLocalError('task-model-push', error);
     }
   }
+
+    function retryTaskModelPush(): void {
+        if (!taskModelPushPending || taskModelPushPending.status !== 'failed') return;
+        const retrying = retryTaskModelPushPendingState(taskModelPushPending);
+        nativeConversationChoiceLoadCoordinator.preserveAccepted(retrying.choice);
+        setNativeConversationChoicesByTask((current) => {
+            const prior = current[retrying.task.id];
+            const choices = [retrying.choice, ...(prior?.choices ?? []).filter((candidate) => candidate.id !== retrying.choice.id)];
+            return {
+                ...current,
+                [retrying.task.id]: {
+                    taskId: retrying.task.id,
+                    projectId: retrying.task.projectId,
+                    hasHistory: true,
+                    requiresChoice: choices.length > 1,
+                    choices,
+                    items: choices
+                }
+            };
+        });
+        setTaskModelPushPending(retrying);
+        void dispatchTaskModelPush(retrying);
+    }
 
   async function controlTaskRuntime(taskId: string, action: 'run' | 'pause' | 'continue' | 'cancel' | 'retry'): Promise<void> {
     if (resolveTaskRuntimeActionRoute(action) === 'model_push') {
@@ -7158,7 +7434,7 @@ export function App(props: {
         setTaskDetail(navigation.task);
         setConversationDraftOpen(false);
         setConversationDrawer(undefined);
-        setTaskDrawerTaskId(undefined);
+          setTaskDetailPaneTaskId(undefined);
         setActiveNavTarget(navigation.mainNavTarget);
         setActiveProjectSection(navigation.projectSection);
         if (typeof window !== 'undefined') {
@@ -7199,22 +7475,10 @@ export function App(props: {
     return `${successCount} processed, ${skippedCount} skipped, ${failedCount} failed.`;
   }
 
-  async function runSingleBulkTaskStatusChange(task: TaskRecord, targetStatus: TaskStatus): Promise<DashboardSnapshot> {
-    // 批量状态修改优先走现有专用控制入口，保留 Runtime 停止/继续/重试等真实副作用与审计事件。
-    if (targetStatus === 'cancelled' && props.onCancelTask) return props.onCancelTask(task.id);
-    if (targetStatus === 'paused' && props.onPauseTask) return props.onPauseTask(task.id);
-    if (targetStatus === 'running') {
-      if ((task.status === 'paused' || task.status === 'waiting_confirmation') && props.onContinueTask) return normalizeTaskRuntimeControlHandlerResult(await props.onContinueTask(task.id)).snapshot;
-    }
-    if (targetStatus === 'ready' && (task.status === 'failed' || task.status === 'cancelled') && props.onRetryTask) return props.onRetryTask(task.id);
-    if (props.onUpdateTaskStatus) return props.onUpdateTaskStatus(task.id, targetStatus);
-    throw new Error('Bulk task status handler is not available.');
-  }
-
-  async function runBulkTaskStatusChange(targetStatus: TaskStatus, taskIds: string[]): Promise<void> {
+    async function runBulkTaskStatusChange(targetStatus: TaskManagementStatus, taskIds: string[]): Promise<void> {
     const requestedTaskIdSet = new Set(taskIds);
     const requestedTasks = visibleTasks.filter((task) => requestedTaskIdSet.has(task.id));
-    const eligibleTasks = requestedTasks.filter((task) => canTransitionTaskStatusInWorkspace(task.status, targetStatus));
+        const eligibleTasks = requestedTasks.filter((task) => resolveTaskManagementStatus(task) !== targetStatus);
     const skippedCount = requestedTasks.length - eligibleTasks.length;
     const succeededTaskIds: string[] = [];
     const failedTaskIds: string[] = [];
@@ -7227,7 +7491,8 @@ export function App(props: {
     try {
       for (const task of eligibleTasks) {
         try {
-          const nextSnapshot = await runSingleBulkTaskStatusChange(task, targetStatus);
+            if (!props.onUpdateTaskManagementStatus) throw new Error('Task management status handler is not available.');
+            const nextSnapshot = await props.onUpdateTaskManagementStatus(task.id, targetStatus);
           setSnapshot(nextSnapshot);
           succeededTaskIds.push(task.id);
         } catch {
@@ -8170,6 +8435,10 @@ export function App(props: {
   const projectSidebarShellStyle = {
     '--zeus-project-sidebar-width': `${projectSidebarWidth}px`,
   } as CSSProperties;
+    const taskDetailDrawerPortalStyle = {
+        // Portal 不继承应用壳层变量，这里同步真实侧栏宽度，让透明点击层和抽屉比例始终以剩余工作区为基准。
+        '--zeus-drawer-backdrop-inset-inline': `${projectSidebarWidth + 1}px 0`,
+    } as CSSProperties;
 
   function commitProjectSidebarPreferredWidth(width: number): void {
     const nextWidth = normalizeProjectSidebarPreferredWidth(width);
@@ -9167,7 +9436,6 @@ export function App(props: {
                     setSessionSourceRailOpen(false);
                   }}
                   language={appShellSettings.appLanguage}
-                  compactProjectLabel
                 />
               </aside>
             ) : null}
@@ -9177,11 +9445,11 @@ export function App(props: {
             >
               {activeProjectSection === 'tasks' ? (
                 <>
-                  {/* 任务页首屏只保留任务表格；任务列表是任务页布局主角；任务列表空态必须保持轻量行；点击任务行打开详情抽屉，避免顶部 HERO、右栏停车场和松散按钮回流。 */}
+                    {/* 任务页首屏只保留任务表格，任务列表保持完整宽度；任务详情通过透明点击层上的右侧悬浮抽屉展开，点击抽屉外空白处即可关闭。 */}
                   <TaskWorkspace
                     projectName={selectedProject?.name}
                     tasks={currentProjectTasks}
-                    selectedTaskId={taskDrawerTaskId}
+                    selectedTaskId={taskDetailPaneTaskId}
                     selectedTaskIds={selectedTaskIds}
                     searchQuery={taskSearchQuery}
                     statusFilter={taskStatusFilter}
@@ -9189,11 +9457,14 @@ export function App(props: {
                     sortBy={taskSortBy}
                     statusOptions={taskStatusFilterValues}
                     sortOptions={taskSortValues}
-                    statusLabels={uiCopy.taskStatuses}
+                    statusLabels={taskManagementStatusLabels[appShellSettings.appLanguage]}
+                    runStatusLabels={taskAgentRunStatusLabels[appShellSettings.appLanguage]}
                     sortLabels={uiCopy.taskSorts}
                     copy={taskWorkspaceCopy}
                     runtime={runtime}
                     runtimeSessions={runtimeSessions}
+                    taskConversations={currentTaskConversationChoices}
+                    conversationRunStatuses={nativeConversationTaskRunStatuses}
                     taskTableColumns={appShellSettings.taskTableColumns}
                     creatingTaskBusy={creatingTaskBusy}
                     bulkActionBusy={updatingTaskBusy}
@@ -9206,7 +9477,7 @@ export function App(props: {
                     onSortChange={setTaskSortBy}
                     onTaskTableColumnsChange={(taskTableColumns) => void saveTaskTableColumns(taskTableColumns)}
                     onCreateTask={openTaskCreateModal}
-                    onOpenTaskDetail={(taskId) => void openTaskDetailDrawer(taskId)}
+                    onOpenTaskDetail={(taskId) => void openTaskDetailPane(taskId)}
                     onToggleTaskSelection={toggleTaskSelection}
                     onToggleAllVisibleTaskSelection={toggleAllVisibleTaskSelection}
                     onClearTaskSelection={clearTaskSelection}
@@ -9252,17 +9523,26 @@ export function App(props: {
                     onLoadAttachmentPreview={props.onLoadTaskAttachmentPreview}
                     onOpenAttachment={props.onOpenTaskAttachment}
                   />
-                  {taskDrawerTask ? (
-                    <WorkspaceDrawer label={taskWorkspaceCopy.drawerLabel} backdropLabel={taskWorkspaceCopy.drawerBackdrop} closeLabel={taskWorkspaceCopy.drawerClose} className="task-drawer" onClose={() => setTaskDrawerTaskId(undefined)}>
-                      <TaskDetailDrawerContent
-                        task={taskDrawerTask}
-                        events={taskEvents.filter((event) => event.taskId === taskDrawerTask.id)}
+                    {taskDetailPaneTask ? (
+                        <WorkspaceDrawer
+                            label={taskWorkspaceCopy.detailPaneLabel}
+                            backdropLabel={taskWorkspaceCopy.detailPaneBackdrop}
+                            closeLabel={taskWorkspaceCopy.detailPaneClose}
+                            className="task-detail-floating-drawer"
+                            portalStyle={taskDetailDrawerPortalStyle}
+                            onClose={() => setTaskDetailPaneTaskId(undefined)}
+                        >
+                            <TaskDetailPaneContent
+                                task={taskDetailPaneTask}
+                                events={taskEvents.filter((event) => event.taskId === taskDetailPaneTask.id)}
                         copy={taskWorkspaceCopy}
                         statusLabels={uiCopy.taskStatuses}
                         eventTypeLabels={uiCopy.taskEventTypeLabels}
                         runtimeAiAvailable={runtime.aiCli.available}
                         runtimeSessions={runtimeSessions}
                         busy={updatingTaskBusy}
+                                hasLinkedConversation={Boolean(taskDetailPaneConversation)}
+                                onViewConversation={(taskId) => void openTaskConversation(taskId)}
                         onRuntimeAction={(taskId, action) => void controlTaskRuntime(taskId, action)}
                         onMarkComplete={(taskId) => void updateTaskStatus(taskId, 'completed')}
                         onLoadAttachmentPreview={props.onLoadTaskAttachmentPreview}
@@ -9272,16 +9552,26 @@ export function App(props: {
                     </WorkspaceDrawer>
                   ) : null}
                 </>
+              ) : taskModelPushPending && taskModelPushPending.status !== 'accepted' && selectedNativeConversation?.id === taskModelPushPending.choice.id ? (
+                  <TaskModelPushPendingWorkspace language={appShellSettings.appLanguage} pending={taskModelPushPending}
+                                                 onRetry={retryTaskModelPush}/>
               ) : selectedNativeConversation && props.nativeConversationClient && selectedNativeConversation.transportKind === 'codex_native' && !selectedNativeConversation.readOnly && nativeSessionOwner ? (
                 <ConnectedSessionWorkspace
+                    key={selectedNativeConversation.id}
                   language={appShellSettings.appLanguage}
                   client={props.nativeConversationClient}
                   conversation={selectedNativeConversation}
                   task={nativeSessionTask}
                   owner={nativeSessionOwner}
                   choices={nativeSessionChoices}
+                    initialOptimisticState={taskModelPushPending?.status === 'accepted' && taskModelPushPending.choice.id === selectedNativeConversation.id ? taskModelPushPending.session : undefined}
                   onChooseAttachments={props.onChooseTaskAttachments ? chooseNativeConversationAttachments : undefined}
-                  onStateChange={recordNativeConversationRuntimeState}
+                    onStateChange={(conversationId, state) => {
+                        recordNativeConversationRuntimeState(conversationId, state);
+                        if (taskModelPushPending?.status === 'accepted' && taskModelPushPending.choice.id === conversationId && selectHasConfirmedUserMessage(state, taskModelPushPending.request.clientUserMessageId)) {
+                            setTaskModelPushPending(null);
+                        }
+                    }}
                   onStartConversation={startNativeConversation}
                   onStartProjectConversation={startProjectConversation}
                 />

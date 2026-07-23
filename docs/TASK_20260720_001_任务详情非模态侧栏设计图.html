@@ -1,0 +1,1170 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
+    <title>Zeus 任务详情透明背景悬浮抽屉设计图</title>
+    <style>
+        :root {
+            color-scheme: light;
+            --ink: #16191e;
+            --muted: #69707b;
+            --quiet: #8d949e;
+            --paper: #f5f6f8;
+            --panel: #ffffff;
+            --sidebar: #f7f7f8;
+            --line: #e4e6e9;
+            --line-strong: #d6d9de;
+            --blue: #1769c2;
+            --blue-soft: #edf5ff;
+            --green: #23845d;
+            --green-soft: #edf8f3;
+            --red: #a54239;
+            --shadow: 0 24px 64px rgba(34, 40, 52, 0.15), 0 2px 8px rgba(34, 40, 52, 0.06);
+            --radius: 14px;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        html {
+            scroll-behavior: smooth;
+        }
+
+        body {
+            margin: 0;
+            color: var(--ink);
+            font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif;
+            background: radial-gradient(circle at 14% 0%, rgba(218, 231, 248, 0.72), transparent 30rem),
+            radial-gradient(circle at 92% 4%, rgba(224, 239, 232, 0.68), transparent 28rem),
+            #f4f6f9;
+            overflow-x: clip;
+        }
+
+        button {
+            font: inherit;
+        }
+
+        button:focus-visible,
+        [tabindex="0"]:focus-visible {
+            outline: 3px solid rgba(23, 105, 194, 0.3);
+            outline-offset: 2px;
+        }
+
+        main {
+            width: min(1460px, calc(100vw - 32px));
+            margin: 0 auto;
+            padding: 30px 0 48px;
+        }
+
+        .page-heading {
+            display: flex;
+            align-items: end;
+            justify-content: space-between;
+            gap: 24px;
+            margin: 0 auto 18px;
+            max-width: 1380px;
+        }
+
+        h1 {
+            margin: 0;
+            font-size: clamp(25px, 3vw, 38px);
+            line-height: 1.15;
+            letter-spacing: -0.035em;
+        }
+
+        .summary {
+            max-width: 960px;
+            margin: 8px 0 0;
+            color: var(--muted);
+            font-size: 14px;
+            line-height: 1.7;
+        }
+
+        .decision {
+            flex: 0 0 auto;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            min-height: 34px;
+            padding: 0 12px;
+            border: 1px solid #cce6d9;
+            border-radius: 999px;
+            background: var(--green-soft);
+            color: #176846;
+            font-size: 13px;
+            font-weight: 650;
+        }
+
+        .decision::before {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #32a576;
+            content: "";
+        }
+
+        .template-layout {
+            position: relative;
+            max-width: 1380px;
+            margin: 0 auto;
+            border: 1px solid rgba(199, 205, 214, 0.9);
+            border-radius: 20px;
+            background: rgba(255, 255, 255, 0.84);
+            box-shadow: var(--shadow);
+            overflow: hidden;
+        }
+
+        .artboard-wireframe {
+            display: grid;
+            grid-template-columns: 188px minmax(0, 1fr);
+            min-height: 760px;
+        }
+
+        .rail,
+        .artboard {
+            min-width: 0;
+            background: var(--panel);
+        }
+
+        .navigation-rail {
+            position: relative;
+            z-index: 1;
+            display: flex;
+            flex-direction: column;
+            border-right: 1px solid var(--line);
+            background: var(--sidebar);
+        }
+
+        .window-chrome {
+            display: flex;
+            gap: 8px;
+            height: 45px;
+            padding: 17px 14px 12px;
+        }
+
+        .traffic-light {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            border: 0.5px solid rgba(0, 0, 0, 0.08);
+        }
+
+        .traffic-light.red {
+            background: #ff5f57;
+        }
+
+        .traffic-light.amber {
+            background: #febc2e;
+        }
+
+        .traffic-light.green {
+            background: #28c840;
+        }
+
+        .quick-nav,
+        .project-nav {
+            margin: 0;
+            padding: 0 8px;
+            list-style: none;
+        }
+
+        .quick-nav {
+            margin-top: 4px;
+        }
+
+        .nav-row {
+            display: grid;
+            grid-template-columns: auto minmax(0, 1fr);
+            align-items: center;
+            gap: 9px;
+            min-height: 33px;
+            padding: 0 9px;
+            border-radius: 8px;
+            color: #272b31;
+            font-size: 13px;
+            font-weight: 560;
+        }
+
+        .nav-icon {
+            display: grid;
+            place-items: center;
+            width: 18px;
+            height: 18px;
+            color: #646a73;
+            font-size: 15px;
+        }
+
+        .nav-heading {
+            margin: 14px 0 5px;
+            padding: 0 13px;
+            color: var(--quiet);
+            font-size: 11px;
+            font-weight: 670;
+            letter-spacing: 0.02em;
+        }
+
+        .project-name {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            min-height: 34px;
+            padding: 0 9px;
+            font-size: 13px;
+            font-weight: 630;
+        }
+
+        .project-section {
+            margin: 0 4px 8px 26px;
+        }
+
+        .project-link {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            min-height: 31px;
+            padding: 0 9px;
+            border-radius: 7px;
+            color: #3c4148;
+            font-size: 12px;
+        }
+
+        .project-link.active {
+            background: #e7e8eb;
+            color: #1f2328;
+            font-weight: 650;
+        }
+
+        .project-link .check {
+            color: #626973;
+            font-size: 11px;
+        }
+
+        .sidebar-footer {
+            margin-top: auto;
+            padding: 10px 8px 12px;
+            border-top: 1px solid rgba(228, 230, 233, 0.75);
+        }
+
+        .task-workspace {
+            display: flex;
+            flex-direction: column;
+            min-width: 0;
+            background: #fbfbfc;
+        }
+
+        .workspace-topbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            min-height: 58px;
+            padding: 0 18px;
+            border-bottom: 1px solid var(--line);
+            background: rgba(255, 255, 255, 0.94);
+        }
+
+        .workspace-title {
+            min-width: 0;
+            font-size: 13px;
+            font-weight: 650;
+            white-space: nowrap;
+        }
+
+        .workspace-title span {
+            color: var(--muted);
+            font-weight: 480;
+        }
+
+        .new-task {
+            min-height: 30px;
+            padding: 0 12px;
+            border: 0;
+            border-radius: 7px;
+            background: var(--blue);
+            color: white;
+            font-size: 12px;
+            font-weight: 660;
+            box-shadow: 0 1px 2px rgba(20, 90, 164, 0.18);
+        }
+
+        .filter-bar {
+            display: flex;
+            align-items: center;
+            gap: 9px;
+            min-height: 54px;
+            padding: 10px 16px;
+            border-bottom: 1px solid var(--line);
+            background: #fff;
+        }
+
+        .search {
+            display: flex;
+            align-items: center;
+            flex: 1 1 auto;
+            min-width: 160px;
+            height: 32px;
+            padding: 0 10px;
+            border: 1px solid var(--line-strong);
+            border-radius: 7px;
+            background: #fff;
+            color: var(--quiet);
+            font-size: 12px;
+        }
+
+        .filter-button {
+            min-height: 30px;
+            padding: 0 10px;
+            border: 1px solid var(--line);
+            border-radius: 7px;
+            background: #fff;
+            color: #4e545d;
+            font-size: 12px;
+        }
+
+        .table-meta {
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            padding: 12px 16px 8px;
+            color: var(--muted);
+            font-size: 11px;
+        }
+
+        .task-table {
+            margin: 0 14px;
+            border: 1px solid var(--line);
+            border-radius: 9px;
+            background: #fff;
+            overflow: hidden;
+        }
+
+        .task-row {
+            position: relative;
+            display: grid;
+            grid-template-columns: 31px 88px minmax(170px, 1fr) 110px;
+            align-items: center;
+            min-height: 66px;
+            border-bottom: 1px solid var(--line);
+            color: #30343a;
+            font-size: 12px;
+        }
+
+        .task-row:last-child {
+            border-bottom: 0;
+        }
+
+        .task-row.header {
+            min-height: 35px;
+            background: #fafafb;
+            color: #777e88;
+            font-size: 10px;
+            font-weight: 650;
+        }
+
+        .task-row.selected {
+            background: var(--blue-soft);
+            box-shadow: inset 3px 0 0 var(--blue);
+        }
+
+        .task-row:not(.header):not(.selected):hover {
+            background: #fafcff;
+        }
+
+        .cell {
+            min-width: 0;
+            padding: 8px 9px;
+        }
+
+        .fake-check {
+            width: 14px;
+            height: 14px;
+            margin: auto;
+            border: 1px solid #cbd0d7;
+            border-radius: 4px;
+            background: #fff;
+        }
+
+        .task-code {
+            color: #343941;
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-size: 10px;
+            font-weight: 650;
+        }
+
+        .task-code small,
+        .task-copy small,
+        .task-state small {
+            display: block;
+            margin-top: 4px;
+            color: var(--muted);
+            font-family: inherit;
+            font-size: 10px;
+            font-weight: 450;
+            line-height: 1.35;
+        }
+
+        .task-copy strong {
+            display: block;
+            overflow: hidden;
+            color: #20242a;
+            font-size: 12px;
+            font-weight: 660;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .state-dot {
+            display: inline-block;
+            width: 7px;
+            height: 7px;
+            margin-right: 5px;
+            border-radius: 50%;
+            background: #4a8ed2;
+        }
+
+        .state-dot.waiting {
+            background: #b88b33;
+        }
+
+        .state-dot.done {
+            background: #3c956c;
+        }
+
+        .workspace-hint {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin: auto 16px 16px;
+            padding: 11px 12px;
+            border: 1px solid #d8e8fa;
+            border-radius: 8px;
+            background: #f5f9fe;
+            color: #4e647c;
+            font-size: 11px;
+            line-height: 1.45;
+        }
+
+        .detail-rail {
+            position: absolute;
+            z-index: 5;
+            display: flex;
+            flex-direction: column;
+            top: 68px;
+            right: 12px;
+            bottom: 12px;
+            width: min(520px, calc(100% - 224px));
+            min-width: 420px;
+            border: 1px solid var(--line-strong);
+            border-radius: 14px;
+            background: #fff;
+            box-shadow: -18px 0 42px rgba(35, 42, 53, 0.16);
+            overflow: hidden;
+        }
+
+        .blank-click-layer {
+            position: absolute;
+            z-index: 4;
+            inset: 45px 0 0 188px;
+            border: 0;
+            background: transparent;
+            cursor: default;
+        }
+
+        .resize-handle {
+            position: absolute;
+            z-index: 3;
+            inset: 0 auto 0 -4px;
+            width: 8px;
+            cursor: col-resize;
+        }
+
+        .resize-handle::after {
+            position: absolute;
+            top: 50%;
+            left: 3px;
+            width: 2px;
+            height: 42px;
+            border-radius: 4px;
+            background: transparent;
+            content: "";
+            transform: translateY(-50%);
+        }
+
+        .resize-handle:hover::after {
+            background: #a8c7e8;
+        }
+
+        .detail-header {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
+            gap: 18px;
+            padding: 18px 18px 15px;
+            border-bottom: 1px solid var(--line);
+        }
+
+        .eyebrow {
+            margin: 0 0 6px;
+            color: var(--muted);
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-size: 10px;
+            font-weight: 650;
+            letter-spacing: 0.03em;
+        }
+
+        .detail-header h2 {
+            margin: 0;
+            font-size: 16px;
+            line-height: 1.35;
+            letter-spacing: -0.015em;
+        }
+
+        .header-actions {
+            display: flex;
+            align-items: start;
+            gap: 4px;
+        }
+
+        .icon-button {
+            display: grid;
+            place-items: center;
+            width: 30px;
+            height: 30px;
+            border: 0;
+            border-radius: 7px;
+            background: transparent;
+            color: #626973;
+            font-size: 17px;
+        }
+
+        .icon-button:hover {
+            background: #f0f1f3;
+        }
+
+        .detail-status-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            padding: 11px 18px;
+            border-bottom: 1px solid var(--line);
+            background: #fbfcfe;
+        }
+
+        .status-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            min-height: 26px;
+            padding: 0 9px;
+            border-radius: 999px;
+            background: var(--blue-soft);
+            color: #175a9d;
+            font-size: 11px;
+            font-weight: 650;
+        }
+
+        .next-step {
+            color: var(--muted);
+            font-size: 11px;
+        }
+
+        .detail-scroll {
+            flex: 1 1 auto;
+            min-height: 0;
+            overflow: auto;
+            padding: 16px 18px 24px;
+        }
+
+        .section {
+            padding: 0 0 17px;
+            border-bottom: 1px solid var(--line);
+        }
+
+        .section + .section {
+            padding-top: 17px;
+        }
+
+        .section:last-child {
+            border-bottom: 0;
+        }
+
+        .section h3 {
+            margin: 0 0 10px;
+            font-size: 12px;
+            font-weight: 680;
+        }
+
+        .facts {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+        }
+
+        .fact {
+            min-width: 0;
+            padding: 10px;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            background: #fbfbfc;
+        }
+
+        .fact span {
+            display: block;
+            margin-bottom: 4px;
+            color: var(--muted);
+            font-size: 9px;
+        }
+
+        .fact strong {
+            display: block;
+            overflow: hidden;
+            color: #30353b;
+            font-size: 11px;
+            font-weight: 650;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .requirement {
+            margin: 0;
+            color: #424850;
+            font-size: 11px;
+            line-height: 1.65;
+        }
+
+        .timeline {
+            position: relative;
+            display: grid;
+            gap: 14px;
+            margin-left: 4px;
+        }
+
+        .timeline::before {
+            position: absolute;
+            top: 8px;
+            bottom: 8px;
+            left: 4px;
+            width: 1px;
+            background: #dde1e6;
+            content: "";
+        }
+
+        .event {
+            position: relative;
+            display: grid;
+            grid-template-columns: 12px minmax(0, 1fr) auto;
+            gap: 8px;
+            align-items: start;
+            min-width: 0;
+        }
+
+        .event-dot {
+            position: relative;
+            z-index: 1;
+            width: 9px;
+            height: 9px;
+            margin-top: 3px;
+            border: 2px solid #fff;
+            border-radius: 50%;
+            background: #7d8793;
+            box-shadow: 0 0 0 1px #bbc2ca;
+        }
+
+        .event.current .event-dot {
+            background: var(--blue);
+            box-shadow: 0 0 0 1px #72a9df;
+        }
+
+        .event strong {
+            display: block;
+            font-size: 10px;
+            font-weight: 640;
+        }
+
+        .event small {
+            display: block;
+            margin-top: 3px;
+            color: var(--muted);
+            font-size: 9px;
+        }
+
+        .event time {
+            color: var(--quiet);
+            font-size: 9px;
+            white-space: nowrap;
+        }
+
+        .detail-footer {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto auto;
+            gap: 8px;
+            padding: 12px 14px;
+            border-top: 1px solid var(--line);
+            background: rgba(255, 255, 255, 0.96);
+            box-shadow: 0 -8px 18px rgba(35, 42, 53, 0.035);
+        }
+
+        .footer-button {
+            min-height: 32px;
+            padding: 0 12px;
+            border: 1px solid var(--line-strong);
+            border-radius: 7px;
+            background: #fff;
+            color: #343940;
+            font-size: 11px;
+            font-weight: 630;
+        }
+
+        .footer-button.primary {
+            border-color: #1769c2;
+            background: #1769c2;
+            color: white;
+        }
+
+        .footer-button.more {
+            width: 34px;
+            padding: 0;
+        }
+
+        .annotation {
+            position: absolute;
+            z-index: 6;
+            display: grid;
+            grid-template-columns: auto minmax(0, 1fr);
+            align-items: center;
+            gap: 8px;
+            max-width: 230px;
+            padding: 8px 10px;
+            border: 1px solid rgba(23, 105, 194, 0.22);
+            border-radius: 9px;
+            background: rgba(246, 250, 255, 0.96);
+            color: #34516e;
+            box-shadow: 0 5px 18px rgba(45, 71, 98, 0.09);
+            font-size: 10px;
+            line-height: 1.45;
+            pointer-events: none;
+        }
+
+        .annotation b {
+            display: grid;
+            flex: 0 0 auto;
+            place-items: center;
+            width: 19px;
+            height: 19px;
+            border-radius: 50%;
+            background: var(--blue);
+            color: #fff;
+            font-size: 10px;
+        }
+
+        .annotation-a {
+            top: 618px;
+            right: 550px;
+        }
+
+        .annotation-b {
+            top: 618px;
+            right: 22px;
+        }
+
+        .evidence-and-notes {
+            display: grid;
+            grid-template-columns: 1.05fr 1fr 1fr;
+            gap: 12px;
+            max-width: 1380px;
+            margin: 16px auto 0;
+        }
+
+        .note {
+            min-width: 0;
+            padding: 15px 16px;
+            border: 1px solid rgba(207, 213, 221, 0.9);
+            border-radius: 13px;
+            background: rgba(255, 255, 255, 0.82);
+        }
+
+        .note h2 {
+            margin: 0 0 7px;
+            font-size: 13px;
+            letter-spacing: -0.01em;
+        }
+
+        .note p,
+        .note li {
+            margin: 0;
+            color: var(--muted);
+            font-size: 11px;
+            line-height: 1.65;
+        }
+
+        .note ul {
+            margin: 0;
+            padding-left: 16px;
+        }
+
+        .note li + li {
+            margin-top: 4px;
+        }
+
+        .note code {
+            color: #39546d;
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-size: 10px;
+        }
+
+        .before {
+            border-color: #eed7d2;
+            background: rgba(255, 250, 249, 0.88);
+        }
+
+        .after {
+            border-color: #cfe1f5;
+            background: rgba(248, 252, 255, 0.9);
+        }
+
+        @media (max-width: 1050px) {
+            .artboard-wireframe {
+                grid-template-columns: 176px minmax(0, 1fr);
+            }
+
+            .blank-click-layer {
+                inset-inline-start: 176px;
+            }
+
+            .detail-rail {
+                width: min(500px, calc(100% - 200px));
+                min-width: 400px;
+            }
+
+            .task-row {
+                grid-template-columns: 28px 78px minmax(140px, 1fr);
+            }
+
+            .task-row > :last-child {
+                display: none;
+            }
+
+            .annotation {
+                display: none;
+            }
+        }
+
+        @media (max-width: 780px) {
+            main {
+                width: min(100vw - 20px, 760px);
+                padding-top: 18px;
+            }
+
+            .page-heading {
+                align-items: start;
+                flex-direction: column;
+                gap: 10px;
+            }
+
+            .template-layout {
+                width: 100%;
+                max-width: 100%;
+                overflow: hidden;
+            }
+
+            .artboard-wireframe {
+                display: block;
+                min-height: 0;
+            }
+
+            .navigation-rail {
+                display: none;
+            }
+
+            .task-workspace {
+                width: 100%;
+                max-width: 100%;
+                min-height: 520px;
+                border-radius: 18px;
+                overflow: hidden;
+            }
+
+            .workspace-topbar {
+                flex-wrap: wrap;
+                padding-block: 11px;
+            }
+
+            .workspace-title {
+                flex: 1 1 100%;
+                white-space: normal;
+            }
+
+            .filter-bar {
+                display: grid;
+                grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+            }
+
+            .search {
+                grid-column: 1 / -1;
+                width: 100%;
+                min-width: 0;
+            }
+
+            .filter-button {
+                width: 100%;
+            }
+
+            .detail-rail {
+                top: 56px;
+                right: 12px;
+                bottom: 12px;
+                width: calc(100% - 24px);
+                max-width: none;
+                min-width: 0;
+                min-height: 0;
+                border: 1px solid var(--line-strong);
+                border-radius: 14px;
+                overflow: hidden;
+                box-shadow: 0 12px 36px rgba(35, 42, 53, 0.1);
+            }
+
+            .blank-click-layer {
+                inset: 45px 0 0;
+            }
+
+            .evidence-and-notes {
+                grid-template-columns: 1fr;
+            }
+
+            .facts {
+                grid-template-columns: 1fr;
+            }
+
+            .detail-footer {
+                grid-template-columns: 1fr auto auto;
+            }
+        }
+
+        @media print {
+            body {
+                background: #fff;
+            }
+
+            main {
+                width: 100%;
+                padding: 0;
+            }
+
+            .template-layout {
+                box-shadow: none;
+                break-inside: avoid;
+            }
+
+            .detail-scroll {
+                overflow: visible;
+            }
+
+            .annotation {
+                box-shadow: none;
+            }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            html {
+                scroll-behavior: auto;
+            }
+
+            * {
+                transition: none !important;
+                animation: none !important;
+            }
+        }
+    </style>
+</head>
+<body>
+<main data-diagram-type="page-mockup"
+      data-template-family="page-mockup"
+      data-template-id="artboard-wireframe"
+      data-template-layout="artboard-wireframe">
+    <header class="page-heading">
+        <div>
+            <h1 data-slot="title">Zeus 任务详情透明背景悬浮抽屉设计图</h1>
+            <p class="summary" data-slot="summary">保留右侧悬浮抽屉的快捷关闭体验，同时取消显眼的灰色遮罩。抽屉按侧栏之外的主工作区比例自适应，任务列表保持原宽，点击抽屉外空白处或按
+                Esc 即可关闭。</p>
+        </div>
+        <span class="decision">确认方案 · 悬浮抽屉</span>
+    </header>
+
+    <section class="template-layout artboard-wireframe" aria-label="Zeus 任务详情透明背景悬浮抽屉桌面端设计图">
+        <aside class="rail navigation-rail" data-slot="navigation" aria-label="项目导航">
+            <div class="window-chrome" aria-hidden="true">
+                <i class="traffic-light red"></i><i class="traffic-light amber"></i><i class="traffic-light green"></i>
+            </div>
+            <ul class="quick-nav">
+                <li class="nav-row"><span class="nav-icon">✎</span><span>新对话</span></li>
+                <li class="nav-row"><span class="nav-icon">⌕</span><span>搜索</span></li>
+            </ul>
+            <p class="nav-heading">项目</p>
+            <div class="project-name"><span class="nav-icon">□</span><span>Zeus E2E</span></div>
+            <nav class="project-section" aria-label="Zeus E2E 项目功能">
+                <div class="project-link active"><span class="check">✓</span><span>任务</span></div>
+                <div class="project-link"><span>#</span><span>代码</span></div>
+                <div class="project-link"><span>▱</span><span>会话</span></div>
+            </nav>
+            <div class="project-name"><span class="nav-icon">□</span><span>tc-app-core</span></div>
+            <div class="sidebar-footer">
+                <div class="nav-row"><span class="nav-icon">⚙</span><span>设置</span></div>
+            </div>
+        </aside>
+
+        <section class="artboard task-workspace" data-slot="primary-action" aria-label="任务列表工作台">
+            <header class="workspace-topbar">
+                <div class="workspace-title">Zeus E2E <span>· 任务 3/12 · 全部状态</span></div>
+                <button class="new-task" type="button">+新建任务</button>
+            </header>
+            <div class="filter-bar">
+                <div class="search">⌕　搜索任务</div>
+                <button class="filter-button" type="button">状态：全部</button>
+                <button class="filter-button" type="button">排序</button>
+            </div>
+            <div class="table-meta"><span>默认视图 · 按最近更新</span><span>12 项任务</span></div>
+            <div class="task-table" role="table" aria-label="任务列表">
+                <div class="task-row header" role="row">
+                    <div class="cell">
+                        <div class="fake-check"></div>
+                    </div>
+                    <div class="cell">任务编码</div>
+                    <div class="cell">任务 / 意图</div>
+                    <div class="cell">状态 / 下一步</div>
+                </div>
+                <div class="task-row selected" role="row" aria-selected="true" tabindex="0">
+                    <div class="cell">
+                        <div class="fake-check"></div>
+                    </div>
+                    <div class="cell task-code">ZEU-000001<small>序号 1</small></div>
+                    <div class="cell task-copy"><strong>developer 权限生命周期真实验收</strong><small>验证 Zeus 新线程与
+                        Codex App 保持一致</small></div>
+                    <div class="cell task-state"><span><i class="state-dot"></i>运行中</span><small>等待 AI 输出</small>
+                    </div>
+                </div>
+                <div class="task-row" role="row" tabindex="0">
+                    <div class="cell">
+                        <div class="fake-check"></div>
+                    </div>
+                    <div class="cell task-code">ZEU-000002<small>序号 2</small></div>
+                    <div class="cell task-copy">
+                        <strong>任务列表字段配置优化</strong><small>精简默认列，保持快捷筛选</small></div>
+                    <div class="cell task-state"><span><i
+                            class="state-dot waiting"></i>等待中</span><small>待开始</small></div>
+                </div>
+                <div class="task-row" role="row" tabindex="0">
+                    <div class="cell">
+                        <div class="fake-check"></div>
+                    </div>
+                    <div class="cell task-code">ZEU-000003<small>序号 3</small></div>
+                    <div class="cell task-copy">
+                        <strong>会话上下文来源可视化</strong><small>显示引用文件与运行证据</small></div>
+                    <div class="cell task-state"><span><i
+                            class="state-dot done"></i>已完成</span><small>查看证据</small></div>
+                </div>
+                <div class="task-row" role="row" tabindex="0">
+                    <div class="cell">
+                        <div class="fake-check"></div>
+                    </div>
+                    <div class="cell task-code">ZEU-000004<small>序号 4</small></div>
+                    <div class="cell task-copy"><strong>Runtime
+                        恢复路径回归验证</strong><small>检查中断后的任务恢复语义</small></div>
+                    <div class="cell task-state"><span><i
+                            class="state-dot waiting"></i>已暂停</span><small>等待继续</small></div>
+                </div>
+            </div>
+            <div class="workspace-hint"><span aria-hidden="true">ⓘ</span><span>详情抽屉悬浮在列表上方；点击抽屉外空白处、右上角关闭按钮或按 Esc 均可关闭。</span>
+            </div>
+        </section>
+
+        <button class="blank-click-layer" type="button" aria-label="点击空白处关闭任务详情"></button>
+
+        <aside class="rail detail-rail" data-slot="secondary" aria-label="当前任务详情悬浮抽屉">
+            <header class="detail-header">
+                <div>
+                    <p class="eyebrow">任务编码 ZEU-000001</p>
+                    <h2>developer 权限生命周期真实验收</h2>
+                </div>
+                <div class="header-actions">
+                    <button class="icon-button" type="button" aria-label="更多任务操作">⋯</button>
+                    <button class="icon-button" type="button" aria-label="收起任务详情">×</button>
+                </div>
+            </header>
+            <div class="detail-status-row">
+                <span class="status-pill"><i class="state-dot"></i>运行中</span>
+                <span class="next-step">下一步：等待 AI 输出</span>
+            </div>
+            <div class="detail-scroll">
+                <section class="section">
+                    <h3>AI 执行事实</h3>
+                    <div class="facts">
+                        <div class="fact"><span>AI CLI</span><strong>已检测</strong></div>
+                        <div class="fact"><span>Runtime 会话</span><strong>未启动</strong></div>
+                        <div class="fact"><span>运行命令 / 状态</span><strong>未记录运行命令</strong></div>
+                        <div class="fact"><span>上下文来源</span><strong>手动创建</strong></div>
+                    </div>
+                </section>
+                <section class="section">
+                    <h3>任务要求</h3>
+                    <p class="requirement">验证 Zeus 新线程与 Codex App
+                        权限生命周期保持一致；只回复短文本，不调用工具。</p>
+                </section>
+                <section class="section">
+                    <h3>任务事件 <span style="color: var(--muted); font-weight: 500;">· 3</span></h3>
+                    <div class="timeline">
+                        <div class="event">
+                            <i class="event-dot"></i>
+                            <div><strong>任务已创建</strong><small>任务创建</small></div>
+                            <time>07-15 21:01</time>
+                        </div>
+                        <div class="event">
+                            <i class="event-dot"></i>
+                            <div><strong>任务已开始</strong><small>task.model_push.started</small></div>
+                            <time>07-17 15:40</time>
+                        </div>
+                        <div class="event current">
+                            <i class="event-dot"></i>
+                            <div><strong>任务已推送到模型</strong><small>task.model_push.started</small></div>
+                            <time>07-17 15:40</time>
+                        </div>
+                    </div>
+                </section>
+            </div>
+            <footer class="detail-footer">
+                <button class="footer-button primary" type="button">暂停 Runtime</button>
+                <button class="footer-button" type="button">标记完成</button>
+                <button class="footer-button more" type="button" aria-label="更多操作，包含取消任务">⋯</button>
+            </footer>
+        </aside>
+
+        <div class="annotation annotation-a" aria-hidden="true">
+            <b>A</b><span>透明点击层：列表不变灰，点击抽屉外空白处立即关闭详情。</span></div>
+        <div class="annotation annotation-b" aria-hidden="true">
+            <b>B</b><span>主操作固定在底部；“取消任务”收入更多菜单，避免危险操作抢夺注意力。</span></div>
+    </section>
+
+    <section class="evidence-and-notes" data-slot="evidence-and-notes" aria-label="设计说明">
+        <article class="note after">
+            <h2>核心改变</h2>
+            <ul>
+                <li>恢复右侧悬浮抽屉，不再挤压任务表格。</li>
+                <li>保留点击抽屉外空白处、关闭按钮和 Esc 三种关闭方式。</li>
+                <li>抽屉占主工作区 48%，并限制在 440–720px；使用边框与阴影表达悬浮层级。</li>
+            </ul>
+        </article>
+        <article class="note before">
+            <h2>遮罩策略</h2>
+            <p>保留全局 <code>backdrop</code> 作为点击命中层，但背景完全透明；它只负责关闭抽屉，不再把中间任务列表染成灰色。
+            </p>
+        </article>
+        <article class="note">
+            <h2>响应式边界</h2>
+            <p>桌面端按侧栏之外的主工作区计算 48% 宽度，并限制在 440–720px；窄窗口放不下最小宽度时，自动退让为四周留 12px
+                的近全宽浮层，仍保留点击外围关闭。</p>
+        </article>
+    </section>
+</main>
+</body>
+</html>

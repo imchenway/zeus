@@ -1,24 +1,44 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
-import { ConversationComposer, canSteerActiveTurn, resolveComposerKeyIntent } from './ConversationComposer.js';
-import { ConversationTranscript } from './ConversationTranscript.js';
-import { LegacyConversationBanner } from './LegacyConversationBanner.js';
-import { PendingRequestSurface } from './PendingRequestSurface.js';
-import { PermissionModeControl } from './PermissionModeControl.js';
+import {type KeyboardEvent as ReactKeyboardEvent, useEffect, useMemo, useRef, useState} from 'react';
+import {ArrowsClockwiseIcon as ArrowsClockwise} from '@phosphor-icons/react/dist/csr/ArrowsClockwise';
+import {WarningCircleIcon as WarningCircle} from '@phosphor-icons/react/dist/csr/WarningCircle';
+import {canSteerActiveTurn, ConversationComposer, resolveComposerKeyIntent} from './ConversationComposer.js';
+import {ConversationTranscript} from './ConversationTranscript.js';
+import {SessionPlanProgress} from './SessionActivity.js';
+import {LegacyConversationBanner} from './LegacyConversationBanner.js';
+import {PendingRequestSurface, requestKind} from './PendingRequestSurface.js';
+import {PermissionModeControl} from './PermissionModeControl.js';
+import {CollaborationModeControl} from './CollaborationModeControl.js';
+import {PlanImplementationRequestSurface} from './PlanImplementationRequestSurface.js';
+import {PlanWorkspace} from './PlanWorkspace.js';
 import type {
-  NativeConversationAttachment,
-  NativeConversationChoice,
-  NativeOperationAcceptance,
-  NativePendingRequest,
-  NativePermissionMode,
-  NativeSessionItemBuffer,
-  NativeSessionState,
-  SessionConversationOwner,
-  StartNativeConversationRequest,
-  StartProjectConversationRequest,
+    CodexConversationCapabilities,
+    NativeCollaborationMode,
+    NativeConversationAttachment,
+    NativeConversationChoice,
+    NativeOperationAcceptance,
+    NativePendingRequest,
+    NativePermissionMode,
+    NativePlanImplementationRequest,
+    NativeSessionItemBuffer,
+    NativeSessionState,
+    NativeTurnSettingsSelection,
+    SessionConversationOwner,
+    StartNativeConversationRequest,
+    StartProjectConversationRequest,
 } from './sessionTypes.js';
-import { useSessionController, type SessionController, type SessionControllerClient } from './useSessionController.js';
-import { createSessionEscapeController, type SessionEscapeController, type SessionEscapeLayer, type SessionEscapeResult } from './useThreadScrollController.js';
-import { SafeMarkdown, type SessionUiLanguage } from './ThreadItemView.js';
+import {
+    reconnectDelayMs,
+    type SessionController,
+    type SessionControllerClient,
+    useSessionController
+} from './useSessionController.js';
+import {
+    createSessionEscapeController,
+    type SessionEscapeController,
+    type SessionEscapeLayer,
+    type SessionEscapeResult
+} from './useThreadScrollController.js';
+import {SafeMarkdown, type SessionUiLanguage} from './ThreadItemView.js';
 
 export interface SessionWorkspaceTask {
   id: string;
@@ -36,6 +56,7 @@ export interface SessionWorkspaceStartInput {
   content: string;
   attachments?: NativeConversationAttachment[];
   permissionMode: NativePermissionMode;
+    collaborationMode: NativeCollaborationMode;
 }
 
 export interface ProjectSessionWorkspaceStartInput {
@@ -43,6 +64,7 @@ export interface ProjectSessionWorkspaceStartInput {
   content: string;
   attachments: NativeConversationAttachment[];
   permissionMode: NativePermissionMode;
+    collaborationMode: NativeCollaborationMode;
 }
 
 export interface SessionWorkspaceActions {
@@ -50,7 +72,7 @@ export interface SessionWorkspaceActions {
   onStartProjectConversation?: (input: ProjectSessionWorkspaceStartInput) => void | Promise<void>;
   onReconnect?: () => void | Promise<void>;
   onDraftChange?: (draft: string) => void;
-  onSubmit?: (delivery: 'queue' | 'steer_now') => void | Promise<void>;
+    onSubmit?: (delivery: 'queue' | 'steer_now', settings?: NativeTurnSettingsSelection) => void | Promise<void>;
   onInterrupt?: (turnId: string) => void | Promise<void>;
   onChooseAttachments?: () => void | Promise<void>;
   onChooseStartAttachments?: () => Promise<NativeConversationAttachment[]>;
@@ -60,12 +82,19 @@ export interface SessionWorkspaceActions {
   onSendQueuedNow?: (submissionId: string) => void | Promise<void>;
   onReorderQueue?: (orderedSubmissionIds: string[]) => void | Promise<void>;
   onResumeQueue?: () => void | Promise<void>;
+    onRestoreArchivedConversation?: () => void | Promise<void>;
   onRespondToRequest?: (requestId: string, response: Record<string, unknown>) => void | Promise<void>;
-  onEditUserItem?: (item: NativeSessionItemBuffer) => void;
+    onEditUserItem?: (item: NativeSessionItemBuffer, content: string) => void | Promise<void>;
   onRetryItem?: (item: NativeSessionItemBuffer) => void;
   onSelectTask?: (task: SessionWorkspaceTask) => void;
   onOpenImportSettings?: (conversation: NativeConversationChoice) => void;
   onPermissionModeChange?: (permissionMode: NativePermissionMode) => void | Promise<void>;
+    onCollaborationModeChange?: (collaborationMode: NativeCollaborationMode) => void | Promise<void>;
+    onRespondToPlanImplementationRequest?: (requestId: string, input: {
+        action: 'implement' | 'refine' | 'dismiss';
+        feedback?: string
+    }) => void | Promise<void>;
+    onSnoozeRequest?: (requestId: string) => void | Promise<void>;
 }
 
 export interface NativeConversationStartStorage {
@@ -75,9 +104,22 @@ export interface NativeConversationStartStorage {
 }
 
 type StartNativeConversationPayload =
-  | { mode: 'create'; content: string; attachments?: NativeConversationAttachment[]; permissionMode: NativePermissionMode }
-  | { mode: 'resume'; conversationId: string; content: string }
-  | { mode: 'reference_legacy'; sourceConversationId: string; messageIds: string[]; content: string; permissionMode: NativePermissionMode };
+    | {
+    mode: 'create';
+    content: string;
+    attachments?: NativeConversationAttachment[];
+    permissionMode: NativePermissionMode;
+    collaborationMode: NativeCollaborationMode
+}
+    | { mode: 'resume'; conversationId: string; content: string; collaborationMode: NativeCollaborationMode }
+    | {
+    mode: 'reference_legacy';
+    sourceConversationId: string;
+    messageIds: string[];
+    content: string;
+    permissionMode: NativePermissionMode;
+    collaborationMode: NativeCollaborationMode
+};
 
 interface PersistedNativeConversationStartEnvelope {
   version: 1;
@@ -105,12 +147,40 @@ export interface ConnectedSessionWorkspaceProps {
   choices?: NativeConversationChoice[];
   onChooseAttachments?: () => Promise<NativeConversationAttachment[]>;
   onStateChange?: (conversationId: string, state: NativeSessionState) => void;
+    initialOptimisticState?: NativeSessionState;
   onStartConversation?: SessionWorkspaceActions['onStartConversation'];
   onStartProjectConversation?: SessionWorkspaceActions['onStartProjectConversation'];
 }
 
 export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps) {
-  const { state, controller } = useSessionController({ client: props.client, projectId: props.conversation.projectId, conversationId: props.conversation.id });
+    // 每个 conversation 由父层 key 隔离；初始乐观状态只在 controller 创建时接管一次，
+    // 后续即使父层清理 task-push pending，也不能重建 controller 或闪断真实 transcript。
+    const initialOptimisticState = useRef(props.initialOptimisticState).current;
+    const {state, controller} = useSessionController({
+        client: props.client,
+        projectId: props.conversation.projectId,
+        conversationId: props.conversation.id,
+        initialOptimisticState,
+    });
+    const [capabilities, setCapabilities] = useState<CodexConversationCapabilities | null>(null);
+    useEffect(() => {
+        let active = true;
+        const load = props.client.loadCodexConversationCapabilities;
+        if (!load)
+            return () => {
+                active = false;
+            };
+        void load(props.conversation.projectId)
+            .then((snapshot) => {
+                if (active) setCapabilities(snapshot);
+            })
+            .catch(() => {
+                if (active) setCapabilities(null);
+            });
+        return () => {
+            active = false;
+        };
+    }, [props.client, props.conversation.projectId]);
   useEffect(() => {
     props.onStateChange?.(props.conversation.id, state);
   }, [props.conversation.id, props.onStateChange, state]);
@@ -122,6 +192,8 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
       task={props.task}
       owner={props.owner}
       choices={props.choices}
+      suppressComposer={!state.snapshot}
+      capabilities={capabilities}
       actions={{
         ...createConnectedSessionActions({ controller, state, onChooseAttachments: props.onChooseAttachments }),
         onStartConversation: props.onStartConversation,
@@ -166,10 +238,10 @@ export function createConnectedSessionActions(input: { controller: SessionContro
   return {
     onReconnect: () => (recoveryRequired ? Promise.resolve() : settle(input.controller.reconnect())),
     onDraftChange: input.controller.setDraft,
-    onSubmit: (delivery) => {
+      onSubmit: (delivery, settings) => {
       if (recoveryRequired) return Promise.resolve();
       const effectiveDelivery = delivery === 'steer_now' && canSteerActiveTurn(input.state) ? 'steer_now' : 'queue';
-      return settle(input.controller.send(effectiveDelivery, effectiveDelivery === 'steer_now' ? (input.state.activeTurnId ?? undefined) : undefined));
+          return settle(input.controller.send(effectiveDelivery, effectiveDelivery === 'steer_now' ? (input.state.activeTurnId ?? undefined) : undefined, effectiveDelivery === 'queue' ? settings : undefined));
     },
     onInterrupt: () => (recoveryRequired ? Promise.resolve() : settle(input.controller.interruptActiveTurn())),
     ...(input.onChooseAttachments
@@ -190,9 +262,28 @@ export function createConnectedSessionActions(input: { controller: SessionContro
     onSendQueuedNow: (submissionId) => (recoveryRequired ? Promise.resolve() : settle(input.controller.sendQueuedNow(submissionId))),
     onReorderQueue: (orderedSubmissionIds) => (recoveryRequired ? Promise.resolve() : settle(input.controller.reorderQueue(orderedSubmissionIds))),
     onResumeQueue: () => (recoveryRequired ? Promise.resolve() : settle(input.controller.resumeQueue())),
+      onRestoreArchivedConversation: () => (recoveryRequired ? Promise.resolve() : settle(input.controller.restoreArchivedConversation())),
     onRespondToRequest: (requestId, response) => (recoveryRequired ? Promise.resolve() : input.controller.respondToRequest(requestId, response).then(() => undefined)),
+      onRespondToPlanImplementationRequest: (requestId, response) => (recoveryRequired ? Promise.resolve() : input.controller.respondToPlanImplementationRequest(requestId, response)),
+      onSnoozeRequest: (requestId) => (recoveryRequired ? Promise.resolve() : input.controller.snoozeRequest(requestId).then(() => undefined)),
     onPermissionModeChange: (permissionMode) => (recoveryRequired ? Promise.resolve() : settle(input.controller.setPermissionMode(permissionMode))),
-    onEditUserItem: (item) => input.controller.setDraft(item.text),
+      onCollaborationModeChange: (collaborationMode) => (recoveryRequired ? Promise.resolve() : settle(input.controller.setCollaborationMode(collaborationMode))),
+      onEditUserItem: async (_item, content) => {
+          const current = input.controller.getState();
+          const active = current.conversationState === 'active_prework' || current.conversationState === 'active_final_answer';
+          if (current.error?.recoveryRequired || current.transportState !== 'ready' || (!active && current.conversationState !== 'native_idle')) {
+              throw new Error('Conversation is not writable.');
+          }
+          input.controller.setDraft(content);
+          const settings = current.providerSettings?.model
+              ? {
+                  model: current.providerSettings.model,
+                  ...(current.providerSettings.effort ? {effort: current.providerSettings.effort} : {}),
+                  collaborationMode: current.snapshot?.collaborationMode ?? 'default',
+              }
+              : undefined;
+          await input.controller.send('queue', undefined, settings);
+      },
   };
 }
 
@@ -217,9 +308,12 @@ export function nativeConversationChoiceFromAcceptance(acceptance: NativeOperati
     providerModel: stringField(conversation.providerModel) ?? stringField(provider.model),
     providerState: stringField(conversation.providerState) ?? stringField(provider.state),
     permissionMode: permissionModeField(conversation.permissionMode),
+      collaborationMode: conversation.collaborationMode === 'plan' ? 'plan' : 'default',
     createdAt: stringField(conversation.createdAt) ?? now,
     updatedAt: stringField(conversation.updatedAt) ?? now,
     archived: conversation.archived === true,
+      hasUnreadCompletion: conversation.hasUnreadCompletion === true,
+      pendingRequestKind: conversation.pendingRequestKind === 'user_input' ? 'user_input' : conversation.pendingRequestKind === 'approval' ? 'approval' : null,
     resumable: conversation.resumable !== false,
     readOnly: conversation.readOnly === true,
   };
@@ -308,9 +402,12 @@ export function projectConversationChoiceFromAcceptance(acceptance: NativeOperat
     providerModel: stringField(conversation.providerModel) ?? stringField(provider.model),
     providerState: stringField(conversation.providerState) ?? stringField(provider.state),
     permissionMode: permissionModeField(conversation.permissionMode),
+      collaborationMode: conversation.collaborationMode === 'plan' ? 'plan' : 'default',
     createdAt: stringField(conversation.createdAt) ?? now,
     updatedAt: stringField(conversation.updatedAt) ?? now,
     archived: conversation.archived === true,
+      hasUnreadCompletion: conversation.hasUnreadCompletion === true,
+      pendingRequestKind: conversation.pendingRequestKind === 'user_input' ? 'user_input' : conversation.pendingRequestKind === 'approval' ? 'approval' : null,
     resumable: conversation.resumable !== false,
     readOnly: conversation.readOnly === true,
   };
@@ -338,7 +435,13 @@ export async function startProjectConversationWithDurableAcceptance<T>(options: 
 
 function buildProjectConversationStartPayload(input: ProjectSessionWorkspaceStartInput): Omit<StartProjectConversationRequest, 'idempotencyKey' | 'clientUserMessageId'> {
   if (!input.content.trim()) throw new Error('Project conversation start content is required.');
-  return { mode: 'create', content: input.content, attachments: input.attachments, permissionMode: input.permissionMode ?? 'auto' };
+    return {
+        mode: 'create',
+        content: input.content,
+        attachments: input.attachments,
+        permissionMode: input.permissionMode ?? 'auto',
+        collaborationMode: input.collaborationMode ?? 'default'
+    };
 }
 
 function projectConversationStartStorageKey(projectId: string): string {
@@ -365,6 +468,7 @@ function isProjectConversationStartRequest(value: unknown): value is StartProjec
     Boolean(value.content.trim()) &&
     Array.isArray(value.attachments) &&
     permissionModeField(value.permissionMode) !== undefined &&
+    (value.collaborationMode === 'default' || value.collaborationMode === 'plan') &&
     typeof value.idempotencyKey === 'string' &&
     Boolean(value.idempotencyKey) &&
     typeof value.clientUserMessageId === 'string' &&
@@ -439,11 +543,22 @@ export function createNativeConversationStartEnvelopeManager(options: { storage?
 function buildStartNativeConversationPayload(input: SessionWorkspaceStartInput): StartNativeConversationPayload {
   const content = input.content.trim();
   if (!content) throw new Error('Native conversation start content is required.');
-  if (input.mode === 'create') return { mode: 'create', content, ...(input.attachments?.length ? { attachments: input.attachments } : {}), permissionMode: input.permissionMode ?? 'auto' };
+    if (input.mode === 'create')
+        return {
+            mode: 'create',
+            content, ...(input.attachments?.length ? {attachments: input.attachments} : {}),
+            permissionMode: input.permissionMode ?? 'auto',
+            collaborationMode: input.collaborationMode ?? 'default'
+        };
   if (!input.conversation) throw new Error('An explicit conversation choice is required.');
   if (input.mode === 'resume') {
     if (input.conversation.transportKind !== 'codex_native' || !input.conversation.resumable) throw new Error('The selected conversation is not resumable.');
-    return { mode: 'resume', conversationId: input.conversation.id, content };
+      return {
+          mode: 'resume',
+          conversationId: input.conversation.id,
+          content,
+          collaborationMode: input.collaborationMode ?? input.conversation.collaborationMode ?? 'default'
+      };
   }
   const messageIds = [...new Set(input.legacyMessageIds ?? [])];
   if (messageIds.length === 0) throw new Error('Explicit legacy message ids are required.');
@@ -453,6 +568,7 @@ function buildStartNativeConversationPayload(input: SessionWorkspaceStartInput):
     messageIds,
     content,
     permissionMode: input.permissionMode ?? 'auto',
+      collaborationMode: input.collaborationMode ?? 'default',
   };
 }
 
@@ -480,8 +596,8 @@ function isStartNativeConversationRequest(value: unknown): value is StartNativeC
   if (typeof value !== 'object' || value === null) return false;
   const request = value as Partial<StartNativeConversationRequest>;
   if (typeof request.idempotencyKey !== 'string' || !request.idempotencyKey || typeof request.clientUserMessageId !== 'string' || !request.clientUserMessageId || typeof request.content !== 'string' || !request.content) return false;
-  if (request.mode === 'create') return permissionModeField(request.permissionMode) !== undefined;
-  if (request.mode === 'resume') return typeof request.conversationId === 'string' && Boolean(request.conversationId);
+    if (request.mode === 'create') return permissionModeField(request.permissionMode) !== undefined && (request.collaborationMode === 'default' || request.collaborationMode === 'plan');
+    if (request.mode === 'resume') return typeof request.conversationId === 'string' && Boolean(request.conversationId) && (request.collaborationMode === 'default' || request.collaborationMode === 'plan');
   return (
     request.mode === 'reference_legacy' &&
     typeof request.sourceConversationId === 'string' &&
@@ -489,7 +605,8 @@ function isStartNativeConversationRequest(value: unknown): value is StartNativeC
     Array.isArray(request.messageIds) &&
     request.messageIds.length > 0 &&
     request.messageIds.every((messageId) => typeof messageId === 'string' && Boolean(messageId)) &&
-    permissionModeField(request.permissionMode) !== undefined
+    permissionModeField(request.permissionMode) !== undefined &&
+    (request.collaborationMode === 'default' || request.collaborationMode === 'plan')
   );
 }
 
@@ -519,6 +636,8 @@ export interface SessionWorkspaceProps {
   owner?: SessionConversationOwner;
   tasks?: SessionWorkspaceTask[];
   choices?: NativeConversationChoice[];
+    suppressComposer?: boolean;
+    capabilities?: CodexConversationCapabilities | null;
   choicesKnown?: boolean;
   legacyMessages?: Record<string, Array<{ id: string; role: string; content: string }>>;
   loadState?: 'empty' | 'loading' | 'error';
@@ -540,6 +659,7 @@ const labels = {
     details: '详情',
     retry: '重新连接',
     ready: '已就绪',
+      queued: '待发送',
     starting: '正在开始',
     working: '正在处理',
     answering: '正在回答',
@@ -582,6 +702,7 @@ const labels = {
     details: 'Details',
     retry: 'Reconnect',
     ready: 'Ready',
+      queued: 'Queued',
     starting: 'Starting',
     working: 'Working',
     answering: 'Answering',
@@ -614,7 +735,7 @@ const labels = {
   },
 } as const;
 
-type SessionWorkspaceStatus = { kind: 'ready' | 'busy' | 'warning' | 'error'; symbol: string; label: string };
+type SessionWorkspaceStatus = { kind: 'ready' | 'busy' | 'warning' | 'error'; label: string };
 
 export interface SessionHeaderSnapshot {
   conversationId: string;
@@ -651,6 +772,8 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const [requestErrors, setRequestErrors] = useState<Record<string, string>>({});
   const [interruptArmed, setInterruptArmed] = useState(false);
   const [startFreshOpen, setStartFreshOpen] = useState(false);
+    const [planWorkspaceItemId, setPlanWorkspaceItemId] = useState<string | null>(null);
+    const [planWorkspaceFullWidth, setPlanWorkspaceFullWidth] = useState(false);
   const currentHeader = useMemo(() => createSessionHeaderSnapshot(props.conversation, props.task, props.state, props.loadState, props.language, owner), [owner, props.conversation, props.language, props.loadState, props.state, props.task]);
   const currentHeaderRef = useRef(currentHeader);
   currentHeaderRef.current = currentHeader;
@@ -659,8 +782,18 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const previousPendingCountRef = useRef(0);
   const composerFocusRestorationPendingRef = useRef(false);
   const legacy = props.conversation && (props.conversation.readOnly || props.conversation.transportKind !== 'codex_native');
-  const nonResumableNative = Boolean(props.conversation && !legacy && !props.conversation.resumable);
+    const effectiveProviderState = props.state?.snapshot?.providerState ?? props.conversation?.providerState ?? null;
+    const effectiveResumable = props.state?.snapshot ? !['closed', 'failed'].includes(effectiveProviderState ?? '') : effectiveProviderState === 'archived' ? true : props.conversation?.resumable;
+    const nonResumableNative = Boolean(props.conversation && !legacy && !effectiveResumable);
   const pendingRequests = props.state?.pendingRequests.filter((request) => request.status === 'pending') ?? [];
+    const pendingPlanImplementationRequests = props.state?.planImplementationRequests.filter((request) => request.status === 'pending').slice(-1) ?? [];
+    const planWorkspaceItem = planWorkspaceItemId ? (Object.values(props.state?.items ?? {}).find((item) => item.type === 'plan' && (item.localItemId === planWorkspaceItemId || item.itemId === planWorkspaceItemId)) ?? null) : null;
+    const dockedPlan = props.state ? selectDockedTurnPlan(props.state) : null;
+
+    useEffect(() => {
+        setPlanWorkspaceItemId(null);
+        setPlanWorkspaceFullWidth(false);
+    }, [props.conversation?.id]);
 
   useEffect(() => {
     if (displayedHeader?.conversationId === currentHeader?.conversationId) return;
@@ -711,6 +844,28 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
 
   function handleWorkspaceKeyDownCapture(event: ReactKeyboardEvent<HTMLElement>): void {
     if (event.key !== 'Escape') return;
+      const planRequest = pendingPlanImplementationRequests[0];
+      if (planRequest) {
+          event.preventDefault();
+          event.stopPropagation();
+          void respondToPlanImplementationRequest(planRequest, {action: 'dismiss'});
+          return;
+      }
+      if (planWorkspaceItemId) {
+          event.preventDefault();
+          event.stopPropagation();
+          setPlanWorkspaceItemId(null);
+          setPlanWorkspaceFullWidth(false);
+          return;
+      }
+      const userInputRequest = pendingRequests.find((request) => requestKind(request) === 'request_user_input');
+      if (userInputRequest) {
+          if (event.target instanceof Element && event.target.closest('.session-rui-request')) return;
+          event.preventDefault();
+          event.stopPropagation();
+          void respond(userInputRequest, {type: 'userInput', answers: {}});
+          return;
+      }
     const state = props.state;
     const active = state?.conversationState === 'active_prework' || state?.conversationState === 'active_final_answer';
     const result = resolveSessionWorkspaceEscape({
@@ -772,6 +927,28 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     }
   }
 
+    async function respondToPlanImplementationRequest(request: NativePlanImplementationRequest, input: {
+        action: 'implement' | 'refine' | 'dismiss';
+        feedback?: string
+    }): Promise<void> {
+        if (!actions.onRespondToPlanImplementationRequest || !responseGuard.begin(request.id)) return;
+        setRequestErrors((current) => {
+            const next = {...current};
+            delete next[request.id];
+            return next;
+        });
+        try {
+            await actions.onRespondToPlanImplementationRequest(request.id, input);
+        } catch (error) {
+            setRequestErrors((current) => ({
+                ...current,
+                [request.id]: error instanceof Error ? error.message : String(error)
+            }));
+        } finally {
+            responseGuard.finish(request.id);
+        }
+    }
+
   return (
     <section
       className="session-workspace-root"
@@ -791,9 +968,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
             role={displayedHeader.status.kind === 'error' ? 'alert' : 'status'}
             aria-live={displayedHeader.status.kind === 'error' ? 'assertive' : 'polite'}
           >
-            <span className="session-status-symbol" aria-hidden="true">
-              {displayedHeader.status.symbol}
-            </span>
+            <span className="session-status-symbol" aria-hidden="true"/>
             <span>{displayedHeader.status.label}</span>
           </span>
         </header>
@@ -825,91 +1000,135 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
           ) : null}
         </>
       ) : props.state ? (
-        <div className="session-thread-body">
-          <SessionRuntimeDetails state={props.state} conversation={props.conversation} language={props.language} />
-          {props.state.transportState === 'hydrating' || props.state.transportState === 'connecting' ? <SessionLoading language={props.language} /> : null}
-          {props.state.transportState === 'reconnecting' ? <SessionReconnectNotice language={props.language} attempt={props.state.reconnectAttempt} /> : null}
-          {props.state.transportState === 'failed' ? (
-            <section className="session-transport-failure" role="alert">
-              <strong>{props.state.error?.recoveryRequired ? copy.recoveryRequired : isServerBusyError(props.state.error) ? copy.serverBusy : copy.failed}</strong>
-              <p>{props.state.error?.recoveryRequired ? copy.recoveryRequiredHelp : isServerBusyError(props.state.error) ? copy.serverBusyHelp : copy.failureHelp}</p>
-              {errorMessage(props.state.error) || props.loadError ? (
-                <details className="session-error-details">
-                  <summary>{copy.details}</summary>
-                  <p>{errorMessage(props.state.error) ?? props.loadError}</p>
-                </details>
-              ) : null}
-              {props.state.error?.recoveryRequired ? (
-                <button type="button" onClick={() => setStartFreshOpen(true)}>
-                  {copy.startNew}
-                </button>
-              ) : actions.onReconnect ? (
-                <button type="button" onClick={() => void actions.onReconnect?.()}>
-                  {copy.retry}
-                </button>
-              ) : null}
-            </section>
-          ) : null}
-          {nonResumableNative ? (
-            <section className="session-nonresumable-notice" role="status">
-              <strong>{copy.nonResumable}</strong>
-              <p>{copy.nonResumableHelp}</p>
-              <button type="button" onClick={() => setStartFreshOpen(true)}>
-                {copy.startNew}
-              </button>
-            </section>
-          ) : null}
-          {(startFreshOpen || props.state.error?.recoveryRequired) && owner ? (
-            <NewConversationComposer
-              language={props.language}
-              owner={owner}
-              task={props.task}
-              autoFocus
-              onStartTask={actions.onStartConversation}
-              onStartProject={actions.onStartProjectConversation}
-              onChooseAttachments={actions.onChooseStartAttachments}
-            />
-          ) : null}
-          <ConversationTranscript
-            state={props.state}
-            language={props.language}
-            onEditUserItem={actions.onEditUserItem}
-            onRetryItem={actions.onRetryItem}
-            pendingRequests={pendingRequests}
-            renderPendingRequest={(request, index) => (
-              <PendingRequestSurface
-                request={request}
-                language={props.language}
-                permissionMode={props.state?.snapshot?.permissionMode ?? 'read-only'}
-                autoFocus={index === 0}
-                busy={Boolean(props.state?.error?.recoveryRequired) || isRequestResponseBusy(props.state?.busyOperation ?? null, request.id)}
-                error={requestErrors[request.id]}
-                onRespond={(_requestId, response) => respond(request, response)}
-              />
-            )}
-          />
-          <ConversationComposer
-            textareaRef={composerRef}
-            state={props.state}
-            language={props.language}
-            onDraftChange={(draft) => actions.onDraftChange?.(draft)}
-            onSubmit={(delivery) => actions.onSubmit?.(delivery)}
-            onInterrupt={(turnId) => actions.onInterrupt?.(turnId)}
-            onChooseAttachments={actions.onChooseAttachments}
-            onRemoveAttachment={actions.onRemoveAttachment}
-            onEditQueuedSubmission={actions.onEditQueuedSubmission}
-            onDeleteQueuedSubmission={actions.onDeleteQueuedSubmission}
-            onSendQueuedNow={actions.onSendQueuedNow}
-            onReorderQueue={actions.onReorderQueue}
-            onResumeQueue={actions.onResumeQueue}
-            readOnly={nonResumableNative || Boolean(props.state.error?.recoveryRequired)}
-            permissionMode={props.state.snapshot?.permissionMode ?? 'read-only'}
-            onPermissionModeChange={actions.onPermissionModeChange}
-          />
-          {interruptArmed ? (
-            <p className="session-interrupt-confirm" role="status">
-              {copy.interruptConfirm}
-            </p>
+          <div className="session-thread-split" data-plan-open={Boolean(planWorkspaceItem) || undefined}
+               data-plan-full-width={planWorkspaceFullWidth || undefined}>
+              <div className="session-thread-body">
+                  <SessionRuntimeDetails state={props.state} conversation={props.conversation}
+                                         language={props.language}/>
+                  {props.state.transportState === 'hydrating' || props.state.transportState === 'connecting' ?
+                      <SessionLoading language={props.language}/> : null}
+                  {props.state.transportState === 'reconnecting' ?
+                      <SessionReconnectNotice language={props.language} attempt={props.state.reconnectAttempt}
+                                              onReconnect={actions.onReconnect}/> : null}
+                  {props.state.transportState === 'failed' ? (
+                      <section className="session-transport-failure" role="alert">
+                          <WarningCircle aria-hidden="true" weight="regular"/>
+                          <span className="session-transport-failure-copy">
+                  <strong>{props.state.error?.recoveryRequired ? copy.recoveryRequired : isServerBusyError(props.state.error) ? copy.serverBusy : copy.failed}</strong>
+                  <p>{props.state.error?.recoveryRequired ? copy.recoveryRequiredHelp : isServerBusyError(props.state.error) ? copy.serverBusyHelp : copy.failureHelp}</p>
+                              {errorMessage(props.state.error) || props.loadError ? (
+                                  <details className="session-error-details">
+                                      <summary>{copy.details}</summary>
+                                      <p>{errorMessage(props.state.error) ?? props.loadError}</p>
+                                  </details>
+                              ) : null}
+                </span>
+                          {props.state.error?.recoveryRequired ? (
+                              <button type="button" onClick={() => setStartFreshOpen(true)}>
+                                  {copy.startNew}
+                              </button>
+                          ) : actions.onReconnect ? (
+                              <button type="button" onClick={() => void actions.onReconnect?.()}>
+                                  {copy.retry}
+                              </button>
+                          ) : null}
+                      </section>
+                  ) : null}
+                  {nonResumableNative ? (
+                      <section className="session-nonresumable-notice" role="status">
+                          <strong>{copy.nonResumable}</strong>
+                          <p>{copy.nonResumableHelp}</p>
+                          <button type="button" onClick={() => setStartFreshOpen(true)}>
+                              {copy.startNew}
+                          </button>
+                      </section>
+                  ) : null}
+                  {(startFreshOpen || props.state.error?.recoveryRequired) && owner ? (
+                      <NewConversationComposer
+                          language={props.language}
+                          owner={owner}
+                          task={props.task}
+                          autoFocus
+                          onStartTask={actions.onStartConversation}
+                          onStartProject={actions.onStartProjectConversation}
+                          onChooseAttachments={actions.onChooseStartAttachments}
+                      />
+                  ) : null}
+                  <ConversationTranscript
+                      state={props.state}
+                      language={props.language}
+                      onEditUserItem={actions.onEditUserItem}
+                      onRetryItem={actions.onRetryItem}
+                      pendingRequests={pendingRequests}
+                      planImplementationRequests={pendingPlanImplementationRequests}
+                      openPlanItemId={planWorkspaceItemId}
+                      onOpenPlan={(item) => setPlanWorkspaceItemId(item.localItemId ?? item.itemId)}
+                      renderPendingRequest={(request, index) => (
+                          <PendingRequestSurface
+                              request={request}
+                              language={props.language}
+                              permissionMode={props.state?.snapshot?.permissionMode ?? 'read-only'}
+                              autoFocus={index === 0}
+                              busy={Boolean(props.state?.error?.recoveryRequired) || isRequestResponseBusy(props.state?.busyOperation ?? null, request.id)}
+                              error={requestErrors[request.id]}
+                              onRespond={(_requestId, response) => respond(request, response)}
+                              onSnooze={actions.onSnoozeRequest ? () => actions.onSnoozeRequest?.(request.id) : undefined}
+                          />
+                      )}
+                      renderPlanImplementationRequest={(request, index) => (
+                          <PlanImplementationRequestSurface
+                              request={request}
+                              language={props.language}
+                              autoFocus={index === 0 && pendingRequests.length === 0}
+                              busy={isRequestResponseBusy(props.state?.busyOperation ?? null, request.id)}
+                              error={requestErrors[request.id]}
+                              onRespond={(_requestId, response) => respondToPlanImplementationRequest(request, response)}
+                          />
+                      )}
+                  />
+                  {props.suppressComposer || !dockedPlan ? null :
+                      <SessionPlanProgress plan={dockedPlan} language={props.language}/>}
+                  {props.suppressComposer ? null : (
+                      <ConversationComposer
+                          textareaRef={composerRef}
+                          state={props.state}
+                          language={props.language}
+                          capabilities={props.capabilities}
+                          onDraftChange={(draft) => actions.onDraftChange?.(draft)}
+                          onSubmit={(delivery, settings) => actions.onSubmit?.(delivery, settings)}
+                          onInterrupt={(turnId) => actions.onInterrupt?.(turnId)}
+                          onChooseAttachments={actions.onChooseAttachments}
+                          onRemoveAttachment={actions.onRemoveAttachment}
+                          onEditQueuedSubmission={actions.onEditQueuedSubmission}
+                          onDeleteQueuedSubmission={actions.onDeleteQueuedSubmission}
+                          onSendQueuedNow={actions.onSendQueuedNow}
+                          onReorderQueue={actions.onReorderQueue}
+                          onResumeQueue={actions.onResumeQueue}
+                          onRetryQueue={actions.onRestoreArchivedConversation}
+                          readOnly={nonResumableNative || Boolean(props.state.error?.recoveryRequired)}
+                          permissionMode={props.state.snapshot?.permissionMode ?? 'read-only'}
+                          onPermissionModeChange={actions.onPermissionModeChange}
+                          collaborationMode={props.state.snapshot?.collaborationMode ?? 'default'}
+                          onCollaborationModeChange={actions.onCollaborationModeChange}
+                      />
+                  )}
+                  {interruptArmed ? (
+                      <p className="session-interrupt-confirm" role="status">
+                          {copy.interruptConfirm}
+                      </p>
+                  ) : null}
+              </div>
+              {planWorkspaceItem ? (
+                  <PlanWorkspace
+                      item={planWorkspaceItem}
+                      language={props.language}
+                      fullWidth={planWorkspaceFullWidth}
+                      onFullWidthChange={setPlanWorkspaceFullWidth}
+                      onClose={() => {
+                          setPlanWorkspaceItemId(null);
+                          setPlanWorkspaceFullWidth(false);
+                      }}
+                  />
           ) : null}
         </div>
       ) : (
@@ -927,6 +1146,19 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
       )}
     </section>
   );
+}
+
+export function selectDockedTurnPlan(state: NativeSessionState): NativeSessionState['turnsByProviderId'][string]['plan'] {
+    if (state.activeTurnId) return state.turnsByProviderId[state.activeTurnId]?.plan ?? null;
+    const turnIdsInTranscript = [...state.itemOrder]
+        .reverse()
+        .map((key) => state.items[key]?.turnId)
+        .filter((turnId): turnId is string => Boolean(turnId));
+    for (const turnId of turnIdsInTranscript) {
+        const plan = state.turnsByProviderId[turnId]?.plan;
+        if (plan?.steps.length) return plan;
+    }
+    return [...Object.values(state.turnsByProviderId)].sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt)).find((turn) => turn.plan?.steps.length)?.plan ?? null;
 }
 
 function clearInterruptResetTimer(timerRef: { current: ReturnType<typeof setTimeout> | null }): void {
@@ -995,6 +1227,7 @@ function NewConversationComposer(props: {
   const [content, setContent] = useState('');
   const [attachments, setAttachments] = useState<NativeConversationAttachment[]>([]);
   const [permissionMode, setPermissionMode] = useState<NativePermissionMode>('auto');
+    const [collaborationMode, setCollaborationMode] = useState<NativeCollaborationMode>('default');
   const [isComposing, setIsComposing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
@@ -1010,10 +1243,17 @@ function NewConversationComposer(props: {
     try {
       if (props.owner.kind === 'project') {
         if (!props.onStartProject) throw new Error('Project conversation start is unavailable.');
-        await props.onStartProject({ owner: props.owner, content, attachments, permissionMode });
+          await props.onStartProject({owner: props.owner, content, attachments, permissionMode, collaborationMode});
       } else {
         if (!props.task || !props.onStartTask) throw new Error('Task conversation start is unavailable.');
-        await props.onStartTask({ mode: 'create', task: props.task, content, attachments, permissionMode });
+          await props.onStartTask({
+              mode: 'create',
+              task: props.task,
+              content,
+              attachments,
+              permissionMode,
+              collaborationMode
+          });
       }
     } catch (error) {
       setLocalError(error instanceof Error ? error.message : String(error));
@@ -1088,6 +1328,8 @@ function NewConversationComposer(props: {
                 </button>
               ) : null}
               <PermissionModeControl language={props.language} value={permissionMode} disabled={submitting || !props.owner} onChange={setPermissionMode} />
+              <CollaborationModeControl language={props.language} value={collaborationMode}
+                                        disabled={submitting || !props.owner} onChange={setCollaborationMode}/>
             </span>
             <span className="session-composer-trailing-actions">
               <span className="session-primary-command-slot" data-primary-command-slot="true">
@@ -1114,12 +1356,26 @@ function SessionLoading(props: { language: SessionUiLanguage }) {
   );
 }
 
-function SessionReconnectNotice(props: { language: SessionUiLanguage; attempt: number }) {
+function SessionReconnectNotice(props: {
+    language: SessionUiLanguage;
+    attempt: number;
+    onReconnect?: () => void | Promise<void>
+}) {
+    const delay = reconnectDelayMs(props.attempt);
+    const delayLabel = delay < 1_000 ? `${delay} ms` : `${delay / 1_000} s`;
   return (
-    <p className="session-reconnect-notice" role="status" aria-live="polite">
-      <span className="session-command-spinner" aria-hidden="true" />
-      {labels[props.language].reconnectingAttempt(props.attempt)}
-    </p>
+      <section className="session-reconnect-notice" role="status" aria-live="polite" aria-atomic="true">
+          <ArrowsClockwise aria-hidden="true" weight="regular"/>
+          <span>
+        <strong>{labels[props.language].reconnectingAttempt(props.attempt)}</strong>
+        <small>{props.language === 'zh-CN' ? `自动重试会持续进行；下次约 ${delayLabel} 后，历史记录仍可查看。` : `Automatic retries continue; next attempt in about ${delayLabel}. History remains available.`}</small>
+      </span>
+          {props.onReconnect ? (
+              <button type="button" onClick={() => void props.onReconnect?.()}>
+                  {props.language === 'zh-CN' ? '立即重试' : 'Retry now'}
+              </button>
+          ) : null}
+      </section>
   );
 }
 
@@ -1207,37 +1463,50 @@ function humanizeRuntimeKey(value: string): string {
 
 function sessionStatus(state: NativeSessionState | null, loadState: SessionWorkspaceProps['loadState'], copy: (typeof labels)[SessionUiLanguage]): SessionWorkspaceStatus {
   if (!state) {
-    if (loadState === 'loading') return { kind: 'busy', symbol: '◌', label: copy.loading };
-    if (loadState === 'error') return { kind: 'error', symbol: '×', label: copy.failed };
-    return { kind: 'ready', symbol: '·', label: copy.ready };
+      if (loadState === 'loading') return {kind: 'busy', label: copy.loading};
+      if (loadState === 'error') return {kind: 'error', label: copy.failed};
+      return {kind: 'ready', label: copy.ready};
   }
-  if (state.transportState === 'connecting' || state.transportState === 'hydrating') return { kind: 'busy', symbol: '◌', label: copy.loading };
-  if (state.transportState === 'reconnecting') return { kind: 'warning', symbol: '↻', label: copy.reconnectingAttempt(state.reconnectAttempt) };
-  if (state.error?.recoveryRequired) return { kind: 'error', symbol: '×', label: copy.recoveryRequired };
-  if (state.transportState === 'failed') return { kind: 'error', symbol: '×', label: isServerBusyError(state.error) ? copy.serverBusy : copy.failed };
+    if (state.transportState === 'connecting' || state.transportState === 'hydrating') return {
+        kind: 'busy',
+        label: copy.loading
+    };
+    if (state.transportState === 'reconnecting') return {
+        kind: 'warning',
+        label: copy.reconnectingAttempt(state.reconnectAttempt)
+    };
+    if (state.error?.recoveryRequired) return {kind: 'error', label: copy.recoveryRequired};
+    if (state.transportState === 'failed') return {
+        kind: 'error',
+        label: isServerBusyError(state.error) ? copy.serverBusy : copy.failed
+    };
+    if ((state.snapshot?.providerState === 'archived' || (state.queue?.state.type === 'paused' && state.queue.state.reason === 'provider_archived')) && (state.queue?.submissions.length ?? 0) > 0) return {
+        kind: 'busy',
+        label: copy.queued
+    };
   switch (state.conversationState) {
     case 'native_loading':
-      return { kind: 'busy', symbol: '◌', label: copy.loading };
+        return {kind: 'busy', label: copy.loading};
     case 'native_idle':
-      return { kind: 'ready', symbol: '·', label: copy.ready };
+        return {kind: 'ready', label: copy.ready};
     case 'starting_turn':
-      return { kind: 'busy', symbol: '◌', label: copy.starting };
+        return {kind: 'busy', label: copy.starting};
     case 'active_prework':
-      return { kind: 'busy', symbol: '◌', label: copy.working };
+        return {kind: 'busy', label: copy.working};
     case 'active_final_answer':
-      return { kind: 'busy', symbol: '◌', label: copy.answering };
+        return {kind: 'busy', label: copy.answering};
     case 'waiting_approval':
-      return { kind: 'warning', symbol: '!', label: copy.approval };
+        return {kind: 'warning', label: copy.approval};
     case 'waiting_user_input':
-      return { kind: 'warning', symbol: '?', label: copy.input };
+        return {kind: 'warning', label: copy.input};
     case 'interrupt_confirm':
-      return { kind: 'warning', symbol: '!', label: copy.interruptConfirm };
+        return {kind: 'warning', label: copy.interruptConfirm};
     case 'interrupting':
-      return { kind: 'busy', symbol: '◌', label: copy.interrupting };
+        return {kind: 'busy', label: copy.interrupting};
     case 'turn_failed':
-      return { kind: 'error', symbol: '×', label: errorMessage(state.error) ?? copy.turnFailed };
+        return {kind: 'error', label: errorMessage(state.error) ?? copy.turnFailed};
     case 'legacy_readonly':
-      return { kind: 'warning', symbol: '↗', label: copy.legacyTranscript };
+        return {kind: 'warning', label: copy.legacyTranscript};
   }
 }
 

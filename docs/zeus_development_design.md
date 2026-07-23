@@ -15,7 +15,8 @@
 
 ### 0.1 总目标
 
-在 `/Users/david/hypha/zeus` 内从零或从现有空仓库开始，构建一个名为 **Zeus** 的本地优先 macOS AI 研发工作台。最终产物必须是一个可以本地运行、可以打包、可以测试、可以开源发布的 macOS 桌面应用，具备以下完整能力：
+在 `/Users/david/hypha/zeus` 内从零或从现有空仓库开始，构建一个名为 **Zeus** 的本地优先 macOS AI
+研发工作台。最终产物必须是一个可以本地运行、可以打包、可以验收、可以开源发布的 macOS 桌面应用，具备以下完整能力：
 
 1. 项目管理：创建项目、选择本地代码库、维护项目配置、查看项目概览。
 2. 任务管理：创建任务、执行任务、暂停/继续/取消/重试、任务模板、任务状态时间线、任务归档。
@@ -27,22 +28,24 @@
 8. AI 与图谱联动：基于图谱上下文问答、从模块/接口/表/方法/调用链创建任务、任务结果回写图谱。
 9. Telegram 远程入口：long polling、本机白名单、命令、通知、远程创建和控制任务。
 10. 安全与权限：本地服务不暴露公网、API token、macOS Keychain、敏感日志脱敏、高风险操作二次确认。
-11. 测试与质量：单元测试、集成测试、UI 测试、真实代码库扫描测试、打包测试。
+11. 质量验证：代码规范、类型检查、构建、真实代码库扫描、正式打包与真实运行检查。
 12. 发布工程：README、开发文档、贡献指南、Electron Builder、DMG、ZIP、Homebrew cask 配置、GitHub Release 工作流。
 
 ### 0.2 不可违反的硬性约束
 
 1. **项目命名统一为 Zeus / zeus**。所有包名、目录、窗口标题、数据库名称、README、文档、UI 文案必须使用 Zeus。不得出现历史项目代号、历史平台名或无关项目名。
-2. **开发与测试过程禁止写入任何 mock 数据**。不得向 SQLite、配置文件、测试目录、示例目录、文档或 UI 写入虚假的项目、任务、会话、图谱节点、接口、表、SQL、终端输出或 AI 回复。
-3. **不得使用假 demo 项目替代真实扫描**。若没有用户选择的外部项目，测试过程允许并且必须直接使用当前项目 `/Users/david/hypha/zeus` 的真实代码库生成图。
+2. **开发与验收过程禁止写入任何 mock 数据**。不得向 SQLite、配置文件、示例目录、文档或 UI 写入虚假的项目、任务、会话、图谱节点、接口、表、SQL、终端输出或
+   AI 回复。
+3. **不得使用假 demo 项目替代真实扫描**。若没有用户选择的外部项目，验收过程允许并且必须直接使用当前项目
+   `/Users/david/hypha/zeus` 的真实代码库生成图。
 4. **没有真实数据时展示空状态**。不要用假数据填充界面；空项目、空任务、空图谱、空会话都必须以空状态组件呈现。
 5. **外部 AI CLI 不存在时不得伪造执行结果**。必须显示“未检测到可用 CLI / 需要配置”，并提供设置入口。
 6. **Telegram 未配置时不得伪造消息**。必须显示未启用状态。
-7. **数据库测试必须使用临时真实数据库文件或当前项目真实数据导入**，不得 seed 虚假业务记录。
+7. **数据库运行检查必须使用临时真实数据库文件或当前项目真实数据导入**，不得 seed 虚假业务记录。
 8. **代码图谱中的每个节点和边必须有来源**：文件路径、代码行、SQL 文件、DDL 文件、数据库 introspection、Git 信息或用户明确创建的真实记录。
 9. **所有 shell/文件/Git 高风险操作默认需要确认**。远程入口触发高风险操作时必须进入等待确认状态。
 10. **本地服务只允许监听 `127.0.0.1` 或 Unix Domain Socket**，不得默认监听 `0.0.0.0`。
-11. **最终必须能执行真实构建命令、真实测试命令、真实打包命令**，不能仅生成静态页面或 README。
+11. **最终必须能执行真实构建命令、真实打包命令和真实运行检查**，不能仅生成静态页面或 README。
 
 ### 0.3 一次性目标模式执行要求
 
@@ -53,8 +56,6 @@ cd /Users/david/hypha/zeus
 pnpm install
 pnpm lint
 pnpm typecheck
-pnpm test
-pnpm test:real-scan
 pnpm build
 pnpm package:mac
 ```
@@ -109,26 +110,26 @@ pnpm package:mac
 
 ### 2.1 总体选型
 
-| 层级 | 技术 | 说明 |
-|---|---|---|
-| 桌面应用 | Electron + React + TypeScript | 兼顾 macOS 桌面、Web 图谱、终端、Node 本地能力和跨平台潜力 |
-| 本地服务 | Fastify + WebSocket | 本地 API、任务流、图谱查询、实时日志事件 |
-| 桌面主进程 | Electron Main | 启动本地服务、管理窗口、权限、菜单、Keychain、进程生命周期 |
-| UI | React + TypeScript + TanStack Router | 项目、任务、图谱、终端、设置等页面 |
-| 状态管理 | Zustand + TanStack Query | UI 本地状态和服务端数据缓存 |
-| 数据库 | SQLite + Drizzle ORM 或 Kysely | 本地持久化、迁移、类型安全查询 |
-| 终端 | node-pty + xterm.js | AI CLI 交互式 PTY 与终端展示 |
-| 代码扫描 | tree-sitter、ripgrep、fast-xml-parser、node-sql-parser | 多语言解析、Spring/MyBatis/SQL 抽取 |
-| Git | simple-git + 原生 git 命令兜底 | 状态、diff、分支、提交、stash、patch |
-| 图谱 | SQLite nodes/edges + graphology | 本地图谱事实层 |
-| 大图渲染 | Sigma.js / WebGL | 系统总览、模块依赖、表关系大图 |
-| 中小图交互 | React Flow | 接口调用链、模块流程、方法逻辑 |
-| 布局 | elkjs / dagre / graphology layout | 后台计算视图布局并缓存 |
-| 图文本渲染 | Mermaid | 时序图、流程图预览和导出 |
-| 安全存储 | macOS Keychain via keytar | Token、API Key、敏感配置 |
-| 打包 | electron-builder | DMG、ZIP、签名预留、notarization 预留 |
-| 包管理 | pnpm workspace | Monorepo 管理 |
-| 测试 | Vitest、Playwright、Electron smoke tests | 单测、集成、UI、真实扫描测试 |
+| 层级    | 技术                                                  | 说明                                    |
+|-------|-----------------------------------------------------|---------------------------------------|
+| 桌面应用  | Electron + React + TypeScript                       | 兼顾 macOS 桌面、Web 图谱、终端、Node 本地能力和跨平台潜力 |
+| 本地服务  | Fastify + WebSocket                                 | 本地 API、任务流、图谱查询、实时日志事件                |
+| 桌面主进程 | Electron Main                                       | 启动本地服务、管理窗口、权限、菜单、Keychain、进程生命周期     |
+| UI    | React + TypeScript + TanStack Router                | 项目、任务、图谱、终端、设置等页面                     |
+| 状态管理  | Zustand + TanStack Query                            | UI 本地状态和服务端数据缓存                       |
+| 数据库   | SQLite + Drizzle ORM 或 Kysely                       | 本地持久化、迁移、类型安全查询                       |
+| 终端    | node-pty + xterm.js                                 | AI CLI 交互式 PTY 与终端展示                  |
+| 代码扫描  | tree-sitter、ripgrep、fast-xml-parser、node-sql-parser | 多语言解析、Spring/MyBatis/SQL 抽取           |
+| Git   | simple-git + 原生 git 命令兜底                            | 状态、diff、分支、提交、stash、patch             |
+| 图谱    | SQLite nodes/edges + graphology                     | 本地图谱事实层                               |
+| 大图渲染  | Sigma.js / WebGL                                    | 系统总览、模块依赖、表关系大图                       |
+| 中小图交互 | React Flow                                          | 接口调用链、模块流程、方法逻辑                       |
+| 布局    | elkjs / dagre / graphology layout                   | 后台计算视图布局并缓存                           |
+| 图文本渲染 | Mermaid                                             | 时序图、流程图预览和导出                          |
+| 安全存储  | macOS Keychain via keytar                           | Token、API Key、敏感配置                    |
+| 打包    | electron-builder                                    | DMG、ZIP、签名预留、notarization 预留          |
+| 包管理   | pnpm workspace                                      | Monorepo 管理                           |
+| 质量验证  | ESLint、TypeScript、Prettier、真实扫描、Electron Builder    | 代码规范、类型、构建、打包和真实运行证据                  |
 
 ### 2.2 为什么选择 Electron
 
@@ -1187,7 +1188,7 @@ source_context 必须保存真实上下文来源：
 2. 代码实现。
 3. Bug 修复。
 4. 代码评审。
-5. 单元测试。
+5. 运行验收。
 6. 性能分析。
 7. 架构分析。
 8. SQL 优化。
@@ -1875,7 +1876,7 @@ AI_SUMMARY 只能用于摘要、命名、解释，不能作为唯一事实来源
 4. 任务完成。
 5. 任务失败。
 6. 代码变更摘要。
-7. 测试失败。
+7. 验证失败。
 8. 长任务阶段摘要。
 9. 安全确认。
 10. 静默模式。
@@ -1999,8 +2000,6 @@ AI runtime、Git 操作、文件操作必须限制在项目路径内。任何路
     "dev": "pnpm --filter @zeus/desktop dev",
     "lint": "pnpm -r lint",
     "typecheck": "pnpm -r typecheck",
-    "test": "pnpm -r test",
-    "test:real-scan": "bash scripts/test-real-scan.sh",
     "build": "pnpm -r build",
     "package:mac": "pnpm --filter @zeus/desktop package:mac",
     "verify:release": "bash scripts/verify-release.sh"
@@ -2051,112 +2050,41 @@ AI runtime、Git 操作、文件操作必须限制在项目路径内。任何路
 6. `docs/ai-runtime.md`：AI runtime。
 7. `docs/telegram.md`：Telegram。
 8. `docs/release.md`：发布。
-9. `docs/testing.md`：测试。
-10. `CONTRIBUTING.md`。
-11. `ROADMAP.md`。
-12. `LICENSE`。
-13. Issue 模板。
-14. PR 模板。
+9. `CONTRIBUTING.md`。
+10. `ROADMAP.md`。
+11. `LICENSE`。
+12. Issue 模板。
+13. PR 模板。
 
 文档不能包含虚假截图、虚假数据或虚假示例结果。
 
 ---
 
-## 23. 测试设计
+## 23. 质量验证设计
 
-### 23.1 总原则
+### 23.1 当前策略
 
-1. 测试不得写入任何 mock 数据。
-2. 测试不得生成假项目、假接口、假表、假 SQL、假 AI 输出。
-3. 允许使用临时 SQLite 文件，但其中只能写入测试执行过程中由真实操作产生的数据。
-4. 允许直接使用 `/Users/david/hypha/zeus` 当前项目代码库生成图。
-5. 如果测试环境没有外部 AI CLI，runtime 检测测试必须断言“不可用状态正确显示”，不得伪造执行。
-6. 如果测试环境没有 Telegram token，Telegram 测试必须断言“未配置状态正确显示”。
-7. 如果测试环境没有签名证书，打包测试必须断言 unsigned build 成功。
+1. Zeus 不采用 TDD，不执行 RED-GREEN-REFACTOR。
+2. Zeus 不维护 Vitest 单元、组件、API、DOM/CSS 契约测试，也不把测试作为日常完成门禁。
+3. 历史任务文档中的测试记录只保留当时事实，不代表当前规则。
+4. 静态检查、构建和打包成功只能证明对应阶段完成，不能替代真实运行结论。
 
-### 23.2 单元测试
+### 23.2 静态检查与构建
 
-覆盖：
+日常代码检查使用：
 
-1. storage migrations。
-2. repositories。
-3. ProjectService。
-4. TaskService。
-5. Task state machine。
-6. Security policy。
-7. Git command builder。
-8. AI adapter detection。
-9. Tree-sitter extractor。
-10. SQL parser wrapper。
-11. Graph builder。
-12. View generator。
-13. Telegram command parser。
+1. `pnpm lint`：检查代码规范。
+2. `pnpm typecheck`：检查 TypeScript 类型。
+3. `pnpm format:check`：检查受控文件格式。
+4. `pnpm build`：生成可运行构建产物。
 
-单元测试可以构造纯函数输入，但不得将虚假业务记录写入持久化数据库作为产品数据。对数据库的测试必须使用临时数据库，并在测试结束删除。
+### 23.3 正式打包与运行证据
 
-### 23.3 集成测试
+正式交付使用 `pnpm package:mac` 生成 macOS 应用和安装包，并在真实应用进程中检查启动、本地服务健康状态、关键交互及退出行为。不得从静态检查、构建或打包成功推断真实运行已经完成。
 
-必须覆盖：
+### 23.4 发布门禁
 
-1. 创建真实项目记录，路径为 `/Users/david/hypha/zeus`。
-2. 扫描当前项目真实文件。
-3. 生成当前项目的真实 code symbols。
-4. 生成当前项目的 project_nodes/project_edges。
-5. 生成当前项目的系统视图。
-6. 打开项目详情 API。
-7. 创建真实任务记录。
-8. 任务进入 READY。
-9. 若 AI CLI 可用，执行真实 smoke prompt；若不可用，显示配置缺失。
-10. 读取当前 Git 状态。
-11. 生成当前 Git diff。
-12. UI 渲染项目、任务、图谱空/非空状态。
-
-### 23.4 真实扫描测试脚本
-
-`scripts/test-real-scan.sh`：
-
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
-ROOT="/Users/david/hypha/zeus"
-cd "$ROOT"
-pnpm build
-node packages/code-indexer/dist/cli.js scan --path "$ROOT" --project-name Zeus --db "$ROOT/.tmp/zeus-real-scan.db"
-node packages/graph-engine/dist/cli.js generate-views --db "$ROOT/.tmp/zeus-real-scan.db" --project Zeus
-node packages/graph-engine/dist/cli.js assert-nonempty --db "$ROOT/.tmp/zeus-real-scan.db" --project Zeus
-```
-
-该脚本扫描当前项目真实代码，不创建假项目源码。
-
-### 23.5 UI 测试
-
-使用 Playwright：
-
-1. 启动 app。
-2. 验证 Dashboard。
-3. 创建项目时选择当前工作目录。
-4. 触发扫描。
-5. 等待扫描完成或明确失败。
-6. 打开 Code Map。
-7. 搜索真实文件名或包名。
-8. 打开 Tasks。
-9. 创建任务。
-10. 打开任务详情。
-11. 检查终端区域。
-12. 打开 Settings。
-
-不得依赖假 seed 数据。
-
-### 23.6 打包测试
-
-1. `pnpm package:mac` 成功。
-2. `dist/mac/Zeus.app` 存在。
-3. DMG 存在。
-4. ZIP 存在。
-5. App 可启动。
-6. App 启动后 `/health` 正常。
-7. 数据目录创建正常。
-8. 退出后本地服务关闭。
+`pnpm verify:release` 负责串联验收矩阵、lint、typecheck、build、AI runtime 探针、正式打包和打包产物健康检查。发布报告必须分别记录静态检查、构建、打包和真实运行证据。
 
 ---
 
@@ -2167,7 +2095,7 @@ node packages/graph-engine/dist/cli.js assert-nonempty --db "$ROOT/.tmp/zeus-rea
 ### 24.1 Bootstrap
 
 1. 初始化 pnpm workspace。
-2. 初始化 TypeScript、ESLint、Prettier、Vitest。
+2. 初始化 TypeScript、ESLint、Prettier。
 3. 初始化 Electron + React。
 4. 初始化 local-server。
 5. 初始化 SQLite migrations。
@@ -2175,7 +2103,7 @@ node packages/graph-engine/dist/cli.js assert-nonempty --db "$ROOT/.tmp/zeus-rea
 7. 初始化 scripts。
 8. 初始化 CI。
 
-验收：`pnpm install && pnpm typecheck && pnpm test` 通过。
+验收：`pnpm install && pnpm typecheck && pnpm build` 通过。
 
 ### 24.2 App Shell
 
@@ -2402,8 +2330,8 @@ node packages/graph-engine/dist/cli.js assert-nonempty --db "$ROOT/.tmp/zeus-rea
 
 - [ ] 创建/编辑/删除/列表/详情/搜索/筛选/排序/标签/归档。
 - [ ] 待执行/执行中/等待确认/完成/失败/取消/暂停/重试/恢复/状态时间线。
-- [ ] 选择项目、任务目标、模型、工作目录、是否允许改代码、是否运行测试、是否提交 Git、执行前确认、中断、继续。
-- [ ] 需求分析、代码实现、Bug 修复、代码评审、单元测试、性能分析、架构分析、SQL 优化、自定义模板、项目默认模板。
+- [ ] 选择项目、任务目标、模型、工作目录、是否允许改代码、是否执行验证命令、是否提交 Git、执行前确认、中断、继续。
+- [ ] 需求分析、代码实现、Bug 修复、代码评审、运行验收、性能分析、架构分析、SQL 优化、自定义模板、项目默认模板。
 
 ### 25.4 AI Runtime
 
@@ -2508,7 +2436,7 @@ node packages/graph-engine/dist/cli.js assert-nonempty --db "$ROOT/.tmp/zeus-rea
 - [ ] 错误提示。
 - [ ] 安全确认。
 - [ ] `/projects`、`/tasks`、`/run`、`/status`、`/stop`、`/continue`、`/logs`、`/diff`、`/ask`、`/help`。
-- [ ] 开始/完成/失败/等待确认/变更/测试失败/摘要/阶段性/静默通知。
+- [ ] 开始/完成/失败/等待确认/变更/验证失败/摘要/阶段性/静默通知。
 
 ### 25.12 安全与发布
 
@@ -2517,7 +2445,7 @@ node packages/graph-engine/dist/cli.js assert-nonempty --db "$ROOT/.tmp/zeus-rea
 - [ ] Telegram 白名单。
 - [ ] 高风险任务、删除文件、Git 提交、shell、目录限制、安全审计。
 - [ ] Bot Token、API Key、Keychain、隐藏显示、日志脱敏、导出脱敏、清理密钥、重置安全、泄露风险、安全页。
-- [ ] 单测、仓储测试、领域测试、解析器测试、图谱测试、runtime 测试、Telegram 测试、UI 测试。
+- [ ] lint、typecheck、format:check、build、正式打包和真实运行检查。
 - [ ] Electron Builder、DMG、ZIP、图标、签名预留、notarization 预留、Homebrew cask、GitHub Release、版本、更新日志。
 - [ ] README、安装、使用、架构、开发、贡献、License、Issue、PR、Roadmap。
 
@@ -2530,27 +2458,26 @@ Zeus 可上线版本必须满足：
 1. `pnpm install` 成功。
 2. `pnpm lint` 成功。
 3. `pnpm typecheck` 成功。
-4. `pnpm test` 成功。
-5. `pnpm test:real-scan` 成功，且扫描的是 `/Users/david/hypha/zeus` 真实代码库。
-6. `pnpm build` 成功。
-7. `pnpm package:mac` 成功。
-8. App 可启动。
-9. 本地服务健康检查成功。
-10. 用户可以创建项目并选择真实本地代码库。
-11. 用户可以扫描当前项目并生成真实图谱。
-12. 用户可以创建任务。
-13. 用户可以检测 AI CLI 可用性。
-14. 若 AI CLI 可用，用户可以执行任务并看到真实终端输出。
-15. 若 AI CLI 不可用，用户看到明确配置状态，不出现假输出。
-16. 用户可以查看 Git 状态和 diff。
-17. 用户可以打开系统架构图、表关系图、模块详情、接口时序图、方法逻辑图入口。
-18. Telegram 未配置时显示未启用；配置真实 token 后可启用。
-19. 所有敏感 token 存 Keychain。
-20. App 不监听公网。
-21. 数据库中没有任何 seed 的假项目、假任务、假图谱、假执行日志。
-22. README 和文档完整。
-23. DMG/ZIP/Homebrew cask 文件生成。
-24. 最终执行报告列出完成项、真实测试结果、外部配置等待项。
+4. `pnpm format:check` 成功。
+5. `pnpm build` 成功。
+6. `pnpm package:mac` 成功。
+7. App 可启动。
+8. 本地服务健康检查成功。
+9. 用户可以创建项目并选择真实本地代码库。
+10. 用户可以扫描当前项目并生成真实图谱。
+11. 用户可以创建任务。
+12. 用户可以检测 AI CLI 可用性。
+13. 若 AI CLI 可用，用户可以执行任务并看到真实终端输出。
+14. 若 AI CLI 不可用，用户看到明确配置状态，不出现假输出。
+15. 用户可以查看 Git 状态和 diff。
+16. 用户可以打开系统架构图、表关系图、模块详情、接口时序图、方法逻辑图入口。
+17. Telegram 未配置时显示未启用；配置真实 token 后可启用。
+18. 所有敏感 token 存 Keychain。
+19. App 不监听公网。
+20. 数据库中没有任何 seed 的假项目、假任务、假图谱、假执行日志。
+21. README 和文档完整。
+22. DMG/ZIP/Homebrew cask 文件生成。
+23. 最终执行报告列出完成项、静态检查结果、构建结果、安装包路径、真实运行证据和外部配置等待项。
 
 ---
 
@@ -2561,15 +2488,16 @@ Zeus 可上线版本必须满足：
 ```text
 在 /Users/david/hypha/zeus 中实现 Zeus macOS 本地优先 AI 研发工作台。
 
-必须完整阅读并执行 docs 中的开发设计。项目名称统一为 Zeus/zeus。禁止出现历史项目代号、历史平台名或无关项目名。开发和测试过程禁止写入任何 mock 数据。没有真实数据时必须展示空状态。测试允许并且必须使用当前项目 /Users/david/hypha/zeus 的真实代码库生成代码图谱。
+必须完整阅读并执行 docs 中的开发设计。项目名称统一为 Zeus/zeus。禁止出现历史项目代号、历史平台名或无关项目名。开发和验收过程禁止写入任何 mock 数据。没有真实数据时必须展示空状态。代码地图验收允许并且必须使用当前项目 /Users/david/hypha/zeus 的真实代码库生成代码图谱。
+
+本项目不采用 TDD，不执行 RED-GREEN-REFACTOR，不创建或恢复单元测试、测试脚本和测试依赖。质量验证使用 lint、typecheck、format:check、build、正式打包及真实运行检查；不得把静态检查或构建成功夸大为运行完成。
 
 请启用 Build macOS Apps 插件，使用目标模式持续完成，直到以下命令全部通过或给出明确外部阻塞原因：
 
 pnpm install
 pnpm lint
 pnpm typecheck
-pnpm test
-pnpm test:real-scan
+pnpm format:check
 pnpm build
 pnpm package:mac
 
@@ -2577,7 +2505,7 @@ pnpm package:mac
 
 如果 AI CLI、Telegram token、Apple 签名证书等外部条件缺失，不要伪造结果；实现检测、设置页和明确的等待配置状态。
 
-最终给出执行报告：完成的功能、运行过的命令、真实测试结果、生成的安装包路径、仍需用户提供的外部配置。
+最终给出执行报告：完成的功能、运行过的命令、静态检查结果、构建与打包结果、真实运行证据、生成的安装包路径、仍需用户提供的外部配置。
 ```
 
 ---
@@ -2596,8 +2524,7 @@ pnpm package:mac
 - pnpm install: pass/fail
 - pnpm lint: pass/fail
 - pnpm typecheck: pass/fail
-- pnpm test: pass/fail
-- pnpm test:real-scan: pass/fail
+- pnpm format:check: pass/fail
 - pnpm build: pass/fail
 - pnpm package:mac: pass/fail
 
