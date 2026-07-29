@@ -90,8 +90,6 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: 校验设计验收矩阵
-        run: pnpm verify:acceptance-matrix
       - name: 恢复 Codex runtime 构建缓存
         uses: actions/cache@v4
         with:
@@ -123,7 +121,7 @@ jobs:
           printf '%s' "$APPLE_API_KEY_P8" > "$key_path"
           chmod 600 "$key_path"
           echo "APPLE_API_KEY=$key_path" >> "$GITHUB_ENV"
-      - name: 执行发布门禁
+      - name: 执行本地与 CI 共用的完整发布门禁
         run: pnpm verify:release
       - uses: actions/upload-artifact@v4
         with:

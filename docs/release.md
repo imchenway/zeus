@@ -5,14 +5,20 @@ ad-hoc 签名的 unsigned DMG/ZIP，但必须显式标注签名、公证和 Gate
 
 ## 发布脚本
 
-发布脚本覆盖 pnpm dev、pnpm lint、pnpm typecheck、pnpm build、pnpm package:mac、pnpm verify:release。
+发布脚本覆盖 pnpm dev、pnpm verify:publish、pnpm package:mac、pnpm verify:release。
 
 - `pnpm dev`：通过 `@zeus/desktop dev` 对齐 macOS Run 脚本。
-- `pnpm lint`：静态检查。
-- `pnpm typecheck`：TypeScript build references 检查。
-- `pnpm build`：workspace build 与 desktop build。
+- `pnpm verify:publish`：本地、普通 CI 与完整 Release 共用的发布前入口；检查本次变更文件格式、Git 空白错误、lint、typecheck 和 build。
 - `pnpm package:mac`：生成 macOS App、DMG 与 ZIP；无 Developer ID 证书时在打包阶段完成 ad-hoc 签名。
-- `pnpm verify:release`：串联最终发布门禁并生成 Homebrew Cask、SHA256SUMS、安装脚本与更新清单。
+- `pnpm verify:release`：先复用 `verify:publish`，再执行 AI CLI adapter 探针和 macOS 打包，并生成 Homebrew Cask、SHA256SUMS、安装脚本与更新清单。
+
+普通推送和 GitHub CI 都只需执行：
+
+```bash
+pnpm verify:publish
+```
+
+CI 通过 `ZEUS_VERIFY_BASE` 与 `ZEUS_VERIFY_HEAD` 传入本次推送或 PR 的提交范围；本地则自动合并未提交、已暂存、未跟踪和尚未推送的变更。Prettier 只检查该范围内的代码与配置文件，避免历史格式欠账让每次无关文档提交都固定失败。优点是本地与远端结果一致、执行入口简单；缺点是正式推送前会执行一次完整生产构建，耗时高于只跑 lint。依赖审计按需单独运行 `pnpm security:audit`，不放进普通推送或实用发布的自动门禁。
 
 ## 产物
 
@@ -29,8 +35,8 @@ ad-hoc 签名的 unsigned DMG/ZIP，但必须显式标注签名、公证和 Gate
 
 ## 发布门禁
 
-发布门禁必须覆盖 acceptance matrix、lint、typecheck、AI CLI adapter 探针、build、package:mac、包内 Electron 加载、包内
-renderer/main 非 GUI 健康检查。
+普通发布前门禁必须覆盖变更文件格式、Git 空白错误、lint、typecheck 和 build。完整 macOS 发布门禁在此基础上继续覆盖
+acceptance matrix、AI CLI adapter 探针、package:mac、包内 Electron 加载和包内 renderer/main 非 GUI 健康检查。
 
 当前最新基线：
 

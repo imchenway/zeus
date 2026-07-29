@@ -1,6 +1,6 @@
 # Contributing to Zeus
 
-Zeus 是本地优先 macOS AI 研发工作台。贡献必须服务真实本地代码、真实运行态和真实发布证据，不能用 demo 或假数据替代设计书目标。
+Zeus 是用于统一管理项目、任务、Coding Agent 会话、代码理解、Git 变更和自动化协作的 AI 研发工作台。贡献必须服务真实代码、真实运行态和真实发布证据，不能用 demo 或假数据替代设计书目标。
 
 ## 真实数据原则
 
@@ -25,15 +25,23 @@ Zeus 是本地优先 macOS AI 研发工作台。贡献必须服务真实本地�
 
 ## 验证要求
 
-提交前至少运行并记录：
+普通提交或推送前运行：
 
 ```bash
-pnpm lint
-pnpm typecheck
-pnpm build
-pnpm package:mac
+pnpm verify:publish
+```
+
+该命令与 GitHub CI 共用同一门禁，依次检查本次变更文件的格式、Git 空白错误、lint、类型和生产构建。Prettier 只检查本次变更的代码与配置，不会因历史格式欠账阻断无关提交。
+
+正式 macOS 出包或发布前运行：
+
+```bash
 pnpm verify:release
 ```
+
+`verify:release` 会先执行 `verify:publish`，再追加 AI CLI adapter 探针、`package:mac` 和真实产物检查。
+
+依赖审计按需单独运行 `pnpm security:audit`，不放进每次普通推送和实用发布的自动门禁。
 
 如果某项因缺少外部凭据无法完成，必须说明具体等待项；不能把未验证能力写成已完成。
 

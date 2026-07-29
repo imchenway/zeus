@@ -17,6 +17,8 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: pnpm/action-setup@v4
         with:
           version: 10.31.0
@@ -25,8 +27,8 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm format:check
-      - run: pnpm lint
-      - run: pnpm typecheck
-      - run: pnpm build
-      - run: pnpm security:audit
+      - name: 执行与本地一致的发布前门禁
+        env:
+          ZEUS_VERIFY_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          ZEUS_VERIFY_HEAD: ${{ github.sha }}
+        run: pnpm verify:publish

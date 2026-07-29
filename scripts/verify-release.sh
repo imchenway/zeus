@@ -2,10 +2,8 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+pnpm verify:publish
 pnpm verify:acceptance-matrix
-pnpm lint
-pnpm typecheck
-pnpm build
 node scripts/verify-ai-cli-adapters.mjs
 pnpm package:mac
 
