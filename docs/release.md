@@ -22,11 +22,11 @@ CI 通过 `ZEUS_VERIFY_BASE` 与 `ZEUS_VERIFY_HEAD` 传入本次推送或 PR 的
 
 ## 产物
 
-发布产物包括 Zeus.app、Zeus-0.1.0-arm64.dmg、Zeus-0.1.0-arm64.zip、dist/homebrew/zeus.rb、dist/SHA256SUMS、dist/install.sh、dist/zeus-release-manifest.json。
+发布产物包括 Zeus.app、Zeus-0.1.1-arm64.dmg、Zeus-0.1.1-arm64.zip、dist/homebrew/zeus.rb、dist/SHA256SUMS、dist/install.sh、dist/zeus-release-manifest.json。
 
 - App：`dist/mac-arm64/Zeus.app`。
-- DMG：`dist/Zeus-0.1.0-arm64.dmg`。
-- ZIP：`dist/Zeus-0.1.0-arm64.zip`。
+- DMG：`dist/Zeus-0.1.1-arm64.dmg`。
+- ZIP：`dist/Zeus-0.1.1-arm64.zip`。
 - Homebrew cask：`dist/homebrew/zeus.rb`。
 - 安装脚本：`dist/install.sh`，支持 `ZEUS_NON_INTERACTIVE`、`ZEUS_INSTALL_DIR`、`ZEUS_CHANNEL`。
 - 更新清单：`dist/zeus-release-manifest.json`，供应用内检查更新读取。
@@ -38,7 +38,29 @@ CI 通过 `ZEUS_VERIFY_BASE` 与 `ZEUS_VERIFY_HEAD` 传入本次推送或 PR 的
 普通发布前门禁必须覆盖变更文件格式、Git 空白错误、lint、typecheck 和 build。完整 macOS 发布门禁在此基础上继续覆盖
 acceptance matrix、AI CLI adapter 探针、package:mac、包内 Electron 加载和包内 renderer/main 非 GUI 健康检查。
 
-当前最新基线：
+### 当前稳定基线（0.1.1）
+
+- `pnpm verify:release`：通过；Git 空白错误、变更文件 Prettier、lint、typecheck、build、12 个章节 139 项验收矩阵、
+  AI CLI 探针、macOS arm64 打包和产物健康检查完整执行。
+- App 签名完整性：`codesign --verify --deep --strict` 通过。
+- DMG 完整性：`hdiutil verify` 通过。
+- DMG SHA256：`80b84ad65743654bb0fb91cfd3dbcc3b9976ac64c516da16bae433e0e8a01545`。
+- ZIP SHA256：`0008dee0aaf956c69f33416ca08ebfe8c20f78206c156c23fc25e7cef7469d10`。
+- 包内 renderer/main/runtime 非 GUI 健康检查：
+  `packaged-health=Zeus;rendererAssets=2;main=dist/main/main.js;preload=dist/preload/index.cjs;browserPagePreload=dist/preload/browser-page.cjs;codex=0.145.0-alpha.30;arch=aarch64-apple-darwin`。
+- GitHub Release：`https://github.com/imchenway/zeus/releases/tag/v0.1.1`，6 个资产均已上传；GitHub 服务端返回的
+  DMG/ZIP SHA256 与本地产物一致。
+- Homebrew Tap：`imchenway/homebrew-tap` 的 `Casks/zeus.rb` 已发布，提交为
+  `dcceffbd32a42d7fa23e93261186da3549c37d0c`，远端内容摘要与本地 Cask 一致。
+- `brew upgrade --cask imchenway/tap/zeus` 已从公开 Release 完整下载并校验 DMG，成功将本机
+  `/Applications/Zeus.app` 从 `0.1.0` 升级到 `0.1.1`。
+- Homebrew 安装版已真实启动，主进程和内置 Codex runtime 均来自 `/Applications/Zeus.app`；本地服务只监听
+  `127.0.0.1`，`/health` 返回 `ok=true`、`status=ok`、`version=0.1.1`、`database=ok`、`runtime=ok`，
+  随后正常退出。
+- GitHub Actions 运行 `30440270579` 因未配置 `HOMEBREW_TAP_TOKEN` 在构建前失败；本次按人工备用通道使用本地
+  完整门禁通过的不可变制品发布，不把该 Actions 运行记录为远端构建通过。
+
+### 历史稳定基线（0.1.0）
 
 - `pnpm verify:release`：通过；acceptance matrix、lint、typecheck、build、AI CLI 探针、打包和产物门禁完整执行。
 - `pnpm lint`、`pnpm typecheck`、`pnpm build`、`pnpm package:mac`：分别通过。
