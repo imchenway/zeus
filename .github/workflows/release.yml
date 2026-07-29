@@ -4,9 +4,14 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing tag to publish as a GitHub Release
+        description: 要构建的既有 Git tag；公开发布时必须与 package.json 版本一致
         required: false
         default: ''
+      publish_release:
+        description: 发布正式 GitHub Release 并同步 imchenway/homebrew-tap
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -24,9 +29,51 @@ jobs:
       APPLE_ID: ${{ secrets.APPLE_ID }}
       APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+      APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+      APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
       HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+      ZEUS_REQUIRE_DISTRIBUTABLE_RELEASE: ${{ inputs.publish_release && '1' || '0' }}
     steps:
-      - uses: actions/checkout@v4
+      - name: 检出 Zeus 发布源码
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.tag != '' && inputs.tag || github.ref }}
+      - name: 校验公开发布输入与凭据状态
+        if: ${{ inputs.publish_release }}
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          expected_tag="v$(node -p "require('./package.json').version")"
+          if [ -z "$RELEASE_TAG" ] || [ "$RELEASE_TAG" != "$expected_tag" ]; then
+            echo "公开发布要求既有 tag 与 package.json 版本一致：expected=$expected_tag actual=${RELEASE_TAG:-empty}" >&2
+            exit 1
+          fi
+          if [ "$(git describe --tags --exact-match HEAD)" != "$RELEASE_TAG" ]; then
+            echo "当前检出提交不是发布 tag：$RELEASE_TAG" >&2
+            exit 1
+          fi
+          if [ -z "$CSC_LINK" ] || [ -z "$CSC_KEY_PASSWORD" ]; then
+            echo '公开 Homebrew 发布缺少 Developer ID 证书或证书密码。' >&2
+            exit 1
+          fi
+          if ! { [ -n "$APPLE_ID" ] && [ -n "$APPLE_APP_SPECIFIC_PASSWORD" ] && [ -n "$APPLE_TEAM_ID" ]; } &&
+             ! { [ -n "$APPLE_API_KEY_P8" ] && [ -n "$APPLE_API_KEY_ID" ] && [ -n "$APPLE_API_ISSUER" ]; }; then
+            echo '公开 Homebrew 发布缺少完整 Apple 公证凭据。' >&2
+            exit 1
+          fi
+          if [ -z "$HOMEBREW_TAP_TOKEN" ]; then
+            echo '公开 Homebrew 发布缺少 HOMEBREW_TAP_TOKEN。' >&2
+            exit 1
+          fi
+      - name: 检出 Homebrew Tap
+        if: ${{ inputs.publish_release }}
+        uses: actions/checkout@v4
+        with:
+          repository: imchenway/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: .tmp/homebrew-tap
       - uses: pnpm/action-setup@v4
         with:
           version: 10.31.0
@@ -35,7 +82,41 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm verify:release
+      - name: 校验设计验收矩阵
+        run: pnpm verify:acceptance-matrix
+      - name: 恢复 Codex runtime 构建缓存
+        uses: actions/cache@v4
+        with:
+          path: |
+            .tmp/openai-codex
+            .tmp/openai-codex-archives
+            .tmp/rust-toolchain-archives
+            .tmp/rust-toolchains
+            .tmp/codex-runtime
+            ~/Library/Caches/electron
+          key: zeus-macos-${{ runner.arch }}-${{ hashFiles('third_party/openai-codex/runtime.lock.json', 'apps/desktop/electron-builder.yml') }}
+      - name: 构建固定版本 Codex runtime
+        run: |
+          case "$(uname -m)" in
+            arm64) runtime_arch="arm64" ;;
+            x86_64) runtime_arch="x64" ;;
+            *) echo '不支持当前 macOS runner 架构。' >&2; exit 1 ;;
+          esac
+          runtime_dir=".tmp/codex-runtime/$runtime_arch"
+          if [ -x "$runtime_dir/codex" ] && [ -f "$runtime_dir/manifest.json" ]; then
+            echo '使用按 runtime lock 和架构命中的 Codex runtime 缓存。'
+          else
+            node scripts/build-codex-runtime.mjs --arch "$runtime_arch"
+          fi
+      - name: 准备 App Store Connect API Key
+        if: ${{ env.APPLE_API_KEY_P8 != '' }}
+        run: |
+          key_path="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8"
+          printf '%s' "$APPLE_API_KEY_P8" > "$key_path"
+          chmod 600 "$key_path"
+          echo "APPLE_API_KEY=$key_path" >> "$GITHUB_ENV"
+      - name: 执行发布门禁
+        run: pnpm verify:release
       - uses: actions/upload-artifact@v4
         with:
           name: zeus-macos
@@ -46,18 +127,56 @@ jobs:
             dist/install.sh
             dist/zeus-release-manifest.json
             dist/homebrew/zeus.rb
-      - name: Create GitHub Release from verified local-first artifacts
-        if: ${{ inputs.tag != '' }}
+      - name: 发布或核对 GitHub Release
+        if: ${{ inputs.publish_release }}
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
         run: |
-          gh release create "${{ inputs.tag }}" \
-            dist/Zeus-*.dmg \
-            dist/Zeus-*.zip \
-            dist/SHA256SUMS \
-            dist/install.sh \
-            dist/zeus-release-manifest.json \
-            dist/homebrew/zeus.rb \
-            --draft \
-            --title "Zeus ${{ inputs.tag }}" \
-            --notes "Verified by pnpm verify:release. Signing/notarization only reflect configured Apple credentials; do not mark external waits as complete without real secrets."
+          version="$(node -p "require('./package.json').version")"
+          case "$(uname -m)" in
+            arm64) package_arch="arm64" ;;
+            x86_64) package_arch="x64" ;;
+            *) echo '不支持当前 macOS runner 架构。' >&2; exit 1 ;;
+          esac
+          local_dmg="dist/Zeus-${version}-${package_arch}.dmg"
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            if [ "$(gh release view "$RELEASE_TAG" --json isDraft --jq '.isDraft')" = "true" ]; then
+              echo "同名 GitHub Release 仍是草稿，拒绝同步 Homebrew Tap：$RELEASE_TAG" >&2
+              exit 1
+            fi
+            remote_dir="$(mktemp -d)"
+            trap 'rm -rf "$remote_dir"' EXIT
+            gh release download "$RELEASE_TAG" --pattern "$(basename "$local_dmg")" --dir "$remote_dir"
+            if [ "$(shasum -a 256 "$local_dmg" | awk '{print $1}')" != "$(shasum -a 256 "$remote_dir/$(basename "$local_dmg")" | awk '{print $1}')" ]; then
+              echo "既有 Release 的 DMG 与本次构建不一致，拒绝改写 Cask：$RELEASE_TAG" >&2
+              exit 1
+            fi
+          else
+            gh release create "$RELEASE_TAG" \
+              dist/Zeus-*.dmg \
+              dist/Zeus-*.zip \
+              dist/SHA256SUMS \
+              dist/install.sh \
+              dist/zeus-release-manifest.json \
+              dist/homebrew/zeus.rb \
+              --verify-tag \
+              --title "Zeus $RELEASE_TAG" \
+              --notes "本 Release 已通过 pnpm verify:release，并由门禁确认 Developer ID 签名和 Apple 公证。"
+          fi
+      - name: 同步 Homebrew Cask
+        if: ${{ inputs.publish_release }}
+        run: |
+          mkdir -p .tmp/homebrew-tap/Casks
+          cp dist/homebrew/zeus.rb .tmp/homebrew-tap/Casks/zeus.rb
+          cd .tmp/homebrew-tap
+          if [ -z "$(git status --porcelain -- Casks/zeus.rb)" ]; then
+            echo 'Homebrew Cask 已是当前版本，无需提交。'
+            exit 0
+          fi
+          git diff --check
+          git config user.name 'Zeus Release Bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git add Casks/zeus.rb
+          git commit -m "更新 Zeus $(ruby -ne 'puts $1 if $_ =~ /version \"([^\"]+)\"/' Casks/zeus.rb) Cask"
+          git push origin HEAD:main

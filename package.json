@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "pnpm --filter @zeus/desktop dev",
+    "qa:browser": "pnpm --filter @zeus/desktop exec vite --host 127.0.0.1 --port 4179 --strictPort",
     "lint": "eslint .",
     "typecheck": "tsc -b",
     "build": "pnpm -r --if-present build",

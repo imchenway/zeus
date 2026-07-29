@@ -14,6 +14,13 @@ import {
 } from 'node:fs';
 import {dirname, isAbsolute, join, parse, relative, resolve, sep} from 'node:path';
 import {getNextTaskStatus, type TaskStatus} from '@zeus/task-core';
+import {
+    commandNeedsHighRiskConfirmation,
+    validateCommandDefinitionInput,
+    type CommandDefinition,
+    type ConversationResource,
+    type ConversationResourcePreview,
+} from '@zeus/shared';
 import {type ProjectScanResult, scanProjectSource} from '@zeus/code-indexer';
 import {buildProjectGraph, type ProjectGraph} from '@zeus/graph-engine';
 import {
@@ -36,8 +43,6 @@ import {
     type AiCliAdapterDescriptor,
     type AiRuntimeLogEntry,
     type AiRuntimeSession,
-    type AiRuntimeSessionManager,
-    type AiRuntimeSpawn,
     type AiRuntimeTerminalSnapshot,
     buildAiRuntimePrompt,
     checkAiCliAdapter,
@@ -52,11 +57,21 @@ import {
     listAiCliAdapters,
     type NonCodexAiCliAdapterId,
 } from '@zeus/ai-runtime';
+export type {
+  BrowserAutomationContentItem,
+  BrowserAutomationPort,
+  BrowserAutomationToolCall,
+} from './browserAutomation.js';
+import type { BrowserAutomationPort } from './browserAutomation.js';
+import {resolveConversationAttachmentGrant} from './conversationAttachmentGrant.js';
+export {
+  createConversationAttachmentGrant,
+  resolveConversationAttachmentGrant,
+} from './conversationAttachmentGrant.js';
 import {
     createMacOSKeychainStore,
     getSecretPresenceLabel,
-    type SecretPresenceLabel,
-    type SecretStore
+    type SecretPresenceLabel
 } from '@zeus/security-core';
 import {
     buildGitPatchExport,
@@ -65,7 +80,6 @@ import {
     executeHighRiskGitOperation,
     getGitDiff,
     getGitStatus,
-    type GitCommandRunner,
     type GitDiffSummary,
     type GitOperationConfirmation,
     type GitPatchExport,
@@ -77,11 +91,15 @@ import {
 import {
     type AppendAuditLogInput,
     AuditLogRepository,
+    CommandDefinitionRepository,
+    CommandArtifactRepository,
+    CommandRunRepository,
     CodexLegacyImportRepository,
     type ConversationCollaborationMode,
     ConversationItemRepository,
     type ConversationPermissionMode,
     ConversationPlanActionRepository,
+    ConversationResourceRepository,
     ConversationRepository,
     ConversationServerRequestRepository,
     ConversationSubmissionRepository,
@@ -92,23 +110,32 @@ import {
     IdempotencyRequestRepository,
     introspectSqliteSchema,
     isTaskManagementStatus,
+    isTaskPriority,
     ProjectRepository,
     type RuntimeLogStream,
     RuntimeSessionRepository,
     SettingRepository,
     TaskEventRepository,
     type TaskManagementStatus,
+    type TaskPriority,
     TaskRepository,
     TaskTemplateRepository,
     TerminalEventRepository,
+    TurnChangeFileRepository,
+    TurnChangeSetRepository,
     type ZeusAuditLogRecord,
+    type ZeusConversationResourceRecord,
     type ZeusConversationWithMessagesRecord,
     type ZeusProjectRecord,
     type ZeusRuntimeLogRecord,
     type ZeusRuntimeSessionRecord,
     type ZeusTaskRecord,
+    type ZeusDatabase,
 } from '@zeus/storage';
 import {createCodexNativeConversationCoordinator} from './codexNativeConversationCoordinator.js';
+import {normalizeConversationResources, toConversationResource, toConversationResourceOpenIntent} from './conversationResources.js';
+import {changeSetErrorStatus, createTurnChangeSetService, errorCode as turnChangeSetErrorCode} from './turnChangeSets.js';
+import {createCommandCenter} from './commandCenter.js';
 import {migrateLegacyCodexThreads} from './legacyCodexThreadMigration.js';
 import {type CodexLegacyImportService, createCodexLegacyImportService} from './codexLegacyImportService.js';
 import {
@@ -122,7 +149,7 @@ import {
     dispatchTelegramUpdate,
     getTelegramConfigurationState,
     type TelegramCommand,
-    type TelegramLongPollingClient,
+    type TelegramCommandResponse,
     type TelegramMessageSender,
     type TelegramPollingService,
     type TelegramUpdate,
@@ -167,6 +194,117 @@ function isObjectLike(value: unknown): value is object {
   return (typeof value === 'object' && value !== null) || typeof value === 'function';
 }
 
+function readConversationResourcePreview(
+  resource: Exclude<ConversationResource, {kind: 'website'}>,
+  intent: ReturnType<typeof toConversationResourceOpenIntent>,
+): ConversationResourcePreview {
+  const absolutePath = typeof intent.target.absolutePath === 'string' ? resolve(intent.target.absolutePath) : '';
+  const allowedRoot = typeof intent.authority.allowedRoot === 'string' ? resolve(intent.authority.allowedRoot) : '';
+  if (!absolutePath || !allowedRoot || !isPathInsideRoot(absolutePath, allowedRoot) || absolutePath === allowedRoot) {
+    throw Object.assign(new Error('Conversation resource path is outside its authorized root.'), {code: 'ZEUS_CONVERSATION_RESOURCE_FORBIDDEN'});
+  }
+  const rootRealPath = realpathSync(allowedRoot);
+  const fileRealPath = realpathSync(absolutePath);
+  if (!isPathInsideRoot(fileRealPath, rootRealPath)) {
+    throw Object.assign(new Error('Conversation resource resolves outside its authorized root.'), {code: 'ZEUS_CONVERSATION_RESOURCE_FORBIDDEN'});
+  }
+  const fileStat = statSync(fileRealPath);
+  if (!fileStat.isFile()) {
+    throw Object.assign(new Error('Conversation resource is not a regular file.'), {code: 'ZEUS_CONVERSATION_RESOURCE_NOT_FILE'});
+  }
+  const imageMimeType = conversationImageMimeType(fileRealPath);
+  const maximumPreviewBytes = imageMimeType ? 16 * 1024 * 1024 : 2 * 1024 * 1024;
+  if (fileStat.size > maximumPreviewBytes) {
+    throw Object.assign(new Error('Conversation resource is too large for the Zeus preview.'), {code: 'ZEUS_CONVERSATION_RESOURCE_TOO_LARGE'});
+  }
+  const bytes = readFileSync(fileRealPath);
+  if (imageMimeType) {
+    return {
+      kind: 'image',
+      resource,
+      mimeType: imageMimeType,
+      dataUrl: `data:${imageMimeType};base64,${bytes.toString('base64')}`,
+      byteLength: bytes.byteLength,
+    };
+  }
+  if (bytes.includes(0)) {
+    throw Object.assign(new Error('Binary files cannot be rendered in the source preview.'), {code: 'ZEUS_CONVERSATION_RESOURCE_BINARY'});
+  }
+  const content = bytes.toString('utf8');
+  return {
+    kind: 'source',
+    resource,
+    language: sourceLanguageForPath(fileRealPath),
+    content,
+    lineCount: sourcePreviewLineCount(content),
+    truncated: false,
+    ...(resource.kind === 'file' && resource.location ? {location: resource.location} : {}),
+  };
+}
+
+function sourcePreviewLineCount(content: string): number {
+  const normalized = content.replace(/\r\n?/gu, '\n');
+  if (normalized === '') return 1;
+  return (normalized.endsWith('\n') ? normalized.slice(0, -1) : normalized).split('\n').length;
+}
+
+function conversationImageMimeType(
+  path: string,
+): 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp' | 'image/avif' | 'image/bmp' | 'image/x-icon' | null {
+  const extension = path.slice(path.lastIndexOf('.')).toLocaleLowerCase();
+  const mimeTypes = {
+    '.png': 'image/png',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.gif': 'image/gif',
+    '.webp': 'image/webp',
+    '.avif': 'image/avif',
+    '.bmp': 'image/bmp',
+    '.ico': 'image/x-icon',
+  } as const;
+  return mimeTypes[extension as keyof typeof mimeTypes] ?? null;
+}
+
+function isPathInsideRoot(candidate: string, root: string): boolean {
+  const delta = relative(root, candidate);
+  return delta === '' || (!delta.startsWith(`..${sep}`) && delta !== '..' && !isAbsolute(delta));
+}
+
+function sourceLanguageForPath(path: string): string | null {
+  const extension = path.slice(path.lastIndexOf('.') + 1).toLocaleLowerCase();
+  const languages: Record<string, string> = {
+    c: 'c',
+    cc: 'cpp',
+    cpp: 'cpp',
+    css: 'css',
+    go: 'go',
+    h: 'c',
+    hpp: 'cpp',
+    html: 'html',
+    java: 'java',
+    js: 'javascript',
+    json: 'json',
+    jsx: 'javascript',
+    kt: 'kotlin',
+    md: 'markdown',
+    php: 'php',
+    py: 'python',
+    rb: 'ruby',
+    rs: 'rust',
+    scss: 'scss',
+    sh: 'shell',
+    sql: 'sql',
+    swift: 'swift',
+    ts: 'typescript',
+    tsx: 'typescript',
+    txt: 'text',
+    xml: 'xml',
+    yaml: 'yaml',
+    yml: 'yaml',
+  };
+  return languages[extension] ?? null;
+}
+
 export interface CreateLocalServerOptions {
   dbPath: string;
   apiToken: string;
@@ -175,29 +313,21 @@ export interface CreateLocalServerOptions {
   telegramToken?: string;
   telegramAllowedUserIds?: number[];
   telegramNotificationChatIds?: number[];
-  secretStore?: SecretStore;
-  telegramPollingClient?: TelegramLongPollingClient;
-  telegramMessageSender?: TelegramMessageSender;
-  aiRuntimeManager?: AiRuntimeSessionManager;
-  aiRuntimeSpawn?: AiRuntimeSpawn;
   codexAppServerManager?: CodexAppServerManager;
-  codexNativeCoordinatorFactory?: typeof createCodexNativeConversationCoordinator;
   codexNativeEnabled?: boolean;
   codexRuntimeCommandPath?: string;
+  codexRuntimeBinaryVersion?: string;
   codexLegacyImportRoot?: string;
   /** Electron Main 管理的任务附件目录；只允许服务端从任务记录引用。 */
   taskAttachmentRoot?: string;
-  runtimePidExists?: (pid: number) => boolean;
-  runtimeKillPid?: (pid: number, signal: NodeJS.Signals) => void;
-  telegramConfirmationTtlMs?: number;
-  gitConfirmationTtlMs?: number;
-  gitCommandRunner?: GitCommandRunner;
-  gitStatusReader?: (cwd: string) => Promise<GitStatusSummary>;
-  gitDiffReader?: (cwd: string) => Promise<GitDiffSummary>;
-  now?: () => Date;
-  releaseEnvironment?: NodeJS.ProcessEnv;
-  releaseUpdateManifestProvider?: () => Promise<ReleaseUpdateManifest>;
-  releaseUpdateManifestUrl?: string;
+  /** Electron Main 管理的浏览器截图目录；仅允许页面批注提交引用。 */
+  browserAttachmentRoot?: string;
+  /** Electron Main 管理的会话粘贴/拖放物化目录。 */
+  conversationAttachmentRoot?: string;
+  /** Electron Main 与 Local Server 共享的路径 capability 验签密钥。 */
+  conversationAttachmentGrantSecret?: string;
+  /** Electron Main 提供的内置浏览器自动化端口。 */
+  browserAutomation?: BrowserAutomationPort;
 }
 
 export interface SecurityAuditLogEntry {
@@ -233,10 +363,6 @@ export interface RunningZeusLocalServer {
   baseUrl: string;
   prepareForShutdown: () => Promise<void>;
   close: () => Promise<void>;
-}
-
-export interface StartZeusLocalServerDependencies {
-  listen?: (server: FastifyInstance) => Promise<string>;
 }
 
 type ZeusFastifyLifecycle = FastifyInstance & {
@@ -532,16 +658,66 @@ type TaskTableColumnKey =
     | 'runtimeSession'
     | 'rawId'
     | 'createdFrom';
-type TaskTableColumnWidth = 'compact' | 'standard' | 'wide';
+type TaskTableColumnWidth = number;
+type TaskTableSortDirection = 'asc' | 'desc';
+type TaskAgentRunStatus =
+    'not_started'
+    | 'connecting'
+    | 'reconnecting'
+    | 'running'
+    | 'waiting_user'
+    | 'waiting_approval'
+    | 'paused'
+    | 'idle'
+    | 'failed'
+    | 'legacy_readonly';
+
+interface TaskTableSortState {
+  columnKey: TaskTableColumnKey | null;
+  direction: TaskTableSortDirection | null;
+}
 
 interface TaskTableColumnPreferences {
   visibleColumnKeys: TaskTableColumnKey[];
   columnOrder: TaskTableColumnKey[];
-    columnWidths?: Partial<Record<TaskTableColumnKey, TaskTableColumnWidth>>;
+  columnWidths?: Partial<Record<TaskTableColumnKey, TaskTableColumnWidth>>;
+  sort: TaskTableSortState;
+}
+
+interface TaskTableEnumSortOrders {
+  priority: TaskPriority[];
+  managementStatus: TaskManagementStatus[];
+  runStatus: TaskAgentRunStatus[];
 }
 
 const defaultTaskTableColumnOrder: TaskTableColumnKey[] = ['code', 'intent', 'managementStatus', 'runStatus', 'source', 'createdAt', 'updatedAt', 'template', 'project', 'priority', 'description', 'runtimeSession', 'rawId', 'createdFrom'];
 const defaultVisibleTaskTableColumns: TaskTableColumnKey[] = ['code', 'intent', 'managementStatus', 'runStatus', 'source', 'createdAt', 'updatedAt'];
+const defaultTaskTableColumnWidths: Record<TaskTableColumnKey, number> = {
+  code: 112,
+  intent: 280,
+  managementStatus: 112,
+  runStatus: 132,
+  source: 120,
+  updatedAt: 148,
+  createdAt: 148,
+  template: 144,
+  project: 144,
+  priority: 112,
+  description: 220,
+  runtimeSession: 180,
+  rawId: 180,
+  createdFrom: 144,
+};
+const legacyTaskTableColumnWidthScale = {
+  compact: 0.78,
+  standard: 1,
+  wide: 1.35,
+} as const;
+const defaultTaskTableEnumSortOrders: TaskTableEnumSortOrders = {
+  priority: ['p0', 'p1', 'p2', 'p3', 'p4'],
+  managementStatus: ['todo', 'in_development', 'in_testing', 'awaiting_acceptance', 'blocked', 'completed', 'cancelled'],
+  runStatus: ['not_started', 'connecting', 'reconnecting', 'running', 'waiting_user', 'waiting_approval', 'paused', 'idle', 'failed', 'legacy_readonly'],
+};
 const previousDefaultTaskTableColumnOrder: TaskTableColumnKey[] = [
   'code',
   'intent',
@@ -560,7 +736,6 @@ const previousDefaultTaskTableColumnOrder: TaskTableColumnKey[] = [
 ];
 const previousDefaultVisibleTaskTableColumns: TaskTableColumnKey[] = ['code', 'intent', 'managementStatus', 'runStatus', 'source', 'updatedAt'];
 const taskTableColumnKeySet = new Set<TaskTableColumnKey>(defaultTaskTableColumnOrder);
-const taskTableColumnWidthSet = new Set<TaskTableColumnWidth>(['compact', 'standard', 'wide']);
 const legacyTaskTableColumnKeySet = new Set(['nextAction', 'aiExecution', 'signals']);
 
 function normalizeTaskTableColumnKeys(value: unknown, fallback: TaskTableColumnKey[]): TaskTableColumnKey[] {
@@ -586,12 +761,14 @@ function normalizeTaskTableColumnPreferences(value: unknown): TaskTableColumnPre
         migratedOrder = [...defaultTaskTableColumnOrder];
     }
     const columnWidths = normalizeTaskTableColumnWidths(input.columnWidths);
+    const sort = normalizeTaskTableSortState(input.sort);
   // 用户传入顺序只决定已知列的优先级，其他合法列按默认顺序补齐，保证前端刷新后列集合稳定。
     const ordered = [...migratedOrder, ...defaultTaskTableColumnOrder.filter((key) => !migratedOrder.includes(key))];
     const normalized: TaskTableColumnPreferences = {
-    visibleColumnKeys: visibleWithRequired.filter((key) => taskTableColumnKeySet.has(key)),
-    columnOrder: ordered,
-  };
+      visibleColumnKeys: visibleWithRequired.filter((key) => taskTableColumnKeySet.has(key)),
+      columnOrder: ordered,
+      sort,
+    };
     if (columnWidths) normalized.columnWidths = columnWidths;
     return normalized;
 }
@@ -605,10 +782,57 @@ function normalizeTaskTableColumnWidths(value: unknown): Partial<Record<TaskTabl
     const normalized: Partial<Record<TaskTableColumnKey, TaskTableColumnWidth>> = {};
     for (const [key, width] of Object.entries(value)) {
         if (!taskTableColumnKeySet.has(key as TaskTableColumnKey)) continue;
-        if (typeof width !== 'string' || !taskTableColumnWidthSet.has(width as TaskTableColumnWidth)) continue;
-        normalized[key as TaskTableColumnKey] = width as TaskTableColumnWidth;
+        const normalizedWidth = normalizeTaskTableColumnWidth(key as TaskTableColumnKey, width);
+        if (normalizedWidth === null) continue;
+        normalized[key as TaskTableColumnKey] = normalizedWidth;
     }
     return Object.keys(normalized).length > 0 ? normalized : undefined;
+}
+
+function normalizeTaskTableColumnWidth(columnKey: TaskTableColumnKey, value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return Math.min(640, Math.max(64, Math.round(value)));
+  if (typeof value !== 'string' || !(value in legacyTaskTableColumnWidthScale)) return null;
+  const scale = legacyTaskTableColumnWidthScale[value as keyof typeof legacyTaskTableColumnWidthScale];
+  return Math.round(defaultTaskTableColumnWidths[columnKey] * scale);
+}
+
+function normalizeTaskTableSortState(value: unknown): TaskTableSortState {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {columnKey: null, direction: null};
+  const input = value as Partial<TaskTableSortState>;
+  const columnKey = typeof input.columnKey === 'string' && taskTableColumnKeySet.has(input.columnKey as TaskTableColumnKey) ? input.columnKey as TaskTableColumnKey : null;
+  const direction = input.direction === 'asc' || input.direction === 'desc' ? input.direction : null;
+  return columnKey && direction ? {columnKey, direction} : {columnKey: null, direction: null};
+}
+
+function normalizeTaskTableColumnsByProject(value: unknown): Record<string, TaskTableColumnPreferences> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const normalized: Record<string, TaskTableColumnPreferences> = {};
+  for (const [projectId, preferences] of Object.entries(value)) {
+    const normalizedProjectId = projectId.trim();
+    const containsControlCharacter = Array.from(normalizedProjectId).some((character) => {
+      const code = character.charCodeAt(0);
+      return code <= 31 || code === 127;
+    });
+    if (!normalizedProjectId || normalizedProjectId.length > 160 || containsControlCharacter) continue;
+    normalized[normalizedProjectId] = normalizeTaskTableColumnPreferences(preferences);
+  }
+  return normalized;
+}
+
+function normalizeTaskTableEnumSortOrders(value: unknown): TaskTableEnumSortOrders {
+  const input = value && typeof value === 'object' && !Array.isArray(value) ? value as Partial<TaskTableEnumSortOrders> : {};
+  return {
+    priority: normalizeEnumOrder(input.priority, defaultTaskTableEnumSortOrders.priority),
+    managementStatus: normalizeEnumOrder(input.managementStatus, defaultTaskTableEnumSortOrders.managementStatus),
+    runStatus: normalizeEnumOrder(input.runStatus, defaultTaskTableEnumSortOrders.runStatus),
+  };
+}
+
+function normalizeEnumOrder<T extends string>(value: unknown, fallback: readonly T[]): T[] {
+  if (!Array.isArray(value)) return [...fallback];
+  const allowed = new Set(fallback);
+  const normalized = Array.from(new Set(value.filter((item): item is T => typeof item === 'string' && allowed.has(item as T))));
+  return [...normalized, ...fallback.filter((item) => !normalized.includes(item))];
 }
 
 function containsLegacyTaskTableColumnKeys(value: unknown): boolean {
@@ -653,9 +877,12 @@ interface AppShellSettingsSnapshot {
   autoUpdateChannel: 'manual';
   defaultProjectId: string | null;
   pinnedProjectIds: string[];
+  collapsedProjectIds: string[];
   defaultModel: string | null;
   defaultTaskTemplateId: string | null;
   taskTableColumns: TaskTableColumnPreferences;
+  taskTableColumnsByProject: Record<string, TaskTableColumnPreferences>;
+  taskTableEnumSortOrders: TaskTableEnumSortOrders;
   localLogDirectory: string;
   localConfigPath: string;
   dataPortability: {
@@ -683,9 +910,12 @@ interface UpdateAppShellSettingsBody {
   autoUpdateChannel?: 'manual';
   defaultProjectId?: string | null;
   pinnedProjectIds?: string[];
+  collapsedProjectIds?: string[];
   defaultModel?: string | null;
   defaultTaskTemplateId?: string | null;
   taskTableColumns?: Partial<TaskTableColumnPreferences>;
+  taskTableColumnsByProject?: Record<string, TaskTableColumnPreferences>;
+  taskTableEnumSortOrders?: TaskTableEnumSortOrders;
 }
 
 interface ClearCacheResult {
@@ -729,7 +959,7 @@ interface ImportLocalSettingsResult {
 
 interface LocalDataExportSnapshot {
   app: 'Zeus';
-  schemaVersion: 1;
+  schemaVersion: 1 | 2;
   exportedAt: string;
   redaction: {
     secretsRedacted: true;
@@ -739,6 +969,7 @@ interface LocalDataExportSnapshot {
     tasks: PortableTaskRecord[];
     taskEvents: PortableTaskEventRecord[];
     taskTemplates: PortableTaskTemplateRecord[];
+    commandDefinitions?: CommandDefinition[];
   };
 }
 
@@ -749,6 +980,7 @@ interface ImportLocalDataResult {
     tasks: number;
     taskEvents: number;
     taskTemplates: number;
+    commandDefinitions: number;
   };
   importedAt: string;
 }
@@ -829,6 +1061,7 @@ interface CreateTaskBody {
   description?: string;
   sourceContext?: Record<string, unknown>;
   tags?: string[];
+  priority?: TaskPriority;
   allowCodeChanges?: boolean;
   allowTests?: boolean;
   allowGitCommit?: boolean;
@@ -982,7 +1215,9 @@ interface RuntimeInputBody {
 
 interface CreateConversationMessageBody {
   content?: string;
+  displayText?: string;
   attachments?: NativeConversationAttachment[];
+  browserComments?: unknown;
   delivery?: 'queue' | 'steer_now';
   expectedTurnId?: string;
   clientUserMessageId?: string;
@@ -997,6 +1232,8 @@ interface NativeConversationAttachment {
   size: number;
   localPath?: string;
   uploadRef?: string;
+  /** 仅由服务端验签后注入，用于精确授权持久化路径。 */
+  authorizedPath?: string;
 }
 
 type StartTaskConversationBody = (
@@ -1020,7 +1257,7 @@ type StartTaskConversationBody = (
 
 interface StartProjectConversationBody {
   mode: 'create';
-  content: string;
+  content?: string;
   attachments?: NativeConversationAttachment[];
   permissionMode?: ConversationPermissionMode;
     collaborationMode?: ConversationCollaborationMode;
@@ -1156,7 +1393,7 @@ interface TelegramRuntimeConfirmation {
   execute: () => Promise<string>;
 }
 
-/** 创建 Zeus 本地服务实例；监听动作由 Electron Main 决定，测试使用 inject 不暴露端口。 */
+/** 创建 Zeus 本地服务实例；监听动作由 Electron Main 决定。 */
 export async function createLocalServer(options: CreateLocalServerOptions): Promise<FastifyInstance> {
   const db = await createZeusDatabase(options.dbPath);
   const projects = new ProjectRepository(db);
@@ -1164,6 +1401,9 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
   const taskEvents = new TaskEventRepository(db);
   const taskTemplates = new TaskTemplateRepository(db);
   const runtimeSessions = new RuntimeSessionRepository(db);
+  const commandDefinitions = new CommandDefinitionRepository(db);
+  const commandRuns = new CommandRunRepository(db);
+  const commandArtifacts = new CommandArtifactRepository(db);
   const terminalEvents = new TerminalEventRepository(db);
   const settings = new SettingRepository(db);
   const auditLogs = new AuditLogRepository(db);
@@ -1171,6 +1411,9 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
   const codexLegacyImports = new CodexLegacyImportRepository(db);
   const conversationTurns = new ConversationTurnRepository(db);
   const conversationItems = new ConversationItemRepository(db);
+  const conversationResources = new ConversationResourceRepository(db);
+  const turnChangeSets = new TurnChangeSetRepository(db);
+  const turnChangeFiles = new TurnChangeFileRepository(db);
   const conversationSubmissions = new ConversationSubmissionRepository(db);
   const conversationRequests = new ConversationServerRequestRepository(db);
     const conversationPlanActions = new ConversationPlanActionRepository(db);
@@ -1184,23 +1427,25 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
   const server = Fastify({ logger: false });
   await server.register(websocketPlugin);
   const projectRoot = options.projectRoot ?? process.cwd();
-  const readGitStatus = options.gitStatusReader ?? getGitStatus;
-  const readGitDiff = options.gitDiffReader ?? getGitDiff;
-  const releaseEnvironment = options.releaseEnvironment ?? process.env;
-  const releaseUpdateManifestUrl = options.releaseUpdateManifestUrl ?? 'https://github.com/imchenway/zeus/releases/latest/download/zeus-release-manifest.json';
+  const readGitStatus = getGitStatus;
+  const readGitDiff = getGitDiff;
+  const releaseEnvironment = process.env;
+  const releaseUpdateManifestUrl = 'https://github.com/imchenway/zeus/releases/latest/download/zeus-release-manifest.json';
   const gitConfirmations = new Map<string, GitOperationConfirmation>();
   const consumedGitConfirmationIds = new Set<string>();
   const activeProjectGraphScanIds = new Set<string>();
   const runtimeConfirmations = new Map<string, RuntimeOperationConfirmation>();
   const telegramRuntimeConfirmations = new Map<string, TelegramRuntimeConfirmation>();
   const telegramRuntimeSummarySentLogCounts = new Map<string, Set<number>>();
+  const telegramCommandRunMessages = new Map<string, {chatId: number; messageId?: number}>();
+  const telegramCommandRunLogCounts = new Map<string, number>();
   const eventSubscribers = new Set<ZeusRealtimeSocket>();
   const nativeLocalEventGenerationId = `zeus-local-${randomUUID()}`;
   let nativeLocalEventSequence = 0;
   const nativeIdempotentInFlight = new Map<string, { requestHash: string; promise: Promise<{ statusCode: number; body: unknown }> }>();
-  const telegramConfirmationTtlMs = options.telegramConfirmationTtlMs ?? 10 * 60 * 1000;
-  const gitConfirmationTtlMs = options.gitConfirmationTtlMs ?? 10 * 60 * 1000;
-  const now = options.now ?? (() => new Date());
+  const telegramConfirmationTtlMs = 10 * 60 * 1000;
+  const gitConfirmationTtlMs = 10 * 60 * 1000;
+  const now = () => new Date();
   const appShellSettingsKey = 'app.shell.settings';
   const localLogDirectory = `${options.dbPath}.logs`;
   const localConfigPath = options.localConfigPath ?? join(dirname(options.dbPath), 'zeus.config.json');
@@ -1218,32 +1463,37 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
   let memoryGraphCache: ProjectGraph | null = null;
     const persistedAppShellSettings = settings.getJson<AppShellSettingsSnapshot>(appShellSettingsKey);
     let appShellSettings: AppShellSettingsSnapshot = normalizeAppShellSettings(persistedAppShellSettings, localLogDirectory, localConfigPath);
-    if (persistedAppShellSettings && JSON.stringify(persistedAppShellSettings.taskTableColumns) !== JSON.stringify(appShellSettings.taskTableColumns)) {
+    if (
+      persistedAppShellSettings &&
+      (
+        JSON.stringify(persistedAppShellSettings.taskTableColumns) !== JSON.stringify(appShellSettings.taskTableColumns) ||
+        JSON.stringify(persistedAppShellSettings.taskTableColumnsByProject) !== JSON.stringify(appShellSettings.taskTableColumnsByProject) ||
+        JSON.stringify(persistedAppShellSettings.taskTableEnumSortOrders) !== JSON.stringify(appShellSettings.taskTableEnumSortOrders)
+      )
+    ) {
         // 旧列键、旧默认顺序和新增列宽都只迁移一次并立即落库，避免每次启动重复改写用户看到的列配置。
         settings.setJson(appShellSettingsKey, appShellSettings);
         await db.save();
     }
-  const secretStore = options.secretStore ?? createMacOSKeychainStore();
+  const secretStore = createMacOSKeychainStore();
   const runtimePersistenceWrites: Array<Promise<void>> = [];
-  const runtimePidExists = options.runtimePidExists ?? processPidExists;
-  const runtimeKillPid = options.runtimeKillPid ?? processKillPid;
+  const runtimePidExists = processPidExists;
+  const runtimeKillPid = processKillPid;
   const optionalNodePty = createOptionalNodePtyRuntimeSpawn();
   const runtimeTerminalStatus: RuntimeStatusSnapshot['terminal'] = {
-    provider: optionalNodePty.spawn && !options.aiRuntimeSpawn ? 'node-pty' : 'child_process',
+    provider: optionalNodePty.spawn ? 'node-pty' : 'child_process',
     pty: {
       available: optionalNodePty.available,
       reason: optionalNodePty.reason,
     },
   };
-  const aiRuntimeManager =
-    options.aiRuntimeManager ??
-    createAiRuntimeSessionManager({
-      allowedRoot: projectRoot,
-      allowedRoots: () => projects.list().map((project) => project.localPath),
-      spawn: options.aiRuntimeSpawn ?? optionalNodePty.spawn,
-      onSessionChange: persistRuntimeSession,
-      onLog: persistRuntimeLog,
-    });
+  const aiRuntimeManager = createAiRuntimeSessionManager({
+    allowedRoot: projectRoot,
+    allowedRoots: () => projects.list().map((project) => project.localPath),
+    spawn: optionalNodePty.spawn,
+    onSessionChange: persistRuntimeSession,
+    onLog: persistRuntimeLog,
+  });
   const ownsCodexAppServerManager = options.codexAppServerManager === undefined;
   const codexNativeEnabled = options.codexNativeEnabled !== false;
   const codexRuntimeCommandPath = options.codexRuntimeCommandPath ?? 'codex';
@@ -1254,11 +1504,62 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       })()
     : undefined;
   const taskAttachmentRoot = prepareTaskAttachmentRoot(options.taskAttachmentRoot);
+  const browserAttachmentRoot = prepareTaskAttachmentRoot(options.browserAttachmentRoot);
+  const conversationAttachmentRoot = prepareTaskAttachmentRoot(options.conversationAttachmentRoot);
+  const trustedConversationAttachmentRoots = [taskAttachmentRoot, browserAttachmentRoot, conversationAttachmentRoot]
+    .filter((root): root is string => Boolean(root));
+  let conversationResourceBackfillCount = 0;
+  for (const conversation of conversations.listNativeBound()) {
+    const project = projects.getById(conversation.projectId);
+    if (!project) continue;
+    const submissions = conversationSubmissions.listByConversation(conversation.id);
+    const existingResourcesByItem = new Map<string, ReturnType<typeof conversationResources.listByItem>>();
+    for (const resource of conversationResources.listByConversation(conversation.id)) {
+      const existing = existingResourcesByItem.get(resource.itemId) ?? [];
+      existing.push(resource);
+      existingResourcesByItem.set(resource.itemId, existing);
+    }
+    for (const item of conversationItems.listByConversation(conversation.id)) {
+      const submission = item.itemType === 'userMessage'
+        ? submissions.find((candidate) => candidate.providerTurnId === item.providerTurnId)
+        : undefined;
+      const payload = parseJsonObject(item.payloadJson);
+      const normalized = normalizeConversationResources({
+        projectId: conversation.projectId,
+        projectRoot: project.localPath,
+        conversationId: conversation.id,
+        turnId: item.turnId,
+        item,
+        payload: submission
+          ? {...payload, attachments: parseJsonObject(submission.inputJson).attachments}
+          : payload,
+        text: item.textContent,
+        trustedAttachmentRoots: trustedConversationAttachmentRoots,
+        now: item.updatedAt,
+      });
+      const existing = existingResourcesByItem.get(item.id) ?? [];
+      if (conversationResourceRecordsEqual(existing, normalized)) continue;
+      conversationResources.replaceForItem(item.id, normalized, item.updatedAt);
+      conversationResourceBackfillCount += Math.max(normalized.length, existing.length);
+    }
+  }
+  if (conversationResourceBackfillCount > 0) await db.save();
+  const turnChangeSetService = createTurnChangeSetService({
+    db,
+    changeSets: turnChangeSets,
+    files: turnChangeFiles,
+    projects,
+    auditLogs,
+    idempotency: idempotencyRequests,
+    recoveryRoot: join(dirname(options.dbPath), 'turn-change-sets'),
+    broadcast: publishNativeConversationEvent,
+    now: () => now().toISOString(),
+  });
   let settleCodexPendingOnClose = ownsCodexAppServerManager;
   const codexAppServerManager = options.codexAppServerManager ?? createCodexAppServerManager();
   let codexNativeCoordinator: ReturnType<typeof createCodexNativeConversationCoordinator>;
   try {
-    codexNativeCoordinator = (options.codexNativeCoordinatorFactory ?? createCodexNativeConversationCoordinator)({
+    codexNativeCoordinator = createCodexNativeConversationCoordinator({
       manager: codexAppServerManager,
       enabled: codexNativeEnabled,
       commandPath: codexRuntimeCommandPath,
@@ -1267,10 +1568,15 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       conversations,
       turns: conversationTurns,
       items: conversationItems,
+      resources: conversationResources,
+      changeSets: turnChangeSetService,
       submissions: conversationSubmissions,
       requests: conversationRequests,
         planActions: conversationPlanActions,
       settings,
+      browserAutomation: options.browserAutomation,
+      trustedAttachmentRoots: trustedConversationAttachmentRoots,
+      getProjectRoot: (projectId) => projects.getById(projectId)?.localPath ?? null,
       getConcurrency: (projectId) => {
         const runningLegacy = listUniqueRunningRuntimeSessions();
         return {
@@ -1358,7 +1664,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       sourceRoot: codexExternalAgentHome!,
       allowedProjectRoots: () => projects.list().map((project) => project.localPath),
       commandPath: codexRuntimeCommandPath,
-      providerBinaryVersion: '0.144.2',
+      providerBinaryVersion: options.codexRuntimeBinaryVersion ?? 'unknown',
       onUpdated: (snapshot) => publishNativeConversationEvent('codex.legacy_import.updated', snapshot),
     });
     try {
@@ -1379,6 +1685,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     await codexLegacyImportService?.close();
     await codexNativeCoordinator.close({ mode: 'final' });
   };
+  await turnChangeSetService.recoverInterruptedOperations();
   if (codexNativeEnabled && (conversations.listNativeBound().length > 0 || conversationSubmissions.listRecoverable().some((submission) => submission.status === 'dispatching' || submission.status === 'active'))) {
     try {
       await codexNativeCoordinator.recover();
@@ -1427,6 +1734,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
   }
 
   let telegramPollingService: TelegramPollingService | undefined;
+  let telegramMessageSender: TelegramMessageSender | undefined;
   let telegramPollingTimer: ReturnType<typeof setInterval> | undefined;
   let boundPort: number | null = null;
 
@@ -1774,6 +2082,23 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     }
   });
 
+  const commandCenter = createCommandCenter({
+    server,
+    db,
+    projects,
+    runtimeSessions,
+    aiRuntimeManager,
+    commandScriptsDirectory: join(dirname(options.dbPath), 'command-scripts'),
+    commandRunsDirectory: join(dirname(options.dbPath), 'command-runs'),
+    readProjectSecurity: (projectId) => readProjectConfig(projectId).security,
+    buildRuntimeProcessEnv,
+    appendAuditLog,
+    publishRealtimeEvent,
+    save: () => db.save(),
+    now,
+    confirmationTtlMs: telegramConfirmationTtlMs,
+  });
+
   server.get('/api/dashboard', async (): Promise<DashboardSnapshot> => {
     await recoverInactiveProjectGraphScans();
     const currentProjects = projects.list();
@@ -1994,6 +2319,141 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     },
   );
 
+  server.get(
+    '/api/projects/:projectId/conversations/:conversationId/resources',
+    async (
+      request: FastifyRequest<{Params: {projectId: string; conversationId: string}}>,
+      reply,
+    ) => {
+      const conversation = conversations.getById(request.params.conversationId);
+      if (!conversation || conversation.projectId !== request.params.projectId) {
+        return reply.code(404).send({error: 'ZEUS_CONVERSATION_NOT_FOUND', message: 'Conversation not found'});
+      }
+      return {
+        items: conversationResources
+          .listByConversation(conversation.id)
+          .map(toConversationResource)
+          .filter((resource): resource is NonNullable<typeof resource> => resource !== null),
+      };
+    },
+  );
+
+  server.get(
+    '/api/projects/:projectId/conversations/:conversationId/resources/:resourceId/open-intent',
+    async (
+      request: FastifyRequest<{Params: {projectId: string; conversationId: string; resourceId: string}}>,
+      reply,
+    ) => {
+      const record = conversationResources.getById(request.params.resourceId);
+      if (!record || record.projectId !== request.params.projectId || record.conversationId !== request.params.conversationId) {
+        return reply.code(404).send({error: 'ZEUS_CONVERSATION_RESOURCE_NOT_FOUND', message: 'Conversation resource not found'});
+      }
+      return toConversationResourceOpenIntent(record);
+    },
+  );
+
+  server.get(
+    '/api/projects/:projectId/conversations/:conversationId/resources/:resourceId/preview',
+    async (
+      request: FastifyRequest<{Params: {projectId: string; conversationId: string; resourceId: string}}>,
+      reply,
+    ) => {
+      const record = conversationResources.getById(request.params.resourceId);
+      if (!record || record.projectId !== request.params.projectId || record.conversationId !== request.params.conversationId) {
+        return reply.code(404).send({error: 'ZEUS_CONVERSATION_RESOURCE_NOT_FOUND', message: 'Conversation resource not found'});
+      }
+      const resource = toConversationResource(record);
+      if (!resource || resource.kind === 'website') {
+        return reply.code(400).send({error: 'ZEUS_CONVERSATION_RESOURCE_NOT_PREVIEWABLE', message: 'This resource is not a local previewable file'});
+      }
+      try {
+        return readConversationResourcePreview(resource, toConversationResourceOpenIntent(record));
+      } catch (error) {
+        const code = error instanceof Error && 'code' in error ? String((error as Error & {code?: unknown}).code ?? '') : '';
+        const status = code === 'ZEUS_CONVERSATION_RESOURCE_FORBIDDEN' ? 403 : code === 'ZEUS_CONVERSATION_RESOURCE_TOO_LARGE' ? 413 : 409;
+        return reply.code(status).send({
+          error: code || 'ZEUS_CONVERSATION_RESOURCE_PREVIEW_FAILED',
+          message: error instanceof Error ? error.message : 'Conversation resource preview failed',
+        });
+      }
+    },
+  );
+
+  server.get(
+    '/api/projects/:projectId/conversations/:conversationId/turns/:turnId/change-set',
+    async (
+      request: FastifyRequest<{Params: {projectId: string; conversationId: string; turnId: string}}>,
+      reply,
+    ) => {
+      const conversation = conversations.getById(request.params.conversationId);
+      if (!conversation || conversation.projectId !== request.params.projectId) {
+        return reply.code(404).send({error: 'ZEUS_CONVERSATION_NOT_FOUND', message: 'Conversation not found'});
+      }
+      const turn = conversationTurns
+        .listByConversation(conversation.id)
+        .find((candidate) => candidate.id === request.params.turnId || candidate.providerTurnId === request.params.turnId);
+      if (!turn) return reply.code(404).send({error: 'ZEUS_CONVERSATION_TURN_NOT_FOUND', message: 'Conversation turn not found'});
+      const changeSet = turnChangeSetService.getByTurn(conversation.id, turn.id);
+      if (!changeSet) return reply.code(404).send({error: 'ZEUS_TURN_CHANGE_SET_NOT_FOUND', message: 'Turn change set not found'});
+      return changeSet;
+    },
+  );
+
+  for (const action of ['undo', 'reapply'] as const) {
+    server.post(
+      `/api/projects/:projectId/conversations/:conversationId/turns/:turnId/change-set/${action}`,
+      async (
+        request: FastifyRequest<{
+          Params: {projectId: string; conversationId: string; turnId: string};
+          Body: {changeSetId?: unknown; expectedState?: unknown; idempotencyKey?: unknown};
+        }>,
+        reply,
+      ) => {
+        const body = request.body ?? {};
+        if (
+          typeof body.changeSetId !== 'string' ||
+          typeof body.idempotencyKey !== 'string' ||
+          !body.changeSetId.trim() ||
+          !body.idempotencyKey.trim() ||
+          (body.expectedState !== 'applied' && body.expectedState !== 'undone')
+        ) {
+          return reply.code(400).send({
+            error: 'ZEUS_TURN_CHANGE_SET_REQUEST_INVALID',
+            message: 'changeSetId, expectedState, and idempotencyKey are required.',
+          });
+        }
+        try {
+          return await turnChangeSetService.operate({
+            projectId: request.params.projectId,
+            conversationId: request.params.conversationId,
+            turnId:
+              conversationTurns
+                .listByConversation(request.params.conversationId)
+                .find((candidate) => candidate.id === request.params.turnId || candidate.providerTurnId === request.params.turnId)?.id ?? request.params.turnId,
+            action,
+            request: {
+              changeSetId: body.changeSetId,
+              expectedState: body.expectedState,
+              idempotencyKey: body.idempotencyKey,
+            },
+          });
+        } catch (error) {
+          return reply.code(changeSetErrorStatus(error)).send({
+            error: turnChangeSetErrorCode(error),
+            message: error instanceof Error ? error.message : 'Turn change set operation failed.',
+            ...(
+              error instanceof Error &&
+              'paths' in error &&
+              Array.isArray((error as Error & {paths?: unknown}).paths)
+                ? {paths: (error as Error & {paths: unknown[]}).paths}
+                : {}
+            ),
+          });
+        }
+      },
+    );
+  }
+
   server.post(
     '/api/projects/:projectId/conversations/:conversationId/messages',
     async (
@@ -2017,11 +2477,17 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
           message: 'Conversation not found',
         });
       }
-      const content = request.body?.content?.trim();
-      if (!content) {
+      const content = typeof request.body?.content === 'string' ? request.body.content.trim() : '';
+      const hasNativeResourceInput =
+        conversation.transportKind === 'codex_native' &&
+        (
+          (Array.isArray(request.body?.attachments) && request.body.attachments.length > 0) ||
+          (Array.isArray(request.body?.browserComments) && request.body.browserComments.length > 0)
+        );
+      if (!content && !hasNativeResourceInput) {
         return reply.code(400).send({
           error: 'ZEUS_INVALID_CONVERSATION_MESSAGE',
-          message: 'Conversation message content is required',
+          message: 'Conversation message content, attachments, or browser comments are required',
         });
       }
       if (conversation.transportKind === 'codex_native') {
@@ -3222,6 +3688,12 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
         message: 'allowCodeChanges, allowTests and allowGitCommit must be booleans when provided',
       });
     }
+    if (body.priority !== undefined && !isTaskPriority(body.priority)) {
+      return reply.code(400).send({
+        error: 'ZEUS_INVALID_TASK_PRIORITY',
+        message: 'priority must be one of p0, p1, p2, p3 or p4',
+      });
+    }
     const task = tasks.create({
       projectId: body.projectId,
       title: body.title,
@@ -3229,6 +3701,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       createdFrom: 'user',
       sourceContext: body.sourceContext ?? {},
       tags: body.tags,
+      priority: body.priority,
       allowCodeChanges: body.allowCodeChanges,
       allowTests: body.allowTests,
       allowGitCommit: body.allowGitCommit,
@@ -3237,7 +3710,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       taskId: task.id,
       eventType: 'task.created',
       title: '任务已创建',
-        payload: {status: task.status, managementStatus: task.managementStatus, source: task.createdFrom},
+        payload: {status: task.status, managementStatus: task.managementStatus, priority: task.priority, source: task.createdFrom},
     });
     appendAuditLog({
       actorType: 'local_api',
@@ -3249,6 +3722,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
         projectId: task.projectId,
         title: task.title,
         status: task.status,
+        priority: task.priority,
       },
     });
     publishRealtimeEvent('task.created', {
@@ -3256,6 +3730,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       projectId: task.projectId,
       title: task.title,
       status: task.status,
+      priority: task.priority,
     });
     await db.save();
     return reply.code(201).send(task);
@@ -3893,7 +4368,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
           sourceNodes,
           sourceEdges,
           suggestedTestScope,
-          riskHints: ['核对 AI 回答来源节点是否仍与当前代码一致', '优先补充来源文件相关测试', '若图谱来源不足，先重新扫描真实代码库'],
+          riskHints: ['核对 AI 回答来源节点是否仍与当前代码一致', '优先补充来源文件相关验收', '若图谱来源不足，先重新扫描真实代码库'],
         },
         tags: ['graph-question'],
       });
@@ -4009,7 +4484,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       const task = tasks.create({
         projectId: project.id,
         title: `分析图谱视图：${view.title}`,
-        description: [request.body?.intent ?? '基于当前代码图谱视图分析架构风险、影响范围和建议测试范围。', `视图类型：${view.viewType}`, `节点数：${view.nodes.length}`, `边数：${view.edges.length}`].join('\n'),
+        description: [request.body?.intent ?? '基于当前代码图谱视图分析架构风险、影响范围和建议验收范围。', `视图类型：${view.viewType}`, `节点数：${view.nodes.length}`, `边数：${view.edges.length}`].join('\n'),
         createdFrom: 'graph_view',
         sourceContext: {
           graphView: {
@@ -4022,7 +4497,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
           sourceNodes,
           sourceEdges,
           suggestedTestScope: Array.from(new Set(sourceNodes.map((node) => node.sourceRef).filter(Boolean))),
-          riskHints: ['按视图节点逐项核对影响面', '优先补齐来源文件测试', '如果视图过大，先缩小到关键节点再执行'],
+          riskHints: ['按视图节点逐项核对影响面', '优先补齐来源文件验收', '如果视图过大，先缩小到关键节点再执行'],
         },
       });
       recordTaskEvent({
@@ -4752,9 +5227,12 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
         autoUpdateChannel: appShellSettings.autoUpdateChannel,
         defaultProjectId: appShellSettings.defaultProjectId,
         pinnedProjectIds: appShellSettings.pinnedProjectIds,
+        collapsedProjectIds: appShellSettings.collapsedProjectIds,
         defaultModel: appShellSettings.defaultModel,
         defaultTaskTemplateId: appShellSettings.defaultTaskTemplateId,
         taskTableColumns: appShellSettings.taskTableColumns,
+        taskTableColumnsByProject: appShellSettings.taskTableColumnsByProject,
+        taskTableEnumSortOrders: appShellSettings.taskTableEnumSortOrders,
       },
     });
     await db.save();
@@ -4893,7 +5371,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       action: 'data.export.completed',
       resourceType: 'data_export',
       payload: {
-        schemaVersion: 1,
+        schemaVersion: snapshot.schemaVersion,
         secretsRedacted: true,
         exportedAt,
         counts: {
@@ -4901,6 +5379,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
           tasks: snapshot.data.tasks.length,
           taskEvents: snapshot.data.taskEvents.length,
           taskTemplates: snapshot.data.taskTemplates.length,
+          commandDefinitions: snapshot.data.commandDefinitions?.length ?? 0,
         },
       },
     });
@@ -4909,10 +5388,10 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
   });
 
   server.post('/api/data/import', async (request: FastifyRequest<{ Body: LocalDataExportSnapshot }>, reply): Promise<ImportLocalDataResult | unknown> => {
-    if (request.body?.app !== 'Zeus' || request.body.schemaVersion !== 1 || request.body.redaction?.secretsRedacted !== true || !request.body.data) {
+    if (request.body?.app !== 'Zeus' || ![1, 2].includes(request.body.schemaVersion) || request.body.redaction?.secretsRedacted !== true || !request.body.data) {
       return reply.code(400).send({
         error: 'ZEUS_INVALID_DATA_IMPORT',
-        message: 'Zeus data import requires a redacted schemaVersion 1 snapshot',
+        message: 'Zeus data import requires a redacted schemaVersion 1 or 2 snapshot',
       });
     }
     const invalidProjectPaths = findInvalidPortableProjectPaths(request.body);
@@ -4930,7 +5409,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       action: 'data.import.completed',
       resourceType: 'data_import',
       payload: {
-        schemaVersion: 1,
+        schemaVersion: request.body.schemaVersion,
         importedCounts,
         importedAt,
         secretsAccepted: false,
@@ -4995,11 +5474,25 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
         message: 'runtime confirmation is only required for Generic shell sessions',
       });
     }
-    const confirmationCwd = body.session.cwd ?? projectRoot;
-    if (!isPathInsideProjectRoot(confirmationCwd, projectRoot)) {
+    const confirmationProject = projects.getById(body.session.projectId);
+    if (!confirmationProject) {
+      return reply.code(404).send({
+        error: 'ZEUS_PROJECT_NOT_FOUND',
+        message: 'Project not found',
+      });
+    }
+    if (!readProjectConfig(confirmationProject.id).security.allowShell) {
+      return reply.code(403).send({
+        error: 'ZEUS_RUNTIME_SHELL_PERMISSION_REQUIRED',
+        message: 'Project must enable allowShell before Generic shell sessions can be confirmed',
+      });
+    }
+    const confirmationProjectRoot = confirmationProject.localPath;
+    const confirmationCwd = body.session.cwd ?? confirmationProjectRoot;
+    if (!isPathInsideProjectRoot(confirmationCwd, confirmationProjectRoot)) {
       appendRuntimeCwdRejectedAuditLog({
         requestedCwd: confirmationCwd,
-        projectRoot,
+        projectRoot: confirmationProjectRoot,
         projectId: body.session.projectId,
         taskId: body.session.taskId ?? null,
         phase: 'confirmation',
@@ -5010,11 +5503,11 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
         message: 'Runtime cwd must stay inside the configured project root before high-risk shell confirmation can be created',
       });
     }
-    const confirmationShellPathRisk = detectGenericShellOutsideProjectPath(body.session.command, body.session.args ?? [], projectRoot);
+    const confirmationShellPathRisk = detectGenericShellOutsideProjectPath(body.session.command, body.session.args ?? [], confirmationProjectRoot);
     if (confirmationShellPathRisk) {
       appendRuntimeShellPathRejectedAuditLog({
         ...confirmationShellPathRisk,
-        projectRoot,
+        projectRoot: confirmationProjectRoot,
         projectId: body.session.projectId,
         taskId: body.session.taskId ?? null,
         phase: 'confirmation',
@@ -5249,11 +5742,25 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
         message: 'Codex Runtime writes require the native app-server transport.',
       });
     }
-    const requestedRuntimeCwd = body.cwd ?? projectRoot;
-    if (!isPathInsideProjectRoot(requestedRuntimeCwd, projectRoot)) {
+    const runtimeProject = projects.getById(body.projectId);
+    if (!runtimeProject) {
+      return reply.code(404).send({
+        error: 'ZEUS_PROJECT_NOT_FOUND',
+        message: 'Project not found',
+      });
+    }
+    if (runtimeAdapter.id === 'generic' && !readProjectConfig(runtimeProject.id).security.allowShell) {
+      return reply.code(403).send({
+        error: 'ZEUS_RUNTIME_SHELL_PERMISSION_REQUIRED',
+        message: 'Project must enable allowShell before Generic shell sessions can run',
+      });
+    }
+    const runtimeProjectRoot = runtimeProject.localPath;
+    const requestedRuntimeCwd = body.cwd ?? runtimeProjectRoot;
+    if (!isPathInsideProjectRoot(requestedRuntimeCwd, runtimeProjectRoot)) {
       appendRuntimeCwdRejectedAuditLog({
         requestedCwd: requestedRuntimeCwd,
-        projectRoot,
+        projectRoot: runtimeProjectRoot,
         projectId: body.projectId,
         taskId: body.taskId ?? null,
         phase: 'session',
@@ -5265,11 +5772,11 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       });
     }
     if (isGenericRuntimeAdapterCommand(body.command)) {
-      const sessionShellPathRisk = detectGenericShellOutsideProjectPath(body.command, body.args ?? [], projectRoot);
+      const sessionShellPathRisk = detectGenericShellOutsideProjectPath(body.command, body.args ?? [], runtimeProjectRoot);
       if (sessionShellPathRisk) {
         appendRuntimeShellPathRejectedAuditLog({
           ...sessionShellPathRisk,
-          projectRoot,
+          projectRoot: runtimeProjectRoot,
           projectId: body.projectId,
           taskId: body.taskId ?? null,
           phase: 'session',
@@ -5317,7 +5824,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
           message: 'Runtime confirmation was rejected',
         });
       }
-      if (!confirmation || !canConsumeGenericRuntimeConfirmation(confirmation, body, projectRoot)) {
+      if (!confirmation || !canConsumeGenericRuntimeConfirmation(confirmation, body, runtimeProjectRoot)) {
         return reply.code(400).send({
           error: 'ZEUS_GENERIC_RUNTIME_REQUIRES_CONFIRMATION',
           message: 'Generic shell runtime requires a confirmed high-risk confirmation before it can start a session',
@@ -5358,7 +5865,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
         taskId: body.taskId,
         command: body.command,
         args: body.args ?? [],
-        cwd: body.cwd ?? projectRoot,
+        cwd: body.cwd ?? runtimeProjectRoot,
         env: buildRuntimeProcessEnv(),
       });
       appendAuditLog({
@@ -6087,7 +6594,6 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
         stashRef: body.stashRef,
         remote: body.remote,
         targetRef: body.targetRef,
-        runner: options.gitCommandRunner,
       });
       consumedGitConfirmationIds.add(confirmation.id);
       appendAuditLog({
@@ -6443,7 +6949,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
         message: 'Telegram Bot Token 或通知 Chat ID 未配置。',
       });
     }
-    const sender = options.telegramMessageSender ?? createTelegramBotMessageClient({ token });
+    const sender = createTelegramBotMessageClient({ token });
     const sentAt = new Date().toISOString();
     const text = ['Zeus Telegram 测试连接', `时间：${sentAt}`, '这是一条由用户主动触发的真实连接测试，不包含 Token、命令明文或终端输出。'].join('\n');
     try {
@@ -6678,6 +7184,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
 
   server.addHook('onClose', async () => {
     const cleanupErrors: unknown[] = [];
+    commandCenter.close();
     if (telegramPollingTimer) {
       clearInterval(telegramPollingTimer);
       telegramPollingTimer = undefined;
@@ -6761,7 +7268,6 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
         stashRef: body.stashRef,
         remote: body.remote,
         targetRef: body.targetRef,
-        runner: options.gitCommandRunner,
       });
       consumedGitConfirmationIds.add(confirmation.id);
       appendAuditLog({
@@ -6799,7 +7305,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     const chatIds = telegramNotificationSettings.chatIds;
     if (!telegramNotificationSettings.enabled || (telegramNotificationSettings.silentMode && !isCriticalTelegramTaskStatus(status))) return;
     if (!token || chatIds.length === 0) return;
-    const sender = options.telegramMessageSender ?? createTelegramBotMessageClient({ token });
+    const sender = createTelegramBotMessageClient({ token });
     const project = projects.getById(task.projectId);
     const text = [`Zeus ${title}`, `任务：${task.title} (${task.id})`, `状态：${status}`, project ? `项目：${project.name}` : `项目：${task.projectId}`].join('\n');
     try {
@@ -6875,7 +7381,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       .join('\n')
       .slice(0, 1200);
     const text = ['Zeus Runtime 阶段摘要', `任务：${task.title} (${task.id})`, `会话：${session.id}`, `日志数：${logCount}`, '最近真实日志：', recentLogs].join('\n');
-    const sender = options.telegramMessageSender ?? createTelegramBotMessageClient({ token });
+    const sender = createTelegramBotMessageClient({ token });
     try {
       const results = await Promise.all(chatIds.map((chatId) => sendTelegramNotificationWithRetry(sender, chatId, text)));
       recordTaskEvent({
@@ -7211,10 +7717,13 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       openAtLoginEnabled: typeof value?.openAtLoginEnabled === 'boolean' ? value.openAtLoginEnabled : false,
       autoUpdateChannel: 'manual',
       defaultProjectId: normalizeDefaultProjectId(value?.defaultProjectId),
-      pinnedProjectIds: normalizePinnedProjectIds(value?.pinnedProjectIds),
+      pinnedProjectIds: normalizeProjectPreferenceIds(value?.pinnedProjectIds),
+      collapsedProjectIds: normalizeProjectPreferenceIds(value?.collapsedProjectIds),
       defaultModel: normalizeAppShellDefaultModel(value?.defaultModel),
       defaultTaskTemplateId: normalizeDefaultTaskTemplateId(value?.defaultTaskTemplateId),
       taskTableColumns: normalizeTaskTableColumnPreferences(value?.taskTableColumns),
+      taskTableColumnsByProject: normalizeTaskTableColumnsByProject(value?.taskTableColumnsByProject),
+      taskTableEnumSortOrders: normalizeTaskTableEnumSortOrders(value?.taskTableEnumSortOrders),
       localLogDirectory: fallbackLogDirectory,
       // 本地配置文件路径由当前运行实例决定，不接受导入文件覆盖，避免误指向其他机器路径。
       localConfigPath: fallbackConfigPath,
@@ -7242,7 +7751,8 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
         openAtLoginEnabled: typeof input.openAtLoginEnabled === 'boolean' ? input.openAtLoginEnabled : current.openAtLoginEnabled,
         autoUpdateChannel: 'manual',
         defaultProjectId: input.defaultProjectId === null ? null : typeof input.defaultProjectId === 'string' ? input.defaultProjectId : current.defaultProjectId,
-        pinnedProjectIds: Array.isArray(input.pinnedProjectIds) ? normalizePinnedProjectIds(input.pinnedProjectIds) : current.pinnedProjectIds,
+        pinnedProjectIds: Array.isArray(input.pinnedProjectIds) ? normalizeProjectPreferenceIds(input.pinnedProjectIds) : current.pinnedProjectIds,
+        collapsedProjectIds: Array.isArray(input.collapsedProjectIds) ? normalizeProjectPreferenceIds(input.collapsedProjectIds) : current.collapsedProjectIds,
         defaultModel: input.defaultModel === null ? null : typeof input.defaultModel === 'string' ? input.defaultModel : current.defaultModel,
         defaultTaskTemplateId: input.defaultTaskTemplateId === null ? null : typeof input.defaultTaskTemplateId === 'string' ? input.defaultTaskTemplateId : current.defaultTaskTemplateId,
           // taskTableColumns 支持局部保存；columnWidths 只有显式传入时才替换，空对象用于明确恢复默认列宽。
@@ -7253,6 +7763,12 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
                   columnWidths: Object.prototype.hasOwnProperty.call(input.taskTableColumns, 'columnWidths') ? input.taskTableColumns.columnWidths : current.taskTableColumns.columnWidths,
               })
               : current.taskTableColumns,
+          taskTableColumnsByProject: Object.prototype.hasOwnProperty.call(input, 'taskTableColumnsByProject')
+              ? normalizeTaskTableColumnsByProject(input.taskTableColumnsByProject)
+              : current.taskTableColumnsByProject,
+          taskTableEnumSortOrders: Object.prototype.hasOwnProperty.call(input, 'taskTableEnumSortOrders')
+              ? normalizeTaskTableEnumSortOrders(input.taskTableEnumSortOrders)
+              : current.taskTableEnumSortOrders,
       },
       current.localLogDirectory,
       current.localConfigPath,
@@ -7268,7 +7784,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     return model;
   }
 
-  function normalizePinnedProjectIds(value: unknown): string[] {
+  function normalizeProjectPreferenceIds(value: unknown): string[] {
     if (!Array.isArray(value)) return [];
     const seen = new Set<string>();
     const ids: string[] = [];
@@ -8044,9 +8560,6 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
   }
 
   async function loadReleaseUpdateManifest(): Promise<ReleaseUpdateManifest> {
-    if (options.releaseUpdateManifestProvider) {
-      return options.releaseUpdateManifestProvider();
-    }
     const response = await fetch(releaseUpdateManifestUrl, {
       headers: { accept: 'application/json' },
     });
@@ -8097,7 +8610,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     return telegramPollingService;
   }
 
-  async function handleTelegramBusinessCommand(command: TelegramCommand): Promise<string> {
+  async function handleTelegramBusinessCommand(command: TelegramCommand, update?: TelegramUpdate): Promise<string | TelegramCommandResponse> {
     switch (command.command) {
       case 'start':
       case 'help':
@@ -8113,6 +8626,10 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
         if (rows.length === 0) return '任务列表为空。';
         return `任务列表：\n${rows.map(formatTelegramTaskListRow).join('\n')}`;
       }
+      case 'commands':
+        return formatTelegramCommandMenu(command.args[0], Boolean(update?.callbackData));
+      case 'command':
+        return handleTelegramCommandCenterAction(command.args, update);
       case 'status': {
         const taskId = command.args[0];
         if (!taskId) return '请提供任务 ID：/status <taskId>';
@@ -8150,6 +8667,9 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       'Zeus 远程命令帮助',
       '可用命令：',
       '/projects',
+      '/commands [project]',
+      '/command detail <project> <command>',
+      '/command run <project> <command> [KEY=value]',
       '/tasks [project]',
       '/run <project> <task>',
       '/status <task>',
@@ -8160,8 +8680,301 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       '/ask <project> <question>',
       '/help',
       '安全限制：默认禁止远程执行任意 shell；远程任务默认不自动提交 Git；高风险执行需要确认。',
+      '命令中心：只有桌面端已单独开启 Telegram 的命令才会显示；高风险命令同样需要本次明确确认，不需要额外短语。',
       `当前配置：Token：${token ? '已配置' : '未配置'}；白名单用户：${telegramSecuritySettings.allowedUserIds.length}；通知 Chat：${telegramNotificationSettings.chatIds.length}；Polling：${polling?.running ? '运行中' : '已停止'}；状态：${configuration.reason}`,
     ].join('\n');
+  }
+
+  function formatTelegramCommandMenu(projectIdentifier: string | undefined, editOriginalMessage: boolean): TelegramCommandResponse {
+    if (!projectIdentifier) {
+      const rows = projects.list();
+      if (rows.length === 0) return {text: '项目列表为空。请先在 Zeus 桌面端添加真实本地代码库。'};
+      return {
+        text: '选择要执行命令的项目：',
+        inlineKeyboard: rows.map((project) => [
+          {
+            text: project.name,
+            callbackData: telegramCallbackData('project', project.id),
+          },
+        ]),
+        editOriginalMessage,
+      };
+    }
+    const project = resolveTelegramProject(projectIdentifier);
+    if (!project) return {text: `未找到项目：${projectIdentifier}`, editOriginalMessage};
+    const commands = commandDefinitions
+      .listMerged(project.id, true)
+      .filter((command) => command.telegramEnabled);
+    if (commands.length === 0) {
+      return {
+        text: `${project.name} 当前没有已授权的 Telegram 命令。请在 Zeus 桌面端逐条开启。`,
+        inlineKeyboard: [[{text: '返回项目', callbackData: telegramCallbackData('projects')}]],
+        editOriginalMessage,
+      };
+    }
+    return {
+      text: [
+        `命令菜单：${project.name}`,
+        ...commands.map((command) => `- ${command.title} (/${command.name})${commandNeedsHighRiskConfirmation(command.riskFlags) ? ' · 高风险' : ''}`),
+      ].join('\n'),
+      inlineKeyboard: [
+        ...commands.map((command) => [
+          {
+            text: `▶ ${command.title}`,
+            callbackData: telegramCallbackData('detail', project.id, command.id),
+          },
+        ]),
+        [{text: '返回项目', callbackData: telegramCallbackData('projects')}],
+      ],
+      editOriginalMessage,
+    };
+  }
+
+  async function handleTelegramCommandCenterAction(
+    args: string[],
+    update?: TelegramUpdate,
+  ): Promise<string | TelegramCommandResponse> {
+    const [action, projectIdentifier, commandIdentifier, ...rawParameters] = args;
+    if (!action || !projectIdentifier || !commandIdentifier || !['detail', 'run'].includes(action)) {
+      return '命令格式：/command detail <project> <command> 或 /command run <project> <command> [KEY=value]';
+    }
+    const project = resolveTelegramProject(projectIdentifier);
+    if (!project) return `未找到项目：${projectIdentifier}`;
+    const command =
+      commandDefinitions.getById(commandIdentifier) ??
+      commandDefinitions.findByToken(project.id, commandIdentifier, true);
+    if (!command || (command.scope === 'project' && command.projectId !== project.id)) return `未找到命令：${commandIdentifier}`;
+    if (!command.enabled || !command.telegramEnabled) return `命令 ${command.name} 未启用 Telegram 远程执行。`;
+    const highRisk = commandNeedsHighRiskConfirmation(command.riskFlags);
+    const missingRequiredParameter = command.parameters.find(
+      (parameter) => parameter.required && parameter.defaultValue === undefined,
+    );
+    if (action === 'detail') {
+      const runInstruction = `/command run ${project.id} ${command.id}${command.parameters.length > 0 ? ' KEY=value' : ''}`;
+      const canUseButton = !missingRequiredParameter;
+      return {
+        text: [
+          `命令：${command.title} (${command.name})`,
+          `项目：${project.name}`,
+          `目录：${project.localPath}`,
+          `超时：${command.timeoutSeconds} 秒`,
+          `风险：${highRisk ? '高风险，仍需本次明确确认' : '普通，仍需本次确认'}`,
+          `参数：${command.parameters.length > 0 ? command.parameters.map((parameter) => `${parameter.key}${parameter.required ? '*' : ''}`).join(', ') : '无'}`,
+          canUseButton ? '点击“确认运行”将创建一次性确认并启动。' : `请发送：${runInstruction}`,
+        ].join('\n'),
+        inlineKeyboard: [
+          ...(canUseButton
+            ? [[{text: '确认运行', callbackData: telegramCallbackData('run', project.id, command.id)}]]
+            : []),
+          [{text: '返回命令', callbackData: telegramCallbackData('project', project.id)}],
+        ],
+        editOriginalMessage: Boolean(update?.callbackData),
+      };
+    }
+    const parsed = parseTelegramCommandParameters(command.parameters, rawParameters);
+    if ('error' in parsed) return parsed.error;
+    const confirmationResponse = await server.inject({
+      method: 'POST',
+      url: `/api/projects/${encodeURIComponent(project.id)}/commands/${encodeURIComponent(command.id)}/confirmations`,
+      headers: {authorization: `Bearer ${options.apiToken}`},
+      payload: {
+        parameters: parsed.parameters,
+        trigger: 'telegram',
+      },
+    });
+    if (confirmationResponse.statusCode !== 201) return formatTelegramCommandApiFailure(confirmationResponse);
+    const confirmation = confirmationResponse.json<{id: string; runId: string}>();
+    const runResponse = await server.inject({
+      method: 'POST',
+      url: `/api/projects/${encodeURIComponent(project.id)}/commands/${encodeURIComponent(command.id)}/runs`,
+      headers: {authorization: `Bearer ${options.apiToken}`},
+      payload: {
+        confirmationId: confirmation.id,
+        parameters: parsed.parameters,
+      },
+    });
+    if (runResponse.statusCode !== 201) return formatTelegramCommandApiFailure(runResponse);
+    const run = runResponse.json<{id: string; runtimeSessionId: string | null; status: string}>();
+    telegramCommandRunMessages.set(run.id, {
+      chatId: update?.chatId ?? 0,
+      ...(update?.callbackData && update.messageId ? {messageId: update.messageId} : {}),
+    });
+    return {
+      text: [
+        `命令已启动：${command.title}`,
+        `项目：${project.name}`,
+        `执行 ID：${run.id}`,
+        `状态：${run.status}`,
+        'Zeus 会在同一条命令消息中更新进度；完成后回传已登记产物。',
+      ].join('\n'),
+      editOriginalMessage: Boolean(update?.callbackData),
+    };
+  }
+
+  function resolveTelegramProject(identifier: string): ZeusProjectRecord | undefined {
+    const normalized = identifier.trim().toLocaleLowerCase();
+    return projects.list().find((project) => {
+      const alias = readProjectConfig(project.id).telegram.alias?.trim().toLocaleLowerCase();
+      return project.id.toLocaleLowerCase() === normalized || project.name.trim().toLocaleLowerCase() === normalized || alias === normalized;
+    });
+  }
+
+  function parseTelegramCommandParameters(
+    parameters: import('@zeus/shared').CommandParameterDefinition[],
+    args: string[],
+  ): {parameters: Record<string, string | number | boolean>} | {error: string} {
+    const values: Record<string, string | number | boolean> = {};
+    for (const arg of args) {
+      const separatorIndex = arg.indexOf('=');
+      if (separatorIndex <= 0) return {error: `参数格式无效：${arg}。请使用 KEY=value。`};
+      const key = arg.slice(0, separatorIndex).toLocaleUpperCase();
+      const rawValue = arg.slice(separatorIndex + 1);
+      const definition = parameters.find((parameter) => parameter.key === key);
+      if (!definition) return {error: `命令未声明参数：${key}`};
+      if (definition.type === 'number') {
+        const numberValue = Number(rawValue);
+        if (!Number.isFinite(numberValue)) return {error: `参数 ${key} 必须是数字。`};
+        values[key] = numberValue;
+      } else if (definition.type === 'boolean') {
+        if (!['1', '0', 'true', 'false', 'yes', 'no', 'on', 'off'].includes(rawValue.toLocaleLowerCase())) {
+          return {error: `参数 ${key} 必须是布尔值。`};
+        }
+        values[key] = ['1', 'true', 'yes', 'on'].includes(rawValue.toLocaleLowerCase());
+      } else {
+        values[key] = rawValue;
+      }
+    }
+    return {parameters: values};
+  }
+
+  function formatTelegramCommandApiFailure(response: {json: <T>() => T; statusCode: number}): string {
+    const payload = response.json<{message?: string; error?: string; issues?: Array<{message?: string}>}>();
+    return [
+      `命令请求被 Zeus 拒绝（${response.statusCode}）。`,
+      payload.message ?? payload.error ?? '未知错误',
+      ...(payload.issues ?? []).map((issue) => `- ${issue.message ?? '参数无效'}`),
+    ].join('\n');
+  }
+
+  function telegramCallbackData(action: 'projects' | 'project' | 'detail' | 'run', ...parts: string[]): string {
+    const compactAction = {
+      projects: 'ps',
+      project: 'p',
+      detail: 'd',
+      run: 'r',
+    }[action];
+    const callbackData = ['zc', compactAction, ...parts.map((part) => Buffer.from(part, 'utf8').toString('base64url'))].join('|');
+    if (Buffer.byteLength(callbackData, 'utf8') > 64) {
+      throw new Error(`Telegram command callback exceeds 64 bytes: ${action}`);
+    }
+    return callbackData;
+  }
+
+  async function notifyTelegramCommandRunLog(log: AiRuntimeLogEntry): Promise<void> {
+    const run = commandRuns.getByRuntimeSessionId(log.sessionId);
+    if (!run) return;
+    const message = telegramCommandRunMessages.get(run.id);
+    if (!message?.messageId || !telegramMessageSender?.editMessage || run.status !== 'running') return;
+    const count = (telegramCommandRunLogCounts.get(run.id) ?? 0) + 1;
+    telegramCommandRunLogCounts.set(run.id, count);
+    if (count % 5 !== 0) return;
+    try {
+      await telegramMessageSender.editMessage(
+        message.chatId,
+        message.messageId,
+        formatTelegramCommandRunStatus(run),
+      );
+    } catch (error) {
+      appendAuditLog({
+        actorType: 'telegram',
+        action: 'command.telegram_status_update.failed',
+        resourceType: 'command_run',
+        resourceId: run.id,
+        payload: {message: error instanceof Error ? error.message : String(error)},
+      });
+    }
+  }
+
+  async function notifyTelegramCommandRunSession(session: AiRuntimeSession): Promise<void> {
+    const run = commandRuns.getByRuntimeSessionId(session.id);
+    if (!run || run.status === 'running' || run.status === 'pending_confirmation') return;
+    const message = telegramCommandRunMessages.get(run.id);
+    if (!message || !telegramMessageSender) return;
+    try {
+      const text = formatTelegramCommandRunStatus(run);
+      if (message.messageId && telegramMessageSender.editMessage) {
+        await telegramMessageSender.editMessage(message.chatId, message.messageId, text);
+      } else if (message.chatId !== 0) {
+        await telegramMessageSender.sendMessage(message.chatId, text);
+      }
+      if (message.chatId !== 0 && telegramMessageSender.sendDocument) {
+        for (const artifact of commandArtifacts.listByRun(run.id)) {
+          const verifiedPath = verifyTelegramCommandArtifact(run.id, artifact.absolutePath);
+          if (!verifiedPath) continue;
+          await telegramMessageSender.sendDocument(
+            message.chatId,
+            verifiedPath,
+            `${run.commandSnapshot.title} · ${artifact.relativePath}`,
+          );
+        }
+      }
+      appendAuditLog({
+        actorType: 'telegram',
+        action: 'command.telegram_status_update.sent',
+        resourceType: 'command_run',
+        resourceId: run.id,
+        payload: {
+          status: run.status,
+          artifactCount: commandArtifacts.listByRun(run.id).length,
+          editedOriginalMessage: Boolean(message.messageId),
+        },
+      });
+    } catch (error) {
+      appendAuditLog({
+        actorType: 'telegram',
+        action: 'command.telegram_status_update.failed',
+        resourceType: 'command_run',
+        resourceId: run.id,
+        payload: {message: error instanceof Error ? error.message : String(error)},
+      });
+    } finally {
+      telegramCommandRunMessages.delete(run.id);
+      telegramCommandRunLogCounts.delete(run.id);
+      void db.save();
+    }
+  }
+
+  function formatTelegramCommandRunStatus(run: import('@zeus/shared').CommandRun): string {
+    const logs = run.runtimeSessionId ? runtimeSessions.listLogs(run.runtimeSessionId).slice(-8) : [];
+    const tail = logs
+      .filter((log) => log.stream === 'stdout' || log.stream === 'stderr')
+      .map((log) => log.text.trim())
+      .filter(Boolean)
+      .join('\n')
+      .slice(-900);
+    return [
+      `命令：${run.commandSnapshot.title} (${run.commandSnapshot.name})`,
+      `执行 ID：${run.id}`,
+      `状态：${run.status}`,
+      `项目：${run.projectId}`,
+      `目录：${run.cwd}`,
+      run.exitCode === null ? null : `退出码：${run.exitCode}`,
+      run.failureReason ? `说明：${run.failureReason}` : null,
+      tail ? `最近输出：\n${tail}` : null,
+    ]
+      .filter((line): line is string => Boolean(line))
+      .join('\n');
+  }
+
+  function verifyTelegramCommandArtifact(runId: string, artifactPath: string): string | null {
+    try {
+      const runRoot = realpathSync(join(dirname(options.dbPath), 'command-runs', runId));
+      const artifactRealPath = realpathSync(artifactPath);
+      if (!isPathInsideRoot(artifactRealPath, runRoot) || artifactRealPath === runRoot) return null;
+      return statSync(artifactRealPath).isFile() ? artifactRealPath : null;
+    } catch {
+      return null;
+    }
   }
 
   function formatTelegramTaskListRow(task: ZeusTaskRecord): string {
@@ -8930,6 +9743,20 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
 
   function toNativeConversationSnapshot(conversation: ZeusConversationWithMessagesRecord) {
     const submissions = conversationSubmissions.listByConversation(conversation.id);
+    const itemRecords = conversationItems.listByConversation(conversation.id);
+    const itemByProviderItemId = new Map(
+      itemRecords
+        .filter((item) => item.providerItemId)
+        .map((item) => [item.providerItemId, item]),
+    );
+    const resourcesByItemId = new Map<string, ReturnType<typeof toConversationResource>[]>();
+    for (const record of conversationResources.listByConversation(conversation.id)) {
+      const resource = toConversationResource(record);
+      if (!resource) continue;
+      const current = resourcesByItemId.get(record.itemId) ?? [];
+      current.push(resource);
+      resourcesByItemId.set(record.itemId, current);
+    }
     const providerSettings = conversations.getProviderSettingsSnapshot(conversation.id);
     const tokenUsage = conversations.getProviderTokenUsageSnapshot(conversation.id);
     const rateLimits = settings.getCodexRateLimitsSnapshot();
@@ -8941,6 +9768,19 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       ...(tokenUsage ? { tokenUsage } : {}),
       ...(rateLimits ? { rateLimits } : {}),
       ...(mcpStartup ? { mcpStartup } : {}),
+      messages: conversation.messages.map((message) => {
+        const providerItem = message.providerItemId ? itemByProviderItemId.get(message.providerItemId) : undefined;
+        return {
+          id: message.id,
+          conversationId: message.conversationId,
+          role: message.role,
+          content: message.content,
+          source: message.source,
+          metadata: parseJsonObject(message.metadataJson),
+          resources: providerItem ? resourcesByItemId.get(providerItem.id) ?? [] : [],
+          createdAt: message.createdAt,
+        };
+      }),
       turns: conversationTurns.listByConversation(conversation.id).map((turn) => ({
         id: turn.id,
         providerTurnId: turn.providerTurnId,
@@ -8952,7 +9792,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
         createdAt: turn.createdAt,
         updatedAt: turn.updatedAt,
       })),
-      items: conversationItems.listByConversation(conversation.id).map((item) => ({
+      items: itemRecords.map((item) => ({
         id: item.id,
         turnId: item.turnId,
         providerItemId: item.providerItemId,
@@ -8961,11 +9801,13 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
         phase: item.phase,
         text: item.textContent,
         payload: parseJsonObject(item.payloadJson),
+        resources: resourcesByItemId.get(item.id) ?? [],
         startedAt: item.startedAt,
         completedAt: item.completedAt,
         updatedAt: item.updatedAt,
       })),
       submissions: submissions.map(toNativeSubmission),
+      changeSets: turnChangeSetService.listByConversation(conversation.id),
       queue: toNativeQueueApiSnapshot(conversation, submissions),
       requests: conversationRequests.listByConversation(conversation.id).map(toNativeServerRequest),
         planImplementationRequests: conversationPlanActions.listByConversation(conversation.id).map((request) => ({
@@ -9032,6 +9874,18 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     const project = projects.getById(conversation.projectId);
     if (!project) throw nativeApiError('ZEUS_PROJECT_NOT_FOUND', 'Conversation project was not found.');
     const attachments = normalizeNativeConversationAttachments(body.attachments, project.localPath);
+    const browserComments = normalizeNativeBrowserComments(body.browserComments);
+    if (!content && attachments.length === 0 && browserComments.length === 0) {
+      throw nativeApiError('ZEUS_INVALID_CONVERSATION_MESSAGE', 'Conversation message content, attachments, or browser comments are required.');
+    }
+    const displayText =
+      body.displayText === undefined
+        ? undefined
+        : typeof body.displayText === 'string' && body.displayText.trim() && body.displayText.length <= 100_000
+          ? body.displayText.trim()
+          : (() => {
+              throw nativeApiError('ZEUS_INVALID_CONVERSATION_MESSAGE', 'displayText must be a non-empty string no longer than 100000 characters.');
+            })();
       const requestedModel = typeof body.model === 'string' && body.model.trim() ? body.model.trim() : null;
       const requestedEffort = typeof body.effort === 'string' && body.effort.trim() ? body.effort.trim() : null;
       const collaborationMode = body.collaborationMode === undefined ? conversation.collaborationMode : parseConversationCollaborationMode(body.collaborationMode);
@@ -9061,7 +9915,9 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     let nativeOperation = await codexNativeCoordinator.submitMessage({
       conversationId: conversation.id,
       content,
+      ...(displayText ? {displayText} : {}),
       attachments,
+      browserComments,
         ...(selectedModel ? {model: selectedModel} : {}),
         ...(selectedEffort ? {effort: selectedEffort} : {}),
         collaborationMode,
@@ -9078,7 +9934,11 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
             ...input,
             delivery,
             attachments,
-            expectedTurnId, ...(selectedModel ? {model: selectedModel} : {}), ...(selectedEffort ? {effort: selectedEffort} : {})
+            browserComments,
+            expectedTurnId,
+            ...(displayText ? {displayText} : {}),
+            ...(selectedModel ? {model: selectedModel} : {}),
+            ...(selectedEffort ? {effort: selectedEffort} : {})
         }),
       now().toISOString(),
       persisted.id,
@@ -9089,7 +9949,11 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
               clientUserMessageId,
               delivery,
               attachments,
-              expectedTurnId, ...(selectedModel ? {model: selectedModel} : {}), ...(selectedEffort ? {effort: selectedEffort} : {})
+              browserComments,
+              expectedTurnId,
+              ...(displayText ? {displayText} : {}),
+              ...(selectedModel ? {model: selectedModel} : {}),
+              ...(selectedEffort ? {effort: selectedEffort} : {})
           }),
         conversation.id,
         clientUserMessageId,
@@ -9132,21 +9996,38 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       if ((localPath ? 1 : 0) + (uploadRef ? 1 : 0) !== 1) {
         throw nativeApiError('ZEUS_INVALID_CONVERSATION_ATTACHMENT', `Attachment ${index} requires exactly one of localPath or uploadRef.`);
       }
-      if (uploadRef) {
-        throw nativeApiError('ZEUS_NATIVE_ATTACHMENT_UPLOAD_UNSUPPORTED', `Attachment ${index} uploadRef cannot be resolved to a Codex app-server input; provide a project-local file path.`);
-      }
       let canonicalLocalPath: string | undefined;
+      let authorizedPath: string | undefined;
+      if (uploadRef) {
+        const grantedPath = options.conversationAttachmentGrantSecret
+          ? resolveConversationAttachmentGrant(uploadRef, options.conversationAttachmentGrantSecret)
+          : null;
+        if (!grantedPath) {
+          throw nativeApiError('ZEUS_INVALID_CONVERSATION_ATTACHMENT_GRANT', `Attachment ${index} path grant is invalid or expired.`);
+        }
+        try {
+          canonicalLocalPath = realpathSync(grantedPath);
+          const pathStat = statSync(canonicalLocalPath);
+          if (canonicalLocalPath !== grantedPath || (!pathStat.isFile() && !pathStat.isDirectory())) {
+            throw new Error('Granted attachment path changed or is not a file/directory.');
+          }
+          authorizedPath = canonicalLocalPath;
+        } catch {
+          throw nativeApiError('ZEUS_INVALID_CONVERSATION_ATTACHMENT_GRANT', `Attachment ${index} granted path is no longer available.`);
+        }
+      }
       if (localPath) {
         if (!isAbsolute(localPath)) throw nativeApiError('ZEUS_INVALID_CONVERSATION_ATTACHMENT', `Attachment ${index} localPath must be absolute.`);
         try {
           const projectRealPath = realpathSync(projectLocalPath);
           canonicalLocalPath = realpathSync(localPath);
-          const projectRelativePath = relative(projectRealPath, canonicalLocalPath);
-          if (projectRelativePath === '..' || projectRelativePath.startsWith(`..${sep}`) || isAbsolute(projectRelativePath) || !statSync(canonicalLocalPath).isFile()) {
-            throw new Error('Attachment path is outside the project or is not a file.');
+          const allowedRoots = [projectRealPath, ...trustedConversationAttachmentRoots];
+          const pathStat = statSync(canonicalLocalPath);
+          if (!allowedRoots.some((root) => isPathInsideProjectRoot(canonicalLocalPath!, root)) || (!pathStat.isFile() && !pathStat.isDirectory())) {
+            throw new Error('Attachment path is outside trusted roots or is not a file/directory.');
           }
         } catch {
-          throw nativeApiError('ZEUS_INVALID_CONVERSATION_ATTACHMENT', `Attachment ${index} localPath must resolve to a file inside the project root.`);
+          throw nativeApiError('ZEUS_INVALID_CONVERSATION_ATTACHMENT', `Attachment ${index} localPath must resolve inside a trusted Zeus attachment root.`);
         }
       }
       return {
@@ -9154,8 +10035,42 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
         mime: attachment.mime.trim(),
         size: attachment.size,
         ...(canonicalLocalPath ? { localPath: canonicalLocalPath } : {}),
+        ...(authorizedPath ? {authorizedPath} : {}),
       };
     });
+  }
+
+  function normalizeNativeBrowserComments(value: unknown): Record<string, unknown>[] {
+    if (value === undefined) return [];
+    if (!Array.isArray(value) || value.length > 200) {
+      throw nativeApiError('ZEUS_INVALID_BROWSER_COMMENTS', 'browserComments must be an array with no more than 200 entries.');
+    }
+    value.forEach((comment, index) => {
+      const anchor = isNativeApiRecord(comment) && isNativeApiRecord(comment.anchor) ? comment.anchor : null;
+      if (
+        !isNativeApiRecord(comment) ||
+        typeof comment.id !== 'string' ||
+        !comment.id.trim() ||
+        comment.id.length > 200 ||
+        typeof comment.number !== 'number' ||
+        !Number.isSafeInteger(comment.number) ||
+        comment.number < 1 ||
+        typeof comment.body !== 'string' ||
+        !comment.body.trim() ||
+        comment.body.length > 20_000 ||
+        !anchor ||
+        typeof anchor.pageUrl !== 'string' ||
+        !anchor.pageUrl ||
+        anchor.pageUrl.length > 20_000
+      ) {
+        throw nativeApiError('ZEUS_INVALID_BROWSER_COMMENTS', `Browser comment ${index} has invalid identity, body, page URL, or anchor metadata.`);
+      }
+    });
+    const serialized = JSON.stringify(value);
+    if (Buffer.byteLength(serialized, 'utf8') > 1_000_000) {
+      throw nativeApiError('ZEUS_INVALID_BROWSER_COMMENTS', 'browserComments must be no larger than 1 MB.');
+    }
+    return JSON.parse(serialized) as Record<string, unknown>[];
   }
 
   function normalizeNativeClientUserMessageId(value: unknown, legacyFallback: string): string {
@@ -9276,12 +10191,16 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     providerWriteLifecycle: { markPrepared(resourceId: string): Promise<void>; markRpcStarted(resourceId: string): void },
   ) {
     if (!isNativeApiRecord(body) || body.mode !== 'create') throw nativeApiError('ZEUS_INVALID_CONVERSATION_START', 'Project conversations require mode create.');
-    if (typeof body.content !== 'string' || !body.content.trim()) throw nativeApiError('ZEUS_INVALID_CONVERSATION_START', 'Project conversation content is required.');
+    if (body.content !== undefined && typeof body.content !== 'string') throw nativeApiError('ZEUS_INVALID_CONVERSATION_START', 'Project conversation content must be a string.');
     const permissionMode = body.permissionMode === undefined ? 'auto' : parseConversationPermissionMode(body.permissionMode);
     if (!permissionMode) throw nativeApiError('ZEUS_INVALID_PERMISSION_MODE', 'permissionMode must be read-only, auto, or full-access.');
       const collaborationMode = body.collaborationMode === undefined ? 'default' : parseConversationCollaborationMode(body.collaborationMode);
       if (!collaborationMode) throw nativeApiError('ZEUS_INVALID_COLLABORATION_MODE', 'collaborationMode must be default or plan.');
     const attachments = normalizeNativeConversationAttachments(body.attachments, project.localPath);
+    const content = typeof body.content === 'string' ? body.content.trim() : '';
+    if (!content && attachments.length === 0) {
+      throw nativeApiError('ZEUS_INVALID_CONVERSATION_START', 'Project conversation content or attachments are required.');
+    }
     const clientUserMessageId = normalizeNativeClientUserMessageId(body.clientUserMessageId, `native-client-${createHash('sha256').update(`${project.id}\0${idempotencyKey}`).digest('hex').slice(0, 24)}`);
     const resourceId = encodeProjectConversationAcceptanceReservation(reservation);
     const reservedLifecycle = {
@@ -9299,7 +10218,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       submissionId: reservation.submissionId,
       projectId: project.id,
       projectLocalPath: project.localPath,
-      prompt: body.content,
+      prompt: content,
       attachments,
       model: await resolveCodexModel(project),
       permissionMode,
@@ -9479,12 +10398,13 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
         });
       } else {
         if (body.content !== undefined && typeof body.content !== 'string') throw nativeApiError('ZEUS_INVALID_CONVERSATION_START', 'Create content must be a string.');
-        const content = typeof body.content === 'string' && body.content.trim() ? body.content.trim() : createTaskRuntimePrompt(project, task);
           const collaborationMode = body.collaborationMode === undefined ? 'default' : parseConversationCollaborationMode(body.collaborationMode);
           if (!collaborationMode) throw nativeApiError('ZEUS_INVALID_COLLABORATION_MODE', 'collaborationMode must be default or plan.');
         const permissionMode = body.permissionMode === undefined ? (task.allowCodeChanges ? 'auto' : 'read-only') : parseConversationPermissionMode(body.permissionMode);
         if (!permissionMode) throw nativeApiError('ZEUS_INVALID_PERMISSION_MODE', 'permissionMode must be read-only, auto, or full-access.');
         const attachments = normalizeNativeConversationAttachments(body.attachments, project.localPath);
+        const explicitContent = typeof body.content === 'string' ? body.content.trim() : '';
+        const content = explicitContent || (attachments.length === 0 ? createTaskRuntimePrompt(project, task) : '');
         nativeOperation = await codexNativeCoordinator.startTaskConversation({
           conversationId: reservation.conversationId,
           submissionId: reservation.submissionId,
@@ -9919,9 +10839,9 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       }
       try {
         const canonicalPath = realpathSync(path);
-        const file = statSync(canonicalPath);
+        const resource = statSync(canonicalPath);
         if (
-          !file.isFile() ||
+          (!resource.isFile() && !resource.isDirectory()) ||
           !allowedRoots.some((root) => {
             const relativePath = relative(root, canonicalPath);
             return relativePath !== '..' && !relativePath.startsWith(`..${sep}`) && !isAbsolute(relativePath);
@@ -9930,15 +10850,23 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
           throw new Error('outside trusted task attachment roots');
         }
         const storedMime = typeof candidate.mimeType === 'string' && candidate.mimeType.trim() ? candidate.mimeType.trim() : '';
-        const kind = candidate.kind === 'image' ? 'image' : 'file';
-        const mime = storedMime || (kind === 'image' ? 'image/*' : 'application/octet-stream');
-        if (file.size === 0 || (kind === 'image' && !hasTaskImageSignature(mime.toLowerCase(), readFileSync(canonicalPath)))) {
+        const kind = resource.isDirectory()
+          ? 'directory'
+          : candidate.kind === 'image'
+            ? 'image'
+            : candidate.kind === 'pasted_text'
+              ? 'pasted_text'
+              : 'file';
+        const mime = resource.isDirectory()
+          ? 'inode/directory'
+          : storedMime || (kind === 'image' ? 'image/*' : kind === 'pasted_text' ? 'text/plain' : 'application/octet-stream');
+        if (resource.isFile() && (resource.size === 0 || (kind === 'image' && !hasTaskImageSignature(mime.toLowerCase(), readFileSync(canonicalPath))))) {
           throw new Error('empty or unsupported image attachment');
         }
         attachments.push({
           name,
           mime,
-          size: file.size,
+          size: resource.isDirectory() ? 0 : resource.size,
           localPath: canonicalPath,
         });
       } catch {
@@ -10649,12 +11577,18 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       reply.code(400).send({ error: 'ZEUS_TELEGRAM_UNCONFIGURED', message: state.reason });
       return undefined;
     }
-    const sender = options.telegramMessageSender ?? createTelegramBotMessageClient({ token });
+    telegramMessageSender ??= createTelegramBotMessageClient({ token });
+    const sender = telegramMessageSender;
     telegramPollingService ??= createTelegramPollingService({
-      client: options.telegramPollingClient ?? createTelegramLongPollingClient({ token }),
+      client: createTelegramLongPollingClient({ token }),
       allowedUserIds,
-      reply: (chatId, text) => sender.sendMessage(chatId, text),
-      handleCommand: (command) => handleTelegramBusinessCommand(command),
+      reply: (chatId, text, replyOptions) => {
+        if (replyOptions?.editMessageId && sender.editMessage) {
+          return sender.editMessage(chatId, replyOptions.editMessageId, text, {inlineKeyboard: replyOptions.inlineKeyboard});
+        }
+        return sender.sendMessage(chatId, text, {inlineKeyboard: replyOptions?.inlineKeyboard});
+      },
+      handleCommand: (command, update) => handleTelegramBusinessCommand(command, update),
     });
     return telegramPollingService;
   }
@@ -10688,6 +11622,8 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       publishRuntimeSessionEnded(session);
     }
     writeRuntimeSessionMetadata(session);
+    commandCenter.handleRuntimeSessionChange(session);
+    void notifyTelegramCommandRunSession(session);
     runtimePersistenceWrites.push(db.save());
     if (session.status !== 'running') {
       void codexNativeCoordinator.capacityChanged().catch((error) => {
@@ -10706,6 +11642,8 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     const rawChunkPath = writeRuntimeSessionLogFiles(log);
     terminalEvents.setRawChunkPathByRuntimeLogId(log.id, rawChunkPath);
     publishRuntimeLogEvent(log);
+    commandCenter.handleRuntimeLog(log);
+    void notifyTelegramCommandRunLog(log);
     void notifyTelegramRuntimeProgressSummary(log);
     runtimePersistenceWrites.push(db.save());
   }
@@ -10763,11 +11701,11 @@ function sanitizeRuntimeFileName(value: string): string {
 }
 
 /** 启动真实本地 HTTP 服务，端口 0 交给系统选择，始终绑定 127.0.0.1。 */
-export async function startZeusLocalServer(options: CreateLocalServerOptions, dependencies: StartZeusLocalServerDependencies = {}): Promise<RunningZeusLocalServer> {
+export async function startZeusLocalServer(options: CreateLocalServerOptions): Promise<RunningZeusLocalServer> {
   const server = await createLocalServer(options);
   let address: string;
   try {
-    address = await (dependencies.listen ? dependencies.listen(server) : server.listen({ host: zeusLocalServerHost, port: 0 }));
+    address = await server.listen({ host: zeusLocalServerHost, port: 0 });
   } catch (listenError) {
     const claimedListenError = claimCodexFinalizationOwnership(listenError);
     const cleanupErrors: unknown[] = [];
@@ -11546,6 +12484,31 @@ function parseJsonObject(value: string): Record<string, unknown> {
   }
 }
 
+function conversationResourceRecordsEqual(
+  existing: readonly ZeusConversationResourceRecord[],
+  next: readonly Omit<ZeusConversationResourceRecord, 'createdAt' | 'updatedAt'>[],
+): boolean {
+  if (existing.length !== next.length) return false;
+  return existing.every((resource, index) => {
+    const candidate = next[index];
+    return (
+      candidate !== undefined &&
+      resource.id === candidate.id &&
+      resource.projectId === candidate.projectId &&
+      resource.conversationId === candidate.conversationId &&
+      resource.turnId === candidate.turnId &&
+      resource.itemId === candidate.itemId &&
+      resource.sourceIndex === candidate.sourceIndex &&
+      resource.canonicalTargetDigest === candidate.canonicalTargetDigest &&
+      resource.kind === candidate.kind &&
+      resource.presentation === candidate.presentation &&
+      resource.displayJson === candidate.displayJson &&
+      resource.targetJson === candidate.targetJson &&
+      resource.authorityJson === candidate.authorityJson
+    );
+  });
+}
+
 /** 将数据库审计记录转换为本地 API 响应；payload 只解析对象，避免把异常 JSON 透出给界面。 */
 function toSecurityAuditLogEntry(record: ZeusAuditLogRecord): SecurityAuditLogEntry {
   return {
@@ -11696,9 +12659,7 @@ function applyCodeMapSettingsToGraph(graph: ProjectGraph, settings: CodeMapSetti
 }
 
 function exportLocalBusinessData(
-  db: {
-    select: <T>(sql: string, params?: import('sql.js').SqlValue[]) => T[];
-  },
+  db: ZeusDatabase,
   exportedAt: string,
 ): LocalDataExportSnapshot {
   const projects = db
@@ -11744,19 +12705,22 @@ function exportLocalBusinessData(
     )
     .map(mapPortableTaskTemplateRow)
     .filter((template) => !template.projectId || projectIds.has(template.projectId));
+  const commandDefinitions = new CommandDefinitionRepository(db);
+  const portableCommands = [
+    ...commandDefinitions.listGlobal(),
+    ...projects.flatMap((project) => commandDefinitions.listProject(project.id)),
+  ];
   return {
     app: 'Zeus',
-    schemaVersion: 1,
+    schemaVersion: 2,
     exportedAt,
     redaction: { secretsRedacted: true },
-    data: { projects, tasks, taskEvents, taskTemplates },
+    data: { projects, tasks, taskEvents, taskTemplates, commandDefinitions: portableCommands },
   };
 }
 
 function importLocalBusinessData(
-  db: {
-    execute: (sql: string, params?: import('sql.js').SqlValue[]) => void;
-  },
+  db: ZeusDatabase,
   snapshot: LocalDataExportSnapshot,
 ): ImportLocalDataResult['importedCounts'] {
   const projects = Array.isArray(snapshot.data.projects) ? snapshot.data.projects.filter(isPortableProjectRecord) : [];
@@ -11813,12 +12777,69 @@ function importLocalBusinessData(
       [event.id, event.taskId, event.eventType, event.title, event.payloadJson, event.createdAt],
     );
   }
+  const commandRepository = new CommandDefinitionRepository(db);
+  const commandDefinitions =
+    snapshot.schemaVersion >= 2 && Array.isArray(snapshot.data.commandDefinitions)
+      ? snapshot.data.commandDefinitions.filter(
+          (command) =>
+            isPortableCommandDefinition(command) &&
+            (command.scope === 'global' || (command.projectId !== null && projectIds.has(command.projectId))),
+        )
+      : [];
+  let importedCommandDefinitions = 0;
+  for (const command of commandDefinitions) {
+    const conflicts = commandRepository.findTokenConflicts({
+      scope: command.scope,
+      projectId: command.projectId,
+      tokens: [command.name, ...command.aliases],
+      excludeCommandId: command.id,
+    });
+    if (conflicts.length > 0) continue;
+    db.execute(`DELETE FROM command_aliases WHERE command_id = ?`, [command.id]);
+    db.execute(`DELETE FROM command_definitions WHERE id = ?`, [command.id]);
+    commandRepository.create({
+      ...command,
+      id: command.id,
+      scope: command.scope,
+      projectId: command.projectId,
+      enabled: false,
+      telegramEnabled: false,
+      revision: Math.max(1, command.revision),
+      createdAt: command.createdAt,
+    });
+    importedCommandDefinitions += 1;
+  }
   return {
     projects: projects.length,
     tasks: tasks.length,
     taskEvents: taskEvents.length,
     taskTemplates: taskTemplates.length,
+    commandDefinitions: importedCommandDefinitions,
   };
+}
+
+function isPortableCommandDefinition(value: unknown): value is CommandDefinition {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const command = value as Partial<CommandDefinition>;
+  if (
+    typeof command.id !== 'string' ||
+    (command.scope !== 'global' && command.scope !== 'project') ||
+    (command.projectId !== null && typeof command.projectId !== 'string') ||
+    typeof command.name !== 'string' ||
+    !Array.isArray(command.aliases) ||
+    !command.aliases.every((alias) => typeof alias === 'string') ||
+    typeof command.title !== 'string' ||
+    typeof command.description !== 'string' ||
+    typeof command.command !== 'string' ||
+    !Array.isArray(command.parameters) ||
+    typeof command.timeoutSeconds !== 'number' ||
+    typeof command.revision !== 'number' ||
+    typeof command.createdAt !== 'string' ||
+    typeof command.updatedAt !== 'string'
+  ) {
+    return false;
+  }
+  return validateCommandDefinitionInput(command as CommandDefinition).length === 0;
 }
 
 function findInvalidPortableProjectPaths(snapshot: LocalDataExportSnapshot): string[] {

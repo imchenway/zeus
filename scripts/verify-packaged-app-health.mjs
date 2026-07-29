@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 /* global console, process */
-import { readFileSync } from 'node:fs';
+import { accessSync, constants, readFileSync } from 'node:fs';
 import { join, posix, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { machoSignatureNeutralSha256 } from './macho-signature-neutral-sha256.mjs';
 
 function readAsarArchive(asarPath) {
   const previousNoAsar = process.noAsar;
@@ -109,12 +110,65 @@ export function assertPackagedRendererEntrypoint(asarPath) {
 
 /** sandbox: true 的 preload 不能在运行时加载项目内相对 CommonJS 模块，发布包必须是单文件 bundle。 */
 export function assertPackagedPreloadEntrypoint(asarPath) {
-  const preloadPath = 'dist/preload/index.cjs';
-  const preload = readAsarTextFile(asarPath, preloadPath);
-  if (/\brequire\(\s*['"]\.{1,2}\//u.test(preload)) {
-    throw new Error('sandboxed preload contains relative CommonJS require; bundle the preload into one file');
+  const preloadPaths = ['dist/preload/index.cjs', 'dist/preload/browser-page.cjs'];
+  for (const preloadPath of preloadPaths) {
+    const preload = readAsarTextFile(asarPath, preloadPath);
+    if (/\brequire\(\s*['"]\.{1,2}\//u.test(preload)) {
+      throw new Error(`sandboxed preload contains relative CommonJS require; bundle the preload into one file (${preloadPath})`);
+    }
   }
-  return { preloadPath };
+  return { preloadPath: preloadPaths[0], browserPagePreloadPath: preloadPaths[1] };
+}
+
+/**
+ * 校验包内 Codex runtime 与供应链 lock 完全一致。
+ * 该门禁必须在启动前捕获版本漂移，不能让用户只看到 Main 进程的通用失败弹窗。
+ */
+export function assertPackagedCodexRuntime(appRoot) {
+  const runtimeRoot = join(appRoot, 'Contents/Resources/codex');
+  const binaryPath = join(runtimeRoot, 'codex');
+  const manifestPath = join(runtimeRoot, 'manifest.json');
+  const lockPath = join(runtimeRoot, 'runtime.lock.json');
+  accessSync(binaryPath, constants.R_OK | constants.X_OK);
+  const binary = readFileSync(binaryPath);
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+  const lock = JSON.parse(readFileSync(lockPath, 'utf8'));
+
+  if (
+    typeof manifest.binaryVersion !== 'string' ||
+    typeof manifest.upstreamCommit !== 'string' ||
+    typeof manifest.arch !== 'string' ||
+    typeof manifest.sha256 !== 'string' ||
+    typeof manifest.codeSha256 !== 'string' ||
+    !isStringArray(manifest.patches)
+  ) {
+    throw new Error('packaged Codex runtime manifest is invalid');
+  }
+  if (typeof lock.binaryVersion !== 'string' || typeof lock.commit !== 'string' || !isStringArray(lock.arches) || !isStringArray(lock.patches)) {
+    throw new Error('packaged Codex runtime lock is invalid');
+  }
+  if (manifest.binaryVersion !== lock.binaryVersion || manifest.upstreamCommit !== lock.commit) {
+    throw new Error(`packaged Codex runtime identity mismatch: manifest=${manifest.binaryVersion}/${manifest.upstreamCommit}; lock=${lock.binaryVersion}/${lock.commit}`);
+  }
+  if (!lock.arches.includes(manifest.arch)) {
+    throw new Error(`packaged Codex runtime architecture is not allowed by lock: ${manifest.arch}`);
+  }
+  if (manifest.patches.length !== lock.patches.length || manifest.patches.some((patch, index) => patch !== lock.patches[index])) {
+    throw new Error('packaged Codex runtime patches do not match runtime lock');
+  }
+  const actualCodeSha256 = machoSignatureNeutralSha256(binary);
+  if (actualCodeSha256 !== manifest.codeSha256) {
+    throw new Error(`packaged Codex runtime checksum mismatch: expected ${manifest.codeSha256}; received ${actualCodeSha256}`);
+  }
+  return {
+    binaryVersion: manifest.binaryVersion,
+    upstreamCommit: manifest.upstreamCommit,
+    arch: manifest.arch,
+  };
+}
+
+function isStringArray(value) {
+  return Array.isArray(value) && value.every((entry) => typeof entry === 'string');
 }
 
 export function verifyPackagedApp(appPath) {
@@ -127,11 +181,14 @@ export function verifyPackagedApp(appPath) {
     throw new Error(`unexpected packaged app metadata: ${JSON.stringify({ name: mainPackage?.name, main: mainPackage?.main })}`);
   }
   readAsarTextFile(asarPath, mainPackage.main);
+  const runtime = assertPackagedCodexRuntime(appRoot);
   return {
     appName: 'Zeus',
     assetCount: renderer.assetCount,
     main: mainPackage.main,
     preload: preload.preloadPath,
+    browserPagePreload: preload.browserPagePreloadPath,
+    runtime,
   };
 }
 
@@ -142,7 +199,9 @@ async function main() {
     process.exit(2);
   }
   const health = verifyPackagedApp(appPath);
-  console.log(`packaged-health=${health.appName};rendererAssets=${health.assetCount};main=${health.main};preload=${health.preload}`);
+  console.log(
+    `packaged-health=${health.appName};rendererAssets=${health.assetCount};main=${health.main};preload=${health.preload};browserPagePreload=${health.browserPagePreload};codex=${health.runtime.binaryVersion};arch=${health.runtime.arch}`,
+  );
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

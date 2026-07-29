@@ -7,6 +7,9 @@ import {
     useRef,
     useState
 } from 'react';
+import {ChatCircleIcon as ChatCircle} from '@phosphor-icons/react/dist/csr/ChatCircle';
+import {GlobeSimpleIcon as GlobeSimple} from '@phosphor-icons/react/dist/csr/GlobeSimple';
+import type {ZeusBrowserPreparedSubmission} from '@zeus/shared';
 import type {
     CodexConversationCapabilities,
     NativeCollaborationMode,
@@ -21,6 +24,8 @@ import {PermissionModeControl} from './PermissionModeControl.js';
 import type {SessionUiLanguage} from './ThreadItemView.js';
 import {autosizeTextarea} from './textareaAutosize.js';
 import {CollaborationModeControl} from './CollaborationModeControl.js';
+import {ConversationComposerAttachments} from './ConversationComposerAttachments.js';
+import {useConversationInputResources} from './useConversationInputResources.js';
 
 export const QUEUE_REORDER_THRESHOLD_PX = 6;
 
@@ -35,7 +40,9 @@ export interface ConversationComposerProps {
     onSubmit: (delivery: 'queue' | 'steer_now', settings?: NativeTurnSettingsSelection) => void | Promise<void>;
   onInterrupt: (turnId: string) => void | Promise<void>;
   onChooseAttachments?: () => void | Promise<void>;
+  onAddAttachments?: (attachments: NativeConversationAttachment[]) => void;
   onRemoveAttachment?: (attachment: NativeConversationAttachment) => void;
+  onRemoveBrowserSubmission?: () => void;
   onEditQueuedSubmission?: (submissionId: string, content: string) => void | Promise<void>;
   onDeleteQueuedSubmission?: (submissionId: string) => void | Promise<void>;
   onSendQueuedNow?: (submissionId: string) => void | Promise<void>;
@@ -116,6 +123,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
   const [queueEditDraft, setQueueEditDraft] = useState('');
   const [queueEditError, setQueueEditError] = useState<string | null>(null);
   const [queueAnnouncement, setQueueAnnouncement] = useState('');
+  const [inputResourceError, setInputResourceError] = useState<string | null>(null);
     const [selectedModel, setSelectedModel] = useState(initialModel);
     const [selectedEffort, setSelectedEffort] = useState(initialEffort);
     const [settingsDirty, setSettingsDirty] = useState(false);
@@ -129,7 +137,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
     props.state.conversationState !== 'legacy_readonly' &&
     props.state.conversationState !== 'waiting_approval' &&
     props.state.conversationState !== 'waiting_user_input';
-  const hasDraft = props.state.draft.trim().length > 0;
+  const hasDraft = props.state.draft.trim().length > 0 || props.state.attachments.length > 0 || Boolean(props.state.browserSubmission);
   const queue = props.state.queue?.submissions ?? [];
   const steerAllowed = canSteerActiveTurn(props.state) && props.readOnly !== true;
     const selectedCapability = props.capabilities?.models.find((candidate) => candidate.model === selectedModel || candidate.id === selectedModel) ?? null;
@@ -143,6 +151,18 @@ export function ConversationComposer(props: ConversationComposerProps) {
     const effortOptions = selectedCapability?.supportedReasoningEfforts.length
         ? selectedCapability.supportedReasoningEfforts.map((effort) => ({value: effort, label: effort}))
         : [{value: selectedEffort, label: selectedEffort || copy.unsynced}];
+  const inputResources = useConversationInputResources({
+    textareaRef,
+    text: props.state.draft,
+    disabled: !writable || busy,
+    onTextChange: props.onDraftChange,
+    onAddAttachments: (attachments) => {
+      setInputResourceError(null);
+      props.onAddAttachments?.(attachments);
+    },
+    onRemoveAttachment: (attachment) => props.onRemoveAttachment?.(attachment),
+    onError: setInputResourceError,
+  });
 
     useEffect(() => {
         const nextModel = resolveComposerModel(props.capabilities, props.state.providerSettings?.model);
@@ -181,10 +201,11 @@ export function ConversationComposer(props: ConversationComposerProps) {
     }
 
   function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>): void {
+    inputResources.handlePasteShortcut(event);
     const intent = resolveComposerKeyIntent({ key: event.key, shiftKey: event.shiftKey, isComposing: isComposing || event.nativeEvent.isComposing, repeat: event.repeat });
     if (intent === 'submit') {
       event.preventDefault();
-        if (props.state.draft.trim() === '/plan' && props.onCollaborationModeChange) {
+        if (props.state.draft.trim() === '/plan' && !props.state.browserSubmission && props.onCollaborationModeChange) {
             props.onDraftChange('');
             void props.onCollaborationModeChange(props.collaborationMode === 'plan' ? 'default' : 'plan');
             return;
@@ -212,7 +233,16 @@ export function ConversationComposer(props: ConversationComposerProps) {
   }
 
   return (
-    <section className="session-composer-shell" aria-label={copy.input} data-active={active ? 'true' : 'false'}>
+    <section
+      className="session-composer-shell"
+      aria-label={copy.input}
+      data-active={active ? 'true' : 'false'}
+      data-resource-dragging={inputResources.dragging ? 'true' : 'false'}
+      onDragEnter={inputResources.handleDragEnter}
+      onDragOver={inputResources.handleDragOver}
+      onDragLeave={inputResources.handleDragLeave}
+      onDrop={inputResources.handleDrop}
+    >
       {queue.length > 0 ? (
         <section className="session-queue" aria-label={copy.queued}>
           <header>
@@ -338,20 +368,23 @@ export function ConversationComposer(props: ConversationComposerProps) {
       <output className="session-sr-only" aria-live="polite" aria-atomic="true">
         {queueAnnouncement}
       </output>
-      {props.state.attachments.length > 0 ? (
-        <ul className="session-composer-attachments" aria-label={props.language === 'zh-CN' ? '待发送附件' : 'Pending attachments'}>
-          {props.state.attachments.map((attachment) => (
-            <li key={attachment.localPath ?? attachment.uploadRef}>
-              <span>{attachment.name}</span>
-              <small>{formatBytes(attachment.size)}</small>
-              <button type="button" aria-label={`${copy.removeAttachment}: ${attachment.name}`} onClick={() => props.onRemoveAttachment?.(attachment)} disabled={!writable || busy}>
-                ×
-              </button>
-            </li>
-          ))}
-        </ul>
+      {props.state.browserSubmission ? (
+        <BrowserSubmissionAttachment
+          submission={props.state.browserSubmission}
+          language={props.language}
+          disabled={!writable || busy}
+          onRemove={props.onRemoveBrowserSubmission}
+        />
       ) : null}
+      {inputResourceError ? <p className="session-composer-resource-error" role="alert">{inputResourceError}</p> : null}
       <div className="session-composer-input-frame">
+        <ConversationComposerAttachments
+          attachments={props.state.attachments}
+          language={props.language}
+          disabled={!writable || busy || inputResources.processing}
+          onRemove={(attachment) => props.onRemoveAttachment?.(attachment)}
+          onRestorePastedText={inputResources.restorePastedText}
+        />
         <textarea
           ref={textareaRef}
           aria-label={copy.input}
@@ -365,12 +398,23 @@ export function ConversationComposer(props: ConversationComposerProps) {
           }}
           onCompositionStart={() => setIsComposing(true)}
           onCompositionEnd={() => setIsComposing(false)}
+          onPaste={inputResources.handlePaste}
           onKeyDown={handleKeyDown}
         />
         <div className="session-composer-command-row">
           <span className="session-composer-leading-actions">
             {props.onChooseAttachments ? (
-              <button type="button" aria-label={copy.attach} onClick={() => void props.onChooseAttachments?.()} disabled={!writable || busy}>
+              <button
+                type="button"
+                aria-label={copy.attach}
+                onClick={() => {
+                  setInputResourceError(null);
+                  void Promise.resolve(props.onChooseAttachments?.()).catch((error: unknown) => {
+                    setInputResourceError(error instanceof Error ? error.message : String(error));
+                  });
+                }}
+                disabled={!writable || busy || inputResources.processing}
+              >
                 <span aria-hidden="true">＋</span>
               </button>
             ) : null}
@@ -459,6 +503,59 @@ export function ConversationComposer(props: ConversationComposerProps) {
   );
 }
 
+function BrowserSubmissionAttachment(props: {
+  submission: ZeusBrowserPreparedSubmission;
+  language: SessionUiLanguage;
+  disabled: boolean;
+  onRemove?: () => void;
+}) {
+  const screenshot = props.submission.attachments[0];
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const firstComment = props.submission.comments[0];
+  const pageTitle = firstComment?.anchor.pageTitle || firstComment?.anchor.pageUrl || (props.language === 'zh-CN' ? '浏览器页面' : 'Browser page');
+  const count = props.submission.commentIds.length;
+
+  useEffect(() => {
+    let active = true;
+    setPreviewUrl(null);
+    if (!screenshot?.localPath || !window.zeus?.getBrowserCommentPreview) return () => {
+      active = false;
+    };
+    void window.zeus
+      .getBrowserCommentPreview(screenshot.localPath)
+      .then((preview) => {
+        if (active) setPreviewUrl(preview?.previewUrl ?? null);
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [screenshot?.localPath]);
+
+  return (
+    <section
+      className="session-composer-browser-submission"
+      aria-label={props.language === 'zh-CN' ? '待发送浏览器批注' : 'Pending browser comments'}
+    >
+      <div className="session-browser-preview-card" title={pageTitle}>
+        {previewUrl ? <img src={previewUrl} alt={pageTitle} /> : <GlobeSimple aria-hidden="true" weight="regular" />}
+        <button
+          type="button"
+          aria-label={props.language === 'zh-CN' ? '移除浏览器批注' : 'Remove browser comments'}
+          onClick={props.onRemove}
+          disabled={props.disabled || !props.onRemove}
+        >
+          <span aria-hidden="true">×</span>
+        </button>
+      </div>
+      <span className="session-browser-comment-chip">
+        <ChatCircle aria-hidden="true" weight="regular" />
+        <strong>{props.language === 'zh-CN' ? `${count} 条注释` : `${count} ${count === 1 ? 'comment' : 'comments'}`}</strong>
+      </span>
+    </section>
+  );
+}
+
 export function resolveComposerKeyIntent(input: { key: string; shiftKey: boolean; isComposing: boolean; repeat: boolean }): ComposerKeyIntent {
   if (input.repeat) return 'ignore';
   if (input.key === 'Escape') return 'escape';
@@ -532,10 +629,4 @@ function releasePointerCapture(target: Pick<HTMLElement, 'releasePointerCapture'
   } catch {
     // pointerup/cancel 后 release 只需 best-effort，不影响队列状态。
   }
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }

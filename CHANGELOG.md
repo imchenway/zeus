@@ -4,7 +4,7 @@
 
 ### 已验证产物
 
-- `pnpm verify:release` 已通过：63 test files / 548 tests passed。
+- 该版本发布时 `pnpm verify:release` 曾记录 63 个测试文件、548 项检查通过；此项仅保留为历史事实，当前自动化测试体系已经退役。
 - 真实代码扫描已通过：163 files / 16327 nodes / 32021 edges / 7 views。
 - macOS unsigned DMG/ZIP 已生成并通过发布门禁：
   - `dist/mac-arm64/Zeus.app`
@@ -19,7 +19,7 @@
 - 本地优先 Electron + React + TypeScript macOS 桌面应用。
 - 本地 Fastify API、SQLite 持久化、真实代码扫描、图谱视图、图谱问答、任务管理、AI Runtime、Git Diff、Telegram long polling、安全 Keychain、审计日志。
 - `pnpm dev`、Codex Run 按钮、`script/build_and_run.sh` 已对齐到同一 macOS 启动链路。
-- `pnpm verify:release` 已覆盖 lint、typecheck、全量测试、真实扫描、构建、打包、Homebrew cask 生成和包内 App 可执行加载。
+- 该版本发布时 `pnpm verify:release` 曾覆盖 lint、typecheck、自动化测试、真实扫描、构建、打包、Homebrew cask 生成和包内 App 可执行加载；当前门禁以静态检查、生产构建、正式打包和真实运行验收为准。
 
 ### 外部配置等待项
 

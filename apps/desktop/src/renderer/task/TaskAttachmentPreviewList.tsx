@@ -1,5 +1,6 @@
-import { useEffect, useId, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type SyntheticEvent } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type RefObject, type SyntheticEvent } from 'react';
 import type { TaskAttachmentView } from './taskAttachments.js';
+import {PendingResourceCards, type PendingResourceCardItem} from '../ui/PendingResourceCards.js';
 
 export type TaskAttachmentPreviewItem = TaskAttachmentView;
 
@@ -22,6 +23,7 @@ export interface TaskAttachmentPreviewListProps {
   onRemove?: (path: string) => void;
   onLoadPreview?: (path: string) => Promise<{ previewUrl: string; mimeType: string } | null>;
   onOpenAttachment?: (path: string) => Promise<{ opened: boolean; error?: string }> | void;
+  onRestoreText?: (attachment: TaskAttachmentPreviewItem) => void;
   className?: string;
   disabled?: boolean;
 }
@@ -129,6 +131,22 @@ export function TaskAttachmentPreviewList(props: TaskAttachmentPreviewListProps)
     if (event.currentTarget === event.target) closeAttachmentPreview();
   }
 
+  const attachmentsByPath = new Map(props.attachments.map((attachment) => [attachment.path, attachment]));
+  const resources: PendingResourceCardItem[] = props.attachments.map((attachment) => {
+    const previewUrl = resolveTaskAttachmentPreviewSrc(attachment, loadedPreviewUrls);
+    return {
+      id: attachment.path,
+      name: attachment.name,
+      kind: attachment.kind,
+      mimeType: attachment.mimeType,
+      ...(attachment.size !== undefined ? {size: attachment.size} : {}),
+      ...(attachment.characterCount !== undefined ? {characterCount: attachment.characterCount} : {}),
+      ...(previewUrl ? {previewUrl} : {}),
+      ...(attachment.restorableText ? {restorable: true} : {}),
+      title: attachment.path,
+    };
+  });
+  const language = props.copy.imageLabel.toLocaleLowerCase() === 'image' ? 'en-US' : 'zh-CN';
   return (
     <div className={listClassName}>
       {addedStatus ? (
@@ -136,102 +154,97 @@ export function TaskAttachmentPreviewList(props: TaskAttachmentPreviewListProps)
           {addedStatus}
         </p>
       ) : null}
-      <ul className="task-attachment-filmstrip" aria-label={addedStatus}>
-        {props.attachments.map((attachment) => {
-          const attachmentSrc = resolveTaskAttachmentPreviewSrc(attachment, loadedPreviewUrls);
-          const previewIsPending = attachment.kind === 'image' && !attachmentSrc && !failedPreviewPaths.has(attachment.path) && Boolean(props.onLoadPreview);
-          const attachmentFailed = failedPreviewPaths.has(attachment.path) || (!attachmentSrc && !previewIsPending);
-          const previewState = attachment.kind !== 'image' ? 'file' : previewIsPending || loadingPreviewPaths.has(attachment.path) ? 'loading' : attachmentFailed ? 'unavailable' : 'ready';
-          const kindLabel = attachment.kind === 'image' ? props.copy.imageLabel : props.copy.fileLabel;
-          const fileExtension = formatTaskAttachmentExtension(attachment.name);
-          return (
-            <li className="task-attachment-film-item" key={attachment.path} data-attachment-preview-state={previewState}>
-              {attachment.kind === 'image' ? (
-                <button type="button" className="task-attachment-thumb-button" aria-label={`${props.copy.openPreviewLabel}: ${attachment.name}`} onClick={(event) => openAttachmentPreview(attachment, event.currentTarget)}>
-                  {attachmentFailed || !attachmentSrc ? (
-                    <span className="task-attachment-thumb-fallback">{props.copy.previewUnavailable}</span>
-                  ) : (
-                    <img className="task-attachment-image-thumb" src={attachmentSrc} alt={attachment.name} loading="lazy" onError={() => markPreviewFailed(attachment.path)} />
-                  )}
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  className="task-attachment-file-button"
-                  data-attachment-extension={fileExtension}
-                  aria-label={`${props.copy.openFileLabel}: ${attachment.name}`}
-                  onClick={() => openFileAttachment(attachment.path)}
-                  disabled={props.disabled}
-                >
-                  <span className="task-attachment-file-badge" aria-hidden="true">
-                    {fileExtension}
-                  </span>
-                </button>
-              )}
-              <span className="task-attachment-copy">
-                <strong title={attachment.name}>{attachment.name}</strong>
-                <small title={attachment.path}>{attachment.kind === 'image' ? kindLabel : `${fileExtension} · ${kindLabel}`}</small>
-              </span>
-              {props.mode === 'editable' && props.onRemove ? (
-                <button
-                  type="button"
-                  className="task-attachment-remove-button"
-                  onClick={() => props.onRemove?.(attachment.path)}
-                  disabled={props.disabled}
-                  aria-label={props.copy.removeLabel ? `${props.copy.removeLabel}: ${attachment.name}` : attachment.name}
-                >
-                  ×
-                </button>
-              ) : null}
-            </li>
-          );
-        })}
-      </ul>
-      <dialog
-        ref={dialogRef}
-        className="task-attachment-zoom-dialog"
-        aria-labelledby={previewTitleId}
-        aria-describedby={previewDescriptionId}
-        onClose={handleDialogClose}
-        onCancel={handleDialogCancel}
-        onPointerDown={handleDialogPointerDown}
-      >
-        <div className="task-attachment-zoom-sheet">
-          <header className="task-attachment-zoom-header">
-            <span>
-              <strong id={previewTitleId}>{previewAttachment?.name ?? props.copy.openPreviewLabel}</strong>
-              <small id={previewDescriptionId}>{previewAttachment?.path ?? props.copy.localPathLabel}</small>
-            </span>
-            <button type="button" className="task-attachment-zoom-close" onClick={closeAttachmentPreview} aria-label={props.copy.closePreviewLabel}>
-              ×
-            </button>
-          </header>
-          <div className="task-attachment-zoom-stage">
-            {previewAttachment && !previewFailed && previewSrc ? (
-              <img className="task-attachment-zoom-image" src={previewSrc} alt={previewAttachment.name} onError={() => markPreviewFailed(previewAttachment.path)} />
-            ) : (
-              <p className="task-attachment-zoom-fallback">{props.copy.previewUnavailable}</p>
-            )}
-          </div>
-          {previewAttachment ? (
-            <p className="task-attachment-zoom-path">
-              <strong>{props.copy.localPathLabel}</strong>
-              <span>{previewAttachment.path}</span>
-            </p>
-          ) : null}
-        </div>
-      </dialog>
+      <PendingResourceCards
+        resources={resources}
+        language={language}
+        disabled={props.disabled}
+        onRemove={props.mode === 'editable' && props.onRemove
+          ? (resource) => props.onRemove?.(resource.id)
+          : undefined}
+        onRestoreText={props.mode === 'editable' && props.onRestoreText
+          ? (resource) => {
+              const attachment = attachmentsByPath.get(resource.id);
+              if (attachment) props.onRestoreText?.(attachment);
+            }
+          : undefined}
+        onActivate={(resource, trigger) => {
+          const attachment = attachmentsByPath.get(resource.id);
+          if (!attachment) return;
+          if (attachment.kind === 'image') openAttachmentPreview(attachment, trigger);
+          else openFileAttachment(attachment.path);
+        }}
+      />
+      {renderTaskAttachmentPreviewDialog({
+        dialogRef,
+        previewTitleId,
+        previewDescriptionId,
+        previewAttachment,
+        previewFailed,
+        previewSrc,
+        copy: props.copy,
+        closeAttachmentPreview,
+        handleDialogClose,
+        handleDialogCancel,
+        handleDialogPointerDown,
+        markPreviewFailed,
+      })}
     </div>
   );
 }
 
-function formatTaskAttachmentExtension(fileName: string): string {
-  const cleanName = fileName.trim();
-  const extension = cleanName.includes('.')
-    ? cleanName
-        .split('.')
-        .pop()
-        ?.replace(/[^a-z0-9]+/giu, '')
-    : '';
-  return (extension || 'FILE').slice(0, 5).toUpperCase();
+function renderTaskAttachmentPreviewDialog(input: {
+  dialogRef: RefObject<HTMLDialogElement | null>;
+  previewTitleId: string;
+  previewDescriptionId: string;
+  previewAttachment: TaskAttachmentPreviewItem | null;
+  previewFailed: boolean;
+  previewSrc: string;
+  copy: TaskAttachmentPreviewListCopy;
+  closeAttachmentPreview: () => void;
+  handleDialogClose: () => void;
+  handleDialogCancel: (event: SyntheticEvent<HTMLDialogElement, Event>) => void;
+  handleDialogPointerDown: (event: ReactMouseEvent<HTMLDialogElement>) => void;
+  markPreviewFailed: (path: string) => void;
+}) {
+  return (
+    <dialog
+      ref={input.dialogRef}
+      className="task-attachment-zoom-dialog"
+      aria-labelledby={input.previewTitleId}
+      aria-describedby={input.previewDescriptionId}
+      onClose={input.handleDialogClose}
+      onCancel={input.handleDialogCancel}
+      onPointerDown={input.handleDialogPointerDown}
+    >
+      <div className="task-attachment-zoom-sheet">
+        <header className="task-attachment-zoom-header">
+          <span>
+            <strong id={input.previewTitleId}>{input.previewAttachment?.name ?? input.copy.openPreviewLabel}</strong>
+            <small id={input.previewDescriptionId}>{input.previewAttachment?.path ?? input.copy.localPathLabel}</small>
+          </span>
+          <button type="button" className="task-attachment-zoom-close" onClick={input.closeAttachmentPreview} aria-label={input.copy.closePreviewLabel}>
+            ×
+          </button>
+        </header>
+        <div className="task-attachment-zoom-stage">
+          {input.previewAttachment && !input.previewFailed && input.previewSrc ? (
+            <img
+              className="task-attachment-zoom-image"
+              src={input.previewSrc}
+              alt={input.previewAttachment.name}
+              onError={() => input.markPreviewFailed(input.previewAttachment!.path)}
+            />
+          ) : (
+            <p className="task-attachment-zoom-fallback">{input.copy.previewUnavailable}</p>
+          )}
+        </div>
+        {input.previewAttachment ? (
+          <p className="task-attachment-zoom-path">
+            <strong>{input.copy.localPathLabel}</strong>
+            <span>{input.previewAttachment.path}</span>
+          </p>
+        ) : null}
+      </div>
+    </dialog>
+  );
 }

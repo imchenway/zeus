@@ -1,6 +1,6 @@
 .session-codex-parity-v1 {
   --session-canvas: rgb(255 255 255);
-  --session-sidebar: rgb(252 252 252);
+  --session-sidebar: var(--session-canvas);
   --session-text: rgb(34 37 41);
   --session-text-muted: rgb(104 108 115);
   --session-selected: rgb(241 242 242);
@@ -8,8 +8,10 @@
   --session-line-soft: rgb(238 239 240);
   --session-control: rgb(250 250 250);
   --session-control-hover: rgb(244 245 245);
-  --session-focus: rgb(64 104 180 / 0.28);
-  --session-focus-outline: rgb(65 105 180 / 0.72);
+  --session-focus: rgb(34 37 41 / 0.1);
+  --session-focus-outline: rgb(70 74 79 / 0.48);
+  --session-divider: rgb(205 207 210);
+  --session-divider-active: rgb(126 130 136);
   --session-accent: rgb(45 83 150);
     --session-message-action: rgb(139 143 148);
   --session-danger: rgb(148 55 55);
@@ -23,7 +25,7 @@
   --session-gutter: clamp(16px, 4.2vw, 48px);
   --session-thread-max: 48rem;
   --session-markdown-max: 40rem;
-  --session-composer-max: 650px;
+  --session-composer-max: var(--session-thread-max);
   --session-ease-out: cubic-bezier(0.19, 1, 0.22, 1);
   /* 会话页的全局 source rail 与 native thread 共用同一套明暗 token，避免 dark shell 仍消费旧浅色产品变量。 */
   --zeus-product-canvas: var(--session-canvas);
@@ -42,6 +44,9 @@
   --zeus-native-row-hover: var(--session-control-hover);
   --zeus-project-menu-selected-bg: var(--session-selected);
   --zeus-project-menu-line: var(--session-line);
+}
+
+.session-codex-parity-v1 .ai-workspace {
   color: var(--session-text);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
   font-size: 14px;
@@ -62,7 +67,7 @@
 .theme-dark.session-codex-parity-v1,
 .theme-dark .session-codex-parity-v1 {
   --session-canvas: rgb(24 26 29);
-  --session-sidebar: rgb(30 32 36);
+  --session-sidebar: var(--session-canvas);
   --session-text: rgb(235 237 240);
   --session-text-muted: rgb(167 172 180);
   --session-selected: rgb(47 50 55);
@@ -70,8 +75,10 @@
   --session-line-soft: rgb(57 61 67);
   --session-control: rgb(39 42 47);
   --session-control-hover: rgb(50 54 60);
-  --session-focus: rgb(123 164 240 / 0.28);
-  --session-focus-outline: rgb(148 184 248 / 0.88);
+  --session-focus: rgb(235 237 240 / 0.12);
+  --session-focus-outline: rgb(218 221 226 / 0.56);
+  --session-divider: rgb(82 86 93);
+  --session-divider-active: rgb(157 162 171);
   --session-accent: rgb(145 181 244);
     --session-message-action: rgb(157 162 170);
   --session-danger: rgb(246 157 157);
@@ -103,7 +110,7 @@
   .theme-system.session-codex-parity-v1,
   .theme-system .session-codex-parity-v1 {
     --session-canvas: rgb(24 26 29);
-    --session-sidebar: rgb(30 32 36);
+    --session-sidebar: var(--session-canvas);
     --session-text: rgb(235 237 240);
     --session-text-muted: rgb(167 172 180);
     --session-selected: rgb(47 50 55);
@@ -111,8 +118,10 @@
     --session-line-soft: rgb(57 61 67);
     --session-control: rgb(39 42 47);
     --session-control-hover: rgb(50 54 60);
-    --session-focus: rgb(123 164 240 / 0.28);
-    --session-focus-outline: rgb(148 184 248 / 0.88);
+    --session-focus: rgb(235 237 240 / 0.12);
+    --session-focus-outline: rgb(218 221 226 / 0.56);
+    --session-divider: rgb(82 86 93);
+    --session-divider-active: rgb(157 162 171);
     --session-accent: rgb(145 181 244);
       --session-message-action: rgb(157 162 170);
     --session-danger: rgb(246 157 157);
@@ -141,9 +150,13 @@
   }
 }
 
-.session-codex-parity-v1 *,
-.session-codex-parity-v1 *::before,
-.session-codex-parity-v1 *::after {
+.session-codex-parity-v1 .ai-workspace,
+.session-codex-parity-v1 .ai-workspace *,
+.session-codex-parity-v1 .ai-workspace *::before,
+.session-codex-parity-v1 .ai-workspace *::after,
+.session-codex-parity-v1 > .session-mobile-source-backdrop,
+.session-codex-parity-v1 > .session-mobile-source-backdrop::before,
+.session-codex-parity-v1 > .session-mobile-source-backdrop::after {
   box-sizing: border-box;
 }
 
@@ -152,29 +165,33 @@
   overflow-y: auto;
 }
 
-.session-codex-parity-v1 button,
-.session-codex-parity-v1 input,
-.session-codex-parity-v1 textarea {
+.session-codex-parity-v1 .ai-workspace button,
+.session-codex-parity-v1 .ai-workspace input,
+.session-codex-parity-v1 .ai-workspace textarea,
+.session-codex-parity-v1 > .session-mobile-source-backdrop {
   color: inherit;
   font: inherit;
 }
 
-.session-codex-parity-v1 button {
+.session-codex-parity-v1 .ai-workspace button,
+.session-codex-parity-v1 > .session-mobile-source-backdrop {
   min-block-size: 28px;
   min-inline-size: 28px;
 }
 
-.session-codex-parity-v1 button:focus-visible,
-.session-codex-parity-v1 input:focus-visible,
-.session-codex-parity-v1 textarea:focus-visible,
-.session-codex-parity-v1 a:focus-visible {
+.session-codex-parity-v1 .ai-workspace button:focus-visible,
+.session-codex-parity-v1 .ai-workspace input:focus-visible,
+.session-codex-parity-v1 .ai-workspace textarea:focus-visible,
+.session-codex-parity-v1 .ai-workspace a:focus-visible,
+.session-codex-parity-v1 > .session-mobile-source-backdrop:focus-visible {
   outline: 2px solid var(--session-focus-outline);
   outline-offset: 2px;
 }
 
-.session-codex-parity-v1 button:disabled,
-.session-codex-parity-v1 input:disabled,
-.session-codex-parity-v1 textarea:disabled {
+.session-codex-parity-v1 .ai-workspace button:disabled,
+.session-codex-parity-v1 .ai-workspace input:disabled,
+.session-codex-parity-v1 .ai-workspace textarea:disabled,
+.session-codex-parity-v1 > .session-mobile-source-backdrop:disabled {
   cursor: not-allowed;
   opacity: 0.52;
 }
@@ -199,7 +216,9 @@
   justify-content: space-between;
   min-block-size: 58px;
   padding: 10px var(--session-gutter);
-  z-index: 3;
+  pointer-events: none;
+  position: relative;
+  z-index: 31;
 }
 
 .session-codex-parity-v1 .session-thread-header[data-motion-title='entered'] {
@@ -581,12 +600,11 @@
   padding: 28px var(--session-gutter) 24px;
   position: relative;
   scroll-behavior: smooth;
-  scrollbar-gutter: stable;
 }
 
 .session-codex-parity-v1
 .session-transcript
-> :where(.session-thread-item, .session-activity-group, .session-plan-summary, .session-plan-entry, .session-question-panel, .session-plan-progress, .session-turn-duration, .session-transcript-empty, .session-latest-turn-spacer) {
+> :where(.session-thread-item, .session-activity-group, .session-plan-summary, .session-plan-entry, .session-question-panel, .session-plan-progress, .session-turn-change-card, .session-turn-duration, .session-transcript-empty, .session-latest-turn-spacer) {
     flex: 0 0 auto;
   inline-size: min(var(--session-thread-max), 100%);
   margin-inline: auto;
@@ -1288,18 +1306,25 @@
 .session-codex-parity-v1 .session-turn-duration {
     align-items: center;
     color: var(--session-text-muted);
-    display: grid;
+    display: flex;
     font-size: 11px;
     gap: 10px;
-    grid-template-columns: minmax(18px, 1fr) auto minmax(18px, 1fr);
+    inline-size: min(220px, 100%);
+    justify-content: center;
     margin-block: 2px;
 }
 
-.session-codex-parity-v1 .session-turn-duration > span {
-    border-block-start: 1px solid var(--session-line-soft);
+.session-codex-parity-v1 .session-turn-duration::before,
+.session-codex-parity-v1 .session-turn-duration::after {
+    background: var(--session-line-soft);
+    block-size: 1px;
+    content: '';
+    flex: 1 1 0;
+    max-inline-size: 72px;
 }
 
 .session-codex-parity-v1 .session-turn-duration time {
+    flex: 0 0 auto;
     font-variant-numeric: tabular-nums;
 }
 
@@ -1830,8 +1855,8 @@
 }
 
 .session-codex-parity-v1 .session-composer-input-frame {
-  background: var(--session-sidebar);
-  border: 1px solid var(--session-line);
+  background: var(--zeus-product-panel);
+  border: 1px solid var(--zeus-product-line);
   border-radius: 14px;
   box-shadow:
     0 8px 28px var(--session-shadow),
@@ -1853,9 +1878,11 @@
 }
 
 .session-codex-parity-v1 .session-composer-input-frame > textarea {
-  background: transparent;
-  border: 0;
-  box-shadow: none;
+  appearance: none;
+  background: transparent !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
   line-height: 1.45;
   max-block-size: 34vh;
   min-block-size: 48px;
@@ -1863,6 +1890,19 @@
     overflow-y: hidden;
   padding: 4px 5px;
   resize: none;
+}
+
+.session-codex-parity-v1 .ai-workspace .session-composer-input-frame > textarea:focus-visible {
+  border: 0;
+  box-shadow: none;
+  outline: 0;
+}
+
+@media (forced-colors: active) {
+  .session-codex-parity-v1 .ai-workspace .session-composer-input-frame > textarea:focus-visible {
+    outline: 1px solid CanvasText;
+    outline-offset: 2px;
+  }
 }
 
 .session-codex-parity-v1 .session-composer-command-row,
@@ -2060,7 +2100,6 @@
   inline-size: 12px;
 }
 
-.session-codex-parity-v1 .session-composer-attachments,
 .session-codex-parity-v1 .session-queue ol {
   list-style: none;
   margin: 0;
@@ -2068,36 +2107,28 @@
 }
 
 .session-codex-parity-v1 .session-composer-attachments {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+  min-inline-size: 0;
+  inline-size: 100%;
 }
 
-.session-codex-parity-v1 .session-composer-attachments li {
-  align-items: center;
-  background: var(--session-selected);
-  border-radius: 8px;
-  display: inline-flex;
-  gap: 6px;
-  max-inline-size: 240px;
-  padding: 4px 5px 4px 8px;
+.session-codex-parity-v1 .session-composer-attachments .pending-resource-remove {
+  min-block-size: 24px;
+  min-inline-size: 24px;
 }
 
-.session-codex-parity-v1 .session-composer-attachments li > span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.session-codex-parity-v1 .session-composer-shell[data-resource-dragging='true'] .session-composer-input-frame {
+  border-color: var(--session-accent);
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--session-accent) 18%, transparent),
+    0 8px 28px var(--session-shadow);
 }
 
-.session-codex-parity-v1 .session-composer-attachments small {
-  color: var(--session-text-muted);
-  white-space: nowrap;
-}
-
-.session-codex-parity-v1 .session-composer-attachments button {
-  background: transparent;
-  border: 0;
-  border-radius: 5px;
+.session-codex-parity-v1 .session-composer-resource-error {
+  color: var(--session-danger);
+  font-size: 12px;
+  line-height: 1.4;
+  margin: 0;
+  overflow-wrap: anywhere;
 }
 
 .session-codex-parity-v1 .session-queue {
@@ -3047,5 +3078,1985 @@
   .session-codex-parity-v1 *::after {
     animation: none !important;
     transition-duration: 0.01ms !important;
+  }
+}
+
+/* 内置浏览器保持与会话工作区同一层级；真正页面由 Electron WebContentsView 放入 viewport 占位区。 */
+.session-codex-parity-v1 .session-thread-header-actions {
+  align-items: center;
+  app-region: no-drag;
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 10px;
+  pointer-events: auto;
+  -webkit-app-region: no-drag;
+}
+
+.session-codex-parity-v1 .session-browser-toggle,
+.session-codex-parity-v1 .browser-workspace button,
+.session-codex-parity-v1 .browser-workspace input {
+  font: inherit;
+}
+
+.session-codex-parity-v1 .session-browser-toggle {
+  align-items: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--session-text-muted);
+  display: inline-flex;
+  gap: 6px;
+  min-block-size: 30px;
+  padding: 0 9px;
+}
+
+.session-codex-parity-v1 .session-browser-toggle:hover,
+.session-codex-parity-v1 .session-browser-toggle.selected {
+  background: var(--session-control-hover);
+  border-color: var(--session-line);
+  color: var(--session-text);
+}
+
+.session-codex-parity-v1 .session-browser-toggle:focus-visible,
+.session-codex-parity-v1 .browser-workspace button:focus-visible,
+.session-codex-parity-v1 .browser-workspace input:focus-visible {
+  box-shadow: 0 0 0 3px var(--session-focus);
+  outline: 1px solid var(--session-focus-outline);
+  outline-offset: 1px;
+}
+
+.session-codex-parity-v1 .session-browser-toggle svg {
+  block-size: 15px;
+  inline-size: 15px;
+}
+
+.session-codex-parity-v1 .browser-workspace {
+  background: var(--session-canvas);
+  color: var(--session-text);
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-block-size: 0;
+  min-inline-size: 0;
+  overflow: hidden;
+}
+
+.session-codex-parity-v1 .browser-workspace-loading {
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: var(--session-text-muted);
+}
+
+.session-codex-parity-v1 .browser-workspace-loading > svg {
+  block-size: 24px;
+  inline-size: 24px;
+}
+
+.session-codex-parity-v1 .browser-workspace-loading p {
+  margin: 0;
+}
+
+.session-codex-parity-v1 .browser-tab-strip {
+  align-items: end;
+  background: color-mix(in oklab, var(--session-header) 90%, var(--session-sidebar));
+  border-block-end: 1px solid var(--session-line);
+  display: flex;
+  flex: 0 0 38px;
+  gap: 3px;
+  min-inline-size: 0;
+  padding: 5px 8px 0;
+}
+
+.session-codex-parity-v1 .browser-tabs {
+  align-items: center;
+  display: flex;
+  flex: 0 1 auto;
+  gap: 4px;
+  min-inline-size: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.session-codex-parity-v1 .browser-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.session-codex-parity-v1 .browser-tab-shell {
+  align-items: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-block-end: 0;
+  border-radius: 8px 8px 0 0;
+  display: flex;
+  flex: 0 1 210px;
+  min-block-size: 32px;
+  min-inline-size: 92px;
+  overflow: hidden;
+  padding-inline-end: 3px;
+}
+
+.session-codex-parity-v1 .browser-tab-shell:hover {
+  background: var(--session-control-hover);
+}
+
+.session-codex-parity-v1 .browser-tab-shell.selected {
+  background: var(--session-canvas);
+  border-color: var(--session-line);
+}
+
+.session-codex-parity-v1 .browser-tab {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  color: var(--session-text-muted);
+  display: flex;
+  flex: 1 1 auto;
+  gap: 7px;
+  min-block-size: 30px;
+  min-inline-size: 0;
+  padding: 0 5px 0 9px;
+}
+
+.session-codex-parity-v1 .browser-tab-shell.selected .browser-tab {
+  color: var(--session-text);
+}
+
+.session-codex-parity-v1 .browser-tab > svg {
+  block-size: 13px;
+  flex: 0 0 auto;
+  inline-size: 13px;
+}
+
+.session-codex-parity-v1 .browser-tab > span:not(.browser-tab-loading) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-codex-parity-v1 .browser-tab-loading {
+  animation: session-spinner 850ms linear infinite;
+  block-size: 11px;
+  border: 1.4px solid currentColor;
+  border-inline-end-color: transparent;
+  border-radius: 999px;
+  flex: 0 0 auto;
+  inline-size: 11px;
+}
+
+.session-codex-parity-v1 .browser-tab-close,
+.session-codex-parity-v1 .browser-new-tab {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: var(--session-text-muted);
+  display: inline-flex;
+  flex: 0 0 auto;
+  justify-content: center;
+}
+
+.session-codex-parity-v1 .browser-tab-close {
+  block-size: 28px;
+  flex-basis: 28px;
+  inline-size: 28px;
+  min-block-size: 28px;
+  min-inline-size: 28px;
+  opacity: 0;
+  padding: 0;
+}
+
+.session-codex-parity-v1 :where(.browser-tab-shell:hover, .browser-tab-shell.selected) .browser-tab-close {
+  opacity: 1;
+}
+
+.session-codex-parity-v1 .browser-tab-close:hover {
+  color: var(--session-text);
+}
+
+.session-codex-parity-v1 .browser-new-tab:hover {
+  background: var(--session-control-hover);
+  color: var(--session-text);
+}
+
+.session-codex-parity-v1 .browser-tab-close-surface {
+  align-items: center;
+  background: transparent;
+  block-size: 16px;
+  border-radius: 999px;
+  display: inline-flex;
+  flex: 0 0 16px;
+  inline-size: 16px;
+  justify-content: center;
+  min-inline-size: 16px;
+}
+
+.session-codex-parity-v1 :where(.browser-tab-close:hover, .browser-tab-close:focus-visible) .browser-tab-close-surface {
+  background: color-mix(in oklab, var(--session-text-muted) 20%, transparent);
+}
+
+.session-codex-parity-v1 .browser-tab-close:active .browser-tab-close-surface {
+  background: color-mix(in oklab, var(--session-text-muted) 28%, transparent);
+}
+
+.session-codex-parity-v1 .browser-tab-close-surface svg,
+.session-codex-parity-v1 .browser-new-tab svg {
+  block-size: 12px;
+  inline-size: 12px;
+}
+
+.session-codex-parity-v1 .browser-new-tab {
+  block-size: 28px;
+  inline-size: 28px;
+  margin-block-end: 2px;
+}
+
+.session-codex-parity-v1 .browser-toolbar {
+  align-items: center;
+  background: var(--session-canvas);
+  border-block-end: 1px solid var(--session-line-soft);
+  display: flex;
+  flex: 0 0 46px;
+  gap: 8px;
+  min-inline-size: 0;
+  padding: 7px 10px;
+}
+
+.session-codex-parity-v1 .browser-navigation-actions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 2px;
+}
+
+.session-codex-parity-v1 .browser-navigation-actions button,
+.session-codex-parity-v1 .browser-comments-toggle {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  color: var(--session-text-muted);
+  display: inline-flex;
+  justify-content: center;
+  min-block-size: 30px;
+  min-inline-size: 30px;
+  padding: 0 7px;
+}
+
+.session-codex-parity-v1 .browser-navigation-actions button:hover:not(:disabled),
+.session-codex-parity-v1 .browser-comments-toggle:hover,
+.session-codex-parity-v1 .browser-comments-toggle.selected {
+  background: var(--session-control-hover);
+  color: var(--session-text);
+}
+
+.session-codex-parity-v1 .browser-navigation-actions button:disabled {
+  opacity: 0.35;
+}
+
+.session-codex-parity-v1 .browser-navigation-actions svg,
+.session-codex-parity-v1 .browser-comments-toggle svg {
+  block-size: 16px;
+  inline-size: 16px;
+}
+
+.session-codex-parity-v1 .browser-address-form {
+  align-items: center;
+  background: var(--session-control);
+  border: 1px solid var(--session-line);
+  border-radius: 9px;
+  display: flex;
+  flex: 1 1 auto;
+  gap: 7px;
+  min-inline-size: 120px;
+  padding-inline: 10px;
+}
+
+.session-codex-parity-v1 .browser-address-form:focus-within {
+  border-color: var(--session-focus-outline);
+  box-shadow: 0 0 0 3px var(--session-focus);
+}
+
+.session-codex-parity-v1 .browser-address-form > svg {
+  block-size: 13px;
+  color: var(--session-text-muted);
+  flex: 0 0 auto;
+  inline-size: 13px;
+}
+
+.session-codex-parity-v1 .browser-address-form input {
+  background: transparent;
+  border: 0;
+  color: var(--session-text);
+  flex: 1 1 auto;
+  min-block-size: 30px;
+  min-inline-size: 0;
+  outline: 0;
+  padding: 0;
+}
+
+.session-codex-parity-v1 .browser-address-form input:focus-visible {
+  box-shadow: none;
+  outline: 0;
+}
+
+.session-codex-parity-v1 .browser-annotate-button {
+  align-items: center;
+  border: 1px solid var(--session-line);
+  border-radius: 8px;
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 6px;
+  min-block-size: 31px;
+  padding: 0 10px;
+}
+
+.session-codex-parity-v1 .browser-annotate-button {
+  background: var(--session-control);
+  color: var(--session-text);
+}
+
+.session-codex-parity-v1 .browser-annotate-button.selected {
+  background: color-mix(in oklab, var(--session-accent) 15%, var(--session-control));
+  border-color: color-mix(in oklab, var(--session-accent) 55%, var(--session-line));
+  color: var(--session-accent);
+}
+
+.session-codex-parity-v1 .browser-comments-toggle {
+  gap: 3px;
+}
+
+.session-codex-parity-v1 .browser-comments-toggle span {
+  font-size: 11px;
+  min-inline-size: 10px;
+}
+
+.session-codex-parity-v1 .browser-error-banner {
+  background: color-mix(in oklab, var(--session-danger) 8%, var(--session-canvas));
+  border-block-end: 1px solid color-mix(in oklab, var(--session-danger) 30%, var(--session-line));
+  color: var(--session-danger);
+  flex: 0 0 auto;
+  font-size: 12px;
+  margin: 0;
+  padding: 7px 12px;
+}
+
+.session-codex-parity-v1 .browser-content-row {
+  display: flex;
+  flex: 1 1 auto;
+  min-block-size: 0;
+  min-inline-size: 0;
+  overflow: hidden;
+}
+
+.session-codex-parity-v1 .browser-native-viewport {
+  background: white;
+  flex: 1 1 auto;
+  min-block-size: 120px;
+  min-inline-size: 0;
+  position: relative;
+}
+
+.session-codex-parity-v1 .browser-comments-rail {
+  background: var(--session-sidebar);
+  border-inline-start: 1px solid var(--session-line);
+  box-sizing: border-box;
+  flex: 0 0 min(340px, 38%);
+  overflow: auto;
+  padding: 12px;
+}
+
+.session-codex-parity-v1 .browser-approval-card {
+  background: color-mix(in oklab, var(--session-warning) 7%, var(--session-canvas));
+  border: 1px solid color-mix(in oklab, var(--session-warning) 30%, var(--session-line));
+  border-radius: 10px;
+  display: grid;
+  gap: 7px;
+  margin-block-end: 10px;
+  padding: 11px;
+}
+
+.session-codex-parity-v1 .browser-approval-card strong,
+.session-codex-parity-v1 .browser-comments-empty strong {
+  font-size: 12px;
+}
+
+.session-codex-parity-v1 .browser-approval-card p,
+.session-codex-parity-v1 .browser-comments-empty p {
+  color: var(--session-text-muted);
+  font-size: 11px;
+  line-height: 16px;
+  margin: 0;
+}
+
+.session-codex-parity-v1 .browser-approval-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.session-codex-parity-v1 .browser-approval-actions button {
+  background: var(--session-control);
+  border: 1px solid var(--session-line);
+  border-radius: 7px;
+  color: var(--session-text);
+  min-block-size: 27px;
+  padding-inline: 8px;
+}
+
+.session-codex-parity-v1 .browser-comments-empty {
+  display: grid;
+  gap: 5px;
+  padding: 8px 3px;
+}
+
+.session-codex-parity-v1 .browser-comment-list {
+  display: grid;
+  gap: 7px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.session-codex-parity-v1 .browser-comment-list li {
+  align-items: start;
+  background: var(--session-canvas);
+  border: 1px solid var(--session-line);
+  border-radius: 9px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 28px;
+  overflow: hidden;
+}
+
+.session-codex-parity-v1 .browser-comment-focus {
+  align-items: start;
+  background: transparent;
+  border: 0;
+  color: var(--session-text);
+  display: grid;
+  gap: 3px 7px;
+  grid-template-columns: 22px minmax(0, 1fr);
+  padding: 9px;
+  text-align: start;
+}
+
+.session-codex-parity-v1 .browser-comment-focus > span {
+  align-items: center;
+  background: var(--session-accent);
+  border-radius: 999px;
+  color: var(--session-canvas);
+  display: inline-flex;
+  font-size: 10px;
+  font-weight: 700;
+  grid-row: 1 / span 2;
+  justify-content: center;
+  min-block-size: 20px;
+  min-inline-size: 20px;
+}
+
+.session-codex-parity-v1 .browser-comment-focus > strong {
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 16px;
+  overflow-wrap: anywhere;
+}
+
+.session-codex-parity-v1 .browser-comment-focus > small {
+  color: var(--session-text-muted);
+  font-size: 10px;
+  line-height: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-codex-parity-v1 .browser-comment-delete {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  color: var(--session-text-muted);
+  display: inline-flex;
+  inline-size: 28px;
+  justify-content: center;
+  margin-block-start: 6px;
+  min-block-size: 28px;
+}
+
+.session-codex-parity-v1 .browser-comment-delete:hover {
+  color: var(--session-danger);
+}
+
+@media (max-width: 760px) {
+  .session-codex-parity-v1 .browser-annotate-button span,
+  .session-codex-parity-v1 .session-browser-toggle span {
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    inline-size: 1px;
+    overflow: hidden;
+    position: absolute;
+    white-space: nowrap;
+  }
+
+  .session-codex-parity-v1 .browser-annotate-button {
+    min-inline-size: 31px;
+    padding-inline: 7px;
+  }
+
+  .session-codex-parity-v1 .browser-comments-rail {
+    flex-basis: min(300px, 48%);
+  }
+}
+
+/* 会话浏览器沿用 Codex 的左右并置关系：会话始终在左，浏览器作为右侧工作面展开。 */
+.session-codex-parity-v1 .session-thread-body {
+  container-name: session-conversation-area;
+  container-type: inline-size;
+}
+
+.session-codex-parity-v1 .session-conversation-browser-layout {
+  display: flex;
+  flex: 1 1 auto;
+  min-block-size: 0;
+  min-inline-size: 0;
+  overflow: hidden;
+  position: relative;
+}
+
+.session-codex-parity-v1 .session-conversation-pane {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  min-block-size: 0;
+  min-inline-size: 0;
+  overflow: hidden;
+  position: relative;
+}
+
+.session-codex-parity-v1 .session-browser-sidecar {
+  border-inline-start: 1px solid var(--session-divider);
+  flex: 0 0 auto;
+  min-block-size: 0;
+  min-inline-size: 0;
+  overflow: visible;
+  position: relative;
+  z-index: 33;
+}
+
+.session-codex-parity-v1 .session-browser-pane {
+  background: var(--session-canvas);
+  display: flex;
+  flex-direction: column;
+  inset: 0;
+  min-block-size: 0;
+  min-inline-size: 0;
+  overflow: hidden;
+  position: absolute;
+}
+
+.session-codex-parity-v1 .session-browser-sidecar,
+.session-codex-parity-v1 .session-browser-pane {
+  background: var(--session-canvas);
+}
+
+/* 会话资源保持 Codex 的“正文内引用 + 独立资源卡”两种密度，不把路径退化成裸文本。 */
+.session-codex-parity-v1 .session-inline-resource-shell {
+  display: inline;
+}
+
+.session-codex-parity-v1 .session-inline-resource {
+  align-items: baseline;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  color: color-mix(in oklab, var(--session-accent) 90%, rgb(0 83 174));
+  cursor: pointer;
+  display: inline-flex;
+  font: inherit;
+  font-weight: 520;
+  gap: 4px;
+  line-height: inherit;
+  margin: 0;
+  min-block-size: 0;
+  min-inline-size: 0;
+  padding: 0 1px;
+  text-align: start;
+  vertical-align: baseline;
+}
+
+.session-codex-parity-v1 .session-inline-resource:hover {
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
+.session-codex-parity-v1 .session-inline-resource:focus-visible {
+  box-shadow: 0 0 0 3px var(--session-focus);
+  outline: 1px solid var(--session-focus-outline);
+  outline-offset: 1px;
+}
+
+.session-codex-parity-v1 .session-inline-resource[data-error='true'] {
+  color: var(--session-danger);
+}
+
+.session-codex-parity-v1 .session-inline-resource > svg {
+  block-size: 15px;
+  flex: 0 0 auto;
+  inline-size: 15px;
+  position: relative;
+  top: 2px;
+}
+
+.session-codex-parity-v1 .session-inline-resource-location {
+  font-weight: inherit;
+}
+
+.session-codex-parity-v1 .session-resource-card-list {
+  display: grid;
+  gap: 10px;
+  inline-size: 100%;
+  margin-block: 14px 4px;
+  max-inline-size: 100%;
+  min-inline-size: 0;
+}
+
+.session-codex-parity-v1 .session-resource-card {
+  align-items: center;
+  background: var(--session-canvas);
+  border: 1px solid var(--session-line);
+  border-radius: 14px;
+  display: flex;
+  gap: 10px;
+  inline-size: 100%;
+  max-inline-size: 100%;
+  min-block-size: 76px;
+  min-inline-size: 0;
+  padding: 10px 12px;
+  position: relative;
+}
+
+.session-codex-parity-v1 .session-resource-card[data-error='true'] {
+  border-color: color-mix(in oklab, var(--session-danger) 42%, var(--session-line));
+}
+
+.session-codex-parity-v1 .session-resource-card-main {
+  align-items: center;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  border-radius: 9px;
+  cursor: pointer;
+  display: flex;
+  flex: 1 1 auto;
+  gap: 12px;
+  min-inline-size: 0;
+  padding: 2px;
+  text-align: start;
+}
+
+.session-codex-parity-v1 .session-resource-card-main:hover .session-resource-card-copy strong {
+  color: var(--session-accent);
+}
+
+.session-codex-parity-v1 .session-resource-card-main:focus-visible,
+.session-codex-parity-v1 .session-open-with-trigger:focus-visible,
+.session-codex-parity-v1 .session-open-with-menu button:focus-visible {
+  box-shadow: 0 0 0 3px var(--session-focus);
+  outline: 1px solid var(--session-focus-outline);
+}
+
+.session-codex-parity-v1 .session-resource-card-icon {
+  align-items: center;
+  background: var(--session-control);
+  border-radius: 11px;
+  color: var(--session-accent);
+  display: inline-flex;
+  flex: 0 0 48px;
+  justify-content: center;
+  block-size: 48px;
+}
+
+.session-codex-parity-v1 .session-resource-card-icon svg {
+  block-size: 25px;
+  inline-size: 25px;
+}
+
+.session-codex-parity-v1 .session-resource-card-copy {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-inline-size: 0;
+}
+
+.session-codex-parity-v1 .session-resource-card-copy strong,
+.session-codex-parity-v1 .session-resource-card-copy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-codex-parity-v1 .session-resource-card-copy strong {
+  color: var(--session-text);
+  font-size: 15px;
+  font-weight: 570;
+  line-height: 21px;
+  transition: color 120ms ease-out;
+}
+
+.session-codex-parity-v1 .session-resource-card-copy small {
+  color: var(--session-text-muted);
+  font-size: 13px;
+  line-height: 19px;
+}
+
+.session-codex-parity-v1 .session-open-with {
+  flex: 0 0 auto;
+  position: relative;
+}
+
+.session-codex-parity-v1 .session-open-with-trigger {
+  align-items: center;
+  appearance: none;
+  background: var(--session-canvas);
+  border: 1px solid var(--session-line);
+  border-radius: 12px;
+  cursor: pointer;
+  display: inline-flex;
+  font-weight: 540;
+  gap: 8px;
+  min-block-size: 38px;
+  padding: 0 12px;
+}
+
+.session-codex-parity-v1 .session-open-with-trigger:hover,
+.session-codex-parity-v1 .session-open-with-trigger[aria-expanded='true'] {
+  background: var(--session-control-hover);
+}
+
+.session-codex-parity-v1 .session-open-with-trigger svg {
+  block-size: 14px;
+  inline-size: 14px;
+}
+
+.session-codex-parity-v1 .session-open-with-menu {
+  background: var(--session-canvas);
+  border: 1px solid var(--session-line);
+  border-radius: 11px;
+  box-shadow: 0 12px 34px var(--session-shadow);
+  display: grid;
+  inline-size: max-content;
+  max-inline-size: 260px;
+  min-inline-size: 210px;
+  padding: 5px;
+  position: absolute;
+  inset-block-end: calc(100% + 6px);
+  inset-inline-end: 0;
+  z-index: 90;
+}
+
+.session-open-with-portal.session-codex-parity-v1 {
+  color: var(--session-text);
+  inset: 0;
+  pointer-events: none;
+  position: fixed;
+  z-index: 10000;
+}
+
+.session-open-with-portal.session-codex-parity-v1 .session-open-with-menu {
+  inset: auto;
+  pointer-events: auto;
+  position: fixed;
+}
+
+.session-codex-parity-v1 .session-open-with-menu button {
+  align-items: center;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  color: var(--session-text);
+  cursor: pointer;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  min-block-size: 34px;
+  padding: 6px 9px;
+  text-align: start;
+}
+
+.session-codex-parity-v1 .session-open-with-menu button:hover {
+  background: var(--session-control-hover);
+}
+
+.session-codex-parity-v1 .session-open-with-menu button:disabled {
+  cursor: default;
+  opacity: 0.42;
+}
+
+.session-codex-parity-v1 .session-open-with-menu button small,
+.session-codex-parity-v1 .session-open-with-status {
+  color: var(--session-text-muted);
+  font-size: 11px;
+}
+
+.session-codex-parity-v1 .session-open-with-status {
+  padding: 9px;
+}
+
+/* 每轮变更卡片只消费该 turn 的 provider diff；Undo/Reapply 不读取全局 Git 工作区。 */
+.session-codex-parity-v1 .session-turn-change-card {
+  background: var(--session-canvas);
+  border: 1px solid var(--session-line);
+  border-radius: 13px;
+  box-shadow: 0 1px 2px var(--session-shadow-soft);
+  flex: 0 0 auto;
+  inline-size: min(var(--session-thread-max), 100%);
+  margin-inline: auto;
+  overflow: hidden;
+}
+
+.session-codex-parity-v1 .session-turn-change-card > header {
+  align-items: center;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+  min-block-size: 70px;
+  padding: 10px 12px 10px 14px;
+}
+
+.session-codex-parity-v1 .session-turn-change-summary {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  min-inline-size: 0;
+}
+
+.session-codex-parity-v1 .session-turn-change-icon {
+  align-items: center;
+  background: var(--session-control);
+  border-radius: 10px;
+  color: var(--session-text-muted);
+  display: inline-flex;
+  flex: 0 0 46px;
+  justify-content: center;
+  block-size: 46px;
+}
+
+.session-codex-parity-v1 .session-turn-change-icon svg {
+  block-size: 24px;
+  inline-size: 24px;
+}
+
+.session-codex-parity-v1 .session-turn-change-summary > span:last-child {
+  display: flex;
+  flex-direction: column;
+  min-inline-size: 0;
+}
+
+.session-codex-parity-v1 .session-turn-change-summary strong {
+  font-size: 15px;
+  font-weight: 580;
+  line-height: 22px;
+}
+
+.session-codex-parity-v1 .session-turn-change-summary small {
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.session-codex-parity-v1 .session-turn-change-view {
+  color: var(--session-text-muted);
+  display: none;
+}
+
+.session-codex-parity-v1 .session-turn-change-card:hover .session-turn-change-stats,
+.session-codex-parity-v1 .session-turn-change-card:focus-within .session-turn-change-stats {
+  display: none;
+}
+
+.session-codex-parity-v1 .session-turn-change-card:hover .session-turn-change-view,
+.session-codex-parity-v1 .session-turn-change-card:focus-within .session-turn-change-view {
+  display: inline;
+}
+
+.session-codex-parity-v1 .session-change-added {
+  color: rgb(16 151 72);
+}
+
+.session-codex-parity-v1 .session-change-deleted {
+  color: rgb(214 53 53);
+}
+
+.session-codex-parity-v1 .session-turn-change-card nav {
+  align-items: center;
+  display: flex;
+  gap: 5px;
+}
+
+.session-codex-parity-v1 .session-turn-change-card nav > button {
+  align-items: center;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  border-radius: 9px;
+  cursor: pointer;
+  display: inline-flex;
+  font-weight: 540;
+  gap: 6px;
+  min-block-size: 36px;
+  padding: 0 10px;
+}
+
+.session-codex-parity-v1 .session-turn-change-card nav > button:hover {
+  background: var(--session-control-hover);
+}
+
+.session-codex-parity-v1 .session-turn-change-card nav > button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.session-codex-parity-v1 .session-turn-change-card nav svg {
+  block-size: 17px;
+  inline-size: 17px;
+}
+
+.session-codex-parity-v1 .session-turn-change-review {
+  border: 1px solid var(--session-line) !important;
+  padding-inline: 15px !important;
+}
+
+.session-codex-parity-v1 .session-turn-change-error {
+  align-items: flex-start;
+  background: color-mix(in oklab, var(--session-danger) 8%, transparent);
+  border-block: 1px solid color-mix(in oklab, var(--session-danger) 24%, var(--session-line));
+  color: var(--session-danger);
+  display: flex;
+  font-size: 12px;
+  gap: 7px;
+  margin: 0;
+  padding: 9px 14px;
+}
+
+.session-codex-parity-v1 .session-turn-change-error svg {
+  block-size: 16px;
+  flex: 0 0 auto;
+  inline-size: 16px;
+}
+
+.session-codex-parity-v1 .session-turn-change-files {
+  border-block-start: 1px solid var(--session-line-soft);
+  list-style: none;
+  margin: 0;
+  padding: 9px 14px 7px;
+}
+
+.session-codex-parity-v1 .session-turn-change-files button {
+  align-items: center;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  cursor: pointer;
+  display: flex;
+  gap: 14px;
+  inline-size: 100%;
+  justify-content: space-between;
+  min-block-size: 34px;
+  padding: 5px 7px;
+  text-align: start;
+}
+
+.session-codex-parity-v1 .session-turn-change-files button:hover {
+  background: var(--session-control-hover);
+}
+
+.session-codex-parity-v1 .session-turn-change-path {
+  color: var(--session-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-codex-parity-v1 .session-turn-change-file-counts {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 8px;
+  font-variant-numeric: tabular-nums;
+}
+
+.session-codex-parity-v1 .session-turn-change-more {
+  align-items: center;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  color: var(--session-text);
+  cursor: pointer;
+  display: inline-flex;
+  font-weight: 550;
+  gap: 8px;
+  margin: 0 14px 10px;
+  min-block-size: 30px;
+  padding: 3px 7px;
+}
+
+.session-codex-parity-v1 .session-turn-change-more svg {
+  block-size: 14px;
+  inline-size: 14px;
+  transition: transform 140ms ease-out;
+}
+
+.session-codex-parity-v1 .session-turn-change-more svg[data-expanded='true'] {
+  transform: rotate(180deg);
+}
+
+/* 浏览器、计划、源码与 Review 共用右侧上下文容器和同一套打开/关闭运动。 */
+.session-codex-parity-v1 .session-context-workspace {
+  background: var(--session-canvas);
+  color: var(--session-text);
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-block-size: 0;
+  min-inline-size: 0;
+  overflow: hidden;
+}
+
+.session-codex-parity-v1 .session-context-workspace-header {
+  align-items: center;
+  border-block-end: 1px solid var(--session-line);
+  display: flex;
+  flex: 0 0 52px;
+  gap: 12px;
+  justify-content: space-between;
+  min-inline-size: 0;
+  padding: 0 10px 0 15px;
+}
+
+.session-codex-parity-v1 .session-context-workspace-title {
+  align-items: center;
+  display: flex;
+  gap: 9px;
+  min-inline-size: 0;
+}
+
+.session-codex-parity-v1 .session-context-workspace-title > svg {
+  block-size: 18px;
+  color: var(--session-text-muted);
+  flex: 0 0 auto;
+  inline-size: 18px;
+}
+
+.session-codex-parity-v1 .session-context-workspace-title > span {
+  display: flex;
+  flex-direction: column;
+  min-inline-size: 0;
+}
+
+.session-codex-parity-v1 .session-context-workspace-title strong,
+.session-codex-parity-v1 .session-context-workspace-title small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-codex-parity-v1 .session-context-workspace-title strong {
+  font-size: 14px;
+  font-weight: 610;
+}
+
+.session-codex-parity-v1 .session-context-workspace-title small {
+  color: var(--session-text-muted);
+  font-size: 11px;
+}
+
+.session-codex-parity-v1 .session-context-workspace-header nav {
+  align-items: center;
+  display: flex;
+  flex: 0 0 auto;
+  gap: 2px;
+}
+
+.session-codex-parity-v1 .session-context-workspace-header nav > button {
+  align-items: center;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  cursor: pointer;
+  display: inline-flex;
+  gap: 6px;
+  justify-content: center;
+  min-block-size: 30px;
+  min-inline-size: 30px;
+  padding: 5px;
+}
+
+.session-codex-parity-v1 .session-context-workspace-header nav > button:hover {
+  background: var(--session-control-hover);
+}
+
+.session-codex-parity-v1 .session-context-workspace-header nav svg {
+  block-size: 17px;
+  inline-size: 17px;
+}
+
+.session-codex-parity-v1 .session-context-workspace-header .session-context-text-action {
+  padding-inline: 8px;
+}
+
+.session-codex-parity-v1 .session-source-meta {
+  align-items: center;
+  background: var(--session-sidebar);
+  border-block-end: 1px solid var(--session-line-soft);
+  color: var(--session-text-muted);
+  display: flex;
+  flex: 0 0 30px;
+  font-size: 11px;
+  gap: 12px;
+  padding-inline: 15px;
+}
+
+.session-codex-parity-v1 .session-source-scroll {
+  background: var(--session-code);
+  flex: 1 1 auto;
+  min-block-size: 0;
+  overflow: auto;
+}
+
+.session-codex-parity-v1 .session-image-preview {
+  align-items: center;
+  background: var(--session-sidebar);
+  display: flex;
+  justify-content: center;
+  padding: 24px;
+}
+
+.session-codex-parity-v1 .session-image-preview img {
+  block-size: auto;
+  box-shadow: 0 10px 34px rgb(0 0 0 / 14%);
+  max-block-size: 100%;
+  max-inline-size: 100%;
+  object-fit: contain;
+}
+
+.session-codex-parity-v1 .session-source-scroll pre,
+.session-codex-parity-v1 .session-turn-diff-content pre {
+  color: var(--session-text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  line-height: 20px;
+  margin: 0;
+  min-inline-size: max-content;
+  padding-block: 12px 28px;
+}
+
+.session-codex-parity-v1 .session-source-scroll code,
+.session-codex-parity-v1 .session-turn-diff-content code {
+  display: block;
+}
+
+.session-codex-parity-v1 .session-source-line,
+.session-codex-parity-v1 .session-diff-line {
+  display: flex;
+  min-block-size: 20px;
+  white-space: pre;
+}
+
+.session-codex-parity-v1 .session-source-line[data-selected='true'] {
+  background: color-mix(in oklab, var(--session-accent) 15%, transparent);
+  box-shadow: inset 2px 0 0 var(--session-accent);
+}
+
+.session-codex-parity-v1 .session-source-line-number {
+  color: var(--session-text-muted);
+  flex: 0 0 52px;
+  padding-inline-end: 12px;
+  text-align: end;
+  user-select: none;
+}
+
+.session-codex-parity-v1 .session-source-line-code {
+  padding-inline-end: 24px;
+}
+
+.session-codex-parity-v1 .session-turn-diff-error {
+  flex: 0 0 auto;
+}
+
+.session-codex-parity-v1 .session-turn-diff-layout {
+  display: grid;
+  flex: 1 1 auto;
+  grid-template-columns: minmax(150px, 30%) minmax(0, 1fr);
+  min-block-size: 0;
+  min-inline-size: 0;
+}
+
+.session-codex-parity-v1 .session-turn-diff-files {
+  background: var(--session-sidebar);
+  border-inline-end: 1px solid var(--session-line);
+  min-block-size: 0;
+  overflow: auto;
+  padding: 8px;
+}
+
+.session-codex-parity-v1 .session-turn-diff-totals {
+  display: flex;
+  font-size: 12px;
+  gap: 8px;
+  padding: 5px 7px 9px;
+}
+
+.session-codex-parity-v1 .session-turn-diff-files > button {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  inline-size: 100%;
+  min-inline-size: 0;
+  padding: 7px;
+  text-align: start;
+}
+
+.session-codex-parity-v1 .session-turn-diff-files > button:hover {
+  background: var(--session-control-hover);
+}
+
+.session-codex-parity-v1 .session-turn-diff-files > button[aria-current='true'] {
+  background: var(--session-selected);
+}
+
+.session-codex-parity-v1 .session-turn-diff-files > button > span {
+  inline-size: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-codex-parity-v1 .session-turn-diff-files > button small {
+  display: flex;
+  font-size: 11px;
+  gap: 7px;
+}
+
+.session-codex-parity-v1 .session-turn-diff-content {
+  background: var(--session-code);
+  display: flex;
+  flex-direction: column;
+  min-block-size: 0;
+  min-inline-size: 0;
+  overflow: auto;
+}
+
+.session-codex-parity-v1 .session-turn-diff-content > header {
+  align-items: center;
+  background: var(--session-canvas);
+  border-block-end: 1px solid var(--session-line-soft);
+  display: flex;
+  flex: 0 0 34px;
+  gap: 10px;
+  justify-content: space-between;
+  min-inline-size: max-content;
+  padding-inline: 12px;
+  position: sticky;
+  inset-block-start: 0;
+  z-index: 2;
+}
+
+.session-codex-parity-v1 .session-turn-diff-content > header strong {
+  font-size: 12px;
+  font-weight: 570;
+}
+
+.session-codex-parity-v1 .session-turn-diff-content > header small {
+  color: var(--session-text-muted);
+  font-size: 11px;
+}
+
+.session-codex-parity-v1 .session-turn-diff-content > header > span {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+}
+
+.session-codex-parity-v1 .session-turn-diff-truncated {
+  background: color-mix(in oklab, var(--session-accent) 8%, var(--session-canvas));
+  border-block-end: 1px solid var(--session-line-soft);
+  color: var(--session-text-secondary);
+  flex: 0 0 auto;
+  font-size: 11px;
+  margin: 0;
+  padding: 7px 12px;
+}
+
+.session-codex-parity-v1 .session-turn-diff-open-file {
+  align-items: center;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: var(--session-text-secondary);
+  cursor: pointer;
+  display: inline-flex;
+  font: inherit;
+  font-size: 11px;
+  gap: 4px;
+  min-block-size: 24px;
+  padding-inline: 6px;
+}
+
+.session-codex-parity-v1 .session-turn-diff-open-file:hover {
+  background: var(--session-control-hover);
+  color: var(--session-text);
+}
+
+.session-codex-parity-v1 .session-turn-diff-open-file svg {
+  block-size: 14px;
+  inline-size: 14px;
+}
+
+.session-codex-parity-v1 .session-diff-line {
+  padding-inline-end: 24px;
+}
+
+.session-codex-parity-v1 .session-diff-line[data-kind='added'] {
+  background: color-mix(in oklab, rgb(16 151 72) 13%, transparent);
+}
+
+.session-codex-parity-v1 .session-diff-line[data-kind='deleted'] {
+  background: color-mix(in oklab, rgb(214 53 53) 12%, transparent);
+}
+
+.session-codex-parity-v1 .session-diff-line[data-kind='hunk'] {
+  background: color-mix(in oklab, var(--session-accent) 12%, transparent);
+  color: var(--session-accent);
+}
+
+.session-codex-parity-v1 .session-diff-line[data-kind='meta'] {
+  color: var(--session-text-muted);
+}
+
+.session-codex-parity-v1 .session-diff-line-sign {
+  color: var(--session-text-muted);
+  flex: 0 0 28px;
+  text-align: center;
+  user-select: none;
+}
+
+.session-codex-parity-v1 .session-diff-line-number {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  color: var(--session-text-muted);
+  flex: 0 0 54px;
+  font: inherit;
+  min-block-size: 20px;
+  padding: 0 10px 0 0;
+  text-align: end;
+  user-select: none;
+}
+
+.session-codex-parity-v1 button.session-diff-line-number {
+  cursor: pointer;
+}
+
+.session-codex-parity-v1 button.session-diff-line-number:hover {
+  color: var(--session-accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.session-codex-parity-v1 .session-turn-diff-empty {
+  color: var(--session-text-muted);
+  margin: auto;
+  padding: 24px;
+  text-align: center;
+}
+
+@media (max-width: 760px) {
+  .session-codex-parity-v1 .session-resource-card {
+    align-items: stretch;
+    flex-wrap: wrap;
+  }
+
+  .session-codex-parity-v1 .session-open-with {
+    margin-inline-start: 60px;
+  }
+
+  .session-codex-parity-v1 .session-turn-change-card > header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .session-codex-parity-v1 .session-turn-diff-layout {
+    grid-template-columns: minmax(112px, 34%) minmax(0, 1fr);
+  }
+}
+
+.session-codex-parity-v1 .session-browser-resizer {
+  align-items: stretch;
+  cursor: col-resize;
+  display: flex;
+  inline-size: 7px;
+  inset-block: 0;
+  inset-inline-start: -3px;
+  justify-content: center;
+  min-block-size: 0;
+  outline: 0;
+  position: absolute;
+  touch-action: none;
+  z-index: 34;
+}
+
+.session-codex-parity-v1 .session-browser-resizer::before {
+  background: transparent;
+  content: '';
+  inline-size: 1px;
+  transition: background-color 120ms ease-out, inline-size 120ms ease-out;
+}
+
+.session-codex-parity-v1 .session-browser-resizer:hover::before,
+.session-codex-parity-v1 .session-browser-resizer:focus-visible::before,
+.session-codex-parity-v1 .session-conversation-browser-layout[data-browser-resizing='true'] .session-browser-resizer::before {
+  background: var(--session-divider-active);
+  inline-size: 2px;
+}
+
+.session-codex-parity-v1 .session-conversation-browser-layout[data-browser-resizing='true'] {
+  cursor: col-resize;
+  user-select: none;
+}
+
+.session-codex-parity-v1 .session-conversation-browser-layout[data-browser-expanded='true'] > .session-conversation-pane {
+  pointer-events: none;
+  visibility: hidden;
+}
+
+.session-codex-parity-v1 .session-conversation-browser-layout[data-browser-expanded='true'] .session-browser-resizer {
+  visibility: hidden;
+}
+
+.session-codex-parity-v1 .session-conversation-browser-layout[data-browser-expanded='true'] .session-browser-sidecar {
+  border-inline-start: 0;
+}
+
+/* 浏览器 chrome 的尺寸、层级和状态切换以参考录像的可观察界面为准。 */
+.session-codex-parity-v1 .browser-tab-strip {
+  align-items: center;
+  background: color-mix(in oklab, var(--session-sidebar) 84%, var(--session-canvas));
+  flex-basis: 44px;
+  gap: 4px;
+  padding: 6px 8px;
+}
+
+.session-codex-parity-v1 .browser-tab-shell {
+  border: 0;
+  border-radius: 10px;
+  flex-basis: 224px;
+  min-block-size: 32px;
+  padding-inline-end: 3px;
+}
+
+.session-codex-parity-v1 .browser-tab-shell.selected {
+  background: var(--session-selected);
+  border: 0;
+}
+
+.session-codex-parity-v1 .browser-tab {
+  min-block-size: 32px;
+  padding-inline-start: 10px;
+}
+
+.session-codex-parity-v1 .browser-tab-shell.selected .browser-tab-close {
+  opacity: 1;
+}
+
+.session-codex-parity-v1 .browser-new-tab {
+  margin-block-end: 0;
+}
+
+.session-codex-parity-v1 .browser-tab-strip-spacer {
+  flex: 1 1 auto;
+  min-inline-size: 4px;
+}
+
+.session-codex-parity-v1 .browser-view-actions {
+  align-items: center;
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 3px;
+}
+
+.session-codex-parity-v1 .browser-view-actions > button {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  color: var(--session-text-muted);
+  display: inline-flex;
+  block-size: 30px;
+  inline-size: 30px;
+  justify-content: center;
+  padding: 0;
+}
+
+.session-codex-parity-v1 .browser-view-actions > button:hover {
+  background: var(--session-control-hover);
+  color: var(--session-text);
+}
+
+.session-codex-parity-v1 .browser-view-actions svg {
+  block-size: 16px;
+  inline-size: 16px;
+}
+
+.session-codex-parity-v1 .browser-toolbar {
+  flex-basis: 44px;
+  min-block-size: 44px;
+  padding: 6px 9px;
+}
+
+.session-codex-parity-v1 .browser-navigation-toolbar {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
+.session-codex-parity-v1 .browser-address-form {
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  justify-self: stretch;
+  padding-inline: 8px;
+}
+
+.session-codex-parity-v1 .browser-address-form:focus-within {
+  background: var(--session-control-hover);
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.session-codex-parity-v1 .browser-address-form input {
+  font-size: 13px;
+  text-align: center;
+  text-overflow: ellipsis;
+}
+
+.session-codex-parity-v1 .browser-navigation-trailing {
+  align-items: center;
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 3px;
+  justify-self: end;
+}
+
+.session-codex-parity-v1 .browser-annotate-button.selected {
+  background: color-mix(in oklab, rgb(33 150 243) 13%, var(--session-canvas));
+  border-color: transparent;
+  color: color-mix(in oklab, rgb(0 111 202) 86%, var(--session-text));
+  max-inline-size: 168px;
+  padding-inline: 10px 13px;
+}
+
+.session-codex-parity-v1 .browser-annotate-button.selected .browser-annotate-label {
+  max-inline-size: 86px;
+  opacity: 1;
+}
+
+.session-codex-parity-v1 .browser-annotate-button.selected kbd {
+  display: none;
+}
+
+.session-codex-parity-v1 .browser-more {
+  display: inline-flex;
+  position: relative;
+}
+
+.session-codex-parity-v1 .browser-more-trigger {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  color: var(--session-text-muted);
+  display: inline-flex;
+  block-size: 32px;
+  inline-size: 30px;
+  justify-content: center;
+  padding: 0;
+}
+
+.session-codex-parity-v1 .browser-more-trigger:hover,
+.session-codex-parity-v1 .browser-more-trigger[aria-expanded='true'] {
+  background: var(--session-control-hover);
+  color: var(--session-text);
+}
+
+.session-codex-parity-v1 .browser-more-trigger svg {
+  block-size: 17px;
+  inline-size: 17px;
+}
+
+.session-codex-parity-v1 .browser-more-menu {
+  background: var(--session-canvas);
+  border: 1px solid var(--session-line);
+  border-radius: 10px;
+  box-shadow: 0 10px 30px var(--session-shadow);
+  display: grid;
+  gap: 2px;
+  inline-size: 176px;
+  inset-block-start: calc(100% + 6px);
+  inset-inline-end: 0;
+  padding: 5px;
+  position: absolute;
+  z-index: 40;
+}
+
+.session-codex-parity-v1 .browser-more-menu > button {
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  min-block-size: 30px;
+  padding-inline: 9px;
+  text-align: start;
+}
+
+.session-codex-parity-v1 .browser-more-menu > button:hover,
+.session-codex-parity-v1 .browser-more-menu > button:focus-visible {
+  background: var(--session-control-hover);
+}
+
+.session-codex-parity-v1 .browser-annotation-toolbar {
+  background: color-mix(in oklab, rgb(45 151 231) 17%, var(--session-canvas));
+  border-block-end-color: color-mix(in oklab, rgb(45 151 231) 24%, var(--session-line));
+  grid-template-columns: minmax(78px, 1fr) minmax(0, 3fr) minmax(164px, 1fr);
+}
+
+.session-codex-parity-v1 .browser-annotation-context {
+  color: var(--session-text);
+  font-size: 13px;
+}
+
+.session-codex-parity-v1 .browser-stage-comments {
+  border-radius: 10px;
+  gap: 8px;
+  min-block-size: 34px;
+  padding: 0 7px 0 13px;
+}
+
+.session-codex-parity-v1 .browser-stage-count {
+  align-items: center;
+  background: color-mix(in oklab, var(--session-accent) 78%, black);
+  border-radius: 999px;
+  color: white;
+  display: inline-flex;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  block-size: 22px;
+  min-inline-size: 22px;
+  justify-content: center;
+  padding-inline: 5px;
+}
+
+@container session-conversation-area (max-width: 840px) {
+  .session-codex-parity-v1 .session-conversation-browser-layout[data-browser-open='true'] > .session-conversation-pane {
+    pointer-events: none;
+    visibility: hidden;
+  }
+
+  .session-codex-parity-v1 .session-conversation-browser-layout[data-browser-open='true'] .session-browser-sidecar {
+    border-inline-start: 0;
+  }
+
+  .session-codex-parity-v1 .session-conversation-browser-layout[data-browser-open='true'] .session-browser-resizer {
+    visibility: hidden;
+  }
+}
+
+@container session-conversation-area (max-width: 560px) {
+  .session-codex-parity-v1 .browser-view-actions > button:nth-child(2),
+  .session-codex-parity-v1 .browser-navigation-actions > button:nth-child(2) {
+    display: none;
+  }
+
+  .session-codex-parity-v1 .browser-tab-shell {
+    flex-basis: 160px;
+  }
+}
+
+/* Codex Browser Annotation：普通导航只保留可展开注释入口，注释态切换为独立模式栏。 */
+.session-codex-parity-v1 .browser-annotate-button {
+  background: transparent;
+  border-color: transparent;
+  border-radius: 999px;
+  gap: 7px;
+  max-inline-size: 38px;
+  min-inline-size: 38px;
+  overflow: hidden;
+  padding-inline: 8px;
+  transition: background 140ms ease, border-color 140ms ease, max-inline-size 180ms ease;
+  white-space: nowrap;
+}
+
+.session-codex-parity-v1 .browser-annotate-button:hover,
+.session-codex-parity-v1 .browser-annotate-button:focus-visible {
+  background: var(--session-control-hover);
+  border-color: var(--session-line);
+  max-inline-size: 172px;
+}
+
+.session-codex-parity-v1 .browser-annotate-icon {
+  block-size: 20px;
+  display: inline-block;
+  flex: 0 0 20px;
+  inline-size: 20px;
+  position: relative;
+}
+
+.session-codex-parity-v1 .browser-annotate-icon svg:first-child {
+  block-size: 20px;
+  inline-size: 20px;
+}
+
+.session-codex-parity-v1 .browser-annotate-icon svg:last-child {
+  background: var(--session-canvas);
+  block-size: 9px;
+  border-radius: 999px;
+  bottom: 0;
+  inline-size: 9px;
+  position: absolute;
+  right: -1px;
+}
+
+.session-codex-parity-v1 .browser-annotate-label,
+.session-codex-parity-v1 .browser-annotate-button kbd {
+  max-inline-size: 0;
+  opacity: 0;
+  overflow: hidden;
+  transition: max-inline-size 180ms ease, opacity 120ms ease;
+}
+
+.session-codex-parity-v1 .browser-annotate-button:hover .browser-annotate-label,
+.session-codex-parity-v1 .browser-annotate-button:focus-visible .browser-annotate-label {
+  max-inline-size: 72px;
+  opacity: 1;
+}
+
+.session-codex-parity-v1 .browser-annotate-button:hover kbd,
+.session-codex-parity-v1 .browser-annotate-button:focus-visible kbd {
+  background: var(--session-selected);
+  border-radius: 999px;
+  color: var(--session-text-muted);
+  font-family: inherit;
+  font-size: 11px;
+  max-inline-size: 32px;
+  opacity: 1;
+  padding: 2px 6px;
+}
+
+.session-codex-parity-v1 .browser-annotation-toolbar {
+  background: color-mix(in oklab, var(--session-accent) 10%, var(--session-canvas));
+  border-block-end-color: color-mix(in oklab, var(--session-accent) 24%, var(--session-line));
+  display: grid;
+  grid-template-columns: minmax(96px, 1fr) minmax(0, 2fr) minmax(180px, 1fr);
+}
+
+.session-codex-parity-v1 .browser-annotation-actions {
+  align-items: center;
+  display: inline-flex;
+  gap: 3px;
+  min-inline-size: 0;
+}
+
+.session-codex-parity-v1 .browser-annotation-actions-leading {
+  justify-self: start;
+}
+
+.session-codex-parity-v1 .browser-annotation-actions-trailing {
+  justify-self: end;
+}
+
+.session-codex-parity-v1 .browser-annotation-actions > button:not(.browser-stage-comments) {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  color: var(--session-text-muted);
+  display: inline-flex;
+  justify-content: center;
+  min-block-size: 30px;
+  min-inline-size: 30px;
+  padding: 0;
+}
+
+.session-codex-parity-v1 .browser-annotation-actions > button:hover:not(:disabled),
+.session-codex-parity-v1 .browser-annotation-actions > button.selected {
+  background: color-mix(in oklab, var(--session-accent) 12%, var(--session-canvas));
+  color: var(--session-text);
+}
+
+.session-codex-parity-v1 .browser-annotation-actions > button:disabled {
+  opacity: 0.32;
+}
+
+.session-codex-parity-v1 .browser-annotation-actions svg {
+  block-size: 17px;
+  inline-size: 17px;
+}
+
+.session-codex-parity-v1 .browser-annotation-context {
+  color: var(--session-text-muted);
+  font-size: 12px;
+  justify-self: center;
+  max-inline-size: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-codex-parity-v1 .browser-stage-comments {
+  background: var(--session-accent);
+  border: 0;
+  border-radius: 999px;
+  color: white;
+  font-size: 12px;
+  font-weight: 650;
+  min-block-size: 31px;
+  padding-inline: 13px;
+}
+
+.session-codex-parity-v1 .browser-stage-comments:hover:not(:disabled) {
+  filter: brightness(0.96);
+}
+
+.session-codex-parity-v1 .browser-stage-comments:disabled {
+  opacity: 0.42;
+}
+
+/* 批注进入会话后按 Codex 输入框形态展示截图缩略图和数量胶囊。 */
+.session-codex-parity-v1 .session-composer-browser-submission {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.session-codex-parity-v1 .session-browser-preview-card {
+  align-items: center;
+  background: var(--session-selected);
+  border: 1px solid var(--session-line);
+  border-radius: 12px;
+  display: flex;
+  flex: 0 0 106px;
+  block-size: 72px;
+  inline-size: 106px;
+  justify-content: center;
+  overflow: visible;
+  position: relative;
+}
+
+.session-codex-parity-v1 .session-browser-preview-card > img {
+  block-size: 100%;
+  border-radius: 11px;
+  inline-size: 100%;
+  object-fit: cover;
+}
+
+.session-codex-parity-v1 .session-browser-preview-card > svg {
+  block-size: 24px;
+  color: var(--session-text-muted);
+  inline-size: 24px;
+}
+
+.session-codex-parity-v1 .session-browser-preview-card > button {
+  align-items: center;
+  background: #151515;
+  border: 2px solid var(--session-canvas);
+  border-radius: 999px;
+  color: white;
+  display: inline-flex;
+  font-size: 18px;
+  block-size: 30px;
+  inline-size: 30px;
+  justify-content: center;
+  padding: 0;
+  position: absolute;
+  right: -10px;
+  top: -10px;
+}
+
+.session-codex-parity-v1 .session-browser-preview-card > button:disabled {
+  opacity: 0.48;
+}
+
+.session-codex-parity-v1 .session-browser-comment-chip {
+  align-items: center;
+  background: var(--session-canvas);
+  border: 1px solid var(--session-line);
+  border-radius: 999px;
+  color: var(--session-text);
+  display: inline-flex;
+  gap: 9px;
+  min-block-size: 48px;
+  padding-inline: 16px 19px;
+}
+
+.session-codex-parity-v1 .session-browser-comment-chip svg {
+  block-size: 20px;
+  color: var(--session-text-muted);
+  inline-size: 20px;
+}
+
+.session-codex-parity-v1 .session-browser-comment-chip strong {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+@media (max-width: 760px) {
+  .session-codex-parity-v1 .browser-annotation-toolbar {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+
+  .session-codex-parity-v1 .browser-annotation-context {
+    max-inline-size: 180px;
+  }
+
+  .session-codex-parity-v1 .browser-annotation-actions-trailing > button:not(.browser-stage-comments) {
+    display: none;
+  }
+
+  .session-codex-parity-v1 .browser-annotate-button .browser-annotate-icon {
+    block-size: 20px;
+    clip: auto;
+    clip-path: none;
+    inline-size: 20px;
+    overflow: visible;
+    position: relative;
+    white-space: normal;
+  }
+}
+
+@media (prefers-contrast: more), (forced-colors: active) {
+  .session-codex-parity-v1 :where(
+    .session-resource-card,
+    .session-open-with-trigger,
+    .session-open-with-menu,
+    .session-turn-change-card
+  ) {
+    border-color: CanvasText;
+  }
+
+  .session-codex-parity-v1 :where(
+    .session-inline-resource,
+    .session-resource-card-main,
+    .session-open-with-trigger,
+    .session-open-with-menu button,
+    .session-turn-change-card button,
+    .session-context-workspace button
+  ):focus-visible {
+    outline: 2px solid Highlight;
+    outline-offset: 2px;
   }
 }

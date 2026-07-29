@@ -7,6 +7,7 @@ import { constants } from 'node:fs';
 import { access, chmod, copyFile, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import { basename, delimiter, dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL, URL } from 'node:url';
+import { machoSignatureNeutralSha256 } from './macho-signature-neutral-sha256.mjs';
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const rootDir = resolve(scriptDir, '..');
@@ -153,6 +154,7 @@ export function createCodexRuntimeManifest({ lock, target, binary, protocolSchem
     normalizedCargoLockSha256: lock.normalizedCargoLock.sha256,
     arch: target,
     sha256: sha256(binary),
+    codeSha256: machoSignatureNeutralSha256(binary),
     protocolSchemaSha256: sha256(protocolSchema),
     patches: [...lock.patches],
   };

@@ -13,6 +13,9 @@ export interface TelegramUpdate {
   chatId: number;
   userId: number;
   text: string;
+  messageId?: number;
+  callbackQueryId?: string;
+  callbackData?: string;
 }
 
 export interface TelegramAuditEvent {
@@ -35,18 +38,40 @@ export interface TelegramLongPollingClient {
 }
 
 export interface TelegramMessageSender {
-  sendMessage: (chatId: number, text: string) => Promise<void>;
+  sendMessage: (chatId: number, text: string, options?: TelegramMessageOptions) => Promise<TelegramSentMessage | void>;
+  editMessage?: (chatId: number, messageId: number, text: string, options?: TelegramMessageOptions) => Promise<void>;
+  sendDocument?: (chatId: number, filePath: string, caption?: string) => Promise<void>;
+}
+
+export interface TelegramInlineKeyboardButton {
+  text: string;
+  callbackData: string;
+}
+
+export interface TelegramMessageOptions {
+  inlineKeyboard?: TelegramInlineKeyboardButton[][];
+}
+
+export interface TelegramSentMessage {
+  messageId: number;
 }
 
 interface TelegramApiMessage {
   chat?: { id?: number };
   from?: { id?: number };
   text?: string;
+  message_id?: number;
 }
 
 interface TelegramApiUpdate {
   update_id?: number;
   message?: TelegramApiMessage;
+  callback_query?: {
+    id?: string;
+    from?: {id?: number};
+    message?: TelegramApiMessage;
+    data?: string;
+  };
 }
 
 interface TelegramApiGetUpdatesResponse {
@@ -57,10 +82,11 @@ interface TelegramApiGetUpdatesResponse {
 
 interface TelegramApiSendMessageResponse {
   ok: boolean;
+  result?: {message_id?: number};
   description?: string;
 }
 
-const supportedCommands = new Set(['start', 'projects', 'tasks', 'run', 'status', 'stop', 'continue', 'logs', 'diff', 'ask', 'confirm', 'cancel', 'help']);
+const supportedCommands = new Set(['start', 'projects', 'tasks', 'run', 'status', 'stop', 'continue', 'logs', 'diff', 'ask', 'confirm', 'cancel', 'commands', 'command', 'help']);
 const defaultTelegramMaxLength = 3900;
 
 /** Telegram 未配置时只返回明确状态，不制造假消息。 */
@@ -73,7 +99,7 @@ export function getTelegramConfigurationState(token: string | undefined, allowed
 /** 解析 Telegram 命令文本，未知命令保持可解释错误。 */
 export function parseTelegramCommand(text: string): TelegramCommand {
   const [rawCommand = '', ...args] = text.trim().split(/\s+/u);
-  const command = rawCommand.replace(/^\//u, '');
+  const command = rawCommand.replace(/^\//u, '').split('@')[0] ?? '';
   if (!supportedCommands.has(command)) {
     throw new Error(`Unsupported Zeus Telegram command: ${rawCommand}`);
   }
@@ -85,7 +111,7 @@ export function parseTelegramCommand(text: string): TelegramCommand {
 export function createTelegramBotMessageClient(options: { token: string; fetch?: typeof fetch; maxLength?: number }): TelegramMessageSender {
   const fetchImpl = options.fetch ?? fetch;
   return {
-    async sendMessage(chatId: number, text: string): Promise<void> {
+    async sendMessage(chatId: number, text: string, messageOptions?: TelegramMessageOptions): Promise<TelegramSentMessage | void> {
       const url = `https://api.telegram.org/bot${options.token}/sendMessage`;
       const response = await fetchImpl(url, {
         method: 'POST',
@@ -93,6 +119,9 @@ export function createTelegramBotMessageClient(options: { token: string; fetch?:
         body: JSON.stringify({
           chat_id: chatId,
           text: formatTelegramMessage(text, { maxLength: options.maxLength }),
+          ...(messageOptions?.inlineKeyboard?.length
+            ? {reply_markup: {inline_keyboard: toTelegramInlineKeyboard(messageOptions.inlineKeyboard)}}
+            : {}),
         }),
       });
       if (!response.ok) {
@@ -102,6 +131,39 @@ export function createTelegramBotMessageClient(options: { token: string; fetch?:
       if (!body.ok) {
         throw new Error(body.description ?? 'Telegram sendMessage returned ok=false');
       }
+      return typeof body.result?.message_id === 'number' ? {messageId: body.result.message_id} : undefined;
+    },
+    async editMessage(chatId: number, messageId: number, text: string, messageOptions?: TelegramMessageOptions): Promise<void> {
+      const url = `https://api.telegram.org/bot${options.token}/editMessageText`;
+      const response = await fetchImpl(url, {
+        method: 'POST',
+        headers: {'content-type': 'application/json'},
+        body: JSON.stringify({
+          chat_id: chatId,
+          message_id: messageId,
+          text: formatTelegramMessage(text, {maxLength: options.maxLength}),
+          ...(messageOptions?.inlineKeyboard?.length
+            ? {reply_markup: {inline_keyboard: toTelegramInlineKeyboard(messageOptions.inlineKeyboard)}}
+            : {reply_markup: {inline_keyboard: []}}),
+        }),
+      });
+      if (!response.ok) throw new Error(`Telegram editMessageText failed: ${response.status}`);
+      const body = (await response.json()) as TelegramApiSendMessageResponse;
+      if (!body.ok && !body.description?.includes('message is not modified')) {
+        throw new Error(body.description ?? 'Telegram editMessageText returned ok=false');
+      }
+    },
+    async sendDocument(chatId: number, filePath: string, caption?: string): Promise<void> {
+      const url = `https://api.telegram.org/bot${options.token}/sendDocument`;
+      const bytes = await readFile(filePath);
+      const form = new FormData();
+      form.set('chat_id', String(chatId));
+      form.set('document', new Blob([bytes]), basename(filePath));
+      if (caption) form.set('caption', formatTelegramMessage(caption, {maxLength: 900}));
+      const response = await fetchImpl(url, {method: 'POST', body: form});
+      if (!response.ok) throw new Error(`Telegram sendDocument failed: ${response.status}`);
+      const body = (await response.json()) as TelegramApiSendMessageResponse;
+      if (!body.ok) throw new Error(body.description ?? 'Telegram sendDocument returned ok=false');
     },
   };
 }
@@ -135,7 +197,7 @@ export function dispatchTelegramUpdate(update: TelegramUpdate, options: { allowe
   const rawCommand = extractTelegramRawCommand(update.text);
   let command: TelegramCommand | undefined;
   try {
-    command = parseTelegramCommand(update.text);
+    command = update.callbackData ? parseTelegramCallbackData(update.callbackData) : parseTelegramCommand(update.text);
   } catch {
     const auditEvent: TelegramAuditEvent = {
       updateId: update.updateId,
@@ -194,10 +256,30 @@ function normalizeTelegramUpdate(update: TelegramApiUpdate): TelegramUpdate[] {
   const chatId = update.message?.chat?.id;
   const userId = update.message?.from?.id;
   const text = update.message?.text;
-  if (typeof updateId !== 'number' || typeof chatId !== 'number' || typeof userId !== 'number' || typeof text !== 'string') {
-    return [];
+  if (typeof updateId === 'number' && typeof chatId === 'number' && typeof userId === 'number' && typeof text === 'string') {
+    return [{updateId, chatId, userId, text, messageId: update.message?.message_id}];
   }
-  return [{ updateId, chatId, userId, text }];
+  const callback = update.callback_query;
+  const callbackChatId = callback?.message?.chat?.id;
+  const callbackUserId = callback?.from?.id;
+  const callbackData = callback?.data;
+  if (
+    typeof updateId === 'number' &&
+    typeof callbackChatId === 'number' &&
+    typeof callbackUserId === 'number' &&
+    typeof callbackData === 'string'
+  ) {
+    return [{
+      updateId,
+      chatId: callbackChatId,
+      userId: callbackUserId,
+      text: callbackData,
+      messageId: callback?.message?.message_id,
+      callbackQueryId: callback?.id,
+      callbackData,
+    }];
+  }
+  return [];
 }
 
 function redactSensitiveText(input: string): string {
@@ -235,14 +317,24 @@ export interface TelegramPollingService {
   logs: () => TelegramPollingLogEntry[];
 }
 
+export interface TelegramCommandResponse {
+  text: string;
+  inlineKeyboard?: TelegramInlineKeyboardButton[][];
+  editOriginalMessage?: boolean;
+}
+
+export interface TelegramReplyOptions extends TelegramMessageOptions {
+  editMessageId?: number;
+}
+
 /** Telegram 后台轮询服务：只消费真实 client 返回的 update，并记录可审计日志。 */
 export function createTelegramPollingService(options: {
   client: TelegramLongPollingClient;
   allowedUserIds: number[];
   initialOffset?: number;
   maxLogs?: number;
-  reply?: (chatId: number, text: string) => Promise<void>;
-  handleCommand?: (command: TelegramCommand, update: TelegramUpdate) => Promise<string | undefined>;
+  reply?: (chatId: number, text: string, options?: TelegramReplyOptions) => Promise<TelegramSentMessage | void>;
+  handleCommand?: (command: TelegramCommand, update: TelegramUpdate) => Promise<string | TelegramCommandResponse | undefined>;
 }): TelegramPollingService {
   let running = false;
   let offset = options.initialOffset ?? 0;
@@ -281,8 +373,15 @@ export function createTelegramPollingService(options: {
             await options.reply(update.chatId, result.reason);
           }
           if (result.allowed && result.command && options.reply && options.handleCommand) {
-            const replyText = await options.handleCommand(result.command, update);
-            if (replyText) await options.reply(update.chatId, replyText);
+            const commandResponse = await options.handleCommand(result.command, update);
+            if (typeof commandResponse === 'string') {
+              await options.reply(update.chatId, commandResponse);
+            } else if (commandResponse) {
+              await options.reply(update.chatId, commandResponse.text, {
+                inlineKeyboard: commandResponse.inlineKeyboard,
+                editMessageId: commandResponse.editOriginalMessage ? update.messageId : undefined,
+              });
+            }
           }
           handledUpdates += 1;
           offset = Math.max(offset, update.updateId + 1);
@@ -305,3 +404,32 @@ export function createTelegramPollingService(options: {
     logs: () => [...logs],
   };
 }
+
+function parseTelegramCallbackData(data: string): TelegramCommand {
+  const [namespace, action, ...parts] = data.split('|');
+  if (namespace !== 'zc') throw new Error('Unsupported Zeus Telegram callback');
+  if (action === 'ps') return {command: 'commands', args: []};
+  if (action === 'p' && parts[0]) return {command: 'commands', args: [decodeCallbackPart(parts[0])]};
+  if (action === 'd' && parts[0] && parts[1]) {
+    return {command: 'command', args: ['detail', decodeCallbackPart(parts[0]), decodeCallbackPart(parts[1])]};
+  }
+  if (action === 'r' && parts[0] && parts[1]) {
+    return {command: 'command', args: ['run', decodeCallbackPart(parts[0]), decodeCallbackPart(parts[1])]};
+  }
+  throw new Error('Unsupported Zeus Telegram callback');
+}
+
+function decodeCallbackPart(value: string): string {
+  return Buffer.from(value, 'base64url').toString('utf8');
+}
+
+function toTelegramInlineKeyboard(rows: TelegramInlineKeyboardButton[][]): Array<Array<{text: string; callback_data: string}>> {
+  return rows.map((row) =>
+    row.map((button) => ({
+      text: button.text.slice(0, 64),
+      callback_data: button.callbackData.slice(0, 64),
+    })),
+  );
+}
+import {readFile} from 'node:fs/promises';
+import {basename} from 'node:path';

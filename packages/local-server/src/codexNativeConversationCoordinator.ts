@@ -17,6 +17,7 @@ import {
     type ConversationItemType,
     type ConversationPermissionMode,
     ConversationPlanActionRepository,
+    ConversationResourceRepository,
     ConversationRepository,
     type ConversationServerRequestKind,
     ConversationServerRequestRepository,
@@ -53,6 +54,10 @@ import {
     parseCanonicalRequestUserInputQuestions,
     validateCanonicalRequestUserInputAnswers
 } from './codexNativeRuiValidation.js';
+import type {BrowserAutomationPort} from './browserAutomation.js';
+import {zeusBrowserDynamicTools} from './browserDynamicTools.js';
+import {normalizeConversationResources, toConversationResource} from './conversationResources.js';
+import type {TurnChangeSetService} from './turnChangeSets.js';
 
 interface ConversationDispatchContext {
   projectId: string;
@@ -75,6 +80,7 @@ interface ConversationDispatchContext {
 interface PersistedSubmissionInput {
   text: string;
   attachments?: NativeConversationAttachmentInput[];
+  browserComments?: Record<string, unknown>[];
   context: ConversationDispatchContext;
     displayText?: string;
     origin?: 'implement_plan';
@@ -96,6 +102,8 @@ export interface CreateCodexNativeConversationCoordinatorOptions {
   conversations: ConversationRepository;
   turns: ConversationTurnRepository;
   items: ConversationItemRepository;
+  resources?: ConversationResourceRepository;
+  changeSets?: TurnChangeSetService;
   submissions: ConversationSubmissionRepository;
   requests: ConversationServerRequestRepository;
     planActions?: ConversationPlanActionRepository;
@@ -105,6 +113,9 @@ export interface CreateCodexNativeConversationCoordinatorOptions {
   now?: () => string;
   operationId?: () => string;
   turnResultTimeoutMs?: number;
+  browserAutomation?: BrowserAutomationPort;
+  trustedAttachmentRoots?: string[];
+  getProjectRoot?: (projectId: string) => string | null;
 }
 
 export interface CodexNativeConversationRuntime extends CodexNativeConversationCoordinator {
@@ -120,6 +131,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   const now = options.now ?? (() => new Date().toISOString());
   const operationId = options.operationId ?? randomUUID;
     const planActions = options.planActions ?? new ConversationPlanActionRepository(options.db);
+  const resources = options.resources ?? new ConversationResourceRepository(options.db);
   const runStates = new Map<string, NativeConversationRunState>();
   const contexts = new Map<string, ConversationDispatchContext>();
   const processedEvents = new Set(options.settings.getJson<string[]>(processedEventsSettingKey) ?? []);
@@ -137,6 +149,10 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   let finalizationPromise: Promise<void> | null = null;
 
   const unsubscribe = options.manager.subscribe((event) => {
+    if (event.method === 'item/tool/call') {
+      void handleDynamicBrowserToolCall(event);
+      return;
+    }
     providerEventChain = providerEventChain.then(() => handleProviderEvent(event)).catch((error) => safelyHandleProviderEventError(event, error));
     return providerEventChain;
   });
@@ -150,8 +166,94 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     await options.db.save();
   }
 
+  function syncItemResources(
+    conversation: ZeusConversationWithMessagesRecord,
+    turn: ZeusConversationTurnRecord,
+    item: ReturnType<ConversationItemRepository['getByProvider']> extends infer RecordType ? Exclude<RecordType, undefined> : never,
+    payload: Record<string, unknown>,
+    text: string,
+    timestamp: string,
+  ) {
+    const projectRoot = contexts.get(conversation.id)?.projectLocalPath ?? options.getProjectRoot?.(conversation.projectId) ?? null;
+    if (!projectRoot) return [];
+    const submission = item.itemType === 'userMessage'
+      ? options.submissions
+          .listByConversation(conversation.id)
+          .find((candidate) => candidate.id === turn.clientSubmissionId || candidate.providerTurnId === turn.providerTurnId)
+      : undefined;
+    const resourcePayload = submission
+      ? {...payload, attachments: submissionAttachments(submission)}
+      : payload;
+    const normalized = normalizeConversationResources({
+      projectId: conversation.projectId,
+      projectRoot,
+      conversationId: conversation.id,
+      turnId: turn.id,
+      item,
+      payload: resourcePayload,
+      text,
+      trustedAttachmentRoots: options.trustedAttachmentRoots ?? [],
+      now: timestamp,
+    });
+    return resources
+      .replaceForItem(item.id, normalized, timestamp)
+      .map(toConversationResource)
+      .filter((resource): resource is NonNullable<typeof resource> => resource !== null);
+  }
+
   function commandPath(): string {
     return typeof options.commandPath === 'function' ? options.commandPath() : options.commandPath;
+  }
+
+  async function handleDynamicBrowserToolCall(event: CodexAppServerEvent): Promise<void> {
+    if (closed || event.requestId === undefined) return;
+    const params = isRecord(event.params) ? event.params : {};
+    const threadId = typeof params.threadId === 'string' ? params.threadId : '';
+    const turnId = typeof params.turnId === 'string' ? params.turnId : '';
+    const callId = typeof params.callId === 'string' ? params.callId : '';
+    const namespace = typeof params.namespace === 'string' ? params.namespace : '';
+    const tool = typeof params.tool === 'string' ? params.tool : '';
+    const argumentsValue = isRecord(params.arguments) ? params.arguments : {};
+    const conversation = threadId ? options.conversations.getByProviderThreadId(threadId) : undefined;
+    try {
+      if (!options.browserAutomation) throw coordinatorError('ZEUS_BROWSER_AUTOMATION_UNAVAILABLE', 'The built-in browser automation host is unavailable.');
+      if (!conversation || !threadId || !turnId || !callId) throw coordinatorError('ZEUS_BROWSER_TOOL_CONTEXT_INVALID', 'The browser tool call is not attached to a durable Zeus conversation.');
+      if (namespace !== 'zeus_browser' || !tool) throw coordinatorError('ZEUS_BROWSER_TOOL_UNSUPPORTED', 'The requested dynamic tool is not owned by the Zeus browser namespace.');
+      const result = await options.browserAutomation.invoke({
+        conversationId: conversation.id,
+        threadId,
+        turnId,
+        callId,
+        tool,
+        arguments: argumentsValue,
+      });
+      await options.manager.respondToServerRequest({
+        generationId: event.generationId,
+        requestId: event.requestId,
+        type: 'dynamic_tool',
+        contentItems: result.contentItems,
+        success: result.success,
+      });
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      try {
+        await options.manager.respondToServerRequest({
+          generationId: event.generationId,
+          requestId: event.requestId,
+          type: 'dynamic_tool',
+          contentItems: [{type: 'inputText', text: `Zeus built-in browser tool failed: ${detail.slice(0, 1200)}`}],
+          success: false,
+        });
+      } catch (responseError) {
+        options.broadcast('conversation.native.error', {
+          ...(conversation ? {conversationId: conversation.id} : {}),
+          providerThreadId: threadId || null,
+          providerTurnId: turnId || null,
+          error: 'ZEUS_BROWSER_TOOL_RESPONSE_FAILED',
+          message: responseError instanceof Error ? responseError.message : String(responseError),
+        });
+      }
+    }
   }
 
   function activeNativeCounts(projectId: string): { project: number; global: number } {
@@ -195,7 +297,9 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   }
 
   function submissionText(submission: ZeusConversationSubmissionRecord): string {
-    return requireString(parseJsonRecord(submission.inputJson).text, 'submission text');
+    const text = parseJsonRecord(submission.inputJson).text;
+    if (typeof text !== 'string') throw coordinatorError('ZEUS_NATIVE_PERSISTED_STATE_INVALID', 'Persisted submission text is invalid.');
+    return text;
   }
 
   function submissionAttachments(submission: ZeusConversationSubmissionRecord): NativeConversationAttachmentInput[] {
@@ -218,13 +322,37 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       const localPath = typeof attachment.localPath === 'string' && attachment.localPath ? attachment.localPath : undefined;
       const uploadRef = typeof attachment.uploadRef === 'string' && attachment.uploadRef ? attachment.uploadRef : undefined;
       if ((localPath ? 1 : 0) + (uploadRef ? 1 : 0) !== 1) throw coordinatorError('ZEUS_NATIVE_ATTACHMENT_INPUT_INVALID', 'Durable native attachment identity is invalid.');
-      return { name: attachment.name, mime: attachment.mime, size: attachment.size, ...(localPath ? { localPath } : {}), ...(uploadRef ? { uploadRef } : {}) };
+      const authorizedPath = typeof attachment.authorizedPath === 'string' && attachment.authorizedPath ? attachment.authorizedPath : undefined;
+      if (authorizedPath && (!localPath || uploadRef)) throw coordinatorError('ZEUS_NATIVE_ATTACHMENT_INPUT_INVALID', 'Durable native attachment path authority is invalid.');
+      return {
+        name: attachment.name,
+        mime: attachment.mime,
+        size: attachment.size,
+        ...(localPath ? {localPath} : {}),
+        ...(uploadRef ? {uploadRef} : {}),
+        ...(authorizedPath ? {authorizedPath} : {}),
+      };
     });
   }
 
+  function submissionBrowserComments(submission: ZeusConversationSubmissionRecord): Record<string, unknown>[] {
+    const value = parseJsonRecord(submission.inputJson).browserComments;
+    if (value === undefined) return [];
+    if (!Array.isArray(value) || !value.every(isRecord)) {
+      throw coordinatorError('ZEUS_NATIVE_BROWSER_COMMENTS_INVALID', 'Durable browser comment metadata is invalid.');
+    }
+    return value;
+  }
+
   function submissionProviderInput(submission: ZeusConversationSubmissionRecord, context: ConversationDispatchContext): Array<Record<string, unknown>> {
-    const inputs: Array<Record<string, unknown>> = [{ type: 'text', text: submissionText(submission) }];
-    const allowedRoots = (context.allowedAttachmentRoots?.length ? context.allowedAttachmentRoots : [context.projectLocalPath]).map(existingDirectoryRealpath).filter((root): root is string => Boolean(root));
+    const text = submissionText(submission);
+    const inputs: Array<Record<string, unknown>> = text.trim() ? [{type: 'text', text}] : [];
+    const allowedRoots = [
+      ...(context.allowedAttachmentRoots?.length ? context.allowedAttachmentRoots : [context.projectLocalPath]),
+      ...(options.trustedAttachmentRoots ?? []),
+    ]
+      .map(existingDirectoryRealpath)
+      .filter((root, index, roots): root is string => Boolean(root) && roots.indexOf(root) === index);
     if (allowedRoots.length === 0 && submissionAttachments(submission).length > 0) {
       throw coordinatorError('ZEUS_NATIVE_ATTACHMENT_PROJECT_UNAVAILABLE', 'No trusted attachment root can be resolved.');
     }
@@ -237,13 +365,23 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       let canonicalPath: string;
       try {
         canonicalPath = realpathSync(localPath);
-        if (!allowedRoots.some((root) => isInsideRoot(canonicalPath, root)) || !statSync(canonicalPath).isFile()) throw new Error('outside trusted roots or not a file');
+        const pathStat = statSync(canonicalPath);
+        const exactlyAuthorized =
+          Boolean(attachment.authorizedPath) &&
+          realpathSync(attachment.authorizedPath!) === canonicalPath;
+        if (
+          (!exactlyAuthorized && !allowedRoots.some((root) => isInsideRoot(canonicalPath, root))) ||
+          (!pathStat.isFile() && !pathStat.isDirectory())
+        ) {
+          throw new Error('outside trusted roots or not a file/directory');
+        }
       } catch {
-        throw coordinatorError('ZEUS_NATIVE_ATTACHMENT_PATH_UNAVAILABLE', 'Native attachment must resolve to a file inside a trusted attachment root.');
+        throw coordinatorError('ZEUS_NATIVE_ATTACHMENT_PATH_UNAVAILABLE', 'Native attachment must resolve to an authorized file or directory.');
       }
       if (isSupportedLocalImageAttachment(attachment, canonicalPath)) inputs.push({ type: 'localImage', path: canonicalPath });
       else inputs.push({ type: 'mention', name: attachment.name, path: canonicalPath });
     }
+    if (inputs.length === 0) throw coordinatorError('ZEUS_INVALID_CONVERSATION_MESSAGE', 'Native submission requires text or attachments.');
     return inputs;
   }
 
@@ -254,7 +392,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       state: runStates.get(conversationId) ?? { type: 'idle' },
       submissions: entries.map((submission, index) => ({
         id: submission.id,
-        content: submissionText(submission),
+        content: submissionText(submission) || submissionAttachments(submission).map((attachment) => attachment.name).join('、'),
         status: submission.status as 'queued' | 'paused' | 'failed',
         position: submission.queuePosition ?? index + 1,
         pausedReason: submission.pausedReason,
@@ -270,6 +408,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         idempotencyKey: string;
         clientUserMessageId: string;
         attachments?: NativeConversationAttachmentInput[];
+        browserComments?: Record<string, unknown>[];
         displayText?: string;
         origin?: 'implement_plan';
         planItemId?: string;
@@ -280,6 +419,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       const payload: PersistedSubmissionInput = {
           text: content,
           ...(input.attachments?.length ? {attachments: input.attachments} : {}),
+          ...(input.browserComments?.length ? {browserComments: input.browserComments} : {}),
           context,
           ...(input.displayText ? {displayText: input.displayText} : {}),
           ...(input.origin ? {origin: input.origin} : {}),
@@ -354,7 +494,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
 
   async function startProjectConversation(input: StartProjectConversationInput): Promise<NativeAcceptedOperation> {
     assertOpen();
-    const title = projectConversationTitle(input.prompt);
+    const title = projectConversationTitle(input.prompt, input.attachments);
     const existingConversation = input.conversationId ? options.conversations.getById(input.conversationId) : undefined;
     const permissionMode = existingConversation?.permissionMode ?? input.permissionMode ?? 'auto';
     const context: ConversationDispatchContext = {
@@ -378,7 +518,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         ...(input.conversationId ? { id: input.conversationId } : {}),
         projectId: input.projectId,
         title,
-        summary: [...input.prompt].slice(0, 240).join(''),
+        summary: [...input.prompt].slice(0, 240).join('') || input.attachments?.[0]?.name || '',
         status: 'starting',
         transportKind: 'codex_native',
         providerId: 'codex',
@@ -397,13 +537,15 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     return dispatchSubmission(conversation, submission, input.providerWriteLifecycle);
   }
 
-  function projectConversationTitle(prompt: string): string {
+  function projectConversationTitle(prompt: string, attachments: NativeConversationAttachmentInput[] | undefined): string {
     const firstLine = prompt
       .split(/\r\n?|\n/u)
       .map((line) => line.replace(/\s+/gu, ' ').trim())
       .find(Boolean);
-    if (!firstLine) throw coordinatorError('ZEUS_INVALID_CONVERSATION_START', 'Project conversation content is required.');
-    return [...firstLine].slice(0, 48).join('');
+    if (firstLine) return [...firstLine].slice(0, 48).join('');
+    const attachmentName = attachments?.find((attachment) => attachment.name.trim())?.name.trim();
+    if (attachmentName) return [...attachmentName].slice(0, 48).join('');
+    throw coordinatorError('ZEUS_INVALID_CONVERSATION_START', 'Project conversation content or attachments are required.');
   }
 
   async function startEphemeralConversation(input: StartNativeEphemeralConversationInput): Promise<NativeAcceptedOperation> {
@@ -616,6 +758,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
           approvalsReviewer: profile.approvalsReviewer,
           developerInstructions: developerInstructionsFor(context),
           ephemeral: context.ephemeral,
+          ...(options.browserAutomation ? {dynamicTools: zeusBrowserDynamicTools()} : {}),
         });
         conversation = options.conversations.bindProvider(conversation.id, {
           providerId: 'codex',
@@ -822,6 +965,9 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         ...(existingProviderMessage ? parseJsonRecord(existingProviderMessage.metadataJson) : {}),
         ...(clientMessageId ? { clientUserMessageId: clientMessageId } : {}),
         ...(submission ? { attachments: submissionAttachments(submission) } : {}),
+        ...(submission && submissionBrowserComments(submission).length
+          ? {browserComments: submissionBrowserComments(submission)}
+          : {}),
           ...(typeof itemPayload.origin === 'string' ? {origin: itemPayload.origin} : {}),
           ...(typeof itemPayload.planItemId === 'string' ? {planItemId: itemPayload.planItemId} : {}),
       },
@@ -1707,6 +1853,16 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
                 plan,
             },
         };
+    } else if (event.method === 'turn/diff/updated' && conversation && threadId && options.changeSets) {
+      const providerTurnId = providerTurnIdFrom(params);
+      const turn = providerTurnId ? options.turns.listByConversation(conversation.id).find((candidate) => candidate.providerTurnId === providerTurnId) : undefined;
+      if (!providerTurnId || !turn || typeof params.diff !== 'string') return;
+      options.changeSets.updateUnifiedDiff({
+        conversation,
+        turn,
+        diff: params.diff,
+        timestamp: event.receivedAt,
+      });
     } else if (event.method === 'turn/completed' && conversation && threadId) {
       const providerTurnId = providerTurnIdFrom(params);
       if (!providerTurnId) return;
@@ -1725,6 +1881,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         completedAt: timestamp,
         updatedAt: timestamp,
       });
+      options.changeSets?.seal({conversation, turn, timestamp});
       const submissions = options.submissions.listByConversation(conversation.id);
       const activeSubmission = submissions.find((entry) => entry.providerTurnId === providerTurnId && (entry.status === 'active' || entry.status === 'dispatching'));
       if (activeSubmission) {
@@ -1814,7 +1971,18 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         startedAt: event.receivedAt,
         updatedAt: event.receivedAt,
       });
+        if (item.itemType === 'fileChange') {
+          options.changeSets?.capture({
+            conversation,
+            turn,
+            providerItemId,
+            changes: itemPayload.changes,
+            phase: 'pre',
+            timestamp: event.receivedAt,
+          });
+        }
         const durableClientMessageId = item.itemType === 'userMessage' ? persistProviderUserMessage(conversation, turn, presentedItemPayload, item.textContent || itemText(itemPayload), providerItemId, event.receivedAt) : null;
+        const itemResources = syncItemResources(conversation, turn, item, presentedItemPayload, item.textContent || itemText(itemPayload), event.receivedAt);
       broadcast = {
         type: 'conversation.item.started',
         payload: {
@@ -1825,6 +1993,48 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
           itemType: item.itemType,
           itemPayload: { ...parseJsonRecord(item.payloadJson), ...(item.itemType === 'userMessage' ? { clientId: durableClientMessageId } : {}) },
           textContent: item.itemType === 'userMessage' ? itemText(itemPayload) : item.textContent,
+          status: item.status,
+          phase: item.phase,
+          itemResources,
+        },
+      };
+    } else if (event.method === 'item/fileChange/patchUpdated' && conversation && threadId) {
+      const providerTurnId = providerTurnIdFrom(params);
+      const providerItemId = providerItemIdFrom(params);
+      const turn = providerTurnId ? options.turns.listByConversation(conversation.id).find((candidate) => candidate.providerTurnId === providerTurnId) : undefined;
+      if (!providerTurnId || !providerItemId || !turn || !Array.isArray(params.changes)) return;
+      const existing = options.items.getByProvider(threadId, providerItemId);
+      const item = options.items.appendDelta({
+        conversationId: conversation.id,
+        turnId: turn.id,
+        providerThreadId: threadId,
+        providerTurnId,
+        providerItemId,
+        itemType: 'fileChange',
+        phase: 'prework',
+        payload: {...(existing ? parseJsonRecord(existing.payloadJson) : {}), ...params, changes: params.changes},
+        delta: '',
+        startedAt: existing?.startedAt ?? event.receivedAt,
+        updatedAt: event.receivedAt,
+      });
+      options.changeSets?.capture({
+        conversation,
+        turn,
+        providerItemId,
+        changes: params.changes,
+        phase: 'pre',
+        timestamp: event.receivedAt,
+      });
+      broadcast = {
+        type: 'conversation.item.updated',
+        payload: {
+          conversationId: conversation.id,
+          providerThreadId: threadId,
+          providerTurnId,
+          providerItemId,
+          itemType: item.itemType,
+          itemPayload: parseJsonRecord(item.payloadJson),
+          textContent: item.textContent,
           status: item.status,
           phase: item.phase,
         },
@@ -1898,7 +2108,18 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
           providerItemId,
         });
       }
+      if (item.itemType === 'fileChange') {
+        options.changeSets?.capture({
+          conversation,
+          turn,
+          providerItemId,
+          changes: itemPayload.changes,
+          phase: 'post',
+          timestamp: event.receivedAt,
+        });
+      }
       if (item.phase === 'final_answer') runStates.set(conversation.id, { type: 'active', turnId: providerTurnId, phase: 'final_answer' });
+      const itemResources = syncItemResources(conversation, turn, item, presentedItemPayload, item.textContent, event.receivedAt);
       broadcast = {
         type: 'conversation.item.updated',
         payload: {
@@ -1911,6 +2132,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
           textContent: item.textContent,
           status: item.status,
           phase: item.phase,
+          itemResources,
         },
       };
     } else if (event.method === 'thread/settings/updated' && conversation) {

@@ -13,20 +13,33 @@ export async function sha256File(filePath) {
   return createHash('sha256').update(content).digest('hex');
 }
 
+function normalizeCaskArchitecture(arch) {
+  if (arch === 'arm64') {
+    return { artifact: 'arm64', homebrew: ':arm64' };
+  }
+  if (arch === 'x64') {
+    return { artifact: 'x64', homebrew: ':x86_64' };
+  }
+  throw new Error(`Zeus Homebrew cask 不支持架构：${arch}`);
+}
+
 export function renderHomebrewCask({ version, arch, sha256 }) {
+  const normalizedArch = normalizeCaskArchitecture(arch);
   return `cask "zeus" do
   version "${version}"
   sha256 "${sha256}"
 
-  url "https://github.com/imchenway/zeus/releases/download/v#{version}/Zeus-#{version}-${arch}.dmg"
+  url "https://github.com/imchenway/zeus/releases/download/v#{version}/Zeus-#{version}-${normalizedArch.artifact}.dmg"
   name "Zeus"
-  desc "Local-first macOS AI development workbench"
+  desc "Local-first AI development workbench"
   homepage "https://github.com/imchenway/zeus"
+
+  depends_on :macos
+  depends_on arch: ${normalizedArch.homebrew}
 
   app "Zeus.app"
 
-  uninstall launchctl: "dev.hypha.zeus",
-            quit:      "dev.hypha.zeus"
+  uninstall quit: "dev.hypha.zeus"
 
   zap trash: [
     "~/Library/Application Support/Zeus",

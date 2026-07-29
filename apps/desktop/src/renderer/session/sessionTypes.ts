@@ -1,3 +1,17 @@
+import type {
+  ConversationResource,
+  TurnChangeSet,
+  ZeusBrowserComment,
+  ZeusBrowserPreparedSubmission,
+} from '@zeus/shared';
+
+export type {
+  ConversationResource,
+  ConversationResourcePreview,
+  TurnChangeSet,
+  TurnChangeSetOperationResult,
+} from '@zeus/shared';
+
 export type TransportState = 'disconnected' | 'connecting' | 'hydrating' | 'ready' | 'reconnecting' | 'failed';
 
 export type ConversationState =
@@ -35,6 +49,11 @@ interface NativeConversationAttachmentBase {
   name: string;
   mime: string;
   size: number;
+  kind?: 'image' | 'file' | 'directory' | 'pasted_text';
+  source?: 'picker' | 'paste' | 'drop';
+  characterCount?: number;
+  /** 仅保留 Codex App 同级可恢复范围内的粘贴文本，不写入服务端持久化附件。 */
+  restorableText?: string;
 }
 
 export type NativeConversationAttachment = NativeConversationAttachmentBase & ({ localPath: string; uploadRef?: never } | { localPath?: never; uploadRef: string });
@@ -60,6 +79,7 @@ export interface NativeItemSnapshot {
   phase: string;
   text: string;
   payload: Record<string, unknown>;
+  resources?: ConversationResource[];
   startedAt: string | null;
   completedAt: string | null;
   updatedAt: string;
@@ -171,6 +191,7 @@ export interface NativeConversationSnapshot {
   messages: NativeConversationMessage[];
   turns: NativeTurnSnapshot[];
   items: NativeItemSnapshot[];
+  changeSets?: TurnChangeSet[];
   submissions: NativeQueuedSubmission[];
   queue: NativeQueueSnapshot;
   requests: NativePendingRequest[];
@@ -190,6 +211,7 @@ export interface NativeConversationMessage {
   content: string;
   source: string;
   metadata: Record<string, unknown>;
+  resources?: ConversationResource[];
   createdAt: string;
 }
 
@@ -317,7 +339,9 @@ export interface StartProjectConversationRequest {
 
 export interface SendNativeMessageRequest {
   content: string;
+  displayText?: string;
   attachments: NativeConversationAttachment[];
+  browserComments?: ZeusBrowserComment[];
   delivery: 'queue' | 'steer_now';
   expectedTurnId?: string;
     model?: string;
@@ -369,6 +393,7 @@ type NativeItemEventPayload = NativeEventIdentity & {
   status?: string;
   phase?: string;
   textContent?: string;
+  itemResources?: ConversationResource[];
 };
 
 export type NativeConversationEvent =
@@ -377,6 +402,7 @@ export type NativeConversationEvent =
   | NativeEvent<'conversation.turn.started', NativeTurnEventPayload>
   | NativeEvent<'conversation.turn.completed', NativeTurnEventPayload>
     | NativeEvent<'conversation.turn.plan.updated', NativeTurnEventPayload & { plan: NativeTurnPlanSnapshot }>
+  | NativeEvent<'conversation.turn.change_set.changed', NativeTurnEventPayload & {changeSetId: string; changeSet: TurnChangeSet}>
   | NativeEvent<'conversation.item.started', NativeItemEventPayload>
   | NativeEvent<'conversation.item.delta', NativeItemEventPayload & { textContent: string }>
   | NativeEvent<'conversation.item.completed', NativeItemEventPayload & { textContent: string }>
@@ -410,6 +436,7 @@ export const nativeConversationEventTypes = new Set<NativeConversationEvent['typ
   'conversation.turn.started',
   'conversation.turn.completed',
     'conversation.turn.plan.updated',
+  'conversation.turn.change_set.changed',
   'conversation.item.started',
   'conversation.item.delta',
   'conversation.item.completed',
@@ -442,6 +469,7 @@ export interface NativeSessionItemBuffer {
   phase: string;
   text: string;
   payload: Record<string, unknown>;
+  resources: ConversationResource[];
   optimistic?: boolean;
   clientUserMessageId?: string;
   durableClientUserMessageId?: string;
@@ -467,6 +495,7 @@ export interface NativeSessionState {
   startedTurnId: string | null;
   snapshot: NativeConversationSnapshot | null;
   turnsByProviderId: Record<string, NativeTurnSnapshot>;
+  changeSetsByProviderId: Record<string, TurnChangeSet>;
   terminalTurnIds: Record<string, 'completed' | 'interrupted' | 'failed'>;
   items: Record<string, NativeSessionItemBuffer>;
   itemOrder: string[];
@@ -482,6 +511,7 @@ export interface NativeSessionState {
   lastEventId: string | null;
   draft: string;
   attachments: NativeConversationAttachment[];
+  browserSubmission: ZeusBrowserPreparedSubmission | null;
   transcriptRevision: number;
   busyOperation: string | null;
   error: NativeSessionError | null;

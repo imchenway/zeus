@@ -145,6 +145,16 @@ export async function readTaskClipboardAttachmentsFromClipboard(reader: NativeTa
   return [];
 }
 
+/** 返回剪贴板中的真实本地路径，不读取文件内容；会话附件借此保留目录和任意文件类型。 */
+export async function readTaskClipboardFileReferencesFromClipboard(
+  reader: NativeTaskClipboardReader,
+  options: TaskClipboardReadOptions = {},
+): Promise<string[]> {
+  const clipboardTexts = readNativeClipboardReferenceTexts(reader);
+  const systemFileReferences = await readSystemClipboardFileReferences(options);
+  return extractTaskClipboardFileReferences([...clipboardTexts, ...systemFileReferences]);
+}
+
 async function readSystemClipboardFileReferences(options: TaskClipboardReadOptions): Promise<string[]> {
   if (!options.readSystemFileReferences) return [];
   try {
@@ -251,7 +261,7 @@ function readNativeClipboardReferenceTexts(reader: NativeTaskClipboardReader): s
     const html = reader.readHTML();
     if (html) values.push(html);
   } catch {
-    // Electron 在部分测试/运行环境可能没有 HTML clipboard，跳过即可。
+    // Electron 在部分受限运行环境可能没有 HTML clipboard，跳过即可。
   }
   return values;
 }

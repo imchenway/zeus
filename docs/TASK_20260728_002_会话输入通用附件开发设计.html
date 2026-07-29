@@ -1,0 +1,3064 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Zeus 会话输入通用附件开发设计</title>
+  <style>:root{--ink:#102033;--muted:#5a6c80;--paper:#fbfdff;--panel:#fff;--line:#8db3d8;--blue:#176fb3;--blue-soft:#eaf4ff;--green:#11815d;--green-soft:#eaf8f2;--amber:#a66a00;--amber-soft:#fff6df;--red:#ac3d46;--red-soft:#fff0f1;--violet:#6954be;--violet-soft:#f2efff;--shadow:0 12px 30px rgba(20,57,92,.08);--radius:14px}
+*{box-sizing:border-box}html{color-scheme:light}body{margin:0;color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",Arial,sans-serif;background:linear-gradient(rgba(93,133,173,.045) 1px,transparent 1px),linear-gradient(90deg,rgba(93,133,173,.045) 1px,transparent 1px),linear-gradient(180deg,#fff,#f6faff 62%,#fbfdff);background-size:28px 28px,28px 28px,auto;overflow-x:clip}
+main{width:min(72rem,calc(100vw - 2rem));margin:0 auto;padding:1.5rem 0 4rem}h1{max-width:28ch;margin:0 0 .45rem;font-size:clamp(1.7rem,3vw,2.25rem);line-height:1.16;letter-spacing:-.025em}.summary{max-width:76ch;margin:0 0 1rem;color:var(--muted);font-size:.95rem;line-height:1.65}
+a{color:inherit}.template-layout{border:1px solid rgba(141,179,216,.62);border-radius:.9rem;background:#fff;box-shadow:var(--shadow)}
+.semantic-relation{position:absolute;inline-size:1px;block-size:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}</style>
+  <style data-artifact-shell-kernel="1">
+[data-diagram-title-region] {
+  display: block;
+  max-inline-size: 100%;
+}
+
+[data-diagram-title-copy] {
+  min-inline-size: 0;
+}
+
+[data-diagram-reading-guide="1"] {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas: "groups controls";
+  align-items: center;
+  gap: .5rem 1rem;
+  inline-size: 100%;
+  margin-block: .5rem .75rem;
+  padding: .625rem .75rem;
+  border: 1px solid #b8cde1;
+  border-radius: .625rem;
+  background: #f8fbfe;
+}
+
+[data-diagram-reading-guide="1"][data-reading-guide-controls-state="empty"] {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: "groups";
+}
+
+[data-reading-guide-heading] {
+  display: none;
+}
+
+[data-reading-guide-heading] strong {
+  color: #17324d;
+  font-size: .875rem;
+}
+
+[data-reading-guide-heading] span {
+  display: none;
+}
+
+[data-reading-guide-groups] {
+  grid-area: groups;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas:
+    "relations"
+    "evidence";
+  align-items: start;
+  gap: .45rem;
+  min-inline-size: 0;
+}
+
+[data-reading-guide-group="relations"] {
+  grid-area: relations;
+}
+
+[data-reading-guide-group="evidence"] {
+  grid-area: evidence;
+}
+
+[data-reading-guide-group] {
+  display: flex;
+  align-items: center;
+  gap: .4rem .65rem;
+  min-inline-size: 0;
+  flex-wrap: wrap;
+}
+
+[data-reading-guide-group] + [data-reading-guide-group] {
+  padding-inline-start: 0;
+  border-inline-start: 0;
+}
+
+[data-reading-guide-group-title] {
+  display: inline-flex;
+  min-block-size: 1.35rem;
+  align-items: center;
+  padding: .12rem .38rem;
+  border: 1px solid #a8c4df;
+  border-radius: .3rem;
+  background: #e8f3ff;
+  color: #0c4f83;
+  font-size: .72rem;
+  font-weight: 900;
+  letter-spacing: .025em;
+  white-space: nowrap;
+}
+
+[data-reading-guide-groups] [data-reading-guide-group-title] {
+  box-shadow: 0 .08rem .2rem rgba(20, 57, 92, .08);
+}
+
+[data-reading-guide-item],
+[data-diagram-reading-guide="1"] [data-evidence-id] {
+  display: inline-flex;
+  align-items: center;
+  gap: .35rem;
+  min-inline-size: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+[data-reading-guide-item] b,
+[data-diagram-reading-guide="1"] [data-evidence-id] b {
+  margin: 0;
+  color: #38546f;
+  font-size: .7rem;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+
+[data-diagram-reading-guide="1"] [data-evidence-id] span {
+  display: none;
+}
+
+[data-line-swatch] {
+  position: relative;
+  display: inline-block;
+  inline-size: 2rem;
+  block-size: .75rem;
+  flex: 0 0 auto;
+}
+
+[data-line-swatch]::before {
+  content: "";
+  position: absolute;
+  inset-inline: 0 .32rem;
+  inset-block-start: .3rem;
+  border-block-start: 3px solid #0877ff;
+}
+
+[data-line-swatch]::after {
+  content: "";
+  position: absolute;
+  inset-inline-end: 0;
+  inset-block-start: .06rem;
+  border-inline-start: .5rem solid #0877ff;
+  border-block: .34rem solid transparent;
+}
+
+[data-line-kind="line-02"] [data-line-swatch]::before {
+  border-color: #00a56a;
+}
+
+[data-line-kind="line-02"] [data-line-swatch]::after {
+  border-inline-start-color: #00a56a;
+}
+
+[data-line-kind="line-03"] [data-line-swatch]::before {
+  border-color: #7c3aed;
+  border-block-start-style: dashed;
+}
+
+[data-line-kind="line-03"] [data-line-swatch]::after {
+  border-inline-start-color: #7c3aed;
+}
+
+[data-line-kind="line-04"] [data-line-swatch]::before {
+  border-color: #f59e0b;
+  border-block-start-style: dotted;
+}
+
+[data-line-kind="line-04"] [data-line-swatch]::after {
+  border-inline-start-color: #f59e0b;
+}
+
+[data-diagram-reading-guide="1"] [data-evidence-id]::before {
+  content: "";
+  inline-size: .68rem;
+  block-size: .68rem;
+  flex: 0 0 auto;
+  border: 2px solid;
+  border-radius: .3rem;
+  background: #fff;
+}
+
+[data-diagram-reading-guide="1"] [data-evidence-source-kind="file"]::before {
+  border-color: #2787df;
+  background: #e8f3ff;
+}
+
+[data-diagram-reading-guide="1"] [data-evidence-source-kind="test"]::before {
+  border-color: #20a476;
+  background: #e9f8f2;
+}
+
+[data-diagram-reading-guide="1"] [data-evidence-status="unresolved"]::before {
+  border-color: #e49a10;
+  border-style: dashed;
+  background: #fff6de;
+}
+
+[data-reading-guide-controls] {
+  grid-area: controls;
+  display: flex;
+  min-inline-size: max-content;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-end;
+  gap: .45rem;
+}
+
+[data-reading-guide-controls][data-interaction-capability="none"] {
+  display: none;
+}
+
+[data-reading-guide-controls][data-interaction-capability="details"] {
+  min-inline-size: 0;
+  max-inline-size: min(100%, 24rem);
+  justify-self: end;
+}
+
+[data-reading-guide-controls][data-interaction-capability="details"] [data-reading-guide-group="interaction"] {
+  padding-block-end: .1rem;
+}
+
+[data-reading-guide-controls] [data-reading-guide-group="interaction"] {
+  justify-content: flex-start;
+  padding: .1rem .35rem 0;
+  border-inline-start: 0;
+}
+
+[data-diagram-controls],
+[data-sequence-toolbar] {
+  position: relative;
+  display: none;
+  max-inline-size: 100%;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .375rem;
+  margin: 0;
+  padding: .35rem;
+  border: 1px solid rgba(141, 179, 216, .72);
+  border-radius: .625rem;
+  background: #fff;
+  box-shadow: 0 .25rem .75rem rgba(20, 57, 92, .08);
+}
+
+[data-diagram-controls][data-diagram-controls-visible="true"],
+[data-sequence-toolbar]:not([hidden]) {
+  display: inline-flex;
+}
+
+[data-diagram-controls] button,
+[data-sequence-toolbar] button {
+  appearance: none;
+  min-block-size: 2.75rem;
+  padding-inline: .9rem;
+  border: 1px solid rgba(141, 179, 216, .78);
+  border-radius: .5rem;
+  background: #f7fbff;
+  color: #17324d;
+  font: inherit;
+  font-size: .8125rem;
+  font-weight: 750;
+  line-height: 1;
+  cursor: pointer;
+  transition: background-color .16s ease, border-color .16s ease, box-shadow .16s ease;
+}
+
+[data-diagram-controls] button:hover,
+[data-sequence-toolbar] button:hover {
+  border-color: #5f96c8;
+  background: #e8f3ff;
+}
+
+[data-diagram-controls] button[aria-pressed="true"],
+[data-sequence-toolbar] button[aria-pressed="true"] {
+  border-color: #1f6fb2;
+  background: #1f6fb2;
+  color: #fff;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .28);
+}
+
+[data-diagram-controls] button:focus-visible,
+[data-sequence-toolbar] button:focus-visible {
+  outline: 3px solid #77b8f2;
+  outline-offset: 2px;
+}
+
+[data-diagram-controls] button:disabled,
+[data-sequence-toolbar] button:disabled {
+  opacity: .48;
+  cursor: not-allowed;
+}
+
+[data-diagram-zoom-status],
+[data-sequence-scale-status] {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (max-width: 64rem) {
+  [data-diagram-reading-guide="1"] {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "heading"
+      "groups"
+      "controls";
+  }
+
+  [data-reading-guide-controls] {
+    min-inline-size: 0;
+    max-inline-size: 100%;
+    align-items: flex-start;
+    justify-content: flex-start;
+    justify-self: stretch;
+  }
+
+  [data-reading-guide-group] + [data-reading-guide-group] {
+    padding-inline-start: 0;
+    border-inline-start: 0;
+  }
+}
+
+@media (max-width: 48rem) {
+  [data-reading-guide-heading],
+  [data-reading-guide-groups] {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  [data-reading-guide-group] {
+    align-items: flex-start;
+  }
+
+}
+
+@media print {
+  [data-diagram-reading-guide="1"] {
+    break-inside: avoid;
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "heading"
+      "groups";
+    background: #fff;
+  }
+
+  [data-reading-guide-controls] {
+    display: none !important;
+  }
+}
+</style>
+  <style data-adaptive-viewport-kernel="1">
+[data-diagram-canvas][data-diagram-contract="1"] {
+  --diagram-scale: 1;
+  box-sizing: border-box;
+  max-inline-size: 100%;
+  min-inline-size: 0;
+  transform-origin: top left;
+}
+
+[data-diagram-width="contained"] { inline-size: 100%; margin-inline: 0; }
+[data-diagram-width="auto"] { inline-size: 100%; }
+[data-diagram-width="wide"] { inline-size: 100%; overflow-x: auto; overflow-y: hidden; }
+[data-diagram-height="flow"] { block-size: auto; }
+[data-diagram-height="auto"] { max-block-size: clamp(32.5rem, 75vh, 56.25rem); overflow: auto; }
+[data-diagram-height="scroll"] { max-block-size: clamp(32.5rem, 75vh, 56.25rem); overflow: auto; }
+[data-diagram-scaled="true"] > [data-diagram-stage] {
+  transform: scale(var(--diagram-scale));
+  transform-origin: top left;
+}
+.diagram-fallback { display: none; }
+
+html:not(.vibe-js) [data-diagram-canvas] > [data-diagram-stage] {
+  display: none;
+}
+
+html:not(.vibe-js) [data-fallback-for] {
+  display: block;
+}
+
+@media (max-width: 48rem) {
+  [data-diagram-mobile="stack"] [data-diagram-group-id] { position: static; }
+  [data-diagram-mobile="summary"] {
+    overflow: auto;
+  }
+  [data-diagram-mobile="summary"] > [data-diagram-stage] {
+    display: block;
+    min-inline-size: max(var(--diagram-mobile-stage-min, 60rem), 100%) !important;
+  }
+}
+
+@media print {
+  [data-diagram-canvas] { max-block-size: none; overflow: visible; transform: none; }
+  [data-diagram-canvas] > [data-diagram-stage] { display: none; }
+  .diagram-fallback { display: block; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-diagram-canvas] { scroll-behavior: auto; }
+}
+</style>
+  <style data-semantic-relations-kernel="1">
+[data-architecture-canvas="1"] [data-diagram-visible-relation-id] {
+  vector-effect: non-scaling-stroke;
+}
+
+[data-semantic-edge-ledger] {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: .45rem;
+  margin-block-start: 1rem;
+  padding: .75rem 0 0;
+  border: 0;
+  border-block-start: 1px dashed rgba(90, 108, 128, .38);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: #5a6c80;
+}
+[data-semantic-edge-ledger] > h2 {
+  margin: 0;
+  color: #6b7c8e;
+  font-size: .68rem;
+  font-weight: 750;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+[data-semantic-edge-grid] {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
+  gap: .25rem 1rem;
+}
+[data-semantic-edge] {
+  display: grid;
+  gap: .15rem;
+  min-inline-size: 0;
+  padding: .25rem 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+[data-semantic-edge-route] {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 1.25rem minmax(0, 1fr);
+  align-items: center;
+  gap: .25rem;
+}
+[data-semantic-edge-route] b {
+  min-inline-size: 0;
+  color: #52677b;
+  font-size: .68rem;
+  font-weight: 700;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+[data-semantic-edge-route] b:last-child { text-align: end; }
+[data-semantic-edge-route] i {
+  display: grid;
+  min-block-size: 1rem;
+  place-items: center;
+  color: #8293a5;
+  font-style: normal;
+  line-height: 1;
+}
+[data-semantic-edge-route] i::before {
+  content: "↪";
+}
+[data-semantic-edge-route] i::after {
+  content: none;
+}
+[data-semantic-edge-label] {
+  color: #738497;
+  font-size: .66rem;
+  line-height: 1.35;
+}
+
+@media (max-width: 48rem) {
+  [data-semantic-edge-grid] { grid-template-columns: 1fr; }
+}
+
+@media print {
+  [data-semantic-edge-ledger] { break-inside: avoid; background: transparent; }
+}
+</style>
+  <style data-progressive-disclosure-kernel="1">
+[data-diagram-detail][hidden] { display: none; }
+[data-diagram-detail]:target { display: block; }
+
+[data-diagram-detail-trigger][data-detail-for] {
+  cursor: pointer;
+}
+
+[data-diagram-detail-trigger][data-detail-for]:focus-visible {
+  outline: 3px solid #0877ff;
+  outline-offset: 2px;
+}
+
+[data-node-detail-region] {
+  margin-block-start: .875rem;
+  padding: .875rem;
+  border: 1px solid rgba(141, 179, 216, .5);
+  border-radius: 1rem;
+  background: rgba(247, 251, 255, .84);
+}
+
+[data-node-detail-region] > header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: .4rem 1rem;
+  margin-block-end: .7rem;
+}
+
+[data-node-detail-region] h2 {
+  margin: 0;
+  color: #17324d;
+  font-size: .95rem;
+}
+
+[data-node-detail-region] header p {
+  margin: 0;
+  color: #5a6c80;
+  font-size: .75rem;
+}
+
+[data-node-detail-grid] {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr));
+  gap: .55rem;
+}
+
+details[data-diagram-detail] {
+  position: relative;
+  display: block;
+  min-inline-size: 0;
+  border: 1px solid rgba(141, 179, 216, .54);
+  border-radius: .8rem;
+  background: rgba(255, 255, 255, .96);
+  overflow: clip;
+}
+
+details[data-diagram-detail] > summary {
+  cursor: pointer;
+  padding: .7rem .8rem;
+  color: #17324d;
+  font-size: .8125rem;
+  font-weight: 780;
+}
+
+details[data-diagram-detail] > summary:focus-visible {
+  outline: 3px solid color-mix(in srgb, currentColor 58%, transparent);
+  outline-offset: 4px;
+}
+
+details[data-diagram-detail] > :not(summary, [data-diagram-detail-close]) {
+  margin: 0;
+  padding: 0 .8rem .8rem;
+  color: #52677d;
+  font-size: .8rem;
+  line-height: 1.6;
+}
+
+[data-diagram-detail-close] {
+  display: none;
+}
+
+html[data-progressive-disclosure-enhanced="true"] [data-node-detail-region] {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  pointer-events: none;
+}
+
+html[data-progressive-disclosure-enhanced="true"] [data-node-detail-region][data-runtime-active="true"] {
+  display: block;
+}
+
+html[data-progressive-disclosure-enhanced="true"] [data-node-detail-region] > header {
+  display: none;
+}
+
+html[data-progressive-disclosure-enhanced="true"] [data-node-detail-grid] {
+  position: fixed;
+  inset-block-start: var(--detail-top, 1rem);
+  inset-inline-start: var(--detail-left, 1rem);
+  z-index: 1;
+  display: block;
+  inline-size: var(--detail-width, min(22rem, calc(100vw - 1.5rem)));
+  max-block-size: min(26rem, calc(100vh - 1.5rem));
+  overflow: auto;
+  overscroll-behavior: contain;
+  border: 1px solid rgba(94, 151, 207, .72);
+  border-radius: .75rem;
+  background: #fff;
+  box-shadow: 0 1rem 2.5rem rgba(20, 57, 92, .22);
+  pointer-events: auto;
+}
+
+html[data-progressive-disclosure-enhanced="true"] [data-node-detail-grid]::before {
+  content: "";
+  position: sticky;
+  inset-block-start: 0;
+  z-index: 2;
+  display: block;
+  block-size: .24rem;
+  background: #0877ff;
+}
+
+html[data-progressive-disclosure-enhanced="true"] details[data-diagram-detail] {
+  display: none;
+  min-block-size: 0;
+  padding: .95rem 1rem 1rem;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  overflow: visible;
+}
+
+html[data-progressive-disclosure-enhanced="true"] details[data-diagram-detail][data-runtime-open="true"] {
+  display: block;
+}
+
+html[data-progressive-disclosure-enhanced="true"] details[data-diagram-detail] > summary {
+  padding: .15rem 2.65rem .7rem .1rem;
+  border-block-end: 1px solid rgba(141, 179, 216, .48);
+  color: #102033;
+  font-size: 1rem;
+  font-weight: 850;
+  list-style: none;
+}
+
+html[data-progressive-disclosure-enhanced="true"] details[data-diagram-detail] > summary::-webkit-details-marker {
+  display: none;
+}
+
+html[data-progressive-disclosure-enhanced="true"] details[data-diagram-detail] > :not(summary, [data-diagram-detail-close]) {
+  padding: .8rem .1rem .05rem;
+  color: #38546f;
+  font-size: .84rem;
+  line-height: 1.68;
+}
+
+html[data-progressive-disclosure-enhanced="true"] [data-diagram-detail-close] {
+  position: absolute;
+  inset-block-start: .72rem;
+  inset-inline-end: .72rem;
+  display: grid;
+  inline-size: 2rem;
+  block-size: 2rem;
+  place-items: center;
+  padding: 0;
+  border: 1px solid rgba(94, 151, 207, .68);
+  border-radius: 999px;
+  background: #fff;
+  color: #17324d;
+  font: inherit;
+  font-size: 1.12rem;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 .3rem .8rem rgba(20, 57, 92, .1);
+}
+
+html[data-progressive-disclosure-enhanced="true"] [data-diagram-detail-close]:hover {
+  border-color: #0877ff;
+  background: #e8f3ff;
+}
+
+html[data-progressive-disclosure-enhanced="true"] [data-diagram-detail-close]:focus-visible {
+  outline: 3px solid #77b8f2;
+  outline-offset: 2px;
+}
+
+@media (max-width: 48rem) {
+  [data-node-detail-region] > header { align-items: flex-start; flex-direction: column; }
+  [data-node-detail-grid] { grid-template-columns: 1fr; }
+  html[data-progressive-disclosure-enhanced="true"] [data-node-detail-grid] {
+    inline-size: var(--detail-width, min(21rem, calc(100vw - 1.25rem)));
+    max-block-size: min(22rem, calc(100vh - 1.25rem));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html[data-progressive-disclosure-enhanced="true"] [data-node-detail-grid] {
+    scroll-behavior: auto;
+  }
+}
+
+@media print {
+  [data-node-detail-region],
+  html[data-progressive-disclosure-enhanced="true"] [data-node-detail-region] {
+    position: static;
+    display: block;
+    margin-block-start: .875rem;
+    padding: .875rem;
+    border: 1px solid #b9cfe2;
+    background: #fff;
+    pointer-events: auto;
+  }
+  html[data-progressive-disclosure-enhanced="true"] [data-node-detail-region] > header {
+    display: flex;
+  }
+  [data-node-detail-grid],
+  html[data-progressive-disclosure-enhanced="true"] [data-node-detail-grid] {
+    position: static;
+    display: grid;
+    inline-size: auto;
+    max-block-size: none;
+    grid-template-columns: 1fr 1fr;
+    overflow: visible;
+    border: 0;
+    box-shadow: none;
+  }
+  html[data-progressive-disclosure-enhanced="true"] [data-node-detail-grid]::before {
+    display: none;
+  }
+  [data-diagram-detail][hidden],
+  html[data-progressive-disclosure-enhanced="true"] details[data-diagram-detail],
+  html[data-progressive-disclosure-enhanced="true"] details[data-diagram-detail][data-runtime-open="true"] {
+    display: block !important;
+    min-block-size: 0;
+    padding: 0;
+    border: 1px solid #b9cfe2;
+    border-radius: .8rem;
+  }
+  details[data-diagram-detail] > :not(summary, [data-diagram-detail-close]) {
+    display: block !important;
+  }
+  [data-diagram-detail-close] { display: none !important; }
+}
+</style>
+  <style data-sequence-kernel="1">
+    [data-sequence-canvas] {
+      --sequence-lane-min: 13rem;
+      --sequence-min-readable-font: 16px;
+      --sequence-page-gutter: clamp(16px, 3vw, 48px);
+      position: relative;
+      width: 100%;
+      border: 1px solid rgba(141, 179, 216, .54);
+      border-radius: var(--radius, 20px);
+      background: rgba(251, 253, 255, .94);
+      box-shadow: var(--shadow, 0 16px 42px rgba(20, 57, 92, .085));
+      overflow: visible;
+    }
+    [data-sequence-canvas][data-sequence-wide="true"] {
+      width: calc(100vw - (2 * var(--sequence-page-gutter)));
+      max-width: none;
+      margin-left: calc(50% - 50vw + var(--sequence-page-gutter));
+    }
+    [data-sequence-viewport]:focus-visible {
+      outline: 3px solid rgba(31, 111, 178, .44);
+      outline-offset: 2px;
+    }
+    [data-sequence-viewport] {
+      position: relative;
+      width: 100%;
+      overflow: visible;
+      overscroll-behavior: contain;
+      scrollbar-gutter: stable;
+    }
+    [data-sequence-canvas][data-sequence-overflow-x="true"] [data-sequence-viewport] {
+      overflow-x: auto;
+      overflow-y: visible;
+    }
+    [data-sequence-canvas][data-sequence-long="true"] [data-sequence-viewport] {
+      max-height: clamp(520px, 75vh, 900px);
+      overflow-y: auto;
+      scroll-padding-top: var(--sequence-sticky-header-height, 0px);
+    }
+    [data-sequence-message] {
+      scroll-margin-top: var(--sequence-sticky-header-height, 0px);
+    }
+    [data-sequence-stage] {
+      position: relative;
+      min-width: max(100%, var(--sequence-natural-width, 100%));
+      padding: 14px 16px 24px;
+      background:
+        linear-gradient(rgba(38, 102, 154, .043) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(38, 102, 154, .043) 1px, transparent 1px);
+      background-size: 22px 22px;
+      transform-origin: top left;
+    }
+    [data-sequence-stage] [data-participant-id] strong,
+    [data-sequence-stage] [data-participant-id] span,
+    [data-sequence-stage] [data-sequence-route],
+    [data-sequence-stage] [data-sequence-kind],
+    [data-sequence-stage] [data-sequence-description],
+    [data-sequence-stage] [data-sequence-phase-label] {
+      font-size: max(var(--sequence-min-readable-font), 1em);
+    }
+    [data-sequence-participants] {
+      position: relative;
+      z-index: 4;
+      display: grid;
+      grid-template-columns: repeat(var(--sequence-participant-count, 4), minmax(var(--sequence-lane-min), 1fr));
+      gap: 12px;
+      padding: 4px 0 14px;
+      background: rgba(251, 253, 255, .98);
+    }
+    [data-sequence-canvas][data-sequence-long="true"] [data-sequence-participants] {
+      position: sticky;
+      top: 0;
+      box-shadow: 0 12px 22px rgba(20, 57, 92, .07);
+    }
+    .sequence-messages { position: relative; z-index: 2; }
+    [data-sequence-phase-id] {
+      display: grid;
+      grid-template-columns: repeat(var(--sequence-participant-count, 4), minmax(var(--sequence-lane-min), 1fr));
+      gap: 0 12px;
+      padding: 16px 0 8px;
+      border-top: 1px dashed rgba(141, 179, 216, .6);
+    }
+    [data-sequence-phase-label] {
+      grid-column: 1 / -1;
+      width: max-content;
+      max-width: 100%;
+      margin: -16px 0 8px 8px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      color: var(--muted, #5a6c80);
+      background: var(--paper, #fbfdff);
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+    }
+    [data-sequence-step-index-label] {
+      display: inline-grid;
+      place-items: center;
+      min-inline-size: 1.75rem;
+      block-size: 1.75rem;
+      border: 1px solid rgba(31, 111, 178, .36);
+      border-radius: 999px;
+      padding-inline: .3rem;
+      color: var(--blue, #1f6fb2);
+      background: var(--paper, #fbfdff);
+      font-size: .75rem;
+      font-weight: 850;
+      line-height: 1;
+      font-variant-numeric: tabular-nums;
+    }
+    @media (max-width: 780px) {
+      [data-sequence-canvas],
+      [data-sequence-canvas][data-sequence-wide="true"] {
+        width: 100%;
+        margin-left: 0;
+      }
+      [data-sequence-viewport],
+      [data-sequence-canvas][data-sequence-overflow-x="true"] [data-sequence-viewport],
+      [data-sequence-canvas][data-sequence-long="true"] [data-sequence-viewport] {
+        max-height: none;
+        overflow: visible;
+        scroll-padding-top: 0 !important;
+      }
+      [data-sequence-message] { scroll-margin-top: 0 !important; }
+      [data-sequence-stage] {
+        min-width: 0 !important;
+        width: 100% !important;
+        padding: 12px;
+        zoom: 1 !important;
+      }
+      [data-sequence-participants] {
+        position: static !important;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+        box-shadow: none !important;
+      }
+      [data-sequence-phase-id] {
+        display: block;
+        padding: 20px 0 4px;
+      }
+    }
+    @media print {
+      [data-sequence-canvas] { --sequence-lane-min: 0px; }
+      [data-sequence-canvas],
+      [data-sequence-canvas][data-sequence-wide="true"] {
+        width: 100%;
+        margin: 0;
+        border: 1px solid #8db3d8;
+        box-shadow: none;
+      }
+      [data-sequence-viewport],
+      [data-sequence-canvas][data-sequence-overflow-x="true"] [data-sequence-viewport],
+      [data-sequence-canvas][data-sequence-long="true"] [data-sequence-viewport] {
+        max-height: none;
+        overflow: visible;
+        scroll-padding-top: 0 !important;
+      }
+      [data-sequence-message] { scroll-margin-top: 0 !important; }
+      [data-sequence-stage] {
+        position: static;
+        width: auto !important;
+        min-width: 0 !important;
+        height: auto !important;
+        zoom: 1 !important;
+      }
+      [data-sequence-participants] { position: static !important; box-shadow: none !important; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      [data-sequence-canvas] *, [data-sequence-canvas] *::before, [data-sequence-canvas] *::after {
+        scroll-behavior: auto !important;
+        transition: none !important;
+        animation: none !important;
+      }
+    }
+  </style>
+  <style data-sequence-visual="1">
+[data-sequence-canvas] .seq-step {
+  --line-color: var(--blue);
+  counter-increment: sequence-step;
+  position: relative;
+  display: block;
+  grid-column: 1 / -1;
+  width: 100%;
+  min-height: 4.5rem;
+  padding: 1.75rem 0 1.5rem;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  appearance: none;
+}
+[data-sequence-canvas] .seq-step:hover .seq-caption {
+  color: var(--blue);
+  text-decoration: underline;
+  text-underline-offset: .18rem;
+}
+[data-sequence-canvas] .seq-step[data-message-kind="return"] { --line-color: var(--green); }
+[data-sequence-canvas] .seq-step[data-message-kind="error"] { --line-color: var(--red); }
+[data-sequence-canvas] .seq-step[data-message-kind="async"] { --line-color: var(--violet); }
+[data-sequence-canvas] .seq-step[data-message-kind="self"] { --line-color: var(--amber); padding-bottom: 50px; }
+[data-sequence-canvas] .seq-number {
+  position: absolute;
+  left: 7px;
+  bottom: 8px;
+  color: var(--blue);
+  font-size: 12px;
+  font-weight: 850;
+  letter-spacing: .04em;
+}
+[data-sequence-canvas] .seq-arrow {
+  position: absolute;
+  bottom: 14px;
+  left: var(--from-x);
+  width: calc(var(--to-x) - var(--from-x));
+  height: 2px;
+  background: var(--line-color);
+}
+[data-sequence-canvas] .seq-arrow::after {
+  content: "";
+  position: absolute;
+  right: -1px;
+  top: -5px;
+  border-left: 10px solid var(--line-color);
+  border-top: 6px solid transparent;
+  border-bottom: 6px solid transparent;
+}
+[data-sequence-canvas] .seq-step[data-direction="reverse"] .seq-arrow {
+  left: var(--to-x);
+  width: calc(var(--from-x) - var(--to-x));
+}
+[data-sequence-canvas] .seq-step[data-direction="reverse"] .seq-arrow::after {
+  right: auto;
+  left: -1px;
+  border-right: 10px solid var(--line-color);
+  border-left: 0;
+}
+[data-sequence-canvas] .seq-step[data-message-kind="return"] .seq-arrow {
+  height: 0;
+  border-top: 2px dashed var(--line-color);
+  background: transparent;
+}
+[data-sequence-canvas] .seq-caption {
+  position: absolute;
+  inset-block-end: 1.75rem;
+  inset-inline-start: var(--mid-x);
+  z-index: 2;
+  display: block;
+  inline-size: min(20rem, 42vw);
+  min-block-size: 0;
+  transform: translateX(-50%);
+  padding: .1rem .35rem;
+  border: 0;
+  border-radius: .25rem;
+  background: #fbfdff;
+  text-align: left;
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+[data-sequence-canvas] .seq-step[data-message-kind="return"] .seq-caption {
+  border: 0;
+}
+[data-sequence-canvas] .seq-step[data-message-kind="error"] .seq-caption {
+  border: 0;
+  background: #fff7f7;
+}
+[data-sequence-canvas] .seq-route {
+  display: block;
+  margin-bottom: 1px;
+  color: var(--line-color);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.25;
+}
+[data-sequence-canvas] .seq-caption [data-sequence-kind] {
+  display: inline;
+  font-size: 12px;
+  line-height: 1.3;
+}
+[data-sequence-canvas] .seq-caption [data-sequence-description] {
+  display: none;
+}
+[data-sequence-canvas] .seq-step[data-message-kind="self"] .seq-arrow {
+  bottom: 10px;
+  left: var(--from-x);
+  width: 76px;
+  height: 31px;
+  border: 2px solid var(--line-color);
+  border-left: 0;
+  border-radius: 0 11px 11px 0;
+  background: transparent;
+}
+[data-sequence-canvas] .seq-step[data-message-kind="self"] .seq-arrow::after {
+  right: auto;
+  left: -1px;
+  top: 23px;
+  border-right: 10px solid var(--line-color);
+  border-left: 0;
+}
+[data-sequence-canvas] .seq-risk-pin,
+[data-sequence-canvas] [data-sequence-risk-id] {
+  display: block;
+  width: calc(100% - 16px);
+  margin: 8px;
+  padding: 10px 14px;
+  border: 1px solid rgba(166,58,58,.44);
+  border-left: 5px solid var(--red);
+  border-radius: 12px;
+  color: var(--ink);
+  background: rgba(255,240,240,.96);
+  text-align: left;
+}
+
+[data-sequence-canvas] [data-sequence-lifeline-for] {
+  position: relative;
+}
+
+[data-sequence-canvas] [data-sequence-lifeline-for]::before {
+  content: "";
+  position: absolute;
+  inset-block-start: 18%;
+  inset-inline-start: -3px;
+  inline-size: 6px;
+  block-size: 22%;
+  border: 1px solid color-mix(in srgb, var(--participant-accent, var(--line)) 78%, #17324d);
+  background: #fff;
+}
+
+[data-sequence-canvas] [data-sequence-detail-trigger]::after {
+  content: none !important;
+}
+
+@media (max-width: 780px) {
+  [data-sequence-canvas] .seq-step {
+    display: grid;
+    grid-template-columns: 32px minmax(0,1fr);
+    gap: 8px;
+    min-height: 0;
+    margin: 0 0 18px;
+    padding: 10px;
+    border: 1px solid rgba(141,179,216,.58);
+    border-radius: .625rem;
+    background: rgba(255,255,255,.98);
+    text-align: left;
+  }
+  [data-sequence-canvas] .seq-step[data-message-kind="return"] {
+    border-style: dashed;
+    border-color: rgba(23,120,90,.48);
+  }
+  [data-sequence-canvas] .seq-step[data-message-kind="error"] {
+    border-color: rgba(166,58,58,.44);
+    background: rgba(255,240,240,.98);
+  }
+  [data-sequence-canvas] .seq-step::after {
+    content: "↓";
+    position: absolute;
+    left: 50%;
+    bottom: -20px;
+    color: var(--line-color);
+    font-size: 18px;
+    font-weight: 900;
+  }
+  [data-sequence-canvas] .seq-number { position: static; align-self: start; padding-top: 2px; }
+  [data-sequence-canvas] .seq-arrow { display: none; }
+  [data-sequence-canvas] .seq-caption {
+    position: static;
+    display: block;
+    margin-left: 0;
+    width: auto;
+    min-height: 0;
+    transform: none;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+  [data-sequence-canvas] .seq-step:hover .seq-caption { color: var(--blue); box-shadow: none; }
+  [data-sequence-canvas] [data-sequence-lifeline-for]::before { content: none; }
+}
+</style>
+  <style data-template-contract="1">
+body{background:radial-gradient(circle at 18% 3%,rgba(214,233,255,.78),transparent 30rem),radial-gradient(circle at 78% 6%,rgba(228,246,239,.8),transparent 28rem),linear-gradient(rgba(93,133,173,.045) 1px,transparent 1px),linear-gradient(90deg,rgba(93,133,173,.045) 1px,transparent 1px),linear-gradient(180deg,#fff 0%,#f7fbff 54%,#fbfdff 100%);background-size:auto,auto,28px 28px,28px 28px,auto}
+[data-technical-design-package="1"]{display:grid;gap:1rem;border:0;background:transparent;box-shadow:none}
+.technical-view{min-inline-size:0;padding:1rem;border:1px solid #bfd2e4;border-radius:1rem;background:rgba(255,255,255,.96)}
+.technical-view[data-technical-view-id="overview"]{padding-inline:0}
+.technical-view[data-technical-view-id="overview"]>.view-heading{margin-inline:1rem}
+.view-heading{display:grid;grid-template-columns:minmax(0,1fr);gap:.24rem;align-items:baseline;margin:0 0 .8rem;padding:0 .1rem .7rem;border-bottom:1px solid #d8e4ef}
+.view-heading span{grid-row:1 / span 2;align-self:start;min-inline-size:2.3rem;color:var(--blue);font-size:.72rem;font-weight:900;letter-spacing:.09em}
+.view-heading h2{margin:0;font-size:clamp(1.15rem,2vw,1.45rem);line-height:1.25}.view-heading p{margin:0;color:var(--muted);font-size:.82rem;line-height:1.5}
+.technical-map{padding:.65rem}.technical-map svg{display:block;inline-size:100%;block-size:auto;border-radius:.7rem;background:linear-gradient(rgba(111,157,202,.08) 1px,transparent 1px),linear-gradient(90deg,rgba(111,157,202,.08) 1px,transparent 1px),#fbfdff;background-size:24px 24px,24px 24px,auto}
+.map-boundary{fill:rgba(246,250,254,.76);stroke:#a9c3dc;stroke-width:1.5}.state-boundary{fill:rgba(244,248,255,.8)}.feedback-boundary{fill:rgba(242,239,255,.54);stroke:#8b75cf;stroke-dasharray:7 6}.boundary-label{fill:#38546f;font-size:13px;font-weight:850}.vertical-label{font-size:11px}
+.map-node{fill:#fff;stroke:#176fb3;stroke-width:2;filter:drop-shadow(0 4px 8px rgba(25,67,107,.08))}.map-node.green{stroke:#11815d;fill:#f7fffb}.map-node.violet{stroke:#6954be;fill:#faf9ff}.map-node.amber{stroke:#a66a00;fill:#fffcf3}
+.node-link{display:flex;inline-size:100%;block-size:100%;flex-direction:column;align-items:center;justify-content:center;gap:.28rem;padding:.55rem;color:#17324d;text-align:center;text-decoration:none;overflow-wrap:anywhere}.node-link b{font-size:.88rem;line-height:1.22}.node-link small{color:var(--muted);font-size:.69rem;line-height:1.35}
+.route{fill:none;stroke:#176fb3;stroke-width:3.5;stroke-linecap:round;stroke-linejoin:round}.route.green{stroke:#11815d}.route.violet{stroke:#6954be;stroke-dasharray:9 7}.route.amber{stroke:#a66a00;stroke-dasharray:4 7}.route-label{display:block;fill:#38546f;font-size:11px;font-weight:800;paint-order:stroke;stroke:#fbfdff;stroke-width:5px;stroke-linejoin:round}
+.semantic-table-wrap{max-inline-size:100%;overflow-x:auto;border:1px solid #c4d6e7;border-radius:.8rem;background:#fff}
+[data-technical-semantic-table]{inline-size:100%;min-inline-size:52rem;border-collapse:collapse;font-size:.78rem;line-height:1.45}
+[data-technical-semantic-table] caption{padding:.75rem 1rem;color:#17324d;font-weight:850;text-align:left}
+[data-technical-semantic-table] th,[data-technical-semantic-table] td{padding:.72rem .8rem;border-top:1px solid #dce7f1;border-inline-end:1px solid #e3ebf3;text-align:left;vertical-align:top;overflow-wrap:anywhere}
+[data-technical-semantic-table] thead th{background:#eef6fd;color:#294762;font-weight:850}[data-technical-semantic-table] tbody th{background:#f8fbfe;color:#17324d;min-inline-size:8rem}[data-technical-semantic-table] mark{padding:.08rem .28rem;border-radius:.25rem;background:#fff0ba;color:#704800}
+.technical-sequence{--sequence-natural-width:54rem;--sequence-participant-count:4;box-shadow:none}
+.technical-sequence .sequence-stage{position:relative;min-inline-size:54rem;padding:.75rem}
+.technical-sequence .sequence-participants{position:sticky;inset-block-start:0;z-index:6;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:.65rem;padding:.15rem 0 .8rem;background:linear-gradient(180deg,#f8fbfe 76%,rgba(248,251,254,0))}
+.technical-sequence [data-participant-id]{min-inline-size:0;border:1px solid #8fb6d9;border-radius:.65rem;background:linear-gradient(180deg,#f8fbff 0%,#e7f2fc 100%);box-shadow:0 .3rem .8rem rgba(23,77,124,.08)}
+.technical-sequence [data-participant-id] a{display:flex;min-block-size:4.25rem;flex-direction:column;justify-content:center;padding:.55rem .7rem;text-align:center;text-decoration:none;overflow-wrap:anywhere}
+.technical-sequence [data-participant-id] strong{font-size:.86rem}.technical-sequence [data-participant-id] span{margin-top:.2rem;color:var(--muted);font-size:.69rem}
+.technical-sequence .sequence-lifelines{position:absolute;inset:5.8rem .75rem 1rem;display:grid;grid-template-columns:repeat(4,1fr);pointer-events:none}
+.technical-sequence [data-sequence-lifeline-for]{justify-self:center;block-size:100%;border-left:2px dashed #88aecd}
+.technical-sequence .sequence-messages{position:relative;z-index:2;display:grid;gap:.35rem;padding-top:.3rem}
+.technical-sequence [data-sequence-phase-id]{position:relative;display:grid;gap:.15rem;padding:.65rem 0 .3rem;border-top:1px dashed #c5d7e8}
+.technical-sequence [data-sequence-fragment-label],.technical-sequence [data-sequence-phase-label]{display:inline-block;margin-inline:.6rem;color:#38546f;font-size:.7rem;font-weight:850}
+.technical-sequence .seq-caption{border-color:#8fb6d9;background:linear-gradient(180deg,#f8fbff 0%,#eaf4ff 100%)}
+.technical-sequence .seq-step[data-message-kind="async"] .seq-caption{border-color:#a89cda;background:linear-gradient(180deg,#fbfaff 0%,#f2efff 100%)}
+.technical-sequence .seq-step[data-message-kind="return"] .seq-caption{border-color:#88bfae;background:linear-gradient(180deg,#f9fffc 0%,#eaf8f2 100%)}
+.technical-sequence .seq-step[data-message-kind="error"] .seq-caption{border-color:#d7a0a5;background:linear-gradient(180deg,#fffafb 0%,#fff0f1 100%)}
+@media(max-width:48rem){
+  main{width:min(100vw - 1rem,72rem);padding-top:.75rem}
+  .technical-view{padding:.65rem}
+  .technical-view[data-technical-view-id="overview"]{padding-inline:0}
+  .technical-view[data-technical-view-id="overview"]>.view-heading{margin-inline:.65rem}
+  .view-heading{grid-template-columns:1fr}
+  .view-heading span{grid-row:auto}
+  .technical-map{overflow-x:auto}
+  .technical-map svg{min-inline-size:58rem}
+  .technical-sequence,
+  .technical-sequence .sequence-viewport,
+  .technical-sequence .sequence-stage,
+  .technical-sequence .sequence-messages,
+  .technical-sequence [data-sequence-phase-id],
+  .technical-sequence .seq-step{min-inline-size:0;max-inline-size:100%}
+  .technical-sequence .sequence-viewport{overflow-x:clip}
+  .technical-sequence [data-sequence-phase-id]{display:block}
+  .technical-sequence .sequence-participants{position:static;grid-template-columns:1fr 1fr}
+  .technical-sequence .sequence-lifelines{display:none}
+  [data-technical-semantic-table]{min-inline-size:46rem}
+}
+@media print{.technical-view{break-inside:avoid;border-color:#9cb5cc;box-shadow:none}.semantic-table-wrap{overflow:visible}[data-technical-semantic-table]{min-inline-size:0}}
+</style>
+</head>
+<body>
+<main data-diagram-type="technical-design" data-template-family="technical-design" data-template-id="technical-design-package" data-template-layout="technical-design-package" data-template-contract-version="2">
+  <header data-diagram-title-region data-artifact-shell-title="1"><div data-diagram-title-copy><h1 data-slot="title">Zeus 会话输入通用附件开发设计</h1><p class="summary" data-slot="summary">结论：采用“共享输入资源控制器 + 主进程资源 Broker + 混合持久化”的方案，对齐当前 Codex App 的文件与文件夹选择、图片/文件粘贴、拖放、超长文本转附件和资源单独发送；图中严格区分现状证据、建议设计与待打包运行验收。</p></div></header>
+  <section data-slot="evidence-and-notes" data-evidence-ledger="1" data-diagram-reading-guide="1" aria-label="图表阅读指南">
+    <div data-reading-guide-heading><strong>阅读指南</strong></div>
+    <div data-reading-guide-groups>
+      <div data-reading-guide-group="relations"><span data-reading-guide-group-title>关系类型</span><span data-reading-guide-item data-line-kind="line-01"><i data-line-swatch aria-hidden="true"></i><b>输入与命令</b></span><span data-reading-guide-item data-line-kind="line-02"><i data-line-swatch aria-hidden="true"></i><b>成功与持久化</b></span><span data-reading-guide-item data-line-kind="line-03"><i data-line-swatch aria-hidden="true"></i><b>状态与恢复</b></span><span data-reading-guide-item data-line-kind="line-04"><i data-line-swatch aria-hidden="true"></i><b>异常与人工重试</b></span></div>
+      <div data-reading-guide-group="evidence"><span data-reading-guide-group-title>证据状态</span><article data-evidence-id="evidence-observed" data-evidence-status="observed" data-evidence-for="technical-design-overview layout-node-001 layout-node-002 layout-node-003 layout-node-004" data-evidence-source-kind="file" data-evidence-source="apps/desktop/src/main/main.ts:613; apps/desktop/src/renderer/App.tsx:7258; apps/desktop/src/renderer/session/ConversationComposer.tsx:366; packages/local-server/src/codexNativeConversationCoordinator.ts:360; /Applications/Codex.app 26.721.41059"><b>已观察实现</b></article><article data-evidence-id="evidence-check" data-evidence-status="observed" data-evidence-for="technical-design-overview technical-design-consistency technical-design-recovery" data-evidence-source-kind="test" data-evidence-source="2026-07-28 Zeus 源码、既有 taskClipboard 能力与 Codex app.asar 只读静态检查"><b>已完成检查</b></article><article data-evidence-id="evidence-unresolved" data-evidence-status="unresolved" data-evidence-for="technical-design-consistency technical-design-recovery" data-evidence-source-kind="runtime" data-evidence-source="Zeus 正式打包 App 的选择、粘贴、拖放、长文本、资源单发与失败恢复尚未运行验收"><b>尚未验证</b></article></div>
+    </div>
+    <div data-reading-guide-controls aria-label="图表缩放控制"><div data-reading-guide-group="interaction" data-interaction-hint="node-detail" data-node-detail-interaction-hint="1"><span data-reading-guide-group-title>交互方式</span><span data-reading-guide-item>☝️ <b>点击节点或时序步骤查看实现细节</b></span></div><div data-diagram-controls="technical-design-overview" aria-label="图表缩放按钮"><button type="button" data-diagram-zoom-control="0.75" aria-pressed="false">75%</button><button type="button" data-diagram-zoom-control="0.9" aria-pressed="false">90%</button><button type="button" data-diagram-zoom-control="1" aria-pressed="false">100%</button><button type="button" data-diagram-zoom-control="fit" aria-pressed="true">自动</button><output data-diagram-zoom-status aria-live="polite">适应宽度</output></div></div>
+  </section>
+  <section class="template-layout" data-technical-design-package="1" data-diagram-composition-root="technical-design-package">
+    <section class="technical-view" data-technical-view-id="overview" data-view-kind="diagram" data-reuse-family="system-architecture" data-reuse-template="component-breakdown">
+  <header class="view-heading"><h2>架构图｜一条会话域管线接住全部输入来源</h2><p>不再让会话复用任务附件 IPC；渲染层只管交互状态，主进程负责路径信任、资源物化与再次校验。</p></header>
+  <div data-diagram-canvas data-diagram-contract="1" data-diagram-id="technical-design-overview" data-diagram-control-scope="primary" data-diagram-controls-mode="persistent" data-diagram-profile="graph" data-diagram-width="auto" data-diagram-height="flow" data-diagram-mobile="summary">
+    <section data-diagram-stage class="technical-map" aria-label="会话输入通用附件推荐架构图">
+      <svg viewBox="0 0 1160 360" role="img" aria-labelledby="layout-node-001">
+        <defs>
+  <marker id="arrow-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto"><path d="M1 1L9 5L1 9Z" fill="#176fb3"></path></marker>
+  <marker id="arrow-green" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto"><path d="M1 1L9 5L1 9Z" fill="#11815d"></path></marker>
+  <marker id="arrow-violet" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto"><path d="M1 1L9 5L1 9Z" fill="#6954be"></path></marker>
+  <marker id="arrow-amber" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto"><path d="M1 1L9 5L1 9Z" fill="#b06f00"></path></marker>
+</defs>
+        <g data-diagram-group-id="layout-group-001" data-semantic-role="renderer-input-boundary"><rect class="map-boundary" x="24" y="48" width="286" height="250" rx="14"></rect><text class="boundary-label" x="48" y="78">会话输入界面</text></g>
+        <g data-diagram-group-id="layout-group-002" data-semantic-role="shared-controller-main-boundary"><rect class="map-boundary" x="326" y="48" width="520" height="250" rx="14"></rect><text class="boundary-label" x="350" y="78">共享控制器与主进程边界</text></g>
+        <g data-diagram-group-id="layout-group-003" data-semantic-role="conversation-service-boundary"><rect class="map-boundary" x="862" y="48" width="274" height="250" rx="14"></rect><text class="boundary-label" x="886" y="78">会话传输与持久化</text></g>
+        <g id="layout-node-001" data-diagram-node-id="layout-node-001" data-semantic-role="input-surface" data-detail-for="layout-detail-001" data-node-primary-label="统一输入入口">
+  <rect class="map-node blue" x="64" y="118" width="206" height="112" rx="12"></rect>
+  <foreignObject x="70" y="124" width="194" height="100"><div><a class="node-link" data-diagram-detail-trigger="primary" data-detail-for="layout-detail-001" href="#layout-detail-001" aria-expanded="false"><b data-slot="layout-slot-001">统一输入入口</b><small>+ 选择 · 粘贴 · 拖放 · 超长文本</small></a></div></foreignObject>
+</g>
+        <g id="layout-node-002" data-diagram-node-id="layout-node-002" data-semantic-role="composer-input-controller" data-detail-for="layout-detail-002" data-node-primary-label="输入资源控制器">
+  <rect class="map-node violet" x="366" y="118" width="206" height="112" rx="12"></rect>
+  <foreignObject x="372" y="124" width="194" height="100"><div><a class="node-link" data-diagram-detail-trigger="primary" data-detail-for="layout-detail-002" href="#layout-detail-002" aria-expanded="false"><b data-slot="layout-slot-002">输入资源控制器</b><small>归一化、去重、资源条目与草稿状态</small></a></div></foreignObject>
+</g>
+        <g id="layout-node-003" data-diagram-node-id="layout-node-003" data-semantic-role="conversation-resource-broker" data-detail-for="layout-detail-003" data-node-primary-label="会话资源 Broker">
+  <rect class="map-node green" x="600" y="118" width="206" height="112" rx="12"></rect>
+  <foreignObject x="606" y="124" width="194" height="100"><div><a class="node-link" data-diagram-detail-trigger="primary" data-detail-for="layout-detail-003" href="#layout-detail-003" aria-expanded="false"><b data-slot="layout-slot-003">会话资源 Broker</b><small>原生选择、路径校验、剪贴板与文本物化</small></a></div></foreignObject>
+</g>
+        <g id="layout-node-004" data-diagram-node-id="layout-node-004" data-semantic-role="conversation-transport" data-detail-for="layout-detail-004" data-node-primary-label="Codex 会话传输">
+  <rect class="map-node amber" x="896" y="118" width="206" height="112" rx="12"></rect>
+  <foreignObject x="902" y="124" width="194" height="100"><div><a class="node-link" data-diagram-detail-trigger="primary" data-detail-for="layout-detail-004" href="#layout-detail-004" aria-expanded="false"><b data-slot="layout-slot-004">Codex 会话传输</b><small>localImage / mention + 持久化回执</small></a></div></foreignObject>
+</g>
+        <path d="M270 174H366" class="route blue" data-route-intent="direct" marker-end="url(#arrow-blue)" data-diagram-visible-relation-id="layout-relation-001" data-from="layout-node-001" data-to="layout-node-002" data-relation-kind="input-flow"></path>
+<text class="route-label" x="318" y="158" text-anchor="middle" data-route-label-for="layout-relation-001">收集输入</text>
+        <path d="M572 174H600" class="route blue" data-route-intent="direct" marker-end="url(#arrow-blue)" data-diagram-visible-relation-id="layout-relation-002" data-from="layout-node-002" data-to="layout-node-003" data-relation-kind="trusted-resource-request"></path>
+<text class="route-label" x="586" y="158" text-anchor="middle" data-route-label-for="layout-relation-002">请求可信资源</text>
+        <path d="M806 174H896" class="route blue" data-route-intent="direct" marker-end="url(#arrow-blue)" data-diagram-visible-relation-id="layout-relation-003" data-from="layout-node-003" data-to="layout-node-004" data-relation-kind="provider-submit"></path>
+<text class="route-label" x="851" y="158" text-anchor="middle" data-route-label-for="layout-relation-003">冻结并发送</text>
+      </svg>
+      <span class="semantic-relation" data-diagram-relation-id="layout-relation-001" data-from="layout-node-001" data-to="layout-node-002" data-relation-kind="input-flow" data-semantic="会话输入事件进入共享资源控制器">收集输入</span>
+      <span class="semantic-relation" data-diagram-relation-id="layout-relation-002" data-from="layout-node-002" data-to="layout-node-003" data-relation-kind="trusted-resource-request" data-semantic="控制器通过会话域 IPC 请求可信资源">请求可信资源</span>
+      <span class="semantic-relation" data-diagram-relation-id="layout-relation-003" data-from="layout-node-003" data-to="layout-node-004" data-relation-kind="provider-submit" data-semantic="冻结正文与资源后映射并发送">冻结并发送</span>
+    </section>
+    <section data-node-detail-region data-detail-close-label="关闭节点说明">
+  <header><h2>架构节点说明</h2><p>这些细节同时标出 Zeus 当前缺口与建议落点。</p></header>
+  <div data-node-detail-grid>
+    <details id="layout-detail-001" data-diagram-detail="layout-detail-001" data-diagram-detail-id="layout-detail-001" data-detail-for="layout-node-001"><summary>统一输入入口</summary><p data-slot="layout-slot-301">两个会话输入框共享同一交互能力：原生选择器接受多文件与目录；paste/drop 先区分图片、普通文件、目录与纯文本；正文为空但资源非空时也允许发送。当前两个输入框均缺少资源 paste/drop，且发送逻辑要求正文非空。</p></details>
+    <details id="layout-detail-002" data-diagram-detail="layout-detail-002" data-diagram-detail-id="layout-detail-002" data-detail-for="layout-node-002"><summary>输入资源控制器</summary><p data-slot="layout-slot-302">建议新增 ComposerInputResourceController 与共享 reducer。它只保存编辑器草稿、资源条目、错误和冻结发送快照，不授权任意路径；新建会话与既有会话必须走相同状态机，避免功能漂移。</p></details>
+    <details id="layout-detail-003" data-diagram-detail="layout-detail-003" data-diagram-detail-id="layout-detail-003" data-detail-for="layout-node-003"><summary>会话资源 Broker</summary><p data-slot="layout-slot-303">建议新增会话域 IPC：choose / readClipboard / materialize / validate。复用 taskClipboard 的底层解析能力，但抽离任务命名。显式选择的既有路径经 realpath 校验后可引用；剪贴板位图与 Pasted text.txt 写入会话专用资源目录。</p></details>
+    <details id="layout-detail-004" data-diagram-detail="layout-detail-004" data-diagram-detail-id="layout-detail-004" data-detail-for="layout-node-004"><summary>Codex 会话传输</summary><p data-slot="layout-slot-304">Provider 映射保持窄接口：图片 → localImage；文件、目录、长文本 → mention。只有服务端返回持久化回执后才清空草稿与资源；所有文件可附加不等于承诺解析所有二进制格式。</p></details>
+  </div>
+</section>
+  </div>
+  <details class="diagram-fallback" data-fallback-for="technical-design-overview">
+  <summary>查看推荐架构的文字关系</summary>
+  <section data-semantic-edge-ledger aria-label="语义关系文字清单">
+    <div data-semantic-edge-grid>
+      <article data-semantic-edge data-fallback-relation-id="layout-relation-001" data-from="layout-node-001" data-to="layout-node-002" data-relation-kind="input-flow"><span data-semantic-edge-route><b>收集输入</b><i aria-hidden="true"></i><b>收集输入</b></span></article>
+      <article data-semantic-edge data-fallback-relation-id="layout-relation-002" data-from="layout-node-002" data-to="layout-node-003" data-relation-kind="trusted-resource-request"><span data-semantic-edge-route><b>请求可信资源</b><i aria-hidden="true"></i><b>请求可信资源</b></span></article>
+      <article data-semantic-edge data-fallback-relation-id="layout-relation-003" data-from="layout-node-003" data-to="layout-node-004" data-relation-kind="provider-submit"><span data-semantic-edge-route><b>冻结并发送</b><i aria-hidden="true"></i><b>冻结并发送</b></span></article>
+    </div>
+  </section>
+</details>
+</section>
+    <section class="technical-view" data-technical-view-id="runtime" data-view-kind="sequence" data-reuse-family="code-sequence" data-reuse-template="participant-timeline">
+  <header class="view-heading"><h2>时序图｜从操作系统输入到持久化用户消息</h2><p>选择、粘贴、拖放与长文本共用归一化链路；失败回到同一冻结快照，而不是清空编辑器。</p></header>
+  <section class="technical-sequence" aria-label="会话输入资源运行时时序图" data-sequence-canvas data-sequence-contract="1" data-sequence-id="layout-sequence-001" data-diagram-control-scope="embedded" data-sequence-role="standalone" data-sequence-width="contained" data-sequence-height="flow">
+    <div class="sequence-viewport" data-sequence-viewport tabindex="0" aria-label="横向浏览会话输入运行时时序">
+      <div class="sequence-stage" data-sequence-stage>
+        <header class="sequence-participants" data-sequence-participants>
+          <div data-participant-id="layout-participant-001" data-slot="layout-slot-041"><a data-sequence-detail-trigger="1" data-diagram-detail-trigger="primary" data-detail-for="layout-detail-015" href="#layout-detail-015" aria-expanded="false"><strong>用户与操作系统</strong><span>Finder、截图、Paste.app、键盘与拖放</span></a></div>
+          <div data-participant-id="layout-participant-002" data-slot="layout-slot-042"><a data-sequence-detail-trigger="1" data-diagram-detail-trigger="primary" data-detail-for="layout-detail-016" href="#layout-detail-016" aria-expanded="false"><strong>输入资源控制器</strong><span>两个 Composer 共用</span></a></div>
+          <div data-participant-id="layout-participant-003" data-slot="layout-slot-043"><a data-sequence-detail-trigger="1" data-diagram-detail-trigger="primary" data-detail-for="layout-detail-017" href="#layout-detail-017" aria-expanded="false"><strong>主进程资源 Broker</strong><span>可信选择、物化与校验</span></a></div>
+          <div data-participant-id="layout-participant-004" data-slot="layout-slot-044"><a data-sequence-detail-trigger="1" data-diagram-detail-trigger="primary" data-detail-for="layout-detail-018" href="#layout-detail-018" aria-expanded="false"><strong>会话服务</strong><span>映射与持久化</span></a></div>
+        </header>
+        <div class="sequence-lifelines" aria-hidden="true">
+          <i data-sequence-lifeline-for="layout-participant-001"></i><i data-sequence-lifeline-for="layout-participant-002"></i><i data-sequence-lifeline-for="layout-participant-003"></i><i data-sequence-lifeline-for="layout-participant-004"></i>
+        </div>
+        <div class="sequence-messages">
+          <section data-sequence-phase-id="layout-phase-001" data-sequence-fragment-id="layout-fragment-001" data-sequence-fragment-kind="group"><span data-sequence-fragment-label>收集阶段</span><span data-sequence-phase-label>任何入口都先变成候选资源</span>
+            <article class="seq-step" data-sequence-message data-sequence-message-id="layout-message-001" data-from="layout-participant-001" data-to="layout-participant-002" data-message-kind="sync" data-semantic="用户或操作系统提交候选输入" data-sequence-step-index="001" style="--sequence-start:1;--sequence-span:2;--from-x:12.5%;--to-x:37.5%">
+  <span class="seq-number" data-sequence-step-index-label>1</span>
+  <a class="seq-caption" data-sequence-detail-trigger="1" data-diagram-detail-trigger="primary" data-detail-for="layout-detail-019" href="#layout-detail-019" aria-expanded="false"><span class="seq-route" data-sequence-route>OS → 控制器</span><span data-sequence-kind>提交输入事件</span><span data-sequence-description>文件/目录选择、paste、drop；纯文本达到 5000 字符时转 Pasted text.txt。</span></a>
+  <span class="seq-arrow" aria-hidden="true"></span>
+</article>
+            <article class="seq-step" data-sequence-message data-sequence-message-id="layout-message-002" data-from="layout-participant-002" data-to="layout-participant-003" data-message-kind="sync" data-semantic="控制器请求主进程归一化与物化" data-sequence-step-index="002" style="--sequence-start:2;--sequence-span:2;--from-x:37.5%;--to-x:62.5%">
+  <span class="seq-number" data-sequence-step-index-label>2</span>
+  <a class="seq-caption" data-sequence-detail-trigger="1" data-diagram-detail-trigger="primary" data-detail-for="layout-detail-020" href="#layout-detail-020" aria-expanded="false"><span class="seq-route" data-sequence-route>控制器 → Broker</span><span data-sequence-kind>归一化与物化</span><span data-sequence-description>请求解析剪贴板、规范化 realpath，并为位图或生成文本建立稳定本地文件。</span></a>
+  <span class="seq-arrow" aria-hidden="true"></span>
+</article>
+          </section>
+          <section data-sequence-phase-id="layout-phase-002" data-sequence-fragment-id="layout-fragment-002" data-sequence-fragment-kind="group"><span data-sequence-fragment-label>发送阶段</span><span data-sequence-phase-label>冻结同一份正文与资源快照</span>
+            <article class="seq-step" data-sequence-message data-sequence-message-id="layout-message-003" data-from="layout-participant-003" data-to="layout-participant-004" data-message-kind="async" data-semantic="Broker 复验后提交 provider 输入" data-sequence-step-index="003" style="--sequence-start:3;--sequence-span:2;--from-x:62.5%;--to-x:87.5%">
+  <span class="seq-number" data-sequence-step-index-label>3</span>
+  <a class="seq-caption" data-sequence-detail-trigger="1" data-diagram-detail-trigger="primary" data-detail-for="layout-detail-021" href="#layout-detail-021" aria-expanded="false"><span class="seq-route" data-sequence-route>Broker → 会话服务</span><span data-sequence-kind>校验并发送</span><span data-sequence-description>发送前再次校验；图片映射 localImage，其他资源映射 mention；支持仅资源消息。</span></a>
+  <span class="seq-arrow" aria-hidden="true"></span>
+</article>
+            <article class="seq-step" data-sequence-message data-sequence-message-id="layout-message-004" data-from="layout-participant-004" data-to="layout-participant-003" data-message-kind="return" data-semantic="会话服务返回持久化回执" data-sequence-step-index="004" data-direction="reverse" style="--sequence-start:3;--sequence-span:2;--from-x:87.5%;--to-x:62.5%">
+  <span class="seq-number" data-sequence-step-index-label>4</span>
+  <a class="seq-caption" data-sequence-detail-trigger="1" data-diagram-detail-trigger="primary" data-detail-for="layout-detail-022" href="#layout-detail-022" aria-expanded="false"><span class="seq-route" data-sequence-route>会话服务 → Broker</span><span data-sequence-kind>返回持久化回执</span><span data-sequence-description>成功后返回 user turn / item 标识，控制器才可提交清空。</span></a>
+  <span class="seq-arrow" aria-hidden="true"></span>
+</article>
+          </section>
+          <section data-sequence-phase-id="layout-phase-003" data-sequence-fragment-id="layout-fragment-003" data-sequence-fragment-kind="alt"><span data-sequence-fragment-label>异常分支</span><span data-sequence-phase-label>任何失败都保留可恢复输入</span>
+            <article class="seq-step" data-sequence-message data-sequence-message-id="layout-message-005" data-from="layout-participant-003" data-to="layout-participant-001" data-message-kind="error" data-semantic="失败恢复冻结快照并显示逐项错误" data-sequence-step-index="005" data-direction="reverse" style="--sequence-start:1;--sequence-span:3;--from-x:62.5%;--to-x:12.5%">
+  <span class="seq-number" data-sequence-step-index-label>5</span>
+  <a class="seq-caption" data-sequence-detail-trigger="1" data-diagram-detail-trigger="primary" data-detail-for="layout-detail-023" href="#layout-detail-023" aria-expanded="false"><span class="seq-route" data-sequence-route>Broker → 用户</span><span data-sequence-kind>逐项错误并恢复</span><span data-sequence-description>不可读、路径变化、物化或发送失败时保留原文和资源；错误条目可移除或重试。</span></a>
+  <span class="seq-arrow" aria-hidden="true"></span>
+</article>
+          </section>
+        </div>
+      </div>
+    </div>
+  </section>
+  <section data-node-detail-region data-detail-close-label="关闭节点说明">
+  <header><h2>参与者与消息契约</h2><p>点击任意参与者或消息查看职责边界。</p></header>
+  <div data-node-detail-grid>
+    <details id="layout-detail-015" data-diagram-detail="layout-detail-015" data-diagram-detail-id="layout-detail-015" data-detail-for="layout-detail-015" data-sequence-detail="layout-detail-015" data-sequence-detail-for="layout-participant-001"><summary>用户与操作系统</summary><p data-slot="layout-slot-315">输入源不直接授予渲染层路径信任。选择器取消是无操作；Finder、截图工具和 Paste.app 都应作为真实验收来源。</p></details>
+    <details id="layout-detail-016" data-diagram-detail="layout-detail-016" data-diagram-detail-id="layout-detail-016" data-detail-for="layout-detail-016" data-sequence-detail="layout-detail-016" data-sequence-detail-for="layout-participant-002"><summary>输入资源控制器</summary><p data-slot="layout-slot-316">控制器负责将多入口事件收敛为同一资源数组，维护 collecting / ready / invalid / sending / send_failed 状态，并生成幂等发送快照。</p></details>
+    <details id="layout-detail-017" data-diagram-detail="layout-detail-017" data-diagram-detail-id="layout-detail-017" data-detail-for="layout-detail-017" data-sequence-detail="layout-detail-017" data-sequence-detail-for="layout-participant-003"><summary>主进程资源 Broker</summary><p data-slot="layout-slot-317">Broker 校验 sender、realpath、存在性和资源种类。目录只允许通过明确选择或拖放进入；不静默抓取远程 URL。</p></details>
+    <details id="layout-detail-018" data-diagram-detail="layout-detail-018" data-diagram-detail-id="layout-detail-018" data-detail-for="layout-detail-018" data-sequence-detail="layout-detail-018" data-sequence-detail-for="layout-participant-004"><summary>会话服务</summary><p data-slot="layout-slot-318">本地服务与 app-server 只接收已校验的 provider 输入；它不负责 UI 预览，也不应把任意文件可选择误解释为任意二进制可解析。</p></details>
+    <details id="layout-detail-019" data-diagram-detail="layout-detail-019" data-diagram-detail-id="layout-detail-019" data-detail-for="layout-detail-019" data-sequence-detail="layout-detail-019" data-sequence-detail-for="layout-message-001"><summary>提交输入事件</summary><p data-slot="layout-slot-319">DOM paste 能提供资源时直接收集；macOS 未触发 DOM paste 时通过原生剪贴板兜底。普通短文本保持在编辑器中。</p></details>
+    <details id="layout-detail-020" data-diagram-detail="layout-detail-020" data-diagram-detail-id="layout-detail-020" data-detail-for="layout-detail-020" data-sequence-detail="layout-detail-020" data-sequence-detail-for="layout-message-002"><summary>归一化与物化</summary><p data-slot="layout-slot-320">统一返回逐项结果：成功资源进入 ready，失败资源带错误原因保留在 UI；生成文本落盘失败时原文本不得从编辑器消失。</p></details>
+    <details id="layout-detail-021" data-diagram-detail="layout-detail-021" data-diagram-detail-id="layout-detail-021" data-detail-for="layout-detail-021" data-sequence-detail="layout-detail-021" data-sequence-detail-for="layout-message-003"><summary>校验并发送</summary><p data-slot="layout-slot-321">冻结 displayText、resources 和 idempotencyKey 后发送；发送期间的新编辑继续留在下一份草稿，不改变在途请求。</p></details>
+    <details id="layout-detail-022" data-diagram-detail="layout-detail-022" data-diagram-detail-id="layout-detail-022" data-detail-for="layout-detail-022" data-sequence-detail="layout-detail-022" data-sequence-detail-for="layout-message-004"><summary>返回持久化回执</summary><p data-slot="layout-slot-322">只有持久化成功才消费冻结快照。回执需要能关联当前发送尝试，避免重试导致重复或错误清空。</p></details>
+    <details id="layout-detail-023" data-diagram-detail="layout-detail-023" data-diagram-detail-id="layout-detail-023" data-detail-for="layout-detail-023" data-sequence-detail="layout-detail-023" data-sequence-detail-for="layout-message-005"><summary>逐项错误并恢复</summary><p data-slot="layout-slot-323">失败时恢复冻结快照并保留用户后续编辑；无效资源阻止发送，用户修复或删除后再重试。</p></details>
+  </div>
+</section>
+</section>
+    <section class="technical-view" data-technical-view-id="consistency" data-view-kind="diagram" data-reuse-family="state-data-model" data-reuse-template="state-machine">
+  <header class="view-heading"><h2>状态图｜清空编辑器必须晚于持久化回执</h2><p>正文和资源作为一个原子发送快照流转；失败回到资源就绪态，不能各自丢失。</p></header>
+  <div data-diagram-canvas data-diagram-contract="1" data-diagram-id="technical-design-consistency" data-diagram-control-scope="embedded" data-diagram-profile="graph" data-diagram-width="auto" data-diagram-height="flow" data-diagram-mobile="summary">
+    <section data-diagram-stage class="technical-map" aria-label="会话输入资源一致性状态图">
+      <svg viewBox="0 0 1160 390" role="img" aria-labelledby="layout-node-005">
+        <defs>
+  <marker id="arrow-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto"><path d="M1 1L9 5L1 9Z" fill="#176fb3"></path></marker>
+  <marker id="arrow-green" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto"><path d="M1 1L9 5L1 9Z" fill="#11815d"></path></marker>
+  <marker id="arrow-violet" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto"><path d="M1 1L9 5L1 9Z" fill="#6954be"></path></marker>
+  <marker id="arrow-amber" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto"><path d="M1 1L9 5L1 9Z" fill="#b06f00"></path></marker>
+</defs>
+        <g data-diagram-group-id="layout-group-004" data-semantic-role="atomic-draft-resource-state"><rect class="map-boundary state-boundary" x="24" y="50" width="1112" height="290" rx="14"></rect><text class="boundary-label" x="48" y="80">会话输入资源状态边界</text></g>
+        <g id="layout-node-005" data-diagram-node-id="layout-node-005" data-semantic-role="editor-draft" data-detail-for="layout-detail-005" data-node-primary-label="编辑器草稿">
+  <rect class="map-node blue" x="75" y="125" width="210" height="110" rx="12"></rect>
+  <foreignObject x="81" y="131" width="198" height="98"><div><a class="node-link" data-diagram-detail-trigger="primary" data-detail-for="layout-detail-005" href="#layout-detail-005" aria-expanded="false"><b data-slot="layout-slot-005">编辑器草稿</b><small>短文本、正在编辑的内容</small></a></div></foreignObject>
+</g>
+        <g id="layout-node-006" data-diagram-node-id="layout-node-006" data-semantic-role="collected-resources" data-detail-for="layout-detail-006" data-node-primary-label="已收集资源">
+  <rect class="map-node violet" x="335" y="125" width="210" height="110" rx="12"></rect>
+  <foreignObject x="341" y="131" width="198" height="98"><div><a class="node-link" data-diagram-detail-trigger="primary" data-detail-for="layout-detail-006" href="#layout-detail-006" aria-expanded="false"><b data-slot="layout-slot-006">已收集资源</b><small>图片、文件、目录、Pasted text.txt</small></a></div></foreignObject>
+</g>
+        <g id="layout-node-007" data-diagram-node-id="layout-node-007" data-semantic-role="frozen-envelope" data-detail-for="layout-detail-007" data-node-primary-label="在途发送包">
+  <rect class="map-node green" x="595" y="125" width="210" height="110" rx="12"></rect>
+  <foreignObject x="601" y="131" width="198" height="98"><div><a class="node-link" data-diagram-detail-trigger="primary" data-detail-for="layout-detail-007" href="#layout-detail-007" aria-expanded="false"><b data-slot="layout-slot-007">在途发送包</b><small>正文 + 资源 + 幂等键</small></a></div></foreignObject>
+</g>
+        <g id="layout-node-008" data-diagram-node-id="layout-node-008" data-semantic-role="durable-user-turn" data-detail-for="layout-detail-008" data-node-primary-label="持久化用户消息">
+  <rect class="map-node amber" x="855" y="125" width="210" height="110" rx="12"></rect>
+  <foreignObject x="861" y="131" width="198" height="98"><div><a class="node-link" data-diagram-detail-trigger="primary" data-detail-for="layout-detail-008" href="#layout-detail-008" aria-expanded="false"><b data-slot="layout-slot-008">持久化用户消息</b><small>服务端确认的 turn / item</small></a></div></foreignObject>
+</g>
+        <path d="M285 180H335" class="route blue" data-route-intent="direct" marker-end="url(#arrow-blue)" data-diagram-visible-relation-id="layout-relation-004" data-from="layout-node-005" data-to="layout-node-006" data-relation-kind="normalize"></path>
+<text class="route-label" x="310" y="164" text-anchor="middle" data-route-label-for="layout-relation-004">归一化</text>
+        <path d="M545 180H595" class="route green" data-route-intent="direct" marker-end="url(#arrow-green)" data-diagram-visible-relation-id="layout-relation-005" data-from="layout-node-006" data-to="layout-node-007" data-relation-kind="freeze"></path>
+<text class="route-label" x="570" y="164" text-anchor="middle" data-route-label-for="layout-relation-005">冻结快照</text>
+        <path d="M805 180H855" class="route violet" data-route-intent="direct" marker-end="url(#arrow-violet)" data-diagram-visible-relation-id="layout-relation-006" data-from="layout-node-007" data-to="layout-node-008" data-relation-kind="persist"></path>
+<text class="route-label" x="830" y="164" text-anchor="middle" data-route-label-for="layout-relation-006">持久化成功</text>
+        <path d="M960 235V300H440V235" class="route amber" data-route-intent="feedback" data-route-reason="state-reconciliation" marker-end="url(#arrow-amber)" data-diagram-visible-relation-id="layout-relation-007" data-from="layout-node-008" data-to="layout-node-006" data-relation-kind="restore"></path>
+<text class="route-label" x="700" y="292" text-anchor="middle" data-route-label-for="layout-relation-007">失败原样恢复</text>
+      </svg>
+      <span class="semantic-relation" data-diagram-relation-id="layout-relation-004" data-from="layout-node-005" data-to="layout-node-006" data-relation-kind="normalize" data-semantic="草稿与输入事件归一化为统一资源">归一化</span>
+      <span class="semantic-relation" data-diagram-relation-id="layout-relation-005" data-from="layout-node-006" data-to="layout-node-007" data-relation-kind="freeze" data-semantic="冻结不可变发送快照">冻结快照</span>
+      <span class="semantic-relation" data-diagram-relation-id="layout-relation-006" data-from="layout-node-007" data-to="layout-node-008" data-relation-kind="persist" data-semantic="服务端持久化成功后消费快照">持久化成功</span>
+      <span class="semantic-relation" data-diagram-relation-id="layout-relation-007" data-from="layout-node-008" data-to="layout-node-006" data-relation-kind="restore" data-semantic="失败恢复正文与资源">失败原样恢复</span>
+    </section>
+    <section data-node-detail-region data-detail-close-label="关闭节点说明">
+  <header><h2>状态节点说明</h2><p>核心不变量：只有服务端持久化成功才能消费冻结快照。</p></header>
+  <div data-node-detail-grid>
+    <details id="layout-detail-005" data-diagram-detail="layout-detail-005" data-diagram-detail-id="layout-detail-005" data-detail-for="layout-node-005"><summary>编辑器草稿</summary><p data-slot="layout-slot-305">短文本留在编辑器；达到 5000 字符的粘贴文本候选转成文本资源。若物化失败，原文继续留在草稿。</p></details>
+    <details id="layout-detail-006" data-diagram-detail="layout-detail-006" data-diagram-detail-id="layout-detail-006" data-detail-for="layout-node-006"><summary>已收集资源</summary><p data-slot="layout-slot-306">每个资源有稳定 id、kind、source、name、localPath 和校验状态。图片预览失败可降级为普通文件，但资源本身不得静默消失。</p></details>
+    <details id="layout-detail-007" data-diagram-detail="layout-detail-007" data-diagram-detail-id="layout-detail-007" data-detail-for="layout-node-007"><summary>在途发送包</summary><p data-slot="layout-slot-307">发送动作复制当前草稿和 ready 资源形成不可变快照；后续输入写入下一草稿，确保在途请求可重试。</p></details>
+    <details id="layout-detail-008" data-diagram-detail="layout-detail-008" data-diagram-detail-id="layout-detail-008" data-detail-for="layout-node-008"><summary>持久化用户消息</summary><p data-slot="layout-slot-308">持久化消息是唯一可消费草稿的确认点。发送失败、超时或回执不匹配时回滚到已收集资源态。</p></details>
+  </div>
+</section>
+  </div>
+  <details class="diagram-fallback" data-fallback-for="technical-design-consistency">
+  <summary>查看一致性状态的文字关系</summary>
+  <section data-semantic-edge-ledger aria-label="语义关系文字清单">
+    <div data-semantic-edge-grid>
+      <article data-semantic-edge data-fallback-relation-id="layout-relation-004" data-from="layout-node-005" data-to="layout-node-006" data-relation-kind="normalize"><span data-semantic-edge-route><b>归一化</b><i aria-hidden="true"></i><b>归一化</b></span></article>
+      <article data-semantic-edge data-fallback-relation-id="layout-relation-005" data-from="layout-node-006" data-to="layout-node-007" data-relation-kind="freeze"><span data-semantic-edge-route><b>冻结快照</b><i aria-hidden="true"></i><b>冻结快照</b></span></article>
+      <article data-semantic-edge data-fallback-relation-id="layout-relation-006" data-from="layout-node-007" data-to="layout-node-008" data-relation-kind="persist"><span data-semantic-edge-route><b>持久化成功</b><i aria-hidden="true"></i><b>持久化成功</b></span></article>
+      <article data-semantic-edge data-fallback-relation-id="layout-relation-007" data-from="layout-node-008" data-to="layout-node-006" data-relation-kind="restore"><span data-semantic-edge-route><b>失败原样恢复</b><i aria-hidden="true"></i><b>失败原样恢复</b></span></article>
+    </div>
+  </section>
+</details>
+</section>
+    <section class="technical-view" data-technical-view-id="recovery" data-view-kind="diagram" data-reuse-family="business-flow" data-reuse-template="logic-flowchart">
+  <header class="view-heading"><h2>流程图｜逐项报错，保留成功项与原始输入</h2><p>不把选择取消当错误，不静默部分发送；无效条目修复后进入同一发送管线。</p></header>
+  <div data-diagram-canvas data-diagram-contract="1" data-diagram-id="technical-design-recovery" data-diagram-control-scope="embedded" data-diagram-profile="graph" data-diagram-width="auto" data-diagram-height="flow" data-diagram-mobile="summary">
+    <section data-diagram-stage class="technical-map recovery-map" aria-label="会话输入失败与恢复流程图">
+      <svg viewBox="0 0 1160 760" role="img" aria-labelledby="layout-node-009">
+        <defs>
+  <marker id="arrow-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto"><path d="M1 1L9 5L1 9Z" fill="#176fb3"></path></marker>
+  <marker id="arrow-green" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto"><path d="M1 1L9 5L1 9Z" fill="#11815d"></path></marker>
+  <marker id="arrow-violet" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto"><path d="M1 1L9 5L1 9Z" fill="#6954be"></path></marker>
+  <marker id="arrow-amber" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto"><path d="M1 1L9 5L1 9Z" fill="#b06f00"></path></marker>
+</defs>
+        <g data-diagram-group-id="layout-group-005" data-semantic-role="recovery-main-flow"><rect class="map-boundary" x="80" y="30" width="1000" height="680" rx="14"></rect><text class="boundary-label" x="108" y="62">收集、校验、发送与恢复主流程</text></g>
+        <g data-diagram-group-id="layout-group-006" data-semantic-role="operator-retry-lane"><rect class="map-boundary feedback-boundary" x="910" y="78" width="130" height="500" rx="14"></rect><text class="boundary-label vertical-label" x="1010" y="102">人工重试</text></g>
+        <g id="layout-node-009" data-diagram-node-id="layout-node-009" data-semantic-role="capture-input" data-detail-for="layout-detail-009" data-node-primary-label="捕获输入事件">
+  <rect class="map-node blue" x="480" y="75" width="200" height="90" rx="12"></rect>
+  <foreignObject x="486" y="81" width="188" height="78"><div><a class="node-link" data-diagram-detail-trigger="primary" data-detail-for="layout-detail-009" href="#layout-detail-009" aria-expanded="false"><b data-slot="layout-slot-009">捕获输入事件</b><small>+ / paste / drop / 长文本</small></a></div></foreignObject>
+</g>
+        <g id="layout-node-010" data-diagram-node-id="layout-node-010" data-semantic-role="normalize-materialize" data-detail-for="layout-detail-010" data-node-primary-label="归一化并物化">
+  <rect class="map-node violet" x="470" y="210" width="220" height="100" rx="12"></rect>
+  <foreignObject x="476" y="216" width="208" height="88"><div><a class="node-link" data-diagram-detail-trigger="primary" data-detail-for="layout-detail-010" href="#layout-detail-010" aria-expanded="false"><b data-slot="layout-slot-010">归一化并物化</b><small>分类、realpath、存在性、稳定文件</small></a></div></foreignObject>
+</g>
+        <g id="layout-node-011" data-diagram-node-id="layout-node-011" data-semantic-role="ready-resource" data-detail-for="layout-detail-011" data-node-primary-label="加入就绪资源">
+  <rect class="map-node green" x="230" y="355" width="210" height="100" rx="12"></rect>
+  <foreignObject x="236" y="361" width="198" height="88"><div><a class="node-link" data-diagram-detail-trigger="primary" data-detail-for="layout-detail-011" href="#layout-detail-011" aria-expanded="false"><b data-slot="layout-slot-011">加入就绪资源</b><small>资源条目可预览、删除、恢复文本</small></a></div></foreignObject>
+</g>
+        <g id="layout-node-012" data-diagram-node-id="layout-node-012" data-semantic-role="invalid-resource" data-detail-for="layout-detail-012" data-node-primary-label="显示无效条目">
+  <rect class="map-node amber" x="720" y="355" width="210" height="100" rx="12"></rect>
+  <foreignObject x="726" y="361" width="198" height="88"><div><a class="node-link" data-diagram-detail-trigger="primary" data-detail-for="layout-detail-012" href="#layout-detail-012" aria-expanded="false"><b data-slot="layout-slot-012">显示无效条目</b><small>逐项原因；阻止静默丢失</small></a></div></foreignObject>
+</g>
+        <g id="layout-node-013" data-diagram-node-id="layout-node-013" data-semantic-role="freeze-submit" data-detail-for="layout-detail-013" data-node-primary-label="冻结并提交快照">
+  <rect class="map-node blue" x="475" y="505" width="210" height="100" rx="12"></rect>
+  <foreignObject x="481" y="511" width="198" height="88"><div><a class="node-link" data-diagram-detail-trigger="primary" data-detail-for="layout-detail-013" href="#layout-detail-013" aria-expanded="false"><b data-slot="layout-slot-013">冻结并提交快照</b><small>正文可空，资源不可空；发送前复验</small></a></div></foreignObject>
+</g>
+        <g id="layout-node-014" data-diagram-node-id="layout-node-014" data-semantic-role="commit-or-restore" data-detail-for="layout-detail-014" data-node-primary-label="确认或原样恢复">
+  <rect class="map-node green" x="480" y="640" width="200" height="70" rx="12"></rect>
+  <foreignObject x="486" y="646" width="188" height="58"><div><a class="node-link" data-diagram-detail-trigger="primary" data-detail-for="layout-detail-014" href="#layout-detail-014" aria-expanded="false"><b data-slot="layout-slot-014">确认或原样恢复</b><small>成功清空；失败回到 ready</small></a></div></foreignObject>
+</g>
+        <path d="M580 165V210" class="route blue" data-route-intent="direct" marker-end="url(#arrow-blue)" data-diagram-visible-relation-id="layout-relation-008" data-from="layout-node-009" data-to="layout-node-010" data-relation-kind="validate"></path>
+<text class="route-label" x="600" y="194" text-anchor="start" data-route-label-for="layout-relation-008">进入校验</text>
+        <path d="M580 310H335V355" class="route green" data-route-intent="branch" marker-end="url(#arrow-green)" data-diagram-visible-relation-id="layout-relation-009" data-from="layout-node-010" data-to="layout-node-011" data-relation-kind="valid-branch"></path>
+<text class="route-label" x="445" y="300" text-anchor="middle" data-route-label-for="layout-relation-009">有效</text>
+        <path d="M580 310H825V355" class="route amber" data-route-intent="branch" marker-end="url(#arrow-amber)" data-diagram-visible-relation-id="layout-relation-010" data-from="layout-node-010" data-to="layout-node-012" data-relation-kind="invalid-branch"></path>
+<text class="route-label" x="715" y="300" text-anchor="middle" data-route-label-for="layout-relation-010">失败</text>
+        <path d="M335 455H580V505" class="route green" data-route-intent="merge" marker-end="url(#arrow-green)" data-diagram-visible-relation-id="layout-relation-011" data-from="layout-node-011" data-to="layout-node-013" data-relation-kind="submit"></path>
+<text class="route-label" x="455" y="474" text-anchor="middle" data-route-label-for="layout-relation-011">用户发送</text>
+        <path d="M825 455H580V505" class="route amber" data-route-intent="merge" marker-end="url(#arrow-amber)" data-diagram-visible-relation-id="layout-relation-012" data-from="layout-node-012" data-to="layout-node-013" data-relation-kind="repair-submit"></path>
+<text class="route-label" x="705" y="474" text-anchor="middle" data-route-label-for="layout-relation-012">修复或移除后发送</text>
+        <path d="M580 605V640" class="route blue" data-route-intent="direct" marker-end="url(#arrow-blue)" data-diagram-visible-relation-id="layout-relation-013" data-from="layout-node-013" data-to="layout-node-014" data-relation-kind="persist-or-restore"></path>
+<text class="route-label" x="600" y="628" text-anchor="start" data-route-label-for="layout-relation-013">持久化</text>
+        <path d="M930 405H990V120H680" class="route violet" data-route-intent="feedback" data-route-reason="operator-retry" marker-end="url(#arrow-violet)" data-diagram-visible-relation-id="layout-relation-014" data-from="layout-node-012" data-to="layout-node-009" data-relation-kind="operator-retry"></path>
+<text class="route-label" x="1002" y="255" text-anchor="start" data-route-label-for="layout-relation-014">保留原输入并重试</text>
+      </svg>
+      <span class="semantic-relation" data-diagram-relation-id="layout-relation-008" data-from="layout-node-009" data-to="layout-node-010" data-relation-kind="validate" data-semantic="捕获后进入归一化与校验">进入校验</span>
+      <span class="semantic-relation" data-diagram-relation-id="layout-relation-009" data-from="layout-node-010" data-to="layout-node-011" data-relation-kind="valid-branch" data-semantic="有效资源进入就绪条目">有效</span>
+      <span class="semantic-relation" data-diagram-relation-id="layout-relation-010" data-from="layout-node-010" data-to="layout-node-012" data-relation-kind="invalid-branch" data-semantic="无效资源显示逐项错误">失败</span>
+      <span class="semantic-relation" data-diagram-relation-id="layout-relation-011" data-from="layout-node-011" data-to="layout-node-013" data-relation-kind="submit" data-semantic="就绪资源与正文组成发送快照">用户发送</span>
+      <span class="semantic-relation" data-diagram-relation-id="layout-relation-012" data-from="layout-node-012" data-to="layout-node-013" data-relation-kind="repair-submit" data-semantic="修复或移除无效项后重试发送">修复或移除后发送</span>
+      <span class="semantic-relation" data-diagram-relation-id="layout-relation-013" data-from="layout-node-013" data-to="layout-node-014" data-relation-kind="persist-or-restore" data-semantic="服务端确认后清空，否则恢复">持久化</span>
+      <span class="semantic-relation" data-diagram-relation-id="layout-relation-014" data-from="layout-node-012" data-to="layout-node-009" data-relation-kind="operator-retry" data-semantic="人工操作后从原输入重新收集">保留原输入并重试</span>
+    </section>
+    <section data-node-detail-region data-detail-close-label="关闭节点说明">
+  <header><h2>恢复节点说明</h2><p>每一种失败都必须明确回答：用户看见什么、原数据在哪里、怎样继续。</p></header>
+  <div data-node-detail-grid>
+    <details id="layout-detail-009" data-diagram-detail="layout-detail-009" data-diagram-detail-id="layout-detail-009" data-detail-for="layout-node-009"><summary>捕获输入事件</summary><p data-slot="layout-slot-309">选择器取消直接结束；普通输入事件进入归一化。短文本不转资源，继续由编辑器处理。</p></details>
+    <details id="layout-detail-010" data-diagram-detail="layout-detail-010" data-diagram-detail-id="layout-detail-010" data-detail-for="layout-node-010"><summary>归一化并物化</summary><p data-slot="layout-slot-310">路径先 canonicalize/realpath，再校验存在性和类型；位图、无稳定路径数据与长文本写入会话专用资源目录。</p></details>
+    <details id="layout-detail-011" data-diagram-detail="layout-detail-011" data-diagram-detail-id="layout-detail-011" data-detail-for="layout-node-011"><summary>加入就绪资源</summary><p data-slot="layout-slot-311">成功资源立即以统一资源条目显示。图片有缩略图；普通文件和目录显示名称、类型、大小或路径范围。</p></details>
+    <details id="layout-detail-012" data-diagram-detail="layout-detail-012" data-diagram-detail-id="layout-detail-012" data-detail-for="layout-node-012"><summary>显示无效条目</summary><p data-slot="layout-slot-312">失败项保留可见错误。长文本落盘失败保留原文；预览失败降级为普通文件；失效路径在发送前阻止提交。</p></details>
+    <details id="layout-detail-013" data-diagram-detail="layout-detail-013" data-diagram-detail-id="layout-detail-013" data-detail-for="layout-node-013"><summary>冻结并提交快照</summary><p data-slot="layout-slot-313">发送时冻结 displayText、resources、draftScope 与 idempotencyKey。资源单独发送合法，空正文且空资源仍然禁止。</p></details>
+    <details id="layout-detail-014" data-diagram-detail="layout-detail-014" data-diagram-detail-id="layout-detail-014" data-detail-for="layout-node-014"><summary>确认或原样恢复</summary><p data-slot="layout-slot-314">持久化成功后清空对应快照；失败恢复正文和资源。人工修复从捕获或校验阶段重试，不新建隐式重复消息。</p></details>
+  </div>
+</section>
+  </div>
+  <details class="diagram-fallback" data-fallback-for="technical-design-recovery">
+  <summary>查看恢复流程的文字关系</summary>
+  <section data-semantic-edge-ledger aria-label="语义关系文字清单">
+    <div data-semantic-edge-grid>
+      <article data-semantic-edge data-fallback-relation-id="layout-relation-008" data-from="layout-node-009" data-to="layout-node-010" data-relation-kind="validate"><span data-semantic-edge-route><b>进入校验</b><i aria-hidden="true"></i><b>进入校验</b></span></article>
+      <article data-semantic-edge data-fallback-relation-id="layout-relation-009" data-from="layout-node-010" data-to="layout-node-011" data-relation-kind="valid-branch"><span data-semantic-edge-route><b>有效</b><i aria-hidden="true"></i><b>有效</b></span></article>
+      <article data-semantic-edge data-fallback-relation-id="layout-relation-010" data-from="layout-node-010" data-to="layout-node-012" data-relation-kind="invalid-branch"><span data-semantic-edge-route><b>失败</b><i aria-hidden="true"></i><b>失败</b></span></article>
+      <article data-semantic-edge data-fallback-relation-id="layout-relation-011" data-from="layout-node-011" data-to="layout-node-013" data-relation-kind="submit"><span data-semantic-edge-route><b>用户发送</b><i aria-hidden="true"></i><b>用户发送</b></span></article>
+      <article data-semantic-edge data-fallback-relation-id="layout-relation-012" data-from="layout-node-012" data-to="layout-node-013" data-relation-kind="repair-submit"><span data-semantic-edge-route><b>修复或移除后发送</b><i aria-hidden="true"></i><b>修复或移除后发送</b></span></article>
+      <article data-semantic-edge data-fallback-relation-id="layout-relation-013" data-from="layout-node-013" data-to="layout-node-014" data-relation-kind="persist-or-restore"><span data-semantic-edge-route><b>持久化</b><i aria-hidden="true"></i><b>持久化</b></span></article>
+      <article data-semantic-edge data-fallback-relation-id="layout-relation-014" data-from="layout-node-012" data-to="layout-node-009" data-relation-kind="operator-retry"><span data-semantic-edge-route><b>保留原输入并重试</b><i aria-hidden="true"></i><b>保留原输入并重试</b></span></article>
+    </div>
+  </section>
+</details>
+</section>
+  </section>
+</main>
+<script data-sequence-kernel="1">
+  (function () {
+    "use strict";
+    var sequenceScaleModes = new WeakMap();
+    var sequenceViewportAnchors = new WeakMap();
+
+    function sequenceCenterRatio(viewport) {
+      var width = Math.max(viewport.scrollWidth, 1);
+      return (viewport.scrollLeft + viewport.clientWidth / 2) / width;
+    }
+
+    function rememberSequenceAnchor(viewport) {
+      sequenceViewportAnchors.set(viewport, sequenceCenterRatio(viewport));
+    }
+
+    function sequenceToolbarFor(canvas) {
+      return Array.prototype.find.call(
+        document.querySelectorAll("[data-sequence-toolbar][data-sequence-controls]"),
+        function (toolbar) {
+          return toolbar.dataset.sequenceControls === canvas.dataset.sequenceId;
+        }
+      ) || null;
+    }
+
+    function preserveSequenceAnchor(viewport, mutate, preservedCenterRatio) {
+      var centerRatio = Number.isFinite(preservedCenterRatio)
+        ? preservedCenterRatio
+        : sequenceCenterRatio(viewport);
+      var focusedMessage = viewport.querySelector("[data-sequence-message]:focus");
+      mutate();
+      requestAnimationFrame(function () {
+        var nextWidth = Math.max(viewport.scrollWidth, 1);
+        viewport.scrollLeft = Math.max(0, centerRatio * nextWidth - viewport.clientWidth / 2);
+        rememberSequenceAnchor(viewport);
+        if (focusedMessage) {
+          focusedMessage.scrollIntoView({ block: "nearest", inline: "nearest" });
+        }
+      });
+    }
+
+    function applySequenceScale(canvas, mode, preservedCenterRatio) {
+      var viewport = canvas.querySelector("[data-sequence-viewport]");
+      var stage = canvas.querySelector("[data-sequence-stage]");
+      var toolbar = sequenceToolbarFor(canvas);
+      var status = toolbar && toolbar.querySelector("[data-sequence-scale-status]");
+      if (!viewport || !stage || !CSS.supports("zoom", "1")) return;
+      preserveSequenceAnchor(viewport, function () {
+        var naturalWidth = Math.max(
+          Number(canvas.dataset.sequenceNaturalWidth) || 0,
+          stage.scrollWidth || 1
+        );
+        var requested = mode === "fit"
+          ? Math.min(1, Math.max(0.75, viewport.clientWidth / naturalWidth))
+          : Math.min(1, Math.max(0.75, Number(mode) || 1));
+        stage.style.zoom = String(requested);
+        canvas.dataset.sequenceScale = String(requested);
+        sequenceScaleModes.set(canvas, mode);
+        if (toolbar) toolbar.querySelectorAll("[data-sequence-scale]").forEach(function (button) {
+          button.setAttribute("aria-pressed", String(button.dataset.sequenceScale === mode));
+        });
+        if (status) status.value = Math.round(requested * 100) + "%";
+      }, preservedCenterRatio);
+    }
+
+    function measureSequenceCanvas(canvas, preservedCenterRatio) {
+      var viewport = canvas.querySelector("[data-sequence-viewport]");
+      var stage = canvas.querySelector("[data-sequence-stage]");
+      var participants = canvas.querySelectorAll("[data-participant-id]");
+      var participantHeader = canvas.querySelector("[data-sequence-participants]");
+      var toolbar = sequenceToolbarFor(canvas);
+      if (!viewport || !stage || participants.length === 0) return;
+
+      delete canvas.dataset.sequenceWide;
+      var laneValue = getComputedStyle(canvas).getPropertyValue("--sequence-lane-min").trim();
+      var laneNumber = parseFloat(laneValue) || 13;
+      var rootFontSize = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+      var laneMinimum = laneValue.endsWith("rem") ? laneNumber * rootFontSize : laneNumber;
+      var naturalWidth = Math.ceil(participants.length * laneMinimum);
+      var contentWidth = canvas.parentElement ? canvas.parentElement.clientWidth : canvas.clientWidth;
+      var widthMode = canvas.dataset.sequenceWidth;
+      var shouldBreakOut = widthMode === "wide" || (widthMode === "auto" && naturalWidth > contentWidth);
+      if (shouldBreakOut) canvas.dataset.sequenceWide = "true";
+      stage.style.setProperty("--sequence-natural-width", naturalWidth + "px");
+      stage.style.setProperty("--sequence-participant-count", String(participants.length));
+      canvas.dataset.sequenceNaturalWidth = String(naturalWidth);
+
+      requestAnimationFrame(function () {
+        var supportsZoom = CSS.supports("zoom", "1");
+        var overflowX = stage.scrollWidth > viewport.clientWidth + 1;
+        canvas.dataset.sequenceOverflowX = String(overflowX);
+        if (toolbar) toolbar.hidden = !overflowX || !supportsZoom;
+        if (!supportsZoom) {
+          stage.style.zoom = "1";
+          canvas.dataset.sequenceScale = "1";
+        }
+
+        delete canvas.dataset.sequenceLong;
+        var heightMode = canvas.dataset.sequenceHeight;
+        var longThreshold = Math.min(900, Math.max(520, window.innerHeight * 0.75));
+        if (heightMode === "scroll" || (heightMode === "auto" && stage.scrollHeight > longThreshold)) {
+          canvas.dataset.sequenceLong = "true";
+        }
+        var stickyHeaderHeight = canvas.dataset.sequenceLong === "true" && participantHeader
+          ? Math.ceil(participantHeader.getBoundingClientRect().height)
+          : 0;
+        canvas.style.setProperty("--sequence-sticky-header-height", stickyHeaderHeight + "px");
+        stage.style.setProperty("--sequence-stage-height", Math.max(stage.scrollHeight, 320) + "px");
+        var activeScaleMode = sequenceScaleModes.get(canvas) || "fit";
+        if (overflowX && supportsZoom) {
+          applySequenceScale(canvas, activeScaleMode, preservedCenterRatio);
+        } else {
+          rememberSequenceAnchor(viewport);
+        }
+      });
+    }
+
+    function positionSequenceMessages(canvas, participantIds) {
+      var count = Math.max(participantIds.length, 1);
+      canvas.querySelectorAll("[data-sequence-message]").forEach(function (message) {
+        var fromIndex = participantIds.indexOf(message.dataset.from);
+        var toIndex = participantIds.indexOf(message.dataset.to);
+        if (fromIndex < 0 || toIndex < 0) return;
+        var from = ((fromIndex + 0.5) / count) * 100;
+        var to = ((toIndex + 0.5) / count) * 100;
+        var mid = fromIndex === toIndex ? Math.min(92, from + (50 / count)) : (from + to) / 2;
+        message.style.setProperty("--from-x", from.toFixed(4) + "%");
+        message.style.setProperty("--to-x", to.toFixed(4) + "%");
+        message.style.setProperty("--mid-x", mid.toFixed(4) + "%");
+        if (fromIndex > toIndex) message.dataset.direction = "reverse";
+      });
+    }
+
+    function initSequenceCanvas(canvas) {
+      try {
+        var viewport = canvas.querySelector("[data-sequence-viewport]");
+        var stage = canvas.querySelector("[data-sequence-stage]");
+        var participantNodes = Array.prototype.slice.call(canvas.querySelectorAll("[data-participant-id]"));
+        if (!viewport || !stage || participantNodes.length === 0) throw new Error("Incomplete sequence canvas");
+        if (canvas.dataset.sequenceContract !== "1") throw new Error("Unsupported sequence contract");
+        var participantIds = participantNodes.map(function (node) { return node.dataset.participantId; });
+        var messageKinds = new Set(["sync", "return", "async", "self", "error"]);
+        if (participantIds.some(function (id) { return !id; }) || new Set(participantIds).size !== participantIds.length) {
+          throw new Error("Invalid participant identities");
+        }
+        canvas.querySelectorAll("[data-sequence-message]").forEach(function (message) {
+          var source = message.dataset.from;
+          var target = message.dataset.to;
+          var kind = message.dataset.messageKind;
+          if (!participantIds.includes(source) || !participantIds.includes(target)) {
+            throw new Error("Invalid structured sequence endpoint");
+          }
+          if (!messageKinds.has(message.dataset.messageKind)) throw new Error("Invalid message kind");
+          if ((kind === "self") !== (source === target)) throw new Error("Invalid self message endpoints");
+        });
+        positionSequenceMessages(canvas, participantIds);
+        var toolbar = sequenceToolbarFor(canvas);
+        if (toolbar) toolbar.querySelectorAll("[data-sequence-scale]").forEach(function (button) {
+          button.addEventListener("click", function () {
+            applySequenceScale(canvas, button.dataset.sequenceScale || "fit");
+          });
+        });
+        viewport.addEventListener("scroll", function () {
+          rememberSequenceAnchor(viewport);
+        }, { passive: true });
+        rememberSequenceAnchor(viewport);
+        canvas.dataset.enhanced = "true";
+        measureSequenceCanvas(canvas);
+        if ("ResizeObserver" in window) {
+          var observer = new ResizeObserver(function () {
+            measureSequenceCanvas(canvas, sequenceViewportAnchors.get(viewport));
+          });
+          observer.observe(viewport);
+        } else {
+          window.addEventListener("resize", function () {
+            measureSequenceCanvas(canvas, sequenceViewportAnchors.get(viewport));
+          }, { passive: true });
+        }
+      } catch (error) {
+        delete canvas.dataset.enhanced;
+        delete canvas.dataset.sequenceWide;
+        delete canvas.dataset.sequenceOverflowX;
+        delete canvas.dataset.sequenceLong;
+        canvas.style.removeProperty("--sequence-sticky-header-height");
+        var toolbar = sequenceToolbarFor(canvas);
+        if (toolbar) toolbar.hidden = true;
+      }
+    }
+
+    document.querySelectorAll("[data-sequence-canvas]").forEach(initSequenceCanvas);
+  }());
+</script>
+<script data-adaptive-viewport-kernel="1">
+(() => {
+  "use strict";
+  const allowed = new Set(["fit", "0.75", "0.9", "1"]);
+  const managed = new Set();
+  const autoCentered = new WeakSet();
+  const requestedByCanvas = new WeakMap();
+  let resizeFrame = 0;
+
+  const stageFor = (canvas) => canvas.querySelector(":scope > [data-diagram-stage]");
+  const controlsFor = (canvas, root = document) =>
+    Array.from(root.querySelectorAll("[data-diagram-controls]")).filter(
+      (controls) => controls.dataset.diagramControls === canvas.dataset.diagramId
+    );
+  const reset = (canvas) => {
+    canvas.style.removeProperty("--diagram-scale");
+    canvas.removeAttribute("data-diagram-scaled");
+  };
+  const reflect = (controls, requested, applied, message) => {
+    controls.querySelectorAll("[data-diagram-zoom-control]").forEach((button) => {
+      button.setAttribute(
+        "aria-pressed",
+        String(button.dataset.diagramZoomControl === requested && applied)
+      );
+    });
+    const status = controls.querySelector("[data-diagram-zoom-status]");
+    if (status) {
+      status.textContent = message;
+      if ("value" in status) status.value = message;
+    }
+  };
+  const revealControls = (canvas, visible, overflow, root = document) => {
+    controlsFor(canvas, root).forEach((controls) => {
+      controls.hidden = !visible;
+      controls.dataset.diagramControlsVisible = String(visible);
+      controls.dataset.diagramOverflow = String(overflow);
+    });
+  };
+  const retest = (canvas, requested = requestedByCanvas.get(canvas) || canvas.dataset.diagramZoom || "fit") => {
+    reset(canvas);
+    if (!allowed.has(requested)) requested = "fit";
+    requestedByCanvas.set(canvas, requested);
+    const stage = stageFor(canvas);
+    if (!stage || !canvas.clientWidth || !stage.scrollWidth) {
+      revealControls(canvas, false, false);
+      return false;
+    }
+    const overflow = stage.scrollWidth > canvas.clientWidth + 1;
+    const persistent = canvas.dataset.diagramControlsMode === "persistent";
+    const controlsVisible = persistent || overflow;
+    revealControls(canvas, controlsVisible, overflow);
+    const controls = controlsFor(canvas);
+    if (!controlsVisible) {
+      controls.forEach((item) =>
+        reflect(
+          item,
+          "fit",
+          true,
+          item.dataset.diagramStatusFits || "Fits at 100%"
+        )
+      );
+      return true;
+    }
+    const scale = requested === "fit"
+      ? Math.min(1, canvas.clientWidth / stage.scrollWidth)
+      : Number(requested);
+    const applied = Number.isFinite(scale) && scale >= 0.75 && scale <= 1;
+    if (applied) {
+      canvas.style.setProperty("--diagram-scale", String(scale));
+      canvas.setAttribute("data-diagram-scaled", "true");
+    } else if (
+      requested === "fit"
+      && canvas.dataset.primaryDirection === "north-to-south"
+      && !autoCentered.has(canvas)
+    ) {
+      canvas.scrollLeft = Math.max(0, (stage.scrollWidth - canvas.clientWidth) / 2);
+      autoCentered.add(canvas);
+    }
+    controls.forEach((item) => {
+      const message = applied
+        ? (
+          requested === "fit"
+            ? (
+              overflow
+                ? item.dataset.diagramStatusFit || "Fit width"
+                : item.dataset.diagramStatusFits || "Fits at 100%"
+            )
+            : `${Number(requested) * 100}%`
+        )
+        : item.dataset.diagramStatusScroll || "Scroll";
+      reflect(item, requested, applied, message);
+    });
+    return applied;
+  };
+  const apply = (canvas, requested = "fit") => {
+    if (!allowed.has(requested)) return false;
+    if (requested === "fit") autoCentered.delete(canvas);
+    return retest(canvas, requested);
+  };
+  const scheduleRetest = () => {
+    if (resizeFrame) return;
+    resizeFrame = requestAnimationFrame(() => {
+      resizeFrame = 0;
+      managed.forEach((canvas) => retest(canvas));
+    });
+  };
+  const bind = (root = document) => {
+    root.querySelectorAll("[data-diagram-controls]").forEach((controls) => {
+      const id = controls.dataset.diagramControls;
+      const canvas = id
+        ? Array.from(root.querySelectorAll("[data-diagram-id]")).find(
+            (candidate) => candidate.dataset.diagramId === id
+          )
+        : null;
+      if (!canvas || controls.dataset.diagramBound === "true") return;
+      controls.dataset.diagramBound = "true";
+      controls.hidden = true;
+      controls.addEventListener("click", (event) => {
+        const button = event.target.closest("[data-diagram-zoom-control]");
+        if (!button || !controls.contains(button)) return;
+        const requested = button.dataset.diagramZoomControl;
+        apply(canvas, requested);
+      });
+    });
+  };
+  const resizeObserver = typeof ResizeObserver === "function"
+    ? new ResizeObserver(scheduleRetest)
+    : null;
+  const enhance = (root = document) => {
+    bind(root);
+    root.querySelectorAll('[data-diagram-canvas][data-diagram-contract="1"]')
+      .forEach((canvas) => {
+        try {
+          if (!managed.has(canvas)) {
+            managed.add(canvas);
+            if (resizeObserver) {
+              resizeObserver.observe(canvas);
+              const stage = stageFor(canvas);
+              if (stage) resizeObserver.observe(stage);
+            }
+          }
+          retest(canvas, canvas.dataset.diagramZoom || "fit");
+        } catch (_error) {
+          reset(canvas);
+          revealControls(canvas, false, false, root);
+        }
+      });
+  };
+  if (!resizeObserver) globalThis.addEventListener("resize", scheduleRetest, { passive: true });
+  globalThis.VibeDiagramViewport = Object.freeze({ apply, bind, enhance, reset, retest });
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", () => enhance(), { once: true });
+  } else {
+    enhance();
+  }
+})();
+</script>
+<script data-progressive-disclosure-kernel="1">
+(() => {
+  "use strict";
+  const activeByRoot = new WeakMap();
+  const returnFocusByRoot = new WeakMap();
+  const boundRoots = new WeakSet();
+  const lifecycleAuditByRoot = new WeakMap();
+  const isNativeDetails = (detail) => detail.matches("details");
+  const documentElementFor = (root) =>
+    root.nodeType === Node.DOCUMENT_NODE ? root.documentElement : root.ownerDocument.documentElement;
+  const viewFor = (root) =>
+    root.nodeType === Node.DOCUMENT_NODE
+      ? root.defaultView
+      : root.ownerDocument.defaultView;
+  const decodedHashFor = (view) => {
+    try {
+      return decodeURIComponent(view?.location.hash.slice(1) || "");
+    } catch (_error) {
+      return "";
+    }
+  };
+  const detailTriggerSelector = "[data-diagram-detail-trigger][data-detail-for]";
+  const triggersFor = (root, id) =>
+    Array.from(root.querySelectorAll(detailTriggerSelector)).filter(
+      (trigger) => trigger.dataset.detailFor === id
+    );
+  const reflect = (root, id, expanded) => {
+    triggersFor(root, id).forEach((trigger) => {
+      trigger.setAttribute("aria-expanded", String(expanded));
+    });
+  };
+  const regionFor = (detail) => detail.closest("[data-node-detail-region]");
+  const gridFor = (detail) => detail.closest("[data-node-detail-grid]");
+  const portalRegions = (root) => {
+    const documentRoot = root.nodeType === Node.DOCUMENT_NODE
+      ? root
+      : root.ownerDocument;
+    const host = documentRoot?.body;
+    if (!host) return;
+    Array.from(root.querySelectorAll("[data-node-detail-region]")).forEach((region) => {
+      if (region.parentElement === host) return;
+      region.dataset.runtimeDetailPortal = "true";
+      host.append(region);
+    });
+  };
+  const syncDocumentState = (root) => {
+    const documentElement = documentElementFor(root);
+    documentElement.setAttribute("data-progressive-disclosure-enhanced", "true");
+    documentElement.toggleAttribute(
+      "data-progressive-disclosure-open",
+      Boolean(root.querySelector("[data-node-detail-region][data-runtime-active='true']"))
+    );
+  };
+  const ensureCloseButton = (root, detail) => {
+    let button = detail.querySelector(":scope > [data-diagram-detail-close]");
+    if (button) return button;
+    const region = regionFor(detail);
+    button = detail.ownerDocument.createElement("button");
+    button.type = "button";
+    button.dataset.diagramDetailClose = "true";
+    button.setAttribute(
+      "aria-label",
+      region?.dataset.detailCloseLabel || "Close node details"
+    );
+    button.textContent = "×";
+    button.addEventListener("click", () => close(root, true));
+    detail.append(button);
+    return button;
+  };
+  const clamp = (value, minimum, maximum) =>
+    Math.min(Math.max(value, minimum), Math.max(minimum, maximum));
+  const place = (detail, trigger) => {
+    const grid = gridFor(detail);
+    const view = detail.ownerDocument.defaultView;
+    if (!grid || !view) return;
+    const margin = 12;
+    const gap = 10;
+    const viewportWidth = Math.max(0, view.innerWidth);
+    const viewportHeight = Math.max(0, view.innerHeight);
+    const width = Math.min(352, Math.max(240, viewportWidth - margin * 2));
+    grid.style.setProperty("--detail-width", `${width}px`);
+    grid.style.setProperty("--detail-left", `${margin}px`);
+    grid.style.setProperty("--detail-top", `${margin}px`);
+    const popupRect = grid.getBoundingClientRect();
+    const popupWidth = width;
+    const popupHeight = Math.min(
+      popupRect.height || 240,
+      Math.max(160, viewportHeight - margin * 2)
+    );
+    const triggerRect = trigger?.getBoundingClientRect();
+    let left = clamp((viewportWidth - popupWidth) / 2, margin, viewportWidth - popupWidth - margin);
+    let top = clamp((viewportHeight - popupHeight) / 2, margin, viewportHeight - popupHeight - margin);
+    let side = "center";
+    if (triggerRect) {
+      if (
+        viewportWidth >= 768
+        && triggerRect.right + gap + popupWidth <= viewportWidth - margin
+      ) {
+        left = triggerRect.right + gap;
+        side = "right";
+      } else if (
+        viewportWidth >= 768
+        && triggerRect.left - gap - popupWidth >= margin
+      ) {
+        left = triggerRect.left - gap - popupWidth;
+        side = "left";
+      } else {
+        left = clamp(
+          triggerRect.left + triggerRect.width / 2 - popupWidth / 2,
+          margin,
+          viewportWidth - popupWidth - margin
+        );
+        side = "center";
+      }
+      top = clamp(
+        triggerRect.top + triggerRect.height / 2 - popupHeight / 2,
+        margin,
+        viewportHeight - popupHeight - margin
+      );
+    }
+    left = clamp(left, margin, viewportWidth - popupWidth - margin);
+    top = clamp(top, margin, viewportHeight - popupHeight - margin);
+    grid.style.setProperty("--detail-left", `${Math.round(left)}px`);
+    grid.style.setProperty("--detail-top", `${Math.round(top)}px`);
+    const renderedRect = grid.getBoundingClientRect();
+    if (renderedRect.left < margin) left += margin - renderedRect.left;
+    if (renderedRect.right > viewportWidth - margin) {
+      left -= renderedRect.right - (viewportWidth - margin);
+    }
+    if (renderedRect.top < margin) top += margin - renderedRect.top;
+    if (renderedRect.bottom > viewportHeight - margin) {
+      top -= renderedRect.bottom - (viewportHeight - margin);
+    }
+    left = clamp(left, margin, viewportWidth - renderedRect.width - margin);
+    top = clamp(top, margin, viewportHeight - renderedRect.height - margin);
+    grid.style.setProperty("--detail-left", `${Math.round(left)}px`);
+    grid.style.setProperty("--detail-top", `${Math.round(top)}px`);
+    grid.dataset.popupSide = side;
+  };
+  const restoreDetail = (root, detail) => {
+    const id = detail.dataset.diagramDetail;
+    if (isNativeDetails(detail)) {
+      const wasOpen = detail.getAttribute("data-runtime-was-open") === "true";
+      detail.open = wasOpen;
+      detail.removeAttribute("data-runtime-was-open");
+    } else {
+      const wasHidden = detail.getAttribute("data-runtime-was-hidden") === "true";
+      detail.hidden = wasHidden;
+      detail.removeAttribute("data-runtime-was-hidden");
+    }
+    detail.removeAttribute("data-runtime-open");
+    detail.removeAttribute("role");
+    detail.removeAttribute("aria-modal");
+    const grid = gridFor(detail);
+    if (grid) {
+      grid.style.removeProperty("--detail-width");
+      grid.style.removeProperty("--detail-left");
+      grid.style.removeProperty("--detail-top");
+      delete grid.dataset.popupSide;
+    }
+    regionFor(detail)?.removeAttribute("data-runtime-active");
+    reflect(root, id, isNativeDetails(detail) && detail.open);
+  };
+  const close = (root = document, restoreFocus = true, clearHash = true) => {
+    const detail = activeByRoot.get(root);
+    if (!detail) return false;
+    const id = detail.dataset.diagramDetail;
+    restoreDetail(root, detail);
+    activeByRoot.delete(root);
+    syncDocumentState(root);
+    const view = viewFor(root);
+    if (
+      clearHash
+      && view
+      && decodedHashFor(view) === id
+    ) {
+      view.history.replaceState(
+        view.history.state,
+        "",
+        `${view.location.pathname}${view.location.search}`
+      );
+    }
+    if (restoreFocus) {
+      const trigger = returnFocusByRoot.get(root);
+      if (trigger?.isConnected) trigger.focus({ preventScroll: true });
+    }
+    returnFocusByRoot.delete(root);
+    return true;
+  };
+  const reset = (root = document) => {
+    close(root, false);
+    root.querySelectorAll("[data-diagram-detail][data-runtime-open]").forEach((detail) => {
+      restoreDetail(root, detail);
+    });
+    root.querySelectorAll("[data-node-detail-region][data-runtime-active]").forEach((region) => {
+      region.removeAttribute("data-runtime-active");
+    });
+    syncDocumentState(root);
+  };
+  const open = (root, id, trigger = null, updateHash = true) => {
+    const detail = root.querySelector(`[data-diagram-detail="${CSS.escape(id)}"]`);
+    if (!detail) return false;
+    const previous = activeByRoot.get(root);
+    if (previous && previous !== detail) restoreDetail(root, previous);
+    if (!detail.hasAttribute("data-runtime-open")) {
+      if (isNativeDetails(detail)) {
+        detail.setAttribute("data-runtime-was-open", String(detail.open));
+      } else {
+        detail.setAttribute("data-runtime-was-hidden", String(detail.hidden));
+      }
+    }
+    if (isNativeDetails(detail)) {
+      detail.open = true;
+    } else {
+      detail.hidden = false;
+    }
+    detail.setAttribute("data-runtime-open", "true");
+    detail.setAttribute("role", "dialog");
+    detail.setAttribute("aria-modal", "false");
+    regionFor(detail)?.setAttribute("data-runtime-active", "true");
+    activeByRoot.set(root, detail);
+    returnFocusByRoot.set(root, trigger || detail.ownerDocument.activeElement);
+    ensureCloseButton(root, detail);
+    reflect(root, id, true);
+    syncDocumentState(root);
+    place(detail, trigger);
+    const view = viewFor(root);
+    if (updateHash && view) {
+      const nextHash = `#${encodeURIComponent(id)}`;
+      if (view.location.hash !== nextHash) {
+        view.history.pushState(view.history.state, "", nextHash);
+      }
+    }
+    const focusTarget = detail.querySelector("summary") || detail;
+    focusTarget.focus({ preventScroll: true });
+    return true;
+  };
+  const bind = (root = document) => {
+    const triggers = root.querySelectorAll(detailTriggerSelector);
+    if (!triggers.length) return;
+    portalRegions(root);
+    syncDocumentState(root);
+    triggers.forEach((trigger) => {
+      const id = trigger.dataset.detailFor;
+      const detail = id
+        ? root.querySelector(`[data-diagram-detail="${CSS.escape(id)}"]`)
+        : null;
+      if (!detail || trigger.dataset.diagramDetailBound === "true") return;
+      trigger.dataset.diagramDetailBound = "true";
+      trigger.setAttribute("aria-controls", detail.id);
+      reflect(root, id, false);
+      trigger.addEventListener("click", (event) => {
+        event.preventDefault();
+        open(root, id, trigger);
+      });
+      if (isNativeDetails(detail) && detail.dataset.diagramToggleBound !== "true") {
+        detail.dataset.diagramToggleBound = "true";
+        detail.addEventListener("toggle", () => {
+          const runtimeOpen = detail.getAttribute("data-runtime-open") === "true";
+          if (runtimeOpen && !detail.open) close(root, true);
+          else reflect(root, id, detail.open);
+        });
+      }
+    });
+    if (boundRoots.has(root)) return;
+    boundRoots.add(root);
+    root.addEventListener("pointerdown", (event) => {
+      const detail = activeByRoot.get(root);
+      if (!detail) return;
+      const trigger = returnFocusByRoot.get(root);
+      if (!detail.contains(event.target) && !trigger?.contains(event.target)) {
+        close(root, false);
+      }
+    });
+    root.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && close(root, true)) event.preventDefault();
+    });
+    const view = viewFor(root);
+    const openFromHash = () => {
+      if (!view?.location.hash) return false;
+      const id = decodedHashFor(view);
+      return open(root, id, null, false);
+    };
+    view?.addEventListener("hashchange", () => {
+      if (!openFromHash()) close(root, false, false);
+    });
+    const reposition = () => {
+      const detail = activeByRoot.get(root);
+      if (detail) place(detail, returnFocusByRoot.get(root));
+    };
+    view?.addEventListener("resize", reposition);
+    view?.addEventListener("scroll", reposition, true);
+    openFromHash();
+  };
+  const auditLifecycle = (root = document) => {
+    const view = viewFor(root);
+    const documentElement = documentElementFor(root);
+    const triggers = Array.from(root.querySelectorAll(detailTriggerSelector));
+    const auditKey = `${view?.innerWidth || 0}x${view?.innerHeight || 0}:${triggers.length}`;
+    const cached = lifecycleAuditByRoot.get(root);
+    if (cached?.key === auditKey) return cached.result;
+    const issues = new Set();
+    const originalHash = view?.location.hash || "";
+    const originalFocus = root.activeElement;
+    const uniqueTriggers = new Map();
+    triggers.forEach((trigger) => {
+      const id = (trigger.dataset.detailFor || "").trim();
+      if (id && !uniqueTriggers.has(id)) uniqueTriggers.set(id, trigger);
+    });
+    const viewportPlacement = (element) => {
+      if (!element || !view) {
+        return { fits: false, trace: "missing" };
+      }
+      const rect = element.getBoundingClientRect();
+      const fits = (
+        rect.left >= -1
+        && rect.top >= -1
+        && rect.right <= view.innerWidth + 1
+        && rect.bottom <= view.innerHeight + 1
+      );
+      return {
+        fits,
+        trace: [
+          Math.round(rect.left),
+          Math.round(rect.top),
+          Math.round(rect.right),
+          Math.round(rect.bottom),
+          view.innerWidth,
+          view.innerHeight
+        ].join(",")
+      };
+    };
+    uniqueTriggers.forEach((trigger, id) => {
+      if (!open(root, id, trigger, false)) {
+        issues.add(`open:${id}`);
+        return;
+      }
+      const detail = activeByRoot.get(root);
+      const grid = gridFor(detail);
+      if (
+        detail?.dataset.diagramDetail !== id
+        || detail.getAttribute("role") !== "dialog"
+        || !regionFor(detail)?.hasAttribute("data-runtime-active")
+        || !detail.querySelector(":scope > [data-diagram-detail-close]")
+      ) {
+        issues.add(`dialog-state:${id}`);
+      }
+      place(detail, trigger);
+      const placement = viewportPlacement(grid);
+      if (!placement.fits) issues.add(`placement:${id}:${placement.trace}`);
+      if (!close(root, true, false)) issues.add(`close:${id}`);
+      if (root.activeElement !== trigger) issues.add(`focus-return:${id}`);
+    });
+    const first = uniqueTriggers.entries().next().value;
+    if (first) {
+      const [id, trigger] = first;
+      open(root, id, trigger, false);
+      root.dispatchEvent(
+        new view.KeyboardEvent("keydown", { key: "Escape", bubbles: true })
+      );
+      if (activeByRoot.has(root) || root.activeElement !== trigger) {
+        issues.add(`escape:${id}`);
+        close(root, true, false);
+      }
+      open(root, id, trigger, false);
+      const pointerTarget = root.body || documentElement;
+      pointerTarget.dispatchEvent(
+        new view.Event("pointerdown", { bubbles: true, cancelable: true })
+      );
+      if (activeByRoot.has(root)) {
+        issues.add(`outside:${id}`);
+        close(root, false, false);
+      }
+      if (view?.history) {
+        view.history.replaceState(view.history.state, "", `#${encodeURIComponent(id)}`);
+        view.dispatchEvent(new view.HashChangeEvent("hashchange"));
+        if (activeByRoot.get(root)?.dataset.diagramDetail !== id) {
+          issues.add(`deep-link:${id}`);
+        }
+        close(root, false, false);
+        view.history.replaceState(
+          view.history.state,
+          "",
+          `${view.location.pathname}${view.location.search}${originalHash}`
+        );
+      }
+    }
+    if (originalFocus?.isConnected && typeof originalFocus.focus === "function") {
+      originalFocus.focus({ preventScroll: true });
+    }
+    const ordered = Array.from(issues).sort();
+    const result = Object.freeze({
+      count: uniqueTriggers.size,
+      issues: Object.freeze(ordered),
+      passed: ordered.length === 0
+    });
+    lifecycleAuditByRoot.set(root, { key: auditKey, result });
+    documentElement.dataset.detailLifecycleAudit = result.passed ? "passed" : "failed";
+    documentElement.dataset.detailLifecycleCount = String(result.count);
+    if (ordered.length) {
+      documentElement.dataset.detailLifecycleIssues = ordered.join("|").slice(0, 2048);
+    } else {
+      delete documentElement.dataset.detailLifecycleIssues;
+    }
+    return result;
+  };
+  const enhance = (root = document) => bind(root);
+  globalThis.VibeDiagramDisclosure = Object.freeze({
+    auditLifecycle,
+    bind,
+    close,
+    enhance,
+    open,
+    reset
+  });
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", () => enhance(), { once: true });
+  } else {
+    enhance();
+  }
+})();
+</script>
+<script data-artifact-shell-preview-kernel="1">
+(() => {
+  "use strict";
+  document.documentElement.classList.add("vibe-js");
+
+  const unresolvedCanvasText = /^\s*\{\{canvas-text-\d{3}\}\}\s*$/;
+  const detailTriggerSelector = "[data-diagram-detail-trigger]";
+  const declaredRelationSelector = "[data-diagram-relation-id]";
+  const geometricCarrierSelector = [
+    "svg path[data-diagram-visible-relation-id]",
+    "svg line[data-diagram-visible-relation-id]",
+    "svg polyline[data-diagram-visible-relation-id]",
+    "svg polygon[data-diagram-visible-relation-id]"
+  ].join(", ");
+  const fallbackCarrierSelector = [
+    "[data-fallback-relation-id]",
+    '[data-visible-relation-kind="edge"][data-diagram-visible-relation-id]'
+  ].join(", ");
+  const auditRoots = "[data-diagram-canvas], [data-sequence-canvas]";
+  const epsilon = 1;
+  const permitsOverflow = (element, axis) => {
+    const owner = element.closest?.("[data-diagram-overflow-intent]");
+    const intent = owner?.dataset.diagramOverflowIntent || "";
+    return intent === "both-scroll" || intent === `${axis}-scroll`;
+  };
+
+  const localizeShell = () => {
+    const language = (document.documentElement.lang || "").toLowerCase();
+    const isChinese = language === "zh" || language.startsWith("zh-");
+    document.querySelectorAll("[data-reading-guide-heading]").forEach((heading) => {
+      heading.remove();
+    });
+    const groupLabels = {
+      relations: isChinese ? "\u5173\u7cfb\u7c7b\u578b" : "Line types",
+      evidence: isChinese ? "\u8bc1\u636e\u72b6\u6001" : "Evidence states",
+      interaction: isChinese ? "\u4ea4\u4e92\u65b9\u5f0f" : "Interaction"
+    };
+    document.querySelectorAll("[data-reading-guide-group]").forEach((group) => {
+      const label = group.querySelector(":scope > [data-reading-guide-group-title]");
+      const text = groupLabels[group.dataset.readingGuideGroup];
+      if (label && text) label.textContent = text;
+    });
+    const evidenceLabels = {
+      "evidence-observed": isChinese ? "\u7528\u6237\u63d0\u4f9b\u4e8b\u5b9e" : "Observed implementation",
+      "evidence-check": isChinese ? "\u5df2\u5b8c\u6210\u68c0\u67e5" : "Completed check",
+      "evidence-unresolved": isChinese ? "\u5c1a\u672a\u9a8c\u8bc1" : "Not yet verified"
+    };
+    document.querySelectorAll("[data-evidence-id] > b").forEach((label) => {
+      const text = evidenceLabels[label.parentElement?.dataset.evidenceId];
+      if (text) label.textContent = text;
+    });
+    document.querySelectorAll(
+      "[data-interaction-hint='node-detail'] [data-reading-guide-item] b"
+    ).forEach((label) => {
+      label.textContent =
+        "\u70b9\u51fb\u4efb\u4e00\u4e3b\u8282\u70b9\u67e5\u770b\u5bf9\u5e94\u8be6\u60c5";
+    });
+    document.querySelectorAll(
+      "[data-diagram-zoom-control='fit'], [data-sequence-scale='fit']"
+    ).forEach((button) => {
+      button.textContent = "\u81ea\u9002\u5e94";
+    });
+  };
+
+  const suppressUnfilledCanvasText = (root) => {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    const unresolvedNodes = [];
+    while (walker.nextNode()) {
+      if (unresolvedCanvasText.test(walker.currentNode.nodeValue || "")) {
+        unresolvedNodes.push(walker.currentNode);
+      }
+    }
+    unresolvedNodes.forEach((node) => {
+      node.nodeValue = "";
+    });
+    if (unresolvedNodes.length) {
+      root.setAttribute("data-template-preview", "unfilled");
+    }
+  };
+
+  const isVisible = (element) => {
+    const style = getComputedStyle(element);
+    const rect = element.getBoundingClientRect();
+    return (
+      style.display !== "none" &&
+      style.visibility !== "hidden" &&
+      Number.parseFloat(style.opacity || "1") > 0 &&
+      rect.width > epsilon &&
+      rect.height > epsilon
+    );
+  };
+
+  const isRendered = (element) => {
+    const style = getComputedStyle(element);
+    return (
+      style.display !== "none" &&
+      style.visibility !== "hidden" &&
+      Number.parseFloat(style.opacity || "1") > 0 &&
+      element.getClientRects().length > 0
+    );
+  };
+
+  const localNameOf = (element) => (
+    element.localName || element.tagName || ""
+  ).toLowerCase();
+
+  const overlaps = (left, right, inset = epsilon) => (
+    left.left + inset < right.right &&
+    left.right - inset > right.left &&
+    left.top + inset < right.bottom &&
+    left.bottom - inset > right.top
+  );
+
+  const containsPoint = (rect, point, inset = 2) => (
+    point.x > rect.left + inset &&
+    point.x < rect.right - inset &&
+    point.y > rect.top + inset &&
+    point.y < rect.bottom - inset
+  );
+
+  const escapesBounds = (outer, inner, tolerance = epsilon) => (
+    inner.left < outer.left - tolerance ||
+    inner.right > outer.right + tolerance ||
+    inner.top < outer.top - tolerance ||
+    inner.bottom > outer.bottom + tolerance
+  );
+
+  const pointOnBoundary = (rect, point, tolerance = 6) => {
+    const withinHorizontal = point.x >= rect.left - tolerance && point.x <= rect.right + tolerance;
+    const withinVertical = point.y >= rect.top - tolerance && point.y <= rect.bottom + tolerance;
+    return (
+      (withinHorizontal && (
+        Math.abs(point.y - rect.top) <= tolerance ||
+        Math.abs(point.y - rect.bottom) <= tolerance
+      )) ||
+      (withinVertical && (
+        Math.abs(point.x - rect.left) <= tolerance ||
+        Math.abs(point.x - rect.right) <= tolerance
+      ))
+    );
+  };
+
+  const numericAttribute = (element, name) => {
+    const value = Number.parseFloat(element.getAttribute(name) || "");
+    return Number.isFinite(value) ? value : null;
+  };
+
+  const parseColor = (value) => {
+    const normalized = (value || "").trim();
+    if (normalized === "transparent" || normalized === "none") {
+      return { red: 0, green: 0, blue: 0, alpha: 0 };
+    }
+    const hex = normalized.match(/^#([\da-f]{3,8})$/i);
+    if (hex) {
+      let payload = hex[1];
+      if (payload.length === 3 || payload.length === 4) {
+        payload = Array.from(payload, (part) => part + part).join("");
+      }
+      if (payload.length === 6 || payload.length === 8) {
+        return {
+          red: Number.parseInt(payload.slice(0, 2), 16) / 255,
+          green: Number.parseInt(payload.slice(2, 4), 16) / 255,
+          blue: Number.parseInt(payload.slice(4, 6), 16) / 255,
+          alpha: payload.length === 8
+            ? Number.parseInt(payload.slice(6, 8), 16) / 255
+            : 1
+        };
+      }
+    }
+    const match = normalized.match(
+      /rgba?\(\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)(?:\s*[,/]\s*(\d*(?:\.\d+)?))?\s*\)/
+    );
+    if (!match) return null;
+    return {
+      red: Number(match[1]) / 255,
+      green: Number(match[2]) / 255,
+      blue: Number(match[3]) / 255,
+      alpha: match[4] === undefined || match[4] === "" ? 1 : Number(match[4])
+    };
+  };
+
+  const pointOnScreen = (path, distance) => {
+    const point = path.getPointAtLength(distance);
+    const matrix = path.getScreenCTM();
+    if (!matrix) return null;
+    const transformed = new DOMPoint(point.x, point.y).matrixTransform(matrix);
+    return { x: transformed.x, y: transformed.y };
+  };
+
+  const auditDetailLinks = (canvas, addIssue) => {
+    const documentRoot = canvas.ownerDocument;
+    canvas.querySelectorAll(detailTriggerSelector).forEach((trigger) => {
+      const detailId = (trigger.dataset.detailFor || "").trim();
+      const triggerIdentity = (
+        trigger.getAttribute("aria-label") ||
+        trigger.getAttribute("data-node-primary-label") ||
+        trigger.textContent ||
+        ""
+      ).trim();
+      if (!detailId) {
+        addIssue(
+          "detail-trigger-target-empty",
+          triggerIdentity || trigger.dataset.diagramDetailTrigger || "unnamed-trigger"
+        );
+        return;
+      }
+      if (!triggerIdentity) {
+        addIssue("detail-trigger-empty", detailId);
+      }
+      const detail = documentRoot.getElementById(detailId);
+      if (!detail) {
+        addIssue("detail-target-missing", detailId);
+        return;
+      }
+      if (localNameOf(trigger) !== "a" || trigger.getAttribute("href") !== `#${detailId}`) {
+        addIssue("detail-trigger-not-native-link", detailId);
+      }
+      if (
+        localNameOf(detail) !== "details" ||
+        detail.id !== detailId ||
+        detail.dataset.diagramDetail !== detailId
+      ) {
+        addIssue("detail-target-not-native-details", detailId);
+      }
+    });
+  };
+
+  const auditNodeGeometry = (canvas, addIssue) => {
+    const nodes = Array.from(canvas.querySelectorAll("[data-diagram-node-id]")).filter(isVisible);
+    for (let leftIndex = 0; leftIndex < nodes.length; leftIndex += 1) {
+      const left = nodes[leftIndex];
+      const leftRect = left.getBoundingClientRect();
+      for (let rightIndex = leftIndex + 1; rightIndex < nodes.length; rightIndex += 1) {
+        const right = nodes[rightIndex];
+        if (left.contains(right) || right.contains(left)) continue;
+        if (overlaps(leftRect, right.getBoundingClientRect(), 2)) {
+          addIssue(
+            "node-overlap",
+            `${left.dataset.diagramNodeId || leftIndex}:${right.dataset.diagramNodeId || rightIndex}`
+          );
+        }
+      }
+    }
+
+    nodes.forEach((node) => {
+      const nodeId = node.dataset.diagramNodeId || "unnamed-node";
+      if (
+        "scrollWidth" in node &&
+        "clientWidth" in node &&
+        (
+          (
+            node.scrollWidth > node.clientWidth + epsilon &&
+            !permitsOverflow(node, "horizontal")
+          ) ||
+          (
+            node.scrollHeight > node.clientHeight + epsilon &&
+            !permitsOverflow(node, "vertical")
+          )
+        )
+      ) {
+        addIssue("node-content-overflow", nodeId);
+      }
+
+      node.querySelectorAll("*").forEach((content) => {
+        if (!isRendered(content)) return;
+        if (
+          "scrollWidth" in content &&
+          "clientWidth" in content &&
+          (
+            (
+              content.scrollWidth > content.clientWidth + epsilon &&
+              !permitsOverflow(content, "horizontal")
+            ) ||
+            (
+              content.scrollHeight > content.clientHeight + epsilon &&
+              !permitsOverflow(content, "vertical")
+            )
+          )
+        ) {
+          addIssue("node-content-overflow", nodeId);
+        }
+      });
+
+      const svgSurface = Array.from(node.children).find(
+        (child) => localNameOf(child) === "rect" && isRendered(child)
+      );
+      if (!svgSurface) return;
+      const surfaceRect = svgSurface.getBoundingClientRect();
+      node.querySelectorAll("text, foreignObject").forEach((content) => {
+        if (!isRendered(content)) return;
+        const contentRect = content.getBoundingClientRect();
+        if (escapesBounds(surfaceRect, contentRect, 2)) {
+          addIssue("node-content-overflow", nodeId);
+        }
+      });
+    });
+
+    canvas.querySelectorAll("[data-architecture-landmark-for]").forEach((landmark) => {
+      if (!isRendered(landmark)) return;
+      const nodeId = (landmark.dataset.architectureLandmarkFor || "").trim();
+      const surface = Array.from(landmark.children).find(
+        (child) => localNameOf(child) === "rect" && isRendered(child)
+      );
+      if (!surface) return;
+      const surfaceRect = surface.getBoundingClientRect();
+      landmark.querySelectorAll("text, foreignObject").forEach((content) => {
+        if (!isRendered(content)) return;
+        if (escapesBounds(surfaceRect, content.getBoundingClientRect(), 2)) {
+          addIssue("node-content-overflow", nodeId || "unnamed-landmark");
+        }
+      });
+    });
+
+    canvas.querySelectorAll("foreignObject > *").forEach((content) => {
+      if (!isRendered(content)) return;
+      if (
+        "scrollWidth" in content &&
+        "clientWidth" in content &&
+        "scrollHeight" in content &&
+        "clientHeight" in content &&
+        (
+          (
+            content.scrollWidth > content.clientWidth + epsilon &&
+            !permitsOverflow(content, "horizontal")
+          ) ||
+          (
+            content.scrollHeight > content.clientHeight + epsilon &&
+            !permitsOverflow(content, "vertical")
+          )
+        )
+      ) {
+        addIssue(
+          "node-content-overflow",
+          content.closest("[data-diagram-node-id]")?.dataset.diagramNodeId || localNameOf(content)
+        );
+      }
+    });
+
+    canvas.querySelectorAll("[data-diagram-detail-trigger='auxiliary']").forEach((trigger) => {
+      if (!isRendered(trigger)) return;
+      const svgSurface = trigger.querySelector("rect, path, polygon, circle, ellipse");
+      const surface = svgSurface || trigger;
+      const surfaceStyle = getComputedStyle(surface);
+      const color = parseColor(
+        svgSurface
+          ? surfaceStyle.fill || svgSurface.getAttribute("fill") || ""
+          : surfaceStyle.backgroundColor
+      );
+      if (!color || color.alpha < 0.85) {
+        addIssue("auxiliary-node-background-transparent", trigger.dataset.detailFor || "unknown");
+        return;
+      }
+      const luminance = color.red * 0.2126 + color.green * 0.7152 + color.blue * 0.0722;
+      if (luminance < 0.72) {
+        addIssue("auxiliary-node-background-too-dark", trigger.dataset.detailFor || "unknown");
+      }
+    });
+  };
+
+  const auditRoutes = (canvas, addIssue) => {
+    const nodeRects = new Map(
+      Array.from(canvas.querySelectorAll("[data-diagram-node-id]"))
+        .filter(isVisible)
+        .map((node) => [node.dataset.diagramNodeId, node.getBoundingClientRect()])
+    );
+    canvas.querySelectorAll("[data-architecture-landmark-for]").forEach((landmark) => {
+      if (!isRendered(landmark)) return;
+      const nodeId = (landmark.dataset.architectureLandmarkFor || "").trim();
+      if (!nodeId) return;
+      const surface = Array.from(landmark.children).find(
+        (child) => localNameOf(child) === "rect" && isRendered(child)
+      );
+      nodeRects.set(nodeId, (surface || landmark).getBoundingClientRect());
+    });
+    const labels = Array.from(canvas.querySelectorAll("svg text")).filter(isVisible);
+    const declaredRelations = Array.from(canvas.querySelectorAll(declaredRelationSelector));
+    const declaredById = new Map(
+      declaredRelations
+        .map((relation) => [(relation.dataset.diagramRelationId || "").trim(), relation])
+        .filter(([relationId]) => Boolean(relationId))
+    );
+    const declaredRelationIds = new Set(declaredById.keys());
+    const primaryStage = canvas.querySelector(":scope > [data-diagram-stage]") || canvas;
+    if (!isRendered(primaryStage)) {
+      const canvasId = canvas.dataset.diagramId || canvas.dataset.sequenceId || "";
+      const fallbackRoot = canvasId
+        ? canvas.ownerDocument.querySelector(
+          `[data-fallback-for="${CSS.escape(canvasId)}"]`
+        )
+        : null;
+      const fallbackByRelation = new Map();
+      if (fallbackRoot && isRendered(fallbackRoot)) {
+        fallbackRoot.querySelectorAll(fallbackCarrierSelector).forEach((carrier) => {
+          const relationId = (
+            carrier.dataset.fallbackRelationId ||
+            carrier.dataset.diagramVisibleRelationId ||
+            ""
+          ).trim();
+          if (!relationId) {
+            addIssue("fallback-relation-id-missing", canvasId || "unnamed-canvas");
+            return;
+          }
+          const values = fallbackByRelation.get(relationId) || [];
+          values.push(carrier);
+          fallbackByRelation.set(relationId, values);
+          if (!declaredById.has(relationId)) {
+            addIssue("fallback-relation-not-declared", relationId);
+          }
+        });
+      }
+      declaredById.forEach((declaration, relationId) => {
+        const fallbackCarriers = fallbackByRelation.get(relationId) || [];
+        if (!fallbackCarriers.length) {
+          addIssue("missing-geometric-carrier", relationId);
+          addIssue("declared-route-not-audited", relationId);
+          return;
+        }
+        if (fallbackCarriers.length !== 1) {
+          addIssue("fallback-relation-duplicate", relationId);
+          addIssue("declared-route-not-audited", relationId);
+          return;
+        }
+        const fallback = fallbackCarriers[0];
+        if (
+          (fallback.dataset.from || "") !== (declaration.dataset.from || "") ||
+          (fallback.dataset.to || "") !== (declaration.dataset.to || "") ||
+          (fallback.dataset.relationKind || "") !== (declaration.dataset.relationKind || "")
+        ) {
+          addIssue("fallback-relation-not-equivalent", relationId);
+          addIssue("declared-route-not-audited", relationId);
+        }
+      });
+      return;
+    }
+
+    const carriers = Array.from(primaryStage.querySelectorAll(geometricCarrierSelector))
+      .filter(isRendered);
+    const carriersByRelation = new Map();
+    carriers.forEach((carrier) => {
+      const relationId = (carrier.dataset.diagramVisibleRelationId || "").trim();
+      if (!relationId) return;
+      const values = carriersByRelation.get(relationId) || [];
+      values.push(carrier);
+      carriersByRelation.set(relationId, values);
+    });
+
+    declaredRelationIds.forEach((relationId) => {
+      if (!carriersByRelation.has(relationId)) {
+        addIssue("missing-geometric-carrier", relationId);
+      }
+    });
+
+    const auditedRelationIds = new Set();
+    carriers
+      .filter((carrier) => localNameOf(carrier) === "path")
+      .forEach((path) => {
+        const relationId = path.dataset.diagramVisibleRelationId || "unknown";
+        if (typeof path.getTotalLength !== "function") return;
+        let length = Number.NaN;
+        try {
+          length = path.getTotalLength();
+        } catch (_error) {
+          return;
+        }
+        auditedRelationIds.add(relationId);
+        if (!Number.isFinite(length) || length < 24) {
+          addIssue("route-too-short", relationId);
+          return;
+        }
+        if (!path.getAttribute("marker-end")) {
+          addIssue("route-arrowhead-missing", relationId);
+        }
+        const sourceId = path.dataset.from || "";
+        const targetId = path.dataset.to || "";
+        const sourceRect = nodeRects.get(sourceId);
+        const targetRect = nodeRects.get(targetId);
+        const startPoint = pointOnScreen(path, 0);
+        const endPoint = pointOnScreen(path, length);
+        if (!sourceRect || !startPoint || !pointOnBoundary(sourceRect, startPoint)) {
+          addIssue("route-source-not-anchored", relationId);
+        }
+        if (!targetRect || !endPoint || !pointOnBoundary(targetRect, endPoint)) {
+          addIssue("route-target-not-anchored", relationId);
+        }
+        const sampleCount = Math.max(8, Math.min(96, Math.ceil(length / 12)));
+        for (let index = 1; index < sampleCount; index += 1) {
+          const progress = index / sampleCount;
+          const point = pointOnScreen(path, length * progress);
+          if (!point) break;
+          for (const [nodeId, rect] of nodeRects) {
+            if (
+              (nodeId === sourceId && progress < 0.08) ||
+              (nodeId === targetId && progress > 0.92)
+            ) {
+              continue;
+            }
+            if (containsPoint(rect, point, 3)) {
+              addIssue("route-crosses-node", `${relationId}:${nodeId}`);
+            }
+          }
+          for (const label of labels) {
+            if (label.dataset.routeLabelFor === relationId) continue;
+            if (containsPoint(label.getBoundingClientRect(), point, 1)) {
+              addIssue("route-crosses-label", relationId);
+              break;
+            }
+          }
+        }
+      });
+
+    declaredRelationIds.forEach((relationId) => {
+      if (!auditedRelationIds.has(relationId)) {
+        addIssue("declared-route-not-audited", relationId);
+      }
+    });
+  };
+
+  const auditUtilization = (canvas, addIssue) => {
+    const svg = canvas.querySelector("svg[data-architecture-canvas]");
+    if (!svg?.viewBox?.baseVal) return;
+    const boundaries = Array.from(
+      svg.querySelectorAll("rect[data-architecture-boundary]")
+    ).map((rect) => ({
+      x: numericAttribute(rect, "x"),
+      y: numericAttribute(rect, "y"),
+      width: numericAttribute(rect, "width"),
+      height: numericAttribute(rect, "height")
+    })).filter((item) => Object.values(item).every((value) => value !== null));
+    if (!boundaries.length) return;
+    const viewBox = svg.viewBox.baseVal;
+    const left = Math.min(...boundaries.map((item) => item.x));
+    const top = Math.min(...boundaries.map((item) => item.y));
+    const right = Math.max(...boundaries.map((item) => item.x + item.width));
+    const bottom = Math.max(...boundaries.map((item) => item.y + item.height));
+    const ratios = {
+      top: (top - viewBox.y) / viewBox.height,
+      bottom: (viewBox.y + viewBox.height - bottom) / viewBox.height,
+      horizontal: (right - left) / viewBox.width
+    };
+    const thresholds = {
+      top: numericAttribute(canvas, "data-max-top-whitespace-ratio"),
+      bottom: numericAttribute(canvas, "data-max-bottom-whitespace-ratio"),
+      horizontal: numericAttribute(canvas, "data-min-horizontal-utilization-ratio")
+    };
+    if (thresholds.top !== null && ratios.top > thresholds.top + 0.0001) {
+      addIssue("canvas-top-whitespace", ratios.top.toFixed(4));
+    }
+    if (thresholds.bottom !== null && ratios.bottom > thresholds.bottom + 0.0001) {
+      addIssue("canvas-bottom-whitespace", ratios.bottom.toFixed(4));
+    }
+    if (thresholds.horizontal !== null && ratios.horizontal < thresholds.horizontal - 0.0001) {
+      addIssue("canvas-horizontal-underuse", ratios.horizontal.toFixed(4));
+    }
+  };
+
+  const controlsAreAvailable = (controls) => {
+    if (!controls) return false;
+    if (controls.hasAttribute("data-diagram-controls")) {
+      return controls.dataset.diagramControlsVisible === "true";
+    }
+    return !controls.hidden;
+  };
+
+  const reflectReadingGuideCapability = (canvas, controls) => {
+    const controlRegion = controls?.closest("[data-reading-guide-controls]");
+    const guide = controlRegion?.closest('[data-diagram-reading-guide="1"]');
+    if (!controlRegion || !guide) return;
+    const hasDetails = Array.from(canvas.querySelectorAll(detailTriggerSelector))
+      .some((trigger) => (trigger.dataset.detailFor || "").trim());
+    const hasZoom = controlsAreAvailable(controls);
+    const capability = hasDetails && hasZoom
+      ? "details-zoom"
+      : hasDetails
+        ? "details"
+        : hasZoom
+          ? "zoom"
+          : "none";
+    controlRegion.dataset.interactionCapability = capability;
+    guide.dataset.readingGuideControlsState = capability === "none" ? "empty" : "active";
+  };
+
+  const auditControls = (canvas, addIssue) => {
+    const controlScope = (canvas.dataset.diagramControlScope || "").trim();
+    if (controlScope === "embedded") {
+      const composition = canvas.closest("[data-diagram-composition-root]");
+      const primary = composition?.querySelector(
+        '[data-diagram-control-scope="primary"]'
+      );
+      const primaryId = primary?.dataset.diagramId || primary?.dataset.sequenceId || "";
+      const primaryControls = primaryId
+        ? document.querySelector(
+            `[data-diagram-controls="${CSS.escape(primaryId)}"], [data-sequence-controls="${CSS.escape(primaryId)}"]`
+          )
+        : null;
+      if (!composition || !primary || !primaryControls) {
+        addIssue(
+          "embedded-control-scope-invalid",
+          canvas.dataset.diagramId || canvas.dataset.sequenceId || "unnamed-canvas"
+        );
+      }
+      return;
+    }
+    const canvasId = canvas.dataset.diagramId || canvas.dataset.sequenceId || "";
+    const controls = document.querySelector(
+      `[data-diagram-controls="${CSS.escape(canvasId)}"], [data-sequence-controls="${CSS.escape(canvasId)}"]`
+    );
+    if (!controls) {
+      addIssue("zoom-controls-missing", canvasId || "unnamed-canvas");
+      return;
+    }
+    reflectReadingGuideCapability(canvas, controls);
+    const controlRegion = controls.closest("[data-reading-guide-controls]");
+    const interaction = controlRegion?.querySelector("[data-reading-guide-group='interaction']");
+    if (!controlRegion || !interaction) {
+      addIssue("reading-guide-control-stack-missing", canvasId || "unnamed-canvas");
+      return;
+    }
+    const scaleAttribute = controls.hasAttribute("data-sequence-toolbar")
+      ? "sequenceScale"
+      : "diagramZoomControl";
+    const scaleSelector = controls.hasAttribute("data-sequence-toolbar")
+      ? "[data-sequence-scale]"
+      : "[data-diagram-zoom-control]";
+    const scaleOrder = Array.from(controls.querySelectorAll(scaleSelector))
+      .map((button) => button.dataset[scaleAttribute]);
+    if (scaleOrder.join("|") !== "0.75|0.9|1|fit") {
+      addIssue("zoom-control-order", scaleOrder.join("|") || "empty");
+    }
+    const guide = controlRegion.closest("[data-diagram-reading-guide='1']");
+    if (guide && isRendered(guide) && isRendered(canvas)) {
+      const guideRect = guide.getBoundingClientRect();
+      const canvasRect = canvas.getBoundingClientRect();
+      if (
+        Math.abs(guideRect.left - canvasRect.left) > epsilon ||
+        Math.abs(guideRect.right - canvasRect.right) > epsilon
+      ) {
+        addIssue(
+          "guide-canvas-horizontal-misalignment",
+          `${Math.round(guideRect.left - canvasRect.left)}:${Math.round(guideRect.right - canvasRect.right)}`
+        );
+      }
+    }
+    const interactionRect = interaction.getBoundingClientRect();
+    const controlsRect = controls.getBoundingClientRect();
+    if (
+      isVisible(interaction) &&
+      isVisible(controls) &&
+      interactionRect.bottom > controlsRect.top + epsilon
+    ) {
+      addIssue("interaction-not-above-controls", canvasId || "unnamed-canvas");
+    }
+  };
+
+  const audit = (canvas) => {
+    const issues = new Set();
+    const addIssue = (code, target) => issues.add(`${code}:${target}`);
+    auditDetailLinks(canvas, addIssue);
+    auditNodeGeometry(canvas, addIssue);
+    auditRoutes(canvas, addIssue);
+    auditUtilization(canvas, addIssue);
+    auditControls(canvas, addIssue);
+    if (document.documentElement.scrollWidth > document.documentElement.clientWidth + epsilon) {
+      addIssue("page-horizontal-overflow", document.documentElement.scrollWidth);
+    }
+    const ordered = Array.from(issues).sort();
+    canvas.setAttribute(
+      "data-computed-layout-audit",
+      ordered.length ? "failed" : "passed"
+    );
+    canvas.setAttribute("data-computed-layout-issue-count", String(ordered.length));
+    if (ordered.length) {
+      canvas.dataset.computedLayoutIssues = ordered.join("|").slice(0, 2048);
+    } else {
+      delete canvas.dataset.computedLayoutIssues;
+    }
+    canvas.dispatchEvent(
+      new CustomEvent("vibe-diagram:layout-audit", {
+        bubbles: true,
+        detail: { issues: ordered, passed: ordered.length === 0 }
+      })
+    );
+    return ordered;
+  };
+
+  const auditAll = (root = document) => {
+    const results = new Map();
+    root.querySelectorAll(auditRoots).forEach((canvas) => {
+      results.set(canvas.dataset.diagramId || canvas.dataset.sequenceId || "canvas", audit(canvas));
+    });
+    const disclosure = globalThis.VibeDiagramDisclosure?.auditLifecycle?.(root);
+    const disclosureIssues = Array.isArray(disclosure?.issues)
+      ? disclosure.issues
+      : [];
+    const failures = Array.from(results.values()).reduce(
+      (total, issues) => total + issues.length,
+      0
+    ) + disclosureIssues.length;
+    document.documentElement.dataset.computedLayoutAudit = failures ? "failed" : "passed";
+    document.documentElement.dataset.computedLayoutIssueCount = String(failures);
+    if (disclosureIssues.length) {
+      document.documentElement.dataset.computedLayoutIssues =
+        disclosureIssues.map((issue) => `detail-lifecycle:${issue}`).join("|").slice(0, 2048);
+    } else {
+      delete document.documentElement.dataset.computedLayoutIssues;
+    }
+    return results;
+  };
+
+  const reflectDetailState = (detail) => {
+    if (!detail?.id) return;
+    document.querySelectorAll(
+      `${detailTriggerSelector}[data-detail-for="${CSS.escape(detail.id)}"]`
+    ).forEach((trigger) => {
+      trigger.setAttribute("aria-expanded", detail.open ? "true" : "false");
+    });
+  };
+
+  const openDetailTarget = (trigger, { focus = true } = {}) => {
+    const detailId = (trigger?.dataset.detailFor || "").trim();
+    const detail = detailId ? document.getElementById(detailId) : null;
+    if (
+      !detail ||
+      localNameOf(detail) !== "details" ||
+      detail.dataset.diagramDetail !== detailId
+    ) {
+      return false;
+    }
+    detail.open = true;
+    reflectDetailState(detail);
+    if (focus) {
+      requestAnimationFrame(() => {
+        detail.querySelector("summary")?.focus({ preventScroll: true });
+      });
+    }
+    return true;
+  };
+
+  const enhanceDetailLinks = () => {
+    document.querySelectorAll("details[data-diagram-detail]").forEach((detail) => {
+      reflectDetailState(detail);
+      detail.addEventListener("toggle", () => reflectDetailState(detail));
+    });
+    document.addEventListener("click", (event) => {
+      if (
+        event.defaultPrevented ||
+        event.button !== 0 ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.shiftKey ||
+        event.altKey
+      ) {
+        return;
+      }
+      const trigger = event.target.closest?.(detailTriggerSelector);
+      if (trigger) openDetailTarget(trigger);
+    }, { capture: true });
+    const openHashTarget = () => {
+      const detailId = decodeURIComponent(location.hash.slice(1));
+      if (!detailId) return;
+      const trigger = document.querySelector(
+        `${detailTriggerSelector}[data-detail-for="${CSS.escape(detailId)}"]`
+      );
+      if (trigger) openDetailTarget(trigger, { focus: false });
+    };
+    addEventListener("hashchange", openHashTarget);
+    openHashTarget();
+  };
+
+  let auditQueued = false;
+  const scheduleAudit = () => {
+    if (auditQueued) return;
+    auditQueued = true;
+    requestAnimationFrame(() => {
+      auditQueued = false;
+      auditAll();
+    });
+  };
+
+  const enhance = () => {
+    localizeShell();
+    document
+      .querySelectorAll(auditRoots)
+      .forEach(suppressUnfilledCanvasText);
+    if (!globalThis.VibeDiagramDisclosure) enhanceDetailLinks();
+    globalThis.VibeDiagramQuality = Object.freeze({ audit, auditAll, scheduleAudit });
+    scheduleAudit();
+    document.fonts?.ready.then(scheduleAudit, scheduleAudit);
+    if ("ResizeObserver" in globalThis) {
+      const observer = new ResizeObserver(scheduleAudit);
+      document.querySelectorAll(`${auditRoots}, [data-diagram-reading-guide="1"]`).forEach(
+        (element) => observer.observe(element)
+      );
+    } else {
+      addEventListener("resize", scheduleAudit);
+    }
+    if ("MutationObserver" in globalThis) {
+      const observer = new MutationObserver(scheduleAudit);
+      document.querySelectorAll("[data-diagram-controls], [data-sequence-toolbar]").forEach(
+        (controls) => observer.observe(controls, {
+          attributes: true,
+          attributeFilter: ["hidden", "data-diagram-controls-visible"]
+        })
+      );
+    }
+  };
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", enhance, { once: true });
+  } else {
+    enhance();
+  }
+})();
+</script>
+</body>
+</html>

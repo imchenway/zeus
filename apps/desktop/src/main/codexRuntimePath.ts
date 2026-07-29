@@ -3,49 +3,70 @@ import { access, readFile, realpath } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { join } from 'node:path';
 
-const PINNED_CODEX_VERSION = '0.144.2';
-const PINNED_CODEX_COMMIT = 'a6645b6b8a656360fa16fb7e1c6721d0697d3d6a';
-
 interface CodexRuntimeManifest {
   upstreamCommit: string;
   binaryVersion: string;
   arch: string;
   sha256: string;
+  codeSha256?: string;
   patches: string[];
 }
 
-export interface ResolveCodexRuntimePathOptions {
+interface CodexRuntimeLock {
+  commit: string;
+  binaryVersion: string;
+  arches: string[];
+  patches: string[];
+}
+
+export interface ResolvedCodexRuntime {
+  commandPath: string;
+  binaryVersion: string;
+  upstreamCommit: string;
+}
+
+export interface ResolveCodexRuntimeOptions {
   isPackaged: boolean;
   resourcesPath: string;
   projectRoot: string;
   arch: NodeJS.Architecture;
 }
 
-export async function resolveCodexRuntimePath(options: ResolveCodexRuntimePathOptions): Promise<string> {
+export async function resolveCodexRuntime(options: ResolveCodexRuntimeOptions): Promise<ResolvedCodexRuntime> {
   const directory = options.isPackaged ? join(options.resourcesPath, 'codex') : join(options.projectRoot, '.tmp', 'codex-runtime', runtimeDirectoryName(options.arch));
   const binaryPath = join(directory, 'codex');
   const manifestPath = join(directory, 'manifest.json');
+  const lockPath = options.isPackaged ? join(directory, 'runtime.lock.json') : join(options.projectRoot, 'third_party', 'openai-codex', 'runtime.lock.json');
   let bytes: Buffer;
   let manifest: CodexRuntimeManifest;
+  let lock: CodexRuntimeLock;
   try {
     await access(binaryPath, constants.R_OK | constants.X_OK);
     bytes = await readFile(binaryPath);
     manifest = parseManifest(JSON.parse(await readFile(manifestPath, 'utf8')) as unknown);
+    lock = parseLock(JSON.parse(await readFile(lockPath, 'utf8')) as unknown);
   } catch (error) {
     if (hasRuntimeCode(error)) throw error;
     throw runtimeError('ZEUS_CODEX_RUNTIME_UNAVAILABLE', `Bundled Codex runtime is unavailable at ${binaryPath}.`);
   }
-  if (manifest.binaryVersion !== PINNED_CODEX_VERSION || manifest.upstreamCommit !== PINNED_CODEX_COMMIT) {
-    throw runtimeError('ZEUS_CODEX_RUNTIME_VERSION_MISMATCH', `Bundled Codex runtime must be ${PINNED_CODEX_VERSION} from ${PINNED_CODEX_COMMIT}.`);
+  if (manifest.binaryVersion !== lock.binaryVersion || manifest.upstreamCommit !== lock.commit) {
+    throw runtimeError('ZEUS_CODEX_RUNTIME_VERSION_MISMATCH', `Bundled Codex runtime must be ${lock.binaryVersion} from ${lock.commit}.`);
   }
   const expectedTarget = options.arch === 'x64' ? 'x86_64-apple-darwin' : 'aarch64-apple-darwin';
+  if (!lock.arches.includes(expectedTarget)) throw runtimeError('ZEUS_CODEX_RUNTIME_ARCH_UNSUPPORTED', `Pinned Codex runtime does not support architecture: ${expectedTarget}.`);
   if (manifest.arch !== expectedTarget) throw runtimeError('ZEUS_CODEX_RUNTIME_ARCH_MISMATCH', `Bundled Codex runtime architecture mismatch: expected ${expectedTarget}.`);
-  const actualSha256 = createHash('sha256').update(bytes).digest('hex');
-  if (actualSha256 !== manifest.sha256) throw runtimeError('ZEUS_CODEX_RUNTIME_CHECKSUM_MISMATCH', 'Bundled Codex runtime checksum does not match its build manifest.');
-  if (!manifest.patches.includes('patches/0001-zeus-legacy-session-source.patch')) {
-    throw runtimeError('ZEUS_CODEX_RUNTIME_PATCH_MISMATCH', 'Bundled Codex runtime manifest does not include the Zeus external-agent-home patch.');
+  const actualSha256 = options.isPackaged ? machoSignatureNeutralSha256(bytes) : createHash('sha256').update(bytes).digest('hex');
+  const expectedSha256 = options.isPackaged ? manifest.codeSha256 : manifest.sha256;
+  if (typeof expectedSha256 !== 'string') throw runtimeError('ZEUS_CODEX_RUNTIME_MANIFEST_INVALID', 'Bundled Codex runtime manifest is missing its signed-code checksum.');
+  if (actualSha256 !== expectedSha256) throw runtimeError('ZEUS_CODEX_RUNTIME_CHECKSUM_MISMATCH', 'Bundled Codex runtime checksum does not match its build manifest.');
+  if (manifest.patches.length !== lock.patches.length || manifest.patches.some((patch, index) => patch !== lock.patches[index])) {
+    throw runtimeError('ZEUS_CODEX_RUNTIME_PATCH_MISMATCH', 'Bundled Codex runtime patches do not match the pinned runtime lock.');
   }
-  return realpath(binaryPath);
+  return {
+    commandPath: await realpath(binaryPath),
+    binaryVersion: manifest.binaryVersion,
+    upstreamCommit: manifest.upstreamCommit,
+  };
 }
 
 function runtimeDirectoryName(arch: NodeJS.Architecture): 'arm64' | 'x64' {
@@ -71,6 +92,77 @@ function parseManifest(value: unknown): CodexRuntimeManifest {
     binaryVersion: value.binaryVersion,
     arch: value.arch,
     sha256: value.sha256,
+    codeSha256: typeof value.codeSha256 === 'string' ? value.codeSha256 : undefined,
+    patches: value.patches,
+  };
+}
+
+/**
+ * 计算不受 macOS 重签名影响的 Mach-O 内容摘要。
+ * 摘要保留签名区之前的全部代码与链接数据，只归零签名会改写的 __LINKEDIT 大小和签名命令字段。
+ */
+function machoSignatureNeutralSha256(binary: Buffer): string {
+  const headerSize = 32;
+  if (binary.length < headerSize || binary.readUInt32LE(0) !== 0xfeedfacf) {
+    throw runtimeError('ZEUS_CODEX_RUNTIME_CHECKSUM_MISMATCH', 'Bundled Codex runtime is not a supported 64-bit little-endian Mach-O file.');
+  }
+
+  const commandCount = binary.readUInt32LE(16);
+  const commandEnd = headerSize + binary.readUInt32LE(20);
+  if (commandEnd > binary.length) throw runtimeError('ZEUS_CODEX_RUNTIME_CHECKSUM_MISMATCH', 'Bundled Codex runtime contains invalid Mach-O load commands.');
+
+  let commandOffset = headerSize;
+  let codeSignatureOffset: number | undefined;
+  let codeSignatureDataOffset: number | undefined;
+  let linkEditOffset: number | undefined;
+  for (let index = 0; index < commandCount; index += 1) {
+    if (commandOffset + 8 > commandEnd) throw runtimeError('ZEUS_CODEX_RUNTIME_CHECKSUM_MISMATCH', 'Bundled Codex runtime contains incomplete Mach-O load commands.');
+    const command = binary.readUInt32LE(commandOffset);
+    const commandSize = binary.readUInt32LE(commandOffset + 4);
+    if (commandSize < 8 || commandOffset + commandSize > commandEnd) {
+      throw runtimeError('ZEUS_CODEX_RUNTIME_CHECKSUM_MISMATCH', 'Bundled Codex runtime contains an invalid Mach-O load command.');
+    }
+    if (command === 0x19 && commandSize >= 72) {
+      const segmentName = binary
+        .subarray(commandOffset + 8, commandOffset + 24)
+        .toString('ascii')
+        .replace(/\0.*$/u, '');
+      if (segmentName === '__LINKEDIT') linkEditOffset = commandOffset;
+    }
+    if (command === 0x1d && commandSize >= 16) {
+      codeSignatureOffset = commandOffset;
+      codeSignatureDataOffset = binary.readUInt32LE(commandOffset + 8);
+    }
+    commandOffset += commandSize;
+  }
+
+  if (linkEditOffset === undefined || codeSignatureOffset === undefined || codeSignatureDataOffset === undefined || codeSignatureDataOffset < commandEnd || codeSignatureDataOffset > binary.length) {
+    throw runtimeError('ZEUS_CODEX_RUNTIME_CHECKSUM_MISMATCH', 'Bundled Codex runtime is missing a valid Mach-O signature structure.');
+  }
+
+  const normalized = Buffer.from(binary.subarray(0, codeSignatureDataOffset));
+  normalized.fill(0, linkEditOffset + 32, linkEditOffset + 40);
+  normalized.fill(0, linkEditOffset + 48, linkEditOffset + 56);
+  normalized.fill(0, codeSignatureOffset + 8, codeSignatureOffset + 16);
+  return createHash('sha256').update(normalized).digest('hex');
+}
+
+function parseLock(value: unknown): CodexRuntimeLock {
+  if (
+    !isRecord(value) ||
+    typeof value.commit !== 'string' ||
+    typeof value.binaryVersion !== 'string' ||
+    !Array.isArray(value.arches) ||
+    !value.arches.every((arch) => typeof arch === 'string') ||
+    !Array.isArray(value.patches) ||
+    !value.patches.every((patch) => typeof patch === 'string')
+  ) {
+    throw runtimeError('ZEUS_CODEX_RUNTIME_LOCK_INVALID', 'Pinned Codex runtime lock is invalid.');
+  }
+  return {
+    commit: value.commit,
+    binaryVersion: value.binaryVersion,
+    arches: value.arches,
     patches: value.patches,
   };
 }

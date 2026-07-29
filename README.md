@@ -15,7 +15,7 @@ Zeus 是一个本地优先的 macOS AI 研发工作台，把本地项目管理�
 - Git Diff：只读读取当前仓库状态和 diff，高风险 Git 操作只创建确认记录，不自动执行提交、stash 或 reset。
 - Telegram：支持 Bot Token、long polling、白名单、命令、通知、消息日志、安全确认和未配置状态。
 - 安全：Token 存 macOS Keychain，日志/API/UI 不回显明文；支持清理密钥、安全审计和泄露风险重置。
-- 发布：Electron Builder 可生成 DMG/ZIP，Homebrew cask 文件位于 `Casks/zeus.rb`；签名和 notarization 已预留但不伪造成已完成。
+- 发布：Electron Builder 可生成 DMG/ZIP，发布门禁会生成 Homebrew Cask；正式发布要求 Developer ID 签名和 Apple 公证，不伪造外部发布完成。
 
 ## 安装
 
@@ -27,16 +27,20 @@ dist/Zeus-0.1.0-arm64.zip
 dist/mac-arm64/Zeus.app
 ```
 
-新用户可以从 GitHub Release 安装，也可以直接打开 DMG/ZIP。本地开发时可用 Homebrew cask 验证安装契约：
+正式 GitHub Release 与 `imchenway/homebrew-tap` 发布后，新用户使用：
+
+```bash
+brew install --cask imchenway/tap/zeus
+```
+
+也可以从 GitHub Release 使用安装脚本或直接打开 DMG/ZIP：
 
 ```bash
 curl -fsSL https://github.com/imchenway/zeus/releases/latest/download/install.sh | bash
-brew install --cask imchenway/zeus/zeus
 ```
 
-```bash
-brew install --cask ./Casks/zeus.rb
-```
+当前远端已创建 `imchenway/homebrew-tap`，但尚无正式 Release 与远端 Cask，上述远端命令还不能作为已验证安装结果。开发者可使用
+`Casks/zeus.rb` 检查 Cask 结构；它不替代远端 Release 下载验证。
 
 如在 Intel Mac 上打包，产物后缀会使用 `x64`。
 
@@ -56,8 +60,9 @@ pnpm package:mac
 pnpm verify:release
 ```
 
-该命令会串联 acceptance matrix、lint、typecheck、build、AI CLI adapter 探针和 package:mac，并检查 DMG/ZIP/Homebrew
-cask、SHA256SUMS、install.sh 与更新 manifest 是否存在。未配置 Apple 证书时会明确报告 `unsigned DMG/ZIP`，不会声明签名或公证成功。
+该命令会串联 acceptance matrix、lint、typecheck、build、AI CLI adapter 探针和 package:mac，并检查 DMG/ZIP、Homebrew
+Cask、SHA256SUMS、install.sh 与更新 manifest。未配置 Apple 证书时只生成本地 ad-hoc 签名产物并明确报告未完成 Developer ID
+签名和公证；公开 Release 与 Tap 发布门禁要求两者都已通过。
 
 ## 本地运行
 
@@ -94,7 +99,7 @@ Zeus 会实现检测、设置页和等待状态，但以下外部条件需要用
 | AI CLI 登录状态 | Codex/Claude/Gemini 等本地 Runtime 执行 | 显示不可用原因，不生成假 AI 回复 |
 | Telegram Bot Token | Telegram long polling、命令与通知 | 显示未配置，不伪造消息 |
 | Telegram 白名单用户 ID | 限制远程入口 | 非白名单 update 被拒绝并记录日志 |
-| Apple signing certificate | macOS 签名 | 只生成 unsigned DMG/ZIP |
+| Apple signing certificate | macOS 签名 | 生成本地 ad-hoc 签名 DMG/ZIP，但不作为正式分发包 |
 | Apple notarization 凭据 | notarization | 显示等待配置，不伪造公证成功 |
 | Homebrew tap token | 自动发布到 tap | 保留 cask 文件，本地可验证 |
 
@@ -136,5 +141,5 @@ Zeus 不写入假项目、假任务、假图谱、假终端输出、假 Telegram
 - 静态检查结果、构建结果、打包结果和真实运行结果。
 - 生成的安装包路径，例如 `dist/Zeus-0.1.0-arm64.dmg` 与 `dist/Zeus-0.1.0-arm64.zip`。
 - 外部配置等待项，包括 AI CLI 登录状态、Telegram Bot Token、Apple signing certificate、notarization 凭据和 Homebrew tap token。
-- Release workflow 支持输入已有 tag 后创建 draft GitHub Release，并上传 DMG、ZIP、SHA256SUMS、install.sh、更新 manifest 与 Homebrew cask；没有 tag 时只上传 artifact，不伪造远端发布。
-- 若未配置签名证书，必须明确说明产物是 unsigned DMG/ZIP，未 notarized。
+- Release workflow 只有在显式启用发布、tag 与版本一致、Developer ID 签名、公证和 Tap token 均通过后，才创建正式 GitHub Release 并同步 Homebrew Cask；否则不伪造远端发布。
+- 若未配置签名证书，必须明确说明产物只有本地 ad-hoc 签名且未公证，不能作为正式分发包。

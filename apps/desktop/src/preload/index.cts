@@ -1,4 +1,4 @@
-import {contextBridge, ipcRenderer} from 'electron';
+import {contextBridge, ipcRenderer, webUtils} from 'electron';
 import {createRendererBootstrapReporter, shouldReportRendererWindowError} from './rendererBootstrapState.cjs';
 
 const rendererBootstrapReporter = createRendererBootstrapReporter({
@@ -20,18 +20,67 @@ globalThis.addEventListener('unhandledrejection', (event) => {
   rendererBootstrapReporter.reportFailure(event.reason);
 });
 
+async function authorizePendingResourceFiles(
+  files: File[],
+  source: 'paste' | 'drop',
+  pathChannel: string,
+  materializeChannel: string,
+): Promise<{resources: unknown[]; failedCount: number}> {
+  const nativePaths: string[] = [];
+  const pathlessFiles: File[] = [];
+  for (const file of files) {
+    let nativePath = '';
+    try {
+      nativePath = webUtils.getPathForFile(file);
+    } catch {
+      // 截图/浏览器 Blob 没有稳定本地路径，转入 Main 物化链路。
+    }
+    if (nativePath) nativePaths.push(nativePath);
+    else pathlessFiles.push(file);
+  }
+  const pathlessPayloadResults = await Promise.allSettled(
+    pathlessFiles.map(async (file) => ({
+      name: file.name,
+      type: file.type,
+      data: await file.arrayBuffer(),
+      source,
+    })),
+  );
+  const pathlessPayloads = pathlessPayloadResults.flatMap((result) => result.status === 'fulfilled' ? [result.value] : []);
+  const [authorizedResult, materializedResult] = await Promise.allSettled([
+    nativePaths.length ? ipcRenderer.invoke(pathChannel, nativePaths, source) : Promise.resolve([]),
+    pathlessPayloads.length ? ipcRenderer.invoke(materializeChannel, pathlessPayloads) : Promise.resolve([]),
+  ]);
+  const authorized = authorizedResult.status === 'fulfilled' && Array.isArray(authorizedResult.value) ? authorizedResult.value : [];
+  const materialized = materializedResult.status === 'fulfilled' && Array.isArray(materializedResult.value) ? materializedResult.value : [];
+  const resources = [...authorized, ...materialized];
+  return {resources, failedCount: Math.max(0, files.length - resources.length)};
+}
+
 contextBridge.exposeInMainWorld('zeus', {
   appName: 'Zeus',
   getLocalServerConfig: () => ipcRenderer.invoke('zeus:get-local-server-config'),
   reportRendererFatalFailure: (message: string) => rendererBootstrapReporter.reportFailure(message),
   reportRendererBootstrapReady: () => rendererBootstrapReporter.reportReady(),
   chooseProjectDirectory: () => ipcRenderer.invoke('zeus:choose-project-directory'),
+  revealProjectInFinder: (projectPath: string) => ipcRenderer.invoke('zeus:reveal-project-in-finder', projectPath),
+  chooseConversationResources: () => ipcRenderer.invoke('zeus:choose-conversation-resources'),
+  authorizeConversationFiles: (files: File[], source: 'paste' | 'drop') =>
+    authorizePendingResourceFiles(files, source, 'zeus:authorize-conversation-files', 'zeus:materialize-conversation-resources'),
+  materializeConversationResources: (resources: unknown[]) => ipcRenderer.invoke('zeus:materialize-conversation-resources', resources),
+  readConversationClipboardResources: () => ipcRenderer.invoke('zeus:read-conversation-clipboard-resources'),
+  getConversationResourcePreview: (resource: unknown) => ipcRenderer.invoke('zeus:get-conversation-resource-preview', resource),
   chooseTaskAttachments: () => ipcRenderer.invoke('zeus:choose-task-attachments'),
+  authorizeTaskFiles: (files: File[], source: 'paste' | 'drop') =>
+    authorizePendingResourceFiles(files, source, 'zeus:store-task-resource-paths', 'zeus:materialize-task-resources'),
+  materializeTaskResources: (resources: unknown[]) => ipcRenderer.invoke('zeus:materialize-task-resources', resources),
+  readTaskClipboardResources: () => ipcRenderer.invoke('zeus:read-task-clipboard-resources'),
   readTaskClipboardAttachments: () => ipcRenderer.invoke('zeus:read-task-clipboard-attachments'),
   readTaskClipboardImage: () => ipcRenderer.invoke('zeus:read-task-clipboard-image'),
     writeClipboardText: (text: string) => ipcRenderer.invoke('zeus:write-clipboard-text', text),
   saveTaskClipboardAttachments: () => ipcRenderer.invoke('zeus:save-task-clipboard-attachments'),
-  saveTaskPastedAttachments: (attachments: Array<{ name: string; type: string; data: ArrayBuffer }>) => ipcRenderer.invoke('zeus:save-task-pasted-attachments', attachments),
+  saveTaskPastedAttachments: (attachments: Array<{name?: string; type?: string; data?: ArrayBuffer; text?: string; kind?: 'image' | 'file' | 'pasted_text'}>) =>
+    ipcRenderer.invoke('zeus:save-task-pasted-attachments', attachments),
   getTaskAttachmentPreview: (path: string) => ipcRenderer.invoke('zeus:get-task-attachment-preview', path),
   openTaskAttachment: (path: string) => ipcRenderer.invoke('zeus:open-task-attachment', path),
   exportSettingsSnapshotToFile: (snapshot: unknown) => ipcRenderer.invoke('zeus:export-settings-snapshot', snapshot),
@@ -40,9 +89,18 @@ contextBridge.exposeInMainWorld('zeus', {
   exportPatchToFile: (patch: unknown) => ipcRenderer.invoke('zeus:export-patch', patch),
   openGraphSource: (source: unknown) => ipcRenderer.invoke('zeus:open-graph-source', source),
   openExternalHttpsUrl: (url: string) => ipcRenderer.invoke('zeus:open-external-https-url', url),
+  listConversationResourceOpenTargets: (request: unknown) => ipcRenderer.invoke('zeus:conversation-resource:list-open-targets', request),
+  openConversationResource: (request: unknown) => ipcRenderer.invoke('zeus:conversation-resource:open', request),
   exportMermaidDiagramToFile: (payload: unknown) => ipcRenderer.invoke('zeus:export-mermaid-diagram', payload),
   exportPlantUmlDiagramToFile: (payload: unknown) => ipcRenderer.invoke('zeus:export-plantuml-diagram', payload),
   notifyAppShellSettingsChanged: (settings: unknown) => ipcRenderer.invoke('zeus:app-shell-settings-changed', settings),
+  notifyTaskTableLayoutDirty: (dirty: boolean) => ipcRenderer.send('zeus:task-table-layout-dirty-changed', dirty),
+  resolveTaskTableLayoutCloseRequest: (proceed: boolean) => ipcRenderer.send('zeus:task-table-layout-close-resolution', {proceed}),
+  onTaskTableLayoutCloseRequested: (listener: () => void) => {
+    const handler = () => listener();
+    ipcRenderer.on('zeus:task-table-layout-close-requested', handler);
+    return () => ipcRenderer.removeListener('zeus:task-table-layout-close-requested', handler);
+  },
   exportRuntimeLogsToFile: (payload: unknown) => ipcRenderer.invoke('zeus:export-runtime-logs', payload),
   beginWindowDrag: (point: unknown) => ipcRenderer.invoke('zeus:window-drag-start', point),
   moveWindowDrag: (point: unknown) => ipcRenderer.invoke('zeus:window-drag-move', point),
@@ -51,5 +109,23 @@ contextBridge.exposeInMainWorld('zeus', {
     const handler = () => listener();
     ipcRenderer.on('zeus:native-new-conversation', handler);
     return () => ipcRenderer.removeListener('zeus:native-new-conversation', handler);
+  },
+  getBrowserSnapshot: (conversationId: string) => ipcRenderer.invoke('zeus:browser:get-snapshot', conversationId),
+  openBrowserTab: (input: unknown) => ipcRenderer.invoke('zeus:browser:open-tab', input),
+  activateBrowserTab: (input: unknown) => ipcRenderer.invoke('zeus:browser:activate-tab', input),
+  closeBrowserTab: (input: unknown) => ipcRenderer.invoke('zeus:browser:close-tab', input),
+  runBrowserCommand: (input: unknown) => ipcRenderer.invoke('zeus:browser:command', input),
+  setBrowserLayout: (input: unknown) => ipcRenderer.invoke('zeus:browser:set-layout', input),
+  prepareBrowserComments: (input: unknown) => ipcRenderer.invoke('zeus:browser:prepare-comments', input),
+  getBrowserCommentPreview: (path: string) => ipcRenderer.invoke('zeus:browser:comment-preview', path),
+  markBrowserCommentsSent: (input: unknown) => ipcRenderer.invoke('zeus:browser:mark-comments-sent', input),
+  respondToBrowserApproval: (input: unknown) => ipcRenderer.invoke('zeus:browser:respond-approval', input),
+  getBrowserSettings: () => ipcRenderer.invoke('zeus:browser:get-settings'),
+  updateBrowserSettings: (input: unknown) => ipcRenderer.invoke('zeus:browser:update-settings', input),
+  clearBrowserData: () => ipcRenderer.invoke('zeus:browser:clear-data'),
+  onBrowserEvent: (listener: (event: unknown) => void) => {
+    const handler = (_event: unknown, value: unknown) => listener(value);
+    ipcRenderer.on('zeus:browser-event', handler);
+    return () => ipcRenderer.removeListener('zeus:browser-event', handler);
   },
 });

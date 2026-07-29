@@ -183,9 +183,7 @@ export function SessionTurnDuration(props: { turn: NativeTurnSnapshot; language:
     const label = props.language === 'zh-CN' ? `已处理 ${value}` : active ? `Processing for ${value}` : `Processed in ${value}`;
     return (
         <p className="session-turn-duration" data-active={active || undefined}>
-            <span aria-hidden="true"/>
             <time dateTime={`PT${Math.max(0, Math.round(duration / 1_000))}S`}>{label}</time>
-            <span aria-hidden="true"/>
         </p>
     );
 }

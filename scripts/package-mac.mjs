@@ -1,12 +1,14 @@
 #!/usr/bin/env node
 /* global console, process */
+import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { mkdir, readdir, rm } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { execFileSync, spawn } from 'node:child_process';
 import { verifyPackagedApp } from './verify-packaged-app-health.mjs';
+import { machoSignatureNeutralSha256 } from './macho-signature-neutral-sha256.mjs';
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const rootDir = resolve(scriptDir, '..');
@@ -24,12 +26,27 @@ export function packagedAppPathForArch(arch) {
   return join(rootDir, 'dist', arch === 'arm64' ? 'mac-arm64' : 'mac', 'Zeus.app');
 }
 
-export function buildAdHocCodesignArgs(appPath) {
-  return ['--force', '--deep', '--sign', '-', appPath];
-}
-
 export function buildCodesignVerifyArgs(appPath) {
   return ['--verify', '--deep', '--strict', '--verbose=2', appPath];
+}
+
+function hasDeveloperIdSigningConfiguration(env) {
+  return Boolean(env.CSC_LINK?.trim() || env.CSC_NAME?.trim());
+}
+
+function hasNotarizationConfiguration(env) {
+  const hasApiKey = Boolean(env.APPLE_API_KEY?.trim() && env.APPLE_API_KEY_ID?.trim() && env.APPLE_API_ISSUER?.trim());
+  const hasAppleId = Boolean(env.APPLE_ID?.trim() && env.APPLE_APP_SPECIFIC_PASSWORD?.trim() && env.APPLE_TEAM_ID?.trim());
+  const hasKeychainProfile = Boolean(env.APPLE_KEYCHAIN_PROFILE?.trim());
+  return hasApiKey || hasAppleId || hasKeychainProfile;
+}
+
+function buildElectronBuilderSigningArgs(env) {
+  if (!hasDeveloperIdSigningConfiguration(env)) {
+    return ['--config.mac.identity=-', '--config.mac.notarize=false'];
+  }
+
+  return [`--config.mac.notarize=${hasNotarizationConfiguration(env) ? 'true' : 'false'}`, '--config.forceCodeSigning=true'];
 }
 
 async function readElectronVersion() {
@@ -118,11 +135,9 @@ async function assertPackagedAppIsNotRunning(appPath) {
   }
 }
 
-async function adHocSignPackagedApp(appPath) {
+async function verifyCodesignPackagedApp(appPath) {
   if (process.platform !== 'darwin') return;
-  // electron-builder 在 identity: null 时会跳过正式签名；自定义 Electron 分发仍可能带残留签名。
-  // 这里使用本机 ad-hoc 签名重封 bundle 资源，确保 Finder/Dock 可以稳定启动未公证的本地产物。
-  await run('/usr/bin/codesign', buildAdHocCodesignArgs(appPath));
+  // 签名必须在 electron-builder 生成 DMG/ZIP 前完成；这里仅验证最终 App，不再事后改写签名。
   await run('/usr/bin/codesign', buildCodesignVerifyArgs(appPath));
 }
 
@@ -131,7 +146,7 @@ async function prepareElectronDist(version, arch) {
   const cacheRoot = join(homedir(), 'Library', 'Caches', 'electron');
   const zipPath = await findFileByName(cacheRoot, zipName);
   if (!zipPath) {
-    throw new Error(`Zeus package:mac 未找到 Electron 缓存 ${zipName}。请先执行一次 electron-builder 下载 Electron，或检查网络后重试。`);
+    return undefined;
   }
 
   const distDir = join(rootDir, '.tmp', 'electron-dist', electronDistDirName(version, arch));
@@ -144,6 +159,20 @@ async function prepareElectronDist(version, arch) {
   return distDir;
 }
 
+async function refreshCodexRuntimeManifest(arch) {
+  const runtimeDir = join(rootDir, '.tmp', 'codex-runtime', arch);
+  const binary = await readFile(join(runtimeDir, 'codex'));
+  const manifestPath = join(runtimeDir, 'manifest.json');
+  const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+  const binarySha256 = createHash('sha256').update(binary).digest('hex');
+  if (manifest.sha256 !== binarySha256) {
+    throw new Error(`Zeus package:mac Codex runtime 原始摘要不一致：expected=${manifest.sha256 ?? 'missing'} actual=${binarySha256}`);
+  }
+  const codeSha256 = machoSignatureNeutralSha256(binary);
+  if (manifest.codeSha256 === codeSha256) return;
+  await writeFile(manifestPath, `${JSON.stringify({ ...manifest, codeSha256 }, null, 2)}\n`, { mode: 0o600 });
+}
+
 export async function packageMac() {
   if (process.platform !== 'darwin') {
     throw new Error('Zeus package:mac 只能在 macOS 上执行。');
@@ -153,10 +182,17 @@ export async function packageMac() {
   const electronDist = await prepareElectronDist(version, arch);
   const appPath = packagedAppPathForArch(arch);
   await assertPackagedAppIsNotRunning(appPath);
+  await refreshCodexRuntimeManifest(arch);
   await run('pnpm', ['build'], { cwd: desktopDir });
-  await run('pnpm', ['--filter', '@zeus/desktop', 'exec', 'electron-builder', '--mac', 'dmg', 'zip', '--config', 'electron-builder.yml', `--config.electronDist=${electronDist}`], { cwd: rootDir, env: buildMacNativeDependencyEnv() });
+  const packageEnv = buildMacNativeDependencyEnv();
+  const signingArgs = buildElectronBuilderSigningArgs(packageEnv);
+  const electronDistArgs = electronDist ? [`--config.electronDist=${electronDist}`] : [];
+  await run('pnpm', ['--filter', '@zeus/desktop', 'exec', 'electron-builder', '--mac', 'dmg', 'zip', '--config', 'electron-builder.yml', ...electronDistArgs, ...signingArgs], {
+    cwd: rootDir,
+    env: packageEnv,
+  });
   verifyPackagedApp(appPath);
-  await adHocSignPackagedApp(appPath);
+  await verifyCodesignPackagedApp(appPath);
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {

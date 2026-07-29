@@ -1,6 +1,7 @@
 import type {
     CodexConversationCapabilities,
     CodexTaskPushCapabilities,
+    ConversationResourcePreview,
     NativeCollaborationMode,
     NativeConversationChoicesSnapshot,
     NativeConversationSnapshot,
@@ -14,12 +15,43 @@ import type {
     StartNativeConversationRequest,
     StartProjectConversationRequest,
     StartTaskModelPushRequest,
+    TurnChangeSet,
+    TurnChangeSetOperationResult,
 } from './session/sessionTypes.js';
-import type {TaskManagementStatus} from '@zeus/shared';
+import type {
+  CommandArtifact,
+  CommandConfirmation,
+  CommandDefinition,
+  CommandDefinitionInput,
+  CommandRun,
+  TaskManagementStatus,
+  TaskPriority,
+} from '@zeus/shared';
 
-export type {TaskManagementStatus} from '@zeus/shared';
+export type {
+  CommandArtifact,
+  CommandConfirmation,
+  CommandDefinition,
+  CommandDefinitionInput,
+  CommandParameterDefinition,
+  CommandRun,
+  CommandRunStatus,
+  TaskManagementStatus,
+  TaskPriority,
+} from '@zeus/shared';
 
 export type TaskStatus = 'draft' | 'ready' | 'running' | 'paused' | 'waiting_confirmation' | 'completed' | 'failed' | 'cancelled';
+export type TaskAgentRunStatus =
+    'not_started'
+    | 'connecting'
+    | 'reconnecting'
+    | 'running'
+    | 'waiting_user'
+    | 'waiting_approval'
+    | 'paused'
+    | 'idle'
+    | 'failed'
+    | 'legacy_readonly';
 export type TaskTableColumnKey =
     'code'
     | 'intent'
@@ -35,12 +67,25 @@ export type TaskTableColumnKey =
     | 'runtimeSession'
     | 'rawId'
     | 'createdFrom';
-export type TaskTableColumnWidth = 'compact' | 'standard' | 'wide';
+export type TaskTableColumnWidth = number;
+export type TaskTableSortDirection = 'asc' | 'desc';
+
+export interface TaskTableSortState {
+  columnKey: TaskTableColumnKey | null;
+  direction: TaskTableSortDirection | null;
+}
 
 export interface TaskTableColumnPreferences {
   visibleColumnKeys: TaskTableColumnKey[];
   columnOrder: TaskTableColumnKey[];
   columnWidths?: Partial<Record<TaskTableColumnKey, TaskTableColumnWidth>>;
+  sort: TaskTableSortState;
+}
+
+export interface TaskTableEnumSortOrders {
+  priority: TaskPriority[];
+  managementStatus: TaskManagementStatus[];
+  runStatus: TaskAgentRunStatus[];
 }
 
 export interface ProjectRecord {
@@ -353,9 +398,12 @@ export interface AppShellSettings {
   autoUpdateChannel: 'manual';
   defaultProjectId: string | null;
   pinnedProjectIds: string[];
+  collapsedProjectIds: string[];
   defaultModel: string | null;
   defaultTaskTemplateId: string | null;
   taskTableColumns?: TaskTableColumnPreferences;
+  taskTableColumnsByProject?: Record<string, TaskTableColumnPreferences>;
+  taskTableEnumSortOrders?: TaskTableEnumSortOrders;
   localLogDirectory: string;
   localConfigPath: string;
   dataPortability: {
@@ -377,9 +425,12 @@ export type UpdateAppShellSettingsRequest = Pick<
 > & {
   defaultProjectId?: string | null;
   pinnedProjectIds?: string[];
+  collapsedProjectIds?: string[];
   defaultModel?: string | null;
   defaultTaskTemplateId?: string | null;
   taskTableColumns?: Partial<TaskTableColumnPreferences>;
+  taskTableColumnsByProject?: Record<string, TaskTableColumnPreferences>;
+  taskTableEnumSortOrders?: TaskTableEnumSortOrders;
 };
 
 export interface ClearLocalCachesResult {
@@ -423,7 +474,7 @@ export interface ImportLocalSettingsResult {
 
 export interface LocalBusinessDataSnapshot {
   app: 'Zeus';
-  schemaVersion: 1;
+  schemaVersion: 1 | 2;
   exportedAt: string;
   redaction: {
     secretsRedacted: true;
@@ -446,6 +497,7 @@ export interface LocalBusinessDataSnapshot {
     >;
     taskEvents: TaskEventRecord[];
     taskTemplates: TaskTemplateRecord[];
+    commandDefinitions?: CommandDefinition[];
   };
 }
 
@@ -456,6 +508,7 @@ export interface ImportLocalBusinessDataResult {
     tasks: number;
     taskEvents: number;
     taskTemplates: number;
+    commandDefinitions: number;
   };
   importedAt: string;
 }
@@ -512,6 +565,25 @@ export interface AiRuntimeLogEntry {
   text: string;
   createdAt: string;
 }
+
+export interface CommandRunDetail {
+  run: CommandRun;
+  artifacts: CommandArtifact[];
+  runtimeSession: AiRuntimeSession | null;
+  logs: AiRuntimeLogEntry[];
+}
+
+export interface CreateCommandConfirmationRequest {
+  parameters: Record<string, string | number | boolean>;
+  trigger?: 'desktop' | 'telegram';
+}
+
+export interface StartCommandRunRequest {
+  confirmationId: string;
+  parameters: Record<string, string | number | boolean>;
+}
+
+export type CommandConfirmationResponse = CommandConfirmation & {runId: string};
 
 export interface AiRuntimeTerminalSnapshot {
   sessionId: string;
@@ -945,6 +1017,7 @@ export interface CreateTaskRequest {
   description: string;
   sourceContext: Record<string, unknown>;
   tags?: string[];
+  priority: TaskPriority;
 }
 
 export interface LoadTasksRequest {
@@ -1067,6 +1140,15 @@ export interface DashboardClient {
     loadCodexConversationCapabilities: (projectId: string) => Promise<CodexConversationCapabilities>;
   startTaskModelPush: (taskId: string, input: StartTaskModelPushRequest) => Promise<NativeOperationAcceptance>;
   loadNativeConversation: (projectId: string, conversationId: string) => Promise<NativeConversationSnapshot>;
+  loadConversationResourcePreview: (projectId: string, conversationId: string, resourceId: string) => Promise<ConversationResourcePreview>;
+  loadTurnChangeSet: (projectId: string, conversationId: string, turnId: string) => Promise<TurnChangeSet>;
+  operateTurnChangeSet: (
+    projectId: string,
+    conversationId: string,
+    turnId: string,
+    action: 'undo' | 'reapply',
+    input: {changeSetId: string; expectedState: 'applied' | 'undone'; idempotencyKey: string},
+  ) => Promise<TurnChangeSetOperationResult>;
     acknowledgeNativeConversationCompletion: (projectId: string, conversationId: string) => Promise<void>;
     restoreArchivedNativeConversation: (projectId: string, conversationId: string) => Promise<NativeConversationSnapshot>;
   updateNativePermissionMode: (projectId: string, conversationId: string, permissionMode: NativePermissionMode) => Promise<NativeConversationSnapshot>;
@@ -1108,6 +1190,20 @@ export interface DashboardClient {
   importLocalSettings: (input: ImportLocalSettingsRequest) => Promise<ImportLocalSettingsResult>;
   exportLocalBusinessData: () => Promise<LocalBusinessDataSnapshot>;
   importLocalBusinessData: (input: LocalBusinessDataSnapshot) => Promise<ImportLocalBusinessDataResult>;
+  loadGlobalCommands: () => Promise<CommandDefinition[]>;
+  createGlobalCommand: (input: CommandDefinitionInput) => Promise<CommandDefinition>;
+  updateGlobalCommand: (commandId: string, input: Partial<CommandDefinitionInput>) => Promise<CommandDefinition>;
+  deleteGlobalCommand: (commandId: string) => Promise<CommandDefinition>;
+  loadProjectCommands: (projectId: string) => Promise<CommandDefinition[]>;
+  createProjectCommand: (projectId: string, input: CommandDefinitionInput) => Promise<CommandDefinition>;
+  updateProjectCommand: (projectId: string, commandId: string, input: Partial<CommandDefinitionInput>) => Promise<CommandDefinition>;
+  deleteProjectCommand: (projectId: string, commandId: string) => Promise<CommandDefinition>;
+  createCommandConfirmation: (projectId: string, commandId: string, input: CreateCommandConfirmationRequest) => Promise<CommandConfirmationResponse>;
+  startCommandRun: (projectId: string, commandId: string, input: StartCommandRunRequest) => Promise<CommandRun>;
+  loadCommandRuns: (projectId: string, limit?: number) => Promise<CommandRun[]>;
+  loadCommandRun: (runId: string) => Promise<CommandRunDetail>;
+  stopCommandRun: (runId: string) => Promise<CommandRun>;
+  loadCommandArtifact: (artifactId: string) => Promise<Blob>;
   loadRuntimeAdapters: () => Promise<AiRuntimeAdapterDescriptor[]>;
   checkRuntimeAdapter: (adapterId: string) => Promise<AiRuntimeAdapterStatus>;
   loadRuntimeSessions: (input?: LoadRuntimeSessionsRequest) => Promise<AiRuntimeSession[]>;
@@ -1294,6 +1390,21 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
     return (await response.json()) as T;
   }
 
+  async function requestBlob(path: string): Promise<Blob> {
+    const response = await fetch(`${currentOptions.baseUrl}${path}`, {
+      headers: {authorization: `Bearer ${currentOptions.apiToken}`},
+    });
+    if (!response.ok) {
+      const payload = (await response.json().catch(() => ({}))) as {error?: string; message?: string};
+      throw new ZeusApiError({
+        status: response.status,
+        error: payload.error ?? null,
+        message: payload.message ?? `Zeus local API request failed: ${response.status}`,
+      });
+    }
+    return response.blob();
+  }
+
   return {
     connectEvents: (onEvent, eventOptions) => connectZeusEvents(currentOptions, onEvent, eventOptions),
     loadProjectConversationChoices: (projectId) => request<NativeProjectConversationChoicesSnapshot>(`/api/projects/${encodeURIComponent(projectId)}/conversation-choices`),
@@ -1325,6 +1436,19 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
       });
     },
     loadNativeConversation: (projectId, conversationId) => request<NativeConversationSnapshot>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}`),
+    loadConversationResourcePreview: (projectId, conversationId, resourceId) =>
+      request<ConversationResourcePreview>(
+        `/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/resources/${encodeURIComponent(resourceId)}/preview`,
+      ),
+    loadTurnChangeSet: (projectId, conversationId, turnId) =>
+      request<TurnChangeSet>(
+        `/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/turns/${encodeURIComponent(turnId)}/change-set`,
+      ),
+    operateTurnChangeSet: (projectId, conversationId, turnId, action, input) =>
+      request<TurnChangeSetOperationResult>(
+        `/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/turns/${encodeURIComponent(turnId)}/change-set/${action}`,
+        {method: 'POST', body: JSON.stringify(input)},
+      ),
       acknowledgeNativeConversationCompletion: (projectId, conversationId) => request<void>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/completion-acknowledgement`, {method: 'PUT'}),
       restoreArchivedNativeConversation: (projectId, conversationId) =>
           request<NativeConversationSnapshot>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/provider-thread/restore`, {method: 'POST'}),
@@ -1424,6 +1548,40 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
         method: 'POST',
         body: JSON.stringify(input),
       }),
+    loadGlobalCommands: () => request<CommandDefinition[]>('/api/commands/global'),
+    createGlobalCommand: (input) =>
+      request<CommandDefinition>('/api/commands/global', {method: 'POST', body: JSON.stringify(input)}),
+    updateGlobalCommand: (commandId, input) =>
+      request<CommandDefinition>(`/api/commands/global/${encodeURIComponent(commandId)}`, {method: 'PATCH', body: JSON.stringify(input)}),
+    deleteGlobalCommand: (commandId) =>
+      request<CommandDefinition>(`/api/commands/global/${encodeURIComponent(commandId)}`, {method: 'DELETE'}),
+    loadProjectCommands: (projectId) =>
+      request<CommandDefinition[]>(`/api/projects/${encodeURIComponent(projectId)}/commands`),
+    createProjectCommand: (projectId, input) =>
+      request<CommandDefinition>(`/api/projects/${encodeURIComponent(projectId)}/commands`, {method: 'POST', body: JSON.stringify(input)}),
+    updateProjectCommand: (projectId, commandId, input) =>
+      request<CommandDefinition>(`/api/projects/${encodeURIComponent(projectId)}/commands/${encodeURIComponent(commandId)}`, {
+        method: 'PATCH',
+        body: JSON.stringify(input),
+      }),
+    deleteProjectCommand: (projectId, commandId) =>
+      request<CommandDefinition>(`/api/projects/${encodeURIComponent(projectId)}/commands/${encodeURIComponent(commandId)}`, {method: 'DELETE'}),
+    createCommandConfirmation: (projectId, commandId, input) =>
+      request<CommandConfirmationResponse>(
+        `/api/projects/${encodeURIComponent(projectId)}/commands/${encodeURIComponent(commandId)}/confirmations`,
+        {method: 'POST', body: JSON.stringify(input)},
+      ),
+    startCommandRun: (projectId, commandId, input) =>
+      request<CommandRun>(`/api/projects/${encodeURIComponent(projectId)}/commands/${encodeURIComponent(commandId)}/runs`, {
+        method: 'POST',
+        body: JSON.stringify(input),
+      }),
+    loadCommandRuns: (projectId, limit = 100) =>
+      request<CommandRun[]>(`/api/projects/${encodeURIComponent(projectId)}/command-runs?limit=${encodeURIComponent(String(limit))}`),
+    loadCommandRun: (runId) => request<CommandRunDetail>(`/api/command-runs/${encodeURIComponent(runId)}`),
+    stopCommandRun: (runId) =>
+      request<CommandRun>(`/api/command-runs/${encodeURIComponent(runId)}/stop`, {method: 'POST'}),
+    loadCommandArtifact: (artifactId) => requestBlob(`/api/command-artifacts/${encodeURIComponent(artifactId)}/content`),
     loadRuntimeAdapters: () => request<AiRuntimeAdapterDescriptor[]>('/api/runtime/adapters'),
     checkRuntimeAdapter: (adapterId) => request<AiRuntimeAdapterStatus>(`/api/runtime/adapters/${adapterId}/check`),
     loadRuntimeSessions: (input) => request<AiRuntimeSession[]>(`/api/runtime/sessions${toRuntimeSessionQuery(input)}`),

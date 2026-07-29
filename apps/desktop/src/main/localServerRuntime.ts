@@ -1,8 +1,13 @@
 import { randomBytes } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { createCodexAppServerManager, type CodexAppServerManager } from '@zeus/ai-runtime';
-import { hasCodexFinalizationOwnershipClaim, startZeusLocalServer, type RunningZeusLocalServer } from '@zeus/local-server';
+import { createCodexAppServerManager } from '@zeus/ai-runtime';
+import {
+  hasCodexFinalizationOwnershipClaim,
+  startZeusLocalServer,
+  type BrowserAutomationPort,
+  type RunningZeusLocalServer,
+} from '@zeus/local-server';
 
 export interface RendererLocalServerConfig {
   baseUrl: string;
@@ -24,11 +29,13 @@ export interface StartDesktopLocalServerOptions {
   telegramAllowedUserIds?: number[];
   codexNativeEnabled?: boolean;
   codexRuntimeCommandPath?: string;
+  codexRuntimeBinaryVersion?: string;
   codexLegacyImportRoot?: string;
   taskAttachmentRoot?: string;
-  codexAppServerManagerFactory?: () => CodexAppServerManager;
-  localServerFactory?: typeof startZeusLocalServer;
-  restartDelayMs?: number;
+  browserAttachmentRoot?: string;
+  conversationAttachmentRoot?: string;
+  conversationAttachmentGrantSecret?: string;
+  browserAutomation?: BrowserAutomationPort;
   onRestarted?: (config: RendererLocalServerConfig) => void | Promise<void>;
 }
 
@@ -68,9 +75,8 @@ export async function startDesktopLocalServer(options: StartDesktopLocalServerOp
   const apiToken = randomBytes(24).toString('base64url');
   const dbPath = join(options.userDataPath, 'zeus.db');
   const configPath = join(options.userDataPath, 'zeus.config.json');
-  const restartDelayMs = options.restartDelayMs ?? 1_000;
-  const localServerFactory = options.localServerFactory ?? startZeusLocalServer;
-  const codexAppServerManager = (options.codexAppServerManagerFactory ?? createCodexAppServerManager)();
+  const restartDelayMs = 1_000;
+  const codexAppServerManager = createCodexAppServerManager();
   let closingIntentionally = false;
   let restartTimer: ReturnType<typeof setTimeout> | undefined;
   let restartPromise: Promise<void> | undefined;
@@ -107,7 +113,7 @@ export async function startDesktopLocalServer(options: StartDesktopLocalServerOp
   };
 
   async function launchServer(): Promise<RunningZeusLocalServer> {
-    const server = await localServerFactory({
+    const server = await startZeusLocalServer({
       dbPath,
       localConfigPath: configPath,
       apiToken,
@@ -116,8 +122,13 @@ export async function startDesktopLocalServer(options: StartDesktopLocalServerOp
       telegramAllowedUserIds: options.telegramAllowedUserIds,
       codexNativeEnabled: options.codexNativeEnabled ?? true,
       codexRuntimeCommandPath: options.codexRuntimeCommandPath,
+      codexRuntimeBinaryVersion: options.codexRuntimeBinaryVersion,
       codexLegacyImportRoot: options.codexLegacyImportRoot,
       taskAttachmentRoot: options.taskAttachmentRoot,
+      browserAttachmentRoot: options.browserAttachmentRoot,
+      conversationAttachmentRoot: options.conversationAttachmentRoot,
+      conversationAttachmentGrantSecret: options.conversationAttachmentGrantSecret,
+      browserAutomation: options.browserAutomation,
       codexAppServerManager,
     });
     server.server.server.once('close', () => {
@@ -240,6 +251,8 @@ export interface BeforeQuitCleanupEvent {
 export interface BeforeQuitCleanupResources {
   closeSystemNotifications?: () => void;
   closeLocalServer?: () => Promise<void>;
+  shouldDeferQuit?: () => boolean;
+  requestQuitConfirmation?: () => void;
   exitApp: (code: number) => void;
 }
 
@@ -252,6 +265,10 @@ export function createBeforeQuitCleanupHandler(resources: BeforeQuitCleanupResou
   return (event) => {
     event.preventDefault();
     if (cleanupStarted) return;
+    if (resources.shouldDeferQuit?.()) {
+      resources.requestQuitConfirmation?.();
+      return;
+    }
     cleanupStarted = true;
     void (async () => {
       try {

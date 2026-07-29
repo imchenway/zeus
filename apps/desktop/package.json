@@ -16,6 +16,7 @@
     "@zeus/diagram-engine": "workspace:*",
     "@zeus/local-server": "workspace:*",
     "@zeus/shared": "workspace:*",
+    "framer-motion": "12.42.0",
     "graphology": "^0.26.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",

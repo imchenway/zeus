@@ -3,12 +3,17 @@ import {isOperationalActivityItem, SessionActivityGroup, SessionTurnDuration} fr
 import {itemRole, type SessionUiLanguage, ThreadItemView, transcriptItemText} from './ThreadItemView.js';
 import {PlanSummary} from './PlanSummary.js';
 import type {
+    ConversationResource,
     NativePendingRequest,
     NativePlanImplementationRequest,
     NativeSessionItemBuffer,
-    NativeSessionState
+    NativeSessionState,
+    TurnChangeSet,
+    TurnChangeSetOperationResult,
 } from './sessionTypes.js';
+import type {ConversationFileLocation, ConversationOpenTarget} from '@zeus/shared';
 import {useThreadScrollController} from './useThreadScrollController.js';
+import {TurnChangeCard} from './TurnChanges.js';
 
 export interface ConversationTranscriptProps {
   state: NativeSessionState;
@@ -21,6 +26,13 @@ export interface ConversationTranscriptProps {
     renderPlanImplementationRequest?: (request: NativePlanImplementationRequest, index: number) => ReactNode;
     openPlanItemId?: string | null;
     onOpenPlan?: (item: NativeSessionItemBuffer) => void;
+    onOpenResource?: (
+      resource: ConversationResource,
+      target: ConversationOpenTarget,
+      location?: ConversationFileLocation,
+    ) => void | Promise<void>;
+    onReviewTurnChanges?: (changeSet: TurnChangeSet, fileId?: string) => void;
+    onOperateTurnChangeSet?: (changeSet: TurnChangeSet, action: 'undo' | 'reapply') => Promise<TurnChangeSetOperationResult>;
 }
 
 export function ConversationTranscript(props: ConversationTranscriptProps) {
@@ -121,6 +133,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
                   const rowItems = row.kind === 'item' ? [row.item] : row.items;
                   const lastRowItem = rowItems[rowItems.length - 1]!;
                   const turn = props.state.turnsByProviderId[lastRowItem.turnId];
+                  const changeSet = props.state.changeSetsByProviderId[lastRowItem.turnId];
                   const closesVisibleTurn = lastItemKeyByTurn[lastRowItem.turnId] === lastRowItem.key;
                   return (
                       <Fragment key={row.key}>
@@ -138,6 +151,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
                                       isLatestUser={row.item.key === lastUserKey}
                                       onEdit={props.onEditUserItem}
                                       onRetry={props.onRetryItem}
+                                      onOpenResource={props.onOpenResource}
                                   />
                               )
                           ) : (
@@ -156,6 +170,17 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
                                   <Fragment
                                       key={request.id}>{props.renderPlanImplementationRequest?.(request, planRequests.indexOf(request))}</Fragment>
                               ))}
+                          {closesVisibleTurn &&
+                          changeSet &&
+                          changeSet.state !== 'capturing' &&
+                          (changeSet.fileCount > 0 || changeSet.state === 'conflicted') ? (
+                              <TurnChangeCard
+                                  changeSet={changeSet}
+                                  language={props.language}
+                                  onReview={props.onReviewTurnChanges}
+                                  onOperate={props.onOperateTurnChangeSet}
+                              />
+                          ) : null}
                           {closesVisibleTurn && turn ?
                               <SessionTurnDuration turn={turn} language={props.language}/> : null}
                       </Fragment>

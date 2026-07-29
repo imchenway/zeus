@@ -64,6 +64,23 @@ export interface CodexCapabilitiesSnapshot {
 
 export type CodexSandboxPolicy = { type: 'readOnly'; networkAccess: false } | { type: 'workspaceWrite'; writableRoots: string[]; networkAccess: boolean } | { type: 'dangerFullAccess' };
 
+export interface CodexDynamicToolFunctionSpec {
+  type: 'function';
+  name: string;
+  description: string;
+  inputSchema: JsonValue;
+  deferLoading?: boolean;
+}
+
+export interface CodexDynamicToolNamespaceSpec {
+  type: 'namespace';
+  name: string;
+  description: string;
+  tools: CodexDynamicToolFunctionSpec[];
+}
+
+export type CodexDynamicToolSpec = CodexDynamicToolFunctionSpec | CodexDynamicToolNamespaceSpec;
+
 export interface CodexThreadStartInput {
   model: string;
   cwd: string;
@@ -74,6 +91,7 @@ export interface CodexThreadStartInput {
   baseInstructions?: string;
   developerInstructions?: string;
   ephemeral?: boolean;
+  dynamicTools?: CodexDynamicToolSpec[];
 }
 
 export interface CodexThreadSnapshot {
@@ -128,7 +146,12 @@ export type CodexServerRequestResponse =
       strictAutoReview?: boolean;
     })
   | (CodexServerResponseBase & { type: 'request_user_input'; answers: Record<string, { answers: string[] }> })
-  | (CodexServerResponseBase & { type: 'mcp'; action: 'accept' | 'decline' | 'cancel'; content: JsonValue | null; _meta: JsonValue | null });
+  | (CodexServerResponseBase & { type: 'mcp'; action: 'accept' | 'decline' | 'cancel'; content: JsonValue | null; _meta: JsonValue | null })
+  | (CodexServerResponseBase & {
+      type: 'dynamic_tool';
+      contentItems: Array<{ type: 'inputText'; text: string } | { type: 'inputImage'; imageUrl: string }>;
+      success: boolean;
+    });
 
 export type CodexCommandApprovalDecision = 'accept' | 'acceptForSession' | 'decline' | 'cancel' | {
     acceptWithExecpolicyAmendment: { execpolicy_amendment: string[] }
@@ -604,6 +627,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
             baseInstructions: input.baseInstructions,
             developerInstructions: input.developerInstructions,
             ephemeral: input.ephemeral,
+            dynamicTools: input.dynamicTools,
           }),
         ),
       );
@@ -722,6 +746,9 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
           break;
         case 'mcp':
           result = { action: input.action, content: input.content, _meta: input._meta };
+          break;
+        case 'dynamic_tool':
+          result = { contentItems: input.contentItems, success: input.success };
           break;
       }
       write({ id: input.requestId, result });
@@ -882,6 +909,20 @@ function validateServerResponse(input: CodexServerRequestResponse): void {
     }
     return;
   }
+  if (input.type === 'dynamic_tool') {
+    if (
+      typeof input.success !== 'boolean' ||
+      !Array.isArray(input.contentItems) ||
+      !input.contentItems.every(
+        (item) =>
+          (item.type === 'inputText' && typeof item.text === 'string') ||
+          (item.type === 'inputImage' && typeof item.imageUrl === 'string' && item.imageUrl.startsWith('data:image/')),
+      )
+    ) {
+      throw managerError('ZEUS_CODEX_SERVER_RESPONSE_INVALID', 'Codex dynamic tool response is invalid.');
+    }
+    return;
+  }
   if (!['accept', 'decline', 'cancel'].includes(input.action) || !isJsonValue(input.content) || !isJsonValue(input._meta)) {
     throw managerError('ZEUS_CODEX_SERVER_RESPONSE_INVALID', 'Codex MCP response is invalid.');
   }
@@ -935,10 +976,18 @@ function serverMethodForResponse(type: CodexServerRequestResponse['type']): stri
     permissions: 'item/permissions/requestApproval',
     request_user_input: 'item/tool/requestUserInput',
     mcp: 'mcpServer/elicitation/request',
+    dynamic_tool: 'item/tool/call',
   }[type];
 }
 
-const supportedServerRequestMethods = new Set(['item/commandExecution/requestApproval', 'item/fileChange/requestApproval', 'item/permissions/requestApproval', 'item/tool/requestUserInput', 'mcpServer/elicitation/request']);
+const supportedServerRequestMethods = new Set([
+  'item/commandExecution/requestApproval',
+  'item/fileChange/requestApproval',
+  'item/permissions/requestApproval',
+  'item/tool/requestUserInput',
+  'mcpServer/elicitation/request',
+  'item/tool/call',
+]);
 
 function pendingKey(generationId: string, id: CodexWireId): string {
   return `${generationId}\u0000${typeof id}:${String(id)}`;

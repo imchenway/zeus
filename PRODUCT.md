@@ -8,7 +8,7 @@ Zeus 是本地优先的 macOS AI 研发工作台，帮助个人开发者、技�
 
 ## 用户与场景
 
-- 个人开发者：在 Mac 上远程调度本机 AI 编程任务，并把任务、Runtime 会话、Git diff 和测试结果留在本机证据链里。
+- 个人开发者：在 Mac 上远程调度本机 AI 编程任务，并把任务、Runtime 会话、Git diff 和运行验收结果留在本机证据链里。
 - 技术负责人：快速理解陌生项目的模块、接口、表和调用链，基于真实源码和 SQL/DDL 判断影响范围。
 - 开源维护者：把 issue、任务、终端日志、代码变更、图谱上下文和远程通知串成一个闭环。
 
@@ -19,7 +19,7 @@ Zeus 是本地优先的 macOS AI 研发工作台，帮助个人开发者、技�
 ## 当前已验证边界
 
 - Zeus 当前已覆盖本地优先 macOS 桌面应用、本地 app-server、SQLite 存储、真实代码扫描、代码图谱、图谱问答、Sigma/WebGL 大图、React Flow 局部图、任务管理、AI Runtime（node-pty + xterm.js）、Git Diff、Telegram long polling、安全与发布打包。
-- 已验证发布基线为 `pnpm verify:release` 通过，包含 lint、typecheck、63 test files / 524 tests、真实扫描、build、package:mac、DMG/ZIP、Homebrew cask 和包内 Electron 可执行文件加载。
+- 当前发布证据链包含 lint、typecheck、build、package:mac、DMG/ZIP、Homebrew cask、包内 Electron 可执行文件加载及必要的真实运行验收；各阶段证据不得互相替代。
 - 当前真实扫描基线为 162 files / 15984 nodes / 31536 edges / 7 views，扫描的是 `/Users/david/hypha/zeus` 真实代码库。
 - 缺少真实数据时，产品展示空态、失败态、未配置态或外部配置等待项，不用 seed 数据伪造繁荣度。
 

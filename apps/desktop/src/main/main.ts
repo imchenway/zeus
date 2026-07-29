@@ -12,9 +12,10 @@ import {
     Tray
 } from 'electron';
 import {execFile as execFileCallback} from 'node:child_process';
-import {readFileSync} from 'node:fs';
+import {constants as fsConstants, readFileSync} from 'node:fs';
+import {randomUUID} from 'node:crypto';
 import {basename, dirname, extname, isAbsolute, join, relative, resolve, sep} from 'node:path';
-import {access, mkdir, readFile, writeFile} from 'node:fs/promises';
+import {access, copyFile, cp, lstat, mkdir, readFile, readdir, realpath, stat, writeFile} from 'node:fs/promises';
 import {pathToFileURL} from 'node:url';
 import {promisify} from 'node:util';
 import {
@@ -26,7 +27,7 @@ import {
 import {createStartupCoordinator} from './startupCoordinator.js';
 import {terminateAfterFatalStartup} from './fatalStartup.js';
 import {createRendererBootstrapMonitor} from './rendererBootstrapMonitor.js';
-import {resolveCodexRuntimePath} from './codexRuntimePath.js';
+import {resolveCodexRuntime} from './codexRuntimePath.js';
 import {exportMermaidDiagramToFile, exportPlantUmlDiagramToFile} from './mermaidExport.js';
 import {exportPatchToFile} from './patchExport.js';
 import {exportRuntimeLogsToFile} from './runtimeLogExport.js';
@@ -66,15 +67,31 @@ import {
     buildTaskAttachmentPreviewDataUrl,
     coerceTaskClipboardAttachmentBuffer,
     inferTaskClipboardAttachmentMimeType,
-    readTaskAttachmentFilePathPayloads,
     readTaskClipboardAttachmentsFromClipboard,
+    readTaskClipboardFileReferencesFromClipboard,
     type TaskClipboardAttachmentPayload,
 } from './taskClipboard.js';
+import {createBrowserHost, type BrowserHost} from './browserHost.js';
+import {
+    listConversationResourceOpenTargets,
+    openConversationResource,
+    type ConversationResourceRequest,
+    type OpenConversationResourceRequest,
+} from './conversationResourceOpen.js';
+import {
+    createConversationInputResourceBroker,
+    readOrCreateConversationAttachmentGrantSecret,
+    type ConversationInputResourceBroker,
+    type ConversationInputResourceSource,
+    type ConversationResourcePayload,
+} from './conversationInputResources.js';
 
 let mainWindow: BrowserWindow | undefined;
 const windows = new Set<BrowserWindow>();
 let tray: Tray | undefined;
 let localServerRuntime: DesktopLocalServerRuntime | undefined;
+let browserHost: BrowserHost | undefined;
+let conversationInputResources: ConversationInputResourceBroker | undefined;
 let systemNotificationBridge: SystemNotificationBridge | undefined;
 let fatalStartup = false;
 let appShellSettings: MainAppShellSettings = {
@@ -88,6 +105,11 @@ const manualWindowDragStates = new Map<number, { pointerX: number; pointerY: num
 const windowStateSaveTimers = new Map<number, ReturnType<typeof setTimeout>>();
 const windowStateActivationTimers = new Map<number, ReturnType<typeof setTimeout>>();
 const windowStatePersistenceGates = new Map<number, WindowStatePersistenceGate>();
+const taskTableLayoutDirtyWindowIds = new Set<number>();
+const taskTableLayoutCloseApprovedWindowIds = new Set<number>();
+const pendingTaskTableLayoutWindowCloseIds = new Set<number>();
+let taskTableLayoutQuitPending = false;
+let taskTableLayoutQuitApproved = false;
 const execFile = promisify(execFileCallback);
 const windowStateSaveDelayMs = 250;
 const windowStateActivationDelayMs = 500;
@@ -170,7 +192,13 @@ function registerMainWindowStatePersistence(window: BrowserWindow): void {
     window.on('unmaximize', scheduleSave);
     window.on('enter-full-screen', scheduleSave);
     window.on('leave-full-screen', scheduleSave);
-    window.on('close', () => flushMainWindowState(window));
+    window.on('close', (event) => {
+      flushMainWindowState(window);
+      if (taskTableLayoutQuitApproved || taskTableLayoutCloseApprovedWindowIds.has(window.id) || !taskTableLayoutDirtyWindowIds.has(window.id)) return;
+      event.preventDefault();
+      pendingTaskTableLayoutWindowCloseIds.add(window.id);
+      window.webContents.send('zeus:task-table-layout-close-requested');
+    });
 }
 
 function activateMainWindowStatePersistence(window: BrowserWindow): void {
@@ -284,6 +312,7 @@ async function createWindow(): Promise<void> {
       allowRunningInsecureContent: false,
     },
   });
+  browserHost?.registerWindow(window);
 
     registerMainWindowStatePersistence(window);
 
@@ -307,6 +336,7 @@ async function createWindow(): Promise<void> {
   windows.add(window);
   mainWindow = window;
   window.on('closed', () => {
+    browserHost?.unregisterWindow(window);
       const timer = windowStateSaveTimers.get(window.id);
       if (timer) clearTimeout(timer);
       windowStateSaveTimers.delete(window.id);
@@ -314,6 +344,9 @@ async function createWindow(): Promise<void> {
       if (activationTimer) clearTimeout(activationTimer);
       windowStateActivationTimers.delete(window.id);
       windowStatePersistenceGates.delete(window.id);
+      taskTableLayoutDirtyWindowIds.delete(window.id);
+      taskTableLayoutCloseApprovedWindowIds.delete(window.id);
+      pendingTaskTableLayoutWindowCloseIds.delete(window.id);
     rendererBootstrapMonitor.dispose(window);
     windows.delete(window);
     if (mainWindow === window) mainWindow = [...windows].at(-1);
@@ -414,6 +447,60 @@ async function openLogsDirectoryFromMenu(): Promise<void> {
   }).catch(() => undefined);
 }
 
+async function revealProjectPathInFinder(value: unknown): Promise<{ revealed: true; path: string }> {
+  if (typeof value !== 'string' || value.includes('\0') || !isAbsolute(value.trim())) {
+    throw new TypeError('Project path must be an absolute local path.');
+  }
+  const projectPath = resolve(value.trim());
+  const projectPathStat = await stat(projectPath);
+  if (!projectPathStat.isDirectory()) {
+    throw new TypeError('Project path must point to a local directory.');
+  }
+  // showItemInFolder 会在 Finder 中选中项目目录；不能退化成 openPath，否则用户会进入目录而不是定位目录本身。
+  shell.showItemInFolder(projectPath);
+  return { revealed: true, path: projectPath };
+}
+
+function conversationResourceOpenServices(requestingWindow: BrowserWindow) {
+  if (!localServerRuntime) throw new Error('Zeus local server is not ready.');
+  return {
+    config: localServerRuntime.config,
+    fetchJson: async (url: string, init: {headers: Record<string, string>}) => {
+      const response = await fetch(url, init);
+      const payload = (await response.json().catch(() => ({}))) as unknown;
+      if (!response.ok) {
+        const record = payload && typeof payload === 'object' && !Array.isArray(payload) ? payload as Record<string, unknown> : {};
+        throw Object.assign(new Error(typeof record.message === 'string' ? record.message : `Local resource authority failed with HTTP ${response.status}.`), {
+          code: typeof record.error === 'string' ? record.error : 'ZEUS_CONVERSATION_RESOURCE_AUTHORITY_FAILED',
+        });
+      }
+      return payload;
+    },
+    pathExists: async (path: string) => {
+      try {
+        await access(path);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    openExternal: (url: string) => shell.openExternal(url),
+    openPath: (path: string) => shell.openPath(path),
+    showItemInFolder: (path: string) => shell.showItemInFolder(path),
+    writeClipboardText: (text: string) => clipboard.writeText(text),
+    openBrowser: async (input: {conversationId: string; url: string}) => {
+      if (!browserHost) throw new Error('Zeus BrowserHost is not ready.');
+      return browserHost.openConversationResource(requestingWindow, input);
+    },
+    executeFile: (file: string, args: string[]) => execFile(file, args),
+    applicationHome: app.getPath('home'),
+    getSettings: () => {
+      if (!browserHost) throw new Error('Zeus BrowserHost is not ready.');
+      return browserHost.getSettings();
+    },
+  };
+}
+
 function setupIpc(): void {
   ipcMain.handle('zeus:get-local-server-config', () => {
     if (!localServerRuntime) {
@@ -438,6 +525,34 @@ function setupIpc(): void {
     const detail = typeof message === 'string' && message.trim() ? message.trim().slice(0, 500) : 'Renderer runtime failed without detail';
     void startupCoordinator.fail(new Error(`Renderer runtime failed: ${detail}`));
   });
+  ipcMain.on('zeus:task-table-layout-dirty-changed', (event, dirty: unknown) => {
+    const requestingWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow)) return;
+    if (dirty === true) taskTableLayoutDirtyWindowIds.add(requestingWindow.id);
+    else taskTableLayoutDirtyWindowIds.delete(requestingWindow.id);
+  });
+  ipcMain.on('zeus:task-table-layout-close-resolution', (event, resolution: unknown) => {
+    const requestingWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow)) return;
+    const proceed = Boolean(resolution && typeof resolution === 'object' && (resolution as {proceed?: unknown}).proceed === true);
+    if (!proceed) {
+      pendingTaskTableLayoutWindowCloseIds.delete(requestingWindow.id);
+      taskTableLayoutQuitPending = false;
+      taskTableLayoutQuitApproved = false;
+      return;
+    }
+    taskTableLayoutDirtyWindowIds.delete(requestingWindow.id);
+    taskTableLayoutCloseApprovedWindowIds.add(requestingWindow.id);
+    if (taskTableLayoutQuitPending) {
+      if (taskTableLayoutDirtyWindowIds.size === 0) {
+        taskTableLayoutQuitApproved = true;
+        taskTableLayoutQuitPending = false;
+        app.quit();
+      }
+      return;
+    }
+    if (pendingTaskTableLayoutWindowCloseIds.delete(requestingWindow.id)) requestingWindow.close();
+  });
   ipcMain.handle('zeus:open-external-https-url', (event, url: unknown) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
     if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow)) return { opened: false, error: 'external_open_untrusted_sender' };
@@ -445,6 +560,20 @@ function setupIpc(): void {
       url,
       openExternal: (url) => shell.openExternal(url),
     });
+  });
+  ipcMain.handle('zeus:conversation-resource:list-open-targets', (event, request: ConversationResourceRequest) => {
+    const requestingWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow)) {
+      throw new Error('Conversation resource request came from an untrusted window.');
+    }
+    return listConversationResourceOpenTargets(request, conversationResourceOpenServices(requestingWindow));
+  });
+  ipcMain.handle('zeus:conversation-resource:open', (event, request: OpenConversationResourceRequest) => {
+    const requestingWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow)) {
+      throw new Error('Conversation resource request came from an untrusted window.');
+    }
+    return openConversationResource(request, conversationResourceOpenServices(requestingWindow));
   });
   ipcMain.handle('zeus:window-drag-start', (event, point: unknown) => {
     const window = BrowserWindow.fromWebContents(event.sender);
@@ -483,20 +612,85 @@ function setupIpc(): void {
       }),
     ),
   );
-  ipcMain.handle('zeus:choose-task-attachments', async () => {
-    const selected = await dialog.showOpenDialog({
-      title: '选择任务图片或附件',
-      properties: ['openFile', 'multiSelections'],
-      filters: [
-        { name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'heic'] },
-        { name: 'All Files', extensions: ['*'] },
-      ],
+  ipcMain.handle('zeus:reveal-project-in-finder', (event, projectPath: unknown) => {
+    const requestingWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow)) {
+      throw new Error('Project reveal request came from an untrusted window.');
+    }
+    return revealProjectPathInFinder(projectPath);
+  });
+  ipcMain.handle('zeus:choose-conversation-resources', async (event) => {
+    const requestingWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow) || !conversationInputResources) {
+      throw new Error('Conversation resource picker is unavailable for this window.');
+    }
+    const selected = await dialog.showOpenDialog(requestingWindow, {
+      title: '选择文件或文件夹',
+      properties: ['openFile', 'openDirectory', 'multiSelections'],
     });
     if (selected.canceled) return [];
-    return saveTaskAttachmentPayloads(await readTaskAttachmentFilePathPayloads(selected.filePaths));
+    return conversationInputResources.describePaths(selected.filePaths, 'picker');
   });
+  ipcMain.handle('zeus:authorize-conversation-files', async (event, paths: unknown, source: unknown) => {
+    const requestingWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow) || !conversationInputResources) {
+      throw new Error('Conversation file authorization is unavailable for this window.');
+    }
+    const filePaths = Array.isArray(paths) ? paths.filter((path): path is string => typeof path === 'string') : [];
+    const normalizedSource: ConversationInputResourceSource = source === 'drop' ? 'drop' : 'paste';
+    return conversationInputResources.describePaths(filePaths, normalizedSource);
+  });
+  ipcMain.handle('zeus:materialize-conversation-resources', async (event, payloads: unknown) => {
+    const requestingWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow) || !conversationInputResources) {
+      throw new Error('Conversation resource materialization is unavailable for this window.');
+    }
+    const normalized = Array.isArray(payloads)
+      ? payloads.filter((payload): payload is ConversationResourcePayload => Boolean(payload) && typeof payload === 'object' && !Array.isArray(payload))
+      : [];
+    return conversationInputResources.materialize(normalized);
+  });
+  ipcMain.handle('zeus:read-conversation-clipboard-resources', async (event) => {
+    const requestingWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow) || !conversationInputResources) {
+      throw new Error('Conversation clipboard access is unavailable for this window.');
+    }
+    return conversationInputResources.readClipboard();
+  });
+  ipcMain.handle('zeus:get-conversation-resource-preview', async (event, resource: unknown) => {
+    const requestingWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow) || !conversationInputResources) {
+      throw new Error('Conversation resource preview is unavailable for this window.');
+    }
+    const record = resource && typeof resource === 'object' && !Array.isArray(resource)
+      ? resource as {localPath?: string; uploadRef?: string}
+      : {};
+    return conversationInputResources.preview(record);
+  });
+  ipcMain.handle('zeus:choose-task-attachments', async () => {
+    const selected = await dialog.showOpenDialog({
+      title: '选择文件或文件夹',
+      properties: ['openFile', 'openDirectory', 'multiSelections'],
+    });
+    if (selected.canceled) return [];
+    const resources = await saveTaskResourcePaths(selected.filePaths);
+    if (selected.filePaths.length > 0 && resources.length === 0) {
+      throw new Error('No selected task resources could be copied into Zeus storage.');
+    }
+    return resources;
+  });
+  ipcMain.handle('zeus:store-task-resource-paths', (_event, paths: unknown) =>
+    saveTaskResourcePaths(Array.isArray(paths) ? paths.filter((path): path is string => typeof path === 'string') : []),
+  );
+  ipcMain.handle('zeus:materialize-task-resources', (_event, resources: unknown) =>
+    saveTaskAttachmentPayloads(Array.isArray(resources) ? resources as TaskResourcePayload[] : []),
+  );
+  ipcMain.handle('zeus:read-task-clipboard-resources', () => readTaskClipboardResourcesFromNativeClipboard());
   ipcMain.handle('zeus:read-task-clipboard-attachments', () => readTaskClipboardAttachmentsFromNativeClipboard());
-  ipcMain.handle('zeus:save-task-clipboard-attachments', async () => saveTaskAttachmentPayloads(await readTaskClipboardAttachmentsFromNativeClipboard()));
+  ipcMain.handle('zeus:save-task-clipboard-attachments', async () => {
+    const result = await readTaskClipboardResourcesFromNativeClipboard();
+    return result.resources;
+  });
     ipcMain.handle('zeus:write-clipboard-text', (_event, text: unknown) => {
         if (typeof text !== 'string') throw new TypeError('Clipboard text must be a string.');
         clipboard.writeText(text);
@@ -506,7 +700,7 @@ function setupIpc(): void {
     const [firstAttachment] = await readTaskClipboardAttachmentsFromNativeClipboard();
     return firstAttachment ?? null;
   });
-  ipcMain.handle('zeus:save-task-pasted-attachments', async (_event, attachments: Array<{ name: string; type: string; data: ArrayBuffer | Uint8Array }>) => {
+  ipcMain.handle('zeus:save-task-pasted-attachments', async (_event, attachments: TaskResourcePayload[]) => {
     return saveTaskAttachmentPayloads(Array.isArray(attachments) ? attachments : []);
   });
   ipcMain.handle('zeus:get-task-attachment-preview', (_event, path: string) => loadSavedTaskAttachmentPreview(path));
@@ -639,6 +833,7 @@ function setupIpc(): void {
     applyLoginItemSettings();
     return { applied: true };
   });
+  browserHost?.registerIpc();
 }
 
 /** 解析 Telegram 白名单，非法值直接忽略，避免把错误配置当作授权用户。 */
@@ -692,6 +887,34 @@ function isImageAttachmentPath(filePath: string): boolean {
   return ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.heic'].includes(extname(filePath).toLowerCase());
 }
 
+type TaskStoredResourceKind = 'image' | 'file' | 'directory' | 'pasted_text';
+
+type TaskStoredResource = {
+  path: string;
+  name: string;
+  kind: TaskStoredResourceKind;
+  mimeType?: string;
+  size?: number;
+  characterCount?: number;
+  previewUrl?: string;
+  restorableText?: string;
+};
+
+type TaskResourcePayload = {
+  name?: string;
+  type?: string;
+  data?: ArrayBuffer | Uint8Array;
+  text?: string;
+  kind?: TaskStoredResourceKind;
+};
+
+const maximumTaskResourceCount = 100;
+const maximumTaskResourceBytes = 100 * 1024 * 1024;
+const maximumTaskResourceBatchBytes = 256 * 1024 * 1024;
+const maximumTaskDirectoryEntries = 2_000;
+const maximumTaskRestorableTextCharacters = 25_000;
+const taskLongPasteThreshold = 5_000;
+
 function taskAttachmentDirectory(): string {
   return join(app.getPath('userData'), 'task-attachments');
 }
@@ -706,7 +929,7 @@ function isInsideTaskAttachmentDirectory(filePath: string): boolean {
 
 function sanitizeTaskAttachmentFileName(fileName: string): string {
   const safeName = basename(fileName)
-    .replace(/[^\p{L}\p{N}._ -]+/gu, '-')
+    .replace(/[^\p{L}\p{N}._ ()[\]-]+/gu, '-')
     .replace(/\s+/gu, ' ')
     .trim();
   // 文件名为空或只有非法字符时保留稳定 fallback，避免 userData 附件目录出现不可读文件。
@@ -726,6 +949,38 @@ function readTaskClipboardAttachmentsFromNativeClipboard(): Promise<TaskClipboar
       readSystemFileReferences: readMacOSClipboardFileReferences,
     },
   );
+}
+
+async function readTaskClipboardResourcesFromNativeClipboard(): Promise<{resources: TaskStoredResource[]; text: string}> {
+  const clipboardReader = {
+    readImage: () => clipboard.readImage(),
+    availableFormats: () => clipboard.availableFormats(),
+    readBuffer: (format: string) => clipboard.readBuffer(format),
+    readText: () => clipboard.readText(),
+    readHTML: () => clipboard.readHTML(),
+  };
+  const readOptions = {readSystemFileReferences: readMacOSClipboardFileReferences};
+  const referencedPaths = await readTaskClipboardFileReferencesFromClipboard(clipboardReader, readOptions);
+  if (referencedPaths.length > 0) {
+    return {resources: await saveTaskResourcePaths(referencedPaths), text: ''};
+  }
+  const attachments = await readTaskClipboardAttachmentsFromClipboard(clipboardReader, readOptions);
+  if (attachments.length > 0) {
+    return {resources: await saveTaskAttachmentPayloads(attachments), text: ''};
+  }
+  let text = '';
+  try {
+    text = clipboard.readText();
+  } catch {
+    // 剪贴板文字读取失败时按空内容处理，保留用户当前任务表单。
+  }
+  if (text.length >= taskLongPasteThreshold) {
+    return {
+      resources: await saveTaskAttachmentPayloads([{name: 'Pasted text.txt', type: 'text/plain', text, kind: 'pasted_text'}]),
+      text: '',
+    };
+  }
+  return {resources: [], text};
 }
 
 async function readMacOSClipboardFileReferences(): Promise<string[]> {
@@ -773,26 +1028,130 @@ async function openSavedTaskAttachment(path: string): Promise<{ opened: boolean;
   }
 }
 
-async function saveTaskAttachmentPayloads(attachments: Array<{ name: string; type: string; data: ArrayBuffer | Uint8Array }>): Promise<Array<{ path: string; name: string; kind: 'image' | 'file'; mimeType?: string; previewUrl?: string }>> {
+async function saveTaskResourcePaths(paths: string[]): Promise<TaskStoredResource[]> {
+  if (paths.length === 0) return [];
+  const attachmentDirectory = taskAttachmentDirectory();
+  await mkdir(attachmentDirectory, {recursive: true, mode: 0o700});
+  const resources: TaskStoredResource[] = [];
+  const seen = new Set<string>();
+  let batchBytes = 0;
+  for (const path of paths.slice(0, maximumTaskResourceCount)) {
+    if (typeof path !== 'string' || !isAbsolute(path) || path.includes('\0')) continue;
+    try {
+      const canonicalPath = await realpath(path);
+      if (seen.has(canonicalPath)) continue;
+      seen.add(canonicalPath);
+      const sourceStat = await lstat(canonicalPath);
+      if (sourceStat.isSymbolicLink() || (!sourceStat.isFile() && !sourceStat.isDirectory())) continue;
+      const summary = sourceStat.isDirectory()
+        ? await inspectTaskResourceTree(canonicalPath)
+        : {bytes: sourceStat.size, entries: 1};
+      if (
+        summary.bytes > maximumTaskResourceBytes ||
+        batchBytes + summary.bytes > maximumTaskResourceBatchBytes
+      ) {
+        continue;
+      }
+      batchBytes += summary.bytes;
+      const safeName = sanitizeTaskAttachmentFileName(basename(canonicalPath) || 'task-resource');
+      const destination = join(attachmentDirectory, `${Date.now()}-${randomUUID()}-${safeName}`);
+      if (sourceStat.isDirectory()) {
+        await cp(canonicalPath, destination, {
+          recursive: true,
+          errorOnExist: true,
+          force: false,
+          filter: async (source) => !(await lstat(source)).isSymbolicLink(),
+        });
+        resources.push({
+          path: destination,
+          name: safeName,
+          kind: 'directory',
+          mimeType: 'inode/directory',
+          size: summary.bytes,
+        });
+        continue;
+      }
+      await copyFile(canonicalPath, destination, fsConstants.COPYFILE_EXCL);
+      const mimeType = inferTaskClipboardAttachmentMimeType(destination);
+      const kind = mimeType.startsWith('image/') || isImageAttachmentPath(destination) ? 'image' : 'file';
+      const previewUrl = kind === 'image' && sourceStat.size <= maximumTaskResourceBytes
+        ? buildTaskAttachmentPreviewDataUrl(await readFile(destination), mimeType)
+        : undefined;
+      resources.push({
+        path: destination,
+        name: safeName,
+        kind,
+        mimeType,
+        size: sourceStat.size,
+        ...(previewUrl ? {previewUrl} : {}),
+      });
+    } catch {
+      // 单个文件、目录或复制动作失败时保留同批次中的其他可用资源。
+    }
+  }
+  return resources;
+}
+
+async function inspectTaskResourceTree(rootPath: string): Promise<{bytes: number; entries: number}> {
+  const pending = [rootPath];
+  let bytes = 0;
+  let entries = 0;
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (!current) continue;
+    for (const entry of await readdir(current, {withFileTypes: true})) {
+      const entryPath = join(current, entry.name);
+      const entryStat = await lstat(entryPath);
+      if (entryStat.isSymbolicLink()) throw new Error('Task attachment directories cannot contain symbolic links.');
+      entries += 1;
+      if (entries > maximumTaskDirectoryEntries) throw new Error('Task attachment directory contains too many entries.');
+      if (entryStat.isDirectory()) pending.push(entryPath);
+      else if (entryStat.isFile()) bytes += entryStat.size;
+      else throw new Error('Task attachment directory contains an unsupported entry.');
+      if (bytes > maximumTaskResourceBytes) throw new Error('Task attachment directory is too large.');
+    }
+  }
+  return {bytes, entries};
+}
+
+async function saveTaskAttachmentPayloads(attachments: TaskResourcePayload[]): Promise<TaskStoredResource[]> {
   if (attachments.length === 0) return [];
   const attachmentDirectory = taskAttachmentDirectory();
-  await mkdir(attachmentDirectory, { recursive: true });
-  const createdAt = Date.now();
-  const savedAttachments: Array<{ path: string; name: string; kind: 'image' | 'file'; mimeType?: string; previewUrl?: string }> = [];
-  for (const [index, attachment] of attachments.entries()) {
-    const attachmentBuffer = coerceTaskClipboardAttachmentBuffer(attachment?.data);
-    if (!attachment || !attachmentBuffer) continue;
+  await mkdir(attachmentDirectory, {recursive: true, mode: 0o700});
+  const savedAttachments: TaskStoredResource[] = [];
+  let batchBytes = 0;
+  for (const [index, attachment] of attachments.slice(0, maximumTaskResourceCount).entries()) {
+    const text = typeof attachment?.text === 'string' ? attachment.text : undefined;
+    const attachmentBuffer = text === undefined
+      ? coerceTaskClipboardAttachmentBuffer(attachment?.data)
+      : Buffer.from(text, 'utf8');
+    if (!attachment || !attachmentBuffer || attachmentBuffer.byteLength === 0) continue;
+    if (
+      attachmentBuffer.byteLength > maximumTaskResourceBytes ||
+      batchBytes + attachmentBuffer.byteLength > maximumTaskResourceBatchBytes
+    ) {
+      continue;
+    }
+    batchBytes += attachmentBuffer.byteLength;
     const safeName = sanitizeTaskAttachmentFileName(attachment.name || `pasted-task-attachment-${index + 1}`);
-    const filePath = join(attachmentDirectory, `${createdAt}-${index}-${safeName}`);
+    const filePath = join(attachmentDirectory, `${Date.now()}-${randomUUID()}-${safeName}`);
     // 粘贴得到的是剪贴板二进制内容；Main 进程落到本机 userData 后，只把路径回传给任务上下文。
-    await writeFile(filePath, attachmentBuffer);
+    await writeFile(filePath, attachmentBuffer, {flag: 'wx', mode: 0o600});
     const mimeType = attachment.type || inferTaskClipboardAttachmentMimeType(filePath);
-    const kind = mimeType.startsWith('image/') || isImageAttachmentPath(filePath) ? 'image' : 'file';
+    const pastedText = text !== undefined || attachment.kind === 'pasted_text';
+    const kind: TaskStoredResourceKind = pastedText
+      ? 'pasted_text'
+      : mimeType.startsWith('image/') || isImageAttachmentPath(filePath)
+        ? 'image'
+        : 'file';
     savedAttachments.push({
       path: filePath,
       name: safeName,
       kind,
       mimeType,
+      size: attachmentBuffer.byteLength,
+      ...(pastedText ? {characterCount: text?.length ?? 0} : {}),
+      ...(pastedText && text !== undefined && text.length <= maximumTaskRestorableTextCharacters ? {restorableText: text} : {}),
       ...(kind === 'image' ? { previewUrl: buildTaskAttachmentPreviewDataUrl(attachmentBuffer, mimeType) } : {}),
     });
   }
@@ -802,10 +1161,33 @@ async function saveTaskAttachmentPayloads(attachments: Array<{ name: string; typ
 async function initializeApplication(): Promise<void> {
   await app.whenReady();
   const userDataPath = app.getPath('userData');
+  const browserAttachmentRoot = join(userDataPath, 'browser-comments');
+  const conversationAttachmentRoot = join(userDataPath, 'conversation-attachments');
+  const conversationAttachmentGrantSecret = await readOrCreateConversationAttachmentGrantSecret(
+    join(userDataPath, 'conversation-attachment-grant.secret'),
+  );
+  conversationInputResources = createConversationInputResourceBroker({
+    attachmentRoot: conversationAttachmentRoot,
+    grantSecret: conversationAttachmentGrantSecret,
+    clipboard: {
+      readImage: () => clipboard.readImage(),
+      availableFormats: () => clipboard.availableFormats(),
+      readBuffer: (format) => clipboard.readBuffer(format),
+      readText: () => clipboard.readText(),
+      readHTML: () => clipboard.readHTML(),
+    },
+    clipboardReadOptions: {readSystemFileReferences: readMacOSClipboardFileReferences},
+  });
+  browserHost = createBrowserHost({
+    userDataPath,
+    preloadPath: join(desktopRoot(), 'dist/preload/browser-page.cjs'),
+    attachmentRoot: browserAttachmentRoot,
+    defaultDownloadDirectory: app.getPath('downloads'),
+  });
   const mainProjectRoot = resolveMainProjectRoot();
   const codexNativeEnabled = parseCodexNativeEnabled(process.env.ZEUS_CODEX_NATIVE_ENABLED);
-  const codexRuntimeCommandPath = codexNativeEnabled
-    ? await resolveCodexRuntimePath({
+  const codexRuntime = codexNativeEnabled
+    ? await resolveCodexRuntime({
         isPackaged: app.isPackaged,
         resourcesPath: process.resourcesPath,
         projectRoot: mainProjectRoot,
@@ -818,9 +1200,14 @@ async function initializeApplication(): Promise<void> {
     telegramToken: process.env.ZEUS_TELEGRAM_BOT_TOKEN,
     telegramAllowedUserIds: parseTelegramAllowedUserIds(process.env.ZEUS_TELEGRAM_ALLOWED_USER_IDS),
     codexNativeEnabled,
-    codexRuntimeCommandPath,
+    codexRuntimeCommandPath: codexRuntime?.commandPath,
+    codexRuntimeBinaryVersion: codexRuntime?.binaryVersion,
     codexLegacyImportRoot: join(userDataPath, 'codex-legacy-import'),
     taskAttachmentRoot: join(userDataPath, 'task-attachments'),
+    browserAttachmentRoot,
+    conversationAttachmentRoot,
+    conversationAttachmentGrantSecret,
+    browserAutomation: browserHost,
     onRestarted: () => {
       // 本地服务异常重启后，依赖旧 WebSocket 的系统通知桥必须重建，避免继续挂在旧端口。
       applySystemNotificationBridge();
@@ -874,11 +1261,24 @@ if (!hasSingleInstanceLock) {
 app.on(
   'before-quit',
   createBeforeQuitCleanupHandler({
+    shouldDeferQuit: () => !taskTableLayoutQuitApproved && taskTableLayoutDirtyWindowIds.size > 0,
+    requestQuitConfirmation: () => {
+      if (taskTableLayoutQuitPending) return;
+      taskTableLayoutQuitPending = true;
+      for (const window of windows) {
+        if (!window.isDestroyed() && taskTableLayoutDirtyWindowIds.has(window.id)) {
+          window.webContents.send('zeus:task-table-layout-close-requested');
+        }
+      }
+    },
     closeSystemNotifications: () => {
       systemNotificationBridge?.close();
       systemNotificationBridge = undefined;
     },
     closeLocalServer: async () => {
+      await browserHost?.close();
+      browserHost = undefined;
+      conversationInputResources = undefined;
       await localServerRuntime?.close();
       localServerRuntime = undefined;
     },
@@ -952,7 +1352,7 @@ function applyLoginItemSettings(): void {
       }),
     );
   } catch {
-    // 某些开发或测试环境可能不允许写入登录项，设置页仍保留用户偏好以便下次真实 App 启动时重试。
+    // 某些开发或受限运行环境可能不允许写入登录项，设置页仍保留用户偏好以便下次真实 App 启动时重试。
   }
 }
 

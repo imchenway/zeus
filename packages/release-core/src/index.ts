@@ -77,6 +77,7 @@ export interface ReleaseUpdateManifestInput {
   version: string;
   channel: ReleaseUpdateChannel;
   repository: string;
+  homebrewTap?: string;
   publishedAt?: string;
   signed?: boolean;
   notarized?: boolean;
@@ -204,6 +205,7 @@ export function buildAutoUpdatePolicy(input: AutoUpdatePolicyInput): AutoUpdateP
 /** 构造公开 GitHub Release 更新清单；所有下载地址都来源于仓库名和版本，不内嵌本机路径。 */
 export function buildReleaseUpdateManifest(input: ReleaseUpdateManifestInput): ReleaseUpdateManifest {
   const repository = normalizeRepository(input.repository);
+  const homebrewTap = normalizeRepository(input.homebrewTap ?? 'imchenway/tap');
   const version = normalizeVersion(input.version);
   const tag = `v${version}`;
   const releaseBaseUrl = `https://github.com/${repository}/releases`;
@@ -232,10 +234,10 @@ export function buildReleaseUpdateManifest(input: ReleaseUpdateManifestInput): R
     minimumSystemVersion: input.minimumSystemVersion?.trim() || '13.0',
     artifacts,
     homebrew: {
-      tap: repository,
+      tap: homebrewTap,
       cask: 'zeus',
-      installCommand: `brew install --cask ${repository}/zeus`,
-      upgradeCommand: 'brew upgrade --cask zeus',
+      installCommand: `brew install --cask ${homebrewTap}/zeus`,
+      upgradeCommand: `brew upgrade --cask ${homebrewTap}/zeus`,
     },
   };
 }

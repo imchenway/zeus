@@ -14,13 +14,17 @@ extraResources:
     filter:
       - codex
       - manifest.json
+  - from: ../../third_party/openai-codex/runtime.lock.json
+    to: codex/runtime.lock.json
 mac:
   category: public.app-category.developer-tools
   icon: assets/icon.icns
+  hardenedRuntime: true
+  entitlements: assets/entitlements.mac.plist
+  entitlementsInherit: assets/entitlements.mac.inherit.plist
   target:
     - dmg
     - zip
-  identity: null
 dmg:
   title: Zeus
   artifactName: Zeus-${version}-${arch}.dmg

@@ -1,6 +1,7 @@
 node_modules/
 dist/
 .tmp/
+.idea/
 *.tsbuildinfo
 .DS_Store
 .env

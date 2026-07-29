@@ -138,6 +138,9 @@ function buildOptimisticTaskPushSession(choice: NativeConversationChoice, reques
         durableClientUserMessageId: request.clientUserMessageId,
         draft: prompt,
         attachments,
+        submittedAttachments: attachments,
+        browserSubmission: null,
+        browserComments: [],
         delivery: 'queue',
         previousConversationState: 'native_idle',
     });

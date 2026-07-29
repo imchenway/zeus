@@ -3,10 +3,22 @@ import {mkdir, readFile, writeFile} from 'node:fs/promises';
 import {dirname} from 'node:path';
 import {nanoid} from 'nanoid';
 import initSqlJs, {type Database, type SqlJsStatic, type SqlValue} from 'sql.js';
-import {isTaskManagementStatus, type TaskManagementStatus} from '@zeus/shared';
+import {
+  isTaskManagementStatus,
+  isTaskPriority,
+  type ConversationResourceKind,
+  type ConversationResourcePresentation,
+  type TaskManagementStatus,
+  type TaskPriority,
+  type TurnChangeFileType,
+  type TurnChangeSetState,
+} from '@zeus/shared';
+import {migrateCommandCenterSchema} from './commands.js';
 
-export {isTaskManagementStatus};
-export type {TaskManagementStatus};
+export * from './commands.js';
+
+export {isTaskManagementStatus, isTaskPriority};
+export type {TaskManagementStatus, TaskPriority};
 
 export interface ZeusProjectRecord {
   id: string;
@@ -91,6 +103,7 @@ export interface CreateTaskInput {
   description: string;
   createdFrom: string;
   sourceContext: Record<string, unknown>;
+  priority?: TaskPriority;
   templateId?: string;
   tags?: string[];
   allowCodeChanges?: boolean;
@@ -491,6 +504,65 @@ export interface ZeusConversationItemRecord {
   updatedAt: string;
 }
 
+export interface ZeusConversationResourceRecord {
+  id: string;
+  projectId: string;
+  conversationId: string;
+  turnId: string;
+  itemId: string;
+  sourceIndex: number;
+  canonicalTargetDigest: string;
+  kind: ConversationResourceKind;
+  presentation: ConversationResourcePresentation;
+  displayJson: string;
+  targetJson: string;
+  authorityJson: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ZeusTurnChangeSetRecord {
+  id: string;
+  projectId: string;
+  conversationId: string;
+  turnId: string;
+  providerTurnId: string;
+  state: TurnChangeSetState;
+  unifiedDiff: string;
+  preImageDigest: string | null;
+  postImageDigest: string | null;
+  conflictJson: string | null;
+  unavailableReason: string | null;
+  journalRef: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ZeusTurnChangeFileRecord {
+  id: string;
+  changeSetId: string;
+  sourceItemId: string | null;
+  sourceIndex: number;
+  oldPath: string | null;
+  newPath: string | null;
+  changeType: TurnChangeFileType;
+  addedLines: number;
+  deletedLines: number;
+  preHash: string | null;
+  postHash: string | null;
+  preExists: boolean;
+  postExists: boolean;
+  preMode: number | null;
+  postMode: number | null;
+  unifiedDiff: string;
+  preBlobRef: string | null;
+  postBlobRef: string | null;
+  reversible: boolean;
+  unavailableReason: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export type ConversationSubmissionKind = 'message' | 'steer';
 export type ConversationRequestedDelivery = 'queue' | 'send_now';
 export type ConversationSubmissionStatus = 'queued' | 'dispatching' | 'active' | 'paused' | 'completed' | 'resolved' | 'failed' | 'cancelled' | 'deleted';
@@ -698,7 +770,7 @@ async function loadSqlModule(): Promise<SqlJsStatic> {
   return sqlModulePromise;
 }
 
-/** Zeus SQLite 包装器：负责迁移、保存和少量测试/诊断辅助查询。 */
+/** Zeus SQLite 包装器：负责迁移、保存和运行态诊断查询。 */
 export class ZeusDatabase {
   constructor(
     private readonly db: Database,
@@ -724,10 +796,6 @@ export class ZeusDatabase {
 
   get<T>(sql: string, params: SqlValue[] = []): T | undefined {
     return this.select<T>(sql, params)[0];
-  }
-
-  listTableNames(): string[] {
-    return this.select<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name").map((row) => row.name);
   }
 
   countRows(tableName: string): number {
@@ -869,6 +937,7 @@ export async function createZeusDatabase(filePath: string): Promise<ZeusDatabase
   migrateCodexNativeConversationSchema(zeusDb);
   migrateCodexLegacyImportSchema(zeusDb);
     migrateMcpServerIdentifierFalsePositiveCleanup(zeusDb);
+  migrateCommandCenterSchema(zeusDb);
   return zeusDb;
 }
 
@@ -1297,6 +1366,57 @@ function migrateCodexNativeConversationSchema(db: ZeusDatabase): void {
   db.execute(`CREATE UNIQUE INDEX IF NOT EXISTS idx_conversation_item_provider ON conversation_items(provider_thread_id, provider_item_id)`);
 
   db.execute(`
+    CREATE TABLE IF NOT EXISTS conversation_resources (
+      id TEXT PRIMARY KEY, project_id TEXT NOT NULL, conversation_id TEXT NOT NULL,
+      turn_id TEXT NOT NULL, item_id TEXT NOT NULL, source_index INTEGER NOT NULL,
+      canonical_target_digest TEXT NOT NULL, kind TEXT NOT NULL, presentation TEXT NOT NULL,
+      display_json TEXT NOT NULL, target_json TEXT NOT NULL, authority_json TEXT NOT NULL,
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+    )
+  `);
+  db.execute(`CREATE UNIQUE INDEX IF NOT EXISTS idx_conversation_resource_source ON conversation_resources(item_id, source_index, canonical_target_digest)`);
+  db.execute(`CREATE INDEX IF NOT EXISTS idx_conversation_resources_conversation ON conversation_resources(conversation_id, turn_id, item_id)`);
+
+  db.execute(`
+    CREATE TABLE IF NOT EXISTS turn_change_sets (
+      id TEXT PRIMARY KEY, project_id TEXT NOT NULL, conversation_id TEXT NOT NULL,
+      turn_id TEXT NOT NULL, provider_turn_id TEXT NOT NULL, state TEXT NOT NULL,
+      unified_diff TEXT NOT NULL, pre_image_digest TEXT, post_image_digest TEXT,
+      conflict_json TEXT, unavailable_reason TEXT, journal_ref TEXT,
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+    )
+  `);
+  db.execute(`CREATE UNIQUE INDEX IF NOT EXISTS idx_turn_change_set_turn ON turn_change_sets(conversation_id, turn_id)`);
+  db.execute(`CREATE UNIQUE INDEX IF NOT EXISTS idx_turn_change_set_provider_turn ON turn_change_sets(conversation_id, provider_turn_id)`);
+
+  db.execute(`
+    CREATE TABLE IF NOT EXISTS turn_change_files (
+      id TEXT PRIMARY KEY, change_set_id TEXT NOT NULL, source_item_id TEXT,
+      source_index INTEGER NOT NULL, old_path TEXT, new_path TEXT, change_type TEXT NOT NULL,
+      added_lines INTEGER NOT NULL DEFAULT 0, deleted_lines INTEGER NOT NULL DEFAULT 0,
+      pre_hash TEXT, post_hash TEXT, pre_exists INTEGER NOT NULL DEFAULT 0,
+      post_exists INTEGER NOT NULL DEFAULT 0, pre_mode INTEGER, post_mode INTEGER,
+      unified_diff TEXT NOT NULL,
+      pre_blob_ref TEXT, post_blob_ref TEXT, reversible INTEGER NOT NULL DEFAULT 0,
+      unavailable_reason TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+    )
+  `);
+  for (const statement of [
+    `ALTER TABLE turn_change_files ADD COLUMN pre_exists INTEGER NOT NULL DEFAULT 0`,
+    `ALTER TABLE turn_change_files ADD COLUMN post_exists INTEGER NOT NULL DEFAULT 0`,
+    `ALTER TABLE turn_change_files ADD COLUMN pre_mode INTEGER`,
+    `ALTER TABLE turn_change_files ADD COLUMN post_mode INTEGER`,
+  ]) {
+    try {
+      db.execute(statement);
+    } catch {
+      // 新库已在 CREATE TABLE 中包含字段；旧库只补一次。
+    }
+  }
+  db.execute(`CREATE UNIQUE INDEX IF NOT EXISTS idx_turn_change_file_source ON turn_change_files(change_set_id, source_item_id, source_index)`);
+  db.execute(`CREATE INDEX IF NOT EXISTS idx_turn_change_files_set ON turn_change_files(change_set_id, source_index, id)`);
+
+  db.execute(`
     CREATE TABLE IF NOT EXISTS conversation_submissions (
       id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, idempotency_key TEXT NOT NULL,
       request_hash TEXT NOT NULL, client_message_id TEXT NOT NULL, kind TEXT NOT NULL,
@@ -1382,6 +1502,11 @@ function migrateCodexNativeConversationSchema(db: ZeusDatabase): void {
         migrationId: '20260722_0007_conversation_completion_unread',
         description: '增加会话成功完成未读状态',
         checksumSource: 'conversations:completion_unread:successful_turn_completion,acknowledgement:v1',
+    });
+    recordSchemaMigration(db, {
+        migrationId: '20260727_0008_conversation_resources_and_turn_change_sets',
+        description: '增加会话资源与执行轮次变更集持久化',
+        checksumSource: 'conversation_resources,turn_change_sets,turn_change_files:resource_authority,turn_patch_undo_reapply:v1',
     });
 }
 
@@ -1710,9 +1835,12 @@ export class ProjectRepository {
       throw new Error(`Zeus project not found: ${projectId}`);
     }
     const localPath = input.localPath === undefined ? existing.localPath : normalizeProjectLocalPath(input.localPath);
-    const duplicated = this.findByLocalPath(localPath, projectId);
-    if (duplicated) {
-      throw new Error(`Zeus project localPath already exists: ${localPath}`);
+    // 只有真实修改本地路径时才执行唯一性校验；显示名称等元数据更新不应被历史重复路径数据阻断。
+    if (input.localPath !== undefined && localPath !== existing.localPath) {
+      const duplicated = this.findByLocalPath(localPath, projectId);
+      if (duplicated) {
+        throw new Error(`Zeus project localPath already exists: ${localPath}`);
+      }
     }
     const timestamp = nowIso();
     this.db.execute(`UPDATE projects SET name = ?, local_path = ?, description = ?, note = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`, [
@@ -1854,7 +1982,7 @@ export class TaskRepository {
       description: input.description,
         managementStatus: 'todo',
       status: 'ready',
-      priority: 'normal',
+      priority: input.priority ?? 'p3',
       allowCodeChanges: input.allowCodeChanges === true,
       allowTests: input.allowTests === true,
       allowGitCommit: input.allowGitCommit === true,
@@ -2829,8 +2957,8 @@ export class CodexLegacyImportRepository {
          (id, project_id, task_id, session_id, title, summary, status, created_at, updated_at, archived,
           transport_kind, provider_id, provider_thread_id, provider_thread_path, provider_model, provider_state,
           provider_protocol_version, provider_binary_version, legacy_source_conversation_id, provider_settings_json, provider_token_usage_json)
-         VALUES (?, ?, ?, NULL, ?, ?, 'open', ?, ?, 0, 'codex_native', 'codex', ?, NULL, NULL, 'ready', '0.144.2', ?, ?, '{}', '{}')`,
-        [targetConversationId, source.project_id, source.task_id, source.title, source.summary, timestamp, timestamp, input.targetThreadId, input.providerBinaryVersion, source.id],
+         VALUES (?, ?, ?, NULL, ?, ?, 'open', ?, ?, 0, 'codex_native', 'codex', ?, NULL, NULL, 'ready', ?, ?, ?, '{}', '{}')`,
+        [targetConversationId, source.project_id, source.task_id, source.title, source.summary, timestamp, timestamp, input.targetThreadId, input.providerBinaryVersion, input.providerBinaryVersion, source.id],
       );
       const sourceMessages = this.db.select<DbConversationMessageRow>(`SELECT ${selectConversationMessageFields} FROM conversation_messages WHERE conversation_id = ? ORDER BY created_at, id`, [source.id]);
       for (const message of sourceMessages) {
@@ -2999,6 +3127,225 @@ export class ConversationItemRepository {
 
   listByConversation(conversationId: string): ZeusConversationItemRecord[] {
     return this.db.select<DbConversationItemRow>(`SELECT * FROM conversation_items WHERE conversation_id = ? ORDER BY updated_at, id`, [conversationId]).map(mapConversationItemRow);
+  }
+}
+
+export class ConversationResourceRepository {
+  constructor(private readonly db: ZeusDatabase) {}
+
+  replaceForItem(
+    itemId: string,
+    resources: Array<Omit<ZeusConversationResourceRecord, 'id' | 'createdAt' | 'updatedAt'> & { id?: string }>,
+    updatedAt: string,
+  ): ZeusConversationResourceRecord[] {
+    return this.db.transaction(() => {
+      this.db.execute(`DELETE FROM conversation_resources WHERE item_id = ?`, [itemId]);
+      for (const resource of resources) {
+        const kind = assertEnum(resource.kind, ['file', 'website', 'attachment'] as const, 'conversation resource kind');
+        const presentation = assertEnum(resource.presentation, ['inline', 'card'] as const, 'conversation resource presentation');
+        this.db.execute(
+          `INSERT INTO conversation_resources
+             (id, project_id, conversation_id, turn_id, item_id, source_index, canonical_target_digest,
+              kind, presentation, display_json, target_json, authority_json, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            resource.id ?? `conversation_resource_${nanoid(12)}`,
+            resource.projectId,
+            resource.conversationId,
+            resource.turnId,
+            itemId,
+            resource.sourceIndex,
+            resource.canonicalTargetDigest,
+            kind,
+            presentation,
+            resource.displayJson,
+            resource.targetJson,
+            resource.authorityJson,
+            updatedAt,
+            updatedAt,
+          ],
+        );
+      }
+      return this.listByItem(itemId);
+    });
+  }
+
+  getById(id: string): ZeusConversationResourceRecord | undefined {
+    const row = this.db.get<DbConversationResourceRow>(`SELECT * FROM conversation_resources WHERE id = ?`, [id]);
+    return row ? mapConversationResourceRow(row) : undefined;
+  }
+
+  listByItem(itemId: string): ZeusConversationResourceRecord[] {
+    return this.db
+      .select<DbConversationResourceRow>(`SELECT * FROM conversation_resources WHERE item_id = ? ORDER BY source_index, id`, [itemId])
+      .map(mapConversationResourceRow);
+  }
+
+  listByConversation(conversationId: string): ZeusConversationResourceRecord[] {
+    return this.db
+      .select<DbConversationResourceRow>(`SELECT * FROM conversation_resources WHERE conversation_id = ? ORDER BY created_at, source_index, id`, [conversationId])
+      .map(mapConversationResourceRow);
+  }
+}
+
+export class TurnChangeSetRepository {
+  constructor(private readonly db: ZeusDatabase) {}
+
+  upsert(
+    input: Omit<ZeusTurnChangeSetRecord, 'id' | 'createdAt' | 'updatedAt'> & {
+      id?: string;
+      createdAt?: string;
+      updatedAt: string;
+    },
+  ): ZeusTurnChangeSetRecord {
+    const state = assertEnum(
+      input.state,
+      ['capturing', 'applied', 'undoing', 'undone', 'reapplying', 'conflicted', 'unavailable'] as const,
+      'turn change set state',
+    );
+    const existing = this.getByTurn(input.conversationId, input.turnId);
+    const id = existing?.id ?? input.id ?? `turn_change_set_${nanoid(12)}`;
+    const createdAt = existing?.createdAt ?? input.createdAt ?? input.updatedAt;
+    this.db.execute(
+      `INSERT INTO turn_change_sets
+         (id, project_id, conversation_id, turn_id, provider_turn_id, state, unified_diff,
+          pre_image_digest, post_image_digest, conflict_json, unavailable_reason, journal_ref, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(conversation_id, turn_id) DO UPDATE SET
+         provider_turn_id = excluded.provider_turn_id, state = excluded.state,
+         unified_diff = excluded.unified_diff, pre_image_digest = excluded.pre_image_digest,
+         post_image_digest = excluded.post_image_digest, conflict_json = excluded.conflict_json,
+         unavailable_reason = excluded.unavailable_reason, journal_ref = excluded.journal_ref,
+         updated_at = excluded.updated_at`,
+      [
+        id,
+        input.projectId,
+        input.conversationId,
+        input.turnId,
+        input.providerTurnId,
+        state,
+        input.unifiedDiff,
+        input.preImageDigest,
+        input.postImageDigest,
+        input.conflictJson,
+        input.unavailableReason,
+        input.journalRef,
+        createdAt,
+        input.updatedAt,
+      ],
+    );
+    return this.getByTurn(input.conversationId, input.turnId)!;
+  }
+
+  getById(id: string): ZeusTurnChangeSetRecord | undefined {
+    const row = this.db.get<DbTurnChangeSetRow>(`SELECT * FROM turn_change_sets WHERE id = ?`, [id]);
+    return row ? mapTurnChangeSetRow(row) : undefined;
+  }
+
+  getByTurn(conversationId: string, turnId: string): ZeusTurnChangeSetRecord | undefined {
+    const row = this.db.get<DbTurnChangeSetRow>(`SELECT * FROM turn_change_sets WHERE conversation_id = ? AND turn_id = ?`, [conversationId, turnId]);
+    return row ? mapTurnChangeSetRow(row) : undefined;
+  }
+
+  getByProviderTurn(conversationId: string, providerTurnId: string): ZeusTurnChangeSetRecord | undefined {
+    const row = this.db.get<DbTurnChangeSetRow>(`SELECT * FROM turn_change_sets WHERE conversation_id = ? AND provider_turn_id = ?`, [conversationId, providerTurnId]);
+    return row ? mapTurnChangeSetRow(row) : undefined;
+  }
+
+  listByConversation(conversationId: string): ZeusTurnChangeSetRecord[] {
+    return this.db
+      .select<DbTurnChangeSetRow>(`SELECT * FROM turn_change_sets WHERE conversation_id = ? ORDER BY created_at, id`, [conversationId])
+      .map(mapTurnChangeSetRow);
+  }
+
+  listInProgress(): ZeusTurnChangeSetRecord[] {
+    return this.db
+      .select<DbTurnChangeSetRow>(`SELECT * FROM turn_change_sets WHERE state IN ('undoing', 'reapplying') ORDER BY updated_at, id`)
+      .map(mapTurnChangeSetRow);
+  }
+}
+
+export class TurnChangeFileRepository {
+  constructor(private readonly db: ZeusDatabase) {}
+
+  upsert(
+    input: Omit<ZeusTurnChangeFileRecord, 'id' | 'createdAt' | 'updatedAt'> & {
+      id?: string;
+      createdAt?: string;
+      updatedAt: string;
+      replacePreImage?: boolean;
+    },
+  ): ZeusTurnChangeFileRecord {
+    const changeType = assertEnum(input.changeType, ['added', 'deleted', 'modified', 'renamed', 'binary'] as const, 'turn change file type');
+    const existing =
+      input.sourceItemId === null
+        ? undefined
+        : this.db.get<DbTurnChangeFileRow>(
+            `SELECT * FROM turn_change_files WHERE change_set_id = ? AND source_item_id = ? AND source_index = ?`,
+            [input.changeSetId, input.sourceItemId, input.sourceIndex],
+          );
+    const id = existing?.id ?? input.id ?? `turn_change_file_${nanoid(12)}`;
+    const createdAt = existing?.created_at ?? input.createdAt ?? input.updatedAt;
+    this.db.execute(
+      `INSERT INTO turn_change_files
+         (id, change_set_id, source_item_id, source_index, old_path, new_path, change_type,
+          added_lines, deleted_lines, pre_hash, post_hash, pre_exists, post_exists,
+          pre_mode, post_mode, unified_diff, pre_blob_ref, post_blob_ref,
+          reversible, unavailable_reason, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(change_set_id, source_item_id, source_index) DO UPDATE SET
+         old_path = excluded.old_path, new_path = excluded.new_path, change_type = excluded.change_type,
+         added_lines = excluded.added_lines, deleted_lines = excluded.deleted_lines,
+         pre_hash = CASE WHEN ? = 1 THEN excluded.pre_hash ELSE COALESCE(turn_change_files.pre_hash, excluded.pre_hash) END,
+         post_hash = excluded.post_hash,
+         pre_exists = CASE WHEN ? = 1 THEN excluded.pre_exists ELSE turn_change_files.pre_exists END,
+         post_exists = excluded.post_exists,
+         pre_mode = CASE WHEN ? = 1 THEN excluded.pre_mode ELSE COALESCE(turn_change_files.pre_mode, excluded.pre_mode) END,
+         post_mode = excluded.post_mode, unified_diff = excluded.unified_diff,
+         pre_blob_ref = CASE WHEN ? = 1 THEN excluded.pre_blob_ref ELSE COALESCE(turn_change_files.pre_blob_ref, excluded.pre_blob_ref) END,
+         post_blob_ref = excluded.post_blob_ref, reversible = excluded.reversible,
+         unavailable_reason = excluded.unavailable_reason, updated_at = excluded.updated_at`,
+      [
+        id,
+        input.changeSetId,
+        input.sourceItemId,
+        input.sourceIndex,
+        input.oldPath,
+        input.newPath,
+        changeType,
+        input.addedLines,
+        input.deletedLines,
+        input.preHash,
+        input.postHash,
+        input.preExists ? 1 : 0,
+        input.postExists ? 1 : 0,
+        input.preMode,
+        input.postMode,
+        input.unifiedDiff,
+        input.preBlobRef,
+        input.postBlobRef,
+        input.reversible ? 1 : 0,
+        input.unavailableReason,
+        createdAt,
+        input.updatedAt,
+        input.replacePreImage ? 1 : 0,
+        input.replacePreImage ? 1 : 0,
+        input.replacePreImage ? 1 : 0,
+        input.replacePreImage ? 1 : 0,
+      ],
+    );
+    return this.getById(id)!;
+  }
+
+  getById(id: string): ZeusTurnChangeFileRecord | undefined {
+    const row = this.db.get<DbTurnChangeFileRow>(`SELECT * FROM turn_change_files WHERE id = ?`, [id]);
+    return row ? mapTurnChangeFileRow(row) : undefined;
+  }
+
+  listByChangeSet(changeSetId: string): ZeusTurnChangeFileRecord[] {
+    return this.db
+      .select<DbTurnChangeFileRow>(`SELECT * FROM turn_change_files WHERE change_set_id = ? ORDER BY source_index, id`, [changeSetId])
+      .map(mapTurnChangeFileRow);
   }
 }
 
@@ -3333,6 +3680,39 @@ export class IdempotencyRequestRepository {
       input.createdAt,
     ]);
     return mapIdempotencyRequestRow(this.db.get<DbIdempotencyRequestRow>(`SELECT * FROM idempotency_requests WHERE scope = ? AND idempotency_key = ?`, [input.scope, input.idempotencyKey])!);
+  }
+
+  get(scope: string, idempotencyKey: string): ZeusIdempotencyRequestRecord | undefined {
+    const row = this.db.get<DbIdempotencyRequestRow>(`SELECT * FROM idempotency_requests WHERE scope = ? AND idempotency_key = ?`, [scope, idempotencyKey]);
+    return row ? mapIdempotencyRequestRow(row) : undefined;
+  }
+
+  complete(input: {
+    scope: string;
+    idempotencyKey: string;
+    status: 'completed' | 'failed';
+    httpStatus: number;
+    response: unknown;
+    resourceId?: string | null;
+    updatedAt: string;
+  }): ZeusIdempotencyRequestRecord {
+    const existing = this.get(input.scope, input.idempotencyKey);
+    if (!existing) throw new Error(`Idempotency request not found: ${input.scope}/${input.idempotencyKey}`);
+    this.db.execute(
+      `UPDATE idempotency_requests
+       SET status = ?, http_status = ?, response_json = ?, resource_id = ?, updated_at = ?
+       WHERE scope = ? AND idempotency_key = ?`,
+      [
+        input.status,
+        input.httpStatus,
+        JSON.stringify(input.response),
+        input.resourceId ?? existing.resourceId,
+        input.updatedAt,
+        input.scope,
+        input.idempotencyKey,
+      ],
+    );
+    return this.get(input.scope, input.idempotencyKey)!;
   }
 }
 
@@ -3795,6 +4175,65 @@ interface DbConversationItemRow {
   updated_at: string;
 }
 
+interface DbConversationResourceRow {
+  id: string;
+  project_id: string;
+  conversation_id: string;
+  turn_id: string;
+  item_id: string;
+  source_index: number;
+  canonical_target_digest: string;
+  kind: ConversationResourceKind;
+  presentation: ConversationResourcePresentation;
+  display_json: string;
+  target_json: string;
+  authority_json: string;
+  created_at: string;
+  updated_at: string;
+}
+
+interface DbTurnChangeSetRow {
+  id: string;
+  project_id: string;
+  conversation_id: string;
+  turn_id: string;
+  provider_turn_id: string;
+  state: TurnChangeSetState;
+  unified_diff: string;
+  pre_image_digest: string | null;
+  post_image_digest: string | null;
+  conflict_json: string | null;
+  unavailable_reason: string | null;
+  journal_ref: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface DbTurnChangeFileRow {
+  id: string;
+  change_set_id: string;
+  source_item_id: string | null;
+  source_index: number;
+  old_path: string | null;
+  new_path: string | null;
+  change_type: TurnChangeFileType;
+  added_lines: number;
+  deleted_lines: number;
+  pre_hash: string | null;
+  post_hash: string | null;
+  pre_exists: number;
+  post_exists: number;
+  pre_mode: number | null;
+  post_mode: number | null;
+  unified_diff: string;
+  pre_blob_ref: string | null;
+  post_blob_ref: string | null;
+  reversible: number;
+  unavailable_reason: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 interface DbConversationSubmissionRow {
   id: string;
   conversation_id: string;
@@ -4105,6 +4544,71 @@ function mapConversationItemRow(row: DbConversationItemRow): ZeusConversationIte
     payloadJson: row.payload_json,
     startedAt: row.started_at,
     completedAt: row.completed_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapConversationResourceRow(row: DbConversationResourceRow): ZeusConversationResourceRecord {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    conversationId: row.conversation_id,
+    turnId: row.turn_id,
+    itemId: row.item_id,
+    sourceIndex: row.source_index,
+    canonicalTargetDigest: row.canonical_target_digest,
+    kind: row.kind,
+    presentation: row.presentation,
+    displayJson: row.display_json,
+    targetJson: row.target_json,
+    authorityJson: row.authority_json,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapTurnChangeSetRow(row: DbTurnChangeSetRow): ZeusTurnChangeSetRecord {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    conversationId: row.conversation_id,
+    turnId: row.turn_id,
+    providerTurnId: row.provider_turn_id,
+    state: row.state,
+    unifiedDiff: row.unified_diff,
+    preImageDigest: row.pre_image_digest,
+    postImageDigest: row.post_image_digest,
+    conflictJson: row.conflict_json,
+    unavailableReason: row.unavailable_reason,
+    journalRef: row.journal_ref,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapTurnChangeFileRow(row: DbTurnChangeFileRow): ZeusTurnChangeFileRecord {
+  return {
+    id: row.id,
+    changeSetId: row.change_set_id,
+    sourceItemId: row.source_item_id,
+    sourceIndex: row.source_index,
+    oldPath: row.old_path,
+    newPath: row.new_path,
+    changeType: row.change_type,
+    addedLines: row.added_lines,
+    deletedLines: row.deleted_lines,
+    preHash: row.pre_hash,
+    postHash: row.post_hash,
+    preExists: row.pre_exists === 1,
+    postExists: row.post_exists === 1,
+    preMode: row.pre_mode,
+    postMode: row.post_mode,
+    unifiedDiff: row.unified_diff,
+    preBlobRef: row.pre_blob_ref,
+    postBlobRef: row.post_blob_ref,
+    reversible: row.reversible === 1,
+    unavailableReason: row.unavailable_reason,
+    createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
 }

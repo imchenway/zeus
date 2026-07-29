@@ -1,3 +1,9 @@
+import type {
+  ConversationFileLocation,
+  ConversationOpenTarget,
+  ConversationResourceOpenTarget,
+} from '@zeus/shared';
+
 export interface MainAppShellSettingsChange {
   webviewDebugEnabled: boolean;
   multiWindowEnabled: boolean;
@@ -24,11 +30,39 @@ export interface ExternalHttpsOpenResult {
   error?: string;
 }
 
+export interface ProjectRevealResult {
+  revealed: boolean;
+  path?: string;
+  error?: string;
+}
+
 export interface AppShellBridgeWindow {
   zeus?: {
     notifyAppShellSettingsChanged?: (settings: MainAppShellSettingsChange) => Promise<{ applied: boolean }>;
+    notifyTaskTableLayoutDirty?: (dirty: boolean) => void;
+    resolveTaskTableLayoutCloseRequest?: (proceed: boolean) => void;
+    onTaskTableLayoutCloseRequested?: (listener: () => void) => () => void;
     openGraphSource?: (source: GraphSourceOpenRequest) => Promise<GraphSourceOpenResult>;
     openExternalHttpsUrl?: (url: string) => Promise<ExternalHttpsOpenResult>;
+    listConversationResourceOpenTargets?: (request: {
+      projectId: string;
+      conversationId: string;
+      resourceId: string;
+    }) => Promise<{resourceId: string; targets: ConversationResourceOpenTarget[]}>;
+    openConversationResource?: (request: {
+      projectId: string;
+      conversationId: string;
+      resourceId: string;
+      target: ConversationOpenTarget;
+      location?: ConversationFileLocation;
+    }) => Promise<{
+      opened: boolean;
+      resourceId: string;
+      target: ConversationOpenTarget;
+      mode?: 'zeus_source' | 'zeus_browser' | 'external' | 'file' | 'clipboard';
+      error?: string;
+    }>;
+    revealProjectInFinder?: (projectPath: string) => Promise<ProjectRevealResult>;
   };
 }
 
@@ -38,7 +72,7 @@ export async function notifyMainAppShellSettingsChanged(input: { zeus: AppShellB
   return input.zeus.notifyAppShellSettingsChanged(input.settings);
 }
 
-/** 从 Renderer 请求 Electron Main 打开图谱来源文件；非 Electron 环境返回 no-op，方便 SSR 测试与浏览器预览。 */
+/** 从 Renderer 请求 Electron Main 打开图谱来源文件；非 Electron 环境返回 no-op，供浏览器预览安全降级。 */
 export async function openGraphSourceInMain(input: { zeus: AppShellBridgeWindow['zeus']; source: GraphSourceOpenRequest }): Promise<GraphSourceOpenResult> {
   if (!input.zeus?.openGraphSource)
     return {
@@ -57,6 +91,48 @@ export async function openExternalHttpsUrlInMain(input: { zeus: AppShellBridgeWi
   return input.zeus.openExternalHttpsUrl(url);
 }
 
+export async function listConversationResourceOpenTargetsInMain(input: {
+  zeus: AppShellBridgeWindow['zeus'];
+  projectId: string;
+  conversationId: string;
+  resourceId: string;
+}): Promise<{resourceId: string; targets: ConversationResourceOpenTarget[]}> {
+  if (!input.zeus?.listConversationResourceOpenTargets) return {resourceId: input.resourceId, targets: []};
+  return input.zeus.listConversationResourceOpenTargets({
+    projectId: input.projectId,
+    conversationId: input.conversationId,
+    resourceId: input.resourceId,
+  });
+}
+
+export async function openConversationResourceInMain(input: {
+  zeus: AppShellBridgeWindow['zeus'];
+  projectId: string;
+  conversationId: string;
+  resourceId: string;
+  target: ConversationOpenTarget;
+  location?: ConversationFileLocation;
+}) {
+  if (!input.zeus?.openConversationResource) {
+    return {opened: false, resourceId: input.resourceId, target: input.target, error: 'conversation_resource_open_unavailable'} as const;
+  }
+  return input.zeus.openConversationResource({
+    projectId: input.projectId,
+    conversationId: input.conversationId,
+    resourceId: input.resourceId,
+    target: input.target,
+    ...(input.location ? {location: input.location} : {}),
+  });
+}
+
+/** 项目菜单只接受绝对本地路径；Main 进程会再次校验目录存在且请求来自受信窗口。 */
+export async function revealProjectInFinderInMain(input: { zeus: AppShellBridgeWindow['zeus']; projectPath: unknown }): Promise<ProjectRevealResult> {
+  const projectPath = normalizeRendererProjectPath(input.projectPath);
+  if (!projectPath) return { revealed: false, error: 'project_path_not_allowed' };
+  if (!input.zeus?.revealProjectInFinder) return { revealed: false, error: 'project_reveal_unavailable' };
+  return input.zeus.revealProjectInFinder(projectPath);
+}
+
 function normalizeRendererExternalHttpsUrl(value: unknown): string | null {
   if (typeof value !== 'string') return null;
   try {
@@ -66,4 +142,10 @@ function normalizeRendererExternalHttpsUrl(value: unknown): string | null {
   } catch {
     return null;
   }
+}
+
+function normalizeRendererProjectPath(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const path = value.trim();
+  return path && path.startsWith('/') && !path.includes('\0') ? path : null;
 }

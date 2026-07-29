@@ -39,4 +39,28 @@
 
 ## 未验证项
 
-- 在最终打包与真实窗口验收完成前，不声明视觉对齐或 runtime 运行闭环已经通过。
+- 本次启动返修只重新验证应用启动与基础主窗口；未逐项重做计划悬浮和文件审批交互验收，不把本轮启动成功扩大成上述交互已重新验收。
+
+## 2026-07-23 启动失败返修
+
+### 现场结论
+
+- 用户打开 `dist/mac-arm64/Zeus.app` 后只看到“Zeus 无法启动，请重新打开应用”。该文案来自 Main 进程的不可恢复启动失败兜底，不是 macOS Gatekeeper 提示。
+- 应用包架构为 arm64，和当前机器一致；`codesign --verify --deep --strict` 通过。直接根因是包内 runtime 已为 `0.145.0-alpha.30 / 3b61fac...`，但启动校验仍硬编码要求 `0.144.2 / a6645b6...`，因此抛出 `ZEUS_CODEX_RUNTIME_VERSION_MISMATCH` 后主动退出。
+
+### 修复边界
+
+- 保留 fail-closed 启动完整性校验，不通过关闭 Codex Native 或跳过版本校验来掩盖问题。
+- 以 `third_party/openai-codex/runtime.lock.json` 作为版本、commit、架构和补丁清单的唯一版本事实；打包时将该 lock 随 runtime 一起封入应用包。
+- 旧会话导入产生的 provider 版本元数据改用当前已校验 runtime 的真实版本，不再写死 `0.144.2`。
+- 包内健康检查必须覆盖 runtime lock、manifest、二进制 SHA-256 与可执行权限，使版本漂移在打包阶段失败，而不是等用户启动后才暴露。
+
+### 验证状态
+
+- `pnpm lint`：exit 0。
+- `pnpm typecheck`：exit 0。
+- `pnpm build`：exit 0；现有 Renderer chunk size 提示仍为非阻断 warning。
+- `pnpm package:mac`：exit 0；重新生成 `dist/mac-arm64/Zeus.app`、DMG 与 ZIP，应用包通过 ad-hoc `codesign --verify --deep --strict`。本结果不等同于 Developer ID 签名或 notarization 完成。
+- `node scripts/verify-packaged-app-health.mjs dist/mac-arm64/Zeus.app`：通过，输出 `codex=0.145.0-alpha.30;arch=aarch64-apple-darwin`。
+- 包内 `codex --version`：`codex-cli 0.145.0-alpha.30`；二进制 SHA-256 与 manifest 的 `784c251f...6084` 一致。
+- 真实启动：从 `/Users/david/hypha/zeus/dist/mac-arm64/Zeus.app` 拉起 PID `24312`；可访问性树确认标题为“Zeus”的标准窗口已加载包内 `app.asar/dist/renderer/index.html`，项目导航、会话列表和输入框均出现，原通用启动失败弹窗未复现。

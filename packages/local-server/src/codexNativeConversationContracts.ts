@@ -56,6 +56,8 @@ export interface NativeConversationAttachmentInput {
   size: number;
   localPath?: string;
   uploadRef?: string;
+  /** Local Server 验签后写入的精确路径授权；API 调用方不能自行声明。 */
+  authorizedPath?: string;
 }
 
 export interface StartTaskConversationInput {
@@ -108,7 +110,9 @@ export interface SubmitNativeMessageInput {
   conversationId: string;
   submissionId?: string;
   content: string;
+  displayText?: string;
   attachments?: NativeConversationAttachmentInput[];
+  browserComments?: Record<string, unknown>[];
     model?: string;
     effort?: string;
     collaborationMode?: ConversationCollaborationMode;

@@ -18,7 +18,7 @@
 ## 最新验证基线
 
 - `pnpm verify:release`：通过。
-- 单元/集成测试：63 test files / 548 tests passed。
+- 自动化测试体系已经退役；当前交付证据来自静态检查、生产构建、正式打包和真实运行验收。
 - 真实扫描：163 files / 16327 nodes / 32021 edges / 7 views。
 - App 产物：unsigned DMG/ZIP、`dist/mac-arm64/Zeus.app`、`dist/homebrew/zeus.rb`。
 - 包内 Electron 加载：`electron=36.9.5;node=22.19.0;arch=arm64`。
@@ -36,7 +36,7 @@
 
 - 大图 Sigma/WebGL 与局部 React Flow 已接入；Postgres/MySQL 真实连接扫描作为可选连接器按用户项目配置单独启用。
 - 在用户提供外部凭据后完成签名、公证、GitHub Release 发布和远端 Homebrew tap 发布。
-- 持续增强复杂 Java/Spring/MyBatis/SQL/TypeScript AST 精度；当前 Java/Spring/MyBatis fixture 已纳入 release gate，所有图谱节点和边仍必须可追溯到真实源码、SQL、DDL、Git 或用户明确创建的记录。
+- 持续增强复杂 Java/Spring/MyBatis/SQL/TypeScript AST 精度；相关结论必须通过真实项目扫描取证，所有图谱节点和边仍必须可追溯到真实源码、SQL、DDL、Git 或用户明确创建的记录。
 
 ## 不做的降级
 

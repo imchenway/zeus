@@ -127,7 +127,7 @@ export function shouldUseSystemNotifications(input: { desktopNotificationsEnable
   return input.desktopNotificationsEnabled && input.notificationSupported;
 }
 
-/** 将 Zeus 本机设置映射成 Electron 登录项 API 参数，保持 Main 进程逻辑可测试。 */
+/** 将 Zeus 本机设置映射成 Electron 登录项 API 参数，保持 Main 进程逻辑纯净且可复用。 */
 export function buildLoginItemSettings(input: { openAtLoginEnabled: boolean }): { openAtLogin: boolean } {
   return { openAtLogin: input.openAtLoginEnabled };
 }

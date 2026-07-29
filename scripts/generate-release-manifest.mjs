@@ -8,6 +8,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const rootDir = resolve(scriptDir, '..');
 const defaultRepository = 'imchenway/zeus';
+const defaultHomebrewTap = 'imchenway/tap';
 
 async function sha256File(filePath) {
   const content = await readFile(filePath);
@@ -29,9 +30,26 @@ function normalizeRepository(repository) {
   return trimmed || defaultRepository;
 }
 
+function normalizeHomebrewTap(homebrewTap) {
+  const trimmed = String(homebrewTap ?? '')
+    .trim()
+    .replace(/^https:\/\/github\.com\//u, '')
+    .replace(/\.git$/u, '');
+  return trimmed || defaultHomebrewTap;
+}
+
+function parseBoolean(value) {
+  return ['1', 'true', 'yes'].includes(
+    String(value ?? '')
+      .trim()
+      .toLowerCase(),
+  );
+}
+
 export function renderReleaseManifest(input) {
   const version = normalizeVersion(input.version);
   const repository = normalizeRepository(input.repository);
+  const homebrewTap = normalizeHomebrewTap(input.homebrewTap);
   const tag = `v${version}`;
   const releaseBaseUrl = `https://github.com/${repository}/releases`;
   const releaseDownloadBaseUrl = `${releaseBaseUrl}/download/${tag}`;
@@ -59,10 +77,10 @@ export function renderReleaseManifest(input) {
       downloadUrl: artifact.downloadUrl ?? `${releaseDownloadBaseUrl}/${encodeURIComponent(artifact.fileName)}`,
     })),
     homebrew: {
-      tap: repository,
+      tap: homebrewTap,
       cask: 'zeus',
-      installCommand: `brew install --cask ${repository}/zeus`,
-      upgradeCommand: 'brew upgrade --cask zeus',
+      installCommand: `brew install --cask ${homebrewTap}/zeus`,
+      upgradeCommand: `brew upgrade --cask ${homebrewTap}/zeus`,
     },
   };
   return `${JSON.stringify(manifest, null, 2)}\n`;
@@ -88,9 +106,10 @@ async function discoverArtifacts({ distDir, version, repository }) {
   return artifacts.sort((left, right) => `${left.arch}-${left.kind}`.localeCompare(`${right.arch}-${right.kind}`));
 }
 
-export async function generateReleaseManifest({ version, channel = 'stable', repository = defaultRepository, outputPath, distDir = join(rootDir, 'dist'), signed = false, notarized = false }) {
+export async function generateReleaseManifest({ version, channel = 'stable', repository = defaultRepository, homebrewTap = defaultHomebrewTap, outputPath, distDir = join(rootDir, 'dist'), signed = false, notarized = false }) {
   const normalizedVersion = normalizeVersion(version);
   const normalizedRepository = normalizeRepository(repository);
+  const normalizedHomebrewTap = normalizeHomebrewTap(homebrewTap);
   const artifacts = await discoverArtifacts({
     distDir,
     version: normalizedVersion,
@@ -100,6 +119,7 @@ export async function generateReleaseManifest({ version, channel = 'stable', rep
     version: normalizedVersion,
     channel,
     repository: normalizedRepository,
+    homebrewTap: normalizedHomebrewTap,
     signed,
     notarized,
     publishedAt: new Date().toISOString(),
@@ -115,11 +135,17 @@ async function main() {
   const channel = process.argv[3] ?? 'stable';
   const repository = process.argv[4] ?? defaultRepository;
   const outputPath = process.argv[5] ?? join(rootDir, 'dist', 'zeus-release-manifest.json');
+  const homebrewTap = process.argv[6] ?? defaultHomebrewTap;
+  const signed = parseBoolean(process.argv[7] ?? process.env.ZEUS_RELEASE_SIGNED);
+  const notarized = parseBoolean(process.argv[8] ?? process.env.ZEUS_RELEASE_NOTARIZED);
   const result = await generateReleaseManifest({
     version,
     channel,
     repository,
+    homebrewTap,
     outputPath,
+    signed,
+    notarized,
   });
   console.log(`Zeus release manifest generated: ${result.outputPath}; artifacts=${result.artifactCount}`);
 }

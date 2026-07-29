@@ -17,6 +17,7 @@ import type {
     NativeTurnSnapshot,
     TransportState,
 } from './sessionTypes.js';
+import type {ZeusBrowserComment, ZeusBrowserPreparedSubmission} from '@zeus/shared';
 
 export type NativeSessionAction =
   | { type: 'transport_changed'; transportState: TransportState; reconnectAttempt?: number; error?: NativeSessionError | null }
@@ -31,12 +32,16 @@ export type NativeSessionAction =
   | { type: 'event_received'; event: NativeConversationEvent; suppressRequestAuthority?: boolean }
   | { type: 'draft_changed'; draft: string }
   | { type: 'attachments_changed'; attachments: NativeConversationAttachment[] }
+  | { type: 'browser_submission_changed'; browserSubmission: ZeusBrowserPreparedSubmission | null }
   | {
       type: 'send_started';
       clientUserMessageId: string;
       durableClientUserMessageId: string;
       draft: string;
       attachments: NativeConversationAttachment[];
+      submittedAttachments: NativeConversationAttachment[];
+      browserSubmission: ZeusBrowserPreparedSubmission | null;
+      browserComments: ZeusBrowserComment[];
       delivery: 'queue' | 'steer_now';
       previousConversationState: ConversationState;
     }
@@ -45,6 +50,7 @@ export type NativeSessionAction =
       clientUserMessageId: string;
       draft: string;
       attachments: NativeConversationAttachment[];
+      browserSubmission: ZeusBrowserPreparedSubmission | null;
       previousConversationState: ConversationState;
       error: NativeSessionError;
     }
@@ -68,6 +74,7 @@ export function createInitialSessionState(): NativeSessionState {
     startedTurnId: null,
     snapshot: null,
     turnsByProviderId: {},
+    changeSetsByProviderId: {},
     terminalTurnIds: {},
     items: {},
     itemOrder: [],
@@ -83,6 +90,7 @@ export function createInitialSessionState(): NativeSessionState {
     lastEventId: null,
     draft: '',
     attachments: [],
+    browserSubmission: null,
     transcriptRevision: 0,
     busyOperation: null,
     error: null,
@@ -130,6 +138,8 @@ export function sessionReducer(state: NativeSessionState, action: NativeSessionA
       return { ...state, draft: action.draft };
     case 'attachments_changed':
       return { ...state, attachments: action.attachments };
+    case 'browser_submission_changed':
+      return { ...state, browserSubmission: action.browserSubmission };
     case 'send_started':
       return addOptimisticUserItem(state, action);
     case 'send_failed': {
@@ -144,6 +154,7 @@ export function sessionReducer(state: NativeSessionState, action: NativeSessionA
         conversationState: action.previousConversationState,
         draft: action.draft,
         attachments: action.attachments,
+        browserSubmission: action.browserSubmission,
         error: action.error,
       };
     }
@@ -194,6 +205,7 @@ function hydrateSnapshot(state: NativeSessionState, snapshot: NativeConversation
       phase: item.phase,
       text: item.text,
       payload: item.payload,
+      resources: item.resources ?? [],
       updatedAt: item.updatedAt,
     };
     orderedItems.push({ key, timestamp: item.startedAt ?? item.updatedAt, stableIndex: stableIndex++ });
@@ -220,6 +232,7 @@ function hydrateSnapshot(state: NativeSessionState, snapshot: NativeConversation
       phase: stringValue(message.metadata.phase) ?? 'prework',
       text: message.content,
       payload: message.metadata,
+      resources: message.resources ?? [],
       optimistic: false,
       ...(clientUserMessageId ? { clientUserMessageId } : {}),
       updatedAt: message.createdAt,
@@ -238,6 +251,7 @@ function hydrateSnapshot(state: NativeSessionState, snapshot: NativeConversation
   }
 
   const activeTurnId = activeTurnFromSnapshot(snapshot);
+  const changeSetsByProviderId = Object.fromEntries((snapshot.changeSets ?? []).map((changeSet) => [changeSet.providerTurnId, changeSet]));
   const terminalTurnIds = { ...state.terminalTurnIds };
   for (const turn of snapshot.turns) {
     if (!turn.providerTurnId || !isTerminalTurnStatus(turn.status)) continue;
@@ -254,6 +268,7 @@ function hydrateSnapshot(state: NativeSessionState, snapshot: NativeConversation
     startedTurnId: activeTurnId,
     snapshot,
     turnsByProviderId,
+    changeSetsByProviderId,
     terminalTurnIds,
     items,
     itemOrder,
@@ -327,6 +342,19 @@ function reduceNativeEvent(state: NativeSessionState, event: NativeConversationE
               turnsByProviderId: {
                   ...base.turnsByProviderId,
                   [turnId]: {...turn, plan, updatedAt: event.createdAt},
+              },
+              transcriptRevision: base.transcriptRevision + 1,
+          };
+      }
+      case 'conversation.turn.change_set.changed': {
+          const changeSet = isRecord(payload.changeSet) ? payload.changeSet as unknown as NativeSessionState['changeSetsByProviderId'][string] : null;
+          const providerTurnId = changeSet?.providerTurnId ?? stringValue(payload.turnId);
+          if (!changeSet || !providerTurnId || changeSet.conversationId !== base.conversationId) return base;
+          return {
+              ...base,
+              changeSetsByProviderId: {
+                  ...base.changeSetsByProviderId,
+                  [providerTurnId]: changeSet,
               },
               transcriptRevision: base.transcriptRevision + 1,
           };
@@ -450,6 +478,7 @@ function reduceItemEvent(state: NativeSessionState, event: NativeConversationEve
   const incomingText = stringValue(payload.textContent) ?? '';
   const incomingType = stringValue(payload.itemType);
   const incomingPayload = isRecord(payload.itemPayload) ? payload.itemPayload : null;
+  const incomingResources = Array.isArray(payload.itemResources) ? payload.itemResources : null;
   const effectiveType = completed ? (incomingType ?? previous?.type ?? 'providerItem') : (previous?.type ?? incomingType ?? 'providerItem');
   const providerClientId = effectiveType === 'userMessage' && incomingPayload ? stringValue(incomingPayload.clientId) : null;
   const optimisticEntry = providerClientId ? Object.entries(state.items).find(([, item]) => item.optimistic && (item.clientUserMessageId === providerClientId || item.durableClientUserMessageId === providerClientId)) : undefined;
@@ -467,6 +496,7 @@ function reduceItemEvent(state: NativeSessionState, event: NativeConversationEve
     // Delta payloads are provider method fragments. Keep the typed shell established by
     // item/started; item/completed is the persisted authoritative item projection.
     payload: completed ? (incomingPayload ?? previous?.payload ?? {}) : (previous?.payload ?? incomingPayload ?? {}),
+    resources: completed ? (incomingResources ?? previous?.resources ?? []) : (previous?.resources ?? incomingResources ?? []),
     ...(providerClientId ? { clientUserMessageId: providerClientId, durableClientUserMessageId: providerClientId, optimistic: false } : {}),
     updatedAt: event.createdAt,
   };
@@ -510,7 +540,11 @@ function addOptimisticUserItem(state: NativeSessionState, action: Extract<Native
     status: 'pending',
     phase: 'prework',
     text: action.draft,
-    payload: { attachments: action.attachments },
+    payload: {
+      attachments: action.submittedAttachments,
+      ...(action.browserComments.length ? {browserComments: action.browserComments} : {}),
+    },
+    resources: [],
     optimistic: true,
     clientUserMessageId: action.clientUserMessageId,
     durableClientUserMessageId: action.durableClientUserMessageId,
@@ -525,6 +559,7 @@ function addOptimisticUserItem(state: NativeSessionState, action: Extract<Native
     conversationState: keepActiveState ? action.previousConversationState : 'starting_turn',
     draft: '',
     attachments: [],
+    browserSubmission: null,
     error: null,
   };
 }

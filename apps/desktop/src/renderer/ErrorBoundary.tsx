@@ -6,8 +6,6 @@ interface RendererErrorBoundaryProps {
   children: ReactNode;
   /** 跟随应用语言渲染兜底页；未加载设置前默认中文，避免崩溃页出现空白。 */
   appLanguage?: RendererCrashLanguage;
-  /** 测试专用初始错误；生产渲染错误由 React 生命周期捕获。 */
-  initialError?: Error;
   onFatalError?: (error: Error, info: ErrorInfo) => void;
 }
 
@@ -50,7 +48,7 @@ function getRendererCrashCopy(appLanguage: RendererErrorBoundaryProps['appLangua
  */
 export class RendererErrorBoundary extends Component<RendererErrorBoundaryProps, RendererErrorBoundaryState> {
   state: RendererErrorBoundaryState = {
-    hasError: Boolean(this.props.initialError),
+    hasError: false,
   };
 
   static getDerivedStateFromError(): RendererErrorBoundaryState {

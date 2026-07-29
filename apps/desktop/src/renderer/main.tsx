@@ -9,7 +9,7 @@ import {
 } from './App.js';
 import {RendererErrorBoundary} from './ErrorBoundary.js';
 import {createDashboardClient, type DashboardClient} from './apiClient.js';
-import {openGraphSourceInMain} from './appShellBridge.js';
+import {openGraphSourceInMain, revealProjectInFinderInMain} from './appShellBridge.js';
 
 /** 选择真实仓库失败或取消时保留现有列表；开源分发包不能内置维护者本机路径。 */
 function resolveProjectDirectoryForCreation(selectedPath: string | null | undefined, appLanguage: Parameters<typeof buildProjectDirectoryResolution>[1]): { path: string | null; description: string } {
@@ -28,6 +28,7 @@ async function renderWithClient(client: DashboardClient): Promise<void> {
         initialAppShellSettings={appShellSettings}
         snapshot={snapshot}
         nativeConversationClient={client}
+        commandClient={client}
         onCreateCurrentProject={async (defaults) => {
           const selectedPath = await window.zeus?.chooseProjectDirectory?.();
           const resolved = resolveProjectDirectoryForCreation(selectedPath, appShellSettings.appLanguage);
@@ -55,6 +56,7 @@ async function renderWithClient(client: DashboardClient): Promise<void> {
           await client.updateProject(projectId, input);
           return client.loadDashboard();
         }}
+        onRevealProjectInFinder={(projectPath) => revealProjectInFinderInMain({zeus: window.zeus, projectPath})}
         onDeleteProject={async (projectId) => {
           await client.deleteProject(projectId);
           return client.loadDashboard();
@@ -70,12 +72,12 @@ async function renderWithClient(client: DashboardClient): Promise<void> {
           await client.setProjectDefaultTemplate(projectId, templateId);
           return client.loadDashboard();
         }}
-        onSaveTaskPastedAttachments={(attachments) => window.zeus?.saveTaskPastedAttachments?.(attachments) ?? Promise.resolve([])}
-        onSaveTaskClipboardAttachments={() => window.zeus?.saveTaskClipboardAttachments?.() ?? Promise.resolve([])}
+        onAuthorizeTaskFiles={(files, source) =>
+          window.zeus?.authorizeTaskFiles?.(files, source) ?? Promise.resolve({resources: [], failedCount: files.length})}
+        onMaterializeTaskResources={(resources) => window.zeus?.materializeTaskResources?.(resources) ?? Promise.resolve([])}
+        onReadTaskClipboardResources={() => window.zeus?.readTaskClipboardResources?.() ?? Promise.resolve({resources: [], text: ''})}
         onLoadTaskAttachmentPreview={(path) => window.zeus?.getTaskAttachmentPreview?.(path) ?? Promise.resolve(null)}
         onOpenTaskAttachment={(path) => window.zeus?.openTaskAttachment?.(path) ?? Promise.resolve({ opened: false, error: 'open_attachment_unavailable' })}
-        onReadTaskClipboardAttachments={() => window.zeus?.readTaskClipboardAttachments?.() ?? Promise.resolve([])}
-        onReadTaskClipboardImage={() => window.zeus?.readTaskClipboardImage?.() ?? Promise.resolve(null)}
         onCreateTaskFromGraphNode={async (nodeId, projectId) => {
           await client.createTaskFromGraphNode(nodeId, {
             projectId,
@@ -95,6 +97,7 @@ async function renderWithClient(client: DashboardClient): Promise<void> {
           });
           return client.loadDashboard();
         }}
+        onChooseConversationResources={() => window.zeus?.chooseConversationResources?.() ?? Promise.resolve([])}
         onChooseTaskAttachments={() => window.zeus?.chooseTaskAttachments?.() ?? Promise.resolve([])}
         onCreateTaskDraft={async (projectId, draft) => {
           await client.createTask({
@@ -102,6 +105,7 @@ async function renderWithClient(client: DashboardClient): Promise<void> {
             title: draft.title,
             description: draft.description,
             tags: draft.tags,
+            priority: draft.priority,
             sourceContext: {
               path: snapshot.projects.find((project) => project.id === projectId)?.localPath ?? snapshot.projects[0]?.localPath ?? '',
               attachments: draft.attachments,

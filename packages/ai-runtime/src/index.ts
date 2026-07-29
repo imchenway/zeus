@@ -281,6 +281,8 @@ export interface StartAiRuntimeSessionInput {
   args?: string[];
   cwd: string;
   env?: NodeJS.ProcessEnv;
+  /** 只保存在当前进程内，用于在任何日志回调前抹除声明式敏感参数值。 */
+  redactValues?: string[];
 }
 
 export interface AiRuntimeSpawnOptions {
@@ -418,6 +420,7 @@ export interface AiRuntimeSessionManager {
   resizeSession(sessionId: string, cols: number, rows: number): AiRuntimeSession;
   getTerminalSnapshot(sessionId: string): AiRuntimeTerminalSnapshot;
   stopSession(sessionId: string): AiRuntimeSession;
+  killSession(sessionId: string, signal: NodeJS.Signals): AiRuntimeSession;
 }
 
 export interface CreateAiRuntimeSessionManagerOptions {
@@ -528,6 +531,7 @@ export function createAiRuntimeSessionManager(options: CreateAiRuntimeSessionMan
   const sessions = new Map<string, AiRuntimeSession>();
   const logs = new Map<string, AiRuntimeLogEntry[]>();
   const handles = new Map<string, AiRuntimeProcessHandle>();
+  const redactedValues = new Map<string, string[]>();
   const spawn = options.spawn ?? spawnWithNodeChildProcess;
   const now = options.now ?? (() => new Date().toISOString());
 
@@ -538,11 +542,12 @@ export function createAiRuntimeSessionManager(options: CreateAiRuntimeSessionMan
 
   function appendLog(sessionId: string, stream: AiRuntimeLogStream, text: string): void {
     const entries = logs.get(sessionId) ?? [];
+    const exactValues = redactedValues.get(sessionId) ?? [];
     const entry = {
       id: `${sessionId}-log-${entries.length + 1}`,
       sessionId,
       stream,
-      text: redactSensitiveText(text),
+      text: redactExactValues(redactSensitiveText(text), exactValues),
       createdAt: now(),
     };
     entries.push(entry);
@@ -574,6 +579,7 @@ export function createAiRuntimeSessionManager(options: CreateAiRuntimeSessionMan
         startedAt: now(),
       };
       sessions.set(session.id, session);
+      redactedValues.set(session.id, (input.redactValues ?? []).filter((value) => value.length > 0));
       options.onSessionChange?.(session);
       appendLog(session.id, 'system', `启动 AI Runtime 会话：${[input.command, ...(input.args ?? [])].join(' ')}`);
       const handle = spawn(input.command, input.args ?? [], {
@@ -592,17 +598,21 @@ export function createAiRuntimeSessionManager(options: CreateAiRuntimeSessionMan
           if (!current) return;
           current.status = 'failed';
           current.endedAt = now();
-          options.onSessionChange?.(current);
           appendLog(session.id, 'system', value instanceof Error ? value.message : String(value));
+          handles.delete(session.id);
+          redactedValues.delete(session.id);
+          options.onSessionChange?.(current);
         })
         .on('exit', (value) => {
           const current = sessions.get(session.id);
           if (!current) return;
-          current.status = 'exited';
+          if (current.status === 'running') current.status = 'exited';
           current.exitCode = typeof value === 'number' ? value : null;
           current.endedAt = now();
-          options.onSessionChange?.(current);
           appendLog(session.id, 'system', `AI Runtime 会话已退出：${current.exitCode ?? 'unknown'}`);
+          handles.delete(session.id);
+          redactedValues.delete(session.id);
+          options.onSessionChange?.(current);
         });
       return session;
     },
@@ -663,14 +673,23 @@ export function createAiRuntimeSessionManager(options: CreateAiRuntimeSessionMan
       }
       return session;
     },
+    killSession(sessionId, signal) {
+      const session = requireRuntimeSession(sessions, sessionId);
+      handles.get(sessionId)?.kill(signal);
+      appendLog(sessionId, 'system', `已向 AI Runtime 会话发送 ${signal}`);
+      return session;
+    },
   };
 }
 
 function spawnWithNodeChildProcess(command: string, args: string[], options: AiRuntimeSpawnOptions): AiRuntimeProcessHandle {
+  const useProcessGroup = process.platform !== 'win32';
   const child = nodeSpawn(command, args, {
     cwd: options.cwd,
     env: options.env ?? process.env,
     shell: false,
+    // POSIX 下为每个 Runtime 建立独立进程组，停止/超时时才能连同 shell 的子进程一起终止。
+    detached: useProcessGroup,
   });
   return {
     pid: child.pid,
@@ -682,6 +701,14 @@ function spawnWithNodeChildProcess(command: string, args: string[], options: AiR
       return this;
     },
     kill(signal) {
+      if (useProcessGroup && child.pid) {
+        try {
+          process.kill(-child.pid, signal);
+          return;
+        } catch {
+          // 进程组可能已退出；回退到直接信号以覆盖 spawn/exit 的竞争窗口。
+        }
+      }
       child.kill(signal);
     },
   };
@@ -710,6 +737,15 @@ function redactSensitiveText(text: string): string {
     .replace(/\bBearer\s+[^\s]+/giu, 'Bearer [REDACTED]')
     .replace(/\b(cookie)\s*:\s*[^\n\r]+/giu, '$1: [REDACTED]')
     .replace(/\b([A-Z0-9_.-]*(?:token|api[_-]?key|password|secret)[A-Z0-9_.-]*)\s*[:=]\s*("[^"\n\r]*"|'[^'\n\r]*'|[^\s,;]+)/giu, '$1=[REDACTED]');
+}
+
+function redactExactValues(text: string, values: string[]): string {
+  let redacted = text;
+  for (const value of values) {
+    if (!value) continue;
+    redacted = redacted.split(value).join('[REDACTED]');
+  }
+  return redacted;
 }
 
 function requireRuntimeSession(sessions: Map<string, AiRuntimeSession>, sessionId: string): AiRuntimeSession {

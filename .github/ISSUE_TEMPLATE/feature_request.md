@@ -29,7 +29,7 @@ about: Propose a Zeus capability backed by real local data
 
 - [ ] 有可复现的主路径。
 - [ ] 有空状态、失败态和权限不足态。
-- [ ] 有聚焦测试或验收命令。
+- [ ] 有聚焦验收命令或真实运行检查。
 - [ ] 不引入无法验证的外部成功状态。
 
 ## 备选方案

@@ -1,6 +1,16 @@
 /** Zeus 任务状态：只描述真实任务生命周期，不承载任何示例或 mock 业务数据。 */
 export type TaskStatus = 'draft' | 'ready' | 'running' | 'paused' | 'waiting_confirmation' | 'completed' | 'failed' | 'cancelled';
 
+/** 任务优先级只表达处理顺序；P0 不会隐式启动任务或 AI 会话。 */
+export const taskPriorityOrder = ['p0', 'p1', 'p2', 'p3', 'p4'] as const;
+
+export type TaskPriority = (typeof taskPriorityOrder)[number];
+
+/** 对 API 输入做统一优先级校验，拒绝把任意字符串写入新任务。 */
+export function isTaskPriority(value: unknown): value is TaskPriority {
+  return typeof value === 'string' && taskPriorityOrder.includes(value as TaskPriority);
+}
+
 /** 项目管理阶段与 Coding Agent 执行状态严格分离；这里只描述任务在交付流程中的位置。 */
 export type TaskManagementStatus =
     'todo'
@@ -51,3 +61,7 @@ export interface ZeusEvent<TPayload extends Record<string, unknown> = Record<str
   source: 'user' | 'system' | 'scanner' | 'runtime' | 'git' | 'telegram';
   createdAt: string;
 }
+
+export * from './browser.js';
+export * from './commands.js';
+export * from './conversationResources.js';

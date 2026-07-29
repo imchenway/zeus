@@ -1,15 +1,14 @@
-import {useEffect, useRef, useState} from 'react';
-import type {AiRuntimeSession, AiRuntimeSessionStatus, TaskEventRecord, TaskRecord, TaskStatus} from '../apiClient.js';
+import type {TaskEventRecord, TaskManagementStatus, TaskRecord} from '../apiClient.js';
+import type {NativeConversationChoice} from '../session/sessionTypes.js';
+import {Button} from '../ui/Button.js';
+import {ZeusSelect} from '../ZeusSelect.js';
 import {TaskAttachmentPreviewList} from './TaskAttachmentPreviewList.js';
 import {parseTaskAttachments} from './taskAttachments.js';
 import {
-    findLinkedRuntimeSession,
-    formatRuntimeCommandPreview,
-    formatRuntimeSessionStatus,
-    formatTaskNextAction,
     formatTaskSource,
     formatTaskUpdatedAt,
-    type TaskNextActionLabels,
+    resolveTaskManagementStatus,
+    taskManagementStatuses,
     type TaskSourceLabels
 } from './taskWorkspaceModel.js';
 
@@ -18,25 +17,21 @@ export interface TaskDetailPaneCopy {
   noRequest: string;
   eventsTitle: string;
   noEvents: string;
-  runTask: string;
-    viewConversation: string;
-  retryTask: string;
-  markComplete: string;
-  cancelTask: string;
+  pushNewConversation: string;
+  conversationsTitle: string;
+  conversationEmptyTitle: string;
+  conversationEmptyHelp: string;
+  conversationLoading: string;
+  conversationError: string;
+  openConversation: string;
+  retryConversationLoad: string;
+  detailStatusSelectAria: string;
   primaryActionsTitle: string;
-  secondaryActionsTitle: string;
-  dangerActionsTitle: string;
   metadataTitle: string;
-  projectLabel: string;
-  templateLabel: string;
-  aiCliLabel: string;
-  aiDetected: string;
-  aiNotConfigured: string;
   taskCodeLabel?: string;
+  priorityLabel?: string;
   sourceLabel?: string;
   updatedAtLabel?: string;
-  runtimeSessionLabel?: string;
-  runtimeCommandLabel?: string;
   latestEvidenceLabel?: string;
   noEvidence?: string;
   attachmentsTitle?: string;
@@ -47,103 +42,42 @@ export interface TaskDetailPaneCopy {
   previewCloseLabel?: string;
   previewUnavailableLabel?: string;
   localPathLabel?: string;
-  runtimeSessionNotStarted?: string;
-  runtimeCommandMissing?: string;
-  runtimeSessionStatusLabels?: Partial<Record<AiRuntimeSessionStatus, string>>;
-  nextActionLabels?: TaskNextActionLabels;
   sourceLabels?: TaskSourceLabels;
   updatedAtMissing?: string;
-  sensitiveCommandArgument?: string;
-  cancelConfirm: string;
 }
 
 export interface TaskDetailPaneContentProps {
   task: TaskRecord;
   events: TaskEventRecord[];
-    copy: TaskDetailPaneCopy;
-  statusLabels: Record<TaskStatus | '', string>;
+  copy: TaskDetailPaneCopy;
+  statusLabels: Record<TaskManagementStatus | '', string>;
   eventTypeLabels: Record<string, string>;
-  runtimeAiAvailable: boolean;
-  runtimeSessions?: AiRuntimeSession[];
   busy: boolean;
-    hasLinkedConversation?: boolean;
-    onViewConversation?: (taskId: string) => void;
-  onRuntimeAction: (taskId: string, action: 'run' | 'pause' | 'continue' | 'cancel' | 'retry') => void;
-  onMarkComplete: (taskId: string) => void;
+  conversations?: NativeConversationChoice[];
+  conversationsLoading?: boolean;
+  conversationsError?: string | null;
+  onOpenConversation: (taskId: string, conversationId: string) => void;
+  onPushNewConversation: (taskId: string) => void;
+  onManagementStatusChange: (taskId: string, status: TaskManagementStatus) => void;
+  onReloadConversations?: (taskId: string) => void;
   onLoadAttachmentPreview?: (path: string) => Promise<{ previewUrl: string; mimeType: string } | null>;
   onOpenAttachment?: (path: string) => Promise<{ opened: boolean; error?: string }>;
-  controlBusyProps: (busy: boolean) => { 'aria-busy'?: true; 'data-loading'?: 'true' };
-}
-
-function shouldShowRun(status: TaskStatus): boolean {
-  return status === 'ready' || status === 'draft';
 }
 
 export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
-    const [moreActionsOpen, setMoreActionsOpen] = useState(false);
-    const moreActionsTriggerRef = useRef<HTMLButtonElement | null>(null);
-    const moreActionsMenuRef = useRef<HTMLDivElement | null>(null);
-  const runtimeDisabled = props.busy;
-  const completeDisabled = props.busy || props.task.status === 'completed' || props.task.status === 'cancelled';
-  const cancelDisabled = props.busy || props.task.status === 'completed' || props.task.status === 'cancelled';
-  const statusLabel = props.statusLabels[props.task.status];
-  const nextAction = formatTaskNextAction(props.task, props.copy.nextActionLabels);
+  const managementStatus = resolveTaskManagementStatus(props.task);
   const taskIdentity = props.task.taskCode?.trim() || props.task.id;
-  const linkedRuntimeSession = findLinkedRuntimeSession(props.task, props.runtimeSessions);
-  const runtimeCommandMissing = props.copy.runtimeCommandMissing ?? '未记录运行命令';
-  const runtimeCommand = formatRuntimeCommandPreview(linkedRuntimeSession, runtimeCommandMissing);
-  const runtimeStatus = formatRuntimeSessionStatus(linkedRuntimeSession, props.copy.runtimeSessionStatusLabels, props.copy.runtimeSessionNotStarted ?? '未启动 Runtime 会话');
-  const statusWithNextAction = `${statusLabel} · ${nextAction}`;
   const latestEvent = props.events.at(-1);
   const latestEvidenceType = latestEvent ? (props.eventTypeLabels[latestEvent.eventType] ?? latestEvent.eventType) : undefined;
   const taskAttachments = parseTaskAttachments(props.task.sourceContextJson);
-
-  const requestCancel = () => {
-    if (typeof window !== 'undefined' && !window.confirm(props.copy.cancelConfirm)) return;
-      setMoreActionsOpen(false);
-    props.onRuntimeAction(props.task.id, 'cancel');
-  };
-
-    const hasLinkedConversation = props.hasLinkedConversation === true && Boolean(props.onViewConversation);
-    const primaryActions: Array<{ key: string; label: string; action: 'run' | 'retry'; disabled: boolean }> = [];
-    if (!hasLinkedConversation && shouldShowRun(props.task.status)) primaryActions.push({
-        key: 'run',
-        label: props.copy.runTask,
-        action: 'run',
-        disabled: runtimeDisabled
-    });
-    if (!hasLinkedConversation && (props.task.status === 'failed' || props.task.status === 'cancelled')) primaryActions.push({
-        key: 'retry',
-        label: props.copy.retryTask,
-        action: 'retry',
-        disabled: runtimeDisabled
-    });
-
-    useEffect(() => {
-        if (!moreActionsOpen) return;
-        const handlePointerDown = (event: PointerEvent) => {
-            const target = event.target;
-            if (!(target instanceof Node)) return;
-            if (moreActionsTriggerRef.current?.contains(target) || moreActionsMenuRef.current?.contains(target)) return;
-            setMoreActionsOpen(false);
-        };
-        document.addEventListener('pointerdown', handlePointerDown);
-        return () => {
-            document.removeEventListener('pointerdown', handlePointerDown);
-        };
-    }, [moreActionsOpen]);
+  const conversations = [...(props.conversations ?? [])]
+    .filter((conversation) => !conversation.archived)
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
 
   return (
       <section
           className="product-drawer-pane task-detail-pane-content task-detail-pane-shell"
           aria-label={props.task.title}
-          onKeyDown={(event) => {
-              if (event.key !== 'Escape' || !moreActionsOpen) return;
-              event.preventDefault();
-              event.stopPropagation();
-              setMoreActionsOpen(false);
-              moreActionsTriggerRef.current?.focus();
-          }}
       >
           <header className="task-detail-pane-header task-detail-summary-row">
         <span className="task-detail-pane-title">
@@ -152,29 +86,30 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
           </small>
           <strong>{props.task.title}</strong>
         </span>
-              <span className="task-detail-pane-status" aria-label={statusWithNextAction}>
-          {statusWithNextAction}
+        <span className="task-detail-pane-status-control">
+          <ZeusSelect
+            size="compact"
+            ariaLabel={props.copy.detailStatusSelectAria}
+            value={managementStatus}
+            options={taskManagementStatuses.map((status) => ({
+              value: status,
+              label: props.statusLabels[status],
+            }))}
+            onChange={(status) => props.onManagementStatusChange(props.task.id, status)}
+            disabled={props.busy}
+            searchable={false}
+          />
         </span>
       </header>
 
-      <section className="task-detail-summary-grid task-detail-ai-facts" aria-label={props.copy.metadataTitle}>
-        <span className="task-detail-summary-row">
-          <small>{props.copy.aiCliLabel}</small>
-          <strong>{props.runtimeAiAvailable ? props.copy.aiDetected : props.copy.aiNotConfigured}</strong>
-        </span>
-        <span className="task-detail-summary-row">
-          <small>{props.copy.runtimeSessionLabel ?? 'Runtime 会话'}</small>
-          <strong>{linkedRuntimeSession?.id ?? props.copy.runtimeSessionNotStarted ?? '未启动 Runtime 会话'}</strong>
-        </span>
-        <span className="task-detail-summary-row">
-          <small>{props.copy.runtimeCommandLabel ?? '运行命令 / 状态'}</small>
-          <strong>
-            {runtimeCommand} · {runtimeStatus}
-          </strong>
-        </span>
+      <section className="task-detail-summary-grid task-detail-task-facts" aria-label={props.copy.metadataTitle}>
         <span className="task-detail-summary-row">
           <small>{props.copy.sourceLabel ?? '上下文来源'}</small>
           <strong>{formatTaskSource(props.task, props.copy.sourceLabels)}</strong>
+        </span>
+        <span className="task-detail-summary-row">
+          <small>{props.copy.priorityLabel ?? '优先级'}</small>
+          <strong>{props.task.priority?.toUpperCase() ?? '未设置'}</strong>
         </span>
         <span className="task-detail-summary-row">
           <small>{props.copy.updatedAtLabel ?? '更新时间'}</small>
@@ -228,6 +163,58 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
         </section>
       ) : null}
 
+      <section className="task-detail-block task-detail-conversations" aria-label={props.copy.conversationsTitle}>
+        <span className="task-detail-section-heading">
+          <strong>{props.copy.conversationsTitle}</strong>
+          <small>{conversations.length}</small>
+        </span>
+        {props.conversationsLoading && conversations.length === 0 ? (
+          <p className="task-detail-conversation-state" role="status">{props.copy.conversationLoading}</p>
+        ) : props.conversationsError && conversations.length === 0 ? (
+          <span className="task-detail-conversation-state task-detail-conversation-error" role="alert">
+            <strong>{props.copy.conversationError}</strong>
+            <small>{props.conversationsError}</small>
+            {props.onReloadConversations ? (
+              <Button variant="secondary" size="compact" onClick={() => props.onReloadConversations?.(props.task.id)}>
+                {props.copy.retryConversationLoad}
+              </Button>
+            ) : null}
+          </span>
+        ) : conversations.length === 0 ? (
+          <span className="task-detail-conversation-state task-detail-conversation-empty">
+            <strong>{props.copy.conversationEmptyTitle}</strong>
+            <small>{props.copy.conversationEmptyHelp}</small>
+          </span>
+        ) : (
+          <>
+            {props.conversationsError ? (
+              <p className="task-detail-conversation-refresh-warning" role="status">{props.copy.conversationError}</p>
+            ) : null}
+            <ol className="task-detail-conversation-list">
+              {conversations.map((conversation) => (
+                <li key={conversation.id}>
+                  <button
+                    type="button"
+                    className="task-detail-conversation-row"
+                    aria-label={`${props.copy.openConversation}：${conversation.title}`}
+                    onClick={() => props.onOpenConversation(props.task.id, conversation.id)}
+                  >
+                    <span>
+                      <strong>{conversation.title}</strong>
+                      <small>{conversation.providerModel ?? conversation.summary ?? conversation.status}</small>
+                    </span>
+                    <span className="task-detail-conversation-row-meta">
+                      <time dateTime={conversation.updatedAt}>{formatTaskUpdatedAt(conversation.updatedAt, props.copy.updatedAtMissing ?? '未记录')}</time>
+                      <small>{props.copy.openConversation}</small>
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ol>
+          </>
+        )}
+      </section>
+
       <section className="task-detail-block task-detail-events" aria-label={props.copy.eventsTitle}>
         <span className="task-detail-section-heading">
           <strong>{props.copy.eventsTitle}</strong>
@@ -252,46 +239,15 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
 
       <section className="task-detail-action-rail" aria-label={props.copy.primaryActionsTitle}>
         <span className="task-detail-action-buttons">
-          {hasLinkedConversation ? (
-              <button type="button" className="task-detail-primary-action task-detail-view-conversation-action"
-                      onClick={() => props.onViewConversation?.(props.task.id)}
-                      disabled={props.busy} {...props.controlBusyProps(props.busy)}>
-                  {props.copy.viewConversation}
-              </button>
-          ) : null}
-            {primaryActions.map((item) => (
-                <button key={item.key} type="button" className="task-detail-primary-action"
-                        onClick={() => props.onRuntimeAction(props.task.id, item.action)}
-                        disabled={item.disabled} {...props.controlBusyProps(props.busy)}>
-                    {item.label}
-                </button>
-            ))}
-            <button type="button" className="task-detail-secondary-action"
-                    onClick={() => props.onMarkComplete(props.task.id)}
-                    disabled={completeDisabled} {...props.controlBusyProps(props.busy)}>
-            {props.copy.markComplete}
-          </button>
-          <span className="task-detail-more-actions">
-            <button
-                ref={moreActionsTriggerRef}
-                type="button"
-                className="task-detail-more-actions-trigger"
-                aria-label={props.copy.dangerActionsTitle}
-                aria-haspopup="menu"
-                aria-expanded={moreActionsOpen}
-                onClick={() => setMoreActionsOpen((open) => !open)}
-            >
-              …
-            </button>
-            <div ref={moreActionsMenuRef} className="task-detail-more-actions-menu" role="menu"
-                 hidden={!moreActionsOpen}>
-              <button type="button" role="menuitem" className="task-detail-danger-action danger-action"
-                      onClick={requestCancel} disabled={cancelDisabled} {...props.controlBusyProps(props.busy)}>
-                {props.copy.cancelTask}
-              </button>
-              <small>{props.copy.cancelConfirm}</small>
-            </div>
-          </span>
+          <Button
+            variant="primary"
+            size="regular"
+            className="task-detail-primary-action"
+            onClick={() => props.onPushNewConversation(props.task.id)}
+            busy={props.busy}
+          >
+            {props.copy.pushNewConversation}
+          </Button>
         </span>
       </section>
     </section>

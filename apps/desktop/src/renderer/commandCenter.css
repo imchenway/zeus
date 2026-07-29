@@ -1,0 +1,595 @@
+.command-center {
+  color: var(--zeus-control-text);
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 18px;
+  min-height: 0;
+  overflow: auto;
+  padding: 28px clamp(20px, 4vw, 56px) 48px;
+}
+
+.workspace-view-command-center {
+  display: flex;
+  min-height: 0;
+}
+
+.settings-content-column > .command-center {
+  padding: 0 0 48px;
+}
+
+.command-center-header,
+.command-center-header > span,
+.command-definition-copy,
+.command-run-detail > header,
+.command-run-detail > header > span,
+.command-parameter-editor > header,
+.command-parameter-editor > header > span {
+  display: flex;
+}
+
+.command-center-header {
+  align-items: flex-start;
+  app-region: no-drag;
+  justify-content: space-between;
+  gap: 24px;
+  pointer-events: auto;
+  position: relative;
+  -webkit-app-region: no-drag;
+  z-index: 31;
+}
+
+.command-center-header > span,
+.command-definition-copy,
+.command-run-detail > header > span,
+.command-parameter-editor > header > span {
+  flex-direction: column;
+  gap: 5px;
+}
+
+.command-center h2,
+.command-center h3,
+.command-center p {
+  margin: 0;
+}
+
+.command-center-header p {
+  color: var(--zeus-control-muted-text);
+  max-width: 760px;
+}
+
+.command-center-live {
+  min-height: 20px;
+}
+
+.command-center-error,
+.command-run-failure {
+  color: var(--zeus-control-danger-text);
+}
+
+.command-definition-list,
+.command-run-history {
+  background: var(--zeus-product-panel);
+  border: 1px solid var(--zeus-control-border);
+  border-radius: 14px;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+.command-definition-row {
+  align-items: center;
+  display: grid;
+  gap: 14px;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  min-height: 76px;
+  padding: 12px 14px;
+}
+
+.command-definition-row + .command-definition-row {
+  border-top: 1px solid var(--zeus-control-border);
+}
+
+.command-definition-row[data-enabled='false'] {
+  opacity: 0.66;
+}
+
+.command-definition-leading {
+  align-items: center;
+  background: var(--zeus-product-panel-muted);
+  border-radius: 9px;
+  display: inline-flex;
+  height: 32px;
+  justify-content: center;
+  width: 32px;
+}
+
+.command-definition-title,
+.command-definition-actions,
+.command-run-history > header,
+.command-run-history > header > span,
+.command-parameter-flags,
+.command-editor-form footer,
+.command-run-form footer {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+}
+
+.command-definition-title code,
+.command-definition-title small,
+.command-run-status {
+  background: var(--zeus-product-panel-muted);
+  border-radius: 999px;
+  padding: 3px 7px;
+}
+
+.command-definition-copy > span:not(.command-definition-title),
+.command-definition-copy > small,
+.command-run-detail small,
+.command-parameter-editor small {
+  color: var(--zeus-control-muted-text);
+}
+
+.command-definition-actions {
+  justify-content: flex-end;
+}
+
+.command-center-empty {
+  color: var(--zeus-control-muted-text);
+  padding: 22px;
+}
+
+.command-run-history > header {
+  border-bottom: 1px solid var(--zeus-control-border);
+  justify-content: space-between;
+  min-height: 48px;
+  padding: 0 16px;
+}
+
+.command-run-layout {
+  display: grid;
+  grid-template-columns: minmax(220px, 32%) minmax(0, 1fr);
+  min-height: 280px;
+}
+
+.command-run-list {
+  border-right: 1px solid var(--zeus-control-border);
+  max-height: 480px;
+  overflow: auto;
+}
+
+.command-run-list > button {
+  align-items: center;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--zeus-control-border);
+  color: inherit;
+  cursor: pointer;
+  display: flex;
+  font: inherit;
+  justify-content: space-between;
+  min-height: 58px;
+  padding: 9px 12px;
+  text-align: left;
+  width: 100%;
+}
+
+.command-run-list > button:hover,
+.command-run-list > button.selected {
+  background: var(--zeus-product-panel-muted);
+}
+
+.command-run-list > button:focus-visible {
+  outline: 2px solid var(--zeus-control-focus);
+  outline-offset: -2px;
+}
+
+.command-run-list > button > span:first-child {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.command-run-list small {
+  color: var(--zeus-control-muted-text);
+}
+
+.status-succeeded {
+  color: var(--zeus-control-success-text, #207a43);
+}
+
+.status-failed,
+.status-timed_out,
+.status-rejected {
+  color: var(--zeus-control-danger-text);
+}
+
+.status-running {
+  color: var(--zeus-control-accent, #1769d2);
+}
+
+.command-run-detail {
+  min-width: 0;
+  padding: 16px;
+}
+
+.command-run-detail > header {
+  justify-content: space-between;
+}
+
+.command-run-detail dl,
+.command-run-form dl {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 14px 0;
+}
+
+.command-run-detail dl div,
+.command-run-form dl div {
+  background: var(--zeus-product-panel-muted);
+  border-radius: 8px;
+  padding: 8px;
+}
+
+.command-run-detail dt,
+.command-run-form dt {
+  color: var(--zeus-control-muted-text);
+  font-size: 12px;
+}
+
+.command-run-detail dd,
+.command-run-form dd {
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
+}
+
+.command-run-log {
+  background: #111419;
+  border-radius: 10px;
+  color: #e7ecf3;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  margin: 14px 0 0;
+  max-height: 280px;
+  min-height: 92px;
+  overflow: auto;
+  padding: 12px;
+  white-space: pre-wrap;
+}
+
+.command-artifacts {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.command-artifacts button {
+  background: transparent;
+  border: 0;
+  color: var(--zeus-control-link-text, #1769d2);
+  cursor: pointer;
+  min-height: 28px;
+  padding: 0;
+}
+
+.command-artifacts img {
+  border-radius: 8px;
+  display: block;
+  margin-top: 8px;
+  max-height: 320px;
+  max-width: 100%;
+}
+
+.command-modal {
+  background: var(--zeus-solid-surface-bg);
+  border: 1px solid var(--zeus-control-border);
+  border-radius: 16px;
+  box-shadow: 0 24px 72px oklch(20% 0.01 255 / 0.28);
+  color: var(--zeus-control-text);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  max-height: min(860px, calc(100vh - 40px));
+  overflow: hidden;
+  width: min(640px, calc(100vw - 40px));
+}
+
+.command-definition-modal {
+  width: min(820px, calc(100vw - 40px));
+}
+
+.command-permission-modal {
+  width: min(560px, calc(100vw - 40px));
+}
+
+.command-editor-form.command-modal,
+.command-run-form.command-modal {
+  display: grid;
+  gap: 0;
+  padding: 0;
+}
+
+.command-modal h3,
+.command-modal p {
+  margin: 0;
+}
+
+.command-modal-header,
+.command-modal-footer {
+  align-items: center;
+  background: var(--zeus-solid-surface-bg);
+  display: flex;
+  gap: 14px;
+  justify-content: space-between;
+  padding-inline: 22px;
+}
+
+.command-modal-header {
+  border-bottom: 1px solid var(--zeus-control-border);
+  padding-block: 18px 14px;
+}
+
+.command-modal-header > span {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.command-modal-header p,
+.command-modal-header code {
+  color: var(--zeus-control-muted-text);
+  overflow-wrap: anywhere;
+}
+
+.command-modal-header > button {
+  align-items: center;
+  appearance: none;
+  background: var(--zeus-control-bg);
+  border: 1px solid var(--zeus-control-border);
+  border-radius: 8px;
+  color: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  flex: 0 0 auto;
+  font: inherit;
+  height: 32px;
+  justify-content: center;
+  padding: 0;
+  width: 32px;
+}
+
+.command-modal-header > button:hover {
+  background: var(--zeus-product-panel-muted);
+}
+
+.command-modal-header > button:focus-visible {
+  outline: 2px solid var(--zeus-control-focus);
+  outline-offset: 2px;
+}
+
+.command-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  min-height: 0;
+  overflow: auto;
+  padding: 18px 22px;
+}
+
+.command-modal-error {
+  background: color-mix(in oklch, var(--zeus-control-danger-bg) 55%, transparent);
+  border: 1px solid var(--zeus-control-danger-line);
+  border-radius: 10px;
+  color: var(--zeus-control-danger-text);
+  padding: 10px 12px;
+}
+
+.command-modal-footer {
+  border-top: 1px solid var(--zeus-control-border);
+  justify-content: flex-end;
+  padding-block: 14px 18px;
+}
+
+.command-editor-grid,
+.command-parameter-row {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.command-editor-form label,
+.command-run-form label,
+.command-parameter-row label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.command-editor-form input,
+.command-editor-form textarea,
+.command-editor-form select,
+.command-run-form input {
+  background: var(--zeus-control-bg);
+  border: 1px solid var(--zeus-control-border);
+  border-radius: 8px;
+  color: inherit;
+  font: inherit;
+  min-height: 36px;
+  padding: 8px 10px;
+  width: 100%;
+}
+
+.command-run-form input[type='checkbox'] {
+  align-self: flex-start;
+  height: 18px;
+  min-height: 18px;
+  padding: 0;
+  width: 18px;
+}
+
+.command-editor-form textarea {
+  resize: vertical;
+}
+
+.command-editor-grid .wide,
+.command-parameter-row .wide {
+  grid-column: 1 / -1;
+}
+
+.command-editor-switches,
+.command-parameter-row {
+  border: 1px solid var(--zeus-control-border);
+  border-radius: 10px;
+  padding: 12px;
+}
+
+.command-editor-switches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+}
+
+.command-check {
+  align-items: center !important;
+  flex-direction: row !important;
+  min-height: 28px;
+}
+
+.command-check input {
+  height: 18px;
+  min-height: 18px;
+  width: 18px;
+}
+
+.command-parameter-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.command-parameter-editor > header {
+  align-items: center;
+  justify-content: space-between;
+}
+
+.command-parameter-flags {
+  grid-column: 1 / -1;
+  justify-content: flex-end;
+}
+
+.command-high-risk-summary {
+  background: color-mix(in oklch, var(--zeus-control-danger-bg) 55%, transparent);
+  border: 1px solid var(--zeus-control-danger-line);
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+}
+
+.command-high-risk-summary ul,
+.command-high-risk-summary p {
+  margin: 0;
+}
+
+.command-high-risk-summary p {
+  color: var(--zeus-control-muted-text);
+}
+
+.command-permission-body > p {
+  color: var(--zeus-control-muted-text);
+}
+
+.command-permission-body ul {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.command-permission-body li {
+  background: var(--zeus-product-panel-muted);
+  border: 1px solid var(--zeus-control-border);
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px;
+}
+
+.command-permission-body li span {
+  color: var(--zeus-control-muted-text);
+}
+
+.command-permission-next-step {
+  border-left: 3px solid var(--zeus-control-accent, #1769d2);
+  padding-left: 10px;
+}
+
+@media (max-width: 820px) {
+  .command-center {
+    padding-inline: 14px;
+  }
+
+  .command-center-header,
+  .command-definition-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .command-definition-row {
+    grid-template-columns: 32px minmax(0, 1fr);
+  }
+
+  .command-definition-actions {
+    grid-column: 1 / -1;
+  }
+
+  .command-run-layout,
+  .command-editor-grid,
+  .command-parameter-row {
+    grid-template-columns: 1fr;
+  }
+
+  .command-run-list {
+    border-bottom: 1px solid var(--zeus-control-border);
+    border-right: 0;
+    max-height: 220px;
+  }
+
+  .command-run-detail dl,
+  .command-run-form dl {
+    grid-template-columns: 1fr;
+  }
+
+  .command-modal {
+    max-height: calc(100vh - 24px);
+    width: min(100%, calc(100vw - 24px));
+  }
+
+  .command-modal-header,
+  .command-modal-footer {
+    padding-inline: 16px;
+  }
+
+  .command-modal-body {
+    padding-inline: 16px;
+  }
+}
+
+@media (max-width: 560px) {
+  .command-modal-footer {
+    align-items: stretch;
+    flex-direction: column-reverse;
+  }
+
+  .command-modal-footer .zeus-button {
+    width: 100%;
+  }
+}

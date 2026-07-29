@@ -13,6 +13,11 @@ import {TerminalWindowIcon as TerminalWindow} from '@phosphor-icons/react/dist/c
 import {MessageCheckIcon, MessageEditIcon, MessageExpandIcon, MessageThumbIcon} from './SessionMessageIcons.js';
 import type {NativeSessionItemBuffer} from './sessionTypes.js';
 import {autosizeTextarea} from './textareaAutosize.js';
+import type {ConversationFileLocation, ConversationOpenTarget, ConversationResource} from '@zeus/shared';
+import {
+    ConversationInlineResource,
+    ConversationResourceCards
+} from './ConversationResources.js';
 
 export type SessionUiLanguage = 'zh-CN' | 'en-US';
 export type ThreadItemRole = 'user' | 'assistant' | 'commentary' | 'tool' | 'file' | 'request' | 'error' | 'unknown';
@@ -92,6 +97,11 @@ export interface ThreadItemViewProps {
   isLatestUser?: boolean;
     onEdit?: (item: NativeSessionItemBuffer, content: string) => void | Promise<void>;
   onRetry?: (item: NativeSessionItemBuffer) => void;
+  onOpenResource?: (
+    resource: ConversationResource,
+    target: ConversationOpenTarget,
+    location?: ConversationFileLocation,
+  ) => void | Promise<void>;
 }
 
 export function ThreadItemView(props: ThreadItemViewProps) {
@@ -211,15 +221,16 @@ export function ThreadItemView(props: ThreadItemViewProps) {
         <CommandExecutionItem item={props.item} language={props.language} />
       ) : commentary && visibleText ? (
             <div className="session-commentary-flow">
-          <SafeMarkdown text={visibleText} language={props.language} />
+          <SafeMarkdown text={visibleText} language={props.language} resources={props.item.resources} onOpenResource={props.onOpenResource} />
             </div>
       ) : visibleText ? (
-        <SafeMarkdown text={visibleText} language={props.language} />
+        <SafeMarkdown text={visibleText} language={props.language} resources={props.item.resources} onOpenResource={props.onOpenResource} />
       ) : role === 'assistant' && props.item.status !== 'completed' ? (
         <span className="session-thinking-indicator">{labels.thinking}</span>
       ) : null}
       {!command ? <TypedItemFacts item={props.item} role={role} language={props.language} /> : null}
       <ItemAttachments item={props.item} label={labels.attachments} />
+      <ConversationResourceCards resources={props.item.resources} language={props.language} onOpenResource={props.onOpenResource}/>
       <ItemImages item={props.item} label={labels.image} />
       {hasActions ? (
           <footer className="session-thread-item-actions" data-message-actions={role}>
@@ -269,10 +280,30 @@ export function ThreadItemView(props: ThreadItemViewProps) {
   );
 }
 
-export function SafeMarkdown(props: { text: string; language?: SessionUiLanguage }) {
+export function SafeMarkdown(props: {
+    text: string;
+    language?: SessionUiLanguage;
+    resources?: ConversationResource[];
+    onOpenResource?: (
+      resource: ConversationResource,
+      target: ConversationOpenTarget,
+      location?: ConversationFileLocation,
+    ) => void | Promise<void>;
+}) {
   const bounded = boundedMarkdownText(props.text);
   const labels = copy[props.language ?? 'en-US'];
-    const rendered = markdownBlocks(bounded.text, labels.copyCode, labels.copied, labels.complexityTruncated);
+    const rendered = markdownBlocks(
+        bounded.text,
+        labels.copyCode,
+        labels.copied,
+        labels.complexityTruncated,
+        {
+            language: props.language ?? 'en-US',
+            resources: (props.resources ?? []).filter((resource) => resource.presentation === 'inline'),
+            usedResourceIds: new Set<string>(),
+            onOpenResource: props.onOpenResource,
+        },
+    );
   return (
     <div className="session-markdown" data-truncated={bounded.truncated || rendered.truncated || undefined}>
       {rendered.blocks}
@@ -296,7 +327,24 @@ interface MarkdownComplexityBudget {
   truncated: boolean;
 }
 
-function markdownBlocks(text: string, copyCodeLabel: string, copiedLabel: string, complexityTruncatedLabel: string): {
+interface MarkdownRenderContext {
+    language: SessionUiLanguage;
+    resources: ConversationResource[];
+    usedResourceIds: Set<string>;
+    onOpenResource?: (
+      resource: ConversationResource,
+      target: ConversationOpenTarget,
+      location?: ConversationFileLocation,
+    ) => void | Promise<void>;
+}
+
+function markdownBlocks(
+    text: string,
+    copyCodeLabel: string,
+    copiedLabel: string,
+    complexityTruncatedLabel: string,
+    context: MarkdownRenderContext,
+): {
     blocks: ReactNode[];
     truncated: boolean
 } {
@@ -344,7 +392,7 @@ function markdownBlocks(text: string, copyCodeLabel: string, copiedLabel: string
     if (heading) {
       if (!beginMarkdownBlock(budget)) break;
       const level = heading[1]?.length ?? 1;
-      const content = inlineMarkdown(boundedMarkdownBlockText(heading[2] ?? '').text, `heading-${index}`, budget);
+      const content = inlineMarkdown(boundedMarkdownBlockText(heading[2] ?? '').text, `heading-${index}`, budget, context);
       blocks.push(level === 1 ? <h1 key={`h-${index}`}>{content}</h1> : level === 2 ? <h2 key={`h-${index}`}>{content}</h2> : level === 3 ? <h3 key={`h-${index}`}>{content}</h3> : <h4 key={`h-${index}`}>{content}</h4>);
       index += 1;
       if (budget.truncated) break;
@@ -356,7 +404,7 @@ function markdownBlocks(text: string, copyCodeLabel: string, copiedLabel: string
       while (index < lines.length && /^[-*]\s+/.test(lines[index] ?? '')) {
         if (!takeMarkdownNode(budget)) break;
         const value = boundedMarkdownBlockText((lines[index] ?? '').replace(/^[-*]\s+/, '')).text;
-        items.push(<li key={`li-${index}`}>{inlineMarkdown(value, `li-${index}`, budget)}</li>);
+        items.push(<li key={`li-${index}`}>{inlineMarkdown(value, `li-${index}`, budget, context)}</li>);
         index += 1;
         if (budget.truncated) break;
       }
@@ -370,7 +418,7 @@ function markdownBlocks(text: string, copyCodeLabel: string, copiedLabel: string
       while (index < lines.length && /^\d+\.\s+/.test(lines[index] ?? '')) {
         if (!takeMarkdownNode(budget)) break;
         const value = boundedMarkdownBlockText((lines[index] ?? '').replace(/^\d+\.\s+/, '')).text;
-        items.push(<li key={`oli-${index}`}>{inlineMarkdown(value, `oli-${index}`, budget)}</li>);
+        items.push(<li key={`oli-${index}`}>{inlineMarkdown(value, `oli-${index}`, budget, context)}</li>);
         index += 1;
         if (budget.truncated) break;
       }
@@ -380,7 +428,7 @@ function markdownBlocks(text: string, copyCodeLabel: string, copiedLabel: string
     }
     if (line.startsWith('> ')) {
       if (!beginMarkdownBlock(budget)) break;
-      blocks.push(<blockquote key={`quote-${index}`}>{inlineMarkdown(boundedMarkdownBlockText(line.slice(2)).text, `quote-${index}`, budget)}</blockquote>);
+      blocks.push(<blockquote key={`quote-${index}`}>{inlineMarkdown(boundedMarkdownBlockText(line.slice(2)).text, `quote-${index}`, budget, context)}</blockquote>);
       index += 1;
       if (budget.truncated) break;
       continue;
@@ -392,7 +440,7 @@ function markdownBlocks(text: string, copyCodeLabel: string, copiedLabel: string
       paragraphLines.push(lines[index] ?? '');
       index += 1;
     }
-    blocks.push(<p key={`p-${index}`}>{inlineMarkdown(boundedMarkdownBlockText(paragraphLines.join('\n')).text, `p-${index}`, budget)}</p>);
+    blocks.push(<p key={`p-${index}`}>{inlineMarkdown(boundedMarkdownBlockText(paragraphLines.join('\n')).text, `p-${index}`, budget, context)}</p>);
     if (budget.truncated) break;
   }
   if (budget.truncated) {
@@ -428,9 +476,14 @@ function startsMarkdownBlock(line: string): boolean {
   return /^(#{1,4})\s+|^```|^[-*]\s+|^\d+\.\s+|^>\s+/.test(line) || /^\s*([-*_])(?:\s*\1){2,}\s*$/.test(line);
 }
 
-function inlineMarkdown(text: string, keyPrefix: string, budget: MarkdownComplexityBudget): ReactNode[] {
+function inlineMarkdown(
+    text: string,
+    keyPrefix: string,
+    budget: MarkdownComplexityBudget,
+    context: MarkdownRenderContext,
+): ReactNode[] {
   const nodes: ReactNode[] = [];
-  const tokenPattern = /(`[^`\n]+`|\[[^\]\n]+\]\([^\s)]+\)|\*\*[^*\n]+\*\*|__[^_\n]+__|\*[^*\n]+\*|_[^_\n]+_)/g;
+  const tokenPattern = /(`[^`\n]+`|\[[^\]\n]+\]\((?:<[^>\n]+>|[^)\n]+)\)|\*\*[^*\n]+\*\*|__[^_\n]+__|\*[^*\n]+\*|_[^_\n]+_)/g;
   let cursor = 0;
   let match: RegExpExecArray | null;
   let tokenIndex = 0;
@@ -446,14 +499,20 @@ function inlineMarkdown(text: string, keyPrefix: string, budget: MarkdownComplex
     else if (token.startsWith('*') || token.startsWith('_')) nodes.push(<em key={`${keyPrefix}-em-${tokenIndex}`}>{token.slice(1, -1)}</em>);
     else {
       const link = /^\[([^\]]+)\]\(([^)]+)\)$/.exec(token);
-      const href = link?.[2] ?? '';
+      const href = (link?.[2] ?? '').trim().replace(/^<|>$/gu, '');
+      const label = link?.[1] ?? '';
+      const resource = takeMatchingInlineResource(context, label, href);
       nodes.push(
-        isSafeLink(href) ? (
-          <a key={`${keyPrefix}-link-${tokenIndex}`} href={href} target="_blank" rel="noreferrer">
-            {link?.[1]}
-          </a>
+        resource ? (
+          <ConversationInlineResource
+              key={`${keyPrefix}-resource-${tokenIndex}`}
+              resource={resource}
+              label={label}
+              language={context.language}
+              onOpenResource={context.onOpenResource}
+          />
         ) : (
-          <Fragment key={`${keyPrefix}-unsafe-${tokenIndex}`}>{link?.[1] ?? token}</Fragment>
+          <Fragment key={`${keyPrefix}-unsafe-${tokenIndex}`}>{label || token}</Fragment>
         ),
       );
     }
@@ -462,6 +521,47 @@ function inlineMarkdown(text: string, keyPrefix: string, budget: MarkdownComplex
   }
   if (!budget.truncated && cursor < text.length && takeMarkdownNode(budget)) nodes.push(<Fragment key={`${keyPrefix}-tail`}>{text.slice(cursor)}</Fragment>);
   return nodes;
+}
+
+function takeMatchingInlineResource(
+    context: MarkdownRenderContext,
+    label: string,
+    href: string,
+): ConversationResource | null {
+    for (const resource of context.resources) {
+        if (context.usedResourceIds.has(resource.id) || !inlineResourceMatches(resource, label, href)) continue;
+        context.usedResourceIds.add(resource.id);
+        return resource;
+    }
+    return null;
+}
+
+function inlineResourceMatches(resource: ConversationResource, label: string, href: string): boolean {
+    if (resource.kind === 'website') {
+        try {
+            return new URL(href).href === resource.url;
+        } catch {
+            return resource.displayName === label;
+        }
+    }
+    if (resource.kind === 'attachment') return resource.displayName === label;
+    const reference = decodeReferencePath(href);
+    return (
+        resource.displayName === label ||
+        reference.endsWith(resource.projectRelativePath) ||
+        reference.endsWith(`/${resource.projectRelativePath}`) ||
+        reference.split('/').pop()?.replace(/(?::\d+(?::\d+)?)|(?:#L\d+(?:-L?\d+)?)$/u, '') === resource.projectRelativePath.split('/').pop()
+    );
+}
+
+function decodeReferencePath(href: string): string {
+    let value = href.replace(/^file:\/\//iu, '').replace(/#L\d+(?:-L?\d+)?$/iu, '').replace(/:\d+(?::\d+)?$/u, '');
+    try {
+        value = decodeURIComponent(value);
+    } catch {
+        // 保留原始 href 参与末尾匹配；非法编码不会得到打开权限。
+    }
+    return value;
 }
 
 export function itemRole(item: NativeSessionItemBuffer): ThreadItemRole {
@@ -692,6 +792,7 @@ function itemFacts(item: NativeSessionItemBuffer, role: ThreadItemRole): Array<[
 }
 
 function ItemAttachments(props: { item: NativeSessionItemBuffer; label: string }) {
+  if (props.item.resources.some((resource) => resource.kind === 'attachment' && resource.presentation === 'card')) return null;
   const raw = Array.isArray(props.item.payload.attachments) ? props.item.payload.attachments : [];
   const attachments = raw.flatMap((entry) => {
     if (!isRecord(entry)) return [];
@@ -738,10 +839,6 @@ function primitiveText(value: unknown): string | null {
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
-function isSafeLink(href: string): boolean {
-  return /^(https?:|mailto:)/i.test(href);
-}
-
 export async function copyText(
     text: string,
     services: {

@@ -1,7 +1,8 @@
-import {createPortal} from 'react-dom';
 import type {FormEvent, KeyboardEvent} from 'react';
 import type {TaskRecord} from '../apiClient.js';
 import type {CodexTaskPushCapabilities, NativePermissionMode} from '../session/sessionTypes.js';
+import {Button} from '../ui/Button.js';
+import {ModalPortal} from '../ui/ModalPortal.js';
 import {ZeusSelect} from '../ZeusSelect.js';
 import {TaskAttachmentPreviewList} from './TaskAttachmentPreviewList.js';
 import {parseTaskAttachments} from './taskAttachments.js';
@@ -94,12 +95,16 @@ export function TaskModelPushModal(props: {
   }
 
   const modal = (
-    <div className="macos-ai-app task-model-push-portal-root">
-      <div className="task-model-push-backdrop" onPointerDown={(event) => event.currentTarget === event.target && !busy && props.onClose()}>
-        <form className="task-model-push-modal" role="dialog" aria-modal="true" aria-labelledby="task-model-push-title" onSubmit={props.onSubmit} onKeyDown={handleKeyDown}>
+    <ModalPortal
+      rootClassName="task-model-push-portal-root"
+      backdropClassName="task-model-push-backdrop"
+      dismissDisabled={busy}
+      onDismiss={props.onClose}
+    >
+        <form className="task-model-push-modal zeus-solid-form-surface" role="dialog" aria-modal="true" aria-labelledby="task-model-push-title" onSubmit={props.onSubmit} onKeyDown={handleKeyDown}>
           <header className="task-model-push-header">
             <span>
-              <strong id="task-model-push-title">{zh ? '推送到模型' : 'Push to model'}</strong>
+              <strong id="task-model-push-title">{zh ? '推送到新会话' : 'Push to new conversation'}</strong>
               <small>{props.projectName ? `${props.projectName} · ${props.task.taskCode ?? props.task.id}` : (props.task.taskCode ?? props.task.id)}</small>
             </span>
             <button type="button" aria-label={zh ? '关闭' : 'Close'} onClick={props.onClose} disabled={busy}>
@@ -112,6 +117,7 @@ export function TaskModelPushModal(props: {
               <label>
                 <span>{zh ? '模型' : 'Model'}</span>
                   <ZeusSelect
+                      size="regular"
                       ariaLabel={zh ? '模型' : 'Model'}
                       value={props.form.model}
                       options={(props.capabilities?.models ?? []).map((model) => ({
@@ -127,6 +133,7 @@ export function TaskModelPushModal(props: {
               <label>
                 <span>{zh ? '模型等级' : 'Reasoning effort'}</span>
                   <ZeusSelect
+                      size="regular"
                       ariaLabel={zh ? '模型等级' : 'Reasoning effort'}
                       value={props.form.effort}
                       options={(selectedModel?.supportedReasoningEfforts ?? []).map((effort) => ({
@@ -141,6 +148,7 @@ export function TaskModelPushModal(props: {
               <label>
                 <span>{zh ? '工作模式' : 'Work mode'}</span>
                   <ZeusSelect
+                      size="regular"
                       ariaLabel={zh ? '工作模式' : 'Work mode'}
                       value={props.form.workMode}
                       options={[
@@ -155,6 +163,7 @@ export function TaskModelPushModal(props: {
               <label>
                 <span>{zh ? '权限模式' : 'Permission mode'}</span>
                   <ZeusSelect<NativePermissionMode>
+                      size="regular"
                       ariaLabel={zh ? '权限模式' : 'Permission mode'}
                       value={props.form.permissionMode}
                       options={[
@@ -220,19 +229,18 @@ export function TaskModelPushModal(props: {
           </div>
 
           <footer className="task-model-push-footer">
-              <small>{zh ? '推送后将立即进入会话；成功后才会记住本次选择。' : 'You will enter the conversation immediately; selections are remembered after success.'}</small>
+              <small>{zh ? '确认后会创建新会话并立即进入；历史会话不会被覆盖。' : 'A new conversation will be created and opened; history remains unchanged.'}</small>
             <span>
-              <button type="button" onClick={props.onClose} disabled={busy}>
+              <Button variant="secondary" size="regular" onClick={props.onClose} disabled={busy}>
                 {zh ? '取消' : 'Cancel'}
-              </button>
-              <button type="submit" className="task-model-push-submit" disabled={props.status === 'loading' || busy || !props.form.model}>
-                {busy ? (zh ? '正在推送…' : 'Pushing…') : zh ? '确认推送' : 'Push'}
-              </button>
+              </Button>
+              <Button type="submit" variant="primary" size="regular" busy={busy} disabled={props.status === 'loading' || !props.form.model}>
+                {busy ? (zh ? '正在创建…' : 'Creating…') : zh ? '创建新会话' : 'Create conversation'}
+              </Button>
             </span>
           </footer>
         </form>
-      </div>
-    </div>
+    </ModalPortal>
   );
-  return typeof document !== 'undefined' && document.body ? createPortal(modal, document.body) : modal;
+  return modal;
 }

@@ -183,7 +183,6 @@ zeus/
 ├── scripts/
 │   ├── dev.sh
 │   ├── build.sh
-│   ├── test-real-scan.sh
 │   ├── package-mac.sh
 │   └── verify-release.sh
 │
@@ -194,8 +193,7 @@ zeus/
 │   ├── code-map-engine.md
 │   ├── ai-runtime.md
 │   ├── telegram.md
-│   ├── release.md
-│   └── testing.md
+│   └── release.md
 │
 ├── .github/
 │   ├── workflows/
@@ -1305,7 +1303,7 @@ export interface PtySession {
 6. 相关源码路径和行号。
 7. 相关 SQL/表。
 8. Git 状态摘要。
-9. 测试要求。
+9. 验收要求。
 10. 安全要求。
 
 不得包含虚假上下文。
@@ -2020,7 +2018,7 @@ AI runtime、Git 操作、文件操作必须限制在项目路径内。任何路
 
 如果本地没有证书：
 
-1. unsigned build 必须成功。
+1. 本地 ad-hoc 签名 build 必须成功，并明确它不等同于 Developer ID 正式分发签名。
 2. CI 中保留签名环境变量。
 3. release 文档说明签名流程。
 4. 不伪造 notarization 成功。
@@ -2033,8 +2031,11 @@ AI runtime、Git 操作、文件操作必须限制在项目路径内。任何路
 2. URL 指向 GitHub Release。
 3. sha256 占位由 release 脚本计算。
 4. app 安装到 `/Applications/Zeus.app`。
-5. uninstall 清理 launch agents 预留。
-6. zap 清理 `~/Library/Application Support/Zeus` 需要用户确认。
+5. 当前阶段发布到 `imchenway/homebrew-tap`，安装命令为 `brew install --cask imchenway/tap/zeus`。
+6. Cask 必须显式声明只支持 macOS。
+7. 单架构产物必须声明 Homebrew 架构限制。
+8. uninstall 通过 bundle id 退出 Zeus，不声明源码中不存在的 LaunchAgent。
+9. zap 清理 `~/Library/Application Support/Zeus` 需要用户确认。
 
 ---
 
@@ -2133,7 +2134,7 @@ AI runtime、Git 操作、文件操作必须限制在项目路径内。任何路
 9. AuditService。
 10. SecurityService。
 
-验收：领域测试通过。
+验收：领域规则通过静态检查、生产构建和真实运行核对。
 
 ### 24.4 Project + Task UI
 
@@ -2564,7 +2565,7 @@ pnpm package:mac
 5. 不得把 token 明文写入数据库。
 6. 不得只实现 UI 而没有真实本地服务。
 7. 不得只写 README 而没有可运行应用。
-8. 不得跳过真实扫描测试。
+8. 不得跳过真实项目扫描验收。
 9. 不得把外部配置缺失伪造成成功。
 10. 不得改变项目名称 Zeus。
 

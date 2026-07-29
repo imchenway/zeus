@@ -1,4 +1,5 @@
-import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { createPortal } from 'react-dom';
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 
 export interface ZeusSelectOption<T extends string> {
   value: T;
@@ -16,7 +17,25 @@ export interface ZeusSelectProps<T extends string> {
   searchPlaceholder?: string;
   emptyLabel?: string;
   searchable?: boolean;
+  size: 'compact' | 'regular' | 'roomy';
 }
+
+interface ZeusSelectPopoverLayout {
+  top: number;
+  left: number;
+  width: number;
+  maxHeight: number;
+}
+
+const tabbableSelector = [
+  'a[href]',
+  'button:not([disabled])',
+  'input:not([disabled]):not([type="hidden"])',
+  'select:not([disabled])',
+  'textarea:not([disabled])',
+  '[contenteditable="true"]',
+  '[tabindex]:not([tabindex="-1"])',
+].join(',');
 
 function focusElement(element: HTMLElement | undefined): void {
   if (!element || typeof window === 'undefined') return;
@@ -33,6 +52,7 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
   const generatedId = useId();
   const rootRef = useRef<HTMLSpanElement | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const popoverRef = useRef<HTMLSpanElement | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
   const optionRefs = useRef(new Map<T, HTMLButtonElement>());
   const enabledOptions = useMemo(() => props.options.filter((option) => !option.disabled), [props.options]);
@@ -41,6 +61,7 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
   const [open, setOpen] = useState(false);
   const [activeValue, setActiveValue] = useState<T>(props.value);
   const [query, setQuery] = useState('');
+  const [popoverLayout, setPopoverLayout] = useState<ZeusSelectPopoverLayout | null>(null);
   const visibleOptions = useMemo(() => (searchable ? filterSelectOptions(props.options, query) : props.options), [props.options, query, searchable]);
   const enabledVisibleOptions = useMemo(() => visibleOptions.filter((option) => !option.disabled), [visibleOptions]);
   const rootId = `zeus-select-${generatedId}`;
@@ -52,6 +73,39 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
 
   const focusOption = (value: T) => focusElement(optionRefs.current.get(value));
 
+  const focusAdjacentTabStop = (direction: 1 | -1): boolean => {
+    const trigger = triggerRef.current;
+    if (!trigger || typeof window === 'undefined') return false;
+    const tabbableElements = Array.from(trigger.ownerDocument.querySelectorAll<HTMLElement>(tabbableSelector)).filter((element) => {
+      if (popoverRef.current?.contains(element) || element.hidden || element.getAttribute('aria-hidden') === 'true') return false;
+      const style = window.getComputedStyle(element);
+      return style.display !== 'none' && style.visibility !== 'hidden';
+    });
+    const triggerIndex = tabbableElements.indexOf(trigger);
+    const nextElement = triggerIndex >= 0 ? tabbableElements[triggerIndex + direction] : undefined;
+    if (!nextElement) return false;
+    focusElement(nextElement);
+    return true;
+  };
+
+  const syncPopoverLayout = useCallback(() => {
+    const trigger = triggerRef.current;
+    if (!trigger || typeof window === 'undefined') return;
+    const triggerRect = trigger.getBoundingClientRect();
+    const viewportPadding = 8;
+    const popoverGap = 6;
+    const top = triggerRect.bottom + popoverGap;
+    const width = Math.min(triggerRect.width, Math.max(0, window.innerWidth - viewportPadding * 2));
+    const left = Math.min(Math.max(triggerRect.left, viewportPadding), Math.max(viewportPadding, window.innerWidth - width - viewportPadding));
+    const availableHeight = Math.max(72, window.innerHeight - top - viewportPadding);
+    setPopoverLayout({
+      top,
+      left,
+      width,
+      maxHeight: Math.min(availableHeight, window.innerHeight * 0.56, 430),
+    });
+  }, []);
+
   const closeListbox = (restoreFocus = true) => {
     setOpen(false);
     if (restoreFocus) focusElement(triggerRef.current ?? undefined);
@@ -61,6 +115,7 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
     if (props.disabled || enabledOptions.length === 0) return;
     setQuery('');
     setActiveValue(nextActiveValue);
+    syncPopoverLayout();
     setOpen(true);
     // 长列表优先聚焦搜索；任务工具栏这类短列表直接聚焦选项，避免顶部搜索灰区抢占视觉。
     focusElement(searchable ? (searchRef.current ?? undefined) : (optionRefs.current.get(nextActiveValue) ?? undefined));
@@ -83,7 +138,14 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
   };
 
   const handleTriggerKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>) => {
-    if (event.key === 'ArrowDown' || event.key === 'Enter' || event.key === ' ') {
+    if (open && event.key === 'Escape') {
+      event.preventDefault();
+      closeListbox();
+    } else if (open && event.key === 'Tab') {
+      event.preventDefault();
+      closeListbox(false);
+      if (!focusAdjacentTabStop(event.shiftKey ? -1 : 1)) focusElement(triggerRef.current ?? undefined);
+    } else if (event.key === 'ArrowDown' || event.key === 'Enter' || event.key === ' ') {
       event.preventDefault();
       openListbox(props.value);
     } else if (event.key === 'ArrowUp') {
@@ -112,7 +174,9 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
       event.preventDefault();
       if (!option.disabled) selectOption(option.value);
     } else if (event.key === 'Tab') {
-      setOpen(false);
+      event.preventDefault();
+      closeListbox(false);
+      if (!focusAdjacentTabStop(event.shiftKey ? -1 : 1)) focusElement(triggerRef.current ?? undefined);
     }
   };
 
@@ -148,19 +212,43 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
         selectOption(activeOption.value);
       }
     } else if (event.key === 'Tab') {
-      setOpen(false);
+      event.preventDefault();
+      closeListbox(false);
+      if (!focusAdjacentTabStop(event.shiftKey ? -1 : 1)) focusElement(triggerRef.current ?? undefined);
     }
   };
 
   useEffect(() => {
     if (!open) return undefined;
     const closeOnOutsidePointerDown = (event: PointerEvent) => {
-      if (event.target instanceof Node && rootRef.current?.contains(event.target)) return;
+      if (event.target instanceof Node && (rootRef.current?.contains(event.target) || popoverRef.current?.contains(event.target))) return;
       closeListbox(false);
     };
     document.addEventListener('pointerdown', closeOnOutsidePointerDown, true);
     return () => document.removeEventListener('pointerdown', closeOnOutsidePointerDown, true);
   }, [open]);
+
+  useLayoutEffect(() => {
+    if (!open || typeof window === 'undefined') return undefined;
+    syncPopoverLayout();
+    const resizeObserver = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(syncPopoverLayout);
+    if (triggerRef.current) resizeObserver?.observe(triggerRef.current);
+    window.addEventListener('resize', syncPopoverLayout);
+    document.addEventListener('scroll', syncPopoverLayout, true);
+    return () => {
+      resizeObserver?.disconnect();
+      window.removeEventListener('resize', syncPopoverLayout);
+      document.removeEventListener('scroll', syncPopoverLayout, true);
+    };
+  }, [open, syncPopoverLayout]);
+
+  useEffect(() => {
+    if (!open || typeof window === 'undefined') return undefined;
+    const animationFrame = window.requestAnimationFrame(() => {
+      focusElement(searchable ? (searchRef.current ?? undefined) : (optionRefs.current.get(activeValue) ?? undefined));
+    });
+    return () => window.cancelAnimationFrame(animationFrame);
+  }, [activeValue, open, searchable]);
 
   useEffect(() => {
     setActiveValue(props.value);
@@ -172,27 +260,29 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
     setActiveValue(enabledVisibleOptions[0]?.value ?? props.value);
   }, [activeValue, enabledVisibleOptions, open, props.value]);
 
-  return (
-    <span className={props.className ? `zeus-select ${props.className}` : 'zeus-select'} data-zeus-select-placement="bottom" ref={rootRef}>
-      {/* 自控 popover 固定从触发器下方展开，避免 macOS 原生 select 把已选项覆盖到控件上方。 */}
-      <button
-        ref={triggerRef}
-        type="button"
-        className="zeus-select-trigger"
-        role="combobox"
-        aria-label={props.ariaLabel}
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        aria-controls={listboxId}
-        aria-activedescendant={open ? activeOptionId : undefined}
-        disabled={props.disabled}
-        onClick={() => (open ? closeListbox(false) : openListbox(props.value))}
-        onKeyDown={handleTriggerKeyDown}
+  const portalHost = typeof document === 'undefined' ? null : (rootRef.current?.closest('.macos-ai-app') ?? document.body);
+  const popover = open ? (
+    <span
+      className={portalHost === document.body ? 'macos-ai-app zeus-select-portal-root' : 'zeus-select-portal-root'}
+      data-zeus-primitive="select-popover"
+      data-control-size={props.size}
+    >
+      <span
+        ref={popoverRef}
+        className="zeus-select-popover"
+        data-motion-surface="popover"
+        data-zeus-select-placement="bottom"
+        style={
+          popoverLayout
+            ? {
+                top: popoverLayout.top,
+                left: popoverLayout.left,
+                width: popoverLayout.width,
+                maxHeight: popoverLayout.maxHeight,
+              }
+            : { visibility: 'hidden' }
+        }
       >
-        <span className="zeus-select-value">{selectedOption?.label ?? props.value}</span>
-        <span className="zeus-select-chevron" aria-hidden="true" />
-      </button>
-      <span className="zeus-select-popover" hidden={!open} data-motion-surface="popover">
         {searchable ? (
           <span className="zeus-select-search-row">
             <span className="zeus-select-search-icon" aria-hidden="true" />
@@ -242,6 +332,36 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
           )}
         </span>
       </span>
+    </span>
+  ) : null;
+
+  return (
+    <span
+      className={props.className ? `zeus-select ${props.className}` : 'zeus-select'}
+      data-zeus-primitive="select"
+      data-zeus-select-placement="bottom"
+      data-control-size={props.size}
+      ref={rootRef}
+    >
+      {/* 触发器只保留在业务布局中；popover 通过 portal 提升到应用壳层，禁止扩大表单滚动区域。 */}
+      <button
+        ref={triggerRef}
+        type="button"
+        className="zeus-select-trigger"
+        role="combobox"
+        aria-label={props.ariaLabel}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-controls={listboxId}
+        aria-activedescendant={open ? activeOptionId : undefined}
+        disabled={props.disabled}
+        onClick={() => (open ? closeListbox(false) : openListbox(props.value))}
+        onKeyDown={handleTriggerKeyDown}
+      >
+        <span className="zeus-select-value">{selectedOption?.label ?? props.value}</span>
+        <span className="zeus-select-chevron" aria-hidden="true" />
+      </button>
+      {popover && portalHost ? createPortal(popover, portalHost) : popover}
     </span>
   );
 }

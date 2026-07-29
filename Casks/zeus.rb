@@ -1,16 +1,18 @@
 cask "zeus" do
   version "0.1.0"
-  sha256 "0610d3b917feb0db9e285efd51d4b3dfc602669776152f0252b4993ff9465c4d"
+  sha256 "5ba434a0c71b4e8140eb065df6b16e839cf5f17b97c0a4adcbd7d6f07f3a52a9"
 
   url "https://github.com/imchenway/zeus/releases/download/v#{version}/Zeus-#{version}-arm64.dmg"
   name "Zeus"
-  desc "Local-first macOS AI development workbench"
+  desc "Local-first AI development workbench"
   homepage "https://github.com/imchenway/zeus"
+
+  depends_on :macos
+  depends_on arch: :arm64
 
   app "Zeus.app"
 
-  uninstall launchctl: "dev.hypha.zeus",
-            quit:      "dev.hypha.zeus"
+  uninstall quit: "dev.hypha.zeus"
 
   zap trash: [
     "~/Library/Application Support/Zeus",

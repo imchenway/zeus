@@ -4,13 +4,6 @@ import { promisify } from 'node:util';
 const localHosts = new Set(['127.0.0.1', 'localhost', '::1']);
 const execFileAsync = promisify(execFile);
 
-export interface KeychainExecutionResult {
-  stdout: string;
-  stderr: string;
-}
-
-export type KeychainExecutor = (command: string, args: string[]) => Promise<KeychainExecutionResult>;
-
 export interface SecretStore {
   setSecret: (account: string, value: string) => Promise<void>;
   getSecret: (account: string) => Promise<string | undefined>;
@@ -37,19 +30,18 @@ export function redactSensitiveText(input: string): string {
     .replace(/\b([A-Z0-9_.-]*(?:token|api[_-]?key|password|secret)[A-Z0-9_.-]*)\s*[:=]\s*("[^"\n\r]*"|'[^'\n\r]*'|[^\s,;]+)/giu, '$1=[REDACTED]');
 }
 
-/** 创建 macOS Keychain 适配器；默认使用系统 security 命令，测试可注入执行器。 */
-export function createMacOSKeychainStore(options: { service?: string; execute?: KeychainExecutor } = {}): SecretStore {
-  const service = options.service ?? 'Zeus';
-  const execute = options.execute ?? executeSecurityCommand;
+/** 创建 macOS Keychain 适配器；始终调用系统 security 命令。 */
+export function createMacOSKeychainStore(): SecretStore {
+  const service = 'Zeus';
   return {
     async setSecret(account: string, value: string): Promise<void> {
       validateSecretAccount(account);
-      await execute('security', ['add-generic-password', '-U', '-s', service, '-a', account, '-w', value]);
+      await executeSecurityCommand('security', ['add-generic-password', '-U', '-s', service, '-a', account, '-w', value]);
     },
     async getSecret(account: string): Promise<string | undefined> {
       validateSecretAccount(account);
       try {
-        const result = await execute('security', ['find-generic-password', '-s', service, '-a', account, '-w']);
+        const result = await executeSecurityCommand('security', ['find-generic-password', '-s', service, '-a', account, '-w']);
         const value = result.stdout.trim();
         return value || undefined;
       } catch (error) {
@@ -60,7 +52,7 @@ export function createMacOSKeychainStore(options: { service?: string; execute?: 
     async deleteSecret(account: string): Promise<void> {
       validateSecretAccount(account);
       try {
-        await execute('security', ['delete-generic-password', '-s', service, '-a', account]);
+        await executeSecurityCommand('security', ['delete-generic-password', '-s', service, '-a', account]);
       } catch (error) {
         if (!isSecurityItemNotFound(error)) throw error;
       }
@@ -73,7 +65,7 @@ export function getSecretPresenceLabel(value: string | undefined): SecretPresenc
   return value ? { configured: true, label: '已安全保存' } : { configured: false, label: '未配置' };
 }
 
-async function executeSecurityCommand(command: string, args: string[]): Promise<KeychainExecutionResult> {
+async function executeSecurityCommand(command: string, args: string[]): Promise<{ stdout: string; stderr: string }> {
   const { stdout, stderr } = await execFileAsync(command, args);
   return { stdout, stderr };
 }
