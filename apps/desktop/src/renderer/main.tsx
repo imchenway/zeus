@@ -1,15 +1,9 @@
-import {useEffect} from 'react';
-import {createRoot} from 'react-dom/client';
-import {
-    App,
-    buildGraphConversationTaskIntent,
-    buildGraphNodeTaskIntent,
-    buildProjectDirectoryResolution,
-    buildTemplateTaskDraft
-} from './App.js';
-import {RendererErrorBoundary} from './ErrorBoundary.js';
-import {createDashboardClient, type DashboardClient} from './apiClient.js';
-import {openGraphSourceInMain, revealProjectInFinderInMain} from './appShellBridge.js';
+import { useEffect } from 'react';
+import { createRoot } from 'react-dom/client';
+import { App, buildGraphConversationTaskIntent, buildGraphNodeTaskIntent, buildProjectDirectoryResolution, buildTemplateTaskDraft } from './App.js';
+import { RendererErrorBoundary } from './ErrorBoundary.js';
+import { createDashboardClient, type DashboardClient } from './apiClient.js';
+import { openGraphSourceInMain, revealProjectInFinderInMain } from './appShellBridge.js';
 
 /** 选择真实仓库失败或取消时保留现有列表；开源分发包不能内置维护者本机路径。 */
 function resolveProjectDirectoryForCreation(selectedPath: string | null | undefined, appLanguage: Parameters<typeof buildProjectDirectoryResolution>[1]): { path: string | null; description: string } {
@@ -29,16 +23,13 @@ async function renderWithClient(client: DashboardClient): Promise<void> {
         snapshot={snapshot}
         nativeConversationClient={client}
         commandClient={client}
-        onCreateCurrentProject={async (defaults) => {
+        onChooseProjectDirectory={async () => {
           const selectedPath = await window.zeus?.chooseProjectDirectory?.();
           const resolved = resolveProjectDirectoryForCreation(selectedPath, appShellSettings.appLanguage);
-          if (!resolved.path) return client.loadDashboard();
-          await client.createProject({
-            name: resolved.path.split('/').filter(Boolean).at(-1) ?? 'Zeus',
-            localPath: resolved.path,
-            description: resolved.description,
-            ...defaults,
-          });
+          return resolved.path;
+        }}
+        onCreateCurrentProject={async (request) => {
+          await client.createProject(request);
           return client.loadDashboard();
         }}
         onArchiveProject={async (projectId) => {
@@ -56,7 +47,7 @@ async function renderWithClient(client: DashboardClient): Promise<void> {
           await client.updateProject(projectId, input);
           return client.loadDashboard();
         }}
-        onRevealProjectInFinder={(projectPath) => revealProjectInFinderInMain({zeus: window.zeus, projectPath})}
+        onRevealProjectInFinder={(projectPath) => revealProjectInFinderInMain({ zeus: window.zeus, projectPath })}
         onDeleteProject={async (projectId) => {
           await client.deleteProject(projectId);
           return client.loadDashboard();
@@ -72,10 +63,9 @@ async function renderWithClient(client: DashboardClient): Promise<void> {
           await client.setProjectDefaultTemplate(projectId, templateId);
           return client.loadDashboard();
         }}
-        onAuthorizeTaskFiles={(files, source) =>
-          window.zeus?.authorizeTaskFiles?.(files, source) ?? Promise.resolve({resources: [], failedCount: files.length})}
+        onAuthorizeTaskFiles={(files, source) => window.zeus?.authorizeTaskFiles?.(files, source) ?? Promise.resolve({ resources: [], failedCount: files.length })}
         onMaterializeTaskResources={(resources) => window.zeus?.materializeTaskResources?.(resources) ?? Promise.resolve([])}
-        onReadTaskClipboardResources={() => window.zeus?.readTaskClipboardResources?.() ?? Promise.resolve({resources: [], text: ''})}
+        onReadTaskClipboardResources={() => window.zeus?.readTaskClipboardResources?.() ?? Promise.resolve({ resources: [], text: '' })}
         onLoadTaskAttachmentPreview={(path) => window.zeus?.getTaskAttachmentPreview?.(path) ?? Promise.resolve(null)}
         onOpenTaskAttachment={(path) => window.zeus?.openTaskAttachment?.(path) ?? Promise.resolve({ opened: false, error: 'open_attachment_unavailable' })}
         onCreateTaskFromGraphNode={async (nodeId, projectId) => {
@@ -117,7 +107,7 @@ async function renderWithClient(client: DashboardClient): Promise<void> {
           client.loadTasks({
             projectId,
             query,
-              managementStatus,
+            managementStatus,
             tag,
             sortBy,
             sortDirection: 'asc',
@@ -265,8 +255,8 @@ async function renderWithClient(client: DashboardClient): Promise<void> {
           return client.loadDashboard();
         }}
         onUpdateTaskManagementStatus={async (taskId, status) => {
-            await client.updateTaskManagementStatus(taskId, status);
-            return client.loadDashboard();
+          await client.updateTaskManagementStatus(taskId, status);
+          return client.loadDashboard();
         }}
         onArchiveTask={async (taskId) => {
           await client.archiveTask(taskId);

@@ -12918,7 +12918,8 @@ a {
 
 /* 2026-07-21 任务表格跨分辨率语义对齐最终覆盖：表头与数据共享列轨道和语义锚点，状态不再继承旧列表的右对齐。 */
 .macos-ai-app .task-table-header {
-    background: color-mix(in oklch, var(--zeus-product-panel-muted) 72%, transparent);
+    /* 深色主题禁止让 transparent 参与 OKLCH 色相插值，否则中性灰会在 Chromium 中偏成暖红色。 */
+    background: color-mix(in srgb, var(--zeus-product-panel-muted) 72%, var(--zeus-product-canvas));
     border-block-end: 1px solid var(--zeus-product-line-soft);
     color: color-mix(in oklch, var(--zeus-product-text) 84%, var(--zeus-product-muted));
     font-size: 11px;
@@ -14571,9 +14572,10 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   box-shadow: 0 18px 42px rgb(0 0 0 / 0.24);
 }
 
+/* 2026-07-29 任务空状态颜色回归修复：空态属于任务画布，不再绘制独立白色面板或悬浮阴影。 */
 .macos-ai-app .task-list-empty-row.task-empty-state {
-  background: var(--zeus-product-panel);
-  box-shadow: 0 18px 46px rgb(0 0 0 / 0.12);
+  background: transparent;
+  box-shadow: none;
 }
 
 .macos-ai-app .zeus-select-popover::before {
@@ -14681,5 +14683,301 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   .macos-ai-app.zeus-shell.theme-system .graph-sequence-lifeline.current-graph-canvas-object .graph-sequence-node-box {
     fill: var(--zeus-product-accent-soft);
     stroke: var(--zeus-product-accent);
+  }
+}
+
+/* 2026-07-29 项目新增入口：标题行仅增加明确的加号动作，不引入无功能的折叠或更多菜单。 */
+.macos-ai-app.zeus-shell .project-first-sidebar .project-sidebar-heading {
+  grid-template-columns: minmax(0, 1fr) 28px;
+}
+
+.macos-ai-app.zeus-shell .project-first-sidebar .project-add-button {
+  align-items: center;
+  appearance: none;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  color: var(--zeus-product-muted);
+  cursor: pointer;
+  display: inline-flex;
+  inline-size: 28px;
+  justify-content: center;
+  min-block-size: 28px;
+  padding: 0;
+  transition:
+    background-color 120ms var(--zeus-motion-ease-out),
+    color 120ms var(--zeus-motion-ease-out);
+}
+
+.macos-ai-app.zeus-shell .project-first-sidebar .project-add-button svg {
+  block-size: 18px;
+  inline-size: 18px;
+}
+
+.macos-ai-app.zeus-shell .project-first-sidebar .project-add-button:hover:not(:disabled) {
+  background: var(--zeus-native-row-hover);
+  color: var(--zeus-product-text);
+}
+
+.macos-ai-app.zeus-shell .project-first-sidebar .project-add-button:focus-visible {
+  box-shadow: var(--zeus-control-focus);
+  outline: 0;
+}
+
+.macos-ai-app.zeus-shell .project-first-sidebar .project-add-button:disabled {
+  background: transparent;
+  border-color: transparent;
+  color: var(--zeus-control-disabled-text);
+}
+
+/* 单目录创建弹窗复用 Zeus 表面、按钮与主题 token，并保持与 Codex 参考一致的名称优先层级。 */
+.project-create-dialog-portal-root.macos-ai-app {
+  background: transparent;
+}
+
+.macos-ai-app .project-create-dialog {
+  background: var(--zeus-solid-surface-bg);
+  border: 1px solid var(--zeus-product-line);
+  border-radius: 16px;
+  box-shadow: 0 24px 58px oklch(28% 0.008 255 / 0.18);
+  color: var(--zeus-product-text);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  inline-size: min(540px, calc(100vw - 32px));
+  max-block-size: min(660px, calc(100vh - 40px));
+  overflow: hidden;
+  pointer-events: auto;
+}
+
+.macos-ai-app .project-create-dialog-header,
+.macos-ai-app .project-create-dialog-footer {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  padding-inline: 22px;
+}
+
+.macos-ai-app .project-create-dialog-header {
+  padding-block: 20px 10px;
+}
+
+.macos-ai-app .project-create-dialog-header strong {
+  font-size: 18px;
+  font-weight: 680;
+  letter-spacing: -0.015em;
+  line-height: 24px;
+}
+
+.macos-ai-app .project-create-dialog-close {
+  align-items: center;
+  appearance: none;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--zeus-product-muted);
+  cursor: pointer;
+  display: inline-flex;
+  inline-size: 30px;
+  justify-content: center;
+  min-block-size: 30px;
+  padding: 0;
+}
+
+.macos-ai-app .project-create-dialog-close svg {
+  block-size: 18px;
+  inline-size: 18px;
+}
+
+.macos-ai-app .project-create-dialog-close:hover:not(:disabled) {
+  background: var(--zeus-control-bg-hover);
+  color: var(--zeus-product-text);
+}
+
+.macos-ai-app .project-create-dialog-close:focus-visible {
+  box-shadow: var(--zeus-control-focus);
+  outline: 0;
+}
+
+.macos-ai-app .project-create-dialog-body {
+  display: grid;
+  gap: 16px;
+  min-block-size: 0;
+  overflow-y: auto;
+  padding: 12px 22px;
+}
+
+.macos-ai-app .project-create-name-control {
+  align-items: stretch;
+  background: var(--zeus-control-bg);
+  border: 1px solid var(--zeus-control-border);
+  border-radius: 11px;
+  display: grid;
+  grid-template-columns: 46px minmax(0, 1fr);
+  min-block-size: 44px;
+  overflow: hidden;
+  transition:
+    border-color 120ms var(--zeus-motion-ease-out),
+    box-shadow 120ms var(--zeus-motion-ease-out);
+}
+
+.macos-ai-app .project-create-name-control:focus-within {
+  border-color: var(--zeus-focus-line);
+  box-shadow: var(--zeus-control-focus);
+}
+
+.macos-ai-app .project-create-name-icon {
+  align-items: center;
+  border-inline-end: 1px solid var(--zeus-product-line-soft);
+  color: var(--zeus-product-muted);
+  display: inline-flex;
+  justify-content: center;
+}
+
+.macos-ai-app .project-create-name-icon svg {
+  block-size: 20px;
+  inline-size: 20px;
+}
+
+.macos-ai-app .project-create-name-control input {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  color: var(--zeus-product-text);
+  font-size: 14px;
+  min-block-size: 42px;
+  padding: 0 14px;
+}
+
+.macos-ai-app .project-create-name-control input:focus-visible {
+  border: 0;
+  box-shadow: none;
+  outline: 0;
+}
+
+.macos-ai-app .project-create-folder-field {
+  display: grid;
+  gap: 8px;
+}
+
+.macos-ai-app .project-create-folder-field > strong {
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 18px;
+}
+
+.macos-ai-app .project-create-folder-picker {
+  align-items: center;
+  appearance: none;
+  background: var(--zeus-product-panel);
+  border: 1px solid var(--zeus-product-line);
+  border-radius: 11px;
+  color: var(--zeus-product-text);
+  cursor: pointer;
+  display: grid;
+  gap: 10px;
+  justify-items: center;
+  min-block-size: 112px;
+  padding: 18px;
+  text-align: center;
+  transition:
+    background-color 120ms var(--zeus-motion-ease-out),
+    border-color 120ms var(--zeus-motion-ease-out),
+    box-shadow 120ms var(--zeus-motion-ease-out);
+  inline-size: 100%;
+}
+
+.macos-ai-app .project-create-folder-picker:hover:not(:disabled) {
+  background: var(--zeus-product-panel-muted);
+  border-color: var(--zeus-control-border-hover);
+}
+
+.macos-ai-app .project-create-folder-picker:focus-visible {
+  border-color: var(--zeus-focus-line);
+  box-shadow: var(--zeus-control-focus);
+  outline: 0;
+}
+
+.macos-ai-app .project-create-folder-picker[data-selected='true'] {
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  justify-items: start;
+  min-block-size: 82px;
+  padding: 14px 16px;
+  text-align: start;
+}
+
+.macos-ai-app .project-create-folder-picker-icon {
+  color: var(--zeus-product-muted);
+  display: inline-flex;
+}
+
+.macos-ai-app .project-create-folder-picker-icon svg {
+  block-size: 26px;
+  inline-size: 26px;
+}
+
+.macos-ai-app .project-create-folder-picker-copy {
+  display: grid;
+  gap: 3px;
+  min-inline-size: 0;
+}
+
+.macos-ai-app .project-create-folder-picker-copy strong {
+  font-size: 14px;
+  font-weight: 620;
+  line-height: 19px;
+}
+
+.macos-ai-app .project-create-folder-picker-copy small {
+  color: var(--zeus-product-muted);
+  font-size: 11px;
+  line-height: 16px;
+  max-inline-size: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.macos-ai-app .project-create-folder-change {
+  color: var(--zeus-product-muted);
+  font-size: 12px;
+  font-weight: 620;
+  white-space: nowrap;
+}
+
+.macos-ai-app .project-create-error {
+  color: var(--zeus-danger-text);
+  font-size: 12px;
+  line-height: 17px;
+  margin: -4px 0 0;
+}
+
+.macos-ai-app .project-create-dialog-footer {
+  justify-content: flex-end;
+  padding-block: 12px 20px;
+}
+
+@media (max-width: 560px) {
+  .macos-ai-app .project-create-dialog {
+    inline-size: 100%;
+    max-block-size: calc(100vh - 24px);
+  }
+
+  .macos-ai-app .project-create-dialog-header,
+  .macos-ai-app .project-create-dialog-footer {
+    padding-inline: 18px;
+  }
+
+  .macos-ai-app .project-create-dialog-body {
+    padding-inline: 18px;
+  }
+
+  .macos-ai-app .project-create-folder-picker[data-selected='true'] {
+    grid-template-columns: 26px minmax(0, 1fr);
+  }
+
+  .macos-ai-app .project-create-folder-change {
+    display: none;
   }
 }

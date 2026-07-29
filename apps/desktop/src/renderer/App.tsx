@@ -1,175 +1,173 @@
 import {
-    type ClipboardEvent as ReactClipboardEvent,
-    type CSSProperties,
-    type DragEvent as ReactDragEvent,
-    type FormEvent,
-    type KeyboardEvent as ReactKeyboardEvent,
-    type PointerEvent as ReactPointerEvent,
-    type ReactNode,
-    type RefObject,
-    useCallback,
-    useEffect,
-    useMemo,
-    useRef,
-    useState,
+  type ClipboardEvent as ReactClipboardEvent,
+  type CSSProperties,
+  type DragEvent as ReactDragEvent,
+  type FormEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+  type RefObject,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
 } from 'react';
-import {createPortal} from 'react-dom';
-import {FolderOpenIcon as FolderOpen} from '@phosphor-icons/react/dist/csr/FolderOpen';
-import {MagnifyingGlassIcon as MagnifyingGlass} from '@phosphor-icons/react/dist/csr/MagnifyingGlass';
-import {PencilSimpleIcon as PencilSimple} from '@phosphor-icons/react/dist/csr/PencilSimple';
-import {PushPinIcon as PushPin} from '@phosphor-icons/react/dist/csr/PushPin';
-import {PushPinSlashIcon as PushPinSlash} from '@phosphor-icons/react/dist/csr/PushPinSlash';
-import {XIcon as X} from '@phosphor-icons/react/dist/csr/X';
+import { createPortal } from 'react-dom';
+import { FolderIcon as Folder } from '@phosphor-icons/react/dist/csr/Folder';
+import { FolderOpenIcon as FolderOpen } from '@phosphor-icons/react/dist/csr/FolderOpen';
+import { FolderPlusIcon as FolderPlus } from '@phosphor-icons/react/dist/csr/FolderPlus';
+import { MagnifyingGlassIcon as MagnifyingGlass } from '@phosphor-icons/react/dist/csr/MagnifyingGlass';
+import { PencilSimpleIcon as PencilSimple } from '@phosphor-icons/react/dist/csr/PencilSimple';
+import { PlusIcon as Plus } from '@phosphor-icons/react/dist/csr/Plus';
+import { PushPinIcon as PushPin } from '@phosphor-icons/react/dist/csr/PushPin';
+import { PushPinSlashIcon as PushPinSlash } from '@phosphor-icons/react/dist/csr/PushPinSlash';
+import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import {
-    buildMermaidDiagramExport,
-    buildMermaidDiagramSource,
-    buildPlantUmlDiagramExport,
-    buildPlantUmlDiagramSource,
-    type MermaidDiagramExportFile,
-    type PlantUmlDiagramExportFile,
-    toReactFlowElements,
-    toSigmaGraph,
+  buildMermaidDiagramExport,
+  buildMermaidDiagramSource,
+  buildPlantUmlDiagramExport,
+  buildPlantUmlDiagramSource,
+  type MermaidDiagramExportFile,
+  type PlantUmlDiagramExportFile,
+  toReactFlowElements,
+  toSigmaGraph,
 } from '@zeus/diagram-engine';
 import '@xterm/xterm/css/xterm.css';
 import '@xyflow/react/dist/style.css';
 import './styles.css';
 import './session/session.css';
 import './ui/primitives.css';
-import {notifyMainAppShellSettingsChanged} from './appShellBridge.js';
-import {PENDING_RESOURCE_LONG_TEXT_THRESHOLD} from './ui/pendingResourcePolicy.js';
-import {TaskAttachmentPreviewList} from './task/TaskAttachmentPreviewList.js';
+import { notifyMainAppShellSettingsChanged } from './appShellBridge.js';
+import { PENDING_RESOURCE_LONG_TEXT_THRESHOLD } from './ui/pendingResourcePolicy.js';
+import { TaskAttachmentPreviewList } from './task/TaskAttachmentPreviewList.js';
+import { type ConversationTreeRuntimeState, conversationTreeRuntimeStateFromSession, type ProjectConversationGroup, ProjectConversationTree } from './session/ProjectConversationTree.js';
 import {
-    type ConversationTreeRuntimeState,
-    conversationTreeRuntimeStateFromSession,
-    type ProjectConversationGroup,
-    ProjectConversationTree
-} from './session/ProjectConversationTree.js';
-import {
-    ConnectedSessionWorkspace,
-    createNativeConversationStartEnvelopeManager,
-    createProjectConversationStartEnvelopeManager,
-    loadLegacyConversationDetail,
-    nativeConversationChoiceFromAcceptance,
-    type NativeConversationStartStorage,
-    type ProjectSessionWorkspaceStartInput,
-    SessionWorkspace,
-    type SessionWorkspaceStartInput,
-    type SessionWorkspaceTask,
-    startNativeConversationWithDurableAcceptance,
-    startProjectConversationWithDurableAcceptance,
+  ConnectedSessionWorkspace,
+  createNativeConversationStartEnvelopeManager,
+  createProjectConversationStartEnvelopeManager,
+  loadLegacyConversationDetail,
+  nativeConversationChoiceFromAcceptance,
+  type NativeConversationStartStorage,
+  type ProjectSessionWorkspaceStartInput,
+  SessionWorkspace,
+  type SessionWorkspaceStartInput,
+  type SessionWorkspaceTask,
+  startNativeConversationWithDurableAcceptance,
+  startProjectConversationWithDurableAcceptance,
 } from './session/SessionWorkspace.js';
 import type {
-    CodexTaskPushCapabilities,
-    NativeConversationAttachment,
-    NativeConversationChoice,
-    NativeConversationChoicesSnapshot,
-    NativeProjectConversationChoicesSnapshot,
-    NativeSessionState,
-    SessionConversationOwner,
-    StartTaskModelPushRequest,
+  CodexTaskPushCapabilities,
+  NativeConversationAttachment,
+  NativeConversationChoice,
+  NativeConversationChoicesSnapshot,
+  NativeProjectConversationChoicesSnapshot,
+  NativeSessionState,
+  SessionConversationOwner,
+  StartTaskModelPushRequest,
 } from './session/sessionTypes.js';
-import {selectHasConfirmedUserMessage} from './session/sessionSelectors.js';
-import type {SessionControllerClient} from './session/useSessionController.js';
-import {TaskDetailPaneContent} from './task/TaskDetailPaneContent.js';
+import { selectHasConfirmedUserMessage } from './session/sessionSelectors.js';
+import type { SessionControllerClient } from './session/useSessionController.js';
+import { TaskDetailPaneContent } from './task/TaskDetailPaneContent.js';
 import {
-    buildTaskModelPushMessage,
-    readTaskModelPushPreferences,
-    resolveTaskModelPushInitialForm,
-    type TaskModelPushForm,
-    TaskModelPushModal,
-    type TaskModelPushModalStatus,
-    writeTaskModelPushPreferences,
+  buildTaskModelPushMessage,
+  readTaskModelPushPreferences,
+  resolveTaskModelPushInitialForm,
+  type TaskModelPushForm,
+  TaskModelPushModal,
+  type TaskModelPushModalStatus,
+  writeTaskModelPushPreferences,
 } from './task/TaskModelPushModal.js';
 import {
-    acceptTaskModelPushPendingState,
-    createTaskModelPushPendingState,
-    failTaskModelPushPendingState,
-    retryTaskModelPushPendingState,
-    type TaskModelPushPendingState,
-    TaskModelPushPendingWorkspace,
+  acceptTaskModelPushPendingState,
+  createTaskModelPushPendingState,
+  failTaskModelPushPendingState,
+  retryTaskModelPushPendingState,
+  type TaskModelPushPendingState,
+  TaskModelPushPendingWorkspace,
 } from './task/TaskModelPushPendingWorkspace.js';
-import {TaskWorkspace} from './task/TaskWorkspace.js';
-import {LegacyChatImportSettings} from './settings/LegacyChatImportSettings.js';
-import {BrowserSettingsPane} from './settings/BrowserSettingsPane.js';
-import {type TaskAttachmentRestoreTarget, type TaskAttachmentView, toPersistedTaskAttachment} from './task/taskAttachments.js';
+import { TaskWorkspace } from './task/TaskWorkspace.js';
+import { LegacyChatImportSettings } from './settings/LegacyChatImportSettings.js';
+import { BrowserSettingsPane } from './settings/BrowserSettingsPane.js';
+import { type TaskAttachmentRestoreTarget, type TaskAttachmentView, toPersistedTaskAttachment } from './task/taskAttachments.js';
 import {
-    filterVisibleTasks,
-    defaultTaskTableEnumSortOrders,
-    normalizeTaskTableEnumSortOrders,
-    normalizeTaskTableColumnPreferences,
-    resolveTaskManagementStatus,
-    taskAgentRunStatusFromSession,
-    taskManagementStatuses,
+  filterVisibleTasks,
+  defaultTaskTableEnumSortOrders,
+  normalizeTaskTableEnumSortOrders,
+  normalizeTaskTableColumnPreferences,
+  resolveTaskManagementStatus,
+  taskAgentRunStatusFromSession,
+  taskManagementStatuses,
 } from './task/taskWorkspaceModel.js';
-import {ZeusSelect} from './ZeusSelect.js';
-import {Button, type ButtonVariant} from './ui/Button.js';
-import {ModalPortal} from './ui/ModalPortal.js';
-import {SourceListRow} from './ui/SourceListRow.js';
-import {WorkspaceDrawer} from './ui/WorkspaceDrawer.js';
-import {CommandCenterPanel} from './CommandCenterPanel.js';
+import { ZeusSelect } from './ZeusSelect.js';
+import { Button, type ButtonVariant } from './ui/Button.js';
+import { ModalPortal } from './ui/ModalPortal.js';
+import { SourceListRow } from './ui/SourceListRow.js';
+import { WorkspaceDrawer } from './ui/WorkspaceDrawer.js';
+import { CommandCenterPanel } from './CommandCenterPanel.js';
 import {
-    type AiRuntimeAdapterDescriptor,
-    type AiRuntimeAdapterStatus,
-    type AiRuntimeLogEntry,
-    type AiRuntimeSession,
-    type AiRuntimeSessionStatus,
-    type AiRuntimeTerminalEvent,
-    type AiRuntimeTerminalSnapshot,
-    type AppShellSettings,
-    type CodeMapSettings,
-    type CodexLegacyImportResult,
-    type CodexLegacyImportSnapshot,
-    createEmptyDashboardSnapshot,
-    type CreateProjectRequest,
-    type DashboardClient,
-    type DashboardSnapshot,
-    type ExecutedGitOperationResult,
-    type ExecuteGitOperationRequest,
-    type GitDiffHunk,
-    type GitDiffSummary,
-    type GitOperationConfirmation,
-    type GitPatchExport,
-    type GraphConversationHistoryItem,
-    type GraphConversationHistoryPage,
-    type GraphQuestionAnswer,
-    type GraphSearchResult,
-    type GraphViewSnapshot,
-    type GraphViewType,
-    type HighRiskGitOperation,
-    type ImportLocalBusinessDataResult,
-    type ImportLocalSettingsRequest,
-    type ImportLocalSettingsResult,
-    type LoadRuntimeSessionsRequest,
-    type LocalBusinessDataSnapshot,
-    type LocalSettingsExportSnapshot,
-    type ProjectArchiveConfirmation,
-    type ProjectConfig,
-    type ProjectDatabaseSecretSnapshot,
-    type ProjectRecord,
-    type ReleaseStatusSnapshot,
-    type ReleaseUpdateStatusSnapshot,
-    type RuntimeOperationConfirmation,
-    type RuntimeSettings,
-    type RuntimeStatusSnapshot,
-    type SaveProjectConfigRequest,
-    type SecurityAuditLogEntry,
-    type SecurityResetResult,
-    type SecuritySecretsSnapshot,
-    type SendConversationMessageResult,
-    type TaskEventRecord,
-    type TaskManagementStatus,
-    type TaskPriority,
-    type TaskRecord,
-    type TaskStatus,
-    type TaskAgentRunStatus,
-    type TaskTableColumnPreferences,
-    type TaskTemplateRecord,
-    type TelegramNotificationSettings,
-    type TelegramPollingLogEntry,
-    type TelegramPollingStatus,
-    type TelegramSecuritySettings,
-    type TelegramTestConnectionResult,
-    type ZeusRealtimeEvent,
+  type AiRuntimeAdapterDescriptor,
+  type AiRuntimeAdapterStatus,
+  type AiRuntimeLogEntry,
+  type AiRuntimeSession,
+  type AiRuntimeSessionStatus,
+  type AiRuntimeTerminalEvent,
+  type AiRuntimeTerminalSnapshot,
+  type AppShellSettings,
+  type CodeMapSettings,
+  type CodexLegacyImportResult,
+  type CodexLegacyImportSnapshot,
+  createEmptyDashboardSnapshot,
+  type CreateProjectRequest,
+  type DashboardClient,
+  type DashboardSnapshot,
+  type ExecutedGitOperationResult,
+  type ExecuteGitOperationRequest,
+  type GitDiffHunk,
+  type GitDiffSummary,
+  type GitOperationConfirmation,
+  type GitPatchExport,
+  type GraphConversationHistoryItem,
+  type GraphConversationHistoryPage,
+  type GraphQuestionAnswer,
+  type GraphSearchResult,
+  type GraphViewSnapshot,
+  type GraphViewType,
+  type HighRiskGitOperation,
+  type ImportLocalBusinessDataResult,
+  type ImportLocalSettingsRequest,
+  type ImportLocalSettingsResult,
+  type LoadRuntimeSessionsRequest,
+  type LocalBusinessDataSnapshot,
+  type LocalSettingsExportSnapshot,
+  type ProjectArchiveConfirmation,
+  type ProjectConfig,
+  type ProjectDatabaseSecretSnapshot,
+  type ProjectRecord,
+  type ReleaseStatusSnapshot,
+  type ReleaseUpdateStatusSnapshot,
+  type RuntimeOperationConfirmation,
+  type RuntimeSettings,
+  type RuntimeStatusSnapshot,
+  type SaveProjectConfigRequest,
+  type SecurityAuditLogEntry,
+  type SecurityResetResult,
+  type SecuritySecretsSnapshot,
+  type SendConversationMessageResult,
+  type TaskEventRecord,
+  type TaskManagementStatus,
+  type TaskPriority,
+  type TaskRecord,
+  type TaskStatus,
+  type TaskAgentRunStatus,
+  type TaskTableColumnPreferences,
+  type TaskTemplateRecord,
+  type TelegramNotificationSettings,
+  type TelegramPollingLogEntry,
+  type TelegramPollingStatus,
+  type TelegramSecuritySettings,
+  type TelegramTestConnectionResult,
+  type ZeusRealtimeEvent,
 } from './apiClient.js';
 
 export {
@@ -215,13 +213,13 @@ type TaskCreateAttachment = TaskAttachmentView;
 type TaskCreateFormState = { title: string; description: string; priority: TaskPriority; tags: string; attachments: TaskCreateAttachment[] };
 type TaskCreateTextField = Extract<keyof TaskCreateFormState, 'title' | 'description' | 'tags'>;
 type TaskCreateDraft = { title: string; description: string; priority: TaskPriority; tags: string[]; attachments: ReturnType<typeof toPersistedTaskAttachment>[] };
-type TaskResourcePayload = {name?: string; type?: string; data?: ArrayBuffer; text?: string; kind?: 'image' | 'file' | 'pasted_text'};
-type TaskResourceAuthorizationResult = {resources: TaskCreateAttachment[]; failedCount: number};
+type TaskResourcePayload = { name?: string; type?: string; data?: ArrayBuffer; text?: string; kind?: 'image' | 'file' | 'pasted_text' };
+type TaskResourceAuthorizationResult = { resources: TaskCreateAttachment[]; failedCount: number };
 type NativeConversationAppClient = SessionControllerClient &
-    Pick<
-        DashboardClient,
-        'loadProjectConversationChoices' | 'startProjectConversation' | 'loadTaskConversationChoices' | 'startNativeConversation' | 'loadCodexTaskPushCapabilities' | 'startTaskModelPush' | 'acknowledgeNativeConversationCompletion'
-    >;
+  Pick<
+    DashboardClient,
+    'loadProjectConversationChoices' | 'startProjectConversation' | 'loadTaskConversationChoices' | 'startNativeConversation' | 'loadCodexTaskPushCapabilities' | 'startTaskModelPush' | 'acknowledgeNativeConversationCompletion'
+  >;
 type NativeConversationChoiceLoadState = 'empty' | 'loading' | 'ready' | 'error';
 
 export interface NativeConversationChoiceTaskLoadState {
@@ -248,7 +246,7 @@ export interface NativeConversationChoiceLoadCoordinator {
   isCurrent(taskId: string, requestVersion: number): boolean;
   preserveAccepted(choice: NativeConversationChoice): void;
 
-    forget(taskId: string, conversationId: string): void;
+  forget(taskId: string, conversationId: string): void;
   commit(taskId: string, requestVersion: number, snapshot: NativeConversationChoicesSnapshot): NativeConversationChoicesSnapshot | null;
 }
 
@@ -270,12 +268,12 @@ export function createNativeConversationChoiceLoadCoordinator(): NativeConversat
       accepted.set(choice.id, choice);
       acceptedByTask.set(choice.taskId, accepted);
     },
-      forget(taskId, conversationId) {
-          const accepted = acceptedByTask.get(taskId);
-          if (!accepted) return;
-          accepted.delete(conversationId);
-          if (accepted.size === 0) acceptedByTask.delete(taskId);
-      },
+    forget(taskId, conversationId) {
+      const accepted = acceptedByTask.get(taskId);
+      if (!accepted) return;
+      accepted.delete(conversationId);
+      if (accepted.size === 0) acceptedByTask.delete(taskId);
+    },
     commit(taskId, requestVersion, snapshot) {
       if (!isCurrent(taskId, requestVersion)) return null;
       const loadedIds = new Set(snapshot.choices.map((choice) => choice.id));
@@ -519,22 +517,27 @@ export function resolveSelectedNativeConversationForProject(choices: NativeConve
 }
 
 export function resolveTaskConversationToView(snapshot: NativeConversationChoicesSnapshot | undefined): NativeConversationChoice | null {
-    if (!snapshot?.choices.length) return null;
-    return snapshot.choices.reduce((latest, candidate) => (candidate.updatedAt.localeCompare(latest.updatedAt) > 0 ? candidate : latest));
+  if (!snapshot?.choices.length) return null;
+  return snapshot.choices.reduce((latest, candidate) => (candidate.updatedAt.localeCompare(latest.updatedAt) > 0 ? candidate : latest));
 }
 
-export function updateConversationChoiceCompletionUnread<Snapshot extends {
+export function updateConversationChoiceCompletionUnread<
+  Snapshot extends {
     choices: NativeConversationChoice[];
-    items: NativeConversationChoice[]
-}>(snapshot: Snapshot, conversationId: string, hasUnreadCompletion: boolean): Snapshot {
-    const update = (choice: NativeConversationChoice) => (choice.id === conversationId && choice.hasUnreadCompletion !== hasUnreadCompletion ? {
-        ...choice,
-        hasUnreadCompletion
-    } : choice);
-    const choices = snapshot.choices.map(update);
-    const items = snapshot.items.map(update);
-    if (choices.every((choice, index) => choice === snapshot.choices[index]) && items.every((choice, index) => choice === snapshot.items[index])) return snapshot;
-    return {...snapshot, choices, items};
+    items: NativeConversationChoice[];
+  },
+>(snapshot: Snapshot, conversationId: string, hasUnreadCompletion: boolean): Snapshot {
+  const update = (choice: NativeConversationChoice) =>
+    choice.id === conversationId && choice.hasUnreadCompletion !== hasUnreadCompletion
+      ? {
+          ...choice,
+          hasUnreadCompletion,
+        }
+      : choice;
+  const choices = snapshot.choices.map(update);
+  const items = snapshot.items.map(update);
+  if (choices.every((choice, index) => choice === snapshot.choices[index]) && items.every((choice, index) => choice === snapshot.items[index])) return snapshot;
+  return { ...snapshot, choices, items };
 }
 
 const GRAPH_NODE_TASK_SUCCESS_DISMISS_MS = 2200;
@@ -542,52 +545,52 @@ const GRAPH_SOURCE_OPEN_FEEDBACK_DISMISS_MS = 2400;
 const workModeValues = ['plan', 'develop', 'review', 'debug'] as const;
 const taskStatusFilterValues = ['', ...taskManagementStatuses] as const;
 const taskManagementStatusLabels: Record<AppLanguage, Record<TaskManagementStatus | '', string>> = {
-    'zh-CN': {
-        '': '全部',
-        todo: '待开始',
-        in_development: '开发中',
-        in_testing: '测试中',
-        awaiting_acceptance: '待验收',
-        blocked: '已阻塞',
-        completed: '已完成',
-        cancelled: '已取消'
-    },
-    'en-US': {
-        '': 'All',
-        todo: 'To do',
-        in_development: 'In development',
-        in_testing: 'In testing',
-        awaiting_acceptance: 'Awaiting acceptance',
-        blocked: 'Blocked',
-        completed: 'Completed',
-        cancelled: 'Cancelled'
-    },
+  'zh-CN': {
+    '': '全部',
+    todo: '待开始',
+    in_development: '开发中',
+    in_testing: '测试中',
+    awaiting_acceptance: '待验收',
+    blocked: '已阻塞',
+    completed: '已完成',
+    cancelled: '已取消',
+  },
+  'en-US': {
+    '': 'All',
+    todo: 'To do',
+    in_development: 'In development',
+    in_testing: 'In testing',
+    awaiting_acceptance: 'Awaiting acceptance',
+    blocked: 'Blocked',
+    completed: 'Completed',
+    cancelled: 'Cancelled',
+  },
 };
 const taskAgentRunStatusLabels: Record<AppLanguage, Record<TaskAgentRunStatus, string>> = {
-    'zh-CN': {
-        not_started: '未启动',
-        connecting: '正在连接',
-        reconnecting: '正在重连',
-        running: '运行中',
-        waiting_user: '等待用户回复',
-        waiting_approval: '等待授权',
-        paused: '已暂停',
-        idle: '等待新指令',
-        failed: '运行失败',
-        legacy_readonly: '旧会话只读',
-    },
-    'en-US': {
-        not_started: 'Not started',
-        connecting: 'Connecting',
-        reconnecting: 'Reconnecting',
-        running: 'Running',
-        waiting_user: 'Waiting for user',
-        waiting_approval: 'Waiting for approval',
-        paused: 'Paused',
-        idle: 'Waiting for instructions',
-        failed: 'Run failed',
-        legacy_readonly: 'Legacy read-only',
-    },
+  'zh-CN': {
+    not_started: '未启动',
+    connecting: '正在连接',
+    reconnecting: '正在重连',
+    running: '运行中',
+    waiting_user: '等待用户回复',
+    waiting_approval: '等待授权',
+    paused: '已暂停',
+    idle: '等待新指令',
+    failed: '运行失败',
+    legacy_readonly: '旧会话只读',
+  },
+  'en-US': {
+    not_started: 'Not started',
+    connecting: 'Connecting',
+    reconnecting: 'Reconnecting',
+    running: 'Running',
+    waiting_user: 'Waiting for user',
+    waiting_approval: 'Waiting for approval',
+    paused: 'Paused',
+    idle: 'Waiting for instructions',
+    failed: 'Run failed',
+    legacy_readonly: 'Legacy read-only',
+  },
 };
 const graphNodeTypeFilterValues = ['', 'file', 'function', 'package', 'api', 'table', 'column', 'control_flow', 'aggregate'] as const;
 const graphEdgeTypeFilterValues = [
@@ -719,7 +722,7 @@ const languageCopy = {
     },
     taskSorts: {
       title: '标题',
-        managementStatus: '任务状态',
+      managementStatus: '任务状态',
       createdAt: '创建时间',
       updatedAt: '更新时间',
     },
@@ -786,6 +789,19 @@ const languageCopy = {
       creatingRepository: '创建中',
       selectLocalRepository: '选择真实本地代码库',
       noProjectMatches: '没有匹配项目',
+      addProject: '新增项目',
+      createDialogTitle: '创建项目',
+      createNameLabel: '项目名称',
+      createNamePlaceholder: '项目名称',
+      createFolderLabel: '项目目录',
+      createFolderHelp: '选择一个 Zeus 可读取、索引和执行任务的本地目录。',
+      createChooseFolder: '选择 Zeus 可读取和编辑的文件夹',
+      createChangeFolder: '更换目录',
+      createCancel: '取消',
+      createSubmit: '创建项目',
+      createSubmitting: '创建中',
+      createNameRequired: '项目名称不能为空',
+      createFolderRequired: '请先选择项目目录',
       projectSettingsPrefix: '项目设置',
       expandProjectPrefix: '展开项目',
       collapseProjectPrefix: '折叠项目',
@@ -855,11 +871,11 @@ const languageCopy = {
       taskCreateDescriptionPlaceholder: '描述期望行为、验收标准和必要上下文',
       taskCreatePriorityLabel: '优先级',
       taskCreatePriorityOptions: [
-        {value: 'p0', label: 'P0：立即开始处理'},
-        {value: 'p1', label: 'P1：紧急且重要'},
-        {value: 'p2', label: 'P2：紧急不重要'},
-        {value: 'p3', label: 'P3：重要不紧急'},
-        {value: 'p4', label: 'P4：不重要不紧急'},
+        { value: 'p0', label: 'P0：立即开始处理' },
+        { value: 'p1', label: 'P1：紧急且重要' },
+        { value: 'p2', label: 'P2：紧急不重要' },
+        { value: 'p3', label: 'P3：重要不紧急' },
+        { value: 'p4', label: 'P4：不重要不紧急' },
       ],
       taskCreateTagsLabel: '标签',
       taskCreateTagsPlaceholder: '可选，逗号分隔',
@@ -885,7 +901,7 @@ const languageCopy = {
       taskCreateSubmitFailed: '创建任务失败，请保留输入后重试。',
       today: '今天',
       emptyTitle: '还没有任务',
-        emptyHelp: '用“新任务”创建第一条研发任务；创建后会显示任务状态、运行状态和更新时间。',
+      emptyHelp: '用“新任务”创建第一条研发任务；创建后会显示任务状态、运行状态和更新时间。',
       emptySecondaryAction: '查看项目代码',
       emptyOutcomeStatus: '状态会随任务推进更新',
       emptyOutcomeAi: 'AI Runtime 连接后显示执行状态',
@@ -978,7 +994,7 @@ const languageCopy = {
       commandDockAria: '任务推进命令',
       statusActionsAria: '任务状态操作',
       runTask: '推送到模型',
-        viewConversation: '查看会话',
+      viewConversation: '查看会话',
       pushNewConversation: '推送到新会话',
       conversationsTitle: '关联会话',
       conversationEmptyTitle: '还没有关联会话',
@@ -990,17 +1006,17 @@ const languageCopy = {
       markComplete: '标记完成',
       cancelTask: '取消任务',
       retryTask: '重试任务',
-        detailPaneLabel: '任务详情',
-        detailPaneBackdrop: '关闭任务详情',
-        detailPaneClose: '关闭',
+      detailPaneLabel: '任务详情',
+      detailPaneBackdrop: '关闭任务详情',
+      detailPaneClose: '关闭',
       openTaskDetail: '打开任务详情',
       taskCountPrefix: '任务',
       filteredState: '已筛选',
       allState: '全部状态',
       codeColumnTitle: '任务编码',
-        intentColumnTitle: '任务',
-        managementStatusColumnTitle: '任务状态',
-        runStatusColumnTitle: '运行状态',
+      intentColumnTitle: '任务',
+      managementStatusColumnTitle: '任务状态',
+      runStatusColumnTitle: '运行状态',
       sourceColumnTitle: '上下文来源',
       createdAtColumnTitle: '创建时间',
       updatedAtColumnTitle: '更新时间',
@@ -2112,7 +2128,7 @@ const languageCopy = {
     },
     taskSorts: {
       title: 'Title',
-        managementStatus: 'Task status',
+      managementStatus: 'Task status',
       createdAt: 'Created',
       updatedAt: 'Updated',
     },
@@ -2179,6 +2195,19 @@ const languageCopy = {
       creatingRepository: 'Creating',
       selectLocalRepository: 'Choose local repository',
       noProjectMatches: 'No matching projects',
+      addProject: 'Add project',
+      createDialogTitle: 'Create project',
+      createNameLabel: 'Project name',
+      createNamePlaceholder: 'Project name',
+      createFolderLabel: 'Project folder',
+      createFolderHelp: 'Choose one local folder that Zeus can read, index, and use for task execution.',
+      createChooseFolder: 'Choose a folder Zeus can read and edit',
+      createChangeFolder: 'Change folder',
+      createCancel: 'Cancel',
+      createSubmit: 'Create project',
+      createSubmitting: 'Creating',
+      createNameRequired: 'Project name is required',
+      createFolderRequired: 'Choose a project folder first',
       projectSettingsPrefix: 'Project settings',
       expandProjectPrefix: 'Expand project',
       collapseProjectPrefix: 'Collapse project',
@@ -2248,11 +2277,11 @@ const languageCopy = {
       taskCreateDescriptionPlaceholder: 'Describe the expected behavior, acceptance criteria, and required context',
       taskCreatePriorityLabel: 'Priority',
       taskCreatePriorityOptions: [
-        {value: 'p0', label: 'P0: Start handling immediately'},
-        {value: 'p1', label: 'P1: Urgent and important'},
-        {value: 'p2', label: 'P2: Urgent, not important'},
-        {value: 'p3', label: 'P3: Important, not urgent'},
-        {value: 'p4', label: 'P4: Not important or urgent'},
+        { value: 'p0', label: 'P0: Start handling immediately' },
+        { value: 'p1', label: 'P1: Urgent and important' },
+        { value: 'p2', label: 'P2: Urgent, not important' },
+        { value: 'p3', label: 'P3: Important, not urgent' },
+        { value: 'p4', label: 'P4: Not important or urgent' },
       ],
       taskCreateTagsLabel: 'Tags',
       taskCreateTagsPlaceholder: 'Optional, comma separated',
@@ -2278,7 +2307,7 @@ const languageCopy = {
       taskCreateSubmitFailed: 'Task creation failed. Your input is preserved for retry.',
       today: 'Today',
       emptyTitle: 'No tasks yet',
-        emptyHelp: 'Create the first engineering task with New task. Task status, run status, and updated time will appear after creation.',
+      emptyHelp: 'Create the first engineering task with New task. Task status, run status, and updated time will appear after creation.',
       emptySecondaryAction: 'View project code',
       emptyOutcomeStatus: 'Status updates as work moves',
       emptyOutcomeAi: 'AI Runtime state appears after launch',
@@ -2371,7 +2400,7 @@ const languageCopy = {
       commandDockAria: 'Task progress commands',
       statusActionsAria: 'Task status actions',
       runTask: 'Push to model',
-        viewConversation: 'View conversation',
+      viewConversation: 'View conversation',
       pushNewConversation: 'Push to new conversation',
       conversationsTitle: 'Linked conversations',
       conversationEmptyTitle: 'No linked conversations yet',
@@ -2383,17 +2412,17 @@ const languageCopy = {
       markComplete: 'Mark complete',
       cancelTask: 'Cancel task',
       retryTask: 'Retry task',
-        detailPaneLabel: 'Task details',
-        detailPaneBackdrop: 'Close task details',
-        detailPaneClose: 'Close',
+      detailPaneLabel: 'Task details',
+      detailPaneBackdrop: 'Close task details',
+      detailPaneClose: 'Close',
       openTaskDetail: 'Open task details',
       taskCountPrefix: 'Tasks',
       filteredState: 'Filtered',
       allState: 'All states',
       codeColumnTitle: 'Task code',
-        intentColumnTitle: 'Task',
-        managementStatusColumnTitle: 'Task status',
-        runStatusColumnTitle: 'Run status',
+      intentColumnTitle: 'Task',
+      managementStatusColumnTitle: 'Task status',
+      runStatusColumnTitle: 'Run status',
       sourceColumnTitle: 'Context source',
       createdAtColumnTitle: 'Created',
       updatedAtColumnTitle: 'Updated',
@@ -3436,6 +3465,19 @@ const languageCopy = {
       creatingRepository: string;
       selectLocalRepository: string;
       noProjectMatches: string;
+      addProject: string;
+      createDialogTitle: string;
+      createNameLabel: string;
+      createNamePlaceholder: string;
+      createFolderLabel: string;
+      createFolderHelp: string;
+      createChooseFolder: string;
+      createChangeFolder: string;
+      createCancel: string;
+      createSubmit: string;
+      createSubmitting: string;
+      createNameRequired: string;
+      createFolderRequired: string;
       projectSettingsPrefix: string;
       expandProjectPrefix: string;
       collapseProjectPrefix: string;
@@ -3499,7 +3541,7 @@ const languageCopy = {
       taskCreateDescriptionLabel: string;
       taskCreateDescriptionPlaceholder: string;
       taskCreatePriorityLabel: string;
-      taskCreatePriorityOptions: readonly {value: TaskPriority; label: string}[];
+      taskCreatePriorityOptions: readonly { value: TaskPriority; label: string }[];
       taskCreateTagsLabel: string;
       taskCreateTagsPlaceholder: string;
       taskCreateAttachmentsLabel: string;
@@ -3583,7 +3625,7 @@ const languageCopy = {
       commandDockAria: string;
       statusActionsAria: string;
       runTask: string;
-        viewConversation: string;
+      viewConversation: string;
       pushNewConversation: string;
       conversationsTitle: string;
       conversationEmptyTitle: string;
@@ -3595,17 +3637,17 @@ const languageCopy = {
       markComplete: string;
       cancelTask: string;
       retryTask: string;
-        detailPaneLabel: string;
-        detailPaneBackdrop: string;
-        detailPaneClose: string;
+      detailPaneLabel: string;
+      detailPaneBackdrop: string;
+      detailPaneClose: string;
       openTaskDetail: string;
       taskCountPrefix: string;
       filteredState: string;
       allState: string;
       codeColumnTitle: string;
       intentColumnTitle: string;
-        managementStatusColumnTitle: string;
-        runStatusColumnTitle: string;
+      managementStatusColumnTitle: string;
+      runStatusColumnTitle: string;
       sourceColumnTitle: string;
       createdAtColumnTitle: string;
       updatedAtColumnTitle: string;
@@ -4563,9 +4605,7 @@ function normalizeRendererAppShellSettings(settings: AppShellSettings): AppShell
   );
   return {
     ...settings,
-    collapsedProjectIds: Array.isArray(settings.collapsedProjectIds)
-      ? [...new Set(settings.collapsedProjectIds.filter((id): id is string => typeof id === 'string' && Boolean(id.trim())).map((id) => id.trim()))].slice(0, 100)
-      : [],
+    collapsedProjectIds: Array.isArray(settings.collapsedProjectIds) ? [...new Set(settings.collapsedProjectIds.filter((id): id is string => typeof id === 'string' && Boolean(id.trim())).map((id) => id.trim()))].slice(0, 100) : [],
     taskTableColumns: normalizeTaskTableColumnPreferences(settings.taskTableColumns),
     taskTableColumnsByProject,
     taskTableEnumSortOrders: normalizeTaskTableEnumSortOrders(settings.taskTableEnumSortOrders),
@@ -4573,10 +4613,8 @@ function normalizeRendererAppShellSettings(settings: AppShellSettings): AppShell
 }
 
 export function toAppShellSettingsSavePayload(settings: AppShellSettings): AppShellSettingsSavePayload {
-    const taskTableColumns = normalizeTaskTableColumnPreferences(settings.taskTableColumns);
-    const taskTableColumnsByProject = Object.fromEntries(
-      Object.entries(settings.taskTableColumnsByProject ?? {}).map(([projectId, preferences]) => [projectId, normalizeTaskTableColumnPreferences(preferences)]),
-    );
+  const taskTableColumns = normalizeTaskTableColumnPreferences(settings.taskTableColumns);
+  const taskTableColumnsByProject = Object.fromEntries(Object.entries(settings.taskTableColumnsByProject ?? {}).map(([projectId, preferences]) => [projectId, normalizeTaskTableColumnPreferences(preferences)]));
   return {
     appLanguage: settings.appLanguage,
     appearance: settings.appearance,
@@ -4593,13 +4631,13 @@ export function toAppShellSettingsSavePayload(settings: AppShellSettings): AppSh
     defaultModel: settings.defaultModel,
     defaultTaskTemplateId: settings.defaultTaskTemplateId,
     // 任务字段偏好属于本机 app shell 设置；任何通用设置保存都必须带上，避免后续保存把字段配置丢掉。
-      taskTableColumns: {
-          ...taskTableColumns,
-          // 空对象是“恢复默认列宽”的显式协议；省略字段表示局部保存时继续沿用已存列宽。
-          columnWidths: taskTableColumns.columnWidths ?? {},
-      },
-      taskTableColumnsByProject,
-      taskTableEnumSortOrders: normalizeTaskTableEnumSortOrders(settings.taskTableEnumSortOrders),
+    taskTableColumns: {
+      ...taskTableColumns,
+      // 空对象是“恢复默认列宽”的显式协议；省略字段表示局部保存时继续沿用已存列宽。
+      columnWidths: taskTableColumns.columnWidths ?? {},
+    },
+    taskTableColumnsByProject,
+    taskTableEnumSortOrders: normalizeTaskTableEnumSortOrders(settings.taskTableEnumSortOrders),
   };
 }
 
@@ -5008,6 +5046,17 @@ function normalizeProjectLocalPath(localPath: string): string {
   return trimmed.replace(/\/+$/u, '');
 }
 
+interface ProjectCreateFormState {
+  name: string;
+  localPath: string;
+}
+
+function defaultProjectNameFromLocalPath(localPath: string): string {
+  const normalizedPath = normalizeProjectLocalPath(localPath);
+  if (normalizedPath === '/') return 'Root';
+  return normalizedPath.split('/').filter(Boolean).at(-1) ?? '';
+}
+
 function dedupeProjectRecordsByLocalPath(projects: ProjectRecord[]): ProjectRecord[] {
   const seen = new Set<string>();
   const deduped: ProjectRecord[] = [];
@@ -5051,7 +5100,7 @@ function TaskCreateModal(props: {
   onChooseAttachments: () => void;
   onAuthorizeFiles: (files: File[], source: 'paste' | 'drop') => Promise<TaskResourceAuthorizationResult>;
   onMaterializeResources: (resources: TaskResourcePayload[]) => Promise<TaskCreateAttachment[]>;
-  onReadClipboardResources: () => Promise<{resources: TaskCreateAttachment[]; text: string}>;
+  onReadClipboardResources: () => Promise<{ resources: TaskCreateAttachment[]; text: string }>;
   onAddAttachments: (attachments: TaskCreateAttachment[]) => void;
   onLoadAttachmentPreview?: (path: string) => Promise<{ previewUrl: string; mimeType: string } | null>;
   onOpenAttachment?: (path: string) => Promise<{ opened: boolean; error?: string }>;
@@ -5155,9 +5204,7 @@ function TaskCreateModal(props: {
       }
       const text = nativeResult.text || plainText;
       if (text.length >= PENDING_RESOURCE_LONG_TEXT_THRESHOLD) {
-        const resources = await props.onMaterializeResources([
-          {name: 'Pasted text.txt', type: 'text/plain', text, kind: 'pasted_text'},
-        ]);
+        const resources = await props.onMaterializeResources([{ name: 'Pasted text.txt', type: 'text/plain', text, kind: 'pasted_text' }]);
         if (resources.length > 0) {
           props.onAddAttachments(withTaskAttachmentRestoreTarget(resources, restoreTarget));
           return;
@@ -5235,145 +5282,140 @@ function TaskCreateModal(props: {
   }
 
   const modalSurface = (
-    <ModalPortal
-      rootClassName="task-create-modal-portal-root"
-      backdropClassName="task-create-modal-backdrop"
-      dismissDisabled={interactionBusy}
-      onDismiss={props.onClose}
-    >
-        <form
-          className="task-create-modal zeus-solid-form-surface"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="task-create-modal-title"
-          aria-describedby={describedBy}
-          data-resource-dragging={resourceDragDepth > 0 ? 'true' : undefined}
-          onPaste={handleTaskCreateClipboardPaste}
-          onDragEnter={handleTaskCreateDragEnter}
-          onDragOver={handleTaskCreateDragOver}
-          onDragLeave={handleTaskCreateDragLeave}
-          onDrop={handleTaskCreateDrop}
-          onSubmit={(event) => {
-            if (resourcesBusy) {
-              event.preventDefault();
-              return;
-            }
-            props.onSubmit(event);
-          }}
-          onKeyDown={handleTaskCreateModalKeyDown}
-        >
-          <header className="task-create-modal-header">
-            <strong id="task-create-modal-title" className="task-create-modal-heading">
-              {props.copy.taskCreateDialogTitle}
-            </strong>
-            <button type="button" className="task-create-modal-close" aria-label={props.copy.taskCreateClose} onClick={props.onClose} disabled={interactionBusy}>
-              ×
-            </button>
-          </header>
-          <div className="task-create-modal-body">
-            {/* 创建任务只收集 Zeus 本地任务 draft，避免复制 giraffe 的负责人、迭代、附件和富文本团队字段。 */}
-            <div className="task-create-field task-create-title-field">
-              <span id="task-create-title-label">{props.copy.taskCreateTitleLabel}</span>
-              <input
-                ref={props.titleInputRef}
-                id="task-create-title-input"
-                className="task-create-title-input"
-                value={props.form.title}
-                placeholder={props.copy.taskCreateTitlePlaceholder}
-                aria-labelledby="task-create-title-label"
-                aria-invalid={props.error ? true : undefined}
-                aria-describedby={props.error ? 'task-create-error' : undefined}
-                onChange={(event) => props.onFormChange('title', event.currentTarget.value)}
-                disabled={interactionBusy}
-              />
-            </div>
-            <div className="task-create-field task-create-description-field">
-              <span id="task-create-description-label">{props.copy.taskCreateDescriptionLabel}</span>
-              <textarea
-                id="task-create-description-input"
-                className="task-create-description-input"
-                value={props.form.description}
-                placeholder={props.copy.taskCreateDescriptionPlaceholder}
-                aria-labelledby="task-create-description-label"
-                onChange={(event) => props.onFormChange('description', event.currentTarget.value)}
-                disabled={interactionBusy}
-              />
-            </div>
-            <div className="task-create-two-column-row">
-              <div className="task-create-field task-create-priority-field">
-                <span id="task-create-priority-label">{props.copy.taskCreatePriorityLabel}</span>
-                <ZeusSelect
-                  size="regular"
-                  className="task-create-priority-select"
-                  ariaLabel={props.copy.taskCreatePriorityLabel}
-                  value={props.form.priority}
-                  options={props.copy.taskCreatePriorityOptions}
-                  onChange={props.onPriorityChange}
-                  searchable={false}
-                  disabled={interactionBusy}
-                />
-              </div>
-              <div className="task-create-field task-create-tags-field">
-                <span id="task-create-tags-label">{props.copy.taskCreateTagsLabel}</span>
-                <input
-                  id="task-create-tags-input"
-                  className="task-create-tags-input"
-                  value={props.form.tags}
-                  placeholder={props.copy.taskCreateTagsPlaceholder}
-                  aria-labelledby="task-create-tags-label"
-                  onChange={(event) => props.onFormChange('tags', event.currentTarget.value)}
-                  disabled={interactionBusy}
-                />
-              </div>
-            </div>
-            <section className="task-create-attachments" aria-label={props.copy.taskCreateAttachmentsLabel}>
-              <div className="task-create-attachments-heading">
-                <span>
-                  <strong>{props.copy.taskCreateAttachmentsLabel}</strong>
-                  <small>{props.copy.taskCreateAttachmentsHint}</small>
-                </span>
-                <button type="button" className="task-create-attachment-picker" onClick={props.onChooseAttachments} disabled={interactionBusy}>
-                  {props.copy.taskCreateChooseAttachments}
-                </button>
-              </div>
-              {props.form.attachments.length > 0 ? (
-                <TaskAttachmentPreviewList
-                  attachments={props.form.attachments}
-                  mode="editable"
-                  disabled={interactionBusy}
-                  onRemove={props.onRemoveAttachment}
-                  onRestoreText={restoreTaskCreateText}
-                  onLoadPreview={props.onLoadAttachmentPreview}
-                  onOpenAttachment={props.onOpenAttachment}
-                  copy={{
-                    imageLabel: props.copy.taskCreateImageAttachment,
-                    fileLabel: props.copy.taskCreateFileAttachment,
-                    openFileLabel: props.copy.taskCreateOpenAttachment,
-                    removeLabel: props.copy.taskCreateRemoveAttachment,
-                    openPreviewLabel: props.copy.taskCreatePreviewAttachment,
-                    closePreviewLabel: props.copy.taskCreatePreviewClose,
-                    previewUnavailable: props.copy.taskCreatePreviewUnavailable,
-                    localPathLabel: props.copy.taskCreateLocalPathLabel,
-                    addedStatus: props.copy.taskCreateAttachmentAddedStatus,
-                  }}
-                />
-              ) : null}
-            </section>
-            {props.error ? (
-              <p className="task-create-error" id="task-create-error" role="alert">
-                {props.error}
-              </p>
-            ) : null}
+    <ModalPortal rootClassName="task-create-modal-portal-root" backdropClassName="task-create-modal-backdrop" dismissDisabled={interactionBusy} onDismiss={props.onClose}>
+      <form
+        className="task-create-modal zeus-solid-form-surface"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="task-create-modal-title"
+        aria-describedby={describedBy}
+        data-resource-dragging={resourceDragDepth > 0 ? 'true' : undefined}
+        onPaste={handleTaskCreateClipboardPaste}
+        onDragEnter={handleTaskCreateDragEnter}
+        onDragOver={handleTaskCreateDragOver}
+        onDragLeave={handleTaskCreateDragLeave}
+        onDrop={handleTaskCreateDrop}
+        onSubmit={(event) => {
+          if (resourcesBusy) {
+            event.preventDefault();
+            return;
+          }
+          props.onSubmit(event);
+        }}
+        onKeyDown={handleTaskCreateModalKeyDown}
+      >
+        <header className="task-create-modal-header">
+          <strong id="task-create-modal-title" className="task-create-modal-heading">
+            {props.copy.taskCreateDialogTitle}
+          </strong>
+          <button type="button" className="task-create-modal-close" aria-label={props.copy.taskCreateClose} onClick={props.onClose} disabled={interactionBusy}>
+            ×
+          </button>
+        </header>
+        <div className="task-create-modal-body">
+          {/* 创建任务只收集 Zeus 本地任务 draft，避免复制 giraffe 的负责人、迭代、附件和富文本团队字段。 */}
+          <div className="task-create-field task-create-title-field">
+            <span id="task-create-title-label">{props.copy.taskCreateTitleLabel}</span>
+            <input
+              ref={props.titleInputRef}
+              id="task-create-title-input"
+              className="task-create-title-input"
+              value={props.form.title}
+              placeholder={props.copy.taskCreateTitlePlaceholder}
+              aria-labelledby="task-create-title-label"
+              aria-invalid={props.error ? true : undefined}
+              aria-describedby={props.error ? 'task-create-error' : undefined}
+              onChange={(event) => props.onFormChange('title', event.currentTarget.value)}
+              disabled={interactionBusy}
+            />
           </div>
-          <footer className="task-create-modal-footer">
-            <Button variant="secondary" size="regular" className="task-create-cancel-button" onClick={props.onClose} disabled={interactionBusy}>
-              {props.copy.taskCreateCancel}
-            </Button>
-            <Button type="submit" variant="primary" size="regular" className="task-create-submit-button" busy={props.busy} disabled={resourcesBusy}>
-              {props.busy ? props.copy.taskCreateSubmitting : props.copy.taskCreateSubmit}
-            </Button>
-          </footer>
-        </form>
+          <div className="task-create-field task-create-description-field">
+            <span id="task-create-description-label">{props.copy.taskCreateDescriptionLabel}</span>
+            <textarea
+              id="task-create-description-input"
+              className="task-create-description-input"
+              value={props.form.description}
+              placeholder={props.copy.taskCreateDescriptionPlaceholder}
+              aria-labelledby="task-create-description-label"
+              onChange={(event) => props.onFormChange('description', event.currentTarget.value)}
+              disabled={interactionBusy}
+            />
+          </div>
+          <div className="task-create-two-column-row">
+            <div className="task-create-field task-create-priority-field">
+              <span id="task-create-priority-label">{props.copy.taskCreatePriorityLabel}</span>
+              <ZeusSelect
+                size="regular"
+                className="task-create-priority-select"
+                ariaLabel={props.copy.taskCreatePriorityLabel}
+                value={props.form.priority}
+                options={props.copy.taskCreatePriorityOptions}
+                onChange={props.onPriorityChange}
+                searchable={false}
+                disabled={interactionBusy}
+              />
+            </div>
+            <div className="task-create-field task-create-tags-field">
+              <span id="task-create-tags-label">{props.copy.taskCreateTagsLabel}</span>
+              <input
+                id="task-create-tags-input"
+                className="task-create-tags-input"
+                value={props.form.tags}
+                placeholder={props.copy.taskCreateTagsPlaceholder}
+                aria-labelledby="task-create-tags-label"
+                onChange={(event) => props.onFormChange('tags', event.currentTarget.value)}
+                disabled={interactionBusy}
+              />
+            </div>
+          </div>
+          <section className="task-create-attachments" aria-label={props.copy.taskCreateAttachmentsLabel}>
+            <div className="task-create-attachments-heading">
+              <span>
+                <strong>{props.copy.taskCreateAttachmentsLabel}</strong>
+                <small>{props.copy.taskCreateAttachmentsHint}</small>
+              </span>
+              <button type="button" className="task-create-attachment-picker" onClick={props.onChooseAttachments} disabled={interactionBusy}>
+                {props.copy.taskCreateChooseAttachments}
+              </button>
+            </div>
+            {props.form.attachments.length > 0 ? (
+              <TaskAttachmentPreviewList
+                attachments={props.form.attachments}
+                mode="editable"
+                disabled={interactionBusy}
+                onRemove={props.onRemoveAttachment}
+                onRestoreText={restoreTaskCreateText}
+                onLoadPreview={props.onLoadAttachmentPreview}
+                onOpenAttachment={props.onOpenAttachment}
+                copy={{
+                  imageLabel: props.copy.taskCreateImageAttachment,
+                  fileLabel: props.copy.taskCreateFileAttachment,
+                  openFileLabel: props.copy.taskCreateOpenAttachment,
+                  removeLabel: props.copy.taskCreateRemoveAttachment,
+                  openPreviewLabel: props.copy.taskCreatePreviewAttachment,
+                  closePreviewLabel: props.copy.taskCreatePreviewClose,
+                  previewUnavailable: props.copy.taskCreatePreviewUnavailable,
+                  localPathLabel: props.copy.taskCreateLocalPathLabel,
+                  addedStatus: props.copy.taskCreateAttachmentAddedStatus,
+                }}
+              />
+            ) : null}
+          </section>
+          {props.error ? (
+            <p className="task-create-error" id="task-create-error" role="alert">
+              {props.error}
+            </p>
+          ) : null}
+        </div>
+        <footer className="task-create-modal-footer">
+          <Button variant="secondary" size="regular" className="task-create-cancel-button" onClick={props.onClose} disabled={interactionBusy}>
+            {props.copy.taskCreateCancel}
+          </Button>
+          <Button type="submit" variant="primary" size="regular" className="task-create-submit-button" busy={props.busy} disabled={resourcesBusy}>
+            {props.busy ? props.copy.taskCreateSubmitting : props.copy.taskCreateSubmit}
+          </Button>
+        </footer>
+      </form>
     </ModalPortal>
   );
 
@@ -5381,14 +5423,7 @@ function TaskCreateModal(props: {
   return modalSurface;
 }
 
-function TaskTableLayoutDecisionDialog(props: {
-  open: boolean;
-  title: string;
-  description: string;
-  busy?: boolean;
-  actions: Array<{id: string; label: string; variant?: ButtonVariant; onClick: () => void}>;
-  onCancel: () => void;
-}) {
+function TaskTableLayoutDecisionDialog(props: { open: boolean; title: string; description: string; busy?: boolean; actions: Array<{ id: string; label: string; variant?: ButtonVariant; onClick: () => void }>; onCancel: () => void }) {
   const firstActionRef = useRef<HTMLButtonElement | null>(null);
   useEffect(() => {
     if (!props.open) return;
@@ -5397,69 +5432,52 @@ function TaskTableLayoutDecisionDialog(props: {
   }, [props.open]);
   if (!props.open) return null;
   const surface = (
-    <ModalPortal
-      rootClassName="task-table-layout-dialog-portal"
-      backdropClassName="task-create-modal-backdrop"
-      dismissDisabled={props.busy}
-      onDismiss={props.onCancel}
-    >
-        <section
-          className="task-table-layout-dialog zeus-solid-form-surface"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="task-table-layout-dialog-title"
-          aria-describedby="task-table-layout-dialog-description"
-          tabIndex={-1}
-          onKeyDown={(event) => {
-            if (event.key === 'Escape' && !props.busy) {
-              event.preventDefault();
-              props.onCancel();
-              return;
-            }
-            if (event.key !== 'Tab') return;
-            const controls = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('button:not(:disabled)'));
-            if (controls.length === 0) return;
-            const first = controls[0];
-            const last = controls[controls.length - 1];
-            if (event.shiftKey && document.activeElement === first) {
-              event.preventDefault();
-              last?.focus();
-            } else if (!event.shiftKey && document.activeElement === last) {
-              event.preventDefault();
-              first?.focus();
-            }
-          }}
-        >
-          <header>
-            <strong id="task-table-layout-dialog-title">{props.title}</strong>
-            <p id="task-table-layout-dialog-description">{props.description}</p>
-          </header>
-          <footer>
-            {props.actions.map((action, index) => (
-              <Button
-                ref={index === 0 ? firstActionRef : undefined}
-                variant={action.variant}
-                busy={props.busy}
-                key={action.id}
-                onClick={action.onClick}
-              >
-                {action.label}
-              </Button>
-            ))}
-          </footer>
-        </section>
+    <ModalPortal rootClassName="task-table-layout-dialog-portal" backdropClassName="task-create-modal-backdrop" dismissDisabled={props.busy} onDismiss={props.onCancel}>
+      <section
+        className="task-table-layout-dialog zeus-solid-form-surface"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="task-table-layout-dialog-title"
+        aria-describedby="task-table-layout-dialog-description"
+        tabIndex={-1}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape' && !props.busy) {
+            event.preventDefault();
+            props.onCancel();
+            return;
+          }
+          if (event.key !== 'Tab') return;
+          const controls = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('button:not(:disabled)'));
+          if (controls.length === 0) return;
+          const first = controls[0];
+          const last = controls[controls.length - 1];
+          if (event.shiftKey && document.activeElement === first) {
+            event.preventDefault();
+            last?.focus();
+          } else if (!event.shiftKey && document.activeElement === last) {
+            event.preventDefault();
+            first?.focus();
+          }
+        }}
+      >
+        <header>
+          <strong id="task-table-layout-dialog-title">{props.title}</strong>
+          <p id="task-table-layout-dialog-description">{props.description}</p>
+        </header>
+        <footer>
+          {props.actions.map((action, index) => (
+            <Button ref={index === 0 ? firstActionRef : undefined} variant={action.variant} busy={props.busy} key={action.id} onClick={action.onClick}>
+              {action.label}
+            </Button>
+          ))}
+        </footer>
+      </section>
     </ModalPortal>
   );
   return surface;
 }
 
-function TaskEnumOrderEditor<T extends string>(props: {
-  title: string;
-  description: string;
-  language: AppLanguage;
-  items: Array<{value: T; label: string}>;
-  onChange: (values: T[]) => void;
-}) {
+function TaskEnumOrderEditor<T extends string>(props: { title: string; description: string; language: AppLanguage; items: Array<{ value: T; label: string }>; onChange: (values: T[]) => void }) {
   const [draggedValue, setDraggedValue] = useState<T | null>(null);
   const moveItem = (value: T, targetIndex: number) => {
     const values = props.items.map((item) => item.value);
@@ -5538,10 +5556,7 @@ function resolveTaskCreatePasteField(target: EventTarget): { field: TaskCreateTe
   return undefined;
 }
 
-function captureTaskAttachmentRestoreTarget(
-  field: TaskCreateTextField,
-  control: HTMLInputElement | HTMLTextAreaElement,
-): TaskAttachmentRestoreTarget {
+function captureTaskAttachmentRestoreTarget(field: TaskCreateTextField, control: HTMLInputElement | HTMLTextAreaElement): TaskAttachmentRestoreTarget {
   const start = control.selectionStart ?? control.value.length;
   return {
     field,
@@ -5550,15 +5565,8 @@ function captureTaskAttachmentRestoreTarget(
   };
 }
 
-function withTaskAttachmentRestoreTarget(
-  attachments: TaskCreateAttachment[],
-  restoreTarget: TaskAttachmentRestoreTarget,
-): TaskCreateAttachment[] {
-  return attachments.map((attachment) =>
-    attachment.restorableText
-      ? {...attachment, restoreTarget}
-      : attachment,
-  );
+function withTaskAttachmentRestoreTarget(attachments: TaskCreateAttachment[], restoreTarget: TaskAttachmentRestoreTarget): TaskCreateAttachment[] {
+  return attachments.map((attachment) => (attachment.restorableText ? { ...attachment, restoreTarget } : attachment));
 }
 
 function taskCreateDataTransferFiles(dataTransfer: DataTransfer): File[] {
@@ -5699,7 +5707,8 @@ export function App(props: {
   onArchiveGraphConversation?: (projectId: string, conversationId: string) => Promise<GraphConversationHistoryItem>;
   onRestoreGraphConversation?: (projectId: string, conversationId: string) => Promise<GraphConversationHistoryItem>;
   onCreateTaskFromGraphConversation?: (projectId: string, conversationId: string) => Promise<DashboardSnapshot>;
-  onCreateCurrentProject?: (defaults?: Pick<CreateProjectRequest, 'defaultModel' | 'defaultWorkMode' | 'defaultTaskPrompt'>) => Promise<DashboardSnapshot>;
+  onChooseProjectDirectory?: () => Promise<string | null>;
+  onCreateCurrentProject?: (request: CreateProjectRequest) => Promise<DashboardSnapshot>;
   onLoadProjects?: (query?: string) => Promise<ProjectRecord[]>;
   onLoadProject?: (projectId: string) => Promise<ProjectRecord>;
   onLoadProjectConfig?: (projectId: string) => Promise<ProjectConfig>;
@@ -5728,11 +5737,11 @@ export function App(props: {
   onChooseConversationResources?: () => Promise<NativeConversationAttachment[]>;
   onAuthorizeTaskFiles?: (files: File[], source: 'paste' | 'drop') => Promise<TaskResourceAuthorizationResult>;
   onMaterializeTaskResources?: (resources: TaskResourcePayload[]) => Promise<TaskCreateAttachment[]>;
-  onReadTaskClipboardResources?: () => Promise<{resources: TaskCreateAttachment[]; text: string}>;
+  onReadTaskClipboardResources?: () => Promise<{ resources: TaskCreateAttachment[]; text: string }>;
   onLoadTaskAttachmentPreview?: (path: string) => Promise<{ previewUrl: string; mimeType: string } | null>;
   onOpenTaskAttachment?: (path: string) => Promise<{ opened: boolean; error?: string }>;
   onCreateTaskDraft?: (projectId: string, draft: TaskCreateDraft) => Promise<DashboardSnapshot>;
-    onLoadTasks?: (projectId: string, query?: string, managementStatus?: TaskManagementStatus, tag?: string, sortBy?: 'createdAt' | 'updatedAt' | 'title' | 'managementStatus') => Promise<TaskRecord[]>;
+  onLoadTasks?: (projectId: string, query?: string, managementStatus?: TaskManagementStatus, tag?: string, sortBy?: 'createdAt' | 'updatedAt' | 'title' | 'managementStatus') => Promise<TaskRecord[]>;
   onLoadTask?: (taskId: string) => Promise<TaskRecord>;
   onUpdateTask?: (taskId: string, input: { title: string; description?: string; sourceContext?: Record<string, unknown> }) => Promise<DashboardSnapshot>;
   onUpdateTaskTags?: (taskId: string, tags: string[]) => Promise<DashboardSnapshot>;
@@ -5858,7 +5867,7 @@ export function App(props: {
   onLoadTaskTemplates?: (projectId?: string) => Promise<TaskTemplateRecord[]>;
   onLoadTaskEvents?: (taskId: string) => Promise<TaskEventRecord[]>;
   onUpdateTaskStatus?: (taskId: string, status: TaskStatus) => Promise<DashboardSnapshot>;
-    onUpdateTaskManagementStatus?: (taskId: string, status: TaskManagementStatus) => Promise<DashboardSnapshot>;
+  onUpdateTaskManagementStatus?: (taskId: string, status: TaskManagementStatus) => Promise<DashboardSnapshot>;
   onArchiveTask?: (taskId: string) => Promise<DashboardSnapshot>;
   onRestoreTask?: (taskId: string) => Promise<DashboardSnapshot>;
   onCreateGitConfirmation?: (operation: HighRiskGitOperation, message?: string) => Promise<GitOperationConfirmation>;
@@ -5929,10 +5938,10 @@ export function App(props: {
     Object.fromEntries((props.initialNativeProjectConversationChoices ?? []).map((snapshot) => [snapshot.projectId, completeNativeConversationChoiceTaskLoad(undefined)])),
   );
   const [selectedNativeConversationId, setSelectedNativeConversationId] = useState<string | null>(() => props.initialSelectedNativeConversationId ?? null);
-    const selectedNativeConversationIdRef = useRef<string | null>(props.initialSelectedNativeConversationId ?? null);
+  const selectedNativeConversationIdRef = useRef<string | null>(props.initialSelectedNativeConversationId ?? null);
   const [newConversationFocusRequest, setNewConversationFocusRequest] = useState(0);
   const [nativeConversationRuntimeStates, setNativeConversationRuntimeStates] = useState<Record<string, ConversationTreeRuntimeState>>({});
-    const [nativeConversationTaskRunStatuses, setNativeConversationTaskRunStatuses] = useState<Record<string, TaskAgentRunStatus>>({});
+  const [nativeConversationTaskRunStatuses, setNativeConversationTaskRunStatuses] = useState<Record<string, TaskAgentRunStatus>>({});
   const [sessionSourceRailOpen, setSessionSourceRailOpen] = useState(false);
   const [compactSessionViewport, setCompactSessionViewport] = useState(() => typeof window !== 'undefined' && window.matchMedia?.('(max-width: 759px)').matches === true);
   const [projectSidebarViewportWidth, setProjectSidebarViewportWidth] = useState(() => (typeof window === 'undefined' ? 1440 : window.innerWidth));
@@ -5997,14 +6006,19 @@ export function App(props: {
   const [conversationDraftOpen, setConversationDraftOpen] = useState(false);
   const [projectDetail, setProjectDetail] = useState<ProjectRecord | undefined>(() => props.snapshot?.projects[0]);
   const [taskDetail, setTaskDetail] = useState<TaskRecord | undefined>(() => props.snapshot?.tasks[0]);
-    const [taskDetailPaneTaskId, setTaskDetailPaneTaskId] = useState<string | undefined>();
+  const [taskDetailPaneTaskId, setTaskDetailPaneTaskId] = useState<string | undefined>();
+  const [projectCreateDialogOpen, setProjectCreateDialogOpen] = useState(false);
+  const [projectCreateForm, setProjectCreateForm] = useState<ProjectCreateFormState>({ name: '', localPath: '' });
+  const [projectCreateError, setProjectCreateError] = useState<string | undefined>();
+  const [projectDirectoryChoosing, setProjectDirectoryChoosing] = useState(false);
+  const projectCreateReturnFocusRef = useRef<HTMLElement | null>(null);
   const [createProjectConfigForm] = useState(() => ({
     defaultModel: '',
     defaultWorkMode: 'plan' as ProjectConfig['defaultWorkMode'],
     defaultTaskPrompt: '',
   }));
   const [taskSearchQuery, setTaskSearchQuery] = useState('');
-    const [taskStatusFilter, setTaskStatusFilter] = useState<TaskManagementStatus | ''>('');
+  const [taskStatusFilter, setTaskStatusFilter] = useState<TaskManagementStatus | ''>('');
   const [taskTagFilter, setTaskTagFilter] = useState('');
   const [selectedTaskIds, setSelectedTaskIds] = useState<string[]>([]);
   const [taskBulkActionStatus, setTaskBulkActionStatus] = useState<TaskBulkActionStatusState>({ kind: 'idle' });
@@ -6135,7 +6149,7 @@ export function App(props: {
   const [taskModelPushForm, setTaskModelPushForm] = useState<TaskModelPushForm>({ model: '', effort: '', workMode: 'default', permissionMode: 'read-only', supplementalInfo: '' });
   const [taskModelPushStatus, setTaskModelPushStatus] = useState<TaskModelPushModalStatus>('loading');
   const [taskModelPushError, setTaskModelPushError] = useState<string | null>(null);
-    const [taskModelPushPending, setTaskModelPushPending] = useState<TaskModelPushPendingState | null>(null);
+  const [taskModelPushPending, setTaskModelPushPending] = useState<TaskModelPushPendingState | null>(null);
   const taskModelPushCapabilityRequestRef = useRef(0);
   const taskModelPushEnvelopeRef = useRef<{ fingerprint: string; request: StartTaskModelPushRequest } | null>(null);
   const taskCreateTitleInputRef = useRef<HTMLInputElement | null>(null);
@@ -6250,7 +6264,7 @@ export function App(props: {
   const scanActionBusy = scanState === 'scanning';
   const releaseUpdateBusy = releaseUpdateCheckState === 'loading';
   const [localError, setLocalError] = useState<LocalUiErrorSnapshot | undefined>(() => normalizeLocalUiError(props.initialLocalError));
-  const projectCreationReady = Boolean(props.onCreateCurrentProject);
+  const projectCreationReady = Boolean(props.onChooseProjectDirectory && props.onCreateCurrentProject);
   const gitLabel = snapshot.git.isRepository ? `Git ${snapshot.git.branch}` : codeWorkspaceCopy.gitNotDetected;
   useEffect(() => {
     if (!taskCreateModalOpen) return;
@@ -6322,11 +6336,8 @@ export function App(props: {
   }, [activeNavTarget, codexLegacyImportLoading, codexLegacyImportSnapshot, props.onLoadCodexLegacyImports, settingsCategory]);
   const selectedProject = projectDetail ?? firstProject;
   const activeProjectId = selectedProject?.id ?? firstProjectId;
-  const persistedTaskTableColumns = useMemo(
-    () => resolveTaskTableColumnsForProject(appShellSettings, activeProjectId),
-    [activeProjectId, appShellSettings.taskTableColumns, appShellSettings.taskTableColumnsByProject],
-  );
-  const [taskTableLayoutDraft, setTaskTableLayoutDraft] = useState<{projectId?: string; preferences: TaskTableColumnPreferences}>(() => ({
+  const persistedTaskTableColumns = useMemo(() => resolveTaskTableColumnsForProject(appShellSettings, activeProjectId), [activeProjectId, appShellSettings.taskTableColumns, appShellSettings.taskTableColumnsByProject]);
+  const [taskTableLayoutDraft, setTaskTableLayoutDraft] = useState<{ projectId?: string; preferences: TaskTableColumnPreferences }>(() => ({
     projectId: selectedProject?.id ?? props.snapshot?.projects[0]?.id,
     preferences: resolveTaskTableColumnsForProject(appShellSettings, selectedProject?.id ?? props.snapshot?.projects[0]?.id),
   }));
@@ -6340,7 +6351,7 @@ export function App(props: {
   const saveTaskTableLayoutThenLeaveRef = useRef(false);
   useEffect(() => {
     if (taskTableLayoutDraft.projectId === activeProjectId) return;
-    setTaskTableLayoutDraft({projectId: activeProjectId, preferences: persistedTaskTableColumns});
+    setTaskTableLayoutDraft({ projectId: activeProjectId, preferences: persistedTaskTableColumns });
   }, [activeProjectId, persistedTaskTableColumns, taskTableLayoutDraft.projectId]);
   useEffect(() => {
     window.zeus?.notifyTaskTableLayoutDirty?.(taskTableLayoutDirty);
@@ -6383,7 +6394,7 @@ export function App(props: {
     resetGraphWorkspace(activeProjectId);
   }, [activeProjectId, graphProjectId]);
   const currentProjectTasks = useMemo(() => (activeProjectId ? snapshot.tasks.filter((task) => task.projectId === activeProjectId) : snapshot.tasks), [activeProjectId, snapshot.tasks]);
-    const currentTaskConversationChoices = useMemo(() => Object.fromEntries(currentProjectTasks.map((task) => [task.id, nativeConversationChoicesByTask[task.id]?.choices ?? []])), [currentProjectTasks, nativeConversationChoicesByTask]);
+  const currentTaskConversationChoices = useMemo(() => Object.fromEntries(currentProjectTasks.map((task) => [task.id, nativeConversationChoicesByTask[task.id]?.choices ?? []])), [currentProjectTasks, nativeConversationChoicesByTask]);
   const nativeConversationChoices = useMemo(
     () => [...Object.values(nativeConversationChoicesByProject), ...Object.values(nativeConversationChoicesByTask)].flatMap((entry) => entry.choices).sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
     [nativeConversationChoicesByProject, nativeConversationChoicesByTask],
@@ -6392,32 +6403,32 @@ export function App(props: {
     () => resolveSelectedNativeConversationForProject(nativeConversationChoices, selectedNativeConversationId, activeProjectId),
     [activeProjectId, nativeConversationChoices, selectedNativeConversationId],
   );
-    useEffect(() => {
-        selectedNativeConversationIdRef.current = selectedNativeConversationId;
-    }, [selectedNativeConversationId]);
+  useEffect(() => {
+    selectedNativeConversationIdRef.current = selectedNativeConversationId;
+  }, [selectedNativeConversationId]);
 
-    const setNativeConversationCompletionUnread = useCallback((conversationId: string, hasUnreadCompletion: boolean): void => {
-        setNativeConversationChoicesByProject((current) => Object.fromEntries(Object.entries(current).map(([projectId, snapshot]) => [projectId, updateConversationChoiceCompletionUnread(snapshot, conversationId, hasUnreadCompletion)])));
-        setNativeConversationChoicesByTask((current) => Object.fromEntries(Object.entries(current).map(([taskId, snapshot]) => [taskId, updateConversationChoiceCompletionUnread(snapshot, conversationId, hasUnreadCompletion)])));
-    }, []);
+  const setNativeConversationCompletionUnread = useCallback((conversationId: string, hasUnreadCompletion: boolean): void => {
+    setNativeConversationChoicesByProject((current) => Object.fromEntries(Object.entries(current).map(([projectId, snapshot]) => [projectId, updateConversationChoiceCompletionUnread(snapshot, conversationId, hasUnreadCompletion)])));
+    setNativeConversationChoicesByTask((current) => Object.fromEntries(Object.entries(current).map(([taskId, snapshot]) => [taskId, updateConversationChoiceCompletionUnread(snapshot, conversationId, hasUnreadCompletion)])));
+  }, []);
 
-    const acknowledgeNativeConversationCompletion = useCallback(
-        (projectId: string, conversationId: string): void => {
-            const client = props.nativeConversationClient;
-            if (!client) return;
-            setNativeConversationCompletionUnread(conversationId, false);
-            void client.acknowledgeNativeConversationCompletion(projectId, conversationId).catch((error: unknown) => {
-                setNativeConversationCompletionUnread(conversationId, true);
-                recordLocalError('conversation-completion-acknowledgement', error);
-            });
-        },
-        [props.nativeConversationClient, setNativeConversationCompletionUnread],
-    );
+  const acknowledgeNativeConversationCompletion = useCallback(
+    (projectId: string, conversationId: string): void => {
+      const client = props.nativeConversationClient;
+      if (!client) return;
+      setNativeConversationCompletionUnread(conversationId, false);
+      void client.acknowledgeNativeConversationCompletion(projectId, conversationId).catch((error: unknown) => {
+        setNativeConversationCompletionUnread(conversationId, true);
+        recordLocalError('conversation-completion-acknowledgement', error);
+      });
+    },
+    [props.nativeConversationClient, setNativeConversationCompletionUnread],
+  );
 
-    useEffect(() => {
-        if (!selectedNativeConversation?.hasUnreadCompletion) return;
-        acknowledgeNativeConversationCompletion(selectedNativeConversation.projectId, selectedNativeConversation.id);
-    }, [acknowledgeNativeConversationCompletion, selectedNativeConversation]);
+  useEffect(() => {
+    if (!selectedNativeConversation?.hasUnreadCompletion) return;
+    acknowledgeNativeConversationCompletion(selectedNativeConversation.projectId, selectedNativeConversation.id);
+  }, [acknowledgeNativeConversationCompletion, selectedNativeConversation]);
   const nativeConversationGroups = useMemo<ProjectConversationGroup[]>(
     () =>
       orderedProjects.map((project) => ({
@@ -6428,7 +6439,7 @@ export function App(props: {
           .filter((task) => task.projectId === project.id)
           .map((task) => ({
             taskId: task.id,
-              taskCode: task.taskCode?.trim() || task.id,
+            taskCode: task.taskCode?.trim() || task.id,
             taskTitle: task.title,
             conversations: [...(nativeConversationChoicesByTask[task.id]?.choices ?? [])].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
           })),
@@ -6438,16 +6449,20 @@ export function App(props: {
   const recordNativeConversationRuntimeState = useCallback((conversationId: string, state: NativeSessionState): void => {
     const runtimeState = conversationTreeRuntimeStateFromSession(state);
     setNativeConversationRuntimeStates((current) => (current[conversationId] === runtimeState ? current : { ...current, [conversationId]: runtimeState }));
-      const taskRunStatus = taskAgentRunStatusFromSession(state);
-      setNativeConversationTaskRunStatuses((current) => (current[conversationId] === taskRunStatus ? current : {
-          ...current,
-          [conversationId]: taskRunStatus
-      }));
+    const taskRunStatus = taskAgentRunStatusFromSession(state);
+    setNativeConversationTaskRunStatuses((current) =>
+      current[conversationId] === taskRunStatus
+        ? current
+        : {
+            ...current,
+            [conversationId]: taskRunStatus,
+          },
+    );
   }, []);
 
   useEffect(() => {
     const client = props.nativeConversationClient;
-      if (!client || (activeProjectSection !== 'sessions' && activeProjectSection !== 'tasks') || !activeProjectId) return;
+    if (!client || (activeProjectSection !== 'sessions' && activeProjectSection !== 'tasks') || !activeProjectId) return;
     let cancelled = false;
     const projectId = activeProjectId;
     const projectRequestVersion = nativeProjectConversationChoiceLoadCoordinator.begin(projectId);
@@ -6542,20 +6557,20 @@ export function App(props: {
   useEffect(() => {
     const subscribeRealtimeEvents = props.onSubscribeRealtimeEvents;
     const loadGraphConversation = props.onLoadGraphConversation;
-      if (!subscribeRealtimeEvents) return;
+    if (!subscribeRealtimeEvents) return;
     const unsubscribe = subscribeRealtimeEvents((event) => {
-        if (event.type === 'conversation.turn.completed' && typeof event.payload.conversationId === 'string') {
-            const conversationId = event.payload.conversationId;
-            const hasUnreadCompletion = event.payload.status === 'completed' && event.payload.hasUnreadCompletion !== false;
-            if (hasUnreadCompletion) {
-                const selected = selectedNativeConversationIdRef.current === conversationId;
-                setNativeConversationCompletionUnread(conversationId, !selected);
-                if (selected && typeof event.payload.projectId === 'string') {
-                    acknowledgeNativeConversationCompletion(event.payload.projectId, conversationId);
-                }
-            }
+      if (event.type === 'conversation.turn.completed' && typeof event.payload.conversationId === 'string') {
+        const conversationId = event.payload.conversationId;
+        const hasUnreadCompletion = event.payload.status === 'completed' && event.payload.hasUnreadCompletion !== false;
+        if (hasUnreadCompletion) {
+          const selected = selectedNativeConversationIdRef.current === conversationId;
+          setNativeConversationCompletionUnread(conversationId, !selected);
+          if (selected && typeof event.payload.projectId === 'string') {
+            acknowledgeNativeConversationCompletion(event.payload.projectId, conversationId);
+          }
         }
-        if (!loadGraphConversation) return;
+      }
+      if (!loadGraphConversation) return;
       if (!shouldRefreshConversationForRuntimeEvent(event, selectedTaskConversationRef.current)) return;
       const conversation = selectedTaskConversationRef.current;
       if (!conversation) return;
@@ -6574,9 +6589,9 @@ export function App(props: {
     };
   }, [acknowledgeNativeConversationCompletion, props.onLoadGraphConversation, props.onSubscribeRealtimeEvents, setNativeConversationCompletionUnread]);
 
-    const taskDetailPaneTask = taskDetailPaneTaskId ? (taskDetail?.id === taskDetailPaneTaskId ? taskDetail : snapshot.tasks.find((task) => task.id === taskDetailPaneTaskId)) : undefined;
-    const taskDetailPaneConversations = taskDetailPaneTask ? (nativeConversationChoicesByTask[taskDetailPaneTask.id]?.choices ?? []) : [];
-    const taskDetailPaneConversationState = taskDetailPaneTask ? nativeConversationChoiceTaskStates[taskDetailPaneTask.id] : undefined;
+  const taskDetailPaneTask = taskDetailPaneTaskId ? (taskDetail?.id === taskDetailPaneTaskId ? taskDetail : snapshot.tasks.find((task) => task.id === taskDetailPaneTaskId)) : undefined;
+  const taskDetailPaneConversations = taskDetailPaneTask ? (nativeConversationChoicesByTask[taskDetailPaneTask.id]?.choices ?? []) : [];
+  const taskDetailPaneConversationState = taskDetailPaneTask ? nativeConversationChoiceTaskStates[taskDetailPaneTask.id] : undefined;
   const currentRuntimeAdapterDisplayName = formatRuntimeAdapterDisplayName(runtimeSettings.defaultAdapterId, runtimeAdapters, settingsWorkspaceCopy.runtime);
   const taskTableEnumSortOrders = normalizeTaskTableEnumSortOrders(appShellSettings.taskTableEnumSortOrders);
   const taskPriorityLabels = Object.fromEntries(taskWorkspaceCopy.taskCreatePriorityOptions.map((option) => [option.value, option.label])) as Record<TaskPriority, string>;
@@ -6620,30 +6635,30 @@ export function App(props: {
     }
   }
 
-    async function openTaskDetailPane(taskId: string): Promise<void> {
-        // 点击任务行从右侧打开悬浮详情抽屉；透明点击层保留列表原貌，并让用户点击抽屉外空白处立即关闭。
-        setTaskDetailPaneTaskId(taskId);
-        const pending: Promise<void>[] = [loadTaskDetail(taskId)];
-        if (props.onLoadTaskEvents) {
-            pending.push(
-                props
-                    .onLoadTaskEvents(taskId)
-                    .then(setTaskEvents)
-                    .catch((error: unknown) => {
-                        recordLocalError('renderer-action', error);
-                    }),
-            );
+  async function openTaskDetailPane(taskId: string): Promise<void> {
+    // 点击任务行从右侧打开悬浮详情抽屉；透明点击层保留列表原貌，并让用户点击抽屉外空白处立即关闭。
+    setTaskDetailPaneTaskId(taskId);
+    const pending: Promise<void>[] = [loadTaskDetail(taskId)];
+    if (props.onLoadTaskEvents) {
+      pending.push(
+        props
+          .onLoadTaskEvents(taskId)
+          .then(setTaskEvents)
+          .catch((error: unknown) => {
+            recordLocalError('renderer-action', error);
+          }),
+      );
     }
-        if (props.nativeConversationClient) {
-            pending.push(
-                refreshNativeConversationChoices(taskId)
-                    .then(() => undefined)
-                    .catch((error: unknown) => {
-                        recordLocalError('task-conversation-choice-load', error);
-                    }),
-            );
-        }
-        await Promise.all(pending);
+    if (props.nativeConversationClient) {
+      pending.push(
+        refreshNativeConversationChoices(taskId)
+          .then(() => undefined)
+          .catch((error: unknown) => {
+            recordLocalError('task-conversation-choice-load', error);
+          }),
+      );
+    }
+    await Promise.all(pending);
   }
 
   async function loadProjectConfig(projectId: string): Promise<void> {
@@ -6743,7 +6758,7 @@ export function App(props: {
     setActionState('creating-project');
     try {
       // 侧栏重命名只提交 name，避免把旧表单中的路径或说明顺带覆盖到真实项目记录。
-      const nextSnapshot = await props.onUpdateProject(projectId, {name});
+      const nextSnapshot = await props.onUpdateProject(projectId, { name });
       const updatedProject = nextSnapshot.projects.find((project) => project.id === projectId);
       setSnapshot(nextSnapshot);
       if (projectDetail?.id === projectId) {
@@ -7083,20 +7098,91 @@ export function App(props: {
     }
   }
 
-  async function createCurrentProject(): Promise<void> {
-    if (!props.onCreateCurrentProject) return;
-    setActionState('creating-project');
+  function resetProjectCreateDialog(): void {
+    setProjectCreateDialogOpen(false);
+    setProjectCreateForm({ name: '', localPath: '' });
+    setProjectCreateError(undefined);
+    window.requestAnimationFrame(() => projectCreateReturnFocusRef.current?.focus());
+  }
+
+  function openProjectCreateDialog(): void {
+    if (!projectCreationReady) return;
+    projectCreateReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setProjectCreateForm({ name: '', localPath: '' });
+    setProjectCreateError(undefined);
+    if (actionState === 'failed') setActionState('idle');
+    setProjectCreateDialogOpen(true);
+  }
+
+  function closeProjectCreateDialog(): void {
+    if (creatingProjectBusy || projectDirectoryChoosing) return;
+    resetProjectCreateDialog();
+  }
+
+  async function chooseProjectDirectoryForCreate(): Promise<void> {
+    if (!props.onChooseProjectDirectory || creatingProjectBusy || projectDirectoryChoosing) return;
+    setProjectDirectoryChoosing(true);
+    setProjectCreateError(undefined);
     try {
-      setSnapshot(
-        await props.onCreateCurrentProject({
-          defaultModel: createProjectConfigForm.defaultModel.trim() || appShellSettings.defaultModel || null,
-          defaultWorkMode: createProjectConfigForm.defaultWorkMode,
-          defaultTaskPrompt: createProjectConfigForm.defaultTaskPrompt.trim(),
-        }),
-      );
+      const selectedPath = await props.onChooseProjectDirectory();
+      if (!selectedPath) return;
+      const localPath = normalizeProjectLocalPath(selectedPath);
+      setProjectCreateForm((current) => ({
+        name: current.name.trim() || defaultProjectNameFromLocalPath(localPath),
+        localPath,
+      }));
+    } catch (error) {
+      setProjectCreateError(errorToLocalUiMessage(error));
+    } finally {
+      setProjectDirectoryChoosing(false);
+    }
+  }
+
+  async function createCurrentProject(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+    if (!props.onCreateCurrentProject || creatingProjectBusy) return;
+    const name = projectCreateForm.name.trim();
+    const localPath = normalizeProjectLocalPath(projectCreateForm.localPath);
+    if (!name) {
+      setProjectCreateError(uiCopy.sidebar.createNameRequired);
+      return;
+    }
+    if (!localPath) {
+      setProjectCreateError(uiCopy.sidebar.createFolderRequired);
+      return;
+    }
+    setActionState('creating-project');
+    setProjectCreateError(undefined);
+    try {
+      const nextSnapshot = await props.onCreateCurrentProject({
+        name,
+        localPath,
+        description: uiCopy.sidebar.selectedRepositoryDescription,
+        defaultModel: createProjectConfigForm.defaultModel.trim() || appShellSettings.defaultModel || null,
+        defaultWorkMode: createProjectConfigForm.defaultWorkMode,
+        defaultTaskPrompt: createProjectConfigForm.defaultTaskPrompt.trim(),
+      });
+      const selectedCreatedProject = nextSnapshot.projects.find((project) => normalizeProjectLocalPath(project.localPath) === localPath);
+      setSnapshot(nextSnapshot);
+      if (selectedCreatedProject) {
+        activeProjectIdRef.current = selectedCreatedProject.id;
+        setProjectDetail(selectedCreatedProject);
+        setTaskDetail(undefined);
+        setTaskDetailPaneTaskId(undefined);
+        setConversationDraftOpen(false);
+        setProjectEditForm({
+          name: selectedCreatedProject.name,
+          localPath: selectedCreatedProject.localPath,
+          description: selectedCreatedProject.description ?? '',
+          note: selectedCreatedProject.note ?? '',
+        });
+        if (activeProjectSection === 'code') resetGraphWorkspace(selectedCreatedProject.id);
+      }
       setActionState('idle');
+      resetProjectCreateDialog();
     } catch (error) {
       recordLocalError('renderer-action', error);
+      setProjectCreateError(errorToLocalUiMessage(error));
       setActionState('failed');
     }
   }
@@ -7206,7 +7292,7 @@ export function App(props: {
           tags: createdTask.tags?.join(', ') ?? '',
         });
         setActiveProjectSection('tasks');
-          setTaskDetailPaneTaskId(createdTask.id);
+        setTaskDetailPaneTaskId(createdTask.id);
         if (props.onLoadTaskEvents) {
           setTaskEvents(await props.onLoadTaskEvents(createdTask.id));
         }
@@ -7245,7 +7331,7 @@ export function App(props: {
   }
 
   function updateTaskCreatePriority(priority: TaskPriority): void {
-    setTaskCreateForm((current) => ({...current, priority}));
+    setTaskCreateForm((current) => ({ ...current, priority }));
   }
 
   function mergeTaskCreateAttachments(attachments: TaskCreateAttachment[]): void {
@@ -7277,22 +7363,18 @@ export function App(props: {
   }
 
   async function authorizeTaskCreateFiles(files: File[], source: 'paste' | 'drop'): Promise<TaskResourceAuthorizationResult> {
-    if (!props.onAuthorizeTaskFiles || files.length === 0) return {resources: [], failedCount: files.length};
+    if (!props.onAuthorizeTaskFiles || files.length === 0) return { resources: [], failedCount: files.length };
     try {
       const result = await props.onAuthorizeTaskFiles(files, source);
       if (result.resources.length > 0 && result.failedCount === 0) setTaskCreateError('');
       else if (result.failedCount > 0) {
-        setTaskCreateError(
-          appShellSettings.appLanguage === 'zh-CN'
-            ? `已添加可读取资源，另有 ${result.failedCount} 项读取失败。`
-            : `Readable resources were added; ${result.failedCount} item(s) failed.`,
-        );
+        setTaskCreateError(appShellSettings.appLanguage === 'zh-CN' ? `已添加可读取资源，另有 ${result.failedCount} 项读取失败。` : `Readable resources were added; ${result.failedCount} item(s) failed.`);
       }
       return result;
     } catch (error) {
       recordLocalError('renderer-action', error);
       setTaskCreateError(taskWorkspaceCopy.taskCreatePasteAttachmentFailed);
-      return {resources: [], failedCount: files.length};
+      return { resources: [], failedCount: files.length };
     }
   }
 
@@ -7309,8 +7391,8 @@ export function App(props: {
     }
   }
 
-  async function readTaskCreateClipboardResources(): Promise<{resources: TaskCreateAttachment[]; text: string}> {
-    if (!props.onReadTaskClipboardResources) return {resources: [], text: ''};
+  async function readTaskCreateClipboardResources(): Promise<{ resources: TaskCreateAttachment[]; text: string }> {
+    if (!props.onReadTaskClipboardResources) return { resources: [], text: '' };
     try {
       const result = await props.onReadTaskClipboardResources();
       if (result.resources.length > 0) setTaskCreateError('');
@@ -7318,7 +7400,7 @@ export function App(props: {
     } catch (error) {
       recordLocalError('renderer-action', error);
       setTaskCreateError(taskWorkspaceCopy.taskCreatePasteAttachmentFailed);
-      return {resources: [], text: ''};
+      return { resources: [], text: '' };
     }
   }
 
@@ -7386,9 +7468,9 @@ export function App(props: {
     const task = conversation.taskId ? snapshot.tasks.find((candidate) => candidate.id === conversation.taskId) : undefined;
     if (task) setTaskDetail(task);
     else setTaskDetail(undefined);
-      selectedNativeConversationIdRef.current = conversation.id;
+    selectedNativeConversationIdRef.current = conversation.id;
     setSelectedNativeConversationId(conversation.id);
-      if (conversation.hasUnreadCompletion) acknowledgeNativeConversationCompletion(conversation.projectId, conversation.id);
+    if (conversation.hasUnreadCompletion) acknowledgeNativeConversationCompletion(conversation.projectId, conversation.id);
     setConversationDraftOpen(false);
     setActiveNavTarget('conversations');
     setActiveProjectSection('sessions');
@@ -7427,22 +7509,22 @@ export function App(props: {
     }
   }
 
-    async function openTaskConversation(taskId: string, conversationId: string): Promise<void> {
-        const conversation = nativeConversationChoicesByTask[taskId]?.choices.find((candidate) => candidate.id === conversationId);
-        if (!conversation) return;
-        const targetProject = snapshot.projects.find((project) => project.id === conversation.projectId);
-        if (targetProject) {
-            activeProjectIdRef.current = targetProject.id;
-            setProjectDetail(targetProject);
-        }
-        setTaskDetailPaneTaskId(undefined);
-        setConversationDrawer(undefined);
-        await selectNativeConversation(conversation);
-        if (typeof window !== 'undefined') {
-            window.history.replaceState(null, '', '#project-sessions');
-        }
-        workspaceScrollRef.current?.scrollTo({top: 0, behavior: 'smooth'});
+  async function openTaskConversation(taskId: string, conversationId: string): Promise<void> {
+    const conversation = nativeConversationChoicesByTask[taskId]?.choices.find((candidate) => candidate.id === conversationId);
+    if (!conversation) return;
+    const targetProject = snapshot.projects.find((project) => project.id === conversation.projectId);
+    if (targetProject) {
+      activeProjectIdRef.current = targetProject.id;
+      setProjectDetail(targetProject);
     }
+    setTaskDetailPaneTaskId(undefined);
+    setConversationDrawer(undefined);
+    await selectNativeConversation(conversation);
+    if (typeof window !== 'undefined') {
+      window.history.replaceState(null, '', '#project-sessions');
+    }
+    workspaceScrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+  }
 
   function prepareNativeConversationForTask(taskId: string): void {
     const task = snapshot.tasks.find((candidate) => candidate.id === taskId);
@@ -7459,7 +7541,7 @@ export function App(props: {
     setActiveNavTarget('conversations');
     setActiveProjectSection('sessions');
     setConversationDrawer(undefined);
-      setTaskDetailPaneTaskId(undefined);
+    setTaskDetailPaneTaskId(undefined);
     if (typeof window !== 'undefined') {
       window.history.replaceState(null, '', '#project-sessions');
     }
@@ -7581,7 +7663,7 @@ export function App(props: {
     setNewConversationFocusRequest((current) => current + 1);
     setSelectedNativeConversationId(null);
     setConversationDrawer(undefined);
-      setTaskDetailPaneTaskId(undefined);
+    setTaskDetailPaneTaskId(undefined);
     setTaskSearchQuery('');
     setTaskStatusFilter('');
     setTaskTagFilter('');
@@ -7609,7 +7691,7 @@ export function App(props: {
       setSnapshot(nextSnapshot);
       const updatedTask = nextSnapshot.tasks.find((task) => task.id === taskId);
       if (updatedTask) {
-        setTaskDetail((current) => current?.id === taskId ? updatedTask : current);
+        setTaskDetail((current) => (current?.id === taskId ? updatedTask : current));
       }
       if (props.onLoadTaskEvents && taskDetailPaneTaskId === taskId) {
         setTaskEvents(await props.onLoadTaskEvents(taskId));
@@ -7639,7 +7721,7 @@ export function App(props: {
     }
     try {
       // 与 Codex App 一致：打开 composer 时只连接并读取能力，不提前创建 thread/turn。
-        const capabilities = await client.loadCodexTaskPushCapabilities(task.projectId, task.id);
+      const capabilities = await client.loadCodexTaskPushCapabilities(task.projectId, task.id);
       if (taskModelPushCapabilityRequestRef.current !== requestVersion) return;
       const remembered = readTaskModelPushPreferences(browserNativeConversationStartStorage(), task.projectId);
       setTaskModelPushCapabilities(capabilities);
@@ -7662,7 +7744,7 @@ export function App(props: {
     setTaskModelPushError(null);
   }
 
-    function submitTaskModelPush(event: FormEvent<HTMLFormElement>): void {
+  function submitTaskModelPush(event: FormEvent<HTMLFormElement>): void {
     event.preventDefault();
     const task = snapshot.tasks.find((candidate) => candidate.id === taskModelPushTaskId);
     const client = props.nativeConversationClient;
@@ -7686,94 +7768,94 @@ export function App(props: {
     taskModelPushEnvelopeRef.current = { fingerprint, request };
     setTaskModelPushStatus('submitting');
     setTaskModelPushError(null);
-        const targetProject = snapshot.projects.find((project) => project.id === task.projectId);
-        const pending = createTaskModelPushPendingState({
-            task,
-            projectName: targetProject?.name ?? task.projectId,
-            request,
-            form: taskModelPushForm,
-            prompt: buildTaskModelPushMessage(taskModelPushCapabilities.canonicalPrompt, taskModelPushForm.supplementalInfo),
-        });
-        nativeConversationChoiceLoadCoordinator.preserveAccepted(pending.choice);
-        setNativeConversationChoicesByTask((current) => {
-            const prior = current[task.id];
-            const choices = [pending.choice, ...(prior?.choices ?? []).filter((candidate) => candidate.id !== pending.choice.id)];
-            return {
-                ...current,
-                [task.id]: {
-                    taskId: task.id,
-                    projectId: task.projectId,
-                    hasHistory: true,
-                    requiresChoice: choices.length > 1,
-                    choices,
-                    items: choices
-                }
-            };
-        });
-        setTaskModelPushPending(pending);
-        if (targetProject) {
-            activeProjectIdRef.current = targetProject.id;
-            setProjectDetail(targetProject);
-        }
-        setTaskDetail(task);
-        setSelectedNativeConversationId(pending.choice.id);
-        setConversationDraftOpen(false);
-        setTaskDetailPaneTaskId(undefined);
-        setConversationDrawer(undefined);
-        taskModelPushCapabilityRequestRef.current += 1;
-        setTaskModelPushTaskId(null);
-        setTaskModelPushCapabilities(null);
-        setActiveNavTarget('conversations');
-        setActiveProjectSection('sessions');
-        if (typeof window !== 'undefined') window.history.replaceState(null, '', '#project-sessions');
-        workspaceScrollRef.current?.scrollTo({top: 0, behavior: 'smooth'});
-        void dispatchTaskModelPush(pending);
+    const targetProject = snapshot.projects.find((project) => project.id === task.projectId);
+    const pending = createTaskModelPushPendingState({
+      task,
+      projectName: targetProject?.name ?? task.projectId,
+      request,
+      form: taskModelPushForm,
+      prompt: buildTaskModelPushMessage(taskModelPushCapabilities.canonicalPrompt, taskModelPushForm.supplementalInfo),
+    });
+    nativeConversationChoiceLoadCoordinator.preserveAccepted(pending.choice);
+    setNativeConversationChoicesByTask((current) => {
+      const prior = current[task.id];
+      const choices = [pending.choice, ...(prior?.choices ?? []).filter((candidate) => candidate.id !== pending.choice.id)];
+      return {
+        ...current,
+        [task.id]: {
+          taskId: task.id,
+          projectId: task.projectId,
+          hasHistory: true,
+          requiresChoice: choices.length > 1,
+          choices,
+          items: choices,
+        },
+      };
+    });
+    setTaskModelPushPending(pending);
+    if (targetProject) {
+      activeProjectIdRef.current = targetProject.id;
+      setProjectDetail(targetProject);
     }
+    setTaskDetail(task);
+    setSelectedNativeConversationId(pending.choice.id);
+    setConversationDraftOpen(false);
+    setTaskDetailPaneTaskId(undefined);
+    setConversationDrawer(undefined);
+    taskModelPushCapabilityRequestRef.current += 1;
+    setTaskModelPushTaskId(null);
+    setTaskModelPushCapabilities(null);
+    setActiveNavTarget('conversations');
+    setActiveProjectSection('sessions');
+    if (typeof window !== 'undefined') window.history.replaceState(null, '', '#project-sessions');
+    workspaceScrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+    void dispatchTaskModelPush(pending);
+  }
 
-    async function dispatchTaskModelPush(pending: TaskModelPushPendingState): Promise<void> {
-        const client = props.nativeConversationClient;
-        if (!client) return;
-        try {
-            const acceptance = await client.startTaskModelPush(pending.task.id, pending.request);
-            if (acceptance.operation.status !== 'accepted' || acceptance.operation.idempotencyKey !== pending.request.idempotencyKey) {
-                throw new Error('Task model push did not return a durable accepted operation.');
-            }
-            taskModelPushEnvelopeRef.current = null;
-            const provider = typeof acceptance.conversation.provider === 'object' && acceptance.conversation.provider !== null ? (acceptance.conversation.provider as Record<string, unknown>) : {};
-            const providerThreadId = (typeof acceptance.conversation.providerThreadId === 'string' && acceptance.conversation.providerThreadId) || (typeof provider.threadId === 'string' && provider.threadId) || null;
-            if (!providerThreadId) {
-                throw new Error(appShellSettings.appLanguage === 'zh-CN' ? 'app-server 未能创建真实会话，消息尚未发送。请检查连接后重试。' : 'app-server did not create a real conversation. Check the connection and retry.');
-            }
+  async function dispatchTaskModelPush(pending: TaskModelPushPendingState): Promise<void> {
+    const client = props.nativeConversationClient;
+    if (!client) return;
+    try {
+      const acceptance = await client.startTaskModelPush(pending.task.id, pending.request);
+      if (acceptance.operation.status !== 'accepted' || acceptance.operation.idempotencyKey !== pending.request.idempotencyKey) {
+        throw new Error('Task model push did not return a durable accepted operation.');
+      }
+      taskModelPushEnvelopeRef.current = null;
+      const provider = typeof acceptance.conversation.provider === 'object' && acceptance.conversation.provider !== null ? (acceptance.conversation.provider as Record<string, unknown>) : {};
+      const providerThreadId = (typeof acceptance.conversation.providerThreadId === 'string' && acceptance.conversation.providerThreadId) || (typeof provider.threadId === 'string' && provider.threadId) || null;
+      if (!providerThreadId) {
+        throw new Error(appShellSettings.appLanguage === 'zh-CN' ? 'app-server 未能创建真实会话，消息尚未发送。请检查连接后重试。' : 'app-server did not create a real conversation. Check the connection and retry.');
+      }
 
-            const choice = nativeConversationChoiceFromAcceptance(acceptance, pending.task);
-            nativeConversationChoiceLoadCoordinator.forget(pending.task.id, pending.choice.id);
-            nativeConversationChoiceLoadCoordinator.preserveAccepted(choice);
-            setNativeConversationChoicesByTask((current) => {
-                const prior = current[pending.task.id];
-                const choices = [choice, ...(prior?.choices ?? []).filter((candidate) => candidate.id !== choice.id && candidate.id !== pending.choice.id)];
-                return {
-                    ...current,
-                    [pending.task.id]: {
-                        taskId: pending.task.id,
-                        projectId: pending.task.projectId,
-                        hasHistory: true,
-                        requiresChoice: choices.length > 1,
-                        choices,
-                        items: choices
-                    }
-                };
-            });
-            setSelectedNativeConversationId(choice.id);
-            setTaskModelPushPending((current) => (current?.request.idempotencyKey === pending.request.idempotencyKey ? acceptTaskModelPushPendingState(current, choice) : current));
-            const submissionStatus = typeof acceptance.submission?.status === 'string' ? acceptance.submission.status : null;
-            if (submissionStatus === 'active') {
-                // 只有 thread/start 与首个 turn/start 都成功后，才更新项目级选择记忆。
-                writeTaskModelPushPreferences(browserNativeConversationStartStorage(), pending.task.projectId, pending.form);
-            }
-            void refreshNativeConversationChoices(pending.task.id).catch((error: unknown) => recordLocalError('task-model-push-history-refresh', error));
+      const choice = nativeConversationChoiceFromAcceptance(acceptance, pending.task);
+      nativeConversationChoiceLoadCoordinator.forget(pending.task.id, pending.choice.id);
+      nativeConversationChoiceLoadCoordinator.preserveAccepted(choice);
+      setNativeConversationChoicesByTask((current) => {
+        const prior = current[pending.task.id];
+        const choices = [choice, ...(prior?.choices ?? []).filter((candidate) => candidate.id !== choice.id && candidate.id !== pending.choice.id)];
+        return {
+          ...current,
+          [pending.task.id]: {
+            taskId: pending.task.id,
+            projectId: pending.task.projectId,
+            hasHistory: true,
+            requiresChoice: choices.length > 1,
+            choices,
+            items: choices,
+          },
+        };
+      });
+      setSelectedNativeConversationId(choice.id);
+      setTaskModelPushPending((current) => (current?.request.idempotencyKey === pending.request.idempotencyKey ? acceptTaskModelPushPendingState(current, choice) : current));
+      const submissionStatus = typeof acceptance.submission?.status === 'string' ? acceptance.submission.status : null;
+      if (submissionStatus === 'active') {
+        // 只有 thread/start 与首个 turn/start 都成功后，才更新项目级选择记忆。
+        writeTaskModelPushPreferences(browserNativeConversationStartStorage(), pending.task.projectId, pending.form);
+      }
+      void refreshNativeConversationChoices(pending.task.id).catch((error: unknown) => recordLocalError('task-model-push-history-refresh', error));
       if (props.onLoadTask) {
         void props
-            .onLoadTask(pending.task.id)
+          .onLoadTask(pending.task.id)
           .then((updatedTask) => {
             setTaskDetail(updatedTask);
             setSnapshot((current) => ({ ...current, tasks: current.tasks.map((candidate) => (candidate.id === updatedTask.id ? updatedTask : candidate)) }));
@@ -7781,51 +7863,51 @@ export function App(props: {
           .catch((error: unknown) => recordLocalError('task-model-push-task-refresh', error));
       }
     } catch (error) {
-            const message = redactLocalUiErrorMessage(errorToLocalUiMessage(error));
-            const failed = failTaskModelPushPendingState(pending, message);
-            nativeConversationChoiceLoadCoordinator.preserveAccepted(failed.choice);
-            setNativeConversationChoicesByTask((current) => {
-                const prior = current[pending.task.id];
-                const choices = [failed.choice, ...(prior?.choices ?? []).filter((candidate) => candidate.id !== failed.choice.id)];
-                return {
-                    ...current,
-                    [pending.task.id]: {
-                        taskId: pending.task.id,
-                        projectId: pending.task.projectId,
-                        hasHistory: true,
-                        requiresChoice: choices.length > 1,
-                        choices,
-                        items: choices
-                    }
-                };
-            });
-            setTaskModelPushPending((current) => (current?.request.idempotencyKey === pending.request.idempotencyKey ? failed : current));
+      const message = redactLocalUiErrorMessage(errorToLocalUiMessage(error));
+      const failed = failTaskModelPushPendingState(pending, message);
+      nativeConversationChoiceLoadCoordinator.preserveAccepted(failed.choice);
+      setNativeConversationChoicesByTask((current) => {
+        const prior = current[pending.task.id];
+        const choices = [failed.choice, ...(prior?.choices ?? []).filter((candidate) => candidate.id !== failed.choice.id)];
+        return {
+          ...current,
+          [pending.task.id]: {
+            taskId: pending.task.id,
+            projectId: pending.task.projectId,
+            hasHistory: true,
+            requiresChoice: choices.length > 1,
+            choices,
+            items: choices,
+          },
+        };
+      });
+      setTaskModelPushPending((current) => (current?.request.idempotencyKey === pending.request.idempotencyKey ? failed : current));
       recordLocalError('task-model-push', error);
     }
   }
 
-    function retryTaskModelPush(): void {
-        if (!taskModelPushPending || taskModelPushPending.status !== 'failed') return;
-        const retrying = retryTaskModelPushPendingState(taskModelPushPending);
-        nativeConversationChoiceLoadCoordinator.preserveAccepted(retrying.choice);
-        setNativeConversationChoicesByTask((current) => {
-            const prior = current[retrying.task.id];
-            const choices = [retrying.choice, ...(prior?.choices ?? []).filter((candidate) => candidate.id !== retrying.choice.id)];
-            return {
-                ...current,
-                [retrying.task.id]: {
-                    taskId: retrying.task.id,
-                    projectId: retrying.task.projectId,
-                    hasHistory: true,
-                    requiresChoice: choices.length > 1,
-                    choices,
-                    items: choices
-                }
-            };
-        });
-        setTaskModelPushPending(retrying);
-        void dispatchTaskModelPush(retrying);
-    }
+  function retryTaskModelPush(): void {
+    if (!taskModelPushPending || taskModelPushPending.status !== 'failed') return;
+    const retrying = retryTaskModelPushPendingState(taskModelPushPending);
+    nativeConversationChoiceLoadCoordinator.preserveAccepted(retrying.choice);
+    setNativeConversationChoicesByTask((current) => {
+      const prior = current[retrying.task.id];
+      const choices = [retrying.choice, ...(prior?.choices ?? []).filter((candidate) => candidate.id !== retrying.choice.id)];
+      return {
+        ...current,
+        [retrying.task.id]: {
+          taskId: retrying.task.id,
+          projectId: retrying.task.projectId,
+          hasHistory: true,
+          requiresChoice: choices.length > 1,
+          choices,
+          items: choices,
+        },
+      };
+    });
+    setTaskModelPushPending(retrying);
+    void dispatchTaskModelPush(retrying);
+  }
 
   function toggleTaskSelection(taskId: string, selected: boolean): void {
     setSelectedTaskIds((ids) => {
@@ -7854,10 +7936,10 @@ export function App(props: {
     return `${successCount} processed, ${skippedCount} skipped, ${failedCount} failed.`;
   }
 
-    async function runBulkTaskStatusChange(targetStatus: TaskManagementStatus, taskIds: string[]): Promise<void> {
+  async function runBulkTaskStatusChange(targetStatus: TaskManagementStatus, taskIds: string[]): Promise<void> {
     const requestedTaskIdSet = new Set(taskIds);
     const requestedTasks = visibleTasks.filter((task) => requestedTaskIdSet.has(task.id));
-        const eligibleTasks = requestedTasks.filter((task) => resolveTaskManagementStatus(task) !== targetStatus);
+    const eligibleTasks = requestedTasks.filter((task) => resolveTaskManagementStatus(task) !== targetStatus);
     const skippedCount = requestedTasks.length - eligibleTasks.length;
     const succeededTaskIds: string[] = [];
     const failedTaskIds: string[] = [];
@@ -7870,8 +7952,8 @@ export function App(props: {
     try {
       for (const task of eligibleTasks) {
         try {
-            if (!props.onUpdateTaskManagementStatus) throw new Error('Task management status handler is not available.');
-            const nextSnapshot = await props.onUpdateTaskManagementStatus(task.id, targetStatus);
+          if (!props.onUpdateTaskManagementStatus) throw new Error('Task management status handler is not available.');
+          const nextSnapshot = await props.onUpdateTaskManagementStatus(task.id, targetStatus);
           setSnapshot(nextSnapshot);
           succeededTaskIds.push(task.id);
         } catch {
@@ -8181,12 +8263,10 @@ export function App(props: {
     );
     setTaskTableLayoutSaveBusy(true);
     try {
-      const savedSettings = props.onSaveAppShellSettings
-        ? normalizeRendererAppShellSettings(await props.onSaveAppShellSettings(toAppShellSettingsSavePayload(nextSettings)))
-        : nextSettings;
+      const savedSettings = props.onSaveAppShellSettings ? normalizeRendererAppShellSettings(await props.onSaveAppShellSettings(toAppShellSettingsSavePayload(nextSettings))) : nextSettings;
       setAppShellSettings(savedSettings);
       const savedPreferences = resolveTaskTableColumnsForProject(savedSettings, activeProjectId);
-      setTaskTableLayoutDraft({projectId: activeProjectId, preferences: savedPreferences});
+      setTaskTableLayoutDraft({ projectId: activeProjectId, preferences: savedPreferences });
       setTaskTableLayoutScopeDialogOpen(false);
       if (saveTaskTableLayoutThenLeaveRef.current) {
         saveTaskTableLayoutThenLeaveRef.current = false;
@@ -8225,7 +8305,7 @@ export function App(props: {
   }
 
   function discardTaskTableLayoutAndLeave(): void {
-    setTaskTableLayoutDraft({projectId: activeProjectId, preferences: persistedTaskTableColumns});
+    setTaskTableLayoutDraft({ projectId: activeProjectId, preferences: persistedTaskTableColumns });
     setTaskTableLayoutLeaveDialogOpen(false);
     const leave = pendingTaskTableLayoutLeaveRef.current;
     pendingTaskTableLayoutLeaveRef.current = null;
@@ -8309,9 +8389,7 @@ export function App(props: {
                   defaultModel: appShellSettings.defaultModel,
                   defaultTaskTemplateId: appShellSettings.defaultTaskTemplateId,
                   taskTableColumns: normalizeTaskTableColumnPreferences(appShellSettings.taskTableColumns),
-                  taskTableColumnsByProject: Object.fromEntries(
-                    Object.entries(appShellSettings.taskTableColumnsByProject ?? {}).map(([projectId, preferences]) => [projectId, normalizeTaskTableColumnPreferences(preferences)]),
-                  ),
+                  taskTableColumnsByProject: Object.fromEntries(Object.entries(appShellSettings.taskTableColumnsByProject ?? {}).map(([projectId, preferences]) => [projectId, normalizeTaskTableColumnPreferences(preferences)])),
                   taskTableEnumSortOrders: normalizeTaskTableEnumSortOrders(appShellSettings.taskTableEnumSortOrders),
                 },
                 runtime: runtimeSettings,
@@ -8923,10 +9001,7 @@ export function App(props: {
     // Portal 不继承应用壳层变量，只同步真实侧栏宽度用于计算抽屉可用空间；关闭点击层始终覆盖整个窗口。
     '--zeus-drawer-sidebar-inline-size': `${projectSidebarWidth + 1}px`,
   } as CSSProperties;
-  const projectDrawerVisualProps =
-    projectPanel === 'config'
-      ? ({ presentation: 'floating', backdrop: 'dimmed', size: 'wide' } as const)
-      : ({ presentation: 'sheet', backdrop: 'dimmed', size: 'wide' } as const);
+  const projectDrawerVisualProps = projectPanel === 'config' ? ({ presentation: 'floating', backdrop: 'dimmed', size: 'wide' } as const) : ({ presentation: 'sheet', backdrop: 'dimmed', size: 'wide' } as const);
 
   function commitProjectSidebarPreferredWidth(width: number): void {
     const nextWidth = normalizeProjectSidebarPreferredWidth(width);
@@ -9040,6 +9115,21 @@ export function App(props: {
       aria-label={uiCopy.shellAriaLabel}
     >
       <div className="window-drag-strip" aria-hidden="true" onPointerDown={handleWindowDragPointerDown} />
+      <ProjectCreateDialog
+        open={projectCreateDialogOpen}
+        form={projectCreateForm}
+        busy={creatingProjectBusy}
+        directoryBusy={projectDirectoryChoosing}
+        error={projectCreateError}
+        copy={uiCopy.sidebar}
+        onNameChange={(name) => {
+          setProjectCreateForm((current) => ({ ...current, name }));
+          if (projectCreateError) setProjectCreateError(undefined);
+        }}
+        onChooseDirectory={() => void chooseProjectDirectoryForCreate()}
+        onClose={closeProjectCreateDialog}
+        onSubmit={(event) => void createCurrentProject(event)}
+      />
       {activeNavTarget !== 'settings' ? (
         <SidebarNav
           activeNavTarget={activeNavTarget}
@@ -9048,11 +9138,10 @@ export function App(props: {
           projects={orderedProjects}
           pinnedProjectIds={appShellSettings.pinnedProjectIds}
           collapsedProjectIds={appShellSettings.collapsedProjectIds}
-          repositoryPickerLabel={repositoryPickerLabel()}
           appLanguage={appShellSettings.appLanguage}
           canCreateProject={projectCreationReady && !creatingProjectBusy}
           createProjectBusy={creatingProjectBusy}
-          onCreateProject={createCurrentProject}
+          onCreateProject={openProjectCreateDialog}
           onCreateConversation={prepareNewConversationDraft}
           onNavigate={handleMainNavigate}
           onOpenProjectSection={openProjectSection}
@@ -9471,11 +9560,7 @@ export function App(props: {
                               <small>{projectEditCopy.nameHelp}</small>
                             </span>
                             <span className="project-edit-setting-field">
-                              <input
-                                aria-label={projectEditCopy.nameAria}
-                                value={projectEditForm.name}
-                                onChange={(event) => patchProjectEditForm({ name: event.currentTarget.value })}
-                              />
+                              <input aria-label={projectEditCopy.nameAria} value={projectEditForm.name} onChange={(event) => patchProjectEditForm({ name: event.currentTarget.value })} />
                             </span>
                           </section>
                           <section className="project-edit-setting-row" aria-label={projectEditCopy.pathAria}>
@@ -9484,11 +9569,7 @@ export function App(props: {
                               <small>{projectEditCopy.pathHelp}</small>
                             </span>
                             <span className="project-edit-setting-field">
-                              <input
-                                aria-label={projectEditCopy.pathAria}
-                                value={projectEditForm.localPath}
-                                onChange={(event) => patchProjectEditForm({ localPath: event.currentTarget.value })}
-                              />
+                              <input aria-label={projectEditCopy.pathAria} value={projectEditForm.localPath} onChange={(event) => patchProjectEditForm({ localPath: event.currentTarget.value })} />
                             </span>
                           </section>
                           <section className="project-edit-setting-row project-edit-textarea-row" aria-label={projectEditCopy.descriptionAria}>
@@ -9497,11 +9578,7 @@ export function App(props: {
                               <small>{projectEditCopy.descriptionHelp}</small>
                             </span>
                             <span className="project-edit-setting-field">
-                              <textarea
-                                aria-label={projectEditCopy.descriptionAria}
-                                value={projectEditForm.description}
-                                onChange={(event) => patchProjectEditForm({ description: event.currentTarget.value })}
-                              />
+                              <textarea aria-label={projectEditCopy.descriptionAria} value={projectEditForm.description} onChange={(event) => patchProjectEditForm({ description: event.currentTarget.value })} />
                             </span>
                           </section>
                           <div className="project-edit-command-rail" aria-label={projectEditCopy.saveAria}>
@@ -9545,11 +9622,7 @@ export function App(props: {
                               <small>{projectConfigCopy.defaultModelHelp}</small>
                             </span>
                             <span className="project-config-setting-field">
-                              <input
-                                aria-label={projectConfigCopy.defaultModelAria}
-                                value={projectConfigForm.defaultModel}
-                                onChange={(event) => patchProjectConfigForm({ defaultModel: event.currentTarget.value })}
-                              />
+                              <input aria-label={projectConfigCopy.defaultModelAria} value={projectConfigForm.defaultModel} onChange={(event) => patchProjectConfigForm({ defaultModel: event.currentTarget.value })} />
                             </span>
                           </section>
                           <section className="project-config-setting-row" aria-label={projectConfigCopy.defaultWorkModeAria}>
@@ -9578,11 +9651,7 @@ export function App(props: {
                               <small>{projectConfigCopy.defaultTaskPromptHelp}</small>
                             </span>
                             <span className="project-config-setting-field">
-                              <textarea
-                                aria-label={projectConfigCopy.defaultTaskPromptAria}
-                                value={projectConfigForm.defaultTaskPrompt}
-                                onChange={(event) => patchProjectConfigForm({ defaultTaskPrompt: event.currentTarget.value })}
-                              />
+                              <textarea aria-label={projectConfigCopy.defaultTaskPromptAria} value={projectConfigForm.defaultTaskPrompt} onChange={(event) => patchProjectConfigForm({ defaultTaskPrompt: event.currentTarget.value })} />
                             </span>
                           </section>
                           <section className="project-config-setting-row" aria-label={projectConfigCopy.scanIgnoreAria}>
@@ -9591,11 +9660,7 @@ export function App(props: {
                               <small>{projectConfigCopy.scanIgnoreHelp}</small>
                             </span>
                             <span className="project-config-setting-field">
-                              <input
-                                aria-label={projectConfigCopy.scanIgnoreAria}
-                                value={projectConfigForm.scanIgnoreDirectories}
-                                onChange={(event) => patchProjectConfigForm({ scanIgnoreDirectories: event.currentTarget.value })}
-                              />
+                              <input aria-label={projectConfigCopy.scanIgnoreAria} value={projectConfigForm.scanIgnoreDirectories} onChange={(event) => patchProjectConfigForm({ scanIgnoreDirectories: event.currentTarget.value })} />
                             </span>
                           </section>
                           <section className="project-config-setting-row" aria-label={projectConfigCopy.indexScopeAria}>
@@ -9625,11 +9690,7 @@ export function App(props: {
                               <small>{projectConfigCopy.primaryLanguageHelp}</small>
                             </span>
                             <span className="project-config-setting-field">
-                              <input
-                                aria-label={projectConfigCopy.primaryLanguageAria}
-                                value={projectConfigForm.languagePrimary}
-                                onChange={(event) => patchProjectConfigForm({ languagePrimary: event.currentTarget.value })}
-                              />
+                              <input aria-label={projectConfigCopy.primaryLanguageAria} value={projectConfigForm.languagePrimary} onChange={(event) => patchProjectConfigForm({ languagePrimary: event.currentTarget.value })} />
                             </span>
                           </section>
                           <section className="project-config-setting-row" aria-label={projectConfigCopy.additionalLanguagesAria}>
@@ -9638,11 +9699,7 @@ export function App(props: {
                               <small>{projectConfigCopy.additionalLanguagesHelp}</small>
                             </span>
                             <span className="project-config-setting-field">
-                              <input
-                                aria-label={projectConfigCopy.additionalLanguagesAria}
-                                value={projectConfigForm.languageAdditional}
-                                onChange={(event) => patchProjectConfigForm({ languageAdditional: event.currentTarget.value })}
-                              />
+                              <input aria-label={projectConfigCopy.additionalLanguagesAria} value={projectConfigForm.languageAdditional} onChange={(event) => patchProjectConfigForm({ languageAdditional: event.currentTarget.value })} />
                             </span>
                           </section>
                           <section className="project-config-setting-row" aria-label={projectConfigCopy.packageManagersAria}>
@@ -9651,11 +9708,7 @@ export function App(props: {
                               <small>{projectConfigCopy.packageManagersHelp}</small>
                             </span>
                             <span className="project-config-setting-field">
-                              <input
-                                aria-label={projectConfigCopy.packageManagersAria}
-                                value={projectConfigForm.packageManagers}
-                                onChange={(event) => patchProjectConfigForm({ packageManagers: event.currentTarget.value })}
-                              />
+                              <input aria-label={projectConfigCopy.packageManagersAria} value={projectConfigForm.packageManagers} onChange={(event) => patchProjectConfigForm({ packageManagers: event.currentTarget.value })} />
                             </span>
                           </section>
                           <section className="project-config-setting-row" aria-label={projectConfigCopy.manifestPathsAria}>
@@ -9664,11 +9717,7 @@ export function App(props: {
                               <small>{projectConfigCopy.manifestPathsHelp}</small>
                             </span>
                             <span className="project-config-setting-field">
-                              <input
-                                aria-label={projectConfigCopy.manifestPathsAria}
-                                value={projectConfigForm.manifestPaths}
-                                onChange={(event) => patchProjectConfigForm({ manifestPaths: event.currentTarget.value })}
-                              />
+                              <input aria-label={projectConfigCopy.manifestPathsAria} value={projectConfigForm.manifestPaths} onChange={(event) => patchProjectConfigForm({ manifestPaths: event.currentTarget.value })} />
                             </span>
                           </section>
                           <section className="project-config-setting-row" aria-label={projectConfigCopy.databaseConnectionAria}>
@@ -9690,11 +9739,7 @@ export function App(props: {
                               <small>{projectConfigCopy.schemaPathsHelp}</small>
                             </span>
                             <span className="project-config-setting-field">
-                              <input
-                                aria-label={projectConfigCopy.schemaPathsAria}
-                                value={projectConfigForm.databaseSchemaPaths}
-                                onChange={(event) => patchProjectConfigForm({ databaseSchemaPaths: event.currentTarget.value })}
-                              />
+                              <input aria-label={projectConfigCopy.schemaPathsAria} value={projectConfigForm.databaseSchemaPaths} onChange={(event) => patchProjectConfigForm({ databaseSchemaPaths: event.currentTarget.value })} />
                             </span>
                           </section>
                           <section className="project-config-setting-row" aria-label={projectConfigCopy.telegramAliasAria}>
@@ -9703,11 +9748,7 @@ export function App(props: {
                               <small>{projectConfigCopy.telegramAliasHelp}</small>
                             </span>
                             <span className="project-config-setting-field">
-                              <input
-                                aria-label={projectConfigCopy.telegramAliasAria}
-                                value={projectConfigForm.telegramAlias}
-                                onChange={(event) => patchProjectConfigForm({ telegramAlias: event.currentTarget.value })}
-                              />
+                              <input aria-label={projectConfigCopy.telegramAliasAria} value={projectConfigForm.telegramAlias} onChange={(event) => patchProjectConfigForm({ telegramAlias: event.currentTarget.value })} />
                             </span>
                           </section>
                           <section className="project-config-setting-row project-config-toggle-row" aria-label={projectConfigCopy.allowShellAria}>
@@ -9716,12 +9757,7 @@ export function App(props: {
                               <small>{projectConfigCopy.allowShellHelp}</small>
                             </span>
                             <span className="project-config-setting-field">
-                              <input
-                                aria-label={projectConfigCopy.allowShellAria}
-                                type="checkbox"
-                                checked={projectConfigForm.allowShell}
-                                onChange={(event) => patchProjectConfigForm({ allowShell: event.currentTarget.checked })}
-                              />
+                              <input aria-label={projectConfigCopy.allowShellAria} type="checkbox" checked={projectConfigForm.allowShell} onChange={(event) => patchProjectConfigForm({ allowShell: event.currentTarget.checked })} />
                             </span>
                           </section>
                           <section className="project-config-setting-row project-config-toggle-row" aria-label={projectConfigCopy.allowGitWriteAria}>
@@ -9730,12 +9766,7 @@ export function App(props: {
                               <small>{projectConfigCopy.allowGitWriteHelp}</small>
                             </span>
                             <span className="project-config-setting-field">
-                              <input
-                                aria-label={projectConfigCopy.allowGitWriteAria}
-                                type="checkbox"
-                                checked={projectConfigForm.allowGitWrite}
-                                onChange={(event) => patchProjectConfigForm({ allowGitWrite: event.currentTarget.checked })}
-                              />
+                              <input aria-label={projectConfigCopy.allowGitWriteAria} type="checkbox" checked={projectConfigForm.allowGitWrite} onChange={(event) => patchProjectConfigForm({ allowGitWrite: event.currentTarget.checked })} />
                             </span>
                           </section>
                           <div className="project-config-state-row" aria-label={projectConfigCopy.databaseStateAria}>
@@ -9780,7 +9811,7 @@ export function App(props: {
                     actions={[
                       {
                         label: repositoryPickerLabel(),
-                        onAction: createCurrentProject,
+                        onAction: openProjectCreateDialog,
                         disabled: !projectCreationReady || creatingProjectBusy,
                         busy: creatingProjectBusy,
                       },
@@ -9876,7 +9907,7 @@ export function App(props: {
             >
               {activeProjectSection === 'tasks' ? (
                 <>
-                    {/* 任务页首屏只保留任务表格，任务列表保持完整宽度；任务详情通过透明点击层上的右侧悬浮抽屉展开，点击抽屉外空白处即可关闭。 */}
+                  {/* 任务页首屏只保留任务表格，任务列表保持完整宽度；任务详情通过透明点击层上的右侧悬浮抽屉展开，点击抽屉外空白处即可关闭。 */}
                   <TaskWorkspace
                     projectName={selectedProject?.name}
                     tasks={currentProjectTasks}
@@ -9906,7 +9937,7 @@ export function App(props: {
                     onSearchChange={setTaskSearchQuery}
                     onStatusFilterChange={setTaskStatusFilter}
                     onTagFilterChange={setTaskTagFilter}
-                    onTaskTableColumnsChange={(preferences) => setTaskTableLayoutDraft({projectId: activeProjectId, preferences})}
+                    onTaskTableColumnsChange={(preferences) => setTaskTableLayoutDraft({ projectId: activeProjectId, preferences })}
                     onSaveTaskTableLayout={() => setTaskTableLayoutScopeDialogOpen(true)}
                     onCreateTask={openTaskCreateModal}
                     onOpenTaskDetail={(taskId) => void openTaskDetailPane(taskId)}
@@ -9944,11 +9975,7 @@ export function App(props: {
                   <TaskTableLayoutDecisionDialog
                     open={taskTableLayoutLeaveDialogOpen}
                     title={appShellSettings.appLanguage === 'zh-CN' ? '任务列表布局尚未保存' : 'Task list layout is not saved'}
-                    description={
-                      appShellSettings.appLanguage === 'zh-CN'
-                        ? '离开后，本次列显隐、排序、位置和宽度修改将丢失。'
-                        : 'Leaving now will discard your column visibility, sort, order, and width changes.'
-                    }
+                    description={appShellSettings.appLanguage === 'zh-CN' ? '离开后，本次列显隐、排序、位置和宽度修改将丢失。' : 'Leaving now will discard your column visibility, sort, order, and width changes.'}
                     actions={[
                       {
                         id: 'continue-editing',
@@ -10014,21 +10041,21 @@ export function App(props: {
                     onLoadAttachmentPreview={props.onLoadTaskAttachmentPreview}
                     onOpenAttachment={props.onOpenTaskAttachment}
                   />
-                    {taskDetailPaneTask ? (
-                        <WorkspaceDrawer
-                            presentation="floating"
-                            backdrop="dimmed"
-                            size="standard"
-                            label={taskWorkspaceCopy.detailPaneLabel}
-                            backdropLabel={taskWorkspaceCopy.detailPaneBackdrop}
-                            closeLabel={taskWorkspaceCopy.detailPaneClose}
-                            className="task-detail-floating-drawer"
-                            portalStyle={workspaceDrawerPortalStyle}
-                            onClose={() => setTaskDetailPaneTaskId(undefined)}
-                        >
-                            <TaskDetailPaneContent
-                                task={taskDetailPaneTask}
-                                events={taskEvents.filter((event) => event.taskId === taskDetailPaneTask.id)}
+                  {taskDetailPaneTask ? (
+                    <WorkspaceDrawer
+                      presentation="floating"
+                      backdrop="dimmed"
+                      size="standard"
+                      label={taskWorkspaceCopy.detailPaneLabel}
+                      backdropLabel={taskWorkspaceCopy.detailPaneBackdrop}
+                      closeLabel={taskWorkspaceCopy.detailPaneClose}
+                      className="task-detail-floating-drawer"
+                      portalStyle={workspaceDrawerPortalStyle}
+                      onClose={() => setTaskDetailPaneTaskId(undefined)}
+                    >
+                      <TaskDetailPaneContent
+                        task={taskDetailPaneTask}
+                        events={taskEvents.filter((event) => event.taskId === taskDetailPaneTask.id)}
                         copy={taskWorkspaceCopy}
                         statusLabels={taskManagementStatusLabels[appShellSettings.appLanguage]}
                         eventTypeLabels={uiCopy.taskEventTypeLabels}
@@ -10047,25 +10074,24 @@ export function App(props: {
                   ) : null}
                 </>
               ) : taskModelPushPending && taskModelPushPending.status !== 'accepted' && selectedNativeConversation?.id === taskModelPushPending.choice.id ? (
-                  <TaskModelPushPendingWorkspace language={appShellSettings.appLanguage} pending={taskModelPushPending}
-                                                 onRetry={retryTaskModelPush}/>
+                <TaskModelPushPendingWorkspace language={appShellSettings.appLanguage} pending={taskModelPushPending} onRetry={retryTaskModelPush} />
               ) : selectedNativeConversation && props.nativeConversationClient && selectedNativeConversation.transportKind === 'codex_native' && !selectedNativeConversation.readOnly && nativeSessionOwner ? (
                 <ConnectedSessionWorkspace
-                    key={selectedNativeConversation.id}
+                  key={selectedNativeConversation.id}
                   language={appShellSettings.appLanguage}
                   client={props.nativeConversationClient}
                   conversation={selectedNativeConversation}
                   task={nativeSessionTask}
                   owner={nativeSessionOwner}
                   choices={nativeSessionChoices}
-                    initialOptimisticState={taskModelPushPending?.status === 'accepted' && taskModelPushPending.choice.id === selectedNativeConversation.id ? taskModelPushPending.session : undefined}
+                  initialOptimisticState={taskModelPushPending?.status === 'accepted' && taskModelPushPending.choice.id === selectedNativeConversation.id ? taskModelPushPending.session : undefined}
                   onChooseAttachments={props.onChooseConversationResources ? chooseNativeConversationAttachments : undefined}
-                    onStateChange={(conversationId, state) => {
-                        recordNativeConversationRuntimeState(conversationId, state);
-                        if (taskModelPushPending?.status === 'accepted' && taskModelPushPending.choice.id === conversationId && selectHasConfirmedUserMessage(state, taskModelPushPending.request.clientUserMessageId)) {
-                            setTaskModelPushPending(null);
-                        }
-                    }}
+                  onStateChange={(conversationId, state) => {
+                    recordNativeConversationRuntimeState(conversationId, state);
+                    if (taskModelPushPending?.status === 'accepted' && taskModelPushPending.choice.id === conversationId && selectHasConfirmedUserMessage(state, taskModelPushPending.request.clientUserMessageId)) {
+                      setTaskModelPushPending(null);
+                    }
+                  }}
                   onStartConversation={startNativeConversation}
                   onStartProjectConversation={startProjectConversation}
                 />
@@ -10816,11 +10842,11 @@ export function App(props: {
                           language={appShellSettings.appLanguage}
                           title={appShellSettings.appLanguage === 'zh-CN' ? '优先级' : 'Priority'}
                           description={appShellSettings.appLanguage === 'zh-CN' ? 'P0 至 P4 的业务顺序' : 'Business order for P0 through P4'}
-                          items={taskTableEnumSortOrders.priority.map((value) => ({value, label: taskPriorityLabels[value]}))}
+                          items={taskTableEnumSortOrders.priority.map((value) => ({ value, label: taskPriorityLabels[value] }))}
                           onChange={(priority) =>
                             setAppShellSettings((current) => ({
                               ...current,
-                              taskTableEnumSortOrders: normalizeTaskTableEnumSortOrders({...current.taskTableEnumSortOrders, priority}),
+                              taskTableEnumSortOrders: normalizeTaskTableEnumSortOrders({ ...current.taskTableEnumSortOrders, priority }),
                             }))
                           }
                         />
@@ -10828,11 +10854,11 @@ export function App(props: {
                           language={appShellSettings.appLanguage}
                           title={appShellSettings.appLanguage === 'zh-CN' ? '管理状态' : 'Management status'}
                           description={appShellSettings.appLanguage === 'zh-CN' ? '任务交付阶段顺序' : 'Task delivery stage order'}
-                          items={taskTableEnumSortOrders.managementStatus.map((value) => ({value, label: taskManagementStatusLabels[appShellSettings.appLanguage][value]}))}
+                          items={taskTableEnumSortOrders.managementStatus.map((value) => ({ value, label: taskManagementStatusLabels[appShellSettings.appLanguage][value] }))}
                           onChange={(managementStatus) =>
                             setAppShellSettings((current) => ({
                               ...current,
-                              taskTableEnumSortOrders: normalizeTaskTableEnumSortOrders({...current.taskTableEnumSortOrders, managementStatus}),
+                              taskTableEnumSortOrders: normalizeTaskTableEnumSortOrders({ ...current.taskTableEnumSortOrders, managementStatus }),
                             }))
                           }
                         />
@@ -10840,11 +10866,11 @@ export function App(props: {
                           language={appShellSettings.appLanguage}
                           title={appShellSettings.appLanguage === 'zh-CN' ? '运行状态' : 'Run status'}
                           description={appShellSettings.appLanguage === 'zh-CN' ? 'Coding Agent 运行阶段顺序' : 'Coding Agent runtime stage order'}
-                          items={taskTableEnumSortOrders.runStatus.map((value) => ({value, label: taskAgentRunStatusLabels[appShellSettings.appLanguage][value]}))}
+                          items={taskTableEnumSortOrders.runStatus.map((value) => ({ value, label: taskAgentRunStatusLabels[appShellSettings.appLanguage][value] }))}
                           onChange={(runStatus) =>
                             setAppShellSettings((current) => ({
                               ...current,
-                              taskTableEnumSortOrders: normalizeTaskTableEnumSortOrders({...current.taskTableEnumSortOrders, runStatus}),
+                              taskTableEnumSortOrders: normalizeTaskTableEnumSortOrders({ ...current.taskTableEnumSortOrders, runStatus }),
                             }))
                           }
                         />
@@ -10862,13 +10888,7 @@ export function App(props: {
                         >
                           {appShellSettings.appLanguage === 'zh-CN' ? '恢复默认顺序' : 'Restore default order'}
                         </Button>
-                        <Button
-                          variant="primary"
-                          size="compact"
-                          onClick={() => void saveAppShellSettings()}
-                          disabled={!props.onSaveAppShellSettings || loadingRuntimeBusy}
-                          busy={loadingRuntimeBusy}
-                        >
+                        <Button variant="primary" size="compact" onClick={() => void saveAppShellSettings()} disabled={!props.onSaveAppShellSettings || loadingRuntimeBusy} busy={loadingRuntimeBusy}>
                           {settingsWorkspaceCopy.save}
                         </Button>
                       </div>
@@ -11242,9 +11262,7 @@ export function App(props: {
                     </NativeSettingsPane>
                   </section>
                 ) : null}
-                {settingsCategory === 'commands' && props.commandClient ? (
-                  <CommandCenterPanel mode="global" client={props.commandClient} language={appShellSettings.appLanguage} />
-                ) : null}
+                {settingsCategory === 'commands' && props.commandClient ? <CommandCenterPanel mode="global" client={props.commandClient} language={appShellSettings.appLanguage} /> : null}
                 {settingsCategory === 'release' ? (
                   <section className="settings-product-pane" aria-label={settingsWorkspaceCopy.categories.release}>
                     <NativeSettingsPane label={settingsWorkspaceCopy.release.paneTitle} className="deep-settings-pane release-settings-pane">
@@ -11646,9 +11664,7 @@ function toSafeAppShellImport(
     defaultModel: typeof raw.defaultModel === 'string' ? raw.defaultModel : null,
     defaultTaskTemplateId: typeof raw.defaultTaskTemplateId === 'string' ? raw.defaultTaskTemplateId : null,
     taskTableColumns: normalizeTaskTableColumnPreferences(raw.taskTableColumns),
-    taskTableColumnsByProject: Object.fromEntries(
-      Object.entries(raw.taskTableColumnsByProject ?? {}).map(([projectId, preferences]) => [projectId, normalizeTaskTableColumnPreferences(preferences)]),
-    ),
+    taskTableColumnsByProject: Object.fromEntries(Object.entries(raw.taskTableColumnsByProject ?? {}).map(([projectId, preferences]) => [projectId, normalizeTaskTableColumnPreferences(preferences)])),
     taskTableEnumSortOrders: normalizeTaskTableEnumSortOrders(raw.taskTableEnumSortOrders),
   };
 }
@@ -13918,6 +13934,129 @@ function GraphEdgeDetailPanel(props: { edge: GraphViewSnapshot['edges'][number];
   );
 }
 
+function ProjectCreateDialog(props: {
+  open: boolean;
+  form: ProjectCreateFormState;
+  busy: boolean;
+  directoryBusy: boolean;
+  error?: string;
+  copy: ReturnType<typeof getLanguageCopy>['sidebar'];
+  onNameChange: (name: string) => void;
+  onChooseDirectory: () => void;
+  onClose: () => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+  const nameInputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (!props.open) return;
+    const focusFrame = window.requestAnimationFrame(() => nameInputRef.current?.focus());
+    return () => window.cancelAnimationFrame(focusFrame);
+  }, [props.open]);
+  if (!props.open) return null;
+
+  const interactionBusy = props.busy || props.directoryBusy;
+  const describedBy = props.error ? 'project-create-folder-help project-create-error' : 'project-create-folder-help';
+
+  function handleProjectCreateKeyDown(event: ReactKeyboardEvent<HTMLFormElement>): void {
+    if (event.key === 'Escape' && !interactionBusy) {
+      event.stopPropagation();
+      props.onClose();
+      return;
+    }
+    if (event.key !== 'Tab') return;
+    const controls = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), a[href], [tabindex]:not([tabindex="-1"])')).filter(
+      (element) => element.tabIndex >= 0 && element.getAttribute('aria-hidden') !== 'true',
+    );
+    if (controls.length === 0) return;
+    const firstControl = controls[0];
+    const lastControl = controls.at(-1);
+    if (event.shiftKey && document.activeElement === firstControl) {
+      event.preventDefault();
+      lastControl?.focus();
+    } else if (!event.shiftKey && document.activeElement === lastControl) {
+      event.preventDefault();
+      firstControl?.focus();
+    }
+  }
+
+  return (
+    <ModalPortal rootClassName="project-create-dialog-portal-root" backdropClassName="project-create-dialog-backdrop" dismissDisabled={interactionBusy} onDismiss={props.onClose}>
+      <form
+        className="project-create-dialog zeus-solid-form-surface"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="project-create-dialog-title"
+        aria-describedby={describedBy}
+        onSubmit={props.onSubmit}
+        onKeyDown={handleProjectCreateKeyDown}
+      >
+        <header className="project-create-dialog-header">
+          <strong id="project-create-dialog-title">{props.copy.createDialogTitle}</strong>
+          <button type="button" className="project-create-dialog-close" aria-label={props.copy.createCancel} onClick={props.onClose} disabled={interactionBusy}>
+            <X aria-hidden="true" weight="regular" />
+          </button>
+        </header>
+        <div className="project-create-dialog-body">
+          <label className="visually-hidden" htmlFor="project-create-name-input">
+            {props.copy.createNameLabel}
+          </label>
+          <div className="project-create-name-control">
+            <span className="project-create-name-icon" aria-hidden="true">
+              <Folder weight="regular" />
+            </span>
+            <input
+              ref={nameInputRef}
+              id="project-create-name-input"
+              value={props.form.name}
+              placeholder={props.copy.createNamePlaceholder}
+              aria-invalid={props.error === props.copy.createNameRequired ? true : undefined}
+              onChange={(event) => props.onNameChange(event.currentTarget.value)}
+              disabled={interactionBusy}
+            />
+          </div>
+          <section className="project-create-folder-field" aria-labelledby="project-create-folder-label">
+            <strong id="project-create-folder-label">{props.copy.createFolderLabel}</strong>
+            <p id="project-create-folder-help" className="visually-hidden">
+              {props.copy.createFolderHelp}
+            </p>
+            <button
+              type="button"
+              className="project-create-folder-picker"
+              data-selected={props.form.localPath ? 'true' : 'false'}
+              aria-describedby="project-create-folder-help"
+              onClick={props.onChooseDirectory}
+              disabled={interactionBusy}
+              {...controlBusyProps(props.directoryBusy)}
+            >
+              <span className="project-create-folder-picker-icon" aria-hidden="true">
+                {props.form.localPath ? <FolderOpen weight="regular" /> : <FolderPlus weight="regular" />}
+              </span>
+              <span className="project-create-folder-picker-copy">
+                <strong>{props.form.localPath ? defaultProjectNameFromLocalPath(props.form.localPath) : props.copy.createChooseFolder}</strong>
+                {props.form.localPath ? <small title={props.form.localPath}>{props.form.localPath}</small> : null}
+              </span>
+              {props.form.localPath ? <span className="project-create-folder-change">{props.copy.createChangeFolder}</span> : null}
+            </button>
+          </section>
+          {props.error ? (
+            <p className="project-create-error" id="project-create-error" role="alert">
+              {props.error}
+            </p>
+          ) : null}
+        </div>
+        <footer className="project-create-dialog-footer">
+          <Button variant="secondary" size="regular" onClick={props.onClose} disabled={interactionBusy}>
+            {props.copy.createCancel}
+          </Button>
+          <Button type="submit" variant="primary" size="regular" busy={props.busy} disabled={interactionBusy || !props.form.name.trim() || !props.form.localPath}>
+            {props.busy ? props.copy.createSubmitting : props.copy.createSubmit}
+          </Button>
+        </footer>
+      </form>
+    </ModalPortal>
+  );
+}
+
 function ProjectRenameDialog(props: {
   project?: ProjectRecord;
   draft: string;
@@ -13941,60 +14080,55 @@ function ProjectRenameDialog(props: {
 
   const describedBy = props.error ? 'project-rename-dialog-help project-rename-error' : 'project-rename-dialog-help';
   const surface = (
-    <ModalPortal
-      rootClassName="project-rename-dialog-portal-root"
-      backdropClassName="project-rename-dialog-backdrop"
-      dismissDisabled={props.busy}
-      onDismiss={props.onClose}
-    >
-        <form
-          className="project-rename-dialog zeus-solid-form-surface"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="project-rename-dialog-title"
-          aria-describedby={describedBy}
-          onSubmit={props.onSubmit}
-          onKeyDown={(event) => {
-            if (event.key !== 'Escape' || props.busy) return;
-            event.stopPropagation();
-            props.onClose();
-          }}
-        >
-          <header className="project-rename-dialog-header">
-            <span>
-              <strong id="project-rename-dialog-title">{props.copy.renameDialogTitle}</strong>
-              <small id="project-rename-dialog-help">{props.copy.renameDialogHelp}</small>
-            </span>
-            <button type="button" className="project-rename-dialog-close" aria-label={props.copy.renameCancel} onClick={props.onClose} disabled={props.busy}>
-              <X aria-hidden="true" weight="regular" />
-            </button>
-          </header>
-          <div className="project-rename-dialog-body">
-            <label htmlFor="project-rename-input">{props.copy.renameLabel}</label>
-            <input
-              ref={inputRef}
-              id="project-rename-input"
-              value={props.draft}
-              placeholder={props.copy.renamePlaceholder}
-              aria-invalid={props.error ? true : undefined}
-              onChange={(event) => props.onDraftChange(event.currentTarget.value)}
-              disabled={props.busy}
-            />
-            {props.error ? (
-              <small className="project-rename-error" id="project-rename-error" role="alert">
-                {props.error}
-              </small>
-            ) : null}
-          </div>
-          <footer className="project-rename-dialog-footer">
-            <Button variant="secondary" size="regular" className="project-rename-dialog-cancel" onClick={props.onClose} disabled={props.busy}>
-              {props.copy.renameCancel}
-            </Button>
-            <Button type="submit" variant="primary" size="regular" className="project-rename-dialog-submit" busy={props.busy} disabled={!props.draft.trim()}>
-              {props.busy ? props.copy.renameSaving : props.copy.renameSave}
-            </Button>
-          </footer>
-        </form>
+    <ModalPortal rootClassName="project-rename-dialog-portal-root" backdropClassName="project-rename-dialog-backdrop" dismissDisabled={props.busy} onDismiss={props.onClose}>
+      <form
+        className="project-rename-dialog zeus-solid-form-surface"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="project-rename-dialog-title"
+        aria-describedby={describedBy}
+        onSubmit={props.onSubmit}
+        onKeyDown={(event) => {
+          if (event.key !== 'Escape' || props.busy) return;
+          event.stopPropagation();
+          props.onClose();
+        }}
+      >
+        <header className="project-rename-dialog-header">
+          <span>
+            <strong id="project-rename-dialog-title">{props.copy.renameDialogTitle}</strong>
+            <small id="project-rename-dialog-help">{props.copy.renameDialogHelp}</small>
+          </span>
+          <button type="button" className="project-rename-dialog-close" aria-label={props.copy.renameCancel} onClick={props.onClose} disabled={props.busy}>
+            <X aria-hidden="true" weight="regular" />
+          </button>
+        </header>
+        <div className="project-rename-dialog-body">
+          <label htmlFor="project-rename-input">{props.copy.renameLabel}</label>
+          <input
+            ref={inputRef}
+            id="project-rename-input"
+            value={props.draft}
+            placeholder={props.copy.renamePlaceholder}
+            aria-invalid={props.error ? true : undefined}
+            onChange={(event) => props.onDraftChange(event.currentTarget.value)}
+            disabled={props.busy}
+          />
+          {props.error ? (
+            <small className="project-rename-error" id="project-rename-error" role="alert">
+              {props.error}
+            </small>
+          ) : null}
+        </div>
+        <footer className="project-rename-dialog-footer">
+          <Button variant="secondary" size="regular" className="project-rename-dialog-cancel" onClick={props.onClose} disabled={props.busy}>
+            {props.copy.renameCancel}
+          </Button>
+          <Button type="submit" variant="primary" size="regular" className="project-rename-dialog-submit" busy={props.busy} disabled={!props.draft.trim()}>
+            {props.busy ? props.copy.renameSaving : props.copy.renameSave}
+          </Button>
+        </footer>
+      </form>
     </ModalPortal>
   );
   return surface;
@@ -14007,7 +14141,6 @@ function SidebarNav(props: {
   projects: ProjectRecord[];
   pinnedProjectIds: string[];
   collapsedProjectIds: string[];
-  repositoryPickerLabel: string;
   appLanguage: AppLanguage;
   canCreateProject: boolean;
   createProjectBusy: boolean;
@@ -14159,14 +14292,7 @@ function SidebarNav(props: {
     }
     if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key) || menuItems.length === 0) return;
     event.preventDefault();
-    const nextIndex =
-      event.key === 'Home'
-        ? 0
-        : event.key === 'End'
-          ? menuItems.length - 1
-          : event.key === 'ArrowDown'
-            ? (currentIndex + 1 + menuItems.length) % menuItems.length
-            : (currentIndex - 1 + menuItems.length) % menuItems.length;
+    const nextIndex = event.key === 'Home' ? 0 : event.key === 'End' ? menuItems.length - 1 : event.key === 'ArrowDown' ? (currentIndex + 1 + menuItems.length) % menuItems.length : (currentIndex - 1 + menuItems.length) % menuItems.length;
     menuItems[nextIndex]?.focus();
   };
   useEffect(() => {
@@ -14252,7 +14378,7 @@ function SidebarNav(props: {
     paddingBlockStart: 'var(--zeus-hidden-titlebar-safe-top, 44px)',
     paddingTop: 'var(--zeus-hidden-titlebar-safe-top, 44px)',
   } as CSSProperties;
-  const projectMenuPortalHost = typeof document === 'undefined' ? undefined : document.querySelector<HTMLElement>('.macos-ai-app.zeus-shell') ?? undefined;
+  const projectMenuPortalHost = typeof document === 'undefined' ? undefined : (document.querySelector<HTMLElement>('.macos-ai-app.zeus-shell') ?? undefined);
 
   return (
     <aside className="zeus-sidebar ai-sidebar project-first-sidebar zeus-titlebar-protected-source-list" aria-label={copy.ariaLabel} style={titlebarProtectedSidebarStyle}>
@@ -14290,19 +14416,11 @@ function SidebarNav(props: {
       <section className="project-sidebar-list zeus-source-list" role="navigation" data-source-list-keyboard="vertical" aria-label={copy.projectListLabel} onKeyDown={handleSourceListKeyboardNavigation}>
         <div className="project-sidebar-heading">
           <span>{copy.projects}</span>
+          <button type="button" className="project-add-button" aria-label={copy.addProject} title={copy.addProject} onClick={props.onCreateProject} disabled={!props.canCreateProject} {...controlBusyProps(props.createProjectBusy)}>
+            <Plus aria-hidden="true" weight="regular" />
+          </button>
         </div>
-        {props.projects.length === 0 ? (
-          <section className="project-inline-recovery-row" aria-label={copy.selectLocalRepository}>
-            <span className="project-inline-recovery-copy">
-              <strong>{copy.selectLocalRepository}</strong>
-            </span>
-            <span className="project-inline-recovery-command-rail">
-              <button type="button" onClick={props.onCreateProject} disabled={!props.canCreateProject} {...controlBusyProps(props.createProjectBusy)}>
-                {props.repositoryPickerLabel}
-              </button>
-            </span>
-          </section>
-        ) : visibleProjects.length === 0 ? (
+        {props.projects.length === 0 ? null : visibleProjects.length === 0 ? (
           <section className="project-inline-recovery-row project-search-empty-row" aria-label={copy.noProjectMatches}>
             <span className="project-inline-recovery-copy">
               <strong>{copy.noProjectMatches}</strong>

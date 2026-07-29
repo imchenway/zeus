@@ -32,6 +32,41 @@
 
 final result: passed
 
+# 2026-07-29 任务空状态与深色表头返修验收
+
+## 问题与根因
+
+- 用户指出“还没有任务”区域与任务页颜色不统一；原实现最后层覆盖把空态重新绘制成白色面板并加大阴影。
+- 用户在深色主题继续指出任务表头呈红色。该颜色不是任务、错误或危险状态，而是
+  `color-mix(in oklch, 中性灰, transparent)` 在 Chromium 中产生的透明端色相污染。
+
+## 修复
+
+- 空任务状态改为透明背景并移除阴影，直接透出任务页统一画布。
+- 深色表头改为在 sRGB 中混合 `--zeus-product-panel-muted` 与 `--zeus-product-canvas` 两个不透明中性色。
+- 顶部“新任务”继续是唯一主操作；真实零任务时不新增重复按钮或卡片。
+
+## 真实窗口证据
+
+- 浅色最大窗口：`/tmp/zeus-task-empty-light-20260729.png`
+- 深色表头修复后：`/tmp/zeus-task-empty-dark-fixed-20260729.png`
+- 深色窄窗口：`/tmp/zeus-task-empty-dark-narrow-20260729.png`
+- 浅色窄窗口：`/tmp/zeus-task-empty-light-narrow-20260729.png`
+- 跟随系统窄窗口：`/tmp/zeus-task-empty-system-narrow-20260729.png`
+- 搜索输入交互：`/tmp/zeus-task-empty-filtered-system-narrow-20260729.png`
+
+真实 Electron 使用隔离数据目录 `/tmp/zeus-project-entry-qa.PH9WS5/user-data`。最大窗口与
+`1060 × 820` 窄窗口均已检查；浅色、深色和跟随系统主题均无白色横条、暖红表头、重叠或裁切。
+搜索框可以输入并清空，零任务事实保持不变。运行日志只有隔离环境设置登录项失败的既有权限提示，没有
+Renderer 或本地服务错误。
+
+## Findings
+
+- 当前没有遗留的 `P0`、`P1` 或 `P2` 视觉问题。
+- 窄窗口中任务表格按既有设计保留横向滚动，不属于本次空态视觉回归。
+
+final result: passed
+
 # 2026-07-23 项目配置右侧留白与任务搜索最终纠错验收
 
 ## 结论纠正
@@ -42,6 +77,82 @@ final result: passed
 - macOS 当前仍处于锁屏状态，正式 App 无法启动并复验项目配置、任务创建、任务详情、设置、重命名及任务搜索布局；解锁并完成逐页截图验收前，状态保持阻塞。
 
 final result: blocked
+
+# 2026-07-29 新增项目入口与单目录创建最终验收
+
+## 参考与实现证据
+
+- 项目侧栏参考：
+  `/var/folders/2m/dswmfzbd7wx_39zxs4kvd3fc0000gn/T/codex-clipboard-6f598b90-c994-470a-8111-01e443c04ed6.png`
+- 创建项目参考：
+  `/var/folders/2m/dswmfzbd7wx_39zxs4kvd3fc0000gn/T/codex-clipboard-18fc2c6f-ceff-4f13-9542-78cb9b58a6e6.png`
+- 用户否定的旧侧栏空态：
+  `/var/folders/2m/dswmfzbd7wx_39zxs4kvd3fc0000gn/T/codex-clipboard-1f6de17c-2a01-478e-b8b9-c88b51c23252.png`
+- Zeus 零项目侧栏：
+  `/var/folders/2m/dswmfzbd7wx_39zxs4kvd3fc0000gn/T/com.openai.sky.CUAService/Zeus Screenshot 2026-07-29 at 4.05.51 PM.jpeg`
+- Zeus 空创建弹窗：
+  `/var/folders/2m/dswmfzbd7wx_39zxs4kvd3fc0000gn/T/com.openai.sky.CUAService/Zeus Screenshot 2026-07-29 at 4.06.00 PM.jpeg`
+- Zeus 已选目录弹窗：
+  `/var/folders/2m/dswmfzbd7wx_39zxs4kvd3fc0000gn/T/com.openai.sky.CUAService/Zeus Screenshot 2026-07-29 at 4.10.06 PM.jpeg`
+- Zeus 创建成功并自动切换：
+  `/var/folders/2m/dswmfzbd7wx_39zxs4kvd3fc0000gn/T/com.openai.sky.CUAService/Zeus Screenshot 2026-07-29 at 4.10.16 PM.jpeg`
+
+Codex 创建项目参考为 `1718 × 962`、`144dpi`，按高密度来源折算约为 `859 × 481` 逻辑像素；Zeus Computer Use 截图为 `1226 × 768`、`72dpi`，真实窗口恢复边界为 `1728 × 1083`，截图服务做了等比下采样。两者外围工作区并非同一产品页面，因此不以全窗口绝对坐标评价；同一比较输入中按弹窗内容区和侧栏分组做聚焦对照。Zeus 弹窗正式 CSS 宽度为 `540px`，输入框高度为 `44px`，未选目录区最小高度为 `112px`，与 Codex 高密度参考折算后的组件尺度接近。
+
+## 状态与同屏比较
+
+- 主题：浅色、简体中文、正式打包 Electron。
+- 空状态：零项目侧栏只保留“项目”标题和右侧加号，不再渲染重复文案卡片。
+- 表单状态：空表单、已编辑项目名、已选单目录、创建成功均有真实窗口证据。
+- 完整参考与实现已放入同一视觉比较输入；创建弹窗的名称输入、目录选择区和底部动作可清楚辨认，因此无需再做局部裁切。
+
+## 迭代历史
+
+1. 初始实现沿用了旧的零项目侧栏恢复卡片，形成“大边框卡片内再套同文案按钮”的重复层级。用户明确否定该视觉，按 `P2` 处理。
+2. 修复删除侧栏恢复卡片；创建入口统一由“项目”标题右侧加号承担。复验截图确认边框套边框、重复标题和重复按钮全部消失。
+3. 修复后重新执行打包与真实 Electron 交互；不存在遗留 `P0`、`P1` 或 `P2` 视觉问题。
+
+## 必查视觉面
+
+- 字体与排版：沿用 Zeus/macOS 系统字体；弹窗标题、字段标签、输入值和辅助路径形成四级层级，无异常换行或裁切。
+- 间距与布局：标题、名称输入、目录区和底部动作保持单列节奏；侧栏加号与“项目”标题同一基线，零项目时不再出现抢占列表空间的卡片。
+- 颜色与 token：表面、遮罩、边框、焦点和禁用态全部使用 Zeus 语义 token。主按钮保留 Zeus 蓝色动作语义，没有机械复制 Codex 黑色按钮。
+- 图像与资产：本界面没有图片素材；文件夹、添加目录、关闭和加号均使用现有 Phosphor 图标库，没有手工 SVG、字符图标或占位图。
+- 文案与内容：参考中的多目录文案按用户确认的单目录边界改为“项目目录”；项目名称默认取目录名但允许编辑，中英文文案完整。
+
+## 交互与运行结果
+
+1. 已有项目时加号仍可打开创建弹窗，证明不是零项目专用入口。
+2. 弹窗首次打开后焦点位于项目名称；未选目录时创建按钮禁用。
+3. 名称编辑为 `Parent Workspace` 后选择
+   `/private/tmp/zeus-project-entry-qa.PH9WS5/SampleWorkspace`，名称保持不变，目录路径完整显示。
+4. 创建后侧栏出现第二个项目并自动选中 `Parent Workspace`；隔离数据库中的名称和路径与界面一致。
+5. `Shift+Tab` 焦点循环可到达底部取消按钮；`Escape` 关闭后焦点返回侧栏加号。
+6. 交互期间应用进程没有 renderer 或本地服务错误；启动时的登录项权限提示来自隔离打包运行环境，不影响本次创建路径。
+
+## Findings
+
+- 当前没有可执行的 `P0`、`P1` 或 `P2` 差异。
+- Codex 参考与 Zeus 的外围页面、主按钮品牌色和单/多目录语义不同，均属于明确的产品边界，不是未修复漂移。
+
+## Open Questions
+
+- 无阻塞问题。多目录能力不属于本次范围。
+
+## Implementation Checklist
+
+- [x] 删除重复侧栏空态。
+- [x] 保留标题栏真实加号入口。
+- [x] 完成单目录表单与真实目录选择。
+- [x] 完成创建、刷新和自动切换。
+- [x] 完成键盘焦点闭环。
+- [x] 完成参考与正式包截图同屏复核。
+
+## Follow-up Polish
+
+- 当前无必须跟进的视觉修正；后续只有在引入多目录时才需要重做目录列表密度和排序交互。
+
+final result: passed
 
 # 2026-07-23 项目配置右侧留白纠错验收
 
@@ -296,3 +407,9 @@ final result: passed
 此外，本轮尚未在新建任务中真实执行截图剪贴板粘贴和跨 Finder drag/drop，也未完成深色、窄窗口与键盘焦点矩阵。
 
 final result: blocked
+
+# 当前任务最终结论：新增项目入口与单目录创建
+
+本文件中较早任务的 `blocked` 只描述各自历史验收状态。当前任务以“2026-07-29 新增项目入口与单目录创建最终验收”一节为准；重复侧栏空态已删除，单目录创建、自动切换、键盘焦点闭环和正式包视觉对照均已通过。
+
+final result: passed
