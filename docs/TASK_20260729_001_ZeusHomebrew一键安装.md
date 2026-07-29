@@ -135,3 +135,10 @@ brew install --cask zeus
 - GitHub Actions dry run `30421181556` 在打包阶段因空 `CSC_LINK` 被 electron-builder 误判为证书路径而失败；这次公开版本
   使用已经完整验证的本地产物直接发布，不依赖该失败 run。打包脚本已增加空 Apple secret 过滤，但未重新执行耗时的远端全量构建。
 - 当前只发布 Apple Silicon 产物，Intel Mac 不在本次支持范围。
+
+## README 精简
+
+- 用户要求 README 只保留简单的项目概述、功能说明、安装说明和首次打开处理步骤。
+- README 已明确给出“系统设置 → 隐私与安全性 → 仍要打开”，不提供删除隔离属性等命令行绕过方式。
+- GitHub About 同步补充项目简介、最新 Release 链接及 macOS、Electron、AI CLI、代码分析和 Homebrew topics。
+- 优点：首页更短，安装和首次启动处理更容易找到；缺点：构建、发布门禁和完整验证证据需要进入 `docs/` 查看。
