@@ -4,21 +4,21 @@ register: product
 
 ## 产品定位
 
-Zeus 是本地优先的 macOS AI 研发工作台，帮助个人开发者、技术负责人和开源维护者在本机完成项目管理、真实代码扫描、代码图谱理解、AI CLI 执行、Git Diff 审查与 Telegram 远程控制。
+Zeus 是一款 AI 研发工作台，将项目与任务管理、Coding Agent 会话、代码理解、Git 变更审查和自动化协作整合在同一个工作空间中。
 
 ## 用户与场景
 
-- 个人开发者：在 Mac 上远程调度本机 AI 编程任务，并把任务、Runtime 会话、Git diff 和运行验收结果留在本机证据链里。
+- 个人开发者：统一调度 AI 编程任务，并串联任务、会话、Git diff 和运行验收结果。
 - 技术负责人：快速理解陌生项目的模块、接口、表和调用链，基于真实源码和 SQL/DDL 判断影响范围。
 - 开源维护者：把 issue、任务、终端日志、代码变更、图谱上下文和远程通知串成一个闭环。
 
 ## Aha Moment
 
-用户第一次选择真实本地仓库并完成扫描后，看到由真实文件生成的系统架构图、表关系图、模块详情图、接口时序图、模块流程图和方法逻辑图，确认 Zeus 没有上传代码，也没有用假数据填充界面。
+用户第一次添加真实项目并完成扫描后，看到可追溯到源码的系统架构图、表关系图、模块详情图、接口时序图、模块流程图和方法逻辑图，并能从代码上下文继续创建任务或进入 Coding Agent 会话。
 
 ## 当前已验证边界
 
-- Zeus 当前已覆盖本地优先 macOS 桌面应用、本地 app-server、SQLite 存储、真实代码扫描、代码图谱、图谱问答、Sigma/WebGL 大图、React Flow 局部图、任务管理、AI Runtime（node-pty + xterm.js）、Git Diff、Telegram long polling、安全与发布打包。
+- Zeus 当前已覆盖 Electron 桌面应用、app-server、SQLite 存储、真实代码扫描、代码图谱、图谱问答、Sigma/WebGL 大图、React Flow 局部图、任务管理、AI Runtime（node-pty + xterm.js）、Git Diff、Telegram long polling、安全与发布打包。当前公开安装包为 Apple Silicon macOS 版本，这是发布边界，不是产品平台定位。
 - 当前发布证据链包含 lint、typecheck、build、package:mac、DMG/ZIP、Homebrew cask、包内 Electron 可执行文件加载及必要的真实运行验收；各阶段证据不得互相替代。
 - 当前真实扫描基线为 162 files / 15984 nodes / 31536 edges / 7 views，扫描的是 `/Users/david/hypha/zeus` 真实代码库。
 - 缺少真实数据时，产品展示空态、失败态、未配置态或外部配置等待项，不用 seed 数据伪造繁荣度。
@@ -41,7 +41,7 @@ Zeus 是本地优先的 macOS AI 研发工作台，帮助个人开发者、技�
 
 ## 产品原则
 
-- 本地优先，不默认上传代码。
+- 用户拥有项目数据、执行权限和外部集成的明确控制权。
 - 无真实来源不展示业务数据。
 - 外部工具缺失时清楚显示“需要配置”，不伪造结果。
 - 高风险 Git、Shell、文件操作默认二次确认。

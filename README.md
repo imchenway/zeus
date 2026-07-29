@@ -1,19 +1,19 @@
 # Zeus
 
-Zeus 是一个本地优先的 macOS AI 研发工作台，用于管理本地项目、理解代码、运行 AI CLI 和审查代码变更。项目代码与运行数据默认保存在本机。
+Zeus 是一款 AI 研发工作台，将项目与任务管理、Coding Agent 会话、代码理解、Git 变更审查和自动化协作整合在同一个工作空间中。
 
 ## 功能
 
-- 管理本地项目、任务和运行会话。
+- 管理项目、任务和 Coding Agent 会话。
 - 扫描真实代码，生成架构、模块、接口和数据关系图。
 - 基于代码图谱、源码和 SQL 进行检索与问答。
-- 运行 Codex、Claude、Gemini 等本地 AI CLI，并保存终端日志。
+- 接入 Codex、Claude、Gemini 等 Coding Agent，并保存执行日志。
 - 查看 Git 状态与 Diff，重要写操作保留确认步骤。
 - 可选接入 Telegram，接收通知和执行受控命令。
 
 ## 安装
 
-当前版本支持 Apple Silicon Mac，要求 macOS 13 或更高版本。
+当前 Homebrew 安装包支持 Apple Silicon Mac，要求 macOS 13 或更高版本。
 
 ```bash
 brew install --cask imchenway/tap/zeus

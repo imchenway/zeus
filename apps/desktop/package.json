@@ -22,6 +22,6 @@
     "react-dom": "^19.1.0",
     "sigma": "^3.0.3"
   },
-  "description": "Zeus local-first macOS AI development workbench",
+  "description": "Zeus AI development workbench for projects, coding agents, code intelligence, and Git workflows",
   "author": "Zeus Contributors"
 }

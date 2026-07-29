@@ -142,3 +142,13 @@ brew install --cask zeus
 - README 已明确给出“系统设置 → 隐私与安全性 → 仍要打开”，不提供删除隔离属性等命令行绕过方式。
 - GitHub About 同步补充项目简介、最新 Release 链接及 macOS、Electron、AI CLI、代码分析和 Homebrew topics。
 - 优点：首页更短，安装和首次启动处理更容易找到；缺点：构建、发布门禁和完整验证证据需要进入 `docs/` 查看。
+
+## 产品定位纠正
+
+- 用户明确纠正 Zeus 不是以“本地优先”或“macOS 专属”为产品定位；此前 README 与 GitHub About 混淆了产品定位和当前发布形态。
+- README、`PRODUCT.md`、开发设计中的产品一句话和桌面包描述统一改为 AI 研发工作台，核心是项目与任务、Coding Agent
+  会话、代码理解、Git 变更审查和自动化协作。
+- 当前 Homebrew 安装包仍只支持 Apple Silicon macOS；README 将其明确写成当前安装包边界，不再表述为产品平台边界。
+- GitHub About 同步移除 `local-first`、`macos` topics，改用 `coding-agent`、`developer-tools` 和
+  `project-management`。
+- 优点：产品定位不再被当前安装包和部署方式限制；缺点：当前只发布 macOS 安装包的事实仍必须在安装说明中单独保留。
