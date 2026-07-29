@@ -1,18 +1,21 @@
 # Changelog
 
-## 0.1.0 - 2026-06-15
+## 0.1.0 - 2026-07-29
 
 ### 已验证产物
 
-- 该版本发布时 `pnpm verify:release` 曾记录 63 个测试文件、548 项检查通过；此项仅保留为历史事实，当前自动化测试体系已经退役。
+- `pnpm verify:release` 已通过；当前自动化测试体系已经退役，发布证据来自静态检查、生产构建、正式打包和真实运行。
 - 真实代码扫描已通过：163 files / 16327 nodes / 32021 edges / 7 views。
-- macOS unsigned DMG/ZIP 已生成并通过发布门禁：
+- macOS ad-hoc 签名且未公证的 DMG/ZIP 已生成并通过发布门禁：
   - `dist/mac-arm64/Zeus.app`
   - `dist/Zeus-0.1.0-arm64.dmg`
   - `dist/Zeus-0.1.0-arm64.zip`
 - 包内 Electron 可执行文件已由发布门禁加载验证：`electron=36.9.5;node=22.19.0;arch=arm64`。
-- AI CLI adapter 探针已纳入发布门禁：`ai-cli-adapters=checked;codex=available@0.139.0;claude=available@2.1.152;gemini=available@0.32.1;authStatus=real-probe-or-unknown`，只检测真实命令/版本/登录输出，不伪造已登录状态。
-- Homebrew cask sha256：`0610d3b917feb0db9e285efd51d4b3dfc602669776152f0252b4993ff9465c4d`。
+- AI CLI adapter 探针已纳入发布门禁：`ai-cli-adapters=checked;codex=available@0.145.0;claude=available@2.1.198;gemini=available@0.32.1;authStatus=real-probe-or-unknown`，只检测真实命令/版本/登录输出，不伪造已登录状态。
+- Homebrew cask sha256：`5ba434a0c71b4e8140eb065df6b16e839cf5f17b97c0a4adcbd7d6f07f3a52a9`。
+- GitHub Release 已公开：`https://github.com/imchenway/zeus/releases/tag/v0.1.0`。
+- Homebrew Tap 已同步，`brew install --cask imchenway/tap/zeus` 已完成真实下载、安装和启动验收。
+- Homebrew 安装版 `/health` 返回 `ok=true`、`version=0.1.0`、`database=ok`、`runtime=ok`。
 
 ### 主要能力
 
@@ -21,13 +24,13 @@
 - `pnpm dev`、Codex Run 按钮、`script/build_and_run.sh` 已对齐到同一 macOS 启动链路。
 - 该版本发布时 `pnpm verify:release` 曾覆盖 lint、typecheck、自动化测试、真实扫描、构建、打包、Homebrew cask 生成和包内 App 可执行加载；当前门禁以静态检查、生产构建、正式打包和真实运行验收为准。
 
-### 外部配置等待项
+### 可选增强与外部配置
 
-- Apple signing certificate：等待用户配置；当前仅验证 unsigned DMG/ZIP。
-- notarization：等待用户配置；当前不伪造 notarization 成功。
+- Apple signing certificate：后续可选增强；当前公开产物使用 ad-hoc 签名。
+- notarization：后续可选增强；当前 manifest 明确记录 `notarized=false`。
 - Telegram Bot Token / 白名单：等待用户按真实账号配置。
 - AI CLI 登录状态：等待用户在本机完成 Codex/Claude/Gemini 等 CLI 安装与登录。
-- Homebrew tap token：等待用户配置。
+- Homebrew tap token：仅 Actions 自动同步需要；当前版本已在明确授权下完成 Tap 发布。
 - `node-pty` / `xterm`、Sigma/WebGL、React Flow 已接入；Postgres/MySQL 驱动仅作为可选连接器，非 Zeus 本地核心依赖。
 
-- GitHub Release workflow 保留签名、notarization、Homebrew tap token 输入，并支持已有 tag 创建 draft Release。
+- GitHub Release workflow 支持已有 tag 创建非草稿 Release、同步 Tap，并可按需启用 Developer ID 与 Apple 公证严格门禁。

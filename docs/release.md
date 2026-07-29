@@ -1,7 +1,7 @@
 # 发布工程
 
-Zeus 发布工程必须基于真实构建、真实运行检查和真实产物。没有 Apple Developer ID 或 notarization 凭据时，可以交付本地
-ad-hoc 签名 DMG/ZIP，但必须显式标注，不得伪造正式签名、公证或远端发布成功。
+Zeus 发布工程必须基于真实构建、真实运行检查和真实产物。Apple signing / notarization 未配置时，可以公开交付
+ad-hoc 签名的 unsigned DMG/ZIP，但必须显式标注签名、公证和 Gatekeeper 限制，不得伪造 Apple 分发认证。
 
 ## 发布脚本
 
@@ -42,18 +42,32 @@ renderer/main 非 GUI 健康检查。
 - 正式 App 真实启动：仅监听 `127.0.0.1`，`/health` 返回 `ok=true`、`status=ok`、`version=0.1.0`，随后正常退出。
 - Homebrew cask sha256：`5ba434a0c71b4e8140eb065df6b16e839cf5f17b97c0a4adcbd7d6f07f3a52a9`。
 - 临时 Tap 中 `brew info --cask`、`brew install --cask --dry-run` 与 `brew style`：通过；临时 Tap 已删除。
+- GitHub Release：`https://github.com/imchenway/zeus/releases/tag/v0.1.0`，6 个资产均已上传；GitHub 返回的 DMG/ZIP
+  SHA256 与本地产物一致。
+- Homebrew Tap：`imchenway/homebrew-tap` 的 `Casks/zeus.rb` 已发布，提交为
+  `67437061e7434d8c68410b11a9afb7e0aba69c59`，远端内容摘要与本地 Cask 一致。
+- 标准命令 `brew install --cask imchenway/tap/zeus` 已从公开 Release 完成真实下载、SHA256 校验和安装，
+  `/Applications/Zeus.app` 的版本为 `0.1.0`。
+- Homebrew 安装版已真实启动，主进程和内置 Codex runtime 均来自 `/Applications/Zeus.app`；`/health` 返回
+  `ok=true`、`status=ok`、`version=0.1.0`、`database=ok`、`runtime=ok`。
 
 ## 签名与 notarization
 
-Apple signing / notarization 未配置时，只能声明未完成正式分发签名与公证，不伪造 notarization 成功。
+Apple signing / notarization 未配置时，允许进行明确标注的实用发布；这不等同于 Developer ID 正式签名或 Apple 公证。
 
 - 本地没有证书时，electron-builder 在生成 DMG/ZIP 前对 App 执行 ad-hoc 签名，保证归档内外是同一签名阶段；这不等同于 Developer ID 签名。
 - CI/release workflow 支持 `MACOS_CERTIFICATE`、`MACOS_CERTIFICATE_PASSWORD`、Apple ID，或
   `APPLE_API_KEY_P8` / `APPLE_API_KEY_ID` / `APPLE_API_ISSUER` App Store Connect API Key 公证凭据，以及
   `HOMEBREW_TAP_TOKEN`。
-- `publish_release=true` 时，发布门禁必须从最终 App 中确认 Developer ID 签名与 Apple 公证票据，否则在创建 Release 前失败。
-- 签名和公证成功前，README、CHANGELOG、ROADMAP、实现报告、PR 模板都必须标注 ad-hoc / 未公证 / waiting。
-- 不得把未签名产物描述为正式已签名发布。
+- `publish_release=true` 默认允许发布真实验证过的 ad-hoc 产物；只有显式设置
+  `require_apple_distribution=true` 时，才强制最终 App 同时具备 Developer ID 签名与 Apple 公证票据。
+- GitHub Actions 注入空 Apple secret 时，打包脚本会移除空值，避免 electron-builder 把空 `CSC_LINK` 误判成证书路径。
+- 当前公开版本的 manifest 明确记录 `signed=false`、`notarized=false`；`spctl --assess` 返回 rejected，但本机普通
+  `open` 已成功启动。其他 Mac 仍可能需要在 Finder 中右键“打开”并确认系统提示。
+- 不得把 ad-hoc 产物描述为已完成 Developer ID 签名或 Apple 公证。
+
+当前方案优点是无需等待 Apple Developer 凭据即可稳定形成 Release、Tap 和一键安装链路；缺点是首次启动体验不如已公证应用，
+也不能启用静默自动更新。Developer ID 签名和公证保留为后续增强。
 
 ## Homebrew cask
 
@@ -67,14 +81,16 @@ sha256 由 release 脚本从真实 DMG 计算，不允许 sha256 :no_check。
 - `app "Zeus.app"` 安装到 `/Applications/Zeus.app`。
 - uninstall 通过 bundle id 退出 Zeus；当前源码没有 LaunchAgent，不声明不存在的 launchctl 清理。
 - zap 清理 `~/Library/Application Support/Zeus` 需要用户确认。
-- 远端 Homebrew Tap 发布需要用户提供只对 `imchenway/homebrew-tap` 有 Contents 写权限的 token；未提供时只生成本地 Cask。
+- Actions 自动同步远端 Tap 需要只对 `imchenway/homebrew-tap` 有 Contents 写权限的 token；明确授权的人工发布也可通过
+  GitHub API 同步，不影响 Cask 生成和安装。
 
-## 外部等待项
+## 可选增强与自动化凭据
 
-- Apple Developer 证书、notarization 凭据、Homebrew tap token。
-- GitHub Release 发布权限；`publish_release=false` 时只上传 Actions artifact，不创建 Release、不更新 Tap。
-- `publish_release=true` 时，既有 tag 必须与 `package.json` 版本一致；workflow 先完成签名、公证与发布门禁，再创建非草稿
-  GitHub Release，最后把 `dist/homebrew/zeus.rb` 同步为 Tap 仓库的 `Casks/zeus.rb`。
+- Apple Developer 证书和 notarization 凭据只用于改善 Gatekeeper 体验及启用严格 Apple 分发，不阻塞实用发布。
+- `HOMEBREW_TAP_TOKEN` 用于 Actions 自动同步 Tap；当前公开版本已在用户明确授权下完成 Release 与 Tap 人工发布。
+- `publish_release=false` 时只上传 Actions artifact，不创建 Release、不更新 Tap。
+- `publish_release=true` 时，既有 tag 必须与 `package.json` 版本一致；workflow 完成发布门禁后创建非草稿 GitHub Release，
+  最后把 `dist/homebrew/zeus.rb` 同步为 Tap 仓库的 `Casks/zeus.rb`。
 - 同名 Release 已存在时只允许 DMG SHA256 完全一致的幂等续跑，禁止用同一版本静默替换二进制。
 - 应用内更新检查读取 GitHub Release manifest；签名和公证完成前只允许打开 GitHub Release 手动安装，不做静默替换。
 

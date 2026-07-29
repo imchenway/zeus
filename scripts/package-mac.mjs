@@ -41,6 +41,16 @@ function hasNotarizationConfiguration(env) {
   return hasApiKey || hasAppleId || hasKeychainProfile;
 }
 
+function omitEmptyAppleReleaseEnvironment(env) {
+  const normalizedEnv = { ...env };
+  const releaseKeys = ['CSC_LINK', 'CSC_NAME', 'CSC_KEY_PASSWORD', 'APPLE_ID', 'APPLE_APP_SPECIFIC_PASSWORD', 'APPLE_TEAM_ID', 'APPLE_API_KEY', 'APPLE_API_KEY_ID', 'APPLE_API_ISSUER', 'APPLE_KEYCHAIN_PROFILE'];
+  // GitHub Actions 会把未配置的 secret 注入为空字符串；electron-builder 会把空 CSC_LINK 误判为证书路径。
+  for (const key of releaseKeys) {
+    if (!normalizedEnv[key]?.trim()) delete normalizedEnv[key];
+  }
+  return normalizedEnv;
+}
+
 function buildElectronBuilderSigningArgs(env) {
   if (!hasDeveloperIdSigningConfiguration(env)) {
     return ['--config.mac.identity=-', '--config.mac.notarize=false'];
@@ -184,7 +194,7 @@ export async function packageMac() {
   await assertPackagedAppIsNotRunning(appPath);
   await refreshCodexRuntimeManifest(arch);
   await run('pnpm', ['build'], { cwd: desktopDir });
-  const packageEnv = buildMacNativeDependencyEnv();
+  const packageEnv = buildMacNativeDependencyEnv(omitEmptyAppleReleaseEnvironment(process.env));
   const signingArgs = buildElectronBuilderSigningArgs(packageEnv);
   const electronDistArgs = electronDist ? [`--config.electronDist=${electronDist}`] : [];
   await run('pnpm', ['--filter', '@zeus/desktop', 'exec', 'electron-builder', '--mac', 'dmg', 'zip', '--config', 'electron-builder.yml', ...electronDistArgs, ...signingArgs], {

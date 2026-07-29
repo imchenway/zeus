@@ -19,10 +19,11 @@ brew install --cask zeus
 - Zeus 是预构建 macOS 图形应用，使用 Homebrew Cask，不改造成从源码构建的 Formula。
 - 当前 Tap 采用 `imchenway/homebrew-tap`，用户侧使用 Homebrew 的 `imchenway/tap` 简写。
 - 用户命令保留 `--cask`，优点是类型明确且符合官方文档；缺点是比自动推断形式稍长。
-- 公开 Release 与 Tap 只允许发布已完成 Developer ID 签名和 Apple 公证的产物。
+- 用户于 2026-07-29 明确把发布口径调整为“能运行、能发布即可”：允许公开发布如实标注的 ad-hoc 产物，Developer ID
+  签名和 Apple 公证不再是当前阻塞项。
 - 当前只发布真实构建所在架构；Cask 必须显式声明架构限制，不伪造另一架构可用。
 
-## 现状证据
+## 实施前证据
 
 - 当前公开仓库是 `imchenway/zeus`，但尚无正式 GitHub Release。
 - 已按发布授权创建公开仓库 `imchenway/homebrew-tap`，默认分支为 `main`；当前只有初始化 README，尚未写入指向未发布
@@ -39,7 +40,9 @@ brew install --cask zeus
 - 更新清单把源码仓库与 Homebrew Tap 分开建模，安装与升级命令指向 `imchenway/tap/zeus`。
 - macOS 打包在生成 DMG/ZIP 前完成签名：本地无证书时使用 ad-hoc，CI 有证书时使用 Developer ID；公证凭据完整时启用 notarization。
 - Codex runtime 增加不受 Mach-O 重签名影响的代码内容摘要；electron-builder 重签嵌套 runtime 后，包内完整性门禁仍能验证真实代码内容。
-- 公开发布门禁从最终 App 检查 Developer ID Authority 和公证票据，缺任一项均不得创建 Release 或更新 Tap。
+- 公开发布默认允许真实验证过的 ad-hoc 产物；只有显式启用 `require_apple_distribution` 时，才要求最终 App 同时通过
+  Developer ID 与 Apple 公证检查。
+- 打包脚本会移除 GitHub Actions 注入的空 Apple secret，避免 electron-builder 把空 `CSC_LINK` 误判成证书路径。
 - Release workflow 增加显式 `publish_release` 开关、tag/版本一致性检查、同版本 DMG 不可变检查和 Tap 自动同步。
 - Release workflow 在干净 runner 上先构建固定版本 Codex runtime；本地没有 Electron 缓存时允许 electron-builder 下载固定版本，
   不再依赖开发机 `.tmp/`。
@@ -53,17 +56,25 @@ brew install --cask zeus
 - 优点：不受 Homebrew 官方影响力门槛限制；新用户只需一条命令；发布节奏由 Zeus 控制。
 - 缺点：需要维护独立 Tap、跨仓 token 和每次 Release 的版本/SHA256 同步。
 
-### 发布门禁要求正式签名与公证
+### 当前实用发布
 
-- 优点：Homebrew 下载后的首次启动不需要用户绕过 Gatekeeper，符合正式分发安全边界。
-- 缺点：需要 Apple Developer Program、证书和公证凭据，当前无法在纯本地环境完成最终远端验收。
+- 优点：不依赖 Apple Developer Program 即可形成真实 Release、Tap 和 Homebrew 一键安装；发布链路已经完成运行验证。
+- 缺点：当前仍是 ad-hoc 签名且未公证，其他 Mac 首次启动可能需要在 Finder 中右键“打开”，不能启用静默自动更新。
 
-## 外部等待项
+### 后续严格 Apple 分发
 
-1. 配置只允许写入该 Tap 仓库的 `HOMEBREW_TAP_TOKEN`。
-2. 配置 Developer ID Application 证书与 Apple 公证凭据。
-3. 在 Zeus 仓库形成明确发布提交和既有版本 tag。
-4. 用户已明确授权发布；Cask 写入 Tap 仍必须等待前述凭据、正式 Release 和明确发布快照齐备。
+- 优点：首次启动不需要额外 Gatekeeper 确认，可为后续自动更新提供更完整的可信分发基础。
+- 缺点：需要付费 Apple Developer 账号、证书和持续维护公证凭据；当前不作为发布阻塞项。
+
+## 当前发布状态
+
+1. 全量发布提交为 `8d139bb51b3c607b507435003c35573aa4f51168`，已推送到 `main`。
+2. tag `v0.1.0` 已推送，GitHub Release 已公开：
+   `https://github.com/imchenway/zeus/releases/tag/v0.1.0`。
+3. `imchenway/homebrew-tap` 已写入 `Casks/zeus.rb`，对应提交为
+   `67437061e7434d8c68410b11a9afb7e0aba69c59`。
+4. Developer ID 与 Apple 公证凭据仍未配置，只影响首次启动体验和严格 Apple 分发。
+5. `HOMEBREW_TAP_TOKEN` 仍可用于后续 Actions 自动同步；当前版本已在用户明确授权下通过 GitHub API 完成同步。
 
 ## 发布快照确认
 
@@ -77,9 +88,8 @@ brew install --cask zeus
 
 ## 验收边界
 
-- 本轮可以验证源码、静态检查、构建、App/DMG/ZIP、Cask 结构和本地 ad-hoc 签名。
-- 在远端 Tap、公开 Release 和 Apple 凭据未配置前，不能宣称
-  `brew install --cask imchenway/tap/zeus` 已在全新 Mac 上真实安装成功。
+- 本轮已验证源码、静态检查、构建、App/DMG/ZIP、Cask、ad-hoc 签名、公开 Release、远端 Tap 和本机真实 Homebrew 安装。
+- 本轮没有在另一台全新 Mac 上验收 Gatekeeper 首次启动交互；只确认当前机器从公开 Release 下载后，普通 `open` 可启动。
 - 不执行或恢复任何单元测试、组件测试、DOM/CSS 契约测试及 TDD 流程。
 
 ## 验证记录
@@ -105,13 +115,23 @@ brew install --cask zeus
   `version=0.1.0`、`database=ok`、`runtime=ok`，验收后正常退出。
 - 临时 Tap 中 `brew info --cask codex-zeus/check/zeus`、`brew install --cask --dry-run codex-zeus/check/zeus` 与
   `brew style codex-zeus/check/zeus`：通过；临时 Tap 随后已删除，Homebrew developer mode 已关闭。
+- GitHub Release 已公开 6 个资产；GitHub 返回的 DMG SHA256 为
+  `5ba434a0c71b4e8140eb065df6b16e839cf5f17b97c0a4adcbd7d6f07f3a52a9`，ZIP SHA256 为
+  `c9a7a79506bdc182e49f9b12c2ab098f57bf766f5e94d1c43606d3cc120feec8`，均与本地一致。
+- 远端 `Casks/zeus.rb` 与本地摘要均为
+  `824664034cd75e230edc6734b536712c928d8ad78e0552f5078f34a23d67ac59`。
+- `brew install --cask imchenway/tap/zeus`：退出码 0；真实下载公开 DMG、通过 SHA256 校验并安装到
+  `/Applications/Zeus.app`。
+- Homebrew 安装版真实启动：主进程 `/Applications/Zeus.app/Contents/MacOS/Zeus`、内置 runtime
+  `/Applications/Zeus.app/Contents/Resources/codex/codex app-server` 均存在；`/health` 返回
+  `ok=true`、`status=ok`、`version=0.1.0`、`database=ok`、`runtime=ok`。
 
-### 未通过或待完成
+### 已知限制
 
 - 全仓 `pnpm format:check` 命中 80 个既有未格式化文件；本任务没有批量改写用户其他工作。
-- 当前 App 仍是 ad-hoc 签名，`spctl --assess` 返回 rejected；这与本机无 Developer ID/公证凭据的事实一致。
+- 当前 App 仍是 ad-hoc 签名，manifest 明确记录 `signed=false`、`notarized=false`，`spctl --assess` 返回
+  rejected；这与本机无 Developer ID/公证凭据的事实一致。
 - 本机 Command Line Tools 低于 Homebrew 当前审计要求，`brew audit --cask --strict` 在进入完整审计前退出。
-- GitHub 当前没有 Actions secrets、tag 或 Release；`imchenway/homebrew-tap` 已创建但尚无 Cask，因此尚未执行远端
-  Release 上传或 Cask 发布。
-- 当前工作区包含大量其他未提交功能变更，发布 tag 必须对应一个明确且可复现的源码快照；不能只提交本轮发布文件却用整个脏工作区
-  构建二进制。
+- GitHub Actions dry run `30421181556` 在打包阶段因空 `CSC_LINK` 被 electron-builder 误判为证书路径而失败；这次公开版本
+  使用已经完整验证的本地产物直接发布，不依赖该失败 run。打包脚本已增加空 Apple secret 过滤，但未重新执行耗时的远端全量构建。
+- 当前只发布 Apple Silicon 产物，Intel Mac 不在本次支持范围。

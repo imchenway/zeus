@@ -55,12 +55,12 @@ AI Runtime、Git 操作、文件操作必须限制在项目路径内。
 - 用户应能通过 Settings / Security 查看配置状态、风险提示、审计时间线和重置入口。
 - 重置后应显示真实未配置状态，不保留假成功标记。
 
-## 远程入口与发布等待项
+## 远程入口与发布配置状态
 
-远程入口与发布等待项包括 Telegram 白名单、Apple signing / notarization、Homebrew tap token。
+远程入口与发布配置包括 Telegram 白名单、可选的 Apple signing / notarization、Actions 自动同步使用的 Homebrew tap token。
 
 - Telegram Bot Token 未配置时，long polling 与通知保持未启用。
 - 非白名单 Telegram user id 必须拒绝，不能返回项目、任务、日志或 diff 详情。
 - Apple signing / notarization 未配置时，只能声明 unsigned DMG/ZIP；不得伪装成已签名或已公证。
-- Homebrew tap token 未配置时，只生成本地 cask，不声明已发布远端 tap。
-- 外部等待项必须在 README、CHANGELOG、ROADMAP、实现报告和 PR 模板中保持一致。
+- Homebrew tap token 未配置时，Actions 不能自动同步 Tap；只有用户明确授权并取得真实远端结果后，才能声明人工发布成功。
+- 外部配置状态必须在 README、CHANGELOG、ROADMAP、实现报告和 PR 模板中保持一致。
