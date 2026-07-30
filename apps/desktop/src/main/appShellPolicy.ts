@@ -13,7 +13,7 @@ export interface AppShellMenuActions {
   toggleDevTools: () => void;
   showMainWindow: () => void;
   openSettings: () => void | Promise<void>;
-  openReleaseStatus: () => void | Promise<void>;
+  checkForUpdates: () => void | Promise<void>;
   openLogsDirectory: () => void | Promise<void>;
   quit: () => void;
 }
@@ -52,7 +52,7 @@ export function buildAppShellMenuTemplate(actions: AppShellMenuActions): AppShel
         {
           label: 'Check for Updates...',
           accelerator: 'CommandOrControl+U',
-          click: actions.openReleaseStatus,
+          click: actions.checkForUpdates,
         },
         { type: 'separator' },
         { label: 'Show Zeus', click: actions.showMainWindow },
@@ -76,10 +76,10 @@ export function buildAppShellMenuTemplate(actions: AppShellMenuActions): AppShel
       ],
     },
     {
-        label: 'Edit',
-        submenu: [{role: 'undo'}, {role: 'redo'}, {type: 'separator'}, {role: 'cut'}, {role: 'copy'}, {role: 'paste'}, {type: 'separator'}, {role: 'selectAll'}],
+      label: 'Edit',
+      submenu: [{ role: 'undo' }, { role: 'redo' }, { type: 'separator' }, { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { type: 'separator' }, { role: 'selectAll' }],
     },
-      {
+    {
       label: 'View',
       submenu: [
         { role: 'reload' },

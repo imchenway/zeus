@@ -1172,6 +1172,26 @@
     padding: 2px 0 1px 18px;
 }
 
+.session-codex-parity-v1 .session-activity-live {
+    align-items: center;
+    animation: session-markdown-block-reveal 140ms var(--session-ease-out) both;
+    color: var(--session-text-muted);
+    display: grid;
+    font-size: 12px;
+    gap: 8px;
+    grid-template-columns: 20px minmax(0, 1fr);
+    line-height: 1.45;
+    margin: 2px 0 0 2px;
+    min-block-size: 24px;
+    padding: 0;
+}
+
+.session-codex-parity-v1 .session-activity-live > span:last-child {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 .session-codex-parity-v1 .session-activity-skills {
     align-items: center;
     color: var(--session-text-muted);
@@ -1852,6 +1872,36 @@
   padding-block-end: env(safe-area-inset-bottom, 0);
   position: relative;
   z-index: 5;
+}
+
+.session-codex-parity-v1 .session-interaction-dock {
+  flex: 0 0 auto;
+  inline-size: min(var(--session-composer-max), calc(100% - (2 * var(--session-gutter))));
+  margin: 0 auto 16px;
+  max-block-size: min(68vh, 720px);
+  min-block-size: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-block-end: env(safe-area-inset-bottom, 0);
+  position: relative;
+  scrollbar-gutter: stable;
+  z-index: 5;
+}
+
+.session-codex-parity-v1 .session-interaction-dock > :where(.session-request-user-input-surface, .session-pending-request, .session-question-panel) {
+  inline-size: 100%;
+}
+
+.session-codex-parity-v1 .session-interaction-dock .session-question-status {
+  inline-size: 100%;
+  margin-block-end: 10px;
+}
+
+.session-codex-parity-v1 .session-interaction-dock .session-question-panel,
+.session-codex-parity-v1 .session-interaction-dock .session-plan-implementation-request {
+  inline-size: 100%;
+  margin-block: 0;
 }
 
 .session-codex-parity-v1 .session-composer-input-frame {
@@ -2635,12 +2685,6 @@
     padding-inline: 3px;
 }
 
-.session-codex-parity-v1 .session-transcript > .session-request-user-input-surface {
-    flex: 0 0 auto;
-    inline-size: 100%;
-    margin-block-start: auto;
-}
-
 .session-codex-parity-v1 .session-question-status > svg {
     block-size: 18px;
     inline-size: 18px;
@@ -3000,6 +3044,11 @@
 
   .session-codex-parity-v1 .session-composer-shell {
     margin-block-end: max(10px, env(safe-area-inset-bottom, 0px));
+  }
+
+  .session-codex-parity-v1 .session-interaction-dock {
+    margin-block-end: max(10px, env(safe-area-inset-bottom, 0px));
+    max-block-size: min(72vh, 640px);
   }
 
   .session-codex-parity-v1 .session-legacy-banner {

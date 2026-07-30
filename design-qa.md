@@ -32,6 +32,36 @@
 
 final result: passed
 
+# 2026-07-30 应用菜单检查更新弹窗验收
+
+## 对比目标
+
+- 来源视觉：用户提供的 macOS Zeus 应用菜单截图，要求 `Check for Updates...` 直接检查并显示用户决策弹窗；
+- 正式包：`/Users/david/hypha/zeus/dist/mac-arm64/Zeus.app`，版本 `0.1.2`；
+- 结果截图：
+  `/var/folders/2m/dswmfzbd7wx_39zxs4kvd3fc0000gn/T/com.openai.sky.CUAService/Zeus Screenshot 2026-07-30 at 3.51.35 PM.jpeg`。
+
+## Findings
+
+- [x] 菜单点击不再跳转设置页，真实显示“正在检查更新”；
+- [x] 远端检查完成后原位切换为结果弹窗；
+- [x] 结果弹窗显示当前版本 `0.1.2`、公开清单版本 `0.1.1` 和真实匹配 DMG；
+- [x] `Command+U` 触发同一链路；
+- [x] 主动作获得初始焦点，弹窗使用 `role=dialog`、`aria-modal=true`；
+- [x] 正式包辅助功能树标记“已遵循减少动态效果”；
+- [x] 验收载体为仓库 `dist/mac-arm64/Zeus.app`，不依赖 `/Applications/Zeus.app`；
+- [ ] 当前公开清单没有更高版本，“发现更新 / 打开下载页”尚未完成真实远端验收；
+- [ ] 深色模式和增强对比度尚未覆盖。
+
+## 验收边界
+
+- 现有公开产物未同时签名和公证，因此本轮没有执行自动替换 App；
+- 下载和安装 API 仍会真实拒绝，弹窗会显示拒绝原因，不宣称自动升级已经可用；
+- 完整静态与发布门禁结果以
+  `docs/TASK_20260730_003_应用菜单检查更新弹窗.md` 为准。
+
+final result: partially passed
+
 # 2026-07-29 任务空状态与深色表头返修验收
 
 ## 问题与根因
@@ -411,5 +441,59 @@ final result: blocked
 # 当前任务最终结论：新增项目入口与单目录创建
 
 本文件中较早任务的 `blocked` 只描述各自历史验收状态。当前任务以“2026-07-29 新增项目入口与单目录创建最终验收”一节为准；重复侧栏空态已删除，单目录创建、自动切换、键盘焦点闭环和正式包视觉对照均已通过。
+
+final result: passed
+
+# 2026-07-30 过程态与底部交互坞验收
+
+## 对比目标
+
+- 来源视觉：用户提供的六张 Codex App 截图，完整路径记录在
+  `docs/TASK_20260730_001_Codex过程态与底部交互坞对齐.md`。
+- 来源像素尺寸：`1606 × 488`、`1596 × 784`、`1666 × 1126`、`1604 × 540`、
+  `1608 × 250`、`1582 × 1696`。
+- 目标状态：过程 reasoning、实时工具活动、活动展开、阻塞提问替换 composer。
+- 最终正式包实现截图：
+  `/var/folders/2m/dswmfzbd7wx_39zxs4kvd3fc0000gn/T/com.openai.sky.CUAService/Zeus Screenshot 2026-07-30 at 3.22.09 PM.jpeg`。
+- 实现截图为 `864 × 768` 窄窗口；应用辅助功能树明确标记已遵循减少动态效果。
+
+## Findings
+
+- 未发现阻断本任务交付的 P1/P2 问题。
+- 首轮运行验收发现 readable reasoning 仍为空，根因是 Zeus 只处理 delta、却未在
+  `turn/start` 请求 summary；补充 `summary: "auto"` 并重新打包后，正式包真实显示四组分段摘要，
+  数据库 `text_content` 长度分别为 `83`、`88`、`51`、`99`。
+- 首轮还发现 provider 可能以新 item ID 完成已经流出的消息前缀；turn 完成归一化已补齐，
+  最终两个回归 turn 均为 `in_progress_items=0`。
+
+## Open Questions
+
+- 深色模式与 macOS“增强对比度”仍未覆盖；不影响本任务已验收的浅色、窄窗口和减少动态效果路径。
+
+## Implementation Checklist
+
+- [x] `pnpm lint`
+- [x] `pnpm typecheck`
+- [x] `pnpm build`
+- [x] `git diff --check`
+- [x] `pnpm verify:release`：格式、lint、类型、构建、139 项验收矩阵、CLI 探针、打包、发布清单、
+      健康检查与严格 codesign 校验通过。
+- [x] `hdiutil verify`：最终 DMG 校验有效。
+- [x] 正式包 Plan、普通模式、`864 × 768` 窄窗口与减少动态效果验收。
+- [x] 初始思考、回答后恢复思考、实时最新活动行、阶段结束活动汇总。
+- [x] Plan 阻塞提问替换 composer；提交后恢复 composer。
+- [x] 运行库复核完成事件保留可读摘要，最终 turn 无遗留 `in_progress` item。
+- [x] 运行验收使用仓库 `dist/mac-arm64/Zeus.app`；用户的 `/Applications/Zeus.app` 已恢复为验收前原始副本。
+
+## Follow-up Polish
+
+- 可后续补充深色模式、增强对比度，以及命令/文件/权限/MCP 超长审批卡的独立滚动截图矩阵。
+
+## 比较历史
+
+- 首轮：源码实现、静态检查和构建完成；缺少重新打包后的正式窗口截图，视觉验收保持阻塞。
+- 第二轮：用户授权发布更新后完成正式包 UI 验收；发现 summary 未请求及遗留流式 item 两个运行缺口。
+- 最终轮：补充 `summary: "auto"` 与 turn 完成收口后重新打包；Plan/普通模式、窄窗口、
+  减少动态效果、活动行、交互坞、回答后思考及数据库持久化均通过；正式发布门禁和本机应用更新完成。
 
 final result: passed

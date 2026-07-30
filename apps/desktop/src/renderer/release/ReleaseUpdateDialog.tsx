@@ -1,0 +1,177 @@
+import { useEffect, useRef } from 'react';
+import { ArrowSquareOutIcon as ArrowSquareOut } from '@phosphor-icons/react/dist/csr/ArrowSquareOut';
+import { CheckCircleIcon as CheckCircle } from '@phosphor-icons/react/dist/csr/CheckCircle';
+import { SpinnerGapIcon as SpinnerGap } from '@phosphor-icons/react/dist/csr/SpinnerGap';
+import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/csr/WarningCircle';
+import type { ReleaseUpdateStatusSnapshot } from '../apiClient.js';
+import { Button } from '../ui/Button.js';
+import { ModalPortal } from '../ui/ModalPortal.js';
+
+export type ReleaseUpdateDialogState =
+  | { kind: 'checking' }
+  | { kind: 'result'; update: ReleaseUpdateStatusSnapshot }
+  | { kind: 'installing'; update: ReleaseUpdateStatusSnapshot }
+  | { kind: 'failed'; update?: ReleaseUpdateStatusSnapshot; reason?: string };
+
+export interface ReleaseUpdateDialogProps {
+  language: 'zh-CN' | 'en';
+  state: ReleaseUpdateDialogState;
+  onDismiss: () => void;
+  onRetry: () => void;
+  onOpenDownloadPage: (update: ReleaseUpdateStatusSnapshot) => void;
+  onInstall: (update: ReleaseUpdateStatusSnapshot) => void;
+}
+
+const copyByLanguage = {
+  'zh-CN': {
+    checkingTitle: '正在检查更新',
+    checkingDescription: 'Zeus 正在读取 GitHub Release 的真实发布清单。',
+    currentTitle: 'Zeus 已是最新版本',
+    availableTitle: '发现新版本',
+    unavailableTitle: '暂时无法检查更新',
+    failedTitle: '更新操作未能开始',
+    installingTitle: '正在准备升级',
+    currentVersion: (version: string) => `当前版本 ${version}`,
+    latestVersion: (version: string) => `最新版本 ${version}`,
+    currentDescription: '当前安装版本不低于发布清单中的最新版本。',
+    manualDescription: '该版本尚未同时完成签名和公证。Zeus 不会自动替换应用，你可以前往发布页手动升级。',
+    installDescription: '发布产物已经签名并公证，可以下载并进入安装流程。',
+    unavailableDescription: 'Zeus 没有取得可用的发布清单。请检查网络连接后重试。',
+    installingDescription: '升级请求已经提交。安装流程完成后 Zeus 会提示重启。',
+    artifact: (fileName: string) => `安装包：${fileName}`,
+    cancel: '取消',
+    later: '稍后',
+    done: '好',
+    retry: '重试',
+    openDownloadPage: '打开下载页',
+    install: '下载并安装',
+  },
+  en: {
+    checkingTitle: 'Checking for updates',
+    checkingDescription: 'Zeus is reading the real GitHub Release manifest.',
+    currentTitle: 'Zeus is up to date',
+    availableTitle: 'A new version is available',
+    unavailableTitle: 'Unable to check for updates',
+    failedTitle: 'The update could not start',
+    installingTitle: 'Preparing the update',
+    currentVersion: (version: string) => `Current version ${version}`,
+    latestVersion: (version: string) => `Latest version ${version}`,
+    currentDescription: 'The installed version is already at or above the latest release manifest version.',
+    manualDescription: 'This release is not both signed and notarized. Zeus will not replace the app automatically; you can upgrade from the release page.',
+    installDescription: 'The release is signed and notarized and can enter the download and installation flow.',
+    unavailableDescription: 'Zeus did not receive a usable release manifest. Check the network connection and try again.',
+    installingDescription: 'The update request was accepted. Zeus will prompt for a restart when installation is ready.',
+    artifact: (fileName: string) => `Installer: ${fileName}`,
+    cancel: 'Cancel',
+    later: 'Later',
+    done: 'OK',
+    retry: 'Try Again',
+    openDownloadPage: 'Open Download Page',
+    install: 'Download and Install',
+  },
+} as const;
+
+export function ReleaseUpdateDialog(props: ReleaseUpdateDialogProps) {
+  const copy = copyByLanguage[props.language];
+  const primaryActionRef = useRef<HTMLButtonElement>(null);
+  const update = props.state.kind === 'checking' ? undefined : props.state.update;
+  const checking = props.state.kind === 'checking';
+  const installing = props.state.kind === 'installing';
+  const busy = checking || installing;
+  const unavailable = props.state.kind === 'result' && update?.status === 'unavailable';
+  const failed = props.state.kind === 'failed';
+  const upToDate = props.state.kind === 'result' && update?.status === 'up_to_date';
+  const available = props.state.kind === 'result' && update?.status === 'available';
+
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => primaryActionRef.current?.focus());
+    return () => window.cancelAnimationFrame(frame);
+  }, [props.state.kind, update?.status, update?.latestVersion]);
+
+  let title: string = copy.checkingTitle;
+  let description: string = copy.checkingDescription;
+  if (props.state.kind === 'installing') {
+    title = copy.installingTitle;
+    description = copy.installingDescription;
+  } else if (props.state.kind === 'failed') {
+    title = copy.failedTitle;
+    description = props.state.reason?.trim() || copy.unavailableDescription;
+  } else if (upToDate) {
+    title = copy.currentTitle;
+    description = copy.currentDescription;
+  } else if (unavailable) {
+    title = copy.unavailableTitle;
+    description = copy.unavailableDescription;
+  } else if (available && update) {
+    title = copy.availableTitle;
+    description = update.automaticInstallEnabled ? copy.installDescription : copy.manualDescription;
+  }
+
+  return (
+    <ModalPortal rootClassName="release-update-dialog-portal-root" backdropClassName="release-update-dialog-backdrop" dismissDisabled={installing} onDismiss={props.onDismiss}>
+      <section className="release-update-dialog zeus-solid-form-surface" role="dialog" aria-modal="true" aria-labelledby="release-update-dialog-title" aria-describedby="release-update-dialog-description" data-state={props.state.kind}>
+        <div className="release-update-dialog-icon" data-tone={failed || unavailable ? 'warning' : upToDate ? 'success' : 'progress'} aria-hidden="true">
+          {busy ? <SpinnerGap className="release-update-dialog-spinner" weight="regular" /> : failed || unavailable ? <WarningCircle weight="regular" /> : upToDate ? <CheckCircle weight="regular" /> : <ArrowSquareOut weight="regular" />}
+        </div>
+        <div className="release-update-dialog-content">
+          <header>
+            <strong id="release-update-dialog-title">{title}</strong>
+            <p id="release-update-dialog-description" role={failed || unavailable ? 'alert' : 'status'}>
+              {description}
+            </p>
+          </header>
+          {update ? (
+            <div className="release-update-dialog-version" aria-label={title}>
+              <span>{copy.currentVersion(update.currentVersion)}</span>
+              <span>{copy.latestVersion(update.latestVersion)}</span>
+              {update.artifact ? <small>{copy.artifact(update.artifact.fileName)}</small> : null}
+            </div>
+          ) : null}
+        </div>
+        <footer>
+          {checking ? (
+            <Button ref={primaryActionRef} variant="secondary" size="regular" onClick={props.onDismiss}>
+              {copy.cancel}
+            </Button>
+          ) : installing ? (
+            <Button variant="secondary" size="regular" onClick={props.onDismiss} disabled>
+              {copy.cancel}
+            </Button>
+          ) : upToDate ? (
+            <Button ref={primaryActionRef} variant="primary" size="regular" onClick={props.onDismiss}>
+              {copy.done}
+            </Button>
+          ) : unavailable || failed ? (
+            <>
+              <Button variant="secondary" size="regular" onClick={props.onDismiss}>
+                {copy.cancel}
+              </Button>
+              <Button ref={primaryActionRef} variant="primary" size="regular" onClick={props.onRetry}>
+                {copy.retry}
+              </Button>
+            </>
+          ) : available && update ? (
+            <>
+              <Button variant="secondary" size="regular" onClick={props.onDismiss}>
+                {copy.later}
+              </Button>
+              {update.recommendedAction === 'download_and_install' ? (
+                <Button ref={primaryActionRef} variant="primary" size="regular" onClick={() => props.onInstall(update)}>
+                  {copy.install}
+                </Button>
+              ) : (
+                <Button ref={primaryActionRef} variant="primary" size="regular" onClick={() => props.onOpenDownloadPage(update)}>
+                  {copy.openDownloadPage}
+                </Button>
+              )}
+            </>
+          ) : (
+            <Button ref={primaryActionRef} variant="primary" size="regular" onClick={props.onDismiss}>
+              {copy.done}
+            </Button>
+          )}
+        </footer>
+      </section>
+    </ModalPortal>
+  );
+}

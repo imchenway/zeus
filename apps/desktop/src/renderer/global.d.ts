@@ -1,17 +1,6 @@
-import type {DashboardClientOptions, LocalBusinessDataSnapshot, LocalSettingsExportSnapshot} from './apiClient.js';
-import type {
-  ZeusBrowserApprovalDecision,
-  ZeusBrowserCommand,
-  ZeusBrowserConversationSnapshot,
-  ZeusBrowserEvent,
-  ZeusBrowserPreparedSubmission,
-  ZeusBrowserSettings,
-} from '@zeus/shared';
-import type {
-  ConversationFileLocation,
-  ConversationOpenTarget,
-  ConversationResourceOpenTarget,
-} from '@zeus/shared';
+import type { DashboardClientOptions, LocalBusinessDataSnapshot, LocalSettingsExportSnapshot } from './apiClient.js';
+import type { ZeusBrowserApprovalDecision, ZeusBrowserCommand, ZeusBrowserConversationSnapshot, ZeusBrowserEvent, ZeusBrowserPreparedSubmission, ZeusBrowserSettings } from '@zeus/shared';
+import type { ConversationFileLocation, ConversationOpenTarget, ConversationResourceOpenTarget } from '@zeus/shared';
 
 type ConversationInputResourceBridge = {
   name: string;
@@ -21,7 +10,7 @@ type ConversationInputResourceBridge = {
   source: 'picker' | 'paste' | 'drop';
   characterCount?: number;
   restorableText?: string;
-} & ({localPath: string; uploadRef?: never} | {localPath?: never; uploadRef: string});
+} & ({ localPath: string; uploadRef?: never } | { localPath?: never; uploadRef: string });
 
 type TaskInputResourceBridge = {
   path: string;
@@ -44,44 +33,56 @@ declare global {
       chooseProjectDirectory: () => Promise<string | null>;
       revealProjectInFinder: (projectPath: string) => Promise<{ revealed: true; path: string }>;
       chooseConversationResources: () => Promise<ConversationInputResourceBridge[]>;
-      authorizeConversationFiles: (files: File[], source: 'paste' | 'drop') => Promise<{
+      authorizeConversationFiles: (
+        files: File[],
+        source: 'paste' | 'drop',
+      ) => Promise<{
         resources: ConversationInputResourceBridge[];
         failedCount: number;
       }>;
-      materializeConversationResources: (resources: Array<{
-        name?: string;
-        type?: string;
-        data?: ArrayBuffer;
-        text?: string;
-        source?: 'paste' | 'drop';
-        kind?: 'image' | 'file' | 'pasted_text';
-      }>) => Promise<ConversationInputResourceBridge[]>;
-      readConversationClipboardResources: () => Promise<{resources: ConversationInputResourceBridge[]; text: string}>;
-      getConversationResourcePreview: (resource: {localPath?: string; uploadRef?: string}) => Promise<{previewUrl: string; mimeType: string} | null>;
+      materializeConversationResources: (
+        resources: Array<{
+          name?: string;
+          type?: string;
+          data?: ArrayBuffer;
+          text?: string;
+          source?: 'paste' | 'drop';
+          kind?: 'image' | 'file' | 'pasted_text';
+        }>,
+      ) => Promise<ConversationInputResourceBridge[]>;
+      readConversationClipboardResources: () => Promise<{ resources: ConversationInputResourceBridge[]; text: string }>;
+      getConversationResourcePreview: (resource: { localPath?: string; uploadRef?: string }) => Promise<{ previewUrl: string; mimeType: string } | null>;
       chooseTaskAttachments: () => Promise<TaskInputResourceBridge[]>;
-      authorizeTaskFiles: (files: File[], source: 'paste' | 'drop') => Promise<{
+      authorizeTaskFiles: (
+        files: File[],
+        source: 'paste' | 'drop',
+      ) => Promise<{
         resources: TaskInputResourceBridge[];
         failedCount: number;
       }>;
-      materializeTaskResources: (resources: Array<{
-        name?: string;
-        type?: string;
-        data?: ArrayBuffer;
-        text?: string;
-        kind?: 'image' | 'file' | 'pasted_text';
-      }>) => Promise<TaskInputResourceBridge[]>;
-      readTaskClipboardResources: () => Promise<{resources: TaskInputResourceBridge[]; text: string}>;
+      materializeTaskResources: (
+        resources: Array<{
+          name?: string;
+          type?: string;
+          data?: ArrayBuffer;
+          text?: string;
+          kind?: 'image' | 'file' | 'pasted_text';
+        }>,
+      ) => Promise<TaskInputResourceBridge[]>;
+      readTaskClipboardResources: () => Promise<{ resources: TaskInputResourceBridge[]; text: string }>;
       readTaskClipboardAttachments: () => Promise<Array<{ name: string; type: string; data: ArrayBuffer }>>;
       readTaskClipboardImage: () => Promise<{ name: string; type: 'image/png'; data: ArrayBuffer } | null>;
-        writeClipboardText: (text: string) => Promise<{ written: boolean }>;
+      writeClipboardText: (text: string) => Promise<{ written: boolean }>;
       saveTaskClipboardAttachments: () => Promise<TaskInputResourceBridge[]>;
-      saveTaskPastedAttachments: (attachments: Array<{
-        name?: string;
-        type?: string;
-        data?: ArrayBuffer;
-        text?: string;
-        kind?: 'image' | 'file' | 'pasted_text';
-      }>) => Promise<TaskInputResourceBridge[]>;
+      saveTaskPastedAttachments: (
+        attachments: Array<{
+          name?: string;
+          type?: string;
+          data?: ArrayBuffer;
+          text?: string;
+          kind?: 'image' | 'file' | 'pasted_text';
+        }>,
+      ) => Promise<TaskInputResourceBridge[]>;
       getTaskAttachmentPreview: (path: string) => Promise<{ previewUrl: string; mimeType: string } | null>;
       openTaskAttachment: (path: string) => Promise<{ opened: boolean; error?: string }>;
       exportSettingsSnapshotToFile: (snapshot: unknown) => Promise<{ saved: boolean; filePath: string | null }>;
@@ -102,18 +103,8 @@ declare global {
         lineStart?: number | null;
       }>;
       openExternalHttpsUrl: (url: string) => Promise<{ opened: boolean; url?: string; error?: string }>;
-      listConversationResourceOpenTargets: (request: {
-        projectId: string;
-        conversationId: string;
-        resourceId: string;
-      }) => Promise<{resourceId: string; targets: ConversationResourceOpenTarget[]}>;
-      openConversationResource: (request: {
-        projectId: string;
-        conversationId: string;
-        resourceId: string;
-        target: ConversationOpenTarget;
-        location?: ConversationFileLocation;
-      }) => Promise<{
+      listConversationResourceOpenTargets: (request: { projectId: string; conversationId: string; resourceId: string }) => Promise<{ resourceId: string; targets: ConversationResourceOpenTarget[] }>;
+      openConversationResource: (request: { projectId: string; conversationId: string; resourceId: string; target: ConversationOpenTarget; location?: ConversationFileLocation }) => Promise<{
         opened: boolean;
         resourceId: string;
         target: ConversationOpenTarget;
@@ -143,24 +134,20 @@ declare global {
       moveWindowDrag: (point: { screenX: number; screenY: number }) => Promise<{ dragging: boolean; x?: number; y?: number }>;
       endWindowDrag: () => Promise<{ dragging: false }>;
       onNativeNewConversation: (listener: () => void) => () => void;
+      onNativeCheckForUpdates: (listener: () => void) => () => void;
       getBrowserSnapshot: (conversationId: string) => Promise<ZeusBrowserConversationSnapshot>;
-      openBrowserTab: (input: {conversationId: string; url?: string}) => Promise<ZeusBrowserConversationSnapshot>;
-      activateBrowserTab: (input: {conversationId: string; tabId: string}) => Promise<ZeusBrowserConversationSnapshot>;
-      closeBrowserTab: (input: {conversationId: string; tabId: string}) => Promise<ZeusBrowserConversationSnapshot>;
-      runBrowserCommand: (input: {conversationId: string; tabId: string; command: ZeusBrowserCommand}) => Promise<ZeusBrowserConversationSnapshot>;
-      setBrowserLayout: (input: {
-        conversationId: string;
-        tabId: string;
-        bounds: {x: number; y: number; width: number; height: number};
-        visible: boolean;
-      }) => Promise<{applied: boolean}>;
-      prepareBrowserComments: (input: {conversationId: string; tabId: string; commentIds?: string[]}) => Promise<ZeusBrowserPreparedSubmission>;
-      getBrowserCommentPreview: (path: string) => Promise<{previewUrl: string; mimeType: 'image/png'} | null>;
-      markBrowserCommentsSent: (input: {conversationId: string; tabId: string; commentIds: string[]}) => Promise<ZeusBrowserConversationSnapshot>;
-      respondToBrowserApproval: (input: {requestId: string; decision: ZeusBrowserApprovalDecision}) => Promise<{resolved: boolean}>;
+      openBrowserTab: (input: { conversationId: string; url?: string }) => Promise<ZeusBrowserConversationSnapshot>;
+      activateBrowserTab: (input: { conversationId: string; tabId: string }) => Promise<ZeusBrowserConversationSnapshot>;
+      closeBrowserTab: (input: { conversationId: string; tabId: string }) => Promise<ZeusBrowserConversationSnapshot>;
+      runBrowserCommand: (input: { conversationId: string; tabId: string; command: ZeusBrowserCommand }) => Promise<ZeusBrowserConversationSnapshot>;
+      setBrowserLayout: (input: { conversationId: string; tabId: string; bounds: { x: number; y: number; width: number; height: number }; visible: boolean }) => Promise<{ applied: boolean }>;
+      prepareBrowserComments: (input: { conversationId: string; tabId: string; commentIds?: string[] }) => Promise<ZeusBrowserPreparedSubmission>;
+      getBrowserCommentPreview: (path: string) => Promise<{ previewUrl: string; mimeType: 'image/png' } | null>;
+      markBrowserCommentsSent: (input: { conversationId: string; tabId: string; commentIds: string[] }) => Promise<ZeusBrowserConversationSnapshot>;
+      respondToBrowserApproval: (input: { requestId: string; decision: ZeusBrowserApprovalDecision }) => Promise<{ resolved: boolean }>;
       getBrowserSettings: () => Promise<ZeusBrowserSettings>;
       updateBrowserSettings: (input: Partial<ZeusBrowserSettings>) => Promise<ZeusBrowserSettings>;
-      clearBrowserData: () => Promise<{cleared: boolean}>;
+      clearBrowserData: () => Promise<{ cleared: boolean }>;
       onBrowserEvent: (listener: (event: ZeusBrowserEvent) => void) => () => void;
     };
   }

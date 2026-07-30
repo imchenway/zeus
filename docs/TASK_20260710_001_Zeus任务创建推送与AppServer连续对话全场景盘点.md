@@ -1586,8 +1586,9 @@ flex 中被压缩裁切。
   窗口复核后确认仍偏大，撤销该轮视觉结论。
 - 第二轮紧凑基准为：面板最大宽度 `736px`、圆角 `18px`、标题 `15/20px`、选项行最小高度 `40px`、编号圆 `28px`、选项标题 `14px`
   、说明 `12/18px`、底部按钮 `28px`；“正在询问”状态行到面板的间距由 `10px` 调整为 `24px`。计划正文尺寸保持不变，避免为修复问答面板而误伤阅读区。
-- 修复普通问答纵向位置：面板仍作为 transcript 的真实子项随消息滚动，但当当前消息不足一屏时通过 flex auto margin
-  占用剩余空间，把问答面板推到 composer 上方；内容超过一屏时 auto margin 归零，不形成 fixed/modal，也不遮挡历史消息。
+- 当时采用“面板仍作为 transcript 的真实子项随消息滚动，并通过 flex auto margin 推到 composer 上方”的方案。该方案已被用户在
+  `TASK_20260730_001` 的正式包现场否决：卡片可滑到对话顶部、与 composer 同时存在并制造大块留白。当前约束改为由
+  `docs/TASK_20260730_001_Codex过程态与底部交互坞对齐.md` 定义的统一底部交互坞，本段仅保留为历史记录。
 - 新增 Renderer CSS 契约测试，红灯锁定旧的 `56rem / 24px / 64px / 42px` 等过大尺寸；实现后
   `session-workspace + pending-request-surface` 为 `95 passed`。
 - `pnpm typecheck`、相关文件 Prettier / ESLint 和 `pnpm --filter @zeus/desktop build` 通过；构建只保留既有的单 chunk 超过

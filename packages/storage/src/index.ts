@@ -1,24 +1,15 @@
-import {createHash} from 'node:crypto';
-import {mkdir, readFile, writeFile} from 'node:fs/promises';
-import {dirname} from 'node:path';
-import {nanoid} from 'nanoid';
-import initSqlJs, {type Database, type SqlJsStatic, type SqlValue} from 'sql.js';
-import {
-  isTaskManagementStatus,
-  isTaskPriority,
-  type ConversationResourceKind,
-  type ConversationResourcePresentation,
-  type TaskManagementStatus,
-  type TaskPriority,
-  type TurnChangeFileType,
-  type TurnChangeSetState,
-} from '@zeus/shared';
-import {migrateCommandCenterSchema} from './commands.js';
+import { createHash } from 'node:crypto';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { dirname } from 'node:path';
+import { nanoid } from 'nanoid';
+import initSqlJs, { type Database, type SqlJsStatic, type SqlValue } from 'sql.js';
+import { isTaskManagementStatus, isTaskPriority, type ConversationResourceKind, type ConversationResourcePresentation, type TaskManagementStatus, type TaskPriority, type TurnChangeFileType, type TurnChangeSetState } from '@zeus/shared';
+import { migrateCommandCenterSchema } from './commands.js';
 
 export * from './commands.js';
 
-export {isTaskManagementStatus, isTaskPriority};
-export type {TaskManagementStatus, TaskPriority};
+export { isTaskManagementStatus, isTaskPriority };
+export type { TaskManagementStatus, TaskPriority };
 
 export interface ZeusProjectRecord {
   id: string;
@@ -40,7 +31,7 @@ export interface ZeusTaskRecord {
   taskSequence: number | null;
   title: string;
   description: string;
-    managementStatus: TaskManagementStatus;
+  managementStatus: TaskManagementStatus;
   status: 'draft' | 'ready' | 'running' | 'paused' | 'waiting_confirmation' | 'completed' | 'failed' | 'cancelled';
   priority: string;
   allowCodeChanges: boolean;
@@ -130,9 +121,9 @@ export interface CreateTaskFromTemplateInput {
 export interface TaskListOptions {
   query?: string;
   status?: ZeusTaskRecord['status'];
-    managementStatus?: TaskManagementStatus;
+  managementStatus?: TaskManagementStatus;
   tag?: string;
-    sortBy?: 'createdAt' | 'updatedAt' | 'title' | 'status' | 'managementStatus';
+  sortBy?: 'createdAt' | 'updatedAt' | 'title' | 'status' | 'managementStatus';
   sortDirection?: 'asc' | 'desc';
 }
 
@@ -299,21 +290,12 @@ export interface ZeusConversationRecord {
   providerSettingsJson: string;
   providerTokenUsageJson: string;
   permissionMode: ConversationPermissionMode;
-    collaborationMode: ConversationCollaborationMode;
-    completionUnread: boolean;
+  collaborationMode: ConversationCollaborationMode;
+  completionUnread: boolean;
 }
 
 export type ConversationTransportKind = 'legacy_cli' | 'codex_native';
-export type ConversationProviderState =
-    'unbound'
-    | 'binding'
-    | 'ready'
-    | 'active'
-    | 'waiting'
-    | 'paused'
-    | 'archived'
-    | 'closed'
-    | 'failed';
+export type ConversationProviderState = 'unbound' | 'binding' | 'ready' | 'active' | 'waiting' | 'paused' | 'archived' | 'closed' | 'failed';
 export type ConversationPermissionMode = 'read-only' | 'auto' | 'full-access';
 export type ConversationCollaborationMode = 'default' | 'plan';
 
@@ -396,7 +378,7 @@ export interface CreateConversationInput {
   providerBinaryVersion?: string;
   legacySourceConversationId?: string;
   permissionMode?: ConversationPermissionMode;
-    collaborationMode?: ConversationCollaborationMode;
+  collaborationMode?: ConversationCollaborationMode;
 }
 
 export interface AppendConversationMessageInput {
@@ -477,7 +459,7 @@ export interface ZeusConversationTurnRecord {
   clientSubmissionId: string;
   status: ConversationTurnStatus;
   errorJson: string | null;
-    planJson: string | null;
+  planJson: string | null;
   startedAt: string | null;
   completedAt: string | null;
   createdAt: string;
@@ -602,30 +584,25 @@ export interface ZeusConversationServerRequestRecord {
   responseJson: string | null;
   containsSecret: boolean;
   expiresAt: string | null;
-    autoResolutionState: ConversationRequestAutoResolutionState;
-    createdAt: string;
-    resolvedAt: string | null;
+  autoResolutionState: ConversationRequestAutoResolutionState;
+  createdAt: string;
+  resolvedAt: string | null;
 }
 
 export type ConversationRequestAutoResolutionState = 'none' | 'scheduled' | 'snoozed';
 
-export type ConversationPlanActionStatus =
-    'pending'
-    | 'dismissed'
-    | 'implemented'
-    | 'refinement_requested'
-    | 'superseded';
+export type ConversationPlanActionStatus = 'pending' | 'dismissed' | 'implemented' | 'refinement_requested' | 'superseded';
 
 export interface ZeusConversationPlanActionRecord {
-    id: string;
-    conversationId: string;
-    turnId: string;
-    planItemId: string;
-    status: ConversationPlanActionStatus;
-    submissionId: string | null;
+  id: string;
+  conversationId: string;
+  turnId: string;
+  planItemId: string;
+  status: ConversationPlanActionStatus;
+  submissionId: string | null;
   createdAt: string;
   resolvedAt: string | null;
-    updatedAt: string;
+  updatedAt: string;
 }
 
 export type IdempotencyRequestStatus = 'in_progress' | 'completed' | 'failed';
@@ -729,18 +706,18 @@ const builtInTaskTemplates = [
     id: 'task_template_bug_fix',
     sortOrder: 3,
     name: 'Bug 修复',
-      description: '定位真实缺陷、补充回归验证并修复。',
-      promptTemplate: '请复现并修复缺陷：{{bug_report}}，给出根因、修法、静态检查和真实运行验证结果。',
+    description: '定位真实缺陷、补充回归验证并修复。',
+    promptTemplate: '请复现并修复缺陷：{{bug_report}}，给出根因、修法、静态检查和真实运行验证结果。',
   },
   {
     id: 'task_template_code_review',
     sortOrder: 4,
     name: '代码评审',
     description: '审查真实变更的正确性、风险和可维护性。',
-      promptTemplate: '请审查以下真实变更：{{diff_context}}，重点关注正确性、风险、验证缺口和回滚建议。',
+    promptTemplate: '请审查以下真实变更：{{diff_context}}，重点关注正确性、风险、验证缺口和回滚建议。',
   },
   {
-      id: 'task_template_performance_analysis',
+    id: 'task_template_performance_analysis',
     sortOrder: 5,
     name: '性能分析',
     description: '分析真实代码路径的性能瓶颈与可观测指标。',
@@ -748,14 +725,14 @@ const builtInTaskTemplates = [
   },
   {
     id: 'task_template_architecture_analysis',
-      sortOrder: 6,
+    sortOrder: 6,
     name: '架构分析',
     description: '基于真实图谱理解模块边界、依赖和演进风险。',
     promptTemplate: '请基于 {{graph_context}} 分析架构边界、依赖方向、风险点和改造顺序。',
   },
   {
     id: 'task_template_sql_optimization',
-      sortOrder: 7,
+    sortOrder: 7,
     name: 'SQL 优化',
     description: '分析真实 SQL、表结构或查询路径的优化空间。',
     promptTemplate: '请基于 {{sql_context}} 分析 SQL 性能、索引、事务一致性和回滚风险。',
@@ -932,11 +909,11 @@ export async function createZeusDatabase(filePath: string): Promise<ZeusDatabase
   }
   const zeusDb = new ZeusDatabase(db, filePath);
   migrateCoreSchema(zeusDb);
-    migrateRetiredUnitTestTemplate(zeusDb);
-    migrateTaskManagementStatus(zeusDb);
+  migrateRetiredUnitTestTemplate(zeusDb);
+  migrateTaskManagementStatus(zeusDb);
   migrateCodexNativeConversationSchema(zeusDb);
   migrateCodexLegacyImportSchema(zeusDb);
-    migrateMcpServerIdentifierFalsePositiveCleanup(zeusDb);
+  migrateMcpServerIdentifierFalsePositiveCleanup(zeusDb);
   migrateCommandCenterSchema(zeusDb);
   return zeusDb;
 }
@@ -1241,33 +1218,42 @@ function migrateCoreSchema(db: ZeusDatabase): void {
 }
 
 function migrateRetiredUnitTestTemplate(db: ZeusDatabase): void {
-    const migrationId = '20260723_0001_retire_unit_test_template';
-    if (db.get<{ migration_id: string }>(`SELECT migration_id
+  const migrationId = '20260723_0001_retire_unit_test_template';
+  if (
+    db.get<{ migration_id: string }>(
+      `SELECT migration_id
                                           FROM schema_migrations
-                                          WHERE migration_id = ?`, [migrationId])) return;
-    db.execute(`DELETE
+                                          WHERE migration_id = ?`,
+      [migrationId],
+    )
+  )
+    return;
+  db.execute(`DELETE
                 FROM task_templates
                 WHERE id = 'task_template_unit_test'
                   AND built_in = 1`);
-    recordSchemaMigration(db, {
-        migrationId,
-        description: '退役内置单元测试任务模板',
-        checksumSource: 'task_templates:delete:task_template_unit_test:built_in:v1',
-    });
+  recordSchemaMigration(db, {
+    migrationId,
+    description: '退役内置单元测试任务模板',
+    checksumSource: 'task_templates:delete:task_template_unit_test:built_in:v1',
+  });
 }
 
 function migrateTaskManagementStatus(db: ZeusDatabase): void {
-    const migrationId = '20260721_0001_task_management_status';
-    if (db.get<{
-        migration_id: string
-    }>(`SELECT migration_id FROM schema_migrations WHERE migration_id = ?`, [migrationId])) return;
-    try {
-        db.execute(`ALTER TABLE tasks ADD COLUMN management_status TEXT NOT NULL DEFAULT 'todo'`);
-    } catch {
-        // 新库已在建表语句中包含字段；旧库重复执行时也安全忽略。
-    }
-    // 只在本迁移首次执行时把旧的 Agent 执行状态映射成项目阶段；后续两套状态互不自动覆盖。
-    db.execute(`
+  const migrationId = '20260721_0001_task_management_status';
+  if (
+    db.get<{
+      migration_id: string;
+    }>(`SELECT migration_id FROM schema_migrations WHERE migration_id = ?`, [migrationId])
+  )
+    return;
+  try {
+    db.execute(`ALTER TABLE tasks ADD COLUMN management_status TEXT NOT NULL DEFAULT 'todo'`);
+  } catch {
+    // 新库已在建表语句中包含字段；旧库重复执行时也安全忽略。
+  }
+  // 只在本迁移首次执行时把旧的 Agent 执行状态映射成项目阶段；后续两套状态互不自动覆盖。
+  db.execute(`
     UPDATE tasks
        SET management_status = CASE status
          WHEN 'completed' THEN 'completed'
@@ -1279,12 +1265,12 @@ function migrateTaskManagementStatus(db: ZeusDatabase): void {
          ELSE 'todo'
        END
   `);
-    db.execute(`CREATE INDEX IF NOT EXISTS idx_tasks_project_management_status_updated_at ON tasks(project_id, management_status, updated_at)`);
-    recordSchemaMigration(db, {
-        migrationId,
-        description: '拆分项目管理任务状态与 Coding Agent 执行状态',
-        checksumSource: 'tasks.management_status:v1:todo,in_development,in_testing,awaiting_acceptance,blocked,completed,cancelled',
-    });
+  db.execute(`CREATE INDEX IF NOT EXISTS idx_tasks_project_management_status_updated_at ON tasks(project_id, management_status, updated_at)`);
+  recordSchemaMigration(db, {
+    migrationId,
+    description: '拆分项目管理任务状态与 Coding Agent 执行状态',
+    checksumSource: 'tasks.management_status:v1:todo,in_development,in_testing,awaiting_acceptance,blocked,completed,cancelled',
+  });
 }
 
 function createSchemaMigrationsLedger(db: ZeusDatabase): void {
@@ -1312,9 +1298,9 @@ function recordSchemaMigration(
 }
 
 function migrateCodexNativeConversationSchema(db: ZeusDatabase): void {
-    const needsCollaborationModeBackfill = !db.get<{
-        migration_id: string
-    }>(`SELECT migration_id FROM schema_migrations WHERE migration_id = ?`, ['20260722_0006_conversation_plan_actions']);
+  const needsCollaborationModeBackfill = !db.get<{
+    migration_id: string;
+  }>(`SELECT migration_id FROM schema_migrations WHERE migration_id = ?`, ['20260722_0006_conversation_plan_actions']);
   for (const statement of [
     `ALTER TABLE conversations ADD COLUMN transport_kind TEXT NOT NULL DEFAULT 'legacy_cli'`,
     `ALTER TABLE conversations ADD COLUMN provider_id TEXT`,
@@ -1328,8 +1314,8 @@ function migrateCodexNativeConversationSchema(db: ZeusDatabase): void {
     `ALTER TABLE conversations ADD COLUMN provider_settings_json TEXT NOT NULL DEFAULT '{}'`,
     `ALTER TABLE conversations ADD COLUMN provider_token_usage_json TEXT NOT NULL DEFAULT '{}'`,
     `ALTER TABLE conversations ADD COLUMN permission_mode TEXT NOT NULL DEFAULT 'read-only'`,
-      `ALTER TABLE conversations ADD COLUMN collaboration_mode TEXT NOT NULL DEFAULT 'default'`,
-      `ALTER TABLE conversations ADD COLUMN completion_unread INTEGER NOT NULL DEFAULT 0`,
+    `ALTER TABLE conversations ADD COLUMN collaboration_mode TEXT NOT NULL DEFAULT 'default'`,
+    `ALTER TABLE conversations ADD COLUMN completion_unread INTEGER NOT NULL DEFAULT 0`,
   ]) {
     try {
       db.execute(statement);
@@ -1348,11 +1334,11 @@ function migrateCodexNativeConversationSchema(db: ZeusDatabase): void {
       error_json TEXT, plan_json TEXT, started_at TEXT, completed_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
     )
   `);
-    try {
-        db.execute(`ALTER TABLE conversation_turns ADD COLUMN plan_json TEXT`);
-    } catch {
-        // 新库已在 CREATE TABLE 中包含该列；旧库只补一次。
-    }
+  try {
+    db.execute(`ALTER TABLE conversation_turns ADD COLUMN plan_json TEXT`);
+  } catch {
+    // 新库已在 CREATE TABLE 中包含该列；旧库只补一次。
+  }
   db.execute(`CREATE UNIQUE INDEX IF NOT EXISTS idx_conversation_turn_provider ON conversation_turns(provider_thread_id, provider_turn_id) WHERE provider_turn_id IS NOT NULL`);
 
   db.execute(`
@@ -1427,7 +1413,7 @@ function migrateCodexNativeConversationSchema(db: ZeusDatabase): void {
     )
   `);
   db.execute(`CREATE UNIQUE INDEX IF NOT EXISTS idx_conversation_submission_idempotency ON conversation_submissions(conversation_id, idempotency_key)`);
-    if (needsCollaborationModeBackfill) backfillConversationCollaborationModes(db);
+  if (needsCollaborationModeBackfill) backfillConversationCollaborationModes(db);
 
   db.execute(`
     CREATE TABLE IF NOT EXISTS conversation_server_requests (
@@ -1439,21 +1425,21 @@ function migrateCodexNativeConversationSchema(db: ZeusDatabase): void {
     )
   `);
   db.execute(`CREATE UNIQUE INDEX IF NOT EXISTS idx_conversation_server_request_provider ON conversation_server_requests(transport_generation_id, provider_request_id_json)`);
-    try {
-        db.execute(`ALTER TABLE conversation_server_requests ADD COLUMN auto_resolution_state TEXT NOT NULL DEFAULT 'none'`);
-    } catch {
-        // 新库已在迁移补列；旧库重复打开时忽略。
-    }
+  try {
+    db.execute(`ALTER TABLE conversation_server_requests ADD COLUMN auto_resolution_state TEXT NOT NULL DEFAULT 'none'`);
+  } catch {
+    // 新库已在迁移补列；旧库重复打开时忽略。
+  }
 
-    db.execute(`
+  db.execute(`
     CREATE TABLE IF NOT EXISTS conversation_plan_actions (
       id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, turn_id TEXT NOT NULL,
       plan_item_id TEXT NOT NULL, status TEXT NOT NULL, submission_id TEXT,
       created_at TEXT NOT NULL, resolved_at TEXT, updated_at TEXT NOT NULL
     )
   `);
-    db.execute(`CREATE UNIQUE INDEX IF NOT EXISTS idx_conversation_plan_action_item ON conversation_plan_actions(plan_item_id)`);
-    db.execute(`CREATE INDEX IF NOT EXISTS idx_conversation_plan_action_pending ON conversation_plan_actions(conversation_id, status, created_at)`);
+  db.execute(`CREATE UNIQUE INDEX IF NOT EXISTS idx_conversation_plan_action_item ON conversation_plan_actions(plan_item_id)`);
+  db.execute(`CREATE INDEX IF NOT EXISTS idx_conversation_plan_action_pending ON conversation_plan_actions(conversation_id, status, created_at)`);
 
   db.execute(`
     CREATE TABLE IF NOT EXISTS idempotency_requests (
@@ -1488,42 +1474,42 @@ function migrateCodexNativeConversationSchema(db: ZeusDatabase): void {
     description: '增加 Codex native 会话权限模式事实源',
     checksumSource: 'conversations:permission_mode:read-only,auto,full-access:v1',
   });
-    recordSchemaMigration(db, {
-        migrationId: '20260721_0005_conversation_turn_plan',
-        description: '增加 Codex native 轮次结构化计划快照',
-        checksumSource: 'conversation_turns:plan_json:turn_plan_updated:v1',
-    });
-    recordSchemaMigration(db, {
-        migrationId: '20260722_0006_conversation_plan_actions',
-        description: '增加 PLAN 协作模式、计划实施请求和用户询问自动解决状态',
-        checksumSource: 'conversations:collaboration_mode,conversation_plan_actions,conversation_server_requests:auto_resolution_state:v1',
-    });
-    recordSchemaMigration(db, {
-        migrationId: '20260722_0007_conversation_completion_unread',
-        description: '增加会话成功完成未读状态',
-        checksumSource: 'conversations:completion_unread:successful_turn_completion,acknowledgement:v1',
-    });
-    recordSchemaMigration(db, {
-        migrationId: '20260727_0008_conversation_resources_and_turn_change_sets',
-        description: '增加会话资源与执行轮次变更集持久化',
-        checksumSource: 'conversation_resources,turn_change_sets,turn_change_files:resource_authority,turn_patch_undo_reapply:v1',
-    });
+  recordSchemaMigration(db, {
+    migrationId: '20260721_0005_conversation_turn_plan',
+    description: '增加 Codex native 轮次结构化计划快照',
+    checksumSource: 'conversation_turns:plan_json:turn_plan_updated:v1',
+  });
+  recordSchemaMigration(db, {
+    migrationId: '20260722_0006_conversation_plan_actions',
+    description: '增加 PLAN 协作模式、计划实施请求和用户询问自动解决状态',
+    checksumSource: 'conversations:collaboration_mode,conversation_plan_actions,conversation_server_requests:auto_resolution_state:v1',
+  });
+  recordSchemaMigration(db, {
+    migrationId: '20260722_0007_conversation_completion_unread',
+    description: '增加会话成功完成未读状态',
+    checksumSource: 'conversations:completion_unread:successful_turn_completion,acknowledgement:v1',
+  });
+  recordSchemaMigration(db, {
+    migrationId: '20260727_0008_conversation_resources_and_turn_change_sets',
+    description: '增加会话资源与执行轮次变更集持久化',
+    checksumSource: 'conversation_resources,turn_change_sets,turn_change_files:resource_authority,turn_patch_undo_reapply:v1',
+  });
 }
 
 function backfillConversationCollaborationModes(db: ZeusDatabase): void {
-    for (const conversation of db.select<{ id: string }>(`SELECT id FROM conversations`)) {
-        const latest = db.get<{
-            input_json: string
-        }>(`SELECT input_json FROM conversation_submissions WHERE conversation_id = ? ORDER BY created_at DESC, id DESC LIMIT 1`, [conversation.id]);
-        if (!latest) continue;
-        try {
-            const input = JSON.parse(latest.input_json) as { context?: { workMode?: unknown } };
-            const mode = input.context?.workMode;
-            if (mode === 'plan' || mode === 'default') db.execute(`UPDATE conversations SET collaboration_mode = ? WHERE id = ?`, [mode, conversation.id]);
-        } catch {
-            // 旧提交无法解析时保持列默认值 default，避免迁移失败阻断启动。
-        }
+  for (const conversation of db.select<{ id: string }>(`SELECT id FROM conversations`)) {
+    const latest = db.get<{
+      input_json: string;
+    }>(`SELECT input_json FROM conversation_submissions WHERE conversation_id = ? ORDER BY created_at DESC, id DESC LIMIT 1`, [conversation.id]);
+    if (!latest) continue;
+    try {
+      const input = JSON.parse(latest.input_json) as { context?: { workMode?: unknown } };
+      const mode = input.context?.workMode;
+      if (mode === 'plan' || mode === 'default') db.execute(`UPDATE conversations SET collaboration_mode = ? WHERE id = ?`, [mode, conversation.id]);
+    } catch {
+      // 旧提交无法解析时保持列默认值 default，避免迁移失败阻断启动。
     }
+  }
 }
 
 function migrateCodexLegacyImportSchema(db: ZeusDatabase): void {
@@ -1558,38 +1544,41 @@ function migrateCodexLegacyImportSchema(db: ZeusDatabase): void {
 }
 
 function migrateMcpServerIdentifierFalsePositiveCleanup(db: ZeusDatabase): void {
-    const migrationId = '20260720_0005_mcp_server_identifier_false_positive_cleanup';
-    if (db.get<{
-        migration_id: string
-    }>(`SELECT migration_id FROM schema_migrations WHERE migration_id = ?`, [migrationId])) return;
+  const migrationId = '20260720_0005_mcp_server_identifier_false_positive_cleanup';
+  if (
+    db.get<{
+      migration_id: string;
+    }>(`SELECT migration_id FROM schema_migrations WHERE migration_id = ?`, [migrationId])
+  )
+    return;
 
-    const falsePositive = 'Secret-like provider field rejected: snapshot.openai-api-key-local-confirmation';
-    db.transaction(() => {
-        db.execute(`DELETE FROM conversation_items WHERE item_type = 'error' AND provider_item_id LIKE 'native-provider-event-error-%' AND text_content = ?`, [falsePositive]);
+  const falsePositive = 'Secret-like provider field rejected: snapshot.openai-api-key-local-confirmation';
+  db.transaction(() => {
+    db.execute(`DELETE FROM conversation_items WHERE item_type = 'error' AND provider_item_id LIKE 'native-provider-event-error-%' AND text_content = ?`, [falsePositive]);
 
-        const providerErrors = db.get<{
-            value_json: string
-        }>(`SELECT value_json FROM settings WHERE key = 'codex.native.provider_event_errors'`);
-        if (providerErrors) {
-            try {
-                const parsed = JSON.parse(providerErrors.value_json) as unknown;
-                if (Array.isArray(parsed)) {
-                    const filtered = parsed.filter((entry) => !(isPlainRecord(entry) && entry.method === 'mcpServer/startupStatus/updated' && isPlainRecord(entry.error) && entry.error.message === falsePositive));
-                    if (filtered.length !== parsed.length) {
-                        db.execute(`UPDATE settings SET value_json = ?, updated_at = ? WHERE key = 'codex.native.provider_event_errors'`, [JSON.stringify(filtered), nowIso()]);
-                    }
-                }
-            } catch {
-                // 非法诊断 JSON 保持原样；本迁移只清理能够精确识别的历史误报。
-            }
+    const providerErrors = db.get<{
+      value_json: string;
+    }>(`SELECT value_json FROM settings WHERE key = 'codex.native.provider_event_errors'`);
+    if (providerErrors) {
+      try {
+        const parsed = JSON.parse(providerErrors.value_json) as unknown;
+        if (Array.isArray(parsed)) {
+          const filtered = parsed.filter((entry) => !(isPlainRecord(entry) && entry.method === 'mcpServer/startupStatus/updated' && isPlainRecord(entry.error) && entry.error.message === falsePositive));
+          if (filtered.length !== parsed.length) {
+            db.execute(`UPDATE settings SET value_json = ?, updated_at = ? WHERE key = 'codex.native.provider_event_errors'`, [JSON.stringify(filtered), nowIso()]);
+          }
         }
+      } catch {
+        // 非法诊断 JSON 保持原样；本迁移只清理能够精确识别的历史误报。
+      }
+    }
 
-        recordSchemaMigration(db, {
-            migrationId,
-            description: '清理 MCP 服务标识被误判为密钥字段所产生的历史错误项',
-            checksumSource: 'mcp_server_identifier:false_positive:conversation_items,provider_event_errors:v1',
-        });
+    recordSchemaMigration(db, {
+      migrationId,
+      description: '清理 MCP 服务标识被误判为密钥字段所产生的历史错误项',
+      checksumSource: 'mcp_server_identifier:false_positive:conversation_items,provider_event_errors:v1',
     });
+  });
 }
 
 function backfillMissingTaskCodes(db: ZeusDatabase): void {
@@ -1699,9 +1688,9 @@ function filterAndSortTasks(records: ZeusTaskRecord[], options: TaskListOptions)
   const filtered = records.filter((record) => {
     const matchesQuery = !query || [record.taskCode, record.id, record.title, record.description, record.createdFrom, record.sourceContextJson, record.priority].join('\n').toLowerCase().includes(query);
     const matchesStatus = !options.status || record.status === options.status;
-      const matchesManagementStatus = !options.managementStatus || record.managementStatus === options.managementStatus;
+    const matchesManagementStatus = !options.managementStatus || record.managementStatus === options.managementStatus;
     const matchesTag = !tag || record.tags.includes(tag);
-      return matchesQuery && matchesStatus && matchesManagementStatus && matchesTag;
+    return matchesQuery && matchesStatus && matchesManagementStatus && matchesTag;
   });
   const sortBy = options.sortBy ?? 'createdAt';
   const direction = options.sortDirection === 'desc' ? -1 : 1;
@@ -1980,7 +1969,7 @@ export class TaskRepository {
       taskSequence,
       title: input.title,
       description: input.description,
-        managementStatus: 'todo',
+      managementStatus: 'todo',
       status: 'ready',
       priority: input.priority ?? 'p3',
       allowCodeChanges: input.allowCodeChanges === true,
@@ -1994,7 +1983,7 @@ export class TaskRepository {
       updatedAt: timestamp,
     };
     this.db.execute(
-        `INSERT INTO tasks (id, project_id, task_code, task_sequence, title, description, management_status, status, priority, tags_json, template_id,
+      `INSERT INTO tasks (id, project_id, task_code, task_sequence, title, description, management_status, status, priority, tags_json, template_id,
         allow_code_changes, allow_tests, allow_git_commit, created_from, source_context_json, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
@@ -2004,7 +1993,7 @@ export class TaskRepository {
         record.taskSequence,
         record.title,
         record.description,
-          record.managementStatus,
+        record.managementStatus,
         record.status,
         record.priority,
         JSON.stringify(record.tags),
@@ -2079,14 +2068,14 @@ export class TaskRepository {
     return updated;
   }
 
-    updateManagementStatus(taskId: string, managementStatus: TaskManagementStatus): ZeusTaskRecord {
-        if (!isTaskManagementStatus(managementStatus)) throw new Error(`Unknown Zeus task management status: ${String(managementStatus)}`);
-        const timestamp = nowIso();
-        this.db.execute(`UPDATE tasks SET management_status = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`, [managementStatus, timestamp, taskId]);
-        const updated = this.getById(taskId);
-        if (!updated) throw new Error(`Zeus task not found: ${taskId}`);
-        return updated;
-    }
+  updateManagementStatus(taskId: string, managementStatus: TaskManagementStatus): ZeusTaskRecord {
+    if (!isTaskManagementStatus(managementStatus)) throw new Error(`Unknown Zeus task management status: ${String(managementStatus)}`);
+    const timestamp = nowIso();
+    this.db.execute(`UPDATE tasks SET management_status = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`, [managementStatus, timestamp, taskId]);
+    const updated = this.getById(taskId);
+    if (!updated) throw new Error(`Zeus task not found: ${taskId}`);
+    return updated;
+  }
 
   update(taskId: string, input: UpdateTaskInput): ZeusTaskRecord {
     const existing = this.getById(taskId);
@@ -2524,9 +2513,9 @@ export class ConversationRepository {
 
   create(input: CreateConversationInput): ZeusConversationRecord {
     const transportKind = assertEnum(input.transportKind ?? 'legacy_cli', ['legacy_cli', 'codex_native'] as const, 'conversation transport kind');
-      const providerState = assertEnum(input.providerState ?? 'unbound', ['unbound', 'binding', 'ready', 'active', 'waiting', 'paused', 'archived', 'closed', 'failed'] as const, 'conversation provider state');
+    const providerState = assertEnum(input.providerState ?? 'unbound', ['unbound', 'binding', 'ready', 'active', 'waiting', 'paused', 'archived', 'closed', 'failed'] as const, 'conversation provider state');
     const permissionMode = assertEnum(input.permissionMode ?? 'read-only', ['read-only', 'auto', 'full-access'] as const, 'conversation permission mode');
-      const collaborationMode = assertEnum(input.collaborationMode ?? 'default', ['default', 'plan'] as const, 'conversation collaboration mode');
+    const collaborationMode = assertEnum(input.collaborationMode ?? 'default', ['default', 'plan'] as const, 'conversation collaboration mode');
     const timestamp = nowIso();
     const record: ZeusConversationRecord = {
       id: input.id ?? `conversation_${nanoid(12)}`,
@@ -2551,8 +2540,8 @@ export class ConversationRepository {
       providerSettingsJson: '{}',
       providerTokenUsageJson: '{}',
       permissionMode,
-        collaborationMode,
-        completionUnread: false,
+      collaborationMode,
+      completionUnread: false,
     };
     this.db.execute(
       `INSERT INTO conversations (id, project_id, task_id, session_id, title, summary, status, created_at, updated_at, archived,
@@ -2581,7 +2570,7 @@ export class ConversationRepository {
         record.providerSettingsJson,
         record.providerTokenUsageJson,
         record.permissionMode,
-          record.collaborationMode,
+        record.collaborationMode,
       ],
     );
     return record;
@@ -2595,24 +2584,24 @@ export class ConversationRepository {
     return updated;
   }
 
-    updateCollaborationMode(conversationId: string, collaborationMode: ConversationCollaborationMode): ZeusConversationWithMessagesRecord {
-        const normalized = assertEnum(collaborationMode, ['default', 'plan'] as const, 'conversation collaboration mode');
-        this.db.execute(`UPDATE conversations SET collaboration_mode = ?, updated_at = ? WHERE id = ?`, [normalized, nowIso(), conversationId]);
-        const updated = this.getById(conversationId);
-        if (!updated) throw new Error(`Zeus conversation not found: ${conversationId}`);
-        return updated;
-    }
+  updateCollaborationMode(conversationId: string, collaborationMode: ConversationCollaborationMode): ZeusConversationWithMessagesRecord {
+    const normalized = assertEnum(collaborationMode, ['default', 'plan'] as const, 'conversation collaboration mode');
+    this.db.execute(`UPDATE conversations SET collaboration_mode = ?, updated_at = ? WHERE id = ?`, [normalized, nowIso(), conversationId]);
+    const updated = this.getById(conversationId);
+    if (!updated) throw new Error(`Zeus conversation not found: ${conversationId}`);
+    return updated;
+  }
 
-    /** 完成未读是列表阅读状态，不得改变会话活跃时间或排序。 */
-    setCompletionUnread(conversationId: string, completionUnread: boolean): ZeusConversationWithMessagesRecord {
-        if (!this.db.get<{ id: string }>(`SELECT id FROM conversations WHERE id = ?`, [conversationId])) {
-            throw new Error(`Zeus conversation not found: ${conversationId}`);
-        }
-        this.db.execute(`UPDATE conversations SET completion_unread = ? WHERE id = ?`, [completionUnread ? 1 : 0, conversationId]);
-        const updated = this.getById(conversationId);
-        if (!updated) throw new Error(`Zeus conversation not found: ${conversationId}`);
-        return updated;
+  /** 完成未读是列表阅读状态，不得改变会话活跃时间或排序。 */
+  setCompletionUnread(conversationId: string, completionUnread: boolean): ZeusConversationWithMessagesRecord {
+    if (!this.db.get<{ id: string }>(`SELECT id FROM conversations WHERE id = ?`, [conversationId])) {
+      throw new Error(`Zeus conversation not found: ${conversationId}`);
     }
+    this.db.execute(`UPDATE conversations SET completion_unread = ? WHERE id = ?`, [completionUnread ? 1 : 0, conversationId]);
+    const updated = this.getById(conversationId);
+    if (!updated) throw new Error(`Zeus conversation not found: ${conversationId}`);
+    return updated;
+  }
 
   appendMessage(input: AppendConversationMessageInput): ZeusConversationMessageRecord {
     const record: ZeusConversationMessageRecord = {
@@ -2654,7 +2643,7 @@ export class ConversationRepository {
   }
 
   bindProvider(conversationId: string, input: BindConversationProviderInput): ZeusConversationWithMessagesRecord {
-      assertEnum(input.providerState, ['unbound', 'binding', 'ready', 'active', 'waiting', 'paused', 'archived', 'closed', 'failed'] as const, 'conversation provider state');
+    assertEnum(input.providerState, ['unbound', 'binding', 'ready', 'active', 'waiting', 'paused', 'archived', 'closed', 'failed'] as const, 'conversation provider state');
     const timestamp = nowIso();
     this.db.execute(
       `UPDATE conversations SET transport_kind = 'codex_native', provider_id = ?, provider_thread_id = ?, provider_thread_path = COALESCE(?, provider_thread_path),
@@ -3009,10 +2998,12 @@ export class CodexLegacyImportRepository {
 export class ConversationTurnRepository {
   constructor(private readonly db: ZeusDatabase) {}
 
-    upsert(input: Omit<ZeusConversationTurnRecord, 'id' | 'errorJson' | 'planJson'> & {
-        id?: string;
-        error?: unknown
-    }): ZeusConversationTurnRecord {
+  upsert(
+    input: Omit<ZeusConversationTurnRecord, 'id' | 'errorJson' | 'planJson'> & {
+      id?: string;
+      error?: unknown;
+    },
+  ): ZeusConversationTurnRecord {
     const status = assertEnum(input.status, ['queued', 'dispatching', 'running', 'waiting', 'paused', 'completed', 'interrupted', 'failed'] as const, 'conversation turn status');
     const existing = input.providerTurnId ? this.db.get<DbConversationTurnRow>(`SELECT * FROM conversation_turns WHERE provider_thread_id = ? AND provider_turn_id = ?`, [input.providerThreadId, input.providerTurnId]) : undefined;
     if (existing?.status === 'completed') return mapConversationTurnRow(existing);
@@ -3034,16 +3025,20 @@ export class ConversationTurnRepository {
     return row ? mapConversationTurnRow(row) : undefined;
   }
 
-    updatePlan(id: string, plan: {
-        explanation: string | null;
-        steps: Array<{ step: string; status: 'pending' | 'inProgress' | 'completed' }>
-    }, updatedAt: string): ZeusConversationTurnRecord {
-        const existing = this.getById(id);
-        if (!existing) throw new Error(`Conversation turn not found: ${id}`);
-        const planJson = JSON.stringify(plan);
-        this.db.execute(`UPDATE conversation_turns SET plan_json = ?, updated_at = ? WHERE id = ?`, [planJson, updatedAt, id]);
-        return this.getById(id)!;
-    }
+  updatePlan(
+    id: string,
+    plan: {
+      explanation: string | null;
+      steps: Array<{ step: string; status: 'pending' | 'inProgress' | 'completed' }>;
+    },
+    updatedAt: string,
+  ): ZeusConversationTurnRecord {
+    const existing = this.getById(id);
+    if (!existing) throw new Error(`Conversation turn not found: ${id}`);
+    const planJson = JSON.stringify(plan);
+    this.db.execute(`UPDATE conversation_turns SET plan_json = ?, updated_at = ? WHERE id = ?`, [planJson, updatedAt, id]);
+    return this.getById(id)!;
+  }
 
   listByConversation(conversationId: string): ZeusConversationTurnRecord[] {
     return this.db.select<DbConversationTurnRow>(`SELECT * FROM conversation_turns WHERE conversation_id = ? ORDER BY created_at, id`, [conversationId]).map(mapConversationTurnRow);
@@ -3081,6 +3076,26 @@ export class ConversationItemRepository {
        status = excluded.status, phase = excluded.phase, text_content = conversation_items.text_content || excluded.text_content,
        payload_json = excluded.payload_json, started_at = COALESCE(conversation_items.started_at, excluded.started_at), updated_at = excluded.updated_at`,
       [id, input.conversationId, input.turnId, input.providerThreadId, input.providerTurnId, input.providerItemId, itemType, status, phase, input.delta, JSON.stringify(input.payload), input.startedAt ?? null, input.updatedAt],
+    );
+    return this.getByProvider(input.providerThreadId, input.providerItemId)!;
+  }
+
+  upsertProgress(input: ConversationItemBaseInput & { textContent: string; status?: ConversationItemStatus }): ZeusConversationItemRecord {
+    const itemType = assertEnum(input.itemType, ['userMessage', 'agentMessage', 'reasoning', 'commandExecution', 'fileChange', 'mcpToolCall', 'dynamicToolCall', 'plan', 'imageView', 'webSearch', 'error'] as const, 'conversation item type');
+    const status = assertEnum(input.status ?? 'in_progress', ['in_progress', 'completed', 'failed'] as const, 'conversation item status');
+    const phase = assertEnum(input.phase, ['prework', 'final_answer'] as const, 'conversation item phase');
+    const existing = this.getByProvider(input.providerThreadId, input.providerItemId);
+    if (existing?.status === 'completed') return existing;
+    const id = existing?.id ?? `conversation_item_${nanoid(12)}`;
+    this.db.execute(
+      `INSERT INTO conversation_items (id, conversation_id, turn_id, provider_thread_id, provider_turn_id, provider_item_id, item_type, status, phase, text_content, payload_json, started_at, completed_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
+       ON CONFLICT(provider_thread_id, provider_item_id) DO UPDATE SET
+       turn_id = excluded.turn_id, provider_turn_id = excluded.provider_turn_id, item_type = excluded.item_type,
+       status = excluded.status, phase = excluded.phase, text_content = excluded.text_content,
+       payload_json = excluded.payload_json, started_at = COALESCE(conversation_items.started_at, excluded.started_at),
+       updated_at = excluded.updated_at`,
+      [id, input.conversationId, input.turnId, input.providerThreadId, input.providerTurnId, input.providerItemId, itemType, status, phase, input.textContent, JSON.stringify(input.payload), input.startedAt ?? null, input.updatedAt],
     );
     return this.getByProvider(input.providerThreadId, input.providerItemId)!;
   }
@@ -3133,11 +3148,7 @@ export class ConversationItemRepository {
 export class ConversationResourceRepository {
   constructor(private readonly db: ZeusDatabase) {}
 
-  replaceForItem(
-    itemId: string,
-    resources: Array<Omit<ZeusConversationResourceRecord, 'id' | 'createdAt' | 'updatedAt'> & { id?: string }>,
-    updatedAt: string,
-  ): ZeusConversationResourceRecord[] {
+  replaceForItem(itemId: string, resources: Array<Omit<ZeusConversationResourceRecord, 'id' | 'createdAt' | 'updatedAt'> & { id?: string }>, updatedAt: string): ZeusConversationResourceRecord[] {
     return this.db.transaction(() => {
       this.db.execute(`DELETE FROM conversation_resources WHERE item_id = ?`, [itemId]);
       for (const resource of resources) {
@@ -3176,15 +3187,11 @@ export class ConversationResourceRepository {
   }
 
   listByItem(itemId: string): ZeusConversationResourceRecord[] {
-    return this.db
-      .select<DbConversationResourceRow>(`SELECT * FROM conversation_resources WHERE item_id = ? ORDER BY source_index, id`, [itemId])
-      .map(mapConversationResourceRow);
+    return this.db.select<DbConversationResourceRow>(`SELECT * FROM conversation_resources WHERE item_id = ? ORDER BY source_index, id`, [itemId]).map(mapConversationResourceRow);
   }
 
   listByConversation(conversationId: string): ZeusConversationResourceRecord[] {
-    return this.db
-      .select<DbConversationResourceRow>(`SELECT * FROM conversation_resources WHERE conversation_id = ? ORDER BY created_at, source_index, id`, [conversationId])
-      .map(mapConversationResourceRow);
+    return this.db.select<DbConversationResourceRow>(`SELECT * FROM conversation_resources WHERE conversation_id = ? ORDER BY created_at, source_index, id`, [conversationId]).map(mapConversationResourceRow);
   }
 }
 
@@ -3198,11 +3205,7 @@ export class TurnChangeSetRepository {
       updatedAt: string;
     },
   ): ZeusTurnChangeSetRecord {
-    const state = assertEnum(
-      input.state,
-      ['capturing', 'applied', 'undoing', 'undone', 'reapplying', 'conflicted', 'unavailable'] as const,
-      'turn change set state',
-    );
+    const state = assertEnum(input.state, ['capturing', 'applied', 'undoing', 'undone', 'reapplying', 'conflicted', 'unavailable'] as const, 'turn change set state');
     const existing = this.getByTurn(input.conversationId, input.turnId);
     const id = existing?.id ?? input.id ?? `turn_change_set_${nanoid(12)}`;
     const createdAt = existing?.createdAt ?? input.createdAt ?? input.updatedAt;
@@ -3253,15 +3256,11 @@ export class TurnChangeSetRepository {
   }
 
   listByConversation(conversationId: string): ZeusTurnChangeSetRecord[] {
-    return this.db
-      .select<DbTurnChangeSetRow>(`SELECT * FROM turn_change_sets WHERE conversation_id = ? ORDER BY created_at, id`, [conversationId])
-      .map(mapTurnChangeSetRow);
+    return this.db.select<DbTurnChangeSetRow>(`SELECT * FROM turn_change_sets WHERE conversation_id = ? ORDER BY created_at, id`, [conversationId]).map(mapTurnChangeSetRow);
   }
 
   listInProgress(): ZeusTurnChangeSetRecord[] {
-    return this.db
-      .select<DbTurnChangeSetRow>(`SELECT * FROM turn_change_sets WHERE state IN ('undoing', 'reapplying') ORDER BY updated_at, id`)
-      .map(mapTurnChangeSetRow);
+    return this.db.select<DbTurnChangeSetRow>(`SELECT * FROM turn_change_sets WHERE state IN ('undoing', 'reapplying') ORDER BY updated_at, id`).map(mapTurnChangeSetRow);
   }
 }
 
@@ -3280,10 +3279,7 @@ export class TurnChangeFileRepository {
     const existing =
       input.sourceItemId === null
         ? undefined
-        : this.db.get<DbTurnChangeFileRow>(
-            `SELECT * FROM turn_change_files WHERE change_set_id = ? AND source_item_id = ? AND source_index = ?`,
-            [input.changeSetId, input.sourceItemId, input.sourceIndex],
-          );
+        : this.db.get<DbTurnChangeFileRow>(`SELECT * FROM turn_change_files WHERE change_set_id = ? AND source_item_id = ? AND source_index = ?`, [input.changeSetId, input.sourceItemId, input.sourceIndex]);
     const id = existing?.id ?? input.id ?? `turn_change_file_${nanoid(12)}`;
     const createdAt = existing?.created_at ?? input.createdAt ?? input.updatedAt;
     this.db.execute(
@@ -3343,9 +3339,7 @@ export class TurnChangeFileRepository {
   }
 
   listByChangeSet(changeSetId: string): ZeusTurnChangeFileRecord[] {
-    return this.db
-      .select<DbTurnChangeFileRow>(`SELECT * FROM turn_change_files WHERE change_set_id = ? ORDER BY source_index, id`, [changeSetId])
-      .map(mapTurnChangeFileRow);
+    return this.db.select<DbTurnChangeFileRow>(`SELECT * FROM turn_change_files WHERE change_set_id = ? ORDER BY source_index, id`, [changeSetId]).map(mapTurnChangeFileRow);
   }
 }
 
@@ -3480,7 +3474,7 @@ export class ConversationServerRequestRepository {
     response?: unknown;
     containsSecret?: boolean;
     expiresAt?: string | null;
-      autoResolutionState?: ConversationRequestAutoResolutionState;
+    autoResolutionState?: ConversationRequestAutoResolutionState;
     createdAt: string;
     resolvedAt?: string | null;
   }): ZeusConversationServerRequestRecord {
@@ -3498,7 +3492,7 @@ export class ConversationServerRequestRepository {
     const id = `conversation_server_request_${nanoid(12)}`;
     const response = containsSecret && input.response !== undefined ? createSecretResponseSummary(input.payload, input.response) : input.response;
     this.db.execute(
-        `INSERT INTO conversation_server_requests (id, conversation_id, turn_id, item_id, transport_generation_id, provider_request_id_json, request_kind, payload_json, status, response_json, contains_secret, expires_at, auto_resolution_state, created_at, resolved_at)
+      `INSERT INTO conversation_server_requests (id, conversation_id, turn_id, item_id, transport_generation_id, provider_request_id_json, request_kind, payload_json, status, response_json, contains_secret, expires_at, auto_resolution_state, created_at, resolved_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(transport_generation_id, provider_request_id_json) DO NOTHING`,
       [
@@ -3514,7 +3508,7 @@ export class ConversationServerRequestRepository {
         response === undefined ? null : JSON.stringify(response),
         containsSecret ? 1 : 0,
         input.expiresAt ?? null,
-          assertEnum(input.autoResolutionState ?? 'none', ['none', 'scheduled', 'snoozed'] as const, 'request auto resolution state'),
+        assertEnum(input.autoResolutionState ?? 'none', ['none', 'scheduled', 'snoozed'] as const, 'request auto resolution state'),
         input.createdAt,
         input.resolvedAt ?? null,
       ],
@@ -3542,20 +3536,20 @@ export class ConversationServerRequestRepository {
     return this.getById(id)!;
   }
 
-    expire(id: string, input: { response: unknown; resolvedAt: string }): ZeusConversationServerRequestRecord {
-        const existing = this.getById(id);
-        if (!existing) throw new Error(`Conversation server request not found: ${id}`);
-        this.db.execute(`UPDATE conversation_server_requests SET status = 'expired', response_json = ?, resolved_at = ? WHERE id = ? AND status IN ('pending', 'resolved')`, [JSON.stringify(input.response), input.resolvedAt, id]);
-        return this.getById(id)!;
-    }
+  expire(id: string, input: { response: unknown; resolvedAt: string }): ZeusConversationServerRequestRecord {
+    const existing = this.getById(id);
+    if (!existing) throw new Error(`Conversation server request not found: ${id}`);
+    this.db.execute(`UPDATE conversation_server_requests SET status = 'expired', response_json = ?, resolved_at = ? WHERE id = ? AND status IN ('pending', 'resolved')`, [JSON.stringify(input.response), input.resolvedAt, id]);
+    return this.getById(id)!;
+  }
 
-    snooze(id: string): ZeusConversationServerRequestRecord {
-        const existing = this.getById(id);
-        if (!existing) throw new Error(`Conversation server request not found: ${id}`);
-        if (existing.status !== 'pending') throw Object.assign(new Error('Only a pending request can be snoozed.'), {code: 'ZEUS_CODEX_SERVER_REQUEST_NOT_PENDING' as const});
-        this.db.execute(`UPDATE conversation_server_requests SET auto_resolution_state = 'snoozed', expires_at = NULL WHERE id = ?`, [id]);
-        return this.getById(id)!;
-    }
+  snooze(id: string): ZeusConversationServerRequestRecord {
+    const existing = this.getById(id);
+    if (!existing) throw new Error(`Conversation server request not found: ${id}`);
+    if (existing.status !== 'pending') throw Object.assign(new Error('Only a pending request can be snoozed.'), { code: 'ZEUS_CODEX_SERVER_REQUEST_NOT_PENDING' as const });
+    this.db.execute(`UPDATE conversation_server_requests SET auto_resolution_state = 'snoozed', expires_at = NULL WHERE id = ?`, [id]);
+    return this.getById(id)!;
+  }
 
   getById(id: string): ZeusConversationServerRequestRecord | undefined {
     const row = this.db.get<DbConversationServerRequestRow>(`SELECT * FROM conversation_server_requests WHERE id = ?`, [id]);
@@ -3576,77 +3570,77 @@ export class ConversationServerRequestRepository {
 }
 
 export class ConversationPlanActionRepository {
-    constructor(private readonly db: ZeusDatabase) {
-    }
+  constructor(private readonly db: ZeusDatabase) {}
 
-    createPending(input: {
-        conversationId: string;
-        turnId: string;
-        planItemId: string;
-        createdAt: string
-    }): ZeusConversationPlanActionRecord {
-        const existing = this.db.get<DbConversationPlanActionRow>(`SELECT * FROM conversation_plan_actions WHERE plan_item_id = ?`, [input.planItemId]);
-        if (existing) return mapConversationPlanActionRow(existing);
-        return this.db.transaction(() => {
-            this.db.execute(`UPDATE conversation_plan_actions SET status = 'superseded', resolved_at = ?, updated_at = ? WHERE conversation_id = ? AND status IN ('pending', 'refinement_requested')`, [
-                input.createdAt,
-                input.createdAt,
-                input.conversationId,
-            ]);
-            const id = `conversation_plan_action_${nanoid(12)}`;
-            this.db.execute(
-                `INSERT INTO conversation_plan_actions (id, conversation_id, turn_id, plan_item_id, status, submission_id, created_at, resolved_at, updated_at)
+  createPending(input: { conversationId: string; turnId: string; planItemId: string; createdAt: string }): ZeusConversationPlanActionRecord {
+    const existing = this.db.get<DbConversationPlanActionRow>(`SELECT * FROM conversation_plan_actions WHERE plan_item_id = ?`, [input.planItemId]);
+    if (existing) return mapConversationPlanActionRow(existing);
+    return this.db.transaction(() => {
+      this.db.execute(`UPDATE conversation_plan_actions SET status = 'superseded', resolved_at = ?, updated_at = ? WHERE conversation_id = ? AND status IN ('pending', 'refinement_requested')`, [
+        input.createdAt,
+        input.createdAt,
+        input.conversationId,
+      ]);
+      const id = `conversation_plan_action_${nanoid(12)}`;
+      this.db.execute(
+        `INSERT INTO conversation_plan_actions (id, conversation_id, turn_id, plan_item_id, status, submission_id, created_at, resolved_at, updated_at)
          VALUES (?, ?, ?, ?, 'pending', NULL, ?, NULL, ?)`,
-                [id, input.conversationId, input.turnId, input.planItemId, input.createdAt, input.createdAt],
-            );
-            return this.getById(id)!;
-        });
-    }
+        [id, input.conversationId, input.turnId, input.planItemId, input.createdAt, input.createdAt],
+      );
+      return this.getById(id)!;
+    });
+  }
 
-    getById(id: string): ZeusConversationPlanActionRecord | undefined {
-        const row = this.db.get<DbConversationPlanActionRow>(`SELECT * FROM conversation_plan_actions WHERE id = ?`, [id]);
-        return row ? mapConversationPlanActionRow(row) : undefined;
-    }
+  getById(id: string): ZeusConversationPlanActionRecord | undefined {
+    const row = this.db.get<DbConversationPlanActionRow>(`SELECT * FROM conversation_plan_actions WHERE id = ?`, [id]);
+    return row ? mapConversationPlanActionRow(row) : undefined;
+  }
 
-    getLatestPending(conversationId: string): ZeusConversationPlanActionRecord | undefined {
-        const row = this.db.get<DbConversationPlanActionRow>(`SELECT * FROM conversation_plan_actions WHERE conversation_id = ? AND status = 'pending' ORDER BY created_at DESC, id DESC LIMIT 1`, [conversationId]);
-        return row ? mapConversationPlanActionRow(row) : undefined;
-    }
+  getLatestPending(conversationId: string): ZeusConversationPlanActionRecord | undefined {
+    const row = this.db.get<DbConversationPlanActionRow>(`SELECT * FROM conversation_plan_actions WHERE conversation_id = ? AND status = 'pending' ORDER BY created_at DESC, id DESC LIMIT 1`, [conversationId]);
+    return row ? mapConversationPlanActionRow(row) : undefined;
+  }
 
-    listByConversation(conversationId: string): ZeusConversationPlanActionRecord[] {
-        return this.db.select<DbConversationPlanActionRow>(`SELECT * FROM conversation_plan_actions WHERE conversation_id = ? ORDER BY created_at, id`, [conversationId]).map(mapConversationPlanActionRow);
-    }
+  listByConversation(conversationId: string): ZeusConversationPlanActionRecord[] {
+    return this.db.select<DbConversationPlanActionRow>(`SELECT * FROM conversation_plan_actions WHERE conversation_id = ? ORDER BY created_at, id`, [conversationId]).map(mapConversationPlanActionRow);
+  }
 
-    resolveLatestPending(id: string, conversationId: string, input: {
-        status: Exclude<ConversationPlanActionStatus, 'pending' | 'superseded'>;
-        submissionId?: string | null;
-        resolvedAt: string
-    }): ZeusConversationPlanActionRecord {
-        const status = assertEnum(input.status, ['dismissed', 'implemented', 'refinement_requested'] as const, 'conversation plan action resolution');
-        return this.db.transaction(() => this.resolveLatestPendingInCurrentTransaction(id, conversationId, {
-            ...input,
-            status
-        }));
-    }
+  resolveLatestPending(
+    id: string,
+    conversationId: string,
+    input: {
+      status: Exclude<ConversationPlanActionStatus, 'pending' | 'superseded'>;
+      submissionId?: string | null;
+      resolvedAt: string;
+    },
+  ): ZeusConversationPlanActionRecord {
+    const status = assertEnum(input.status, ['dismissed', 'implemented', 'refinement_requested'] as const, 'conversation plan action resolution');
+    return this.db.transaction(() =>
+      this.resolveLatestPendingInCurrentTransaction(id, conversationId, {
+        ...input,
+        status,
+      }),
+    );
+  }
 
-    /** 仅供已经持有 ZeusDatabase transaction 的领域操作组合调用。 */
-    resolveLatestPendingInCurrentTransaction(
-        id: string,
-        conversationId: string,
-        input: {
-            status: Exclude<ConversationPlanActionStatus, 'pending' | 'superseded'>;
-            submissionId?: string | null;
-            resolvedAt: string
-        },
-    ): ZeusConversationPlanActionRecord {
-        const status = assertEnum(input.status, ['dismissed', 'implemented', 'refinement_requested'] as const, 'conversation plan action resolution');
-        const latest = this.getLatestPending(conversationId);
-        if (!latest || latest.id !== id) {
-            throw Object.assign(new Error('Plan implementation request is stale or already resolved.'), {code: 'ZEUS_PLAN_IMPLEMENTATION_REQUEST_STALE' as const});
-        }
-        this.db.execute(`UPDATE conversation_plan_actions SET status = ?, submission_id = ?, resolved_at = ?, updated_at = ? WHERE id = ? AND status = 'pending'`, [status, input.submissionId ?? null, input.resolvedAt, input.resolvedAt, id]);
-        return this.getById(id)!;
+  /** 仅供已经持有 ZeusDatabase transaction 的领域操作组合调用。 */
+  resolveLatestPendingInCurrentTransaction(
+    id: string,
+    conversationId: string,
+    input: {
+      status: Exclude<ConversationPlanActionStatus, 'pending' | 'superseded'>;
+      submissionId?: string | null;
+      resolvedAt: string;
+    },
+  ): ZeusConversationPlanActionRecord {
+    const status = assertEnum(input.status, ['dismissed', 'implemented', 'refinement_requested'] as const, 'conversation plan action resolution');
+    const latest = this.getLatestPending(conversationId);
+    if (!latest || latest.id !== id) {
+      throw Object.assign(new Error('Plan implementation request is stale or already resolved.'), { code: 'ZEUS_PLAN_IMPLEMENTATION_REQUEST_STALE' as const });
     }
+    this.db.execute(`UPDATE conversation_plan_actions SET status = ?, submission_id = ?, resolved_at = ?, updated_at = ? WHERE id = ? AND status = 'pending'`, [status, input.submissionId ?? null, input.resolvedAt, input.resolvedAt, id]);
+    return this.getById(id)!;
+  }
 }
 
 export class IdempotencyRequestRepository {
@@ -3687,30 +3681,14 @@ export class IdempotencyRequestRepository {
     return row ? mapIdempotencyRequestRow(row) : undefined;
   }
 
-  complete(input: {
-    scope: string;
-    idempotencyKey: string;
-    status: 'completed' | 'failed';
-    httpStatus: number;
-    response: unknown;
-    resourceId?: string | null;
-    updatedAt: string;
-  }): ZeusIdempotencyRequestRecord {
+  complete(input: { scope: string; idempotencyKey: string; status: 'completed' | 'failed'; httpStatus: number; response: unknown; resourceId?: string | null; updatedAt: string }): ZeusIdempotencyRequestRecord {
     const existing = this.get(input.scope, input.idempotencyKey);
     if (!existing) throw new Error(`Idempotency request not found: ${input.scope}/${input.idempotencyKey}`);
     this.db.execute(
       `UPDATE idempotency_requests
        SET status = ?, http_status = ?, response_json = ?, resource_id = ?, updated_at = ?
        WHERE scope = ? AND idempotency_key = ?`,
-      [
-        input.status,
-        input.httpStatus,
-        JSON.stringify(input.response),
-        input.resourceId ?? existing.resourceId,
-        input.updatedAt,
-        input.scope,
-        input.idempotencyKey,
-      ],
+      [input.status, input.httpStatus, JSON.stringify(input.response), input.resourceId ?? existing.resourceId, input.updatedAt, input.scope, input.idempotencyKey],
     );
     return this.get(input.scope, input.idempotencyKey)!;
   }
@@ -3777,13 +3755,13 @@ function validateMcpStartupStatusSnapshot(snapshot: unknown): asserts snapshot i
   assertOnlyKeys(candidate, ['generationId', 'sequence', 'value'], 'Codex MCP startup snapshot');
   assertProviderVisibleJson(candidate.value, 'MCP startup status');
   if (!isPlainRecord(candidate.value)) throw new Error('Invalid Codex MCP startup snapshot');
-    for (const [serverId, state] of Object.entries(candidate.value)) {
-        if (!serverId.trim()) throw new Error('Invalid Codex MCP startup snapshot');
-        // 顶层键是 MCP 服务标识而非负载字段；密钥规则继续应用于每个服务的状态内容。
-        assertNoSecretLikeProviderKeys(state, new Set<string>(), `snapshot.${serverId}`);
+  for (const [serverId, state] of Object.entries(candidate.value)) {
+    if (!serverId.trim()) throw new Error('Invalid Codex MCP startup snapshot');
+    // 顶层键是 MCP 服务标识而非负载字段；密钥规则继续应用于每个服务的状态内容。
+    assertNoSecretLikeProviderKeys(state, new Set<string>(), `snapshot.${serverId}`);
     if (typeof state === 'string') continue;
     if (!isPlainRecord(state) || typeof state.status !== 'string') throw new Error('Invalid Codex MCP startup snapshot');
-        assertOnlyKeys(state, ['status', 'error'], 'Codex MCP server startup state');
+    assertOnlyKeys(state, ['status', 'error'], 'Codex MCP server startup state');
     if (state.error !== undefined && state.error !== null && typeof state.error !== 'string') throw new Error('Invalid Codex MCP startup snapshot');
   }
 }
@@ -4107,8 +4085,8 @@ interface DbConversationRow {
   provider_settings_json: string;
   provider_token_usage_json: string;
   permission_mode: ConversationPermissionMode;
-    collaboration_mode: ConversationCollaborationMode;
-    completion_unread: number;
+  collaboration_mode: ConversationCollaborationMode;
+  completion_unread: number;
 }
 
 interface DbConversationMessageRow {
@@ -4151,7 +4129,7 @@ interface DbConversationTurnRow {
   client_submission_id: string;
   status: ConversationTurnStatus;
   error_json: string | null;
-    plan_json: string | null;
+  plan_json: string | null;
   started_at: string | null;
   completed_at: string | null;
   created_at: string;
@@ -4268,21 +4246,21 @@ interface DbConversationServerRequestRow {
   response_json: string | null;
   contains_secret: number;
   expires_at: string | null;
-    auto_resolution_state: ConversationRequestAutoResolutionState;
-    created_at: string;
-    resolved_at: string | null;
+  auto_resolution_state: ConversationRequestAutoResolutionState;
+  created_at: string;
+  resolved_at: string | null;
 }
 
 interface DbConversationPlanActionRow {
-    id: string;
-    conversation_id: string;
-    turn_id: string;
-    plan_item_id: string;
-    status: ConversationPlanActionStatus;
-    submission_id: string | null;
+  id: string;
+  conversation_id: string;
+  turn_id: string;
+  plan_item_id: string;
+  status: ConversationPlanActionStatus;
+  submission_id: string | null;
   created_at: string;
   resolved_at: string | null;
-    updated_at: string;
+  updated_at: string;
 }
 
 interface DbIdempotencyRequestRow {
@@ -4359,7 +4337,7 @@ interface DbTaskRow {
   task_sequence: number | null;
   title: string;
   description: string;
-    management_status: string;
+  management_status: string;
   status: ZeusTaskRecord['status'];
   priority: string;
   tags_json: string;
@@ -4471,8 +4449,8 @@ function mapConversationRow(row: DbConversationRow): ZeusConversationRecord {
     providerSettingsJson: row.provider_settings_json,
     providerTokenUsageJson: row.provider_token_usage_json,
     permissionMode: assertEnum(row.permission_mode, ['read-only', 'auto', 'full-access'] as const, 'conversation permission mode'),
-      collaborationMode: assertEnum(row.collaboration_mode, ['default', 'plan'] as const, 'conversation collaboration mode'),
-      completionUnread: row.completion_unread === 1,
+    collaborationMode: assertEnum(row.collaboration_mode, ['default', 'plan'] as const, 'conversation collaboration mode'),
+    completionUnread: row.completion_unread === 1,
   };
 }
 
@@ -4521,7 +4499,7 @@ function mapConversationTurnRow(row: DbConversationTurnRow): ZeusConversationTur
     clientSubmissionId: row.client_submission_id,
     status: row.status,
     errorJson: row.error_json,
-      planJson: row.plan_json,
+    planJson: row.plan_json,
     startedAt: row.started_at,
     completedAt: row.completed_at,
     createdAt: row.created_at,
@@ -4650,24 +4628,24 @@ function mapConversationServerRequestRow(row: DbConversationServerRequestRow): Z
     responseJson: row.response_json,
     containsSecret: row.contains_secret === 1,
     expiresAt: row.expires_at,
-      autoResolutionState: assertEnum(row.auto_resolution_state, ['none', 'scheduled', 'snoozed'] as const, 'request auto resolution state'),
+    autoResolutionState: assertEnum(row.auto_resolution_state, ['none', 'scheduled', 'snoozed'] as const, 'request auto resolution state'),
     createdAt: row.created_at,
     resolvedAt: row.resolved_at,
   };
 }
 
 function mapConversationPlanActionRow(row: DbConversationPlanActionRow): ZeusConversationPlanActionRecord {
-    return {
-        id: row.id,
-        conversationId: row.conversation_id,
-        turnId: row.turn_id,
-        planItemId: row.plan_item_id,
-        status: assertEnum(row.status, ['pending', 'dismissed', 'implemented', 'refinement_requested', 'superseded'] as const, 'conversation plan action status'),
-        submissionId: row.submission_id,
-        createdAt: row.created_at,
-        resolvedAt: row.resolved_at,
-        updatedAt: row.updated_at,
-    };
+  return {
+    id: row.id,
+    conversationId: row.conversation_id,
+    turnId: row.turn_id,
+    planItemId: row.plan_item_id,
+    status: assertEnum(row.status, ['pending', 'dismissed', 'implemented', 'refinement_requested', 'superseded'] as const, 'conversation plan action status'),
+    submissionId: row.submission_id,
+    createdAt: row.created_at,
+    resolvedAt: row.resolved_at,
+    updatedAt: row.updated_at,
+  };
 }
 
 function mapIdempotencyRequestRow(row: DbIdempotencyRequestRow): ZeusIdempotencyRequestRecord {
@@ -4750,7 +4728,7 @@ function mapTaskRow(row: DbTaskRow): ZeusTaskRecord {
     taskSequence: sequence,
     title: row.title,
     description: row.description,
-      managementStatus: isTaskManagementStatus(row.management_status) ? row.management_status : 'todo',
+    managementStatus: isTaskManagementStatus(row.management_status) ? row.management_status : 'todo',
     status: row.status,
     priority: row.priority || 'normal',
     allowCodeChanges: row.allow_code_changes === 1,

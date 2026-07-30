@@ -38,7 +38,7 @@ import '@xyflow/react/dist/style.css';
 import './styles.css';
 import './session/session.css';
 import './ui/primitives.css';
-import { notifyMainAppShellSettingsChanged } from './appShellBridge.js';
+import { notifyMainAppShellSettingsChanged, openExternalHttpsUrlInMain } from './appShellBridge.js';
 import { PENDING_RESOURCE_LONG_TEXT_THRESHOLD } from './ui/pendingResourcePolicy.js';
 import { TaskAttachmentPreviewList } from './task/TaskAttachmentPreviewList.js';
 import { type ConversationTreeRuntimeState, conversationTreeRuntimeStateFromSession, type ProjectConversationGroup, ProjectConversationTree } from './session/ProjectConversationTree.js';
@@ -105,6 +105,7 @@ import { ModalPortal } from './ui/ModalPortal.js';
 import { SourceListRow } from './ui/SourceListRow.js';
 import { WorkspaceDrawer } from './ui/WorkspaceDrawer.js';
 import { CommandCenterPanel } from './CommandCenterPanel.js';
+import { ReleaseUpdateDialog, type ReleaseUpdateDialogState } from './release/ReleaseUpdateDialog.js';
 import {
   type AiRuntimeAdapterDescriptor,
   type AiRuntimeAdapterStatus,
@@ -145,6 +146,7 @@ import {
   type ProjectDatabaseSecretSnapshot,
   type ProjectRecord,
   type ReleaseStatusSnapshot,
+  type ReleaseUpdateOperationSnapshot,
   type ReleaseUpdateStatusSnapshot,
   type RuntimeOperationConfirmation,
   type RuntimeSettings,
@@ -5849,6 +5851,8 @@ export function App(props: {
   onLoadSecurityAuditLogs?: () => Promise<SecurityAuditLogEntry[]>;
   onLoadReleaseStatus?: () => Promise<ReleaseStatusSnapshot>;
   onCheckReleaseUpdate?: () => Promise<ReleaseUpdateStatusSnapshot>;
+  onDownloadReleaseUpdate?: () => Promise<ReleaseUpdateOperationSnapshot>;
+  onInstallReleaseUpdate?: () => Promise<ReleaseUpdateOperationSnapshot>;
   onSaveTelegramBotToken?: (token: string) => Promise<SecuritySecretsSnapshot>;
   onClearTelegramBotToken?: () => Promise<SecuritySecretsSnapshot>;
   onSaveExternalApiKey?: (key: string) => Promise<SecuritySecretsSnapshot>;
@@ -6231,6 +6235,9 @@ export function App(props: {
       },
   );
   const [releaseUpdateCheckState, setReleaseUpdateCheckState] = useState<'idle' | 'loading' | 'failed'>('idle');
+  const [releaseUpdateDialogState, setReleaseUpdateDialogState] = useState<ReleaseUpdateDialogState | null>(null);
+  const releaseUpdateRequestIdRef = useRef(0);
+  const releaseUpdateMenuBusyRef = useRef(false);
   const [telegramTokenInput, setTelegramTokenInput] = useState('');
   const [telegramPollingStatus, setTelegramPollingStatus] = useState<TelegramPollingStatus>({
     running: false,
@@ -8175,17 +8182,96 @@ export function App(props: {
     }
   }
 
-  async function checkReleaseUpdate(): Promise<void> {
+  async function checkReleaseUpdate(presentDialog = false): Promise<void> {
     if (!props.onCheckReleaseUpdate) return;
+    if (presentDialog && releaseUpdateMenuBusyRef.current) return;
+    const requestId = releaseUpdateRequestIdRef.current + 1;
+    releaseUpdateRequestIdRef.current = requestId;
+    if (presentDialog) {
+      releaseUpdateMenuBusyRef.current = true;
+      setReleaseUpdateDialogState({ kind: 'checking' });
+    }
     setReleaseUpdateCheckState('loading');
     try {
-      setReleaseUpdateStatus(await props.onCheckReleaseUpdate());
+      const update = await props.onCheckReleaseUpdate();
+      setReleaseUpdateStatus(update);
       setReleaseUpdateCheckState('idle');
+      if (presentDialog && releaseUpdateRequestIdRef.current === requestId) {
+        setReleaseUpdateDialogState({ kind: 'result', update });
+      }
     } catch (error) {
       setReleaseUpdateCheckState('failed');
+      if (presentDialog && releaseUpdateRequestIdRef.current === requestId) {
+        setReleaseUpdateDialogState({ kind: 'failed' });
+      }
+      recordLocalError('renderer-action', error);
+    } finally {
+      if (presentDialog) releaseUpdateMenuBusyRef.current = false;
+    }
+  }
+
+  function closeReleaseUpdateDialog(): void {
+    releaseUpdateRequestIdRef.current += 1;
+    releaseUpdateMenuBusyRef.current = false;
+    setReleaseUpdateDialogState(null);
+  }
+
+  async function openReleaseUpdateDownloadPage(update: ReleaseUpdateStatusSnapshot): Promise<void> {
+    const result = await openExternalHttpsUrlInMain({
+      zeus: typeof window === 'undefined' ? undefined : window.zeus,
+      url: update.releasePageUrl,
+    });
+    if (result.opened) {
+      closeReleaseUpdateDialog();
+      return;
+    }
+    setReleaseUpdateDialogState({
+      kind: 'failed',
+      update,
+      reason: appShellSettings.appLanguage === 'zh-CN' ? '无法安全打开 GitHub Release 下载页。' : 'Zeus could not safely open the GitHub Release download page.',
+    });
+  }
+
+  async function installReleaseUpdate(update: ReleaseUpdateStatusSnapshot): Promise<void> {
+    if (!props.onDownloadReleaseUpdate || !props.onInstallReleaseUpdate) {
+      setReleaseUpdateDialogState({
+        kind: 'failed',
+        update,
+        reason: appShellSettings.appLanguage === 'zh-CN' ? '当前构建没有可用的下载和安装桥接。' : 'This build does not provide the download and installation bridge.',
+      });
+      return;
+    }
+    setReleaseUpdateDialogState({ kind: 'installing', update });
+    try {
+      const download = await props.onDownloadReleaseUpdate();
+      if (!download.accepted) {
+        setReleaseUpdateDialogState({ kind: 'failed', update: download.update, reason: download.reason });
+        return;
+      }
+      const installation = await props.onInstallReleaseUpdate();
+      if (!installation.accepted) {
+        setReleaseUpdateDialogState({ kind: 'failed', update: installation.update, reason: installation.reason });
+        return;
+      }
+      setReleaseUpdateDialogState({ kind: 'installing', update: installation.update });
+    } catch (error) {
+      setReleaseUpdateDialogState({
+        kind: 'failed',
+        update,
+        reason: appShellSettings.appLanguage === 'zh-CN' ? '升级请求失败，请稍后重试。' : 'The update request failed. Try again later.',
+      });
       recordLocalError('renderer-action', error);
     }
   }
+
+  useEffect(() => {
+    const unsubscribe = window.zeus?.onNativeCheckForUpdates?.(() => {
+      void checkReleaseUpdate(true);
+    });
+    return () => {
+      if (unsubscribe) unsubscribe();
+    };
+  }, [props.onCheckReleaseUpdate]);
 
   async function checkRuntimeAdapter(adapterId: string): Promise<void> {
     if (!props.onCheckRuntimeAdapter) return;
@@ -9130,6 +9216,16 @@ export function App(props: {
         onClose={closeProjectCreateDialog}
         onSubmit={(event) => void createCurrentProject(event)}
       />
+      {releaseUpdateDialogState ? (
+        <ReleaseUpdateDialog
+          language={appShellSettings.appLanguage === 'zh-CN' ? 'zh-CN' : 'en'}
+          state={releaseUpdateDialogState}
+          onDismiss={closeReleaseUpdateDialog}
+          onRetry={() => void checkReleaseUpdate(true)}
+          onOpenDownloadPage={(update) => void openReleaseUpdateDownloadPage(update)}
+          onInstall={(update) => void installReleaseUpdate(update)}
+        />
+      ) : null}
       {activeNavTarget !== 'settings' ? (
         <SidebarNav
           activeNavTarget={activeNavTarget}
@@ -11310,7 +11406,7 @@ export function App(props: {
                             <small>{settingsWorkspaceCopy.release.installHelp(releaseUpdateStatus.automaticInstallEnabled)}</small>
                           </span>
                           <span className="release-update-command-rail">
-                            <button type="button" onClick={checkReleaseUpdate} disabled={!props.onCheckReleaseUpdate || releaseUpdateBusy} {...controlBusyProps(releaseUpdateBusy)}>
+                            <button type="button" onClick={() => void checkReleaseUpdate(false)} disabled={!props.onCheckReleaseUpdate || releaseUpdateBusy} {...controlBusyProps(releaseUpdateBusy)}>
                               {releaseUpdateCheckState === 'loading' ? settingsWorkspaceCopy.release.checking : settingsWorkspaceCopy.release.checkUpdates}
                             </button>
                           </span>

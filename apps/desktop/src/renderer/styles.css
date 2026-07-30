@@ -14981,3 +14981,133 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
     display: none;
   }
 }
+
+/* 原生菜单触发的更新结果使用统一 ModalPortal；状态、版本和用户决策保持在一个紧凑焦点面中。 */
+.release-update-dialog-portal-root.macos-ai-app {
+  background: transparent;
+}
+
+.macos-ai-app .release-update-dialog {
+  background: var(--zeus-solid-surface-bg);
+  border: 1px solid var(--zeus-product-line);
+  border-radius: 16px;
+  box-shadow: 0 24px 58px oklch(28% 0.008 255 / 0.18);
+  color: var(--zeus-product-text);
+  display: grid;
+  gap: 18px;
+  grid-template-columns: 44px minmax(0, 1fr);
+  inline-size: min(480px, calc(100vw - 32px));
+  max-block-size: min(560px, calc(100vh - 40px));
+  overflow: auto;
+  padding: 22px;
+  pointer-events: auto;
+}
+
+.macos-ai-app .release-update-dialog-icon {
+  align-items: center;
+  background: var(--zeus-product-panel-muted);
+  border: 1px solid var(--zeus-product-line-soft);
+  border-radius: 12px;
+  color: var(--zeus-product-muted);
+  display: inline-flex;
+  block-size: 42px;
+  inline-size: 42px;
+  justify-content: center;
+}
+
+.macos-ai-app .release-update-dialog-icon[data-tone='success'] {
+  color: var(--zeus-status-success-text);
+}
+
+.macos-ai-app .release-update-dialog-icon[data-tone='warning'] {
+  color: var(--zeus-danger-text);
+}
+
+.macos-ai-app .release-update-dialog-icon svg {
+  block-size: 23px;
+  inline-size: 23px;
+}
+
+.macos-ai-app .release-update-dialog-content {
+  display: grid;
+  gap: 14px;
+  min-inline-size: 0;
+}
+
+.macos-ai-app .release-update-dialog-content header {
+  display: grid;
+  gap: 7px;
+}
+
+.macos-ai-app .release-update-dialog-content header strong {
+  font-size: 17px;
+  font-weight: 680;
+  letter-spacing: -0.012em;
+  line-height: 23px;
+}
+
+.macos-ai-app .release-update-dialog-content header p {
+  color: var(--zeus-product-muted);
+  font-size: 13px;
+  line-height: 19px;
+  margin: 0;
+}
+
+.macos-ai-app .release-update-dialog-version {
+  background: var(--zeus-product-panel-muted);
+  border: 1px solid var(--zeus-product-line-soft);
+  border-radius: 10px;
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+}
+
+.macos-ai-app .release-update-dialog-version span {
+  font-size: 12px;
+  line-height: 17px;
+}
+
+.macos-ai-app .release-update-dialog-version small {
+  color: var(--zeus-product-muted);
+  font-size: 11px;
+  line-height: 16px;
+  overflow-wrap: anywhere;
+}
+
+.macos-ai-app .release-update-dialog > footer {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  grid-column: 1 / -1;
+  justify-content: flex-end;
+  padding: 0;
+}
+
+@keyframes zeus-release-update-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.macos-ai-app .release-update-dialog-spinner {
+  animation: zeus-release-update-spin 900ms linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .macos-ai-app .release-update-dialog-spinner {
+    animation: none;
+  }
+}
+
+@media (max-width: 560px) {
+  .macos-ai-app .release-update-dialog {
+    gap: 14px;
+    grid-template-columns: 38px minmax(0, 1fr);
+    padding: 18px;
+  }
+
+  .macos-ai-app .release-update-dialog-icon {
+    block-size: 36px;
+    inline-size: 36px;
+  }
+}
