@@ -108,7 +108,7 @@ function verifyMatrix() {
 
   const blockerText = JSON.stringify(matrix.sections ?? []);
   const releaseDocumentation = `${readFileSync(resolve('docs/release.md'), 'utf8')}\n${readFileSync(resolve('docs/security.md'), 'utf8')}`;
-  for (const required of ['Apple signing / notarization 未配置', 'unsigned DMG/ZIP']) {
+  for (const required of ['Apple signing / notarization 未配置', 'unsigned DMG']) {
     if (!releaseDocumentation.includes(required)) {
       errors.push(`发布文档缺少外部签名/公证等待说明：${required}`);
     }

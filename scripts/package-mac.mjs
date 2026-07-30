@@ -147,7 +147,7 @@ async function assertPackagedAppIsNotRunning(appPath) {
 
 async function verifyCodesignPackagedApp(appPath) {
   if (process.platform !== 'darwin') return;
-  // 签名必须在 electron-builder 生成 DMG/ZIP 前完成；这里仅验证最终 App，不再事后改写签名。
+  // 签名必须在 electron-builder 生成 DMG 前完成；这里仅验证最终 App，不再事后改写签名。
   await run('/usr/bin/codesign', buildCodesignVerifyArgs(appPath));
 }
 
@@ -197,7 +197,7 @@ export async function packageMac() {
   const packageEnv = buildMacNativeDependencyEnv(omitEmptyAppleReleaseEnvironment(process.env));
   const signingArgs = buildElectronBuilderSigningArgs(packageEnv);
   const electronDistArgs = electronDist ? [`--config.electronDist=${electronDist}`] : [];
-  await run('pnpm', ['--filter', '@zeus/desktop', 'exec', 'electron-builder', '--mac', 'dmg', 'zip', '--config', 'electron-builder.yml', ...electronDistArgs, ...signingArgs], {
+  await run('pnpm', ['--filter', '@zeus/desktop', 'exec', 'electron-builder', '--mac', 'dmg', '--config', 'electron-builder.yml', ...electronDistArgs, ...signingArgs], {
     cwd: rootDir,
     env: packageEnv,
   });

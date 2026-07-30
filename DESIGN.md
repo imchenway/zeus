@@ -57,7 +57,7 @@ Zeus 是生产力工具，不是营销页面。界面采用克制、清晰、可
 - AI CLI 不可用时展示安装/登录/版本检测状态，不生成假 AI 回复。
 - Telegram 未配置时展示未启用，不生成假 Telegram 消息。
 - Postgres/MySQL driver 未批准时拒绝明文密码 URI，并说明等待依赖；不伪造外部数据库扫描成功。
-- Apple signing / notarization 未配置时只声明 unsigned DMG/ZIP，不把产物伪装成已签名正式发布。
+- Apple signing / notarization 未配置时只声明 unsigned DMG，不把产物伪装成已签名正式发布。
 - 不使用假图表、假任务、假终端输出、假 AI 回复或无来源图谱节点。
 
 ## 质量底线

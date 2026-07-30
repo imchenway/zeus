@@ -128,11 +128,7 @@ jobs:
           name: zeus-macos
           path: |
             dist/Zeus-*.dmg
-            dist/Zeus-*.zip
-            dist/SHA256SUMS
-            dist/install.sh
             dist/zeus-release-manifest.json
-            dist/homebrew/zeus.rb
       - name: 发布或核对 GitHub Release
         if: ${{ inputs.publish_release }}
         env:
@@ -159,24 +155,17 @@ jobs:
               exit 1
             fi
           else
-            release_notes="$(node -e '
-              const manifest = require("./dist/zeus-release-manifest.json");
-              if (manifest.signed && manifest.notarized) {
-                process.stdout.write("本 Release 已通过 pnpm verify:release，并完成 Developer ID 签名和 Apple 公证。");
-              } else {
-                process.stdout.write("本 Release 已通过 pnpm verify:release；当前为 ad-hoc 签名且未公证，首次启动可能需要在 Finder 中右键打开。");
-              }
-            ')"
+            release_notes_file="docs/releases/${RELEASE_TAG}.md"
+            if [ ! -s "$release_notes_file" ]; then
+              echo "公开发布缺少面向用户的 Release notes：$release_notes_file" >&2
+              exit 1
+            fi
             gh release create "$RELEASE_TAG" \
               dist/Zeus-*.dmg \
-              dist/Zeus-*.zip \
-              dist/SHA256SUMS \
-              dist/install.sh \
               dist/zeus-release-manifest.json \
-              dist/homebrew/zeus.rb \
               --verify-tag \
               --title "Zeus $RELEASE_TAG" \
-              --notes "$release_notes"
+              --notes-file "$release_notes_file"
           fi
       - name: 同步 Homebrew Cask
         if: ${{ inputs.publish_release }}
