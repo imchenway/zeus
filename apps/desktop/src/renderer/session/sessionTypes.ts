@@ -1,16 +1,6 @@
-import type {
-  ConversationResource,
-  TurnChangeSet,
-  ZeusBrowserComment,
-  ZeusBrowserPreparedSubmission,
-} from '@zeus/shared';
+import type { ConversationResource, TurnChangeSet, ZeusBrowserComment, ZeusBrowserPreparedSubmission } from '@zeus/shared';
 
-export type {
-  ConversationResource,
-  ConversationResourcePreview,
-  TurnChangeSet,
-  TurnChangeSetOperationResult,
-} from '@zeus/shared';
+export type { ConversationResource, ConversationResourcePreview, TurnChangeSet, TurnChangeSetOperationResult } from '@zeus/shared';
 
 export type TransportState = 'disconnected' | 'connecting' | 'hydrating' | 'ready' | 'reconnecting' | 'failed';
 
@@ -34,13 +24,13 @@ export type NativeCollaborationMode = 'default' | 'plan';
 export type NativeTurnPlanStepStatus = 'pending' | 'inProgress' | 'completed';
 
 export interface NativeTurnPlanStep {
-    step: string;
-    status: NativeTurnPlanStepStatus;
+  step: string;
+  status: NativeTurnPlanStepStatus;
 }
 
 export interface NativeTurnPlanSnapshot {
-    explanation: string | null;
-    steps: NativeTurnPlanStep[];
+  explanation: string | null;
+  steps: NativeTurnPlanStep[];
 }
 
 export type SessionConversationOwner = { kind: 'project'; projectId: string; projectName: string } | { kind: 'task'; projectId: string; projectName: string; taskId: string; taskTitle: string };
@@ -63,7 +53,7 @@ export interface NativeTurnSnapshot {
   providerTurnId: string | null;
   submissionId: string | null;
   status: string;
-    plan?: NativeTurnPlanSnapshot | null;
+  plan?: NativeTurnPlanSnapshot | null;
   startedAt: string | null;
   completedAt: string | null;
   createdAt: string;
@@ -106,7 +96,7 @@ export type NativeConversationRunState =
   | { type: 'dispatching'; submissionId: string }
   | { type: 'active'; turnId: string; phase: 'prework' | 'final_answer' }
   | { type: 'waiting'; turnId: string; requestId: string; reason: 'approval' | 'user_input' }
-    | { type: 'paused'; reason: 'interrupted' | 'transport_unavailable' | 'provider_archived' | 'recovery_required' };
+  | { type: 'paused'; reason: 'interrupted' | 'transport_unavailable' | 'provider_archived' | 'recovery_required' };
 
 export interface NativeQueueSnapshot {
   state: NativeConversationRunState;
@@ -125,21 +115,21 @@ export interface NativePendingRequest {
   response: Record<string, unknown> | null;
   containsSecret: boolean;
   expiresAt: string | null;
-    autoResolutionState?: 'none' | 'scheduled' | 'snoozed';
-    createdAt: string;
-    resolvedAt: string | null;
+  autoResolutionState?: 'none' | 'scheduled' | 'snoozed';
+  createdAt: string;
+  resolvedAt: string | null;
 }
 
 export interface NativePlanImplementationRequest {
-    id: string;
-    conversationId: string;
-    turnId: string;
-    planItemId: string;
-    status: 'pending' | 'dismissed' | 'implemented' | 'refinement_requested' | 'superseded';
-    submissionId: string | null;
+  id: string;
+  conversationId: string;
+  turnId: string;
+  planItemId: string;
+  status: 'pending' | 'dismissed' | 'implemented' | 'refinement_requested' | 'superseded';
+  submissionId: string | null;
   createdAt: string;
   resolvedAt: string | null;
-    updatedAt: string;
+  updatedAt: string;
 }
 
 export interface NativeProviderSettingsSnapshot {
@@ -186,8 +176,8 @@ export interface NativeConversationSnapshot {
   createdAt: string;
   updatedAt: string;
   archived: boolean;
-    hasUnreadCompletion: boolean;
-    pendingRequestKind: 'approval' | 'user_input' | null;
+  hasUnreadCompletion: boolean;
+  pendingRequestKind: 'approval' | 'user_input' | null;
   messages: NativeConversationMessage[];
   turns: NativeTurnSnapshot[];
   items: NativeItemSnapshot[];
@@ -195,13 +185,13 @@ export interface NativeConversationSnapshot {
   submissions: NativeQueuedSubmission[];
   queue: NativeQueueSnapshot;
   requests: NativePendingRequest[];
-    planImplementationRequests: NativePlanImplementationRequest[];
+  planImplementationRequests: NativePlanImplementationRequest[];
   providerSettings?: NativeProviderSettingsSnapshot;
   tokenUsage?: NativeTokenUsageSnapshot;
   rateLimits?: NativeProviderValueSnapshot;
   mcpStartup?: NativeProviderValueSnapshot;
   permissionMode?: NativePermissionMode;
-    collaborationMode?: NativeCollaborationMode;
+  collaborationMode?: NativeCollaborationMode;
 }
 
 export interface NativeConversationMessage {
@@ -231,12 +221,12 @@ export interface NativeConversationChoice {
   createdAt: string;
   updatedAt: string;
   archived: boolean;
-    hasUnreadCompletion: boolean;
-    pendingRequestKind: 'approval' | 'user_input' | null;
+  hasUnreadCompletion: boolean;
+  pendingRequestKind: 'approval' | 'user_input' | null;
   resumable: boolean;
   readOnly: boolean;
   permissionMode?: NativePermissionMode;
-    collaborationMode?: NativeCollaborationMode;
+  collaborationMode?: NativeCollaborationMode;
 }
 
 export interface NativeConversationChoicesSnapshot {
@@ -263,13 +253,13 @@ export interface CodexTaskPushModelCapability {
 }
 
 export interface CodexTaskPushCapabilities {
-    generationId: string;
-    initializedAt: string;
-    projectId: string;
-    taskId: string;
-    canonicalPrompt: string;
-    preferredModel: string;
-    models: CodexTaskPushModelCapability[];
+  generationId: string;
+  initializedAt: string;
+  projectId: string;
+  taskId: string;
+  canonicalPrompt: string;
+  preferredModel: string;
+  models: CodexTaskPushModelCapability[];
 }
 
 export interface CodexConversationCapabilities {
@@ -281,9 +271,9 @@ export interface CodexConversationCapabilities {
 }
 
 export interface NativeTurnSettingsSelection {
-    model: string;
-    effort?: string;
-    collaborationMode: NativeCollaborationMode;
+  model: string;
+  effort?: string;
+  collaborationMode: NativeCollaborationMode;
 }
 
 export interface StartTaskModelPushRequest {
@@ -299,40 +289,40 @@ export interface StartTaskModelPushRequest {
 }
 
 export type StartNativeConversationRequest =
-    | {
-    mode: 'create';
-    content?: string;
-    attachments?: NativeConversationAttachment[];
-    permissionMode: NativePermissionMode;
-    collaborationMode: NativeCollaborationMode;
-    idempotencyKey: string;
-    clientUserMessageId: string
-}
-    | {
-    mode: 'resume';
-    conversationId: string;
-    content: string;
-    collaborationMode: NativeCollaborationMode;
-    idempotencyKey: string;
-    clientUserMessageId: string
-}
-    | {
-    mode: 'reference_legacy';
-    sourceConversationId: string;
-    messageIds: string[];
-    content: string;
-    permissionMode: NativePermissionMode;
-    collaborationMode: NativeCollaborationMode;
-    idempotencyKey: string;
-    clientUserMessageId: string
-};
+  | {
+      mode: 'create';
+      content?: string;
+      attachments?: NativeConversationAttachment[];
+      permissionMode: NativePermissionMode;
+      collaborationMode: NativeCollaborationMode;
+      idempotencyKey: string;
+      clientUserMessageId: string;
+    }
+  | {
+      mode: 'resume';
+      conversationId: string;
+      content: string;
+      collaborationMode: NativeCollaborationMode;
+      idempotencyKey: string;
+      clientUserMessageId: string;
+    }
+  | {
+      mode: 'reference_legacy';
+      sourceConversationId: string;
+      messageIds: string[];
+      content: string;
+      permissionMode: NativePermissionMode;
+      collaborationMode: NativeCollaborationMode;
+      idempotencyKey: string;
+      clientUserMessageId: string;
+    };
 
 export interface StartProjectConversationRequest {
   mode: 'create';
   content: string;
   attachments: NativeConversationAttachment[];
   permissionMode: NativePermissionMode;
-    collaborationMode: NativeCollaborationMode;
+  collaborationMode: NativeCollaborationMode;
   idempotencyKey: string;
   clientUserMessageId: string;
 }
@@ -344,9 +334,9 @@ export interface SendNativeMessageRequest {
   browserComments?: ZeusBrowserComment[];
   delivery: 'queue' | 'steer_now';
   expectedTurnId?: string;
-    model?: string;
-    effort?: string;
-    collaborationMode: NativeCollaborationMode;
+  model?: string;
+  effort?: string;
+  collaborationMode: NativeCollaborationMode;
   idempotencyKey: string;
   clientUserMessageId: string;
 }
@@ -380,10 +370,10 @@ interface NativeEvent<Type extends string, Payload extends NativeEventIdentity> 
 }
 
 type NativeTurnEventPayload = NativeEventIdentity & {
-    turnId: string;
-    status?: string;
-    submissionId?: string;
-    hasUnreadCompletion?: boolean
+  turnId: string;
+  status?: string;
+  submissionId?: string;
+  hasUnreadCompletion?: boolean;
 };
 type NativeItemEventPayload = NativeEventIdentity & {
   turnId: string;
@@ -401,8 +391,8 @@ export type NativeConversationEvent =
   | NativeEvent<'conversation.thread.changed', NativeEventIdentity & { providerThreadId?: string; providerState?: string }>
   | NativeEvent<'conversation.turn.started', NativeTurnEventPayload>
   | NativeEvent<'conversation.turn.completed', NativeTurnEventPayload>
-    | NativeEvent<'conversation.turn.plan.updated', NativeTurnEventPayload & { plan: NativeTurnPlanSnapshot }>
-  | NativeEvent<'conversation.turn.change_set.changed', NativeTurnEventPayload & {changeSetId: string; changeSet: TurnChangeSet}>
+  | NativeEvent<'conversation.turn.plan.updated', NativeTurnEventPayload & { plan: NativeTurnPlanSnapshot }>
+  | NativeEvent<'conversation.turn.change_set.changed', NativeTurnEventPayload & { changeSetId: string; changeSet: TurnChangeSet }>
   | NativeEvent<'conversation.item.started', NativeItemEventPayload>
   | NativeEvent<'conversation.item.delta', NativeItemEventPayload & { textContent: string }>
   | NativeEvent<'conversation.item.completed', NativeItemEventPayload & { textContent: string }>
@@ -413,21 +403,24 @@ export type NativeConversationEvent =
   | NativeEvent<'conversation.queue.changed', NativeEventIdentity & { queue: NativeQueueSnapshot }>
   | NativeEvent<'conversation.request.created', NativeEventIdentity & { turnId?: string; requestId: string; requestKind: string }>
   | NativeEvent<'conversation.request.resolved', NativeEventIdentity & { turnId?: string; requestId: string; requestKind?: string }>
-    | NativeEvent<'conversation.request.snoozed', NativeEventIdentity & { requestId: string }>
-    | NativeEvent<
-    'conversation.plan_implementation_request.changed',
-    NativeEventIdentity & {
-    requestId: string;
-    turnId?: string;
-    planItemId?: string;
-    status: NativePlanImplementationRequest['status'];
-    submissionId?: string;
-    collaborationMode?: NativeCollaborationMode
-}
->
-    | NativeEvent<'conversation.collaboration_mode.changed', NativeEventIdentity & {
-    collaborationMode: NativeCollaborationMode
-}>
+  | NativeEvent<'conversation.request.snoozed', NativeEventIdentity & { requestId: string }>
+  | NativeEvent<
+      'conversation.plan_implementation_request.changed',
+      NativeEventIdentity & {
+        requestId: string;
+        turnId?: string;
+        planItemId?: string;
+        status: NativePlanImplementationRequest['status'];
+        submissionId?: string;
+        collaborationMode?: NativeCollaborationMode;
+      }
+    >
+  | NativeEvent<
+      'conversation.collaboration_mode.changed',
+      NativeEventIdentity & {
+        collaborationMode: NativeCollaborationMode;
+      }
+    >
   | NativeEvent<'conversation.native.error', NativeEventIdentity & { turnId?: string; error?: string | Record<string, unknown>; message?: string; recoveryRequired?: boolean; retryable?: boolean }>;
 
 export const nativeConversationEventTypes = new Set<NativeConversationEvent['type']>([
@@ -435,7 +428,7 @@ export const nativeConversationEventTypes = new Set<NativeConversationEvent['typ
   'conversation.thread.changed',
   'conversation.turn.started',
   'conversation.turn.completed',
-    'conversation.turn.plan.updated',
+  'conversation.turn.plan.updated',
   'conversation.turn.change_set.changed',
   'conversation.item.started',
   'conversation.item.delta',
@@ -447,9 +440,9 @@ export const nativeConversationEventTypes = new Set<NativeConversationEvent['typ
   'conversation.queue.changed',
   'conversation.request.created',
   'conversation.request.resolved',
-    'conversation.request.snoozed',
-    'conversation.plan_implementation_request.changed',
-    'conversation.collaboration_mode.changed',
+  'conversation.request.snoozed',
+  'conversation.plan_implementation_request.changed',
+  'conversation.collaboration_mode.changed',
   'conversation.native.error',
 ]);
 
@@ -501,7 +494,7 @@ export interface NativeSessionState {
   itemOrder: string[];
   queue: NativeQueueSnapshot | null;
   pendingRequests: NativePendingRequest[];
-    planImplementationRequests: NativePlanImplementationRequest[];
+  planImplementationRequests: NativePlanImplementationRequest[];
   providerSettings: NativeProviderSettingsSnapshot | null;
   tokenUsage: NativeTokenUsageSnapshot | null;
   rateLimits: NativeProviderValueSnapshot | null;
@@ -513,6 +506,8 @@ export interface NativeSessionState {
   attachments: NativeConversationAttachment[];
   browserSubmission: ZeusBrowserPreparedSubmission | null;
   transcriptRevision: number;
+  feedbackEpoch: number;
+  visibleFeedbackEpoch: number;
   busyOperation: string | null;
   error: NativeSessionError | null;
 }

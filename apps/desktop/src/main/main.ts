@@ -1,89 +1,44 @@
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, Notification, screen, shell, Tray } from 'electron';
+import { execFile as execFileCallback } from 'node:child_process';
+import { constants as fsConstants, readFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { access, copyFile, cp, lstat, mkdir, readFile, readdir, realpath, stat, writeFile } from 'node:fs/promises';
+import { pathToFileURL } from 'node:url';
+import { promisify } from 'node:util';
+import { createBeforeQuitCleanupHandler, type DesktopLocalServerRuntime, parseCodexNativeEnabled, startDesktopLocalServer } from './localServerRuntime.js';
+import { createStartupCoordinator } from './startupCoordinator.js';
+import { terminateAfterFatalStartup } from './fatalStartup.js';
+import { createRendererBootstrapMonitor } from './rendererBootstrapMonitor.js';
+import { resolveCodexRuntime } from './codexRuntimePath.js';
+import { exportMermaidDiagramToFile, exportPlantUmlDiagramToFile } from './mermaidExport.js';
+import { exportPatchToFile } from './patchExport.js';
+import { exportRuntimeLogsToFile } from './runtimeLogExport.js';
+import { chooseProjectDirectory } from './projectDirectoryPicker.js';
+import { exportSettingsSnapshotToFile, importBusinessDataSnapshotFromFile, importSettingsSnapshotFromFile } from './settingsPortability.js';
+import { type GraphSourceLocation, openGraphSourceLocation } from './sourceOpen.js';
+import { buildAppShellMenuTemplate, buildLoginItemSettings, buildMenuBarTrayTemplate, type MainAppShellSettings, shouldQuitWhenAllWindowsClosed, shouldUseSystemNotifications } from './appShellPolicy.js';
+import { createSystemNotificationBridge, type SystemNotificationBridge } from './systemNotifications.js';
+import { openLocalLogDirectory } from './localLogDirectory.js';
+import { openExternalHttpsUrl } from './externalOpen.js';
+import { createPersistedMainWindowState, findSavedWindowDisplay, type PersistedMainWindowState, readPersistedMainWindowState, resolveMainWindowState, writePersistedMainWindowState } from './windowState.js';
+import { applyRestoredMainWindowPlacement, createWindowStatePersistenceGate, waitForSavedWindowDisplay, type WindowStatePersistenceGate } from './windowRestoration.js';
 import {
-    app,
-    BrowserWindow,
-    clipboard,
-    dialog,
-    ipcMain,
-    Menu,
-    nativeImage,
-    Notification,
-    screen,
-    shell,
-    Tray
-} from 'electron';
-import {execFile as execFileCallback} from 'node:child_process';
-import {constants as fsConstants, readFileSync} from 'node:fs';
-import {randomUUID} from 'node:crypto';
-import {basename, dirname, extname, isAbsolute, join, relative, resolve, sep} from 'node:path';
-import {access, copyFile, cp, lstat, mkdir, readFile, readdir, realpath, stat, writeFile} from 'node:fs/promises';
-import {pathToFileURL} from 'node:url';
-import {promisify} from 'node:util';
-import {
-    createBeforeQuitCleanupHandler,
-    type DesktopLocalServerRuntime,
-    parseCodexNativeEnabled,
-    startDesktopLocalServer
-} from './localServerRuntime.js';
-import {createStartupCoordinator} from './startupCoordinator.js';
-import {terminateAfterFatalStartup} from './fatalStartup.js';
-import {createRendererBootstrapMonitor} from './rendererBootstrapMonitor.js';
-import {resolveCodexRuntime} from './codexRuntimePath.js';
-import {exportMermaidDiagramToFile, exportPlantUmlDiagramToFile} from './mermaidExport.js';
-import {exportPatchToFile} from './patchExport.js';
-import {exportRuntimeLogsToFile} from './runtimeLogExport.js';
-import {chooseProjectDirectory} from './projectDirectoryPicker.js';
-import {
-    exportSettingsSnapshotToFile,
-    importBusinessDataSnapshotFromFile,
-    importSettingsSnapshotFromFile
-} from './settingsPortability.js';
-import {type GraphSourceLocation, openGraphSourceLocation} from './sourceOpen.js';
-import {
-    buildAppShellMenuTemplate,
-    buildLoginItemSettings,
-    buildMenuBarTrayTemplate,
-    type MainAppShellSettings,
-    shouldQuitWhenAllWindowsClosed,
-    shouldUseSystemNotifications
-} from './appShellPolicy.js';
-import {createSystemNotificationBridge, type SystemNotificationBridge} from './systemNotifications.js';
-import {openLocalLogDirectory} from './localLogDirectory.js';
-import {openExternalHttpsUrl} from './externalOpen.js';
-import {
-    createPersistedMainWindowState,
-    findSavedWindowDisplay,
-    type PersistedMainWindowState,
-    readPersistedMainWindowState,
-    resolveMainWindowState,
-    writePersistedMainWindowState
-} from './windowState.js';
-import {
-    applyRestoredMainWindowPlacement,
-    createWindowStatePersistenceGate,
-    waitForSavedWindowDisplay,
-    type WindowStatePersistenceGate
-} from './windowRestoration.js';
-import {
-    buildTaskAttachmentPreviewDataUrl,
-    coerceTaskClipboardAttachmentBuffer,
-    inferTaskClipboardAttachmentMimeType,
-    readTaskClipboardAttachmentsFromClipboard,
-    readTaskClipboardFileReferencesFromClipboard,
-    type TaskClipboardAttachmentPayload,
+  buildTaskAttachmentPreviewDataUrl,
+  coerceTaskClipboardAttachmentBuffer,
+  inferTaskClipboardAttachmentMimeType,
+  readTaskClipboardAttachmentsFromClipboard,
+  readTaskClipboardFileReferencesFromClipboard,
+  type TaskClipboardAttachmentPayload,
 } from './taskClipboard.js';
-import {createBrowserHost, type BrowserHost} from './browserHost.js';
+import { createBrowserHost, type BrowserHost } from './browserHost.js';
+import { listConversationResourceOpenTargets, openConversationResource, type ConversationResourceRequest, type OpenConversationResourceRequest } from './conversationResourceOpen.js';
 import {
-    listConversationResourceOpenTargets,
-    openConversationResource,
-    type ConversationResourceRequest,
-    type OpenConversationResourceRequest,
-} from './conversationResourceOpen.js';
-import {
-    createConversationInputResourceBroker,
-    readOrCreateConversationAttachmentGrantSecret,
-    type ConversationInputResourceBroker,
-    type ConversationInputResourceSource,
-    type ConversationResourcePayload,
+  createConversationInputResourceBroker,
+  readOrCreateConversationAttachmentGrantSecret,
+  type ConversationInputResourceBroker,
+  type ConversationInputResourceSource,
+  type ConversationResourcePayload,
 } from './conversationInputResources.js';
 
 let mainWindow: BrowserWindow | undefined;
@@ -108,6 +63,7 @@ const windowStatePersistenceGates = new Map<number, WindowStatePersistenceGate>(
 const taskTableLayoutDirtyWindowIds = new Set<number>();
 const taskTableLayoutCloseApprovedWindowIds = new Set<number>();
 const pendingTaskTableLayoutWindowCloseIds = new Set<number>();
+const pendingNativeUpdateCheckWindowIds = new Set<number>();
 let taskTableLayoutQuitPending = false;
 let taskTableLayoutQuitApproved = false;
 const execFile = promisify(execFileCallback);
@@ -128,8 +84,8 @@ function disableChromiumSafeStorageKeychainPrompt(): void {
 disableChromiumSafeStorageKeychainPrompt();
 
 function applyExplicitUserDataDirectory(): void {
-    const configured = process.env.ZEUS_USER_DATA_DIR?.trim();
-    if (configured) app.setPath('userData', resolve(configured));
+  const configured = process.env.ZEUS_USER_DATA_DIR?.trim();
+  if (configured) app.setPath('userData', resolve(configured));
 }
 
 // 打包验收可用隔离资料目录运行，禁止污染用户正在使用的 Zeus 数据。
@@ -145,91 +101,91 @@ function resolveMainProjectRoot(): string {
 }
 
 function mainWindowStatePath(): string {
-    return join(app.getPath('userData'), 'main-window-state.json');
+  return join(app.getPath('userData'), 'main-window-state.json');
 }
 
 function persistMainWindowState(window: BrowserWindow): boolean {
-    if (window.isDestroyed()) return false;
-    const bounds = window.getNormalBounds();
-    const display = screen.getDisplayMatching(bounds);
-    const state = createPersistedMainWindowState({
-        bounds,
-        display,
-        isMaximized: window.isMaximized(),
-        isFullScreen: window.isFullScreen(),
-    });
-    if (!state || !writePersistedMainWindowState(mainWindowStatePath(), state)) return false;
-    windowStatePersistenceGates.get(window.id)?.markPersisted();
-    return true;
+  if (window.isDestroyed()) return false;
+  const bounds = window.getNormalBounds();
+  const display = screen.getDisplayMatching(bounds);
+  const state = createPersistedMainWindowState({
+    bounds,
+    display,
+    isMaximized: window.isMaximized(),
+    isFullScreen: window.isFullScreen(),
+  });
+  if (!state || !writePersistedMainWindowState(mainWindowStatePath(), state)) return false;
+  windowStatePersistenceGates.get(window.id)?.markPersisted();
+  return true;
 }
 
 function flushMainWindowState(window: BrowserWindow): void {
-    const timer = windowStateSaveTimers.get(window.id);
-    if (timer) clearTimeout(timer);
-    windowStateSaveTimers.delete(window.id);
-    if (!windowStatePersistenceGates.get(window.id)?.shouldPersist()) return;
-    persistMainWindowState(window);
+  const timer = windowStateSaveTimers.get(window.id);
+  if (timer) clearTimeout(timer);
+  windowStateSaveTimers.delete(window.id);
+  if (!windowStatePersistenceGates.get(window.id)?.shouldPersist()) return;
+  persistMainWindowState(window);
 }
 
 function scheduleMainWindowStateSave(window: BrowserWindow): void {
-    if (!windowStatePersistenceGates.get(window.id)?.recordChange()) return;
-    const pendingTimer = windowStateSaveTimers.get(window.id);
-    if (pendingTimer) clearTimeout(pendingTimer);
-    const timer = setTimeout(() => {
-        windowStateSaveTimers.delete(window.id);
-        persistMainWindowState(window);
-    }, windowStateSaveDelayMs);
-    timer.unref();
-    windowStateSaveTimers.set(window.id, timer);
+  if (!windowStatePersistenceGates.get(window.id)?.recordChange()) return;
+  const pendingTimer = windowStateSaveTimers.get(window.id);
+  if (pendingTimer) clearTimeout(pendingTimer);
+  const timer = setTimeout(() => {
+    windowStateSaveTimers.delete(window.id);
+    persistMainWindowState(window);
+  }, windowStateSaveDelayMs);
+  timer.unref();
+  windowStateSaveTimers.set(window.id, timer);
 }
 
 function registerMainWindowStatePersistence(window: BrowserWindow): void {
-    windowStatePersistenceGates.set(window.id, createWindowStatePersistenceGate());
-    const scheduleSave = () => scheduleMainWindowStateSave(window);
-    window.on('move', scheduleSave);
-    window.on('resize', scheduleSave);
-    window.on('maximize', scheduleSave);
-    window.on('unmaximize', scheduleSave);
-    window.on('enter-full-screen', scheduleSave);
-    window.on('leave-full-screen', scheduleSave);
-    window.on('close', (event) => {
-      flushMainWindowState(window);
-      if (taskTableLayoutQuitApproved || taskTableLayoutCloseApprovedWindowIds.has(window.id) || !taskTableLayoutDirtyWindowIds.has(window.id)) return;
-      event.preventDefault();
-      pendingTaskTableLayoutWindowCloseIds.add(window.id);
-      window.webContents.send('zeus:task-table-layout-close-requested');
-    });
+  windowStatePersistenceGates.set(window.id, createWindowStatePersistenceGate());
+  const scheduleSave = () => scheduleMainWindowStateSave(window);
+  window.on('move', scheduleSave);
+  window.on('resize', scheduleSave);
+  window.on('maximize', scheduleSave);
+  window.on('unmaximize', scheduleSave);
+  window.on('enter-full-screen', scheduleSave);
+  window.on('leave-full-screen', scheduleSave);
+  window.on('close', (event) => {
+    flushMainWindowState(window);
+    if (taskTableLayoutQuitApproved || taskTableLayoutCloseApprovedWindowIds.has(window.id) || !taskTableLayoutDirtyWindowIds.has(window.id)) return;
+    event.preventDefault();
+    pendingTaskTableLayoutWindowCloseIds.add(window.id);
+    window.webContents.send('zeus:task-table-layout-close-requested');
+  });
 }
 
 function activateMainWindowStatePersistence(window: BrowserWindow): void {
-    const pendingTimer = windowStateActivationTimers.get(window.id);
-    if (pendingTimer) clearTimeout(pendingTimer);
-    const timer = setTimeout(() => {
-        windowStateActivationTimers.delete(window.id);
-        if (!window.isDestroyed()) windowStatePersistenceGates.get(window.id)?.activate();
-    }, windowStateActivationDelayMs);
-    timer.unref();
-    windowStateActivationTimers.set(window.id, timer);
+  const pendingTimer = windowStateActivationTimers.get(window.id);
+  if (pendingTimer) clearTimeout(pendingTimer);
+  const timer = setTimeout(() => {
+    windowStateActivationTimers.delete(window.id);
+    if (!window.isDestroyed()) windowStatePersistenceGates.get(window.id)?.activate();
+  }, windowStateActivationDelayMs);
+  timer.unref();
+  windowStateActivationTimers.set(window.id, timer);
 }
 
 async function resolveMainWindowStateForLaunch(persisted: PersistedMainWindowState | undefined) {
-    const displays = screen.getAllDisplays();
-    if (persisted && !findSavedWindowDisplay(persisted, displays)) {
-        await waitForSavedWindowDisplay({
-            persisted,
-            getDisplays: () => screen.getAllDisplays(),
-            subscribe: (listener) => {
-                screen.on('display-added', listener);
-                screen.on('display-metrics-changed', listener);
-                return () => {
-                    screen.off('display-added', listener);
-                    screen.off('display-metrics-changed', listener);
-                };
-            },
-            timeoutMs: savedDisplayAvailabilityTimeoutMs,
-        });
-    }
-    return resolveMainWindowState(persisted, screen.getAllDisplays(), screen.getPrimaryDisplay());
+  const displays = screen.getAllDisplays();
+  if (persisted && !findSavedWindowDisplay(persisted, displays)) {
+    await waitForSavedWindowDisplay({
+      persisted,
+      getDisplays: () => screen.getAllDisplays(),
+      subscribe: (listener) => {
+        screen.on('display-added', listener);
+        screen.on('display-metrics-changed', listener);
+        return () => {
+          screen.off('display-added', listener);
+          screen.off('display-metrics-changed', listener);
+        };
+      },
+      timeoutMs: savedDisplayAvailabilityTimeoutMs,
+    });
+  }
+  return resolveMainWindowState(persisted, screen.getAllDisplays(), screen.getPrimaryDisplay());
 }
 
 function revealMainWindow(window: BrowserWindow): void {
@@ -291,10 +247,10 @@ async function createWindow(): Promise<void> {
     return;
   }
 
-    const persistedWindowState = windows.size === 0 ? readPersistedMainWindowState(mainWindowStatePath()) : undefined;
-    const restoredWindowState = await resolveMainWindowStateForLaunch(persistedWindowState);
+  const persistedWindowState = windows.size === 0 ? readPersistedMainWindowState(mainWindowStatePath()) : undefined;
+  const restoredWindowState = await resolveMainWindowStateForLaunch(persistedWindowState);
   const window = new BrowserWindow({
-      ...restoredWindowState.bounds,
+    ...restoredWindowState.bounds,
     // 2026-06-18 窗口根层响应式最终覆盖：允许紧凑窗口真实触发 renderer 的窄屏结构，而不是在 Main 进程强制桌面最小尺寸。
     minWidth: 360,
     minHeight: 560,
@@ -314,7 +270,7 @@ async function createWindow(): Promise<void> {
   });
   browserHost?.registerWindow(window);
 
-    registerMainWindowStatePersistence(window);
+  registerMainWindowStatePersistence(window);
 
   rendererBootstrapMonitor.watch(window);
 
@@ -337,16 +293,17 @@ async function createWindow(): Promise<void> {
   mainWindow = window;
   window.on('closed', () => {
     browserHost?.unregisterWindow(window);
-      const timer = windowStateSaveTimers.get(window.id);
-      if (timer) clearTimeout(timer);
-      windowStateSaveTimers.delete(window.id);
-      const activationTimer = windowStateActivationTimers.get(window.id);
-      if (activationTimer) clearTimeout(activationTimer);
-      windowStateActivationTimers.delete(window.id);
-      windowStatePersistenceGates.delete(window.id);
-      taskTableLayoutDirtyWindowIds.delete(window.id);
-      taskTableLayoutCloseApprovedWindowIds.delete(window.id);
-      pendingTaskTableLayoutWindowCloseIds.delete(window.id);
+    const timer = windowStateSaveTimers.get(window.id);
+    if (timer) clearTimeout(timer);
+    windowStateSaveTimers.delete(window.id);
+    const activationTimer = windowStateActivationTimers.get(window.id);
+    if (activationTimer) clearTimeout(activationTimer);
+    windowStateActivationTimers.delete(window.id);
+    windowStatePersistenceGates.delete(window.id);
+    taskTableLayoutDirtyWindowIds.delete(window.id);
+    taskTableLayoutCloseApprovedWindowIds.delete(window.id);
+    pendingTaskTableLayoutWindowCloseIds.delete(window.id);
+    pendingNativeUpdateCheckWindowIds.delete(window.id);
     rendererBootstrapMonitor.dispose(window);
     windows.delete(window);
     if (mainWindow === window) mainWindow = [...windows].at(-1);
@@ -356,23 +313,23 @@ async function createWindow(): Promise<void> {
   const revealMainWindowOnce = () => {
     if (didRevealMainWindow) return;
     didRevealMainWindow = true;
-      const placement = applyRestoredMainWindowPlacement({
-          window,
-          restored: restoredWindowState,
-          getDisplayMatching: (bounds) => screen.getDisplayMatching(bounds),
-          reveal: () => revealMainWindow(window),
-      });
-      activateMainWindowStatePersistence(window);
-      console.info(
-          'Zeus main window restoration',
-          JSON.stringify({
-              matchKind: restoredWindowState.matchKind,
-              targetDisplayId: restoredWindowState.targetDisplayId ?? null,
-              actualDisplayId: placement.actualDisplayId ?? null,
-              corrected: placement.corrected,
-              bounds: window.getBounds(),
-          }),
-      );
+    const placement = applyRestoredMainWindowPlacement({
+      window,
+      restored: restoredWindowState,
+      getDisplayMatching: (bounds) => screen.getDisplayMatching(bounds),
+      reveal: () => revealMainWindow(window),
+    });
+    activateMainWindowStatePersistence(window);
+    console.info(
+      'Zeus main window restoration',
+      JSON.stringify({
+        matchKind: restoredWindowState.matchKind,
+        targetDisplayId: restoredWindowState.targetDisplayId ?? null,
+        actualDisplayId: placement.actualDisplayId ?? null,
+        corrected: placement.corrected,
+        bounds: window.getBounds(),
+      }),
+    );
   };
 
   window.once('ready-to-show', revealMainWindowOnce);
@@ -399,8 +356,8 @@ function setupMenu(): void {
         openSettings: () => {
           void openSettingsFromMenu();
         },
-        openReleaseStatus: () => {
-          void openReleaseStatusFromMenu();
+        checkForUpdates: () => {
+          void checkForUpdatesFromMenu();
         },
         openLogsDirectory: () => {
           void openLogsDirectoryFromMenu();
@@ -428,11 +385,17 @@ async function openSettingsFromMenu(): Promise<void> {
   await mainWindow?.webContents.executeJavaScript('globalThis.location.hash = "#settings-general";', true).catch(() => undefined);
 }
 
-/** 从 macOS 原生菜单进入发布与签名区域；只展示手动更新和等待项，不伪造在线更新 feed。 */
-async function openReleaseStatusFromMenu(): Promise<void> {
+/** 从 macOS 原生菜单触发真实更新检查；结果和用户决策由 Renderer 的统一弹窗承载。 */
+async function checkForUpdatesFromMenu(): Promise<void> {
   await requestMainWindow();
   if (fatalStartup) return;
-  await mainWindow?.webContents.executeJavaScript('globalThis.location.hash = "#settings-about";', true).catch(() => undefined);
+  const window = mainWindow;
+  if (!window || window.isDestroyed()) return;
+  if (!rendererBootstrapMonitor.isReady(window)) {
+    pendingNativeUpdateCheckWindowIds.add(window.id);
+    return;
+  }
+  window.webContents.send('zeus:native-check-for-updates');
 }
 
 /** 打开本机日志目录；长日志和导出文件留在用户 Mac 上，不发送到远端渠道。 */
@@ -465,11 +428,11 @@ function conversationResourceOpenServices(requestingWindow: BrowserWindow) {
   if (!localServerRuntime) throw new Error('Zeus local server is not ready.');
   return {
     config: localServerRuntime.config,
-    fetchJson: async (url: string, init: {headers: Record<string, string>}) => {
+    fetchJson: async (url: string, init: { headers: Record<string, string> }) => {
       const response = await fetch(url, init);
       const payload = (await response.json().catch(() => ({}))) as unknown;
       if (!response.ok) {
-        const record = payload && typeof payload === 'object' && !Array.isArray(payload) ? payload as Record<string, unknown> : {};
+        const record = payload && typeof payload === 'object' && !Array.isArray(payload) ? (payload as Record<string, unknown>) : {};
         throw Object.assign(new Error(typeof record.message === 'string' ? record.message : `Local resource authority failed with HTTP ${response.status}.`), {
           code: typeof record.error === 'string' ? record.error : 'ZEUS_CONVERSATION_RESOURCE_AUTHORITY_FAILED',
         });
@@ -488,7 +451,7 @@ function conversationResourceOpenServices(requestingWindow: BrowserWindow) {
     openPath: (path: string) => shell.openPath(path),
     showItemInFolder: (path: string) => shell.showItemInFolder(path),
     writeClipboardText: (text: string) => clipboard.writeText(text),
-    openBrowser: async (input: {conversationId: string; url: string}) => {
+    openBrowser: async (input: { conversationId: string; url: string }) => {
       if (!browserHost) throw new Error('Zeus BrowserHost is not ready.');
       return browserHost.openConversationResource(requestingWindow, input);
     },
@@ -518,6 +481,9 @@ function setupIpc(): void {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
     if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow)) return;
     rendererBootstrapMonitor.markReady(requestingWindow);
+    if (pendingNativeUpdateCheckWindowIds.delete(requestingWindow.id)) {
+      requestingWindow.webContents.send('zeus:native-check-for-updates');
+    }
   });
   ipcMain.on('zeus:renderer-runtime-failed', (event, message: unknown) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
@@ -534,7 +500,7 @@ function setupIpc(): void {
   ipcMain.on('zeus:task-table-layout-close-resolution', (event, resolution: unknown) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
     if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow)) return;
-    const proceed = Boolean(resolution && typeof resolution === 'object' && (resolution as {proceed?: unknown}).proceed === true);
+    const proceed = Boolean(resolution && typeof resolution === 'object' && (resolution as { proceed?: unknown }).proceed === true);
     if (!proceed) {
       pendingTaskTableLayoutWindowCloseIds.delete(requestingWindow.id);
       taskTableLayoutQuitPending = false;
@@ -645,9 +611,7 @@ function setupIpc(): void {
     if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow) || !conversationInputResources) {
       throw new Error('Conversation resource materialization is unavailable for this window.');
     }
-    const normalized = Array.isArray(payloads)
-      ? payloads.filter((payload): payload is ConversationResourcePayload => Boolean(payload) && typeof payload === 'object' && !Array.isArray(payload))
-      : [];
+    const normalized = Array.isArray(payloads) ? payloads.filter((payload): payload is ConversationResourcePayload => Boolean(payload) && typeof payload === 'object' && !Array.isArray(payload)) : [];
     return conversationInputResources.materialize(normalized);
   });
   ipcMain.handle('zeus:read-conversation-clipboard-resources', async (event) => {
@@ -662,9 +626,7 @@ function setupIpc(): void {
     if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow) || !conversationInputResources) {
       throw new Error('Conversation resource preview is unavailable for this window.');
     }
-    const record = resource && typeof resource === 'object' && !Array.isArray(resource)
-      ? resource as {localPath?: string; uploadRef?: string}
-      : {};
+    const record = resource && typeof resource === 'object' && !Array.isArray(resource) ? (resource as { localPath?: string; uploadRef?: string }) : {};
     return conversationInputResources.preview(record);
   });
   ipcMain.handle('zeus:choose-task-attachments', async () => {
@@ -679,23 +641,19 @@ function setupIpc(): void {
     }
     return resources;
   });
-  ipcMain.handle('zeus:store-task-resource-paths', (_event, paths: unknown) =>
-    saveTaskResourcePaths(Array.isArray(paths) ? paths.filter((path): path is string => typeof path === 'string') : []),
-  );
-  ipcMain.handle('zeus:materialize-task-resources', (_event, resources: unknown) =>
-    saveTaskAttachmentPayloads(Array.isArray(resources) ? resources as TaskResourcePayload[] : []),
-  );
+  ipcMain.handle('zeus:store-task-resource-paths', (_event, paths: unknown) => saveTaskResourcePaths(Array.isArray(paths) ? paths.filter((path): path is string => typeof path === 'string') : []));
+  ipcMain.handle('zeus:materialize-task-resources', (_event, resources: unknown) => saveTaskAttachmentPayloads(Array.isArray(resources) ? (resources as TaskResourcePayload[]) : []));
   ipcMain.handle('zeus:read-task-clipboard-resources', () => readTaskClipboardResourcesFromNativeClipboard());
   ipcMain.handle('zeus:read-task-clipboard-attachments', () => readTaskClipboardAttachmentsFromNativeClipboard());
   ipcMain.handle('zeus:save-task-clipboard-attachments', async () => {
     const result = await readTaskClipboardResourcesFromNativeClipboard();
     return result.resources;
   });
-    ipcMain.handle('zeus:write-clipboard-text', (_event, text: unknown) => {
-        if (typeof text !== 'string') throw new TypeError('Clipboard text must be a string.');
-        clipboard.writeText(text);
-        return {written: clipboard.readText() === text};
-    });
+  ipcMain.handle('zeus:write-clipboard-text', (_event, text: unknown) => {
+    if (typeof text !== 'string') throw new TypeError('Clipboard text must be a string.');
+    clipboard.writeText(text);
+    return { written: clipboard.readText() === text };
+  });
   ipcMain.handle('zeus:read-task-clipboard-image', async () => {
     const [firstAttachment] = await readTaskClipboardAttachmentsFromNativeClipboard();
     return firstAttachment ?? null;
@@ -951,7 +909,7 @@ function readTaskClipboardAttachmentsFromNativeClipboard(): Promise<TaskClipboar
   );
 }
 
-async function readTaskClipboardResourcesFromNativeClipboard(): Promise<{resources: TaskStoredResource[]; text: string}> {
+async function readTaskClipboardResourcesFromNativeClipboard(): Promise<{ resources: TaskStoredResource[]; text: string }> {
   const clipboardReader = {
     readImage: () => clipboard.readImage(),
     availableFormats: () => clipboard.availableFormats(),
@@ -959,14 +917,14 @@ async function readTaskClipboardResourcesFromNativeClipboard(): Promise<{resourc
     readText: () => clipboard.readText(),
     readHTML: () => clipboard.readHTML(),
   };
-  const readOptions = {readSystemFileReferences: readMacOSClipboardFileReferences};
+  const readOptions = { readSystemFileReferences: readMacOSClipboardFileReferences };
   const referencedPaths = await readTaskClipboardFileReferencesFromClipboard(clipboardReader, readOptions);
   if (referencedPaths.length > 0) {
-    return {resources: await saveTaskResourcePaths(referencedPaths), text: ''};
+    return { resources: await saveTaskResourcePaths(referencedPaths), text: '' };
   }
   const attachments = await readTaskClipboardAttachmentsFromClipboard(clipboardReader, readOptions);
   if (attachments.length > 0) {
-    return {resources: await saveTaskAttachmentPayloads(attachments), text: ''};
+    return { resources: await saveTaskAttachmentPayloads(attachments), text: '' };
   }
   let text = '';
   try {
@@ -976,11 +934,11 @@ async function readTaskClipboardResourcesFromNativeClipboard(): Promise<{resourc
   }
   if (text.length >= taskLongPasteThreshold) {
     return {
-      resources: await saveTaskAttachmentPayloads([{name: 'Pasted text.txt', type: 'text/plain', text, kind: 'pasted_text'}]),
+      resources: await saveTaskAttachmentPayloads([{ name: 'Pasted text.txt', type: 'text/plain', text, kind: 'pasted_text' }]),
       text: '',
     };
   }
-  return {resources: [], text};
+  return { resources: [], text };
 }
 
 async function readMacOSClipboardFileReferences(): Promise<string[]> {
@@ -1031,7 +989,7 @@ async function openSavedTaskAttachment(path: string): Promise<{ opened: boolean;
 async function saveTaskResourcePaths(paths: string[]): Promise<TaskStoredResource[]> {
   if (paths.length === 0) return [];
   const attachmentDirectory = taskAttachmentDirectory();
-  await mkdir(attachmentDirectory, {recursive: true, mode: 0o700});
+  await mkdir(attachmentDirectory, { recursive: true, mode: 0o700 });
   const resources: TaskStoredResource[] = [];
   const seen = new Set<string>();
   let batchBytes = 0;
@@ -1043,13 +1001,8 @@ async function saveTaskResourcePaths(paths: string[]): Promise<TaskStoredResourc
       seen.add(canonicalPath);
       const sourceStat = await lstat(canonicalPath);
       if (sourceStat.isSymbolicLink() || (!sourceStat.isFile() && !sourceStat.isDirectory())) continue;
-      const summary = sourceStat.isDirectory()
-        ? await inspectTaskResourceTree(canonicalPath)
-        : {bytes: sourceStat.size, entries: 1};
-      if (
-        summary.bytes > maximumTaskResourceBytes ||
-        batchBytes + summary.bytes > maximumTaskResourceBatchBytes
-      ) {
+      const summary = sourceStat.isDirectory() ? await inspectTaskResourceTree(canonicalPath) : { bytes: sourceStat.size, entries: 1 };
+      if (summary.bytes > maximumTaskResourceBytes || batchBytes + summary.bytes > maximumTaskResourceBatchBytes) {
         continue;
       }
       batchBytes += summary.bytes;
@@ -1074,16 +1027,14 @@ async function saveTaskResourcePaths(paths: string[]): Promise<TaskStoredResourc
       await copyFile(canonicalPath, destination, fsConstants.COPYFILE_EXCL);
       const mimeType = inferTaskClipboardAttachmentMimeType(destination);
       const kind = mimeType.startsWith('image/') || isImageAttachmentPath(destination) ? 'image' : 'file';
-      const previewUrl = kind === 'image' && sourceStat.size <= maximumTaskResourceBytes
-        ? buildTaskAttachmentPreviewDataUrl(await readFile(destination), mimeType)
-        : undefined;
+      const previewUrl = kind === 'image' && sourceStat.size <= maximumTaskResourceBytes ? buildTaskAttachmentPreviewDataUrl(await readFile(destination), mimeType) : undefined;
       resources.push({
         path: destination,
         name: safeName,
         kind,
         mimeType,
         size: sourceStat.size,
-        ...(previewUrl ? {previewUrl} : {}),
+        ...(previewUrl ? { previewUrl } : {}),
       });
     } catch {
       // 单个文件、目录或复制动作失败时保留同批次中的其他可用资源。
@@ -1092,14 +1043,14 @@ async function saveTaskResourcePaths(paths: string[]): Promise<TaskStoredResourc
   return resources;
 }
 
-async function inspectTaskResourceTree(rootPath: string): Promise<{bytes: number; entries: number}> {
+async function inspectTaskResourceTree(rootPath: string): Promise<{ bytes: number; entries: number }> {
   const pending = [rootPath];
   let bytes = 0;
   let entries = 0;
   while (pending.length > 0) {
     const current = pending.pop();
     if (!current) continue;
-    for (const entry of await readdir(current, {withFileTypes: true})) {
+    for (const entry of await readdir(current, { withFileTypes: true })) {
       const entryPath = join(current, entry.name);
       const entryStat = await lstat(entryPath);
       if (entryStat.isSymbolicLink()) throw new Error('Task attachment directories cannot contain symbolic links.');
@@ -1111,47 +1062,38 @@ async function inspectTaskResourceTree(rootPath: string): Promise<{bytes: number
       if (bytes > maximumTaskResourceBytes) throw new Error('Task attachment directory is too large.');
     }
   }
-  return {bytes, entries};
+  return { bytes, entries };
 }
 
 async function saveTaskAttachmentPayloads(attachments: TaskResourcePayload[]): Promise<TaskStoredResource[]> {
   if (attachments.length === 0) return [];
   const attachmentDirectory = taskAttachmentDirectory();
-  await mkdir(attachmentDirectory, {recursive: true, mode: 0o700});
+  await mkdir(attachmentDirectory, { recursive: true, mode: 0o700 });
   const savedAttachments: TaskStoredResource[] = [];
   let batchBytes = 0;
   for (const [index, attachment] of attachments.slice(0, maximumTaskResourceCount).entries()) {
     const text = typeof attachment?.text === 'string' ? attachment.text : undefined;
-    const attachmentBuffer = text === undefined
-      ? coerceTaskClipboardAttachmentBuffer(attachment?.data)
-      : Buffer.from(text, 'utf8');
+    const attachmentBuffer = text === undefined ? coerceTaskClipboardAttachmentBuffer(attachment?.data) : Buffer.from(text, 'utf8');
     if (!attachment || !attachmentBuffer || attachmentBuffer.byteLength === 0) continue;
-    if (
-      attachmentBuffer.byteLength > maximumTaskResourceBytes ||
-      batchBytes + attachmentBuffer.byteLength > maximumTaskResourceBatchBytes
-    ) {
+    if (attachmentBuffer.byteLength > maximumTaskResourceBytes || batchBytes + attachmentBuffer.byteLength > maximumTaskResourceBatchBytes) {
       continue;
     }
     batchBytes += attachmentBuffer.byteLength;
     const safeName = sanitizeTaskAttachmentFileName(attachment.name || `pasted-task-attachment-${index + 1}`);
     const filePath = join(attachmentDirectory, `${Date.now()}-${randomUUID()}-${safeName}`);
     // 粘贴得到的是剪贴板二进制内容；Main 进程落到本机 userData 后，只把路径回传给任务上下文。
-    await writeFile(filePath, attachmentBuffer, {flag: 'wx', mode: 0o600});
+    await writeFile(filePath, attachmentBuffer, { flag: 'wx', mode: 0o600 });
     const mimeType = attachment.type || inferTaskClipboardAttachmentMimeType(filePath);
     const pastedText = text !== undefined || attachment.kind === 'pasted_text';
-    const kind: TaskStoredResourceKind = pastedText
-      ? 'pasted_text'
-      : mimeType.startsWith('image/') || isImageAttachmentPath(filePath)
-        ? 'image'
-        : 'file';
+    const kind: TaskStoredResourceKind = pastedText ? 'pasted_text' : mimeType.startsWith('image/') || isImageAttachmentPath(filePath) ? 'image' : 'file';
     savedAttachments.push({
       path: filePath,
       name: safeName,
       kind,
       mimeType,
       size: attachmentBuffer.byteLength,
-      ...(pastedText ? {characterCount: text?.length ?? 0} : {}),
-      ...(pastedText && text !== undefined && text.length <= maximumTaskRestorableTextCharacters ? {restorableText: text} : {}),
+      ...(pastedText ? { characterCount: text?.length ?? 0 } : {}),
+      ...(pastedText && text !== undefined && text.length <= maximumTaskRestorableTextCharacters ? { restorableText: text } : {}),
       ...(kind === 'image' ? { previewUrl: buildTaskAttachmentPreviewDataUrl(attachmentBuffer, mimeType) } : {}),
     });
   }
@@ -1163,9 +1105,7 @@ async function initializeApplication(): Promise<void> {
   const userDataPath = app.getPath('userData');
   const browserAttachmentRoot = join(userDataPath, 'browser-comments');
   const conversationAttachmentRoot = join(userDataPath, 'conversation-attachments');
-  const conversationAttachmentGrantSecret = await readOrCreateConversationAttachmentGrantSecret(
-    join(userDataPath, 'conversation-attachment-grant.secret'),
-  );
+  const conversationAttachmentGrantSecret = await readOrCreateConversationAttachmentGrantSecret(join(userDataPath, 'conversation-attachment-grant.secret'));
   conversationInputResources = createConversationInputResourceBroker({
     attachmentRoot: conversationAttachmentRoot,
     grantSecret: conversationAttachmentGrantSecret,
@@ -1176,7 +1116,7 @@ async function initializeApplication(): Promise<void> {
       readText: () => clipboard.readText(),
       readHTML: () => clipboard.readHTML(),
     },
-    clipboardReadOptions: {readSystemFileReferences: readMacOSClipboardFileReferences},
+    clipboardReadOptions: { readSystemFileReferences: readMacOSClipboardFileReferences },
   });
   browserHost = createBrowserHost({
     userDataPath,

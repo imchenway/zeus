@@ -1,22 +1,22 @@
-import {spawn as nodeSpawn} from 'node:child_process';
-import {randomUUID} from 'node:crypto';
-import {isAbsolute} from 'node:path';
+import { spawn as nodeSpawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
+import { isAbsolute } from 'node:path';
 import {
-    CodexJsonLineDecoder,
-    type CodexWireId,
-    type CodexWireMessage,
-    type ExternalAgentConfigDetectParams,
-    type ExternalAgentConfigDetectResponse,
-    type ExternalAgentConfigImportHistory,
-    type ExternalAgentConfigImportParams,
-    type ExternalAgentConfigImportResponse,
-    type ExternalAgentImportNotification,
-    parseExternalAgentConfigDetectResponse,
-    parseExternalAgentConfigImportHistoriesResponse,
-    parseExternalAgentConfigImportResponse,
-    parseExternalAgentImportNotification,
+  CodexJsonLineDecoder,
+  type CodexWireId,
+  type CodexWireMessage,
+  type ExternalAgentConfigDetectParams,
+  type ExternalAgentConfigDetectResponse,
+  type ExternalAgentConfigImportHistory,
+  type ExternalAgentConfigImportParams,
+  type ExternalAgentConfigImportResponse,
+  type ExternalAgentImportNotification,
+  parseExternalAgentConfigDetectResponse,
+  parseExternalAgentConfigImportHistoriesResponse,
+  parseExternalAgentConfigImportResponse,
+  parseExternalAgentImportNotification,
 } from './codexAppServerProtocol.js';
-import {expandCliSearchPath} from './cliSearchPath.js';
+import { expandCliSearchPath } from './cliSearchPath.js';
 
 export type {
   ExternalAgentConfigDetectParams,
@@ -63,6 +63,7 @@ export interface CodexCapabilitiesSnapshot {
 }
 
 export type CodexSandboxPolicy = { type: 'readOnly'; networkAccess: false } | { type: 'workspaceWrite'; writableRoots: string[]; networkAccess: boolean } | { type: 'dangerFullAccess' };
+export type CodexReasoningSummary = 'auto' | 'concise' | 'detailed' | 'none';
 
 export interface CodexDynamicToolFunctionSpec {
   type: 'function';
@@ -108,6 +109,7 @@ export interface CodexTurnStartInput {
   collaborationMode?: { mode: 'plan' | 'default'; settings: { model: string; reasoning_effort: string | null; developer_instructions: string | null } };
   model?: string;
   effort?: string;
+  summary?: CodexReasoningSummary;
   cwd?: string;
   approvalPolicy?: string;
   approvalsReviewer?: string;
@@ -134,7 +136,7 @@ interface CodexServerResponseBase {
 }
 
 export type CodexServerRequestResponse =
-    | (CodexServerResponseBase & { type: 'command'; decision: CodexCommandApprovalDecision })
+  | (CodexServerResponseBase & { type: 'command'; decision: CodexCommandApprovalDecision })
   | (CodexServerResponseBase & { type: 'file'; decision: 'accept' | 'acceptForSession' | 'decline' | 'cancel' })
   | (CodexServerResponseBase & {
       type: 'permissions';
@@ -153,9 +155,14 @@ export type CodexServerRequestResponse =
       success: boolean;
     });
 
-export type CodexCommandApprovalDecision = 'accept' | 'acceptForSession' | 'decline' | 'cancel' | {
-    acceptWithExecpolicyAmendment: { execpolicy_amendment: string[] }
-};
+export type CodexCommandApprovalDecision =
+  | 'accept'
+  | 'acceptForSession'
+  | 'decline'
+  | 'cancel'
+  | {
+      acceptWithExecpolicyAmendment: { execpolicy_amendment: string[] };
+    };
 
 type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 
@@ -180,7 +187,7 @@ export interface CodexAppServerManager {
   startThread(input: CodexThreadStartInput): Promise<CodexThreadSnapshot>;
   resumeThread(input: { threadId: string; cwd?: string }): Promise<CodexThreadSnapshot>;
 
-    unarchiveThread(input: { threadId: string }): Promise<CodexThreadSnapshot>;
+  unarchiveThread(input: { threadId: string }): Promise<CodexThreadSnapshot>;
   readThread(input: { threadId: string }): Promise<CodexThreadSnapshot>;
   startTurn(input: CodexTurnStartInput): Promise<CodexTurnSnapshot>;
   steerTurn(input: CodexTurnSteerInput): Promise<{ turnId: string }>;
@@ -642,11 +649,11 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
       if (typeof response.model === 'string') threadModels.set(thread.id, response.model);
       return thread;
     },
-      async unarchiveThread(input) {
-          const capabilities = await awaitCapabilities();
-          const response = asRecord(await rpc(capabilities.generationId, 'thread/unarchive', {threadId: input.threadId}));
-          return parseThread(response.thread);
-      },
+    async unarchiveThread(input) {
+      const capabilities = await awaitCapabilities();
+      const response = asRecord(await rpc(capabilities.generationId, 'thread/unarchive', { threadId: input.threadId }));
+      return parseThread(response.thread);
+    },
     async readThread(input) {
       const capabilities = await awaitCapabilities();
       const response = asRecord(await rpc(capabilities.generationId, 'thread/read', { threadId: input.threadId, includeTurns: true }));
@@ -688,6 +695,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
             collaborationMode: input.collaborationMode,
             model: input.model,
             effort: input.effort,
+            summary: input.summary,
             cwd: input.cwd,
             approvalPolicy: input.approvalPolicy,
             approvalsReviewer: input.approvalsReviewer,
@@ -756,14 +764,18 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
     },
     async detectExternalAgentConfig(input = {}) {
       const capabilities = await awaitCapabilities();
-        return parseExternalAgentConfigDetectResponse(
-            await rpc(capabilities.generationId, 'externalAgentConfig/detect', compactObject({
-                includeHome: input.includeHome,
-                cwds: input.cwds,
-                source: input.source,
-                migrationSource: input.migrationSource
-            })),
-        );
+      return parseExternalAgentConfigDetectResponse(
+        await rpc(
+          capabilities.generationId,
+          'externalAgentConfig/detect',
+          compactObject({
+            includeHome: input.includeHome,
+            cwds: input.cwds,
+            source: input.source,
+            migrationSource: input.migrationSource,
+          }),
+        ),
+      );
     },
     async startExternalAgentImport(input) {
       const capabilities = await awaitCapabilities();
@@ -889,12 +901,12 @@ function validWritableRoots(value: unknown): value is string[] {
 }
 
 function validateServerResponse(input: CodexServerRequestResponse): void {
-    if (input.type === 'command') {
-        if (!isCommandApprovalDecision(input.decision)) throw managerError('ZEUS_CODEX_SERVER_RESPONSE_INVALID', 'Codex command approval decision is invalid.');
-        return;
-    }
-    if (input.type === 'file') {
-        if (!['accept', 'acceptForSession', 'decline', 'cancel'].includes(input.decision)) throw managerError('ZEUS_CODEX_SERVER_RESPONSE_INVALID', 'Codex file approval decision is invalid.');
+  if (input.type === 'command') {
+    if (!isCommandApprovalDecision(input.decision)) throw managerError('ZEUS_CODEX_SERVER_RESPONSE_INVALID', 'Codex command approval decision is invalid.');
+    return;
+  }
+  if (input.type === 'file') {
+    if (!['accept', 'acceptForSession', 'decline', 'cancel'].includes(input.decision)) throw managerError('ZEUS_CODEX_SERVER_RESPONSE_INVALID', 'Codex file approval decision is invalid.');
     return;
   }
   if (input.type === 'permissions') {
@@ -913,11 +925,7 @@ function validateServerResponse(input: CodexServerRequestResponse): void {
     if (
       typeof input.success !== 'boolean' ||
       !Array.isArray(input.contentItems) ||
-      !input.contentItems.every(
-        (item) =>
-          (item.type === 'inputText' && typeof item.text === 'string') ||
-          (item.type === 'inputImage' && typeof item.imageUrl === 'string' && item.imageUrl.startsWith('data:image/')),
-      )
+      !input.contentItems.every((item) => (item.type === 'inputText' && typeof item.text === 'string') || (item.type === 'inputImage' && typeof item.imageUrl === 'string' && item.imageUrl.startsWith('data:image/')))
     ) {
       throw managerError('ZEUS_CODEX_SERVER_RESPONSE_INVALID', 'Codex dynamic tool response is invalid.');
     }
@@ -929,16 +937,16 @@ function validateServerResponse(input: CodexServerRequestResponse): void {
 }
 
 function isCommandApprovalDecision(value: unknown): value is CodexCommandApprovalDecision {
-    if (typeof value === 'string') return ['accept', 'acceptForSession', 'decline', 'cancel'].includes(value);
-    if (!isRecord(value) || !hasOnlyKeys(value, ['acceptWithExecpolicyAmendment'])) return false;
-    const amendment = value.acceptWithExecpolicyAmendment;
-    return (
-        isRecord(amendment) &&
-        hasOnlyKeys(amendment, ['execpolicy_amendment']) &&
-        Array.isArray(amendment.execpolicy_amendment) &&
-        amendment.execpolicy_amendment.length > 0 &&
-        amendment.execpolicy_amendment.every((entry) => typeof entry === 'string' && entry.length > 0)
-    );
+  if (typeof value === 'string') return ['accept', 'acceptForSession', 'decline', 'cancel'].includes(value);
+  if (!isRecord(value) || !hasOnlyKeys(value, ['acceptWithExecpolicyAmendment'])) return false;
+  const amendment = value.acceptWithExecpolicyAmendment;
+  return (
+    isRecord(amendment) &&
+    hasOnlyKeys(amendment, ['execpolicy_amendment']) &&
+    Array.isArray(amendment.execpolicy_amendment) &&
+    amendment.execpolicy_amendment.length > 0 &&
+    amendment.execpolicy_amendment.every((entry) => typeof entry === 'string' && entry.length > 0)
+  );
 }
 
 function isPermissionProfile(value: unknown): boolean {

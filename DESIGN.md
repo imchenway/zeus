@@ -278,6 +278,28 @@ quality_gates:
 - 本例外的实现、视觉证据、当前 Codex App 版本和回滚边界统一记录在 `docs/TASK_20260710_001_Zeus任务创建推送与AppServer连续对话全场景盘点.md`；
 - composer 响应式对齐、内容增高和焦点线收敛的本次实现与验收记录在 `docs/TASK_20260725_002_Zeus会话输入框Codex自适应对齐.md`；
 
+## TASK_20260730_001 会话过程态与底部交互坞契约
+
+- Plan 和普通工作模式共用同一过程反馈规则：turn 开始及阻塞请求解决后，在首个新摘要、活动或回答出现前必须显示明确的思考状态；
+- 每次 `turn/start` 必须显式请求 `summary: "auto"`，不能假设 app-server 会在省略参数时自动返回可读摘要；
+- Renderer 只展示 app-server 的 readable reasoning summary，不把 raw reasoning content 当作过程文案；
+- `turn/completed` 必须收敛当前轮次遗留的 `in_progress` 项；若遗留文本是后续完整项的严格前缀，则用结构化 `supersededBy` 标记抑制重复展示，否则保留文本并完成该项；
+- 连续工作活动默认收起，运行时只露出最新一项；用户主动展开后才能查看完整命令、读取和输出历史；
+- `request_user_input`、计划实施确认、命令、文件、权限和 MCP 请求统一占用 composer 所在的底部交互坞，同一时刻只显示队首请求；
+- 交互坞不得进入 transcript 的滚动内容，不得与 composer 同时形成两个主操作区；长内容只能在交互坞内部滚动；
+- 动态效果遵循系统减少动态效果设置，取消空间动画时仍必须保留可读状态变化；
+- 完整证据、协议边界、取舍和验收记录见 `docs/TASK_20260730_001_Codex过程态与底部交互坞对齐.md`。
+
+## TASK_20260730_003 应用菜单检查更新契约
+
+- macOS 应用菜单的 `Check for Updates...` 和 `Command+U` 必须直接触发真实 Release manifest 检查，不能只跳转设置页；
+- Main 只负责恢复窗口并发送受限单向事件，Renderer 继续复用现有 `/api/release/check-update`，禁止建立第二个更新事实源；
+- 弹窗必须覆盖检查中、已是最新、发现更新和检查失败，并展示真实当前版本、最新版本与匹配产物；
+- 未签名或未公证的产物只能提供“打开下载页 / 取消”，下载页必须经过 Main 的 HTTPS URL 复验；
+- 只有 `automaticInstallEnabled=true` 且 `recommendedAction=download_and_install` 时才能显示下载并安装动作；后端拒绝时必须显示真实原因，不能把预留接口伪装成已开始升级；
+- 检查开始前 Renderer 尚未完成 bootstrap 时，Main 必须按窗口保留一次待处理请求，并在该窗口就绪后投递；窗口关闭时清理；
+- 弹窗复用 `ModalPortal`、`Button` 和 Zeus 主题 token，支持键盘焦点、窄窗口和 reduced-motion。
+
 ### 正式任务与项目对话的领域边界（2026-07-17）
 
 - **正式任务**是 Zeus 的可调度工作对象：持久化于 `tasks`，具有任务编号、状态、权限初值和任务事件。任务分组旁的 `+` 创建 `owner.kind = task` 的会话，`conversations.task_id` 指向该任务。

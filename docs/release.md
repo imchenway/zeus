@@ -38,7 +38,20 @@ CI 通过 `ZEUS_VERIFY_BASE` 与 `ZEUS_VERIFY_HEAD` 传入本次推送或 PR 的
 普通发布前门禁必须覆盖变更文件格式、Git 空白错误、lint、typecheck 和 build。完整 macOS 发布门禁在此基础上继续覆盖
 acceptance matrix、AI CLI adapter 探针、package:mac、包内 Electron 加载和包内 renderer/main 非 GUI 健康检查。
 
-### 当前稳定基线（0.1.1）
+### 本地待发布基线（0.1.2）
+
+- 根包与桌面包版本已同步为 `0.1.2`；
+- `pnpm verify:release`：通过；Prettier、lint、typecheck、build、12 个章节 139 项验收矩阵、
+  AI CLI 探针、macOS arm64 打包、产物健康检查和严格 codesign 校验完整执行；
+- DMG SHA256：`23187b7fa1842e23b009606dc9415ee3fc004ccd9d01fa27d53db347b8b2b740`；
+- ZIP SHA256：`9a0ab53da4674e060fd3c287537a21e7e000aa346875ee7a483e931eb5319e6c`；
+- 仓库 `dist/mac-arm64/Zeus.app` 中的应用菜单 `Check for Updates...` 与 `Command+U`
+  均真实触发检查弹窗；
+- `/Applications/Zeus.app` 不作为开发验收载体，已恢复为验收前原始副本；
+- 当前产物仍为 ad-hoc 签名且未公证；GitHub Release、tag 和 Homebrew Tap 尚未发布，
+  不能把本地发布门禁通过描述成公开发布完成。
+
+### 当前公开稳定基线（0.1.1）
 
 - `pnpm verify:release`：通过；Git 空白错误、变更文件 Prettier、lint、typecheck、build、12 个章节 139 项验收矩阵、
   AI CLI 探针、macOS arm64 打包和产物健康检查完整执行。

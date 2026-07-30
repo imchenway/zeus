@@ -1,72 +1,30 @@
 import type {
-    CodexConversationCapabilities,
-    CodexTaskPushCapabilities,
-    ConversationResourcePreview,
-    NativeCollaborationMode,
-    NativeConversationChoicesSnapshot,
-    NativeConversationSnapshot,
-    NativeOperationAcceptance,
-    NativePendingRequest,
-    NativePermissionMode,
-    NativePlanImplementationRequest,
-    NativeProjectConversationChoicesSnapshot,
-    NativeQueueSnapshot,
-    SendNativeMessageRequest,
-    StartNativeConversationRequest,
-    StartProjectConversationRequest,
-    StartTaskModelPushRequest,
-    TurnChangeSet,
-    TurnChangeSetOperationResult,
+  CodexConversationCapabilities,
+  CodexTaskPushCapabilities,
+  ConversationResourcePreview,
+  NativeCollaborationMode,
+  NativeConversationChoicesSnapshot,
+  NativeConversationSnapshot,
+  NativeOperationAcceptance,
+  NativePendingRequest,
+  NativePermissionMode,
+  NativePlanImplementationRequest,
+  NativeProjectConversationChoicesSnapshot,
+  NativeQueueSnapshot,
+  SendNativeMessageRequest,
+  StartNativeConversationRequest,
+  StartProjectConversationRequest,
+  StartTaskModelPushRequest,
+  TurnChangeSet,
+  TurnChangeSetOperationResult,
 } from './session/sessionTypes.js';
-import type {
-  CommandArtifact,
-  CommandConfirmation,
-  CommandDefinition,
-  CommandDefinitionInput,
-  CommandRun,
-  TaskManagementStatus,
-  TaskPriority,
-} from '@zeus/shared';
+import type { CommandArtifact, CommandConfirmation, CommandDefinition, CommandDefinitionInput, CommandRun, TaskManagementStatus, TaskPriority } from '@zeus/shared';
 
-export type {
-  CommandArtifact,
-  CommandConfirmation,
-  CommandDefinition,
-  CommandDefinitionInput,
-  CommandParameterDefinition,
-  CommandRun,
-  CommandRunStatus,
-  TaskManagementStatus,
-  TaskPriority,
-} from '@zeus/shared';
+export type { CommandArtifact, CommandConfirmation, CommandDefinition, CommandDefinitionInput, CommandParameterDefinition, CommandRun, CommandRunStatus, TaskManagementStatus, TaskPriority } from '@zeus/shared';
 
 export type TaskStatus = 'draft' | 'ready' | 'running' | 'paused' | 'waiting_confirmation' | 'completed' | 'failed' | 'cancelled';
-export type TaskAgentRunStatus =
-    'not_started'
-    | 'connecting'
-    | 'reconnecting'
-    | 'running'
-    | 'waiting_user'
-    | 'waiting_approval'
-    | 'paused'
-    | 'idle'
-    | 'failed'
-    | 'legacy_readonly';
-export type TaskTableColumnKey =
-    'code'
-    | 'intent'
-    | 'managementStatus'
-    | 'runStatus'
-    | 'source'
-    | 'updatedAt'
-    | 'createdAt'
-    | 'template'
-    | 'project'
-    | 'priority'
-    | 'description'
-    | 'runtimeSession'
-    | 'rawId'
-    | 'createdFrom';
+export type TaskAgentRunStatus = 'not_started' | 'connecting' | 'reconnecting' | 'running' | 'waiting_user' | 'waiting_approval' | 'paused' | 'idle' | 'failed' | 'legacy_readonly';
+export type TaskTableColumnKey = 'code' | 'intent' | 'managementStatus' | 'runStatus' | 'source' | 'updatedAt' | 'createdAt' | 'template' | 'project' | 'priority' | 'description' | 'runtimeSession' | 'rawId' | 'createdFrom';
 export type TaskTableColumnWidth = number;
 export type TaskTableSortDirection = 'asc' | 'desc';
 
@@ -144,7 +102,7 @@ export interface TaskRecord {
   taskSequence?: number | null;
   title: string;
   description?: string;
-    managementStatus?: TaskManagementStatus;
+  managementStatus?: TaskManagementStatus;
   status: TaskStatus;
   priority?: string;
   templateId?: string | null;
@@ -281,7 +239,7 @@ export interface ReleaseUpdateStatusSnapshot {
 }
 
 export interface ReleaseUpdateOperationSnapshot {
-  accepted: false;
+  accepted: boolean;
   update: ReleaseUpdateStatusSnapshot;
   reason: string;
 }
@@ -583,7 +541,7 @@ export interface StartCommandRunRequest {
   parameters: Record<string, string | number | boolean>;
 }
 
-export type CommandConfirmationResponse = CommandConfirmation & {runId: string};
+export type CommandConfirmationResponse = CommandConfirmation & { runId: string };
 
 export interface AiRuntimeTerminalSnapshot {
   sessionId: string;
@@ -1023,9 +981,9 @@ export interface CreateTaskRequest {
 export interface LoadTasksRequest {
   projectId: string;
   query?: string;
-    managementStatus?: TaskManagementStatus;
+  managementStatus?: TaskManagementStatus;
   tag?: string;
-    sortBy?: 'createdAt' | 'updatedAt' | 'title' | 'managementStatus';
+  sortBy?: 'createdAt' | 'updatedAt' | 'title' | 'managementStatus';
   sortDirection?: 'asc' | 'desc';
 }
 
@@ -1136,8 +1094,8 @@ export interface DashboardClient {
   startProjectConversation: (projectId: string, input: StartProjectConversationRequest) => Promise<NativeOperationAcceptance>;
   loadTaskConversationChoices: (taskId: string) => Promise<NativeConversationChoicesSnapshot>;
   startNativeConversation: (taskId: string, input: StartNativeConversationRequest) => Promise<NativeOperationAcceptance>;
-    loadCodexTaskPushCapabilities: (projectId: string, taskId: string) => Promise<CodexTaskPushCapabilities>;
-    loadCodexConversationCapabilities: (projectId: string) => Promise<CodexConversationCapabilities>;
+  loadCodexTaskPushCapabilities: (projectId: string, taskId: string) => Promise<CodexTaskPushCapabilities>;
+  loadCodexConversationCapabilities: (projectId: string) => Promise<CodexConversationCapabilities>;
   startTaskModelPush: (taskId: string, input: StartTaskModelPushRequest) => Promise<NativeOperationAcceptance>;
   loadNativeConversation: (projectId: string, conversationId: string) => Promise<NativeConversationSnapshot>;
   loadConversationResourcePreview: (projectId: string, conversationId: string, resourceId: string) => Promise<ConversationResourcePreview>;
@@ -1147,12 +1105,12 @@ export interface DashboardClient {
     conversationId: string,
     turnId: string,
     action: 'undo' | 'reapply',
-    input: {changeSetId: string; expectedState: 'applied' | 'undone'; idempotencyKey: string},
+    input: { changeSetId: string; expectedState: 'applied' | 'undone'; idempotencyKey: string },
   ) => Promise<TurnChangeSetOperationResult>;
-    acknowledgeNativeConversationCompletion: (projectId: string, conversationId: string) => Promise<void>;
-    restoreArchivedNativeConversation: (projectId: string, conversationId: string) => Promise<NativeConversationSnapshot>;
+  acknowledgeNativeConversationCompletion: (projectId: string, conversationId: string) => Promise<void>;
+  restoreArchivedNativeConversation: (projectId: string, conversationId: string) => Promise<NativeConversationSnapshot>;
   updateNativePermissionMode: (projectId: string, conversationId: string, permissionMode: NativePermissionMode) => Promise<NativeConversationSnapshot>;
-    updateNativeCollaborationMode: (projectId: string, conversationId: string, collaborationMode: NativeCollaborationMode) => Promise<NativeConversationSnapshot>;
+  updateNativeCollaborationMode: (projectId: string, conversationId: string, collaborationMode: NativeCollaborationMode) => Promise<NativeConversationSnapshot>;
   loadCodexLegacyImports: () => Promise<CodexLegacyImportSnapshot>;
   startCodexLegacyImport: (sourceConversationIds: string[]) => Promise<CodexLegacyImportResult>;
   loadCodexLegacyImport: (importId: string) => Promise<CodexLegacyImportResult>;
@@ -1162,19 +1120,23 @@ export interface DashboardClient {
   sendNativeQueuedNow: (projectId: string, conversationId: string, submissionId: string) => Promise<NativeOperationAcceptance>;
   interruptNativeTurn: (projectId: string, conversationId: string, turnId: string) => Promise<NativeOperationAcceptance>;
   respondToNativeRequest: (projectId: string, conversationId: string, requestId: string, response: Record<string, unknown>) => Promise<{ operation: Record<string, unknown>; request: NativePendingRequest }>;
-    snoozeNativeRequest: (projectId: string, conversationId: string, requestId: string) => Promise<{
-        request: NativePendingRequest
-    }>;
-    respondToPlanImplementationRequest: (
-        projectId: string,
-        conversationId: string,
-        requestId: string,
-        input: { action: 'implement' | 'refine' | 'dismiss'; feedback?: string },
-    ) => Promise<{
-        operation: NativeOperationAcceptance['operation'];
-        request: NativePlanImplementationRequest;
-        conversation: NativeConversationSnapshot
-    }>;
+  snoozeNativeRequest: (
+    projectId: string,
+    conversationId: string,
+    requestId: string,
+  ) => Promise<{
+    request: NativePendingRequest;
+  }>;
+  respondToPlanImplementationRequest: (
+    projectId: string,
+    conversationId: string,
+    requestId: string,
+    input: { action: 'implement' | 'refine' | 'dismiss'; feedback?: string },
+  ) => Promise<{
+    operation: NativeOperationAcceptance['operation'];
+    request: NativePlanImplementationRequest;
+    conversation: NativeConversationSnapshot;
+  }>;
   resumeNativeQueue: (projectId: string, conversationId: string) => Promise<NativeQueueSnapshot>;
   reorderNativeQueue: (projectId: string, conversationId: string, orderedSubmissionIds: string[]) => Promise<NativeQueueSnapshot>;
   loadDashboard: () => Promise<DashboardSnapshot>;
@@ -1325,7 +1287,7 @@ export interface DashboardClient {
   exportGitPatch: () => Promise<GitPatchExport>;
   loadTaskEvents: (taskId: string) => Promise<TaskEventRecord[]>;
   updateTaskStatus: (taskId: string, status: TaskStatus) => Promise<TaskRecord>;
-    updateTaskManagementStatus: (taskId: string, status: TaskManagementStatus) => Promise<TaskRecord>;
+  updateTaskManagementStatus: (taskId: string, status: TaskManagementStatus) => Promise<TaskRecord>;
   archiveTask: (taskId: string) => Promise<TaskRecord>;
   restoreTask: (taskId: string) => Promise<TaskRecord>;
   createGitConfirmation: (input: CreateGitConfirmationRequest) => Promise<GitOperationConfirmation>;
@@ -1386,16 +1348,16 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
         recoveryRequired,
       });
     }
-      if (response.status === 204) return undefined as T;
+    if (response.status === 204) return undefined as T;
     return (await response.json()) as T;
   }
 
   async function requestBlob(path: string): Promise<Blob> {
     const response = await fetch(`${currentOptions.baseUrl}${path}`, {
-      headers: {authorization: `Bearer ${currentOptions.apiToken}`},
+      headers: { authorization: `Bearer ${currentOptions.apiToken}` },
     });
     if (!response.ok) {
-      const payload = (await response.json().catch(() => ({}))) as {error?: string; message?: string};
+      const payload = (await response.json().catch(() => ({}))) as { error?: string; message?: string };
       throw new ZeusApiError({
         status: response.status,
         error: payload.error ?? null,
@@ -1417,8 +1379,8 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
       });
     },
     loadTaskConversationChoices: (taskId) => request<NativeConversationChoicesSnapshot>(`/api/tasks/${encodeURIComponent(taskId)}/conversation-choices`),
-      loadCodexTaskPushCapabilities: (projectId, taskId) => request<CodexTaskPushCapabilities>(`/api/projects/${encodeURIComponent(projectId)}/codex-task-push-capabilities?taskId=${encodeURIComponent(taskId)}`),
-      loadCodexConversationCapabilities: (projectId) => request<CodexConversationCapabilities>(`/api/projects/${encodeURIComponent(projectId)}/codex-conversation-capabilities`),
+    loadCodexTaskPushCapabilities: (projectId, taskId) => request<CodexTaskPushCapabilities>(`/api/projects/${encodeURIComponent(projectId)}/codex-task-push-capabilities?taskId=${encodeURIComponent(taskId)}`),
+    loadCodexConversationCapabilities: (projectId) => request<CodexConversationCapabilities>(`/api/projects/${encodeURIComponent(projectId)}/codex-conversation-capabilities`),
     startTaskModelPush: (taskId, input) => {
       const { idempotencyKey, ...body } = input;
       return request<NativeOperationAcceptance>(`/api/tasks/${encodeURIComponent(taskId)}/conversations`, {
@@ -1437,31 +1399,26 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
     },
     loadNativeConversation: (projectId, conversationId) => request<NativeConversationSnapshot>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}`),
     loadConversationResourcePreview: (projectId, conversationId, resourceId) =>
-      request<ConversationResourcePreview>(
-        `/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/resources/${encodeURIComponent(resourceId)}/preview`,
-      ),
-    loadTurnChangeSet: (projectId, conversationId, turnId) =>
-      request<TurnChangeSet>(
-        `/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/turns/${encodeURIComponent(turnId)}/change-set`,
-      ),
+      request<ConversationResourcePreview>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/resources/${encodeURIComponent(resourceId)}/preview`),
+    loadTurnChangeSet: (projectId, conversationId, turnId) => request<TurnChangeSet>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/turns/${encodeURIComponent(turnId)}/change-set`),
     operateTurnChangeSet: (projectId, conversationId, turnId, action, input) =>
-      request<TurnChangeSetOperationResult>(
-        `/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/turns/${encodeURIComponent(turnId)}/change-set/${action}`,
-        {method: 'POST', body: JSON.stringify(input)},
-      ),
-      acknowledgeNativeConversationCompletion: (projectId, conversationId) => request<void>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/completion-acknowledgement`, {method: 'PUT'}),
-      restoreArchivedNativeConversation: (projectId, conversationId) =>
-          request<NativeConversationSnapshot>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/provider-thread/restore`, {method: 'POST'}),
+      request<TurnChangeSetOperationResult>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/turns/${encodeURIComponent(turnId)}/change-set/${action}`, {
+        method: 'POST',
+        body: JSON.stringify(input),
+      }),
+    acknowledgeNativeConversationCompletion: (projectId, conversationId) => request<void>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/completion-acknowledgement`, { method: 'PUT' }),
+    restoreArchivedNativeConversation: (projectId, conversationId) =>
+      request<NativeConversationSnapshot>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/provider-thread/restore`, { method: 'POST' }),
     updateNativePermissionMode: (projectId, conversationId, permissionMode) =>
       request<NativeConversationSnapshot>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/permission-mode`, {
         method: 'PATCH',
         body: JSON.stringify({ permissionMode }),
       }),
-      updateNativeCollaborationMode: (projectId, conversationId, collaborationMode) =>
-          request<NativeConversationSnapshot>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/collaboration-mode`, {
-              method: 'PATCH',
-              body: JSON.stringify({collaborationMode}),
-          }),
+    updateNativeCollaborationMode: (projectId, conversationId, collaborationMode) =>
+      request<NativeConversationSnapshot>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/collaboration-mode`, {
+        method: 'PATCH',
+        body: JSON.stringify({ collaborationMode }),
+      }),
     loadCodexLegacyImports: () => request<CodexLegacyImportSnapshot>('/api/codex-native/import'),
     startCodexLegacyImport: (sourceConversationIds) =>
       request<CodexLegacyImportResult>('/api/codex-native/import', {
@@ -1493,19 +1450,16 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
         method: 'POST',
         body: JSON.stringify(response),
       }),
-      snoozeNativeRequest: (projectId, conversationId, requestId) =>
-          request<{
-              request: NativePendingRequest
-          }>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/requests/${encodeURIComponent(requestId)}/snooze`, {method: 'POST'}),
-      respondToPlanImplementationRequest: (projectId, conversationId, requestId, input) =>
-          request<{
-              operation: NativeOperationAcceptance['operation'];
-              request: NativePlanImplementationRequest;
-              conversation: NativeConversationSnapshot
-          }>(
-              `/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/plan-implementation-requests/${encodeURIComponent(requestId)}/respond`,
-              {method: 'POST', body: JSON.stringify(input)},
-          ),
+    snoozeNativeRequest: (projectId, conversationId, requestId) =>
+      request<{
+        request: NativePendingRequest;
+      }>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/requests/${encodeURIComponent(requestId)}/snooze`, { method: 'POST' }),
+    respondToPlanImplementationRequest: (projectId, conversationId, requestId, input) =>
+      request<{
+        operation: NativeOperationAcceptance['operation'];
+        request: NativePlanImplementationRequest;
+        conversation: NativeConversationSnapshot;
+      }>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/plan-implementation-requests/${encodeURIComponent(requestId)}/respond`, { method: 'POST', body: JSON.stringify(input) }),
     resumeNativeQueue: (projectId, conversationId) => request<NativeQueueSnapshot>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/queue/resume`, { method: 'POST' }),
     reorderNativeQueue: (projectId, conversationId, orderedSubmissionIds) =>
       request<NativeQueueSnapshot>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/queue/reorder`, {
@@ -1549,38 +1503,27 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
         body: JSON.stringify(input),
       }),
     loadGlobalCommands: () => request<CommandDefinition[]>('/api/commands/global'),
-    createGlobalCommand: (input) =>
-      request<CommandDefinition>('/api/commands/global', {method: 'POST', body: JSON.stringify(input)}),
-    updateGlobalCommand: (commandId, input) =>
-      request<CommandDefinition>(`/api/commands/global/${encodeURIComponent(commandId)}`, {method: 'PATCH', body: JSON.stringify(input)}),
-    deleteGlobalCommand: (commandId) =>
-      request<CommandDefinition>(`/api/commands/global/${encodeURIComponent(commandId)}`, {method: 'DELETE'}),
-    loadProjectCommands: (projectId) =>
-      request<CommandDefinition[]>(`/api/projects/${encodeURIComponent(projectId)}/commands`),
-    createProjectCommand: (projectId, input) =>
-      request<CommandDefinition>(`/api/projects/${encodeURIComponent(projectId)}/commands`, {method: 'POST', body: JSON.stringify(input)}),
+    createGlobalCommand: (input) => request<CommandDefinition>('/api/commands/global', { method: 'POST', body: JSON.stringify(input) }),
+    updateGlobalCommand: (commandId, input) => request<CommandDefinition>(`/api/commands/global/${encodeURIComponent(commandId)}`, { method: 'PATCH', body: JSON.stringify(input) }),
+    deleteGlobalCommand: (commandId) => request<CommandDefinition>(`/api/commands/global/${encodeURIComponent(commandId)}`, { method: 'DELETE' }),
+    loadProjectCommands: (projectId) => request<CommandDefinition[]>(`/api/projects/${encodeURIComponent(projectId)}/commands`),
+    createProjectCommand: (projectId, input) => request<CommandDefinition>(`/api/projects/${encodeURIComponent(projectId)}/commands`, { method: 'POST', body: JSON.stringify(input) }),
     updateProjectCommand: (projectId, commandId, input) =>
       request<CommandDefinition>(`/api/projects/${encodeURIComponent(projectId)}/commands/${encodeURIComponent(commandId)}`, {
         method: 'PATCH',
         body: JSON.stringify(input),
       }),
-    deleteProjectCommand: (projectId, commandId) =>
-      request<CommandDefinition>(`/api/projects/${encodeURIComponent(projectId)}/commands/${encodeURIComponent(commandId)}`, {method: 'DELETE'}),
+    deleteProjectCommand: (projectId, commandId) => request<CommandDefinition>(`/api/projects/${encodeURIComponent(projectId)}/commands/${encodeURIComponent(commandId)}`, { method: 'DELETE' }),
     createCommandConfirmation: (projectId, commandId, input) =>
-      request<CommandConfirmationResponse>(
-        `/api/projects/${encodeURIComponent(projectId)}/commands/${encodeURIComponent(commandId)}/confirmations`,
-        {method: 'POST', body: JSON.stringify(input)},
-      ),
+      request<CommandConfirmationResponse>(`/api/projects/${encodeURIComponent(projectId)}/commands/${encodeURIComponent(commandId)}/confirmations`, { method: 'POST', body: JSON.stringify(input) }),
     startCommandRun: (projectId, commandId, input) =>
       request<CommandRun>(`/api/projects/${encodeURIComponent(projectId)}/commands/${encodeURIComponent(commandId)}/runs`, {
         method: 'POST',
         body: JSON.stringify(input),
       }),
-    loadCommandRuns: (projectId, limit = 100) =>
-      request<CommandRun[]>(`/api/projects/${encodeURIComponent(projectId)}/command-runs?limit=${encodeURIComponent(String(limit))}`),
+    loadCommandRuns: (projectId, limit = 100) => request<CommandRun[]>(`/api/projects/${encodeURIComponent(projectId)}/command-runs?limit=${encodeURIComponent(String(limit))}`),
     loadCommandRun: (runId) => request<CommandRunDetail>(`/api/command-runs/${encodeURIComponent(runId)}`),
-    stopCommandRun: (runId) =>
-      request<CommandRun>(`/api/command-runs/${encodeURIComponent(runId)}/stop`, {method: 'POST'}),
+    stopCommandRun: (runId) => request<CommandRun>(`/api/command-runs/${encodeURIComponent(runId)}/stop`, { method: 'POST' }),
     loadCommandArtifact: (artifactId) => requestBlob(`/api/command-artifacts/${encodeURIComponent(artifactId)}/content`),
     loadRuntimeAdapters: () => request<AiRuntimeAdapterDescriptor[]>('/api/runtime/adapters'),
     checkRuntimeAdapter: (adapterId) => request<AiRuntimeAdapterStatus>(`/api/runtime/adapters/${adapterId}/check`),
@@ -1797,7 +1740,7 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
       }),
     loadTasks: (input) =>
       request<TaskRecord[]>(
-          `/api/tasks?projectId=${encodeURIComponent(input.projectId)}${input.query ? `&query=${encodeURIComponent(input.query)}` : ''}${input.managementStatus ? `&managementStatus=${encodeURIComponent(input.managementStatus)}` : ''}${input.tag ? `&tag=${encodeURIComponent(input.tag)}` : ''}${input.sortBy ? `&sortBy=${encodeURIComponent(input.sortBy)}` : ''}${input.sortDirection ? `&sortDirection=${encodeURIComponent(input.sortDirection)}` : ''}`,
+        `/api/tasks?projectId=${encodeURIComponent(input.projectId)}${input.query ? `&query=${encodeURIComponent(input.query)}` : ''}${input.managementStatus ? `&managementStatus=${encodeURIComponent(input.managementStatus)}` : ''}${input.tag ? `&tag=${encodeURIComponent(input.tag)}` : ''}${input.sortBy ? `&sortBy=${encodeURIComponent(input.sortBy)}` : ''}${input.sortDirection ? `&sortDirection=${encodeURIComponent(input.sortDirection)}` : ''}`,
       ),
     loadTask: (taskId) => request<TaskRecord>(`/api/tasks/${taskId}`),
     updateTask: (taskId, input) =>
@@ -1862,10 +1805,10 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
         method: 'PATCH',
         body: JSON.stringify({ status }),
       }),
-      updateTaskManagementStatus: (taskId, status) =>
-          request<TaskRecord>(`/api/tasks/${taskId}/management-status`, {
-              method: 'PATCH',
-              body: JSON.stringify({status}),
+    updateTaskManagementStatus: (taskId, status) =>
+      request<TaskRecord>(`/api/tasks/${taskId}/management-status`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status }),
       }),
     archiveTask: (taskId) => request<TaskRecord>(`/api/tasks/${taskId}/archive`, { method: 'POST' }),
     restoreTask: (taskId) => request<TaskRecord>(`/api/tasks/${taskId}/restore`, { method: 'POST' }),

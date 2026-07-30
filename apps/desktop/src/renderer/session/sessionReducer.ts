@@ -1,23 +1,23 @@
 import type {
-    ConversationState,
-    NativeConversationAttachment,
-    NativeConversationEvent,
-    NativeConversationSnapshot,
-    NativeItemSnapshot,
-    NativePendingRequest,
-    NativePlanImplementationRequest,
-    NativeProviderSettingsSnapshot,
-    NativeProviderValueSnapshot,
-    NativeQueueSnapshot,
-    NativeSessionError,
-    NativeSessionItemBuffer,
-    NativeSessionState,
-    NativeTokenUsageSnapshot,
-    NativeTurnPlanSnapshot,
-    NativeTurnSnapshot,
-    TransportState,
+  ConversationState,
+  NativeConversationAttachment,
+  NativeConversationEvent,
+  NativeConversationSnapshot,
+  NativeItemSnapshot,
+  NativePendingRequest,
+  NativePlanImplementationRequest,
+  NativeProviderSettingsSnapshot,
+  NativeProviderValueSnapshot,
+  NativeQueueSnapshot,
+  NativeSessionError,
+  NativeSessionItemBuffer,
+  NativeSessionState,
+  NativeTokenUsageSnapshot,
+  NativeTurnPlanSnapshot,
+  NativeTurnSnapshot,
+  TransportState,
 } from './sessionTypes.js';
-import type {ZeusBrowserComment, ZeusBrowserPreparedSubmission} from '@zeus/shared';
+import type { ZeusBrowserComment, ZeusBrowserPreparedSubmission } from '@zeus/shared';
 
 export type NativeSessionAction =
   | { type: 'transport_changed'; transportState: TransportState; reconnectAttempt?: number; error?: NativeSessionError | null }
@@ -80,7 +80,7 @@ export function createInitialSessionState(): NativeSessionState {
     itemOrder: [],
     queue: null,
     pendingRequests: [],
-      planImplementationRequests: [],
+    planImplementationRequests: [],
     providerSettings: null,
     tokenUsage: null,
     rateLimits: null,
@@ -92,6 +92,8 @@ export function createInitialSessionState(): NativeSessionState {
     attachments: [],
     browserSubmission: null,
     transcriptRevision: 0,
+    feedbackEpoch: 0,
+    visibleFeedbackEpoch: 0,
     busyOperation: null,
     error: null,
   };
@@ -129,8 +131,14 @@ export function sessionReducer(state: NativeSessionState, action: NativeSessionA
     case 'interrupt_failed':
       return { ...state, conversationState: action.previousConversationState, error: action.error };
     case 'request_resolved': {
+      const wasPending = state.pendingRequests.some((request) => request.id === action.requestId);
       const pendingRequests = state.pendingRequests.filter((request) => request.id !== action.requestId);
-      return { ...state, pendingRequests, conversationState: requestConversationState(pendingRequests) ?? conversationStateWithoutRequests(state) };
+      return {
+        ...state,
+        pendingRequests,
+        feedbackEpoch: wasPending && state.activeTurnId ? state.feedbackEpoch + 1 : state.feedbackEpoch,
+        conversationState: requestConversationState(pendingRequests) ?? conversationStateWithoutRequests(state),
+      };
     }
     case 'event_received':
       return reduceNativeEvent(state, action.event, action.suppressRequestAuthority === true);
@@ -259,6 +267,8 @@ function hydrateSnapshot(state: NativeSessionState, snapshot: NativeConversation
   }
   const pendingRequests = normalizePendingRequestsWithMaps(snapshot.requests, providerTurnIdByLocalId, providerItemIdByLocalId);
   const itemOrder = orderedItems.sort((left, right) => left.timestamp.localeCompare(right.timestamp) || left.stableIndex - right.stableIndex).map((entry) => entry.key);
+  const feedbackEpoch = activeTurnId ? state.feedbackEpoch + 1 : state.feedbackEpoch;
+  const hasVisibleActiveFeedback = activeTurnId ? Object.values(items).some((item) => item.turnId === activeTurnId && item.status === 'in_progress' && itemProvidesVisibleFeedback(item)) : false;
   return {
     ...state,
     projectId: snapshot.projectId,
@@ -274,13 +284,15 @@ function hydrateSnapshot(state: NativeSessionState, snapshot: NativeConversation
     itemOrder,
     queue: snapshot.queue,
     pendingRequests,
-      planImplementationRequests: snapshot.planImplementationRequests ?? [],
+    planImplementationRequests: snapshot.planImplementationRequests ?? [],
     providerSettings: snapshot.providerSettings ?? null,
     tokenUsage: snapshot.tokenUsage ?? null,
     rateLimits: snapshot.rateLimits ?? null,
     mcpStartup: snapshot.mcpStartup ?? null,
     conversationState: requestConversationState(pendingRequests) ?? conversationStateFromSnapshot(snapshot),
     transcriptRevision: state.transcriptRevision + 1,
+    feedbackEpoch,
+    visibleFeedbackEpoch: hasVisibleActiveFeedback ? feedbackEpoch : Math.min(state.visibleFeedbackEpoch, feedbackEpoch),
     error: recoveryErrorFromSnapshot(snapshot),
   };
 }
@@ -316,6 +328,7 @@ function reduceNativeEvent(state: NativeSessionState, event: NativeConversationE
         ...base,
         activeTurnId: turnId,
         startedTurnId: turnId,
+        feedbackEpoch: base.feedbackEpoch + 1,
         conversationState: 'active_prework',
       };
     }
@@ -332,33 +345,33 @@ function reduceNativeEvent(state: NativeSessionState, event: NativeConversationE
         conversationState: status === 'failed' ? 'turn_failed' : 'native_idle',
       };
     }
-      case 'conversation.turn.plan.updated': {
-          const turnId = stringValue(payload.turnId);
-          const plan = nativeTurnPlanFrom(payload.plan);
-          const turn = turnId ? base.turnsByProviderId[turnId] : undefined;
-          if (!turnId || !turn || !plan) return base;
-          return {
-              ...base,
-              turnsByProviderId: {
-                  ...base.turnsByProviderId,
-                  [turnId]: {...turn, plan, updatedAt: event.createdAt},
-              },
-              transcriptRevision: base.transcriptRevision + 1,
-          };
-      }
-      case 'conversation.turn.change_set.changed': {
-          const changeSet = isRecord(payload.changeSet) ? payload.changeSet as unknown as NativeSessionState['changeSetsByProviderId'][string] : null;
-          const providerTurnId = changeSet?.providerTurnId ?? stringValue(payload.turnId);
-          if (!changeSet || !providerTurnId || changeSet.conversationId !== base.conversationId) return base;
-          return {
-              ...base,
-              changeSetsByProviderId: {
-                  ...base.changeSetsByProviderId,
-                  [providerTurnId]: changeSet,
-              },
-              transcriptRevision: base.transcriptRevision + 1,
-          };
-      }
+    case 'conversation.turn.plan.updated': {
+      const turnId = stringValue(payload.turnId);
+      const plan = nativeTurnPlanFrom(payload.plan);
+      const turn = turnId ? base.turnsByProviderId[turnId] : undefined;
+      if (!turnId || !turn || !plan) return base;
+      return {
+        ...base,
+        turnsByProviderId: {
+          ...base.turnsByProviderId,
+          [turnId]: { ...turn, plan, updatedAt: event.createdAt },
+        },
+        transcriptRevision: base.transcriptRevision + 1,
+      };
+    }
+    case 'conversation.turn.change_set.changed': {
+      const changeSet = isRecord(payload.changeSet) ? (payload.changeSet as unknown as NativeSessionState['changeSetsByProviderId'][string]) : null;
+      const providerTurnId = changeSet?.providerTurnId ?? stringValue(payload.turnId);
+      if (!changeSet || !providerTurnId || changeSet.conversationId !== base.conversationId) return base;
+      return {
+        ...base,
+        changeSetsByProviderId: {
+          ...base.changeSetsByProviderId,
+          [providerTurnId]: changeSet,
+        },
+        transcriptRevision: base.transcriptRevision + 1,
+      };
+    }
     case 'conversation.item.started':
     case 'conversation.item.delta':
     case 'conversation.item.completed':
@@ -389,65 +402,73 @@ function reduceNativeEvent(state: NativeSessionState, event: NativeConversationE
     }
     case 'conversation.request.resolved': {
       const requestId = stringValue(payload.requestId);
+      const wasPending = requestId ? state.pendingRequests.some((request) => request.id === requestId) : false;
       const pendingRequests = requestId ? state.pendingRequests.filter((request) => request.id !== requestId) : state.pendingRequests;
       return {
         ...base,
         pendingRequests,
+        feedbackEpoch: wasPending && state.activeTurnId ? base.feedbackEpoch + 1 : base.feedbackEpoch,
         conversationState: requestConversationState(pendingRequests) ?? conversationStateWithoutRequests(base),
       };
     }
-      case 'conversation.request.snoozed': {
-          const requestId = stringValue(payload.requestId);
-          if (!requestId) return base;
-          return {
-              ...base,
-              pendingRequests: base.pendingRequests.map((request) => (request.id === requestId ? {
-                  ...request,
-                  autoResolutionState: 'snoozed',
-                  expiresAt: null
-              } : request)),
-          };
-      }
-      case 'conversation.plan_implementation_request.changed': {
-          const requestId = stringValue(payload.requestId);
-          const status = planImplementationStatus(payload.status);
-          if (!requestId || !status) return base;
-          const existing = base.planImplementationRequests.find((request) => request.id === requestId);
-          const updated: NativePlanImplementationRequest = existing
-              ? {
-                  ...existing,
-                  status,
-                  submissionId: stringValue(payload.submissionId) ?? existing.submissionId,
-                  resolvedAt: status === 'pending' ? null : event.createdAt,
-                  updatedAt: event.createdAt
+    case 'conversation.request.snoozed': {
+      const requestId = stringValue(payload.requestId);
+      if (!requestId) return base;
+      return {
+        ...base,
+        pendingRequests: base.pendingRequests.map((request) =>
+          request.id === requestId
+            ? {
+                ...request,
+                autoResolutionState: 'snoozed',
+                expiresAt: null,
               }
-              : {
-                  id: requestId,
-                  conversationId: base.conversationId ?? '',
-                  turnId: stringValue(payload.turnId) ?? '',
-                  planItemId: stringValue(payload.planItemId) ?? '',
-                  status,
-                  submissionId: stringValue(payload.submissionId),
-                  createdAt: event.createdAt,
-                  resolvedAt: status === 'pending' ? null : event.createdAt,
-                  updatedAt: event.createdAt,
-              };
-          return {
-              ...base,
-              planImplementationRequests: [...base.planImplementationRequests.filter((request) => request.id !== requestId), updated],
-              snapshot: base.snapshot
-                  ? {
-                      ...base.snapshot,
-                      collaborationMode: payload.collaborationMode === 'plan' || payload.collaborationMode === 'default' ? payload.collaborationMode : base.snapshot.collaborationMode,
-                  }
-                  : base.snapshot,
+            : request,
+        ),
+      };
+    }
+    case 'conversation.plan_implementation_request.changed': {
+      const requestId = stringValue(payload.requestId);
+      const status = planImplementationStatus(payload.status);
+      if (!requestId || !status) return base;
+      const existing = base.planImplementationRequests.find((request) => request.id === requestId);
+      const updated: NativePlanImplementationRequest = existing
+        ? {
+            ...existing,
+            status,
+            submissionId: stringValue(payload.submissionId) ?? existing.submissionId,
+            resolvedAt: status === 'pending' ? null : event.createdAt,
+            updatedAt: event.createdAt,
+          }
+        : {
+            id: requestId,
+            conversationId: base.conversationId ?? '',
+            turnId: stringValue(payload.turnId) ?? '',
+            planItemId: stringValue(payload.planItemId) ?? '',
+            status,
+            submissionId: stringValue(payload.submissionId),
+            createdAt: event.createdAt,
+            resolvedAt: status === 'pending' ? null : event.createdAt,
+            updatedAt: event.createdAt,
           };
-      }
-      case 'conversation.collaboration_mode.changed':
-          return base.snapshot && (payload.collaborationMode === 'default' || payload.collaborationMode === 'plan') ? {
-              ...base,
-              snapshot: {...base.snapshot, collaborationMode: payload.collaborationMode}
-          } : base;
+      return {
+        ...base,
+        planImplementationRequests: [...base.planImplementationRequests.filter((request) => request.id !== requestId), updated],
+        snapshot: base.snapshot
+          ? {
+              ...base.snapshot,
+              collaborationMode: payload.collaborationMode === 'plan' || payload.collaborationMode === 'default' ? payload.collaborationMode : base.snapshot.collaborationMode,
+            }
+          : base.snapshot,
+      };
+    }
+    case 'conversation.collaboration_mode.changed':
+      return base.snapshot && (payload.collaborationMode === 'default' || payload.collaborationMode === 'plan')
+        ? {
+            ...base,
+            snapshot: { ...base.snapshot, collaborationMode: payload.collaborationMode },
+          }
+        : base;
     case 'conversation.native.error':
       return {
         ...base,
@@ -460,7 +481,7 @@ function reduceNativeEvent(state: NativeSessionState, event: NativeConversationE
 }
 
 function planImplementationStatus(value: unknown): NativePlanImplementationRequest['status'] | null {
-    return value === 'pending' || value === 'dismissed' || value === 'implemented' || value === 'refinement_requested' || value === 'superseded' ? value : null;
+  return value === 'pending' || value === 'dismissed' || value === 'implemented' || value === 'refinement_requested' || value === 'superseded' ? value : null;
 }
 
 function reduceItemEvent(state: NativeSessionState, event: NativeConversationEvent): NativeSessionState {
@@ -493,9 +514,8 @@ function reduceItemEvent(state: NativeSessionState, event: NativeConversationEve
     status: stringValue(payload.status) ?? (completed ? 'completed' : (previous?.status ?? 'in_progress')),
     phase: stringValue(payload.phase) ?? previous?.phase ?? 'prework',
     text: completed ? incomingText || previous?.text || optimisticText : reconcileCumulativeText(previous?.text ?? optimisticText, incomingText),
-    // Delta payloads are provider method fragments. Keep the typed shell established by
-    // item/started; item/completed is the persisted authoritative item projection.
-    payload: completed ? (incomingPayload ?? previous?.payload ?? {}) : (previous?.payload ?? incomingPayload ?? {}),
+    // 进行中事件以 started 的类型壳为基础合并权威进度字段；completed 仍是最终投影。
+    payload: completed ? (incomingPayload ?? previous?.payload ?? {}) : mergeProgressPayload(previous?.payload, incomingPayload),
     resources: completed ? (incomingResources ?? previous?.resources ?? []) : (previous?.resources ?? incomingResources ?? []),
     ...(providerClientId ? { clientUserMessageId: providerClientId, durableClientUserMessageId: providerClientId, optimistic: false } : {}),
     updatedAt: event.createdAt,
@@ -507,12 +527,14 @@ function reduceItemEvent(state: NativeSessionState, event: NativeConversationEve
   const itemOrder = optimisticKey && optimisticKey !== key ? [...new Set(state.itemOrder.map((entry) => (entry === optimisticKey ? key : entry)))] : isNew ? [...state.itemOrder, key] : state.itemOrder;
   const phase = next.phase === 'final_answer' ? 'active_final_answer' : 'active_prework';
   const terminal = Boolean(state.terminalTurnIds[turnId]);
+  const visibleFeedbackEpoch = itemProvidesVisibleFeedback(next) ? state.feedbackEpoch : state.visibleFeedbackEpoch;
   return {
     ...state,
     activeTurnId: terminal ? state.activeTurnId : turnId,
     items,
     itemOrder,
     transcriptRevision: state.transcriptRevision + 1,
+    visibleFeedbackEpoch,
     conversationState: terminal ? state.conversationState : phase,
   };
 }
@@ -524,6 +546,25 @@ function reconcileCumulativeText(current: string, incoming: string): string {
   // Codex snapshots are cumulative; a non-prefix payload is an authoritative correction,
   // not an append-only token fragment.
   return incoming;
+}
+
+function itemProvidesVisibleFeedback(item: NativeSessionItemBuffer): boolean {
+  const type = item.type.toLocaleLowerCase().replace(/[\s_\-/]+/gu, '');
+  if (type === 'usermessage' || type === 'user') return false;
+  if (item.text.trim()) return true;
+  return ['commandexecution', 'command', 'mcptoolcall', 'dynamictoolcall', 'websearch', 'imageview', 'toolcall', 'tool', 'filechange', 'file'].includes(type);
+}
+
+function mergeProgressPayload(previous: Record<string, unknown> | undefined, incoming: Record<string, unknown> | null): Record<string, unknown> {
+  if (!previous) return incoming ?? {};
+  if (!incoming) return previous;
+  const previousPresentation = isRecord(previous.presentation) ? previous.presentation : null;
+  const incomingPresentation = isRecord(incoming.presentation) ? incoming.presentation : null;
+  return {
+    ...previous,
+    ...incoming,
+    ...(previousPresentation || incomingPresentation ? { presentation: { ...(previousPresentation ?? {}), ...(incomingPresentation ?? {}) } } : {}),
+  };
 }
 
 function addOptimisticUserItem(state: NativeSessionState, action: Extract<NativeSessionAction, { type: 'send_started' }>): NativeSessionState {
@@ -542,7 +583,7 @@ function addOptimisticUserItem(state: NativeSessionState, action: Extract<Native
     text: action.draft,
     payload: {
       attachments: action.submittedAttachments,
-      ...(action.browserComments.length ? {browserComments: action.browserComments} : {}),
+      ...(action.browserComments.length ? { browserComments: action.browserComments } : {}),
     },
     resources: [],
     optimistic: true,
@@ -780,15 +821,15 @@ function providerValueFrom(payload: Record<string, unknown>): NativeProviderValu
 }
 
 function nativeTurnPlanFrom(value: unknown): NativeTurnPlanSnapshot | null {
-    if (!isRecord(value) || !(value.explanation === null || typeof value.explanation === 'string') || !Array.isArray(value.steps)) return null;
-    const steps = value.steps.flatMap((candidate) => {
-        if (!isRecord(candidate) || typeof candidate.step !== 'string' || !candidate.step.trim()) return [];
-        const statusValue = candidate.status;
-        if (statusValue !== 'pending' && statusValue !== 'inProgress' && statusValue !== 'completed') return [];
-        return [{step: candidate.step, status: statusValue as 'pending' | 'inProgress' | 'completed'}];
-    });
-    if (steps.length !== value.steps.length) return null;
-    return {explanation: value.explanation, steps};
+  if (!isRecord(value) || !(value.explanation === null || typeof value.explanation === 'string') || !Array.isArray(value.steps)) return null;
+  const steps = value.steps.flatMap((candidate) => {
+    if (!isRecord(candidate) || typeof candidate.step !== 'string' || !candidate.step.trim()) return [];
+    const statusValue = candidate.status;
+    if (statusValue !== 'pending' && statusValue !== 'inProgress' && statusValue !== 'completed') return [];
+    return [{ step: candidate.step, status: statusValue as 'pending' | 'inProgress' | 'completed' }];
+  });
+  if (steps.length !== value.steps.length) return null;
+  return { explanation: value.explanation, steps };
 }
 
 function stringValue(value: unknown): string | null {

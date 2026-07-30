@@ -1,43 +1,31 @@
-import {
-    type KeyboardEvent,
-    type PointerEvent,
-    type RefObject,
-    useEffect,
-    useLayoutEffect,
-    useRef,
-    useState
-} from 'react';
-import {ChatCircleIcon as ChatCircle} from '@phosphor-icons/react/dist/csr/ChatCircle';
-import {GlobeSimpleIcon as GlobeSimple} from '@phosphor-icons/react/dist/csr/GlobeSimple';
-import type {ZeusBrowserPreparedSubmission} from '@zeus/shared';
-import type {
-    CodexConversationCapabilities,
-    NativeCollaborationMode,
-    NativeConversationAttachment,
-    NativePermissionMode,
-    NativeQueuedSubmission,
-    NativeSessionState,
-    NativeTurnSettingsSelection
-} from './sessionTypes.js';
-import {ComposerDropdown} from './ComposerDropdown.js';
-import {PermissionModeControl} from './PermissionModeControl.js';
-import type {SessionUiLanguage} from './ThreadItemView.js';
-import {autosizeTextarea} from './textareaAutosize.js';
-import {CollaborationModeControl} from './CollaborationModeControl.js';
-import {ConversationComposerAttachments} from './ConversationComposerAttachments.js';
-import {useConversationInputResources} from './useConversationInputResources.js';
+import { type KeyboardEvent, type PointerEvent, type RefObject, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { ChatCircleIcon as ChatCircle } from '@phosphor-icons/react/dist/csr/ChatCircle';
+import { GlobeSimpleIcon as GlobeSimple } from '@phosphor-icons/react/dist/csr/GlobeSimple';
+import type { ZeusBrowserPreparedSubmission } from '@zeus/shared';
+import type { CodexConversationCapabilities, NativeCollaborationMode, NativeConversationAttachment, NativePermissionMode, NativeQueuedSubmission, NativeSessionState, NativeTurnSettingsSelection } from './sessionTypes.js';
+import { ComposerDropdown } from './ComposerDropdown.js';
+import { PermissionModeControl } from './PermissionModeControl.js';
+import type { SessionUiLanguage } from './ThreadItemView.js';
+import { autosizeTextarea } from './textareaAutosize.js';
+import { CollaborationModeControl } from './CollaborationModeControl.js';
+import { ConversationComposerAttachments } from './ConversationComposerAttachments.js';
+import { useConversationInputResources } from './useConversationInputResources.js';
 
 export const QUEUE_REORDER_THRESHOLD_PX = 6;
 
 export type ComposerKeyIntent = 'submit' | 'newline' | 'escape' | 'ignore';
+export interface ComposerRuntimeSettings {
+  model: string;
+  effort: string;
+}
 
 export interface ConversationComposerProps {
   state: NativeSessionState;
   language: SessionUiLanguage;
   textareaRef?: RefObject<HTMLTextAreaElement | null>;
-    capabilities?: CodexConversationCapabilities | null;
+  capabilities?: CodexConversationCapabilities | null;
   onDraftChange: (draft: string) => void;
-    onSubmit: (delivery: 'queue' | 'steer_now', settings?: NativeTurnSettingsSelection) => void | Promise<void>;
+  onSubmit: (delivery: 'queue' | 'steer_now', settings?: NativeTurnSettingsSelection) => void | Promise<void>;
   onInterrupt: (turnId: string) => void | Promise<void>;
   onChooseAttachments?: () => void | Promise<void>;
   onAddAttachments?: (attachments: NativeConversationAttachment[]) => void;
@@ -48,12 +36,14 @@ export interface ConversationComposerProps {
   onSendQueuedNow?: (submissionId: string) => void | Promise<void>;
   onReorderQueue?: (orderedSubmissionIds: string[]) => void | Promise<void>;
   onResumeQueue?: () => void | Promise<void>;
-    onRetryQueue?: () => void | Promise<void>;
+  onRetryQueue?: () => void | Promise<void>;
+  runtimeSettings?: ComposerRuntimeSettings | null;
+  onRuntimeSettingsChange?: (settings: ComposerRuntimeSettings | null) => void;
   readOnly?: boolean;
   permissionMode: NativePermissionMode;
   onPermissionModeChange?: (permissionMode: NativePermissionMode) => void | Promise<void>;
-    collaborationMode: NativeCollaborationMode;
-    onCollaborationModeChange?: (collaborationMode: NativeCollaborationMode) => void | Promise<void>;
+  collaborationMode: NativeCollaborationMode;
+  onCollaborationModeChange?: (collaborationMode: NativeCollaborationMode) => void | Promise<void>;
 }
 
 const labels = {
@@ -76,7 +66,7 @@ const labels = {
     moveDown: '下移队列消息',
     drag: '拖动队列消息',
     resume: '继续队列',
-      retry: '重试发送',
+    retry: '重试发送',
     interruptConfirm: '再次按 Escape 停止当前响应',
     model: '模型',
     effort: '推理强度',
@@ -102,7 +92,7 @@ const labels = {
     moveDown: 'Move queued message down',
     drag: 'Drag queued message',
     resume: 'Resume queue',
-      retry: 'Retry sending',
+    retry: 'Retry sending',
     interruptConfirm: 'Press Escape again to stop the current response',
     model: 'Model',
     effort: 'Reasoning effort',
@@ -113,8 +103,8 @@ const labels = {
 
 export function ConversationComposer(props: ConversationComposerProps) {
   const copy = labels[props.language];
-    const initialModel = resolveComposerModel(props.capabilities, props.state.providerSettings?.model);
-    const initialEffort = resolveComposerEffort(props.capabilities, initialModel, props.state.providerSettings?.effort);
+  const initialModel = resolveComposerModel(props.capabilities, props.runtimeSettings?.model ?? props.state.providerSettings?.model);
+  const initialEffort = resolveComposerEffort(props.capabilities, initialModel, props.runtimeSettings?.effort ?? props.state.providerSettings?.effort);
   const fallbackRef = useRef<HTMLTextAreaElement | null>(null);
   const textareaRef = props.textareaRef ?? fallbackRef;
   const [delivery, setDelivery] = useState<'queue' | 'steer_now'>('queue');
@@ -124,9 +114,9 @@ export function ConversationComposer(props: ConversationComposerProps) {
   const [queueEditError, setQueueEditError] = useState<string | null>(null);
   const [queueAnnouncement, setQueueAnnouncement] = useState('');
   const [inputResourceError, setInputResourceError] = useState<string | null>(null);
-    const [selectedModel, setSelectedModel] = useState(initialModel);
-    const [selectedEffort, setSelectedEffort] = useState(initialEffort);
-    const [settingsDirty, setSettingsDirty] = useState(false);
+  const [selectedModel, setSelectedModel] = useState(initialModel);
+  const [selectedEffort, setSelectedEffort] = useState(initialEffort);
+  const [settingsDirty, setSettingsDirty] = useState(Boolean(props.runtimeSettings));
   const pointerStarts = useRef(new Map<string, { x: number; y: number }>());
   const active = props.state.conversationState === 'active_prework' || props.state.conversationState === 'active_final_answer';
   const busy = Boolean(props.state.busyOperation);
@@ -140,17 +130,17 @@ export function ConversationComposer(props: ConversationComposerProps) {
   const hasDraft = props.state.draft.trim().length > 0 || props.state.attachments.length > 0 || Boolean(props.state.browserSubmission);
   const queue = props.state.queue?.submissions ?? [];
   const steerAllowed = canSteerActiveTurn(props.state) && props.readOnly !== true;
-    const selectedCapability = props.capabilities?.models.find((candidate) => candidate.model === selectedModel || candidate.id === selectedModel) ?? null;
-    const settingsWritable = writable && props.state.conversationState === 'native_idle' && !busy && Boolean(selectedCapability);
-    const modelOptions = props.capabilities?.models.length
-        ? props.capabilities.models.map((capability) => ({
-            value: capability.model,
-            label: capability.displayName ?? capability.model
-        }))
-        : [{value: selectedModel, label: selectedModel || copy.unsynced}];
-    const effortOptions = selectedCapability?.supportedReasoningEfforts.length
-        ? selectedCapability.supportedReasoningEfforts.map((effort) => ({value: effort, label: effort}))
-        : [{value: selectedEffort, label: selectedEffort || copy.unsynced}];
+  const selectedCapability = props.capabilities?.models.find((candidate) => candidate.model === selectedModel || candidate.id === selectedModel) ?? null;
+  const settingsWritable = writable && props.state.conversationState === 'native_idle' && !busy && Boolean(selectedCapability);
+  const modelOptions = props.capabilities?.models.length
+    ? props.capabilities.models.map((capability) => ({
+        value: capability.model,
+        label: capability.displayName ?? capability.model,
+      }))
+    : [{ value: selectedModel, label: selectedModel || copy.unsynced }];
+  const effortOptions = selectedCapability?.supportedReasoningEfforts.length
+    ? selectedCapability.supportedReasoningEfforts.map((effort) => ({ value: effort, label: effort }))
+    : [{ value: selectedEffort, label: selectedEffort || copy.unsynced }];
   const inputResources = useConversationInputResources({
     textareaRef,
     text: props.state.draft,
@@ -164,53 +154,61 @@ export function ConversationComposer(props: ConversationComposerProps) {
     onError: setInputResourceError,
   });
 
-    useEffect(() => {
-        const nextModel = resolveComposerModel(props.capabilities, props.state.providerSettings?.model);
-        const nextEffort = resolveComposerEffort(props.capabilities, nextModel, props.state.providerSettings?.effort);
-        if (!settingsDirty) {
-            if (nextModel !== selectedModel) setSelectedModel(nextModel);
-            if (nextEffort !== selectedEffort) setSelectedEffort(nextEffort);
-            return;
-        }
-        if (props.state.providerSettings?.model === selectedModel && (props.state.providerSettings?.effort ?? '') === selectedEffort) setSettingsDirty(false);
-    }, [props.capabilities, props.state.providerSettings?.effort, props.state.providerSettings?.model, selectedEffort, selectedModel, settingsDirty]);
+  useEffect(() => {
+    const nextModel = resolveComposerModel(props.capabilities, props.state.providerSettings?.model);
+    const nextEffort = resolveComposerEffort(props.capabilities, nextModel, props.state.providerSettings?.effort);
+    if (!settingsDirty) {
+      if (nextModel !== selectedModel) setSelectedModel(nextModel);
+      if (nextEffort !== selectedEffort) setSelectedEffort(nextEffort);
+      props.onRuntimeSettingsChange?.(null);
+      return;
+    }
+    if (props.state.providerSettings?.model === selectedModel && (props.state.providerSettings?.effort ?? '') === selectedEffort) {
+      setSettingsDirty(false);
+      props.onRuntimeSettingsChange?.(null);
+    }
+  }, [props.capabilities, props.onRuntimeSettingsChange, props.state.providerSettings?.effort, props.state.providerSettings?.model, selectedEffort, selectedModel, settingsDirty]);
 
   useEffect(() => {
     if (!steerAllowed && delivery === 'steer_now') setDelivery('queue');
   }, [delivery, steerAllowed]);
 
-    useLayoutEffect(() => {
-        if (textareaRef.current) autosizeTextarea(textareaRef.current);
-    }, [props.state.draft, textareaRef]);
+  useLayoutEffect(() => {
+    if (textareaRef.current) autosizeTextarea(textareaRef.current);
+  }, [props.state.draft, textareaRef]);
 
-    useEffect(() => {
-        const textarea = textareaRef.current;
-        const view = textarea?.ownerDocument.defaultView;
-        if (!textarea || !view) return;
-        const resize = () => autosizeTextarea(textarea);
-        view.addEventListener('resize', resize);
-        return () => view.removeEventListener('resize', resize);
-    }, [textareaRef]);
+  useEffect(() => {
+    const textarea = textareaRef.current;
+    const view = textarea?.ownerDocument.defaultView;
+    if (!textarea || !view) return;
+    const resize = () => autosizeTextarea(textarea);
+    view.addEventListener('resize', resize);
+    return () => view.removeEventListener('resize', resize);
+  }, [textareaRef]);
 
-    function submit(nextDelivery: 'queue' | 'steer_now'): void {
-        const settings = nextDelivery === 'queue' && selectedModel ? {
-            model: selectedModel, ...(selectedEffort ? {effort: selectedEffort} : {}),
-            collaborationMode: props.collaborationMode
-        } : undefined;
-        void props.onSubmit(nextDelivery, settings);
-    }
+  function submit(nextDelivery: 'queue' | 'steer_now'): void {
+    const settings =
+      nextDelivery === 'queue' && selectedModel
+        ? {
+            model: selectedModel,
+            ...(selectedEffort ? { effort: selectedEffort } : {}),
+            collaborationMode: props.collaborationMode,
+          }
+        : undefined;
+    void props.onSubmit(nextDelivery, settings);
+  }
 
   function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>): void {
     inputResources.handlePasteShortcut(event);
     const intent = resolveComposerKeyIntent({ key: event.key, shiftKey: event.shiftKey, isComposing: isComposing || event.nativeEvent.isComposing, repeat: event.repeat });
     if (intent === 'submit') {
       event.preventDefault();
-        if (props.state.draft.trim() === '/plan' && !props.state.browserSubmission && props.onCollaborationModeChange) {
-            props.onDraftChange('');
-            void props.onCollaborationModeChange(props.collaborationMode === 'plan' ? 'default' : 'plan');
-            return;
-        }
-        if (writable && hasDraft && !busy) submit(active && delivery === 'steer_now' && steerAllowed ? 'steer_now' : 'queue');
+      if (props.state.draft.trim() === '/plan' && !props.state.browserSubmission && props.onCollaborationModeChange) {
+        props.onDraftChange('');
+        void props.onCollaborationModeChange(props.collaborationMode === 'plan' ? 'default' : 'plan');
+        return;
+      }
+      if (writable && hasDraft && !busy) submit(active && delivery === 'steer_now' && steerAllowed ? 'steer_now' : 'queue');
       return;
     }
     // Escape 由 SessionWorkspace capture 统一处理，保证 approval/RUI 层优先于 interrupt。
@@ -247,14 +245,14 @@ export function ConversationComposer(props: ConversationComposerProps) {
         <section className="session-queue" aria-label={copy.queued}>
           <header>
             <strong>{copy.queued}</strong>
-              {props.state.queue?.state.type === 'paused' && props.state.queue.state.reason === 'interrupted' ? (
+            {props.state.queue?.state.type === 'paused' && props.state.queue.state.reason === 'interrupted' ? (
               <button type="button" onClick={() => void props.onResumeQueue?.()} disabled={!writable || busy}>
                 {copy.resume}
               </button>
-              ) : props.state.queue?.state.type === 'paused' && props.state.queue.state.reason === 'provider_archived' ? (
-                  <button type="button" onClick={() => void props.onRetryQueue?.()} disabled={!writable || busy}>
-                      {copy.retry}
-                  </button>
+            ) : props.state.queue?.state.type === 'paused' && props.state.queue.state.reason === 'provider_archived' ? (
+              <button type="button" onClick={() => void props.onRetryQueue?.()} disabled={!writable || busy}>
+                {copy.retry}
+              </button>
             ) : null}
           </header>
           <ol>
@@ -325,9 +323,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
                         </span>
                         <span className="session-queue-action-label">{copy.remove}</span>
                       </button>
-                      <button type="button" aria-label={copy.sendNow}
-                              onClick={() => void props.onSendQueuedNow?.(submission.id)}
-                              disabled={!active || !writable || busy}>
+                      <button type="button" aria-label={copy.sendNow} onClick={() => void props.onSendQueuedNow?.(submission.id)} disabled={!active || !writable || busy}>
                         <span className="session-queue-action-icon" aria-hidden="true">
                           ↥
                         </span>
@@ -368,15 +364,12 @@ export function ConversationComposer(props: ConversationComposerProps) {
       <output className="session-sr-only" aria-live="polite" aria-atomic="true">
         {queueAnnouncement}
       </output>
-      {props.state.browserSubmission ? (
-        <BrowserSubmissionAttachment
-          submission={props.state.browserSubmission}
-          language={props.language}
-          disabled={!writable || busy}
-          onRemove={props.onRemoveBrowserSubmission}
-        />
+      {props.state.browserSubmission ? <BrowserSubmissionAttachment submission={props.state.browserSubmission} language={props.language} disabled={!writable || busy} onRemove={props.onRemoveBrowserSubmission} /> : null}
+      {inputResourceError ? (
+        <p className="session-composer-resource-error" role="alert">
+          {inputResourceError}
+        </p>
       ) : null}
-      {inputResourceError ? <p className="session-composer-resource-error" role="alert">{inputResourceError}</p> : null}
       <div className="session-composer-input-frame">
         <ConversationComposerAttachments
           attachments={props.state.attachments}
@@ -393,8 +386,8 @@ export function ConversationComposer(props: ConversationComposerProps) {
           value={props.state.draft}
           disabled={!writable || busy}
           onChange={(event) => {
-              autosizeTextarea(event.currentTarget);
-              props.onDraftChange(event.currentTarget.value);
+            autosizeTextarea(event.currentTarget);
+            props.onDraftChange(event.currentTarget.value);
           }}
           onCompositionStart={() => setIsComposing(true)}
           onCompositionEnd={() => setIsComposing(false)}
@@ -418,28 +411,31 @@ export function ConversationComposer(props: ConversationComposerProps) {
                 <span aria-hidden="true">＋</span>
               </button>
             ) : null}
-              <span className="session-composer-runtime-settings">
+            <span className="session-composer-runtime-settings">
               <ComposerDropdown
-                  label={copy.model}
-                  value={selectedModel}
-                  options={modelOptions}
-                  disabled={!settingsWritable}
-                  onChange={(model) => {
-                      const capability = props.capabilities?.models.find((candidate) => candidate.model === model || candidate.id === model);
-                      setSelectedModel(model);
-                      setSelectedEffort(capability?.defaultReasoningEffort ?? capability?.supportedReasoningEfforts[0] ?? '');
-                      setSettingsDirty(true);
-                  }}
+                label={copy.model}
+                value={selectedModel}
+                options={modelOptions}
+                disabled={!settingsWritable}
+                onChange={(model) => {
+                  const capability = props.capabilities?.models.find((candidate) => candidate.model === model || candidate.id === model);
+                  const effort = capability?.defaultReasoningEffort ?? capability?.supportedReasoningEfforts[0] ?? '';
+                  setSelectedModel(model);
+                  setSelectedEffort(effort);
+                  setSettingsDirty(true);
+                  props.onRuntimeSettingsChange?.({ model, effort });
+                }}
               />
               <ComposerDropdown
-                  label={copy.effort}
-                  value={selectedEffort}
-                  options={effortOptions}
-                  disabled={!settingsWritable || !selectedCapability?.supportedReasoningEfforts.length}
-                  onChange={(effort) => {
-                      setSelectedEffort(effort);
-                      setSettingsDirty(true);
-                  }}
+                label={copy.effort}
+                value={selectedEffort}
+                options={effortOptions}
+                disabled={!settingsWritable || !selectedCapability?.supportedReasoningEfforts.length}
+                onChange={(effort) => {
+                  setSelectedEffort(effort);
+                  setSettingsDirty(true);
+                  props.onRuntimeSettingsChange?.({ model: selectedModel, effort });
+                }}
               />
             </span>
             <PermissionModeControl
@@ -449,10 +445,10 @@ export function ConversationComposer(props: ConversationComposerProps) {
               onChange={(permissionMode) => props.onPermissionModeChange?.(permissionMode)}
             />
             <CollaborationModeControl
-                language={props.language}
-                value={props.collaborationMode}
-                disabled={props.state.transportState !== 'ready' || busy || !props.onCollaborationModeChange}
-                onChange={(mode) => props.onCollaborationModeChange?.(mode)}
+              language={props.language}
+              value={props.collaborationMode}
+              disabled={props.state.transportState !== 'ready' || busy || !props.onCollaborationModeChange}
+              onChange={(mode) => props.onCollaborationModeChange?.(mode)}
             />
           </span>
           <span className="session-composer-trailing-actions">
@@ -489,9 +485,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
                   <span aria-hidden="true" />
                 </button>
               ) : (
-                  <button type="button" className="session-send-button" aria-label={copy.send}
-                          onClick={() => submit('queue')} disabled={!writable || !hasDraft || busy}
-                          aria-busy={busy || undefined}>
+                <button type="button" className="session-send-button" aria-label={copy.send} onClick={() => submit('queue')} disabled={!writable || !hasDraft || busy} aria-busy={busy || undefined}>
                   {busy ? <span className="session-command-spinner" aria-hidden="true" /> : <span aria-hidden="true">↑</span>}
                 </button>
               )}
@@ -503,12 +497,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
   );
 }
 
-function BrowserSubmissionAttachment(props: {
-  submission: ZeusBrowserPreparedSubmission;
-  language: SessionUiLanguage;
-  disabled: boolean;
-  onRemove?: () => void;
-}) {
+function BrowserSubmissionAttachment(props: { submission: ZeusBrowserPreparedSubmission; language: SessionUiLanguage; disabled: boolean; onRemove?: () => void }) {
   const screenshot = props.submission.attachments[0];
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const firstComment = props.submission.comments[0];
@@ -518,9 +507,10 @@ function BrowserSubmissionAttachment(props: {
   useEffect(() => {
     let active = true;
     setPreviewUrl(null);
-    if (!screenshot?.localPath || !window.zeus?.getBrowserCommentPreview) return () => {
-      active = false;
-    };
+    if (!screenshot?.localPath || !window.zeus?.getBrowserCommentPreview)
+      return () => {
+        active = false;
+      };
     void window.zeus
       .getBrowserCommentPreview(screenshot.localPath)
       .then((preview) => {
@@ -533,18 +523,10 @@ function BrowserSubmissionAttachment(props: {
   }, [screenshot?.localPath]);
 
   return (
-    <section
-      className="session-composer-browser-submission"
-      aria-label={props.language === 'zh-CN' ? '待发送浏览器批注' : 'Pending browser comments'}
-    >
+    <section className="session-composer-browser-submission" aria-label={props.language === 'zh-CN' ? '待发送浏览器批注' : 'Pending browser comments'}>
       <div className="session-browser-preview-card" title={pageTitle}>
         {previewUrl ? <img src={previewUrl} alt={pageTitle} /> : <GlobeSimple aria-hidden="true" weight="regular" />}
-        <button
-          type="button"
-          aria-label={props.language === 'zh-CN' ? '移除浏览器批注' : 'Remove browser comments'}
-          onClick={props.onRemove}
-          disabled={props.disabled || !props.onRemove}
-        >
+        <button type="button" aria-label={props.language === 'zh-CN' ? '移除浏览器批注' : 'Remove browser comments'} onClick={props.onRemove} disabled={props.disabled || !props.onRemove}>
           <span aria-hidden="true">×</span>
         </button>
       </div>
@@ -574,17 +556,17 @@ export function canSteerActiveTurn(state: NativeSessionState): boolean {
 }
 
 function resolveComposerModel(capabilities: CodexConversationCapabilities | null | undefined, providerModel: string | undefined): string {
-    const normalized = providerModel?.trim();
-    if (normalized && capabilities?.models.some((candidate) => candidate.model === normalized || candidate.id === normalized))
-        return capabilities.models.find((candidate) => candidate.model === normalized || candidate.id === normalized)?.model ?? normalized;
-    return capabilities?.preferredModel ?? capabilities?.models[0]?.model ?? normalized ?? '';
+  const normalized = providerModel?.trim();
+  if (normalized && capabilities?.models.some((candidate) => candidate.model === normalized || candidate.id === normalized))
+    return capabilities.models.find((candidate) => candidate.model === normalized || candidate.id === normalized)?.model ?? normalized;
+  return capabilities?.preferredModel ?? capabilities?.models[0]?.model ?? normalized ?? '';
 }
 
 function resolveComposerEffort(capabilities: CodexConversationCapabilities | null | undefined, model: string, providerEffort: string | undefined): string {
-    const capability = capabilities?.models.find((candidate) => candidate.model === model || candidate.id === model);
-    const normalized = providerEffort?.trim();
-    if (normalized && capability?.supportedReasoningEfforts.includes(normalized)) return normalized;
-    return capability?.defaultReasoningEffort ?? capability?.supportedReasoningEfforts[0] ?? normalized ?? '';
+  const capability = capabilities?.models.find((candidate) => candidate.model === model || candidate.id === model);
+  const normalized = providerEffort?.trim();
+  if (normalized && capability?.supportedReasoningEfforts.includes(normalized)) return normalized;
+  return capability?.defaultReasoningEffort ?? capability?.supportedReasoningEfforts[0] ?? normalized ?? '';
 }
 
 export function moveQueueSubmissionByPixels(queue: readonly NativeQueuedSubmission[], submissionId: string, deltaY: number, rowHeight = 38): string[] {

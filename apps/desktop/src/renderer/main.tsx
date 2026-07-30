@@ -192,6 +192,8 @@ async function renderWithClient(client: DashboardClient): Promise<void> {
         onLoadRuntimeStatus={() => client.loadRuntimeStatus()}
         onLoadReleaseStatus={() => client.loadReleaseStatus()}
         onCheckReleaseUpdate={() => client.checkReleaseUpdate()}
+        onDownloadReleaseUpdate={() => client.downloadReleaseUpdate()}
+        onInstallReleaseUpdate={() => client.installReleaseUpdate()}
         onLoadRuntimeSettings={() => client.loadRuntimeSettings()}
         onSaveRuntimeSettings={(input) => client.saveRuntimeSettings(input)}
         onLoadCodeMapSettings={() => client.loadCodeMapSettings()}
