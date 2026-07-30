@@ -53,6 +53,8 @@ acceptance matrix、AI CLI adapter 探针、package:mac、包内 Electron 加载
   `7a6434e2cfbd967329d3eb2d04982c5ea2e160be`，标签为 `v0.1.2`；
 - GitHub Release：`https://github.com/imchenway/zeus/releases/tag/v0.1.2`，6 个资产均已上传；
   GitHub 服务端返回的 DMG、ZIP、manifest、Cask 和安装脚本摘要与本地产物一致；
+- GitHub Release notes 已补充面向用户的完整更新日志，明确列出过程反馈与对话体验、统一底部交互坞、
+  检查更新、升级方式、系统要求、签名限制和制品摘要；
 - Homebrew Tap：`imchenway/homebrew-tap` 的 `Casks/zeus.rb` 已发布，提交为
   `53153209c7136461c98b6ba863677bd99dcc822c`，远端文件摘要
   `7f76a24aad24d431bda0fcfee7977889b279b30ec67faed39547735d1d58e189` 与本地 Cask 一致；
@@ -147,6 +149,7 @@ sha256 由 release 脚本从真实 DMG 计算，不允许 sha256 :no_check。
 ## 禁止项
 
 - 不伪造签名成功、公证成功、远端 Homebrew tap 发布成功或自动更新可用状态。
+- 版本发布必须包含面向用户的升级内容、升级方式和已知限制；单句签名或门禁提示不能替代 Release notes。
 - 不用 `sha256 :no_check` 代替真实 DMG sha256。
 - 不把旧 sha256、旧构建结果或旧运行结果写成最新发布证据。
 - 不把构建产物修改当作源码交付。
