@@ -22,11 +22,11 @@ CI 通过 `ZEUS_VERIFY_BASE` 与 `ZEUS_VERIFY_HEAD` 传入本次推送或 PR 的
 
 ## 产物
 
-发布产物包括 Zeus.app、Zeus-0.1.1-arm64.dmg、Zeus-0.1.1-arm64.zip、dist/homebrew/zeus.rb、dist/SHA256SUMS、dist/install.sh、dist/zeus-release-manifest.json。
+发布产物包括 Zeus.app、Zeus-0.1.2-arm64.dmg、Zeus-0.1.2-arm64.zip、dist/homebrew/zeus.rb、dist/SHA256SUMS、dist/install.sh、dist/zeus-release-manifest.json。
 
 - App：`dist/mac-arm64/Zeus.app`。
-- DMG：`dist/Zeus-0.1.1-arm64.dmg`。
-- ZIP：`dist/Zeus-0.1.1-arm64.zip`。
+- DMG：`dist/Zeus-0.1.2-arm64.dmg`。
+- ZIP：`dist/Zeus-0.1.2-arm64.zip`。
 - Homebrew cask：`dist/homebrew/zeus.rb`。
 - 安装脚本：`dist/install.sh`，支持 `ZEUS_NON_INTERACTIVE`、`ZEUS_INSTALL_DIR`、`ZEUS_CHANNEL`。
 - 更新清单：`dist/zeus-release-manifest.json`，供应用内检查更新读取。
@@ -38,7 +38,7 @@ CI 通过 `ZEUS_VERIFY_BASE` 与 `ZEUS_VERIFY_HEAD` 传入本次推送或 PR 的
 普通发布前门禁必须覆盖变更文件格式、Git 空白错误、lint、typecheck 和 build。完整 macOS 发布门禁在此基础上继续覆盖
 acceptance matrix、AI CLI adapter 探针、package:mac、包内 Electron 加载和包内 renderer/main 非 GUI 健康检查。
 
-### 本地待发布基线（0.1.2）
+### 当前公开稳定基线（0.1.2）
 
 - 根包与桌面包版本已同步为 `0.1.2`；
 - `pnpm verify:release`：通过；Prettier、lint、typecheck、build、12 个章节 139 项验收矩阵、
@@ -48,10 +48,19 @@ acceptance matrix、AI CLI adapter 探针、package:mac、包内 Electron 加载
 - 仓库 `dist/mac-arm64/Zeus.app` 中的应用菜单 `Check for Updates...` 与 `Command+U`
   均真实触发检查弹窗；
 - `/Applications/Zeus.app` 不作为开发验收载体，已恢复为验收前原始副本；
-- 当前产物仍为 ad-hoc 签名且未公证；GitHub Release、tag 和 Homebrew Tap 尚未发布，
-  不能把本地发布门禁通过描述成公开发布完成。
+- 当前产物仍为 ad-hoc 签名且未公证，manifest 明确保存 `signed=false`、`notarized=false`；
+- 发布源码经 PR `#12` 的远端 CI `30528247790` 验证通过后合并到 `main`，合并提交为
+  `7a6434e2cfbd967329d3eb2d04982c5ea2e160be`，标签为 `v0.1.2`；
+- GitHub Release：`https://github.com/imchenway/zeus/releases/tag/v0.1.2`，6 个资产均已上传；
+  GitHub 服务端返回的 DMG、ZIP、manifest、Cask 和安装脚本摘要与本地产物一致；
+- Homebrew Tap：`imchenway/homebrew-tap` 的 `Casks/zeus.rb` 已发布，提交为
+  `53153209c7136461c98b6ba863677bd99dcc822c`，远端文件摘要
+  `7f76a24aad24d431bda0fcfee7977889b279b30ec67faed39547735d1d58e189` 与本地 Cask 一致；
+- GitHub Release workflow `30528362786` 因未配置 `HOMEBREW_TAP_TOKEN` 在构建前失败；本次按仓库允许的
+  人工备用通道发布本地完整门禁通过的不可变制品，不把该 Actions 运行记录为远端打包通过；
+- 本轮没有执行 Homebrew 安装、升级或启动 `/Applications/Zeus.app`；发布后核对只读取远端资产、manifest 和 Tap。
 
-### 当前公开稳定基线（0.1.1）
+### 历史稳定基线（0.1.1）
 
 - `pnpm verify:release`：通过；Git 空白错误、变更文件 Prettier、lint、typecheck、build、12 个章节 139 项验收矩阵、
   AI CLI 探针、macOS arm64 打包和产物健康检查完整执行。
