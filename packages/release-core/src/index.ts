@@ -13,7 +13,6 @@ export interface ReleaseArtifactManifest {
   arch: string;
   appBundlePath: string;
   dmgPath: string;
-  zipPath: string;
   caskPath: string;
   caskSha256: string | null;
   signed: boolean;
@@ -53,7 +52,7 @@ export interface AutoUpdatePolicy {
 
 export type ReleaseUpdateChannel = 'stable' | 'preview';
 export type ReleaseUpdateArtifactArch = 'arm64' | 'x64';
-export type ReleaseUpdateArtifactKind = 'dmg' | 'zip';
+export type ReleaseUpdateArtifactKind = 'dmg';
 
 export interface ReleaseUpdateArtifactInput {
   arch: ReleaseUpdateArtifactArch;
@@ -94,7 +93,6 @@ export interface ReleaseUpdateManifest {
   releasePageUrl: string;
   latestReleaseUrl: string;
   releaseNotesUrl: string;
-  installScriptUrl: string;
   publishedAt: string;
   signed: boolean;
   notarized: boolean;
@@ -132,15 +130,6 @@ export interface EvaluateReleaseUpdateAvailabilityInput {
   checkedAt?: string;
 }
 
-export interface InstallScriptPlan {
-  repository: string;
-  channel: ReleaseUpdateChannel;
-  installUrl: string;
-  supportedEnvironmentVariables: ['ZEUS_NON_INTERACTIVE', 'ZEUS_INSTALL_DIR', 'ZEUS_CHANNEL'];
-  defaultInstallDir: '/Applications';
-  command: string;
-}
-
 /**
  * 构造 Zeus macOS 发布产物清单；只描述真实路径与已知签名状态，不伪造签名或 notarization 成功。
  */
@@ -156,12 +145,11 @@ export function buildReleaseArtifactManifest(input: ReleaseArtifactManifestInput
     arch,
     appBundlePath: `dist/mac-${arch}/${appName}.app`,
     dmgPath: `dist/${appName}-${version}-${arch}.dmg`,
-    zipPath: `dist/${appName}-${version}-${arch}.zip`,
     caskPath: 'dist/homebrew/zeus.rb',
     caskSha256: input.caskSha256?.trim() || null,
     signed,
     notarized,
-    statusLabel: signed && notarized ? 'signed and notarized' : 'unsigned DMG/ZIP',
+    statusLabel: signed && notarized ? 'signed and notarized' : 'unsigned DMG',
   };
 }
 
@@ -227,7 +215,6 @@ export function buildReleaseUpdateManifest(input: ReleaseUpdateManifestInput): R
     releasePageUrl: `${releaseBaseUrl}/tag/${tag}`,
     latestReleaseUrl: `${releaseBaseUrl}/latest`,
     releaseNotesUrl: `${releaseBaseUrl}/tag/${tag}`,
-    installScriptUrl: `${releaseBaseUrl}/latest/download/install.sh`,
     publishedAt: input.publishedAt?.trim() || new Date(0).toISOString(),
     signed: Boolean(input.signed),
     notarized: Boolean(input.notarized),
@@ -291,20 +278,6 @@ export function evaluateReleaseUpdateAvailability(input: EvaluateReleaseUpdateAv
     label: `发现新版本 · ${latestVersion}`,
     reason: automaticInstallEnabled ? '发现新版本，产物已签名并公证，可下载后安装。' : '发现新版本，但当前产物未同时签名和公证，只允许打开 GitHub Release 手动安装。',
     checkedAt,
-  };
-}
-
-/** 安装脚本计划用于 README、Release workflow 和应用内“新用户安装”入口保持同一 URL。 */
-export function buildInstallScriptPlan(input: { repository: string; channel: ReleaseUpdateChannel }): InstallScriptPlan {
-  const repository = normalizeRepository(input.repository);
-  const installUrl = `https://github.com/${repository}/releases/latest/download/install.sh`;
-  return {
-    repository,
-    channel: input.channel,
-    installUrl,
-    supportedEnvironmentVariables: ['ZEUS_NON_INTERACTIVE', 'ZEUS_INSTALL_DIR', 'ZEUS_CHANNEL'],
-    defaultInstallDir: '/Applications',
-    command: `curl -fsSL ${installUrl} | bash`,
   };
 }
 

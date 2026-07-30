@@ -1,7 +1,7 @@
 # 发布工程
 
 Zeus 发布工程必须基于真实构建、真实运行检查和真实产物。Apple signing / notarization 未配置时，可以公开交付
-ad-hoc 签名的 unsigned DMG/ZIP，但必须显式标注签名、公证和 Gatekeeper 限制，不得伪造 Apple 分发认证。
+ad-hoc 签名的 unsigned DMG，但必须显式标注签名、公证和 Gatekeeper 限制，不得伪造 Apple 分发认证。
 
 ## 发布脚本
 
@@ -9,8 +9,8 @@ ad-hoc 签名的 unsigned DMG/ZIP，但必须显式标注签名、公证和 Gate
 
 - `pnpm dev`：通过 `@zeus/desktop dev` 对齐 macOS Run 脚本。
 - `pnpm verify:publish`：本地、普通 CI 与完整 Release 共用的发布前入口；检查本次变更文件格式、Git 空白错误、lint、typecheck 和 build。
-- `pnpm package:mac`：生成 macOS App、DMG 与 ZIP；无 Developer ID 证书时在打包阶段完成 ad-hoc 签名。
-- `pnpm verify:release`：先复用 `verify:publish`，再执行 AI CLI adapter 探针和 macOS 打包，并生成 Homebrew Cask、SHA256SUMS、安装脚本与更新清单。
+- `pnpm package:mac`：生成 macOS App 与 DMG；无 Developer ID 证书时在打包阶段完成 ad-hoc 签名。
+- `pnpm verify:release`：先复用 `verify:publish`，再执行 AI CLI adapter 探针和 macOS 打包，并生成内部 Homebrew Cask 与公开更新清单。
 
 普通推送和 GitHub CI 都只需执行：
 
@@ -22,16 +22,13 @@ CI 通过 `ZEUS_VERIFY_BASE` 与 `ZEUS_VERIFY_HEAD` 传入本次推送或 PR 的
 
 ## 产物
 
-发布产物包括 Zeus.app、Zeus-0.1.2-arm64.dmg、Zeus-0.1.2-arm64.zip、dist/homebrew/zeus.rb、dist/SHA256SUMS、dist/install.sh、dist/zeus-release-manifest.json。
+公开 Release 只包含版本化 DMG 和更新 manifest；Zeus.app 与 Homebrew Cask 是本地或 CI 内部发布工件，不作为 Release 附件。
 
-- App：`dist/mac-arm64/Zeus.app`。
-- DMG：`dist/Zeus-0.1.2-arm64.dmg`。
-- ZIP：`dist/Zeus-0.1.2-arm64.zip`。
-- Homebrew cask：`dist/homebrew/zeus.rb`。
-- 安装脚本：`dist/install.sh`，支持 `ZEUS_NON_INTERACTIVE`、`ZEUS_INSTALL_DIR`、`ZEUS_CHANNEL`。
-- 更新清单：`dist/zeus-release-manifest.json`，供应用内检查更新读取。
-- 校验文件：`dist/SHA256SUMS`。
-- 模板 cask：`Casks/zeus.rb`。
+- 公开 DMG：`dist/Zeus-0.1.2-arm64.dmg`；
+- 公开更新清单：`dist/zeus-release-manifest.json`，供应用内检查更新读取；
+- 内部 App：`dist/mac-arm64/Zeus.app`；
+- 内部 Homebrew Cask：`dist/homebrew/zeus.rb`，同步到 `imchenway/homebrew-tap`；
+- 模板 Cask：`Casks/zeus.rb`。
 
 ## 发布门禁
 
@@ -44,15 +41,14 @@ acceptance matrix、AI CLI adapter 探针、package:mac、包内 Electron 加载
 - `pnpm verify:release`：通过；Prettier、lint、typecheck、build、12 个章节 139 项验收矩阵、
   AI CLI 探针、macOS arm64 打包、产物健康检查和严格 codesign 校验完整执行；
 - DMG SHA256：`23187b7fa1842e23b009606dc9415ee3fc004ccd9d01fa27d53db347b8b2b740`；
-- ZIP SHA256：`9a0ab53da4674e060fd3c287537a21e7e000aa346875ee7a483e931eb5319e6c`；
 - 仓库 `dist/mac-arm64/Zeus.app` 中的应用菜单 `Check for Updates...` 与 `Command+U`
   均真实触发检查弹窗；
 - `/Applications/Zeus.app` 不作为开发验收载体，已恢复为验收前原始副本；
 - 当前产物仍为 ad-hoc 签名且未公证，manifest 明确保存 `signed=false`、`notarized=false`；
 - 发布源码经 PR `#12` 的远端 CI `30528247790` 验证通过后合并到 `main`，合并提交为
   `7a6434e2cfbd967329d3eb2d04982c5ea2e160be`，标签为 `v0.1.2`；
-- GitHub Release：`https://github.com/imchenway/zeus/releases/tag/v0.1.2`，6 个资产均已上传；
-  GitHub 服务端返回的 DMG、ZIP、manifest、Cask 和安装脚本摘要与本地产物一致；
+- GitHub Release：`https://github.com/imchenway/zeus/releases/tag/v0.1.2`，公开下载区只保留 DMG 和 manifest；
+  GitHub 服务端返回的 DMG 与 manifest 摘要与本地产物一致；
 - GitHub Release notes 已补充面向用户的完整更新日志，明确列出过程反馈与对话体验、统一底部交互坞、
   检查更新、升级方式、系统要求、签名限制和制品摘要；
 - Homebrew Tap：`imchenway/homebrew-tap` 的 `Casks/zeus.rb` 已发布，提交为
@@ -107,7 +103,7 @@ acceptance matrix、AI CLI adapter 探针、package:mac、包内 Electron 加载
 
 Apple signing / notarization 未配置时，允许进行明确标注的实用发布；这不等同于 Developer ID 正式签名或 Apple 公证。
 
-- 本地没有证书时，electron-builder 在生成 DMG/ZIP 前对 App 执行 ad-hoc 签名，保证归档内外是同一签名阶段；这不等同于 Developer ID 签名。
+- 本地没有证书时，electron-builder 在生成 DMG 前对 App 执行 ad-hoc 签名，保证归档内外是同一签名阶段；这不等同于 Developer ID 签名。
 - CI/release workflow 支持 `MACOS_CERTIFICATE`、`MACOS_CERTIFICATE_PASSWORD`、Apple ID，或
   `APPLE_API_KEY_P8` / `APPLE_API_KEY_ID` / `APPLE_API_ISSUER` App Store Connect API Key 公证凭据，以及
   `HOMEBREW_TAP_TOKEN`。
@@ -140,9 +136,10 @@ sha256 由 release 脚本从真实 DMG 计算，不允许 sha256 :no_check。
 
 - Apple Developer 证书和 notarization 凭据只用于改善 Gatekeeper 体验及启用严格 Apple 分发，不阻塞实用发布。
 - `HOMEBREW_TAP_TOKEN` 用于 Actions 自动同步 Tap；当前公开版本已在用户明确授权下完成 Release 与 Tap 人工发布。
-- `publish_release=false` 时只上传 Actions artifact，不创建 Release、不更新 Tap。
+- `publish_release=false` 时只上传 DMG 和 manifest 的 Actions artifact，不创建 Release、不更新 Tap。
 - `publish_release=true` 时，既有 tag 必须与 `package.json` 版本一致；workflow 完成发布门禁后创建非草稿 GitHub Release，
   最后把 `dist/homebrew/zeus.rb` 同步为 Tap 仓库的 `Casks/zeus.rb`。
+- 每个新版本必须在 `docs/releases/v<version>.md` 提供面向用户的 Release notes；文件缺失或为空时拒绝公开发布。
 - 同名 Release 已存在时只允许 DMG SHA256 完全一致的幂等续跑，禁止用同一版本静默替换二进制。
 - 应用内更新检查读取 GitHub Release manifest；签名和公证完成前只允许打开 GitHub Release 手动安装，不做静默替换。
 

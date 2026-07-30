@@ -62,7 +62,6 @@ export function renderReleaseManifest(input) {
     releasePageUrl: `${releaseBaseUrl}/tag/${tag}`,
     latestReleaseUrl: `${releaseBaseUrl}/latest`,
     releaseNotesUrl: `${releaseBaseUrl}/tag/${tag}`,
-    installScriptUrl: `${releaseBaseUrl}/latest/download/install.sh`,
     publishedAt: input.publishedAt ?? new Date(0).toISOString(),
     signed: Boolean(input.signed),
     notarized: Boolean(input.notarized),
@@ -90,7 +89,7 @@ async function discoverArtifacts({ distDir, version, repository }) {
   const files = await readdir(distDir).catch(() => []);
   const artifacts = [];
   for (const fileName of files) {
-    const match = fileName.match(new RegExp(`^Zeus-${version}-(arm64|x64)\\.(dmg|zip)$`, 'u'));
+    const match = fileName.match(new RegExp(`^Zeus-${version}-(arm64|x64)\\.(dmg)$`, 'u'));
     if (!match) continue;
     const filePath = join(distDir, fileName);
     const fileStat = await stat(filePath);

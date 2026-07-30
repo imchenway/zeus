@@ -22,26 +22,14 @@ case "$arch" in
 esac
 
 dmg="dist/Zeus-${version}-${package_arch}.dmg"
-zip="dist/Zeus-${version}-${package_arch}.zip"
 source_cask="Casks/zeus.rb"
 generated_cask="dist/homebrew/zeus.rb"
-latest_dmg="dist/Zeus-latest-${package_arch}.dmg"
-latest_zip="dist/Zeus-latest-${package_arch}.zip"
-sha_sums="dist/SHA256SUMS"
 release_manifest="dist/zeus-release-manifest.json"
-install_script="dist/install.sh"
 source_repository="imchenway/zeus"
 homebrew_tap="imchenway/tap"
 node scripts/generate-homebrew-cask.mjs "$version" "$package_arch" "$dmg" "$generated_cask"
-cp "$dmg" "$latest_dmg"
-cp "$zip" "$latest_zip"
-(cd dist && shasum -a 256 \
-  "Zeus-${version}-${package_arch}.dmg" \
-  "Zeus-${version}-${package_arch}.zip" \
-  "Zeus-latest-${package_arch}.dmg" \
-  "Zeus-latest-${package_arch}.zip" > "SHA256SUMS")
 
-for required in "$dmg" "$zip" "$app" "$source_cask" "$generated_cask" "$latest_dmg" "$latest_zip" "$sha_sums"; do
+for required in "$dmg" "$app" "$source_cask" "$generated_cask"; do
   if [ ! -e "$required" ]; then
     echo "Zeus verify-release: missing required release artifact $required" >&2
     exit 1
@@ -70,8 +58,7 @@ if [ "${ZEUS_REQUIRE_DISTRIBUTABLE_RELEASE:-0}" = "1" ] && { [ "$signed" != "tru
 fi
 
 node scripts/generate-release-manifest.mjs "$version" "stable" "$source_repository" "$release_manifest" "$homebrew_tap" "$signed" "$notarized"
-node scripts/generate-install-script.mjs "$install_script" "$source_repository" "stable"
-for required in "$release_manifest" "$install_script"; do
+for required in "$release_manifest"; do
   if [ ! -e "$required" ]; then
     echo "Zeus verify-release: missing required release artifact $required" >&2
     exit 1
@@ -121,5 +108,5 @@ node -e '
 ' "$release_manifest" "$homebrew_tap" "$signed" "$notarized"
 
 if [ "$signed" != "true" ]; then
-  echo 'Zeus verify-release: Developer ID signing is not configured; local ad-hoc DMG/ZIP verified only, without Apple notarization.' >&2
+  echo 'Zeus verify-release: Developer ID signing is not configured; local ad-hoc DMG verified only, without Apple notarization.' >&2
 fi

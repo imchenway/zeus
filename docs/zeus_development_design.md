@@ -3,7 +3,7 @@
 > 项目名称：**Zeus**  
 > 工作目录：`/Users/david/hypha/zeus`  
 > 目标平台：macOS  
-> 分发目标：开源项目、Homebrew cask、DMG/ZIP 安装包  
+> 分发目标：开源项目、Homebrew cask、DMG 安装包
 > 目标执行方式：交给 Codex App 的 **Build macOS Apps** 插件，在目标模式下一次性完成可上线版本。  
 > 设计要求：本文件是工程执行文档，不是概念说明。执行者必须以本文件为唯一产品与技术边界，持续完成到所有验收项通过。
 
@@ -143,7 +143,7 @@ Zeus 的核心 UI 包含复杂图谱、终端、diff review、Markdown、WebSock
 4. Keychain。
 5. Menu Bar 常驻。
 6. 开机启动设置预留。
-7. DMG/ZIP 打包。
+7. DMG 打包。
 8. 签名与 notarization 预留。
 
 ---
@@ -2264,7 +2264,7 @@ AI runtime、Git 操作、文件操作必须限制在项目路径内。任何路
 4. 高风险确认。
 5. 敏感脱敏。
 6. Electron Builder。
-7. DMG/ZIP。
+7. DMG。
 8. Homebrew cask。
 9. GitHub Actions。
 10. docs。
@@ -2477,7 +2477,7 @@ Zeus 可上线版本必须满足：
 19. App 不监听公网。
 20. 数据库中没有任何 seed 的假项目、假任务、假图谱、假执行日志。
 21. README 和文档完整。
-22. DMG/ZIP/Homebrew cask 文件生成。
+22. DMG/Homebrew cask 文件生成。
 23. 最终执行报告列出完成项、静态检查结果、构建结果、安装包路径、真实运行证据和外部配置等待项。
 
 ---
@@ -2502,7 +2502,7 @@ pnpm format:check
 pnpm build
 pnpm package:mac
 
-必须实现：Electron + React + TypeScript macOS app、本地 app-server、SQLite、本地项目管理、任务管理、AI CLI PTY runtime、终端日志、会话、Git diff、代码扫描、代码图谱、系统架构图、表关系图、模块详情图、接口时序图、模块流程图、方法逻辑图、图谱问答、图上创建任务、Telegram long polling、安全策略、Keychain、DMG/ZIP/Homebrew cask、README 和完整文档。
+必须实现：Electron + React + TypeScript macOS app、本地 app-server、SQLite、本地项目管理、任务管理、AI CLI PTY runtime、终端日志、会话、Git diff、代码扫描、代码图谱、系统架构图、表关系图、模块详情图、接口时序图、模块流程图、方法逻辑图、图谱问答、图上创建任务、Telegram long polling、安全策略、Keychain、DMG/Homebrew cask、README 和完整文档。
 
 如果 AI CLI、Telegram token、Apple 签名证书等外部条件缺失，不要伪造结果；实现检测、设置页和明确的等待配置状态。
 
@@ -2575,7 +2575,7 @@ pnpm package:mac
 
 目标是全量完成。如果遇到外部不可控条件，只允许以下降级：
 
-1. 无 Apple 签名证书：允许 unsigned DMG/ZIP，但必须保留签名配置。
+1. 无 Apple 签名证书：允许 unsigned DMG，但必须保留签名配置。
 2. 无 Telegram Token：允许 Telegram 功能处于未配置状态，但设置页、Keychain、long polling 代码必须完整。
 3. 无 AI CLI：允许 runtime 显示不可用，但 adapter、PTY、终端、任务执行链路必须完整。
 4. 当前项目没有 Java/Spring/MyBatis 文件：允许 Java/Spring/MyBatis 图谱为空，但 extractor 必须实现；当前项目 TypeScript/Electron 结构必须能生成真实图谱。

@@ -24,7 +24,6 @@ mac:
   entitlementsInherit: assets/entitlements.mac.inherit.plist
   target:
     - dmg
-    - zip
 dmg:
   title: Zeus
   artifactName: Zeus-${version}-${arch}.dmg
