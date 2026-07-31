@@ -33,6 +33,7 @@ import {
   toReactFlowElements,
   toSigmaGraph,
 } from '@zeus/diagram-engine';
+import { isTaskStatusFilter } from '@zeus/shared';
 import '@xterm/xterm/css/xterm.css';
 import '@xyflow/react/dist/style.css';
 import './styles.css';
@@ -161,6 +162,7 @@ import {
   type TaskPriority,
   type TaskRecord,
   type TaskStatus,
+  type TaskStatusFilter,
   type TaskAgentRunStatus,
   type TaskTableColumnPreferences,
   type TaskTemplateRecord,
@@ -379,6 +381,7 @@ type AppShellSettingsSavePayload = Pick<
   | 'taskTableColumns'
   | 'taskTableColumnsByProject'
   | 'taskTableEnumSortOrders'
+  | 'taskStatusFilterByProject'
 >;
 
 function createSessionOperationId(): string {
@@ -545,7 +548,7 @@ export function updateConversationChoiceCompletionUnread<
 const GRAPH_NODE_TASK_SUCCESS_DISMISS_MS = 2200;
 const GRAPH_SOURCE_OPEN_FEEDBACK_DISMISS_MS = 2400;
 const workModeValues = ['plan', 'develop', 'review', 'debug'] as const;
-const taskStatusFilterValues = ['', ...taskManagementStatuses] as const;
+const taskStatusFilterValues: readonly TaskStatusFilter[] = ['', 'unfinished', ...taskManagementStatuses];
 const taskManagementStatusLabels: Record<AppLanguage, Record<TaskManagementStatus | '', string>> = {
   'zh-CN': {
     '': '全部',
@@ -849,6 +852,7 @@ const languageCopy = {
       taskStatusSelectAria: (taskTitle: string) => `修改任务状态：${taskTitle}`,
       detailStatusSelectAria: '修改当前任务状态',
       statusTitle: '状态',
+      unfinishedStatusFilter: '未完成',
       statusHelp: '只看某类进度',
       sortAria: '任务排序',
       sortSelectAria: '任务排序',
@@ -2255,6 +2259,7 @@ const languageCopy = {
       taskStatusSelectAria: (taskTitle: string) => `Change task status: ${taskTitle}`,
       detailStatusSelectAria: 'Change current task status',
       statusTitle: 'Status',
+      unfinishedStatusFilter: 'Unfinished',
       statusHelp: 'Show one progress state',
       sortAria: 'Task sort',
       sortSelectAria: 'Task sort',
@@ -3520,6 +3525,7 @@ const languageCopy = {
       taskStatusSelectAria: (taskTitle: string) => string;
       detailStatusSelectAria: string;
       statusTitle: string;
+      unfinishedStatusFilter: string;
       statusHelp: string;
       sortAria: string;
       sortSelectAria: string;
@@ -4599,6 +4605,21 @@ function controlBusyProps(isBusy: boolean): ControlBusyProps {
   return isBusy ? { 'aria-busy': true, 'data-loading': 'true' } : {};
 }
 
+function normalizeTaskStatusFilterByProject(value: unknown): Record<string, TaskStatusFilter> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const normalized: Record<string, TaskStatusFilter> = {};
+  let count = 0;
+  for (const [projectId, filter] of Object.entries(value)) {
+    const normalizedProjectId = projectId.trim();
+    const containsControlCharacter = Array.from(normalizedProjectId).some((character) => character.charCodeAt(0) <= 31 || character.charCodeAt(0) === 127);
+    if (!normalizedProjectId || normalizedProjectId.length > 160 || containsControlCharacter || !isTaskStatusFilter(filter)) continue;
+    normalized[normalizedProjectId] = filter;
+    count += 1;
+    if (count >= 100) break;
+  }
+  return normalized;
+}
+
 function normalizeRendererAppShellSettings(settings: AppShellSettings): AppShellSettings {
   const taskTableColumnsByProject = Object.fromEntries(
     Object.entries(settings.taskTableColumnsByProject ?? {})
@@ -4611,12 +4632,14 @@ function normalizeRendererAppShellSettings(settings: AppShellSettings): AppShell
     taskTableColumns: normalizeTaskTableColumnPreferences(settings.taskTableColumns),
     taskTableColumnsByProject,
     taskTableEnumSortOrders: normalizeTaskTableEnumSortOrders(settings.taskTableEnumSortOrders),
+    taskStatusFilterByProject: normalizeTaskStatusFilterByProject(settings.taskStatusFilterByProject),
   };
 }
 
 export function toAppShellSettingsSavePayload(settings: AppShellSettings): AppShellSettingsSavePayload {
   const taskTableColumns = normalizeTaskTableColumnPreferences(settings.taskTableColumns);
   const taskTableColumnsByProject = Object.fromEntries(Object.entries(settings.taskTableColumnsByProject ?? {}).map(([projectId, preferences]) => [projectId, normalizeTaskTableColumnPreferences(preferences)]));
+  const taskStatusFilterByProject = normalizeTaskStatusFilterByProject(settings.taskStatusFilterByProject);
   return {
     appLanguage: settings.appLanguage,
     appearance: settings.appearance,
@@ -4640,6 +4663,7 @@ export function toAppShellSettingsSavePayload(settings: AppShellSettings): AppSh
     },
     taskTableColumnsByProject,
     taskTableEnumSortOrders: normalizeTaskTableEnumSortOrders(settings.taskTableEnumSortOrders),
+    taskStatusFilterByProject,
   };
 }
 
@@ -4649,6 +4673,12 @@ function resolveTaskTableColumnsForProject(settings: AppShellSettings, projectId
     if (projectPreferences) return normalizeTaskTableColumnPreferences(projectPreferences);
   }
   return normalizeTaskTableColumnPreferences(settings.taskTableColumns);
+}
+
+function resolveTaskStatusFilterForProject(settings: AppShellSettings, projectId: string | undefined): TaskStatusFilter {
+  if (!projectId) return 'unfinished';
+  const filter = settings.taskStatusFilterByProject?.[projectId];
+  return isTaskStatusFilter(filter) ? filter : 'unfinished';
 }
 
 function taskTableColumnPreferencesEqual(left: TaskTableColumnPreferences, right: TaskTableColumnPreferences): boolean {
@@ -4665,6 +4695,7 @@ export function resolveTaskTableColumnsSaveResponse(input: { currentSettings: Ap
     taskTableColumns: savedSettings.taskTableColumns,
     taskTableColumnsByProject: savedSettings.taskTableColumnsByProject,
     taskTableEnumSortOrders: savedSettings.taskTableEnumSortOrders,
+    taskStatusFilterByProject: currentSettings.taskStatusFilterByProject,
   };
 }
 
@@ -4677,6 +4708,7 @@ export function mergeAppShellSettingsSaveResponse(input: { currentSettings: AppS
     taskTableColumns: currentSettings.taskTableColumns,
     taskTableColumnsByProject: currentSettings.taskTableColumnsByProject,
     taskTableEnumSortOrders: currentSettings.taskTableEnumSortOrders,
+    taskStatusFilterByProject: currentSettings.taskStatusFilterByProject,
   };
 }
 
@@ -5794,6 +5826,7 @@ export function App(props: {
       | 'taskTableColumns'
       | 'taskTableColumnsByProject'
       | 'taskTableEnumSortOrders'
+      | 'taskStatusFilterByProject'
     >,
   ) => Promise<AppShellSettings>;
   onClearLocalCaches?: () => Promise<{
@@ -6022,7 +6055,6 @@ export function App(props: {
     defaultTaskPrompt: '',
   }));
   const [taskSearchQuery, setTaskSearchQuery] = useState('');
-  const [taskStatusFilter, setTaskStatusFilter] = useState<TaskManagementStatus | ''>('');
   const [taskTagFilter, setTaskTagFilter] = useState('');
   const [selectedTaskIds, setSelectedTaskIds] = useState<string[]>([]);
   const [taskBulkActionStatus, setTaskBulkActionStatus] = useState<TaskBulkActionStatusState>({ kind: 'idle' });
@@ -6113,6 +6145,7 @@ export function App(props: {
         taskTableColumns: normalizeTaskTableColumnPreferences(),
         taskTableColumnsByProject: {},
         taskTableEnumSortOrders: defaultTaskTableEnumSortOrders,
+        taskStatusFilterByProject: {},
         localLogDirectory: 'Zeus/logs',
         localConfigPath: 'Zeus/zeus.config.json',
         dataPortability: {
@@ -6343,6 +6376,7 @@ export function App(props: {
   }, [activeNavTarget, codexLegacyImportLoading, codexLegacyImportSnapshot, props.onLoadCodexLegacyImports, settingsCategory]);
   const selectedProject = projectDetail ?? firstProject;
   const activeProjectId = selectedProject?.id ?? firstProjectId;
+  const taskStatusFilter = resolveTaskStatusFilterForProject(appShellSettings, activeProjectId);
   const persistedTaskTableColumns = useMemo(() => resolveTaskTableColumnsForProject(appShellSettings, activeProjectId), [activeProjectId, appShellSettings.taskTableColumns, appShellSettings.taskTableColumnsByProject]);
   const [taskTableLayoutDraft, setTaskTableLayoutDraft] = useState<{ projectId?: string; preferences: TaskTableColumnPreferences }>(() => ({
     projectId: selectedProject?.id ?? props.snapshot?.projects[0]?.id,
@@ -7246,11 +7280,10 @@ export function App(props: {
       const createdTask = selectCreatedGraphNodeTask(nextSnapshot, previousTaskIds, activeProjectId);
       setSnapshot(nextSnapshot);
       if (createdTask) {
-        // 从代码图谱创建任务后立即回到任务主路径，避免用户在图谱里丢失新任务上下文。
+        // 从代码图谱创建任务后立即回到任务主路径；只清搜索和标签，不覆盖用户按项目记住的状态筛选。
         setConversationDraftOpen(false);
         setActiveProjectSection('tasks');
         setTaskSearchQuery('');
-        setTaskStatusFilter('');
         setTaskTagFilter('');
         setTaskDetail(createdTask);
         setTaskEditForm({
@@ -7287,10 +7320,9 @@ export function App(props: {
       const createdTask = selectCreatedProjectTask(nextSnapshot, previousTaskIds, activeProjectId);
       setSnapshot(nextSnapshot);
       if (createdTask) {
-        // 弹窗提交成功后才落真实任务；成功反馈沿用原有闭环：清筛选、选中新任务、打开详情抽屉。
+        // 弹窗提交成功后才落真实任务；只清搜索和标签并打开详情，不覆盖用户按项目记住的状态筛选。
         setConversationDraftOpen(false);
         setTaskSearchQuery('');
-        setTaskStatusFilter('');
         setTaskTagFilter('');
         setTaskDetail(createdTask);
         setTaskEditForm({
@@ -7664,6 +7696,7 @@ export function App(props: {
 
   const prepareNewConversationDraft = useCallback((): void => {
     // 新对话只是本地会话草稿入口，不能复用任务创建接口，否则会误生成 ZEU 编号的正式任务。
+    // 离开任务页时不改状态筛选，返回后继续使用当前项目最后一次显式选择。
     setActiveNavTarget('conversations');
     setActiveProjectSection('sessions');
     setConversationDraftOpen(true);
@@ -7672,7 +7705,6 @@ export function App(props: {
     setConversationDrawer(undefined);
     setTaskDetailPaneTaskId(undefined);
     setTaskSearchQuery('');
-    setTaskStatusFilter('');
     setTaskTagFilter('');
     setTaskDetail(undefined);
     setTaskEditForm({ title: '', description: '', tags: '' });
@@ -8328,6 +8360,30 @@ export function App(props: {
     }
   }
 
+  async function saveTaskStatusFilter(filter: TaskStatusFilter): Promise<void> {
+    if (!activeProjectId || filter === taskStatusFilter) return;
+    const nextSettings = normalizeRendererAppShellSettings({
+      ...appShellSettings,
+      taskStatusFilterByProject: {
+        ...(appShellSettings.taskStatusFilterByProject ?? {}),
+        [activeProjectId]: filter,
+      },
+    });
+    setAppShellSettings(nextSettings);
+    if (!props.onSaveAppShellSettings) return;
+    try {
+      const savedSettings = await props.onSaveAppShellSettings(toAppShellSettingsSavePayload(nextSettings));
+      setAppShellSettings((currentSettings) =>
+        mergeAppShellSettingsSaveResponse({
+          currentSettings,
+          savedSettings,
+        }),
+      );
+    } catch (error) {
+      recordLocalError('task-status-filter-save', error);
+    }
+  }
+
   async function saveTaskTableLayout(scope: 'project' | 'global'): Promise<boolean> {
     if (scope === 'project' && !activeProjectId) return false;
     const normalizedDraft = normalizeTaskTableColumnPreferences(activeTaskTableColumns);
@@ -8350,7 +8406,10 @@ export function App(props: {
     setTaskTableLayoutSaveBusy(true);
     try {
       const savedSettings = props.onSaveAppShellSettings ? normalizeRendererAppShellSettings(await props.onSaveAppShellSettings(toAppShellSettingsSavePayload(nextSettings))) : nextSettings;
-      setAppShellSettings(savedSettings);
+      setAppShellSettings((currentSettings) => ({
+        ...savedSettings,
+        taskStatusFilterByProject: currentSettings.taskStatusFilterByProject,
+      }));
       const savedPreferences = resolveTaskTableColumnsForProject(savedSettings, activeProjectId);
       setTaskTableLayoutDraft({ projectId: activeProjectId, preferences: savedPreferences });
       setTaskTableLayoutScopeDialogOpen(false);
@@ -8477,6 +8536,7 @@ export function App(props: {
                   taskTableColumns: normalizeTaskTableColumnPreferences(appShellSettings.taskTableColumns),
                   taskTableColumnsByProject: Object.fromEntries(Object.entries(appShellSettings.taskTableColumnsByProject ?? {}).map(([projectId, preferences]) => [projectId, normalizeTaskTableColumnPreferences(preferences)])),
                   taskTableEnumSortOrders: normalizeTaskTableEnumSortOrders(appShellSettings.taskTableEnumSortOrders),
+                  taskStatusFilterByProject: normalizeTaskStatusFilterByProject(appShellSettings.taskStatusFilterByProject),
                 },
                 runtime: runtimeSettings,
                 codeMap: codeMapSettings,
@@ -10031,7 +10091,7 @@ export function App(props: {
                     listState={!props.snapshot ? 'loading' : 'ready'}
                     activeProjectId={activeProjectId}
                     onSearchChange={setTaskSearchQuery}
-                    onStatusFilterChange={setTaskStatusFilter}
+                    onStatusFilterChange={(filter) => void saveTaskStatusFilter(filter)}
                     onTagFilterChange={setTaskTagFilter}
                     onTaskTableColumnsChange={(preferences) => setTaskTableLayoutDraft({ projectId: activeProjectId, preferences })}
                     onSaveTaskTableLayout={() => setTaskTableLayoutScopeDialogOpen(true)}
@@ -10043,7 +10103,9 @@ export function App(props: {
                     onTaskStatusChange={(taskId, targetStatus) => void updateTaskManagementStatus(taskId, targetStatus)}
                     onBulkTaskStatusChange={(targetStatus, taskIds) => void runBulkTaskStatusChange(targetStatus, taskIds)}
                     onBulkTaskDelete={(taskIds) => void runBulkTaskDelete(taskIds)}
-                    onRetryTaskList={props.onLoadTasks && activeProjectId ? () => void props.onLoadTasks?.(activeProjectId, taskSearchQuery, taskStatusFilter || undefined, taskTagFilter) : undefined}
+                    onRetryTaskList={
+                      props.onLoadTasks && activeProjectId ? () => void props.onLoadTasks?.(activeProjectId, taskSearchQuery, taskStatusFilter && taskStatusFilter !== 'unfinished' ? taskStatusFilter : undefined, taskTagFilter) : undefined
+                    }
                     onOpenProjectSettings={selectedProject ? () => openProjectSection(selectedProject, 'project-settings') : undefined}
                     onOpenProjectCode={selectedProject ? () => openProjectSection(selectedProject, 'code') : undefined}
                     controlBusyProps={controlBusyProps}
@@ -11741,6 +11803,7 @@ function toSafeAppShellImport(
       | 'taskTableColumns'
       | 'taskTableColumnsByProject'
       | 'taskTableEnumSortOrders'
+      | 'taskStatusFilterByProject'
     >
   | undefined {
   if (!raw) return undefined;
@@ -11762,6 +11825,7 @@ function toSafeAppShellImport(
     taskTableColumns: normalizeTaskTableColumnPreferences(raw.taskTableColumns),
     taskTableColumnsByProject: Object.fromEntries(Object.entries(raw.taskTableColumnsByProject ?? {}).map(([projectId, preferences]) => [projectId, normalizeTaskTableColumnPreferences(preferences)])),
     taskTableEnumSortOrders: normalizeTaskTableEnumSortOrders(raw.taskTableEnumSortOrders),
+    taskStatusFilterByProject: normalizeTaskStatusFilterByProject(raw.taskStatusFilterByProject),
   };
 }
 

@@ -5,6 +5,7 @@ import type {
     TaskManagementStatus,
     TaskRecord,
     TaskStatus,
+    TaskStatusFilter,
     TaskTableColumnKey,
     TaskTableEnumSortOrders,
     TaskTableColumnPreferences,
@@ -95,7 +96,7 @@ const legacyTaskTableColumnWidthScale = {compact: 0.78, standard: 1, wide: 1.35}
 
 export interface TaskWorkspaceFilters {
   query: string;
-  status: TaskManagementStatus | '';
+  status: TaskStatusFilter;
   tag: string;
 }
 
@@ -363,13 +364,14 @@ export function hasActiveTaskFilters(filters: TaskWorkspaceFilters): boolean {
   return Boolean(filters.query.trim() || filters.status || filters.tag.trim());
 }
 
-export function filterVisibleTasks(tasks: TaskRecord[], query: string, status: TaskManagementStatus | '', tag: string): TaskRecord[] {
+export function filterVisibleTasks(tasks: TaskRecord[], query: string, status: TaskStatusFilter, tag: string): TaskRecord[] {
   const normalizedQuery = query.trim().toLowerCase();
   const normalizedTag = tag.trim().toLowerCase();
   return tasks.filter((task) => {
     const matchesQuery =
       !normalizedQuery || [task.taskCode ?? '', task.title, task.description ?? '', task.id, task.createdFrom ?? '', task.sourceContextJson ?? '', task.priority ?? ''].some((value) => value.toLowerCase().includes(normalizedQuery));
-      const matchesStatus = !status || resolveTaskManagementStatus(task) === status;
+    const managementStatus = resolveTaskManagementStatus(task);
+    const matchesStatus = status === 'unfinished' ? managementStatus !== 'completed' && managementStatus !== 'cancelled' : !status || managementStatus === status;
     const matchesTag = !normalizedTag || task.tags?.some((item) => item.toLowerCase().includes(normalizedTag));
     return matchesQuery && matchesStatus && matchesTag;
   });

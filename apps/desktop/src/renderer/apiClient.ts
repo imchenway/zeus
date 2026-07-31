@@ -18,9 +18,9 @@ import type {
   TurnChangeSet,
   TurnChangeSetOperationResult,
 } from './session/sessionTypes.js';
-import type { CommandArtifact, CommandConfirmation, CommandDefinition, CommandDefinitionInput, CommandRun, TaskManagementStatus, TaskPriority } from '@zeus/shared';
+import type { CommandArtifact, CommandConfirmation, CommandDefinition, CommandDefinitionInput, CommandRun, TaskManagementStatus, TaskPriority, TaskStatusFilter } from '@zeus/shared';
 
-export type { CommandArtifact, CommandConfirmation, CommandDefinition, CommandDefinitionInput, CommandParameterDefinition, CommandRun, CommandRunStatus, TaskManagementStatus, TaskPriority } from '@zeus/shared';
+export type { CommandArtifact, CommandConfirmation, CommandDefinition, CommandDefinitionInput, CommandParameterDefinition, CommandRun, CommandRunStatus, TaskManagementStatus, TaskPriority, TaskStatusFilter } from '@zeus/shared';
 
 export type TaskStatus = 'draft' | 'ready' | 'running' | 'paused' | 'waiting_confirmation' | 'completed' | 'failed' | 'cancelled';
 export type TaskAgentRunStatus = 'not_started' | 'connecting' | 'reconnecting' | 'running' | 'waiting_user' | 'waiting_approval' | 'paused' | 'idle' | 'failed' | 'legacy_readonly';
@@ -362,6 +362,7 @@ export interface AppShellSettings {
   taskTableColumns?: TaskTableColumnPreferences;
   taskTableColumnsByProject?: Record<string, TaskTableColumnPreferences>;
   taskTableEnumSortOrders?: TaskTableEnumSortOrders;
+  taskStatusFilterByProject?: Record<string, TaskStatusFilter>;
   localLogDirectory: string;
   localConfigPath: string;
   dataPortability: {
@@ -389,6 +390,7 @@ export type UpdateAppShellSettingsRequest = Pick<
   taskTableColumns?: Partial<TaskTableColumnPreferences>;
   taskTableColumnsByProject?: Record<string, TaskTableColumnPreferences>;
   taskTableEnumSortOrders?: TaskTableEnumSortOrders;
+  taskStatusFilterByProject?: Record<string, TaskStatusFilter>;
 };
 
 export interface ClearLocalCachesResult {

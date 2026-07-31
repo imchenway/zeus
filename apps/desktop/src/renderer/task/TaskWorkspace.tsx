@@ -13,6 +13,7 @@ import type {
     RuntimeStatusSnapshot,
     TaskManagementStatus,
     TaskRecord,
+    TaskStatusFilter,
     TaskTableColumnKey,
     TaskTableEnumSortOrders,
     TaskTableColumnPreferences,
@@ -46,6 +47,7 @@ export interface TaskWorkspaceCopy {
   statusAria: string;
   statusSelectAria: string;
   statusTitle: string;
+  unfinishedStatusFilter: string;
   sortAria: string;
   sortSelectAria: string;
   sortTitle: string;
@@ -134,9 +136,9 @@ export interface TaskWorkspaceProps {
   selectedTaskId?: string;
   selectedTaskIds?: readonly string[];
   searchQuery: string;
-    statusFilter: TaskManagementStatus | '';
+  statusFilter: TaskStatusFilter;
   tagFilter: string;
-    statusOptions: readonly (TaskManagementStatus | '')[];
+  statusOptions: readonly TaskStatusFilter[];
     statusLabels: Record<TaskManagementStatus | '', string>;
     runStatusLabels: Record<TaskAgentRunStatus, string>;
   copy: TaskWorkspaceCopy;
@@ -155,7 +157,7 @@ export interface TaskWorkspaceProps {
   listState?: TaskWorkspaceListState;
   activeProjectId?: string;
   onSearchChange: (value: string) => void;
-    onStatusFilterChange: (value: TaskManagementStatus | '') => void;
+  onStatusFilterChange: (value: TaskStatusFilter) => void;
   onTagFilterChange: (value: string) => void;
   onTaskTableColumnsChange: (value: TaskTableColumnPreferences) => void;
   onSaveTaskTableLayout?: () => void;
@@ -297,9 +299,14 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
     rawId: props.copy.rawIdColumnTitle,
     createdFrom: props.copy.createdFromColumnTitle,
   };
-    const configuredStatusOptions = props.statusOptions.filter((status): status is TaskManagementStatus => taskManagementStatuses.includes(status as TaskManagementStatus));
-    const bulkStatusOptions = configuredStatusOptions.length > 0 ? configuredStatusOptions : taskManagementStatuses;
-    const statusLabel = (status: TaskManagementStatus | '') => (status === '' ? props.statusLabels[''] || (props.copy.taskCountPrefix === 'Tasks' ? 'All' : '全部') : props.statusLabels[status] || formatTaskManagementStatus(status));
+  const configuredStatusOptions = props.statusOptions.filter((status): status is TaskManagementStatus => taskManagementStatuses.includes(status as TaskManagementStatus));
+  const bulkStatusOptions = configuredStatusOptions.length > 0 ? configuredStatusOptions : taskManagementStatuses;
+  const statusLabel = (status: TaskStatusFilter) =>
+    status === 'unfinished'
+      ? props.copy.unfinishedStatusFilter
+      : status === ''
+        ? props.statusLabels[''] || (props.copy.taskCountPrefix === 'Tasks' ? 'All' : '全部')
+        : props.statusLabels[status] || formatTaskManagementStatus(status);
   const bulkTargetEligibility = model.bulkStatusEligibility[bulkTargetStatus];
   const selectedVisibleCount = model.selectedVisibleTaskIds.length;
   const bulkActionBusy = Boolean(props.bulkActionBusy);
@@ -333,7 +340,11 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
   ]
     .filter(Boolean)
     .join(' ');
-    const statusSegmentOptions: Array<TaskManagementStatus | ''> = [...(props.statusOptions.includes('') ? ([''] as const) : []), ...bulkStatusOptions].slice(0, 4);
+  const statusSegmentOptions: TaskStatusFilter[] = [
+    ...(props.statusOptions.includes('') ? ([''] as const) : []),
+    ...(props.statusOptions.includes('unfinished') ? (['unfinished'] as const) : []),
+    ...bulkStatusOptions,
+  ].slice(0, 5);
   const isEnglishCopy = props.copy.taskCountPrefix === 'Tasks';
   const showTaskStatusLine = taskListLoading || taskListError;
   const statusLineTitle = taskListLoading ? props.copy.taskListLoadingTitle : props.copy.taskListErrorTitle;
@@ -565,7 +576,7 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
             <span className="sr-only">{props.copy.statusTitle}</span>
             {statusSegmentOptions.map((status) => (
               <button className="task-table-status-segment" type="button" aria-pressed={props.statusFilter === status} key={status || 'all'} onClick={() => props.onStatusFilterChange(status)}>
-                  {statusLabel(status)}
+                {statusLabel(status)}
               </button>
             ))}
           </div>

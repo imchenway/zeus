@@ -29,6 +29,14 @@ export function isTaskManagementStatus(value: unknown): value is TaskManagementS
     return typeof value === 'string' && taskManagementStatusOrder.includes(value as TaskManagementStatus);
 }
 
+/** 任务页状态筛选值；空字符串表示“全部”，“未完成”是派生筛选而不是任务管理状态。 */
+export type TaskStatusFilter = '' | 'unfinished' | TaskManagementStatus;
+
+/** 对本机项目筛选偏好做统一校验，拒绝把未知字符串写入 App Shell 设置。 */
+export function isTaskStatusFilter(value: unknown): value is TaskStatusFilter {
+  return value === '' || value === 'unfinished' || isTaskManagementStatus(value);
+}
+
 /** 任务状态展示顺序，前端和服务端共用，避免多处硬编码。 */
 export const taskStatusOrder: readonly TaskStatus[] = ['draft', 'ready', 'running', 'paused', 'waiting_confirmation', 'completed', 'failed', 'cancelled'] as const;
 
