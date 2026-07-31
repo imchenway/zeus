@@ -24,7 +24,7 @@ CI 通过 `ZEUS_VERIFY_BASE` 与 `ZEUS_VERIFY_HEAD` 传入本次推送或 PR 的
 
 公开 Release 只包含版本化 DMG 和更新 manifest；Zeus.app 与 Homebrew Cask 是本地或 CI 内部发布工件，不作为 Release 附件。
 
-- 公开 DMG：`dist/Zeus-0.1.2-arm64.dmg`；
+- 公开 DMG：`dist/Zeus-0.1.3-arm64.dmg`；
 - 公开更新清单：`dist/zeus-release-manifest.json`，供应用内检查更新读取；
 - 内部 App：`dist/mac-arm64/Zeus.app`；
 - 内部 Homebrew Cask：`dist/homebrew/zeus.rb`，同步到 `imchenway/homebrew-tap`；
@@ -35,7 +35,32 @@ CI 通过 `ZEUS_VERIFY_BASE` 与 `ZEUS_VERIFY_HEAD` 传入本次推送或 PR 的
 普通发布前门禁必须覆盖变更文件格式、Git 空白错误、lint、typecheck 和 build。完整 macOS 发布门禁在此基础上继续覆盖
 acceptance matrix、AI CLI adapter 探针、package:mac、包内 Electron 加载和包内 renderer/main 非 GUI 健康检查。
 
-### 当前公开稳定基线（0.1.2）
+### 当前公开稳定基线（0.1.3）
+
+- 根包与桌面包版本已同步为 `0.1.3`；
+- `pnpm verify:release`：通过；Prettier、Git 空白错误、lint、typecheck、build、12 个章节 139 项验收矩阵、
+  AI CLI 探针、macOS arm64 打包、产物健康检查和严格 codesign 校验完整执行；
+- DMG SHA256：`32491e85d57ba594bc36cac9295aecf41e47f1fa92ce5b93e29e375122f8a068`，大小为
+  `252114101` 字节，`hdiutil verify` 返回 `VALID`；
+- 只启动仓库发布 worktree 生成的 `dist/mac-arm64/Zeus.app`；本地服务只监听 `127.0.0.1`，
+  `/health` 返回 `ok=true`、`version=0.1.3`、`database=ok`、`runtime=ok`，随后正常退出；
+- 当前产物仍为 ad-hoc 签名且未公证，manifest 明确保存 `signed=false`、`notarized=false`；
+- 任务提交 `a7e47f7347214d20dd87dad78afbcc0d5b1fe769` 通过 merge commit `9b3f17e` 合入，
+  发布提交为 `052538940e549dd5b2557b05fb0bc5509babdf03`；
+- 远端 CI `30615685576` 对发布提交验证通过；annotated tag `v0.1.3` 解引用后指向同一提交；
+- GitHub Release：`https://github.com/imchenway/zeus/releases/tag/v0.1.3`，为非草稿、非预发布的 Latest Release；
+- Release 公开下载区只包含 `Zeus-0.1.3-arm64.dmg` 与 `zeus-release-manifest.json`，GitHub 服务端返回的
+  SHA256 分别为 `32491e85d57ba594bc36cac9295aecf41e47f1fa92ce5b93e29e375122f8a068` 和
+  `037f09b8215f1d622bbc81616e7efa02c07b0eb52483ed00f7550a7848f9fcdd`，与本地产物一致；
+- GitHub Release notes 与 `docs/releases/v0.1.3.md` 完全一致，覆盖用户向更新内容、升级方式、系统要求、
+  签名限制、真实运行验证和 DMG 摘要；
+- Homebrew Tap：`imchenway/homebrew-tap` 的 `Casks/zeus.rb` 已发布，提交为
+  `9ce90f56ced4d8af88e4be84389053c427e06370`；远端文件摘要
+  `33948ce8883112379d8b7fe9339eb6ca5782b1d0ad2c8666a4b1edcf220da258` 与本地生成 Cask 一致；
+- 本次没有启动 Release workflow；按仓库允许的人工备用通道发布本地完整门禁通过的不可变制品并同步 Tap；
+- 本轮没有执行 Homebrew 安装、升级或启动 `/Applications/Zeus.app`；发布后核对只读取远端资产、manifest 和 Tap。
+
+### 历史稳定基线（0.1.2）
 
 - 根包与桌面包版本已同步为 `0.1.2`；
 - `pnpm verify:release`：通过；Prettier、lint、typecheck、build、12 个章节 139 项验收矩阵、
