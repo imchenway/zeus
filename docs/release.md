@@ -35,7 +35,7 @@ CI 通过 `ZEUS_VERIFY_BASE` 与 `ZEUS_VERIFY_HEAD` 传入本次推送或 PR 的
 普通发布前门禁必须覆盖变更文件格式、Git 空白错误、lint、typecheck 和 build。完整 macOS 发布门禁在此基础上继续覆盖
 acceptance matrix、AI CLI adapter 探针、package:mac、包内 Electron 加载和包内 renderer/main 非 GUI 健康检查。
 
-### 待发布稳定基线（0.1.5）
+### 当前公开稳定基线（0.1.5）
 
 - 根包与桌面包版本已同步为 `0.1.5`；
 - 本次修复界面租约过期或执行宿主退出后永久重试的问题：Main 会重新登记当前宿主，控制端点失效时通过安全 rendezvous 发现或启动唯一宿主，并向 Renderer 提供刷新后的 Local Server 地址；
@@ -48,7 +48,13 @@ acceptance matrix、AI CLI adapter 探针、package:mac、包内 Electron 加载
 - 暂停 Main 20 秒后，同一宿主和租约重新附着；结束执行宿主后约 3.5 秒内只启动一个新宿主，历史继续可见，界面均未出现 `Failed to fetch` 或永久重连；
 - 宿主替换后的首次外部 `sqlite3 quick_check` 恰逢数据库落盘窗口，返回一次 `database disk image is malformed`；随后连续 5 次 `quick_check` 与一次 `integrity_check` 均返回 `ok`，应用健康检查也为 `database=ok`。该瞬态外部读取事实保留在发布记录中，不描述为数据库从未出现并发读取窗口；
 - 验收应用正常退出后 Main、执行宿主和 Codex runtime 均结束，rendezvous 已清理；
-- 远端 CI、GitHub Release、公开资产和 Homebrew Tap 结果将在发布完成后写回，不复用 `0.1.4` 的远端验证数字。
+- 发布提交 `9ae882e971ecec7c676fb5b1e81b76e7832f1e6c` 通过 PR `#15` 的 CI `30646469207` 和 `main` 推送 CI `30646571300`；annotated tag `v0.1.5` 解引用后指向同一提交；
+- GitHub Release：`https://github.com/imchenway/zeus/releases/tag/v0.1.5`，为非草稿、非预发布的 Latest Release；
+- Release 公开下载区只包含 `Zeus-0.1.5-arm64.dmg` 与 `zeus-release-manifest.json`，GitHub API 返回的服务端 SHA256 分别为 `81a0906587fa2775d1a4964e4a86823577674d89e6780a171463f4b9bcb05b70` 和 `c976aa35984a0af9367d912294a1e4be349aaa300fc21369aeb58a78424384b3`，大小与本地产物一致；
+- GitHub Release notes 与 `docs/releases/v0.1.5.md` 的 SHA256 均为 `eb4c1ba81ad70e0a86f6a43cf56257a12b3c9cc5d2f5e6e650b5aebc9a03c5d9`；
+- Homebrew Tap 已更新到提交 `390dc964dbb61158c23dd8daeedc211c26c33a0b`；远端 Cask SHA256 为 `04d683d06ead406f905d676b7c84336422adff9992f4b3a28988661e1203cf47`，与本地生成文件一致；
+- 从 GitHub Release CDN 重新下载资产的只读反查持续卡在下载入口，已主动停止；本轮只确认 GitHub API 的 `state=uploaded`、服务端 digest 与 size，没有把未完成的 CDN 字节下载描述为通过；
+- 本轮没有启动、升级或修改 `/Applications/Zeus.app`，发布后核对只读取远端 Release 与 Tap。
 
 ### 历史稳定基线（0.1.4）
 
