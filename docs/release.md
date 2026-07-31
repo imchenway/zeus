@@ -35,6 +35,19 @@ CI 通过 `ZEUS_VERIFY_BASE` 与 `ZEUS_VERIFY_HEAD` 传入本次推送或 PR 的
 普通发布前门禁必须覆盖变更文件格式、Git 空白错误、lint、typecheck 和 build。完整 macOS 发布门禁在此基础上继续覆盖
 acceptance matrix、AI CLI adapter 探针、package:mac、包内 Electron 加载和包内 renderer/main 非 GUI 健康检查。
 
+### 当前发布候选（0.1.6，尚未公开）
+
+- 根包与桌面包版本已同步为 `0.1.6`；
+- 本次修复 provider 上一轮已经终止但本地 paused 状态阻止新队列派发的问题，并把无 `providerTurnId` 的 queued/paused 输入定义为可带入新会话草稿但不自动发送的“未发送内容”；
+- 已有 `providerTurnId` 的失败提交不再重复显示为“待发送”，避免用户误认为它仍会自动重放；
+- `pnpm verify:release` 已通过：Prettier、Git 空白错误、lint、typecheck、build、12 个章节 139 项验收矩阵、AI CLI 探针、macOS arm64 打包、产物健康检查和严格 codesign 校验完整执行；
+- DMG SHA256：`bc653563c13ced0bc73d2cbf3a5e42920c02d7764dc9d7d5448285e6eb0d49b8`，大小为 `252260734` 字节，`hdiutil verify` 返回 `VALID`；
+- manifest SHA256：`d7b50dfbf46aec86bf4bbb653237f31ab13dc144d6b6776db6f50db21de373ec`，明确记录 `version=0.1.6`、`signed=false`、`notarized=false`；
+- 只使用仓库 `dist/mac-arm64/Zeus.app` 与隔离数据库副本真实启动，`/health` 返回 `version=0.1.6`、`database=ok`、`runtime=ok`；失败轮次没有“待发送”，无法确认的输入显示为“未发送内容”且未自动创建 turn；
+- 验收应用正常退出后 Main、执行宿主均结束，rendezvous 已清理；直接启动隔离包时出现一次登录项权限警告，本轮未验证登录项设置；
+- 当前仍为 ad-hoc 实用发布，manifest 保持 `signed=false`、`notarized=false`，不描述为 Apple 已认证或应用内自动安装；
+- 远端 PR/CI、annotated tag、GitHub Release 和 Homebrew Tap 尚未执行，当前不能描述为公开稳定版已发布。
+
 ### 当前公开稳定基线（0.1.5）
 
 - 根包与桌面包版本已同步为 `0.1.5`；

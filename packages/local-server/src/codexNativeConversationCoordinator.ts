@@ -1587,7 +1587,19 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     }
     const inFlight = submissions.filter((submission) => submission.status === 'dispatching' || submission.status === 'active');
     if (inFlight.length === 0) {
-      runStates.set(conversation.id, inferRunState(conversation));
+      if (conversation.providerState === 'paused') {
+        if (!snapshotConfirmsTerminalLocalTurn(snapshot, options.turns.listByConversation(conversation.id))) {
+          markConversationRecoveryRequired(conversation.id, coordinatorError('ZEUS_NATIVE_PROVIDER_STATE_UNCONFIRMED', 'Provider thread state cannot confirm that the previous turn is terminal.'));
+          return;
+        }
+        options.conversations.bindProvider(conversation.id, {
+          providerId: 'codex',
+          providerThreadId: requireString(conversation.providerThreadId, 'provider thread id'),
+          providerModel: conversation.providerModel,
+          providerState: 'ready',
+        });
+      }
+      runStates.set(conversation.id, { type: 'idle' });
       return;
     }
     for (const submission of inFlight) {
@@ -1671,7 +1683,16 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
 
   function markConversationRecoveryRequired(conversationId: string, error: unknown): void {
     for (const submission of options.submissions.listByConversation(conversationId)) {
-      if (submission.status === 'dispatching' || submission.status === 'active') markSubmissionRecoveryRequired(submission, error);
+      if (submission.status === 'queued' || submission.status === 'dispatching' || submission.status === 'active') markSubmissionRecoveryRequired(submission, error);
+    }
+    const conversation = options.conversations.getById(conversationId);
+    if (conversation?.providerThreadId && conversation.providerState !== 'archived' && conversation.providerState !== 'closed' && conversation.providerState !== 'failed') {
+      options.conversations.bindProvider(conversation.id, {
+        providerId: 'codex',
+        providerThreadId: conversation.providerThreadId,
+        providerModel: conversation.providerModel,
+        providerState: 'paused',
+      });
     }
     runStates.set(conversationId, { type: 'paused', reason: 'recovery_required' });
   }
@@ -2803,6 +2824,13 @@ function findSnapshotTurn(snapshot: CodexThreadSnapshot, submission: ZeusConvers
     if (byProviderId) return byProviderId;
   }
   return turns.find((turn) => turn.clientUserMessageId === submission.clientMessageId || turn.clientMessageId === submission.clientMessageId) ?? null;
+}
+
+function snapshotConfirmsTerminalLocalTurn(snapshot: CodexThreadSnapshot, localTurns: readonly ZeusConversationTurnRecord[]): boolean {
+  const snapshotTurns = Array.isArray(snapshot.turns) ? snapshot.turns.filter(isRecord) : [];
+  if (snapshotTurns.some((turn) => classifySnapshotTurn(turn) === 'active')) return false;
+  const terminalLocalIds = new Set(localTurns.filter((turn) => turn.providerTurnId && (turn.status === 'completed' || turn.status === 'interrupted' || turn.status === 'failed')).map((turn) => turn.providerTurnId as string));
+  return snapshotTurns.some((turn) => typeof turn.id === 'string' && terminalLocalIds.has(turn.id) && ['completed', 'interrupted', 'failed'].includes(classifySnapshotTurn(turn)));
 }
 
 function classifySnapshotTurn(turn: Record<string, unknown> | null): 'active' | 'completed' | 'interrupted' | 'failed' | 'unknown' {

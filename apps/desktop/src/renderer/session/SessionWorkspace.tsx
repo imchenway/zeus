@@ -25,6 +25,7 @@ import type {
   NativeCollaborationMode,
   NativeConversationAttachment,
   NativeConversationChoice,
+  NativeQueuedSubmission,
   NativeOperationAcceptance,
   NativePendingRequest,
   NativePermissionMode,
@@ -751,8 +752,13 @@ const labels = {
     recoveryRequired: '需要恢复',
     recoveryRequiredHelp: '当前状态可能不完整，不能安全续接。请新建会话，不要重连或继续发送。',
     startNew: '新建会话',
+    recoverUnsent: '带入新会话',
     nonResumable: '此会话已不能继续。',
     nonResumableHelp: '历史仍可只读查看；若要继续工作，请显式新建会话。',
+    unsent: '未发送内容',
+    unsentHelp: '这些内容尚未进入 Codex 执行轮次。带入新会话后仍需由你确认发送。',
+    unsentAttachments: '未发送附件',
+    attachmentOnly: '仅包含附件',
     legacyTranscript: '只读旧会话记录',
     unsynced: '未同步',
     tokens: (count: number) => `${count} tokens`,
@@ -794,8 +800,13 @@ const labels = {
     recoveryRequired: 'Recovery required',
     recoveryRequiredHelp: 'The current state may be incomplete and cannot be continued safely. Start a new conversation instead of reconnecting or sending.',
     startNew: 'Start a new conversation',
+    recoverUnsent: 'Move to new conversation',
     nonResumable: 'This conversation can no longer be continued.',
     nonResumableHelp: 'Its history remains read-only. Start a new conversation explicitly to continue working.',
+    unsent: 'Unsent content',
+    unsentHelp: 'This content has not entered a Codex turn. You will still confirm before sending it from the new conversation.',
+    unsentAttachments: 'Unsent attachments',
+    attachmentOnly: 'Attachments only',
     legacyTranscript: 'Read-only legacy transcript',
     unsynced: 'Not synced',
     tokens: (count: number) => `${count} tokens`,
@@ -871,6 +882,8 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const effectiveProviderState = props.state?.snapshot?.providerState ?? props.conversation?.providerState ?? null;
   const effectiveResumable = props.state?.snapshot ? !['closed', 'failed'].includes(effectiveProviderState ?? '') : effectiveProviderState === 'archived' ? true : props.conversation?.resumable;
   const nonResumableNative = Boolean(props.conversation && !legacy && !effectiveResumable);
+  const freshStartRequired = nonResumableNative || Boolean(props.state?.error?.recoveryRequired);
+  const unsentDraft = useMemo(() => createUnsentConversationDraft(freshStartRequired ? props.state?.queue?.submissions : undefined), [freshStartRequired, props.state?.queue?.submissions]);
   const pendingRequests = props.state?.pendingRequests.filter((request) => request.status === 'pending') ?? [];
   const pendingPlanImplementationRequests = props.state?.planImplementationRequests.filter((request) => request.status === 'pending').slice(-1) ?? [];
   const blockingPendingRequest = pendingRequests[0] ?? null;
@@ -1343,7 +1356,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                     </span>
                     {props.state.error?.recoveryRequired ? (
                       <button type="button" onClick={() => setStartFreshOpen(true)}>
-                        {copy.startNew}
+                        {unsentDraft.submissions.length ? copy.recoverUnsent : copy.startNew}
                       </button>
                     ) : actions.onReconnect ? (
                       <button type="button" onClick={() => void actions.onReconnect?.()}>
@@ -1357,16 +1370,19 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                     <strong>{copy.nonResumable}</strong>
                     <p>{copy.nonResumableHelp}</p>
                     <button type="button" onClick={() => setStartFreshOpen(true)}>
-                      {copy.startNew}
+                      {unsentDraft.submissions.length ? copy.recoverUnsent : copy.startNew}
                     </button>
                   </section>
                 ) : null}
                 {(startFreshOpen || props.state.error?.recoveryRequired) && owner ? (
                   <NewConversationComposer
+                    key={`fresh-conversation:${unsentDraft.key}`}
                     language={props.language}
                     owner={owner}
                     task={props.task}
                     autoFocus
+                    initialContent={unsentDraft.content}
+                    initialAttachments={unsentDraft.attachments}
                     onStartTask={actions.onStartConversation}
                     onStartProject={actions.onStartProjectConversation}
                     onChooseAttachments={actions.onChooseStartAttachments}
@@ -1422,6 +1438,10 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                       onRespond={(_requestId, response) => respondToPlanImplementationRequest(blockingPlanImplementationRequest, response)}
                     />
                   </section>
+                ) : freshStartRequired ? (
+                  unsentDraft.submissions.length ? (
+                    <UnsentConversationContent language={props.language} submissions={unsentDraft.submissions} onRecover={() => setStartFreshOpen(true)} />
+                  ) : null
                 ) : (
                   <ConversationComposer
                     textareaRef={composerRef}
@@ -1443,7 +1463,6 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                     onRetryQueue={actions.onRestoreArchivedConversation}
                     runtimeSettings={composerRuntimeSettings}
                     onRuntimeSettingsChange={setComposerRuntimeSettings}
-                    readOnly={nonResumableNative || Boolean(props.state.error?.recoveryRequired)}
                     permissionMode={props.state.snapshot?.permissionMode ?? 'read-only'}
                     onPermissionModeChange={actions.onPermissionModeChange}
                     collaborationMode={props.state.snapshot?.collaborationMode ?? 'default'}
@@ -1619,6 +1638,8 @@ function NewConversationComposer(props: {
   owner?: SessionConversationOwner;
   task: SessionWorkspaceTask | null;
   autoFocus?: boolean;
+  initialContent?: string;
+  initialAttachments?: NativeConversationAttachment[];
   loadState?: SessionWorkspaceProps['loadState'];
   loadError?: string | null;
   onStartTask?: SessionWorkspaceActions['onStartConversation'];
@@ -1627,8 +1648,8 @@ function NewConversationComposer(props: {
 }) {
   const copy = labels[props.language];
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
-  const [content, setContent] = useState('');
-  const [attachments, setAttachments] = useState<NativeConversationAttachment[]>([]);
+  const [content, setContent] = useState(() => props.initialContent ?? '');
+  const [attachments, setAttachments] = useState<NativeConversationAttachment[]>(() => [...(props.initialAttachments ?? [])]);
   const [permissionMode, setPermissionMode] = useState<NativePermissionMode>('auto');
   const [collaborationMode, setCollaborationMode] = useState<NativeCollaborationMode>('default');
   const [isComposing, setIsComposing] = useState(false);
@@ -1778,6 +1799,60 @@ function NewConversationComposer(props: {
             </span>
           </div>
         </div>
+      </section>
+    </section>
+  );
+}
+
+interface UnsentConversationDraft {
+  key: string;
+  content: string;
+  attachments: NativeConversationAttachment[];
+  submissions: NativeQueuedSubmission[];
+}
+
+function createUnsentConversationDraft(submissions: readonly NativeQueuedSubmission[] | undefined): UnsentConversationDraft {
+  const unsent = (submissions ?? []).filter((submission) => (submission.status === 'queued' || submission.status === 'paused') && !submission.providerTurnId).sort((left, right) => left.position - right.position);
+  const attachments = unsent.flatMap((submission) => submission.attachments ?? []);
+  return {
+    key: unsent.map((submission) => submission.id).join(':'),
+    content: unsent
+      .map((submission) => submission.content.trim())
+      .filter(Boolean)
+      .join('\n\n'),
+    attachments: mergeConversationAttachments([], attachments),
+    submissions: unsent,
+  };
+}
+
+function UnsentConversationContent(props: { language: SessionUiLanguage; submissions: NativeQueuedSubmission[]; onRecover: () => void }) {
+  const copy = labels[props.language];
+  return (
+    <section className="session-unsent-content" aria-label={copy.unsent}>
+      <section className="session-queue session-unsent-queue">
+        <header>
+          <span>
+            <strong>{copy.unsent}</strong>
+            <small>{copy.unsentHelp}</small>
+          </span>
+          <button type="button" onClick={props.onRecover}>
+            {copy.recoverUnsent}
+          </button>
+        </header>
+        <ol>
+          {props.submissions.map((submission) => (
+            <li key={submission.id}>
+              <span className="session-queue-copy">{submission.content.trim() || copy.attachmentOnly}</span>
+              {submission.attachments?.length ? (
+                <ul className="session-unsent-attachments" aria-label={copy.unsentAttachments}>
+                  {submission.attachments.map((attachment) => (
+                    <li key={conversationAttachmentIdentity(attachment)}>{attachment.name}</li>
+                  ))}
+                </ul>
+              ) : null}
+            </li>
+          ))}
+        </ol>
       </section>
     </section>
   );
