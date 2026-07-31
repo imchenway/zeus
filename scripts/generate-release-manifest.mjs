@@ -66,6 +66,7 @@ export function renderReleaseManifest(input) {
     signed: Boolean(input.signed),
     notarized: Boolean(input.notarized),
     minimumSystemVersion: input.minimumSystemVersion ?? '13.0',
+    executionHostProtocolVersion: Number.isInteger(input.executionHostProtocolVersion) && input.executionHostProtocolVersion > 0 ? input.executionHostProtocolVersion : 1,
     // 只写入真实产物名、hash 和下载地址，不包含任何本机 dist 绝对路径。
     artifacts: (input.artifacts ?? []).map((artifact) => ({
       arch: artifact.arch,

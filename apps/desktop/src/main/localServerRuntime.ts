@@ -1,13 +1,20 @@
-import { randomBytes } from 'node:crypto';
-import { mkdir, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
-import { createCodexAppServerManager } from '@zeus/ai-runtime';
+import { spawn } from 'node:child_process';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { lstat, mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { createCodexRuntimeGenerationManager } from '@zeus/ai-runtime';
+import { hasCodexFinalizationOwnershipClaim, startZeusLocalServer, type BrowserAutomationPort, type RunningZeusLocalServer } from '@zeus/local-server';
+import { startDesktopBrowserAutomationBridge } from './browserAutomationBridge.js';
 import {
-  hasCodexFinalizationOwnershipClaim,
-  startZeusLocalServer,
-  type BrowserAutomationPort,
-  type RunningZeusLocalServer,
-} from '@zeus/local-server';
+  createExecutionHostControlClient,
+  executionHostProtocolVersion,
+  readExecutionHostRendezvous,
+  writeExecutionHostBootstrap,
+  type ExecutionHostRendezvous,
+  type ExecutionHostRuntimeDescriptor,
+  type ExecutionHostWorkStatus,
+} from './executionHostProtocol.js';
 
 export interface RendererLocalServerConfig {
   baseUrl: string;
@@ -18,24 +25,46 @@ export interface DesktopLocalServerRuntime {
   dbPath: string;
   configPath: string;
   config: RendererLocalServerConfig;
-  readonly server: RunningZeusLocalServer;
-  close: () => Promise<void>;
+  readonly server?: RunningZeusLocalServer;
+  executionHost: {
+    mode: 'embedded' | 'detached';
+    instanceId: string | null;
+    pid: number;
+    protocolVersion: number;
+  };
+  getStatus: () => Promise<ExecutionHostWorkStatus>;
+  activateCodexRuntime: (runtime: ExecutionHostRuntimeDescriptor) => Promise<void>;
+  stopActiveWork: () => Promise<void>;
+  close: (mode?: DesktopLocalServerCloseMode) => Promise<void>;
 }
+
+export type DesktopLocalServerCloseMode = 'continue_in_background' | 'upgrade_handoff' | 'final_quit';
 
 export interface StartDesktopLocalServerOptions {
   userDataPath: string;
   projectRoot: string;
+  appVersion?: string;
+  currentAppVersion?: () => string;
+  apiToken?: string;
   telegramToken?: string;
   telegramAllowedUserIds?: number[];
   codexNativeEnabled?: boolean;
-  codexRuntimeCommandPath?: string;
-  codexRuntimeBinaryVersion?: string;
+  codexRuntime?: ExecutionHostRuntimeDescriptor;
   codexLegacyImportRoot?: string;
+  releaseUpdateManifestUrl?: string;
+  allowUntrustedReleaseUpdateTest?: boolean;
   taskAttachmentRoot?: string;
   browserAttachmentRoot?: string;
   conversationAttachmentRoot?: string;
   conversationAttachmentGrantSecret?: string;
+  conversationAttachmentGrantSecretPath?: string;
   browserAutomation?: BrowserAutomationPort;
+  executionHost?: {
+    instanceId: string;
+    protocolVersion: number;
+    startedAt: string;
+    mode: 'embedded' | 'detached';
+  };
   onRestarted?: (config: RendererLocalServerConfig) => void | Promise<void>;
 }
 
@@ -70,13 +99,93 @@ async function writeDesktopLocalAppConfig(input: { configPath: string; userDataP
   await writeFile(input.configPath, `${JSON.stringify(configFile, null, 2)}\n`, 'utf8');
 }
 
-/** Electron Main 启动本地服务，并只把本机 baseUrl 与临时 token 暴露给 Renderer。 */
+/**
+ * Electron Main 只连接独立执行宿主。宿主进程使用 Electron 的 Node 模式启动并脱离父进程，
+ * 因而窗口重启、Main 退出或 App 原子替换不会直接终止正在执行的轮次。
+ */
 export async function startDesktopLocalServer(options: StartDesktopLocalServerOptions): Promise<DesktopLocalServerRuntime> {
-  const apiToken = randomBytes(24).toString('base64url');
+  if (!options.browserAutomation) throw new Error('Zeus execution-host requires the Electron BrowserHost bridge.');
+  if (!options.conversationAttachmentGrantSecretPath) throw new Error('Zeus execution-host requires a durable conversation attachment grant secret path.');
+
+  const browserBridge = await startDesktopBrowserAutomationBridge(options.browserAutomation);
+  const leaseId = randomUUID();
+  let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
+  let closePromise: Promise<void> | undefined;
+  try {
+    const connection = await connectOrLaunchExecutionHost(options);
+    const client = createExecutionHostControlClient(connection);
+    await client.registerBrowserBridge({
+      leaseId,
+      baseUrl: browserBridge.baseUrl,
+      token: browserBridge.token,
+      appVersion: options.appVersion?.trim() || '0.0.0',
+      codexRuntime: options.codexRuntime,
+    });
+    heartbeatTimer = setInterval(() => {
+      void client.heartbeat(leaseId).catch(() => undefined);
+    }, 5_000);
+    heartbeatTimer.unref();
+
+    return {
+      dbPath: connection.dbPath,
+      configPath: join(options.userDataPath, 'zeus.config.json'),
+      config: {
+        baseUrl: connection.baseUrl,
+        apiToken: connection.apiToken,
+      },
+      executionHost: {
+        mode: 'detached',
+        instanceId: connection.instanceId,
+        pid: connection.pid,
+        protocolVersion: connection.protocolVersion,
+      },
+      getStatus: async () => (await client.health()).work,
+      activateCodexRuntime: async () => undefined,
+      stopActiveWork: async () => {
+        const result = await client.stopActiveWork();
+        if (result.failedTurns.length > 0) {
+          throw new Error(`Zeus 无法停止 ${result.failedTurns.length} 个执行轮次。`);
+        }
+      },
+      close: (mode = 'final_quit') => {
+        if (closePromise) return closePromise;
+        closePromise = (async () => {
+          if (heartbeatTimer) {
+            clearInterval(heartbeatTimer);
+            heartbeatTimer = undefined;
+          }
+          const errors: unknown[] = [];
+          try {
+            if (mode === 'final_quit') await client.shutdown();
+            else await client.detach(leaseId);
+          } catch (error) {
+            errors.push(error);
+          }
+          try {
+            await browserBridge.close();
+          } catch (error) {
+            errors.push(error);
+          }
+          throwCollectedCleanupErrors(errors, 'Zeus desktop execution-host disconnect failed.');
+        })();
+        return closePromise;
+      },
+    };
+  } catch (error) {
+    await browserBridge.close().catch(() => undefined);
+    throw error;
+  }
+}
+
+/** 独立执行宿主拥有 Local Server、SQLite 与 Codex app-server；该函数不能由 Renderer 生命周期直接关闭。 */
+export async function startOwnedDesktopLocalServer(options: StartDesktopLocalServerOptions): Promise<DesktopLocalServerRuntime> {
+  const apiToken = options.apiToken ?? randomBytes(24).toString('base64url');
   const dbPath = join(options.userDataPath, 'zeus.db');
   const configPath = join(options.userDataPath, 'zeus.config.json');
   const restartDelayMs = 1_000;
-  const codexAppServerManager = createCodexAppServerManager();
+  const codexAppServerManager = createCodexRuntimeGenerationManager();
+  if (options.codexRuntime) await validateMaterializedCodexRuntime(options.codexRuntime, options.userDataPath);
+  let activeCodexRuntime = options.codexRuntime;
   let closingIntentionally = false;
   let restartTimer: ReturnType<typeof setTimeout> | undefined;
   let restartPromise: Promise<void> | undefined;
@@ -118,17 +227,21 @@ export async function startDesktopLocalServer(options: StartDesktopLocalServerOp
       localConfigPath: configPath,
       apiToken,
       projectRoot: options.projectRoot,
+      currentAppVersion: options.currentAppVersion ?? options.appVersion,
       telegramToken: options.telegramToken,
       telegramAllowedUserIds: options.telegramAllowedUserIds,
       codexNativeEnabled: options.codexNativeEnabled ?? true,
-      codexRuntimeCommandPath: options.codexRuntimeCommandPath,
-      codexRuntimeBinaryVersion: options.codexRuntimeBinaryVersion,
+      codexRuntimeCommandPath: () => activeCodexRuntime?.commandPath ?? 'codex',
+      codexRuntimeBinaryVersion: activeCodexRuntime?.binaryVersion,
       codexLegacyImportRoot: options.codexLegacyImportRoot,
+      releaseUpdateManifestUrl: options.releaseUpdateManifestUrl,
+      allowUntrustedReleaseUpdateTest: options.allowUntrustedReleaseUpdateTest,
       taskAttachmentRoot: options.taskAttachmentRoot,
       browserAttachmentRoot: options.browserAttachmentRoot,
       conversationAttachmentRoot: options.conversationAttachmentRoot,
       conversationAttachmentGrantSecret: options.conversationAttachmentGrantSecret,
       browserAutomation: options.browserAutomation,
+      executionHost: options.executionHost,
       codexAppServerManager,
     });
     server.server.server.once('close', () => {
@@ -182,6 +295,43 @@ export async function startDesktopLocalServer(options: StartDesktopLocalServerOp
       return currentServer;
     },
     config,
+    executionHost: {
+      mode: options.executionHost?.mode ?? 'embedded',
+      instanceId: options.executionHost?.instanceId ?? null,
+      pid: process.pid,
+      protocolVersion: options.executionHost?.protocolVersion ?? executionHostProtocolVersion,
+    },
+    getStatus: async () => {
+      const response = await fetch(`${config.baseUrl}/api/execution-host/status`, {
+        headers: { authorization: `Bearer ${config.apiToken}` },
+        signal: AbortSignal.timeout(5_000),
+      });
+      if (!response.ok) throw new Error(`Zeus execution-host status failed with HTTP ${response.status}.`);
+      return (await response.json()) as ExecutionHostWorkStatus;
+    },
+    activateCodexRuntime: async (runtime) => {
+      if (activeCodexRuntime?.artifactSha256 === runtime.artifactSha256 && activeCodexRuntime.commandPath === runtime.commandPath) return;
+      await validateMaterializedCodexRuntime(runtime, options.userDataPath);
+      const previous = activeCodexRuntime;
+      activeCodexRuntime = runtime;
+      try {
+        await codexAppServerManager.ensureReady({
+          commandPath: runtime.commandPath,
+          ...(options.codexLegacyImportRoot ? { externalAgentHome: await realpath(options.codexLegacyImportRoot) } : {}),
+        });
+      } catch (error) {
+        if (activeCodexRuntime === runtime) activeCodexRuntime = previous;
+        throw error;
+      }
+    },
+    stopActiveWork: async () => {
+      const response = await fetch(`${config.baseUrl}/api/execution-host/stop-active`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${config.apiToken}` },
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!response.ok) throw new Error(`Zeus execution-host stop failed with HTTP ${response.status}.`);
+    },
     close: () => {
       if (closePromise) return closePromise;
       closePromise = (async () => {
@@ -230,6 +380,82 @@ export async function startDesktopLocalServer(options: StartDesktopLocalServerOp
   };
 }
 
+/** 宿主只接受 Main 已物化到内容地址目录且仍保持原摘要的运行时，避免控制面注入任意可执行文件。 */
+async function validateMaterializedCodexRuntime(runtime: ExecutionHostRuntimeDescriptor, userDataPath: string): Promise<void> {
+  const expectedPath = join(userDataPath, 'execution-host', 'runtimes', runtime.artifactSha256, 'codex');
+  const [actualPath, canonicalExpectedPath, fileStat, bytes] = await Promise.all([realpath(runtime.commandPath), realpath(expectedPath), lstat(expectedPath), readFile(expectedPath)]);
+  if (actualPath !== canonicalExpectedPath || !fileStat.isFile() || fileStat.isSymbolicLink()) {
+    throw new Error('Zeus Codex runtime is not a regular materialized executable.');
+  }
+  if (typeof process.getuid === 'function' && fileStat.uid !== process.getuid()) throw new Error('Zeus Codex runtime owner does not match the execution host.');
+  if ((fileStat.mode & 0o022) !== 0 || (fileStat.mode & 0o100) === 0) throw new Error('Zeus Codex runtime permissions are unsafe.');
+  if (createHash('sha256').update(bytes).digest('hex') !== runtime.artifactSha256) throw new Error('Zeus Codex runtime checksum changed after materialization.');
+}
+
+async function connectOrLaunchExecutionHost(options: StartDesktopLocalServerOptions): Promise<ExecutionHostRendezvous> {
+  const existing = await readHealthyExecutionHost(options.userDataPath);
+  if (existing) return existing;
+
+  const requestedInstanceId = randomUUID();
+  const bootstrapPath = await writeExecutionHostBootstrap(options.userDataPath, {
+    protocolVersion: executionHostProtocolVersion,
+    requestedInstanceId,
+    userDataPath: options.userDataPath,
+    projectRoot: options.projectRoot,
+    codexNativeEnabled: options.codexNativeEnabled ?? true,
+    codexRuntime: options.codexRuntime,
+    codexLegacyImportRoot: options.codexLegacyImportRoot ?? join(options.userDataPath, 'codex-legacy-import'),
+    releaseUpdateManifestUrl: options.releaseUpdateManifestUrl,
+    allowUntrustedReleaseUpdateTest: options.allowUntrustedReleaseUpdateTest,
+    taskAttachmentRoot: options.taskAttachmentRoot ?? join(options.userDataPath, 'task-attachments'),
+    browserAttachmentRoot: options.browserAttachmentRoot ?? join(options.userDataPath, 'browser-comments'),
+    conversationAttachmentRoot: options.conversationAttachmentRoot ?? join(options.userDataPath, 'conversation-attachments'),
+    conversationAttachmentGrantSecretPath: options.conversationAttachmentGrantSecretPath!,
+    telegramAllowedUserIds: options.telegramAllowedUserIds,
+    appVersion: options.appVersion?.trim() || '0.0.0',
+    createdAt: new Date().toISOString(),
+  });
+  const entryPath = join(dirname(fileURLToPath(import.meta.url)), 'executionHost.js');
+  const child = spawn(process.execPath, [entryPath], {
+    detached: true,
+    stdio: 'ignore',
+    env: {
+      ...process.env,
+      ELECTRON_RUN_AS_NODE: '1',
+      ZEUS_EXECUTION_HOST_BOOTSTRAP_PATH: bootstrapPath,
+      ...(options.telegramToken ? { ZEUS_TELEGRAM_BOT_TOKEN: options.telegramToken } : {}),
+    },
+  });
+  child.unref();
+
+  const deadline = Date.now() + 20_000;
+  while (Date.now() < deadline) {
+    const launched = await readHealthyExecutionHost(options.userDataPath);
+    if (launched) return launched;
+    await wait(200);
+  }
+  throw new Error('Zeus execution-host did not become ready within 20 seconds.');
+}
+
+async function readHealthyExecutionHost(userDataPath: string): Promise<ExecutionHostRendezvous | null> {
+  const rendezvous = await readExecutionHostRendezvous(userDataPath);
+  if (!rendezvous || rendezvous.protocolVersion !== executionHostProtocolVersion) return null;
+  try {
+    const status = await createExecutionHostControlClient(rendezvous).health();
+    if (status.instanceId !== rendezvous.instanceId || status.pid !== rendezvous.pid || status.protocolVersion !== executionHostProtocolVersion) return null;
+    return rendezvous;
+  } catch {
+    return null;
+  }
+}
+
+function wait(delayMs: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, delayMs);
+    timer.unref();
+  });
+}
+
 function collectCleanupError(errors: unknown[], error: unknown): void {
   if (error instanceof AggregateError) {
     errors.push(...error.errors);
@@ -250,7 +476,8 @@ export interface BeforeQuitCleanupEvent {
 
 export interface BeforeQuitCleanupResources {
   closeSystemNotifications?: () => void;
-  closeLocalServer?: () => Promise<void>;
+  resolveQuitMode?: () => Promise<DesktopLocalServerCloseMode | 'cancel'>;
+  closeLocalServer?: (mode: DesktopLocalServerCloseMode) => Promise<void>;
   shouldDeferQuit?: () => boolean;
   requestQuitConfirmation?: () => void;
   exitApp: (code: number) => void;
@@ -272,10 +499,15 @@ export function createBeforeQuitCleanupHandler(resources: BeforeQuitCleanupResou
     cleanupStarted = true;
     void (async () => {
       try {
+        const quitMode = (await resources.resolveQuitMode?.()) ?? 'final_quit';
+        if (quitMode === 'cancel') {
+          cleanupStarted = false;
+          return;
+        }
         resources.closeSystemNotifications?.();
-        await resources.closeLocalServer?.();
+        await resources.closeLocalServer?.(quitMode);
       } finally {
-        resources.exitApp(0);
+        if (cleanupStarted) resources.exitApp(0);
       }
     })();
   };

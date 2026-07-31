@@ -81,12 +81,15 @@ contextBridge.exposeInMainWorld('zeus', {
   exportPatchToFile: (patch: unknown) => ipcRenderer.invoke('zeus:export-patch', patch),
   openGraphSource: (source: unknown) => ipcRenderer.invoke('zeus:open-graph-source', source),
   openExternalHttpsUrl: (url: string) => ipcRenderer.invoke('zeus:open-external-https-url', url),
+  downloadReleaseUpdate: () => ipcRenderer.invoke('zeus:release:download-update'),
+  installReleaseUpdate: () => ipcRenderer.invoke('zeus:release:install-update'),
   listConversationResourceOpenTargets: (request: unknown) => ipcRenderer.invoke('zeus:conversation-resource:list-open-targets', request),
   openConversationResource: (request: unknown) => ipcRenderer.invoke('zeus:conversation-resource:open', request),
   exportMermaidDiagramToFile: (payload: unknown) => ipcRenderer.invoke('zeus:export-mermaid-diagram', payload),
   exportPlantUmlDiagramToFile: (payload: unknown) => ipcRenderer.invoke('zeus:export-plantuml-diagram', payload),
   notifyAppShellSettingsChanged: (settings: unknown) => ipcRenderer.invoke('zeus:app-shell-settings-changed', settings),
   notifyTaskTableLayoutDirty: (dirty: boolean) => ipcRenderer.send('zeus:task-table-layout-dirty-changed', dirty),
+  notifySensitiveRequestDraft: (payload: { requestId: string; present: boolean }) => ipcRenderer.send('zeus:sensitive-request-draft-changed', payload),
   resolveTaskTableLayoutCloseRequest: (proceed: boolean) => ipcRenderer.send('zeus:task-table-layout-close-resolution', { proceed }),
   onTaskTableLayoutCloseRequested: (listener: () => void) => {
     const handler = () => listener();

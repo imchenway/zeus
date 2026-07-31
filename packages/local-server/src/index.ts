@@ -6,13 +6,14 @@ import { dirname, isAbsolute, join, parse, relative, resolve, sep } from 'node:p
 import { getNextTaskStatus, type TaskStatus } from '@zeus/task-core';
 import { commandNeedsHighRiskConfirmation, isTaskStatusFilter, type TaskStatusFilter, validateCommandDefinitionInput, type CommandDefinition, type ConversationResource, type ConversationResourcePreview } from '@zeus/shared';
 import { type ProjectScanResult, scanProjectSource } from '@zeus/code-indexer';
-import { buildProjectGraph, type ProjectGraph } from '@zeus/graph-engine';
+import { buildProjectGraph, GRAPH_VIEW_SCHEMA_VERSION, type ProjectGraph } from '@zeus/graph-engine';
 import { createDefaultProjectConfig, normalizeProjectConfig, type ProjectConfigSnapshot, type UpdateProjectConfigBody } from '@zeus/project-core';
 import {
   type AutoUpdatePolicy,
   buildAutoUpdatePolicy,
   detectReleaseReadiness,
   evaluateReleaseUpdateAvailability,
+  parseReleaseUpdateManifest,
   type ReleaseReadiness,
   type ReleaseUpdateArtifactArch,
   type ReleaseUpdateManifest,
@@ -42,12 +43,25 @@ import { resolveConversationAttachmentGrant } from './conversationAttachmentGran
 export { createConversationAttachmentGrant, resolveConversationAttachmentGrant } from './conversationAttachmentGrant.js';
 import { createMacOSKeychainStore, getSecretPresenceLabel, type SecretPresenceLabel } from '@zeus/security-core';
 import {
+  buildTaskBranchName,
   buildGitPatchExport,
+  commitAndPushTaskWorkspace,
   confirmGitOperation,
   createGitOperationConfirmation,
   executeHighRiskGitOperation,
+  discardTaskWorktree,
   getGitDiff,
+  getGitRepositoryContext,
   getGitStatus,
+  getTaskWorkspaceReview,
+  getTaskWorkspaceFileDiff,
+  completeTaskIntegrationCommit,
+  finalizeTaskBranchIntegration,
+  prepareTaskWorktree,
+  readTaskIntegrationConflict,
+  reclaimTaskWorktree,
+  startTaskBranchIntegration,
+  writeTaskIntegrationResolution,
   type GitDiffSummary,
   type GitOperationConfirmation,
   type GitPatchExport,
@@ -84,9 +98,11 @@ import {
   RuntimeSessionRepository,
   SettingRepository,
   TaskEventRepository,
+  TaskIntegrationRepository,
   type TaskManagementStatus,
   type TaskPriority,
   TaskRepository,
+  TaskWorkspaceRepository,
   TaskTemplateRepository,
   TerminalEventRepository,
   TurnChangeFileRepository,
@@ -98,6 +114,8 @@ import {
   type ZeusRuntimeLogRecord,
   type ZeusRuntimeSessionRecord,
   type ZeusTaskRecord,
+  type ZeusTaskIntegrationRecord,
+  type ZeusTaskWorkspaceRecord,
   type ZeusDatabase,
 } from '@zeus/storage';
 import { createCodexNativeConversationCoordinator } from './codexNativeConversationCoordinator.js';
@@ -270,14 +288,23 @@ export interface CreateLocalServerOptions {
   apiToken: string;
   localConfigPath?: string;
   projectRoot?: string;
+  currentAppVersion?: string | (() => string);
+  executionHost?: {
+    instanceId: string;
+    protocolVersion: number;
+    startedAt: string;
+    mode: 'embedded' | 'detached';
+  };
   telegramToken?: string;
   telegramAllowedUserIds?: number[];
   telegramNotificationChatIds?: number[];
   codexAppServerManager?: CodexAppServerManager;
   codexNativeEnabled?: boolean;
-  codexRuntimeCommandPath?: string;
+  codexRuntimeCommandPath?: string | (() => string);
   codexRuntimeBinaryVersion?: string;
   codexLegacyImportRoot?: string;
+  releaseUpdateManifestUrl?: string;
+  allowUntrustedReleaseUpdateTest?: boolean;
   /** Electron Main 管理的任务附件目录；只允许服务端从任务记录引用。 */
   taskAttachmentRoot?: string;
   /** Electron Main 管理的浏览器截图目录；仅允许页面批注提交引用。 */
@@ -331,6 +358,7 @@ type ZeusFastifyLifecycle = FastifyInstance & {
 
 export interface GraphViewSnapshot {
   id: string;
+  schemaVersion: number;
   projectId?: string;
   projectName?: string;
   title: string;
@@ -475,8 +503,40 @@ interface ReleaseStatusSnapshot {
 
 interface ReleaseUpdateOperationSnapshot {
   accepted: boolean;
-  update: ReleaseUpdateStatus;
+  update: ReleaseUpdateStatus & { executionHost: ExecutionHostWorkStatusSnapshot };
   reason: string;
+}
+
+interface ExecutionHostWorkStatusSnapshot {
+  instanceId: string | null;
+  protocolVersion: number;
+  mode: 'embedded' | 'detached';
+  pid: number;
+  startedAt: string | null;
+  transport: {
+    state: 'idle' | 'starting' | 'ready' | 'restarting' | 'closed';
+    generationId: string | null;
+  };
+  runtimeGenerations: Array<{
+    generationId: string;
+    state: 'idle' | 'starting' | 'ready' | 'restarting' | 'closed';
+    active: boolean;
+    activeThreadCount: number;
+    pendingRequestCount: number;
+  }>;
+  activeTurnCount: number;
+  waitingRequestCount: number;
+  activeRuntimeCount: number;
+  activeCommandRunCount: number;
+  hasActiveWork: boolean;
+  observedAt: string;
+}
+
+interface ExecutionHostStopResult {
+  requestedTurnCount: number;
+  stoppedRuntimeCount: number;
+  failedTurns: Array<{ conversationId: string; providerTurnId: string; message: string }>;
+  requestedAt: string;
 }
 
 interface SaveTelegramTokenBody {
@@ -1116,6 +1176,25 @@ interface ExecuteGitOperationBody {
   targetRef?: string;
 }
 
+interface CommitTaskWorkspaceBody {
+  message?: string;
+  selectedPaths?: string[];
+  push?: boolean;
+}
+
+interface DiscardTaskWorkspaceBody {
+  confirmationText?: string;
+}
+
+interface StartTaskIntegrationBody {
+  target?: 'source' | 'current';
+  mode?: 'merge' | 'squash';
+}
+
+interface ResolveTaskIntegrationConflictBody {
+  content?: string;
+}
+
 interface CreateRuntimeSessionBody {
   projectId: string;
   taskId?: string;
@@ -1203,6 +1282,7 @@ type StartTaskConversationBody = (
       effort?: string;
       workMode?: 'default' | 'plan';
       supplementalInfo?: string;
+      workspace?: { mode: 'create'; sourceRef: string; branchName?: string } | { mode: 'existing'; workspaceId: string };
     }
   | { mode: 'resume'; conversationId: string; content: string }
   | { mode: 'reference_legacy'; sourceConversationId: string; messageIds: string[]; content: string; permissionMode?: ConversationPermissionMode }
@@ -1334,6 +1414,16 @@ export function isUnsafeCodeMapScanRoot(rootPath: string): boolean {
 function isUnsafeCodeMapScanRootError(error: unknown): error is UnsafeCodeMapScanRootError {
   return error instanceof UnsafeCodeMapScanRootError;
 }
+
+function resolveReleaseUpdateManifestUrl(configured: string | undefined, allowUntrustedTest: boolean): string {
+  const fallback = 'https://github.com/imchenway/zeus/releases/latest/download/zeus-release-manifest.json';
+  const candidate = configured?.trim() || fallback;
+  const url = new URL(candidate);
+  if (url.protocol === 'https:' && url.hostname === 'github.com' && url.pathname.startsWith('/imchenway/zeus/releases/')) return url.toString();
+  if (allowUntrustedTest && url.protocol === 'http:' && url.hostname === '127.0.0.1' && Boolean(url.port)) return url.toString();
+  throw new Error('Zeus release update manifest URL is not trusted.');
+}
+
 const telegramNotificationMaxAttempts = 3;
 const telegramRuntimeSummaryLogInterval = 5;
 const NON_CODEX_LEGACY_HISTORY_LIMIT = 12;
@@ -1354,6 +1444,8 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
   const db = await createZeusDatabase(options.dbPath);
   const projects = new ProjectRepository(db);
   const tasks = new TaskRepository(db);
+  const taskWorkspaces = new TaskWorkspaceRepository(db);
+  const taskIntegrations = new TaskIntegrationRepository(db);
   const taskEvents = new TaskEventRepository(db);
   const taskTemplates = new TaskTemplateRepository(db);
   const runtimeSessions = new RuntimeSessionRepository(db);
@@ -1386,7 +1478,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
   const readGitStatus = getGitStatus;
   const readGitDiff = getGitDiff;
   const releaseEnvironment = process.env;
-  const releaseUpdateManifestUrl = 'https://github.com/imchenway/zeus/releases/latest/download/zeus-release-manifest.json';
+  const releaseUpdateManifestUrl = resolveReleaseUpdateManifestUrl(options.releaseUpdateManifestUrl, Boolean(options.allowUntrustedReleaseUpdateTest));
   const gitConfirmations = new Map<string, GitOperationConfirmation>();
   const consumedGitConfirmationIds = new Set<string>();
   const activeProjectGraphScanIds = new Set<string>();
@@ -1452,6 +1544,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
   const ownsCodexAppServerManager = options.codexAppServerManager === undefined;
   const codexNativeEnabled = options.codexNativeEnabled !== false;
   const codexRuntimeCommandPath = options.codexRuntimeCommandPath ?? 'codex';
+  const currentCodexRuntimeCommandPath = () => (typeof codexRuntimeCommandPath === 'function' ? codexRuntimeCommandPath() : codexRuntimeCommandPath);
   const codexExternalAgentHome = options.codexLegacyImportRoot
     ? (() => {
         mkdirSync(options.codexLegacyImportRoot!, { recursive: true, mode: 0o700 });
@@ -1512,7 +1605,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     codexNativeCoordinator = createCodexNativeConversationCoordinator({
       manager: codexAppServerManager,
       enabled: codexNativeEnabled,
-      commandPath: codexRuntimeCommandPath,
+      commandPath: currentCodexRuntimeCommandPath,
       externalAgentHome: codexExternalAgentHome,
       db,
       conversations,
@@ -1574,7 +1667,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
         items: conversationItems,
         submissions: conversationSubmissions,
         manager: codexAppServerManager,
-        commandPath: codexRuntimeCommandPath,
+        commandPath: currentCodexRuntimeCommandPath(),
         externalAgentHome: codexExternalAgentHome,
       });
       if (migration.imported.length > 0 || migration.existing.length > 0 || migration.archivedSourceConversationIds.length > 0) {
@@ -1613,7 +1706,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       imports: codexLegacyImports,
       sourceRoot: codexExternalAgentHome!,
       allowedProjectRoots: () => projects.list().map((project) => project.localPath),
-      commandPath: codexRuntimeCommandPath,
+      commandPath: currentCodexRuntimeCommandPath(),
       providerBinaryVersion: options.codexRuntimeBinaryVersion ?? 'unknown',
       onUpdated: (snapshot) => publishNativeConversationEvent('codex.legacy_import.updated', snapshot),
     });
@@ -2049,6 +2142,77 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     confirmationTtlMs: telegramConfirmationTtlMs,
   });
 
+  function buildExecutionHostWorkStatusSnapshot(): ExecutionHostWorkStatusSnapshot {
+    const transport = codexAppServerManager.getState();
+    const activeTurnCount = conversationSubmissions.listRecoverable().filter((submission) => submission.status === 'dispatching' || submission.status === 'active').length;
+    const waitingRequestCount = conversations
+      .listNativeBound()
+      .flatMap((conversation) => conversationRequests.listByConversation(conversation.id))
+      .filter((request) => request.status === 'pending').length;
+    const activeRuntimeCount = aiRuntimeManager.listSessions().filter((session) => session.status === 'running').length;
+    const activeCommandRunCount = commandRuns.listActive().length;
+    return {
+      instanceId: options.executionHost?.instanceId ?? null,
+      protocolVersion: options.executionHost?.protocolVersion ?? 1,
+      mode: options.executionHost?.mode ?? 'embedded',
+      pid: process.pid,
+      startedAt: options.executionHost?.startedAt ?? null,
+      transport: {
+        state: transport.type,
+        generationId: transport.type === 'idle' || transport.type === 'closed' ? null : transport.generationId,
+      },
+      runtimeGenerations: codexAppServerManager.listRuntimeGenerations().map((generation) => ({
+        generationId: generation.generationId,
+        state: generation.state,
+        active: generation.active,
+        activeThreadCount: generation.activeThreadCount,
+        pendingRequestCount: generation.pendingRequestCount,
+      })),
+      activeTurnCount,
+      waitingRequestCount,
+      activeRuntimeCount,
+      activeCommandRunCount,
+      hasActiveWork: activeTurnCount > 0 || waitingRequestCount > 0 || activeRuntimeCount > 0 || activeCommandRunCount > 0,
+      observedAt: now().toISOString(),
+    };
+  }
+
+  server.get('/api/execution-host/status', async (): Promise<ExecutionHostWorkStatusSnapshot> => buildExecutionHostWorkStatusSnapshot());
+
+  server.post('/api/execution-host/stop-active', async (): Promise<ExecutionHostStopResult> => {
+    const requestedAt = now().toISOString();
+    const failedTurns: ExecutionHostStopResult['failedTurns'] = [];
+    const activeSubmissions = conversationSubmissions.listRecoverable().filter((submission) => (submission.status === 'dispatching' || submission.status === 'active') && submission.providerTurnId);
+    const requestedTurns = new Set<string>();
+    for (const submission of activeSubmissions) {
+      const providerTurnId = submission.providerTurnId!;
+      const identity = `${submission.conversationId}\0${providerTurnId}`;
+      if (requestedTurns.has(identity)) continue;
+      requestedTurns.add(identity);
+      try {
+        await codexNativeCoordinator.interruptTurn({
+          conversationId: submission.conversationId,
+          providerTurnId,
+        });
+      } catch (error) {
+        failedTurns.push({
+          conversationId: submission.conversationId,
+          providerTurnId,
+          message: error instanceof Error ? error.message : '无法停止正在执行的轮次。',
+        });
+      }
+    }
+    const activeRuntimeSessions = aiRuntimeManager.listSessions().filter((session) => session.status === 'running');
+    for (const session of activeRuntimeSessions) aiRuntimeManager.stopSession(session.id);
+    await db.save();
+    return {
+      requestedTurnCount: requestedTurns.size,
+      stoppedRuntimeCount: activeRuntimeSessions.length,
+      failedTurns,
+      requestedAt,
+    };
+  });
+
   server.get('/api/dashboard', async (): Promise<DashboardSnapshot> => {
     await recoverInactiveProjectGraphScans();
     const currentProjects = projects.list();
@@ -2249,6 +2413,57 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       return reply.code(204).send();
     },
   );
+
+  server.post('/api/tasks/:taskId/integrations/:integrationId/conflict-assist', async (request: FastifyRequest<{ Params: { taskId: string; integrationId: string }; Querystring: { path?: string } }>, reply) => {
+    const resolved = resolveTaskIntegrationRequest(request.params.taskId, request.params.integrationId);
+    if ('error' in resolved) return reply.code(resolved.status).send(resolved.error);
+    if (!resolved.integration.integrationPath) return reply.code(409).send({ error: 'ZEUS_TASK_INTEGRATION_PATH_UNAVAILABLE', message: 'Integration worktree is unavailable.' });
+    const path = request.query.path?.trim();
+    if (!path) return reply.code(400).send({ error: 'ZEUS_GIT_PATH_REQUIRED', message: 'path is required' });
+    try {
+      const conflict = await readTaskIntegrationConflict(resolved.integration.integrationPath, path);
+      const combinedLength = conflict.base.length + conflict.source.length + conflict.task.length;
+      if (combinedLength > 240_000) {
+        return reply.code(413).send({ error: 'ZEUS_TASK_CONFLICT_TOO_LARGE', message: 'Conflict content is too large for Codex assistance.' });
+      }
+      const prompt = [
+        '请协助解决一个 Git 三方合并冲突。',
+        '只输出最终文件完整内容，不要输出 Markdown 代码围栏、解释或省略号。',
+        `文件：${path}`,
+        `目标分支：${resolved.integration.targetBranch}`,
+        `任务分支：${resolved.workspace.branchName}`,
+        '',
+        '共同基线：',
+        conflict.base,
+        '',
+        '目标分支版本：',
+        conflict.source,
+        '',
+        '任务分支版本：',
+        conflict.task,
+      ].join('\n');
+      const operation = await codexNativeCoordinator.startEphemeralConversation({
+        projectId: resolved.project.id,
+        projectLocalPath: resolved.integration.integrationPath,
+        title: `冲突协助：${path}`.slice(0, 64),
+        prompt,
+        model: await resolveCodexModel(resolved.project),
+        idempotencyKey: randomUUID(),
+        clientUserMessageId: randomUUID(),
+      });
+      if (operation.status !== 'active' || !operation.providerTurnId) {
+        throw nativeApiError('ZEUS_CODEX_EPHEMERAL_DISPATCH_FAILED', 'Codex conflict assistance could not start.');
+      }
+      const completed = await codexNativeCoordinator.waitForTurnResult({
+        conversationId: operation.conversationId,
+        providerTurnId: operation.providerTurnId,
+        timeoutMs: runtimeSettings.executionTimeoutSeconds * 1_000,
+      });
+      return { path, suggestedContent: stripOptionalMarkdownFence(completed.answer) };
+    } catch (error) {
+      return sendTaskGitApiError(reply, error);
+    }
+  });
 
   server.get(
     '/api/projects/:projectId/conversations/:conversationId',
@@ -3304,6 +3519,372 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     },
   );
 
+  server.get('/api/tasks/:taskId/git-workspaces', async (request: FastifyRequest<{ Params: { taskId: string } }>, reply) => {
+    const task = tasks.getById(request.params.taskId);
+    if (!task) return reply.code(404).send({ error: 'ZEUS_TASK_NOT_FOUND', message: 'Task not found' });
+    const project = projects.getById(task.projectId);
+    if (!project) return reply.code(404).send({ error: 'ZEUS_PROJECT_NOT_FOUND', message: 'Project not found' });
+    const repository = await getGitRepositoryContext(project.localPath);
+    const items = await Promise.all(
+      taskWorkspaces.listByTask(task.id).map(async (workspace) => {
+        const activeConversationCount = countTaskWorkspaceActiveConversations(workspace);
+        if (!workspace.worktreePath || workspace.state === 'reclaimed' || workspace.state === 'merged' || workspace.state === 'discarded') {
+          return { ...workspace, activeConversationCount, review: null };
+        }
+        try {
+          return { ...workspace, activeConversationCount, review: await getTaskWorkspaceReview(workspace.worktreePath) };
+        } catch (error) {
+          return { ...workspace, activeConversationCount, review: null, reviewError: error instanceof Error ? error.message : 'Task workspace review failed.' };
+        }
+      }),
+    );
+    return { taskId: task.id, projectId: project.id, primaryBranch: repository.branch || null, items, workspaces: items };
+  });
+
+  server.get('/api/tasks/:taskId/git-workspaces/:workspaceId/file-diff', async (request: FastifyRequest<{ Params: { taskId: string; workspaceId: string }; Querystring: { path?: string } }>, reply) => {
+    const resolved = resolveTaskWorkspaceRequest(request.params.taskId, request.params.workspaceId);
+    if ('error' in resolved) return reply.code(resolved.status).send(resolved.error);
+    const path = request.query.path?.trim();
+    if (!path) return reply.code(400).send({ error: 'ZEUS_GIT_PATH_REQUIRED', message: 'path is required' });
+    if (!resolved.workspace.worktreePath) return reply.code(409).send({ error: 'ZEUS_TASK_WORKTREE_UNAVAILABLE', message: 'Task worktree is not available.' });
+    try {
+      return await getTaskWorkspaceFileDiff(resolved.workspace.worktreePath, path);
+    } catch (error) {
+      return sendTaskGitApiError(reply, error);
+    }
+  });
+
+  server.post('/api/tasks/:taskId/git-workspaces/:workspaceId/commit', async (request: FastifyRequest<{ Params: { taskId: string; workspaceId: string }; Body: CommitTaskWorkspaceBody }>, reply) => {
+    const resolved = resolveTaskWorkspaceRequest(request.params.taskId, request.params.workspaceId);
+    if ('error' in resolved) return reply.code(resolved.status).send(resolved.error);
+    const { task, workspace } = resolved;
+    try {
+      assertTaskWorkspaceWritable(workspace);
+    } catch (error) {
+      return sendTaskGitApiError(reply, error);
+    }
+    if (!workspace.worktreePath) return reply.code(409).send({ error: 'ZEUS_TASK_WORKTREE_UNAVAILABLE', message: 'Task worktree is not available.' });
+    const selectedPaths = Array.isArray(request.body?.selectedPaths) && request.body.selectedPaths.every((path) => typeof path === 'string') ? request.body.selectedPaths : [];
+    try {
+      const result = await commitAndPushTaskWorkspace({
+        cwd: workspace.worktreePath,
+        message: request.body?.message?.trim() || `${task.taskCode}: ${task.title}`,
+        selectedPaths,
+        remoteName: workspace.remoteName,
+        remoteBranch: workspace.remoteBranch,
+        push: request.body?.push === true,
+      });
+      taskWorkspaces.update(workspace.id, { headSha: result.headSha, state: 'ready', lastError: null });
+      recordTaskEvent({
+        taskId: task.id,
+        eventType: result.pushed ? 'task.git_workspace.pushed' : 'task.git_workspace.committed',
+        title: result.pushed ? '任务分支已提交并推送' : '任务分支已提交',
+        payload: { workspaceId: workspace.id, branchName: workspace.branchName, ...result },
+      });
+      appendAuditLog({
+        actorType: 'local_api',
+        action: result.pushed ? 'task.git_workspace.commit_push' : 'task.git_workspace.commit',
+        resourceType: 'task_workspace',
+        resourceId: workspace.id,
+        payload: { taskId: task.id, projectId: task.projectId, branchName: workspace.branchName, selectedPaths, ...result },
+        createdAt: new Date().toISOString(),
+      });
+      await db.save();
+      return { workspace: taskWorkspaces.getById(workspace.id), result, review: await getTaskWorkspaceReview(workspace.worktreePath) };
+    } catch (error) {
+      taskWorkspaces.update(workspace.id, { state: 'failed', lastError: error instanceof Error ? error.message : 'Task workspace commit failed.' });
+      await db.save();
+      return sendTaskGitApiError(reply, error);
+    }
+  });
+
+  server.post('/api/tasks/:taskId/git-workspaces/:workspaceId/stop-sessions', async (request: FastifyRequest<{ Params: { taskId: string; workspaceId: string } }>, reply) => {
+    const resolved = resolveTaskWorkspaceRequest(request.params.taskId, request.params.workspaceId);
+    if ('error' in resolved) return reply.code(resolved.status).send(resolved.error);
+    let interrupted = 0;
+    let cancelled = 0;
+    try {
+      for (const conversation of conversations.listByWorkspace(resolved.workspace.id)) {
+        const activeTurn = [...conversationTurns.listByConversation(conversation.id)].reverse().find((turn) => (turn.status === 'running' || turn.status === 'waiting' || turn.status === 'dispatching') && turn.providerTurnId);
+        if (activeTurn?.providerTurnId) {
+          await codexNativeCoordinator.interruptTurn({ conversationId: conversation.id, providerTurnId: activeTurn.providerTurnId });
+          interrupted += 1;
+        }
+        for (const submission of conversationSubmissions.listByConversation(conversation.id)) {
+          if (submission.status !== 'queued' && submission.status !== 'paused' && submission.status !== 'failed') continue;
+          conversationSubmissions.updateStatus(submission.id, 'cancelled', { resolvedAt: new Date().toISOString() });
+          cancelled += 1;
+        }
+      }
+      recordTaskEvent({
+        taskId: resolved.task.id,
+        eventType: 'task.git_workspace.sessions_stopped',
+        title: '任务分支上的活动会话已停止',
+        payload: { workspaceId: resolved.workspace.id, interrupted, cancelled },
+      });
+      await db.save();
+      return { workspaceId: resolved.workspace.id, interrupted, cancelled };
+    } catch (error) {
+      return sendNativeConversationApiError(reply, error);
+    }
+  });
+
+  server.post('/api/tasks/:taskId/git-workspaces/:workspaceId/reclaim', async (request: FastifyRequest<{ Params: { taskId: string; workspaceId: string } }>, reply) => {
+    const resolved = resolveTaskWorkspaceRequest(request.params.taskId, request.params.workspaceId);
+    if ('error' in resolved) return reply.code(resolved.status).send(resolved.error);
+    const { task, project, workspace } = resolved;
+    try {
+      assertTaskWorkspaceWritable(workspace);
+    } catch (error) {
+      return sendTaskGitApiError(reply, error);
+    }
+    if (!workspace.worktreePath) {
+      if (workspace.state === 'reclaimed') return { workspace };
+      return reply.code(409).send({ error: 'ZEUS_TASK_WORKTREE_UNAVAILABLE', message: 'Task worktree is not available.' });
+    }
+    try {
+      const result = await reclaimTaskWorktree({
+        repositoryPath: project.localPath,
+        worktreePath: workspace.worktreePath,
+        remoteName: workspace.remoteName,
+        remoteBranch: workspace.remoteBranch,
+        sourceHeadSha: workspace.sourceHeadSha,
+      });
+      const updated = taskWorkspaces.update(workspace.id, { worktreePath: null, headSha: result.headSha, state: 'reclaimed', lastError: null });
+      recordTaskEvent({
+        taskId: task.id,
+        eventType: 'task.git_workspace.reclaimed',
+        title: '任务 worktree 已回收',
+        payload: { workspaceId: workspace.id, branchName: workspace.branchName, ...result },
+      });
+      await db.save();
+      return { workspace: updated, result };
+    } catch (error) {
+      taskWorkspaces.update(workspace.id, { state: 'failed', lastError: error instanceof Error ? error.message : 'Task worktree reclaim failed.' });
+      await db.save();
+      return sendTaskGitApiError(reply, error);
+    }
+  });
+
+  server.post('/api/tasks/:taskId/git-workspaces/:workspaceId/discard', async (request: FastifyRequest<{ Params: { taskId: string; workspaceId: string }; Body: DiscardTaskWorkspaceBody }>, reply) => {
+    const resolved = resolveTaskWorkspaceRequest(request.params.taskId, request.params.workspaceId);
+    if ('error' in resolved) return reply.code(resolved.status).send(resolved.error);
+    const { task, project, workspace } = resolved;
+    try {
+      assertTaskWorkspaceWritable(workspace);
+    } catch (error) {
+      return sendTaskGitApiError(reply, error);
+    }
+    try {
+      const result = await discardTaskWorktree({
+        repositoryPath: project.localPath,
+        worktreePath: workspace.worktreePath,
+        branchName: workspace.branchName,
+        confirmationText: request.body?.confirmationText?.trim() ?? '',
+      });
+      const updated = taskWorkspaces.update(workspace.id, { worktreePath: null, state: 'discarded', lastError: null });
+      recordTaskEvent({
+        taskId: task.id,
+        eventType: 'task.git_workspace.discarded',
+        title: '任务本地分支已放弃',
+        payload: { workspaceId: workspace.id, remoteBranchPreserved: true, ...result },
+      });
+      await db.save();
+      return { workspace: updated, result };
+    } catch (error) {
+      return sendTaskGitApiError(reply, error);
+    }
+  });
+
+  server.get('/api/tasks/:taskId/integrations', async (request: FastifyRequest<{ Params: { taskId: string } }>, reply) => {
+    const task = tasks.getById(request.params.taskId);
+    if (!task) return reply.code(404).send({ error: 'ZEUS_TASK_NOT_FOUND', message: 'Task not found' });
+    return { taskId: task.id, items: taskIntegrations.listByTask(task.id), integrations: taskIntegrations.listByTask(task.id) };
+  });
+
+  server.post('/api/tasks/:taskId/git-workspaces/:workspaceId/integrate', async (request: FastifyRequest<{ Params: { taskId: string; workspaceId: string }; Body: StartTaskIntegrationBody }>, reply) => {
+    const resolved = resolveTaskWorkspaceRequest(request.params.taskId, request.params.workspaceId);
+    if ('error' in resolved) return reply.code(resolved.status).send(resolved.error);
+    const { task, project, workspace } = resolved;
+    if (workspace.state !== 'reclaimed' && workspace.state !== 'merged') {
+      return reply.code(409).send({
+        error: 'ZEUS_TASK_BRANCH_NOT_REMOTE_BACKED',
+        message: 'Finish the task branch commit, push, verification, and worktree reclaim before merging it.',
+      });
+    }
+    const repository = await getGitRepositoryContext(project.localPath);
+    if (!repository.isRepository || repository.branch === 'detached') {
+      return reply.code(409).send({ error: 'ZEUS_TARGET_BRANCH_UNAVAILABLE', message: 'Primary workspace must be on a named branch.' });
+    }
+    const targetBranch = request.body?.target === 'current' ? repository.branch : workspace.sourceBranch;
+    const mode = request.body?.mode === 'squash' ? 'squash' : 'merge';
+    const primaryReview = await getTaskWorkspaceReview(project.localPath);
+    if (primaryReview.branch !== targetBranch) {
+      return reply.code(409).send({
+        error: 'ZEUS_TARGET_BRANCH_CHANGED',
+        message: `Primary workspace must be on ${targetBranch} before starting this integration.`,
+      });
+    }
+    if (!primaryReview.clean) {
+      return reply.code(409).send({
+        error: 'ZEUS_TARGET_WORKSPACE_DIRTY',
+        message: 'Primary workspace must be clean before starting task branch integration.',
+      });
+    }
+    const active = taskIntegrations.findActive(workspace.id, targetBranch);
+    if (active) return reply.code(active.state === 'conflicted' ? 202 : 409).send({ integration: active });
+    const integrationId = `task_integration_${randomUUID()}`;
+    const integration = taskIntegrations.create({
+      id: integrationId,
+      projectId: project.id,
+      taskId: task.id,
+      workspaceId: workspace.id,
+      targetBranch,
+      targetHeadSha: primaryReview.headSha,
+      mode,
+      state: 'preparing',
+    });
+    await db.save();
+    try {
+      const started = await startTaskBranchIntegration({
+        repositoryPath: project.localPath,
+        projectSlug: project.slug,
+        integrationId: integration.id,
+        targetBranch,
+        taskBranch: workspace.branchName,
+        mode,
+        commitMessage: `${task.taskCode}: 合入 ${workspace.branchName}`,
+      });
+      let updated = taskIntegrations.update(integration.id, {
+        integrationPath: started.integrationPath,
+        resultHeadSha: started.resultHeadSha,
+        state: started.state === 'conflicted' ? 'conflicted' : 'preparing',
+        conflictFiles: started.conflictFiles,
+        lastError: null,
+      });
+      await db.save();
+      if (started.state === 'conflicted') {
+        recordTaskEvent({
+          taskId: task.id,
+          eventType: 'task.git_integration.conflicted',
+          title: '任务分支合入需要处理冲突',
+          payload: { integrationId: integration.id, workspaceId: workspace.id, targetBranch, conflictFiles: started.conflictFiles },
+        });
+        await db.save();
+        return reply.code(202).send({ integration: updated });
+      }
+      const finalized = await finalizeTaskBranchIntegration({
+        repositoryPath: project.localPath,
+        integrationPath: started.integrationPath,
+        targetBranch,
+        targetHeadSha: started.targetHeadSha,
+        resultHeadSha: started.resultHeadSha!,
+        remoteName: workspace.remoteName,
+      });
+      updated = taskIntegrations.update(integration.id, {
+        integrationPath: null,
+        resultHeadSha: finalized.resultHeadSha,
+        state: 'merged',
+        conflictFiles: [],
+        lastError: null,
+      });
+      if (targetBranch === workspace.sourceBranch) taskWorkspaces.update(workspace.id, { state: 'merged', headSha: workspace.headSha, lastError: null });
+      recordTaskEvent({
+        taskId: task.id,
+        eventType: 'task.git_integration.merged',
+        title: targetBranch === workspace.sourceBranch ? '任务分支已合入来源分支' : `任务分支已合入 ${targetBranch}`,
+        payload: { integrationId: integration.id, workspaceId: workspace.id, mode, sourceDelivered: targetBranch === workspace.sourceBranch, ...finalized },
+      });
+      await db.save();
+      return { integration: updated, result: finalized };
+    } catch (error) {
+      taskIntegrations.update(integration.id, { state: 'failed', lastError: error instanceof Error ? error.message : 'Task branch integration failed.' });
+      await db.save();
+      return sendTaskGitApiError(reply, error);
+    }
+  });
+
+  server.get('/api/tasks/:taskId/integrations/:integrationId/conflict', async (request: FastifyRequest<{ Params: { taskId: string; integrationId: string }; Querystring: { path?: string } }>, reply) => {
+    const resolved = resolveTaskIntegrationRequest(request.params.taskId, request.params.integrationId);
+    if ('error' in resolved) return reply.code(resolved.status).send(resolved.error);
+    if (!resolved.integration.integrationPath) return reply.code(409).send({ error: 'ZEUS_TASK_INTEGRATION_PATH_UNAVAILABLE', message: 'Integration worktree is unavailable.' });
+    const path = request.query.path?.trim();
+    if (!path) return reply.code(400).send({ error: 'ZEUS_GIT_PATH_REQUIRED', message: 'path is required' });
+    try {
+      return await readTaskIntegrationConflict(resolved.integration.integrationPath, path);
+    } catch (error) {
+      return sendTaskGitApiError(reply, error);
+    }
+  });
+
+  server.put(
+    '/api/tasks/:taskId/integrations/:integrationId/conflict',
+    async (request: FastifyRequest<{ Params: { taskId: string; integrationId: string }; Querystring: { path?: string }; Body: ResolveTaskIntegrationConflictBody }>, reply) => {
+      const resolved = resolveTaskIntegrationRequest(request.params.taskId, request.params.integrationId);
+      if ('error' in resolved) return reply.code(resolved.status).send(resolved.error);
+      if (!resolved.integration.integrationPath) return reply.code(409).send({ error: 'ZEUS_TASK_INTEGRATION_PATH_UNAVAILABLE', message: 'Integration worktree is unavailable.' });
+      if (typeof request.body?.content !== 'string') return reply.code(400).send({ error: 'ZEUS_TASK_CONFLICT_CONTENT_REQUIRED', message: 'Resolved content is required.' });
+      const path = request.query.path?.trim();
+      if (!path) return reply.code(400).send({ error: 'ZEUS_GIT_PATH_REQUIRED', message: 'path is required' });
+      try {
+        const result = await writeTaskIntegrationResolution(resolved.integration.integrationPath, path, request.body.content);
+        const integration = taskIntegrations.update(resolved.integration.id, { conflictFiles: result.remainingConflictFiles, state: 'conflicted', lastError: null });
+        await db.save();
+        return { integration, result };
+      } catch (error) {
+        return sendTaskGitApiError(reply, error);
+      }
+    },
+  );
+
+  server.post('/api/tasks/:taskId/integrations/:integrationId/finalize', async (request: FastifyRequest<{ Params: { taskId: string; integrationId: string } }>, reply) => {
+    const resolved = resolveTaskIntegrationRequest(request.params.taskId, request.params.integrationId);
+    if ('error' in resolved) return reply.code(resolved.status).send(resolved.error);
+    const { task, project, integration, workspace } = resolved;
+    if (!integration.integrationPath) return reply.code(409).send({ error: 'ZEUS_TASK_INTEGRATION_PATH_UNAVAILABLE', message: 'Integration worktree is unavailable.' });
+    try {
+      const commit = await completeTaskIntegrationCommit({
+        integrationPath: integration.integrationPath,
+        mode: integration.mode,
+        commitMessage: `${task.taskCode}: 合入 ${workspace.branchName}`,
+      });
+      const finalized = await finalizeTaskBranchIntegration({
+        repositoryPath: project.localPath,
+        integrationPath: integration.integrationPath,
+        targetBranch: integration.targetBranch,
+        targetHeadSha: integration.targetHeadSha,
+        resultHeadSha: commit.resultHeadSha,
+        remoteName: workspace.remoteName,
+      });
+      const updated = taskIntegrations.update(integration.id, {
+        integrationPath: null,
+        resultHeadSha: finalized.resultHeadSha,
+        state: 'merged',
+        conflictFiles: [],
+        lastError: null,
+      });
+      if (integration.targetBranch === workspace.sourceBranch) taskWorkspaces.update(workspace.id, { state: 'merged', lastError: null });
+      recordTaskEvent({
+        taskId: task.id,
+        eventType: 'task.git_integration.merged',
+        title: integration.targetBranch === workspace.sourceBranch ? '任务分支已合入来源分支' : `任务分支已合入 ${integration.targetBranch}`,
+        payload: {
+          integrationId: integration.id,
+          workspaceId: workspace.id,
+          mode: integration.mode,
+          sourceDelivered: integration.targetBranch === workspace.sourceBranch,
+          ...finalized,
+        },
+      });
+      await db.save();
+      return { integration: updated, result: finalized };
+    } catch (error) {
+      taskIntegrations.update(integration.id, { state: integration.conflictFiles.length > 0 ? 'conflicted' : 'failed', lastError: error instanceof Error ? error.message : 'Task integration finalization failed.' });
+      await db.save();
+      return sendTaskGitApiError(reply, error);
+    }
+  });
+
   server.post(
     '/api/projects/:projectId/git/snapshot',
     async (
@@ -3730,6 +4311,17 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
           error: 'ZEUS_INVALID_TASK_MANAGEMENT_STATUS',
           message: 'Unknown task management status',
         });
+      }
+      if (request.body.status === 'completed' || request.body.status === 'cancelled') {
+        const pendingWorkspaces = taskWorkspaces.listByTask(existing.id).filter((workspace) => workspace.state !== 'reclaimed' && workspace.state !== 'merged' && workspace.state !== 'discarded');
+        if (pendingWorkspaces.length > 0) {
+          return reply.code(409).send({
+            error: 'ZEUS_TASK_GIT_DISPOSITION_REQUIRED',
+            message: 'Commit and push or explicitly discard every task branch before closing the task.',
+            targetStatus: request.body.status,
+            workspaces: pendingWorkspaces,
+          });
+        }
       }
       const updated = tasks.updateManagementStatus(existing.id, request.body.status);
       recordTaskEvent({
@@ -6713,10 +7305,19 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
   server.get('/api/security/audit-logs', async (): Promise<SecurityAuditLogEntry[]> => auditLogs.listRecent().map(toSecurityAuditLogEntry));
 
   server.get('/api/release/status', async (): Promise<ReleaseStatusSnapshot> => buildReleaseStatusSnapshot());
-  server.get('/api/release/update-status', async (): Promise<ReleaseUpdateStatus> => buildReleaseUpdateStatus());
-  server.post('/api/release/check-update', async (): Promise<ReleaseUpdateStatus> => buildReleaseUpdateStatus());
+  server.get('/api/release/update-status', async () => ({
+    ...(await buildReleaseUpdateStatus()),
+    executionHost: buildExecutionHostWorkStatusSnapshot(),
+  }));
+  server.post('/api/release/check-update', async () => ({
+    ...(await buildReleaseUpdateStatus()),
+    executionHost: buildExecutionHostWorkStatusSnapshot(),
+  }));
   server.post('/api/release/download-update', async (): Promise<ReleaseUpdateOperationSnapshot> => {
-    const update = await buildReleaseUpdateStatus();
+    const update = {
+      ...(await buildReleaseUpdateStatus()),
+      executionHost: buildExecutionHostWorkStatusSnapshot(),
+    };
     return {
       accepted: false,
       update,
@@ -6724,7 +7325,10 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     };
   });
   server.post('/api/release/install-update', async (): Promise<ReleaseUpdateOperationSnapshot> => {
-    const update = await buildReleaseUpdateStatus();
+    const update = {
+      ...(await buildReleaseUpdateStatus()),
+      executionHost: buildExecutionHostWorkStatusSnapshot(),
+    };
     return {
       accepted: false,
       update,
@@ -8463,7 +9067,8 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
   }
 
   async function buildReleaseUpdateStatus(): Promise<ReleaseUpdateStatus> {
-    const currentVersion = readProjectVersion(projectRoot);
+    const configuredCurrentVersion = typeof options.currentAppVersion === 'function' ? options.currentAppVersion().trim() : options.currentAppVersion?.trim();
+    const currentVersion = configuredCurrentVersion || readProjectVersion(projectRoot);
     const checkedAt = now().toISOString();
     try {
       const manifest = await loadReleaseUpdateManifest();
@@ -8471,6 +9076,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
         currentVersion,
         manifest,
         platformArch: resolveReleaseUpdateArch(),
+        executionHostProtocolVersion: options.executionHost?.protocolVersion ?? 1,
         checkedAt,
       });
     } catch (error) {
@@ -8481,6 +9087,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
         channel: 'stable',
         releasePageUrl: 'https://github.com/imchenway/zeus/releases/latest',
         artifact: null,
+        executionHostProtocolVersion: options.executionHost?.protocolVersion ?? 1,
         automaticInstallEnabled: false,
         recommendedAction: 'open_download_page',
         label: '暂未取得更新清单',
@@ -8497,7 +9104,9 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
     }
-    return (await response.json()) as ReleaseUpdateManifest;
+    return parseReleaseUpdateManifest(await response.json(), {
+      allowLoopbackDownloadUrls: Boolean(options.allowUntrustedReleaseUpdateTest),
+    });
   }
 
   function resolveReleaseUpdateArch(): ReleaseUpdateArtifactArch {
@@ -9527,6 +10136,8 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       id: conversation.id,
       projectId: conversation.projectId,
       taskId: conversation.taskId,
+      workspaceId: conversation.workspaceId,
+      workspace: conversation.workspaceId ? (taskWorkspaces.getById(conversation.workspaceId) ?? null) : null,
       title: conversation.title,
       summary: conversation.summary,
       status: conversation.status,
@@ -9730,9 +10341,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     const active = [...turns].reverse().find((turn) => turn.status === 'running' || turn.status === 'dispatching' || turn.status === 'waiting');
     if (active?.providerTurnId) {
       if (active.status === 'waiting') {
-        const managerState = codexAppServerManager.getState();
-        const currentGenerationId = managerState.type === 'ready' ? managerState.generationId : null;
-        const pending = conversationRequests.listByConversation(conversation.id).find((request) => request.turnId === active.id && request.status === 'pending' && request.transportGenerationId === currentGenerationId);
+        const pending = conversationRequests.listByConversation(conversation.id).find((request) => request.turnId === active.id && request.status === 'pending' && codexAppServerManager.hasGeneration(request.transportGenerationId));
         if (pending) {
           return {
             type: 'waiting' as const,
@@ -10259,13 +10868,16 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
         if (selectedEffort && !selectedModel.supportedReasoningEfforts.includes(selectedEffort)) {
           throw nativeApiError('ZEUS_CODEX_EFFORT_UNAVAILABLE', `Configured Codex effort is unavailable: ${selectedEffort}`);
         }
+        const workspace = await resolveTaskPushWorkspace(project, task, body.workspace, stableOperationId);
+        if (!workspace.worktreePath) throw nativeApiError('ZEUS_TASK_WORKTREE_UNAVAILABLE', 'Task worktree was not prepared.');
         const attachmentInput = normalizeTaskPushAttachments(task, project.localPath);
         nativeOperation = await codexNativeCoordinator.startTaskConversation({
           conversationId: reservation.conversationId,
           submissionId: reservation.submissionId,
           projectId: project.id,
-          projectLocalPath: project.localPath,
+          projectLocalPath: workspace.worktreePath,
           taskId: task.id,
+          workspaceId: workspace.id,
           taskTitle: task.title,
           prompt: buildTaskPushPrompt(project, task, supplementalInfo),
           attachments: attachmentInput.attachments,
@@ -10376,6 +10988,24 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       throw nativeApiError('ZEUS_NATIVE_ACCEPTANCE_NOT_DURABLE', 'Native conversation acceptance did not persist the exact reserved resources.');
     }
     if (body.mode === 'create' && body.source === 'task_push') {
+      const taskWorkspace = conversation.workspaceId ? taskWorkspaces.getById(conversation.workspaceId) : undefined;
+      if (taskWorkspace?.worktreePath) {
+        try {
+          const review = await getTaskWorkspaceReview(taskWorkspace.worktreePath);
+          taskWorkspaces.update(taskWorkspace.id, { headSha: review.headSha, state: 'ready', lastError: null });
+        } catch (error) {
+          taskWorkspaces.update(taskWorkspace.id, { state: 'failed', lastError: error instanceof Error ? error.message : 'Task workspace review failed.' });
+        }
+      }
+      if (task.managementStatus === 'completed' || task.managementStatus === 'cancelled') {
+        tasks.updateManagementStatus(task.id, 'in_development');
+        recordTaskEvent({
+          taskId: task.id,
+          eventType: 'task.reopened',
+          title: '任务已因再次推送重新进入开发',
+          payload: { workspaceId: conversation.workspaceId },
+        });
+      }
       if (nativeOperation.status === 'active') {
         const runningTask = moveTaskTowardRunning(task.id, 'task.model_push.started');
         recordTaskEvent({
@@ -10665,7 +11295,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     const projectConfig = readProjectConfig(project.id);
     const configured = projectConfig.defaultModel ?? runtimeSettings.adapterModels.codex;
     if (configured?.trim()) return configured.trim();
-    const capabilities = await codexAppServerManager.ensureReady({ commandPath: codexRuntimeCommandPath, ...(codexExternalAgentHome ? { externalAgentHome: codexExternalAgentHome } : {}) });
+    const capabilities = await codexAppServerManager.ensureReady({ commandPath: currentCodexRuntimeCommandPath(), ...(codexExternalAgentHome ? { externalAgentHome: codexExternalAgentHome } : {}) });
     const firstSupported = capabilities.supportedModels[0];
     if (!firstSupported) {
       throw Object.assign(new Error('Codex app-server did not report an available model.'), { code: 'ZEUS_CODEX_MODEL_UNAVAILABLE' });
@@ -10674,17 +11304,241 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
   }
 
   async function resolveTaskPushCapabilities(project: ZeusProjectRecord, task: ZeusTaskRecord) {
-    const capabilities = await resolveConversationCapabilities(project);
+    const [capabilities, repository, gitStatus] = await Promise.all([resolveConversationCapabilities(project), getGitRepositoryContext(project.localPath), getGitStatus(project.localPath)]);
+    if (!repository.isRepository || repository.branch === 'detached') {
+      throw nativeApiError('ZEUS_TASK_GIT_REPOSITORY_REQUIRED', 'Task model push requires a Git repository on a named primary workspace branch.');
+    }
+    const defaultRemoteName = repository.remotes.includes('origin') ? 'origin' : repository.remotes[0];
+    if (!defaultRemoteName) {
+      throw nativeApiError('ZEUS_TASK_GIT_REMOTE_REQUIRED', 'Task model push requires a Git remote so the task branch can be delivered before worktree cleanup.');
+    }
+    const workspaces = await Promise.all(
+      taskWorkspaces.listByTask(task.id).map(async (workspace) => {
+        const registered = repository.worktrees.find((entry) => entry.branch === workspace.branchName);
+        const reviewPath = registered?.path ?? workspace.worktreePath;
+        let clean: boolean | null = null;
+        let headSha = workspace.headSha;
+        if (reviewPath) {
+          try {
+            const review = await getTaskWorkspaceReview(reviewPath);
+            clean = review.clean;
+            headSha = review.headSha;
+          } catch {
+            clean = null;
+          }
+        }
+        return {
+          ...workspace,
+          worktreePath: registered?.path ?? workspace.worktreePath,
+          headSha,
+          clean,
+          selectable: workspace.state === 'ready' || workspace.state === 'reclaimed' || workspace.state === 'failed',
+        };
+      }),
+    );
+    const sourceRefs = repository.localBranches
+      .map((ref) => ({ ref, label: ref, kind: 'local' as const, current: ref === repository.branch }))
+      .sort((left, right) => Number(right.current) - Number(left.current) || left.label.localeCompare(right.label));
     return {
       ...capabilities,
       taskId: task.id,
       canonicalPrompt: createTaskRuntimePrompt(project, task),
+      git: {
+        primaryWorkspacePath: repository.topLevel,
+        primaryBranch: repository.branch,
+        primaryHeadSha: repository.headSha,
+        primaryClean: gitStatus.clean,
+        defaultRemoteName,
+        sourceRefs,
+        suggestedBranchName: buildTaskBranchName(task.taskCode, task.title, taskWorkspaces.listByTask(task.id).length + 1),
+        worktreeRoot: join(dirname(repository.topLevel), '.zeus-worktrees'),
+      },
+      workspaces,
     };
+  }
+
+  async function resolveTaskPushWorkspace(project: ZeusProjectRecord, task: ZeusTaskRecord, selection: unknown, stableOperationId: string): Promise<ZeusTaskWorkspaceRecord> {
+    const existingRecords = taskWorkspaces.listByTask(task.id);
+    if (!isNativeApiRecord(selection) || (selection.mode !== 'create' && selection.mode !== 'existing')) {
+      throw nativeApiError('ZEUS_TASK_WORKSPACE_CHOICE_REQUIRED', 'Choose a new task branch or an existing task branch.');
+    }
+
+    if (selection.mode === 'existing') {
+      const workspaceId = typeof selection.workspaceId === 'string' ? selection.workspaceId.trim() : '';
+      const workspace = taskWorkspaces.getById(workspaceId);
+      if (!workspace || workspace.projectId !== project.id || workspace.taskId !== task.id) {
+        throw nativeApiError('ZEUS_TASK_WORKSPACE_INVALID', 'Selected task branch does not belong to this task.');
+      }
+      if (workspace.state === 'merged' || workspace.state === 'discarded') {
+        throw nativeApiError('ZEUS_TASK_WORKSPACE_CLOSED', 'Merged or discarded task branches cannot be selected again.');
+      }
+      assertTaskWorkspaceWritable(workspace);
+      const prepared = await prepareTaskWorktree({
+        repositoryPath: project.localPath,
+        projectSlug: project.slug,
+        taskCode: task.taskCode,
+        taskTitle: task.title,
+        workspaceId: workspace.id,
+        branchName: workspace.branchName,
+        sourceRef: workspace.sourceHeadSha,
+        existingBranch: true,
+        existingRemoteRef: `${workspace.remoteName}/${workspace.remoteBranch}`,
+      });
+      const updated = taskWorkspaces.update(workspace.id, {
+        worktreePath: prepared.worktreePath,
+        headSha: prepared.headSha,
+        state: 'ready',
+        lastError: null,
+      });
+      await db.save();
+      return updated;
+    }
+
+    const reservedWorkspaceId = `task_workspace_${createHash('sha256').update(`${stableOperationId}\0workspace`).digest('hex').slice(0, 24)}`;
+    const reserved = taskWorkspaces.getById(reservedWorkspaceId);
+    if (reserved) {
+      if (reserved.projectId !== project.id || reserved.taskId !== task.id) {
+        throw nativeApiError('ZEUS_TASK_WORKSPACE_RESERVED_RESOURCE_CONFLICT', 'Reserved task workspace belongs to another task.');
+      }
+      const prepared = await prepareTaskWorktree({
+        repositoryPath: project.localPath,
+        projectSlug: project.slug,
+        taskCode: task.taskCode,
+        taskTitle: task.title,
+        workspaceId: reserved.id,
+        branchName: reserved.branchName,
+        sourceRef: reserved.sourceHeadSha,
+        existingBranch: true,
+        existingRemoteRef: `${reserved.remoteName}/${reserved.remoteBranch}`,
+      });
+      const updated = taskWorkspaces.update(reserved.id, { worktreePath: prepared.worktreePath, headSha: prepared.headSha, state: 'ready', lastError: null });
+      await db.save();
+      return updated;
+    }
+
+    const requestedSourceRef = typeof selection.sourceRef === 'string' ? selection.sourceRef.trim() : '';
+    const firstWorkspace = existingRecords[0];
+    const sourceBranch = firstWorkspace?.sourceBranch ?? requestedSourceRef;
+    const sourceRef = firstWorkspace?.sourceHeadSha ?? requestedSourceRef;
+    if (!sourceRef) throw nativeApiError('ZEUS_TASK_SOURCE_BRANCH_REQUIRED', 'A source branch is required for the first task branch.');
+    const repository = await getGitRepositoryContext(project.localPath);
+    if (!firstWorkspace && !repository.localBranches.includes(requestedSourceRef)) {
+      throw nativeApiError('ZEUS_TASK_SOURCE_BRANCH_INVALID', 'The source branch must be a local named branch in the primary repository.');
+    }
+    if (firstWorkspace && requestedSourceRef && requestedSourceRef !== firstWorkspace.sourceBranch) {
+      throw nativeApiError('ZEUS_TASK_SOURCE_BRANCH_IMMUTABLE', `This task already uses source branch ${firstWorkspace.sourceBranch}.`);
+    }
+    const branchName = typeof selection.branchName === 'string' && selection.branchName.trim() ? selection.branchName.trim() : buildTaskBranchName(task.taskCode, task.title, existingRecords.length + 1);
+    const branchOwner = taskWorkspaces.getByProjectBranch(project.id, branchName);
+    if (branchOwner) throw nativeApiError('ZEUS_TASK_BRANCH_ALREADY_MANAGED', `Task branch is already managed by Zeus: ${branchName}`);
+    const remoteName = repository.remotes.includes('origin') ? 'origin' : repository.remotes[0];
+    if (!remoteName) throw nativeApiError('ZEUS_TASK_GIT_REMOTE_REQUIRED', 'A Git remote is required for task branch delivery.');
+
+    const prepared = await prepareTaskWorktree({
+      repositoryPath: project.localPath,
+      projectSlug: project.slug,
+      taskCode: task.taskCode,
+      taskTitle: task.title,
+      workspaceId: reservedWorkspaceId,
+      branchName,
+      sourceRef,
+      existingBranch: false,
+    });
+    const workspace = taskWorkspaces.create({
+      id: reservedWorkspaceId,
+      projectId: project.id,
+      taskId: task.id,
+      branchName: prepared.branchName,
+      sourceBranch,
+      sourceHeadSha: prepared.sourceHeadSha,
+      remoteName,
+      remoteBranch: prepared.branchName,
+      worktreePath: prepared.worktreePath,
+      headSha: prepared.headSha,
+      state: 'ready',
+    });
+    recordTaskEvent({
+      taskId: task.id,
+      eventType: 'task.git_workspace.created',
+      title: '任务 Git 工作区已创建',
+      payload: {
+        workspaceId: workspace.id,
+        branchName: workspace.branchName,
+        sourceBranch: workspace.sourceBranch,
+        sourceHeadSha: workspace.sourceHeadSha,
+        worktreePath: workspace.worktreePath,
+      },
+    });
+    await db.save();
+    return workspace;
+  }
+
+  function assertTaskWorkspaceWritable(workspace: ZeusTaskWorkspaceRecord): void {
+    if (countTaskWorkspaceActiveConversations(workspace) > 0) {
+      throw nativeApiError('ZEUS_TASK_WORKSPACE_BUSY', `Task branch ${workspace.branchName} already has an active writable Codex turn.`);
+    }
+  }
+
+  function countTaskWorkspaceActiveConversations(workspace: ZeusTaskWorkspaceRecord): number {
+    let count = 0;
+    for (const conversation of conversations.listByWorkspace(workspace.id)) {
+      const hasPendingWrite = conversationSubmissions.listByConversation(conversation.id).some((submission) => submission.status === 'queued' || submission.status === 'dispatching' || submission.status === 'active');
+      const providerBusy = conversation.providerState === 'binding' || conversation.providerState === 'active' || conversation.providerState === 'waiting';
+      if (hasPendingWrite || providerBusy) count += 1;
+    }
+    return count;
+  }
+
+  function resolveTaskWorkspaceRequest(taskId: string, workspaceId: string): { task: ZeusTaskRecord; project: ZeusProjectRecord; workspace: ZeusTaskWorkspaceRecord } | { status: 404; error: { error: string; message: string } } {
+    const task = tasks.getById(taskId);
+    if (!task) return { status: 404, error: { error: 'ZEUS_TASK_NOT_FOUND', message: 'Task not found' } };
+    const project = projects.getById(task.projectId);
+    if (!project) return { status: 404, error: { error: 'ZEUS_PROJECT_NOT_FOUND', message: 'Project not found' } };
+    const workspace = taskWorkspaces.getById(workspaceId);
+    if (!workspace || workspace.taskId !== task.id || workspace.projectId !== project.id) {
+      return { status: 404, error: { error: 'ZEUS_TASK_WORKSPACE_NOT_FOUND', message: 'Task workspace not found' } };
+    }
+    return { task, project, workspace };
+  }
+
+  function resolveTaskIntegrationRequest(
+    taskId: string,
+    integrationId: string,
+  ): { task: ZeusTaskRecord; project: ZeusProjectRecord; workspace: ZeusTaskWorkspaceRecord; integration: ZeusTaskIntegrationRecord } | { status: 404; error: { error: string; message: string } } {
+    const task = tasks.getById(taskId);
+    if (!task) return { status: 404, error: { error: 'ZEUS_TASK_NOT_FOUND', message: 'Task not found' } };
+    const project = projects.getById(task.projectId);
+    if (!project) return { status: 404, error: { error: 'ZEUS_PROJECT_NOT_FOUND', message: 'Project not found' } };
+    const integration = taskIntegrations.getById(integrationId);
+    if (!integration || integration.taskId !== task.id || integration.projectId !== project.id) {
+      return { status: 404, error: { error: 'ZEUS_TASK_INTEGRATION_NOT_FOUND', message: 'Task integration not found' } };
+    }
+    const workspace = taskWorkspaces.getById(integration.workspaceId);
+    if (!workspace) return { status: 404, error: { error: 'ZEUS_TASK_WORKSPACE_NOT_FOUND', message: 'Task workspace not found' } };
+    return { task, project, workspace, integration };
+  }
+
+  function sendTaskGitApiError(reply: FastifyReply, error: unknown) {
+    const code = error instanceof Error && typeof (error as Error & { code?: unknown }).code === 'string' ? String((error as Error & { code: string }).code) : 'ZEUS_TASK_GIT_OPERATION_FAILED';
+    const status = code.endsWith('_NOT_FOUND')
+      ? 404
+      : code.endsWith('_INVALID') || code.endsWith('_REQUIRED')
+        ? 400
+        : /_(?:DIRTY|CONFLICTED|FAILED|BUSY|CHANGED|UNAVAILABLE|ALREADY_EXISTS|ALREADY_MANAGED|CLOSED|VERIFICATION_FAILED)$/u.test(code)
+          ? 409
+          : 500;
+    return reply.code(status).send({ error: code, message: error instanceof Error ? error.message : 'Task Git operation failed.' });
+  }
+
+  function stripOptionalMarkdownFence(value: string): string {
+    const trimmed = value.trim();
+    const fenced = /^```[^\n]*\n([\s\S]*?)\n```$/u.exec(trimmed);
+    return fenced?.[1] ?? value;
   }
 
   async function resolveConversationCapabilities(project: ZeusProjectRecord) {
     if (!codexNativeEnabled) throw nativeApiError('ZEUS_CODEX_NATIVE_DISABLED', 'Codex native conversation writes are disabled by ZEUS_CODEX_NATIVE_ENABLED.');
-    const capabilities = await codexAppServerManager.ensureReady({ commandPath: codexRuntimeCommandPath, ...(codexExternalAgentHome ? { externalAgentHome: codexExternalAgentHome } : {}) });
+    const capabilities = await codexAppServerManager.ensureReady({ commandPath: currentCodexRuntimeCommandPath(), ...(codexExternalAgentHome ? { externalAgentHome: codexExternalAgentHome } : {}) });
     const models = capabilities.models.map((model) => ({
       id: model.id,
       model: model.model,
@@ -11807,7 +12661,7 @@ function readGraphNeighborhood(
 ): GraphNeighborhood | undefined {
   const centerNode = readGraphNodeById(db, nodeId, projectName);
   if (!centerNode) return undefined;
-  const edgeRows = db.select<{
+  type GraphNeighborhoodEdgeRow = {
     id: string;
     edge_type: string;
     source_node_id: string;
@@ -11815,23 +12669,51 @@ function readGraphNeighborhood(
     source_ref: string;
     confidence: number;
     metadata_json: string;
-  }>(
-    `SELECT id, edge_type, source_node_id, target_node_id, source_ref, confidence, metadata_json
-     FROM project_edges WHERE (? IS NULL OR project_name = ?) AND (source_node_id = ? OR target_node_id = ?) ORDER BY rowid ASC LIMIT 80`,
-    [projectName ?? null, projectName ?? null, nodeId, nodeId],
-  );
-  const edges = edgeRows.map((edge) => ({
-    id: edge.id,
-    edgeType: edge.edge_type,
-    sourceNodeId: edge.source_node_id,
-    targetNodeId: edge.target_node_id,
-    sourceRef: edge.source_ref,
-    confidence: edge.confidence,
-    metadata: parseJsonObject(edge.metadata_json),
-  }));
-  const nodeIds = Array.from(new Set([nodeId, ...edges.flatMap((edge) => [edge.sourceNodeId, edge.targetNodeId])])).slice(0, depth === 1 ? 40 : 80);
-  const nodes = nodeIds.map((id) => readGraphNodeById(db, id, projectName)).filter((node): node is GraphViewSnapshot['nodes'][number] => Boolean(node));
-  return { centerNode, depth, nodes, edges };
+  };
+  const normalizedDepth = depth === 2 ? 2 : 1;
+  const maxNodes = normalizedDepth === 1 ? 40 : 80;
+  const nodeIds = new Set<string>([nodeId]);
+  const edgeRowsById = new Map<string, GraphNeighborhoodEdgeRow>();
+  let frontier = [nodeId];
+
+  for (let hop = 0; hop < normalizedDepth && frontier.length > 0; hop += 1) {
+    const placeholders = frontier.map(() => '?').join(', ');
+    const rows = db.select<GraphNeighborhoodEdgeRow>(
+      `SELECT id, edge_type, source_node_id, target_node_id, source_ref, confidence, metadata_json
+       FROM project_edges
+       WHERE (? IS NULL OR project_name = ?)
+         AND (source_node_id IN (${placeholders}) OR target_node_id IN (${placeholders}))
+       ORDER BY rowid ASC
+       LIMIT 240`,
+      [projectName ?? null, projectName ?? null, ...frontier, ...frontier],
+    );
+    const nextFrontier: string[] = [];
+    for (const edge of rows) {
+      edgeRowsById.set(edge.id, edge);
+      for (const candidateId of [edge.source_node_id, edge.target_node_id]) {
+        if (nodeIds.has(candidateId) || nodeIds.size >= maxNodes) continue;
+        nodeIds.add(candidateId);
+        nextFrontier.push(candidateId);
+      }
+    }
+    frontier = nextFrontier;
+  }
+
+  const edges = Array.from(edgeRowsById.values())
+    .filter((edge) => nodeIds.has(edge.source_node_id) && nodeIds.has(edge.target_node_id))
+    .map((edge) => ({
+      id: edge.id,
+      edgeType: edge.edge_type,
+      sourceNodeId: edge.source_node_id,
+      targetNodeId: edge.target_node_id,
+      sourceRef: edge.source_ref,
+      confidence: edge.confidence,
+      metadata: parseJsonObject(edge.metadata_json),
+    }));
+  const nodes = Array.from(nodeIds)
+    .map((id) => readGraphNodeById(db, id, projectName))
+    .filter((node): node is GraphViewSnapshot['nodes'][number] => Boolean(node));
+  return { centerNode, depth: normalizedDepth, nodes, edges };
 }
 
 function normalizeGraphSearchFilters(
@@ -12153,6 +13035,7 @@ function readGraphView(
     }>(`SELECT id, project_name, view_type, title, payload_json FROM graph_views WHERE view_type = ? AND (? IS NULL OR project_name = ?) ORDER BY id ASC LIMIT 1`, [viewType, projectName ?? null, projectName ?? null]);
     if (!view) return undefined;
     const payload = parseGraphViewPayload(view.payload_json);
+    if (payload.schemaVersion !== GRAPH_VIEW_SCHEMA_VERSION) return undefined;
     const nodes = db
       .select<{
         id: string;
@@ -12203,6 +13086,7 @@ function readGraphView(
       }));
     return {
       id: view.id,
+      schemaVersion: payload.schemaVersion,
       projectName: view.project_name,
       title: view.title,
       viewType: view.view_type,
@@ -12264,10 +13148,33 @@ function graphEdgeDetailFromGraph(graph: ProjectGraph, edgeId: string): GraphEdg
 function graphNeighborhoodFromGraph(graph: ProjectGraph, nodeId: string, depth: number): GraphNeighborhood | undefined {
   const centerNode = graphNodeSnapshotFromGraph(graph, nodeId);
   if (!centerNode) return undefined;
-  const edges = graphEdgesByNodeIdFromGraph(graph, nodeId, 80);
-  const nodeIds = Array.from(new Set([nodeId, ...edges.flatMap((edge) => [edge.sourceNodeId, edge.targetNodeId])])).slice(0, depth === 1 ? 40 : 80);
-  const nodes = nodeIds.map((id) => graphNodeSnapshotFromGraph(graph, id)).filter((node): node is GraphViewSnapshot['nodes'][number] => Boolean(node));
-  return { centerNode, depth, nodes, edges };
+  const normalizedDepth = depth === 2 ? 2 : 1;
+  const maxNodes = normalizedDepth === 1 ? 40 : 80;
+  const nodeIds = new Set<string>([nodeId]);
+  const edgesById = new Map<string, GraphViewSnapshot['edges'][number]>();
+  let frontier = [nodeId];
+
+  for (let hop = 0; hop < normalizedDepth && frontier.length > 0; hop += 1) {
+    const frontierIds = new Set(frontier);
+    const nextFrontier: string[] = [];
+    for (const edge of graph.edges) {
+      if (!frontierIds.has(edge.sourceNodeId) && !frontierIds.has(edge.targetNodeId)) continue;
+      const snapshotEdge = graphEdgeToSnapshot(edge);
+      edgesById.set(snapshotEdge.id, snapshotEdge);
+      for (const candidateId of [edge.sourceNodeId, edge.targetNodeId]) {
+        if (nodeIds.has(candidateId) || nodeIds.size >= maxNodes) continue;
+        nodeIds.add(candidateId);
+        nextFrontier.push(candidateId);
+      }
+    }
+    frontier = nextFrontier;
+  }
+
+  const edges = Array.from(edgesById.values()).filter((edge) => nodeIds.has(edge.sourceNodeId) && nodeIds.has(edge.targetNodeId));
+  const nodes = Array.from(nodeIds)
+    .map((id) => graphNodeSnapshotFromGraph(graph, id))
+    .filter((node): node is GraphViewSnapshot['nodes'][number] => Boolean(node));
+  return { centerNode, depth: normalizedDepth, nodes, edges };
 }
 
 function graphViewSnapshotFromGraph(graph: ProjectGraph, viewType: string): GraphViewSnapshot | undefined {
@@ -12277,6 +13184,7 @@ function graphViewSnapshotFromGraph(graph: ProjectGraph, viewType: string): Grap
   const edgeIds = new Set(view.edgeIds);
   return {
     id: view.id,
+    schemaVersion: view.schemaVersion,
     projectName: graph.projectName,
     title: view.title,
     viewType: view.viewType,
@@ -12307,6 +13215,7 @@ function graphViewSnapshotFromGraph(graph: ProjectGraph, viewType: string): Grap
 }
 
 function parseGraphViewPayload(payloadJson: string): {
+  schemaVersion: number | undefined;
   nodeIds: Set<string>;
   edgeIds: Set<string>;
   hasNodeFilter: boolean;
@@ -12315,11 +13224,13 @@ function parseGraphViewPayload(payloadJson: string): {
 } {
   try {
     const payload = JSON.parse(payloadJson) as {
+      schemaVersion?: number;
       nodeIds?: string[];
       edgeIds?: string[];
       layout?: unknown;
     };
     return {
+      schemaVersion: payload.schemaVersion,
       nodeIds: new Set(payload.nodeIds ?? []),
       edgeIds: new Set(payload.edgeIds ?? []),
       hasNodeFilter: Array.isArray(payload.nodeIds),
@@ -12328,6 +13239,7 @@ function parseGraphViewPayload(payloadJson: string): {
     };
   } catch {
     return {
+      schemaVersion: undefined,
       nodeIds: new Set(),
       edgeIds: new Set(),
       hasNodeFilter: false,
@@ -13262,6 +14174,7 @@ function persistScanAndGraph(db: { execute: (sql: string, params?: import('sql.j
       view.viewType,
       view.title,
       JSON.stringify({
+        schemaVersion: view.schemaVersion,
         nodeIds: view.nodeIds,
         edgeIds: view.edgeIds,
         layout: view.layout,

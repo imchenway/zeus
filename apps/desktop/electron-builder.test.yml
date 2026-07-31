@@ -1,0 +1,11 @@
+extends: ./electron-builder.yml
+appId: dev.hypha.zeus.test
+productName: Zeus Test
+artifactName: Zeus-Test-${version}-${arch}.${ext}
+directories:
+  output: ../../dist/test
+mac:
+  executableName: Zeus Test
+dmg:
+  title: Zeus Test
+  artifactName: Zeus-Test-${version}-${arch}.dmg

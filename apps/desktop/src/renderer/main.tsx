@@ -161,12 +161,14 @@ async function renderWithClient(client: DashboardClient): Promise<void> {
           return client.loadDashboard();
         }}
         onLoadGraphView={(viewType) => client.loadGraphView(viewType ?? 'architecture')}
+        onLoadGraphNeighborhood={(nodeId, depth) => client.loadGraphNeighborhood(nodeId, depth)}
         onSearchGraph={(query, nodeType, edgeType, minConfidence) => client.searchGraph({ query, nodeType, edgeType, minConfidence })}
         onScanProjectGraph={async (projectId) => {
           await client.scanProject(projectId);
           return client.loadDashboard();
         }}
         onLoadProjectGraphView={(projectId, viewType) => client.loadProjectGraphView(projectId, viewType ?? 'architecture')}
+        onLoadProjectGraphNeighborhood={(projectId, nodeId, depth) => client.loadProjectGraphNeighborhood(projectId, nodeId, depth)}
         onSearchProjectGraph={(projectId, query, nodeType, edgeType, minConfidence) => client.searchProjectGraph(projectId, { query, nodeType, edgeType, minConfidence })}
         onAskGraph={(projectId, question) => client.askGraph(projectId, { question })}
         onLoadGraphConversations={(projectId, input) => client.loadGraphConversations(projectId, input)}
@@ -192,8 +194,8 @@ async function renderWithClient(client: DashboardClient): Promise<void> {
         onLoadRuntimeStatus={() => client.loadRuntimeStatus()}
         onLoadReleaseStatus={() => client.loadReleaseStatus()}
         onCheckReleaseUpdate={() => client.checkReleaseUpdate()}
-        onDownloadReleaseUpdate={() => client.downloadReleaseUpdate()}
-        onInstallReleaseUpdate={() => client.installReleaseUpdate()}
+        onDownloadReleaseUpdate={() => window.zeus?.downloadReleaseUpdate?.() ?? client.downloadReleaseUpdate()}
+        onInstallReleaseUpdate={() => window.zeus?.installReleaseUpdate?.() ?? client.installReleaseUpdate()}
         onLoadRuntimeSettings={() => client.loadRuntimeSettings()}
         onSaveRuntimeSettings={(input) => client.saveRuntimeSettings(input)}
         onLoadCodeMapSettings={() => client.loadCodeMapSettings()}

@@ -10,7 +10,7 @@ import { createBeforeQuitCleanupHandler, type DesktopLocalServerRuntime, parseCo
 import { createStartupCoordinator } from './startupCoordinator.js';
 import { terminateAfterFatalStartup } from './fatalStartup.js';
 import { createRendererBootstrapMonitor } from './rendererBootstrapMonitor.js';
-import { resolveCodexRuntime } from './codexRuntimePath.js';
+import { materializeCodexRuntime, resolveCodexRuntime } from './codexRuntimePath.js';
 import { exportMermaidDiagramToFile, exportPlantUmlDiagramToFile } from './mermaidExport.js';
 import { exportPatchToFile } from './patchExport.js';
 import { exportRuntimeLogsToFile } from './runtimeLogExport.js';
@@ -40,11 +40,13 @@ import {
   type ConversationInputResourceSource,
   type ConversationResourcePayload,
 } from './conversationInputResources.js';
+import { cleanupStaleReleaseBackups, createReleaseUpdateService, type ReleaseUpdateService } from './releaseUpdateService.js';
 
 let mainWindow: BrowserWindow | undefined;
 const windows = new Set<BrowserWindow>();
 let tray: Tray | undefined;
 let localServerRuntime: DesktopLocalServerRuntime | undefined;
+let releaseUpdateService: ReleaseUpdateService | undefined;
 let browserHost: BrowserHost | undefined;
 let conversationInputResources: ConversationInputResourceBroker | undefined;
 let systemNotificationBridge: SystemNotificationBridge | undefined;
@@ -61,15 +63,28 @@ const windowStateSaveTimers = new Map<number, ReturnType<typeof setTimeout>>();
 const windowStateActivationTimers = new Map<number, ReturnType<typeof setTimeout>>();
 const windowStatePersistenceGates = new Map<number, WindowStatePersistenceGate>();
 const taskTableLayoutDirtyWindowIds = new Set<number>();
+const sensitiveRequestDraftIdsByWindow = new Map<number, Set<string>>();
 const taskTableLayoutCloseApprovedWindowIds = new Set<number>();
 const pendingTaskTableLayoutWindowCloseIds = new Set<number>();
 const pendingNativeUpdateCheckWindowIds = new Set<number>();
 let taskTableLayoutQuitPending = false;
 let taskTableLayoutQuitApproved = false;
+let upgradeHandoffRequested = false;
 const execFile = promisify(execFileCallback);
 const windowStateSaveDelayMs = 250;
 const windowStateActivationDelayMs = 500;
 const savedDisplayAvailabilityTimeoutMs = 2_000;
+const testDistributionName = 'Zeus Test';
+
+function isTestDistribution(): boolean {
+  if (!app.isPackaged) return false;
+  const executablePath = process.execPath;
+  return basename(executablePath, extname(executablePath)) === testDistributionName;
+}
+
+function desktopDisplayName(): string {
+  return isTestDistribution() ? testDistributionName : 'Zeus';
+}
 
 /**
  * 移除 Chromium Safe Storage 对 macOS 钥匙串的读取申请。
@@ -84,8 +99,18 @@ function disableChromiumSafeStorageKeychainPrompt(): void {
 disableChromiumSafeStorageKeychainPrompt();
 
 function applyExplicitUserDataDirectory(): void {
+  if (isTestDistribution()) app.setName(testDistributionName);
+
   const configured = process.env.ZEUS_USER_DATA_DIR?.trim();
-  if (configured) app.setPath('userData', resolve(configured));
+  if (configured) {
+    app.setPath('userData', resolve(configured));
+    return;
+  }
+
+  // 测试发行版必须拥有独立单实例锁、配置和数据库，正式版继续沿用既有目录。
+  if (isTestDistribution()) {
+    app.setPath('userData', join(app.getPath('appData'), testDistributionName));
+  }
 }
 
 // 打包验收可用隔离资料目录运行，禁止污染用户正在使用的 Zeus 数据。
@@ -93,6 +118,15 @@ applyExplicitUserDataDirectory();
 
 function desktopRoot(): string {
   return process.env.ZEUS_DESKTOP_DIR ?? app.getAppPath();
+}
+
+function currentAppBundlePath(): string {
+  let candidate = resolve(process.execPath);
+  while (dirname(candidate) !== candidate) {
+    if (candidate.endsWith('.app')) return candidate;
+    candidate = dirname(candidate);
+  }
+  throw new Error('Zeus 无法定位当前 App bundle。');
 }
 
 function resolveMainProjectRoot(): string {
@@ -254,7 +288,7 @@ async function createWindow(): Promise<void> {
     // 2026-06-18 窗口根层响应式最终覆盖：允许紧凑窗口真实触发 renderer 的窄屏结构，而不是在 Main 进程强制桌面最小尺寸。
     minWidth: 360,
     minHeight: 560,
-    title: 'Zeus',
+    title: desktopDisplayName(),
     // 隐藏 macOS 原生标题栏，让内容贴近窗口顶部；标题仅保留给系统菜单与辅助功能。
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 14, y: 16 },
@@ -267,6 +301,10 @@ async function createWindow(): Promise<void> {
       webSecurity: true,
       allowRunningInsecureContent: false,
     },
+  });
+  window.webContents.on('page-title-updated', (event) => {
+    event.preventDefault();
+    window.setTitle(desktopDisplayName());
   });
   browserHost?.registerWindow(window);
 
@@ -301,6 +339,7 @@ async function createWindow(): Promise<void> {
     windowStateActivationTimers.delete(window.id);
     windowStatePersistenceGates.delete(window.id);
     taskTableLayoutDirtyWindowIds.delete(window.id);
+    sensitiveRequestDraftIdsByWindow.delete(window.id);
     taskTableLayoutCloseApprovedWindowIds.delete(window.id);
     pendingTaskTableLayoutWindowCloseIds.delete(window.id);
     pendingNativeUpdateCheckWindowIds.delete(window.id);
@@ -497,6 +536,18 @@ function setupIpc(): void {
     if (dirty === true) taskTableLayoutDirtyWindowIds.add(requestingWindow.id);
     else taskTableLayoutDirtyWindowIds.delete(requestingWindow.id);
   });
+  ipcMain.on('zeus:sensitive-request-draft-changed', (event, payload: unknown) => {
+    const requestingWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow) || !payload || typeof payload !== 'object') return;
+    const requestId = typeof (payload as { requestId?: unknown }).requestId === 'string' ? (payload as { requestId: string }).requestId.trim() : '';
+    const present = (payload as { present?: unknown }).present === true;
+    if (!requestId || requestId.length > 200) return;
+    const requestIds = sensitiveRequestDraftIdsByWindow.get(requestingWindow.id) ?? new Set<string>();
+    if (present) requestIds.add(requestId);
+    else requestIds.delete(requestId);
+    if (requestIds.size > 0) sensitiveRequestDraftIdsByWindow.set(requestingWindow.id, requestIds);
+    else sensitiveRequestDraftIdsByWindow.delete(requestingWindow.id);
+  });
   ipcMain.on('zeus:task-table-layout-close-resolution', (event, resolution: unknown) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
     if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow)) return;
@@ -526,6 +577,24 @@ function setupIpc(): void {
       url,
       openExternal: (url) => shell.openExternal(url),
     });
+  });
+  ipcMain.handle('zeus:release:download-update', (event) => {
+    const requestingWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow)) throw new Error('Release update request came from an untrusted window.');
+    if (!releaseUpdateService) throw new Error('Zeus release update service is not ready.');
+    return releaseUpdateService.download();
+  });
+  ipcMain.handle('zeus:release:install-update', (event) => {
+    const requestingWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow)) throw new Error('Release update request came from an untrusted window.');
+    if (!releaseUpdateService) throw new Error('Zeus release update service is not ready.');
+    if (taskTableLayoutDirtyWindowIds.size > 0) {
+      throw new Error('请先保存或放弃尚未保存的任务表布局，再安装更新。');
+    }
+    if ([...sensitiveRequestDraftIdsByWindow.values()].some((requestIds) => requestIds.size > 0)) {
+      throw new Error('存在尚未提交的敏感回答。请先提交或清空敏感内容，再安装更新。');
+    }
+    return releaseUpdateService.install();
   });
   ipcMain.handle('zeus:conversation-resource:list-open-targets', (event, request: ConversationResourceRequest) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
@@ -1105,7 +1174,8 @@ async function initializeApplication(): Promise<void> {
   const userDataPath = app.getPath('userData');
   const browserAttachmentRoot = join(userDataPath, 'browser-comments');
   const conversationAttachmentRoot = join(userDataPath, 'conversation-attachments');
-  const conversationAttachmentGrantSecret = await readOrCreateConversationAttachmentGrantSecret(join(userDataPath, 'conversation-attachment-grant.secret'));
+  const conversationAttachmentGrantSecretPath = join(userDataPath, 'conversation-attachment-grant.secret');
+  const conversationAttachmentGrantSecret = await readOrCreateConversationAttachmentGrantSecret(conversationAttachmentGrantSecretPath);
   conversationInputResources = createConversationInputResourceBroker({
     attachmentRoot: conversationAttachmentRoot,
     grantSecret: conversationAttachmentGrantSecret,
@@ -1126,33 +1196,68 @@ async function initializeApplication(): Promise<void> {
   });
   const mainProjectRoot = resolveMainProjectRoot();
   const codexNativeEnabled = parseCodexNativeEnabled(process.env.ZEUS_CODEX_NATIVE_ENABLED);
+  const allowUntrustedReleaseUpdateTest = isTestDistribution() && process.env.ZEUS_ALLOW_UNTRUSTED_UPDATE_TEST === '1';
   const codexRuntime = codexNativeEnabled
-    ? await resolveCodexRuntime({
-        isPackaged: app.isPackaged,
-        resourcesPath: process.resourcesPath,
-        projectRoot: mainProjectRoot,
-        arch: process.arch,
-      })
+    ? await materializeCodexRuntime(
+        await resolveCodexRuntime({
+          isPackaged: app.isPackaged,
+          resourcesPath: process.resourcesPath,
+          projectRoot: mainProjectRoot,
+          arch: process.arch,
+        }),
+        userDataPath,
+      )
     : undefined;
   localServerRuntime = await startDesktopLocalServer({
     userDataPath,
     projectRoot: mainProjectRoot,
+    appVersion: app.getVersion(),
     telegramToken: process.env.ZEUS_TELEGRAM_BOT_TOKEN,
     telegramAllowedUserIds: parseTelegramAllowedUserIds(process.env.ZEUS_TELEGRAM_ALLOWED_USER_IDS),
     codexNativeEnabled,
-    codexRuntimeCommandPath: codexRuntime?.commandPath,
-    codexRuntimeBinaryVersion: codexRuntime?.binaryVersion,
+    codexRuntime: codexRuntime
+      ? {
+          appVersion: app.getVersion(),
+          commandPath: codexRuntime.commandPath,
+          binaryVersion: codexRuntime.binaryVersion,
+          upstreamCommit: codexRuntime.upstreamCommit,
+          artifactSha256: codexRuntime.artifactSha256,
+        }
+      : undefined,
     codexLegacyImportRoot: join(userDataPath, 'codex-legacy-import'),
+    releaseUpdateManifestUrl: allowUntrustedReleaseUpdateTest ? process.env.ZEUS_RELEASE_UPDATE_MANIFEST_URL : undefined,
+    allowUntrustedReleaseUpdateTest,
     taskAttachmentRoot: join(userDataPath, 'task-attachments'),
     browserAttachmentRoot,
     conversationAttachmentRoot,
     conversationAttachmentGrantSecret,
+    conversationAttachmentGrantSecretPath,
     browserAutomation: browserHost,
     onRestarted: () => {
       // 本地服务异常重启后，依赖旧 WebSocket 的系统通知桥必须重建，避免继续挂在旧端口。
       applySystemNotificationBridge();
     },
   });
+  if (app.isPackaged) {
+    releaseUpdateService = createReleaseUpdateService({
+      userDataPath,
+      currentAppPath: currentAppBundlePath(),
+      currentExecutablePath: process.execPath,
+      currentAppVersion: app.getVersion(),
+      localServerConfig: () => {
+        if (!localServerRuntime) throw new Error('Zeus local server is not ready.');
+        return localServerRuntime.config;
+      },
+      isPackaged: true,
+      testMode: isTestDistribution(),
+      allowUntrustedTestUpdate: allowUntrustedReleaseUpdateTest,
+      onInstallReady: () => {
+        upgradeHandoffRequested = true;
+        taskTableLayoutQuitApproved = true;
+        setImmediate(() => app.quit());
+      },
+    });
+  }
   appShellSettings = await loadMainAppShellSettings(localServerRuntime.config);
   applyLoginItemSettings();
   setupMenu();
@@ -1198,6 +1303,41 @@ if (!hasSingleInstanceLock) {
   void requestMainWindow();
 }
 
+async function resolveDesktopQuitMode(): Promise<'continue_in_background' | 'upgrade_handoff' | 'final_quit' | 'cancel'> {
+  if (upgradeHandoffRequested) return 'upgrade_handoff';
+  const runtime = localServerRuntime;
+  if (!runtime) return 'final_quit';
+  let status;
+  try {
+    status = await runtime.getStatus();
+  } catch {
+    // 无法确认后台工作时优先保护执行，避免一次状态探测失败把长任务连带终止。
+    return 'continue_in_background';
+  }
+  if (!status.hasActiveWork) return 'final_quit';
+  const options = {
+    type: 'warning' as const,
+    title: '仍有任务正在运行',
+    message: '退出 Zeus 时如何处理正在运行的任务？',
+    detail: `正在执行的轮次 ${status.activeTurnCount} 个，等待交互 ${status.waitingRequestCount} 个，其他 Runtime ${status.activeRuntimeCount} 个。`,
+    buttons: ['退出界面，任务继续运行', '停止任务并退出', '取消'],
+    defaultId: 0,
+    cancelId: 2,
+    noLink: true,
+  };
+  const targetWindow = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
+  const result = targetWindow ? await dialog.showMessageBox(targetWindow, options) : await dialog.showMessageBox(options);
+  if (result.response === 2) return 'cancel';
+  if (result.response === 0) return 'continue_in_background';
+  try {
+    await runtime.stopActiveWork();
+    return 'final_quit';
+  } catch (error) {
+    dialog.showErrorBox('Zeus', `无法安全停止全部任务，应用将保持打开。\n\n${error instanceof Error ? error.message : String(error)}`);
+    return 'cancel';
+  }
+}
+
 app.on(
   'before-quit',
   createBeforeQuitCleanupHandler({
@@ -1215,12 +1355,18 @@ app.on(
       systemNotificationBridge?.close();
       systemNotificationBridge = undefined;
     },
-    closeLocalServer: async () => {
+    resolveQuitMode: resolveDesktopQuitMode,
+    closeLocalServer: async (mode) => {
       await browserHost?.close();
       browserHost = undefined;
       conversationInputResources = undefined;
-      await localServerRuntime?.close();
+      await localServerRuntime?.close(mode);
       localServerRuntime = undefined;
+      if (mode === 'final_quit' && app.isPackaged) {
+        await cleanupStaleReleaseBackups(currentAppBundlePath()).catch((error: unknown) => {
+          console.warn('Zeus 未能在执行宿主关闭后清理旧 App 备份。', error);
+        });
+      }
     },
     exitApp: (code) => app.exit(code),
   }),

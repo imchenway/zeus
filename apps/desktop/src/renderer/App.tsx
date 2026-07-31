@@ -7,6 +7,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
   type RefObject,
+  type WheelEvent as ReactWheelEvent,
   useCallback,
   useEffect,
   useMemo,
@@ -70,6 +71,8 @@ import type {
 import { selectHasConfirmedUserMessage } from './session/sessionSelectors.js';
 import type { SessionControllerClient } from './session/useSessionController.js';
 import { TaskDetailPaneContent } from './task/TaskDetailPaneContent.js';
+import { TaskGitReviewModal } from './task/TaskGitReviewModal.js';
+import { TaskGitMergeModal } from './task/TaskGitMergeModal.js';
 import {
   buildTaskModelPushMessage,
   readTaskModelPushPreferences,
@@ -107,6 +110,7 @@ import { SourceListRow } from './ui/SourceListRow.js';
 import { WorkspaceDrawer } from './ui/WorkspaceDrawer.js';
 import { CommandCenterPanel } from './CommandCenterPanel.js';
 import { ReleaseUpdateDialog, type ReleaseUpdateDialogState } from './release/ReleaseUpdateDialog.js';
+import { ArchitectureGraphCanvas, buildArchitectureLayerModel } from './graph/ArchitectureGraphCanvas.js';
 import {
   type AiRuntimeAdapterDescriptor,
   type AiRuntimeAdapterStatus,
@@ -131,6 +135,7 @@ import {
   type GitPatchExport,
   type GraphConversationHistoryItem,
   type GraphConversationHistoryPage,
+  type GraphNeighborhood,
   type GraphQuestionAnswer,
   type GraphSearchResult,
   type GraphViewSnapshot,
@@ -222,7 +227,25 @@ type TaskResourceAuthorizationResult = { resources: TaskCreateAttachment[]; fail
 type NativeConversationAppClient = SessionControllerClient &
   Pick<
     DashboardClient,
-    'loadProjectConversationChoices' | 'startProjectConversation' | 'loadTaskConversationChoices' | 'startNativeConversation' | 'loadCodexTaskPushCapabilities' | 'startTaskModelPush' | 'acknowledgeNativeConversationCompletion'
+    | 'loadProjectConversationChoices'
+    | 'startProjectConversation'
+    | 'loadTaskConversationChoices'
+    | 'startNativeConversation'
+    | 'loadCodexTaskPushCapabilities'
+    | 'startTaskModelPush'
+    | 'acknowledgeNativeConversationCompletion'
+    | 'loadTaskGitWorkspaces'
+    | 'loadTaskWorkspaceFileDiff'
+    | 'commitTaskWorkspace'
+    | 'reclaimTaskWorkspace'
+    | 'discardTaskWorkspace'
+    | 'stopTaskWorkspaceSessions'
+    | 'loadTaskIntegrations'
+    | 'startTaskIntegration'
+    | 'loadTaskIntegrationConflict'
+    | 'resolveTaskIntegrationConflict'
+    | 'assistTaskIntegrationConflict'
+    | 'finalizeTaskIntegration'
   >;
 type NativeConversationChoiceLoadState = 'empty' | 'loading' | 'ready' | 'error';
 
@@ -736,6 +759,13 @@ const languageCopy = {
       file: '文件',
       function: '函数',
       package: '包',
+      module: '模块',
+      class: '类',
+      interface: '接口定义',
+      type: '类型',
+      enum: '枚举',
+      config: '配置',
+      dependency: '依赖',
       api: '接口',
       table: '表',
       column: '字段',
@@ -1849,7 +1879,7 @@ const languageCopy = {
       secondaryToolsAria: '图谱二级工具',
       toolSwitchAria: '图谱工具切换',
       tools: {
-        runtime: { label: '运行时预览', description: '按需校验渲染' },
+        runtime: { label: '图谱渲染诊断', description: '校验静态图谱渲染' },
         search: { label: '搜索与筛选', description: '先定位节点' },
         qa: { label: '图谱问答', description: '基于来源提问' },
         mermaid: { label: 'Mermaid', description: '导出当前视图' },
@@ -1888,12 +1918,12 @@ const languageCopy = {
       edgeSource: '边来源',
       lineLabel: '行',
       missingSymbol: '未绑定 symbol',
-      graphRuntime: '图谱运行时',
-      runtimeToolCollapsed: '运行时预览已收纳；选择该工具后只渲染真实图谱的 Sigma 与 React Flow 校验。',
-      sequenceRuntimeHidden: '时序图和方法逻辑图已经是主舞台，不再叠加运行时预览。',
+      graphRuntime: '图谱渲染诊断',
+      runtimeToolCollapsed: '该工具只用当前静态图谱校验 Sigma 与 React Flow 渲染，不代表真实运行调用链。',
+      sequenceRuntimeHidden: '时序图和方法逻辑图已经是主舞台，不再叠加静态渲染诊断。',
       sigmaTitle: 'Sigma WebGL 大图',
       sigmaSourceAria: 'Sigma 图谱真实来源',
-      sigmaEmpty: '当前没有真实节点，WebGL 运行时保持空态。',
+      sigmaEmpty: '当前没有真实节点，WebGL 渲染诊断保持空态。',
       reactFlowTitle: 'React Flow 局部图',
       reactFlowEdgesAria: 'React Flow 真实边',
       reactFlowEmpty: '当前没有真实局部图节点。',
@@ -2143,6 +2173,13 @@ const languageCopy = {
       file: 'File',
       function: 'Function',
       package: 'Package',
+      module: 'Module',
+      class: 'Class',
+      interface: 'Interface',
+      type: 'Type',
+      enum: 'Enum',
+      config: 'Config',
+      dependency: 'Dependency',
       api: 'API',
       table: 'Table',
       column: 'Column',
@@ -3256,7 +3293,7 @@ const languageCopy = {
       secondaryToolsAria: 'Graph secondary tools',
       toolSwitchAria: 'Graph tool switcher',
       tools: {
-        runtime: { label: 'Runtime preview', description: 'Verify rendering on demand' },
+        runtime: { label: 'Graph render diagnostics', description: 'Validate static graph rendering' },
         search: { label: 'Search and filters', description: 'Locate nodes first' },
         qa: { label: 'Graph Q&A', description: 'Ask from sources' },
         mermaid: { label: 'Mermaid', description: 'Export current view' },
@@ -3295,12 +3332,12 @@ const languageCopy = {
       edgeSource: 'Edge source',
       lineLabel: 'Line',
       missingSymbol: 'No symbol bound',
-      graphRuntime: 'Graph runtime',
-      runtimeToolCollapsed: 'Runtime preview is tucked away; opening this tool renders Sigma and React Flow from the real graph only.',
-      sequenceRuntimeHidden: 'Sequence and method-logic views are already the main stage, so runtime preview stays hidden.',
+      graphRuntime: 'Graph render diagnostics',
+      runtimeToolCollapsed: 'This tool only validates Sigma and React Flow against the current static graph; it is not a live runtime call trace.',
+      sequenceRuntimeHidden: 'Sequence and method-logic views are already the main stage, so static render diagnostics stay hidden.',
       sigmaTitle: 'Sigma WebGL graph',
       sigmaSourceAria: 'Sigma graph real sources',
-      sigmaEmpty: 'No real nodes are visible, so the WebGL runtime stays empty.',
+      sigmaEmpty: 'No real nodes are visible, so the WebGL render diagnostic stays empty.',
       reactFlowTitle: 'React Flow local graph',
       reactFlowEdgesAria: 'React Flow real edges',
       reactFlowEmpty: 'No real local graph nodes are visible.',
@@ -5716,9 +5753,11 @@ export function App(props: {
   snapshot?: DashboardSnapshot;
   onScanCurrentGraph?: () => Promise<DashboardSnapshot>;
   onLoadGraphView?: (viewType?: GraphViewType) => Promise<GraphViewSnapshot>;
+  onLoadGraphNeighborhood?: (nodeId: string, depth?: 1 | 2) => Promise<GraphNeighborhood>;
   onSearchGraph?: (query: string, nodeType?: string, edgeType?: string, minConfidence?: number) => Promise<GraphSearchResult>;
   onScanProjectGraph?: (projectId: string) => Promise<DashboardSnapshot>;
   onLoadProjectGraphView?: (projectId: string, viewType?: GraphViewType) => Promise<GraphViewSnapshot>;
+  onLoadProjectGraphNeighborhood?: (projectId: string, nodeId: string, depth?: 1 | 2) => Promise<GraphNeighborhood>;
   onSearchProjectGraph?: (projectId: string, query: string, nodeType?: string, edgeType?: string, minConfidence?: number) => Promise<GraphSearchResult>;
   onAskGraph?: (projectId: string, question: string) => Promise<GraphQuestionAnswer>;
   onLoadGraphConversations?: (
@@ -6183,10 +6222,26 @@ export function App(props: {
   const [taskCreateError, setTaskCreateError] = useState('');
   const [taskModelPushTaskId, setTaskModelPushTaskId] = useState<string | null>(null);
   const [taskModelPushCapabilities, setTaskModelPushCapabilities] = useState<CodexTaskPushCapabilities | null>(null);
-  const [taskModelPushForm, setTaskModelPushForm] = useState<TaskModelPushForm>({ model: '', effort: '', workMode: 'default', permissionMode: 'read-only', supplementalInfo: '' });
+  const [taskModelPushForm, setTaskModelPushForm] = useState<TaskModelPushForm>({
+    model: '',
+    effort: '',
+    workMode: 'default',
+    permissionMode: 'read-only',
+    workspaceMode: 'create',
+    sourceRef: '',
+    workspaceId: '',
+    branchName: '',
+    supplementalInfo: '',
+  });
   const [taskModelPushStatus, setTaskModelPushStatus] = useState<TaskModelPushModalStatus>('loading');
   const [taskModelPushError, setTaskModelPushError] = useState<string | null>(null);
   const [taskModelPushPending, setTaskModelPushPending] = useState<TaskModelPushPendingState | null>(null);
+  const [taskGitReviewState, setTaskGitReviewState] = useState<{
+    taskId: string;
+    workspaceId?: string | null;
+    mode: 'commit' | 'completed' | 'cancelled';
+  } | null>(null);
+  const [taskGitMergeTaskId, setTaskGitMergeTaskId] = useState<string | null>(null);
   const taskModelPushCapabilityRequestRef = useRef(0);
   const taskModelPushEnvelopeRef = useRef<{ fingerprint: string; request: StartTaskModelPushRequest } | null>(null);
   const taskCreateTitleInputRef = useRef<HTMLInputElement | null>(null);
@@ -6260,6 +6315,7 @@ export function App(props: {
         channel: 'stable',
         releasePageUrl: 'https://github.com/imchenway/zeus/releases/latest',
         artifact: null,
+        executionHostProtocolVersion: 1,
         automaticInstallEnabled: false,
         recommendedAction: 'open_download_page',
         label: '暂未检查更新',
@@ -6412,6 +6468,13 @@ export function App(props: {
     });
   }, [taskTableLayoutDirty]);
   const activeProjectIdRef = useRef<string | undefined>(activeProjectId);
+  const graphViewRequestVersionRef = useRef(0);
+  const graphSearchRequestVersionRef = useRef(0);
+  const graphQuestionRequestVersionRef = useRef(0);
+  const graphScanRequestVersionRef = useRef(0);
+  const graphConversationListRequestVersionRef = useRef(0);
+  const graphConversationDetailRequestVersionRef = useRef(0);
+  const activeGraphViewTypeRef = useRef<GraphViewType | undefined>(undefined);
   const selectedTaskConversationRef = useRef<GraphConversationHistoryItem | undefined>(undefined);
   const pendingRealtimeConversationRefreshIdsRef = useRef<Set<string>>(new Set());
   useEffect(() => {
@@ -6419,14 +6482,17 @@ export function App(props: {
   }, [activeProjectId]);
   // 图谱视图必须同时匹配当前项目 id 与响应元数据，避免切换项目后把 Zeus 或其他项目图谱挂到当前代码页。
   const activeGraphView = graphView && graphProjectId === activeProjectId && isProjectGraphViewForProject(graphView, selectedProject, { requireProjectIdentity: orderedProjects.length > 1 }) ? graphView : undefined;
+  useEffect(() => {
+    activeGraphViewTypeRef.current = activeGraphView?.viewType as GraphViewType | undefined;
+  }, [activeGraphView?.viewType]);
   const activeProjectGraphSummary = activeGraphView
     ? {
         // 项目代码页只能展示已经通过当前项目身份校验的图谱数据；Dashboard 的全局 Zeus 计数不能作为项目图谱兜底。
         nodeCount: activeGraphView.nodes.length,
         edgeCount: activeGraphView.edges.length,
-        viewCount: 1,
       }
-    : { nodeCount: 0, edgeCount: 0, viewCount: 0 };
+    : { nodeCount: 0, edgeCount: 0 };
+  const activeProjectGraphSummaryBoundary = appShellSettings.appLanguage === 'zh-CN' ? '当前已加载视图' : 'Currently loaded view';
   // 忙碌态只代表本轮 UI 发起的动作；数据库里上次崩溃残留的 scanning 不能永久锁死项目扫描入口，真实并发由服务端 409 兜底。
   const scanBusy = scanActionBusy;
   useEffect(() => {
@@ -6444,6 +6510,22 @@ export function App(props: {
     () => resolveSelectedNativeConversationForProject(nativeConversationChoices, selectedNativeConversationId, activeProjectId),
     [activeProjectId, nativeConversationChoices, selectedNativeConversationId],
   );
+  useEffect(() => {
+    function onCommitShortcut(event: globalThis.KeyboardEvent): void {
+      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== 'k') return;
+      const target = event.target;
+      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || (target instanceof HTMLElement && target.isContentEditable)) return;
+      if (!selectedNativeConversation?.taskId || !selectedNativeConversation.workspaceId) return;
+      event.preventDefault();
+      setTaskGitReviewState({
+        taskId: selectedNativeConversation.taskId,
+        workspaceId: selectedNativeConversation.workspaceId,
+        mode: 'commit',
+      });
+    }
+    window.addEventListener('keydown', onCommitShortcut);
+    return () => window.removeEventListener('keydown', onCommitShortcut);
+  }, [selectedNativeConversation?.taskId, selectedNativeConversation?.workspaceId]);
   useEffect(() => {
     selectedNativeConversationIdRef.current = selectedNativeConversationId;
   }, [selectedNativeConversationId]);
@@ -6847,30 +6929,44 @@ export function App(props: {
   }
 
   async function searchGraph(query: string, nodeType?: string, edgeType?: string, minConfidence?: number): Promise<void> {
-    if (!props.onSearchProjectGraph && !props.onSearchGraph) return;
-    setScanState('scanning');
+    if ((!props.onSearchProjectGraph && !props.onSearchGraph) || scanState === 'scanning') return;
+    if (!query.trim() && !nodeType?.trim() && !edgeType?.trim()) {
+      // 清空检索条件时直接恢复当前完整视图；置信度仍由画布本地过滤，避免空查询被后端结果上限截断。
+      graphSearchRequestVersionRef.current += 1;
+      setGraphSearchResult(undefined);
+      return;
+    }
+    const requestVersion = ++graphSearchRequestVersionRef.current;
+    const projectId = activeProjectId;
+    const requestedViewType = activeGraphViewTypeRef.current;
     try {
+      let result: GraphSearchResult | undefined;
       if (props.onSearchProjectGraph && activeProjectId) {
         // 项目抽屉内的搜索必须绑定当前选中项目，避免误读全局当前仓库图谱。
-        setGraphSearchResult(await props.onSearchProjectGraph(activeProjectId, query, nodeType, edgeType, minConfidence));
+        result = await props.onSearchProjectGraph(activeProjectId, query, nodeType, edgeType, minConfidence);
       } else if (props.onSearchGraph) {
-        setGraphSearchResult(await props.onSearchGraph(query, nodeType, edgeType, minConfidence));
+        result = await props.onSearchGraph(query, nodeType, edgeType, minConfidence);
       }
-      setScanState('idle');
+      if (requestVersion !== graphSearchRequestVersionRef.current || activeProjectIdRef.current !== projectId || activeGraphViewTypeRef.current !== requestedViewType) return;
+      setGraphSearchResult(result);
     } catch (error) {
+      if (requestVersion !== graphSearchRequestVersionRef.current) return;
       recordLocalError('graph-search', error);
-      setScanState('failed');
     }
   }
 
   async function askGraph(question: string): Promise<void> {
-    if (!props.onAskGraph || !activeProjectId) return;
+    if (!props.onAskGraph || !activeProjectId || scanState === 'scanning') return;
     const normalizedQuestion = question.trim();
     if (!normalizedQuestion) return;
-    setScanState('scanning');
+    const requestVersion = ++graphQuestionRequestVersionRef.current;
+    const projectId = activeProjectId;
+    const requestedViewType = activeGraphViewTypeRef.current;
     try {
       // 图谱问答必须走真实后端 Runtime，不在前端编造 AI 结论。
-      setGraphAnswer(await props.onAskGraph(activeProjectId, normalizedQuestion));
+      const answer = await props.onAskGraph(activeProjectId, normalizedQuestion);
+      if (requestVersion !== graphQuestionRequestVersionRef.current || activeProjectIdRef.current !== projectId || activeGraphViewTypeRef.current !== requestedViewType) return;
+      setGraphAnswer(answer);
       if (props.onLoadGraphConversations) {
         await loadGraphConversations({
           query: undefined,
@@ -6878,10 +6974,9 @@ export function App(props: {
           archived: false,
         });
       }
-      setScanState('idle');
     } catch (error) {
+      if (requestVersion !== graphQuestionRequestVersionRef.current) return;
       recordLocalError('graph-question', error);
-      setScanState('failed');
     }
   }
 
@@ -6896,14 +6991,16 @@ export function App(props: {
 
   async function loadGraphConversations(input: { query?: string; offset?: number; archived?: boolean } = {}): Promise<void> {
     if (!props.onLoadGraphConversations || !activeProjectId) return;
-    setScanState('scanning');
+    const requestVersion = ++graphConversationListRequestVersionRef.current;
+    const projectId = activeProjectId;
     try {
-      const page = await props.onLoadGraphConversations(activeProjectId, {
+      const page = await props.onLoadGraphConversations(projectId, {
         query: input.query,
         limit: graphConversationPage.limit,
         offset: input.offset ?? graphConversationPage.offset,
         archived: input.archived ?? graphConversationPage.archived,
       });
+      if (requestVersion !== graphConversationListRequestVersionRef.current || activeProjectIdRef.current !== projectId) return;
       setGraphConversations(page.items);
       setGraphConversationPage({
         total: page.total,
@@ -6913,34 +7010,36 @@ export function App(props: {
         archived: page.archived,
       });
       setSelectedGraphConversation(page.items[0]);
-      setScanState('idle');
     } catch (error) {
+      if (requestVersion !== graphConversationListRequestVersionRef.current || activeProjectIdRef.current !== projectId) return;
       recordLocalError('graph-conversations', error);
-      setScanState('failed');
     }
   }
 
   async function loadGraphConversationDetail(conversationId: string): Promise<void> {
     if (!activeProjectId) return;
+    const requestVersion = ++graphConversationDetailRequestVersionRef.current;
+    const projectId = activeProjectId;
     if (!props.onLoadGraphConversation) {
       setSelectedGraphConversation(graphConversations.find((conversation) => conversation.id === conversationId));
       return;
     }
-    setScanState('scanning');
     try {
-      upsertGraphConversation(await props.onLoadGraphConversation(activeProjectId, conversationId));
-      setScanState('idle');
+      const conversation = await props.onLoadGraphConversation(projectId, conversationId);
+      if (requestVersion !== graphConversationDetailRequestVersionRef.current || activeProjectIdRef.current !== projectId) return;
+      upsertGraphConversation(conversation);
     } catch (error) {
+      if (requestVersion !== graphConversationDetailRequestVersionRef.current || activeProjectIdRef.current !== projectId) return;
       recordLocalError('graph-conversation-load', error);
-      setScanState('failed');
     }
   }
 
   async function archiveGraphConversation(conversationId: string): Promise<void> {
     if (!props.onArchiveGraphConversation || !activeProjectId) return;
-    setScanState('scanning');
+    const projectId = activeProjectId;
     try {
-      await props.onArchiveGraphConversation(activeProjectId, conversationId);
+      await props.onArchiveGraphConversation(projectId, conversationId);
+      if (activeProjectIdRef.current !== projectId) return;
       await loadGraphConversations({
         query: graphConversationPage.query ?? undefined,
         offset: graphConversationPage.offset,
@@ -6948,15 +7047,15 @@ export function App(props: {
       });
     } catch (error) {
       recordLocalError('graph-conversation-archive', error);
-      setScanState('failed');
     }
   }
 
   async function restoreGraphConversation(conversationId: string): Promise<void> {
     if (!props.onRestoreGraphConversation || !activeProjectId) return;
-    setScanState('scanning');
+    const projectId = activeProjectId;
     try {
-      await props.onRestoreGraphConversation(activeProjectId, conversationId);
+      await props.onRestoreGraphConversation(projectId, conversationId);
+      if (activeProjectIdRef.current !== projectId) return;
       await loadGraphConversations({
         query: graphConversationPage.query ?? undefined,
         offset: graphConversationPage.offset,
@@ -6964,7 +7063,6 @@ export function App(props: {
       });
     } catch (error) {
       recordLocalError('graph-conversation-restore', error);
-      setScanState('failed');
     }
   }
 
@@ -6979,6 +7077,13 @@ export function App(props: {
   }, [activeNavTarget, activeProjectSection, activeProjectId, conversationDraftOpen]);
 
   function resetGraphWorkspace(projectId?: string): void {
+    graphViewRequestVersionRef.current += 1;
+    graphSearchRequestVersionRef.current += 1;
+    graphQuestionRequestVersionRef.current += 1;
+    graphScanRequestVersionRef.current += 1;
+    graphConversationListRequestVersionRef.current += 1;
+    graphConversationDetailRequestVersionRef.current += 1;
+    activeGraphViewTypeRef.current = undefined;
     setGraphProjectId(projectId);
     setGraphView(undefined);
     setGraphSearchResult(undefined);
@@ -6990,34 +7095,41 @@ export function App(props: {
     setGraphSourceOpenFeedback('idle');
   }
 
-  function acceptLoadedProjectGraphView(projectId: string, loadedGraphView: GraphViewSnapshot, expectedProject: ProjectRecord | undefined): boolean {
+  function acceptLoadedProjectGraphView(projectId: string, loadedGraphView: GraphViewSnapshot, expectedProject: ProjectRecord | undefined, options?: { preserveExisting?: boolean }): boolean {
     if (!isProjectGraphViewForProject(loadedGraphView, expectedProject, { requireProjectIdentity: true })) {
       // 所有项目级图谱入口都必须先校验项目身份；失败时只清空当前代码页并显示可恢复错误，不能把旧 Zeus 图谱挂到新项目。
-      resetGraphWorkspace(projectId);
+      if (!options?.preserveExisting) resetGraphWorkspace(projectId);
       recordLocalError('graph-view-project-mismatch', new Error(`Graph view belongs to ${loadedGraphView.projectId ?? loadedGraphView.projectName ?? 'another project'}`));
       setScanState('failed');
       return false;
     }
     setGraphProjectId(projectId);
     setGraphView(loadedGraphView);
+    activeGraphViewTypeRef.current = loadedGraphView.viewType as GraphViewType;
     return true;
   }
 
   async function openProjectGraphView(projectId: string, viewType: GraphViewType = 'architecture'): Promise<GraphViewSnapshot | undefined> {
     if (!props.onLoadProjectGraphView) return undefined;
+    const requestVersion = ++graphViewRequestVersionRef.current;
     setScanState('scanning');
     try {
       const loadedGraphView = await props.onLoadProjectGraphView(projectId, viewType);
-      if (activeProjectIdRef.current !== projectId) {
+      if (requestVersion !== graphViewRequestVersionRef.current || activeProjectIdRef.current !== projectId) {
         // 用户已经切换到其他项目时，晚到的旧图谱响应不能覆盖当前代码页，也不能让按钮停在扫描中。
-        setScanState('idle');
         return loadedGraphView;
+      }
+      if (loadedGraphView.viewType !== viewType) {
+        recordLocalError('graph-view-open', new Error(`Requested ${viewType}, received ${loadedGraphView.viewType}`));
+        setScanState('failed');
+        return undefined;
       }
       const expectedProject = snapshot.projects.find((project) => project.id === projectId) ?? (selectedProject?.id === projectId ? selectedProject : undefined);
       if (!acceptLoadedProjectGraphView(projectId, loadedGraphView, expectedProject)) return undefined;
       setScanState('idle');
       return loadedGraphView;
     } catch (error) {
+      if (requestVersion !== graphViewRequestVersionRef.current || activeProjectIdRef.current !== projectId) return undefined;
       recordLocalError('graph-view-open', error);
       setScanState('failed');
       return undefined;
@@ -7026,23 +7138,32 @@ export function App(props: {
 
   async function openGraphView(viewType: GraphViewType = 'architecture'): Promise<void> {
     if (!props.onLoadProjectGraphView && !props.onLoadGraphView) return;
+    const requestVersion = ++graphViewRequestVersionRef.current;
+    const projectId = activeProjectId;
+    graphSearchRequestVersionRef.current += 1;
+    graphQuestionRequestVersionRef.current += 1;
+    // 视图切换时先清空旧搜索切片，避免上一视图的节点和边被套进新视图标题与布局。
+    setGraphSearchResult(undefined);
+    setGraphAnswer(undefined);
     setScanState('scanning');
     try {
-      const projectId = activeProjectId;
       if (props.onLoadProjectGraphView && projectId) {
         const loadedGraphView = await props.onLoadProjectGraphView(projectId, viewType);
-        if (activeProjectIdRef.current !== projectId) {
-          setScanState('idle');
-          return;
-        }
+        if (requestVersion !== graphViewRequestVersionRef.current || activeProjectIdRef.current !== projectId) return;
+        if (loadedGraphView.viewType !== viewType) throw new Error(`Requested ${viewType}, received ${loadedGraphView.viewType}`);
         const expectedProject = snapshot.projects.find((project) => project.id === projectId) ?? (selectedProject?.id === projectId ? selectedProject : undefined);
         if (!acceptLoadedProjectGraphView(projectId, loadedGraphView, expectedProject)) return;
       } else if (!projectId && props.onLoadGraphView) {
-        setGraphView(await props.onLoadGraphView(viewType));
+        const loadedGraphView = await props.onLoadGraphView(viewType);
+        if (requestVersion !== graphViewRequestVersionRef.current) return;
+        if (loadedGraphView.viewType !== viewType) throw new Error(`Requested ${viewType}, received ${loadedGraphView.viewType}`);
+        setGraphView(loadedGraphView);
+        activeGraphViewTypeRef.current = loadedGraphView.viewType as GraphViewType;
         setGraphProjectId(projectId);
       }
       setScanState('idle');
     } catch (error) {
+      if (requestVersion !== graphViewRequestVersionRef.current || activeProjectIdRef.current !== projectId) return;
       recordLocalError('graph-view-open', error);
       setScanState('failed');
     }
@@ -7082,6 +7203,7 @@ export function App(props: {
           graphNodeTaskFeedback={graphNodeTaskFeedback}
           graphNodeTaskTargetId={lastGraphNodeTaskId}
           graphSourceOpenFeedback={graphSourceOpenFeedback}
+          scanState={scanState}
           onGraphConversationSearchChange={setGraphConversationSearch}
           onLoadGraphConversations={loadGraphConversations}
           onLoadGraphConversation={loadGraphConversationDetail}
@@ -7089,10 +7211,18 @@ export function App(props: {
           onRestoreGraphConversation={restoreGraphConversation}
           onCreateTaskFromGraphConversation={createTaskFromGraphConversation}
           onLoadView={openGraphView}
+          onLoadGraphNeighborhood={activeProjectId && props.onLoadProjectGraphNeighborhood ? (nodeId, depth) => props.onLoadProjectGraphNeighborhood!(activeProjectId, nodeId, depth) : props.onLoadGraphNeighborhood}
           onSearchGraph={searchGraph}
           onAskGraph={askGraph}
           onCreateTaskFromNode={createTaskFromGraphNode}
           onOpenGraphSource={openGraphSourceFromCodeMap}
+          onScanGraph={() => {
+            void scanActiveProjectGraph();
+          }}
+          onOpenChanges={() => {
+            setProjectPanel('diff');
+            void loadGitDiff();
+          }}
           onExportMermaidDiagramFile={props.onExportMermaidDiagramFile}
           onExportPlantUmlDiagramFile={props.onExportPlantUmlDiagramFile}
           codeMapSettings={codeMapSettings}
@@ -7104,36 +7234,61 @@ export function App(props: {
 
   async function scanActiveProjectGraph(): Promise<void> {
     if (!props.onScanProjectGraph && !props.onScanCurrentGraph) return;
+    let scanRequestVersion = ++graphScanRequestVersionRef.current;
     const projectId = activeProjectId;
+    const refreshViewType = activeGraphViewTypeRef.current ?? 'architecture';
+    const hasCurrentGraphSnapshot = Boolean(activeGraphView && graphProjectId === projectId);
     setScanState('scanning');
     try {
       if (props.onScanProjectGraph && projectId) {
-        resetGraphWorkspace(projectId);
+        if (hasCurrentGraphSnapshot) {
+          // 重新扫描期间继续保留上一个可用快照；只有新快照成功加载后才原子替换，失败时用户仍能查看原图。
+          graphViewRequestVersionRef.current += 1;
+          graphSearchRequestVersionRef.current += 1;
+          graphQuestionRequestVersionRef.current += 1;
+          setGraphSearchResult(undefined);
+          setGraphAnswer(undefined);
+        } else {
+          resetGraphWorkspace(projectId);
+          scanRequestVersion = graphScanRequestVersionRef.current;
+        }
         const nextSnapshot = await props.onScanProjectGraph(projectId);
         setSnapshot(nextSnapshot);
-        if (activeProjectIdRef.current !== projectId) {
-          setScanState('idle');
-          return;
-        }
+        if (scanRequestVersion !== graphScanRequestVersionRef.current || activeProjectIdRef.current !== projectId) return;
         if (props.onLoadProjectGraphView) {
-          const loadedGraphView = await props.onLoadProjectGraphView(projectId, 'architecture');
-          if (activeProjectIdRef.current !== projectId) {
-            setScanState('idle');
-            return;
-          }
+          const viewRequestVersion = ++graphViewRequestVersionRef.current;
+          const loadedGraphView = await props.onLoadProjectGraphView(projectId, refreshViewType);
+          if (viewRequestVersion !== graphViewRequestVersionRef.current || activeProjectIdRef.current !== projectId) return;
+          if (loadedGraphView.viewType !== refreshViewType) throw new Error(`Requested ${refreshViewType}, received ${loadedGraphView.viewType}`);
           const expectedProject = nextSnapshot.projects.find((project) => project.id === projectId) ?? snapshot.projects.find((project) => project.id === projectId) ?? (selectedProject?.id === projectId ? selectedProject : undefined);
-          if (!acceptLoadedProjectGraphView(projectId, loadedGraphView, expectedProject)) return;
+          if (!acceptLoadedProjectGraphView(projectId, loadedGraphView, expectedProject, { preserveExisting: hasCurrentGraphSnapshot })) return;
         }
       } else if (!projectId && props.onScanCurrentGraph) {
-        resetGraphWorkspace(projectId);
+        if (hasCurrentGraphSnapshot) {
+          graphViewRequestVersionRef.current += 1;
+          graphSearchRequestVersionRef.current += 1;
+          graphQuestionRequestVersionRef.current += 1;
+          setGraphSearchResult(undefined);
+          setGraphAnswer(undefined);
+        } else {
+          resetGraphWorkspace(projectId);
+          scanRequestVersion = graphScanRequestVersionRef.current;
+        }
         setSnapshot(await props.onScanCurrentGraph());
         if (props.onLoadGraphView) {
-          setGraphView(await props.onLoadGraphView('architecture'));
+          const viewRequestVersion = ++graphViewRequestVersionRef.current;
+          const loadedGraphView = await props.onLoadGraphView(refreshViewType);
+          if (viewRequestVersion !== graphViewRequestVersionRef.current) return;
+          if (loadedGraphView.viewType !== refreshViewType) throw new Error(`Requested ${refreshViewType}, received ${loadedGraphView.viewType}`);
+          setGraphView(loadedGraphView);
+          activeGraphViewTypeRef.current = loadedGraphView.viewType as GraphViewType;
           setGraphProjectId(projectId);
         }
       }
+      if (scanRequestVersion !== graphScanRequestVersionRef.current || activeProjectIdRef.current !== projectId) return;
       setScanState('idle');
     } catch (error) {
+      if (scanRequestVersion !== graphScanRequestVersionRef.current || activeProjectIdRef.current !== projectId) return;
       recordLocalError('graph-scan', error);
       setScanState('failed');
     }
@@ -7721,9 +7876,13 @@ export function App(props: {
     };
   }, [prepareNewConversationDraft]);
 
-  async function updateTaskManagementStatus(taskId: string, status: TaskManagementStatus): Promise<void> {
+  async function updateTaskManagementStatus(taskId: string, status: TaskManagementStatus, options: { skipGitReview?: boolean } = {}): Promise<void> {
     const currentTask = snapshot.tasks.find((task) => task.id === taskId);
     if (!props.onUpdateTaskManagementStatus || !currentTask || resolveTaskManagementStatus(currentTask) === status) return;
+    if (!options.skipGitReview && (status === 'completed' || status === 'cancelled') && props.nativeConversationClient) {
+      setTaskGitReviewState({ taskId, mode: status });
+      return;
+    }
     setActionState('updating-task');
     try {
       const nextSnapshot = await props.onUpdateTaskManagementStatus(taskId, status);
@@ -7747,7 +7906,17 @@ export function App(props: {
     if (!task) return;
     setTaskModelPushTaskId(task.id);
     setTaskModelPushCapabilities(null);
-    setTaskModelPushForm({ model: '', effort: '', workMode: 'default', permissionMode: 'read-only', supplementalInfo: '' });
+    setTaskModelPushForm({
+      model: '',
+      effort: '',
+      workMode: 'default',
+      permissionMode: 'read-only',
+      workspaceMode: 'create',
+      sourceRef: '',
+      workspaceId: '',
+      branchName: '',
+      supplementalInfo: '',
+    });
     setTaskModelPushStatus('loading');
     setTaskModelPushError(null);
     taskModelPushEnvelopeRef.current = null;
@@ -7800,6 +7969,7 @@ export function App(props: {
             ...(taskModelPushForm.effort ? { effort: taskModelPushForm.effort } : {}),
             workMode: taskModelPushForm.workMode,
             permissionMode: taskModelPushForm.permissionMode,
+            workspace: taskModelPushForm.workspaceMode === 'existing' ? { mode: 'existing', workspaceId: taskModelPushForm.workspaceId } : { mode: 'create', sourceRef: taskModelPushForm.sourceRef, branchName: taskModelPushForm.branchName },
             ...(taskModelPushForm.supplementalInfo.trim() ? { supplementalInfo: taskModelPushForm.supplementalInfo.trim() } : {}),
             idempotencyKey: createSessionOperationId(),
             clientUserMessageId: createSessionOperationId(),
@@ -9378,96 +9548,106 @@ export function App(props: {
 
                   <section className="project-code-primary" aria-label={codeWorkspaceCopy.overviewAria}>
                     {activeProjectSection === 'code' ? renderProjectCodeMapStage() : null}
-                    <section className={`project-code-context-rail ${activeProjectSection === 'code' && activeGraphView ? 'is-condensed' : ''}`.trim()} aria-label={codeWorkspaceCopy.contextRailAria}>
-                      <section className="code-repository-facts" aria-label={codeWorkspaceCopy.repositoryStatusAria}>
-                        <div className="code-context-rail-heading">
-                          <strong>{codeWorkspaceCopy.repositoryStatusTitle}</strong>
-                          <span>{selectedProject.name}</span>
+                    {activeProjectSection === 'project-settings' || !activeGraphView ? (
+                      <section className="project-code-context-rail" aria-label={codeWorkspaceCopy.contextRailAria}>
+                        <section className="code-repository-facts" aria-label={codeWorkspaceCopy.repositoryStatusAria}>
+                          <div className="code-context-rail-heading">
+                            <strong>{codeWorkspaceCopy.repositoryStatusTitle}</strong>
+                            <span>{selectedProject.name}</span>
+                          </div>
+                          <dl>
+                            <div className="code-repository-fact-row">
+                              <dt>{codeWorkspaceCopy.localPath}</dt>
+                              <dd>{selectedProject.localPath}</dd>
+                            </div>
+                            <div className="code-repository-fact-row">
+                              <dt>{codeWorkspaceCopy.scan}</dt>
+                              <dd>{formatProjectScanStatus(selectedProject.scanStatus, codeWorkspaceCopy)}</dd>
+                            </div>
+                            <div className="code-repository-fact-row">
+                              <dt>{codeWorkspaceCopy.git}</dt>
+                              <dd>
+                                {gitLabel}
+                                {changedFiles.length > 0 ? ` · ${changedFiles.length} ${codeWorkspaceCopy.changeUnit}` : ''}
+                              </dd>
+                            </div>
+                            <div className="code-repository-fact-row">
+                              <dt>{codeWorkspaceCopy.graph}</dt>
+                              <dd>
+                                {activeProjectGraphSummary.nodeCount > 0
+                                  ? `${codeWorkspaceCopy.graphCounts(activeProjectGraphSummary.nodeCount, activeProjectGraphSummary.edgeCount)} · ${activeProjectGraphSummaryBoundary}`
+                                  : codeWorkspaceCopy.waitingRealScan}
+                              </dd>
+                            </div>
+                          </dl>
+                        </section>
+
+                        <section className="code-graph-status-strip" aria-label={codeWorkspaceCopy.graphSummaryAria}>
+                          <div className="code-context-rail-heading">
+                            <strong>{codeWorkspaceCopy.graphTitle}</strong>
+                            <span>{activeProjectGraphSummary.nodeCount > 0 ? activeProjectGraphSummaryBoundary : codeWorkspaceCopy.waitingRealScan}</span>
+                          </div>
+                          <p>
+                            {activeProjectGraphSummary.nodeCount > 0
+                              ? `${activeProjectGraphSummaryBoundary} · ${codeWorkspaceCopy.graphCounts(activeProjectGraphSummary.nodeCount, activeProjectGraphSummary.edgeCount)}`
+                              : codeWorkspaceCopy.emptyGraphHelp}
+                          </p>
+                        </section>
+
+                        <div className="code-repository-primary-rail" aria-label={codeWorkspaceCopy.primaryActionsAria}>
+                          {/* 代码库主路径只有三件事：扫描、打开图谱、查看变更；其余项目操作收进次要操作行。 */}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              void scanActiveProjectGraph();
+                            }}
+                            disabled={(!props.onScanProjectGraph && !props.onScanCurrentGraph) || !activeProjectId || scanBusy}
+                            {...controlBusyProps(scanBusy)}
+                          >
+                            {codeWorkspaceCopy.scanProject}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              void handleCodeMapAction();
+                            }}
+                            disabled={(!props.onLoadProjectGraphView && !props.onLoadGraphView && !props.onScanProjectGraph && !props.onScanCurrentGraph) || !activeProjectId || scanBusy}
+                            {...controlBusyProps(scanBusy)}
+                          >
+                            {codeMapActionLabel()}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setProjectPanel('diff');
+                              void loadGitDiff();
+                            }}
+                            disabled={!props.onLoadGitDiff || loadingDiffBusy}
+                            {...controlBusyProps(loadingDiffBusy)}
+                          >
+                            {codeWorkspaceCopy.viewChanges}
+                          </button>
                         </div>
-                        <dl>
-                          <div className="code-repository-fact-row">
-                            <dt>{codeWorkspaceCopy.localPath}</dt>
-                            <dd>{selectedProject.localPath}</dd>
-                          </div>
-                          <div className="code-repository-fact-row">
-                            <dt>{codeWorkspaceCopy.scan}</dt>
-                            <dd>{formatProjectScanStatus(selectedProject.scanStatus, codeWorkspaceCopy)}</dd>
-                          </div>
-                          <div className="code-repository-fact-row">
-                            <dt>{codeWorkspaceCopy.git}</dt>
-                            <dd>
-                              {gitLabel}
-                              {changedFiles.length > 0 ? ` · ${changedFiles.length} ${codeWorkspaceCopy.changeUnit}` : ''}
-                            </dd>
-                          </div>
-                          <div className="code-repository-fact-row">
-                            <dt>{codeWorkspaceCopy.graph}</dt>
-                            <dd>{codeWorkspaceCopy.graphCounts(activeProjectGraphSummary.nodeCount, activeProjectGraphSummary.edgeCount)}</dd>
-                          </div>
-                        </dl>
-                      </section>
 
-                      <section className="code-graph-status-strip" aria-label={codeWorkspaceCopy.graphSummaryAria}>
-                        <div className="code-context-rail-heading">
-                          <strong>{codeWorkspaceCopy.graphTitle}</strong>
-                          <span>{activeProjectGraphSummary.nodeCount > 0 ? codeWorkspaceCopy.viewsAvailable(activeProjectGraphSummary.viewCount) : codeWorkspaceCopy.waitingRealScan}</span>
+                        <div className="code-repository-secondary-rail" aria-label={codeWorkspaceCopy.secondaryActionsAria}>
+                          <button type="button" onClick={() => setProjectPanel(projectPanel === 'edit' ? undefined : 'edit')}>
+                            {codeWorkspaceCopy.edit}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setProjectPanel(projectPanel === 'config' ? undefined : 'config');
+                              if (selectedProject.id) void loadProjectConfig(selectedProject.id);
+                            }}
+                          >
+                            {codeWorkspaceCopy.configure}
+                          </button>
+                          <button type="button" onClick={() => setProjectPanel(projectPanel === 'archive' ? undefined : 'archive')}>
+                            {codeWorkspaceCopy.moreProjectActions}
+                          </button>
                         </div>
-                        <p>{activeProjectGraphSummary.nodeCount > 0 ? codeWorkspaceCopy.graphCounts(activeProjectGraphSummary.nodeCount, activeProjectGraphSummary.edgeCount) : codeWorkspaceCopy.emptyGraphHelp}</p>
                       </section>
-
-                      <div className="code-repository-primary-rail" aria-label={codeWorkspaceCopy.primaryActionsAria}>
-                        {/* 代码库主路径只有三件事：扫描、打开图谱、查看变更；其余项目操作收进次要操作行。 */}
-                        <button
-                          type="button"
-                          onClick={() => {
-                            void scanActiveProjectGraph();
-                          }}
-                          disabled={(!props.onScanProjectGraph && !props.onScanCurrentGraph) || !activeProjectId || scanBusy}
-                          {...controlBusyProps(scanBusy)}
-                        >
-                          {codeWorkspaceCopy.scanProject}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            void handleCodeMapAction();
-                          }}
-                          disabled={(!props.onLoadProjectGraphView && !props.onLoadGraphView && !props.onScanProjectGraph && !props.onScanCurrentGraph) || !activeProjectId || scanBusy}
-                          {...controlBusyProps(scanBusy)}
-                        >
-                          {codeMapActionLabel()}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setProjectPanel('diff');
-                            void loadGitDiff();
-                          }}
-                          disabled={!props.onLoadGitDiff || loadingDiffBusy}
-                          {...controlBusyProps(loadingDiffBusy)}
-                        >
-                          {codeWorkspaceCopy.viewChanges}
-                        </button>
-                      </div>
-
-                      <div className="code-repository-secondary-rail" aria-label={codeWorkspaceCopy.secondaryActionsAria}>
-                        <button type="button" onClick={() => setProjectPanel(projectPanel === 'edit' ? undefined : 'edit')}>
-                          {codeWorkspaceCopy.edit}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setProjectPanel(projectPanel === 'config' ? undefined : 'config');
-                            if (selectedProject.id) void loadProjectConfig(selectedProject.id);
-                          }}
-                        >
-                          {codeWorkspaceCopy.configure}
-                        </button>
-                        <button type="button" onClick={() => setProjectPanel(projectPanel === 'archive' ? undefined : 'archive')}>
-                          {codeWorkspaceCopy.moreProjectActions}
-                        </button>
-                      </div>
-                    </section>
+                    ) : null}
                   </section>
 
                   {projectPanel ? (
@@ -10199,6 +10379,22 @@ export function App(props: {
                     onLoadAttachmentPreview={props.onLoadTaskAttachmentPreview}
                     onOpenAttachment={props.onOpenTaskAttachment}
                   />
+                  <TaskGitMergeModal
+                    open={Boolean(taskGitMergeTaskId)}
+                    language={appShellSettings.appLanguage}
+                    task={snapshot.tasks.find((task) => task.id === taskGitMergeTaskId) ?? null}
+                    projectName={snapshot.projects.find((project) => project.id === snapshot.tasks.find((task) => task.id === taskGitMergeTaskId)?.projectId)?.name}
+                    client={props.nativeConversationClient ?? null}
+                    onChanged={() =>
+                      taskGitMergeTaskId
+                        ? Promise.all([
+                            refreshNativeConversationChoices(taskGitMergeTaskId),
+                            props.onLoadTaskEvents && taskDetailPaneTaskId === taskGitMergeTaskId ? props.onLoadTaskEvents(taskGitMergeTaskId).then(setTaskEvents) : Promise.resolve(),
+                          ]).then(() => undefined)
+                        : Promise.resolve()
+                    }
+                    onClose={() => setTaskGitMergeTaskId(null)}
+                  />
                   {taskDetailPaneTask ? (
                     <WorkspaceDrawer
                       presentation="floating"
@@ -10212,6 +10408,7 @@ export function App(props: {
                       onClose={() => setTaskDetailPaneTaskId(undefined)}
                     >
                       <TaskDetailPaneContent
+                        language={appShellSettings.appLanguage}
                         task={taskDetailPaneTask}
                         events={taskEvents.filter((event) => event.taskId === taskDetailPaneTask.id)}
                         copy={taskWorkspaceCopy}
@@ -10223,6 +10420,7 @@ export function App(props: {
                         conversationsError={taskDetailPaneConversationState?.status === 'error' ? taskDetailPaneConversationState.error : null}
                         onOpenConversation={(taskId, conversationId) => void openTaskConversation(taskId, conversationId)}
                         onPushNewConversation={(taskId) => void openTaskModelPush(taskId)}
+                        onOpenCodeDelivery={(taskId) => setTaskGitMergeTaskId(taskId)}
                         onManagementStatusChange={(taskId, status) => void updateTaskManagementStatus(taskId, status)}
                         onReloadConversations={(taskId) => void refreshNativeConversationChoices(taskId)}
                         onLoadAttachmentPreview={props.onLoadTaskAttachmentPreview}
@@ -10763,6 +10961,18 @@ export function App(props: {
             </section>
           </section>
         ) : null}
+
+        <TaskGitReviewModal
+          open={Boolean(taskGitReviewState)}
+          language={appShellSettings.appLanguage}
+          task={snapshot.tasks.find((task) => task.id === taskGitReviewState?.taskId) ?? null}
+          projectName={snapshot.projects.find((project) => project.id === snapshot.tasks.find((task) => task.id === taskGitReviewState?.taskId)?.projectId)?.name}
+          client={props.nativeConversationClient ?? null}
+          mode={taskGitReviewState?.mode ?? 'commit'}
+          preferredWorkspaceId={taskGitReviewState?.workspaceId}
+          onClose={() => setTaskGitReviewState(null)}
+          onReadyToCloseTask={(status) => (taskGitReviewState ? updateTaskManagementStatus(taskGitReviewState.taskId, status, { skipGitReview: true }) : Promise.resolve())}
+        />
 
         {activeNavTarget === 'settings' ? (
           <section className="workspace-view workspace-view-settings settings-reference-shell" aria-label={settingsWorkspaceCopy.viewAria}>
@@ -11705,11 +11915,13 @@ function formatGraphLayoutAlgorithm(algorithm: string, appLanguage: AppLanguage 
     hierarchical: '层级布局',
     force: '力导向布局',
     dagre: 'Dagre 布局',
+    'radial-neighborhood': '节点邻域布局',
   };
   const enLabels: Record<string, string> = {
     hierarchical: 'hierarchical layout',
     force: 'force layout',
     dagre: 'Dagre layout',
+    'radial-neighborhood': 'node neighborhood layout',
   };
   return appLanguage === 'en-US' ? (enLabels[algorithm] ?? algorithm) : (zhLabels[algorithm] ?? algorithm);
 }
@@ -11841,6 +12053,7 @@ function CodeMapView(props: {
   graphNodeTaskFeedback?: GraphNodeTaskFeedback;
   graphNodeTaskTargetId?: string;
   graphSourceOpenFeedback?: GraphSourceOpenFeedback;
+  scanState?: 'idle' | 'scanning' | 'failed';
   onGraphConversationSearchChange?: (query: string) => void;
   onLoadGraphConversations?: (input?: { query?: string; offset?: number; archived?: boolean }) => void;
   onLoadGraphConversation?: (conversationId: string) => void;
@@ -11848,10 +12061,13 @@ function CodeMapView(props: {
   onRestoreGraphConversation?: (conversationId: string) => void;
   onCreateTaskFromGraphConversation?: (conversationId: string) => void;
   onLoadView?: (viewType: GraphViewType) => Promise<void>;
+  onLoadGraphNeighborhood?: (nodeId: string, depth?: 1 | 2) => Promise<GraphNeighborhood>;
   onSearchGraph?: (query: string, nodeType?: string, edgeType?: string, minConfidence?: number) => void;
   onAskGraph?: (question: string) => void;
   onCreateTaskFromNode?: (nodeId: string) => void;
   onOpenGraphSource?: (source: { sourceRef: string; lineStart?: number }) => void;
+  onScanGraph?: () => void;
+  onOpenChanges?: () => void;
   onExportMermaidDiagramFile?: (payload: MermaidDiagramExportFile) => Promise<{ saved: boolean; filePath: string | null }>;
   onExportPlantUmlDiagramFile?: (payload: PlantUmlDiagramExportFile) => Promise<{ saved: boolean; filePath: string | null }>;
   codeMapSettings: CodeMapSettings;
@@ -11859,6 +12075,94 @@ function CodeMapView(props: {
 }) {
   const uiCopy = getLanguageCopy(props.appLanguage);
   const codeMapCopy = uiCopy.codeMapWorkspace;
+  const graphWorkbenchCopy =
+    props.appLanguage === 'zh-CN'
+      ? {
+          viewPicker: '选择图谱视图',
+          quickSearch: '搜索节点或关系',
+          ask: '询问',
+          tools: '图谱工具',
+          close: '关闭图谱面板',
+          allGraphs: '全部图谱',
+          structure: '真实结构',
+          scanIdle: '图谱已就绪',
+          scanBusy: '正在读取或更新图谱',
+          scanFailed: '图谱读取或更新失败',
+          currentVisible: '当前可见',
+          loadedTotal: '已加载总量',
+          relationUnit: '条关系',
+          relationGroupUnit: '个关系组',
+          nodeUnit: '个节点',
+          representedRelations: (count: number) => `表达 ${count} 条原始关系`,
+          omittedRelations: (groups: number, relations: number) => `另有 ${groups} 个关系组 / ${relations} 条原始关系未渲染`,
+          restoreHidden: '恢复隐藏节点',
+          inspectNode: '节点详情',
+          inspectEdge: '关系详情',
+          focusAll: '全部',
+          focusOne: '一跳',
+          focusTwo: '两跳',
+          focusLabel: '聚焦关系',
+          drilldownBack: '返回系统架构图',
+          drilldownLoading: (name: string) => `正在生成 ${name} 的节点关系图`,
+          drilldownFailed: '节点关系图生成失败，请重试',
+          drilldownDepth: '邻域深度',
+          drilldownOne: '一跳图',
+          drilldownTwo: '两跳图',
+          drilldownGraph: '节点关系图',
+          openSource: '打开源码',
+          askNode: '询问节点',
+          createTask: '创建任务',
+          hideNode: '隐藏节点',
+          rescan: '重新扫描',
+          viewChanges: '查看变更',
+          toolMenu: '图谱工具菜单',
+          canvasHint: '拖动空白处平移，使用控制按钮缩放',
+          searchNoMatch: '当前视图没有匹配项，画布已保留原图',
+          staticStructure: '静态扫描结构 · 非运行时轨迹',
+        }
+      : {
+          viewPicker: 'Select graph view',
+          quickSearch: 'Search nodes or relations',
+          ask: 'Ask',
+          tools: 'Graph tools',
+          close: 'Close graph panel',
+          allGraphs: 'All graphs',
+          structure: 'Real structure',
+          scanIdle: 'Graph ready',
+          scanBusy: 'Loading or updating graph',
+          scanFailed: 'Graph load or update failed',
+          currentVisible: 'Visible',
+          loadedTotal: 'Loaded total',
+          relationUnit: 'relations',
+          relationGroupUnit: 'relation groups',
+          nodeUnit: 'nodes',
+          representedRelations: (count: number) => `representing ${count} original relation${count === 1 ? '' : 's'}`,
+          omittedRelations: (groups: number, relations: number) => `${groups} relation group${groups === 1 ? '' : 's'} / ${relations} original relation${relations === 1 ? '' : 's'} not rendered`,
+          restoreHidden: 'Restore hidden nodes',
+          inspectNode: 'Node details',
+          inspectEdge: 'Relation details',
+          focusAll: 'All',
+          focusOne: '1 hop',
+          focusTwo: '2 hops',
+          focusLabel: 'Focus relations',
+          drilldownBack: 'Back to system architecture',
+          drilldownLoading: (name: string) => `Building the graph around ${name}`,
+          drilldownFailed: 'Failed to build the node graph. Try again.',
+          drilldownDepth: 'Neighborhood depth',
+          drilldownOne: '1-hop graph',
+          drilldownTwo: '2-hop graph',
+          drilldownGraph: 'Node graph',
+          openSource: 'Open source',
+          askNode: 'Ask about node',
+          createTask: 'Create task',
+          hideNode: 'Hide node',
+          rescan: 'Rescan',
+          viewChanges: 'View changes',
+          toolMenu: 'Graph tools menu',
+          canvasHint: 'Drag empty canvas to pan and use the controls to zoom',
+          searchNoMatch: 'No match in this view; the original graph remains visible',
+          staticStructure: 'Static scan structure · not a runtime trace',
+        };
   const selectSearchPlaceholder = props.appLanguage === 'zh-CN' ? '搜索选项' : 'Search options';
   const selectNoResults = props.appLanguage === 'zh-CN' ? '没有匹配选项' : 'No matching options';
   const [hiddenNodeIds, setHiddenNodeIds] = useState<string[]>([]);
@@ -11869,7 +12173,12 @@ function CodeMapView(props: {
   const [selectedGraphNodeId, setSelectedGraphNodeId] = useState<string | null>(null);
   const [selectedGraphEdgeId, setSelectedGraphEdgeId] = useState<string | null>(null);
   const [selectedGraphSubject, setSelectedGraphSubject] = useState<'node' | 'edge'>('node');
-  const [selectedGraphHopDepth, setSelectedGraphHopDepth] = useState<1 | 2>(1);
+  const [selectedGraphHopDepth, setSelectedGraphHopDepth] = useState<0 | 1 | 2>(0);
+  const [graphDrilldown, setGraphDrilldown] = useState<(GraphNeighborhood & { label: string }) | null>(null);
+  const [graphDrilldownStatus, setGraphDrilldownStatus] = useState<'idle' | 'loading' | 'failed'>('idle');
+  const [graphDrilldownPendingLabel, setGraphDrilldownPendingLabel] = useState('');
+  const [graphDrilldownPendingTarget, setGraphDrilldownPendingTarget] = useState<{ nodeId: string; depth: 1 | 2; label: string } | null>(null);
+  const graphDrilldownRequestVersionRef = useRef(0);
   const [showMermaidPreview, setShowMermaidPreview] = useState(false);
   const [diagramExportFormat, setDiagramExportFormat] = useState<'mermaid' | 'plantuml'>('mermaid');
   const [lastMermaidExport, setLastMermaidExport] = useState<ReturnType<typeof buildMermaidDiagramExport> | ReturnType<typeof buildPlantUmlDiagramExport> | null>(null);
@@ -11879,7 +12188,16 @@ function CodeMapView(props: {
   const [graphNodeTypeFilter, setGraphNodeTypeFilter] = useState('');
   const [graphEdgeTypeFilter, setGraphEdgeTypeFilter] = useState('');
   const [activeGraphTool, setActiveGraphTool] = useState<CodeMapToolPanel | null>(null);
+  const [graphToolMenuOpen, setGraphToolMenuOpen] = useState(false);
   const [graphMinConfidence, setGraphMinConfidence] = useState(props.codeMapSettings.showLowConfidenceEdges ? 0 : 1);
+  const [isCompactGraphWorkbench, setIsCompactGraphWorkbench] = useState(false);
+  const codeMapWorkbenchRef = useRef<HTMLElement | null>(null);
+  const graphQuickSearchRef = useRef<HTMLInputElement | null>(null);
+  const graphToolMenuRef = useRef<HTMLDivElement | null>(null);
+  const graphOverlayRef = useRef<HTMLElement | null>(null);
+  const graphOverlayCloseRef = useRef<HTMLButtonElement | null>(null);
+  const graphToolTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const graphOverlayReturnFocusRef = useRef<HTMLElement | SVGElement | null>(null);
   const graphNodeTaskStatusText =
     props.graphNodeTaskFeedback === 'creating'
       ? codeMapCopy.graphNodeTaskCreating
@@ -11902,24 +12220,101 @@ function CodeMapView(props: {
     props.onCreateTaskFromNode?.(props.graphNodeTaskTargetId);
   }
 
-  const rawVisibleNodes = props.searchResult?.nodes ?? props.graphView.nodes;
-  const { nodes: visibleNodes, edges: visibleEdges } = buildVisibleGraphSlice({
-    nodes: rawVisibleNodes,
-    edges: props.searchResult?.edges?.length ? props.searchResult.edges : props.graphView.edges,
-    hiddenNodeIds,
-    maxNodes: 8,
-    maxEdges: 5,
-    showLowConfidenceEdges: props.codeMapSettings.showLowConfidenceEdges,
-    minConfidence: graphMinConfidence,
-  });
-  const selectedGraphNode = visibleNodes.find((node) => node.id === selectedGraphNodeId) ?? visibleNodes[0];
-  const selectedGraphEdge = visibleEdges.find((edge) => edge.id === selectedGraphEdgeId) ?? visibleEdges[0];
-  const selectedGraphEdgeSource = selectedGraphEdge ? props.graphView.nodes.find((node) => node.id === selectedGraphEdge.sourceNodeId) : null;
-  const selectedGraphEdgeTarget = selectedGraphEdge ? props.graphView.nodes.find((node) => node.id === selectedGraphEdge.targetNodeId) : null;
+  const filteredGraph = useMemo(() => {
+    const hiddenIds = new Set(hiddenNodeIds);
+    const minConfidence = normalizeGraphMinConfidence(graphMinConfidence, props.codeMapSettings.showLowConfidenceEdges ? 0 : 1);
+    const nodes = props.graphView.nodes.filter((node) => !hiddenIds.has(node.id));
+    const nodeIds = new Set(nodes.map((node) => node.id));
+    const edges = props.graphView.edges.filter((edge) => nodeIds.has(edge.sourceNodeId) && nodeIds.has(edge.targetNodeId) && edge.confidence >= minConfidence);
+    return { nodes, edges };
+  }, [graphMinConfidence, hiddenNodeIds, props.codeMapSettings.showLowConfidenceEdges, props.graphView.edges, props.graphView.nodes]);
+  const searchedGraph = useMemo(() => {
+    if (!props.searchResult) return { ...filteredGraph, hasMatches: true };
+    const resultNodeIds = new Set(props.searchResult.nodes.map((node) => node.id));
+    const resultEdgeIds = new Set(props.searchResult.edges.map((edge) => edge.id));
+    const edges = filteredGraph.edges.filter((edge) => resultEdgeIds.has(edge.id));
+    const matchedNodeIds = new Set(resultNodeIds);
+    for (const edge of edges) {
+      matchedNodeIds.add(edge.sourceNodeId);
+      matchedNodeIds.add(edge.targetNodeId);
+    }
+    const nodes = filteredGraph.nodes.filter((node) => matchedNodeIds.has(node.id));
+    const hasMatches = nodes.length > 0 || edges.length > 0;
+    // 项目级搜索结果必须先和当前视图求交；零命中时保留原图，并在画布上下文明确反馈。
+    return hasMatches ? { nodes, edges, hasMatches } : { ...filteredGraph, hasMatches };
+  }, [filteredGraph, props.searchResult]);
+  const drilldownFilteredGraph = useMemo(() => {
+    if (!graphDrilldown) return null;
+    const hiddenIds = new Set(hiddenNodeIds);
+    const minConfidence = normalizeGraphMinConfidence(graphMinConfidence, props.codeMapSettings.showLowConfidenceEdges ? 0 : 1);
+    const nodes = graphDrilldown.nodes.filter((node) => !hiddenIds.has(node.id));
+    const nodeIds = new Set(nodes.map((node) => node.id));
+    const edges = graphDrilldown.edges.filter((edge) => nodeIds.has(edge.sourceNodeId) && nodeIds.has(edge.targetNodeId) && edge.confidence >= minConfidence);
+    return { nodes, edges };
+  }, [graphDrilldown, graphMinConfidence, hiddenNodeIds, props.codeMapSettings.showLowConfidenceEdges]);
+  const searchResultHasCurrentMatches = graphDrilldown || !props.searchResult ? true : searchedGraph.hasMatches;
+  const activeGraphScope = drilldownFilteredGraph ?? filteredGraph;
+  const defaultVisibleGraph = drilldownFilteredGraph ?? { nodes: searchedGraph.nodes, edges: searchedGraph.edges };
+  const focusedGraph = useMemo(
+    () =>
+      selectedGraphNodeId && selectedGraphHopDepth > 0
+        ? buildGraphNeighborhoodSlice({
+            nodes: activeGraphScope.nodes,
+            edges: activeGraphScope.edges,
+            centerNodeId: selectedGraphNodeId,
+            depth: selectedGraphHopDepth as 1 | 2,
+          })
+        : defaultVisibleGraph,
+    [activeGraphScope.edges, activeGraphScope.nodes, defaultVisibleGraph, selectedGraphHopDepth, selectedGraphNodeId],
+  );
+  const visibleGraph = useMemo(
+    () =>
+      buildVisibleGraphSlice({
+        nodes: focusedGraph.nodes,
+        edges: focusedGraph.edges,
+        hiddenNodeIds: [],
+        maxNodes: graphDrilldown ? 18 : 24,
+        maxEdges: 80,
+        showLowConfidenceEdges: true,
+        minConfidence: 0,
+      }),
+    [focusedGraph.edges, focusedGraph.nodes, graphDrilldown],
+  );
+  const { nodes: visibleNodes, edges: visibleEdges, stats: visibleGraphStats } = visibleGraph;
+  const visibleArchitectureModel = useMemo(
+    () => (!graphDrilldown && props.graphView.viewType === 'architecture' ? buildArchitectureLayerModel(visibleNodes, visibleEdges, props.graphView.title) : null),
+    [graphDrilldown, props.graphView.title, props.graphView.viewType, visibleEdges, visibleNodes],
+  );
+  const graphDrilldownLayout = useMemo(() => (graphDrilldown ? buildGraphNeighborhoodLayout(graphDrilldown.centerNode.id, visibleNodes, visibleEdges) : undefined), [graphDrilldown, visibleEdges, visibleNodes]);
+  const inspectorGraphView = useMemo(
+    () => ({
+      ...props.graphView,
+      title: graphDrilldown ? `${graphDrilldown.label} · ${graphWorkbenchCopy.drilldownGraph}` : props.graphView.title,
+      viewType: graphDrilldown ? 'module_detail' : props.graphView.viewType,
+      layout: graphDrilldownLayout ?? props.graphView.layout,
+      nodes: activeGraphScope.nodes,
+      edges: activeGraphScope.edges,
+    }),
+    [activeGraphScope.edges, activeGraphScope.nodes, graphDrilldown, graphDrilldownLayout, graphWorkbenchCopy.drilldownGraph, props.graphView],
+  );
+  const selectedGraphNode = visibleNodes.find((node) => node.id === selectedGraphNodeId);
+  const selectedGraphEdge = visibleEdges.find((edge) => edge.id === selectedGraphEdgeId);
+  const selectedGraphEdgeSource = selectedGraphEdge ? visibleNodes.find((node) => node.id === selectedGraphEdge.sourceNodeId) : null;
+  const selectedGraphEdgeTarget = selectedGraphEdge ? visibleNodes.find((node) => node.id === selectedGraphEdge.targetNodeId) : null;
   const selectedGraphCurrentTarget =
-    selectedGraphSubject === 'edge' && selectedGraphEdge
-      ? `${selectedGraphEdgeSource?.name ?? selectedGraphEdge.sourceNodeId} → ${selectedGraphEdgeTarget?.name ?? selectedGraphEdge.targetNodeId}`
-      : (selectedGraphNode?.name ?? codeMapCopy.missingSymbol);
+    selectedGraphSubject === 'edge' && selectedGraphEdge ? `${selectedGraphEdgeSource?.name ?? selectedGraphEdge.sourceNodeId} → ${selectedGraphEdgeTarget?.name ?? selectedGraphEdge.targetNodeId}` : (selectedGraphNode?.name ?? '');
+
+  useEffect(() => {
+    graphDrilldownRequestVersionRef.current += 1;
+    setGraphDrilldown(null);
+    setGraphDrilldownStatus('idle');
+    setGraphDrilldownPendingLabel('');
+    setGraphDrilldownPendingTarget(null);
+    setSelectedGraphNodeId(null);
+    setSelectedGraphEdgeId(null);
+    setSelectedGraphHopDepth(0);
+  }, [props.graphView.id, props.graphView.viewType]);
+
   const conversationPage = props.graphConversationPage ?? {
     total: props.graphConversations?.length ?? 0,
     limit: 5,
@@ -11935,15 +12330,15 @@ function CodeMapView(props: {
   const graphQaModeItems = [
     {
       label: codeMapCopy.currentView,
-      value: uiCopy.graphViewTypes[props.graphView.viewType as GraphViewType] ?? props.graphView.viewType,
+      value: graphDrilldown ? `${graphDrilldown.label} · ${graphWorkbenchCopy.drilldownGraph}` : (uiCopy.graphViewTypes[props.graphView.viewType as GraphViewType] ?? props.graphView.viewType),
     },
     {
       label: codeMapCopy.realNodes,
-      value: `${visibleNodes.length} / ${props.graphView.nodes.length}`,
+      value: `${visibleNodes.length} / ${activeGraphScope.nodes.length}`,
     },
     {
       label: codeMapCopy.realEdges,
-      value: `${visibleEdges.length} / ${props.graphView.edges.length}`,
+      value: `${visibleGraphStats.representedEdgeCount} / ${activeGraphScope.edges.length}`,
     },
     {
       label: codeMapCopy.runtimeSessionLabel,
@@ -11961,7 +12356,7 @@ function CodeMapView(props: {
       : codeMapCopy.mermaidPreviewTitle;
   const buildVisibleDiagramSource = (format: DiagramExportFormat): string => {
     const input = {
-      viewType: props.graphView.viewType,
+      viewType: graphDrilldown ? 'module_detail' : props.graphView.viewType,
       nodes: visibleNodes,
       edges: visibleEdges,
     };
@@ -11973,8 +12368,8 @@ function CodeMapView(props: {
   function buildVisibleDiagramExport(format: DiagramExportFormat): MermaidDiagramExportFile | PlantUmlDiagramExportFile {
     const source = buildVisibleDiagramSource(format);
     const input = {
-      viewTitle: props.graphView.title,
-      viewType: props.graphView.viewType,
+      viewTitle: graphDrilldown ? `${graphDrilldown.label} · ${graphWorkbenchCopy.drilldownGraph}` : props.graphView.title,
+      viewType: graphDrilldown ? 'module_detail' : props.graphView.viewType,
       generatedAt: new Date().toISOString(),
       source,
     };
@@ -11985,16 +12380,128 @@ function CodeMapView(props: {
     setHiddenNodeIds((current) => (current.includes(nodeId) ? current.filter((id) => id !== nodeId) : [...current, nodeId]));
   }
 
+  function findGraphObjectElement(kind: 'node' | 'edge', id: string | null): HTMLElement | SVGElement | null {
+    if (!id) return null;
+    const attribute = `data-graph-${kind}-id`;
+    const candidates = codeMapWorkbenchRef.current?.querySelectorAll<HTMLElement | SVGElement>(`[${attribute}]`) ?? [];
+    return Array.from(candidates).find((candidate) => candidate.getAttribute(attribute) === id) ?? null;
+  }
+
+  function restoreGraphObjectFocus(kind: 'node' | 'edge', id: string | null): void {
+    const target = findGraphObjectElement(kind, id);
+    window.requestAnimationFrame(() => target?.focus());
+  }
+
+  function closeGraphInspector(options?: { restoreFocus?: boolean }): void {
+    const nodeId = selectedGraphNodeId;
+    const edgeId = selectedGraphEdgeId;
+    const subject = selectedGraphSubject;
+    setSelectedGraphNodeId(null);
+    setSelectedGraphEdgeId(null);
+    setSelectedGraphHopDepth(0);
+    if (options?.restoreFocus) restoreGraphObjectFocus(subject, subject === 'node' ? nodeId : edgeId);
+  }
+
+  function leaveGraphDrilldown(): void {
+    graphDrilldownRequestVersionRef.current += 1;
+    setGraphDrilldown(null);
+    setGraphDrilldownStatus('idle');
+    setGraphDrilldownPendingLabel('');
+    setGraphDrilldownPendingTarget(null);
+    closeGraphInspector();
+  }
+
+  async function openGraphDrilldown(nodeId: string, depth: 1 | 2, label: string): Promise<void> {
+    if (!props.onLoadGraphNeighborhood) {
+      selectGraphNode(nodeId);
+      return;
+    }
+    const requestVersion = ++graphDrilldownRequestVersionRef.current;
+    closeGraphInspector();
+    setActiveGraphTool(null);
+    setGraphToolMenuOpen(false);
+    setGraphDrilldownPendingLabel(label);
+    setGraphDrilldownPendingTarget({ nodeId, depth, label });
+    setGraphDrilldownStatus('loading');
+    try {
+      const neighborhood = await props.onLoadGraphNeighborhood(nodeId, depth);
+      if (requestVersion !== graphDrilldownRequestVersionRef.current) return;
+      setGraphDrilldown({
+        ...neighborhood,
+        depth,
+        label,
+      });
+      setGraphDrilldownStatus('idle');
+      setGraphDrilldownPendingTarget(null);
+    } catch {
+      if (requestVersion !== graphDrilldownRequestVersionRef.current) return;
+      setGraphDrilldownStatus('failed');
+    }
+  }
+
+  function closeGraphTool(options?: { restoreFocus?: boolean }): void {
+    setActiveGraphTool(null);
+    if (options?.restoreFocus) {
+      const target = graphOverlayReturnFocusRef.current;
+      window.requestAnimationFrame(() => target?.focus());
+    }
+  }
+
+  function openGraphTool(tool: CodeMapToolPanel, trigger?: HTMLElement | SVGElement | null): void {
+    if (trigger) graphOverlayReturnFocusRef.current = trigger;
+    else if (!graphOverlayReturnFocusRef.current && graphToolTriggerRef.current) graphOverlayReturnFocusRef.current = graphToolTriggerRef.current;
+    closeGraphInspector();
+    setGraphToolMenuOpen(false);
+    setActiveGraphTool(tool);
+  }
+
+  function toggleGraphToolMenu(trigger: HTMLButtonElement): void {
+    graphOverlayReturnFocusRef.current = trigger;
+    setGraphToolMenuOpen((current) => !current);
+  }
+
+  function runQuickGraphSearch(): void {
+    leaveGraphDrilldown();
+    closeGraphInspector();
+    const request = buildGraphSearchRequest({
+      query: graphSearchQuery,
+      nodeType: graphNodeTypeFilter,
+      edgeType: graphEdgeTypeFilter,
+      minConfidence: graphMinConfidence,
+    });
+    props.onSearchGraph?.(request.query, request.nodeType, request.edgeType, request.minConfidence);
+  }
+
   const selectGraphNode = (nodeId: string): void => {
-    // 图谱 inspector 需要知道用户当前聚焦的是节点还是边，避免两个详情块同时看起来处于激活态。
+    // 节点与边详情互斥，默认不保留过期对象，保证详情面板只解释当前主动选择。
+    setActiveGraphTool(null);
+    setGraphToolMenuOpen(false);
     setSelectedGraphNodeId(nodeId);
+    setSelectedGraphEdgeId(null);
     setSelectedGraphSubject('node');
+    setSelectedGraphHopDepth(0);
+  };
+
+  const selectPrimaryGraphNode = (nodeId: string): void => {
+    if (props.graphView.viewType !== 'architecture' || graphDrilldown) {
+      selectGraphNode(nodeId);
+      return;
+    }
+    const workload = visibleArchitectureModel?.workloads.find((item) => item.primaryNode.id === nodeId || item.module?.id === nodeId || item.application?.id === nodeId);
+    const selectedNode = visibleNodes.find((node) => node.id === nodeId);
+    // 架构卡片把模块与启动入口合并展示；下钻以模块为中心，才能得到包含父级、入口和依赖的真实邻域，而不是只剩一条 contains 关系。
+    const centerNodeId = workload?.module?.id ?? nodeId;
+    const label = workload?.application?.name ?? workload?.label ?? selectedNode?.name ?? nodeId;
+    void openGraphDrilldown(centerNodeId, 2, label);
   };
 
   const selectGraphEdge = (edgeId: string): void => {
-    // 边点击只切换当前对象语义，不清空节点详情，保留节点与边的上下文对照。
+    setActiveGraphTool(null);
+    setGraphToolMenuOpen(false);
+    setSelectedGraphNodeId(null);
     setSelectedGraphEdgeId(edgeId);
     setSelectedGraphSubject('edge');
+    setSelectedGraphHopDepth(0);
   };
 
   function clearGraphNodeMenuCloseTimer(): void {
@@ -12056,11 +12563,115 @@ function CodeMapView(props: {
     document.addEventListener('pointerdown', closeGraphNodeMenuOnOutsidePointerDown, true);
     return () => document.removeEventListener('pointerdown', closeGraphNodeMenuOnOutsidePointerDown, true);
   }, [activeNodeMenuId]);
+  useEffect(() => {
+    const compactQuery = window.matchMedia('(max-width: 760px)');
+    const syncCompactState = () => setIsCompactGraphWorkbench(compactQuery.matches);
+    syncCompactState();
+    compactQuery.addEventListener('change', syncCompactState);
+    return () => compactQuery.removeEventListener('change', syncCompactState);
+  }, []);
+  useEffect(() => {
+    closeGraphInspector();
+    setHiddenNodeIds([]);
+    setGraphSearchQuery('');
+    setGraphNodeTypeFilter('');
+    setGraphEdgeTypeFilter('');
+    setActiveGraphTool(null);
+    setGraphToolMenuOpen(false);
+    setActiveNodeMenuId(null);
+  }, [props.graphView.viewType]);
+  useEffect(() => {
+    if (!props.isActive) return undefined;
+    const focusGraphSearch = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== 'f') return;
+      event.preventDefault();
+      if (isCompactGraphWorkbench) {
+        const returnTarget = document.activeElement instanceof HTMLElement || document.activeElement instanceof SVGElement ? document.activeElement : graphToolTriggerRef.current;
+        openGraphTool('search', returnTarget);
+        return;
+      }
+      graphQuickSearchRef.current?.focus();
+      graphQuickSearchRef.current?.select();
+    };
+    document.addEventListener('keydown', focusGraphSearch);
+    return () => document.removeEventListener('keydown', focusGraphSearch);
+  }, [isCompactGraphWorkbench, props.isActive]);
+  useEffect(() => {
+    if (!graphToolMenuOpen) return undefined;
+    const focusFrame = window.requestAnimationFrame(() => {
+      graphToolMenuRef.current?.querySelector<HTMLElement>('[role="menuitem"]:not(:disabled)')?.focus();
+    });
+    return () => window.cancelAnimationFrame(focusFrame);
+  }, [graphToolMenuOpen]);
+  useEffect(() => {
+    if (!activeGraphTool && !selectedGraphNode && !selectedGraphEdge) return;
+    const focusOverlay = window.requestAnimationFrame(() => {
+      if (isCompactGraphWorkbench) {
+        if (activeGraphTool === 'search') {
+          graphOverlayRef.current?.querySelector<HTMLInputElement>('input[type="search"]')?.focus();
+          return;
+        }
+        graphOverlayCloseRef.current?.focus();
+        return;
+      }
+      if (activeGraphTool) {
+        graphOverlayRef.current?.querySelector<HTMLElement>('input:not([disabled]), button:not([disabled])')?.focus();
+      }
+    });
+    return () => window.cancelAnimationFrame(focusOverlay);
+  }, [activeGraphTool, isCompactGraphWorkbench, selectedGraphEdge, selectedGraphNode]);
+
+  const handleGraphWorkbenchKeyDown = (event: ReactKeyboardEvent<HTMLElement>): void => {
+    if (event.key === 'Escape') {
+      if (graphToolMenuOpen) {
+        event.preventDefault();
+        setGraphToolMenuOpen(false);
+        graphToolTriggerRef.current?.focus();
+        return;
+      }
+      if (activeGraphTool) {
+        event.preventDefault();
+        closeGraphTool({ restoreFocus: true });
+        return;
+      }
+      if (selectedGraphNode || selectedGraphEdge) {
+        event.preventDefault();
+        closeGraphInspector({ restoreFocus: true });
+      }
+      return;
+    }
+  };
+
+  const handleGraphWorkbenchPointerDownCapture = (event: ReactPointerEvent<HTMLElement>): void => {
+    if (!graphToolMenuOpen || !(event.target instanceof Node)) return;
+    if (graphToolMenuRef.current?.contains(event.target) || graphToolTriggerRef.current?.contains(event.target)) return;
+    // 点击工作台其他区域时关闭菜单，并把焦点留给用户刚刚点击的目标。
+    setGraphToolMenuOpen(false);
+  };
+
+  const handleGraphToolMenuKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>): void => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      setGraphToolMenuOpen(false);
+      graphToolTriggerRef.current?.focus();
+      return;
+    }
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+    const items = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)'));
+    if (items.length === 0) return;
+    const currentIndex = Math.max(
+      0,
+      items.findIndex((item) => item === document.activeElement),
+    );
+    const nextIndex = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 : event.key === 'ArrowDown' ? (currentIndex + 1) % items.length : (currentIndex - 1 + items.length) % items.length;
+    event.preventDefault();
+    items[nextIndex]?.focus();
+  };
 
   function runNodeAction(node: GraphViewSnapshot['nodes'][number], action: GraphNodeActionMenuItem): void {
     if (action.id === 'inspect-detail') {
       selectGraphNode(node.id);
-      setSelectedGraphHopDepth(1);
+      setSelectedGraphHopDepth(0);
     }
     if (action.id === 'create-task') props.onCreateTaskFromNode?.(node.id);
     if (action.id === 'open-source')
@@ -12088,55 +12699,194 @@ function CodeMapView(props: {
     closeGraphNodeMenuWithMotion();
   }
 
+  const scanStatusCopy = props.scanState === 'scanning' ? graphWorkbenchCopy.scanBusy : props.scanState === 'failed' ? graphWorkbenchCopy.scanFailed : graphWorkbenchCopy.scanIdle;
+  const inspectorOpen = Boolean(selectedGraphNode || selectedGraphEdge);
+
   return (
-    <section className="code-map-view code-map-workbench" aria-label={codeMapCopy.viewAria}>
-      {/* 代码图谱 inspector pane：主画布和右侧检查器保持低噪音 pane，不再沿用 panel 语义。 */}
-      <div className="code-map-primary-grid" aria-label={codeMapCopy.primaryGridAria}>
-        <section className="code-map-stage-surface" aria-label={codeMapCopy.stageAria}>
-          <div
-            className="graph-view-selector-row graph-view-selector-inline"
-            role="tablist"
-            aria-orientation="horizontal"
-            data-inline-rail-keyboard="horizontal"
-            aria-label={codeMapCopy.viewSwitcherAria}
-            onKeyDown={handleInlineRailKeyboardNavigation}
+    <section
+      ref={codeMapWorkbenchRef}
+      className="code-map-view code-map-workbench code-map-graph-first"
+      aria-label={codeMapCopy.viewAria}
+      onKeyDown={handleGraphWorkbenchKeyDown}
+      onPointerDownCapture={handleGraphWorkbenchPointerDownCapture}
+    >
+      <header className="code-map-command-bar" aria-label={codeMapCopy.viewSwitcherAria}>
+        <ZeusSelect<GraphViewType>
+          size="compact"
+          className="code-map-view-picker"
+          ariaLabel={graphWorkbenchCopy.viewPicker}
+          value={props.graphView.viewType as GraphViewType}
+          onChange={(viewType) => {
+            setGraphToolMenuOpen(false);
+            leaveGraphDrilldown();
+            void props.onLoadView?.(viewType);
+          }}
+          searchable={false}
+          searchPlaceholder={selectSearchPlaceholder}
+          emptyLabel={selectNoResults}
+          options={graphViewOptions.map((option) => ({
+            value: option.type,
+            label: uiCopy.graphViewTypes[option.type],
+          }))}
+        />
+        <label className="code-map-quick-search">
+          <MagnifyingGlass aria-hidden="true" weight="regular" />
+          <input
+            ref={graphQuickSearchRef}
+            type="search"
+            aria-label={graphWorkbenchCopy.quickSearch}
+            placeholder={`${graphWorkbenchCopy.quickSearch}…`}
+            value={graphSearchQuery}
+            disabled={props.scanState === 'scanning'}
+            onChange={(event) => setGraphSearchQuery(event.currentTarget.value)}
+            onKeyDown={(event) => {
+              if (event.key !== 'Enter') return;
+              event.preventDefault();
+              runQuickGraphSearch();
+            }}
+          />
+          <kbd>⌘F</kbd>
+        </label>
+        <span className={`code-map-scan-state ${props.scanState ?? 'idle'}`} role="status" aria-live="polite">
+          <i aria-hidden="true" />
+          {scanStatusCopy}
+        </span>
+        <span className="code-map-command-actions">
+          <button
+            type="button"
+            disabled={props.scanState === 'scanning'}
+            onClick={(event) => {
+              graphOverlayReturnFocusRef.current = event.currentTarget;
+              openGraphTool('qa', event.currentTarget);
+            }}
           >
-            {graphViewOptions.map((option) => {
-              const selected = props.graphView.viewType === option.type;
-              return (
-                <button
-                  key={option.type}
-                  className="graph-view-selector-tab"
-                  type="button"
-                  role="tab"
-                  aria-selected={selected}
-                  aria-pressed={selected}
-                  tabIndex={selected ? 0 : -1}
-                  data-inline-rail-item="true"
-                  onClick={() => props.onLoadView?.(option.type)}
-                >
-                  {/* 视图切换属于图谱舞台工具，不再单独占顶部横幅；方向键仍在同级 tab 内切换。 */}
-                  {uiCopy.graphViewTypes[option.type]}
-                </button>
-              );
-            })}
+            {graphWorkbenchCopy.ask}
+          </button>
+          <button
+            ref={graphToolTriggerRef}
+            type="button"
+            aria-expanded={graphToolMenuOpen}
+            aria-haspopup="menu"
+            onClick={(event) => {
+              // 统一走 click，避免辅助技术同时合成 pointer 与 click 时把菜单连续开关两次。
+              toggleGraphToolMenu(event.currentTarget);
+            }}
+          >
+            {graphWorkbenchCopy.tools}
+          </button>
+        </span>
+        {graphToolMenuOpen ? (
+          <div ref={graphToolMenuRef} className="code-map-tool-menu" role="menu" aria-label={graphWorkbenchCopy.toolMenu} onKeyDown={handleGraphToolMenuKeyDown}>
+            {codeMapToolPanels.map((tool) => (
+              <button key={tool.id} type="button" role="menuitem" onClick={() => openGraphTool(tool.id, graphToolTriggerRef.current)}>
+                <strong>{codeMapCopy.tools[tool.id].label}</strong>
+                <small>{codeMapCopy.tools[tool.id].description}</small>
+              </button>
+            ))}
+            <span className="code-map-tool-menu-separator" aria-hidden="true" />
+            <button
+              type="button"
+              role="menuitem"
+              disabled={!props.onScanGraph || props.scanState === 'scanning'}
+              onClick={() => {
+                setGraphToolMenuOpen(false);
+                props.onScanGraph?.();
+              }}
+            >
+              <strong>{graphWorkbenchCopy.rescan}</strong>
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              disabled={!props.onOpenChanges}
+              onClick={() => {
+                setGraphToolMenuOpen(false);
+                props.onOpenChanges?.();
+              }}
+            >
+              <strong>{graphWorkbenchCopy.viewChanges}</strong>
+            </button>
           </div>
-          {props.graphView.performance ? (
-            <div className="graph-performance-row graph-performance-inline" aria-label={codeMapCopy.performanceAria}>
-              <span>
-                {codeMapCopy.viewReadPrefix} {Math.round(props.graphView.performance.durationMs)}ms
-              </span>
-              <span>
-                {codeMapCopy.realNodes} {props.graphView.performance.nodeCount}
-              </span>
-              <span>
-                {codeMapCopy.realEdges} {props.graphView.performance.edgeCount}
-              </span>
-            </div>
+        ) : null}
+      </header>
+
+      <div className="code-map-primary-grid" aria-label={codeMapCopy.primaryGridAria} data-overlay-open={inspectorOpen || Boolean(activeGraphTool) ? 'true' : 'false'}>
+        <section className="code-map-stage-surface" aria-label={codeMapCopy.stageAria}>
+          <header className="code-map-canvas-context">
+            <span>
+              {graphDrilldown ? (
+                <>
+                  <button type="button" className="code-map-breadcrumb-button" onClick={leaveGraphDrilldown}>
+                    {uiCopy.graphViewTypes.architecture}
+                  </button>
+                  <i aria-hidden="true">/</i>
+                  <strong>{graphDrilldown.label}</strong>
+                </>
+              ) : (
+                <>
+                  <strong>{graphWorkbenchCopy.allGraphs}</strong>
+                  <i aria-hidden="true">/</i>
+                  <span>{uiCopy.graphViewTypes[props.graphView.viewType as GraphViewType] ?? props.graphView.title}</span>
+                </>
+              )}
+            </span>
+            <span>
+              {graphDrilldown ? (
+                <span className="code-map-drilldown-depth" aria-label={graphWorkbenchCopy.drilldownDepth}>
+                  {([1, 2] as const).map((depth) => (
+                    <button
+                      key={depth}
+                      type="button"
+                      aria-pressed={graphDrilldown.depth === depth}
+                      disabled={graphDrilldownStatus === 'loading'}
+                      onClick={() => void openGraphDrilldown(graphDrilldown.centerNode.id, depth, graphDrilldown.label)}
+                    >
+                      {depth === 1 ? graphWorkbenchCopy.drilldownOne : graphWorkbenchCopy.drilldownTwo}
+                    </button>
+                  ))}
+                </span>
+              ) : null}
+              {props.searchResult && !searchResultHasCurrentMatches ? (
+                <em className="code-map-search-feedback" role="status">
+                  {graphWorkbenchCopy.searchNoMatch}
+                </em>
+              ) : null}
+              {visibleArchitectureModel ? (
+                <>
+                  {graphWorkbenchCopy.currentVisible} {visibleArchitectureModel.objectCount} {props.appLanguage === 'zh-CN' ? '个架构对象' : 'architecture objects'} · {visibleArchitectureModel.dependencyEdges.length}{' '}
+                  {props.appLanguage === 'zh-CN' ? '条依赖' : 'dependencies'}
+                </>
+              ) : (
+                <>
+                  {graphWorkbenchCopy.currentVisible} {visibleNodes.length} {graphWorkbenchCopy.nodeUnit} · {visibleEdges.length} {graphWorkbenchCopy.relationGroupUnit} ·{' '}
+                  {graphWorkbenchCopy.representedRelations(visibleGraphStats.representedEdgeCount)}
+                </>
+              )}
+              {hiddenNodeIds.length > 0 ? (
+                <button type="button" onClick={() => setHiddenNodeIds([])}>
+                  {graphWorkbenchCopy.restoreHidden} ({hiddenNodeIds.length})
+                </button>
+              ) : null}
+            </span>
+          </header>
+          {graphDrilldownStatus !== 'idle' ? (
+            <section className={`code-map-drilldown-status ${graphDrilldownStatus}`} role="status" aria-live="polite">
+              <span>{graphDrilldownStatus === 'loading' ? graphWorkbenchCopy.drilldownLoading(graphDrilldownPendingLabel) : graphWorkbenchCopy.drilldownFailed}</span>
+              {graphDrilldownStatus === 'failed' ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!graphDrilldownPendingTarget) return;
+                    void openGraphDrilldown(graphDrilldownPendingTarget.nodeId, graphDrilldownPendingTarget.depth, graphDrilldownPendingTarget.label);
+                  }}
+                >
+                  {props.appLanguage === 'zh-CN' ? '重试' : 'Retry'}
+                </button>
+              ) : null}
+            </section>
           ) : null}
           {graphNodeTaskStatusText ? (
             <section className={`graph-node-task-status-row ${props.graphNodeTaskFeedback}`} role="status" aria-live="polite" aria-label={codeMapCopy.graphNodeTaskStatusAria}>
-              {/* 图谱节点任务反馈留在图谱主舞台内，成功才切任务页，失败不让用户丢失当前节点上下文。 */}
               <span>{graphNodeTaskStatusText}</span>
               {props.graphNodeTaskFeedback === 'failed' && props.graphNodeTaskTargetId ? (
                 <button type="button" className="graph-node-task-retry-button" aria-label={codeMapCopy.graphNodeTaskRetryAria} onClick={retryGraphNodeTask}>
@@ -12147,562 +12897,615 @@ function CodeMapView(props: {
           ) : null}
           {graphSourceOpenStatusText ? (
             <section className={`graph-source-open-status-row ${props.graphSourceOpenFeedback}`} role="status" aria-live="polite" aria-label={codeMapCopy.graphSourceOpenStatusAria}>
-              {/* 源码打开反馈留在代码图谱主舞台内，避免打开失败时只剩全局错误或静默失败。 */}
               <span>{graphSourceOpenStatusText}</span>
             </section>
           ) : null}
-          {/* 代码逻辑图是代码页主角，运行时预览只在右侧二级工具按需展开，不能抢顶部和画布首屏。 */}
           <GraphCanvas
-            title={props.graphView.title}
+            title={graphDrilldown ? `${graphDrilldown.label} · ${graphWorkbenchCopy.drilldownGraph}` : props.graphView.title}
             nodes={visibleNodes}
             edges={visibleEdges}
-            layout={props.graphView.layout}
-            viewType={props.graphView.viewType as GraphViewType}
+            layout={graphDrilldownLayout ?? props.graphView.layout}
+            viewType={graphDrilldown ? 'module_detail' : (props.graphView.viewType as GraphViewType)}
             appLanguage={props.appLanguage}
-            currentNodeId={selectedGraphSubject === 'node' ? selectedGraphNode?.id : null}
+            currentNodeId={selectedGraphSubject === 'node' ? (selectedGraphNode?.id ?? graphDrilldown?.centerNode.id) : graphDrilldown?.centerNode.id}
             currentEdgeId={selectedGraphSubject === 'edge' ? selectedGraphEdge?.id : null}
-            onSelectNode={selectGraphNode}
+            onSelectNode={selectPrimaryGraphNode}
             onSelectEdge={selectGraphEdge}
+            onClearSelection={() => closeGraphInspector()}
             onOpenGraphSource={props.onOpenGraphSource}
             onCreateTaskFromNode={props.onCreateTaskFromNode}
           />
-        </section>
-        <aside className="code-map-inspector-pane" aria-label={codeMapCopy.inspectorAria}>
-          <div className="graph-visibility-toolbar" aria-label={codeMapCopy.visibilityAria}>
-            <span>{codeMapCopy.hiddenNodes(hiddenNodeIds.length)}</span>
-            <button type="button" disabled={hiddenNodeIds.length === 0} onClick={() => setHiddenNodeIds([])}>
-              {codeMapCopy.restoreAllNodes}
-            </button>
-          </div>
-          <section className="graph-current-selection-row" aria-label={codeMapCopy.currentSelection}>
-            <span className="graph-current-selection-copy">
-              <strong>{codeMapCopy.currentSelection}</strong>
-              <span>{selectedGraphSubject === 'edge' ? codeMapCopy.edgeDetail : codeMapCopy.nodeDetail}</span>
-            </span>
-            <span className="graph-current-selection-target">{selectedGraphCurrentTarget}</span>
-          </section>
-          {selectedGraphNode ? <GraphNodeDetail node={selectedGraphNode} graphView={props.graphView} expandedHopDepth={selectedGraphHopDepth} appLanguage={props.appLanguage} isCurrent={selectedGraphSubject === 'node'} /> : null}
-          {selectedGraphEdge ? <GraphEdgeDetailPanel edge={selectedGraphEdge} graphView={props.graphView} appLanguage={props.appLanguage} isCurrent={selectedGraphSubject === 'edge'} /> : null}
-          <section className="code-map-secondary-tools code-map-secondary-inspector" aria-label={codeMapCopy.secondaryToolsAria}>
-            {/* 图谱二级工具改为右侧检查器启动器：默认只露出入口，搜索/问答/导出/运行时预览按需展开，避免画布下方继续堆工具。 */}
-            <nav
-              className="code-map-tool-tabs code-map-tool-launcher"
-              aria-label={codeMapCopy.toolSwitchAria}
-              role="tablist"
-              aria-orientation="horizontal"
-              data-inline-rail-keyboard="horizontal"
-              onKeyDown={handleInlineRailKeyboardNavigation}
-            >
-              {codeMapToolPanels.map((tool) => {
-                const toolCopy = codeMapCopy.tools[tool.id];
-                const selected = activeGraphTool === tool.id;
-                const launcherTabIndex = activeGraphTool === null ? (tool.id === 'runtime' ? 0 : -1) : selected ? 0 : -1;
-                return (
-                  <button
-                    key={tool.id}
-                    type="button"
-                    className="code-map-tool-tab"
-                    role="tab"
-                    aria-selected={selected}
-                    aria-pressed={selected}
-                    tabIndex={launcherTabIndex}
-                    data-inline-rail-item="true"
-                    onClick={() => setActiveGraphTool(selected ? null : tool.id)}
-                  >
-                    {/* 图谱工具切换只打开一个按需工作区；再次点击当前项会收起，保持代码图谱画布作为唯一主路径。 */}
-                    <span className="code-map-tool-tab-copy">
-                      <strong>{toolCopy.label}</strong>
-                      <small>{toolCopy.description}</small>
-                    </span>
-                  </button>
-                );
-              })}
-            </nav>
 
-            <section className={`code-map-tool-pane ${activeGraphTool === 'runtime' ? 'code-map-tool-pane-active' : ''}`} aria-label={codeMapCopy.graphRuntime} hidden={activeGraphTool !== 'runtime'}>
-              {shouldRenderRuntimeGraph ? (
-                <GraphRuntimeCanvas
-                  nodes={visibleNodes}
-                  edges={visibleEdges}
-                  layout={props.graphView.layout}
-                  appLanguage={props.appLanguage}
-                  currentNodeId={selectedGraphSubject === 'node' ? selectedGraphNode?.id : null}
-                  currentEdgeId={selectedGraphSubject === 'edge' ? selectedGraphEdge?.id : null}
-                  onSelectNode={selectGraphNode}
-                  onSelectEdge={selectGraphEdge}
-                />
-              ) : (
-                <section className="graph-runtime-unavailable-row" aria-label={codeMapCopy.graphRuntime}>
-                  {/* 运行时预览只能按需出现；默认状态必须明确它被收纳而不是悄悄抢占主画布。 */}
-                  <span className="graph-qa-copy">
-                    <strong>{codeMapCopy.graphRuntime}</strong>
-                    <span>{isSequenceDiagramExportView ? codeMapCopy.sequenceRuntimeHidden : codeMapCopy.runtimeToolCollapsed}</span>
-                  </span>
-                </section>
-              )}
-            </section>
-
-            <section className={`code-map-tool-pane ${activeGraphTool === 'search' ? 'code-map-tool-pane-active' : ''}`} aria-label={codeMapCopy.searchPanelAria} hidden={activeGraphTool !== 'search'}>
-              <div className="graph-search-control-grid" aria-label={codeMapCopy.searchFilterAria}>
-                <section className="graph-search-control-row" aria-label={codeMapCopy.nodeSearchAria}>
-                  {/* 图谱筛选控件必须保留来源语境：说明列讲清筛选含义，控件列只负责输入。 */}
-                  <span className="graph-search-control-copy">
-                    <strong>{codeMapCopy.nodeSearchTitle}</strong>
-                    <small>{codeMapCopy.nodeSearchHelp}</small>
-                  </span>
-                  <span className="graph-search-control-field">
-                    <input type="search" aria-label={codeMapCopy.nodeSearchAria} value={graphSearchQuery} onChange={(event) => setGraphSearchQuery(event.currentTarget.value)} />
-                  </span>
-                </section>
-                <section className="graph-search-control-row" aria-label={codeMapCopy.nodeTypeAria}>
-                  <span className="graph-search-control-copy">
-                    <strong>{codeMapCopy.nodeTypeTitle}</strong>
-                    <small>{codeMapCopy.nodeTypeHelp}</small>
-                  </span>
-                  <span className="graph-search-control-field">
-                    <ZeusSelect
-                      size="regular"
-                      ariaLabel={codeMapCopy.nodeTypeAria}
-                      value={graphNodeTypeFilter}
-                      onChange={setGraphNodeTypeFilter}
-                      searchPlaceholder={selectSearchPlaceholder}
-                      emptyLabel={selectNoResults}
-                      options={graphNodeTypeFilterValues.map((nodeType) => ({
-                        value: nodeType,
-                        label: uiCopy.graphNodeTypes[nodeType],
-                      }))}
-                    />
-                  </span>
-                </section>
-                <section className="graph-search-control-row" aria-label={codeMapCopy.edgeTypeAria}>
-                  <span className="graph-search-control-copy">
-                    <strong>{codeMapCopy.edgeTypeTitle}</strong>
-                    <small>{codeMapCopy.edgeTypeHelp}</small>
-                  </span>
-                  <span className="graph-search-control-field">
-                    <ZeusSelect
-                      size="regular"
-                      ariaLabel={codeMapCopy.edgeTypeAria}
-                      value={graphEdgeTypeFilter}
-                      onChange={setGraphEdgeTypeFilter}
-                      searchPlaceholder={selectSearchPlaceholder}
-                      emptyLabel={selectNoResults}
-                      options={graphEdgeTypeFilterValues.map((edgeType) => ({
-                        value: edgeType,
-                        label: uiCopy.graphEdgeTypes[edgeType],
-                      }))}
-                    />
-                  </span>
-                </section>
-                <section className="graph-search-control-row" aria-label={codeMapCopy.minConfidenceAria}>
-                  <span className="graph-search-control-copy">
-                    <strong>{codeMapCopy.minConfidenceTitle}</strong>
-                    <small>{codeMapCopy.minConfidenceHelp}</small>
-                  </span>
-                  <span className="graph-search-control-field">
-                    <input
-                      aria-label={codeMapCopy.minConfidenceAria}
-                      type="number"
-                      min="0"
-                      max="1"
-                      step="0.1"
-                      value={graphMinConfidence}
-                      onChange={(event) => setGraphMinConfidence(normalizeGraphMinConfidence(event.currentTarget.value, graphMinConfidence))}
-                    />
-                  </span>
-                </section>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const request = buildGraphSearchRequest({
-                      query: graphSearchQuery,
-                      nodeType: graphNodeTypeFilter,
-                      edgeType: graphEdgeTypeFilter,
-                      minConfidence: graphMinConfidence,
-                    });
-                    props.onSearchGraph?.(request.query, request.nodeType, request.edgeType, request.minConfidence);
-                  }}
-                >
-                  {codeMapCopy.searchAction}
+          {inspectorOpen ? (
+            <aside ref={graphOverlayRef} className="code-map-inspector-pane code-map-floating-surface" aria-label={codeMapCopy.inspectorAria} role={isCompactGraphWorkbench ? 'dialog' : undefined}>
+              <header className="code-map-floating-header">
+                <span>
+                  <small>{selectedGraphSubject === 'edge' ? graphWorkbenchCopy.inspectEdge : graphWorkbenchCopy.inspectNode}</small>
+                  <strong>{selectedGraphCurrentTarget}</strong>
+                </span>
+                <button ref={graphOverlayCloseRef} type="button" aria-label={graphWorkbenchCopy.close} onClick={() => closeGraphInspector({ restoreFocus: true })}>
+                  <X aria-hidden="true" weight="regular" />
                 </button>
-                {props.searchResult ? <span>{codeMapCopy.resultCount(props.searchResult.nodes.length)}</span> : null}
-              </div>
-            </section>
-
-            <section className={`code-map-tool-pane ${activeGraphTool === 'qa' ? 'code-map-tool-pane-active' : ''}`} aria-label={codeMapCopy.qaPanelAria} hidden={activeGraphTool !== 'qa'}>
-              <section className="graph-qa-workbench" aria-label={codeMapCopy.qaPanelAria}>
-                {/* 图谱问答必须绑定真实图谱来源，提问、回答、历史和详情按连续行组织，避免回到表单和时间线堆叠。 */}
-                <section className="graph-qa-compose-row zeus-composer-dock" aria-label={codeMapCopy.qaComposeAria}>
-                  <span className="graph-qa-copy">
-                    <strong>{codeMapCopy.askGraphTitle}</strong>
-                    <small>{codeMapCopy.askGraphHelp}</small>
-                  </span>
-                  <section className="graph-qa-question-row" aria-label={codeMapCopy.questionAria}>
-                    <span className="graph-qa-question-copy">
-                      <strong>{codeMapCopy.questionTitle}</strong>
-                      <small>{codeMapCopy.questionHelp}</small>
-                    </span>
-                    <span className="graph-qa-question-field">
-                      <input aria-label={codeMapCopy.askGraphAction} value={graphQuestionInput} onChange={(event) => setGraphQuestionInput(event.currentTarget.value)} />
-                    </span>
-                  </section>
-                  <span className="graph-qa-decision-rail zeus-decision-rail" data-inline-rail-keyboard="horizontal" onKeyDown={handleInlineRailKeyboardNavigation}>
+              </header>
+              {selectedGraphNode ? (
+                <>
+                  <div className="graph-focus-toolbar" aria-label={graphWorkbenchCopy.focusLabel}>
+                    {([0, 1, 2] as const).map((depth) => (
+                      <button key={depth} type="button" aria-pressed={selectedGraphHopDepth === depth} disabled={isAggregatedGraphNode(selectedGraphNode) && depth > 0} onClick={() => setSelectedGraphHopDepth(depth)}>
+                        {depth === 0 ? graphWorkbenchCopy.focusAll : depth === 1 ? graphWorkbenchCopy.focusOne : graphWorkbenchCopy.focusTwo}
+                      </button>
+                    ))}
+                  </div>
+                  <GraphNodeDetail node={selectedGraphNode} graphView={inspectorGraphView} expandedHopDepth={selectedGraphHopDepth || undefined} appLanguage={props.appLanguage} isCurrent />
+                  <div className="graph-inspector-actions">
                     <button
                       type="button"
-                      className="graph-qa-ask-button zeus-decision-rail-button"
-                      data-inline-rail-item="true"
-                      disabled={!buildGraphQuestionRequest(graphQuestionInput).canAsk}
+                      disabled={!resolveGraphCanvasNodeSourceRef(selectedGraphNode)}
+                      onClick={() =>
+                        props.onOpenGraphSource?.({
+                          sourceRef: resolveGraphCanvasNodeSourceRef(selectedGraphNode),
+                          lineStart: resolveGraphCanvasNodeLineStart(selectedGraphNode) ?? undefined,
+                        })
+                      }
+                    >
+                      {graphWorkbenchCopy.openSource}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={isAggregatedGraphNode(selectedGraphNode) || props.scanState === 'scanning'}
                       onClick={() => {
-                        const request = buildGraphQuestionRequest(graphQuestionInput);
-                        if (request.canAsk) props.onAskGraph?.(request.question);
+                        if (isAggregatedGraphNode(selectedGraphNode)) return;
+                        const question = codeMapCopy.explainNodeQuestion(selectedGraphNode.qualifiedName, resolveGraphCanvasNodeSourceRef(selectedGraphNode));
+                        setGraphQuestionInput(question);
+                        openGraphTool('qa', findGraphObjectElement('node', selectedGraphNode.id));
                       }}
                     >
-                      {codeMapCopy.askGraphAction}
+                      {graphWorkbenchCopy.askNode}
                     </button>
-                  </span>
-                  <section className="graph-qa-mode-rail zeus-mode-rail" aria-label={codeMapCopy.qaModeRailAria}>
-                    {graphQaModeItems.map((item) => (
-                      <span className="graph-qa-mode-rail-item zeus-mode-rail-item" key={item.label}>
-                        <small>{item.label}</small>
-                        <strong>{item.value}</strong>
-                      </span>
-                    ))}
-                  </section>
-                </section>
-                {props.graphAnswer ? (
-                  <section className="graph-qa-answer-row" aria-label={codeMapCopy.graphAnswerAria}>
-                    <span className="graph-qa-copy">
-                      <strong>{props.graphAnswer.answer}</strong>
-                      <span>{props.graphAnswer.sessionId ? `${codeMapCopy.runtimeSessionLabel} ${props.graphAnswer.sessionId}` : codeMapCopy.insufficientRuntimeSession}</span>
-                      {props.graphAnswer.sources.nodes.slice(0, 3).map((node) => (
-                        <small key={node.id}>{node.sourceRef}</small>
-                      ))}
-                    </span>
-                  </section>
-                ) : null}
-                <section className="graph-qa-history" aria-label={codeMapCopy.qaHistoryAria}>
-                  <div className="graph-qa-history-toolbar" aria-label={codeMapCopy.qaHistoryToolbarAria}>
-                    <section className="graph-qa-history-search-row" aria-label={codeMapCopy.qaHistorySearchAria}>
-                      <span className="graph-qa-history-search-copy">
-                        <strong>{codeMapCopy.searchHistoryTitle}</strong>
-                        <small>{codeMapCopy.searchHistoryHelp}</small>
-                      </span>
-                      <span className="graph-qa-history-search-field">
-                        <input type="search" aria-label={codeMapCopy.qaHistorySearchAria} value={props.graphConversationSearch ?? ''} onChange={(event) => props.onGraphConversationSearchChange?.(event.target.value)} />
+                    <button type="button" disabled={isAggregatedGraphNode(selectedGraphNode)} onClick={() => props.onCreateTaskFromNode?.(selectedGraphNode.id)}>
+                      {graphWorkbenchCopy.createTask}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (isAggregatedGraphNode(selectedGraphNode)) {
+                          setHiddenNodeIds((current) => [...new Set([...current, ...selectedGraphNode.nodeIds])]);
+                        } else {
+                          toggleNodeVisibility(selectedGraphNode.id);
+                        }
+                        closeGraphInspector();
+                      }}
+                    >
+                      {graphWorkbenchCopy.hideNode}
+                    </button>
+                  </div>
+                </>
+              ) : null}
+              {selectedGraphEdge ? <GraphEdgeDetailPanel edge={selectedGraphEdge} nodes={visibleNodes} graphView={inspectorGraphView} appLanguage={props.appLanguage} isCurrent /> : null}
+            </aside>
+          ) : null}
+
+          {activeGraphTool ? (
+            <aside ref={graphOverlayRef} className="code-map-tool-surface code-map-floating-surface" aria-label={codeMapCopy.tools[activeGraphTool].label} role={isCompactGraphWorkbench ? 'dialog' : undefined}>
+              <header className="code-map-floating-header">
+                <span>
+                  <small>{graphWorkbenchCopy.tools}</small>
+                  <strong>{codeMapCopy.tools[activeGraphTool].label}</strong>
+                </span>
+                <button ref={graphOverlayCloseRef} type="button" aria-label={graphWorkbenchCopy.close} onClick={() => closeGraphTool({ restoreFocus: true })}>
+                  <X aria-hidden="true" weight="regular" />
+                </button>
+              </header>
+              <section className="code-map-secondary-tools code-map-secondary-inspector" aria-label={codeMapCopy.secondaryToolsAria}>
+                <section className={`code-map-tool-pane ${activeGraphTool === 'runtime' ? 'code-map-tool-pane-active' : ''}`} aria-label={codeMapCopy.graphRuntime} hidden={activeGraphTool !== 'runtime'}>
+                  {shouldRenderRuntimeGraph ? (
+                    <GraphRuntimeCanvas
+                      nodes={visibleNodes}
+                      edges={visibleEdges}
+                      layout={graphDrilldownLayout ?? props.graphView.layout}
+                      appLanguage={props.appLanguage}
+                      currentNodeId={selectedGraphSubject === 'node' ? selectedGraphNode?.id : null}
+                      currentEdgeId={selectedGraphSubject === 'edge' ? selectedGraphEdge?.id : null}
+                      onSelectNode={selectGraphNode}
+                      onSelectEdge={selectGraphEdge}
+                    />
+                  ) : (
+                    <section className="graph-runtime-unavailable-row" aria-label={codeMapCopy.graphRuntime}>
+                      {/* 运行时预览只能按需出现；默认状态必须明确它被收纳而不是悄悄抢占主画布。 */}
+                      <span className="graph-qa-copy">
+                        <strong>{codeMapCopy.graphRuntime}</strong>
+                        <span>{isSequenceDiagramExportView ? codeMapCopy.sequenceRuntimeHidden : codeMapCopy.runtimeToolCollapsed}</span>
                       </span>
                     </section>
-                    <span className="graph-qa-toolbar-command-rail">
-                      <button
-                        type="button"
-                        onClick={() =>
-                          props.onLoadGraphConversations?.({
-                            query: props.graphConversationSearch?.trim() || undefined,
-                            offset: 0,
-                            archived: conversationPage.archived,
-                          })
-                        }
-                      >
-                        {codeMapCopy.searchHistoryAction}
-                      </button>
-                      <button
-                        type="button"
-                        aria-pressed={conversationPage.archived}
-                        onClick={() =>
-                          props.onLoadGraphConversations?.({
-                            query: conversationPage.query ?? undefined,
-                            offset: 0,
-                            archived: !conversationPage.archived,
-                          })
-                        }
-                      >
-                        {conversationPage.archived ? codeMapCopy.viewActiveHistory : codeMapCopy.viewArchivedHistory}
-                      </button>
-                    </span>
-                    <span className="graph-qa-count">{codeMapCopy.realQaCount(conversationPage.total)}</span>
-                  </div>
-                  {(props.graphConversations ?? []).length === 0 ? (
-                    <div className="graph-qa-empty-row" aria-label={codeMapCopy.qaHistoryEmptyAria}>
-                      <span className="graph-qa-copy">
-                        <strong>{codeMapCopy.noRealQaHistory}</strong>
-                        <span>{conversationPage.query ? codeMapCopy.noMatchingQaHistory : codeMapCopy.qaHistoryEmptyHelp}</span>
-                      </span>
-                    </div>
-                  ) : (
-                    props.graphConversations?.slice(0, 5).map((conversation) => {
-                      const assistantMessage = conversation.messages.find((message) => message.role === 'assistant');
-                      return (
-                        <article className="graph-qa-history-row" key={conversation.id}>
-                          <span className="graph-qa-copy">
-                            <strong>{conversation.title}</strong>
-                            <span>{assistantMessage?.content ?? conversation.summary ?? codeMapCopy.answerNotGenerated}</span>
-                            <small>{conversation.sessionId ? `${codeMapCopy.runtimeSessionLabel} ${conversation.sessionId}` : codeMapCopy.insufficientRuntimeSession}</small>
-                          </span>
-                          <span className="graph-qa-history-command-rail">
-                            <button type="button" className="graph-qa-detail-button" onClick={() => props.onLoadGraphConversation?.(conversation.id)}>
-                              {codeMapCopy.viewDetail}
-                            </button>
-                            <button type="button" className="graph-qa-task-button" onClick={() => props.onCreateTaskFromGraphConversation?.(conversation.id)}>
-                              {codeMapCopy.createTaskFromQa}
-                            </button>
-                            {conversation.archived ? (
-                              <button type="button" className="graph-qa-archive-button" onClick={() => props.onRestoreGraphConversation?.(conversation.id)}>
-                                {codeMapCopy.restoreHistory}
-                              </button>
-                            ) : (
-                              <button type="button" className="graph-qa-archive-button" onClick={() => props.onArchiveGraphConversation?.(conversation.id)}>
-                                {codeMapCopy.archiveHistory}
-                              </button>
-                            )}
-                          </span>
-                        </article>
-                      );
-                    })
                   )}
-                  <div className="graph-qa-pagination-row" aria-label={codeMapCopy.qaPaginationAria}>
-                    <button
-                      type="button"
-                      disabled={conversationPage.offset <= 0}
-                      onClick={() =>
-                        props.onLoadGraphConversations?.({
-                          query: conversationPage.query ?? undefined,
-                          offset: previousOffset,
-                          archived: conversationPage.archived,
-                        })
-                      }
-                    >
-                      {codeMapCopy.previousPage}
-                    </button>
-                    <span>{conversationPage.total === 0 ? codeMapCopy.pageRangeEmpty : codeMapCopy.pageRange(conversationPage.offset + 1, Math.min(conversationPage.total, conversationPage.offset + conversationPage.limit))}</span>
-                    <button
-                      type="button"
-                      disabled={nextOffset >= conversationPage.total}
-                      onClick={() =>
-                        props.onLoadGraphConversations?.({
-                          query: conversationPage.query ?? undefined,
-                          offset: nextOffset,
-                          archived: conversationPage.archived,
-                        })
-                      }
-                    >
-                      {codeMapCopy.nextPage}
-                    </button>
-                  </div>
-                  {selectedConversation ? (
-                    <aside className="graph-qa-detail-pane graph-qa-detail-inspector" aria-label={codeMapCopy.qaDetailAria}>
-                      <header className="graph-qa-detail-header">
-                        <span className="graph-qa-detail-title-copy">
-                          <strong>{selectedConversation.title}</strong>
-                          <small>{selectedConversation.summary || selectedConversation.projectId}</small>
-                        </span>
-                        <small>
-                          {selectedConversation.archived ? codeMapCopy.archivedStatus : codeMapCopy.activeStatus} · {formatGraphConversationStatus(selectedConversation.status, props.appLanguage)}
-                        </small>
-                      </header>
-                      <section className="graph-qa-detail-meta-row" aria-label={codeMapCopy.qaDetailStatusAria}>
-                        <span className="graph-qa-detail-message-copy">
-                          {/* Runtime 会话来自真实历史记录；缺失时明确展示未启动，避免伪造会话来源。 */}
-                          <strong>{selectedConversation.sessionId ? `${codeMapCopy.runtimeSessionLabel} ${selectedConversation.sessionId}` : codeMapCopy.insufficientRuntimeSession}</strong>
-                          <small>{selectedConversation.updatedAt}</small>
-                        </span>
-                        <span>{codeMapCopy.messageCount(selectedConversation.messages.length)}</span>
-                      </section>
-                      <section className="graph-qa-detail-message-list" aria-label={codeMapCopy.qaMessagesAria}>
-                        {selectedConversation.messages.map((message) => (
-                          <div className="graph-qa-message-row" key={message.id}>
-                            <span className="graph-qa-detail-message-copy graph-qa-copy">
-                              <strong>{message.role === 'assistant' ? codeMapCopy.assistantAnswer : codeMapCopy.userQuestion}</strong>
-                              <span>{message.content}</span>
-                              <small>{formatGraphMessageSource(message.source, props.appLanguage)}</small>
-                            </span>
-                          </div>
-                        ))}
-                      </section>
-                    </aside>
-                  ) : null}
                 </section>
-              </section>
-            </section>
 
-            <section className={`code-map-tool-pane ${activeGraphTool === 'mermaid' ? 'code-map-tool-pane-active' : ''}`} aria-label={codeMapCopy.mermaidPanelAria} hidden={activeGraphTool !== 'mermaid'}>
-              <section className="graph-mermaid-preview graph-mermaid-workbench" aria-label={codeMapCopy.mermaidPreviewAria}>
-                {/* 图表源码导出只展示真实可见节点和边；PlantUML 用于对接成熟 UML 工具链，Mermaid 保留轻量预览。 */}
-                <div className="graph-mermaid-command-row" aria-label={codeMapCopy.mermaidExportCommandsAria}>
-                  <span className="graph-mermaid-copy">
-                    <strong>{diagramPreviewTitle}</strong>
-                    <small>{codeMapCopy.mermaidPreviewHelp}</small>
-                  </span>
-                  <span className="graph-mermaid-command-rail">
-                    <span className="graph-diagram-format-switch" aria-label={codeMapCopy.diagramFormatAria}>
-                      {(['mermaid', 'plantuml'] as const).map((format) => (
-                        <button key={format} type="button" aria-pressed={diagramExportFormat === format} onClick={() => setDiagramExportFormat(format)}>
-                          {format === 'plantuml' ? 'PlantUML' : 'Mermaid'}
-                        </button>
-                      ))}
-                    </span>
-                    <button type="button" onClick={() => setShowMermaidPreview((current) => !current)}>
-                      {showMermaidPreview ? codeMapCopy.hideMermaidSource : codeMapCopy.generateMermaidPreview}
+                <section className={`code-map-tool-pane ${activeGraphTool === 'search' ? 'code-map-tool-pane-active' : ''}`} aria-label={codeMapCopy.searchPanelAria} hidden={activeGraphTool !== 'search'}>
+                  <div className="graph-search-control-grid" aria-label={codeMapCopy.searchFilterAria}>
+                    <section className="graph-search-control-row" aria-label={codeMapCopy.nodeSearchAria}>
+                      {/* 图谱筛选控件必须保留来源语境：说明列讲清筛选含义，控件列只负责输入。 */}
+                      <span className="graph-search-control-copy">
+                        <strong>{codeMapCopy.nodeSearchTitle}</strong>
+                        <small>{codeMapCopy.nodeSearchHelp}</small>
+                      </span>
+                      <span className="graph-search-control-field">
+                        <input type="search" aria-label={codeMapCopy.nodeSearchAria} value={graphSearchQuery} onChange={(event) => setGraphSearchQuery(event.currentTarget.value)} />
+                      </span>
+                    </section>
+                    <section className="graph-search-control-row" aria-label={codeMapCopy.nodeTypeAria}>
+                      <span className="graph-search-control-copy">
+                        <strong>{codeMapCopy.nodeTypeTitle}</strong>
+                        <small>{codeMapCopy.nodeTypeHelp}</small>
+                      </span>
+                      <span className="graph-search-control-field">
+                        <ZeusSelect
+                          size="regular"
+                          ariaLabel={codeMapCopy.nodeTypeAria}
+                          value={graphNodeTypeFilter}
+                          onChange={setGraphNodeTypeFilter}
+                          searchPlaceholder={selectSearchPlaceholder}
+                          emptyLabel={selectNoResults}
+                          options={graphNodeTypeFilterValues.map((nodeType) => ({
+                            value: nodeType,
+                            label: uiCopy.graphNodeTypes[nodeType],
+                          }))}
+                        />
+                      </span>
+                    </section>
+                    <section className="graph-search-control-row" aria-label={codeMapCopy.edgeTypeAria}>
+                      <span className="graph-search-control-copy">
+                        <strong>{codeMapCopy.edgeTypeTitle}</strong>
+                        <small>{codeMapCopy.edgeTypeHelp}</small>
+                      </span>
+                      <span className="graph-search-control-field">
+                        <ZeusSelect
+                          size="regular"
+                          ariaLabel={codeMapCopy.edgeTypeAria}
+                          value={graphEdgeTypeFilter}
+                          onChange={setGraphEdgeTypeFilter}
+                          searchPlaceholder={selectSearchPlaceholder}
+                          emptyLabel={selectNoResults}
+                          options={graphEdgeTypeFilterValues.map((edgeType) => ({
+                            value: edgeType,
+                            label: uiCopy.graphEdgeTypes[edgeType],
+                          }))}
+                        />
+                      </span>
+                    </section>
+                    <section className="graph-search-control-row" aria-label={codeMapCopy.minConfidenceAria}>
+                      <span className="graph-search-control-copy">
+                        <strong>{codeMapCopy.minConfidenceTitle}</strong>
+                        <small>{codeMapCopy.minConfidenceHelp}</small>
+                      </span>
+                      <span className="graph-search-control-field">
+                        <input
+                          aria-label={codeMapCopy.minConfidenceAria}
+                          type="number"
+                          min="0"
+                          max="1"
+                          step="0.1"
+                          value={graphMinConfidence}
+                          onChange={(event) => setGraphMinConfidence(normalizeGraphMinConfidence(event.currentTarget.value, graphMinConfidence))}
+                        />
+                      </span>
+                    </section>
+                    <button type="button" disabled={props.scanState === 'scanning'} onClick={runQuickGraphSearch}>
+                      {codeMapCopy.searchAction}
                     </button>
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        try {
-                          if (diagramExportFormat === 'plantuml') {
-                            const exportFile = buildVisibleDiagramExport('plantuml');
-                            setLastMermaidExport(exportFile);
-                            const saved = props.onExportPlantUmlDiagramFile ? await props.onExportPlantUmlDiagramFile(exportFile) : { saved: false, filePath: null };
-                            setMermaidExportStatus(saved.saved && saved.filePath ? codeMapCopy.mermaidSavedStatus(saved.filePath) : codeMapCopy.mermaidGeneratedStatus(exportFile.fileName));
-                          } else {
-                            const exportFile = buildVisibleDiagramExport('mermaid');
-                            setLastMermaidExport(exportFile);
-                            const saved = props.onExportMermaidDiagramFile ? await props.onExportMermaidDiagramFile(exportFile) : { saved: false, filePath: null };
-                            setMermaidExportStatus(saved.saved && saved.filePath ? codeMapCopy.mermaidSavedStatus(saved.filePath) : codeMapCopy.mermaidGeneratedStatus(exportFile.fileName));
-                          }
-                        } catch {
-                          setMermaidExportStatus(codeMapCopy.mermaidSaveFailedStatus);
-                        }
-                        setShowMermaidPreview(true);
-                      }}
-                    >
-                      {codeMapCopy.exportMermaidSource}
-                    </button>
-                  </span>
-                </div>
-                {showMermaidPreview ? (
-                  <div className="graph-mermaid-source-row" aria-label={codeMapCopy.mermaidSourceAria}>
-                    <small>{diagramExportFormatLabel}</small>
-                    <pre className="graph-mermaid-source-preview">{buildVisibleDiagramSource(diagramExportFormat)}</pre>
+                    {props.searchResult ? <span>{codeMapCopy.resultCount(props.searchResult.nodes.length + props.searchResult.edges.length)}</span> : null}
+                    {props.searchResult && !searchResultHasCurrentMatches ? (
+                      <span className="code-map-search-feedback" role="status">
+                        {graphWorkbenchCopy.searchNoMatch}
+                      </span>
+                    ) : null}
                   </div>
-                ) : (
-                  <div className="graph-mermaid-empty-row" aria-label={codeMapCopy.mermaidEmptyAria}>
-                    <span className="graph-mermaid-copy">
-                      <strong>{codeMapCopy.mermaidEmptyTitle}</strong>
-                      <span>{codeMapCopy.mermaidEmptyHelp}</span>
-                    </span>
-                  </div>
-                )}
-                {lastMermaidExport || mermaidExportStatus ? (
-                  <div className="graph-mermaid-status-row" aria-label={codeMapCopy.mermaidStatusAria}>
-                    {lastMermaidExport ? <small>{codeMapCopy.mermaidGeneratedFile(lastMermaidExport.fileName, lastMermaidExport.mimeType)}</small> : null}
-                    {mermaidExportStatus ? <small>{mermaidExportStatus}</small> : null}
-                  </div>
-                ) : null}
-              </section>
-            </section>
+                </section>
 
-            <section className={`code-map-tool-pane ${activeGraphTool === 'entities' ? 'code-map-tool-pane-active' : ''}`} aria-label={codeMapCopy.entityPanelAria} hidden={activeGraphTool !== 'entities'}>
-              <section className="graph-entity-workbench" aria-label={codeMapCopy.entityWorkbenchAria}>
-                {/* 节点和边列表只表达真实来源与常用动作，操作列和信息列分离，避免节点卡片继续按钮平铺。 */}
-                <section className="graph-entity-section" aria-label={codeMapCopy.graphNodesAria}>
-                  <div className="graph-entity-section-header">
-                    <strong>{codeMapCopy.graphNodesTitle}</strong>
-                    <span>{codeMapCopy.realNodeCount(visibleNodes.length)}</span>
-                  </div>
-                  <div className="graph-node-list" aria-label={codeMapCopy.graphNodesAria}>
-                    {visibleNodes.map((node) => {
-                      if (isAggregatedGraphNode(node)) {
-                        return (
-                          <article className="graph-node-row aggregate" key={node.id}>
-                            <span className="graph-node-copy">
-                              <strong>{node.name}</strong>
-                              <span>{formatGraphNodeTypeList(node.nodeTypes, props.appLanguage)}</span>
-                              <small>{codeMapCopy.aggregatedNodeSummary(node.aggregateCount, node.sourceRefs.length)}</small>
-                            </span>
-                            <span className="graph-node-command-rail">
-                              <small>{codeMapCopy.aggregateNodeLabel}</small>
-                            </span>
-                          </article>
-                        );
-                      }
-                      const isHidden = hiddenNodeIds.includes(node.id);
-                      const isMenuOpen = activeNodeMenuId === node.id;
-                      const isMenuClosing = closingNodeMenuId === node.id;
-                      const isMenuVisible = isMenuOpen || isMenuClosing;
-                      const isCurrentGraphNodeEntity = selectedGraphSubject === 'node' && selectedGraphNode?.id === node.id;
-                      const nodeActions = buildGraphNodeActionMenu(node, isHidden, props.appLanguage);
-                      return (
-                        <article
-                          className={`graph-node-row${isCurrentGraphNodeEntity ? ' current-graph-entity-row' : ''}`}
-                          aria-current={isCurrentGraphNodeEntity ? 'true' : undefined}
-                          key={node.id}
-                          onKeyDown={handleGraphNodeMenuKeyDown}
-                          onContextMenu={(event) => {
-                            event.preventDefault();
-                            openGraphNodeMenu(node.id);
+                <section className={`code-map-tool-pane ${activeGraphTool === 'qa' ? 'code-map-tool-pane-active' : ''}`} aria-label={codeMapCopy.qaPanelAria} hidden={activeGraphTool !== 'qa'}>
+                  <section className="graph-qa-workbench" aria-label={codeMapCopy.qaPanelAria}>
+                    {/* 图谱问答必须绑定真实图谱来源，提问、回答、历史和详情按连续行组织，避免回到表单和时间线堆叠。 */}
+                    <section className="graph-qa-compose-row zeus-composer-dock" aria-label={codeMapCopy.qaComposeAria}>
+                      <span className="graph-qa-copy">
+                        <strong>{codeMapCopy.askGraphTitle}</strong>
+                        <small>{codeMapCopy.askGraphHelp}</small>
+                      </span>
+                      <section className="graph-qa-question-row" aria-label={codeMapCopy.questionAria}>
+                        <span className="graph-qa-question-copy">
+                          <strong>{codeMapCopy.questionTitle}</strong>
+                          <small>{codeMapCopy.questionHelp}</small>
+                        </span>
+                        <span className="graph-qa-question-field">
+                          <input aria-label={codeMapCopy.askGraphAction} value={graphQuestionInput} onChange={(event) => setGraphQuestionInput(event.currentTarget.value)} />
+                        </span>
+                      </section>
+                      <span className="graph-qa-decision-rail zeus-decision-rail" data-inline-rail-keyboard="horizontal" onKeyDown={handleInlineRailKeyboardNavigation}>
+                        <button
+                          type="button"
+                          className="graph-qa-ask-button zeus-decision-rail-button"
+                          data-inline-rail-item="true"
+                          disabled={props.scanState === 'scanning' || !buildGraphQuestionRequest(graphQuestionInput).canAsk}
+                          onClick={() => {
+                            const request = buildGraphQuestionRequest(graphQuestionInput);
+                            if (request.canAsk) props.onAskGraph?.(request.question);
                           }}
                         >
-                          <button type="button" className="graph-node-copy" onClick={() => selectGraphNode(node.id)}>
-                            <strong>{node.name}</strong>
-                            <span>{formatGraphNodeType(node.nodeType, props.appLanguage)}</span>
-                            <small>
-                              {node.sourceRef}:{String(node.metadata.lineStart ?? '?')}
-                            </small>
-                          </button>
-                          <span className="graph-node-command-rail">
-                            <button type="button" onClick={() => props.onCreateTaskFromNode?.(node.id)}>
-                              {codeMapCopy.createTaskFromNode}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() =>
-                                props.onOpenGraphSource?.({
-                                  sourceRef: node.sourceRef,
-                                  lineStart: typeof node.metadata.lineStart === 'number' ? node.metadata.lineStart : undefined,
-                                })
-                              }
-                            >
-                              {codeMapCopy.openSource}
-                            </button>
-                            <button type="button" aria-pressed={isHidden} onClick={() => toggleNodeVisibility(node.id)}>
-                              {isHidden ? codeMapCopy.restoreNode : codeMapCopy.hideNode}
-                            </button>
-                            <button type="button" aria-expanded={isMenuOpen} onClick={() => toggleGraphNodeMenu(node.id)}>
-                              {codeMapCopy.openNodeMenu}
-                            </button>
+                          {codeMapCopy.askGraphAction}
+                        </button>
+                      </span>
+                      <section className="graph-qa-mode-rail zeus-mode-rail" aria-label={codeMapCopy.qaModeRailAria}>
+                        {graphQaModeItems.map((item) => (
+                          <span className="graph-qa-mode-rail-item zeus-mode-rail-item" key={item.label}>
+                            <small>{item.label}</small>
+                            <strong>{item.value}</strong>
                           </span>
-                          <div
-                            className="graph-node-menu-row"
-                            role="menu"
-                            aria-label={codeMapCopy.nodeActionMenuAria}
-                            hidden={!isMenuVisible}
-                            data-motion-surface="popover"
-                            data-motion-state={isMenuClosing ? 'closing' : isMenuOpen ? 'open' : undefined}
+                        ))}
+                      </section>
+                    </section>
+                    {props.graphAnswer ? (
+                      <section className="graph-qa-answer-row" aria-label={codeMapCopy.graphAnswerAria}>
+                        <span className="graph-qa-copy">
+                          <strong>{props.graphAnswer.answer}</strong>
+                          <span>{props.graphAnswer.sessionId ? `${codeMapCopy.runtimeSessionLabel} ${props.graphAnswer.sessionId}` : codeMapCopy.insufficientRuntimeSession}</span>
+                          {props.graphAnswer.sources.nodes.slice(0, 3).map((node) => (
+                            <small key={node.id}>{node.sourceRef}</small>
+                          ))}
+                        </span>
+                      </section>
+                    ) : null}
+                    <section className="graph-qa-history" aria-label={codeMapCopy.qaHistoryAria}>
+                      <div className="graph-qa-history-toolbar" aria-label={codeMapCopy.qaHistoryToolbarAria}>
+                        <section className="graph-qa-history-search-row" aria-label={codeMapCopy.qaHistorySearchAria}>
+                          <span className="graph-qa-history-search-copy">
+                            <strong>{codeMapCopy.searchHistoryTitle}</strong>
+                            <small>{codeMapCopy.searchHistoryHelp}</small>
+                          </span>
+                          <span className="graph-qa-history-search-field">
+                            <input type="search" aria-label={codeMapCopy.qaHistorySearchAria} value={props.graphConversationSearch ?? ''} onChange={(event) => props.onGraphConversationSearchChange?.(event.target.value)} />
+                          </span>
+                        </section>
+                        <span className="graph-qa-toolbar-command-rail">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              props.onLoadGraphConversations?.({
+                                query: props.graphConversationSearch?.trim() || undefined,
+                                offset: 0,
+                                archived: conversationPage.archived,
+                              })
+                            }
                           >
-                            {nodeActions.map((action) => (
-                              <button key={action.id} type="button" role="menuitem" onClick={() => runNodeAction(node, action)}>
-                                {action.label}
-                              </button>
-                            ))}
-                          </div>
-                        </article>
-                      );
-                    })}
-                  </div>
-                </section>
-                <section className="graph-entity-section" aria-label={codeMapCopy.graphEdgesAria}>
-                  <div className="graph-entity-section-header">
-                    <strong>{codeMapCopy.graphEdgesTitle}</strong>
-                    <span>{codeMapCopy.realEdgeCount(visibleEdges.length)}</span>
-                  </div>
-                  <div className="graph-edge-list" aria-label={codeMapCopy.graphEdgesAria}>
-                    {visibleEdges.map((edge) => {
-                      const isCurrentGraphEdgeEntity = selectedGraphSubject === 'edge' && selectedGraphEdge?.id === edge.id;
-                      return (
-                        <div className={`graph-edge-row${isCurrentGraphEdgeEntity ? ' current-graph-entity-row' : ''}`} aria-current={isCurrentGraphEdgeEntity ? 'true' : undefined} key={edge.id}>
-                          <button type="button" className="graph-edge-copy" onClick={() => selectGraphEdge(edge.id)}>
-                            <strong>{formatGraphEdgeType(edge.edgeType, props.appLanguage)}</strong>
-                            <span>{edge.sourceRef}</span>
-                            {'aggregateCount' in edge && edge.aggregateCount > 1 ? <small>{codeMapCopy.aggregatedEdgeSummary(edge.aggregateCount, edge.sourceRefs.length)}</small> : null}
+                            {codeMapCopy.searchHistoryAction}
                           </button>
-                          <span className="graph-edge-meta-rail">{typeof edge.confidence === 'number' ? <small>{codeMapCopy.confidenceValue(edge.confidence.toFixed(2))}</small> : <small>{codeMapCopy.confidenceUnknown}</small>}</span>
+                          <button
+                            type="button"
+                            aria-pressed={conversationPage.archived}
+                            onClick={() =>
+                              props.onLoadGraphConversations?.({
+                                query: conversationPage.query ?? undefined,
+                                offset: 0,
+                                archived: !conversationPage.archived,
+                              })
+                            }
+                          >
+                            {conversationPage.archived ? codeMapCopy.viewActiveHistory : codeMapCopy.viewArchivedHistory}
+                          </button>
+                        </span>
+                        <span className="graph-qa-count">{codeMapCopy.realQaCount(conversationPage.total)}</span>
+                      </div>
+                      {(props.graphConversations ?? []).length === 0 ? (
+                        <div className="graph-qa-empty-row" aria-label={codeMapCopy.qaHistoryEmptyAria}>
+                          <span className="graph-qa-copy">
+                            <strong>{codeMapCopy.noRealQaHistory}</strong>
+                            <span>{conversationPage.query ? codeMapCopy.noMatchingQaHistory : codeMapCopy.qaHistoryEmptyHelp}</span>
+                          </span>
                         </div>
-                      );
-                    })}
-                  </div>
+                      ) : (
+                        props.graphConversations?.slice(0, 5).map((conversation) => {
+                          const assistantMessage = conversation.messages.find((message) => message.role === 'assistant');
+                          return (
+                            <article className="graph-qa-history-row" key={conversation.id}>
+                              <span className="graph-qa-copy">
+                                <strong>{conversation.title}</strong>
+                                <span>{assistantMessage?.content ?? conversation.summary ?? codeMapCopy.answerNotGenerated}</span>
+                                <small>{conversation.sessionId ? `${codeMapCopy.runtimeSessionLabel} ${conversation.sessionId}` : codeMapCopy.insufficientRuntimeSession}</small>
+                              </span>
+                              <span className="graph-qa-history-command-rail">
+                                <button type="button" className="graph-qa-detail-button" onClick={() => props.onLoadGraphConversation?.(conversation.id)}>
+                                  {codeMapCopy.viewDetail}
+                                </button>
+                                <button type="button" className="graph-qa-task-button" onClick={() => props.onCreateTaskFromGraphConversation?.(conversation.id)}>
+                                  {codeMapCopy.createTaskFromQa}
+                                </button>
+                                {conversation.archived ? (
+                                  <button type="button" className="graph-qa-archive-button" onClick={() => props.onRestoreGraphConversation?.(conversation.id)}>
+                                    {codeMapCopy.restoreHistory}
+                                  </button>
+                                ) : (
+                                  <button type="button" className="graph-qa-archive-button" onClick={() => props.onArchiveGraphConversation?.(conversation.id)}>
+                                    {codeMapCopy.archiveHistory}
+                                  </button>
+                                )}
+                              </span>
+                            </article>
+                          );
+                        })
+                      )}
+                      <div className="graph-qa-pagination-row" aria-label={codeMapCopy.qaPaginationAria}>
+                        <button
+                          type="button"
+                          disabled={conversationPage.offset <= 0}
+                          onClick={() =>
+                            props.onLoadGraphConversations?.({
+                              query: conversationPage.query ?? undefined,
+                              offset: previousOffset,
+                              archived: conversationPage.archived,
+                            })
+                          }
+                        >
+                          {codeMapCopy.previousPage}
+                        </button>
+                        <span>{conversationPage.total === 0 ? codeMapCopy.pageRangeEmpty : codeMapCopy.pageRange(conversationPage.offset + 1, Math.min(conversationPage.total, conversationPage.offset + conversationPage.limit))}</span>
+                        <button
+                          type="button"
+                          disabled={nextOffset >= conversationPage.total}
+                          onClick={() =>
+                            props.onLoadGraphConversations?.({
+                              query: conversationPage.query ?? undefined,
+                              offset: nextOffset,
+                              archived: conversationPage.archived,
+                            })
+                          }
+                        >
+                          {codeMapCopy.nextPage}
+                        </button>
+                      </div>
+                      {selectedConversation ? (
+                        <aside className="graph-qa-detail-pane graph-qa-detail-inspector" aria-label={codeMapCopy.qaDetailAria}>
+                          <header className="graph-qa-detail-header">
+                            <span className="graph-qa-detail-title-copy">
+                              <strong>{selectedConversation.title}</strong>
+                              <small>{selectedConversation.summary || selectedConversation.projectId}</small>
+                            </span>
+                            <small>
+                              {selectedConversation.archived ? codeMapCopy.archivedStatus : codeMapCopy.activeStatus} · {formatGraphConversationStatus(selectedConversation.status, props.appLanguage)}
+                            </small>
+                          </header>
+                          <section className="graph-qa-detail-meta-row" aria-label={codeMapCopy.qaDetailStatusAria}>
+                            <span className="graph-qa-detail-message-copy">
+                              {/* Runtime 会话来自真实历史记录；缺失时明确展示未启动，避免伪造会话来源。 */}
+                              <strong>{selectedConversation.sessionId ? `${codeMapCopy.runtimeSessionLabel} ${selectedConversation.sessionId}` : codeMapCopy.insufficientRuntimeSession}</strong>
+                              <small>{selectedConversation.updatedAt}</small>
+                            </span>
+                            <span>{codeMapCopy.messageCount(selectedConversation.messages.length)}</span>
+                          </section>
+                          <section className="graph-qa-detail-message-list" aria-label={codeMapCopy.qaMessagesAria}>
+                            {selectedConversation.messages.map((message) => (
+                              <div className="graph-qa-message-row" key={message.id}>
+                                <span className="graph-qa-detail-message-copy graph-qa-copy">
+                                  <strong>{message.role === 'assistant' ? codeMapCopy.assistantAnswer : codeMapCopy.userQuestion}</strong>
+                                  <span>{message.content}</span>
+                                  <small>{formatGraphMessageSource(message.source, props.appLanguage)}</small>
+                                </span>
+                              </div>
+                            ))}
+                          </section>
+                        </aside>
+                      ) : null}
+                    </section>
+                  </section>
+                </section>
+
+                <section className={`code-map-tool-pane ${activeGraphTool === 'mermaid' ? 'code-map-tool-pane-active' : ''}`} aria-label={codeMapCopy.mermaidPanelAria} hidden={activeGraphTool !== 'mermaid'}>
+                  <section className="graph-mermaid-preview graph-mermaid-workbench" aria-label={codeMapCopy.mermaidPreviewAria}>
+                    {/* 图表源码导出只展示真实可见节点和边；PlantUML 用于对接成熟 UML 工具链，Mermaid 保留轻量预览。 */}
+                    <div className="graph-mermaid-command-row" aria-label={codeMapCopy.mermaidExportCommandsAria}>
+                      <span className="graph-mermaid-copy">
+                        <strong>{diagramPreviewTitle}</strong>
+                        <small>{codeMapCopy.mermaidPreviewHelp}</small>
+                      </span>
+                      <span className="graph-mermaid-command-rail">
+                        <span className="graph-diagram-format-switch" aria-label={codeMapCopy.diagramFormatAria}>
+                          {(['mermaid', 'plantuml'] as const).map((format) => (
+                            <button key={format} type="button" aria-pressed={diagramExportFormat === format} onClick={() => setDiagramExportFormat(format)}>
+                              {format === 'plantuml' ? 'PlantUML' : 'Mermaid'}
+                            </button>
+                          ))}
+                        </span>
+                        <button type="button" onClick={() => setShowMermaidPreview((current) => !current)}>
+                          {showMermaidPreview ? codeMapCopy.hideMermaidSource : codeMapCopy.generateMermaidPreview}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            try {
+                              if (diagramExportFormat === 'plantuml') {
+                                const exportFile = buildVisibleDiagramExport('plantuml');
+                                setLastMermaidExport(exportFile);
+                                const saved = props.onExportPlantUmlDiagramFile ? await props.onExportPlantUmlDiagramFile(exportFile) : { saved: false, filePath: null };
+                                setMermaidExportStatus(saved.saved && saved.filePath ? codeMapCopy.mermaidSavedStatus(saved.filePath) : codeMapCopy.mermaidGeneratedStatus(exportFile.fileName));
+                              } else {
+                                const exportFile = buildVisibleDiagramExport('mermaid');
+                                setLastMermaidExport(exportFile);
+                                const saved = props.onExportMermaidDiagramFile ? await props.onExportMermaidDiagramFile(exportFile) : { saved: false, filePath: null };
+                                setMermaidExportStatus(saved.saved && saved.filePath ? codeMapCopy.mermaidSavedStatus(saved.filePath) : codeMapCopy.mermaidGeneratedStatus(exportFile.fileName));
+                              }
+                            } catch {
+                              setMermaidExportStatus(codeMapCopy.mermaidSaveFailedStatus);
+                            }
+                            setShowMermaidPreview(true);
+                          }}
+                        >
+                          {codeMapCopy.exportMermaidSource}
+                        </button>
+                      </span>
+                    </div>
+                    {showMermaidPreview ? (
+                      <div className="graph-mermaid-source-row" aria-label={codeMapCopy.mermaidSourceAria}>
+                        <small>{diagramExportFormatLabel}</small>
+                        <pre className="graph-mermaid-source-preview">{buildVisibleDiagramSource(diagramExportFormat)}</pre>
+                      </div>
+                    ) : (
+                      <div className="graph-mermaid-empty-row" aria-label={codeMapCopy.mermaidEmptyAria}>
+                        <span className="graph-mermaid-copy">
+                          <strong>{codeMapCopy.mermaidEmptyTitle}</strong>
+                          <span>{codeMapCopy.mermaidEmptyHelp}</span>
+                        </span>
+                      </div>
+                    )}
+                    {lastMermaidExport || mermaidExportStatus ? (
+                      <div className="graph-mermaid-status-row" aria-label={codeMapCopy.mermaidStatusAria}>
+                        {lastMermaidExport ? <small>{codeMapCopy.mermaidGeneratedFile(lastMermaidExport.fileName, lastMermaidExport.mimeType)}</small> : null}
+                        {mermaidExportStatus ? <small>{mermaidExportStatus}</small> : null}
+                      </div>
+                    ) : null}
+                  </section>
+                </section>
+
+                <section className={`code-map-tool-pane ${activeGraphTool === 'entities' ? 'code-map-tool-pane-active' : ''}`} aria-label={codeMapCopy.entityPanelAria} hidden={activeGraphTool !== 'entities'}>
+                  <section className="graph-entity-workbench" aria-label={codeMapCopy.entityWorkbenchAria}>
+                    {/* 节点和边列表只表达真实来源与常用动作，操作列和信息列分离，避免节点卡片继续按钮平铺。 */}
+                    <section className="graph-entity-section" aria-label={codeMapCopy.graphNodesAria}>
+                      <div className="graph-entity-section-header">
+                        <strong>{codeMapCopy.graphNodesTitle}</strong>
+                        <span>{codeMapCopy.realNodeCount(visibleNodes.length)}</span>
+                      </div>
+                      <div className="graph-node-list" aria-label={codeMapCopy.graphNodesAria}>
+                        {visibleNodes.map((node) => {
+                          if (isAggregatedGraphNode(node)) {
+                            return (
+                              <article className="graph-node-row aggregate" key={node.id}>
+                                <span className="graph-node-copy">
+                                  <strong>{node.name}</strong>
+                                  <span>{formatGraphNodeTypeList(node.nodeTypes, props.appLanguage)}</span>
+                                  <small>{codeMapCopy.aggregatedNodeSummary(node.aggregateCount, node.sourceRefs.length)}</small>
+                                </span>
+                                <span className="graph-node-command-rail">
+                                  <small>{codeMapCopy.aggregateNodeLabel}</small>
+                                </span>
+                              </article>
+                            );
+                          }
+                          const isHidden = hiddenNodeIds.includes(node.id);
+                          const isMenuOpen = activeNodeMenuId === node.id;
+                          const isMenuClosing = closingNodeMenuId === node.id;
+                          const isMenuVisible = isMenuOpen || isMenuClosing;
+                          const isCurrentGraphNodeEntity = selectedGraphSubject === 'node' && selectedGraphNode?.id === node.id;
+                          const nodeActions = buildGraphNodeActionMenu(node, isHidden, props.appLanguage);
+                          return (
+                            <article
+                              className={`graph-node-row${isCurrentGraphNodeEntity ? ' current-graph-entity-row' : ''}`}
+                              aria-current={isCurrentGraphNodeEntity ? 'true' : undefined}
+                              key={node.id}
+                              onKeyDown={handleGraphNodeMenuKeyDown}
+                              onContextMenu={(event) => {
+                                event.preventDefault();
+                                openGraphNodeMenu(node.id);
+                              }}
+                            >
+                              <button type="button" className="graph-node-copy" onClick={() => selectGraphNode(node.id)}>
+                                <strong>{node.name}</strong>
+                                <span>{formatGraphNodeType(node.nodeType, props.appLanguage)}</span>
+                                <small>
+                                  {node.sourceRef}:{String(node.metadata.lineStart ?? '?')}
+                                </small>
+                              </button>
+                              <span className="graph-node-command-rail">
+                                <button type="button" onClick={() => props.onCreateTaskFromNode?.(node.id)}>
+                                  {codeMapCopy.createTaskFromNode}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    props.onOpenGraphSource?.({
+                                      sourceRef: node.sourceRef,
+                                      lineStart: typeof node.metadata.lineStart === 'number' ? node.metadata.lineStart : undefined,
+                                    })
+                                  }
+                                >
+                                  {codeMapCopy.openSource}
+                                </button>
+                                <button type="button" aria-pressed={isHidden} onClick={() => toggleNodeVisibility(node.id)}>
+                                  {isHidden ? codeMapCopy.restoreNode : codeMapCopy.hideNode}
+                                </button>
+                                <button type="button" aria-expanded={isMenuOpen} onClick={() => toggleGraphNodeMenu(node.id)}>
+                                  {codeMapCopy.openNodeMenu}
+                                </button>
+                              </span>
+                              <div
+                                className="graph-node-menu-row"
+                                role="menu"
+                                aria-label={codeMapCopy.nodeActionMenuAria}
+                                hidden={!isMenuVisible}
+                                data-motion-surface="popover"
+                                data-motion-state={isMenuClosing ? 'closing' : isMenuOpen ? 'open' : undefined}
+                              >
+                                {nodeActions.map((action) => (
+                                  <button key={action.id} type="button" role="menuitem" onClick={() => runNodeAction(node, action)}>
+                                    {action.label}
+                                  </button>
+                                ))}
+                              </div>
+                            </article>
+                          );
+                        })}
+                      </div>
+                    </section>
+                    <section className="graph-entity-section" aria-label={codeMapCopy.graphEdgesAria}>
+                      <div className="graph-entity-section-header">
+                        <strong>{codeMapCopy.graphEdgesTitle}</strong>
+                        <span>{codeMapCopy.realEdgeCount(visibleEdges.length)}</span>
+                      </div>
+                      <div className="graph-edge-list" aria-label={codeMapCopy.graphEdgesAria}>
+                        {visibleEdges.map((edge) => {
+                          const isCurrentGraphEdgeEntity = selectedGraphSubject === 'edge' && selectedGraphEdge?.id === edge.id;
+                          return (
+                            <div className={`graph-edge-row${isCurrentGraphEdgeEntity ? ' current-graph-entity-row' : ''}`} aria-current={isCurrentGraphEdgeEntity ? 'true' : undefined} key={edge.id}>
+                              <button type="button" className="graph-edge-copy" onClick={() => selectGraphEdge(edge.id)}>
+                                <strong>{formatGraphEdgeType(edge.edgeType, props.appLanguage)}</strong>
+                                <span>{edge.sourceRef}</span>
+                                {'aggregateCount' in edge && edge.aggregateCount > 1 ? <small>{codeMapCopy.aggregatedEdgeSummary(edge.aggregateCount, edge.sourceRefs.length)}</small> : null}
+                              </button>
+                              <span className="graph-edge-meta-rail">{typeof edge.confidence === 'number' ? <small>{codeMapCopy.confidenceValue(edge.confidence.toFixed(2))}</small> : <small>{codeMapCopy.confidenceUnknown}</small>}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </section>
+                  </section>
                 </section>
               </section>
-            </section>
-          </section>
-        </aside>
+            </aside>
+          ) : null}
+        </section>
+        <footer className="code-map-status-bar" aria-label={codeMapCopy.performanceAria}>
+          <span>
+            <strong>{graphDrilldown ? `${graphDrilldown.label} · ${graphWorkbenchCopy.drilldownGraph}` : (uiCopy.graphViewTypes[props.graphView.viewType as GraphViewType] ?? props.graphView.title)}</strong>
+            <span>
+              {visibleArchitectureModel ? (
+                <>
+                  {graphWorkbenchCopy.currentVisible} {visibleArchitectureModel.objectCount} {props.appLanguage === 'zh-CN' ? '个架构对象' : 'architecture objects'} / {visibleArchitectureModel.dependencyEdges.length}{' '}
+                  {props.appLanguage === 'zh-CN' ? '条依赖' : 'dependencies'}
+                </>
+              ) : (
+                <>
+                  {graphWorkbenchCopy.currentVisible} {visibleNodes.length} {graphWorkbenchCopy.nodeUnit} / {visibleEdges.length} {graphWorkbenchCopy.relationGroupUnit} ·{' '}
+                  {graphWorkbenchCopy.representedRelations(visibleGraphStats.representedEdgeCount)}
+                </>
+              )}
+            </span>
+            <span>
+              {graphWorkbenchCopy.loadedTotal} {activeGraphScope.nodes.length} {graphWorkbenchCopy.nodeUnit} / {activeGraphScope.edges.length} {graphWorkbenchCopy.relationUnit}
+            </span>
+            {visibleGraphStats.omittedEdgeGroupCount > 0 ? <span>{graphWorkbenchCopy.omittedRelations(visibleGraphStats.omittedEdgeGroupCount, visibleGraphStats.omittedRepresentedEdgeCount)}</span> : null}
+            <span>{graphWorkbenchCopy.staticStructure}</span>
+            {graphDrilldownLayout || props.graphView.layout ? <span>{formatGraphLayoutAlgorithm((graphDrilldownLayout ?? props.graphView.layout)!.algorithm, props.appLanguage)}</span> : null}
+            {props.graphView.performance ? <span>{Math.round(props.graphView.performance.durationMs)}ms</span> : null}
+          </span>
+          <span className={props.scanState ?? 'idle'}>
+            <i aria-hidden="true" />
+            {scanStatusCopy}
+          </span>
+        </footer>
       </div>
     </section>
   );
@@ -12790,6 +13593,40 @@ export type AggregatedGraphEdge = GraphViewSnapshot['edges'][number] & {
   edgeIds: string[];
 };
 
+export function buildGraphNeighborhoodSlice(input: { nodes: GraphViewSnapshot['nodes']; edges: GraphViewSnapshot['edges']; centerNodeId: string; depth: 1 | 2 }): {
+  nodes: GraphViewSnapshot['nodes'];
+  edges: GraphViewSnapshot['edges'];
+} {
+  const nodeIds = new Set(input.nodes.map((node) => node.id));
+  if (!nodeIds.has(input.centerNodeId)) return { nodes: input.nodes, edges: input.edges };
+
+  const adjacency = new Map<string, Set<string>>();
+  for (const nodeId of nodeIds) adjacency.set(nodeId, new Set());
+  for (const edge of input.edges) {
+    if (!nodeIds.has(edge.sourceNodeId) || !nodeIds.has(edge.targetNodeId)) continue;
+    adjacency.get(edge.sourceNodeId)?.add(edge.targetNodeId);
+    adjacency.get(edge.targetNodeId)?.add(edge.sourceNodeId);
+  }
+
+  const visibleNodeIds = new Set([input.centerNodeId]);
+  let frontier = new Set([input.centerNodeId]);
+  for (let step = 0; step < input.depth; step += 1) {
+    const next = new Set<string>();
+    for (const nodeId of frontier) {
+      for (const neighborId of adjacency.get(nodeId) ?? []) {
+        if (!visibleNodeIds.has(neighborId)) next.add(neighborId);
+      }
+    }
+    for (const nodeId of next) visibleNodeIds.add(nodeId);
+    frontier = next;
+  }
+
+  return {
+    nodes: input.nodes.filter((node) => visibleNodeIds.has(node.id)),
+    edges: input.edges.filter((edge) => visibleNodeIds.has(edge.sourceNodeId) && visibleNodeIds.has(edge.targetNodeId)),
+  };
+}
+
 export function buildVisibleGraphSlice(input: {
   nodes: GraphViewSnapshot['nodes'];
   edges: GraphViewSnapshot['edges'];
@@ -12801,6 +13638,12 @@ export function buildVisibleGraphSlice(input: {
 }): {
   nodes: Array<GraphViewSnapshot['nodes'][number] | AggregatedGraphNode>;
   edges: AggregatedGraphEdge[];
+  stats: {
+    renderedEdgeGroupCount: number;
+    representedEdgeCount: number;
+    omittedEdgeGroupCount: number;
+    omittedRepresentedEdgeCount: number;
+  };
 } {
   const hiddenNodeIds = new Set(input.hiddenNodeIds);
   const minConfidence = typeof input.minConfidence === 'number' ? normalizeGraphMinConfidence(input.minConfidence, input.showLowConfidenceEdges ? 0 : 1) : input.showLowConfidenceEdges ? 0 : 1;
@@ -12808,9 +13651,35 @@ export function buildVisibleGraphSlice(input: {
     input.nodes.filter((node) => !hiddenNodeIds.has(node.id)),
     input.maxNodes,
   );
-  const visibleNodeIds = new Set(nodes.map((node) => node.id));
-  const edges = buildAggregatedGraphEdges(input.edges.filter((edge) => visibleNodeIds.has(edge.sourceNodeId) && visibleNodeIds.has(edge.targetNodeId)).filter((edge) => edge.confidence >= minConfidence)).slice(0, input.maxEdges);
-  return { nodes, edges };
+  const visibleNodeIdBySourceNodeId = new Map<string, string>();
+  for (const node of nodes) {
+    if (isAggregatedGraphNode(node)) {
+      for (const sourceNodeId of node.nodeIds) visibleNodeIdBySourceNodeId.set(sourceNodeId, node.id);
+    } else {
+      visibleNodeIdBySourceNodeId.set(node.id, node.id);
+    }
+  }
+  const remappedEdges = input.edges.flatMap((edge) => {
+    if (edge.confidence < minConfidence) return [];
+    const sourceNodeId = visibleNodeIdBySourceNodeId.get(edge.sourceNodeId);
+    const targetNodeId = visibleNodeIdBySourceNodeId.get(edge.targetNodeId);
+    if (!sourceNodeId || !targetNodeId) return [];
+    return [{ ...edge, sourceNodeId, targetNodeId }];
+  });
+  const allEdgeGroups = buildAggregatedGraphEdges(remappedEdges);
+  const edges = allEdgeGroups.slice(0, Math.max(1, input.maxEdges));
+  const representedEdgeCount = edges.reduce((count, edge) => count + edge.aggregateCount, 0);
+  const totalRepresentedEdgeCount = allEdgeGroups.reduce((count, edge) => count + edge.aggregateCount, 0);
+  return {
+    nodes,
+    edges,
+    stats: {
+      renderedEdgeGroupCount: edges.length,
+      representedEdgeCount,
+      omittedEdgeGroupCount: Math.max(0, allEdgeGroups.length - edges.length),
+      omittedRepresentedEdgeCount: Math.max(0, totalRepresentedEdgeCount - representedEdgeCount),
+    },
+  };
 }
 
 export function buildGraphQuestionRequest(question: string): {
@@ -12858,34 +13727,71 @@ export function isAggregatedGraphNode(node: GraphViewSnapshot['nodes'][number] |
 export function buildAggregatedGraphNodes(nodes: GraphViewSnapshot['nodes'], maxNodes: number): Array<GraphViewSnapshot['nodes'][number] | AggregatedGraphNode> {
   const safeMaxNodes = Math.max(1, maxNodes);
   if (nodes.length <= safeMaxNodes) return nodes;
-  const concreteNodeCount = Math.max(0, safeMaxNodes - 1);
+  const aggregateSlotCount = safeMaxNodes < 4 ? 1 : Math.min(4, Math.max(1, Math.floor(safeMaxNodes / 5)));
+  const concreteNodeCount = Math.max(0, safeMaxNodes - aggregateSlotCount);
   const concreteNodes = nodes.slice(0, concreteNodeCount);
   const overflowNodes = nodes.slice(concreteNodeCount);
-  const sourceRefs = [...new Set(overflowNodes.map((node) => node.sourceRef))];
-  const nodeTypes = [...new Set(overflowNodes.map((node) => node.nodeType))];
-  const nodeIds = overflowNodes.map((node) => node.id);
-  const firstOverflow = overflowNodes[0];
-  // 聚合节点只表达前端可见切片的压缩摘要，不写回图谱事实库。
-  const aggregateNode: AggregatedGraphNode = {
-    id: `aggregate_nodes_${nodeIds.join('_')}`,
-    nodeType: 'aggregate',
-    name: `聚合 ${overflowNodes.length} 个节点`,
-    qualifiedName: `聚合节点：${nodeIds.join(',')}`,
-    sourceRef: firstOverflow?.sourceRef ?? '',
-    symbolId: `aggregate_symbols_${nodeIds.join('_')}`,
-    metadata: {
-      aggregateCount: overflowNodes.length,
+  const groups = new Map<string, { label: string; nodes: GraphViewSnapshot['nodes'] }>();
+  for (const node of overflowNodes) {
+    const sourceParts = node.sourceRef.split(/[\\/]/u).filter(Boolean);
+    const sourceDirectories = sourceParts.slice(0, -1);
+    const sourceArea = sourceDirectories.length > 1 ? sourceDirectories.slice(-2).join('/') : sourceDirectories[0] || node.nodeType;
+    const key = `${sourceArea}::${node.nodeType}`;
+    const group = groups.get(key) ?? { label: `${sourceArea} · ${node.nodeType}`, nodes: [] };
+    group.nodes.push(node);
+    groups.set(key, group);
+  }
+  const semanticGroups = [...groups.values()];
+  const visibleGroups =
+    semanticGroups.length <= aggregateSlotCount
+      ? semanticGroups
+      : [
+          ...semanticGroups.slice(0, Math.max(0, aggregateSlotCount - 1)),
+          {
+            label: 'other · mixed',
+            nodes: semanticGroups.slice(Math.max(0, aggregateSlotCount - 1)).flatMap((group) => group.nodes),
+          },
+        ];
+
+  const aggregateNodes = visibleGroups.map((group, index): AggregatedGraphNode => {
+    const sourceRefs = [...new Set(group.nodes.map((node) => node.sourceRef))];
+    const nodeTypes = [...new Set(group.nodes.map((node) => node.nodeType))];
+    const nodeIds = group.nodes.map((node) => node.id);
+    const firstOverflow = group.nodes[0];
+    const aggregateKey = buildGraphAggregateKey(nodeIds);
+    // 聚合只压缩当前渲染模型；每个原节点仍保留到 nodeIds，边端点会在下一步同步重映射。
+    return {
+      id: `aggregate_${index}_${aggregateKey}`,
+      nodeType: 'aggregate',
+      name: `${group.label} · ${group.nodes.length}`,
+      qualifiedName: `aggregate:${group.label}:${aggregateKey}`,
+      sourceRef: firstOverflow?.sourceRef ?? '',
+      symbolId: `aggregate_symbol_${index}_${aggregateKey}`,
+      metadata: {
+        aggregateCount: group.nodes.length,
+        nodeIds,
+        sourceRefs,
+        nodeTypes,
+      },
+      isAggregate: true,
+      aggregateCount: group.nodes.length,
       nodeIds,
       sourceRefs,
       nodeTypes,
-    },
-    isAggregate: true,
-    aggregateCount: overflowNodes.length,
-    nodeIds,
-    sourceRefs,
-    nodeTypes,
-  };
-  return [...concreteNodes, aggregateNode];
+    };
+  });
+  return [...concreteNodes, ...aggregateNodes];
+}
+
+function buildGraphAggregateKey(nodeIds: string[]): string {
+  let hash = 2166136261;
+  for (const nodeId of nodeIds) {
+    for (let index = 0; index < nodeId.length; index += 1) {
+      hash ^= nodeId.charCodeAt(index);
+      hash = Math.imul(hash, 16777619);
+    }
+  }
+  return (hash >>> 0).toString(36);
 }
 
 export function buildAggregatedGraphEdges(edges: GraphViewSnapshot['edges']): AggregatedGraphEdge[] {
@@ -13169,33 +14075,172 @@ function GraphCanvas(props: {
   currentEdgeId?: string | null;
   onSelectNode?: (nodeId: string) => void;
   onSelectEdge?: (edgeId: string) => void;
+  onClearSelection?: () => void;
   onOpenGraphSource?: (source: { sourceRef: string; lineStart?: number }) => void;
   onCreateTaskFromNode?: (nodeId: string) => void;
 }) {
   const copy = getLanguageCopy(props.appLanguage).codeMapWorkspace;
-  const width = normalizeGraphCanvasDimension(props.layout?.width, 720, 1440);
-  const height = normalizeGraphCanvasDimension(props.layout?.height, 300, 900);
-  const layout = buildGraphCanvasLayout(props.nodes, width, height, props.layout);
-  const visibleNodeIds = new Set(props.nodes.map((node) => node.id));
-  const visibleEdges = buildAggregatedGraphEdges(props.edges.filter((edge) => visibleNodeIds.has(edge.sourceNodeId) && visibleNodeIds.has(edge.targetNodeId)));
+  const interactionCopy =
+    props.appLanguage === 'zh-CN'
+      ? {
+          zoomOut: '缩小图谱',
+          zoomIn: '放大图谱',
+          fit: '适配',
+          minimap: '图谱小地图',
+        }
+      : {
+          zoomOut: 'Zoom out',
+          zoomIn: 'Zoom in',
+          fit: 'Fit',
+          minimap: 'Graph minimap',
+        };
   const isSequenceGraphView = props.viewType === 'api_sequence' || props.viewType === 'method_logic';
+  const sourceWidth = normalizeGraphCanvasDimension(props.layout?.width, 720, 1440);
+  const sourceHeight = normalizeGraphCanvasDimension(props.layout?.height, 300, 900);
+  // 时序图世界坐标随生命线与消息数量增长，视口仍由 viewBox 控制，避免把大型链路压进固定 1440×900 后相互覆盖。
+  const width = isSequenceGraphView ? Math.max(sourceWidth, props.nodes.length * 150 + 120) : sourceWidth;
+  const height = isSequenceGraphView ? Math.max(sourceHeight, props.edges.length * 42 + 150) : sourceHeight;
+  const layout = useMemo(() => buildGraphCanvasLayout(props.nodes, width, height, props.layout), [height, props.layout, props.nodes, width]);
+  const visibleEdges = useMemo(() => {
+    const visibleNodeIds = new Set(props.nodes.map((node) => node.id));
+    return props.edges
+      .filter((edge) => visibleNodeIds.has(edge.sourceNodeId) && visibleNodeIds.has(edge.targetNodeId))
+      .map(
+        (edge): AggregatedGraphEdge =>
+          'aggregateCount' in edge
+            ? edge
+            : {
+                ...edge,
+                aggregateCount: 1,
+                sourceRefs: [edge.sourceRef],
+                edgeIds: [edge.id],
+              },
+      );
+  }, [props.edges, props.nodes]);
+  const baseViewport = useMemo(() => buildGraphCanvasViewport(layout, props.nodes.length, width, height, isSequenceGraphView), [height, isSequenceGraphView, layout, props.nodes.length, width]);
+  const graphModelKey = useMemo(() => `${props.viewType ?? 'graph'}:${props.nodes.map((node) => node.id).join('|')}:${visibleEdges.map((edge) => edge.id).join('|')}`, [props.nodes, props.viewType, visibleEdges]);
+  const [camera, setCamera] = useState({ zoom: 1, panX: 0, panY: 0 });
+  const [isPanning, setIsPanning] = useState(false);
+  const cameraDragRef = useRef<{
+    pointerId: number;
+    clientX: number;
+    clientY: number;
+    panX: number;
+    panY: number;
+    viewportWidth: number;
+    viewportHeight: number;
+    elementWidth: number;
+    elementHeight: number;
+  } | null>(null);
   const canvasLabel = isSequenceGraphView ? copy.sequenceGraphCanvas : copy.graphCanvas;
   const canvasTitle = isSequenceGraphView ? canvasLabel : props.title?.trim() || canvasLabel;
+  const cameraViewport = {
+    x: baseViewport.x + camera.panX + (baseViewport.width - baseViewport.width / camera.zoom) / 2,
+    y: baseViewport.y + camera.panY + (baseViewport.height - baseViewport.height / camera.zoom) / 2,
+    width: baseViewport.width / camera.zoom,
+    height: baseViewport.height / camera.zoom,
+  };
 
-  function handleGraphNodeInlineAffordanceKeyDown(event: ReactKeyboardEvent<SVGTextElement>, action: () => void): void {
-    if (event.key !== 'Enter' && event.key !== ' ') return;
+  useEffect(() => {
+    setCamera({ zoom: 1, panX: 0, panY: 0 });
+    setIsPanning(false);
+    cameraDragRef.current = null;
+  }, [graphModelKey]);
+
+  const setGraphZoom = (nextZoom: number): void => {
+    setCamera((current) => ({
+      ...current,
+      zoom: Math.min(2.4, Math.max(0.6, Math.round(nextZoom * 10) / 10)),
+    }));
+  };
+
+  const fitGraphCanvas = (): void => {
+    setCamera({ zoom: 1, panX: 0, panY: 0 });
+  };
+
+  const handleGraphCanvasPointerDown = (event: ReactPointerEvent<SVGSVGElement>): void => {
+    if (event.button !== 0 || event.target !== event.currentTarget) return;
+    props.onClearSelection?.();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    const bounds = event.currentTarget.getBoundingClientRect();
+    cameraDragRef.current = {
+      pointerId: event.pointerId,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      panX: camera.panX,
+      panY: camera.panY,
+      viewportWidth: cameraViewport.width,
+      viewportHeight: cameraViewport.height,
+      elementWidth: Math.max(1, bounds.width),
+      elementHeight: Math.max(1, bounds.height),
+    };
+    setIsPanning(true);
+  };
+
+  const handleGraphCanvasPointerMove = (event: ReactPointerEvent<SVGSVGElement>): void => {
+    const drag = cameraDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    const nextPanX = drag.panX - ((event.clientX - drag.clientX) / drag.elementWidth) * drag.viewportWidth;
+    const nextPanY = drag.panY - ((event.clientY - drag.clientY) / drag.elementHeight) * drag.viewportHeight;
+    setCamera((current) => ({
+      ...current,
+      panX: Math.max(-baseViewport.width, Math.min(baseViewport.width, nextPanX)),
+      panY: Math.max(-baseViewport.height, Math.min(baseViewport.height, nextPanY)),
+    }));
+  };
+
+  const finishGraphCanvasPan = (event: ReactPointerEvent<SVGSVGElement>): void => {
+    if (cameraDragRef.current?.pointerId !== event.pointerId) return;
+    cameraDragRef.current = null;
+    setIsPanning(false);
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+  };
+
+  const handleGraphCanvasWheel = (event: ReactWheelEvent<SVGSVGElement>): void => {
     event.preventDefault();
-    event.stopPropagation();
-    // 图谱节点内联动作虽然画在 SVG 里，也必须保持按钮级键盘语义，避免只服务鼠标点击。
-    action();
-  }
+    setGraphZoom(camera.zoom + (event.deltaY < 0 ? 0.1 : -0.1));
+  };
+
+  const canvasControls = (
+    <nav className="graph-canvas-controls" aria-label={canvasLabel}>
+      <button type="button" aria-label={interactionCopy.zoomOut} onClick={() => setGraphZoom(camera.zoom - 0.1)}>
+        −
+      </button>
+      <output aria-live="polite">{Math.round(camera.zoom * 100)}%</output>
+      <button type="button" aria-label={interactionCopy.zoomIn} onClick={() => setGraphZoom(camera.zoom + 0.1)}>
+        ＋
+      </button>
+      <button type="button" onClick={fitGraphCanvas}>
+        {interactionCopy.fit}
+      </button>
+    </nav>
+  );
 
   if (props.nodes.length === 0) {
     return (
       <section className="graph-canvas" aria-label={copy.graphCanvas}>
-        <h3>{canvasTitle}</h3>
-        <p>{copy.canvasEmpty}</p>
+        <div className="graph-canvas-empty">
+          <h3>{canvasTitle}</h3>
+          <p>{copy.canvasEmpty}</p>
+        </div>
       </section>
+    );
+  }
+
+  if (props.viewType === 'architecture') {
+    return (
+      <ArchitectureGraphCanvas
+        model={buildArchitectureLayerModel(props.nodes, visibleEdges, props.title)}
+        appLanguage={props.appLanguage}
+        zoom={camera.zoom}
+        controls={canvasControls}
+        currentNodeId={props.currentNodeId}
+        currentEdgeId={props.currentEdgeId}
+        onSelectNode={props.onSelectNode}
+        onSelectEdge={props.onSelectEdge}
+        onClearSelection={props.onClearSelection}
+        onOpenGraphSource={props.onOpenGraphSource}
+      />
     );
   }
 
@@ -13252,14 +14297,17 @@ function GraphCanvas(props: {
 
     return (
       <section className="graph-canvas graph-sequence-stage" aria-label={canvasLabel}>
-        <div className="graph-canvas-header">
-          <h3>{canvasTitle}</h3>
-          <span>
-            {copy.realSource} · {copy.lifelineCount(props.nodes.length)} · {copy.aggregatedEdgeCount(visibleEdges.length)}
-            {props.layout ? ` · ${copy.serverLayout}：${formatGraphLayoutAlgorithm(props.layout.algorithm, props.appLanguage)}` : ''}
-          </span>
-        </div>
-        <svg className="graph-canvas-svg graph-sequence-svg" role="group" aria-label={canvasLabel} viewBox={`0 0 ${width} ${height}`}>
+        <svg
+          className={`graph-canvas-svg graph-sequence-svg${isPanning ? ' is-panning' : ''}`}
+          role="group"
+          aria-label={canvasLabel}
+          viewBox={`${cameraViewport.x} ${cameraViewport.y} ${cameraViewport.width} ${cameraViewport.height}`}
+          onPointerDown={handleGraphCanvasPointerDown}
+          onPointerMove={handleGraphCanvasPointerMove}
+          onPointerUp={finishGraphCanvasPan}
+          onPointerCancel={finishGraphCanvasPan}
+          onWheel={handleGraphCanvasWheel}
+        >
           <defs>
             <marker id="graph-sequence-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
               <path d="M 0 0 L 8 4 L 0 8 z" />
@@ -13274,9 +14322,11 @@ function GraphCanvas(props: {
                 data-sequence-fragment-edge-count={String(fragment.edgeCount)}
                 data-sequence-fragment-operand-count={String(fragment.operands.length)}
                 data-sequence-fragment-edge-id={fragment.edgeIds[0]}
+                data-sequence-fragment-inferred="true"
                 key={fragment.id}
                 role="button"
                 tabIndex={0}
+                aria-current={props.currentEdgeId === fragment.edgeIds[0] ? 'true' : undefined}
                 aria-keyshortcuts="Enter Space"
                 aria-label={`${fragment.label}${fragment.guardText ? ` · ${fragment.guardText}` : ''}`}
                 onClick={() => props.onSelectEdge?.(fragment.edgeIds[0])}
@@ -13305,7 +14355,8 @@ function GraphCanvas(props: {
                 key={node.id}
                 role="button"
                 tabIndex={0}
-                aria-keyshortcuts="Enter Space O T"
+                aria-current={props.currentNodeId === node.id ? 'true' : undefined}
+                aria-keyshortcuts={isAggregatedGraphNode(node) ? 'Enter Space' : 'Enter Space O T'}
                 data-graph-node-id={node.id}
                 data-graph-source-ref={resolveGraphSequenceNodeSourceRef(node)}
                 data-graph-source-line={resolveGraphSequenceNodeLineStart(node) ?? undefined}
@@ -13314,44 +14365,16 @@ function GraphCanvas(props: {
                 onDoubleClick={() => openGraphSequenceNodeSource(node)}
                 onKeyDown={(event) => handleSequenceNodeKeyDown(event, node.id)}
               >
-                <rect className="graph-sequence-node-box" x={lane.x - lane.width / 2} y="22" width={lane.width} height="34" rx="6" />
+                <rect className="graph-sequence-node-box" x={lane.x - lane.width / 2} y="22" width={lane.width} height="40" rx="6" />
                 <text className="graph-sequence-node-name" x={lane.x} y="43">
                   {node.name}
                 </text>
-                <text
-                  className="graph-sequence-source-link"
-                  role="button"
-                  tabIndex={0}
-                  aria-keyshortcuts="Enter Space"
-                  x={lane.x}
-                  y="54"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    openGraphSequenceNodeSource(node);
-                  }}
-                  onKeyDown={(event) => handleGraphNodeInlineAffordanceKeyDown(event, () => openGraphSequenceNodeSource(node))}
-                >
-                  {copy.openSource}
-                </text>
-                {!isAggregatedGraphNode(node) ? (
-                  <text
-                    className="graph-sequence-task-link"
-                    role="button"
-                    tabIndex={0}
-                    aria-keyshortcuts="Enter Space"
-                    x={lane.x}
-                    y="66"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      createGraphSequenceNodeTask(node);
-                    }}
-                    onKeyDown={(event) => handleGraphNodeInlineAffordanceKeyDown(event, () => createGraphSequenceNodeTask(node))}
-                  >
-                    {copy.createTaskFromNode}
-                  </text>
-                ) : null}
                 <line className="graph-sequence-node-line" x1={lane.x} y1="72" x2={lane.x} y2={height - 28} />
-                <title>{`${node.qualifiedName} · ${resolveGraphSequenceNodeSourceRef(node)} · ${copy.openSourceShortcut} · ${copy.createTaskShortcut}`}</title>
+                <title>
+                  {isAggregatedGraphNode(node)
+                    ? `${node.qualifiedName} · ${copy.aggregatedNodeSummary(node.aggregateCount, node.sourceRefs.length)}`
+                    : `${node.qualifiedName} · ${resolveGraphSequenceNodeSourceRef(node)} · ${copy.openSourceShortcut} · ${copy.createTaskShortcut}`}
+                </title>
               </g>
             );
           })}
@@ -13367,6 +14390,7 @@ function GraphCanvas(props: {
                 key={edge.id}
                 role="button"
                 tabIndex={0}
+                aria-current={props.currentEdgeId === edge.id ? 'true' : undefined}
                 aria-keyshortcuts="Enter Space"
                 data-graph-edge-id={edge.id}
                 aria-label={formatGraphEdgeWithConfidence(edge, props.appLanguage)}
@@ -13381,17 +14405,13 @@ function GraphCanvas(props: {
                 <text x={message.kind === 'self' ? (message.sourceX + message.loopX) / 2 : (message.sourceX + message.targetX) / 2} y={message.y - 8}>
                   {`${index + 1}: ${formatGraphEdgeWithConfidence(edge, props.appLanguage)}`}
                   {/* 来源数量是 UI 文案，必须跟随当前语言；真实 sourceRef 路径仍保持原文。 */}
-                  {edge.aggregateCount > 1 ? ` · ${copy.sourceCount(edge.aggregateCount)}` : ''}
+                  {edge.sourceRefs.length > 1 ? ` · ${copy.sourceCount(edge.sourceRefs.length)}` : ''}
                 </text>
               </g>
             );
           })}
         </svg>
-        <div className="graph-canvas-sources" aria-label={copy.canvasSourcesAria}>
-          {props.nodes.slice(0, 4).map((node) => (
-            <span key={node.id}>{node.sourceRef}</span>
-          ))}
-        </div>
+        {canvasControls}
       </section>
     );
   }
@@ -13426,18 +14446,19 @@ function GraphCanvas(props: {
     // 方法逻辑图、模块图等普通节点也能直接进入任务主路径，保持“图谱是代码页主角”的交互闭环。
     props.onCreateTaskFromNode?.(node.id);
   };
-  const viewport = buildGraphCanvasViewport(layout, props.nodes.length, width, height, false);
-
   return (
     <section className="graph-canvas" aria-label={copy.graphCanvas}>
-      <div className="graph-canvas-header">
-        <h3>{canvasTitle}</h3>
-        <span>
-          {copy.realSource} · {copy.nodeCount(props.nodes.length)} · {copy.aggregatedEdgeCount(visibleEdges.length)}
-          {props.layout ? ` · ${copy.serverLayout}：${formatGraphLayoutAlgorithm(props.layout.algorithm, props.appLanguage)}` : ''}
-        </span>
-      </div>
-      <svg className="graph-canvas-svg" role="group" aria-label={copy.graphCanvas} viewBox={`${viewport.x} ${viewport.y} ${viewport.width} ${viewport.height}`}>
+      <svg
+        className={`graph-canvas-svg${isPanning ? ' is-panning' : ''}`}
+        role="group"
+        aria-label={copy.graphCanvas}
+        viewBox={`${cameraViewport.x} ${cameraViewport.y} ${cameraViewport.width} ${cameraViewport.height}`}
+        onPointerDown={handleGraphCanvasPointerDown}
+        onPointerMove={handleGraphCanvasPointerMove}
+        onPointerUp={finishGraphCanvasPan}
+        onPointerCancel={finishGraphCanvasPan}
+        onWheel={handleGraphCanvasWheel}
+      >
         <defs>
           <marker id="graph-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
             <path d="M 0 0 L 8 4 L 0 8 z" />
@@ -13447,29 +14468,32 @@ function GraphCanvas(props: {
           const source = layout.get(edge.sourceNodeId);
           const target = layout.get(edge.targetNodeId);
           if (!source || !target) return null;
-          const labelX = (source.x + target.x) / 2;
-          const labelY = (source.y + target.y) / 2 - 8;
+          const geometry = buildGraphCanvasEdgeGeometry(source, target, edge.sourceNodeId === edge.targetNodeId);
           return (
             <g
               className={`graph-canvas-edge${props.currentEdgeId === edge.id ? ' current-graph-canvas-object' : ''}`}
               key={edge.id}
               role="button"
               tabIndex={0}
+              aria-current={props.currentEdgeId === edge.id ? 'true' : undefined}
               aria-keyshortcuts="Enter Space"
               data-graph-edge-id={edge.id}
               aria-label={formatGraphEdgeWithConfidence(edge, props.appLanguage)}
-              onClick={() => props.onSelectEdge?.(edge.id)}
+              onClick={(event) => {
+                event.stopPropagation();
+                props.onSelectEdge?.(edge.id);
+              }}
               onKeyDown={(event) => {
                 if (event.key !== 'Enter' && event.key !== ' ') return;
                 event.preventDefault();
                 props.onSelectEdge?.(edge.id);
               }}
             >
-              <line x1={source.x} y1={source.y} x2={target.x} y2={target.y} markerEnd="url(#graph-arrow)" />
-              <text x={labelX} y={labelY}>
+              {geometry.kind === 'loop' ? <path d={geometry.path} markerEnd="url(#graph-arrow)" /> : <line x1={geometry.x1} y1={geometry.y1} x2={geometry.x2} y2={geometry.y2} markerEnd="url(#graph-arrow)" />}
+              <text x={geometry.labelX} y={geometry.labelY}>
                 {formatGraphEdgeWithConfidence(edge, props.appLanguage)}
                 {/* 来源数量是 UI 文案，必须跟随当前语言；真实 sourceRef 路径仍保持原文。 */}
-                {edge.aggregateCount > 1 ? ` · ${copy.sourceCount(edge.aggregateCount)}` : ''}
+                {edge.sourceRefs.length > 1 ? ` · ${copy.sourceCount(edge.sourceRefs.length)}` : ''}
               </text>
             </g>
           );
@@ -13484,70 +14508,93 @@ function GraphCanvas(props: {
               transform={`translate(${point.x} ${point.y})`}
               role="button"
               tabIndex={0}
-              aria-keyshortcuts="Enter Space O T"
+              aria-current={props.currentNodeId === node.id ? 'true' : undefined}
+              aria-keyshortcuts={isAggregatedGraphNode(node) ? 'Enter Space' : 'Enter Space O T'}
               data-graph-node-id={node.id}
               data-graph-source-ref={resolveGraphCanvasNodeSourceRef(node)}
               data-graph-source-line={resolveGraphCanvasNodeLineStart(node) ?? undefined}
               aria-label={`${node.name} · ${formatGraphNodeType(node.nodeType, props.appLanguage)}`}
-              onClick={() => props.onSelectNode?.(node.id)}
+              onClick={(event) => {
+                event.stopPropagation();
+                props.onSelectNode?.(node.id);
+              }}
               onDoubleClick={() => openGraphCanvasNodeSource(node)}
               onKeyDown={(event) => handleGraphCanvasNodeKeyDown(event, node)}
             >
-              <circle r="24" />
-              <text className="graph-canvas-node-name" x="0" y="-32">
-                {node.name}
+              <rect className="graph-canvas-node-surface" x="-78" y="-30" width="156" height="60" rx="9" />
+              <rect className="graph-canvas-node-kind" x="-78" y="-30" width="5" height="60" rx="3" />
+              <text className="graph-canvas-node-name" x="-63" y="-4">
+                {node.name.length > 24 ? `${node.name.slice(0, 23)}…` : node.name}
               </text>
-              <text className="graph-canvas-node-type" x="0" y="42">
+              <text className="graph-canvas-node-type" x="-63" y="15">
                 {formatGraphNodeType(node.nodeType, props.appLanguage)}
               </text>
-              <text
-                className="graph-canvas-node-affordance graph-canvas-node-source-link"
-                role="button"
-                tabIndex={0}
-                aria-keyshortcuts="Enter Space"
-                x="0"
-                y="58"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  openGraphCanvasNodeSource(node);
-                }}
-                onKeyDown={(event) => handleGraphNodeInlineAffordanceKeyDown(event, () => openGraphCanvasNodeSource(node))}
-              >
-                {copy.openSource}
-              </text>
-              {!isAggregatedGraphNode(node) ? (
-                <text
-                  className="graph-canvas-node-affordance graph-canvas-node-task-link"
-                  role="button"
-                  tabIndex={0}
-                  aria-keyshortcuts="Enter Space"
-                  x="0"
-                  y="72"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    createGraphCanvasNodeTask(node);
-                  }}
-                  onKeyDown={(event) => handleGraphNodeInlineAffordanceKeyDown(event, () => createGraphCanvasNodeTask(node))}
-                >
-                  {copy.createTaskFromNode}
-                </text>
-              ) : null}
-              <title>{`${node.qualifiedName} · ${resolveGraphCanvasNodeSourceRef(node)} · ${copy.openSourceShortcut} · ${copy.createTaskShortcut}`}</title>
+              <title>
+                {isAggregatedGraphNode(node)
+                  ? `${node.qualifiedName} · ${copy.aggregatedNodeSummary(node.aggregateCount, node.sourceRefs.length)}`
+                  : `${node.qualifiedName} · ${resolveGraphCanvasNodeSourceRef(node)} · ${copy.openSourceShortcut} · ${copy.createTaskShortcut}`}
+              </title>
             </g>
           );
         })}
       </svg>
-      <div className="graph-canvas-sources" aria-label={copy.canvasSourcesAria}>
-        {props.nodes.slice(0, 4).map((node) => (
-          <span key={node.id}>{node.sourceRef}</span>
-        ))}
-      </div>
+      {props.nodes.length > 6 ? (
+        <button type="button" className="graph-canvas-minimap" aria-label={`${interactionCopy.minimap} · ${interactionCopy.fit}`} onClick={fitGraphCanvas}>
+          <svg viewBox={`0 0 ${width} ${height}`} aria-hidden="true">
+            {visibleEdges.map((edge) => {
+              const source = layout.get(edge.sourceNodeId);
+              const target = layout.get(edge.targetNodeId);
+              if (!source || !target) return null;
+              return <line key={edge.id} x1={source.x} y1={source.y} x2={target.x} y2={target.y} />;
+            })}
+            {props.nodes.map((node) => {
+              const point = layout.get(node.id);
+              return point ? <circle key={node.id} cx={point.x} cy={point.y} r={Math.max(7, width / 90)} /> : null;
+            })}
+            <rect className="graph-canvas-minimap-viewport" x={cameraViewport.x} y={cameraViewport.y} width={cameraViewport.width} height={cameraViewport.height} />
+          </svg>
+        </button>
+      ) : null}
+      {canvasControls}
     </section>
   );
 }
 
+function buildGraphCanvasEdgeGeometry(
+  source: { x: number; y: number },
+  target: { x: number; y: number },
+  selfLoop: boolean,
+): { kind: 'loop'; path: string; labelX: number; labelY: number } | { kind: 'line'; x1: number; y1: number; x2: number; y2: number; labelX: number; labelY: number } {
+  if (selfLoop) {
+    return {
+      kind: 'loop',
+      path: `M ${source.x + 78} ${source.y} C ${source.x + 72} ${source.y - 58}, ${source.x + 20} ${source.y - 74}, ${source.x} ${source.y - 30}`,
+      labelX: source.x + 38,
+      labelY: source.y - 52,
+    };
+  }
+  const deltaX = target.x - source.x;
+  const deltaY = target.y - source.y;
+  const horizontalIntersection = Math.abs(deltaX) > 0 ? 78 / Math.abs(deltaX) : Number.POSITIVE_INFINITY;
+  const verticalIntersection = Math.abs(deltaY) > 0 ? 30 / Math.abs(deltaY) : Number.POSITIVE_INFINITY;
+  const intersectionScale = Math.min(0.49, horizontalIntersection, verticalIntersection);
+  const x1 = source.x + deltaX * intersectionScale;
+  const y1 = source.y + deltaY * intersectionScale;
+  const x2 = target.x - deltaX * intersectionScale;
+  const y2 = target.y - deltaY * intersectionScale;
+  return {
+    kind: 'line',
+    x1,
+    y1,
+    x2,
+    y2,
+    labelX: (x1 + x2) / 2,
+    labelY: (y1 + y2) / 2 - 8,
+  };
+}
+
 function resolveGraphCanvasNodeSourceRef(node: GraphViewSnapshot['nodes'][number] | AggregatedGraphNode): string {
-  if (isAggregatedGraphNode(node)) return node.sourceRefs[0] ?? node.sourceRef;
+  if (isAggregatedGraphNode(node)) return '';
   return node.sourceRef;
 }
 
@@ -13580,11 +14627,12 @@ type GraphSequenceFragment = {
 };
 
 function resolveGraphSequenceNodeSourceRef(node: GraphViewSnapshot['nodes'][number] | AggregatedGraphNode): string {
-  if (isAggregatedGraphNode(node)) return node.sourceRefs[0] ?? node.sourceRef;
+  if (isAggregatedGraphNode(node)) return '';
   return node.sourceRef;
 }
 
 function resolveGraphSequenceNodeLineStart(node: GraphViewSnapshot['nodes'][number] | AggregatedGraphNode): number | null {
+  if (isAggregatedGraphNode(node)) return null;
   const lineStart = node.metadata.lineStart;
   return typeof lineStart === 'number' ? lineStart : null;
 }
@@ -13707,7 +14755,9 @@ function buildGraphSequenceFragments(
     const bottom = Math.min(height - 30, message.y + 46);
 
     const kind = resolveGraphSequenceFragmentKind(edge, nodesById);
-    const label = formatGraphSequenceFragmentLabel(kind, appLanguage);
+    const fragmentKindLabel = formatGraphSequenceFragmentLabel(kind, appLanguage);
+    // 当前 fragment 来自静态节点/关系名称推导，直接写入可见标签，不能冒充运行时或显式语法事实。
+    const label = appLanguage === 'zh-CN' ? `${fragmentKindLabel} · 静态推导` : `${fragmentKindLabel} · inferred`;
     const guardText = formatGraphSequenceFragmentGuard(kind, edge, nodesById);
 
     return [
@@ -13840,6 +14890,52 @@ export function buildGraphCanvasLayout(nodes: Array<GraphViewSnapshot['nodes'][n
   return compactSmallGraphCanvasLayout(layout, nodes.length, width, height, Boolean(serverLayout));
 }
 
+function buildGraphNeighborhoodLayout(
+  centerNodeId: string,
+  nodes: Array<GraphViewSnapshot['nodes'][number] | AggregatedGraphNode>,
+  edges: Array<GraphViewSnapshot['edges'][number] | AggregatedGraphEdge>,
+): NonNullable<GraphViewSnapshot['layout']> {
+  const width = 900;
+  const height = 720;
+  const center = { x: width / 2, y: Math.round(height * 0.56) };
+  const visibleNodeIds = new Set(nodes.map((node) => node.id));
+  const oneHopIds = new Set<string>();
+
+  for (const edge of edges) {
+    if (edge.sourceNodeId === centerNodeId && visibleNodeIds.has(edge.targetNodeId)) oneHopIds.add(edge.targetNodeId);
+    if (edge.targetNodeId === centerNodeId && visibleNodeIds.has(edge.sourceNodeId)) oneHopIds.add(edge.sourceNodeId);
+  }
+
+  const innerNodes = nodes.filter((node) => node.id !== centerNodeId && oneHopIds.has(node.id));
+  const outerNodes = nodes.filter((node) => node.id !== centerNodeId && !oneHopIds.has(node.id));
+  // 一跳节点过多时拆成双环，避免 156px 节点卡片在中心周围互相覆盖。
+  if (outerNodes.length === 0 && innerNodes.length > 10) outerNodes.push(...innerNodes.splice(10));
+
+  const positions: NonNullable<GraphViewSnapshot['layout']>['positions'] = [];
+  if (visibleNodeIds.has(centerNodeId)) positions.push({ nodeId: centerNodeId, ...center });
+
+  const placeRing = (ringNodes: Array<GraphViewSnapshot['nodes'][number] | AggregatedGraphNode>, radiusX: number, radiusY: number, angleOffset: number): void => {
+    ringNodes.forEach((node, index) => {
+      const angle = angleOffset + (index / Math.max(1, ringNodes.length)) * Math.PI * 2;
+      positions.push({
+        nodeId: node.id,
+        x: Math.round(center.x + Math.cos(angle) * radiusX),
+        y: Math.round(center.y + Math.sin(angle) * radiusY),
+      });
+    });
+  };
+
+  placeRing(innerNodes, 230, 160, -Math.PI / 2);
+  placeRing(outerNodes, 350, 230, -Math.PI / 2 + Math.PI / Math.max(2, outerNodes.length));
+
+  return {
+    algorithm: 'radial-neighborhood',
+    width,
+    height,
+    positions,
+  };
+}
+
 export function buildGraphCanvasViewport(layout: Map<string, { x: number; y: number }>, nodeCount: number, width: number, height: number, isSequenceGraphView: boolean): { x: number; y: number; width: number; height: number } {
   if (isSequenceGraphView || nodeCount <= 0 || nodeCount > 8 || layout.size === 0) {
     return { x: 0, y: 0, width, height };
@@ -13970,6 +15066,7 @@ const handleInlineRailKeyboardNavigation = (event: ReactKeyboardEvent<HTMLElemen
 
 function GraphNodeDetail(props: { node: GraphViewSnapshot['nodes'][number]; graphView: GraphViewSnapshot; expandedHopDepth?: 1 | 2; appLanguage: AppLanguage; isCurrent?: boolean }) {
   const copy = getLanguageCopy(props.appLanguage).codeMapWorkspace;
+  const aggregateNode = isAggregatedGraphNode(props.node) ? props.node : null;
   const recentTasks = Array.isArray(props.node.metadata.recentTasks) ? props.node.metadata.recentTasks : [];
   const riskTags = Array.isArray(props.node.metadata.riskTags) ? props.node.metadata.riskTags.filter((tag): tag is string => typeof tag === 'string') : [];
   const aiSummary = typeof props.node.metadata.aiSummary === 'string' && props.node.metadata.aiSummary.trim() ? props.node.metadata.aiSummary.trim() : null;
@@ -13997,10 +15094,22 @@ function GraphNodeDetail(props: { node: GraphViewSnapshot['nodes'][number]; grap
       </header>
       <section className="graph-detail-source-row" aria-label={copy.nodeSource}>
         <span className="graph-detail-source-copy">
-          <strong>{props.node.sourceRef}</strong>
-          <small>
-            {copy.lineLabel} {lineRange} · {props.node.symbolId ?? copy.missingSymbol}
-          </small>
+          {aggregateNode ? (
+            <>
+              <strong>{copy.aggregatedNodeSummary(aggregateNode.aggregateCount, aggregateNode.sourceRefs.length)}</strong>
+              {aggregateNode.sourceRefs.slice(0, 6).map((sourceRef) => (
+                <small key={sourceRef}>{sourceRef}</small>
+              ))}
+              {aggregateNode.sourceRefs.length > 6 ? <small>+{aggregateNode.sourceRefs.length - 6}</small> : null}
+            </>
+          ) : (
+            <>
+              <strong>{props.node.sourceRef}</strong>
+              <small>
+                {copy.lineLabel} {lineRange} · {props.node.symbolId ?? copy.missingSymbol}
+              </small>
+            </>
+          )}
         </span>
       </section>
       {aiSummary ? (
@@ -14069,10 +15178,32 @@ function GraphNodeDetail(props: { node: GraphViewSnapshot['nodes'][number]; grap
   );
 }
 
-function GraphEdgeDetailPanel(props: { edge: GraphViewSnapshot['edges'][number]; graphView: GraphViewSnapshot; appLanguage: AppLanguage; isCurrent?: boolean }) {
+function GraphEdgeDetailPanel(props: {
+  edge: GraphViewSnapshot['edges'][number] | AggregatedGraphEdge;
+  nodes?: Array<GraphViewSnapshot['nodes'][number] | AggregatedGraphNode>;
+  graphView: GraphViewSnapshot;
+  appLanguage: AppLanguage;
+  isCurrent?: boolean;
+}) {
   const copy = getLanguageCopy(props.appLanguage).codeMapWorkspace;
-  const source = props.graphView.nodes.find((node) => node.id === props.edge.sourceNodeId);
-  const target = props.graphView.nodes.find((node) => node.id === props.edge.targetNodeId);
+  const detailCopy =
+    props.appLanguage === 'zh-CN'
+      ? {
+          originalEdges: '原始边标识',
+          moreSources: (count: number) => `另有 ${count} 个来源`,
+          moreEdges: (count: number) => `另有 ${count} 条原始边`,
+        }
+      : {
+          originalEdges: 'Original edge IDs',
+          moreSources: (count: number) => `${count} more source${count === 1 ? '' : 's'}`,
+          moreEdges: (count: number) => `${count} more original edge${count === 1 ? '' : 's'}`,
+        };
+  const currentNodes = props.nodes ?? props.graphView.nodes;
+  const source = currentNodes.find((node) => node.id === props.edge.sourceNodeId) ?? props.graphView.nodes.find((node) => node.id === props.edge.sourceNodeId);
+  const target = currentNodes.find((node) => node.id === props.edge.targetNodeId) ?? props.graphView.nodes.find((node) => node.id === props.edge.targetNodeId);
+  const sourceRefs = 'sourceRefs' in props.edge ? props.edge.sourceRefs : [props.edge.sourceRef];
+  const edgeIds = 'edgeIds' in props.edge ? props.edge.edgeIds : [props.edge.id];
+  const aggregateCount = 'aggregateCount' in props.edge ? props.edge.aggregateCount : 1;
   return (
     <aside className={`graph-detail-workbench graph-edge-detail-workbench${props.isCurrent ? ' current-graph-detail' : ''}`} aria-label={copy.edgeDetail} aria-current={props.isCurrent ? 'true' : undefined}>
       <header className="graph-detail-header">
@@ -14087,7 +15218,20 @@ function GraphEdgeDetailPanel(props: { edge: GraphViewSnapshot['edges'][number];
           <strong>
             {source?.name ?? props.edge.sourceNodeId} → {target?.name ?? props.edge.targetNodeId}
           </strong>
-          <small>{props.edge.sourceRef}</small>
+          {aggregateCount > 1 ? <small>{copy.aggregatedEdgeSummary(aggregateCount, sourceRefs.length)}</small> : null}
+          {sourceRefs.slice(0, 8).map((sourceRef) => (
+            <small key={sourceRef}>{sourceRef}</small>
+          ))}
+          {sourceRefs.length > 8 ? <small>{detailCopy.moreSources(sourceRefs.length - 8)}</small> : null}
+        </span>
+      </section>
+      <section className="graph-detail-context-row" aria-label={detailCopy.originalEdges}>
+        <span className="graph-detail-source-copy">
+          <strong>{detailCopy.originalEdges}</strong>
+          {edgeIds.slice(0, 8).map((edgeId) => (
+            <small key={edgeId}>{edgeId}</small>
+          ))}
+          {edgeIds.length > 8 ? <small>{detailCopy.moreEdges(edgeIds.length - 8)}</small> : null}
         </span>
       </section>
     </aside>

@@ -182,6 +182,15 @@ export type CodexTransportState =
   | { type: 'restarting'; generationId: string; attempt: number }
   | { type: 'closed' };
 
+export interface CodexRuntimeGenerationSnapshot {
+  generationId: string;
+  commandPath: string;
+  state: CodexTransportState['type'];
+  active: boolean;
+  activeThreadCount: number;
+  pendingRequestCount: number;
+}
+
 export interface CodexAppServerManager {
   ensureReady(input: { commandPath: string; externalAgentHome?: string }): Promise<CodexCapabilitiesSnapshot>;
   startThread(input: CodexThreadStartInput): Promise<CodexThreadSnapshot>;
@@ -199,6 +208,9 @@ export interface CodexAppServerManager {
   subscribeExternalAgentImport(listener: (event: ExternalAgentImportEvent) => void): () => void;
   subscribe(listener: (event: CodexAppServerEvent) => void): () => void;
   getState(): CodexTransportState;
+  hasGeneration(generationId: string): boolean;
+  generationForThread(threadId: string): string | null;
+  listRuntimeGenerations(): CodexRuntimeGenerationSnapshot[];
   prepareForShutdown(): Promise<void>;
   close(): Promise<void>;
 }
@@ -796,6 +808,25 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
     },
     getState() {
       return state;
+    },
+    hasGeneration(generationId) {
+      return state.type !== 'idle' && state.type !== 'closed' && state.generationId === generationId;
+    },
+    generationForThread() {
+      return state.type === 'idle' || state.type === 'closed' ? null : state.generationId;
+    },
+    listRuntimeGenerations() {
+      if (state.type === 'idle' || state.type === 'closed' || commandPath === null) return [];
+      return [
+        {
+          generationId: state.generationId,
+          commandPath,
+          state: state.type,
+          active: true,
+          activeThreadCount: 0,
+          pendingRequestCount: serverRequests.size,
+        },
+      ];
     },
     async prepareForShutdown() {
       preparingForShutdown = true;

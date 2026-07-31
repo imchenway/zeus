@@ -1,16 +1,10 @@
-import type {TaskEventRecord, TaskManagementStatus, TaskRecord} from '../apiClient.js';
-import type {NativeConversationChoice} from '../session/sessionTypes.js';
-import {Button} from '../ui/Button.js';
-import {ZeusSelect} from '../ZeusSelect.js';
-import {TaskAttachmentPreviewList} from './TaskAttachmentPreviewList.js';
-import {parseTaskAttachments} from './taskAttachments.js';
-import {
-    formatTaskSource,
-    formatTaskUpdatedAt,
-    resolveTaskManagementStatus,
-    taskManagementStatuses,
-    type TaskSourceLabels
-} from './taskWorkspaceModel.js';
+import type { TaskEventRecord, TaskManagementStatus, TaskRecord } from '../apiClient.js';
+import type { NativeConversationChoice } from '../session/sessionTypes.js';
+import { Button } from '../ui/Button.js';
+import { ZeusSelect } from '../ZeusSelect.js';
+import { TaskAttachmentPreviewList } from './TaskAttachmentPreviewList.js';
+import { parseTaskAttachments } from './taskAttachments.js';
+import { formatTaskSource, formatTaskUpdatedAt, resolveTaskManagementStatus, taskManagementStatuses, type TaskSourceLabels } from './taskWorkspaceModel.js';
 
 export interface TaskDetailPaneCopy {
   requestTitle: string;
@@ -47,6 +41,7 @@ export interface TaskDetailPaneCopy {
 }
 
 export interface TaskDetailPaneContentProps {
+  language: 'zh-CN' | 'en-US';
   task: TaskRecord;
   events: TaskEventRecord[];
   copy: TaskDetailPaneCopy;
@@ -58,6 +53,7 @@ export interface TaskDetailPaneContentProps {
   conversationsError?: string | null;
   onOpenConversation: (taskId: string, conversationId: string) => void;
   onPushNewConversation: (taskId: string) => void;
+  onOpenCodeDelivery?: (taskId: string) => void;
   onManagementStatusChange: (taskId: string, status: TaskManagementStatus) => void;
   onReloadConversations?: (taskId: string) => void;
   onLoadAttachmentPreview?: (path: string) => Promise<{ previewUrl: string; mimeType: string } | null>;
@@ -65,21 +61,25 @@ export interface TaskDetailPaneContentProps {
 }
 
 export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
+  const zh = props.language === 'zh-CN';
   const managementStatus = resolveTaskManagementStatus(props.task);
   const taskIdentity = props.task.taskCode?.trim() || props.task.id;
   const latestEvent = props.events.at(-1);
   const latestEvidenceType = latestEvent ? (props.eventTypeLabels[latestEvent.eventType] ?? latestEvent.eventType) : undefined;
   const taskAttachments = parseTaskAttachments(props.task.sourceContextJson);
-  const conversations = [...(props.conversations ?? [])]
-    .filter((conversation) => !conversation.archived)
-    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+  const conversations = [...(props.conversations ?? [])].filter((conversation) => !conversation.archived).sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+  const taskWorkspaces = Array.from(
+    new Map(
+      conversations
+        .map((conversation) => conversation.workspace)
+        .filter((workspace): workspace is NonNullable<NativeConversationChoice['workspace']> => Boolean(workspace))
+        .map((workspace) => [workspace.id, workspace]),
+    ).values(),
+  );
 
   return (
-      <section
-          className="product-drawer-pane task-detail-pane-content task-detail-pane-shell"
-          aria-label={props.task.title}
-      >
-          <header className="task-detail-pane-header task-detail-summary-row">
+    <section className="product-drawer-pane task-detail-pane-content task-detail-pane-shell" aria-label={props.task.title}>
+      <header className="task-detail-pane-header task-detail-summary-row">
         <span className="task-detail-pane-title">
           <small>
             {props.copy.taskCodeLabel ?? '任务编码'} {taskIdentity}
@@ -169,7 +169,9 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
           <small>{conversations.length}</small>
         </span>
         {props.conversationsLoading && conversations.length === 0 ? (
-          <p className="task-detail-conversation-state" role="status">{props.copy.conversationLoading}</p>
+          <p className="task-detail-conversation-state" role="status">
+            {props.copy.conversationLoading}
+          </p>
         ) : props.conversationsError && conversations.length === 0 ? (
           <span className="task-detail-conversation-state task-detail-conversation-error" role="alert">
             <strong>{props.copy.conversationError}</strong>
@@ -188,17 +190,14 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
         ) : (
           <>
             {props.conversationsError ? (
-              <p className="task-detail-conversation-refresh-warning" role="status">{props.copy.conversationError}</p>
+              <p className="task-detail-conversation-refresh-warning" role="status">
+                {props.copy.conversationError}
+              </p>
             ) : null}
             <ol className="task-detail-conversation-list">
               {conversations.map((conversation) => (
                 <li key={conversation.id}>
-                  <button
-                    type="button"
-                    className="task-detail-conversation-row"
-                    aria-label={`${props.copy.openConversation}：${conversation.title}`}
-                    onClick={() => props.onOpenConversation(props.task.id, conversation.id)}
-                  >
+                  <button type="button" className="task-detail-conversation-row" aria-label={`${props.copy.openConversation}：${conversation.title}`} onClick={() => props.onOpenConversation(props.task.id, conversation.id)}>
                     <span>
                       <strong>{conversation.title}</strong>
                       <small>{conversation.providerModel ?? conversation.summary ?? conversation.status}</small>
@@ -214,6 +213,31 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
           </>
         )}
       </section>
+
+      {taskWorkspaces.length > 0 ? (
+        <section className="task-detail-block task-detail-code-delivery" aria-label={zh ? '代码交付' : 'Code delivery'}>
+          <span className="task-detail-section-heading">
+            <strong>{zh ? '代码交付' : 'Code delivery'}</strong>
+            <small>{taskWorkspaces.length}</small>
+          </span>
+          <ol className="task-detail-delivery-list">
+            {taskWorkspaces.map((workspace) => (
+              <li key={workspace.id}>
+                <span>
+                  <strong>{workspace.branchName}</strong>
+                  <small>{zh ? `来源 ${workspace.sourceBranch}` : `Source ${workspace.sourceBranch}`}</small>
+                </span>
+                <small>{taskWorkspaceDeliveryLabel(workspace.state, zh)}</small>
+              </li>
+            ))}
+          </ol>
+          {props.onOpenCodeDelivery ? (
+            <Button variant="secondary" size="compact" onClick={() => props.onOpenCodeDelivery?.(props.task.id)}>
+              {zh ? '打开代码交付…' : 'Open code delivery…'}
+            </Button>
+          ) : null}
+        </section>
+      ) : null}
 
       <section className="task-detail-block task-detail-events" aria-label={props.copy.eventsTitle}>
         <span className="task-detail-section-heading">
@@ -239,17 +263,23 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
 
       <section className="task-detail-action-rail" aria-label={props.copy.primaryActionsTitle}>
         <span className="task-detail-action-buttons">
-          <Button
-            variant="primary"
-            size="regular"
-            className="task-detail-primary-action"
-            onClick={() => props.onPushNewConversation(props.task.id)}
-            busy={props.busy}
-          >
+          <Button variant="primary" size="regular" className="task-detail-primary-action" onClick={() => props.onPushNewConversation(props.task.id)} busy={props.busy}>
             {props.copy.pushNewConversation}
           </Button>
+          {props.onOpenCodeDelivery ? (
+            <Button variant="secondary" size="regular" className="task-detail-secondary-action" onClick={() => props.onOpenCodeDelivery?.(props.task.id)} busy={props.busy}>
+              {zh ? '代码交付…' : 'Code delivery…'}
+            </Button>
+          ) : null}
         </span>
       </section>
     </section>
   );
+}
+
+function taskWorkspaceDeliveryLabel(state: NonNullable<NativeConversationChoice['workspace']>['state'], zh: boolean): string {
+  const labels = zh
+    ? { ready: '开发中', reclaimed: '已推送，待合入', merged: '已合入来源分支', discarded: '已放弃', failed: '需要处理' }
+    : { ready: 'In development', reclaimed: 'Pushed, awaiting merge', merged: 'Merged into source', discarded: 'Discarded', failed: 'Action required' };
+  return labels[state];
 }

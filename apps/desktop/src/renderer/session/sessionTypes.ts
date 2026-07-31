@@ -209,6 +209,8 @@ export interface NativeConversationChoice {
   id: string;
   projectId: string;
   taskId: string | null;
+  workspaceId?: string | null;
+  workspace?: TaskWorkspaceRecord | null;
   title: string;
   summary: string | null;
   status: string;
@@ -260,6 +262,139 @@ export interface CodexTaskPushCapabilities {
   canonicalPrompt: string;
   preferredModel: string;
   models: CodexTaskPushModelCapability[];
+  git: {
+    primaryWorkspacePath: string;
+    primaryBranch: string;
+    primaryHeadSha: string;
+    primaryClean: boolean;
+    defaultRemoteName: string;
+    sourceRefs: Array<{ ref: string; label: string; kind: 'local' | 'remote'; current: boolean }>;
+    suggestedBranchName: string;
+    worktreeRoot: string;
+  };
+  workspaces: CodexTaskWorkspaceCapability[];
+}
+
+export interface TaskWorkspaceRecord {
+  id: string;
+  projectId: string;
+  taskId: string;
+  branchName: string;
+  sourceBranch: string;
+  sourceHeadSha: string;
+  remoteName: string;
+  remoteBranch: string;
+  worktreePath: string | null;
+  headSha: string | null;
+  state: 'ready' | 'reclaimed' | 'merged' | 'discarded' | 'failed';
+  lastError: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CodexTaskWorkspaceCapability extends TaskWorkspaceRecord {
+  clean: boolean | null;
+  selectable: boolean;
+}
+
+export interface TaskGitFileStatus {
+  path: string;
+  originalPath?: string;
+  indexStatus: string;
+  workingTreeStatus: string;
+  category: 'added' | 'modified' | 'deleted' | 'renamed' | 'untracked' | 'conflict' | 'other';
+}
+
+export interface TaskGitDiffLine {
+  type: 'context' | 'addition' | 'deletion' | 'metadata';
+  content: string;
+  oldLineNumber: number | null;
+  newLineNumber: number | null;
+}
+
+export interface TaskGitFileDiff {
+  oldPath: string;
+  newPath: string;
+  changeType: 'added' | 'deleted' | 'modified' | 'renamed' | 'copied';
+  addedLines: number;
+  deletedLines: number;
+  hunks: Array<{ header: string; oldStart: number; oldLines: number; newStart: number; newLines: number; lines: TaskGitDiffLine[] }>;
+}
+
+export interface TaskGitDiffSummary {
+  isRepository: boolean;
+  files: string[];
+  diffText: string;
+  fileDiffs: TaskGitFileDiff[];
+}
+
+export interface TaskWorkspaceReview {
+  cwd: string;
+  branch: string;
+  headSha: string;
+  upstream: string | null;
+  ahead: number;
+  behind: number;
+  clean: boolean;
+  conflictFiles: string[];
+  stagedFiles: TaskGitFileStatus[];
+  unstagedFiles: TaskGitFileStatus[];
+  untrackedFiles: TaskGitFileStatus[];
+  stagedDiff: TaskGitDiffSummary;
+  unstagedDiff: TaskGitDiffSummary;
+}
+
+export interface TaskWorkspaceSnapshot extends TaskWorkspaceRecord {
+  activeConversationCount: number;
+  review: TaskWorkspaceReview | null;
+  reviewError?: string;
+}
+
+export interface TaskWorkspacesSnapshot {
+  taskId: string;
+  projectId: string;
+  primaryBranch: string | null;
+  items: TaskWorkspaceSnapshot[];
+  workspaces: TaskWorkspaceSnapshot[];
+}
+
+export interface TaskWorkspaceCommitResult {
+  workspace: TaskWorkspaceRecord;
+  result: {
+    branch: string;
+    headSha: string;
+    committed: boolean;
+    pushed: boolean;
+    remoteName: string;
+    remoteBranch: string;
+    remoteHeadSha: string | null;
+  };
+  review: TaskWorkspaceReview;
+}
+
+export interface TaskIntegrationRecord {
+  id: string;
+  projectId: string;
+  taskId: string;
+  workspaceId: string;
+  targetBranch: string;
+  targetHeadSha: string;
+  mode: 'merge' | 'squash';
+  integrationPath: string | null;
+  resultHeadSha: string | null;
+  state: 'preparing' | 'conflicted' | 'merged' | 'failed';
+  conflictFiles: string[];
+  lastError: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TaskIntegrationConflictFile {
+  path: string;
+  base: string;
+  source: string;
+  task: string;
+  result: string;
 }
 
 export interface CodexConversationCapabilities {
@@ -283,6 +418,7 @@ export interface StartTaskModelPushRequest {
   effort?: string;
   workMode: 'default' | 'plan';
   permissionMode: NativePermissionMode;
+  workspace: { mode: 'create'; sourceRef: string; branchName: string } | { mode: 'existing'; workspaceId: string };
   supplementalInfo?: string;
   idempotencyKey: string;
   clientUserMessageId: string;

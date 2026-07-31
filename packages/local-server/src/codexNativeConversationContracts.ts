@@ -1,21 +1,14 @@
-import type {CodexServerRequestResponse} from '@zeus/ai-runtime';
-import type {ConversationCollaborationMode, ConversationPermissionMode} from '@zeus/storage';
+import type { CodexServerRequestResponse } from '@zeus/ai-runtime';
+import type { ConversationCollaborationMode, ConversationPermissionMode } from '@zeus/storage';
 
 export type NativeConversationRunState =
   | { type: 'idle' }
   | { type: 'dispatching'; submissionId: string }
   | { type: 'active'; turnId: string; phase: 'prework' | 'final_answer' }
   | { type: 'waiting'; turnId: string; requestId: string; reason: 'approval' | 'user_input' }
-    | { type: 'paused'; reason: 'interrupted' | 'transport_unavailable' | 'provider_archived' | 'recovery_required' };
+  | { type: 'paused'; reason: 'interrupted' | 'transport_unavailable' | 'provider_archived' | 'recovery_required' };
 
-export type NativeOperationStatus =
-    'queued'
-    | 'active'
-    | 'steered'
-    | 'interrupted'
-    | 'responded'
-    | 'provider_archived'
-    | 'recovery_required';
+export type NativeOperationStatus = 'queued' | 'active' | 'steered' | 'interrupted' | 'responded' | 'provider_archived' | 'recovery_required';
 
 export interface NativeAcceptedOperation {
   operationId: string;
@@ -66,6 +59,7 @@ export interface StartTaskConversationInput {
   projectId: string;
   projectLocalPath: string;
   taskId: string;
+  workspaceId?: string;
   taskTitle: string;
   prompt: string;
   model: string;
@@ -99,7 +93,7 @@ export interface StartProjectConversationInput {
   model: string;
   effort?: string;
   permissionMode?: ConversationPermissionMode;
-    collaborationMode?: ConversationCollaborationMode;
+  collaborationMode?: ConversationCollaborationMode;
   idempotencyKey: string;
   clientUserMessageId: string;
   attachments?: NativeConversationAttachmentInput[];
@@ -113,19 +107,19 @@ export interface SubmitNativeMessageInput {
   displayText?: string;
   attachments?: NativeConversationAttachmentInput[];
   browserComments?: Record<string, unknown>[];
-    model?: string;
-    effort?: string;
-    collaborationMode?: ConversationCollaborationMode;
+  model?: string;
+  effort?: string;
+  collaborationMode?: ConversationCollaborationMode;
   idempotencyKey: string;
   clientUserMessageId: string;
   providerWriteLifecycle?: NativeProviderWriteLifecycle;
 }
 
 export interface RespondPlanImplementationRequestInput {
-    conversationId: string;
-    requestId: string;
-    action: 'implement' | 'refine' | 'dismiss';
-    feedback?: string;
+  conversationId: string;
+  requestId: string;
+  action: 'implement' | 'refine' | 'dismiss';
+  feedback?: string;
 }
 
 export interface EditQueuedSubmissionInput {
@@ -155,7 +149,7 @@ export interface ResumeNativeQueueInput {
 }
 
 export interface RestoreArchivedConversationInput {
-    conversationId: string;
+  conversationId: string;
 }
 
 export interface InterruptNativeTurnInput {
@@ -173,7 +167,7 @@ export interface RespondNativeRequestInput {
 }
 
 export interface SnoozeNativeRequestInput {
-    requestId: string;
+  requestId: string;
 }
 
 export interface StartNativeEphemeralConversationInput {
@@ -211,13 +205,13 @@ export interface CodexNativeConversationCoordinator {
   sendQueuedNow(input: SendQueuedNowInput): Promise<NativeAcceptedOperation>;
   resumeInterruptedQueue(input: ResumeNativeQueueInput): Promise<NativeQueueSnapshot>;
 
-    restoreArchivedConversation(input: RestoreArchivedConversationInput): Promise<NativeQueueSnapshot>;
+  restoreArchivedConversation(input: RestoreArchivedConversationInput): Promise<NativeQueueSnapshot>;
   interruptTurn(input: InterruptNativeTurnInput): Promise<NativeAcceptedOperation>;
   respondToRequest(input: RespondNativeRequestInput): Promise<NativeAcceptedOperation>;
 
-    snoozeRequest(input: SnoozeNativeRequestInput): Promise<void>;
+  snoozeRequest(input: SnoozeNativeRequestInput): Promise<void>;
 
-    respondToPlanImplementationRequest(input: RespondPlanImplementationRequestInput): Promise<NativeAcceptedOperation>;
+  respondToPlanImplementationRequest(input: RespondPlanImplementationRequestInput): Promise<NativeAcceptedOperation>;
   recover(): Promise<void>;
   capacityChanged(): Promise<void>;
   close(): Promise<void>;

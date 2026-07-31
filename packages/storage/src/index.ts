@@ -45,6 +45,91 @@ export interface ZeusTaskRecord {
   updatedAt: string;
 }
 
+export type TaskWorkspaceState = 'ready' | 'reclaimed' | 'merged' | 'discarded' | 'failed';
+
+/**
+ * 任务工作区代表一个可被多次会话复用的任务开发线。
+ * 会话结束不会删除工作区；只有任务完成、取消或显式清理才会回收 worktree。
+ */
+export interface ZeusTaskWorkspaceRecord {
+  id: string;
+  projectId: string;
+  taskId: string;
+  branchName: string;
+  sourceBranch: string;
+  sourceHeadSha: string;
+  remoteName: string;
+  remoteBranch: string;
+  worktreePath: string | null;
+  headSha: string | null;
+  state: TaskWorkspaceState;
+  lastError: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateTaskWorkspaceInput {
+  id?: string;
+  projectId: string;
+  taskId: string;
+  branchName: string;
+  sourceBranch: string;
+  sourceHeadSha: string;
+  remoteName?: string;
+  remoteBranch?: string;
+  worktreePath?: string;
+  headSha?: string;
+  state?: TaskWorkspaceState;
+}
+
+export interface UpdateTaskWorkspaceInput {
+  worktreePath?: string | null;
+  headSha?: string | null;
+  state?: TaskWorkspaceState;
+  remoteBranch?: string;
+  lastError?: string | null;
+}
+
+export type TaskIntegrationMode = 'merge' | 'squash';
+export type TaskIntegrationState = 'preparing' | 'conflicted' | 'merged' | 'failed';
+
+export interface ZeusTaskIntegrationRecord {
+  id: string;
+  projectId: string;
+  taskId: string;
+  workspaceId: string;
+  targetBranch: string;
+  targetHeadSha: string;
+  mode: TaskIntegrationMode;
+  integrationPath: string | null;
+  resultHeadSha: string | null;
+  state: TaskIntegrationState;
+  conflictFiles: string[];
+  lastError: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateTaskIntegrationInput {
+  id?: string;
+  projectId: string;
+  taskId: string;
+  workspaceId: string;
+  targetBranch: string;
+  targetHeadSha: string;
+  mode: TaskIntegrationMode;
+  integrationPath?: string;
+  state?: TaskIntegrationState;
+}
+
+export interface UpdateTaskIntegrationInput {
+  integrationPath?: string | null;
+  resultHeadSha?: string | null;
+  state?: TaskIntegrationState;
+  conflictFiles?: string[];
+  lastError?: string | null;
+}
+
 export interface ZeusTaskTemplateRecord {
   id: string;
   name: string;
@@ -271,6 +356,7 @@ export interface ZeusConversationRecord {
   id: string;
   projectId: string;
   taskId: string | null;
+  workspaceId: string | null;
   sessionId: string | null;
   title: string;
   summary: string | null;
@@ -364,6 +450,7 @@ export interface CreateConversationInput {
   id?: string;
   projectId: string;
   taskId?: string;
+  workspaceId?: string;
   sessionId?: string;
   title: string;
   summary?: string;
@@ -912,6 +999,7 @@ export async function createZeusDatabase(filePath: string): Promise<ZeusDatabase
   migrateRetiredUnitTestTemplate(zeusDb);
   migrateTaskManagementStatus(zeusDb);
   migrateCodexNativeConversationSchema(zeusDb);
+  migrateTaskGitWorkspaceSchema(zeusDb);
   migrateCodexLegacyImportSchema(zeusDb);
   migrateMcpServerIdentifierFalsePositiveCleanup(zeusDb);
   migrateCommandCenterSchema(zeusDb);
@@ -1270,6 +1358,61 @@ function migrateTaskManagementStatus(db: ZeusDatabase): void {
     migrationId,
     description: '拆分项目管理任务状态与 Coding Agent 执行状态',
     checksumSource: 'tasks.management_status:v1:todo,in_development,in_testing,awaiting_acceptance,blocked,completed,cancelled',
+  });
+}
+
+function migrateTaskGitWorkspaceSchema(db: ZeusDatabase): void {
+  db.execute(`
+    CREATE TABLE IF NOT EXISTS task_workspaces (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL,
+      task_id TEXT NOT NULL,
+      branch_name TEXT NOT NULL,
+      source_branch TEXT NOT NULL,
+      source_head_sha TEXT NOT NULL,
+      remote_name TEXT NOT NULL DEFAULT 'origin',
+      remote_branch TEXT NOT NULL,
+      worktree_path TEXT,
+      head_sha TEXT,
+      state TEXT NOT NULL DEFAULT 'ready',
+      last_error TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+  `);
+  db.execute(`CREATE UNIQUE INDEX IF NOT EXISTS idx_task_workspaces_project_branch ON task_workspaces(project_id, branch_name)`);
+  db.execute(`CREATE UNIQUE INDEX IF NOT EXISTS idx_task_workspaces_worktree_path ON task_workspaces(worktree_path) WHERE worktree_path IS NOT NULL`);
+  db.execute(`CREATE INDEX IF NOT EXISTS idx_task_workspaces_task_state ON task_workspaces(task_id, state, updated_at)`);
+  try {
+    db.execute(`ALTER TABLE conversations ADD COLUMN workspace_id TEXT`);
+  } catch {
+    // 新库可能已经完成迁移；sql.js 不支持 ADD COLUMN IF NOT EXISTS。
+  }
+  db.execute(`CREATE INDEX IF NOT EXISTS idx_conversations_workspace_updated_at ON conversations(workspace_id, updated_at)`);
+  db.execute(`
+    CREATE TABLE IF NOT EXISTS task_integrations (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL,
+      task_id TEXT NOT NULL,
+      workspace_id TEXT NOT NULL,
+      target_branch TEXT NOT NULL,
+      target_head_sha TEXT NOT NULL,
+      mode TEXT NOT NULL,
+      integration_path TEXT,
+      result_head_sha TEXT,
+      state TEXT NOT NULL,
+      conflict_files_json TEXT NOT NULL DEFAULT '[]',
+      last_error TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+  `);
+  db.execute(`CREATE INDEX IF NOT EXISTS idx_task_integrations_task_state ON task_integrations(task_id, state, updated_at)`);
+  db.execute(`CREATE UNIQUE INDEX IF NOT EXISTS idx_task_integrations_active_workspace_target ON task_integrations(workspace_id, target_branch) WHERE state IN ('preparing', 'conflicted')`);
+  recordSchemaMigration(db, {
+    migrationId: '20260731_0001_task_git_workspaces',
+    description: '增加可跨会话复用的任务分支与 worktree 生命周期记录',
+    checksumSource: 'task_workspaces,task_integrations,conversations.workspace_id,project_branch,worktree_path,task_state,integration_state',
   });
 }
 
@@ -1657,7 +1800,7 @@ function normalizeTags(tags: string[]): string[] {
 }
 
 function formatTaskCode(sequence: number): string {
-  return `ZEU-${String(sequence).padStart(6, '0')}`;
+  return `ZEUS-${String(sequence).padStart(6, '0')}`;
 }
 
 function normalizeTaskSequence(value: unknown): number | null {
@@ -1667,8 +1810,8 @@ function normalizeTaskSequence(value: unknown): number | null {
 function normalizeTaskCode(value: unknown, sequence: number | null): string {
   if (typeof value === 'string') {
     const code = value.trim();
-    // 只保留统一展示格式；旧库里的 ZEU-1、ABC-1 等不规范编码必须按序号重算。
-    if (/^ZEU-\d{6}$/u.test(code)) return code;
+    // 只保留统一展示格式；旧库里的 ZEU 编码按原序号迁移为 ZEUS。
+    if (/^ZEUS-\d{6}$/u.test(code)) return code;
   }
   return formatTaskCode(sequence ?? 1);
 }
@@ -2172,6 +2315,158 @@ export class TaskRepository {
   }
 }
 
+const selectTaskWorkspaceFields = `id, project_id, task_id, branch_name, source_branch, source_head_sha, remote_name,
+  remote_branch, worktree_path, head_sha, state, last_error, created_at, updated_at`;
+
+/** 任务工作区仓储只记录 Git 身份与生命周期，不代替 Git 本身作为分支状态真相源。 */
+export class TaskWorkspaceRepository {
+  constructor(private readonly db: ZeusDatabase) {}
+
+  create(input: CreateTaskWorkspaceInput): ZeusTaskWorkspaceRecord {
+    const timestamp = nowIso();
+    const state = assertEnum(input.state ?? 'ready', ['ready', 'reclaimed', 'merged', 'discarded', 'failed'] as const, 'task workspace state');
+    const record: ZeusTaskWorkspaceRecord = {
+      id: input.id ?? `task_workspace_${nanoid(12)}`,
+      projectId: input.projectId,
+      taskId: input.taskId,
+      branchName: input.branchName,
+      sourceBranch: input.sourceBranch,
+      sourceHeadSha: input.sourceHeadSha,
+      remoteName: input.remoteName ?? 'origin',
+      remoteBranch: input.remoteBranch ?? input.branchName,
+      worktreePath: input.worktreePath ?? null,
+      headSha: input.headSha ?? null,
+      state,
+      lastError: null,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+    this.db.execute(
+      `INSERT INTO task_workspaces
+       (id, project_id, task_id, branch_name, source_branch, source_head_sha, remote_name, remote_branch,
+        worktree_path, head_sha, state, last_error, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`,
+      [record.id, record.projectId, record.taskId, record.branchName, record.sourceBranch, record.sourceHeadSha, record.remoteName, record.remoteBranch, record.worktreePath, record.headSha, record.state, record.createdAt, record.updatedAt],
+    );
+    return record;
+  }
+
+  getById(workspaceId: string): ZeusTaskWorkspaceRecord | undefined {
+    const row = this.db.get<DbTaskWorkspaceRow>(`SELECT ${selectTaskWorkspaceFields} FROM task_workspaces WHERE id = ?`, [workspaceId]);
+    return row ? mapTaskWorkspaceRow(row) : undefined;
+  }
+
+  getByProjectBranch(projectId: string, branchName: string): ZeusTaskWorkspaceRecord | undefined {
+    const row = this.db.get<DbTaskWorkspaceRow>(`SELECT ${selectTaskWorkspaceFields} FROM task_workspaces WHERE project_id = ? AND branch_name = ?`, [projectId, branchName]);
+    return row ? mapTaskWorkspaceRow(row) : undefined;
+  }
+
+  listByTask(taskId: string): ZeusTaskWorkspaceRecord[] {
+    return this.db.select<DbTaskWorkspaceRow>(`SELECT ${selectTaskWorkspaceFields} FROM task_workspaces WHERE task_id = ? ORDER BY created_at, id`, [taskId]).map(mapTaskWorkspaceRow);
+  }
+
+  listByProject(projectId: string): ZeusTaskWorkspaceRecord[] {
+    return this.db.select<DbTaskWorkspaceRow>(`SELECT ${selectTaskWorkspaceFields} FROM task_workspaces WHERE project_id = ? ORDER BY updated_at DESC, id`, [projectId]).map(mapTaskWorkspaceRow);
+  }
+
+  update(workspaceId: string, input: UpdateTaskWorkspaceInput): ZeusTaskWorkspaceRecord {
+    const existing = this.getById(workspaceId);
+    if (!existing) throw new Error(`Zeus task workspace not found: ${workspaceId}`);
+    const state = input.state ? assertEnum(input.state, ['ready', 'reclaimed', 'merged', 'discarded', 'failed'] as const, 'task workspace state') : existing.state;
+    this.db.execute(
+      `UPDATE task_workspaces
+       SET worktree_path = ?, head_sha = ?, state = ?, remote_branch = ?, last_error = ?, updated_at = ?
+       WHERE id = ?`,
+      [
+        'worktreePath' in input ? (input.worktreePath ?? null) : existing.worktreePath,
+        'headSha' in input ? (input.headSha ?? null) : existing.headSha,
+        state,
+        input.remoteBranch ?? existing.remoteBranch,
+        'lastError' in input ? (input.lastError ?? null) : existing.lastError,
+        nowIso(),
+        workspaceId,
+      ],
+    );
+    return this.getById(workspaceId)!;
+  }
+}
+
+const selectTaskIntegrationFields = `id, project_id, task_id, workspace_id, target_branch, target_head_sha, mode,
+  integration_path, result_head_sha, state, conflict_files_json, last_error, created_at, updated_at`;
+
+/** 合入记录保存隔离集成 worktree 的恢复身份，使冲突处理可以跨应用重启继续。 */
+export class TaskIntegrationRepository {
+  constructor(private readonly db: ZeusDatabase) {}
+
+  create(input: CreateTaskIntegrationInput): ZeusTaskIntegrationRecord {
+    const timestamp = nowIso();
+    const mode = assertEnum(input.mode, ['merge', 'squash'] as const, 'task integration mode');
+    const state = assertEnum(input.state ?? 'preparing', ['preparing', 'conflicted', 'merged', 'failed'] as const, 'task integration state');
+    const record: ZeusTaskIntegrationRecord = {
+      id: input.id ?? `task_integration_${nanoid(12)}`,
+      projectId: input.projectId,
+      taskId: input.taskId,
+      workspaceId: input.workspaceId,
+      targetBranch: input.targetBranch,
+      targetHeadSha: input.targetHeadSha,
+      mode,
+      integrationPath: input.integrationPath ?? null,
+      resultHeadSha: null,
+      state,
+      conflictFiles: [],
+      lastError: null,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+    this.db.execute(
+      `INSERT INTO task_integrations
+       (id, project_id, task_id, workspace_id, target_branch, target_head_sha, mode, integration_path,
+        result_head_sha, state, conflict_files_json, last_error, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, '[]', NULL, ?, ?)`,
+      [record.id, record.projectId, record.taskId, record.workspaceId, record.targetBranch, record.targetHeadSha, record.mode, record.integrationPath, record.state, record.createdAt, record.updatedAt],
+    );
+    return record;
+  }
+
+  getById(integrationId: string): ZeusTaskIntegrationRecord | undefined {
+    const row = this.db.get<DbTaskIntegrationRow>(`SELECT ${selectTaskIntegrationFields} FROM task_integrations WHERE id = ?`, [integrationId]);
+    return row ? mapTaskIntegrationRow(row) : undefined;
+  }
+
+  findActive(workspaceId: string, targetBranch: string): ZeusTaskIntegrationRecord | undefined {
+    const row = this.db.get<DbTaskIntegrationRow>(`SELECT ${selectTaskIntegrationFields} FROM task_integrations WHERE workspace_id = ? AND target_branch = ? AND state IN ('preparing', 'conflicted') ORDER BY updated_at DESC LIMIT 1`, [
+      workspaceId,
+      targetBranch,
+    ]);
+    return row ? mapTaskIntegrationRow(row) : undefined;
+  }
+
+  listByTask(taskId: string): ZeusTaskIntegrationRecord[] {
+    return this.db.select<DbTaskIntegrationRow>(`SELECT ${selectTaskIntegrationFields} FROM task_integrations WHERE task_id = ? ORDER BY updated_at DESC, id`, [taskId]).map(mapTaskIntegrationRow);
+  }
+
+  update(integrationId: string, input: UpdateTaskIntegrationInput): ZeusTaskIntegrationRecord {
+    const existing = this.getById(integrationId);
+    if (!existing) throw new Error(`Zeus task integration not found: ${integrationId}`);
+    const state = input.state ? assertEnum(input.state, ['preparing', 'conflicted', 'merged', 'failed'] as const, 'task integration state') : existing.state;
+    this.db.execute(
+      `UPDATE task_integrations
+       SET integration_path = ?, result_head_sha = ?, state = ?, conflict_files_json = ?, last_error = ?, updated_at = ?
+       WHERE id = ?`,
+      [
+        'integrationPath' in input ? (input.integrationPath ?? null) : existing.integrationPath,
+        'resultHeadSha' in input ? (input.resultHeadSha ?? null) : existing.resultHeadSha,
+        state,
+        JSON.stringify(input.conflictFiles ?? existing.conflictFiles),
+        'lastError' in input ? (input.lastError ?? null) : existing.lastError,
+        nowIso(),
+        integrationId,
+      ],
+    );
+    return this.getById(integrationId)!;
+  }
+}
+
 /** 任务模板是产品 prompt 定义，不是项目、任务、会话或执行结果数据。 */
 export class TaskTemplateRepository {
   constructor(private readonly db: ZeusDatabase) {}
@@ -2503,7 +2798,7 @@ export class TerminalEventRepository {
 
 const selectConversationFields = `id, project_id, task_id, session_id, title, summary, status, created_at, updated_at, archived,
   transport_kind, provider_id, provider_thread_id, provider_thread_path, provider_model, provider_state,
-  provider_protocol_version, provider_binary_version, legacy_source_conversation_id, provider_settings_json, provider_token_usage_json, permission_mode, collaboration_mode, completion_unread`;
+  provider_protocol_version, provider_binary_version, legacy_source_conversation_id, provider_settings_json, provider_token_usage_json, permission_mode, collaboration_mode, completion_unread, workspace_id`;
 const selectConversationMessageFields = `id, conversation_id, role, content, source, metadata_json, created_at,
   provider_thread_id, provider_turn_id, provider_item_id, client_message_id`;
 
@@ -2521,6 +2816,7 @@ export class ConversationRepository {
       id: input.id ?? `conversation_${nanoid(12)}`,
       projectId: input.projectId,
       taskId: input.taskId ?? null,
+      workspaceId: input.workspaceId ?? null,
       sessionId: input.sessionId ?? null,
       title: input.title,
       summary: input.summary ?? null,
@@ -2544,14 +2840,15 @@ export class ConversationRepository {
       completionUnread: false,
     };
     this.db.execute(
-      `INSERT INTO conversations (id, project_id, task_id, session_id, title, summary, status, created_at, updated_at, archived,
+      `INSERT INTO conversations (id, project_id, task_id, workspace_id, session_id, title, summary, status, created_at, updated_at, archived,
         transport_kind, provider_id, provider_thread_id, provider_thread_path, provider_model, provider_state,
         provider_protocol_version, provider_binary_version, legacy_source_conversation_id, provider_settings_json, provider_token_usage_json, permission_mode, collaboration_mode, completion_unread)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
       [
         record.id,
         record.projectId,
         record.taskId,
+        record.workspaceId,
         record.sessionId,
         record.title,
         record.summary,
@@ -2755,6 +3052,13 @@ export class ConversationRepository {
         const conversation = mapConversationRow(row);
         return { ...conversation, messages: this.listMessages(conversation.id) };
       });
+  }
+
+  listByWorkspace(workspaceId: string): ZeusConversationWithMessagesRecord[] {
+    return this.db.select<DbConversationRow>(`SELECT ${selectConversationFields} FROM conversations WHERE workspace_id = ? AND archived = 0 ORDER BY updated_at DESC, id`, [workspaceId]).map((row) => {
+      const conversation = mapConversationRow(row);
+      return { ...conversation, messages: this.listMessages(conversation.id) };
+    });
   }
 
   listBySessionId(sessionId: string): ZeusConversationWithMessagesRecord[] {
@@ -4066,6 +4370,7 @@ interface DbConversationRow {
   id: string;
   project_id: string;
   task_id: string | null;
+  workspace_id: string | null;
   session_id: string | null;
   title: string;
   summary: string | null;
@@ -4351,6 +4656,40 @@ interface DbTaskRow {
   updated_at: string;
 }
 
+interface DbTaskWorkspaceRow {
+  id: string;
+  project_id: string;
+  task_id: string;
+  branch_name: string;
+  source_branch: string;
+  source_head_sha: string;
+  remote_name: string;
+  remote_branch: string;
+  worktree_path: string | null;
+  head_sha: string | null;
+  state: TaskWorkspaceState;
+  last_error: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface DbTaskIntegrationRow {
+  id: string;
+  project_id: string;
+  task_id: string;
+  workspace_id: string;
+  target_branch: string;
+  target_head_sha: string;
+  mode: TaskIntegrationMode;
+  integration_path: string | null;
+  result_head_sha: string | null;
+  state: TaskIntegrationState;
+  conflict_files_json: string;
+  last_error: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 interface DbTaskTemplateRow {
   id: string;
   name: string;
@@ -4430,6 +4769,7 @@ function mapConversationRow(row: DbConversationRow): ZeusConversationRecord {
     id: row.id,
     projectId: row.project_id,
     taskId: row.task_id,
+    workspaceId: row.workspace_id,
     sessionId: row.session_id,
     title: row.title,
     summary: row.summary,
@@ -4738,6 +5078,51 @@ function mapTaskRow(row: DbTaskRow): ZeusTaskRecord {
     tags: parseTagsJson(row.tags_json),
     createdFrom: row.created_from,
     sourceContextJson: row.source_context_json,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapTaskWorkspaceRow(row: DbTaskWorkspaceRow): ZeusTaskWorkspaceRecord {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    taskId: row.task_id,
+    branchName: row.branch_name,
+    sourceBranch: row.source_branch,
+    sourceHeadSha: row.source_head_sha,
+    remoteName: row.remote_name,
+    remoteBranch: row.remote_branch,
+    worktreePath: row.worktree_path,
+    headSha: row.head_sha,
+    state: assertEnum(row.state, ['ready', 'reclaimed', 'merged', 'discarded', 'failed'] as const, 'task workspace state'),
+    lastError: row.last_error,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapTaskIntegrationRow(row: DbTaskIntegrationRow): ZeusTaskIntegrationRecord {
+  let conflictFiles: string[] = [];
+  try {
+    const parsed = JSON.parse(row.conflict_files_json) as unknown;
+    if (Array.isArray(parsed)) conflictFiles = parsed.filter((item): item is string => typeof item === 'string');
+  } catch {
+    conflictFiles = [];
+  }
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    taskId: row.task_id,
+    workspaceId: row.workspace_id,
+    targetBranch: row.target_branch,
+    targetHeadSha: row.target_head_sha,
+    mode: assertEnum(row.mode, ['merge', 'squash'] as const, 'task integration mode'),
+    integrationPath: row.integration_path,
+    resultHeadSha: row.result_head_sha,
+    state: assertEnum(row.state, ['preparing', 'conflicted', 'merged', 'failed'] as const, 'task integration state'),
+    conflictFiles,
+    lastError: row.last_error,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

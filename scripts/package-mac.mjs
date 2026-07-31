@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { execFileSync, spawn } from 'node:child_process';
 import { verifyPackagedApp } from './verify-packaged-app-health.mjs';
@@ -22,8 +22,10 @@ export function electronDistDirName(version, arch) {
   return `electron-v${version}-darwin-${arch}`;
 }
 
-export function packagedAppPathForArch(arch) {
-  return join(rootDir, 'dist', arch === 'arm64' ? 'mac-arm64' : 'mac', 'Zeus.app');
+export function packagedAppPathForArch(arch, variant = 'release') {
+  const outputRoot = variant === 'test' ? join(rootDir, 'dist', 'test') : join(rootDir, 'dist');
+  const appName = variant === 'test' ? 'Zeus Test.app' : 'Zeus.app';
+  return join(outputRoot, arch === 'arm64' ? 'mac-arm64' : 'mac', appName);
 }
 
 export function buildCodesignVerifyArgs(appPath) {
@@ -115,7 +117,8 @@ function buildMacNativeDependencyEnv(baseEnv = process.env) {
 }
 
 export function findRunningPackagedAppProcesses(psOutput, appPath) {
-  const executablePath = join(resolve(appPath), 'Contents', 'MacOS', 'Zeus');
+  const executableName = basename(appPath, '.app');
+  const executablePath = join(resolve(appPath), 'Contents', 'MacOS', executableName);
   return psOutput
     .split(/\r?\n/u)
     .map((line) => line.trim())
@@ -188,16 +191,18 @@ export async function packageMac() {
     throw new Error('Zeus package:mac 只能在 macOS 上执行。');
   }
   const arch = process.arch === 'x64' ? 'x64' : 'arm64';
+  const variant = process.env.ZEUS_PACKAGE_VARIANT === 'test' ? 'test' : 'release';
+  const builderConfig = variant === 'test' ? 'electron-builder.test.yml' : 'electron-builder.yml';
   const version = await readElectronVersion();
   const electronDist = await prepareElectronDist(version, arch);
-  const appPath = packagedAppPathForArch(arch);
+  const appPath = packagedAppPathForArch(arch, variant);
   await assertPackagedAppIsNotRunning(appPath);
   await refreshCodexRuntimeManifest(arch);
   await run('pnpm', ['build'], { cwd: desktopDir });
   const packageEnv = buildMacNativeDependencyEnv(omitEmptyAppleReleaseEnvironment(process.env));
   const signingArgs = buildElectronBuilderSigningArgs(packageEnv);
   const electronDistArgs = electronDist ? [`--config.electronDist=${electronDist}`] : [];
-  await run('pnpm', ['--filter', '@zeus/desktop', 'exec', 'electron-builder', '--mac', 'dmg', '--config', 'electron-builder.yml', ...electronDistArgs, ...signingArgs], {
+  await run('pnpm', ['--filter', '@zeus/desktop', 'exec', 'electron-builder', '--mac', 'dmg', '--config', builderConfig, ...electronDistArgs, ...signingArgs], {
     cwd: rootDir,
     env: packageEnv,
   });

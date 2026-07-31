@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /* global console, process */
 import { accessSync, constants, readFileSync } from 'node:fs';
-import { join, posix, resolve } from 'node:path';
+import { basename, join, posix, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { machoSignatureNeutralSha256 } from './macho-signature-neutral-sha256.mjs';
 
@@ -183,7 +183,7 @@ export function verifyPackagedApp(appPath) {
   readAsarTextFile(asarPath, mainPackage.main);
   const runtime = assertPackagedCodexRuntime(appRoot);
   return {
-    appName: 'Zeus',
+    appName: basename(appRoot, '.app'),
     assetCount: renderer.assetCount,
     main: mainPackage.main,
     preload: preload.preloadPath,

@@ -7,6 +7,7 @@ import { expandCliSearchPath } from './cliSearchPath.js';
 
 export * from './codexAppServerManager.js';
 export * from './codexAppServerProtocol.js';
+export * from './codexRuntimeGenerationManager.js';
 export { expandCliSearchPath } from './cliSearchPath.js';
 
 export interface AiCliDescriptor {
@@ -579,7 +580,10 @@ export function createAiRuntimeSessionManager(options: CreateAiRuntimeSessionMan
         startedAt: now(),
       };
       sessions.set(session.id, session);
-      redactedValues.set(session.id, (input.redactValues ?? []).filter((value) => value.length > 0));
+      redactedValues.set(
+        session.id,
+        (input.redactValues ?? []).filter((value) => value.length > 0),
+      );
       options.onSessionChange?.(session);
       appendLog(session.id, 'system', `启动 AI Runtime 会话：${[input.command, ...(input.args ?? [])].join(' ')}`);
       const handle = spawn(input.command, input.args ?? [], {

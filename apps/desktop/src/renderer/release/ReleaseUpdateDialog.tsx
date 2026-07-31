@@ -39,6 +39,12 @@ const copyByLanguage = {
     unavailableDescription: 'Zeus 没有取得可用的发布清单。请检查网络连接后重试。',
     installingDescription: '升级请求已经提交。安装流程完成后 Zeus 会提示重启。',
     artifact: (fileName: string) => `安装包：${fileName}`,
+    detachedHost: '执行宿主已独立运行',
+    embeddedHost: '执行仍绑定当前界面进程',
+    hostWork: (turns: number, requests: number, runtimes: number) => `执行中 ${turns} · 等待交互 ${requests} · 其他 Runtime ${runtimes}`,
+    runtimeGenerations: (count: number, draining: number) => `Codex 运行时世代 ${count} · 排空中 ${draining}`,
+    detachedHostDescription: '关闭或重启界面不会直接结束这些工作；新版打开后会重新连接同一宿主。',
+    embeddedHostDescription: '当前构建退出时仍可能结束执行，不能宣称无损升级。',
     cancel: '取消',
     later: '稍后',
     done: '好',
@@ -62,6 +68,12 @@ const copyByLanguage = {
     unavailableDescription: 'Zeus did not receive a usable release manifest. Check the network connection and try again.',
     installingDescription: 'The update request was accepted. Zeus will prompt for a restart when installation is ready.',
     artifact: (fileName: string) => `Installer: ${fileName}`,
+    detachedHost: 'Execution host is detached',
+    embeddedHost: 'Execution is still owned by this UI process',
+    hostWork: (turns: number, requests: number, runtimes: number) => `${turns} running · ${requests} awaiting input · ${runtimes} other runtimes`,
+    runtimeGenerations: (count: number, draining: number) => `${count} Codex runtime generations · ${draining} draining`,
+    detachedHostDescription: 'Closing or restarting the UI does not directly stop this work; the next UI reconnects to the same host.',
+    embeddedHostDescription: 'This build may still stop execution on exit and cannot claim lossless upgrades.',
     cancel: 'Cancel',
     later: 'Later',
     done: 'OK',
@@ -121,11 +133,23 @@ export function ReleaseUpdateDialog(props: ReleaseUpdateDialogProps) {
             </p>
           </header>
           {update ? (
-            <div className="release-update-dialog-version" aria-label={title}>
-              <span>{copy.currentVersion(update.currentVersion)}</span>
-              <span>{copy.latestVersion(update.latestVersion)}</span>
-              {update.artifact ? <small>{copy.artifact(update.artifact.fileName)}</small> : null}
-            </div>
+            <>
+              <div className="release-update-dialog-version" aria-label={title}>
+                <span>{copy.currentVersion(update.currentVersion)}</span>
+                <span>{copy.latestVersion(update.latestVersion)}</span>
+                {update.artifact ? <small>{copy.artifact(update.artifact.fileName)}</small> : null}
+              </div>
+              {update.executionHost ? (
+                <div className="release-update-dialog-host" data-mode={update.executionHost.mode}>
+                  <strong>{update.executionHost.mode === 'detached' ? copy.detachedHost : copy.embeddedHost}</strong>
+                  <span>{copy.hostWork(update.executionHost.activeTurnCount, update.executionHost.waitingRequestCount, update.executionHost.activeRuntimeCount)}</span>
+                  {update.executionHost.runtimeGenerations.length > 0 ? (
+                    <span>{copy.runtimeGenerations(update.executionHost.runtimeGenerations.length, update.executionHost.runtimeGenerations.filter((generation) => !generation.active).length)}</span>
+                  ) : null}
+                  <small>{update.executionHost.mode === 'detached' ? copy.detachedHostDescription : copy.embeddedHostDescription}</small>
+                </div>
+              ) : null}
+            </>
           ) : null}
         </div>
         <footer>

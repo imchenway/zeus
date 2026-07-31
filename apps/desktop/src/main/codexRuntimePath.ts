@@ -1,5 +1,5 @@
-import { createHash } from 'node:crypto';
-import { access, readFile, realpath } from 'node:fs/promises';
+import { createHash, randomUUID } from 'node:crypto';
+import { access, chmod, copyFile, mkdir, readFile, realpath, rename, unlink } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { join } from 'node:path';
 
@@ -23,6 +23,7 @@ export interface ResolvedCodexRuntime {
   commandPath: string;
   binaryVersion: string;
   upstreamCommit: string;
+  artifactSha256: string;
 }
 
 export interface ResolveCodexRuntimeOptions {
@@ -66,7 +67,46 @@ export async function resolveCodexRuntime(options: ResolveCodexRuntimeOptions): 
     commandPath: await realpath(binaryPath),
     binaryVersion: manifest.binaryVersion,
     upstreamCommit: manifest.upstreamCommit,
+    artifactSha256: createHash('sha256').update(bytes).digest('hex'),
   };
+}
+
+/**
+ * 把已经验签的运行时复制到用户数据目录中的不可变内容地址。
+ * 执行宿主只启动该副本，应用包被安装器替换后，旧世代仍能继续运行和按需重启。
+ */
+export async function materializeCodexRuntime(runtime: ResolvedCodexRuntime, userDataPath: string): Promise<ResolvedCodexRuntime> {
+  const runtimeDirectory = join(userDataPath, 'execution-host', 'runtimes', runtime.artifactSha256);
+  const targetPath = join(runtimeDirectory, 'codex');
+  await mkdir(runtimeDirectory, { recursive: true, mode: 0o700 });
+  await chmod(runtimeDirectory, 0o700);
+  try {
+    const existingBytes = await readFile(targetPath);
+    if (createHash('sha256').update(existingBytes).digest('hex') !== runtime.artifactSha256) {
+      throw runtimeError('ZEUS_CODEX_RUNTIME_MATERIALIZATION_MISMATCH', 'Materialized Codex runtime checksum does not match its verified source.');
+    }
+    await chmod(targetPath, 0o700);
+    return { ...runtime, commandPath: await realpath(targetPath) };
+  } catch (error) {
+    if (!isNodeError(error, 'ENOENT')) throw error;
+  }
+
+  const temporaryPath = join(runtimeDirectory, `.codex-${randomUUID()}.tmp`);
+  try {
+    await copyFile(runtime.commandPath, temporaryPath, constants.COPYFILE_EXCL);
+    await chmod(temporaryPath, 0o700);
+    const copiedBytes = await readFile(temporaryPath);
+    if (createHash('sha256').update(copiedBytes).digest('hex') !== runtime.artifactSha256) {
+      throw runtimeError('ZEUS_CODEX_RUNTIME_MATERIALIZATION_MISMATCH', 'Copied Codex runtime checksum does not match its verified source.');
+    }
+    await rename(temporaryPath, targetPath);
+    await chmod(targetPath, 0o700);
+  } finally {
+    await unlink(temporaryPath).catch((error: unknown) => {
+      if (!isNodeError(error, 'ENOENT')) throw error;
+    });
+  }
+  return { ...runtime, commandPath: await realpath(targetPath) };
 }
 
 function runtimeDirectoryName(arch: NodeJS.Architecture): 'arm64' | 'x64' {
@@ -173,6 +213,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function hasRuntimeCode(value: unknown): value is { code: string } {
   return typeof value === 'object' && value !== null && typeof (value as { code?: unknown }).code === 'string' && (value as { code: string }).code.startsWith('ZEUS_CODEX_RUNTIME_');
+}
+
+function isNodeError(value: unknown, code: string): value is NodeJS.ErrnoException {
+  return value instanceof Error && (value as NodeJS.ErrnoException).code === code;
 }
 
 function runtimeError(code: string, message: string): Error & { code: string } {

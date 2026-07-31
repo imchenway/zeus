@@ -590,9 +590,21 @@ function extractSymbols(rootPath: string, file: ScannedFile, content: string, kn
   ];
   if (file.relativePath.endsWith('package.json')) {
     try {
-      const parsed = JSON.parse(content) as { name?: string };
+      const parsed = JSON.parse(content) as {
+        name?: string;
+        dependencies?: Record<string, string>;
+        optionalDependencies?: Record<string, string>;
+        peerDependencies?: Record<string, string>;
+      };
       if (parsed.name) {
-        symbols.push(makeSymbol('package', parsed.name, parsed.name, file.absolutePath, 1, 1, 'json', file.sourceHash, { rootPath }));
+        symbols.push(
+          makeSymbol('package', parsed.name, parsed.name, file.absolutePath, 1, 1, 'json', file.sourceHash, {
+            rootPath,
+            relativePath: file.relativePath,
+            packageRoot: dirname(file.relativePath) === '.' ? '' : dirname(file.relativePath),
+            dependencies: uniqueStrings([...Object.keys(parsed.dependencies ?? {}), ...Object.keys(parsed.optionalDependencies ?? {}), ...Object.keys(parsed.peerDependencies ?? {})]),
+          }),
+        );
       }
     } catch {
       // package.json 解析失败时只保留 file fact，避免伪造包信息。
@@ -1010,16 +1022,22 @@ function findJavaBlockEndLineFromOpenBrace(content: string, openIndex: number): 
 function extractMavenBuildSymbols(file: ScannedFile, content: string, language: string): CodeSymbolFact[] {
   if (language !== 'xml' || !file.relativePath.endsWith('pom.xml')) return [];
   const symbols: CodeSymbolFact[] = [];
-  const projectGroupId = firstXmlTagValue(content, 'groupId');
-  const projectArtifactId = firstXmlTagValue(content, 'artifactId');
-  const projectVersion = firstXmlTagValue(content, 'version');
+  const parentBlock = content.match(/<parent>([\s\S]*?)<\/parent>/iu)?.[1] ?? '';
+  // 项目坐标必须排除 parent 块后再读取；否则 Spring Boot parent 会被误画成当前 Maven 模块。
+  const projectBody = content.replace(/<parent>[\s\S]*?<\/parent>/iu, '');
+  const projectGroupId = firstXmlTagValue(projectBody, 'groupId') ?? firstXmlTagValue(parentBlock, 'groupId');
+  const projectArtifactId = firstXmlTagValue(projectBody, 'artifactId');
+  const projectVersion = firstXmlTagValue(projectBody, 'version') ?? firstXmlTagValue(parentBlock, 'version');
+  const packaging = firstXmlTagValue(projectBody, 'packaging') ?? 'jar';
   if (projectArtifactId) {
     symbols.push(
-      makeSymbol('config', `Maven project ${projectArtifactId}`, `${file.relativePath}#maven:project:${projectArtifactId}`, file.absolutePath, 1, 1, language, file.sourceHash, {
+      makeSymbol('config', projectArtifactId, `${file.relativePath}#maven:project:${projectArtifactId}`, file.absolutePath, 1, 1, language, file.sourceHash, {
         sourceKind: 'maven_project',
+        relativePath: file.relativePath,
         groupId: projectGroupId,
         artifactId: projectArtifactId,
         version: projectVersion,
+        packaging,
       }),
     );
   }
@@ -1029,8 +1047,9 @@ function extractMavenBuildSymbols(file: ScannedFile, content: string, language: 
     if (!modulePath) continue;
     const lineNo = lineNumberAt(content, content.indexOf(moduleMatch[0]) >= 0 ? content.indexOf(moduleMatch[0]) : 0);
     symbols.push(
-      makeSymbol('config', `Maven module ${modulePath}`, `${file.relativePath}#maven:module:${modulePath}`, file.absolutePath, lineNo, lineNo, language, file.sourceHash, {
+      makeSymbol('config', modulePath, `${file.relativePath}#maven:module:${modulePath}`, file.absolutePath, lineNo, lineNo, language, file.sourceHash, {
         sourceKind: 'maven_module',
+        relativePath: file.relativePath,
         modulePath,
         projectArtifactId,
       }),
@@ -1047,6 +1066,7 @@ function extractMavenBuildSymbols(file: ScannedFile, content: string, language: 
     symbols.push(
       makeSymbol('dependency', `${groupId}:${artifactId}`, `${file.relativePath}#maven:dependency:${groupId}:${artifactId}`, file.absolutePath, lineNo, lineNo, language, file.sourceHash, {
         sourceKind: 'maven_dependency',
+        relativePath: file.relativePath,
         groupId,
         artifactId,
         version,

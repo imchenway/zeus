@@ -1,0 +1,1335 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Zeus 代码图谱工作台设计稿</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #20242c;
+      --muted: #69717f;
+      --subtle: #9299a5;
+      --line: #dfe2e8;
+      --line-strong: #d2d6de;
+      --window: #f8f8fa;
+      --sidebar: #f0f1f4;
+      --canvas: #f7f8fa;
+      --accent: #5b67d8;
+      --accent-soft: #eef0ff;
+      --success: #36765c;
+      --warning: #a66a20;
+      --shadow: 0 22px 62px rgba(25, 31, 45, .15);
+    }
+
+    * { box-sizing: border-box; }
+
+    html,
+    body { min-block-size: 100%; }
+
+    body {
+      margin: 0;
+      overflow-x: clip;
+      background: #f0f1f3;
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    }
+
+    button,
+    input,
+    select { font: inherit; }
+
+    button,
+    select { color: inherit; }
+
+    button:focus-visible,
+    input:focus-visible,
+    select:focus-visible,
+    [role="button"]:focus-visible {
+      outline: 3px solid rgba(91, 103, 216, .24);
+      outline-offset: 2px;
+    }
+
+    [hidden] { display: none !important; }
+
+    .artifact {
+      inline-size: min(1400px, calc(100vw - 28px));
+      margin-inline: auto;
+      padding-block: 18px 30px;
+    }
+
+    .artifact-intro {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 14px 24px;
+      align-items: end;
+      margin-block-end: 14px;
+    }
+
+    .artifact-intro h1 {
+      margin: 0;
+      font-size: clamp(24px, 2.4vw, 32px);
+      letter-spacing: -.025em;
+    }
+
+    .artifact-intro p {
+      max-inline-size: 900px;
+      margin: 7px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.65;
+    }
+
+    .boundary-badge {
+      display: inline-flex;
+      align-items: center;
+      min-block-size: 29px;
+      padding-inline: 10px;
+      border: 1px solid #c9cdea;
+      border-radius: 7px;
+      background: var(--accent-soft);
+      color: #414bac;
+      font-size: 11px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .evidence-strip {
+      grid-column: 1 / -1;
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr);
+      gap: 8px 12px;
+      align-items: center;
+      padding: 8px 10px;
+      border: 1px solid var(--line-strong);
+      border-radius: 9px;
+      background: rgba(255, 255, 255, .72);
+      font-size: 10px;
+    }
+
+    .evidence-strip strong {
+      color: #3d4450;
+      white-space: nowrap;
+    }
+
+    .evidence-strip span {
+      color: var(--muted);
+      line-height: 1.45;
+    }
+
+    .evidence-strip strong:last-of-type { color: #72501f; }
+
+    .prototype {
+      display: grid;
+      grid-template-columns: 12.5rem minmax(0, 1fr);
+      min-block-size: 48rem;
+      overflow: hidden;
+      border: 1px solid #d2d5dc;
+      border-radius: 14px;
+      background: var(--window);
+      box-shadow: var(--shadow);
+    }
+
+    .project-nav {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      padding: 54px 10px 12px;
+      border-inline-end: 1px solid var(--line-strong);
+      background: var(--sidebar);
+    }
+
+    .window-lights {
+      position: absolute;
+      inset-block-start: 17px;
+      inset-inline-start: 16px;
+      display: flex;
+      gap: 8px;
+    }
+
+    .window-lights i {
+      inline-size: 11px;
+      block-size: 11px;
+      border-radius: 50%;
+      background: #d4d6dc;
+      box-shadow: inset 0 0 0 1px rgba(44, 49, 59, .08);
+    }
+
+    .product-name {
+      display: grid;
+      gap: 2px;
+      margin: 0 8px 12px;
+    }
+
+    .product-name strong { font-size: 14px; }
+    .product-name small { color: var(--muted); font-size: 10px; }
+
+    .project-row {
+      display: grid;
+      grid-template-columns: 22px minmax(0, 1fr);
+      gap: 7px;
+      align-items: center;
+      margin-block-end: 5px;
+      padding: 7px 8px;
+      border-radius: 8px;
+      font-size: 12px;
+    }
+
+    .project-row > i {
+      display: grid;
+      place-items: center;
+      inline-size: 22px;
+      block-size: 22px;
+      border-radius: 6px;
+      background: #dfe2e8;
+      color: #59606c;
+      font-style: normal;
+    }
+
+    .project-row > span { display: grid; min-inline-size: 0; }
+    .project-row small { color: var(--muted); font-size: 10px; }
+
+    .project-nav > button {
+      display: grid;
+      grid-template-columns: 20px minmax(0, 1fr);
+      gap: 7px;
+      align-items: center;
+      min-block-size: 31px;
+      padding-inline: 9px;
+      border: 0;
+      border-radius: 8px;
+      background: transparent;
+      color: #5d6470;
+      text-align: start;
+      font-size: 12px;
+      cursor: pointer;
+    }
+
+    .project-nav > button:hover { background: rgba(85, 91, 105, .07); }
+
+    .project-nav > button[aria-current="page"] {
+      background: #dedfe5;
+      color: #22262e;
+      font-weight: 700;
+    }
+
+    .graph-app {
+      display: grid;
+      grid-template-rows: 44px minmax(0, 1fr) 27px;
+      min-inline-size: 0;
+      min-block-size: 0;
+      background: var(--canvas);
+    }
+
+    .command-bar {
+      position: relative;
+      z-index: 10;
+      display: grid;
+      grid-template-columns: 10.5rem minmax(12rem, 1fr) auto auto;
+      gap: 8px;
+      align-items: center;
+      min-block-size: 44px;
+      padding: 6px 9px;
+      border-block-end: 1px solid var(--line-strong);
+      background: rgba(250, 250, 252, .97);
+    }
+
+    .view-picker {
+      min-inline-size: 0;
+      overflow: hidden;
+    }
+
+    .view-picker select {
+      inline-size: 100%;
+      min-inline-size: 0;
+      min-block-size: 30px;
+      padding: 0 28px 0 9px;
+      border: 1px solid var(--line-strong);
+      border-radius: 7px;
+      background: #fff;
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .graph-search {
+      display: flex;
+      gap: 7px;
+      align-items: center;
+      inline-size: min(25rem, 100%);
+      min-block-size: 30px;
+      justify-self: center;
+      padding-inline: 8px;
+      border: 1px solid var(--line-strong);
+      border-radius: 7px;
+      background: #fff;
+    }
+
+    .graph-search input {
+      min-inline-size: 0;
+      inline-size: 100%;
+      border: 0;
+      outline: 0;
+      background: transparent;
+      color: var(--ink);
+      font-size: 11px;
+    }
+
+    .graph-search kbd {
+      color: var(--subtle);
+      font: 9px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+
+    .scan-state {
+      display: inline-flex;
+      gap: 6px;
+      align-items: center;
+      color: var(--muted);
+      font-size: 9px;
+      white-space: nowrap;
+    }
+
+    .scan-state i {
+      inline-size: 7px;
+      block-size: 7px;
+      border-radius: 50%;
+      background: var(--success);
+      box-shadow: 0 0 0 3px rgba(52, 116, 90, .1);
+    }
+
+    .command-actions {
+      display: flex;
+      gap: 4px;
+      align-items: center;
+    }
+
+    .command-actions button,
+    .filter-actions button,
+    .canvas-controls button,
+    .focus-actions button,
+    .inspector-actions button,
+    .tool-menu button {
+      min-block-size: 28px;
+      padding-inline: 9px;
+      border: 1px solid var(--line-strong);
+      border-radius: 6px;
+      background: #fff;
+      color: #555d6a;
+      font-size: 9px;
+      cursor: pointer;
+    }
+
+    .command-actions button:hover,
+    .filter-actions button:hover,
+    .canvas-controls button:hover,
+    .focus-actions button:hover,
+    .inspector-actions button:hover,
+    .tool-menu button:hover {
+      border-color: #adb2bd;
+      color: var(--ink);
+    }
+
+    .command-actions .more-button {
+      inline-size: 30px;
+      padding: 0;
+      letter-spacing: 1px;
+    }
+
+    .tool-menu {
+      position: absolute;
+      z-index: 20;
+      inset-block-start: 39px;
+      inset-inline-end: 9px;
+      display: grid;
+      inline-size: 224px;
+      padding: 6px;
+      border: 1px solid var(--line-strong);
+      border-radius: 9px;
+      background: rgba(255, 255, 255, .98);
+      box-shadow: 0 16px 40px rgba(27, 32, 44, .18);
+    }
+
+    .tool-menu button {
+      justify-content: flex-start;
+      border: 0;
+      background: transparent;
+      text-align: start;
+    }
+
+    .tool-menu small {
+      margin: 5px 6px 4px;
+      color: var(--subtle);
+      font-size: 8px;
+      line-height: 1.45;
+    }
+
+    .workspace {
+      position: relative;
+      display: grid;
+      grid-template-rows: 36px minmax(0, 1fr);
+      min-inline-size: 0;
+      min-block-size: 0;
+      overflow: hidden;
+    }
+
+    .context-bar {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 8px;
+      align-items: center;
+      min-block-size: 36px;
+      padding: 4px 9px;
+      border-block-end: 1px solid var(--line);
+      background: #f4f4f6;
+    }
+
+    .breadcrumb {
+      display: flex;
+      gap: 4px;
+      align-items: center;
+      min-inline-size: 0;
+      color: var(--muted);
+      font-size: 10px;
+      white-space: nowrap;
+    }
+
+    .breadcrumb strong {
+      overflow: hidden;
+      color: var(--ink);
+      text-overflow: ellipsis;
+    }
+
+    .filter-actions {
+      display: flex;
+      gap: 4px;
+      align-items: center;
+      color: var(--muted);
+      font-size: 8px;
+      white-space: nowrap;
+    }
+
+    .filter-actions button {
+      min-block-size: 25px;
+      padding-inline: 7px;
+      border: 0;
+      background: transparent;
+    }
+
+    .filter-actions button[aria-pressed="true"],
+    .focus-actions button[aria-pressed="true"] {
+      background: var(--accent-soft);
+      color: #3f48aa;
+      font-weight: 700;
+    }
+
+    .canvas-stage {
+      position: relative;
+      min-inline-size: 0;
+      min-block-size: 0;
+      overflow: hidden;
+    }
+
+    .canvas-scroll {
+      position: relative;
+      display: grid;
+      place-items: center;
+      inline-size: 100%;
+      block-size: 100%;
+      min-block-size: 39rem;
+      padding: 38px 38px 54px;
+      overflow: auto;
+      background:
+        radial-gradient(circle, rgba(83, 91, 111, .16) 1px, transparent 1.2px),
+        var(--canvas);
+      background-size: 20px 20px;
+    }
+
+    .canvas-scroll svg {
+      inline-size: min(100%, 70rem);
+      min-inline-size: 48rem;
+      max-inline-size: none;
+      transition: inline-size 160ms cubic-bezier(.22, 1, .36, 1);
+    }
+
+    .layer-labels text {
+      fill: #9ca2ad;
+      font: 700 9px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      letter-spacing: .08em;
+    }
+
+    .graph-edge {
+      fill: none;
+      stroke: #9aa1ae;
+      stroke-width: 1.35;
+      marker-end: url(#arrow);
+    }
+
+    .graph-edge.strong {
+      stroke: var(--accent);
+      stroke-width: 1.75;
+      marker-end: url(#arrow-accent);
+    }
+
+    .graph-edge.data { stroke-dasharray: 5 4; }
+
+    .edge-label {
+      fill: #737b89;
+      font: 8.5px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      paint-order: stroke;
+      stroke: var(--canvas);
+      stroke-width: 5px;
+      stroke-linejoin: round;
+    }
+
+    .graph-node { cursor: pointer; }
+
+    .graph-node rect:first-child {
+      fill: rgba(255, 255, 255, .98);
+      stroke: #cdd1da;
+      stroke-width: 1.25;
+      rx: 10;
+      filter: drop-shadow(0 5px 8px rgba(34, 40, 54, .055));
+    }
+
+    .graph-node .kind-bar {
+      fill: #778090;
+      stroke: none;
+      rx: 4;
+    }
+
+    .graph-node[data-node-kind="界面"] .kind-bar { fill: var(--accent); }
+    .graph-node[data-node-kind="模块"] .kind-bar { fill: #3f8b74; }
+    .graph-node[data-node-kind="包"] .kind-bar { fill: #4b79aa; }
+    .graph-node[data-node-kind="运行时"] .kind-bar { fill: #b47832; }
+
+    .graph-node[data-selected="true"] rect:first-child {
+      fill: var(--accent-soft);
+      stroke: var(--accent);
+      stroke-width: 2;
+    }
+
+    .graph-node text {
+      fill: var(--ink);
+      font: 11px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      pointer-events: none;
+    }
+
+    .graph-node .node-path {
+      fill: var(--muted);
+      font-size: 8px;
+    }
+
+    .graph-node:focus-visible rect:first-child {
+      stroke: #1a1f2b;
+      stroke-width: 2;
+      stroke-dasharray: 3 2;
+    }
+
+    .canvas-legend,
+    .proposal-note,
+    .render-note,
+    .canvas-controls,
+    .minimap {
+      position: absolute;
+      z-index: 4;
+      border: 1px solid rgba(211, 214, 222, .9);
+      border-radius: 7px;
+      background: rgba(250, 250, 252, .9);
+      backdrop-filter: blur(8px);
+    }
+
+    .canvas-legend {
+      inset-block-start: 12px;
+      inset-inline-start: 12px;
+      display: flex;
+      gap: 10px;
+      padding: 6px 8px;
+      color: var(--muted);
+      font-size: 8px;
+    }
+
+    .canvas-legend span {
+      display: inline-flex;
+      gap: 4px;
+      align-items: center;
+    }
+
+    .canvas-legend i {
+      inline-size: 4px;
+      block-size: 12px;
+      border-radius: 3px;
+      background: #778090;
+    }
+
+    .canvas-legend i[data-kind="界面"] { background: var(--accent); }
+    .canvas-legend i[data-kind="模块"] { background: #3f8b74; }
+    .canvas-legend i[data-kind="包"] { background: #4b79aa; }
+    .canvas-legend i[data-kind="运行时"] { background: #b47832; }
+
+    .proposal-note {
+      inset-block-start: 12px;
+      inset-inline-end: 12px;
+      max-inline-size: 260px;
+      padding: 6px 8px;
+      color: #7a5524;
+      font-size: 8px;
+      line-height: 1.45;
+    }
+
+    .proposal-note strong { color: #654315; }
+
+    .render-note {
+      inset-inline-start: 12px;
+      inset-block-end: 12px;
+      padding: 5px 8px;
+      color: var(--muted);
+      font-size: 8px;
+    }
+
+    .canvas-controls {
+      inset-inline-end: 88px;
+      inset-block-end: 12px;
+      display: flex;
+      gap: 3px;
+      align-items: center;
+      padding: 3px;
+      box-shadow: 0 5px 14px rgba(24, 30, 42, .08);
+    }
+
+    .canvas-controls button {
+      min-inline-size: 28px;
+      padding-inline: 7px;
+      border: 0;
+      background: transparent;
+    }
+
+    .canvas-controls output {
+      min-inline-size: 34px;
+      color: var(--muted);
+      text-align: center;
+      font-size: 8px;
+    }
+
+    .minimap {
+      inset-inline-end: 12px;
+      inset-block-end: 12px;
+      inline-size: 64px;
+      block-size: 42px;
+      background:
+        linear-gradient(33deg, transparent 48%, #c4c9d2 49%, #c4c9d2 51%, transparent 52%),
+        rgba(255, 255, 255, .94);
+    }
+
+    .minimap i {
+      position: absolute;
+      inset: 8px 13px;
+      border: 1px solid var(--accent);
+      background: rgba(91, 103, 216, .08);
+    }
+
+    .inspector {
+      position: absolute;
+      z-index: 8;
+      inset-block: 12px;
+      inset-inline-end: 12px;
+      inline-size: min(20rem, calc(100% - 24px));
+      max-block-size: calc(100% - 24px);
+      overflow: auto;
+      border: 1px solid var(--line-strong);
+      border-radius: 10px;
+      background: rgba(249, 249, 251, .98);
+      box-shadow: 0 18px 44px rgba(24, 30, 42, .18);
+      backdrop-filter: blur(12px);
+    }
+
+    @media (min-width: 70.001rem) {
+      .workspace[data-inspector-open="true"] .canvas-controls {
+        inset-inline-end: calc(20rem + 88px);
+      }
+
+      .workspace[data-inspector-open="true"] .minimap {
+        inset-inline-end: calc(20rem + 12px);
+      }
+    }
+
+    .inspector-header {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      align-items: center;
+      min-block-size: 39px;
+      padding: 7px 10px;
+      border-block-end: 1px solid var(--line);
+    }
+
+    .inspector-header > span { display: grid; }
+    .inspector-header strong { font-size: 11px; }
+    .inspector-header small { color: var(--muted); font-size: 8px; }
+
+    .close-button {
+      display: grid;
+      place-items: center;
+      inline-size: 27px;
+      block-size: 27px;
+      border: 0;
+      border-radius: 6px;
+      background: transparent;
+      cursor: pointer;
+    }
+
+    .close-button:hover { background: #e9eaee; }
+
+    .inspector-body { padding: 2px 12px 14px; }
+
+    .inspector-section {
+      display: grid;
+      gap: 6px;
+      padding: 12px 0;
+      border-block-end: 1px solid var(--line);
+    }
+
+    .inspector-section > small {
+      color: var(--subtle);
+      font-size: 8px;
+      font-weight: 700;
+      letter-spacing: .04em;
+    }
+
+    .inspector-section strong { font-size: 11px; }
+
+    .inspector-section p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 9px;
+      line-height: 1.5;
+    }
+
+    .fact-list {
+      display: grid;
+      gap: 7px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .fact-list li {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 9px;
+    }
+
+    .fact-list strong { color: var(--ink); font-size: 9px; }
+
+    .focus-actions {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 4px;
+    }
+
+    .focus-actions button { padding-inline: 4px; }
+
+    .inspector-actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 5px;
+    }
+
+    .inspector-actions .primary {
+      border-color: var(--accent);
+      background: var(--accent);
+      color: #fff;
+    }
+
+    .status-bar {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+      min-block-size: 27px;
+      padding-inline: 10px;
+      border-block-start: 1px solid var(--line-strong);
+      background: #f4f4f6;
+      color: var(--muted);
+      font-size: 9px;
+    }
+
+    .status-bar > span {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      white-space: nowrap;
+    }
+
+    .status-bar b { color: var(--success); font-weight: 700; }
+    .status-bar em { color: #4752bd; font-style: normal; font-weight: 700; }
+
+    .fallback {
+      margin-block-start: 12px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.65;
+    }
+
+    @media (max-width: 70rem) {
+      .command-bar { grid-template-columns: 9.5rem minmax(9rem, 1fr) auto auto; }
+      .filter-actions > span { display: none; }
+      .inspector {
+        inset-block: 8px;
+        inset-inline-end: 8px;
+        inline-size: min(22rem, 42vw);
+        max-block-size: calc(100% - 16px);
+      }
+    }
+
+    @media (min-width: 48.001rem) and (max-width: 70rem) {
+      .workspace[data-inspector-open="true"] .canvas-controls {
+        inset-inline-end: calc(min(22rem, 42vw) + 84px);
+      }
+
+      .workspace[data-inspector-open="true"] .minimap {
+        inset-inline-end: calc(min(22rem, 42vw) + 8px);
+      }
+    }
+
+    @media (max-width: 48rem) {
+      .artifact {
+        inline-size: min(100vw - 18px, 46rem);
+        padding-block-start: 10px;
+      }
+
+      .artifact-intro {
+        grid-template-columns: 1fr;
+        gap: 8px;
+      }
+
+      .boundary-badge { justify-self: start; }
+
+      .evidence-strip {
+        grid-template-columns: auto minmax(0, 1fr);
+        gap: 5px 8px;
+      }
+
+      .prototype {
+        grid-template-columns: 1fr;
+        min-block-size: 42rem;
+      }
+
+      .project-nav {
+        flex-direction: row;
+        padding: 8px 10px;
+        overflow-x: auto;
+        border-inline-end: 0;
+        border-block-end: 1px solid var(--line-strong);
+      }
+
+      .window-lights,
+      .product-name,
+      .project-row { display: none; }
+
+      .project-nav > button {
+        flex: 0 0 auto;
+        grid-template-columns: 15px auto;
+        min-block-size: 29px;
+      }
+
+      .graph-app { grid-template-rows: 43px minmax(0, 1fr) 25px; }
+
+      .command-bar {
+        grid-template-columns: minmax(8.5rem, 1fr) auto auto;
+        padding-inline: 7px;
+      }
+
+      .graph-search,
+      .command-actions > button:not(.more-button),
+      .scan-state span { display: none; }
+
+      .tool-menu { inset-inline-end: 7px; }
+
+      .filter-actions button:nth-child(2),
+      .filter-actions > span { display: none; }
+
+      .canvas-scroll {
+        min-block-size: 34rem;
+        padding: 44px 18px 58px;
+      }
+
+      .canvas-scroll svg { min-inline-size: 44rem; }
+
+      .canvas-legend {
+        max-inline-size: calc(100% - 24px);
+        overflow-x: auto;
+      }
+
+      .proposal-note { display: none; }
+      .render-note { display: none; }
+
+      .canvas-controls { inset-inline-end: 76px; }
+
+      .inspector {
+        inset-block-start: auto;
+        inset-inline: 0;
+        inset-block-end: 0;
+        inline-size: 100%;
+        max-block-size: 58%;
+        border-inline: 0;
+        border-block-end: 0;
+        border-radius: 12px 12px 0 0;
+        box-shadow: 0 -16px 38px rgba(24, 30, 42, .2);
+      }
+
+      .status-bar > span:first-child span:nth-child(n + 2) { display: none; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after {
+        scroll-behavior: auto !important;
+        transition-duration: .001ms !important;
+        animation-duration: .001ms !important;
+      }
+    }
+  </style>
+</head>
+<body>
+<main class="artifact" data-design-artifact="graph-first-page-prototype"
+      data-artifact-role="frontend-interaction-detail"
+      data-canonical-overview="TASK_20260731_002_Zeus代码工作台重构设计结构图.html">
+  <header class="artifact-intro">
+    <div>
+      <h1>Zeus 代码图谱工作台设计稿</h1>
+      <p>这是规范化信息架构主制品的交互细化稿。已按你的产品边界纠正：代码页只看图谱；除项目导航和一条紧凑命令栏外，首屏全部交给代码关系画布。</p>
+    </div>
+    <span class="boundary-badge">GraphCanvas 首屏主角 · 交互细化稿</span>
+    <section class="evidence-strip" aria-label="现状与提案边界">
+      <strong>现状能力</strong><span>七类视图、节点与边选择、外部打开源码、图谱问答、创建任务。</span>
+      <strong>提案能力</strong><span>缩放、适配、小地图、语义聚合，以及真实改变画布的一跳与两跳聚焦。</span>
+    </section>
+  </header>
+
+  <section class="prototype" aria-label="Zeus 代码图谱工作台交互设计稿">
+    <nav class="project-nav" aria-label="项目导航">
+      <span class="window-lights" aria-hidden="true"><i></i><i></i><i></i></span>
+      <span class="product-name"><strong>Zeus</strong><small>本地研发工作台</small></span>
+      <span class="project-row"><i aria-hidden="true">Z</i><span><strong>zeus</strong><small>main · 本地</small></span></span>
+      <button type="button"><span aria-hidden="true">✓</span><span>任务</span></button>
+      <button type="button" aria-current="page"><span aria-hidden="true">⌘</span><span>代码</span></button>
+      <button type="button"><span aria-hidden="true">○</span><span>会话</span></button>
+    </nav>
+
+    <section class="graph-app">
+      <header class="command-bar">
+        <label class="view-picker"><select data-graph-view aria-label="选择图谱视图"><option>系统架构图</option><option disabled>模块图 · 本稿不展开</option><option disabled>表关系图 · 本稿不展开</option><option disabled>模块详情图 · 本稿不展开</option><option disabled>接口时序图 · 本稿不展开</option><option disabled>模块流程图 · 本稿不展开</option><option disabled>方法逻辑图 · 本稿不展开</option></select></label>
+        <label class="graph-search"><span aria-hidden="true">⌕</span><input type="search" data-graph-search aria-label="搜索节点或关系" placeholder="搜索节点或关系…" /><kbd>⌘F</kbd></label>
+        <span class="scan-state" role="status"><i aria-hidden="true"></i><span>示例状态 · 扫描完成</span></span>
+        <span class="command-actions"><button type="button" data-question-open>询问</button><button type="button" data-tool-toggle aria-expanded="false">图谱工具</button><button class="more-button" type="button" data-tool-toggle aria-label="更多图谱操作" aria-expanded="false">•••</button></span>
+        <div class="tool-menu" data-tool-menu hidden>
+          <button type="button">重新扫描</button>
+          <button type="button">搜索与筛选</button>
+          <button type="button">图谱问答</button>
+          <button type="button">图表导出</button>
+          <button type="button">节点与边</button>
+          <button type="button">运行时诊断</button>
+          <small>低频工具互斥打开；运行时入口只承担渲染诊断。</small>
+        </div>
+      </header>
+
+      <section class="workspace" data-inspector-open="false">
+        <header class="context-bar">
+          <span class="breadcrumb"><span>全部图谱</span><span>›</span><strong data-current-view>系统架构图</strong><span>›</span><span>结构示例</span></span>
+          <span class="filter-actions"><span>高置信度关系优先</span><span>当前示例 9 个节点</span></span>
+        </header>
+
+        <section class="canvas-stage" aria-label="代码图谱主舞台" data-diagram-overflow-intent="both-scroll">
+          <div class="canvas-scroll">
+            <aside class="canvas-legend" aria-label="节点类型图例"><span><i data-kind="界面"></i>界面</span><span><i data-kind="模块"></i>模块</span><span><i data-kind="包"></i>包</span><span><i data-kind="运行时"></i>运行时</span></aside>
+            <span class="proposal-note"><strong>提案交互</strong>：缩放、适配、小地图、聚合和真实邻域聚焦。</span>
+            <svg viewBox="0 0 960 560" role="group" aria-label="Zeus 代码结构示例图谱">
+              <defs>
+                <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8 Z" fill="#8b93a2"></path></marker>
+                <marker id="arrow-accent" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8 Z" fill="#5b67d8"></path></marker>
+              </defs>
+              <g class="layer-labels" aria-hidden="true"><text x="68" y="42">界面入口</text><text x="380" y="42">图谱编排</text><text x="718" y="42">数据与渲染</text></g>
+              <path class="graph-edge" data-from="DesktopRenderer" data-to="CodeMapView" d="M238 131 C292 131 316 112 370 112"></path>
+              <path class="graph-edge strong" data-from="AppShell" data-to="CodeMapView" d="M238 280 C298 280 310 112 370 112"></path>
+              <path class="graph-edge" data-from="ProjectState" data-to="apiClient" d="M238 429 C292 429 316 280 370 280"></path>
+              <path class="graph-edge strong" data-from="CodeMapView" data-to="GraphCanvas" d="M550 112 C610 112 638 112 698 112"></path>
+              <path class="graph-edge" data-from="CodeMapView" data-to="apiClient" d="M460 151 L460 241"></path>
+              <path class="graph-edge" data-from="apiClient" data-to="local-server" d="M550 280 C610 280 638 280 698 280"></path>
+              <path class="graph-edge" data-from="GraphRuntime" data-to="GraphCanvas" d="M550 448 C610 448 638 112 698 112"></path>
+              <path class="graph-edge" data-from="local-server" data-to="graph-engine" d="M788 319 L788 409"></path>
+              <path class="graph-edge data" data-from="graph-engine" data-to="apiClient" d="M698 448 C622 448 610 320 550 300"></path>
+              <text class="edge-label" x="280" y="115">渲染</text>
+              <text class="edge-label" x="289" y="215">进入图谱</text>
+              <text class="edge-label" x="286" y="371">读取项目</text>
+              <text class="edge-label" x="611" y="98">渲染节点</text>
+              <text class="edge-label" x="470" y="196">请求</text>
+              <text class="edge-label" x="612" y="266">IPC / HTTP</text>
+              <text class="edge-label" x="612" y="381">运行预览</text>
+              <text class="edge-label" x="799" y="366">扫描</text>
+              <text class="edge-label" x="609" y="421">返回视图</text>
+
+              <g class="graph-node" data-node-name="DesktopRenderer" data-node-path="apps/desktop/src/renderer" data-node-kind="界面" role="button" aria-label="选择 DesktopRenderer 图谱节点" aria-pressed="false" tabindex="0"><rect x="68" y="92" width="170" height="78"></rect><rect class="kind-bar" x="68" y="92" width="5" height="78"></rect><text x="88" y="122">DesktopRenderer</text><text class="node-path" x="88" y="143">apps/desktop/src/renderer</text></g>
+              <g class="graph-node" data-node-name="AppShell" data-node-path="App.tsx" data-node-kind="界面" role="button" aria-label="选择 AppShell 图谱节点" aria-pressed="false" tabindex="0"><rect x="68" y="241" width="170" height="78"></rect><rect class="kind-bar" x="68" y="241" width="5" height="78"></rect><text x="88" y="271">AppShell</text><text class="node-path" x="88" y="292">App.tsx</text></g>
+              <g class="graph-node" data-node-name="ProjectState" data-node-path="renderer/state" data-node-kind="模块" role="button" aria-label="选择 ProjectState 图谱节点" aria-pressed="false" tabindex="0"><rect x="68" y="390" width="170" height="78"></rect><rect class="kind-bar" x="68" y="390" width="5" height="78"></rect><text x="88" y="420">ProjectState</text><text class="node-path" x="88" y="441">renderer/state</text></g>
+              <g class="graph-node" data-node-name="CodeMapView" data-node-path="App.tsx:11878" data-node-kind="模块" role="button" aria-label="选择 CodeMapView 图谱节点" aria-pressed="false" tabindex="0"><rect x="370" y="73" width="180" height="78"></rect><rect class="kind-bar" x="370" y="73" width="5" height="78"></rect><text x="390" y="103">CodeMapView</text><text class="node-path" x="390" y="124">App.tsx:11878</text></g>
+              <g class="graph-node" data-node-name="apiClient" data-node-path="renderer/apiClient.ts" data-node-kind="模块" role="button" aria-label="选择 apiClient 图谱节点" aria-pressed="false" tabindex="0"><rect x="370" y="241" width="180" height="78"></rect><rect class="kind-bar" x="370" y="241" width="5" height="78"></rect><text x="390" y="271">apiClient</text><text class="node-path" x="390" y="292">renderer/apiClient.ts</text></g>
+              <g class="graph-node" data-node-name="GraphRuntime" data-node-path="App.tsx:13068" data-node-kind="运行时" role="button" aria-label="选择 GraphRuntime 图谱节点" aria-pressed="false" tabindex="0"><rect x="370" y="409" width="180" height="78"></rect><rect class="kind-bar" x="370" y="409" width="5" height="78"></rect><text x="390" y="439">GraphRuntime</text><text class="node-path" x="390" y="460">App.tsx:13068</text></g>
+              <g class="graph-node" data-node-name="GraphCanvas" data-node-path="App.tsx:13207" data-node-kind="界面" role="button" aria-label="选择 GraphCanvas 图谱节点" aria-pressed="false" tabindex="0"><rect x="698" y="73" width="180" height="78"></rect><rect class="kind-bar" x="698" y="73" width="5" height="78"></rect><text x="718" y="103">GraphCanvas</text><text class="node-path" x="718" y="124">App.tsx:13207</text></g>
+              <g class="graph-node" data-node-name="local-server" data-node-path="packages/local-server" data-node-kind="包" role="button" aria-label="选择 local-server 图谱节点" aria-pressed="false" tabindex="0"><rect x="698" y="241" width="180" height="78"></rect><rect class="kind-bar" x="698" y="241" width="5" height="78"></rect><text x="718" y="271">local-server</text><text class="node-path" x="718" y="292">packages/local-server</text></g>
+              <g class="graph-node" data-node-name="graph-engine" data-node-path="packages/graph-engine" data-node-kind="包" role="button" aria-label="选择 graph-engine 图谱节点" aria-pressed="false" tabindex="0"><rect x="698" y="409" width="180" height="78"></rect><rect class="kind-bar" x="698" y="409" width="5" height="78"></rect><text x="718" y="439">graph-engine</text><text class="node-path" x="718" y="460">packages/graph-engine</text></g>
+            </svg>
+
+            <span class="render-note">结构示例 · 非运行态节点数量</span>
+            <nav class="canvas-controls" aria-label="图谱画布提案控制"><button type="button" data-graph-zoom="-0.1" aria-label="缩小图谱">−</button><output data-zoom-status>100%</output><button type="button" data-graph-zoom="0.1" aria-label="放大图谱">＋</button><button type="button" data-graph-fit>适配</button></nav>
+            <span class="minimap" aria-label="图谱小地图提案"><i></i></span>
+          </div>
+
+          <aside class="inspector" aria-label="按需节点详情" hidden>
+            <header class="inspector-header"><span><strong>节点详情</strong><small>选择后出现，不改变画布尺寸</small></span><button class="close-button" type="button" data-inspector-close aria-label="关闭节点详情">×</button></header>
+            <div class="inspector-body">
+              <section class="inspector-section"><small>当前节点</small><strong data-inspector-title>CodeMapView</strong><p data-inspector-summary>App.tsx:11878 · 模块</p></section>
+              <section class="inspector-section"><small>示例关系摘要</small><ul class="fact-list"><li><span>入边</span><strong data-inspector-in>0</strong></li><li><span>出边</span><strong data-inspector-out>0</strong></li><li><span>范围</span><strong>结构示例</strong></li><li><span>数据</span><strong>非运行态</strong></li></ul></section>
+              <section class="inspector-section"><small>真实聚焦 · 提案</small><div class="focus-actions"><button type="button" data-focus-depth="all" aria-pressed="true">全部</button><button type="button" data-focus-depth="1" aria-pressed="false">一跳</button><button type="button" data-focus-depth="2" aria-pressed="false">两跳</button></div><p>本稿会真实改变示例子图，实施时应接入 neighborhood API。</p></section>
+              <section class="inspector-section"><small>现状节点动作</small><div class="inspector-actions"><button type="button">打开源码</button><button type="button">询问节点</button><button class="primary" type="button">创建任务</button><button type="button">隐藏节点</button></div></section>
+            </div>
+          </aside>
+        </section>
+      </section>
+
+      <footer class="status-bar" aria-label="图谱状态"><span><span>系统架构图</span><span>示例 9 个节点</span><span>示例 9 条关系</span><span>非运行态示意</span></span><span><b>● 示例状态正常</b><em>交互设计提案</em></span></footer>
+    </section>
+  </section>
+
+  <details class="fallback"><summary>设计取舍与窄屏规则</summary><ol><li>代码页没有内层文件树或源码模式，GraphCanvas 是唯一主区。</li><li>节点详情仅在选择后出现；搜索、问答、导出、实体清单和运行诊断进入次级入口。</li><li>移动端保留真实图形，详情改为底部面板；页面本身不产生横向滚动。</li></ol></details>
+</main>
+
+<script>
+(() => {
+  "use strict";
+  const root = document.querySelector(".prototype");
+  const workspace = root?.querySelector(".workspace");
+  const inspector = root?.querySelector(".inspector");
+  const toolMenu = root?.querySelector("[data-tool-menu]");
+  const svg = root?.querySelector(".canvas-scroll svg");
+  const scroller = root?.querySelector(".canvas-scroll");
+  const graphNodes = Array.from(root?.querySelectorAll(".graph-node") || []);
+  const graphEdges = Array.from(root?.querySelectorAll(".graph-edge") || []);
+  const edgeLabels = Array.from(root?.querySelectorAll(".edge-label") || []);
+  const compact = matchMedia("(max-width: 48rem)");
+  let selectedNode = null;
+  let toolMenuTrigger = null;
+  let baseGraphWidth = null;
+  let graphScale = 1;
+  let fitMode = false;
+
+  const setToolMenuOpen = (
+    open,
+    { focusQuestion = false, restoreFocus = false, trigger = null } = {},
+  ) => {
+    if (!toolMenu) return;
+    if (open) toolMenuTrigger = trigger || document.activeElement;
+    toolMenu.hidden = !open;
+    root.querySelectorAll("[data-tool-toggle]").forEach((button) => {
+      button.setAttribute("aria-expanded", String(open));
+    });
+    if (open && focusQuestion) {
+      requestAnimationFrame(() => {
+        Array.from(toolMenu.querySelectorAll("button"))
+          .find((button) => button.textContent.includes("图谱问答"))
+          ?.focus();
+      });
+    }
+    if (!open) {
+      const returnTarget = toolMenuTrigger;
+      toolMenuTrigger = null;
+      if (restoreFocus && returnTarget?.isConnected) {
+        requestAnimationFrame(() => returnTarget.focus());
+      }
+    }
+  };
+
+  const clearMobileSemantics = () => {
+    inspector?.removeAttribute("role");
+    inspector?.removeAttribute("aria-modal");
+  };
+
+  const setInspectorOpen = (open, { restoreFocus = false } = {}) => {
+    if (!workspace || !inspector) return;
+    inspector.hidden = !open;
+    workspace.dataset.inspectorOpen = String(open);
+    if (open && compact.matches) {
+      inspector.setAttribute("role", "dialog");
+      inspector.setAttribute("aria-modal", "true");
+      requestAnimationFrame(() => inspector.querySelector("[data-inspector-close]")?.focus());
+    } else {
+      clearMobileSemantics();
+    }
+    if (!open && restoreFocus && selectedNode?.isConnected) {
+      requestAnimationFrame(() => selectedNode.focus());
+    }
+  };
+
+  compact.addEventListener?.("change", () => {
+    if (workspace?.dataset.inspectorOpen === "true") {
+      if (compact.matches) {
+        inspector?.setAttribute("role", "dialog");
+        inspector?.setAttribute("aria-modal", "true");
+        requestAnimationFrame(() => inspector?.querySelector("[data-inspector-close]")?.focus());
+      } else {
+        clearMobileSemantics();
+      }
+    }
+  });
+
+  const setFocusDepth = (depth) => {
+    root.querySelectorAll("[data-focus-depth]").forEach((button) => {
+      button.setAttribute("aria-pressed", String(button.dataset.focusDepth === String(depth)));
+    });
+  };
+
+  const applyFocus = (depth = "all") => {
+    if (!selectedNode || depth === "all") {
+      graphNodes.forEach((node) => { node.style.display = ""; });
+      graphEdges.forEach((edge) => { edge.style.display = ""; });
+      edgeLabels.forEach((label) => { label.style.display = ""; });
+      return;
+    }
+
+    const adjacency = new Map(graphNodes.map((node) => [node.dataset.nodeName, new Set()]));
+    graphEdges.forEach((edge) => {
+      const from = edge.dataset.from;
+      const to = edge.dataset.to;
+      if (!from || !to) return;
+      adjacency.get(from)?.add(to);
+      adjacency.get(to)?.add(from);
+    });
+
+    const allowed = new Set([selectedNode.dataset.nodeName]);
+    let frontier = new Set(allowed);
+    for (let step = 0; step < Number(depth); step += 1) {
+      const next = new Set();
+      frontier.forEach((name) => {
+        adjacency.get(name)?.forEach((neighbor) => {
+          if (!allowed.has(neighbor)) next.add(neighbor);
+        });
+      });
+      next.forEach((name) => allowed.add(name));
+      frontier = next;
+    }
+
+    graphNodes.forEach((node) => {
+      node.style.display = allowed.has(node.dataset.nodeName) ? "" : "none";
+    });
+    graphEdges.forEach((edge, index) => {
+      const visible = allowed.has(edge.dataset.from) && allowed.has(edge.dataset.to);
+      edge.style.display = visible ? "" : "none";
+      if (edgeLabels[index]) edgeLabels[index].style.display = visible ? "" : "none";
+    });
+  };
+
+  const selectNode = (node) => {
+    graphNodes.forEach((candidate) => {
+      const selected = candidate === node;
+      candidate.dataset.selected = String(selected);
+      candidate.setAttribute("aria-pressed", String(selected));
+    });
+    selectedNode = node;
+    const title = root.querySelector("[data-inspector-title]");
+    const summary = root.querySelector("[data-inspector-summary]");
+    if (title) title.textContent = node.dataset.nodeName || "图谱节点";
+    if (summary) {
+      summary.textContent = [node.dataset.nodePath, node.dataset.nodeKind]
+        .filter(Boolean)
+        .join(" · ");
+    }
+    const nodeName = node.dataset.nodeName;
+    const inbound = graphEdges.filter((edge) => edge.dataset.to === nodeName).length;
+    const outbound = graphEdges.filter((edge) => edge.dataset.from === nodeName).length;
+    const inboundOutput = root.querySelector("[data-inspector-in]");
+    const outboundOutput = root.querySelector("[data-inspector-out]");
+    if (inboundOutput) inboundOutput.textContent = String(inbound);
+    if (outboundOutput) outboundOutput.textContent = String(outbound);
+    setFocusDepth("all");
+    applyFocus("all");
+    setInspectorOpen(true);
+  };
+
+  const clearSelection = ({ restoreFocus = false } = {}) => {
+    const returnTarget = selectedNode;
+    graphNodes.forEach((node) => {
+      node.dataset.selected = "false";
+      node.setAttribute("aria-pressed", "false");
+    });
+    applyFocus("all");
+    setFocusDepth("all");
+    setInspectorOpen(false);
+    selectedNode = null;
+    if (restoreFocus && returnTarget?.isConnected) {
+      requestAnimationFrame(() => returnTarget.focus());
+    }
+  };
+
+  graphNodes.forEach((node) => {
+    node.addEventListener("click", () => selectNode(node));
+    node.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      selectNode(node);
+    });
+  });
+
+  root?.querySelector("[data-inspector-close]")?.addEventListener("click", () => {
+    clearSelection({ restoreFocus: true });
+  });
+
+  root?.querySelector(".canvas-stage")?.addEventListener("click", (event) => {
+    if (event.target.closest?.(".graph-node, button, .canvas-legend, .proposal-note, .minimap, .inspector")) return;
+    clearSelection();
+  });
+
+  root?.querySelectorAll("[data-tool-toggle]").forEach((button) => {
+    button.addEventListener("click", () => {
+      setToolMenuOpen(toolMenu?.hidden ?? false, { trigger: button });
+    });
+  });
+
+  root?.querySelector("[data-question-open]")?.addEventListener("click", (event) => {
+    setToolMenuOpen(true, { focusQuestion: true, trigger: event.currentTarget });
+  });
+
+  root?.querySelector("[data-graph-search]")?.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    const query = event.currentTarget.value.trim().toLocaleLowerCase();
+    if (!query) return;
+    const node = Array.from(root.querySelectorAll(".graph-node")).find((candidate) => (
+      [candidate.dataset.nodeName, candidate.dataset.nodePath, candidate.dataset.nodeKind]
+        .filter(Boolean)
+        .some((value) => value.toLocaleLowerCase().includes(query))
+    ));
+    if (node) selectNode(node);
+  });
+
+  root?.querySelector("[data-graph-view]")?.addEventListener("change", (event) => {
+    const label = root.querySelector("[data-current-view]");
+    if (label) label.textContent = event.currentTarget.value;
+    clearSelection();
+  });
+
+  const setGraphWidth = (width, statusText) => {
+    if (!svg) return;
+    const safeWidth = Math.max(240, Math.round(width));
+    svg.style.inlineSize = `${safeWidth}px`;
+    svg.style.minInlineSize = `${safeWidth}px`;
+    const status = root?.querySelector("[data-zoom-status]");
+    if (status) status.textContent = statusText;
+  };
+
+  const availableGraphWidth = () => {
+    if (!scroller) return 0;
+    const styles = getComputedStyle(scroller);
+    return Math.max(
+      240,
+      scroller.clientWidth - parseFloat(styles.paddingLeft) - parseFloat(styles.paddingRight),
+    );
+  };
+
+  const fitGraph = () => {
+    const available = availableGraphWidth();
+    if (!available) return;
+    baseGraphWidth = available;
+    graphScale = 1;
+    fitMode = true;
+    setGraphWidth(available, "适配");
+    scroller?.scrollTo({ left: 0, top: 0, behavior: "smooth" });
+  };
+
+  root?.querySelectorAll("[data-graph-zoom]").forEach((button) => {
+    button.addEventListener("click", () => {
+      if (!svg) return;
+      if (baseGraphWidth === null) {
+        baseGraphWidth = svg.getBoundingClientRect().width / graphScale;
+      }
+      fitMode = false;
+      graphScale = Math.min(1.3, Math.max(.7, graphScale + Number(button.dataset.graphZoom)));
+      setGraphWidth(baseGraphWidth * graphScale, `${Math.round(graphScale * 100)}%`);
+    });
+  });
+
+  root?.querySelector("[data-graph-fit]")?.addEventListener("click", () => {
+    fitGraph();
+  });
+
+  root?.querySelectorAll("[data-focus-depth]").forEach((button) => {
+    button.addEventListener("click", () => {
+      setFocusDepth(button.dataset.focusDepth);
+      applyFocus(button.dataset.focusDepth);
+    });
+  });
+
+  addEventListener("resize", () => {
+    if (fitMode) fitGraph();
+  });
+
+  root?.addEventListener("click", (event) => {
+    if (
+      toolMenu &&
+      !toolMenu.hidden &&
+      !event.target.closest?.("[data-tool-menu], [data-tool-toggle], [data-question-open]")
+    ) {
+      const targetIsFocusable = Boolean(event.target.closest?.(
+        "a, button, input, select, textarea, [tabindex]:not([tabindex='-1'])",
+      ));
+      setToolMenuOpen(false, { restoreFocus: !targetIsFocusable });
+    }
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if ((event.metaKey || event.ctrlKey) && event.key.toLocaleLowerCase() === "f") {
+      const search = root.querySelector("[data-graph-search]");
+      if (search?.getClientRects().length) {
+        event.preventDefault();
+        search.focus();
+        search.select();
+        return;
+      }
+    }
+  });
+
+  root?.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && toolMenu && !toolMenu.hidden) {
+      event.preventDefault();
+      setToolMenuOpen(false, { restoreFocus: true });
+      return;
+    }
+    if (event.key === "Escape" && workspace?.dataset.inspectorOpen === "true") {
+      event.preventDefault();
+      clearSelection({ restoreFocus: true });
+      return;
+    }
+    if (event.key !== "Tab" || !compact.matches || inspector?.hidden) return;
+    const focusable = Array.from(inspector.querySelectorAll("button, input, select, [tabindex]"))
+      .filter((element) => !element.disabled && element.getClientRects().length > 0 && element.getAttribute("tabindex") !== "-1");
+    if (!focusable.length) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (!inspector.contains(document.activeElement)) {
+      event.preventDefault();
+      (event.shiftKey ? last : first).focus();
+      return;
+    }
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  });
+})();
+</script>
+</body>
+</html>

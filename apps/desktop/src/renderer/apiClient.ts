@@ -15,6 +15,11 @@ import type {
   StartNativeConversationRequest,
   StartProjectConversationRequest,
   StartTaskModelPushRequest,
+  TaskGitDiffSummary,
+  TaskIntegrationConflictFile,
+  TaskIntegrationRecord,
+  TaskWorkspaceCommitResult,
+  TaskWorkspacesSnapshot,
   TurnChangeSet,
   TurnChangeSetOperationResult,
 } from './session/sessionTypes.js';
@@ -231,11 +236,36 @@ export interface ReleaseUpdateStatusSnapshot {
   channel: 'stable' | 'preview';
   releasePageUrl: string;
   artifact: ReleaseUpdateArtifactSnapshot | null;
+  executionHostProtocolVersion: number;
   automaticInstallEnabled: boolean;
   recommendedAction: 'none' | 'open_download_page' | 'download_and_install';
   label: string;
   reason: string;
   checkedAt: string;
+  executionHost?: {
+    instanceId: string | null;
+    protocolVersion: number;
+    mode: 'embedded' | 'detached';
+    pid: number;
+    startedAt: string | null;
+    transport: {
+      state: 'idle' | 'starting' | 'ready' | 'restarting' | 'closed';
+      generationId: string | null;
+    };
+    runtimeGenerations: Array<{
+      generationId: string;
+      state: 'idle' | 'starting' | 'ready' | 'restarting' | 'closed';
+      active: boolean;
+      activeThreadCount: number;
+      pendingRequestCount: number;
+    }>;
+    activeTurnCount: number;
+    waitingRequestCount: number;
+    activeRuntimeCount: number;
+    activeCommandRunCount: number;
+    hasActiveWork: boolean;
+    observedAt: string;
+  };
 }
 
 export interface ReleaseUpdateOperationSnapshot {
@@ -689,6 +719,7 @@ export type GraphViewType = 'architecture' | 'module' | 'table' | 'module_detail
 
 export interface GraphViewSnapshot {
   id: string;
+  schemaVersion: number;
   projectId?: string;
   projectName?: string;
   title: string;
@@ -1099,6 +1130,18 @@ export interface DashboardClient {
   loadCodexTaskPushCapabilities: (projectId: string, taskId: string) => Promise<CodexTaskPushCapabilities>;
   loadCodexConversationCapabilities: (projectId: string) => Promise<CodexConversationCapabilities>;
   startTaskModelPush: (taskId: string, input: StartTaskModelPushRequest) => Promise<NativeOperationAcceptance>;
+  loadTaskGitWorkspaces: (taskId: string) => Promise<TaskWorkspacesSnapshot>;
+  loadTaskWorkspaceFileDiff: (taskId: string, workspaceId: string, path: string) => Promise<{ path: string; diff: TaskGitDiffSummary }>;
+  commitTaskWorkspace: (taskId: string, workspaceId: string, input: { message: string; selectedPaths: string[]; push: boolean }) => Promise<TaskWorkspaceCommitResult>;
+  reclaimTaskWorkspace: (taskId: string, workspaceId: string) => Promise<{ workspace: unknown; result?: unknown }>;
+  discardTaskWorkspace: (taskId: string, workspaceId: string, confirmationText: string) => Promise<{ workspace: unknown; result: unknown }>;
+  stopTaskWorkspaceSessions: (taskId: string, workspaceId: string) => Promise<{ workspaceId: string; interrupted: number; cancelled: number }>;
+  loadTaskIntegrations: (taskId: string) => Promise<{ taskId: string; items: TaskIntegrationRecord[]; integrations: TaskIntegrationRecord[] }>;
+  startTaskIntegration: (taskId: string, workspaceId: string, input: { target: 'source' | 'current'; mode: 'merge' | 'squash' }) => Promise<{ integration: TaskIntegrationRecord; result?: unknown }>;
+  loadTaskIntegrationConflict: (taskId: string, integrationId: string, path: string) => Promise<TaskIntegrationConflictFile>;
+  resolveTaskIntegrationConflict: (taskId: string, integrationId: string, path: string, content: string) => Promise<{ integration: TaskIntegrationRecord; result: { path: string; remainingConflictFiles: string[] } }>;
+  assistTaskIntegrationConflict: (taskId: string, integrationId: string, path: string) => Promise<{ path: string; suggestedContent: string }>;
+  finalizeTaskIntegration: (taskId: string, integrationId: string) => Promise<{ integration: TaskIntegrationRecord; result: unknown }>;
   loadNativeConversation: (projectId: string, conversationId: string) => Promise<NativeConversationSnapshot>;
   loadConversationResourcePreview: (projectId: string, conversationId: string, resourceId: string) => Promise<ConversationResourcePreview>;
   loadTurnChangeSet: (projectId: string, conversationId: string, turnId: string) => Promise<TurnChangeSet>;
@@ -1391,6 +1434,48 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
         body: JSON.stringify(body),
       });
     },
+    loadTaskGitWorkspaces: (taskId) => request<TaskWorkspacesSnapshot>(`/api/tasks/${encodeURIComponent(taskId)}/git-workspaces`),
+    loadTaskWorkspaceFileDiff: (taskId, workspaceId, path) =>
+      request<{ path: string; diff: TaskGitDiffSummary }>(`/api/tasks/${encodeURIComponent(taskId)}/git-workspaces/${encodeURIComponent(workspaceId)}/file-diff?path=${encodeURIComponent(path)}`),
+    commitTaskWorkspace: (taskId, workspaceId, input) =>
+      request<TaskWorkspaceCommitResult>(`/api/tasks/${encodeURIComponent(taskId)}/git-workspaces/${encodeURIComponent(workspaceId)}/commit`, {
+        method: 'POST',
+        body: JSON.stringify(input),
+      }),
+    reclaimTaskWorkspace: (taskId, workspaceId) =>
+      request<{ workspace: unknown; result?: unknown }>(`/api/tasks/${encodeURIComponent(taskId)}/git-workspaces/${encodeURIComponent(workspaceId)}/reclaim`, {
+        method: 'POST',
+        body: JSON.stringify({}),
+      }),
+    discardTaskWorkspace: (taskId, workspaceId, confirmationText) =>
+      request<{ workspace: unknown; result: unknown }>(`/api/tasks/${encodeURIComponent(taskId)}/git-workspaces/${encodeURIComponent(workspaceId)}/discard`, {
+        method: 'POST',
+        body: JSON.stringify({ confirmationText }),
+      }),
+    stopTaskWorkspaceSessions: (taskId, workspaceId) =>
+      request<{ workspaceId: string; interrupted: number; cancelled: number }>(`/api/tasks/${encodeURIComponent(taskId)}/git-workspaces/${encodeURIComponent(workspaceId)}/stop-sessions`, { method: 'POST', body: JSON.stringify({}) }),
+    loadTaskIntegrations: (taskId) => request<{ taskId: string; items: TaskIntegrationRecord[]; integrations: TaskIntegrationRecord[] }>(`/api/tasks/${encodeURIComponent(taskId)}/integrations`),
+    startTaskIntegration: (taskId, workspaceId, input) =>
+      request<{ integration: TaskIntegrationRecord; result?: unknown }>(`/api/tasks/${encodeURIComponent(taskId)}/git-workspaces/${encodeURIComponent(workspaceId)}/integrate`, {
+        method: 'POST',
+        body: JSON.stringify(input),
+      }),
+    loadTaskIntegrationConflict: (taskId, integrationId, path) => request<TaskIntegrationConflictFile>(`/api/tasks/${encodeURIComponent(taskId)}/integrations/${encodeURIComponent(integrationId)}/conflict?path=${encodeURIComponent(path)}`),
+    resolveTaskIntegrationConflict: (taskId, integrationId, path, content) =>
+      request<{ integration: TaskIntegrationRecord; result: { path: string; remainingConflictFiles: string[] } }>(
+        `/api/tasks/${encodeURIComponent(taskId)}/integrations/${encodeURIComponent(integrationId)}/conflict?path=${encodeURIComponent(path)}`,
+        { method: 'PUT', body: JSON.stringify({ content }) },
+      ),
+    assistTaskIntegrationConflict: (taskId, integrationId, path) =>
+      request<{ path: string; suggestedContent: string }>(`/api/tasks/${encodeURIComponent(taskId)}/integrations/${encodeURIComponent(integrationId)}/conflict-assist?path=${encodeURIComponent(path)}`, {
+        method: 'POST',
+        body: JSON.stringify({}),
+      }),
+    finalizeTaskIntegration: (taskId, integrationId) =>
+      request<{ integration: TaskIntegrationRecord; result: unknown }>(`/api/tasks/${encodeURIComponent(taskId)}/integrations/${encodeURIComponent(integrationId)}/finalize`, {
+        method: 'POST',
+        body: JSON.stringify({}),
+      }),
     startNativeConversation: (taskId, input) => {
       const { idempotencyKey, ...body } = input;
       return request<NativeOperationAcceptance>(`/api/tasks/${encodeURIComponent(taskId)}/conversations`, {

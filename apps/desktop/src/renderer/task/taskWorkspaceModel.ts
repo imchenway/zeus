@@ -583,10 +583,15 @@ function buildTaskTableCells(
   const displayProjectName = projectName?.trim() || '当前项目';
   const runStatus = resolveTaskAgentRunStatus(conversations, conversationRunStatuses);
   const managementStatus = resolveTaskManagementStatus(task);
+  const deliveryStatus = resolveTaskDeliveryStatus(conversations, managementStatusLabels?.todo === 'Todo');
   return {
     code: { primary: task.taskCode || task.id, sortValue: task.taskCode || task.id },
     intent: { primary: task.title, sortValue: task.title },
-    managementStatus: { primary: formatTaskManagementStatus(managementStatus, managementStatusLabels), sortValue: managementStatus },
+    managementStatus: {
+      primary: formatTaskManagementStatus(managementStatus, managementStatusLabels),
+      secondary: deliveryStatus,
+      sortValue: managementStatus,
+    },
     runStatus: { primary: formatTaskAgentRunStatus(runStatus, runStatusLabels), sortValue: runStatus },
     source: { primary: formatTaskSource(task), sortValue: formatTaskSource(task) },
     updatedAt: { primary: formatTaskUpdatedAt(task.updatedAt), sortValue: parseTaskDateSortValue(task.updatedAt) },
@@ -603,6 +608,22 @@ function buildTaskTableCells(
     rawId: { primary: task.id, sortValue: task.id },
     createdFrom: { primary: task.createdFrom ?? 'manual', sortValue: task.createdFrom ?? 'manual' },
   };
+}
+
+function resolveTaskDeliveryStatus(conversations: NativeConversationChoice[], english: boolean): string | undefined {
+  const workspaces = Array.from(
+    new Map(
+      conversations
+        .map((conversation) => conversation.workspace)
+        .filter((workspace): workspace is NonNullable<NativeConversationChoice['workspace']> => Boolean(workspace))
+        .map((workspace) => [workspace.id, workspace]),
+    ).values(),
+  );
+  if (workspaces.length === 0) return undefined;
+  if (workspaces.every((workspace) => workspace.state === 'merged')) return english ? 'Code merged' : '代码已合入';
+  if (workspaces.some((workspace) => workspace.state === 'reclaimed' || workspace.state === 'merged')) return english ? 'Branch pushed' : '分支已推送';
+  if (workspaces.some((workspace) => workspace.state === 'failed')) return english ? 'Git action needed' : 'Git 待处理';
+  return english ? 'Development branch active' : '开发分支进行中';
 }
 
 function parseTaskDateSortValue(value: string | undefined): number | null {

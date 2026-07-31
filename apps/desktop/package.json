@@ -1,12 +1,13 @@
 {
   "name": "@zeus/desktop",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "type": "module",
   "main": "dist/main/main.js",
   "scripts": {
     "dev": "../../script/build_and_run.sh",
     "build": "vite build && tsc -p tsconfig.preload.json && node scripts/bundle-preload.mjs && tsc -p tsconfig.main.json",
-    "package:mac": "node ../../scripts/package-mac.mjs"
+    "package:mac": "node ../../scripts/package-mac.mjs",
+    "package:mac:test": "ZEUS_PACKAGE_VARIANT=test node ../../scripts/package-mac.mjs"
   },
   "dependencies": {
     "@phosphor-icons/react": "^2.1.10",

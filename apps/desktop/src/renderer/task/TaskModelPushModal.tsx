@@ -1,29 +1,33 @@
-import type {FormEvent, KeyboardEvent} from 'react';
-import type {TaskRecord} from '../apiClient.js';
-import type {CodexTaskPushCapabilities, NativePermissionMode} from '../session/sessionTypes.js';
-import {Button} from '../ui/Button.js';
-import {ModalPortal} from '../ui/ModalPortal.js';
-import {ZeusSelect} from '../ZeusSelect.js';
-import {TaskAttachmentPreviewList} from './TaskAttachmentPreviewList.js';
-import {parseTaskAttachments} from './taskAttachments.js';
+import type { FormEvent, KeyboardEvent } from 'react';
+import type { TaskRecord } from '../apiClient.js';
+import type { CodexTaskPushCapabilities, NativePermissionMode } from '../session/sessionTypes.js';
+import { Button } from '../ui/Button.js';
+import { ModalPortal } from '../ui/ModalPortal.js';
+import { ZeusSelect } from '../ZeusSelect.js';
+import { TaskAttachmentPreviewList } from './TaskAttachmentPreviewList.js';
+import { parseTaskAttachments } from './taskAttachments.js';
 
 export interface TaskModelPushForm {
   model: string;
   effort: string;
   workMode: 'default' | 'plan';
   permissionMode: NativePermissionMode;
+  workspaceMode: 'create' | 'existing';
+  sourceRef: string;
+  workspaceId: string;
+  branchName: string;
   supplementalInfo: string;
 }
 
 export type TaskModelPushModalStatus = 'loading' | 'ready' | 'submitting' | 'error';
 
-export type TaskModelPushPreferences = Omit<TaskModelPushForm, 'supplementalInfo'>;
+export type TaskModelPushPreferences = Pick<TaskModelPushForm, 'model' | 'effort' | 'workMode' | 'permissionMode'>;
 
 const preferencesKeyPrefix = 'zeus.task-model-push-preferences:v1:';
 
 export function buildTaskModelPushMessage(canonicalPrompt: string, supplementalInfo: string): string {
-    const supplement = supplementalInfo.trim();
-    return supplement ? `${canonicalPrompt}\n\n## 本次推送补充信息\n${supplement}` : canonicalPrompt;
+  const supplement = supplementalInfo.trim();
+  return supplement ? `${canonicalPrompt}\n\n## 本次推送补充信息\n${supplement}` : canonicalPrompt;
 }
 
 export function readTaskModelPushPreferences(storage: Pick<Storage, 'getItem'> | undefined, projectId: string): TaskModelPushPreferences | null {
@@ -49,12 +53,17 @@ export function resolveTaskModelPushInitialForm(capabilities: CodexTaskPushCapab
   const selectedModel = rememberedModel ?? capabilities.models.find((model) => model.model === capabilities.preferredModel || model.id === capabilities.preferredModel) ?? capabilities.models[0];
   if (!selectedModel) throw new Error('Codex app-server did not report an available model.');
   const effort = rememberedModel && remembered && selectedModel.supportedReasoningEfforts.includes(remembered.effort) ? remembered.effort : (selectedModel.defaultReasoningEffort ?? selectedModel.supportedReasoningEfforts[0] ?? '');
+  const existingWorkspace = [...capabilities.workspaces].filter((workspace) => workspace.selectable).sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0];
   return {
     model: selectedModel.model,
     effort,
     workMode: remembered?.workMode ?? 'default',
     // 用户已确认：项目没有成功记忆时，权限必须回退为只读。
     permissionMode: remembered?.permissionMode ?? 'read-only',
+    workspaceMode: existingWorkspace ? 'existing' : 'create',
+    sourceRef: capabilities.workspaces[0]?.sourceBranch ?? capabilities.git.sourceRefs.find((source) => source.current)?.ref ?? capabilities.git.primaryBranch,
+    workspaceId: existingWorkspace?.id ?? '',
+    branchName: capabilities.git.suggestedBranchName,
     supplementalInfo: '',
   };
 }
@@ -79,7 +88,9 @@ export function TaskModelPushModal(props: {
   const busy = props.status === 'submitting';
   const attachments = parseTaskAttachments(props.task.sourceContextJson);
   const selectedModel = props.capabilities?.models.find((model) => model.model === props.form.model || model.id === props.form.model);
-    const canonicalPrompt = props.capabilities?.canonicalPrompt ?? `${zh ? '任务标题' : 'Task title'}：${props.task.title}\n${zh ? '任务要求' : 'Task request'}：${props.task.description?.trim() || (zh ? '未填写' : 'Not provided')}`;
+  const selectedWorkspace = props.capabilities?.workspaces.find((workspace) => workspace.id === props.form.workspaceId);
+  const taskSourceBranch = props.capabilities?.workspaces[0]?.sourceBranch;
+  const canonicalPrompt = props.capabilities?.canonicalPrompt ?? `${zh ? '任务标题' : 'Task title'}：${props.task.title}\n${zh ? '任务要求' : 'Task request'}：${props.task.description?.trim() || (zh ? '未填写' : 'Not provided')}`;
 
   function onModelChange(model: string): void {
     const capability = props.capabilities?.models.find((candidate) => candidate.model === model || candidate.id === model);
@@ -95,151 +106,229 @@ export function TaskModelPushModal(props: {
   }
 
   const modal = (
-    <ModalPortal
-      rootClassName="task-model-push-portal-root"
-      backdropClassName="task-model-push-backdrop"
-      dismissDisabled={busy}
-      onDismiss={props.onClose}
-    >
-        <form className="task-model-push-modal zeus-solid-form-surface" role="dialog" aria-modal="true" aria-labelledby="task-model-push-title" onSubmit={props.onSubmit} onKeyDown={handleKeyDown}>
-          <header className="task-model-push-header">
-            <span>
-              <strong id="task-model-push-title">{zh ? '推送到新会话' : 'Push to new conversation'}</strong>
-              <small>{props.projectName ? `${props.projectName} · ${props.task.taskCode ?? props.task.id}` : (props.task.taskCode ?? props.task.id)}</small>
+    <ModalPortal rootClassName="task-model-push-portal-root" backdropClassName="task-model-push-backdrop" dismissDisabled={busy} onDismiss={props.onClose}>
+      <form className="task-model-push-modal zeus-solid-form-surface" role="dialog" aria-modal="true" aria-labelledby="task-model-push-title" onSubmit={props.onSubmit} onKeyDown={handleKeyDown}>
+        <header className="task-model-push-header">
+          <span>
+            <strong id="task-model-push-title">{zh ? '推送到新会话' : 'Push to new conversation'}</strong>
+            <small>{props.projectName ? `${props.projectName} · ${props.task.taskCode ?? props.task.id}` : (props.task.taskCode ?? props.task.id)}</small>
+          </span>
+          <button type="button" aria-label={zh ? '关闭' : 'Close'} onClick={props.onClose} disabled={busy}>
+            ×
+          </button>
+        </header>
+
+        <div className="task-model-push-body">
+          <section className="task-model-push-workspace" aria-label={zh ? '任务开发分支' : 'Task development branch'}>
+            <span className="task-model-push-section-heading">
+              <strong>{zh ? '任务开发分支' : 'Task development branch'}</strong>
+              <small>{zh ? '同一分支可被后续新会话继续使用' : 'The same branch can be reused by later conversations'}</small>
             </span>
-            <button type="button" aria-label={zh ? '关闭' : 'Close'} onClick={props.onClose} disabled={busy}>
-              ×
-            </button>
-          </header>
-
-          <div className="task-model-push-body">
-            <div className="task-model-push-config-grid">
-              <label>
-                <span>{zh ? '模型' : 'Model'}</span>
-                  <ZeusSelect
-                      size="regular"
-                      ariaLabel={zh ? '模型' : 'Model'}
-                      value={props.form.model}
-                      options={(props.capabilities?.models ?? []).map((model) => ({
-                          value: model.model,
-                          label: model.displayName ?? model.model
-                      }))}
-                      onChange={onModelChange}
-                      disabled={!props.capabilities || busy}
-                      searchPlaceholder={zh ? '搜索模型' : 'Search models'}
-                      emptyLabel={zh ? '没有匹配模型' : 'No matching models'}
-                  />
-              </label>
-              <label>
-                <span>{zh ? '模型等级' : 'Reasoning effort'}</span>
-                  <ZeusSelect
-                      size="regular"
-                      ariaLabel={zh ? '模型等级' : 'Reasoning effort'}
-                      value={props.form.effort}
-                      options={(selectedModel?.supportedReasoningEfforts ?? []).map((effort) => ({
-                          value: effort,
-                          label: effort
-                      }))}
-                      onChange={(effort) => props.onChange({...props.form, effort})}
-                      disabled={!selectedModel || busy}
-                      searchable={false}
-                  />
-              </label>
-              <label>
-                <span>{zh ? '工作模式' : 'Work mode'}</span>
-                  <ZeusSelect
-                      size="regular"
-                      ariaLabel={zh ? '工作模式' : 'Work mode'}
-                      value={props.form.workMode}
-                      options={[
-                          {value: 'default', label: zh ? '默认' : 'Default'},
-                          {value: 'plan', label: zh ? '规划' : 'Plan'},
-                      ]}
-                      onChange={(workMode) => props.onChange({...props.form, workMode})}
-                      disabled={busy}
-                      searchable={false}
-                  />
-              </label>
-              <label>
-                <span>{zh ? '权限模式' : 'Permission mode'}</span>
-                  <ZeusSelect<NativePermissionMode>
-                      size="regular"
-                      ariaLabel={zh ? '权限模式' : 'Permission mode'}
-                      value={props.form.permissionMode}
-                      options={[
-                          {value: 'read-only', label: zh ? '只读' : 'Read only'},
-                          {value: 'auto', label: zh ? '自动' : 'Auto'},
-                          {value: 'full-access', label: zh ? '完全访问' : 'Full access'},
-                      ]}
-                      onChange={(permissionMode) => props.onChange({...props.form, permissionMode})}
-                      disabled={busy}
-                      searchable={false}
-                  />
-              </label>
-            </div>
-
-            <label className="task-model-push-supplement">
-              <span>{zh ? '补充信息（可选）' : 'Supplemental information (optional)'}</span>
-              <textarea
-                value={props.form.supplementalInfo}
-                maxLength={20_000}
-                onChange={(event) => props.onChange({ ...props.form, supplementalInfo: event.target.value })}
-                disabled={busy}
-                placeholder={zh ? '仅影响本次推送，不会修改任务本身。' : 'Applies only to this push and does not modify the task.'}
+            <label>
+              <span>{zh ? '使用方式' : 'Branch choice'}</span>
+              <ZeusSelect
+                size="regular"
+                ariaLabel={zh ? '任务开发分支使用方式' : 'Task branch choice'}
+                value={props.form.workspaceMode === 'existing' ? props.form.workspaceId : '__create__'}
+                options={[
+                  { value: '__create__', label: zh ? '创建新的 zeus/ 分支' : 'Create a new zeus/ branch' },
+                  ...(props.capabilities?.workspaces ?? [])
+                    .filter((workspace) => workspace.selectable)
+                    .map((workspace) => ({
+                      value: workspace.id,
+                      label: `${workspace.branchName}${workspace.clean === false ? (zh ? ' · 有未提交变更' : ' · uncommitted changes') : ''}`,
+                    })),
+                ]}
+                onChange={(value) =>
+                  props.onChange(
+                    value === '__create__'
+                      ? {
+                          ...props.form,
+                          workspaceMode: 'create',
+                          workspaceId: '',
+                          sourceRef: taskSourceBranch ?? props.form.sourceRef,
+                          branchName: props.capabilities?.git.suggestedBranchName ?? props.form.branchName,
+                        }
+                      : { ...props.form, workspaceMode: 'existing', workspaceId: value },
+                  )
+                }
+                disabled={!props.capabilities || busy}
+                searchable={false}
               />
             </label>
-
-            <section className="task-model-push-canonical">
-              <strong>{zh ? '将发送的任务内容' : 'Task content to send'}</strong>
-                <pre>{buildTaskModelPushMessage(canonicalPrompt, props.form.supplementalInfo)}</pre>
-            </section>
-
-            <section className="task-model-push-attachments">
-              <span>
-                <strong>{zh ? '附件' : 'Attachments'}</strong>
-                <small>{attachments.length}</small>
+            {props.form.workspaceMode === 'create' ? (
+              <div className="task-model-push-workspace-grid">
+                <label>
+                  <span>{zh ? '来源分支' : 'Source branch'}</span>
+                  <ZeusSelect
+                    size="regular"
+                    ariaLabel={zh ? '来源分支' : 'Source branch'}
+                    value={props.form.sourceRef}
+                    options={(props.capabilities?.git.sourceRefs ?? []).map((source) => ({
+                      value: source.ref,
+                      label: `${source.label}${source.current ? (zh ? ' · 当前' : ' · current') : ''}${source.kind === 'remote' ? (zh ? ' · 远端' : ' · remote') : ''}`,
+                    }))}
+                    onChange={(sourceRef) => props.onChange({ ...props.form, sourceRef })}
+                    disabled={!props.capabilities || busy || Boolean(taskSourceBranch)}
+                    searchPlaceholder={zh ? '搜索分支' : 'Search branches'}
+                  />
+                </label>
+                <label>
+                  <span>{zh ? '新分支' : 'New branch'}</span>
+                  <input value={props.form.branchName} onChange={(event) => props.onChange({ ...props.form, branchName: event.target.value })} disabled={busy} spellCheck={false} />
+                </label>
+              </div>
+            ) : selectedWorkspace ? (
+              <span className="task-model-push-workspace-summary">
+                <strong>{selectedWorkspace.branchName}</strong>
+                <small>
+                  {zh ? '来源' : 'Source'} {selectedWorkspace.sourceBranch} · {selectedWorkspace.worktreePath ? (zh ? '复用现有 worktree' : 'Reuse existing worktree') : zh ? '从分支恢复 worktree' : 'Restore worktree from branch'}
+                </small>
               </span>
-              {attachments.length > 0 ? (
-                <TaskAttachmentPreviewList
-                  attachments={attachments}
-                  mode="readonly"
-                  onLoadPreview={props.onLoadAttachmentPreview}
-                  onOpenAttachment={props.onOpenAttachment}
-                  copy={{
-                    imageLabel: zh ? '图片' : 'Image',
-                    fileLabel: zh ? '文件' : 'File',
-                    openFileLabel: zh ? '打开附件' : 'Open attachment',
-                    openPreviewLabel: zh ? '预览附件' : 'Preview attachment',
-                    closePreviewLabel: zh ? '关闭预览' : 'Close preview',
-                    previewUnavailable: zh ? '无法预览' : 'Preview unavailable',
-                    localPathLabel: zh ? '本机路径' : 'Local path',
-                  }}
-                />
-              ) : (
-                <small>{zh ? '无附件' : 'No attachments'}</small>
-              )}
-            </section>
-
-            {props.status === 'loading' ? <p className="task-model-push-message">{zh ? '正在连接 app-server 并读取可用模型…' : 'Connecting to app-server and loading models…'}</p> : null}
-            {props.error ? (
-              <p className="task-model-push-error" role="alert">
-                {props.error}
+            ) : null}
+            {props.capabilities?.git.primaryClean === false && props.form.workspaceMode === 'create' ? (
+              <p className="task-model-push-warning">
+                {zh ? '主工作区存在未提交变更；新分支只会使用来源分支已提交的 HEAD，不会带入这些变更。' : 'The primary workspace has uncommitted changes. The new branch uses only the committed source HEAD.'}
               </p>
             ) : null}
+            <small className="task-model-push-worktree-root">
+              {zh ? 'worktree 保存位置' : 'Worktree location'}：{props.capabilities?.git.worktreeRoot ?? '—'}
+            </small>
+          </section>
+
+          <div className="task-model-push-config-grid">
+            <label>
+              <span>{zh ? '模型' : 'Model'}</span>
+              <ZeusSelect
+                size="regular"
+                ariaLabel={zh ? '模型' : 'Model'}
+                value={props.form.model}
+                options={(props.capabilities?.models ?? []).map((model) => ({
+                  value: model.model,
+                  label: model.displayName ?? model.model,
+                }))}
+                onChange={onModelChange}
+                disabled={!props.capabilities || busy}
+                searchPlaceholder={zh ? '搜索模型' : 'Search models'}
+                emptyLabel={zh ? '没有匹配模型' : 'No matching models'}
+              />
+            </label>
+            <label>
+              <span>{zh ? '模型等级' : 'Reasoning effort'}</span>
+              <ZeusSelect
+                size="regular"
+                ariaLabel={zh ? '模型等级' : 'Reasoning effort'}
+                value={props.form.effort}
+                options={(selectedModel?.supportedReasoningEfforts ?? []).map((effort) => ({
+                  value: effort,
+                  label: effort,
+                }))}
+                onChange={(effort) => props.onChange({ ...props.form, effort })}
+                disabled={!selectedModel || busy}
+                searchable={false}
+              />
+            </label>
+            <label>
+              <span>{zh ? '工作模式' : 'Work mode'}</span>
+              <ZeusSelect
+                size="regular"
+                ariaLabel={zh ? '工作模式' : 'Work mode'}
+                value={props.form.workMode}
+                options={[
+                  { value: 'default', label: zh ? '默认' : 'Default' },
+                  { value: 'plan', label: zh ? '规划' : 'Plan' },
+                ]}
+                onChange={(workMode) => props.onChange({ ...props.form, workMode })}
+                disabled={busy}
+                searchable={false}
+              />
+            </label>
+            <label>
+              <span>{zh ? '权限模式' : 'Permission mode'}</span>
+              <ZeusSelect<NativePermissionMode>
+                size="regular"
+                ariaLabel={zh ? '权限模式' : 'Permission mode'}
+                value={props.form.permissionMode}
+                options={[
+                  { value: 'read-only', label: zh ? '只读' : 'Read only' },
+                  { value: 'auto', label: zh ? '自动' : 'Auto' },
+                  { value: 'full-access', label: zh ? '完全访问' : 'Full access' },
+                ]}
+                onChange={(permissionMode) => props.onChange({ ...props.form, permissionMode })}
+                disabled={busy}
+                searchable={false}
+              />
+            </label>
           </div>
 
-          <footer className="task-model-push-footer">
-              <small>{zh ? '确认后会创建新会话并立即进入；历史会话不会被覆盖。' : 'A new conversation will be created and opened; history remains unchanged.'}</small>
+          <label className="task-model-push-supplement">
+            <span>{zh ? '补充信息（可选）' : 'Supplemental information (optional)'}</span>
+            <textarea
+              value={props.form.supplementalInfo}
+              maxLength={20_000}
+              onChange={(event) => props.onChange({ ...props.form, supplementalInfo: event.target.value })}
+              disabled={busy}
+              placeholder={zh ? '仅影响本次推送，不会修改任务本身。' : 'Applies only to this push and does not modify the task.'}
+            />
+          </label>
+
+          <section className="task-model-push-canonical">
+            <strong>{zh ? '将发送的任务内容' : 'Task content to send'}</strong>
+            <pre>{buildTaskModelPushMessage(canonicalPrompt, props.form.supplementalInfo)}</pre>
+          </section>
+
+          <section className="task-model-push-attachments">
             <span>
-              <Button variant="secondary" size="regular" onClick={props.onClose} disabled={busy}>
-                {zh ? '取消' : 'Cancel'}
-              </Button>
-              <Button type="submit" variant="primary" size="regular" busy={busy} disabled={props.status === 'loading' || !props.form.model}>
-                {busy ? (zh ? '正在创建…' : 'Creating…') : zh ? '创建新会话' : 'Create conversation'}
-              </Button>
+              <strong>{zh ? '附件' : 'Attachments'}</strong>
+              <small>{attachments.length}</small>
             </span>
-          </footer>
-        </form>
+            {attachments.length > 0 ? (
+              <TaskAttachmentPreviewList
+                attachments={attachments}
+                mode="readonly"
+                onLoadPreview={props.onLoadAttachmentPreview}
+                onOpenAttachment={props.onOpenAttachment}
+                copy={{
+                  imageLabel: zh ? '图片' : 'Image',
+                  fileLabel: zh ? '文件' : 'File',
+                  openFileLabel: zh ? '打开附件' : 'Open attachment',
+                  openPreviewLabel: zh ? '预览附件' : 'Preview attachment',
+                  closePreviewLabel: zh ? '关闭预览' : 'Close preview',
+                  previewUnavailable: zh ? '无法预览' : 'Preview unavailable',
+                  localPathLabel: zh ? '本机路径' : 'Local path',
+                }}
+              />
+            ) : (
+              <small>{zh ? '无附件' : 'No attachments'}</small>
+            )}
+          </section>
+
+          {props.status === 'loading' ? <p className="task-model-push-message">{zh ? '正在连接 app-server 并读取可用模型…' : 'Connecting to app-server and loading models…'}</p> : null}
+          {props.error ? (
+            <p className="task-model-push-error" role="alert">
+              {props.error}
+            </p>
+          ) : null}
+        </div>
+
+        <footer className="task-model-push-footer">
+          <small>{zh ? '确认后会创建新会话并立即进入；历史会话不会被覆盖。' : 'A new conversation will be created and opened; history remains unchanged.'}</small>
+          <span>
+            <Button variant="secondary" size="regular" onClick={props.onClose} disabled={busy}>
+              {zh ? '取消' : 'Cancel'}
+            </Button>
+            <Button
+              type="submit"
+              variant="primary"
+              size="regular"
+              busy={busy}
+              disabled={props.status === 'loading' || !props.form.model || (props.form.workspaceMode === 'existing' ? !props.form.workspaceId : !props.form.sourceRef || !props.form.branchName.trim())}
+            >
+              {busy ? (zh ? '正在创建…' : 'Creating…') : zh ? '创建新会话' : 'Create conversation'}
+            </Button>
+          </span>
+        </footer>
+      </form>
     </ModalPortal>
   );
   return modal;

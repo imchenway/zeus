@@ -442,7 +442,10 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       ...(input.ephemeral ? { ephemeral: true } : {}),
       ...(additionalContext ? { additionalContext } : {}),
     };
-    if (existingConversation && (existingConversation.projectId !== input.projectId || existingConversation.taskId !== input.taskId || existingConversation.transportKind !== 'codex_native')) {
+    if (
+      existingConversation &&
+      (existingConversation.projectId !== input.projectId || existingConversation.taskId !== input.taskId || existingConversation.workspaceId !== (input.workspaceId ?? null) || existingConversation.transportKind !== 'codex_native')
+    ) {
       throw coordinatorError('ZEUS_NATIVE_RESERVED_RESOURCE_CONFLICT', 'Reserved native conversation id is already owned by another resource.');
     }
     const conversation =
@@ -451,6 +454,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         ...(input.conversationId ? { id: input.conversationId } : {}),
         projectId: input.projectId,
         taskId: input.taskId,
+        ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
         title: `任务会话：${input.taskTitle.slice(0, 48)}`,
         summary: input.prompt.slice(0, 240),
         status: 'starting',
@@ -672,8 +676,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     const activeTurn = [...options.turns.listByConversation(conversation.id)].reverse().find((turn) => turn.status === 'running' || turn.status === 'waiting' || turn.status === 'dispatching');
     if (activeTurn?.providerTurnId) {
       if (activeTurn.status === 'waiting') {
-        const currentGenerationId = readyGenerationId();
-        const pending = options.requests.listByConversation(conversation.id).find((request) => request.turnId === activeTurn.id && request.status === 'pending' && request.transportGenerationId === currentGenerationId);
+        const pending = options.requests.listByConversation(conversation.id).find((request) => request.turnId === activeTurn.id && request.status === 'pending' && options.manager.hasGeneration(request.transportGenerationId));
         if (pending) {
           return {
             type: 'waiting',
@@ -696,7 +699,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   function failStalePendingRequests(conversationId: string, currentGenerationId: string): void {
     const timestamp = now();
     for (const request of options.requests.listByConversation(conversationId)) {
-      if (request.status !== 'pending' || request.transportGenerationId === currentGenerationId) continue;
+      if (request.status !== 'pending' || options.manager.hasGeneration(request.transportGenerationId)) continue;
       options.requests.fail(request.id, {
         error: {
           error: 'ZEUS_CODEX_REQUEST_GENERATION_STALE',
@@ -1147,7 +1150,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     const request = options.requests.getById(input.requestId);
     if (!request) throw coordinatorError('ZEUS_CODEX_SERVER_REQUEST_NOT_FOUND', 'Codex server request is not pending.');
     const currentGenerationId = readyGenerationId();
-    if (!currentGenerationId || request.transportGenerationId !== currentGenerationId) {
+    if (!options.manager.hasGeneration(request.transportGenerationId)) {
       if (request.status === 'pending') {
         options.requests.fail(request.id, {
           error: {
@@ -1231,7 +1234,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     });
     const turn = request.turnId ? options.turns.getById(request.turnId) : undefined;
     if (turn?.providerTurnId) {
-      const pending = options.requests.listByConversation(conversation.id).find((candidate) => candidate.turnId === turn.id && candidate.status === 'pending' && candidate.transportGenerationId === currentGenerationId);
+      const pending = options.requests.listByConversation(conversation.id).find((candidate) => candidate.turnId === turn.id && candidate.status === 'pending' && options.manager.hasGeneration(candidate.transportGenerationId));
       if (pending) {
         options.turns.upsert({ ...turn, status: 'waiting', updatedAt: now() });
         options.conversations.bindProvider(conversation.id, {
@@ -1555,8 +1558,9 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         if (contextual) contexts.set(conversation.id, contextFromSubmission(contextual));
         const providerThreadId = requireString(conversation.providerThreadId, 'provider thread id');
         await options.manager.resumeThread({ threadId: providerThreadId, ...(contexts.get(conversation.id)?.projectLocalPath ? { cwd: contexts.get(conversation.id)!.projectLocalPath } : {}) });
+        const authoritativeGenerationId = options.manager.generationForThread(providerThreadId) ?? generationId;
         const snapshot = await options.manager.readThread({ threadId: providerThreadId });
-        reconcileConversationSnapshot(conversation, snapshot, generationId);
+        reconcileConversationSnapshot(conversation, snapshot, authoritativeGenerationId);
       } catch (error) {
         if (isProviderThreadArchivedError(error)) markConversationProviderArchived(conversation.id, error);
         else markConversationRecoveryRequired(conversation.id, error);
@@ -2350,7 +2354,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
             timestamp: event.receivedAt,
           });
           broadcast = { type: 'conversation.native.error', payload: { conversationId: conversation.id, providerThreadId: threadId, providerTurnId, ...recoveryError } };
-        } else if (currentGenerationId !== event.generationId) {
+        } else if (!options.manager.hasGeneration(event.generationId)) {
           const recoveryError = {
             error: 'ZEUS_CODEX_REQUEST_GENERATION_STALE',
             message: 'The provider request arrived from a retired app-server generation and cannot become interaction authority.',

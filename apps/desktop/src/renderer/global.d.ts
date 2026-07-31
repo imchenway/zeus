@@ -1,4 +1,4 @@
-import type { DashboardClientOptions, LocalBusinessDataSnapshot, LocalSettingsExportSnapshot } from './apiClient.js';
+import type { DashboardClientOptions, LocalBusinessDataSnapshot, LocalSettingsExportSnapshot, ReleaseUpdateOperationSnapshot } from './apiClient.js';
 import type { ZeusBrowserApprovalDecision, ZeusBrowserCommand, ZeusBrowserConversationSnapshot, ZeusBrowserEvent, ZeusBrowserPreparedSubmission, ZeusBrowserSettings } from '@zeus/shared';
 import type { ConversationFileLocation, ConversationOpenTarget, ConversationResourceOpenTarget } from '@zeus/shared';
 
@@ -103,6 +103,8 @@ declare global {
         lineStart?: number | null;
       }>;
       openExternalHttpsUrl: (url: string) => Promise<{ opened: boolean; url?: string; error?: string }>;
+      downloadReleaseUpdate: () => Promise<ReleaseUpdateOperationSnapshot>;
+      installReleaseUpdate: () => Promise<ReleaseUpdateOperationSnapshot>;
       listConversationResourceOpenTargets: (request: { projectId: string; conversationId: string; resourceId: string }) => Promise<{ resourceId: string; targets: ConversationResourceOpenTarget[] }>;
       openConversationResource: (request: { projectId: string; conversationId: string; resourceId: string; target: ConversationOpenTarget; location?: ConversationFileLocation }) => Promise<{
         opened: boolean;
@@ -121,6 +123,7 @@ declare global {
         openAtLoginEnabled: boolean;
       }) => Promise<{ applied: boolean }>;
       notifyTaskTableLayoutDirty: (dirty: boolean) => void;
+      notifySensitiveRequestDraft: (payload: { requestId: string; present: boolean }) => void;
       resolveTaskTableLayoutCloseRequest: (proceed: boolean) => void;
       onTaskTableLayoutCloseRequested: (listener: () => void) => () => void;
       exportRuntimeLogsToFile: (payload: {

@@ -1,4 +1,5 @@
-import {nanoid} from 'nanoid';
+import { nanoid } from 'nanoid';
+import { dirname, join, normalize } from 'node:path';
 
 interface CodeSymbolFact {
   id: string;
@@ -64,6 +65,7 @@ export interface ProjectGraphEdge {
 }
 
 export type GraphViewType = 'architecture' | 'module' | 'table' | 'module_detail' | 'api_sequence' | 'module_flow' | 'method_logic';
+export const GRAPH_VIEW_SCHEMA_VERSION = 2;
 const ARCHITECTURE_VIEW_NODE_LIMIT = 250;
 const MODULE_VIEW_NODE_LIMIT = 1200;
 const TABLE_VIEW_NODE_LIMIT = 1200;
@@ -73,6 +75,7 @@ const METHOD_LOGIC_VIEW_NODE_LIMIT = 6000;
 
 export interface ProjectGraphView {
   id: string;
+  schemaVersion: number;
   viewType: GraphViewType;
   title: string;
   nodeIds: string[];
@@ -132,6 +135,10 @@ export function buildProjectGraph(scan: ProjectScanResult): ProjectGraph {
   edges.push(...buildTableColumnEdges(nodes, nodeByQualifiedName));
   edges.push(...buildSqlColumnImpactEdges(nodes, nodeByQualifiedName));
   edges.push(...buildImportDependencyEdges(nodes, nodeByQualifiedName));
+  edges.push(...buildWorkspacePackageDependencyEdges(nodes));
+  edges.push(...buildMavenArchitectureEdges(nodes));
+  edges.push(...buildArchitectureComponentOwnershipEdges(nodes));
+  edges.push(...buildArchitectureComponentDependencyEdges(nodes));
   edges.push(...buildSqlJoinRelationEdges(nodes));
   edges.push(...buildTableReferenceEdges(nodes));
   return {
@@ -152,7 +159,7 @@ export function assertNonEmptyGraph(graph: ProjectGraph): void {
 function toGraphNode(symbol: CodeSymbolFact): ProjectGraphNode {
   return {
     id: `node_${nanoid(12)}`,
-    nodeType: symbol.symbolType,
+    nodeType: ['maven_project', 'maven_module'].includes(String(symbol.metadata.sourceKind)) ? 'module' : symbol.symbolType,
     name: symbol.name,
     qualifiedName: symbol.qualifiedName,
     sourceRef: symbol.filePath,
@@ -169,10 +176,9 @@ function toGraphNode(symbol: CodeSymbolFact): ProjectGraphNode {
 
 /** 生成设计书要求的多类图谱视图；所有节点和边都来自真实扫描事实。 */
 function buildGraphViews(projectName: string, nodes: ProjectGraphNode[], edges: ProjectGraphEdge[]): ProjectGraphView[] {
-  const nodeIds = nodes.map((node) => node.id);
-  const architectureNodeIds = nodeIds.slice(0, ARCHITECTURE_VIEW_NODE_LIMIT);
-  // 架构图节点有上限时，边必须跟随可见节点二次裁剪；否则大型仓库会把不可见端点交给 Graphology/Sigma 导致渲染崩溃。
-  const architectureEdgeIds = pickEdgesForNodes(edges, architectureNodeIds).slice(0, 500);
+  const architectureNodeIds = pickArchitectureNodeIds(nodes, edges).slice(0, ARCHITECTURE_VIEW_NODE_LIMIT);
+  // 系统架构图只接收模块、运行组件与真实依赖，禁止再把按路径排序的文档标题或普通文件填进架构画布。
+  const architectureEdgeIds = pickArchitectureEdgeIds(edges, architectureNodeIds).slice(0, 500);
   // 模块图和表关系图也必须在服务端裁剪；真实 Java 大仓可能有上万文件/表字段，不能把超大 payload 交给 Electron 渲染进程。
   const moduleNodeIds = pickNodeIdsByTypePriority(nodes, ['package', 'file', 'class', 'interface', 'type']).slice(0, MODULE_VIEW_NODE_LIMIT);
   const tableNodeIds = pickSqlNodeIds(nodes).slice(0, TABLE_VIEW_NODE_LIMIT);
@@ -214,6 +220,7 @@ function makeApiSequenceGraphView(projectName: string, nodes: ProjectGraphNode[]
 function makeGraphView(projectName: string, viewType: GraphViewType, label: string, nodeIds: string[], edgeIds: string[]): ProjectGraphView {
   return {
     id: `view_${nanoid(12)}`,
+    schemaVersion: GRAPH_VIEW_SCHEMA_VERSION,
     viewType,
     title: `${projectName} ${label}`,
     nodeIds,
@@ -251,6 +258,34 @@ function pickNodeIdsByTypePriority(nodes: ProjectGraphNode[], nodeTypes: string[
   return nodeTypes.flatMap((nodeType) => nodes.filter((node) => node.nodeType === nodeType).map((node) => node.id));
 }
 
+const architectureStereotypePriority = ['spring_boot_application', 'remote_client', 'controller', 'service', 'repository', 'mybatis_mapper', 'component'] as const;
+
+/** 系统架构视图按模块和运行组件语义选点，不再使用扫描顺序作为架构事实。 */
+function pickArchitectureNodeIds(nodes: ProjectGraphNode[], edges: ProjectGraphEdge[]): string[] {
+  const moduleNodes = nodes.filter((node) => node.nodeType === 'package' || node.metadata.sourceKind === 'maven_project');
+  const componentNodes = architectureStereotypePriority.flatMap((stereotype) => nodes.filter((node) => node.metadata.stereotype === stereotype));
+  const applicationNodes = componentNodes.filter((node) => node.metadata.stereotype === 'spring_boot_application');
+  // 已识别到 Maven/workspace 边界时，系统架构图停在模块和可运行应用层；Controller/Service 等细节留给模块视图。
+  if (moduleNodes.length > 0) return uniqueNodeIds([...moduleNodes, ...applicationNodes]);
+  const architectureEdges = edges.filter((edge) => edge.edgeType === 'contains' || edge.edgeType === 'module_depends_on');
+  const connectedNodeIds = new Set(architectureEdges.flatMap((edge) => [edge.sourceNodeId, edge.targetNodeId]));
+  const alwaysVisibleNodeIds = new Set(applicationNodes.map((node) => node.id));
+  return uniqueNodeIds(componentNodes).filter((nodeId) => alwaysVisibleNodeIds.has(nodeId) || connectedNodeIds.has(nodeId));
+}
+
+function pickArchitectureEdgeIds(edges: ProjectGraphEdge[], nodeIds: string[]): string[] {
+  const allowedNodeIds = new Set(nodeIds);
+  return edges
+    .filter((edge) => allowedNodeIds.has(edge.sourceNodeId) && allowedNodeIds.has(edge.targetNodeId) && (edge.edgeType === 'contains' || edge.edgeType === 'module_depends_on'))
+    .sort((a, b) => architectureEdgePriority(a) - architectureEdgePriority(b))
+    .map((edge) => edge.id);
+}
+
+function architectureEdgePriority(edge: ProjectGraphEdge): number {
+  if (edge.edgeType === 'contains') return 0;
+  return 1;
+}
+
 function pickApiSequenceNodeIds(nodes: ProjectGraphNode[]): string[] {
   const apiNodes = nodes.filter((node) => node.nodeType === 'api');
   const apiSourceRefs = new Set(apiNodes.map((node) => node.sourceRef));
@@ -278,7 +313,7 @@ function pickApiSequenceNodeIds(nodes: ProjectGraphNode[]): string[] {
     ...resolvedApiHandlerCallNodes,
     ...resolvedTargetSqlNodes,
     ...resolvedTargetTableNodes,
-      ...resolvedTransitiveTargetCallNodes,
+    ...resolvedTransitiveTargetCallNodes,
     ...unresolvedApiHandlerCallNodes,
     ...unresolvedTransitiveTargetCallNodes,
     ...handlerLikeNodes,
@@ -970,6 +1005,187 @@ function buildImportDependencyEdges(nodes: ProjectGraphNode[], nodeByQualifiedNa
         },
       ];
     });
+}
+
+/** 将 workspace package.json 中声明的内部依赖连成包级架构边。 */
+function buildWorkspacePackageDependencyEdges(nodes: ProjectGraphNode[]): ProjectGraphEdge[] {
+  const packageNodes = nodes.filter((node) => node.nodeType === 'package');
+  const packageByName = new Map(packageNodes.map((node) => [node.name, node]));
+  return dedupeArchitectureEdges(
+    packageNodes.flatMap((source) =>
+      metadataStringArray(source.metadata.dependencies).flatMap((dependencyName) => {
+        const target = packageByName.get(dependencyName);
+        if (!target || target.id === source.id) return [];
+        return [
+          makeArchitectureEdge('module_depends_on', source, target, {
+            evidenceKind: 'package_json_dependency',
+            dependencyName,
+          }),
+        ];
+      }),
+    ),
+  );
+}
+
+/** 将 Maven reactor 模块声明和仓库内依赖转换为模块级架构边，不把外部依赖清单铺满主画布。 */
+function buildMavenArchitectureEdges(nodes: ProjectGraphNode[]): ProjectGraphEdge[] {
+  const projects = nodes.filter((node) => node.metadata.sourceKind === 'maven_project');
+  const modules = nodes.filter((node) => node.metadata.sourceKind === 'maven_module');
+  const dependencies = nodes.filter((node) => node.metadata.sourceKind === 'maven_dependency' && node.metadata.scope !== 'test');
+  const projectByPomPath = new Map(projects.map((node) => [graphNodeRelativePath(node), node] as const).filter((entry): entry is [string, ProjectGraphNode] => Boolean(entry[0])));
+  const projectsByArtifactId = new Map<string, ProjectGraphNode[]>();
+  for (const project of projects) {
+    const artifactId = metadataString(project.metadata.artifactId);
+    if (!artifactId) continue;
+    const matches = projectsByArtifactId.get(artifactId) ?? [];
+    matches.push(project);
+    projectsByArtifactId.set(artifactId, matches);
+  }
+  const edges: ProjectGraphEdge[] = [];
+  for (const moduleNode of modules) {
+    const parentPomPath = graphNodeRelativePath(moduleNode);
+    const modulePath = metadataString(moduleNode.metadata.modulePath);
+    if (!parentPomPath || !modulePath) continue;
+    const source = projectByPomPath.get(parentPomPath);
+    const targetPomPath = normalize(join(dirname(parentPomPath), modulePath, 'pom.xml'));
+    const target = projectByPomPath.get(targetPomPath);
+    if (!source || !target || source.id === target.id) continue;
+    edges.push(
+      makeArchitectureEdge('contains', source, target, {
+        evidenceKind: 'maven_module',
+        modulePath,
+      }),
+    );
+  }
+  for (const dependency of dependencies) {
+    const dependencyPomPath = graphNodeRelativePath(dependency);
+    const artifactId = metadataString(dependency.metadata.artifactId);
+    if (!dependencyPomPath || !artifactId) continue;
+    const source = projectByPomPath.get(dependencyPomPath);
+    const candidates = projectsByArtifactId.get(artifactId) ?? [];
+    const target = candidates.find((candidate) => candidate.id !== source?.id && metadataString(candidate.metadata.groupId) === metadataString(dependency.metadata.groupId)) ?? candidates.find((candidate) => candidate.id !== source?.id);
+    if (!source || !target) continue;
+    edges.push(
+      makeArchitectureEdge('module_depends_on', source, target, {
+        evidenceKind: 'maven_dependency',
+        artifactId,
+      }),
+    );
+  }
+  return dedupeArchitectureEdges(edges);
+}
+
+/** 将 Spring 运行组件归属到最内层 Maven/workspace 模块，作为架构层级而非文件声明关系。 */
+function buildArchitectureComponentOwnershipEdges(nodes: ProjectGraphNode[]): ProjectGraphEdge[] {
+  const owners = nodes
+    .filter((node) => node.nodeType === 'package' || node.metadata.sourceKind === 'maven_project')
+    .map((node) => ({ node, root: graphOwnerRoot(node) }))
+    .filter((item): item is { node: ProjectGraphNode; root: string } => item.root !== undefined);
+  const components = nodes.filter((node) => architectureStereotypePriority.includes(node.metadata.stereotype as (typeof architectureStereotypePriority)[number]));
+  const edges: ProjectGraphEdge[] = [];
+  for (const component of components) {
+    const componentPath = graphNodeRelativePath(component);
+    if (!componentPath) continue;
+    const owner = owners.filter((candidate) => pathIsInsideGraphRoot(componentPath, candidate.root)).sort((a, b) => b.root.length - a.root.length)[0];
+    if (!owner) continue;
+    edges.push(
+      makeArchitectureEdge('contains', owner.node, component, {
+        evidenceKind: 'source_path_ownership',
+        ownerRoot: owner.root,
+      }),
+    );
+  }
+  return dedupeArchitectureEdges(edges);
+}
+
+/** 只把有架构角色的类之间的真实 import 提升为组件依赖，普通文件依赖继续留在模块图。 */
+function buildArchitectureComponentDependencyEdges(nodes: ProjectGraphNode[]): ProjectGraphEdge[] {
+  const components = nodes.filter((node) => architectureStereotypePriority.includes(node.metadata.stereotype as (typeof architectureStereotypePriority)[number]));
+  const componentsBySourceRef = new Map<string, ProjectGraphNode[]>();
+  const componentsByRelativePath = new Map<string, ProjectGraphNode[]>();
+  for (const component of components) {
+    const sourceMatches = componentsBySourceRef.get(component.sourceRef) ?? [];
+    sourceMatches.push(component);
+    componentsBySourceRef.set(component.sourceRef, sourceMatches);
+    const relativePath = graphNodeRelativePath(component);
+    if (!relativePath) continue;
+    const relativeMatches = componentsByRelativePath.get(relativePath) ?? [];
+    relativeMatches.push(component);
+    componentsByRelativePath.set(relativePath, relativeMatches);
+  }
+  const edges: ProjectGraphEdge[] = [];
+  for (const importNode of nodes.filter((node) => node.nodeType === 'import')) {
+    const resolvedRelativePath = metadataString(importNode.metadata.resolvedRelativePath);
+    if (!resolvedRelativePath) continue;
+    const sources = componentsBySourceRef.get(importNode.sourceRef) ?? [];
+    const targets = componentsByRelativePath.get(normalize(resolvedRelativePath)) ?? [];
+    for (const source of sources) {
+      for (const target of targets) {
+        if (source.id === target.id) continue;
+        edges.push(
+          makeArchitectureEdge('module_depends_on', source, target, {
+            evidenceKind: 'source_import',
+            importSource: metadataString(importNode.metadata.importSource),
+          }),
+        );
+      }
+    }
+  }
+  return dedupeArchitectureEdges(edges);
+}
+
+function makeArchitectureEdge(edgeType: 'contains' | 'module_depends_on', source: ProjectGraphNode, target: ProjectGraphNode, metadata: Record<string, unknown>): ProjectGraphEdge {
+  return {
+    id: `edge_${nanoid(12)}`,
+    edgeType,
+    sourceNodeId: source.id,
+    targetNodeId: target.id,
+    sourceRef: source.sourceRef,
+    confidence: 1,
+    metadata,
+  };
+}
+
+function dedupeArchitectureEdges(edges: ProjectGraphEdge[]): ProjectGraphEdge[] {
+  const seen = new Set<string>();
+  return edges.filter((edge) => {
+    const key = `${edge.edgeType}:${edge.sourceNodeId}:${edge.targetNodeId}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function graphNodeRelativePath(node: ProjectGraphNode): string | undefined {
+  const explicit = metadataString(node.metadata.relativePath);
+  if (explicit) return normalize(explicit);
+  const qualifiedPath = node.qualifiedName.split('#')[0];
+  return qualifiedPath && qualifiedPath !== node.qualifiedName ? normalize(qualifiedPath) : undefined;
+}
+
+function graphOwnerRoot(node: ProjectGraphNode): string | undefined {
+  if (node.metadata.sourceKind === 'maven_project') {
+    const pomPath = graphNodeRelativePath(node);
+    if (!pomPath) return undefined;
+    const root = dirname(pomPath);
+    return root === '.' ? '' : normalize(root);
+  }
+  if (node.nodeType === 'package') {
+    const root = metadataString(node.metadata.packageRoot);
+    return root ? normalize(root) : '';
+  }
+  return undefined;
+}
+
+function pathIsInsideGraphRoot(relativePath: string, root: string): boolean {
+  if (!root) return true;
+  const normalizedPath = normalize(relativePath);
+  const normalizedRoot = normalize(root);
+  return normalizedPath === normalizedRoot || normalizedPath.startsWith(`${normalizedRoot}/`) || normalizedPath.startsWith(`${normalizedRoot}\\`);
+}
+
+function metadataString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
 }
 
 function metadataStringArray(value: unknown): string[] {

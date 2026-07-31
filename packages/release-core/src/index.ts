@@ -81,6 +81,7 @@ export interface ReleaseUpdateManifestInput {
   signed?: boolean;
   notarized?: boolean;
   minimumSystemVersion?: string;
+  executionHostProtocolVersion?: number;
   artifacts: ReleaseUpdateArtifactInput[];
 }
 
@@ -97,6 +98,7 @@ export interface ReleaseUpdateManifest {
   signed: boolean;
   notarized: boolean;
   minimumSystemVersion: string;
+  executionHostProtocolVersion: number;
   artifacts: ReleaseUpdateArtifact[];
   homebrew: {
     tap: string;
@@ -116,6 +118,7 @@ export interface ReleaseUpdateStatus {
   channel: ReleaseUpdateChannel;
   releasePageUrl: string;
   artifact: ReleaseUpdateArtifact | null;
+  executionHostProtocolVersion: number;
   automaticInstallEnabled: boolean;
   recommendedAction: ReleaseUpdateRecommendedAction;
   label: string;
@@ -127,6 +130,7 @@ export interface EvaluateReleaseUpdateAvailabilityInput {
   currentVersion: string;
   manifest: ReleaseUpdateManifest;
   platformArch: ReleaseUpdateArtifactArch;
+  executionHostProtocolVersion?: number;
   checkedAt?: string;
 }
 
@@ -219,6 +223,7 @@ export function buildReleaseUpdateManifest(input: ReleaseUpdateManifestInput): R
     signed: Boolean(input.signed),
     notarized: Boolean(input.notarized),
     minimumSystemVersion: input.minimumSystemVersion?.trim() || '13.0',
+    executionHostProtocolVersion: typeof input.executionHostProtocolVersion === 'number' && Number.isInteger(input.executionHostProtocolVersion) && input.executionHostProtocolVersion > 0 ? input.executionHostProtocolVersion : 1,
     artifacts,
     homebrew: {
       tap: homebrewTap,
@@ -243,6 +248,7 @@ export function evaluateReleaseUpdateAvailability(input: EvaluateReleaseUpdateAv
       channel: input.manifest.channel,
       releasePageUrl: input.manifest.releasePageUrl,
       artifact,
+      executionHostProtocolVersion: input.manifest.executionHostProtocolVersion,
       automaticInstallEnabled: false,
       recommendedAction: 'none',
       label: `已是最新版本 · ${currentVersion}`,
@@ -258,6 +264,7 @@ export function evaluateReleaseUpdateAvailability(input: EvaluateReleaseUpdateAv
       channel: input.manifest.channel,
       releasePageUrl: input.manifest.releasePageUrl,
       artifact: null,
+      executionHostProtocolVersion: input.manifest.executionHostProtocolVersion,
       automaticInstallEnabled: false,
       recommendedAction: 'open_download_page',
       label: `发现新版本 · ${latestVersion}`,
@@ -265,7 +272,8 @@ export function evaluateReleaseUpdateAvailability(input: EvaluateReleaseUpdateAv
       checkedAt,
     };
   }
-  const automaticInstallEnabled = input.manifest.signed && input.manifest.notarized;
+  const protocolCompatible = input.manifest.executionHostProtocolVersion === (input.executionHostProtocolVersion ?? 1);
+  const automaticInstallEnabled = input.manifest.signed && input.manifest.notarized && protocolCompatible;
   return {
     status: 'available',
     currentVersion,
@@ -273,11 +281,76 @@ export function evaluateReleaseUpdateAvailability(input: EvaluateReleaseUpdateAv
     channel: input.manifest.channel,
     releasePageUrl: input.manifest.releasePageUrl,
     artifact,
+    executionHostProtocolVersion: input.manifest.executionHostProtocolVersion,
     automaticInstallEnabled,
     recommendedAction: automaticInstallEnabled ? 'download_and_install' : 'open_download_page',
     label: `发现新版本 · ${latestVersion}`,
-    reason: automaticInstallEnabled ? '发现新版本，产物已签名并公证，可下载后安装。' : '发现新版本，但当前产物未同时签名和公证，只允许打开 GitHub Release 手动安装。',
+    reason: automaticInstallEnabled
+      ? '发现新版本，产物已签名、公证且执行宿主协议兼容，可下载后安装。'
+      : !protocolCompatible
+        ? '发现新版本，但执行宿主协议不兼容；必须等待当前任务排空后再手动升级。'
+        : '发现新版本，但当前产物未同时签名和公证，只允许打开 GitHub Release 手动安装。',
     checkedAt,
+  };
+}
+
+/** 校验远程更新清单；签名、公证布尔值只能开启后续复验，不能替代本机产物校验。 */
+export function parseReleaseUpdateManifest(value: unknown, options: { allowLoopbackDownloadUrls?: boolean } = {}): ReleaseUpdateManifest {
+  if (!isRecord(value)) throw new Error('Release update manifest must be an object.');
+  if (value.app !== 'Zeus' || value.schemaVersion !== 1) throw new Error('Release update manifest identity or schema is incompatible.');
+  if (value.channel !== 'stable' && value.channel !== 'preview') throw new Error('Release update manifest channel is invalid.');
+  if (
+    typeof value.version !== 'string' ||
+    typeof value.repository !== 'string' ||
+    typeof value.releasePageUrl !== 'string' ||
+    typeof value.latestReleaseUrl !== 'string' ||
+    typeof value.releaseNotesUrl !== 'string' ||
+    typeof value.publishedAt !== 'string' ||
+    typeof value.signed !== 'boolean' ||
+    typeof value.notarized !== 'boolean' ||
+    typeof value.minimumSystemVersion !== 'string' ||
+    !Number.isInteger(value.executionHostProtocolVersion) ||
+    Number(value.executionHostProtocolVersion) <= 0 ||
+    !Array.isArray(value.artifacts) ||
+    !isRecord(value.homebrew)
+  ) {
+    throw new Error('Release update manifest fields are invalid.');
+  }
+  const repository = normalizeRepository(value.repository);
+  const artifacts = value.artifacts.map((candidate) => parseReleaseArtifact(candidate, repository, Boolean(options.allowLoopbackDownloadUrls)));
+  const homebrewTap = typeof value.homebrew.tap === 'string' ? normalizeRepository(value.homebrew.tap) : '';
+  if (
+    !homebrewTap ||
+    value.homebrew.cask !== 'zeus' ||
+    typeof value.homebrew.installCommand !== 'string' ||
+    typeof value.homebrew.upgradeCommand !== 'string' ||
+    !isTrustedGithubUrl(value.releasePageUrl, repository) ||
+    !isTrustedGithubUrl(value.latestReleaseUrl, repository) ||
+    !isTrustedGithubUrl(value.releaseNotesUrl, repository)
+  ) {
+    throw new Error('Release update manifest links are invalid.');
+  }
+  return {
+    app: 'Zeus',
+    schemaVersion: 1,
+    version: normalizeVersion(value.version),
+    channel: value.channel,
+    repository,
+    releasePageUrl: value.releasePageUrl,
+    latestReleaseUrl: value.latestReleaseUrl,
+    releaseNotesUrl: value.releaseNotesUrl,
+    publishedAt: value.publishedAt,
+    signed: value.signed,
+    notarized: value.notarized,
+    minimumSystemVersion: value.minimumSystemVersion,
+    executionHostProtocolVersion: Number(value.executionHostProtocolVersion),
+    artifacts,
+    homebrew: {
+      tap: homebrewTap,
+      cask: 'zeus',
+      installCommand: value.homebrew.installCommand,
+      upgradeCommand: value.homebrew.upgradeCommand,
+    },
   };
 }
 
@@ -313,4 +386,61 @@ function parseSemverParts(version: string): number[] {
     .split(/[.-]/u)
     .map((part) => Number.parseInt(part, 10))
     .map((part) => (Number.isFinite(part) ? part : 0));
+}
+
+function parseReleaseArtifact(value: unknown, repository: string, allowLoopbackDownloadUrls: boolean): ReleaseUpdateArtifact {
+  if (
+    !isRecord(value) ||
+    (value.arch !== 'arm64' && value.arch !== 'x64') ||
+    value.kind !== 'dmg' ||
+    typeof value.fileName !== 'string' ||
+    !value.fileName.trim().endsWith('.dmg') ||
+    /[\\/]/u.test(value.fileName.trim()) ||
+    typeof value.sha256 !== 'string' ||
+    !/^[a-f0-9]{64}$/u.test(value.sha256) ||
+    (value.sizeBytes !== null && (typeof value.sizeBytes !== 'number' || !Number.isSafeInteger(value.sizeBytes) || value.sizeBytes <= 0)) ||
+    typeof value.downloadUrl !== 'string' ||
+    (!isTrustedGithubReleaseDownload(value.downloadUrl, repository) && !(allowLoopbackDownloadUrls && isLoopbackHttpUrl(value.downloadUrl)))
+  ) {
+    throw new Error('Release update artifact is invalid.');
+  }
+  return {
+    arch: value.arch,
+    kind: value.kind,
+    fileName: value.fileName.trim(),
+    sha256: value.sha256,
+    sizeBytes: value.sizeBytes,
+    downloadUrl: value.downloadUrl,
+  };
+}
+
+function isLoopbackHttpUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'http:' && url.hostname === '127.0.0.1' && Boolean(url.port) && url.username === '' && url.password === '';
+  } catch {
+    return false;
+  }
+}
+
+function isTrustedGithubUrl(value: string, repository: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' && url.hostname === 'github.com' && url.pathname.startsWith(`/${repository}/releases`);
+  } catch {
+    return false;
+  }
+}
+
+function isTrustedGithubReleaseDownload(value: string, repository: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' && url.hostname === 'github.com' && url.pathname.startsWith(`/${repository}/releases/download/`);
+  } catch {
+    return false;
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
