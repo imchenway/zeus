@@ -33,6 +33,7 @@ export interface DesktopLocalServerRuntime {
     protocolVersion: number;
   };
   getStatus: () => Promise<ExecutionHostWorkStatus>;
+  refreshConfig: () => Promise<RendererLocalServerConfig>;
   activateCodexRuntime: (runtime: ExecutionHostRuntimeDescriptor) => Promise<void>;
   stopActiveWork: () => Promise<void>;
   close: (mode?: DesktopLocalServerCloseMode) => Promise<void>;
@@ -110,39 +111,140 @@ export async function startDesktopLocalServer(options: StartDesktopLocalServerOp
   const browserBridge = await startDesktopBrowserAutomationBridge(options.browserAutomation);
   const leaseId = randomUUID();
   let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
+  let heartbeatCyclePromise: Promise<void> | undefined;
+  let recoveryPromise: Promise<void> | undefined;
   let closePromise: Promise<void> | undefined;
+  let closing = false;
   try {
-    const connection = await connectOrLaunchExecutionHost(options);
-    const client = createExecutionHostControlClient(connection);
-    await client.registerBrowserBridge({
+    let connection = await connectOrLaunchExecutionHost(options);
+    let client = createExecutionHostControlClient(connection);
+    const registration = {
       leaseId,
       baseUrl: browserBridge.baseUrl,
       token: browserBridge.token,
       appVersion: options.appVersion?.trim() || '0.0.0',
       codexRuntime: options.codexRuntime,
-    });
+    };
+    await client.registerBrowserBridge(registration);
+    const config: RendererLocalServerConfig = {
+      baseUrl: connection.baseUrl,
+      apiToken: connection.apiToken,
+    };
+    const executionHost = {
+      mode: 'detached' as const,
+      instanceId: connection.instanceId,
+      pid: connection.pid,
+      protocolVersion: connection.protocolVersion,
+    };
+
+    const connectionChanged = (next: ExecutionHostRendezvous): boolean =>
+      next.instanceId !== connection.instanceId ||
+      next.pid !== connection.pid ||
+      next.baseUrl !== connection.baseUrl ||
+      next.apiToken !== connection.apiToken ||
+      next.controlUrl !== connection.controlUrl ||
+      next.controlToken !== connection.controlToken;
+
+    const attach = async (next: ExecutionHostRendezvous): Promise<void> => {
+      const nextClient = createExecutionHostControlClient(next);
+      await nextClient.registerBrowserBridge(registration);
+      const changed = connectionChanged(next);
+      connection = next;
+      client = nextClient;
+      config.baseUrl = next.baseUrl;
+      config.apiToken = next.apiToken;
+      executionHost.instanceId = next.instanceId;
+      executionHost.pid = next.pid;
+      executionHost.protocolVersion = next.protocolVersion;
+      if (changed) await options.onRestarted?.(config);
+    };
+
+    const recover = (discoverCurrent: boolean): Promise<void> => {
+      if (recoveryPromise) return recoveryPromise;
+      if (closing) return Promise.reject(new Error('Zeus execution-host connection is closing.'));
+      const recovering = (async () => {
+        if (!discoverCurrent) {
+          try {
+            await client.registerBrowserBridge(registration);
+            return;
+          } catch {
+            // 当前控制端点已经不可用时，继续通过安全 rendezvous 发现唯一宿主。
+          }
+        }
+        const advertised = await readExecutionHostRendezvous(options.userDataPath);
+        if (advertised) {
+          try {
+            await attach(advertised);
+            return;
+          } catch {
+            // 陈旧 rendezvous 不能成为第二数据库写入者的创建依据，由单实例锁继续裁决。
+          }
+        }
+        await attach(await connectOrLaunchExecutionHost(options));
+      })();
+      const tracked = recovering.finally(() => {
+        if (recoveryPromise === tracked) recoveryPromise = undefined;
+      });
+      recoveryPromise = tracked;
+      return tracked;
+    };
+
+    const refreshConfig = async (): Promise<RendererLocalServerConfig> => {
+      if (closing) throw new Error('Zeus execution-host connection is closing.');
+      const advertised = await readExecutionHostRendezvous(options.userDataPath);
+      if (advertised && connectionChanged(advertised)) await recover(true);
+      else {
+        try {
+          await client.heartbeat(leaseId);
+        } catch {
+          await recover(false);
+        }
+      }
+      return { ...config };
+    };
+
+    const maintainLease = async (): Promise<void> => {
+      if (closing) return;
+      try {
+        await client.heartbeat(leaseId);
+      } catch {
+        await recover(false);
+      }
+    };
+
     heartbeatTimer = setInterval(() => {
-      void client.heartbeat(leaseId).catch(() => undefined);
+      if (heartbeatCyclePromise || closing) return;
+      const cycle = maintainLease().finally(() => {
+        if (heartbeatCyclePromise === cycle) heartbeatCyclePromise = undefined;
+      });
+      heartbeatCyclePromise = cycle;
+      void cycle.catch(() => undefined);
     }, 5_000);
     heartbeatTimer.unref();
 
     return {
       dbPath: connection.dbPath,
       configPath: join(options.userDataPath, 'zeus.config.json'),
-      config: {
-        baseUrl: connection.baseUrl,
-        apiToken: connection.apiToken,
+      config,
+      executionHost,
+      getStatus: async () => {
+        try {
+          return (await client.health()).work;
+        } catch {
+          await recover(true);
+          return (await client.health()).work;
+        }
       },
-      executionHost: {
-        mode: 'detached',
-        instanceId: connection.instanceId,
-        pid: connection.pid,
-        protocolVersion: connection.protocolVersion,
-      },
-      getStatus: async () => (await client.health()).work,
+      refreshConfig,
       activateCodexRuntime: async () => undefined,
       stopActiveWork: async () => {
-        const result = await client.stopActiveWork();
+        let result;
+        try {
+          result = await client.stopActiveWork();
+        } catch {
+          await recover(true);
+          result = await client.stopActiveWork();
+        }
         if (result.failedTurns.length > 0) {
           throw new Error(`Zeus 无法停止 ${result.failedTurns.length} 个执行轮次。`);
         }
@@ -150,11 +252,28 @@ export async function startDesktopLocalServer(options: StartDesktopLocalServerOp
       close: (mode = 'final_quit') => {
         if (closePromise) return closePromise;
         closePromise = (async () => {
+          closing = true;
           if (heartbeatTimer) {
             clearInterval(heartbeatTimer);
             heartbeatTimer = undefined;
           }
           const errors: unknown[] = [];
+          const pendingHeartbeat = heartbeatCyclePromise;
+          if (pendingHeartbeat) {
+            try {
+              await pendingHeartbeat;
+            } catch (error) {
+              errors.push(error);
+            }
+          }
+          const pendingRecovery = recoveryPromise;
+          if (pendingRecovery) {
+            try {
+              await pendingRecovery;
+            } catch (error) {
+              errors.push(error);
+            }
+          }
           try {
             if (mode === 'final_quit') await client.shutdown();
             else await client.detach(leaseId);
@@ -309,6 +428,7 @@ export async function startOwnedDesktopLocalServer(options: StartDesktopLocalSer
       if (!response.ok) throw new Error(`Zeus execution-host status failed with HTTP ${response.status}.`);
       return (await response.json()) as ExecutionHostWorkStatus;
     },
+    refreshConfig: async () => ({ ...config }),
     activateCodexRuntime: async (runtime) => {
       if (activeCodexRuntime?.artifactSha256 === runtime.artifactSha256 && activeCodexRuntime.commandPath === runtime.commandPath) return;
       await validateMaterializedCodexRuntime(runtime, options.userDataPath);

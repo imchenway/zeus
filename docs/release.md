@@ -24,7 +24,7 @@ CI 通过 `ZEUS_VERIFY_BASE` 与 `ZEUS_VERIFY_HEAD` 传入本次推送或 PR 的
 
 公开 Release 只包含版本化 DMG 和更新 manifest；Zeus.app 与 Homebrew Cask 是本地或 CI 内部发布工件，不作为 Release 附件。
 
-- 公开 DMG：`dist/Zeus-0.1.4-arm64.dmg`；
+- 公开 DMG：`dist/Zeus-0.1.5-arm64.dmg`；
 - 公开更新清单：`dist/zeus-release-manifest.json`，供应用内检查更新读取；
 - 内部 App：`dist/mac-arm64/Zeus.app`；
 - 内部 Homebrew Cask：`dist/homebrew/zeus.rb`，同步到 `imchenway/homebrew-tap`；
@@ -35,7 +35,22 @@ CI 通过 `ZEUS_VERIFY_BASE` 与 `ZEUS_VERIFY_HEAD` 传入本次推送或 PR 的
 普通发布前门禁必须覆盖变更文件格式、Git 空白错误、lint、typecheck 和 build。完整 macOS 发布门禁在此基础上继续覆盖
 acceptance matrix、AI CLI adapter 探针、package:mac、包内 Electron 加载和包内 renderer/main 非 GUI 健康检查。
 
-### 当前公开稳定基线（0.1.4）
+### 待发布稳定基线（0.1.5）
+
+- 根包与桌面包版本已同步为 `0.1.5`；
+- 本次修复界面租约过期或执行宿主退出后永久重试的问题：Main 会重新登记当前宿主，控制端点失效时通过安全 rendezvous 发现或启动唯一宿主，并向 Renderer 提供刷新后的 Local Server 地址；
+- 本次修复历史 snapshot 尚未加载时被误报为空会话的问题：只有权威 snapshot 已成功加载且确实为空时才展示“发送第一条消息”，连接失败时明确展示历史暂不可用；
+- 发布仍沿用 ad-hoc 实用发布，必须保持 manifest 的 `signed=false`、`notarized=false`，不描述为 Apple 已认证或应用内自动安装；
+- `pnpm verify:release` 已通过：Prettier、Git 空白错误、lint、typecheck、build、12 个章节 139 项验收矩阵、AI CLI 探针、macOS arm64 打包、产物健康检查和严格 codesign 校验完整执行；
+- DMG SHA256：`81a0906587fa2775d1a4964e4a86823577674d89e6780a171463f4b9bcb05b70`，大小为 `252261991` 字节，`hdiutil verify` 返回 `VALID`；
+- manifest SHA256：`c976aa35984a0af9367d912294a1e4be349aaa300fc21369aeb58a78424384b3`，明确记录 `version=0.1.5`、`signed=false`、`notarized=false`；
+- 只使用仓库 `dist/mac-arm64/Zeus.app` 真实启动，`/health` 返回 `version=0.1.5`、`database=ok`、`runtime=ok`；Fast 历史会话可见 369 个 item；
+- 暂停 Main 20 秒后，同一宿主和租约重新附着；结束执行宿主后约 3.5 秒内只启动一个新宿主，历史继续可见，界面均未出现 `Failed to fetch` 或永久重连；
+- 宿主替换后的首次外部 `sqlite3 quick_check` 恰逢数据库落盘窗口，返回一次 `database disk image is malformed`；随后连续 5 次 `quick_check` 与一次 `integrity_check` 均返回 `ok`，应用健康检查也为 `database=ok`。该瞬态外部读取事实保留在发布记录中，不描述为数据库从未出现并发读取窗口；
+- 验收应用正常退出后 Main、执行宿主和 Codex runtime 均结束，rendezvous 已清理；
+- 远端 CI、GitHub Release、公开资产和 Homebrew Tap 结果将在发布完成后写回，不复用 `0.1.4` 的远端验证数字。
+
+### 历史稳定基线（0.1.4）
 
 - 根包与桌面包版本已同步为 `0.1.4`；
 - `pnpm verify:release`：通过；Prettier、Git 空白错误、lint、typecheck、build、12 个章节 139 项验收矩阵、

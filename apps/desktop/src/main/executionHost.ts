@@ -12,6 +12,7 @@ import {
   writeExecutionHostRendezvous,
   type ExecutionHostBrowserBridgeRegistration,
   type ExecutionHostControlStatus,
+  type ExecutionHostLeaseStatus,
   type ExecutionHostRendezvous,
   type ExecutionHostWorkStatus,
 } from './executionHostProtocol.js';
@@ -85,6 +86,16 @@ async function runExecutionHost(): Promise<void> {
     };
   }
 
+  function leaseStatus(): ExecutionHostLeaseStatus {
+    return {
+      protocolVersion: executionHostProtocolVersion,
+      instanceId,
+      connected: uiLease !== null,
+      leaseId: uiLease?.leaseId ?? null,
+      lastHeartbeatAt: uiLease?.lastHeartbeatAt ?? null,
+    };
+  }
+
   async function closeHost(reason: string): Promise<void> {
     if (closePromise) return closePromise;
     closing = true;
@@ -152,12 +163,12 @@ async function runExecutionHost(): Promise<void> {
         detachedIdleSince = null;
         browserAutomation.register(registration);
         await record('execution_host.ui_attached', { leaseId: registration.leaseId });
-        return controlStatus();
+        return leaseStatus();
       },
       heartbeat: async (leaseId) => {
         if (!uiLease || uiLease.leaseId !== leaseId) throw Object.assign(new Error('Zeus 界面租约已经失效。'), { statusCode: 409 });
         uiLease = { ...uiLease, lastHeartbeatAt: new Date().toISOString() };
-        return controlStatus();
+        return leaseStatus();
       },
       detach: async (leaseId) => {
         if (uiLease?.leaseId === leaseId) {
@@ -245,8 +256,8 @@ async function runExecutionHost(): Promise<void> {
 interface ControlRequestServices {
   token: string;
   status(): Promise<ExecutionHostControlStatus>;
-  registerBrowserBridge(input: ExecutionHostBrowserBridgeRegistration): Promise<ExecutionHostControlStatus>;
-  heartbeat(leaseId: string): Promise<ExecutionHostControlStatus>;
+  registerBrowserBridge(input: ExecutionHostBrowserBridgeRegistration): Promise<ExecutionHostLeaseStatus>;
+  heartbeat(leaseId: string): Promise<ExecutionHostLeaseStatus>;
   detach(leaseId: string): Promise<ExecutionHostControlStatus>;
   stopActiveWork(): Promise<unknown>;
   shutdown(): Promise<void>;

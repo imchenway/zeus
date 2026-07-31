@@ -87,6 +87,14 @@ export interface ExecutionHostControlStatus {
   work: ExecutionHostWorkStatus;
 }
 
+export interface ExecutionHostLeaseStatus {
+  protocolVersion: number;
+  instanceId: string;
+  connected: boolean;
+  leaseId: string | null;
+  lastHeartbeatAt: string | null;
+}
+
 export interface ExecutionHostBrowserBridgeRegistration {
   leaseId: string;
   baseUrl: string;
@@ -97,8 +105,8 @@ export interface ExecutionHostBrowserBridgeRegistration {
 
 export interface ExecutionHostControlClient {
   health(): Promise<ExecutionHostControlStatus>;
-  registerBrowserBridge(input: ExecutionHostBrowserBridgeRegistration): Promise<ExecutionHostControlStatus>;
-  heartbeat(leaseId: string): Promise<ExecutionHostControlStatus>;
+  registerBrowserBridge(input: ExecutionHostBrowserBridgeRegistration): Promise<ExecutionHostLeaseStatus>;
+  heartbeat(leaseId: string): Promise<ExecutionHostLeaseStatus>;
   detach(leaseId: string): Promise<ExecutionHostControlStatus>;
   stopActiveWork(): Promise<{
     requestedTurnCount: number;
@@ -171,13 +179,13 @@ export function createExecutionHostControlClient(rendezvous: ExecutionHostRendez
   return {
     health: () => request<ExecutionHostControlStatus>('/health'),
     registerBrowserBridge: (input) =>
-      request<ExecutionHostControlStatus>('/ui/browser-bridge', {
+      request<ExecutionHostLeaseStatus>('/ui/browser-bridge', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(input),
       }),
     heartbeat: (leaseId) =>
-      request<ExecutionHostControlStatus>('/ui/heartbeat', {
+      request<ExecutionHostLeaseStatus>('/ui/heartbeat', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ leaseId }),

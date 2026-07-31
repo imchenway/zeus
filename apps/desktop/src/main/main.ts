@@ -504,11 +504,11 @@ function conversationResourceOpenServices(requestingWindow: BrowserWindow) {
 }
 
 function setupIpc(): void {
-  ipcMain.handle('zeus:get-local-server-config', () => {
+  ipcMain.handle('zeus:get-local-server-config', async () => {
     if (!localServerRuntime) {
       throw new Error('Zeus local server is not ready');
     }
-    return localServerRuntime.config;
+    return localServerRuntime.refreshConfig();
   });
   ipcMain.on('zeus:renderer-bootstrap-failed', (event, message: unknown) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);

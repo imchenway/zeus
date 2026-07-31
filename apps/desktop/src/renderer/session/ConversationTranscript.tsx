@@ -34,6 +34,8 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   const transcriptRows = useMemo(() => projectTranscriptRows(items), [items]);
   const lastItemKeyByTurn = useMemo(() => Object.fromEntries(items.map((item) => [item.turnId, item.key])), [items]);
   const showThinking = shouldShowTranscriptThinking(props.state);
+  const historyHydrated = props.state.snapshot !== null;
+  const historyUnavailable = !historyHydrated && (props.state.transportState === 'reconnecting' || props.state.transportState === 'failed');
 
   useEffect(() => {
     const resolution = resolveCompletedItemAnnouncement(completedAnnouncementTrackerRef.current, items, props.language);
@@ -128,8 +130,12 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
                 </Fragment>
               );
             })
-          ) : !showThinking ? (
+          ) : !showThinking && historyHydrated ? (
             <p className="session-transcript-empty">{props.language === 'zh-CN' ? '发送第一条消息后，真实 app-server 对话会显示在这里。' : 'Send the first message to begin the real app-server transcript.'}</p>
+          ) : !showThinking && historyUnavailable ? (
+            <p className="session-transcript-empty" role="status">
+              {props.language === 'zh-CN' ? '历史消息暂不可用；连接恢复后会自动显示。' : 'History is temporarily unavailable and will reappear after the connection recovers.'}
+            </p>
           ) : null}
           {showThinking ? (
             <p className="session-transcript-thinking" role="status" aria-live="polite">
