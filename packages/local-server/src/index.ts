@@ -4,7 +4,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { accessSync, appendFileSync, constants as fsConstants, existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, parse, relative, resolve, sep } from 'node:path';
 import { getNextTaskStatus, type TaskStatus } from '@zeus/task-core';
-import { commandNeedsHighRiskConfirmation, validateCommandDefinitionInput, type CommandDefinition, type ConversationResource, type ConversationResourcePreview } from '@zeus/shared';
+import { commandNeedsHighRiskConfirmation, isTaskStatusFilter, type TaskStatusFilter, validateCommandDefinitionInput, type CommandDefinition, type ConversationResource, type ConversationResourcePreview } from '@zeus/shared';
 import { type ProjectScanResult, scanProjectSource } from '@zeus/code-indexer';
 import { buildProjectGraph, type ProjectGraph } from '@zeus/graph-engine';
 import { createDefaultProjectConfig, normalizeProjectConfig, type ProjectConfigSnapshot, type UpdateProjectConfigBody } from '@zeus/project-core';
@@ -755,6 +755,24 @@ function normalizeTaskTableColumnsByProject(value: unknown): Record<string, Task
   return normalized;
 }
 
+function normalizeTaskStatusFilterByProject(value: unknown): Record<string, TaskStatusFilter> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const normalized: Record<string, TaskStatusFilter> = {};
+  let count = 0;
+  for (const [projectId, filter] of Object.entries(value)) {
+    const normalizedProjectId = projectId.trim();
+    const containsControlCharacter = Array.from(normalizedProjectId).some((character) => {
+      const code = character.charCodeAt(0);
+      return code <= 31 || code === 127;
+    });
+    if (!normalizedProjectId || normalizedProjectId.length > 160 || containsControlCharacter || !isTaskStatusFilter(filter)) continue;
+    normalized[normalizedProjectId] = filter;
+    count += 1;
+    if (count >= 100) break;
+  }
+  return normalized;
+}
+
 function normalizeTaskTableEnumSortOrders(value: unknown): TaskTableEnumSortOrders {
   const input = value && typeof value === 'object' && !Array.isArray(value) ? (value as Partial<TaskTableEnumSortOrders>) : {};
   return {
@@ -819,6 +837,7 @@ interface AppShellSettingsSnapshot {
   taskTableColumns: TaskTableColumnPreferences;
   taskTableColumnsByProject: Record<string, TaskTableColumnPreferences>;
   taskTableEnumSortOrders: TaskTableEnumSortOrders;
+  taskStatusFilterByProject: Record<string, TaskStatusFilter>;
   localLogDirectory: string;
   localConfigPath: string;
   dataPortability: {
@@ -852,6 +871,7 @@ interface UpdateAppShellSettingsBody {
   taskTableColumns?: Partial<TaskTableColumnPreferences>;
   taskTableColumnsByProject?: Record<string, TaskTableColumnPreferences>;
   taskTableEnumSortOrders?: TaskTableEnumSortOrders;
+  taskStatusFilterByProject?: Record<string, TaskStatusFilter>;
 }
 
 interface ClearCacheResult {
@@ -1403,9 +1423,10 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     persistedAppShellSettings &&
     (JSON.stringify(persistedAppShellSettings.taskTableColumns) !== JSON.stringify(appShellSettings.taskTableColumns) ||
       JSON.stringify(persistedAppShellSettings.taskTableColumnsByProject) !== JSON.stringify(appShellSettings.taskTableColumnsByProject) ||
-      JSON.stringify(persistedAppShellSettings.taskTableEnumSortOrders) !== JSON.stringify(appShellSettings.taskTableEnumSortOrders))
+      JSON.stringify(persistedAppShellSettings.taskTableEnumSortOrders) !== JSON.stringify(appShellSettings.taskTableEnumSortOrders) ||
+      JSON.stringify(persistedAppShellSettings.taskStatusFilterByProject) !== JSON.stringify(appShellSettings.taskStatusFilterByProject))
   ) {
-    // 旧列键、旧默认顺序和新增列宽都只迁移一次并立即落库，避免每次启动重复改写用户看到的列配置。
+    // 旧列键、旧默认顺序、新增列宽和项目筛选偏好都只迁移一次并立即落库，避免每次启动重复改写本机视图配置。
     settings.setJson(appShellSettingsKey, appShellSettings);
     await db.save();
   }
@@ -5144,6 +5165,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
         taskTableColumns: appShellSettings.taskTableColumns,
         taskTableColumnsByProject: appShellSettings.taskTableColumnsByProject,
         taskTableEnumSortOrders: appShellSettings.taskTableEnumSortOrders,
+        taskStatusFilterByProject: appShellSettings.taskStatusFilterByProject,
       },
     });
     await db.save();
@@ -7635,6 +7657,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       taskTableColumns: normalizeTaskTableColumnPreferences(value?.taskTableColumns),
       taskTableColumnsByProject: normalizeTaskTableColumnsByProject(value?.taskTableColumnsByProject),
       taskTableEnumSortOrders: normalizeTaskTableEnumSortOrders(value?.taskTableEnumSortOrders),
+      taskStatusFilterByProject: normalizeTaskStatusFilterByProject(value?.taskStatusFilterByProject),
       localLogDirectory: fallbackLogDirectory,
       // 本地配置文件路径由当前运行实例决定，不接受导入文件覆盖，避免误指向其他机器路径。
       localConfigPath: fallbackConfigPath,
@@ -7676,6 +7699,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
           : current.taskTableColumns,
         taskTableColumnsByProject: Object.prototype.hasOwnProperty.call(input, 'taskTableColumnsByProject') ? normalizeTaskTableColumnsByProject(input.taskTableColumnsByProject) : current.taskTableColumnsByProject,
         taskTableEnumSortOrders: Object.prototype.hasOwnProperty.call(input, 'taskTableEnumSortOrders') ? normalizeTaskTableEnumSortOrders(input.taskTableEnumSortOrders) : current.taskTableEnumSortOrders,
+        taskStatusFilterByProject: Object.prototype.hasOwnProperty.call(input, 'taskStatusFilterByProject') ? normalizeTaskStatusFilterByProject(input.taskStatusFilterByProject) : current.taskStatusFilterByProject,
       },
       current.localLogDirectory,
       current.localConfigPath,
