@@ -1,43 +1,25 @@
+import { type CSSProperties, type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, useCallback, useEffect, useRef, useState } from 'react';
+import type { AiRuntimeSession, RuntimeStatusSnapshot, TaskManagementStatus, TaskRecord, TaskStatusFilter, TaskTableColumnKey, TaskTableEnumSortOrders, TaskTableColumnPreferences } from '../apiClient.js';
+import type { NativeConversationChoice } from '../session/sessionTypes.js';
+import { ZeusSelect } from '../ZeusSelect.js';
 import {
-    type CSSProperties,
-    type DragEvent as ReactDragEvent,
-    type KeyboardEvent as ReactKeyboardEvent,
-    type PointerEvent as ReactPointerEvent,
-    useCallback,
-    useEffect,
-    useRef,
-    useState
-} from 'react';
-import type {
-    AiRuntimeSession,
-    RuntimeStatusSnapshot,
-    TaskManagementStatus,
-    TaskRecord,
-    TaskStatusFilter,
-    TaskTableColumnKey,
-    TaskTableEnumSortOrders,
-    TaskTableColumnPreferences,
-} from '../apiClient.js';
-import type {NativeConversationChoice} from '../session/sessionTypes.js';
-import {ZeusSelect} from '../ZeusSelect.js';
-import {
-    clampTaskTableColumnWidth,
-    createTaskWorkspaceViewModel,
-    cycleTaskTableSort,
-    defaultTaskTableColumnWidths,
-    defaultTaskTableColumnOrder,
-    defaultVisibleTaskTableColumns,
-    formatTaskManagementStatus,
-    getTaskTableColumnWidthBounds,
-    moveTaskTableColumnTo,
-    normalizeTaskTableColumnPreferences,
-    placeTaskTableColumn,
-    resolveTaskManagementStatus,
-    setTaskTableColumnWidth,
-    type TaskAgentRunStatus,
-    type TaskTableColumnDropPosition,
-    taskManagementStatuses,
-    toggleTaskTableColumn,
+  clampTaskTableColumnWidth,
+  createTaskWorkspaceViewModel,
+  cycleTaskTableSort,
+  defaultTaskTableColumnWidths,
+  defaultTaskTableColumnOrder,
+  defaultVisibleTaskTableColumns,
+  formatTaskManagementStatus,
+  getTaskTableColumnWidthBounds,
+  moveTaskTableColumnTo,
+  normalizeTaskTableColumnPreferences,
+  placeTaskTableColumn,
+  resolveTaskManagementStatus,
+  setTaskTableColumnWidth,
+  type TaskAgentRunStatus,
+  type TaskTableColumnDropPosition,
+  taskManagementStatuses,
+  toggleTaskTableColumn,
 } from './taskWorkspaceModel.js';
 
 export interface TaskWorkspaceCopy {
@@ -92,8 +74,8 @@ export interface TaskWorkspaceCopy {
   allState: string;
   codeColumnTitle: string;
   intentColumnTitle: string;
-    managementStatusColumnTitle: string;
-    runStatusColumnTitle: string;
+  managementStatusColumnTitle: string;
+  runStatusColumnTitle: string;
   sourceColumnTitle: string;
   createdAtColumnTitle: string;
   updatedAtColumnTitle: string;
@@ -139,14 +121,14 @@ export interface TaskWorkspaceProps {
   statusFilter: TaskStatusFilter;
   tagFilter: string;
   statusOptions: readonly TaskStatusFilter[];
-    statusLabels: Record<TaskManagementStatus | '', string>;
-    runStatusLabels: Record<TaskAgentRunStatus, string>;
+  statusLabels: Record<TaskManagementStatus | '', string>;
+  runStatusLabels: Record<TaskAgentRunStatus, string>;
   copy: TaskWorkspaceCopy;
   appLanguage: 'zh-CN' | 'en-US';
   runtime: RuntimeStatusSnapshot;
   runtimeSessions: AiRuntimeSession[];
-    taskConversations?: Record<string, NativeConversationChoice[]>;
-    conversationRunStatuses?: Record<string, TaskAgentRunStatus>;
+  taskConversations?: Record<string, NativeConversationChoice[]>;
+  conversationRunStatuses?: Record<string, TaskAgentRunStatus>;
   taskTableColumns?: Partial<TaskTableColumnPreferences>;
   taskTableEnumSortOrders?: TaskTableEnumSortOrders;
   taskTableLayoutDirty?: boolean;
@@ -167,7 +149,7 @@ export interface TaskWorkspaceProps {
   onToggleAllVisibleTaskSelection?: (taskIds: string[], selected: boolean) => void;
   onClearTaskSelection?: () => void;
   onTaskStatusChange?: (taskId: string, targetStatus: TaskManagementStatus) => void;
-    onBulkTaskStatusChange?: (targetStatus: TaskManagementStatus, taskIds: string[]) => void;
+  onBulkTaskStatusChange?: (targetStatus: TaskManagementStatus, taskIds: string[]) => void;
   onBulkTaskDelete?: (taskIds: string[]) => void;
   onRetryTaskList?: () => void;
   onOpenProjectSettings?: () => void;
@@ -181,32 +163,32 @@ function getTaskTableColumnTrack(columnKey: TaskTableColumnKey, preferences: Tas
 }
 
 const taskTableColumnAlignment: Record<TaskTableColumnKey, 'start' | 'end'> = {
-    code: 'start',
-    intent: 'start',
-    managementStatus: 'start',
-    runStatus: 'start',
-    source: 'start',
-    updatedAt: 'end',
-    createdAt: 'end',
-    template: 'start',
-    project: 'start',
-    priority: 'start',
-    description: 'start',
-    runtimeSession: 'start',
-    rawId: 'start',
-    createdFrom: 'start',
+  code: 'start',
+  intent: 'start',
+  managementStatus: 'start',
+  runStatus: 'start',
+  source: 'start',
+  updatedAt: 'end',
+  createdAt: 'end',
+  template: 'start',
+  project: 'start',
+  priority: 'start',
+  description: 'start',
+  runtimeSession: 'start',
+  rawId: 'start',
+  createdFrom: 'start',
 };
 
 function taskTableCellClassName(columnKey: TaskTableColumnKey, rowCell = false): string {
   const legacyColumnClass: Partial<Record<TaskTableColumnKey, string>> = {
     intent: 'task-table-title-cell',
-      managementStatus: 'task-table-task-status-cell',
+    managementStatus: 'task-table-task-status-cell',
     updatedAt: 'task-table-updated-cell',
   };
   const legacyRowClass: Partial<Record<TaskTableColumnKey, string>> = {
     intent: 'task-list-copy',
   };
-    return ['task-table-cell', legacyColumnClass[columnKey], rowCell ? legacyRowClass[columnKey] : undefined, `task-table-align-${taskTableColumnAlignment[columnKey]}`, `task-table-${columnKey}-cell`].filter(Boolean).join(' ');
+  return ['task-table-cell', legacyColumnClass[columnKey], rowCell ? legacyRowClass[columnKey] : undefined, `task-table-align-${taskTableColumnAlignment[columnKey]}`, `task-table-${columnKey}-cell`].filter(Boolean).join(' ');
 }
 
 function focusRelativeTaskRow(currentTarget: HTMLElement, currentElement: HTMLElement, direction: 1 | -1 | 'first' | 'last'): void {
@@ -247,12 +229,12 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
   const [moreSettingsOpen, setMoreSettingsOpen] = useState(false);
   const [draggedColumnKey, setDraggedColumnKey] = useState<TaskTableColumnKey | null>(null);
   const [dragPreviewColumnOrder, setDragPreviewColumnOrder] = useState<TaskTableColumnKey[] | null>(null);
-  const [dragInsertion, setDragInsertion] = useState<{targetColumnKey: TaskTableColumnKey; position: TaskTableColumnDropPosition} | null>(null);
+  const [dragInsertion, setDragInsertion] = useState<{ targetColumnKey: TaskTableColumnKey; position: TaskTableColumnDropPosition } | null>(null);
   const [keyboardMovingColumnKey, setKeyboardMovingColumnKey] = useState<TaskTableColumnKey | null>(null);
   const [columnInteractionAnnouncement, setColumnInteractionAnnouncement] = useState('');
-    const [bulkTargetStatus, setBulkTargetStatus] = useState<TaskManagementStatus>('todo');
+  const [bulkTargetStatus, setBulkTargetStatus] = useState<TaskManagementStatus>('todo');
   const keyboardMoveStartOrderRef = useRef<TaskTableColumnKey[] | null>(null);
-  const resizeStateRef = useRef<{columnKey: TaskTableColumnKey; startX: number; startWidth: number} | null>(null);
+  const resizeStateRef = useRef<{ columnKey: TaskTableColumnKey; startX: number; startWidth: number } | null>(null);
   const fieldSettingsTriggerRef = useRef<HTMLButtonElement | null>(null);
   const fieldSettingsPopoverRef = useRef<HTMLElement | null>(null);
   const moreSettingsTriggerRef = useRef<HTMLButtonElement | null>(null);
@@ -274,10 +256,10 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
     selectedTaskIds: props.selectedTaskIds,
     runtimeAiAvailable: props.runtime.aiCli.available,
     runtimeSessions: props.runtimeSessions,
-      taskConversations: props.taskConversations,
-      conversationRunStatuses: props.conversationRunStatuses,
-      managementStatusLabels: props.statusLabels,
-      runStatusLabels: props.runStatusLabels,
+    taskConversations: props.taskConversations,
+    conversationRunStatuses: props.conversationRunStatuses,
+    managementStatusLabels: props.statusLabels,
+    runStatusLabels: props.runStatusLabels,
     projectName: props.projectName,
     taskTableColumns: props.taskTableColumns,
     taskTableEnumSortOrders: props.taskTableEnumSortOrders,
@@ -286,8 +268,8 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
   const columnLabels: Record<TaskTableColumnKey, string> = {
     code: props.copy.codeColumnTitle,
     intent: props.copy.intentColumnTitle,
-      managementStatus: props.copy.managementStatusColumnTitle,
-      runStatus: props.copy.runStatusColumnTitle,
+    managementStatus: props.copy.managementStatusColumnTitle,
+    runStatus: props.copy.runStatusColumnTitle,
     source: props.copy.sourceColumnTitle,
     createdAt: props.copy.createdAtColumnTitle,
     updatedAt: props.copy.updatedAtColumnTitle,
@@ -302,11 +284,7 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
   const configuredStatusOptions = props.statusOptions.filter((status): status is TaskManagementStatus => taskManagementStatuses.includes(status as TaskManagementStatus));
   const bulkStatusOptions = configuredStatusOptions.length > 0 ? configuredStatusOptions : taskManagementStatuses;
   const statusLabel = (status: TaskStatusFilter) =>
-    status === 'unfinished'
-      ? props.copy.unfinishedStatusFilter
-      : status === ''
-        ? props.statusLabels[''] || (props.copy.taskCountPrefix === 'Tasks' ? 'All' : '全部')
-        : props.statusLabels[status] || formatTaskManagementStatus(status);
+    status === 'unfinished' ? props.copy.unfinishedStatusFilter : status === '' ? props.statusLabels[''] || (props.copy.taskCountPrefix === 'Tasks' ? 'All' : '全部') : props.statusLabels[status] || formatTaskManagementStatus(status);
   const bulkTargetEligibility = model.bulkStatusEligibility[bulkTargetStatus];
   const selectedVisibleCount = model.selectedVisibleTaskIds.length;
   const bulkActionBusy = Boolean(props.bulkActionBusy);
@@ -315,12 +293,10 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
   const taskListLoading = taskListState === 'loading';
   const taskListError = taskListState === 'error';
   const showEmptyState = !taskListLoading && !taskListError && model.visibleTasks.length === 0;
-    // visual thesis: 任务表格像 macOS 原生工作台，选择列稳定，批量栏只在选择后低噪音出现，任务列表空态必须保持轻量行。
-    // content plan: 顶部仍只服务筛选与新建；选择后追加批量状态、删除与结果提示；单任务详情在右侧悬浮抽屉中展开。
+  // visual thesis: 任务表格像 macOS 原生工作台，选择列稳定，批量栏只在选择后低噪音出现，任务列表空态必须保持轻量行。
+  // content plan: 顶部仍只服务筛选与新建；选择后追加批量状态、删除与结果提示；单任务详情在右侧悬浮抽屉中展开。
   // interaction thesis: checkbox 只负责选择，行内容负责打开详情，执行反馈通过 aria-live 告知而不打断表格浏览。
-  const renderedColumnPreferences = dragPreviewColumnOrder
-    ? {...model.columnPreferences, columnOrder: dragPreviewColumnOrder}
-    : model.columnPreferences;
+  const renderedColumnPreferences = dragPreviewColumnOrder ? { ...model.columnPreferences, columnOrder: dragPreviewColumnOrder } : model.columnPreferences;
   const renderedVisibleColumns = renderedColumnPreferences.columnOrder.filter((columnKey) => renderedColumnPreferences.visibleColumnKeys.includes(columnKey));
   const taskTableContentGridTemplate = renderedVisibleColumns.map((columnKey) => getTaskTableColumnTrack(columnKey, renderedColumnPreferences)).join(' ');
   const taskTableContentWidth = renderedVisibleColumns.reduce((total, columnKey) => total + (renderedColumnPreferences.columnWidths?.[columnKey] ?? defaultTaskTableColumnWidths[columnKey]), 32);
@@ -340,11 +316,7 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
   ]
     .filter(Boolean)
     .join(' ');
-  const statusSegmentOptions: TaskStatusFilter[] = [
-    ...(props.statusOptions.includes('') ? ([''] as const) : []),
-    ...(props.statusOptions.includes('unfinished') ? (['unfinished'] as const) : []),
-    ...bulkStatusOptions,
-  ].slice(0, 5);
+  const statusSegmentOptions: TaskStatusFilter[] = [...(props.statusOptions.includes('') ? ([''] as const) : []), ...(props.statusOptions.includes('unfinished') ? (['unfinished'] as const) : []), ...bulkStatusOptions].slice(0, 5);
   const isEnglishCopy = props.copy.taskCountPrefix === 'Tasks';
   const showTaskStatusLine = taskListLoading || taskListError;
   const statusLineTitle = taskListLoading ? props.copy.taskListLoadingTitle : props.copy.taskListErrorTitle;
@@ -478,12 +450,8 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
     const bounds = event.currentTarget.getBoundingClientRect();
     const position: TaskTableColumnDropPosition = event.clientX < bounds.left + bounds.width / 2 ? 'before' : 'after';
     const nextPreferences = placeTaskTableColumn(model.columnPreferences, draggedColumnKey, targetColumnKey, position);
-    setDragPreviewColumnOrder((current) => arrayShallowEqual(current ?? [], nextPreferences.columnOrder) ? current : nextPreferences.columnOrder);
-    setDragInsertion((current) =>
-      current?.targetColumnKey === targetColumnKey && current.position === position
-        ? current
-        : {targetColumnKey, position},
-    );
+    setDragPreviewColumnOrder((current) => (arrayShallowEqual(current ?? [], nextPreferences.columnOrder) ? current : nextPreferences.columnOrder));
+    setDragInsertion((current) => (current?.targetColumnKey === targetColumnKey && current.position === position ? current : { targetColumnKey, position }));
   };
 
   const handleColumnDrop = (event: ReactDragEvent<HTMLElement>) => {
@@ -492,7 +460,7 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
       clearColumnDragPreview();
       return;
     }
-    const nextPreferences = normalizeTaskTableColumnPreferences({...model.columnPreferences, columnOrder: dragPreviewColumnOrder});
+    const nextPreferences = normalizeTaskTableColumnPreferences({ ...model.columnPreferences, columnOrder: dragPreviewColumnOrder });
     props.onTaskTableColumnsChange(nextPreferences);
     announceColumnPosition(draggedColumnKey, nextPreferences);
     clearColumnDragPreview();
@@ -515,7 +483,7 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
     if (event.key === 'Escape' && keyboardMovingColumnKey === columnKey) {
       event.preventDefault();
       const startOrder = keyboardMoveStartOrderRef.current;
-      if (startOrder) props.onTaskTableColumnsChange(normalizeTaskTableColumnPreferences({...model.columnPreferences, columnOrder: startOrder}));
+      if (startOrder) props.onTaskTableColumnsChange(normalizeTaskTableColumnPreferences({ ...model.columnPreferences, columnOrder: startOrder }));
       setKeyboardMovingColumnKey(null);
       keyboardMoveStartOrderRef.current = null;
       setColumnInteractionAnnouncement(isEnglishCopy ? 'Column move cancelled.' : '已取消移动列。');
@@ -537,7 +505,7 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
     event.preventDefault();
     event.stopPropagation();
     const startWidth = model.columnPreferences.columnWidths?.[columnKey] ?? defaultTaskTableColumnWidths[columnKey];
-    resizeStateRef.current = {columnKey, startX: event.clientX, startWidth};
+    resizeStateRef.current = { columnKey, startX: event.clientX, startWidth };
     const handlePointerMove = (pointerEvent: PointerEvent) => {
       const resizeState = resizeStateRef.current;
       if (!resizeState) return;
@@ -550,7 +518,7 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
       window.removeEventListener('pointerup', handlePointerUp);
     };
     window.addEventListener('pointermove', handlePointerMove);
-    window.addEventListener('pointerup', handlePointerUp, {once: true});
+    window.addEventListener('pointerup', handlePointerUp, { once: true });
   };
 
   const handleColumnResizeKeyDown = (event: ReactKeyboardEvent<HTMLElement>, columnKey: TaskTableColumnKey) => {
@@ -558,9 +526,7 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
     event.preventDefault();
     const currentWidth = model.columnPreferences.columnWidths?.[columnKey] ?? defaultTaskTableColumnWidths[columnKey];
     const delta = event.shiftKey ? 24 : 8;
-    const nextWidth = event.key === 'Home'
-      ? defaultTaskTableColumnWidths[columnKey]
-      : currentWidth + (event.key === 'ArrowLeft' ? -delta : delta);
+    const nextWidth = event.key === 'Home' ? defaultTaskTableColumnWidths[columnKey] : currentWidth + (event.key === 'ArrowLeft' ? -delta : delta);
     props.onTaskTableColumnsChange(setTaskTableColumnWidth(model.columnPreferences, columnKey, nextWidth));
   };
 
@@ -654,56 +620,51 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
               </section>
             </div>
             {props.taskTableLayoutDirty ? (
-              <button
-                className="task-table-view-pill task-table-view-save-pill"
-                type="button"
-                onClick={props.onSaveTaskTableLayout}
-                disabled={!props.onSaveTaskTableLayout}
-              >
+              <button className="task-table-view-pill task-table-view-save-pill" type="button" onClick={props.onSaveTaskTableLayout} disabled={!props.onSaveTaskTableLayout}>
                 {saveViewActionLabel}
               </button>
             ) : (
               <div className="task-table-more-settings">
-              <button
-                ref={moreSettingsTriggerRef}
-                className="task-table-view-pill task-table-more-settings-trigger"
-                type="button"
-                aria-haspopup="menu"
-                aria-expanded={moreSettingsOpen}
-                aria-controls="task-table-more-settings-popover"
-                disabled={!moreActionsAvailable}
-                aria-disabled={!moreActionsAvailable}
-                onClick={() => {
-                  if (!moreActionsAvailable) return;
-                  setMoreSettingsOpen((open) => !open);
-                }}
-              >
-                {moreViewActionLabel}
-              </button>
-              {moreActionsAvailable ? (
-                <section
-                  ref={moreSettingsPopoverRef}
-                  id="task-table-more-settings-popover"
-                  className="task-table-view-more-panel"
-                  role="menu"
-                  aria-label={isEnglishCopy ? 'More task view actions' : '更多任务视图动作'}
-                  hidden={!moreSettingsOpen}
-                  data-open={moreSettingsOpen ? 'true' : 'false'}
+                <button
+                  ref={moreSettingsTriggerRef}
+                  className="task-table-view-pill task-table-more-settings-trigger"
+                  type="button"
+                  aria-haspopup="menu"
+                  aria-expanded={moreSettingsOpen}
+                  aria-controls="task-table-more-settings-popover"
+                  disabled={!moreActionsAvailable}
+                  aria-disabled={!moreActionsAvailable}
+                  onClick={() => {
+                    if (!moreActionsAvailable) return;
+                    setMoreSettingsOpen((open) => !open);
+                  }}
                 >
-                  {filtersHaveValue ? (
-                    <button className="task-table-more-menu-action" type="button" role="menuitem" onClick={handleMoreResetTaskFilters}>
-                      <span>{props.copy.noResultsPrimaryAction}</span>
-                      <small>{isEnglishCopy ? 'Reset search, status and tag filters.' : '重置搜索、状态和标签筛选'}</small>
-                    </button>
-                  ) : null}
-                  {columnsHaveCustomPreferences ? (
-                    <button className="task-table-more-menu-action" type="button" role="menuitem" onClick={handleMoreRestoreDefaultColumns}>
-                      <span>{resetColumnsActionLabel}</span>
-                      <small>{isEnglishCopy ? 'Return task columns to the default view.' : '恢复默认任务列视图'}</small>
-                    </button>
-                  ) : null}
-                </section>
-              ) : null}
+                  {moreViewActionLabel}
+                </button>
+                {moreActionsAvailable ? (
+                  <section
+                    ref={moreSettingsPopoverRef}
+                    id="task-table-more-settings-popover"
+                    className="task-table-view-more-panel"
+                    role="menu"
+                    aria-label={isEnglishCopy ? 'More task view actions' : '更多任务视图动作'}
+                    hidden={!moreSettingsOpen}
+                    data-open={moreSettingsOpen ? 'true' : 'false'}
+                  >
+                    {filtersHaveValue ? (
+                      <button className="task-table-more-menu-action" type="button" role="menuitem" onClick={handleMoreResetTaskFilters}>
+                        <span>{props.copy.noResultsPrimaryAction}</span>
+                        <small>{isEnglishCopy ? 'Reset search, status and tag filters.' : '重置搜索、状态和标签筛选'}</small>
+                      </button>
+                    ) : null}
+                    {columnsHaveCustomPreferences ? (
+                      <button className="task-table-more-menu-action" type="button" role="menuitem" onClick={handleMoreRestoreDefaultColumns}>
+                        <span>{resetColumnsActionLabel}</span>
+                        <small>{isEnglishCopy ? 'Return task columns to the default view.' : '恢复默认任务列视图'}</small>
+                      </button>
+                    ) : null}
+                  </section>
+                ) : null}
               </div>
             )}
           </div>
@@ -737,7 +698,7 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
                 searchable={false}
                 options={bulkStatusOptions.map((status) => ({
                   value: status,
-                    label: statusLabel(status),
+                  label: statusLabel(status),
                 }))}
               />
             </label>
@@ -792,11 +753,7 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
                 const sortDirection = model.columnPreferences.sort.columnKey === columnKey ? model.columnPreferences.sort.direction : null;
                 const width = model.columnPreferences.columnWidths?.[columnKey] ?? defaultTaskTableColumnWidths[columnKey];
                 const bounds = getTaskTableColumnWidthBounds(columnKey);
-                const sortLabel = sortDirection === 'asc'
-                  ? (isEnglishCopy ? 'ascending' : '升序')
-                  : sortDirection === 'desc'
-                    ? (isEnglishCopy ? 'descending' : '降序')
-                    : (isEnglishCopy ? 'not sorted' : '未排序');
+                const sortLabel = sortDirection === 'asc' ? (isEnglishCopy ? 'ascending' : '升序') : sortDirection === 'desc' ? (isEnglishCopy ? 'descending' : '降序') : isEnglishCopy ? 'not sorted' : '未排序';
                 return (
                   <span
                     className={[
@@ -804,7 +761,9 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
                       'task-table-interactive-header',
                       draggedColumnKey === columnKey ? 'dragging' : undefined,
                       dragInsertion?.targetColumnKey === columnKey ? `drop-${dragInsertion.position}` : undefined,
-                    ].filter(Boolean).join(' ')}
+                    ]
+                      .filter(Boolean)
+                      .join(' ')}
                     role="columnheader"
                     aria-sort={sortDirection === 'asc' ? 'ascending' : sortDirection === 'desc' ? 'descending' : 'none'}
                     key={columnKey}
@@ -937,8 +896,8 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
                   data-source-list-item="true"
                   data-task-row-action={row.action}
                   onClick={(event) => {
-                      event.currentTarget.focus();
-                      props.onOpenTaskDetail(task.id);
+                    event.currentTarget.focus();
+                    props.onOpenTaskDetail(task.id);
                   }}
                   onKeyDown={(event) => {
                     if (event.target !== event.currentTarget) return;
@@ -947,15 +906,14 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
                     props.onOpenTaskDetail(task.id);
                   }}
                 >
-                    {/* 任务列表是任务页布局主角：点击任务行打开右侧悬浮详情抽屉，列表本身不提前塞入 Runtime、完成、取消等推进按钮。 */}
+                  {/* 任务列表是任务页布局主角：点击任务行打开右侧悬浮详情抽屉，列表本身不提前塞入 Runtime、完成、取消等推进按钮。 */}
                   <span className="task-table-cell task-table-select-cell" role="gridcell" onClick={(event) => event.stopPropagation()}>
                     <TaskSelectionCheckbox ariaLabel={props.copy.selectTaskAria(task.title)} checked={row.bulkSelected} disabled={bulkActionBusy} onChange={(selected) => props.onToggleTaskSelection?.(task.id, selected)} />
                   </span>
                   {renderedVisibleColumns.map((columnKey) => {
                     const cell = row.cells[columnKey];
                     return (
-                        <span className={taskTableCellClassName(columnKey, true)} role="gridcell" key={columnKey}
-                              data-column-label={columnLabels[columnKey]}>
+                      <span className={taskTableCellClassName(columnKey, true)} role="gridcell" key={columnKey} data-column-label={columnLabels[columnKey]}>
                         {columnKey === 'managementStatus' ? (
                           <span className="task-table-row-status-control" onClick={(event) => event.stopPropagation()}>
                             <ZeusSelect

@@ -12,21 +12,14 @@ export function isTaskPriority(value: unknown): value is TaskPriority {
 }
 
 /** 项目管理阶段与 Coding Agent 执行状态严格分离；这里只描述任务在交付流程中的位置。 */
-export type TaskManagementStatus =
-    'todo'
-    | 'in_development'
-    | 'in_testing'
-    | 'awaiting_acceptance'
-    | 'blocked'
-    | 'completed'
-    | 'cancelled';
+export type TaskManagementStatus = 'todo' | 'in_development' | 'in_testing' | 'awaiting_acceptance' | 'blocked' | 'completed' | 'cancelled';
 
 /** 项目管理阶段的固定展示与筛选顺序。 */
 export const taskManagementStatusOrder: readonly TaskManagementStatus[] = ['todo', 'in_development', 'in_testing', 'awaiting_acceptance', 'blocked', 'completed', 'cancelled'] as const;
 
 /** 对 API、导入文件和数据库回填值做统一运行时校验。 */
 export function isTaskManagementStatus(value: unknown): value is TaskManagementStatus {
-    return typeof value === 'string' && taskManagementStatusOrder.includes(value as TaskManagementStatus);
+  return typeof value === 'string' && taskManagementStatusOrder.includes(value as TaskManagementStatus);
 }
 
 /** 任务页状态筛选值；空字符串表示“全部”，“未完成”是派生筛选而不是任务管理状态。 */

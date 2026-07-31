@@ -1,18 +1,18 @@
 import type {
-    AiRuntimeSession,
-    AiRuntimeSessionStatus,
-    TaskAgentRunStatus,
-    TaskManagementStatus,
-    TaskRecord,
-    TaskStatus,
-    TaskStatusFilter,
-    TaskTableColumnKey,
-    TaskTableEnumSortOrders,
-    TaskTableColumnPreferences,
-    TaskTableColumnWidth,
-    TaskTableSortState,
+  AiRuntimeSession,
+  AiRuntimeSessionStatus,
+  TaskAgentRunStatus,
+  TaskManagementStatus,
+  TaskRecord,
+  TaskStatus,
+  TaskStatusFilter,
+  TaskTableColumnKey,
+  TaskTableEnumSortOrders,
+  TaskTableColumnPreferences,
+  TaskTableColumnWidth,
+  TaskTableSortState,
 } from '../apiClient.js';
-import type {NativeConversationChoice, NativeSessionState} from '../session/sessionTypes.js';
+import type { NativeConversationChoice, NativeSessionState } from '../session/sessionTypes.js';
 
 export type TaskWorkspaceEmptyState = 'empty' | 'no-results' | undefined;
 export type TaskRowAction = 'open-detail';
@@ -20,7 +20,7 @@ export type TaskTableColumnMoveDirection = 'up' | 'down';
 export type TaskTableColumnDropPosition = 'before' | 'after';
 export type TaskNextActionLabels = Partial<Record<TaskStatus, string>>;
 export type TaskSourceLabels = Partial<Record<string, string>>;
-export type {TaskAgentRunStatus} from '../apiClient.js';
+export type { TaskAgentRunStatus } from '../apiClient.js';
 
 export const taskManagementStatuses: TaskManagementStatus[] = ['todo', 'in_development', 'in_testing', 'awaiting_acceptance', 'blocked', 'completed', 'cancelled'];
 const allowedTaskStatusTransitions: Record<TaskStatus, readonly TaskStatus[]> = {
@@ -38,18 +38,18 @@ const allowedTaskStatusTransitions: Record<TaskStatus, readonly TaskStatus[]> = 
 export const defaultTaskTableColumnOrder: TaskTableColumnKey[] = [
   'code',
   'intent',
-    'managementStatus',
-    'runStatus',
+  'managementStatus',
+  'runStatus',
   'source',
-    'createdAt',
-    'updatedAt',
-    'template',
-    'project',
-    'priority',
-    'description',
-    'runtimeSession',
-    'rawId',
-    'createdFrom',
+  'createdAt',
+  'updatedAt',
+  'template',
+  'project',
+  'priority',
+  'description',
+  'runtimeSession',
+  'rawId',
+  'createdFrom',
 ];
 export const defaultVisibleTaskTableColumns: TaskTableColumnKey[] = ['code', 'intent', 'managementStatus', 'runStatus', 'source', 'createdAt', 'updatedAt'];
 export const defaultTaskTableColumnWidths: Record<TaskTableColumnKey, number> = {
@@ -74,11 +74,11 @@ export const defaultTaskTableEnumSortOrders: TaskTableEnumSortOrders = {
   runStatus: ['not_started', 'connecting', 'reconnecting', 'running', 'waiting_user', 'waiting_approval', 'paused', 'idle', 'failed', 'legacy_readonly'],
 };
 const previousDefaultTaskTableColumnOrder: TaskTableColumnKey[] = [
-    'code',
-    'intent',
-    'managementStatus',
-    'runStatus',
-    'source',
+  'code',
+  'intent',
+  'managementStatus',
+  'runStatus',
+  'source',
   'updatedAt',
   'createdAt',
   'template',
@@ -92,7 +92,7 @@ const previousDefaultTaskTableColumnOrder: TaskTableColumnKey[] = [
 const previousDefaultVisibleTaskTableColumns: TaskTableColumnKey[] = ['code', 'intent', 'managementStatus', 'runStatus', 'source', 'updatedAt'];
 const taskTableColumnKeySet = new Set<TaskTableColumnKey>(defaultTaskTableColumnOrder);
 const legacyTaskTableColumnKeySet = new Set(['nextAction', 'aiExecution', 'signals']);
-const legacyTaskTableColumnWidthScale = {compact: 0.78, standard: 1, wide: 1.35} as const;
+const legacyTaskTableColumnWidthScale = { compact: 0.78, standard: 1, wide: 1.35 } as const;
 
 export interface TaskWorkspaceFilters {
   query: string;
@@ -106,9 +106,9 @@ export interface TaskWorkspaceViewModelInput extends TaskWorkspaceFilters {
   selectedTaskIds?: readonly string[];
   runtimeAiAvailable?: boolean;
   runtimeSessions?: AiRuntimeSession[];
-    taskConversations?: Record<string, NativeConversationChoice[]>;
-    conversationRunStatuses?: Record<string, TaskAgentRunStatus>;
-    managementStatusLabels?: Partial<Record<TaskManagementStatus, string>>;
+  taskConversations?: Record<string, NativeConversationChoice[]>;
+  conversationRunStatuses?: Record<string, TaskAgentRunStatus>;
+  managementStatusLabels?: Partial<Record<TaskManagementStatus, string>>;
   runStatusLabels?: Partial<Record<TaskAgentRunStatus, string>>;
   projectName?: string;
   taskTableColumns?: unknown;
@@ -133,7 +133,7 @@ export interface TaskRowViewModel {
 }
 
 export interface TaskBulkStatusEligibility {
-    targetStatus: TaskManagementStatus;
+  targetStatus: TaskManagementStatus;
   eligibleTaskIds: string[];
   skippedTaskIds: string[];
 }
@@ -151,7 +151,7 @@ export interface TaskWorkspaceViewModel {
   selectedVisibleTaskIds: string[];
   allVisibleSelected: boolean;
   someVisibleSelected: boolean;
-    bulkStatusEligibility: Record<TaskManagementStatus, TaskBulkStatusEligibility>;
+  bulkStatusEligibility: Record<TaskManagementStatus, TaskBulkStatusEligibility>;
   bulkDeleteEligibility: TaskBulkDeleteEligibility;
   rows: TaskRowViewModel[];
   emptyState: TaskWorkspaceEmptyState;
@@ -163,22 +163,22 @@ export interface TaskWorkspaceViewModel {
 
 export function normalizeTaskTableColumnPreferences(input?: unknown): TaskTableColumnPreferences {
   const preferences = isRecord(input) ? input : {};
-    const hasLegacyColumns = containsLegacyTaskTableColumnKeys(preferences.visibleColumnKeys) || containsLegacyTaskTableColumnKeys(preferences.columnOrder);
-    const visible = normalizeColumnKeys(migrateLegacyTaskTableColumnKeys(preferences.visibleColumnKeys), defaultVisibleTaskTableColumns);
-    let visibleWithRequired = Array.from(new Set<TaskTableColumnKey>([...visible, 'code', 'intent']));
-    const order = normalizeColumnKeys(migrateLegacyTaskTableColumnKeys(preferences.columnOrder), defaultTaskTableColumnOrder);
-    if (hasLegacyColumns) visibleWithRequired = placeStatusColumnsAfterIntent(visibleWithRequired);
-    let migratedOrder = hasLegacyColumns ? placeStatusColumnsAfterIntent(order) : order;
-    const usesPreviousDefault = arraysEqual(visibleWithRequired, previousDefaultVisibleTaskTableColumns) && arraysEqual(migratedOrder, previousDefaultTaskTableColumnOrder);
-    if (usesPreviousDefault) {
-        visibleWithRequired = [...defaultVisibleTaskTableColumns];
-        migratedOrder = [...defaultTaskTableColumnOrder];
-    }
+  const hasLegacyColumns = containsLegacyTaskTableColumnKeys(preferences.visibleColumnKeys) || containsLegacyTaskTableColumnKeys(preferences.columnOrder);
+  const visible = normalizeColumnKeys(migrateLegacyTaskTableColumnKeys(preferences.visibleColumnKeys), defaultVisibleTaskTableColumns);
+  let visibleWithRequired = Array.from(new Set<TaskTableColumnKey>([...visible, 'code', 'intent']));
+  const order = normalizeColumnKeys(migrateLegacyTaskTableColumnKeys(preferences.columnOrder), defaultTaskTableColumnOrder);
+  if (hasLegacyColumns) visibleWithRequired = placeStatusColumnsAfterIntent(visibleWithRequired);
+  let migratedOrder = hasLegacyColumns ? placeStatusColumnsAfterIntent(order) : order;
+  const usesPreviousDefault = arraysEqual(visibleWithRequired, previousDefaultVisibleTaskTableColumns) && arraysEqual(migratedOrder, previousDefaultTaskTableColumnOrder);
+  if (usesPreviousDefault) {
+    visibleWithRequired = [...defaultVisibleTaskTableColumns];
+    migratedOrder = [...defaultTaskTableColumnOrder];
+  }
   const columnWidths = normalizeColumnWidths(preferences.columnWidths);
   const sort = normalizeTaskTableSortState(preferences.sort);
   const normalized: TaskTableColumnPreferences = {
     visibleColumnKeys: visibleWithRequired,
-      columnOrder: [...migratedOrder, ...defaultTaskTableColumnOrder.filter((key) => !migratedOrder.includes(key))],
+    columnOrder: [...migratedOrder, ...defaultTaskTableColumnOrder.filter((key) => !migratedOrder.includes(key))],
     sort,
   };
   if (columnWidths) normalized.columnWidths = columnWidths;
@@ -186,37 +186,37 @@ export function normalizeTaskTableColumnPreferences(input?: unknown): TaskTableC
 }
 
 function arraysEqual(left: readonly TaskTableColumnKey[], right: readonly TaskTableColumnKey[]): boolean {
-    return left.length === right.length && left.every((key, index) => key === right[index]);
+  return left.length === right.length && left.every((key, index) => key === right[index]);
 }
 
 function containsLegacyTaskTableColumnKeys(value: unknown): boolean {
-    return Array.isArray(value) && value.some((item) => typeof item === 'string' && legacyTaskTableColumnKeySet.has(item));
+  return Array.isArray(value) && value.some((item) => typeof item === 'string' && legacyTaskTableColumnKeySet.has(item));
 }
 
 function placeStatusColumnsAfterIntent(keys: TaskTableColumnKey[]): TaskTableColumnKey[] {
-    const withoutStatusColumns = keys.filter((key) => key !== 'managementStatus' && key !== 'runStatus');
-    const intentIndex = withoutStatusColumns.indexOf('intent');
-    const insertIndex = intentIndex >= 0 ? intentIndex + 1 : 0;
-    return [...withoutStatusColumns.slice(0, insertIndex), 'managementStatus', 'runStatus', ...withoutStatusColumns.slice(insertIndex)];
+  const withoutStatusColumns = keys.filter((key) => key !== 'managementStatus' && key !== 'runStatus');
+  const intentIndex = withoutStatusColumns.indexOf('intent');
+  const insertIndex = intentIndex >= 0 ? intentIndex + 1 : 0;
+  return [...withoutStatusColumns.slice(0, insertIndex), 'managementStatus', 'runStatus', ...withoutStatusColumns.slice(insertIndex)];
 }
 
 function migrateLegacyTaskTableColumnKeys(value: unknown): unknown {
-    if (!containsLegacyTaskTableColumnKeys(value)) return value;
-    if (!Array.isArray(value)) return value;
-    const migrated: string[] = [];
-    let insertedStatusColumns = false;
-    for (const item of value) {
-        if (typeof item !== 'string') continue;
-        if (legacyTaskTableColumnKeySet.has(item)) {
-            if (!insertedStatusColumns) {
-                migrated.push('managementStatus', 'runStatus');
-                insertedStatusColumns = true;
-            }
-            continue;
-        }
-        migrated.push(item);
+  if (!containsLegacyTaskTableColumnKeys(value)) return value;
+  if (!Array.isArray(value)) return value;
+  const migrated: string[] = [];
+  let insertedStatusColumns = false;
+  for (const item of value) {
+    if (typeof item !== 'string') continue;
+    if (legacyTaskTableColumnKeySet.has(item)) {
+      if (!insertedStatusColumns) {
+        migrated.push('managementStatus', 'runStatus');
+        insertedStatusColumns = true;
+      }
+      continue;
     }
-    return migrated;
+    migrated.push(item);
+  }
+  return migrated;
 }
 
 export function toggleTaskTableColumn(preferences: TaskTableColumnPreferences, columnKey: TaskTableColumnKey, visible: boolean): TaskTableColumnPreferences {
@@ -253,22 +253,17 @@ export function moveTaskTableColumnTo(preferences: TaskTableColumnPreferences, c
   const columnOrder = [...normalized.columnOrder];
   const [movedColumn] = columnOrder.splice(sourceIndex, 1);
   columnOrder.splice(targetIndex, 0, movedColumn);
-  return normalizeTaskTableColumnPreferences({...normalized, columnOrder});
+  return normalizeTaskTableColumnPreferences({ ...normalized, columnOrder });
 }
 
-export function placeTaskTableColumn(
-  preferences: TaskTableColumnPreferences,
-  columnKey: TaskTableColumnKey,
-  targetColumnKey: TaskTableColumnKey,
-  position: TaskTableColumnDropPosition,
-): TaskTableColumnPreferences {
+export function placeTaskTableColumn(preferences: TaskTableColumnPreferences, columnKey: TaskTableColumnKey, targetColumnKey: TaskTableColumnKey, position: TaskTableColumnDropPosition): TaskTableColumnPreferences {
   const normalized = normalizeTaskTableColumnPreferences(preferences);
   if (columnKey === targetColumnKey) return normalized;
   const columnOrder = normalized.columnOrder.filter((key) => key !== columnKey);
   const targetIndex = columnOrder.indexOf(targetColumnKey);
   if (targetIndex < 0) return normalized;
   columnOrder.splice(position === 'after' ? targetIndex + 1 : targetIndex, 0, columnKey);
-  return normalizeTaskTableColumnPreferences({...normalized, columnOrder});
+  return normalizeTaskTableColumnPreferences({ ...normalized, columnOrder });
 }
 
 export function setTaskTableColumnWidth(preferences: TaskTableColumnPreferences, columnKey: TaskTableColumnKey, width: TaskTableColumnWidth): TaskTableColumnPreferences {
@@ -288,10 +283,10 @@ export function cycleTaskTableSort(preferences: TaskTableColumnPreferences, colu
   const normalized = normalizeTaskTableColumnPreferences(preferences);
   const current = normalized.sort;
   let sort: TaskTableSortState;
-  if (current.columnKey !== columnKey || current.direction === null) sort = {columnKey, direction: 'asc'};
-  else if (current.direction === 'asc') sort = {columnKey, direction: 'desc'};
-  else sort = {columnKey: null, direction: null};
-  return normalizeTaskTableColumnPreferences({...normalized, sort});
+  if (current.columnKey !== columnKey || current.direction === null) sort = { columnKey, direction: 'asc' };
+  else if (current.direction === 'asc') sort = { columnKey, direction: 'desc' };
+  else sort = { columnKey: null, direction: null };
+  return normalizeTaskTableColumnPreferences({ ...normalized, sort });
 }
 
 export function normalizeTaskTableEnumSortOrders(value?: unknown): TaskTableEnumSortOrders {
@@ -335,10 +330,10 @@ function normalizeTaskTableColumnWidth(columnKey: TaskTableColumnKey, value: unk
   return clampTaskTableColumnWidth(columnKey, defaultTaskTableColumnWidths[columnKey] * legacyTaskTableColumnWidthScale[value as keyof typeof legacyTaskTableColumnWidthScale]);
 }
 
-export function getTaskTableColumnWidthBounds(columnKey: TaskTableColumnKey): {min: number; max: number} {
-  if (columnKey === 'intent' || columnKey === 'description') return {min: 140, max: 560};
-  if (columnKey === 'runtimeSession' || columnKey === 'rawId') return {min: 120, max: 520};
-  return {min: 72, max: 420};
+export function getTaskTableColumnWidthBounds(columnKey: TaskTableColumnKey): { min: number; max: number } {
+  if (columnKey === 'intent' || columnKey === 'description') return { min: 140, max: 560 };
+  if (columnKey === 'runtimeSession' || columnKey === 'rawId') return { min: 120, max: 520 };
+  return { min: 72, max: 420 };
 }
 
 export function clampTaskTableColumnWidth(columnKey: TaskTableColumnKey, value: number): number {
@@ -347,10 +342,10 @@ export function clampTaskTableColumnWidth(columnKey: TaskTableColumnKey, value: 
 }
 
 function normalizeTaskTableSortState(value: unknown): TaskTableSortState {
-  if (!isRecord(value)) return {columnKey: null, direction: null};
-  const columnKey = typeof value.columnKey === 'string' && taskTableColumnKeySet.has(value.columnKey as TaskTableColumnKey) ? value.columnKey as TaskTableColumnKey : null;
+  if (!isRecord(value)) return { columnKey: null, direction: null };
+  const columnKey = typeof value.columnKey === 'string' && taskTableColumnKeySet.has(value.columnKey as TaskTableColumnKey) ? (value.columnKey as TaskTableColumnKey) : null;
   const direction = value.direction === 'asc' || value.direction === 'desc' ? value.direction : null;
-  return columnKey && direction ? {columnKey, direction} : {columnKey: null, direction: null};
+  return columnKey && direction ? { columnKey, direction } : { columnKey: null, direction: null };
 }
 
 function normalizeEnumOrder<T extends string>(value: unknown, fallback: readonly T[]): T[] {
@@ -424,7 +419,7 @@ function sortTaskRows(rows: TaskRowViewModel[], sort: TaskTableSortState, enumSo
   if (!sort.columnKey || !sort.direction) return rows;
   const sourceIndexes = new Map(rows.map((row, index) => [row.id, index]));
   const enumOrder = resolveTaskTableEnumOrder(sort.columnKey, enumSortOrders);
-  const collator = new Intl.Collator(language, {numeric: true, sensitivity: 'base'});
+  const collator = new Intl.Collator(language, { numeric: true, sensitivity: 'base' });
   return [...rows].sort((left, right) => {
     const leftValue = left.cells[sort.columnKey!].sortValue;
     const rightValue = right.cells[sort.columnKey!].sortValue;
@@ -459,19 +454,19 @@ function resolveTaskTableEnumOrder(columnKey: TaskTableColumnKey, orders: TaskTa
 }
 
 function buildBulkStatusEligibility(tasks: TaskRecord[]): Record<TaskManagementStatus, TaskBulkStatusEligibility> {
-    return taskManagementStatuses.reduce<Record<TaskManagementStatus, TaskBulkStatusEligibility>>(
+  return taskManagementStatuses.reduce<Record<TaskManagementStatus, TaskBulkStatusEligibility>>(
     (eligibility, targetStatus) => {
       const eligibleTaskIds: string[] = [];
       const skippedTaskIds: string[] = [];
       for (const task of tasks) {
-          // 项目管理阶段与 Agent 状态解耦；除当前值外均可由用户显式调整。
-          if (resolveTaskManagementStatus(task) !== targetStatus) eligibleTaskIds.push(task.id);
+        // 项目管理阶段与 Agent 状态解耦；除当前值外均可由用户显式调整。
+        if (resolveTaskManagementStatus(task) !== targetStatus) eligibleTaskIds.push(task.id);
         else skippedTaskIds.push(task.id);
       }
       eligibility[targetStatus] = { targetStatus, eligibleTaskIds, skippedTaskIds };
       return eligibility;
     },
-        {} as Record<TaskManagementStatus, TaskBulkStatusEligibility>,
+    {} as Record<TaskManagementStatus, TaskBulkStatusEligibility>,
   );
 }
 
@@ -576,23 +571,23 @@ export function formatRuntimeSessionStatus(session: AiRuntimeSession | undefined
 }
 
 function buildTaskTableCells(
-    task: TaskRecord,
-    runtimeSessions: AiRuntimeSession[],
-    projectName: string | undefined,
-    conversations: NativeConversationChoice[],
-    conversationRunStatuses: Record<string, TaskAgentRunStatus>,
-    managementStatusLabels?: Partial<Record<TaskManagementStatus, string>>,
-    runStatusLabels?: Partial<Record<TaskAgentRunStatus, string>>,
+  task: TaskRecord,
+  runtimeSessions: AiRuntimeSession[],
+  projectName: string | undefined,
+  conversations: NativeConversationChoice[],
+  conversationRunStatuses: Record<string, TaskAgentRunStatus>,
+  managementStatusLabels?: Partial<Record<TaskManagementStatus, string>>,
+  runStatusLabels?: Partial<Record<TaskAgentRunStatus, string>>,
 ): Record<TaskTableColumnKey, TaskTableCellViewModel> {
   const taskRuntimeSession = findLinkedRuntimeSession(task, runtimeSessions);
   const displayProjectName = projectName?.trim() || '当前项目';
-    const runStatus = resolveTaskAgentRunStatus(conversations, conversationRunStatuses);
+  const runStatus = resolveTaskAgentRunStatus(conversations, conversationRunStatuses);
   const managementStatus = resolveTaskManagementStatus(task);
   return {
-      code: {primary: task.taskCode || task.id, sortValue: task.taskCode || task.id},
-      intent: {primary: task.title, sortValue: task.title},
-      managementStatus: {primary: formatTaskManagementStatus(managementStatus, managementStatusLabels), sortValue: managementStatus},
-      runStatus: {primary: formatTaskAgentRunStatus(runStatus, runStatusLabels), sortValue: runStatus},
+    code: { primary: task.taskCode || task.id, sortValue: task.taskCode || task.id },
+    intent: { primary: task.title, sortValue: task.title },
+    managementStatus: { primary: formatTaskManagementStatus(managementStatus, managementStatusLabels), sortValue: managementStatus },
+    runStatus: { primary: formatTaskAgentRunStatus(runStatus, runStatusLabels), sortValue: runStatus },
     source: { primary: formatTaskSource(task), sortValue: formatTaskSource(task) },
     updatedAt: { primary: formatTaskUpdatedAt(task.updatedAt), sortValue: parseTaskDateSortValue(task.updatedAt) },
     createdAt: { primary: formatTaskUpdatedAt(task.createdAt), sortValue: parseTaskDateSortValue(task.createdAt) },
@@ -617,71 +612,71 @@ function parseTaskDateSortValue(value: string | undefined): number | null {
 }
 
 export function taskAgentRunStatusFromSession(state: NativeSessionState): TaskAgentRunStatus {
-    if (state.error || state.transportState === 'failed' || state.conversationState === 'turn_failed') return 'failed';
-    if (state.transportState === 'reconnecting') return 'reconnecting';
-    if (state.transportState === 'connecting' || state.transportState === 'hydrating' || state.transportState === 'disconnected') return 'connecting';
-    if (state.queue?.state.type === 'paused') return 'paused';
-    if (state.conversationState === 'waiting_user_input') return 'waiting_user';
-    if (state.conversationState === 'waiting_approval') return 'waiting_approval';
-    if (state.conversationState === 'legacy_readonly') return 'legacy_readonly';
-    if (state.conversationState === 'native_idle') return 'idle';
-    return 'running';
+  if (state.error || state.transportState === 'failed' || state.conversationState === 'turn_failed') return 'failed';
+  if (state.transportState === 'reconnecting') return 'reconnecting';
+  if (state.transportState === 'connecting' || state.transportState === 'hydrating' || state.transportState === 'disconnected') return 'connecting';
+  if (state.queue?.state.type === 'paused') return 'paused';
+  if (state.conversationState === 'waiting_user_input') return 'waiting_user';
+  if (state.conversationState === 'waiting_approval') return 'waiting_approval';
+  if (state.conversationState === 'legacy_readonly') return 'legacy_readonly';
+  if (state.conversationState === 'native_idle') return 'idle';
+  return 'running';
 }
 
 export function resolveTaskAgentRunStatus(conversations: NativeConversationChoice[], liveStatuses: Record<string, TaskAgentRunStatus>): TaskAgentRunStatus {
-    if (conversations.length === 0) return 'not_started';
-    const latest = conversations.reduce((current, candidate) => (candidate.updatedAt.localeCompare(current.updatedAt) > 0 ? candidate : current));
-    const liveStatus = liveStatuses[latest.id];
-    if (liveStatus) return liveStatus;
-    if (latest.readOnly || latest.transportKind !== 'codex_native') return 'legacy_readonly';
-    const providerState = `${latest.providerState ?? ''}`.toLowerCase();
-    const recordState = latest.status.toLowerCase();
-    if (providerState.includes('failed') || providerState.includes('error') || recordState.includes('failed') || recordState.includes('error')) return 'failed';
-    if (providerState.includes('reconnect')) return 'reconnecting';
-    if (providerState.includes('connect') || providerState.includes('hydrat') || providerState.includes('disconnected')) return 'connecting';
-    if (providerState.includes('user_input') || providerState.includes('user input')) return 'waiting_user';
-    if (providerState.includes('approval')) return 'waiting_approval';
-    if (providerState.includes('waiting')) return 'waiting_user';
-    if (providerState.includes('paused')) return 'paused';
-    if (providerState.includes('active') || providerState.includes('running') || providerState.includes('starting')) return 'running';
-    return 'idle';
+  if (conversations.length === 0) return 'not_started';
+  const latest = conversations.reduce((current, candidate) => (candidate.updatedAt.localeCompare(current.updatedAt) > 0 ? candidate : current));
+  const liveStatus = liveStatuses[latest.id];
+  if (liveStatus) return liveStatus;
+  if (latest.readOnly || latest.transportKind !== 'codex_native') return 'legacy_readonly';
+  const providerState = `${latest.providerState ?? ''}`.toLowerCase();
+  const recordState = latest.status.toLowerCase();
+  if (providerState.includes('failed') || providerState.includes('error') || recordState.includes('failed') || recordState.includes('error')) return 'failed';
+  if (providerState.includes('reconnect')) return 'reconnecting';
+  if (providerState.includes('connect') || providerState.includes('hydrat') || providerState.includes('disconnected')) return 'connecting';
+  if (providerState.includes('user_input') || providerState.includes('user input')) return 'waiting_user';
+  if (providerState.includes('approval')) return 'waiting_approval';
+  if (providerState.includes('waiting')) return 'waiting_user';
+  if (providerState.includes('paused')) return 'paused';
+  if (providerState.includes('active') || providerState.includes('running') || providerState.includes('starting')) return 'running';
+  return 'idle';
 }
 
 export function formatTaskManagementStatus(status: TaskManagementStatus, labels?: Partial<Record<TaskManagementStatus, string>>): string {
-    const defaultLabels: Record<TaskManagementStatus, string> = {
-        todo: '待开始',
-        in_development: '开发中',
-        in_testing: '测试中',
-        awaiting_acceptance: '待验收',
-        blocked: '已阻塞',
-        completed: '已完成',
-        cancelled: '已取消',
-    };
-    return labels?.[status] ?? defaultLabels[status];
+  const defaultLabels: Record<TaskManagementStatus, string> = {
+    todo: '待开始',
+    in_development: '开发中',
+    in_testing: '测试中',
+    awaiting_acceptance: '待验收',
+    blocked: '已阻塞',
+    completed: '已完成',
+    cancelled: '已取消',
+  };
+  return labels?.[status] ?? defaultLabels[status];
 }
 
 export function resolveTaskManagementStatus(task: Pick<TaskRecord, 'managementStatus' | 'status'>): TaskManagementStatus {
-    if (task.managementStatus) return task.managementStatus;
-    if (task.status === 'completed') return 'completed';
-    if (task.status === 'cancelled') return 'cancelled';
-    if (task.status === 'running' || task.status === 'paused' || task.status === 'waiting_confirmation' || task.status === 'failed') return 'in_development';
-    return 'todo';
+  if (task.managementStatus) return task.managementStatus;
+  if (task.status === 'completed') return 'completed';
+  if (task.status === 'cancelled') return 'cancelled';
+  if (task.status === 'running' || task.status === 'paused' || task.status === 'waiting_confirmation' || task.status === 'failed') return 'in_development';
+  return 'todo';
 }
 
 export function formatTaskAgentRunStatus(status: TaskAgentRunStatus, labels?: Partial<Record<TaskAgentRunStatus, string>>): string {
-    const defaultLabels: Record<TaskAgentRunStatus, string> = {
-        not_started: '未启动',
-        connecting: '正在连接',
-        reconnecting: '正在重连',
-        running: '运行中',
-        waiting_user: '等待用户回复',
-        waiting_approval: '等待授权',
-        paused: '已暂停',
-        idle: '等待新指令',
-        failed: '运行失败',
-        legacy_readonly: '旧会话只读',
-    };
-    return labels?.[status] ?? defaultLabels[status];
+  const defaultLabels: Record<TaskAgentRunStatus, string> = {
+    not_started: '未启动',
+    connecting: '正在连接',
+    reconnecting: '正在重连',
+    running: '运行中',
+    waiting_user: '等待用户回复',
+    waiting_approval: '等待授权',
+    paused: '已暂停',
+    idle: '等待新指令',
+    failed: '运行失败',
+    legacy_readonly: '旧会话只读',
+  };
+  return labels?.[status] ?? defaultLabels[status];
 }
 
 function formatTaskSourceType(value: string, labels?: TaskSourceLabels): string | undefined {
