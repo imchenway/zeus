@@ -35,7 +35,7 @@ CI 通过 `ZEUS_VERIFY_BASE` 与 `ZEUS_VERIFY_HEAD` 传入本次推送或 PR 的
 普通发布前门禁必须覆盖变更文件格式、Git 空白错误、lint、typecheck 和 build。完整 macOS 发布门禁在此基础上继续覆盖
 acceptance matrix、AI CLI adapter 探针、package:mac、包内 Electron 加载和包内 renderer/main 非 GUI 健康检查。
 
-### 当前发布候选（0.1.6，尚未公开）
+### 当前公开稳定基线（0.1.6）
 
 - 根包与桌面包版本已同步为 `0.1.6`；
 - 本次修复 provider 上一轮已经终止但本地 paused 状态阻止新队列派发的问题，并把无 `providerTurnId` 的 queued/paused 输入定义为可带入新会话草稿但不自动发送的“未发送内容”；
@@ -46,9 +46,15 @@ acceptance matrix、AI CLI adapter 探针、package:mac、包内 Electron 加载
 - 只使用仓库 `dist/mac-arm64/Zeus.app` 与隔离数据库副本真实启动，`/health` 返回 `version=0.1.6`、`database=ok`、`runtime=ok`；失败轮次没有“待发送”，无法确认的输入显示为“未发送内容”且未自动创建 turn；
 - 验收应用正常退出后 Main、执行宿主均结束，rendezvous 已清理；直接启动隔离包时出现一次登录项权限警告，本轮未验证登录项设置；
 - 当前仍为 ad-hoc 实用发布，manifest 保持 `signed=false`、`notarized=false`，不描述为 Apple 已认证或应用内自动安装；
-- 远端 PR/CI、annotated tag、GitHub Release 和 Homebrew Tap 尚未执行，当前不能描述为公开稳定版已发布。
+- 本地发布提交 `296ee49337dfff8e21c8afeda76ec3a803a5b42f` 经 PR `#16` rebase 合入为最终发布提交 `a8534da6ec5a33a777602896b971372431bd3ff9`；PR CI `30650097808` 与 main 推送 CI `30650219288` 均成功；
+- annotated tag `v0.1.6` 解引用后指向最终发布提交；GitHub Release `https://github.com/imchenway/zeus/releases/tag/v0.1.6` 为非草稿、非预发布的 Latest Release；
+- Release 公开下载区只有 `Zeus-0.1.6-arm64.dmg` 与 `zeus-release-manifest.json`，GitHub 服务端摘要、大小与本地产物一致；
+- 从公开 CDN 重新下载的 DMG 与 manifest 和本地产物逐字节一致，下载后的 DMG 再次通过 `hdiutil verify`；
+- GitHub Release notes 与 `docs/releases/v0.1.6.md` 完全一致，SHA256 均为 `617e09883c11a6121ffa14ca0c3cb934d4232196656aa3c52e8cd51234b445bd`；
+- Homebrew Tap 已更新到提交 `de6e6146bce425e2b934b2d2cdacee12fd30aa5e`；远端 Cask SHA256 为 `132040d39b777819ec22baa100ea2f303a29bde1dca16f2f7a5aa8b183c6c9fc`，与本地生成文件一致；
+- 本轮没有启动、升级或修改 `/Applications/Zeus.app`，发布后核对只读取远端 Release 与 Tap。
 
-### 当前公开稳定基线（0.1.5）
+### 历史稳定基线（0.1.5）
 
 - 根包与桌面包版本已同步为 `0.1.5`；
 - 本次修复界面租约过期或执行宿主退出后永久重试的问题：Main 会重新登记当前宿主，控制端点失效时通过安全 rendezvous 发现或启动唯一宿主，并向 Renderer 提供刷新后的 Local Server 地址；
