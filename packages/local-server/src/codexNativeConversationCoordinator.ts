@@ -55,6 +55,7 @@ interface ConversationDispatchContext {
   taskId: string | null;
   model: string;
   effort?: string;
+  serviceTier?: string | null;
   allowCodeChanges: boolean;
   allowTests: boolean;
   allowGitCommit: boolean;
@@ -267,6 +268,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       taskId: typeof context.taskId === 'string' ? context.taskId : null,
       model: requireString(context.model, 'submission model'),
       ...(typeof context.effort === 'string' ? { effort: context.effort } : {}),
+      ...(Object.prototype.hasOwnProperty.call(context, 'serviceTier') && (context.serviceTier === null || typeof context.serviceTier === 'string') ? { serviceTier: context.serviceTier } : {}),
       allowCodeChanges: context.allowCodeChanges === true,
       allowTests: context.allowTests === true,
       allowGitCommit: context.allowGitCommit === true,
@@ -431,6 +433,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       taskId: input.taskId,
       model: input.model,
       ...(input.effort ? { effort: input.effort } : {}),
+      ...(Object.prototype.hasOwnProperty.call(input, 'serviceTier') ? { serviceTier: input.serviceTier } : {}),
       allowCodeChanges: input.allowCodeChanges,
       allowTests: input.allowTests,
       allowGitCommit: input.allowGitCommit,
@@ -487,6 +490,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       taskId: null,
       model: input.model,
       ...(input.effort ? { effort: input.effort } : {}),
+      ...(Object.prototype.hasOwnProperty.call(input, 'serviceTier') ? { serviceTier: input.serviceTier } : {}),
       allowCodeChanges: permissionMode !== 'read-only',
       allowTests: permissionMode !== 'read-only',
       allowGitCommit: false,
@@ -540,6 +544,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       taskId: null,
       model: input.model,
       ...(input.effort ? { effort: input.effort } : {}),
+      ...(Object.prototype.hasOwnProperty.call(input, 'serviceTier') ? { serviceTier: input.serviceTier } : {}),
       allowCodeChanges: false,
       allowTests: false,
       allowGitCommit: false,
@@ -631,6 +636,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       workMode: input.collaborationMode ?? conversation.collaborationMode,
       ...(input.model ? { model: input.model } : {}),
       ...(input.effort ? { effort: input.effort } : {}),
+      ...(Object.prototype.hasOwnProperty.call(input, 'serviceTier') ? { serviceTier: input.serviceTier } : {}),
     };
     if (input.model && input.model !== previousContext.model && !input.effort) delete context.effort;
     if (conversation.collaborationMode !== context.workMode) options.conversations.updateCollaborationMode(conversation.id, context.workMode);
@@ -735,6 +741,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         const profile = providerPermissionProfile(context);
         const thread = await options.manager.startThread({
           model: context.model,
+          ...(Object.prototype.hasOwnProperty.call(context, 'serviceTier') ? { serviceTier: context.serviceTier } : {}),
           cwd: context.projectLocalPath,
           sandbox: profile.sandbox,
           approvalPolicy: profile.approvalPolicy,
@@ -749,6 +756,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
           providerModel: context.model,
           providerState: 'ready',
         });
+        persistThreadProviderSettings(conversation.id, thread);
         await persist();
         options.broadcast('conversation.transport.changed', {
           conversationId: conversation.id,
@@ -771,6 +779,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         ...(context.additionalContext ? { additionalContext: context.additionalContext } : {}),
         model: context.model,
         ...(context.effort ? { effort: context.effort } : {}),
+        ...(Object.prototype.hasOwnProperty.call(context, 'serviceTier') ? { serviceTier: context.serviceTier } : {}),
         summary: 'auto',
         ...(context.workMode
           ? {
@@ -1096,7 +1105,8 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     contexts.set(conversation.id, context);
     try {
       await options.manager.unarchiveThread({ threadId: providerThreadId });
-      await options.manager.resumeThread({ threadId: providerThreadId, cwd: context.projectLocalPath });
+      const resumed = await options.manager.resumeThread({ threadId: providerThreadId, cwd: context.projectLocalPath });
+      persistThreadProviderSettings(conversation.id, resumed);
       const snapshot = await options.manager.readThread({ threadId: providerThreadId });
       for (const submission of options.submissions.listByConversation(conversation.id)) {
         if (submission.status === 'paused' && submission.pausedReason === 'provider_archived') options.submissions.updateStatus(submission.id, 'queued');
@@ -1557,7 +1567,8 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         const contextual = options.submissions.listByConversation(conversation.id).find((submission) => isRecord(parseJsonRecord(submission.inputJson).context));
         if (contextual) contexts.set(conversation.id, contextFromSubmission(contextual));
         const providerThreadId = requireString(conversation.providerThreadId, 'provider thread id');
-        await options.manager.resumeThread({ threadId: providerThreadId, ...(contexts.get(conversation.id)?.projectLocalPath ? { cwd: contexts.get(conversation.id)!.projectLocalPath } : {}) });
+        const resumed = await options.manager.resumeThread({ threadId: providerThreadId, ...(contexts.get(conversation.id)?.projectLocalPath ? { cwd: contexts.get(conversation.id)!.projectLocalPath } : {}) });
+        persistThreadProviderSettings(conversation.id, resumed);
         const authoritativeGenerationId = options.manager.generationForThread(providerThreadId) ?? generationId;
         const snapshot = await options.manager.readThread({ threadId: providerThreadId });
         reconcileConversationSnapshot(conversation, snapshot, authoritativeGenerationId);
@@ -2303,7 +2314,13 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       };
     } else if (event.method === 'thread/settings/updated' && conversation) {
       const settings = isRecord(params.threadSettings) ? params.threadSettings : params;
-      const snapshot = { generationId: event.generationId, sequence: event.sequence, model: requireString(settings.model, 'provider settings model'), ...(typeof settings.effort === 'string' ? { effort: settings.effort } : {}) };
+      const snapshot = {
+        generationId: event.generationId,
+        sequence: event.sequence,
+        model: requireString(settings.model, 'provider settings model'),
+        ...(typeof settings.effort === 'string' ? { effort: settings.effort } : {}),
+        ...(Object.prototype.hasOwnProperty.call(settings, 'serviceTier') && (settings.serviceTier === null || typeof settings.serviceTier === 'string') ? { serviceTier: settings.serviceTier } : {}),
+      };
       options.conversations.upsertProviderSettingsSnapshot(conversation.id, snapshot);
       broadcast = { type: 'conversation.provider.settings.updated', payload: { conversationId: conversation.id, ...snapshot } };
     } else if (event.method === 'thread/tokenUsage/updated' && conversation) {
@@ -2463,6 +2480,18 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       });
     }
     if (drainAfterTurn && conversation) await drainQueuedSubmissions();
+  }
+
+  function persistThreadProviderSettings(conversationId: string, thread: CodexThreadSnapshot): void {
+    const settings = thread.providerSettings;
+    if (!settings) return;
+    options.conversations.upsertProviderSettingsSnapshot(conversationId, {
+      generationId: settings.generationId,
+      sequence: settings.sequence,
+      model: settings.model,
+      ...(settings.effort ? { effort: settings.effort } : {}),
+      ...(Object.prototype.hasOwnProperty.call(settings, 'serviceTier') ? { serviceTier: settings.serviceTier } : {}),
+    });
   }
 
   async function safelyHandleProviderEventError(event: CodexAppServerEvent, error: unknown): Promise<void> {

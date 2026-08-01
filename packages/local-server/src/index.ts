@@ -1258,6 +1258,7 @@ interface CreateConversationMessageBody {
   clientUserMessageId?: string;
   model?: string;
   effort?: string;
+  serviceTier?: string | null;
   collaborationMode?: ConversationCollaborationMode;
 }
 
@@ -1280,6 +1281,7 @@ type StartTaskConversationBody = (
       source?: 'task_push';
       model?: string;
       effort?: string;
+      serviceTier?: string | null;
       workMode?: 'default' | 'plan';
       supplementalInfo?: string;
       workspace?: { mode: 'create'; sourceRef: string; branchName?: string } | { mode: 'existing'; workspaceId: string };
@@ -1297,6 +1299,7 @@ interface StartProjectConversationBody {
   attachments?: NativeConversationAttachment[];
   permissionMode?: ConversationPermissionMode;
   collaborationMode?: ConversationCollaborationMode;
+  serviceTier?: string | null;
   clientUserMessageId?: string;
 }
 
@@ -10387,11 +10390,12 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
             })();
     const requestedModel = typeof body.model === 'string' && body.model.trim() ? body.model.trim() : null;
     const requestedEffort = typeof body.effort === 'string' && body.effort.trim() ? body.effort.trim() : null;
+    const requestedServiceTier = readServiceTierOverride(body);
     const collaborationMode = body.collaborationMode === undefined ? conversation.collaborationMode : parseConversationCollaborationMode(body.collaborationMode);
     if (!collaborationMode) throw nativeApiError('ZEUS_INVALID_COLLABORATION_MODE', 'collaborationMode must be default or plan.');
     const expectedTurnId = typeof body.expectedTurnId === 'string' && body.expectedTurnId.trim() ? body.expectedTurnId.trim() : null;
     if (delivery === 'steer_now') {
-      if (requestedModel || requestedEffort) throw nativeApiError('ZEUS_INVALID_CONVERSATION_SETTINGS', 'Model and reasoning effort can change only when starting a queued turn.');
+      if (requestedModel || requestedEffort || requestedServiceTier.present) throw nativeApiError('ZEUS_INVALID_CONVERSATION_SETTINGS', 'Model, reasoning effort, and service tier can change only when starting a queued turn.');
       const activeTurn = [...conversationTurns.listByConversation(conversation.id)].reverse().find((turn) => turn.status === 'running' || turn.status === 'waiting' || turn.status === 'dispatching');
       if (!expectedTurnId || activeTurn?.providerTurnId !== expectedTurnId) {
         throw nativeApiError('ZEUS_NATIVE_TURN_MISMATCH', 'steer_now requires the exact currently active provider turn id.');
@@ -10399,7 +10403,8 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     }
     let selectedModel: string | null = null;
     let selectedEffort: string | null = null;
-    if (requestedModel || requestedEffort) {
+    let selectedServiceTier: string | null | undefined;
+    if (requestedModel || requestedEffort || requestedServiceTier.present) {
       const capabilities = await resolveConversationCapabilities(project);
       const model = requestedModel ?? conversation.providerModel ?? capabilities.preferredModel;
       const capability = capabilities.models.find((candidate) => candidate.model === model || candidate.id === model);
@@ -10409,6 +10414,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       }
       selectedModel = capability.model;
       selectedEffort = requestedEffort ?? capability.defaultReasoningEffort ?? capability.supportedReasoningEfforts[0] ?? null;
+      selectedServiceTier = normalizeServiceTierForCapability(requestedServiceTier, capability);
     }
     const clientUserMessageId = normalizeNativeClientUserMessageId(body.clientUserMessageId, `native-client-${createHash('sha256').update(`${conversation.id}\0${idempotencyKey}`).digest('hex').slice(0, 24)}`);
     let nativeOperation = await codexNativeCoordinator.submitMessage({
@@ -10419,6 +10425,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       browserComments,
       ...(selectedModel ? { model: selectedModel } : {}),
       ...(selectedEffort ? { effort: selectedEffort } : {}),
+      ...(requestedServiceTier.present ? { serviceTier: selectedServiceTier ?? null } : {}),
       collaborationMode,
       idempotencyKey,
       clientUserMessageId,
@@ -10438,6 +10445,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
         ...(displayText ? { displayText } : {}),
         ...(selectedModel ? { model: selectedModel } : {}),
         ...(selectedEffort ? { effort: selectedEffort } : {}),
+        ...(requestedServiceTier.present ? { serviceTier: selectedServiceTier ?? null } : {}),
       }),
       now().toISOString(),
       persisted.id,
@@ -10453,6 +10461,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
           ...(displayText ? { displayText } : {}),
           ...(selectedModel ? { model: selectedModel } : {}),
           ...(selectedEffort ? { effort: selectedEffort } : {}),
+          ...(requestedServiceTier.present ? { serviceTier: selectedServiceTier ?? null } : {}),
         }),
         conversation.id,
         clientUserMessageId,
@@ -10698,6 +10707,10 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     if (!content && attachments.length === 0) {
       throw nativeApiError('ZEUS_INVALID_CONVERSATION_START', 'Project conversation content or attachments are required.');
     }
+    const capabilities = await resolveConversationCapabilities(project);
+    const selectedModel = capabilities.models.find((candidate) => candidate.model === capabilities.preferredModel || candidate.id === capabilities.preferredModel) ?? capabilities.models[0]!;
+    const requestedServiceTier = readServiceTierOverride(body);
+    const serviceTier = normalizeServiceTierForCapability(requestedServiceTier, selectedModel);
     const clientUserMessageId = normalizeNativeClientUserMessageId(body.clientUserMessageId, `native-client-${createHash('sha256').update(`${project.id}\0${idempotencyKey}`).digest('hex').slice(0, 24)}`);
     const resourceId = encodeProjectConversationAcceptanceReservation(reservation);
     const reservedLifecycle = {
@@ -10717,7 +10730,8 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       projectLocalPath: project.localPath,
       prompt: content,
       attachments,
-      model: await resolveCodexModel(project),
+      model: selectedModel.model,
+      ...(requestedServiceTier.present ? { serviceTier } : {}),
       permissionMode,
       collaborationMode,
       idempotencyKey,
@@ -10864,6 +10878,8 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
         const capabilities = await resolveTaskPushCapabilities(project, task);
         const selectedModel = capabilities.models.find((candidate) => candidate.model === modelName || candidate.id === modelName);
         if (!selectedModel) throw nativeApiError('ZEUS_CODEX_MODEL_UNAVAILABLE', `Configured Codex model is unavailable: ${modelName}`);
+        const requestedServiceTier = readServiceTierOverride(body);
+        const serviceTier = normalizeServiceTierForCapability(requestedServiceTier, selectedModel);
         const selectedEffort = effort || selectedModel.defaultReasoningEffort || selectedModel.supportedReasoningEfforts[0] || '';
         if (selectedEffort && !selectedModel.supportedReasoningEfforts.includes(selectedEffort)) {
           throw nativeApiError('ZEUS_CODEX_EFFORT_UNAVAILABLE', `Configured Codex effort is unavailable: ${selectedEffort}`);
@@ -10884,6 +10900,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
           allowedAttachmentRoots: attachmentInput.allowedRoots,
           model: selectedModel.model,
           ...(selectedEffort ? { effort: selectedEffort } : {}),
+          ...(requestedServiceTier.present ? { serviceTier } : {}),
           workMode,
           // 兼容字段在该链路中不参与权限或提示词决策；权限完全取自弹窗的 permissionMode。
           allowCodeChanges: false,
@@ -10905,6 +10922,10 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
         const attachments = normalizeNativeConversationAttachments(body.attachments, project.localPath);
         const explicitContent = typeof body.content === 'string' ? body.content.trim() : '';
         const content = explicitContent || (attachments.length === 0 ? createTaskRuntimePrompt(project, task) : '');
+        const capabilities = await resolveConversationCapabilities(project);
+        const selectedModel = capabilities.models.find((candidate) => candidate.model === capabilities.preferredModel || candidate.id === capabilities.preferredModel) ?? capabilities.models[0]!;
+        const requestedServiceTier = readServiceTierOverride(body);
+        const serviceTier = normalizeServiceTierForCapability(requestedServiceTier, selectedModel);
         nativeOperation = await codexNativeCoordinator.startTaskConversation({
           conversationId: reservation.conversationId,
           submissionId: reservation.submissionId,
@@ -10914,7 +10935,8 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
           taskTitle: task.title,
           prompt: content,
           attachments,
-          model: await resolveCodexModel(project),
+          model: selectedModel.model,
+          ...(requestedServiceTier.present ? { serviceTier } : {}),
           allowCodeChanges: task.allowCodeChanges,
           allowTests: task.allowTests,
           allowGitCommit: task.allowGitCommit,
@@ -11545,6 +11567,8 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       ...(model.displayName ? { displayName: model.displayName } : {}),
       supportedReasoningEfforts: [...model.supportedReasoningEfforts],
       ...(model.defaultReasoningEffort ? { defaultReasoningEffort: model.defaultReasoningEffort } : {}),
+      serviceTiers: model.serviceTiers.map((tier) => ({ ...tier })),
+      ...(model.defaultServiceTier !== undefined ? { defaultServiceTier: model.defaultServiceTier } : {}),
     }));
     if (models.length === 0) throw nativeApiError('ZEUS_CODEX_MODEL_UNAVAILABLE', 'Codex app-server did not report an available model.');
     const projectConfig = readProjectConfig(project.id);
@@ -11557,6 +11581,20 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       preferredModel,
       models,
     };
+  }
+
+  function readServiceTierOverride(value: object): { present: false } | { present: true; value: string | null } {
+    if (!Object.prototype.hasOwnProperty.call(value, 'serviceTier')) return { present: false };
+    const serviceTier = (value as { serviceTier?: unknown }).serviceTier;
+    if (serviceTier === null) return { present: true, value: null };
+    if (typeof serviceTier === 'string' && serviceTier.trim()) return { present: true, value: serviceTier.trim() };
+    throw nativeApiError('ZEUS_INVALID_CONVERSATION_SETTINGS', 'serviceTier must be null, a non-empty catalog id, or omitted.');
+  }
+
+  function normalizeServiceTierForCapability(requested: { present: false } | { present: true; value: string | null }, capability: { serviceTiers: Array<{ id: string }> }): string | null | undefined {
+    if (!requested.present) return undefined;
+    if (requested.value === null) return null;
+    return capability.serviceTiers.some((tier) => tier.id === requested.value) ? requested.value : null;
   }
 
   function buildTaskPushPrompt(project: ZeusProjectRecord, task: ZeusTaskRecord, supplementalInfo: string): string {

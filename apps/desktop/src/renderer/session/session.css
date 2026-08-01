@@ -1989,6 +1989,15 @@
     gap: 2px;
 }
 
+.session-codex-parity-v1 .session-service-tier-note {
+  color: var(--session-text-muted);
+  display: block;
+  font-size: 10px;
+  line-height: 1.35;
+  margin: 0 6px 3px;
+  overflow-wrap: anywhere;
+}
+
 .session-codex-parity-v1 .session-composer-dropdown {
   display: inline-flex;
     min-inline-size: 0;

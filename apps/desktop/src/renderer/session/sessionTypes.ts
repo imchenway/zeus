@@ -137,6 +137,7 @@ export interface NativeProviderSettingsSnapshot {
   sequence?: number;
   model: string;
   effort?: string;
+  serviceTier?: string | null;
 }
 
 export interface NativeTokenUsageSnapshot {
@@ -252,7 +253,11 @@ export interface CodexTaskPushModelCapability {
   displayName?: string;
   supportedReasoningEfforts: string[];
   defaultReasoningEffort?: string;
+  serviceTiers: Array<{ id: string; name: string; description: string }>;
+  defaultServiceTier?: string | null;
 }
+
+export type NativeServiceTierSelection = { type: 'follow' } | { type: 'standard' } | { type: 'catalog'; id: string };
 
 export interface CodexTaskPushCapabilities {
   generationId: string;
@@ -408,6 +413,7 @@ export interface CodexConversationCapabilities {
 export interface NativeTurnSettingsSelection {
   model: string;
   effort?: string;
+  serviceTier?: string | null;
   collaborationMode: NativeCollaborationMode;
 }
 
@@ -416,6 +422,7 @@ export interface StartTaskModelPushRequest {
   source: 'task_push';
   model: string;
   effort?: string;
+  serviceTier?: string | null;
   workMode: 'default' | 'plan';
   permissionMode: NativePermissionMode;
   workspace: { mode: 'create'; sourceRef: string; branchName: string } | { mode: 'existing'; workspaceId: string };
@@ -431,6 +438,7 @@ export type StartNativeConversationRequest =
       attachments?: NativeConversationAttachment[];
       permissionMode: NativePermissionMode;
       collaborationMode: NativeCollaborationMode;
+      serviceTier?: string | null;
       idempotencyKey: string;
       clientUserMessageId: string;
     }
@@ -459,6 +467,7 @@ export interface StartProjectConversationRequest {
   attachments: NativeConversationAttachment[];
   permissionMode: NativePermissionMode;
   collaborationMode: NativeCollaborationMode;
+  serviceTier?: string | null;
   idempotencyKey: string;
   clientUserMessageId: string;
 }
@@ -472,6 +481,7 @@ export interface SendNativeMessageRequest {
   expectedTurnId?: string;
   model?: string;
   effort?: string;
+  serviceTier?: string | null;
   collaborationMode: NativeCollaborationMode;
   idempotencyKey: string;
   clientUserMessageId: string;
