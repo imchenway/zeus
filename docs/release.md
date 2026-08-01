@@ -24,7 +24,7 @@ CI 通过 `ZEUS_VERIFY_BASE` 与 `ZEUS_VERIFY_HEAD` 传入本次推送或 PR 的
 
 公开 Release 只包含版本化 DMG 和更新 manifest；Zeus.app 与 Homebrew Cask 是本地或 CI 内部发布工件，不作为 Release 附件。
 
-- 公开 DMG：`dist/Zeus-0.1.5-arm64.dmg`；
+- 公开 DMG：`dist/Zeus-0.1.7-arm64.dmg`；
 - 公开更新清单：`dist/zeus-release-manifest.json`，供应用内检查更新读取；
 - 内部 App：`dist/mac-arm64/Zeus.app`；
 - 内部 Homebrew Cask：`dist/homebrew/zeus.rb`，同步到 `imchenway/homebrew-tap`；
@@ -34,6 +34,20 @@ CI 通过 `ZEUS_VERIFY_BASE` 与 `ZEUS_VERIFY_HEAD` 传入本次推送或 PR 的
 
 普通发布前门禁必须覆盖变更文件格式、Git 空白错误、lint、typecheck 和 build。完整 macOS 发布门禁在此基础上继续覆盖
 acceptance matrix、AI CLI adapter 探针、package:mac、包内 Electron 加载和包内 renderer/main 非 GUI 健康检查。
+
+### 当前发布候选（0.1.7，尚未公开）
+
+- 根包与桌面包版本已同步为 `0.1.7`；
+- 任务推送、项目对话、任务会话首轮和已有会话后续轮次已经贯通 Codex app-server 的 `serviceTier` 三态；
+- 跟随 Codex 省略字段、标准显式发送 `null`、Fast 发送模型目录的真实档位 ID；用户选择、项目偏好和 provider 实际档位保持分离；
+- `pnpm verify:release` 已通过：Prettier、Git 空白错误、lint、typecheck、build、12 个章节 139 项验收矩阵、AI CLI 探针、macOS arm64 打包、产物健康检查和严格 codesign 校验完整执行；
+- 首次打包按预期发现缓存 Runtime 缺失源码锁要求的 patch 并阻断发布；重建后的包内 Runtime manifest 已包含 `patches/0001-zeus-legacy-session-source.patch`；
+- DMG SHA256：`079c6754fd9ba1a2b2fc8be04f8dacf1c848c8f2d1767dee2af1c69c487bf8a9`，大小为 `252279601` 字节，`hdiutil verify` 返回 `VALID`；
+- manifest SHA256：`40978e39b9ad61733aa386ddc6bbc899a9f94eef5fa39a22bde1d4e68c88b76c`，明确记录 `version=0.1.7`、`signed=false`、`notarized=false`；
+- 只使用仓库 `dist/mac-arm64/Zeus.app` 与隔离用户数据真实启动，`/health` 返回 `version=0.1.7`、`database=ok`、`runtime=ok`；本地服务只监听 `127.0.0.1`；
+- 验收应用正常退出后执行宿主与 rendezvous 已清理，隔离资料目录已移入系统废纸篓；
+- 当前仍为 ad-hoc 实用发布，不描述为 Apple 已认证或应用内自动安装；
+- 远端 CI、annotated tag、GitHub Release 和 Homebrew Tap 尚未执行，当前不能描述为公开稳定版已发布。
 
 ### 当前公开稳定基线（0.1.6）
 
