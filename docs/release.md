@@ -35,7 +35,7 @@ CI 通过 `ZEUS_VERIFY_BASE` 与 `ZEUS_VERIFY_HEAD` 传入本次推送或 PR 的
 普通发布前门禁必须覆盖变更文件格式、Git 空白错误、lint、typecheck 和 build。完整 macOS 发布门禁在此基础上继续覆盖
 acceptance matrix、AI CLI adapter 探针、package:mac、包内 Electron 加载和包内 renderer/main 非 GUI 健康检查。
 
-### 当前发布候选（0.1.7，尚未公开）
+### 当前公开稳定基线（0.1.7）
 
 - 根包与桌面包版本已同步为 `0.1.7`；
 - 任务推送、项目对话、任务会话首轮和已有会话后续轮次已经贯通 Codex app-server 的 `serviceTier` 三态；
@@ -47,9 +47,16 @@ acceptance matrix、AI CLI adapter 探针、package:mac、包内 Electron 加载
 - 只使用仓库 `dist/mac-arm64/Zeus.app` 与隔离用户数据真实启动，`/health` 返回 `version=0.1.7`、`database=ok`、`runtime=ok`；本地服务只监听 `127.0.0.1`；
 - 验收应用正常退出后执行宿主与 rendezvous 已清理，隔离资料目录已移入系统废纸篓；
 - 当前仍为 ad-hoc 实用发布，不描述为 Apple 已认证或应用内自动安装；
-- 远端 CI、annotated tag、GitHub Release 和 Homebrew Tap 尚未执行，当前不能描述为公开稳定版已发布。
+- 发布分支通过 PR `#17` 的 CI `30694508136`，并以 rebase 方式合入最终发布提交 `5f6c91a63eb61649d83e6255b345b6e211b44d13`；`main` 推送 CI `30694556609` 成功；
+- annotated tag `v0.1.7` 解引用后指向最终发布提交；GitHub Release `https://github.com/imchenway/zeus/releases/tag/v0.1.7` 为非草稿、非预发布的 Latest Release；
+- Release 公开下载区只有 `Zeus-0.1.7-arm64.dmg` 与 `zeus-release-manifest.json`，GitHub 服务端摘要、大小与本地产物一致；
+- 从公开 CDN 重新下载的 DMG 与 manifest 和本地产物逐字节一致，下载后的 DMG 再次通过 `hdiutil verify`；
+- GitHub Release notes 与 `docs/releases/v0.1.7.md` 精确一致，SHA256 均为 `feb097a15c058e4580bd49c9213e64fcc2bfe08f066d963279d7593464d45711`；
+- Homebrew Tap 已更新到提交 `345438e7cbd47d61a4aa6a1993aa242c45e538f0`；远端 Cask SHA256 为 `673bb804c5bc162fe0809ea8aaa86bb1b74a8607abced583abd22df749c90149`，与本地生成文件一致；
+- `brew style --cask imchenway/tap/zeus` 检查 1 个文件且无问题，`brew info` 显示公开版本 `0.1.7`；本机仍安装 `0.1.6` 且被标记为 outdated；
+- 本轮没有升级、替换或启动 `/Applications/Zeus.app`，发布后验收只使用仓库包、公开 Release 与 Tap。
 
-### 当前公开稳定基线（0.1.6）
+### 历史稳定基线（0.1.6）
 
 - 根包与桌面包版本已同步为 `0.1.6`；
 - 本次修复 provider 上一轮已经终止但本地 paused 状态阻止新队列派发的问题，并把无 `providerTurnId` 的 queued/paused 输入定义为可带入新会话草稿但不自动发送的“未发送内容”；
