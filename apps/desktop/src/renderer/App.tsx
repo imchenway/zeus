@@ -64,11 +64,13 @@ import type {
   NativeConversationChoice,
   NativeConversationChoicesSnapshot,
   NativeProjectConversationChoicesSnapshot,
+  NativeServiceTierSelection,
   NativeSessionState,
   SessionConversationOwner,
   StartTaskModelPushRequest,
 } from './session/sessionTypes.js';
 import { selectHasConfirmedUserMessage } from './session/sessionSelectors.js';
+import { readProjectServiceTierPreference, serviceTierWireOverride, writeProjectServiceTierPreference } from './session/serviceTierSelection.js';
 import type { SessionControllerClient } from './session/useSessionController.js';
 import { TaskDetailPaneContent } from './task/TaskDetailPaneContent.js';
 import { TaskGitReviewModal } from './task/TaskGitReviewModal.js';
@@ -6225,6 +6227,8 @@ export function App(props: {
   const [taskModelPushForm, setTaskModelPushForm] = useState<TaskModelPushForm>({
     model: '',
     effort: '',
+    serviceTier: { type: 'follow' },
+    serviceTierDowngraded: false,
     workMode: 'default',
     permissionMode: 'read-only',
     workspaceMode: 'create',
@@ -6244,6 +6248,7 @@ export function App(props: {
   const [taskGitMergeTaskId, setTaskGitMergeTaskId] = useState<string | null>(null);
   const taskModelPushCapabilityRequestRef = useRef(0);
   const taskModelPushEnvelopeRef = useRef<{ fingerprint: string; request: StartTaskModelPushRequest } | null>(null);
+  const pendingProjectServiceTierPreferencesRef = useRef(new Map<string, { projectId: string; clientUserMessageId: string; selection: NativeServiceTierSelection }>());
   const taskCreateTitleInputRef = useRef<HTMLInputElement | null>(null);
   const taskCreateReturnFocusRef = useRef<HTMLElement | null>(null);
   const [dataPortabilityStatus, setDataPortabilityStatus] = useState<DataPortabilityStatusState>({ kind: 'idle' });
@@ -7787,6 +7792,15 @@ export function App(props: {
         },
         refresh: refreshNativeConversationChoices,
       });
+      if (result.acceptance.submission?.status === 'active') {
+        writeProjectServiceTierPreference(browserNativeConversationStartStorage(), input.task.projectId, input.serviceTierSelection);
+      } else {
+        pendingProjectServiceTierPreferencesRef.current.set(result.choice.id, {
+          projectId: input.task.projectId,
+          clientUserMessageId: result.request.clientUserMessageId,
+          selection: input.serviceTierSelection,
+        });
+      }
       refreshError = result.refreshError;
     } catch (error) {
       const message = redactLocalUiErrorMessage(errorToLocalUiMessage(error));
@@ -7833,6 +7847,15 @@ export function App(props: {
         },
         refresh: refreshNativeProjectConversationChoices,
       });
+      if (result.acceptance.submission?.status === 'active') {
+        writeProjectServiceTierPreference(browserNativeConversationStartStorage(), projectId, input.serviceTierSelection);
+      } else {
+        pendingProjectServiceTierPreferencesRef.current.set(result.choice.id, {
+          projectId,
+          clientUserMessageId: result.request.clientUserMessageId,
+          selection: input.serviceTierSelection,
+        });
+      }
       refreshError = result.refreshError;
     } catch (error) {
       const message = redactLocalUiErrorMessage(errorToLocalUiMessage(error));
@@ -7909,6 +7932,8 @@ export function App(props: {
     setTaskModelPushForm({
       model: '',
       effort: '',
+      serviceTier: { type: 'follow' },
+      serviceTierDowngraded: false,
       workMode: 'default',
       permissionMode: 'read-only',
       workspaceMode: 'create',
@@ -7932,8 +7957,9 @@ export function App(props: {
       const capabilities = await client.loadCodexTaskPushCapabilities(task.projectId, task.id);
       if (taskModelPushCapabilityRequestRef.current !== requestVersion) return;
       const remembered = readTaskModelPushPreferences(browserNativeConversationStartStorage(), task.projectId);
+      const rememberedServiceTier = readProjectServiceTierPreference(browserNativeConversationStartStorage(), task.projectId);
       setTaskModelPushCapabilities(capabilities);
-      setTaskModelPushForm(resolveTaskModelPushInitialForm(capabilities, remembered));
+      setTaskModelPushForm(resolveTaskModelPushInitialForm(capabilities, remembered, rememberedServiceTier));
       setTaskModelPushStatus('ready');
     } catch (error) {
       if (taskModelPushCapabilityRequestRef.current !== requestVersion) return;
@@ -7967,6 +7993,7 @@ export function App(props: {
             source: 'task_push',
             model: taskModelPushForm.model,
             ...(taskModelPushForm.effort ? { effort: taskModelPushForm.effort } : {}),
+            ...serviceTierWireOverride(taskModelPushForm.serviceTier),
             workMode: taskModelPushForm.workMode,
             permissionMode: taskModelPushForm.permissionMode,
             workspace: taskModelPushForm.workspaceMode === 'existing' ? { mode: 'existing', workspaceId: taskModelPushForm.workspaceId } : { mode: 'create', sourceRef: taskModelPushForm.sourceRef, branchName: taskModelPushForm.branchName },
@@ -8060,6 +8087,7 @@ export function App(props: {
       if (submissionStatus === 'active') {
         // 只有 thread/start 与首个 turn/start 都成功后，才更新项目级选择记忆。
         writeTaskModelPushPreferences(browserNativeConversationStartStorage(), pending.task.projectId, pending.form);
+        writeProjectServiceTierPreference(browserNativeConversationStartStorage(), pending.task.projectId, pending.form.serviceTier);
       }
       void refreshNativeConversationChoices(pending.task.id).catch((error: unknown) => recordLocalError('task-model-push-history-refresh', error));
       if (props.onLoadTask) {
@@ -10445,7 +10473,14 @@ export function App(props: {
                   onStateChange={(conversationId, state) => {
                     recordNativeConversationRuntimeState(conversationId, state);
                     if (taskModelPushPending?.status === 'accepted' && taskModelPushPending.choice.id === conversationId && selectHasConfirmedUserMessage(state, taskModelPushPending.request.clientUserMessageId)) {
+                      writeTaskModelPushPreferences(browserNativeConversationStartStorage(), taskModelPushPending.task.projectId, taskModelPushPending.form);
+                      writeProjectServiceTierPreference(browserNativeConversationStartStorage(), taskModelPushPending.task.projectId, taskModelPushPending.form.serviceTier);
                       setTaskModelPushPending(null);
+                    }
+                    const pendingPreference = pendingProjectServiceTierPreferencesRef.current.get(conversationId);
+                    if (pendingPreference && selectHasConfirmedUserMessage(state, pendingPreference.clientUserMessageId)) {
+                      writeProjectServiceTierPreference(browserNativeConversationStartStorage(), pendingPreference.projectId, pendingPreference.selection);
+                      pendingProjectServiceTierPreferencesRef.current.delete(conversationId);
                     }
                   }}
                   onStartConversation={startNativeConversation}
@@ -10483,6 +10518,7 @@ export function App(props: {
                   actions={{
                     onStartConversation: startNativeConversation,
                     onStartProjectConversation: startProjectConversation,
+                    onLoadCapabilities: props.nativeConversationClient?.loadCodexConversationCapabilities,
                     onChooseStartAttachments: props.onChooseConversationResources ? chooseNativeConversationAttachments : undefined,
                     onOpenImportSettings: () => {
                       setSettingsCategory('runtime');

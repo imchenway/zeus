@@ -2,7 +2,16 @@ import { type KeyboardEvent, type PointerEvent, type RefObject, useEffect, useLa
 import { ChatCircleIcon as ChatCircle } from '@phosphor-icons/react/dist/csr/ChatCircle';
 import { GlobeSimpleIcon as GlobeSimple } from '@phosphor-icons/react/dist/csr/GlobeSimple';
 import type { ZeusBrowserPreparedSubmission } from '@zeus/shared';
-import type { CodexConversationCapabilities, NativeCollaborationMode, NativeConversationAttachment, NativePermissionMode, NativeQueuedSubmission, NativeSessionState, NativeTurnSettingsSelection } from './sessionTypes.js';
+import type {
+  CodexConversationCapabilities,
+  NativeCollaborationMode,
+  NativeConversationAttachment,
+  NativePermissionMode,
+  NativeQueuedSubmission,
+  NativeServiceTierSelection,
+  NativeSessionState,
+  NativeTurnSettingsSelection,
+} from './sessionTypes.js';
 import { ComposerDropdown } from './ComposerDropdown.js';
 import { PermissionModeControl } from './PermissionModeControl.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
@@ -10,6 +19,7 @@ import { autosizeTextarea } from './textareaAutosize.js';
 import { CollaborationModeControl } from './CollaborationModeControl.js';
 import { ConversationComposerAttachments } from './ConversationComposerAttachments.js';
 import { useConversationInputResources } from './useConversationInputResources.js';
+import { normalizeServiceTierSelection, selectionFromEffectiveServiceTier, serviceTierDescription, serviceTierOptions, serviceTierSelectionFromValue, serviceTierSelectionValue, serviceTierWireOverride } from './serviceTierSelection.js';
 
 export const QUEUE_REORDER_THRESHOLD_PX = 6;
 
@@ -17,6 +27,7 @@ export type ComposerKeyIntent = 'submit' | 'newline' | 'escape' | 'ignore';
 export interface ComposerRuntimeSettings {
   model: string;
   effort: string;
+  serviceTier?: string | null;
 }
 
 export interface ConversationComposerProps {
@@ -70,6 +81,7 @@ const labels = {
     interruptConfirm: '再次按 Escape 停止当前响应',
     model: '模型',
     effort: '推理强度',
+    serviceTier: '服务档位',
     unsynced: '未同步',
     reordered: (position: number, total: number) => `队列消息已移到第 ${position} 项，共 ${total} 项`,
   },
@@ -96,6 +108,7 @@ const labels = {
     interruptConfirm: 'Press Escape again to stop the current response',
     model: 'Model',
     effort: 'Reasoning effort',
+    serviceTier: 'Service tier',
     unsynced: 'Not synced',
     reordered: (position: number, total: number) => `Queued message moved to position ${position} of ${total}`,
   },
@@ -105,6 +118,10 @@ export function ConversationComposer(props: ConversationComposerProps) {
   const copy = labels[props.language];
   const initialModel = resolveComposerModel(props.capabilities, props.runtimeSettings?.model ?? props.state.providerSettings?.model);
   const initialEffort = resolveComposerEffort(props.capabilities, initialModel, props.runtimeSettings?.effort ?? props.state.providerSettings?.effort);
+  const initialServiceTier = selectionFromEffectiveServiceTier(
+    props.runtimeSettings && Object.prototype.hasOwnProperty.call(props.runtimeSettings, 'serviceTier') ? props.runtimeSettings.serviceTier : props.state.providerSettings?.serviceTier,
+    props.capabilities?.models.find((model) => model.model === initialModel || model.id === initialModel),
+  );
   const fallbackRef = useRef<HTMLTextAreaElement | null>(null);
   const textareaRef = props.textareaRef ?? fallbackRef;
   const [delivery, setDelivery] = useState<'queue' | 'steer_now'>('queue');
@@ -116,6 +133,8 @@ export function ConversationComposer(props: ConversationComposerProps) {
   const [inputResourceError, setInputResourceError] = useState<string | null>(null);
   const [selectedModel, setSelectedModel] = useState(initialModel);
   const [selectedEffort, setSelectedEffort] = useState(initialEffort);
+  const [selectedServiceTier, setSelectedServiceTier] = useState<NativeServiceTierSelection>(initialServiceTier);
+  const [serviceTierDowngraded, setServiceTierDowngraded] = useState(false);
   const [settingsDirty, setSettingsDirty] = useState(Boolean(props.runtimeSettings));
   const pointerStarts = useRef(new Map<string, { x: number; y: number }>());
   const active = props.state.conversationState === 'active_prework' || props.state.conversationState === 'active_final_answer';
@@ -141,6 +160,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
   const effortOptions = selectedCapability?.supportedReasoningEfforts.length
     ? selectedCapability.supportedReasoningEfforts.map((effort) => ({ value: effort, label: effort }))
     : [{ value: selectedEffort, label: selectedEffort || copy.unsynced }];
+  const tierOptions = serviceTierOptions(selectedCapability, props.language, false);
   const inputResources = useConversationInputResources({
     textareaRef,
     text: props.state.draft,
@@ -157,17 +177,32 @@ export function ConversationComposer(props: ConversationComposerProps) {
   useEffect(() => {
     const nextModel = resolveComposerModel(props.capabilities, props.state.providerSettings?.model);
     const nextEffort = resolveComposerEffort(props.capabilities, nextModel, props.state.providerSettings?.effort);
+    const nextServiceTier = selectionFromEffectiveServiceTier(
+      props.state.providerSettings?.serviceTier,
+      props.capabilities?.models.find((model) => model.model === nextModel || model.id === nextModel),
+    );
     if (!settingsDirty) {
       if (nextModel !== selectedModel) setSelectedModel(nextModel);
       if (nextEffort !== selectedEffort) setSelectedEffort(nextEffort);
+      if (serviceTierSelectionValue(nextServiceTier) !== serviceTierSelectionValue(selectedServiceTier)) setSelectedServiceTier(nextServiceTier);
       props.onRuntimeSettingsChange?.(null);
       return;
     }
-    if (props.state.providerSettings?.model === selectedModel && (props.state.providerSettings?.effort ?? '') === selectedEffort) {
+    if (props.state.providerSettings?.model === selectedModel && (props.state.providerSettings?.effort ?? '') === selectedEffort && effectiveServiceTierMatchesSelection(props.state.providerSettings?.serviceTier, selectedServiceTier)) {
       setSettingsDirty(false);
       props.onRuntimeSettingsChange?.(null);
     }
-  }, [props.capabilities, props.onRuntimeSettingsChange, props.state.providerSettings?.effort, props.state.providerSettings?.model, selectedEffort, selectedModel, settingsDirty]);
+  }, [
+    props.capabilities,
+    props.onRuntimeSettingsChange,
+    props.state.providerSettings?.effort,
+    props.state.providerSettings?.model,
+    props.state.providerSettings?.serviceTier,
+    selectedEffort,
+    selectedModel,
+    selectedServiceTier,
+    settingsDirty,
+  ]);
 
   useEffect(() => {
     if (!steerAllowed && delivery === 'steer_now') setDelivery('queue');
@@ -192,6 +227,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
         ? {
             model: selectedModel,
             ...(selectedEffort ? { effort: selectedEffort } : {}),
+            ...serviceTierWireOverride(selectedServiceTier),
             collaborationMode: props.collaborationMode,
           }
         : undefined;
@@ -420,10 +456,13 @@ export function ConversationComposer(props: ConversationComposerProps) {
                 onChange={(model) => {
                   const capability = props.capabilities?.models.find((candidate) => candidate.model === model || candidate.id === model);
                   const effort = capability?.defaultReasoningEffort ?? capability?.supportedReasoningEfforts[0] ?? '';
+                  const normalizedTier = normalizeServiceTierSelection(selectedServiceTier, capability);
                   setSelectedModel(model);
                   setSelectedEffort(effort);
+                  setSelectedServiceTier(normalizedTier.selection);
+                  setServiceTierDowngraded(normalizedTier.downgraded);
                   setSettingsDirty(true);
-                  props.onRuntimeSettingsChange?.({ model, effort });
+                  props.onRuntimeSettingsChange?.({ model, effort, ...serviceTierWireOverride(normalizedTier.selection) });
                 }}
               />
               <ComposerDropdown
@@ -434,7 +473,20 @@ export function ConversationComposer(props: ConversationComposerProps) {
                 onChange={(effort) => {
                   setSelectedEffort(effort);
                   setSettingsDirty(true);
-                  props.onRuntimeSettingsChange?.({ model: selectedModel, effort });
+                  props.onRuntimeSettingsChange?.({ model: selectedModel, effort, ...serviceTierWireOverride(selectedServiceTier) });
+                }}
+              />
+              <ComposerDropdown
+                label={copy.serviceTier}
+                value={serviceTierSelectionValue(selectedServiceTier)}
+                options={tierOptions}
+                disabled={!settingsWritable}
+                onChange={(value) => {
+                  const selection = serviceTierSelectionFromValue(value);
+                  setSelectedServiceTier(selection);
+                  setServiceTierDowngraded(false);
+                  setSettingsDirty(true);
+                  props.onRuntimeSettingsChange?.({ model: selectedModel, effort: selectedEffort, ...serviceTierWireOverride(selection) });
                 }}
               />
             </span>
@@ -492,9 +544,30 @@ export function ConversationComposer(props: ConversationComposerProps) {
             </span>
           </span>
         </div>
+        <small className="session-service-tier-note" role={serviceTierDowngraded ? 'status' : undefined}>
+          {serviceTierDowngraded
+            ? props.language === 'zh-CN'
+              ? '所选模型不支持原 Fast 档位，已保留模型并切换为标准。'
+              : 'The selected model does not support the previous Fast tier. The model was kept and Standard was selected.'
+            : `${serviceTierDescription(selectedServiceTier, selectedCapability, props.language)} · ${effectiveServiceTierLabel(props.state.providerSettings, selectedCapability, props.language)}`}
+        </small>
       </div>
     </section>
   );
+}
+
+function effectiveServiceTierMatchesSelection(serviceTier: string | null | undefined, selection: NativeServiceTierSelection): boolean {
+  if (selection.type === 'standard') return serviceTier === null || serviceTier === 'default';
+  if (selection.type === 'catalog') return serviceTier === selection.id;
+  return serviceTier === undefined;
+}
+
+function effectiveServiceTierLabel(settings: NativeSessionState['providerSettings'], model: CodexConversationCapabilities['models'][number] | null, language: SessionUiLanguage): string {
+  const prefix = language === 'zh-CN' ? '实际' : 'Effective';
+  if (!settings || !Object.prototype.hasOwnProperty.call(settings, 'serviceTier')) return `${prefix}：${language === 'zh-CN' ? '未同步' : 'Not synced'}`;
+  const serviceTier = settings.serviceTier;
+  if (!serviceTier || serviceTier === 'default') return `${prefix}：${language === 'zh-CN' ? '标准' : 'Standard'}`;
+  return `${prefix}：${model?.serviceTiers.find((tier) => tier.id === serviceTier)?.name ?? serviceTier}`;
 }
 
 function BrowserSubmissionAttachment(props: { submission: ZeusBrowserPreparedSubmission; language: SessionUiLanguage; disabled: boolean; onRemove?: () => void }) {
@@ -552,7 +625,7 @@ export function shouldCommitQueueReorder(start: { x: number; y: number }, curren
 
 export function canSteerActiveTurn(state: NativeSessionState): boolean {
   const active = state.conversationState === 'active_prework' || state.conversationState === 'active_final_answer';
-  return active && state.transportState === 'ready' && Boolean(state.activeTurnId) && state.startedTurnId === state.activeTurnId && !state.error?.recoveryRequired;
+  return active && state.transportState === 'ready' && Boolean(state.activeTurnId) && state.startedTurnId === state.activeTurnId;
 }
 
 function resolveComposerModel(capabilities: CodexConversationCapabilities | null | undefined, providerModel: string | undefined): string {

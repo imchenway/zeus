@@ -24,6 +24,18 @@ Runtime 会话状态必须覆盖 created、running、waiting、ended、failed、
 - stop：终止会话并写入 reason。
 - restore：App 重启后读取 runtime_sessions；PID 存在时标记 orphan_detected，PID 不存在时标记 lost，不得伪造恢复成功。
 
+## Codex 服务档位
+
+Codex native 会话的服务档位以当前 app-server `model/list` 目录为能力事实源。Zeus 不把模型、推理强度或模型名称中的速度描述推断为 Fast。
+
+- 新 thread 的“跟随 Codex”省略 `serviceTier`；“标准”传递 `serviceTier: null`；目录档位传递目录原始 ID。
+- 已有 thread 的后续 `turn/start` 只允许“标准”或当前模型目录档位；`thread/resume` 不携带档位覆盖。
+- `thread/start`、`thread/resume` 响应和 `thread/settings/updated` 返回的 `serviceTier` 是实际生效状态，按 Runtime 世代与事件顺序写入同一 provider settings 快照。
+- 当前模型不支持项目记忆中的目录档位时，保留模型并回退为标准；目录仍声明支持但 provider 拒绝时保留失败现场，不自动重放或伪造降级成功。
+- 缺少实际档位时显示“未同步”；未知实际档位保留原始 ID，不猜测为 Fast。
+
+目录驱动的优点是 UI 与 Runtime 能力自动同步；缺点是必须处理目录缺失、过期与异常响应，不能把缓存目录当作永久能力。
+
 ## Prompt 生成
 
 任务 prompt 必须包含任务标题、任务描述、项目路径、图谱上下文、源码路径和行号、SQL/表、Git 状态摘要、测试要求、安全要求。

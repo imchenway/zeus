@@ -133,6 +133,7 @@ interface PendingSendEnvelope {
   expectedTurnId?: string;
     model?: string;
     effort?: string;
+    serviceTier?: string | null;
     collaborationMode: NativeCollaborationMode;
   idempotencyKey: string;
   clientUserMessageId: string;
@@ -740,6 +741,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
               pendingSend.expectedTurnId === normalizedExpectedTurnId &&
               pendingSend.model === settings?.model &&
               pendingSend.effort === settings?.effort &&
+              pendingSend.serviceTier === settings?.serviceTier &&
               pendingSend.collaborationMode === requestedCollaborationMode
           ) {
           return activeOperation.promise as Promise<NativeOperationAcceptance>;
@@ -765,9 +767,26 @@ export function createSessionController(options: CreateSessionControllerOptions)
         ...(normalizedExpectedTurnId ? {expectedTurnId: normalizedExpectedTurnId} : {}),
         ...(appliedSettings?.model ? {model: appliedSettings.model} : {}),
         ...(appliedSettings?.effort ? {effort: appliedSettings.effort} : {}),
+        ...(appliedSettings && Object.prototype.hasOwnProperty.call(appliedSettings, 'serviceTier') ? {serviceTier: appliedSettings.serviceTier} : {}),
         collaborationMode: requestedCollaborationMode,
       });
       if (!pendingSend || pendingSend.fingerprint !== fingerprint) {
+        const reusableIdentity =
+          pendingSend &&
+          pendingSend.deliveryState !== 'accepted' &&
+          pendingSend.content === content &&
+          pendingSend.displayText === displayText &&
+          pendingSend.draft === draft &&
+          sameAttachments(pendingSend.attachments, attachments) &&
+          sameAttachments(pendingSend.composerAttachments, composerAttachments) &&
+          sameBrowserSubmission(pendingSend.browserSubmission, browserSubmission) &&
+          pendingSend.delivery === delivery &&
+          pendingSend.expectedTurnId === normalizedExpectedTurnId &&
+          pendingSend.model === appliedSettings?.model &&
+          pendingSend.effort === appliedSettings?.effort &&
+          pendingSend.collaborationMode === requestedCollaborationMode
+            ? pendingSend
+            : null;
         pendingSend = {
           fingerprint,
           content,
@@ -780,9 +799,11 @@ export function createSessionController(options: CreateSessionControllerOptions)
           ...(normalizedExpectedTurnId ? { expectedTurnId: normalizedExpectedTurnId } : {}),
             ...(appliedSettings?.model ? {model: appliedSettings.model} : {}),
             ...(appliedSettings?.effort ? {effort: appliedSettings.effort} : {}),
+            ...(appliedSettings && Object.prototype.hasOwnProperty.call(appliedSettings, 'serviceTier') ? {serviceTier: appliedSettings.serviceTier} : {}),
             collaborationMode: requestedCollaborationMode,
-          idempotencyKey: createId(),
-          clientUserMessageId: createId(),
+          // provider 尚未接受的失败提交只调整服务档位时，沿用原幂等身份重试。
+          idempotencyKey: reusableIdentity?.idempotencyKey ?? createId(),
+          clientUserMessageId: reusableIdentity?.clientUserMessageId ?? createId(),
         };
       }
       const envelope = pendingSend;
@@ -819,6 +840,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
               ...(envelope.expectedTurnId ? { expectedTurnId: envelope.expectedTurnId } : {}),
                 ...(envelope.model ? {model: envelope.model} : {}),
                 ...(envelope.effort ? {effort: envelope.effort} : {}),
+                ...(Object.prototype.hasOwnProperty.call(envelope, 'serviceTier') ? {serviceTier: envelope.serviceTier} : {}),
                 collaborationMode: envelope.collaborationMode,
               idempotencyKey: envelope.idempotencyKey,
               clientUserMessageId: envelope.clientUserMessageId,
@@ -1006,6 +1028,7 @@ function isPendingSendEnvelope(value: unknown): value is PendingSendEnvelope {
     (pending.expectedTurnId === undefined || typeof pending.expectedTurnId === 'string') &&
     (pending.model === undefined || typeof pending.model === 'string') &&
     (pending.effort === undefined || typeof pending.effort === 'string') &&
+    (pending.serviceTier === undefined || pending.serviceTier === null || typeof pending.serviceTier === 'string') &&
     (pending.collaborationMode === undefined || pending.collaborationMode === 'default' || pending.collaborationMode === 'plan') &&
     typeof pending.idempotencyKey === 'string' &&
     typeof pending.clientUserMessageId === 'string' &&

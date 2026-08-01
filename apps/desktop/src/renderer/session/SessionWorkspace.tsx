@@ -12,6 +12,7 @@ import { LegacyConversationBanner } from './LegacyConversationBanner.js';
 import { PendingRequestSurface, requestKind } from './PendingRequestSurface.js';
 import { PermissionModeControl } from './PermissionModeControl.js';
 import { CollaborationModeControl } from './CollaborationModeControl.js';
+import { ComposerDropdown } from './ComposerDropdown.js';
 import { PlanImplementationRequestSurface } from './PlanImplementationRequestSurface.js';
 import { PlanWorkspace } from './PlanWorkspace.js';
 import { BrowserWorkspace } from './BrowserWorkspace.js';
@@ -32,6 +33,7 @@ import type {
   NativePlanImplementationRequest,
   NativeSessionItemBuffer,
   NativeSessionState,
+  NativeServiceTierSelection,
   NativeTurnSettingsSelection,
   SessionConversationOwner,
   StartNativeConversationRequest,
@@ -39,6 +41,7 @@ import type {
   TurnChangeSet,
   TurnChangeSetOperationResult,
 } from './sessionTypes.js';
+import { normalizeServiceTierSelection, readProjectServiceTierPreference, serviceTierDescription, serviceTierOptions, serviceTierSelectionFromValue, serviceTierSelectionValue, serviceTierWireOverride } from './serviceTierSelection.js';
 import { reconnectDelayMs, type SessionController, type SessionControllerClient, useSessionController } from './useSessionController.js';
 import { createSessionEscapeController, type SessionEscapeController, type SessionEscapeLayer, type SessionEscapeResult } from './useThreadScrollController.js';
 import { SafeMarkdown, type SessionUiLanguage } from './ThreadItemView.js';
@@ -63,6 +66,7 @@ export interface SessionWorkspaceStartInput {
   attachments?: NativeConversationAttachment[];
   permissionMode: NativePermissionMode;
   collaborationMode: NativeCollaborationMode;
+  serviceTierSelection: NativeServiceTierSelection;
 }
 
 export interface ProjectSessionWorkspaceStartInput {
@@ -71,11 +75,13 @@ export interface ProjectSessionWorkspaceStartInput {
   attachments: NativeConversationAttachment[];
   permissionMode: NativePermissionMode;
   collaborationMode: NativeCollaborationMode;
+  serviceTierSelection: NativeServiceTierSelection;
 }
 
 export interface SessionWorkspaceActions {
   onStartConversation?: (input: SessionWorkspaceStartInput) => void | Promise<void>;
   onStartProjectConversation?: (input: ProjectSessionWorkspaceStartInput) => void | Promise<void>;
+  onLoadCapabilities?: (projectId: string) => Promise<CodexConversationCapabilities>;
   onReconnect?: () => void | Promise<void>;
   onDraftChange?: (draft: string) => void;
   onSubmit?: (delivery: 'queue' | 'steer_now', settings?: NativeTurnSettingsSelection) => void | Promise<void>;
@@ -130,6 +136,7 @@ type StartNativeConversationPayload =
       attachments?: NativeConversationAttachment[];
       permissionMode: NativePermissionMode;
       collaborationMode: NativeCollaborationMode;
+      serviceTier?: string | null;
     }
   | { mode: 'resume'; conversationId: string; content: string; collaborationMode: NativeCollaborationMode }
   | {
@@ -245,6 +252,7 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
         },
         onStartConversation: props.onStartConversation,
         onStartProjectConversation: props.onStartProjectConversation,
+        onLoadCapabilities: props.client.loadCodexConversationCapabilities,
         onChooseStartAttachments: props.onChooseAttachments,
       }}
     />
@@ -337,6 +345,7 @@ export function createConnectedSessionActions(input: { controller: SessionContro
         ? {
             model: current.providerSettings.model,
             ...(current.providerSettings.effort ? { effort: current.providerSettings.effort } : {}),
+            ...(Object.prototype.hasOwnProperty.call(current.providerSettings, 'serviceTier') ? { serviceTier: current.providerSettings.serviceTier } : {}),
             collaborationMode: current.snapshot?.collaborationMode ?? 'default',
           }
         : undefined;
@@ -383,7 +392,7 @@ export async function startNativeConversationWithDurableAcceptance<T>(options: {
   dispatch: (taskId: string, request: StartNativeConversationRequest) => Promise<NativeOperationAcceptance>;
   onAccepted: (choice: NativeConversationChoice) => void | Promise<void>;
   refresh: (taskId: string) => Promise<T>;
-}): Promise<{ choice: NativeConversationChoice; refreshResult: T | null; refreshError: unknown | null }> {
+}): Promise<{ choice: NativeConversationChoice; request: StartNativeConversationRequest; acceptance: NativeOperationAcceptance; refreshResult: T | null; refreshError: unknown | null }> {
   const request = options.envelopeManager.prepare(options.input);
   const acceptance = await options.dispatch(options.input.task.id, request);
   if (!isDurableNativeConversationAcceptance(request, acceptance)) throw new Error('Native conversation start did not return a durable accepted operation.');
@@ -392,9 +401,9 @@ export async function startNativeConversationWithDurableAcceptance<T>(options: {
   // acceptance 导航属于 durable 边界，必须先于摘要刷新发生。
   await options.onAccepted(choice);
   try {
-    return { choice, refreshResult: await options.refresh(options.input.task.id), refreshError: null };
+    return { choice, request, acceptance, refreshResult: await options.refresh(options.input.task.id), refreshError: null };
   } catch (refreshError) {
-    return { choice, refreshResult: null, refreshError };
+    return { choice, request, acceptance, refreshResult: null, refreshError };
   }
 }
 
@@ -477,7 +486,7 @@ export async function startProjectConversationWithDurableAcceptance<T>(options: 
   dispatch: (projectId: string, request: StartProjectConversationRequest) => Promise<NativeOperationAcceptance>;
   onAccepted: (choice: NativeConversationChoice) => void | Promise<void>;
   refresh: (projectId: string) => Promise<T>;
-}): Promise<{ choice: NativeConversationChoice; refreshResult: T | null; refreshError: unknown | null }> {
+}): Promise<{ choice: NativeConversationChoice; request: StartProjectConversationRequest; acceptance: NativeOperationAcceptance; refreshResult: T | null; refreshError: unknown | null }> {
   const request = options.envelopeManager.prepare(options.input);
   const acceptance = await options.dispatch(options.input.owner.projectId, request);
   if (!isDurableNativeConversationAcceptance(request, acceptance)) throw new Error('Project conversation start did not return a durable accepted operation.');
@@ -485,9 +494,9 @@ export async function startProjectConversationWithDurableAcceptance<T>(options: 
   const choice = projectConversationChoiceFromAcceptance(acceptance, options.input.owner);
   await options.onAccepted(choice);
   try {
-    return { choice, refreshResult: await options.refresh(options.input.owner.projectId), refreshError: null };
+    return { choice, request, acceptance, refreshResult: await options.refresh(options.input.owner.projectId), refreshError: null };
   } catch (refreshError) {
-    return { choice, refreshResult: null, refreshError };
+    return { choice, request, acceptance, refreshResult: null, refreshError };
   }
 }
 
@@ -499,6 +508,7 @@ function buildProjectConversationStartPayload(input: ProjectSessionWorkspaceStar
     attachments: input.attachments,
     permissionMode: input.permissionMode ?? 'auto',
     collaborationMode: input.collaborationMode ?? 'default',
+    ...serviceTierWireOverride(input.serviceTierSelection),
   };
 }
 
@@ -527,6 +537,7 @@ function isProjectConversationStartRequest(value: unknown): value is StartProjec
     (Boolean(value.content.trim()) || value.attachments.length > 0) &&
     permissionModeField(value.permissionMode) !== undefined &&
     (value.collaborationMode === 'default' || value.collaborationMode === 'plan') &&
+    serviceTierOverrideField(value.serviceTier) &&
     typeof value.idempotencyKey === 'string' &&
     Boolean(value.idempotencyKey) &&
     typeof value.clientUserMessageId === 'string' &&
@@ -608,6 +619,7 @@ function buildStartNativeConversationPayload(input: SessionWorkspaceStartInput):
       ...(input.attachments?.length ? { attachments: input.attachments } : {}),
       permissionMode: input.permissionMode ?? 'auto',
       collaborationMode: input.collaborationMode ?? 'default',
+      ...serviceTierWireOverride(input.serviceTierSelection),
     };
   }
   if (!content) throw new Error('Native conversation resume/reference content is required.');
@@ -661,7 +673,8 @@ function isStartNativeConversationRequest(value: unknown): value is StartNativeC
     return (
       (Boolean(request.content.trim()) || (Array.isArray(request.attachments) && request.attachments.length > 0)) &&
       permissionModeField(request.permissionMode) !== undefined &&
-      (request.collaborationMode === 'default' || request.collaborationMode === 'plan')
+      (request.collaborationMode === 'default' || request.collaborationMode === 'plan') &&
+      serviceTierOverrideField(request.serviceTier)
     );
   }
   if (!request.content.trim()) return false;
@@ -676,6 +689,10 @@ function isStartNativeConversationRequest(value: unknown): value is StartNativeC
     permissionModeField(request.permissionMode) !== undefined &&
     (request.collaborationMode === 'default' || request.collaborationMode === 'plan')
   );
+}
+
+function serviceTierOverrideField(value: unknown): boolean {
+  return value === undefined || value === null || (typeof value === 'string' && Boolean(value.trim()));
 }
 
 function requestMatchesPayload(request: StartNativeConversationRequest, payload: StartNativeConversationPayload): boolean {
@@ -1338,7 +1355,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
               data-browser-resizing={browserResizing || undefined}
             >
               <div className="session-conversation-pane">
-                <SessionRuntimeDetails state={props.state} conversation={props.conversation} language={props.language} />
+                <SessionRuntimeDetails state={props.state} conversation={props.conversation} language={props.language} capabilities={props.capabilities} />
                 {props.state.transportState === 'hydrating' || props.state.transportState === 'connecting' ? <SessionLoading language={props.language} /> : null}
                 {props.state.transportState === 'reconnecting' ? <SessionReconnectNotice language={props.language} attempt={props.state.reconnectAttempt} onReconnect={actions.onReconnect} /> : null}
                 {props.state.transportState === 'failed' ? (
@@ -1383,8 +1400,10 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                     autoFocus
                     initialContent={unsentDraft.content}
                     initialAttachments={unsentDraft.attachments}
+                    capabilities={props.capabilities}
                     onStartTask={actions.onStartConversation}
                     onStartProject={actions.onStartProjectConversation}
+                    onLoadCapabilities={actions.onLoadCapabilities}
                     onChooseAttachments={actions.onChooseStartAttachments}
                   />
                 ) : null}
@@ -1548,8 +1567,10 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
           autoFocus={props.autoFocusNewConversation}
           loadState={props.loadState}
           loadError={props.loadError}
+          capabilities={props.capabilities}
           onStartTask={actions.onStartConversation}
           onStartProject={actions.onStartProjectConversation}
+          onLoadCapabilities={actions.onLoadCapabilities}
           onChooseAttachments={actions.onChooseStartAttachments}
         />
       )}
@@ -1642,8 +1663,10 @@ function NewConversationComposer(props: {
   initialAttachments?: NativeConversationAttachment[];
   loadState?: SessionWorkspaceProps['loadState'];
   loadError?: string | null;
+  capabilities?: CodexConversationCapabilities | null;
   onStartTask?: SessionWorkspaceActions['onStartConversation'];
   onStartProject?: SessionWorkspaceActions['onStartProjectConversation'];
+  onLoadCapabilities?: SessionWorkspaceActions['onLoadCapabilities'];
   onChooseAttachments?: SessionWorkspaceActions['onChooseStartAttachments'];
 }) {
   const copy = labels[props.language];
@@ -1652,6 +1675,9 @@ function NewConversationComposer(props: {
   const [attachments, setAttachments] = useState<NativeConversationAttachment[]>(() => [...(props.initialAttachments ?? [])]);
   const [permissionMode, setPermissionMode] = useState<NativePermissionMode>('auto');
   const [collaborationMode, setCollaborationMode] = useState<NativeCollaborationMode>('default');
+  const [capabilities, setCapabilities] = useState<CodexConversationCapabilities | null>(props.capabilities ?? null);
+  const [serviceTierSelection, setServiceTierSelection] = useState<NativeServiceTierSelection>(() => readProjectServiceTierPreference(browserConversationStorage(), props.owner?.projectId ?? ''));
+  const [serviceTierDowngraded, setServiceTierDowngraded] = useState(false);
   const [isComposing, setIsComposing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
@@ -1674,6 +1700,39 @@ function NewConversationComposer(props: {
     if (props.autoFocus) textareaRef.current?.focus();
   }, [props.autoFocus]);
 
+  useEffect(() => {
+    const projectId = props.owner?.projectId;
+    if (!projectId) return;
+    setServiceTierSelection(readProjectServiceTierPreference(browserConversationStorage(), projectId));
+    setServiceTierDowngraded(false);
+    if (props.capabilities) {
+      setCapabilities(props.capabilities);
+      return;
+    }
+    let active = true;
+    void props
+      .onLoadCapabilities?.(projectId)
+      .then((snapshot) => {
+        if (active && snapshot) setCapabilities(snapshot);
+      })
+      .catch((error: unknown) => {
+        if (active) setLocalError(error instanceof Error ? error.message : String(error));
+      });
+    return () => {
+      active = false;
+    };
+  }, [props.capabilities, props.onLoadCapabilities, props.owner?.projectId]);
+
+  const selectedModel = capabilities?.models.find((model) => model.model === capabilities.preferredModel || model.id === capabilities.preferredModel) ?? capabilities?.models[0] ?? null;
+
+  useEffect(() => {
+    if (!selectedModel) return;
+    const normalized = normalizeServiceTierSelection(serviceTierSelection, selectedModel);
+    if (!normalized.downgraded) return;
+    setServiceTierSelection(normalized.selection);
+    setServiceTierDowngraded(true);
+  }, [selectedModel, serviceTierSelection]);
+
   useLayoutEffect(() => {
     if (textareaRef.current) autosizeTextarea(textareaRef.current);
   }, [content]);
@@ -1694,7 +1753,7 @@ function NewConversationComposer(props: {
     try {
       if (props.owner.kind === 'project') {
         if (!props.onStartProject) throw new Error('Project conversation start is unavailable.');
-        await props.onStartProject({ owner: props.owner, content, attachments, permissionMode, collaborationMode });
+        await props.onStartProject({ owner: props.owner, content, attachments, permissionMode, collaborationMode, serviceTierSelection });
       } else {
         if (!props.task || !props.onStartTask) throw new Error('Task conversation start is unavailable.');
         await props.onStartTask({
@@ -1704,6 +1763,7 @@ function NewConversationComposer(props: {
           attachments,
           permissionMode,
           collaborationMode,
+          serviceTierSelection,
         });
       }
     } catch (error) {
@@ -1780,6 +1840,16 @@ function NewConversationComposer(props: {
                   <span aria-hidden="true">＋</span>
                 </button>
               ) : null}
+              <ComposerDropdown
+                label={props.language === 'zh-CN' ? '服务档位' : 'Service tier'}
+                value={serviceTierSelectionValue(serviceTierSelection)}
+                options={serviceTierOptions(selectedModel, props.language, true)}
+                disabled={submitting || !props.owner}
+                onChange={(value) => {
+                  setServiceTierSelection(serviceTierSelectionFromValue(value));
+                  setServiceTierDowngraded(false);
+                }}
+              />
               <PermissionModeControl language={props.language} value={permissionMode} disabled={submitting || !props.owner} onChange={setPermissionMode} />
               <CollaborationModeControl language={props.language} value={collaborationMode} disabled={submitting || !props.owner} onChange={setCollaborationMode} />
             </span>
@@ -1798,10 +1868,25 @@ function NewConversationComposer(props: {
               </span>
             </span>
           </div>
+          <small className="session-service-tier-note" role={serviceTierDowngraded ? 'status' : undefined}>
+            {serviceTierDowngraded
+              ? props.language === 'zh-CN'
+                ? '当前模型不支持原 Fast 档位，已切换为标准。'
+                : 'The current model does not support the previous Fast tier. Standard is selected.'
+              : serviceTierDescription(serviceTierSelection, selectedModel, props.language)}
+          </small>
         </div>
       </section>
     </section>
   );
+}
+
+function browserConversationStorage(): Storage | undefined {
+  try {
+    return typeof window === 'undefined' ? undefined : window.localStorage;
+  } catch {
+    return undefined;
+  }
 }
 
 interface UnsentConversationDraft {
@@ -1894,15 +1979,24 @@ function SessionReconnectNotice(props: { language: SessionUiLanguage; attempt: n
   );
 }
 
-function SessionRuntimeDetails(props: { state: NativeSessionState; conversation: NativeConversationChoice | null; language: SessionUiLanguage }) {
+function SessionRuntimeDetails(props: { state: NativeSessionState; conversation: NativeConversationChoice | null; language: SessionUiLanguage; capabilities?: CodexConversationCapabilities | null }) {
   const copy = labels[props.language];
   const model = props.state.providerSettings?.model?.trim() || copy.unsynced;
   const effort = props.state.providerSettings?.effort?.trim() || copy.unsynced;
+  const rawServiceTier = props.state.providerSettings?.serviceTier;
+  const hasServiceTier = Boolean(props.state.providerSettings && Object.prototype.hasOwnProperty.call(props.state.providerSettings, 'serviceTier'));
+  const serviceTier = !hasServiceTier
+    ? copy.unsynced
+    : !rawServiceTier || rawServiceTier === 'default'
+      ? props.language === 'zh-CN'
+        ? '标准'
+        : 'Standard'
+      : (props.capabilities?.models.flatMap((candidate) => candidate.serviceTiers).find((tier) => tier.id === rawServiceTier)?.name ?? rawServiceTier);
   const usage = props.state.tokenUsage;
   const rateLimits = props.state.rateLimits?.value ?? null;
   const mcpStartup = props.state.mcpStartup?.value ?? null;
   const warning = runtimeValueNeedsAttention(rateLimits) || runtimeValueNeedsAttention(mcpStartup);
-  const modelLabel = [model, effort].join(' · ');
+  const modelLabel = [model, effort, serviceTier].join(' · ');
   return (
     <details className="session-runtime-details" data-severity={warning ? 'warning' : 'ready'} aria-label={copy.runtimeDetails}>
       <summary>

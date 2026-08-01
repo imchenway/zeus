@@ -1,6 +1,7 @@
 import type { FormEvent, KeyboardEvent } from 'react';
 import type { TaskRecord } from '../apiClient.js';
-import type { CodexTaskPushCapabilities, NativePermissionMode } from '../session/sessionTypes.js';
+import type { CodexTaskPushCapabilities, NativePermissionMode, NativeServiceTierSelection } from '../session/sessionTypes.js';
+import { normalizeServiceTierSelection, serviceTierDescription, serviceTierOptions, serviceTierSelectionFromValue, serviceTierSelectionValue } from '../session/serviceTierSelection.js';
 import { Button } from '../ui/Button.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
 import { ZeusSelect } from '../ZeusSelect.js';
@@ -10,6 +11,8 @@ import { parseTaskAttachments } from './taskAttachments.js';
 export interface TaskModelPushForm {
   model: string;
   effort: string;
+  serviceTier: NativeServiceTierSelection;
+  serviceTierDowngraded: boolean;
   workMode: 'default' | 'plan';
   permissionMode: NativePermissionMode;
   workspaceMode: 'create' | 'existing';
@@ -48,7 +51,7 @@ export function writeTaskModelPushPreferences(storage: Pick<Storage, 'setItem'> 
   storage.setItem(`${preferencesKeyPrefix}${encodeURIComponent(projectId)}`, JSON.stringify({ model: form.model, effort: form.effort, workMode: form.workMode, permissionMode: form.permissionMode } satisfies TaskModelPushPreferences));
 }
 
-export function resolveTaskModelPushInitialForm(capabilities: CodexTaskPushCapabilities, remembered: TaskModelPushPreferences | null): TaskModelPushForm {
+export function resolveTaskModelPushInitialForm(capabilities: CodexTaskPushCapabilities, remembered: TaskModelPushPreferences | null, serviceTier: NativeServiceTierSelection = { type: 'follow' }): TaskModelPushForm {
   const rememberedModel = capabilities.models.find((model) => model.model === remembered?.model || model.id === remembered?.model);
   const selectedModel = rememberedModel ?? capabilities.models.find((model) => model.model === capabilities.preferredModel || model.id === capabilities.preferredModel) ?? capabilities.models[0];
   if (!selectedModel) throw new Error('Codex app-server did not report an available model.');
@@ -57,6 +60,8 @@ export function resolveTaskModelPushInitialForm(capabilities: CodexTaskPushCapab
   return {
     model: selectedModel.model,
     effort,
+    serviceTier: normalizeServiceTierSelection(serviceTier, selectedModel).selection,
+    serviceTierDowngraded: serviceTier.type === 'catalog' && !selectedModel.serviceTiers.some((tier) => tier.id === serviceTier.id),
     workMode: remembered?.workMode ?? 'default',
     // 用户已确认：项目没有成功记忆时，权限必须回退为只读。
     permissionMode: remembered?.permissionMode ?? 'read-only',
@@ -94,10 +99,13 @@ export function TaskModelPushModal(props: {
 
   function onModelChange(model: string): void {
     const capability = props.capabilities?.models.find((candidate) => candidate.model === model || candidate.id === model);
+    const normalizedTier = normalizeServiceTierSelection(props.form.serviceTier, capability);
     props.onChange({
       ...props.form,
       model: capability?.model ?? model,
       effort: capability?.defaultReasoningEffort ?? capability?.supportedReasoningEfforts[0] ?? '',
+      serviceTier: normalizedTier.selection,
+      serviceTierDowngraded: normalizedTier.downgraded,
     });
   }
 
@@ -229,6 +237,18 @@ export function TaskModelPushModal(props: {
               />
             </label>
             <label>
+              <span>{zh ? '服务档位' : 'Service tier'}</span>
+              <ZeusSelect
+                size="regular"
+                ariaLabel={zh ? '服务档位' : 'Service tier'}
+                value={serviceTierSelectionValue(props.form.serviceTier)}
+                options={serviceTierOptions(selectedModel, props.language, true)}
+                onChange={(value) => props.onChange({ ...props.form, serviceTier: serviceTierSelectionFromValue(value), serviceTierDowngraded: false })}
+                disabled={!selectedModel || busy}
+                searchable={false}
+              />
+            </label>
+            <label>
               <span>{zh ? '工作模式' : 'Work mode'}</span>
               <ZeusSelect
                 size="regular"
@@ -260,6 +280,14 @@ export function TaskModelPushModal(props: {
               />
             </label>
           </div>
+
+          <p className="task-model-push-message" role={props.form.serviceTierDowngraded ? 'status' : undefined}>
+            {props.form.serviceTierDowngraded
+              ? zh
+                ? '所选模型不支持原 Fast 档位，已保留模型并切换为标准。'
+                : 'The selected model does not support the previous Fast tier. The model was kept and the tier changed to Standard.'
+              : serviceTierDescription(props.form.serviceTier, selectedModel, props.language)}
+          </p>
 
           <label className="task-model-push-supplement">
             <span>{zh ? '补充信息（可选）' : 'Supplemental information (optional)'}</span>

@@ -46,12 +46,20 @@ export interface CodexAppServerSpawnOptions {
 
 export type CodexAppServerSpawn = (command: string, args: string[], options?: CodexAppServerSpawnOptions) => CodexAppServerProcess;
 
+export interface CodexModelServiceTier {
+  id: string;
+  name: string;
+  description: string;
+}
+
 export interface CodexModelCapability {
   id: string;
   model: string;
   displayName?: string;
   supportedReasoningEfforts: string[];
   defaultReasoningEffort?: string;
+  serviceTiers: CodexModelServiceTier[];
+  defaultServiceTier?: string | null;
   raw: Record<string, unknown>;
 }
 
@@ -84,6 +92,7 @@ export type CodexDynamicToolSpec = CodexDynamicToolFunctionSpec | CodexDynamicTo
 
 export interface CodexThreadStartInput {
   model: string;
+  serviceTier?: string | null;
   cwd: string;
   approvalPolicy?: string;
   approvalsReviewer?: string;
@@ -98,6 +107,13 @@ export interface CodexThreadStartInput {
 export interface CodexThreadSnapshot {
   id: string;
   turns?: unknown[];
+  providerSettings?: {
+    generationId: string;
+    sequence: number;
+    model: string;
+    effort?: string;
+    serviceTier?: string | null;
+  };
   [key: string]: unknown;
 }
 
@@ -109,6 +125,7 @@ export interface CodexTurnStartInput {
   collaborationMode?: { mode: 'plan' | 'default'; settings: { model: string; reasoning_effort: string | null; developer_instructions: string | null } };
   model?: string;
   effort?: string;
+  serviceTier?: string | null;
   summary?: CodexReasoningSummary;
   cwd?: string;
   approvalPolicy?: string;
@@ -629,7 +646,8 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
     },
     async startThread(input) {
       const capabilities = await awaitCapabilities();
-      requireModel(capabilities, input.model);
+      const model = requireModel(capabilities, input.model);
+      validateServiceTier(model, input.serviceTier);
       if (input.config !== undefined) throw managerError('ZEUS_CODEX_CONFIG_UNAVAILABLE', 'Raw Codex thread config overrides are not supported.');
       const sandbox = normalizeThreadSandbox(input.sandbox);
       const response = asRecord(
@@ -638,6 +656,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
           'thread/start',
           compactObject({
             model: input.model,
+            serviceTier: input.serviceTier,
             cwd: input.cwd,
             approvalPolicy: input.approvalPolicy,
             approvalsReviewer: input.approvalsReviewer,
@@ -651,15 +670,17 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
         ),
       );
       const thread = parseThread(response.thread);
-      threadModels.set(thread.id, typeof response.model === 'string' ? response.model : input.model);
-      return thread;
+      const responseModel = typeof response.model === 'string' ? response.model : input.model;
+      threadModels.set(thread.id, responseModel);
+      return attachThreadProviderSettings(thread, capabilities.generationId, response, responseModel);
     },
     async resumeThread(input) {
       const capabilities = await awaitCapabilities();
       const response = asRecord(await rpc(capabilities.generationId, 'thread/resume', compactObject({ threadId: input.threadId, cwd: input.cwd })));
       const thread = parseThread(response.thread);
-      if (typeof response.model === 'string') threadModels.set(thread.id, response.model);
-      return thread;
+      const responseModel = typeof response.model === 'string' ? response.model : threadModels.get(thread.id);
+      if (responseModel) threadModels.set(thread.id, responseModel);
+      return responseModel ? attachThreadProviderSettings(thread, capabilities.generationId, response, responseModel) : thread;
     },
     async unarchiveThread(input) {
       const capabilities = await awaitCapabilities();
@@ -684,6 +705,10 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
           });
         }
       }
+      if (input.serviceTier !== undefined) {
+        if (!model) throw managerError('ZEUS_CODEX_MODEL_UNAVAILABLE', 'Codex service tier validation requires a known model.');
+        validateServiceTier(model, input.serviceTier);
+      }
       if (input.collaborationMode) {
         const collaborationModel = requireModel(capabilities, input.collaborationMode.settings.model);
         const collaborationEffort = input.collaborationMode.settings.reasoning_effort;
@@ -707,6 +732,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
             collaborationMode: input.collaborationMode,
             model: input.model,
             effort: input.effort,
+            serviceTier: input.serviceTier,
             summary: input.summary,
             cwd: input.cwd,
             approvalPolicy: input.approvalPolicy,
@@ -878,15 +904,50 @@ function parseModels(value: unknown): CodexModelCapability[] {
     if (typeof model.id !== 'string' || typeof model.model !== 'string') throw managerError('ZEUS_CODEX_INVALID_RESPONSE', 'Codex model/list returned an invalid model.');
     const effortEntries = Array.isArray(model.supportedReasoningEfforts) ? model.supportedReasoningEfforts : [];
     const supportedReasoningEfforts = effortEntries.map((effort) => (isRecord(effort) && typeof effort.reasoningEffort === 'string' ? effort.reasoningEffort : null)).filter((effort): effort is string => effort !== null);
+    const serviceTierEntries = model.serviceTiers === undefined ? [] : model.serviceTiers;
+    if (!Array.isArray(serviceTierEntries)) throw managerError('ZEUS_CODEX_INVALID_RESPONSE', 'Codex model/list returned invalid service tiers.');
+    const serviceTiers = serviceTierEntries.map((entry) => {
+      if (!isRecord(entry) || typeof entry.id !== 'string' || !entry.id || typeof entry.name !== 'string' || !entry.name || typeof entry.description !== 'string') {
+        throw managerError('ZEUS_CODEX_INVALID_RESPONSE', 'Codex model/list returned an invalid service tier.');
+      }
+      return { id: entry.id, name: entry.name, description: entry.description };
+    });
     return {
       id: model.id,
       model: model.model,
       ...(typeof model.displayName === 'string' ? { displayName: model.displayName } : {}),
       supportedReasoningEfforts,
       ...(typeof model.defaultReasoningEffort === 'string' ? { defaultReasoningEffort: model.defaultReasoningEffort } : {}),
+      serviceTiers,
+      ...(typeof model.defaultServiceTier === 'string' || model.defaultServiceTier === null ? { defaultServiceTier: model.defaultServiceTier } : {}),
       raw: model,
     };
   });
+}
+
+function validateServiceTier(model: CodexModelCapability, serviceTier: string | null | undefined): void {
+  if (serviceTier === undefined || serviceTier === null) return;
+  if (model.serviceTiers.some((tier) => tier.id === serviceTier)) return;
+  throw Object.assign(new Error(`Configured Codex service tier is unavailable: ${serviceTier}`), {
+    code: 'ZEUS_CODEX_SERVICE_TIER_UNAVAILABLE',
+    supportedServiceTiers: model.serviceTiers.map((tier) => tier.id),
+  });
+}
+
+function attachThreadProviderSettings(thread: CodexThreadSnapshot, generationId: string, response: Record<string, unknown>, model: string): CodexThreadSnapshot {
+  const effort = typeof response.effort === 'string' ? response.effort : typeof response.reasoningEffort === 'string' ? response.reasoningEffort : undefined;
+  const hasServiceTier = Object.prototype.hasOwnProperty.call(response, 'serviceTier');
+  const serviceTier = typeof response.serviceTier === 'string' || response.serviceTier === null ? response.serviceTier : undefined;
+  return {
+    ...thread,
+    providerSettings: {
+      generationId,
+      sequence: 0,
+      model,
+      ...(effort ? { effort } : {}),
+      ...(hasServiceTier && serviceTier !== undefined ? { serviceTier } : {}),
+    },
+  };
 }
 
 function parseThread(value: unknown): CodexThreadSnapshot {

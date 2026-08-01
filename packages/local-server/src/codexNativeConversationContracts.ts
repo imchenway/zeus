@@ -64,6 +64,7 @@ export interface StartTaskConversationInput {
   prompt: string;
   model: string;
   effort?: string;
+  serviceTier?: string | null;
   allowCodeChanges: boolean;
   allowTests: boolean;
   allowGitCommit: boolean;
@@ -92,6 +93,7 @@ export interface StartProjectConversationInput {
   prompt: string;
   model: string;
   effort?: string;
+  serviceTier?: string | null;
   permissionMode?: ConversationPermissionMode;
   collaborationMode?: ConversationCollaborationMode;
   idempotencyKey: string;
@@ -109,6 +111,7 @@ export interface SubmitNativeMessageInput {
   browserComments?: Record<string, unknown>[];
   model?: string;
   effort?: string;
+  serviceTier?: string | null;
   collaborationMode?: ConversationCollaborationMode;
   idempotencyKey: string;
   clientUserMessageId: string;
@@ -177,6 +180,7 @@ export interface StartNativeEphemeralConversationInput {
   prompt: string;
   model: string;
   effort?: string;
+  serviceTier?: string | null;
   idempotencyKey: string;
   clientUserMessageId: string;
 }

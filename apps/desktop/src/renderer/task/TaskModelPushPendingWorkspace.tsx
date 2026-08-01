@@ -130,7 +130,8 @@ function buildOptimisticTaskPushSession(choice: NativeConversationChoice, reques
         projectId: choice.projectId,
         conversationId: choice.id,
         providerThreadId: choice.providerThreadId,
-        providerSettings: {model: request.model, ...(request.effort ? {effort: request.effort} : {})},
+        // 用户请求值不能伪装成 Runtime 已确认的实际设置。
+        providerSettings: null,
     };
     return sessionReducer(base, {
         type: 'send_started',
