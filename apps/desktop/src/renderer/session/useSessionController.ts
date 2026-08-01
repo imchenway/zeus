@@ -1,36 +1,36 @@
-import {useEffect, useMemo, useSyncExternalStore} from 'react';
-import type {ZeusBrowserPreparedSubmission} from '@zeus/shared';
-import {createInitialSessionState, sessionReducer} from './sessionReducer.js';
+import { useEffect, useMemo, useSyncExternalStore } from 'react';
+import type { ZeusBrowserPreparedSubmission } from '@zeus/shared';
+import { createInitialSessionState, sessionReducer } from './sessionReducer.js';
 import {
-    type CodexConversationCapabilities,
-    type ConversationResourcePreview,
-    isNativeConversationEvent,
-    type NativeCollaborationMode,
-    type NativeConversationAttachment,
-    type NativeConversationEvent,
-    type NativeConversationSnapshot,
-    type NativeOperationAcceptance,
-    type NativePendingRequest,
-    type NativePermissionMode,
-    type NativePlanImplementationRequest,
-    type NativeQueueSnapshot,
-    type NativeRealtimeEventEnvelope,
-    type NativeSessionError,
-    type NativeSessionState,
-    type NativeTurnSettingsSelection,
-    type SendNativeMessageRequest,
-    type TurnChangeSet,
-    type TurnChangeSetOperationResult,
+  type CodexConversationCapabilities,
+  type ConversationResourcePreview,
+  isNativeConversationEvent,
+  type NativeCollaborationMode,
+  type NativeConversationAttachment,
+  type NativeConversationEvent,
+  type NativeConversationSnapshot,
+  type NativeOperationAcceptance,
+  type NativePendingRequest,
+  type NativePermissionMode,
+  type NativePlanImplementationRequest,
+  type NativeQueueSnapshot,
+  type NativeRealtimeEventEnvelope,
+  type NativeSessionError,
+  type NativeSessionState,
+  type NativeTurnSettingsSelection,
+  type SendNativeMessageRequest,
+  type TurnChangeSet,
+  type TurnChangeSetOperationResult,
 } from './sessionTypes.js';
 
 export const reconnectBackoffMs = [250, 500, 1_000, 2_000, 5_000] as const;
 
 export function reconnectDelayMs(attempt: number): number {
-    return reconnectBackoffMs[Math.min(Math.max(0, Math.floor(attempt) - 1), reconnectBackoffMs.length - 1)]!;
+  return reconnectBackoffMs[Math.min(Math.max(0, Math.floor(attempt) - 1), reconnectBackoffMs.length - 1)]!;
 }
 
 export interface SessionControllerClient {
-    loadCodexConversationCapabilities?(projectId: string): Promise<CodexConversationCapabilities>;
+  loadCodexConversationCapabilities?(projectId: string): Promise<CodexConversationCapabilities>;
   loadNativeConversation(projectId: string, conversationId: string): Promise<NativeConversationSnapshot>;
   loadConversationResourcePreview?(projectId: string, conversationId: string, resourceId: string): Promise<ConversationResourcePreview>;
   loadTurnChangeSet?(projectId: string, conversationId: string, turnId: string): Promise<TurnChangeSet>;
@@ -39,13 +39,13 @@ export interface SessionControllerClient {
     conversationId: string,
     turnId: string,
     action: 'undo' | 'reapply',
-    input: {changeSetId: string; expectedState: 'applied' | 'undone'; idempotencyKey: string},
+    input: { changeSetId: string; expectedState: 'applied' | 'undone'; idempotencyKey: string },
   ): Promise<TurnChangeSetOperationResult>;
 
-    restoreArchivedNativeConversation(projectId: string, conversationId: string): Promise<NativeConversationSnapshot>;
+  restoreArchivedNativeConversation(projectId: string, conversationId: string): Promise<NativeConversationSnapshot>;
   updateNativePermissionMode(projectId: string, conversationId: string, permissionMode: NativePermissionMode): Promise<NativeConversationSnapshot>;
 
-    updateNativeCollaborationMode(projectId: string, conversationId: string, collaborationMode: NativeCollaborationMode): Promise<NativeConversationSnapshot>;
+  updateNativeCollaborationMode(projectId: string, conversationId: string, collaborationMode: NativeCollaborationMode): Promise<NativeConversationSnapshot>;
   connectEvents(onEvent: (event: NativeRealtimeEventEnvelope) => void, options?: { afterEventId?: string }): WebSocket;
   sendNativeMessage(projectId: string, conversationId: string, input: SendNativeMessageRequest): Promise<NativeOperationAcceptance>;
   editNativeQueuedSubmission(projectId: string, conversationId: string, submissionId: string, content: string): Promise<NativeQueueSnapshot>;
@@ -56,20 +56,24 @@ export interface SessionControllerClient {
   interruptNativeTurn(projectId: string, conversationId: string, turnId: string): Promise<NativeOperationAcceptance>;
   respondToNativeRequest(projectId: string, conversationId: string, requestId: string, response: Record<string, unknown>): Promise<{ operation: Record<string, unknown>; request: NativePendingRequest }>;
 
-    snoozeNativeRequest(projectId: string, conversationId: string, requestId: string): Promise<{
-        request: NativePendingRequest
-    }>;
+  snoozeNativeRequest(
+    projectId: string,
+    conversationId: string,
+    requestId: string,
+  ): Promise<{
+    request: NativePendingRequest;
+  }>;
 
-    respondToPlanImplementationRequest(
-        projectId: string,
-        conversationId: string,
-        requestId: string,
-        input: { action: 'implement' | 'refine' | 'dismiss'; feedback?: string },
-    ): Promise<{
-        operation: NativeOperationAcceptance['operation'];
-        request: NativePlanImplementationRequest;
-        conversation: NativeConversationSnapshot
-    }>;
+  respondToPlanImplementationRequest(
+    projectId: string,
+    conversationId: string,
+    requestId: string,
+    input: { action: 'implement' | 'refine' | 'dismiss'; feedback?: string },
+  ): Promise<{
+    operation: NativeOperationAcceptance['operation'];
+    request: NativePlanImplementationRequest;
+    conversation: NativeConversationSnapshot;
+  }>;
 }
 
 export interface SessionDraftStorage {
@@ -82,11 +86,11 @@ export interface CreateSessionControllerOptions {
   client: SessionControllerClient;
   projectId: string;
   conversationId: string;
-    initialOptimisticState?: NativeSessionState;
+  initialOptimisticState?: NativeSessionState;
   storage?: SessionDraftStorage;
   createId?: () => string;
   reconnectDelay?: (delayMs: number) => Promise<void>;
-  markBrowserCommentsSent?: (input: {conversationId: string; tabId: string; commentIds: string[]}) => Promise<unknown>;
+  markBrowserCommentsSent?: (input: { conversationId: string; tabId: string; commentIds: string[] }) => Promise<unknown>;
 }
 
 export interface SessionController {
@@ -106,19 +110,22 @@ export interface SessionController {
   sendQueuedNow(submissionId: string): Promise<NativeOperationAcceptance>;
   resumeQueue(): Promise<NativeQueueSnapshot>;
 
-    restoreArchivedConversation(): Promise<NativeConversationSnapshot>;
+  restoreArchivedConversation(): Promise<NativeConversationSnapshot>;
   interruptActiveTurn(): Promise<NativeOperationAcceptance>;
   respondToRequest(requestId: string, response: Record<string, unknown>): Promise<{ operation: Record<string, unknown>; request: NativePendingRequest }>;
 
-    snoozeRequest(requestId: string): Promise<{ request: NativePendingRequest }>;
+  snoozeRequest(requestId: string): Promise<{ request: NativePendingRequest }>;
 
-    respondToPlanImplementationRequest(requestId: string, input: {
-        action: 'implement' | 'refine' | 'dismiss';
-        feedback?: string
-    }): Promise<void>;
+  respondToPlanImplementationRequest(
+    requestId: string,
+    input: {
+      action: 'implement' | 'refine' | 'dismiss';
+      feedback?: string;
+    },
+  ): Promise<void>;
   setPermissionMode(permissionMode: NativePermissionMode): Promise<NativeConversationSnapshot>;
 
-    setCollaborationMode(collaborationMode: NativeCollaborationMode): Promise<NativeConversationSnapshot>;
+  setCollaborationMode(collaborationMode: NativeCollaborationMode): Promise<NativeConversationSnapshot>;
 }
 
 interface PendingSendEnvelope {
@@ -131,10 +138,10 @@ interface PendingSendEnvelope {
   browserSubmission: ZeusBrowserPreparedSubmission | null;
   delivery: 'queue' | 'steer_now';
   expectedTurnId?: string;
-    model?: string;
-    effort?: string;
-    serviceTier?: string | null;
-    collaborationMode: NativeCollaborationMode;
+  model?: string;
+  effort?: string;
+  serviceTier?: string | null;
+  collaborationMode: NativeCollaborationMode;
   idempotencyKey: string;
   clientUserMessageId: string;
   deliveryState?: 'pending' | 'accepted';
@@ -169,19 +176,19 @@ export function createSessionController(options: CreateSessionControllerOptions)
   const persisted = readPersistedDraft(storage, storageKey);
   let pendingSend = persisted.pendingSend ?? null;
   let recoveryRequired = persisted.recoveryRequired ?? null;
-    const initialOptimisticItems = (options.initialOptimisticState?.itemOrder ?? [])
-        .map((key) => options.initialOptimisticState?.items[key])
-        .filter((item): item is NonNullable<typeof item> => Boolean(item?.optimistic && item.conversationId === options.conversationId));
+  const initialOptimisticItems = (options.initialOptimisticState?.itemOrder ?? [])
+    .map((key) => options.initialOptimisticState?.items[key])
+    .filter((item): item is NonNullable<typeof item> => Boolean(item?.optimistic && item.conversationId === options.conversationId));
   let state: NativeSessionState = {
     ...createInitialSessionState(),
     projectId: options.projectId,
     conversationId: options.conversationId,
-      providerThreadId: initialOptimisticItems.length > 0 ? (options.initialOptimisticState?.providerThreadId ?? null) : null,
-      conversationState: initialOptimisticItems.length > 0 ? 'starting_turn' : 'native_loading',
-      items: Object.fromEntries(initialOptimisticItems.map((item) => [item.key, {...item}])),
-      itemOrder: initialOptimisticItems.map((item) => item.key),
-      providerSettings: initialOptimisticItems.length > 0 ? (options.initialOptimisticState?.providerSettings ?? null) : null,
-      transcriptRevision: initialOptimisticItems.length,
+    providerThreadId: initialOptimisticItems.length > 0 ? (options.initialOptimisticState?.providerThreadId ?? null) : null,
+    conversationState: initialOptimisticItems.length > 0 ? 'starting_turn' : 'native_loading',
+    items: Object.fromEntries(initialOptimisticItems.map((item) => [item.key, { ...item }])),
+    itemOrder: initialOptimisticItems.map((item) => item.key),
+    providerSettings: initialOptimisticItems.length > 0 ? (options.initialOptimisticState?.providerSettings ?? null) : null,
+    transcriptRevision: initialOptimisticItems.length,
     draft: persisted.draft,
     attachments: persisted.attachments,
     browserSubmission: persisted.browserSubmission ?? null,
@@ -233,19 +240,15 @@ export function createSessionController(options: CreateSessionControllerOptions)
       JSON.stringify({
         draft,
         attachments,
-        ...(browserSubmission ? {browserSubmission} : {}),
-        ...(pendingSend ? {pendingSend} : {}),
-        ...(recoveryRequired ? {recoveryRequired} : {}),
+        ...(browserSubmission ? { browserSubmission } : {}),
+        ...(pendingSend ? { pendingSend } : {}),
+        ...(recoveryRequired ? { recoveryRequired } : {}),
       } satisfies PersistedDraft),
     );
   }
 
   function clearDraftIfItStillMatches(envelope: PendingSendEnvelope): void {
-    if (
-      state.draft !== envelope.draft ||
-      !sameAttachments(state.attachments, envelope.composerAttachments) ||
-      !sameBrowserSubmission(state.browserSubmission, envelope.browserSubmission)
-    ) {
+    if (state.draft !== envelope.draft || !sameAttachments(state.attachments, envelope.composerAttachments) || !sameBrowserSubmission(state.browserSubmission, envelope.browserSubmission)) {
       return;
     }
     dispatch({ type: 'draft_changed', draft: '' });
@@ -320,9 +323,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
     if (!browserSubmission || envelope.browserCommentsMarked) return;
     const mark =
       options.markBrowserCommentsSent ??
-      (typeof window !== 'undefined' && window.zeus?.markBrowserCommentsSent
-        ? (input: {conversationId: string; tabId: string; commentIds: string[]}) => window.zeus!.markBrowserCommentsSent!(input)
-        : undefined);
+      (typeof window !== 'undefined' && window.zeus?.markBrowserCommentsSent ? (input: { conversationId: string; tabId: string; commentIds: string[] }) => window.zeus!.markBrowserCommentsSent!(input) : undefined);
     if (!mark) return;
     try {
       await mark({
@@ -331,7 +332,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
         commentIds: browserSubmission.commentIds,
       });
       envelope.browserCommentsMarked = true;
-      if (pendingSend === envelope) pendingSend = {...envelope};
+      if (pendingSend === envelope) pendingSend = { ...envelope };
       persistDraft();
     } catch {
       // 模型提交已经被服务端接受时不能因本地页面状态同步失败而回滚或重复提交；
@@ -493,7 +494,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
       let attempt = 0;
       while (!disposed && epoch === reconnectLoopEpoch) {
         dispatch({ type: 'transport_changed', transportState: 'reconnecting', reconnectAttempt: attempt + 1 });
-          const delayMs = reconnectDelayMs(attempt + 1);
+        const delayMs = reconnectDelayMs(attempt + 1);
         if (!(await waitForReconnectDelay(delayMs, epoch))) return;
         try {
           await hydrate(true, true);
@@ -699,12 +700,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
       persistDraft();
     },
     setBrowserSubmission(browserSubmission) {
-      if (
-        pendingSend &&
-        pendingSend.deliveryState !== 'accepted' &&
-        !recoveryRequired &&
-        !sameBrowserSubmission(pendingSend.browserSubmission, browserSubmission)
-      ) {
+      if (pendingSend && pendingSend.deliveryState !== 'accepted' && !recoveryRequired && !sameBrowserSubmission(pendingSend.browserSubmission, browserSubmission)) {
         pendingSend = null;
       }
       dispatch({
@@ -721,29 +717,29 @@ export function createSessionController(options: CreateSessionControllerOptions)
         (snapshot) => dispatch({ type: 'snapshot_hydrated', snapshot: withoutResolvedRequests(snapshot) }),
       );
     },
-      setCollaborationMode(collaborationMode) {
-          return runOperation(
-              `collaboration-mode:${collaborationMode}`,
-              () => options.client.updateNativeCollaborationMode(options.projectId, options.conversationId, collaborationMode),
-              (snapshot) => dispatch({type: 'snapshot_hydrated', snapshot: withoutResolvedRequests(snapshot)}),
-          );
-      },
-      send(delivery, expectedTurnId, settings) {
+    setCollaborationMode(collaborationMode) {
+      return runOperation(
+        `collaboration-mode:${collaborationMode}`,
+        () => options.client.updateNativeCollaborationMode(options.projectId, options.conversationId, collaborationMode),
+        (snapshot) => dispatch({ type: 'snapshot_hydrated', snapshot: withoutResolvedRequests(snapshot) }),
+      );
+    },
+    send(delivery, expectedTurnId, settings) {
       if (recoveryRequired) return Promise.reject(sessionWriteBlockedError(recoveryRequired));
       const normalizedExpectedTurnId = expectedTurnId || undefined;
-          const requestedCollaborationMode = settings?.collaborationMode ?? state.snapshot?.collaborationMode ?? 'default';
+      const requestedCollaborationMode = settings?.collaborationMode ?? state.snapshot?.collaborationMode ?? 'default';
       if (activeOperation) {
         const pendingOperation = pendingSend ? `send:${pendingSend.fingerprint}` : null;
-          if (
-              pendingSend &&
-              activeOperation.key === pendingOperation &&
-              pendingSend.delivery === delivery &&
-              pendingSend.expectedTurnId === normalizedExpectedTurnId &&
-              pendingSend.model === settings?.model &&
-              pendingSend.effort === settings?.effort &&
-              pendingSend.serviceTier === settings?.serviceTier &&
-              pendingSend.collaborationMode === requestedCollaborationMode
-          ) {
+        if (
+          pendingSend &&
+          activeOperation.key === pendingOperation &&
+          pendingSend.delivery === delivery &&
+          pendingSend.expectedTurnId === normalizedExpectedTurnId &&
+          pendingSend.model === settings?.model &&
+          pendingSend.effort === settings?.effort &&
+          pendingSend.serviceTier === settings?.serviceTier &&
+          pendingSend.collaborationMode === requestedCollaborationMode
+        ) {
           return activeOperation.promise as Promise<NativeOperationAcceptance>;
         }
         return Promise.reject(new Error(`Session operation already in progress: ${activeOperation.key}`));
@@ -762,12 +758,12 @@ export function createSessionController(options: CreateSessionControllerOptions)
         content,
         displayText,
         attachments,
-        ...(browserSubmission?.comments.length ? {browserComments: browserSubmission.comments} : {}),
+        ...(browserSubmission?.comments.length ? { browserComments: browserSubmission.comments } : {}),
         delivery,
-        ...(normalizedExpectedTurnId ? {expectedTurnId: normalizedExpectedTurnId} : {}),
-        ...(appliedSettings?.model ? {model: appliedSettings.model} : {}),
-        ...(appliedSettings?.effort ? {effort: appliedSettings.effort} : {}),
-        ...(appliedSettings && Object.prototype.hasOwnProperty.call(appliedSettings, 'serviceTier') ? {serviceTier: appliedSettings.serviceTier} : {}),
+        ...(normalizedExpectedTurnId ? { expectedTurnId: normalizedExpectedTurnId } : {}),
+        ...(appliedSettings?.model ? { model: appliedSettings.model } : {}),
+        ...(appliedSettings?.effort ? { effort: appliedSettings.effort } : {}),
+        ...(appliedSettings && Object.prototype.hasOwnProperty.call(appliedSettings, 'serviceTier') ? { serviceTier: appliedSettings.serviceTier } : {}),
         collaborationMode: requestedCollaborationMode,
       });
       if (!pendingSend || pendingSend.fingerprint !== fingerprint) {
@@ -797,10 +793,10 @@ export function createSessionController(options: CreateSessionControllerOptions)
           browserSubmission,
           delivery,
           ...(normalizedExpectedTurnId ? { expectedTurnId: normalizedExpectedTurnId } : {}),
-            ...(appliedSettings?.model ? {model: appliedSettings.model} : {}),
-            ...(appliedSettings?.effort ? {effort: appliedSettings.effort} : {}),
-            ...(appliedSettings && Object.prototype.hasOwnProperty.call(appliedSettings, 'serviceTier') ? {serviceTier: appliedSettings.serviceTier} : {}),
-            collaborationMode: requestedCollaborationMode,
+          ...(appliedSettings?.model ? { model: appliedSettings.model } : {}),
+          ...(appliedSettings?.effort ? { effort: appliedSettings.effort } : {}),
+          ...(appliedSettings && Object.prototype.hasOwnProperty.call(appliedSettings, 'serviceTier') ? { serviceTier: appliedSettings.serviceTier } : {}),
+          collaborationMode: requestedCollaborationMode,
           // provider 尚未接受的失败提交只调整服务档位时，沿用原幂等身份重试。
           idempotencyKey: reusableIdentity?.idempotencyKey ?? createId(),
           clientUserMessageId: reusableIdentity?.clientUserMessageId ?? createId(),
@@ -833,15 +829,15 @@ export function createSessionController(options: CreateSessionControllerOptions)
           try {
             const acceptance = await options.client.sendNativeMessage(options.projectId, options.conversationId, {
               content: envelope.content,
-              ...(envelope.displayText ? {displayText: envelope.displayText} : {}),
+              ...(envelope.displayText ? { displayText: envelope.displayText } : {}),
               attachments: envelope.attachments,
-              ...(envelope.browserSubmission?.comments.length ? {browserComments: envelope.browserSubmission.comments} : {}),
+              ...(envelope.browserSubmission?.comments.length ? { browserComments: envelope.browserSubmission.comments } : {}),
               delivery: envelope.delivery,
               ...(envelope.expectedTurnId ? { expectedTurnId: envelope.expectedTurnId } : {}),
-                ...(envelope.model ? {model: envelope.model} : {}),
-                ...(envelope.effort ? {effort: envelope.effort} : {}),
-                ...(Object.prototype.hasOwnProperty.call(envelope, 'serviceTier') ? {serviceTier: envelope.serviceTier} : {}),
-                collaborationMode: envelope.collaborationMode,
+              ...(envelope.model ? { model: envelope.model } : {}),
+              ...(envelope.effort ? { effort: envelope.effort } : {}),
+              ...(Object.prototype.hasOwnProperty.call(envelope, 'serviceTier') ? { serviceTier: envelope.serviceTier } : {}),
+              collaborationMode: envelope.collaborationMode,
               idempotencyKey: envelope.idempotencyKey,
               clientUserMessageId: envelope.clientUserMessageId,
             });
@@ -905,13 +901,13 @@ export function createSessionController(options: CreateSessionControllerOptions)
         (queue) => dispatch({ type: 'queue_hydrated', queue }),
       );
     },
-      restoreArchivedConversation() {
-          return runOperation(
-              'provider-thread:restore',
-              () => options.client.restoreArchivedNativeConversation(options.projectId, options.conversationId),
-              (snapshot) => dispatch({type: 'snapshot_hydrated', snapshot: withoutResolvedRequests(snapshot)}),
-          );
-      },
+    restoreArchivedConversation() {
+      return runOperation(
+        'provider-thread:restore',
+        () => options.client.restoreArchivedNativeConversation(options.projectId, options.conversationId),
+        (snapshot) => dispatch({ type: 'snapshot_hydrated', snapshot: withoutResolvedRequests(snapshot) }),
+      );
+    },
     interruptActiveTurn() {
       const turnId = state.activeTurnId;
       if (!turnId || state.startedTurnId !== turnId) return Promise.reject(new Error('A matching started turn is required before interrupt.'));
@@ -938,26 +934,28 @@ export function createSessionController(options: CreateSessionControllerOptions)
         () => markRequestResolved(requestId),
       );
     },
-      snoozeRequest(requestId) {
-          return runOperation(
-              `request:snooze:${requestId}`,
-              () => options.client.snoozeNativeRequest(options.projectId, options.conversationId, requestId),
-              ({request}) => dispatch({
-                  type: 'pending_requests_hydrated',
-                  requests: state.pendingRequests.map((candidate) => (candidate.id === request.id ? request : candidate))
-              }),
-          );
-      },
-      respondToPlanImplementationRequest(requestId, input) {
-          return runOperation(
-              `plan-request:${requestId}:${JSON.stringify(input)}`,
-              () => options.client.respondToPlanImplementationRequest(options.projectId, options.conversationId, requestId, input),
-              ({conversation}) => dispatch({
-                  type: 'snapshot_hydrated',
-                  snapshot: withoutResolvedRequests(conversation)
-              }),
-          ).then(() => undefined);
-      },
+    snoozeRequest(requestId) {
+      return runOperation(
+        `request:snooze:${requestId}`,
+        () => options.client.snoozeNativeRequest(options.projectId, options.conversationId, requestId),
+        ({ request }) =>
+          dispatch({
+            type: 'pending_requests_hydrated',
+            requests: state.pendingRequests.map((candidate) => (candidate.id === request.id ? request : candidate)),
+          }),
+      );
+    },
+    respondToPlanImplementationRequest(requestId, input) {
+      return runOperation(
+        `plan-request:${requestId}:${JSON.stringify(input)}`,
+        () => options.client.respondToPlanImplementationRequest(options.projectId, options.conversationId, requestId, input),
+        ({ conversation }) =>
+          dispatch({
+            type: 'snapshot_hydrated',
+            snapshot: withoutResolvedRequests(conversation),
+          }),
+      ).then(() => undefined);
+    },
   };
   return controller;
 }
@@ -968,7 +966,7 @@ export interface UseSessionControllerResult {
 }
 
 export function useSessionController(options: CreateSessionControllerOptions): UseSessionControllerResult {
-    const controller = useMemo(() => createSessionController(options), [options.client, options.projectId, options.conversationId, options.initialOptimisticState, options.storage, options.createId]);
+  const controller = useMemo(() => createSessionController(options), [options.client, options.projectId, options.conversationId, options.initialOptimisticState, options.storage, options.createId]);
   const state = useSyncExternalStore(controller.subscribe, controller.getState, controller.getState);
   useEffect(() => {
     void controller.start().catch(() => undefined);
@@ -995,7 +993,7 @@ function readPersistedDraft(storage: SessionDraftStorage | undefined, key: strin
     const attachments = Array.isArray(parsed.attachments) ? parsed.attachments.filter(isNativeAttachment) : [];
     const browserSubmission = isBrowserPreparedSubmission(parsed.browserSubmission) ? parsed.browserSubmission : null;
     const pendingCandidate = isPendingSendEnvelope(parsed.pendingSend) ? parsed.pendingSend : undefined;
-    const pending = pendingCandidate ? {...pendingCandidate, collaborationMode: pendingCandidate.collaborationMode ?? 'default'} : undefined;
+    const pending = pendingCandidate ? { ...pendingCandidate, collaborationMode: pendingCandidate.collaborationMode ?? 'default' } : undefined;
     const recoveryRequired = isPersistedRecoveryRequired(parsed.recoveryRequired) ? parsed.recoveryRequired : undefined;
     const persistedDraft = typeof parsed.draft === 'string' ? parsed.draft : '';
     const restorePendingInput = pending && pending.deliveryState !== 'accepted' && !persistedDraft && attachments.length === 0 && !browserSubmission;
