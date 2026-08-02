@@ -24,7 +24,7 @@ CI 通过 `ZEUS_VERIFY_BASE` 与 `ZEUS_VERIFY_HEAD` 传入本次推送或 PR 的
 
 公开 Release 只包含版本化 DMG 和更新 manifest；Zeus.app 与 Homebrew Cask 是本地或 CI 内部发布工件，不作为 Release 附件。
 
-- 公开 DMG：`dist/Zeus-0.1.8-arm64.dmg`；
+- 公开 DMG：`dist/Zeus-0.1.9-arm64.dmg`；
 - 公开更新清单：`dist/zeus-release-manifest.json`，供应用内检查更新读取；
 - 内部 App：`dist/mac-arm64/Zeus.app`；
 - 内部 Homebrew Cask：`dist/homebrew/zeus.rb`，同步到 `imchenway/homebrew-tap`；
@@ -35,7 +35,27 @@ CI 通过 `ZEUS_VERIFY_BASE` 与 `ZEUS_VERIFY_HEAD` 传入本次推送或 PR 的
 普通发布前门禁必须覆盖变更文件格式、Git 空白错误、lint、typecheck 和 build。完整 macOS 发布门禁在此基础上继续覆盖
 acceptance matrix、AI CLI adapter 探针、package:mac、包内 Electron 加载和包内 renderer/main 非 GUI 健康检查。
 
-### 当前公开稳定基线（0.1.8）
+### 当前公开稳定基线（0.1.9）
+
+- 根包与桌面包版本已同步为 `0.1.9`；
+- 代码交付入口不再受任务管理状态限制；`ready / failed` 任务分支可以从同一入口进入完整变更审查、提交、推送、远端校验和 worktree 回收，完成或取消后返回代码交付且不修改任务状态；
+- 任务分支选择器显示真实 Git 分支名与生命周期标签，不再把 `task_workspace_*` 内部关联标识暴露给用户；准备完成前合入目标和方式保持禁用；
+- 使用版本为 `0.1.9`、最低系统版本为 macOS 13.0 的仓库隔离包完成“任务详情 → 代码交付 → 审查并准备交付 → 取消返回”真实桌面交互，任务状态保持“待开始”；验收没有执行提交、推送、回收或合入，临时 TaskWorkspace 记录已清理；
+- 首轮正式包对账发现 App `Info.plist` 的默认最低系统版本仍为 12.0，与 manifest 和用户文档不一致；在打包配置显式固定 macOS 13.0 后重新执行完整发布门禁并重新生成所有正式制品；
+- `pnpm verify:release` 已通过：Git 空白与变更格式、lint、typecheck、build、12 个章节 139 项验收矩阵、AI CLI 探针、macOS arm64 打包、包内 Electron 与资源健康和严格 codesign 校验完整执行；
+- DMG SHA256：`7154e0210c8577c0cb9c7c06464c762d65802ddb7a3236c97702f17a7840255c`，大小为 `252288718` 字节，`hdiutil verify` 返回 `VALID`；
+- manifest SHA256：`ad3c6baf3523f235cb4b518f7a885e9ee448d2e05f28d3f8e87554abd6364477`，大小为 `1041` 字节，明确记录 `version=0.1.9`、`minimumSystemVersion=13.0`、`signed=false`、`notarized=false`；
+- App 的 ad-hoc `codesign` 严格校验通过，`spctl --assess` 按预期返回 rejected；当前仍是实用发布，不描述为 Apple 已认证或应用内自动安装；
+- 发布提交 `2c6d009` 经 PR `#19` 的 CI `30737452609` 验证后，以 rebase 方式合入最终发布提交 `3d5aa3ca1467ebbe61577d7dc209ef7ae1a9957d`；main 推送 CI `30737500913` 成功；
+- annotated tag `v0.1.9` 解引用后精确指向最终发布提交；GitHub Release `https://github.com/imchenway/zeus/releases/tag/v0.1.9` 为非草稿、非预发布的 Latest Release；
+- Release 公开资产只有 `Zeus-0.1.9-arm64.dmg` 与 `zeus-release-manifest.json`，GitHub 服务端摘要和大小与本地产物一致；
+- 从公开 Release 回下载的 DMG 与 manifest 和本地产物逐字节一致，下载后的 DMG 再次通过 `hdiutil verify`；
+- GitHub Release notes 与 `docs/releases/v0.1.9.md` 内容精确一致，SHA256 均为 `b0af7d88ab1bdbfe60f46afaf4a6f61f9a806453c3bac86aaed6c99347089100`；
+- Homebrew Tap 已更新到提交 `759f3bd3133dfc9c40841bdf65dac3f9ea8198c9`；远端 Cask SHA256 为 `e69c4ce1b535a04d93aa259bdda2238ecdedff733e9a050723d9cd1335f9a4b2`，与本地生成文件一致；
+- `brew style --cask imchenway/tap/zeus` 检查 1 个文件且无问题，`brew info` 显示公开版本 `0.1.9`；本机仍安装 `0.1.7` 并被标记为 outdated；
+- 本轮没有升级、替换或启动 `/Applications/Zeus.app`，发布后验收只使用仓库隔离包、公开 Release 与 Tap。
+
+### 历史稳定基线（0.1.8）
 
 - 根包与桌面包版本已同步为 `0.1.8`；
 - 任务详情已恢复标题、说明、优先级、管理状态、标签和附件关联即时编辑，并通过 `updatedAt` 乐观并发阻止静默覆盖；
