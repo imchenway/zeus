@@ -266,6 +266,7 @@ function InlineTaskTextField(props: {
   function handleKeyDown(event: ReactKeyboardEvent<HTMLInputElement | HTMLTextAreaElement>): void {
     if (event.key === 'Escape') {
       event.preventDefault();
+      event.stopPropagation();
       cancelEditing();
       return;
     }
