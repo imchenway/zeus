@@ -5,12 +5,17 @@ ad-hoc 签名的 unsigned DMG，但必须显式标注签名、公证和 Gatekeep
 
 ## 发布脚本
 
-发布脚本覆盖 pnpm dev、pnpm verify:publish、pnpm package:mac、pnpm verify:release。
+发布脚本覆盖开发、候选准备、本地门禁、公开发布和命令管理同步。
 
 - `pnpm dev`：通过 `@zeus/desktop dev` 对齐 macOS Run 脚本。
 - `pnpm verify:publish`：本地、普通 CI 与完整 Release 共用的发布前入口；检查本次变更文件格式、Git 空白错误、lint、typecheck 和 build。
 - `pnpm package:mac`：生成 macOS App 与 DMG；无 Developer ID 证书时在打包阶段完成 ad-hoc 签名。
 - `pnpm verify:release`：先复用 `verify:publish`，再执行 AI CLI adapter 探针和 macOS 打包，并生成内部 Homebrew Cask 与公开更新清单。
+- `pnpm release:notes:draft`：基于最近公开标签到候选提交的真实范围生成 Release notes 草稿和证据。
+- `pnpm release:prepare`：默认只生成候选计划；显式写入时同步版本与已审阅 Release notes。
+- `pnpm release:gate`：对干净候选提交执行完整本地发布门禁，并输出绑定提交的摘要与快照。
+- `pnpm release:publish`：默认只做远程前置检查；显式确认后创建标签、触发 Release Workflow，并回下载公开资产完成对账。
+- `pnpm release:commands:sync`：把四条发布命令按仓库声明预览或幂等同步到指定 Zeus 项目。
 
 普通推送和 GitHub CI 都只需执行：
 
@@ -24,7 +29,7 @@ CI 通过 `ZEUS_VERIFY_BASE` 与 `ZEUS_VERIFY_HEAD` 传入本次推送或 PR 的
 
 公开 Release 只包含版本化 DMG 和更新 manifest；Zeus.app 与 Homebrew Cask 是本地或 CI 内部发布工件，不作为 Release 附件。
 
-- 公开 DMG：`dist/Zeus-0.1.9-arm64.dmg`；
+- 公开 DMG：`dist/Zeus-0.1.10-arm64.dmg`；
 - 公开更新清单：`dist/zeus-release-manifest.json`，供应用内检查更新读取；
 - 内部 App：`dist/mac-arm64/Zeus.app`；
 - 内部 Homebrew Cask：`dist/homebrew/zeus.rb`，同步到 `imchenway/homebrew-tap`；
@@ -35,7 +40,23 @@ CI 通过 `ZEUS_VERIFY_BASE` 与 `ZEUS_VERIFY_HEAD` 传入本次推送或 PR 的
 普通发布前门禁必须覆盖变更文件格式、Git 空白错误、lint、typecheck 和 build。完整 macOS 发布门禁在此基础上继续覆盖
 acceptance matrix、AI CLI adapter 探针、package:mac、包内 Electron 加载和包内 renderer/main 非 GUI 健康检查。
 
-### 当前公开稳定基线（0.1.9）
+### 当前公开稳定基线（0.1.10）
+
+- 根包与桌面包版本已同步为 `0.1.10`；本版本面向仓库维护者交付四阶段受控发布脚本、命令管理声明及同步入口，没有新增桌面界面或运行时业务功能；
+- Release notes 从 `v0.1.9` 到候选提交的 Git 范围、任务文档和版本事实生成，经人工复核后由 `release:prepare` 写入仓库；正文 SHA256 为 `312921d95604426cc8e24c4dd7099f2c1a2411556ed688e6eed5edb02e8934cd`；
+- 候选提交 `bbbe13a0d8bb33bf7dab3c7ce56cb9cb1463f57b` 已推送到 `main`，main push CI `30751833039` 成功；
+- `release:gate` 在同一候选提交上通过完整本地门禁：Git 空白与变更格式、lint、typecheck、build、12 个章节／139 项验收矩阵、AI CLI 探针、macOS arm64 打包、包内 Electron 与资源健康、严格 codesign 和 DMG 校验均成功；
+- 本地门禁 DMG 为 `252288745` 字节，SHA256 为 `4950e30402e7d9934380a3333755962bf657190b0fcf8aacbf4c53f70217ff2d`；App 为 ad-hoc 签名且未公证，`spctl --assess` 按预期返回 rejected；
+- 只使用仓库 `dist/mac-arm64/Zeus.app` 与独立 `ZEUS_USER_DATA_DIR` 完成真实启动；`/health` 返回 `version=0.1.10`、`database=ok`、`runtime=ok`，Renderer 租约已连接，Codex transport 为 `ready`，隔离数据库 `PRAGMA quick_check` 返回 `ok`；正常退出后 Main、执行宿主、Codex runtime 与 rendezvous 均完成清理；
+- `release:publish` 的只读前置检查无阻断，显式确认后创建 annotated tag `v0.1.10` 并触发 Release Workflow `30752046514`；Workflow 结论为 `success`，标签解引用后精确指向候选提交；
+- GitHub Release `https://github.com/imchenway/zeus/releases/tag/v0.1.10` 为非草稿、非预发布的 Latest Release，公开资产只有 `Zeus-0.1.10-arm64.dmg` 与 `zeus-release-manifest.json`；
+- 公开 DMG 为 `252192812` 字节、SHA256 为 `94c8f05981b50383a763672b343508b38d0d80fbe4ab57838506f39dbf89546f`；公开 manifest 为 `1047` 字节、SHA256 为 `b2ede00f00855d362e109c5ba0424acf134ebd489adee61ad3d367b55b309dc2`，明确记录 `signed=false`、`notarized=false`；
+- 发布脚本已从公开 Release 完整回下载 DMG 与 manifest；DMG 再次通过 `hdiutil verify`，GitHub 资产元数据、manifest、Release notes 与回下载文件一致；
+- Homebrew Tap 已更新到提交 `e00cb2f72a38a8ebb3c2cae08b82cb23723239c2`；远端 Cask SHA256 为 `103d24f3f1f676fe5d57d08143b99fd0b9b7e8d4fae39e61db47a73fe57b3e98`，与发布脚本快照一致；
+- `brew style --cask imchenway/tap/zeus` 检查 1 个文件且无问题，`brew info` 显示公开版本 `0.1.10`；本机安装版仍为 `0.1.7`；
+- 本轮没有升级、替换或启动 `/Applications/Zeus.app`。当前公开制品仍不能描述为 Apple 已认证、静默应用内安装或差分更新。
+
+### 历史稳定基线（0.1.9）
 
 - 根包与桌面包版本已同步为 `0.1.9`；
 - 代码交付入口不再受任务管理状态限制；`ready / failed` 任务分支可以从同一入口进入完整变更审查、提交、推送、远端校验和 worktree 回收，完成或取消后返回代码交付且不修改任务状态；
