@@ -1,0 +1,225 @@
+{
+  "purpose": "把 Zeus 升级发布流程配置为当前项目的四条受控命令",
+  "commands": [
+    {
+      "name": "zeus-release-notes",
+      "aliases": ["release-notes"],
+      "title": "生成 Zeus 发布内容草稿",
+      "description": "根据稳定标签、候选提交、任务文档和版本事实生成待人工审阅的 Release notes 草稿与证据；不修改源码、版本、Git 历史或公开发布状态。",
+      "command": "pnpm release:notes:draft",
+      "parameters": [
+        {
+          "key": "RELEASE_VERSION",
+          "label": "目标版本",
+          "description": "新的稳定版本号，例如 0.1.10。",
+          "type": "string",
+          "required": true,
+          "sensitive": false
+        },
+        {
+          "key": "BASE_TAG",
+          "label": "发布基线标签",
+          "description": "可选；默认使用最新稳定标签，例如 v0.1.9。",
+          "type": "string",
+          "required": false,
+          "sensitive": false
+        },
+        {
+          "key": "INCLUDE_WORKTREE",
+          "label": "包含未提交线索",
+          "description": "是否把当前未提交工作区的变更线索纳入草稿生成。",
+          "type": "boolean",
+          "required": false,
+          "sensitive": false,
+          "defaultValue": true
+        },
+        {
+          "key": "RELEASE_CONTEXT",
+          "label": "补充发布边界",
+          "description": "可选；补充本次发布的用户影响或明确排除项，最多 2000 字符。",
+          "type": "string",
+          "required": false,
+          "sensitive": false
+        },
+        {
+          "key": "RELEASE_MODEL",
+          "label": "生成模型",
+          "description": "可选；留空时沿用本机 Codex CLI 的默认模型。",
+          "type": "string",
+          "required": false,
+          "sensitive": false
+        }
+      ],
+      "timeoutSeconds": 1800,
+      "enabled": true,
+      "telegramEnabled": false,
+      "riskFlags": {
+        "gitWrite": false,
+        "outsideProjectWrite": true,
+        "externalServiceWrite": true
+      }
+    },
+    {
+      "name": "zeus-release-prepare",
+      "aliases": ["release-prepare"],
+      "title": "准备 Zeus 发布候选",
+      "description": "把已人工审阅的草稿收敛为仓库 Release notes，并按显式开关同步根包与桌面包版本；不执行 git add、commit、push 或标签操作。",
+      "command": "pnpm release:prepare",
+      "parameters": [
+        {
+          "key": "RELEASE_VERSION",
+          "label": "目标版本",
+          "description": "新的稳定版本号，例如 0.1.10。",
+          "type": "string",
+          "required": true,
+          "sensitive": false
+        },
+        {
+          "key": "RELEASE_NOTES_FILE",
+          "label": "已审阅发布内容",
+          "description": "上一阶段产出并经人工审阅的 Release notes 文件路径。",
+          "type": "string",
+          "required": true,
+          "sensitive": false
+        },
+        {
+          "key": "APPLY_CHANGES",
+          "label": "写入候选文件",
+          "description": "关闭时只生成计划；开启后写入两个包版本和仓库 Release notes。",
+          "type": "boolean",
+          "required": false,
+          "sensitive": false,
+          "defaultValue": false
+        }
+      ],
+      "timeoutSeconds": 300,
+      "enabled": true,
+      "telegramEnabled": false,
+      "riskFlags": {
+        "gitWrite": false,
+        "outsideProjectWrite": true,
+        "externalServiceWrite": false
+      }
+    },
+    {
+      "name": "zeus-release-gate",
+      "aliases": ["release-gate"],
+      "title": "执行 Zeus 本地发布门禁",
+      "description": "执行静态检查、验收矩阵、AI CLI 状态探针、正式打包和产物一致性校验；不创建提交、标签、GitHub Release 或 Tap 变更。",
+      "command": "pnpm release:gate",
+      "parameters": [
+        {
+          "key": "EXPECTED_VERSION",
+          "label": "待验证版本",
+          "description": "已经完成候选准备并进入候选提交的稳定版本号。",
+          "type": "string",
+          "required": true,
+          "sensitive": false
+        },
+        {
+          "key": "ALLOW_DIRTY_WORKTREE",
+          "label": "允许脏工作区",
+          "description": "只用于明确的本地非正式试跑；正式候选保持关闭。",
+          "type": "boolean",
+          "required": false,
+          "sensitive": false,
+          "defaultValue": false
+        },
+        {
+          "key": "REQUIRE_APPLE_DISTRIBUTION",
+          "label": "强制 Apple 分发条件",
+          "description": "开启后强制 Developer ID 签名和 Apple 公证。",
+          "type": "boolean",
+          "required": false,
+          "sensitive": false,
+          "defaultValue": false
+        },
+        {
+          "key": "REGISTER_DMG_ARTIFACT",
+          "label": "登记 DMG 产物",
+          "description": "是否把大体积 DMG 一并登记到本次 Zeus 命令产物。",
+          "type": "boolean",
+          "required": false,
+          "sensitive": false,
+          "defaultValue": false
+        }
+      ],
+      "timeoutSeconds": 3600,
+      "enabled": true,
+      "telegramEnabled": false,
+      "riskFlags": {
+        "gitWrite": false,
+        "outsideProjectWrite": true,
+        "externalServiceWrite": false
+      }
+    },
+    {
+      "name": "zeus-release-publish",
+      "aliases": ["release-publish"],
+      "title": "执行 Zeus 公开发布编排",
+      "description": "默认只做远程前置检查；显式开启并输入版本确认值后，创建并推送标签、触发 Release Workflow，等待完成并回验公开资产与 Homebrew Tap。",
+      "command": "pnpm release:publish",
+      "parameters": [
+        {
+          "key": "RELEASE_VERSION",
+          "label": "目标版本",
+          "description": "已经合入 main 且通过本地发布门禁的稳定版本号。",
+          "type": "string",
+          "required": true,
+          "sensitive": false
+        },
+        {
+          "key": "LOCAL_GATE_SUMMARY_FILE",
+          "label": "本地门禁摘要",
+          "description": "本地发布门禁生成的摘要文件；真实公开发布时必填。",
+          "type": "string",
+          "required": false,
+          "sensitive": false
+        },
+        {
+          "key": "APPLY_REMOTE",
+          "label": "执行远程发布",
+          "description": "关闭时只执行远程只读前置检查；开启后才可能产生远程写入。",
+          "type": "boolean",
+          "required": false,
+          "sensitive": false,
+          "defaultValue": false
+        },
+        {
+          "key": "PUBLISH_CONFIRMATION",
+          "label": "公开发布确认值",
+          "description": "真实发布时必须精确输入 PUBLISH_v加目标版本，例如 PUBLISH_v0.1.10。",
+          "type": "string",
+          "required": false,
+          "sensitive": false
+        },
+        {
+          "key": "REQUIRE_APPLE_DISTRIBUTION",
+          "label": "强制 Apple 分发条件",
+          "description": "是否要求公开资产具备 Developer ID 签名和 Apple 公证。",
+          "type": "boolean",
+          "required": false,
+          "sensitive": false,
+          "defaultValue": false
+        },
+        {
+          "key": "WAIT_FOR_COMPLETION",
+          "label": "等待并回验发布",
+          "description": "是否等待 Workflow 完成并继续验证 Release、DMG、清单和 Tap。",
+          "type": "boolean",
+          "required": false,
+          "sensitive": false,
+          "defaultValue": true
+        }
+      ],
+      "timeoutSeconds": 3600,
+      "enabled": true,
+      "telegramEnabled": false,
+      "riskFlags": {
+        "gitWrite": true,
+        "outsideProjectWrite": true,
+        "externalServiceWrite": true
+      }
+    }
+  ]
+}
