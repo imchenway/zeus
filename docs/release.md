@@ -24,7 +24,7 @@ CI 通过 `ZEUS_VERIFY_BASE` 与 `ZEUS_VERIFY_HEAD` 传入本次推送或 PR 的
 
 公开 Release 只包含版本化 DMG 和更新 manifest；Zeus.app 与 Homebrew Cask 是本地或 CI 内部发布工件，不作为 Release 附件。
 
-- 公开 DMG：`dist/Zeus-0.1.7-arm64.dmg`；
+- 公开 DMG：`dist/Zeus-0.1.8-arm64.dmg`；
 - 公开更新清单：`dist/zeus-release-manifest.json`，供应用内检查更新读取；
 - 内部 App：`dist/mac-arm64/Zeus.app`；
 - 内部 Homebrew Cask：`dist/homebrew/zeus.rb`，同步到 `imchenway/homebrew-tap`；
@@ -35,7 +35,26 @@ CI 通过 `ZEUS_VERIFY_BASE` 与 `ZEUS_VERIFY_HEAD` 传入本次推送或 PR 的
 普通发布前门禁必须覆盖变更文件格式、Git 空白错误、lint、typecheck 和 build。完整 macOS 发布门禁在此基础上继续覆盖
 acceptance matrix、AI CLI adapter 探针、package:mac、包内 Electron 加载和包内 renderer/main 非 GUI 健康检查。
 
-### 当前公开稳定基线（0.1.7）
+### 当前公开稳定基线（0.1.8）
+
+- 根包与桌面包版本已同步为 `0.1.8`；
+- 任务详情已恢复标题、说明、优先级、管理状态、标签和附件关联即时编辑，并通过 `updatedAt` 乐观并发阻止静默覆盖；
+- 正式包首轮界面复验发现字段 Escape 会继续关闭任务详情抽屉；补充字段级 `stopPropagation()` 后重新打包，标题与说明的取消路径均只放弃草稿并保持抽屉打开；
+- 使用仓库正式 App、独立用户数据、真实 Local Server 与 SQLite 完成标题／说明保存和取消、P2、“开发中”、标签去重、附件添加／移除／撤销、409 冲突和载入最新值验证；正常退出后 rendezvous 已清理，`PRAGMA quick_check` 返回 `ok`；
+- `pnpm verify:release` 已通过：Git 空白与变更格式、lint、typecheck、build、12 个章节 139 项验收矩阵、AI CLI 探针、macOS arm64 打包、包内 Electron 与资源健康和严格 codesign 校验完整执行；
+- DMG SHA256：`724c538bfbdf0b2dff3bbb08e6ada9726d2103d508798b1c808d00684a35e79d`，大小为 `252276414` 字节，`hdiutil verify` 返回 `VALID`；
+- manifest SHA256：`9cbcf61fc35adf00f904b6fca6410a2db30c3c74a4f98184b8b5d6b2665f0870`，大小为 `1041` 字节，明确记录 `version=0.1.8`、`minimumSystemVersion=13.0`、`signed=false`、`notarized=false`；
+- App 的 ad-hoc `codesign` 严格校验通过，`spctl --assess` 按预期返回 rejected；当前仍是实用发布，不描述为 Apple 已认证或应用内自动安装；
+- 发布提交 `6f64292` 经 PR `#18` 的 CI `30736088580` 验证后，以 rebase 方式合入最终发布提交 `cbeaf86356f2030c1b4ec28f2775da50267bb8f3`；main 推送 CI `30736122464` 成功；
+- annotated tag `v0.1.8` 解引用后精确指向最终发布提交；GitHub Release `https://github.com/imchenway/zeus/releases/tag/v0.1.8` 为非草稿、非预发布的 Latest Release；
+- Release 公开资产只有 `Zeus-0.1.8-arm64.dmg` 与 `zeus-release-manifest.json`，GitHub 服务端摘要和大小与本地产物一致；
+- 从公开 CDN 回下载的 DMG 与 manifest 和本地产物逐字节一致，下载后的 DMG 再次通过 `hdiutil verify`；
+- GitHub Release notes 与 `docs/releases/v0.1.8.md` 内容精确一致，SHA256 均为 `3a09bd748ada7f4f9f209a5348adebb87e16be354bc04326a041ca0837a1bd2f`；
+- Homebrew Tap 已更新到提交 `dde82f64ce54e9ad337e12579a31672075db733a`；远端 Cask SHA256 为 `f05ee6267b1c4147ada662f88c2418be9a2fbce0ef2efd137438393d644fdc65`，与本地生成文件一致；
+- `brew style --cask imchenway/tap/zeus` 检查 1 个文件且无问题，`brew info` 显示公开版本 `0.1.8`；本机仍安装 `0.1.7` 并被标记为 outdated；
+- 本轮没有升级、替换或启动 `/Applications/Zeus.app`，发布后验收只使用仓库包、公开 Release 与 Tap。
+
+### 历史稳定基线（0.1.7）
 
 - 根包与桌面包版本已同步为 `0.1.7`；
 - 任务推送、项目对话、任务会话首轮和已有会话后续轮次已经贯通 Codex app-server 的 `serviceTier` 三态；
