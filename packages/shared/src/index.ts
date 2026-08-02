@@ -6,6 +6,16 @@ export const taskPriorityOrder = ['p0', 'p1', 'p2', 'p3', 'p4'] as const;
 
 export type TaskPriority = (typeof taskPriorityOrder)[number];
 
+/** 任务附件关联只保存可持久化元数据；预览内容与可恢复正文不进入任务记录。 */
+export interface TaskAttachmentReference {
+  path: string;
+  name: string;
+  kind: 'image' | 'file' | 'directory' | 'pasted_text';
+  mimeType?: string;
+  size?: number;
+  characterCount?: number;
+}
+
 /** 对 API 输入做统一优先级校验，拒绝把任意字符串写入新任务。 */
 export function isTaskPriority(value: unknown): value is TaskPriority {
   return typeof value === 'string' && taskPriorityOrder.includes(value as TaskPriority);

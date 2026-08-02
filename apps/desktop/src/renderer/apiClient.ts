@@ -23,7 +23,7 @@ import type {
   TurnChangeSet,
   TurnChangeSetOperationResult,
 } from './session/sessionTypes.js';
-import type { CommandArtifact, CommandConfirmation, CommandDefinition, CommandDefinitionInput, CommandRun, TaskManagementStatus, TaskPriority, TaskStatusFilter } from '@zeus/shared';
+import type { CommandArtifact, CommandConfirmation, CommandDefinition, CommandDefinitionInput, CommandRun, TaskAttachmentReference, TaskManagementStatus, TaskPriority, TaskStatusFilter } from '@zeus/shared';
 
 export type { CommandArtifact, CommandConfirmation, CommandDefinition, CommandDefinitionInput, CommandParameterDefinition, CommandRun, CommandRunStatus, TaskManagementStatus, TaskPriority, TaskStatusFilter } from '@zeus/shared';
 
@@ -1021,9 +1021,16 @@ export interface LoadTasksRequest {
 }
 
 export interface UpdateTaskRequest {
+  expectedUpdatedAt: string;
   title?: string;
   description?: string;
+  priority?: TaskPriority;
+  tags?: string[];
+  attachments?: TaskAttachmentReference[];
   sourceContext?: Record<string, unknown>;
+  allowCodeChanges?: boolean;
+  allowTests?: boolean;
+  allowGitCommit?: boolean;
 }
 
 export interface CreateTaskFromGraphNodeRequest {
@@ -1310,7 +1317,7 @@ export interface DashboardClient {
   loadTasks: (input: LoadTasksRequest) => Promise<TaskRecord[]>;
   loadTask: (taskId: string) => Promise<TaskRecord>;
   updateTask: (taskId: string, input: UpdateTaskRequest) => Promise<TaskRecord>;
-  updateTaskTags: (taskId: string, tags: string[]) => Promise<TaskRecord>;
+  updateTaskTags: (taskId: string, tags: string[], expectedUpdatedAt: string) => Promise<TaskRecord>;
   deleteTask: (taskId: string) => Promise<TaskRecord>;
   runTask: (taskId: string) => Promise<TaskRuntimeControlResult>;
   pauseTask: (taskId: string) => Promise<TaskRecord>;
@@ -1332,7 +1339,7 @@ export interface DashboardClient {
   exportGitPatch: () => Promise<GitPatchExport>;
   loadTaskEvents: (taskId: string) => Promise<TaskEventRecord[]>;
   updateTaskStatus: (taskId: string, status: TaskStatus) => Promise<TaskRecord>;
-  updateTaskManagementStatus: (taskId: string, status: TaskManagementStatus) => Promise<TaskRecord>;
+  updateTaskManagementStatus: (taskId: string, status: TaskManagementStatus, expectedUpdatedAt: string) => Promise<TaskRecord>;
   archiveTask: (taskId: string) => Promise<TaskRecord>;
   restoreTask: (taskId: string) => Promise<TaskRecord>;
   createGitConfirmation: (input: CreateGitConfirmationRequest) => Promise<GitOperationConfirmation>;
@@ -1835,10 +1842,10 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
         method: 'PATCH',
         body: JSON.stringify(input),
       }),
-    updateTaskTags: (taskId, tags) =>
+    updateTaskTags: (taskId, tags, expectedUpdatedAt) =>
       request<TaskRecord>(`/api/tasks/${taskId}/tags`, {
         method: 'PUT',
-        body: JSON.stringify({ tags }),
+        body: JSON.stringify({ tags, expectedUpdatedAt }),
       }),
     deleteTask: (taskId) => request<TaskRecord>(`/api/tasks/${taskId}`, { method: 'DELETE' }),
     runTask: (taskId) =>
@@ -1892,10 +1899,10 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
         method: 'PATCH',
         body: JSON.stringify({ status }),
       }),
-    updateTaskManagementStatus: (taskId, status) =>
+    updateTaskManagementStatus: (taskId, status, expectedUpdatedAt) =>
       request<TaskRecord>(`/api/tasks/${taskId}/management-status`, {
         method: 'PATCH',
-        body: JSON.stringify({ status }),
+        body: JSON.stringify({ status, expectedUpdatedAt }),
       }),
     archiveTask: (taskId) => request<TaskRecord>(`/api/tasks/${taskId}/archive`, { method: 'POST' }),
     restoreTask: (taskId) => request<TaskRecord>(`/api/tasks/${taskId}/restore`, { method: 'POST' }),

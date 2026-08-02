@@ -3,7 +3,17 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { nanoid } from 'nanoid';
 import initSqlJs, { type Database, type SqlJsStatic, type SqlValue } from 'sql.js';
-import { isTaskManagementStatus, isTaskPriority, type ConversationResourceKind, type ConversationResourcePresentation, type TaskManagementStatus, type TaskPriority, type TurnChangeFileType, type TurnChangeSetState } from '@zeus/shared';
+import {
+  isTaskManagementStatus,
+  isTaskPriority,
+  type ConversationResourceKind,
+  type ConversationResourcePresentation,
+  type TaskAttachmentReference,
+  type TaskManagementStatus,
+  type TaskPriority,
+  type TurnChangeFileType,
+  type TurnChangeSetState,
+} from '@zeus/shared';
 import { migrateCommandCenterSchema } from './commands.js';
 
 export * from './commands.js';
@@ -218,6 +228,26 @@ export interface UpdateTaskInput {
   allowCodeChanges?: boolean;
   allowTests?: boolean;
   allowGitCommit?: boolean;
+}
+
+export type TaskEditableField = 'title' | 'description' | 'priority' | 'tags' | 'attachments' | 'sourceContext' | 'allowCodeChanges' | 'allowTests' | 'allowGitCommit';
+
+export interface UpdateTaskContentInput extends UpdateTaskInput {
+  expectedUpdatedAt: string;
+  priority?: TaskPriority;
+  tags?: string[];
+  attachments?: TaskAttachmentReference[];
+  sourceContext?: Record<string, unknown>;
+}
+
+export interface UpdateTaskContentResult {
+  task: ZeusTaskRecord;
+  changedFields: TaskEditableField[];
+  tagCountBefore: number;
+  tagCountAfter: number;
+  attachmentCountBefore: number;
+  attachmentCountAfter: number;
+  previousUpdatedAt: string;
 }
 
 export interface ZeusTaskEventRecord {
@@ -1763,6 +1793,12 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
+function nextIsoTimestamp(previousTimestamp: string): string {
+  const now = Date.now();
+  const previous = Date.parse(previousTimestamp);
+  return new Date(Number.isFinite(previous) ? Math.max(now, previous + 1) : now).toISOString();
+}
+
 function slugifyProjectName(name: string): string {
   const slug = name
     .trim()
@@ -1824,6 +1860,26 @@ function parseTagsJson(tagsJson: string): string[] {
   } catch {
     return [];
   }
+}
+
+function parseTaskSourceContextJson(sourceContextJson: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(sourceContextJson) as unknown;
+    return isPlainRecord(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function countTaskAttachmentReferences(sourceContext: Record<string, unknown>): number {
+  return Array.isArray(sourceContext.attachments) ? sourceContext.attachments.length : 0;
+}
+
+function throwTaskEditConflict(taskId: string, currentUpdatedAt: string): never {
+  throw Object.assign(new Error(`Zeus task changed after editing started: ${taskId}`), {
+    code: 'ZEUS_TASK_EDIT_CONFLICT' as const,
+    currentUpdatedAt,
+  });
 }
 
 function filterAndSortTasks(records: ZeusTaskRecord[], options: TaskListOptions): ZeusTaskRecord[] {
@@ -2182,7 +2238,9 @@ export class TaskRepository {
   }
 
   archive(taskId: string): ZeusTaskRecord {
-    const timestamp = nowIso();
+    const existing = this.getById(taskId);
+    if (!existing) throw new Error(`Zeus task not found: ${taskId}`);
+    const timestamp = nextIsoTimestamp(existing.updatedAt);
     this.db.execute(`UPDATE tasks SET archived = 1, updated_at = ? WHERE id = ? AND deleted_at IS NULL`, [timestamp, taskId]);
     const archived = this.getById(taskId);
     if (!archived) {
@@ -2192,7 +2250,9 @@ export class TaskRepository {
   }
 
   restore(taskId: string): ZeusTaskRecord {
-    const timestamp = nowIso();
+    const existing = this.getById(taskId);
+    if (!existing) throw new Error(`Zeus task not found: ${taskId}`);
+    const timestamp = nextIsoTimestamp(existing.updatedAt);
     // 恢复只切换归档标记，保留任务状态与时间线来源，避免丢失真实执行上下文。
     this.db.execute(`UPDATE tasks SET archived = 0, updated_at = ? WHERE id = ? AND deleted_at IS NULL`, [timestamp, taskId]);
     const restored = this.getById(taskId);
@@ -2203,7 +2263,9 @@ export class TaskRepository {
   }
 
   updateStatus(taskId: string, status: ZeusTaskRecord['status']): ZeusTaskRecord {
-    const timestamp = nowIso();
+    const existing = this.getById(taskId);
+    if (!existing) throw new Error(`Zeus task not found: ${taskId}`);
+    const timestamp = nextIsoTimestamp(existing.updatedAt);
     this.db.execute(`UPDATE tasks SET status = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`, [status, timestamp, taskId]);
     const updated = this.getById(taskId);
     if (!updated) {
@@ -2212,10 +2274,19 @@ export class TaskRepository {
     return updated;
   }
 
-  updateManagementStatus(taskId: string, managementStatus: TaskManagementStatus): ZeusTaskRecord {
+  updateManagementStatus(taskId: string, managementStatus: TaskManagementStatus, expectedUpdatedAt?: string): ZeusTaskRecord {
     if (!isTaskManagementStatus(managementStatus)) throw new Error(`Unknown Zeus task management status: ${String(managementStatus)}`);
-    const timestamp = nowIso();
-    this.db.execute(`UPDATE tasks SET management_status = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`, [managementStatus, timestamp, taskId]);
+    const existing = this.getById(taskId);
+    if (!existing) throw new Error(`Zeus task not found: ${taskId}`);
+    if (expectedUpdatedAt && existing.updatedAt !== expectedUpdatedAt) throwTaskEditConflict(taskId, existing.updatedAt);
+    if (existing.managementStatus === managementStatus) return existing;
+    const timestamp = nextIsoTimestamp(existing.updatedAt);
+    this.db.execute(`UPDATE tasks SET management_status = ?, updated_at = ? WHERE id = ? AND updated_at = ? AND deleted_at IS NULL`, [managementStatus, timestamp, taskId, expectedUpdatedAt ?? existing.updatedAt]);
+    const modifiedRows = this.db.get<{ count: number }>(`SELECT changes() AS count`)?.count ?? 0;
+    if (modifiedRows !== 1) {
+      const current = this.getById(taskId);
+      throwTaskEditConflict(taskId, current?.updatedAt ?? existing.updatedAt);
+    }
     const updated = this.getById(taskId);
     if (!updated) throw new Error(`Zeus task not found: ${taskId}`);
     return updated;
@@ -2226,7 +2297,7 @@ export class TaskRepository {
     if (!existing) {
       throw new Error(`Zeus task not found: ${taskId}`);
     }
-    const timestamp = nowIso();
+    const timestamp = nextIsoTimestamp(existing.updatedAt);
     this.db.execute(`UPDATE tasks SET title = ?, description = ?, allow_code_changes = ?, allow_tests = ?, allow_git_commit = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`, [
       input.title ?? existing.title,
       input.description ?? existing.description,
@@ -2243,12 +2314,78 @@ export class TaskRepository {
     return updated;
   }
 
+  updateContent(taskId: string, input: UpdateTaskContentInput): UpdateTaskContentResult {
+    return this.db.transaction(() => {
+      const existing = this.getById(taskId);
+      if (!existing) {
+        throw new Error(`Zeus task not found: ${taskId}`);
+      }
+      if (existing.updatedAt !== input.expectedUpdatedAt) {
+        throwTaskEditConflict(taskId, existing.updatedAt);
+      }
+
+      const title = input.title === undefined ? existing.title : input.title.trim();
+      if (!title) {
+        throw Object.assign(new Error('Task title is required.'), { code: 'ZEUS_TASK_TITLE_REQUIRED' as const });
+      }
+      const description = input.description ?? existing.description;
+      const priority = input.priority ?? existing.priority;
+      const tags = input.tags === undefined ? existing.tags : normalizeTags(input.tags);
+      const allowCodeChanges = input.allowCodeChanges ?? existing.allowCodeChanges;
+      const allowTests = input.allowTests ?? existing.allowTests;
+      const allowGitCommit = input.allowGitCommit ?? existing.allowGitCommit;
+      const previousSourceContext = parseTaskSourceContextJson(existing.sourceContextJson);
+      const sourceContext = input.sourceContext ? { ...input.sourceContext } : input.attachments ? { ...previousSourceContext, attachments: input.attachments } : previousSourceContext;
+      const sourceContextJson = JSON.stringify(sourceContext);
+      const changedFields: TaskEditableField[] = [];
+      if (title !== existing.title) changedFields.push('title');
+      if (description !== existing.description) changedFields.push('description');
+      if (priority !== existing.priority) changedFields.push('priority');
+      if (canonicalJson(tags) !== canonicalJson(existing.tags)) changedFields.push('tags');
+      if (input.attachments !== undefined && canonicalJson(sourceContext.attachments) !== canonicalJson(previousSourceContext.attachments)) changedFields.push('attachments');
+      else if (input.sourceContext !== undefined && canonicalJson(sourceContext) !== canonicalJson(previousSourceContext)) changedFields.push('sourceContext');
+      if (allowCodeChanges !== existing.allowCodeChanges) changedFields.push('allowCodeChanges');
+      if (allowTests !== existing.allowTests) changedFields.push('allowTests');
+      if (allowGitCommit !== existing.allowGitCommit) changedFields.push('allowGitCommit');
+
+      const resultBase = {
+        tagCountBefore: existing.tags.length,
+        tagCountAfter: tags.length,
+        attachmentCountBefore: countTaskAttachmentReferences(previousSourceContext),
+        attachmentCountAfter: countTaskAttachmentReferences(sourceContext),
+        previousUpdatedAt: existing.updatedAt,
+      };
+      if (changedFields.length === 0) {
+        return { task: existing, changedFields, ...resultBase };
+      }
+
+      const timestamp = nextIsoTimestamp(existing.updatedAt);
+      this.db.execute(
+        `UPDATE tasks
+         SET title = ?, description = ?, priority = ?, tags_json = ?, source_context_json = ?,
+             allow_code_changes = ?, allow_tests = ?, allow_git_commit = ?, updated_at = ?
+         WHERE id = ? AND updated_at = ? AND deleted_at IS NULL`,
+        [title, description, priority, JSON.stringify(tags), sourceContextJson, allowCodeChanges ? 1 : 0, allowTests ? 1 : 0, allowGitCommit ? 1 : 0, timestamp, taskId, input.expectedUpdatedAt],
+      );
+      const modifiedRows = this.db.get<{ count: number }>(`SELECT changes() AS count`)?.count ?? 0;
+      if (modifiedRows !== 1) {
+        const current = this.getById(taskId);
+        throwTaskEditConflict(taskId, current?.updatedAt ?? existing.updatedAt);
+      }
+      const updated = this.getById(taskId);
+      if (!updated) {
+        throw new Error(`Zeus task not found after update: ${taskId}`);
+      }
+      return { task: updated, changedFields, ...resultBase };
+    });
+  }
+
   updateSourceContext(taskId: string, sourceContext: Record<string, unknown>): ZeusTaskRecord {
     const existing = this.getById(taskId);
     if (!existing) {
       throw new Error(`Zeus task not found: ${taskId}`);
     }
-    const timestamp = nowIso();
+    const timestamp = nextIsoTimestamp(existing.updatedAt);
     // 图谱关联会持续补充任务来源上下文，单独更新 source_context_json，避免误改标题、描述和状态。
     this.db.execute(`UPDATE tasks SET source_context_json = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`, [JSON.stringify(sourceContext), timestamp, taskId]);
     const updated = this.getById(taskId);
@@ -2263,7 +2400,7 @@ export class TaskRepository {
     if (!existing) {
       throw new Error(`Zeus task not found: ${taskId}`);
     }
-    const timestamp = nowIso();
+    const timestamp = nextIsoTimestamp(existing.updatedAt);
     this.db.execute(`UPDATE tasks SET tags_json = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`, [JSON.stringify(normalizeTags(tags)), timestamp, taskId]);
     const updated = this.getById(taskId);
     if (!updated) {
@@ -2277,7 +2414,7 @@ export class TaskRepository {
     if (!existing) {
       throw new Error(`Zeus task not found: ${taskId}`);
     }
-    const timestamp = nowIso();
+    const timestamp = nextIsoTimestamp(existing.updatedAt);
     // 任务删除采用软删除，保留真实任务来源与事件审计，避免误删历史链路。
     this.db.execute(`UPDATE tasks SET deleted_at = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`, [timestamp, timestamp, taskId]);
     return existing;

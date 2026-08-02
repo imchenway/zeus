@@ -4,7 +4,16 @@ import { createHash, randomUUID } from 'node:crypto';
 import { accessSync, appendFileSync, constants as fsConstants, existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, parse, relative, resolve, sep } from 'node:path';
 import { getNextTaskStatus, type TaskStatus } from '@zeus/task-core';
-import { commandNeedsHighRiskConfirmation, isTaskStatusFilter, type TaskStatusFilter, validateCommandDefinitionInput, type CommandDefinition, type ConversationResource, type ConversationResourcePreview } from '@zeus/shared';
+import {
+  commandNeedsHighRiskConfirmation,
+  isTaskStatusFilter,
+  type TaskAttachmentReference,
+  type TaskStatusFilter,
+  validateCommandDefinitionInput,
+  type CommandDefinition,
+  type ConversationResource,
+  type ConversationResourcePreview,
+} from '@zeus/shared';
 import { type ProjectScanResult, scanProjectSource } from '@zeus/code-indexer';
 import { buildProjectGraph, GRAPH_VIEW_SCHEMA_VERSION, type ProjectGraph } from '@zeus/graph-engine';
 import { createDefaultProjectConfig, normalizeProjectConfig, type ProjectConfigSnapshot, type UpdateProjectConfigBody } from '@zeus/project-core';
@@ -1140,11 +1149,16 @@ interface UpdateTaskStatusBody {
 
 interface UpdateTaskManagementStatusBody {
   status: TaskManagementStatus;
+  expectedUpdatedAt?: string;
 }
 
 interface UpdateTaskBody {
+  expectedUpdatedAt?: string;
   title?: string;
   description?: string;
+  priority?: TaskPriority;
+  tags?: string[];
+  attachments?: TaskAttachmentReference[];
   sourceContext?: Record<string, unknown>;
   allowCodeChanges?: boolean;
   allowTests?: boolean;
@@ -1153,6 +1167,41 @@ interface UpdateTaskBody {
 
 interface UpdateTaskTagsBody {
   tags?: string[];
+  expectedUpdatedAt?: string;
+}
+
+function normalizeTaskAttachmentReferences(value: unknown): TaskAttachmentReference[] | null {
+  if (!Array.isArray(value) || value.length > 24) return null;
+  const byPath = new Map<string, TaskAttachmentReference>();
+  for (const rawAttachment of value) {
+    if (!rawAttachment || typeof rawAttachment !== 'object' || Array.isArray(rawAttachment)) return null;
+    const attachment = rawAttachment as Record<string, unknown>;
+    const path = typeof attachment.path === 'string' ? attachment.path.trim() : '';
+    const name = typeof attachment.name === 'string' ? attachment.name.trim() : '';
+    const kind = attachment.kind;
+    if (!path || !name || (kind !== 'image' && kind !== 'file' && kind !== 'directory' && kind !== 'pasted_text')) return null;
+    if (attachment.mimeType !== undefined && typeof attachment.mimeType !== 'string') return null;
+    if (attachment.size !== undefined && (!Number.isSafeInteger(attachment.size) || Number(attachment.size) < 0)) return null;
+    if (attachment.characterCount !== undefined && (!Number.isSafeInteger(attachment.characterCount) || Number(attachment.characterCount) < 0)) return null;
+    byPath.set(path, {
+      path,
+      name,
+      kind,
+      ...(typeof attachment.mimeType === 'string' && attachment.mimeType.trim() ? { mimeType: attachment.mimeType.trim() } : {}),
+      ...(typeof attachment.size === 'number' ? { size: attachment.size } : {}),
+      ...(typeof attachment.characterCount === 'number' ? { characterCount: attachment.characterCount } : {}),
+    });
+  }
+  return Array.from(byPath.values());
+}
+
+function taskEditConflictDetails(error: unknown): { code: string; currentUpdatedAt?: string } | null {
+  if (!(error instanceof Error) || !('code' in error) || typeof (error as Error & { code?: unknown }).code !== 'string') return null;
+  const candidate = error as Error & { code: string; currentUpdatedAt?: unknown };
+  return {
+    code: candidate.code,
+    ...(typeof candidate.currentUpdatedAt === 'string' ? { currentUpdatedAt: candidate.currentUpdatedAt } : {}),
+  };
 }
 
 interface CreateGitConfirmationBody {
@@ -4315,6 +4364,12 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
           message: 'Unknown task management status',
         });
       }
+      if (typeof request.body?.expectedUpdatedAt !== 'string' || !request.body.expectedUpdatedAt) {
+        return reply.code(400).send({
+          error: 'ZEUS_TASK_EDIT_VERSION_REQUIRED',
+          message: 'expectedUpdatedAt is required when updating task management status.',
+        });
+      }
       if (request.body.status === 'completed' || request.body.status === 'cancelled') {
         const pendingWorkspaces = taskWorkspaces.listByTask(existing.id).filter((workspace) => workspace.state !== 'reclaimed' && workspace.state !== 'merged' && workspace.state !== 'discarded');
         if (pendingWorkspaces.length > 0) {
@@ -4326,7 +4381,21 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
           });
         }
       }
-      const updated = tasks.updateManagementStatus(existing.id, request.body.status);
+      let updated: ZeusTaskRecord;
+      try {
+        updated = tasks.updateManagementStatus(existing.id, request.body.status, request.body.expectedUpdatedAt);
+      } catch (error) {
+        const conflict = taskEditConflictDetails(error);
+        if (conflict?.code === 'ZEUS_TASK_EDIT_CONFLICT') {
+          return reply.code(409).send({
+            error: conflict.code,
+            message: 'Task changed after editing started.',
+            currentUpdatedAt: conflict.currentUpdatedAt,
+          });
+        }
+        throw error;
+      }
+      if (updated.managementStatus === existing.managementStatus) return updated;
       recordTaskEvent({
         taskId: updated.id,
         eventType: 'task.management_status.changed',
@@ -4349,6 +4418,8 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
         taskId: updated.id,
         projectId: updated.projectId,
         managementStatus: updated.managementStatus,
+        changedFields: ['managementStatus'],
+        updatedAt: updated.updatedAt,
       });
       await db.save();
       return updated;
@@ -4657,25 +4728,102 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
         return reply.code(404).send({ error: 'ZEUS_TASK_NOT_FOUND', message: 'Task not found' });
       }
       const body = request.body ?? {};
+      if (typeof body.expectedUpdatedAt !== 'string' || !body.expectedUpdatedAt) {
+        return reply.code(400).send({ error: 'ZEUS_TASK_EDIT_VERSION_REQUIRED', message: 'expectedUpdatedAt is required when updating a task.' });
+      }
+      if (body.title !== undefined && typeof body.title !== 'string') {
+        return reply.code(400).send({ error: 'ZEUS_INVALID_TASK_TITLE', message: 'Task title must be a string.' });
+      }
+      if (typeof body.title === 'string' && !body.title.trim()) {
+        return reply.code(400).send({ error: 'ZEUS_TASK_TITLE_REQUIRED', message: 'Task title is required.' });
+      }
+      if (body.description !== undefined && typeof body.description !== 'string') {
+        return reply.code(400).send({ error: 'ZEUS_INVALID_TASK_DESCRIPTION', message: 'Task description must be a string.' });
+      }
+      if (body.priority !== undefined && !isTaskPriority(body.priority)) {
+        return reply.code(400).send({ error: 'ZEUS_INVALID_TASK_PRIORITY', message: 'Task priority must be one of p0, p1, p2, p3 or p4.' });
+      }
+      if (body.tags !== undefined && (!Array.isArray(body.tags) || !body.tags.every((tag) => typeof tag === 'string'))) {
+        return reply.code(400).send({ error: 'ZEUS_INVALID_TASK_TAGS', message: 'Task tags must be an array of strings.' });
+      }
+      const attachments = body.attachments === undefined ? undefined : normalizeTaskAttachmentReferences(body.attachments);
+      if (attachments === null) {
+        return reply.code(400).send({ error: 'ZEUS_INVALID_TASK_ATTACHMENTS', message: 'Task attachments must contain at most 24 valid attachment references.' });
+      }
+      if (body.sourceContext !== undefined && (!body.sourceContext || typeof body.sourceContext !== 'object' || Array.isArray(body.sourceContext))) {
+        return reply.code(400).send({ error: 'ZEUS_INVALID_TASK_SOURCE_CONTEXT', message: 'Task source context must be an object.' });
+      }
+      if (body.sourceContext !== undefined && attachments !== undefined) {
+        return reply.code(400).send({ error: 'ZEUS_AMBIGUOUS_TASK_CONTEXT_UPDATE', message: 'sourceContext and attachments cannot be updated in the same request.' });
+      }
       if ([body.allowCodeChanges, body.allowTests, body.allowGitCommit].some((value) => value !== undefined && typeof value !== 'boolean')) {
         return reply.code(400).send({
           error: 'ZEUS_INVALID_TASK_PERMISSIONS',
           message: 'allowCodeChanges, allowTests and allowGitCommit must be booleans when provided',
         });
       }
-      const updatedTask = tasks.update(existing.id, {
-        title: body.title,
-        description: body.description,
-        allowCodeChanges: body.allowCodeChanges,
-        allowTests: body.allowTests,
-        allowGitCommit: body.allowGitCommit,
-      });
-      const updated = body.sourceContext && typeof body.sourceContext === 'object' && !Array.isArray(body.sourceContext) ? tasks.updateSourceContext(updatedTask.id, body.sourceContext) : updatedTask;
+      let result: ReturnType<TaskRepository['updateContent']>;
+      try {
+        result = tasks.updateContent(existing.id, {
+          expectedUpdatedAt: body.expectedUpdatedAt,
+          title: body.title,
+          description: body.description,
+          priority: body.priority,
+          tags: body.tags,
+          attachments,
+          sourceContext: body.sourceContext,
+          allowCodeChanges: body.allowCodeChanges,
+          allowTests: body.allowTests,
+          allowGitCommit: body.allowGitCommit,
+        });
+      } catch (error) {
+        const details = taskEditConflictDetails(error);
+        if (details?.code === 'ZEUS_TASK_EDIT_CONFLICT') {
+          return reply.code(409).send({
+            error: details.code,
+            message: 'Task changed after editing started.',
+            currentUpdatedAt: details.currentUpdatedAt,
+          });
+        }
+        if (details?.code === 'ZEUS_TASK_TITLE_REQUIRED') {
+          return reply.code(400).send({ error: details.code, message: 'Task title is required.' });
+        }
+        throw error;
+      }
+      if (result.changedFields.length === 0) return result.task;
+      const updated = result.task;
       recordTaskEvent({
         taskId: updated.id,
         eventType: 'task.updated',
-        title: '任务已编辑',
-        payload: { title: updated.title },
+        title: '任务内容已更新',
+        payload: {
+          changedFields: result.changedFields,
+          tagCount: { before: result.tagCountBefore, after: result.tagCountAfter },
+          attachmentCount: { before: result.attachmentCountBefore, after: result.attachmentCountAfter },
+          previousUpdatedAt: result.previousUpdatedAt,
+          updatedAt: updated.updatedAt,
+        },
+      });
+      appendAuditLog({
+        actorType: 'local_api',
+        action: 'task.updated',
+        resourceType: 'task',
+        resourceId: updated.id,
+        payload: {
+          taskId: updated.id,
+          projectId: updated.projectId,
+          changedFields: result.changedFields,
+          tagCountBefore: result.tagCountBefore,
+          tagCountAfter: result.tagCountAfter,
+          attachmentCountBefore: result.attachmentCountBefore,
+          attachmentCountAfter: result.attachmentCountAfter,
+        },
+      });
+      publishRealtimeEvent('task.updated', {
+        taskId: updated.id,
+        projectId: updated.projectId,
+        changedFields: result.changedFields,
+        updatedAt: updated.updatedAt,
       });
       await db.save();
       return updated;
@@ -4695,13 +4843,31 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       if (!existing) {
         return reply.code(404).send({ error: 'ZEUS_TASK_NOT_FOUND', message: 'Task not found' });
       }
-      const updated = tasks.updateTags(existing.id, request.body?.tags ?? []);
+      if (typeof request.body?.expectedUpdatedAt !== 'string' || !request.body.expectedUpdatedAt) {
+        return reply.code(400).send({ error: 'ZEUS_TASK_EDIT_VERSION_REQUIRED', message: 'expectedUpdatedAt is required when updating task tags.' });
+      }
+      if (!Array.isArray(request.body?.tags) || !request.body.tags.every((tag) => typeof tag === 'string')) {
+        return reply.code(400).send({ error: 'ZEUS_INVALID_TASK_TAGS', message: 'Task tags must be an array of strings.' });
+      }
+      let result: ReturnType<TaskRepository['updateContent']>;
+      try {
+        result = tasks.updateContent(existing.id, { expectedUpdatedAt: request.body.expectedUpdatedAt, tags: request.body.tags });
+      } catch (error) {
+        const conflict = taskEditConflictDetails(error);
+        if (conflict?.code === 'ZEUS_TASK_EDIT_CONFLICT') {
+          return reply.code(409).send({ error: conflict.code, message: 'Task changed after editing started.', currentUpdatedAt: conflict.currentUpdatedAt });
+        }
+        throw error;
+      }
+      if (result.changedFields.length === 0) return result.task;
+      const updated = result.task;
       recordTaskEvent({
         taskId: updated.id,
         eventType: 'task.tags.updated',
         title: '任务标签已更新',
-        payload: { tags: updated.tags },
+        payload: { changedFields: ['tags'], tagCount: { before: result.tagCountBefore, after: result.tagCountAfter }, previousUpdatedAt: result.previousUpdatedAt, updatedAt: updated.updatedAt },
       });
+      publishRealtimeEvent('task.updated', { taskId: updated.id, projectId: updated.projectId, changedFields: ['tags'], updatedAt: updated.updatedAt });
       await db.save();
       return updated;
     },

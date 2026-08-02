@@ -1,4 +1,6 @@
-export type TaskAttachmentKind = 'image' | 'file' | 'directory' | 'pasted_text';
+import type { TaskAttachmentReference } from '@zeus/shared';
+
+export type TaskAttachmentKind = TaskAttachmentReference['kind'];
 
 export interface TaskAttachmentRestoreTarget {
   field: 'title' | 'description' | 'tags';
@@ -6,13 +8,7 @@ export interface TaskAttachmentRestoreTarget {
   end: number;
 }
 
-export interface TaskAttachmentView {
-  path: string;
-  name: string;
-  kind: TaskAttachmentKind;
-  mimeType?: string;
-  size?: number;
-  characterCount?: number;
+export interface TaskAttachmentView extends TaskAttachmentReference {
   previewUrl?: string;
   /** 只存在于创建任务的当前 UI 草稿；持久化任务时主动剔除。 */
   restorableText?: string;
@@ -20,7 +16,7 @@ export interface TaskAttachmentView {
   restoreTarget?: TaskAttachmentRestoreTarget;
 }
 
-export type PersistedTaskAttachment = Pick<TaskAttachmentView, 'path' | 'name' | 'kind' | 'mimeType' | 'size' | 'characterCount'>;
+export type PersistedTaskAttachment = TaskAttachmentReference;
 
 function inferAttachmentName(path: string): string {
   const parts = path.split(/[\\/]/u).filter(Boolean);
@@ -32,17 +28,11 @@ export function normalizeTaskAttachment(rawAttachment: unknown): TaskAttachmentV
   const attachment = rawAttachment as Record<string, unknown>;
   const path = typeof attachment.path === 'string' ? attachment.path.trim() : '';
   if (!path) return undefined;
-  const kind: TaskAttachmentKind =
-    attachment.kind === 'image' || attachment.kind === 'directory' || attachment.kind === 'pasted_text'
-      ? attachment.kind
-      : 'file';
+  const kind: TaskAttachmentKind = attachment.kind === 'image' || attachment.kind === 'directory' || attachment.kind === 'pasted_text' ? attachment.kind : 'file';
   const name = typeof attachment.name === 'string' && attachment.name.trim() ? attachment.name.trim() : inferAttachmentName(path);
   const mimeType = typeof attachment.mimeType === 'string' && attachment.mimeType.trim() ? attachment.mimeType.trim() : undefined;
   const size = typeof attachment.size === 'number' && Number.isSafeInteger(attachment.size) && attachment.size >= 0 ? attachment.size : undefined;
-  const characterCount =
-    typeof attachment.characterCount === 'number' && Number.isSafeInteger(attachment.characterCount) && attachment.characterCount >= 0
-      ? attachment.characterCount
-      : undefined;
+  const characterCount = typeof attachment.characterCount === 'number' && Number.isSafeInteger(attachment.characterCount) && attachment.characterCount >= 0 ? attachment.characterCount : undefined;
   const previewUrl = typeof attachment.previewUrl === 'string' && attachment.previewUrl.startsWith('data:image/') ? attachment.previewUrl : undefined;
   const restorableText = typeof attachment.restorableText === 'string' ? attachment.restorableText : undefined;
   return { path, name, kind, mimeType, size, characterCount, previewUrl, restorableText };
@@ -54,8 +44,8 @@ export function toPersistedTaskAttachment(attachment: TaskAttachmentView): Persi
     name: attachment.name,
     kind: attachment.kind,
     ...(attachment.mimeType ? { mimeType: attachment.mimeType } : {}),
-    ...(attachment.size !== undefined ? {size: attachment.size} : {}),
-    ...(attachment.characterCount !== undefined ? {characterCount: attachment.characterCount} : {}),
+    ...(attachment.size !== undefined ? { size: attachment.size } : {}),
+    ...(attachment.characterCount !== undefined ? { characterCount: attachment.characterCount } : {}),
   };
 }
 

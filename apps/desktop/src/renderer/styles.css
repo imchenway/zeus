@@ -14759,6 +14759,124 @@ a {
     inline-size: 100%;
 }
 
+/* 任务详情采用原位编辑：文本点击进入输入态，下拉选择后立即保存，字段反馈不挤占其他业务区块。 */
+.macos-ai-app .task-inline-edit,
+.macos-ai-app .task-immediate-select {
+    display: grid;
+    gap: 5px;
+    min-inline-size: 0;
+}
+
+.macos-ai-app .task-inline-edit-trigger {
+    appearance: none;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 7px;
+    color: inherit;
+    cursor: text;
+    display: block;
+    font: inherit;
+    inline-size: 100%;
+    margin: -4px;
+    min-inline-size: 0;
+    padding: 4px;
+    text-align: start;
+}
+
+.macos-ai-app .task-inline-edit-trigger:hover,
+.macos-ai-app .task-inline-edit-trigger:focus-visible {
+    background: var(--zeus-product-panel-muted);
+    border-color: var(--zeus-product-line-soft);
+    outline: 0;
+}
+
+.macos-ai-app .task-inline-edit-trigger:focus-visible {
+    box-shadow: 0 0 0 2px color-mix(in oklch, var(--zeus-accent) 22%, transparent);
+}
+
+.macos-ai-app .task-inline-edit-control {
+    background: var(--zeus-product-panel);
+    border: 1px solid var(--zeus-product-line-strong, var(--zeus-product-line-soft));
+    border-radius: 8px;
+    color: var(--zeus-product-text);
+    font: inherit;
+    inline-size: 100%;
+    line-height: 1.55;
+    min-inline-size: 0;
+    padding: 7px 9px;
+}
+
+.macos-ai-app .task-inline-edit-control:focus-visible {
+    border-color: var(--zeus-accent);
+    box-shadow: 0 0 0 2px color-mix(in oklch, var(--zeus-accent) 18%, transparent);
+    outline: 0;
+}
+
+.macos-ai-app textarea.task-inline-edit-control {
+    min-block-size: 104px;
+    resize: vertical;
+}
+
+.macos-ai-app .task-detail-pane-title .task-inline-edit-control {
+    font-size: 18px;
+    font-weight: 680;
+    line-height: 24px;
+}
+
+.macos-ai-app .task-inline-edit-empty,
+.macos-ai-app .task-detail-attachment-empty {
+    color: var(--zeus-product-muted);
+}
+
+.macos-ai-app .task-inline-edit-feedback,
+.macos-ai-app .task-inline-edit-conflict-actions,
+.macos-ai-app .task-detail-attachment-undo {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.macos-ai-app .task-inline-edit-feedback small,
+.macos-ai-app .task-detail-attachment-undo small {
+    color: var(--zeus-product-muted);
+    font-size: 11px;
+    line-height: 15px;
+}
+
+.macos-ai-app .task-inline-edit-feedback.is-error small {
+    color: var(--zeus-danger-text, oklch(42% 0.095 28));
+}
+
+.macos-ai-app .task-detail-tag-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.macos-ai-app .task-detail-tag-list > span {
+    background: var(--zeus-product-panel-muted);
+    border: 1px solid var(--zeus-product-line-soft);
+    border-radius: 999px;
+    color: var(--zeus-product-text-subtle);
+    font-size: 11px;
+    line-height: 18px;
+    padding-inline: 8px;
+}
+
+.macos-ai-app .task-detail-section-heading > span,
+.macos-ai-app .task-detail-attachment-undo {
+    align-items: center;
+    display: flex;
+    gap: 7px;
+}
+
+.macos-ai-app .task-detail-task-facts .task-immediate-select,
+.macos-ai-app .task-detail-task-facts .zeus-select,
+.macos-ai-app .task-detail-task-facts .zeus-select-trigger {
+    inline-size: 100%;
+}
+
 .macos-ai-app .task-detail-summary-grid.task-detail-task-facts {
     background: var(--zeus-drawer-section-bg, var(--zeus-product-panel-muted));
     border-block-end: 0;
