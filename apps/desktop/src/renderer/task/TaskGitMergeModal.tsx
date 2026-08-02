@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { DashboardClient, TaskRecord } from '../apiClient.js';
-import type { TaskIntegrationConflictFile, TaskIntegrationRecord, TaskWorkspacesSnapshot } from '../session/sessionTypes.js';
+import { ZeusApiError, type DashboardClient, type TaskRecord } from '../apiClient.js';
+import type { TaskIntegrationConflictFile, TaskIntegrationRecord, TaskWorkspaceSnapshot, TaskWorkspacesSnapshot } from '../session/sessionTypes.js';
 import { Button } from '../ui/Button.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
 import { ZeusSelect } from '../ZeusSelect.js';
@@ -10,7 +10,16 @@ type MergeClient = Pick<
   'loadTaskGitWorkspaces' | 'loadTaskIntegrations' | 'startTaskIntegration' | 'loadTaskIntegrationConflict' | 'resolveTaskIntegrationConflict' | 'assistTaskIntegrationConflict' | 'finalizeTaskIntegration'
 >;
 
-export function TaskGitMergeModal(props: { open: boolean; language: 'zh-CN' | 'en-US'; task: TaskRecord | null; projectName?: string; client: MergeClient | null; onChanged?: () => void | Promise<void>; onClose: () => void }) {
+export function TaskGitMergeModal(props: {
+  open: boolean;
+  language: 'zh-CN' | 'en-US';
+  task: TaskRecord | null;
+  projectName?: string;
+  client: MergeClient | null;
+  onChanged?: () => void | Promise<void>;
+  onPrepareWorkspace?: (taskId: string, workspaceId: string) => void;
+  onClose: () => void;
+}) {
   const zh = props.language === 'zh-CN';
   const [workspaces, setWorkspaces] = useState<TaskWorkspacesSnapshot | null>(null);
   const [integrations, setIntegrations] = useState<TaskIntegrationRecord[]>([]);
@@ -25,8 +34,18 @@ export function TaskGitMergeModal(props: { open: boolean; language: 'zh-CN' | 'e
   const [error, setError] = useState<string | null>(null);
 
   const selectedWorkspace = workspaces?.items.find((workspace) => workspace.id === workspaceId) ?? null;
-  const eligibleWorkspaces = workspaces?.items.filter((workspace) => workspace.state === 'reclaimed' || workspace.state === 'merged') ?? [];
   const activeConflict = integration?.state === 'conflicted' ? integration : null;
+  const needsPreparation = selectedWorkspace?.state === 'ready' || selectedWorkspace?.state === 'failed';
+  const canIntegrate = selectedWorkspace?.state === 'reclaimed' || selectedWorkspace?.state === 'merged';
+  const discarded = selectedWorkspace?.state === 'discarded';
+  const workspaceOptions = useMemo(
+    () =>
+      workspaces?.items.map((workspace) => ({
+        value: workspace.id,
+        label: `${workspace.branchName} · ${workspaceStateLabel(workspace, zh)}`,
+      })) ?? [],
+    [workspaces?.items, zh],
+  );
   const targetOptions = useMemo(() => {
     if (!selectedWorkspace) return [];
     const values: Array<{ value: 'source' | 'current'; label: string }> = [{ value: 'source', label: zh ? `来源分支 · ${selectedWorkspace.sourceBranch}` : `Source branch · ${selectedWorkspace.sourceBranch}` }];
@@ -47,7 +66,11 @@ export function TaskGitMergeModal(props: { open: boolean; language: 'zh-CN' | 'e
         setWorkspaces(workspaceSnapshot);
         setIntegrations(integrationSnapshot.items);
         const conflicted = integrationSnapshot.items.find((candidate) => candidate.state === 'conflicted');
-        const firstWorkspace = workspaceSnapshot.items.find((workspace) => workspace.id === conflicted?.workspaceId) ?? workspaceSnapshot.items.find((workspace) => workspace.state === 'reclaimed') ?? workspaceSnapshot.items[0];
+        const firstWorkspace =
+          workspaceSnapshot.items.find((workspace) => workspace.id === conflicted?.workspaceId) ??
+          workspaceSnapshot.items.find((workspace) => workspace.state === 'ready' || workspace.state === 'failed') ??
+          workspaceSnapshot.items.find((workspace) => workspace.state === 'reclaimed') ??
+          workspaceSnapshot.items[0];
         setWorkspaceId(firstWorkspace?.id ?? '');
         setIntegration(conflicted ?? null);
         setConflictPath(conflicted?.conflictFiles[0] ?? '');
@@ -56,7 +79,7 @@ export function TaskGitMergeModal(props: { open: boolean; language: 'zh-CN' | 'e
       .catch((reason: unknown) => {
         if (cancelled) return;
         setBusy(false);
-        setError(errorMessage(reason));
+        setError(errorMessage(reason, zh));
       });
     return () => {
       cancelled = true;
@@ -82,7 +105,7 @@ export function TaskGitMergeModal(props: { open: boolean; language: 'zh-CN' | 'e
       .catch((reason: unknown) => {
         if (cancelled) return;
         setBusy(false);
-        setError(errorMessage(reason));
+        setError(errorMessage(reason, zh));
       });
     return () => {
       cancelled = true;
@@ -99,7 +122,7 @@ export function TaskGitMergeModal(props: { open: boolean; language: 'zh-CN' | 'e
   }
 
   async function start(): Promise<void> {
-    if (!props.task || !props.client || !selectedWorkspace) return;
+    if (!props.task || !props.client || !selectedWorkspace || !canIntegrate) return;
     setBusy(true);
     setError(null);
     try {
@@ -111,7 +134,7 @@ export function TaskGitMergeModal(props: { open: boolean; language: 'zh-CN' | 'e
       setBusy(false);
     } catch (reason) {
       setBusy(false);
-      setError(errorMessage(reason));
+      setError(errorMessage(reason, zh));
     }
   }
 
@@ -130,7 +153,7 @@ export function TaskGitMergeModal(props: { open: boolean; language: 'zh-CN' | 'e
       setBusy(false);
     } catch (reason) {
       setBusy(false);
-      setError(errorMessage(reason));
+      setError(errorMessage(reason, zh));
     }
   }
 
@@ -144,7 +167,7 @@ export function TaskGitMergeModal(props: { open: boolean; language: 'zh-CN' | 'e
       setBusy(false);
     } catch (reason) {
       setBusy(false);
-      setError(errorMessage(reason));
+      setError(errorMessage(reason, zh));
     }
   }
 
@@ -160,7 +183,7 @@ export function TaskGitMergeModal(props: { open: boolean; language: 'zh-CN' | 'e
       setBusy(false);
     } catch (reason) {
       setBusy(false);
-      setError(errorMessage(reason));
+      setError(errorMessage(reason, zh));
     }
   }
 
@@ -176,6 +199,8 @@ export function TaskGitMergeModal(props: { open: boolean; language: 'zh-CN' | 'e
   const alreadyDelivered =
     Boolean(selectedWorkspace && selectedTargetBranch) &&
     (target === 'source' ? selectedWorkspace?.state === 'merged' : integrations.some((candidate) => candidate.workspaceId === selectedWorkspace?.id && candidate.targetBranch === selectedTargetBranch && candidate.state === 'merged'));
+  const resultLabel = deliveryResultLabel({ workspace: selectedWorkspace, alreadyDelivered, zh });
+  const preparationSteps = deliveryPreparationSteps(selectedWorkspace, zh);
 
   return (
     <ModalPortal rootClassName="task-git-merge-portal-root" backdropClassName="task-git-merge-backdrop" dismissDisabled={busy} onDismiss={props.onClose}>
@@ -251,25 +276,18 @@ export function TaskGitMergeModal(props: { open: boolean; language: 'zh-CN' | 'e
               <b>→</b>
               <span>
                 <small>{zh ? '结果' : 'Result'}</small>
-                <strong>{alreadyDelivered ? (zh ? '已交付' : 'Delivered') : zh ? '合入并推送' : 'Merge and push'}</strong>
+                <strong>{resultLabel}</strong>
               </span>
             </section>
 
             <section className="task-git-merge-config">
               <label>
                 <span>{zh ? '任务分支' : 'Task branch'}</span>
-                <ZeusSelect
-                  size="regular"
-                  ariaLabel={zh ? '任务分支' : 'Task branch'}
-                  value={workspaceId}
-                  options={eligibleWorkspaces.map((workspace) => ({ value: workspace.id, label: workspace.branchName }))}
-                  onChange={selectWorkspace}
-                  disabled={busy}
-                />
+                <ZeusSelect size="regular" ariaLabel={zh ? '任务分支' : 'Task branch'} value={workspaceId} options={workspaceOptions} onChange={selectWorkspace} disabled={busy || workspaceOptions.length === 0} />
               </label>
               <label>
                 <span>{zh ? '合入到' : 'Merge into'}</span>
-                <ZeusSelect size="regular" ariaLabel={zh ? '合入目标' : 'Merge target'} value={target} options={targetOptions} onChange={setTarget} disabled={busy} searchable={false} />
+                <ZeusSelect size="regular" ariaLabel={zh ? '合入目标' : 'Merge target'} value={target} options={targetOptions} onChange={setTarget} disabled={busy || !canIntegrate} searchable={false} />
               </label>
               <label>
                 <span>{zh ? '方式' : 'Method'}</span>
@@ -282,19 +300,20 @@ export function TaskGitMergeModal(props: { open: boolean; language: 'zh-CN' | 'e
                     { value: 'squash', label: zh ? 'Squash · 合并为一个提交' : 'Squash · one target commit' },
                   ]}
                   onChange={setMode}
-                  disabled={busy}
+                  disabled={busy || !canIntegrate}
                   searchable={false}
                 />
               </label>
             </section>
 
             <section className="task-git-merge-preflight">
-              <strong>{zh ? '一键合入会执行' : 'One-click delivery will'}</strong>
+              <strong>{deliveryStageTitle(selectedWorkspace, zh)}</strong>
               <ol>
-                <li>{zh ? '在隔离 integration worktree 中准备合入' : 'Prepare the merge in an isolated integration worktree'}</li>
-                <li>{zh ? '无冲突时重新校验主工作区分支、HEAD 与干净状态' : 'Revalidate the primary branch, HEAD, and clean state'}</li>
-                <li>{zh ? '快进目标分支，推送并校验远端提交' : 'Fast-forward the target, push, and verify the remote commit'}</li>
+                {preparationSteps.map((step) => (
+                  <li key={step}>{step}</li>
+                ))}
               </ol>
+              {selectedWorkspace?.lastError ? <small className="task-git-merge-stage-error">{selectedWorkspace.lastError}</small> : null}
             </section>
           </div>
         )}
@@ -319,8 +338,16 @@ export function TaskGitMergeModal(props: { open: boolean; language: 'zh-CN' | 'e
                 {zh ? '完成合入并推送' : 'Finish merge and push'}
               </Button>
             )
+          ) : needsPreparation ? (
+            <Button variant="primary" size="regular" onClick={() => selectedWorkspace && props.task && props.onPrepareWorkspace?.(props.task.id, selectedWorkspace.id)} disabled={busy || !selectedWorkspace || !props.onPrepareWorkspace}>
+              {zh ? '审查并准备交付…' : 'Review and prepare delivery…'}
+            </Button>
+          ) : discarded ? (
+            <Button variant="primary" size="regular" disabled>
+              {zh ? '分支已放弃' : 'Branch discarded'}
+            </Button>
           ) : (
-            <Button variant="primary" size="regular" busy={busy} onClick={() => void start()} disabled={!selectedWorkspace || alreadyDelivered}>
+            <Button variant="primary" size="regular" busy={busy} onClick={() => void start()} disabled={!selectedWorkspace || !canIntegrate || alreadyDelivered}>
               {alreadyDelivered ? (zh ? `已交付到 ${selectedTargetBranch}` : `Delivered to ${selectedTargetBranch}`) : zh ? '合入并推送' : 'Merge and Push'}
             </Button>
           )}
@@ -328,6 +355,45 @@ export function TaskGitMergeModal(props: { open: boolean; language: 'zh-CN' | 'e
       </section>
     </ModalPortal>
   );
+}
+
+function workspaceStateLabel(workspace: TaskWorkspaceSnapshot, zh: boolean): string {
+  const labels = zh
+    ? { ready: '待准备', reclaimed: '待合入', merged: '已交付', discarded: '已放弃', failed: '需要处理' }
+    : { ready: 'Preparation required', reclaimed: 'Ready to merge', merged: 'Delivered', discarded: 'Discarded', failed: 'Action required' };
+  return labels[workspace.state];
+}
+
+function deliveryResultLabel(input: { workspace: TaskWorkspaceSnapshot | null; alreadyDelivered: boolean; zh: boolean }): string {
+  if (!input.workspace) return '—';
+  if (input.alreadyDelivered) return input.zh ? '已交付' : 'Delivered';
+  if (input.workspace.state === 'ready' || input.workspace.state === 'failed') return input.zh ? '提交、推送并回收' : 'Commit, push, and reclaim';
+  if (input.workspace.state === 'discarded') return input.zh ? '不可交付' : 'Unavailable';
+  return input.zh ? '合入并推送' : 'Merge and push';
+}
+
+function deliveryStageTitle(workspace: TaskWorkspaceSnapshot | null, zh: boolean): string {
+  if (!workspace) return zh ? '正在读取任务分支' : 'Loading task branch';
+  if (workspace.state === 'ready') return zh ? '当前分支需要先准备代码交付' : 'Prepare this branch for code delivery first';
+  if (workspace.state === 'failed') return zh ? '上次分支操作失败，请重新审查' : 'The previous branch operation failed; review it again';
+  if (workspace.state === 'discarded') return zh ? '当前分支已经放弃' : 'This branch was discarded';
+  if (workspace.state === 'merged') return zh ? '当前分支已有交付记录' : 'This branch has a delivery record';
+  return zh ? '当前分支已准备完成，可以合入' : 'This branch is prepared and ready to merge';
+}
+
+function deliveryPreparationSteps(workspace: TaskWorkspaceSnapshot | null, zh: boolean): string[] {
+  if (!workspace) return [zh ? '等待任务工作区状态返回。' : 'Wait for the task workspace state.'];
+  if (workspace.state === 'ready' || workspace.state === 'failed') {
+    return zh
+      ? ['审查当前 worktree 的全部变更与活动会话。', '提交并推送任务分支，校验远端提交与本地 HEAD 一致。', '回收 worktree 后返回代码交付，继续合入目标分支。']
+      : ['Review all worktree changes and active conversations.', 'Commit and push the task branch, then verify the remote matches local HEAD.', 'Reclaim the worktree, return to code delivery, and merge into the target branch.'];
+  }
+  if (workspace.state === 'discarded') {
+    return [zh ? '本地任务分支已明确放弃，不能继续合入；远端分支如存在仍保持不变。' : 'The local task branch was explicitly discarded and cannot be merged; any remote branch remains unchanged.'];
+  }
+  return zh
+    ? ['在隔离 integration worktree 中准备合入。', '无冲突时重新校验主工作区分支、HEAD 与干净状态。', '快进目标分支，推送并校验远端提交。']
+    : ['Prepare the merge in an isolated integration worktree.', 'Revalidate the primary branch, HEAD, and clean state when there is no conflict.', 'Fast-forward the target, push, and verify the remote commit.'];
 }
 
 function ConflictCodePane(props: { title: string; content: string }) {
@@ -339,6 +405,17 @@ function ConflictCodePane(props: { title: string; content: string }) {
   );
 }
 
-function errorMessage(error: unknown): string {
+function errorMessage(error: unknown, zh: boolean): string {
+  if (zh && error instanceof ZeusApiError) {
+    const localizedMessages: Record<string, string> = {
+      ZEUS_TASK_BRANCH_NOT_REMOTE_BACKED: '请先审查任务分支，完成提交、推送、远端校验和 worktree 回收。',
+      ZEUS_TARGET_BRANCH_UNAVAILABLE: '主工作区必须检出一个本地命名分支后才能开始合入。',
+      ZEUS_TARGET_BRANCH_CHANGED: '主工作区已经不在选定的目标分支，请切换回目标分支后重试。',
+      ZEUS_TARGET_WORKSPACE_DIRTY: '主工作区存在未提交变更，请先处理这些变更后再合入。',
+      ZEUS_TASK_WORKSPACE_BUSY: '仍有会话可能写入当前任务分支，请先停止活动会话。',
+      ZEUS_TASK_REMOTE_VERIFICATION_FAILED: '远端任务分支与本地 HEAD 不一致，请重新推送并完成校验。',
+    };
+    if (error.error && localizedMessages[error.error]) return localizedMessages[error.error];
+  }
   return error instanceof Error ? error.message : String(error);
 }

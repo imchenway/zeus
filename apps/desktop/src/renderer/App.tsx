@@ -6233,7 +6233,8 @@ export function App(props: {
   const [taskGitReviewState, setTaskGitReviewState] = useState<{
     taskId: string;
     workspaceId?: string | null;
-    mode: 'commit' | 'completed' | 'cancelled';
+    mode: 'commit' | 'delivery' | 'completed' | 'cancelled';
+    returnToCodeDelivery?: boolean;
   } | null>(null);
   const [taskGitMergeTaskId, setTaskGitMergeTaskId] = useState<string | null>(null);
   const taskModelPushCapabilityRequestRef = useRef(0);
@@ -7981,6 +7982,21 @@ export function App(props: {
       if (unsubscribe) unsubscribe();
     };
   }, [prepareNewConversationDraft]);
+
+  function openTaskDeliveryPreparation(taskId: string, workspaceId: string): void {
+    setTaskGitMergeTaskId(null);
+    setTaskGitReviewState({ taskId, workspaceId, mode: 'delivery', returnToCodeDelivery: true });
+  }
+
+  function closeTaskGitReview(): void {
+    const returnTaskId = taskGitReviewState?.returnToCodeDelivery ? taskGitReviewState.taskId : null;
+    setTaskGitReviewState(null);
+    if (!returnTaskId) return;
+    // 交付准备弹窗结束后回到同一代码交付上下文，任务管理状态保持不变。
+    setTaskGitMergeTaskId(returnTaskId);
+    void refreshNativeConversationChoices(returnTaskId);
+    refreshOpenTaskEvents(returnTaskId);
+  }
 
   async function updateTaskManagementStatus(taskId: string, status: TaskManagementStatus, options: { skipGitReview?: boolean; expectedUpdatedAt?: string } = {}): Promise<TaskEditResult | undefined> {
     const currentTask = (taskDetail?.id === taskId ? taskDetail : undefined) ?? snapshot.tasks.find((task) => task.id === taskId);
@@ -10512,6 +10528,7 @@ export function App(props: {
                           ]).then(() => undefined)
                         : Promise.resolve()
                     }
+                    onPrepareWorkspace={openTaskDeliveryPreparation}
                     onClose={() => setTaskGitMergeTaskId(null)}
                   />
                   {taskDetailPaneTask ? (
@@ -11100,7 +11117,7 @@ export function App(props: {
           client={props.nativeConversationClient ?? null}
           mode={taskGitReviewState?.mode ?? 'commit'}
           preferredWorkspaceId={taskGitReviewState?.workspaceId}
-          onClose={() => setTaskGitReviewState(null)}
+          onClose={closeTaskGitReview}
           onReadyToCloseTask={(status) => (taskGitReviewState ? updateTaskManagementStatus(taskGitReviewState.taskId, status, { skipGitReview: true }).then(() => undefined) : Promise.resolve())}
         />
 

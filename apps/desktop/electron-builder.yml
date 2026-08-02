@@ -19,6 +19,7 @@ extraResources:
 mac:
   category: public.app-category.developer-tools
   icon: assets/icon.icns
+  minimumSystemVersion: '13.0'
   hardenedRuntime: true
   entitlements: assets/entitlements.mac.plist
   entitlementsInherit: assets/entitlements.mac.inherit.plist

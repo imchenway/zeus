@@ -11980,6 +11980,11 @@ a {
   color: var(--zeus-product-muted);
 }
 
+.macos-ai-app .task-git-merge-stage-error {
+  color: var(--zeus-danger-text);
+  line-height: 1.45;
+}
+
 .macos-ai-app .task-git-merge-error {
   margin: 0;
   padding: 10px 16px;
