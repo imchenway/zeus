@@ -118,8 +118,8 @@ async function renderWithClient(client: DashboardClient): Promise<void> {
           await client.updateTask(taskId, input);
           return client.loadDashboard();
         }}
-        onUpdateTaskTags={async (taskId, tags) => {
-          await client.updateTaskTags(taskId, tags);
+        onUpdateTaskTags={async (taskId, tags, expectedUpdatedAt) => {
+          await client.updateTaskTags(taskId, tags, expectedUpdatedAt);
           return client.loadDashboard();
         }}
         onDeleteTask={async (taskId) => {
@@ -258,8 +258,8 @@ async function renderWithClient(client: DashboardClient): Promise<void> {
           await client.updateTaskStatus(taskId, status);
           return client.loadDashboard();
         }}
-        onUpdateTaskManagementStatus={async (taskId, status) => {
-          await client.updateTaskManagementStatus(taskId, status);
+        onUpdateTaskManagementStatus={async (taskId, status, expectedUpdatedAt) => {
+          await client.updateTaskManagementStatus(taskId, status, expectedUpdatedAt);
           return client.loadDashboard();
         }}
         onArchiveTask={async (taskId) => {

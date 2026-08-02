@@ -72,7 +72,7 @@ import type {
 import { selectHasConfirmedUserMessage } from './session/sessionSelectors.js';
 import { readProjectServiceTierPreference, serviceTierWireOverride, writeProjectServiceTierPreference } from './session/serviceTierSelection.js';
 import type { SessionControllerClient } from './session/useSessionController.js';
-import { TaskDetailPaneContent } from './task/TaskDetailPaneContent.js';
+import { TaskDetailPaneContent, type TaskEditResult } from './task/TaskDetailPaneContent.js';
 import { TaskGitReviewModal } from './task/TaskGitReviewModal.js';
 import { TaskGitMergeModal } from './task/TaskGitMergeModal.js';
 import {
@@ -173,6 +173,8 @@ import {
   type TaskAgentRunStatus,
   type TaskTableColumnPreferences,
   type TaskTemplateRecord,
+  type UpdateTaskRequest,
+  ZeusApiError,
   type TelegramNotificationSettings,
   type TelegramPollingLogEntry,
   type TelegramPollingStatus,
@@ -5818,8 +5820,8 @@ export function App(props: {
   onCreateTaskDraft?: (projectId: string, draft: TaskCreateDraft) => Promise<DashboardSnapshot>;
   onLoadTasks?: (projectId: string, query?: string, managementStatus?: TaskManagementStatus, tag?: string, sortBy?: 'createdAt' | 'updatedAt' | 'title' | 'managementStatus') => Promise<TaskRecord[]>;
   onLoadTask?: (taskId: string) => Promise<TaskRecord>;
-  onUpdateTask?: (taskId: string, input: { title: string; description?: string; sourceContext?: Record<string, unknown> }) => Promise<DashboardSnapshot>;
-  onUpdateTaskTags?: (taskId: string, tags: string[]) => Promise<DashboardSnapshot>;
+  onUpdateTask?: (taskId: string, input: UpdateTaskRequest) => Promise<DashboardSnapshot>;
+  onUpdateTaskTags?: (taskId: string, tags: string[], expectedUpdatedAt: string) => Promise<DashboardSnapshot>;
   onDeleteTask?: (taskId: string) => Promise<DashboardSnapshot>;
   onRunTask?: (taskId: string) => Promise<TaskRuntimeControlHandlerResult>;
   onPauseTask?: (taskId: string) => Promise<DashboardSnapshot>;
@@ -5945,7 +5947,7 @@ export function App(props: {
   onLoadTaskTemplates?: (projectId?: string) => Promise<TaskTemplateRecord[]>;
   onLoadTaskEvents?: (taskId: string) => Promise<TaskEventRecord[]>;
   onUpdateTaskStatus?: (taskId: string, status: TaskStatus) => Promise<DashboardSnapshot>;
-  onUpdateTaskManagementStatus?: (taskId: string, status: TaskManagementStatus) => Promise<DashboardSnapshot>;
+  onUpdateTaskManagementStatus?: (taskId: string, status: TaskManagementStatus, expectedUpdatedAt: string) => Promise<DashboardSnapshot>;
   onArchiveTask?: (taskId: string) => Promise<DashboardSnapshot>;
   onRestoreTask?: (taskId: string) => Promise<DashboardSnapshot>;
   onCreateGitConfirmation?: (operation: HighRiskGitOperation, message?: string) => Promise<GitOperationConfirmation>;
@@ -6109,11 +6111,6 @@ export function App(props: {
   const [projectConfig, setProjectConfig] = useState<ProjectConfig | undefined>(() => initialProjectConfig);
   const [projectConfigForm, setProjectConfigForm] = useState<ProjectConfigFormState>(() => toProjectConfigForm(initialProjectConfig));
   const [projectDatabaseSecret] = useState<ProjectDatabaseSecretSnapshot | undefined>(() => props.initialProjectDatabaseSecret);
-  const [, setTaskEditForm] = useState(() => ({
-    title: props.snapshot?.tasks[0]?.title ?? '',
-    description: props.snapshot?.tasks[0]?.description ?? '',
-    tags: props.snapshot?.tasks[0]?.tags?.join(', ') ?? '',
-  }));
   const [pendingProjectDeleteId, setPendingProjectDeleteId] = useState<string | undefined>();
 
   function patchProjectEditForm(patch: Partial<typeof projectEditForm>): void {
@@ -6138,14 +6135,7 @@ export function App(props: {
       description: nextProject?.description ?? '',
       note: nextProject?.note ?? '',
     });
-    if (!conversationDraftOpen) {
-      setTaskEditForm({
-        title: nextTask?.title ?? '',
-        description: nextTask?.description ?? '',
-        tags: nextTask?.tags?.join(', ') ?? '',
-      });
-    }
-  }, [props.snapshot, conversationDraftOpen]);
+  }, [props.snapshot]);
 
   const [graphSearchResult, setGraphSearchResult] = useState<GraphSearchResult | undefined>();
   const [gitConfirmation, setGitConfirmation] = useState<GitOperationConfirmation | undefined>(() => props.initialGitConfirmation);
@@ -6482,6 +6472,9 @@ export function App(props: {
   const activeGraphViewTypeRef = useRef<GraphViewType | undefined>(undefined);
   const selectedTaskConversationRef = useRef<GraphConversationHistoryItem | undefined>(undefined);
   const pendingRealtimeConversationRefreshIdsRef = useRef<Set<string>>(new Set());
+  const pendingRealtimeTaskRefreshIdsRef = useRef<Set<string>>(new Set());
+  const taskMutationQueuesRef = useRef<Map<string, Promise<void>>>(new Map());
+  const taskLocalVersionTransitionsRef = useRef<Map<string, Map<string, string>>>(new Map());
   useEffect(() => {
     activeProjectIdRef.current = activeProjectId;
   }, [activeProjectId]);
@@ -6682,6 +6675,14 @@ export function App(props: {
     selectedTaskConversationRef.current = selectedTaskConversation;
   }, [selectedTaskConversation]);
 
+  const mergeTaskRecord = useCallback((task: TaskRecord): void => {
+    setSnapshot((current) => ({
+      ...current,
+      tasks: current.tasks.some((candidate) => candidate.id === task.id) ? current.tasks.map((candidate) => (candidate.id === task.id ? task : candidate)) : [...current.tasks, task],
+    }));
+    setTaskDetail((current) => (current?.id === task.id ? task : current));
+  }, []);
+
   useEffect(() => {
     const subscribeRealtimeEvents = props.onSubscribeRealtimeEvents;
     const loadGraphConversation = props.onLoadGraphConversation;
@@ -6696,6 +6697,19 @@ export function App(props: {
           if (selected && typeof event.payload.projectId === 'string') {
             acknowledgeNativeConversationCompletion(event.payload.projectId, conversationId);
           }
+        }
+      }
+      if (event.type === 'task.updated' && typeof event.payload.taskId === 'string' && props.onLoadTask) {
+        const taskId = event.payload.taskId;
+        if (!pendingRealtimeTaskRefreshIdsRef.current.has(taskId)) {
+          pendingRealtimeTaskRefreshIdsRef.current.add(taskId);
+          void props
+            .onLoadTask(taskId)
+            .then(mergeTaskRecord)
+            .catch((error: unknown) => recordLocalError('task-realtime-refresh', error))
+            .finally(() => {
+              pendingRealtimeTaskRefreshIdsRef.current.delete(taskId);
+            });
         }
       }
       if (!loadGraphConversation) return;
@@ -6715,7 +6729,7 @@ export function App(props: {
     return () => {
       if (unsubscribe) unsubscribe();
     };
-  }, [acknowledgeNativeConversationCompletion, props.onLoadGraphConversation, props.onSubscribeRealtimeEvents, setNativeConversationCompletionUnread]);
+  }, [acknowledgeNativeConversationCompletion, mergeTaskRecord, props.onLoadGraphConversation, props.onLoadTask, props.onSubscribeRealtimeEvents, setNativeConversationCompletionUnread]);
 
   const taskDetailPaneTask = taskDetailPaneTaskId ? (taskDetail?.id === taskDetailPaneTaskId ? taskDetail : snapshot.tasks.find((task) => task.id === taskDetailPaneTaskId)) : undefined;
   const taskDetailPaneConversations = taskDetailPaneTask ? (nativeConversationChoicesByTask[taskDetailPaneTask.id]?.choices ?? []) : [];
@@ -6741,6 +6755,91 @@ export function App(props: {
     setActionState('failed');
   }
 
+  function enqueueTaskMutation<T>(taskId: string, operation: () => Promise<T>): Promise<T> {
+    const previous = taskMutationQueuesRef.current.get(taskId) ?? Promise.resolve();
+    const mutation = previous.catch(() => undefined).then(operation);
+    const completion = mutation.then(
+      () => undefined,
+      () => undefined,
+    );
+    taskMutationQueuesRef.current.set(taskId, completion);
+    void completion.finally(() => {
+      if (taskMutationQueuesRef.current.get(taskId) === completion) taskMutationQueuesRef.current.delete(taskId);
+    });
+    return mutation;
+  }
+
+  function resolveTaskMutationVersion(taskId: string, requestedVersion: string): string {
+    const transitions = taskLocalVersionTransitionsRef.current.get(taskId);
+    if (!transitions) return requestedVersion;
+    const seen = new Set<string>();
+    let resolved = requestedVersion;
+    while (!seen.has(resolved)) {
+      seen.add(resolved);
+      const next = transitions.get(resolved);
+      if (!next || next === resolved) break;
+      resolved = next;
+    }
+    return resolved;
+  }
+
+  function recordTaskMutationVersion(taskId: string, previousVersion: string | undefined, nextVersion: string | undefined): void {
+    if (!previousVersion || !nextVersion || previousVersion === nextVersion) return;
+    const transitions = taskLocalVersionTransitionsRef.current.get(taskId) ?? new Map<string, string>();
+    transitions.set(previousVersion, nextVersion);
+    taskLocalVersionTransitionsRef.current.set(taskId, transitions);
+  }
+
+  function applyTaskMutationSnapshot(nextSnapshot: DashboardSnapshot, taskId: string): TaskRecord {
+    const updatedTask = nextSnapshot.tasks.find((task) => task.id === taskId);
+    if (!updatedTask) throw new Error(`Updated task ${taskId} was not present in the dashboard snapshot.`);
+    mergeTaskRecord(updatedTask);
+    return updatedTask;
+  }
+
+  function refreshOpenTaskEvents(taskId: string): void {
+    if (!props.onLoadTaskEvents || taskDetailPaneTaskId !== taskId) return;
+    void props
+      .onLoadTaskEvents(taskId)
+      .then(setTaskEvents)
+      .catch((error: unknown) => recordLocalError('task-event-refresh', error));
+  }
+
+  async function loadLatestTaskAfterConflict(taskId: string): Promise<TaskRecord | null> {
+    if (!props.onLoadTask) return null;
+    const latest = await props.onLoadTask(taskId);
+    taskLocalVersionTransitionsRef.current.delete(taskId);
+    mergeTaskRecord(latest);
+    return latest;
+  }
+
+  async function updateTaskContent(taskId: string, input: UpdateTaskRequest): Promise<TaskEditResult> {
+    if (!props.onUpdateTask) throw new Error('Task update handler is not available.');
+    return enqueueTaskMutation(taskId, async () => {
+      const expectedUpdatedAt = resolveTaskMutationVersion(taskId, input.expectedUpdatedAt);
+      setActionState('updating-task');
+      try {
+        const nextSnapshot = await props.onUpdateTask?.(taskId, { ...input, expectedUpdatedAt });
+        if (!nextSnapshot) throw new Error('Task update handler returned no dashboard snapshot.');
+        const updatedTask = applyTaskMutationSnapshot(nextSnapshot, taskId);
+        recordTaskMutationVersion(taskId, expectedUpdatedAt, updatedTask.updatedAt);
+        refreshOpenTaskEvents(taskId);
+        setActionState('idle');
+        return { kind: 'updated', task: updatedTask };
+      } catch (error) {
+        if (error instanceof ZeusApiError && error.error === 'ZEUS_TASK_EDIT_CONFLICT') {
+          const latest = await loadLatestTaskAfterConflict(taskId);
+          if (latest) {
+            setActionState('idle');
+            return { kind: 'conflict', latest };
+          }
+        }
+        setActionState('idle');
+        throw error;
+      }
+    });
+  }
+
   async function loadTaskDetail(taskId: string): Promise<void> {
     setConversationDraftOpen(false);
     if (!props.onLoadTask) {
@@ -6751,11 +6850,6 @@ export function App(props: {
     try {
       const task = await props.onLoadTask(taskId);
       setTaskDetail(task);
-      setTaskEditForm({
-        title: task.title,
-        description: task.description ?? '',
-        tags: task.tags?.join(', ') ?? '',
-      });
       setActionState('idle');
     } catch (error) {
       recordLocalError('renderer-action', error);
@@ -7446,11 +7540,6 @@ export function App(props: {
         setTaskSearchQuery('');
         setTaskTagFilter('');
         setTaskDetail(createdTask);
-        setTaskEditForm({
-          title: createdTask.title,
-          description: createdTask.description ?? '',
-          tags: createdTask.tags?.join(', ') ?? '',
-        });
       }
       setGraphNodeTaskFeedback('created');
       setActionState('idle');
@@ -7485,11 +7574,6 @@ export function App(props: {
         setTaskSearchQuery('');
         setTaskTagFilter('');
         setTaskDetail(createdTask);
-        setTaskEditForm({
-          title: createdTask.title,
-          description: createdTask.description ?? '',
-          tags: createdTask.tags?.join(', ') ?? '',
-        });
         setActiveProjectSection('tasks');
         setTaskDetailPaneTaskId(createdTask.id);
         if (props.onLoadTaskEvents) {
@@ -7885,7 +7969,6 @@ export function App(props: {
     setTaskSearchQuery('');
     setTaskTagFilter('');
     setTaskDetail(undefined);
-    setTaskEditForm({ title: '', description: '', tags: '' });
     if (typeof window !== 'undefined') {
       window.history.replaceState(null, '', '#project-sessions');
     }
@@ -7899,28 +7982,36 @@ export function App(props: {
     };
   }, [prepareNewConversationDraft]);
 
-  async function updateTaskManagementStatus(taskId: string, status: TaskManagementStatus, options: { skipGitReview?: boolean } = {}): Promise<void> {
-    const currentTask = snapshot.tasks.find((task) => task.id === taskId);
+  async function updateTaskManagementStatus(taskId: string, status: TaskManagementStatus, options: { skipGitReview?: boolean; expectedUpdatedAt?: string } = {}): Promise<TaskEditResult | undefined> {
+    const currentTask = (taskDetail?.id === taskId ? taskDetail : undefined) ?? snapshot.tasks.find((task) => task.id === taskId);
     if (!props.onUpdateTaskManagementStatus || !currentTask || resolveTaskManagementStatus(currentTask) === status) return;
     if (!options.skipGitReview && (status === 'completed' || status === 'cancelled') && props.nativeConversationClient) {
       setTaskGitReviewState({ taskId, mode: status });
       return;
     }
-    setActionState('updating-task');
-    try {
-      const nextSnapshot = await props.onUpdateTaskManagementStatus(taskId, status);
-      setSnapshot(nextSnapshot);
-      const updatedTask = nextSnapshot.tasks.find((task) => task.id === taskId);
-      if (updatedTask) {
-        setTaskDetail((current) => (current?.id === taskId ? updatedTask : current));
+    const updateManagementStatus = props.onUpdateTaskManagementStatus;
+    return enqueueTaskMutation(taskId, async () => {
+      const expectedUpdatedAt = resolveTaskMutationVersion(taskId, options.expectedUpdatedAt ?? currentTask.updatedAt ?? '');
+      setActionState('updating-task');
+      try {
+        const nextSnapshot = await updateManagementStatus(taskId, status, expectedUpdatedAt);
+        const updatedTask = applyTaskMutationSnapshot(nextSnapshot, taskId);
+        recordTaskMutationVersion(taskId, expectedUpdatedAt, updatedTask.updatedAt);
+        refreshOpenTaskEvents(taskId);
+        setActionState('idle');
+        return { kind: 'updated', task: updatedTask };
+      } catch (error) {
+        if (error instanceof ZeusApiError && error.error === 'ZEUS_TASK_EDIT_CONFLICT') {
+          const latest = await loadLatestTaskAfterConflict(taskId);
+          if (latest) {
+            setActionState('idle');
+            return { kind: 'conflict', latest };
+          }
+        }
+        recordLocalError('task-management-status-update', error);
+        throw error;
       }
-      if (props.onLoadTaskEvents && taskDetailPaneTaskId === taskId) {
-        setTaskEvents(await props.onLoadTaskEvents(taskId));
-      }
-      setActionState('idle');
-    } catch (error) {
-      recordLocalError('task-management-status-update', error);
-    }
+    });
   }
 
   async function openTaskModelPush(taskId: string): Promise<void> {
@@ -8190,7 +8281,7 @@ export function App(props: {
       for (const task of eligibleTasks) {
         try {
           if (!props.onUpdateTaskManagementStatus) throw new Error('Task management status handler is not available.');
-          const nextSnapshot = await props.onUpdateTaskManagementStatus(task.id, targetStatus);
+          const nextSnapshot = await props.onUpdateTaskManagementStatus(task.id, targetStatus, task.updatedAt ?? '');
           setSnapshot(nextSnapshot);
           succeededTaskIds.push(task.id);
         } catch {
@@ -10308,7 +10399,7 @@ export function App(props: {
                     onToggleTaskSelection={toggleTaskSelection}
                     onToggleAllVisibleTaskSelection={toggleAllVisibleTaskSelection}
                     onClearTaskSelection={clearTaskSelection}
-                    onTaskStatusChange={(taskId, targetStatus) => void updateTaskManagementStatus(taskId, targetStatus)}
+                    onTaskStatusChange={(taskId, targetStatus) => void updateTaskManagementStatus(taskId, targetStatus).catch(() => undefined)}
                     onBulkTaskStatusChange={(targetStatus, taskIds) => void runBulkTaskStatusChange(targetStatus, taskIds)}
                     onBulkTaskDelete={(taskIds) => void runBulkTaskDelete(taskIds)}
                     onRetryTaskList={
@@ -10442,6 +10533,7 @@ export function App(props: {
                         copy={taskWorkspaceCopy}
                         statusLabels={taskManagementStatusLabels[appShellSettings.appLanguage]}
                         eventTypeLabels={uiCopy.taskEventTypeLabels}
+                        priorityOptions={taskWorkspaceCopy.taskCreatePriorityOptions}
                         busy={updatingTaskBusy}
                         conversations={taskDetailPaneConversations}
                         conversationsLoading={taskDetailPaneConversationState?.status === 'loading' && !taskDetailPaneConversationState.choicesKnown}
@@ -10449,7 +10541,9 @@ export function App(props: {
                         onOpenConversation={(taskId, conversationId) => void openTaskConversation(taskId, conversationId)}
                         onPushNewConversation={(taskId) => void openTaskModelPush(taskId)}
                         onOpenCodeDelivery={(taskId) => setTaskGitMergeTaskId(taskId)}
-                        onManagementStatusChange={(taskId, status) => void updateTaskManagementStatus(taskId, status)}
+                        onUpdateTaskContent={updateTaskContent}
+                        onManagementStatusChange={(taskId, status, expectedUpdatedAt) => updateTaskManagementStatus(taskId, status, { expectedUpdatedAt })}
+                        onChooseAttachments={props.onChooseTaskAttachments}
                         onReloadConversations={(taskId) => void refreshNativeConversationChoices(taskId)}
                         onLoadAttachmentPreview={props.onLoadTaskAttachmentPreview}
                         onOpenAttachment={props.onOpenTaskAttachment}
@@ -11007,7 +11101,7 @@ export function App(props: {
           mode={taskGitReviewState?.mode ?? 'commit'}
           preferredWorkspaceId={taskGitReviewState?.workspaceId}
           onClose={() => setTaskGitReviewState(null)}
-          onReadyToCloseTask={(status) => (taskGitReviewState ? updateTaskManagementStatus(taskGitReviewState.taskId, status, { skipGitReview: true }) : Promise.resolve())}
+          onReadyToCloseTask={(status) => (taskGitReviewState ? updateTaskManagementStatus(taskGitReviewState.taskId, status, { skipGitReview: true }).then(() => undefined) : Promise.resolve())}
         />
 
         {activeNavTarget === 'settings' ? (

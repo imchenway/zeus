@@ -1,9 +1,11 @@
-import type { TaskEventRecord, TaskManagementStatus, TaskRecord } from '../apiClient.js';
+import { useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
+import { isTaskPriority, type TaskAttachmentReference } from '@zeus/shared';
+import type { TaskEventRecord, TaskManagementStatus, TaskPriority, TaskRecord, UpdateTaskRequest } from '../apiClient.js';
 import type { NativeConversationChoice } from '../session/sessionTypes.js';
 import { Button } from '../ui/Button.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 import { TaskAttachmentPreviewList } from './TaskAttachmentPreviewList.js';
-import { parseTaskAttachments } from './taskAttachments.js';
+import { mergeTaskAttachments, parseTaskAttachments, toPersistedTaskAttachment, type TaskAttachmentView } from './taskAttachments.js';
 import { formatTaskSource, formatTaskUpdatedAt, resolveTaskManagementStatus, taskManagementStatuses, type TaskSourceLabels } from './taskWorkspaceModel.js';
 
 export interface TaskDetailPaneCopy {
@@ -47,6 +49,7 @@ export interface TaskDetailPaneContentProps {
   copy: TaskDetailPaneCopy;
   statusLabels: Record<TaskManagementStatus | '', string>;
   eventTypeLabels: Record<string, string>;
+  priorityOptions: ReadonlyArray<{ value: TaskPriority; label: string }>;
   busy: boolean;
   conversations?: NativeConversationChoice[];
   conversationsLoading?: boolean;
@@ -54,19 +57,401 @@ export interface TaskDetailPaneContentProps {
   onOpenConversation: (taskId: string, conversationId: string) => void;
   onPushNewConversation: (taskId: string) => void;
   onOpenCodeDelivery?: (taskId: string) => void;
-  onManagementStatusChange: (taskId: string, status: TaskManagementStatus) => void;
+  onUpdateTaskContent: (taskId: string, input: UpdateTaskRequest) => Promise<TaskEditResult>;
+  onManagementStatusChange: (taskId: string, status: TaskManagementStatus, expectedUpdatedAt: string) => Promise<TaskEditResult | undefined>;
+  onChooseAttachments?: () => Promise<TaskAttachmentView[]>;
   onReloadConversations?: (taskId: string) => void;
   onLoadAttachmentPreview?: (path: string) => Promise<{ previewUrl: string; mimeType: string } | null>;
   onOpenAttachment?: (path: string) => Promise<{ opened: boolean; error?: string }>;
 }
 
+export type TaskEditResult = { kind: 'updated'; task: TaskRecord } | { kind: 'conflict'; latest: TaskRecord };
+
+type TaskFieldSaveState = { kind: 'idle' } | { kind: 'saving' } | { kind: 'saved' } | { kind: 'error'; message: string } | { kind: 'conflict'; latest: TaskRecord };
+
+type TaskEditCopy = {
+  editTitle: string;
+  editDescription: string;
+  editTags: string;
+  titleRequired: string;
+  noTags: string;
+  addAttachment: string;
+  removeAttachment: string;
+  undoAttachment: string;
+  saving: string;
+  saved: string;
+  retry: string;
+  loadLatest: string;
+  saveFailed: string;
+  conflict: string;
+};
+
+const taskEditCopies: Record<'zh-CN' | 'en-US', TaskEditCopy> = {
+  'zh-CN': {
+    editTitle: '编辑任务标题',
+    editDescription: '编辑任务说明',
+    editTags: '编辑任务标签',
+    titleRequired: '标题不能为空。',
+    noTags: '暂无标签，点击添加',
+    addAttachment: '添加附件',
+    removeAttachment: '移除附件关联',
+    undoAttachment: '撤销移除',
+    saving: '正在保存…',
+    saved: '已保存',
+    retry: '重试',
+    loadLatest: '载入最新值',
+    saveFailed: '保存失败',
+    conflict: '任务已在其他位置更新。请选择保留本地内容重试，或载入最新值。',
+  },
+  'en-US': {
+    editTitle: 'Edit task title',
+    editDescription: 'Edit task description',
+    editTags: 'Edit task tags',
+    titleRequired: 'Title cannot be empty.',
+    noTags: 'No tags. Click to add',
+    addAttachment: 'Add attachment',
+    removeAttachment: 'Remove attachment link',
+    undoAttachment: 'Undo removal',
+    saving: 'Saving…',
+    saved: 'Saved',
+    retry: 'Retry',
+    loadLatest: 'Load latest value',
+    saveFailed: 'Save failed',
+    conflict: 'This task changed elsewhere. Retry with the local value or load the latest value.',
+  },
+};
+
+function taskEditErrorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error && error.message.trim() ? error.message : fallback;
+}
+
+function normalizeTaskTagsInput(value: string): string[] {
+  return Array.from(
+    new Set(
+      value
+        .split(/[,，\n]+/u)
+        .map((tag) => tag.trim())
+        .filter(Boolean),
+    ),
+  );
+}
+
+function taskTagsDraft(tags: string[] | undefined): string {
+  return (tags ?? []).join(', ');
+}
+
+function TaskEditFeedback(props: { state: TaskFieldSaveState; copy: TaskEditCopy; statusId: string; onRetry?: () => void; onLoadLatest?: () => void }) {
+  if (props.state.kind === 'idle') return null;
+  const isError = props.state.kind === 'error' || props.state.kind === 'conflict';
+  const message = props.state.kind === 'saving' ? props.copy.saving : props.state.kind === 'saved' ? props.copy.saved : props.state.kind === 'conflict' ? props.copy.conflict : `${props.copy.saveFailed}：${props.state.message}`;
+  return (
+    <span className={`task-inline-edit-feedback${isError ? ' is-error' : ''}`}>
+      <small id={props.statusId} role="status" aria-live="polite">
+        {message}
+      </small>
+      {props.state.kind === 'error' && props.onRetry ? (
+        <Button variant="secondary" size="compact" onClick={props.onRetry}>
+          {props.copy.retry}
+        </Button>
+      ) : null}
+      {props.state.kind === 'conflict' ? (
+        <span className="task-inline-edit-conflict-actions">
+          {props.onRetry ? (
+            <Button variant="secondary" size="compact" onClick={props.onRetry}>
+              {props.copy.retry}
+            </Button>
+          ) : null}
+          {props.onLoadLatest ? (
+            <Button variant="secondary" size="compact" onClick={props.onLoadLatest}>
+              {props.copy.loadLatest}
+            </Button>
+          ) : null}
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
+function InlineTaskTextField(props: {
+  task: TaskRecord;
+  label: string;
+  value: string;
+  display: ReactNode;
+  multiline?: boolean;
+  enterSeparates?: boolean;
+  required?: boolean;
+  copy: TaskEditCopy;
+  className?: string;
+  disabled?: boolean;
+  buildPatch: (value: string) => Omit<UpdateTaskRequest, 'expectedUpdatedAt'>;
+  valueFromTask: (task: TaskRecord) => string;
+  onSave: (input: UpdateTaskRequest) => Promise<TaskEditResult>;
+}) {
+  const statusId = `${useId()}-status`;
+  const inputRef = useRef<HTMLInputElement | HTMLTextAreaElement | null>(null);
+  const baseUpdatedAtRef = useRef(props.task.updatedAt ?? '');
+  const composingRef = useRef(false);
+  const suppressBlurRef = useRef(false);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(props.value);
+  const [saveState, setSaveState] = useState<TaskFieldSaveState>({ kind: 'idle' });
+
+  useEffect(() => {
+    if (editing) return;
+    setDraft(props.value);
+    baseUpdatedAtRef.current = props.task.updatedAt ?? '';
+  }, [editing, props.task.id, props.task.updatedAt, props.value]);
+
+  useEffect(() => {
+    if (!editing) return;
+    inputRef.current?.focus();
+    if (inputRef.current instanceof HTMLInputElement) inputRef.current.select();
+  }, [editing]);
+
+  function beginEditing(): void {
+    if (props.disabled) return;
+    setDraft(props.value);
+    baseUpdatedAtRef.current = props.task.updatedAt ?? '';
+    setSaveState({ kind: 'idle' });
+    setEditing(true);
+  }
+
+  function cancelEditing(): void {
+    suppressBlurRef.current = true;
+    setDraft(props.value);
+    setSaveState({ kind: 'idle' });
+    setEditing(false);
+  }
+
+  async function commitDraft(expectedUpdatedAt = baseUpdatedAtRef.current): Promise<void> {
+    if (saveState.kind === 'saving') return;
+    const nextValue = props.required ? draft.trim() : draft;
+    if (props.required && !nextValue) {
+      setSaveState({ kind: 'error', message: props.copy.titleRequired });
+      return;
+    }
+    if (nextValue === props.value) {
+      setSaveState({ kind: 'idle' });
+      setEditing(false);
+      return;
+    }
+    if (!expectedUpdatedAt) {
+      setSaveState({ kind: 'error', message: props.copy.saveFailed });
+      return;
+    }
+    setSaveState({ kind: 'saving' });
+    try {
+      const result = await props.onSave({ ...props.buildPatch(nextValue), expectedUpdatedAt });
+      if (result.kind === 'conflict') {
+        setSaveState({ kind: 'conflict', latest: result.latest });
+        return;
+      }
+      setDraft(props.valueFromTask(result.task));
+      baseUpdatedAtRef.current = result.task.updatedAt ?? expectedUpdatedAt;
+      setSaveState({ kind: 'saved' });
+      setEditing(false);
+    } catch (error) {
+      setSaveState({ kind: 'error', message: taskEditErrorMessage(error, props.copy.saveFailed) });
+    }
+  }
+
+  function handleBlur(): void {
+    if (suppressBlurRef.current) {
+      suppressBlurRef.current = false;
+      return;
+    }
+    void commitDraft();
+  }
+
+  function handleKeyDown(event: ReactKeyboardEvent<HTMLInputElement | HTMLTextAreaElement>): void {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      cancelEditing();
+      return;
+    }
+    if (event.key === 'Enter' && props.enterSeparates && !composingRef.current && !event.nativeEvent.isComposing) {
+      event.preventDefault();
+      setDraft((current) => {
+        const trimmed = current.trimEnd();
+        return trimmed ? `${trimmed.replace(/[,，]$/u, '')}, ` : current;
+      });
+      return;
+    }
+    if (!props.multiline && event.key === 'Enter' && !composingRef.current && !event.nativeEvent.isComposing) {
+      event.preventDefault();
+      event.currentTarget.blur();
+    }
+  }
+
+  function retrySave(): void {
+    suppressBlurRef.current = false;
+    const expectedUpdatedAt = saveState.kind === 'conflict' ? (saveState.latest.updatedAt ?? '') : baseUpdatedAtRef.current;
+    void commitDraft(expectedUpdatedAt);
+  }
+
+  function loadLatestValue(): void {
+    if (saveState.kind !== 'conflict') return;
+    setDraft(props.valueFromTask(saveState.latest));
+    baseUpdatedAtRef.current = saveState.latest.updatedAt ?? '';
+    setSaveState({ kind: 'idle' });
+    setEditing(false);
+  }
+
+  const editorProps = {
+    'aria-label': props.label,
+    'aria-describedby': saveState.kind === 'idle' ? undefined : statusId,
+    'aria-invalid': saveState.kind === 'error' || saveState.kind === 'conflict' ? true : undefined,
+    className: 'task-inline-edit-control',
+    disabled: props.disabled || saveState.kind === 'saving',
+    value: draft,
+    onBlur: handleBlur,
+    onChange: (event: { currentTarget: { value: string } }) => setDraft(event.currentTarget.value),
+    onCompositionStart: () => {
+      composingRef.current = true;
+    },
+    onCompositionEnd: () => {
+      composingRef.current = false;
+    },
+    onKeyDown: handleKeyDown,
+  };
+
+  return (
+    <span className={['task-inline-edit', props.className].filter(Boolean).join(' ')} data-state={saveState.kind}>
+      {editing ? (
+        props.multiline ? (
+          <textarea
+            {...editorProps}
+            ref={(node) => {
+              inputRef.current = node;
+            }}
+            rows={4}
+          />
+        ) : (
+          <input
+            {...editorProps}
+            ref={(node) => {
+              inputRef.current = node;
+            }}
+          />
+        )
+      ) : (
+        <button type="button" className="task-inline-edit-trigger" onClick={beginEditing} disabled={props.disabled} aria-label={props.label}>
+          {props.display}
+        </button>
+      )}
+      <TaskEditFeedback state={saveState} copy={props.copy} statusId={statusId} onRetry={retrySave} onLoadLatest={loadLatestValue} />
+    </span>
+  );
+}
+
+function TaskImmediateSelect<T extends string>(props: {
+  task: TaskRecord;
+  value: T;
+  options: ReadonlyArray<{ value: T; label: string; disabled?: boolean }>;
+  ariaLabel: string;
+  copy: TaskEditCopy;
+  disabled?: boolean;
+  className?: string;
+  onSave: (value: T, expectedUpdatedAt: string) => Promise<TaskEditResult | undefined>;
+}) {
+  const statusId = `${useId()}-status`;
+  const desiredValueRef = useRef<T | null>(null);
+  const [displayValue, setDisplayValue] = useState(props.value);
+  const [saveState, setSaveState] = useState<TaskFieldSaveState>({ kind: 'idle' });
+
+  useEffect(() => {
+    if (saveState.kind === 'saving' || saveState.kind === 'error' || saveState.kind === 'conflict') return;
+    setDisplayValue(props.value);
+  }, [props.value, saveState.kind]);
+
+  async function saveValue(value: T, expectedUpdatedAt: string): Promise<void> {
+    desiredValueRef.current = value;
+    setDisplayValue(value);
+    setSaveState({ kind: 'saving' });
+    try {
+      const result = await props.onSave(value, expectedUpdatedAt);
+      if (!result) {
+        desiredValueRef.current = null;
+        setDisplayValue(props.value);
+        setSaveState({ kind: 'idle' });
+        return;
+      }
+      if (result.kind === 'conflict') {
+        setSaveState({ kind: 'conflict', latest: result.latest });
+        return;
+      }
+      desiredValueRef.current = null;
+      setSaveState({ kind: 'saved' });
+    } catch (error) {
+      setSaveState({ kind: 'error', message: taskEditErrorMessage(error, props.copy.saveFailed) });
+    }
+  }
+
+  function retrySave(): void {
+    const desiredValue = desiredValueRef.current;
+    if (!desiredValue) return;
+    const expectedUpdatedAt = saveState.kind === 'conflict' ? (saveState.latest.updatedAt ?? '') : (props.task.updatedAt ?? '');
+    if (!expectedUpdatedAt) return;
+    void saveValue(desiredValue, expectedUpdatedAt);
+  }
+
+  function loadLatestValue(): void {
+    desiredValueRef.current = null;
+    setDisplayValue(props.value);
+    setSaveState({ kind: 'idle' });
+  }
+
+  return (
+    <span className={['task-immediate-select', props.className].filter(Boolean).join(' ')} aria-describedby={saveState.kind === 'idle' ? undefined : statusId}>
+      <ZeusSelect
+        size="compact"
+        ariaLabel={props.ariaLabel}
+        value={displayValue}
+        options={props.options}
+        onChange={(value) => {
+          const expectedUpdatedAt = props.task.updatedAt ?? '';
+          if (value === props.value) return;
+          if (!expectedUpdatedAt) {
+            desiredValueRef.current = value;
+            setDisplayValue(value);
+            setSaveState({ kind: 'error', message: props.copy.saveFailed });
+            return;
+          }
+          void saveValue(value, expectedUpdatedAt);
+        }}
+        disabled={props.disabled || saveState.kind === 'saving'}
+        searchable={false}
+      />
+      <TaskEditFeedback state={saveState} copy={props.copy} statusId={statusId} onRetry={retrySave} onLoadLatest={loadLatestValue} />
+    </span>
+  );
+}
+
 export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
   const zh = props.language === 'zh-CN';
+  const editCopy = taskEditCopies[props.language];
   const managementStatus = resolveTaskManagementStatus(props.task);
   const taskIdentity = props.task.taskCode?.trim() || props.task.id;
   const latestEvent = props.events.at(-1);
   const latestEvidenceType = latestEvent ? (props.eventTypeLabels[latestEvent.eventType] ?? latestEvent.eventType) : undefined;
   const taskAttachments = parseTaskAttachments(props.task.sourceContextJson);
+  const attachmentStatusId = `${useId()}-status`;
+  const desiredAttachmentsRef = useRef<TaskAttachmentReference[]>([]);
+  const undoTimerRef = useRef<number | null>(null);
+  const [attachmentSaveState, setAttachmentSaveState] = useState<TaskFieldSaveState>({ kind: 'idle' });
+  const [undoAttachment, setUndoAttachment] = useState<TaskAttachmentView | null>(null);
+  useEffect(() => {
+    setAttachmentSaveState({ kind: 'idle' });
+    setUndoAttachment(null);
+    desiredAttachmentsRef.current = [];
+    if (undoTimerRef.current !== null) window.clearTimeout(undoTimerRef.current);
+  }, [props.task.id]);
+  useEffect(
+    () => () => {
+      if (undoTimerRef.current !== null) window.clearTimeout(undoTimerRef.current);
+    },
+    [],
+  );
   const conversations = [...(props.conversations ?? [])].filter((conversation) => !conversation.archived).sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
   const taskWorkspaces = Array.from(
     new Map(
@@ -77,6 +462,74 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
     ).values(),
   );
 
+  async function saveAttachmentReferences(attachments: TaskAttachmentReference[], expectedUpdatedAt: string): Promise<TaskEditResult | null> {
+    if (!expectedUpdatedAt) {
+      setAttachmentSaveState({ kind: 'error', message: editCopy.saveFailed });
+      return null;
+    }
+    desiredAttachmentsRef.current = attachments;
+    setAttachmentSaveState({ kind: 'saving' });
+    try {
+      const result = await props.onUpdateTaskContent(props.task.id, { expectedUpdatedAt, attachments });
+      if (result.kind === 'conflict') {
+        setAttachmentSaveState({ kind: 'conflict', latest: result.latest });
+        return result;
+      }
+      setAttachmentSaveState({ kind: 'saved' });
+      return result;
+    } catch (error) {
+      setAttachmentSaveState({ kind: 'error', message: taskEditErrorMessage(error, editCopy.saveFailed) });
+      return null;
+    }
+  }
+
+  async function chooseAttachments(): Promise<void> {
+    if (!props.onChooseAttachments) return;
+    try {
+      const additions = await props.onChooseAttachments();
+      if (additions.length === 0) return;
+      const nextAttachments = mergeTaskAttachments(taskAttachments, additions);
+      await saveAttachmentReferences(nextAttachments, props.task.updatedAt ?? '');
+    } catch (error) {
+      setAttachmentSaveState({ kind: 'error', message: taskEditErrorMessage(error, editCopy.saveFailed) });
+    }
+  }
+
+  async function removeAttachment(path: string): Promise<void> {
+    const removed = taskAttachments.find((attachment) => attachment.path === path);
+    if (!removed) return;
+    const nextAttachments = taskAttachments.filter((attachment) => attachment.path !== path).map(toPersistedTaskAttachment);
+    const result = await saveAttachmentReferences(nextAttachments, props.task.updatedAt ?? '');
+    if (result?.kind !== 'updated') return;
+    setUndoAttachment(removed);
+    if (undoTimerRef.current !== null) window.clearTimeout(undoTimerRef.current);
+    undoTimerRef.current = window.setTimeout(() => setUndoAttachment(null), 8000);
+  }
+
+  async function restoreRemovedAttachment(): Promise<void> {
+    if (!undoAttachment) return;
+    const nextAttachments = mergeTaskAttachments(taskAttachments, [undoAttachment]);
+    const result = await saveAttachmentReferences(nextAttachments, props.task.updatedAt ?? '');
+    if (result?.kind !== 'updated') return;
+    setUndoAttachment(null);
+    if (undoTimerRef.current !== null) window.clearTimeout(undoTimerRef.current);
+  }
+
+  function retryAttachmentSave(): void {
+    const expectedUpdatedAt = attachmentSaveState.kind === 'conflict' ? (attachmentSaveState.latest.updatedAt ?? '') : (props.task.updatedAt ?? '');
+    void saveAttachmentReferences(desiredAttachmentsRef.current, expectedUpdatedAt);
+  }
+
+  function loadLatestAttachments(): void {
+    desiredAttachmentsRef.current = [];
+    setAttachmentSaveState({ kind: 'idle' });
+  }
+
+  const taskPriority = props.task.priority ?? 'p3';
+  const priorityOptions: ReadonlyArray<{ value: string; label: string; disabled?: boolean }> = isTaskPriority(taskPriority)
+    ? props.priorityOptions
+    : [{ value: taskPriority, label: `${taskPriority.toUpperCase()} (${zh ? '历史值' : 'legacy'})`, disabled: true }, ...props.priorityOptions];
+
   return (
     <section className="product-drawer-pane task-detail-pane-content task-detail-pane-shell" aria-label={props.task.title}>
       <header className="task-detail-pane-header task-detail-summary-row">
@@ -84,20 +537,31 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
           <small>
             {props.copy.taskCodeLabel ?? '任务编码'} {taskIdentity}
           </small>
-          <strong>{props.task.title}</strong>
+          <InlineTaskTextField
+            task={props.task}
+            label={editCopy.editTitle}
+            value={props.task.title}
+            display={<strong>{props.task.title}</strong>}
+            required
+            copy={editCopy}
+            disabled={props.busy}
+            buildPatch={(title) => ({ title: title.trim() })}
+            valueFromTask={(task) => task.title}
+            onSave={(input) => props.onUpdateTaskContent(props.task.id, input)}
+          />
         </span>
         <span className="task-detail-pane-status-control">
-          <ZeusSelect
-            size="compact"
-            ariaLabel={props.copy.detailStatusSelectAria}
+          <TaskImmediateSelect
+            task={props.task}
             value={managementStatus}
             options={taskManagementStatuses.map((status) => ({
               value: status,
               label: props.statusLabels[status],
             }))}
-            onChange={(status) => props.onManagementStatusChange(props.task.id, status)}
+            ariaLabel={props.copy.detailStatusSelectAria}
+            copy={editCopy}
             disabled={props.busy}
-            searchable={false}
+            onSave={(status, expectedUpdatedAt) => props.onManagementStatusChange(props.task.id, status, expectedUpdatedAt)}
           />
         </span>
       </header>
@@ -109,7 +573,15 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
         </span>
         <span className="task-detail-summary-row">
           <small>{props.copy.priorityLabel ?? '优先级'}</small>
-          <strong>{props.task.priority?.toUpperCase() ?? '未设置'}</strong>
+          <TaskImmediateSelect
+            task={props.task}
+            value={taskPriority}
+            options={priorityOptions}
+            ariaLabel={zh ? '修改任务优先级' : 'Change task priority'}
+            copy={editCopy}
+            disabled={props.busy}
+            onSave={(priority, expectedUpdatedAt) => (isTaskPriority(priority) ? props.onUpdateTaskContent(props.task.id, { expectedUpdatedAt, priority }) : Promise.reject(new Error(zh ? '无效的任务优先级。' : 'Invalid task priority.')))}
+          />
         </span>
         <span className="task-detail-summary-row">
           <small>{props.copy.updatedAtLabel ?? '更新时间'}</small>
@@ -136,18 +608,67 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
         <span className="task-detail-section-heading">
           <strong>{props.copy.requestTitle}</strong>
         </span>
-        <p className="task-detail-request-text">{props.task.description || props.copy.noRequest}</p>
+        <InlineTaskTextField
+          task={props.task}
+          label={editCopy.editDescription}
+          value={props.task.description ?? ''}
+          display={<span className="task-detail-request-text">{props.task.description || props.copy.noRequest}</span>}
+          multiline
+          copy={editCopy}
+          disabled={props.busy}
+          buildPatch={(description) => ({ description })}
+          valueFromTask={(task) => task.description ?? ''}
+          onSave={(input) => props.onUpdateTaskContent(props.task.id, input)}
+        />
       </section>
 
-      {taskAttachments.length > 0 ? (
-        <section className="task-detail-block task-detail-attachments" aria-label={props.copy.attachmentsTitle ?? '图片与附件'}>
-          <span className="task-detail-section-heading">
+      <section className="task-detail-block task-detail-tags" aria-label={zh ? '任务标签' : 'Task tags'}>
+        <span className="task-detail-section-heading">
+          <strong>{zh ? '标签' : 'Tags'}</strong>
+          <small>{props.task.tags?.length ?? 0}</small>
+        </span>
+        <InlineTaskTextField
+          task={props.task}
+          label={editCopy.editTags}
+          value={taskTagsDraft(props.task.tags)}
+          display={
+            props.task.tags && props.task.tags.length > 0 ? (
+              <span className="task-detail-tag-list">
+                {props.task.tags.map((tag) => (
+                  <span key={tag}>{tag}</span>
+                ))}
+              </span>
+            ) : (
+              <span className="task-inline-edit-empty">{editCopy.noTags}</span>
+            )
+          }
+          copy={editCopy}
+          disabled={props.busy}
+          enterSeparates
+          buildPatch={(tags) => ({ tags: normalizeTaskTagsInput(tags) })}
+          valueFromTask={(task) => taskTagsDraft(task.tags)}
+          onSave={(input) => props.onUpdateTaskContent(props.task.id, input)}
+        />
+      </section>
+
+      <section className="task-detail-block task-detail-attachments" aria-label={props.copy.attachmentsTitle ?? '图片与附件'}>
+        <span className="task-detail-section-heading">
+          <span>
             <strong>{props.copy.attachmentsTitle ?? '图片与附件'}</strong>
             <small>{taskAttachments.length}</small>
           </span>
+          {props.onChooseAttachments ? (
+            <Button variant="secondary" size="compact" onClick={() => void chooseAttachments()} busy={attachmentSaveState.kind === 'saving'} disabled={props.busy}>
+              {editCopy.addAttachment}
+            </Button>
+          ) : null}
+        </span>
+        {taskAttachments.length > 0 ? (
           <TaskAttachmentPreviewList
             attachments={taskAttachments}
-            mode="readonly"
+            mode="editable"
+            disabled={props.busy || attachmentSaveState.kind === 'saving'}
+            onRemove={(path) => void removeAttachment(path)}
             onLoadPreview={props.onLoadAttachmentPreview}
             onOpenAttachment={props.onOpenAttachment}
             copy={{
@@ -158,10 +679,24 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
               closePreviewLabel: props.copy.previewCloseLabel ?? '关闭附件预览',
               previewUnavailable: props.copy.previewUnavailableLabel ?? '无法预览，本机路径已保存',
               localPathLabel: props.copy.localPathLabel ?? '本机路径',
+              removeLabel: editCopy.removeAttachment,
             }}
           />
-        </section>
-      ) : null}
+        ) : (
+          <p className="task-detail-attachment-empty">{zh ? '暂无附件，可以添加本机图片或文件。' : 'No attachments. Add a local image or file.'}</p>
+        )}
+        {undoAttachment ? (
+          <span className="task-detail-attachment-undo">
+            <small role="status" aria-live="polite">
+              {zh ? `已解除 ${undoAttachment.name} 的任务关联。` : `Removed ${undoAttachment.name} from this task.`}
+            </small>
+            <Button variant="secondary" size="compact" onClick={() => void restoreRemovedAttachment()}>
+              {editCopy.undoAttachment}
+            </Button>
+          </span>
+        ) : null}
+        <TaskEditFeedback state={attachmentSaveState} copy={editCopy} statusId={attachmentStatusId} onRetry={retryAttachmentSave} onLoadLatest={loadLatestAttachments} />
+      </section>
 
       <section className="task-detail-block task-detail-conversations" aria-label={props.copy.conversationsTitle}>
         <span className="task-detail-section-heading">
