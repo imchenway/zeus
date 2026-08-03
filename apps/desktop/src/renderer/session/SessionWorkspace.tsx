@@ -778,7 +778,7 @@ const labels = {
     attachmentOnly: '仅包含附件',
     legacyTranscript: '只读旧会话记录',
     unsynced: '未同步',
-    tokens: (count: number) => `${count} tokens`,
+    exactValue: '精确值',
   },
   'en-US': {
     workspace: 'Conversation workspace',
@@ -826,9 +826,57 @@ const labels = {
     attachmentOnly: 'Attachments only',
     legacyTranscript: 'Read-only legacy transcript',
     unsynced: 'Not synced',
-    tokens: (count: number) => `${count} tokens`,
+    exactValue: 'exact value',
   },
 } as const;
+
+const TOKEN_USAGE_UNITS = [
+  { suffix: '', divisor: 1 },
+  { suffix: 'K', divisor: 1_000 },
+  { suffix: 'M', divisor: 1_000_000 },
+  { suffix: 'B', divisor: 1_000_000_000 },
+] as const;
+const TOKEN_USAGE_SIGNIFICANT_DIGITS = 3;
+const TOKEN_USAGE_COMPACT_FORMATTER = new Intl.NumberFormat('en-US', { maximumSignificantDigits: TOKEN_USAGE_SIGNIFICANT_DIGITS, useGrouping: false });
+const TOKEN_USAGE_EXACT_FORMATTERS = {
+  'zh-CN': new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 0 }),
+  'en-US': new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }),
+} satisfies Record<SessionUiLanguage, Intl.NumberFormat>;
+
+type TokenUsageLabel = 'tokens' | 'in' | 'out';
+
+function formatTokenCount(count: number, language: SessionUiLanguage): { compact: string; exact: string } {
+  let unitIndex = 0;
+  for (let index = 1; index < TOKEN_USAGE_UNITS.length; index += 1) {
+    if (count < TOKEN_USAGE_UNITS[index].divisor) break;
+    unitIndex = index;
+  }
+
+  let unit = TOKEN_USAGE_UNITS[unitIndex];
+  let rounded = Number((count / unit.divisor).toPrecision(TOKEN_USAGE_SIGNIFICANT_DIGITS));
+  if (rounded >= 1_000 && unitIndex < TOKEN_USAGE_UNITS.length - 1) {
+    unitIndex += 1;
+    unit = TOKEN_USAGE_UNITS[unitIndex];
+    rounded = Number((count / unit.divisor).toPrecision(TOKEN_USAGE_SIGNIFICANT_DIGITS));
+  }
+
+  const exact = TOKEN_USAGE_EXACT_FORMATTERS[language].format(count);
+  return {
+    compact: unitIndex === 0 ? exact : `${TOKEN_USAGE_COMPACT_FORMATTER.format(rounded)}${unit.suffix}`,
+    exact,
+  };
+}
+
+function TokenUsageValue(props: { count: number; label: TokenUsageLabel; language: SessionUiLanguage }) {
+  const display = formatTokenCount(props.count, props.language);
+  const visibleText = `${display.compact} ${props.label}`;
+  const exactText = `${display.exact} ${props.label}`;
+  return (
+    <span title={exactText} aria-label={`${visibleText}, ${labels[props.language].exactValue} ${exactText}`}>
+      {visibleText}
+    </span>
+  );
+}
 
 type SessionWorkspaceStatus = { kind: 'ready' | 'busy' | 'warning' | 'error'; label: string };
 
@@ -2001,7 +2049,7 @@ function SessionRuntimeDetails(props: { state: NativeSessionState; conversation:
     <details className="session-runtime-details" data-severity={warning ? 'warning' : 'ready'} aria-label={copy.runtimeDetails}>
       <summary>
         {modelLabel ? <span>{modelLabel}</span> : null}
-        {usage ? <span>{copy.tokens(usage.totalTokens)}</span> : null}
+        {usage ? <TokenUsageValue count={usage.totalTokens} label="tokens" language={props.language} /> : null}
         {rateLimits ? <span>{runtimeValueHeadline(rateLimits)}</span> : null}
         {mcpStartup ? <span>{runtimeValueHeadline(mcpStartup)}</span> : null}
         <span className="session-runtime-severity">
@@ -2020,7 +2068,8 @@ function SessionRuntimeDetails(props: { state: NativeSessionState; conversation:
           <div>
             <dt>{copy.usage}</dt>
             <dd>
-              {copy.tokens(usage.totalTokens)} · {usage.inputTokens} in · {usage.outputTokens} out
+              <TokenUsageValue count={usage.totalTokens} label="tokens" language={props.language} /> · <TokenUsageValue count={usage.inputTokens} label="in" language={props.language} /> ·{' '}
+              <TokenUsageValue count={usage.outputTokens} label="out" language={props.language} />
             </dd>
           </div>
         ) : null}
