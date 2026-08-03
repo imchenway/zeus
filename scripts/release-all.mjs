@@ -10,6 +10,8 @@ import { setTimeout as delay } from 'node:timers/promises';
 const repositoryRoot = resolve(import.meta.dirname, '..');
 const repository = 'imchenway/zeus';
 const releaseFiles = ['package.json', 'apps/desktop/package.json'];
+const isolatedSourceEnvironment = 'ZEUS_RELEASE_ISOLATED_SOURCE';
+const isolationValidationEnvironment = 'ZEUS_RELEASE_VALIDATE_ISOLATION';
 
 main().catch((error) => {
   console.error(error instanceof Error ? error.message : String(error));
@@ -20,6 +22,16 @@ async function main() {
   const outputDirectory = resolveOutputDirectory();
   mkdirSync(outputDirectory, { recursive: true, mode: 0o700 });
   assertRepositoryPreflight();
+  const initialHeadSha = git(['rev-parse', 'HEAD']);
+  const initialWorktreeStatus = git(['status', '--short']);
+  const isolationValidation = parseBooleanEnvironment(isolationValidationEnvironment, false);
+  if (isolationValidation && (!initialWorktreeStatus || process.env[isolatedSourceEnvironment])) {
+    throw new Error(`${isolationValidationEnvironment} 只允许验证脏工作区的隔离路径，不能进入当前仓库的真实发布主链路。`);
+  }
+  if (initialWorktreeStatus && !process.env[isolatedSourceEnvironment]) {
+    await runIsolatedRelease({ outputDirectory, sourceHead: initialHeadSha, worktreeStatus: initialWorktreeStatus });
+    return;
+  }
   const codexCommandPath = resolveCodexCommandPath();
   assertCodexCapability(codexCommandPath);
   assertGitHubAuthentication();
@@ -27,7 +39,7 @@ async function main() {
   const stableRelease = readLatestStableRelease();
   fetchReleaseFacts(stableRelease.tag);
   const publicCommit = git(['rev-parse', `${stableRelease.tag}^{commit}`]);
-  const headSha = git(['rev-parse', 'HEAD']);
+  const headSha = initialHeadSha;
   assertMainRelationship(headSha);
   const packageVersion = readMatchingPackageVersion();
   const nextVersion = incrementPatch(stableRelease.version);
@@ -79,6 +91,94 @@ async function main() {
   }
   console.log(`Zeus ${releaseState.version} 已完成 main 推送、公开发布与产物回验。`);
   for (const path of artifactPaths) console.log(`ZEUS_ARTIFACT_FILE=${path}`);
+}
+
+async function runIsolatedRelease(input) {
+  if (!/^[a-f0-9]{40}$/u.test(input.sourceHead)) throw new Error(`隔离发布源提交无效：${input.sourceHead}`);
+  const origin = git(['remote', 'get-url', 'origin']);
+  const isolatedRoot = join(repositoryRoot, '.tmp', 'zeus-release-isolated');
+  const isolatedRepository = join(isolatedRoot, input.sourceHead);
+  mkdirSync(isolatedRoot, { recursive: true, mode: 0o700 });
+
+  if (!existsSync(isolatedRepository)) {
+    runInDirectory(repositoryRoot, 'git', ['clone', '--shared', '--branch', 'main', '--single-branch', repositoryRoot, isolatedRepository]);
+  } else if (!existsSync(join(isolatedRepository, '.git'))) {
+    throw new Error(`隔离发布目录已存在但不是 Git 仓库，拒绝覆盖或清理：${isolatedRepository}`);
+  }
+
+  runInDirectory(isolatedRepository, 'git', ['remote', 'set-url', 'origin', origin]);
+  runInDirectory(isolatedRepository, 'git', ['fetch', '--force', 'origin', 'refs/heads/main:refs/remotes/origin/main']);
+  const isolatedBranch = gitInDirectory(isolatedRepository, ['branch', '--show-current']) || '(detached HEAD)';
+  const isolatedHead = gitInDirectory(isolatedRepository, ['rev-parse', 'HEAD']);
+  if (isolatedBranch !== 'main') throw new Error(`隔离发布副本不在 main：${isolatedBranch}`);
+  if (isolatedHead !== input.sourceHead && !isRecoverableIsolatedReleaseCommit(isolatedRepository, input.sourceHead, isolatedHead)) {
+    throw new Error(`隔离发布副本已经偏离发布源，拒绝覆盖或清理：source=${input.sourceHead} isolated=${isolatedHead}`);
+  }
+  if (captureInDirectory(isolatedRepository, 'git', ['merge-base', '--is-ancestor', 'origin/main', input.sourceHead], true).status !== 0) {
+    throw new Error(`origin/main 已领先发布源或与之分叉，拒绝隔离发布：source=${input.sourceHead}`);
+  }
+
+  console.log(`检测到未提交内容，改用隔离发布副本：${isolatedRepository}`);
+  console.log(`发布源固定为本地 main HEAD：${input.sourceHead}`);
+  console.log('暂存、未暂存和未跟踪内容均不会复制、提交或打包；原工作区保持原样。');
+
+  await runStage('准备隔离发布依赖', 'pnpm', ['install', '--frozen-lockfile'], process.env, { cwd: isolatedRepository });
+
+  if (parseBooleanEnvironment(isolationValidationEnvironment, false)) {
+    const currentHead = git(['rev-parse', 'HEAD']);
+    const currentWorktreeStatus = git(['status', '--short']);
+    if (currentHead !== input.sourceHead || currentWorktreeStatus !== input.worktreeStatus) {
+      throw new Error('隔离校验期间原工作区发生变化，无法证明发布编排保持原样。');
+    }
+    const isolatedStatus = gitInDirectory(isolatedRepository, ['status', '--short']);
+    if (isolatedHead !== input.sourceHead || isolatedStatus) {
+      throw new Error(`隔离副本不是发布源的干净快照：head=${isolatedHead}\n${isolatedStatus}`);
+    }
+    const resultPath = join(input.outputDirectory, `Zeus-isolated-release-${input.sourceHead.slice(0, 12)}-validation.md`);
+    writeFileSync(resultPath, buildIsolationValidationResult(input, isolatedRepository), { mode: 0o600 });
+    console.log('隔离发布校验通过；验证模式没有执行版本写入、提交、push、标签或公开发布。');
+    console.log(`ZEUS_ARTIFACT_FILE=${resultPath}`);
+    return;
+  }
+
+  await runStage(
+    '在隔离副本执行端到端发布',
+    'pnpm',
+    ['release'],
+    {
+      ...process.env,
+      [isolatedSourceEnvironment]: input.sourceHead,
+      ZEUS_COMMAND_RUN_DIR: input.outputDirectory,
+    },
+    { cwd: isolatedRepository, preserveArtifactLines: true },
+  );
+  const currentOriginalHead = git(['rev-parse', 'HEAD']);
+  if (currentOriginalHead === input.sourceHead) console.log(`隔离发布已完成；原工作区和本地 main 仍保持在 ${input.sourceHead.slice(0, 12)}。`);
+  else console.log(`隔离发布已完成；原工作区的 main 在执行期间由其他流程移动到 ${currentOriginalHead.slice(0, 12)}，本脚本没有改写它。`);
+  console.log('请在处理完未提交内容后显式同步 origin/main；脚本不会自动 stash、恢复、合并或变基。');
+}
+
+function isRecoverableIsolatedReleaseCommit(isolatedRepository, sourceHead, isolatedHead) {
+  const parent = captureInDirectory(isolatedRepository, 'git', ['rev-parse', `${isolatedHead}^`], true);
+  if (parent.status !== 0 || parent.stdout.trim() !== sourceHead) return false;
+  const changedPaths = gitInDirectory(isolatedRepository, ['diff-tree', '--no-commit-id', '--name-only', '-r', isolatedHead]).split(/\r?\n/u).filter(Boolean);
+  const versionNotes = changedPaths.filter((path) => /^docs\/releases\/v\d+\.\d+\.\d+\.md$/u.test(path));
+  return changedPaths.length === 3 && releaseFiles.every((path) => changedPaths.includes(path)) && versionNotes.length === 1;
+}
+
+function buildIsolationValidationResult(input, isolatedRepository) {
+  return [
+    '# Zeus 脏工作区隔离发布校验',
+    '',
+    `- 发布源：${input.sourceHead}`,
+    `- 隔离副本：${isolatedRepository}`,
+    '- 隔离副本分支：main',
+    '- 隔离副本工作区：干净',
+    '- 原仓库 HEAD：保持不变',
+    '- 原仓库 porcelain 状态：保持不变',
+    '- 版本写入、提交、push、标签、GitHub Release、Homebrew Tap：均未执行',
+    '',
+  ].join('\n');
 }
 
 function assertRepositoryPreflight() {
@@ -510,14 +610,14 @@ function writeState(state) {
   renameSync(temporary, path);
 }
 
-async function runStage(label, command, args, env) {
+async function runStage(label, command, args, env, options = {}) {
   console.log(`\n[${label}] ${command} ${args.join(' ')}`);
   await new Promise((resolveRun, rejectRun) => {
-    const child = spawn(command, args, { cwd: repositoryRoot, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(command, args, { cwd: options.cwd ?? repositoryRoot, env, stdio: ['ignore', 'pipe', 'pipe'] });
     const stdout = createInterface({ input: child.stdout });
     const stderr = createInterface({ input: child.stderr });
     stdout.on('line', (line) => {
-      if (line.startsWith('ZEUS_ARTIFACT_FILE=')) console.log(`[内部阶段产物] ${line.slice('ZEUS_ARTIFACT_FILE='.length)}`);
+      if (line.startsWith('ZEUS_ARTIFACT_FILE=') && !options.preserveArtifactLines) console.log(`[内部阶段产物] ${line.slice('ZEUS_ARTIFACT_FILE='.length)}`);
       else console.log(line);
     });
     stderr.on('line', (line) => console.error(line));
@@ -527,6 +627,38 @@ async function runStage(label, command, args, env) {
       else rejectRun(new Error(`${label}失败${signal ? `，信号 ${signal}` : `，退出码 ${code ?? 'unknown'}`}。`));
     });
   });
+}
+
+function parseBooleanEnvironment(name, defaultValue) {
+  const rawValue = process.env[name];
+  if (rawValue === undefined || rawValue.trim() === '') return defaultValue;
+  const normalized = rawValue.trim().toLocaleLowerCase();
+  if (['1', 'true', 'yes'].includes(normalized)) return true;
+  if (['0', 'false', 'no'].includes(normalized)) return false;
+  throw new Error(`${name} 必须是布尔值；当前值为 ${rawValue}。`);
+}
+
+function runInDirectory(cwd, command, args) {
+  const result = spawnSync(command, args, { cwd, encoding: 'utf8', stdio: 'inherit' });
+  if (result.error) throw result.error;
+  if (result.status !== 0) throw new Error(`${command} ${args.join(' ')} 执行失败，退出码 ${result.status ?? 'unknown'}。`);
+}
+
+function captureInDirectory(cwd, command, args, allowFailure = false, timeout = 30_000) {
+  const result = spawnSync(command, args, {
+    cwd,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    timeout,
+    maxBuffer: 16 * 1024 * 1024,
+  });
+  if (result.error) throw result.error;
+  if (!allowFailure && result.status !== 0) throw new Error(`${command} ${args.join(' ')} 执行失败：${result.stderr.trim() || result.stdout.trim() || result.status}`);
+  return { status: result.status, stdout: result.stdout ?? '', stderr: result.stderr ?? '' };
+}
+
+function gitInDirectory(cwd, args) {
+  return captureInDirectory(cwd, 'git', ['-c', 'core.quotePath=false', ...args]).stdout.trimEnd();
 }
 
 function run(command, args) {

@@ -10049,9 +10049,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
 
   function getNonCodexTaskAttachmentsUnsupportedMessage(adapterId: NonCodexAiCliAdapterId, task: ZeusTaskRecord): string | null {
     const sourceContext = parseTaskSourceContext(task);
-    return Array.isArray(sourceContext.attachments) && sourceContext.attachments.length > 0
-      ? `Runtime adapter ${adapterId} 不支持任务附件，未启动会话。`
-      : null;
+    return Array.isArray(sourceContext.attachments) && sourceContext.attachments.length > 0 ? `Runtime adapter ${adapterId} 不支持任务附件，未启动会话。` : null;
   }
 
   function assertNonCodexTaskAttachmentsSupported(adapterId: NonCodexAiCliAdapterId, task: ZeusTaskRecord): void {
@@ -10071,14 +10069,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     return candidates.size === 1 ? (candidates.values().next().value ?? null) : null;
   }
 
-  function createNonCodexTaskRuntimeInvocation(
-    adapterId: NonCodexAiCliAdapterId,
-    project: ZeusProjectRecord,
-    task: ZeusTaskRecord,
-    instruction?: string,
-    prompt = createTaskRuntimePrompt(task, instruction),
-    commandPathOverride?: string,
-  ) {
+  function createNonCodexTaskRuntimeInvocation(adapterId: NonCodexAiCliAdapterId, project: ZeusProjectRecord, task: ZeusTaskRecord, instruction?: string, prompt = createTaskRuntimePrompt(task, instruction), commandPathOverride?: string) {
     assertNonCodexTaskAttachmentsSupported(adapterId, task);
     const projectConfig = readProjectConfig(project.id);
     // 项目默认模型优先级高于全局 Runtime 模型；未配置时才回退到全局设置。
