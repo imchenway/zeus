@@ -1,20 +1,20 @@
-import {createHash} from 'node:crypto';
-import {mkdir, readFile, writeFile} from 'node:fs/promises';
-import {dirname} from 'node:path';
-import {nanoid} from 'nanoid';
-import initSqlJs, {type Database, type SqlJsStatic, type SqlValue} from 'sql.js';
+import { createHash } from 'node:crypto';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { dirname } from 'node:path';
+import { nanoid } from 'nanoid';
+import initSqlJs, { type Database, type SqlJsStatic, type SqlValue } from 'sql.js';
 import {
-    type ConversationResourceKind,
-    type ConversationResourcePresentation,
-    isTaskManagementStatus,
-    isTaskPriority,
-    type TaskAttachmentReference,
-    type TaskManagementStatus,
-    type TaskPriority,
-    type TurnChangeFileType,
-    type TurnChangeSetState,
+  type ConversationResourceKind,
+  type ConversationResourcePresentation,
+  isTaskManagementStatus,
+  isTaskPriority,
+  type TaskAttachmentReference,
+  type TaskManagementStatus,
+  type TaskPriority,
+  type TurnChangeFileType,
+  type TurnChangeSetState,
 } from '@zeus/shared';
-import {migrateCommandCenterSchema} from './commands.js';
+import { migrateCommandCenterSchema } from './commands.js';
 
 export * from './commands.js';
 
@@ -115,9 +115,9 @@ export interface ZeusTaskIntegrationRecord {
   integrationPath: string | null;
   resultHeadSha: string | null;
   state: TaskIntegrationState;
-    localSyncStatus: TaskIntegrationLocalSyncStatus | null;
-    localHeadSha: string | null;
-    localWorktreePath: string | null;
+  localSyncStatus: TaskIntegrationLocalSyncStatus | null;
+  localHeadSha: string | null;
+  localWorktreePath: string | null;
   conflictFiles: string[];
   lastError: string | null;
   createdAt: string;
@@ -140,9 +140,9 @@ export interface UpdateTaskIntegrationInput {
   integrationPath?: string | null;
   resultHeadSha?: string | null;
   state?: TaskIntegrationState;
-    localSyncStatus?: TaskIntegrationLocalSyncStatus | null;
-    localHeadSha?: string | null;
-    localWorktreePath?: string | null;
+  localSyncStatus?: TaskIntegrationLocalSyncStatus | null;
+  localHeadSha?: string | null;
+  localWorktreePath?: string | null;
   conflictFiles?: string[];
   lastError?: string | null;
 }
@@ -415,13 +415,13 @@ export interface ZeusConversationRecord {
   permissionMode: ConversationPermissionMode;
   collaborationMode: ConversationCollaborationMode;
   completionUnread: boolean;
-    agentKind: ConversationAgentKind | null;
-    agentTransport: ConversationAgentTransport | null;
-    modelSourceId: string | null;
-    modelId: string | null;
-    nativeSessionId: string | null;
-    nativeSessionPath: string | null;
-    capabilitySnapshotId: string | null;
+  agentKind: ConversationAgentKind | null;
+  agentTransport: ConversationAgentTransport | null;
+  modelSourceId: string | null;
+  modelId: string | null;
+  nativeSessionId: string | null;
+  nativeSessionPath: string | null;
+  capabilitySnapshotId: string | null;
 }
 
 export type ConversationTransportKind = 'legacy_cli' | 'codex_native';
@@ -512,13 +512,13 @@ export interface CreateConversationInput {
   legacySourceConversationId?: string;
   permissionMode?: ConversationPermissionMode;
   collaborationMode?: ConversationCollaborationMode;
-    agentKind?: ConversationAgentKind;
-    agentTransport?: ConversationAgentTransport;
-    modelSourceId?: string;
-    modelId?: string;
-    nativeSessionId?: string;
-    nativeSessionPath?: string;
-    capabilitySnapshotId?: string;
+  agentKind?: ConversationAgentKind;
+  agentTransport?: ConversationAgentTransport;
+  modelSourceId?: string;
+  modelId?: string;
+  nativeSessionId?: string;
+  nativeSessionPath?: string;
+  capabilitySnapshotId?: string;
 }
 
 export interface AppendConversationMessageInput {
@@ -605,8 +605,8 @@ export interface ZeusConversationTurnRecord {
   completedAt: string | null;
   createdAt: string;
   updatedAt: string;
-    agentKind: ConversationAgentKind | null;
-    nativeRunId: string | null;
+  agentKind: ConversationAgentKind | null;
+  nativeRunId: string | null;
 }
 
 export type ConversationItemType = 'userMessage' | 'agentMessage' | 'reasoning' | 'commandExecution' | 'fileChange' | 'mcpToolCall' | 'dynamicToolCall' | 'plan' | 'imageView' | 'webSearch' | 'error';
@@ -627,36 +627,36 @@ export interface ZeusConversationItemRecord {
   startedAt: string | null;
   completedAt: string | null;
   updatedAt: string;
-    agentKind: ConversationAgentKind | null;
-    nativeItemId: string | null;
+  agentKind: ConversationAgentKind | null;
+  nativeItemId: string | null;
 }
 
 export type AgentCapabilitySupportStatus = 'unavailable' | 'framework_only' | 'experimental' | 'verified';
 
 export interface ZeusAgentCapabilitySnapshotRecord {
-    id: string;
-    agentKind: ConversationAgentKind;
-    transportKind: ConversationAgentTransport;
-    supportStatus: AgentCapabilitySupportStatus;
-    adapterVersion: string | null;
-    binaryVersion: string | null;
-    protocolVersion: string | null;
-    capabilitiesJson: string;
-    evidenceJson: string;
-    checkedAt: string;
+  id: string;
+  agentKind: ConversationAgentKind;
+  transportKind: ConversationAgentTransport;
+  supportStatus: AgentCapabilitySupportStatus;
+  adapterVersion: string | null;
+  binaryVersion: string | null;
+  protocolVersion: string | null;
+  capabilitiesJson: string;
+  evidenceJson: string;
+  checkedAt: string;
 }
 
 export interface CreateAgentCapabilitySnapshotInput {
-    id?: string;
-    agentKind: ConversationAgentKind;
-    transportKind: ConversationAgentTransport;
-    supportStatus: AgentCapabilitySupportStatus;
-    adapterVersion?: string;
-    binaryVersion?: string;
-    protocolVersion?: string;
-    capabilities: unknown;
-    evidence: unknown;
-    checkedAt: string;
+  id?: string;
+  agentKind: ConversationAgentKind;
+  transportKind: ConversationAgentTransport;
+  supportStatus: AgentCapabilitySupportStatus;
+  adapterVersion?: string;
+  binaryVersion?: string;
+  protocolVersion?: string;
+  capabilities: unknown;
+  evidence: unknown;
+  checkedAt: string;
 }
 
 export interface ZeusConversationResourceRecord {
@@ -1085,7 +1085,7 @@ export async function createZeusDatabase(filePath: string): Promise<ZeusDatabase
   migrateRetiredUnitTestTemplate(zeusDb);
   migrateTaskManagementStatus(zeusDb);
   migrateCodexNativeConversationSchema(zeusDb);
-    migrateAgentRuntimeSchema(zeusDb);
+  migrateAgentRuntimeSchema(zeusDb);
   migrateTaskGitWorkspaceSchema(zeusDb);
   migrateCodexLegacyImportSchema(zeusDb);
   migrateMcpServerIdentifierFalsePositiveCleanup(zeusDb);
@@ -1497,20 +1497,20 @@ function migrateTaskGitWorkspaceSchema(db: ZeusDatabase): void {
       updated_at TEXT NOT NULL
     )
   `);
-    for (const statement of [
-        `ALTER TABLE task_integrations
+  for (const statement of [
+    `ALTER TABLE task_integrations
             ADD COLUMN local_sync_status TEXT`,
-        `ALTER TABLE task_integrations
+    `ALTER TABLE task_integrations
             ADD COLUMN local_head_sha TEXT`,
-        `ALTER TABLE task_integrations
+    `ALTER TABLE task_integrations
             ADD COLUMN local_worktree_path TEXT`,
-    ]) {
-        try {
-            db.execute(statement);
-        } catch {
-            // sql.js 不支持 ADD COLUMN IF NOT EXISTS；字段存在时保留当前数据。
-        }
+  ]) {
+    try {
+      db.execute(statement);
+    } catch {
+      // sql.js 不支持 ADD COLUMN IF NOT EXISTS；字段存在时保留当前数据。
     }
+  }
   db.execute(`CREATE INDEX IF NOT EXISTS idx_task_integrations_task_state ON task_integrations(task_id, state, updated_at)`);
   db.execute(`CREATE UNIQUE INDEX IF NOT EXISTS idx_task_integrations_active_workspace_target ON task_integrations(workspace_id, target_branch) WHERE state IN ('preparing', 'conflicted')`);
   recordSchemaMigration(db, {
@@ -1518,11 +1518,11 @@ function migrateTaskGitWorkspaceSchema(db: ZeusDatabase): void {
     description: '增加可跨会话复用的任务分支与 worktree 生命周期记录',
     checksumSource: 'task_workspaces,task_integrations,conversations.workspace_id,project_branch,worktree_path,task_state,integration_state',
   });
-    recordSchemaMigration(db, {
-        migrationId: '20260803_0002_task_integration_local_sync',
-        description: '记录任务分支远端交付后的本地目标分支同步状态',
-        checksumSource: 'task_integrations:local_sync_status,local_head_sha,local_worktree_path',
-    });
+  recordSchemaMigration(db, {
+    migrationId: '20260803_0002_task_integration_local_sync',
+    description: '记录任务分支远端交付后的本地目标分支同步状态',
+    checksumSource: 'task_integrations:local_sync_status,local_head_sha,local_worktree_path',
+  });
 }
 
 function createSchemaMigrationsLedger(db: ZeusDatabase): void {
@@ -1749,27 +1749,27 @@ function migrateCodexNativeConversationSchema(db: ZeusDatabase): void {
 }
 
 function migrateAgentRuntimeSchema(db: ZeusDatabase): void {
-    for (const statement of [
-        `ALTER TABLE conversations ADD COLUMN agent_kind TEXT`,
-        `ALTER TABLE conversations ADD COLUMN agent_transport TEXT`,
-        `ALTER TABLE conversations ADD COLUMN model_source_id TEXT`,
-        `ALTER TABLE conversations ADD COLUMN model_id TEXT`,
-        `ALTER TABLE conversations ADD COLUMN native_session_id TEXT`,
-        `ALTER TABLE conversations ADD COLUMN native_session_path TEXT`,
-        `ALTER TABLE conversations ADD COLUMN capability_snapshot_id TEXT`,
-        `ALTER TABLE conversation_turns ADD COLUMN agent_kind TEXT`,
-        `ALTER TABLE conversation_turns ADD COLUMN native_run_id TEXT`,
-        `ALTER TABLE conversation_items ADD COLUMN agent_kind TEXT`,
-        `ALTER TABLE conversation_items ADD COLUMN native_item_id TEXT`,
-    ]) {
-        try {
-            db.execute(statement);
-        } catch {
-            // sql.js 不支持 ADD COLUMN IF NOT EXISTS；字段存在时保持当前数据。
-        }
+  for (const statement of [
+    `ALTER TABLE conversations ADD COLUMN agent_kind TEXT`,
+    `ALTER TABLE conversations ADD COLUMN agent_transport TEXT`,
+    `ALTER TABLE conversations ADD COLUMN model_source_id TEXT`,
+    `ALTER TABLE conversations ADD COLUMN model_id TEXT`,
+    `ALTER TABLE conversations ADD COLUMN native_session_id TEXT`,
+    `ALTER TABLE conversations ADD COLUMN native_session_path TEXT`,
+    `ALTER TABLE conversations ADD COLUMN capability_snapshot_id TEXT`,
+    `ALTER TABLE conversation_turns ADD COLUMN agent_kind TEXT`,
+    `ALTER TABLE conversation_turns ADD COLUMN native_run_id TEXT`,
+    `ALTER TABLE conversation_items ADD COLUMN agent_kind TEXT`,
+    `ALTER TABLE conversation_items ADD COLUMN native_item_id TEXT`,
+  ]) {
+    try {
+      db.execute(statement);
+    } catch {
+      // sql.js 不支持 ADD COLUMN IF NOT EXISTS；字段存在时保持当前数据。
     }
+  }
 
-    db.execute(`
+  db.execute(`
     CREATE TABLE IF NOT EXISTS agent_capability_snapshots (
       id TEXT PRIMARY KEY,
       agent_kind TEXT NOT NULL,
@@ -1783,33 +1783,33 @@ function migrateAgentRuntimeSchema(db: ZeusDatabase): void {
       checked_at TEXT NOT NULL
     )
   `);
-    db.execute(`CREATE INDEX IF NOT EXISTS idx_agent_capability_snapshots_agent_checked ON agent_capability_snapshots(agent_kind, checked_at DESC)`);
-    db.execute(`CREATE UNIQUE INDEX IF NOT EXISTS idx_conversations_agent_native_session ON conversations(agent_kind, native_session_id) WHERE agent_kind IS NOT NULL AND native_session_id IS NOT NULL`);
-    db.execute(`CREATE UNIQUE INDEX IF NOT EXISTS idx_conversation_turn_agent_native_run ON conversation_turns(agent_kind, provider_thread_id, native_run_id) WHERE agent_kind IS NOT NULL AND native_run_id IS NOT NULL`);
-    db.execute(`CREATE UNIQUE INDEX IF NOT EXISTS idx_conversation_item_agent_native_item ON conversation_items(agent_kind, provider_thread_id, native_item_id) WHERE agent_kind IS NOT NULL AND native_item_id IS NOT NULL`);
+  db.execute(`CREATE INDEX IF NOT EXISTS idx_agent_capability_snapshots_agent_checked ON agent_capability_snapshots(agent_kind, checked_at DESC)`);
+  db.execute(`CREATE UNIQUE INDEX IF NOT EXISTS idx_conversations_agent_native_session ON conversations(agent_kind, native_session_id) WHERE agent_kind IS NOT NULL AND native_session_id IS NOT NULL`);
+  db.execute(`CREATE UNIQUE INDEX IF NOT EXISTS idx_conversation_turn_agent_native_run ON conversation_turns(agent_kind, provider_thread_id, native_run_id) WHERE agent_kind IS NOT NULL AND native_run_id IS NOT NULL`);
+  db.execute(`CREATE UNIQUE INDEX IF NOT EXISTS idx_conversation_item_agent_native_item ON conversation_items(agent_kind, provider_thread_id, native_item_id) WHERE agent_kind IS NOT NULL AND native_item_id IS NOT NULL`);
 
-    // 只回填有明确传输证据的 Codex 原生会话；历史 CLI 记录不猜测 Agent 或模型来源。
-    db.execute(`UPDATE conversations SET
+  // 只回填有明确传输证据的 Codex 原生会话；历史 CLI 记录不猜测 Agent 或模型来源。
+  db.execute(`UPDATE conversations SET
     agent_kind = COALESCE(agent_kind, 'codex'),
     agent_transport = COALESCE(agent_transport, 'app_server'),
     model_id = COALESCE(model_id, provider_model),
     native_session_id = COALESCE(native_session_id, provider_thread_id),
     native_session_path = COALESCE(native_session_path, provider_thread_path)
     WHERE transport_kind = 'codex_native'`);
-    db.execute(`UPDATE conversation_turns SET
+  db.execute(`UPDATE conversation_turns SET
     agent_kind = COALESCE(agent_kind, 'codex'),
     native_run_id = COALESCE(native_run_id, provider_turn_id)
     WHERE conversation_id IN (SELECT id FROM conversations WHERE agent_kind = 'codex')`);
-    db.execute(`UPDATE conversation_items SET
+  db.execute(`UPDATE conversation_items SET
     agent_kind = COALESCE(agent_kind, 'codex'),
     native_item_id = COALESCE(native_item_id, provider_item_id)
     WHERE conversation_id IN (SELECT id FROM conversations WHERE agent_kind = 'codex')`);
 
-    recordSchemaMigration(db, {
-        migrationId: '20260803_0001_agent_runtime_framework',
-        description: '增加多 Agent 身份、原生会话映射与能力证据快照',
-        checksumSource: 'agent_runtime_framework:conversation_identity,turn_identity,item_identity,capability_snapshot,backfill_codex_native',
-    });
+  recordSchemaMigration(db, {
+    migrationId: '20260803_0001_agent_runtime_framework',
+    description: '增加多 Agent 身份、原生会话映射与能力证据快照',
+    checksumSource: 'agent_runtime_framework:conversation_identity,turn_identity,item_identity,capability_snapshot,backfill_codex_native',
+  });
 }
 
 function backfillConversationCollaborationModes(db: ZeusDatabase): void {
@@ -2694,9 +2694,9 @@ export class TaskIntegrationRepository {
       integrationPath: input.integrationPath ?? null,
       resultHeadSha: null,
       state,
-        localSyncStatus: null,
-        localHeadSha: null,
-        localWorktreePath: null,
+      localSyncStatus: null,
+      localHeadSha: null,
+      localWorktreePath: null,
       conflictFiles: [],
       lastError: null,
       createdAt: timestamp,
@@ -2743,9 +2743,9 @@ export class TaskIntegrationRepository {
         'integrationPath' in input ? (input.integrationPath ?? null) : existing.integrationPath,
         'resultHeadSha' in input ? (input.resultHeadSha ?? null) : existing.resultHeadSha,
         state,
-          'localSyncStatus' in input ? (input.localSyncStatus ?? null) : existing.localSyncStatus,
-          'localHeadSha' in input ? (input.localHeadSha ?? null) : existing.localHeadSha,
-          'localWorktreePath' in input ? (input.localWorktreePath ?? null) : existing.localWorktreePath,
+        'localSyncStatus' in input ? (input.localSyncStatus ?? null) : existing.localSyncStatus,
+        'localHeadSha' in input ? (input.localHeadSha ?? null) : existing.localHeadSha,
+        'localWorktreePath' in input ? (input.localWorktreePath ?? null) : existing.localWorktreePath,
         JSON.stringify(input.conflictFiles ?? existing.conflictFiles),
         'lastError' in input ? (input.lastError ?? null) : existing.lastError,
         nowIso(),
@@ -3094,41 +3094,40 @@ const selectConversationMessageFields = `id, conversation_id, role, content, sou
 
 /** 保存一次真实能力检查的版本与结论，不保存命令原文、密钥或对话正文。 */
 export class AgentCapabilitySnapshotRepository {
-    constructor(private readonly db: ZeusDatabase) {
-    }
+  constructor(private readonly db: ZeusDatabase) {}
 
-    create(input: CreateAgentCapabilitySnapshotInput): ZeusAgentCapabilitySnapshotRecord {
-        const record: ZeusAgentCapabilitySnapshotRecord = {
-            id: input.id ?? `agent_capability_${nanoid(12)}`,
-            agentKind: assertEnum(input.agentKind, ['codex', 'pi', 'claude'] as const, 'agent capability kind'),
-            transportKind: assertEnum(input.transportKind, ['app_server', 'rpc', 'sdk'] as const, 'agent capability transport'),
-            supportStatus: assertEnum(input.supportStatus, ['unavailable', 'framework_only', 'experimental', 'verified'] as const, 'agent capability support status'),
-            adapterVersion: input.adapterVersion ?? null,
-            binaryVersion: input.binaryVersion ?? null,
-            protocolVersion: input.protocolVersion ?? null,
-            capabilitiesJson: JSON.stringify(input.capabilities),
-            evidenceJson: JSON.stringify(input.evidence),
-            checkedAt: input.checkedAt,
-        };
-        this.db.execute(
-            `INSERT INTO agent_capability_snapshots
+  create(input: CreateAgentCapabilitySnapshotInput): ZeusAgentCapabilitySnapshotRecord {
+    const record: ZeusAgentCapabilitySnapshotRecord = {
+      id: input.id ?? `agent_capability_${nanoid(12)}`,
+      agentKind: assertEnum(input.agentKind, ['codex', 'pi', 'claude'] as const, 'agent capability kind'),
+      transportKind: assertEnum(input.transportKind, ['app_server', 'rpc', 'sdk'] as const, 'agent capability transport'),
+      supportStatus: assertEnum(input.supportStatus, ['unavailable', 'framework_only', 'experimental', 'verified'] as const, 'agent capability support status'),
+      adapterVersion: input.adapterVersion ?? null,
+      binaryVersion: input.binaryVersion ?? null,
+      protocolVersion: input.protocolVersion ?? null,
+      capabilitiesJson: JSON.stringify(input.capabilities),
+      evidenceJson: JSON.stringify(input.evidence),
+      checkedAt: input.checkedAt,
+    };
+    this.db.execute(
+      `INSERT INTO agent_capability_snapshots
        (id, agent_kind, transport_kind, support_status, adapter_version, binary_version, protocol_version, capabilities_json, evidence_json, checked_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [record.id, record.agentKind, record.transportKind, record.supportStatus, record.adapterVersion, record.binaryVersion, record.protocolVersion, record.capabilitiesJson, record.evidenceJson, record.checkedAt],
-        );
-        return record;
-    }
+      [record.id, record.agentKind, record.transportKind, record.supportStatus, record.adapterVersion, record.binaryVersion, record.protocolVersion, record.capabilitiesJson, record.evidenceJson, record.checkedAt],
+    );
+    return record;
+  }
 
-    getById(id: string): ZeusAgentCapabilitySnapshotRecord | undefined {
-        const row = this.db.get<DbAgentCapabilitySnapshotRow>(`SELECT * FROM agent_capability_snapshots WHERE id = ?`, [id]);
-        return row ? mapAgentCapabilitySnapshotRow(row) : undefined;
-    }
+  getById(id: string): ZeusAgentCapabilitySnapshotRecord | undefined {
+    const row = this.db.get<DbAgentCapabilitySnapshotRow>(`SELECT * FROM agent_capability_snapshots WHERE id = ?`, [id]);
+    return row ? mapAgentCapabilitySnapshotRow(row) : undefined;
+  }
 
-    listByAgent(agentKind: ConversationAgentKind, limit = 20): ZeusAgentCapabilitySnapshotRecord[] {
-        const normalizedAgentKind = assertEnum(agentKind, ['codex', 'pi', 'claude'] as const, 'agent capability kind');
-        const safeLimit = Math.max(1, Math.min(Math.trunc(limit), 200));
-        return this.db.select<DbAgentCapabilitySnapshotRow>(`SELECT * FROM agent_capability_snapshots WHERE agent_kind = ? ORDER BY checked_at DESC, id DESC LIMIT ?`, [normalizedAgentKind, safeLimit]).map(mapAgentCapabilitySnapshotRow);
-    }
+  listByAgent(agentKind: ConversationAgentKind, limit = 20): ZeusAgentCapabilitySnapshotRecord[] {
+    const normalizedAgentKind = assertEnum(agentKind, ['codex', 'pi', 'claude'] as const, 'agent capability kind');
+    const safeLimit = Math.max(1, Math.min(Math.trunc(limit), 200));
+    return this.db.select<DbAgentCapabilitySnapshotRow>(`SELECT * FROM agent_capability_snapshots WHERE agent_kind = ? ORDER BY checked_at DESC, id DESC LIMIT ?`, [normalizedAgentKind, safeLimit]).map(mapAgentCapabilitySnapshotRow);
+  }
 }
 
 /** 对话仓储保存 AI 对话主记录与消息，不写入任何 seed 对话。 */
@@ -3140,12 +3139,8 @@ export class ConversationRepository {
     const providerState = assertEnum(input.providerState ?? 'unbound', ['unbound', 'binding', 'ready', 'active', 'waiting', 'paused', 'archived', 'closed', 'failed'] as const, 'conversation provider state');
     const permissionMode = assertEnum(input.permissionMode ?? 'read-only', ['read-only', 'auto', 'full-access'] as const, 'conversation permission mode');
     const collaborationMode = assertEnum(input.collaborationMode ?? 'default', ['default', 'plan'] as const, 'conversation collaboration mode');
-      const agentKind = input.agentKind ? assertEnum(input.agentKind, ['codex', 'pi', 'claude'] as const, 'conversation agent kind') : transportKind === 'codex_native' ? 'codex' : null;
-      const agentTransport = input.agentTransport
-          ? assertEnum(input.agentTransport, ['app_server', 'rpc', 'sdk'] as const, 'conversation agent transport')
-          : transportKind === 'codex_native'
-              ? 'app_server'
-              : null;
+    const agentKind = input.agentKind ? assertEnum(input.agentKind, ['codex', 'pi', 'claude'] as const, 'conversation agent kind') : transportKind === 'codex_native' ? 'codex' : null;
+    const agentTransport = input.agentTransport ? assertEnum(input.agentTransport, ['app_server', 'rpc', 'sdk'] as const, 'conversation agent transport') : transportKind === 'codex_native' ? 'app_server' : null;
     const timestamp = nowIso();
     const record: ZeusConversationRecord = {
       id: input.id ?? `conversation_${nanoid(12)}`,
@@ -3173,13 +3168,13 @@ export class ConversationRepository {
       permissionMode,
       collaborationMode,
       completionUnread: false,
-        agentKind,
-        agentTransport,
-        modelSourceId: input.modelSourceId ?? null,
-        modelId: input.modelId ?? input.providerModel ?? null,
-        nativeSessionId: input.nativeSessionId ?? input.providerThreadId ?? null,
-        nativeSessionPath: input.nativeSessionPath ?? input.providerThreadPath ?? null,
-        capabilitySnapshotId: input.capabilitySnapshotId ?? null,
+      agentKind,
+      agentTransport,
+      modelSourceId: input.modelSourceId ?? null,
+      modelId: input.modelId ?? input.providerModel ?? null,
+      nativeSessionId: input.nativeSessionId ?? input.providerThreadId ?? null,
+      nativeSessionPath: input.nativeSessionPath ?? input.providerThreadPath ?? null,
+      capabilitySnapshotId: input.capabilitySnapshotId ?? null,
     };
     this.db.execute(
       `INSERT INTO conversations (id, project_id, task_id, workspace_id, session_id, title, summary, status, created_at, updated_at, archived,
@@ -3211,13 +3206,13 @@ export class ConversationRepository {
         record.providerTokenUsageJson,
         record.permissionMode,
         record.collaborationMode,
-          record.agentKind,
-          record.agentTransport,
-          record.modelSourceId,
-          record.modelId,
-          record.nativeSessionId,
-          record.nativeSessionPath,
-          record.capabilitySnapshotId,
+        record.agentKind,
+        record.agentTransport,
+        record.modelSourceId,
+        record.modelId,
+        record.nativeSessionId,
+        record.nativeSessionPath,
+        record.capabilitySnapshotId,
       ],
     );
     return record;
@@ -3296,20 +3291,20 @@ export class ConversationRepository {
       `UPDATE conversations SET transport_kind = 'codex_native', provider_id = ?, provider_thread_id = ?, provider_thread_path = COALESCE(?, provider_thread_path),
        provider_model = COALESCE(?, provider_model), provider_state = ?, provider_protocol_version = COALESCE(?, provider_protocol_version), provider_binary_version = COALESCE(?, provider_binary_version),
        agent_kind = 'codex', agent_transport = 'app_server', model_id = COALESCE(?, model_id), native_session_id = ?, native_session_path = COALESCE(?, native_session_path), updated_at = ? WHERE id = ?`,
-        [
-            input.providerId,
-            input.providerThreadId,
-            input.providerThreadPath ?? null,
-            input.providerModel ?? null,
-            input.providerState,
-            input.providerProtocolVersion ?? null,
-            input.providerBinaryVersion ?? null,
-            input.providerModel ?? null,
-            input.providerThreadId,
-            input.providerThreadPath ?? null,
-            timestamp,
-            conversationId,
-        ],
+      [
+        input.providerId,
+        input.providerThreadId,
+        input.providerThreadPath ?? null,
+        input.providerModel ?? null,
+        input.providerState,
+        input.providerProtocolVersion ?? null,
+        input.providerBinaryVersion ?? null,
+        input.providerModel ?? null,
+        input.providerThreadId,
+        input.providerThreadPath ?? null,
+        timestamp,
+        conversationId,
+      ],
     );
     const updated = this.getById(conversationId);
     if (!updated) throw new Error(`Zeus conversation not found: ${conversationId}`);
@@ -3616,7 +3611,7 @@ export class CodexLegacyImportRepository {
           provider_protocol_version, provider_binary_version, legacy_source_conversation_id, provider_settings_json, provider_token_usage_json,
           agent_kind, agent_transport, native_session_id)
          VALUES (?, ?, ?, NULL, ?, ?, 'open', ?, ?, 0, 'codex_native', 'codex', ?, NULL, NULL, 'ready', ?, ?, ?, '{}', '{}', 'codex', 'app_server', ?)`,
-          [targetConversationId, source.project_id, source.task_id, source.title, source.summary, timestamp, timestamp, input.targetThreadId, input.providerBinaryVersion, input.providerBinaryVersion, source.id, input.targetThreadId],
+        [targetConversationId, source.project_id, source.task_id, source.title, source.summary, timestamp, timestamp, input.targetThreadId, input.providerBinaryVersion, input.providerBinaryVersion, source.id, input.targetThreadId],
       );
       const sourceMessages = this.db.select<DbConversationMessageRow>(`SELECT ${selectConversationMessageFields} FROM conversation_messages WHERE conversation_id = ? ORDER BY created_at, id`, [source.id]);
       for (const message of sourceMessages) {
@@ -3668,7 +3663,7 @@ export class ConversationTurnRepository {
   constructor(private readonly db: ZeusDatabase) {}
 
   upsert(
-      input: Omit<ZeusConversationTurnRecord, 'id' | 'errorJson' | 'planJson' | 'agentKind' | 'nativeRunId'> & {
+    input: Omit<ZeusConversationTurnRecord, 'id' | 'errorJson' | 'planJson' | 'agentKind' | 'nativeRunId'> & {
       id?: string;
       error?: unknown;
     },
@@ -3679,12 +3674,12 @@ export class ConversationTurnRepository {
     const id = existing?.id ?? input.id ?? `conversation_turn_${nanoid(12)}`;
     const errorJson = input.error === undefined ? null : JSON.stringify(input.error);
     this.db.execute(
-        `INSERT INTO conversation_turns (id, conversation_id, provider_thread_id, provider_turn_id, client_submission_id, status, error_json, started_at, completed_at, created_at, updated_at, agent_kind, native_run_id)
+      `INSERT INTO conversation_turns (id, conversation_id, provider_thread_id, provider_turn_id, client_submission_id, status, error_json, started_at, completed_at, created_at, updated_at, agent_kind, native_run_id)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'codex', ?)
        ON CONFLICT(id) DO UPDATE SET provider_thread_id = excluded.provider_thread_id, provider_turn_id = excluded.provider_turn_id,
        status = excluded.status, error_json = excluded.error_json, started_at = COALESCE(excluded.started_at, conversation_turns.started_at),
        completed_at = excluded.completed_at, updated_at = excluded.updated_at, agent_kind = excluded.agent_kind, native_run_id = COALESCE(excluded.native_run_id, conversation_turns.native_run_id)`,
-        [id, input.conversationId, input.providerThreadId, input.providerTurnId, input.clientSubmissionId, status, errorJson, input.startedAt, input.completedAt, input.createdAt, input.updatedAt, input.providerTurnId],
+      [id, input.conversationId, input.providerThreadId, input.providerTurnId, input.clientSubmissionId, status, errorJson, input.startedAt, input.completedAt, input.createdAt, input.updatedAt, input.providerTurnId],
     );
     return mapConversationTurnRow(this.db.get<DbConversationTurnRow>(`SELECT * FROM conversation_turns WHERE id = ?`, [id])!);
   }
@@ -3738,14 +3733,29 @@ export class ConversationItemRepository {
     if (existing?.status === 'completed') return existing;
     const id = existing?.id ?? `conversation_item_${nanoid(12)}`;
     this.db.execute(
-        `INSERT INTO conversation_items (id, conversation_id, turn_id, provider_thread_id, provider_turn_id, provider_item_id, item_type, status, phase, text_content, payload_json, started_at, completed_at, updated_at, agent_kind, native_item_id)
+      `INSERT INTO conversation_items (id, conversation_id, turn_id, provider_thread_id, provider_turn_id, provider_item_id, item_type, status, phase, text_content, payload_json, started_at, completed_at, updated_at, agent_kind, native_item_id)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, 'codex', ?)
        ON CONFLICT(provider_thread_id, provider_item_id) DO UPDATE SET
        turn_id = excluded.turn_id, provider_turn_id = excluded.provider_turn_id, item_type = excluded.item_type,
        status = excluded.status, phase = excluded.phase, text_content = conversation_items.text_content || excluded.text_content,
        payload_json = excluded.payload_json, started_at = COALESCE(conversation_items.started_at, excluded.started_at), updated_at = excluded.updated_at,
        agent_kind = excluded.agent_kind, native_item_id = excluded.native_item_id`,
-        [id, input.conversationId, input.turnId, input.providerThreadId, input.providerTurnId, input.providerItemId, itemType, status, phase, input.delta, JSON.stringify(input.payload), input.startedAt ?? null, input.updatedAt, input.providerItemId],
+      [
+        id,
+        input.conversationId,
+        input.turnId,
+        input.providerThreadId,
+        input.providerTurnId,
+        input.providerItemId,
+        itemType,
+        status,
+        phase,
+        input.delta,
+        JSON.stringify(input.payload),
+        input.startedAt ?? null,
+        input.updatedAt,
+        input.providerItemId,
+      ],
     );
     return this.getByProvider(input.providerThreadId, input.providerItemId)!;
   }
@@ -3758,14 +3768,29 @@ export class ConversationItemRepository {
     if (existing?.status === 'completed') return existing;
     const id = existing?.id ?? `conversation_item_${nanoid(12)}`;
     this.db.execute(
-        `INSERT INTO conversation_items (id, conversation_id, turn_id, provider_thread_id, provider_turn_id, provider_item_id, item_type, status, phase, text_content, payload_json, started_at, completed_at, updated_at, agent_kind, native_item_id)
+      `INSERT INTO conversation_items (id, conversation_id, turn_id, provider_thread_id, provider_turn_id, provider_item_id, item_type, status, phase, text_content, payload_json, started_at, completed_at, updated_at, agent_kind, native_item_id)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, 'codex', ?)
        ON CONFLICT(provider_thread_id, provider_item_id) DO UPDATE SET
        turn_id = excluded.turn_id, provider_turn_id = excluded.provider_turn_id, item_type = excluded.item_type,
        status = excluded.status, phase = excluded.phase, text_content = excluded.text_content,
        payload_json = excluded.payload_json, started_at = COALESCE(conversation_items.started_at, excluded.started_at),
        updated_at = excluded.updated_at, agent_kind = excluded.agent_kind, native_item_id = excluded.native_item_id`,
-        [id, input.conversationId, input.turnId, input.providerThreadId, input.providerTurnId, input.providerItemId, itemType, status, phase, input.textContent, JSON.stringify(input.payload), input.startedAt ?? null, input.updatedAt, input.providerItemId],
+      [
+        id,
+        input.conversationId,
+        input.turnId,
+        input.providerThreadId,
+        input.providerTurnId,
+        input.providerItemId,
+        itemType,
+        status,
+        phase,
+        input.textContent,
+        JSON.stringify(input.payload),
+        input.startedAt ?? null,
+        input.updatedAt,
+        input.providerItemId,
+      ],
     );
     return this.getByProvider(input.providerThreadId, input.providerItemId)!;
   }
@@ -3778,7 +3803,7 @@ export class ConversationItemRepository {
     if (existing?.status === 'completed') return existing;
     const id = existing?.id ?? `conversation_item_${nanoid(12)}`;
     this.db.execute(
-        `INSERT INTO conversation_items (id, conversation_id, turn_id, provider_thread_id, provider_turn_id, provider_item_id, item_type, status, phase, text_content, payload_json, started_at, completed_at, updated_at, agent_kind, native_item_id)
+      `INSERT INTO conversation_items (id, conversation_id, turn_id, provider_thread_id, provider_turn_id, provider_item_id, item_type, status, phase, text_content, payload_json, started_at, completed_at, updated_at, agent_kind, native_item_id)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'codex', ?)
        ON CONFLICT(provider_thread_id, provider_item_id) DO UPDATE SET
        turn_id = excluded.turn_id, provider_turn_id = excluded.provider_turn_id, item_type = excluded.item_type,
@@ -3800,7 +3825,7 @@ export class ConversationItemRepository {
         input.startedAt ?? null,
         input.completedAt,
         input.updatedAt,
-          input.providerItemId,
+        input.providerItemId,
       ],
     );
     return this.getByProvider(input.providerThreadId, input.providerItemId)!;
@@ -4766,13 +4791,13 @@ interface DbConversationRow {
   permission_mode: ConversationPermissionMode;
   collaboration_mode: ConversationCollaborationMode;
   completion_unread: number;
-    agent_kind: ConversationAgentKind | null;
-    agent_transport: ConversationAgentTransport | null;
-    model_source_id: string | null;
-    model_id: string | null;
-    native_session_id: string | null;
-    native_session_path: string | null;
-    capability_snapshot_id: string | null;
+  agent_kind: ConversationAgentKind | null;
+  agent_transport: ConversationAgentTransport | null;
+  model_source_id: string | null;
+  model_id: string | null;
+  native_session_id: string | null;
+  native_session_path: string | null;
+  capability_snapshot_id: string | null;
 }
 
 interface DbConversationMessageRow {
@@ -4820,8 +4845,8 @@ interface DbConversationTurnRow {
   completed_at: string | null;
   created_at: string;
   updated_at: string;
-    agent_kind: ConversationAgentKind | null;
-    native_run_id: string | null;
+  agent_kind: ConversationAgentKind | null;
+  native_run_id: string | null;
 }
 
 interface DbConversationItemRow {
@@ -4839,21 +4864,21 @@ interface DbConversationItemRow {
   started_at: string | null;
   completed_at: string | null;
   updated_at: string;
-    agent_kind: ConversationAgentKind | null;
-    native_item_id: string | null;
+  agent_kind: ConversationAgentKind | null;
+  native_item_id: string | null;
 }
 
 interface DbAgentCapabilitySnapshotRow {
-    id: string;
-    agent_kind: ConversationAgentKind;
-    transport_kind: ConversationAgentTransport;
-    support_status: AgentCapabilitySupportStatus;
-    adapter_version: string | null;
-    binary_version: string | null;
-    protocol_version: string | null;
-    capabilities_json: string;
-    evidence_json: string;
-    checked_at: string;
+  id: string;
+  agent_kind: ConversationAgentKind;
+  transport_kind: ConversationAgentTransport;
+  support_status: AgentCapabilitySupportStatus;
+  adapter_version: string | null;
+  binary_version: string | null;
+  protocol_version: string | null;
+  capabilities_json: string;
+  evidence_json: string;
+  checked_at: string;
 }
 
 interface DbConversationResourceRow {
@@ -5082,9 +5107,9 @@ interface DbTaskIntegrationRow {
   integration_path: string | null;
   result_head_sha: string | null;
   state: TaskIntegrationState;
-    local_sync_status: TaskIntegrationLocalSyncStatus | null;
-    local_head_sha: string | null;
-    local_worktree_path: string | null;
+  local_sync_status: TaskIntegrationLocalSyncStatus | null;
+  local_head_sha: string | null;
+  local_worktree_path: string | null;
   conflict_files_json: string;
   last_error: string | null;
   created_at: string;
@@ -5192,13 +5217,13 @@ function mapConversationRow(row: DbConversationRow): ZeusConversationRecord {
     permissionMode: assertEnum(row.permission_mode, ['read-only', 'auto', 'full-access'] as const, 'conversation permission mode'),
     collaborationMode: assertEnum(row.collaboration_mode, ['default', 'plan'] as const, 'conversation collaboration mode'),
     completionUnread: row.completion_unread === 1,
-      agentKind: row.agent_kind,
-      agentTransport: row.agent_transport,
-      modelSourceId: row.model_source_id,
-      modelId: row.model_id,
-      nativeSessionId: row.native_session_id,
-      nativeSessionPath: row.native_session_path,
-      capabilitySnapshotId: row.capability_snapshot_id,
+    agentKind: row.agent_kind,
+    agentTransport: row.agent_transport,
+    modelSourceId: row.model_source_id,
+    modelId: row.model_id,
+    nativeSessionId: row.native_session_id,
+    nativeSessionPath: row.native_session_path,
+    capabilitySnapshotId: row.capability_snapshot_id,
   };
 }
 
@@ -5252,8 +5277,8 @@ function mapConversationTurnRow(row: DbConversationTurnRow): ZeusConversationTur
     completedAt: row.completed_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
-      agentKind: row.agent_kind,
-      nativeRunId: row.native_run_id,
+    agentKind: row.agent_kind,
+    nativeRunId: row.native_run_id,
   };
 }
 
@@ -5273,23 +5298,23 @@ function mapConversationItemRow(row: DbConversationItemRow): ZeusConversationIte
     startedAt: row.started_at,
     completedAt: row.completed_at,
     updatedAt: row.updated_at,
-      agentKind: row.agent_kind,
-      nativeItemId: row.native_item_id,
+    agentKind: row.agent_kind,
+    nativeItemId: row.native_item_id,
   };
 }
 
 function mapAgentCapabilitySnapshotRow(row: DbAgentCapabilitySnapshotRow): ZeusAgentCapabilitySnapshotRecord {
-    return {
-        id: row.id,
-        agentKind: row.agent_kind,
-        transportKind: row.transport_kind,
-        supportStatus: row.support_status,
-        adapterVersion: row.adapter_version,
-        binaryVersion: row.binary_version,
-        protocolVersion: row.protocol_version,
-        capabilitiesJson: row.capabilities_json,
-        evidenceJson: row.evidence_json,
-        checkedAt: row.checked_at,
+  return {
+    id: row.id,
+    agentKind: row.agent_kind,
+    transportKind: row.transport_kind,
+    supportStatus: row.support_status,
+    adapterVersion: row.adapter_version,
+    binaryVersion: row.binary_version,
+    protocolVersion: row.protocol_version,
+    capabilitiesJson: row.capabilities_json,
+    evidenceJson: row.evidence_json,
+    checkedAt: row.checked_at,
   };
 }
 
@@ -5548,9 +5573,9 @@ function mapTaskIntegrationRow(row: DbTaskIntegrationRow): ZeusTaskIntegrationRe
     integrationPath: row.integration_path,
     resultHeadSha: row.result_head_sha,
     state: assertEnum(row.state, ['preparing', 'conflicted', 'merged', 'failed'] as const, 'task integration state'),
-      localSyncStatus: row.local_sync_status ? assertEnum(row.local_sync_status, ['synced', 'pending'] as const, 'task integration local sync status') : null,
-      localHeadSha: row.local_head_sha,
-      localWorktreePath: row.local_worktree_path,
+    localSyncStatus: row.local_sync_status ? assertEnum(row.local_sync_status, ['synced', 'pending'] as const, 'task integration local sync status') : null,
+    localHeadSha: row.local_head_sha,
+    localWorktreePath: row.local_worktree_path,
     conflictFiles,
     lastError: row.last_error,
     createdAt: row.created_at,

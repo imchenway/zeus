@@ -1,42 +1,32 @@
 import type {
-    AgentCatalogSnapshot,
-    CodexConversationCapabilities,
-    CodexTaskPushCapabilities,
-    ConversationResourcePreview,
-    NativeCollaborationMode,
-    NativeConversationChoicesSnapshot,
-    NativeConversationSnapshot,
-    NativeOperationAcceptance,
-    NativePendingRequest,
-    NativePermissionMode,
-    NativePlanImplementationRequest,
-    NativeProjectConversationChoicesSnapshot,
-    NativeQueueSnapshot,
-    SendNativeMessageRequest,
-    StartNativeConversationRequest,
-    StartProjectConversationRequest,
-    StartTaskModelPushRequest,
-    TaskGitDiffSummary,
-    TaskIntegrationConflictFile,
-    TaskIntegrationRecord,
-    TaskIntegrationResult,
-    TaskWorkspaceCommitResult,
-    TaskWorkspacePushResult,
-    TaskWorkspacesSnapshot,
-    TurnChangeSet,
-    TurnChangeSetOperationResult,
+  AgentCatalogSnapshot,
+  CodexConversationCapabilities,
+  CodexTaskPushCapabilities,
+  ConversationResourcePreview,
+  NativeCollaborationMode,
+  NativeConversationChoicesSnapshot,
+  NativeConversationSnapshot,
+  NativeOperationAcceptance,
+  NativePendingRequest,
+  NativePermissionMode,
+  NativePlanImplementationRequest,
+  NativeProjectConversationChoicesSnapshot,
+  NativeQueueSnapshot,
+  SendNativeMessageRequest,
+  StartNativeConversationRequest,
+  StartProjectConversationRequest,
+  StartTaskModelPushRequest,
+  TaskGitDiffSummary,
+  TaskIntegrationConflictFile,
+  TaskIntegrationRecord,
+  TaskIntegrationResult,
+  TaskWorkspaceCommitResult,
+  TaskWorkspacePushResult,
+  TaskWorkspacesSnapshot,
+  TurnChangeSet,
+  TurnChangeSetOperationResult,
 } from './session/sessionTypes.js';
-import type {
-    CommandArtifact,
-    CommandConfirmation,
-    CommandDefinition,
-    CommandDefinitionInput,
-    CommandRun,
-    TaskAttachmentReference,
-    TaskManagementStatus,
-    TaskPriority,
-    TaskStatusFilter
-} from '@zeus/shared';
+import type { CommandArtifact, CommandConfirmation, CommandDefinition, CommandDefinitionInput, CommandRun, TaskAttachmentReference, TaskManagementStatus, TaskPriority, TaskStatusFilter } from '@zeus/shared';
 
 export type { CommandArtifact, CommandConfirmation, CommandDefinition, CommandDefinitionInput, CommandParameterDefinition, CommandRun, CommandRunStatus, TaskManagementStatus, TaskPriority, TaskStatusFilter } from '@zeus/shared';
 
@@ -1147,7 +1137,7 @@ export interface ProjectArchiveConfirmation {
 
 export interface DashboardClient {
   connectEvents: (onEvent: (event: ZeusRealtimeEvent) => void, options?: { afterEventId?: string }) => WebSocket;
-    loadAgents: () => Promise<AgentCatalogSnapshot>;
+  loadAgents: () => Promise<AgentCatalogSnapshot>;
   loadProjectConversationChoices: (projectId: string) => Promise<NativeProjectConversationChoicesSnapshot>;
   startProjectConversation: (projectId: string, input: StartProjectConversationRequest) => Promise<NativeOperationAcceptance>;
   loadTaskConversationChoices: (taskId: string) => Promise<NativeConversationChoicesSnapshot>;
@@ -1156,27 +1146,39 @@ export interface DashboardClient {
   loadCodexConversationCapabilities: (projectId: string) => Promise<CodexConversationCapabilities>;
   startTaskModelPush: (taskId: string, input: StartTaskModelPushRequest) => Promise<NativeOperationAcceptance>;
   loadTaskGitWorkspaces: (taskId: string) => Promise<TaskWorkspacesSnapshot>;
-    loadTaskWorkspaceFileDiff: (taskId: string, workspaceId: string, path: string, scope?: 'working' | 'committed') => Promise<{
-        path: string;
-        diff: TaskGitDiffSummary
-    }>;
+  loadTaskWorkspaceFileDiff: (
+    taskId: string,
+    workspaceId: string,
+    path: string,
+    scope?: 'working' | 'committed',
+  ) => Promise<{
+    path: string;
+    diff: TaskGitDiffSummary;
+  }>;
   commitTaskWorkspace: (taskId: string, workspaceId: string, input: { message: string; selectedPaths: string[]; push: boolean }) => Promise<TaskWorkspaceCommitResult>;
   pushTaskWorkspace: (taskId: string, workspaceId: string) => Promise<TaskWorkspacePushResult>;
   reclaimTaskWorkspace: (taskId: string, workspaceId: string) => Promise<{ workspace: unknown; result?: unknown }>;
   discardTaskWorkspace: (taskId: string, workspaceId: string, confirmationText: string) => Promise<{ workspace: unknown; result: unknown }>;
   stopTaskWorkspaceSessions: (taskId: string, workspaceId: string) => Promise<{ workspaceId: string; interrupted: number; cancelled: number }>;
   loadTaskIntegrations: (taskId: string) => Promise<{ taskId: string; items: TaskIntegrationRecord[]; integrations: TaskIntegrationRecord[] }>;
-    startTaskIntegration: (taskId: string, workspaceId: string, input: {
-        targetBranch: string;
-        mode: 'merge' | 'squash'
-    }) => Promise<{ integration: TaskIntegrationRecord; result?: TaskIntegrationResult }>;
+  startTaskIntegration: (
+    taskId: string,
+    workspaceId: string,
+    input: {
+      targetBranch: string;
+      mode: 'merge' | 'squash';
+    },
+  ) => Promise<{ integration: TaskIntegrationRecord; result?: TaskIntegrationResult }>;
   loadTaskIntegrationConflict: (taskId: string, integrationId: string, path: string) => Promise<TaskIntegrationConflictFile>;
   resolveTaskIntegrationConflict: (taskId: string, integrationId: string, path: string, content: string) => Promise<{ integration: TaskIntegrationRecord; result: { path: string; remainingConflictFiles: string[] } }>;
   assistTaskIntegrationConflict: (taskId: string, integrationId: string, path: string) => Promise<{ path: string; suggestedContent: string }>;
-    finalizeTaskIntegration: (taskId: string, integrationId: string) => Promise<{
-        integration: TaskIntegrationRecord;
-        result: TaskIntegrationResult
-    }>;
+  finalizeTaskIntegration: (
+    taskId: string,
+    integrationId: string,
+  ) => Promise<{
+    integration: TaskIntegrationRecord;
+    result: TaskIntegrationResult;
+  }>;
   loadNativeConversation: (projectId: string, conversationId: string) => Promise<NativeConversationSnapshot>;
   loadConversationResourcePreview: (projectId: string, conversationId: string, resourceId: string) => Promise<ConversationResourcePreview>;
   loadTurnChangeSet: (projectId: string, conversationId: string, turnId: string) => Promise<TurnChangeSet>;
@@ -1449,7 +1451,7 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
 
   return {
     connectEvents: (onEvent, eventOptions) => connectZeusEvents(currentOptions, onEvent, eventOptions),
-      loadAgents: () => request<AgentCatalogSnapshot>('/api/agents'),
+    loadAgents: () => request<AgentCatalogSnapshot>('/api/agents'),
     loadProjectConversationChoices: (projectId) => request<NativeProjectConversationChoicesSnapshot>(`/api/projects/${encodeURIComponent(projectId)}/conversation-choices`),
     startProjectConversation: (projectId, input) => {
       const { idempotencyKey, ...body } = input;
@@ -1471,11 +1473,11 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
       });
     },
     loadTaskGitWorkspaces: (taskId) => request<TaskWorkspacesSnapshot>(`/api/tasks/${encodeURIComponent(taskId)}/git-workspaces`),
-      loadTaskWorkspaceFileDiff: (taskId, workspaceId, path, scope = 'working') =>
-          request<{
-              path: string;
-              diff: TaskGitDiffSummary
-          }>(`/api/tasks/${encodeURIComponent(taskId)}/git-workspaces/${encodeURIComponent(workspaceId)}/file-diff?path=${encodeURIComponent(path)}&scope=${encodeURIComponent(scope)}`),
+    loadTaskWorkspaceFileDiff: (taskId, workspaceId, path, scope = 'working') =>
+      request<{
+        path: string;
+        diff: TaskGitDiffSummary;
+      }>(`/api/tasks/${encodeURIComponent(taskId)}/git-workspaces/${encodeURIComponent(workspaceId)}/file-diff?path=${encodeURIComponent(path)}&scope=${encodeURIComponent(scope)}`),
     commitTaskWorkspace: (taskId, workspaceId, input) =>
       request<TaskWorkspaceCommitResult>(`/api/tasks/${encodeURIComponent(taskId)}/git-workspaces/${encodeURIComponent(workspaceId)}/commit`, {
         method: 'POST',
@@ -1500,10 +1502,10 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
       request<{ workspaceId: string; interrupted: number; cancelled: number }>(`/api/tasks/${encodeURIComponent(taskId)}/git-workspaces/${encodeURIComponent(workspaceId)}/stop-sessions`, { method: 'POST', body: JSON.stringify({}) }),
     loadTaskIntegrations: (taskId) => request<{ taskId: string; items: TaskIntegrationRecord[]; integrations: TaskIntegrationRecord[] }>(`/api/tasks/${encodeURIComponent(taskId)}/integrations`),
     startTaskIntegration: (taskId, workspaceId, input) =>
-        request<{
-            integration: TaskIntegrationRecord;
-            result?: TaskIntegrationResult
-        }>(`/api/tasks/${encodeURIComponent(taskId)}/git-workspaces/${encodeURIComponent(workspaceId)}/integrate`, {
+      request<{
+        integration: TaskIntegrationRecord;
+        result?: TaskIntegrationResult;
+      }>(`/api/tasks/${encodeURIComponent(taskId)}/git-workspaces/${encodeURIComponent(workspaceId)}/integrate`, {
         method: 'POST',
         body: JSON.stringify(input),
       }),
@@ -1519,10 +1521,10 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
         body: JSON.stringify({}),
       }),
     finalizeTaskIntegration: (taskId, integrationId) =>
-        request<{
-            integration: TaskIntegrationRecord;
-            result: TaskIntegrationResult
-        }>(`/api/tasks/${encodeURIComponent(taskId)}/integrations/${encodeURIComponent(integrationId)}/finalize`, {
+      request<{
+        integration: TaskIntegrationRecord;
+        result: TaskIntegrationResult;
+      }>(`/api/tasks/${encodeURIComponent(taskId)}/integrations/${encodeURIComponent(integrationId)}/finalize`, {
         method: 'POST',
         body: JSON.stringify({}),
       }),

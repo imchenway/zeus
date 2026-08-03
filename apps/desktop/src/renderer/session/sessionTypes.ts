@@ -1,9 +1,4 @@
-import type {
-    ConversationResource,
-    TurnChangeSet,
-    ZeusBrowserComment,
-    ZeusBrowserPreparedSubmission
-} from '@zeus/shared';
+import type { ConversationResource, TurnChangeSet, ZeusBrowserComment, ZeusBrowserPreparedSubmission } from '@zeus/shared';
 
 export type { ConversationResource, ConversationResourcePreview, TurnChangeSet, TurnChangeSetOperationResult } from '@zeus/shared';
 
@@ -185,9 +180,9 @@ export interface NativeConversationSnapshot {
     model: string | null;
     state: string | null;
   };
-    agent?: NativeAgentIdentity;
-    model?: NativeModelIdentity;
-    nativeSession?: NativeSessionIdentity;
+  agent?: NativeAgentIdentity;
+  model?: NativeModelIdentity;
+  nativeSession?: NativeSessionIdentity;
   createdAt: string;
   updatedAt: string;
   archived: boolean;
@@ -245,48 +240,48 @@ export interface NativeConversationChoice {
   readOnly: boolean;
   permissionMode?: NativePermissionMode;
   collaborationMode?: NativeCollaborationMode;
-    agent?: NativeAgentIdentity;
-    model?: NativeModelIdentity;
-    nativeSession?: NativeSessionIdentity;
+  agent?: NativeAgentIdentity;
+  model?: NativeModelIdentity;
+  nativeSession?: NativeSessionIdentity;
 }
 
 export interface NativeAgentIdentity {
-    kind: 'codex' | 'pi' | 'claude' | null;
-    transport: 'app_server' | 'rpc' | 'sdk' | null;
-    supportStatus: 'unavailable' | 'framework_only' | 'experimental' | 'verified';
-    capabilitySnapshotId: string | null;
+  kind: 'codex' | 'pi' | 'claude' | null;
+  transport: 'app_server' | 'rpc' | 'sdk' | null;
+  supportStatus: 'unavailable' | 'framework_only' | 'experimental' | 'verified';
+  capabilitySnapshotId: string | null;
 }
 
 export interface NativeModelIdentity {
-    sourceId: string | null;
-    id: string | null;
+  sourceId: string | null;
+  id: string | null;
 }
 
 export interface NativeSessionIdentity {
-    id: string | null;
-    path: string | null;
+  id: string | null;
+  path: string | null;
 }
 
 export interface AgentCatalogItem {
-    kind: 'codex' | 'pi' | 'claude';
-    displayName: string;
-    transport: 'app_server' | 'rpc' | 'sdk';
-    supportStatus: 'unavailable' | 'framework_only' | 'experimental' | 'verified';
-    visibleToUsers: boolean;
-    capabilities: Record<
-        string,
-        {
-            state: 'supported' | 'unsupported' | 'unverified';
-            checkedAt: string | null;
-            adapterVersion: string | null;
-            binaryVersion: string | null;
-            reason: string;
-        }
-    >;
+  kind: 'codex' | 'pi' | 'claude';
+  displayName: string;
+  transport: 'app_server' | 'rpc' | 'sdk';
+  supportStatus: 'unavailable' | 'framework_only' | 'experimental' | 'verified';
+  visibleToUsers: boolean;
+  capabilities: Record<
+    string,
+    {
+      state: 'supported' | 'unsupported' | 'unverified';
+      checkedAt: string | null;
+      adapterVersion: string | null;
+      binaryVersion: string | null;
+      reason: string;
+    }
+  >;
 }
 
 export interface AgentCatalogSnapshot {
-    items: AgentCatalogItem[];
+  items: AgentCatalogItem[];
 }
 
 export interface NativeConversationChoicesSnapshot {
@@ -391,22 +386,22 @@ export interface TaskGitDiffSummary {
 }
 
 export interface TaskBranchFileChange {
-    path: string;
-    originalPath?: string;
-    changeType: TaskGitFileDiff['changeType'];
-    additions: number;
-    deletions: number;
+  path: string;
+  originalPath?: string;
+  changeType: TaskGitFileDiff['changeType'];
+  additions: number;
+  deletions: number;
 }
 
 export interface TaskBranchComparison {
-    sourceBranch: string;
-    taskBranch: string;
-    sourceHeadSha: string;
-    taskHeadSha: string;
-    mergeBaseSha: string;
-    ahead: number;
-    behind: number;
-    files: TaskBranchFileChange[];
+  sourceBranch: string;
+  taskBranch: string;
+  sourceHeadSha: string;
+  taskHeadSha: string;
+  mergeBaseSha: string;
+  ahead: number;
+  behind: number;
+  files: TaskBranchFileChange[];
 }
 
 export interface TaskWorkspaceReview {
@@ -428,18 +423,18 @@ export interface TaskWorkspaceReview {
 export interface TaskWorkspaceSnapshot extends TaskWorkspaceRecord {
   activeConversationCount: number;
   review: TaskWorkspaceReview | null;
-    branchComparison: TaskBranchComparison | null;
-    remoteHeadSha: string | null;
-    remoteVerified: boolean;
+  branchComparison: TaskBranchComparison | null;
+  remoteHeadSha: string | null;
+  remoteVerified: boolean;
   reviewError?: string;
-    comparisonError?: string;
+  comparisonError?: string;
 }
 
 export interface TaskWorkspacesSnapshot {
   taskId: string;
   projectId: string;
   primaryBranch: string | null;
-    localBranches: string[];
+  localBranches: string[];
   items: TaskWorkspaceSnapshot[];
   workspaces: TaskWorkspaceSnapshot[];
 }
@@ -481,9 +476,9 @@ export interface TaskIntegrationRecord {
   integrationPath: string | null;
   resultHeadSha: string | null;
   state: 'preparing' | 'conflicted' | 'merged' | 'failed';
-    localSyncStatus: 'synced' | 'pending' | null;
-    localHeadSha: string | null;
-    localWorktreePath: string | null;
+  localSyncStatus: 'synced' | 'pending' | null;
+  localHeadSha: string | null;
+  localWorktreePath: string | null;
   conflictFiles: string[];
   lastError: string | null;
   createdAt: string;
@@ -491,14 +486,14 @@ export interface TaskIntegrationRecord {
 }
 
 export interface TaskIntegrationResult {
-    targetBranch: string;
-    targetHeadSha: string;
-    resultHeadSha: string;
-    remoteName: string;
-    remoteHeadSha: string;
-    localSyncStatus: 'synced' | 'pending';
-    localHeadSha: string;
-    localWorktreePath: string | null;
+  targetBranch: string;
+  targetHeadSha: string;
+  resultHeadSha: string;
+  remoteName: string;
+  remoteHeadSha: string;
+  localSyncStatus: 'synced' | 'pending';
+  localHeadSha: string;
+  localWorktreePath: string | null;
 }
 
 export interface TaskIntegrationConflictFile {
@@ -525,7 +520,7 @@ export interface NativeTurnSettingsSelection {
 }
 
 export interface StartTaskModelPushRequest {
-    agentKind?: 'codex' | 'pi' | 'claude';
+  agentKind?: 'codex' | 'pi' | 'claude';
   mode: 'create';
   source: 'task_push';
   model: string;
@@ -549,7 +544,7 @@ export type StartNativeConversationRequest =
       serviceTier?: string | null;
       idempotencyKey: string;
       clientUserMessageId: string;
-    agentKind?: 'codex' | 'pi' | 'claude';
+      agentKind?: 'codex' | 'pi' | 'claude';
     }
   | {
       mode: 'resume';
@@ -558,7 +553,7 @@ export type StartNativeConversationRequest =
       collaborationMode: NativeCollaborationMode;
       idempotencyKey: string;
       clientUserMessageId: string;
-    agentKind?: 'codex' | 'pi' | 'claude';
+      agentKind?: 'codex' | 'pi' | 'claude';
     }
   | {
       mode: 'reference_legacy';
@@ -569,11 +564,11 @@ export type StartNativeConversationRequest =
       collaborationMode: NativeCollaborationMode;
       idempotencyKey: string;
       clientUserMessageId: string;
-    agentKind?: 'codex' | 'pi' | 'claude';
+      agentKind?: 'codex' | 'pi' | 'claude';
     };
 
 export interface StartProjectConversationRequest {
-    agentKind?: 'codex' | 'pi' | 'claude';
+  agentKind?: 'codex' | 'pi' | 'claude';
   mode: 'create';
   content: string;
   attachments: NativeConversationAttachment[];
@@ -585,7 +580,7 @@ export interface StartProjectConversationRequest {
 }
 
 export interface SendNativeMessageRequest {
-    agentKind?: 'codex' | 'pi' | 'claude';
+  agentKind?: 'codex' | 'pi' | 'claude';
   content: string;
   displayText?: string;
   attachments: NativeConversationAttachment[];

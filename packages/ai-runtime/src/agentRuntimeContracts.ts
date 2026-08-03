@@ -6,118 +6,106 @@ export type AgentSupportStatus = 'unavailable' | 'framework_only' | 'experimenta
 
 export type AgentCapabilityState = 'supported' | 'unsupported' | 'unverified';
 
-export type AgentCapabilityId =
-    | 'session'
-    | 'streaming'
-    | 'steer'
-    | 'follow_up'
-    | 'interrupt'
-    | 'approval'
-    | 'user_input'
-    | 'model_catalog'
-    | 'service_tier'
-    | 'usage'
-    | 'compaction'
-    | 'retry';
+export type AgentCapabilityId = 'session' | 'streaming' | 'steer' | 'follow_up' | 'interrupt' | 'approval' | 'user_input' | 'model_catalog' | 'service_tier' | 'usage' | 'compaction' | 'retry';
 
 export interface AgentCapabilityEvidence {
-    state: AgentCapabilityState;
-    checkedAt: string | null;
-    adapterVersion: string | null;
-    binaryVersion: string | null;
-    reason: string;
+  state: AgentCapabilityState;
+  checkedAt: string | null;
+  adapterVersion: string | null;
+  binaryVersion: string | null;
+  reason: string;
 }
 
 export interface AgentDescriptor {
-    kind: AgentKind;
-    displayName: string;
-    transport: AgentTransportKind;
-    supportStatus: AgentSupportStatus;
-    visibleToUsers: boolean;
-    capabilities: Partial<Record<AgentCapabilityId, AgentCapabilityEvidence>>;
+  kind: AgentKind;
+  displayName: string;
+  transport: AgentTransportKind;
+  supportStatus: AgentSupportStatus;
+  visibleToUsers: boolean;
+  capabilities: Partial<Record<AgentCapabilityId, AgentCapabilityEvidence>>;
 }
 
 export interface AgentModelIdentity {
-    sourceId: string | null;
-    modelId: string;
-    displayName: string | null;
+  sourceId: string | null;
+  modelId: string;
+  displayName: string | null;
 }
 
 export interface AgentSessionIdentity {
-    agentKind: AgentKind;
-    nativeSessionId: string;
-    nativeSessionPath: string | null;
-    runtimeInstanceId: string;
+  agentKind: AgentKind;
+  nativeSessionId: string;
+  nativeSessionPath: string | null;
+  runtimeInstanceId: string;
 }
 
 export interface AgentRuntimeProbe {
-    available: boolean;
-    checkedAt: string;
-    adapterVersion: string | null;
-    binaryVersion: string | null;
-    protocolVersion: string | null;
-    reason: string;
+  available: boolean;
+  checkedAt: string;
+  adapterVersion: string | null;
+  binaryVersion: string | null;
+  protocolVersion: string | null;
+  reason: string;
 }
 
 export interface OpenAgentSessionInput {
-    cwd: string;
-    model: AgentModelIdentity;
-    metadata?: Record<string, unknown>;
+  cwd: string;
+  model: AgentModelIdentity;
+  metadata?: Record<string, unknown>;
 }
 
 export interface ResumeAgentSessionInput {
-    nativeSessionId: string;
-    nativeSessionPath?: string | null;
-    cwd?: string;
+  nativeSessionId: string;
+  nativeSessionPath?: string | null;
+  cwd?: string;
 }
 
 export interface StartAgentRunInput {
-    session: AgentSessionIdentity;
-    content: string;
-    clientRequestId: string;
+  session: AgentSessionIdentity;
+  content: string;
+  clientRequestId: string;
 }
 
 export interface SteerAgentRunInput extends StartAgentRunInput {
-    nativeRunId: string;
+  nativeRunId: string;
 }
 
 export type FollowUpAgentRunInput = StartAgentRunInput;
 
 export interface InterruptAgentRunInput {
-    session: AgentSessionIdentity;
-    nativeRunId: string;
+  session: AgentSessionIdentity;
+  nativeRunId: string;
 }
 
 export interface RespondAgentInteractionInput {
-    session: AgentSessionIdentity;
-    requestId: string;
-    response: unknown;
+  session: AgentSessionIdentity;
+  requestId: string;
+  response: unknown;
 }
 
 export interface ReadAgentSessionInput {
-    session: AgentSessionIdentity;
+  session: AgentSessionIdentity;
 }
 
 export interface AcceptedAgentRun {
-    nativeRunId: string;
-    acceptedAt: string;
+  nativeRunId: string;
+  acceptedAt: string;
 }
 
 export interface AgentSessionSnapshot {
-    session: AgentSessionIdentity;
-    state: 'idle' | 'active' | 'waiting' | 'paused' | 'failed';
-    raw: unknown;
+  session: AgentSessionIdentity;
+  state: 'idle' | 'active' | 'waiting' | 'paused' | 'failed';
+  raw: unknown;
 }
 
 export interface AgentRuntimeEvent {
-    agentKind: AgentKind;
-    runtimeInstanceId: string;
-    nativeSessionId: string | null;
-    nativeRunId: string | null;
-    sequence: number;
-    type: string;
-    payload: unknown;
-    createdAt: string;
+  agentKind: AgentKind;
+  runtimeInstanceId: string;
+  nativeSessionId: string | null;
+  nativeRunId: string | null;
+  sequence: number;
+  type: string;
+  payload: unknown;
+  createdAt: string;
 }
 
 /**
@@ -125,31 +113,31 @@ export interface AgentRuntimeEvent {
  * 当前公共框架没有提供 Pi 的实现，也不会启动 Pi 进程。
  */
 export interface AgentRuntimeDriver {
-    readonly kind: AgentKind;
+  readonly kind: AgentKind;
 
-    probe(): Promise<AgentRuntimeProbe>;
+  probe(): Promise<AgentRuntimeProbe>;
 
-    readCapabilities(): Promise<AgentDescriptor>;
+  readCapabilities(): Promise<AgentDescriptor>;
 
-    openSession(input: OpenAgentSessionInput): Promise<AgentSessionIdentity>;
+  openSession(input: OpenAgentSessionInput): Promise<AgentSessionIdentity>;
 
-    resumeSession(input: ResumeAgentSessionInput): Promise<AgentSessionIdentity>;
+  resumeSession(input: ResumeAgentSessionInput): Promise<AgentSessionIdentity>;
 
-    startRun(input: StartAgentRunInput): Promise<AcceptedAgentRun>;
+  startRun(input: StartAgentRunInput): Promise<AcceptedAgentRun>;
 
-    steerRun(input: SteerAgentRunInput): Promise<AcceptedAgentRun>;
+  steerRun(input: SteerAgentRunInput): Promise<AcceptedAgentRun>;
 
-    followUp(input: FollowUpAgentRunInput): Promise<AcceptedAgentRun>;
+  followUp(input: FollowUpAgentRunInput): Promise<AcceptedAgentRun>;
 
-    interruptRun(input: InterruptAgentRunInput): Promise<void>;
+  interruptRun(input: InterruptAgentRunInput): Promise<void>;
 
-    respondToInteraction(input: RespondAgentInteractionInput): Promise<void>;
+  respondToInteraction(input: RespondAgentInteractionInput): Promise<void>;
 
-    readSession(input: ReadAgentSessionInput): Promise<AgentSessionSnapshot>;
+  readSession(input: ReadAgentSessionInput): Promise<AgentSessionSnapshot>;
 
-    recover(): Promise<void>;
+  recover(): Promise<void>;
 
-    close(input: { mode: 'handoff' | 'final' }): Promise<void>;
+  close(input: { mode: 'handoff' | 'final' }): Promise<void>;
 
-    subscribe(listener: (event: AgentRuntimeEvent) => void): () => void;
+  subscribe(listener: (event: AgentRuntimeEvent) => void): () => void;
 }
