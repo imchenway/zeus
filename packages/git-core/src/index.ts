@@ -16,6 +16,11 @@ export interface GitStatusSummary {
   recentCommits: GitRecentCommit[];
 }
 
+export interface GitWorkingContext {
+  isRepository: boolean;
+  branch: string | null;
+}
+
 export interface GitWorktreeEntry {
   path: string;
   headSha: string;
@@ -887,6 +892,17 @@ export async function getGitStatus(cwd: string): Promise<GitStatusSummary> {
     };
   } catch {
     return emptyGitStatus();
+  }
+}
+
+/** 只读获取指定目录此刻所在的 Git 分支，供会话界面展示真实执行现场。 */
+export async function getGitWorkingContext(cwd: string): Promise<GitWorkingContext> {
+  try {
+    await execFileAsync('git', ['rev-parse', '--is-inside-work-tree'], { cwd });
+    const branch = (await execFileAsync('git', ['branch', '--show-current'], { cwd })).stdout.trim();
+    return { isRepository: true, branch: branch || 'detached' };
+  } catch {
+    return { isRepository: false, branch: null };
   }
 }
 
