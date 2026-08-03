@@ -242,6 +242,7 @@ type NativeConversationAppClient = SessionControllerClient &
     | 'loadTaskGitWorkspaces'
     | 'loadTaskWorkspaceFileDiff'
     | 'commitTaskWorkspace'
+    | 'pushTaskWorkspace'
     | 'reclaimTaskWorkspace'
     | 'discardTaskWorkspace'
     | 'stopTaskWorkspaceSessions'
@@ -6321,7 +6322,7 @@ export function App(props: {
   const [taskGitReviewState, setTaskGitReviewState] = useState<{
     taskId: string;
     workspaceId?: string | null;
-    mode: 'commit' | 'delivery' | 'completed' | 'cancelled';
+    mode: 'commit' | 'commit-only' | 'push-only' | 'delivery' | 'completed' | 'cancelled';
     returnToCodeDelivery?: boolean;
   } | null>(null);
   const [taskGitMergeTaskId, setTaskGitMergeTaskId] = useState<string | null>(null);
@@ -8132,13 +8133,17 @@ export function App(props: {
   }
 
   function closeTaskGitReview(): void {
+    const closedTaskId = taskGitReviewState?.taskId ?? null;
     const returnTaskId = taskGitReviewState?.returnToCodeDelivery ? taskGitReviewState.taskId : null;
     setTaskGitReviewState(null);
-    if (!returnTaskId) return;
-    // 交付准备弹窗结束后回到同一代码交付上下文，任务管理状态保持不变。
-    setTaskGitMergeTaskId(returnTaskId);
-    void refreshNativeConversationChoices(returnTaskId);
-    refreshOpenTaskEvents(returnTaskId);
+    if (closedTaskId) {
+      void refreshNativeConversationChoices(closedTaskId);
+      refreshOpenTaskEvents(closedTaskId);
+    }
+    if (returnTaskId) {
+      // 交付准备弹窗结束后回到同一代码交付上下文，任务管理状态保持不变。
+      setTaskGitMergeTaskId(returnTaskId);
+    }
   }
 
   async function updateTaskManagementStatus(taskId: string, status: TaskManagementStatus, options: { skipGitReview?: boolean; expectedUpdatedAt?: string } = {}): Promise<TaskEditResult | undefined> {
@@ -10701,6 +10706,8 @@ export function App(props: {
                         onOpenConversation={(taskId, conversationId) => void openTaskConversation(taskId, conversationId)}
                         onPushNewConversation={(taskId) => void openTaskModelPush(taskId)}
                         onOpenCodeDelivery={(taskId) => setTaskGitMergeTaskId(taskId)}
+                        onCommitCode={(taskId) => setTaskGitReviewState({ taskId, mode: 'commit-only' })}
+                        onPushCode={(taskId) => setTaskGitReviewState({ taskId, mode: 'push-only' })}
                         onUpdateTaskContent={updateTaskContent}
                         onManagementStatusChange={(taskId, status, expectedUpdatedAt) => updateTaskManagementStatus(taskId, status, { expectedUpdatedAt })}
                         onChooseAttachments={props.onChooseTaskAttachments}

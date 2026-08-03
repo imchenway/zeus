@@ -64,6 +64,7 @@ import {
   getGitWorkingContext,
   getTaskWorkspaceFileDiff,
   getTaskWorkspaceReview,
+  pushTaskWorkspace,
   type GitDiffSummary,
   type GitOperationConfirmation,
   type GitPatchExport,
@@ -3645,6 +3646,46 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       return { workspace: taskWorkspaces.getById(workspace.id), result, review: await getTaskWorkspaceReview(workspace.worktreePath) };
     } catch (error) {
       taskWorkspaces.update(workspace.id, { state: 'failed', lastError: error instanceof Error ? error.message : 'Task workspace commit failed.' });
+      await db.save();
+      return sendTaskGitApiError(reply, error);
+    }
+  });
+
+  server.post('/api/tasks/:taskId/git-workspaces/:workspaceId/push', async (request: FastifyRequest<{ Params: { taskId: string; workspaceId: string } }>, reply) => {
+    const resolved = resolveTaskWorkspaceRequest(request.params.taskId, request.params.workspaceId);
+    if ('error' in resolved) return reply.code(resolved.status).send(resolved.error);
+    const { task, workspace } = resolved;
+    try {
+      assertTaskWorkspaceWritable(workspace);
+    } catch (error) {
+      return sendTaskGitApiError(reply, error);
+    }
+    if (!workspace.worktreePath) return reply.code(409).send({ error: 'ZEUS_TASK_WORKTREE_UNAVAILABLE', message: 'Task worktree is not available.' });
+    try {
+      const result = await pushTaskWorkspace({
+        cwd: workspace.worktreePath,
+        remoteName: workspace.remoteName,
+        remoteBranch: workspace.remoteBranch,
+      });
+      taskWorkspaces.update(workspace.id, { headSha: result.headSha, state: 'ready', lastError: null });
+      recordTaskEvent({
+        taskId: task.id,
+        eventType: 'task.git_workspace.pushed',
+        title: '任务分支已推送',
+        payload: { workspaceId: workspace.id, branchName: workspace.branchName, ...result },
+      });
+      appendAuditLog({
+        actorType: 'local_api',
+        action: 'task.git_workspace.push',
+        resourceType: 'task_workspace',
+        resourceId: workspace.id,
+        payload: { taskId: task.id, projectId: task.projectId, branchName: workspace.branchName, ...result },
+        createdAt: new Date().toISOString(),
+      });
+      await db.save();
+      return { workspace: taskWorkspaces.getById(workspace.id), result, review: await getTaskWorkspaceReview(workspace.worktreePath) };
+    } catch (error) {
+      taskWorkspaces.update(workspace.id, { state: 'failed', lastError: error instanceof Error ? error.message : 'Task workspace push failed.' });
       await db.save();
       return sendTaskGitApiError(reply, error);
     }
