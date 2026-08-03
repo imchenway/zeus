@@ -762,6 +762,10 @@ const labels = {
     runtimeDetails: '运行时详情',
     model: '模型',
     usage: 'Token 用量',
+    cwd: '当前目录',
+    branch: '当前分支',
+    nonGitDirectory: '非 Git 目录',
+    unavailable: '不可用',
     rateLimits: '账户限额',
     mcpStartup: 'MCP 启动状态',
     runtimeReady: '运行时状态正常',
@@ -810,6 +814,10 @@ const labels = {
     runtimeDetails: 'Runtime details',
     model: 'Model',
     usage: 'Token usage',
+    cwd: 'Current directory',
+    branch: 'Current branch',
+    nonGitDirectory: 'Not a Git directory',
+    unavailable: 'Unavailable',
     rateLimits: 'Account rate limits',
     mcpStartup: 'MCP startup',
     runtimeReady: 'Runtime status current',
@@ -1997,17 +2005,34 @@ function SessionRuntimeDetails(props: { state: NativeSessionState; conversation:
   const mcpStartup = props.state.mcpStartup?.value ?? null;
   const warning = runtimeValueNeedsAttention(rateLimits) || runtimeValueNeedsAttention(mcpStartup);
   const modelLabel = [model, effort, serviceTier].join(' · ');
+  const executionContext = props.state.snapshot?.executionContext;
+  const executionCwd = executionContext?.cwd ?? copy.unavailable;
+  const executionBranch = executionContext?.cwd ? (executionContext.branch ?? copy.nonGitDirectory) : copy.unavailable;
   return (
     <details className="session-runtime-details" data-severity={warning ? 'warning' : 'ready'} aria-label={copy.runtimeDetails}>
       <summary>
-        {modelLabel ? <span>{modelLabel}</span> : null}
-        {usage ? <span>{copy.tokens(usage.totalTokens)}</span> : null}
-        {rateLimits ? <span>{runtimeValueHeadline(rateLimits)}</span> : null}
-        {mcpStartup ? <span>{runtimeValueHeadline(mcpStartup)}</span> : null}
-        <span className="session-runtime-severity">
-          <span aria-hidden="true">{warning ? '!' : '·'}</span>
-          {warning ? copy.runtimeAttention : copy.runtimeReady}
+        <span className="session-runtime-summary-primary">
+          {modelLabel ? <span>{modelLabel}</span> : null}
+          {usage ? <span>{copy.tokens(usage.totalTokens)}</span> : null}
+          {rateLimits ? <span>{runtimeValueHeadline(rateLimits)}</span> : null}
+          {mcpStartup ? <span>{runtimeValueHeadline(mcpStartup)}</span> : null}
+          <span className="session-runtime-severity">
+            <span aria-hidden="true">{warning ? '!' : '·'}</span>
+            {warning ? copy.runtimeAttention : copy.runtimeReady}
+          </span>
         </span>
+        {executionContext ? (
+          <small className="session-runtime-execution-context">
+            <span title={executionCwd}>
+              <b>{copy.cwd}</b>
+              <code>{executionCwd}</code>
+            </span>
+            <span title={executionBranch}>
+              <b>{copy.branch}</b>
+              <code>{executionBranch}</code>
+            </span>
+          </small>
+        ) : null}
       </summary>
       <dl>
         {modelLabel ? (

@@ -506,19 +506,67 @@
 }
 
 .session-codex-parity-v1 .session-runtime-details > summary {
-  align-items: center;
   cursor: pointer;
+  display: grid;
+  gap: 2px;
+  min-block-size: 46px;
+  padding: 5px var(--session-gutter);
+}
+
+.session-codex-parity-v1 .session-runtime-summary-primary {
+  align-items: center;
   display: flex;
   gap: 10px;
-  min-block-size: 30px;
+  min-inline-size: 0;
   overflow-x: auto;
-  padding: 5px var(--session-gutter);
   scrollbar-width: none;
   white-space: nowrap;
 }
 
-.session-codex-parity-v1 .session-runtime-details > summary::-webkit-scrollbar {
+.session-codex-parity-v1 .session-runtime-summary-primary::-webkit-scrollbar {
   display: none;
+}
+
+.session-codex-parity-v1 .session-runtime-execution-context {
+  align-items: center;
+  color: var(--session-text-muted);
+  display: flex;
+  gap: 12px;
+  min-inline-size: 0;
+  padding-inline-start: 1px;
+  white-space: nowrap;
+}
+
+.session-codex-parity-v1 .session-runtime-execution-context > span {
+  align-items: center;
+  display: inline-flex;
+  gap: 5px;
+  min-inline-size: 0;
+}
+
+.session-codex-parity-v1 .session-runtime-execution-context > span:first-child {
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+
+.session-codex-parity-v1 .session-runtime-execution-context > span:last-child {
+  flex: 0 1 44%;
+  overflow: hidden;
+}
+
+.session-codex-parity-v1 .session-runtime-execution-context b {
+  color: var(--session-text);
+  flex: 0 0 auto;
+  font-weight: 570;
+}
+
+.session-codex-parity-v1 .session-runtime-execution-context code {
+  color: inherit;
+  font-family: var(--zeus-mono-font, 'SFMono-Regular', 'SF Mono', Consolas, monospace);
+  font-size: 10px;
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .session-codex-parity-v1 .session-runtime-details > summary::marker {

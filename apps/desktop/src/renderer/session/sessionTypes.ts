@@ -154,6 +154,12 @@ export interface NativeProviderValueSnapshot {
   value: Record<string, unknown>;
 }
 
+export interface NativeConversationExecutionContext {
+  cwd: string | null;
+  branch: string | null;
+  isGitRepository: boolean | null;
+}
+
 export interface NativeConversationSnapshot {
   id: string;
   projectId: string;
@@ -191,6 +197,7 @@ export interface NativeConversationSnapshot {
   tokenUsage?: NativeTokenUsageSnapshot;
   rateLimits?: NativeProviderValueSnapshot;
   mcpStartup?: NativeProviderValueSnapshot;
+  executionContext?: NativeConversationExecutionContext;
   permissionMode?: NativePermissionMode;
   collaborationMode?: NativeCollaborationMode;
 }

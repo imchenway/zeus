@@ -62,6 +62,7 @@ import {
   getGitDiff,
   getGitRepositoryContext,
   getGitStatus,
+  getGitWorkingContext,
   getTaskWorkspaceReview,
   getTaskWorkspaceFileDiff,
   completeTaskIntegrationCommit,
@@ -3090,7 +3091,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
         return reply.code(202).send({
           operation,
           request: planRequest,
-          conversation: toNativeConversationSnapshot(updated),
+          conversation: await toNativeConversationSnapshot(updated),
         });
       } catch (error) {
         return sendNativeConversationApiError(reply, error);
@@ -10414,7 +10415,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     return { explanation: parsed.explanation, steps };
   }
 
-  function toNativeConversationSnapshot(conversation: ZeusConversationWithMessagesRecord) {
+  async function toNativeConversationSnapshot(conversation: ZeusConversationWithMessagesRecord) {
     const submissions = conversationSubmissions.listByConversation(conversation.id);
     const itemRecords = conversationItems.listByConversation(conversation.id);
     const itemByProviderItemId = new Map(itemRecords.filter((item) => item.providerItemId).map((item) => [item.providerItemId, item]));
@@ -10430,6 +10431,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     const tokenUsage = conversations.getProviderTokenUsageSnapshot(conversation.id);
     const rateLimits = settings.getCodexRateLimitsSnapshot();
     const mcpStartup = settings.getCodexMcpStartupStatusSnapshot();
+    const executionContext = await readNativeConversationExecutionContext(conversation);
     return {
       ...toGraphConversationHistoryItem(conversation),
       ...toNativeConversationSummary(conversation),
@@ -10437,6 +10439,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       ...(tokenUsage ? { tokenUsage } : {}),
       ...(rateLimits ? { rateLimits } : {}),
       ...(mcpStartup ? { mcpStartup } : {}),
+      executionContext,
       messages: conversation.messages.map((message) => {
         const providerItem = message.providerItemId ? itemByProviderItemId.get(message.providerItemId) : undefined;
         return {
@@ -10491,6 +10494,28 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
         updatedAt: request.updatedAt,
       })),
     };
+  }
+
+  async function readNativeConversationExecutionContext(conversation: ZeusConversationWithMessagesRecord): Promise<{ cwd: string | null; branch: string | null; isGitRepository: boolean | null }> {
+    const contextualSubmission = conversationSubmissions.listByConversation(conversation.id).find((submission) => {
+      const context = parseJsonObject(submission.inputJson).context;
+      return isNativeApiRecord(context) && typeof context.projectLocalPath === 'string' && Boolean(context.projectLocalPath.trim());
+    });
+    const persistedContext = contextualSubmission ? parseJsonObject(contextualSubmission.inputJson).context : undefined;
+    const workspace = conversation.workspaceId ? taskWorkspaces.getById(conversation.workspaceId) : undefined;
+    const project = projects.getById(conversation.projectId);
+    const cwdSource =
+      isNativeApiRecord(persistedContext) && typeof persistedContext.projectLocalPath === 'string' && persistedContext.projectLocalPath.trim()
+        ? persistedContext.projectLocalPath
+        : workspace?.worktreePath
+          ? workspace.worktreePath
+          : conversation.taskId
+            ? null
+            : (project?.localPath ?? projectRoot);
+    if (!cwdSource) return { cwd: null, branch: null, isGitRepository: null };
+    const cwd = resolve(cwdSource);
+    const git = await getGitWorkingContext(cwd);
+    return { cwd, branch: git.branch, isGitRepository: git.isRepository };
   }
 
   function toNativeQueueApiSnapshot(conversation: ZeusConversationWithMessagesRecord, submissions = conversationSubmissions.listByConversation(conversation.id)) {
