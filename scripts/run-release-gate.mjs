@@ -1,20 +1,10 @@
 #!/usr/bin/env node
 /* global console, process */
-import {createHash} from 'node:crypto';
-import {spawnSync} from 'node:child_process';
-import {
-    copyFileSync,
-    createReadStream,
-    existsSync,
-    linkSync,
-    mkdirSync,
-    mkdtempSync,
-    readFileSync,
-    statSync,
-    writeFileSync
-} from 'node:fs';
-import {tmpdir} from 'node:os';
-import {basename, join, resolve} from 'node:path';
+import { createHash } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
+import { copyFileSync, createReadStream, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { basename, join, resolve } from 'node:path';
 
 const repositoryRoot = resolve(import.meta.dirname, '..');
 
@@ -31,7 +21,7 @@ async function main() {
   const latestTag = resolveLatestStableTag();
   const headSha = git(['rev-parse', 'HEAD']);
   const branch = git(['branch', '--show-current']) || '(detached HEAD)';
-    const releaseOutputDirectory = resolve(repositoryRoot, process.env.ZEUS_RELEASE_OUTPUT_DIR?.trim() || 'dist');
+  const releaseOutputDirectory = resolve(repositoryRoot, process.env.ZEUS_RELEASE_OUTPUT_DIR?.trim() || 'dist');
 
   assertVersionAfterBase(expectedVersion, latestTag);
   assertTagDoesNotExist(expectedVersion);
@@ -55,15 +45,15 @@ async function main() {
     env: {
       ...process.env,
       ZEUS_REQUIRE_DISTRIBUTABLE_RELEASE: requireAppleDistribution ? '1' : '0',
-        ZEUS_RELEASE_OUTPUT_DIR: releaseOutputDirectory,
+      ZEUS_RELEASE_OUTPUT_DIR: releaseOutputDirectory,
     },
   });
 
   const architecture = process.arch === 'x64' ? 'x64' : 'arm64';
-    const dmgPath = join(releaseOutputDirectory, `Zeus-${expectedVersion}-${architecture}.dmg`);
-    const manifestPath = join(releaseOutputDirectory, 'zeus-release-manifest.json');
-    const generatedCaskPath = join(releaseOutputDirectory, 'homebrew', 'zeus.rb');
-    const appPath = join(releaseOutputDirectory, architecture === 'arm64' ? 'mac-arm64' : 'mac', 'Zeus.app');
+  const dmgPath = join(releaseOutputDirectory, `Zeus-${expectedVersion}-${architecture}.dmg`);
+  const manifestPath = join(releaseOutputDirectory, 'zeus-release-manifest.json');
+  const generatedCaskPath = join(releaseOutputDirectory, 'homebrew', 'zeus.rb');
+  const appPath = join(releaseOutputDirectory, architecture === 'arm64' ? 'mac-arm64' : 'mac', 'Zeus.app');
 
   for (const path of [dmgPath, manifestPath, generatedCaskPath, appPath]) {
     if (!existsSync(path)) throw new Error(`发布门禁缺少必需产物：${path}`);

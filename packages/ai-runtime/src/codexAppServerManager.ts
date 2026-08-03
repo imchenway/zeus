@@ -1,22 +1,22 @@
-import {spawn as nodeSpawn} from 'node:child_process';
-import {randomUUID} from 'node:crypto';
-import {isAbsolute} from 'node:path';
+import { spawn as nodeSpawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
+import { isAbsolute } from 'node:path';
 import {
-    CodexJsonLineDecoder,
-    type CodexWireId,
-    type CodexWireMessage,
-    type ExternalAgentConfigDetectParams,
-    type ExternalAgentConfigDetectResponse,
-    type ExternalAgentConfigImportHistory,
-    type ExternalAgentConfigImportParams,
-    type ExternalAgentConfigImportResponse,
-    type ExternalAgentImportNotification,
-    parseExternalAgentConfigDetectResponse,
-    parseExternalAgentConfigImportHistoriesResponse,
-    parseExternalAgentConfigImportResponse,
-    parseExternalAgentImportNotification,
+  CodexJsonLineDecoder,
+  type CodexWireId,
+  type CodexWireMessage,
+  type ExternalAgentConfigDetectParams,
+  type ExternalAgentConfigDetectResponse,
+  type ExternalAgentConfigImportHistory,
+  type ExternalAgentConfigImportParams,
+  type ExternalAgentConfigImportResponse,
+  type ExternalAgentImportNotification,
+  parseExternalAgentConfigDetectResponse,
+  parseExternalAgentConfigImportHistoriesResponse,
+  parseExternalAgentConfigImportResponse,
+  parseExternalAgentImportNotification,
 } from './codexAppServerProtocol.js';
-import {expandCliSearchPath} from './cliSearchPath.js';
+import { expandCliSearchPath } from './cliSearchPath.js';
 
 export type {
   ExternalAgentConfigDetectParams,
@@ -394,10 +394,10 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
       if (child === spawned) {
         spawned.kill('SIGTERM');
       }
-        throw managerError(
-            'ZEUS_CODEX_DEPENDENCY_UNAVAILABLE',
-            `用户本机 Codex CLI 无法启动兼容的 app-server（${command}）：${failure.message}。请运行官方安装命令 curl -fsSL https://chatgpt.com/codex/install.sh | sh，完成登录后在 Zeus 设置中重新检测；Zeus 不会自动安装或使用内置回退。`,
-        );
+      throw managerError(
+        'ZEUS_CODEX_DEPENDENCY_UNAVAILABLE',
+        `用户本机 Codex CLI 无法启动兼容的 app-server（${command}）：${failure.message}。请运行官方安装命令 curl -fsSL https://chatgpt.com/codex/install.sh | sh，完成登录后在 Zeus 设置中重新检测；Zeus 不会自动安装或使用内置回退。`,
+      );
     });
   }
 

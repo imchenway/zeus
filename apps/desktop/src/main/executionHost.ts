@@ -1,22 +1,22 @@
-import {randomBytes} from 'node:crypto';
-import {appendFile, open, readFile, unlink, writeFile} from 'node:fs/promises';
-import {createServer, type IncomingMessage, type Server, type ServerResponse} from 'node:http';
-import type {AddressInfo} from 'node:net';
-import {dirname, join} from 'node:path';
-import {createReconnectableBrowserAutomationProxy} from './browserAutomationBridge.js';
+import { randomBytes } from 'node:crypto';
+import { appendFile, open, readFile, unlink, writeFile } from 'node:fs/promises';
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import type { AddressInfo } from 'node:net';
+import { dirname, join } from 'node:path';
+import { createReconnectableBrowserAutomationProxy } from './browserAutomationBridge.js';
 import {
-    type ExecutionHostBrowserBridgeRegistration,
-    type ExecutionHostControlStatus,
-    type ExecutionHostLeaseStatus,
-    executionHostLockPath,
-    executionHostProtocolVersion,
-    type ExecutionHostRendezvous,
-    type ExecutionHostWorkStatus,
-    readExecutionHostBootstrap,
-    removeExecutionHostRendezvous,
-    writeExecutionHostRendezvous,
+  type ExecutionHostBrowserBridgeRegistration,
+  type ExecutionHostControlStatus,
+  type ExecutionHostLeaseStatus,
+  executionHostLockPath,
+  executionHostProtocolVersion,
+  type ExecutionHostRendezvous,
+  type ExecutionHostWorkStatus,
+  readExecutionHostBootstrap,
+  removeExecutionHostRendezvous,
+  writeExecutionHostRendezvous,
 } from './executionHostProtocol.js';
-import {type DesktopLocalServerRuntime, startOwnedDesktopLocalServer} from './localServerRuntime.js';
+import { type DesktopLocalServerRuntime, startOwnedDesktopLocalServer } from './localServerRuntime.js';
 
 const uiLeaseTimeoutMs = 15_000;
 const detachedIdleShutdownMs = 30_000;
@@ -338,7 +338,7 @@ function processExists(pid: number): boolean {
 }
 
 function isBrowserBridgeRegistration(value: unknown): value is ExecutionHostBrowserBridgeRegistration {
-    return isRecord(value) && isNonEmptyString(value.leaseId) && isNonEmptyString(value.baseUrl) && isNonEmptyString(value.token) && isNonEmptyString(value.appVersion);
+  return isRecord(value) && isNonEmptyString(value.leaseId) && isNonEmptyString(value.baseUrl) && isNonEmptyString(value.token) && isNonEmptyString(value.appVersion);
 }
 
 function assertLoopbackUrl(value: string): void {

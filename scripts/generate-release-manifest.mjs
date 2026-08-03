@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 /* global console, process */
-import {createHash} from 'node:crypto';
-import {mkdir, readdir, readFile, stat, writeFile} from 'node:fs/promises';
-import {dirname, join, resolve} from 'node:path';
-import {fileURLToPath, pathToFileURL} from 'node:url';
+import { createHash } from 'node:crypto';
+import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const rootDir = resolve(scriptDir, '..');
@@ -138,14 +138,14 @@ async function main() {
   const homebrewTap = process.argv[6] ?? defaultHomebrewTap;
   const signed = parseBoolean(process.argv[7] ?? process.env.ZEUS_RELEASE_SIGNED);
   const notarized = parseBoolean(process.argv[8] ?? process.env.ZEUS_RELEASE_NOTARIZED);
-    const distDir = resolve(rootDir, process.env.ZEUS_RELEASE_OUTPUT_DIR?.trim() || 'dist');
+  const distDir = resolve(rootDir, process.env.ZEUS_RELEASE_OUTPUT_DIR?.trim() || 'dist');
   const result = await generateReleaseManifest({
     version,
     channel,
     repository,
     homebrewTap,
     outputPath,
-      distDir,
+    distDir,
     signed,
     notarized,
   });

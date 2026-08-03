@@ -1,94 +1,45 @@
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, Notification, screen, shell, Tray } from 'electron';
+import { execFile as execFileCallback } from 'node:child_process';
+import { constants as fsConstants, readFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { access, copyFile, cp, lstat, mkdir, readdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
+import { pathToFileURL } from 'node:url';
+import { promisify } from 'node:util';
+import { createBeforeQuitCleanupHandler, type DesktopLocalServerRuntime, parseCodexNativeEnabled, startDesktopLocalServer } from './localServerRuntime.js';
+import { createStartupCoordinator } from './startupCoordinator.js';
+import { terminateAfterFatalStartup } from './fatalStartup.js';
+import { createRendererBootstrapMonitor } from './rendererBootstrapMonitor.js';
+import { exportMermaidDiagramToFile, exportPlantUmlDiagramToFile } from './mermaidExport.js';
+import { exportPatchToFile } from './patchExport.js';
+import { exportRuntimeLogsToFile } from './runtimeLogExport.js';
+import { chooseProjectDirectory } from './projectDirectoryPicker.js';
+import { exportSettingsSnapshotToFile, importBusinessDataSnapshotFromFile, importSettingsSnapshotFromFile } from './settingsPortability.js';
+import { type GraphSourceLocation, openGraphSourceLocation } from './sourceOpen.js';
+import { buildAppShellMenuTemplate, buildLoginItemSettings, buildMenuBarTrayTemplate, type MainAppShellSettings, shouldQuitWhenAllWindowsClosed, shouldUseSystemNotifications } from './appShellPolicy.js';
+import { createSystemNotificationBridge, type SystemNotificationBridge } from './systemNotifications.js';
+import { openLocalLogDirectory } from './localLogDirectory.js';
+import { openExternalHttpsUrl } from './externalOpen.js';
+import { createPersistedMainWindowState, findSavedWindowDisplay, type PersistedMainWindowState, readPersistedMainWindowState, resolveMainWindowState, writePersistedMainWindowState } from './windowState.js';
+import { applyRestoredMainWindowPlacement, createWindowStatePersistenceGate, waitForSavedWindowDisplay, type WindowStatePersistenceGate } from './windowRestoration.js';
 import {
-    app,
-    BrowserWindow,
-    clipboard,
-    dialog,
-    ipcMain,
-    Menu,
-    nativeImage,
-    Notification,
-    screen,
-    shell,
-    Tray
-} from 'electron';
-import {execFile as execFileCallback} from 'node:child_process';
-import {constants as fsConstants, readFileSync} from 'node:fs';
-import {randomUUID} from 'node:crypto';
-import {basename, dirname, extname, isAbsolute, join, relative, resolve, sep} from 'node:path';
-import {access, copyFile, cp, lstat, mkdir, readdir, readFile, realpath, stat, writeFile} from 'node:fs/promises';
-import {pathToFileURL} from 'node:url';
-import {promisify} from 'node:util';
-import {
-    createBeforeQuitCleanupHandler,
-    type DesktopLocalServerRuntime,
-    parseCodexNativeEnabled,
-    startDesktopLocalServer
-} from './localServerRuntime.js';
-import {createStartupCoordinator} from './startupCoordinator.js';
-import {terminateAfterFatalStartup} from './fatalStartup.js';
-import {createRendererBootstrapMonitor} from './rendererBootstrapMonitor.js';
-import {exportMermaidDiagramToFile, exportPlantUmlDiagramToFile} from './mermaidExport.js';
-import {exportPatchToFile} from './patchExport.js';
-import {exportRuntimeLogsToFile} from './runtimeLogExport.js';
-import {chooseProjectDirectory} from './projectDirectoryPicker.js';
-import {
-    exportSettingsSnapshotToFile,
-    importBusinessDataSnapshotFromFile,
-    importSettingsSnapshotFromFile
-} from './settingsPortability.js';
-import {type GraphSourceLocation, openGraphSourceLocation} from './sourceOpen.js';
-import {
-    buildAppShellMenuTemplate,
-    buildLoginItemSettings,
-    buildMenuBarTrayTemplate,
-    type MainAppShellSettings,
-    shouldQuitWhenAllWindowsClosed,
-    shouldUseSystemNotifications
-} from './appShellPolicy.js';
-import {createSystemNotificationBridge, type SystemNotificationBridge} from './systemNotifications.js';
-import {openLocalLogDirectory} from './localLogDirectory.js';
-import {openExternalHttpsUrl} from './externalOpen.js';
-import {
-    createPersistedMainWindowState,
-    findSavedWindowDisplay,
-    type PersistedMainWindowState,
-    readPersistedMainWindowState,
-    resolveMainWindowState,
-    writePersistedMainWindowState
-} from './windowState.js';
-import {
-    applyRestoredMainWindowPlacement,
-    createWindowStatePersistenceGate,
-    waitForSavedWindowDisplay,
-    type WindowStatePersistenceGate
-} from './windowRestoration.js';
-import {
-    buildTaskAttachmentPreviewDataUrl,
-    coerceTaskClipboardAttachmentBuffer,
-    inferTaskClipboardAttachmentMimeType,
-    readTaskClipboardAttachmentsFromClipboard,
-    readTaskClipboardFileReferencesFromClipboard,
-    type TaskClipboardAttachmentPayload,
+  buildTaskAttachmentPreviewDataUrl,
+  coerceTaskClipboardAttachmentBuffer,
+  inferTaskClipboardAttachmentMimeType,
+  readTaskClipboardAttachmentsFromClipboard,
+  readTaskClipboardFileReferencesFromClipboard,
+  type TaskClipboardAttachmentPayload,
 } from './taskClipboard.js';
-import {type BrowserHost, createBrowserHost} from './browserHost.js';
+import { type BrowserHost, createBrowserHost } from './browserHost.js';
+import { type ConversationResourceRequest, listConversationResourceOpenTargets, openConversationResource, type OpenConversationResourceRequest } from './conversationResourceOpen.js';
 import {
-    type ConversationResourceRequest,
-    listConversationResourceOpenTargets,
-    openConversationResource,
-    type OpenConversationResourceRequest
-} from './conversationResourceOpen.js';
-import {
-    type ConversationInputResourceBroker,
-    type ConversationInputResourceSource,
-    type ConversationResourcePayload,
-    createConversationInputResourceBroker,
-    readOrCreateConversationAttachmentGrantSecret,
+  type ConversationInputResourceBroker,
+  type ConversationInputResourceSource,
+  type ConversationResourcePayload,
+  createConversationInputResourceBroker,
+  readOrCreateConversationAttachmentGrantSecret,
 } from './conversationInputResources.js';
-import {
-    cleanupStaleReleaseBackups,
-    createReleaseUpdateService,
-    type ReleaseUpdateService
-} from './releaseUpdateService.js';
+import { cleanupStaleReleaseBackups, createReleaseUpdateService, type ReleaseUpdateService } from './releaseUpdateService.js';
 
 let mainWindow: BrowserWindow | undefined;
 const windows = new Set<BrowserWindow>();

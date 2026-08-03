@@ -1,6 +1,6 @@
-import {randomUUID} from 'node:crypto';
-import {chmod, lstat, mkdir, readFile, rename, unlink, writeFile} from 'node:fs/promises';
-import {join} from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { chmod, lstat, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 
 export const executionHostProtocolVersion = 1;
 export const executionHostRendezvousFileName = 'rendezvous.json';

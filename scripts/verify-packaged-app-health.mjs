@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /* global console, process */
-import {existsSync, readFileSync} from 'node:fs';
-import {basename, join, posix, resolve} from 'node:path';
-import {pathToFileURL} from 'node:url';
+import { existsSync, readFileSync } from 'node:fs';
+import { basename, join, posix, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 function readAsarArchive(asarPath) {
   const previousNoAsar = process.noAsar;
@@ -122,8 +122,8 @@ export function assertPackagedPreloadEntrypoint(asarPath) {
 /** Zeus 只依赖用户本机安装的 Codex，正式包不得重新夹带二进制或供应链元数据。 */
 export function assertNoPackagedCodexRuntime(appRoot) {
   const runtimeRoot = join(appRoot, 'Contents/Resources/codex');
-    if (existsSync(runtimeRoot)) throw new Error(`packaged app must not contain Codex runtime resources: ${runtimeRoot}`);
-    return {dependency: 'user-installed'};
+  if (existsSync(runtimeRoot)) throw new Error(`packaged app must not contain Codex runtime resources: ${runtimeRoot}`);
+  return { dependency: 'user-installed' };
 }
 
 export function verifyPackagedApp(appPath) {
@@ -136,14 +136,14 @@ export function verifyPackagedApp(appPath) {
     throw new Error(`unexpected packaged app metadata: ${JSON.stringify({ name: mainPackage?.name, main: mainPackage?.main })}`);
   }
   readAsarTextFile(asarPath, mainPackage.main);
-    const codex = assertNoPackagedCodexRuntime(appRoot);
+  const codex = assertNoPackagedCodexRuntime(appRoot);
   return {
     appName: basename(appRoot, '.app'),
     assetCount: renderer.assetCount,
     main: mainPackage.main,
     preload: preload.preloadPath,
     browserPagePreload: preload.browserPagePreloadPath,
-      codex,
+    codex,
   };
 }
 
@@ -154,7 +154,7 @@ async function main() {
     process.exit(2);
   }
   const health = verifyPackagedApp(appPath);
-    console.log(`packaged-health=${health.appName};rendererAssets=${health.assetCount};main=${health.main};preload=${health.preload};browserPagePreload=${health.browserPagePreload};codex=${health.codex.dependency}`);
+  console.log(`packaged-health=${health.appName};rendererAssets=${health.assetCount};main=${health.main};preload=${health.preload};browserPagePreload=${health.browserPagePreload};codex=${health.codex.dependency}`);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

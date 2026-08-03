@@ -1,39 +1,29 @@
 import type {
-    CodexConversationCapabilities,
-    CodexTaskPushCapabilities,
-    ConversationResourcePreview,
-    NativeCollaborationMode,
-    NativeConversationChoicesSnapshot,
-    NativeConversationSnapshot,
-    NativeOperationAcceptance,
-    NativePendingRequest,
-    NativePermissionMode,
-    NativePlanImplementationRequest,
-    NativeProjectConversationChoicesSnapshot,
-    NativeQueueSnapshot,
-    SendNativeMessageRequest,
-    StartNativeConversationRequest,
-    StartProjectConversationRequest,
-    StartTaskModelPushRequest,
-    TaskGitDiffSummary,
-    TaskIntegrationConflictFile,
-    TaskIntegrationRecord,
-    TaskWorkspaceCommitResult,
-    TaskWorkspacesSnapshot,
-    TurnChangeSet,
-    TurnChangeSetOperationResult,
+  CodexConversationCapabilities,
+  CodexTaskPushCapabilities,
+  ConversationResourcePreview,
+  NativeCollaborationMode,
+  NativeConversationChoicesSnapshot,
+  NativeConversationSnapshot,
+  NativeOperationAcceptance,
+  NativePendingRequest,
+  NativePermissionMode,
+  NativePlanImplementationRequest,
+  NativeProjectConversationChoicesSnapshot,
+  NativeQueueSnapshot,
+  SendNativeMessageRequest,
+  StartNativeConversationRequest,
+  StartProjectConversationRequest,
+  StartTaskModelPushRequest,
+  TaskGitDiffSummary,
+  TaskIntegrationConflictFile,
+  TaskIntegrationRecord,
+  TaskWorkspaceCommitResult,
+  TaskWorkspacesSnapshot,
+  TurnChangeSet,
+  TurnChangeSetOperationResult,
 } from './session/sessionTypes.js';
-import type {
-    CommandArtifact,
-    CommandConfirmation,
-    CommandDefinition,
-    CommandDefinitionInput,
-    CommandRun,
-    TaskAttachmentReference,
-    TaskManagementStatus,
-    TaskPriority,
-    TaskStatusFilter
-} from '@zeus/shared';
+import type { CommandArtifact, CommandConfirmation, CommandDefinition, CommandDefinitionInput, CommandRun, TaskAttachmentReference, TaskManagementStatus, TaskPriority, TaskStatusFilter } from '@zeus/shared';
 
 export type { CommandArtifact, CommandConfirmation, CommandDefinition, CommandDefinitionInput, CommandParameterDefinition, CommandRun, CommandRunStatus, TaskManagementStatus, TaskPriority, TaskStatusFilter } from '@zeus/shared';
 
@@ -517,10 +507,10 @@ export interface AiRuntimeAdapterStatus extends AiRuntimeAdapterDescriptor {
   available: boolean;
   reason: string;
   version: string | null;
-    resolvedCommandPath: string | null;
-    checkedAt: string;
-    compatibility: 'compatible' | 'incompatible' | 'not_checked';
-    installationGuideUrl: string | null;
+  resolvedCommandPath: string | null;
+  checkedAt: string;
+  compatibility: 'compatible' | 'incompatible' | 'not_checked';
+  installationGuideUrl: string | null;
   authStatus: 'unknown' | 'authenticated' | 'unauthenticated';
   modelConfiguration: 'user-configured';
 }

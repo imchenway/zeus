@@ -1,199 +1,186 @@
 import {
-    type ClipboardEvent as ReactClipboardEvent,
-    type CSSProperties,
-    type DragEvent as ReactDragEvent,
-    type FormEvent,
-    type KeyboardEvent as ReactKeyboardEvent,
-    type PointerEvent as ReactPointerEvent,
-    type ReactNode,
-    type RefObject,
-    useCallback,
-    useEffect,
-    useMemo,
-    useRef,
-    useState,
-    type WheelEvent as ReactWheelEvent,
+  type ClipboardEvent as ReactClipboardEvent,
+  type CSSProperties,
+  type DragEvent as ReactDragEvent,
+  type FormEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+  type RefObject,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type WheelEvent as ReactWheelEvent,
 } from 'react';
-import {createPortal} from 'react-dom';
-import {FolderIcon as Folder} from '@phosphor-icons/react/dist/csr/Folder';
-import {FolderOpenIcon as FolderOpen} from '@phosphor-icons/react/dist/csr/FolderOpen';
-import {FolderPlusIcon as FolderPlus} from '@phosphor-icons/react/dist/csr/FolderPlus';
-import {MagnifyingGlassIcon as MagnifyingGlass} from '@phosphor-icons/react/dist/csr/MagnifyingGlass';
-import {PencilSimpleIcon as PencilSimple} from '@phosphor-icons/react/dist/csr/PencilSimple';
-import {PlusIcon as Plus} from '@phosphor-icons/react/dist/csr/Plus';
-import {PushPinIcon as PushPin} from '@phosphor-icons/react/dist/csr/PushPin';
-import {PushPinSlashIcon as PushPinSlash} from '@phosphor-icons/react/dist/csr/PushPinSlash';
-import {XIcon as X} from '@phosphor-icons/react/dist/csr/X';
+import { createPortal } from 'react-dom';
+import { FolderIcon as Folder } from '@phosphor-icons/react/dist/csr/Folder';
+import { FolderOpenIcon as FolderOpen } from '@phosphor-icons/react/dist/csr/FolderOpen';
+import { FolderPlusIcon as FolderPlus } from '@phosphor-icons/react/dist/csr/FolderPlus';
+import { MagnifyingGlassIcon as MagnifyingGlass } from '@phosphor-icons/react/dist/csr/MagnifyingGlass';
+import { PencilSimpleIcon as PencilSimple } from '@phosphor-icons/react/dist/csr/PencilSimple';
+import { PlusIcon as Plus } from '@phosphor-icons/react/dist/csr/Plus';
+import { PushPinIcon as PushPin } from '@phosphor-icons/react/dist/csr/PushPin';
+import { PushPinSlashIcon as PushPinSlash } from '@phosphor-icons/react/dist/csr/PushPinSlash';
+import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import {
-    buildMermaidDiagramExport,
-    buildMermaidDiagramSource,
-    buildPlantUmlDiagramExport,
-    buildPlantUmlDiagramSource,
-    type MermaidDiagramExportFile,
-    type PlantUmlDiagramExportFile,
-    toReactFlowElements,
-    toSigmaGraph,
+  buildMermaidDiagramExport,
+  buildMermaidDiagramSource,
+  buildPlantUmlDiagramExport,
+  buildPlantUmlDiagramSource,
+  type MermaidDiagramExportFile,
+  type PlantUmlDiagramExportFile,
+  toReactFlowElements,
+  toSigmaGraph,
 } from '@zeus/diagram-engine';
-import {isTaskStatusFilter} from '@zeus/shared';
+import { isTaskStatusFilter } from '@zeus/shared';
 import '@xterm/xterm/css/xterm.css';
 import '@xyflow/react/dist/style.css';
 import './styles.css';
 import './session/session.css';
 import './ui/primitives.css';
-import {notifyMainAppShellSettingsChanged, openExternalHttpsUrlInMain} from './appShellBridge.js';
-import {PENDING_RESOURCE_LONG_TEXT_THRESHOLD} from './ui/pendingResourcePolicy.js';
-import {TaskAttachmentPreviewList} from './task/TaskAttachmentPreviewList.js';
+import { notifyMainAppShellSettingsChanged, openExternalHttpsUrlInMain } from './appShellBridge.js';
+import { PENDING_RESOURCE_LONG_TEXT_THRESHOLD } from './ui/pendingResourcePolicy.js';
+import { TaskAttachmentPreviewList } from './task/TaskAttachmentPreviewList.js';
+import { type ConversationTreeRuntimeState, conversationTreeRuntimeStateFromSession, type ProjectConversationGroup, ProjectConversationTree } from './session/ProjectConversationTree.js';
 import {
-    type ConversationTreeRuntimeState,
-    conversationTreeRuntimeStateFromSession,
-    type ProjectConversationGroup,
-    ProjectConversationTree
-} from './session/ProjectConversationTree.js';
-import {
-    ConnectedSessionWorkspace,
-    createNativeConversationStartEnvelopeManager,
-    createProjectConversationStartEnvelopeManager,
-    loadLegacyConversationDetail,
-    nativeConversationChoiceFromAcceptance,
-    type NativeConversationStartStorage,
-    type ProjectSessionWorkspaceStartInput,
-    SessionWorkspace,
-    type SessionWorkspaceStartInput,
-    type SessionWorkspaceTask,
-    startNativeConversationWithDurableAcceptance,
-    startProjectConversationWithDurableAcceptance,
+  ConnectedSessionWorkspace,
+  createNativeConversationStartEnvelopeManager,
+  createProjectConversationStartEnvelopeManager,
+  loadLegacyConversationDetail,
+  nativeConversationChoiceFromAcceptance,
+  type NativeConversationStartStorage,
+  type ProjectSessionWorkspaceStartInput,
+  SessionWorkspace,
+  type SessionWorkspaceStartInput,
+  type SessionWorkspaceTask,
+  startNativeConversationWithDurableAcceptance,
+  startProjectConversationWithDurableAcceptance,
 } from './session/SessionWorkspace.js';
 import type {
-    CodexTaskPushCapabilities,
-    NativeConversationAttachment,
-    NativeConversationChoice,
-    NativeConversationChoicesSnapshot,
-    NativeProjectConversationChoicesSnapshot,
-    NativeServiceTierSelection,
-    NativeSessionState,
-    SessionConversationOwner,
-    StartTaskModelPushRequest,
+  CodexTaskPushCapabilities,
+  NativeConversationAttachment,
+  NativeConversationChoice,
+  NativeConversationChoicesSnapshot,
+  NativeProjectConversationChoicesSnapshot,
+  NativeServiceTierSelection,
+  NativeSessionState,
+  SessionConversationOwner,
+  StartTaskModelPushRequest,
 } from './session/sessionTypes.js';
-import {selectHasConfirmedUserMessage} from './session/sessionSelectors.js';
+import { selectHasConfirmedUserMessage } from './session/sessionSelectors.js';
+import { readProjectServiceTierPreference, serviceTierWireOverride, writeProjectServiceTierPreference } from './session/serviceTierSelection.js';
+import type { SessionControllerClient } from './session/useSessionController.js';
+import { TaskDetailPaneContent, type TaskEditResult } from './task/TaskDetailPaneContent.js';
+import { TaskGitReviewModal } from './task/TaskGitReviewModal.js';
+import { TaskGitMergeModal } from './task/TaskGitMergeModal.js';
 import {
-    readProjectServiceTierPreference,
-    serviceTierWireOverride,
-    writeProjectServiceTierPreference
-} from './session/serviceTierSelection.js';
-import type {SessionControllerClient} from './session/useSessionController.js';
-import {TaskDetailPaneContent, type TaskEditResult} from './task/TaskDetailPaneContent.js';
-import {TaskGitReviewModal} from './task/TaskGitReviewModal.js';
-import {TaskGitMergeModal} from './task/TaskGitMergeModal.js';
-import {
-    buildTaskModelPushMessage,
-    readTaskModelPushPreferences,
-    resolveTaskModelPushInitialForm,
-    type TaskModelPushForm,
-    TaskModelPushModal,
-    type TaskModelPushModalStatus,
-    writeTaskModelPushPreferences,
+  buildTaskModelPushMessage,
+  readTaskModelPushPreferences,
+  resolveTaskModelPushInitialForm,
+  type TaskModelPushForm,
+  TaskModelPushModal,
+  type TaskModelPushModalStatus,
+  writeTaskModelPushPreferences,
 } from './task/TaskModelPushModal.js';
 import {
-    acceptTaskModelPushPendingState,
-    createTaskModelPushPendingState,
-    failTaskModelPushPendingState,
-    retryTaskModelPushPendingState,
-    type TaskModelPushPendingState,
-    TaskModelPushPendingWorkspace,
+  acceptTaskModelPushPendingState,
+  createTaskModelPushPendingState,
+  failTaskModelPushPendingState,
+  retryTaskModelPushPendingState,
+  type TaskModelPushPendingState,
+  TaskModelPushPendingWorkspace,
 } from './task/TaskModelPushPendingWorkspace.js';
-import {TaskWorkspace} from './task/TaskWorkspace.js';
-import {LegacyChatImportSettings} from './settings/LegacyChatImportSettings.js';
-import {BrowserSettingsPane} from './settings/BrowserSettingsPane.js';
+import { TaskWorkspace } from './task/TaskWorkspace.js';
+import { LegacyChatImportSettings } from './settings/LegacyChatImportSettings.js';
+import { BrowserSettingsPane } from './settings/BrowserSettingsPane.js';
+import { type TaskAttachmentRestoreTarget, type TaskAttachmentView, toPersistedTaskAttachment } from './task/taskAttachments.js';
 import {
-    type TaskAttachmentRestoreTarget,
-    type TaskAttachmentView,
-    toPersistedTaskAttachment
-} from './task/taskAttachments.js';
-import {
-    defaultTaskTableEnumSortOrders,
-    filterVisibleTasks,
-    normalizeTaskTableColumnPreferences,
-    normalizeTaskTableEnumSortOrders,
-    resolveTaskManagementStatus,
-    taskAgentRunStatusFromSession,
-    taskManagementStatuses,
+  defaultTaskTableEnumSortOrders,
+  filterVisibleTasks,
+  normalizeTaskTableColumnPreferences,
+  normalizeTaskTableEnumSortOrders,
+  resolveTaskManagementStatus,
+  taskAgentRunStatusFromSession,
+  taskManagementStatuses,
 } from './task/taskWorkspaceModel.js';
-import {ZeusSelect} from './ZeusSelect.js';
-import {Button, type ButtonVariant} from './ui/Button.js';
-import {ModalPortal} from './ui/ModalPortal.js';
-import {SourceListRow} from './ui/SourceListRow.js';
-import {WorkspaceDrawer} from './ui/WorkspaceDrawer.js';
-import {CommandCenterPanel} from './CommandCenterPanel.js';
-import {ReleaseUpdateDialog, type ReleaseUpdateDialogState} from './release/ReleaseUpdateDialog.js';
-import {ArchitectureGraphCanvas, buildArchitectureLayerModel} from './graph/ArchitectureGraphCanvas.js';
+import { ZeusSelect } from './ZeusSelect.js';
+import { Button, type ButtonVariant } from './ui/Button.js';
+import { ModalPortal } from './ui/ModalPortal.js';
+import { SourceListRow } from './ui/SourceListRow.js';
+import { WorkspaceDrawer } from './ui/WorkspaceDrawer.js';
+import { CommandCenterPanel } from './CommandCenterPanel.js';
+import { ReleaseUpdateDialog, type ReleaseUpdateDialogState } from './release/ReleaseUpdateDialog.js';
+import { ArchitectureGraphCanvas, buildArchitectureLayerModel } from './graph/ArchitectureGraphCanvas.js';
 import {
-    type AiRuntimeAdapterDescriptor,
-    type AiRuntimeAdapterStatus,
-    type AiRuntimeLogEntry,
-    type AiRuntimeSession,
-    type AiRuntimeSessionStatus,
-    type AiRuntimeTerminalEvent,
-    type AiRuntimeTerminalSnapshot,
-    type AppShellSettings,
-    type CodeMapSettings,
-    type CodexLegacyImportResult,
-    type CodexLegacyImportSnapshot,
-    createEmptyDashboardSnapshot,
-    type CreateProjectRequest,
-    type DashboardClient,
-    type DashboardSnapshot,
-    type ExecutedGitOperationResult,
-    type ExecuteGitOperationRequest,
-    type GitDiffHunk,
-    type GitDiffSummary,
-    type GitOperationConfirmation,
-    type GitPatchExport,
-    type GraphConversationHistoryItem,
-    type GraphConversationHistoryPage,
-    type GraphNeighborhood,
-    type GraphQuestionAnswer,
-    type GraphSearchResult,
-    type GraphViewSnapshot,
-    type GraphViewType,
-    type HighRiskGitOperation,
-    type ImportLocalBusinessDataResult,
-    type ImportLocalSettingsRequest,
-    type ImportLocalSettingsResult,
-    type LoadRuntimeSessionsRequest,
-    type LocalBusinessDataSnapshot,
-    type LocalSettingsExportSnapshot,
-    type ProjectArchiveConfirmation,
-    type ProjectConfig,
-    type ProjectDatabaseSecretSnapshot,
-    type ProjectRecord,
-    type ReleaseStatusSnapshot,
-    type ReleaseUpdateOperationSnapshot,
-    type ReleaseUpdateStatusSnapshot,
-    type RuntimeOperationConfirmation,
-    type RuntimeSettings,
-    type RuntimeStatusSnapshot,
-    type SaveProjectConfigRequest,
-    type SecurityAuditLogEntry,
-    type SecurityResetResult,
-    type SecuritySecretsSnapshot,
-    type SendConversationMessageResult,
-    type TaskAgentRunStatus,
-    type TaskEventRecord,
-    type TaskManagementStatus,
-    type TaskPriority,
-    type TaskRecord,
-    type TaskStatus,
-    type TaskStatusFilter,
-    type TaskTableColumnPreferences,
-    type TaskTemplateRecord,
-    type TelegramNotificationSettings,
-    type TelegramPollingLogEntry,
-    type TelegramPollingStatus,
-    type TelegramSecuritySettings,
-    type TelegramTestConnectionResult,
-    type UpdateTaskRequest,
-    ZeusApiError,
-    type ZeusRealtimeEvent,
+  type AiRuntimeAdapterDescriptor,
+  type AiRuntimeAdapterStatus,
+  type AiRuntimeLogEntry,
+  type AiRuntimeSession,
+  type AiRuntimeSessionStatus,
+  type AiRuntimeTerminalEvent,
+  type AiRuntimeTerminalSnapshot,
+  type AppShellSettings,
+  type CodeMapSettings,
+  type CodexLegacyImportResult,
+  type CodexLegacyImportSnapshot,
+  createEmptyDashboardSnapshot,
+  type CreateProjectRequest,
+  type DashboardClient,
+  type DashboardSnapshot,
+  type ExecutedGitOperationResult,
+  type ExecuteGitOperationRequest,
+  type GitDiffHunk,
+  type GitDiffSummary,
+  type GitOperationConfirmation,
+  type GitPatchExport,
+  type GraphConversationHistoryItem,
+  type GraphConversationHistoryPage,
+  type GraphNeighborhood,
+  type GraphQuestionAnswer,
+  type GraphSearchResult,
+  type GraphViewSnapshot,
+  type GraphViewType,
+  type HighRiskGitOperation,
+  type ImportLocalBusinessDataResult,
+  type ImportLocalSettingsRequest,
+  type ImportLocalSettingsResult,
+  type LoadRuntimeSessionsRequest,
+  type LocalBusinessDataSnapshot,
+  type LocalSettingsExportSnapshot,
+  type ProjectArchiveConfirmation,
+  type ProjectConfig,
+  type ProjectDatabaseSecretSnapshot,
+  type ProjectRecord,
+  type ReleaseStatusSnapshot,
+  type ReleaseUpdateOperationSnapshot,
+  type ReleaseUpdateStatusSnapshot,
+  type RuntimeOperationConfirmation,
+  type RuntimeSettings,
+  type RuntimeStatusSnapshot,
+  type SaveProjectConfigRequest,
+  type SecurityAuditLogEntry,
+  type SecurityResetResult,
+  type SecuritySecretsSnapshot,
+  type SendConversationMessageResult,
+  type TaskAgentRunStatus,
+  type TaskEventRecord,
+  type TaskManagementStatus,
+  type TaskPriority,
+  type TaskRecord,
+  type TaskStatus,
+  type TaskStatusFilter,
+  type TaskTableColumnPreferences,
+  type TaskTemplateRecord,
+  type TelegramNotificationSettings,
+  type TelegramPollingLogEntry,
+  type TelegramPollingStatus,
+  type TelegramSecuritySettings,
+  type TelegramTestConnectionResult,
+  type UpdateTaskRequest,
+  ZeusApiError,
+  type ZeusRealtimeEvent,
 } from './apiClient.js';
 
 export {
@@ -1579,7 +1566,7 @@ const languageCopy = {
         defaultArgsDescription: '按空格解析为真实 CLI 参数。',
         cliPathAria: 'CLI 路径',
         cliPathTitle: 'CLI 路径',
-          cliPathDescription: '可选本机可执行文件绝对路径；留空则依次检查当前 PATH、常见目录和登录 Shell。Zeus 不内置或自动安装 CLI。',
+        cliPathDescription: '可选本机可执行文件绝对路径；留空则依次检查当前 PATH、常见目录和登录 Shell。Zeus 不内置或自动安装 CLI。',
         concurrencyAria: 'Runtime 并发上限',
         concurrencyTitle: '项目并发上限',
         globalConcurrency: (count: number) => `全局并发上限：${count}`,
@@ -2993,7 +2980,7 @@ const languageCopy = {
         defaultArgsDescription: 'Parsed as real CLI arguments separated by spaces.',
         cliPathAria: 'CLI path',
         cliPathTitle: 'CLI path',
-          cliPathDescription: 'Optional absolute path. When empty, Zeus checks PATH, common local directories, and the login shell. Zeus never bundles or installs the CLI.',
+        cliPathDescription: 'Optional absolute path. When empty, Zeus checks PATH, common local directories, and the login shell. Zeus never bundles or installs the CLI.',
         concurrencyAria: 'Runtime concurrency limit',
         concurrencyTitle: 'Project concurrency limit',
         globalConcurrency: (count: number) => `Global concurrency limit: ${count}`,
@@ -16116,9 +16103,9 @@ function formatRuntimeAdapterDetectionFacts(adapter: AiRuntimeAdapterDescriptor,
   // Adapter 检测字段直接来自真实探测结果；按当前应用语言格式化标签，但不翻译真实命令、模型 ID 或能力 ID。
   const modelConfiguration = status.modelConfiguration === 'user-configured' ? copy.adapterModelUserConfigured : status.modelConfiguration;
   return [
-      status.resolvedCommandPath ?? adapter.command,
+    status.resolvedCommandPath ?? adapter.command,
     copy.adapterVersion(status.version ?? copy.adapterVersionUnknown),
-      status.checkedAt,
+    status.checkedAt,
     copy.adapterAuthStatus(formatAdapterAuthStatus(status.authStatus, appLanguage)),
     copy.adapterModelConfig(modelConfiguration),
     copy.adapterCapabilities(status.capabilities.join(' / ')),

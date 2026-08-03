@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 /* global console, process */
-import {existsSync} from 'node:fs';
-import {mkdir, readdir, rm} from 'node:fs/promises';
-import {homedir} from 'node:os';
-import {basename, dirname, join, resolve} from 'node:path';
-import {fileURLToPath, pathToFileURL} from 'node:url';
-import {execFileSync, spawn} from 'node:child_process';
-import {verifyPackagedApp} from './verify-packaged-app-health.mjs';
+import { existsSync } from 'node:fs';
+import { mkdir, readdir, rm } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { basename, dirname, join, resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { execFileSync, spawn } from 'node:child_process';
+import { verifyPackagedApp } from './verify-packaged-app-health.mjs';
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const rootDir = resolve(scriptDir, '..');
@@ -21,7 +21,7 @@ export function electronDistDirName(version, arch) {
 }
 
 export function packagedAppPathForArch(arch, variant = 'release', requestedOutputRoot) {
-    const outputRoot = requestedOutputRoot ?? (variant === 'test' ? join(rootDir, 'dist', 'test') : join(rootDir, 'dist'));
+  const outputRoot = requestedOutputRoot ?? (variant === 'test' ? join(rootDir, 'dist', 'test') : join(rootDir, 'dist'));
   const appName = variant === 'test' ? 'Zeus Test.app' : 'Zeus.app';
   return join(outputRoot, arch === 'arm64' ? 'mac-arm64' : 'mac', appName);
 }
@@ -177,18 +177,18 @@ export async function packageMac() {
   const arch = process.arch === 'x64' ? 'x64' : 'arm64';
   const variant = process.env.ZEUS_PACKAGE_VARIANT === 'test' ? 'test' : 'release';
   const builderConfig = variant === 'test' ? 'electron-builder.test.yml' : 'electron-builder.yml';
-    const configuredOutputRoot = process.env.ZEUS_PACKAGE_OUTPUT_DIR?.trim();
-    const outputRoot = configuredOutputRoot ? resolve(rootDir, configuredOutputRoot) : variant === 'test' ? join(rootDir, 'dist', 'test') : join(rootDir, 'dist');
+  const configuredOutputRoot = process.env.ZEUS_PACKAGE_OUTPUT_DIR?.trim();
+  const outputRoot = configuredOutputRoot ? resolve(rootDir, configuredOutputRoot) : variant === 'test' ? join(rootDir, 'dist', 'test') : join(rootDir, 'dist');
   const version = await readElectronVersion();
   const electronDist = await prepareElectronDist(version, arch);
-    const appPath = packagedAppPathForArch(arch, variant, outputRoot);
+  const appPath = packagedAppPathForArch(arch, variant, outputRoot);
   await assertPackagedAppIsNotRunning(appPath);
   await run('pnpm', ['build'], { cwd: desktopDir });
   const packageEnv = buildMacNativeDependencyEnv(omitEmptyAppleReleaseEnvironment(process.env));
   const signingArgs = buildElectronBuilderSigningArgs(packageEnv);
   const electronDistArgs = electronDist ? [`--config.electronDist=${electronDist}`] : [];
-    const outputArgs = configuredOutputRoot ? [`--config.directories.output=${outputRoot}`] : [];
-    await run('pnpm', ['--filter', '@zeus/desktop', 'exec', 'electron-builder', '--mac', 'dmg', '--config', builderConfig, ...electronDistArgs, ...outputArgs, ...signingArgs], {
+  const outputArgs = configuredOutputRoot ? [`--config.directories.output=${outputRoot}`] : [];
+  await run('pnpm', ['--filter', '@zeus/desktop', 'exec', 'electron-builder', '--mac', 'dmg', '--config', builderConfig, ...electronDistArgs, ...outputArgs, ...signingArgs], {
     cwd: rootDir,
     env: packageEnv,
   });

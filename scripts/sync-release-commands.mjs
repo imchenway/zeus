@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 /* global AbortController, URL, clearTimeout, console, fetch, process, setTimeout */
-import {existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync} from 'node:fs';
-import {tmpdir} from 'node:os';
-import {join, resolve} from 'node:path';
-import {isDeepStrictEqual} from 'node:util';
-import {validateCommandDefinitionInput} from '../packages/shared/dist/index.js';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
+import { validateCommandDefinitionInput } from '../packages/shared/dist/index.js';
 
 const repositoryRoot = resolve(import.meta.dirname, '..');
 const manifestPath = join(import.meta.dirname, 'zeus-release-command-definitions.json');
@@ -27,7 +27,7 @@ async function main() {
     if (applyCommands) throw new Error('VALIDATE_ONLY=true 时不能同时设置 APPLY_COMMANDS=true。');
     const reportPath = join(outputDirectory, 'Zeus-release-command-definitions-validation.md');
     writeFileSync(reportPath, buildValidationReport(manifest), { mode: 0o600 });
-      console.log(`一键发布命令定义验证通过：${reportPath}`);
+    console.log(`一键发布命令定义验证通过：${reportPath}`);
     console.log(`ZEUS_ARTIFACT_FILE=${reportPath}`);
     return;
   }
@@ -60,7 +60,7 @@ async function main() {
   if (!applyCommands) {
     writeFileSync(planPath, buildPlanReport({ apiBaseUrl, project, applyCommands, plan, result: '只读预览，未写入' }), { mode: 0o600 });
     console.log(`命令同步计划已生成：${planPath}`);
-      console.log(`待创建 ${plan.creates.length} 条、更新 ${plan.updates.length} 条、移除旧命令 ${plan.deletes.length} 条、保持 ${plan.unchanged.length} 条。`);
+    console.log(`待创建 ${plan.creates.length} 条、更新 ${plan.updates.length} 条、移除旧命令 ${plan.deletes.length} 条、保持 ${plan.unchanged.length} 条。`);
     console.log(`ZEUS_ARTIFACT_FILE=${planPath}`);
     return;
   }
@@ -76,14 +76,14 @@ async function main() {
   for (const action of plan.updates) {
     await api.patch(`/api/projects/${encodeURIComponent(projectId)}/commands/${encodeURIComponent(action.commandId)}`, action.definition);
   }
-    for (const action of plan.deletes) {
-        await api.delete(`/api/projects/${encodeURIComponent(projectId)}/commands/${encodeURIComponent(action.commandId)}`);
-    }
+  for (const action of plan.deletes) {
+    await api.delete(`/api/projects/${encodeURIComponent(projectId)}/commands/${encodeURIComponent(action.commandId)}`);
+  }
 
   const commandsAfter = await api.get(`/api/projects/${encodeURIComponent(projectId)}/commands`);
   if (!Array.isArray(commandsAfter)) throw new Error('同步后 Zeus 命令列表响应格式无效。');
   const verification = buildSyncPlan(manifest.commands, commandsAfter, projectId);
-    if (verification.blockers.length > 0 || verification.creates.length > 0 || verification.updates.length > 0 || verification.deletes.length > 0) {
+  if (verification.blockers.length > 0 || verification.creates.length > 0 || verification.updates.length > 0 || verification.deletes.length > 0) {
     throw new Error('同步请求已返回，但回读结果与声明文件不一致；请保留现场后重新执行只读预览。');
   }
 
@@ -94,11 +94,11 @@ async function main() {
       project,
       applyCommands,
       plan,
-        result: `同步并回读通过：创建 ${plan.creates.length} 条，更新 ${plan.updates.length} 条，移除旧命令 ${plan.deletes.length} 条，保持 ${plan.unchanged.length} 条`,
+      result: `同步并回读通过：创建 ${plan.creates.length} 条，更新 ${plan.updates.length} 条，移除旧命令 ${plan.deletes.length} 条，保持 ${plan.unchanged.length} 条`,
     }),
     { mode: 0o600 },
   );
-    console.log(`一键发布命令已同步并回读验证：${planPath}`);
+  console.log(`一键发布命令已同步并回读验证：${planPath}`);
   console.log(`ZEUS_ARTIFACT_FILE=${planPath}`);
 }
 
@@ -159,7 +159,7 @@ function buildSyncPlan(definitions, currentCommands, projectId) {
   const creates = [];
   const updates = [];
   const unchanged = [];
-    const deletes = [];
+  const deletes = [];
   const blockers = [];
 
   for (const definition of definitions) {
@@ -187,14 +187,15 @@ function buildSyncPlan(definitions, currentCommands, projectId) {
       updates.push({ name: definition.name, commandId: existing.id, definition });
     }
   }
-    for (const command of currentCommands) {
-        if (command.scope !== 'project' || command.projectId !== projectId) continue;
-        if (legacyCommandNames.includes(normalizeToken(command.name))) deletes.push({
-            name: command.name,
-            commandId: command.id
-        });
-    }
-    return {creates, updates, unchanged, deletes, blockers};
+  for (const command of currentCommands) {
+    if (command.scope !== 'project' || command.projectId !== projectId) continue;
+    if (legacyCommandNames.includes(normalizeToken(command.name)))
+      deletes.push({
+        name: command.name,
+        commandId: command.id,
+      });
+  }
+  return { creates, updates, unchanged, deletes, blockers };
 }
 
 function assertMatchingProject(project, projectId) {
@@ -239,7 +240,7 @@ function createApiClient(baseUrl, token) {
     get: (path, authorized = true) => request('GET', path, undefined, authorized),
     post: (path, body) => request('POST', path, body),
     patch: (path, body) => request('PATCH', path, body),
-      delete: (path) => request('DELETE', path),
+    delete: (path) => request('DELETE', path),
   };
 }
 
@@ -278,14 +279,14 @@ function buildPlanReport(input) {
     `- ${input.result}`,
     `- 待创建：${formatNames(input.plan.creates)}`,
     `- 待更新：${formatNames(input.plan.updates)}`,
-      `- 待移除旧命令：${formatNames(input.plan.deletes)}`,
+    `- 待移除旧命令：${formatNames(input.plan.deletes)}`,
     `- 无需改变：${formatNames(input.plan.unchanged)}`,
     `- 阻断冲突：${input.plan.blockers.length === 0 ? '无' : input.plan.blockers.map((item) => `${item.name} ← ${item.reason}`).join('；')}`,
     '',
     '## 安全边界',
     '',
-      '- 只创建或更新声明文件中的一条项目命令，并软删除四个精确命名的旧发布阶段命令；不创建全局命令。',
-      '- 不删除其他未声明命令，不修改项目 Shell 或 Git 写入权限。',
+    '- 只创建或更新声明文件中的一条项目命令，并软删除四个精确命名的旧发布阶段命令；不创建全局命令。',
+    '- 不删除其他未声明命令，不修改项目 Shell 或 Git 写入权限。',
     '- 真实同步要求显式开启 APPLY_COMMANDS，并提供绑定项目 ID 的确认值。',
     '- 任一名称或别名冲突会在写入前阻断；网络中断后的重试依赖幂等回读，不执行破坏性回滚。',
     '',

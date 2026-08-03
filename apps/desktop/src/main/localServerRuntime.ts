@@ -1,24 +1,12 @@
-import {spawn} from 'node:child_process';
-import {randomBytes, randomUUID} from 'node:crypto';
-import {mkdir, writeFile} from 'node:fs/promises';
-import {dirname, join} from 'node:path';
-import {fileURLToPath} from 'node:url';
-import {createCodexRuntimeGenerationManager} from '@zeus/ai-runtime';
-import {
-    type BrowserAutomationPort,
-    hasCodexFinalizationOwnershipClaim,
-    type RunningZeusLocalServer,
-    startZeusLocalServer
-} from '@zeus/local-server';
-import {startDesktopBrowserAutomationBridge} from './browserAutomationBridge.js';
-import {
-    createExecutionHostControlClient,
-    executionHostProtocolVersion,
-    type ExecutionHostRendezvous,
-    type ExecutionHostWorkStatus,
-    readExecutionHostRendezvous,
-    writeExecutionHostBootstrap
-} from './executionHostProtocol.js';
+import { spawn } from 'node:child_process';
+import { randomBytes, randomUUID } from 'node:crypto';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { createCodexRuntimeGenerationManager } from '@zeus/ai-runtime';
+import { type BrowserAutomationPort, hasCodexFinalizationOwnershipClaim, type RunningZeusLocalServer, startZeusLocalServer } from '@zeus/local-server';
+import { startDesktopBrowserAutomationBridge } from './browserAutomationBridge.js';
+import { createExecutionHostControlClient, executionHostProtocolVersion, type ExecutionHostRendezvous, type ExecutionHostWorkStatus, readExecutionHostRendezvous, writeExecutionHostBootstrap } from './executionHostProtocol.js';
 
 export interface RendererLocalServerConfig {
   baseUrl: string;
@@ -348,7 +336,7 @@ export async function startOwnedDesktopLocalServer(options: StartDesktopLocalSer
       telegramToken: options.telegramToken,
       telegramAllowedUserIds: options.telegramAllowedUserIds,
       codexNativeEnabled: options.codexNativeEnabled ?? true,
-        codexRuntimeCommandPath: 'codex',
+      codexRuntimeCommandPath: 'codex',
       codexLegacyImportRoot: options.codexLegacyImportRoot,
       releaseUpdateManifestUrl: options.releaseUpdateManifestUrl,
       allowUntrustedReleaseUpdateTest: options.allowUntrustedReleaseUpdateTest,
