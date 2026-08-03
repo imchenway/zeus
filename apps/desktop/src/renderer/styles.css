@@ -13861,7 +13861,7 @@ a {
     text-align: end;
 }
 
-/* 两个时间列只让短列头居中建立视觉分区；长时间值继续右对齐，保留纵向数字扫描基线。 */
+/* 两个时间列的短标题在列内居中；长时间值继续右对齐，保留纵向数字扫描基线。 */
 .macos-ai-app .task-table-header :where(.task-table-createdAt-cell, .task-table-updatedAt-cell) {
     justify-items: center;
     text-align: center;
@@ -14219,11 +14219,30 @@ a {
   text-align: start;
 }
 
-.macos-ai-app .task-table-align-end .task-table-column-sort-button,
-.macos-ai-app .task-table-header :where(.task-table-createdAt-cell, .task-table-updatedAt-cell) .task-table-column-sort-button {
+.macos-ai-app .task-table-align-end .task-table-column-sort-button {
   justify-content: flex-end;
   padding: 0 0 0 32px;
   text-align: end;
+}
+
+/* 时间列标题使用对称网格：标题固定居中，排序箭头出现时只占用左侧镜像槽。 */
+.macos-ai-app .task-table-header :where(.task-table-createdAt-cell, .task-table-updatedAt-cell) .task-table-column-sort-button {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  justify-content: stretch;
+  padding: 0 32px;
+  text-align: center;
+}
+
+.macos-ai-app .task-table-header :where(.task-table-createdAt-cell, .task-table-updatedAt-cell) .task-table-column-sort-button > span:first-child {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.macos-ai-app .task-table-header :where(.task-table-createdAt-cell, .task-table-updatedAt-cell) .task-table-column-sort-indicator {
+  grid-column: 1;
+  grid-row: 1;
+  justify-self: end;
 }
 
 .macos-ai-app .task-table-column-sort-button > span:first-child {
