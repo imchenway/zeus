@@ -1,149 +1,181 @@
-import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
+import Fastify, {type FastifyInstance, type FastifyReply, type FastifyRequest} from 'fastify';
 import websocketPlugin from '@fastify/websocket';
-import { createHash, randomUUID } from 'node:crypto';
-import { accessSync, appendFileSync, constants as fsConstants, existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, isAbsolute, join, parse, relative, resolve, sep } from 'node:path';
-import { getNextTaskStatus, type TaskStatus } from '@zeus/task-core';
+import {createHash, randomUUID} from 'node:crypto';
 import {
-  type CommandDefinition,
-  commandNeedsHighRiskConfirmation,
-  type ConversationResource,
-  type ConversationResourcePreview,
-  isTaskStatusFilter,
-  type TaskAttachmentReference,
-  type TaskStatusFilter,
-  validateCommandDefinitionInput,
+    accessSync,
+    appendFileSync,
+    constants as fsConstants,
+    existsSync,
+    mkdirSync,
+    readFileSync,
+    realpathSync,
+    statSync,
+    writeFileSync
+} from 'node:fs';
+import {dirname, isAbsolute, join, parse, relative, resolve, sep} from 'node:path';
+import {getNextTaskStatus, type TaskStatus} from '@zeus/task-core';
+import {
+    type CommandDefinition,
+    commandNeedsHighRiskConfirmation,
+    type ConversationResource,
+    type ConversationResourcePreview,
+    isTaskStatusFilter,
+    type TaskAttachmentReference,
+    type TaskStatusFilter,
+    validateCommandDefinitionInput,
 } from '@zeus/shared';
-import { type ProjectScanResult, scanProjectSource } from '@zeus/code-indexer';
-import { buildProjectGraph, GRAPH_VIEW_SCHEMA_VERSION, type ProjectGraph } from '@zeus/graph-engine';
-import { createDefaultProjectConfig, normalizeProjectConfig, type ProjectConfigSnapshot, type UpdateProjectConfigBody } from '@zeus/project-core';
+import {type ProjectScanResult, scanProjectSource} from '@zeus/code-indexer';
+import {buildProjectGraph, GRAPH_VIEW_SCHEMA_VERSION, type ProjectGraph} from '@zeus/graph-engine';
 import {
-  type AutoUpdatePolicy,
-  buildAutoUpdatePolicy,
-  detectReleaseReadiness,
-  evaluateReleaseUpdateAvailability,
-  parseReleaseUpdateManifest,
-  type ReleaseReadiness,
-  type ReleaseUpdateArtifactArch,
-  type ReleaseUpdateManifest,
-  type ReleaseUpdateStatus,
+    createDefaultProjectConfig,
+    normalizeProjectConfig,
+    type ProjectConfigSnapshot,
+    type UpdateProjectConfigBody
+} from '@zeus/project-core';
+import {
+    type AutoUpdatePolicy,
+    buildAutoUpdatePolicy,
+    detectReleaseReadiness,
+    evaluateReleaseUpdateAvailability,
+    parseReleaseUpdateManifest,
+    type ReleaseReadiness,
+    type ReleaseUpdateArtifactArch,
+    type ReleaseUpdateManifest,
+    type ReleaseUpdateStatus,
 } from '@zeus/release-core';
 import {
-  type AiCliAdapterDescriptor,
-  type AiRuntimeLogEntry,
-  type AiRuntimeSession,
-  type AiRuntimeTerminalSnapshot,
-  buildAiRuntimePrompt,
-  checkAiCliAdapter,
-  type CodexAppServerManager,
-  createAiRuntimeSessionManager,
-  createCodexAppServerManager,
-  createNonCodexAiCliAdapterInvocation,
-  createOptionalNodePtyRuntimeSpawn,
-  expandCliSearchPath,
-  isNonCodexAiCliAdapterId,
-  listAiCliAdapters,
-  type NonCodexAiCliAdapterId,
+    type AiCliAdapterDescriptor,
+    type AiRuntimeLogEntry,
+    type AiRuntimeSession,
+    type AiRuntimeTerminalSnapshot,
+    buildAiRuntimePrompt,
+    checkAiCliAdapter,
+    type CodexAppServerManager,
+    createAgentCapabilityCatalog,
+    createAiRuntimeSessionManager,
+    createCodexAppServerManager,
+    createNonCodexAiCliAdapterInvocation,
+    createOptionalNodePtyRuntimeSpawn,
+    expandCliSearchPath,
+    isNonCodexAiCliAdapterId,
+    listAiCliAdapters,
+    type NonCodexAiCliAdapterId,
 } from '@zeus/ai-runtime';
-import type { BrowserAutomationPort } from './browserAutomation.js';
-import { resolveConversationAttachmentGrant } from './conversationAttachmentGrant.js';
-import { createMacOSKeychainStore, getSecretPresenceLabel, type SecretPresenceLabel } from '@zeus/security-core';
+import type {BrowserAutomationPort} from './browserAutomation.js';
+import {resolveConversationAttachmentGrant} from './conversationAttachmentGrant.js';
+import {createMacOSKeychainStore, getSecretPresenceLabel, type SecretPresenceLabel} from '@zeus/security-core';
 import {
-  buildGitPatchExport,
-  buildTaskBranchName,
-  commitAndPushTaskWorkspace,
-  completeTaskIntegrationCommit,
-  confirmGitOperation,
-  createGitOperationConfirmation,
-  discardTaskWorktree,
-  executeHighRiskGitOperation,
-  finalizeTaskBranchIntegration,
-  getGitDiff,
-  getGitRepositoryContext,
-  getGitStatus,
-  getGitWorkingContext,
-  getTaskWorkspaceFileDiff,
-  getTaskWorkspaceReview,
-  pushTaskWorkspace,
-  type GitDiffSummary,
-  type GitOperationConfirmation,
-  type GitPatchExport,
-  type GitStatusSummary,
-  type HighRiskGitOperation,
-  isGitConfirmationExpired,
-  prepareTaskWorktree,
-  readTaskIntegrationConflict,
-  reclaimTaskWorktree,
-  rejectGitOperation,
-  startTaskBranchIntegration,
-  writeTaskIntegrationResolution,
+    buildGitPatchExport,
+    buildTaskBranchName,
+    commitAndPushTaskWorkspace,
+    completeTaskIntegrationCommit,
+    confirmGitOperation,
+    createGitOperationConfirmation,
+    discardTaskWorktree,
+    executeHighRiskGitOperation,
+    finalizeTaskBranchIntegration,
+    getGitBranchHead,
+    getGitDiff,
+    getGitRepositoryContext,
+    getGitStatus,
+    getGitWorkingContext,
+    getRemoteBranchHead,
+    getTaskBranchComparison,
+    getTaskBranchFileDiff,
+    getTaskWorkspaceFileDiff,
+    getTaskWorkspaceReview,
+    type GitDiffSummary,
+    type GitOperationConfirmation,
+    type GitPatchExport,
+    type GitStatusSummary,
+    type HighRiskGitOperation,
+    isGitConfirmationExpired,
+    prepareTaskWorktree,
+    pushTaskWorkspace,
+    readTaskIntegrationConflict,
+    reclaimDeliveredTaskWorktree,
+    reclaimTaskWorktree,
+    rejectGitOperation,
+    startTaskBranchIntegration,
+    writeTaskIntegrationResolution,
 } from '@zeus/git-core';
 import {
-  type AppendAuditLogInput,
-  AuditLogRepository,
-  CodexLegacyImportRepository,
-  CommandArtifactRepository,
-  CommandDefinitionRepository,
-  CommandRunRepository,
-  type ConversationCollaborationMode,
-  ConversationItemRepository,
-  type ConversationPermissionMode,
-  ConversationPlanActionRepository,
-  ConversationRepository,
-  ConversationResourceRepository,
-  ConversationServerRequestRepository,
-  ConversationSubmissionRepository,
-  ConversationTurnRepository,
-  type CreateTaskEventInput,
-  createZeusDatabase,
-  GitSnapshotRepository,
-  IdempotencyRequestRepository,
-  introspectSqliteSchema,
-  isTaskManagementStatus,
-  isTaskPriority,
-  ProjectRepository,
-  type RuntimeLogStream,
-  RuntimeSessionRepository,
-  SettingRepository,
-  TaskEventRepository,
-  TaskIntegrationRepository,
-  type TaskManagementStatus,
-  type TaskPriority,
-  TaskRepository,
-  TaskTemplateRepository,
-  TaskWorkspaceRepository,
-  TerminalEventRepository,
-  TurnChangeFileRepository,
-  TurnChangeSetRepository,
-  type ZeusAuditLogRecord,
-  type ZeusConversationResourceRecord,
-  type ZeusConversationWithMessagesRecord,
-  type ZeusDatabase,
-  type ZeusProjectRecord,
-  type ZeusRuntimeLogRecord,
-  type ZeusRuntimeSessionRecord,
-  type ZeusTaskIntegrationRecord,
-  type ZeusTaskRecord,
-  type ZeusTaskWorkspaceRecord,
+    type AppendAuditLogInput,
+    AuditLogRepository,
+    CodexLegacyImportRepository,
+    CommandArtifactRepository,
+    CommandDefinitionRepository,
+    CommandRunRepository,
+    type ConversationCollaborationMode,
+    ConversationItemRepository,
+    type ConversationPermissionMode,
+    ConversationPlanActionRepository,
+    ConversationRepository,
+    ConversationResourceRepository,
+    ConversationServerRequestRepository,
+    ConversationSubmissionRepository,
+    ConversationTurnRepository,
+    type CreateTaskEventInput,
+    createZeusDatabase,
+    GitSnapshotRepository,
+    IdempotencyRequestRepository,
+    introspectSqliteSchema,
+    isTaskManagementStatus,
+    isTaskPriority,
+    ProjectRepository,
+    type RuntimeLogStream,
+    RuntimeSessionRepository,
+    SettingRepository,
+    TaskEventRepository,
+    TaskIntegrationRepository,
+    type TaskManagementStatus,
+    type TaskPriority,
+    TaskRepository,
+    TaskTemplateRepository,
+    TaskWorkspaceRepository,
+    TerminalEventRepository,
+    TurnChangeFileRepository,
+    TurnChangeSetRepository,
+    type ZeusAuditLogRecord,
+    type ZeusConversationResourceRecord,
+    type ZeusConversationWithMessagesRecord,
+    type ZeusDatabase,
+    type ZeusProjectRecord,
+    type ZeusRuntimeLogRecord,
+    type ZeusRuntimeSessionRecord,
+    type ZeusTaskIntegrationRecord,
+    type ZeusTaskRecord,
+    type ZeusTaskWorkspaceRecord,
 } from '@zeus/storage';
-import { createCodexNativeConversationCoordinator } from './codexNativeConversationCoordinator.js';
-import { normalizeConversationResources, toConversationResource, toConversationResourceOpenIntent } from './conversationResources.js';
-import { changeSetErrorStatus, createTurnChangeSetService, errorCode as turnChangeSetErrorCode } from './turnChangeSets.js';
-import { createCommandCenter } from './commandCenter.js';
-import { migrateLegacyCodexThreads } from './legacyCodexThreadMigration.js';
-import { type CodexLegacyImportService, createCodexLegacyImportService } from './codexLegacyImportService.js';
-import { resolveWritableNonCodexLegacyConversation, type WritableNonCodexLegacyConversationContext } from './nonCodexLegacyRuntime.js';
+import {createCodexNativeConversationCoordinator} from './codexNativeConversationCoordinator.js';
 import {
-  createTelegramBotMessageClient,
-  createTelegramLongPollingClient,
-  createTelegramPollingService,
-  dispatchTelegramUpdate,
-  getTelegramConfigurationState,
-  type TelegramCommand,
-  type TelegramCommandResponse,
-  type TelegramMessageSender,
-  type TelegramPollingService,
-  type TelegramUpdate,
+    normalizeConversationResources,
+    toConversationResource,
+    toConversationResourceOpenIntent
+} from './conversationResources.js';
+import {
+    changeSetErrorStatus,
+    createTurnChangeSetService,
+    errorCode as turnChangeSetErrorCode
+} from './turnChangeSets.js';
+import {createCommandCenter} from './commandCenter.js';
+import {migrateLegacyCodexThreads} from './legacyCodexThreadMigration.js';
+import {type CodexLegacyImportService, createCodexLegacyImportService} from './codexLegacyImportService.js';
+import {
+    resolveWritableNonCodexLegacyConversation,
+    type WritableNonCodexLegacyConversationContext
+} from './nonCodexLegacyRuntime.js';
+import {
+    createTelegramBotMessageClient,
+    createTelegramLongPollingClient,
+    createTelegramPollingService,
+    dispatchTelegramUpdate,
+    getTelegramConfigurationState,
+    type TelegramCommand,
+    type TelegramCommandResponse,
+    type TelegramMessageSender,
+    type TelegramPollingService,
+    type TelegramUpdate,
 } from '@zeus/telegram-adapter';
 
 export type { BrowserAutomationContentItem, BrowserAutomationPort, BrowserAutomationToolCall } from './browserAutomation.js';
@@ -1238,6 +1270,7 @@ interface DiscardTaskWorkspaceBody {
 
 interface StartTaskIntegrationBody {
   target?: 'source' | 'current';
+    targetBranch?: string;
   mode?: 'merge' | 'squash';
 }
 
@@ -1310,6 +1343,7 @@ interface CreateConversationMessageBody {
   effort?: string;
   serviceTier?: string | null;
   collaborationMode?: ConversationCollaborationMode;
+    agentKind?: 'codex' | 'pi' | 'claude';
 }
 
 interface NativeConversationAttachment {
@@ -1341,6 +1375,7 @@ type StartTaskConversationBody = (
 ) & {
   clientUserMessageId?: string;
   collaborationMode?: ConversationCollaborationMode;
+    agentKind?: 'codex' | 'pi' | 'claude';
 };
 
 interface StartProjectConversationBody {
@@ -1351,6 +1386,7 @@ interface StartProjectConversationBody {
   collaborationMode?: ConversationCollaborationMode;
   serviceTier?: string | null;
   clientUserMessageId?: string;
+    agentKind?: 'codex' | 'pi' | 'claude';
 }
 
 interface TaskConversationAcceptanceReservation {
@@ -1597,7 +1633,8 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
   const ownsCodexAppServerManager = options.codexAppServerManager === undefined;
   const codexNativeEnabled = options.codexNativeEnabled !== false;
   const codexRuntimeCommandPath = options.codexRuntimeCommandPath;
-  const currentCodexRuntimeCommandPath = () => runtimeSettings.adapterCliPaths.codex?.trim() || (typeof codexRuntimeCommandPath === 'function' ? codexRuntimeCommandPath() : codexRuntimeCommandPath) || 'codex';
+    const configuredCodexRuntimeCommandPath = () => runtimeSettings.adapterCliPaths.codex?.trim() || (typeof codexRuntimeCommandPath === 'function' ? codexRuntimeCommandPath() : codexRuntimeCommandPath) || undefined;
+    const currentCodexRuntimeCommandPath = () => configuredCodexRuntimeCommandPath() || 'codex';
   const codexExternalAgentHome = options.codexLegacyImportRoot
     ? (() => {
         mkdirSync(options.codexLegacyImportRoot!, { recursive: true, mode: 0o700 });
@@ -2661,6 +2698,17 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
           message: 'Conversation not found',
         });
       }
+        try {
+            assertRequestedAgentIsCodex(request.body ?? {});
+        } catch (error) {
+            return sendNativeConversationApiError(reply, error);
+        }
+        if (conversation.agentKind && conversation.agentKind !== 'codex') {
+            return reply.code(409).send({
+                error: 'ZEUS_AGENT_NOT_AVAILABLE',
+                message: `${conversation.agentKind} Agent 当前尚未开放。`
+            });
+        }
       const content = typeof request.body?.content === 'string' ? request.body.content.trim() : '';
       const hasNativeResourceInput =
         conversation.transportKind === 'codex_native' && ((Array.isArray(request.body?.attachments) && request.body.attachments.length > 0) || (Array.isArray(request.body?.browserComments) && request.body.browserComments.length > 0));
@@ -3581,26 +3629,75 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     const items = await Promise.all(
       taskWorkspaces.listByTask(task.id).map(async (workspace) => {
         const activeConversationCount = countTaskWorkspaceActiveConversations(workspace);
+          let branchComparison = null;
+          let comparisonError: string | undefined;
+          try {
+              branchComparison = await getTaskBranchComparison(project.localPath, workspace.sourceBranch, workspace.branchName);
+          } catch (error) {
+              comparisonError = error instanceof Error ? error.message : 'Task branch comparison failed.';
+          }
+          const remoteHeadSha = await getRemoteBranchHead(project.localPath, workspace.remoteName, workspace.remoteBranch).catch(() => null);
+          const expectedHeadSha = branchComparison?.taskHeadSha ?? workspace.headSha;
+          const remoteVerified = Boolean(expectedHeadSha && remoteHeadSha === expectedHeadSha);
         if (!workspace.worktreePath || workspace.state === 'reclaimed' || workspace.state === 'merged' || workspace.state === 'discarded') {
-          return { ...workspace, activeConversationCount, review: null };
+            return {
+                ...workspace,
+                activeConversationCount,
+                review: null,
+                branchComparison,
+                remoteHeadSha,
+                remoteVerified, ...(comparisonError ? {comparisonError} : {})
+            };
         }
         try {
-          return { ...workspace, activeConversationCount, review: await getTaskWorkspaceReview(workspace.worktreePath) };
+            return {
+                ...workspace,
+                activeConversationCount,
+                review: await getTaskWorkspaceReview(workspace.worktreePath),
+                branchComparison,
+                remoteHeadSha,
+                remoteVerified, ...(comparisonError ? {comparisonError} : {})
+            };
         } catch (error) {
-          return { ...workspace, activeConversationCount, review: null, reviewError: error instanceof Error ? error.message : 'Task workspace review failed.' };
+            return {
+                ...workspace,
+                activeConversationCount,
+                review: null,
+                reviewError: error instanceof Error ? error.message : 'Task workspace review failed.',
+                branchComparison,
+                remoteHeadSha,
+                remoteVerified,
+                ...(comparisonError ? {comparisonError} : {}),
+            };
         }
       }),
     );
-    return { taskId: task.id, projectId: project.id, primaryBranch: repository.branch || null, items, workspaces: items };
+      return {
+          taskId: task.id,
+          projectId: project.id,
+          primaryBranch: repository.branch || null,
+          localBranches: repository.localBranches,
+          items,
+          workspaces: items
+      };
   });
 
-  server.get('/api/tasks/:taskId/git-workspaces/:workspaceId/file-diff', async (request: FastifyRequest<{ Params: { taskId: string; workspaceId: string }; Querystring: { path?: string } }>, reply) => {
+    server.get('/api/tasks/:taskId/git-workspaces/:workspaceId/file-diff', async (request: FastifyRequest<{
+        Params: { taskId: string; workspaceId: string };
+        Querystring: { path?: string; scope?: string }
+    }>, reply) => {
     const resolved = resolveTaskWorkspaceRequest(request.params.taskId, request.params.workspaceId);
     if ('error' in resolved) return reply.code(resolved.status).send(resolved.error);
     const path = request.query.path?.trim();
     if (!path) return reply.code(400).send({ error: 'ZEUS_GIT_PATH_REQUIRED', message: 'path is required' });
-    if (!resolved.workspace.worktreePath) return reply.code(409).send({ error: 'ZEUS_TASK_WORKTREE_UNAVAILABLE', message: 'Task worktree is not available.' });
     try {
+        if (request.query.scope === 'committed') {
+            return await getTaskBranchFileDiff(resolved.project.localPath, resolved.workspace.sourceBranch, resolved.workspace.branchName, path);
+        }
+        if (!resolved.workspace.worktreePath) return reply.code(409).send({
+            error: 'ZEUS_TASK_WORKTREE_UNAVAILABLE',
+            message: 'Task worktree is not available.'
+        });
       return await getTaskWorkspaceFileDiff(resolved.workspace.worktreePath, path);
     } catch (error) {
       return sendTaskGitApiError(reply, error);
@@ -3799,30 +3896,58 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     const resolved = resolveTaskWorkspaceRequest(request.params.taskId, request.params.workspaceId);
     if ('error' in resolved) return reply.code(resolved.status).send(resolved.error);
     const { task, project, workspace } = resolved;
-    if (workspace.state !== 'reclaimed' && workspace.state !== 'merged') {
+      if (workspace.state === 'discarded') {
       return reply.code(409).send({
-        error: 'ZEUS_TASK_BRANCH_NOT_REMOTE_BACKED',
-        message: 'Finish the task branch commit, push, verification, and worktree reclaim before merging it.',
+          error: 'ZEUS_TASK_WORKSPACE_CLOSED',
+          message: 'Discarded task branches cannot be merged.',
       });
+      }
+      try {
+          assertTaskWorkspaceWritable(workspace);
+      } catch (error) {
+          return sendTaskGitApiError(reply, error);
     }
     const repository = await getGitRepositoryContext(project.localPath);
-    if (!repository.isRepository || repository.branch === 'detached') {
-      return reply.code(409).send({ error: 'ZEUS_TARGET_BRANCH_UNAVAILABLE', message: 'Primary workspace must be on a named branch.' });
-    }
-    const targetBranch = request.body?.target === 'current' ? repository.branch : workspace.sourceBranch;
+      if (!repository.isRepository) {
+          return reply.code(409).send({
+              error: 'ZEUS_TARGET_BRANCH_UNAVAILABLE',
+              message: 'Project repository is unavailable.'
+          });
+      }
+      if (workspace.worktreePath) {
+          try {
+              const taskReview = await getTaskWorkspaceReview(workspace.worktreePath);
+              if (taskReview.conflictFiles.length > 0) return reply.code(409).send({
+                  error: 'ZEUS_TASK_WORKSPACE_CONFLICTED',
+                  message: 'Resolve task workspace conflicts before merging.'
+              });
+              if (!taskReview.clean) return reply.code(409).send({
+                  error: 'ZEUS_TASK_WORKSPACE_DIRTY',
+                  message: 'Commit or discard every task workspace change before merging.'
+              });
+          } catch (error) {
+              return sendTaskGitApiError(reply, error);
+          }
+      } else if (workspace.state !== 'reclaimed' && workspace.state !== 'merged') {
+          return reply.code(409).send({
+              error: 'ZEUS_TASK_WORKTREE_UNAVAILABLE',
+              message: 'Task worktree is unavailable before delivery preparation completed.'
+          });
+      }
+      const requestedTargetBranch = request.body?.targetBranch?.trim();
+      const targetBranch = requestedTargetBranch || (request.body?.target === 'current' ? repository.branch : workspace.sourceBranch);
+      if (!targetBranch || targetBranch === 'detached') {
+          return reply.code(409).send({
+              error: 'ZEUS_TARGET_BRANCH_UNAVAILABLE',
+              message: 'Select an available local target branch.'
+          });
+      }
     const mode = request.body?.mode === 'squash' ? 'squash' : 'merge';
-    const primaryReview = await getTaskWorkspaceReview(project.localPath);
-    if (primaryReview.branch !== targetBranch) {
-      return reply.code(409).send({
-        error: 'ZEUS_TARGET_BRANCH_CHANGED',
-        message: `Primary workspace must be on ${targetBranch} before starting this integration.`,
-      });
-    }
-    if (!primaryReview.clean) {
-      return reply.code(409).send({
-        error: 'ZEUS_TARGET_WORKSPACE_DIRTY',
-        message: 'Primary workspace must be clean before starting task branch integration.',
-      });
+      let targetHeadSha: string;
+      try {
+          targetHeadSha = await getGitBranchHead(project.localPath, targetBranch);
+      } catch (error) {
+          return sendTaskGitApiError(reply, error);
     }
     const active = taskIntegrations.findActive(workspace.id, targetBranch);
     if (active) return reply.code(active.state === 'conflicted' ? 202 : 409).send({ integration: active });
@@ -3833,7 +3958,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       taskId: task.id,
       workspaceId: workspace.id,
       targetBranch,
-      targetHeadSha: primaryReview.headSha,
+        targetHeadSha,
       mode,
       state: 'preparing',
     });
@@ -3878,15 +4003,24 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
         integrationPath: null,
         resultHeadSha: finalized.resultHeadSha,
         state: 'merged',
+          localSyncStatus: finalized.localSyncStatus,
+          localHeadSha: finalized.localHeadSha,
+          localWorktreePath: finalized.localWorktreePath,
         conflictFiles: [],
         lastError: null,
       });
-      if (targetBranch === workspace.sourceBranch) taskWorkspaces.update(workspace.id, { state: 'merged', headSha: workspace.headSha, lastError: null });
+        const taskWorktreeReclaimed = targetBranch === workspace.sourceBranch ? await markTaskWorkspaceDelivered(workspace) : false;
       recordTaskEvent({
         taskId: task.id,
         eventType: 'task.git_integration.merged',
         title: targetBranch === workspace.sourceBranch ? '任务分支已合入来源分支' : `任务分支已合入 ${targetBranch}`,
-        payload: { integrationId: integration.id, workspaceId: workspace.id, mode, sourceDelivered: targetBranch === workspace.sourceBranch, ...finalized },
+          payload: {
+              integrationId: integration.id,
+              workspaceId: workspace.id,
+              mode,
+              sourceDelivered: targetBranch === workspace.sourceBranch,
+              taskWorktreeReclaimed, ...finalized
+          },
       });
       await db.save();
       return { integration: updated, result: finalized };
@@ -3953,10 +4087,13 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
         integrationPath: null,
         resultHeadSha: finalized.resultHeadSha,
         state: 'merged',
+          localSyncStatus: finalized.localSyncStatus,
+          localHeadSha: finalized.localHeadSha,
+          localWorktreePath: finalized.localWorktreePath,
         conflictFiles: [],
         lastError: null,
       });
-      if (integration.targetBranch === workspace.sourceBranch) taskWorkspaces.update(workspace.id, { state: 'merged', lastError: null });
+        const taskWorktreeReclaimed = integration.targetBranch === workspace.sourceBranch ? await markTaskWorkspaceDelivered(workspace) : false;
       recordTaskEvent({
         taskId: task.id,
         eventType: 'task.git_integration.merged',
@@ -3966,6 +4103,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
           workspaceId: workspace.id,
           mode: integration.mode,
           sourceDelivered: integration.targetBranch === workspace.sourceBranch,
+            taskWorktreeReclaimed,
           ...finalized,
         },
       });
@@ -5848,6 +5986,68 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
   });
 
   server.get('/api/runtime/adapters', async () => listAiCliAdapters());
+
+    async function readAgentCapabilityCatalog() {
+        const checkedAt = now().toISOString();
+        const configuredCommandPath = configuredCodexRuntimeCommandPath();
+        let codexStatus = {
+            available: false,
+            version: null as string | null,
+            checkedAt,
+            reason: 'Zeus 当前已关闭 Codex 原生会话。',
+        };
+        if (codexNativeEnabled) {
+            const cliStatus = await checkAiCliAdapter('codex', {
+                ...(configuredCommandPath ? {commandPath: configuredCommandPath} : {}),
+                now: () => checkedAt
+            });
+            codexStatus = {
+                available: false,
+                version: cliStatus.version,
+                checkedAt: cliStatus.checkedAt,
+                reason: cliStatus.reason,
+            };
+            if (cliStatus.available) {
+                try {
+                    const capabilities = await codexAppServerManager.ensureReady({commandPath: currentCodexRuntimeCommandPath(), ...(codexExternalAgentHome ? {externalAgentHome: codexExternalAgentHome} : {})});
+                    codexStatus = {
+                        ...codexStatus,
+                        available: capabilities.models.length > 0,
+                        reason: capabilities.models.length > 0 ? `${cliStatus.reason.replace(/[。；]+$/u, '')}；App Server 已完成初始化并返回 ${capabilities.models.length} 个模型。` : 'Codex App Server 已初始化，但没有返回可用模型。',
+                    };
+                } catch (error) {
+                    codexStatus = {
+                        ...codexStatus,
+                        reason: error instanceof Error ? `Codex CLI 已检测，但 App Server 初始化失败：${error.message}` : 'Codex CLI 已检测，但 App Server 初始化失败。',
+                    };
+                }
+            }
+        }
+        return createAgentCapabilityCatalog({
+            enabled: codexNativeEnabled,
+            available: codexStatus.available,
+            checkedAt: codexStatus.checkedAt,
+            adapterVersion: codexStatus.version,
+            binaryVersion: codexStatus.version,
+            reason: codexStatus.reason,
+        });
+    }
+
+    server.get('/api/agents', async () => {
+        const registry = await readAgentCapabilityCatalog();
+        return {items: registry.listPublic()};
+    });
+
+    server.get('/api/developer/agents', async (_request, reply) => {
+        if (!appShellSettings.developerModeEnabled) {
+            return reply.code(404).send({
+                error: 'ZEUS_DEVELOPER_AGENT_CATALOG_DISABLED',
+                message: 'Developer agent catalog is disabled.'
+            });
+        }
+        const registry = await readAgentCapabilityCatalog();
+        return {items: registry.listAll()};
+    });
 
   server.get('/api/runtime/settings', async (): Promise<RuntimeSettingsSnapshot> => runtimeSettings);
 
@@ -10388,6 +10588,20 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
         model: conversation.providerModel,
         state: conversation.providerState,
       },
+        agent: {
+            kind: conversation.agentKind,
+            transport: conversation.agentTransport,
+            supportStatus: conversation.agentKind === 'codex' && codexNativeEnabled ? 'verified' : 'unavailable',
+            capabilitySnapshotId: conversation.capabilitySnapshotId,
+        },
+        model: {
+            sourceId: conversation.modelSourceId,
+            id: conversation.modelId ?? conversation.providerModel,
+        },
+        nativeSession: {
+            id: conversation.nativeSessionId ?? conversation.providerThreadId,
+            path: conversation.nativeSessionPath ?? conversation.providerThreadPath,
+        },
       createdAt: conversation.createdAt,
       updatedAt: conversation.updatedAt,
       archived: conversation.archived,
@@ -10895,6 +11109,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
   }
 
   async function executeProjectConversationIdempotent(project: ZeusProjectRecord, body: StartProjectConversationBody | Record<string, unknown>, idempotencyKey: string) {
+      assertRequestedAgentIsCodex(body);
     const scope = `project-conversation:${project.id}`;
     const requestHash = nativeIdempotencyRequestHash(body);
     const stableOperationId = nativeStableOperationId(scope, idempotencyKey, requestHash);
@@ -11029,6 +11244,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
   }
 
   async function executeTaskConversationIdempotent(project: ZeusProjectRecord, task: ZeusTaskRecord, body: StartTaskConversationBody | Record<string, unknown>, idempotencyKey: string) {
+      assertRequestedAgentIsCodex(body);
     const scope = `task-conversation:${task.id}`;
     const requestHash = nativeIdempotencyRequestHash(body);
     const stableOperationId = nativeStableOperationId(scope, idempotencyKey, requestHash);
@@ -11551,6 +11767,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
           code.includes('EXCEEDS_REQUEST') ||
           code.includes('ATTACHMENT_UNAVAILABLE') ||
           code.includes('NATIVE_DISABLED') ||
+        code.includes('NOT_AVAILABLE') ||
           code.includes('STALE')
         ? 409
         : code.startsWith('ZEUS_INVALID_') || code.endsWith('_INVALID') || code.endsWith('_REQUIRED') || code.includes('_UNSUPPORTED')
@@ -11562,6 +11779,14 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
   function nativeApiError(code: string, message: string): Error & { code: string } {
     return Object.assign(new Error(message), { code });
   }
+
+    function assertRequestedAgentIsCodex(value: unknown): void {
+        if (!isNativeApiRecord(value) || value.agentKind === undefined || value.agentKind === 'codex') return;
+        if (value.agentKind === 'pi' || value.agentKind === 'claude') {
+            throw nativeApiError('ZEUS_AGENT_NOT_AVAILABLE', `${value.agentKind === 'pi' ? 'Pi' : 'Claude'} Agent 当前尚未开放。`);
+        }
+        throw nativeApiError('ZEUS_INVALID_AGENT_KIND', 'agentKind must be codex, pi, claude, or omitted.');
+    }
 
   function parseConversationPermissionMode(value: unknown): ConversationPermissionMode | null {
     return value === 'read-only' || value === 'auto' || value === 'full-access' ? value : null;
@@ -11782,6 +12007,34 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       throw nativeApiError('ZEUS_TASK_WORKSPACE_BUSY', `Task branch ${workspace.branchName} already has an active writable Codex turn.`);
     }
   }
+
+    /** 来源分支远端交付成功后回收干净任务目录；清理失败不能反写成交付失败。 */
+    async function markTaskWorkspaceDelivered(workspace: ZeusTaskWorkspaceRecord): Promise<boolean> {
+        if (!workspace.worktreePath) {
+            taskWorkspaces.update(workspace.id, {state: 'merged', lastError: null});
+            return false;
+        }
+        try {
+            const reclaimed = await reclaimDeliveredTaskWorktree({
+                repositoryPath: projects.getById(workspace.projectId)?.localPath ?? '',
+                worktreePath: workspace.worktreePath
+            });
+            taskWorkspaces.update(workspace.id, {
+                worktreePath: null,
+                headSha: reclaimed.headSha,
+                state: 'merged',
+                lastError: null
+            });
+            return true;
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'Task worktree cleanup failed.';
+            taskWorkspaces.update(workspace.id, {
+                state: 'merged',
+                lastError: `目标分支已交付，但任务 worktree 回收失败：${message}`
+            });
+            return false;
+        }
+    }
 
   function countTaskWorkspaceActiveConversations(workspace: ZeusTaskWorkspaceRecord): number {
     let count = 0;

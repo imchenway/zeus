@@ -77,7 +77,7 @@ export function selectSessionCapabilities(state: NativeSessionState): {
   canRespondToRequest: boolean;
   canManageQueue: boolean;
 } {
-  const native = state.snapshot?.transportKind === 'codex_native';
+    const native = Boolean(state.snapshot?.agent?.kind) || state.snapshot?.transportKind === 'codex_native';
   const active = state.conversationState === 'active_prework' || state.conversationState === 'active_final_answer';
   return {
     canEditDraft: native && state.transportState !== 'failed' && state.conversationState !== 'legacy_readonly',
