@@ -3,13 +3,14 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { accessSync, constants, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { basename, delimiter, dirname, isAbsolute, join, resolve, sep } from 'node:path';
+import { basename, delimiter, dirname, extname, isAbsolute, join, resolve, sep } from 'node:path';
 import { createInterface } from 'node:readline';
 import { setTimeout as delay } from 'node:timers/promises';
 
 const repositoryRoot = resolve(import.meta.dirname, '..');
 const repository = 'imchenway/zeus';
 const releaseFiles = ['package.json', 'apps/desktop/package.json'];
+const formatExtensions = new Set(['.ts', '.tsx', '.cts', '.cjs', '.mjs', '.js', '.json', '.yml', '.yaml']);
 const isolatedSourceEnvironment = 'ZEUS_RELEASE_ISOLATED_SOURCE';
 const isolationValidationEnvironment = 'ZEUS_RELEASE_VALIDATE_ISOLATION';
 
@@ -67,6 +68,7 @@ async function main() {
 
   const releaseState = state.value;
   assertResumeWorktree(releaseState);
+  ensureReleaseCandidateFormatting(releaseState);
   console.log(`Zeus 端到端发布：${releaseState.baseTag}..${releaseState.sourceHead.slice(0, 12)} → ${releaseState.tag}`);
   console.log(`Codex CLI：${codexCommandPath}`);
 
@@ -141,6 +143,7 @@ async function runIsolatedRelease(input) {
     return;
   }
 
+  seedIsolatedReleaseState(isolatedRepository, input.sourceHead);
   await runStage(
     '在隔离副本执行端到端发布',
     'pnpm',
@@ -159,11 +162,71 @@ async function runIsolatedRelease(input) {
 }
 
 function isRecoverableIsolatedReleaseCommit(isolatedRepository, sourceHead, isolatedHead) {
+  const packagePath = join(isolatedRepository, 'package.json');
+  if (existsSync(packagePath)) {
+    const version = JSON.parse(readFileSync(packagePath, 'utf8')).version;
+    const gitDirectoryValue = gitInDirectory(isolatedRepository, ['rev-parse', '--git-common-dir']);
+    const gitDirectory = isAbsolute(gitDirectoryValue) ? gitDirectoryValue : resolve(isolatedRepository, gitDirectoryValue);
+    const releaseStatePath = join(gitDirectory, 'zeus-release', `v${version}`, 'state.json');
+    if (existsSync(releaseStatePath)) {
+      const state = JSON.parse(readFileSync(releaseStatePath, 'utf8'));
+      const sourceIsAncestor = captureInDirectory(isolatedRepository, 'git', ['merge-base', '--is-ancestor', sourceHead, state.sourceHead], true).status === 0;
+      if (state.releaseCommit === isolatedHead && sourceIsAncestor) return true;
+    }
+  }
   const parent = captureInDirectory(isolatedRepository, 'git', ['rev-parse', `${isolatedHead}^`], true);
   if (parent.status !== 0 || parent.stdout.trim() !== sourceHead) return false;
   const changedPaths = gitInDirectory(isolatedRepository, ['diff-tree', '--no-commit-id', '--name-only', '-r', isolatedHead]).split(/\r?\n/u).filter(Boolean);
   const versionNotes = changedPaths.filter((path) => /^docs\/releases\/v\d+\.\d+\.\d+\.md$/u.test(path));
   return changedPaths.length === 3 && releaseFiles.every((path) => changedPaths.includes(path)) && versionNotes.length === 1;
+}
+
+function seedIsolatedReleaseState(isolatedRepository, sourceHead) {
+  const version = JSON.parse(readFileSync(join(isolatedRepository, 'package.json'), 'utf8')).version;
+  const sourceState = readState(version);
+  if (!sourceState) return;
+  const gitDirectoryValue = gitInDirectory(isolatedRepository, ['rev-parse', '--git-common-dir']);
+  const gitDirectory = isAbsolute(gitDirectoryValue) ? gitDirectoryValue : resolve(isolatedRepository, gitDirectoryValue);
+  const stateDirectory = join(gitDirectory, 'zeus-release', `v${version}`);
+  const targetStatePath = join(stateDirectory, 'state.json');
+  if (existsSync(targetStatePath)) return;
+  if (sourceState.phase !== 'release_committed' || sourceState.gateSummaryPath || sourceState.publishResultPath || !sourceState.releaseCommit) {
+    return;
+  }
+  if (captureInDirectory(isolatedRepository, 'git', ['merge-base', '--is-ancestor', sourceState.releaseCommit, sourceHead], true).status !== 0) {
+    return;
+  }
+  if (resolveLocalTagSha(sourceState.tag) || resolveRemoteReference(`refs/tags/${sourceState.tag}`)) return;
+  const remoteMainSha = resolveRemoteReference('refs/heads/main');
+  if (!remoteMainSha || captureInDirectory(isolatedRepository, 'git', ['merge-base', '--is-ancestor', sourceState.releaseCommit, remoteMainSha], true).status === 0) {
+    return;
+  }
+  const notesSource = join(isolatedRepository, 'docs', 'releases', `${sourceState.tag}.md`);
+  if (!existsSync(notesSource)) throw new Error(`隔离恢复缺少仓库 Release notes：${notesSource}`);
+  const notesDirectory = join(stateDirectory, 'notes');
+  mkdirSync(notesDirectory, { recursive: true, mode: 0o700 });
+  const notesPath = join(notesDirectory, `Zeus-${version}-release-notes-draft.md`);
+  copyFileSync(notesSource, notesPath);
+  const isolatedState = {
+    schemaVersion: 1,
+    version,
+    tag: sourceState.tag,
+    baseTag: sourceState.baseTag,
+    sourceHead,
+    releaseCommit: sourceHead,
+    notesPath,
+    gateSummaryPath: null,
+    publishResultPath: null,
+    phase: 'release_committed',
+    createdAt: sourceState.createdAt,
+    updatedAt: new Date().toISOString(),
+    stateDirectory,
+  };
+  mkdirSync(stateDirectory, { recursive: true, mode: 0o700 });
+  const temporaryStatePath = `${targetStatePath}.${process.pid}.tmp`;
+  writeFileSync(temporaryStatePath, `${JSON.stringify(isolatedState, null, 2)}\n`, { mode: 0o600 });
+  renameSync(temporaryStatePath, targetStatePath);
+  console.log(`已把尚未推送的 ${sourceState.tag} 恢复状态带入隔离副本 ${sourceHead.slice(0, 12)}。`);
 }
 
 function buildIsolationValidationResult(input, isolatedRepository) {
@@ -232,6 +295,9 @@ function resolveReleaseState(input) {
   if (input.packageVersion === input.nextVersion) {
     if (!currentState) throw new Error(`检测到包版本 ${input.packageVersion} 高于公开稳定版，但缺少一键发布恢复状态，拒绝推断或创建新版本。`);
     validateState(currentState, input.stableRelease);
+    if (currentState.releaseCommit && currentState.releaseCommit !== input.headSha && !rebindUnpublishedReleaseRepair(currentState, input.headSha)) {
+      throw new Error(`本地 main 已偏离发布提交，且当前阶段不允许自动恢复：expected=${currentState.releaseCommit} actual=${input.headSha}`);
+    }
     return { type: 'resume', value: currentState };
   }
   if (input.packageVersion !== input.stableRelease.version) {
@@ -285,6 +351,24 @@ function canRebindPreWriteState(state) {
   return ['initialized', 'notes_generated'].includes(state.phase) && state.releaseCommit === null && state.gateSummaryPath === null && state.publishResultPath === null;
 }
 
+function rebindUnpublishedReleaseRepair(state, headSha) {
+  if (state.phase !== 'release_committed' || state.gateSummaryPath || state.publishResultPath) return false;
+  if (git(['status', '--short'])) return false;
+  if (readMatchingPackageVersion() !== state.version) return false;
+  if (resolveLocalTagSha(state.tag) || resolveRemoteReference(`refs/tags/${state.tag}`)) return false;
+  if (capture('git', ['merge-base', '--is-ancestor', state.releaseCommit, headSha], true).status !== 0) return false;
+  const remoteMainSha = resolveRemoteReference('refs/heads/main');
+  if (!remoteMainSha || capture('git', ['merge-base', '--is-ancestor', state.releaseCommit, remoteMainSha], true).status === 0) return false;
+  assertAncestor(state.baseTag, headSha);
+  state.sourceHead = headSha;
+  state.releaseCommit = headSha;
+  syncReleaseNotesSnapshot(state);
+  state.phase = 'release_committed';
+  writeState(state);
+  console.log(`尚未推送的 ${state.tag} 发布状态已重新绑定到修复提交 ${headSha.slice(0, 12)}。`);
+  return true;
+}
+
 function validateState(state, stableRelease) {
   if (state.schemaVersion !== 1 || !/^\d+\.\d+\.\d+$/u.test(state.version ?? '') || state.tag !== `v${state.version}`) {
     throw new Error('一键发布恢复状态格式无效。');
@@ -318,6 +402,64 @@ function assertResumeWorktree(state) {
     .map((line) => line.slice(3).split(' -> ').at(-1))
     .filter((path) => path && !allowed.has(path));
   if (unexpected.length > 0) throw new Error(`恢复现场包含发布候选以外的工作区变更：\n${unexpected.join('\n')}`);
+}
+
+function ensureReleaseCandidateFormatting(state) {
+  if (!['initialized', 'notes_generated', 'release_committed'].includes(state.phase)) return;
+  const currentHead = git(['rev-parse', 'HEAD']);
+  const expectedHead = state.releaseCommit ?? state.sourceHead;
+  if (currentHead !== expectedHead) throw new Error(`自动整理前本地 main 已偏离候选提交：expected=${expectedHead} actual=${currentHead}`);
+  const worktreeStatus = git(['status', '--short']);
+  if (worktreeStatus) throw new Error(`自动整理只能从干净候选开始：\n${worktreeStatus}`);
+  const paths = git(['diff', '--name-only', '--diff-filter=ACMR', `${state.baseTag}^{commit}`, currentHead, '--'])
+    .split(/\r?\n/u)
+    .filter((path) => path && formatExtensions.has(extname(path)) && existsSync(join(repositoryRoot, path)))
+    .sort();
+  if (paths.length === 0) return;
+
+  console.log(`\n[自动整理发布候选] Prettier --write（${paths.length} 个文件）`);
+  run('pnpm', ['exec', 'prettier', '--write', '--ignore-path', '.prettierignore', ...paths]);
+  const statusAfterFormatting = git(['status', '--short']);
+  if (!statusAfterFormatting) {
+    console.log('发布候选已经符合格式，无需创建整理提交。');
+    return;
+  }
+  const changedPaths = statusAfterFormatting
+    .split(/\r?\n/u)
+    .map((line) => line.slice(3).split(' -> ').at(-1))
+    .filter(Boolean);
+  const allowedPaths = new Set(paths);
+  const unexpectedPaths = changedPaths.filter((path) => !allowedPaths.has(path));
+  if (unexpectedPaths.length > 0) throw new Error(`自动整理产生范围外变化：\n${unexpectedPaths.join('\n')}`);
+
+  run('pnpm', ['exec', 'prettier', '--check', '--ignore-path', '.prettierignore', ...changedPaths]);
+  run('git', ['diff', '--check', '--', ...changedPaths]);
+  run('git', ['add', '--', ...changedPaths]);
+  run('git', ['diff', '--cached', '--check', '--', ...changedPaths]);
+  run('git', ['commit', '-m', 'chore: format release candidate']);
+
+  const formattedCommit = git(['rev-parse', 'HEAD']);
+  state.sourceHead = formattedCommit;
+  if (state.phase === 'release_committed') {
+    state.releaseCommit = formattedCommit;
+    syncReleaseNotesSnapshot(state);
+  } else {
+    state.releaseCommit = null;
+    state.notesPath = null;
+    state.phase = 'initialized';
+  }
+  writeState(state);
+  console.log(`发布候选格式变化已形成独立提交 ${formattedCommit.slice(0, 12)}。`);
+}
+
+function syncReleaseNotesSnapshot(state) {
+  const notesTarget = join(repositoryRoot, 'docs', 'releases', `${state.tag}.md`);
+  if (!existsSync(notesTarget)) throw new Error(`恢复发布缺少仓库 Release notes：${notesTarget}`);
+  const notesDirectory = join(state.stateDirectory, 'notes');
+  mkdirSync(notesDirectory, { recursive: true, mode: 0o700 });
+  const notesPath = join(notesDirectory, `Zeus-${state.version}-release-notes-draft.md`);
+  copyFileSync(notesTarget, notesPath);
+  state.notesPath = notesPath;
 }
 
 async function ensureReleaseNotes(state, codexCommandPath) {

@@ -190,7 +190,7 @@ function buildPrompt(currentEvidencePath) {
   const ignoredReleaseNotes = join(repositoryRoot, 'docs', 'releases', `v${releaseVersion}.md`);
   return `你负责为 Zeus ${releaseVersion} 生成一份面向用户的候选 Release notes。
 
-这只是只读内容生成，不发布、不修改源码、不运行验证命令。最终响应必须满足输出 Schema，只返回 markdown 字段。
+这只是只读内容生成，不发布、不修改源码、不运行验证命令。最终响应必须满足输出 Schema；markdown 字段只能包含 Release notes 正文，confidence、uncertainties 或生成过程说明只能放在各自字段，禁止追加到 markdown。
 
 事实入口：
 - 仓库根目录：${repositoryRoot}
@@ -342,4 +342,6 @@ function validateDraft(markdown) {
   if (/docs\/releases\/v[^\s]+\.md|TASK_\d+/u.test(markdown)) {
     throw new Error('发布内容泄漏内部任务或发布文档路径，请调整生成范围后重试。');
   }
+  const leakedCommentary = markdown.match(/用户要求只返回|confidence\s*[=:：]|uncertainties\s*[=:：]|以下无其他字段|最终正文如上/iu)?.[0];
+  if (leakedCommentary) throw new Error(`发布内容混入生成过程说明“${leakedCommentary}”，拒绝写入草稿。`);
 }

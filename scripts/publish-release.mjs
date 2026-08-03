@@ -376,6 +376,8 @@ function validateReleaseNotesFile(path, version) {
   for (const heading of ['## 如何升级', '## 系统要求与已知限制', '## 发布验证']) {
     if (!markdown.includes(`\n${heading}\n`)) throw new Error(`Release notes 缺少必要章节：${heading}`);
   }
+  const leakedCommentary = markdown.match(/用户要求只返回|confidence\s*[=:：]|uncertainties\s*[=:：]|以下无其他字段|最终正文如上/iu)?.[0];
+  if (leakedCommentary) throw new Error(`Release notes 混入生成过程说明“${leakedCommentary}”。`);
 }
 
 function validateLocalGateSummary(path, version, headSha) {

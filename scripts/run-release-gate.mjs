@@ -176,6 +176,8 @@ function validateReleaseNotes(path, version) {
   if (/docs\/releases\/v[^\s]+\.md|TASK_\d+/u.test(markdown)) {
     throw new Error('Release notes 泄漏内部任务或发布文档路径。');
   }
+  const leakedCommentary = markdown.match(/用户要求只返回|confidence\s*[=:：]|uncertainties\s*[=:：]|以下无其他字段|最终正文如上/iu)?.[0];
+  if (leakedCommentary) throw new Error(`Release notes 混入生成过程说明“${leakedCommentary}”。`);
 }
 
 function validateManifest(manifest, version, architecture, dmgPath) {
