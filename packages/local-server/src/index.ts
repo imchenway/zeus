@@ -4580,8 +4580,12 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
         return sendNativeConversationApiError(reply, error);
       }
     }
-    const result = await startTaskRuntimeSession(project, task, 'task.runtime.run', '任务已通过本地 API 启动 Runtime');
-    return reply.code('queued' in result ? 202 : 201).send(result);
+    try {
+      const result = await startTaskRuntimeSession(project, task, 'task.runtime.run', '任务已通过本地 API 启动 Runtime');
+      return reply.code('queued' in result ? 202 : 201).send(result);
+    } catch (error) {
+      return sendNativeConversationApiError(reply, error);
+    }
   });
 
   server.post('/api/tasks/:taskId/pause', async (request: FastifyRequest<{ Params: { taskId: string } }>, reply) => {
@@ -4619,8 +4623,12 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
         message: 'Codex continue requires an explicitly selected native conversation. Use POST /api/tasks/:taskId/conversations with mode resume.',
       });
     }
-    const result = await startTaskRuntimeSession(project, task, 'task.runtime.continue', '任务已通过本地 API 继续 Runtime', '继续执行该任务，优先复用已有上下文并说明新的真实依据。');
-    return reply.code('queued' in result ? 202 : 201).send(result);
+    try {
+      const result = await startTaskRuntimeSession(project, task, 'task.runtime.continue', '任务已通过本地 API 继续 Runtime', '继续执行该任务，优先复用已有上下文并说明新的真实依据。');
+      return reply.code('queued' in result ? 202 : 201).send(result);
+    } catch (error) {
+      return sendNativeConversationApiError(reply, error);
+    }
   });
 
   server.post('/api/tasks/:taskId/cancel', async (request: FastifyRequest<{ Params: { taskId: string } }>, reply) => {
@@ -9716,6 +9724,11 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     const task = tasks.getById(taskId);
     if (!task) return `未找到任务：${taskId}`;
     if (task.projectId !== project.id) return `任务不属于项目：${task.title} (${task.id})`;
+    const adapterId = runtimeSettings.defaultAdapterId;
+    if (isNonCodexAiCliAdapterId(adapterId)) {
+      const unsupportedMessage = getNonCodexTaskAttachmentsUnsupportedMessage(adapterId, task);
+      if (unsupportedMessage) return unsupportedMessage;
+    }
     return createTelegramRuntimeConfirmation('run', project, task, () => runTelegramTaskAfterConfirmation(project, task.id));
   }
 
@@ -9733,6 +9746,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       return `已启动 Codex native 会话：${result.task.title} (${result.task.id}) · ${result.conversation.id}`;
     }
     if (!isNonCodexAiCliAdapterId(adapterId)) return `不支持的 Runtime adapter：${String(adapterId)}`;
+    assertNonCodexTaskAttachmentsSupported(adapterId, task);
     const runningTask = moveTaskTowardRunning(task.id);
     const invocation = createNonCodexTaskRuntimeInvocation(adapterId, project, runningTask);
     const session = await aiRuntimeManager.startSession({
@@ -9791,6 +9805,11 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     if (!task) return `未找到任务：${taskId}`;
     const project = projects.getById(task.projectId);
     if (!project) return `未找到任务所属项目：${task.projectId}`;
+    const adapterId = runtimeSettings.defaultAdapterId;
+    if (isNonCodexAiCliAdapterId(adapterId)) {
+      const unsupportedMessage = getNonCodexTaskAttachmentsUnsupportedMessage(adapterId, task);
+      if (unsupportedMessage) return unsupportedMessage;
+    }
     return createTelegramRuntimeConfirmation('continue', project, task, () => continueTelegramTaskAfterConfirmation(task.id));
   }
 
@@ -9806,6 +9825,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       return `远程操作未执行；请在桌面端为任务 ${task.title} (${task.id}) 显式选择要续接的 Codex native 会话，Telegram 不会隐式选择历史。`;
     }
     if (!isNonCodexAiCliAdapterId(adapterId)) return `不支持的 Runtime adapter：${String(adapterId)}`;
+    assertNonCodexTaskAttachmentsSupported(adapterId, task);
     const runningTask = moveTaskTowardRunning(task.id);
     const invocation = createNonCodexTaskRuntimeInvocation(adapterId, project, runningTask, '继续执行该任务，优先复用已有上下文并说明新的真实依据。');
     const session = await aiRuntimeManager.startSession({
@@ -10016,18 +10036,24 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     return telegramConfirmationTtlMs <= 0 || Date.now() > confirmation.expiresAt;
   }
 
-  function createTaskRuntimePrompt(project: ZeusProjectRecord, task: ZeusTaskRecord, instruction?: string): string {
-    const projectConfig = readProjectConfig(project.id);
+  function createTaskRuntimePrompt(task: ZeusTaskRecord, descriptionSupplement?: string): string {
+    const taskDescription = [task.description.trim(), descriptionSupplement?.trim() ?? ''].filter(Boolean).join('\n\n');
     return buildAiRuntimePrompt({
       taskTitle: task.title,
-      taskDescription: task.description,
-      projectName: project.name,
-      projectPath: project.localPath,
-      sourceContext: parseTaskSourceContext(task),
-      projectWorkMode: projectConfig.defaultWorkMode,
-      projectDefaultTaskPrompt: projectConfig.defaultTaskPrompt,
-      instruction,
+      taskDescription,
     });
+  }
+
+  function getNonCodexTaskAttachmentsUnsupportedMessage(adapterId: NonCodexAiCliAdapterId, task: ZeusTaskRecord): string | null {
+    const sourceContext = parseTaskSourceContext(task);
+    return Array.isArray(sourceContext.attachments) && sourceContext.attachments.length > 0
+      ? `Runtime adapter ${adapterId} 不支持任务附件，未启动会话。`
+      : null;
+  }
+
+  function assertNonCodexTaskAttachmentsSupported(adapterId: NonCodexAiCliAdapterId, task: ZeusTaskRecord): void {
+    const unsupportedMessage = getNonCodexTaskAttachmentsUnsupportedMessage(adapterId, task);
+    if (unsupportedMessage) throw nativeApiError('ZEUS_NON_CODEX_TASK_ATTACHMENTS_UNSUPPORTED', unsupportedMessage);
   }
 
   function resolveExistingRuntimeSessionAdapter(command: string): AiCliAdapterDescriptor | null {
@@ -10047,9 +10073,10 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     project: ZeusProjectRecord,
     task: ZeusTaskRecord,
     instruction?: string,
-    prompt = createTaskRuntimePrompt(project, task, instruction),
+    prompt = createTaskRuntimePrompt(task, instruction),
     commandPathOverride?: string,
   ) {
+    assertNonCodexTaskAttachmentsSupported(adapterId, task);
     const projectConfig = readProjectConfig(project.id);
     // 项目默认模型优先级高于全局 Runtime 模型；未配置时才回退到全局设置。
     return createNonCodexAiCliAdapterInvocation(adapterId, prompt, {
@@ -10059,13 +10086,12 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     });
   }
 
-  function buildNonCodexLegacyContinuationPrompt(context: WritableNonCodexLegacyConversationContext, project: ZeusProjectRecord, task: ZeusTaskRecord): string {
+  function buildNonCodexLegacyContinuationPrompt(context: WritableNonCodexLegacyConversationContext, task: ZeusTaskRecord): string {
     const recentHistory = context.conversation.messages
       .slice(-NON_CODEX_LEGACY_HISTORY_LIMIT)
       .map((message) => `[${message.role}/${message.source}/${message.createdAt}]\n${message.content}`)
       .join('\n\n');
     return createTaskRuntimePrompt(
-      project,
       task,
       [
         `继续执行 legacy CLI 会话 ${context.conversation.id}。`,
@@ -10163,10 +10189,11 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       });
       return { runtimeError: { message: concurrency.reason } };
     }
+    assertNonCodexTaskAttachmentsSupported(context.adapterId, task);
     const runningTask = moveTaskTowardRunning(task.id, 'task.runtime.reconnect');
     const latestConversation = conversations.getById(conversation.id) ?? conversation;
     const latestContext: WritableNonCodexLegacyConversationContext = { ...context, conversation: latestConversation };
-    const prompt = buildNonCodexLegacyContinuationPrompt(latestContext, project, runningTask);
+    const prompt = buildNonCodexLegacyContinuationPrompt(latestContext, runningTask);
     const invocation = createNonCodexTaskRuntimeInvocation(context.adapterId, project, runningTask, undefined, prompt, context.recordedCommand ?? undefined);
     try {
       const session = await aiRuntimeManager.startSession({
@@ -11061,7 +11088,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
           taskId: task.id,
           workspaceId: workspace.id,
           taskTitle: task.title,
-          prompt: buildTaskPushPrompt(project, task, supplementalInfo),
+          prompt: buildTaskPushPrompt(task, supplementalInfo),
           attachments: attachmentInput.attachments,
           allowedAttachmentRoots: attachmentInput.allowedRoots,
           model: selectedModel.model,
@@ -11085,9 +11112,11 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
         if (!collaborationMode) throw nativeApiError('ZEUS_INVALID_COLLABORATION_MODE', 'collaborationMode must be default or plan.');
         const permissionMode = body.permissionMode === undefined ? (task.allowCodeChanges ? 'auto' : 'read-only') : parseConversationPermissionMode(body.permissionMode);
         if (!permissionMode) throw nativeApiError('ZEUS_INVALID_PERMISSION_MODE', 'permissionMode must be read-only, auto, or full-access.');
-        const attachments = normalizeNativeConversationAttachments(body.attachments, project.localPath);
+        const explicitAttachments = normalizeNativeConversationAttachments(body.attachments, project.localPath);
         const explicitContent = typeof body.content === 'string' ? body.content.trim() : '';
-        const content = explicitContent || (attachments.length === 0 ? createTaskRuntimePrompt(project, task) : '');
+        const canonicalAttachmentInput = body.attachments === undefined && !explicitContent ? normalizeTaskPushAttachments(task, project.localPath) : null;
+        const attachments = canonicalAttachmentInput?.attachments ?? explicitAttachments;
+        const content = explicitContent || createTaskRuntimePrompt(task);
         const capabilities = await resolveConversationCapabilities(project);
         const selectedModel = capabilities.models.find((candidate) => candidate.model === capabilities.preferredModel || candidate.id === capabilities.preferredModel) ?? capabilities.models[0]!;
         const requestedServiceTier = readServiceTierOverride(body);
@@ -11101,6 +11130,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
           taskTitle: task.title,
           prompt: content,
           attachments,
+          ...(canonicalAttachmentInput?.allowedRoots.length ? { allowedAttachmentRoots: canonicalAttachmentInput.allowedRoots } : {}),
           model: selectedModel.model,
           ...(requestedServiceTier.present ? { serviceTier } : {}),
           allowCodeChanges: task.allowCodeChanges,
@@ -11530,7 +11560,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     return {
       ...capabilities,
       taskId: task.id,
-      canonicalPrompt: createTaskRuntimePrompt(project, task),
+      canonicalPrompt: createTaskRuntimePrompt(task),
       git: {
         primaryWorkspacePath: repository.topLevel,
         primaryBranch: repository.branch,
@@ -11763,9 +11793,8 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     return capability.serviceTiers.some((tier) => tier.id === requested.value) ? requested.value : null;
   }
 
-  function buildTaskPushPrompt(project: ZeusProjectRecord, task: ZeusTaskRecord, supplementalInfo: string): string {
-    const canonicalPrompt = createTaskRuntimePrompt(project, task);
-    return supplementalInfo ? `${canonicalPrompt}\n\n## 本次推送补充信息\n${supplementalInfo}` : canonicalPrompt;
+  function buildTaskPushPrompt(task: ZeusTaskRecord, supplementalInfo: string): string {
+    return createTaskRuntimePrompt(task, supplementalInfo);
   }
 
   function normalizeTaskPushAttachments(task: ZeusTaskRecord, projectLocalPath: string): { attachments: NativeConversationAttachment[]; allowedRoots: string[] } {
@@ -11818,13 +11847,16 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
   }
 
   async function startTaskNativeConversation(project: ZeusProjectRecord, task: ZeusTaskRecord, eventType: string, eventTitle: string, instruction?: string) {
-    const prompt = createTaskRuntimePrompt(project, task, instruction);
+    const prompt = createTaskRuntimePrompt(task, instruction);
+    const attachmentInput = normalizeTaskPushAttachments(task, project.localPath);
     const operation = await codexNativeCoordinator.startTaskConversation({
       projectId: project.id,
       projectLocalPath: project.localPath,
       taskId: task.id,
       taskTitle: task.title,
       prompt,
+      attachments: attachmentInput.attachments,
+      allowedAttachmentRoots: attachmentInput.allowedRoots,
       model: await resolveCodexModel(project),
       allowCodeChanges: task.allowCodeChanges,
       allowTests: task.allowTests,
@@ -11900,7 +11932,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     if (!isNonCodexAiCliAdapterId(adapterId)) {
       throw new Error(`AI CLI adapter not found: ${String(adapterId)}`);
     }
-    const prompt = createTaskRuntimePrompt(project, task, instruction);
+    const prompt = createTaskRuntimePrompt(task, instruction);
     const invocation = createNonCodexTaskRuntimeInvocation(adapterId, project, task, instruction, prompt);
     const startingConversation = createTaskRuntimeConversation(adapterId, invocation.command, project, task, prompt, eventType);
     const concurrency = evaluateRuntimeConcurrency(project.id);
@@ -12448,16 +12480,18 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
         confidence: edge.confidence,
       })),
     };
-    return buildAiRuntimePrompt({
-      projectName: project.name,
-      projectPath: project.localPath,
-      taskTitle: `图谱问答：${question}`,
-      taskDescription: '基于 Zeus 真实代码图谱回答用户问题。回答必须带来源；如果来源不足，明确说“不足以判断”。',
-      sourceContext,
-      projectWorkMode: projectConfig.defaultWorkMode,
-      projectDefaultTaskPrompt: projectConfig.defaultTaskPrompt,
-      instruction: '请仅基于 sourceContext 中的真实图谱节点和边回答，保留文件路径、行号、节点或关系来源；不要编造未出现的模块、接口、表或任务记录。',
-    });
+    return [
+      '你是 Zeus 本地优先 AI 研发工作台中的 AI Runtime。',
+      '只能基于真实仓库、真实日志、真实错误输出行动；信息不足时先说明缺口，不要编造结果。',
+      `项目：${project.name}`,
+      `项目路径：${project.localPath}`,
+      `任务：图谱问答：${question}`,
+      '任务描述：基于 Zeus 真实代码图谱回答用户问题。回答必须带来源；如果来源不足，明确说“不足以判断”。',
+      `来源上下文：${JSON.stringify(sourceContext)}`,
+      `项目默认工作模式：${projectConfig.defaultWorkMode}`,
+      ...(projectConfig.defaultTaskPrompt.trim() ? [`项目默认任务提示词：${projectConfig.defaultTaskPrompt.trim()}`] : []),
+      '执行要求：请仅基于 sourceContext 中的真实图谱节点和边回答，保留文件路径、行号、节点或关系来源；不要编造未出现的模块、接口、表或任务记录。',
+    ].join('\n');
   }
 
   async function waitForRuntimeSessionExit(sessionId: string): Promise<void> {

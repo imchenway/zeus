@@ -53,12 +53,6 @@ export interface CheckAiCliAdapterOptions {
 export interface AiRuntimePromptInput {
   taskTitle: string;
   taskDescription?: string;
-  projectName?: string;
-  projectPath: string;
-  sourceContext?: Record<string, unknown>;
-  projectWorkMode?: string;
-  projectDefaultTaskPrompt?: string;
-  instruction?: string;
 }
 
 export interface AiCliAdapterInvocation {
@@ -120,24 +114,9 @@ export function listAiCliAdapters(): AiCliAdapterDescriptor[] {
   }));
 }
 
-/** 构造传给 AI CLI 的任务 prompt；只注入真实任务和来源上下文，不编造执行结论。 */
+/** 构造正式任务首发正文；运行配置和附件必须通过各自通道传递。 */
 export function buildAiRuntimePrompt(input: AiRuntimePromptInput): string {
-  const sourceContext = input.sourceContext ? JSON.stringify(input.sourceContext) : '{}';
-  const projectPreferences = [
-    input.projectWorkMode?.trim() ? `项目默认工作模式：${input.projectWorkMode.trim()}` : null,
-    input.projectDefaultTaskPrompt?.trim() ? `项目默认任务提示词：${input.projectDefaultTaskPrompt.trim()}` : null,
-  ].filter((item): item is string => Boolean(item));
-  return [
-    '你是 Zeus 本地优先 AI 研发工作台中的 AI Runtime。',
-    '只能基于真实仓库、真实日志、真实错误输出行动；信息不足时先说明缺口，不要编造结果。',
-    `项目：${input.projectName ?? '未命名项目'}`,
-    `项目路径：${input.projectPath}`,
-    `任务：${input.taskTitle}`,
-    `任务描述：${input.taskDescription?.trim() || '未提供'}`,
-    `来源上下文：${sourceContext}`,
-    ...projectPreferences,
-    `执行要求：${input.instruction?.trim() || '按任务目标完成分析或修改，并在输出中列出真实依据、修改点和验证方式。'}`,
-  ].join('\n');
+  return [`任务标题：${input.taskTitle.trim()}`, `任务描述：${input.taskDescription?.trim() || '未提供'}`].join('\n');
 }
 
 export function isNonCodexAiCliAdapterId(value: unknown): value is NonCodexAiCliAdapterId {

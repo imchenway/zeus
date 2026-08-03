@@ -28,9 +28,9 @@ export type TaskModelPushPreferences = Pick<TaskModelPushForm, 'model' | 'effort
 
 const preferencesKeyPrefix = 'zeus.task-model-push-preferences:v1:';
 
-export function buildTaskModelPushMessage(canonicalPrompt: string, supplementalInfo: string): string {
-  const supplement = supplementalInfo.trim();
-  return supplement ? `${canonicalPrompt}\n\n## 本次推送补充信息\n${supplement}` : canonicalPrompt;
+export function buildTaskModelPushMessage(task: Pick<TaskRecord, 'title' | 'description'>, supplementalInfo: string): string {
+  const description = [task.description?.trim() ?? '', supplementalInfo.trim()].filter(Boolean).join('\n\n') || '未提供';
+  return `任务标题：${task.title.trim()}\n任务描述：${description}`;
 }
 
 export function readTaskModelPushPreferences(storage: Pick<Storage, 'getItem'> | undefined, projectId: string): TaskModelPushPreferences | null {
@@ -95,7 +95,6 @@ export function TaskModelPushModal(props: {
   const selectedModel = props.capabilities?.models.find((model) => model.model === props.form.model || model.id === props.form.model);
   const selectedWorkspace = props.capabilities?.workspaces.find((workspace) => workspace.id === props.form.workspaceId);
   const taskSourceBranch = props.capabilities?.workspaces[0]?.sourceBranch;
-  const canonicalPrompt = props.capabilities?.canonicalPrompt ?? `${zh ? '任务标题' : 'Task title'}：${props.task.title}\n${zh ? '任务要求' : 'Task request'}：${props.task.description?.trim() || (zh ? '未填写' : 'Not provided')}`;
 
   function onModelChange(model: string): void {
     const capability = props.capabilities?.models.find((candidate) => candidate.model === model || candidate.id === model);
@@ -302,7 +301,7 @@ export function TaskModelPushModal(props: {
 
           <section className="task-model-push-canonical">
             <strong>{zh ? '将发送的任务内容' : 'Task content to send'}</strong>
-            <pre>{buildTaskModelPushMessage(canonicalPrompt, props.form.supplementalInfo)}</pre>
+            <pre>{buildTaskModelPushMessage(props.task, props.form.supplementalInfo)}</pre>
           </section>
 
           <section className="task-model-push-attachments">

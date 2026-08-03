@@ -1432,7 +1432,7 @@ const languageCopy = {
         defaultWorkModeHelp: '控制新任务进入 plan、develop、review 或 debug 的默认入口。',
         defaultTaskPromptAria: '默认任务提示',
         defaultTaskPromptTitle: '默认任务提示',
-        defaultTaskPromptHelp: '会追加到本项目新任务上下文中，只保存真实项目配置。',
+        defaultTaskPromptHelp: '用于图谱问答等项目级上下文，不进入正式任务首发。',
         scanIgnoreAria: '扫描忽略规则',
         scanIgnoreTitle: '扫描忽略规则',
         scanIgnoreHelp: '逗号分隔目录；用于代码扫描与图谱生成时排除噪音。',
@@ -2846,7 +2846,7 @@ const languageCopy = {
         defaultWorkModeHelp: 'Controls whether new tasks start in plan, develop, review, or debug.',
         defaultTaskPromptAria: 'Default task prompt',
         defaultTaskPromptTitle: 'Default task prompt',
-        defaultTaskPromptHelp: 'Appended to new task context for this project. Only real project configuration is saved.',
+        defaultTaskPromptHelp: 'Used for project-level contexts such as graph Q&A, not formal task dispatch.',
         scanIgnoreAria: 'Scan ignore rules',
         scanIgnoreTitle: 'Scan ignore rules',
         scanIgnoreHelp: 'Comma-separated directories excluded from code scans and graph generation.',
@@ -8117,7 +8117,7 @@ export function App(props: {
       projectName: targetProject?.name ?? task.projectId,
       request,
       form: taskModelPushForm,
-      prompt: buildTaskModelPushMessage(taskModelPushCapabilities.canonicalPrompt, taskModelPushForm.supplementalInfo),
+      prompt: buildTaskModelPushMessage(task, taskModelPushForm.supplementalInfo),
     });
     nativeConversationChoiceLoadCoordinator.preserveAccepted(pending.choice);
     setNativeConversationChoicesByTask((current) => {
