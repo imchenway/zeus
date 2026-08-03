@@ -644,23 +644,26 @@ export function taskAgentRunStatusFromSession(state: NativeSessionState): TaskAg
   return 'running';
 }
 
+export function taskAgentRunStatusFromConversation(conversation: Pick<NativeConversationChoice, 'status' | 'transportKind' | 'providerState' | 'pendingRequestKind'> & { readOnly?: boolean }): TaskAgentRunStatus {
+  if (conversation.readOnly || conversation.transportKind !== 'codex_native') return 'legacy_readonly';
+  const providerState = `${conversation.providerState ?? ''}`.toLowerCase();
+  const recordState = conversation.status.toLowerCase();
+  if (providerState.includes('failed') || providerState.includes('error') || recordState.includes('failed') || recordState.includes('error')) return 'failed';
+  if (providerState.includes('reconnect')) return 'reconnecting';
+  if (providerState.includes('connect') || providerState.includes('hydrat') || providerState.includes('disconnected')) return 'connecting';
+  if (providerState.includes('paused') || recordState.includes('paused')) return 'paused';
+  if (conversation.pendingRequestKind === 'user_input' || providerState.includes('user_input') || providerState.includes('user input')) return 'waiting_user';
+  if (conversation.pendingRequestKind === 'approval' || providerState.includes('approval') || providerState.includes('waiting')) return 'waiting_approval';
+  if (providerState.includes('active') || providerState.includes('running') || providerState.includes('starting')) return 'running';
+  return 'idle';
+}
+
 export function resolveTaskAgentRunStatus(conversations: NativeConversationChoice[], liveStatuses: Record<string, TaskAgentRunStatus>): TaskAgentRunStatus {
   if (conversations.length === 0) return 'not_started';
   const latest = conversations.reduce((current, candidate) => (candidate.updatedAt.localeCompare(current.updatedAt) > 0 ? candidate : current));
   const liveStatus = liveStatuses[latest.id];
   if (liveStatus) return liveStatus;
-  if (latest.readOnly || latest.transportKind !== 'codex_native') return 'legacy_readonly';
-  const providerState = `${latest.providerState ?? ''}`.toLowerCase();
-  const recordState = latest.status.toLowerCase();
-  if (providerState.includes('failed') || providerState.includes('error') || recordState.includes('failed') || recordState.includes('error')) return 'failed';
-  if (providerState.includes('reconnect')) return 'reconnecting';
-  if (providerState.includes('connect') || providerState.includes('hydrat') || providerState.includes('disconnected')) return 'connecting';
-  if (providerState.includes('user_input') || providerState.includes('user input')) return 'waiting_user';
-  if (providerState.includes('approval')) return 'waiting_approval';
-  if (providerState.includes('waiting')) return 'waiting_user';
-  if (providerState.includes('paused')) return 'paused';
-  if (providerState.includes('active') || providerState.includes('running') || providerState.includes('starting')) return 'running';
-  return 'idle';
+  return taskAgentRunStatusFromConversation(latest);
 }
 
 export function formatTaskManagementStatus(status: TaskManagementStatus, labels?: Partial<Record<TaskManagementStatus, string>>): string {
