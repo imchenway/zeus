@@ -141,11 +141,13 @@ function resolveReleaseState(input) {
   if (targetState) {
     validateState(targetState, input.stableRelease);
     if (targetState.sourceHead !== input.headSha) {
-      if (canRebindInitializedState(targetState)) {
+      if (canRebindPreWriteState(targetState)) {
         const worktreeStatus = git(['status', '--short']);
         if (worktreeStatus) throw new Error(`重新绑定未写入的发布候选前要求工作区干净：\n${worktreeStatus}`);
         assertAncestor(targetState.baseTag, input.headSha);
         targetState.sourceHead = input.headSha;
+        targetState.notesPath = null;
+        targetState.phase = 'initialized';
         targetState.updatedAt = new Date().toISOString();
         writeState(targetState);
         console.log(`未产生写入的 ${targetState.tag} 发布状态已重新绑定到 ${input.headSha.slice(0, 12)}。`);
@@ -179,8 +181,8 @@ function resolveReleaseState(input) {
   return { type: 'new', value: state };
 }
 
-function canRebindInitializedState(state) {
-  return state.phase === 'initialized' && state.releaseCommit === null && state.notesPath === null && state.gateSummaryPath === null && state.publishResultPath === null;
+function canRebindPreWriteState(state) {
+  return ['initialized', 'notes_generated'].includes(state.phase) && state.releaseCommit === null && state.gateSummaryPath === null && state.publishResultPath === null;
 }
 
 function validateState(state, stableRelease) {
@@ -547,7 +549,7 @@ function capture(command, args, allowFailure = false, timeout = 30_000) {
 }
 
 function git(args) {
-  return capture('git', ['-c', 'core.quotePath=false', ...args]).stdout.trim();
+  return capture('git', ['-c', 'core.quotePath=false', ...args]).stdout.trimEnd();
 }
 
 function gh(args) {
