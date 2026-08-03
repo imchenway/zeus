@@ -11233,16 +11233,43 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
           taskWorkspaces.update(taskWorkspace.id, { state: 'failed', lastError: error instanceof Error ? error.message : 'Task workspace review failed.' });
         }
       }
-      if (task.managementStatus === 'completed' || task.managementStatus === 'cancelled') {
-        tasks.updateManagementStatus(task.id, 'in_development');
-        recordTaskEvent({
-          taskId: task.id,
-          eventType: 'task.reopened',
-          title: '任务已因再次推送重新进入开发',
-          payload: { workspaceId: conversation.workspaceId },
-        });
-      }
       if (nativeOperation.status === 'active') {
+        const latestTask = tasks.getById(task.id);
+        if (latestTask?.managementStatus === 'todo') {
+          const updatedTask = tasks.updateManagementStatus(latestTask.id, 'in_development', latestTask.updatedAt);
+          recordTaskEvent({
+            taskId: updatedTask.id,
+            eventType: 'task.management_status.changed',
+            title: '任务推送成功，已进入开发中',
+            payload: {
+              from: latestTask.managementStatus,
+              to: updatedTask.managementStatus,
+              trigger: 'task.model_push.started',
+              conversationId: conversation.id,
+            },
+          });
+          appendAuditLog({
+            actorType: 'system',
+            action: 'task.management_status.changed',
+            resourceType: 'task',
+            resourceId: updatedTask.id,
+            payload: {
+              taskId: updatedTask.id,
+              projectId: updatedTask.projectId,
+              from: latestTask.managementStatus,
+              to: updatedTask.managementStatus,
+              trigger: 'task.model_push.started',
+              conversationId: conversation.id,
+            },
+          });
+          publishRealtimeEvent('task.updated', {
+            taskId: updatedTask.id,
+            projectId: updatedTask.projectId,
+            managementStatus: updatedTask.managementStatus,
+            changedFields: ['managementStatus'],
+            updatedAt: updatedTask.updatedAt,
+          });
+        }
         const runningTask = moveTaskTowardRunning(task.id, 'task.model_push.started');
         recordTaskEvent({
           taskId: runningTask.id,
