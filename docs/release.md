@@ -29,7 +29,7 @@ CI 通过 `ZEUS_VERIFY_BASE` 与 `ZEUS_VERIFY_HEAD` 传入本次推送或 PR 的
 
 公开 Release 只包含版本化 DMG 和更新 manifest；Zeus.app 与 Homebrew Cask 是本地或 CI 内部发布工件，不作为 Release 附件。
 
-- 公开 DMG：`dist/Zeus-0.1.10-arm64.dmg`；
+- 公开 DMG：`dist/Zeus-0.1.14-arm64.dmg`；
 - 公开更新清单：`dist/zeus-release-manifest.json`，供应用内检查更新读取；
 - 内部 App：`dist/mac-arm64/Zeus.app`；
 - 内部 Homebrew Cask：`dist/homebrew/zeus.rb`，同步到 `imchenway/homebrew-tap`；
@@ -40,7 +40,25 @@ CI 通过 `ZEUS_VERIFY_BASE` 与 `ZEUS_VERIFY_HEAD` 传入本次推送或 PR 的
 普通发布前门禁必须覆盖变更文件格式、Git 空白错误、lint、typecheck 和 build。完整 macOS 发布门禁在此基础上继续覆盖
 acceptance matrix、AI CLI adapter 探针、package:mac、包内 Electron 加载和包内 renderer/main 非 GUI 健康检查。
 
-### 当前公开稳定基线（0.1.10）
+### 当前公开稳定基线（0.1.14）
+
+- 根包与桌面包版本已同步为 `0.1.14`；本版本交付代码对比、独立提交、可选推送、无需推送即可合入，以及脏目标工作区的隔离交付与本地待同步反馈。
+- `pnpm release` 现在会自动整理本次候选中受 Prettier 管理的文件；产生变化时创建独立提交，不改写已有历史。尚未推送的失败候选可重新绑定后继续，脏工作区恢复状态可安全带入隔离发布副本。
+- Release notes 生成、候选准备、本地门禁和公开发布入口均会阻止 AI 生成过程说明混入公开正文；`0.1.14` 正文中的错误尾部已在公开前清理。
+- 自动整理扫描 20 个候选文件，实际整理 13 个文件，最终发布提交为 `0d61f218105ac82ffc381312c260aa0e452ed3b5`。
+- `pnpm verify:release` 在同一提交上通过：Prettier、Git 空白错误、lint、typecheck、build、12 个章节／139 项验收矩阵、AI CLI 探针、macOS arm64 正式打包、包内容健康、codesign 和 DMG 校验均成功。
+- 本地门禁 DMG 为 `135238461` 字节，SHA-256 为 `ce9af2c1129424db913d39449ddb382c218b68082337a2c625e1598d56c48c1a`；App 为 ad-hoc 签名且未公证，Gatekeeper 按预期拒绝。
+- `main` 推送 CI `30800693854` 成功；GitHub Actions 的 Node.js 20 弃用提醒保留为后续工程债务，不属于本次发布失败。
+- annotated tag `v0.1.14` 解引用后精确指向发布提交；Release Workflow `30800824335` 成功。
+- GitHub Release `https://github.com/imchenway/zeus/releases/tag/v0.1.14` 为非草稿、非预发布的 Latest Release，公开资产只有 `Zeus-0.1.14-arm64.dmg` 与 `zeus-release-manifest.json`。
+- 公开 DMG 为 `135174197` 字节、SHA-256 为 `b36afcc28e7b13471a7bb2cbcdb8780388e08a0799f5c5a9c5d24198af663fa1`；公开 manifest 为 `1047` 字节、SHA-256 为 `902b951b118821447da17f260fa7d1ad83ba4125f15a6126a21924d7a0c612d2`，明确记录 `signed=false`、`notarized=false`、最低 macOS `13.0`。
+- 发布脚本已从公开 Release 完整回下载 DMG 与 manifest；DMG 再次通过 `hdiutil verify`，GitHub 资产元数据、manifest、Release notes 和 Homebrew Tap Cask 完成一致性对账。
+- Homebrew Tap 已更新到提交 `ebcac4a06fd3ab712a934f4450d61b978294cce6`；远端 Cask 版本为 `0.1.14`，DMG SHA-256 与公开 manifest 一致。
+- 任务 006 已使用仓库测试包完成代码交付真实桌面点击和隔离 Git 链路验收；本发布轮没有重复桌面点击，不把静态门禁或打包成功描述为新的界面验收。
+- 原工作区并行未提交内容保持原样且没有进入发布；本轮没有启动、升级、替换或修改 `/Applications/Zeus.app`。
+- 当前公开制品仍是手动安装的实用发布，不能描述为 Apple 已认证、静默应用内安装或差分更新。
+
+### 历史稳定基线（0.1.10）
 
 - 根包与桌面包版本已同步为 `0.1.10`；本版本面向仓库维护者交付四阶段受控发布脚本、命令管理声明及同步入口，没有新增桌面界面或运行时业务功能；
 - Release notes 从 `v0.1.9` 到候选提交的 Git 范围、任务文档和版本事实生成，经人工复核后由 `release:prepare` 写入仓库；正文 SHA256 为 `312921d95604426cc8e24c4dd7099f2c1a2411556ed688e6eed5edb02e8934cd`；
