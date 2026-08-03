@@ -43,7 +43,7 @@ import './ui/primitives.css';
 import { notifyMainAppShellSettingsChanged, openExternalHttpsUrlInMain } from './appShellBridge.js';
 import { PENDING_RESOURCE_LONG_TEXT_THRESHOLD } from './ui/pendingResourcePolicy.js';
 import { TaskAttachmentPreviewList } from './task/TaskAttachmentPreviewList.js';
-import { type ConversationTreeRuntimeState, conversationTreeRuntimeStateFromSession, type ProjectConversationGroup, ProjectConversationTree } from './session/ProjectConversationTree.js';
+import { type ConversationTreeRuntimeState, conversationTreeRuntimeStateFromSession, conversationTreeRuntimeStateFromSnapshot, type ProjectConversationGroup, ProjectConversationTree } from './session/ProjectConversationTree.js';
 import {
   ConnectedSessionWorkspace,
   createNativeConversationStartEnvelopeManager,
@@ -63,6 +63,7 @@ import type {
   NativeConversationAttachment,
   NativeConversationChoice,
   NativeConversationChoicesSnapshot,
+  NativeConversationSnapshot,
   NativeProjectConversationChoicesSnapshot,
   NativeServiceTierSelection,
   NativeSessionState,
@@ -383,6 +384,33 @@ export function shouldRefreshConversationForRuntimeEvent(event: ZeusRealtimeEven
   return Boolean(sessionId && conversation && !conversation.archived && conversation.sessionId === sessionId);
 }
 
+const nativeConversationListLifecycleEventTypes = new Set([
+  'conversation.transport.changed',
+  'conversation.thread.changed',
+  'conversation.turn.started',
+  'conversation.turn.completed',
+  'conversation.queue.changed',
+  'conversation.request.created',
+  'conversation.request.resolved',
+  'conversation.native.error',
+]);
+
+export function shouldRefreshNativeConversationListForRealtimeEvent(event: ZeusRealtimeEvent): boolean {
+  return nativeConversationListLifecycleEventTypes.has(event.type) && typeof event.payload.projectId === 'string' && typeof event.payload.conversationId === 'string';
+}
+
+function taskAgentRunStatusFromConversationTreeRuntimeState(state: ConversationTreeRuntimeState): TaskAgentRunStatus {
+  if (state === 'connecting') return 'connecting';
+  if (state === 'reconnecting') return 'reconnecting';
+  if (state === 'pending_user_input') return 'waiting_user';
+  if (state === 'pending_approval') return 'waiting_approval';
+  if (state === 'paused') return 'paused';
+  if (state === 'ready') return 'idle';
+  if (state === 'error') return 'failed';
+  if (state === 'legacy_readonly') return 'legacy_readonly';
+  return 'running';
+}
+
 type AppLanguage = AppShellSettings['appLanguage'];
 type WorkMode = ProjectConfig['defaultWorkMode'];
 type CodeMapToolPanel = 'runtime' | 'search' | 'qa' | 'mermaid' | 'entities';
@@ -570,6 +598,58 @@ export function updateConversationChoiceCompletionUnread<
   const items = snapshot.items.map(update);
   if (choices.every((choice, index) => choice === snapshot.choices[index]) && items.every((choice, index) => choice === snapshot.items[index])) return snapshot;
   return { ...snapshot, choices, items };
+}
+
+export function updateConversationChoiceFromNativeSnapshot<
+  Snapshot extends {
+    choices: NativeConversationChoice[];
+    items: NativeConversationChoice[];
+  },
+>(snapshot: Snapshot, nativeSnapshot: NativeConversationSnapshot): Snapshot {
+  let changed = false;
+  const update = (choice: NativeConversationChoice): NativeConversationChoice => {
+    if (choice.id !== nativeSnapshot.id) return choice;
+    changed = true;
+    return {
+      ...choice,
+      projectId: nativeSnapshot.projectId,
+      taskId: nativeSnapshot.taskId,
+      title: nativeSnapshot.title,
+      summary: nativeSnapshot.summary,
+      status: nativeSnapshot.status,
+      transportKind: nativeSnapshot.transportKind,
+      providerId: nativeSnapshot.providerId,
+      providerThreadId: nativeSnapshot.providerThreadId,
+      providerModel: nativeSnapshot.providerModel,
+      providerState: nativeSnapshot.providerState,
+      pendingRequestKind: nativeSnapshot.pendingRequestKind,
+      createdAt: nativeSnapshot.createdAt,
+      updatedAt: nativeSnapshot.updatedAt,
+      archived: nativeSnapshot.archived,
+      permissionMode: nativeSnapshot.permissionMode,
+      collaborationMode: nativeSnapshot.collaborationMode,
+    };
+  };
+  const choices = snapshot.choices.map(update).sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+  const items = snapshot.items.map(update).sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+  return changed ? { ...snapshot, choices, items } : snapshot;
+}
+
+function updateConversationChoiceSnapshotCollection<
+  Snapshot extends {
+    choices: NativeConversationChoice[];
+    items: NativeConversationChoice[];
+  },
+>(collection: Record<string, Snapshot>, nativeSnapshot: NativeConversationSnapshot): Record<string, Snapshot> {
+  let changed = false;
+  const next = Object.fromEntries(
+    Object.entries(collection).map(([key, snapshot]) => {
+      const updated = updateConversationChoiceFromNativeSnapshot(snapshot, nativeSnapshot);
+      if (updated !== snapshot) changed = true;
+      return [key, updated];
+    }),
+  ) as Record<string, Snapshot>;
+  return changed ? next : collection;
 }
 
 const GRAPH_NODE_TASK_SUCCESS_DISMISS_MS = 2200;
@@ -6011,6 +6091,14 @@ export function App(props: {
   const [nativeConversationChoicesByProject, setNativeConversationChoicesByProject] = useState<Record<string, NativeProjectConversationChoicesSnapshot>>(() =>
     Object.fromEntries((props.initialNativeProjectConversationChoices ?? []).map((snapshot) => [snapshot.projectId, snapshot])),
   );
+  const nativeConversationChoicesByTaskRef = useRef(nativeConversationChoicesByTask);
+  const nativeConversationChoicesByProjectRef = useRef(nativeConversationChoicesByProject);
+  useEffect(() => {
+    nativeConversationChoicesByTaskRef.current = nativeConversationChoicesByTask;
+  }, [nativeConversationChoicesByTask]);
+  useEffect(() => {
+    nativeConversationChoicesByProjectRef.current = nativeConversationChoicesByProject;
+  }, [nativeConversationChoicesByProject]);
   const [nativeConversationChoiceTaskStates, setNativeConversationChoiceTaskStates] = useState<Record<string, NativeConversationChoiceTaskLoadState>>(() =>
     Object.fromEntries((props.initialNativeConversationChoices ?? []).map((snapshot) => [snapshot.taskId, completeNativeConversationChoiceTaskLoad(undefined)])),
   );
@@ -6474,6 +6562,8 @@ export function App(props: {
   const selectedTaskConversationRef = useRef<GraphConversationHistoryItem | undefined>(undefined);
   const pendingRealtimeConversationRefreshIdsRef = useRef<Set<string>>(new Set());
   const pendingRealtimeTaskRefreshIdsRef = useRef<Set<string>>(new Set());
+  const pendingRealtimeNativeConversationRefreshIdsRef = useRef<Set<string>>(new Set());
+  const repeatRealtimeNativeConversationRefreshIdsRef = useRef<Set<string>>(new Set());
   const taskMutationQueuesRef = useRef<Map<string, Promise<void>>>(new Map());
   const taskLocalVersionTransitionsRef = useRef<Map<string, Map<string, string>>>(new Map());
   useEffect(() => {
@@ -6688,7 +6778,60 @@ export function App(props: {
     const subscribeRealtimeEvents = props.onSubscribeRealtimeEvents;
     const loadGraphConversation = props.onLoadGraphConversation;
     if (!subscribeRealtimeEvents) return;
+    const refreshNativeConversationList = (projectId: string, conversationId: string): void => {
+      const client = props.nativeConversationClient;
+      if (!client) return;
+      if (pendingRealtimeNativeConversationRefreshIdsRef.current.has(conversationId)) {
+        repeatRealtimeNativeConversationRefreshIdsRef.current.add(conversationId);
+        return;
+      }
+      pendingRealtimeNativeConversationRefreshIdsRef.current.add(conversationId);
+      void client
+        .loadNativeConversation(projectId, conversationId)
+        .then(async (nativeSnapshot) => {
+          if (nativeSnapshot.id !== conversationId || nativeSnapshot.projectId !== projectId) return;
+          const knownConversation = nativeSnapshot.taskId
+            ? nativeConversationChoicesByTaskRef.current[nativeSnapshot.taskId]?.choices.some((choice) => choice.id === conversationId) === true
+            : nativeConversationChoicesByProjectRef.current[projectId]?.choices.some((choice) => choice.id === conversationId) === true;
+          if (knownConversation) {
+            setNativeConversationChoicesByProject((current) => updateConversationChoiceSnapshotCollection(current, nativeSnapshot));
+            setNativeConversationChoicesByTask((current) => updateConversationChoiceSnapshotCollection(current, nativeSnapshot));
+          } else if (nativeSnapshot.taskId) {
+            const taskId = nativeSnapshot.taskId;
+            const requestVersion = nativeConversationChoiceLoadCoordinator.begin(taskId);
+            const choices = await client.loadTaskConversationChoices(taskId);
+            const merged = nativeConversationChoiceLoadCoordinator.commit(taskId, requestVersion, choices);
+            if (merged) {
+              nativeConversationChoicesByTaskRef.current = { ...nativeConversationChoicesByTaskRef.current, [taskId]: merged };
+              setNativeConversationChoicesByTask((current) => ({ ...current, [taskId]: merged }));
+              setNativeConversationChoiceTaskStates((current) => ({ ...current, [taskId]: completeNativeConversationChoiceTaskLoad(current[taskId]) }));
+            }
+          } else {
+            const requestVersion = nativeProjectConversationChoiceLoadCoordinator.begin(projectId);
+            const choices = await client.loadProjectConversationChoices(projectId);
+            const merged = nativeProjectConversationChoiceLoadCoordinator.commit(projectId, requestVersion, choices);
+            if (merged) {
+              nativeConversationChoicesByProjectRef.current = { ...nativeConversationChoicesByProjectRef.current, [projectId]: merged };
+              setNativeConversationChoicesByProject((current) => ({ ...current, [projectId]: merged }));
+              setNativeConversationChoiceProjectStates((current) => ({ ...current, [projectId]: completeNativeConversationChoiceTaskLoad(current[projectId]) }));
+            }
+          }
+          const runtimeState = conversationTreeRuntimeStateFromSnapshot(nativeSnapshot);
+          setNativeConversationRuntimeStates((current) => (current[conversationId] === runtimeState ? current : { ...current, [conversationId]: runtimeState }));
+          const taskRunStatus = taskAgentRunStatusFromConversationTreeRuntimeState(runtimeState);
+          setNativeConversationTaskRunStatuses((current) => (current[conversationId] === taskRunStatus ? current : { ...current, [conversationId]: taskRunStatus }));
+        })
+        .catch((error: unknown) => recordLocalError('conversation-list-realtime-refresh', error))
+        .finally(() => {
+          pendingRealtimeNativeConversationRefreshIdsRef.current.delete(conversationId);
+          if (!repeatRealtimeNativeConversationRefreshIdsRef.current.delete(conversationId)) return;
+          refreshNativeConversationList(projectId, conversationId);
+        });
+    };
     const unsubscribe = subscribeRealtimeEvents((event) => {
+      if (shouldRefreshNativeConversationListForRealtimeEvent(event)) {
+        refreshNativeConversationList(event.payload.projectId as string, event.payload.conversationId as string);
+      }
       if (event.type === 'conversation.turn.completed' && typeof event.payload.conversationId === 'string') {
         const conversationId = event.payload.conversationId;
         const hasUnreadCompletion = event.payload.status === 'completed' && event.payload.hasUnreadCompletion !== false;
@@ -6730,7 +6873,7 @@ export function App(props: {
     return () => {
       if (unsubscribe) unsubscribe();
     };
-  }, [acknowledgeNativeConversationCompletion, mergeTaskRecord, props.onLoadGraphConversation, props.onLoadTask, props.onSubscribeRealtimeEvents, setNativeConversationCompletionUnread]);
+  }, [acknowledgeNativeConversationCompletion, mergeTaskRecord, props.nativeConversationClient, props.onLoadGraphConversation, props.onLoadTask, props.onSubscribeRealtimeEvents, setNativeConversationCompletionUnread]);
 
   const taskDetailPaneTask = taskDetailPaneTaskId ? (taskDetail?.id === taskDetailPaneTaskId ? taskDetail : snapshot.tasks.find((task) => task.id === taskDetailPaneTaskId)) : undefined;
   const taskDetailPaneConversations = taskDetailPaneTask ? (nativeConversationChoicesByTask[taskDetailPaneTask.id]?.choices ?? []) : [];
