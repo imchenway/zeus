@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 /* global console, process */
-import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { homedir, tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import {spawnSync} from 'node:child_process';
+import {existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync} from 'node:fs';
+import {homedir, tmpdir} from 'node:os';
+import {join, resolve} from 'node:path';
 
 process.on('uncaughtException', (error) => {
   console.error(error instanceof Error ? error.message : String(error));
@@ -15,6 +15,7 @@ const releaseVersion = requiredVersion(process.env.RELEASE_VERSION);
 const includeWorktree = parseBoolean(process.env.INCLUDE_WORKTREE, true);
 const releaseContext = boundedText(process.env.RELEASE_CONTEXT, 2_000);
 const releaseModel = optionalModel(process.env.RELEASE_MODEL);
+const automatedRelease = parseBoolean(process.env.AUTOMATED_RELEASE, false);
 const baseTag = resolveBaseTag(process.env.BASE_TAG);
 const headSha = git(['rev-parse', 'HEAD']);
 const shortHeadSha = git(['rev-parse', '--short=12', 'HEAD']);
@@ -39,8 +40,14 @@ writeFileSync(
     {
       type: 'object',
       additionalProperties: false,
-      properties: { markdown: { type: 'string' } },
-      required: ['markdown'],
+        properties: automatedRelease
+            ? {
+                markdown: {type: 'string'},
+                confidence: {type: 'string', enum: ['high', 'medium', 'low']},
+                uncertainties: {type: 'array', items: {type: 'string'}},
+            }
+            : {markdown: {type: 'string'}},
+        required: automatedRelease ? ['markdown', 'confidence', 'uncertainties'] : ['markdown'],
     },
     null,
     2,
@@ -78,7 +85,7 @@ console.log('正在调用 Codex 只读分析真实变更；该步骤不会修改
 const isolatedCodexHome = createIsolatedCodexHome();
 let codex;
 try {
-  codex = spawnSync('codex', codexArgs, {
+    codex = spawnSync(process.env.ZEUS_CODEX_COMMAND_PATH?.trim() || 'codex', codexArgs, {
     cwd: outputDirectory,
     env: { ...process.env, CODEX_HOME: isolatedCodexHome },
     input: prompt,
@@ -98,6 +105,9 @@ if (codex.status !== 0) {
 }
 
 const response = parseResponse(rawResponsePath);
+if (automatedRelease && (response.confidence !== 'high' || !Array.isArray(response.uncertainties) || response.uncertainties.length > 0)) {
+    throw new Error(`AI 发布内容没有达到自动发布要求：confidence=${response.confidence ?? 'missing'} uncertainties=${JSON.stringify(response.uncertainties ?? 'missing')}`);
+}
 const markdown = normalizeMarkdown(response.markdown);
 validateDraft(markdown);
 writeFileSync(draftPath, markdown, { mode: 0o600 });
@@ -192,13 +202,14 @@ function buildPrompt(currentEvidencePath) {
 1. 先完整读取生成证据，再按需只读检查真实 Git diff、相关任务文档、package.json、apps/desktop/electron-builder.yml 和上一版本 Release notes。
 2. 不得读取或复用 ${ignoredReleaseNotes}、docs/release.md 中目标版本的发布结果，也不得以目标版本的升级发布结果文档反推正文。
 3. 用用户能理解的功能和交互变化组织内容，不把 commit subject、文件清单或内部实现名直接当作发布卖点。
-4. 只写证据支持的事实；没有同一候选提交的真实验证证据时，明确写“待发布门禁确认”，不得声称已经通过。
+4. 只写证据支持的事实；发布验证章节描述本次公开前必经的门禁与回验，不得伪造当前尚未发生的结果。
 5. 当前公开制品若仍是 ad-hoc、未公证，只能描述为手动升级，不得声称应用内自动安装可用。
 6. 必须使用简体中文，标题必须精确为“# Zeus ${releaseVersion} 更新内容”。
 7. 必须包含“## 如何升级”“## 系统要求与已知限制”“## 发布验证”三个二级标题；前面按真实变化生成一至四个用户向主题。
 8. “如何升级”必须包含 Homebrew 命令 \`brew upgrade --cask imchenway/tap/zeus\` 和版本化 DMG 手动升级方式。
 9. 不写营销套话，不虚构性能数字，不使用源码行号或内部任务编号充当用户说明。
 10. 这是草稿，不要写 GitHub Release 已发布、Tap 已同步或用户已经完成升级。
+${automatedRelease ? '11. 本次用于无人值守发布。只有所有用户向事实均有明确证据时才把 confidence 设为 high 且 uncertainties 返回空数组；任何疑点都必须放入 uncertainties，禁止用“待确认”“待验证”“可能”“预计”掩盖。' : '11. 发布验证没有同一候选提交证据时，保留“待发布门禁确认”。'}
 `;
 }
 
@@ -320,9 +331,12 @@ function validateDraft(markdown) {
   if (!markdown.includes(`Zeus-${releaseVersion}-arm64.dmg`)) {
     throw new Error(`发布内容缺少版本化 DMG 名称：Zeus-${releaseVersion}-arm64.dmg。`);
   }
-  if (!markdown.includes('待发布门禁确认')) {
+    if (!automatedRelease && !markdown.includes('待发布门禁确认')) {
     throw new Error('发布内容没有保留“待发布门禁确认”的验证边界。');
   }
+    if (automatedRelease && /(待.{0,6}(?:确认|验证)|尚未(?:确认|验证)|TODO|TBD|可能|预计)/iu.test(markdown)) {
+        throw new Error('自动发布内容包含不确定表述，拒绝进入版本写入阶段。');
+    }
   if (markdown.length > 32_000) throw new Error('发布内容超过 32,000 字符，拒绝作为命令产物。');
   if (/docs\/releases\/v[^\s]+\.md|TASK_\d+/u.test(markdown)) {
     throw new Error('发布内容泄漏内部任务或发布文档路径，请调整生成范围后重试。');

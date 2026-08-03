@@ -1,22 +1,22 @@
-import { randomBytes } from 'node:crypto';
-import { open, readFile, unlink, writeFile, appendFile } from 'node:fs/promises';
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import type { AddressInfo } from 'node:net';
-import { dirname, join } from 'node:path';
-import { createReconnectableBrowserAutomationProxy } from './browserAutomationBridge.js';
+import {randomBytes} from 'node:crypto';
+import {appendFile, open, readFile, unlink, writeFile} from 'node:fs/promises';
+import {createServer, type IncomingMessage, type Server, type ServerResponse} from 'node:http';
+import type {AddressInfo} from 'node:net';
+import {dirname, join} from 'node:path';
+import {createReconnectableBrowserAutomationProxy} from './browserAutomationBridge.js';
 import {
-  executionHostLockPath,
-  executionHostProtocolVersion,
-  readExecutionHostBootstrap,
-  removeExecutionHostRendezvous,
-  writeExecutionHostRendezvous,
-  type ExecutionHostBrowserBridgeRegistration,
-  type ExecutionHostControlStatus,
-  type ExecutionHostLeaseStatus,
-  type ExecutionHostRendezvous,
-  type ExecutionHostWorkStatus,
+    type ExecutionHostBrowserBridgeRegistration,
+    type ExecutionHostControlStatus,
+    type ExecutionHostLeaseStatus,
+    executionHostLockPath,
+    executionHostProtocolVersion,
+    type ExecutionHostRendezvous,
+    type ExecutionHostWorkStatus,
+    readExecutionHostBootstrap,
+    removeExecutionHostRendezvous,
+    writeExecutionHostRendezvous,
 } from './executionHostProtocol.js';
-import { startOwnedDesktopLocalServer, type DesktopLocalServerRuntime } from './localServerRuntime.js';
+import {type DesktopLocalServerRuntime, startOwnedDesktopLocalServer} from './localServerRuntime.js';
 
 const uiLeaseTimeoutMs = 15_000;
 const detachedIdleShutdownMs = 30_000;
@@ -121,7 +121,6 @@ async function runExecutionHost(): Promise<void> {
     telegramToken: process.env.ZEUS_TELEGRAM_BOT_TOKEN,
     telegramAllowedUserIds: bootstrap.telegramAllowedUserIds,
     codexNativeEnabled: bootstrap.codexNativeEnabled,
-    codexRuntime: bootstrap.codexRuntime,
     codexLegacyImportRoot: bootstrap.codexLegacyImportRoot,
     releaseUpdateManifestUrl: bootstrap.releaseUpdateManifestUrl,
     allowUntrustedReleaseUpdateTest: bootstrap.allowUntrustedReleaseUpdateTest,
@@ -150,14 +149,6 @@ async function runExecutionHost(): Promise<void> {
       status: controlStatus,
       registerBrowserBridge: async (registration) => {
         assertLoopbackUrl(registration.baseUrl);
-        if (registration.codexRuntime) {
-          await runtime.activateCodexRuntime(registration.codexRuntime);
-          await record('execution_host.runtime_activated', {
-            appVersion: registration.codexRuntime.appVersion,
-            binaryVersion: registration.codexRuntime.binaryVersion,
-            artifactSha256: registration.codexRuntime.artifactSha256,
-          });
-        }
         currentUiAppVersion = registration.appVersion;
         uiLease = { leaseId: registration.leaseId, lastHeartbeatAt: new Date().toISOString(), appVersion: registration.appVersion };
         detachedIdleSince = null;
@@ -347,21 +338,7 @@ function processExists(pid: number): boolean {
 }
 
 function isBrowserBridgeRegistration(value: unknown): value is ExecutionHostBrowserBridgeRegistration {
-  return (
-    isRecord(value) &&
-    isNonEmptyString(value.leaseId) &&
-    isNonEmptyString(value.baseUrl) &&
-    isNonEmptyString(value.token) &&
-    isNonEmptyString(value.appVersion) &&
-    (value.codexRuntime === undefined ||
-      (isRecord(value.codexRuntime) &&
-        isNonEmptyString(value.codexRuntime.appVersion) &&
-        isNonEmptyString(value.codexRuntime.commandPath) &&
-        isNonEmptyString(value.codexRuntime.binaryVersion) &&
-        isNonEmptyString(value.codexRuntime.upstreamCommit) &&
-        typeof value.codexRuntime.artifactSha256 === 'string' &&
-        /^[a-f0-9]{64}$/u.test(value.codexRuntime.artifactSha256)))
-  );
+    return isRecord(value) && isNonEmptyString(value.leaseId) && isNonEmptyString(value.baseUrl) && isNonEmptyString(value.token) && isNonEmptyString(value.appVersion);
 }
 
 function assertLoopbackUrl(value: string): void {

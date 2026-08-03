@@ -191,9 +191,10 @@ app-server 在 MCP 启动状态中提供、用于索引单个 MCP 服务状态�
 `api-key` 等文本。
 _Avoid_: API Key、密钥值、provider 负载字段
 
-**内置 Codex Runtime**：
-随 Zeus 发行并经过启动完整性校验的 Codex 执行引擎；它是 Zeus 会话执行的唯一版本事实，不等同于系统 PATH 或 Codex App 内的 CLI。
-_Avoid_: 系统 Codex、外部 CLI、当前 Codex App Runtime
+**本机 Codex 依赖**：
+由用户自行安装、登录并由 Zeus 检测或显式配置路径的 Codex CLI；Zeus 不随安装包分发 Codex、不自动安装，也不保留内置回退。缺失或能力不兼容时，Zeus
+阻断 AI 执行并提供安装或升级引导。
+_Avoid_: 内置 Codex Runtime、包内 Codex、自动下载安装、静默回退
 
 **项目导航展开状态**：
 用户对单个项目在左侧导航中展开或折叠的本机偏好；首次默认展开并跨应用重启保留，不代表当前项目或当前页面。

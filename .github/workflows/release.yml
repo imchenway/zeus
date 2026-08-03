@@ -90,30 +90,11 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: 恢复 Codex runtime 构建缓存
+      - name: 恢复 Electron 构建缓存
         uses: actions/cache@v4
         with:
-          path: |
-            .tmp/openai-codex
-            .tmp/openai-codex-archives
-            .tmp/rust-toolchain-archives
-            .tmp/rust-toolchains
-            .tmp/codex-runtime
-            ~/Library/Caches/electron
-          key: zeus-macos-${{ runner.arch }}-${{ hashFiles('third_party/openai-codex/runtime.lock.json', 'apps/desktop/electron-builder.yml') }}
-      - name: 构建固定版本 Codex runtime
-        run: |
-          case "$(uname -m)" in
-            arm64) runtime_arch="arm64" ;;
-            x86_64) runtime_arch="x64" ;;
-            *) echo '不支持当前 macOS runner 架构。' >&2; exit 1 ;;
-          esac
-          runtime_dir=".tmp/codex-runtime/$runtime_arch"
-          if [ -x "$runtime_dir/codex" ] && [ -f "$runtime_dir/manifest.json" ]; then
-            echo '使用按 runtime lock 和架构命中的 Codex runtime 缓存。'
-          else
-            node scripts/build-codex-runtime.mjs --arch "$runtime_arch"
-          fi
+          path: ~/Library/Caches/electron
+          key: zeus-electron-macos-${{ runner.arch }}-${{ hashFiles('apps/desktop/electron-builder.yml', 'pnpm-lock.yaml') }}
       - name: 准备 App Store Connect API Key
         if: ${{ env.APPLE_API_KEY_P8 != '' }}
         run: |

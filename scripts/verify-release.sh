@@ -5,26 +5,27 @@ cd "$(dirname "$0")/.."
 pnpm verify:publish
 pnpm verify:acceptance-matrix
 node scripts/verify-ai-cli-adapters.mjs
-pnpm package:mac
+release_output_dir="${ZEUS_RELEASE_OUTPUT_DIR:-dist}"
+ZEUS_PACKAGE_OUTPUT_DIR="$release_output_dir" pnpm package:mac
 
 version="$(node -e "const fs=require('fs'); process.stdout.write(JSON.parse(fs.readFileSync('package.json','utf8')).version)")"
 arch="$(uname -m)"
 case "$arch" in
   arm64)
     package_arch="arm64"
-    app="dist/mac-arm64/Zeus.app"
+    app="$release_output_dir/mac-arm64/Zeus.app"
     ;;
   x86_64)
     package_arch="x64"
-    app="dist/mac/Zeus.app"
+    app="$release_output_dir/mac/Zeus.app"
     ;;
   *) echo "Zeus verify-release: unsupported macOS arch $arch" >&2; exit 1 ;;
 esac
 
-dmg="dist/Zeus-${version}-${package_arch}.dmg"
+dmg="$release_output_dir/Zeus-${version}-${package_arch}.dmg"
 source_cask="Casks/zeus.rb"
-generated_cask="dist/homebrew/zeus.rb"
-release_manifest="dist/zeus-release-manifest.json"
+generated_cask="$release_output_dir/homebrew/zeus.rb"
+release_manifest="$release_output_dir/zeus-release-manifest.json"
 source_repository="imchenway/zeus"
 homebrew_tap="imchenway/tap"
 node scripts/generate-homebrew-cask.mjs "$version" "$package_arch" "$dmg" "$generated_cask"
@@ -57,7 +58,7 @@ if [ "${ZEUS_REQUIRE_DISTRIBUTABLE_RELEASE:-0}" = "1" ] && { [ "$signed" != "tru
   exit 1
 fi
 
-node scripts/generate-release-manifest.mjs "$version" "stable" "$source_repository" "$release_manifest" "$homebrew_tap" "$signed" "$notarized"
+ZEUS_RELEASE_OUTPUT_DIR="$release_output_dir" node scripts/generate-release-manifest.mjs "$version" "stable" "$source_repository" "$release_manifest" "$homebrew_tap" "$signed" "$notarized"
 for required in "$release_manifest"; do
   if [ ! -e "$required" ]; then
     echo "Zeus verify-release: missing required release artifact $required" >&2
@@ -71,7 +72,7 @@ if ! ELECTRON_RUN_AS_NODE=1 "$app_executable" -e 'if (!process.versions.electron
   exit 1
 fi
 
-# 非 GUI 模式验证包内 Renderer、Main、Preload 与 Codex runtime 的结构和完整性。
+# 非 GUI 模式验证包内 Renderer、Main、Preload 结构，并确认没有夹带 Codex CLI。
 # 真实本地服务启动、127.0.0.1 绑定和 /health 响应必须由正式 App 运行验收单独证明。
 if ! ELECTRON_RUN_AS_NODE=1 "$app_executable" scripts/verify-packaged-app-health.mjs "$app"; then
   echo 'Zeus verify-release: packaged app content integrity check failed' >&2

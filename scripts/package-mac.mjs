@@ -1,14 +1,12 @@
 #!/usr/bin/env node
 /* global console, process */
-import { createHash } from 'node:crypto';
-import { existsSync } from 'node:fs';
-import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
-import { homedir } from 'node:os';
-import { basename, dirname, join, resolve } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
-import { execFileSync, spawn } from 'node:child_process';
-import { verifyPackagedApp } from './verify-packaged-app-health.mjs';
-import { machoSignatureNeutralSha256 } from './macho-signature-neutral-sha256.mjs';
+import {existsSync} from 'node:fs';
+import {mkdir, readdir, rm} from 'node:fs/promises';
+import {homedir} from 'node:os';
+import {basename, dirname, join, resolve} from 'node:path';
+import {fileURLToPath, pathToFileURL} from 'node:url';
+import {execFileSync, spawn} from 'node:child_process';
+import {verifyPackagedApp} from './verify-packaged-app-health.mjs';
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const rootDir = resolve(scriptDir, '..');
@@ -22,8 +20,8 @@ export function electronDistDirName(version, arch) {
   return `electron-v${version}-darwin-${arch}`;
 }
 
-export function packagedAppPathForArch(arch, variant = 'release') {
-  const outputRoot = variant === 'test' ? join(rootDir, 'dist', 'test') : join(rootDir, 'dist');
+export function packagedAppPathForArch(arch, variant = 'release', requestedOutputRoot) {
+    const outputRoot = requestedOutputRoot ?? (variant === 'test' ? join(rootDir, 'dist', 'test') : join(rootDir, 'dist'));
   const appName = variant === 'test' ? 'Zeus Test.app' : 'Zeus.app';
   return join(outputRoot, arch === 'arm64' ? 'mac-arm64' : 'mac', appName);
 }
@@ -172,20 +170,6 @@ async function prepareElectronDist(version, arch) {
   return distDir;
 }
 
-async function refreshCodexRuntimeManifest(arch) {
-  const runtimeDir = join(rootDir, '.tmp', 'codex-runtime', arch);
-  const binary = await readFile(join(runtimeDir, 'codex'));
-  const manifestPath = join(runtimeDir, 'manifest.json');
-  const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
-  const binarySha256 = createHash('sha256').update(binary).digest('hex');
-  if (manifest.sha256 !== binarySha256) {
-    throw new Error(`Zeus package:mac Codex runtime 原始摘要不一致：expected=${manifest.sha256 ?? 'missing'} actual=${binarySha256}`);
-  }
-  const codeSha256 = machoSignatureNeutralSha256(binary);
-  if (manifest.codeSha256 === codeSha256) return;
-  await writeFile(manifestPath, `${JSON.stringify({ ...manifest, codeSha256 }, null, 2)}\n`, { mode: 0o600 });
-}
-
 export async function packageMac() {
   if (process.platform !== 'darwin') {
     throw new Error('Zeus package:mac 只能在 macOS 上执行。');
@@ -193,16 +177,18 @@ export async function packageMac() {
   const arch = process.arch === 'x64' ? 'x64' : 'arm64';
   const variant = process.env.ZEUS_PACKAGE_VARIANT === 'test' ? 'test' : 'release';
   const builderConfig = variant === 'test' ? 'electron-builder.test.yml' : 'electron-builder.yml';
+    const configuredOutputRoot = process.env.ZEUS_PACKAGE_OUTPUT_DIR?.trim();
+    const outputRoot = configuredOutputRoot ? resolve(rootDir, configuredOutputRoot) : variant === 'test' ? join(rootDir, 'dist', 'test') : join(rootDir, 'dist');
   const version = await readElectronVersion();
   const electronDist = await prepareElectronDist(version, arch);
-  const appPath = packagedAppPathForArch(arch, variant);
+    const appPath = packagedAppPathForArch(arch, variant, outputRoot);
   await assertPackagedAppIsNotRunning(appPath);
-  await refreshCodexRuntimeManifest(arch);
   await run('pnpm', ['build'], { cwd: desktopDir });
   const packageEnv = buildMacNativeDependencyEnv(omitEmptyAppleReleaseEnvironment(process.env));
   const signingArgs = buildElectronBuilderSigningArgs(packageEnv);
   const electronDistArgs = electronDist ? [`--config.electronDist=${electronDist}`] : [];
-  await run('pnpm', ['--filter', '@zeus/desktop', 'exec', 'electron-builder', '--mac', 'dmg', '--config', builderConfig, ...electronDistArgs, ...signingArgs], {
+    const outputArgs = configuredOutputRoot ? [`--config.directories.output=${outputRoot}`] : [];
+    await run('pnpm', ['--filter', '@zeus/desktop', 'exec', 'electron-builder', '--mac', 'dmg', '--config', builderConfig, ...electronDistArgs, ...outputArgs, ...signingArgs], {
     cwd: rootDir,
     env: packageEnv,
   });

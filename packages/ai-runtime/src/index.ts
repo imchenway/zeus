@@ -1,9 +1,10 @@
-import { access } from 'node:fs/promises';
-import { spawn as nodeSpawn } from 'node:child_process';
-import { basename, delimiter, resolve, relative } from 'node:path';
-import { createRequire } from 'node:module';
-import { normalizeTerminalChunk } from '@zeus/terminal-core';
-import { expandCliSearchPath } from './cliSearchPath.js';
+import {constants} from 'node:fs';
+import {access, realpath} from 'node:fs/promises';
+import {spawn as nodeSpawn} from 'node:child_process';
+import {basename, delimiter, isAbsolute, relative, resolve} from 'node:path';
+import {createRequire} from 'node:module';
+import {normalizeTerminalChunk} from '@zeus/terminal-core';
+import {expandCliSearchPath} from './cliSearchPath.js';
 
 export * from './codexAppServerManager.js';
 export * from './codexAppServerProtocol.js';
@@ -35,6 +36,10 @@ export interface AiCliAdapterStatus extends AiCliStatus {
   displayName: string;
   capabilities: string[];
   version: string | null;
+    resolvedCommandPath: string | null;
+    checkedAt: string;
+    compatibility: 'compatible' | 'incompatible' | 'not_checked';
+    installationGuideUrl: string | null;
   authStatus: 'unknown' | 'authenticated' | 'unauthenticated';
   modelConfiguration: 'user-configured';
 }
@@ -46,8 +51,10 @@ export interface AiCliProbeResult {
 }
 
 export interface CheckAiCliAdapterOptions {
+    commandPath?: string;
   findCommand?: (command: string) => Promise<string | null>;
   runCommand?: (commandPath: string, args: string[]) => Promise<AiCliProbeResult>;
+    now?: () => string;
 }
 
 export interface AiRuntimePromptInput {
@@ -207,8 +214,10 @@ export function parseAiRuntimeOutputState(text: string): AiRuntimeOutputStateRes
 export async function checkAiCliAdapter(adapterId: string, options: CheckAiCliAdapterOptions = {}): Promise<AiCliAdapterStatus> {
   const adapter = AI_CLI_ADAPTERS.find((candidate) => candidate.id === adapterId);
   if (!adapter) throw new Error(`AI CLI adapter not found: ${adapterId}`);
+    const checkedAt = options.now?.() ?? new Date().toISOString();
   const findCommand = options.findCommand ?? findCommandOnPath;
-  const commandPath = await findCommand(adapter.command);
+    const configuredCommandPath = options.commandPath?.trim();
+    const commandPath = configuredCommandPath ? await resolveConfiguredCommandPath(configuredCommandPath, adapter.command) : await findCommand(adapter.command);
   const status: AiCliStatus = commandPath
     ? {
         ...adapter,
@@ -218,7 +227,7 @@ export async function checkAiCliAdapter(adapterId: string, options: CheckAiCliAd
     : {
         ...adapter,
         available: false,
-        reason: `未检测到 ${adapter.name} CLI，请在 Zeus 设置中配置。`,
+          reason: adapter.id === 'codex' ? codexInstallationGuidance(`未检测到 ${adapter.name}`) : `未检测到 ${adapter.name}，请在 Zeus 设置中配置。`,
       };
   if (!commandPath) {
     return {
@@ -227,6 +236,10 @@ export async function checkAiCliAdapter(adapterId: string, options: CheckAiCliAd
       displayName: adapter.displayName,
       capabilities: [...adapter.capabilities],
       version: null,
+        resolvedCommandPath: null,
+        checkedAt,
+        compatibility: 'not_checked',
+        installationGuideUrl: adapter.id === 'codex' ? 'https://chatgpt.com/codex/install.sh' : null,
       authStatus: 'unknown',
       modelConfiguration: 'user-configured',
     };
@@ -234,13 +247,24 @@ export async function checkAiCliAdapter(adapterId: string, options: CheckAiCliAd
   const probe = await runAdapterVersionProbe(commandPath, options.runCommand ?? runCommandOnce);
   const version = extractVersion(probe.stdout || probe.stderr);
   const authStatus = detectAuthStatus(`${probe.stdout}\n${probe.stderr}`);
+    const capabilityProbe = adapter.id === 'codex' && probe.exitCode === 0 ? await runAdapterCapabilityProbe(commandPath, options.runCommand ?? runCommandOnce) : null;
+    const compatible = probe.exitCode === 0 && (adapter.id !== 'codex' || capabilityProbe?.exitCode === 0);
   return {
     ...status,
-    reason: buildAdapterProbeReason(adapter, status.reason, version, authStatus),
+      available: compatible,
+      reason: compatible
+          ? buildAdapterProbeReason(adapter, status.reason, version, authStatus)
+          : adapter.id === 'codex'
+              ? codexInstallationGuidance(`检测到 Codex CLI，但版本探针或 app-server 能力不可用：${commandPath}`)
+              : `${status.reason}；版本探针失败，退出码 ${probe.exitCode}。`,
     id: adapter.id,
     displayName: adapter.displayName,
     capabilities: [...adapter.capabilities],
     version,
+      resolvedCommandPath: commandPath,
+      checkedAt,
+      compatibility: compatible ? 'compatible' : 'incompatible',
+      installationGuideUrl: adapter.id === 'codex' ? 'https://chatgpt.com/codex/install.sh' : null,
     authStatus,
     modelConfiguration: 'user-configured',
   };
@@ -454,13 +478,42 @@ async function findCommandOnPath(command: string): Promise<string | null> {
   for (const entry of pathEntries) {
     const candidate = resolve(entry, command);
     try {
-      await access(candidate);
-      return candidate;
+        await access(candidate, constants.X_OK);
+        return await realpath(candidate);
     } catch {
       // 继续检查 PATH 中下一个目录。
     }
   }
-  return null;
+    return findCommandFromLoginShell(command);
+}
+
+async function resolveConfiguredCommandPath(commandPath: string, expectedCommand: string, requireExpectedBasename = false): Promise<string | null> {
+    if (!isAbsolute(commandPath) || (requireExpectedBasename && basename(commandPath) !== expectedCommand)) return null;
+    try {
+        await access(commandPath, constants.X_OK);
+        return await realpath(commandPath);
+    } catch {
+        return null;
+    }
+}
+
+async function findCommandFromLoginShell(command: string): Promise<string | null> {
+    if (!AI_CLI_ADAPTER_COMMAND_BASENAMES.has(command)) return null;
+    const shellPath = process.env.SHELL?.trim();
+    if (!shellPath || !isAbsolute(shellPath)) return null;
+    try {
+        await access(shellPath, constants.X_OK);
+    } catch {
+        return null;
+    }
+    const result = await runCommandOnce(shellPath, ['-lic', `command -v ${command}`]);
+    if (result.exitCode !== 0) return null;
+    const candidates = result.stdout
+        .split(/\r?\n/u)
+        .map((line) => line.trim())
+        .filter((line) => isAbsolute(line));
+    const candidate = candidates.at(-1);
+    return candidate ? resolveConfiguredCommandPath(candidate, command, true) : null;
 }
 
 async function runAdapterVersionProbe(commandPath: string, runCommand: (commandPath: string, args: string[]) => Promise<AiCliProbeResult>): Promise<AiCliProbeResult> {
@@ -473,6 +526,18 @@ async function runAdapterVersionProbe(commandPath: string, runCommand: (commandP
       exitCode: 1,
     };
   }
+}
+
+async function runAdapterCapabilityProbe(commandPath: string, runCommand: (commandPath: string, args: string[]) => Promise<AiCliProbeResult>): Promise<AiCliProbeResult> {
+    try {
+        return await runCommand(commandPath, ['app-server', '--help']);
+    } catch (error) {
+        return {
+            stdout: '',
+            stderr: error instanceof Error ? error.message : String(error),
+            exitCode: 1,
+        };
+    }
 }
 
 function runCommandOnce(commandPath: string, args: string[]): Promise<AiCliProbeResult> {
@@ -525,6 +590,10 @@ function buildAdapterProbeReason(adapter: AiCliAdapterDescriptor, baseReason: st
   if (authStatus === 'unauthenticated') return `${baseReason}；${adapter.name} 需要登录后才能执行任务。`;
   if (version) return `${baseReason}；版本 ${version}。`;
   return `${baseReason}；未能从 --version 输出读取版本。`;
+}
+
+function codexInstallationGuidance(reason: string): string {
+    return `${reason}。请由用户在终端运行官方安装命令 curl -fsSL https://chatgpt.com/codex/install.sh | sh，完成登录后回到 Zeus 重新检测。Zeus 不会自动安装或回退到内置版本。`;
 }
 
 /** 创建 AI Runtime 会话管理器；默认使用真实子进程，不伪造 AI 输出。 */

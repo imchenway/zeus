@@ -1,17 +1,9 @@
-import { randomUUID } from 'node:crypto';
-import { chmod, lstat, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import {randomUUID} from 'node:crypto';
+import {chmod, lstat, mkdir, readFile, rename, unlink, writeFile} from 'node:fs/promises';
+import {join} from 'node:path';
 
 export const executionHostProtocolVersion = 1;
 export const executionHostRendezvousFileName = 'rendezvous.json';
-
-export interface ExecutionHostRuntimeDescriptor {
-  appVersion: string;
-  commandPath: string;
-  binaryVersion: string;
-  upstreamCommit: string;
-  artifactSha256: string;
-}
 
 export interface ExecutionHostBootstrap {
   protocolVersion: number;
@@ -19,7 +11,6 @@ export interface ExecutionHostBootstrap {
   userDataPath: string;
   projectRoot: string;
   codexNativeEnabled: boolean;
-  codexRuntime?: ExecutionHostRuntimeDescriptor;
   codexLegacyImportRoot: string;
   releaseUpdateManifestUrl?: string;
   allowUntrustedReleaseUpdateTest?: boolean;
@@ -100,7 +91,6 @@ export interface ExecutionHostBrowserBridgeRegistration {
   baseUrl: string;
   token: string;
   appVersion: string;
-  codexRuntime?: ExecutionHostRuntimeDescriptor;
 }
 
 export interface ExecutionHostControlClient {
@@ -245,7 +235,6 @@ function isExecutionHostBootstrap(value: unknown): value is ExecutionHostBootstr
     isNonEmptyString(value.userDataPath) &&
     isNonEmptyString(value.projectRoot) &&
     typeof value.codexNativeEnabled === 'boolean' &&
-    (value.codexRuntime === undefined || isExecutionHostRuntimeDescriptor(value.codexRuntime)) &&
     isNonEmptyString(value.codexLegacyImportRoot) &&
     (value.releaseUpdateManifestUrl === undefined || isNonEmptyString(value.releaseUpdateManifestUrl)) &&
     (value.allowUntrustedReleaseUpdateTest === undefined || typeof value.allowUntrustedReleaseUpdateTest === 'boolean') &&
@@ -255,18 +244,6 @@ function isExecutionHostBootstrap(value: unknown): value is ExecutionHostBootstr
     isNonEmptyString(value.conversationAttachmentGrantSecretPath) &&
     isNonEmptyString(value.appVersion) &&
     isNonEmptyString(value.createdAt)
-  );
-}
-
-function isExecutionHostRuntimeDescriptor(value: unknown): value is ExecutionHostRuntimeDescriptor {
-  return (
-    isRecord(value) &&
-    isNonEmptyString(value.appVersion) &&
-    isNonEmptyString(value.commandPath) &&
-    isNonEmptyString(value.binaryVersion) &&
-    isNonEmptyString(value.upstreamCommit) &&
-    typeof value.artifactSha256 === 'string' &&
-    /^[a-f0-9]{64}$/u.test(value.artifactSha256)
   );
 }
 

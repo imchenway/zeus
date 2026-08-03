@@ -1,19 +1,23 @@
-import { spawn } from 'node:child_process';
-import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import { lstat, mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { createCodexRuntimeGenerationManager } from '@zeus/ai-runtime';
-import { hasCodexFinalizationOwnershipClaim, startZeusLocalServer, type BrowserAutomationPort, type RunningZeusLocalServer } from '@zeus/local-server';
-import { startDesktopBrowserAutomationBridge } from './browserAutomationBridge.js';
+import {spawn} from 'node:child_process';
+import {randomBytes, randomUUID} from 'node:crypto';
+import {mkdir, writeFile} from 'node:fs/promises';
+import {dirname, join} from 'node:path';
+import {fileURLToPath} from 'node:url';
+import {createCodexRuntimeGenerationManager} from '@zeus/ai-runtime';
 import {
-  createExecutionHostControlClient,
-  executionHostProtocolVersion,
-  readExecutionHostRendezvous,
-  writeExecutionHostBootstrap,
-  type ExecutionHostRendezvous,
-  type ExecutionHostRuntimeDescriptor,
-  type ExecutionHostWorkStatus,
+    type BrowserAutomationPort,
+    hasCodexFinalizationOwnershipClaim,
+    type RunningZeusLocalServer,
+    startZeusLocalServer
+} from '@zeus/local-server';
+import {startDesktopBrowserAutomationBridge} from './browserAutomationBridge.js';
+import {
+    createExecutionHostControlClient,
+    executionHostProtocolVersion,
+    type ExecutionHostRendezvous,
+    type ExecutionHostWorkStatus,
+    readExecutionHostRendezvous,
+    writeExecutionHostBootstrap
 } from './executionHostProtocol.js';
 
 export interface RendererLocalServerConfig {
@@ -34,7 +38,6 @@ export interface DesktopLocalServerRuntime {
   };
   getStatus: () => Promise<ExecutionHostWorkStatus>;
   refreshConfig: () => Promise<RendererLocalServerConfig>;
-  activateCodexRuntime: (runtime: ExecutionHostRuntimeDescriptor) => Promise<void>;
   stopActiveWork: () => Promise<void>;
   close: (mode?: DesktopLocalServerCloseMode) => Promise<void>;
 }
@@ -50,7 +53,6 @@ export interface StartDesktopLocalServerOptions {
   telegramToken?: string;
   telegramAllowedUserIds?: number[];
   codexNativeEnabled?: boolean;
-  codexRuntime?: ExecutionHostRuntimeDescriptor;
   codexLegacyImportRoot?: string;
   releaseUpdateManifestUrl?: string;
   allowUntrustedReleaseUpdateTest?: boolean;
@@ -123,7 +125,6 @@ export async function startDesktopLocalServer(options: StartDesktopLocalServerOp
       baseUrl: browserBridge.baseUrl,
       token: browserBridge.token,
       appVersion: options.appVersion?.trim() || '0.0.0',
-      codexRuntime: options.codexRuntime,
     };
     await client.registerBrowserBridge(registration);
     const config: RendererLocalServerConfig = {
@@ -236,7 +237,6 @@ export async function startDesktopLocalServer(options: StartDesktopLocalServerOp
         }
       },
       refreshConfig,
-      activateCodexRuntime: async () => undefined,
       stopActiveWork: async () => {
         let result;
         try {
@@ -303,8 +303,6 @@ export async function startOwnedDesktopLocalServer(options: StartDesktopLocalSer
   const configPath = join(options.userDataPath, 'zeus.config.json');
   const restartDelayMs = 1_000;
   const codexAppServerManager = createCodexRuntimeGenerationManager();
-  if (options.codexRuntime) await validateMaterializedCodexRuntime(options.codexRuntime, options.userDataPath);
-  let activeCodexRuntime = options.codexRuntime;
   let closingIntentionally = false;
   let restartTimer: ReturnType<typeof setTimeout> | undefined;
   let restartPromise: Promise<void> | undefined;
@@ -350,8 +348,7 @@ export async function startOwnedDesktopLocalServer(options: StartDesktopLocalSer
       telegramToken: options.telegramToken,
       telegramAllowedUserIds: options.telegramAllowedUserIds,
       codexNativeEnabled: options.codexNativeEnabled ?? true,
-      codexRuntimeCommandPath: () => activeCodexRuntime?.commandPath ?? 'codex',
-      codexRuntimeBinaryVersion: activeCodexRuntime?.binaryVersion,
+        codexRuntimeCommandPath: 'codex',
       codexLegacyImportRoot: options.codexLegacyImportRoot,
       releaseUpdateManifestUrl: options.releaseUpdateManifestUrl,
       allowUntrustedReleaseUpdateTest: options.allowUntrustedReleaseUpdateTest,
@@ -429,21 +426,6 @@ export async function startOwnedDesktopLocalServer(options: StartDesktopLocalSer
       return (await response.json()) as ExecutionHostWorkStatus;
     },
     refreshConfig: async () => ({ ...config }),
-    activateCodexRuntime: async (runtime) => {
-      if (activeCodexRuntime?.artifactSha256 === runtime.artifactSha256 && activeCodexRuntime.commandPath === runtime.commandPath) return;
-      await validateMaterializedCodexRuntime(runtime, options.userDataPath);
-      const previous = activeCodexRuntime;
-      activeCodexRuntime = runtime;
-      try {
-        await codexAppServerManager.ensureReady({
-          commandPath: runtime.commandPath,
-          ...(options.codexLegacyImportRoot ? { externalAgentHome: await realpath(options.codexLegacyImportRoot) } : {}),
-        });
-      } catch (error) {
-        if (activeCodexRuntime === runtime) activeCodexRuntime = previous;
-        throw error;
-      }
-    },
     stopActiveWork: async () => {
       const response = await fetch(`${config.baseUrl}/api/execution-host/stop-active`, {
         method: 'POST',
@@ -500,18 +482,6 @@ export async function startOwnedDesktopLocalServer(options: StartDesktopLocalSer
   };
 }
 
-/** 宿主只接受 Main 已物化到内容地址目录且仍保持原摘要的运行时，避免控制面注入任意可执行文件。 */
-async function validateMaterializedCodexRuntime(runtime: ExecutionHostRuntimeDescriptor, userDataPath: string): Promise<void> {
-  const expectedPath = join(userDataPath, 'execution-host', 'runtimes', runtime.artifactSha256, 'codex');
-  const [actualPath, canonicalExpectedPath, fileStat, bytes] = await Promise.all([realpath(runtime.commandPath), realpath(expectedPath), lstat(expectedPath), readFile(expectedPath)]);
-  if (actualPath !== canonicalExpectedPath || !fileStat.isFile() || fileStat.isSymbolicLink()) {
-    throw new Error('Zeus Codex runtime is not a regular materialized executable.');
-  }
-  if (typeof process.getuid === 'function' && fileStat.uid !== process.getuid()) throw new Error('Zeus Codex runtime owner does not match the execution host.');
-  if ((fileStat.mode & 0o022) !== 0 || (fileStat.mode & 0o100) === 0) throw new Error('Zeus Codex runtime permissions are unsafe.');
-  if (createHash('sha256').update(bytes).digest('hex') !== runtime.artifactSha256) throw new Error('Zeus Codex runtime checksum changed after materialization.');
-}
-
 async function connectOrLaunchExecutionHost(options: StartDesktopLocalServerOptions): Promise<ExecutionHostRendezvous> {
   const existing = await readHealthyExecutionHost(options.userDataPath);
   if (existing) return existing;
@@ -523,7 +493,6 @@ async function connectOrLaunchExecutionHost(options: StartDesktopLocalServerOpti
     userDataPath: options.userDataPath,
     projectRoot: options.projectRoot,
     codexNativeEnabled: options.codexNativeEnabled ?? true,
-    codexRuntime: options.codexRuntime,
     codexLegacyImportRoot: options.codexLegacyImportRoot ?? join(options.userDataPath, 'codex-legacy-import'),
     releaseUpdateManifestUrl: options.releaseUpdateManifestUrl,
     allowUntrustedReleaseUpdateTest: options.allowUntrustedReleaseUpdateTest,

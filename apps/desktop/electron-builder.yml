@@ -8,14 +8,6 @@ files:
   - dist/**
   - assets/**
   - package.json
-extraResources:
-  - from: ../../.tmp/codex-runtime/${arch}
-    to: codex
-    filter:
-      - codex
-      - manifest.json
-  - from: ../../third_party/openai-codex/runtime.lock.json
-    to: codex/runtime.lock.json
 mac:
   category: public.app-category.developer-tools
   icon: assets/icon.icns
