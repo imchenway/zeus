@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { DashboardClient, TaskManagementStatus, TaskRecord } from '../apiClient.js';
+import { ZeusApiError, type DashboardClient, type TaskManagementStatus, type TaskRecord } from '../apiClient.js';
 import type { TaskGitDiffSummary, TaskGitFileDiff, TaskGitFileStatus, TaskWorkspaceSnapshot, TaskWorkspacesSnapshot } from '../session/sessionTypes.js';
 import { Button } from '../ui/Button.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
 
-type ReviewMode = 'commit' | 'delivery' | 'completed' | 'cancelled';
+type ReviewMode = 'commit' | 'commit-only' | 'push-only' | 'delivery' | 'completed' | 'cancelled';
 type ReviewStatus = 'loading' | 'ready' | 'submitting' | 'error';
 const closedWorkspaceStates = new Set(['reclaimed', 'merged', 'discarded']);
 
@@ -13,7 +13,7 @@ export function TaskGitReviewModal(props: {
   language: 'zh-CN' | 'en-US';
   task: TaskRecord | null;
   projectName?: string;
-  client: Pick<DashboardClient, 'loadTaskGitWorkspaces' | 'loadTaskWorkspaceFileDiff' | 'commitTaskWorkspace' | 'reclaimTaskWorkspace' | 'discardTaskWorkspace' | 'stopTaskWorkspaceSessions'> | null;
+  client: Pick<DashboardClient, 'loadTaskGitWorkspaces' | 'loadTaskWorkspaceFileDiff' | 'commitTaskWorkspace' | 'pushTaskWorkspace' | 'reclaimTaskWorkspace' | 'discardTaskWorkspace' | 'stopTaskWorkspaceSessions'> | null;
   mode: ReviewMode;
   preferredWorkspaceId?: string | null;
   onClose: () => void;
@@ -51,7 +51,7 @@ export function TaskGitReviewModal(props: {
           props.onClose();
           return;
         }
-        if (props.mode !== 'commit' && next.items.every((workspace) => closedWorkspaceStates.has(workspace.state))) {
+        if (props.mode !== 'commit' && props.mode !== 'commit-only' && props.mode !== 'push-only' && next.items.every((workspace) => closedWorkspaceStates.has(workspace.state))) {
           if (props.mode === 'delivery') {
             props.onClose();
             return;
@@ -64,7 +64,7 @@ export function TaskGitReviewModal(props: {
             .catch((reason: unknown) => {
               if (cancelled) return;
               setStatus('error');
-              setError(errorMessage(reason));
+              setError(errorMessage(reason, zh));
             });
           return;
         }
@@ -76,7 +76,7 @@ export function TaskGitReviewModal(props: {
       .catch((reason: unknown) => {
         if (cancelled) return;
         setStatus('error');
-        setError(errorMessage(reason));
+        setError(errorMessage(reason, zh));
       });
     return () => {
       cancelled = true;
@@ -105,7 +105,7 @@ export function TaskGitReviewModal(props: {
         if (!cancelled) setFileDiff(result.diff);
       })
       .catch((reason: unknown) => {
-        if (!cancelled) setError(errorMessage(reason));
+        if (!cancelled) setError(errorMessage(reason, zh));
       });
     return () => {
       cancelled = true;
@@ -134,7 +134,7 @@ export function TaskGitReviewModal(props: {
         selectedPaths,
         push,
       });
-      if (props.mode === 'commit') {
+      if (props.mode === 'commit' || props.mode === 'commit-only') {
         await reload(activeWorkspace.id);
         setStatus('ready');
         return;
@@ -167,13 +167,28 @@ export function TaskGitReviewModal(props: {
       setStatus('ready');
     } catch (reason) {
       setStatus('error');
-      setError(errorMessage(reason));
+      setError(errorMessage(reason, zh));
+      await reload(activeWorkspace.id).catch(() => undefined);
+    }
+  }
+
+  async function push(): Promise<void> {
+    if (!props.task || !props.client || !activeWorkspace || props.mode !== 'push-only') return;
+    setStatus('submitting');
+    setError(null);
+    try {
+      await props.client.pushTaskWorkspace(props.task.id, activeWorkspace.id);
+      await reload(activeWorkspace.id);
+      setStatus('ready');
+    } catch (reason) {
+      setStatus('error');
+      setError(errorMessage(reason, zh));
       await reload(activeWorkspace.id).catch(() => undefined);
     }
   }
 
   async function reclaimWithoutCommit(): Promise<void> {
-    if (!props.task || !props.client || !activeWorkspace || props.mode === 'commit') return;
+    if (!props.task || !props.client || !activeWorkspace || props.mode === 'commit' || props.mode === 'commit-only' || props.mode === 'push-only') return;
     setStatus('submitting');
     setError(null);
     try {
@@ -191,12 +206,12 @@ export function TaskGitReviewModal(props: {
       setStatus('ready');
     } catch (reason) {
       setStatus('error');
-      setError(errorMessage(reason));
+      setError(errorMessage(reason, zh));
     }
   }
 
   async function discard(): Promise<void> {
-    if (!props.task || !props.client || !activeWorkspace || props.mode === 'commit') return;
+    if (!props.task || !props.client || !activeWorkspace || props.mode === 'commit' || props.mode === 'commit-only' || props.mode === 'push-only') return;
     setStatus('submitting');
     setError(null);
     try {
@@ -214,7 +229,7 @@ export function TaskGitReviewModal(props: {
       setStatus('ready');
     } catch (reason) {
       setStatus('error');
-      setError(errorMessage(reason));
+      setError(errorMessage(reason, zh));
     }
   }
 
@@ -228,13 +243,13 @@ export function TaskGitReviewModal(props: {
       setStatus('ready');
     } catch (reason) {
       setStatus('error');
-      setError(errorMessage(reason));
+      setError(errorMessage(reason, zh));
     }
   }
 
   const busy = status === 'submitting';
   const activeReview = activeWorkspace?.review;
-  const canReclaimUnchanged = props.mode !== 'commit' && activeReview?.clean === true && activeReview.headSha === activeWorkspace?.sourceHeadSha;
+  const canReclaimUnchanged = props.mode !== 'commit' && props.mode !== 'commit-only' && props.mode !== 'push-only' && activeReview?.clean === true && activeReview.headSha === activeWorkspace?.sourceHeadSha;
 
   return (
     <ModalPortal rootClassName="task-git-review-portal-root" backdropClassName="task-git-review-backdrop" dismissDisabled={busy} onDismiss={props.onClose}>
@@ -242,7 +257,25 @@ export function TaskGitReviewModal(props: {
         <header className="task-git-review-header">
           <span>
             <strong id="task-git-review-title">
-              {props.mode === 'commit' ? (zh ? '提交变更' : 'Commit Changes') : props.mode === 'delivery' ? (zh ? '准备代码交付' : 'Prepare Code Delivery') : zh ? '审查并交付任务分支' : 'Review and deliver task branches'}
+              {props.mode === 'commit'
+                ? zh
+                  ? '提交变更'
+                  : 'Commit Changes'
+                : props.mode === 'commit-only'
+                  ? zh
+                    ? '提交代码'
+                    : 'Commit Code'
+                  : props.mode === 'push-only'
+                    ? zh
+                      ? '推送代码'
+                      : 'Push Code'
+                    : props.mode === 'delivery'
+                      ? zh
+                        ? '准备代码交付'
+                        : 'Prepare Code Delivery'
+                      : zh
+                        ? '审查并交付任务分支'
+                        : 'Review and deliver task branches'}
             </strong>
             <small>
               {props.projectName ? `${props.projectName} · ` : ''}
@@ -270,7 +303,7 @@ export function TaskGitReviewModal(props: {
           <main className="task-git-review-main">
             <section className="task-git-review-changes" aria-label={zh ? '变更文件' : 'Changed files'}>
               <span className="task-git-review-pane-title">
-                <strong>{zh ? '变更' : 'Changes'}</strong>
+                <strong>{props.mode === 'push-only' ? (zh ? '本机未提交变更' : 'Local uncommitted changes') : zh ? '变更' : 'Changes'}</strong>
                 <small>{files.length}</small>
               </span>
               {status === 'loading' ? <p>{zh ? '正在读取 Git 状态…' : 'Loading Git status…'}</p> : null}
@@ -282,12 +315,14 @@ export function TaskGitReviewModal(props: {
                 {files.map((file) => (
                   <li key={file.path} className={selectedFile === file.path ? 'is-active' : ''}>
                     <label>
-                      <input
-                        type="checkbox"
-                        checked={selectedPaths.includes(file.path)}
-                        onChange={(event) => setSelectedPaths((current) => (event.target.checked ? Array.from(new Set([...current, file.path])) : current.filter((path) => path !== file.path)))}
-                        disabled={busy}
-                      />
+                      {props.mode !== 'push-only' ? (
+                        <input
+                          type="checkbox"
+                          checked={selectedPaths.includes(file.path)}
+                          onChange={(event) => setSelectedPaths((current) => (event.target.checked ? Array.from(new Set([...current, file.path])) : current.filter((path) => path !== file.path)))}
+                          disabled={busy}
+                        />
+                      ) : null}
                       <button type="button" onClick={() => setSelectedFile(file.path)}>
                         <span>{file.path}</span>
                         <small>{fileStatusLabel(file, zh)}</small>
@@ -331,10 +366,20 @@ export function TaskGitReviewModal(props: {
                 <dd>{activeReview ? `${activeReview.ahead} / ${activeReview.behind}` : '—'}</dd>
               </div>
             </dl>
-            <section>
-              <strong>{zh ? '提交检查' : 'Commit checks'}</strong>
-              <small>{zh ? '项目未配置额外提交前检查。' : 'No additional project commit checks are configured.'}</small>
-            </section>
+            {props.mode !== 'push-only' ? (
+              <section>
+                <strong>{zh ? '提交检查' : 'Commit checks'}</strong>
+                <small>{zh ? '项目未配置额外提交前检查。' : 'No additional project commit checks are configured.'}</small>
+              </section>
+            ) : null}
+            {props.mode === 'push-only' ? (
+              <section className="task-git-review-push-scope">
+                <strong>{zh ? '本次推送范围' : 'Push scope'}</strong>
+                <small>
+                  {zh ? '只推送当前 HEAD。未提交和已暂存改动会原样保留在本机，不会自动提交、回收或合入。' : 'Only the current HEAD will be pushed. Uncommitted and staged changes stay local and will not be committed, reclaimed, or merged.'}
+                </small>
+              </section>
+            ) : null}
             {activeWorkspace && activeWorkspace.activeConversationCount > 0 ? (
               <section className="task-git-review-active-sessions">
                 <strong>{zh ? '活动会话' : 'Active sessions'}</strong>
@@ -351,10 +396,12 @@ export function TaskGitReviewModal(props: {
           </aside>
         </div>
 
-        <label className="task-git-review-message">
-          <span>{zh ? '提交说明' : 'Commit message'}</span>
-          <textarea value={message} onChange={(event) => setMessage(event.target.value)} disabled={busy} />
-        </label>
+        {props.mode !== 'push-only' ? (
+          <label className="task-git-review-message">
+            <span>{zh ? '提交说明' : 'Commit message'}</span>
+            <textarea value={message} onChange={(event) => setMessage(event.target.value)} disabled={busy} />
+          </label>
+        ) : null}
 
         {discardOpen && activeWorkspace ? (
           <section className="task-git-review-discard">
@@ -375,7 +422,7 @@ export function TaskGitReviewModal(props: {
 
         <footer className="task-git-review-footer">
           <span>
-            {props.mode !== 'commit' && activeWorkspace && !closedWorkspaceStates.has(activeWorkspace.state) ? (
+            {props.mode !== 'commit' && props.mode !== 'commit-only' && props.mode !== 'push-only' && activeWorkspace && !closedWorkspaceStates.has(activeWorkspace.state) ? (
               <Button variant="secondary" size="regular" onClick={() => setDiscardOpen((current) => !current)} disabled={busy}>
                 {zh ? '放弃分支…' : 'Discard branch…'}
               </Button>
@@ -400,6 +447,26 @@ export function TaskGitReviewModal(props: {
                   {zh ? '提交' : 'Commit'}
                 </Button>
               </>
+            ) : props.mode === 'commit-only' ? (
+              <Button
+                variant="primary"
+                size="regular"
+                busy={busy}
+                onClick={() => void commit(false)}
+                disabled={busy || !activeWorkspace || activeWorkspace.activeConversationCount > 0 || files.length === 0 || selectedPaths.length === 0 || activeReview?.conflictFiles.length !== 0}
+              >
+                {zh ? '提交代码' : 'Commit Code'}
+              </Button>
+            ) : props.mode === 'push-only' ? (
+              <Button
+                variant="primary"
+                size="regular"
+                busy={busy}
+                onClick={() => void push()}
+                disabled={busy || !activeWorkspace || activeWorkspace.activeConversationCount > 0 || activeReview?.conflictFiles.length !== 0 || closedWorkspaceStates.has(activeWorkspace.state)}
+              >
+                {zh ? '推送代码' : 'Push Code'}
+              </Button>
             ) : canReclaimUnchanged ? (
               <Button variant="primary" size="regular" busy={busy} onClick={() => void reclaimWithoutCommit()} disabled={busy || activeWorkspace.activeConversationCount > 0}>
                 {zh ? '确认无变更并回收' : 'Confirm unchanged and reclaim'}
@@ -474,6 +541,17 @@ function SideBySideDiff(props: { diff: TaskGitFileDiff | null; zh: boolean }) {
   );
 }
 
-function errorMessage(error: unknown): string {
+function errorMessage(error: unknown, zh: boolean): string {
+  if (zh && error instanceof ZeusApiError) {
+    const localizedMessages: Record<string, string> = {
+      ZEUS_TASK_WORKSPACE_BUSY: '仍有会话可能写入当前任务分支，请先停止活动会话。',
+      ZEUS_TASK_WORKSPACE_CONFLICTED: '任务工作区存在未解决冲突，请先完成冲突处理。',
+      ZEUS_TASK_WORKSPACE_DETACHED: '任务工作区当前未绑定命名分支，无法提交或推送。',
+      ZEUS_TASK_WORKTREE_UNAVAILABLE: '任务 worktree 当前不可用，无法提交或推送。',
+      ZEUS_TASK_REMOTE_VERIFICATION_FAILED: '推送后远端分支与本地 HEAD 不一致，请检查远端状态后重试。',
+      ZEUS_TASK_GIT_OPERATION_FAILED: 'Git 操作失败，请检查任务分支与远端状态后重试。',
+    };
+    if (error.error && localizedMessages[error.error]) return localizedMessages[error.error];
+  }
   return error instanceof Error ? error.message : String(error);
 }

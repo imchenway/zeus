@@ -384,6 +384,18 @@ export interface TaskWorkspaceCommitResult {
   review: TaskWorkspaceReview;
 }
 
+export interface TaskWorkspacePushResult {
+  workspace: TaskWorkspaceRecord;
+  result: {
+    branch: string;
+    headSha: string;
+    remoteName: string;
+    remoteBranch: string;
+    remoteHeadSha: string;
+  };
+  review: TaskWorkspaceReview;
+}
+
 export interface TaskIntegrationRecord {
   id: string;
   projectId: string;

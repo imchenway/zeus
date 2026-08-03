@@ -19,6 +19,7 @@ import type {
   TaskIntegrationConflictFile,
   TaskIntegrationRecord,
   TaskWorkspaceCommitResult,
+  TaskWorkspacePushResult,
   TaskWorkspacesSnapshot,
   TurnChangeSet,
   TurnChangeSetOperationResult,
@@ -1144,6 +1145,7 @@ export interface DashboardClient {
   loadTaskGitWorkspaces: (taskId: string) => Promise<TaskWorkspacesSnapshot>;
   loadTaskWorkspaceFileDiff: (taskId: string, workspaceId: string, path: string) => Promise<{ path: string; diff: TaskGitDiffSummary }>;
   commitTaskWorkspace: (taskId: string, workspaceId: string, input: { message: string; selectedPaths: string[]; push: boolean }) => Promise<TaskWorkspaceCommitResult>;
+  pushTaskWorkspace: (taskId: string, workspaceId: string) => Promise<TaskWorkspacePushResult>;
   reclaimTaskWorkspace: (taskId: string, workspaceId: string) => Promise<{ workspace: unknown; result?: unknown }>;
   discardTaskWorkspace: (taskId: string, workspaceId: string, confirmationText: string) => Promise<{ workspace: unknown; result: unknown }>;
   stopTaskWorkspaceSessions: (taskId: string, workspaceId: string) => Promise<{ workspaceId: string; interrupted: number; cancelled: number }>;
@@ -1452,6 +1454,11 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
       request<TaskWorkspaceCommitResult>(`/api/tasks/${encodeURIComponent(taskId)}/git-workspaces/${encodeURIComponent(workspaceId)}/commit`, {
         method: 'POST',
         body: JSON.stringify(input),
+      }),
+    pushTaskWorkspace: (taskId, workspaceId) =>
+      request<TaskWorkspacePushResult>(`/api/tasks/${encodeURIComponent(taskId)}/git-workspaces/${encodeURIComponent(workspaceId)}/push`, {
+        method: 'POST',
+        body: JSON.stringify({}),
       }),
     reclaimTaskWorkspace: (taskId, workspaceId) =>
       request<{ workspace: unknown; result?: unknown }>(`/api/tasks/${encodeURIComponent(taskId)}/git-workspaces/${encodeURIComponent(workspaceId)}/reclaim`, {

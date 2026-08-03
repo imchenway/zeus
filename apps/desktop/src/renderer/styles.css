@@ -14998,6 +14998,18 @@ a {
   color: var(--zeus-product-muted);
 }
 
+.macos-ai-app .task-detail-git-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.macos-ai-app .task-detail-git-action-help {
+  color: var(--zeus-product-muted);
+  font-size: 11px;
+  line-height: 16px;
+}
+
 .macos-ai-app .task-detail-conversation-row {
     align-items: center;
     background: transparent;

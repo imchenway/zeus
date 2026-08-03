@@ -99,6 +99,20 @@ export interface CommitAndPushTaskWorkspaceResult {
   remoteHeadSha: string | null;
 }
 
+export interface PushTaskWorkspaceInput {
+  cwd: string;
+  remoteName?: string;
+  remoteBranch?: string;
+}
+
+export interface PushTaskWorkspaceResult {
+  branch: string;
+  headSha: string;
+  remoteName: string;
+  remoteBranch: string;
+  remoteHeadSha: string;
+}
+
 export interface TaskWorkspaceFileDiff {
   path: string;
   diff: GitDiffSummary;
@@ -361,6 +375,26 @@ export async function commitAndPushTaskWorkspace(input: CommitAndPushTaskWorkspa
     }
   }
   return { branch: review.branch, headSha, committed, pushed: input.push, remoteName, remoteBranch, remoteHeadSha };
+}
+
+/**
+ * 只把任务开发线当前 HEAD 推送到记录的远端分支。
+ * 该函数不读取或写入 index，也不会把未提交和已暂存改动带入远端。
+ */
+export async function pushTaskWorkspace(input: PushTaskWorkspaceInput): Promise<PushTaskWorkspaceResult> {
+  const review = await getTaskWorkspaceReview(input.cwd);
+  if (review.branch === 'detached') throw gitCoreError('ZEUS_TASK_WORKSPACE_DETACHED', 'Task workspace is detached and cannot be pushed.');
+  if (review.conflictFiles.length > 0) throw gitCoreError('ZEUS_TASK_WORKSPACE_CONFLICTED', 'Resolve all conflicts before pushing.');
+
+  const headSha = review.headSha;
+  const remoteName = requireSafeGitRef(input.remoteName || 'origin', 'remote');
+  const remoteBranch = requireSafeGitRef(input.remoteBranch || review.branch, 'remote branch');
+  await runGit(input.cwd, ['push', '--set-upstream', remoteName, `HEAD:refs/heads/${remoteBranch}`]);
+  const remoteHeadSha = await readRemoteHead(input.cwd, remoteName, remoteBranch);
+  if (remoteHeadSha !== headSha) {
+    throw gitCoreError('ZEUS_TASK_REMOTE_VERIFICATION_FAILED', `Remote ${remoteName}/${remoteBranch} does not match local HEAD after push.`);
+  }
+  return { branch: review.branch, headSha, remoteName, remoteBranch, remoteHeadSha };
 }
 
 /** 仅当 worktree 干净且远端精确包含本地 HEAD 时回收物理目录。 */

@@ -57,6 +57,8 @@ export interface TaskDetailPaneContentProps {
   onOpenConversation: (taskId: string, conversationId: string) => void;
   onPushNewConversation: (taskId: string) => void;
   onOpenCodeDelivery?: (taskId: string) => void;
+  onCommitCode?: (taskId: string) => void;
+  onPushCode?: (taskId: string) => void;
   onUpdateTaskContent: (taskId: string, input: UpdateTaskRequest) => Promise<TaskEditResult>;
   onManagementStatusChange: (taskId: string, status: TaskManagementStatus, expectedUpdatedAt: string) => Promise<TaskEditResult | undefined>;
   onChooseAttachments?: () => Promise<TaskAttachmentView[]>;
@@ -462,6 +464,7 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
         .map((workspace) => [workspace.id, workspace]),
     ).values(),
   );
+  const hasWritableTaskWorkspace = taskWorkspaces.some((workspace) => (workspace.state === 'ready' || workspace.state === 'failed') && Boolean(workspace.worktreePath));
 
   async function saveAttachmentReferences(attachments: TaskAttachmentReference[], expectedUpdatedAt: string): Promise<TaskEditResult | null> {
     if (!expectedUpdatedAt) {
@@ -768,10 +771,23 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
             ))}
           </ol>
           {props.onOpenCodeDelivery ? (
-            <Button variant="secondary" size="compact" onClick={() => props.onOpenCodeDelivery?.(props.task.id)}>
-              {zh ? '打开代码交付…' : 'Open code delivery…'}
-            </Button>
+            <span className="task-detail-git-actions">
+              {props.onCommitCode ? (
+                <Button variant="secondary" size="compact" onClick={() => props.onCommitCode?.(props.task.id)} disabled={!hasWritableTaskWorkspace}>
+                  {zh ? '提交代码…' : 'Commit code…'}
+                </Button>
+              ) : null}
+              {props.onPushCode ? (
+                <Button variant="secondary" size="compact" onClick={() => props.onPushCode?.(props.task.id)} disabled={!hasWritableTaskWorkspace}>
+                  {zh ? '推送代码…' : 'Push code…'}
+                </Button>
+              ) : null}
+              <Button variant="secondary" size="compact" onClick={() => props.onOpenCodeDelivery?.(props.task.id)}>
+                {zh ? '打开代码交付…' : 'Open code delivery…'}
+              </Button>
+            </span>
           ) : null}
+          {!hasWritableTaskWorkspace ? <small className="task-detail-git-action-help">{zh ? '当前没有可提交或推送的任务工作区。' : 'No task workspace is currently available to commit or push.'}</small> : null}
         </section>
       ) : null}
 
