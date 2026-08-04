@@ -11028,7 +11028,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
   function toNativeQueueApiSnapshot(conversation: ZeusConversationWithMessagesRecord, submissions = conversationSubmissions.listByConversation(conversation.id)) {
     return {
       state: inferNativeConversationSnapshotState(conversation),
-      submissions: submissions.filter((submission) => submission.status === 'queued' || submission.status === 'paused' || submission.status === 'failed').map(toNativeSubmission),
+      submissions: submissions.filter((submission) => (submission.status === 'queued' || submission.status === 'paused') && !submission.providerTurnId).map(toNativeSubmission),
     };
   }
 

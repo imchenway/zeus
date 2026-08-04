@@ -21,10 +21,18 @@ export interface NativeAcceptedOperation {
 
 export interface NativeQueuedSubmission {
   id: string;
+  conversationId: string;
   content: string;
-  status: 'queued' | 'paused' | 'failed';
+  status: 'queued' | 'paused';
+  delivery: 'queue' | 'steer_now';
+  attachments: NativeConversationAttachmentInput[];
+  expectedTurnId: string | null;
+  clientUserMessageId: string;
   position: number;
+  providerTurnId: null;
   pausedReason: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface NativeQueueSnapshot {

@@ -324,11 +324,21 @@ function reduceNativeEvent(state: NativeSessionState, event: NativeConversationE
     case 'conversation.turn.started': {
       const turnId = stringValue(payload.turnId);
       if (!turnId || state.terminalTurnIds[turnId]) return base;
+      const submissionId = stringValue(payload.submissionId);
+      const queue = base.queue
+        ? {
+            ...base.queue,
+            state: { type: 'active' as const, turnId, phase: 'prework' as const },
+            submissions: submissionId ? base.queue.submissions.filter((submission) => submission.id !== submissionId) : base.queue.submissions,
+          }
+        : null;
       return {
         ...base,
         activeTurnId: turnId,
         startedTurnId: turnId,
+        queue,
         feedbackEpoch: base.feedbackEpoch + 1,
+        transcriptRevision: base.transcriptRevision + 1,
         conversationState: 'active_prework',
       };
     }
@@ -387,7 +397,7 @@ function reduceNativeEvent(state: NativeSessionState, event: NativeConversationE
     case 'conversation.queue.changed': {
       const queue = isRecord(payload.queue) ? (payload.queue as unknown as NativeQueueSnapshot) : state.queue;
       const recoveryError = queue ? recoveryErrorFromQueue(queue) : null;
-      return queue ? { ...base, queue, conversationState: conversationStateFromQueue(queue, base), ...(recoveryError ? { error: recoveryError } : {}) } : base;
+      return queue ? { ...base, queue, transcriptRevision: base.transcriptRevision + 1, conversationState: conversationStateFromQueue(queue, base), ...(recoveryError ? { error: recoveryError } : {}) } : base;
     }
     case 'conversation.request.created': {
       if (suppressRequestAuthority) return base;
@@ -522,9 +532,17 @@ function reduceItemEvent(state: NativeSessionState, event: NativeConversationEve
   };
   const isNew = previous === undefined;
   const optimisticKey = optimisticEntry?.[0];
+  const wasQueuedOptimistic = optimisticEntry?.[1].status === 'queued';
   const items = { ...state.items, [key]: next };
   if (optimisticKey && optimisticKey !== key) delete items[optimisticKey];
-  const itemOrder = optimisticKey && optimisticKey !== key ? [...new Set(state.itemOrder.map((entry) => (entry === optimisticKey ? key : entry)))] : isNew ? [...state.itemOrder, key] : state.itemOrder;
+  const itemOrder =
+    optimisticKey && optimisticKey !== key
+      ? wasQueuedOptimistic
+        ? [...state.itemOrder.filter((entry) => entry !== optimisticKey && entry !== key), key]
+        : [...new Set(state.itemOrder.map((entry) => (entry === optimisticKey ? key : entry)))]
+      : isNew
+        ? [...state.itemOrder, key]
+        : state.itemOrder;
   const phase = next.phase === 'final_answer' ? 'active_final_answer' : 'active_prework';
   const terminal = Boolean(state.terminalTurnIds[turnId]);
   const visibleFeedbackEpoch = itemProvidesVisibleFeedback(next) ? state.feedbackEpoch : state.visibleFeedbackEpoch;

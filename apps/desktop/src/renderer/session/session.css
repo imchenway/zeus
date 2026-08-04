@@ -680,7 +680,7 @@
 
 .session-codex-parity-v1
 .session-transcript
-> :where(.session-thread-item, .session-activity-group, .session-plan-summary, .session-plan-entry, .session-question-panel, .session-plan-progress, .session-turn-change-card, .session-turn-duration, .session-transcript-empty, .session-latest-turn-spacer) {
+> :where(.session-thread-item, .session-activity-group, .session-plan-summary, .session-plan-entry, .session-question-panel, .session-plan-progress, .session-turn-change-card, .session-turn-duration, .session-transcript-empty, .session-queued-messages, .session-latest-turn-spacer) {
     flex: 0 0 auto;
   inline-size: min(var(--session-thread-max), 100%);
   margin-inline: auto;
@@ -715,6 +715,161 @@
   margin-inline-end: max(var(--session-gutter), calc((100% - var(--session-thread-max)) / 2)) !important;
   max-inline-size: min(77%, var(--session-markdown-max));
   padding: 10px 13px;
+}
+
+.session-codex-parity-v1 .session-queued-messages {
+  min-inline-size: 0;
+}
+
+.session-codex-parity-v1 .session-queued-messages > ol {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.session-codex-parity-v1 .session-queued-messages > ol > li {
+  display: flex;
+  justify-content: flex-end;
+  min-inline-size: 0;
+  padding-block-end: 30px;
+}
+
+.session-codex-parity-v1 .session-queued-message {
+  border: 1px dashed color-mix(in srgb, var(--session-text-muted) 42%, transparent);
+  margin-inline: auto 0 !important;
+  max-inline-size: min(77%, var(--session-markdown-max));
+}
+
+.session-codex-parity-v1 .session-queued-message .session-thread-item-meta {
+  margin-block-end: 6px;
+}
+
+.session-codex-parity-v1 .session-queued-message-status {
+  align-items: center;
+  color: var(--session-text-muted);
+  display: inline-flex;
+  font-size: 11px;
+  font-weight: 580;
+  gap: 5px;
+}
+
+.session-codex-parity-v1 .session-queued-message-status > span {
+  background: currentColor;
+  block-size: 5px;
+  border-radius: 50%;
+  inline-size: 5px;
+}
+
+.session-codex-parity-v1 .session-queued-message[data-queue-status='paused'] .session-queued-message-status {
+  color: var(--session-warning);
+}
+
+.session-codex-parity-v1 .session-queued-message-actions {
+  align-items: center;
+  color: var(--session-message-action);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  inset-block-start: calc(100% + 5px);
+  inset-inline-end: 0;
+  opacity: 0;
+  position: absolute;
+  transition: opacity 120ms var(--session-ease-out);
+  z-index: 2;
+}
+
+.session-codex-parity-v1 .session-queued-message:hover .session-queued-message-actions,
+.session-codex-parity-v1 .session-queued-message:focus-within .session-queued-message-actions {
+  opacity: 1;
+}
+
+.session-codex-parity-v1 .session-queued-message-actions button,
+.session-codex-parity-v1 .session-queued-message-editor button {
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  color: currentColor;
+  font-size: 11px;
+  min-block-size: 28px;
+  min-inline-size: 28px;
+  padding-inline: 8px;
+}
+
+.session-codex-parity-v1 .session-queued-message-actions button:hover:not(:disabled),
+.session-codex-parity-v1 .session-queued-message-actions button:focus-visible,
+.session-codex-parity-v1 .session-queued-message-editor button:hover:not(:disabled),
+.session-codex-parity-v1 .session-queued-message-editor button:focus-visible {
+  background: var(--session-control-hover);
+  color: var(--session-text);
+}
+
+.session-codex-parity-v1 .session-queued-message-actions button:focus-visible,
+.session-codex-parity-v1 .session-queued-message-editor button:focus-visible {
+  box-shadow: 0 0 0 3px var(--session-focus);
+  outline: 1px solid var(--session-focus-outline);
+  outline-offset: 0;
+}
+
+.session-codex-parity-v1 .session-queued-message-actions button:disabled,
+.session-codex-parity-v1 .session-queued-message-editor button:disabled {
+  color: color-mix(in srgb, var(--session-text-muted) 58%, transparent);
+  cursor: default;
+}
+
+.session-codex-parity-v1 .session-queued-message-editor {
+  display: grid;
+  gap: 8px;
+  inline-size: min(38rem, 72vw);
+  max-inline-size: 100%;
+}
+
+.session-codex-parity-v1 .session-queued-message-editor textarea {
+  background: transparent;
+  border: 1px solid var(--session-line);
+  border-radius: 8px;
+  inline-size: 100%;
+  line-height: 1.58;
+  max-block-size: 42vh;
+  min-block-size: 72px;
+  padding: 7px 8px;
+  resize: none;
+}
+
+.session-codex-parity-v1 .session-queued-message-editor textarea:focus-visible {
+  box-shadow: 0 0 0 2px var(--session-focus);
+  outline: 1px solid var(--session-focus-outline);
+  outline-offset: 0;
+}
+
+.session-codex-parity-v1 .session-queued-message-editor > footer {
+  align-items: center;
+  display: flex;
+  gap: 4px;
+  justify-content: flex-end;
+}
+
+.session-codex-parity-v1 .session-queued-message-editor > footer small {
+  color: var(--session-danger);
+  margin-inline-end: auto;
+}
+
+.session-codex-parity-v1 .session-queued-message-attachments {
+  color: var(--session-text-muted);
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 11px;
+  gap: 4px 10px;
+  list-style-position: inside;
+  margin: 8px 0 0;
+  padding: 0;
+}
+
+.session-codex-parity-v1 .session-queued-message-empty {
+  color: var(--session-text-muted);
+  margin: 0;
 }
 
 .session-codex-parity-v1 .session-thread-item-assistant,
@@ -3169,6 +3324,10 @@
 
   .session-codex-parity-v1 .session-thread-item-user {
     margin-inline-end: 0 !important;
+    max-inline-size: 88%;
+  }
+
+  .session-codex-parity-v1 .session-queued-message {
     max-inline-size: 88%;
   }
 
