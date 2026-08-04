@@ -9,14 +9,17 @@ export interface ZeusSelectOption<T extends string> {
 
 export interface ZeusSelectProps<T extends string> {
   ariaLabel: string;
+  ariaDescribedBy?: string;
   value: T;
   options: readonly ZeusSelectOption<T>[];
   onChange: (value: T) => void;
+  triggerLabel?: string;
   className?: string;
   disabled?: boolean;
   searchPlaceholder?: string;
   emptyLabel?: string;
   searchable?: boolean;
+  popoverMinWidth?: number;
   size: 'compact' | 'regular' | 'roomy';
 }
 
@@ -95,7 +98,7 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
     const viewportPadding = 8;
     const popoverGap = 6;
     const top = triggerRect.bottom + popoverGap;
-    const width = Math.min(triggerRect.width, Math.max(0, window.innerWidth - viewportPadding * 2));
+    const width = Math.min(Math.max(triggerRect.width, props.popoverMinWidth ?? 0), Math.max(0, window.innerWidth - viewportPadding * 2));
     const left = Math.min(Math.max(triggerRect.left, viewportPadding), Math.max(viewportPadding, window.innerWidth - width - viewportPadding));
     const availableHeight = Math.max(72, window.innerHeight - top - viewportPadding);
     setPopoverLayout({
@@ -104,7 +107,7 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
       width,
       maxHeight: Math.min(availableHeight, window.innerHeight * 0.56, 430),
     });
-  }, []);
+  }, [props.popoverMinWidth]);
 
   const closeListbox = (restoreFocus = true) => {
     setOpen(false);
@@ -350,6 +353,7 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
         className="zeus-select-trigger"
         role="combobox"
         aria-label={props.ariaLabel}
+        aria-describedby={props.ariaDescribedBy}
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-controls={listboxId}
@@ -358,7 +362,7 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
         onClick={() => (open ? closeListbox(false) : openListbox(props.value))}
         onKeyDown={handleTriggerKeyDown}
       >
-        <span className="zeus-select-value">{selectedOption?.label ?? props.value}</span>
+        <span className="zeus-select-value">{props.triggerLabel ?? selectedOption?.label ?? props.value}</span>
         <span className="zeus-select-chevron" aria-hidden="true" />
       </button>
       {popover && portalHost ? createPortal(popover, portalHost) : popover}

@@ -1,7 +1,9 @@
-import { type CSSProperties, type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, useCallback, useEffect, useRef, useState } from 'react';
+import { type CSSProperties, type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, useCallback, useEffect, useId, useRef, useState } from 'react';
 import { CircleNotchIcon as CircleNotch } from '@phosphor-icons/react/dist/csr/CircleNotch';
-import type { AiRuntimeSession, RuntimeStatusSnapshot, TaskManagementStatus, TaskRecord, TaskStatusFilter, TaskTableColumnKey, TaskTableEnumSortOrders, TaskTableColumnPreferences } from '../apiClient.js';
+import { isTaskPriority } from '@zeus/shared';
+import type { AiRuntimeSession, RuntimeStatusSnapshot, TaskManagementStatus, TaskPriority, TaskRecord, TaskStatusFilter, TaskTableColumnKey, TaskTableEnumSortOrders, TaskTableColumnPreferences, UpdateTaskRequest } from '../apiClient.js';
 import type { NativeConversationChoice } from '../session/sessionTypes.js';
+import { Button } from '../ui/Button.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 import {
   clampTaskTableColumnWidth,
@@ -50,6 +52,140 @@ function taskPriorityTone(priority: string | number | null): TaskSemanticTone {
   if (priority === 'p2') return 'amber';
   if (priority === 'p3') return 'blue';
   return 'neutral';
+}
+
+type TaskPriorityEditResult = { kind: 'updated'; task: TaskRecord } | { kind: 'conflict'; latest: TaskRecord };
+type TaskPrioritySaveState = { kind: 'idle' } | { kind: 'saving' } | { kind: 'saved' } | { kind: 'error'; message: string } | { kind: 'conflict'; latest: TaskRecord };
+
+function TaskPriorityControl(props: {
+  task: TaskRecord;
+  language: 'zh-CN' | 'en-US';
+  options: ReadonlyArray<{ value: TaskPriority; label: string }>;
+  ariaLabel: string;
+  disabled: boolean;
+  onSave: (taskId: string, input: UpdateTaskRequest) => Promise<TaskPriorityEditResult>;
+}) {
+  const statusId = `${useId()}-status`;
+  const taskPriority = props.task.priority ?? 'p3';
+  const desiredValueRef = useRef<TaskPriority | null>(null);
+  const [displayValue, setDisplayValue] = useState(taskPriority);
+  const [saveState, setSaveState] = useState<TaskPrioritySaveState>({ kind: 'idle' });
+  const zh = props.language === 'zh-CN';
+  const legacyLabel = zh ? '历史值' : 'Legacy value';
+  const selectOptions: ReadonlyArray<{ value: string; label: string; disabled?: boolean }> = isTaskPriority(taskPriority) ? props.options : [{ value: taskPriority, label: legacyLabel, disabled: true }, ...props.options];
+
+  useEffect(() => {
+    if (saveState.kind === 'saving' || saveState.kind === 'error' || saveState.kind === 'conflict') return;
+    setDisplayValue(taskPriority);
+  }, [saveState.kind, taskPriority]);
+
+  async function savePriority(priority: TaskPriority, expectedUpdatedAt: string): Promise<void> {
+    desiredValueRef.current = priority;
+    setDisplayValue(priority);
+    setSaveState({ kind: 'saving' });
+    try {
+      const result = await props.onSave(props.task.id, { priority, expectedUpdatedAt });
+      if (result.kind === 'conflict') {
+        setSaveState({ kind: 'conflict', latest: result.latest });
+        return;
+      }
+      desiredValueRef.current = null;
+      setSaveState({ kind: 'saved' });
+    } catch (error) {
+      setSaveState({ kind: 'error', message: error instanceof Error && error.message.trim() ? error.message : zh ? '保存失败' : 'Save failed' });
+    }
+  }
+
+  function retrySave(): void {
+    const priority = desiredValueRef.current;
+    if (!priority) return;
+    const expectedUpdatedAt = saveState.kind === 'conflict' ? (saveState.latest.updatedAt ?? '') : (props.task.updatedAt ?? '');
+    if (!expectedUpdatedAt) return;
+    void savePriority(priority, expectedUpdatedAt);
+  }
+
+  function loadLatestValue(): void {
+    const latestPriority = saveState.kind === 'conflict' ? (saveState.latest.priority ?? 'p3') : taskPriority;
+    desiredValueRef.current = null;
+    setDisplayValue(latestPriority);
+    setSaveState({ kind: 'idle' });
+  }
+
+  const feedback =
+    saveState.kind === 'saving'
+      ? zh
+        ? '保存中…'
+        : 'Saving…'
+      : saveState.kind === 'saved'
+        ? zh
+          ? '已保存'
+          : 'Saved'
+        : saveState.kind === 'conflict'
+          ? zh
+            ? '保存冲突'
+            : 'Conflict'
+          : saveState.kind === 'error'
+            ? zh
+              ? `保存失败：${saveState.message}`
+              : `Save failed: ${saveState.message}`
+            : null;
+  const triggerLabel = isTaskPriority(displayValue) ? displayValue.toUpperCase() : legacyLabel;
+
+  return (
+    <span className="task-table-priority-control" data-state={saveState.kind} onClick={(event) => event.stopPropagation()}>
+      <ZeusSelect
+        size="compact"
+        ariaLabel={props.ariaLabel}
+        ariaDescribedBy={feedback ? statusId : undefined}
+        value={displayValue}
+        options={selectOptions}
+        triggerLabel={triggerLabel}
+        popoverMinWidth={props.language === 'zh-CN' ? 176 : 210}
+        onChange={(value) => {
+          if (!isTaskPriority(value)) return;
+          if (value === taskPriority) {
+            desiredValueRef.current = null;
+            setDisplayValue(taskPriority);
+            setSaveState({ kind: 'idle' });
+            return;
+          }
+          const expectedUpdatedAt = props.task.updatedAt ?? '';
+          if (!expectedUpdatedAt) {
+            desiredValueRef.current = value;
+            setDisplayValue(value);
+            setSaveState({ kind: 'error', message: zh ? '任务缺少更新时间。' : 'Task update time is missing.' });
+            return;
+          }
+          void savePriority(value, expectedUpdatedAt);
+        }}
+        className={`task-status-select task-priority-select task-status-tone-${taskPriorityTone(displayValue)}`}
+        disabled={props.disabled || saveState.kind === 'saving'}
+        searchable={false}
+      />
+      {feedback ? (
+        <span className={`task-table-priority-feedback${saveState.kind === 'error' || saveState.kind === 'conflict' ? ' is-error' : ''}`}>
+          <small id={statusId} role="status" aria-live="polite">
+            {feedback}
+          </small>
+          {saveState.kind === 'error' ? (
+            <Button variant="secondary" size="compact" onClick={retrySave}>
+              {zh ? '重试' : 'Retry'}
+            </Button>
+          ) : null}
+          {saveState.kind === 'conflict' ? (
+            <span className="task-table-priority-conflict-actions">
+              <Button variant="secondary" size="compact" onClick={retrySave}>
+                {zh ? '重试' : 'Retry'}
+              </Button>
+              <Button variant="secondary" size="compact" onClick={loadLatestValue}>
+                {zh ? '载入最新' : 'Load latest'}
+              </Button>
+            </span>
+          ) : null}
+        </span>
+      ) : null}
+    </span>
+  );
 }
 
 export interface TaskWorkspaceCopy {
@@ -137,6 +273,7 @@ export interface TaskWorkspaceCopy {
   bulkDeleteConfirm: (count: number, skippedCount: number) => string;
   bulkStatusSkippedHint: (eligibleCount: number, skippedCount: number) => string;
   taskStatusSelectAria: (taskTitle: string) => string;
+  taskPrioritySelectAria: (taskTitle: string) => string;
 }
 
 export type TaskWorkspaceBulkActionStatus = { kind: 'idle' | 'running' | 'done' | 'failed'; message?: string };
@@ -153,6 +290,7 @@ export interface TaskWorkspaceProps {
   statusOptions: readonly TaskStatusFilter[];
   statusLabels: Record<TaskManagementStatus | '', string>;
   runStatusLabels: Record<TaskAgentRunStatus, string>;
+  priorityOptions: ReadonlyArray<{ value: TaskPriority; label: string }>;
   copy: TaskWorkspaceCopy;
   appLanguage: 'zh-CN' | 'en-US';
   runtime: RuntimeStatusSnapshot;
@@ -179,6 +317,7 @@ export interface TaskWorkspaceProps {
   onToggleAllVisibleTaskSelection?: (taskIds: string[], selected: boolean) => void;
   onClearTaskSelection?: () => void;
   onTaskStatusChange?: (taskId: string, targetStatus: TaskManagementStatus) => void;
+  onTaskPriorityChange?: (taskId: string, input: UpdateTaskRequest) => Promise<TaskPriorityEditResult>;
   onBulkTaskStatusChange?: (targetStatus: TaskManagementStatus, taskIds: string[]) => void;
   onBulkTaskDelete?: (taskIds: string[]) => void;
   onRetryTaskList?: () => void;
@@ -968,9 +1107,17 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
                             <strong>{cell.primary}</strong>
                           </span>
                         ) : columnKey === 'priority' ? (
-                          <span className={`task-status-chip task-priority-chip task-status-tone-${taskPriorityTone(cell.sortValue)}`}>
-                            <strong>{cell.primary}</strong>
-                          </span>
+                          <TaskPriorityControl
+                            task={task}
+                            language={props.appLanguage}
+                            options={props.priorityOptions}
+                            ariaLabel={props.copy.taskPrioritySelectAria(task.title)}
+                            disabled={props.statusChangeBusy || !props.onTaskPriorityChange}
+                            onSave={(taskId, input) => {
+                              if (!props.onTaskPriorityChange) return Promise.reject(new Error(props.appLanguage === 'zh-CN' ? '任务优先级更新能力不可用。' : 'Task priority update is unavailable.'));
+                              return props.onTaskPriorityChange(taskId, input);
+                            }}
+                          />
                         ) : columnKey === 'intent' ? (
                           <span className="task-table-title-text">{cell.primary}</span>
                         ) : (
