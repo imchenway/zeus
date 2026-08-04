@@ -61,6 +61,7 @@ interface ConversationDispatchContext {
   allowGitCommit: boolean;
   permissionMode: ConversationPermissionMode;
   allowedAttachmentRoots?: string[];
+  writableRoots?: string[];
   bypassConcurrency?: boolean;
   workMode: ConversationCollaborationMode;
   applyLegacyTaskGuards?: boolean;
@@ -274,6 +275,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       allowGitCommit: context.allowGitCommit === true,
       permissionMode: permissionModeFromValue(context.permissionMode, context.allowCodeChanges === true ? 'auto' : 'read-only'),
       ...(Array.isArray(context.allowedAttachmentRoots) && context.allowedAttachmentRoots.every((root) => typeof root === 'string') ? { allowedAttachmentRoots: context.allowedAttachmentRoots } : {}),
+      ...(Array.isArray(context.writableRoots) && context.writableRoots.every((root) => typeof root === 'string') ? { writableRoots: context.writableRoots } : {}),
       ...(context.bypassConcurrency === true ? { bypassConcurrency: true } : {}),
       workMode: context.workMode === 'plan' || context.workMode === 'default' ? context.workMode : 'default',
       ...(context.applyLegacyTaskGuards === false ? { applyLegacyTaskGuards: false } : {}),
@@ -439,6 +441,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       allowGitCommit: input.allowGitCommit,
       permissionMode,
       ...(input.allowedAttachmentRoots?.length ? { allowedAttachmentRoots: input.allowedAttachmentRoots.map((root) => resolve(root)) } : {}),
+      ...(input.writableRoots?.length ? { writableRoots: input.writableRoots.map((root) => resolve(root)) } : {}),
       ...(input.bypassConcurrency ? { bypassConcurrency: true } : {}),
       workMode: input.workMode ?? existingConversation?.collaborationMode ?? 'default',
       ...(input.applyLegacyTaskGuards === false ? { applyLegacyTaskGuards: false } : {}),
@@ -447,7 +450,11 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     };
     if (
       existingConversation &&
-      (existingConversation.projectId !== input.projectId || existingConversation.taskId !== input.taskId || existingConversation.workspaceId !== (input.workspaceId ?? null) || existingConversation.transportKind !== 'codex_native')
+      (existingConversation.projectId !== input.projectId ||
+        existingConversation.taskId !== input.taskId ||
+        existingConversation.workspaceId !== (input.workspaceId ?? null) ||
+        existingConversation.environmentId !== (input.environmentId ?? null) ||
+        existingConversation.transportKind !== 'codex_native')
     ) {
       throw coordinatorError('ZEUS_NATIVE_RESERVED_RESOURCE_CONFLICT', 'Reserved native conversation id is already owned by another resource.');
     }
@@ -458,6 +465,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         projectId: input.projectId,
         taskId: input.taskId,
         ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
+        ...(input.environmentId ? { environmentId: input.environmentId } : {}),
         title: `任务会话：${input.taskTitle.slice(0, 48)}`,
         summary: input.prompt.slice(0, 240),
         status: 'starting',
@@ -2715,7 +2723,11 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
 function providerPermissionProfile(context: ConversationDispatchContext): { sandbox: CodexSandboxPolicy; approvalPolicy: 'on-request' | 'never'; approvalsReviewer: 'user' } {
   if (context.permissionMode === 'full-access') return { sandbox: { type: 'dangerFullAccess' }, approvalPolicy: 'never', approvalsReviewer: 'user' };
   if (context.permissionMode === 'auto') {
-    return { sandbox: { type: 'workspaceWrite', writableRoots: [resolve(context.projectLocalPath)], networkAccess: false }, approvalPolicy: 'on-request', approvalsReviewer: 'user' };
+    return {
+      sandbox: { type: 'workspaceWrite', writableRoots: (context.writableRoots?.length ? context.writableRoots : [context.projectLocalPath]).map((root) => resolve(root)), networkAccess: false },
+      approvalPolicy: 'on-request',
+      approvalsReviewer: 'user',
+    };
   }
   return { sandbox: { type: 'readOnly', networkAccess: false }, approvalPolicy: 'on-request', approvalsReviewer: 'user' };
 }
@@ -3395,7 +3407,7 @@ function isSupportedCommandApprovalPolicy(payload: Record<string, unknown>, cont
   if (payload.sandboxPermissions !== undefined && payload.sandboxPermissions !== 'use_default') return false;
   if (payload.sandbox_permissions !== undefined && payload.sandbox_permissions !== 'use_default') return false;
   if (payload.approvalPolicy !== undefined && payload.approvalPolicy !== 'untrusted') return false;
-  if (payload.cwd !== undefined && payload.cwd !== null && (typeof payload.cwd !== 'string' || !isExistingProjectDirectory(payload.cwd, context.projectLocalPath, projectRealPath))) return false;
+  if (payload.cwd !== undefined && payload.cwd !== null && (typeof payload.cwd !== 'string' || !isExistingProjectDirectory(payload.cwd, context, projectRealPath))) return false;
   if (payload.writableRoots !== undefined && !areProjectWritableRoots(payload.writableRoots, context, projectRealPath)) return false;
   if (payload.sandboxPolicy !== undefined && !isSupportedCommandSandbox(payload.sandboxPolicy, context, projectRealPath)) return false;
   if (payload.sandbox !== undefined && !isSupportedCommandSandbox(payload.sandbox, context, projectRealPath)) return false;
@@ -3411,12 +3423,14 @@ function isSupportedCommandSandbox(value: unknown, context: ConversationDispatch
 }
 
 function areProjectWritableRoots(value: unknown, context: ConversationDispatchContext, projectRealPath: string): boolean {
-  return context.permissionMode !== 'read-only' && Array.isArray(value) && value.every((entry) => typeof entry === 'string' && isExistingProjectDirectory(entry, context.projectLocalPath, projectRealPath));
+  return context.permissionMode !== 'read-only' && Array.isArray(value) && value.every((entry) => typeof entry === 'string' && isExistingProjectDirectory(entry, context, projectRealPath));
 }
 
-function isExistingProjectDirectory(value: string, projectRoot: string, projectRealPath: string): boolean {
-  const targetRealPath = existingDirectoryRealpath(isAbsolute(value) ? value : resolve(projectRoot, value));
-  return targetRealPath !== null && isInsideRoot(targetRealPath, projectRealPath);
+function isExistingProjectDirectory(value: string, context: ConversationDispatchContext, projectRealPath: string): boolean {
+  const targetRealPath = existingDirectoryRealpath(isAbsolute(value) ? value : resolve(context.projectLocalPath, value));
+  if (targetRealPath === null) return false;
+  const allowedRoots = [projectRealPath, ...(context.writableRoots ?? []).map(existingDirectoryRealpath).filter((entry): entry is string => entry !== null)];
+  return allowedRoots.some((root) => isInsideRoot(targetRealPath, root));
 }
 
 function existingDirectoryRealpath(value: string): string | null {
@@ -3566,7 +3580,7 @@ function isDirectGitStatus(argv: readonly string[], context: ConversationDispatc
     const option = argv[index] ?? '';
     if (option === '-C') {
       const path = argv[index + 1];
-      if (!path || !isExistingProjectDirectory(path, context.projectLocalPath, projectRealPath)) return false;
+      if (!path || !isExistingProjectDirectory(path, context, projectRealPath)) return false;
       index += 2;
       continue;
     }

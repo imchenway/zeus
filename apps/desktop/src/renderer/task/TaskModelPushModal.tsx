@@ -16,9 +16,8 @@ export interface TaskModelPushForm {
   workMode: 'default' | 'plan';
   permissionMode: NativePermissionMode;
   workspaceMode: 'create' | 'existing';
-  sourceRef: string;
-  workspaceId: string;
-  branchName: string;
+  environmentId: string;
+  repositorySelections: Record<string, { sourceRef: string; branchName: string }>;
   supplementalInfo: string;
 }
 
@@ -56,7 +55,7 @@ export function resolveTaskModelPushInitialForm(capabilities: CodexTaskPushCapab
   const selectedModel = rememberedModel ?? capabilities.models.find((model) => model.model === capabilities.preferredModel || model.id === capabilities.preferredModel) ?? capabilities.models[0];
   if (!selectedModel) throw new Error('Codex app-server did not report an available model.');
   const effort = rememberedModel && remembered && selectedModel.supportedReasoningEfforts.includes(remembered.effort) ? remembered.effort : (selectedModel.defaultReasoningEffort ?? selectedModel.supportedReasoningEfforts[0] ?? '');
-  const existingWorkspace = [...capabilities.workspaces].filter((workspace) => workspace.selectable).sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0];
+  const existingEnvironment = [...capabilities.environments].filter((environment) => environment.selectable).sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0];
   return {
     model: selectedModel.model,
     effort,
@@ -65,10 +64,18 @@ export function resolveTaskModelPushInitialForm(capabilities: CodexTaskPushCapab
     workMode: remembered?.workMode ?? 'default',
     // 用户已确认：项目没有成功记忆时，权限必须回退为只读。
     permissionMode: remembered?.permissionMode ?? 'read-only',
-    workspaceMode: existingWorkspace ? 'existing' : 'create',
-    sourceRef: capabilities.workspaces[0]?.sourceBranch ?? capabilities.git.sourceRefs.find((source) => source.current)?.ref ?? capabilities.git.primaryBranch,
-    workspaceId: existingWorkspace?.id ?? '',
-    branchName: capabilities.git.suggestedBranchName,
+    workspaceMode: existingEnvironment ? 'existing' : 'create',
+    environmentId: existingEnvironment?.id ?? '',
+    repositorySelections: Object.fromEntries(
+      capabilities.repositories.map((repository) => [
+        repository.id,
+        {
+          // 每个仓库都要求用户在弹窗内确认，初始值不替用户选择来源分支。
+          sourceRef: '',
+          branchName: repository.suggestedBranchName,
+        },
+      ]),
+    ),
     supplementalInfo: '',
   };
 }
@@ -93,8 +100,9 @@ export function TaskModelPushModal(props: {
   const busy = props.status === 'submitting';
   const attachments = parseTaskAttachments(props.task.sourceContextJson);
   const selectedModel = props.capabilities?.models.find((model) => model.model === props.form.model || model.id === props.form.model);
-  const selectedWorkspace = props.capabilities?.workspaces.find((workspace) => workspace.id === props.form.workspaceId);
-  const taskSourceBranch = props.capabilities?.workspaces[0]?.sourceBranch;
+  const selectedEnvironment = props.capabilities?.environments.find((environment) => environment.id === props.form.environmentId);
+  const repositories = props.capabilities?.repositories ?? [];
+  const repositoryRegistrationRequired = props.capabilities?.repositoryRegistrationRequired === true;
 
   function onModelChange(model: string): void {
     const capability = props.capabilities?.models.find((candidate) => candidate.model === model || candidate.id === model);
@@ -136,14 +144,14 @@ export function TaskModelPushModal(props: {
               <ZeusSelect
                 size="regular"
                 ariaLabel={zh ? '任务开发分支使用方式' : 'Task branch choice'}
-                value={props.form.workspaceMode === 'existing' ? props.form.workspaceId : '__create__'}
+                value={props.form.workspaceMode === 'existing' ? props.form.environmentId : '__create__'}
                 options={[
-                  { value: '__create__', label: zh ? '创建新的 zeus/ 分支' : 'Create a new zeus/ branch' },
-                  ...(props.capabilities?.workspaces ?? [])
-                    .filter((workspace) => workspace.selectable)
-                    .map((workspace) => ({
-                      value: workspace.id,
-                      label: `${workspace.branchName}${workspace.clean === false ? (zh ? ' · 有未提交变更' : ' · uncommitted changes') : ''}`,
+                  { value: '__create__', label: zh ? '创建新的任务环境' : 'Create a new task environment' },
+                  ...(props.capabilities?.environments ?? [])
+                    .filter((environment) => environment.selectable)
+                    .map((environment) => ({
+                      value: environment.id,
+                      label: `${zh ? '任务环境' : 'Task environment'} · ${new Date(environment.updatedAt).toLocaleString()} · ${environment.workspaces.length}${zh ? ' 个仓库' : ' repositories'}`,
                     })),
                 ]}
                 onChange={(value) =>
@@ -152,11 +160,9 @@ export function TaskModelPushModal(props: {
                       ? {
                           ...props.form,
                           workspaceMode: 'create',
-                          workspaceId: '',
-                          sourceRef: taskSourceBranch ?? props.form.sourceRef,
-                          branchName: props.capabilities?.git.suggestedBranchName ?? props.form.branchName,
+                          environmentId: '',
                         }
-                      : { ...props.form, workspaceMode: 'existing', workspaceId: value },
+                      : { ...props.form, workspaceMode: 'existing', environmentId: value },
                   )
                 }
                 disabled={!props.capabilities || busy}
@@ -164,42 +170,83 @@ export function TaskModelPushModal(props: {
               />
             </label>
             {props.form.workspaceMode === 'create' ? (
-              <div className="task-model-push-workspace-grid">
-                <label>
-                  <span>{zh ? '来源分支' : 'Source branch'}</span>
-                  <ZeusSelect
-                    size="regular"
-                    ariaLabel={zh ? '来源分支' : 'Source branch'}
-                    value={props.form.sourceRef}
-                    options={(props.capabilities?.git.sourceRefs ?? []).map((source) => ({
-                      value: source.ref,
-                      label: `${source.label}${source.current ? (zh ? ' · 当前' : ' · current') : ''}${source.kind === 'remote' ? (zh ? ' · 远端' : ' · remote') : ''}`,
-                    }))}
-                    onChange={(sourceRef) => props.onChange({ ...props.form, sourceRef })}
-                    disabled={!props.capabilities || busy || Boolean(taskSourceBranch)}
-                    searchPlaceholder={zh ? '搜索分支' : 'Search branches'}
-                  />
-                </label>
-                <label>
-                  <span>{zh ? '新分支' : 'New branch'}</span>
-                  <input value={props.form.branchName} onChange={(event) => props.onChange({ ...props.form, branchName: event.target.value })} disabled={busy} spellCheck={false} />
-                </label>
-              </div>
-            ) : selectedWorkspace ? (
+              repositories.length > 0 ? (
+                <div className="task-model-push-repository-list">
+                  {repositories.map((repository) => {
+                    const selection = props.form.repositorySelections[repository.id] ?? { sourceRef: '', branchName: repository.suggestedBranchName };
+                    return (
+                      <fieldset key={repository.id} className="task-model-push-repository">
+                        <legend>
+                          <strong>{repository.name}</strong>
+                          <small>{repository.relativePath}</small>
+                        </legend>
+                        <div className="task-model-push-workspace-grid">
+                          <label>
+                            <span>{zh ? '来源分支（必选）' : 'Source branch (required)'}</span>
+                            <ZeusSelect
+                              size="regular"
+                              ariaLabel={`${repository.name} ${zh ? '来源分支' : 'source branch'}`}
+                              value={selection.sourceRef}
+                              options={[
+                                { value: '', label: zh ? '请选择来源分支' : 'Select source branch', disabled: true },
+                                ...repository.sourceRefs.map((source) => ({
+                                  value: source.ref,
+                                  label: `${source.label}${source.current ? (zh ? ' · 当前' : ' · current') : ''}`,
+                                })),
+                              ]}
+                              onChange={(sourceRef) => props.onChange({
+                                ...props.form,
+                                repositorySelections: { ...props.form.repositorySelections, [repository.id]: { ...selection, sourceRef } },
+                              })}
+                              disabled={!props.capabilities || busy}
+                              searchPlaceholder={zh ? '搜索分支' : 'Search branches'}
+                            />
+                          </label>
+                          <label>
+                            <span>{zh ? '新分支' : 'New branch'}</span>
+                            <input
+                              value={selection.branchName}
+                              onChange={(event) => props.onChange({
+                                ...props.form,
+                                repositorySelections: { ...props.form.repositorySelections, [repository.id]: { ...selection, branchName: event.target.value } },
+                              })}
+                              disabled={busy}
+                              spellCheck={false}
+                            />
+                          </label>
+                        </div>
+                        {repository.clean === false ? (
+                          <p className="task-model-push-warning">
+                            {zh ? '该仓库的未提交改动会带入新任务工作区；忽略文件仅按 .worktreeinclude 带入。' : 'Uncommitted changes are copied into the new task workspace; ignored files are included only through .worktreeinclude.'}
+                          </p>
+                        ) : null}
+                      </fieldset>
+                    );
+                  })}
+                </div>
+              ) : repositoryRegistrationRequired ? (
+                <p className="task-model-push-error" role="alert">
+                  {zh
+                    ? `已发现 ${props.capabilities?.discoveredRepositories.length ?? 0} 个 Git 仓库，请先到项目设置确认任务仓库后再推送。`
+                    : `${props.capabilities?.discoveredRepositories.length ?? 0} Git repositories were found. Confirm the task repositories in project settings before pushing.`}
+                </p>
+              ) : (
+                <p className="task-model-push-message">
+                  {zh ? '该项目未登记 Git 仓库，将直接使用项目目录，不创建分支或 worktree。' : 'No Git repositories are registered. The project directory is used directly without branches or worktrees.'}
+                </p>
+              )
+            ) : selectedEnvironment ? (
               <span className="task-model-push-workspace-summary">
-                <strong>{selectedWorkspace.branchName}</strong>
+                <strong>{zh ? '复用现有任务环境' : 'Reuse task environment'}</strong>
                 <small>
-                  {zh ? '来源' : 'Source'} {selectedWorkspace.sourceBranch} · {selectedWorkspace.worktreePath ? (zh ? '复用现有 worktree' : 'Reuse existing worktree') : zh ? '从分支恢复 worktree' : 'Restore worktree from branch'}
+                  {selectedEnvironment.workspaces.length > 0
+                    ? selectedEnvironment.workspaces.map((workspace) => `${workspace.repositoryRelativePath} · ${workspace.branchName}`).join('；')
+                    : (zh ? '无 Git 仓库' : 'No Git repositories')}
                 </small>
               </span>
             ) : null}
-            {props.capabilities?.git.primaryClean === false && props.form.workspaceMode === 'create' ? (
-              <p className="task-model-push-warning">
-                {zh ? '主工作区存在未提交变更；新分支只会使用来源分支已提交的 HEAD，不会带入这些变更。' : 'The primary workspace has uncommitted changes. The new branch uses only the committed source HEAD.'}
-              </p>
-            ) : null}
             <small className="task-model-push-worktree-root">
-              {zh ? 'worktree 保存位置' : 'Worktree location'}：{props.capabilities?.git.worktreeRoot ?? '—'}
+              {zh ? '任务环境保存位置' : 'Task environment location'}：{props.capabilities?.git.worktreeRoot ?? '—'}
             </small>
           </section>
 
@@ -349,7 +396,17 @@ export function TaskModelPushModal(props: {
               variant="primary"
               size="regular"
               busy={busy}
-              disabled={props.status === 'loading' || !props.form.model || (props.form.workspaceMode === 'existing' ? !props.form.workspaceId : !props.form.sourceRef || !props.form.branchName.trim())}
+              disabled={
+                props.status === 'loading' ||
+                !props.form.model ||
+                repositoryRegistrationRequired ||
+                (props.form.workspaceMode === 'existing'
+                  ? !props.form.environmentId
+                  : repositories.some((repository) => {
+                      const selection = props.form.repositorySelections[repository.id];
+                      return !selection?.sourceRef || !selection.branchName.trim();
+                    }))
+              }
             >
               {busy ? (zh ? '正在创建…' : 'Creating…') : zh ? '创建新会话' : 'Create conversation'}
             </Button>

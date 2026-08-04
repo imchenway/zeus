@@ -226,6 +226,7 @@ export interface NativeConversationChoice {
   projectId: string;
   taskId: string | null;
   workspaceId?: string | null;
+  environmentId?: string | null;
   workspace?: TaskWorkspaceRecord | null;
   title: string;
   summary: string | null;
@@ -316,6 +317,47 @@ export interface CodexTaskPushModelCapability {
 
 export type NativeServiceTierSelection = { type: 'follow' } | { type: 'standard' } | { type: 'catalog'; id: string };
 
+export interface ProjectRepositoryRecord {
+  id: string;
+  projectId: string;
+  name: string;
+  relativePath: string;
+  localPath: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProjectSharedPathRecord {
+  id: string;
+  projectId: string;
+  relativePath: string;
+  localPath: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CodexTaskRepositoryCapability extends ProjectRepositoryRecord {
+  branch: string;
+  headSha: string;
+  clean: boolean;
+  defaultRemoteName: string;
+  sourceRefs: Array<{ ref: string; label: string; kind: 'local' | 'remote'; current: boolean }>;
+  suggestedBranchName: string;
+}
+
+export interface CodexTaskEnvironmentCapability {
+  id: string;
+  projectId: string;
+  taskId: string;
+  rootPath: string | null;
+  state: 'ready' | 'reclaimed' | 'failed';
+  lastError: string | null;
+  createdAt: string;
+  updatedAt: string;
+  workspaces: CodexTaskWorkspaceCapability[];
+  selectable: boolean;
+}
+
 export interface CodexTaskPushCapabilities {
   generationId: string;
   initializedAt: string;
@@ -324,6 +366,17 @@ export interface CodexTaskPushCapabilities {
   canonicalPrompt: string;
   preferredModel: string;
   models: CodexTaskPushModelCapability[];
+  repositories: CodexTaskRepositoryCapability[];
+  repositoryRegistrationRequired: boolean;
+  discoveredRepositories: Array<{
+    name: string;
+    relativePath: string;
+    localPath: string;
+    branch: string;
+    clean: boolean;
+  }>;
+  sharedWritablePaths: ProjectSharedPathRecord[];
+  environments: CodexTaskEnvironmentCapability[];
   git: {
     primaryWorkspacePath: string;
     primaryBranch: string;
@@ -341,6 +394,11 @@ export interface TaskWorkspaceRecord {
   id: string;
   projectId: string;
   taskId: string;
+  environmentId: string | null;
+  repositoryId: string | null;
+  repositoryName: string;
+  repositoryRelativePath: string;
+  repositoryPath: string;
   branchName: string;
   sourceBranch: string;
   sourceHeadSha: string;
@@ -427,6 +485,8 @@ export interface TaskWorkspaceReview {
 
 export interface TaskWorkspaceSnapshot extends TaskWorkspaceRecord {
   activeConversationCount: number;
+  primaryBranch: string | null;
+  localBranches: string[];
   review: TaskWorkspaceReview | null;
     branchComparison: TaskBranchComparison | null;
     remoteHeadSha: string | null;
@@ -480,7 +540,7 @@ export interface TaskIntegrationRecord {
   mode: 'merge' | 'squash';
   integrationPath: string | null;
   resultHeadSha: string | null;
-  state: 'preparing' | 'conflicted' | 'merged' | 'failed';
+  state: 'preparing' | 'conflicted' | 'pending_local_sync' | 'merged' | 'failed';
     localSyncStatus: 'synced' | 'pending' | null;
     localHeadSha: string | null;
     localWorktreePath: string | null;
@@ -495,7 +555,7 @@ export interface TaskIntegrationResult {
     targetHeadSha: string;
     resultHeadSha: string;
     remoteName: string;
-    remoteHeadSha: string;
+    remoteHeadSha: string | null;
     localSyncStatus: 'synced' | 'pending';
     localHeadSha: string;
     localWorktreePath: string | null;
@@ -533,7 +593,9 @@ export interface StartTaskModelPushRequest {
   serviceTier?: string | null;
   workMode: 'default' | 'plan';
   permissionMode: NativePermissionMode;
-  workspace: { mode: 'create'; sourceRef: string; branchName: string } | { mode: 'existing'; workspaceId: string };
+  workspace:
+    | { mode: 'create'; repositories: Array<{ repositoryId: string; sourceRef: string; branchName: string }> }
+    | { mode: 'existing'; environmentId: string };
   supplementalInfo?: string;
   idempotencyKey: string;
   clientUserMessageId: string;

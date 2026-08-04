@@ -168,6 +168,8 @@ import {
     type ProjectConfig,
     type ProjectDatabaseSecretSnapshot,
     type ProjectRecord,
+    type ProjectRepositoryDiscoverySnapshot,
+    type ProjectWorkspaceConfigSnapshot,
     type ReleaseStatusSnapshot,
     type ReleaseUpdateOperationSnapshot,
     type ReleaseUpdateStatusSnapshot,
@@ -252,6 +254,9 @@ type NativeConversationAppClient = SessionControllerClient &
     | 'startNativeConversation'
     | 'loadCodexTaskPushCapabilities'
     | 'startTaskModelPush'
+    | 'loadProjectWorkspaceConfig'
+    | 'discoverProjectRepositories'
+    | 'saveProjectWorkspaceConfig'
     | 'acknowledgeNativeConversationCompletion'
     | 'loadTaskGitWorkspaces'
     | 'loadTaskWorkspaceFileDiff'
@@ -6213,6 +6218,12 @@ export function App(props: {
   const initialProjectConfig = normalizeProjectConfig(props.initialProjectConfig, props.snapshot?.projects[0]?.id);
   const [projectConfig, setProjectConfig] = useState<ProjectConfig | undefined>(() => initialProjectConfig);
   const [projectConfigForm, setProjectConfigForm] = useState<ProjectConfigFormState>(() => toProjectConfigForm(initialProjectConfig));
+  const [projectWorkspaceConfig, setProjectWorkspaceConfig] = useState<ProjectWorkspaceConfigSnapshot | undefined>();
+  const [projectRepositoryDiscovery, setProjectRepositoryDiscovery] = useState<ProjectRepositoryDiscoverySnapshot | undefined>();
+  const [selectedProjectRepositoryPaths, setSelectedProjectRepositoryPaths] = useState<string[]>([]);
+  const [projectSharedWritablePaths, setProjectSharedWritablePaths] = useState('');
+  const [projectWorkspaceConfigStatus, setProjectWorkspaceConfigStatus] = useState<'idle' | 'loading' | 'saving' | 'error'>('idle');
+  const [projectWorkspaceConfigError, setProjectWorkspaceConfigError] = useState<string | null>(null);
   const [projectDatabaseSecret] = useState<ProjectDatabaseSecretSnapshot | undefined>(() => props.initialProjectDatabaseSecret);
   const [pendingProjectDeleteId, setPendingProjectDeleteId] = useState<string | undefined>();
 
@@ -6325,9 +6336,8 @@ export function App(props: {
     workMode: 'default',
     permissionMode: 'read-only',
     workspaceMode: 'create',
-    sourceRef: '',
-    workspaceId: '',
-    branchName: '',
+    environmentId: '',
+    repositorySelections: {},
     supplementalInfo: '',
   });
   const [taskModelPushStatus, setTaskModelPushStatus] = useState<TaskModelPushModalStatus>('loading');
@@ -7052,6 +7062,51 @@ export function App(props: {
     } catch (error) {
       recordLocalError('renderer-action', error);
       setActionState('failed');
+    }
+  }
+
+  async function loadProjectWorkspaceConfig(projectId: string): Promise<void> {
+    const client = props.nativeConversationClient;
+    if (!client) return;
+    setProjectWorkspaceConfigStatus('loading');
+    setProjectWorkspaceConfigError(null);
+    try {
+      const [config, discovery] = await Promise.all([
+        client.loadProjectWorkspaceConfig(projectId),
+        client.discoverProjectRepositories(projectId),
+      ]);
+      setProjectWorkspaceConfig(config);
+      setProjectRepositoryDiscovery(discovery);
+      setSelectedProjectRepositoryPaths(config.repositories.map((repository) => repository.localPath));
+      setProjectSharedWritablePaths(config.sharedWritablePaths.map((entry) => entry.localPath).join('\n'));
+      setProjectWorkspaceConfigStatus('idle');
+    } catch (error) {
+      setProjectWorkspaceConfigStatus('error');
+      setProjectWorkspaceConfigError(redactLocalUiErrorMessage(errorToLocalUiMessage(error)));
+      recordLocalError('project-workspace-config-load', error);
+    }
+  }
+
+  async function saveProjectWorkspaceConfig(projectId: string): Promise<void> {
+    const client = props.nativeConversationClient;
+    if (!client) return;
+    setProjectWorkspaceConfigStatus('saving');
+    setProjectWorkspaceConfigError(null);
+    try {
+      const saved = await client.saveProjectWorkspaceConfig(projectId, {
+        repositories: selectedProjectRepositoryPaths.map((localPath) => ({ localPath })),
+        sharedWritablePaths: parseProjectConfigList(projectSharedWritablePaths).map((localPath) => ({ localPath })),
+      });
+      setProjectWorkspaceConfig(saved);
+      const discovery = await client.discoverProjectRepositories(projectId);
+      setProjectRepositoryDiscovery(discovery);
+      setSelectedProjectRepositoryPaths(saved.repositories.map((repository) => repository.localPath));
+      setProjectSharedWritablePaths(saved.sharedWritablePaths.map((entry) => entry.localPath).join('\n'));
+      setProjectWorkspaceConfigStatus('idle');
+    } catch (error) {
+      setProjectWorkspaceConfigStatus('error');
+      setProjectWorkspaceConfigError(redactLocalUiErrorMessage(errorToLocalUiMessage(error)));
+      recordLocalError('project-workspace-config-save', error);
     }
   }
 
@@ -8195,9 +8250,8 @@ export function App(props: {
       workMode: 'default',
       permissionMode: 'read-only',
       workspaceMode: 'create',
-      sourceRef: '',
-      workspaceId: '',
-      branchName: '',
+      environmentId: '',
+      repositorySelections: {},
       supplementalInfo: '',
     });
     setTaskModelPushStatus('loading');
@@ -8254,7 +8308,17 @@ export function App(props: {
             ...serviceTierWireOverride(taskModelPushForm.serviceTier),
             workMode: taskModelPushForm.workMode,
             permissionMode: taskModelPushForm.permissionMode,
-            workspace: taskModelPushForm.workspaceMode === 'existing' ? { mode: 'existing', workspaceId: taskModelPushForm.workspaceId } : { mode: 'create', sourceRef: taskModelPushForm.sourceRef, branchName: taskModelPushForm.branchName },
+            workspace:
+              taskModelPushForm.workspaceMode === 'existing'
+                ? { mode: 'existing', environmentId: taskModelPushForm.environmentId }
+                : {
+                    mode: 'create',
+                    repositories: taskModelPushCapabilities.repositories.map((repository) => ({
+                      repositoryId: repository.id,
+                      sourceRef: taskModelPushForm.repositorySelections[repository.id]?.sourceRef ?? '',
+                      branchName: taskModelPushForm.repositorySelections[repository.id]?.branchName ?? '',
+                    })),
+                  },
             ...(taskModelPushForm.supplementalInfo.trim() ? { supplementalInfo: taskModelPushForm.supplementalInfo.trim() } : {}),
             idempotencyKey: createSessionOperationId(),
             clientUserMessageId: createSessionOperationId(),
@@ -9923,7 +9987,10 @@ export function App(props: {
                             type="button"
                             onClick={() => {
                               setProjectPanel(projectPanel === 'config' ? undefined : 'config');
-                              if (selectedProject.id) void loadProjectConfig(selectedProject.id);
+                              if (selectedProject.id) {
+                                void loadProjectConfig(selectedProject.id);
+                                void loadProjectWorkspaceConfig(selectedProject.id);
+                              }
                             }}
                           >
                             {codeWorkspaceCopy.configure}
@@ -10237,6 +10304,72 @@ export function App(props: {
                               {formatProjectLanguage(projectConfigForm)} · {formatProjectDependencies(projectConfigForm, projectConfigCopy)}
                             </em>
                           </div>
+                          <section className="project-workspace-config" aria-label="项目任务工作区">
+                            <span className="project-config-setting-copy">
+                              <strong>任务工作区</strong>
+                              <small>项目目录是容器。请确认任务需要带入的 Git 仓库；每次新建任务环境时会再逐仓选择来源分支。</small>
+                            </span>
+                            <div className="project-workspace-config-body">
+                              <small>项目容器：{projectWorkspaceConfig?.containerPath ?? selectedProject.localPath}</small>
+                              {projectWorkspaceConfigStatus === 'loading' ? <small>正在发现 Git 仓库…</small> : null}
+                              {(projectRepositoryDiscovery?.candidates ?? []).length > 0 ? (
+                                <fieldset className="project-repository-choice-list">
+                                  <legend>发现的 Git 仓库</legend>
+                                  {projectRepositoryDiscovery?.candidates.map((candidate) => (
+                                    <label key={candidate.localPath}>
+                                      <input
+                                        type="checkbox"
+                                        checked={selectedProjectRepositoryPaths.includes(candidate.localPath)}
+                                        onChange={(event) =>
+                                          setSelectedProjectRepositoryPaths((current) =>
+                                            event.currentTarget.checked
+                                              ? Array.from(new Set([...current, candidate.localPath]))
+                                              : current.filter((path) => path !== candidate.localPath),
+                                          )
+                                        }
+                                        disabled={projectWorkspaceConfigStatus === 'saving'}
+                                      />
+                                      <span>
+                                        <strong>{candidate.name}</strong>
+                                        <small>
+                                          {candidate.relativePath} · {candidate.branch || 'detached'} · {candidate.remotes.length > 0 ? candidate.remotes.join(', ') : '无远端'}
+                                        </small>
+                                      </span>
+                                    </label>
+                                  ))}
+                                </fieldset>
+                              ) : projectWorkspaceConfigStatus !== 'loading' ? (
+                                <small>未发现 Git 仓库；任务会直接使用项目目录，不检出分支。</small>
+                              ) : null}
+                              <label className="project-shared-paths-field">
+                                <span>共享可写目录</span>
+                                <textarea
+                                  value={projectSharedWritablePaths}
+                                  onChange={(event) => setProjectSharedWritablePaths(event.currentTarget.value)}
+                                  placeholder={`${selectedProject.localPath}/docs`}
+                                  disabled={projectWorkspaceConfigStatus === 'saving'}
+                                />
+                                <small>每行一个目录。任务环境会直接写入这些真实目录，例如父级 docs；它们不参与 Git 隔离。</small>
+                              </label>
+                              {projectWorkspaceConfigError ? <p className="task-model-push-error" role="alert">{projectWorkspaceConfigError}</p> : null}
+                              <div className="project-config-command-rail">
+                                <button
+                                  type="button"
+                                  onClick={() => void loadProjectWorkspaceConfig(selectedProject.id)}
+                                  disabled={!props.nativeConversationClient || projectWorkspaceConfigStatus === 'loading' || projectWorkspaceConfigStatus === 'saving'}
+                                >
+                                  重新发现
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => void saveProjectWorkspaceConfig(selectedProject.id)}
+                                  disabled={!props.nativeConversationClient || projectWorkspaceConfigStatus === 'loading' || projectWorkspaceConfigStatus === 'saving'}
+                                >
+                                  {projectWorkspaceConfigStatus === 'saving' ? '正在保存…' : '保存任务工作区'}
+                                </button>
+                              </div>
+                            </div>
+                          </section>
                           {/* 项目配置字段拆成说明列和控件列，保留 form 提交语义，但不再把字段直接堆成 label 列表。 */}
                           <section className="project-config-setting-row" aria-label={projectConfigCopy.defaultModelAria}>
                             <span className="project-config-setting-copy">

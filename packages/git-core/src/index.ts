@@ -1,6 +1,6 @@
 import {execFile} from 'node:child_process';
 import {realpathSync} from 'node:fs';
-import {mkdir, readFile, rm, writeFile} from 'node:fs/promises';
+import {copyFile, lstat, mkdir, readFile, readdir, rm, writeFile} from 'node:fs/promises';
 import {basename, dirname, isAbsolute, join, relative, resolve, sep} from 'node:path';
 import {promisify} from 'node:util';
 
@@ -43,6 +43,17 @@ export interface GitRepositoryContext {
   worktrees: GitWorktreeEntry[];
 }
 
+export interface DiscoveredGitRepository {
+  name: string;
+  relativePath: string;
+  localPath: string;
+  branch: string;
+  headSha: string;
+  clean: boolean;
+  localBranches: string[];
+  remotes: string[];
+}
+
 export interface PrepareTaskWorktreeInput {
   repositoryPath: string;
   projectSlug: string;
@@ -53,6 +64,8 @@ export interface PrepareTaskWorktreeInput {
   sourceRef: string;
   existingBranch: boolean;
   existingRemoteRef?: string;
+  worktreePath?: string;
+  includeLocalChanges?: boolean;
 }
 
 export interface PreparedTaskWorktree {
@@ -63,6 +76,7 @@ export interface PreparedTaskWorktree {
   sourceHeadSha: string;
   headSha: string;
   reused: boolean;
+  localChangesApplied: boolean;
 }
 
 export interface TaskWorkspaceReview {
@@ -163,7 +177,7 @@ export interface FinalizedTaskBranchIntegration {
   targetHeadSha: string;
   resultHeadSha: string;
   remoteName: string;
-  remoteHeadSha: string;
+  remoteHeadSha: string | null;
     localSyncStatus: 'synced' | 'pending';
     localHeadSha: string;
     localWorktreePath: string | null;
@@ -246,6 +260,69 @@ export async function getGitRepositoryContext(cwd: string): Promise<GitRepositor
   }
 }
 
+/**
+ * 在项目容器内发现真实 Git 根目录；只返回候选，不替用户登记仓库。
+ * 扫描跳过依赖、构建产物和 Zeus 自己的 worktree 根，避免把缓存仓库误纳入项目。
+ */
+export async function discoverGitRepositories(containerPath: string, maxDepth = 6): Promise<DiscoveredGitRepository[]> {
+  const containerRoot = canonicalFilesystemPath(containerPath);
+  const candidates: string[] = [];
+  const seen = new Set<string>();
+  const skippedDirectories = new Set(['.git', '.zeus-worktrees', 'node_modules', 'dist', 'build', 'target', '.next', '.turbo', '.cache']);
+
+  async function visit(directoryPath: string, depth: number): Promise<void> {
+    if (depth > maxDepth) return;
+    try {
+      const gitMarker = await lstat(join(directoryPath, '.git')).catch(() => null);
+      if (gitMarker?.isDirectory() || gitMarker?.isFile()) {
+        const repositoryRoot = canonicalFilesystemPath(directoryPath);
+        if (!seen.has(repositoryRoot)) {
+          seen.add(repositoryRoot);
+          candidates.push(repositoryRoot);
+        }
+      }
+      const entries = await readdir(directoryPath, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isDirectory() || entry.isSymbolicLink() || skippedDirectories.has(entry.name)) continue;
+        await visit(join(directoryPath, entry.name), depth + 1);
+      }
+    } catch {
+      // 单个无权限或消失目录不应让整个候选扫描失败。
+    }
+  }
+
+  await visit(containerRoot, 0);
+  const discovered = await Promise.all(
+    candidates.map(async (localPath) => {
+      const [context, status] = await Promise.all([getGitRepositoryContext(localPath), getGitStatus(localPath)]);
+      if (!context.isRepository || canonicalFilesystemPath(context.topLevel) !== localPath) return null;
+      const repositoryRelativePath = relative(containerRoot, localPath);
+      if (repositoryRelativePath === '..' || repositoryRelativePath.startsWith(`..${sep}`) || isAbsolute(repositoryRelativePath)) return null;
+      return {
+        name: basename(localPath),
+        relativePath: repositoryRelativePath ? repositoryRelativePath.split(sep).join('/') : '.',
+        localPath,
+        branch: context.branch,
+        headSha: context.headSha,
+        clean: status.clean,
+        localBranches: context.localBranches,
+        remotes: context.remotes,
+      } satisfies DiscoveredGitRepository;
+    }),
+  );
+  return discovered.filter((candidate): candidate is DiscoveredGitRepository => candidate !== null).sort((left, right) => left.relativePath.localeCompare(right.relativePath));
+}
+
+/** 为多仓任务环境生成共同根目录；逐仓 worktree 会按原相对路径放在该根目录内。 */
+export function buildTaskEnvironmentRootPath(projectContainerPath: string, projectSlug: string, taskCode: string, environmentId: string): string {
+  const containerRoot = resolve(projectContainerPath);
+  const root = join(dirname(containerRoot), '.zeus-worktrees');
+  const safeProject = safePathSegment(projectSlug || basename(containerRoot));
+  const safeTask = safePathSegment(taskCode);
+  const safeEnvironment = safePathSegment(environmentId).slice(-20) || 'environment';
+  return join(root, safeProject, safeTask, safeEnvironment);
+}
+
 /** 从任务编码、名称和开发线序号生成可读分支；最终合法性仍由 git check-ref-format 判定。 */
 export function buildTaskBranchName(taskCode: string, taskTitle: string, sequence: number): string {
   const normalizedCode =
@@ -299,38 +376,106 @@ export async function prepareTaskWorktree(input: PrepareTaskWorktreeInput): Prom
       sourceHeadSha,
       headSha,
       reused: true,
+      localChangesApplied: false,
     };
   }
 
-  const worktreePath = buildTaskWorktreePath(context.topLevel, input.projectSlug, input.taskCode, input.workspaceId);
+  const worktreePath = input.worktreePath ? resolve(input.worktreePath) : buildTaskWorktreePath(context.topLevel, input.projectSlug, input.taskCode, input.workspaceId);
   await mkdir(dirname(worktreePath), { recursive: true });
   const localBranchExists = context.localBranches.includes(branchName);
   if (localBranchExists && !input.existingBranch) {
     throw gitCoreError('ZEUS_TASK_BRANCH_ALREADY_EXISTS', `Task branch already exists locally: ${branchName}`);
   }
-  if (input.existingBranch) {
-    if (localBranchExists) {
-      await runGit(context.topLevel, ['worktree', 'add', worktreePath, branchName]);
-    } else {
-      const remoteRef = input.existingRemoteRef?.trim() ?? '';
-      if (!remoteRef || !context.remoteBranches.includes(remoteRef)) {
-        throw gitCoreError('ZEUS_TASK_BRANCH_NOT_FOUND', `Existing task branch is not available locally or on its recorded remote: ${branchName}`);
+  try {
+    if (input.existingBranch) {
+      if (localBranchExists) {
+        await runGit(context.topLevel, ['worktree', 'add', worktreePath, branchName]);
+      } else {
+        const remoteRef = input.existingRemoteRef?.trim() ?? '';
+        if (!remoteRef || !context.remoteBranches.includes(remoteRef)) {
+          throw gitCoreError('ZEUS_TASK_BRANCH_NOT_FOUND', `Existing task branch is not available locally or on its recorded remote: ${branchName}`);
+        }
+        await runGit(context.topLevel, ['worktree', 'add', '-b', branchName, worktreePath, remoteRef]);
       }
-      await runGit(context.topLevel, ['worktree', 'add', '-b', branchName, worktreePath, remoteRef]);
+    } else {
+      await runGit(context.topLevel, ['worktree', 'add', '-b', branchName, worktreePath, sourceHeadSha]);
     }
-  } else {
-    await runGit(context.topLevel, ['worktree', 'add', '-b', branchName, worktreePath, sourceHeadSha]);
+    const localChangesApplied = input.includeLocalChanges === true && !input.existingBranch ? await applyLocalChangesToTaskWorktree(context.topLevel, worktreePath) : false;
+    const headSha = await resolveCommit(worktreePath, 'HEAD');
+    return {
+      topLevel: context.topLevel,
+      worktreePath,
+      branchName,
+      sourceBranch: sourceRef,
+      sourceHeadSha,
+      headSha,
+      reused: false,
+      localChangesApplied,
+    };
+  } catch (error) {
+    await cleanupPreparedTaskWorktree({ repositoryPath: context.topLevel, worktreePath, branchName, removeBranch: !input.existingBranch }).catch(() => undefined);
+    throw error;
   }
-  const headSha = await resolveCommit(worktreePath, 'HEAD');
-  return {
-    topLevel: context.topLevel,
-    worktreePath,
-    branchName,
-    sourceBranch: sourceRef,
-    sourceHeadSha,
-    headSha,
-    reused: false,
-  };
+}
+
+/**
+ * 与 Codex 托管 worktree 一致，把来源工作目录的 staged、unstaged、未跟踪文件和
+ * `.worktreeinclude` 命中的忽略文件应用到新任务工作区。任一步失败都会由调用方回收。
+ */
+async function applyLocalChangesToTaskWorktree(sourcePath: string, targetPath: string): Promise<boolean> {
+  const stagedPatch = await readGitDiffAllowChanges(sourcePath, ['diff', '--cached', '--binary', '--', '.']);
+  const unstagedPatch = await readGitDiffAllowChanges(sourcePath, ['diff', '--binary', '--', '.']);
+  const untracked = splitNullRecords((await runGit(sourcePath, ['ls-files', '--others', '--exclude-standard', '-z'])).stdout);
+  const includeFile = join(sourcePath, '.worktreeinclude');
+  const includeExists = await lstat(includeFile).then((entry) => entry.isFile()).catch(() => false);
+  const includedIgnored = includeExists ? splitNullRecords((await runGit(sourcePath, ['ls-files', '--others', '--ignored', `--exclude-from=${includeFile}`, '-z'])).stdout) : [];
+  const copyPaths = Array.from(new Set([...untracked, ...includedIgnored]));
+  const hasChanges = Boolean(stagedPatch || unstagedPatch || copyPaths.length > 0);
+  if (!hasChanges) return false;
+
+  const patchRoot = dirname(targetPath);
+  if (stagedPatch) {
+    const patchPath = join(patchRoot, `.zeus-staged-${process.pid}-${Date.now()}.patch`);
+    await writeFile(patchPath, stagedPatch, 'utf8');
+    try {
+      await runGit(targetPath, ['apply', '--index', '--binary', patchPath]);
+    } finally {
+      await rm(patchPath, { force: true });
+    }
+  }
+  if (unstagedPatch) {
+    const patchPath = join(patchRoot, `.zeus-unstaged-${process.pid}-${Date.now()}.patch`);
+    await writeFile(patchPath, unstagedPatch, 'utf8');
+    try {
+      await runGit(targetPath, ['apply', '--binary', patchPath]);
+    } finally {
+      await rm(patchPath, { force: true });
+    }
+  }
+  for (const relativePath of copyPaths) {
+    const safePath = requireSafeWorkspacePath(relativePath);
+    const sourceFile = resolve(sourcePath, safePath);
+    const targetFile = resolve(targetPath, safePath);
+    if (!isPathInside(sourcePath, sourceFile) || !isPathInside(targetPath, targetFile)) throw gitCoreError('ZEUS_GIT_PATH_INVALID', `Local change path escapes its repository: ${relativePath}`);
+    const sourceEntry = await lstat(sourceFile);
+    if (!sourceEntry.isFile() || sourceEntry.isSymbolicLink()) continue;
+    const targetEntry = await lstat(targetFile).catch(() => null);
+    if (targetEntry) throw gitCoreError('ZEUS_TASK_LOCAL_CHANGE_CONFLICT', `Local untracked file conflicts with the selected source branch: ${relativePath}`);
+    await mkdir(dirname(targetFile), { recursive: true });
+    await copyFile(sourceFile, targetFile);
+  }
+  return true;
+}
+
+/** 精确回收本次刚创建的任务 worktree；只在创建失败回滚或用户显式回收时调用。 */
+export async function cleanupPreparedTaskWorktree(input: { repositoryPath: string; worktreePath: string; branchName: string; removeBranch: boolean }): Promise<void> {
+  const context = await getGitRepositoryContext(input.repositoryPath);
+  if (!context.isRepository) throw gitCoreError('ZEUS_GIT_REPOSITORY_REQUIRED', 'Task workspace repository is unavailable during cleanup.');
+  const targetPath = canonicalFilesystemPath(input.worktreePath);
+  const registered = context.worktrees.find((entry) => canonicalFilesystemPath(entry.path) === targetPath);
+  if (registered) await runGit(context.topLevel, ['worktree', 'remove', '--force', registered.path]);
+  else await rm(input.worktreePath, { recursive: true, force: true });
+  if (input.removeBranch && context.localBranches.includes(input.branchName)) await runGit(context.topLevel, ['branch', '-D', input.branchName]);
 }
 
 /** 汇总 IDEA 式提交窗口所需的 staged、unstaged、untracked 与冲突状态。 */
@@ -441,7 +586,7 @@ export async function commitAndPushTaskWorkspace(input: CommitAndPushTaskWorkspa
   }
 
   const headSha = await resolveCommit(input.cwd, 'HEAD');
-  const remoteName = requireSafeGitRef(input.remoteName || 'origin', 'remote');
+  const remoteName = input.push ? requireSafeGitRef(input.remoteName || 'origin', 'remote') : input.remoteName ? requireSafeGitRef(input.remoteName, 'remote') : '';
   const remoteBranch = requireSafeGitRef(input.remoteBranch || review.branch, 'remote branch');
   let remoteHeadSha: string | null = null;
   if (input.push) {
@@ -640,7 +785,7 @@ export async function completeTaskIntegrationCommit(input: { integrationPath: st
   return { resultHeadSha: await resolveCommit(input.integrationPath, 'HEAD') };
 }
 
-/** 重新校验目标分支提交后从隔离 worktree 推送结果；本地脏工作区只进入待同步状态。 */
+/** 重新校验目标分支提交后交付结果；配置远端时推送，否则只同步本地目标分支。 */
 export async function finalizeTaskBranchIntegration(input: {
   repositoryPath: string;
   integrationPath: string;
@@ -650,15 +795,18 @@ export async function finalizeTaskBranchIntegration(input: {
   remoteName: string;
 }): Promise<FinalizedTaskBranchIntegration> {
   const targetBranch = requireSafeGitRef(input.targetBranch, 'target branch');
-  const remoteName = requireSafeGitRef(input.remoteName, 'remote');
+  const remoteName = input.remoteName ? requireSafeGitRef(input.remoteName, 'remote') : '';
   const resultHeadSha = requireSafeGitRef(input.resultHeadSha, 'integration result');
     const targetHeadSha = await getGitBranchHead(input.repositoryPath, targetBranch);
     if (targetHeadSha !== input.targetHeadSha) throw gitCoreError('ZEUS_TARGET_HEAD_CHANGED', 'Target branch advanced while the integration was being prepared.');
 
-    // 推送源是隔离目录中的确定提交，不读取也不改变项目主工作区的文件和 index。
-    await runGit(input.integrationPath, ['push', remoteName, `${resultHeadSha}:refs/heads/${targetBranch}`]);
-    const remoteHeadSha = await readRemoteHead(input.integrationPath, remoteName, targetBranch);
-  if (remoteHeadSha !== resultHeadSha) throw gitCoreError('ZEUS_TASK_REMOTE_VERIFICATION_FAILED', 'Remote target branch does not match the merged result.');
+    // 配置远端时，推送源是隔离目录中的确定提交；未配置远端时仍允许完成本地交付。
+    let remoteHeadSha: string | null = null;
+    if (remoteName) {
+      await runGit(input.integrationPath, ['push', remoteName, `${resultHeadSha}:refs/heads/${targetBranch}`]);
+      remoteHeadSha = await readRemoteHead(input.integrationPath, remoteName, targetBranch);
+      if (remoteHeadSha !== resultHeadSha) throw gitCoreError('ZEUS_TASK_REMOTE_VERIFICATION_FAILED', 'Remote target branch does not match the merged result.');
+    }
 
     const localSync = await syncLocalTargetBranch({
         repositoryPath: input.repositoryPath,
@@ -666,11 +814,14 @@ export async function finalizeTaskBranchIntegration(input: {
         targetHeadSha: input.targetHeadSha,
         resultHeadSha,
     });
-  const context = await getGitRepositoryContext(input.repositoryPath);
+  // 无远端且本地目标分支暂时不安全时，保留隔离合入结果，待用户清理原工作区后重试同步。
+  if (remoteName || localSync.localSyncStatus === 'synced') {
+    const context = await getGitRepositoryContext(input.repositoryPath);
     const registered = context.worktrees.find((entry) => canonicalFilesystemPath(entry.path) === canonicalFilesystemPath(input.integrationPath));
-  if (registered) {
-    await runGit(context.topLevel, ['worktree', 'remove', input.integrationPath]);
-    await rm(input.integrationPath, { recursive: true, force: true });
+    if (registered) {
+      await runGit(context.topLevel, ['worktree', 'remove', input.integrationPath]);
+      await rm(input.integrationPath, { recursive: true, force: true });
+    }
   }
   return {
     targetBranch,
@@ -1365,4 +1516,11 @@ export function buildGitPatchExport(diff: GitDiffSummary, createdAt = new Date()
 
 function splitLines(value: string): string[] {
   return value ? value.split('\n').filter(Boolean) : [];
+}
+
+function splitNullRecords(value: string): string[] {
+  return value
+    .split('\0')
+    .map((item) => item.trim())
+    .filter(Boolean);
 }

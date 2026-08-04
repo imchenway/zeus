@@ -763,7 +763,8 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
             {taskWorkspaces.map((workspace) => (
               <li key={workspace.id}>
                 <span>
-                  <strong>{workspace.branchName}</strong>
+                  <strong>{workspace.repositoryName || workspace.repositoryRelativePath || workspace.branchName}</strong>
+                  <small>{workspace.repositoryRelativePath ? `${workspace.repositoryRelativePath} · ${workspace.branchName}` : workspace.branchName}</small>
                   <small>{zh ? `来源 ${workspace.sourceBranch}` : `Source ${workspace.sourceBranch}`}</small>
                 </span>
                 <small>{taskWorkspaceDeliveryLabel(workspace.state, zh)}</small>

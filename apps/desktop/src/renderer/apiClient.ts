@@ -74,6 +74,48 @@ export interface ProjectRecord {
   defaultTemplateId?: string | null;
 }
 
+export interface ProjectWorkspaceRepository {
+  id: string;
+  projectId: string;
+  name: string;
+  relativePath: string;
+  localPath: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProjectWorkspaceSharedPath {
+  id: string;
+  projectId: string;
+  relativePath: string;
+  localPath: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProjectWorkspaceConfigSnapshot {
+  projectId: string;
+  containerPath: string;
+  repositories: ProjectWorkspaceRepository[];
+  sharedWritablePaths: ProjectWorkspaceSharedPath[];
+}
+
+export interface DiscoveredProjectRepository {
+  name: string;
+  relativePath: string;
+  localPath: string;
+  branch: string;
+  headSha: string;
+  clean: boolean;
+  localBranches: string[];
+  remotes: string[];
+  registered: boolean;
+}
+
+export interface ProjectRepositoryDiscoverySnapshot extends ProjectWorkspaceConfigSnapshot {
+  candidates: DiscoveredProjectRepository[];
+}
+
 export type ProjectWorkMode = 'plan' | 'develop' | 'review' | 'debug';
 export type ProjectIndexScope = 'project' | 'src' | 'custom';
 
@@ -1328,6 +1370,9 @@ export interface DashboardClient {
   loadProject: (projectId: string) => Promise<ProjectRecord>;
   loadProjectConfig: (projectId: string) => Promise<ProjectConfig>;
   saveProjectConfig: (projectId: string, input: SaveProjectConfigRequest) => Promise<ProjectConfig>;
+  loadProjectWorkspaceConfig: (projectId: string) => Promise<ProjectWorkspaceConfigSnapshot>;
+  discoverProjectRepositories: (projectId: string) => Promise<ProjectRepositoryDiscoverySnapshot>;
+  saveProjectWorkspaceConfig: (projectId: string, input: { repositories: Array<{ localPath: string }>; sharedWritablePaths: Array<{ localPath: string }> }) => Promise<ProjectWorkspaceConfigSnapshot>;
   loadProjectDatabaseSecret: (projectId: string) => Promise<ProjectDatabaseSecretSnapshot>;
   saveProjectDatabasePassword: (projectId: string, password: string) => Promise<ProjectDatabaseSecretSnapshot>;
   clearProjectDatabasePassword: (projectId: string) => Promise<ProjectDatabaseSecretSnapshot>;
@@ -1830,6 +1875,13 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
     loadProjectConfig: (projectId) => request<ProjectConfig>(`/api/projects/${projectId}/config`),
     saveProjectConfig: (projectId, input) =>
       request<ProjectConfig>(`/api/projects/${projectId}/config`, {
+        method: 'PUT',
+        body: JSON.stringify(input),
+      }),
+    loadProjectWorkspaceConfig: (projectId) => request<ProjectWorkspaceConfigSnapshot>(`/api/projects/${encodeURIComponent(projectId)}/workspace-config`),
+    discoverProjectRepositories: (projectId) => request<ProjectRepositoryDiscoverySnapshot>(`/api/projects/${encodeURIComponent(projectId)}/repositories/discover`),
+    saveProjectWorkspaceConfig: (projectId, input) =>
+      request<ProjectWorkspaceConfigSnapshot>(`/api/projects/${encodeURIComponent(projectId)}/workspace-config`, {
         method: 'PUT',
         body: JSON.stringify(input),
       }),

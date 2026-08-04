@@ -294,7 +294,8 @@ export function TaskGitReviewModal(props: {
             </strong>
             {snapshot?.items.map((workspace) => (
               <button type="button" key={workspace.id} className={workspace.id === activeWorkspaceId ? 'is-active' : ''} onClick={() => setActiveWorkspaceId(workspace.id)}>
-                <span>{workspace.branchName}</span>
+                <span>{workspace.repositoryName || workspace.repositoryRelativePath || workspace.branchName}</span>
+                <small>{workspace.repositoryRelativePath ? `${workspace.repositoryRelativePath} · ${workspace.branchName}` : workspace.branchName}</small>
                 <small>{workspaceStateLabel(workspace, zh)}</small>
               </button>
             ))}
