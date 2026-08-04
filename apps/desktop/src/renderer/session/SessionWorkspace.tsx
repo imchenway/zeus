@@ -1656,16 +1656,8 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
 }
 
 export function selectDockedTurnPlan(state: NativeSessionState): NativeSessionState['turnsByProviderId'][string]['plan'] {
-  if (state.activeTurnId) return state.turnsByProviderId[state.activeTurnId]?.plan ?? null;
-  const turnIdsInTranscript = [...state.itemOrder]
-    .reverse()
-    .map((key) => state.items[key]?.turnId)
-    .filter((turnId): turnId is string => Boolean(turnId));
-  for (const turnId of turnIdsInTranscript) {
-    const plan = state.turnsByProviderId[turnId]?.plan;
-    if (plan?.steps.length) return plan;
-  }
-  return [...Object.values(state.turnsByProviderId)].sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt)).find((turn) => turn.plan?.steps.length)?.plan ?? null;
+  if (!state.activeTurnId) return null;
+  return state.turnsByProviderId[state.activeTurnId]?.plan ?? null;
 }
 
 function contextWorkspaceLabel(workspace: SessionContextWorkspace, language: SessionUiLanguage): string {
