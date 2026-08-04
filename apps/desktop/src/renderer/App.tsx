@@ -10909,7 +10909,6 @@ export function App(props: {
                     events={taskEvents.filter((event) => event.taskId === taskDetailPaneTask.id)}
                     copy={taskWorkspaceCopy}
                     statusLabels={taskManagementStatusLabels[appShellSettings.appLanguage]}
-                    eventTypeLabels={uiCopy.taskEventTypeLabels}
                     priorityOptions={taskWorkspaceCopy.taskCreatePriorityOptions}
                     busy={updatingTaskBusy}
                     conversations={taskDetailPaneConversations}

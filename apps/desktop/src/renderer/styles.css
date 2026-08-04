@@ -15081,12 +15081,22 @@ a {
     inline-size: 100%;
 }
 
-/* 任务详情采用原位编辑：文本点击进入输入态，下拉选择后立即保存，字段反馈不挤占其他业务区块。 */
+/* 任务详情采用原位编辑：保存中在当前控件内显示加载动效，成功后安静收起，只有失败或冲突才展示文字。 */
 .macos-ai-app .task-inline-edit,
 .macos-ai-app .task-immediate-select {
     display: grid;
     gap: 5px;
     min-inline-size: 0;
+}
+
+.macos-ai-app .task-inline-edit-control-shell,
+.macos-ai-app .task-immediate-select {
+    min-inline-size: 0;
+    position: relative;
+}
+
+.macos-ai-app .task-inline-edit-control-shell {
+    display: grid;
 }
 
 .macos-ai-app .task-inline-edit-trigger {
@@ -15125,7 +15135,45 @@ a {
     inline-size: 100%;
     line-height: 1.55;
     min-inline-size: 0;
-    padding: 7px 9px;
+    padding: 7px 30px 7px 9px;
+}
+
+.macos-ai-app .task-save-spinner {
+    animation: task-save-spinner-rotate 720ms linear infinite;
+    block-size: 12px;
+    border: 1.5px solid color-mix(in oklch, var(--zeus-product-muted) 36%, transparent);
+    border-block-start-color: var(--zeus-accent);
+    border-radius: 9999px;
+    inline-size: 12px;
+    inset-block-start: 11px;
+    inset-inline-end: 10px;
+    pointer-events: none;
+    position: absolute;
+    z-index: 1;
+}
+
+.macos-ai-app textarea.task-inline-edit-control + .task-save-spinner {
+    inset-block-start: 10px;
+}
+
+.macos-ai-app .task-immediate-select.is-saving .zeus-select-chevron {
+    opacity: 0;
+}
+
+.macos-ai-app .task-detail-attachments > .task-detail-section-heading > .task-save-spinner {
+    inset-block-start: auto;
+    inset-inline-end: auto;
+    position: relative;
+}
+
+.macos-ai-app .task-detail-attachments > .task-detail-section-heading .zeus-button[data-loading='true']::after {
+    display: none;
+}
+
+@keyframes task-save-spinner-rotate {
+    to {
+        transform: rotate(360deg);
+    }
 }
 
 .macos-ai-app .task-inline-edit-control:focus-visible {
@@ -15137,6 +15185,13 @@ a {
 .macos-ai-app textarea.task-inline-edit-control {
     min-block-size: 104px;
     resize: vertical;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .macos-ai-app .task-save-spinner {
+        animation: none;
+        border-block-start-color: var(--zeus-product-muted);
+    }
 }
 
 .macos-ai-app .task-detail-pane-title .task-inline-edit-control {
