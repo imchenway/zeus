@@ -1143,6 +1143,7 @@ const languageCopy = {
       detailPaneBackdrop: '关闭任务详情',
       detailPaneClose: '关闭',
       openTaskDetail: '打开任务详情',
+      openRunStatusConversationAria: (taskTitle: string, runStatus: string) => `打开任务“${taskTitle}”的对应会话，当前运行状态：${runStatus}`,
       taskCountPrefix: '任务',
       filteredState: '已筛选',
       allState: '全部状态',
@@ -2559,6 +2560,7 @@ const languageCopy = {
       detailPaneBackdrop: 'Close task details',
       detailPaneClose: 'Close',
       openTaskDetail: 'Open task details',
+      openRunStatusConversationAria: (taskTitle: string, runStatus: string) => `Open the conversation for task “${taskTitle}”. Current run status: ${runStatus}`,
       taskCountPrefix: 'Tasks',
       filteredState: 'Filtered',
       allState: 'All states',
@@ -3787,6 +3789,7 @@ const languageCopy = {
       detailPaneBackdrop: string;
       detailPaneClose: string;
       openTaskDetail: string;
+      openRunStatusConversationAria: (taskTitle: string, runStatus: string) => string;
       taskCountPrefix: string;
       filteredState: string;
       allState: string;
@@ -10722,6 +10725,7 @@ export function App(props: {
                     onSaveTaskTableLayout={() => setTaskTableLayoutScopeDialogOpen(true)}
                     onCreateTask={openTaskCreateModal}
                     onOpenTaskDetail={(taskId) => void openTaskDetailPane(taskId)}
+                    onOpenTaskConversation={(taskId, conversationId) => void openTaskConversation(taskId, conversationId)}
                     onToggleTaskSelection={toggleTaskSelection}
                     onToggleAllVisibleTaskSelection={toggleAllVisibleTaskSelection}
                     onClearTaskSelection={clearTaskSelection}
