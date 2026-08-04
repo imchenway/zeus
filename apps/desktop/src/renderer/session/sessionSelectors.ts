@@ -1,4 +1,4 @@
-import type {NativeSessionState} from './sessionTypes.js';
+import type { NativeSessionState } from './sessionTypes.js';
 
 export interface SessionStatusSemantics {
   role: 'status' | 'alert';
@@ -9,14 +9,14 @@ export interface SessionStatusSemantics {
 export type SessionComposerAction = 'send' | 'stop' | 'queue' | 'respond' | 'retry' | 'readonly' | 'disabled';
 
 export function selectHasConfirmedUserMessage(state: NativeSessionState, clientUserMessageId: string): boolean {
-    if (!clientUserMessageId) return false;
-    return state.itemOrder.some((key) => {
-        const item = state.items[key];
-        if (!item || item.optimistic) return false;
-        const itemType = item.type.toLowerCase();
-        const userItem = itemType === 'user' || itemType === 'usermessage' || itemType === 'user_message';
-        return userItem && (item.clientUserMessageId === clientUserMessageId || item.durableClientUserMessageId === clientUserMessageId);
-    });
+  if (!clientUserMessageId) return false;
+  return state.itemOrder.some((key) => {
+    const item = state.items[key];
+    if (!item || item.optimistic) return false;
+    const itemType = item.type.toLowerCase();
+    const userItem = itemType === 'user' || itemType === 'usermessage' || itemType === 'user_message';
+    return userItem && (item.clientUserMessageId === clientUserMessageId || item.durableClientUserMessageId === clientUserMessageId);
+  });
 }
 
 export function selectSessionStatusSemantics(state: NativeSessionState): SessionStatusSemantics {
@@ -77,7 +77,7 @@ export function selectSessionCapabilities(state: NativeSessionState): {
   canRespondToRequest: boolean;
   canManageQueue: boolean;
 } {
-    const native = Boolean(state.snapshot?.agent?.kind) || state.snapshot?.transportKind === 'codex_native';
+  const native = Boolean(state.snapshot?.agent?.kind) || state.snapshot?.transportKind === 'codex_native';
   const active = state.conversationState === 'active_prework' || state.conversationState === 'active_final_answer';
   return {
     canEditDraft: native && state.transportState !== 'failed' && state.conversationState !== 'legacy_readonly',
