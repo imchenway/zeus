@@ -590,7 +590,7 @@ function buildTaskTableCells(
   const managementStatus = resolveTaskManagementStatus(task);
   const deliveryStatus = resolveTaskDeliveryStatus(conversations, managementStatusLabels?.todo === 'Todo');
   return {
-    code: { primary: task.taskCode || task.id, sortValue: task.taskCode || task.id },
+    code: { primary: task.taskCode || task.id, sortValue: task.taskSequence ?? task.taskCode ?? task.id },
     intent: { primary: task.title, sortValue: task.title },
     managementStatus: {
       primary: formatTaskManagementStatus(managementStatus, managementStatusLabels),
