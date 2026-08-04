@@ -581,10 +581,11 @@ function RequestUserInputPanel(props: PendingRequestSurfaceProps & { questions: 
                     placeholder={copy.otherPlaceholder}
                     disabled={!selectedValues.includes(otherAnswerControlValue(currentQuestion))}
                     onChange={(event) => {
+                      const value = event.currentTarget.value;
                       void snooze();
                       setOtherAnswers((current) => ({
                         ...current,
-                        [currentQuestion.id]: event.currentTarget.value,
+                        [currentQuestion.id]: value,
                       }));
                     }}
                     onKeyDown={(event) => {
@@ -601,10 +602,11 @@ function RequestUserInputPanel(props: PendingRequestSurfaceProps & { questions: 
                     placeholder={copy.otherPlaceholder}
                     disabled={!selectedValues.includes(otherAnswerControlValue(currentQuestion))}
                     onChange={(event) => {
+                      const value = event.currentTarget.value;
                       void snooze();
                       setOtherAnswers((current) => ({
                         ...current,
-                        [currentQuestion.id]: event.currentTarget.value,
+                        [currentQuestion.id]: value,
                       }));
                     }}
                     onKeyDown={(event) => {
@@ -625,10 +627,11 @@ function RequestUserInputPanel(props: PendingRequestSurfaceProps & { questions: 
                   {...answerInputSecurityAttributes(true)}
                   value={selectedValues[0] ?? ''}
                   onChange={(event) => {
+                    const value = event.currentTarget.value;
                     void snooze();
                     setAnswers((current) => ({
                       ...current,
-                      [currentQuestion.id]: [event.currentTarget.value],
+                      [currentQuestion.id]: [value],
                     }));
                   }}
                 />
@@ -638,10 +641,11 @@ function RequestUserInputPanel(props: PendingRequestSurfaceProps & { questions: 
                   className="session-question-freeform"
                   value={selectedValues[0] ?? ''}
                   onChange={(event) => {
+                    const value = event.currentTarget.value;
                     void snooze();
                     setAnswers((current) => ({
                       ...current,
-                      [currentQuestion.id]: [event.currentTarget.value],
+                      [currentQuestion.id]: [value],
                     }));
                   }}
                   onKeyDown={(event) => {
