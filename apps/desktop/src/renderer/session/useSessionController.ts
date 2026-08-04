@@ -13,6 +13,7 @@ import {
   type NativePendingRequest,
   type NativePermissionMode,
   type NativePlanImplementationRequest,
+  type NativeQueuedSubmission,
   type NativeQueueSnapshot,
   type NativeRealtimeEventEnvelope,
   type NativeSessionError,
@@ -155,6 +156,7 @@ interface PersistedDraft {
   browserSubmission?: ZeusBrowserPreparedSubmission | null;
   pendingSend?: PendingSendEnvelope;
   recoveryRequired?: NativeSessionError;
+  recoveredSubmissionIds?: string[];
 }
 
 interface SocketLifecycle {
@@ -176,6 +178,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
   const persisted = readPersistedDraft(storage, storageKey);
   let pendingSend = persisted.pendingSend ?? null;
   let recoveryRequired = persisted.recoveryRequired ?? null;
+  const recoveredSubmissionIds = new Set(persisted.recoveredSubmissionIds ?? []);
   const initialOptimisticItems = (options.initialOptimisticState?.itemOrder ?? [])
     .map((key) => options.initialOptimisticState?.items[key])
     .filter((item): item is NonNullable<typeof item> => Boolean(item?.optimistic && item.conversationId === options.conversationId));
@@ -231,7 +234,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
     const draft = state.draft;
     const attachments = state.attachments;
     const browserSubmission = state.browserSubmission;
-    if (!draft && attachments.length === 0 && !browserSubmission && !pendingSend && !recoveryRequired) {
+    if (!draft && attachments.length === 0 && !browserSubmission && !pendingSend && !recoveryRequired && recoveredSubmissionIds.size === 0) {
       storage.removeItem(storageKey);
       return;
     }
@@ -243,6 +246,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
         ...(browserSubmission ? { browserSubmission } : {}),
         ...(pendingSend ? { pendingSend } : {}),
         ...(recoveryRequired ? { recoveryRequired } : {}),
+        ...(recoveredSubmissionIds.size > 0 ? { recoveredSubmissionIds: [...recoveredSubmissionIds] } : {}),
       } satisfies PersistedDraft),
     );
   }
@@ -254,6 +258,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
     dispatch({ type: 'draft_changed', draft: '' });
     dispatch({ type: 'attachments_changed', attachments: [] });
     dispatch({ type: 'browser_submission_changed', browserSubmission: null });
+    recoveredSubmissionIds.clear();
   }
 
   function rememberRecoveryRequired(error: NativeSessionError): void {
@@ -275,8 +280,54 @@ export function createSessionController(options: CreateSessionControllerOptions)
       persistDraft();
       return;
     }
-    dispatch({ type: 'send_reconciliation_failed', error: recoveryRequired });
+    // 权威快照已经证明原会话可继续时，只清理旧写入门禁；任何未发送内容仍需回到草稿并由用户确认。
+    pendingSend = null;
+    recoveryRequired = null;
+    dispatch({ type: 'send_succeeded' });
     persistDraft();
+  }
+
+  async function recoverManualConfirmationDraft(snapshot: NativeConversationSnapshot): Promise<void> {
+    const recoverable = snapshot.queue.submissions
+      .filter(isManualConfirmationSubmission)
+      .sort((left, right) => left.position - right.position || (left.createdAt ?? '').localeCompare(right.createdAt ?? '') || left.id.localeCompare(right.id));
+    if (recoverable.length === 0) return;
+
+    const unseen = recoverable.filter((submission) => !recoveredSubmissionIds.has(submission.id));
+    if (unseen.length > 0) {
+      const recoveredText = unseen
+        .map((submission) => submission.content.trim())
+        .filter(Boolean)
+        .join('\n\n');
+      const currentDraft = state.draft.trim();
+      const nextDraft = !recoveredText || currentDraft === recoveredText ? state.draft : [recoveredText, state.draft].filter((part) => part.trim()).join('\n\n');
+      const nextAttachments = mergeAttachments(
+        state.attachments,
+        unseen.flatMap((submission) => submission.attachments ?? []),
+      );
+      dispatch({ type: 'draft_changed', draft: nextDraft });
+      dispatch({ type: 'attachments_changed', attachments: nextAttachments });
+      unseen.forEach((submission) => recoveredSubmissionIds.add(submission.id));
+      if (!storage) return;
+      try {
+        persistDraft();
+      } catch {
+        // 草稿没有先持久化成功时保留服务端提交，避免恢复确认过程中丢失用户输入。
+        unseen.forEach((submission) => recoveredSubmissionIds.delete(submission.id));
+        return;
+      }
+    }
+
+    if (!storage) return;
+    for (const submission of recoverable) {
+      try {
+        const queue = await options.client.deleteNativeQueuedSubmission(options.projectId, options.conversationId, submission.id);
+        if (disposed) return;
+        dispatch({ type: 'queue_hydrated', queue });
+      } catch {
+        // 删除确认失败时保留服务端记录；下次权威快照会按 submission id 去重并重试。
+      }
+    }
   }
 
   function applyEvent(event: NativeConversationEvent): void {
@@ -607,6 +658,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
       if (lifecycle.isDisconnected()) throw new SocketDisconnectedDuringHydrationError();
       dispatch({ type: 'snapshot_hydrated', snapshot: withoutResolvedRequests(snapshot) });
       reconcilePersistedRecovery(snapshot);
+      await recoverManualConfirmationDraft(snapshot);
       reconcilePersistedAcceptance(snapshot);
       for (const event of buffered) applyEvent(event);
       hydrating = false;
@@ -995,6 +1047,7 @@ function readPersistedDraft(storage: SessionDraftStorage | undefined, key: strin
     const pendingCandidate = isPendingSendEnvelope(parsed.pendingSend) ? parsed.pendingSend : undefined;
     const pending = pendingCandidate ? { ...pendingCandidate, collaborationMode: pendingCandidate.collaborationMode ?? 'default' } : undefined;
     const recoveryRequired = isPersistedRecoveryRequired(parsed.recoveryRequired) ? parsed.recoveryRequired : undefined;
+    const recoveredSubmissionIds = Array.isArray(parsed.recoveredSubmissionIds) ? parsed.recoveredSubmissionIds.filter((id): id is string => typeof id === 'string' && Boolean(id)) : [];
     const persistedDraft = typeof parsed.draft === 'string' ? parsed.draft : '';
     const restorePendingInput = pending && pending.deliveryState !== 'accepted' && !persistedDraft && attachments.length === 0 && !browserSubmission;
     return {
@@ -1003,6 +1056,7 @@ function readPersistedDraft(storage: SessionDraftStorage | undefined, key: strin
       browserSubmission: restorePendingInput ? pending.browserSubmission : browserSubmission,
       ...(pending ? { pendingSend: pending } : {}),
       ...(recoveryRequired ? { recoveryRequired } : {}),
+      ...(recoveredSubmissionIds.length > 0 ? { recoveredSubmissionIds } : {}),
     };
   } catch {
     return empty;
@@ -1114,6 +1168,10 @@ function snapshotRequiresRecovery(snapshot: NativeConversationSnapshot): boolean
   return (
     (snapshot.queue.state.type === 'paused' && snapshot.queue.state.reason === 'recovery_required') || snapshot.submissions.some((submission) => submission.status === 'recovery_required' || submission.pausedReason === 'recovery_required')
   );
+}
+
+function isManualConfirmationSubmission(submission: NativeQueuedSubmission): boolean {
+  return (submission.status === 'queued' || submission.status === 'paused') && submission.pausedReason === 'user_confirmation' && !submission.providerTurnId;
 }
 
 function sessionWriteBlockedError(error: NativeSessionError): Error & {

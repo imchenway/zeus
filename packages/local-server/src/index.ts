@@ -11054,10 +11054,12 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       }
       return { type: 'active' as const, turnId: active.providerTurnId, phase: 'prework' as const };
     }
-    const paused = conversationSubmissions.listByConversation(conversation.id).find((submission) => submission.status === 'paused');
-    if (paused?.pausedReason === 'interrupted') return { type: 'paused' as const, reason: 'interrupted' as const };
-    if (paused?.pausedReason === 'transport_unavailable') return { type: 'paused' as const, reason: 'transport_unavailable' as const };
-    if (paused) return { type: 'paused' as const, reason: 'recovery_required' as const };
+    const paused = conversationSubmissions.listByConversation(conversation.id).filter((submission) => submission.status === 'paused');
+    if (paused.some((submission) => submission.pausedReason === 'recovery_required')) return { type: 'paused' as const, reason: 'recovery_required' as const };
+    if (paused.some((submission) => submission.pausedReason === 'interrupted')) return { type: 'paused' as const, reason: 'interrupted' as const };
+    if (paused.some((submission) => submission.pausedReason === 'transport_unavailable')) return { type: 'paused' as const, reason: 'transport_unavailable' as const };
+    if (paused.length > 0 && paused.every((submission) => submission.pausedReason === 'user_confirmation')) return { type: 'idle' as const };
+    if (paused.length > 0) return { type: 'paused' as const, reason: 'recovery_required' as const };
     return { type: 'idle' as const };
   }
 
