@@ -10303,9 +10303,11 @@ export function App(props: {
                                       <input
                                         type="checkbox"
                                         checked={selectedProjectRepositoryPaths.includes(candidate.localPath)}
-                                        onChange={(event) =>
-                                          setSelectedProjectRepositoryPaths((current) => (event.currentTarget.checked ? Array.from(new Set([...current, candidate.localPath])) : current.filter((path) => path !== candidate.localPath)))
-                                        }
+                                        onChange={(event) => {
+                                          // React 完成事件分发后会清空 currentTarget；先读取勾选值，避免延迟状态计算访问失效事件并触发界面崩溃。
+                                          const checked = event.currentTarget.checked;
+                                          setSelectedProjectRepositoryPaths((current) => (checked ? Array.from(new Set([...current, candidate.localPath])) : current.filter((path) => path !== candidate.localPath)));
+                                        }}
                                         disabled={projectWorkspaceConfigStatus === 'saving'}
                                       />
                                       <span>

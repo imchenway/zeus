@@ -527,7 +527,8 @@ function setupIpc(): void {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
     if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow) || !rendererBootstrapMonitor.isReady(requestingWindow)) return;
     const detail = typeof message === 'string' && message.trim() ? message.trim().slice(0, 500) : 'Renderer runtime failed without detail';
-    void startupCoordinator.fail(new Error(`Renderer runtime failed: ${detail}`));
+    // 界面已完成启动后，运行期错误交给 Renderer 的可恢复页处理；主进程不得把它误判为启动失败并退出整个应用。
+    console.error(`Renderer runtime failed: ${detail}`);
   });
   ipcMain.on('zeus:task-table-layout-dirty-changed', (event, dirty: unknown) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);

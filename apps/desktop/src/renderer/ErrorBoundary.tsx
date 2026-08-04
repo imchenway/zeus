@@ -65,7 +65,6 @@ export class RendererErrorBoundary extends Component<RendererErrorBoundaryProps,
   }
 
   render(): ReactNode {
-    if (this.state.hasError && this.props.onFatalError) return null;
     if (this.state.hasError) {
       const copy = getRendererCrashCopy(this.props.appLanguage);
       return (
