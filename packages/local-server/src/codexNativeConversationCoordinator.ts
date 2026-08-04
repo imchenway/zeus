@@ -2900,7 +2900,7 @@ function itemTypeFromMethod(method: string): ConversationItemType {
 
 function itemTypeFromValue(value: unknown): ConversationItemType {
   const normalized = typeof value === 'string' ? value : 'error';
-  const allowed: ConversationItemType[] = ['userMessage', 'agentMessage', 'reasoning', 'commandExecution', 'fileChange', 'mcpToolCall', 'dynamicToolCall', 'plan', 'imageView', 'webSearch', 'error'];
+  const allowed: ConversationItemType[] = ['userMessage', 'agentMessage', 'reasoning', 'commandExecution', 'fileChange', 'mcpToolCall', 'dynamicToolCall', 'plan', 'imageView', 'webSearch', 'contextCompaction', 'error'];
   return allowed.includes(normalized as ConversationItemType) ? (normalized as ConversationItemType) : 'error';
 }
 

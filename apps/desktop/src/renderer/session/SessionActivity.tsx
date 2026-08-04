@@ -14,10 +14,12 @@ import { WrenchIcon as Wrench } from '@phosphor-icons/react/dist/csr/Wrench';
 import type { NativeSessionItemBuffer, NativeTurnPlanSnapshot, NativeTurnSnapshot } from './sessionTypes.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
 
-const operationalTypes = new Set(['commandexecution', 'command', 'mcptoolcall', 'dynamictoolcall', 'websearch', 'imageview', 'toolcall', 'tool', 'filechange', 'file']);
+const operationalTypes = new Set(['commandexecution', 'command', 'mcptoolcall', 'dynamictoolcall', 'websearch', 'imageview', 'toolcall', 'tool', 'filechange', 'file', 'contextcompaction']);
 
 export function isOperationalActivityItem(item: NativeSessionItemBuffer): boolean {
-  return operationalTypes.has(normalizeType(item.type));
+  const type = normalizeType(item.type);
+  if (type === 'contextcompaction' && item.status === 'failed') return false;
+  return operationalTypes.has(type);
 }
 
 export function SessionActivityGroup(props: { items: NativeSessionItemBuffer[]; language: SessionUiLanguage }) {
@@ -211,6 +213,10 @@ export function SessionTurnDuration(props: { turn: NativeTurnSnapshot; language:
 }
 
 function activitySummary(items: NativeSessionItemBuffer[], language: SessionUiLanguage, active = false): string {
+  const compactions = items.filter((item) => normalizeType(item.type) === 'contextcompaction');
+  if (compactions.length === items.length) {
+    return language === 'zh-CN' ? (active ? '正在整理较早对话以继续工作' : '已整理较早对话') : active ? 'Organizing earlier conversation to continue' : 'Organized earlier conversation';
+  }
   const skills = activitySkillNames(items);
   if (skills.length > 0) {
     if (language === 'zh-CN') return `${active ? '正在加载' : '已加载'} ${skills.length} 个技能`;
@@ -253,6 +259,10 @@ function activityItemTitle(item: NativeSessionItemBuffer, language: SessionUiLan
   }
   const payload = item.payload;
   const type = normalizeType(item.type);
+  if (type === 'contextcompaction') {
+    const active = item.status !== 'completed' && item.status !== 'failed';
+    return language === 'zh-CN' ? (active ? '正在整理较早对话以继续工作' : '已整理较早对话') : active ? 'Organizing earlier conversation to continue' : 'Organized earlier conversation';
+  }
   if (type === 'commandexecution' || type === 'command') {
     const actionTitle = commandActionTitle(item, language);
     if (actionTitle) return actionTitle;
@@ -297,6 +307,7 @@ function activityItemIcon(item: NativeSessionItemBuffer) {
   }
   if (type === 'websearch') return MagnifyingGlass;
   if (type === 'imageview') return Image;
+  if (type === 'contextcompaction') return BookOpen;
   if (type === 'filechange' || type === 'file') return PencilSimple;
   if (type === 'mcptoolcall') return Plugs;
   if (type === 'dynamictoolcall' || type === 'toolcall' || type === 'tool') return Wrench;

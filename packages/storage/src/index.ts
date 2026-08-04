@@ -684,7 +684,7 @@ export interface ZeusConversationTurnRecord {
   nativeRunId: string | null;
 }
 
-export type ConversationItemType = 'userMessage' | 'agentMessage' | 'reasoning' | 'commandExecution' | 'fileChange' | 'mcpToolCall' | 'dynamicToolCall' | 'plan' | 'imageView' | 'webSearch' | 'error';
+export type ConversationItemType = 'userMessage' | 'agentMessage' | 'reasoning' | 'commandExecution' | 'fileChange' | 'mcpToolCall' | 'dynamicToolCall' | 'plan' | 'imageView' | 'webSearch' | 'contextCompaction' | 'error';
 export type ConversationItemStatus = 'in_progress' | 'completed' | 'failed';
 export type ConversationItemPhase = 'prework' | 'final_answer';
 export interface ZeusConversationItemRecord {
@@ -1165,6 +1165,7 @@ export async function createZeusDatabase(filePath: string): Promise<ZeusDatabase
   migrateMultiRepositoryTaskSchema(zeusDb);
   migrateCodexLegacyImportSchema(zeusDb);
   migrateMcpServerIdentifierFalsePositiveCleanup(zeusDb);
+  migrateContextCompactionItemClassification(zeusDb);
   migrateCommandCenterSchema(zeusDb);
   return zeusDb;
 }
@@ -2071,6 +2072,36 @@ function migrateMcpServerIdentifierFalsePositiveCleanup(db: ZeusDatabase): void 
       migrationId,
       description: '清理 MCP 服务标识被误判为密钥字段所产生的历史错误项',
       checksumSource: 'mcp_server_identifier:false_positive:conversation_items,provider_event_errors:v1',
+    });
+  });
+}
+
+function migrateContextCompactionItemClassification(db: ZeusDatabase): void {
+  const migrationId = '20260804_0001_context_compaction_item_classification';
+  if (
+    db.get<{
+      migration_id: string;
+    }>(`SELECT migration_id FROM schema_migrations WHERE migration_id = ?`, [migrationId])
+  )
+    return;
+
+  db.transaction(() => {
+    const candidates = db.select<{ id: string; payload_json: string }>(`SELECT id, payload_json FROM conversation_items WHERE item_type = 'error'`);
+    for (const candidate of candidates) {
+      try {
+        const payload = JSON.parse(candidate.payload_json) as unknown;
+        if (isPlainRecord(payload) && payload.type === 'contextCompaction') {
+          db.execute(`UPDATE conversation_items SET item_type = 'contextCompaction' WHERE id = ? AND item_type = 'error'`, [candidate.id]);
+        }
+      } catch {
+        // 非法历史负载保持原样；本迁移只修正能够精确识别的上下文整理条目。
+      }
+    }
+
+    recordSchemaMigration(db, {
+      migrationId,
+      description: '修正上下文整理条目被误分类为执行错误的历史记录',
+      checksumSource: 'context_compaction:item_type:error_to_contextCompaction:20260804',
     });
   });
 }
@@ -4085,7 +4116,11 @@ export class ConversationItemRepository {
   constructor(private readonly db: ZeusDatabase) {}
 
   appendDelta(input: ConversationItemBaseInput & { delta: string; status?: ConversationItemStatus }): ZeusConversationItemRecord {
-    const itemType = assertEnum(input.itemType, ['userMessage', 'agentMessage', 'reasoning', 'commandExecution', 'fileChange', 'mcpToolCall', 'dynamicToolCall', 'plan', 'imageView', 'webSearch', 'error'] as const, 'conversation item type');
+    const itemType = assertEnum(
+      input.itemType,
+      ['userMessage', 'agentMessage', 'reasoning', 'commandExecution', 'fileChange', 'mcpToolCall', 'dynamicToolCall', 'plan', 'imageView', 'webSearch', 'contextCompaction', 'error'] as const,
+      'conversation item type',
+    );
     const status = assertEnum(input.status ?? 'in_progress', ['in_progress', 'completed', 'failed'] as const, 'conversation item status');
     const phase = assertEnum(input.phase, ['prework', 'final_answer'] as const, 'conversation item phase');
     const existing = this.getByProvider(input.providerThreadId, input.providerItemId);
@@ -4120,7 +4155,11 @@ export class ConversationItemRepository {
   }
 
   upsertProgress(input: ConversationItemBaseInput & { textContent: string; status?: ConversationItemStatus }): ZeusConversationItemRecord {
-    const itemType = assertEnum(input.itemType, ['userMessage', 'agentMessage', 'reasoning', 'commandExecution', 'fileChange', 'mcpToolCall', 'dynamicToolCall', 'plan', 'imageView', 'webSearch', 'error'] as const, 'conversation item type');
+    const itemType = assertEnum(
+      input.itemType,
+      ['userMessage', 'agentMessage', 'reasoning', 'commandExecution', 'fileChange', 'mcpToolCall', 'dynamicToolCall', 'plan', 'imageView', 'webSearch', 'contextCompaction', 'error'] as const,
+      'conversation item type',
+    );
     const status = assertEnum(input.status ?? 'in_progress', ['in_progress', 'completed', 'failed'] as const, 'conversation item status');
     const phase = assertEnum(input.phase, ['prework', 'final_answer'] as const, 'conversation item phase');
     const existing = this.getByProvider(input.providerThreadId, input.providerItemId);
@@ -4155,7 +4194,11 @@ export class ConversationItemRepository {
   }
 
   upsertCompleted(input: ConversationItemBaseInput & { textContent: string; completedAt: string | null; status?: ConversationItemStatus }): ZeusConversationItemRecord {
-    const itemType = assertEnum(input.itemType, ['userMessage', 'agentMessage', 'reasoning', 'commandExecution', 'fileChange', 'mcpToolCall', 'dynamicToolCall', 'plan', 'imageView', 'webSearch', 'error'] as const, 'conversation item type');
+    const itemType = assertEnum(
+      input.itemType,
+      ['userMessage', 'agentMessage', 'reasoning', 'commandExecution', 'fileChange', 'mcpToolCall', 'dynamicToolCall', 'plan', 'imageView', 'webSearch', 'contextCompaction', 'error'] as const,
+      'conversation item type',
+    );
     const status = assertEnum(input.status ?? 'completed', ['in_progress', 'completed', 'failed'] as const, 'conversation item status');
     const phase = assertEnum(input.phase, ['prework', 'final_answer'] as const, 'conversation item phase');
     const existing = this.getByProvider(input.providerThreadId, input.providerItemId);
