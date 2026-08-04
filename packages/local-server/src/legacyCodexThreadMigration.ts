@@ -387,7 +387,7 @@ function submissionStatus(turn: Record<string, unknown>): 'completed' | 'failed'
 }
 
 function itemType(value: unknown): ConversationItemType {
-  const allowed: ConversationItemType[] = ['userMessage', 'agentMessage', 'reasoning', 'commandExecution', 'fileChange', 'mcpToolCall', 'dynamicToolCall', 'plan', 'imageView', 'webSearch', 'error'];
+  const allowed: ConversationItemType[] = ['userMessage', 'agentMessage', 'reasoning', 'commandExecution', 'fileChange', 'mcpToolCall', 'dynamicToolCall', 'plan', 'imageView', 'webSearch', 'contextCompaction', 'error'];
   return typeof value === 'string' && allowed.includes(value as ConversationItemType) ? (value as ConversationItemType) : 'error';
 }
 
