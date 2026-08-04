@@ -101,10 +101,6 @@ export function ConversationComposer(props: ConversationComposerProps) {
     props.state.conversationState !== 'waiting_approval' &&
     props.state.conversationState !== 'waiting_user_input';
   const hasDraft = props.state.draft.trim().length > 0 || props.state.attachments.length > 0 || Boolean(props.state.browserSubmission);
-<<<<<<< HEAD
-  const queue = (props.state.queue?.submissions ?? []).filter((submission) => submission.pausedReason !== 'user_confirmation');
-=======
->>>>>>> zeus/ZEUS-000041-task-01
   const steerAllowed = canSteerActiveTurn(props.state) && props.readOnly !== true;
   const selectedCapability = props.capabilities?.models.find((candidate) => candidate.model === selectedModel || candidate.id === selectedModel) ?? null;
   const settingsWritable = writable && props.state.conversationState === 'native_idle' && !busy && Boolean(selectedCapability);

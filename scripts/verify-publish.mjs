@@ -1,12 +1,14 @@
 #!/usr/bin/env node
 /* global process, console */
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, extname, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const formatExtensions = new Set(['.ts', '.tsx', '.cts', '.cjs', '.mjs', '.js', '.json', '.yml', '.yaml']);
+const conflictMarkerPattern = /^(?:<<<<<<<(?: |$)|=======$|>>>>>>>(?: |$))/u;
+const conflictMarkerGitPattern = '^(<<<<<<<( |$)|=======$|>>>>>>>( |$))';
 
 process.chdir(repositoryRoot);
 
@@ -114,8 +116,55 @@ function runStep(label, command, args) {
   execute(command, args);
 }
 
+function conflictMarkerLines(path) {
+  try {
+    return readFileSync(resolve(repositoryRoot, path), 'utf8')
+      .split(/\r?\n/u)
+      .flatMap((line, index) => (conflictMarkerPattern.test(line) ? [`${path}:${index + 1}:${line}`] : []));
+  } catch {
+    return [];
+  }
+}
+
+function verifyNoConflictMarkers(paths) {
+  console.log('\n==> Git 冲突残留检查');
+  const findings = new Set();
+  const unstagedPaths = new Set(changedPaths(['diff']));
+  const trackedScans = [
+    { args: ['grep', '-n', '-I', '-E', conflictMarkerGitPattern, '--', '.'], source: 'worktree' },
+    { args: ['grep', '--cached', '-n', '-I', '-E', conflictMarkerGitPattern, '--', '.'], source: 'index' },
+  ];
+
+  for (const { args, source } of trackedScans) {
+    const result = captureGit(args, { allowFailure: true });
+    if (result.status !== 0 && result.status !== 1) {
+      process.stderr.write(result.stderr);
+      process.exit(result.status ?? 1);
+    }
+    for (const line of result.stdout.split(/\r?\n/u).filter(Boolean)) {
+      const path = line.slice(0, line.indexOf(':'));
+      if (source === 'index' && unstagedPaths.has(path)) continue;
+      findings.add(line);
+    }
+  }
+
+  for (const path of paths) {
+    for (const line of conflictMarkerLines(path)) findings.add(line);
+  }
+
+  if (findings.size > 0) {
+    console.error('Zeus 发布前门禁：发现尚未清理的 Git 冲突标记：');
+    for (const finding of [...findings].sort()) console.error(`  ${finding}`);
+    process.exit(1);
+  }
+
+  console.log('未发现 Git 冲突残留。');
+}
+
 const { paths, diffChecks } = collectChangeContext();
 const formattedPaths = [...paths].filter((path) => formatExtensions.has(extname(path))).sort();
+
+verifyNoConflictMarkers(paths);
 
 for (const args of diffChecks) {
   runStep(`Git 空白错误检查：git ${args.join(' ')}`, 'git', args);
