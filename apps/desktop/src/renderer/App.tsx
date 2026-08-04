@@ -10780,75 +10780,6 @@ export function App(props: {
                     ]}
                     onCancel={cancelTaskTableLayoutScopeDialog}
                   />
-                  <TaskModelPushModal
-                    open={Boolean(taskModelPushTaskId)}
-                    language={appShellSettings.appLanguage}
-                    task={snapshot.tasks.find((task) => task.id === taskModelPushTaskId) ?? null}
-                    projectName={snapshot.projects.find((project) => project.id === snapshot.tasks.find((task) => task.id === taskModelPushTaskId)?.projectId)?.name}
-                    capabilities={taskModelPushCapabilities}
-                    form={taskModelPushForm}
-                    status={taskModelPushStatus}
-                    error={taskModelPushError}
-                    onChange={setTaskModelPushForm}
-                    onClose={closeTaskModelPush}
-                    onSubmit={(event) => void submitTaskModelPush(event)}
-                    onLoadAttachmentPreview={props.onLoadTaskAttachmentPreview}
-                    onOpenAttachment={props.onOpenTaskAttachment}
-                  />
-                  <TaskGitMergeModal
-                    open={Boolean(taskGitMergeTaskId)}
-                    language={appShellSettings.appLanguage}
-                    task={snapshot.tasks.find((task) => task.id === taskGitMergeTaskId) ?? null}
-                    projectName={snapshot.projects.find((project) => project.id === snapshot.tasks.find((task) => task.id === taskGitMergeTaskId)?.projectId)?.name}
-                    client={props.nativeConversationClient ?? null}
-                    onChanged={() =>
-                      taskGitMergeTaskId
-                        ? Promise.all([
-                            refreshNativeConversationChoices(taskGitMergeTaskId),
-                            props.onLoadTaskEvents && taskDetailPaneTaskId === taskGitMergeTaskId ? props.onLoadTaskEvents(taskGitMergeTaskId).then(setTaskEvents) : Promise.resolve(),
-                          ]).then(() => undefined)
-                        : Promise.resolve()
-                    }
-                    onClose={() => setTaskGitMergeTaskId(null)}
-                  />
-                  {taskDetailPaneTask ? (
-                    <WorkspaceDrawer
-                      presentation="floating"
-                      backdrop="dimmed"
-                      size="standard"
-                      label={taskWorkspaceCopy.detailPaneLabel}
-                      backdropLabel={taskWorkspaceCopy.detailPaneBackdrop}
-                      closeLabel={taskWorkspaceCopy.detailPaneClose}
-                      className="task-detail-floating-drawer"
-                      portalStyle={workspaceDrawerPortalStyle}
-                      onClose={() => setTaskDetailPaneTaskId(undefined)}
-                    >
-                      <TaskDetailPaneContent
-                        language={appShellSettings.appLanguage}
-                        task={taskDetailPaneTask}
-                        events={taskEvents.filter((event) => event.taskId === taskDetailPaneTask.id)}
-                        copy={taskWorkspaceCopy}
-                        statusLabels={taskManagementStatusLabels[appShellSettings.appLanguage]}
-                        eventTypeLabels={uiCopy.taskEventTypeLabels}
-                        priorityOptions={taskWorkspaceCopy.taskCreatePriorityOptions}
-                        busy={updatingTaskBusy}
-                        conversations={taskDetailPaneConversations}
-                        conversationsLoading={taskDetailPaneConversationState?.status === 'loading' && !taskDetailPaneConversationState.choicesKnown}
-                        conversationsError={taskDetailPaneConversationState?.status === 'error' ? taskDetailPaneConversationState.error : null}
-                        onOpenConversation={(taskId, conversationId) => void openTaskConversation(taskId, conversationId)}
-                        onPushNewConversation={(taskId) => void openTaskModelPush(taskId)}
-                        onOpenCodeDelivery={(taskId) => setTaskGitMergeTaskId(taskId)}
-                        onCommitCode={(taskId) => setTaskGitReviewState({ taskId, mode: 'commit-only' })}
-                        onPushCode={(taskId) => setTaskGitReviewState({ taskId, mode: 'push-only' })}
-                        onUpdateTaskContent={updateTaskContent}
-                        onManagementStatusChange={(taskId, status, expectedUpdatedAt) => updateTaskManagementStatus(taskId, status, { expectedUpdatedAt })}
-                        onChooseAttachments={props.onChooseTaskAttachments}
-                        onReloadConversations={(taskId) => void refreshNativeConversationChoices(taskId)}
-                        onLoadAttachmentPreview={props.onLoadTaskAttachmentPreview}
-                        onOpenAttachment={props.onOpenTaskAttachment}
-                      />
-                    </WorkspaceDrawer>
-                  ) : null}
                 </>
               ) : taskModelPushPending && taskModelPushPending.status !== 'accepted' && selectedNativeConversation?.id === taskModelPushPending.choice.id ? (
                 <TaskModelPushPendingWorkspace language={appShellSettings.appLanguage} pending={taskModelPushPending} onRetry={retryTaskModelPush} />
@@ -10878,6 +10809,7 @@ export function App(props: {
                   }}
                   onStartConversation={startNativeConversation}
                   onStartProjectConversation={startProjectConversation}
+                  onOpenTaskDetail={(taskId) => void openTaskDetailPane(taskId)}
                 />
               ) : (
                 <SessionWorkspace
@@ -10911,6 +10843,7 @@ export function App(props: {
                   actions={{
                     onStartConversation: startNativeConversation,
                     onStartProjectConversation: startProjectConversation,
+                    onOpenTaskDetail: (taskId) => void openTaskDetailPane(taskId),
                     onLoadCapabilities: props.nativeConversationClient?.loadCodexConversationCapabilities,
                     onChooseStartAttachments: props.onChooseConversationResources ? chooseNativeConversationAttachments : undefined,
                     onOpenImportSettings: () => {
@@ -10924,6 +10857,76 @@ export function App(props: {
                   }}
                 />
               )}
+
+              <TaskModelPushModal
+                open={Boolean(taskModelPushTaskId)}
+                language={appShellSettings.appLanguage}
+                task={snapshot.tasks.find((task) => task.id === taskModelPushTaskId) ?? null}
+                projectName={snapshot.projects.find((project) => project.id === snapshot.tasks.find((task) => task.id === taskModelPushTaskId)?.projectId)?.name}
+                capabilities={taskModelPushCapabilities}
+                form={taskModelPushForm}
+                status={taskModelPushStatus}
+                error={taskModelPushError}
+                onChange={setTaskModelPushForm}
+                onClose={closeTaskModelPush}
+                onSubmit={(event) => void submitTaskModelPush(event)}
+                onLoadAttachmentPreview={props.onLoadTaskAttachmentPreview}
+                onOpenAttachment={props.onOpenTaskAttachment}
+              />
+              <TaskGitMergeModal
+                open={Boolean(taskGitMergeTaskId)}
+                language={appShellSettings.appLanguage}
+                task={snapshot.tasks.find((task) => task.id === taskGitMergeTaskId) ?? null}
+                projectName={snapshot.projects.find((project) => project.id === snapshot.tasks.find((task) => task.id === taskGitMergeTaskId)?.projectId)?.name}
+                client={props.nativeConversationClient ?? null}
+                onChanged={() =>
+                  taskGitMergeTaskId
+                    ? Promise.all([
+                        refreshNativeConversationChoices(taskGitMergeTaskId),
+                        props.onLoadTaskEvents && taskDetailPaneTaskId === taskGitMergeTaskId ? props.onLoadTaskEvents(taskGitMergeTaskId).then(setTaskEvents) : Promise.resolve(),
+                      ]).then(() => undefined)
+                    : Promise.resolve()
+                }
+                onClose={() => setTaskGitMergeTaskId(null)}
+              />
+              {taskDetailPaneTask ? (
+                <WorkspaceDrawer
+                  presentation="floating"
+                  backdrop="dimmed"
+                  size="standard"
+                  label={taskWorkspaceCopy.detailPaneLabel}
+                  backdropLabel={taskWorkspaceCopy.detailPaneBackdrop}
+                  closeLabel={taskWorkspaceCopy.detailPaneClose}
+                  className="task-detail-floating-drawer"
+                  portalStyle={workspaceDrawerPortalStyle}
+                  onClose={() => setTaskDetailPaneTaskId(undefined)}
+                >
+                  <TaskDetailPaneContent
+                    language={appShellSettings.appLanguage}
+                    task={taskDetailPaneTask}
+                    events={taskEvents.filter((event) => event.taskId === taskDetailPaneTask.id)}
+                    copy={taskWorkspaceCopy}
+                    statusLabels={taskManagementStatusLabels[appShellSettings.appLanguage]}
+                    eventTypeLabels={uiCopy.taskEventTypeLabels}
+                    priorityOptions={taskWorkspaceCopy.taskCreatePriorityOptions}
+                    busy={updatingTaskBusy}
+                    conversations={taskDetailPaneConversations}
+                    conversationsLoading={taskDetailPaneConversationState?.status === 'loading' && !taskDetailPaneConversationState.choicesKnown}
+                    conversationsError={taskDetailPaneConversationState?.status === 'error' ? taskDetailPaneConversationState.error : null}
+                    onOpenConversation={(taskId, conversationId) => void openTaskConversation(taskId, conversationId)}
+                    onPushNewConversation={(taskId) => void openTaskModelPush(taskId)}
+                    onOpenCodeDelivery={(taskId) => setTaskGitMergeTaskId(taskId)}
+                    onCommitCode={(taskId) => setTaskGitReviewState({ taskId, mode: 'commit-only' })}
+                    onPushCode={(taskId) => setTaskGitReviewState({ taskId, mode: 'push-only' })}
+                    onUpdateTaskContent={updateTaskContent}
+                    onManagementStatusChange={(taskId, status, expectedUpdatedAt) => updateTaskManagementStatus(taskId, status, { expectedUpdatedAt })}
+                    onChooseAttachments={props.onChooseTaskAttachments}
+                    onReloadConversations={(taskId) => void refreshNativeConversationChoices(taskId)}
+                    onLoadAttachmentPreview={props.onLoadTaskAttachmentPreview}
+                    onOpenAttachment={props.onOpenTaskAttachment}
+                  />
+                </WorkspaceDrawer>
+              ) : null}
 
               {conversationDrawer ? (
                 <WorkspaceDrawer

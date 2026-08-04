@@ -235,7 +235,7 @@
   min-inline-size: 0;
 }
 
-.session-codex-parity-v1 .session-thread-title-copy strong {
+.session-codex-parity-v1 .session-thread-title-copy :where(strong, .session-thread-task-title) {
   font-size: 15px;
   font-weight: 620;
   letter-spacing: -0.012em;
@@ -243,6 +243,34 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.session-codex-parity-v1 .session-thread-task-title {
+  app-region: no-drag;
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  color: inherit;
+  cursor: pointer;
+  font-family: inherit;
+  inline-size: fit-content;
+  max-inline-size: 100%;
+  padding: 0;
+  pointer-events: auto;
+  text-align: start;
+  -webkit-app-region: no-drag;
+}
+
+.session-codex-parity-v1 .session-thread-task-title:hover {
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, currentColor 48%, transparent);
+  text-underline-offset: 3px;
+}
+
+.session-codex-parity-v1 .session-thread-task-title:focus-visible {
+  box-shadow: 0 0 0 3px var(--session-focus);
+  outline: 1px solid var(--session-focus-outline);
+  outline-offset: 2px;
 }
 
 .session-codex-parity-v1 .session-thread-title-copy small {
