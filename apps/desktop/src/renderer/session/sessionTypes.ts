@@ -588,9 +588,7 @@ export interface StartTaskModelPushRequest {
   serviceTier?: string | null;
   workMode: 'default' | 'plan';
   permissionMode: NativePermissionMode;
-  workspace:
-    | { mode: 'create'; repositories: Array<{ repositoryId: string; sourceRef: string; branchName: string }> }
-    | { mode: 'existing'; environmentId: string };
+  workspace: { mode: 'create'; repositories: Array<{ repositoryId: string; sourceRef: string; branchName: string }> } | { mode: 'existing'; environmentId: string };
   supplementalInfo?: string;
   idempotencyKey: string;
   clientUserMessageId: string;

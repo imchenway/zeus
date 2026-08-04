@@ -2780,9 +2780,7 @@ export class ProjectRepositoryRegistrationRepository {
   constructor(private readonly db: ZeusDatabase) {}
 
   listByProject(projectId: string): ZeusProjectRepositoryRecord[] {
-    return this.db
-      .select<DbProjectRepositoryRow>(`SELECT ${selectProjectRepositoryFields} FROM project_repositories WHERE project_id = ? ORDER BY relative_path, id`, [projectId])
-      .map(mapProjectRepositoryRow);
+    return this.db.select<DbProjectRepositoryRow>(`SELECT ${selectProjectRepositoryFields} FROM project_repositories WHERE project_id = ? ORDER BY relative_path, id`, [projectId]).map(mapProjectRepositoryRow);
   }
 
   getById(repositoryId: string): ZeusProjectRepositoryRecord | undefined {
@@ -2797,10 +2795,15 @@ export class ProjectRepositoryRegistrationRepository {
       const timestamp = nowIso();
       for (const input of inputs) {
         const prior = existing.get(input.localPath);
-        this.db.execute(
-          `INSERT INTO project_repositories (id, project_id, name, relative_path, local_path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-          [input.id ?? prior?.id ?? `project_repository_${nanoid(12)}`, projectId, input.name, input.relativePath, input.localPath, prior?.createdAt ?? timestamp, timestamp],
-        );
+        this.db.execute(`INSERT INTO project_repositories (id, project_id, name, relative_path, local_path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`, [
+          input.id ?? prior?.id ?? `project_repository_${nanoid(12)}`,
+          projectId,
+          input.name,
+          input.relativePath,
+          input.localPath,
+          prior?.createdAt ?? timestamp,
+          timestamp,
+        ]);
       }
       return this.listByProject(projectId);
     });
@@ -2814,9 +2817,7 @@ export class ProjectSharedPathRepository {
   constructor(private readonly db: ZeusDatabase) {}
 
   listByProject(projectId: string): ZeusProjectSharedPathRecord[] {
-    return this.db
-      .select<DbProjectSharedPathRow>(`SELECT ${selectProjectSharedPathFields} FROM project_shared_paths WHERE project_id = ? ORDER BY relative_path, id`, [projectId])
-      .map(mapProjectSharedPathRow);
+    return this.db.select<DbProjectSharedPathRow>(`SELECT ${selectProjectSharedPathFields} FROM project_shared_paths WHERE project_id = ? ORDER BY relative_path, id`, [projectId]).map(mapProjectSharedPathRow);
   }
 
   replaceForProject(projectId: string, inputs: CreateProjectSharedPathInput[]): ZeusProjectSharedPathRecord[] {
@@ -2826,10 +2827,14 @@ export class ProjectSharedPathRepository {
       const timestamp = nowIso();
       for (const input of inputs) {
         const prior = existing.get(input.localPath);
-        this.db.execute(
-          `INSERT INTO project_shared_paths (id, project_id, relative_path, local_path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`,
-          [input.id ?? prior?.id ?? `project_shared_path_${nanoid(12)}`, projectId, input.relativePath, input.localPath, prior?.createdAt ?? timestamp, timestamp],
-        );
+        this.db.execute(`INSERT INTO project_shared_paths (id, project_id, relative_path, local_path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`, [
+          input.id ?? prior?.id ?? `project_shared_path_${nanoid(12)}`,
+          projectId,
+          input.relativePath,
+          input.localPath,
+          prior?.createdAt ?? timestamp,
+          timestamp,
+        ]);
       }
       return this.listByProject(projectId);
     });
@@ -2854,10 +2859,15 @@ export class TaskEnvironmentRepository {
       createdAt: timestamp,
       updatedAt: timestamp,
     };
-    this.db.execute(
-      `INSERT INTO task_environments (id, project_id, task_id, root_path, state, last_error, created_at, updated_at) VALUES (?, ?, ?, ?, ?, NULL, ?, ?)`,
-      [record.id, record.projectId, record.taskId, record.rootPath, record.state, record.createdAt, record.updatedAt],
-    );
+    this.db.execute(`INSERT INTO task_environments (id, project_id, task_id, root_path, state, last_error, created_at, updated_at) VALUES (?, ?, ?, ?, ?, NULL, ?, ?)`, [
+      record.id,
+      record.projectId,
+      record.taskId,
+      record.rootPath,
+      record.state,
+      record.createdAt,
+      record.updatedAt,
+    ]);
     return record;
   }
 
@@ -2867,9 +2877,7 @@ export class TaskEnvironmentRepository {
   }
 
   listByTask(taskId: string): ZeusTaskEnvironmentRecord[] {
-    return this.db
-      .select<DbTaskEnvironmentRow>(`SELECT ${selectTaskEnvironmentFields} FROM task_environments WHERE task_id = ? ORDER BY updated_at DESC, id`, [taskId])
-      .map(mapTaskEnvironmentRow);
+    return this.db.select<DbTaskEnvironmentRow>(`SELECT ${selectTaskEnvironmentFields} FROM task_environments WHERE task_id = ? ORDER BY updated_at DESC, id`, [taskId]).map(mapTaskEnvironmentRow);
   }
 
   update(environmentId: string, input: UpdateTaskEnvironmentInput): ZeusTaskEnvironmentRecord {
@@ -2969,9 +2977,7 @@ export class TaskWorkspaceRepository {
   }
 
   listByEnvironment(environmentId: string): ZeusTaskWorkspaceRecord[] {
-    return this.db
-      .select<DbTaskWorkspaceRow>(`SELECT ${selectTaskWorkspaceFields} FROM task_workspaces WHERE environment_id = ? ORDER BY repository_relative_path, id`, [environmentId])
-      .map(mapTaskWorkspaceRow);
+    return this.db.select<DbTaskWorkspaceRow>(`SELECT ${selectTaskWorkspaceFields} FROM task_workspaces WHERE environment_id = ? ORDER BY repository_relative_path, id`, [environmentId]).map(mapTaskWorkspaceRow);
   }
 
   listByTask(taskId: string): ZeusTaskWorkspaceRecord[] {
@@ -3056,10 +3062,10 @@ export class TaskIntegrationRepository {
   }
 
   findActive(workspaceId: string, targetBranch: string): ZeusTaskIntegrationRecord | undefined {
-    const row = this.db.get<DbTaskIntegrationRow>(`SELECT ${selectTaskIntegrationFields} FROM task_integrations WHERE workspace_id = ? AND target_branch = ? AND state IN ('preparing', 'conflicted', 'pending_local_sync') ORDER BY updated_at DESC LIMIT 1`, [
-      workspaceId,
-      targetBranch,
-    ]);
+    const row = this.db.get<DbTaskIntegrationRow>(
+      `SELECT ${selectTaskIntegrationFields} FROM task_integrations WHERE workspace_id = ? AND target_branch = ? AND state IN ('preparing', 'conflicted', 'pending_local_sync') ORDER BY updated_at DESC LIMIT 1`,
+      [workspaceId, targetBranch],
+    );
     return row ? mapTaskIntegrationRow(row) : undefined;
   }
 

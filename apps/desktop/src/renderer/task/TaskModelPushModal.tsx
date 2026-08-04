@@ -194,10 +194,12 @@ export function TaskModelPushModal(props: {
                                   label: `${source.label}${source.current ? (zh ? ' · 当前' : ' · current') : ''}`,
                                 })),
                               ]}
-                              onChange={(sourceRef) => props.onChange({
-                                ...props.form,
-                                repositorySelections: { ...props.form.repositorySelections, [repository.id]: { ...selection, sourceRef } },
-                              })}
+                              onChange={(sourceRef) =>
+                                props.onChange({
+                                  ...props.form,
+                                  repositorySelections: { ...props.form.repositorySelections, [repository.id]: { ...selection, sourceRef } },
+                                })
+                              }
                               disabled={!props.capabilities || busy}
                               searchPlaceholder={zh ? '搜索分支' : 'Search branches'}
                             />
@@ -206,10 +208,12 @@ export function TaskModelPushModal(props: {
                             <span>{zh ? '新分支' : 'New branch'}</span>
                             <input
                               value={selection.branchName}
-                              onChange={(event) => props.onChange({
-                                ...props.form,
-                                repositorySelections: { ...props.form.repositorySelections, [repository.id]: { ...selection, branchName: event.target.value } },
-                              })}
+                              onChange={(event) =>
+                                props.onChange({
+                                  ...props.form,
+                                  repositorySelections: { ...props.form.repositorySelections, [repository.id]: { ...selection, branchName: event.target.value } },
+                                })
+                              }
                               disabled={busy}
                               spellCheck={false}
                             />
@@ -239,9 +243,7 @@ export function TaskModelPushModal(props: {
               <span className="task-model-push-workspace-summary">
                 <strong>{zh ? '复用现有任务环境' : 'Reuse task environment'}</strong>
                 <small>
-                  {selectedEnvironment.workspaces.length > 0
-                    ? selectedEnvironment.workspaces.map((workspace) => `${workspace.repositoryRelativePath} · ${workspace.branchName}`).join('；')
-                    : (zh ? '无 Git 仓库' : 'No Git repositories')}
+                  {selectedEnvironment.workspaces.length > 0 ? selectedEnvironment.workspaces.map((workspace) => `${workspace.repositoryRelativePath} · ${workspace.branchName}`).join('；') : zh ? '无 Git 仓库' : 'No Git repositories'}
                 </small>
               </span>
             ) : null}

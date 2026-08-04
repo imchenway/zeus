@@ -74,11 +74,11 @@ export function TaskGitMergeModal(props: { open: boolean; language: 'zh-CN' | 'e
   const visibleFiles = diffScope === 'committed' ? committedFiles : workingFiles.map((file) => toWorkingDeliveryFile(file, zh));
   const activeConflict = integration?.state === 'conflicted' ? integration : null;
   const pendingLocalSync = integration?.state === 'pending_local_sync' ? integration : null;
-    const busy = busyAction !== null;
-    const workspaceClean = selectedWorkspace?.review?.clean ?? selectedWorkspace?.worktreePath === null;
-    const commitReady = Boolean(selectedWorkspace && workspaceClean && selectedWorkspace.activeConversationCount === 0 && selectedWorkspace.state !== 'discarded');
-    const pushReady = Boolean(selectedWorkspace?.worktreePath && selectedWorkspace.remoteName && commitReady);
-    const mergeReady = Boolean(selectedWorkspace?.branchComparison && commitReady && targetBranch && targetBranch !== selectedWorkspace.branchName && !pendingLocalSync);
+  const busy = busyAction !== null;
+  const workspaceClean = selectedWorkspace?.review?.clean ?? selectedWorkspace?.worktreePath === null;
+  const commitReady = Boolean(selectedWorkspace && workspaceClean && selectedWorkspace.activeConversationCount === 0 && selectedWorkspace.state !== 'discarded');
+  const pushReady = Boolean(selectedWorkspace?.worktreePath && selectedWorkspace.remoteName && commitReady);
+  const mergeReady = Boolean(selectedWorkspace?.branchComparison && commitReady && targetBranch && targetBranch !== selectedWorkspace.branchName && !pendingLocalSync);
   const targetOptions = useMemo(() => buildTargetOptions(workspaces, selectedWorkspace, zh), [workspaces, selectedWorkspace, zh]);
   const deliveredIntegration = integrations.find((candidate) => candidate.workspaceId === selectedWorkspace?.id && candidate.targetBranch === targetBranch && candidate.state === 'merged') ?? null;
   const alreadyDelivered = Boolean(deliveredIntegration || (selectedWorkspace?.state === 'merged' && targetBranch === selectedWorkspace.sourceBranch));
@@ -179,14 +179,14 @@ export function TaskGitMergeModal(props: { open: boolean; language: 'zh-CN' | 'e
     setWorkspaces(workspaceSnapshot);
     setIntegrations(integrationSnapshot.items);
     const recoverable = integrationSnapshot.items.find((candidate) => candidate.workspaceId === preferredWorkspaceId && (candidate.state === 'conflicted' || candidate.state === 'pending_local_sync'));
-        setIntegration(recoverable ?? null);
-        setSnapshotRevision((current) => current + 1);
-        const nextWorkspace = workspaceSnapshot.items.find((workspace) => workspace.id === preferredWorkspaceId) ?? workspaceSnapshot.items[0] ?? null;
-        if (nextWorkspace) {
-            setWorkspaceId(nextWorkspace.id);
-            setTargetBranch((current) => (workspaceSnapshot.localBranches.includes(current) && current !== nextWorkspace.branchName ? current : resolveInitialTargetBranch(workspaceSnapshot, nextWorkspace)));
-        }
+    setIntegration(recoverable ?? null);
+    setSnapshotRevision((current) => current + 1);
+    const nextWorkspace = workspaceSnapshot.items.find((workspace) => workspace.id === preferredWorkspaceId) ?? workspaceSnapshot.items[0] ?? null;
+    if (nextWorkspace) {
+      setWorkspaceId(nextWorkspace.id);
+      setTargetBranch((current) => (workspaceSnapshot.localBranches.includes(current) && current !== nextWorkspace.branchName ? current : resolveInitialTargetBranch(workspaceSnapshot, nextWorkspace)));
     }
+  }
 
   async function commit(): Promise<void> {
     if (!props.task || !props.client || !selectedWorkspace || selectedPaths.length === 0) return;
@@ -350,13 +350,7 @@ export function TaskGitMergeModal(props: { open: boolean; language: 'zh-CN' | 'e
       <section className={`task-git-merge-modal task-git-delivery-modal${activeConflict ? ' is-conflicted' : ''}`} role="dialog" aria-modal="true" aria-labelledby="task-git-merge-title">
         <header className="task-git-merge-header">
           <span>
-            <strong id="task-git-merge-title">
-              {activeConflict
-                ? (zh ? '解决合入冲突' : 'Resolve Merge Conflicts')
-                : pendingLocalSync
-                  ? (zh ? '同步本地目标分支' : 'Sync Local Target Branch')
-                  : zh ? '代码交付' : 'Code Delivery'}
-            </strong>
+            <strong id="task-git-merge-title">{activeConflict ? (zh ? '解决合入冲突' : 'Resolve Merge Conflicts') : pendingLocalSync ? (zh ? '同步本地目标分支' : 'Sync Local Target Branch') : zh ? '代码交付' : 'Code Delivery'}</strong>
             <small>
               {props.projectName ? `${props.projectName} · ` : ''}
               {props.task.taskCode ?? props.task.id} · {props.task.title}
@@ -391,7 +385,7 @@ export function TaskGitMergeModal(props: { open: boolean; language: 'zh-CN' | 'e
                 {workspaces?.items.map((workspace) => (
                   <button type="button" key={workspace.id} className={workspace.id === workspaceId ? 'is-active' : ''} onClick={() => selectWorkspace(workspace.id)} disabled={busy}>
                     <span>{workspace.repositoryName || workspace.repositoryRelativePath || workspace.branchName}</span>
-                                <small>{workspace.repositoryRelativePath ? `${workspace.repositoryRelativePath} · ${workspace.branchName}` : workspace.branchName}</small>
+                    <small>{workspace.repositoryRelativePath ? `${workspace.repositoryRelativePath} · ${workspace.branchName}` : workspace.branchName}</small>
                     <small>{workspaceStateLabel(workspace, zh)}</small>
                   </button>
                 ))}
@@ -501,19 +495,19 @@ export function TaskGitMergeModal(props: { open: boolean; language: 'zh-CN' | 'e
                   </Button>
                 </section>
 
-                        <section
-                            className={`task-git-delivery-action-step${selectedWorkspace?.remoteVerified ? ' is-complete' : ''}`}>
-                            <strong>{zh ? '③ 推送任务分支（可选）' : '③ Push task branch (optional)'}</strong>
-                            <small>
-                              {selectedWorkspace?.remoteName
-                                ? (zh ? '用于远端备份或协作，不影响能否合入。' : 'Useful for backup or collaboration; it does not gate merging.')
-                                : (zh ? '该仓库未配置远端，仍可提交并合入本地目标分支。' : 'No remote is configured; local commit and merge remain available.')}
-                            </small>
-                            <Button variant="secondary" size="compact" busy={busyAction === 'push'}
-                                    onClick={() => void push()} disabled={busy || !pushReady}>
-                                {!selectedWorkspace?.remoteName
-                                  ? (zh ? '未配置远端' : 'No remote configured')
-                                  : selectedWorkspace.remoteVerified ? (zh ? '重新推送' : 'Push again') : zh ? '推送任务分支' : 'Push task branch'}
+                <section className={`task-git-delivery-action-step${selectedWorkspace?.remoteVerified ? ' is-complete' : ''}`}>
+                  <strong>{zh ? '③ 推送任务分支（可选）' : '③ Push task branch (optional)'}</strong>
+                  <small>
+                    {selectedWorkspace?.remoteName
+                      ? zh
+                        ? '用于远端备份或协作，不影响能否合入。'
+                        : 'Useful for backup or collaboration; it does not gate merging.'
+                      : zh
+                        ? '该仓库未配置远端，仍可提交并合入本地目标分支。'
+                        : 'No remote is configured; local commit and merge remain available.'}
+                  </small>
+                  <Button variant="secondary" size="compact" busy={busyAction === 'push'} onClick={() => void push()} disabled={busy || !pushReady}>
+                    {!selectedWorkspace?.remoteName ? (zh ? '未配置远端' : 'No remote configured') : selectedWorkspace.remoteVerified ? (zh ? '重新推送' : 'Push again') : zh ? '推送任务分支' : 'Push task branch'}
                   </Button>
                 </section>
 
@@ -534,12 +528,26 @@ export function TaskGitMergeModal(props: { open: boolean; language: 'zh-CN' | 'e
                   />
                   <Button variant="primary" size="compact" busy={busyAction === 'merge'} onClick={() => void start()} disabled={busy || !mergeReady || alreadyDelivered}>
                     {alreadyDelivered
-                                  ? selectedWorkspace?.remoteName ? (zh ? '已合入并推送' : 'Merged and pushed') : (zh ? '已合入本地分支' : 'Merged locally')
-                                  : selectedWorkspace?.remoteName ? (zh ? '合入并推送目标分支' : 'Merge and push target') : (zh ? '合入本地目标分支' : 'Merge into local target')}
+                      ? selectedWorkspace?.remoteName
+                        ? zh
+                          ? '已合入并推送'
+                          : 'Merged and pushed'
+                        : zh
+                          ? '已合入本地分支'
+                          : 'Merged locally'
+                      : selectedWorkspace?.remoteName
+                        ? zh
+                          ? '合入并推送目标分支'
+                          : 'Merge and push target'
+                        : zh
+                          ? '合入本地目标分支'
+                          : 'Merge into local target'}
                   </Button>
-                            {pendingLocalSync ? <small className="task-git-delivery-local-pending">
-                              {zh ? '合入结果已保留；原目标分支存在未提交改动。处理原目录后，在底部重新同步。' : 'The integration result is preserved. Clean the original target worktree, then retry local sync below.'}
-                            </small> : null}
+                  {pendingLocalSync ? (
+                    <small className="task-git-delivery-local-pending">
+                      {zh ? '合入结果已保留；原目标分支存在未提交改动。处理原目录后，在底部重新同步。' : 'The integration result is preserved. Clean the original target worktree, then retry local sync below.'}
+                    </small>
+                  ) : null}
                   {integrationResult?.localSyncStatus === 'pending' ? (
                     <small className="task-git-delivery-local-pending">
                       {zh ? '远端已交付；本地目标分支有未提交代码，保持原样并待后续同步。' : 'Remote delivery completed; the dirty local target branch was preserved and is pending sync.'}
@@ -569,7 +577,7 @@ export function TaskGitMergeModal(props: { open: boolean; language: 'zh-CN' | 'e
               </Button>
             ) : (
               <Button variant="primary" size="regular" busy={busyAction === 'merge'} onClick={() => void finalize()}>
-                {selectedWorkspace?.remoteName ? (zh ? '完成合入并推送' : 'Finish merge and push') : (zh ? '完成合入并同步本地分支' : 'Finish merge and sync locally')}
+                {selectedWorkspace?.remoteName ? (zh ? '完成合入并推送' : 'Finish merge and push') : zh ? '完成合入并同步本地分支' : 'Finish merge and sync locally'}
               </Button>
             )
           ) : pendingLocalSync ? (
@@ -794,24 +802,26 @@ function SideBySideDiff(props: { diff: TaskGitFileDiff | null; hasSelection: boo
 
 function deliveryFeedback(result: TaskIntegrationResult, zh: boolean): DeliveryFeedback {
   if (!result.remoteName) {
-        return result.localSyncStatus === 'pending'
-            ? {
-                tone: 'warning',
-                text: zh ? '合入结果已保存在隔离工作区；原目标分支有未提交改动，处理后请重新同步。' : 'The integration result is preserved because the local target has uncommitted changes. Clean it, then retry sync.',
-            }
-            : {
-                tone: 'success',
-                text: zh ? `已合入并同步本地分支 ${result.targetBranch} · ${shortSha(result.resultHeadSha)}` : `Merged into local branch ${result.targetBranch} · ${shortSha(result.resultHeadSha)}`,
-            };
-    }
     return result.localSyncStatus === 'pending'
-        ? {
-            tone: 'warning',
-            text: zh ? `远端 ${result.remoteName}/${result.targetBranch} 已交付并校验；本地目标分支保持原样，待处理完未提交代码后再同步。` : `Remote ${result.remoteName}/${result.targetBranch} was delivered and verified; the local target remains unchanged and pending sync.`,
+      ? {
+          tone: 'warning',
+          text: zh ? '合入结果已保存在隔离工作区；原目标分支有未提交改动，处理后请重新同步。' : 'The integration result is preserved because the local target has uncommitted changes. Clean it, then retry sync.',
         }
-        : {
-            tone: 'success',
-            text: zh ? `已合入并推送 ${result.targetBranch} · ${shortSha(result.resultHeadSha)}` : `Merged and pushed ${result.targetBranch} · ${shortSha(result.resultHeadSha)}`,
+      : {
+          tone: 'success',
+          text: zh ? `已合入并同步本地分支 ${result.targetBranch} · ${shortSha(result.resultHeadSha)}` : `Merged into local branch ${result.targetBranch} · ${shortSha(result.resultHeadSha)}`,
+        };
+  }
+  return result.localSyncStatus === 'pending'
+    ? {
+        tone: 'warning',
+        text: zh
+          ? `远端 ${result.remoteName}/${result.targetBranch} 已交付并校验；本地目标分支保持原样，待处理完未提交代码后再同步。`
+          : `Remote ${result.remoteName}/${result.targetBranch} was delivered and verified; the local target remains unchanged and pending sync.`,
+      }
+    : {
+        tone: 'success',
+        text: zh ? `已合入并推送 ${result.targetBranch} · ${shortSha(result.resultHeadSha)}` : `Merged and pushed ${result.targetBranch} · ${shortSha(result.resultHeadSha)}`,
       };
 }
 

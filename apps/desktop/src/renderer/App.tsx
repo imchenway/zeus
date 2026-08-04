@@ -155,8 +155,8 @@ import {
   type ProjectDatabaseSecretSnapshot,
   type ProjectRecord,
   type ProjectRepositoryDiscoverySnapshot,
-    type ProjectWorkspaceConfigSnapshot,
-    type ReleaseStatusSnapshot,
+  type ProjectWorkspaceConfigSnapshot,
+  type ReleaseStatusSnapshot,
   type ReleaseUpdateOperationSnapshot,
   type ReleaseUpdateStatusSnapshot,
   type RuntimeOperationConfirmation,
@@ -7057,10 +7057,7 @@ export function App(props: {
     setProjectWorkspaceConfigStatus('loading');
     setProjectWorkspaceConfigError(null);
     try {
-      const [config, discovery] = await Promise.all([
-        client.loadProjectWorkspaceConfig(projectId),
-        client.discoverProjectRepositories(projectId),
-      ]);
+      const [config, discovery] = await Promise.all([client.loadProjectWorkspaceConfig(projectId), client.discoverProjectRepositories(projectId)]);
       setProjectWorkspaceConfig(config);
       setProjectRepositoryDiscovery(discovery);
       setSelectedProjectRepositoryPaths(config.repositories.map((repository) => repository.localPath));
@@ -10307,11 +10304,7 @@ export function App(props: {
                                         type="checkbox"
                                         checked={selectedProjectRepositoryPaths.includes(candidate.localPath)}
                                         onChange={(event) =>
-                                          setSelectedProjectRepositoryPaths((current) =>
-                                            event.currentTarget.checked
-                                              ? Array.from(new Set([...current, candidate.localPath]))
-                                              : current.filter((path) => path !== candidate.localPath),
-                                          )
+                                          setSelectedProjectRepositoryPaths((current) => (event.currentTarget.checked ? Array.from(new Set([...current, candidate.localPath])) : current.filter((path) => path !== candidate.localPath)))
                                         }
                                         disabled={projectWorkspaceConfigStatus === 'saving'}
                                       />
@@ -10337,7 +10330,11 @@ export function App(props: {
                                 />
                                 <small>每行一个目录。任务环境会直接写入这些真实目录，例如父级 docs；它们不参与 Git 隔离。</small>
                               </label>
-                              {projectWorkspaceConfigError ? <p className="task-model-push-error" role="alert">{projectWorkspaceConfigError}</p> : null}
+                              {projectWorkspaceConfigError ? (
+                                <p className="task-model-push-error" role="alert">
+                                  {projectWorkspaceConfigError}
+                                </p>
+                              ) : null}
                               <div className="project-config-command-rail">
                                 <button
                                   type="button"

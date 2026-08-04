@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 /* global console, process */
-import {existsSync} from 'node:fs';
-import {mkdir, readdir, rm} from 'node:fs/promises';
-import {homedir} from 'node:os';
-import {basename, dirname, join, resolve} from 'node:path';
-import {fileURLToPath, pathToFileURL} from 'node:url';
-import {execFileSync, spawn} from 'node:child_process';
-import {verifyPackagedApp} from './verify-packaged-app-health.mjs';
+import { existsSync } from 'node:fs';
+import { mkdir, readdir, rm } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { basename, dirname, join, resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { execFileSync, spawn } from 'node:child_process';
+import { verifyPackagedApp } from './verify-packaged-app-health.mjs';
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const rootDir = resolve(scriptDir, '..');
@@ -153,25 +153,28 @@ async function verifyCodesignPackagedApp(appPath) {
 }
 
 function readPackagedAppInfo(appPath, key) {
-    return execFileSync('/usr/bin/plutil', ['-extract', key, 'raw', '-o', '-', join(appPath, 'Contents', 'Info.plist')], {
-        encoding: 'utf8',
-    }).trim();
+  return execFileSync('/usr/bin/plutil', ['-extract', key, 'raw', '-o', '-', join(appPath, 'Contents', 'Info.plist')], {
+    encoding: 'utf8',
+  }).trim();
 }
 
 function verifyPackagedAppIdentity(appPath, variant) {
-    const expected = variant === 'test' ? {
-        bundleId: 'dev.hypha.zeus.test',
-        name: 'Zeus Test',
-        executable: 'Zeus Test'
-    } : {bundleId: 'dev.hypha.zeus', name: 'Zeus', executable: 'Zeus'};
-    const actual = {
-        bundleId: readPackagedAppInfo(appPath, 'CFBundleIdentifier'),
-        name: readPackagedAppInfo(appPath, 'CFBundleName'),
-        executable: readPackagedAppInfo(appPath, 'CFBundleExecutable'),
-    };
-    if (actual.bundleId !== expected.bundleId || actual.name !== expected.name || actual.executable !== expected.executable) {
-        throw new Error(`Zeus 打包身份不一致：variant=${variant} expected=${JSON.stringify(expected)} actual=${JSON.stringify(actual)} app=${appPath}`);
-    }
+  const expected =
+    variant === 'test'
+      ? {
+          bundleId: 'dev.hypha.zeus.test',
+          name: 'Zeus Test',
+          executable: 'Zeus Test',
+        }
+      : { bundleId: 'dev.hypha.zeus', name: 'Zeus', executable: 'Zeus' };
+  const actual = {
+    bundleId: readPackagedAppInfo(appPath, 'CFBundleIdentifier'),
+    name: readPackagedAppInfo(appPath, 'CFBundleName'),
+    executable: readPackagedAppInfo(appPath, 'CFBundleExecutable'),
+  };
+  if (actual.bundleId !== expected.bundleId || actual.name !== expected.name || actual.executable !== expected.executable) {
+    throw new Error(`Zeus 打包身份不一致：variant=${variant} expected=${JSON.stringify(expected)} actual=${JSON.stringify(actual)} app=${appPath}`);
+  }
 }
 
 async function prepareElectronDist(version, arch) {
@@ -197,14 +200,14 @@ export async function packageMac() {
     throw new Error('Zeus package:mac 只能在 macOS 上执行。');
   }
   const arch = process.arch === 'x64' ? 'x64' : 'arm64';
-    const requestedVariant = process.env.ZEUS_PACKAGE_VARIANT?.trim() || 'test';
-    if (requestedVariant !== 'test' && requestedVariant !== 'release') {
-        throw new Error(`Zeus package:mac 不支持打包身份：${requestedVariant}。`);
-    }
-    const variant = requestedVariant;
-    if (variant === 'release' && process.env.ZEUS_RELEASE_BUILD !== '1') {
-        throw new Error('生产身份 Zeus.app 只能由正式发布链路生成；日常开发与验收请使用 pnpm package:mac 生成 Zeus Test.app。');
-    }
+  const requestedVariant = process.env.ZEUS_PACKAGE_VARIANT?.trim() || 'test';
+  if (requestedVariant !== 'test' && requestedVariant !== 'release') {
+    throw new Error(`Zeus package:mac 不支持打包身份：${requestedVariant}。`);
+  }
+  const variant = requestedVariant;
+  if (variant === 'release' && process.env.ZEUS_RELEASE_BUILD !== '1') {
+    throw new Error('生产身份 Zeus.app 只能由正式发布链路生成；日常开发与验收请使用 pnpm package:mac 生成 Zeus Test.app。');
+  }
   const builderConfig = variant === 'test' ? 'electron-builder.test.yml' : 'electron-builder.yml';
   const configuredOutputRoot = process.env.ZEUS_PACKAGE_OUTPUT_DIR?.trim();
   const outputRoot = configuredOutputRoot ? resolve(rootDir, configuredOutputRoot) : variant === 'test' ? join(rootDir, 'dist', 'test') : join(rootDir, 'dist');
@@ -221,7 +224,7 @@ export async function packageMac() {
     cwd: rootDir,
     env: packageEnv,
   });
-    verifyPackagedAppIdentity(appPath, variant);
+  verifyPackagedAppIdentity(appPath, variant);
   verifyPackagedApp(appPath);
   await verifyCodesignPackagedApp(appPath);
 }

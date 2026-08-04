@@ -1,8 +1,8 @@
 import { execFile } from 'node:child_process';
 import { realpathSync } from 'node:fs';
-import { copyFile, lstat, mkdir, readFile, readdir, rm, writeFile} from 'node:fs/promises';
-import {basename, dirname, isAbsolute, join, relative, resolve, sep} from 'node:path';
-import {promisify} from 'node:util';
+import { copyFile, lstat, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
 
@@ -427,7 +427,9 @@ async function applyLocalChangesToTaskWorktree(sourcePath: string, targetPath: s
   const unstagedPatch = await readGitDiffAllowChanges(sourcePath, ['diff', '--binary', '--', '.']);
   const untracked = splitNullRecords((await runGit(sourcePath, ['ls-files', '--others', '--exclude-standard', '-z'])).stdout);
   const includeFile = join(sourcePath, '.worktreeinclude');
-  const includeExists = await lstat(includeFile).then((entry) => entry.isFile()).catch(() => false);
+  const includeExists = await lstat(includeFile)
+    .then((entry) => entry.isFile())
+    .catch(() => false);
   const includedIgnored = includeExists ? splitNullRecords((await runGit(sourcePath, ['ls-files', '--others', '--ignored', `--exclude-from=${includeFile}`, '-z'])).stdout) : [];
   const copyPaths = Array.from(new Set([...untracked, ...includedIgnored]));
   const hasChanges = Boolean(stagedPatch || unstagedPatch || copyPaths.length > 0);
@@ -803,11 +805,11 @@ export async function finalizeTaskBranchIntegration(input: {
 
   // 配置远端时，推送源是隔离目录中的确定提交；未配置远端时仍允许完成本地交付。
   let remoteHeadSha: string | null = null;
-    if (remoteName) {
-      await runGit(input.integrationPath, ['push', remoteName, `${resultHeadSha}:refs/heads/${targetBranch}`]);
-      remoteHeadSha = await readRemoteHead(input.integrationPath, remoteName, targetBranch);
-      if (remoteHeadSha !== resultHeadSha) throw gitCoreError('ZEUS_TASK_REMOTE_VERIFICATION_FAILED', 'Remote target branch does not match the merged result.');
-    }
+  if (remoteName) {
+    await runGit(input.integrationPath, ['push', remoteName, `${resultHeadSha}:refs/heads/${targetBranch}`]);
+    remoteHeadSha = await readRemoteHead(input.integrationPath, remoteName, targetBranch);
+    if (remoteHeadSha !== resultHeadSha) throw gitCoreError('ZEUS_TASK_REMOTE_VERIFICATION_FAILED', 'Remote target branch does not match the merged result.');
+  }
 
   const localSync = await syncLocalTargetBranch({
     repositoryPath: input.repositoryPath,
@@ -818,7 +820,7 @@ export async function finalizeTaskBranchIntegration(input: {
   // 无远端且本地目标分支暂时不安全时，保留隔离合入结果，待用户清理原工作区后重试同步。
   if (remoteName || localSync.localSyncStatus === 'synced') {
     const context = await getGitRepositoryContext(input.repositoryPath);
-  const registered = context.worktrees.find((entry) => canonicalFilesystemPath(entry.path) === canonicalFilesystemPath(input.integrationPath));
+    const registered = context.worktrees.find((entry) => canonicalFilesystemPath(entry.path) === canonicalFilesystemPath(input.integrationPath));
     if (registered) {
       await runGit(context.topLevel, ['worktree', 'remove', input.integrationPath]);
       await rm(input.integrationPath, { recursive: true, force: true });
