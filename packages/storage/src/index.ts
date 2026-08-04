@@ -2157,7 +2157,7 @@ function normalizeTags(tags: string[]): string[] {
 }
 
 function formatTaskCode(sequence: number): string {
-  return `ZEUS-${String(sequence).padStart(6, '0')}`;
+  return `ZEUS-${String(sequence).padStart(4, '0')}`;
 }
 
 function normalizeTaskSequence(value: unknown): number | null {
@@ -2167,8 +2167,8 @@ function normalizeTaskSequence(value: unknown): number | null {
 function normalizeTaskCode(value: unknown, sequence: number | null): string {
   if (typeof value === 'string') {
     const code = value.trim();
-    // 只保留统一展示格式；旧库里的 ZEU 编码按原序号迁移为 ZEUS。
-    if (/^ZEUS-\d{6}$/u.test(code)) return code;
+    // 只保留至少四位的统一格式；旧库编码由回填逻辑按原序号重新格式化。
+    if (/^ZEUS-\d{4,}$/u.test(code)) return code;
   }
   return formatTaskCode(sequence ?? 1);
 }
