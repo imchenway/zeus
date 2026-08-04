@@ -11,7 +11,7 @@ import { PencilSimpleIcon as PencilSimple } from '@phosphor-icons/react/dist/csr
 import { PlugsIcon as Plugs } from '@phosphor-icons/react/dist/csr/Plugs';
 import { TerminalWindowIcon as TerminalWindow } from '@phosphor-icons/react/dist/csr/TerminalWindow';
 import { WrenchIcon as Wrench } from '@phosphor-icons/react/dist/csr/Wrench';
-import type { NativeSessionItemBuffer, NativeTurnPlanSnapshot, NativeTurnSnapshot } from './sessionTypes.js';
+import type { NativePendingRequest, NativeSessionItemBuffer, NativeTurnPlanSnapshot, NativeTurnSnapshot } from './sessionTypes.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
 
 const operationalTypes = new Set(['commandexecution', 'command', 'mcptoolcall', 'dynamictoolcall', 'websearch', 'imageview', 'toolcall', 'tool', 'filechange', 'file']);
@@ -191,7 +191,7 @@ export function SessionPlanProgress(props: { plan: NativeTurnPlanSnapshot; langu
   );
 }
 
-export function SessionTurnDuration(props: { turn: NativeTurnSnapshot; language: SessionUiLanguage }) {
+export function SessionTurnDuration(props: { turn: NativeTurnSnapshot; requests: NativePendingRequest[]; language: SessionUiLanguage }) {
   const [now, setNow] = useState(() => Date.now());
   const active = !props.turn.completedAt && (props.turn.status === 'running' || props.turn.status === 'waiting' || props.turn.status === 'dispatching');
   useEffect(() => {
@@ -199,7 +199,7 @@ export function SessionTurnDuration(props: { turn: NativeTurnSnapshot; language:
     const timer = window.setInterval(() => setNow(Date.now()), 1_000);
     return () => window.clearInterval(timer);
   }, [active]);
-  const duration = useMemo(() => turnDurationMs(props.turn, now), [now, props.turn]);
+  const duration = useMemo(() => turnDurationMs(props.turn, props.requests, now), [now, props.requests, props.turn]);
   if (duration === null) return null;
   const value = formatDuration(duration);
   const label = props.language === 'zh-CN' ? `已处理 ${value}` : active ? `Processing for ${value}` : `Processed in ${value}`;
@@ -358,12 +358,41 @@ function planStatusLabel(status: 'pending' | 'inProgress' | 'completed', languag
   return status === 'completed' ? 'Completed' : status === 'inProgress' ? 'In progress' : 'Pending';
 }
 
-function turnDurationMs(turn: NativeTurnSnapshot, now: number): number | null {
+function turnDurationMs(turn: NativeTurnSnapshot, requests: NativePendingRequest[], now: number): number | null {
   if (!turn.startedAt) return null;
   const startedAt = Date.parse(turn.startedAt);
   const endedAt = turn.completedAt ? Date.parse(turn.completedAt) : now;
   if (!Number.isFinite(startedAt) || !Number.isFinite(endedAt) || endedAt < startedAt) return null;
-  return endedAt - startedAt;
+  const waitIntervals = requests
+    .filter((request) => request.turnId === turn.id || (turn.providerTurnId !== null && request.turnId === turn.providerTurnId))
+    .flatMap((request) => {
+      const waitStartedAt = Date.parse(request.createdAt);
+      const waitEndedAt = request.resolvedAt ? Date.parse(request.resolvedAt) : endedAt;
+      if (!Number.isFinite(waitStartedAt) || !Number.isFinite(waitEndedAt)) return [];
+      const intervalStart = Math.max(startedAt, waitStartedAt);
+      const intervalEnd = Math.min(endedAt, waitEndedAt);
+      return intervalEnd > intervalStart ? [{ start: intervalStart, end: intervalEnd }] : [];
+    })
+    .sort((left, right) => left.start - right.start || left.end - right.end);
+  let waitingMs = 0;
+  let mergedStart = -1;
+  let mergedEnd = -1;
+  for (const interval of waitIntervals) {
+    if (mergedStart < 0) {
+      mergedStart = interval.start;
+      mergedEnd = interval.end;
+      continue;
+    }
+    if (interval.start <= mergedEnd) {
+      mergedEnd = Math.max(mergedEnd, interval.end);
+      continue;
+    }
+    waitingMs += mergedEnd - mergedStart;
+    mergedStart = interval.start;
+    mergedEnd = interval.end;
+  }
+  if (mergedStart >= 0) waitingMs += mergedEnd - mergedStart;
+  return Math.max(0, endedAt - startedAt - waitingMs);
 }
 
 function formatDuration(durationMs: number): string {

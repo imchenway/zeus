@@ -33,6 +33,11 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   const lastAssistantKey = [...items].reverse().find((entry) => itemRole(entry) === 'assistant')?.key;
   const transcriptRows = useMemo(() => projectTranscriptRows(items), [items]);
   const lastItemKeyByTurn = useMemo(() => Object.fromEntries(items.map((item) => [item.turnId, item.key])), [items]);
+  const durationRequests = useMemo(() => {
+    const requests = new Map((props.state.snapshot?.requests ?? []).map((request) => [request.id, request]));
+    for (const request of props.state.pendingRequests) requests.set(request.id, request);
+    return [...requests.values()];
+  }, [props.state.pendingRequests, props.state.snapshot?.requests]);
   const showThinking = shouldShowTranscriptThinking(props.state);
   const historyHydrated = props.state.snapshot !== null;
   const historyUnavailable = !historyHydrated && (props.state.transportState === 'reconnecting' || props.state.transportState === 'failed');
@@ -126,7 +131,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
                   {closesVisibleTurn && changeSet && changeSet.state !== 'capturing' && (changeSet.fileCount > 0 || changeSet.state === 'conflicted') ? (
                     <TurnChangeCard changeSet={changeSet} language={props.language} onReview={props.onReviewTurnChanges} onOperate={props.onOperateTurnChangeSet} />
                   ) : null}
-                  {closesVisibleTurn && turn ? <SessionTurnDuration turn={turn} language={props.language} /> : null}
+                  {closesVisibleTurn && turn ? <SessionTurnDuration turn={turn} requests={durationRequests} language={props.language} /> : null}
                 </Fragment>
               );
             })
