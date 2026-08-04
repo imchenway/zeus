@@ -121,3 +121,11 @@
 | 缺陷修复门禁 | 通过 | `pnpm lint`、`pnpm typecheck`、`pnpm build`、`pnpm package:mac:test`；测试包通过 `codesign --verify --deep --strict` |
 
 完整 Electron 窗口自动化受当前已运行的正式 Zeus 单实例锁影响，新的测试 App 会把启动请求交给现有实例后退出；本次没有关闭或操作 `/Applications/Zeus.app`。弹窗使用真实组件隔离渲染并完成了交互验收，但未把该结果夸大为完整正式包 UI 验收。
+
+## 0.1.16 发布结果
+
+- 发布提交：`7abfc00e2ae3bd480ea74ebe2301e7b13e3e7004`。
+- GitHub main CI 与 Release Workflow 均通过；GitHub Release 为非草稿、非预发布。
+- 公开资产为 `Zeus-0.1.16-arm64.dmg` 与 `zeus-release-manifest.json`；DMG 回下载后通过 `hdiutil verify`。
+- Homebrew Cask 已同步并与公开 DMG 的版本和 SHA-256 一致。
+- 公开 manifest 明确记录 `signed=false`、`notarized=false`；本次没有把 ad-hoc 签名描述为 Developer ID 签名或 Apple 公证。
