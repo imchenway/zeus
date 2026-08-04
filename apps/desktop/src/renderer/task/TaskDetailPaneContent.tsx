@@ -48,7 +48,6 @@ export interface TaskDetailPaneContentProps {
   events: TaskEventRecord[];
   copy: TaskDetailPaneCopy;
   statusLabels: Record<TaskManagementStatus | '', string>;
-  eventTypeLabels: Record<string, string>;
   priorityOptions: ReadonlyArray<{ value: TaskPriority; label: string }>;
   busy: boolean;
   conversations?: NativeConversationChoice[];
@@ -80,8 +79,6 @@ type TaskEditCopy = {
   addAttachment: string;
   removeAttachment: string;
   undoAttachment: string;
-  saving: string;
-  saved: string;
   retry: string;
   loadLatest: string;
   saveFailed: string;
@@ -98,8 +95,6 @@ const taskEditCopies: Record<'zh-CN' | 'en-US', TaskEditCopy> = {
     addAttachment: '添加附件',
     removeAttachment: '移除附件关联',
     undoAttachment: '撤销移除',
-    saving: '正在保存…',
-    saved: '已保存',
     retry: '重试',
     loadLatest: '载入最新值',
     saveFailed: '保存失败',
@@ -114,8 +109,6 @@ const taskEditCopies: Record<'zh-CN' | 'en-US', TaskEditCopy> = {
     addAttachment: 'Add attachment',
     removeAttachment: 'Remove attachment link',
     undoAttachment: 'Undo removal',
-    saving: 'Saving…',
-    saved: 'Saved',
     retry: 'Retry',
     loadLatest: 'Load latest value',
     saveFailed: 'Save failed',
@@ -143,11 +136,10 @@ function taskTagsDraft(tags: string[] | undefined): string {
 }
 
 function TaskEditFeedback(props: { state: TaskFieldSaveState; copy: TaskEditCopy; statusId: string; onRetry?: () => void; onLoadLatest?: () => void }) {
-  if (props.state.kind === 'idle') return null;
-  const isError = props.state.kind === 'error' || props.state.kind === 'conflict';
-  const message = props.state.kind === 'saving' ? props.copy.saving : props.state.kind === 'saved' ? props.copy.saved : props.state.kind === 'conflict' ? props.copy.conflict : `${props.copy.saveFailed}：${props.state.message}`;
+  if (props.state.kind !== 'error' && props.state.kind !== 'conflict') return null;
+  const message = props.state.kind === 'conflict' ? props.copy.conflict : `${props.copy.saveFailed}：${props.state.message}`;
   return (
-    <span className={`task-inline-edit-feedback${isError ? ' is-error' : ''}`}>
+    <span className="task-inline-edit-feedback is-error">
       <small id={props.statusId} role="status" aria-live="polite">
         {message}
       </small>
@@ -172,6 +164,10 @@ function TaskEditFeedback(props: { state: TaskFieldSaveState; copy: TaskEditCopy
       ) : null}
     </span>
   );
+}
+
+function TaskSaveSpinner() {
+  return <span className="task-save-spinner" aria-hidden="true" />;
 }
 
 function InlineTaskTextField(props: {
@@ -302,7 +298,8 @@ function InlineTaskTextField(props: {
 
   const editorProps = {
     'aria-label': props.label,
-    'aria-describedby': saveState.kind === 'idle' ? undefined : statusId,
+    'aria-describedby': saveState.kind === 'error' || saveState.kind === 'conflict' ? statusId : undefined,
+    'aria-busy': saveState.kind === 'saving' || undefined,
     'aria-invalid': saveState.kind === 'error' || saveState.kind === 'conflict' ? true : undefined,
     className: 'task-inline-edit-control',
     disabled: props.disabled || saveState.kind === 'saving',
@@ -321,22 +318,25 @@ function InlineTaskTextField(props: {
   return (
     <span className={['task-inline-edit', props.className].filter(Boolean).join(' ')} data-state={saveState.kind}>
       {editing ? (
-        props.multiline ? (
-          <textarea
-            {...editorProps}
-            ref={(node) => {
-              inputRef.current = node;
-            }}
-            rows={4}
-          />
-        ) : (
-          <input
-            {...editorProps}
-            ref={(node) => {
-              inputRef.current = node;
-            }}
-          />
-        )
+        <span className="task-inline-edit-control-shell" aria-busy={saveState.kind === 'saving' || undefined}>
+          {props.multiline ? (
+            <textarea
+              {...editorProps}
+              ref={(node) => {
+                inputRef.current = node;
+              }}
+              rows={4}
+            />
+          ) : (
+            <input
+              {...editorProps}
+              ref={(node) => {
+                inputRef.current = node;
+              }}
+            />
+          )}
+          {saveState.kind === 'saving' ? <TaskSaveSpinner /> : null}
+        </span>
       ) : (
         <button type="button" className="task-inline-edit-trigger" onClick={beginEditing} disabled={props.disabled} aria-label={props.label}>
           {props.display}
@@ -405,7 +405,11 @@ function TaskImmediateSelect<T extends string>(props: {
   }
 
   return (
-    <span className={['task-immediate-select', props.className].filter(Boolean).join(' ')} aria-describedby={saveState.kind === 'idle' ? undefined : statusId}>
+    <span
+      className={['task-immediate-select', saveState.kind === 'saving' ? 'is-saving' : '', props.className].filter(Boolean).join(' ')}
+      aria-busy={saveState.kind === 'saving' || undefined}
+      aria-describedby={saveState.kind === 'error' || saveState.kind === 'conflict' ? statusId : undefined}
+    >
       <ZeusSelect
         size="compact"
         ariaLabel={props.ariaLabel}
@@ -425,6 +429,7 @@ function TaskImmediateSelect<T extends string>(props: {
         disabled={props.disabled || saveState.kind === 'saving'}
         searchable={false}
       />
+      {saveState.kind === 'saving' ? <TaskSaveSpinner /> : null}
       <TaskEditFeedback state={saveState} copy={props.copy} statusId={statusId} onRetry={retrySave} onLoadLatest={loadLatestValue} />
     </span>
   );
@@ -436,7 +441,6 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
   const managementStatus = resolveTaskManagementStatus(props.task);
   const taskIdentity = props.task.taskCode?.trim() || props.task.id;
   const latestEvent = props.events.at(-1);
-  const latestEvidenceType = latestEvent ? (props.eventTypeLabels[latestEvent.eventType] ?? latestEvent.eventType) : undefined;
   const taskAttachments = parseTaskAttachments(props.task.sourceContextJson);
   const attachmentStatusId = `${useId()}-status`;
   const desiredAttachmentsRef = useRef<TaskAttachmentReference[]>([]);
@@ -597,9 +601,7 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
             {latestEvent ? (
               <>
                 {latestEvent.title}
-                <small>
-                  {latestEvidenceType} · {formatTaskUpdatedAt(latestEvent.createdAt, props.copy.updatedAtMissing ?? '未记录')}
-                </small>
+                <small>{formatTaskUpdatedAt(latestEvent.createdAt, props.copy.updatedAtMissing ?? '未记录')}</small>
               </>
             ) : (
               (props.copy.noEvidence ?? '暂无执行证据')
@@ -655,7 +657,7 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
         />
       </section>
 
-      <section className="task-detail-block task-detail-attachments" aria-label={props.copy.attachmentsTitle ?? '图片与附件'}>
+      <section className="task-detail-block task-detail-attachments" aria-label={props.copy.attachmentsTitle ?? '图片与附件'} aria-busy={attachmentSaveState.kind === 'saving' || undefined}>
         <span className="task-detail-section-heading">
           <span>
             <strong>{props.copy.attachmentsTitle ?? '图片与附件'}</strong>
@@ -666,6 +668,7 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
               {editCopy.addAttachment}
             </Button>
           ) : null}
+          {attachmentSaveState.kind === 'saving' ? <TaskSaveSpinner /> : null}
         </span>
         {taskAttachments.length > 0 ? (
           <TaskAttachmentPreviewList
@@ -805,7 +808,6 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
               <li className="task-detail-event-row" key={event.id}>
                 <span>
                   <strong>{event.title}</strong>
-                  <small>{props.eventTypeLabels[event.eventType] ?? event.eventType}</small>
                 </span>
                 <time dateTime={event.createdAt}>{formatTaskUpdatedAt(event.createdAt, props.copy.updatedAtMissing ?? '未记录')}</time>
               </li>
