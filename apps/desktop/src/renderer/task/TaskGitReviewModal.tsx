@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ZeusApiError, type DashboardClient, type TaskManagementStatus, type TaskRecord } from '../apiClient.js';
+import { ZeusApiError, type DashboardClient, type TaskRecord } from '../apiClient.js';
 import type { TaskGitDiffSummary, TaskGitFileDiff, TaskGitFileStatus, TaskWorkspaceSnapshot, TaskWorkspacesSnapshot } from '../session/sessionTypes.js';
 import { Button } from '../ui/Button.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
 
-type ReviewMode = 'commit' | 'commit-only' | 'push-only' | 'delivery' | 'completed' | 'cancelled';
+type ReviewMode = 'commit' | 'commit-only' | 'push-only' | 'delivery';
 type ReviewStatus = 'loading' | 'ready' | 'submitting' | 'error';
 const closedWorkspaceStates = new Set(['reclaimed', 'merged', 'discarded']);
 
@@ -17,7 +17,6 @@ export function TaskGitReviewModal(props: {
   mode: ReviewMode;
   preferredWorkspaceId?: string | null;
   onClose: () => void;
-  onReadyToCloseTask: (status: Extract<TaskManagementStatus, 'completed' | 'cancelled'>) => Promise<void>;
 }) {
   const zh = props.language === 'zh-CN';
   const [snapshot, setSnapshot] = useState<TaskWorkspacesSnapshot | null>(null);
@@ -51,21 +50,8 @@ export function TaskGitReviewModal(props: {
           props.onClose();
           return;
         }
-        if (props.mode !== 'commit' && props.mode !== 'commit-only' && props.mode !== 'push-only' && next.items.every((workspace) => closedWorkspaceStates.has(workspace.state))) {
-          if (props.mode === 'delivery') {
-            props.onClose();
-            return;
-          }
-          void props
-            .onReadyToCloseTask(props.mode)
-            .then(() => {
-              if (!cancelled) props.onClose();
-            })
-            .catch((reason: unknown) => {
-              if (cancelled) return;
-              setStatus('error');
-              setError(errorMessage(reason, zh));
-            });
+        if (props.mode === 'delivery' && next.items.every((workspace) => closedWorkspaceStates.has(workspace.state))) {
+          props.onClose();
           return;
         }
         const preferred = next.items.find((workspace) => workspace.id === props.preferredWorkspaceId && (props.mode === 'commit' || !closedWorkspaceStates.has(workspace.state)));
@@ -142,25 +128,12 @@ export function TaskGitReviewModal(props: {
       if (!result.review.clean) {
         await reload(activeWorkspace.id);
         setStatus('error');
-        setError(
-          props.mode === 'delivery'
-            ? zh
-              ? '仍有未选中的变更。请全部审查并提交后再准备代码交付。'
-              : 'Unselected changes remain. Review and commit them before preparing code delivery.'
-            : zh
-              ? '仍有未选中的变更。请全部审查并提交后再完成任务。'
-              : 'Unselected changes remain. Review and commit them before closing the task.',
-        );
+        setError(zh ? '仍有未选中的变更。请全部审查并提交后再准备代码交付。' : 'Unselected changes remain. Review and commit them before preparing code delivery.');
         return;
       }
       await props.client.reclaimTaskWorkspace(props.task.id, activeWorkspace.id);
-      const next = await reload();
+      await reload();
       if (props.mode === 'delivery') {
-        props.onClose();
-        return;
-      }
-      if (next.items.every((workspace) => closedWorkspaceStates.has(workspace.state))) {
-        if (props.mode === 'completed' || props.mode === 'cancelled') await props.onReadyToCloseTask(props.mode);
         props.onClose();
         return;
       }
@@ -193,13 +166,8 @@ export function TaskGitReviewModal(props: {
     setError(null);
     try {
       await props.client.reclaimTaskWorkspace(props.task.id, activeWorkspace.id);
-      const next = await reload();
+      await reload();
       if (props.mode === 'delivery') {
-        props.onClose();
-        return;
-      }
-      if (next.items.every((workspace) => closedWorkspaceStates.has(workspace.state))) {
-        if (props.mode === 'completed' || props.mode === 'cancelled') await props.onReadyToCloseTask(props.mode);
         props.onClose();
         return;
       }
@@ -216,13 +184,8 @@ export function TaskGitReviewModal(props: {
     setError(null);
     try {
       await props.client.discardTaskWorkspace(props.task.id, activeWorkspace.id, discardConfirmation);
-      const next = await reload();
+      await reload();
       if (props.mode === 'delivery') {
-        props.onClose();
-        return;
-      }
-      if (next.items.every((workspace) => closedWorkspaceStates.has(workspace.state))) {
-        if (props.mode === 'completed' || props.mode === 'cancelled') await props.onReadyToCloseTask(props.mode);
         props.onClose();
         return;
       }
@@ -269,13 +232,9 @@ export function TaskGitReviewModal(props: {
                     ? zh
                       ? '推送代码'
                       : 'Push Code'
-                    : props.mode === 'delivery'
-                      ? zh
-                        ? '准备代码交付'
-                        : 'Prepare Code Delivery'
-                      : zh
-                        ? '审查并交付任务分支'
-                        : 'Review and deliver task branches'}
+                    : zh
+                      ? '准备代码交付'
+                      : 'Prepare Code Delivery'}
             </strong>
             <small>
               {props.projectName ? `${props.projectName} · ` : ''}

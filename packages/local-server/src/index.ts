@@ -83,6 +83,7 @@ import {
   readTaskIntegrationConflict,
   reclaimDeliveredTaskWorktree,
   reclaimTaskWorktree,
+  removeTaskWorktreeForTerminalStatus,
   rejectGitOperation,
   startTaskBranchIntegration,
   writeTaskIntegrationResolution,
@@ -1171,6 +1172,7 @@ interface UpdateTaskStatusBody {
 interface UpdateTaskManagementStatusBody {
   status: TaskManagementStatus;
   expectedUpdatedAt?: string;
+  confirmWorktreeCleanup?: boolean;
 }
 
 interface UpdateTaskBody {
@@ -4680,15 +4682,37 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
           message: 'expectedUpdatedAt is required when updating task management status.',
         });
       }
+      if (request.body.confirmWorktreeCleanup !== undefined && typeof request.body.confirmWorktreeCleanup !== 'boolean') {
+        return reply.code(400).send({
+          error: 'ZEUS_INVALID_TASK_WORKTREE_CLEANUP_CONFIRMATION',
+          message: 'confirmWorktreeCleanup must be a boolean when provided.',
+        });
+      }
+      if (existing.updatedAt !== request.body.expectedUpdatedAt) {
+        return reply.code(409).send({
+          error: 'ZEUS_TASK_EDIT_CONFLICT',
+          message: 'Task changed after editing started.',
+          currentUpdatedAt: existing.updatedAt,
+        });
+      }
       if (request.body.status === 'completed' || request.body.status === 'cancelled') {
-        const pendingWorkspaces = taskWorkspaces.listByTask(existing.id).filter((workspace) => workspace.state !== 'reclaimed' && workspace.state !== 'merged' && workspace.state !== 'discarded');
-        if (pendingWorkspaces.length > 0) {
+        const project = projects.getById(existing.projectId);
+        if (!project) return reply.code(404).send({ error: 'ZEUS_PROJECT_NOT_FOUND', message: 'Project not found' });
+        const cleanup = await inspectTaskTerminalCleanup(existing.id, project.localPath);
+        if (cleanup.requiresConfirmation && request.body.confirmWorktreeCleanup !== true) {
           return reply.code(409).send({
-            error: 'ZEUS_TASK_GIT_DISPOSITION_REQUIRED',
-            message: 'Commit and push or explicitly discard every task branch before closing the task.',
+            error: 'ZEUS_TASK_WORKTREE_CLEANUP_CONFIRMATION_REQUIRED',
+            message: 'Task worktrees contain local changes or active sessions. Confirm to stop and archive task sessions and permanently remove the worktrees.',
             targetStatus: request.body.status,
-            workspaces: pendingWorkspaces,
+            dirtyWorkspaceCount: cleanup.workspaces.filter((entry) => entry.force).length,
+            activeConversationCount: cleanup.activeConversationCount,
+            activeRuntimeSessionCount: cleanup.activeRuntimeSessionCount,
           });
+        }
+        try {
+          await closeTaskResourcesForTerminalStatus(existing.id, cleanup);
+        } catch (error) {
+          return sendTaskGitApiError(reply, error);
         }
       }
       let updated: ZeusTaskRecord;
@@ -12428,6 +12452,109 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
 
   function listTaskWorkspaceConversations(workspace: ZeusTaskWorkspaceRecord): ZeusConversationWithMessagesRecord[] {
     return workspace.environmentId ? conversations.listByEnvironment(workspace.environmentId) : conversations.listByWorkspace(workspace.id);
+  }
+
+  async function inspectTaskTerminalCleanup(taskId: string, fallbackRepositoryPath: string) {
+    const workspacePlans = await Promise.all(
+      taskWorkspaces.listByTask(taskId).map(async (workspace) => {
+        if (!workspace.worktreePath) return { workspace, repositoryPath: workspace.repositoryPath || fallbackRepositoryPath, headSha: workspace.headSha, force: false };
+        try {
+          const review = await getTaskWorkspaceReview(workspace.worktreePath);
+          return {
+            workspace,
+            repositoryPath: workspace.repositoryPath || fallbackRepositoryPath,
+            headSha: review.headSha,
+            force: !review.clean,
+          };
+        } catch {
+          // 无法读取的任务目录不能被当作干净目录；只有用户确认后才允许强制移除。
+          return { workspace, repositoryPath: workspace.repositoryPath || fallbackRepositoryPath, headSha: workspace.headSha, force: true };
+        }
+      }),
+    );
+    const taskConversations = conversations.listByTask(taskId);
+    const activeConversationCount = taskConversations.filter((conversation) => taskConversationHasActiveWork(conversation)).length;
+    const taskRuntimeSessions = runtimeSessions.list({ taskId, archived: false });
+    const activeRuntimeSessionCount = taskRuntimeSessions.filter((session) => session.status === 'running').length;
+    return {
+      workspaces: workspacePlans,
+      conversations: taskConversations,
+      runtimeSessions: taskRuntimeSessions,
+      activeConversationCount,
+      activeRuntimeSessionCount,
+      requiresConfirmation: workspacePlans.some((entry) => entry.force) || activeConversationCount > 0 || activeRuntimeSessionCount > 0,
+    };
+  }
+
+  function taskConversationHasActiveWork(conversation: ZeusConversationWithMessagesRecord): boolean {
+    const hasPendingWrite = conversationSubmissions.listByConversation(conversation.id).some((submission) => submission.status === 'queued' || submission.status === 'dispatching' || submission.status === 'active');
+    const providerBusy = conversation.providerState === 'binding' || conversation.providerState === 'active' || conversation.providerState === 'waiting';
+    return hasPendingWrite || providerBusy;
+  }
+
+  async function closeTaskResourcesForTerminalStatus(taskId: string, cleanup: Awaited<ReturnType<typeof inspectTaskTerminalCleanup>>): Promise<void> {
+    let interrupted = 0;
+    let cancelled = 0;
+    for (const conversation of cleanup.conversations) {
+      const activeTurn = [...conversationTurns.listByConversation(conversation.id)].reverse().find((turn) => (turn.status === 'running' || turn.status === 'waiting' || turn.status === 'dispatching') && turn.providerTurnId);
+      if (activeTurn?.providerTurnId) {
+        try {
+          await codexNativeCoordinator.interruptTurn({ conversationId: conversation.id, providerTurnId: activeTurn.providerTurnId });
+          interrupted += 1;
+        } catch (error) {
+          const code = error instanceof Error && typeof (error as Error & { code?: unknown }).code === 'string' ? String((error as Error & { code: string }).code) : '';
+          if (code !== 'ZEUS_NATIVE_TURN_NOT_ACTIVE') throw error;
+        }
+      }
+      for (const submission of conversationSubmissions.listByConversation(conversation.id)) {
+        const cancellable = submission.status === 'queued' || submission.status === 'paused' || submission.status === 'failed' || ((submission.status === 'dispatching' || submission.status === 'active') && !submission.providerTurnId);
+        if (!cancellable) continue;
+        conversationSubmissions.updateStatus(submission.id, 'cancelled', { resolvedAt: new Date().toISOString() });
+        cancelled += 1;
+      }
+    }
+
+    const runningRuntimeIds = new Set(cleanup.runtimeSessions.filter((session) => session.status === 'running').map((session) => session.id));
+    for (const session of aiRuntimeManager.listSessions()) {
+      if (runningRuntimeIds.has(session.id)) aiRuntimeManager.stopSession(session.id);
+    }
+
+    let removedWorktrees = 0;
+    const environmentIds = new Set<string>();
+    for (const plan of cleanup.workspaces) {
+      if (plan.workspace.worktreePath) {
+        const result = await removeTaskWorktreeForTerminalStatus({
+          repositoryPath: plan.repositoryPath,
+          worktreePath: plan.workspace.worktreePath,
+          force: plan.force,
+        });
+        if (result.removed) removedWorktrees += 1;
+      }
+      const terminalState = plan.workspace.state === 'merged' || plan.workspace.state === 'discarded' ? plan.workspace.state : 'reclaimed';
+      taskWorkspaces.update(plan.workspace.id, {
+        worktreePath: null,
+        headSha: plan.headSha,
+        state: terminalState,
+        lastError: null,
+      });
+      if (plan.workspace.environmentId) environmentIds.add(plan.workspace.environmentId);
+    }
+    for (const environmentId of environmentIds) reconcileTaskEnvironmentState(environmentId);
+
+    for (const conversation of cleanup.conversations) conversations.archive(conversation.id);
+    for (const session of cleanup.runtimeSessions) runtimeSessions.archive(session.id);
+    recordTaskEvent({
+      taskId,
+      eventType: 'task.terminal_resources.cleaned',
+      title: '任务终态资源已清理',
+      payload: {
+        removedWorktrees,
+        archivedConversations: cleanup.conversations.length,
+        archivedRuntimeSessions: cleanup.runtimeSessions.length,
+        interrupted,
+        cancelled,
+      },
+    });
   }
 
   function resolveTaskWorkspaceRequest(taskId: string, workspaceId: string): { task: ZeusTaskRecord; project: ZeusProjectRecord; workspace: ZeusTaskWorkspaceRecord } | { status: 404; error: { error: string; message: string } } {

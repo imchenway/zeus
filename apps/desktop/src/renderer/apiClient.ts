@@ -1414,7 +1414,7 @@ export interface DashboardClient {
   exportGitPatch: () => Promise<GitPatchExport>;
   loadTaskEvents: (taskId: string) => Promise<TaskEventRecord[]>;
   updateTaskStatus: (taskId: string, status: TaskStatus) => Promise<TaskRecord>;
-  updateTaskManagementStatus: (taskId: string, status: TaskManagementStatus, expectedUpdatedAt: string) => Promise<TaskRecord>;
+  updateTaskManagementStatus: (taskId: string, status: TaskManagementStatus, expectedUpdatedAt: string, confirmWorktreeCleanup?: boolean) => Promise<TaskRecord>;
   archiveTask: (taskId: string) => Promise<TaskRecord>;
   restoreTask: (taskId: string) => Promise<TaskRecord>;
   createGitConfirmation: (input: CreateGitConfirmationRequest) => Promise<GitOperationConfirmation>;
@@ -1996,10 +1996,10 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
         method: 'PATCH',
         body: JSON.stringify({ status }),
       }),
-    updateTaskManagementStatus: (taskId, status, expectedUpdatedAt) =>
+    updateTaskManagementStatus: (taskId, status, expectedUpdatedAt, confirmWorktreeCleanup) =>
       request<TaskRecord>(`/api/tasks/${taskId}/management-status`, {
         method: 'PATCH',
-        body: JSON.stringify({ status, expectedUpdatedAt }),
+        body: JSON.stringify({ status, expectedUpdatedAt, ...(confirmWorktreeCleanup === true ? { confirmWorktreeCleanup: true } : {}) }),
       }),
     archiveTask: (taskId) => request<TaskRecord>(`/api/tasks/${taskId}/archive`, { method: 'POST' }),
     restoreTask: (taskId) => request<TaskRecord>(`/api/tasks/${taskId}/restore`, { method: 'POST' }),

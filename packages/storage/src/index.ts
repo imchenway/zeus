@@ -3772,6 +3772,13 @@ export class ConversationRepository {
     });
   }
 
+  listByTask(taskId: string): ZeusConversationWithMessagesRecord[] {
+    return this.db.select<DbConversationRow>(`SELECT ${selectConversationFields} FROM conversations WHERE task_id = ? AND archived = 0 ORDER BY updated_at DESC, id`, [taskId]).map((row) => {
+      const conversation = mapConversationRow(row);
+      return { ...conversation, messages: this.listMessages(conversation.id) };
+    });
+  }
+
   listBySessionId(sessionId: string): ZeusConversationWithMessagesRecord[] {
     return this.db
       .select<DbConversationRow>(
