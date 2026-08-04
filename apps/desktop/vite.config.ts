@@ -22,6 +22,13 @@ export default defineConfig({
               priority: 100,
             },
             {
+              // Markdown 解析链路内部存在互相引用，保持在同一代码包中，避免按全局体积拆分后形成运行时循环依赖。
+              name: 'markdown-runtime',
+              test: /node_modules[\\/](?:react-markdown|remark-[^\\/]+|unified|vfile|unist-util-[^\\/]+|mdast-util-[^\\/]+|hast-util-[^\\/]+|micromark(?:-extension-[^\\/]+)?|html-url-attributes|property-information|space-separated-tokens|comma-separated-tokens|decode-named-character-reference|character-entities[^\\/]*|trim-lines|longest-streak|markdown-table|devlop|bail|trough)[\\/]/u,
+              priority: 95,
+              maxSize: 2 * 1024 * 1024,
+            },
+            {
               name: 'motion-runtime',
               test: /node_modules[\\/](?:framer-motion|motion-dom|motion-utils)[\\/]/u,
               priority: 90,

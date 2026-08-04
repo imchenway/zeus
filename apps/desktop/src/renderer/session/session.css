@@ -830,7 +830,7 @@
     color: var(--session-canvas);
 }
 
-.session-codex-parity-v1 .session-markdown :where(h1, h2, h3, h4, p, ul, ol, blockquote, pre) {
+.session-codex-parity-v1 .session-markdown :where(h1, h2, h3, h4, p, ul, ol, blockquote, pre, table) {
   margin-block: 0 12px;
 }
 
@@ -931,6 +931,119 @@
   color: var(--session-accent);
   text-decoration-thickness: 1px;
   text-underline-offset: 2px;
+}
+
+.session-codex-parity-v1 .session-markdown table {
+  border-collapse: collapse;
+  display: block;
+  inline-size: max-content;
+  max-inline-size: 100%;
+  overflow-x: auto;
+}
+
+.session-codex-parity-v1 .session-markdown :where(th, td) {
+  border: 1px solid var(--session-line);
+  min-inline-size: 104px;
+  padding: 7px 9px;
+  text-align: start;
+  vertical-align: top;
+}
+
+.session-codex-parity-v1 .session-markdown th {
+  background: var(--session-control-hover);
+  color: var(--session-text);
+  font-weight: 620;
+}
+
+.session-codex-parity-v1 .session-markdown tbody tr:nth-child(even) {
+  background: color-mix(in srgb, var(--session-control-hover) 48%, transparent);
+}
+
+.session-codex-parity-v1 .session-markdown .contains-task-list {
+  list-style: none;
+  padding-inline-start: 2px;
+}
+
+.session-codex-parity-v1 .session-markdown .task-list-item {
+  align-items: flex-start;
+  display: flex;
+  gap: 7px;
+}
+
+.session-codex-parity-v1 .session-markdown .task-list-item > input {
+  accent-color: var(--session-accent);
+  block-size: 14px;
+  flex: 0 0 auto;
+  inline-size: 14px;
+  margin: 3px 0 0;
+}
+
+.session-codex-parity-v1 .session-markdown del {
+  color: var(--session-text-muted);
+  text-decoration-thickness: 1px;
+}
+
+.session-codex-parity-v1 .session-markdown-unavailable-resource {
+  color: inherit;
+}
+
+.session-codex-parity-v1 .session-markdown-image {
+  background: var(--session-code);
+  border: 1px solid var(--session-line-soft);
+  border-radius: 10px;
+  color: var(--session-text-muted);
+  display: block;
+  inline-size: min(100%, 720px);
+  margin-block: 4px 14px;
+  min-block-size: 112px;
+  overflow: hidden;
+  padding: 0;
+  position: relative;
+  text-align: start;
+}
+
+.session-codex-parity-v1 .session-markdown-image:hover,
+.session-codex-parity-v1 .session-markdown-image:focus-visible {
+  border-color: var(--session-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--session-accent) 13%, transparent);
+}
+
+.session-codex-parity-v1 .session-markdown-image[data-error='true'] {
+  border-color: color-mix(in srgb, var(--session-danger) 40%, var(--session-line));
+}
+
+.session-codex-parity-v1 .session-markdown-image > img {
+  block-size: auto;
+  display: block;
+  inline-size: 100%;
+  max-block-size: min(62vh, 720px);
+  object-fit: contain;
+}
+
+.session-codex-parity-v1 .session-markdown-image-placeholder {
+  align-items: center;
+  display: flex;
+  gap: 9px;
+  justify-content: center;
+  min-block-size: 112px;
+  padding: 18px;
+}
+
+.session-codex-parity-v1 .session-markdown-image-placeholder > svg {
+  block-size: 22px;
+  flex: 0 0 auto;
+  inline-size: 22px;
+}
+
+.session-codex-parity-v1 .session-markdown-image-unavailable {
+  align-items: center;
+  border: 1px dashed var(--session-line);
+  border-radius: 8px;
+  color: var(--session-text-muted);
+  display: flex;
+  margin-block: 4px 12px;
+  min-block-size: 52px;
+  padding: 10px 12px;
 }
 
 .session-codex-parity-v1 .session-thread-item-actions {

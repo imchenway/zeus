@@ -1,11 +1,13 @@
-import { type FormEvent, Fragment, type KeyboardEvent, type ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { type FormEvent, type KeyboardEvent, type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { CopyIcon as Copy } from '@phosphor-icons/react/dist/csr/Copy';
 import { TerminalWindowIcon as TerminalWindow } from '@phosphor-icons/react/dist/csr/TerminalWindow';
+import Markdown, {type Components} from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { MessageCheckIcon, MessageEditIcon, MessageExpandIcon, MessageThumbIcon } from './SessionMessageIcons.js';
 import type { NativeSessionItemBuffer } from './sessionTypes.js';
 import { autosizeTextarea } from './textareaAutosize.js';
-import type { ConversationFileLocation, ConversationOpenTarget, ConversationResource } from '@zeus/shared';
-import { ConversationInlineResource, ConversationResourceCards } from './ConversationResources.js';
+import type { ConversationFileLocation, ConversationOpenTarget, ConversationResource, ConversationResourcePreview } from '@zeus/shared';
+import { ConversationInlineResource, ConversationMarkdownImage, ConversationResourceCards } from './ConversationResources.js';
 
 export type SessionUiLanguage = 'zh-CN' | 'en-US';
 export type ThreadItemRole = 'user' | 'assistant' | 'commentary' | 'tool' | 'file' | 'request' | 'error' | 'unknown';
@@ -88,6 +90,7 @@ export interface ThreadItemViewProps {
   onEdit?: (item: NativeSessionItemBuffer, content: string) => void | Promise<void>;
   onRetry?: (item: NativeSessionItemBuffer) => void;
   onOpenResource?: (resource: ConversationResource, target: ConversationOpenTarget, location?: ConversationFileLocation) => void | Promise<void>;
+  onLoadResourcePreview?: (resource: ConversationResource) => Promise<ConversationResourcePreview>;
 }
 
 export function ThreadItemView(props: ThreadItemViewProps) {
@@ -222,10 +225,10 @@ export function ThreadItemView(props: ThreadItemViewProps) {
         <CommandExecutionItem item={props.item} language={props.language} />
       ) : commentary && visibleText ? (
         <div ref={commentaryRef} className="session-commentary-flow" data-streaming={(props.item.status !== 'completed' && props.item.status !== 'failed') || undefined}>
-          <SafeMarkdown text={visibleText} language={props.language} resources={props.item.resources} onOpenResource={props.onOpenResource} />
+          <SafeMarkdown text={visibleText} language={props.language} resources={props.item.resources} onOpenResource={props.onOpenResource} onLoadResourcePreview={props.onLoadResourcePreview} />
         </div>
       ) : visibleText ? (
-        <SafeMarkdown text={visibleText} language={props.language} resources={props.item.resources} onOpenResource={props.onOpenResource} />
+        <SafeMarkdown text={visibleText} language={props.language} resources={props.item.resources} onOpenResource={props.onOpenResource} onLoadResourcePreview={props.onLoadResourcePreview} />
       ) : role === 'assistant' && props.item.status !== 'completed' ? (
         <span className="session-thinking-indicator">{labels.thinking}</span>
       ) : null}
@@ -279,21 +282,62 @@ export function SafeMarkdown(props: {
   language?: SessionUiLanguage;
   resources?: ConversationResource[];
   onOpenResource?: (resource: ConversationResource, target: ConversationOpenTarget, location?: ConversationFileLocation) => void | Promise<void>;
+  onLoadResourcePreview?: (resource: ConversationResource) => Promise<ConversationResourcePreview>;
 }) {
   const bounded = boundedMarkdownText(props.text);
   const labels = copy[props.language ?? 'en-US'];
-  const rendered = markdownBlocks(bounded.text, labels.copyCode, labels.copied, labels.complexityTruncated, {
-    language: props.language ?? 'en-US',
-    resources: (props.resources ?? []).filter((resource) => resource.presentation === 'inline'),
-    usedResourceIds: new Set<string>(),
-    onOpenResource: props.onOpenResource,
-  });
+  const resources = props.resources ?? emptyConversationResources;
+  const language = props.language ?? 'en-US';
+  const components = useMemo<Components>(() => ({
+    a({children, href}) {
+      const label = markdownNodeText(children);
+      const resource = matchingInlineResource(resources, label, href ?? '');
+      if (resource) {
+        return <ConversationInlineResource resource={resource} label={label || resource.displayName} language={language} onOpenResource={props.onOpenResource}/>;
+      }
+      if (href?.startsWith('#')) return <a href={href}>{children}</a>;
+      return <span className="session-markdown-unavailable-resource" title={href}>{children}</span>;
+    },
+    img({alt, src, title}) {
+      const label = alt?.trim() || title?.trim() || (language === 'zh-CN' ? '图片' : 'Image');
+      const resource = matchingInlineResource(resources, label, src ?? '');
+      if (!resource || !isImageResource(resource)) {
+        return <span className="session-markdown-image-unavailable" role="img" aria-label={label}>{language === 'zh-CN' ? `图片不可用：${label}` : `Image unavailable: ${label}`}</span>;
+      }
+      return (
+        <ConversationMarkdownImage
+          resource={resource}
+          label={label}
+          language={language}
+          onOpenResource={props.onOpenResource}
+          onLoadResourcePreview={props.onLoadResourcePreview}
+        />
+      );
+    },
+    pre({children}) {
+      const code = markdownNodeText(children);
+      return (
+        <div className="session-code-block">
+          <CopyIconButton label={labels.copyCode} copiedLabel={labels.copied} text={code}/>
+          <pre>{children}</pre>
+        </div>
+      );
+    },
+  }), [labels.copied, labels.copyCode, language, props.onLoadResourcePreview, props.onOpenResource, resources]);
   return (
-    <div className="session-markdown" data-truncated={bounded.truncated || rendered.truncated || undefined}>
-      {rendered.blocks}
+    <div className="session-markdown" data-truncated={bounded.truncated || undefined}>
+      <Markdown
+        components={components}
+        remarkPlugins={[remarkGfm, [limitMarkdownComplexity, {label: labels.complexityTruncated}]]}
+        urlTransform={(url) => url}
+      >
+        {boundMarkdownCodeBlocks(bounded.text)}
+      </Markdown>
     </div>
   );
 }
+
+const emptyConversationResources: ConversationResource[] = [];
 
 export function boundedMarkdownText(text: string): { text: string; truncated: boolean } {
   if (text.length <= MAX_MARKDOWN_CHARACTERS) return { text, truncated: false };
@@ -305,200 +349,93 @@ export function boundedMarkdownBlockText(text: string): { text: string; truncate
   return { text: `${text.slice(0, MAX_MARKDOWN_BLOCK_CHARACTERS)}\n[block truncated]`, truncated: true };
 }
 
-interface MarkdownComplexityBudget {
-  blocks: number;
-  nodes: number;
-  truncated: boolean;
+interface MarkdownAstNode {
+  type: string;
+  children?: MarkdownAstNode[];
 }
 
-interface MarkdownRenderContext {
-  language: SessionUiLanguage;
-  resources: ConversationResource[];
-  usedResourceIds: Set<string>;
-  onOpenResource?: (resource: ConversationResource, target: ConversationOpenTarget, location?: ConversationFileLocation) => void | Promise<void>;
-}
+function limitMarkdownComplexity(options?: {label?: string}) {
+  return (tree: MarkdownAstNode): void => {
+    const rootChildren = tree.children ?? [];
+    let truncated = rootChildren.length > MAX_MARKDOWN_BLOCKS;
+    let remainingNodes = MAX_MARKDOWN_NODES;
 
-function markdownBlocks(
-  text: string,
-  copyCodeLabel: string,
-  copiedLabel: string,
-  complexityTruncatedLabel: string,
-  context: MarkdownRenderContext,
-): {
-  blocks: ReactNode[];
-  truncated: boolean;
-} {
-  const lines = text.replace(/\r\n?/g, '\n').split('\n');
-  const blocks: ReactNode[] = [];
-  const budget: MarkdownComplexityBudget = { blocks: 0, nodes: 0, truncated: false };
-  let index = 0;
-  while (index < lines.length) {
-    const line = lines[index] ?? '';
-    if (!line.trim()) {
-      index += 1;
-      continue;
-    }
-    if (line.startsWith('```')) {
-      if (!beginMarkdownBlock(budget, 4)) break;
-      const language = line.slice(3).trim();
-      const codeLines: string[] = [];
-      let characters = 0;
-      index += 1;
-      while (index < lines.length && !(lines[index] ?? '').startsWith('```')) {
-        const next = lines[index] ?? '';
-        if (characters < MAX_MARKDOWN_BLOCK_CHARACTERS) codeLines.push(next.slice(0, Math.max(0, MAX_MARKDOWN_BLOCK_CHARACTERS - characters)));
-        characters += next.length + 1;
-        index += 1;
+    function limitNode(node: MarkdownAstNode): boolean {
+      if (remainingNodes <= 0) return false;
+      remainingNodes -= 1;
+      if (!node.children) return true;
+      const limitedChildren: MarkdownAstNode[] = [];
+      for (const child of node.children) {
+        if (!limitNode(child)) {
+          truncated = true;
+          break;
+        }
+        limitedChildren.push(child);
       }
-      if (index < lines.length) index += 1;
-      const code = `${codeLines.join('\n')}${characters > MAX_MARKDOWN_BLOCK_CHARACTERS ? '\n[code block truncated]' : ''}`;
-      blocks.push(
-        <div className="session-code-block" key={`code-${index}`}>
-          <CopyIconButton label={copyCodeLabel} copiedLabel={copiedLabel} text={code} />
-          <pre data-language={language || undefined}>
-            <code>{code}</code>
-          </pre>
-        </div>,
-      );
-      continue;
+      if (limitedChildren.length !== node.children.length) truncated = true;
+      node.children = limitedChildren;
+      return true;
     }
-    if (/^\s*([-*_])(?:\s*\1){2,}\s*$/.test(line)) {
-      if (!beginMarkdownBlock(budget)) break;
-      blocks.push(<hr key={`hr-${index}`} />);
-      index += 1;
-      continue;
+
+    tree.children = rootChildren.slice(0, MAX_MARKDOWN_BLOCKS).filter(limitNode);
+    if (tree.children.length !== rootChildren.length) truncated = true;
+    if (truncated) {
+      tree.children.push({
+        type: 'paragraph',
+        children: [{type: 'text', value: options?.label ?? 'Content complexity truncated'} as MarkdownAstNode],
+        data: {hProperties: {className: ['session-markdown-complexity-truncated'], role: 'status'}},
+      } as MarkdownAstNode);
     }
-    const heading = /^(#{1,4})\s+(.+)$/.exec(line);
-    if (heading) {
-      if (!beginMarkdownBlock(budget)) break;
-      const level = heading[1]?.length ?? 1;
-      const content = inlineMarkdown(boundedMarkdownBlockText(heading[2] ?? '').text, `heading-${index}`, budget, context);
-      blocks.push(level === 1 ? <h1 key={`h-${index}`}>{content}</h1> : level === 2 ? <h2 key={`h-${index}`}>{content}</h2> : level === 3 ? <h3 key={`h-${index}`}>{content}</h3> : <h4 key={`h-${index}`}>{content}</h4>);
-      index += 1;
-      if (budget.truncated) break;
-      continue;
-    }
-    if (/^[-*]\s+/.test(line)) {
-      if (!beginMarkdownBlock(budget)) break;
-      const items: ReactNode[] = [];
-      while (index < lines.length && /^[-*]\s+/.test(lines[index] ?? '')) {
-        if (!takeMarkdownNode(budget)) break;
-        const value = boundedMarkdownBlockText((lines[index] ?? '').replace(/^[-*]\s+/, '')).text;
-        items.push(<li key={`li-${index}`}>{inlineMarkdown(value, `li-${index}`, budget, context)}</li>);
-        index += 1;
-        if (budget.truncated) break;
-      }
-      blocks.push(<ul key={`ul-${index}`}>{items}</ul>);
-      if (budget.truncated) break;
-      continue;
-    }
-    if (/^\d+\.\s+/.test(line)) {
-      if (!beginMarkdownBlock(budget)) break;
-      const items: ReactNode[] = [];
-      while (index < lines.length && /^\d+\.\s+/.test(lines[index] ?? '')) {
-        if (!takeMarkdownNode(budget)) break;
-        const value = boundedMarkdownBlockText((lines[index] ?? '').replace(/^\d+\.\s+/, '')).text;
-        items.push(<li key={`oli-${index}`}>{inlineMarkdown(value, `oli-${index}`, budget, context)}</li>);
-        index += 1;
-        if (budget.truncated) break;
-      }
-      blocks.push(<ol key={`ol-${index}`}>{items}</ol>);
-      if (budget.truncated) break;
-      continue;
-    }
-    if (line.startsWith('> ')) {
-      if (!beginMarkdownBlock(budget)) break;
-      blocks.push(<blockquote key={`quote-${index}`}>{inlineMarkdown(boundedMarkdownBlockText(line.slice(2)).text, `quote-${index}`, budget, context)}</blockquote>);
-      index += 1;
-      if (budget.truncated) break;
-      continue;
-    }
-    if (!beginMarkdownBlock(budget)) break;
-    const paragraphLines = [line];
-    index += 1;
-    while (index < lines.length && (lines[index] ?? '').trim() && !startsMarkdownBlock(lines[index] ?? '')) {
-      paragraphLines.push(lines[index] ?? '');
-      index += 1;
-    }
-    blocks.push(<p key={`p-${index}`}>{inlineMarkdown(boundedMarkdownBlockText(paragraphLines.join('\n')).text, `p-${index}`, budget, context)}</p>);
-    if (budget.truncated) break;
-  }
-  if (budget.truncated) {
-    blocks.push(
-      <p className="session-markdown-complexity-truncated" role="status" key="complexity-truncated">
-        {complexityTruncatedLabel}
-      </p>,
-    );
-  }
-  return { blocks, truncated: budget.truncated };
+  };
 }
 
-function beginMarkdownBlock(budget: MarkdownComplexityBudget, nodes = 1): boolean {
-  if (budget.blocks >= MAX_MARKDOWN_BLOCKS || budget.nodes + nodes > MAX_MARKDOWN_NODES) {
-    budget.truncated = true;
-    return false;
-  }
-  budget.blocks += 1;
-  budget.nodes += nodes;
-  return true;
-}
-
-function takeMarkdownNode(budget: MarkdownComplexityBudget): boolean {
-  if (budget.nodes >= MAX_MARKDOWN_NODES) {
-    budget.truncated = true;
-    return false;
-  }
-  budget.nodes += 1;
-  return true;
-}
-
-function startsMarkdownBlock(line: string): boolean {
-  return /^(#{1,4})\s+|^```|^[-*]\s+|^\d+\.\s+|^>\s+/.test(line) || /^\s*([-*_])(?:\s*\1){2,}\s*$/.test(line);
-}
-
-function inlineMarkdown(text: string, keyPrefix: string, budget: MarkdownComplexityBudget, context: MarkdownRenderContext): ReactNode[] {
-  const nodes: ReactNode[] = [];
-  const tokenPattern = /(`[^`\n]+`|\[[^\]\n]+\]\((?:<[^>\n]+>|[^)\n]+)\)|\*\*[^*\n]+\*\*|__[^_\n]+__|\*[^*\n]+\*|_[^_\n]+_)/g;
-  let cursor = 0;
-  let match: RegExpExecArray | null;
-  let tokenIndex = 0;
-  while ((match = tokenPattern.exec(text))) {
-    if (match.index > cursor) {
-      if (!takeMarkdownNode(budget)) break;
-      nodes.push(<Fragment key={`${keyPrefix}-text-${tokenIndex}`}>{text.slice(cursor, match.index)}</Fragment>);
+function boundMarkdownCodeBlocks(text: string): string {
+  const lines = text.replace(/\r\n?/gu, '\n').split('\n');
+  const output: string[] = [];
+  let fence: string | null = null;
+  let codeCharacters = 0;
+  let blockTruncated = false;
+  for (const line of lines) {
+    const marker = /^\s*(`{3,}|~{3,})/u.exec(line)?.[1] ?? null;
+    if (!fence && marker) {
+      fence = marker;
+      codeCharacters = 0;
+      blockTruncated = false;
+      output.push(line);
+      continue;
     }
-    if (!takeMarkdownNode(budget)) break;
-    const token = match[0];
-    if (token.startsWith('`')) nodes.push(<code key={`${keyPrefix}-code-${tokenIndex}`}>{token.slice(1, -1)}</code>);
-    else if (token.startsWith('**') || token.startsWith('__')) nodes.push(<strong key={`${keyPrefix}-strong-${tokenIndex}`}>{token.slice(2, -2)}</strong>);
-    else if (token.startsWith('*') || token.startsWith('_')) nodes.push(<em key={`${keyPrefix}-em-${tokenIndex}`}>{token.slice(1, -1)}</em>);
-    else {
-      const link = /^\[([^\]]+)\]\(([^)]+)\)$/.exec(token);
-      const href = (link?.[2] ?? '').trim().replace(/^<|>$/gu, '');
-      const label = link?.[1] ?? '';
-      const resource = takeMatchingInlineResource(context, label, href);
-      nodes.push(
-        resource ? (
-          <ConversationInlineResource key={`${keyPrefix}-resource-${tokenIndex}`} resource={resource} label={label} language={context.language} onOpenResource={context.onOpenResource} />
-        ) : (
-          <Fragment key={`${keyPrefix}-unsafe-${tokenIndex}`}>{label || token}</Fragment>
-        ),
-      );
+    if (fence && marker?.startsWith(fence[0]!) && marker.length >= fence.length) {
+      if (blockTruncated) output.push('[code block truncated]');
+      output.push(line);
+      fence = null;
+      continue;
     }
-    cursor = match.index + token.length;
-    tokenIndex += 1;
+    if (!fence) {
+      output.push(line);
+      continue;
+    }
+    const remaining = MAX_MARKDOWN_BLOCK_CHARACTERS - codeCharacters;
+    if (remaining > 0) output.push(line.slice(0, remaining));
+    codeCharacters += line.length + 1;
+    if (codeCharacters > MAX_MARKDOWN_BLOCK_CHARACTERS) blockTruncated = true;
   }
-  if (!budget.truncated && cursor < text.length && takeMarkdownNode(budget)) nodes.push(<Fragment key={`${keyPrefix}-tail`}>{text.slice(cursor)}</Fragment>);
-  return nodes;
+  if (fence && blockTruncated) output.push('[code block truncated]');
+  return output.join('\n');
 }
 
-function takeMatchingInlineResource(context: MarkdownRenderContext, label: string, href: string): ConversationResource | null {
-  for (const resource of context.resources) {
-    if (context.usedResourceIds.has(resource.id) || !inlineResourceMatches(resource, label, href)) continue;
-    context.usedResourceIds.add(resource.id);
-    return resource;
-  }
-  return null;
+function markdownNodeText(node: ReactNode): string {
+  if (typeof node === 'string' || typeof node === 'number') return String(node);
+  if (Array.isArray(node)) return node.map(markdownNodeText).join('');
+  if (!node || typeof node !== 'object' || !('props' in node)) return '';
+  return markdownNodeText((node as {props?: {children?: ReactNode}}).props?.children);
+}
+
+function matchingInlineResource(resources: ConversationResource[], label: string, href: string): ConversationResource | null {
+  return resources.find((resource) => resource.presentation === 'inline' && inlineResourceMatches(resource, label, href)) ?? null;
+}
+
+function isImageResource(resource: ConversationResource): boolean {
+  return resource.kind === 'attachment' ? resource.previewKind === 'image' : resource.kind === 'file' && resource.iconKind === 'image';
 }
 
 function inlineResourceMatches(resource: ConversationResource, label: string, href: string): boolean {

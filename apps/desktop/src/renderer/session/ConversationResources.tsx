@@ -23,6 +23,7 @@ import type {
   ConversationOpenTarget,
   ConversationResource,
   ConversationResourceOpenTarget,
+  ConversationResourcePreview,
 } from '@zeus/shared';
 import {
   listConversationResourceOpenTargetsInMain,
@@ -35,6 +36,7 @@ export interface ConversationResourceInteraction {
     target: ConversationOpenTarget,
     location?: ConversationFileLocation,
   ) => void | Promise<void>;
+  onLoadResourcePreview?: (resource: ConversationResource) => Promise<ConversationResourcePreview>;
 }
 
 export function ConversationInlineResource(
@@ -85,6 +87,109 @@ export function ConversationInlineResource(
       </button>
       {error ? <span className="session-sr-only" role="alert">{error}</span> : null}
     </span>
+  );
+}
+
+export function ConversationMarkdownImage(
+  props: ConversationResourceInteraction & {
+    resource: ConversationResource;
+    label: string;
+    language: SessionUiLanguage;
+  },
+) {
+  const rootRef = useRef<HTMLButtonElement | null>(null);
+  const [visible, setVisible] = useState(false);
+  const [preview, setPreview] = useState<Extract<ConversationResourcePreview, {kind: 'image'}> | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [opening, setOpening] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root || visible) return;
+    if (typeof IntersectionObserver === 'undefined') {
+      setVisible(true);
+      return;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (!entries.some((entry) => entry.isIntersecting)) return;
+        setVisible(true);
+        observer.disconnect();
+      },
+      {rootMargin: '240px'},
+    );
+    observer.observe(root);
+    return () => observer.disconnect();
+  }, [visible]);
+
+  useEffect(() => {
+    setPreview(null);
+    setError(null);
+  }, [props.resource.id]);
+
+  useEffect(() => {
+    if (!visible || !props.onLoadResourcePreview) return;
+    let active = true;
+    setLoading(true);
+    void props.onLoadResourcePreview(props.resource)
+      .then((result) => {
+        if (!active) return;
+        if (result.kind !== 'image') throw new Error(props.language === 'zh-CN' ? '该资源不是可预览图片。' : 'This resource is not a previewable image.');
+        setPreview(result);
+      })
+      .catch((loadError) => {
+        if (active) setError(loadError instanceof Error ? loadError.message : String(loadError));
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [props.language, props.onLoadResourcePreview, props.resource, visible]);
+
+  async function open(): Promise<void> {
+    if (!props.onOpenResource || opening) return;
+    setOpening(true);
+    setError(null);
+    try {
+      await props.onOpenResource(props.resource, defaultOpenTarget(props.resource));
+    } catch (openError) {
+      setError(openError instanceof Error ? openError.message : String(openError));
+    } finally {
+      setOpening(false);
+    }
+  }
+
+  const unavailable = !props.onLoadResourcePreview;
+  const status = error
+    ? (props.language === 'zh-CN' ? '图片无法预览，仍可尝试打开' : 'Image preview unavailable; you can still try to open it')
+    : unavailable
+      ? (props.language === 'zh-CN' ? '图片预览不可用' : 'Image preview unavailable')
+      : loading || !preview
+        ? (props.language === 'zh-CN' ? '正在加载图片' : 'Loading image')
+        : props.label;
+
+  return (
+    <button
+      ref={rootRef}
+      type="button"
+      className="session-markdown-image"
+      aria-label={`${props.language === 'zh-CN' ? '在 Zeus 中预览' : 'Preview in Zeus'}：${props.label}`}
+      aria-busy={loading || opening || undefined}
+      data-error={Boolean(error) || undefined}
+      title={error ?? props.resource.displayName}
+      onClick={() => void open()}
+    >
+      {preview ? <img src={preview.dataUrl} alt={props.label} loading="lazy"/> : (
+        <span className="session-markdown-image-placeholder" role="status">
+          <FileImage aria-hidden="true" weight="duotone"/>
+          <span>{status}</span>
+        </span>
+      )}
+      {preview ? <span className="session-sr-only">{status}</span> : null}
+    </button>
   );
 }
 
