@@ -99,6 +99,7 @@ export interface TaskWorkspaceCopy {
   aiDetected: string;
   aiNotConfigured: string;
   openTaskDetail: string;
+  openRunStatusConversationAria: (taskTitle: string, runStatus: string) => string;
   taskCountPrefix: string;
   filteredState: string;
   allState: string;
@@ -175,6 +176,7 @@ export interface TaskWorkspaceProps {
   onSaveTaskTableLayout?: () => void;
   onCreateTask: () => void;
   onOpenTaskDetail: (taskId: string) => void;
+  onOpenTaskConversation?: (taskId: string, conversationId: string) => void;
   onToggleTaskSelection?: (taskId: string, selected: boolean) => void;
   onToggleAllVisibleTaskSelection?: (taskIds: string[], selected: boolean) => void;
   onClearTaskSelection?: () => void;
@@ -916,6 +918,7 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
               const task = row.task;
               const managementStatus = resolveTaskManagementStatus(task);
               const runStatus = row.cells.runStatus.sortValue as TaskAgentRunStatus;
+              const runStatusConversationId = row.runStatusConversationId;
               return (
                 <div
                   key={task.id}
@@ -963,10 +966,25 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
                             />
                           </span>
                         ) : columnKey === 'runStatus' ? (
-                          <span className={`task-status-chip task-run-status-chip task-status-tone-${taskRunStatusTone(runStatus)}`}>
-                            {animatedTaskRunStatuses.has(runStatus) ? <CircleNotch className="session-conversation-state-spinner task-run-status-spinner" aria-hidden="true" /> : null}
-                            <strong>{cell.primary}</strong>
-                          </span>
+                          runStatusConversationId && props.onOpenTaskConversation ? (
+                            <button
+                              type="button"
+                              className={`task-status-chip task-run-status-chip task-run-status-action task-status-tone-${taskRunStatusTone(runStatus)}`}
+                              aria-label={props.copy.openRunStatusConversationAria(task.title, cell.primary)}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                props.onOpenTaskConversation?.(task.id, runStatusConversationId);
+                              }}
+                            >
+                              {animatedTaskRunStatuses.has(runStatus) ? <CircleNotch className="session-conversation-state-spinner task-run-status-spinner" aria-hidden="true" /> : null}
+                              <strong>{cell.primary}</strong>
+                            </button>
+                          ) : (
+                            <span className={`task-status-chip task-run-status-chip task-status-tone-${taskRunStatusTone(runStatus)}`}>
+                              {animatedTaskRunStatuses.has(runStatus) ? <CircleNotch className="session-conversation-state-spinner task-run-status-spinner" aria-hidden="true" /> : null}
+                              <strong>{cell.primary}</strong>
+                            </span>
+                          )
                         ) : columnKey === 'priority' ? (
                           <span className={`task-status-chip task-priority-chip task-status-tone-${taskPriorityTone(cell.sortValue)}`}>
                             <strong>{cell.primary}</strong>
