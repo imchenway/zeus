@@ -18,6 +18,7 @@ export type TaskWorkspaceEmptyState = 'empty' | 'no-results' | undefined;
 export type TaskRowAction = 'open-detail';
 export type TaskTableColumnMoveDirection = 'up' | 'down';
 export type TaskTableColumnDropPosition = 'before' | 'after';
+export type TaskBranchStatus = 'action_required' | 'active' | 'pushed' | 'merged' | 'discarded' | 'not_created';
 export type TaskNextActionLabels = Partial<Record<TaskStatus, string>>;
 export type TaskSourceLabels = Partial<Record<string, string>>;
 export type { TaskAgentRunStatus } from '../apiClient.js';
@@ -39,6 +40,7 @@ export const defaultTaskTableColumnOrder: TaskTableColumnKey[] = [
   'code',
   'intent',
   'managementStatus',
+  'branchStatus',
   'runStatus',
   'source',
   'createdAt',
@@ -51,11 +53,12 @@ export const defaultTaskTableColumnOrder: TaskTableColumnKey[] = [
   'rawId',
   'createdFrom',
 ];
-export const defaultVisibleTaskTableColumns: TaskTableColumnKey[] = ['code', 'intent', 'managementStatus', 'runStatus', 'source', 'createdAt', 'updatedAt'];
+export const defaultVisibleTaskTableColumns: TaskTableColumnKey[] = ['code', 'intent', 'managementStatus', 'branchStatus', 'runStatus', 'source', 'createdAt', 'updatedAt'];
 export const defaultTaskTableColumnWidths: Record<TaskTableColumnKey, number> = {
   code: 112,
   intent: 280,
   managementStatus: 112,
+  branchStatus: 128,
   runStatus: 132,
   source: 120,
   updatedAt: 148,
@@ -73,6 +76,24 @@ export const defaultTaskTableEnumSortOrders: TaskTableEnumSortOrders = {
   managementStatus: ['todo', 'in_development', 'in_testing', 'awaiting_acceptance', 'blocked', 'completed', 'cancelled'],
   runStatus: ['not_started', 'connecting', 'reconnecting', 'running', 'waiting_user', 'waiting_approval', 'paused', 'idle', 'failed', 'legacy_readonly'],
 };
+const taskBranchStatusSortOrder: TaskBranchStatus[] = ['action_required', 'active', 'pushed', 'merged', 'discarded', 'not_created'];
+const preBranchStatusDefaultTaskTableColumnOrder: TaskTableColumnKey[] = [
+  'code',
+  'intent',
+  'managementStatus',
+  'runStatus',
+  'source',
+  'createdAt',
+  'updatedAt',
+  'template',
+  'project',
+  'priority',
+  'description',
+  'runtimeSession',
+  'rawId',
+  'createdFrom',
+];
+const preBranchStatusDefaultVisibleTaskTableColumns: TaskTableColumnKey[] = ['code', 'intent', 'managementStatus', 'runStatus', 'source', 'createdAt', 'updatedAt'];
 const previousDefaultTaskTableColumnOrder: TaskTableColumnKey[] = [
   'code',
   'intent',
@@ -169,10 +190,14 @@ export function normalizeTaskTableColumnPreferences(input?: unknown): TaskTableC
   const order = normalizeColumnKeys(migrateLegacyTaskTableColumnKeys(preferences.columnOrder), defaultTaskTableColumnOrder);
   if (hasLegacyColumns) visibleWithRequired = placeStatusColumnsAfterIntent(visibleWithRequired);
   let migratedOrder = hasLegacyColumns ? placeStatusColumnsAfterIntent(order) : order;
-  const usesPreviousDefault = arraysEqual(visibleWithRequired, previousDefaultVisibleTaskTableColumns) && arraysEqual(migratedOrder, previousDefaultTaskTableColumnOrder);
+  const usesPreviousDefault =
+    (arraysEqual(visibleWithRequired, preBranchStatusDefaultVisibleTaskTableColumns) && arraysEqual(migratedOrder, preBranchStatusDefaultTaskTableColumnOrder)) ||
+    (arraysEqual(visibleWithRequired, previousDefaultVisibleTaskTableColumns) && arraysEqual(migratedOrder, previousDefaultTaskTableColumnOrder));
   if (usesPreviousDefault) {
     visibleWithRequired = [...defaultVisibleTaskTableColumns];
     migratedOrder = [...defaultTaskTableColumnOrder];
+  } else {
+    migratedOrder = insertMissingBranchStatusAfterManagementStatus(migratedOrder);
   }
   const columnWidths = normalizeColumnWidths(preferences.columnWidths);
   const sort = normalizeTaskTableSortState(preferences.sort);
@@ -183,6 +208,13 @@ export function normalizeTaskTableColumnPreferences(input?: unknown): TaskTableC
   };
   if (columnWidths) normalized.columnWidths = columnWidths;
   return normalized;
+}
+
+function insertMissingBranchStatusAfterManagementStatus(keys: TaskTableColumnKey[]): TaskTableColumnKey[] {
+  if (keys.includes('branchStatus')) return keys;
+  const managementStatusIndex = keys.indexOf('managementStatus');
+  const insertIndex = managementStatusIndex >= 0 ? managementStatusIndex + 1 : 0;
+  return [...keys.slice(0, insertIndex), 'branchStatus', ...keys.slice(insertIndex)];
 }
 
 function arraysEqual(left: readonly TaskTableColumnKey[], right: readonly TaskTableColumnKey[]): boolean {
@@ -383,7 +415,16 @@ export function createTaskWorkspaceViewModel(input: TaskWorkspaceViewModelInput)
     bulkSelected: false,
     action: 'open-detail' as const,
     minHitArea: 44,
-    cells: buildTaskTableCells(task, input.runtimeSessions ?? [], input.projectName, input.taskConversations?.[task.id] ?? [], input.conversationRunStatuses ?? {}, input.managementStatusLabels, input.runStatusLabels),
+    cells: buildTaskTableCells(
+      task,
+      input.runtimeSessions ?? [],
+      input.projectName,
+      input.taskConversations?.[task.id] ?? [],
+      input.conversationRunStatuses ?? {},
+      input.managementStatusLabels,
+      input.runStatusLabels,
+      input.appLanguage === 'en-US',
+    ),
   }));
   const rows = sortTaskRows(unsortedRows, columnPreferences.sort, enumSortOrders, input.appLanguage ?? 'zh-CN');
   const visibleTasks = rows.map((row) => row.task);
@@ -449,6 +490,7 @@ function sortTaskRows(rows: TaskRowViewModel[], sort: TaskTableSortState, enumSo
 function resolveTaskTableEnumOrder(columnKey: TaskTableColumnKey, orders: TaskTableEnumSortOrders): readonly string[] | undefined {
   if (columnKey === 'priority') return orders.priority;
   if (columnKey === 'managementStatus') return orders.managementStatus;
+  if (columnKey === 'branchStatus') return taskBranchStatusSortOrder;
   if (columnKey === 'runStatus') return orders.runStatus;
   return undefined;
 }
@@ -578,19 +620,23 @@ function buildTaskTableCells(
   conversationRunStatuses: Record<string, TaskAgentRunStatus>,
   managementStatusLabels?: Partial<Record<TaskManagementStatus, string>>,
   runStatusLabels?: Partial<Record<TaskAgentRunStatus, string>>,
+  english = false,
 ): Record<TaskTableColumnKey, TaskTableCellViewModel> {
   const taskRuntimeSession = findLinkedRuntimeSession(task, runtimeSessions);
   const displayProjectName = projectName?.trim() || '当前项目';
   const runStatus = resolveTaskAgentRunStatus(conversations, conversationRunStatuses);
   const managementStatus = resolveTaskManagementStatus(task);
-  const deliveryStatus = resolveTaskDeliveryStatus(conversations, managementStatusLabels?.todo === 'Todo');
+  const branchStatus = resolveTaskBranchStatus(conversations);
   return {
     code: { primary: task.taskCode || task.id, sortValue: task.taskCode || task.id },
     intent: { primary: task.title, sortValue: task.title },
     managementStatus: {
       primary: formatTaskManagementStatus(managementStatus, managementStatusLabels),
-      secondary: deliveryStatus,
       sortValue: managementStatus,
+    },
+    branchStatus: {
+      primary: formatTaskBranchStatus(branchStatus, english),
+      sortValue: branchStatus,
     },
     runStatus: { primary: formatTaskAgentRunStatus(runStatus, runStatusLabels), sortValue: runStatus },
     source: { primary: formatTaskSource(task), sortValue: formatTaskSource(task) },
@@ -610,7 +656,7 @@ function buildTaskTableCells(
   };
 }
 
-function resolveTaskDeliveryStatus(conversations: NativeConversationChoice[], english: boolean): string | undefined {
+export function resolveTaskBranchStatus(conversations: NativeConversationChoice[]): TaskBranchStatus {
   const workspaces = Array.from(
     new Map(
       conversations
@@ -619,11 +665,24 @@ function resolveTaskDeliveryStatus(conversations: NativeConversationChoice[], en
         .map((workspace) => [workspace.id, workspace]),
     ).values(),
   );
-  if (workspaces.length === 0) return undefined;
-  if (workspaces.every((workspace) => workspace.state === 'merged')) return english ? 'Code merged' : '代码已合入';
-  if (workspaces.some((workspace) => workspace.state === 'reclaimed' || workspace.state === 'merged')) return english ? 'Branch pushed' : '分支已推送';
-  if (workspaces.some((workspace) => workspace.state === 'failed')) return english ? 'Git action needed' : 'Git 待处理';
-  return english ? 'Development branch active' : '开发分支进行中';
+  if (workspaces.length === 0) return 'not_created';
+  if (workspaces.some((workspace) => workspace.state === 'failed')) return 'action_required';
+  if (workspaces.some((workspace) => workspace.state === 'ready')) return 'active';
+  if (workspaces.some((workspace) => workspace.state === 'reclaimed')) return 'pushed';
+  if (workspaces.some((workspace) => workspace.state === 'merged')) return 'merged';
+  return 'discarded';
+}
+
+function formatTaskBranchStatus(status: TaskBranchStatus, english: boolean): string {
+  const labels: Record<TaskBranchStatus, [string, string]> = {
+    action_required: ['Git 待处理', 'Git action needed'],
+    active: ['开发中', 'In development'],
+    pushed: ['已推送，待合入', 'Pushed, awaiting merge'],
+    merged: ['已合入', 'Merged'],
+    discarded: ['已放弃', 'Discarded'],
+    not_created: ['未创建', 'Not created'],
+  };
+  return labels[status][english ? 1 : 0];
 }
 
 function parseTaskDateSortValue(value: string | undefined): number | null {

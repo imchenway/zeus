@@ -32,7 +32,22 @@ export type { CommandArtifact, CommandConfirmation, CommandDefinition, CommandDe
 
 export type TaskStatus = 'draft' | 'ready' | 'running' | 'paused' | 'waiting_confirmation' | 'completed' | 'failed' | 'cancelled';
 export type TaskAgentRunStatus = 'not_started' | 'connecting' | 'reconnecting' | 'running' | 'waiting_user' | 'waiting_approval' | 'paused' | 'idle' | 'failed' | 'legacy_readonly';
-export type TaskTableColumnKey = 'code' | 'intent' | 'managementStatus' | 'runStatus' | 'source' | 'updatedAt' | 'createdAt' | 'template' | 'project' | 'priority' | 'description' | 'runtimeSession' | 'rawId' | 'createdFrom';
+export type TaskTableColumnKey =
+  | 'code'
+  | 'intent'
+  | 'managementStatus'
+  | 'branchStatus'
+  | 'runStatus'
+  | 'source'
+  | 'updatedAt'
+  | 'createdAt'
+  | 'template'
+  | 'project'
+  | 'priority'
+  | 'description'
+  | 'runtimeSession'
+  | 'rawId'
+  | 'createdFrom';
 export type TaskTableColumnWidth = number;
 export type TaskTableSortDirection = 'asc' | 'desc';
 

@@ -689,7 +689,7 @@ interface UpdateRuntimeSettingsBody {
 
 type AppAppearance = 'system' | 'light' | 'dark';
 type AppLanguage = 'zh-CN' | 'en-US';
-type TaskTableColumnKey = 'code' | 'intent' | 'managementStatus' | 'runStatus' | 'source' | 'updatedAt' | 'createdAt' | 'template' | 'project' | 'priority' | 'description' | 'runtimeSession' | 'rawId' | 'createdFrom';
+type TaskTableColumnKey = 'code' | 'intent' | 'managementStatus' | 'branchStatus' | 'runStatus' | 'source' | 'updatedAt' | 'createdAt' | 'template' | 'project' | 'priority' | 'description' | 'runtimeSession' | 'rawId' | 'createdFrom';
 type TaskTableColumnWidth = number;
 type TaskTableSortDirection = 'asc' | 'desc';
 type TaskAgentRunStatus = 'not_started' | 'connecting' | 'reconnecting' | 'running' | 'waiting_user' | 'waiting_approval' | 'paused' | 'idle' | 'failed' | 'legacy_readonly';
@@ -712,12 +712,29 @@ interface TaskTableEnumSortOrders {
   runStatus: TaskAgentRunStatus[];
 }
 
-const defaultTaskTableColumnOrder: TaskTableColumnKey[] = ['code', 'intent', 'managementStatus', 'runStatus', 'source', 'createdAt', 'updatedAt', 'template', 'project', 'priority', 'description', 'runtimeSession', 'rawId', 'createdFrom'];
-const defaultVisibleTaskTableColumns: TaskTableColumnKey[] = ['code', 'intent', 'managementStatus', 'runStatus', 'source', 'createdAt', 'updatedAt'];
+const defaultTaskTableColumnOrder: TaskTableColumnKey[] = [
+  'code',
+  'intent',
+  'managementStatus',
+  'branchStatus',
+  'runStatus',
+  'source',
+  'createdAt',
+  'updatedAt',
+  'template',
+  'project',
+  'priority',
+  'description',
+  'runtimeSession',
+  'rawId',
+  'createdFrom',
+];
+const defaultVisibleTaskTableColumns: TaskTableColumnKey[] = ['code', 'intent', 'managementStatus', 'branchStatus', 'runStatus', 'source', 'createdAt', 'updatedAt'];
 const defaultTaskTableColumnWidths: Record<TaskTableColumnKey, number> = {
   code: 112,
   intent: 280,
   managementStatus: 112,
+  branchStatus: 128,
   runStatus: 132,
   source: 120,
   updatedAt: 148,
@@ -740,6 +757,23 @@ const defaultTaskTableEnumSortOrders: TaskTableEnumSortOrders = {
   managementStatus: ['todo', 'in_development', 'in_testing', 'awaiting_acceptance', 'blocked', 'completed', 'cancelled'],
   runStatus: ['not_started', 'connecting', 'reconnecting', 'running', 'waiting_user', 'waiting_approval', 'paused', 'idle', 'failed', 'legacy_readonly'],
 };
+const preBranchStatusDefaultTaskTableColumnOrder: TaskTableColumnKey[] = [
+  'code',
+  'intent',
+  'managementStatus',
+  'runStatus',
+  'source',
+  'createdAt',
+  'updatedAt',
+  'template',
+  'project',
+  'priority',
+  'description',
+  'runtimeSession',
+  'rawId',
+  'createdFrom',
+];
+const preBranchStatusDefaultVisibleTaskTableColumns: TaskTableColumnKey[] = ['code', 'intent', 'managementStatus', 'runStatus', 'source', 'createdAt', 'updatedAt'];
 const previousDefaultTaskTableColumnOrder: TaskTableColumnKey[] = [
   'code',
   'intent',
@@ -777,10 +811,14 @@ function normalizeTaskTableColumnPreferences(value: unknown): TaskTableColumnPre
   const order = normalizeTaskTableColumnKeys(migrateLegacyTaskTableColumnKeys(input.columnOrder), defaultTaskTableColumnOrder);
   if (hasLegacyColumns) visibleWithRequired = placeStatusColumnsAfterIntent(visibleWithRequired);
   let migratedOrder = hasLegacyColumns ? placeStatusColumnsAfterIntent(order) : order;
-  const usesPreviousDefault = taskTableColumnArraysEqual(visibleWithRequired, previousDefaultVisibleTaskTableColumns) && taskTableColumnArraysEqual(migratedOrder, previousDefaultTaskTableColumnOrder);
+  const usesPreviousDefault =
+    (taskTableColumnArraysEqual(visibleWithRequired, preBranchStatusDefaultVisibleTaskTableColumns) && taskTableColumnArraysEqual(migratedOrder, preBranchStatusDefaultTaskTableColumnOrder)) ||
+    (taskTableColumnArraysEqual(visibleWithRequired, previousDefaultVisibleTaskTableColumns) && taskTableColumnArraysEqual(migratedOrder, previousDefaultTaskTableColumnOrder));
   if (usesPreviousDefault) {
     visibleWithRequired = [...defaultVisibleTaskTableColumns];
     migratedOrder = [...defaultTaskTableColumnOrder];
+  } else {
+    migratedOrder = insertMissingBranchStatusAfterManagementStatus(migratedOrder);
   }
   const columnWidths = normalizeTaskTableColumnWidths(input.columnWidths);
   const sort = normalizeTaskTableSortState(input.sort);
@@ -793,6 +831,13 @@ function normalizeTaskTableColumnPreferences(value: unknown): TaskTableColumnPre
   };
   if (columnWidths) normalized.columnWidths = columnWidths;
   return normalized;
+}
+
+function insertMissingBranchStatusAfterManagementStatus(keys: TaskTableColumnKey[]): TaskTableColumnKey[] {
+  if (keys.includes('branchStatus')) return keys;
+  const managementStatusIndex = keys.indexOf('managementStatus');
+  const insertIndex = managementStatusIndex >= 0 ? managementStatusIndex + 1 : 0;
+  return [...keys.slice(0, insertIndex), 'branchStatus', ...keys.slice(insertIndex)];
 }
 
 function taskTableColumnArraysEqual(left: readonly TaskTableColumnKey[], right: readonly TaskTableColumnKey[]): boolean {

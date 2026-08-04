@@ -9949,6 +9949,7 @@ a {
 
 .macos-ai-app .task-table-intent-cell,
 .macos-ai-app .task-table-managementStatus-cell,
+.macos-ai-app .task-table-branchStatus-cell,
 .macos-ai-app .task-table-runStatus-cell,
 .macos-ai-app .task-table-source-cell,
 .macos-ai-app .task-table-updatedAt-cell,
@@ -9967,6 +9968,7 @@ a {
 .macos-ai-app
   :where(
     .task-table-managementStatus-cell,
+    .task-table-branchStatus-cell,
     .task-table-runStatus-cell,
     .task-table-source-cell,
     .task-table-updatedAt-cell,
