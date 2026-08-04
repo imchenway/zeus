@@ -754,7 +754,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
           sandbox: profile.sandbox,
           approvalPolicy: profile.approvalPolicy,
           approvalsReviewer: profile.approvalsReviewer,
-          developerInstructions: developerInstructionsFor(context),
+          developerInstructions: developerInstructionsFor(context, options.browserAutomation !== undefined),
           ephemeral: context.ephemeral,
           ...(options.browserAutomation ? { dynamicTools: zeusBrowserDynamicTools() } : {}),
         });
@@ -2763,11 +2763,17 @@ function replayResolvedRequest(request: NonNullable<ReturnType<ConversationServe
   } as CodexServerRequestResponse;
 }
 
-function developerInstructionsFor(context: ConversationDispatchContext): string {
-  if (context.applyLegacyTaskGuards === false) return '';
+function developerInstructionsFor(context: ConversationDispatchContext, browserToolsAvailable: boolean): string {
   const instructions: string[] = [];
-  if (!context.allowTests) instructions.push('不得运行会修改项目状态的测试。');
-  if (!context.allowGitCommit) instructions.push('不得执行 git commit、push、merge、rebase、reset、revert、stash、checkout -b 或其他 Git 历史修改动作。');
+  if (browserToolsAvailable) {
+    instructions.push(
+      '用户未明确指定其他浏览器时，在 Zeus 会话中执行网页打开、导航、点击、输入、页面检查或截图，必须优先使用当前会话的 zeus_browser 动态工具。不得把 Codex Browser 插件返回的浏览器列表为空视为 Zeus 内置浏览器不可用，也不得因此改用外部 Playwright。用户明确点名其他浏览器时，尊重该选择并如实报告其可用性。',
+    );
+  }
+  if (context.applyLegacyTaskGuards !== false) {
+    if (!context.allowTests) instructions.push('不得运行会修改项目状态的测试。');
+    if (!context.allowGitCommit) instructions.push('不得执行 git commit、push、merge、rebase、reset、revert、stash、checkout -b 或其他 Git 历史修改动作。');
+  }
   return instructions.join('\n');
 }
 
