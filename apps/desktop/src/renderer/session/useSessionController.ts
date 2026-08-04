@@ -9,6 +9,7 @@ import {
   type NativeConversationAttachment,
   type NativeConversationEvent,
   type NativeConversationSnapshot,
+  type NativeNextTurnSettings,
   type NativeOperationAcceptance,
   type NativePendingRequest,
   type NativePermissionMode,
@@ -47,6 +48,7 @@ export interface SessionControllerClient {
   updateNativePermissionMode(projectId: string, conversationId: string, permissionMode: NativePermissionMode): Promise<NativeConversationSnapshot>;
 
   updateNativeCollaborationMode(projectId: string, conversationId: string, collaborationMode: NativeCollaborationMode): Promise<NativeConversationSnapshot>;
+  updateNativeNextTurnSettings(projectId: string, conversationId: string, settings: NativeNextTurnSettings): Promise<NativeNextTurnSettings>;
   connectEvents(onEvent: (event: NativeRealtimeEventEnvelope) => void, options?: { afterEventId?: string }): WebSocket;
   sendNativeMessage(projectId: string, conversationId: string, input: SendNativeMessageRequest): Promise<NativeOperationAcceptance>;
   editNativeQueuedSubmission(projectId: string, conversationId: string, submissionId: string, content: string): Promise<NativeQueueSnapshot>;
@@ -127,6 +129,7 @@ export interface SessionController {
   setPermissionMode(permissionMode: NativePermissionMode): Promise<NativeConversationSnapshot>;
 
   setCollaborationMode(collaborationMode: NativeCollaborationMode): Promise<NativeConversationSnapshot>;
+  setNextTurnSettings(settings: NativeNextTurnSettings): Promise<NativeNextTurnSettings>;
 }
 
 interface PendingSendEnvelope {
@@ -142,6 +145,7 @@ interface PendingSendEnvelope {
   model?: string;
   effort?: string;
   serviceTier?: string | null;
+  permissionMode?: NativePermissionMode;
   collaborationMode: NativeCollaborationMode;
   idempotencyKey: string;
   clientUserMessageId: string;
@@ -776,10 +780,14 @@ export function createSessionController(options: CreateSessionControllerOptions)
         (snapshot) => dispatch({ type: 'snapshot_hydrated', snapshot: withoutResolvedRequests(snapshot) }),
       );
     },
+    setNextTurnSettings(settings) {
+      return options.client.updateNativeNextTurnSettings(options.projectId, options.conversationId, settings);
+    },
     send(delivery, expectedTurnId, settings) {
       if (recoveryRequired) return Promise.reject(sessionWriteBlockedError(recoveryRequired));
       const normalizedExpectedTurnId = expectedTurnId || undefined;
       const requestedCollaborationMode = settings?.collaborationMode ?? state.snapshot?.collaborationMode ?? 'default';
+      const requestedPermissionMode = settings?.permissionMode ?? state.snapshot?.nextTurnSettings?.permissionMode ?? state.snapshot?.permissionMode;
       if (activeOperation) {
         const pendingOperation = pendingSend ? `send:${pendingSend.fingerprint}` : null;
         if (
@@ -790,6 +798,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
           pendingSend.model === settings?.model &&
           pendingSend.effort === settings?.effort &&
           pendingSend.serviceTier === settings?.serviceTier &&
+          pendingSend.permissionMode === requestedPermissionMode &&
           pendingSend.collaborationMode === requestedCollaborationMode
         ) {
           return activeOperation.promise as Promise<NativeOperationAcceptance>;
@@ -816,6 +825,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
         ...(appliedSettings?.model ? { model: appliedSettings.model } : {}),
         ...(appliedSettings?.effort ? { effort: appliedSettings.effort } : {}),
         ...(appliedSettings && Object.prototype.hasOwnProperty.call(appliedSettings, 'serviceTier') ? { serviceTier: appliedSettings.serviceTier } : {}),
+        ...(appliedSettings ? { permissionMode: appliedSettings.permissionMode } : {}),
         collaborationMode: requestedCollaborationMode,
       });
       if (!pendingSend || pendingSend.fingerprint !== fingerprint) {
@@ -832,6 +842,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
           pendingSend.expectedTurnId === normalizedExpectedTurnId &&
           pendingSend.model === appliedSettings?.model &&
           pendingSend.effort === appliedSettings?.effort &&
+          pendingSend.permissionMode === (appliedSettings ? appliedSettings.permissionMode : undefined) &&
           pendingSend.collaborationMode === requestedCollaborationMode
             ? pendingSend
             : null;
@@ -848,6 +859,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
           ...(appliedSettings?.model ? { model: appliedSettings.model } : {}),
           ...(appliedSettings?.effort ? { effort: appliedSettings.effort } : {}),
           ...(appliedSettings && Object.prototype.hasOwnProperty.call(appliedSettings, 'serviceTier') ? { serviceTier: appliedSettings.serviceTier } : {}),
+          ...(appliedSettings ? { permissionMode: appliedSettings.permissionMode } : {}),
           collaborationMode: requestedCollaborationMode,
           // provider 尚未接受的失败提交只调整服务档位时，沿用原幂等身份重试。
           idempotencyKey: reusableIdentity?.idempotencyKey ?? createId(),
@@ -889,6 +901,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
               ...(envelope.model ? { model: envelope.model } : {}),
               ...(envelope.effort ? { effort: envelope.effort } : {}),
               ...(Object.prototype.hasOwnProperty.call(envelope, 'serviceTier') ? { serviceTier: envelope.serviceTier } : {}),
+              ...(envelope.permissionMode ? { permissionMode: envelope.permissionMode } : {}),
               collaborationMode: envelope.collaborationMode,
               idempotencyKey: envelope.idempotencyKey,
               clientUserMessageId: envelope.clientUserMessageId,
@@ -1081,6 +1094,7 @@ function isPendingSendEnvelope(value: unknown): value is PendingSendEnvelope {
     (pending.model === undefined || typeof pending.model === 'string') &&
     (pending.effort === undefined || typeof pending.effort === 'string') &&
     (pending.serviceTier === undefined || pending.serviceTier === null || typeof pending.serviceTier === 'string') &&
+    (pending.permissionMode === undefined || pending.permissionMode === 'read-only' || pending.permissionMode === 'auto' || pending.permissionMode === 'full-access') &&
     (pending.collaborationMode === undefined || pending.collaborationMode === 'default' || pending.collaborationMode === 'plan') &&
     typeof pending.idempotencyKey === 'string' &&
     typeof pending.clientUserMessageId === 'string' &&

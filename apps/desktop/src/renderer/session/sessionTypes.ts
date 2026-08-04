@@ -140,6 +140,14 @@ export interface NativeProviderSettingsSnapshot {
   serviceTier?: string | null;
 }
 
+export interface NativeNextTurnSettings {
+  model: string;
+  effort?: string;
+  serviceTier?: string | null;
+  permissionMode: NativePermissionMode;
+  collaborationMode: NativeCollaborationMode;
+}
+
 export interface NativeTokenUsageSnapshot {
   generationId?: string;
   sequence?: number;
@@ -197,6 +205,7 @@ export interface NativeConversationSnapshot {
   requests: NativePendingRequest[];
   planImplementationRequests: NativePlanImplementationRequest[];
   providerSettings?: NativeProviderSettingsSnapshot;
+  nextTurnSettings?: NativeNextTurnSettings;
   tokenUsage?: NativeTokenUsageSnapshot;
   rateLimits?: NativeProviderValueSnapshot;
   mcpStartup?: NativeProviderValueSnapshot;
@@ -576,6 +585,7 @@ export interface NativeTurnSettingsSelection {
   model: string;
   effort?: string;
   serviceTier?: string | null;
+  permissionMode: NativePermissionMode;
   collaborationMode: NativeCollaborationMode;
 }
 
@@ -650,6 +660,7 @@ export interface SendNativeMessageRequest {
   model?: string;
   effort?: string;
   serviceTier?: string | null;
+  permissionMode?: NativePermissionMode;
   collaborationMode: NativeCollaborationMode;
   idempotencyKey: string;
   clientUserMessageId: string;

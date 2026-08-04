@@ -138,6 +138,7 @@ export interface SubmitNativeMessageInput {
   model?: string;
   effort?: string;
   serviceTier?: string | null;
+  permissionMode?: ConversationPermissionMode;
   collaborationMode?: ConversationCollaborationMode;
   idempotencyKey: string;
   clientUserMessageId: string;
