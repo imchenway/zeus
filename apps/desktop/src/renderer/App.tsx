@@ -1150,6 +1150,7 @@ const languageCopy = {
       codeColumnTitle: '任务编码',
       intentColumnTitle: '任务',
       managementStatusColumnTitle: '任务状态',
+      branchStatusColumnTitle: '分支状态',
       runStatusColumnTitle: '运行状态',
       sourceColumnTitle: '上下文来源',
       createdAtColumnTitle: '创建时间',
@@ -2567,6 +2568,7 @@ const languageCopy = {
       codeColumnTitle: 'Task code',
       intentColumnTitle: 'Task',
       managementStatusColumnTitle: 'Task status',
+      branchStatusColumnTitle: 'Branch status',
       runStatusColumnTitle: 'Run status',
       sourceColumnTitle: 'Context source',
       createdAtColumnTitle: 'Created',
@@ -3796,6 +3798,7 @@ const languageCopy = {
       codeColumnTitle: string;
       intentColumnTitle: string;
       managementStatusColumnTitle: string;
+      branchStatusColumnTitle: string;
       runStatusColumnTitle: string;
       sourceColumnTitle: string;
       createdAtColumnTitle: string;

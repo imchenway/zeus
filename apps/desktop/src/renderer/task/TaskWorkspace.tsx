@@ -18,6 +18,7 @@ import {
   resolveTaskManagementStatus,
   setTaskTableColumnWidth,
   type TaskAgentRunStatus,
+  type TaskBranchStatus,
   type TaskTableColumnDropPosition,
   taskManagementStatuses,
   toggleTaskTableColumn,
@@ -41,6 +42,14 @@ function taskRunStatusTone(status: TaskAgentRunStatus): TaskSemanticTone {
   if (status === 'waiting_user' || status === 'waiting_approval' || status === 'paused') return 'amber';
   if (status === 'failed') return 'red';
   if (status === 'idle') return 'green';
+  return 'neutral';
+}
+
+function taskBranchStatusTone(status: TaskBranchStatus): TaskSemanticTone {
+  if (status === 'action_required') return 'red';
+  if (status === 'active') return 'blue';
+  if (status === 'pushed') return 'amber';
+  if (status === 'merged') return 'green';
   return 'neutral';
 }
 
@@ -106,6 +115,7 @@ export interface TaskWorkspaceCopy {
   codeColumnTitle: string;
   intentColumnTitle: string;
   managementStatusColumnTitle: string;
+  branchStatusColumnTitle: string;
   runStatusColumnTitle: string;
   sourceColumnTitle: string;
   createdAtColumnTitle: string;
@@ -198,6 +208,7 @@ const taskTableColumnAlignment: Record<TaskTableColumnKey, 'start' | 'end'> = {
   code: 'start',
   intent: 'start',
   managementStatus: 'start',
+  branchStatus: 'start',
   runStatus: 'start',
   source: 'start',
   updatedAt: 'end',
@@ -301,6 +312,7 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
     code: props.copy.codeColumnTitle,
     intent: props.copy.intentColumnTitle,
     managementStatus: props.copy.managementStatusColumnTitle,
+    branchStatus: props.copy.branchStatusColumnTitle,
     runStatus: props.copy.runStatusColumnTitle,
     source: props.copy.sourceColumnTitle,
     createdAt: props.copy.createdAtColumnTitle,
@@ -917,6 +929,7 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
             model.rows.map((row) => {
               const task = row.task;
               const managementStatus = resolveTaskManagementStatus(task);
+              const branchStatus = row.cells.branchStatus.sortValue as TaskBranchStatus;
               const runStatus = row.cells.runStatus.sortValue as TaskAgentRunStatus;
               const runStatusConversationId = row.runStatusConversationId;
               return (
@@ -964,6 +977,10 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
                               disabled={props.statusChangeBusy || !props.onTaskStatusChange}
                               searchable={false}
                             />
+                          </span>
+                        ) : columnKey === 'branchStatus' ? (
+                          <span className={`task-status-chip task-branch-status-chip task-status-tone-${taskBranchStatusTone(branchStatus)}`}>
+                            <strong>{cell.primary}</strong>
                           </span>
                         ) : columnKey === 'runStatus' ? (
                           runStatusConversationId && props.onOpenTaskConversation ? (
