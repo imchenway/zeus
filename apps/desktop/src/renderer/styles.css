@@ -10112,6 +10112,23 @@ a {
   font-weight: 650;
 }
 
+.macos-ai-app .task-run-status-action {
+  appearance: none;
+  cursor: pointer;
+  font: inherit;
+  text-align: start;
+}
+
+.macos-ai-app .task-run-status-action:hover {
+  background: color-mix(in srgb, var(--task-status-tone) 16%, var(--zeus-product-panel));
+  border-color: color-mix(in srgb, var(--task-status-tone) 42%, var(--zeus-product-line-soft));
+}
+
+.macos-ai-app .task-run-status-action:focus-visible {
+  box-shadow: var(--zeus-control-focus);
+  outline: 0;
+}
+
 .macos-ai-app .task-run-status-spinner {
   block-size: 14px;
   color: var(--task-status-tone);

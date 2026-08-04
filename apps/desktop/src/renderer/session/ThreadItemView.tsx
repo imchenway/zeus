@@ -1,7 +1,7 @@
 import { type FormEvent, type KeyboardEvent, type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { CopyIcon as Copy } from '@phosphor-icons/react/dist/csr/Copy';
 import { TerminalWindowIcon as TerminalWindow } from '@phosphor-icons/react/dist/csr/TerminalWindow';
-import Markdown, {type Components} from 'react-markdown';
+import Markdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { MessageCheckIcon, MessageEditIcon, MessageExpandIcon, MessageThumbIcon } from './SessionMessageIcons.js';
 import type { NativeSessionItemBuffer } from './sessionTypes.js';
@@ -288,49 +288,48 @@ export function SafeMarkdown(props: {
   const labels = copy[props.language ?? 'en-US'];
   const resources = props.resources ?? emptyConversationResources;
   const language = props.language ?? 'en-US';
-  const components = useMemo<Components>(() => ({
-    a({children, href}) {
-      const label = markdownNodeText(children);
-      const resource = matchingInlineResource(resources, label, href ?? '');
-      if (resource) {
-        return <ConversationInlineResource resource={resource} label={label || resource.displayName} language={language} onOpenResource={props.onOpenResource}/>;
-      }
-      if (href?.startsWith('#')) return <a href={href}>{children}</a>;
-      return <span className="session-markdown-unavailable-resource" title={href}>{children}</span>;
-    },
-    img({alt, src, title}) {
-      const label = alt?.trim() || title?.trim() || (language === 'zh-CN' ? '图片' : 'Image');
-      const resource = matchingInlineResource(resources, label, src ?? '');
-      if (!resource || !isImageResource(resource)) {
-        return <span className="session-markdown-image-unavailable" role="img" aria-label={label}>{language === 'zh-CN' ? `图片不可用：${label}` : `Image unavailable: ${label}`}</span>;
-      }
-      return (
-        <ConversationMarkdownImage
-          resource={resource}
-          label={label}
-          language={language}
-          onOpenResource={props.onOpenResource}
-          onLoadResourcePreview={props.onLoadResourcePreview}
-        />
-      );
-    },
-    pre({children}) {
-      const code = markdownNodeText(children);
-      return (
-        <div className="session-code-block">
-          <CopyIconButton label={labels.copyCode} copiedLabel={labels.copied} text={code}/>
-          <pre>{children}</pre>
-        </div>
-      );
-    },
-  }), [labels.copied, labels.copyCode, language, props.onLoadResourcePreview, props.onOpenResource, resources]);
+  const components = useMemo<Components>(
+    () => ({
+      a({ children, href }) {
+        const label = markdownNodeText(children);
+        const resource = matchingInlineResource(resources, label, href ?? '');
+        if (resource) {
+          return <ConversationInlineResource resource={resource} label={label || resource.displayName} language={language} onOpenResource={props.onOpenResource} />;
+        }
+        if (href?.startsWith('#')) return <a href={href}>{children}</a>;
+        return (
+          <span className="session-markdown-unavailable-resource" title={href}>
+            {children}
+          </span>
+        );
+      },
+      img({ alt, src, title }) {
+        const label = alt?.trim() || title?.trim() || (language === 'zh-CN' ? '图片' : 'Image');
+        const resource = matchingInlineResource(resources, label, src ?? '');
+        if (!resource || !isImageResource(resource)) {
+          return (
+            <span className="session-markdown-image-unavailable" role="img" aria-label={label}>
+              {language === 'zh-CN' ? `图片不可用：${label}` : `Image unavailable: ${label}`}
+            </span>
+          );
+        }
+        return <ConversationMarkdownImage resource={resource} label={label} language={language} onOpenResource={props.onOpenResource} onLoadResourcePreview={props.onLoadResourcePreview} />;
+      },
+      pre({ children }) {
+        const code = markdownNodeText(children);
+        return (
+          <div className="session-code-block">
+            <CopyIconButton label={labels.copyCode} copiedLabel={labels.copied} text={code} />
+            <pre>{children}</pre>
+          </div>
+        );
+      },
+    }),
+    [labels.copied, labels.copyCode, language, props.onLoadResourcePreview, props.onOpenResource, resources],
+  );
   return (
     <div className="session-markdown" data-truncated={bounded.truncated || undefined}>
-      <Markdown
-        components={components}
-        remarkPlugins={[remarkGfm, [limitMarkdownComplexity, {label: labels.complexityTruncated}]]}
-        urlTransform={(url) => url}
-      >
+      <Markdown components={components} remarkPlugins={[remarkGfm, [limitMarkdownComplexity, { label: labels.complexityTruncated }]]} urlTransform={(url) => url}>
         {boundMarkdownCodeBlocks(bounded.text)}
       </Markdown>
     </div>
@@ -354,7 +353,7 @@ interface MarkdownAstNode {
   children?: MarkdownAstNode[];
 }
 
-function limitMarkdownComplexity(options?: {label?: string}) {
+function limitMarkdownComplexity(options?: { label?: string }) {
   return (tree: MarkdownAstNode): void => {
     const rootChildren = tree.children ?? [];
     let truncated = rootChildren.length > MAX_MARKDOWN_BLOCKS;
@@ -382,8 +381,8 @@ function limitMarkdownComplexity(options?: {label?: string}) {
     if (truncated) {
       tree.children.push({
         type: 'paragraph',
-        children: [{type: 'text', value: options?.label ?? 'Content complexity truncated'} as MarkdownAstNode],
-        data: {hProperties: {className: ['session-markdown-complexity-truncated'], role: 'status'}},
+        children: [{ type: 'text', value: options?.label ?? 'Content complexity truncated' } as MarkdownAstNode],
+        data: { hProperties: { className: ['session-markdown-complexity-truncated'], role: 'status' } },
       } as MarkdownAstNode);
     }
   };
@@ -427,7 +426,7 @@ function markdownNodeText(node: ReactNode): string {
   if (typeof node === 'string' || typeof node === 'number') return String(node);
   if (Array.isArray(node)) return node.map(markdownNodeText).join('');
   if (!node || typeof node !== 'object' || !('props' in node)) return '';
-  return markdownNodeText((node as {props?: {children?: ReactNode}}).props?.children);
+  return markdownNodeText((node as { props?: { children?: ReactNode } }).props?.children);
 }
 
 function matchingInlineResource(resources: ConversationResource[], label: string, href: string): ConversationResource | null {

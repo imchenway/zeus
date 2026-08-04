@@ -128,6 +128,7 @@ export interface TaskRowViewModel {
   selected: boolean;
   bulkSelected: boolean;
   action: TaskRowAction;
+  runStatusConversationId: string | undefined;
   minHitArea: number;
   cells: Record<TaskTableColumnKey, TaskTableCellViewModel>;
 }
@@ -376,15 +377,19 @@ export function createTaskWorkspaceViewModel(input: TaskWorkspaceViewModelInput)
   const filteredTasks = filterVisibleTasks(input.tasks, input.query, input.status, input.tag);
   const columnPreferences = normalizeTaskTableColumnPreferences(input.taskTableColumns);
   const enumSortOrders = normalizeTaskTableEnumSortOrders(input.taskTableEnumSortOrders);
-  const unsortedRows = filteredTasks.map((task) => ({
-    id: task.id,
-    task,
-    selected: task.id === input.selectedTaskId,
-    bulkSelected: false,
-    action: 'open-detail' as const,
-    minHitArea: 44,
-    cells: buildTaskTableCells(task, input.runtimeSessions ?? [], input.projectName, input.taskConversations?.[task.id] ?? [], input.conversationRunStatuses ?? {}, input.managementStatusLabels, input.runStatusLabels),
-  }));
+  const unsortedRows = filteredTasks.map((task) => {
+    const conversations = input.taskConversations?.[task.id] ?? [];
+    return {
+      id: task.id,
+      task,
+      selected: task.id === input.selectedTaskId,
+      bulkSelected: false,
+      action: 'open-detail' as const,
+      runStatusConversationId: resolveTaskAgentRunStatusConversation(conversations)?.id,
+      minHitArea: 44,
+      cells: buildTaskTableCells(task, input.runtimeSessions ?? [], input.projectName, conversations, input.conversationRunStatuses ?? {}, input.managementStatusLabels, input.runStatusLabels),
+    };
+  });
   const rows = sortTaskRows(unsortedRows, columnPreferences.sort, enumSortOrders, input.appLanguage ?? 'zh-CN');
   const visibleTasks = rows.map((row) => row.task);
   const visibleTaskIds = rows.map((row) => row.id);
@@ -659,11 +664,16 @@ export function taskAgentRunStatusFromConversation(conversation: Pick<NativeConv
 }
 
 export function resolveTaskAgentRunStatus(conversations: NativeConversationChoice[], liveStatuses: Record<string, TaskAgentRunStatus>): TaskAgentRunStatus {
-  if (conversations.length === 0) return 'not_started';
-  const latest = conversations.reduce((current, candidate) => (candidate.updatedAt.localeCompare(current.updatedAt) > 0 ? candidate : current));
+  const latest = resolveTaskAgentRunStatusConversation(conversations);
+  if (!latest) return 'not_started';
   const liveStatus = liveStatuses[latest.id];
   if (liveStatus) return liveStatus;
   return taskAgentRunStatusFromConversation(latest);
+}
+
+export function resolveTaskAgentRunStatusConversation(conversations: NativeConversationChoice[]): NativeConversationChoice | undefined {
+  if (conversations.length === 0) return undefined;
+  return conversations.reduce((current, candidate) => (candidate.updatedAt.localeCompare(current.updatedAt) > 0 ? candidate : current));
 }
 
 export function formatTaskManagementStatus(status: TaskManagementStatus, labels?: Partial<Record<TaskManagementStatus, string>>): string {
