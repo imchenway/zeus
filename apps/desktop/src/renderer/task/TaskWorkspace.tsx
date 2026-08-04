@@ -1,4 +1,5 @@
 import { type CSSProperties, type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, useCallback, useEffect, useRef, useState } from 'react';
+import { CircleNotchIcon as CircleNotch } from '@phosphor-icons/react/dist/csr/CircleNotch';
 import type { AiRuntimeSession, RuntimeStatusSnapshot, TaskManagementStatus, TaskRecord, TaskStatusFilter, TaskTableColumnKey, TaskTableEnumSortOrders, TaskTableColumnPreferences } from '../apiClient.js';
 import type { NativeConversationChoice } from '../session/sessionTypes.js';
 import { ZeusSelect } from '../ZeusSelect.js';
@@ -21,6 +22,35 @@ import {
   taskManagementStatuses,
   toggleTaskTableColumn,
 } from './taskWorkspaceModel.js';
+
+type TaskSemanticTone = 'neutral' | 'blue' | 'violet' | 'green' | 'amber' | 'orange' | 'red';
+
+const animatedTaskRunStatuses = new Set<TaskAgentRunStatus>(['connecting', 'reconnecting', 'running', 'waiting_user', 'waiting_approval']);
+
+function taskManagementStatusTone(status: TaskManagementStatus): TaskSemanticTone {
+  if (status === 'in_development') return 'blue';
+  if (status === 'in_testing') return 'violet';
+  if (status === 'awaiting_acceptance') return 'amber';
+  if (status === 'blocked') return 'red';
+  if (status === 'completed') return 'green';
+  return 'neutral';
+}
+
+function taskRunStatusTone(status: TaskAgentRunStatus): TaskSemanticTone {
+  if (status === 'connecting' || status === 'reconnecting' || status === 'running') return 'blue';
+  if (status === 'waiting_user' || status === 'waiting_approval' || status === 'paused') return 'amber';
+  if (status === 'failed') return 'red';
+  if (status === 'idle') return 'green';
+  return 'neutral';
+}
+
+function taskPriorityTone(priority: string | number | null): TaskSemanticTone {
+  if (priority === 'p0') return 'red';
+  if (priority === 'p1') return 'orange';
+  if (priority === 'p2') return 'amber';
+  if (priority === 'p3') return 'blue';
+  return 'neutral';
+}
 
 export interface TaskWorkspaceCopy {
   filterAria: string;
@@ -884,6 +914,8 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
           ) : (
             model.rows.map((row) => {
               const task = row.task;
+              const managementStatus = resolveTaskManagementStatus(task);
+              const runStatus = row.cells.runStatus.sortValue as TaskAgentRunStatus;
               return (
                 <div
                   key={task.id}
@@ -919,15 +951,25 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
                             <ZeusSelect
                               size="compact"
                               ariaLabel={props.copy.taskStatusSelectAria(task.title)}
-                              value={resolveTaskManagementStatus(task)}
+                              value={managementStatus}
                               options={bulkStatusOptions.map((status) => ({
                                 value: status,
                                 label: statusLabel(status),
                               }))}
                               onChange={(status) => props.onTaskStatusChange?.(task.id, status)}
+                              className={`task-status-select task-status-tone-${taskManagementStatusTone(managementStatus)}`}
                               disabled={props.statusChangeBusy || !props.onTaskStatusChange}
                               searchable={false}
                             />
+                          </span>
+                        ) : columnKey === 'runStatus' ? (
+                          <span className={`task-status-chip task-run-status-chip task-status-tone-${taskRunStatusTone(runStatus)}`}>
+                            {animatedTaskRunStatuses.has(runStatus) ? <CircleNotch className="session-conversation-state-spinner task-run-status-spinner" aria-hidden="true" /> : null}
+                            <strong>{cell.primary}</strong>
+                          </span>
+                        ) : columnKey === 'priority' ? (
+                          <span className={`task-status-chip task-priority-chip task-status-tone-${taskPriorityTone(cell.sortValue)}`}>
+                            <strong>{cell.primary}</strong>
                           </span>
                         ) : columnKey === 'intent' ? (
                           <span className="task-table-title-text">{cell.primary}</span>
