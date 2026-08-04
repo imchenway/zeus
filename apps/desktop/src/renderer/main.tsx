@@ -258,8 +258,8 @@ async function renderWithClient(client: DashboardClient): Promise<void> {
           await client.updateTaskStatus(taskId, status);
           return client.loadDashboard();
         }}
-        onUpdateTaskManagementStatus={async (taskId, status, expectedUpdatedAt) => {
-          await client.updateTaskManagementStatus(taskId, status, expectedUpdatedAt);
+        onUpdateTaskManagementStatus={async (taskId, status, expectedUpdatedAt, confirmWorktreeCleanup) => {
+          await client.updateTaskManagementStatus(taskId, status, expectedUpdatedAt, confirmWorktreeCleanup);
           return client.loadDashboard();
         }}
         onArchiveTask={async (taskId) => {

@@ -6033,7 +6033,7 @@ export function App(props: {
   onLoadTaskTemplates?: (projectId?: string) => Promise<TaskTemplateRecord[]>;
   onLoadTaskEvents?: (taskId: string) => Promise<TaskEventRecord[]>;
   onUpdateTaskStatus?: (taskId: string, status: TaskStatus) => Promise<DashboardSnapshot>;
-  onUpdateTaskManagementStatus?: (taskId: string, status: TaskManagementStatus, expectedUpdatedAt: string) => Promise<DashboardSnapshot>;
+  onUpdateTaskManagementStatus?: (taskId: string, status: TaskManagementStatus, expectedUpdatedAt: string, confirmWorktreeCleanup?: boolean) => Promise<DashboardSnapshot>;
   onArchiveTask?: (taskId: string) => Promise<DashboardSnapshot>;
   onRestoreTask?: (taskId: string) => Promise<DashboardSnapshot>;
   onCreateGitConfirmation?: (operation: HighRiskGitOperation, message?: string) => Promise<GitOperationConfirmation>;
@@ -6332,7 +6332,7 @@ export function App(props: {
   const [taskGitReviewState, setTaskGitReviewState] = useState<{
     taskId: string;
     workspaceId?: string | null;
-    mode: 'commit' | 'commit-only' | 'push-only' | 'delivery' | 'completed' | 'cancelled';
+    mode: 'commit' | 'commit-only' | 'push-only' | 'delivery';
   } | null>(null);
   const [taskGitMergeTaskId, setTaskGitMergeTaskId] = useState<string | null>(null);
   const taskModelPushCapabilityRequestRef = useRef(0);
@@ -8187,19 +8187,31 @@ export function App(props: {
     }
   }
 
-  async function updateTaskManagementStatus(taskId: string, status: TaskManagementStatus, options: { skipGitReview?: boolean; expectedUpdatedAt?: string } = {}): Promise<TaskEditResult | undefined> {
+  async function updateTaskManagementStatus(taskId: string, status: TaskManagementStatus, options: { expectedUpdatedAt?: string } = {}): Promise<TaskEditResult | undefined> {
     const currentTask = (taskDetail?.id === taskId ? taskDetail : undefined) ?? snapshot.tasks.find((task) => task.id === taskId);
     if (!props.onUpdateTaskManagementStatus || !currentTask || resolveTaskManagementStatus(currentTask) === status) return;
-    if (!options.skipGitReview && (status === 'completed' || status === 'cancelled') && props.nativeConversationClient) {
-      setTaskGitReviewState({ taskId, mode: status });
-      return;
-    }
     const updateManagementStatus = props.onUpdateTaskManagementStatus;
     return enqueueTaskMutation(taskId, async () => {
       const expectedUpdatedAt = resolveTaskMutationVersion(taskId, options.expectedUpdatedAt ?? currentTask.updatedAt ?? '');
       setActionState('updating-task');
       try {
-        const nextSnapshot = await updateManagementStatus(taskId, status, expectedUpdatedAt);
+        let nextSnapshot: DashboardSnapshot;
+        try {
+          nextSnapshot = await updateManagementStatus(taskId, status, expectedUpdatedAt);
+        } catch (error) {
+          const terminalStatus = status === 'completed' || status === 'cancelled';
+          if (!(terminalStatus && error instanceof ZeusApiError && error.error === 'ZEUS_TASK_WORKTREE_CLEANUP_CONFIRMATION_REQUIRED')) throw error;
+          const confirmed = window.confirm(
+            appShellSettings.appLanguage === 'zh-CN'
+              ? `此任务存在未提交内容或活动会话。继续将停止并归档关联会话，永久删除任务 worktree 中未提交和未跟踪的文件，然后把任务标记为“${taskManagementStatusLabels['zh-CN'][status]}”。是否继续？`
+              : `This task has local changes or active sessions. Continuing will stop and archive related sessions, permanently delete uncommitted and untracked files in the task worktrees, and mark the task as “${taskManagementStatusLabels['en-US'][status]}”. Continue?`,
+          );
+          if (!confirmed) {
+            setActionState('idle');
+            return undefined;
+          }
+          nextSnapshot = await updateManagementStatus(taskId, status, expectedUpdatedAt, true);
+        }
         const updatedTask = applyTaskMutationSnapshot(nextSnapshot, taskId);
         recordTaskMutationVersion(taskId, expectedUpdatedAt, updatedTask.updatedAt);
         refreshOpenTaskEvents(taskId);
@@ -8480,7 +8492,7 @@ export function App(props: {
     const requestedTaskIdSet = new Set(taskIds);
     const requestedTasks = visibleTasks.filter((task) => requestedTaskIdSet.has(task.id));
     const eligibleTasks = requestedTasks.filter((task) => resolveTaskManagementStatus(task) !== targetStatus);
-    const skippedCount = requestedTasks.length - eligibleTasks.length;
+    let skippedCount = requestedTasks.length - eligibleTasks.length;
     const succeededTaskIds: string[] = [];
     const failedTaskIds: string[] = [];
     if (eligibleTasks.length === 0) {
@@ -8492,9 +8504,11 @@ export function App(props: {
     try {
       for (const task of eligibleTasks) {
         try {
-          if (!props.onUpdateTaskManagementStatus) throw new Error('Task management status handler is not available.');
-          const nextSnapshot = await props.onUpdateTaskManagementStatus(task.id, targetStatus, task.updatedAt ?? '');
-          setSnapshot(nextSnapshot);
+          const result = await updateTaskManagementStatus(task.id, targetStatus, { expectedUpdatedAt: task.updatedAt ?? '' });
+          if (!result || result.kind !== 'updated') {
+            skippedCount += 1;
+            continue;
+          }
           succeededTaskIds.push(task.id);
         } catch {
           failedTaskIds.push(task.id);
@@ -11386,7 +11400,6 @@ export function App(props: {
           mode={taskGitReviewState?.mode ?? 'commit'}
           preferredWorkspaceId={taskGitReviewState?.workspaceId}
           onClose={closeTaskGitReview}
-          onReadyToCloseTask={(status) => (taskGitReviewState ? updateTaskManagementStatus(taskGitReviewState.taskId, status, { skipGitReview: true }).then(() => undefined) : Promise.resolve())}
         />
 
         {activeNavTarget === 'settings' ? (

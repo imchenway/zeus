@@ -660,6 +660,30 @@ export async function reclaimDeliveredTaskWorktree(input: { repositoryPath: stri
 }
 
 /**
+ * 任务进入终态时只移除物理 worktree，保留本地任务分支和远端分支。
+ * 脏目录必须由调用方完成用户确认后显式传入 force，不能静默丢弃本机变化。
+ */
+export async function removeTaskWorktreeForTerminalStatus(input: { repositoryPath: string; worktreePath: string; force: boolean }): Promise<{ removed: boolean }> {
+  const context = await getGitRepositoryContext(input.repositoryPath);
+  if (!context.isRepository) throw gitCoreError('ZEUS_GIT_REPOSITORY_REQUIRED', 'The selected project is not a Git repository.');
+  const registered = context.worktrees.find((entry) => canonicalFilesystemPath(entry.path) === canonicalFilesystemPath(input.worktreePath));
+  if (!registered) {
+    const pathExists = await lstat(input.worktreePath).then(
+      () => true,
+      (error: unknown) => {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+        throw error;
+      },
+    );
+    if (pathExists) throw gitCoreError('ZEUS_TASK_WORKTREE_NOT_REGISTERED', 'Task worktree path exists but is not registered in the project repository.');
+    return { removed: false };
+  }
+  await runGit(context.topLevel, ['worktree', 'remove', ...(input.force ? ['--force'] : []), registered.path]);
+  await rm(registered.path, { recursive: true, force: true });
+  return { removed: true };
+}
+
+/**
  * 明确放弃任务分支时删除 worktree 与本地分支。
  * 不删除远端分支，避免把本机任务处置扩散为远端不可逆动作。
  */
