@@ -3758,6 +3758,11 @@ export class ConversationRepository {
       });
   }
 
+  /** 侧边栏状态聚合只读取会话主记录，不加载消息正文。 */
+  listUnarchivedRecords(): ZeusConversationRecord[] {
+    return this.db.select<DbConversationRow>(`SELECT ${selectConversationFields} FROM conversations WHERE archived = 0 ORDER BY updated_at DESC, id DESC`).map(mapConversationRow);
+  }
+
   listByWorkspace(workspaceId: string): ZeusConversationWithMessagesRecord[] {
     return this.db.select<DbConversationRow>(`SELECT ${selectConversationFields} FROM conversations WHERE workspace_id = ? AND archived = 0 ORDER BY updated_at DESC, id`, [workspaceId]).map((row) => {
       const conversation = mapConversationRow(row);
@@ -4621,6 +4626,10 @@ export class ConversationServerRequestRepository {
 
   listByConversation(conversationId: string): ZeusConversationServerRequestRecord[] {
     return this.db.select<DbConversationServerRequestRow>(`SELECT * FROM conversation_server_requests WHERE conversation_id = ? ORDER BY created_at, id`, [conversationId]).map(mapConversationServerRequestRow);
+  }
+
+  listPending(): ZeusConversationServerRequestRecord[] {
+    return this.db.select<DbConversationServerRequestRow>(`SELECT * FROM conversation_server_requests WHERE status = 'pending' ORDER BY created_at, id`).map(mapConversationServerRequestRow);
   }
 }
 

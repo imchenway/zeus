@@ -166,6 +166,7 @@ export type { BrowserAutomationContentItem, BrowserAutomationPort, BrowserAutoma
 export { createConversationAttachmentGrant, resolveConversationAttachmentGrant } from './conversationAttachmentGrant.js';
 
 export const zeusLocalServerHost = '127.0.0.1' as const;
+const nativeConversationAttentionEventTypes = new Set(['conversation.turn.started', 'conversation.turn.completed', 'conversation.queue.changed', 'conversation.request.created', 'conversation.request.resolved', 'conversation.native.error']);
 
 /**
  * 非枚举启动失败元数据：表示新 local-server 已取得并尝试完成 Codex finalization。
@@ -485,6 +486,7 @@ export interface DashboardSnapshot {
   localServer: { host: typeof zeusLocalServerHost; port: number | null };
   projects: ZeusProjectRecord[];
   tasks: ZeusTaskRecord[];
+  conversationAttentionByProject: Record<string, ProjectConversationAttentionState>;
   runtime: {
     aiCli: { available: boolean; reason: string };
     telegram: { enabled: boolean; reason: string };
@@ -492,6 +494,8 @@ export interface DashboardSnapshot {
   git: GitStatusSummary;
   graph: { nodeCount: number; edgeCount: number; viewCount: number };
 }
+
+type ProjectConversationAttentionState = 'idle' | 'running' | 'reply_required';
 
 interface RuntimeStatusSnapshot {
   aiCli: { name: string; command: string; available: boolean; reason: string };
@@ -2002,6 +2006,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       publishRealtimeEvent(mappedType, {
         ...payload,
         ...(mappedType === 'conversation.queue.changed' ? { queue: toNativeQueueApiSnapshot(conversation) } : {}),
+        ...(nativeConversationAttentionEventTypes.has(mappedType) ? { conversationAttentionState: buildProjectConversationAttentionByProject([conversation.projectId])[conversation.projectId] ?? 'idle' } : {}),
         projectId: conversation.projectId,
         conversationId: conversation.id,
         ...(typeof payload.threadId === 'string'
@@ -2308,6 +2313,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       localServer: { host: zeusLocalServerHost, port: boundPort },
       projects: currentProjects,
       tasks: currentProjects.flatMap((project) => tasks.listByProject(project.id)),
+      conversationAttentionByProject: buildProjectConversationAttentionByProject(currentProjects.map((project) => project.id)),
       runtime: {
         aiCli: await toRuntimeStatus(runtimeSettings),
         telegram: getTelegramConfigurationState(await readTelegramToken(), telegramSecuritySettings.allowedUserIds),
@@ -10787,6 +10793,34 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       offset += page.items.length;
       if (offset >= page.total || page.items.length === 0) return history;
     }
+  }
+
+  /** 侧边栏只聚合用户可进入的会话；待回复覆盖运行中，暂停、失败和完成未读不参与。 */
+  function buildProjectConversationAttentionByProject(projectIds: readonly string[]): Record<string, ProjectConversationAttentionState> {
+    const targetProjectIds = new Set(projectIds);
+    const states = new Map<string, ProjectConversationAttentionState>(projectIds.map((projectId) => [projectId, 'idle']));
+    const pendingRequestConversationIds = new Set(conversationRequests.listPending().map((request) => request.conversationId));
+    const recoverableSubmissions = conversationSubmissions.listRecoverable();
+    const runningSubmissionConversationIds = new Set(
+      recoverableSubmissions.filter((submission) => submission.status === 'queued' || submission.status === 'dispatching' || submission.status === 'active').map((submission) => submission.conversationId),
+    );
+
+    for (const conversation of conversations.listUnarchivedRecords()) {
+      if (!targetProjectIds.has(conversation.projectId)) continue;
+      const replyRequired = pendingRequestConversationIds.has(conversation.id) || conversation.providerState === 'waiting';
+      const running = runningSubmissionConversationIds.has(conversation.id) || conversation.providerState === 'binding' || conversation.providerState === 'active' || conversation.status === 'starting' || conversation.status === 'running';
+      if (!replyRequired && !running) continue;
+      const firstSubmission = conversationSubmissions.listByConversation(conversation.id)[0];
+      const context = firstSubmission ? parseJsonObject(firstSubmission.inputJson).context : undefined;
+      if (isNativeApiRecord(context) && context.ephemeral === true) continue;
+      if (replyRequired) {
+        states.set(conversation.projectId, 'reply_required');
+      } else if (states.get(conversation.projectId) === 'idle') {
+        states.set(conversation.projectId, 'running');
+      }
+    }
+
+    return Object.fromEntries(states);
   }
 
   function toNativeConversationSummary(conversation: ZeusConversationWithMessagesRecord) {
