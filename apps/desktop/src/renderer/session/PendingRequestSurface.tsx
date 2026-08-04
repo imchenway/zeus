@@ -1,4 +1,4 @@
-import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { type KeyboardEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ArrowRightIcon as ArrowRight } from '@phosphor-icons/react/dist/csr/ArrowRight';
 import { CheckIcon as Check } from '@phosphor-icons/react/dist/csr/Check';
 import { CaretDownIcon as CaretDown } from '@phosphor-icons/react/dist/csr/CaretDown';
@@ -11,6 +11,7 @@ import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import { openExternalHttpsUrlInMain } from '../appShellBridge.js';
 import type { NativePendingRequest, NativePermissionMode } from './sessionTypes.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
+import { autosizeTextarea } from './textareaAutosize.js';
 
 export interface RequestQuestionOption {
   label: string;
@@ -406,11 +407,13 @@ function RequestUserInputPanel(props: PendingRequestSurfaceProps & { questions: 
   const [remainingMs, setRemainingMs] = useState(() => requestRemainingMs(props.request));
   const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const freeformRef = useRef<HTMLInputElement | HTMLTextAreaElement | null>(null);
+  const otherTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const snoozedRef = useRef(props.request.autoResolutionState === 'snoozed');
   const snoozePromiseRef = useRef<Promise<void> | null>(null);
   const [, setLocallySnoozed] = useState(snoozedRef.current);
   const currentQuestion = props.questions[Math.min(questionIndex, props.questions.length - 1)]!;
   const selectedValues = answers[currentQuestion.id] ?? [];
+  const currentOtherAnswer = otherAnswers[currentQuestion.id] ?? '';
   const currentComplete = questionAnswerComplete(currentQuestion, selectedValues, otherAnswers[currentQuestion.id]);
   const allComplete = areRequiredRequestAnswersComplete(props.questions, answers, otherAnswers);
   const hasSensitiveDraft = props.questions.some((question) => question.secret && ((answers[question.id] ?? []).some((value) => Boolean(value.trim())) || Boolean(otherAnswers[question.id]?.trim())));
@@ -424,6 +427,11 @@ function RequestUserInputPanel(props: PendingRequestSurfaceProps & { questions: 
   useEffect(() => {
     persistRuiDraft(props.request.id, props.questions, answers, otherAnswers);
   }, [answers, otherAnswers, props.questions, props.request.id]);
+
+  useLayoutEffect(() => {
+    if (currentQuestion.secret || !otherTextareaRef.current) return;
+    autosizeTextarea(otherTextareaRef.current, 30, 0.24);
+  }, [currentOtherAnswer, currentQuestion.id, currentQuestion.secret]);
 
   useEffect(() => {
     window.zeus?.notifySensitiveRequestDraft?.({ requestId: props.request.id, present: hasSensitiveDraft });
@@ -581,10 +589,11 @@ function RequestUserInputPanel(props: PendingRequestSurfaceProps & { questions: 
                     placeholder={copy.otherPlaceholder}
                     disabled={!selectedValues.includes(otherAnswerControlValue(currentQuestion))}
                     onChange={(event) => {
+                      const value = event.currentTarget.value;
                       void snooze();
                       setOtherAnswers((current) => ({
                         ...current,
-                        [currentQuestion.id]: event.currentTarget.value,
+                        [currentQuestion.id]: value,
                       }));
                     }}
                     onKeyDown={(event) => {
@@ -596,15 +605,18 @@ function RequestUserInputPanel(props: PendingRequestSurfaceProps & { questions: 
                   />
                 ) : (
                   <textarea
+                    ref={otherTextareaRef}
+                    rows={1}
                     aria-label={`${zh ? '其他' : 'Other'}: ${currentQuestion.header}`}
-                    value={otherAnswers[currentQuestion.id] ?? ''}
+                    value={currentOtherAnswer}
                     placeholder={copy.otherPlaceholder}
                     disabled={!selectedValues.includes(otherAnswerControlValue(currentQuestion))}
                     onChange={(event) => {
+                      const value = event.currentTarget.value;
                       void snooze();
                       setOtherAnswers((current) => ({
                         ...current,
-                        [currentQuestion.id]: event.currentTarget.value,
+                        [currentQuestion.id]: value,
                       }));
                     }}
                     onKeyDown={(event) => {
@@ -625,10 +637,11 @@ function RequestUserInputPanel(props: PendingRequestSurfaceProps & { questions: 
                   {...answerInputSecurityAttributes(true)}
                   value={selectedValues[0] ?? ''}
                   onChange={(event) => {
+                    const value = event.currentTarget.value;
                     void snooze();
                     setAnswers((current) => ({
                       ...current,
-                      [currentQuestion.id]: [event.currentTarget.value],
+                      [currentQuestion.id]: [value],
                     }));
                   }}
                 />
@@ -638,10 +651,11 @@ function RequestUserInputPanel(props: PendingRequestSurfaceProps & { questions: 
                   className="session-question-freeform"
                   value={selectedValues[0] ?? ''}
                   onChange={(event) => {
+                    const value = event.currentTarget.value;
                     void snooze();
                     setAnswers((current) => ({
                       ...current,
-                      [currentQuestion.id]: [event.currentTarget.value],
+                      [currentQuestion.id]: [value],
                     }));
                   }}
                   onKeyDown={(event) => {
