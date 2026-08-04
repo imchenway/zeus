@@ -179,6 +179,7 @@ export interface DashboardSnapshot {
   localServer: { host: '127.0.0.1'; port: number | null };
   projects: ProjectRecord[];
   tasks: TaskRecord[];
+  conversationAttentionByProject: Record<string, ProjectConversationAttentionState>;
   runtime: {
     aiCli: { available: boolean; reason: string };
     telegram: { enabled: boolean; reason: string };
@@ -207,6 +208,8 @@ export interface DashboardSnapshot {
   };
   graph: { nodeCount: number; edgeCount: number; viewCount: number };
 }
+
+export type ProjectConversationAttentionState = 'idle' | 'running' | 'reply_required';
 
 export interface SecretPresence {
   configured: boolean;
@@ -2117,6 +2120,7 @@ export function createEmptyDashboardSnapshot(): DashboardSnapshot {
     localServer: { host: '127.0.0.1', port: null },
     projects: [],
     tasks: [],
+    conversationAttentionByProject: {},
     runtime: {
       aiCli: {
         available: false,

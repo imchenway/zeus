@@ -16136,6 +16136,41 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   color: var(--zeus-control-disabled-text);
 }
 
+/* 项目会话入口只保留红点或运行动效；待回复红点由聚合状态直接覆盖运行动效。 */
+.macos-ai-app.zeus-shell .project-first-sidebar .project-session-attention-indicator {
+  block-size: 9px;
+  box-sizing: border-box;
+  display: inline-block;
+  inline-size: 9px;
+  vertical-align: middle;
+}
+
+.macos-ai-app.zeus-shell .project-first-sidebar .project-session-attention-indicator[data-attention-state='reply_required'] {
+  background: var(--zeus-danger-text);
+  border-radius: 999px;
+  box-shadow: 0 0 0 2px color-mix(in oklch, var(--zeus-danger-text) 14%, transparent);
+}
+
+.macos-ai-app.zeus-shell .project-first-sidebar .project-session-attention-indicator[data-attention-state='running'] {
+  animation: project-session-attention-spin 900ms linear infinite;
+  border: 1.5px solid color-mix(in oklch, var(--zeus-product-accent) 38%, transparent);
+  border-block-start-color: var(--zeus-product-accent);
+  border-radius: 999px;
+}
+
+@keyframes project-session-attention-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .macos-ai-app.zeus-shell .project-first-sidebar .project-session-attention-indicator[data-attention-state='running'] {
+    animation: none;
+    border-color: var(--zeus-product-accent);
+  }
+}
+
 /* 单目录创建弹窗复用 Zeus 表面、按钮与主题 token，并保持与 Codex 参考一致的名称优先层级。 */
 .project-create-dialog-portal-root.macos-ai-app {
   background: transparent;

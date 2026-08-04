@@ -151,6 +151,7 @@ import {
   type LocalBusinessDataSnapshot,
   type LocalSettingsExportSnapshot,
   type ProjectArchiveConfirmation,
+  type ProjectConversationAttentionState,
   type ProjectConfig,
   type ProjectDatabaseSecretSnapshot,
   type ProjectRecord,
@@ -400,6 +401,10 @@ const nativeConversationListLifecycleEventTypes = new Set([
   'conversation.request.resolved',
   'conversation.native.error',
 ]);
+
+function isProjectConversationAttentionState(value: unknown): value is ProjectConversationAttentionState {
+  return value === 'idle' || value === 'running' || value === 'reply_required';
+}
 
 export function shouldRefreshNativeConversationListForRealtimeEvent(event: ZeusRealtimeEvent): boolean {
   return nativeConversationListLifecycleEventTypes.has(event.type) && typeof event.payload.projectId === 'string' && typeof event.payload.conversationId === 'string';
@@ -956,6 +961,8 @@ const languageCopy = {
         commands: '命令',
       },
       current: '当前',
+      conversationRunning: '有会话正在运行',
+      conversationReplyRequired: '有会话等待回复',
       globalSettingsLabel: '全局设置',
       settings: '设置',
     },
@@ -2370,6 +2377,8 @@ const languageCopy = {
         commands: 'Commands',
       },
       current: 'Current',
+      conversationRunning: 'Conversation running',
+      conversationReplyRequired: 'Conversation awaiting reply',
       globalSettingsLabel: 'Global settings',
       settings: 'Settings',
     },
@@ -3636,6 +3645,8 @@ const languageCopy = {
       labelSeparator: string;
       sections: Record<Exclude<ProjectWorkspaceSection, 'project-settings'>, string>;
       current: string;
+      conversationRunning: string;
+      conversationReplyRequired: string;
       globalSettingsLabel: string;
       settings: string;
     };
@@ -6839,6 +6850,21 @@ export function App(props: {
         });
     };
     const unsubscribe = subscribeRealtimeEvents((event) => {
+      if (typeof event.payload.projectId === 'string' && isProjectConversationAttentionState(event.payload.conversationAttentionState)) {
+        const projectId = event.payload.projectId;
+        const attentionState = event.payload.conversationAttentionState;
+        setSnapshot((current) =>
+          current.conversationAttentionByProject[projectId] === attentionState
+            ? current
+            : {
+                ...current,
+                conversationAttentionByProject: {
+                  ...current.conversationAttentionByProject,
+                  [projectId]: attentionState,
+                },
+              },
+        );
+      }
       if (shouldRefreshNativeConversationListForRealtimeEvent(event)) {
         refreshNativeConversationList(event.payload.projectId as string, event.payload.conversationId as string);
       }
@@ -9811,6 +9837,7 @@ export function App(props: {
           projects={orderedProjects}
           pinnedProjectIds={appShellSettings.pinnedProjectIds}
           collapsedProjectIds={appShellSettings.collapsedProjectIds}
+          conversationAttentionByProject={snapshot.conversationAttentionByProject}
           appLanguage={appShellSettings.appLanguage}
           canCreateProject={projectCreationReady && !creatingProjectBusy}
           createProjectBusy={creatingProjectBusy}
@@ -15878,6 +15905,7 @@ function SidebarNav(props: {
   projects: ProjectRecord[];
   pinnedProjectIds: string[];
   collapsedProjectIds: string[];
+  conversationAttentionByProject: Record<string, ProjectConversationAttentionState>;
   appLanguage: AppLanguage;
   canCreateProject: boolean;
   createProjectBusy: boolean;
@@ -16172,6 +16200,7 @@ function SidebarNav(props: {
             const menuClosing = closingProjectMenuIds.has(project.id);
             const menuVisible = menuOpen || menuClosing;
             const menuPosition = projectMenuPositions.get(project.id);
+            const conversationAttentionState = props.conversationAttentionByProject[project.id] ?? 'idle';
             const projectMorePopover =
               menuVisible && menuPosition ? (
                 <div
@@ -16309,6 +16338,8 @@ function SidebarNav(props: {
                       ] satisfies Array<{ id: ProjectWorkspaceSection; label: string; icon: ReactNode }>
                     ).map((item) => {
                       const current = isActiveProject && props.activeProjectSection === item.id;
+                      const attentionState = item.id === 'sessions' ? conversationAttentionState : 'idle';
+                      const attentionLabel = attentionState === 'reply_required' ? copy.conversationReplyRequired : attentionState === 'running' ? copy.conversationRunning : undefined;
                       return (
                         <SourceListRow
                           level="nested"
@@ -16316,10 +16347,11 @@ function SidebarNav(props: {
                           selected={current}
                           icon={item.icon}
                           label={item.label}
-                          state={current ? copy.current : undefined}
+                          state={attentionState === 'idle' ? current ? copy.current : undefined : <SidebarConversationAttentionIndicator state={attentionState} />}
                           buttonProps={{
                             type: 'button',
                             'aria-current': current ? 'page' : undefined,
+                            'aria-label': attentionLabel ? `${item.label}${copy.labelSeparator}${attentionLabel}` : undefined,
                             tabIndex: current ? 0 : -1,
                             'data-inline-rail-item': 'true',
                             onClick: () => props.onOpenProjectSection(project, item.id),
@@ -16357,6 +16389,10 @@ function SidebarNav(props: {
       />
     </aside>
   );
+}
+
+function SidebarConversationAttentionIndicator(props: { state: Exclude<ProjectConversationAttentionState, 'idle'> }) {
+  return <span className="project-session-attention-indicator" data-attention-state={props.state} aria-hidden="true" />;
 }
 
 function InlineRecoveryPrompt(props: { title: string; body: string; actions: InlineRecoveryAction[]; className?: string }) {
