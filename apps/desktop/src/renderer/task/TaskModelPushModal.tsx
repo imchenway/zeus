@@ -23,7 +23,9 @@ export interface TaskModelPushForm {
 
 export type TaskModelPushModalStatus = 'loading' | 'ready' | 'submitting' | 'error';
 
-export type TaskModelPushPreferences = Pick<TaskModelPushForm, 'model' | 'effort' | 'workMode' | 'permissionMode'>;
+export type TaskModelPushPreferences = Pick<TaskModelPushForm, 'model' | 'effort' | 'workMode' | 'permissionMode'> & {
+  repositorySourceRefs: Record<string, string>;
+};
 
 const preferencesKeyPrefix = 'zeus.task-model-push-preferences:v1:';
 
@@ -39,15 +41,36 @@ export function readTaskModelPushPreferences(storage: Pick<Storage, 'getItem'> |
     if (!value || typeof value.model !== 'string' || typeof value.effort !== 'string') return null;
     if (value.workMode !== 'default' && value.workMode !== 'plan') return null;
     if (value.permissionMode !== 'read-only' && value.permissionMode !== 'auto' && value.permissionMode !== 'full-access') return null;
-    return value as TaskModelPushPreferences;
+    const repositorySourceRefs =
+      value.repositorySourceRefs && typeof value.repositorySourceRefs === 'object' && !Array.isArray(value.repositorySourceRefs)
+        ? Object.fromEntries(Object.entries(value.repositorySourceRefs).filter((entry): entry is [string, string] => typeof entry[1] === 'string'))
+        : {};
+    return {
+      model: value.model,
+      effort: value.effort,
+      workMode: value.workMode,
+      permissionMode: value.permissionMode,
+      repositorySourceRefs,
+    };
   } catch {
     return null;
   }
 }
 
-export function writeTaskModelPushPreferences(storage: Pick<Storage, 'setItem'> | undefined, projectId: string, form: TaskModelPushForm): void {
+export function writeTaskModelPushPreferences(storage: Pick<Storage, 'getItem' | 'setItem'> | undefined, projectId: string, form: TaskModelPushForm): void {
   if (!storage) return;
-  storage.setItem(`${preferencesKeyPrefix}${encodeURIComponent(projectId)}`, JSON.stringify({ model: form.model, effort: form.effort, workMode: form.workMode, permissionMode: form.permissionMode } satisfies TaskModelPushPreferences));
+  const rememberedSourceRefs = readTaskModelPushPreferences(storage, projectId)?.repositorySourceRefs ?? {};
+  const selectedSourceRefs = form.workspaceMode === 'create' ? Object.fromEntries(Object.entries(form.repositorySelections).flatMap(([repositoryId, selection]) => (selection.sourceRef ? [[repositoryId, selection.sourceRef]] : []))) : {};
+  storage.setItem(
+    `${preferencesKeyPrefix}${encodeURIComponent(projectId)}`,
+    JSON.stringify({
+      model: form.model,
+      effort: form.effort,
+      workMode: form.workMode,
+      permissionMode: form.permissionMode,
+      repositorySourceRefs: { ...rememberedSourceRefs, ...selectedSourceRefs },
+    } satisfies TaskModelPushPreferences),
+  );
 }
 
 export function resolveTaskModelPushInitialForm(capabilities: CodexTaskPushCapabilities, remembered: TaskModelPushPreferences | null, serviceTier: NativeServiceTierSelection = { type: 'follow' }): TaskModelPushForm {
@@ -67,14 +90,17 @@ export function resolveTaskModelPushInitialForm(capabilities: CodexTaskPushCapab
     workspaceMode: existingEnvironment ? 'existing' : 'create',
     environmentId: existingEnvironment?.id ?? '',
     repositorySelections: Object.fromEntries(
-      capabilities.repositories.map((repository) => [
-        repository.id,
-        {
-          // 每个仓库都要求用户在弹窗内确认，初始值不替用户选择来源分支。
-          sourceRef: '',
-          branchName: repository.suggestedBranchName,
-        },
-      ]),
+      capabilities.repositories.map((repository) => {
+        const rememberedSourceRef = remembered?.repositorySourceRefs[repository.id] ?? '';
+        return [
+          repository.id,
+          {
+            // 只恢复当前仍存在的来源分支，避免把已删除分支显示成有效默认值。
+            sourceRef: repository.sourceRefs.some((source) => source.ref === rememberedSourceRef) ? rememberedSourceRef : '',
+            branchName: repository.suggestedBranchName,
+          },
+        ];
+      }),
     ),
     supplementalInfo: '',
   };
