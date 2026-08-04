@@ -11875,7 +11875,7 @@ a {
 }
 
 .macos-ai-app .task-git-review-diff-table {
-  min-inline-size: 760px;
+  min-inline-size: 0;
   overflow: auto;
   background: var(--zeus-code-bg, var(--zeus-product-panel));
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
@@ -11885,20 +11885,23 @@ a {
 
 .macos-ai-app .task-git-review-diff-row {
   display: grid;
-  grid-template-columns: 48px minmax(330px, 1fr) 48px minmax(330px, 1fr);
+  grid-template-columns: 48px minmax(0, 1fr) 48px minmax(0, 1fr);
   min-block-size: 20px;
 }
 
 .macos-ai-app .task-git-review-diff-row > * {
+  min-inline-size: 0;
   padding-inline: 7px;
   border-inline-end: 1px solid var(--zeus-product-line-soft);
-  white-space: pre;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 .macos-ai-app .task-git-review-diff-row .line-number {
   color: var(--zeus-product-muted);
   text-align: end;
   user-select: none;
+  white-space: nowrap;
 }
 
 .macos-ai-app .task-git-review-diff-row.is-addition > :nth-child(3),
