@@ -8260,7 +8260,6 @@ export function App(props: {
       if (taskModelPushCapabilityRequestRef.current !== requestVersion) return;
       setTaskModelPushStatus('error');
       setTaskModelPushError(redactLocalUiErrorMessage(errorToLocalUiMessage(error)));
-      recordLocalError('task-model-push-capabilities', error);
     }
   }
 
@@ -8424,7 +8423,6 @@ export function App(props: {
         };
       });
       setTaskModelPushPending((current) => (current?.request.idempotencyKey === pending.request.idempotencyKey ? failed : current));
-      recordLocalError('task-model-push', error);
     }
   }
 
