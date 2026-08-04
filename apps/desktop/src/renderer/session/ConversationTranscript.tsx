@@ -21,6 +21,7 @@ export interface ConversationTranscriptProps {
 
 export function ConversationTranscript(props: ConversationTranscriptProps) {
   const containerRef = useRef<HTMLElement | null>(null);
+  const initialPositionedConversationRef = useRef<string | null>(null);
   const previousTurnIdRef = useRef<string | null>(null);
   const pendingTurnPositionRef = useRef(false);
   const scrollController = useThreadScrollController();
@@ -36,6 +37,15 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   const showThinking = shouldShowTranscriptThinking(props.state);
   const historyHydrated = props.state.snapshot !== null;
   const historyUnavailable = !historyHydrated && (props.state.transportState === 'reconnecting' || props.state.transportState === 'failed');
+
+  useLayoutEffect(() => {
+    const container = containerRef.current;
+    const conversationId = props.state.conversationId ?? props.state.snapshot?.id ?? null;
+    if (!container || !historyHydrated || !conversationId || initialPositionedConversationRef.current === conversationId) return;
+    // 会话切换后的首次历史定位必须发生在浏览器绘制前，避免从顶部播放滑到底部的动画。
+    container.scrollTo({ top: container.scrollHeight, behavior: 'instant' });
+    initialPositionedConversationRef.current = conversationId;
+  }, [historyHydrated, props.state.conversationId, props.state.snapshot?.id]);
 
   useEffect(() => {
     const resolution = resolveCompletedItemAnnouncement(completedAnnouncementTrackerRef.current, items, props.language);
