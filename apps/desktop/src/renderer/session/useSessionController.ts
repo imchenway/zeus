@@ -359,8 +359,19 @@ export function createSessionController(options: CreateSessionControllerOptions)
     dispatch(event ? { type: 'event_received', event } : { type: 'request_resolved', requestId });
   }
 
+  function resumeEventsAfterRequestResponse(requestId: string): void {
+    markRequestResolved(requestId);
+    // 用户可能在请求卡片前停留很久，期间本机 WebSocket 已经失活却尚未触发 close。
+    // 回答成功后重新建立事件流并读取权威快照，保证行为与 Codex App 一致：
+    // 请求解除后继续接收同一轮的后续事件，直到 turn/completed。
+    cancelReconnectLoop();
+    const attempt = hydrate(true, true);
+    const token = connectionToken;
+    void attempt.catch(() => scheduleReconnect(token));
+  }
+
   function withoutResolvedRequests(snapshot: NativeConversationSnapshot): NativeConversationSnapshot {
-    const requests = snapshot.requests.filter((request) => !resolvedRequestIds.has(request.id));
+    const requests = snapshot.requests.filter((request) => request.status !== 'pending' || !resolvedRequestIds.has(request.id));
     return requests.length === snapshot.requests.length ? snapshot : { ...snapshot, requests };
   }
 
@@ -996,7 +1007,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
       return runOperation(
         `request:respond:${requestId}:${JSON.stringify(response)}`,
         () => options.client.respondToNativeRequest(options.projectId, options.conversationId, requestId, response),
-        () => markRequestResolved(requestId),
+        () => resumeEventsAfterRequestResponse(requestId),
       );
     },
     snoozeRequest(requestId) {
