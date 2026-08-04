@@ -79,8 +79,8 @@ export interface ProjectSessionWorkspaceStartInput {
 }
 
 export interface SessionWorkspaceActions {
-  onStartConversation?: (input: SessionWorkspaceStartInput) => void | Promise<void>;
-  onStartProjectConversation?: (input: ProjectSessionWorkspaceStartInput) => void | Promise<void>;
+  onStartConversation?: (input: SessionWorkspaceStartInput) => void | boolean | Promise<void | boolean>;
+  onStartProjectConversation?: (input: ProjectSessionWorkspaceStartInput) => void | boolean | Promise<void | boolean>;
   onLoadCapabilities?: (projectId: string) => Promise<CodexConversationCapabilities>;
   onReconnect?: () => void | Promise<void>;
   onDraftChange?: (draft: string) => void;
@@ -327,7 +327,8 @@ export function createConnectedSessionActions(input: { controller: SessionContro
       if (recoveryRequired) return;
       await input.controller.editQueuedSubmission(submissionId, content);
     },
-    onDeleteQueuedSubmission: (submissionId) => (recoveryRequired ? Promise.resolve() : settle(input.controller.deleteQueuedSubmission(submissionId))),
+    // 删除未进入 provider turn 的内容是本地软删除；即使原会话需要恢复，也必须允许用户在成功带入新会话后清理旧记录。
+    onDeleteQueuedSubmission: (submissionId) => settle(input.controller.deleteQueuedSubmission(submissionId)),
     onSendQueuedNow: (submissionId) => (recoveryRequired ? Promise.resolve() : settle(input.controller.sendQueuedNow(submissionId))),
     onReorderQueue: (orderedSubmissionIds) => (recoveryRequired ? Promise.resolve() : settle(input.controller.reorderQueue(orderedSubmissionIds))),
     onResumeQueue: () => (recoveryRequired ? Promise.resolve() : settle(input.controller.resumeQueue())),
@@ -963,6 +964,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const effectiveResumable = props.state?.snapshot ? !['closed', 'failed'].includes(effectiveProviderState ?? '') : effectiveProviderState === 'archived' ? true : props.conversation?.resumable;
   const nonResumableNative = Boolean(props.conversation && !legacy && !effectiveResumable);
   const freshStartRequired = nonResumableNative || Boolean(props.state?.error?.recoveryRequired);
+  const recoveryDecisionPending = Boolean(props.state?.error?.recoveryRequired && ['disconnected', 'connecting', 'hydrating', 'reconnecting'].includes(props.state.transportState));
   const unsentDraft = useMemo(() => createUnsentConversationDraft(freshStartRequired ? props.state?.queue?.submissions : undefined), [freshStartRequired, props.state?.queue?.submissions]);
   const pendingRequests = props.state?.pendingRequests.filter((request) => request.status === 'pending') ?? [];
   const pendingPlanImplementationRequests = props.state?.planImplementationRequests.filter((request) => request.status === 'pending').slice(-1) ?? [];
@@ -1468,22 +1470,6 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                     </button>
                   </section>
                 ) : null}
-                {(startFreshOpen || props.state.error?.recoveryRequired) && owner ? (
-                  <NewConversationComposer
-                    key={`fresh-conversation:${unsentDraft.key}`}
-                    language={props.language}
-                    owner={owner}
-                    task={props.task}
-                    autoFocus
-                    initialContent={unsentDraft.content}
-                    initialAttachments={unsentDraft.attachments}
-                    capabilities={props.capabilities}
-                    onStartTask={actions.onStartConversation}
-                    onStartProject={actions.onStartProjectConversation}
-                    onLoadCapabilities={actions.onLoadCapabilities}
-                    onChooseAttachments={actions.onChooseStartAttachments}
-                  />
-                ) : null}
                 <ConversationTranscript
                   state={props.state}
                   language={props.language}
@@ -1535,7 +1521,28 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                     />
                   </section>
                 ) : freshStartRequired ? (
-                  unsentDraft.submissions.length ? (
+                  recoveryDecisionPending ? null : owner ? (
+                    <NewConversationComposer
+                      key={`fresh-conversation:${unsentDraft.key}`}
+                      language={props.language}
+                      owner={owner}
+                      task={props.task}
+                      autoFocus={startFreshOpen || Boolean(props.state.error?.recoveryRequired)}
+                      docked
+                      initialContent={unsentDraft.content}
+                      initialAttachments={unsentDraft.attachments}
+                      capabilities={props.capabilities}
+                      onStartTask={actions.onStartConversation}
+                      onStartProject={actions.onStartProjectConversation}
+                      onLoadCapabilities={actions.onLoadCapabilities}
+                      onChooseAttachments={actions.onChooseStartAttachments}
+                      onAccepted={async () => {
+                        for (const submission of unsentDraft.submissions) {
+                          await actions.onDeleteQueuedSubmission?.(submission.id);
+                        }
+                      }}
+                    />
+                  ) : unsentDraft.submissions.length ? (
                     <UnsentConversationContent language={props.language} submissions={unsentDraft.submissions} onRecover={() => setStartFreshOpen(true)} />
                   ) : null
                 ) : (
@@ -1736,6 +1743,7 @@ function NewConversationComposer(props: {
   owner?: SessionConversationOwner;
   task: SessionWorkspaceTask | null;
   autoFocus?: boolean;
+  docked?: boolean;
   initialContent?: string;
   initialAttachments?: NativeConversationAttachment[];
   loadState?: SessionWorkspaceProps['loadState'];
@@ -1745,6 +1753,7 @@ function NewConversationComposer(props: {
   onStartProject?: SessionWorkspaceActions['onStartProjectConversation'];
   onLoadCapabilities?: SessionWorkspaceActions['onLoadCapabilities'];
   onChooseAttachments?: SessionWorkspaceActions['onChooseStartAttachments'];
+  onAccepted?: () => void | Promise<void>;
 }) {
   const copy = labels[props.language];
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -1828,12 +1837,13 @@ function NewConversationComposer(props: {
     setSubmitting(true);
     setLocalError(null);
     try {
+      let accepted: void | boolean;
       if (props.owner.kind === 'project') {
         if (!props.onStartProject) throw new Error('Project conversation start is unavailable.');
-        await props.onStartProject({ owner: props.owner, content, attachments, permissionMode, collaborationMode, serviceTierSelection });
+        accepted = await props.onStartProject({ owner: props.owner, content, attachments, permissionMode, collaborationMode, serviceTierSelection });
       } else {
         if (!props.task || !props.onStartTask) throw new Error('Task conversation start is unavailable.');
-        await props.onStartTask({
+        accepted = await props.onStartTask({
           mode: 'create',
           task: props.task,
           content,
@@ -1843,6 +1853,8 @@ function NewConversationComposer(props: {
           serviceTierSelection,
         });
       }
+      if (accepted === false) return;
+      await props.onAccepted?.();
     } catch (error) {
       setLocalError(error instanceof Error ? error.message : String(error));
     } finally {
@@ -1851,7 +1863,7 @@ function NewConversationComposer(props: {
   }
 
   return (
-    <section className="session-new-conversation">
+    <section className="session-new-conversation" data-docked={props.docked || undefined}>
       <span className="session-new-conversation-spacer" aria-hidden="true" />
       <section
         className="session-composer-shell session-new-conversation-composer"

@@ -372,14 +372,21 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       state: runStates.get(conversationId) ?? { type: 'idle' },
       submissions: entries.map((submission, index) => ({
         id: submission.id,
+        conversationId: submission.conversationId,
         content:
           submissionText(submission) ||
           submissionAttachments(submission)
             .map((attachment) => attachment.name)
             .join('、'),
         status: submission.status as 'queued' | 'paused' | 'failed',
+        delivery: 'queue',
+        attachments: submissionAttachments(submission),
+        clientUserMessageId: submission.clientMessageId,
         position: submission.queuePosition ?? index + 1,
+        providerTurnId: submission.providerTurnId,
         pausedReason: submission.pausedReason,
+        createdAt: submission.createdAt,
+        updatedAt: submission.updatedAt,
       })),
     };
   }
@@ -1117,7 +1124,9 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       persistThreadProviderSettings(conversation.id, resumed);
       const snapshot = await options.manager.readThread({ threadId: providerThreadId });
       for (const submission of options.submissions.listByConversation(conversation.id)) {
-        if (submission.status === 'paused' && submission.pausedReason === 'provider_archived') options.submissions.updateStatus(submission.id, 'queued');
+        if (submission.status === 'paused' && submission.pausedReason === 'provider_archived' && !submission.providerTurnId) {
+          options.submissions.updateStatus(submission.id, 'paused', { pausedReason: 'user_confirmation' });
+        }
       }
       conversation = options.conversations.bindProvider(conversation.id, {
         providerId: 'codex',
@@ -1600,17 +1609,23 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
 
   function reconcileConversationSnapshot(conversation: ZeusConversationWithMessagesRecord, snapshot: CodexThreadSnapshot, generationId: string): void {
     const submissions = options.submissions.listByConversation(conversation.id);
-    if (submissions.some((submission) => submission.status === 'paused' && submission.pausedReason === 'interrupted')) {
-      runStates.set(conversation.id, { type: 'paused', reason: 'interrupted' });
-      return;
-    }
     const inFlight = submissions.filter((submission) => submission.status === 'dispatching' || submission.status === 'active');
     if (inFlight.length === 0) {
+      if (!snapshotConfirmsIdleProviderThread(snapshot)) {
+        markConversationRecoveryRequired(conversation.id, coordinatorError('ZEUS_NATIVE_PROVIDER_STATE_UNCONFIRMED', 'Provider thread state cannot confirm that there is no active turn.'));
+        return;
+      }
+      if (conversation.providerState === 'failed' || conversation.providerState === 'closed') {
+        markConversationRecoveryRequired(conversation.id, coordinatorError('ZEUS_NATIVE_CONVERSATION_NOT_RESUMABLE', 'The provider conversation cannot be resumed safely.'));
+        return;
+      }
       if (conversation.providerState === 'paused') {
-        if (!snapshotConfirmsTerminalLocalTurn(snapshot, options.turns.listByConversation(conversation.id))) {
+        if (!snapshotConfirmsSafeResumeBoundary(snapshot, options.turns.listByConversation(conversation.id))) {
           markConversationRecoveryRequired(conversation.id, coordinatorError('ZEUS_NATIVE_PROVIDER_STATE_UNCONFIRMED', 'Provider thread state cannot confirm that the previous turn is terminal.'));
           return;
         }
+      }
+      if (conversation.providerState !== 'ready') {
         options.conversations.bindProvider(conversation.id, {
           providerId: 'codex',
           providerThreadId: requireString(conversation.providerThreadId, 'provider thread id'),
@@ -1618,6 +1633,8 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
           providerState: 'ready',
         });
       }
+      // 恢复只确认原会话可以继续，不替用户发送重启前尚未进入 Codex 轮次的内容。
+      pauseUnsentSubmissionsForConfirmation(conversation.id);
       runStates.set(conversation.id, { type: 'idle' });
       return;
     }
@@ -1672,6 +1689,13 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         failedTurnResults.set(resultKey, failure);
         rejectTurnResultWaiters(resultKey, failure);
       }
+    }
+  }
+
+  function pauseUnsentSubmissionsForConfirmation(conversationId: string): void {
+    for (const submission of options.submissions.listByConversation(conversationId)) {
+      if ((submission.status !== 'queued' && submission.status !== 'paused') || submission.providerTurnId) continue;
+      options.submissions.updateStatus(submission.id, 'paused', { pausedReason: 'user_confirmation' });
     }
   }
 
@@ -2867,10 +2891,18 @@ function findSnapshotTurn(snapshot: CodexThreadSnapshot, submission: ZeusConvers
   return turns.find((turn) => turn.clientUserMessageId === submission.clientMessageId || turn.clientMessageId === submission.clientMessageId) ?? null;
 }
 
-function snapshotConfirmsTerminalLocalTurn(snapshot: CodexThreadSnapshot, localTurns: readonly ZeusConversationTurnRecord[]): boolean {
+function snapshotConfirmsIdleProviderThread(snapshot: CodexThreadSnapshot): boolean {
   const snapshotTurns = Array.isArray(snapshot.turns) ? snapshot.turns.filter(isRecord) : [];
-  if (snapshotTurns.some((turn) => classifySnapshotTurn(turn) === 'active')) return false;
+  return snapshotTurns.every((turn) => {
+    const classification = classifySnapshotTurn(turn);
+    return classification === 'completed' || classification === 'interrupted' || classification === 'failed';
+  });
+}
+
+function snapshotConfirmsSafeResumeBoundary(snapshot: CodexThreadSnapshot, localTurns: readonly ZeusConversationTurnRecord[]): boolean {
+  const snapshotTurns = Array.isArray(snapshot.turns) ? snapshot.turns.filter(isRecord) : [];
   const terminalLocalIds = new Set(localTurns.filter((turn) => turn.providerTurnId && (turn.status === 'completed' || turn.status === 'interrupted' || turn.status === 'failed')).map((turn) => turn.providerTurnId as string));
+  if (terminalLocalIds.size === 0) return snapshotTurns.length === 0;
   return snapshotTurns.some((turn) => typeof turn.id === 'string' && terminalLocalIds.has(turn.id) && ['completed', 'interrupted', 'failed'].includes(classifySnapshotTurn(turn)));
 }
 

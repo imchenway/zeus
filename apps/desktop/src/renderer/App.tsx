@@ -8031,11 +8031,11 @@ export function App(props: {
     return props.onChooseConversationResources?.() ?? [];
   }
 
-  async function startNativeConversation(input: SessionWorkspaceStartInput): Promise<void> {
+  async function startNativeConversation(input: SessionWorkspaceStartInput): Promise<boolean> {
     const client = props.nativeConversationClient;
     if (!client) {
       recordLocalError('native-conversation-start', new Error('Codex native app-server client is unavailable.'));
-      return;
+      return false;
     }
     setNativeConversationChoiceTaskStates((current) => ({ ...current, [input.task.id]: beginNativeConversationChoiceTaskLoad(current[input.task.id]) }));
     let refreshError: unknown | null = null;
@@ -8086,7 +8086,7 @@ export function App(props: {
       const message = redactLocalUiErrorMessage(errorToLocalUiMessage(error));
       setNativeConversationChoiceTaskStates((current) => ({ ...current, [input.task.id]: failNativeConversationChoiceTaskLoad(current[input.task.id], message) }));
       recordLocalError('native-conversation-start', error);
-      return;
+      return false;
     }
     if (refreshError) {
       setNativeConversationChoiceTaskStates((current) => ({
@@ -8095,14 +8095,15 @@ export function App(props: {
       }));
       recordLocalError('native-conversation-choice-refresh', refreshError);
     }
+    return true;
   }
 
-  async function startProjectConversation(input: ProjectSessionWorkspaceStartInput): Promise<void> {
+  async function startProjectConversation(input: ProjectSessionWorkspaceStartInput): Promise<boolean> {
     const client = props.nativeConversationClient;
     const projectId = input.owner.projectId;
     if (!client) {
       recordLocalError('project-conversation-start', new Error('Project conversation client is unavailable.'));
-      return;
+      return false;
     }
     setNativeConversationChoiceProjectStates((current) => ({ ...current, [projectId]: beginNativeConversationChoiceTaskLoad(current[projectId]) }));
     let refreshError: unknown | null = null;
@@ -8141,7 +8142,7 @@ export function App(props: {
       const message = redactLocalUiErrorMessage(errorToLocalUiMessage(error));
       setNativeConversationChoiceProjectStates((current) => ({ ...current, [projectId]: failNativeConversationChoiceTaskLoad(current[projectId], message) }));
       recordLocalError('project-conversation-start', error);
-      return;
+      return false;
     }
     if (refreshError) {
       setNativeConversationChoiceProjectStates((current) => ({
@@ -8150,6 +8151,7 @@ export function App(props: {
       }));
       recordLocalError('project-conversation-choice-refresh', refreshError);
     }
+    return true;
   }
 
   const prepareNewConversationDraft = useCallback((): void => {
