@@ -977,6 +977,7 @@ const languageCopy = {
       statusAria: '任务状态',
       statusSelectAria: '任务状态筛选',
       taskStatusSelectAria: (taskTitle: string) => `修改任务状态：${taskTitle}`,
+      taskPrioritySelectAria: (taskTitle: string) => `修改任务优先级：${taskTitle}`,
       detailStatusSelectAria: '修改当前任务状态',
       statusTitle: '状态',
       unfinishedStatusFilter: '未完成',
@@ -2395,6 +2396,7 @@ const languageCopy = {
       statusAria: 'Task status',
       statusSelectAria: 'Task status filter',
       taskStatusSelectAria: (taskTitle: string) => `Change task status: ${taskTitle}`,
+      taskPrioritySelectAria: (taskTitle: string) => `Change task priority: ${taskTitle}`,
       detailStatusSelectAria: 'Change current task status',
       statusTitle: 'Status',
       unfinishedStatusFilter: 'Unfinished',
@@ -10706,6 +10708,7 @@ export function App(props: {
                     statusOptions={taskStatusFilterValues}
                     statusLabels={taskManagementStatusLabels[appShellSettings.appLanguage]}
                     runStatusLabels={taskAgentRunStatusLabels[appShellSettings.appLanguage]}
+                    priorityOptions={taskWorkspaceCopy.taskCreatePriorityOptions}
                     copy={taskWorkspaceCopy}
                     appLanguage={appShellSettings.appLanguage}
                     runtime={runtime}
@@ -10733,6 +10736,7 @@ export function App(props: {
                     onToggleAllVisibleTaskSelection={toggleAllVisibleTaskSelection}
                     onClearTaskSelection={clearTaskSelection}
                     onTaskStatusChange={(taskId, targetStatus) => void updateTaskManagementStatus(taskId, targetStatus).catch(() => undefined)}
+                    onTaskPriorityChange={updateTaskContent}
                     onBulkTaskStatusChange={(targetStatus, taskIds) => void runBulkTaskStatusChange(targetStatus, taskIds)}
                     onBulkTaskDelete={(taskIds) => void runBulkTaskDelete(taskIds)}
                     onRetryTaskList={

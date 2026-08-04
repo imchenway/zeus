@@ -10143,6 +10143,49 @@ a {
   min-inline-size: 38px;
 }
 
+.macos-ai-app .task-table-priority-control,
+.macos-ai-app .task-table-priority-control .zeus-select,
+.macos-ai-app .task-table-priority-control .zeus-select-trigger {
+  inline-size: 100%;
+  min-inline-size: 0;
+}
+
+.macos-ai-app .task-table-priority-control {
+  align-content: center;
+  display: grid;
+  gap: 2px;
+}
+
+.macos-ai-app .task-table-priority-control .zeus-select-trigger {
+  justify-content: space-between;
+}
+
+.macos-ai-app .task-table-priority-feedback {
+  align-items: center;
+  color: var(--zeus-product-muted);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  min-inline-size: 0;
+}
+
+.macos-ai-app .task-table-priority-feedback.is-error {
+  color: var(--zeus-danger-text);
+}
+
+.macos-ai-app .task-table-priority-feedback small {
+  color: currentColor;
+  font-size: 9px;
+  line-height: 11px;
+  max-inline-size: 100%;
+}
+
+.macos-ai-app .task-table-priority-conflict-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+}
+
 .macos-ai-app .task-table-select-cell {
   align-items: center;
   display: inline-flex;
