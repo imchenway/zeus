@@ -370,26 +370,6 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     return {
       conversationId,
       state: runStates.get(conversationId) ?? { type: 'idle' },
-<<<<<<< HEAD
-      submissions: entries.map((submission, index) => ({
-        id: submission.id,
-        conversationId: submission.conversationId,
-        content:
-          submissionText(submission) ||
-          submissionAttachments(submission)
-            .map((attachment) => attachment.name)
-            .join('、'),
-        status: submission.status as 'queued' | 'paused' | 'failed',
-        delivery: 'queue',
-        attachments: submissionAttachments(submission),
-        clientUserMessageId: submission.clientMessageId,
-        position: submission.queuePosition ?? index + 1,
-        providerTurnId: submission.providerTurnId,
-        pausedReason: submission.pausedReason,
-        createdAt: submission.createdAt,
-        updatedAt: submission.updatedAt,
-      })),
-=======
       submissions: entries.map((submission, index) => {
         const input = parseJsonRecord(submission.inputJson);
         return {
@@ -412,7 +392,6 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
           updatedAt: submission.updatedAt,
         };
       }),
->>>>>>> zeus/ZEUS-000041-task-01
     };
   }
 
