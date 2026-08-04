@@ -6,8 +6,9 @@
   "scripts": {
     "dev": "../../script/build_and_run.sh",
     "build": "node scripts/clean-build-output.mjs && vite build && tsc -p tsconfig.preload.json && node scripts/bundle-preload.mjs && tsc -p tsconfig.main.json",
-    "package:mac": "node ../../scripts/package-mac.mjs",
-    "package:mac:test": "ZEUS_PACKAGE_VARIANT=test node ../../scripts/package-mac.mjs"
+    "package:mac": "ZEUS_PACKAGE_VARIANT=test node ../../scripts/package-mac.mjs",
+    "package:mac:test": "ZEUS_PACKAGE_VARIANT=test node ../../scripts/package-mac.mjs",
+    "package:mac:release": "ZEUS_PACKAGE_VARIANT=release ZEUS_RELEASE_BUILD=1 node ../../scripts/package-mac.mjs"
   },
   "dependencies": {
     "@phosphor-icons/react": "^2.1.10",

@@ -9,7 +9,8 @@ ad-hoc 签名的 unsigned DMG，但必须显式标注签名、公证和 Gatekeep
 
 - `pnpm dev`：通过 `@zeus/desktop dev` 对齐 macOS Run 脚本。
 - `pnpm verify:publish`：本地、普通 CI 与完整 Release 共用的发布前入口；检查本次变更文件格式、Git 空白错误、lint、typecheck 和 build。
-- `pnpm package:mac`：生成 macOS App 与 DMG；无 Developer ID 证书时在打包阶段完成 ad-hoc 签名。
+- `pnpm package:mac`：日常开发与真实运行验收入口，只生成独立身份、独立用户数据的 `Zeus Test.app` 与测试 DMG。
+- `pnpm package:mac:release`：只供正式发布链路内部调用，生成生产身份 `Zeus.app`；缺少发布标记时拒绝执行。
 - `pnpm verify:release`：先复用 `verify:publish`，再执行 AI CLI adapter 探针和 macOS 打包，并生成内部 Homebrew Cask 与公开更新清单。
 - `pnpm release:notes:draft`：基于最近公开标签到候选提交的真实范围生成 Release notes 草稿和证据。
 - `pnpm release:prepare`：默认只生成候选计划；显式写入时同步版本与已审阅 Release notes。
@@ -27,18 +28,21 @@ CI 通过 `ZEUS_VERIFY_BASE` 与 `ZEUS_VERIFY_HEAD` 传入本次推送或 PR 的
 
 ## 产物
 
-公开 Release 只包含版本化 DMG 和更新 manifest；Zeus.app 与 Homebrew Cask 是本地或 CI 内部发布工件，不作为 Release 附件。
+公开 Release 只包含版本化 DMG 和更新 manifest；生产身份 `Zeus.app` 与 Homebrew Cask 是本地或 CI 内部发布工件，不作为
+Release 附件。生产候选只做非 GUI 结构、签名、DMG 和清单校验，不作为本机验收应用启动；日常 GUI 验收统一使用 `Zeus Test.app`。
 
 - 公开 DMG：`dist/Zeus-0.1.14-arm64.dmg`；
 - 公开更新清单：`dist/zeus-release-manifest.json`，供应用内检查更新读取；
-- 内部 App：`dist/mac-arm64/Zeus.app`；
+- 内部生产候选 App：发布链路指定输出目录中的 `mac-arm64/Zeus.app`；
+- 日常测试 App：`dist/test/mac-arm64/Zeus Test.app`；
 - 内部 Homebrew Cask：`dist/homebrew/zeus.rb`，同步到 `imchenway/homebrew-tap`；
 - 模板 Cask：`Casks/zeus.rb`。
 
 ## 发布门禁
 
 普通发布前门禁必须覆盖变更文件格式、Git 空白错误、lint、typecheck 和 build。完整 macOS 发布门禁在此基础上继续覆盖
-acceptance matrix、AI CLI adapter 探针、package:mac、包内 Electron 加载和包内 renderer/main 非 GUI 健康检查。
+acceptance matrix、AI CLI adapter 探针、生产候选打包、包内 Electron 加载和包内 renderer/main 非 GUI 健康检查。普通任务的真实
+GUI 验收只使用 `pnpm package:mac` 生成的 `Zeus Test.app`。
 
 ### 当前公开稳定基线（0.1.14）
 

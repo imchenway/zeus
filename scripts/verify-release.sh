@@ -5,8 +5,8 @@ cd "$(dirname "$0")/.."
 pnpm verify:publish
 pnpm verify:acceptance-matrix
 node scripts/verify-ai-cli-adapters.mjs
-release_output_dir="${ZEUS_RELEASE_OUTPUT_DIR:-dist}"
-ZEUS_PACKAGE_OUTPUT_DIR="$release_output_dir" pnpm package:mac
+release_output_dir="${ZEUS_RELEASE_OUTPUT_DIR:-.tmp/zeus-release/verify}"
+ZEUS_PACKAGE_OUTPUT_DIR="$release_output_dir" pnpm package:mac:release
 
 version="$(node -e "const fs=require('fs'); process.stdout.write(JSON.parse(fs.readFileSync('package.json','utf8')).version)")"
 arch="$(uname -m)"

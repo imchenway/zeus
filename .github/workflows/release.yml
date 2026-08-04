@@ -103,6 +103,8 @@ jobs:
           chmod 600 "$key_path"
           echo "APPLE_API_KEY=$key_path" >> "$GITHUB_ENV"
       - name: 执行本地与 CI 共用的完整发布门禁
+        env:
+          ZEUS_RELEASE_OUTPUT_DIR: dist
         run: pnpm verify:release
       - uses: actions/upload-artifact@v4
         with:
