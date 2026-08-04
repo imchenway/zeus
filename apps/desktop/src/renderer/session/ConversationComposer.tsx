@@ -26,8 +26,10 @@ export const QUEUE_REORDER_THRESHOLD_PX = 6;
 export type ComposerKeyIntent = 'submit' | 'newline' | 'escape' | 'ignore';
 export interface ComposerRuntimeSettings {
   model: string;
-  effort: string;
+  effort?: string;
   serviceTier?: string | null;
+  permissionMode: NativePermissionMode;
+  collaborationMode: NativeCollaborationMode;
 }
 
 export interface ConversationComposerProps {
@@ -49,12 +51,10 @@ export interface ConversationComposerProps {
   onResumeQueue?: () => void | Promise<void>;
   onRetryQueue?: () => void | Promise<void>;
   runtimeSettings?: ComposerRuntimeSettings | null;
-  onRuntimeSettingsChange?: (settings: ComposerRuntimeSettings | null) => void;
+  onRuntimeSettingsChange?: (settings: ComposerRuntimeSettings) => void;
   readOnly?: boolean;
   permissionMode: NativePermissionMode;
-  onPermissionModeChange?: (permissionMode: NativePermissionMode) => void | Promise<void>;
   collaborationMode: NativeCollaborationMode;
-  onCollaborationModeChange?: (collaborationMode: NativeCollaborationMode) => void | Promise<void>;
 }
 
 const labels = {
@@ -135,7 +135,6 @@ export function ConversationComposer(props: ConversationComposerProps) {
   const [selectedEffort, setSelectedEffort] = useState(initialEffort);
   const [selectedServiceTier, setSelectedServiceTier] = useState<NativeServiceTierSelection>(initialServiceTier);
   const [serviceTierDowngraded, setServiceTierDowngraded] = useState(false);
-  const [settingsDirty, setSettingsDirty] = useState(Boolean(props.runtimeSettings));
   const pointerStarts = useRef(new Map<string, { x: number; y: number }>());
   const active = props.state.conversationState === 'active_prework' || props.state.conversationState === 'active_final_answer';
   const busy = Boolean(props.state.busyOperation);
@@ -150,7 +149,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
   const queue = props.state.queue?.submissions ?? [];
   const steerAllowed = canSteerActiveTurn(props.state) && props.readOnly !== true;
   const selectedCapability = props.capabilities?.models.find((candidate) => candidate.model === selectedModel || candidate.id === selectedModel) ?? null;
-  const settingsWritable = writable && props.state.conversationState === 'native_idle' && !busy && Boolean(selectedCapability);
+  const settingsWritable = props.readOnly !== true && Boolean(selectedCapability);
   const modelOptions = props.capabilities?.models.length
     ? props.capabilities.models.map((capability) => ({
         value: capability.model,
@@ -175,33 +174,29 @@ export function ConversationComposer(props: ConversationComposerProps) {
   });
 
   useEffect(() => {
-    const nextModel = resolveComposerModel(props.capabilities, props.state.providerSettings?.model);
-    const nextEffort = resolveComposerEffort(props.capabilities, nextModel, props.state.providerSettings?.effort);
+    const nextModel = resolveComposerModel(props.capabilities, props.runtimeSettings?.model ?? props.state.snapshot?.nextTurnSettings?.model ?? props.state.providerSettings?.model);
+    const nextEffort = resolveComposerEffort(props.capabilities, nextModel, props.runtimeSettings?.effort ?? props.state.snapshot?.nextTurnSettings?.effort ?? props.state.providerSettings?.effort);
     const nextServiceTier = selectionFromEffectiveServiceTier(
-      props.state.providerSettings?.serviceTier,
+      props.runtimeSettings && Object.prototype.hasOwnProperty.call(props.runtimeSettings, 'serviceTier')
+        ? props.runtimeSettings.serviceTier
+        : props.state.snapshot?.nextTurnSettings && Object.prototype.hasOwnProperty.call(props.state.snapshot.nextTurnSettings, 'serviceTier')
+          ? props.state.snapshot.nextTurnSettings.serviceTier
+          : props.state.providerSettings?.serviceTier,
       props.capabilities?.models.find((model) => model.model === nextModel || model.id === nextModel),
     );
-    if (!settingsDirty) {
-      if (nextModel !== selectedModel) setSelectedModel(nextModel);
-      if (nextEffort !== selectedEffort) setSelectedEffort(nextEffort);
-      if (serviceTierSelectionValue(nextServiceTier) !== serviceTierSelectionValue(selectedServiceTier)) setSelectedServiceTier(nextServiceTier);
-      props.onRuntimeSettingsChange?.(null);
-      return;
-    }
-    if (props.state.providerSettings?.model === selectedModel && (props.state.providerSettings?.effort ?? '') === selectedEffort && effectiveServiceTierMatchesSelection(props.state.providerSettings?.serviceTier, selectedServiceTier)) {
-      setSettingsDirty(false);
-      props.onRuntimeSettingsChange?.(null);
-    }
+    if (nextModel !== selectedModel) setSelectedModel(nextModel);
+    if (nextEffort !== selectedEffort) setSelectedEffort(nextEffort);
+    if (serviceTierSelectionValue(nextServiceTier) !== serviceTierSelectionValue(selectedServiceTier)) setSelectedServiceTier(nextServiceTier);
   }, [
     props.capabilities,
-    props.onRuntimeSettingsChange,
+    props.runtimeSettings,
+    props.state.snapshot?.nextTurnSettings,
     props.state.providerSettings?.effort,
     props.state.providerSettings?.model,
     props.state.providerSettings?.serviceTier,
     selectedEffort,
     selectedModel,
     selectedServiceTier,
-    settingsDirty,
   ]);
 
   useEffect(() => {
@@ -228,6 +223,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
             model: selectedModel,
             ...(selectedEffort ? { effort: selectedEffort } : {}),
             ...serviceTierWireOverride(selectedServiceTier),
+            permissionMode: props.permissionMode,
             collaborationMode: props.collaborationMode,
           }
         : undefined;
@@ -239,9 +235,15 @@ export function ConversationComposer(props: ConversationComposerProps) {
     const intent = resolveComposerKeyIntent({ key: event.key, shiftKey: event.shiftKey, isComposing: isComposing || event.nativeEvent.isComposing, repeat: event.repeat });
     if (intent === 'submit') {
       event.preventDefault();
-      if (props.state.draft.trim() === '/plan' && !props.state.browserSubmission && props.onCollaborationModeChange) {
+      if (props.state.draft.trim() === '/plan' && !props.state.browserSubmission && props.onRuntimeSettingsChange) {
         props.onDraftChange('');
-        void props.onCollaborationModeChange(props.collaborationMode === 'plan' ? 'default' : 'plan');
+        props.onRuntimeSettingsChange({
+          model: selectedModel,
+          effort: selectedEffort,
+          ...serviceTierWireOverride(selectedServiceTier),
+          permissionMode: props.permissionMode,
+          collaborationMode: props.collaborationMode === 'plan' ? 'default' : 'plan',
+        });
         return;
       }
       if (writable && hasDraft && !busy) submit(active && delivery === 'steer_now' && steerAllowed ? 'steer_now' : 'queue');
@@ -461,8 +463,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
                   setSelectedEffort(effort);
                   setSelectedServiceTier(normalizedTier.selection);
                   setServiceTierDowngraded(normalizedTier.downgraded);
-                  setSettingsDirty(true);
-                  props.onRuntimeSettingsChange?.({ model, effort, ...serviceTierWireOverride(normalizedTier.selection) });
+                  props.onRuntimeSettingsChange?.({ model, effort, ...serviceTierWireOverride(normalizedTier.selection), permissionMode: props.permissionMode, collaborationMode: props.collaborationMode });
                 }}
               />
               <ComposerDropdown
@@ -472,8 +473,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
                 disabled={!settingsWritable || !selectedCapability?.supportedReasoningEfforts.length}
                 onChange={(effort) => {
                   setSelectedEffort(effort);
-                  setSettingsDirty(true);
-                  props.onRuntimeSettingsChange?.({ model: selectedModel, effort, ...serviceTierWireOverride(selectedServiceTier) });
+                  props.onRuntimeSettingsChange?.({ model: selectedModel, effort, ...serviceTierWireOverride(selectedServiceTier), permissionMode: props.permissionMode, collaborationMode: props.collaborationMode });
                 }}
               />
               <ComposerDropdown
@@ -485,22 +485,37 @@ export function ConversationComposer(props: ConversationComposerProps) {
                   const selection = serviceTierSelectionFromValue(value);
                   setSelectedServiceTier(selection);
                   setServiceTierDowngraded(false);
-                  setSettingsDirty(true);
-                  props.onRuntimeSettingsChange?.({ model: selectedModel, effort: selectedEffort, ...serviceTierWireOverride(selection) });
+                  props.onRuntimeSettingsChange?.({ model: selectedModel, effort: selectedEffort, ...serviceTierWireOverride(selection), permissionMode: props.permissionMode, collaborationMode: props.collaborationMode });
                 }}
               />
             </span>
             <PermissionModeControl
               language={props.language}
               value={props.permissionMode}
-              disabled={props.state.transportState !== 'ready' || props.state.conversationState !== 'native_idle' || busy || !props.onPermissionModeChange}
-              onChange={(permissionMode) => props.onPermissionModeChange?.(permissionMode)}
+              disabled={props.readOnly === true || !props.onRuntimeSettingsChange}
+              onChange={(permissionMode) =>
+                props.onRuntimeSettingsChange?.({
+                  model: selectedModel,
+                  effort: selectedEffort,
+                  ...serviceTierWireOverride(selectedServiceTier),
+                  permissionMode,
+                  collaborationMode: props.collaborationMode,
+                })
+              }
             />
             <CollaborationModeControl
               language={props.language}
               value={props.collaborationMode}
-              disabled={props.state.transportState !== 'ready' || busy || !props.onCollaborationModeChange}
-              onChange={(mode) => props.onCollaborationModeChange?.(mode)}
+              disabled={props.readOnly === true || !props.onRuntimeSettingsChange}
+              onChange={(collaborationMode) =>
+                props.onRuntimeSettingsChange?.({
+                  model: selectedModel,
+                  effort: selectedEffort,
+                  ...serviceTierWireOverride(selectedServiceTier),
+                  permissionMode: props.permissionMode,
+                  collaborationMode,
+                })
+              }
             />
           </span>
           <span className="session-composer-trailing-actions">
@@ -554,12 +569,6 @@ export function ConversationComposer(props: ConversationComposerProps) {
       </div>
     </section>
   );
-}
-
-function effectiveServiceTierMatchesSelection(serviceTier: string | null | undefined, selection: NativeServiceTierSelection): boolean {
-  if (selection.type === 'standard') return serviceTier === null || serviceTier === 'default';
-  if (selection.type === 'catalog') return serviceTier === selection.id;
-  return serviceTier === undefined;
 }
 
 function effectiveServiceTierLabel(settings: NativeSessionState['providerSettings'], model: CodexConversationCapabilities['models'][number] | null, language: SessionUiLanguage): string {

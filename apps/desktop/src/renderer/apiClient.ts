@@ -6,6 +6,7 @@ import type {
   NativeCollaborationMode,
   NativeConversationChoicesSnapshot,
   NativeConversationSnapshot,
+  NativeNextTurnSettings,
   NativeOperationAcceptance,
   NativePendingRequest,
   NativePermissionMode,
@@ -1235,6 +1236,7 @@ export interface DashboardClient {
   restoreArchivedNativeConversation: (projectId: string, conversationId: string) => Promise<NativeConversationSnapshot>;
   updateNativePermissionMode: (projectId: string, conversationId: string, permissionMode: NativePermissionMode) => Promise<NativeConversationSnapshot>;
   updateNativeCollaborationMode: (projectId: string, conversationId: string, collaborationMode: NativeCollaborationMode) => Promise<NativeConversationSnapshot>;
+  updateNativeNextTurnSettings: (projectId: string, conversationId: string, settings: NativeNextTurnSettings) => Promise<NativeNextTurnSettings>;
   loadCodexLegacyImports: () => Promise<CodexLegacyImportSnapshot>;
   startCodexLegacyImport: (sourceConversationIds: string[]) => Promise<CodexLegacyImportResult>;
   loadCodexLegacyImport: (importId: string) => Promise<CodexLegacyImportResult>;
@@ -1602,6 +1604,11 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
       request<NativeConversationSnapshot>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/collaboration-mode`, {
         method: 'PATCH',
         body: JSON.stringify({ collaborationMode }),
+      }),
+    updateNativeNextTurnSettings: (projectId, conversationId, settings) =>
+      request<NativeNextTurnSettings>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/next-turn-settings`, {
+        method: 'PATCH',
+        body: JSON.stringify(settings),
       }),
     loadCodexLegacyImports: () => request<CodexLegacyImportSnapshot>('/api/codex-native/import'),
     startCodexLegacyImport: (sourceConversationIds) =>

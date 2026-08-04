@@ -97,6 +97,7 @@ import {
   CommandRunRepository,
   type ConversationCollaborationMode,
   ConversationItemRepository,
+  type ConversationNextTurnSettings,
   type ConversationPermissionMode,
   ConversationPlanActionRepository,
   ConversationRepository,
@@ -1332,6 +1333,7 @@ interface CreateConversationMessageBody {
   model?: string;
   effort?: string;
   serviceTier?: string | null;
+  permissionMode?: ConversationPermissionMode;
   collaborationMode?: ConversationCollaborationMode;
   agentKind?: 'codex' | 'pi' | 'claude';
 }
@@ -2418,6 +2420,49 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
         ...page,
         items: page.items.map(toGraphConversationHistoryItem),
       };
+    },
+  );
+
+  server.patch(
+    '/api/projects/:projectId/conversations/:conversationId/next-turn-settings',
+    async (
+      request: FastifyRequest<{
+        Params: { projectId: string; conversationId: string };
+        Body: {
+          model?: unknown;
+          effort?: unknown;
+          serviceTier?: unknown;
+          permissionMode?: unknown;
+          collaborationMode?: unknown;
+        };
+      }>,
+      reply,
+    ) => {
+      const conversation = conversations.getById(request.params.conversationId);
+      if (!conversation || conversation.projectId !== request.params.projectId || conversation.transportKind !== 'codex_native') {
+        return reply.code(404).send({ error: 'ZEUS_NATIVE_CONVERSATION_NOT_FOUND', message: 'Native conversation not found' });
+      }
+      const model = typeof request.body?.model === 'string' ? request.body.model.trim() : '';
+      const effort = request.body?.effort === undefined ? undefined : typeof request.body.effort === 'string' ? request.body.effort.trim() : null;
+      const hasServiceTier = Object.prototype.hasOwnProperty.call(request.body ?? {}, 'serviceTier');
+      const serviceTier = request.body?.serviceTier;
+      const permissionMode = parseConversationPermissionMode(request.body?.permissionMode);
+      const collaborationMode = parseConversationCollaborationMode(request.body?.collaborationMode);
+      if (!model || effort === null || effort === '' || (hasServiceTier && serviceTier !== null && (typeof serviceTier !== 'string' || !serviceTier.trim()))) {
+        return reply.code(400).send({ error: 'ZEUS_INVALID_CONVERSATION_SETTINGS', message: 'Next turn model, reasoning effort, or service tier is invalid.' });
+      }
+      if (!permissionMode) return reply.code(400).send({ error: 'ZEUS_INVALID_PERMISSION_MODE', message: 'permissionMode must be read-only, auto, or full-access.' });
+      if (!collaborationMode) return reply.code(400).send({ error: 'ZEUS_INVALID_COLLABORATION_MODE', message: 'collaborationMode must be default or plan.' });
+      const settings: ConversationNextTurnSettings = {
+        model,
+        ...(effort ? { effort } : {}),
+        ...(hasServiceTier ? { serviceTier: serviceTier === null ? null : (serviceTier as string).trim() } : {}),
+        permissionMode,
+        collaborationMode,
+      };
+      conversations.updateNextTurnSettings(conversation.id, settings);
+      await db.save();
+      return settings;
     },
   );
 
@@ -10932,6 +10977,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       resourcesByItemId.set(record.itemId, current);
     }
     const providerSettings = conversations.getProviderSettingsSnapshot(conversation.id);
+    const nextTurnSettings = conversations.getNextTurnSettings(conversation.id) ?? nextTurnSettingsFallback(conversation, submissions, providerSettings);
     const tokenUsage = conversations.getProviderTokenUsageSnapshot(conversation.id);
     const rateLimits = settings.getCodexRateLimitsSnapshot();
     const mcpStartup = settings.getCodexMcpStartupStatusSnapshot();
@@ -10940,6 +10986,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       ...toGraphConversationHistoryItem(conversation),
       ...toNativeConversationSummary(conversation),
       ...(providerSettings ? { providerSettings } : {}),
+      ...(nextTurnSettings ? { nextTurnSettings } : {}),
       ...(tokenUsage ? { tokenUsage } : {}),
       ...(rateLimits ? { rateLimits } : {}),
       ...(mcpStartup ? { mcpStartup } : {}),
@@ -10997,6 +11044,28 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
         resolvedAt: request.resolvedAt,
         updatedAt: request.updatedAt,
       })),
+    };
+  }
+
+  function nextTurnSettingsFallback(
+    conversation: ZeusConversationWithMessagesRecord,
+    submissions: ReturnType<ConversationSubmissionRepository['listByConversation']>,
+    providerSettings: ReturnType<ConversationRepository['getProviderSettingsSnapshot']>,
+  ): ConversationNextTurnSettings | undefined {
+    const latest = [...submissions].sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id)).at(-1);
+    const input = latest ? parseJsonObject(latest.inputJson) : {};
+    const context = isNativeApiRecord(input.context) ? input.context : {};
+    const model = typeof context.model === 'string' && context.model.trim() ? context.model : (providerSettings?.model ?? conversation.providerModel);
+    if (!model) return undefined;
+    const effort = typeof context.effort === 'string' && context.effort.trim() ? context.effort : providerSettings?.effort;
+    const hasContextServiceTier = Object.prototype.hasOwnProperty.call(context, 'serviceTier');
+    const hasProviderServiceTier = providerSettings ? Object.prototype.hasOwnProperty.call(providerSettings, 'serviceTier') : false;
+    return {
+      model,
+      ...(effort ? { effort } : {}),
+      ...(hasContextServiceTier && (context.serviceTier === null || typeof context.serviceTier === 'string') ? { serviceTier: context.serviceTier } : hasProviderServiceTier ? { serviceTier: providerSettings?.serviceTier } : {}),
+      permissionMode: conversation.permissionMode,
+      collaborationMode: conversation.collaborationMode,
     };
   }
 
@@ -11089,11 +11158,15 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     const requestedModel = typeof body.model === 'string' && body.model.trim() ? body.model.trim() : null;
     const requestedEffort = typeof body.effort === 'string' && body.effort.trim() ? body.effort.trim() : null;
     const requestedServiceTier = readServiceTierOverride(body);
-    const collaborationMode = body.collaborationMode === undefined ? conversation.collaborationMode : parseConversationCollaborationMode(body.collaborationMode);
-    if (!collaborationMode) throw nativeApiError('ZEUS_INVALID_COLLABORATION_MODE', 'collaborationMode must be default or plan.');
+    const permissionMode = body.permissionMode === undefined ? undefined : parseConversationPermissionMode(body.permissionMode);
+    if (body.permissionMode !== undefined && !permissionMode) throw nativeApiError('ZEUS_INVALID_PERMISSION_MODE', 'permissionMode must be read-only, auto, or full-access.');
+    const collaborationMode = body.collaborationMode === undefined ? undefined : parseConversationCollaborationMode(body.collaborationMode);
+    if (body.collaborationMode !== undefined && !collaborationMode) throw nativeApiError('ZEUS_INVALID_COLLABORATION_MODE', 'collaborationMode must be default or plan.');
     const expectedTurnId = typeof body.expectedTurnId === 'string' && body.expectedTurnId.trim() ? body.expectedTurnId.trim() : null;
     if (delivery === 'steer_now') {
-      if (requestedModel || requestedEffort || requestedServiceTier.present) throw nativeApiError('ZEUS_INVALID_CONVERSATION_SETTINGS', 'Model, reasoning effort, and service tier can change only when starting a queued turn.');
+      if (requestedModel || requestedEffort || requestedServiceTier.present || body.permissionMode !== undefined) {
+        throw nativeApiError('ZEUS_INVALID_CONVERSATION_SETTINGS', 'Model, reasoning effort, service tier, and permission mode can change only when starting a queued turn.');
+      }
       const activeTurn = [...conversationTurns.listByConversation(conversation.id)].reverse().find((turn) => turn.status === 'running' || turn.status === 'waiting' || turn.status === 'dispatching');
       if (!expectedTurnId || activeTurn?.providerTurnId !== expectedTurnId) {
         throw nativeApiError('ZEUS_NATIVE_TURN_MISMATCH', 'steer_now requires the exact currently active provider turn id.');
@@ -11124,7 +11197,8 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       ...(selectedModel ? { model: selectedModel } : {}),
       ...(selectedEffort ? { effort: selectedEffort } : {}),
       ...(requestedServiceTier.present ? { serviceTier: selectedServiceTier ?? null } : {}),
-      collaborationMode,
+      ...(permissionMode ? { permissionMode } : {}),
+      ...(collaborationMode ? { collaborationMode } : {}),
       idempotencyKey,
       clientUserMessageId,
       providerWriteLifecycle,
@@ -11144,6 +11218,8 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
         ...(selectedModel ? { model: selectedModel } : {}),
         ...(selectedEffort ? { effort: selectedEffort } : {}),
         ...(requestedServiceTier.present ? { serviceTier: selectedServiceTier ?? null } : {}),
+        ...(permissionMode ? { permissionMode } : {}),
+        ...(collaborationMode ? { collaborationMode } : {}),
       }),
       now().toISOString(),
       persisted.id,
@@ -11160,6 +11236,8 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
           ...(selectedModel ? { model: selectedModel } : {}),
           ...(selectedEffort ? { effort: selectedEffort } : {}),
           ...(requestedServiceTier.present ? { serviceTier: selectedServiceTier ?? null } : {}),
+          ...(permissionMode ? { permissionMode } : {}),
+          ...(collaborationMode ? { collaborationMode } : {}),
         }),
         conversation.id,
         clientUserMessageId,

@@ -488,6 +488,7 @@ export interface ZeusConversationRecord {
   providerTokenUsageJson: string;
   permissionMode: ConversationPermissionMode;
   collaborationMode: ConversationCollaborationMode;
+  nextTurnSettingsJson: string;
   completionUnread: boolean;
   agentKind: ConversationAgentKind | null;
   agentTransport: ConversationAgentTransport | null;
@@ -504,6 +505,14 @@ export type ConversationAgentTransport = 'app_server' | 'rpc' | 'sdk';
 export type ConversationProviderState = 'unbound' | 'binding' | 'ready' | 'active' | 'waiting' | 'paused' | 'archived' | 'closed' | 'failed';
 export type ConversationPermissionMode = 'read-only' | 'auto' | 'full-access';
 export type ConversationCollaborationMode = 'default' | 'plan';
+
+export interface ConversationNextTurnSettings {
+  model: string;
+  effort?: string;
+  serviceTier?: string | null;
+  permissionMode: ConversationPermissionMode;
+  collaborationMode: ConversationCollaborationMode;
+}
 
 export interface ZeusConversationMessageRecord {
   id: string;
@@ -1745,6 +1754,7 @@ function migrateCodexNativeConversationSchema(db: ZeusDatabase): void {
     `ALTER TABLE conversations ADD COLUMN provider_token_usage_json TEXT NOT NULL DEFAULT '{}'`,
     `ALTER TABLE conversations ADD COLUMN permission_mode TEXT NOT NULL DEFAULT 'read-only'`,
     `ALTER TABLE conversations ADD COLUMN collaboration_mode TEXT NOT NULL DEFAULT 'default'`,
+    `ALTER TABLE conversations ADD COLUMN next_turn_settings_json TEXT NOT NULL DEFAULT '{}'`,
     `ALTER TABLE conversations ADD COLUMN completion_unread INTEGER NOT NULL DEFAULT 0`,
   ]) {
     try {
@@ -1918,6 +1928,11 @@ function migrateCodexNativeConversationSchema(db: ZeusDatabase): void {
     migrationId: '20260722_0007_conversation_completion_unread',
     description: '增加会话成功完成未读状态',
     checksumSource: 'conversations:completion_unread:successful_turn_completion,acknowledgement:v1',
+  });
+  recordSchemaMigration(db, {
+    migrationId: '20260804_0001_conversation_next_turn_settings',
+    description: '增加会话下一轮配置持久化',
+    checksumSource: 'conversations:next_turn_settings_json:model,effort,service_tier,permission_mode,collaboration_mode',
   });
   recordSchemaMigration(db, {
     migrationId: '20260727_0008_conversation_resources_and_turn_change_sets',
@@ -3430,7 +3445,7 @@ export class TerminalEventRepository {
 
 const selectConversationFields = `id, project_id, task_id, session_id, title, summary, status, created_at, updated_at, archived,
   transport_kind, provider_id, provider_thread_id, provider_thread_path, provider_model, provider_state,
-  provider_protocol_version, provider_binary_version, legacy_source_conversation_id, provider_settings_json, provider_token_usage_json, permission_mode, collaboration_mode, completion_unread, workspace_id, environment_id,
+  provider_protocol_version, provider_binary_version, legacy_source_conversation_id, provider_settings_json, provider_token_usage_json, permission_mode, collaboration_mode, next_turn_settings_json, completion_unread, workspace_id, environment_id,
   agent_kind, agent_transport, model_source_id, model_id, native_session_id, native_session_path, capability_snapshot_id`;
 const selectConversationMessageFields = `id, conversation_id, role, content, source, metadata_json, created_at,
   provider_thread_id, provider_turn_id, provider_item_id, client_message_id`;
@@ -3511,6 +3526,7 @@ export class ConversationRepository {
       providerTokenUsageJson: '{}',
       permissionMode,
       collaborationMode,
+      nextTurnSettingsJson: '{}',
       completionUnread: false,
       agentKind,
       agentTransport,
@@ -3523,9 +3539,9 @@ export class ConversationRepository {
     this.db.execute(
       `INSERT INTO conversations (id, project_id, task_id, workspace_id, environment_id, session_id, title, summary, status, created_at, updated_at, archived,
         transport_kind, provider_id, provider_thread_id, provider_thread_path, provider_model, provider_state,
-        provider_protocol_version, provider_binary_version, legacy_source_conversation_id, provider_settings_json, provider_token_usage_json, permission_mode, collaboration_mode, completion_unread,
+        provider_protocol_version, provider_binary_version, legacy_source_conversation_id, provider_settings_json, provider_token_usage_json, permission_mode, collaboration_mode, next_turn_settings_json, completion_unread,
         agent_kind, agent_transport, model_source_id, model_id, native_session_id, native_session_path, capability_snapshot_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)`,
       [
         record.id,
         record.projectId,
@@ -3551,6 +3567,7 @@ export class ConversationRepository {
         record.providerTokenUsageJson,
         record.permissionMode,
         record.collaborationMode,
+        record.nextTurnSettingsJson,
         record.agentKind,
         record.agentTransport,
         record.modelSourceId,
@@ -3577,6 +3594,26 @@ export class ConversationRepository {
     const updated = this.getById(conversationId);
     if (!updated) throw new Error(`Zeus conversation not found: ${conversationId}`);
     return updated;
+  }
+
+  updateNextTurnSettings(conversationId: string, settings: ConversationNextTurnSettings): ZeusConversationWithMessagesRecord {
+    validateNextTurnSettings(settings);
+    this.db.execute(`UPDATE conversations SET next_turn_settings_json = ?, updated_at = ? WHERE id = ?`, [JSON.stringify(settings), nowIso(), conversationId]);
+    const updated = this.getById(conversationId);
+    if (!updated) throw new Error(`Zeus conversation not found: ${conversationId}`);
+    return updated;
+  }
+
+  getNextTurnSettings(conversationId: string): ConversationNextTurnSettings | undefined {
+    const row = this.db.get<{ next_turn_settings_json: string }>(`SELECT next_turn_settings_json FROM conversations WHERE id = ?`, [conversationId]);
+    if (!row) return undefined;
+    try {
+      const parsed = JSON.parse(row.next_turn_settings_json) as unknown;
+      validateNextTurnSettings(parsed);
+      return parsed;
+    } catch {
+      return undefined;
+    }
   }
 
   /** 完成未读是列表阅读状态，不得改变会话活跃时间或排序。 */
@@ -4786,6 +4823,21 @@ function validateProviderSettingsSnapshot(snapshot: unknown): asserts snapshot i
   }
 }
 
+function validateNextTurnSettings(settings: unknown): asserts settings is ConversationNextTurnSettings {
+  if (!isPlainRecord(settings)) throw new Error('Invalid conversation next turn settings');
+  assertOnlyKeys(settings, ['model', 'effort', 'serviceTier', 'permissionMode', 'collaborationMode'], 'conversation next turn settings');
+  if (
+    typeof settings.model !== 'string' ||
+    !settings.model.trim() ||
+    (settings.effort !== undefined && (typeof settings.effort !== 'string' || !settings.effort.trim())) ||
+    (settings.serviceTier !== undefined && settings.serviceTier !== null && (typeof settings.serviceTier !== 'string' || !settings.serviceTier.trim()))
+  ) {
+    throw new Error('Invalid conversation next turn settings');
+  }
+  assertEnum(settings.permissionMode, ['read-only', 'auto', 'full-access'] as const, 'conversation next turn permission mode');
+  assertEnum(settings.collaborationMode, ['default', 'plan'] as const, 'conversation next turn collaboration mode');
+}
+
 function validateProviderTokenUsageSnapshot(snapshot: unknown): asserts snapshot is ConversationProviderTokenUsageSnapshot {
   assertProviderSequenceSnapshot(snapshot);
   const candidate = snapshot as ProviderSequenceSnapshot & Record<string, unknown>;
@@ -5150,6 +5202,7 @@ interface DbConversationRow {
   provider_token_usage_json: string;
   permission_mode: ConversationPermissionMode;
   collaboration_mode: ConversationCollaborationMode;
+  next_turn_settings_json: string;
   completion_unread: number;
   agent_kind: ConversationAgentKind | null;
   agent_transport: ConversationAgentTransport | null;
@@ -5612,6 +5665,7 @@ function mapConversationRow(row: DbConversationRow): ZeusConversationRecord {
     providerTokenUsageJson: row.provider_token_usage_json,
     permissionMode: assertEnum(row.permission_mode, ['read-only', 'auto', 'full-access'] as const, 'conversation permission mode'),
     collaborationMode: assertEnum(row.collaboration_mode, ['default', 'plan'] as const, 'conversation collaboration mode'),
+    nextTurnSettingsJson: row.next_turn_settings_json,
     completionUnread: row.completion_unread === 1,
     agentKind: row.agent_kind,
     agentTransport: row.agent_transport,

@@ -6,6 +6,7 @@ import {
   type CodexMcpServerStartupState,
   type ConversationCollaborationMode,
   type ConversationItemPhase,
+  type ConversationNextTurnSettings,
   ConversationItemRepository,
   type ConversationItemType,
   type ConversationPermissionMode,
@@ -284,6 +285,11 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     };
   }
 
+  function persistSubmissionExecutionContext(submission: ZeusConversationSubmissionRecord, context: ConversationDispatchContext): void {
+    const input = parseJsonRecord(submission.inputJson);
+    options.db.execute(`UPDATE conversation_submissions SET input_json = ?, updated_at = ? WHERE id = ?`, [JSON.stringify({ ...input, context }), now(), submission.id]);
+  }
+
   function submissionText(submission: ZeusConversationSubmissionRecord): string {
     const text = parseJsonRecord(submission.inputJson).text;
     if (typeof text !== 'string') throw coordinatorError('ZEUS_NATIVE_PERSISTED_STATE_INVALID', 'Persisted submission text is invalid.');
@@ -424,6 +430,32 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     });
   }
 
+  function nextTurnSettingsFromContext(context: ConversationDispatchContext): ConversationNextTurnSettings {
+    return {
+      model: context.model,
+      ...(context.effort ? { effort: context.effort } : {}),
+      ...(Object.prototype.hasOwnProperty.call(context, 'serviceTier') ? { serviceTier: context.serviceTier } : {}),
+      permissionMode: context.permissionMode,
+      collaborationMode: context.workMode,
+    };
+  }
+
+  function contextWithLatestNextTurnSettings(conversationId: string, context: ConversationDispatchContext): ConversationDispatchContext {
+    const settings = options.conversations.getNextTurnSettings(conversationId);
+    if (!settings) return context;
+    const latest: ConversationDispatchContext = {
+      ...context,
+      model: settings.model,
+      permissionMode: settings.permissionMode,
+      workMode: settings.collaborationMode,
+    };
+    delete latest.effort;
+    delete latest.serviceTier;
+    if (settings.effort) latest.effort = settings.effort;
+    if (Object.prototype.hasOwnProperty.call(settings, 'serviceTier')) latest.serviceTier = settings.serviceTier;
+    return latest;
+  }
+
   async function startTaskConversation(input: StartTaskConversationInput): Promise<NativeAcceptedOperation> {
     assertOpen();
     const additionalContext = resolveLegacyReference(input);
@@ -478,6 +510,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         collaborationMode: context.workMode,
       });
     if (conversation.collaborationMode !== context.workMode) options.conversations.updateCollaborationMode(conversation.id, context.workMode);
+    options.conversations.updateNextTurnSettings(conversation.id, nextTurnSettingsFromContext(context));
     contexts.set(conversation.id, context);
     runStates.set(conversation.id, { type: 'idle' });
     const submission = createSubmission(conversation.id, input.prompt, input, context);
@@ -524,6 +557,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         collaborationMode: context.workMode,
       });
     if (conversation.collaborationMode !== context.workMode) options.conversations.updateCollaborationMode(conversation.id, context.workMode);
+    options.conversations.updateNextTurnSettings(conversation.id, nextTurnSettingsFromContext(context));
     contexts.set(conversation.id, context);
     runStates.set(conversation.id, { type: 'idle' });
     const submission = createSubmission(conversation.id, input.prompt, input, context);
@@ -637,18 +671,17 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   async function submitMessage(input: SubmitNativeMessageInput): Promise<NativeAcceptedOperation> {
     assertOpen();
     const conversation = requireConversation(input.conversationId);
-    const previousContext = contexts.get(conversation.id) ?? contextFromConversation(conversation);
+    const previousContext = contextWithLatestNextTurnSettings(conversation.id, contexts.get(conversation.id) ?? contextFromConversation(conversation));
     const context: ConversationDispatchContext = {
       ...previousContext,
-      permissionMode: conversation.permissionMode,
+      permissionMode: input.permissionMode ?? previousContext.permissionMode,
       workMode: input.collaborationMode ?? conversation.collaborationMode,
       ...(input.model ? { model: input.model } : {}),
       ...(input.effort ? { effort: input.effort } : {}),
       ...(Object.prototype.hasOwnProperty.call(input, 'serviceTier') ? { serviceTier: input.serviceTier } : {}),
     };
     if (input.model && input.model !== previousContext.model && !input.effort) delete context.effort;
-    if (conversation.collaborationMode !== context.workMode) options.conversations.updateCollaborationMode(conversation.id, context.workMode);
-    contexts.set(conversation.id, context);
+    options.conversations.updateNextTurnSettings(conversation.id, nextTurnSettingsFromContext(context));
     const submission = createSubmission(conversation.id, input.content, input, context);
     await persist();
     await input.providerWriteLifecycle?.markPrepared(submission.id);
@@ -673,7 +706,11 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   }
 
   function contextFromConversation(conversation: ZeusConversationWithMessagesRecord): ConversationDispatchContext {
-    const submission = [...options.submissions.listByConversation(conversation.id)].sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id)).at(-1);
+    const submissions = options.submissions.listByConversation(conversation.id);
+    const activeTurn = [...options.turns.listByConversation(conversation.id)].reverse().find((turn) => turn.status === 'running' || turn.status === 'waiting' || turn.status === 'dispatching');
+    const submission =
+      (activeTurn ? submissions.find((candidate) => candidate.id === activeTurn.clientSubmissionId) : undefined) ??
+      [...submissions].sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id)).at(-1);
     if (!submission) throw coordinatorError('ZEUS_NATIVE_CONTEXT_UNAVAILABLE', 'Native conversation dispatch context is unavailable.');
     return {
       ...contextFromSubmission(submission),
@@ -735,7 +772,11 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   ): Promise<NativeAcceptedOperation> {
     let conversation = options.conversations.getById(conversationInput.id);
     if (!conversation) throw coordinatorError('ZEUS_NATIVE_CONVERSATION_NOT_FOUND', 'Native conversation was not found.');
-    const context = { ...contextFromSubmission(submission), permissionMode: conversation.permissionMode };
+    const context = contextWithLatestNextTurnSettings(conversation.id, contextFromSubmission(submission));
+    if (conversation.permissionMode !== context.permissionMode) options.conversations.updatePermissionMode(conversation.id, context.permissionMode);
+    if (conversation.collaborationMode !== context.workMode) options.conversations.updateCollaborationMode(conversation.id, context.workMode);
+    persistSubmissionExecutionContext(submission, context);
+    conversation = requireConversation(conversation.id);
     contexts.set(conversation.id, context);
     try {
       await ensureGenerationReconciled();
@@ -1380,7 +1421,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     const refinement = input.action === 'refine';
     const feedback = input.feedback?.trim() ?? '';
     if (refinement && !feedback) throw coordinatorError('ZEUS_PLAN_REFINEMENT_REQUIRED', 'Plan refinement feedback is required.');
-    const previousContext = contexts.get(conversation.id) ?? contextFromConversation(conversation);
+    const previousContext = contextWithLatestNextTurnSettings(conversation.id, contexts.get(conversation.id) ?? contextFromConversation(conversation));
     const nextMode: ConversationCollaborationMode = refinement ? 'plan' : 'default';
     const context: ConversationDispatchContext = {
       ...previousContext,
@@ -1416,6 +1457,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       return created;
     });
     contexts.set(conversation.id, context);
+    options.conversations.updateNextTurnSettings(conversation.id, nextTurnSettingsFromContext(context));
     await persist();
     options.broadcast('conversation.plan_implementation_request.changed', {
       conversationId: conversation.id,

@@ -1,4 +1,4 @@
-import { type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ArrowsClockwiseIcon as ArrowsClockwise } from '@phosphor-icons/react/dist/csr/ArrowsClockwise';
 import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/csr/WarningCircle';
 import { GlobeSimpleIcon as GlobeSimple } from '@phosphor-icons/react/dist/csr/GlobeSimple';
@@ -104,6 +104,7 @@ export interface SessionWorkspaceActions {
   onSelectTask?: (task: SessionWorkspaceTask) => void;
   onOpenTaskDetail?: (taskId: string) => void;
   onOpenImportSettings?: (conversation: NativeConversationChoice) => void;
+  onNextTurnSettingsChange?: (settings: ComposerRuntimeSettings) => void | Promise<void>;
   onPermissionModeChange?: (permissionMode: NativePermissionMode) => void | Promise<void>;
   onCollaborationModeChange?: (collaborationMode: NativeCollaborationMode) => void | Promise<void>;
   onRespondToPlanImplementationRequest?: (
@@ -335,6 +336,7 @@ export function createConnectedSessionActions(input: { controller: SessionContro
     onRespondToRequest: (requestId, response) => (recoveryRequired ? Promise.resolve() : input.controller.respondToRequest(requestId, response).then(() => undefined)),
     onRespondToPlanImplementationRequest: (requestId, response) => (recoveryRequired ? Promise.resolve() : input.controller.respondToPlanImplementationRequest(requestId, response)),
     onSnoozeRequest: (requestId) => (recoveryRequired ? Promise.resolve() : input.controller.snoozeRequest(requestId).then(() => undefined)),
+    onNextTurnSettingsChange: (settings) => input.controller.setNextTurnSettings(settings).then(() => undefined),
     onPermissionModeChange: (permissionMode) => (recoveryRequired ? Promise.resolve() : settle(input.controller.setPermissionMode(permissionMode))),
     onCollaborationModeChange: (collaborationMode) => (recoveryRequired ? Promise.resolve() : settle(input.controller.setCollaborationMode(collaborationMode))),
     onEditUserItem: async (_item, content) => {
@@ -344,14 +346,21 @@ export function createConnectedSessionActions(input: { controller: SessionContro
         throw new Error('Conversation is not writable.');
       }
       input.controller.setDraft(content);
-      const settings = current.providerSettings?.model
-        ? {
-            model: current.providerSettings.model,
-            ...(current.providerSettings.effort ? { effort: current.providerSettings.effort } : {}),
-            ...(Object.prototype.hasOwnProperty.call(current.providerSettings, 'serviceTier') ? { serviceTier: current.providerSettings.serviceTier } : {}),
-            collaborationMode: current.snapshot?.collaborationMode ?? 'default',
-          }
-        : undefined;
+      const selectedSettings = current.snapshot?.nextTurnSettings;
+      const settings =
+        (selectedSettings?.model ?? current.providerSettings?.model)
+          ? {
+              model: selectedSettings?.model ?? current.providerSettings!.model,
+              ...((selectedSettings?.effort ?? current.providerSettings?.effort) ? { effort: selectedSettings?.effort ?? current.providerSettings?.effort } : {}),
+              ...(selectedSettings && Object.prototype.hasOwnProperty.call(selectedSettings, 'serviceTier')
+                ? { serviceTier: selectedSettings.serviceTier }
+                : current.providerSettings && Object.prototype.hasOwnProperty.call(current.providerSettings, 'serviceTier')
+                  ? { serviceTier: current.providerSettings.serviceTier }
+                  : {}),
+              permissionMode: current.snapshot?.nextTurnSettings?.permissionMode ?? current.snapshot?.permissionMode ?? 'read-only',
+              collaborationMode: current.snapshot?.nextTurnSettings?.collaborationMode ?? current.snapshot?.collaborationMode ?? 'default',
+            }
+          : undefined;
       await input.controller.send('queue', undefined, settings);
     },
   };
@@ -956,6 +965,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const [displayedHeader, setDisplayedHeader] = useState(currentHeader);
   const [titleMotion, setTitleMotion] = useState<'entered' | 'exiting'>('entered');
   const [composerRuntimeSettings, setComposerRuntimeSettings] = useState<ComposerRuntimeSettings | null>(null);
+  const lastNextTurnSettingsSyncRef = useRef<string | null>(null);
   const previousBlockingInteractionCountRef = useRef(0);
   const composerFocusRestorationPendingRef = useRef(false);
   const legacy = props.conversation && (props.conversation.readOnly || props.conversation.transportKind !== 'codex_native');
@@ -975,7 +985,8 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
 
   useEffect(() => {
     contextReturnFocusRef.current = null;
-    setComposerRuntimeSettings(null);
+    setComposerRuntimeSettings(readConversationNextTurnSettings(browserConversationStorage(), props.conversation?.projectId ?? '', props.conversation?.id ?? ''));
+    lastNextTurnSettingsSyncRef.current = null;
     setContextWorkspace({ kind: 'none' });
     setContextFullWidth(false);
     browserMotionStopRef.current?.();
@@ -985,6 +996,35 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     setBrowserResizing(false);
     browserResizeActiveRef.current = false;
   }, [browserVisibilityProgress, props.conversation?.id]);
+
+  useEffect(() => {
+    if (!props.state || legacy || composerRuntimeSettings) return;
+    const snapshotSettings = composerRuntimeSettingsFromState(props.state, props.capabilities);
+    const projectId = props.state.projectId ?? props.conversation?.projectId;
+    const conversationId = props.state.conversationId ?? props.conversation?.id;
+    if (!snapshotSettings || !projectId || !conversationId) return;
+    writeConversationNextTurnSettings(browserConversationStorage(), projectId, conversationId, snapshotSettings);
+    setComposerRuntimeSettings(snapshotSettings);
+  }, [composerRuntimeSettings, legacy, props.capabilities, props.state]);
+
+  useEffect(() => {
+    if (!props.state || legacy || !composerRuntimeSettings || !actions.onNextTurnSettingsChange) return;
+    const signature = JSON.stringify(composerRuntimeSettings);
+    if (lastNextTurnSettingsSyncRef.current === signature) return;
+    lastNextTurnSettingsSyncRef.current = signature;
+    void Promise.resolve(actions.onNextTurnSettingsChange(composerRuntimeSettings)).catch(() => {
+      if (lastNextTurnSettingsSyncRef.current === signature) lastNextTurnSettingsSyncRef.current = null;
+    });
+  }, [actions, composerRuntimeSettings, legacy, props.state?.transportState]);
+
+  function updateComposerRuntimeSettings(settings: ComposerRuntimeSettings): void {
+    const projectId = props.state?.projectId ?? props.conversation?.projectId;
+    const conversationId = props.state?.conversationId ?? props.conversation?.id;
+    if (!props.state || !projectId || !conversationId || legacy) return;
+    writeConversationNextTurnSettings(browserConversationStorage(), projectId, conversationId, settings);
+    lastNextTurnSettingsSyncRef.current = null;
+    setComposerRuntimeSettings(settings);
+  }
 
   useLayoutEffect(() => {
     const split = browserSplitRef.current;
@@ -1334,6 +1374,35 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     });
   }
 
+  function renderConversationComposer(): ReactNode {
+    if (!props.state) return null;
+    return (
+      <ConversationComposer
+        textareaRef={composerRef}
+        state={props.state}
+        language={props.language}
+        capabilities={props.capabilities}
+        onDraftChange={(draft) => actions.onDraftChange?.(draft)}
+        onSubmit={(delivery, settings) => actions.onSubmit?.(delivery, settings)}
+        onInterrupt={(turnId) => actions.onInterrupt?.(turnId)}
+        onChooseAttachments={actions.onChooseAttachments}
+        onAddAttachments={actions.onAddAttachments}
+        onRemoveAttachment={actions.onRemoveAttachment}
+        onRemoveBrowserSubmission={actions.onRemoveBrowserSubmission}
+        onEditQueuedSubmission={actions.onEditQueuedSubmission}
+        onDeleteQueuedSubmission={actions.onDeleteQueuedSubmission}
+        onSendQueuedNow={actions.onSendQueuedNow}
+        onReorderQueue={actions.onReorderQueue}
+        onResumeQueue={actions.onResumeQueue}
+        onRetryQueue={actions.onRestoreArchivedConversation}
+        runtimeSettings={composerRuntimeSettings}
+        onRuntimeSettingsChange={updateComposerRuntimeSettings}
+        permissionMode={composerRuntimeSettings?.permissionMode ?? props.state.snapshot?.nextTurnSettings?.permissionMode ?? props.state.snapshot?.permissionMode ?? 'read-only'}
+        collaborationMode={composerRuntimeSettings?.collaborationMode ?? props.state.snapshot?.nextTurnSettings?.collaborationMode ?? props.state.snapshot?.collaborationMode ?? 'default'}
+      />
+    );
+  }
+
   return (
     <section
       className="session-workspace-root"
@@ -1508,62 +1577,43 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                   onOperateTurnChangeSet={actions.onOperateTurnChangeSet ? operateTurnChangeSet : undefined}
                 />
                 {props.suppressComposer || !dockedPlan ? null : <SessionPlanProgress plan={dockedPlan} language={props.language} />}
-                {props.suppressComposer ? null : blockingPendingRequest ? (
-                  <section className="session-interaction-dock" aria-label={props.language === 'zh-CN' ? '待处理交互' : 'Pending interaction'}>
-                    <PendingRequestSurface
-                      key={blockingPendingRequest.id}
-                      request={blockingPendingRequest}
-                      language={props.language}
-                      permissionMode={props.state?.snapshot?.permissionMode ?? 'read-only'}
-                      autoFocus
-                      busy={Boolean(props.state?.error?.recoveryRequired) || isRequestResponseBusy(props.state?.busyOperation ?? null, blockingPendingRequest.id)}
-                      error={requestErrors[blockingPendingRequest.id]}
-                      onRespond={(_requestId, response) => respond(blockingPendingRequest, response)}
-                      onSnooze={actions.onSnoozeRequest ? () => actions.onSnoozeRequest?.(blockingPendingRequest.id) : undefined}
-                    />
-                  </section>
-                ) : blockingPlanImplementationRequest ? (
-                  <section className="session-interaction-dock" aria-label={props.language === 'zh-CN' ? '待处理交互' : 'Pending interaction'}>
-                    <PlanImplementationRequestSurface
-                      key={blockingPlanImplementationRequest.id}
-                      request={blockingPlanImplementationRequest}
-                      language={props.language}
-                      autoFocus
-                      busy={isRequestResponseBusy(props.state?.busyOperation ?? null, blockingPlanImplementationRequest.id)}
-                      error={requestErrors[blockingPlanImplementationRequest.id]}
-                      onRespond={(_requestId, response) => respondToPlanImplementationRequest(blockingPlanImplementationRequest, response)}
-                    />
-                  </section>
-                ) : freshStartRequired ? (
-                  unsentDraft.submissions.length ? (
-                    <UnsentConversationContent language={props.language} submissions={unsentDraft.submissions} onRecover={() => setStartFreshOpen(true)} />
-                  ) : null
-                ) : (
-                  <ConversationComposer
-                    textareaRef={composerRef}
-                    state={props.state}
-                    language={props.language}
-                    capabilities={props.capabilities}
-                    onDraftChange={(draft) => actions.onDraftChange?.(draft)}
-                    onSubmit={(delivery, settings) => actions.onSubmit?.(delivery, settings)}
-                    onInterrupt={(turnId) => actions.onInterrupt?.(turnId)}
-                    onChooseAttachments={actions.onChooseAttachments}
-                    onAddAttachments={actions.onAddAttachments}
-                    onRemoveAttachment={actions.onRemoveAttachment}
-                    onRemoveBrowserSubmission={actions.onRemoveBrowserSubmission}
-                    onEditQueuedSubmission={actions.onEditQueuedSubmission}
-                    onDeleteQueuedSubmission={actions.onDeleteQueuedSubmission}
-                    onSendQueuedNow={actions.onSendQueuedNow}
-                    onReorderQueue={actions.onReorderQueue}
-                    onResumeQueue={actions.onResumeQueue}
-                    onRetryQueue={actions.onRestoreArchivedConversation}
-                    runtimeSettings={composerRuntimeSettings}
-                    onRuntimeSettingsChange={setComposerRuntimeSettings}
-                    permissionMode={props.state.snapshot?.permissionMode ?? 'read-only'}
-                    onPermissionModeChange={actions.onPermissionModeChange}
-                    collaborationMode={props.state.snapshot?.collaborationMode ?? 'default'}
-                    onCollaborationModeChange={actions.onCollaborationModeChange}
-                  />
+                {props.suppressComposer ? null : (
+                  <>
+                    {blockingPendingRequest ? (
+                      <section className="session-interaction-dock" aria-label={props.language === 'zh-CN' ? '待处理交互' : 'Pending interaction'}>
+                        <PendingRequestSurface
+                          key={blockingPendingRequest.id}
+                          request={blockingPendingRequest}
+                          language={props.language}
+                          permissionMode={props.state?.snapshot?.permissionMode ?? 'read-only'}
+                          autoFocus
+                          busy={Boolean(props.state?.error?.recoveryRequired) || isRequestResponseBusy(props.state?.busyOperation ?? null, blockingPendingRequest.id)}
+                          error={requestErrors[blockingPendingRequest.id]}
+                          onRespond={(_requestId, response) => respond(blockingPendingRequest, response)}
+                          onSnooze={actions.onSnoozeRequest ? () => actions.onSnoozeRequest?.(blockingPendingRequest.id) : undefined}
+                        />
+                      </section>
+                    ) : blockingPlanImplementationRequest ? (
+                      <section className="session-interaction-dock" aria-label={props.language === 'zh-CN' ? '待处理交互' : 'Pending interaction'}>
+                        <PlanImplementationRequestSurface
+                          key={blockingPlanImplementationRequest.id}
+                          request={blockingPlanImplementationRequest}
+                          language={props.language}
+                          autoFocus
+                          busy={isRequestResponseBusy(props.state?.busyOperation ?? null, blockingPlanImplementationRequest.id)}
+                          error={requestErrors[blockingPlanImplementationRequest.id]}
+                          onRespond={(_requestId, response) => respondToPlanImplementationRequest(blockingPlanImplementationRequest, response)}
+                        />
+                      </section>
+                    ) : null}
+                    {freshStartRequired ? (
+                      unsentDraft.submissions.length ? (
+                        <UnsentConversationContent language={props.language} submissions={unsentDraft.submissions} onRecover={() => setStartFreshOpen(true)} />
+                      ) : null
+                    ) : (
+                      renderConversationComposer()
+                    )}
+                  </>
                 )}
                 {interruptArmed ? (
                   <p className="session-interrupt-confirm" role="status">
@@ -1964,6 +2014,65 @@ function browserConversationStorage(): Storage | undefined {
   } catch {
     return undefined;
   }
+}
+
+function conversationNextTurnSettingsStorageKey(projectId: string, conversationId: string): string {
+  return `zeus.native-next-turn-settings:${projectId}:${conversationId}`;
+}
+
+function readConversationNextTurnSettings(storage: Pick<Storage, 'getItem'> | undefined, projectId: string, conversationId: string): ComposerRuntimeSettings | null {
+  if (!storage || !projectId || !conversationId) return null;
+  try {
+    const parsed = JSON.parse(storage.getItem(conversationNextTurnSettingsStorageKey(projectId, conversationId)) ?? 'null') as Partial<ComposerRuntimeSettings> | null;
+    if (
+      !parsed ||
+      typeof parsed.model !== 'string' ||
+      !parsed.model.trim() ||
+      (parsed.effort !== undefined && (typeof parsed.effort !== 'string' || !parsed.effort.trim())) ||
+      (parsed.serviceTier !== undefined && parsed.serviceTier !== null && (typeof parsed.serviceTier !== 'string' || !parsed.serviceTier.trim())) ||
+      (parsed.permissionMode !== 'read-only' && parsed.permissionMode !== 'auto' && parsed.permissionMode !== 'full-access') ||
+      (parsed.collaborationMode !== 'default' && parsed.collaborationMode !== 'plan')
+    ) {
+      return null;
+    }
+    return {
+      model: parsed.model,
+      ...(parsed.effort ? { effort: parsed.effort } : {}),
+      ...(Object.prototype.hasOwnProperty.call(parsed, 'serviceTier') ? { serviceTier: parsed.serviceTier } : {}),
+      permissionMode: parsed.permissionMode,
+      collaborationMode: parsed.collaborationMode,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeConversationNextTurnSettings(storage: Pick<Storage, 'setItem'> | undefined, projectId: string, conversationId: string, settings: ComposerRuntimeSettings): void {
+  if (!storage || !projectId || !conversationId) return;
+  storage.setItem(conversationNextTurnSettingsStorageKey(projectId, conversationId), JSON.stringify(settings));
+}
+
+function composerRuntimeSettingsFromState(state: NativeSessionState, capabilities: CodexConversationCapabilities | null | undefined): ComposerRuntimeSettings | null {
+  const source = state.snapshot?.nextTurnSettings;
+  const requestedModel = source?.model ?? state.providerSettings?.model;
+  if (!requestedModel) return null;
+  const capability =
+    capabilities?.models.find((candidate) => candidate.model === requestedModel || candidate.id === requestedModel) ??
+    capabilities?.models.find((candidate) => candidate.model === capabilities.preferredModel || candidate.id === capabilities.preferredModel);
+  const model = capability?.model ?? requestedModel;
+  const requestedEffort = source?.effort ?? state.providerSettings?.effort;
+  const effort = requestedEffort && (!capability || capability.supportedReasoningEfforts.includes(requestedEffort)) ? requestedEffort : (capability?.defaultReasoningEffort ?? capability?.supportedReasoningEfforts[0]);
+  const hasSourceServiceTier = source ? Object.prototype.hasOwnProperty.call(source, 'serviceTier') : false;
+  const hasProviderServiceTier = state.providerSettings ? Object.prototype.hasOwnProperty.call(state.providerSettings, 'serviceTier') : false;
+  const requestedServiceTier = hasSourceServiceTier ? source?.serviceTier : hasProviderServiceTier ? state.providerSettings?.serviceTier : undefined;
+  const serviceTier = typeof requestedServiceTier === 'string' && capability && !capability.serviceTiers.some((tier) => tier.id === requestedServiceTier) ? null : requestedServiceTier;
+  return {
+    model,
+    ...(effort ? { effort } : {}),
+    ...(hasSourceServiceTier || hasProviderServiceTier ? { serviceTier } : {}),
+    permissionMode: source?.permissionMode ?? state.snapshot?.permissionMode ?? 'read-only',
+    collaborationMode: source?.collaborationMode ?? state.snapshot?.collaborationMode ?? 'default',
+  };
 }
 
 interface UnsentConversationDraft {
