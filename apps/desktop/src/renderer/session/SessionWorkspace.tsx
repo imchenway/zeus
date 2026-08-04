@@ -115,6 +115,7 @@ export interface SessionWorkspaceActions {
   ) => void | Promise<void>;
   onSnoozeRequest?: (requestId: string) => void | Promise<void>;
   onOpenResource?: (resource: ConversationResource, target: ConversationOpenTarget, location?: ConversationFileLocation) => Promise<ConversationResourceOpenActionResult>;
+  onLoadResourcePreview?: (resource: ConversationResource) => Promise<ConversationResourcePreview>;
   onOperateTurnChangeSet?: (changeSet: TurnChangeSet, action: 'undo' | 'reapply') => Promise<TurnChangeSetOperationResult>;
 }
 
@@ -243,6 +244,10 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
             mode: result.mode,
             preview: location ? { ...preview, location } : preview,
           };
+        },
+        onLoadResourcePreview: async (resource) => {
+          if (!props.client.loadConversationResourcePreview) throw new Error('conversation_resource_preview_unavailable');
+          return props.client.loadConversationResourcePreview(props.conversation.projectId, props.conversation.id, resource.id);
         },
         onOperateTurnChangeSet: async (changeSet, action) => {
           if (!props.client.operateTurnChangeSet) throw new Error('turn_change_set_operation_unavailable');
@@ -1496,6 +1501,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                     setContextWorkspace({ kind: 'plan', itemId: item.localItemId ?? item.itemId });
                   }}
                   onOpenResource={openConversationResource}
+                  onLoadResourcePreview={actions.onLoadResourcePreview}
                   onReviewTurnChanges={(changeSet, fileId) => {
                     contextReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
                     setContextFullWidth(false);
