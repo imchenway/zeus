@@ -75,7 +75,7 @@ interface FlattenedConversation {
 
 export function ProjectConversationTree(props: ProjectConversationTreeProps) {
   const copy = labels[props.language];
-  const flattenedGroups = props.groups.map((project) => flattenProjectConversations(project, props.language));
+  const flattenedGroups = props.groups.map(flattenProjectConversations);
   const conversationIds = flattenedGroups.flatMap((group) => group.conversations.map((entry) => entry.conversation.id));
   const fallbackTabStopId = props.selectedConversationId && conversationIds.includes(props.selectedConversationId) ? null : (conversationIds[0] ?? null);
 
@@ -238,10 +238,7 @@ function ConversationRowState(props: { conversation: NativeConversationChoice; r
   return null;
 }
 
-function flattenProjectConversations(
-  project: ProjectConversationGroup,
-  language: SessionUiLanguage,
-): {
+function flattenProjectConversations(project: ProjectConversationGroup): {
   project: ProjectConversationGroup;
   conversations: FlattenedConversation[];
 } {
@@ -249,10 +246,9 @@ function flattenProjectConversations(
   const conversations = [...(project.conversations ?? []), ...project.tasks.flatMap((task) => task.conversations)]
     .map((conversation): FlattenedConversation => {
       const task = conversation.taskId ? taskById.get(conversation.taskId) : undefined;
-      const separator = language === 'zh-CN' ? '：' : ': ';
       return {
         conversation,
-        displayTitle: task ? `${task.taskCode}${separator}${task.taskTitle}` : conversation.title,
+        displayTitle: task ? task.taskTitle : conversation.title,
       };
     })
     .sort((left, right) => right.conversation.updatedAt.localeCompare(left.conversation.updatedAt));

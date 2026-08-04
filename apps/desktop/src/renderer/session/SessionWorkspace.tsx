@@ -102,6 +102,7 @@ export interface SessionWorkspaceActions {
   onEditUserItem?: (item: NativeSessionItemBuffer, content: string) => void | Promise<void>;
   onRetryItem?: (item: NativeSessionItemBuffer) => void;
   onSelectTask?: (task: SessionWorkspaceTask) => void;
+  onOpenTaskDetail?: (taskId: string) => void;
   onOpenImportSettings?: (conversation: NativeConversationChoice) => void;
   onPermissionModeChange?: (permissionMode: NativePermissionMode) => void | Promise<void>;
   onCollaborationModeChange?: (collaborationMode: NativeCollaborationMode) => void | Promise<void>;
@@ -177,6 +178,7 @@ export interface ConnectedSessionWorkspaceProps {
   initialOptimisticState?: NativeSessionState;
   onStartConversation?: SessionWorkspaceActions['onStartConversation'];
   onStartProjectConversation?: SessionWorkspaceActions['onStartProjectConversation'];
+  onOpenTaskDetail?: SessionWorkspaceActions['onOpenTaskDetail'];
 }
 
 export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps) {
@@ -252,6 +254,7 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
         },
         onStartConversation: props.onStartConversation,
         onStartProjectConversation: props.onStartProjectConversation,
+        onOpenTaskDetail: props.onOpenTaskDetail,
         onLoadCapabilities: props.client.loadCodexConversationCapabilities,
         onChooseStartAttachments: props.onChooseAttachments,
       }}
@@ -893,7 +896,8 @@ type SessionContextWorkspace = { kind: 'none' } | { kind: 'browser' } | { kind: 
 export interface SessionHeaderSnapshot {
   conversationId: string;
   title: string;
-  contextLabel: string;
+  contextLabel: string | null;
+  taskId: string | null;
   status: SessionWorkspaceStatus;
 }
 
@@ -906,10 +910,13 @@ export function createSessionHeaderSnapshot(
   owner?: SessionConversationOwner,
 ): SessionHeaderSnapshot | null {
   if (!conversation) return null;
+  const taskId = task?.id ?? (owner?.kind === 'task' ? owner.taskId : null);
+  const taskTitle = task?.title ?? (owner?.kind === 'task' ? owner.taskTitle : null);
   return {
     conversationId: conversation.id,
-    title: conversation.title,
-    contextLabel: task?.title ?? (owner?.kind === 'project' ? owner.projectName : null) ?? conversation.summary ?? conversation.projectId,
+    title: taskTitle ?? conversation.title,
+    contextLabel: taskId ? null : ((owner?.kind === 'project' ? owner.projectName : null) ?? conversation.summary ?? conversation.projectId),
+    taskId,
     status: sessionStatus(state, loadState, labels[language]),
   };
 }
@@ -1338,8 +1345,22 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
       {displayedHeader ? (
         <header className="session-thread-header" data-motion-title={titleMotion}>
           <span className="session-thread-title-copy">
-            <strong>{displayedHeader.title}</strong>
-            <small>{displayedHeader.contextLabel}</small>
+            {displayedHeader.taskId && actions.onOpenTaskDetail ? (
+              <button
+                type="button"
+                className="session-thread-task-title"
+                title={displayedHeader.title}
+                aria-label={props.language === 'zh-CN' ? `打开任务详情：${displayedHeader.title}` : `Open task details: ${displayedHeader.title}`}
+                onClick={() => {
+                  if (displayedHeader.taskId) actions.onOpenTaskDetail?.(displayedHeader.taskId);
+                }}
+              >
+                {displayedHeader.title}
+              </button>
+            ) : (
+              <strong title={displayedHeader.title}>{displayedHeader.title}</strong>
+            )}
+            {displayedHeader.contextLabel ? <small>{displayedHeader.contextLabel}</small> : null}
           </span>
           <span className="session-thread-header-actions">
             {!legacy && props.conversation ? (
