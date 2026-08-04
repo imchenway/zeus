@@ -680,7 +680,7 @@
 
 .session-codex-parity-v1
 .session-transcript
-> :where(.session-thread-item, .session-activity-group, .session-plan-summary, .session-plan-entry, .session-question-panel, .session-plan-progress, .session-turn-change-card, .session-turn-duration, .session-transcript-empty, .session-latest-turn-spacer) {
+> :where(.session-thread-item, .session-activity-group, .session-reasoning-summary, .session-plan-summary, .session-plan-entry, .session-question-panel, .session-plan-progress, .session-turn-change-card, .session-turn-duration, .session-transcript-empty, .session-latest-turn-spacer) {
     flex: 0 0 auto;
   inline-size: min(var(--session-thread-max), 100%);
   margin-inline: auto;
@@ -1192,6 +1192,51 @@
 .session-codex-parity-v1 .session-commentary-flow .session-markdown {
     font-size: 13px;
     line-height: 1.65;
+}
+
+.session-codex-parity-v1 .session-reasoning-summary {
+    align-items: center;
+    color: var(--session-text-muted);
+    display: grid;
+    font-size: 13px;
+    font-weight: 590;
+    gap: 9px;
+    grid-template-columns: 19px minmax(0, 1fr);
+    line-height: 1.5;
+    margin: 0;
+    min-block-size: 28px;
+    padding: 0 2px;
+}
+
+.session-codex-parity-v1 .session-reasoning-summary > span:last-child {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.session-codex-parity-v1 .session-reasoning-summary-icon {
+    block-size: 19px;
+    display: grid;
+    inline-size: 19px;
+    place-items: center;
+}
+
+.session-codex-parity-v1 .session-reasoning-summary-icon > svg {
+    block-size: 19px;
+    inline-size: 19px;
+}
+
+.session-codex-parity-v1 .session-reasoning-summary[data-status='active'] .session-reasoning-summary-icon {
+    animation: session-spinner 900ms linear infinite;
+    color: var(--session-accent);
+}
+
+.session-codex-parity-v1 .session-reasoning-summary[data-status='completed'] .session-reasoning-summary-icon {
+    color: var(--session-success);
+}
+
+.session-codex-parity-v1 .session-reasoning-summary[data-status='failed'] .session-reasoning-summary-icon {
+    color: var(--session-danger);
 }
 
 .session-codex-parity-v1 .session-activity-group > details > summary {

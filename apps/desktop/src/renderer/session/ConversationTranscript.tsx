@@ -6,6 +6,7 @@ import type { ConversationResource, NativeSessionItemBuffer, NativeSessionState,
 import type { ConversationFileLocation, ConversationOpenTarget } from '@zeus/shared';
 import { useThreadScrollController } from './useThreadScrollController.js';
 import { TurnChangeCard } from './TurnChanges.js';
+import { latestReasoningItemsByTurn, reasoningSummaryStatus, SessionReasoningSummary } from './SessionReasoningSummary.js';
 
 export interface ConversationTranscriptProps {
   state: NativeSessionState;
@@ -28,7 +29,10 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   const [turnSpacerHeight, setTurnSpacerHeight] = useState(0);
   const [completedAnnouncement, setCompletedAnnouncement] = useState<{ key: string; text: string } | null>(null);
   const completedAnnouncementTrackerRef = useRef<CompletedItemAnnouncementTracker>({ hydrated: false, lastCompletedKey: null });
-  const items = useMemo(() => props.state.itemOrder.map((key) => props.state.items[key]).filter((entry): entry is NativeSessionItemBuffer => Boolean(entry) && isVisibleTranscriptItem(entry)), [props.state.itemOrder, props.state.items]);
+  const items = useMemo(
+    () => latestReasoningItemsByTurn(props.state.itemOrder.map((key) => props.state.items[key]).filter((entry): entry is NativeSessionItemBuffer => Boolean(entry) && isVisibleTranscriptItem(entry))),
+    [props.state.itemOrder, props.state.items],
+  );
   const lastUserKey = [...items].reverse().find((entry) => `${entry.type}`.toLocaleLowerCase().includes('user'))?.key;
   const lastAssistantKey = [...items].reverse().find((entry) => itemRole(entry) === 'assistant')?.key;
   const transcriptRows = useMemo(() => projectTranscriptRows(items), [items]);
@@ -108,6 +112,8 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
                   {row.kind === 'item' ? (
                     row.item.type === 'plan' ? (
                       <PlanSummary item={row.item} language={props.language} panelOpen={props.openPlanItemId === (row.item.localItemId ?? row.item.itemId)} onOpenPanel={props.onOpenPlan} />
+                    ) : normalizeItemType(row.item.type) === 'reasoning' ? (
+                      <SessionReasoningSummary item={row.item} language={props.language} status={reasoningSummaryStatus(row.item, props.state)} />
                     ) : (
                       <ThreadItemView
                         item={row.item}
@@ -246,6 +252,10 @@ export function scheduleTurnPositionAfterSpacerCommit(container: Pick<HTMLElemen
 
 function metrics(element: HTMLElement) {
   return { scrollTop: element.scrollTop, scrollHeight: element.scrollHeight, clientHeight: element.clientHeight };
+}
+
+function normalizeItemType(value: string): string {
+  return value.toLocaleLowerCase().replace(/[\s_\-/]+/gu, '');
 }
 
 function prefersReducedMotion(): boolean {
