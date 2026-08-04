@@ -366,10 +366,11 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   }
 
   function toQueueSnapshot(conversationId: string): NativeQueueSnapshot {
-    const entries = options.submissions.listByConversation(conversationId).filter((submission) => submission.status === 'queued' || submission.status === 'paused' || submission.status === 'failed');
+    const entries = options.submissions.listByConversation(conversationId).filter((submission) => (submission.status === 'queued' || submission.status === 'paused') && !submission.providerTurnId);
     return {
       conversationId,
       state: runStates.get(conversationId) ?? { type: 'idle' },
+<<<<<<< HEAD
       submissions: entries.map((submission, index) => ({
         id: submission.id,
         conversationId: submission.conversationId,
@@ -388,6 +389,30 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         createdAt: submission.createdAt,
         updatedAt: submission.updatedAt,
       })),
+=======
+      submissions: entries.map((submission, index) => {
+        const input = parseJsonRecord(submission.inputJson);
+        return {
+          id: submission.id,
+          conversationId: submission.conversationId,
+          content:
+            submissionText(submission) ||
+            submissionAttachments(submission)
+              .map((attachment) => attachment.name)
+              .join('、'),
+          status: submission.status as 'queued' | 'paused',
+          delivery: input.delivery === 'steer_now' ? ('steer_now' as const) : ('queue' as const),
+          attachments: submissionAttachments(submission),
+          expectedTurnId: typeof input.expectedTurnId === 'string' ? input.expectedTurnId : null,
+          clientUserMessageId: submission.clientMessageId,
+          position: submission.queuePosition ?? index + 1,
+          providerTurnId: null,
+          pausedReason: submission.pausedReason,
+          createdAt: submission.createdAt,
+          updatedAt: submission.updatedAt,
+        };
+      }),
+>>>>>>> zeus/ZEUS-000041-task-01
     };
   }
 
@@ -829,6 +854,8 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       options.conversations.bindProvider(conversation.id, { providerId: 'codex', providerThreadId, providerModel: context.model, providerState: 'active' });
       runStates.set(conversation.id, { type: 'active', turnId: turn.id, phase: 'prework' });
       await persist();
+      // submission 已进入 provider 轮次后必须同步清出队列表面，避免其他窗口继续展示旧快照。
+      options.broadcast('conversation.queue.changed', { conversationId: conversation.id, providerThreadId, providerTurnId: turn.id, submissionId: submission.id });
       options.broadcast('conversation.turn.started', { conversationId: conversation.id, providerThreadId, providerTurnId: turn.id, submissionId: submission.id });
       return accepted(submission, 'active', providerThreadId, turn.id);
     } catch (error) {
@@ -871,6 +898,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         runStates.set(conversation.id, { type: 'paused', reason: 'recovery_required' });
       }
       await persist();
+      options.broadcast('conversation.queue.changed', { conversationId: conversation.id, submissionId: submission.id });
       requestQueueDrain();
       return accepted(submission, 'recovery_required', providerThreadId, null);
     }
@@ -1001,7 +1029,12 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     assertOpen();
     const submission = requireOwnedSubmission(input.conversationId, input.submissionId);
     const persisted = parseJsonRecord(submission.inputJson);
-    const next = { ...persisted, text: input.content };
+    // 展示文本与实际派发文本必须同时更新，否则队列里看到的是新内容，接管后却会恢复成旧气泡。
+    const next = {
+      ...persisted,
+      text: input.content,
+      ...(typeof persisted.displayText === 'string' ? { displayText: input.content } : {}),
+    };
     options.submissions.updateQueuedInput(submission.id, { requestHash: requestHash(next), input: next, updatedAt: now() });
     await persist();
     return toQueueSnapshot(input.conversationId);

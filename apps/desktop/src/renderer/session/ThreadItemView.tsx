@@ -194,7 +194,7 @@ export function ThreadItemView(props: ThreadItemViewProps) {
       {showMeta ? (
         <header className="session-thread-item-meta">
           {showVisibleRoleLabel ? <strong>{label}</strong> : null}
-          {props.item.optimistic ? <span className="session-item-state">{props.language === 'zh-CN' ? '发送中' : 'Sending'}</span> : null}
+          {props.item.optimistic ? <span className="session-item-state">{props.item.status === 'queued' ? (props.language === 'zh-CN' ? '排队中' : 'Queued') : props.language === 'zh-CN' ? '发送中' : 'Sending'}</span> : null}
         </header>
       ) : null}
       {editing ? (

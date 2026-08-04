@@ -1498,6 +1498,12 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                     });
                   }}
                   onOperateTurnChangeSet={actions.onOperateTurnChangeSet ? operateTurnChangeSet : undefined}
+                  onEditQueuedSubmission={actions.onEditQueuedSubmission}
+                  onDeleteQueuedSubmission={actions.onDeleteQueuedSubmission}
+                  onSendQueuedNow={actions.onSendQueuedNow}
+                  onReorderQueue={actions.onReorderQueue}
+                  onResumeQueue={actions.onResumeQueue}
+                  onRetryQueue={actions.onRestoreArchivedConversation}
                 />
                 {props.suppressComposer || !dockedPlan ? null : <SessionPlanProgress plan={dockedPlan} language={props.language} />}
                 {props.suppressComposer ? null : blockingPendingRequest ? (
@@ -1564,12 +1570,6 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                     onAddAttachments={actions.onAddAttachments}
                     onRemoveAttachment={actions.onRemoveAttachment}
                     onRemoveBrowserSubmission={actions.onRemoveBrowserSubmission}
-                    onEditQueuedSubmission={actions.onEditQueuedSubmission}
-                    onDeleteQueuedSubmission={actions.onDeleteQueuedSubmission}
-                    onSendQueuedNow={actions.onSendQueuedNow}
-                    onReorderQueue={actions.onReorderQueue}
-                    onResumeQueue={actions.onResumeQueue}
-                    onRetryQueue={actions.onRestoreArchivedConversation}
                     runtimeSettings={composerRuntimeSettings}
                     onRuntimeSettingsChange={setComposerRuntimeSettings}
                     permissionMode={props.state.snapshot?.permissionMode ?? 'read-only'}

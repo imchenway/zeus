@@ -6,6 +6,7 @@ import type { ConversationResource, ConversationResourcePreview, NativeSessionIt
 import type { ConversationFileLocation, ConversationOpenTarget } from '@zeus/shared';
 import { useThreadScrollController } from './useThreadScrollController.js';
 import { TurnChangeCard } from './TurnChanges.js';
+import { QueuedConversationMessages, visibleQueuedSubmissions } from './QueuedConversationMessages.js';
 
 export interface ConversationTranscriptProps {
   state: NativeSessionState;
@@ -18,6 +19,12 @@ export interface ConversationTranscriptProps {
   onLoadResourcePreview?: (resource: ConversationResource) => Promise<ConversationResourcePreview>;
   onReviewTurnChanges?: (changeSet: TurnChangeSet, fileId?: string) => void;
   onOperateTurnChangeSet?: (changeSet: TurnChangeSet, action: 'undo' | 'reapply') => Promise<TurnChangeSetOperationResult>;
+  onEditQueuedSubmission?: (submissionId: string, content: string) => void | Promise<void>;
+  onDeleteQueuedSubmission?: (submissionId: string) => void | Promise<void>;
+  onSendQueuedNow?: (submissionId: string) => void | Promise<void>;
+  onReorderQueue?: (orderedSubmissionIds: string[]) => void | Promise<void>;
+  onResumeQueue?: () => void | Promise<void>;
+  onRetryQueue?: () => void | Promise<void>;
 }
 
 export function ConversationTranscript(props: ConversationTranscriptProps) {
@@ -30,7 +37,15 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   const [turnSpacerHeight, setTurnSpacerHeight] = useState(0);
   const [completedAnnouncement, setCompletedAnnouncement] = useState<{ key: string; text: string } | null>(null);
   const completedAnnouncementTrackerRef = useRef<CompletedItemAnnouncementTracker>({ hydrated: false, lastCompletedKey: null });
-  const items = useMemo(() => props.state.itemOrder.map((key) => props.state.items[key]).filter((entry): entry is NativeSessionItemBuffer => Boolean(entry) && isVisibleTranscriptItem(entry)), [props.state.itemOrder, props.state.items]);
+  const queuedSubmissions = useMemo(() => visibleQueuedSubmissions(props.state.queue), [props.state.queue]);
+  const queuedClientIds = useMemo(() => new Set(queuedSubmissions.map((submission) => submission.clientUserMessageId).filter((value): value is string => Boolean(value))), [queuedSubmissions]);
+  const projectedItems = useMemo(
+    () => props.state.itemOrder.map((key) => props.state.items[key]).filter((entry): entry is NativeSessionItemBuffer => Boolean(entry) && isVisibleTranscriptItem(entry)),
+    [props.state.itemOrder, props.state.items],
+  );
+  const items = useMemo(() => projectedItems.filter((entry) => !entry.optimistic), [projectedItems]);
+  const immediateOptimisticItems = useMemo(() => projectedItems.filter((entry) => entry.optimistic && entry.status !== 'queued' && !queuedClientIds.has(entry.clientUserMessageId ?? '')), [projectedItems, queuedClientIds]);
+  const queuedOptimisticItems = useMemo(() => projectedItems.filter((entry) => entry.optimistic && entry.status === 'queued' && !queuedClientIds.has(entry.clientUserMessageId ?? '')), [projectedItems, queuedClientIds]);
   const lastUserKey = [...items].reverse().find((entry) => `${entry.type}`.toLocaleLowerCase().includes('user'))?.key;
   const lastAssistantKey = [...items].reverse().find((entry) => itemRole(entry) === 'assistant')?.key;
   const transcriptRows = useMemo(() => projectTranscriptRows(items), [items]);
@@ -142,19 +157,35 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
                 </Fragment>
               );
             })
-          ) : !showThinking && historyHydrated ? (
+          ) : !showThinking && immediateOptimisticItems.length === 0 && queuedOptimisticItems.length === 0 && queuedSubmissions.length === 0 && historyHydrated ? (
             <p className="session-transcript-empty">{props.language === 'zh-CN' ? '发送第一条消息后，真实 app-server 对话会显示在这里。' : 'Send the first message to begin the real app-server transcript.'}</p>
           ) : !showThinking && historyUnavailable ? (
             <p className="session-transcript-empty" role="status">
               {props.language === 'zh-CN' ? '历史消息暂不可用；连接恢复后会自动显示。' : 'History is temporarily unavailable and will reappear after the connection recovers.'}
             </p>
           ) : null}
+          {immediateOptimisticItems.map((item) => (
+            <ThreadItemView key={item.key} item={item} language={props.language} isLatest />
+          ))}
           {showThinking ? (
             <p className="session-transcript-thinking" role="status" aria-live="polite">
               <span className="session-thinking-pulse" aria-hidden="true" />
               {props.language === 'zh-CN' ? '正在思考' : 'Thinking'}
             </p>
           ) : null}
+          <QueuedConversationMessages
+            state={props.state}
+            language={props.language}
+            onEdit={props.onEditQueuedSubmission}
+            onDelete={props.onDeleteQueuedSubmission}
+            onSendNow={props.onSendQueuedNow}
+            onReorder={props.onReorderQueue}
+            onResume={props.onResumeQueue}
+            onRetry={props.onRetryQueue}
+          />
+          {queuedOptimisticItems.map((item) => (
+            <ThreadItemView key={item.key} item={item} language={props.language} />
+          ))}
           {turnSpacerHeight > 0 && props.state.activeTurnId ? <span className="session-latest-turn-spacer" style={{ blockSize: `${turnSpacerHeight}px` }} aria-hidden="true" /> : null}
         </section>
         <button

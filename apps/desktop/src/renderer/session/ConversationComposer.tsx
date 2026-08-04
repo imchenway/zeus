@@ -1,17 +1,8 @@
-import { type KeyboardEvent, type PointerEvent, type RefObject, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { type KeyboardEvent, type RefObject, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ChatCircleIcon as ChatCircle } from '@phosphor-icons/react/dist/csr/ChatCircle';
 import { GlobeSimpleIcon as GlobeSimple } from '@phosphor-icons/react/dist/csr/GlobeSimple';
 import type { ZeusBrowserPreparedSubmission } from '@zeus/shared';
-import type {
-  CodexConversationCapabilities,
-  NativeCollaborationMode,
-  NativeConversationAttachment,
-  NativePermissionMode,
-  NativeQueuedSubmission,
-  NativeServiceTierSelection,
-  NativeSessionState,
-  NativeTurnSettingsSelection,
-} from './sessionTypes.js';
+import type { CodexConversationCapabilities, NativeCollaborationMode, NativeConversationAttachment, NativePermissionMode, NativeServiceTierSelection, NativeSessionState, NativeTurnSettingsSelection } from './sessionTypes.js';
 import { ComposerDropdown } from './ComposerDropdown.js';
 import { PermissionModeControl } from './PermissionModeControl.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
@@ -20,8 +11,6 @@ import { CollaborationModeControl } from './CollaborationModeControl.js';
 import { ConversationComposerAttachments } from './ConversationComposerAttachments.js';
 import { useConversationInputResources } from './useConversationInputResources.js';
 import { normalizeServiceTierSelection, selectionFromEffectiveServiceTier, serviceTierDescription, serviceTierOptions, serviceTierSelectionFromValue, serviceTierSelectionValue, serviceTierWireOverride } from './serviceTierSelection.js';
-
-export const QUEUE_REORDER_THRESHOLD_PX = 6;
 
 export type ComposerKeyIntent = 'submit' | 'newline' | 'escape' | 'ignore';
 export interface ComposerRuntimeSettings {
@@ -42,12 +31,6 @@ export interface ConversationComposerProps {
   onAddAttachments?: (attachments: NativeConversationAttachment[]) => void;
   onRemoveAttachment?: (attachment: NativeConversationAttachment) => void;
   onRemoveBrowserSubmission?: () => void;
-  onEditQueuedSubmission?: (submissionId: string, content: string) => void | Promise<void>;
-  onDeleteQueuedSubmission?: (submissionId: string) => void | Promise<void>;
-  onSendQueuedNow?: (submissionId: string) => void | Promise<void>;
-  onReorderQueue?: (orderedSubmissionIds: string[]) => void | Promise<void>;
-  onResumeQueue?: () => void | Promise<void>;
-  onRetryQueue?: () => void | Promise<void>;
   runtimeSettings?: ComposerRuntimeSettings | null;
   onRuntimeSettingsChange?: (settings: ComposerRuntimeSettings | null) => void;
   readOnly?: boolean;
@@ -67,23 +50,11 @@ const labels = {
     steer: '立即引导',
     attach: '添加附件',
     removeAttachment: '移除附件',
-    queued: '待发送',
-    edit: '编辑队列消息',
-    save: '保存队列消息',
-    cancel: '取消编辑',
-    remove: '删除队列消息',
-    sendNow: '立即发送队列消息',
-    moveUp: '上移队列消息',
-    moveDown: '下移队列消息',
-    drag: '拖动队列消息',
-    resume: '继续队列',
-    retry: '重试发送',
     interruptConfirm: '再次按 Escape 停止当前响应',
     model: '模型',
     effort: '推理强度',
     serviceTier: '服务档位',
     unsynced: '未同步',
-    reordered: (position: number, total: number) => `队列消息已移到第 ${position} 项，共 ${total} 项`,
   },
   'en-US': {
     input: 'Message Codex',
@@ -94,23 +65,11 @@ const labels = {
     steer: 'Steer',
     attach: 'Add attachment',
     removeAttachment: 'Remove attachment',
-    queued: 'Queued',
-    edit: 'Edit queued message',
-    save: 'Save queued message',
-    cancel: 'Cancel queue edit',
-    remove: 'Delete queued message',
-    sendNow: 'Send queued message now',
-    moveUp: 'Move queued message up',
-    moveDown: 'Move queued message down',
-    drag: 'Drag queued message',
-    resume: 'Resume queue',
-    retry: 'Retry sending',
     interruptConfirm: 'Press Escape again to stop the current response',
     model: 'Model',
     effort: 'Reasoning effort',
     serviceTier: 'Service tier',
     unsynced: 'Not synced',
-    reordered: (position: number, total: number) => `Queued message moved to position ${position} of ${total}`,
   },
 } as const;
 
@@ -126,17 +85,12 @@ export function ConversationComposer(props: ConversationComposerProps) {
   const textareaRef = props.textareaRef ?? fallbackRef;
   const [delivery, setDelivery] = useState<'queue' | 'steer_now'>('queue');
   const [isComposing, setIsComposing] = useState(false);
-  const [editingSubmissionId, setEditingSubmissionId] = useState<string | null>(null);
-  const [queueEditDraft, setQueueEditDraft] = useState('');
-  const [queueEditError, setQueueEditError] = useState<string | null>(null);
-  const [queueAnnouncement, setQueueAnnouncement] = useState('');
   const [inputResourceError, setInputResourceError] = useState<string | null>(null);
   const [selectedModel, setSelectedModel] = useState(initialModel);
   const [selectedEffort, setSelectedEffort] = useState(initialEffort);
   const [selectedServiceTier, setSelectedServiceTier] = useState<NativeServiceTierSelection>(initialServiceTier);
   const [serviceTierDowngraded, setServiceTierDowngraded] = useState(false);
   const [settingsDirty, setSettingsDirty] = useState(Boolean(props.runtimeSettings));
-  const pointerStarts = useRef(new Map<string, { x: number; y: number }>());
   const active = props.state.conversationState === 'active_prework' || props.state.conversationState === 'active_final_answer';
   const busy = Boolean(props.state.busyOperation);
   const writable =
@@ -147,7 +101,10 @@ export function ConversationComposer(props: ConversationComposerProps) {
     props.state.conversationState !== 'waiting_approval' &&
     props.state.conversationState !== 'waiting_user_input';
   const hasDraft = props.state.draft.trim().length > 0 || props.state.attachments.length > 0 || Boolean(props.state.browserSubmission);
+<<<<<<< HEAD
   const queue = (props.state.queue?.submissions ?? []).filter((submission) => submission.pausedReason !== 'user_confirmation');
+=======
+>>>>>>> zeus/ZEUS-000041-task-01
   const steerAllowed = canSteerActiveTurn(props.state) && props.readOnly !== true;
   const selectedCapability = props.capabilities?.models.find((candidate) => candidate.model === selectedModel || candidate.id === selectedModel) ?? null;
   const settingsWritable = writable && props.state.conversationState === 'native_idle' && !busy && Boolean(selectedCapability);
@@ -250,22 +207,6 @@ export function ConversationComposer(props: ConversationComposerProps) {
     // Escape 由 SessionWorkspace capture 统一处理，保证 approval/RUI 层优先于 interrupt。
   }
 
-  function handleQueuePointerUp(event: PointerEvent<HTMLSpanElement>, submission: NativeQueuedSubmission): void {
-    const start = pointerStarts.current.get(submission.id);
-    pointerStarts.current.delete(submission.id);
-    if (!start) return;
-    releasePointerCapture(event.currentTarget, event.pointerId);
-    if (!shouldCommitQueueReorder(start, { x: event.clientX, y: event.clientY })) return;
-    const orderedIds = moveQueueSubmissionByPixels(queue, submission.id, event.clientY - start.y);
-    announceQueuePosition(orderedIds, submission.id);
-    void props.onReorderQueue?.(orderedIds);
-  }
-
-  function announceQueuePosition(orderedIds: string[], submissionId: string): void {
-    const position = orderedIds.indexOf(submissionId) + 1;
-    if (position > 0) setQueueAnnouncement(copy.reordered(position, orderedIds.length));
-  }
-
   return (
     <section
       className="session-composer-shell"
@@ -277,129 +218,6 @@ export function ConversationComposer(props: ConversationComposerProps) {
       onDragLeave={inputResources.handleDragLeave}
       onDrop={inputResources.handleDrop}
     >
-      {queue.length > 0 ? (
-        <section className="session-queue" aria-label={copy.queued}>
-          <header>
-            <strong>{copy.queued}</strong>
-            {props.state.queue?.state.type === 'paused' && props.state.queue.state.reason === 'interrupted' ? (
-              <button type="button" onClick={() => void props.onResumeQueue?.()} disabled={!writable || busy}>
-                {copy.resume}
-              </button>
-            ) : props.state.queue?.state.type === 'paused' && props.state.queue.state.reason === 'provider_archived' ? (
-              <button type="button" onClick={() => void props.onRetryQueue?.()} disabled={!writable || busy}>
-                {copy.retry}
-              </button>
-            ) : null}
-          </header>
-          <ol>
-            {queue.map((submission, index) => (
-              <li key={submission.id} data-queue-submission-id={submission.id}>
-                <span
-                  className="session-queue-drag-handle"
-                  title={copy.drag}
-                  aria-hidden="true"
-                  onPointerDown={(event) => {
-                    if (writable && !busy) {
-                      pointerStarts.current.set(submission.id, { x: event.clientX, y: event.clientY });
-                      capturePointer(event.currentTarget, event.pointerId);
-                    }
-                  }}
-                  onPointerUp={(event) => handleQueuePointerUp(event, submission)}
-                  onPointerCancel={(event) => {
-                    pointerStarts.current.delete(submission.id);
-                    releasePointerCapture(event.currentTarget, event.pointerId);
-                  }}
-                >
-                  ⋮⋮
-                </span>
-                {editingSubmissionId === submission.id ? (
-                  <label className="session-queue-editor">
-                    <span className="session-sr-only">{copy.edit}</span>
-                    <textarea value={queueEditDraft} onChange={(event) => setQueueEditDraft(event.currentTarget.value)} />
-                    <span>
-                      <button
-                        type="button"
-                        onClick={async () => {
-                          setQueueEditError(null);
-                          const saved = await saveQueuedSubmissionEdit(submission.id, queueEditDraft, props.onEditQueuedSubmission);
-                          if (saved) setEditingSubmissionId(null);
-                          else setQueueEditError(props.language === 'zh-CN' ? '保存失败，编辑内容已保留。' : 'Save failed. Your edit is preserved.');
-                        }}
-                        disabled={!queueEditDraft.trim() || !writable || busy}
-                      >
-                        {copy.save}
-                      </button>
-                      <button type="button" onClick={() => setEditingSubmissionId(null)} disabled={busy}>
-                        {copy.cancel}
-                      </button>
-                    </span>
-                    {queueEditError ? <small role="alert">{queueEditError}</small> : null}
-                  </label>
-                ) : (
-                  <>
-                    <span className="session-queue-copy">{submission.content}</span>
-                    <span className="session-queue-actions">
-                      <button
-                        type="button"
-                        aria-label={copy.edit}
-                        onClick={() => {
-                          setQueueEditDraft(submission.content);
-                          setEditingSubmissionId(submission.id);
-                        }}
-                        disabled={!writable || busy}
-                      >
-                        <span className="session-queue-action-icon" aria-hidden="true">
-                          ✎
-                        </span>
-                        <span className="session-queue-action-label">{copy.edit}</span>
-                      </button>
-                      <button type="button" aria-label={copy.remove} onClick={() => void props.onDeleteQueuedSubmission?.(submission.id)} disabled={!writable || busy}>
-                        <span className="session-queue-action-icon" aria-hidden="true">
-                          ×
-                        </span>
-                        <span className="session-queue-action-label">{copy.remove}</span>
-                      </button>
-                      <button type="button" aria-label={copy.sendNow} onClick={() => void props.onSendQueuedNow?.(submission.id)} disabled={!active || !writable || busy}>
-                        <span className="session-queue-action-icon" aria-hidden="true">
-                          ↥
-                        </span>
-                        <span className="session-queue-action-label">{copy.sendNow}</span>
-                      </button>
-                      <button
-                        type="button"
-                        aria-label={copy.moveUp}
-                        onClick={() => {
-                          const ordered = moveQueueSubmission(queue, submission.id, -1);
-                          announceQueuePosition(ordered, submission.id);
-                          void props.onReorderQueue?.(ordered);
-                        }}
-                        disabled={index === 0 || !writable || busy}
-                      >
-                        ↑
-                      </button>
-                      <button
-                        type="button"
-                        aria-label={copy.moveDown}
-                        onClick={() => {
-                          const ordered = moveQueueSubmission(queue, submission.id, 1);
-                          announceQueuePosition(ordered, submission.id);
-                          void props.onReorderQueue?.(ordered);
-                        }}
-                        disabled={index === queue.length - 1 || !writable || busy}
-                      >
-                        ↓
-                      </button>
-                    </span>
-                  </>
-                )}
-              </li>
-            ))}
-          </ol>
-        </section>
-      ) : null}
-      <output className="session-sr-only" aria-live="polite" aria-atomic="true">
-        {queueAnnouncement}
-      </output>
       {props.state.browserSubmission ? <BrowserSubmissionAttachment submission={props.state.browserSubmission} language={props.language} disabled={!writable || busy} onRemove={props.onRemoveBrowserSubmission} /> : null}
       {inputResourceError ? (
         <p className="session-composer-resource-error" role="alert">
@@ -619,10 +437,6 @@ export function resolveComposerKeyIntent(input: { key: string; shiftKey: boolean
   return input.shiftKey ? 'newline' : 'submit';
 }
 
-export function shouldCommitQueueReorder(start: { x: number; y: number }, current: { x: number; y: number }): boolean {
-  return Math.hypot(current.x - start.x, current.y - start.y) >= QUEUE_REORDER_THRESHOLD_PX;
-}
-
 export function canSteerActiveTurn(state: NativeSessionState): boolean {
   const active = state.conversationState === 'active_prework' || state.conversationState === 'active_final_answer';
   return active && state.transportState === 'ready' && Boolean(state.activeTurnId) && state.startedTurnId === state.activeTurnId;
@@ -640,48 +454,4 @@ function resolveComposerEffort(capabilities: CodexConversationCapabilities | nul
   const normalized = providerEffort?.trim();
   if (normalized && capability?.supportedReasoningEfforts.includes(normalized)) return normalized;
   return capability?.defaultReasoningEffort ?? capability?.supportedReasoningEfforts[0] ?? normalized ?? '';
-}
-
-export function moveQueueSubmissionByPixels(queue: readonly NativeQueuedSubmission[], submissionId: string, deltaY: number, rowHeight = 38): string[] {
-  if (!Number.isFinite(deltaY) || !Number.isFinite(rowHeight) || rowHeight <= 0) return queue.map((submission) => submission.id);
-  if (Math.abs(deltaY) < QUEUE_REORDER_THRESHOLD_PX) return queue.map((submission) => submission.id);
-  const positions = Math.max(1, Math.round(Math.abs(deltaY) / rowHeight));
-  return moveQueueSubmission(queue, submissionId, deltaY >= 0 ? positions : -positions);
-}
-
-export async function saveQueuedSubmissionEdit(submissionId: string, content: string, save?: (submissionId: string, content: string) => void | Promise<void>): Promise<boolean> {
-  if (!content.trim() || !save) return false;
-  try {
-    await save(submissionId, content);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function moveQueueSubmission(queue: readonly NativeQueuedSubmission[], submissionId: string, direction: number): string[] {
-  const ids = queue.map((submission) => submission.id);
-  const currentIndex = ids.indexOf(submissionId);
-  if (currentIndex < 0) return ids;
-  const targetIndex = Math.max(0, Math.min(ids.length - 1, currentIndex + direction));
-  if (targetIndex === currentIndex) return ids;
-  const [moved] = ids.splice(currentIndex, 1);
-  if (moved) ids.splice(targetIndex, 0, moved);
-  return ids;
-}
-
-function capturePointer(target: Pick<HTMLElement, 'setPointerCapture'>, pointerId: number): void {
-  try {
-    target.setPointerCapture(pointerId);
-  } catch {
-    // 已结束的 pointer 可能不允许 capture；此时仍由后续事件安全收口。
-  }
-}
-
-function releasePointerCapture(target: Pick<HTMLElement, 'releasePointerCapture'>, pointerId: number): void {
-  try {
-    target.releasePointerCapture(pointerId);
-  } catch {
-    // pointerup/cancel 后 release 只需 best-effort，不影响队列状态。
-  }
 }
