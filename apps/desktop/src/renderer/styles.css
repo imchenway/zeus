@@ -10022,6 +10022,108 @@ a {
   justify-content: space-between;
 }
 
+/* 任务状态与优先级使用低饱和语义色；文字始终保留，运行中的动效直接复用会话列表的旋转标记。 */
+.macos-ai-app {
+  --zeus-task-status-blue: oklch(48% 0.11 252);
+  --zeus-task-status-violet: oklch(48% 0.11 302);
+  --zeus-task-status-green: oklch(44% 0.1 153);
+  --zeus-task-status-amber: oklch(48% 0.1 74);
+  --zeus-task-status-orange: oklch(48% 0.11 48);
+}
+
+.macos-ai-app.zeus-shell.theme-dark {
+  --zeus-task-status-blue: oklch(78% 0.1 252);
+  --zeus-task-status-violet: oklch(78% 0.1 302);
+  --zeus-task-status-green: oklch(76% 0.1 153);
+  --zeus-task-status-amber: oklch(80% 0.1 74);
+  --zeus-task-status-orange: oklch(78% 0.11 48);
+}
+
+@media (prefers-color-scheme: dark) {
+  .macos-ai-app.zeus-shell.theme-system {
+    --zeus-task-status-blue: oklch(78% 0.1 252);
+    --zeus-task-status-violet: oklch(78% 0.1 302);
+    --zeus-task-status-green: oklch(76% 0.1 153);
+    --zeus-task-status-amber: oklch(80% 0.1 74);
+    --zeus-task-status-orange: oklch(78% 0.11 48);
+  }
+}
+
+.macos-ai-app :where(.task-status-chip, .task-status-select) {
+  --task-status-tone: var(--zeus-product-muted);
+  --task-status-tone-bg: color-mix(in srgb, var(--task-status-tone) 10%, var(--zeus-product-panel));
+  --task-status-tone-line: color-mix(in srgb, var(--task-status-tone) 28%, var(--zeus-product-line-soft));
+}
+
+.macos-ai-app .task-status-select .zeus-select-trigger {
+  background: var(--task-status-tone-bg);
+  border-color: var(--task-status-tone-line);
+  color: var(--task-status-tone);
+}
+
+.macos-ai-app :where(.task-status-chip, .task-status-select).task-status-tone-blue,
+.macos-ai-app .task-status-select.task-status-tone-blue .zeus-select-trigger {
+  --task-status-tone: var(--zeus-task-status-blue);
+}
+
+.macos-ai-app :where(.task-status-chip, .task-status-select).task-status-tone-violet,
+.macos-ai-app .task-status-select.task-status-tone-violet .zeus-select-trigger {
+  --task-status-tone: var(--zeus-task-status-violet);
+}
+
+.macos-ai-app :where(.task-status-chip, .task-status-select).task-status-tone-green,
+.macos-ai-app .task-status-select.task-status-tone-green .zeus-select-trigger {
+  --task-status-tone: var(--zeus-task-status-green);
+}
+
+.macos-ai-app :where(.task-status-chip, .task-status-select).task-status-tone-amber,
+.macos-ai-app .task-status-select.task-status-tone-amber .zeus-select-trigger {
+  --task-status-tone: var(--zeus-task-status-amber);
+}
+
+.macos-ai-app :where(.task-status-chip, .task-status-select).task-status-tone-orange,
+.macos-ai-app .task-status-select.task-status-tone-orange .zeus-select-trigger {
+  --task-status-tone: var(--zeus-task-status-orange);
+}
+
+.macos-ai-app :where(.task-status-chip, .task-status-select).task-status-tone-red,
+.macos-ai-app .task-status-select.task-status-tone-red .zeus-select-trigger {
+  --task-status-tone: var(--zeus-danger-text, oklch(54% 0.14 25));
+}
+
+.macos-ai-app .task-status-chip {
+  align-items: center;
+  background: var(--task-status-tone-bg);
+  border: 1px solid var(--task-status-tone-line);
+  border-radius: 7px;
+  color: var(--task-status-tone);
+  display: inline-flex;
+  gap: 5px;
+  inline-size: fit-content;
+  line-height: 1;
+  min-block-size: 24px;
+  max-inline-size: 100%;
+  padding: 3px 8px;
+}
+
+.macos-ai-app .task-status-chip strong {
+  color: var(--task-status-tone);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.macos-ai-app .task-run-status-spinner {
+  block-size: 14px;
+  color: var(--task-status-tone);
+  flex: 0 0 auto;
+  inline-size: 14px;
+}
+
+.macos-ai-app .task-priority-chip {
+  justify-content: center;
+  min-inline-size: 38px;
+}
+
 .macos-ai-app .task-table-select-cell {
   align-items: center;
   display: inline-flex;
