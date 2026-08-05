@@ -2,12 +2,13 @@ import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 
 import { isOperationalActivityItem, SessionActivityGroup, SessionTurnDuration } from './SessionActivity.js';
 import { itemRole, type SessionUiLanguage, ThreadItemView, transcriptItemText } from './ThreadItemView.js';
 import { PlanSummary } from './PlanSummary.js';
-import type { ConversationResource, NativeSessionItemBuffer, NativeSessionState, TurnChangeSet, TurnChangeSetOperationResult } from './sessionTypes.js';
+import type { ConversationResource, NativePendingRequest, NativeSessionItemBuffer, NativeSessionState, TurnChangeSet, TurnChangeSetOperationResult } from './sessionTypes.js';
 import type { ConversationFileLocation, ConversationOpenTarget } from '@zeus/shared';
 import { useThreadScrollController } from './useThreadScrollController.js';
 import { TurnChangeCard } from './TurnChanges.js';
 import { QueuedConversationMessages, visibleQueuedSubmissions } from './QueuedConversationMessages.js';
 import { latestReasoningItemsByTurn, reasoningSummaryStatus, SessionReasoningSummary } from './SessionReasoningSummary.js';
+import { AnsweredRequestHistory, isAnsweredUserInputRequest } from './AnsweredRequestHistory.js';
 
 export interface ConversationTranscriptProps {
   state: NativeSessionState;
@@ -36,6 +37,8 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   const [turnSpacerHeight, setTurnSpacerHeight] = useState(0);
   const [completedAnnouncement, setCompletedAnnouncement] = useState<{ key: string; text: string } | null>(null);
   const completedAnnouncementTrackerRef = useRef<CompletedItemAnnouncementTracker>({ hydrated: false, lastCompletedKey: null });
+  const positionedConversationIdRef = useRef<string | null>(null);
+  const latestSubmittedMessageIdRef = useRef<string | null>(null);
   const queuedSubmissions = useMemo(() => visibleQueuedSubmissions(props.state.queue), [props.state.queue]);
   const queuedClientIds = useMemo(() => new Set(queuedSubmissions.map((submission) => submission.clientUserMessageId).filter((value): value is string => Boolean(value))), [queuedSubmissions]);
   const projectedItems = useMemo(
@@ -47,11 +50,32 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   const queuedOptimisticItems = useMemo(() => projectedItems.filter((entry) => entry.optimistic && entry.status === 'queued' && !queuedClientIds.has(entry.clientUserMessageId ?? '')), [projectedItems, queuedClientIds]);
   const lastUserKey = [...items].reverse().find((entry) => `${entry.type}`.toLocaleLowerCase().includes('user'))?.key;
   const lastAssistantKey = [...items].reverse().find((entry) => itemRole(entry) === 'assistant')?.key;
-  const transcriptRows = useMemo(() => projectTranscriptRows(items), [items]);
+  const answeredRequests = useMemo(() => props.state.pendingRequests.filter(isAnsweredUserInputRequest), [props.state.pendingRequests]);
+  const transcriptRows = useMemo(() => projectTranscriptRows(items, answeredRequests), [answeredRequests, items]);
   const lastItemKeyByTurn = useMemo(() => Object.fromEntries(items.map((item) => [item.turnId, item.key])), [items]);
   const showThinking = shouldShowTranscriptThinking(props.state);
   const historyHydrated = props.state.snapshot !== null;
   const historyUnavailable = !historyHydrated && (props.state.transportState === 'reconnecting' || props.state.transportState === 'failed');
+  const latestSubmittedMessageId = [...immediateOptimisticItems, ...queuedOptimisticItems].at(-1)?.clientUserMessageId ?? null;
+
+  useLayoutEffect(() => {
+    const container = containerRef.current;
+    const conversationId = props.state.conversationId;
+    if (!container || !historyHydrated || !conversationId || positionedConversationIdRef.current === conversationId) return;
+    positionedConversationIdRef.current = conversationId;
+    container.scrollTo({ top: container.scrollHeight, behavior: 'instant' });
+    setReturnToLatestVisible(false);
+  }, [historyHydrated, props.state.conversationId, props.state.transcriptRevision]);
+
+  useLayoutEffect(() => {
+    const container = containerRef.current;
+    if (!container || !latestSubmittedMessageId || latestSubmittedMessageIdRef.current === latestSubmittedMessageId) return;
+    latestSubmittedMessageIdRef.current = latestSubmittedMessageId;
+    const effect = scrollController.onUserMessageSubmitted();
+    if (effect.type !== 'scroll_to_bottom') return;
+    container.scrollTo({ top: container.scrollHeight, behavior: 'instant' });
+    setReturnToLatestVisible(false);
+  }, [latestSubmittedMessageId, scrollController]);
 
   useEffect(() => {
     const resolution = resolveCompletedItemAnnouncement(completedAnnouncementTrackerRef.current, items, props.language);
@@ -92,7 +116,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     if (!container) return;
     const effect = scrollController.onDelta(metrics(container), Date.now());
     if (effect.type !== 'scroll_to_bottom') return;
-    container.scrollTo({ top: container.scrollHeight, behavior: prefersReducedMotion() ? 'auto' : 'smooth' });
+    container.scrollTo({ top: container.scrollHeight, behavior: prefersReducedMotion() ? 'instant' : 'smooth' });
   }, [props.state.transcriptRevision, scrollController]);
 
   return (
@@ -112,8 +136,11 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
             setReturnToLatestVisible(mode.mode === 'static');
           }}
         >
-          {items.length > 0 ? (
+          {transcriptRows.length > 0 ? (
             transcriptRows.map((row) => {
+              if (row.kind === 'answered_request') {
+                return <AnsweredRequestHistory key={row.key} request={row.request} language={props.language} />;
+              }
               const rowItems = row.kind === 'item' ? [row.item] : row.items;
               const lastRowItem = rowItems[rowItems.length - 1]!;
               const turn = props.state.turnsByProviderId[lastRowItem.turnId];
@@ -190,7 +217,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
             if (!container) return;
             container.scrollTo({
               top: container.scrollHeight,
-              behavior: prefersReducedMotion() ? 'auto' : 'smooth',
+              behavior: prefersReducedMotion() ? 'instant' : 'smooth',
             });
             setReturnToLatestVisible(false);
           }}
@@ -204,13 +231,14 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
 
 export type TranscriptRow =
   | { kind: 'item'; key: string; item: NativeSessionItemBuffer }
+  | { kind: 'answered_request'; key: string; request: NativePendingRequest }
   | {
       kind: 'activity';
       key: string;
       items: NativeSessionItemBuffer[];
     };
 
-export function projectTranscriptRows(items: readonly NativeSessionItemBuffer[]): TranscriptRow[] {
+export function projectTranscriptRows(items: readonly NativeSessionItemBuffer[], answeredRequests: readonly NativePendingRequest[] = []): TranscriptRow[] {
   const rows: TranscriptRow[] = [];
   let activity: NativeSessionItemBuffer[] = [];
   const flushActivity = () => {
@@ -222,7 +250,19 @@ export function projectTranscriptRows(items: readonly NativeSessionItemBuffer[])
     });
     activity = [];
   };
-  for (const item of items) {
+  const timeline: Array<{ kind: 'item'; item: NativeSessionItemBuffer } | { kind: 'answered_request'; request: NativePendingRequest }> = items.map((item) => ({ kind: 'item', item }));
+  for (const request of [...answeredRequests].sort((left, right) => (left.resolvedAt ?? left.createdAt).localeCompare(right.resolvedAt ?? right.createdAt))) {
+    const resolvedAt = request.resolvedAt ?? request.createdAt;
+    const insertionIndex = timeline.findIndex((entry) => entry.kind === 'item' && (entry.item.updatedAt ?? '') >= resolvedAt);
+    timeline.splice(insertionIndex < 0 ? timeline.length : insertionIndex, 0, { kind: 'answered_request', request });
+  }
+  for (const entry of timeline) {
+    if (entry.kind === 'answered_request') {
+      flushActivity();
+      rows.push({ kind: 'answered_request', key: `answered-request:${entry.request.id}`, request: entry.request });
+      continue;
+    }
+    const item = entry.item;
     if (!isOperationalActivityItem(item)) {
       flushActivity();
       rows.push({ kind: 'item', key: item.key, item });
@@ -271,7 +311,7 @@ export function resolveCompletedItemAnnouncement(
 export function scheduleTurnPositionAfterSpacerCommit(container: Pick<HTMLElement, 'scrollHeight' | 'scrollTo'>, requestFrame: (callback: FrameRequestCallback) => number, shouldPosition: () => boolean): () => void {
   const frameId = requestFrame(() => {
     // 回调在 spacer commit/layout 后才读取 scrollHeight，不能使用 setState 前的旧高度。
-    if (shouldPosition()) container.scrollTo({ top: container.scrollHeight, behavior: 'auto' });
+    if (shouldPosition()) container.scrollTo({ top: container.scrollHeight, behavior: 'instant' });
   });
   return () => {
     if (typeof window !== 'undefined') window.cancelAnimationFrame(frameId);

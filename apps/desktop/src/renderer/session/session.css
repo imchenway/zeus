@@ -5551,6 +5551,126 @@
     outline-offset: 2px;
   }
 }
+
+.session-codex-parity-v1 .session-transcript > .session-answered-request {
+  flex: 0 0 auto;
+  inline-size: min(var(--session-thread-max), 100%);
+  margin-inline: auto;
+}
+
+.session-codex-parity-v1 .session-answered-request > details > summary {
+  align-items: center;
+  color: var(--session-text-muted);
+  cursor: pointer;
+  display: grid;
+  font-size: 13px;
+  gap: 9px;
+  grid-template-columns: 19px minmax(0, 1fr) 13px;
+  list-style: none;
+  min-block-size: 34px;
+  padding: 3px 2px;
+}
+
+.session-codex-parity-v1 .session-answered-request > details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.session-codex-parity-v1 .session-answered-request > details > summary:hover {
+  color: var(--session-text);
+}
+
+.session-codex-parity-v1 .session-answered-request > details > summary:focus-visible {
+  border-radius: 7px;
+  outline: 2px solid var(--session-focus-outline);
+  outline-offset: 2px;
+}
+
+.session-codex-parity-v1 .session-answered-request > details > summary > svg:first-child {
+  block-size: 19px;
+  color: var(--session-success);
+  inline-size: 19px;
+}
+
+.session-codex-parity-v1 .session-answered-request-summary {
+  align-items: baseline;
+  display: flex;
+  gap: 7px;
+  min-inline-size: 0;
+}
+
+.session-codex-parity-v1 .session-answered-request-summary > span:first-child {
+  flex: 0 0 auto;
+  font-weight: 590;
+}
+
+.session-codex-parity-v1 .session-answered-request-summary > strong,
+.session-codex-parity-v1 .session-answered-request-summary > span:last-child {
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-codex-parity-v1 .session-answered-request-summary > strong {
+  color: var(--session-text);
+  font-weight: 590;
+}
+
+.session-codex-parity-v1 .session-answered-request-caret {
+  block-size: 13px;
+  inline-size: 13px;
+  transition: transform 140ms var(--session-ease-out);
+}
+
+.session-codex-parity-v1 .session-answered-request > details[open] .session-answered-request-caret {
+  transform: rotate(180deg);
+}
+
+.session-codex-parity-v1 .session-answered-request-body {
+  border-inline-start: 1px solid var(--session-line-soft);
+  display: grid;
+  gap: 14px;
+  margin: 2px 0 1px 9px;
+  padding: 6px 0 3px 18px;
+}
+
+.session-codex-parity-v1 .session-answered-request-body > section {
+  display: grid;
+  gap: 4px;
+}
+
+.session-codex-parity-v1 .session-answered-request-body small {
+  color: var(--session-text-muted);
+  font-size: 11px;
+  font-weight: 590;
+}
+
+.session-codex-parity-v1 .session-answered-request-body strong {
+  color: var(--session-text);
+  font-size: 13px;
+  font-weight: 590;
+  overflow-wrap: anywhere;
+}
+
+.session-codex-parity-v1 .session-answered-request-body p {
+  color: var(--session-text-muted);
+  font-size: 13px;
+  margin: 0;
+  overflow-wrap: anywhere;
+  white-space: break-spaces;
+}
+
+@media (max-width: 760px) {
+  .session-codex-parity-v1 .session-answered-request-summary > span:last-child {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .session-codex-parity-v1 .session-answered-request-caret {
+    transition: none;
+  }
+}
 .session-codex-parity-v1 {
   --session-canvas: rgb(255 255 255);
   --session-sidebar: var(--session-canvas);

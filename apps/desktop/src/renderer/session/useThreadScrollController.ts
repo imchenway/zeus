@@ -17,6 +17,7 @@ export type ThreadScrollEffect = { type: 'none' } | { type: 'scroll_to_bottom' }
 export interface ThreadScrollController {
   getState(): ThreadScrollState;
   onUserScroll(metrics: ThreadScrollMetrics): ThreadScrollState;
+  onUserMessageSubmitted(): ThreadScrollEffect;
   onDelta(metrics: ThreadScrollMetrics, now: number): ThreadScrollEffect;
 
   onTurnStarted(metrics: ThreadScrollMetrics, now: number): ThreadScrollEffect;
@@ -39,6 +40,10 @@ export function createThreadScrollController(): ThreadScrollController {
         mode: distanceFromBottom(metrics) <= FOLLOW_DISTANCE_PX ? 'user_follow' : 'static',
       };
       return state;
+    },
+    onUserMessageSubmitted() {
+      state = { mode: 'user_follow', suppressBounceUntil: 0 };
+      return { type: 'scroll_to_bottom' };
     },
     onDelta(_metrics, now) {
       if (state.mode === 'static') return { type: 'none' };

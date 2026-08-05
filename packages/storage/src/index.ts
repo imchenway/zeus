@@ -5400,12 +5400,30 @@ function countUserInputAnswers(response: unknown): number {
   return count;
 }
 
-function createSecretResponseSummary(payload: unknown, response: unknown, questionIds?: string[], answerCount?: number): { questionIds: string[]; answerCount: number; answers: '[REDACTED]' } {
+function createSecretResponseSummary(payload: unknown, response: unknown, questionIds?: string[], answerCount?: number): { questionIds: string[]; answerCount: number; answers: '[REDACTED]'; publicAnswers: Record<string, string[]> } {
   return {
     questionIds: questionIds ?? extractUserInputQuestionIds(payload),
     answerCount: answerCount ?? countUserInputAnswers(response),
     answers: '[REDACTED]',
+    publicAnswers: extractNonSecretUserInputAnswers(payload, response),
   };
+}
+
+function extractNonSecretUserInputAnswers(payload: unknown, response: unknown): Record<string, string[]> {
+  if (!isPlainRecord(payload) || !Array.isArray(payload.questions) || !isPlainRecord(response) || !isPlainRecord(response.answers)) return {};
+  const publicQuestionIds = new Set(
+    payload.questions.flatMap((question) => {
+      if (!isPlainRecord(question) || question.isSecret !== false) return [];
+      const id = typeof question.id === 'string' ? question.id : typeof question.questionId === 'string' ? question.questionId : undefined;
+      return id ? [id] : [];
+    }),
+  );
+  return Object.fromEntries(
+    Object.entries(response.answers).flatMap(([questionId, answer]) => {
+      if (!publicQuestionIds.has(questionId) || !isPlainRecord(answer) || !Array.isArray(answer.answers) || !answer.answers.every((entry) => typeof entry === 'string')) return [];
+      return [[questionId, answer.answers]];
+    }),
+  );
 }
 
 function redactSecretValues(value: unknown): unknown {
