@@ -256,7 +256,6 @@ type NativeConversationAppClient = SessionControllerClient &
     | 'startTaskIntegration'
     | 'loadTaskIntegrationConflict'
     | 'resolveTaskIntegrationConflict'
-    | 'assistTaskIntegrationConflict'
     | 'finalizeTaskIntegration'
   >;
 type NativeConversationChoiceLoadState = 'empty' | 'loading' | 'ready' | 'error';
