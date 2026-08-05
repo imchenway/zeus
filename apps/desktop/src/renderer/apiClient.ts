@@ -1,5 +1,6 @@
 import type {
   AgentCatalogSnapshot,
+  ArchivedConversationChoicesSnapshot,
   CodexConversationCapabilities,
   CodexTaskPushCapabilities,
   ConversationResourcePreview,
@@ -1248,6 +1249,7 @@ export interface ProjectArchiveConfirmation {
 export interface DashboardClient {
   connectEvents: (onEvent: (event: ZeusRealtimeEvent) => void, options?: { afterEventId?: string }) => WebSocket;
   loadAgents: () => Promise<AgentCatalogSnapshot>;
+  loadArchivedConversations: () => Promise<ArchivedConversationChoicesSnapshot>;
   loadProjectConversationChoices: (projectId: string) => Promise<NativeProjectConversationChoicesSnapshot>;
   startProjectConversation: (projectId: string, input: StartProjectConversationRequest) => Promise<NativeOperationAcceptance>;
   loadTaskConversationChoices: (taskId: string) => Promise<NativeConversationChoicesSnapshot>;
@@ -1289,6 +1291,8 @@ export interface DashboardClient {
     result: TaskIntegrationResult;
   }>;
   loadNativeConversation: (projectId: string, conversationId: string) => Promise<NativeConversationSnapshot>;
+  archiveNativeConversation: (projectId: string, conversationId: string) => Promise<GraphConversationHistoryItem>;
+  restoreConversationArchive: (projectId: string, conversationId: string) => Promise<GraphConversationHistoryItem>;
   loadConversationResourcePreview: (projectId: string, conversationId: string, resourceId: string) => Promise<ConversationResourcePreview>;
   loadTurnChangeSet: (projectId: string, conversationId: string, turnId: string) => Promise<TurnChangeSet>;
   operateTurnChangeSet: (
@@ -1573,6 +1577,7 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
   return {
     connectEvents: (onEvent, eventOptions) => connectZeusEvents(currentOptions, onEvent, eventOptions),
     loadAgents: () => request<AgentCatalogSnapshot>('/api/agents'),
+    loadArchivedConversations: () => request<ArchivedConversationChoicesSnapshot>('/api/conversations/archived'),
     loadProjectConversationChoices: (projectId) => request<NativeProjectConversationChoicesSnapshot>(`/api/projects/${encodeURIComponent(projectId)}/conversation-choices`),
     startProjectConversation: (projectId, input) => {
       const { idempotencyKey, ...body } = input;
@@ -1653,6 +1658,8 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
       });
     },
     loadNativeConversation: (projectId, conversationId) => request<NativeConversationSnapshot>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}`),
+    archiveNativeConversation: (projectId, conversationId) => request<GraphConversationHistoryItem>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/archive`, { method: 'POST' }),
+    restoreConversationArchive: (projectId, conversationId) => request<GraphConversationHistoryItem>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/restore`, { method: 'POST' }),
     loadConversationResourcePreview: (projectId, conversationId, resourceId) =>
       request<ConversationResourcePreview>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/resources/${encodeURIComponent(resourceId)}/preview`),
     loadTurnChangeSet: (projectId, conversationId, turnId) => request<TurnChangeSet>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/turns/${encodeURIComponent(turnId)}/change-set`),

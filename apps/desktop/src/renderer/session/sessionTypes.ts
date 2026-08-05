@@ -309,6 +309,11 @@ export interface NativeProjectConversationChoicesSnapshot {
   items: NativeConversationChoice[];
 }
 
+export interface ArchivedConversationChoicesSnapshot {
+  choices: NativeConversationChoice[];
+  items: NativeConversationChoice[];
+}
+
 export interface CodexTaskPushModelCapability {
   id: string;
   model: string;
