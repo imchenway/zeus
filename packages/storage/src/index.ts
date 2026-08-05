@@ -79,7 +79,7 @@ export interface ZeusTaskRecord {
 export type TaskWorkspaceState = 'ready' | 'reclaimed' | 'merged' | 'discarded' | 'failed';
 export type TaskEnvironmentState = 'ready' | 'reclaimed' | 'failed';
 
-/** 一套任务环境聚合多个仓库工作区，并被同一任务的后续会话复用。 */
+/** 一次任务推送的内部聚合记录，用于关联多个仓库工作区。 */
 export interface ZeusTaskEnvironmentRecord {
   id: string;
   projectId: string;
@@ -92,7 +92,7 @@ export interface ZeusTaskEnvironmentRecord {
 }
 
 /**
- * 任务工作区代表一个可被多次会话复用的任务开发线。
+ * 任务工作区代表一次任务推送创建的独立任务开发线。
  * 会话结束不会删除工作区；只有任务完成、取消或显式清理才会回收 worktree。
  */
 export interface ZeusTaskWorkspaceRecord {

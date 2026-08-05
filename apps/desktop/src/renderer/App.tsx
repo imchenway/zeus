@@ -6339,8 +6339,6 @@ export function App(props: {
     serviceTierDowngraded: false,
     workMode: 'default',
     permissionMode: 'read-only',
-    workspaceMode: 'create',
-    environmentId: '',
     repositorySelections: {},
     supplementalInfo: '',
   });
@@ -8279,8 +8277,6 @@ export function App(props: {
       serviceTierDowngraded: false,
       workMode: 'default',
       permissionMode: 'read-only',
-      workspaceMode: 'create',
-      environmentId: '',
       repositorySelections: {},
       supplementalInfo: '',
     });
@@ -8337,17 +8333,14 @@ export function App(props: {
             ...serviceTierWireOverride(taskModelPushForm.serviceTier),
             workMode: taskModelPushForm.workMode,
             permissionMode: taskModelPushForm.permissionMode,
-            workspace:
-              taskModelPushForm.workspaceMode === 'existing'
-                ? { mode: 'existing', environmentId: taskModelPushForm.environmentId }
-                : {
-                    mode: 'create',
-                    repositories: taskModelPushCapabilities.repositories.map((repository) => ({
-                      repositoryId: repository.id,
-                      sourceRef: taskModelPushForm.repositorySelections[repository.id]?.sourceRef ?? '',
-                      branchName: taskModelPushForm.repositorySelections[repository.id]?.branchName ?? '',
-                    })),
-                  },
+            workspace: {
+              mode: 'create',
+              repositories: taskModelPushCapabilities.repositories.map((repository) => ({
+                repositoryId: repository.id,
+                sourceRef: taskModelPushForm.repositorySelections[repository.id]?.sourceRef ?? '',
+                branchName: taskModelPushForm.repositorySelections[repository.id]?.branchName ?? '',
+              })),
+            },
             ...(taskModelPushForm.supplementalInfo.trim() ? { supplementalInfo: taskModelPushForm.supplementalInfo.trim() } : {}),
             idempotencyKey: createSessionOperationId(),
             clientUserMessageId: createSessionOperationId(),

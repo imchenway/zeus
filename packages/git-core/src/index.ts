@@ -313,14 +313,14 @@ export async function discoverGitRepositories(containerPath: string, maxDepth = 
   return discovered.filter((candidate): candidate is DiscoveredGitRepository => candidate !== null).sort((left, right) => left.relativePath.localeCompare(right.relativePath));
 }
 
-/** 为多仓任务环境生成共同根目录；逐仓 worktree 会按原相对路径放在该根目录内。 */
-export function buildTaskEnvironmentRootPath(projectContainerPath: string, projectSlug: string, taskCode: string, environmentId: string): string {
+/** 为一次任务推送生成共同根目录；逐仓 worktree 会按原相对路径放在该根目录内。 */
+export function buildTaskEnvironmentRootPath(projectContainerPath: string, projectSlug: string, taskCode: string, pushId: string): string {
   const containerRoot = resolve(projectContainerPath);
   const root = join(dirname(containerRoot), '.zeus-worktrees');
   const safeProject = safePathSegment(projectSlug || basename(containerRoot));
   const safeTask = safePathSegment(taskCode);
-  const safeEnvironment = safePathSegment(environmentId).slice(-20) || 'environment';
-  return join(root, safeProject, safeTask, safeEnvironment);
+  const safePush = safePathSegment(pushId).slice(-20) || 'push';
+  return join(root, safeProject, safePush, safeTask);
 }
 
 /** 从任务编码、名称和开发线序号生成可读分支；最终合法性仍由 git check-ref-format 判定。 */
@@ -1142,7 +1142,7 @@ function buildTaskWorktreePath(topLevel: string, projectSlug: string, taskCode: 
   const safeProject = safePathSegment(projectSlug || basename(topLevel));
   const safeTask = safePathSegment(taskCode);
   const safeWorkspace = safePathSegment(workspaceId).slice(-16) || 'workspace';
-  return join(root, safeProject, safeTask, safeWorkspace);
+  return join(root, safeProject, safeWorkspace, safeTask);
 }
 
 function safePathSegment(value: string): string {

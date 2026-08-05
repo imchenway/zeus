@@ -11562,19 +11562,16 @@ a {
   background: var(--zeus-product-panel-muted);
 }
 
-.macos-ai-app .task-model-push-section-heading,
-.macos-ai-app .task-model-push-workspace-summary {
+.macos-ai-app .task-model-push-section-heading {
   display: grid;
   gap: 3px;
 }
 
 .macos-ai-app .task-model-push-section-heading small,
-.macos-ai-app .task-model-push-workspace-summary small,
 .macos-ai-app .task-model-push-worktree-root {
   color: var(--zeus-product-muted);
 }
 
-.macos-ai-app .task-model-push-workspace > label,
 .macos-ai-app .task-model-push-workspace-grid label {
   min-inline-size: 0;
   display: grid;

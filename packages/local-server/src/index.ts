@@ -1409,11 +1409,7 @@ type StartTaskConversationBody = (
       serviceTier?: string | null;
       workMode?: 'default' | 'plan';
       supplementalInfo?: string;
-      workspace?:
-        | { mode: 'create'; repositories: Array<{ repositoryId: string; sourceRef: string; branchName?: string }> }
-        | { mode: 'existing'; environmentId: string }
-        | { mode: 'create'; sourceRef: string; branchName?: string }
-        | { mode: 'existing'; workspaceId: string };
+      workspace?: { mode: 'create'; repositories: Array<{ repositoryId: string; sourceRef: string; branchName?: string }> } | { mode: 'create'; sourceRef: string; branchName?: string };
     }
   | { mode: 'resume'; conversationId: string; content: string }
   | { mode: 'reference_legacy'; sourceConversationId: string; messageIds: string[]; content: string; permissionMode?: ConversationPermissionMode }
@@ -11692,6 +11688,9 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
         if (selectedEffort && !selectedModel.supportedReasoningEfforts.includes(selectedEffort)) {
           throw nativeApiError('ZEUS_CODEX_EFFORT_UNAVAILABLE', `Configured Codex effort is unavailable: ${selectedEffort}`);
         }
+        if (!isNativeApiRecord(body.workspace) || body.workspace.mode !== 'create') {
+          throw nativeApiError('ZEUS_TASK_PUSH_WORKSPACE_CREATE_REQUIRED', 'Every task push must create an independent workspace from the selected source.');
+        }
         const taskEnvironment = await resolveTaskPushEnvironment(project, task, body.workspace, stableOperationId);
         const attachmentInput = normalizeTaskPushAttachments(task, project.localPath);
         nativeOperation = await codexNativeCoordinator.startTaskConversation({
@@ -12200,40 +12199,6 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
         };
       }),
     );
-    const workspaces = await Promise.all(
-      taskWorkspaces.listByTask(task.id).map(async (workspace) => {
-        const repositoryPath = workspace.repositoryPath || project.localPath;
-        const repository = await getGitRepositoryContext(repositoryPath);
-        const registered = repository.worktrees.find((entry) => entry.branch === workspace.branchName);
-        const reviewPath = registered?.path ?? workspace.worktreePath;
-        let clean: boolean | null = null;
-        let headSha = workspace.headSha;
-        if (reviewPath) {
-          try {
-            const review = await getTaskWorkspaceReview(reviewPath);
-            clean = review.clean;
-            headSha = review.headSha;
-          } catch {
-            clean = null;
-          }
-        }
-        return {
-          ...workspace,
-          worktreePath: registered?.path ?? workspace.worktreePath,
-          headSha,
-          clean,
-          selectable: workspace.state === 'ready' || workspace.state === 'reclaimed' || workspace.state === 'failed',
-        };
-      }),
-    );
-    const environments = taskEnvironments.listByTask(task.id).map((environment) => {
-      const members = workspaces.filter((workspace) => workspace.environmentId === environment.id);
-      return {
-        ...environment,
-        workspaces: members,
-        selectable: environment.state === 'ready' || environment.state === 'reclaimed' || environment.state === 'failed',
-      };
-    });
     const primaryRepository = repositoryCapabilities[0];
     return {
       ...capabilities,
@@ -12249,7 +12214,6 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
         clean: repository.clean,
       })),
       sharedWritablePaths: projectSharedPaths.listByProject(project.id),
-      environments,
       git: {
         primaryWorkspacePath: primaryRepository?.localPath ?? project.localPath,
         primaryBranch: primaryRepository?.branch ?? '',
@@ -12260,7 +12224,6 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
         suggestedBranchName: buildTaskBranchName(task.taskCode, task.title, taskEnvironments.listByTask(task.id).length + 1),
         worktreeRoot: join(dirname(project.localPath), '.zeus-worktrees'),
       },
-      workspaces,
     };
   }
 
