@@ -133,6 +133,8 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   const failedTurnResults = new Map<string, Error & { code: string }>();
   const turnResultWaiters = new Map<string, NativeTurnResultWaiter[]>();
   const autoResolutionTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  // 敏感回答不能落入 submission JSON；仅在当前宿主内存中保留到新 turn 被 app-server 接受。
+  const volatileSubmissionText = new Map<string, string>();
   let closing = false;
   let closed = false;
   let providerEventChain = Promise.resolve();
@@ -340,7 +342,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   }
 
   function submissionProviderInput(submission: ZeusConversationSubmissionRecord, context: ConversationDispatchContext): Array<Record<string, unknown>> {
-    const text = submissionText(submission);
+    const text = volatileSubmissionText.get(submission.id) ?? submissionText(submission);
     const inputs: Array<Record<string, unknown>> = text.trim() ? [{ type: 'text', text }] : [];
     const allowedRoots = [...(context.allowedAttachmentRoots?.length ? context.allowedAttachmentRoots : [context.projectLocalPath]), ...(options.trustedAttachmentRoots ?? [])]
       .map(existingDirectoryRealpath)
@@ -859,6 +861,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         approvalsReviewer: profile.approvalsReviewer,
         sandboxPolicy: profile.sandbox,
       });
+      volatileSubmissionText.delete(submission.id);
       const timestamp = now();
       options.turns.upsert({
         conversationId: conversation.id,
@@ -1294,23 +1297,6 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     assertOpen();
     const request = options.requests.getById(input.requestId);
     if (!request) throw coordinatorError('ZEUS_CODEX_SERVER_REQUEST_NOT_FOUND', 'Codex server request is not pending.');
-    const currentGenerationId = readyGenerationId();
-    if (!options.manager.hasGeneration(request.transportGenerationId)) {
-      if (request.status === 'pending') {
-        options.requests.fail(request.id, {
-          error: {
-            error: 'ZEUS_CODEX_REQUEST_GENERATION_STALE',
-            message: 'The provider request belongs to a retired or unavailable app-server generation.',
-            recoveryRequired: true,
-            requestGenerationId: request.transportGenerationId,
-            currentGenerationId,
-          },
-          resolvedAt: now(),
-        });
-        await persist();
-      }
-      throw coordinatorError('ZEUS_CODEX_REQUEST_GENERATION_STALE', 'Codex server request is not authoritative for the current app-server generation.');
-    }
     if (request.status !== 'pending') throw coordinatorError('ZEUS_CODEX_SERVER_REQUEST_NOT_FOUND', 'Codex server request is not pending.');
     clearAutoResolutionTimer(request.id);
     const conversation = requireConversation(request.conversationId);
@@ -1362,6 +1348,24 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       if (response.type !== 'request_user_input') throw invalidServerRequestResponse('Response type does not match the pending request_user_input request.');
       const validationError = validateCanonicalRequestUserInputAnswers(payload, response.answers);
       if (validationError) throw invalidServerRequestResponse(validationError);
+    }
+    const currentGenerationId = readyGenerationId();
+    if (!options.manager.hasGeneration(request.transportGenerationId)) {
+      if (isHostHandoffCheckpointRequest(request)) {
+        return respondAfterHostHandoff({ request, conversation, response: stripRequestTransport(wireResponse), input });
+      }
+      options.requests.fail(request.id, {
+        error: {
+          error: 'ZEUS_CODEX_REQUEST_GENERATION_STALE',
+          message: 'The provider request belongs to a retired or unavailable app-server generation.',
+          recoveryRequired: true,
+          requestGenerationId: request.transportGenerationId,
+          currentGenerationId,
+        },
+        resolvedAt: now(),
+      });
+      await persist();
+      throw coordinatorError('ZEUS_CODEX_REQUEST_GENERATION_STALE', 'Codex server request is not authoritative for the current app-server generation.');
     }
     await input.providerWriteLifecycle?.markPrepared(request.id);
     input.providerWriteLifecycle?.markRpcStarted(request.id);
@@ -1421,6 +1425,79 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       providerThreadId: conversation.providerThreadId,
       providerTurnId: request.turnId ? (options.turns.getById(request.turnId)?.providerTurnId ?? null) : null,
     };
+  }
+
+  function isHostHandoffCheckpointRequest(request: ZeusConversationServerRequestRecord): boolean {
+    if (!request.responseJson) return false;
+    try {
+      return parseJsonRecord(request.responseJson).handoffCheckpoint === true;
+    } catch {
+      return false;
+    }
+  }
+
+  async function respondAfterHostHandoff(inputValue: {
+    request: ZeusConversationServerRequestRecord;
+    conversation: ZeusConversationWithMessagesRecord;
+    response: RespondNativeRequestInput['response'];
+    input: RespondNativeRequestInput;
+  }): Promise<NativeAcceptedOperation> {
+    const { request, conversation, response } = inputValue;
+    await inputValue.input.providerWriteLifecycle?.markPrepared(request.id);
+    const secret = request.containsSecret && response.type === 'request_user_input';
+    options.requests.resolve(request.id, {
+      response,
+      isSecret: secret,
+      ...(secret && response.type === 'request_user_input' ? { questionIds: Object.keys(response.answers), answerCount: Object.values(response.answers).reduce((total, answer) => total + answer.answers.length, 0) } : {}),
+      resolvedAt: now(),
+    });
+
+    const previousTurn = request.turnId ? options.turns.getById(request.turnId) : undefined;
+    if (previousTurn && previousTurn.status !== 'completed') {
+      options.turns.upsert({ ...previousTurn, status: 'interrupted', completedAt: now(), updatedAt: now() });
+      const previousSubmission = options.submissions.getById(previousTurn.clientSubmissionId);
+      if (previousSubmission && (previousSubmission.status === 'active' || previousSubmission.status === 'dispatching' || previousSubmission.status === 'paused')) {
+        options.submissions.updateStatus(previousSubmission.id, 'completed', { resolvedAt: now() });
+      }
+    }
+    options.conversations.bindProvider(conversation.id, {
+      providerId: 'codex',
+      providerThreadId: requireString(conversation.providerThreadId, 'provider thread id'),
+      providerModel: conversation.providerModel,
+      providerState: 'ready',
+    });
+    runStates.set(conversation.id, { type: 'idle' });
+
+    const actualContent = buildHostHandoffContinuation(request, response);
+    const displayText = buildHostHandoffDisplayText(request, response);
+    const persistedContent = secret ? buildHostHandoffContinuation(request, { type: 'request_user_input', answers: {} }, '敏感回答仅在本次恢复执行的内存中传递，未写入本地记录。') : actualContent;
+    const context = contextWithLatestNextTurnSettings(conversation.id, contexts.get(conversation.id) ?? contextFromConversation(conversation));
+    const submission = createSubmission(
+      conversation.id,
+      persistedContent,
+      {
+        idempotencyKey: `host-handoff-response:${request.id}`,
+        clientUserMessageId: `host-handoff-response:${request.id}`,
+        displayText,
+      },
+      context,
+    );
+    if (secret) volatileSubmissionText.set(submission.id, actualContent);
+    await persist();
+    options.broadcast('conversation.request.resolved', {
+      conversationId: conversation.id,
+      requestId: request.id,
+      requestKind: request.requestKind,
+      resumedAfterHostHandoff: true,
+    });
+    try {
+      await ensureGenerationReconciled();
+    } catch {
+      return accepted(submission, 'queued', conversation.providerThreadId, null);
+    }
+    const refreshed = requireConversation(conversation.id);
+    if (!hasConcurrency(context)) return accepted(submission, 'queued', refreshed.providerThreadId, null);
+    return dispatchSubmission(refreshed, submission, inputValue.input.providerWriteLifecycle);
   }
 
   async function snoozeRequest(input: SnoozeNativeRequestInput): Promise<void> {
@@ -2881,6 +2958,30 @@ function stripRequestTransport(response: CodexServerRequestResponse): RespondNat
   delete effectiveResponse.generationId;
   delete effectiveResponse.requestId;
   return effectiveResponse as RespondNativeRequestInput['response'];
+}
+
+function buildHostHandoffContinuation(request: ZeusConversationServerRequestRecord, response: RespondNativeRequestInput['response'], privacyNote?: string): string {
+  const approvalBoundary = request.requestKind === 'command' || request.requestKind === 'file' || request.requestKind === 'permissions';
+  return [
+    'Zeus 已在一个可恢复阶段完成执行宿主升级。请在同一对话上下文中从这里继续，不要重复升级前已经完成的操作或副作用。',
+    `升级前待处理请求类型：${request.requestKind}`,
+    `升级前待处理请求：${request.payloadJson}`,
+    `用户本次回复：${JSON.stringify(response)}`,
+    ...(approvalBoundary ? ['安全边界：这次决定只针对上面记录的原操作。若继续执行命令、文件修改或权限操作，必须重新发出完全明确的操作请求，由 Zeus 按新宿主的当前策略再次校验；不得把该决定套用到任何不同操作。'] : []),
+    ...(privacyNote ? [privacyNote] : []),
+  ].join('\n\n');
+}
+
+function buildHostHandoffDisplayText(request: ZeusConversationServerRequestRecord, response: RespondNativeRequestInput['response']): string {
+  if (request.containsSecret) return '已提交敏感回答';
+  if (response.type === 'request_user_input') {
+    const answers = Object.values(response.answers).flatMap((answer) => answer.answers);
+    return answers.length > 0 ? answers.join('；') : '已回复';
+  }
+  if ('decision' in response && typeof response.decision === 'string') return `已选择：${response.decision}`;
+  if (response.type === 'permissions') return '已回复权限请求';
+  if (response.type === 'mcp') return '已回复外部工具请求';
+  return '已回复';
 }
 
 function replayResolvedRequest(request: NonNullable<ReturnType<ConversationServerRequestRepository['getById']>>, providerRequestId: string | number): CodexServerRequestResponse | null {

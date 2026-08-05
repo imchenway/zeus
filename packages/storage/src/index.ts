@@ -5003,6 +5003,30 @@ export class ConversationServerRequestRepository {
     return this.getById(id)!;
   }
 
+  /**
+   * 宿主升级会终止旧 app-server 的瞬时请求通道，但用户仍需在同一 Zeus 会话中继续作答。
+   * 这里只恢复待处理投影并写入明确交接标记；真正回复时必须重新校验原请求与用户答案。
+   */
+  restorePendingAfterHostHandoff(id: string, input: { sourceInstanceId: string; capturedAt: string; restoredAt: string }): ZeusConversationServerRequestRecord {
+    const existing = this.getById(id);
+    if (!existing) throw new Error(`Conversation server request not found: ${id}`);
+    this.db.execute(
+      `UPDATE conversation_server_requests
+       SET status = 'pending', response_json = ?, resolved_at = NULL, auto_resolution_state = 'none'
+       WHERE id = ?`,
+      [
+        JSON.stringify({
+          handoffCheckpoint: true,
+          sourceInstanceId: input.sourceInstanceId,
+          capturedAt: input.capturedAt,
+          restoredAt: input.restoredAt,
+        }),
+        id,
+      ],
+    );
+    return this.getById(id)!;
+  }
+
   fail(id: string, input: { error: unknown; resolvedAt: string }): ZeusConversationServerRequestRecord {
     const existing = this.getById(id);
     if (!existing) throw new Error(`Conversation server request not found: ${id}`);

@@ -37,6 +37,17 @@ export interface DesktopLocalServerRuntime {
 
 export type DesktopLocalServerCloseMode = 'continue_in_background' | 'upgrade_handoff' | 'final_quit';
 
+interface ExecutionHostHandoffCheckpoint {
+  sourceInstanceId: string;
+  capturedAt: string;
+  requests: Array<{
+    id: string;
+    conversationId: string;
+    transportGenerationId: string;
+    requestKind: 'command' | 'file' | 'permissions' | 'request_user_input' | 'mcp';
+  }>;
+}
+
 export interface StartDesktopLocalServerOptions {
   userDataPath: string;
   projectRoot: string;
@@ -158,27 +169,22 @@ export async function startDesktopLocalServer(options: StartDesktopLocalServerOp
       if (changed) await options.onRestarted?.(config);
     };
 
-    let previousHostIdleSince: number | undefined;
     const handoffPreviousHostIfSafe = async (work: ExecutionHostWorkStatus): Promise<void> => {
-      if (connection.appVersion === currentAppVersion) {
-        previousHostIdleSince = undefined;
-        return;
-      }
-      if (work.hasActiveWork) {
-        previousHostIdleSince = undefined;
-        return;
-      }
-      previousHostIdleSince ??= Date.now();
-      if (Date.now() - previousHostIdleSince < 10_000 || handoffPromise) return;
+      if (connection.appVersion === currentAppVersion || hasEffectfulExecution(work) || handoffPromise) return;
 
       const previousInstanceId = connection.instanceId;
       const previousClient = client;
       const switching = (async () => {
-        // 旧版宿主空闲稳定后才关闭；锁和 rendezvous 释放前绝不创建第二个 SQLite 写入者。
+        const checkpoint = work.waitingRequestCount > 0 ? await captureExecutionHostHandoffCheckpoint(connection) : { sourceInstanceId: connection.instanceId, capturedAt: new Date().toISOString(), requests: [] };
+        const confirmed = await previousClient.health();
+        // 枚举待回复项后再次确认：若此时出现新的真实执行，本轮交接立即让路，不中断它。
+        if (hasEffectfulExecution(confirmed.work) || confirmed.work.waitingRequestCount !== checkpoint.requests.length) return;
+        // 可恢复边界无需额外等待；锁和 rendezvous 释放前绝不创建第二个 SQLite 写入者。
         await previousClient.shutdown();
         await waitForExecutionHostExit(options.userDataPath, previousInstanceId);
-        await attach(await connectOrLaunchExecutionHost(options));
-        previousHostIdleSince = undefined;
+        const next = await connectOrLaunchExecutionHost(options);
+        if (checkpoint.requests.length > 0) await restoreExecutionHostHandoffCheckpoint(next, checkpoint);
+        await attach(next);
       })();
       const tracked = switching.finally(() => {
         if (handoffPromise === tracked) handoffPromise = undefined;
@@ -251,7 +257,7 @@ export async function startDesktopLocalServer(options: StartDesktopLocalServerOp
       });
       heartbeatCyclePromise = cycle;
       void cycle.catch(() => undefined);
-    }, 5_000);
+    }, 1_000);
     heartbeatTimer.unref();
 
     return {
@@ -579,6 +585,86 @@ function cloneRendererLocalServerConfig(config: RendererLocalServerConfig): Rend
     ...config,
     executionHostTransition: { ...config.executionHostTransition },
   };
+}
+
+function hasEffectfulExecution(work: ExecutionHostWorkStatus): boolean {
+  // 旧宿主把等待用户的 turn 同时计入 activeTurnCount；相减后才是真正仍在生成或执行副作用的 turn。
+  const effectfulNativeTurnCount = work.effectfulTurnCount ?? Math.max(0, work.activeTurnCount - work.waitingRequestCount);
+  return effectfulNativeTurnCount > 0 || work.activeRuntimeCount > 0 || work.activeCommandRunCount > 0;
+}
+
+async function captureExecutionHostHandoffCheckpoint(connection: ExecutionHostRendezvous): Promise<ExecutionHostHandoffCheckpoint> {
+  const dashboard = await requestExecutionHostApi<{
+    projects?: Array<{ id?: unknown }>;
+    conversationAttentionByProject?: Record<string, unknown>;
+  }>(connection, '/api/dashboard');
+  const requests = new Map<string, ExecutionHostHandoffCheckpoint['requests'][number]>();
+  for (const project of dashboard.projects ?? []) {
+    if (typeof project.id !== 'string' || !project.id) continue;
+    if (dashboard.conversationAttentionByProject?.[project.id] !== 'reply_required') continue;
+    let offset = 0;
+    const limit = 200;
+    while (true) {
+      const page = await requestExecutionHostApi<{ items?: Array<{ id?: unknown }>; total?: unknown }>(connection, `/api/projects/${encodeURIComponent(project.id)}/conversations?limit=${limit}&offset=${offset}`);
+      const items = Array.isArray(page.items) ? page.items : [];
+      for (const item of items) {
+        if (typeof item.id !== 'string' || !item.id) continue;
+        const snapshot = await requestExecutionHostApi<{
+          requests?: Array<{
+            id?: unknown;
+            conversationId?: unknown;
+            generationId?: unknown;
+            type?: unknown;
+            status?: unknown;
+          }>;
+        }>(connection, `/api/projects/${encodeURIComponent(project.id)}/conversations/${encodeURIComponent(item.id)}`);
+        for (const candidate of snapshot.requests ?? []) {
+          if (candidate.status !== 'pending' || typeof candidate.id !== 'string' || typeof candidate.conversationId !== 'string' || typeof candidate.generationId !== 'string') continue;
+          const requestKind = candidate.type === 'userInput' ? 'request_user_input' : candidate.type === 'MCP' ? 'mcp' : candidate.type;
+          if (requestKind !== 'command' && requestKind !== 'file' && requestKind !== 'permissions' && requestKind !== 'request_user_input' && requestKind !== 'mcp') continue;
+          requests.set(candidate.id, {
+            id: candidate.id,
+            conversationId: candidate.conversationId,
+            transportGenerationId: candidate.generationId,
+            requestKind,
+          });
+        }
+      }
+      const total = typeof page.total === 'number' ? page.total : items.length;
+      offset += items.length;
+      if (items.length === 0 || offset >= total) break;
+    }
+  }
+  return {
+    sourceInstanceId: connection.instanceId,
+    capturedAt: new Date().toISOString(),
+    requests: [...requests.values()],
+  };
+}
+
+async function restoreExecutionHostHandoffCheckpoint(connection: ExecutionHostRendezvous, checkpoint: ExecutionHostHandoffCheckpoint): Promise<void> {
+  const result = await requestExecutionHostApi<{ restoredRequestCount?: unknown }>(connection, '/api/execution-host/handoff-checkpoint', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(checkpoint),
+  });
+  if (result.restoredRequestCount !== checkpoint.requests.length) {
+    throw new Error(`Zeus 仅恢复 ${String(result.restoredRequestCount)} / ${checkpoint.requests.length} 个宿主交接待回复项。`);
+  }
+}
+
+async function requestExecutionHostApi<T>(connection: ExecutionHostRendezvous, path: string, init: RequestInit = {}): Promise<T> {
+  const response = await fetch(`${connection.baseUrl}${path}`, {
+    ...init,
+    headers: {
+      ...Object.fromEntries(new Headers(init.headers).entries()),
+      authorization: `Bearer ${connection.apiToken}`,
+    },
+    signal: AbortSignal.timeout(10_000),
+  });
+  const payload = (await response.json().catch(() => ({}))) as unknown;
+  if (!response.ok) throw new Error(`Zeus execution-host handoff API failed with HTTP ${response.status}.`);
+  return payload as T;
 }
 
 async function waitForExecutionHostExit(userDataPath: string, instanceId: string): Promise<void> {

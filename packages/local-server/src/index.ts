@@ -558,6 +558,7 @@ interface ExecutionHostWorkStatusSnapshot {
     pendingRequestCount: number;
   }>;
   activeTurnCount: number;
+  effectfulTurnCount: number;
   waitingRequestCount: number;
   activeRuntimeCount: number;
   activeCommandRunCount: number;
@@ -570,6 +571,17 @@ interface ExecutionHostStopResult {
   stoppedRuntimeCount: number;
   failedTurns: Array<{ conversationId: string; providerTurnId: string; message: string }>;
   requestedAt: string;
+}
+
+interface ExecutionHostHandoffCheckpoint {
+  sourceInstanceId: string;
+  capturedAt: string;
+  requests: Array<{
+    id: string;
+    conversationId: string;
+    transportGenerationId: string;
+    requestKind: 'command' | 'file' | 'permissions' | 'request_user_input' | 'mcp';
+  }>;
 }
 
 interface SaveTelegramTokenBody {
@@ -2346,6 +2358,10 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
   function buildExecutionHostWorkStatusSnapshot(): ExecutionHostWorkStatusSnapshot {
     const transport = codexAppServerManager.getState();
     const activeTurnCount = conversationSubmissions.listRecoverable().filter((submission) => submission.status === 'dispatching' || submission.status === 'active').length;
+    const effectfulTurnCount = conversations
+      .listNativeBound()
+      .flatMap((conversation) => conversationTurns.listByConversation(conversation.id))
+      .filter((turn) => turn.status === 'dispatching' || turn.status === 'running').length;
     const waitingRequestCount = conversations
       .listNativeBound()
       .flatMap((conversation) => conversationRequests.listByConversation(conversation.id))
@@ -2370,6 +2386,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
         pendingRequestCount: generation.pendingRequestCount,
       })),
       activeTurnCount,
+      effectfulTurnCount,
       waitingRequestCount,
       activeRuntimeCount,
       activeCommandRunCount,
@@ -2379,6 +2396,55 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
   }
 
   server.get('/api/execution-host/status', async (): Promise<ExecutionHostWorkStatusSnapshot> => buildExecutionHostWorkStatusSnapshot());
+
+  server.post('/api/execution-host/handoff-checkpoint', async (request: FastifyRequest<{ Body: ExecutionHostHandoffCheckpoint }>, reply) => {
+    const checkpoint = request.body;
+    if (
+      !checkpoint ||
+      typeof checkpoint.sourceInstanceId !== 'string' ||
+      !checkpoint.sourceInstanceId.trim() ||
+      typeof checkpoint.capturedAt !== 'string' ||
+      !Number.isFinite(Date.parse(checkpoint.capturedAt)) ||
+      !Array.isArray(checkpoint.requests)
+    ) {
+      return reply.code(400).send({ error: 'ZEUS_EXECUTION_HOST_HANDOFF_CHECKPOINT_INVALID', message: 'Execution-host handoff checkpoint is invalid.' });
+    }
+
+    const restoredAt = now().toISOString();
+    let restoredRequestCount = 0;
+    for (const candidate of checkpoint.requests) {
+      if (!candidate || typeof candidate.id !== 'string' || typeof candidate.conversationId !== 'string' || typeof candidate.transportGenerationId !== 'string') continue;
+      const persisted = conversationRequests.getById(candidate.id);
+      if (!persisted || persisted.conversationId !== candidate.conversationId || persisted.transportGenerationId !== candidate.transportGenerationId || persisted.requestKind !== candidate.requestKind) {
+        continue;
+      }
+      conversationRequests.restorePendingAfterHostHandoff(persisted.id, {
+        sourceInstanceId: checkpoint.sourceInstanceId,
+        capturedAt: checkpoint.capturedAt,
+        restoredAt,
+      });
+      const conversation = conversations.getById(persisted.conversationId);
+      const turn = persisted.turnId ? conversationTurns.getById(persisted.turnId) : undefined;
+      if (conversation?.transportKind === 'codex_native' && turn && turn.status !== 'completed') {
+        conversationTurns.upsert({ ...turn, status: 'waiting', completedAt: null, updatedAt: restoredAt });
+        conversations.bindProvider(conversation.id, {
+          providerId: 'codex',
+          providerThreadId: turn.providerThreadId,
+          providerModel: conversation.providerModel,
+          providerState: 'waiting',
+        });
+      }
+      restoredRequestCount += 1;
+    }
+    await db.save();
+    if (restoredRequestCount > 0) {
+      publishNativeConversationEvent('execution_host.handoff_checkpoint.restored', {
+        sourceInstanceId: checkpoint.sourceInstanceId,
+        restoredRequestCount,
+      });
+    }
+    return { restoredRequestCount, restoredAt };
+  });
 
   server.post('/api/execution-host/stop-active', async (): Promise<ExecutionHostStopResult> => {
     const requestedAt = now().toISOString();

@@ -56,6 +56,8 @@ export interface ExecutionHostWorkStatus {
     pendingRequestCount: number;
   }>;
   activeTurnCount: number;
+  /** 不包含等待用户输入或审批的真实执行轮次数；旧宿主缺少该字段时由 Main 兼容推导。 */
+  effectfulTurnCount?: number;
   waitingRequestCount: number;
   activeRuntimeCount: number;
   activeCommandRunCount: number;

@@ -1510,13 +1510,6 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
   let currentOptions = options;
 
   async function request<T>(path: string, init?: RequestInit): Promise<T> {
-    if (shouldBlockNewExecutionDuringHostTransition(currentOptions.executionHostTransition, path, init)) {
-      throw new ZeusApiError({
-        status: 409,
-        error: 'ZEUS_EXECUTION_HOST_HANDOFF_PENDING',
-        message: 'Zeus 正在等待旧版宿主完成已有任务，暂时不能开始新执行。现有任务、审批与停止操作仍可继续使用。',
-      });
-    }
     try {
       return await requestOnce<T>(path, init);
     } catch (error) {
@@ -2129,23 +2122,6 @@ export function normalizeDashboardSnapshot(snapshot: DashboardSnapshot): Dashboa
     ...snapshot,
     conversationAttentionByProject: snapshot.conversationAttentionByProject && typeof snapshot.conversationAttentionByProject === 'object' ? snapshot.conversationAttentionByProject : {},
   };
-}
-
-function shouldBlockNewExecutionDuringHostTransition(transition: ExecutionHostTransition | undefined, path: string, init?: RequestInit): boolean {
-  if (transition?.state !== 'draining_previous') return false;
-  const method = (init?.method ?? 'GET').toUpperCase();
-  if (method === 'GET' || method === 'HEAD') return false;
-
-  // 只限制会产生新执行的入口；现有轮次的回复、中断、停止和审批必须保持可用。
-  return (
-    (/^\/api\/projects\/[^/]+\/conversations$/u.test(path) && method === 'POST') ||
-    (/^\/api\/tasks\/[^/]+\/conversations$/u.test(path) && method === 'POST') ||
-    /^\/api\/tasks\/[^/]+\/(?:run|continue|retry)$/u.test(path) ||
-    /\/queue\/(?:resume|[^/]+\/send-now)$/u.test(path) ||
-    /^\/api\/runtime\/sessions$/u.test(path) ||
-    /^\/api\/(?:projects\/[^/]+\/)?graph\/scan/u.test(path) ||
-    /^\/api\/(?:projects\/[^/]+\/)?commands\/[^/]+\/confirmations$/u.test(path)
-  );
 }
 
 function connectZeusEvents(options: DashboardClientOptions, onEvent: (event: ZeusRealtimeEvent) => void, eventOptions?: { afterEventId?: string }): WebSocket {

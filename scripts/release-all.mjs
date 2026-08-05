@@ -43,7 +43,7 @@ async function main() {
   const headSha = initialHeadSha;
   assertMainRelationship(headSha);
   const packageVersion = readMatchingPackageVersion();
-  const nextVersion = incrementPatch(stableRelease.version);
+  const nextVersion = resolveTargetVersion(stableRelease.version);
   const state = resolveReleaseState({ stableRelease, publicCommit, headSha, packageVersion, nextVersion });
 
   if (state.type === 'already_published') {
@@ -721,6 +721,19 @@ function readMatchingPackageVersion() {
 function incrementPatch(version) {
   const [major, minor, patch] = version.split('.').map(Number);
   return `${major}.${minor}.${patch + 1}`;
+}
+
+function resolveTargetVersion(stableVersion) {
+  const requested = process.env.RELEASE_VERSION?.trim();
+  if (!requested) return incrementPatch(stableVersion);
+  if (!/^\d+\.\d+\.\d+$/u.test(requested)) throw new Error(`RELEASE_VERSION 不是稳定版本号：${requested}`);
+  const stable = stableVersion.split('.').map(Number);
+  const target = requested.split('.').map(Number);
+  for (let index = 0; index < 3; index += 1) {
+    if (target[index] > stable[index]) return requested;
+    if (target[index] < stable[index]) break;
+  }
+  throw new Error(`目标版本 ${requested} 必须高于当前公开稳定版 ${stableVersion}。`);
 }
 
 function releaseStateDirectory(version) {
