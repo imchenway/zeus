@@ -442,9 +442,9 @@ export function createTaskWorkspaceViewModel(input: TaskWorkspaceViewModelInput)
       action: 'open-detail' as const,
       runStatusConversationId: resolveTaskAgentRunStatusConversation(conversations)?.id,
       minHitArea: 44,
-    depth: 0,
-    hasChildren: false,
-    expanded: false,
+      depth: 0,
+      hasChildren: false,
+      expanded: false,
       cells: buildTaskTableCells(task, input.runtimeSessions ?? [], input.projectName, conversations, input.conversationRunStatuses ?? {}, input.managementStatusLabels, input.runStatusLabels, input.appLanguage === 'en-US'),
     };
   });
