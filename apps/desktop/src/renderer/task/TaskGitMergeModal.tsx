@@ -1164,192 +1164,189 @@ export function TaskGitMergeModal(props: { open: boolean; language: 'zh-CN' | 'e
               onAskCodex={() => void askCodex()}
             />
           ) : conflictReadyToFinalize && activeConflict ? (
-            <ConflictCompletion
-              zh={zh}
-              targetBranch={activeConflict.targetBranch}
-              taskBranch={selectedWorkspace?.branchName ?? ''}
-              remoteName={selectedWorkspace?.remoteName ?? ''}
-            />
+            <ConflictCompletion zh={zh} targetBranch={activeConflict.targetBranch} taskBranch={selectedWorkspace?.branchName ?? ''} remoteName={selectedWorkspace?.remoteName ?? ''} />
           ) : (
             <div className="task-git-delivery-content">
               <DeliveryStepBar workspace={selectedWorkspace} remoteVerified={selectedWorkspace?.remoteVerified ?? false} alreadyDelivered={alreadyDelivered} zh={zh} />
               <div className="task-git-review-layout task-git-delivery-layout">
-              <aside className="task-git-review-workspaces" aria-label={zh ? '任务分支' : 'Task branches'}>
-                <strong>
-                  {zh ? '任务分支' : 'Task branches'} <small>{workspaces?.items.length ?? 0}</small>
-                </strong>
-                {workspaces?.items.map((workspace) => (
-                  <button type="button" key={workspace.id} className={workspace.id === workspaceId ? 'is-active' : ''} onClick={() => selectWorkspace(workspace.id)} disabled={busy}>
-                    <span>{workspace.repositoryName || workspace.repositoryRelativePath || workspace.branchName}</span>
-                    <small>{workspace.repositoryRelativePath ? `${workspace.repositoryRelativePath} · ${workspace.branchName}` : workspace.branchName}</small>
-                    <small>{workspaceStateLabel(workspace, zh)}</small>
-                  </button>
-                ))}
-              </aside>
+                <aside className="task-git-review-workspaces" aria-label={zh ? '任务分支' : 'Task branches'}>
+                  <strong>
+                    {zh ? '任务分支' : 'Task branches'} <small>{workspaces?.items.length ?? 0}</small>
+                  </strong>
+                  {workspaces?.items.map((workspace) => (
+                    <button type="button" key={workspace.id} className={workspace.id === workspaceId ? 'is-active' : ''} onClick={() => selectWorkspace(workspace.id)} disabled={busy}>
+                      <span>{workspace.repositoryName || workspace.repositoryRelativePath || workspace.branchName}</span>
+                      <small>{workspace.repositoryRelativePath ? `${workspace.repositoryRelativePath} · ${workspace.branchName}` : workspace.branchName}</small>
+                      <small>{workspaceStateLabel(workspace, zh)}</small>
+                    </button>
+                  ))}
+                </aside>
 
-              <main className="task-git-review-main">
-                <section className="task-git-review-changes" aria-label={zh ? '代码变化' : 'Code changes'}>
-                  <span className="task-git-review-pane-title task-git-delivery-diff-tabs">
-                    <span>
-                      <button type="button" className={diffScope === 'committed' ? 'is-active' : ''} onClick={() => setDiffScope('committed')} disabled={busy}>
-                        {zh ? '已提交成果' : 'Committed result'} <small>{committedFiles.length}</small>
-                      </button>
-                      <button type="button" className={diffScope === 'working' ? 'is-active' : ''} onClick={() => setDiffScope('working')} disabled={busy || !selectedWorkspace?.worktreePath}>
-                        {zh ? '本机未提交' : 'Local uncommitted'} <small>{workingFiles.length}</small>
-                      </button>
+                <main className="task-git-review-main">
+                  <section className="task-git-review-changes" aria-label={zh ? '代码变化' : 'Code changes'}>
+                    <span className="task-git-review-pane-title task-git-delivery-diff-tabs">
+                      <span>
+                        <button type="button" className={diffScope === 'committed' ? 'is-active' : ''} onClick={() => setDiffScope('committed')} disabled={busy}>
+                          {zh ? '已提交成果' : 'Committed result'} <small>{committedFiles.length}</small>
+                        </button>
+                        <button type="button" className={diffScope === 'working' ? 'is-active' : ''} onClick={() => setDiffScope('working')} disabled={busy || !selectedWorkspace?.worktreePath}>
+                          {zh ? '本机未提交' : 'Local uncommitted'} <small>{workingFiles.length}</small>
+                        </button>
+                      </span>
                     </span>
-                  </span>
-                  {selectedWorkspace?.comparisonError && diffScope === 'committed' ? <p className="task-git-review-error">{selectedWorkspace.comparisonError}</p> : null}
-                  {selectedWorkspace?.reviewError && diffScope === 'working' ? <p className="task-git-review-error">{selectedWorkspace.reviewError}</p> : null}
-                  <ol className="task-git-review-file-tree">
-                    {visibleFiles.map((file) => (
-                      <li key={file.path} className={selectedFile === file.path ? 'is-active' : ''}>
-                        <label>
-                          {diffScope === 'working' ? (
-                            <input
-                              type="checkbox"
-                              checked={selectedPaths.includes(file.path)}
-                              onChange={(event) => setSelectedPaths((current) => (event.target.checked ? Array.from(new Set([...current, file.path])) : current.filter((path) => path !== file.path)))}
-                              disabled={busy}
-                            />
-                          ) : null}
-                          <button type="button" onClick={() => setSelectedFile(file.path)} disabled={busy}>
-                            <span>{file.path}</span>
-                            <small>
-                              {file.label}
-                              {file.additions || file.deletions ? ` · +${file.additions} −${file.deletions}` : ''}
-                            </small>
-                          </button>
-                        </label>
-                      </li>
-                    ))}
-                  </ol>
-                  {visibleFiles.length === 0 ? (
-                    <p className="task-git-review-empty">
-                      {diffScope === 'committed'
-                        ? zh
-                          ? '任务分支相对来源分支没有待交付代码。'
-                          : 'The task branch has no code pending against its source branch.'
-                        : zh
-                          ? '工作区没有未提交变化。'
-                          : 'The workspace has no uncommitted changes.'}
-                    </p>
-                  ) : null}
-                </section>
-
-                <section className="task-git-review-diff" aria-label={zh ? '差异对比' : 'Diff'}>
-                  <span className="task-git-review-pane-title">
-                    <strong>{selectedFile || (zh ? '选择文件查看差异' : 'Select a file to view its diff')}</strong>
-                    {fileDiff?.fileDiffs[0] ? (
-                      <small>
-                        +{fileDiff.fileDiffs[0].addedLines} −{fileDiff.fileDiffs[0].deletedLines}
-                      </small>
+                    {selectedWorkspace?.comparisonError && diffScope === 'committed' ? <p className="task-git-review-error">{selectedWorkspace.comparisonError}</p> : null}
+                    {selectedWorkspace?.reviewError && diffScope === 'working' ? <p className="task-git-review-error">{selectedWorkspace.reviewError}</p> : null}
+                    <ol className="task-git-review-file-tree">
+                      {visibleFiles.map((file) => (
+                        <li key={file.path} className={selectedFile === file.path ? 'is-active' : ''}>
+                          <label>
+                            {diffScope === 'working' ? (
+                              <input
+                                type="checkbox"
+                                checked={selectedPaths.includes(file.path)}
+                                onChange={(event) => setSelectedPaths((current) => (event.target.checked ? Array.from(new Set([...current, file.path])) : current.filter((path) => path !== file.path)))}
+                                disabled={busy}
+                              />
+                            ) : null}
+                            <button type="button" onClick={() => setSelectedFile(file.path)} disabled={busy}>
+                              <span>{file.path}</span>
+                              <small>
+                                {file.label}
+                                {file.additions || file.deletions ? ` · +${file.additions} −${file.deletions}` : ''}
+                              </small>
+                            </button>
+                          </label>
+                        </li>
+                      ))}
+                    </ol>
+                    {visibleFiles.length === 0 ? (
+                      <p className="task-git-review-empty">
+                        {diffScope === 'committed'
+                          ? zh
+                            ? '任务分支相对来源分支没有待交付代码。'
+                            : 'The task branch has no code pending against its source branch.'
+                          : zh
+                            ? '工作区没有未提交变化。'
+                            : 'The workspace has no uncommitted changes.'}
+                      </p>
                     ) : null}
+                  </section>
+
+                  <section className="task-git-review-diff" aria-label={zh ? '差异对比' : 'Diff'}>
+                    <span className="task-git-review-pane-title">
+                      <strong>{selectedFile || (zh ? '选择文件查看差异' : 'Select a file to view its diff')}</strong>
+                      {fileDiff?.fileDiffs[0] ? (
+                        <small>
+                          +{fileDiff.fileDiffs[0].addedLines} −{fileDiff.fileDiffs[0].deletedLines}
+                        </small>
+                      ) : null}
+                    </span>
+                    {diffLoading ? <p className="task-git-review-empty">{zh ? '正在读取差异…' : 'Loading diff…'}</p> : <SideBySideDiff diff={fileDiff?.fileDiffs[0] ?? null} hasSelection={Boolean(selectedFile)} zh={zh} />}
+                  </section>
+                </main>
+
+                <aside className="task-git-review-options task-git-delivery-actions">
+                  <span>
+                    <strong>Git</strong>
+                    <small>{selectedWorkspace?.branchName ?? '—'}</small>
                   </span>
-                  {diffLoading ? <p className="task-git-review-empty">{zh ? '正在读取差异…' : 'Loading diff…'}</p> : <SideBySideDiff diff={fileDiff?.fileDiffs[0] ?? null} hasSelection={Boolean(selectedFile)} zh={zh} />}
-                </section>
-              </main>
+                  <dl>
+                    <div>
+                      <dt>{zh ? '来源分支' : 'Source'}</dt>
+                      <dd>{selectedWorkspace?.sourceBranch ?? '—'}</dd>
+                    </div>
+                    <div>
+                      <dt>{zh ? '任务分支远端' : 'Task branch remote'}</dt>
+                      <dd>{selectedWorkspace?.remoteVerified ? (zh ? '已推送并校验' : 'Pushed and verified') : zh ? '未推送或待更新（可选）' : 'Not pushed or outdated (optional)'}</dd>
+                    </div>
+                  </dl>
 
-              <aside className="task-git-review-options task-git-delivery-actions">
-                <span>
-                  <strong>Git</strong>
-                  <small>{selectedWorkspace?.branchName ?? '—'}</small>
-                </span>
-                <dl>
-                  <div>
-                    <dt>{zh ? '来源分支' : 'Source'}</dt>
-                    <dd>{selectedWorkspace?.sourceBranch ?? '—'}</dd>
-                  </div>
-                  <div>
-                    <dt>{zh ? '任务分支远端' : 'Task branch remote'}</dt>
-                    <dd>{selectedWorkspace?.remoteVerified ? (zh ? '已推送并校验' : 'Pushed and verified') : zh ? '未推送或待更新（可选）' : 'Not pushed or outdated (optional)'}</dd>
-                  </div>
-                </dl>
+                  {selectedWorkspace && selectedWorkspace.activeConversationCount > 0 ? (
+                    <section className="task-git-review-active-sessions">
+                      <strong>{zh ? '活动会话仍在写入' : 'Active sessions are still writing'}</strong>
+                      <small>{zh ? `${selectedWorkspace.activeConversationCount} 个会话需要先停止。` : `Stop ${selectedWorkspace.activeConversationCount} active session(s) first.`}</small>
+                      <Button variant="secondary" size="compact" onClick={() => void stopSessions()} disabled={busy}>
+                        {zh ? '停止活动会话' : 'Stop active sessions'}
+                      </Button>
+                    </section>
+                  ) : null}
 
-                {selectedWorkspace && selectedWorkspace.activeConversationCount > 0 ? (
-                  <section className="task-git-review-active-sessions">
-                    <strong>{zh ? '活动会话仍在写入' : 'Active sessions are still writing'}</strong>
-                    <small>{zh ? `${selectedWorkspace.activeConversationCount} 个会话需要先停止。` : `Stop ${selectedWorkspace.activeConversationCount} active session(s) first.`}</small>
-                    <Button variant="secondary" size="compact" onClick={() => void stopSessions()} disabled={busy}>
-                      {zh ? '停止活动会话' : 'Stop active sessions'}
+                  <section className={`task-git-delivery-action-step${workingFiles.length === 0 ? ' is-complete' : ''}`}>
+                    <strong>{zh ? '② 提交' : '② Commit'}</strong>
+                    <small>
+                      {workingFiles.length === 0 ? (zh ? '本机变化已全部进入提交。' : 'All local changes are committed.') : zh ? `还有 ${workingFiles.length} 个未提交文件。` : `${workingFiles.length} uncommitted file(s) remain.`}
+                    </small>
+                    {workingFiles.length > 0 ? <textarea value={message} onChange={(event) => setMessage(event.target.value)} disabled={busy} aria-label={zh ? '提交说明' : 'Commit message'} /> : null}
+                    <Button
+                      variant="secondary"
+                      size="compact"
+                      busy={busyAction === 'commit'}
+                      onClick={() => void commit()}
+                      disabled={busy || !selectedWorkspace?.worktreePath || workingFiles.length === 0 || selectedPaths.length === 0 || selectedWorkspace.activeConversationCount > 0}
+                    >
+                      {zh ? '提交选中文件' : 'Commit selected files'}
                     </Button>
                   </section>
-                ) : null}
 
-                <section className={`task-git-delivery-action-step${workingFiles.length === 0 ? ' is-complete' : ''}`}>
-                  <strong>{zh ? '② 提交' : '② Commit'}</strong>
-                  <small>{workingFiles.length === 0 ? (zh ? '本机变化已全部进入提交。' : 'All local changes are committed.') : zh ? `还有 ${workingFiles.length} 个未提交文件。` : `${workingFiles.length} uncommitted file(s) remain.`}</small>
-                  {workingFiles.length > 0 ? <textarea value={message} onChange={(event) => setMessage(event.target.value)} disabled={busy} aria-label={zh ? '提交说明' : 'Commit message'} /> : null}
-                  <Button
-                    variant="secondary"
-                    size="compact"
-                    busy={busyAction === 'commit'}
-                    onClick={() => void commit()}
-                    disabled={busy || !selectedWorkspace?.worktreePath || workingFiles.length === 0 || selectedPaths.length === 0 || selectedWorkspace.activeConversationCount > 0}
-                  >
-                    {zh ? '提交选中文件' : 'Commit selected files'}
-                  </Button>
-                </section>
-
-                <section className={`task-git-delivery-action-step${selectedWorkspace?.remoteVerified ? ' is-complete' : ''}`}>
-                  <strong>{zh ? '③ 推送任务分支（可选）' : '③ Push task branch (optional)'}</strong>
-                  <small>
-                    {selectedWorkspace?.remoteName
-                      ? zh
-                        ? '用于远端备份或协作，不影响能否合入。'
-                        : 'Useful for backup or collaboration; it does not gate merging.'
-                      : zh
-                        ? '该仓库未配置远端，仍可提交并合入本地目标分支。'
-                        : 'No remote is configured; local commit and merge remain available.'}
-                  </small>
-                  <Button variant="secondary" size="compact" busy={busyAction === 'push'} onClick={() => void push()} disabled={busy || !pushReady}>
-                    {!selectedWorkspace?.remoteName ? (zh ? '未配置远端' : 'No remote configured') : selectedWorkspace.remoteVerified ? (zh ? '重新推送' : 'Push again') : zh ? '推送任务分支' : 'Push task branch'}
-                  </Button>
-                </section>
-
-                <section className={`task-git-delivery-action-step${alreadyDelivered ? ' is-complete' : ''}`}>
-                  <strong>{zh ? '④ 合入指定分支' : '④ Merge into target'}</strong>
-                  <ZeusSelect size="compact" ariaLabel={zh ? '合入目标分支' : 'Merge target branch'} value={targetBranch} options={targetOptions} onChange={setTargetBranch} disabled={busy || targetOptions.length === 0} />
-                  <ZeusSelect
-                    size="compact"
-                    ariaLabel={zh ? '合入方式' : 'Merge method'}
-                    value={mode}
-                    options={[
-                      { value: 'merge', label: zh ? 'Merge · 保留提交历史' : 'Merge · preserve commits' },
-                      { value: 'squash', label: zh ? 'Squash · 合成一个提交' : 'Squash · one commit' },
-                    ]}
-                    onChange={setMode}
-                    disabled={busy}
-                    searchable={false}
-                  />
-                  <Button variant="primary" size="compact" busy={busyAction === 'merge'} onClick={() => void start()} disabled={busy || !mergeReady || alreadyDelivered}>
-                    {alreadyDelivered
-                      ? selectedWorkspace?.remoteName
+                  <section className={`task-git-delivery-action-step${selectedWorkspace?.remoteVerified ? ' is-complete' : ''}`}>
+                    <strong>{zh ? '③ 推送任务分支（可选）' : '③ Push task branch (optional)'}</strong>
+                    <small>
+                      {selectedWorkspace?.remoteName
                         ? zh
-                          ? '已合入并推送'
-                          : 'Merged and pushed'
+                          ? '用于远端备份或协作，不影响能否合入。'
+                          : 'Useful for backup or collaboration; it does not gate merging.'
                         : zh
-                          ? '已合入本地分支'
-                          : 'Merged locally'
-                      : selectedWorkspace?.remoteName
-                        ? zh
-                          ? '合入并推送目标分支'
-                          : 'Merge and push target'
-                        : zh
-                          ? '合入本地目标分支'
-                          : 'Merge into local target'}
-                  </Button>
-                  {pendingLocalSync ? (
-                    <small className="task-git-delivery-local-pending">
-                      {zh ? '合入结果已保留；原目标分支存在未提交改动。处理原目录后，在底部重新同步。' : 'The integration result is preserved. Clean the original target worktree, then retry local sync below.'}
+                          ? '该仓库未配置远端，仍可提交并合入本地目标分支。'
+                          : 'No remote is configured; local commit and merge remain available.'}
                     </small>
-                  ) : null}
-                  {integrationResult?.localSyncStatus === 'pending' ? (
-                    <small className="task-git-delivery-local-pending">
-                      {zh ? '远端已交付；本地目标分支有未提交代码，保持原样并待后续同步。' : 'Remote delivery completed; the dirty local target branch was preserved and is pending sync.'}
-                    </small>
-                  ) : null}
-                </section>
+                    <Button variant="secondary" size="compact" busy={busyAction === 'push'} onClick={() => void push()} disabled={busy || !pushReady}>
+                      {!selectedWorkspace?.remoteName ? (zh ? '未配置远端' : 'No remote configured') : selectedWorkspace.remoteVerified ? (zh ? '重新推送' : 'Push again') : zh ? '推送任务分支' : 'Push task branch'}
+                    </Button>
+                  </section>
+
+                  <section className={`task-git-delivery-action-step${alreadyDelivered ? ' is-complete' : ''}`}>
+                    <strong>{zh ? '④ 合入指定分支' : '④ Merge into target'}</strong>
+                    <ZeusSelect size="compact" ariaLabel={zh ? '合入目标分支' : 'Merge target branch'} value={targetBranch} options={targetOptions} onChange={setTargetBranch} disabled={busy || targetOptions.length === 0} />
+                    <ZeusSelect
+                      size="compact"
+                      ariaLabel={zh ? '合入方式' : 'Merge method'}
+                      value={mode}
+                      options={[
+                        { value: 'merge', label: zh ? 'Merge · 保留提交历史' : 'Merge · preserve commits' },
+                        { value: 'squash', label: zh ? 'Squash · 合成一个提交' : 'Squash · one commit' },
+                      ]}
+                      onChange={setMode}
+                      disabled={busy}
+                      searchable={false}
+                    />
+                    <Button variant="primary" size="compact" busy={busyAction === 'merge'} onClick={() => void start()} disabled={busy || !mergeReady || alreadyDelivered}>
+                      {alreadyDelivered
+                        ? selectedWorkspace?.remoteName
+                          ? zh
+                            ? '已合入并推送'
+                            : 'Merged and pushed'
+                          : zh
+                            ? '已合入本地分支'
+                            : 'Merged locally'
+                        : selectedWorkspace?.remoteName
+                          ? zh
+                            ? '合入并推送目标分支'
+                            : 'Merge and push target'
+                          : zh
+                            ? '合入本地目标分支'
+                            : 'Merge into local target'}
+                    </Button>
+                    {pendingLocalSync ? (
+                      <small className="task-git-delivery-local-pending">
+                        {zh ? '合入结果已保留；原目标分支存在未提交改动。处理原目录后，在底部重新同步。' : 'The integration result is preserved. Clean the original target worktree, then retry local sync below.'}
+                      </small>
+                    ) : null}
+                    {integrationResult?.localSyncStatus === 'pending' ? (
+                      <small className="task-git-delivery-local-pending">
+                        {zh ? '远端已交付；本地目标分支有未提交代码，保持原样并待后续同步。' : 'Remote delivery completed; the dirty local target branch was preserved and is pending sync.'}
+                      </small>
+                    ) : null}
+                  </section>
                 </aside>
               </div>
             </div>
