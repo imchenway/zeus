@@ -525,6 +525,17 @@
     align-self: center;
 }
 
+.session-codex-parity-v1 .session-transport-failure[data-retained-content='true'] {
+    background: color-mix(in oklab, var(--session-danger) 4%, var(--session-canvas));
+    border: 0;
+    border-block-end: 1px solid color-mix(in oklab, var(--session-danger) 18%, var(--session-line-soft));
+    border-radius: 0;
+    box-shadow: none;
+    inline-size: 100%;
+    margin: 0;
+    padding: 8px var(--session-gutter);
+}
+
 .session-codex-parity-v1 .session-runtime-details {
   background: var(--session-canvas);
   border-block-end: 1px solid var(--session-line-soft);

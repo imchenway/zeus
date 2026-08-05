@@ -99,6 +99,19 @@ export function createInitialSessionState(): NativeSessionState {
   };
 }
 
+/** 将后台取得的权威快照转换为可直接展示和缓存的会话状态。 */
+export function createHydratedSessionState(snapshot: NativeConversationSnapshot): NativeSessionState {
+  return hydrateSnapshot(
+    {
+      ...createInitialSessionState(),
+      transportState: 'ready',
+      projectId: snapshot.projectId,
+      conversationId: snapshot.id,
+    },
+    snapshot,
+  );
+}
+
 export function sessionReducer(state: NativeSessionState, action: NativeSessionAction): NativeSessionState {
   switch (action.type) {
     case 'transport_changed':

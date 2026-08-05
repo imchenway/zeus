@@ -71,6 +71,8 @@ import type {
   StartTaskModelPushRequest,
 } from './session/sessionTypes.js';
 import { selectHasConfirmedUserMessage } from './session/sessionSelectors.js';
+import { rememberSessionHotState, type SessionHotCache } from './session/sessionHotCache.js';
+import { createHydratedSessionState } from './session/sessionReducer.js';
 import { readProjectServiceTierPreference, serviceTierWireOverride, writeProjectServiceTierPreference } from './session/serviceTierSelection.js';
 import type { SessionControllerClient } from './session/useSessionController.js';
 import { TaskDetailPaneContent, type TaskEditResult } from './task/TaskDetailPaneContent.js';
@@ -6134,6 +6136,7 @@ export function App(props: {
   const [newConversationFocusRequest, setNewConversationFocusRequest] = useState(0);
   const [nativeConversationRuntimeStates, setNativeConversationRuntimeStates] = useState<Record<string, ConversationTreeRuntimeState>>({});
   const [nativeConversationTaskRunStatuses, setNativeConversationTaskRunStatuses] = useState<Record<string, TaskAgentRunStatus>>({});
+  const nativeConversationHotCacheRef = useRef<SessionHotCache>(new Map());
   const [sessionSourceRailOpen, setSessionSourceRailOpen] = useState(false);
   const [compactSessionViewport, setCompactSessionViewport] = useState(() => typeof window !== 'undefined' && window.matchMedia?.('(max-width: 759px)').matches === true);
   const [projectSidebarViewportWidth, setProjectSidebarViewportWidth] = useState(() => (typeof window === 'undefined' ? 1440 : window.innerWidth));
@@ -6685,6 +6688,7 @@ export function App(props: {
     [nativeConversationChoicesByProject, nativeConversationChoicesByTask, orderedProjects, snapshot.tasks],
   );
   const recordNativeConversationRuntimeState = useCallback((conversationId: string, state: NativeSessionState): void => {
+    rememberSessionHotState(nativeConversationHotCacheRef.current, conversationId, state);
     const runtimeState = conversationTreeRuntimeStateFromSession(state);
     setNativeConversationRuntimeStates((current) => (current[conversationId] === runtimeState ? current : { ...current, [conversationId]: runtimeState }));
     const taskRunStatus = taskAgentRunStatusFromSession(state);
@@ -6843,6 +6847,7 @@ export function App(props: {
             }
           }
           const runtimeState = conversationTreeRuntimeStateFromSnapshot(nativeSnapshot);
+          rememberSessionHotState(nativeConversationHotCacheRef.current, conversationId, createHydratedSessionState(nativeSnapshot));
           setNativeConversationRuntimeStates((current) => (current[conversationId] === runtimeState ? current : { ...current, [conversationId]: runtimeState }));
           const taskRunStatus = taskAgentRunStatusFromConversationTreeRuntimeState(runtimeState);
           setNativeConversationTaskRunStatuses((current) => (current[conversationId] === taskRunStatus ? current : { ...current, [conversationId]: taskRunStatus }));
@@ -10824,6 +10829,7 @@ export function App(props: {
                   task={nativeSessionTask}
                   owner={nativeSessionOwner}
                   choices={nativeSessionChoices}
+                  initialCachedState={nativeConversationHotCacheRef.current.get(selectedNativeConversation.id)?.state}
                   initialOptimisticState={taskModelPushPending?.status === 'accepted' && taskModelPushPending.choice.id === selectedNativeConversation.id ? taskModelPushPending.session : undefined}
                   onChooseAttachments={props.onChooseConversationResources ? chooseNativeConversationAttachments : undefined}
                   onStateChange={(conversationId, state) => {
