@@ -2533,6 +2533,27 @@ a {
   min-inline-size: 0;
 }
 
+/* 任务运行状态打开完整会话时复用会话页工作区，抽屉只提供边界，不再包一层可滚动预览。 */
+.workspace-drawer-portal-root.macos-ai-app .task-conversation-drawer .workspace-drawer-content {
+  overflow: hidden;
+  padding: 0;
+}
+
+.workspace-drawer-portal-root.macos-ai-app .task-conversation-drawer .session-workspace-root {
+  block-size: 100%;
+  min-block-size: 0;
+}
+
+.workspace-drawer-portal-root.macos-ai-app .task-conversation-drawer-loading {
+  align-items: center;
+  color: var(--session-text-muted, var(--zeus-product-muted));
+  display: grid;
+  font-size: 13px;
+  justify-items: center;
+  min-block-size: 100%;
+  padding: 24px;
+}
+
 @media (max-width: 760px) {
   /* 移动端会话内容保持不透明，抽屉尺寸和遮罩仍由显式变体负责。 */
   .workspace-drawer-portal-root.macos-ai-app .conversation-drawer-shell {

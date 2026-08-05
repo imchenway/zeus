@@ -203,6 +203,7 @@ type LegacyMainNavTarget = MainNavTarget | 'dashboard' | 'tasks' | 'code-map' | 
 type ProjectWorkspaceSection = 'tasks' | 'code' | 'sessions' | 'commands' | 'project-settings';
 type ProjectDetailPanel = 'diff' | 'edit' | 'config' | 'archive' | undefined;
 type ConversationDrawer = 'runtime' | 'context' | 'changes' | 'templates' | undefined;
+type TaskConversationDrawerTarget = Readonly<{ taskId: string; conversationId: string }> | undefined;
 type SettingsCategory = 'general' | 'tasks' | 'runtime' | 'browser' | 'telegram' | 'security' | 'commands' | 'git' | 'release' | 'data';
 type DataPortabilityStatusState = { kind: 'idle' } | { kind: 'exported'; target: string } | { kind: 'imported'; target: string; changedSettings: string[] };
 type TaskBulkActionStatusState = { kind: 'idle' | 'running' | 'done' | 'failed'; message?: string };
@@ -1206,7 +1207,11 @@ const languageCopy = {
       detailPaneBackdrop: '关闭任务详情',
       detailPaneClose: '关闭',
       openTaskDetail: '打开任务详情',
-      openRunStatusConversationAria: (taskTitle: string, runStatus: string) => `打开任务“${taskTitle}”的对应会话，当前运行状态：${runStatus}`,
+      openRunStatusConversationAria: (taskTitle: string, runStatus: string) => `在抽屉中打开任务“${taskTitle}”的对应会话，当前运行状态：${runStatus}`,
+      taskConversationDrawerLabel: '任务会话',
+      taskConversationDrawerBackdrop: '任务会话抽屉背景',
+      taskConversationDrawerClose: '关闭任务会话',
+      taskConversationDrawerLoading: '正在打开会话…',
       taskCountPrefix: '任务',
       filteredState: '已筛选',
       allState: '全部状态',
@@ -2650,7 +2655,11 @@ const languageCopy = {
       detailPaneBackdrop: 'Close task details',
       detailPaneClose: 'Close',
       openTaskDetail: 'Open task details',
-      openRunStatusConversationAria: (taskTitle: string, runStatus: string) => `Open the conversation for task “${taskTitle}”. Current run status: ${runStatus}`,
+      openRunStatusConversationAria: (taskTitle: string, runStatus: string) => `Open the conversation drawer for task “${taskTitle}”. Current run status: ${runStatus}`,
+      taskConversationDrawerLabel: 'Task conversation',
+      taskConversationDrawerBackdrop: 'Task conversation drawer backdrop',
+      taskConversationDrawerClose: 'Close task conversation',
+      taskConversationDrawerLoading: 'Opening conversation…',
       taskCountPrefix: 'Tasks',
       filteredState: 'Filtered',
       allState: 'All states',
@@ -3903,6 +3912,10 @@ const languageCopy = {
       detailPaneClose: string;
       openTaskDetail: string;
       openRunStatusConversationAria: (taskTitle: string, runStatus: string) => string;
+      taskConversationDrawerLabel: string;
+      taskConversationDrawerBackdrop: string;
+      taskConversationDrawerClose: string;
+      taskConversationDrawerLoading: string;
       taskCountPrefix: string;
       filteredState: string;
       allState: string;
@@ -6944,6 +6957,11 @@ export function App(props: {
     if (props.initialTaskTemplates?.length) return 'templates';
     return undefined;
   });
+  const [taskConversationDrawerTarget, setTaskConversationDrawerTarget] = useState<TaskConversationDrawerTarget>();
+  useEffect(() => {
+    if (activeNavTarget !== 'settings' && activeProjectSection === 'tasks') return;
+    setTaskConversationDrawerTarget(undefined);
+  }, [activeNavTarget, activeProjectSection]);
   const [settingsCategory, setSettingsCategory] = useState<SettingsCategory>(() => {
     if (props.initialMainNavTarget === 'settings-data') return 'data';
     if (props.initialMainNavTarget === 'telegram' || props.initialSecuritySecrets?.telegramBotToken.configured) return 'telegram';
@@ -8550,7 +8568,7 @@ export function App(props: {
     }
   }
 
-  async function selectNativeConversation(conversation: NativeConversationChoice): Promise<void> {
+  async function selectNativeConversation(conversation: NativeConversationChoice, navigation: 'page' | 'preserve' = 'page'): Promise<void> {
     const task = conversation.taskId ? snapshot.tasks.find((candidate) => candidate.id === conversation.taskId) : undefined;
     if (task) setTaskDetail(task);
     else setTaskDetail(undefined);
@@ -8558,8 +8576,10 @@ export function App(props: {
     setSelectedNativeConversationId(conversation.id);
     if (conversation.hasUnreadCompletion) acknowledgeNativeConversationCompletion(conversation.projectId, conversation.id);
     setConversationDraftOpen(false);
-    setActiveNavTarget('conversations');
-    setActiveProjectSection('sessions');
+    if (navigation === 'page') {
+      setActiveNavTarget('conversations');
+      setActiveProjectSection('sessions');
+    }
     if (!conversation.readOnly && conversation.transportKind === 'codex_native') {
       setNativeLegacyMessageLoadState('empty');
       setNativeLegacyMessageError(null);
@@ -8604,12 +8624,21 @@ export function App(props: {
       setProjectDetail(targetProject);
     }
     setTaskDetailPaneTaskId(undefined);
+    setTaskConversationDrawerTarget(undefined);
     setConversationDrawer(undefined);
     await selectNativeConversation(conversation);
     if (typeof window !== 'undefined') {
       window.history.replaceState(null, '', '#project-sessions');
     }
     workspaceScrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  async function openTaskConversationDrawer(taskId: string, conversationId: string): Promise<void> {
+    const conversation = nativeConversationChoicesByTask[taskId]?.choices.find((candidate) => candidate.id === conversationId);
+    if (!conversation) return;
+    setConversationDrawer(undefined);
+    setTaskConversationDrawerTarget({ taskId, conversationId });
+    await selectNativeConversation(conversation, 'preserve');
   }
 
   function prepareNativeConversationForTask(taskId: string): void {
@@ -8626,6 +8655,7 @@ export function App(props: {
     setNewConversationFocusRequest((current) => current + 1);
     setActiveNavTarget('conversations');
     setActiveProjectSection('sessions');
+    setTaskConversationDrawerTarget(undefined);
     setConversationDrawer(undefined);
     setTaskDetailPaneTaskId(undefined);
     if (typeof window !== 'undefined') {
@@ -10388,6 +10418,92 @@ export function App(props: {
     target.addEventListener('lostpointercapture', cancelProjectSidebarResize);
   }
 
+  function renderNativeConversationWorkspace(onOpenTaskDetail: (taskId: string) => void): ReactNode {
+    if (selectedNativeConversation && props.nativeConversationClient && selectedNativeConversation.transportKind === 'codex_native' && !selectedNativeConversation.readOnly && nativeSessionOwner) {
+      return (
+        <ConnectedSessionWorkspace
+          key={selectedNativeConversation.id}
+          language={appShellSettings.appLanguage}
+          client={props.nativeConversationClient}
+          conversation={selectedNativeConversation}
+          task={nativeSessionTask}
+          owner={nativeSessionOwner}
+          choices={nativeSessionChoices}
+          initialCachedState={nativeConversationHotCacheRef.current.get(selectedNativeConversation.id)?.state}
+          initialOptimisticState={selectedTaskModelPushOptimisticState}
+          onChooseAttachments={props.onChooseConversationResources ? chooseNativeConversationAttachments : undefined}
+          onStateChange={(conversationId, state) => {
+            recordNativeConversationRuntimeState(conversationId, state);
+            if (selectedTaskModelPushOperation?.status === 'accepted' && selectedTaskModelPushOperation.choice?.id === conversationId && selectHasConfirmedUserMessage(state, selectedTaskModelPushOperation.request.clientUserMessageId)) {
+              writeTaskModelPushPreferences(browserNativeConversationStartStorage(), selectedTaskModelPushOperation.task.projectId, selectedTaskModelPushOperation.form);
+              writeProjectServiceTierPreference(browserNativeConversationStartStorage(), selectedTaskModelPushOperation.task.projectId, selectedTaskModelPushOperation.form.serviceTier);
+              setTaskModelPushPendingByTask((current) => {
+                if (current[selectedTaskModelPushOperation.task.id]?.request.idempotencyKey !== selectedTaskModelPushOperation.request.idempotencyKey) return current;
+                const next = { ...current };
+                delete next[selectedTaskModelPushOperation.task.id];
+                return next;
+              });
+            }
+            const pendingPreference = pendingProjectServiceTierPreferencesRef.current.get(conversationId);
+            if (pendingPreference && selectHasConfirmedUserMessage(state, pendingPreference.clientUserMessageId)) {
+              writeProjectServiceTierPreference(browserNativeConversationStartStorage(), pendingPreference.projectId, pendingPreference.selection);
+              pendingProjectServiceTierPreferencesRef.current.delete(conversationId);
+            }
+          }}
+          onStartConversation={startNativeConversation}
+          onStartProjectConversation={startProjectConversation}
+          onOpenTaskDetail={onOpenTaskDetail}
+        />
+      );
+    }
+    return (
+      <SessionWorkspace
+        key={`new-conversation-${nativeSessionOwner?.kind ?? 'none'}-${nativeSessionOwner?.kind === 'task' ? nativeSessionOwner.taskId : (nativeSessionOwner?.projectId ?? 'none')}-${newConversationFocusRequest}`}
+        language={appShellSettings.appLanguage}
+        state={null}
+        conversation={selectedNativeConversation}
+        task={nativeSessionTask}
+        owner={nativeSessionOwner}
+        tasks={currentProjectTasks.map((task) => ({ id: task.id, projectId: task.projectId, title: task.title }))}
+        choices={nativeSessionChoices}
+        autoFocusNewConversation={conversationDraftOpen}
+        legacyMessages={nativeLegacyMessages}
+        choicesKnown={
+          selectedNativeConversation && (selectedNativeConversation.readOnly || selectedNativeConversation.transportKind !== 'codex_native')
+            ? true
+            : props.nativeConversationClient
+              ? (nativeSessionChoiceTaskState?.choicesKnown ?? false)
+              : true
+        }
+        loadState={
+          selectedNativeConversation && (selectedNativeConversation.readOnly || selectedNativeConversation.transportKind !== 'codex_native')
+            ? nativeLegacyMessageLoadState
+            : props.nativeConversationClient
+              ? nativeSessionChoiceTaskState?.status === 'ready'
+                ? 'empty'
+                : (nativeSessionChoiceTaskState?.status ?? 'loading')
+              : 'empty'
+        }
+        loadError={selectedNativeConversation && (selectedNativeConversation.readOnly || selectedNativeConversation.transportKind !== 'codex_native') ? nativeLegacyMessageError : nativeSessionChoiceTaskState?.error}
+        actions={{
+          onStartConversation: startNativeConversation,
+          onStartProjectConversation: startProjectConversation,
+          onOpenTaskDetail,
+          onLoadCapabilities: props.nativeConversationClient?.loadCodexConversationCapabilities,
+          onChooseStartAttachments: props.onChooseConversationResources ? chooseNativeConversationAttachments : undefined,
+          onOpenImportSettings: () => {
+            setSettingsCategory('runtime');
+            handleMainNavigate('settings');
+          },
+          onSelectTask: (task) => {
+            const selectedTask = snapshot.tasks.find((candidate) => candidate.id === task.id);
+            if (selectedTask) setTaskDetail(selectedTask);
+          },
+        }}
+      />
+    );
+  }
+
   return (
     <main
       className={`zeus-shell ai-native-shell macos-ai-app codex-thread-workbench code-map-product-shell theme-${appShellSettings.appearance}${activeNavTarget === 'settings' ? ' settings-dedicated-shell' : ''}${activeProjectSection === 'sessions' && activeNavTarget !== 'settings' ? ' session-codex-parity-v1' : ''}`}
@@ -11325,7 +11441,7 @@ export function App(props: {
                     onSaveTaskTableLayout={() => setTaskTableLayoutScopeDialogOpen(true)}
                     onCreateTask={() => openTaskCreateModal()}
                     onOpenTaskDetail={(taskId) => void openTaskDetailPane(taskId)}
-                    onOpenTaskConversation={(taskId, conversationId) => void openTaskConversation(taskId, conversationId)}
+                    onOpenTaskConversation={(taskId, conversationId) => void openTaskConversationDrawer(taskId, conversationId)}
                     onViewModeChange={(viewMode) => void saveTaskViewPreferences({ viewMode })}
                     onToggleTaskExpanded={(taskId) =>
                       void saveTaskViewPreferences({
@@ -11434,89 +11550,8 @@ export function App(props: {
                     onCancel={cancelTaskTableLayoutScopeDialog}
                   />
                 </>
-              ) : selectedNativeConversation && props.nativeConversationClient && selectedNativeConversation.transportKind === 'codex_native' && !selectedNativeConversation.readOnly && nativeSessionOwner ? (
-                <ConnectedSessionWorkspace
-                  key={selectedNativeConversation.id}
-                  language={appShellSettings.appLanguage}
-                  client={props.nativeConversationClient}
-                  conversation={selectedNativeConversation}
-                  task={nativeSessionTask}
-                  owner={nativeSessionOwner}
-                  choices={nativeSessionChoices}
-                  initialCachedState={nativeConversationHotCacheRef.current.get(selectedNativeConversation.id)?.state}
-                  initialOptimisticState={selectedTaskModelPushOptimisticState}
-                  onChooseAttachments={props.onChooseConversationResources ? chooseNativeConversationAttachments : undefined}
-                  onStateChange={(conversationId, state) => {
-                    recordNativeConversationRuntimeState(conversationId, state);
-                    if (
-                      selectedTaskModelPushOperation?.status === 'accepted' &&
-                      selectedTaskModelPushOperation.choice?.id === conversationId &&
-                      selectHasConfirmedUserMessage(state, selectedTaskModelPushOperation.request.clientUserMessageId)
-                    ) {
-                      writeTaskModelPushPreferences(browserNativeConversationStartStorage(), selectedTaskModelPushOperation.task.projectId, selectedTaskModelPushOperation.form);
-                      writeProjectServiceTierPreference(browserNativeConversationStartStorage(), selectedTaskModelPushOperation.task.projectId, selectedTaskModelPushOperation.form.serviceTier);
-                      setTaskModelPushPendingByTask((current) => {
-                        if (current[selectedTaskModelPushOperation.task.id]?.request.idempotencyKey !== selectedTaskModelPushOperation.request.idempotencyKey) return current;
-                        const next = { ...current };
-                        delete next[selectedTaskModelPushOperation.task.id];
-                        return next;
-                      });
-                    }
-                    const pendingPreference = pendingProjectServiceTierPreferencesRef.current.get(conversationId);
-                    if (pendingPreference && selectHasConfirmedUserMessage(state, pendingPreference.clientUserMessageId)) {
-                      writeProjectServiceTierPreference(browserNativeConversationStartStorage(), pendingPreference.projectId, pendingPreference.selection);
-                      pendingProjectServiceTierPreferencesRef.current.delete(conversationId);
-                    }
-                  }}
-                  onStartConversation={startNativeConversation}
-                  onStartProjectConversation={startProjectConversation}
-                  onOpenTaskDetail={(taskId) => void openTaskDetailPane(taskId)}
-                />
               ) : (
-                <SessionWorkspace
-                  key={`new-conversation-${nativeSessionOwner?.kind ?? 'none'}-${nativeSessionOwner?.kind === 'task' ? nativeSessionOwner.taskId : (nativeSessionOwner?.projectId ?? 'none')}-${newConversationFocusRequest}`}
-                  language={appShellSettings.appLanguage}
-                  state={null}
-                  conversation={selectedNativeConversation}
-                  task={nativeSessionTask}
-                  owner={nativeSessionOwner}
-                  tasks={currentProjectTasks.map((task) => ({ id: task.id, projectId: task.projectId, title: task.title }))}
-                  choices={nativeSessionChoices}
-                  autoFocusNewConversation={conversationDraftOpen}
-                  legacyMessages={nativeLegacyMessages}
-                  choicesKnown={
-                    selectedNativeConversation && (selectedNativeConversation.readOnly || selectedNativeConversation.transportKind !== 'codex_native')
-                      ? true
-                      : props.nativeConversationClient
-                        ? (nativeSessionChoiceTaskState?.choicesKnown ?? false)
-                        : true
-                  }
-                  loadState={
-                    selectedNativeConversation && (selectedNativeConversation.readOnly || selectedNativeConversation.transportKind !== 'codex_native')
-                      ? nativeLegacyMessageLoadState
-                      : props.nativeConversationClient
-                        ? nativeSessionChoiceTaskState?.status === 'ready'
-                          ? 'empty'
-                          : (nativeSessionChoiceTaskState?.status ?? 'loading')
-                        : 'empty'
-                  }
-                  loadError={selectedNativeConversation && (selectedNativeConversation.readOnly || selectedNativeConversation.transportKind !== 'codex_native') ? nativeLegacyMessageError : nativeSessionChoiceTaskState?.error}
-                  actions={{
-                    onStartConversation: startNativeConversation,
-                    onStartProjectConversation: startProjectConversation,
-                    onOpenTaskDetail: (taskId) => void openTaskDetailPane(taskId),
-                    onLoadCapabilities: props.nativeConversationClient?.loadCodexConversationCapabilities,
-                    onChooseStartAttachments: props.onChooseConversationResources ? chooseNativeConversationAttachments : undefined,
-                    onOpenImportSettings: () => {
-                      setSettingsCategory('runtime');
-                      handleMainNavigate('settings');
-                    },
-                    onSelectTask: (task) => {
-                      const selectedTask = snapshot.tasks.find((candidate) => candidate.id === task.id);
-                      if (selectedTask) setTaskDetail(selectedTask);
-                    },
-                  }}
-                />
+                renderNativeConversationWorkspace((taskId) => void openTaskDetailPane(taskId))
               )}
 
               <TaskModelPushModal
@@ -11591,6 +11626,31 @@ export function App(props: {
                     onLoadAttachmentPreview={props.onLoadTaskAttachmentPreview}
                     onOpenAttachment={props.onOpenTaskAttachment}
                   />
+                </WorkspaceDrawer>
+              ) : null}
+
+              {taskConversationDrawerTarget ? (
+                <WorkspaceDrawer
+                  presentation="sheet"
+                  backdrop="dimmed"
+                  size="wide"
+                  label={taskWorkspaceCopy.taskConversationDrawerLabel}
+                  backdropLabel={taskWorkspaceCopy.taskConversationDrawerBackdrop}
+                  closeLabel={taskWorkspaceCopy.taskConversationDrawerClose}
+                  className={`task-conversation-drawer session-codex-parity-v1 theme-${appShellSettings.appearance}`}
+                  portalStyle={workspaceDrawerPortalStyle}
+                  onClose={() => setTaskConversationDrawerTarget(undefined)}
+                >
+                  {selectedNativeConversation?.id === taskConversationDrawerTarget.conversationId ? (
+                    renderNativeConversationWorkspace((taskId) => {
+                      setTaskConversationDrawerTarget(undefined);
+                      void openTaskDetailPane(taskId);
+                    })
+                  ) : (
+                    <section className="task-conversation-drawer-loading" role="status" aria-live="polite">
+                      {taskWorkspaceCopy.taskConversationDrawerLoading}
+                    </section>
+                  )}
                 </WorkspaceDrawer>
               ) : null}
 
