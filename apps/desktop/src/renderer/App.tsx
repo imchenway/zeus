@@ -105,6 +105,7 @@ import {
   resolveTaskManagementStatus,
   taskAgentRunStatusFromSession,
   taskManagementStatuses,
+  type TaskWorkspaceViewMode,
 } from './task/taskWorkspaceModel.js';
 import { ZeusSelect } from './ZeusSelect.js';
 import { Button, type ButtonVariant } from './ui/Button.js';
@@ -182,6 +183,8 @@ import {
   type TelegramSecuritySettings,
   type TelegramTestConnectionResult,
   type UpdateTaskRequest,
+  type UpdateTaskRelationshipsRequest,
+  type DeleteTaskRequest,
   ZeusApiError,
   type ZeusRealtimeEvent,
 } from './apiClient.js';
@@ -226,9 +229,9 @@ type InlineRecoveryAction = {
 };
 type ControlBusyProps = { 'aria-busy'?: true; 'data-loading'?: 'true' };
 type TaskCreateAttachment = TaskAttachmentView;
-type TaskCreateFormState = { title: string; description: string; priority: TaskPriority; tags: string; attachments: TaskCreateAttachment[] };
+type TaskCreateFormState = { parentTaskId: string | null; title: string; description: string; priority: TaskPriority; tags: string; attachments: TaskCreateAttachment[] };
 type TaskCreateTextField = Extract<keyof TaskCreateFormState, 'title' | 'description' | 'tags'>;
-type TaskCreateDraft = { title: string; description: string; priority: TaskPriority; tags: string[]; attachments: ReturnType<typeof toPersistedTaskAttachment>[] };
+type TaskCreateDraft = { parentTaskId: string | null; title: string; description: string; priority: TaskPriority; tags: string[]; attachments: ReturnType<typeof toPersistedTaskAttachment>[] };
 type TaskResourcePayload = { name?: string; type?: string; data?: ArrayBuffer; text?: string; kind?: 'image' | 'file' | 'pasted_text' };
 type TaskResourceAuthorizationResult = { resources: TaskCreateAttachment[]; failedCount: number };
 type NativeConversationAppClient = SessionControllerClient &
@@ -443,6 +446,8 @@ type AppShellSettingsSavePayload = Pick<
   | 'taskTableColumnsByProject'
   | 'taskTableEnumSortOrders'
   | 'taskStatusFilterByProject'
+  | 'taskViewModeByProject'
+  | 'taskExpandedIdsByProject'
 >;
 
 function createSessionOperationId(): string {
@@ -4747,6 +4752,20 @@ function normalizeTaskStatusFilterByProject(value: unknown): Record<string, Task
   return normalized;
 }
 
+function normalizeTaskViewModeByProject(value: unknown): Record<string, TaskWorkspaceViewMode> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return Object.fromEntries(Object.entries(value).filter(([projectId, mode]) => Boolean(projectId.trim()) && (mode === 'hierarchy' || mode === 'flat'))) as Record<string, TaskWorkspaceViewMode>;
+}
+
+function normalizeTaskExpandedIdsByProject(value: unknown): Record<string, string[]> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([projectId, taskIds]) => Boolean(projectId.trim()) && Array.isArray(taskIds))
+      .map(([projectId, taskIds]) => [projectId, [...new Set((taskIds as unknown[]).filter((taskId): taskId is string => typeof taskId === 'string' && Boolean(taskId.trim())))].slice(0, 500)]),
+  );
+}
+
 function normalizeRendererAppShellSettings(settings: AppShellSettings): AppShellSettings {
   const taskTableColumnsByProject = Object.fromEntries(
     Object.entries(settings.taskTableColumnsByProject ?? {})
@@ -4760,6 +4779,8 @@ function normalizeRendererAppShellSettings(settings: AppShellSettings): AppShell
     taskTableColumnsByProject,
     taskTableEnumSortOrders: normalizeTaskTableEnumSortOrders(settings.taskTableEnumSortOrders),
     taskStatusFilterByProject: normalizeTaskStatusFilterByProject(settings.taskStatusFilterByProject),
+    taskViewModeByProject: normalizeTaskViewModeByProject(settings.taskViewModeByProject),
+    taskExpandedIdsByProject: normalizeTaskExpandedIdsByProject(settings.taskExpandedIdsByProject),
   };
 }
 
@@ -4791,6 +4812,8 @@ export function toAppShellSettingsSavePayload(settings: AppShellSettings): AppSh
     taskTableColumnsByProject,
     taskTableEnumSortOrders: normalizeTaskTableEnumSortOrders(settings.taskTableEnumSortOrders),
     taskStatusFilterByProject,
+    taskViewModeByProject: normalizeTaskViewModeByProject(settings.taskViewModeByProject),
+    taskExpandedIdsByProject: normalizeTaskExpandedIdsByProject(settings.taskExpandedIdsByProject),
   };
 }
 
@@ -4823,6 +4846,8 @@ export function resolveTaskTableColumnsSaveResponse(input: { currentSettings: Ap
     taskTableColumnsByProject: savedSettings.taskTableColumnsByProject,
     taskTableEnumSortOrders: savedSettings.taskTableEnumSortOrders,
     taskStatusFilterByProject: currentSettings.taskStatusFilterByProject,
+    taskViewModeByProject: currentSettings.taskViewModeByProject,
+    taskExpandedIdsByProject: currentSettings.taskExpandedIdsByProject,
   };
 }
 
@@ -4836,6 +4861,8 @@ export function mergeAppShellSettingsSaveResponse(input: { currentSettings: AppS
     taskTableColumnsByProject: currentSettings.taskTableColumnsByProject,
     taskTableEnumSortOrders: currentSettings.taskTableEnumSortOrders,
     taskStatusFilterByProject: currentSettings.taskStatusFilterByProject,
+    taskViewModeByProject: currentSettings.taskViewModeByProject,
+    taskExpandedIdsByProject: currentSettings.taskExpandedIdsByProject,
   };
 }
 
@@ -4958,6 +4985,7 @@ export function buildTaskCreateInitialForm(_appLanguage: AppLanguage): TaskCreat
   void _appLanguage;
   return {
     title: '',
+    parentTaskId: null,
     description: '',
     priority: 'p3',
     tags: '',
@@ -4980,6 +5008,7 @@ export function normalizeTaskCreateDraft(form: TaskCreateFormState, titleRequire
   return {
     draft: {
       title,
+      parentTaskId: form.parentTaskId,
       description: form.description.trim(),
       priority: form.priority,
       tags,
@@ -4987,6 +5016,24 @@ export function normalizeTaskCreateDraft(form: TaskCreateFormState, titleRequire
       attachments: form.attachments.map(toPersistedTaskAttachment),
     },
   };
+}
+
+function taskHierarchyDepth(task: TaskRecord, tasks: readonly TaskRecord[]): number {
+  const taskById = new Map(tasks.map((item) => [item.id, item]));
+  let depth = 1;
+  let parentTaskId = task.parentTaskId ?? null;
+  const visited = new Set<string>([task.id]);
+  while (parentTaskId && !visited.has(parentTaskId)) {
+    visited.add(parentTaskId);
+    depth += 1;
+    parentTaskId = taskById.get(parentTaskId)?.parentTaskId ?? null;
+  }
+  return depth;
+}
+
+function taskSubtreeHeight(taskId: string, tasks: readonly TaskRecord[]): number {
+  const children = tasks.filter((task) => task.parentTaskId === taskId);
+  return children.length === 0 ? 1 : 1 + Math.max(...children.map((task) => taskSubtreeHeight(task.id, tasks)));
 }
 
 /** Runtime 适配器 ID 是真实配置值，界面只在已知内置适配器上转换成人话标签，未知 ID 保留原值方便排障。 */
@@ -5256,8 +5303,10 @@ function TaskCreateModal(props: {
   error?: string;
   busy: boolean;
   titleInputRef: RefObject<HTMLInputElement | null>;
+  parentTasks: TaskRecord[];
   onFormChange: (field: TaskCreateTextField, value: string) => void;
   onPriorityChange: (priority: TaskPriority) => void;
+  onParentChange: (parentTaskId: string | null) => void;
   onChooseAttachments: () => void;
   onAuthorizeFiles: (files: File[], source: 'paste' | 'drop') => Promise<TaskResourceAuthorizationResult>;
   onMaterializeResources: (resources: TaskResourcePayload[]) => Promise<TaskCreateAttachment[]>;
@@ -5490,6 +5539,23 @@ function TaskCreateModal(props: {
               disabled={interactionBusy}
             />
           </div>
+          <div className="task-create-field task-create-parent-field">
+            <span>{props.copy.taskCountPrefix === 'Tasks' ? 'Parent task' : '父任务'}</span>
+            <ZeusSelect
+              size="regular"
+              ariaLabel={props.copy.taskCountPrefix === 'Tasks' ? 'Parent task' : '父任务'}
+              value={props.form.parentTaskId ?? ''}
+              options={[
+                { value: '', label: props.copy.taskCountPrefix === 'Tasks' ? 'No parent (root task)' : '无父任务（根任务）' },
+                ...props.parentTasks.map((task) => ({ value: task.id, label: `${task.taskCode ?? task.id} · ${task.title}` })),
+              ]}
+              onChange={(value) => props.onParentChange(value || null)}
+              searchPlaceholder={props.copy.selectSearchPlaceholder}
+              emptyLabel={props.copy.selectNoResults}
+              disabled={interactionBusy}
+            />
+            <small>{props.copy.taskCountPrefix === 'Tasks' ? 'Up to three hierarchy levels are allowed.' : '任务层级最多三级，超过后无法保存。'}</small>
+          </div>
           <div className="task-create-field task-create-description-field">
             <span id="task-create-description-label">{props.copy.taskCreateDescriptionLabel}</span>
             <textarea
@@ -5636,6 +5702,97 @@ function TaskTableLayoutDecisionDialog(props: { open: boolean; title: string; de
     </ModalPortal>
   );
   return surface;
+}
+
+function TaskDeleteRelationshipDialog(props: { task?: TaskRecord; allTasks: TaskRecord[]; busy: boolean; language: AppLanguage; onCancel: () => void; onConfirm: (input: DeleteTaskRequest) => void }) {
+  const [strategy, setStrategy] = useState<NonNullable<DeleteTaskRequest['childStrategy']>>('make_roots');
+  const [replacementParentTaskId, setReplacementParentTaskId] = useState('');
+  useEffect(() => {
+    setStrategy('make_roots');
+    setReplacementParentTaskId('');
+  }, [props.task?.id]);
+  if (!props.task) return null;
+  const zh = props.language === 'zh-CN';
+  const directChildren = props.allTasks.filter((task) => task.parentTaskId === props.task?.id);
+  const branchTaskIds = new Set<string>([props.task.id]);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const task of props.allTasks) {
+      if (task.parentTaskId && branchTaskIds.has(task.parentTaskId) && !branchTaskIds.has(task.id)) {
+        branchTaskIds.add(task.id);
+        changed = true;
+      }
+    }
+  }
+  const movedBranchHeight = directChildren.length === 0 ? 0 : Math.max(...directChildren.map((task) => taskSubtreeHeight(task.id, props.allTasks)));
+  const replacementCandidates = props.allTasks.filter((task) => !branchTaskIds.has(task.id) && taskHierarchyDepth(task, props.allTasks) + movedBranchHeight <= 3);
+  return (
+    <ModalPortal rootClassName="task-delete-dialog-portal" backdropClassName="task-create-modal-backdrop" dismissDisabled={props.busy} onDismiss={props.onCancel}>
+      <section className="task-delete-dialog zeus-solid-form-surface" role="dialog" aria-modal="true" aria-labelledby="task-delete-dialog-title">
+        <header>
+          <strong id="task-delete-dialog-title">{zh ? `删除“${props.task.title}”` : `Delete “${props.task.title}”`}</strong>
+          <p>
+            {directChildren.length > 0
+              ? zh
+                ? `这个任务有 ${directChildren.length} 个直接子任务。请选择如何处理，原有下级结构会保持不变。`
+                : `This task has ${directChildren.length} direct children. Choose how to handle them; the existing lower structure stays unchanged.`
+              : zh
+                ? '确认删除这个任务？它的普通关联会同时解除。'
+                : 'Delete this task? Its ordinary relations will also be removed.'}
+          </p>
+        </header>
+        {directChildren.length > 0 ? (
+          <div className="task-delete-strategy-list">
+            <label>
+              <input type="radio" name="task-delete-strategy" checked={strategy === 'reparent'} onChange={() => setStrategy('reparent')} />
+              <span>
+                <strong>{zh ? '更换父任务' : 'Move under another parent'}</strong>
+                <small>{zh ? '全部直接子任务连同各自下级结构一起移动。' : 'Move every direct child with its existing lower structure.'}</small>
+              </span>
+            </label>
+            {strategy === 'reparent' ? (
+              <ZeusSelect
+                size="regular"
+                ariaLabel={zh ? '选择新的父任务' : 'Choose the new parent task'}
+                value={replacementParentTaskId}
+                options={replacementCandidates.map((task) => ({ value: task.id, label: `${task.taskCode ?? task.id} · ${task.title}` }))}
+                onChange={setReplacementParentTaskId}
+                disabled={props.busy}
+              />
+            ) : null}
+            <label>
+              <input type="radio" name="task-delete-strategy" checked={strategy === 'delete_descendants'} onChange={() => setStrategy('delete_descendants')} />
+              <span>
+                <strong>{zh ? '全部跟随删除' : 'Delete the whole branch'}</strong>
+                <small>{zh ? '当前任务和它下面的全部任务都会删除。' : 'Delete this task and every task below it.'}</small>
+              </span>
+            </label>
+            <label>
+              <input type="radio" name="task-delete-strategy" checked={strategy === 'make_roots'} onChange={() => setStrategy('make_roots')} />
+              <span>
+                <strong>{zh ? '全部保留为根任务' : 'Keep children as roots'}</strong>
+                <small>{zh ? '只删除当前任务，直接子任务变为根任务。' : 'Delete only this task and make its direct children root tasks.'}</small>
+              </span>
+            </label>
+          </div>
+        ) : null}
+        <footer>
+          <Button variant="secondary" onClick={props.onCancel} disabled={props.busy}>
+            {zh ? '取消' : 'Cancel'}
+          </Button>
+          <Button
+            variant="danger"
+            busy={props.busy}
+            disabled={directChildren.length > 0 && strategy === 'reparent' && !replacementParentTaskId}
+            onClick={() => props.onConfirm(directChildren.length > 0 ? { childStrategy: strategy, ...(strategy === 'reparent' ? { replacementParentTaskId } : {}) } : {})}
+          >
+            {zh ? '确认删除' : 'Delete'}
+          </Button>
+        </footer>
+      </section>
+    </ModalPortal>
+  );
 }
 
 function TaskEnumOrderEditor<T extends string>(props: { title: string; description: string; language: AppLanguage; items: Array<{ value: T; label: string }>; onChange: (values: T[]) => void }) {
@@ -5907,8 +6064,9 @@ export function App(props: {
   onLoadTasks?: (projectId: string, query?: string, managementStatus?: TaskManagementStatus, tag?: string, sortBy?: 'createdAt' | 'updatedAt' | 'title' | 'managementStatus') => Promise<TaskRecord[]>;
   onLoadTask?: (taskId: string) => Promise<TaskRecord>;
   onUpdateTask?: (taskId: string, input: UpdateTaskRequest) => Promise<DashboardSnapshot>;
+  onUpdateTaskRelationships?: (taskId: string, input: UpdateTaskRelationshipsRequest) => Promise<DashboardSnapshot>;
   onUpdateTaskTags?: (taskId: string, tags: string[], expectedUpdatedAt: string) => Promise<DashboardSnapshot>;
-  onDeleteTask?: (taskId: string) => Promise<DashboardSnapshot>;
+  onDeleteTask?: (taskId: string, input?: DeleteTaskRequest) => Promise<DashboardSnapshot>;
   onRunTask?: (taskId: string) => Promise<TaskRuntimeControlHandlerResult>;
   onPauseTask?: (taskId: string) => Promise<DashboardSnapshot>;
   onContinueTask?: (taskId: string) => Promise<TaskRuntimeControlHandlerResult>;
@@ -5956,6 +6114,8 @@ export function App(props: {
       | 'taskTableColumnsByProject'
       | 'taskTableEnumSortOrders'
       | 'taskStatusFilterByProject'
+      | 'taskViewModeByProject'
+      | 'taskExpandedIdsByProject'
     >,
   ) => Promise<AppShellSettings>;
   onClearLocalCaches?: () => Promise<{
@@ -6277,6 +6437,8 @@ export function App(props: {
         taskTableColumnsByProject: {},
         taskTableEnumSortOrders: defaultTaskTableEnumSortOrders,
         taskStatusFilterByProject: {},
+        taskViewModeByProject: {},
+        taskExpandedIdsByProject: {},
         localLogDirectory: 'Zeus/logs',
         localConfigPath: 'Zeus/zeus.config.json',
         dataPortability: {
@@ -6310,6 +6472,7 @@ export function App(props: {
   const selectSearchPlaceholder = appShellSettings.appLanguage === 'zh-CN' ? '搜索选项' : 'Search options';
   const selectNoResults = appShellSettings.appLanguage === 'zh-CN' ? '没有匹配选项' : 'No matching options';
   const [taskCreateModalOpen, setTaskCreateModalOpen] = useState(false);
+  const [taskDeleteDialogTaskId, setTaskDeleteDialogTaskId] = useState<string | null>(null);
   const [taskCreateForm, setTaskCreateForm] = useState<TaskCreateFormState>(() => buildTaskCreateInitialForm(appShellSettings.appLanguage));
   const [taskCreateError, setTaskCreateError] = useState('');
   const [taskModelPushTaskId, setTaskModelPushTaskId] = useState<string | null>(null);
@@ -6527,6 +6690,8 @@ export function App(props: {
   const selectedProject = projectDetail ?? firstProject;
   const activeProjectId = selectedProject?.id ?? firstProjectId;
   const taskStatusFilter = resolveTaskStatusFilterForProject(appShellSettings, activeProjectId);
+  const taskViewMode: TaskWorkspaceViewMode = activeProjectId ? (appShellSettings.taskViewModeByProject?.[activeProjectId] ?? 'hierarchy') : 'hierarchy';
+  const expandedTaskIds = activeProjectId ? (appShellSettings.taskExpandedIdsByProject?.[activeProjectId] ?? []) : [];
   const persistedTaskTableColumns = useMemo(() => resolveTaskTableColumnsForProject(appShellSettings, activeProjectId), [activeProjectId, appShellSettings.taskTableColumns, appShellSettings.taskTableColumnsByProject]);
   const [taskTableLayoutDraft, setTaskTableLayoutDraft] = useState<{ projectId?: string; preferences: TaskTableColumnPreferences }>(() => ({
     projectId: selectedProject?.id ?? props.snapshot?.projects[0]?.id,
@@ -6977,6 +7142,34 @@ export function App(props: {
         if (!nextSnapshot) throw new Error('Task update handler returned no dashboard snapshot.');
         const updatedTask = applyTaskMutationSnapshot(nextSnapshot, taskId);
         recordTaskMutationVersion(taskId, expectedUpdatedAt, updatedTask.updatedAt);
+        refreshOpenTaskEvents(taskId);
+        setActionState('idle');
+        return { kind: 'updated', task: updatedTask };
+      } catch (error) {
+        if (error instanceof ZeusApiError && error.error === 'ZEUS_TASK_EDIT_CONFLICT') {
+          const latest = await loadLatestTaskAfterConflict(taskId);
+          if (latest) {
+            setActionState('idle');
+            return { kind: 'conflict', latest };
+          }
+        }
+        setActionState('idle');
+        throw error;
+      }
+    });
+  }
+
+  async function updateTaskRelationships(taskId: string, input: UpdateTaskRelationshipsRequest): Promise<TaskEditResult> {
+    if (!props.onUpdateTaskRelationships) throw new Error('Task relationship update handler is not available.');
+    return enqueueTaskMutation(taskId, async () => {
+      const expectedUpdatedAt = resolveTaskMutationVersion(taskId, input.expectedUpdatedAt);
+      setActionState('updating-task');
+      try {
+        const nextSnapshot = await props.onUpdateTaskRelationships?.(taskId, { ...input, expectedUpdatedAt });
+        if (!nextSnapshot) throw new Error('Task relationship update handler returned no dashboard snapshot.');
+        const updatedTask = applyTaskMutationSnapshot(nextSnapshot, taskId);
+        recordTaskMutationVersion(taskId, expectedUpdatedAt, updatedTask.updatedAt);
+        setSnapshot(nextSnapshot);
         refreshOpenTaskEvents(taskId);
         setActionState('idle');
         return { kind: 'updated', task: updatedTask };
@@ -7786,9 +7979,9 @@ export function App(props: {
     }
   }
 
-  function openTaskCreateModal(): void {
+  function openTaskCreateModal(parentTaskId: string | null = null): void {
     taskCreateReturnFocusRef.current = typeof document !== 'undefined' && document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    setTaskCreateForm(buildTaskCreateInitialForm(appShellSettings.appLanguage));
+    setTaskCreateForm({ ...buildTaskCreateInitialForm(appShellSettings.appLanguage), parentTaskId });
     setTaskCreateError('');
     setTaskCreateModalOpen(true);
   }
@@ -8529,7 +8722,8 @@ export function App(props: {
     if (!props.onDeleteTask) return;
     const requestedTaskIdSet = new Set(taskIds);
     const requestedTasks = visibleTasks.filter((task) => requestedTaskIdSet.has(task.id));
-    const eligibleTasks = requestedTasks.filter((task) => task.status !== 'running' && task.status !== 'waiting_confirmation');
+    // 批量删除不替用户猜测父任务处置方式；有直接子任务的任务留到详情中的三选一确认。
+    const eligibleTasks = requestedTasks.filter((task) => task.status !== 'running' && task.status !== 'waiting_confirmation' && !currentProjectTasks.some((candidate) => candidate.parentTaskId === task.id));
     const skippedCount = requestedTasks.length - eligibleTasks.length;
     if (eligibleTasks.length === 0) {
       setTaskBulkActionStatus({ kind: 'done', message: formatTaskBulkActionResult(0, skippedCount, 0) });
@@ -8558,6 +8752,23 @@ export function App(props: {
       setActionState('idle');
     } catch (error) {
       recordLocalError('renderer-action', error);
+    }
+  }
+
+  async function deleteTaskWithRelationshipStrategy(taskId: string, input: DeleteTaskRequest): Promise<void> {
+    if (!props.onDeleteTask) return;
+    setActionState('updating-task');
+    try {
+      const nextSnapshot = await props.onDeleteTask(taskId, input);
+      setSnapshot(nextSnapshot);
+      setSelectedTaskIds((ids) => ids.filter((id) => id !== taskId));
+      setTaskDeleteDialogTaskId(null);
+      setTaskDetailPaneTaskId(undefined);
+      setTaskDetail(undefined);
+      setActionState('idle');
+    } catch (error) {
+      recordLocalError('task-delete', error);
+      setActionState('idle');
     }
   }
 
@@ -8899,6 +9110,29 @@ export function App(props: {
     }
   }
 
+  async function saveTaskViewPreferences(input: { viewMode?: TaskWorkspaceViewMode; expandedTaskIds?: string[] }): Promise<void> {
+    if (!activeProjectId) return;
+    const nextSettings = normalizeRendererAppShellSettings({
+      ...appShellSettings,
+      taskViewModeByProject: {
+        ...(appShellSettings.taskViewModeByProject ?? {}),
+        [activeProjectId]: input.viewMode ?? taskViewMode,
+      },
+      taskExpandedIdsByProject: {
+        ...(appShellSettings.taskExpandedIdsByProject ?? {}),
+        [activeProjectId]: input.expandedTaskIds ?? expandedTaskIds,
+      },
+    });
+    setAppShellSettings(nextSettings);
+    if (!props.onSaveAppShellSettings) return;
+    try {
+      const savedSettings = await props.onSaveAppShellSettings(toAppShellSettingsSavePayload(nextSettings));
+      setAppShellSettings((currentSettings) => mergeAppShellSettingsSaveResponse({ currentSettings, savedSettings }));
+    } catch (error) {
+      recordLocalError('task-view-preference-save', error);
+    }
+  }
+
   async function saveTaskTableLayout(scope: 'project' | 'global'): Promise<boolean> {
     if (scope === 'project' && !activeProjectId) return false;
     const normalizedDraft = normalizeTaskTableColumnPreferences(activeTaskTableColumns);
@@ -8924,6 +9158,8 @@ export function App(props: {
       setAppShellSettings((currentSettings) => ({
         ...savedSettings,
         taskStatusFilterByProject: currentSettings.taskStatusFilterByProject,
+        taskViewModeByProject: currentSettings.taskViewModeByProject,
+        taskExpandedIdsByProject: currentSettings.taskExpandedIdsByProject,
       }));
       const savedPreferences = resolveTaskTableColumnsForProject(savedSettings, activeProjectId);
       setTaskTableLayoutDraft({ projectId: activeProjectId, preferences: savedPreferences });
@@ -10686,13 +10922,21 @@ export function App(props: {
                     bulkActionStatus={taskBulkActionStatus}
                     listState={!props.snapshot ? 'loading' : 'ready'}
                     activeProjectId={activeProjectId}
+                    viewMode={taskViewMode}
+                    expandedTaskIds={expandedTaskIds}
                     onSearchChange={setTaskSearchQuery}
                     onStatusFilterChange={(filter) => void saveTaskStatusFilter(filter)}
                     onTagFilterChange={setTaskTagFilter}
                     onTaskTableColumnsChange={(preferences) => setTaskTableLayoutDraft({ projectId: activeProjectId, preferences })}
                     onSaveTaskTableLayout={() => setTaskTableLayoutScopeDialogOpen(true)}
-                    onCreateTask={openTaskCreateModal}
+                    onCreateTask={() => openTaskCreateModal()}
                     onOpenTaskDetail={(taskId) => void openTaskDetailPane(taskId)}
+                    onViewModeChange={(viewMode) => void saveTaskViewPreferences({ viewMode })}
+                    onToggleTaskExpanded={(taskId) =>
+                      void saveTaskViewPreferences({
+                        expandedTaskIds: expandedTaskIds.includes(taskId) ? expandedTaskIds.filter((id) => id !== taskId) : [...expandedTaskIds, taskId],
+                      })
+                    }
                     onToggleTaskSelection={toggleTaskSelection}
                     onToggleAllVisibleTaskSelection={toggleAllVisibleTaskSelection}
                     onClearTaskSelection={clearTaskSelection}
@@ -10710,11 +10954,13 @@ export function App(props: {
                     open={taskCreateModalOpen}
                     copy={taskWorkspaceCopy}
                     form={taskCreateForm}
+                    parentTasks={currentProjectTasks.filter((task) => taskHierarchyDepth(task, currentProjectTasks) < 3)}
                     error={taskCreateError}
                     busy={creatingTaskBusy}
                     titleInputRef={taskCreateTitleInputRef}
                     onFormChange={updateTaskCreateForm}
                     onPriorityChange={updateTaskCreatePriority}
+                    onParentChange={(parentTaskId) => setTaskCreateForm((current) => ({ ...current, parentTaskId }))}
                     onChooseAttachments={() => void chooseTaskCreateAttachments()}
                     onAuthorizeFiles={authorizeTaskCreateFiles}
                     onMaterializeResources={materializeTaskCreateResources}
@@ -10725,6 +10971,16 @@ export function App(props: {
                     onRemoveAttachment={removeTaskCreateAttachment}
                     onClose={closeTaskCreateModal}
                     onSubmit={(event) => void submitTaskCreateModal(event)}
+                  />
+                  <TaskDeleteRelationshipDialog
+                    task={currentProjectTasks.find((task) => task.id === taskDeleteDialogTaskId)}
+                    allTasks={currentProjectTasks}
+                    busy={updatingTaskBusy}
+                    language={appShellSettings.appLanguage}
+                    onCancel={() => setTaskDeleteDialogTaskId(null)}
+                    onConfirm={(input) => {
+                      if (taskDeleteDialogTaskId) void deleteTaskWithRelationshipStrategy(taskDeleteDialogTaskId, input);
+                    }}
                   />
                   <TaskTableLayoutDecisionDialog
                     open={taskTableLayoutLeaveDialogOpen}
@@ -10904,6 +11160,7 @@ export function App(props: {
                   <TaskDetailPaneContent
                     language={appShellSettings.appLanguage}
                     task={taskDetailPaneTask}
+                    allTasks={currentProjectTasks}
                     events={taskEvents.filter((event) => event.taskId === taskDetailPaneTask.id)}
                     copy={taskWorkspaceCopy}
                     statusLabels={taskManagementStatusLabels[appShellSettings.appLanguage]}
@@ -10919,6 +11176,9 @@ export function App(props: {
                     onCommitCode={(taskId) => setTaskGitReviewState({ taskId, mode: 'commit-only' })}
                     onPushCode={(taskId) => setTaskGitReviewState({ taskId, mode: 'push-only' })}
                     onUpdateTaskContent={updateTaskContent}
+                    onUpdateRelationships={updateTaskRelationships}
+                    onCreateChild={(taskId) => openTaskCreateModal(taskId)}
+                    onDeleteTask={(taskId) => setTaskDeleteDialogTaskId(taskId)}
                     onManagementStatusChange={(taskId, status, expectedUpdatedAt) => updateTaskManagementStatus(taskId, status, { expectedUpdatedAt })}
                     onChooseAttachments={props.onChooseTaskAttachments}
                     onReloadConversations={(taskId) => void refreshNativeConversationChoices(taskId)}
@@ -12447,6 +12707,8 @@ function toSafeAppShellImport(
       | 'taskTableColumnsByProject'
       | 'taskTableEnumSortOrders'
       | 'taskStatusFilterByProject'
+      | 'taskViewModeByProject'
+      | 'taskExpandedIdsByProject'
     >
   | undefined {
   if (!raw) return undefined;
@@ -12469,6 +12731,8 @@ function toSafeAppShellImport(
     taskTableColumnsByProject: Object.fromEntries(Object.entries(raw.taskTableColumnsByProject ?? {}).map(([projectId, preferences]) => [projectId, normalizeTaskTableColumnPreferences(preferences)])),
     taskTableEnumSortOrders: normalizeTaskTableEnumSortOrders(raw.taskTableEnumSortOrders),
     taskStatusFilterByProject: normalizeTaskStatusFilterByProject(raw.taskStatusFilterByProject),
+    taskViewModeByProject: normalizeTaskViewModeByProject(raw.taskViewModeByProject),
+    taskExpandedIdsByProject: normalizeTaskExpandedIdsByProject(raw.taskExpandedIdsByProject),
   };
 }
 

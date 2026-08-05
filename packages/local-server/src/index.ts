@@ -859,6 +859,25 @@ function normalizeTaskStatusFilterByProject(value: unknown): Record<string, Task
   return normalized;
 }
 
+function normalizeTaskViewModeByProject(value: unknown): Record<string, 'hierarchy' | 'flat'> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([projectId, mode]) => Boolean(projectId.trim()) && projectId.length <= 160 && (mode === 'hierarchy' || mode === 'flat'))
+      .slice(0, 100),
+  ) as Record<string, 'hierarchy' | 'flat'>;
+}
+
+function normalizeTaskExpandedIdsByProject(value: unknown): Record<string, string[]> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const normalized: Record<string, string[]> = {};
+  for (const [projectId, taskIds] of Object.entries(value)) {
+    if (!projectId.trim() || projectId.length > 160 || !Array.isArray(taskIds)) continue;
+    normalized[projectId] = [...new Set(taskIds.filter((taskId): taskId is string => typeof taskId === 'string' && Boolean(taskId.trim()) && taskId.length <= 160))].slice(0, 500);
+  }
+  return normalized;
+}
+
 function normalizeTaskTableEnumSortOrders(value: unknown): TaskTableEnumSortOrders {
   const input = value && typeof value === 'object' && !Array.isArray(value) ? (value as Partial<TaskTableEnumSortOrders>) : {};
   return {
@@ -924,6 +943,8 @@ interface AppShellSettingsSnapshot {
   taskTableColumnsByProject: Record<string, TaskTableColumnPreferences>;
   taskTableEnumSortOrders: TaskTableEnumSortOrders;
   taskStatusFilterByProject: Record<string, TaskStatusFilter>;
+  taskViewModeByProject: Record<string, 'hierarchy' | 'flat'>;
+  taskExpandedIdsByProject: Record<string, string[]>;
   localLogDirectory: string;
   localConfigPath: string;
   dataPortability: {
@@ -958,6 +979,8 @@ interface UpdateAppShellSettingsBody {
   taskTableColumnsByProject?: Record<string, TaskTableColumnPreferences>;
   taskTableEnumSortOrders?: TaskTableEnumSortOrders;
   taskStatusFilterByProject?: Record<string, TaskStatusFilter>;
+  taskViewModeByProject?: Record<string, 'hierarchy' | 'flat'>;
+  taskExpandedIdsByProject?: Record<string, string[]>;
 }
 
 interface ClearCacheResult {
@@ -1104,6 +1127,7 @@ interface UpdateProjectWorkspaceConfigBody {
 
 interface CreateTaskBody {
   projectId: string;
+  parentTaskId?: string | null;
   title: string;
   description?: string;
   sourceContext?: Record<string, unknown>;
@@ -1186,6 +1210,17 @@ interface UpdateTaskBody {
   allowCodeChanges?: boolean;
   allowTests?: boolean;
   allowGitCommit?: boolean;
+}
+
+interface UpdateTaskRelationshipsBody {
+  expectedUpdatedAt?: string;
+  parentTaskId?: string | null;
+  relatedTaskIds?: string[];
+}
+
+interface DeleteTaskBody {
+  childStrategy?: 'reparent' | 'delete_descendants' | 'make_roots';
+  replacementParentTaskId?: string;
 }
 
 interface UpdateTaskTagsBody {
@@ -1602,7 +1637,9 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     (JSON.stringify(persistedAppShellSettings.taskTableColumns) !== JSON.stringify(appShellSettings.taskTableColumns) ||
       JSON.stringify(persistedAppShellSettings.taskTableColumnsByProject) !== JSON.stringify(appShellSettings.taskTableColumnsByProject) ||
       JSON.stringify(persistedAppShellSettings.taskTableEnumSortOrders) !== JSON.stringify(appShellSettings.taskTableEnumSortOrders) ||
-      JSON.stringify(persistedAppShellSettings.taskStatusFilterByProject) !== JSON.stringify(appShellSettings.taskStatusFilterByProject))
+      JSON.stringify(persistedAppShellSettings.taskStatusFilterByProject) !== JSON.stringify(appShellSettings.taskStatusFilterByProject) ||
+      JSON.stringify(persistedAppShellSettings.taskViewModeByProject) !== JSON.stringify(appShellSettings.taskViewModeByProject) ||
+      JSON.stringify(persistedAppShellSettings.taskExpandedIdsByProject) !== JSON.stringify(appShellSettings.taskExpandedIdsByProject))
   ) {
     // 旧列键、旧默认顺序、新增列宽和项目筛选偏好都只迁移一次并立即落库，避免每次启动重复改写本机视图配置。
     settings.setJson(appShellSettingsKey, appShellSettings);
@@ -4546,6 +4583,9 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
         message: 'projectId and title are required',
       });
     }
+    if (body.parentTaskId !== undefined && body.parentTaskId !== null && typeof body.parentTaskId !== 'string') {
+      return reply.code(400).send({ error: 'ZEUS_INVALID_TASK_PARENT', message: 'parentTaskId must be a string or null.' });
+    }
     if ([body.allowCodeChanges, body.allowTests, body.allowGitCommit].some((value) => value !== undefined && typeof value !== 'boolean')) {
       return reply.code(400).send({
         error: 'ZEUS_INVALID_TASK_PERMISSIONS',
@@ -4558,18 +4598,29 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
         message: 'priority must be one of p0, p1, p2, p3 or p4',
       });
     }
-    const task = tasks.create({
-      projectId: body.projectId,
-      title: body.title,
-      description: body.description ?? '',
-      createdFrom: 'user',
-      sourceContext: body.sourceContext ?? {},
-      tags: body.tags,
-      priority: body.priority,
-      allowCodeChanges: body.allowCodeChanges,
-      allowTests: body.allowTests,
-      allowGitCommit: body.allowGitCommit,
-    });
+    let task: ZeusTaskRecord;
+    try {
+      task = tasks.create({
+        projectId: body.projectId,
+        parentTaskId: body.parentTaskId,
+        title: body.title,
+        description: body.description ?? '',
+        createdFrom: 'user',
+        sourceContext: body.sourceContext ?? {},
+        tags: body.tags,
+        priority: body.priority,
+        allowCodeChanges: body.allowCodeChanges,
+        allowTests: body.allowTests,
+        allowGitCommit: body.allowGitCommit,
+      });
+    } catch (error) {
+      const details = taskEditConflictDetails(error);
+      if (details?.code === 'ZEUS_TASK_PARENT_NOT_FOUND') return reply.code(404).send({ error: details.code, message: 'Parent task not found.' });
+      if (details?.code === 'ZEUS_TASK_RELATION_PROJECT_MISMATCH' || details?.code === 'ZEUS_TASK_HIERARCHY_DEPTH_EXCEEDED' || details?.code === 'ZEUS_TASK_PARENT_CYCLE') {
+        return reply.code(409).send({ error: details.code, message: error instanceof Error ? error.message : 'Invalid parent task.' });
+      }
+      throw error;
+    }
     recordTaskEvent({
       taskId: task.id,
       eventType: 'task.created',
@@ -5219,17 +5270,108 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     },
   );
 
-  server.delete('/api/tasks/:taskId', async (request: FastifyRequest<{ Params: { taskId: string } }>, reply) => {
+  server.patch(
+    '/api/tasks/:taskId/relationships',
+    async (
+      request: FastifyRequest<{
+        Params: { taskId: string };
+        Body: UpdateTaskRelationshipsBody;
+      }>,
+      reply,
+    ) => {
+      const existing = tasks.getById(request.params.taskId);
+      if (!existing) return reply.code(404).send({ error: 'ZEUS_TASK_NOT_FOUND', message: 'Task not found' });
+      const body = request.body ?? {};
+      if (typeof body.expectedUpdatedAt !== 'string' || !body.expectedUpdatedAt) {
+        return reply.code(400).send({ error: 'ZEUS_TASK_EDIT_VERSION_REQUIRED', message: 'expectedUpdatedAt is required when updating task relationships.' });
+      }
+      if (body.parentTaskId !== undefined && body.parentTaskId !== null && typeof body.parentTaskId !== 'string') {
+        return reply.code(400).send({ error: 'ZEUS_INVALID_TASK_PARENT', message: 'parentTaskId must be a string or null.' });
+      }
+      if (body.relatedTaskIds !== undefined && (!Array.isArray(body.relatedTaskIds) || !body.relatedTaskIds.every((taskId) => typeof taskId === 'string'))) {
+        return reply.code(400).send({ error: 'ZEUS_INVALID_RELATED_TASKS', message: 'relatedTaskIds must be an array of task ids.' });
+      }
+      let updated: ZeusTaskRecord;
+      try {
+        updated = tasks.updateRelationships(existing.id, {
+          expectedUpdatedAt: body.expectedUpdatedAt,
+          parentTaskId: body.parentTaskId,
+          relatedTaskIds: body.relatedTaskIds,
+        });
+      } catch (error) {
+        const details = taskEditConflictDetails(error);
+        if (details?.code === 'ZEUS_TASK_EDIT_CONFLICT') {
+          return reply.code(409).send({ error: details.code, message: 'Task changed after editing started.', currentUpdatedAt: details.currentUpdatedAt });
+        }
+        if (details?.code === 'ZEUS_TASK_PARENT_NOT_FOUND' || details?.code === 'ZEUS_TASK_RELATED_NOT_FOUND') {
+          return reply.code(404).send({ error: details.code, message: error instanceof Error ? error.message : 'Related task not found.' });
+        }
+        if (details?.code?.startsWith('ZEUS_TASK_')) {
+          return reply.code(409).send({ error: details.code, message: error instanceof Error ? error.message : 'Invalid task relationship.' });
+        }
+        throw error;
+      }
+      if (updated.updatedAt === existing.updatedAt) return updated;
+      recordTaskEvent({
+        taskId: updated.id,
+        eventType: 'task.relationships.updated',
+        title: '任务关系已更新',
+        payload: {
+          parentTaskId: { before: existing.parentTaskId, after: updated.parentTaskId },
+          relatedTaskIds: { before: existing.relatedTaskIds, after: updated.relatedTaskIds },
+        },
+      });
+      appendAuditLog({
+        actorType: 'local_api',
+        action: 'task.relationships.updated',
+        resourceType: 'task',
+        resourceId: updated.id,
+        payload: { taskId: updated.id, projectId: updated.projectId, parentTaskId: updated.parentTaskId, relatedTaskIds: updated.relatedTaskIds },
+      });
+      publishRealtimeEvent('task.updated', { taskId: updated.id, projectId: updated.projectId, changedFields: ['relationships'], updatedAt: updated.updatedAt });
+      await db.save();
+      return updated;
+    },
+  );
+
+  server.delete('/api/tasks/:taskId', async (request: FastifyRequest<{ Params: { taskId: string }; Body: DeleteTaskBody }>, reply) => {
     const existing = tasks.getById(request.params.taskId);
     if (!existing) {
       return reply.code(404).send({ error: 'ZEUS_TASK_NOT_FOUND', message: 'Task not found' });
     }
-    const deleted = tasks.delete(existing.id);
+    if (request.body?.childStrategy !== undefined && !['reparent', 'delete_descendants', 'make_roots'].includes(request.body.childStrategy)) {
+      return reply.code(400).send({ error: 'ZEUS_TASK_DELETE_STRATEGY_INVALID', message: 'Unknown child handling strategy.' });
+    }
+    let deleted: ReturnType<TaskRepository['delete']>;
+    try {
+      deleted = tasks.delete(existing.id, request.body ?? {});
+    } catch (error) {
+      const details = taskEditConflictDetails(error);
+      if (details?.code === 'ZEUS_TASK_DELETE_RELATIONSHIP_CONFIRMATION_REQUIRED') {
+        const candidate = error as Error & { childCount?: number; descendantCount?: number };
+        return reply.code(409).send({
+          error: details.code,
+          message: 'Choose how to handle this task’s children before deleting it.',
+          childCount: candidate.childCount ?? 0,
+          descendantCount: candidate.descendantCount ?? 0,
+        });
+      }
+      if (details?.code === 'ZEUS_TASK_PARENT_NOT_FOUND') return reply.code(404).send({ error: details.code, message: error instanceof Error ? error.message : 'Replacement parent task not found.' });
+      if (details?.code?.startsWith('ZEUS_TASK_')) return reply.code(409).send({ error: details.code, message: error instanceof Error ? error.message : 'Unable to delete task.' });
+      throw error;
+    }
     recordTaskEvent({
-      taskId: deleted.id,
+      taskId: deleted.task.id,
       eventType: 'task.deleted',
       title: '任务已删除',
-      payload: { softDeleted: true },
+      payload: { softDeleted: true, deletedTaskIds: deleted.deletedTaskIds, movedChildTaskIds: deleted.movedChildTaskIds, childStrategy: request.body?.childStrategy ?? null },
+    });
+    appendAuditLog({
+      actorType: 'local_api',
+      action: 'task.deleted',
+      resourceType: 'task',
+      resourceId: deleted.task.id,
+      payload: { taskId: deleted.task.id, projectId: deleted.task.projectId, deletedTaskIds: deleted.deletedTaskIds, movedChildTaskIds: deleted.movedChildTaskIds },
     });
     await db.save();
     return deleted;
@@ -6335,6 +6477,8 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
         taskTableColumnsByProject: appShellSettings.taskTableColumnsByProject,
         taskTableEnumSortOrders: appShellSettings.taskTableEnumSortOrders,
         taskStatusFilterByProject: appShellSettings.taskStatusFilterByProject,
+        taskViewModeByProject: appShellSettings.taskViewModeByProject,
+        taskExpandedIdsByProject: appShellSettings.taskExpandedIdsByProject,
       },
     });
     await db.save();
@@ -8910,6 +9054,8 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       taskTableColumnsByProject: normalizeTaskTableColumnsByProject(value?.taskTableColumnsByProject),
       taskTableEnumSortOrders: normalizeTaskTableEnumSortOrders(value?.taskTableEnumSortOrders),
       taskStatusFilterByProject: normalizeTaskStatusFilterByProject(value?.taskStatusFilterByProject),
+      taskViewModeByProject: normalizeTaskViewModeByProject(value?.taskViewModeByProject),
+      taskExpandedIdsByProject: normalizeTaskExpandedIdsByProject(value?.taskExpandedIdsByProject),
       localLogDirectory: fallbackLogDirectory,
       // 本地配置文件路径由当前运行实例决定，不接受导入文件覆盖，避免误指向其他机器路径。
       localConfigPath: fallbackConfigPath,
@@ -8952,6 +9098,8 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
         taskTableColumnsByProject: Object.prototype.hasOwnProperty.call(input, 'taskTableColumnsByProject') ? normalizeTaskTableColumnsByProject(input.taskTableColumnsByProject) : current.taskTableColumnsByProject,
         taskTableEnumSortOrders: Object.prototype.hasOwnProperty.call(input, 'taskTableEnumSortOrders') ? normalizeTaskTableEnumSortOrders(input.taskTableEnumSortOrders) : current.taskTableEnumSortOrders,
         taskStatusFilterByProject: Object.prototype.hasOwnProperty.call(input, 'taskStatusFilterByProject') ? normalizeTaskStatusFilterByProject(input.taskStatusFilterByProject) : current.taskStatusFilterByProject,
+        taskViewModeByProject: Object.prototype.hasOwnProperty.call(input, 'taskViewModeByProject') ? normalizeTaskViewModeByProject(input.taskViewModeByProject) : current.taskViewModeByProject,
+        taskExpandedIdsByProject: Object.prototype.hasOwnProperty.call(input, 'taskExpandedIdsByProject') ? normalizeTaskExpandedIdsByProject(input.taskExpandedIdsByProject) : current.taskExpandedIdsByProject,
       },
       current.localLogDirectory,
       current.localConfigPath,

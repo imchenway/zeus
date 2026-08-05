@@ -60,6 +60,8 @@ export interface ZeusTaskRecord {
   projectId: string;
   taskCode: string;
   taskSequence: number | null;
+  parentTaskId: string | null;
+  relatedTaskIds: string[];
   title: string;
   description: string;
   managementStatus: TaskManagementStatus;
@@ -265,6 +267,7 @@ export interface ProjectArchiveConfirmation {
 
 export interface CreateTaskInput {
   projectId: string;
+  parentTaskId?: string | null;
   title: string;
   description: string;
   createdFrom: string;
@@ -275,6 +278,23 @@ export interface CreateTaskInput {
   allowCodeChanges?: boolean;
   allowTests?: boolean;
   allowGitCommit?: boolean;
+}
+
+export interface UpdateTaskRelationshipsInput {
+  expectedUpdatedAt: string;
+  parentTaskId?: string | null;
+  relatedTaskIds?: string[];
+}
+
+export interface DeleteTaskInput {
+  childStrategy?: 'reparent' | 'delete_descendants' | 'make_roots';
+  replacementParentTaskId?: string;
+}
+
+export interface DeleteTaskResult {
+  task: ZeusTaskRecord;
+  deletedTaskIds: string[];
+  movedChildTaskIds: string[];
 }
 
 export interface CreateTaskTemplateInput {
@@ -1207,6 +1227,7 @@ function migrateCoreSchema(db: ZeusDatabase): void {
     CREATE TABLE IF NOT EXISTS tasks (
       id TEXT PRIMARY KEY,
       project_id TEXT NOT NULL,
+      parent_task_id TEXT,
       title TEXT NOT NULL,
       description TEXT NOT NULL,
       management_status TEXT NOT NULL DEFAULT 'todo',
@@ -1239,6 +1260,22 @@ function migrateCoreSchema(db: ZeusDatabase): void {
   } catch {
     // 旧数据库可能已经完成迁移；忽略重复字段错误。
   }
+  try {
+    db.execute(`ALTER TABLE tasks ADD COLUMN parent_task_id TEXT`);
+  } catch {
+    // 旧数据库可能已经完成迁移；忽略重复字段错误。
+  }
+  db.execute(`CREATE INDEX IF NOT EXISTS idx_tasks_parent_task_id ON tasks(parent_task_id)`);
+  db.execute(`
+    CREATE TABLE IF NOT EXISTS task_relations (
+      left_task_id TEXT NOT NULL,
+      right_task_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (left_task_id, right_task_id),
+      CHECK (left_task_id < right_task_id)
+    )
+  `);
+  db.execute(`CREATE INDEX IF NOT EXISTS idx_task_relations_right_task_id ON task_relations(right_task_id)`);
 
   db.execute(`
     CREATE TABLE IF NOT EXISTS task_events (
@@ -2466,7 +2503,7 @@ export class ProjectRepository {
   }
 }
 
-const selectTaskFields = `id, project_id, task_code, task_sequence, title, description, management_status, status, priority, tags_json, template_id,
+const selectTaskFields = `id, project_id, task_code, task_sequence, parent_task_id, title, description, management_status, status, priority, tags_json, template_id,
   allow_code_changes, allow_tests, allow_git_commit, created_from, source_context_json, created_at, updated_at`;
 
 /** 任务仓储保存真实任务定义，初始状态统一为 ready，等待用户或 runtime 执行。 */
@@ -2480,54 +2517,61 @@ export class TaskRepository {
   }
 
   create(input: CreateTaskInput): ZeusTaskRecord {
-    const timestamp = nowIso();
-    const taskSequence = this.nextTaskSequence(input.projectId);
-    const record: ZeusTaskRecord = {
-      id: `task_${nanoid(12)}`,
-      projectId: input.projectId,
-      taskCode: formatTaskCode(taskSequence),
-      taskSequence,
-      title: input.title,
-      description: input.description,
-      managementStatus: 'todo',
-      status: 'ready',
-      priority: input.priority ?? 'p3',
-      allowCodeChanges: input.allowCodeChanges === true,
-      allowTests: input.allowTests === true,
-      allowGitCommit: input.allowGitCommit === true,
-      templateId: input.templateId ?? null,
-      tags: normalizeTags(input.tags ?? []),
-      createdFrom: input.createdFrom,
-      sourceContextJson: JSON.stringify(input.sourceContext),
-      createdAt: timestamp,
-      updatedAt: timestamp,
-    };
-    this.db.execute(
-      `INSERT INTO tasks (id, project_id, task_code, task_sequence, title, description, management_status, status, priority, tags_json, template_id,
+    return this.db.transaction(() => {
+      const timestamp = nowIso();
+      const taskSequence = this.nextTaskSequence(input.projectId);
+      const parentTaskId = input.parentTaskId ?? null;
+      if (parentTaskId) this.assertValidParent(input.projectId, '__new_task__', parentTaskId, 1);
+      const record: ZeusTaskRecord = {
+        id: `task_${nanoid(12)}`,
+        projectId: input.projectId,
+        taskCode: formatTaskCode(taskSequence),
+        taskSequence,
+        parentTaskId,
+        relatedTaskIds: [],
+        title: input.title,
+        description: input.description,
+        managementStatus: 'todo',
+        status: 'ready',
+        priority: input.priority ?? 'p3',
+        allowCodeChanges: input.allowCodeChanges === true,
+        allowTests: input.allowTests === true,
+        allowGitCommit: input.allowGitCommit === true,
+        templateId: input.templateId ?? null,
+        tags: normalizeTags(input.tags ?? []),
+        createdFrom: input.createdFrom,
+        sourceContextJson: JSON.stringify(input.sourceContext),
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      };
+      this.db.execute(
+        `INSERT INTO tasks (id, project_id, task_code, task_sequence, parent_task_id, title, description, management_status, status, priority, tags_json, template_id,
         allow_code_changes, allow_tests, allow_git_commit, created_from, source_context_json, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        record.id,
-        record.projectId,
-        record.taskCode,
-        record.taskSequence,
-        record.title,
-        record.description,
-        record.managementStatus,
-        record.status,
-        record.priority,
-        JSON.stringify(record.tags),
-        record.templateId,
-        record.allowCodeChanges ? 1 : 0,
-        record.allowTests ? 1 : 0,
-        record.allowGitCommit ? 1 : 0,
-        record.createdFrom,
-        record.sourceContextJson,
-        record.createdAt,
-        record.updatedAt,
-      ],
-    );
-    return record;
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          record.id,
+          record.projectId,
+          record.taskCode,
+          record.taskSequence,
+          record.parentTaskId,
+          record.title,
+          record.description,
+          record.managementStatus,
+          record.status,
+          record.priority,
+          JSON.stringify(record.tags),
+          record.templateId,
+          record.allowCodeChanges ? 1 : 0,
+          record.allowTests ? 1 : 0,
+          record.allowGitCommit ? 1 : 0,
+          record.createdFrom,
+          record.sourceContextJson,
+          record.createdAt,
+          record.updatedAt,
+        ],
+      );
+      return record;
+    });
   }
 
   createFromTemplate(input: CreateTaskFromTemplateInput): ZeusTaskRecord {
@@ -2554,7 +2598,7 @@ export class TaskRepository {
        FROM tasks WHERE id = ? AND deleted_at IS NULL`,
       [taskId],
     );
-    return row ? mapTaskRow(row) : undefined;
+    return row ? this.withRelatedTaskIds(mapTaskRow(row)) : undefined;
   }
 
   archive(taskId: string): ZeusTaskRecord {
@@ -2729,15 +2773,75 @@ export class TaskRepository {
     return updated;
   }
 
-  delete(taskId: string): ZeusTaskRecord {
-    const existing = this.getById(taskId);
-    if (!existing) {
-      throw new Error(`Zeus task not found: ${taskId}`);
-    }
-    const timestamp = nextIsoTimestamp(existing.updatedAt);
-    // 任务删除采用软删除，保留真实任务来源与事件审计，避免误删历史链路。
-    this.db.execute(`UPDATE tasks SET deleted_at = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`, [timestamp, timestamp, taskId]);
-    return existing;
+  updateRelationships(taskId: string, input: UpdateTaskRelationshipsInput): ZeusTaskRecord {
+    return this.db.transaction(() => {
+      const existing = this.getById(taskId);
+      if (!existing) throw new Error(`Zeus task not found: ${taskId}`);
+      if (existing.updatedAt !== input.expectedUpdatedAt) throwTaskEditConflict(taskId, existing.updatedAt);
+      const parentTaskId = input.parentTaskId === undefined ? existing.parentTaskId : input.parentTaskId;
+      const relatedTaskIds = input.relatedTaskIds === undefined ? existing.relatedTaskIds : [...new Set(input.relatedTaskIds)];
+      this.assertValidParent(existing.projectId, taskId, parentTaskId, this.subtreeHeight(taskId));
+      this.assertValidRelatedTasks(existing, relatedTaskIds);
+      if (parentTaskId === existing.parentTaskId && canonicalJson(relatedTaskIds.slice().sort()) === canonicalJson(existing.relatedTaskIds.slice().sort())) return existing;
+      const timestamp = nextIsoTimestamp(existing.updatedAt);
+      this.db.execute(`UPDATE tasks SET parent_task_id = ?, updated_at = ? WHERE id = ? AND updated_at = ? AND deleted_at IS NULL`, [parentTaskId, timestamp, taskId, input.expectedUpdatedAt]);
+      const modifiedRows = this.db.get<{ count: number }>(`SELECT changes() AS count`)?.count ?? 0;
+      if (modifiedRows !== 1) throwTaskEditConflict(taskId, this.getById(taskId)?.updatedAt ?? existing.updatedAt);
+      if (input.relatedTaskIds !== undefined) {
+        this.db.execute(`DELETE FROM task_relations WHERE left_task_id = ? OR right_task_id = ?`, [taskId, taskId]);
+        for (const relatedTaskId of relatedTaskIds) {
+          const [leftTaskId, rightTaskId] = [taskId, relatedTaskId].sort();
+          this.db.execute(`INSERT INTO task_relations (left_task_id, right_task_id, created_at) VALUES (?, ?, ?)`, [leftTaskId, rightTaskId, timestamp]);
+        }
+      }
+      const updated = this.getById(taskId);
+      if (!updated) throw new Error(`Zeus task not found after relationship update: ${taskId}`);
+      return updated;
+    });
+  }
+
+  delete(taskId: string, input: DeleteTaskInput = {}): DeleteTaskResult {
+    return this.db.transaction(() => {
+      if (input.childStrategy && !['reparent', 'delete_descendants', 'make_roots'].includes(input.childStrategy)) {
+        throw Object.assign(new Error('Unknown child handling strategy.'), { code: 'ZEUS_TASK_DELETE_STRATEGY_INVALID' as const });
+      }
+      const existing = this.getById(taskId);
+      if (!existing) throw new Error(`Zeus task not found: ${taskId}`);
+      const directChildren = this.listDirectChildren(taskId);
+      if (directChildren.length > 0 && !input.childStrategy) {
+        throw Object.assign(new Error('Deleting this task requires a child handling strategy.'), {
+          code: 'ZEUS_TASK_DELETE_RELATIONSHIP_CONFIRMATION_REQUIRED' as const,
+          childCount: directChildren.length,
+          descendantCount: this.listDescendantIds(taskId).length,
+        });
+      }
+      const timestamp = nextIsoTimestamp(existing.updatedAt);
+      let deletedTaskIds = [taskId];
+      let movedChildTaskIds: string[] = [];
+      if (directChildren.length > 0 && input.childStrategy === 'reparent') {
+        const replacementParentTaskId = input.replacementParentTaskId?.trim();
+        if (!replacementParentTaskId) throw Object.assign(new Error('A replacement parent task is required.'), { code: 'ZEUS_TASK_REPLACEMENT_PARENT_REQUIRED' as const });
+        const descendantIds = new Set(this.listDescendantIds(taskId));
+        if (descendantIds.has(replacementParentTaskId)) throw Object.assign(new Error('The replacement parent cannot be inside the deleted task branch.'), { code: 'ZEUS_TASK_PARENT_CYCLE' as const });
+        for (const child of directChildren) this.assertValidParent(existing.projectId, child.id, replacementParentTaskId, this.subtreeHeight(child.id));
+        for (const child of directChildren) {
+          this.db.execute(`UPDATE tasks SET parent_task_id = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`, [replacementParentTaskId, nextIsoTimestamp(child.updatedAt), child.id]);
+        }
+        movedChildTaskIds = directChildren.map((task) => task.id);
+      } else if (directChildren.length > 0 && input.childStrategy === 'make_roots') {
+        for (const child of directChildren) {
+          this.db.execute(`UPDATE tasks SET parent_task_id = NULL, updated_at = ? WHERE id = ? AND deleted_at IS NULL`, [nextIsoTimestamp(child.updatedAt), child.id]);
+        }
+        movedChildTaskIds = directChildren.map((task) => task.id);
+      } else if (input.childStrategy === 'delete_descendants') {
+        deletedTaskIds = [taskId, ...this.listDescendantIds(taskId)];
+      }
+      for (const deletedTaskId of deletedTaskIds) {
+        this.db.execute(`DELETE FROM task_relations WHERE left_task_id = ? OR right_task_id = ?`, [deletedTaskId, deletedTaskId]);
+        this.db.execute(`UPDATE tasks SET deleted_at = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`, [timestamp, timestamp, deletedTaskId]);
+      }
+      return { task: existing, deletedTaskIds, movedChildTaskIds };
+    });
   }
 
   listAll(options: TaskListOptions = {}): ZeusTaskRecord[] {
@@ -2747,6 +2851,7 @@ export class TaskRepository {
        FROM tasks WHERE archived = 0 AND deleted_at IS NULL ORDER BY created_at ASC`,
       )
       .map(mapTaskRow);
+    this.attachRelatedTaskIds(records);
     return filterAndSortTasks(records, options);
   }
 
@@ -2758,6 +2863,7 @@ export class TaskRepository {
         [projectId],
       )
       .map(mapTaskRow);
+    this.attachRelatedTaskIds(records);
     return filterAndSortTasks(records, options);
   }
 
@@ -2769,7 +2875,86 @@ export class TaskRepository {
         [projectId],
       )
       .map(mapTaskRow);
+    this.attachRelatedTaskIds(records);
     return filterAndSortTasks(records, options);
+  }
+
+  private listDirectChildren(taskId: string): ZeusTaskRecord[] {
+    const rows = this.db.select<DbTaskRow>(`SELECT ${selectTaskFields} FROM tasks WHERE parent_task_id = ? AND deleted_at IS NULL ORDER BY created_at ASC`, [taskId]).map(mapTaskRow);
+    this.attachRelatedTaskIds(rows);
+    return rows;
+  }
+
+  private listDescendantIds(taskId: string): string[] {
+    const descendants: string[] = [];
+    const queue = [taskId];
+    while (queue.length > 0) {
+      const parentId = queue.shift()!;
+      const children = this.db.select<{ id: string }>(`SELECT id FROM tasks WHERE parent_task_id = ? AND deleted_at IS NULL`, [parentId]);
+      for (const child of children) {
+        descendants.push(child.id);
+        queue.push(child.id);
+      }
+    }
+    return descendants;
+  }
+
+  private subtreeHeight(taskId: string): number {
+    const children = this.db.select<{ id: string }>(`SELECT id FROM tasks WHERE parent_task_id = ? AND deleted_at IS NULL`, [taskId]);
+    return children.length === 0 ? 1 : 1 + Math.max(...children.map((child) => this.subtreeHeight(child.id)));
+  }
+
+  private assertValidParent(projectId: string, taskId: string, parentTaskId: string | null, subtreeHeight: number): void {
+    if (!parentTaskId) {
+      if (subtreeHeight > 3) throw Object.assign(new Error('Task hierarchy cannot exceed three levels.'), { code: 'ZEUS_TASK_HIERARCHY_DEPTH_EXCEEDED' as const });
+      return;
+    }
+    if (parentTaskId === taskId) throw Object.assign(new Error('A task cannot be its own parent.'), { code: 'ZEUS_TASK_PARENT_CYCLE' as const });
+    let depth = 1;
+    let cursor: string | null = parentTaskId;
+    const visited = new Set<string>();
+    while (cursor) {
+      if (cursor === taskId || visited.has(cursor)) throw Object.assign(new Error('Task parent relationship would create a cycle.'), { code: 'ZEUS_TASK_PARENT_CYCLE' as const });
+      visited.add(cursor);
+      const parent: { project_id: string; parent_task_id: string | null } | undefined = this.db.get<{ project_id: string; parent_task_id: string | null }>(`SELECT project_id, parent_task_id FROM tasks WHERE id = ? AND deleted_at IS NULL`, [
+        cursor,
+      ]);
+      if (!parent) throw Object.assign(new Error('Parent task not found.'), { code: 'ZEUS_TASK_PARENT_NOT_FOUND' as const });
+      if (parent.project_id !== projectId) throw Object.assign(new Error('Parent task must belong to the same project.'), { code: 'ZEUS_TASK_RELATION_PROJECT_MISMATCH' as const });
+      depth += 1;
+      cursor = parent.parent_task_id;
+    }
+    if (depth + subtreeHeight - 1 > 3) throw Object.assign(new Error('Task hierarchy cannot exceed three levels.'), { code: 'ZEUS_TASK_HIERARCHY_DEPTH_EXCEEDED' as const });
+  }
+
+  private assertValidRelatedTasks(task: ZeusTaskRecord, relatedTaskIds: string[]): void {
+    for (const relatedTaskId of relatedTaskIds) {
+      if (relatedTaskId === task.id) throw Object.assign(new Error('A task cannot relate to itself.'), { code: 'ZEUS_TASK_SELF_RELATION' as const });
+      const related = this.db.get<{ project_id: string }>(`SELECT project_id FROM tasks WHERE id = ? AND deleted_at IS NULL`, [relatedTaskId]);
+      if (!related) throw Object.assign(new Error('Related task not found.'), { code: 'ZEUS_TASK_RELATED_NOT_FOUND' as const });
+      if (related.project_id !== task.projectId) throw Object.assign(new Error('Related task must belong to the same project.'), { code: 'ZEUS_TASK_RELATION_PROJECT_MISMATCH' as const });
+    }
+  }
+
+  private withRelatedTaskIds(task: ZeusTaskRecord): ZeusTaskRecord {
+    task.relatedTaskIds = this.db
+      .select<{ related_task_id: string }>(`SELECT CASE WHEN left_task_id = ? THEN right_task_id ELSE left_task_id END AS related_task_id FROM task_relations WHERE left_task_id = ? OR right_task_id = ?`, [task.id, task.id, task.id])
+      .map((row) => row.related_task_id);
+    return task;
+  }
+
+  private attachRelatedTaskIds(tasks: ZeusTaskRecord[]): void {
+    if (tasks.length === 0) return;
+    const taskById = new Map(tasks.map((task) => [task.id, task]));
+    const placeholders = tasks.map(() => '?').join(', ');
+    const relations = this.db.select<{ left_task_id: string; right_task_id: string }>(`SELECT left_task_id, right_task_id FROM task_relations WHERE left_task_id IN (${placeholders}) OR right_task_id IN (${placeholders})`, [
+      ...taskById.keys(),
+      ...taskById.keys(),
+    ]);
+    for (const relation of relations) {
+      taskById.get(relation.left_task_id)?.relatedTaskIds.push(relation.right_task_id);
+      taskById.get(relation.right_task_id)?.relatedTaskIds.push(relation.left_task_id);
+    }
   }
 }
 
@@ -5453,6 +5638,7 @@ interface DbTaskRow {
   project_id: string;
   task_code: string | null;
   task_sequence: number | null;
+  parent_task_id: string | null;
   title: string;
   description: string;
   management_status: string;
@@ -5950,6 +6136,8 @@ function mapTaskRow(row: DbTaskRow): ZeusTaskRecord {
     projectId: row.project_id,
     taskCode: normalizeTaskCode(row.task_code, sequence),
     taskSequence: sequence,
+    parentTaskId: row.parent_task_id,
+    relatedTaskIds: [],
     title: row.title,
     description: row.description,
     managementStatus: isTaskManagementStatus(row.management_status) ? row.management_status : 'todo',
