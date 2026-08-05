@@ -3360,7 +3360,22 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
           message: 'Conversation not found',
         });
       }
-      const archived = conversations.archive(conversation.id);
+      if (conversation.transportKind === 'codex_native') {
+        try {
+          await codexNativeCoordinator.archiveConversation({ conversationId: conversation.id });
+        } catch (error) {
+          return sendNativeConversationApiError(reply, error);
+        }
+      } else {
+        conversations.archive(conversation.id);
+      }
+      const archived = conversations.getById(conversation.id);
+      if (!archived) {
+        return reply.code(404).send({
+          error: 'ZEUS_CONVERSATION_NOT_FOUND',
+          message: 'Conversation not found',
+        });
+      }
       appendAuditLog({
         actorType: 'local_api',
         action: 'conversation.archived',
@@ -3395,7 +3410,22 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
           message: 'Conversation not found',
         });
       }
-      const restored = conversations.restore(conversation.id);
+      if (conversation.transportKind === 'codex_native') {
+        try {
+          await codexNativeCoordinator.restoreArchivedConversation({ conversationId: conversation.id });
+        } catch (error) {
+          return sendNativeConversationApiError(reply, error);
+        }
+      } else {
+        conversations.restore(conversation.id);
+      }
+      const restored = conversations.getById(conversation.id);
+      if (!restored) {
+        return reply.code(404).send({
+          error: 'ZEUS_CONVERSATION_NOT_FOUND',
+          message: 'Conversation not found',
+        });
+      }
       appendAuditLog({
         actorType: 'local_api',
         action: 'conversation.restored',
@@ -3417,6 +3447,11 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       });
     }
     return project;
+  });
+
+  server.get('/api/conversations/archived', async () => {
+    const choices = listArchivedTaskConversationHistory().map(toNativeConversationChoice);
+    return { choices, items: choices };
   });
 
   server.get('/api/projects/:projectId/config', async (request: FastifyRequest<{ Params: { projectId: string } }>, reply): Promise<ProjectConfigSnapshot | unknown> => {
@@ -10958,6 +10993,20 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       offset += page.items.length;
       if (offset >= page.total || page.items.length === 0) return history;
     }
+  }
+
+  function listArchivedTaskConversationHistory(): ZeusConversationWithMessagesRecord[] {
+    const history: ZeusConversationWithMessagesRecord[] = [];
+    for (const project of [...projects.list(), ...projects.listArchived()]) {
+      let offset = 0;
+      while (true) {
+        const page = conversations.listByProject(project.id, { archived: true, limit: 100, offset });
+        history.push(...page.items.filter((conversation) => conversation.taskId !== null));
+        offset += page.items.length;
+        if (offset >= page.total || page.items.length === 0) break;
+      }
+    }
+    return history.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
   }
 
   function listProjectConversationHistory(projectId: string): ZeusConversationWithMessagesRecord[] {

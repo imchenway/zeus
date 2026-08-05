@@ -212,7 +212,7 @@ export interface CodexAppServerManager {
   ensureReady(input: { commandPath: string; externalAgentHome?: string }): Promise<CodexCapabilitiesSnapshot>;
   startThread(input: CodexThreadStartInput): Promise<CodexThreadSnapshot>;
   resumeThread(input: { threadId: string; cwd?: string }): Promise<CodexThreadSnapshot>;
-
+  archiveThread(input: { threadId: string }): Promise<void>;
   unarchiveThread(input: { threadId: string }): Promise<CodexThreadSnapshot>;
   readThread(input: { threadId: string }): Promise<CodexThreadSnapshot>;
   startTurn(input: CodexTurnStartInput): Promise<CodexTurnSnapshot>;
@@ -684,6 +684,11 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
       const responseModel = typeof response.model === 'string' ? response.model : threadModels.get(thread.id);
       if (responseModel) threadModels.set(thread.id, responseModel);
       return responseModel ? attachThreadProviderSettings(thread, capabilities.generationId, response, responseModel) : thread;
+    },
+    async archiveThread(input) {
+      const capabilities = await awaitCapabilities();
+      await rpc(capabilities.generationId, 'thread/archive', { threadId: input.threadId });
+      threadModels.delete(input.threadId);
     },
     async unarchiveThread(input) {
       const capabilities = await awaitCapabilities();

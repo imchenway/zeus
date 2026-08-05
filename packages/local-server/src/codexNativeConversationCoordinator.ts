@@ -25,6 +25,7 @@ import {
   type ZeusDatabase,
 } from '@zeus/storage';
 import type {
+  ArchiveConversationInput,
   CodexNativeConversationCoordinator,
   InterruptNativeTurnInput,
   NativeAcceptedOperation,
@@ -1153,14 +1154,78 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     return toQueueSnapshot(conversation.id);
   }
 
+  async function archiveConversation(input: ArchiveConversationInput): Promise<NativeQueueSnapshot> {
+    assertOpen();
+    let conversation = requireConversation(input.conversationId);
+    if (conversation.archived) return toQueueSnapshot(conversation.id);
+    assertConversationCanBeArchived(conversation);
+    await ensureGenerationReconciled();
+    conversation = requireConversation(input.conversationId);
+    if (conversation.archived) return toQueueSnapshot(conversation.id);
+    assertConversationCanBeArchived(conversation);
+    const providerThreadId = requireString(conversation.providerThreadId, 'provider thread id');
+    if (conversation.providerState !== 'archived') await options.manager.archiveThread({ threadId: providerThreadId });
+    options.conversations.bindProvider(conversation.id, {
+      providerId: 'codex',
+      providerThreadId,
+      providerModel: conversation.providerModel,
+      providerState: 'archived',
+    });
+    options.conversations.archive(conversation.id);
+    runStates.set(conversation.id, { type: 'paused', reason: 'provider_archived' });
+    contexts.delete(conversation.id);
+    await persist();
+    options.broadcast('conversation.thread.archived', {
+      conversationId: conversation.id,
+      projectId: conversation.projectId,
+      taskId: conversation.taskId,
+      providerThreadId,
+      providerState: 'archived',
+    });
+    return toQueueSnapshot(conversation.id);
+  }
+
+  function assertConversationCanBeArchived(conversation: ZeusConversationWithMessagesRecord): void {
+    const pendingRequest = options.requests.listByConversation(conversation.id).find((request) => request.status === 'pending');
+    const unfinishedTurn = options.turns.listByConversation(conversation.id).find((turn) => turn.status === 'dispatching' || turn.status === 'running' || turn.status === 'waiting');
+    const pendingSubmission = options.submissions
+      .listByConversation(conversation.id)
+      .find((submission) => submission.status === 'queued' || submission.status === 'dispatching' || submission.status === 'active' || (submission.status === 'paused' && !submission.providerTurnId));
+    const state = runStates.get(conversation.id) ?? inferRunState(conversation);
+    if (
+      pendingRequest ||
+      unfinishedTurn ||
+      pendingSubmission ||
+      conversation.providerState === 'binding' ||
+      conversation.providerState === 'active' ||
+      conversation.providerState === 'waiting' ||
+      state.type === 'dispatching' ||
+      state.type === 'active' ||
+      state.type === 'waiting'
+    ) {
+      throw coordinatorError('ZEUS_NATIVE_CONVERSATION_IN_PROGRESS', 'The conversation still has an active turn, queued message, or pending request and cannot be archived.');
+    }
+  }
+
   async function restoreArchivedConversation(input: RestoreArchivedConversationInput): Promise<NativeQueueSnapshot> {
     assertOpen();
     let conversation = requireConversation(input.conversationId);
-    if (conversation.providerState !== 'archived') return toQueueSnapshot(conversation.id);
-    await ensureGenerationReconciled();
-    conversation = requireConversation(input.conversationId);
-    if (conversation.providerState !== 'archived') return toQueueSnapshot(conversation.id);
-    await restoreArchivedProviderThread(conversation.id);
+    if (conversation.providerState === 'archived') {
+      await ensureGenerationReconciled();
+      conversation = requireConversation(input.conversationId);
+      if (conversation.providerState === 'archived') await restoreArchivedProviderThread(conversation.id);
+    }
+    if (conversation.archived) {
+      options.conversations.restore(conversation.id);
+      await persist();
+      options.broadcast('conversation.thread.unarchived', {
+        conversationId: conversation.id,
+        projectId: conversation.projectId,
+        taskId: conversation.taskId,
+        providerThreadId: conversation.providerThreadId,
+        providerState: 'ready',
+      });
+    }
     await drainQueuedSubmissions();
     return toQueueSnapshot(conversation.id);
   }
@@ -2663,6 +2728,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     reorderQueue,
     sendQueuedNow,
     resumeInterruptedQueue,
+    archiveConversation,
     restoreArchivedConversation,
     interruptTurn,
     respondToRequest,

@@ -241,6 +241,9 @@ type NativeConversationAppClient = SessionControllerClient &
   Pick<
     DashboardClient,
     | 'loadProjectConversationChoices'
+    | 'loadArchivedConversations'
+    | 'archiveNativeConversation'
+    | 'restoreConversationArchive'
     | 'startProjectConversation'
     | 'loadTaskConversationChoices'
     | 'startNativeConversation'
@@ -1855,6 +1858,16 @@ const languageCopy = {
         exported: (target: string) => `最近导出：${target}，密钥已脱敏`,
         imported: (target: string, changed: string) => `最近导入：${target}，${changed}`,
         noSettingsChanged: '无设置变更',
+        archivedConversationsAria: '已归档任务会话',
+        archivedConversationsTitle: '已归档会话',
+        archivedConversationsDescription: '归档会话保留消息和任务关联；恢复后会回到原项目与原任务。',
+        loadingArchivedConversations: '正在读取已归档会话…',
+        archivedConversationsError: '读取已归档会话失败。',
+        retryArchivedConversations: '重试',
+        emptyArchivedConversations: '暂无已归档任务会话。',
+        archivedConversationContext: (project: string, taskCode: string) => `${project} · ${taskCode}`,
+        restoreArchivedConversation: '恢复',
+        restoringArchivedConversation: '正在恢复…',
       },
     },
     gitDiffWorkspace: {
@@ -3274,6 +3287,16 @@ const languageCopy = {
         exported: (target: string) => `Last export: ${target}; secrets redacted`,
         imported: (target: string, changed: string) => `Last import: ${target}; ${changed}`,
         noSettingsChanged: 'No settings changed',
+        archivedConversationsAria: 'Archived task conversations',
+        archivedConversationsTitle: 'Archived conversations',
+        archivedConversationsDescription: 'Archived conversations keep their messages and task links. Restoring returns them to the original project and task.',
+        loadingArchivedConversations: 'Loading archived conversations…',
+        archivedConversationsError: 'Failed to load archived conversations.',
+        retryArchivedConversations: 'Retry',
+        emptyArchivedConversations: 'No archived task conversations.',
+        archivedConversationContext: (project: string, taskCode: string) => `${project} · ${taskCode}`,
+        restoreArchivedConversation: 'Unarchive',
+        restoringArchivedConversation: 'Restoring…',
       },
     },
     gitDiffWorkspace: {
@@ -4470,6 +4493,16 @@ const languageCopy = {
         exported: (target: string) => string;
         imported: (target: string, changed: string) => string;
         noSettingsChanged: string;
+        archivedConversationsAria: string;
+        archivedConversationsTitle: string;
+        archivedConversationsDescription: string;
+        loadingArchivedConversations: string;
+        archivedConversationsError: string;
+        retryArchivedConversations: string;
+        emptyArchivedConversations: string;
+        archivedConversationContext: (project: string, taskCode: string) => string;
+        restoreArchivedConversation: string;
+        restoringArchivedConversation: string;
       };
     };
     gitDiffWorkspace: {
@@ -4897,6 +4930,12 @@ function formatDataPortabilityStatus(status: DataPortabilityStatusState, copy: R
   if (status.kind === 'idle') return copy.notImportedExported;
   if (status.kind === 'exported') return copy.exported(status.target);
   return copy.imported(status.target, status.changedSettings.length > 0 ? status.changedSettings.join(', ') : copy.noSettingsChanged);
+}
+
+function formatArchivedConversationDate(value: string, appLanguage: AppLanguage): string {
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) return value;
+  return new Intl.DateTimeFormat(appLanguage, { dateStyle: 'medium', timeStyle: 'short' }).format(timestamp);
 }
 
 /** Runtime 日志导出状态只存结构化事实，渲染时按当前语言输出，避免英文界面残留中文状态。 */
@@ -6294,6 +6333,10 @@ export function App(props: {
   );
   const [selectedNativeConversationId, setSelectedNativeConversationId] = useState<string | null>(() => props.initialSelectedNativeConversationId ?? null);
   const selectedNativeConversationIdRef = useRef<string | null>(props.initialSelectedNativeConversationId ?? null);
+  const [archivedConversations, setArchivedConversations] = useState<NativeConversationChoice[]>([]);
+  const [archivedConversationLoadState, setArchivedConversationLoadState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
+  const [restoringArchivedConversationId, setRestoringArchivedConversationId] = useState<string | null>(null);
+  const archivedConversationRefreshPromiseRef = useRef<Promise<void> | null>(null);
   const [newConversationFocusRequest, setNewConversationFocusRequest] = useState(0);
   const [nativeConversationRuntimeStates, setNativeConversationRuntimeStates] = useState<Record<string, ConversationTreeRuntimeState>>({});
   const [nativeConversationTaskRunStatuses, setNativeConversationTaskRunStatuses] = useState<Record<string, TaskAgentRunStatus>>({});
@@ -6707,6 +6750,10 @@ export function App(props: {
     if (activeNavTarget !== 'settings' || settingsCategory !== 'runtime' || codexLegacyImportSnapshot || codexLegacyImportLoading || !props.onLoadCodexLegacyImports) return;
     void refreshCodexLegacyImports();
   }, [activeNavTarget, codexLegacyImportLoading, codexLegacyImportSnapshot, props.onLoadCodexLegacyImports, settingsCategory]);
+  useEffect(() => {
+    if (activeNavTarget !== 'settings' || settingsCategory !== 'data' || archivedConversationLoadState !== 'idle' || !props.nativeConversationClient) return;
+    void refreshArchivedConversations();
+  }, [activeNavTarget, archivedConversationLoadState, props.nativeConversationClient, settingsCategory]);
   const selectedProject = projectDetail ?? firstProject;
   const activeProjectId = selectedProject?.id ?? firstProjectId;
   const taskStatusFilter = resolveTaskStatusFilterForProject(appShellSettings, activeProjectId);
@@ -7043,6 +7090,35 @@ export function App(props: {
       }
       if (shouldRefreshNativeConversationListForRealtimeEvent(event)) {
         refreshNativeConversationList(event.payload.projectId as string, event.payload.conversationId as string);
+      }
+      if (event.type === 'conversation.thread.archived' && typeof event.payload.conversationId === 'string') {
+        const conversationId = event.payload.conversationId;
+        setNativeConversationChoicesByProject((current) =>
+          Object.fromEntries(
+            Object.entries(current).map(([projectId, choices]) => [
+              projectId,
+              { ...choices, choices: choices.choices.filter((choice) => choice.id !== conversationId), items: choices.items.filter((choice) => choice.id !== conversationId) },
+            ]),
+          ),
+        );
+        setNativeConversationChoicesByTask((current) =>
+          Object.fromEntries(
+            Object.entries(current).map(([taskId, choices]) => [taskId, { ...choices, choices: choices.choices.filter((choice) => choice.id !== conversationId), items: choices.items.filter((choice) => choice.id !== conversationId) }]),
+          ),
+        );
+        if (selectedNativeConversationIdRef.current === conversationId) {
+          selectedNativeConversationIdRef.current = null;
+          setSelectedNativeConversationId(null);
+          setConversationDraftOpen(false);
+        }
+        void refreshArchivedConversations();
+      }
+      if (event.type === 'conversation.thread.unarchived') {
+        const taskId = typeof event.payload.taskId === 'string' ? event.payload.taskId : null;
+        const projectId = typeof event.payload.projectId === 'string' ? event.payload.projectId : null;
+        if (taskId) void refreshNativeConversationChoices(taskId);
+        else if (projectId) void refreshNativeProjectConversationChoices(projectId);
+        void refreshArchivedConversations();
       }
       if (event.type === 'conversation.turn.completed' && typeof event.payload.conversationId === 'string') {
         const conversationId = event.payload.conversationId;
@@ -8170,6 +8246,65 @@ export function App(props: {
         setNativeConversationChoiceProjectStates((current) => ({ ...current, [projectId]: failNativeConversationChoiceTaskLoad(current[projectId], errorToLocalUiMessage(error)) }));
       }
       throw error;
+    }
+  }
+
+  async function refreshArchivedConversations(): Promise<void> {
+    const client = props.nativeConversationClient;
+    if (!client) return;
+    if (archivedConversationRefreshPromiseRef.current) return archivedConversationRefreshPromiseRef.current;
+    const refresh = (async () => {
+      setArchivedConversationLoadState('loading');
+      try {
+        const result = await client.loadArchivedConversations();
+        setArchivedConversations(result.choices);
+        setArchivedConversationLoadState('ready');
+      } catch (error) {
+        setArchivedConversationLoadState('error');
+        recordLocalError('archived-conversation-load', error);
+      }
+    })();
+    archivedConversationRefreshPromiseRef.current = refresh;
+    try {
+      await refresh;
+    } finally {
+      if (archivedConversationRefreshPromiseRef.current === refresh) archivedConversationRefreshPromiseRef.current = null;
+    }
+  }
+
+  async function archiveTaskConversation(conversation: NativeConversationChoice): Promise<void> {
+    const client = props.nativeConversationClient;
+    if (!client || !conversation.taskId) return;
+    try {
+      await client.archiveNativeConversation(conversation.projectId, conversation.id);
+      if (selectedNativeConversationIdRef.current === conversation.id) {
+        selectedNativeConversationIdRef.current = null;
+        setSelectedNativeConversationId(null);
+        setConversationDraftOpen(false);
+      }
+      setNativeConversationRuntimeStates((current) => {
+        const next = { ...current };
+        delete next[conversation.id];
+        return next;
+      });
+      await Promise.all([refreshNativeConversationChoices(conversation.taskId), refreshArchivedConversations()]);
+    } catch (error) {
+      recordLocalError('conversation-archive', error);
+      throw error;
+    }
+  }
+
+  async function restoreTaskConversation(conversation: NativeConversationChoice): Promise<void> {
+    const client = props.nativeConversationClient;
+    if (!client || restoringArchivedConversationId) return;
+    setRestoringArchivedConversationId(conversation.id);
+    try {
+      await client.restoreConversationArchive(conversation.projectId, conversation.id);
+      await Promise.all([conversation.taskId ? refreshNativeConversationChoices(conversation.taskId) : refreshNativeProjectConversationChoices(conversation.projectId), refreshArchivedConversations()]);
+    } catch (error) {
+      recordLocalError('conversation-restore', error);
+    } finally {
+      setRestoringArchivedConversationId(null);
     }
   }
 
@@ -10920,6 +11055,7 @@ export function App(props: {
                     prepareNativeConversationForTask(taskId);
                     setSessionSourceRailOpen(false);
                   }}
+                  onArchiveConversation={archiveTaskConversation}
                   language={appShellSettings.appLanguage}
                 />
               </aside>
@@ -12479,6 +12615,40 @@ export function App(props: {
                           <button type="button" onClick={clearLocalCaches} disabled={!props.onClearLocalCaches || loadingRuntimeBusy} {...controlBusyProps(loadingRuntimeBusy)}>
                             {settingsWorkspaceCopy.data.clearCache}
                           </button>
+                        </span>
+                      </section>
+                      <section className="settings-archived-conversations-row" aria-label={settingsWorkspaceCopy.data.archivedConversationsAria}>
+                        <span className="settings-row-copy">
+                          <strong>{settingsWorkspaceCopy.data.archivedConversationsTitle}</strong>
+                          <small>{settingsWorkspaceCopy.data.archivedConversationsDescription}</small>
+                        </span>
+                        <span className="settings-archived-conversation-list" aria-live="polite">
+                          {archivedConversationLoadState === 'loading' ? <small>{settingsWorkspaceCopy.data.loadingArchivedConversations}</small> : null}
+                          {archivedConversationLoadState === 'error' ? (
+                            <span className="settings-archived-conversation-state">
+                              <small>{settingsWorkspaceCopy.data.archivedConversationsError}</small>
+                              <button type="button" onClick={() => void refreshArchivedConversations()}>
+                                {settingsWorkspaceCopy.data.retryArchivedConversations}
+                              </button>
+                            </span>
+                          ) : null}
+                          {archivedConversationLoadState === 'ready' && archivedConversations.length === 0 ? <small>{settingsWorkspaceCopy.data.emptyArchivedConversations}</small> : null}
+                          {archivedConversations.map((conversation) => {
+                            const task = snapshot.tasks.find((candidate) => candidate.id === conversation.taskId);
+                            const project = snapshot.projects.find((candidate) => candidate.id === conversation.projectId);
+                            return (
+                              <span className="settings-archived-conversation-item" key={conversation.id}>
+                                <span className="settings-archived-conversation-copy">
+                                  <strong>{task?.title ?? conversation.title}</strong>
+                                  <small>{settingsWorkspaceCopy.data.archivedConversationContext(project?.name ?? conversation.projectId, task?.taskCode ?? conversation.taskId ?? conversation.id)}</small>
+                                  <small>{formatArchivedConversationDate(conversation.updatedAt, appShellSettings.appLanguage)}</small>
+                                </span>
+                                <button type="button" disabled={restoringArchivedConversationId !== null} onClick={() => void restoreTaskConversation(conversation)}>
+                                  {restoringArchivedConversationId === conversation.id ? settingsWorkspaceCopy.data.restoringArchivedConversation : settingsWorkspaceCopy.data.restoreArchivedConversation}
+                                </button>
+                              </span>
+                            );
+                          })}
                         </span>
                       </section>
                     </NativeSettingsPane>

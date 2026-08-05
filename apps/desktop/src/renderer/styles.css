@@ -4430,7 +4430,8 @@ a {
     .settings-audit-row,
     .settings-danger-row,
     .release-detail-row,
-    .settings-data-portability-row
+    .settings-data-portability-row,
+    .settings-archived-conversations-row
   ) {
   align-items: center;
   border-block-start: 0;
@@ -4441,6 +4442,60 @@ a {
   min-block-size: 48px;
   min-inline-size: 0;
   padding: 10px 12px;
+}
+
+.macos-ai-app .settings-reference-shell .deep-settings-pane > .settings-archived-conversations-row {
+  align-items: start;
+  grid-template-columns: minmax(220px, 0.42fr) minmax(0, 1fr);
+}
+
+.macos-ai-app .settings-archived-conversation-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-inline-size: 0;
+}
+
+.macos-ai-app .settings-archived-conversation-item,
+.macos-ai-app .settings-archived-conversation-state {
+  align-items: center;
+  background: var(--zeus-settings-action-meta-bg, var(--zeus-product-panel));
+  border: 1px solid var(--zeus-product-line);
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-block-size: 48px;
+  padding: 8px 9px;
+}
+
+.macos-ai-app .settings-archived-conversation-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-inline-size: 0;
+}
+
+.macos-ai-app .settings-archived-conversation-copy > :where(strong, small) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.macos-ai-app .settings-archived-conversation-copy > strong {
+  color: var(--zeus-product-text);
+  font-size: 12px;
+  font-weight: 620;
+}
+
+.macos-ai-app .settings-archived-conversation-copy > small {
+  color: var(--zeus-product-muted);
+  font-size: 11px;
+}
+
+.macos-ai-app .settings-archived-conversation-item > button,
+.macos-ai-app .settings-archived-conversation-state > button {
+  min-block-size: var(--zeus-settings-control-height, 28px);
 }
 
 .macos-ai-app
@@ -6436,6 +6491,83 @@ a {
     min-block-size: 38px;
     padding: 6px 8px 6px 32px;
   text-align: left;
+}
+
+.macos-ai-app .session-conversation-tree-item {
+  align-items: center;
+  display: grid;
+  gap: 2px;
+  grid-template-columns: minmax(0, 1fr) 26px;
+  position: relative;
+}
+
+.macos-ai-app .session-conversation-row-actions {
+  align-items: center;
+  display: flex;
+  position: relative;
+}
+
+.macos-ai-app .session-conversation-more-button {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: var(--zeus-product-muted);
+  display: flex;
+  block-size: 26px;
+  inline-size: 26px;
+  justify-content: center;
+  opacity: 0;
+  padding: 0;
+}
+
+.macos-ai-app .session-conversation-tree-item:where(:hover, :focus-within) .session-conversation-more-button,
+.macos-ai-app .session-conversation-row-actions.is-open .session-conversation-more-button {
+  opacity: 1;
+}
+
+.macos-ai-app .session-conversation-more-button:where(:hover, :focus-visible) {
+  background: var(--zeus-source-list-hover);
+  color: var(--zeus-product-text);
+}
+
+.macos-ai-app .session-conversation-more-button > svg {
+  block-size: 16px;
+  inline-size: 16px;
+}
+
+.macos-ai-app .session-conversation-row-menu {
+  background: var(--zeus-popover-bg, var(--zeus-solid-surface-bg));
+  border: 1px solid var(--zeus-popover-line, var(--zeus-project-menu-line));
+  border-radius: 9px;
+  box-shadow: 0 12px 32px rgb(20 26 34 / 14%);
+  display: block;
+  inline-size: 218px;
+  padding: 5px;
+  position: absolute;
+  right: 0;
+  top: 30px;
+  z-index: 30;
+}
+
+.macos-ai-app .session-conversation-row-menu > button {
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: var(--zeus-product-text);
+  inline-size: 100%;
+  min-block-size: 30px;
+  padding: 6px 8px;
+  text-align: left;
+}
+
+.macos-ai-app .session-conversation-row-menu > button:where(:hover, :focus-visible):not(:disabled) {
+  background: var(--zeus-source-list-hover);
+}
+
+.macos-ai-app .session-conversation-row-menu > button:disabled {
+  color: var(--zeus-product-subtle);
+  cursor: not-allowed;
 }
 
 .macos-ai-app .session-conversation-tree-row:where(:hover, :focus-visible),

@@ -167,6 +167,10 @@ export interface RestoreArchivedConversationInput {
   conversationId: string;
 }
 
+export interface ArchiveConversationInput {
+  conversationId: string;
+}
+
 export interface InterruptNativeTurnInput {
   conversationId: string;
   providerTurnId: string;
@@ -220,7 +224,7 @@ export interface CodexNativeConversationCoordinator {
   reorderQueue(input: ReorderNativeQueueInput): Promise<NativeQueueSnapshot>;
   sendQueuedNow(input: SendQueuedNowInput): Promise<NativeAcceptedOperation>;
   resumeInterruptedQueue(input: ResumeNativeQueueInput): Promise<NativeQueueSnapshot>;
-
+  archiveConversation(input: ArchiveConversationInput): Promise<NativeQueueSnapshot>;
   restoreArchivedConversation(input: RestoreArchivedConversationInput): Promise<NativeQueueSnapshot>;
   interruptTurn(input: InterruptNativeTurnInput): Promise<NativeAcceptedOperation>;
   respondToRequest(input: RespondNativeRequestInput): Promise<NativeAcceptedOperation>;

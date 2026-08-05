@@ -245,6 +245,13 @@ export function createCodexRuntimeGenerationManager(): CodexAppServerManager {
       if (mapped && mapped !== active) void tryDrain(mapped);
       return thread;
     },
+    async archiveThread(input) {
+      const entry = routeThread(input.threadId);
+      await entry.manager.archiveThread(input);
+      entriesByThread.delete(input.threadId);
+      entry.threads.delete(input.threadId);
+      void tryDrain(entry);
+    },
     async unarchiveThread(input) {
       const active = requireActiveEntry();
       const previous = entriesByThread.get(input.threadId);
