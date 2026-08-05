@@ -705,6 +705,214 @@ a {
   }
 }
 
+/* 用户自定义模型连接：左侧选连接，右侧编辑连接和模型能力。 */
+.macos-ai-app .model-connections-settings {
+  gap: 16px;
+}
+
+.macos-ai-app .model-connections-heading {
+  align-items: end;
+  display: flex;
+  justify-content: space-between;
+}
+
+.macos-ai-app .model-connections-heading > span,
+.macos-ai-app .model-definition-section > header > span:first-child {
+  display: grid;
+  gap: 2px;
+}
+
+.macos-ai-app .model-connections-heading small,
+.macos-ai-app .model-definition-section small {
+  color: var(--zeus-product-muted);
+  font-size: 12px;
+  line-height: 17px;
+}
+
+.macos-ai-app .model-connections-layout {
+  display: grid;
+  grid-template-columns: 176px minmax(0, 1fr);
+  gap: 16px;
+}
+
+.macos-ai-app .model-connection-list {
+  align-content: start;
+  display: grid;
+  gap: 6px;
+}
+
+.macos-ai-app .model-connection-list > button {
+  align-items: start;
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--zeus-product-line);
+  border-radius: 10px;
+  background: var(--zeus-product-panel);
+  color: var(--zeus-product-text);
+  text-align: left;
+}
+
+.macos-ai-app .model-connection-list > button > span,
+.macos-ai-app .model-connection-editor,
+.macos-ai-app .model-definition-section {
+  display: grid;
+  gap: 4px;
+}
+
+.macos-ai-app .model-connection-list small,
+.macos-ai-app .model-connection-list em {
+  color: var(--zeus-product-muted);
+  font-size: 11px;
+  font-style: normal;
+}
+
+.macos-ai-app .model-connection-list em[data-configured='true'] {
+  color: var(--zeus-status-success-text, oklch(48% 0.11 150));
+}
+
+.macos-ai-app .model-connection-editor {
+  gap: 14px;
+  min-inline-size: 0;
+}
+
+.macos-ai-app .model-connection-field-grid,
+.macos-ai-app .model-definition-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.macos-ai-app .model-connection-field-grid label,
+.macos-ai-app .model-definition-grid label {
+  display: grid;
+  gap: 5px;
+  min-inline-size: 0;
+}
+
+.macos-ai-app .model-connection-field-grid label > span,
+.macos-ai-app .model-definition-grid label > span {
+  color: var(--zeus-product-muted);
+  font-size: 11px;
+}
+
+.macos-ai-app .model-connection-wide-field {
+  grid-column: 1 / -1;
+}
+
+.macos-ai-app .model-connection-enabled,
+.macos-ai-app .model-definition-card > header,
+.macos-ai-app .model-definition-card > header label,
+.macos-ai-app .model-definition-section > header,
+.macos-ai-app .model-add-row,
+.macos-ai-app .model-connection-actions {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+}
+
+.macos-ai-app .model-definition-section > header,
+.macos-ai-app .model-definition-card > header {
+  justify-content: space-between;
+}
+
+.macos-ai-app .model-definition-list {
+  display: grid;
+  gap: 10px;
+}
+
+.macos-ai-app .model-definition-card {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--zeus-product-line);
+  border-radius: 11px;
+  background: var(--zeus-product-panel);
+}
+
+.macos-ai-app .model-definition-card > header > button {
+  min-block-size: 24px;
+  min-inline-size: 24px;
+  padding: 0;
+}
+
+.macos-ai-app .model-connection-diagnostic,
+.macos-ai-app .model-connection-message {
+  margin: 0;
+  padding: 9px 10px;
+  border-radius: 8px;
+  background: var(--zeus-product-selected);
+  color: var(--zeus-product-muted);
+  font-size: 12px;
+}
+
+.macos-ai-app .model-connection-diagnostic.success {
+  color: var(--zeus-status-success-text, oklch(48% 0.11 150));
+}
+
+.macos-ai-app .model-connection-actions {
+  flex-wrap: wrap;
+}
+
+.macos-ai-app .project-model-settings {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.85fr) minmax(260px, 1.25fr);
+  gap: 18px;
+  padding-block: 14px;
+  border-block-end: 1px solid var(--zeus-product-line);
+}
+
+.macos-ai-app .project-model-settings-body,
+.macos-ai-app .project-model-choice-list,
+.macos-ai-app .project-model-default-field {
+  display: grid;
+  gap: 8px;
+  min-inline-size: 0;
+}
+
+.macos-ai-app .project-model-choice-list {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.macos-ai-app .project-model-choice-list label {
+  align-items: start;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px;
+  padding: 8px 9px;
+  border: 1px solid var(--zeus-product-line);
+  border-radius: 9px;
+  background: var(--zeus-product-panel);
+}
+
+.macos-ai-app .project-model-choice-list label > span {
+  display: grid;
+  gap: 2px;
+}
+
+.macos-ai-app .project-model-choice-list small,
+.macos-ai-app .project-model-default-field > span,
+.macos-ai-app .project-model-settings-body > small {
+  color: var(--zeus-product-muted);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+@media (max-width: 780px) {
+  .macos-ai-app .model-connections-layout,
+  .macos-ai-app .model-connection-field-grid,
+  .macos-ai-app .model-definition-grid,
+  .macos-ai-app .project-model-settings {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .macos-ai-app .model-connection-wide-field {
+    grid-column: auto;
+  }
+}
+
 .macos-ai-app .code-map-context-strip,
 .macos-ai-app .git-review-workbench,
 .macos-ai-app .graph-runtime-pane,

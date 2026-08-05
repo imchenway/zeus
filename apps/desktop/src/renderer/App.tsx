@@ -91,6 +91,8 @@ import { acceptTaskModelPushPendingState, createTaskModelPushPendingState, failT
 import { TaskWorkspace } from './task/TaskWorkspace.js';
 import { LegacyChatImportSettings } from './settings/LegacyChatImportSettings.js';
 import { BrowserSettingsPane } from './settings/BrowserSettingsPane.js';
+import { ModelConnectionsSettingsPane } from './settings/ModelConnectionsSettingsPane.js';
+import { ProjectModelsSettings } from './settings/ProjectModelsSettings.js';
 import { type TaskAttachmentRestoreTarget, type TaskAttachmentView, toPersistedTaskAttachment } from './task/taskAttachments.js';
 import {
   defaultTaskTableEnumSortOrders,
@@ -203,7 +205,7 @@ type LegacyMainNavTarget = MainNavTarget | 'dashboard' | 'tasks' | 'code-map' | 
 type ProjectWorkspaceSection = 'tasks' | 'code' | 'sessions' | 'commands' | 'project-settings';
 type ProjectDetailPanel = 'diff' | 'edit' | 'config' | 'archive' | undefined;
 type ConversationDrawer = 'runtime' | 'context' | 'changes' | 'templates' | undefined;
-type SettingsCategory = 'general' | 'tasks' | 'runtime' | 'browser' | 'telegram' | 'security' | 'commands' | 'git' | 'release' | 'data';
+type SettingsCategory = 'general' | 'tasks' | 'runtime' | 'models' | 'browser' | 'telegram' | 'security' | 'commands' | 'git' | 'release' | 'data';
 type DataPortabilityStatusState = { kind: 'idle' } | { kind: 'exported'; target: string } | { kind: 'imported'; target: string; changedSettings: string[] };
 type TaskBulkActionStatusState = { kind: 'idle' | 'running' | 'done' | 'failed'; message?: string };
 type RuntimeLogExportStatusState = { kind: 'idle' } | { kind: 'empty' } | { kind: 'cancelled' } | { kind: 'saved'; filePath: string } | { kind: 'failed' };
@@ -288,6 +290,16 @@ type NativeConversationAppClient = SessionControllerClient &
     | 'startNativeConversation'
     | 'loadCodexTaskPushCapabilities'
     | 'startTaskModelPush'
+    | 'loadModelConnections'
+    | 'createModelConnection'
+    | 'updateModelConnection'
+    | 'deleteModelConnection'
+    | 'clearModelConnectionApiKey'
+    | 'refreshModelConnectionModels'
+    | 'diagnoseModelConnection'
+    | 'loadSelectablePiModels'
+    | 'loadProjectModelSelection'
+    | 'saveProjectModelSelection'
     | 'loadProjectWorkspaceConfig'
     | 'discoverProjectRepositories'
     | 'saveProjectWorkspaceConfig'
@@ -1679,6 +1691,7 @@ const languageCopy = {
         general: '通用',
         tasks: '任务列表',
         runtime: 'AI CLI / Runtime',
+        models: '模型供应商',
         browser: '内置浏览器',
         telegram: 'Telegram',
         security: '安全与钥匙串',
@@ -3123,6 +3136,7 @@ const languageCopy = {
         general: 'General',
         tasks: 'Task list',
         runtime: 'AI CLI / Runtime',
+        models: 'Model providers',
         browser: 'Built-in browser',
         telegram: 'Telegram',
         security: 'Security & Keychain',
@@ -8902,6 +8916,7 @@ export function App(props: {
       persistedEnvelope?.fingerprint === fingerprint
         ? persistedEnvelope.request
         : {
+            agentKind: taskModelPushCapabilities.models.find((model) => model.id === taskModelPushForm.model || model.model === taskModelPushForm.model)?.agentKind ?? 'codex',
             mode: 'create',
             source: 'task_push',
             model: taskModelPushForm.model,
@@ -10995,6 +11010,7 @@ export function App(props: {
                               </div>
                             </div>
                           </section>
+                          <ProjectModelsSettings projectId={selectedProject.id} language={appShellSettings.appLanguage} client={props.nativeConversationClient ?? null} />
                           {/* 项目配置字段拆成说明列和控件列，保留 form 提交语义，但不再把字段直接堆成 label 列表。 */}
                           <section className="project-config-setting-row" aria-label={projectConfigCopy.defaultModelAria}>
                             <span className="project-config-setting-copy">
@@ -12104,6 +12120,7 @@ export function App(props: {
                       group: settingsWorkspaceCopy.sectionGroups.integrations,
                       items: [
                         ['runtime', settingsWorkspaceCopy.categories.runtime, runtime.aiCli.available ? settingsWorkspaceCopy.protectedStatus : settingsWorkspaceCopy.waitingStatus],
+                        ['models', settingsWorkspaceCopy.categories.models, settingsWorkspaceCopy.localStatus],
                         ['browser', settingsWorkspaceCopy.categories.browser, settingsWorkspaceCopy.localStatus],
                         ['telegram', settingsWorkspaceCopy.categories.telegram, runtime.telegram.enabled ? settingsWorkspaceCopy.protectedStatus : settingsWorkspaceCopy.waitingStatus],
                       ],
@@ -12571,6 +12588,7 @@ export function App(props: {
                   </section>
                 ) : null}
                 {settingsCategory === 'browser' ? <BrowserSettingsPane language={appShellSettings.appLanguage} /> : null}
+                {settingsCategory === 'models' ? <ModelConnectionsSettingsPane language={appShellSettings.appLanguage} client={props.nativeConversationClient ?? null} /> : null}
                 {settingsCategory === 'telegram' ? (
                   <section className="settings-product-pane" aria-label={settingsWorkspaceCopy.categories.telegram}>
                     <NativeSettingsPane label={settingsWorkspaceCopy.telegram.paneTitle} className="deep-settings-pane telegram-settings-pane">

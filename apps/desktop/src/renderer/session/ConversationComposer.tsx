@@ -15,6 +15,7 @@ import { normalizeServiceTierSelection, selectionFromEffectiveServiceTier, servi
 export type ComposerKeyIntent = 'submit' | 'newline' | 'escape' | 'ignore';
 export interface ComposerRuntimeSettings {
   model: string;
+  agentKind?: 'codex' | 'pi';
   effort?: string;
   serviceTier?: string | null;
   permissionMode: NativePermissionMode;
@@ -105,8 +106,9 @@ export function ConversationComposer(props: ConversationComposerProps) {
   const settingsWritable = props.readOnly !== true && Boolean(selectedCapability);
   const modelOptions = props.capabilities?.models.length
     ? props.capabilities.models.map((capability) => ({
-        value: capability.model,
-        label: capability.displayName ?? capability.model,
+        value: capability.id,
+        label: `${capability.sourceName ? `${capability.sourceName} / ` : ''}${capability.displayName ?? capability.model}`,
+        disabled: capability.available === false,
       }))
     : [{ value: selectedModel, label: selectedModel || copy.unsynced }];
   const effortOptions = selectedCapability?.supportedReasoningEfforts.length
@@ -174,6 +176,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
       nextDelivery === 'queue' && selectedModel
         ? {
             model: selectedModel,
+            agentKind: selectedCapability?.agentKind,
             ...(selectedEffort ? { effort: selectedEffort } : {}),
             ...serviceTierWireOverride(selectedServiceTier),
             permissionMode: props.permissionMode,
@@ -277,7 +280,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
                   setSelectedEffort(effort);
                   setSelectedServiceTier(normalizedTier.selection);
                   setServiceTierDowngraded(normalizedTier.downgraded);
-                  props.onRuntimeSettingsChange?.({ model, effort, ...serviceTierWireOverride(normalizedTier.selection), permissionMode: props.permissionMode, collaborationMode: props.collaborationMode });
+                  props.onRuntimeSettingsChange?.({ model, agentKind: capability?.agentKind, effort, ...serviceTierWireOverride(normalizedTier.selection), permissionMode: props.permissionMode, collaborationMode: props.collaborationMode });
                 }}
               />
               <ComposerDropdown
@@ -450,8 +453,8 @@ export function canSteerActiveTurn(state: NativeSessionState): boolean {
 function resolveComposerModel(capabilities: CodexConversationCapabilities | null | undefined, providerModel: string | undefined): string {
   const normalized = providerModel?.trim();
   if (normalized && capabilities?.models.some((candidate) => candidate.model === normalized || candidate.id === normalized))
-    return capabilities.models.find((candidate) => candidate.model === normalized || candidate.id === normalized)?.model ?? normalized;
-  return capabilities?.preferredModel ?? capabilities?.models[0]?.model ?? normalized ?? '';
+    return capabilities.models.find((candidate) => candidate.model === normalized || candidate.id === normalized)?.id ?? normalized;
+  return capabilities?.preferredModel ?? capabilities?.models[0]?.id ?? normalized ?? '';
 }
 
 function resolveComposerEffort(capabilities: CodexConversationCapabilities | null | undefined, model: string, providerEffort: string | undefined): string {

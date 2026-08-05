@@ -1,0 +1,383 @@
+export type ModelConnectionTemplateId = 'custom' | 'deepseek' | 'bailian';
+
+export type ModelCapabilityState = 'supported' | 'unsupported' | 'unverified';
+
+export type PiThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+
+export type OpenAiThinkingFormat = 'openai' | 'openrouter' | 'deepseek' | 'together' | 'zai' | 'qwen' | 'qwen-chat-template' | 'string-thinking' | 'ant-ling';
+
+export interface ModelCapabilityEvidence {
+  source: 'template' | 'catalog' | 'manual' | 'probe';
+  state: ModelCapabilityState;
+  checkedAt: string | null;
+  reason: string;
+}
+
+export interface ConfiguredModelCapability {
+  reasoning: {
+    state: ModelCapabilityState;
+    levels: PiThinkingLevel[];
+    defaultLevel: PiThinkingLevel;
+    thinkingFormat: OpenAiThinkingFormat;
+  };
+  tools: ModelCapabilityEvidence;
+  imageInput: ModelCapabilityEvidence;
+  streaming: ModelCapabilityEvidence;
+  usage: ModelCapabilityEvidence;
+}
+
+export interface ConfiguredModelDefinition {
+  id: string;
+  displayName: string;
+  enabled: boolean;
+  contextWindow: number;
+  maxTokens: number;
+  speedLabel: 'standard' | 'high_speed' | 'flash' | 'turbo';
+  capability: ConfiguredModelCapability;
+}
+
+export interface ModelConnectionRecord {
+  id: string;
+  name: string;
+  templateId: ModelConnectionTemplateId;
+  baseUrl: string;
+  modelsPath: string;
+  enabled: boolean;
+  apiKeyConfigured: boolean;
+  models: ConfiguredModelDefinition[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SaveModelConnectionInput {
+  id?: string;
+  name: string;
+  templateId?: ModelConnectionTemplateId;
+  baseUrl: string;
+  modelsPath?: string;
+  enabled?: boolean;
+  models?: ConfiguredModelDefinition[];
+}
+
+export interface ProjectModelSelection {
+  projectId: string;
+  allowedModelRefs: string[];
+  defaultModelRef: string | null;
+}
+
+export interface SelectablePiModel {
+  id: string;
+  model: string;
+  displayName: string;
+  sourceId: string;
+  sourceName: string;
+  agentKind: 'pi';
+  enabled: boolean;
+  available: boolean;
+  availabilityReason: string;
+  supportedReasoningEfforts: PiThinkingLevel[];
+  defaultReasoningEffort: PiThinkingLevel;
+  serviceTiers: [];
+  defaultServiceTier: null;
+  speedLabel: ConfiguredModelDefinition['speedLabel'];
+  tools: ModelCapabilityState;
+  imageInput: ModelCapabilityState;
+}
+
+const thinkingLevels = new Set<PiThinkingLevel>(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
+const thinkingFormats = new Set<OpenAiThinkingFormat>(['openai', 'openrouter', 'deepseek', 'together', 'zai', 'qwen', 'qwen-chat-template', 'string-thinking', 'ant-ling']);
+const capabilityStates = new Set<ModelCapabilityState>(['supported', 'unsupported', 'unverified']);
+const speedLabels = new Set<ConfiguredModelDefinition['speedLabel']>(['standard', 'high_speed', 'flash', 'turbo']);
+
+export const modelConnectionTemplates: Record<Exclude<ModelConnectionTemplateId, 'custom'>, { name: string; baseUrl: string; modelsPath: string; thinkingFormat: OpenAiThinkingFormat }> = {
+  deepseek: {
+    name: 'DeepSeek',
+    baseUrl: 'https://api.deepseek.com/v1',
+    modelsPath: '/models',
+    thinkingFormat: 'deepseek',
+  },
+  bailian: {
+    name: '阿里云百炼',
+    baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    modelsPath: '/models',
+    thinkingFormat: 'qwen',
+  },
+};
+
+export function modelRef(sourceId: string, modelId: string): string {
+  return `${encodeURIComponent(sourceId)}:${encodeURIComponent(modelId)}`;
+}
+
+export function parseModelRef(value: string): { sourceId: string; modelId: string } | null {
+  const boundary = value.indexOf(':');
+  if (boundary <= 0 || boundary >= value.length - 1) return null;
+  try {
+    const sourceId = decodeURIComponent(value.slice(0, boundary));
+    const modelId = decodeURIComponent(value.slice(boundary + 1));
+    return sourceId && modelId ? { sourceId, modelId } : null;
+  } catch {
+    return null;
+  }
+}
+
+export function normalizeModelConnection(input: SaveModelConnectionInput, options: { id: string; apiKeyConfigured: boolean; createdAt: string; updatedAt: string }): ModelConnectionRecord {
+  const templateId = normalizeTemplateId(input.templateId);
+  const template = templateId === 'custom' ? null : modelConnectionTemplates[templateId];
+  const name = normalizeSingleLine(input.name || template?.name || '', '连接名称', 80);
+  const baseUrl = normalizeModelBaseUrl(input.baseUrl || template?.baseUrl || '');
+  const modelsPath = normalizeModelsPath(input.modelsPath ?? template?.modelsPath ?? '/models');
+  const models = normalizeConfiguredModels(input.models ?? [], template?.thinkingFormat ?? 'openai');
+  return {
+    id: normalizeIdentifier(options.id, '连接 ID'),
+    name,
+    templateId,
+    baseUrl,
+    modelsPath,
+    enabled: input.enabled !== false,
+    apiKeyConfigured: options.apiKeyConfigured,
+    models,
+    createdAt: options.createdAt,
+    updatedAt: options.updatedAt,
+  };
+}
+
+export function normalizeStoredModelConnections(value: unknown): ModelConnectionRecord[] {
+  if (!Array.isArray(value)) return [];
+  const records: ModelConnectionRecord[] = [];
+  const ids = new Set<string>();
+  for (const candidate of value) {
+    if (!isRecord(candidate)) continue;
+    try {
+      const id = normalizeIdentifier(candidate.id, '连接 ID');
+      if (ids.has(id)) continue;
+      const createdAt = normalizeIsoDate(candidate.createdAt) ?? new Date(0).toISOString();
+      const updatedAt = normalizeIsoDate(candidate.updatedAt) ?? createdAt;
+      records.push(
+        normalizeModelConnection(candidate as unknown as SaveModelConnectionInput, {
+          id,
+          apiKeyConfigured: candidate.apiKeyConfigured === true,
+          createdAt,
+          updatedAt,
+        }),
+      );
+      ids.add(id);
+    } catch {
+      // 单条损坏配置不应阻断其他连接读取；API 保存路径会返回明确校验错误。
+    }
+  }
+  return records;
+}
+
+export function normalizeProjectModelSelection(projectId: string, value: unknown, availableRefs?: ReadonlySet<string>): ProjectModelSelection {
+  const source = isRecord(value) ? value : {};
+  const allowedModelRefs = Array.isArray(source.allowedModelRefs)
+    ? [...new Set(source.allowedModelRefs.filter((item): item is string => typeof item === 'string' && parseModelRef(item) !== null))].filter((item) => !availableRefs || availableRefs.has(item))
+    : [];
+  const requestedDefault = typeof source.defaultModelRef === 'string' ? source.defaultModelRef : null;
+  return {
+    projectId,
+    allowedModelRefs,
+    defaultModelRef: requestedDefault && allowedModelRefs.includes(requestedDefault) ? requestedDefault : (allowedModelRefs[0] ?? null),
+  };
+}
+
+export function listSelectablePiModels(connections: readonly ModelConnectionRecord[]): SelectablePiModel[] {
+  return connections.flatMap((connection) =>
+    connection.models.map((model) => {
+      const available = connection.enabled && connection.apiKeyConfigured && model.enabled;
+      const availabilityReason = !connection.enabled
+        ? '模型连接已停用。'
+        : !connection.apiKeyConfigured
+          ? '模型连接尚未配置 API Key。'
+          : !model.enabled
+            ? '模型已停用。'
+            : model.capability.tools.state === 'unsupported'
+              ? '模型明确不支持工具调用，只能保存在诊断目录中。'
+              : '模型已配置；真实外部能力仍以运行探针结果为准。';
+      return {
+        id: modelRef(connection.id, model.id),
+        model: model.id,
+        displayName: model.displayName,
+        sourceId: connection.id,
+        sourceName: connection.name,
+        agentKind: 'pi' as const,
+        enabled: connection.enabled && model.enabled,
+        available: available && model.capability.tools.state !== 'unsupported',
+        availabilityReason,
+        supportedReasoningEfforts: model.capability.reasoning.state === 'supported' ? [...model.capability.reasoning.levels] : ['off'],
+        defaultReasoningEffort: model.capability.reasoning.state === 'supported' ? model.capability.reasoning.defaultLevel : 'off',
+        serviceTiers: [] as [],
+        defaultServiceTier: null,
+        speedLabel: model.speedLabel,
+        tools: model.capability.tools.state,
+        imageInput: model.capability.imageInput.state,
+      };
+    }),
+  );
+}
+
+export function createConfiguredModelDefinition(id: string, input: Partial<ConfiguredModelDefinition> = {}, thinkingFormat: OpenAiThinkingFormat = 'openai'): ConfiguredModelDefinition {
+  const normalizedId = normalizeSingleLine(id, '模型 ID', 200);
+  return normalizeConfiguredModel(
+    {
+      id: normalizedId,
+      displayName: input.displayName ?? normalizedId,
+      enabled: input.enabled ?? true,
+      contextWindow: input.contextWindow ?? 128_000,
+      maxTokens: input.maxTokens ?? 8_192,
+      speedLabel: input.speedLabel ?? inferSpeedLabel(normalizedId),
+      capability:
+        input.capability ??
+        ({
+          reasoning: { state: 'unverified', levels: ['off'], defaultLevel: 'off', thinkingFormat },
+          tools: evidence('unverified', 'manual', '等待真实工具闭环探针。'),
+          imageInput: evidence('unverified', 'manual', '等待真实图片输入探针。'),
+          streaming: evidence('unverified', 'manual', '等待真实流式输出探针。'),
+          usage: evidence('unverified', 'manual', '等待真实用量字段探针。'),
+        } satisfies ConfiguredModelCapability),
+    },
+    thinkingFormat,
+  );
+}
+
+export function mergeDiscoveredModels(existing: readonly ConfiguredModelDefinition[], modelIds: readonly string[], thinkingFormat: OpenAiThinkingFormat): ConfiguredModelDefinition[] {
+  const byId = new Map(existing.map((model) => [model.id, model]));
+  for (const rawId of modelIds) {
+    const id = rawId.trim();
+    if (!id || byId.has(id)) continue;
+    byId.set(id, createConfiguredModelDefinition(id, {}, thinkingFormat));
+  }
+  return [...byId.values()];
+}
+
+export function modelConnectionSecretAccount(connectionId: string): string {
+  return `model.connection.${normalizeIdentifier(connectionId, '连接 ID')}.api-key`;
+}
+
+export function buildModelsUrl(connection: Pick<ModelConnectionRecord, 'baseUrl' | 'modelsPath'>): string {
+  return new URL(connection.modelsPath.replace(/^\/+/, ''), `${connection.baseUrl.replace(/\/+$/u, '')}/`).toString();
+}
+
+function normalizeConfiguredModels(value: readonly ConfiguredModelDefinition[], fallbackThinkingFormat: OpenAiThinkingFormat): ConfiguredModelDefinition[] {
+  if (!Array.isArray(value) || value.length > 200) throw new Error('模型列表必须是数组且不能超过 200 项。');
+  const ids = new Set<string>();
+  return value.map((candidate) => {
+    const model = normalizeConfiguredModel(candidate, fallbackThinkingFormat);
+    if (ids.has(model.id)) throw new Error(`模型 ID 重复：${model.id}`);
+    ids.add(model.id);
+    return model;
+  });
+}
+
+function normalizeConfiguredModel(value: ConfiguredModelDefinition, fallbackThinkingFormat: OpenAiThinkingFormat): ConfiguredModelDefinition {
+  if (!isRecord(value)) throw new Error('模型配置必须是对象。');
+  const id = normalizeSingleLine(value.id, '模型 ID', 200);
+  const displayName = normalizeSingleLine(value.displayName || id, '模型名称', 200);
+  const contextWindow = normalizePositiveInteger(value.contextWindow, '上下文窗口', 1_000, 10_000_000);
+  const maxTokens = normalizePositiveInteger(value.maxTokens, '最大输出 Token', 1, contextWindow);
+  const speedLabel = speedLabels.has(value.speedLabel) ? value.speedLabel : inferSpeedLabel(id);
+  const capability = normalizeCapability(value.capability, fallbackThinkingFormat);
+  return { id, displayName, enabled: value.enabled !== false, contextWindow, maxTokens, speedLabel, capability };
+}
+
+function normalizeCapability(value: ConfiguredModelCapability, fallbackThinkingFormat: OpenAiThinkingFormat): ConfiguredModelCapability {
+  const source: Record<string, unknown> = isRecord(value) ? value : {};
+  const reasoningSource: Record<string, unknown> = isRecord(source.reasoning) ? source.reasoning : {};
+  const reasoningState = normalizeCapabilityState(reasoningSource.state);
+  const levels: PiThinkingLevel[] = [];
+  if (Array.isArray(reasoningSource.levels)) {
+    for (const item of reasoningSource.levels) {
+      if (thinkingLevels.has(item as PiThinkingLevel) && !levels.includes(item as PiThinkingLevel)) levels.push(item as PiThinkingLevel);
+    }
+  }
+  const effectiveLevels: PiThinkingLevel[] = reasoningState === 'supported' && levels.length > 0 ? levels : ['off'];
+  const requestedDefault = thinkingLevels.has(reasoningSource.defaultLevel as PiThinkingLevel) ? (reasoningSource.defaultLevel as PiThinkingLevel) : effectiveLevels[0]!;
+  const defaultLevel = effectiveLevels.includes(requestedDefault) ? requestedDefault : effectiveLevels[0]!;
+  const thinkingFormat = thinkingFormats.has(reasoningSource.thinkingFormat as OpenAiThinkingFormat) ? (reasoningSource.thinkingFormat as OpenAiThinkingFormat) : fallbackThinkingFormat;
+  return {
+    reasoning: { state: reasoningState, levels: effectiveLevels, defaultLevel, thinkingFormat },
+    tools: normalizeEvidence(source.tools, '等待真实工具闭环探针。'),
+    imageInput: normalizeEvidence(source.imageInput, '等待真实图片输入探针。'),
+    streaming: normalizeEvidence(source.streaming, '等待真实流式输出探针。'),
+    usage: normalizeEvidence(source.usage, '等待真实用量字段探针。'),
+  };
+}
+
+function normalizeEvidence(value: unknown, fallbackReason: string): ModelCapabilityEvidence {
+  if (!isRecord(value)) return evidence('unverified', 'manual', fallbackReason);
+  const source = value.source === 'template' || value.source === 'catalog' || value.source === 'probe' ? value.source : 'manual';
+  return {
+    source,
+    state: normalizeCapabilityState(value.state),
+    checkedAt: normalizeIsoDate(value.checkedAt),
+    reason: typeof value.reason === 'string' && value.reason.trim() ? value.reason.trim().slice(0, 500) : fallbackReason,
+  };
+}
+
+function evidence(state: ModelCapabilityState, source: ModelCapabilityEvidence['source'], reason: string): ModelCapabilityEvidence {
+  return { state, source, checkedAt: null, reason };
+}
+
+function normalizeCapabilityState(value: unknown): ModelCapabilityState {
+  return capabilityStates.has(value as ModelCapabilityState) ? (value as ModelCapabilityState) : 'unverified';
+}
+
+function normalizeTemplateId(value: unknown): ModelConnectionTemplateId {
+  return value === 'deepseek' || value === 'bailian' ? value : 'custom';
+}
+
+function normalizeModelBaseUrl(value: unknown): string {
+  const raw = normalizeSingleLine(value, '服务地址', 500);
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new Error('服务地址必须是完整 URL。');
+  }
+  const local = url.hostname === 'localhost' || url.hostname === '127.0.0.1' || url.hostname === '::1';
+  if (url.protocol !== 'https:' && !(local && url.protocol === 'http:')) throw new Error('远程模型服务必须使用 HTTPS；HTTP 只允许本机地址。');
+  if (url.username || url.password || url.hash || url.search) throw new Error('服务地址不能包含账号、密码、查询参数或片段。');
+  return url.toString().replace(/\/+$/u, '');
+}
+
+function normalizeModelsPath(value: unknown): string {
+  const raw = normalizeSingleLine(value || '/models', '模型目录路径', 200);
+  if (!raw.startsWith('/') || raw.includes('..') || raw.includes('?') || raw.includes('#')) throw new Error('模型目录路径必须是站内绝对路径。');
+  return raw;
+}
+
+function normalizeSingleLine(value: unknown, label: string, maxLength: number): string {
+  if (typeof value !== 'string') throw new Error(`${label}必须是字符串。`);
+  const normalized = value.trim();
+  if (!normalized || normalized.length > maxLength || normalized.includes('\r') || normalized.includes('\n') || normalized.includes(String.fromCharCode(0))) throw new Error(`${label}不能为空、不能换行且不能超过 ${maxLength} 个字符。`);
+  return normalized;
+}
+
+function normalizeIdentifier(value: unknown, label: string): string {
+  const normalized = normalizeSingleLine(value, label, 100);
+  if (!/^[a-z0-9_-]+$/iu.test(normalized)) throw new Error(`${label}只能包含字母、数字、下划线和短横线。`);
+  return normalized;
+}
+
+function normalizePositiveInteger(value: unknown, label: string, minimum: number, maximum: number): number {
+  if (!Number.isInteger(value) || Number(value) < minimum || Number(value) > maximum) throw new Error(`${label}必须是 ${minimum} 到 ${maximum} 之间的整数。`);
+  return Number(value);
+}
+
+function normalizeIsoDate(value: unknown): string | null {
+  if (typeof value !== 'string' || !value.trim()) return null;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : null;
+}
+
+function inferSpeedLabel(modelId: string): ConfiguredModelDefinition['speedLabel'] {
+  const normalized = modelId.toLowerCase();
+  if (normalized.includes('highspeed') || normalized.includes('high-speed') || normalized.includes('fast')) return 'high_speed';
+  if (normalized.includes('flash')) return 'flash';
+  if (normalized.includes('turbo')) return 'turbo';
+  return 'standard';
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}

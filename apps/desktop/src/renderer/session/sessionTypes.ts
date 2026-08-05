@@ -318,6 +318,14 @@ export interface CodexTaskPushModelCapability {
   id: string;
   model: string;
   displayName?: string;
+  agentKind?: 'codex' | 'pi';
+  sourceId?: string;
+  sourceName?: string;
+  available?: boolean;
+  availabilityReason?: string;
+  speedLabel?: 'standard' | 'high_speed' | 'flash' | 'turbo';
+  tools?: 'supported' | 'unsupported' | 'unverified';
+  imageInput?: 'supported' | 'unsupported' | 'unverified';
   supportedReasoningEfforts: string[];
   defaultReasoningEffort?: string;
   serviceTiers: Array<{ id: string; name: string; description: string }>;
@@ -568,6 +576,7 @@ export interface CodexConversationCapabilities {
 
 export interface NativeTurnSettingsSelection {
   model: string;
+  agentKind?: 'codex' | 'pi';
   effort?: string;
   serviceTier?: string | null;
   permissionMode: NativePermissionMode;

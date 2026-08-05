@@ -13,6 +13,8 @@ export * from './agentRuntimeContracts.js';
 export * from './agentRuntimeRegistry.js';
 export * from './agentCapabilityCatalog.js';
 export * from './piRpcProtocol.js';
+export * from './modelConnectionCatalog.js';
+export * from './piSdkRuntimeDriver.js';
 export { expandCliSearchPath } from './cliSearchPath.js';
 
 export interface AiCliDescriptor {

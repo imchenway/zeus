@@ -4123,6 +4123,36 @@ export class ConversationRepository {
     return updated;
   }
 
+  /** 通用 Agent 运行态更新，不把 Pi SDK 伪装成 Codex app-server。 */
+  updateAgentRuntime(conversationId: string, input: { providerState?: ConversationProviderState; status?: string; modelSourceId?: string | null; modelId?: string | null; providerModel?: string | null }): ZeusConversationWithMessagesRecord {
+    const existing = this.getById(conversationId);
+    if (!existing) throw new Error(`Zeus conversation not found: ${conversationId}`);
+    const assignments = ['updated_at = ?'];
+    const values: Array<string | number | null> = [nowIso()];
+    if (input.providerState) {
+      assignments.push('provider_state = ?');
+      values.push(assertEnum(input.providerState, ['unbound', 'binding', 'ready', 'active', 'waiting', 'paused', 'archived', 'closed', 'failed'] as const, 'conversation provider state'));
+    }
+    if (input.status) {
+      assignments.push('status = ?');
+      values.push(input.status);
+    }
+    if ('modelSourceId' in input) {
+      assignments.push('model_source_id = ?');
+      values.push(input.modelSourceId ?? null);
+    }
+    if ('modelId' in input) {
+      assignments.push('model_id = ?');
+      values.push(input.modelId ?? null);
+    }
+    if ('providerModel' in input) {
+      assignments.push('provider_model = ?');
+      values.push(input.providerModel ?? null);
+    }
+    this.db.execute(`UPDATE conversations SET ${assignments.join(', ')} WHERE id = ?`, [...values, conversationId]);
+    return this.getById(conversationId)!;
+  }
+
   listMessages(conversationId: string): ZeusConversationMessageRecord[] {
     return this.db
       .select<DbConversationMessageRow>(
@@ -4432,6 +4462,8 @@ export class ConversationTurnRepository {
     input: Omit<ZeusConversationTurnRecord, 'id' | 'errorJson' | 'planJson' | 'agentKind' | 'nativeRunId'> & {
       id?: string;
       error?: unknown;
+      agentKind?: ConversationAgentKind | null;
+      nativeRunId?: string | null;
     },
   ): ZeusConversationTurnRecord {
     const status = assertEnum(input.status, ['queued', 'dispatching', 'running', 'waiting', 'paused', 'completed', 'interrupted', 'failed'] as const, 'conversation turn status');
@@ -4441,11 +4473,11 @@ export class ConversationTurnRepository {
     const errorJson = input.error === undefined ? null : JSON.stringify(input.error);
     this.db.execute(
       `INSERT INTO conversation_turns (id, conversation_id, provider_thread_id, provider_turn_id, client_submission_id, status, error_json, started_at, completed_at, created_at, updated_at, agent_kind, native_run_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'codex', ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET provider_thread_id = excluded.provider_thread_id, provider_turn_id = excluded.provider_turn_id,
        status = excluded.status, error_json = excluded.error_json, started_at = COALESCE(excluded.started_at, conversation_turns.started_at),
        completed_at = excluded.completed_at, updated_at = excluded.updated_at, agent_kind = excluded.agent_kind, native_run_id = COALESCE(excluded.native_run_id, conversation_turns.native_run_id)`,
-      [id, input.conversationId, input.providerThreadId, input.providerTurnId, input.clientSubmissionId, status, errorJson, input.startedAt, input.completedAt, input.createdAt, input.updatedAt, input.providerTurnId],
+      [id, input.conversationId, input.providerThreadId, input.providerTurnId, input.clientSubmissionId, status, errorJson, input.startedAt, input.completedAt, input.createdAt, input.updatedAt, input.agentKind ?? 'codex', input.nativeRunId ?? input.providerTurnId],
     );
     return mapConversationTurnRow(this.db.get<DbConversationTurnRow>(`SELECT * FROM conversation_turns WHERE id = ?`, [id])!);
   }
@@ -4486,6 +4518,8 @@ type ConversationItemBaseInput = {
   payload: unknown;
   startedAt?: string | null;
   updatedAt: string;
+  agentKind?: ConversationAgentKind;
+  nativeItemId?: string;
 };
 
 export class ConversationItemRepository {
@@ -4504,7 +4538,7 @@ export class ConversationItemRepository {
     const id = existing?.id ?? `conversation_item_${nanoid(12)}`;
     this.db.execute(
       `INSERT INTO conversation_items (id, conversation_id, turn_id, provider_thread_id, provider_turn_id, provider_item_id, item_type, status, phase, text_content, payload_json, started_at, completed_at, updated_at, agent_kind, native_item_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, 'codex', ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)
        ON CONFLICT(provider_thread_id, provider_item_id) DO UPDATE SET
        turn_id = excluded.turn_id, provider_turn_id = excluded.provider_turn_id, item_type = excluded.item_type,
        status = excluded.status, phase = excluded.phase, text_content = conversation_items.text_content || excluded.text_content,
@@ -4524,7 +4558,8 @@ export class ConversationItemRepository {
         JSON.stringify(input.payload),
         input.startedAt ?? null,
         input.updatedAt,
-        input.providerItemId,
+        input.agentKind ?? 'codex',
+        input.nativeItemId ?? input.providerItemId,
       ],
     );
     return this.getByProvider(input.providerThreadId, input.providerItemId)!;
@@ -4543,7 +4578,7 @@ export class ConversationItemRepository {
     const id = existing?.id ?? `conversation_item_${nanoid(12)}`;
     this.db.execute(
       `INSERT INTO conversation_items (id, conversation_id, turn_id, provider_thread_id, provider_turn_id, provider_item_id, item_type, status, phase, text_content, payload_json, started_at, completed_at, updated_at, agent_kind, native_item_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, 'codex', ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)
        ON CONFLICT(provider_thread_id, provider_item_id) DO UPDATE SET
        turn_id = excluded.turn_id, provider_turn_id = excluded.provider_turn_id, item_type = excluded.item_type,
        status = excluded.status, phase = excluded.phase, text_content = excluded.text_content,
@@ -4563,7 +4598,8 @@ export class ConversationItemRepository {
         JSON.stringify(input.payload),
         input.startedAt ?? null,
         input.updatedAt,
-        input.providerItemId,
+        input.agentKind ?? 'codex',
+        input.nativeItemId ?? input.providerItemId,
       ],
     );
     return this.getByProvider(input.providerThreadId, input.providerItemId)!;
@@ -4582,7 +4618,7 @@ export class ConversationItemRepository {
     const id = existing?.id ?? `conversation_item_${nanoid(12)}`;
     this.db.execute(
       `INSERT INTO conversation_items (id, conversation_id, turn_id, provider_thread_id, provider_turn_id, provider_item_id, item_type, status, phase, text_content, payload_json, started_at, completed_at, updated_at, agent_kind, native_item_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'codex', ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(provider_thread_id, provider_item_id) DO UPDATE SET
        turn_id = excluded.turn_id, provider_turn_id = excluded.provider_turn_id, item_type = excluded.item_type,
        status = excluded.status, phase = excluded.phase, text_content = excluded.text_content,
@@ -4603,7 +4639,8 @@ export class ConversationItemRepository {
         input.startedAt ?? null,
         input.completedAt,
         input.updatedAt,
-        input.providerItemId,
+        input.agentKind ?? 'codex',
+        input.nativeItemId ?? input.providerItemId,
       ],
     );
     return this.getByProvider(input.providerThreadId, input.providerItemId)!;
