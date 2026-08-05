@@ -73,6 +73,8 @@ export function TaskGitMergeModal(props: { open: boolean; language: 'zh-CN' | 'e
   const committedFiles = useMemo(() => (selectedWorkspace?.branchComparison?.files ?? []).map((file) => toCommittedDeliveryFile(file, zh)), [selectedWorkspace?.branchComparison?.files, zh]);
   const visibleFiles = diffScope === 'committed' ? committedFiles : workingFiles.map((file) => toWorkingDeliveryFile(file, zh));
   const activeConflict = integration?.state === 'conflicted' ? integration : null;
+  const unresolvedConflict = activeConflict && activeConflict.conflictFiles.length > 0 ? activeConflict : null;
+  const conflictReadyToFinalize = Boolean(activeConflict && activeConflict.conflictFiles.length === 0);
   const pendingLocalSync = integration?.state === 'pending_local_sync' ? integration : null;
   const busy = busyAction !== null;
   const workspaceClean = selectedWorkspace?.review?.clean ?? selectedWorkspace?.worktreePath === null;
@@ -350,7 +352,23 @@ export function TaskGitMergeModal(props: { open: boolean; language: 'zh-CN' | 'e
       <section className={`task-git-merge-modal task-git-delivery-modal${activeConflict ? ' is-conflicted' : ''}`} role="dialog" aria-modal="true" aria-labelledby="task-git-merge-title">
         <header className="task-git-merge-header">
           <span>
-            <strong id="task-git-merge-title">{activeConflict ? (zh ? '解决合入冲突' : 'Resolve Merge Conflicts') : pendingLocalSync ? (zh ? '同步本地目标分支' : 'Sync Local Target Branch') : zh ? '代码交付' : 'Code Delivery'}</strong>
+            <strong id="task-git-merge-title">
+              {unresolvedConflict
+                ? zh
+                  ? '解决合入冲突'
+                  : 'Resolve Merge Conflicts'
+                : conflictReadyToFinalize
+                  ? zh
+                    ? '确认完成合入'
+                    : 'Confirm Merge Completion'
+                  : pendingLocalSync
+                    ? zh
+                      ? '同步本地目标分支'
+                      : 'Sync Local Target Branch'
+                    : zh
+                      ? '代码交付'
+                      : 'Code Delivery'}
+            </strong>
             <small>
               {props.projectName ? `${props.projectName} · ` : ''}
               {props.task.taskCode ?? props.task.id} · {props.task.title}
@@ -361,23 +379,31 @@ export function TaskGitMergeModal(props: { open: boolean; language: 'zh-CN' | 'e
           </button>
         </header>
 
-        {activeConflict ? (
-          <ConflictWorkspace
-            zh={zh}
-            busy={busy}
-            integration={activeConflict}
-            taskBranch={selectedWorkspace?.branchName ?? ''}
-            conflictPath={conflictPath}
-            conflict={conflict}
-            resultContent={resultContent}
-            onSelectPath={setConflictPath}
-            onResultChange={setResultContent}
-            onAskCodex={() => void askCodex()}
-          />
-        ) : (
-          <>
-            <DeliveryStepBar workspace={selectedWorkspace} remoteVerified={selectedWorkspace?.remoteVerified ?? false} alreadyDelivered={alreadyDelivered} zh={zh} />
-            <div className="task-git-review-layout task-git-delivery-layout">
+        <div className="task-git-merge-content">
+          {unresolvedConflict ? (
+            <ConflictWorkspace
+              zh={zh}
+              busy={busy}
+              integration={unresolvedConflict}
+              taskBranch={selectedWorkspace?.branchName ?? ''}
+              conflictPath={conflictPath}
+              conflict={conflict}
+              resultContent={resultContent}
+              onSelectPath={setConflictPath}
+              onResultChange={setResultContent}
+              onAskCodex={() => void askCodex()}
+            />
+          ) : conflictReadyToFinalize && activeConflict ? (
+            <ConflictCompletion
+              zh={zh}
+              targetBranch={activeConflict.targetBranch}
+              taskBranch={selectedWorkspace?.branchName ?? ''}
+              remoteName={selectedWorkspace?.remoteName ?? ''}
+            />
+          ) : (
+            <div className="task-git-delivery-content">
+              <DeliveryStepBar workspace={selectedWorkspace} remoteVerified={selectedWorkspace?.remoteVerified ?? false} alreadyDelivered={alreadyDelivered} zh={zh} />
+              <div className="task-git-review-layout task-git-delivery-layout">
               <aside className="task-git-review-workspaces" aria-label={zh ? '任务分支' : 'Task branches'}>
                 <strong>
                   {zh ? '任务分支' : 'Task branches'} <small>{workspaces?.items.length ?? 0}</small>
@@ -554,17 +580,20 @@ export function TaskGitMergeModal(props: { open: boolean; language: 'zh-CN' | 'e
                     </small>
                   ) : null}
                 </section>
-              </aside>
+                </aside>
+              </div>
             </div>
-          </>
-        )}
+          )}
+        </div>
 
-        {feedback ? <p className={`task-git-delivery-feedback is-${feedback.tone}`}>{feedback.text}</p> : null}
-        {error ? (
-          <p className="task-git-merge-error" role="alert">
-            {error}
-          </p>
-        ) : null}
+        <div className="task-git-merge-status" aria-live="polite">
+          {feedback ? <p className={`task-git-delivery-feedback is-${feedback.tone}`}>{feedback.text}</p> : null}
+          {error ? (
+            <p className="task-git-merge-error" role="alert">
+              {error}
+            </p>
+          ) : null}
+        </div>
 
         <footer className="task-git-merge-footer">
           <Button variant="secondary" size="regular" onClick={props.onClose} disabled={busy}>
@@ -613,6 +642,42 @@ function DeliveryStepBar(props: { workspace: TaskWorkspaceSnapshot | null; remot
         </span>
       ))}
     </nav>
+  );
+}
+
+function ConflictCompletion(props: { zh: boolean; targetBranch: string; taskBranch: string; remoteName: string }) {
+  return (
+    <section className="task-git-conflict-completion" aria-label={props.zh ? '冲突收尾确认' : 'Conflict completion confirmation'}>
+      <span aria-hidden="true">✓</span>
+      <strong>{props.zh ? '冲突已全部处理' : 'All conflicts are resolved'}</strong>
+      <p>
+        {props.zh
+          ? props.remoteName
+            ? '合入结果已经准备好。确认后将生成合入提交，并推送到目标远端分支。'
+            : '合入结果已经准备好。确认后将生成合入提交，并同步到本地目标分支。'
+          : props.remoteName
+            ? 'The merge result is ready. Confirm to create the merge commit and push the target branch.'
+            : 'The merge result is ready. Confirm to create the merge commit and sync the local target branch.'}
+      </p>
+      <dl>
+        <div>
+          <dt>{props.zh ? '目标分支' : 'Target branch'}</dt>
+          <dd>{props.targetBranch}</dd>
+        </div>
+        <div>
+          <dt>{props.zh ? '任务分支' : 'Task branch'}</dt>
+          <dd>{props.taskBranch || '—'}</dd>
+        </div>
+        {props.remoteName ? (
+          <div>
+            <dt>{props.zh ? '目标远端' : 'Target remote'}</dt>
+            <dd>
+              {props.remoteName}/{props.targetBranch}
+            </dd>
+          </div>
+        ) : null}
+      </dl>
+    </section>
   );
 }
 
