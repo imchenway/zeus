@@ -55,8 +55,10 @@ export interface TaskDetailPaneContentProps {
   conversations?: NativeConversationChoice[];
   conversationsLoading?: boolean;
   conversationsError?: string | null;
+  modelPushOperation?: { status: 'submitting' | 'failed' | 'accepted'; error: string | null; conversationId?: string };
   onOpenConversation: (taskId: string, conversationId: string) => void;
   onPushNewConversation: (taskId: string) => void;
+  onRetryModelPush?: (taskId: string) => void;
   onOpenCodeDelivery?: (taskId: string) => void;
   onCommitCode?: (taskId: string) => void;
   onPushCode?: (taskId: string) => void;
@@ -455,6 +457,8 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
   const taskIdentity = props.task.taskCode?.trim() || props.task.id;
   const latestEvent = props.events.at(-1);
   const taskAttachments = parseTaskAttachments(props.task.sourceContextJson);
+  const modelPushCreating = props.modelPushOperation?.status === 'submitting';
+  const modelPushFailed = props.modelPushOperation?.status === 'failed';
   const attachmentStatusId = `${useId()}-status`;
   const desiredAttachmentsRef = useRef<TaskAttachmentReference[]>([]);
   const undoTimerRef = useRef<number | null>(null);
@@ -1047,9 +1051,29 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
       </section>
 
       <section className="task-detail-action-rail" aria-label={props.copy.primaryActionsTitle}>
+        {props.modelPushOperation ? (
+          <span className={`task-detail-model-push-feedback is-${props.modelPushOperation.status}`} role={modelPushFailed ? 'alert' : 'status'} aria-live={modelPushFailed ? 'assertive' : 'polite'} aria-atomic="true">
+            <span>
+              {modelPushCreating ? <TaskSaveSpinner /> : null}
+              <strong>
+                {modelPushCreating ? (zh ? '正在后台创建会话' : 'Creating conversation in the background') : modelPushFailed ? (zh ? '会话创建失败' : 'Conversation creation failed') : zh ? '会话已创建' : 'Conversation created'}
+              </strong>
+              {modelPushFailed && props.modelPushOperation.error ? <small>{props.modelPushOperation.error}</small> : null}
+            </span>
+            {modelPushFailed && props.onRetryModelPush ? (
+              <Button variant="secondary" size="compact" onClick={() => props.onRetryModelPush?.(props.task.id)}>
+                {zh ? '重试创建' : 'Retry creation'}
+              </Button>
+            ) : props.modelPushOperation.status === 'accepted' && props.modelPushOperation.conversationId ? (
+              <Button variant="secondary" size="compact" onClick={() => props.onOpenConversation(props.task.id, props.modelPushOperation?.conversationId ?? '')}>
+                {zh ? '打开会话' : 'Open conversation'}
+              </Button>
+            ) : null}
+          </span>
+        ) : null}
         <span className="task-detail-action-buttons">
-          <Button variant="primary" size="regular" className="task-detail-primary-action" onClick={() => props.onPushNewConversation(props.task.id)} busy={props.busy}>
-            {props.copy.pushNewConversation}
+          <Button variant="primary" size="regular" className="task-detail-primary-action" onClick={() => props.onPushNewConversation(props.task.id)} busy={props.busy || modelPushCreating} disabled={modelPushFailed}>
+            {modelPushCreating ? (zh ? '正在创建会话…' : 'Creating conversation…') : props.copy.pushNewConversation}
           </Button>
           {props.onOpenCodeDelivery ? (
             <Button variant="secondary" size="regular" className="task-detail-secondary-action" onClick={() => props.onOpenCodeDelivery?.(props.task.id)} busy={props.busy}>

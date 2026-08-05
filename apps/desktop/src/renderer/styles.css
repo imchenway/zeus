@@ -15873,6 +15873,50 @@ a {
     z-index: 3;
 }
 
+.macos-ai-app .task-detail-model-push-feedback {
+    align-items: center;
+    background: var(--zeus-product-panel-muted, var(--zeus-product-panel));
+    border: 1px solid var(--zeus-product-line-soft);
+    border-radius: 8px;
+    display: flex;
+    gap: 10px;
+    justify-content: space-between;
+    margin-block-end: 8px;
+    min-inline-size: 0;
+    padding: 8px 10px;
+}
+
+.macos-ai-app .task-detail-model-push-feedback > span {
+    align-items: center;
+    display: flex;
+    flex: 1 1 auto;
+    flex-wrap: wrap;
+    gap: 6px;
+    min-inline-size: 0;
+}
+
+.macos-ai-app .task-detail-model-push-feedback strong,
+.macos-ai-app .task-detail-model-push-feedback small {
+    overflow-wrap: anywhere;
+}
+
+.macos-ai-app .task-detail-model-push-feedback small {
+    color: var(--zeus-product-muted);
+    flex-basis: 100%;
+    line-height: 1.45;
+}
+
+.macos-ai-app .task-detail-model-push-feedback .task-save-spinner {
+    inset: auto;
+    position: relative;
+}
+
+.macos-ai-app .task-detail-model-push-feedback.is-failed {
+    background: var(--zeus-product-danger-bg, var(--zeus-danger-bg));
+    border-color: var(--zeus-product-danger-line, var(--zeus-danger-line));
+    color: var(--zeus-danger-text);
+}
+
 .macos-ai-app .task-detail-action-buttons {
     align-items: center;
     display: grid;
