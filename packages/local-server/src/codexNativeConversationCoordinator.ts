@@ -512,7 +512,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         taskId: input.taskId,
         ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
         ...(input.environmentId ? { environmentId: input.environmentId } : {}),
-        title: `任务会话：${input.taskTitle.slice(0, 48)}`,
+        title: input.conversationTitle?.trim().slice(0, 80) || `任务会话：${input.taskTitle.slice(0, 48)}`,
         summary: input.prompt.slice(0, 240),
         status: 'starting',
         transportKind: 'codex_native',

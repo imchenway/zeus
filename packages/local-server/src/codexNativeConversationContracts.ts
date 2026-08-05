@@ -69,6 +69,7 @@ export interface StartTaskConversationInput {
   taskId: string;
   workspaceId?: string;
   environmentId?: string;
+  conversationTitle?: string;
   /** 多仓任务只把逐仓 worktree 与显式共享目录授予写权限。 */
   writableRoots?: string[];
   taskTitle: string;

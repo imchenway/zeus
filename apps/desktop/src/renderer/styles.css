@@ -12976,13 +12976,17 @@ a {
   display: flex;
   align-items: center;
   justify-content: flex-end;
+  flex-wrap: wrap;
   gap: 6px;
 }
 
 .macos-ai-app .task-git-conflict-feedback {
-  max-inline-size: 520px;
+  max-inline-size: min(520px, 45vw);
+  overflow: hidden;
   color: var(--zeus-product-muted);
   text-align: end;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .macos-ai-app .task-git-conflict-magic svg {
@@ -13009,6 +13013,11 @@ a {
   border: 1px solid color-mix(in oklab, var(--zeus-danger-line) 68%, var(--zeus-product-line));
   border-radius: 8px;
   background: color-mix(in oklab, var(--zeus-danger-bg) 48%, var(--zeus-product-panel));
+}
+
+.macos-ai-app .task-git-conflict-block-rail section.is-active {
+  border-color: color-mix(in oklab, var(--zeus-danger-line) 88%, var(--zeus-accent, #3977db));
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--zeus-danger-bg) 72%, transparent);
 }
 
 .macos-ai-app .task-git-conflict-block-rail button {
@@ -13059,6 +13068,19 @@ a {
   min-block-size: 0;
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.macos-ai-app .task-git-conflict-review-complete {
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 8px;
+  color: var(--zeus-product-muted);
+  text-align: center;
+}
+
+.macos-ai-app .task-git-conflict-review-complete strong {
+  color: var(--zeus-product-text);
 }
 
 .macos-ai-app .task-git-conflict-code-pane,
@@ -13199,6 +13221,36 @@ a {
 .macos-ai-app .task-git-conflict-edit-surface textarea:focus-visible {
   outline: 2px solid color-mix(in oklab, var(--zeus-accent, #3977db) 52%, transparent);
   outline-offset: -2px;
+}
+
+.macos-ai-app .task-git-conflict-full-pane textarea {
+  box-sizing: border-box;
+  inline-size: 100%;
+  block-size: 100%;
+  min-inline-size: 0;
+  min-block-size: 0;
+  overflow: auto;
+  margin: 0;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 0;
+  outline-offset: -2px;
+  background: var(--zeus-code-bg, var(--zeus-product-panel));
+  color: var(--zeus-product-text);
+  font:
+    12px/1.55 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    Monaco,
+    Consolas,
+    monospace;
+  resize: none;
+  white-space: pre;
+  tab-size: 2;
+}
+
+.macos-ai-app .task-git-conflict-full-pane textarea:focus-visible {
+  outline: 2px solid color-mix(in oklab, var(--zeus-accent, #3977db) 52%, transparent);
 }
 
 @media (max-width: 880px) {

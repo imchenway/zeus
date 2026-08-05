@@ -566,6 +566,15 @@ export interface TaskIntegrationConflictFile {
   result: string;
 }
 
+export interface TaskIntegrationConflictAiDraft {
+  path: string;
+  agentKind: 'codex' | 'pi';
+  modelSourceId: string | null;
+  modelId: string;
+  conversationId: string;
+  suggestions: Array<{ index: number; content: string; explanation: string }>;
+}
+
 export interface CodexConversationCapabilities {
   generationId: string;
   initializedAt: string;
