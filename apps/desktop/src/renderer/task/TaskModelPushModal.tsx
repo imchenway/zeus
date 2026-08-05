@@ -58,7 +58,7 @@ export function readTaskModelPushPreferences(storage: Pick<Storage, 'getItem'> |
 export function writeTaskModelPushPreferences(storage: Pick<Storage, 'getItem' | 'setItem'> | undefined, projectId: string, form: TaskModelPushForm): void {
   if (!storage) return;
   const rememberedSourceRefs = readTaskModelPushPreferences(storage, projectId)?.repositorySourceRefs ?? {};
-  const selectedSourceRefs = form.workspaceMode === 'create' ? Object.fromEntries(Object.entries(form.repositorySelections).flatMap(([repositoryId, selection]) => (selection.sourceRef ? [[repositoryId, selection.sourceRef]] : []))) : {};
+  const selectedSourceRefs = Object.fromEntries(Object.entries(form.repositorySelections).flatMap(([repositoryId, selection]) => (selection.sourceRef ? [[repositoryId, selection.sourceRef]] : [])));
   storage.setItem(
     `${preferencesKeyPrefix}${encodeURIComponent(projectId)}`,
     JSON.stringify({

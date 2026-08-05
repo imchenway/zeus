@@ -3668,6 +3668,7 @@ const languageCopy = {
       statusAria: string;
       statusSelectAria: string;
       taskStatusSelectAria: (taskTitle: string) => string;
+      taskPrioritySelectAria: (taskTitle: string) => string;
       detailStatusSelectAria: string;
       statusTitle: string;
       unfinishedStatusFilter: string;
