@@ -30,15 +30,7 @@ interface ZeusSelectPopoverLayout {
   maxHeight: number;
 }
 
-const tabbableSelector = [
-  'a[href]',
-  'button:not([disabled])',
-  'input:not([disabled]):not([type="hidden"])',
-  'select:not([disabled])',
-  'textarea:not([disabled])',
-  '[contenteditable="true"]',
-  '[tabindex]:not([tabindex="-1"])',
-].join(',');
+const tabbableSelector = ['a[href]', 'button:not([disabled])', 'input:not([disabled]):not([type="hidden"])', 'select:not([disabled])', 'textarea:not([disabled])', '[contenteditable="true"]', '[tabindex]:not([tabindex="-1"])'].join(',');
 
 function focusElement(element: HTMLElement | undefined): void {
   if (!element || typeof window === 'undefined') return;
@@ -265,11 +257,7 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
 
   const portalHost = typeof document === 'undefined' ? null : (rootRef.current?.closest('.macos-ai-app') ?? document.body);
   const popover = open ? (
-    <span
-      className={portalHost === document.body ? 'macos-ai-app zeus-select-portal-root' : 'zeus-select-portal-root'}
-      data-zeus-primitive="select-popover"
-      data-control-size={props.size}
-    >
+    <span className={portalHost === document.body ? 'macos-ai-app zeus-select-portal-root' : 'zeus-select-portal-root'} data-zeus-primitive="select-popover" data-control-size={props.size}>
       <span
         ref={popoverRef}
         className="zeus-select-popover"
@@ -339,13 +327,7 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
   ) : null;
 
   return (
-    <span
-      className={props.className ? `zeus-select ${props.className}` : 'zeus-select'}
-      data-zeus-primitive="select"
-      data-zeus-select-placement="bottom"
-      data-control-size={props.size}
-      ref={rootRef}
-    >
+    <span className={props.className ? `zeus-select ${props.className}` : 'zeus-select'} data-zeus-primitive="select" data-zeus-select-placement="bottom" data-control-size={props.size} ref={rootRef}>
       {/* 触发器只保留在业务布局中；popover 通过 portal 提升到应用壳层，禁止扩大表单滚动区域。 */}
       <button
         ref={triggerRef}
