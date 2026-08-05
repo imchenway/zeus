@@ -87,6 +87,7 @@ export interface CreateSessionControllerOptions {
   client: SessionControllerClient;
   projectId: string;
   conversationId: string;
+  initialCachedState?: NativeSessionState;
   initialOptimisticState?: NativeSessionState;
   storage?: SessionDraftStorage;
   createId?: () => string;
@@ -179,22 +180,36 @@ export function createSessionController(options: CreateSessionControllerOptions)
   let pendingSend = persisted.pendingSend ?? null;
   let recoveryRequired = persisted.recoveryRequired ?? null;
   const recoveredSubmissionIds = new Set(persisted.recoveredSubmissionIds ?? []);
+  const initialCachedState =
+    options.initialCachedState?.projectId === options.projectId &&
+    options.initialCachedState.conversationId === options.conversationId &&
+    options.initialCachedState.snapshot?.projectId === options.projectId &&
+    options.initialCachedState.snapshot.id === options.conversationId
+      ? options.initialCachedState
+      : undefined;
+  if (!recoveryRequired && initialCachedState?.error?.recoveryRequired) recoveryRequired = initialCachedState.error;
   const initialOptimisticItems = (options.initialOptimisticState?.itemOrder ?? [])
     .map((key) => options.initialOptimisticState?.items[key])
     .filter((item): item is NonNullable<typeof item> => Boolean(item?.optimistic && item.conversationId === options.conversationId));
+  const cachedItems = initialCachedState?.items ?? {};
+  const optimisticItems = Object.fromEntries(initialOptimisticItems.map((item) => [item.key, { ...item }]));
+  const itemOrder = [...new Set([...(initialCachedState?.itemOrder ?? []), ...initialOptimisticItems.map((item) => item.key)])];
   let state: NativeSessionState = {
-    ...createInitialSessionState(),
+    ...(initialCachedState ?? createInitialSessionState()),
+    transportState: 'disconnected',
+    reconnectAttempt: 0,
     projectId: options.projectId,
     conversationId: options.conversationId,
-    providerThreadId: initialOptimisticItems.length > 0 ? (options.initialOptimisticState?.providerThreadId ?? null) : null,
-    conversationState: initialOptimisticItems.length > 0 ? 'starting_turn' : 'native_loading',
-    items: Object.fromEntries(initialOptimisticItems.map((item) => [item.key, { ...item }])),
-    itemOrder: initialOptimisticItems.map((item) => item.key),
-    providerSettings: initialOptimisticItems.length > 0 ? (options.initialOptimisticState?.providerSettings ?? null) : null,
-    transcriptRevision: initialOptimisticItems.length,
+    providerThreadId: initialCachedState?.providerThreadId ?? (initialOptimisticItems.length > 0 ? (options.initialOptimisticState?.providerThreadId ?? null) : null),
+    conversationState: initialCachedState?.conversationState ?? (initialOptimisticItems.length > 0 ? 'starting_turn' : 'native_loading'),
+    items: { ...cachedItems, ...optimisticItems },
+    itemOrder,
+    providerSettings: initialCachedState?.providerSettings ?? (initialOptimisticItems.length > 0 ? (options.initialOptimisticState?.providerSettings ?? null) : null),
+    transcriptRevision: (initialCachedState?.transcriptRevision ?? 0) + initialOptimisticItems.filter((item) => !(item.key in cachedItems)).length,
     draft: persisted.draft,
     attachments: persisted.attachments,
     browserSubmission: persisted.browserSubmission ?? null,
+    busyOperation: null,
     error: recoveryRequired,
   };
   let socket: WebSocket | null = null;
@@ -1018,7 +1033,7 @@ export interface UseSessionControllerResult {
 }
 
 export function useSessionController(options: CreateSessionControllerOptions): UseSessionControllerResult {
-  const controller = useMemo(() => createSessionController(options), [options.client, options.projectId, options.conversationId, options.initialOptimisticState, options.storage, options.createId]);
+  const controller = useMemo(() => createSessionController(options), [options.client, options.projectId, options.conversationId, options.initialCachedState, options.initialOptimisticState, options.storage, options.createId]);
   const state = useSyncExternalStore(controller.subscribe, controller.getState, controller.getState);
   useEffect(() => {
     void controller.start().catch(() => undefined);

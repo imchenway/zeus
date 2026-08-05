@@ -21,20 +21,6 @@ export interface NativeAcceptedOperation {
 
 export interface NativeQueuedSubmission {
   id: string;
-<<<<<<< HEAD
-  conversationId?: string;
-  content: string;
-  status: 'queued' | 'paused' | 'failed';
-  delivery?: 'queue' | 'steer_now';
-  attachments?: NativeConversationAttachmentInput[];
-  expectedTurnId?: string | null;
-  clientUserMessageId?: string;
-  position: number;
-  providerTurnId?: string | null;
-  pausedReason: string | null;
-  createdAt?: string;
-  updatedAt?: string;
-=======
   conversationId: string;
   content: string;
   status: 'queued' | 'paused';
@@ -47,7 +33,6 @@ export interface NativeQueuedSubmission {
   pausedReason: string | null;
   createdAt: string;
   updatedAt: string;
->>>>>>> zeus/ZEUS-000041-task-01
 }
 
 export interface NativeQueueSnapshot {

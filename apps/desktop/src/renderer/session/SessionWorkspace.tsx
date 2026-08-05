@@ -176,6 +176,7 @@ export interface ConnectedSessionWorkspaceProps {
   choices?: NativeConversationChoice[];
   onChooseAttachments?: () => Promise<NativeConversationAttachment[]>;
   onStateChange?: (conversationId: string, state: NativeSessionState) => void;
+  initialCachedState?: NativeSessionState;
   initialOptimisticState?: NativeSessionState;
   onStartConversation?: SessionWorkspaceActions['onStartConversation'];
   onStartProjectConversation?: SessionWorkspaceActions['onStartProjectConversation'];
@@ -185,11 +186,13 @@ export interface ConnectedSessionWorkspaceProps {
 export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps) {
   // 每个 conversation 由父层 key 隔离；初始乐观状态只在 controller 创建时接管一次，
   // 后续即使父层清理 task-push pending，也不能重建 controller 或闪断真实 transcript。
+  const initialCachedState = useRef(props.initialCachedState).current;
   const initialOptimisticState = useRef(props.initialOptimisticState).current;
   const { state, controller } = useSessionController({
     client: props.client,
     projectId: props.conversation.projectId,
     conversationId: props.conversation.id,
+    initialCachedState,
     initialOptimisticState,
   });
   const [capabilities, setCapabilities] = useState<CodexConversationCapabilities | null>(null);
@@ -744,10 +747,12 @@ const labels = {
   'zh-CN': {
     workspace: '会话工作区',
     loading: '正在加载会话',
+    refreshing: '正在刷新会话',
     reconnecting: '正在重新连接',
     reconnectingAttempt: (attempt: number) => `正在重新连接 · 第 ${Math.max(1, attempt)} 次`,
     failed: '连接失败',
     failureHelp: '连接中断。请重新连接以读取最新快照。',
+    refreshFailureHelp: '后台刷新失败，当前仍显示上次成功读取的内容。',
     serverBusy: '服务繁忙',
     serverBusyHelp: '服务暂时繁忙。请稍候片刻，然后重新连接。',
     details: '详情',
@@ -796,10 +801,12 @@ const labels = {
   'en-US': {
     workspace: 'Conversation workspace',
     loading: 'Loading conversation',
+    refreshing: 'Refreshing conversation',
     reconnecting: 'Reconnecting',
     reconnectingAttempt: (attempt: number) => `Reconnecting · attempt ${Math.max(1, attempt)}`,
     failed: 'Connection failed',
     failureHelp: 'The connection was interrupted. Reconnect to load the latest snapshot.',
+    refreshFailureHelp: 'Background refresh failed. The last successfully loaded content remains visible.',
     serverBusy: 'Server busy',
     serverBusyHelp: 'The server is temporarily busy. Wait briefly, then reconnect.',
     details: 'Details',
@@ -1440,14 +1447,14 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
             >
               <div className="session-conversation-pane">
                 <SessionRuntimeDetails state={props.state} conversation={props.conversation} language={props.language} capabilities={props.capabilities} />
-                {props.state.transportState === 'hydrating' || props.state.transportState === 'connecting' ? <SessionLoading language={props.language} /> : null}
+                {(props.state.transportState === 'hydrating' || props.state.transportState === 'connecting') && !props.state.snapshot ? <SessionLoading language={props.language} /> : null}
                 {props.state.transportState === 'reconnecting' ? <SessionReconnectNotice language={props.language} attempt={props.state.reconnectAttempt} onReconnect={actions.onReconnect} /> : null}
                 {props.state.transportState === 'failed' ? (
-                  <section className="session-transport-failure" role="alert">
+                  <section className="session-transport-failure" role="alert" data-retained-content={Boolean(props.state.snapshot) || undefined}>
                     <WarningCircle aria-hidden="true" weight="regular" />
                     <span className="session-transport-failure-copy">
                       <strong>{props.state.error?.recoveryRequired ? copy.recoveryRequired : isServerBusyError(props.state.error) ? copy.serverBusy : copy.failed}</strong>
-                      <p>{props.state.error?.recoveryRequired ? copy.recoveryRequiredHelp : isServerBusyError(props.state.error) ? copy.serverBusyHelp : copy.failureHelp}</p>
+                      <p>{props.state.error?.recoveryRequired ? copy.recoveryRequiredHelp : props.state.snapshot ? copy.refreshFailureHelp : isServerBusyError(props.state.error) ? copy.serverBusyHelp : copy.failureHelp}</p>
                       {errorMessage(props.state.error) || props.loadError ? (
                         <details className="session-error-details">
                           <summary>{copy.details}</summary>
@@ -2184,7 +2191,7 @@ function sessionStatus(state: NativeSessionState | null, loadState: SessionWorks
   if (state.transportState === 'connecting' || state.transportState === 'hydrating')
     return {
       kind: 'busy',
-      label: copy.loading,
+      label: state.snapshot ? copy.refreshing : copy.loading,
     };
   if (state.transportState === 'reconnecting')
     return {
