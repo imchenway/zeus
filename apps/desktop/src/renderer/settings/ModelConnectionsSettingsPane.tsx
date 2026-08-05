@@ -32,7 +32,10 @@ const capabilityStates: Array<{ value: ModelCapabilityState; zh: string; en: str
 ];
 const thinkingFormats: ModelThinkingFormat[] = ['openai', 'deepseek', 'qwen', 'zai', 'openrouter', 'together', 'qwen-chat-template', 'string-thinking', 'ant-ling'];
 
-type ModelConnectionClient = Pick<DashboardClient, 'loadModelConnections' | 'createModelConnection' | 'updateModelConnection' | 'deleteModelConnection' | 'clearModelConnectionApiKey' | 'refreshModelConnectionModels' | 'diagnoseModelConnection'>;
+type ModelConnectionClient = Pick<
+  DashboardClient,
+  'loadModelConnections' | 'createModelConnection' | 'updateModelConnection' | 'deleteModelConnection' | 'clearModelConnectionApiKey' | 'refreshModelConnectionModels' | 'diagnoseModelConnection'
+>;
 
 export function ModelConnectionsSettingsPane(props: { language: 'zh-CN' | 'en-US'; client: ModelConnectionClient | null }) {
   const zh = props.language === 'zh-CN';
@@ -69,7 +72,7 @@ export function ModelConnectionsSettingsPane(props: { language: 'zh-CN' | 'en-US
   }, [props.client]);
 
   const busy = status !== 'idle';
-  const current = draft.id ? connections.find((connection) => connection.id === draft.id) ?? null : null;
+  const current = draft.id ? (connections.find((connection) => connection.id === draft.id) ?? null) : null;
 
   function selectConnection(connection: ModelConnectionRecord): void {
     setDraft({
@@ -224,9 +227,11 @@ export function ModelConnectionsSettingsPane(props: { language: 'zh-CN' | 'en-US
             <button key={connection.id} type="button" className={draft.id === connection.id ? 'selected' : ''} onClick={() => selectConnection(connection)}>
               <span>
                 <strong>{connection.name}</strong>
-                <small>{connection.models.length} {zh ? '个模型' : 'models'}</small>
+                <small>
+                  {connection.models.length} {zh ? '个模型' : 'models'}
+                </small>
               </span>
-              <em data-configured={connection.apiKeyConfigured || undefined}>{connection.apiKeyConfigured ? (zh ? '密钥已保存' : 'Key saved') : (zh ? '未配置密钥' : 'No key')}</em>
+              <em data-configured={connection.apiKeyConfigured || undefined}>{connection.apiKeyConfigured ? (zh ? '密钥已保存' : 'Key saved') : zh ? '未配置密钥' : 'No key'}</em>
             </button>
           ))}
         </nav>
@@ -249,24 +254,58 @@ export function ModelConnectionsSettingsPane(props: { language: 'zh-CN' | 'en-US
             </label>
             <label>
               <span>{zh ? '连接名称' : 'Connection name'}</span>
-              <input value={draft.name} onChange={(event) => { const name = event.currentTarget.value; setDraft((value) => ({ ...value, name })); }} />
+              <input
+                value={draft.name}
+                onChange={(event) => {
+                  const name = event.currentTarget.value;
+                  setDraft((value) => ({ ...value, name }));
+                }}
+              />
             </label>
             <label className="model-connection-wide-field">
               <span>{zh ? '服务地址' : 'Base URL'}</span>
-              <input value={draft.baseUrl} placeholder="https://api.example.com/v1" onChange={(event) => { const baseUrl = event.currentTarget.value; setDraft((value) => ({ ...value, baseUrl })); }} />
+              <input
+                value={draft.baseUrl}
+                placeholder="https://api.example.com/v1"
+                onChange={(event) => {
+                  const baseUrl = event.currentTarget.value;
+                  setDraft((value) => ({ ...value, baseUrl }));
+                }}
+              />
             </label>
             <label>
               <span>{zh ? '模型目录路径' : 'Models path'}</span>
-              <input value={draft.modelsPath} onChange={(event) => { const modelsPath = event.currentTarget.value; setDraft((value) => ({ ...value, modelsPath })); }} />
+              <input
+                value={draft.modelsPath}
+                onChange={(event) => {
+                  const modelsPath = event.currentTarget.value;
+                  setDraft((value) => ({ ...value, modelsPath }));
+                }}
+              />
             </label>
             <label>
               <span>{current?.apiKeyConfigured ? (zh ? '替换 API Key' : 'Replace API key') : 'API Key'}</span>
-              <input type="password" autoComplete="off" value={draft.apiKey} onChange={(event) => { const apiKey = event.currentTarget.value; setDraft((value) => ({ ...value, apiKey })); }} />
+              <input
+                type="password"
+                autoComplete="off"
+                value={draft.apiKey}
+                onChange={(event) => {
+                  const apiKey = event.currentTarget.value;
+                  setDraft((value) => ({ ...value, apiKey }));
+                }}
+              />
             </label>
           </div>
 
           <label className="model-connection-enabled">
-            <input type="checkbox" checked={draft.enabled} onChange={(event) => { const enabled = event.currentTarget.checked; setDraft((value) => ({ ...value, enabled })); }} />
+            <input
+              type="checkbox"
+              checked={draft.enabled}
+              onChange={(event) => {
+                const enabled = event.currentTarget.checked;
+                setDraft((value) => ({ ...value, enabled }));
+              }}
+            />
             <span>{zh ? '允许项目使用此连接' : 'Allow projects to use this connection'}</span>
           </label>
 
@@ -278,25 +317,51 @@ export function ModelConnectionsSettingsPane(props: { language: 'zh-CN' | 'en-US
               </span>
               <span className="model-add-row">
                 <input aria-label={zh ? '手工模型 ID' : 'Manual model ID'} placeholder={zh ? '手工模型 ID' : 'Manual model ID'} value={newModelId} onChange={(event) => setNewModelId(event.currentTarget.value)} />
-                <Button variant="secondary" size="compact" onClick={addManualModel} disabled={!newModelId.trim()}>{zh ? '添加' : 'Add'}</Button>
+                <Button variant="secondary" size="compact" onClick={addManualModel} disabled={!newModelId.trim()}>
+                  {zh ? '添加' : 'Add'}
+                </Button>
               </span>
             </header>
             {draft.models.length === 0 ? <p>{zh ? '可以先保存 API Key 后自动获取，也可以手工添加模型。' : 'Save an API key to fetch models, or add models manually.'}</p> : null}
             <div className="model-definition-list">
               {draft.models.map((model) => (
-                <ModelDefinitionEditor key={model.id} language={props.language} model={model} onChange={(next) => updateModel(model.id, () => next)} onRemove={() => setDraft((value) => ({ ...value, models: value.models.filter((candidate) => candidate.id !== model.id) }))} />
+                <ModelDefinitionEditor
+                  key={model.id}
+                  language={props.language}
+                  model={model}
+                  onChange={(next) => updateModel(model.id, () => next)}
+                  onRemove={() => setDraft((value) => ({ ...value, models: value.models.filter((candidate) => candidate.id !== model.id) }))}
+                />
               ))}
             </div>
           </section>
 
           {diagnostic ? <p className={`model-connection-diagnostic ${diagnostic.ok ? 'success' : 'warning'}`}>{diagnostic.message}</p> : null}
-          {message ? <p className="model-connection-message" role="status">{message}</p> : null}
+          {message ? (
+            <p className="model-connection-message" role="status">
+              {message}
+            </p>
+          ) : null}
           <footer className="model-connection-actions">
-            <Button variant="primary" size="compact" onClick={() => void save()} disabled={busy || !draft.name.trim() || !draft.baseUrl.trim()} busy={status === 'saving'}>{zh ? '保存连接' : 'Save connection'}</Button>
-            <Button variant="secondary" size="compact" onClick={() => void refreshModels()} disabled={busy || !draft.id || !current?.apiKeyConfigured} busy={status === 'refreshing'}>{zh ? '获取模型' : 'Fetch models'}</Button>
-            <Button variant="secondary" size="compact" onClick={() => void diagnose()} disabled={busy || !draft.id}>{zh ? '连接诊断' : 'Diagnose'}</Button>
-            {draft.id && current?.apiKeyConfigured ? <Button variant="secondary" size="compact" onClick={() => void clearApiKey()} disabled={busy}>{zh ? '清除密钥' : 'Clear key'}</Button> : null}
-            {draft.id ? <Button variant="danger" size="compact" onClick={() => void removeConnection()} disabled={busy} busy={status === 'deleting'}>{zh ? '删除连接' : 'Delete'}</Button> : null}
+            <Button variant="primary" size="compact" onClick={() => void save()} disabled={busy || !draft.name.trim() || !draft.baseUrl.trim()} busy={status === 'saving'}>
+              {zh ? '保存连接' : 'Save connection'}
+            </Button>
+            <Button variant="secondary" size="compact" onClick={() => void refreshModels()} disabled={busy || !draft.id || !current?.apiKeyConfigured} busy={status === 'refreshing'}>
+              {zh ? '获取模型' : 'Fetch models'}
+            </Button>
+            <Button variant="secondary" size="compact" onClick={() => void diagnose()} disabled={busy || !draft.id}>
+              {zh ? '连接诊断' : 'Diagnose'}
+            </Button>
+            {draft.id && current?.apiKeyConfigured ? (
+              <Button variant="secondary" size="compact" onClick={() => void clearApiKey()} disabled={busy}>
+                {zh ? '清除密钥' : 'Clear key'}
+              </Button>
+            ) : null}
+            {draft.id ? (
+              <Button variant="danger" size="compact" onClick={() => void removeConnection()} disabled={busy} busy={status === 'deleting'}>
+                {zh ? '删除连接' : 'Delete'}
+              </Button>
+            ) : null}
           </footer>
         </section>
       </div>
@@ -323,7 +388,9 @@ function ModelDefinitionEditor(props: { language: 'zh-CN' | 'en-US'; model: Mode
           <input type="checkbox" checked={model.enabled} onChange={(event) => props.onChange({ ...model, enabled: event.currentTarget.checked })} />
           <strong>{model.id}</strong>
         </label>
-        <button type="button" onClick={props.onRemove} aria-label={zh ? `移除模型 ${model.id}` : `Remove model ${model.id}`}>×</button>
+        <button type="button" onClick={props.onRemove} aria-label={zh ? `移除模型 ${model.id}` : `Remove model ${model.id}`}>
+          ×
+        </button>
       </header>
       <div className="model-definition-grid">
         <label>
@@ -332,7 +399,13 @@ function ModelDefinitionEditor(props: { language: 'zh-CN' | 'en-US'; model: Mode
         </label>
         <label>
           <span>{zh ? '速度标签' : 'Speed label'}</span>
-          <ZeusSelect<ModelConnectionModel['speedLabel']> ariaLabel={zh ? '速度标签' : 'Speed label'} size="regular" value={model.speedLabel} onChange={(speedLabel) => props.onChange({ ...model, speedLabel })} options={(['standard', 'high_speed', 'flash', 'turbo'] as const).map((value) => ({ value, label: value }))} />
+          <ZeusSelect<ModelConnectionModel['speedLabel']>
+            ariaLabel={zh ? '速度标签' : 'Speed label'}
+            size="regular"
+            value={model.speedLabel}
+            onChange={(speedLabel) => props.onChange({ ...model, speedLabel })}
+            options={(['standard', 'high_speed', 'flash', 'turbo'] as const).map((value) => ({ value, label: value }))}
+          />
         </label>
         <label>
           <span>{zh ? '思考能力' : 'Reasoning'}</span>
@@ -354,7 +427,13 @@ function ModelDefinitionEditor(props: { language: 'zh-CN' | 'en-US'; model: Mode
         </label>
         <label>
           <span>{zh ? '思考参数格式' : 'Thinking format'}</span>
-          <ZeusSelect ariaLabel={zh ? '思考参数格式' : 'Thinking format'} size="regular" value={model.capability.reasoning.thinkingFormat} onChange={(thinkingFormat) => props.onChange({ ...model, capability: { ...model.capability, reasoning: { ...model.capability.reasoning, thinkingFormat } } })} options={thinkingFormats.map((value) => ({ value, label: value }))} />
+          <ZeusSelect
+            ariaLabel={zh ? '思考参数格式' : 'Thinking format'}
+            size="regular"
+            value={model.capability.reasoning.thinkingFormat}
+            onChange={(thinkingFormat) => props.onChange({ ...model, capability: { ...model.capability, reasoning: { ...model.capability.reasoning, thinkingFormat } } })}
+            options={thinkingFormats.map((value) => ({ value, label: value }))}
+          />
         </label>
         <label>
           <span>{zh ? '推理等级' : 'Reasoning levels'}</span>
@@ -362,23 +441,52 @@ function ModelDefinitionEditor(props: { language: 'zh-CN' | 'en-US'; model: Mode
             disabled={model.capability.reasoning.state !== 'supported'}
             value={model.capability.reasoning.levels.join(', ')}
             onChange={(event) => {
-              const levels = thinkingLevels.filter((level) => event.currentTarget.value.split(',').map((item) => item.trim()).includes(level));
+              const levels = thinkingLevels.filter((level) =>
+                event.currentTarget.value
+                  .split(',')
+                  .map((item) => item.trim())
+                  .includes(level),
+              );
               const effective: ModelThinkingLevel[] = levels.length > 0 ? levels : ['off'];
-              props.onChange({ ...model, capability: { ...model.capability, reasoning: { ...model.capability.reasoning, levels: effective, defaultLevel: effective.includes(model.capability.reasoning.defaultLevel) ? model.capability.reasoning.defaultLevel : effective[0]! } } });
+              props.onChange({
+                ...model,
+                capability: {
+                  ...model.capability,
+                  reasoning: { ...model.capability.reasoning, levels: effective, defaultLevel: effective.includes(model.capability.reasoning.defaultLevel) ? model.capability.reasoning.defaultLevel : effective[0]! },
+                },
+              });
             }}
           />
         </label>
         <label>
           <span>{zh ? '默认推理等级' : 'Default reasoning'}</span>
-          <ZeusSelect ariaLabel={zh ? '默认推理等级' : 'Default reasoning'} size="regular" value={model.capability.reasoning.defaultLevel} onChange={(defaultLevel) => props.onChange({ ...model, capability: { ...model.capability, reasoning: { ...model.capability.reasoning, defaultLevel } } })} options={model.capability.reasoning.levels.map((value) => ({ value, label: value }))} />
+          <ZeusSelect
+            ariaLabel={zh ? '默认推理等级' : 'Default reasoning'}
+            size="regular"
+            value={model.capability.reasoning.defaultLevel}
+            onChange={(defaultLevel) => props.onChange({ ...model, capability: { ...model.capability, reasoning: { ...model.capability.reasoning, defaultLevel } } })}
+            options={model.capability.reasoning.levels.map((value) => ({ value, label: value }))}
+          />
         </label>
         <label>
           <span>{zh ? '工具调用' : 'Tool calling'}</span>
-          <ZeusSelect ariaLabel={zh ? '工具调用' : 'Tool calling'} size="regular" value={model.capability.tools.state} onChange={(state) => updateEvidence('tools', state)} options={capabilityStates.map((state) => ({ value: state.value, label: zh ? state.zh : state.en }))} />
+          <ZeusSelect
+            ariaLabel={zh ? '工具调用' : 'Tool calling'}
+            size="regular"
+            value={model.capability.tools.state}
+            onChange={(state) => updateEvidence('tools', state)}
+            options={capabilityStates.map((state) => ({ value: state.value, label: zh ? state.zh : state.en }))}
+          />
         </label>
         <label>
           <span>{zh ? '图片输入' : 'Image input'}</span>
-          <ZeusSelect ariaLabel={zh ? '图片输入' : 'Image input'} size="regular" value={model.capability.imageInput.state} onChange={(state) => updateEvidence('imageInput', state)} options={capabilityStates.map((state) => ({ value: state.value, label: zh ? state.zh : state.en }))} />
+          <ZeusSelect
+            ariaLabel={zh ? '图片输入' : 'Image input'}
+            size="regular"
+            value={model.capability.imageInput.state}
+            onChange={(state) => updateEvidence('imageInput', state)}
+            options={capabilityStates.map((state) => ({ value: state.value, label: zh ? state.zh : state.en }))}
+          />
         </label>
       </div>
     </article>
@@ -391,7 +499,8 @@ function emptyDraft(): ModelConnectionDraft {
 
 function createModel(id: string, thinkingFormat: ModelThinkingFormat): ModelConnectionModel {
   const lower = id.toLowerCase();
-  const speedLabel: ModelConnectionModel['speedLabel'] = lower.includes('highspeed') || lower.includes('high-speed') || lower.includes('fast') ? 'high_speed' : lower.includes('flash') ? 'flash' : lower.includes('turbo') ? 'turbo' : 'standard';
+  const speedLabel: ModelConnectionModel['speedLabel'] =
+    lower.includes('highspeed') || lower.includes('high-speed') || lower.includes('fast') ? 'high_speed' : lower.includes('flash') ? 'flash' : lower.includes('turbo') ? 'turbo' : 'standard';
   const evidence = (reason: string) => ({ source: 'manual' as const, state: 'unverified' as const, checkedAt: null, reason });
   return {
     id,

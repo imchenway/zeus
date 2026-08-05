@@ -85,7 +85,9 @@ export function ProjectModelsSettings(props: { projectId: string; language: 'zh-
               <input type="checkbox" checked={selection.allowedModelRefs.includes(model.id)} onChange={(event) => toggleModel(model.id, event.currentTarget.checked)} />
               <span>
                 <strong>{model.displayName}</strong>
-                <small>{model.sourceName} · {formatSpeed(model.speedLabel, zh)} · {model.available ? (zh ? '可运行' : 'Ready') : model.availabilityReason}</small>
+                <small>
+                  {model.sourceName} · {formatSpeed(model.speedLabel, zh)} · {model.available ? (zh ? '可运行' : 'Ready') : model.availabilityReason}
+                </small>
               </span>
             </label>
           ))}

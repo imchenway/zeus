@@ -1,17 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import {
-  createAgentSession,
-  DefaultResourceLoader,
-  defineTool,
-  ModelRuntime,
-  SessionManager,
-  SettingsManager,
-  type AgentSession,
-  type AgentSessionEvent,
-  type ToolDefinition,
-} from '@earendil-works/pi-coding-agent';
+import { createAgentSession, DefaultResourceLoader, defineTool, ModelRuntime, SessionManager, SettingsManager, type AgentSession, type AgentSessionEvent, type ToolDefinition } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
 import type {
   AcceptedAgentRun,
@@ -351,13 +341,52 @@ function createZeusTools(getEntry: () => PiSessionEntry | null, broker: PiZeusTo
     return { content: [{ type: 'text' as const, text: result.text }], details: result.details ?? null };
   };
   return [
-    defineTool({ name: 'read', label: '读取文件', description: '读取 Zeus 当前工作区中的文本文件。', parameters: Type.Object({ path: Type.String(), offset: Type.Optional(Type.Number()), limit: Type.Optional(Type.Number()) }), execute: (id, args, signal) => execute(id, 'read', args, signal) }),
-    defineTool({ name: 'grep', label: '搜索文本', description: '在 Zeus 当前工作区中搜索文本。', parameters: Type.Object({ pattern: Type.String(), path: Type.Optional(Type.String()) }), execute: (id, args, signal) => execute(id, 'grep', args, signal) }),
-    defineTool({ name: 'find', label: '查找文件', description: '在 Zeus 当前工作区中按名称查找文件。', parameters: Type.Object({ pattern: Type.String(), path: Type.Optional(Type.String()) }), execute: (id, args, signal) => execute(id, 'find', args, signal) }),
+    defineTool({
+      name: 'read',
+      label: '读取文件',
+      description: '读取 Zeus 当前工作区中的文本文件。',
+      parameters: Type.Object({ path: Type.String(), offset: Type.Optional(Type.Number()), limit: Type.Optional(Type.Number()) }),
+      execute: (id, args, signal) => execute(id, 'read', args, signal),
+    }),
+    defineTool({
+      name: 'grep',
+      label: '搜索文本',
+      description: '在 Zeus 当前工作区中搜索文本。',
+      parameters: Type.Object({ pattern: Type.String(), path: Type.Optional(Type.String()) }),
+      execute: (id, args, signal) => execute(id, 'grep', args, signal),
+    }),
+    defineTool({
+      name: 'find',
+      label: '查找文件',
+      description: '在 Zeus 当前工作区中按名称查找文件。',
+      parameters: Type.Object({ pattern: Type.String(), path: Type.Optional(Type.String()) }),
+      execute: (id, args, signal) => execute(id, 'find', args, signal),
+    }),
     defineTool({ name: 'ls', label: '列出目录', description: '列出 Zeus 当前工作区中的目录内容。', parameters: Type.Object({ path: Type.Optional(Type.String()) }), execute: (id, args, signal) => execute(id, 'ls', args, signal) }),
-    defineTool({ name: 'write', label: '写入文件', description: '经 Zeus 权限判断和用户审批后写入文件。', parameters: Type.Object({ path: Type.String(), content: Type.String() }), executionMode: 'sequential', execute: (id, args, signal) => execute(id, 'write', args, signal) }),
-    defineTool({ name: 'edit', label: '编辑文件', description: '经 Zeus 权限判断和用户审批后精确替换文件内容。', parameters: Type.Object({ path: Type.String(), oldText: Type.String(), newText: Type.String() }), executionMode: 'sequential', execute: (id, args, signal) => execute(id, 'edit', args, signal) }),
-    defineTool({ name: 'bash', label: '执行命令', description: '经 Zeus 权限判断和用户审批后在当前工作区执行命令。', parameters: Type.Object({ command: Type.String() }), executionMode: 'sequential', execute: (id, args, signal) => execute(id, 'bash', args, signal) }),
+    defineTool({
+      name: 'write',
+      label: '写入文件',
+      description: '经 Zeus 权限判断和用户审批后写入文件。',
+      parameters: Type.Object({ path: Type.String(), content: Type.String() }),
+      executionMode: 'sequential',
+      execute: (id, args, signal) => execute(id, 'write', args, signal),
+    }),
+    defineTool({
+      name: 'edit',
+      label: '编辑文件',
+      description: '经 Zeus 权限判断和用户审批后精确替换文件内容。',
+      parameters: Type.Object({ path: Type.String(), oldText: Type.String(), newText: Type.String() }),
+      executionMode: 'sequential',
+      execute: (id, args, signal) => execute(id, 'edit', args, signal),
+    }),
+    defineTool({
+      name: 'bash',
+      label: '执行命令',
+      description: '经 Zeus 权限判断和用户审批后在当前工作区执行命令。',
+      parameters: Type.Object({ command: Type.String() }),
+      executionMode: 'sequential',
+      execute: (id, args, signal) => execute(id, 'bash', args, signal),
+    }),
   ];
 }
 

@@ -3,15 +3,7 @@ import { readFile, readdir, writeFile } from 'node:fs/promises';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import { createPiSdkRuntimeDriver, modelRef, type AgentModelIdentity, type AgentRuntimeEvent, type AgentSessionIdentity, type PiZeusToolBroker, type PiZeusToolRequest, type PiZeusToolResult } from '@zeus/ai-runtime';
-import type {
-  ConversationItemRepository,
-  ConversationRepository,
-  ConversationServerRequestRepository,
-  ConversationSubmissionRepository,
-  ConversationTurnRepository,
-  ZeusConversationWithMessagesRecord,
-  ZeusDatabase,
-} from '@zeus/storage';
+import type { ConversationItemRepository, ConversationRepository, ConversationServerRequestRepository, ConversationSubmissionRepository, ConversationTurnRepository, ZeusConversationWithMessagesRecord, ZeusDatabase } from '@zeus/storage';
 import type { ModelConnectionService } from './modelConnectionService.js';
 
 const execFileAsync = promisify(execFile);
@@ -164,12 +156,42 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       contexts.set(session.nativeSessionId, context);
     }
     const createdAt = options.now();
-    const submission = options.submissions.createOrGet({ id: input.submissionId, conversationId: input.conversation.id, idempotencyKey: input.idempotencyKey, requestHash: input.idempotencyKey, clientMessageId: input.clientUserMessageId, kind: 'message', requestedDelivery: 'queue', status: 'dispatching', input: { text: input.content, context: { model: input.model.modelId, modelSourceId: input.model.sourceId, agentKind: 'pi', thinkingLevel: input.thinkingLevel, projectLocalPath: context.cwd } }, createdAt, dispatchedAt: createdAt });
+    const submission = options.submissions.createOrGet({
+      id: input.submissionId,
+      conversationId: input.conversation.id,
+      idempotencyKey: input.idempotencyKey,
+      requestHash: input.idempotencyKey,
+      clientMessageId: input.clientUserMessageId,
+      kind: 'message',
+      requestedDelivery: 'queue',
+      status: 'dispatching',
+      input: { text: input.content, context: { model: input.model.modelId, modelSourceId: input.model.sourceId, agentKind: 'pi', thinkingLevel: input.thinkingLevel, projectLocalPath: context.cwd } },
+      createdAt,
+      dispatchedAt: createdAt,
+    });
     const run = await driver.startRun({ session: context.session, content: input.content, clientRequestId: input.clientUserMessageId, model: input.model, ...(input.thinkingLevel ? { thinkingLevel: input.thinkingLevel } : {}) });
-    const turn = options.turns.upsert({ conversationId: input.conversation.id, providerThreadId: context.session.nativeSessionId, providerTurnId: run.nativeRunId, clientSubmissionId: submission.id, status: 'running', startedAt: run.acceptedAt, completedAt: null, createdAt, updatedAt: run.acceptedAt, agentKind: 'pi', nativeRunId: run.nativeRunId });
+    const turn = options.turns.upsert({
+      conversationId: input.conversation.id,
+      providerThreadId: context.session.nativeSessionId,
+      providerTurnId: run.nativeRunId,
+      clientSubmissionId: submission.id,
+      status: 'running',
+      startedAt: run.acceptedAt,
+      completedAt: null,
+      createdAt,
+      updatedAt: run.acceptedAt,
+      agentKind: 'pi',
+      nativeRunId: run.nativeRunId,
+    });
     appendUserProjection(input.conversation.id, context.session.nativeSessionId, turn.id, run.nativeRunId, input.content, input.clientUserMessageId, createdAt);
     options.submissions.updateStatus(submission.id, 'active', { providerTurnId: run.nativeRunId, updatedAt: run.acceptedAt });
-    options.conversations.updateAgentRuntime(input.conversation.id, { providerState: 'active', status: 'running', modelSourceId: input.model.sourceId, modelId: input.model.modelId, providerModel: input.model.sourceId ? modelRef(input.model.sourceId, input.model.modelId) : input.model.modelId });
+    options.conversations.updateAgentRuntime(input.conversation.id, {
+      providerState: 'active',
+      status: 'running',
+      modelSourceId: input.model.sourceId,
+      modelId: input.model.modelId,
+      providerModel: input.model.sourceId ? modelRef(input.model.sourceId, input.model.modelId) : input.model.modelId,
+    });
     runs.set(run.nativeRunId, { conversationId: input.conversation.id, submissionId: submission.id, turnId: turn.id, providerTurnId: run.nativeRunId });
     await options.db.save();
     publish('conversation.turn.started', input.conversation.id, { turnId: run.nativeRunId, submissionId: submission.id, status: 'running' });
@@ -214,15 +236,53 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       const text = messageText(message);
       if (!text) return;
       const itemId = `pi_message_${event.nativeRunId}`;
-      options.items.upsertCompleted({ conversationId: run.conversationId, turnId: run.turnId, providerThreadId: event.nativeSessionId ?? '', providerTurnId: run.providerTurnId, providerItemId: itemId, itemType: 'agentMessage', phase: 'final_answer', payload: { agentKind: 'pi' }, textContent: text, completedAt: event.createdAt, updatedAt: event.createdAt, agentKind: 'pi', nativeItemId: itemId });
-      options.conversations.appendMessage({ conversationId: run.conversationId, role: 'assistant', content: text, source: 'pi_sdk', metadata: { agentKind: 'pi' }, createdAt: event.createdAt, providerThreadId: event.nativeSessionId ?? undefined, providerTurnId: run.providerTurnId, providerItemId: itemId });
+      options.items.upsertCompleted({
+        conversationId: run.conversationId,
+        turnId: run.turnId,
+        providerThreadId: event.nativeSessionId ?? '',
+        providerTurnId: run.providerTurnId,
+        providerItemId: itemId,
+        itemType: 'agentMessage',
+        phase: 'final_answer',
+        payload: { agentKind: 'pi' },
+        textContent: text,
+        completedAt: event.createdAt,
+        updatedAt: event.createdAt,
+        agentKind: 'pi',
+        nativeItemId: itemId,
+      });
+      options.conversations.appendMessage({
+        conversationId: run.conversationId,
+        role: 'assistant',
+        content: text,
+        source: 'pi_sdk',
+        metadata: { agentKind: 'pi' },
+        createdAt: event.createdAt,
+        providerThreadId: event.nativeSessionId ?? undefined,
+        providerTurnId: run.providerTurnId,
+        providerItemId: itemId,
+      });
       publish('conversation.item.completed', run.conversationId, { turnId: run.providerTurnId, itemId, itemType: 'agentMessage', status: 'completed', phase: 'final_answer', textContent: text });
     }
     if (event.type === 'agent_settled' || event.type === 'runtime_error') {
       const failed = event.type === 'runtime_error';
       const interrupted = interruptedRuns.delete(event.nativeRunId);
       const status = interrupted ? 'interrupted' : failed ? 'failed' : 'completed';
-      options.turns.upsert({ id: run.turnId, conversationId: run.conversationId, providerThreadId: event.nativeSessionId ?? '', providerTurnId: run.providerTurnId, clientSubmissionId: run.submissionId, status, startedAt: null, completedAt: event.createdAt, createdAt: event.createdAt, updatedAt: event.createdAt, ...(failed ? { error: payload } : {}), agentKind: 'pi', nativeRunId: run.providerTurnId });
+      options.turns.upsert({
+        id: run.turnId,
+        conversationId: run.conversationId,
+        providerThreadId: event.nativeSessionId ?? '',
+        providerTurnId: run.providerTurnId,
+        clientSubmissionId: run.submissionId,
+        status,
+        startedAt: null,
+        completedAt: event.createdAt,
+        createdAt: event.createdAt,
+        updatedAt: event.createdAt,
+        ...(failed ? { error: payload } : {}),
+        agentKind: 'pi',
+        nativeRunId: run.providerTurnId,
+      });
       if (interrupted) {
         options.submissions.updateStatus(run.submissionId, 'paused', { pausedReason: 'interrupted', resolvedAt: event.createdAt, updatedAt: event.createdAt });
       } else {
@@ -237,8 +297,33 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
 
   function appendUserProjection(conversationId: string, threadId: string, turnId: string, providerTurnId: string, content: string, clientMessageId: string, createdAt: string): void {
     const itemId = `pi_user_${clientMessageId}`;
-    options.items.upsertCompleted({ conversationId, turnId, providerThreadId: threadId, providerTurnId, providerItemId: itemId, itemType: 'userMessage', phase: 'prework', payload: { clientUserMessageId: clientMessageId, agentKind: 'pi' }, textContent: content, completedAt: createdAt, updatedAt: createdAt, agentKind: 'pi', nativeItemId: itemId });
-    options.conversations.appendMessage({ conversationId, role: 'user', content, source: 'pi_sdk', metadata: { clientUserMessageId: clientMessageId, agentKind: 'pi', cwd: contexts.get(threadId)?.cwd }, createdAt, providerThreadId: threadId, providerTurnId, providerItemId: itemId, clientMessageId });
+    options.items.upsertCompleted({
+      conversationId,
+      turnId,
+      providerThreadId: threadId,
+      providerTurnId,
+      providerItemId: itemId,
+      itemType: 'userMessage',
+      phase: 'prework',
+      payload: { clientUserMessageId: clientMessageId, agentKind: 'pi' },
+      textContent: content,
+      completedAt: createdAt,
+      updatedAt: createdAt,
+      agentKind: 'pi',
+      nativeItemId: itemId,
+    });
+    options.conversations.appendMessage({
+      conversationId,
+      role: 'user',
+      content,
+      source: 'pi_sdk',
+      metadata: { clientUserMessageId: clientMessageId, agentKind: 'pi', cwd: contexts.get(threadId)?.cwd },
+      createdAt,
+      providerThreadId: threadId,
+      providerTurnId,
+      providerItemId: itemId,
+      clientMessageId,
+    });
   }
 
   async function executeTool(request: PiZeusToolRequest): Promise<PiZeusToolResult> {
@@ -260,7 +345,12 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       const text = await readFile(path, 'utf8');
       const offset = numberArg(request.args.offset, 0);
       const limit = numberArg(request.args.limit, 2_000);
-      return { text: text.split('\n').slice(offset, offset + limit).join('\n') };
+      return {
+        text: text
+          .split('\n')
+          .slice(offset, offset + limit)
+          .join('\n'),
+      };
     }
     if (request.toolName === 'ls') return { text: (await readdir(path, { withFileTypes: true })).map((entry) => `${entry.isDirectory() ? 'd' : '-'} ${entry.name}`).join('\n') };
     if (request.toolName === 'write') {
@@ -288,7 +378,16 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     const activeTurn = options.turns.getById(activeRun.turnId);
     if (activeTurn) options.turns.upsert({ ...activeTurn, status: 'waiting', completedAt: null, updatedAt: timestamp, agentKind: 'pi', nativeRunId: activeRun.providerTurnId });
     options.conversations.updateAgentRuntime(context.conversationId, { providerState: 'waiting', status: 'running' });
-    const persisted = options.requests.upsert({ conversationId: context.conversationId, turnId: activeRun.turnId, transportGenerationId: request.session.runtimeInstanceId, providerRequestId: request.requestId, requestKind: kind, payload: { agentKind: 'pi', toolName: request.toolName, args: redactArgs(request.args), reason: 'Pi 工具请求需要 Zeus 审批。' }, status: 'pending', createdAt: timestamp });
+    const persisted = options.requests.upsert({
+      conversationId: context.conversationId,
+      turnId: activeRun.turnId,
+      transportGenerationId: request.session.runtimeInstanceId,
+      providerRequestId: request.requestId,
+      requestKind: kind,
+      payload: { agentKind: 'pi', toolName: request.toolName, args: redactArgs(request.args), reason: 'Pi 工具请求需要 Zeus 审批。' },
+      status: 'pending',
+      createdAt: timestamp,
+    });
     await options.db.save();
     publish('conversation.request.created', context.conversationId, { requestId: persisted.id, requestKind: kind });
     return new Promise<boolean>((resolveApproval, reject) => {
@@ -380,10 +479,13 @@ function resolveConversationCwd(conversation: ZeusConversationWithMessagesRecord
 function messageText(message: Record<string, unknown>): string {
   if (typeof message.content === 'string') return message.content.trim();
   if (!Array.isArray(message.content)) return '';
-  return message.content.flatMap((item) => {
-    const part = asRecord(item);
-    return part.type === 'text' && typeof part.text === 'string' ? [part.text] : [];
-  }).join('\n').trim();
+  return message.content
+    .flatMap((item) => {
+      const part = asRecord(item);
+      return part.type === 'text' && typeof part.text === 'string' ? [part.text] : [];
+    })
+    .join('\n')
+    .trim();
 }
 
 function readApprovalDecision(value: unknown): boolean {

@@ -3187,20 +3187,21 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
           {},
           202,
           async (stableOperationId, lifecycle) => {
-            const operation = conversation.agentKind === 'pi'
-              ? await (async () => {
-                  await lifecycle.markPrepared(startedResourceId);
-                  lifecycle.markRpcStarted(startedResourceId);
-                  return piNativeCoordinator.interruptTurn({ conversation, providerTurnId: request.params.turnId });
-                })()
-              : await codexNativeCoordinator.interruptTurn({
-                  conversationId: conversation.id,
-                  providerTurnId: request.params.turnId,
-                  providerWriteLifecycle: {
-                    markPrepared: () => lifecycle.markPrepared(startedResourceId),
-                    markRpcStarted: () => lifecycle.markRpcStarted(startedResourceId),
-                  },
-                });
+            const operation =
+              conversation.agentKind === 'pi'
+                ? await (async () => {
+                    await lifecycle.markPrepared(startedResourceId);
+                    lifecycle.markRpcStarted(startedResourceId);
+                    return piNativeCoordinator.interruptTurn({ conversation, providerTurnId: request.params.turnId });
+                  })()
+                : await codexNativeCoordinator.interruptTurn({
+                    conversationId: conversation.id,
+                    providerTurnId: request.params.turnId,
+                    providerWriteLifecycle: {
+                      markPrepared: () => lifecycle.markPrepared(startedResourceId),
+                      markRpcStarted: () => lifecycle.markRpcStarted(startedResourceId),
+                    },
+                  });
             const updatedConversation = conversations.getById(conversation.id);
             const submission = operation.submissionId ? conversationSubmissions.getById(operation.submissionId) : undefined;
             if (!updatedConversation) throw nativeApiError('ZEUS_NATIVE_ACCEPTANCE_NOT_DURABLE', 'Native interrupt acceptance was not persisted.');
@@ -11606,7 +11607,9 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     const active = [...turns].reverse().find((turn) => turn.status === 'running' || turn.status === 'dispatching' || turn.status === 'waiting');
     if (active?.providerTurnId) {
       if (active.status === 'waiting') {
-        const pending = conversationRequests.listByConversation(conversation.id).find((request) => request.turnId === active.id && request.status === 'pending' && (conversation.agentKind === 'pi' || codexAppServerManager.hasGeneration(request.transportGenerationId)));
+        const pending = conversationRequests
+          .listByConversation(conversation.id)
+          .find((request) => request.turnId === active.id && request.status === 'pending' && (conversation.agentKind === 'pi' || codexAppServerManager.hasGeneration(request.transportGenerationId)));
         if (pending) {
           return {
             type: 'waiting' as const,
@@ -11693,40 +11696,41 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     if (selectedAgentKind !== (conversation.agentKind === 'pi' ? 'pi' : 'codex')) {
       throw nativeApiError('ZEUS_AGENT_SWITCH_REQUIRES_NEW_CONVERSATION', '不能在同一会话内切换 Codex 与 Pi，请新建会话。');
     }
-    let nativeOperation = conversation.agentKind === 'pi'
-      ? delivery === 'steer_now'
-        ? await piNativeCoordinator.steerMessage({
-            conversation,
-            submissionId: `conversation_submission_${createHash('sha256').update(`${stableOperationId}\0pi-steer`).digest('hex').slice(0, 24)}`,
+    let nativeOperation =
+      conversation.agentKind === 'pi'
+        ? delivery === 'steer_now'
+          ? await piNativeCoordinator.steerMessage({
+              conversation,
+              submissionId: `conversation_submission_${createHash('sha256').update(`${stableOperationId}\0pi-steer`).digest('hex').slice(0, 24)}`,
+              content,
+              expectedTurnId: expectedTurnId!,
+              idempotencyKey,
+              clientUserMessageId,
+            })
+          : await piNativeCoordinator.submitMessage({
+              conversation,
+              submissionId: `conversation_submission_${createHash('sha256').update(`${stableOperationId}\0pi-submission`).digest('hex').slice(0, 24)}`,
+              content,
+              model: { sourceId: selectedModelSourceId, modelId: selectedModel ?? conversation.modelId ?? conversation.providerModel ?? '', displayName: null },
+              ...(selectedEffort ? { thinkingLevel: selectedEffort } : {}),
+              idempotencyKey,
+              clientUserMessageId,
+            })
+        : await codexNativeCoordinator.submitMessage({
+            conversationId: conversation.id,
             content,
-            expectedTurnId: expectedTurnId!,
+            ...(displayText ? { displayText } : {}),
+            attachments,
+            browserComments,
+            ...(selectedModel ? { model: selectedModel } : {}),
+            ...(selectedEffort ? { effort: selectedEffort } : {}),
+            ...(requestedServiceTier.present ? { serviceTier: selectedServiceTier ?? null } : {}),
+            ...(permissionMode ? { permissionMode } : {}),
+            ...(collaborationMode ? { collaborationMode } : {}),
             idempotencyKey,
             clientUserMessageId,
-          })
-        : await piNativeCoordinator.submitMessage({
-            conversation,
-            submissionId: `conversation_submission_${createHash('sha256').update(`${stableOperationId}\0pi-submission`).digest('hex').slice(0, 24)}`,
-            content,
-            model: { sourceId: selectedModelSourceId, modelId: selectedModel ?? conversation.modelId ?? conversation.providerModel ?? '', displayName: null },
-            ...(selectedEffort ? { thinkingLevel: selectedEffort } : {}),
-            idempotencyKey,
-            clientUserMessageId,
-          })
-      : await codexNativeCoordinator.submitMessage({
-      conversationId: conversation.id,
-      content,
-      ...(displayText ? { displayText } : {}),
-      attachments,
-      browserComments,
-      ...(selectedModel ? { model: selectedModel } : {}),
-      ...(selectedEffort ? { effort: selectedEffort } : {}),
-      ...(requestedServiceTier.present ? { serviceTier: selectedServiceTier ?? null } : {}),
-      ...(permissionMode ? { permissionMode } : {}),
-      ...(collaborationMode ? { collaborationMode } : {}),
-      idempotencyKey,
-      clientUserMessageId,
-      providerWriteLifecycle,
-        });
+            providerWriteLifecycle,
+          });
     const persisted = conversationSubmissions.getById(nativeOperation.submissionId);
     if (!persisted) throw nativeApiError('ZEUS_NATIVE_ACCEPTANCE_NOT_DURABLE', 'Native message submission was not persisted.');
     const input = parseJsonObject(persisted.inputJson);
@@ -12192,51 +12196,52 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
         }
         const taskEnvironment = await resolveTaskPushEnvironment(project, task, body.workspace, stableOperationId);
         const attachmentInput = normalizeTaskPushAttachments(task, project.localPath);
-        nativeOperation = selectedModel.agentKind === 'pi'
-          ? await piNativeCoordinator.startConversation({
-              conversationId: reservation.conversationId,
-              submissionId: reservation.submissionId,
-              projectId: project.id,
-              taskId: task.id,
-              taskTitle: task.title,
-              cwd: taskEnvironment.cwd,
-              prompt: buildTaskPushPrompt(task, supplementalInfo),
-              model: { sourceId: selectedModel.sourceId ?? null, modelId: selectedModel.model, displayName: selectedModel.displayName ?? null },
-              ...(selectedEffort ? { thinkingLevel: selectedEffort } : {}),
-              permissionMode,
-              idempotencyKey,
-              clientUserMessageId,
-              environmentId: taskEnvironment.environment.id,
-              ...(taskEnvironment.workspaces[0] ? { workspaceId: taskEnvironment.workspaces[0].id } : {}),
-            })
-          : await codexNativeCoordinator.startTaskConversation({
-          conversationId: reservation.conversationId,
-          submissionId: reservation.submissionId,
-          projectId: project.id,
-          projectLocalPath: taskEnvironment.cwd,
-          taskId: task.id,
-          environmentId: taskEnvironment.environment.id,
-          ...(taskEnvironment.workspaces[0] ? { workspaceId: taskEnvironment.workspaces[0].id } : {}),
-          writableRoots: taskEnvironment.writableRoots,
-          taskTitle: task.title,
-          prompt: buildTaskPushPrompt(task, supplementalInfo),
-          attachments: attachmentInput.attachments,
-          allowedAttachmentRoots: attachmentInput.allowedRoots,
-          model: selectedModel.model,
-          ...(selectedEffort ? { effort: selectedEffort } : {}),
-          ...(requestedServiceTier.present ? { serviceTier } : {}),
-          workMode,
-          // 兼容字段在该链路中不参与权限或提示词决策；权限完全取自弹窗的 permissionMode。
-          allowCodeChanges: false,
-          allowTests: false,
-          allowGitCommit: false,
-          applyLegacyTaskGuards: false,
-          bypassConcurrency: true,
-          permissionMode,
-          idempotencyKey,
-          clientUserMessageId,
-          providerWriteLifecycle: reservedLifecycle,
-            });
+        nativeOperation =
+          selectedModel.agentKind === 'pi'
+            ? await piNativeCoordinator.startConversation({
+                conversationId: reservation.conversationId,
+                submissionId: reservation.submissionId,
+                projectId: project.id,
+                taskId: task.id,
+                taskTitle: task.title,
+                cwd: taskEnvironment.cwd,
+                prompt: buildTaskPushPrompt(task, supplementalInfo),
+                model: { sourceId: selectedModel.sourceId ?? null, modelId: selectedModel.model, displayName: selectedModel.displayName ?? null },
+                ...(selectedEffort ? { thinkingLevel: selectedEffort } : {}),
+                permissionMode,
+                idempotencyKey,
+                clientUserMessageId,
+                environmentId: taskEnvironment.environment.id,
+                ...(taskEnvironment.workspaces[0] ? { workspaceId: taskEnvironment.workspaces[0].id } : {}),
+              })
+            : await codexNativeCoordinator.startTaskConversation({
+                conversationId: reservation.conversationId,
+                submissionId: reservation.submissionId,
+                projectId: project.id,
+                projectLocalPath: taskEnvironment.cwd,
+                taskId: task.id,
+                environmentId: taskEnvironment.environment.id,
+                ...(taskEnvironment.workspaces[0] ? { workspaceId: taskEnvironment.workspaces[0].id } : {}),
+                writableRoots: taskEnvironment.writableRoots,
+                taskTitle: task.title,
+                prompt: buildTaskPushPrompt(task, supplementalInfo),
+                attachments: attachmentInput.attachments,
+                allowedAttachmentRoots: attachmentInput.allowedRoots,
+                model: selectedModel.model,
+                ...(selectedEffort ? { effort: selectedEffort } : {}),
+                ...(requestedServiceTier.present ? { serviceTier } : {}),
+                workMode,
+                // 兼容字段在该链路中不参与权限或提示词决策；权限完全取自弹窗的 permissionMode。
+                allowCodeChanges: false,
+                allowTests: false,
+                allowGitCommit: false,
+                applyLegacyTaskGuards: false,
+                bypassConcurrency: true,
+                permissionMode,
+                idempotencyKey,
+                clientUserMessageId,
+                providerWriteLifecycle: reservedLifecycle,
+              });
       } else {
         if (body.content !== undefined && typeof body.content !== 'string') throw nativeApiError('ZEUS_INVALID_CONVERSATION_START', 'Create content must be a string.');
         const collaborationMode = body.collaborationMode === undefined ? 'default' : parseConversationCollaborationMode(body.collaborationMode);
@@ -13227,9 +13232,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     const piSelection = await modelConnections.getProjectSelection(project.id);
     const piCatalog = await modelConnections.listSelectableModels();
     const allowedPi = piCatalog.filter((model) => piSelection.allowedModelRefs.includes(model.id));
-    const codexCapabilities = codexNativeEnabled
-      ? await codexAppServerManager.ensureReady({ commandPath: currentCodexRuntimeCommandPath(), ...(codexExternalAgentHome ? { externalAgentHome: codexExternalAgentHome } : {}) })
-      : null;
+    const codexCapabilities = codexNativeEnabled ? await codexAppServerManager.ensureReady({ commandPath: currentCodexRuntimeCommandPath(), ...(codexExternalAgentHome ? { externalAgentHome: codexExternalAgentHome } : {}) }) : null;
     const codexModels = (codexCapabilities?.models ?? []).map((model) => ({
       id: model.id,
       model: model.model,
@@ -13265,7 +13268,11 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     if (models.length === 0) throw nativeApiError('ZEUS_MODEL_UNAVAILABLE', '当前项目没有可用的 Codex 或 Pi 模型。');
     const projectConfig = readProjectConfig(project.id);
     const configuredModel = projectConfig.defaultModel ?? runtimeSettings.adapterModels.codex;
-    const preferredModel = models.find((candidate) => candidate.id === piSelection.defaultModelRef && candidate.available !== false)?.id ?? models.find((candidate) => (candidate.model === configuredModel || candidate.id === configuredModel) && candidate.available !== false)?.id ?? models.find((candidate) => candidate.available !== false)?.id ?? models[0]!.id;
+    const preferredModel =
+      models.find((candidate) => candidate.id === piSelection.defaultModelRef && candidate.available !== false)?.id ??
+      models.find((candidate) => (candidate.model === configuredModel || candidate.id === configuredModel) && candidate.available !== false)?.id ??
+      models.find((candidate) => candidate.available !== false)?.id ??
+      models[0]!.id;
     return {
       generationId: codexCapabilities?.generationId ?? 'pi-sdk',
       initializedAt: codexCapabilities?.initializedAt ?? now().toISOString(),

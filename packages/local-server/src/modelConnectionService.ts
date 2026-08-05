@@ -59,14 +59,7 @@ const modelConnectionsSettingKey = 'models.connections';
 const projectModelsSettingPrefix = 'project.models.';
 
 /** 模型连接元数据进 SQLite settings，API Key 只进 SecretStore。 */
-export function createModelConnectionService(options: {
-  settings: SettingRepository;
-  secretStore: SecretStore;
-  save: () => Promise<void>;
-  listProjectIds: () => string[];
-  now?: () => string;
-  fetch?: typeof fetch;
-}): ModelConnectionService {
+export function createModelConnectionService(options: { settings: SettingRepository; secretStore: SecretStore; save: () => Promise<void>; listProjectIds: () => string[]; now?: () => string; fetch?: typeof fetch }): ModelConnectionService {
   const now = options.now ?? (() => new Date().toISOString());
   const fetcher = options.fetch ?? fetch;
 

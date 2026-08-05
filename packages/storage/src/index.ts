@@ -4477,7 +4477,21 @@ export class ConversationTurnRepository {
        ON CONFLICT(id) DO UPDATE SET provider_thread_id = excluded.provider_thread_id, provider_turn_id = excluded.provider_turn_id,
        status = excluded.status, error_json = excluded.error_json, started_at = COALESCE(excluded.started_at, conversation_turns.started_at),
        completed_at = excluded.completed_at, updated_at = excluded.updated_at, agent_kind = excluded.agent_kind, native_run_id = COALESCE(excluded.native_run_id, conversation_turns.native_run_id)`,
-      [id, input.conversationId, input.providerThreadId, input.providerTurnId, input.clientSubmissionId, status, errorJson, input.startedAt, input.completedAt, input.createdAt, input.updatedAt, input.agentKind ?? 'codex', input.nativeRunId ?? input.providerTurnId],
+      [
+        id,
+        input.conversationId,
+        input.providerThreadId,
+        input.providerTurnId,
+        input.clientSubmissionId,
+        status,
+        errorJson,
+        input.startedAt,
+        input.completedAt,
+        input.createdAt,
+        input.updatedAt,
+        input.agentKind ?? 'codex',
+        input.nativeRunId ?? input.providerTurnId,
+      ],
     );
     return mapConversationTurnRow(this.db.get<DbConversationTurnRow>(`SELECT * FROM conversation_turns WHERE id = ?`, [id])!);
   }
