@@ -93,13 +93,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
   const [serviceTierDowngraded, setServiceTierDowngraded] = useState(false);
   const active = props.state.conversationState === 'active_prework' || props.state.conversationState === 'active_final_answer';
   const busy = Boolean(props.state.busyOperation);
-  const writable =
-    props.readOnly !== true &&
-    !props.state.error?.recoveryRequired &&
-    props.state.transportState === 'ready' &&
-    props.state.conversationState !== 'legacy_readonly' &&
-    props.state.conversationState !== 'waiting_approval' &&
-    props.state.conversationState !== 'waiting_user_input';
+  const writable = props.readOnly !== true && !props.state.error?.recoveryRequired && props.state.conversationState !== 'legacy_readonly';
   const hasDraft = props.state.draft.trim().length > 0 || props.state.attachments.length > 0 || Boolean(props.state.browserSubmission);
   const steerAllowed = canSteerActiveTurn(props.state) && props.readOnly !== true;
   const selectedCapability = props.capabilities?.models.find((candidate) => candidate.model === selectedModel || candidate.id === selectedModel) ?? null;

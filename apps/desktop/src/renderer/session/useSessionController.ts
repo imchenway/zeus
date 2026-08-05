@@ -711,8 +711,8 @@ export function createSessionController(options: CreateSessionControllerOptions)
     }
   }
 
-  function runOperation<T>(key: string, execute: () => Promise<T>, apply: (result: T) => void | Promise<void>, clearErrorOnSuccess = true): Promise<T> {
-    if (recoveryRequired) return Promise.reject(sessionWriteBlockedError(recoveryRequired));
+  function runOperation<T>(key: string, execute: () => Promise<T>, apply: (result: T) => void | Promise<void>, clearErrorOnSuccess = true, allowDuringRecovery = false): Promise<T> {
+    if (recoveryRequired && !allowDuringRecovery) return Promise.reject(sessionWriteBlockedError(recoveryRequired));
     if (activeOperation) {
       if (activeOperation.key === key) return activeOperation.promise as Promise<T>;
       return Promise.reject(new Error(`Session operation already in progress: ${activeOperation.key}`));
@@ -975,6 +975,8 @@ export function createSessionController(options: CreateSessionControllerOptions)
         `queue:delete:${submissionId}`,
         () => options.client.deleteNativeQueuedSubmission(options.projectId, options.conversationId, submissionId),
         (queue) => dispatch({ type: 'queue_hydrated', queue }),
+        false,
+        true,
       );
     },
     reorderQueue(orderedSubmissionIds) {

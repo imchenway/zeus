@@ -228,7 +228,6 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
       task={props.task}
       owner={props.owner}
       choices={props.choices}
-      suppressComposer={!state.snapshot}
       capabilities={capabilities}
       actions={{
         ...createConnectedSessionActions({ controller, state, onChooseAttachments: props.onChooseAttachments }),
@@ -797,16 +796,8 @@ const labels = {
     mcpStartup: 'MCP 启动状态',
     runtimeReady: '运行时状态正常',
     runtimeAttention: '需要关注',
-    recoveryRequired: '需要恢复',
-    recoveryRequiredHelp: '当前状态可能不完整，不能安全续接。请新建会话，不要重连或继续发送。',
-    startNew: '新建会话',
-    recoverUnsent: '带入新会话',
-    nonResumable: '此会话已不能继续。',
-    nonResumableHelp: '历史仍可只读查看；若要继续工作，请显式新建会话。',
-    unsent: '未发送内容',
-    unsentHelp: '这些内容尚未进入 Codex 执行轮次。带入新会话后仍需由你确认发送。',
-    unsentAttachments: '未发送附件',
-    attachmentOnly: '仅包含附件',
+    recoveryRequired: '可继续输入',
+    recoveryRequiredHelp: '直接在下方输入并发送，Zeus 会自动续接可用会话并保留任务执行现场。',
     legacyTranscript: '只读旧会话记录',
     unsynced: '未同步',
     exactValue: '精确值',
@@ -851,16 +842,8 @@ const labels = {
     mcpStartup: 'MCP startup',
     runtimeReady: 'Runtime status current',
     runtimeAttention: 'Attention required',
-    recoveryRequired: 'Recovery required',
-    recoveryRequiredHelp: 'The current state may be incomplete and cannot be continued safely. Start a new conversation instead of reconnecting or sending.',
-    startNew: 'Start a new conversation',
-    recoverUnsent: 'Move to new conversation',
-    nonResumable: 'This conversation can no longer be continued.',
-    nonResumableHelp: 'Its history remains read-only. Start a new conversation explicitly to continue working.',
-    unsent: 'Unsent content',
-    unsentHelp: 'This content has not entered a Codex turn. You will still confirm before sending it from the new conversation.',
-    unsentAttachments: 'Unsent attachments',
-    attachmentOnly: 'Attachments only',
+    recoveryRequired: 'Ready for input',
+    recoveryRequiredHelp: 'Type and send below. Zeus will continue through an available conversation while preserving the task workspace.',
     legacyTranscript: 'Read-only legacy transcript',
     unsynced: 'Not synced',
     exactValue: 'exact value',
@@ -958,7 +941,6 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const contextReturnFocusRef = useRef<HTMLElement | null>(null);
   const [requestErrors, setRequestErrors] = useState<Record<string, string>>({});
   const [interruptArmed, setInterruptArmed] = useState(false);
-  const [startFreshOpen, setStartFreshOpen] = useState(false);
   const [contextWorkspace, setContextWorkspace] = useState<SessionContextWorkspace>({ kind: 'none' });
   const [contextMounted, setContextMounted] = useState(false);
   const [contextFullWidth, setContextFullWidth] = useState(false);
@@ -990,8 +972,10 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const effectiveResumable = props.state?.snapshot ? !['closed', 'failed'].includes(effectiveProviderState ?? '') : effectiveProviderState === 'archived' ? true : props.conversation?.resumable;
   const nonResumableNative = Boolean(props.conversation && !legacy && !effectiveResumable);
   const freshStartRequired = nonResumableNative || Boolean(props.state?.error?.recoveryRequired);
-  const recoveryDecisionPending = Boolean(props.state?.error?.recoveryRequired && ['disconnected', 'connecting', 'hydrating', 'reconnecting'].includes(props.state.transportState));
-  const unsentDraft = useMemo(() => createUnsentConversationDraft(freshStartRequired ? props.state?.queue?.submissions : undefined), [freshStartRequired, props.state?.queue?.submissions]);
+  const unsentDraft = useMemo(
+    () => createUnsentConversationDraft(freshStartRequired ? props.state?.queue?.submissions : undefined, props.state?.draft, props.state?.attachments),
+    [freshStartRequired, props.state?.attachments, props.state?.draft, props.state?.queue?.submissions],
+  );
   const pendingRequests = props.state?.pendingRequests.filter((request) => request.status === 'pending') ?? [];
   const pendingPlanImplementationRequests = props.state?.planImplementationRequests.filter((request) => request.status === 'pending').slice(-1) ?? [];
   const blockingPendingRequest = pendingRequests[0] ?? null;
@@ -1003,7 +987,6 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
 
   useEffect(() => {
     contextReturnFocusRef.current = null;
-    setStartFreshOpen(false);
     setComposerRuntimeSettings(readConversationNextTurnSettings(browserConversationStorage(), props.conversation?.projectId ?? '', props.conversation?.id ?? ''));
     lastNextTurnSettingsSyncRef.current = null;
     setContextWorkspace({ kind: 'none' });
@@ -1517,7 +1500,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                 <SessionRuntimeDetails state={props.state} conversation={props.conversation} language={props.language} capabilities={props.capabilities} />
                 {(props.state.transportState === 'hydrating' || props.state.transportState === 'connecting') && !props.state.snapshot ? <SessionLoading language={props.language} /> : null}
                 {props.state.transportState === 'reconnecting' ? <SessionReconnectNotice language={props.language} attempt={props.state.reconnectAttempt} onReconnect={actions.onReconnect} /> : null}
-                {props.state.transportState === 'failed' ? (
+                {props.state.transportState === 'failed' && !props.state.error?.recoveryRequired ? (
                   <section className="session-transport-failure" role="alert" data-retained-content={Boolean(props.state.snapshot) || undefined}>
                     <WarningCircle aria-hidden="true" weight="regular" />
                     <span className="session-transport-failure-copy">
@@ -1530,24 +1513,11 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                         </details>
                       ) : null}
                     </span>
-                    {props.state.error?.recoveryRequired ? (
-                      <button type="button" onClick={() => setStartFreshOpen(true)}>
-                        {unsentDraft.submissions.length ? copy.recoverUnsent : copy.startNew}
-                      </button>
-                    ) : actions.onReconnect ? (
+                    {actions.onReconnect ? (
                       <button type="button" onClick={() => void actions.onReconnect?.()}>
                         {copy.retry}
                       </button>
                     ) : null}
-                  </section>
-                ) : null}
-                {nonResumableNative ? (
-                  <section className="session-nonresumable-notice" role="status">
-                    <strong>{copy.nonResumable}</strong>
-                    <p>{copy.nonResumableHelp}</p>
-                    <button type="button" onClick={() => setStartFreshOpen(true)}>
-                      {unsentDraft.submissions.length ? copy.recoverUnsent : copy.startNew}
-                    </button>
                   </section>
                 ) : null}
                 <ConversationTranscript
@@ -1606,8 +1576,9 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                       onRespond={(_requestId, response) => respondToPlanImplementationRequest(blockingPlanImplementationRequest, response)}
                     />
                   </section>
-                ) : freshStartRequired ? (
-                  recoveryDecisionPending || !startFreshOpen ? null : owner ? (
+                ) : null}
+                {props.suppressComposer ? null : freshStartRequired ? (
+                  owner ? (
                     <NewConversationComposer
                       key={`fresh-conversation:${unsentDraft.key}`}
                       language={props.language}
@@ -1627,10 +1598,11 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                         for (const submission of unsentDraft.submissions) {
                           await actions.onDeleteQueuedSubmission?.(submission.id);
                         }
+                        actions.onDraftChange?.('');
+                        for (const attachment of props.state?.attachments ?? []) actions.onRemoveAttachment?.(attachment);
+                        actions.onRemoveBrowserSubmission?.();
                       }}
                     />
-                  ) : unsentDraft.submissions.length ? (
-                    <UnsentConversationContent language={props.language} submissions={unsentDraft.submissions} onRecover={() => setStartFreshOpen(true)} />
                   ) : null
                 ) : (
                   renderConversationComposer()
@@ -1782,15 +1754,7 @@ export function resolveComposerFocusRestoration(input: { previousPendingCount: n
 }
 
 function isComposerWritableForFocus(state: NativeSessionState | null, readOnly: boolean): boolean {
-  return Boolean(
-    !readOnly &&
-    state?.transportState === 'ready' &&
-    !state.busyOperation &&
-    !state.error?.recoveryRequired &&
-    state.conversationState !== 'legacy_readonly' &&
-    state.conversationState !== 'waiting_approval' &&
-    state.conversationState !== 'waiting_user_input',
-  );
+  return Boolean(!readOnly && state && !state.busyOperation && state.conversationState !== 'legacy_readonly');
 }
 
 function NewConversationComposer(props: {
@@ -2101,51 +2065,22 @@ interface UnsentConversationDraft {
   submissions: NativeQueuedSubmission[];
 }
 
-function createUnsentConversationDraft(submissions: readonly NativeQueuedSubmission[] | undefined): UnsentConversationDraft {
+function createUnsentConversationDraft(submissions: readonly NativeQueuedSubmission[] | undefined, currentDraft = '', currentAttachments: readonly NativeConversationAttachment[] = []): UnsentConversationDraft {
   const unsent = (submissions ?? []).filter((submission) => (submission.status === 'queued' || submission.status === 'paused') && !submission.providerTurnId).sort((left, right) => left.position - right.position);
-  const attachments = unsent.flatMap((submission) => submission.attachments ?? []);
+  const recoveredContent = unsent
+    .map((submission) => submission.content.trim())
+    .filter(Boolean)
+    .join('\n\n');
+  const draftContent = currentDraft.trim();
   return {
     key: unsent.map((submission) => submission.id).join(':'),
-    content: unsent
-      .map((submission) => submission.content.trim())
-      .filter(Boolean)
-      .join('\n\n'),
-    attachments: mergeConversationAttachments([], attachments),
+    content: recoveredContent === draftContent ? currentDraft : [recoveredContent, currentDraft].filter((part) => part.trim()).join('\n\n'),
+    attachments: mergeConversationAttachments(
+      [...currentAttachments],
+      unsent.flatMap((submission) => submission.attachments ?? []),
+    ),
     submissions: unsent,
   };
-}
-
-function UnsentConversationContent(props: { language: SessionUiLanguage; submissions: NativeQueuedSubmission[]; onRecover: () => void }) {
-  const copy = labels[props.language];
-  return (
-    <section className="session-unsent-content" aria-label={copy.unsent}>
-      <section className="session-queue session-unsent-queue">
-        <header>
-          <span>
-            <strong>{copy.unsent}</strong>
-            <small>{copy.unsentHelp}</small>
-          </span>
-          <button type="button" onClick={props.onRecover}>
-            {copy.recoverUnsent}
-          </button>
-        </header>
-        <ol>
-          {props.submissions.map((submission) => (
-            <li key={submission.id}>
-              <span className="session-queue-copy">{submission.content.trim() || copy.attachmentOnly}</span>
-              {submission.attachments?.length ? (
-                <ul className="session-unsent-attachments" aria-label={copy.unsentAttachments}>
-                  {submission.attachments.map((attachment) => (
-                    <li key={conversationAttachmentIdentity(attachment)}>{attachment.name}</li>
-                  ))}
-                </ul>
-              ) : null}
-            </li>
-          ))}
-        </ol>
-      </section>
-    </section>
-  );
 }
 
 function mergeConversationAttachments(current: NativeConversationAttachment[], added: NativeConversationAttachment[]): NativeConversationAttachment[] {
@@ -2309,7 +2244,7 @@ function sessionStatus(state: NativeSessionState | null, loadState: SessionWorks
       kind: 'warning',
       label: copy.reconnectingAttempt(state.reconnectAttempt),
     };
-  if (state.error?.recoveryRequired) return { kind: 'error', label: copy.recoveryRequired };
+  if (state.error?.recoveryRequired) return { kind: 'ready', label: copy.recoveryRequired };
   if (state.transportState === 'failed')
     return {
       kind: 'error',
