@@ -101,8 +101,8 @@ const preBranchStatusDefaultTaskTableColumnOrder: TaskTableColumnKey[] = [
 const preBranchStatusDefaultVisibleTaskTableColumns: TaskTableColumnKey[] = ['code', 'intent', 'managementStatus', 'runStatus', 'source', 'createdAt', 'updatedAt'];
 const previousDefaultTaskTableColumns: Array<{ visible: TaskTableColumnKey[]; order: TaskTableColumnKey[] }> = [
   {
-    visible: ['code', 'intent', 'managementStatus', 'runStatus', 'source', 'createdAt', 'updatedAt'],
-    order: ['code', 'intent', 'managementStatus', 'runStatus', 'source', 'createdAt', 'updatedAt', 'template', 'project', 'priority', 'description', 'runtimeSession', 'rawId', 'createdFrom'],
+    visible: preBranchStatusDefaultVisibleTaskTableColumns,
+    order: preBranchStatusDefaultTaskTableColumnOrder,
   },
   {
     visible: ['code', 'intent', 'managementStatus', 'runStatus', 'source', 'updatedAt'],
@@ -442,24 +442,31 @@ export function createTaskWorkspaceViewModel(input: TaskWorkspaceViewModelInput)
     }
   }
   const candidateTasks = (input.viewMode ?? 'hierarchy') === 'hierarchy' ? input.tasks.filter((task) => hierarchyVisibleTaskIds.has(task.id)) : filteredTasks;
-    const unsortedRows = filteredTasks.map((task) => ({
-        id: task.id,
+  const unsortedRows: TaskRowViewModel[] = candidateTasks.map((task) => {
+    const taskConversations = input.taskConversations?.[task.id] ?? [];
+    return {
+      id: task.id,
+      task,
+      selected: task.id === input.selectedTaskId,
+      bulkSelected: false,
+      action: 'open-detail',
+      runStatusConversationId: resolveTaskAgentRunStatusConversation(taskConversations)?.id,
+      minHitArea: 44,
+      depth: 0,
+      hasChildren: false,
+      expanded: false,
+      cells: buildTaskTableCells(
         task,
-        selected: task.id === input.selectedTaskId,
-        bulkSelected: false,
-        action: 'open-detail' as const,
-        minHitArea: 44,
-        cells: buildTaskTableCells(
-            task,
-            input.runtimeSessions ?? [],
-            input.projectName,
-            input.taskConversations?.[task.id] ?? [],
-            input.conversationRunStatuses ?? {},
-            input.managementStatusLabels,
-            input.runStatusLabels,
-            input.appLanguage ?? 'zh-CN',
-        ),
-    }));
+        input.runtimeSessions ?? [],
+        input.projectName,
+        taskConversations,
+        input.conversationRunStatuses ?? {},
+        input.managementStatusLabels,
+        input.runStatusLabels,
+        input.appLanguage ?? 'zh-CN',
+      ),
+    };
+  });
   const rows =
     (input.viewMode ?? 'hierarchy') === 'hierarchy'
       ? flattenHierarchyRows(unsortedRows, filteredTaskIds, input.expandedTaskIds ?? [], hasActiveTaskFilters(input), columnPreferences.sort, enumSortOrders, input.appLanguage ?? 'zh-CN')
@@ -701,7 +708,6 @@ function buildTaskTableCells(
   conversationRunStatuses: Record<string, TaskAgentRunStatus>,
   managementStatusLabels?: Partial<Record<TaskManagementStatus, string>>,
   runStatusLabels?: Partial<Record<TaskAgentRunStatus, string>>,
-  english = false,
   language: 'zh-CN' | 'en-US' = 'zh-CN',
 ): Record<TaskTableColumnKey, TaskTableCellViewModel> {
   const taskRuntimeSession = findLinkedRuntimeSession(task, runtimeSessions);
@@ -724,7 +730,7 @@ function buildTaskTableCells(
       sortValue: managementStatus,
     },
     branchStatus: {
-      primary: formatTaskBranchStatus(branchStatus, english),
+      primary: formatTaskBranchStatus(branchStatus, language !== 'zh-CN'),
       sortValue: branchStatus,
     },
     runStatus: { primary: formatTaskAgentRunStatus(runStatus, runStatusLabels), sortValue: runStatus },
@@ -745,7 +751,6 @@ function buildTaskTableCells(
   };
 }
 
-export function resolveTaskBranchStatus(conversations: NativeConversationChoice[]): TaskBranchStatus {
 export function formatTaskType(taskType: TaskType, language: 'zh-CN' | 'en-US' = 'zh-CN'): string {
   const labels: Record<TaskType, [string, string]> = {
     requirement: ['需求', 'Requirement'],
@@ -755,7 +760,7 @@ export function formatTaskType(taskType: TaskType, language: 'zh-CN' | 'en-US' =
   return labels[taskType]?.[language === 'zh-CN' ? 0 : 1] ?? taskType;
 }
 
-function resolveTaskDeliveryStatus(conversations: NativeConversationChoice[], english: boolean): string | undefined {
+export function resolveTaskBranchStatus(conversations: NativeConversationChoice[]): TaskBranchStatus {
   const workspaces = Array.from(
     new Map(
       conversations

@@ -1,7 +1,6 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import { isTaskPriority, type TaskAttachmentReference } from '@zeus/shared';
-import { ZeusApiError, type TaskEventRecord, type TaskManagementStatus, type TaskPriority, type TaskRecord, type UpdateTaskRelationshipsRequest, type UpdateTaskRequest } from '../apiClient.js';
-import type { TaskEventRecord, TaskManagementStatus, TaskPriority, TaskRecord, TaskType, UpdateTaskRequest } from '../apiClient.js';
+import { ZeusApiError, type TaskEventRecord, type TaskManagementStatus, type TaskPriority, type TaskRecord, type TaskType, type UpdateTaskRelationshipsRequest, type UpdateTaskRequest } from '../apiClient.js';
 import type { NativeConversationChoice } from '../session/sessionTypes.js';
 import { Button } from '../ui/Button.js';
 import { ZeusSelect } from '../ZeusSelect.js';

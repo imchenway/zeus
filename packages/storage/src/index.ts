@@ -2667,12 +2667,14 @@ export class TaskRepository {
         parentTaskId,
         relatedTaskIds: [],
         title: input.title,
-        taskType: input.taskType,description: input.description,
+        taskType: input.taskType,
+        description: input.description,
         defectCurrentState: input.defectCurrentState ?? '',
-      defectExpectedOutcome: input.defectExpectedOutcome ?? '',
-      defectReproductionSteps: input.defectReproductionSteps ?? '',
-      optimizationCurrentState: input.optimizationCurrentState ?? '',
-      optimizationExpectedOutcome: input.optimizationExpectedOutcome ?? '',managementStatus: 'todo',
+        defectExpectedOutcome: input.defectExpectedOutcome ?? '',
+        defectReproductionSteps: input.defectReproductionSteps ?? '',
+        optimizationCurrentState: input.optimizationCurrentState ?? '',
+        optimizationExpectedOutcome: input.optimizationExpectedOutcome ?? '',
+        managementStatus: 'todo',
         status: 'ready',
         priority: input.priority ?? 'p3',
         allowCodeChanges: input.allowCodeChanges === true,
@@ -2690,13 +2692,13 @@ export class TaskRepository {
         defect_current_state, defect_expected_outcome, defect_reproduction_steps, optimization_current_state, optimization_expected_outcome,
         management_status, status, priority, tags_json, template_id,
         allow_code_changes, allow_tests, allow_git_commit, created_from, source_context_json, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         record.id,
         record.projectId,
         record.taskCode,
         record.taskSequence,
-          record.parentTaskId,
+        record.parentTaskId,
         record.title,
         record.taskType,
         record.description,
@@ -2719,7 +2721,8 @@ export class TaskRepository {
         record.updatedAt,
       ],
     );
-    return record;
+      return record;
+    });
   }
 
   createFromTemplate(input: CreateTaskFromTemplateInput): ZeusTaskRecord {

@@ -1216,6 +1216,11 @@ async function initializeApplication(): Promise<void> {
     onRestarted: () => {
       // 本地服务异常重启后，依赖旧 WebSocket 的系统通知桥必须重建，避免继续挂在旧端口。
       applySystemNotificationBridge();
+      for (const window of windows) {
+        if (window.isDestroyed() || window.webContents.isDestroyed()) continue;
+        // 宿主端点完成交接后由 Main 刷新真实 BrowserWindow，避免 Renderer 自导航留下空白页。
+        window.webContents.reloadIgnoringCache();
+      }
     },
   });
   if (app.isPackaged) {

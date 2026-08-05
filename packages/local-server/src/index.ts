@@ -784,8 +784,8 @@ const preBranchStatusDefaultTaskTableColumnOrder: TaskTableColumnKey[] = [
 const preBranchStatusDefaultVisibleTaskTableColumns: TaskTableColumnKey[] = ['code', 'intent', 'managementStatus', 'runStatus', 'source', 'createdAt', 'updatedAt'];
 const previousDefaultTaskTableColumns: Array<{ visible: TaskTableColumnKey[]; order: TaskTableColumnKey[] }> = [
   {
-    visible: ['code', 'intent', 'managementStatus', 'runStatus', 'source', 'createdAt', 'updatedAt'],
-    order: ['code', 'intent', 'managementStatus', 'runStatus', 'source', 'createdAt', 'updatedAt', 'template', 'project', 'priority', 'description', 'runtimeSession', 'rawId', 'createdFrom'],
+    visible: preBranchStatusDefaultVisibleTaskTableColumns,
+    order: preBranchStatusDefaultTaskTableColumnOrder,
   },
   {
     visible: ['code', 'intent', 'managementStatus', 'runStatus', 'source', 'updatedAt'],

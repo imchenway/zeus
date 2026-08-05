@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App, buildGraphConversationTaskIntent, buildGraphNodeTaskIntent, buildProjectDirectoryResolution, buildTemplateTaskDraft } from './App.js';
 import { RendererErrorBoundary } from './ErrorBoundary.js';
-import { createDashboardClient, type DashboardClient } from './apiClient.js';
+import { createDashboardClient, type DashboardClient, type ExecutionHostTransition } from './apiClient.js';
 import { openGraphSourceInMain, revealProjectInFinderInMain } from './appShellBridge.js';
 
 /** 选择真实仓库失败或取消时保留现有列表；开源分发包不能内置维护者本机路径。 */
@@ -10,7 +10,7 @@ function resolveProjectDirectoryForCreation(selectedPath: string | null | undefi
   return buildProjectDirectoryResolution(selectedPath, appLanguage);
 }
 
-async function renderWithClient(client: DashboardClient): Promise<void> {
+async function renderWithClient(client: DashboardClient, executionHostTransition?: ExecutionHostTransition): Promise<void> {
   const snapshot = await client.loadDashboard();
   const appShellSettings = await client.loadAppShellSettings();
   const root = document.getElementById('root');
@@ -21,6 +21,7 @@ async function renderWithClient(client: DashboardClient): Promise<void> {
       <App
         initialAppShellSettings={appShellSettings}
         snapshot={snapshot}
+        executionHostTransition={executionHostTransition}
         nativeConversationClient={client}
         commandClient={client}
         onChooseProjectDirectory={async () => {
@@ -327,6 +328,7 @@ async function hydrateDashboard(): Promise<void> {
       ...config,
       refreshLocalServerConfig: window.zeus.getLocalServerConfig,
     }),
+    config.executionHostTransition,
   );
 }
 

@@ -128,6 +128,7 @@ import {
   type DashboardSnapshot,
   type ExecutedGitOperationResult,
   type ExecuteGitOperationRequest,
+  type ExecutionHostTransition,
   type GitDiffHunk,
   type GitDiffSummary,
   type GitOperationConfirmation,
@@ -6230,6 +6231,7 @@ export type LocalUiErrorSnapshot = {
 /** Zeus 主界面：展示真实 API snapshot；无真实记录时才展示空状态。 */
 export function App(props: {
   snapshot?: DashboardSnapshot;
+  executionHostTransition?: ExecutionHostTransition;
   onScanCurrentGraph?: () => Promise<DashboardSnapshot>;
   onLoadGraphView?: (viewType?: GraphViewType) => Promise<GraphViewSnapshot>;
   onLoadGraphNeighborhood?: (nodeId: string, depth?: 1 | 2) => Promise<GraphNeighborhood>;
@@ -10274,6 +10276,13 @@ export function App(props: {
       <output className="sr-only" aria-live="polite" aria-atomic="true">
         {taskModelPushAnnouncement}
       </output>
+      {props.executionHostTransition?.state === 'draining_previous' ? (
+        <output className="execution-host-transition-banner" aria-live="polite">
+          {appShellSettings.appLanguage === 'zh-CN'
+            ? `Zeus 已正常启动。正在等待 ${props.executionHostTransition.hostAppVersion} 宿主完成已有任务，完成后将自动切换到 ${props.executionHostTransition.currentAppVersion}；交接期间暂时不能开始新执行。`
+            : `Zeus started normally. Waiting for host ${props.executionHostTransition.hostAppVersion} to finish existing work before switching to ${props.executionHostTransition.currentAppVersion}; new executions are temporarily unavailable during handoff.`}
+        </output>
+      ) : null}
       <ProjectCreateDialog
         open={projectCreateDialogOpen}
         form={projectCreateForm}

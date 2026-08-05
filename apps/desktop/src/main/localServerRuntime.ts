@@ -11,6 +11,11 @@ import { createExecutionHostControlClient, executionHostProtocolVersion, type Ex
 export interface RendererLocalServerConfig {
   baseUrl: string;
   apiToken: string;
+  executionHostTransition: {
+    state: 'current' | 'draining_previous';
+    currentAppVersion: string;
+    hostAppVersion: string;
+  };
 }
 
 export interface DesktopLocalServerRuntime {
@@ -103,11 +108,13 @@ export async function startDesktopLocalServer(options: StartDesktopLocalServerOp
   let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
   let heartbeatCyclePromise: Promise<void> | undefined;
   let recoveryPromise: Promise<void> | undefined;
+  let handoffPromise: Promise<void> | undefined;
   let closePromise: Promise<void> | undefined;
   let closing = false;
   try {
     let connection = await connectOrLaunchExecutionHost(options);
     let client = createExecutionHostControlClient(connection);
+    const currentAppVersion = options.appVersion?.trim() || '0.0.0';
     const registration = {
       leaseId,
       baseUrl: browserBridge.baseUrl,
@@ -118,6 +125,7 @@ export async function startDesktopLocalServer(options: StartDesktopLocalServerOp
     const config: RendererLocalServerConfig = {
       baseUrl: connection.baseUrl,
       apiToken: connection.apiToken,
+      executionHostTransition: buildExecutionHostTransition(currentAppVersion, connection.appVersion),
     };
     const executionHost = {
       mode: 'detached' as const,
@@ -132,7 +140,8 @@ export async function startDesktopLocalServer(options: StartDesktopLocalServerOp
       next.baseUrl !== connection.baseUrl ||
       next.apiToken !== connection.apiToken ||
       next.controlUrl !== connection.controlUrl ||
-      next.controlToken !== connection.controlToken;
+      next.controlToken !== connection.controlToken ||
+      next.appVersion !== connection.appVersion;
 
     const attach = async (next: ExecutionHostRendezvous): Promise<void> => {
       const nextClient = createExecutionHostControlClient(next);
@@ -142,10 +151,40 @@ export async function startDesktopLocalServer(options: StartDesktopLocalServerOp
       client = nextClient;
       config.baseUrl = next.baseUrl;
       config.apiToken = next.apiToken;
+      config.executionHostTransition = buildExecutionHostTransition(currentAppVersion, next.appVersion);
       executionHost.instanceId = next.instanceId;
       executionHost.pid = next.pid;
       executionHost.protocolVersion = next.protocolVersion;
       if (changed) await options.onRestarted?.(config);
+    };
+
+    let previousHostIdleSince: number | undefined;
+    const handoffPreviousHostIfSafe = async (work: ExecutionHostWorkStatus): Promise<void> => {
+      if (connection.appVersion === currentAppVersion) {
+        previousHostIdleSince = undefined;
+        return;
+      }
+      if (work.hasActiveWork) {
+        previousHostIdleSince = undefined;
+        return;
+      }
+      previousHostIdleSince ??= Date.now();
+      if (Date.now() - previousHostIdleSince < 10_000 || handoffPromise) return;
+
+      const previousInstanceId = connection.instanceId;
+      const previousClient = client;
+      const switching = (async () => {
+        // 旧版宿主空闲稳定后才关闭；锁和 rendezvous 释放前绝不创建第二个 SQLite 写入者。
+        await previousClient.shutdown();
+        await waitForExecutionHostExit(options.userDataPath, previousInstanceId);
+        await attach(await connectOrLaunchExecutionHost(options));
+        previousHostIdleSince = undefined;
+      })();
+      const tracked = switching.finally(() => {
+        if (handoffPromise === tracked) handoffPromise = undefined;
+      });
+      handoffPromise = tracked;
+      await tracked;
     };
 
     const recover = (discoverCurrent: boolean): Promise<void> => {
@@ -180,6 +219,7 @@ export async function startDesktopLocalServer(options: StartDesktopLocalServerOp
 
     const refreshConfig = async (): Promise<RendererLocalServerConfig> => {
       if (closing) throw new Error('Zeus execution-host connection is closing.');
+      if (handoffPromise) await handoffPromise;
       const advertised = await readExecutionHostRendezvous(options.userDataPath);
       if (advertised && connectionChanged(advertised)) await recover(true);
       else {
@@ -189,12 +229,15 @@ export async function startDesktopLocalServer(options: StartDesktopLocalServerOp
           await recover(false);
         }
       }
-      return { ...config };
+      return cloneRendererLocalServerConfig(config);
     };
 
     const maintainLease = async (): Promise<void> => {
       if (closing) return;
       try {
+        const status = await client.health();
+        await handoffPreviousHostIfSafe(status.work);
+        if (handoffPromise) return;
         await client.heartbeat(leaseId);
       } catch {
         await recover(false);
@@ -262,6 +305,14 @@ export async function startDesktopLocalServer(options: StartDesktopLocalServerOp
               errors.push(error);
             }
           }
+          const pendingHandoff = handoffPromise;
+          if (pendingHandoff) {
+            try {
+              await pendingHandoff;
+            } catch (error) {
+              errors.push(error);
+            }
+          }
           try {
             if (mode === 'final_quit') await client.shutdown();
             else await client.detach(leaseId);
@@ -324,6 +375,7 @@ export async function startOwnedDesktopLocalServer(options: StartDesktopLocalSer
   const config: RendererLocalServerConfig = {
     baseUrl: currentServer.baseUrl,
     apiToken,
+    executionHostTransition: buildExecutionHostTransition(options.appVersion?.trim() || '0.0.0', options.appVersion?.trim() || '0.0.0'),
   };
 
   async function launchServer(): Promise<RunningZeusLocalServer> {
@@ -413,7 +465,7 @@ export async function startOwnedDesktopLocalServer(options: StartDesktopLocalSer
       if (!response.ok) throw new Error(`Zeus execution-host status failed with HTTP ${response.status}.`);
       return (await response.json()) as ExecutionHostWorkStatus;
     },
-    refreshConfig: async () => ({ ...config }),
+    refreshConfig: async () => cloneRendererLocalServerConfig(config),
     stopActiveWork: async () => {
       const response = await fetch(`${config.baseUrl}/api/execution-host/stop-active`, {
         method: 'POST',
@@ -512,6 +564,36 @@ async function connectOrLaunchExecutionHost(options: StartDesktopLocalServerOpti
     await wait(200);
   }
   throw new Error('Zeus execution-host did not become ready within 20 seconds.');
+}
+
+function buildExecutionHostTransition(currentAppVersion: string, hostAppVersion: string): RendererLocalServerConfig['executionHostTransition'] {
+  return {
+    state: currentAppVersion === hostAppVersion ? 'current' : 'draining_previous',
+    currentAppVersion,
+    hostAppVersion,
+  };
+}
+
+function cloneRendererLocalServerConfig(config: RendererLocalServerConfig): RendererLocalServerConfig {
+  return {
+    ...config,
+    executionHostTransition: { ...config.executionHostTransition },
+  };
+}
+
+async function waitForExecutionHostExit(userDataPath: string, instanceId: string): Promise<void> {
+  const deadline = Date.now() + 45_000;
+  while (Date.now() < deadline) {
+    const advertised = await readExecutionHostRendezvous(userDataPath);
+    if (!advertised || advertised.instanceId !== instanceId) return;
+    try {
+      await createExecutionHostControlClient(advertised).health();
+    } catch {
+      return;
+    }
+    await wait(200);
+  }
+  throw new Error('Zeus 旧版 execution-host 未能在 45 秒内完成安全交接。');
 }
 
 async function readHealthyExecutionHost(userDataPath: string): Promise<ExecutionHostRendezvous | null> {

@@ -858,6 +858,32 @@ a {
   user-select: none;
 }
 
+/* 宿主交接只是局部运行状态，使用顶部轻提示，不挤占工作台也不阻断窗口启动。 */
+.macos-ai-app .execution-host-transition-banner {
+  background: oklch(96% 0.035 82 / 0.96);
+  border: 1px solid oklch(78% 0.08 78 / 0.7);
+  border-radius: 8px;
+  box-shadow: 0 5px 18px oklch(25% 0.02 75 / 0.1);
+  color: oklch(35% 0.055 72);
+  font-size: 12px;
+  font-weight: 600;
+  inset: 10px 16px auto calc(var(--zeus-project-sidebar-width) + 16px);
+  line-height: 1.35;
+  overflow: hidden;
+  padding: 7px 10px;
+  pointer-events: none;
+  position: fixed;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  z-index: 31;
+}
+
+.macos-ai-app.theme-dark .execution-host-transition-banner {
+  background: oklch(31% 0.035 72 / 0.96);
+  border-color: oklch(55% 0.08 72 / 0.7);
+  color: oklch(91% 0.04 82);
+}
+
 /* 只有真实交互控件退出窗口拖拽，避免整列 no-drag 抵消顶部透明拖拽层。 */
 .macos-ai-app :where(button, a, input, select, textarea, label) {
   app-region: no-drag;
