@@ -738,9 +738,9 @@ export async function startTaskBranchIntegration(input: {
   }
   try {
     if (input.mode === 'merge') {
-      await runGit(integrationPath, ['merge', '--no-ff', '--no-edit', taskBranch]);
+      await runGit(integrationPath, ['-c', 'merge.conflictStyle=diff3', 'merge', '--no-ff', '--no-edit', taskBranch]);
     } else {
-      await runGit(integrationPath, ['merge', '--squash', taskBranch]);
+      await runGit(integrationPath, ['-c', 'merge.conflictStyle=diff3', 'merge', '--squash', taskBranch]);
       const staged = splitLines(await readGitStdout(integrationPath, ['diff', '--cached', '--name-only']));
       if (staged.length > 0) await runGit(integrationPath, ['commit', '-m', requireSafeGitText(input.commitMessage, 'commit message')]);
     }

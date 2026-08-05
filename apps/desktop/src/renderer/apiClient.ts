@@ -1213,7 +1213,6 @@ export interface DashboardClient {
   ) => Promise<{ integration: TaskIntegrationRecord; result?: TaskIntegrationResult }>;
   loadTaskIntegrationConflict: (taskId: string, integrationId: string, path: string) => Promise<TaskIntegrationConflictFile>;
   resolveTaskIntegrationConflict: (taskId: string, integrationId: string, path: string, content: string) => Promise<{ integration: TaskIntegrationRecord; result: { path: string; remainingConflictFiles: string[] } }>;
-  assistTaskIntegrationConflict: (taskId: string, integrationId: string, path: string) => Promise<{ path: string; suggestedContent: string }>;
   finalizeTaskIntegration: (
     taskId: string,
     integrationId: string,
@@ -1560,11 +1559,6 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
         `/api/tasks/${encodeURIComponent(taskId)}/integrations/${encodeURIComponent(integrationId)}/conflict?path=${encodeURIComponent(path)}`,
         { method: 'PUT', body: JSON.stringify({ content }) },
       ),
-    assistTaskIntegrationConflict: (taskId, integrationId, path) =>
-      request<{ path: string; suggestedContent: string }>(`/api/tasks/${encodeURIComponent(taskId)}/integrations/${encodeURIComponent(integrationId)}/conflict-assist?path=${encodeURIComponent(path)}`, {
-        method: 'POST',
-        body: JSON.stringify({}),
-      }),
     finalizeTaskIntegration: (taskId, integrationId) =>
       request<{
         integration: TaskIntegrationRecord;

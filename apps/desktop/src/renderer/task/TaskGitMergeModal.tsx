@@ -14,6 +14,7 @@ import type {
 import { Button } from '../ui/Button.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
 import { ZeusSelect } from '../ZeusSelect.js';
+import { countConflictBlocks, TaskGitConflictWorkspace } from './TaskGitConflictWorkspace.js';
 
 type DeliveryClient = Pick<
   DashboardClient,
@@ -26,7 +27,6 @@ type DeliveryClient = Pick<
   | 'startTaskIntegration'
   | 'loadTaskIntegrationConflict'
   | 'resolveTaskIntegrationConflict'
-  | 'assistTaskIntegrationConflict'
   | 'finalizeTaskIntegration'
 >;
 
@@ -82,6 +82,7 @@ export function TaskGitMergeModal(props: { open: boolean; language: 'zh-CN' | 'e
   const targetOptions = useMemo(() => buildTargetOptions(workspaces, selectedWorkspace, zh), [workspaces, selectedWorkspace, zh]);
   const deliveredIntegration = integrations.find((candidate) => candidate.workspaceId === selectedWorkspace?.id && candidate.targetBranch === targetBranch && candidate.state === 'merged') ?? null;
   const alreadyDelivered = Boolean(deliveredIntegration || (selectedWorkspace?.state === 'merged' && targetBranch === selectedWorkspace.sourceBranch));
+  const unresolvedConflictBlocks = useMemo(() => countConflictBlocks(resultContent), [resultContent]);
 
   useEffect(() => {
     if (!props.open || !props.task || !props.client) return;
@@ -293,20 +294,6 @@ export function TaskGitMergeModal(props: { open: boolean; language: 'zh-CN' | 'e
     }
   }
 
-  async function askCodex(): Promise<void> {
-    if (!props.task || !props.client || !activeConflict || !conflictPath) return;
-    setBusyAction('conflict');
-    setError(null);
-    try {
-      const response = await props.client.assistTaskIntegrationConflict(props.task.id, activeConflict.id, conflictPath);
-      setResultContent(response.suggestedContent);
-    } catch (reason) {
-      setError(errorMessage(reason, zh));
-    } finally {
-      setBusyAction(null);
-    }
-  }
-
   async function finalize(): Promise<void> {
     if (!props.task || !props.client || !integration) return;
     setBusyAction('merge');
@@ -362,7 +349,7 @@ export function TaskGitMergeModal(props: { open: boolean; language: 'zh-CN' | 'e
         </header>
 
         {activeConflict ? (
-          <ConflictWorkspace
+          <TaskGitConflictWorkspace
             zh={zh}
             busy={busy}
             integration={activeConflict}
@@ -372,7 +359,6 @@ export function TaskGitMergeModal(props: { open: boolean; language: 'zh-CN' | 'e
             resultContent={resultContent}
             onSelectPath={setConflictPath}
             onResultChange={setResultContent}
-            onAskCodex={() => void askCodex()}
           />
         ) : (
           <>
@@ -572,8 +558,8 @@ export function TaskGitMergeModal(props: { open: boolean; language: 'zh-CN' | 'e
           </Button>
           {activeConflict ? (
             activeConflict.conflictFiles.length > 0 ? (
-              <Button variant="primary" size="regular" busy={busyAction === 'conflict'} onClick={() => void saveResolution()} disabled={!conflict || !resultContent}>
-                {zh ? '保存结果并继续' : 'Save result and continue'}
+              <Button variant="primary" size="regular" busy={busyAction === 'conflict'} onClick={() => void saveResolution()} disabled={!conflict || unresolvedConflictBlocks > 0}>
+                {unresolvedConflictBlocks > 0 ? (zh ? `还有 ${unresolvedConflictBlocks} 个冲突未处理` : `${unresolvedConflictBlocks} conflict(s) unresolved`) : zh ? '保存结果并继续' : 'Save result and continue'}
               </Button>
             ) : (
               <Button variant="primary" size="regular" busy={busyAction === 'merge'} onClick={() => void finalize()}>
@@ -613,69 +599,6 @@ function DeliveryStepBar(props: { workspace: TaskWorkspaceSnapshot | null; remot
         </span>
       ))}
     </nav>
-  );
-}
-
-function ConflictWorkspace(props: {
-  zh: boolean;
-  busy: boolean;
-  integration: TaskIntegrationRecord;
-  taskBranch: string;
-  conflictPath: string;
-  conflict: TaskIntegrationConflictFile | null;
-  resultContent: string;
-  onSelectPath: (path: string) => void;
-  onResultChange: (content: string) => void;
-  onAskCodex: () => void;
-}) {
-  return (
-    <div className="task-git-conflict-layout">
-      <aside className="task-git-conflict-files">
-        <strong>
-          {props.zh ? '冲突文件' : 'Conflicted files'} <small>{props.integration.conflictFiles.length}</small>
-        </strong>
-        {props.integration.conflictFiles.map((path) => (
-          <button key={path} type="button" className={path === props.conflictPath ? 'is-active' : ''} onClick={() => props.onSelectPath(path)}>
-            {path}
-          </button>
-        ))}
-      </aside>
-      <main className="task-git-conflict-editor">
-        <div className="task-git-conflict-toolbar">
-          <span>
-            <strong>{props.conflictPath}</strong>
-            <small>{props.zh ? `左：${props.integration.targetBranch} · 右：${props.taskBranch}` : `Left: ${props.integration.targetBranch} · Right: ${props.taskBranch}`}</small>
-          </span>
-          <span>
-            <Button variant="secondary" size="compact" onClick={() => props.conflict && props.onResultChange(props.conflict.source)} disabled={!props.conflict || props.busy}>
-              {props.zh ? '采用来源' : 'Accept source'}
-            </Button>
-            <Button variant="secondary" size="compact" onClick={() => props.conflict && props.onResultChange(props.conflict.task)} disabled={!props.conflict || props.busy}>
-              {props.zh ? '采用任务' : 'Accept task'}
-            </Button>
-            <Button
-              variant="secondary"
-              size="compact"
-              onClick={() => props.conflict && props.onResultChange(`${props.conflict.source}${props.conflict.source.endsWith('\n') ? '' : '\n'}${props.conflict.task}`)}
-              disabled={!props.conflict || props.busy}
-            >
-              {props.zh ? '两者都采用' : 'Accept both'}
-            </Button>
-            <Button variant="secondary" size="compact" onClick={props.onAskCodex} disabled={!props.conflict || props.busy}>
-              {props.zh ? '请 Codex 协助' : 'Ask Codex'}
-            </Button>
-          </span>
-        </div>
-        <div className="task-git-conflict-columns">
-          <ConflictCodePane title={props.zh ? '目标分支' : 'Target branch'} content={props.conflict?.source ?? ''} />
-          <label>
-            <strong>{props.zh ? '合并结果' : 'Merge result'}</strong>
-            <textarea value={props.resultContent} onChange={(event) => props.onResultChange(event.target.value)} disabled={!props.conflict || props.busy} spellCheck={false} />
-          </label>
-          <ConflictCodePane title={props.zh ? '任务分支' : 'Task branch'} content={props.conflict?.task ?? ''} />
-        </div>
-      </main>
-    </div>
   );
 }
 
@@ -827,15 +750,6 @@ function deliveryFeedback(result: TaskIntegrationResult, zh: boolean): DeliveryF
 
 function shortSha(value: string): string {
   return value.slice(0, 8);
-}
-
-function ConflictCodePane(props: { title: string; content: string }) {
-  return (
-    <section>
-      <strong>{props.title}</strong>
-      <pre>{props.content}</pre>
-    </section>
-  );
 }
 
 function errorMessage(error: unknown, zh: boolean): string {

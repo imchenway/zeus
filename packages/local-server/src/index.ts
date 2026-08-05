@@ -2501,57 +2501,6 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     },
   );
 
-  server.post('/api/tasks/:taskId/integrations/:integrationId/conflict-assist', async (request: FastifyRequest<{ Params: { taskId: string; integrationId: string }; Querystring: { path?: string } }>, reply) => {
-    const resolved = resolveTaskIntegrationRequest(request.params.taskId, request.params.integrationId);
-    if ('error' in resolved) return reply.code(resolved.status).send(resolved.error);
-    if (!resolved.integration.integrationPath) return reply.code(409).send({ error: 'ZEUS_TASK_INTEGRATION_PATH_UNAVAILABLE', message: 'Integration worktree is unavailable.' });
-    const path = request.query.path?.trim();
-    if (!path) return reply.code(400).send({ error: 'ZEUS_GIT_PATH_REQUIRED', message: 'path is required' });
-    try {
-      const conflict = await readTaskIntegrationConflict(resolved.integration.integrationPath, path);
-      const combinedLength = conflict.base.length + conflict.source.length + conflict.task.length;
-      if (combinedLength > 240_000) {
-        return reply.code(413).send({ error: 'ZEUS_TASK_CONFLICT_TOO_LARGE', message: 'Conflict content is too large for Codex assistance.' });
-      }
-      const prompt = [
-        '请协助解决一个 Git 三方合并冲突。',
-        '只输出最终文件完整内容，不要输出 Markdown 代码围栏、解释或省略号。',
-        `文件：${path}`,
-        `目标分支：${resolved.integration.targetBranch}`,
-        `任务分支：${resolved.workspace.branchName}`,
-        '',
-        '共同基线：',
-        conflict.base,
-        '',
-        '目标分支版本：',
-        conflict.source,
-        '',
-        '任务分支版本：',
-        conflict.task,
-      ].join('\n');
-      const operation = await codexNativeCoordinator.startEphemeralConversation({
-        projectId: resolved.project.id,
-        projectLocalPath: resolved.integration.integrationPath,
-        title: `冲突协助：${path}`.slice(0, 64),
-        prompt,
-        model: await resolveCodexModel(resolved.project),
-        idempotencyKey: randomUUID(),
-        clientUserMessageId: randomUUID(),
-      });
-      if (operation.status !== 'active' || !operation.providerTurnId) {
-        throw nativeApiError('ZEUS_CODEX_EPHEMERAL_DISPATCH_FAILED', 'Codex conflict assistance could not start.');
-      }
-      const completed = await codexNativeCoordinator.waitForTurnResult({
-        conversationId: operation.conversationId,
-        providerTurnId: operation.providerTurnId,
-        timeoutMs: runtimeSettings.executionTimeoutSeconds * 1_000,
-      });
-      return { path, suggestedContent: stripOptionalMarkdownFence(completed.answer) };
-    } catch (error) {
-      return sendTaskGitApiError(reply, error);
-    }
-  });
-
   server.get(
     '/api/projects/:projectId/conversations/:conversationId',
     async (
@@ -12598,12 +12547,6 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
           ? 409
           : 500;
     return reply.code(status).send({ error: code, message: error instanceof Error ? error.message : 'Task Git operation failed.' });
-  }
-
-  function stripOptionalMarkdownFence(value: string): string {
-    const trimmed = value.trim();
-    const fenced = /^```[^\n]*\n([\s\S]*?)\n```$/u.exec(trimmed);
-    return fenced?.[1] ?? value;
   }
 
   async function resolveConversationCapabilities(project: ZeusProjectRecord) {
