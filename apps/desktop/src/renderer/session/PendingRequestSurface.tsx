@@ -475,13 +475,23 @@ function RequestUserInputPanel(props: PendingRequestSurfaceProps & { questions: 
     if (currentQuestion.kind === 'single' && optionLabel !== otherAnswerControlValue(currentQuestion)) advance(nextAnswers, otherAnswers);
   }
 
-  function handleKeyboard(event: KeyboardEvent<HTMLElement>): void {
+  function handleAnswerInputKeyDown(event: KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>): void {
+    // 自由输入拥有完整键盘事件，不能让数字键、方向键或 Enter 冒泡成答案面板快捷操作。
+    event.stopPropagation();
     if (event.key === 'Escape') {
       event.preventDefault();
-      event.stopPropagation();
-      void skip();
+      const otherControl = currentQuestion.allowOther ? optionRefs.current[currentQuestion.options.length] : null;
+      if (otherControl) otherControl.focus();
+      else event.currentTarget.blur();
       return;
     }
+    // 单行敏感输入中的 Enter 也只能留在输入状态，提交必须点击明确按钮。
+    if (event.key === 'Enter' && event.currentTarget instanceof HTMLInputElement) event.preventDefault();
+  }
+
+  function handleKeyboard(event: KeyboardEvent<HTMLElement>): void {
+    // 即使后续新增输入控件时遗漏局部处理，外层也不能把编辑按键解释成答案快捷键。
+    if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || (event.target instanceof HTMLElement && event.target.isContentEditable)) return;
     if (event.key >= '1' && event.key <= '9') {
       const index = Number(event.key) - 1;
       const option = optionRefs.current[index];
@@ -596,12 +606,7 @@ function RequestUserInputPanel(props: PendingRequestSurfaceProps & { questions: 
                         [currentQuestion.id]: value,
                       }));
                     }}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter') {
-                        event.preventDefault();
-                        event.currentTarget.form?.requestSubmit();
-                      }
-                    }}
+                    onKeyDown={handleAnswerInputKeyDown}
                   />
                 ) : (
                   <textarea
@@ -619,12 +624,7 @@ function RequestUserInputPanel(props: PendingRequestSurfaceProps & { questions: 
                         [currentQuestion.id]: value,
                       }));
                     }}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter' && !event.shiftKey) {
-                        event.preventDefault();
-                        event.currentTarget.form?.requestSubmit();
-                      }
-                    }}
+                    onKeyDown={handleAnswerInputKeyDown}
                   />
                 )}
               </div>
@@ -644,6 +644,7 @@ function RequestUserInputPanel(props: PendingRequestSurfaceProps & { questions: 
                       [currentQuestion.id]: [value],
                     }));
                   }}
+                  onKeyDown={handleAnswerInputKeyDown}
                 />
               ) : (
                 <textarea
@@ -658,12 +659,7 @@ function RequestUserInputPanel(props: PendingRequestSurfaceProps & { questions: 
                       [currentQuestion.id]: [value],
                     }));
                   }}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter' && !event.shiftKey) {
-                      event.preventDefault();
-                      event.currentTarget.form?.requestSubmit();
-                    }
-                  }}
+                  onKeyDown={handleAnswerInputKeyDown}
                 />
               )
             ) : null}
