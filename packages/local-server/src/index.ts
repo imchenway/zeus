@@ -112,6 +112,7 @@ import {
   introspectSqliteSchema,
   isTaskManagementStatus,
   isTaskPriority,
+  isTaskType,
   ProjectRepository,
   ProjectRepositoryRegistrationRepository,
   ProjectSharedPathRepository,
@@ -123,6 +124,7 @@ import {
   TaskIntegrationRepository,
   type TaskManagementStatus,
   type TaskPriority,
+  type TaskType,
   TaskRepository,
   TaskTemplateRepository,
   TaskWorkspaceRepository,
@@ -694,7 +696,7 @@ interface UpdateRuntimeSettingsBody {
 
 type AppAppearance = 'system' | 'light' | 'dark';
 type AppLanguage = 'zh-CN' | 'en-US';
-type TaskTableColumnKey = 'code' | 'intent' | 'managementStatus' | 'branchStatus' | 'runStatus' | 'source' | 'updatedAt' | 'createdAt' | 'template' | 'project' | 'priority' | 'description' | 'runtimeSession' | 'rawId' | 'createdFrom';
+type TaskTableColumnKey = 'code' | 'intent' | 'taskType' | 'managementStatus' | 'branchStatus' | 'runStatus' | 'source' | 'updatedAt' | 'createdAt' | 'template' | 'project' | 'priority' | 'description' | 'runtimeSession' | 'rawId' | 'createdFrom';
 type TaskTableColumnWidth = number;
 type TaskTableSortDirection = 'asc' | 'desc';
 type TaskAgentRunStatus = 'not_started' | 'connecting' | 'reconnecting' | 'running' | 'waiting_user' | 'waiting_approval' | 'paused' | 'idle' | 'failed' | 'legacy_readonly';
@@ -720,7 +722,7 @@ interface TaskTableEnumSortOrders {
 const defaultTaskTableColumnOrder: TaskTableColumnKey[] = [
   'code',
   'intent',
-  'managementStatus',
+  'taskType', 'managementStatus',
   'branchStatus',
   'runStatus',
   'source',
@@ -734,10 +736,11 @@ const defaultTaskTableColumnOrder: TaskTableColumnKey[] = [
   'rawId',
   'createdFrom',
 ];
-const defaultVisibleTaskTableColumns: TaskTableColumnKey[] = ['code', 'intent', 'managementStatus', 'branchStatus', 'runStatus', 'source', 'createdAt', 'updatedAt'];
+const defaultVisibleTaskTableColumns: TaskTableColumnKey[] = ['code', 'intent', 'taskType', 'managementStatus', 'branchStatus', 'runStatus', 'source', 'createdAt', 'updatedAt'];
 const defaultTaskTableColumnWidths: Record<TaskTableColumnKey, number> = {
   code: 112,
   intent: 280,
+  taskType: 96,
   managementStatus: 112,
   branchStatus: 128,
   runStatus: 132,
@@ -779,23 +782,16 @@ const preBranchStatusDefaultTaskTableColumnOrder: TaskTableColumnKey[] = [
   'createdFrom',
 ];
 const preBranchStatusDefaultVisibleTaskTableColumns: TaskTableColumnKey[] = ['code', 'intent', 'managementStatus', 'runStatus', 'source', 'createdAt', 'updatedAt'];
-const previousDefaultTaskTableColumnOrder: TaskTableColumnKey[] = [
-  'code',
-  'intent',
-  'managementStatus',
-  'runStatus',
-  'source',
-  'updatedAt',
-  'createdAt',
-  'template',
-  'project',
-  'priority',
-  'description',
-  'runtimeSession',
-  'rawId',
-  'createdFrom',
+const previousDefaultTaskTableColumns: Array<{ visible: TaskTableColumnKey[]; order: TaskTableColumnKey[] }> = [
+  {
+    visible: ['code', 'intent', 'managementStatus', 'runStatus', 'source', 'createdAt', 'updatedAt'],
+    order: ['code', 'intent', 'managementStatus', 'runStatus', 'source', 'createdAt', 'updatedAt', 'template', 'project', 'priority', 'description', 'runtimeSession', 'rawId', 'createdFrom'],
+  },
+  {
+    visible: ['code', 'intent', 'managementStatus', 'runStatus', 'source', 'updatedAt'],
+    order: ['code', 'intent', 'managementStatus', 'runStatus', 'source', 'updatedAt', 'createdAt', 'template', 'project', 'priority', 'description', 'runtimeSession', 'rawId', 'createdFrom'],
+  },
 ];
-const previousDefaultVisibleTaskTableColumns: TaskTableColumnKey[] = ['code', 'intent', 'managementStatus', 'runStatus', 'source', 'updatedAt'];
 const taskTableColumnKeySet = new Set<TaskTableColumnKey>(defaultTaskTableColumnOrder);
 const legacyTaskTableColumnKeySet = new Set(['nextAction', 'aiExecution', 'signals']);
 
@@ -816,9 +812,9 @@ function normalizeTaskTableColumnPreferences(value: unknown): TaskTableColumnPre
   const order = normalizeTaskTableColumnKeys(migrateLegacyTaskTableColumnKeys(input.columnOrder), defaultTaskTableColumnOrder);
   if (hasLegacyColumns) visibleWithRequired = placeStatusColumnsAfterIntent(visibleWithRequired);
   let migratedOrder = hasLegacyColumns ? placeStatusColumnsAfterIntent(order) : order;
-  const usesPreviousDefault =
-    (taskTableColumnArraysEqual(visibleWithRequired, preBranchStatusDefaultVisibleTaskTableColumns) && taskTableColumnArraysEqual(migratedOrder, preBranchStatusDefaultTaskTableColumnOrder)) ||
-    (taskTableColumnArraysEqual(visibleWithRequired, previousDefaultVisibleTaskTableColumns) && taskTableColumnArraysEqual(migratedOrder, previousDefaultTaskTableColumnOrder));
+  const usesPreviousDefault = previousDefaultTaskTableColumns.some(
+    (defaults) => taskTableColumnArraysEqual(visibleWithRequired, defaults.visible) && taskTableColumnArraysEqual(migratedOrder, defaults.order),
+  );
   if (usesPreviousDefault) {
     visibleWithRequired = [...defaultVisibleTaskTableColumns];
     migratedOrder = [...defaultTaskTableColumnOrder];
@@ -1117,7 +1113,13 @@ interface PortableTaskRecord {
   id: string;
   projectId: string;
   title: string;
+  taskType?: TaskType;
   description: string;
+  defectCurrentState?: string;
+  defectExpectedOutcome?: string;
+  defectReproductionSteps?: string;
+  optimizationCurrentState?: string;
+  optimizationExpectedOutcome?: string;
   managementStatus?: TaskManagementStatus;
   status: string;
   tags: string[];
@@ -1179,7 +1181,13 @@ interface CreateTaskBody {
   projectId: string;
   parentTaskId?: string | null;
   title: string;
+  taskType?: TaskType;
   description?: string;
+  defectCurrentState?: string;
+  defectExpectedOutcome?: string;
+  defectReproductionSteps?: string;
+  optimizationCurrentState?: string;
+  optimizationExpectedOutcome?: string;
   sourceContext?: Record<string, unknown>;
   tags?: string[];
   priority?: TaskPriority;
@@ -1194,7 +1202,7 @@ interface ListTasksQuery {
   status?: TaskStatus;
   managementStatus?: TaskManagementStatus;
   tag?: string;
-  sortBy?: 'createdAt' | 'updatedAt' | 'title' | 'status' | 'managementStatus';
+  sortBy?: 'createdAt' | 'updatedAt' | 'title' | 'taskType' | 'status' | 'managementStatus';
   sortDirection?: 'asc' | 'desc';
 }
 
@@ -1252,7 +1260,13 @@ interface UpdateTaskManagementStatusBody {
 interface UpdateTaskBody {
   expectedUpdatedAt?: string;
   title?: string;
+  taskType?: TaskType;
   description?: string;
+  defectCurrentState?: string;
+  defectExpectedOutcome?: string;
+  defectReproductionSteps?: string;
+  optimizationCurrentState?: string;
+  optimizationExpectedOutcome?: string;
   priority?: TaskPriority;
   tags?: string[];
   attachments?: TaskAttachmentReference[];
@@ -4618,10 +4632,20 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
 
   server.post('/api/tasks', async (request: FastifyRequest<{ Body: CreateTaskBody }>, reply) => {
     const body = request.body;
-    if (!body?.projectId || !body.title) {
+    if (!body?.projectId || !body.title || !isTaskType(body.taskType)) {
       return reply.code(400).send({
         error: 'ZEUS_INVALID_TASK',
-        message: 'projectId and title are required',
+        message: 'projectId, title and taskType are required',
+      });
+    }
+    if (
+      [body.description, body.defectCurrentState, body.defectExpectedOutcome, body.defectReproductionSteps, body.optimizationCurrentState, body.optimizationExpectedOutcome].some(
+        (value) => value !== undefined && typeof value !== 'string',
+      )
+    ) {
+      return reply.code(400).send({
+        error: 'ZEUS_INVALID_TASK_CONTENT',
+        message: 'Task type content fields must be strings when provided',
       });
     }
     if (body.parentTaskId !== undefined && body.parentTaskId !== null && typeof body.parentTaskId !== 'string') {
@@ -4645,7 +4669,13 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
         projectId: body.projectId,
         parentTaskId: body.parentTaskId,
         title: body.title,
-        description: body.description ?? '',
+        taskType: body.taskType,
+      description: body.description ?? '',
+      defectCurrentState: body.defectCurrentState,
+      defectExpectedOutcome: body.defectExpectedOutcome,
+      defectReproductionSteps: body.defectReproductionSteps,
+      optimizationCurrentState: body.optimizationCurrentState,
+      optimizationExpectedOutcome: body.optimizationExpectedOutcome,
         createdFrom: 'user',
         sourceContext: body.sourceContext ?? {},
         tags: body.tags,
@@ -4666,7 +4696,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       taskId: task.id,
       eventType: 'task.created',
       title: '任务已创建',
-      payload: { status: task.status, managementStatus: task.managementStatus, priority: task.priority, source: task.createdFrom },
+      payload: { status: task.status, managementStatus: task.managementStatus, taskType: task.taskType, priority: task.priority, source: task.createdFrom },
     });
     appendAuditLog({
       actorType: 'local_api',
@@ -4676,8 +4706,9 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       payload: {
         taskId: task.id,
         projectId: task.projectId,
-        title: task.title,
-        status: task.status,
+          title: task.title,
+          taskType: task.taskType,
+          status: task.status,
         priority: task.priority,
       },
     });
@@ -5175,8 +5206,18 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       if (typeof body.title === 'string' && !body.title.trim()) {
         return reply.code(400).send({ error: 'ZEUS_TASK_TITLE_REQUIRED', message: 'Task title is required.' });
       }
+      if (body.taskType !== undefined && !isTaskType(body.taskType)) {
+        return reply.code(400).send({ error: 'ZEUS_INVALID_TASK_TYPE', message: 'Task type must be requirement, defect or optimization.' });
+      }
       if (body.description !== undefined && typeof body.description !== 'string') {
         return reply.code(400).send({ error: 'ZEUS_INVALID_TASK_DESCRIPTION', message: 'Task description must be a string.' });
+      }
+      if (
+        [body.defectCurrentState, body.defectExpectedOutcome, body.defectReproductionSteps, body.optimizationCurrentState, body.optimizationExpectedOutcome].some(
+          (value) => value !== undefined && typeof value !== 'string',
+        )
+      ) {
+        return reply.code(400).send({ error: 'ZEUS_INVALID_TASK_CONTENT', message: 'Task type content fields must be strings when provided.' });
       }
       if (body.priority !== undefined && !isTaskPriority(body.priority)) {
         return reply.code(400).send({ error: 'ZEUS_INVALID_TASK_PRIORITY', message: 'Task priority must be one of p0, p1, p2, p3 or p4.' });
@@ -5205,7 +5246,13 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
         result = tasks.updateContent(existing.id, {
           expectedUpdatedAt: body.expectedUpdatedAt,
           title: body.title,
+          taskType: body.taskType,
           description: body.description,
+          defectCurrentState: body.defectCurrentState,
+          defectExpectedOutcome: body.defectExpectedOutcome,
+          defectReproductionSteps: body.defectReproductionSteps,
+          optimizationCurrentState: body.optimizationCurrentState,
+          optimizationExpectedOutcome: body.optimizationExpectedOutcome,
           priority: body.priority,
           tags: body.tags,
           attachments,
@@ -5572,6 +5619,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       const task = tasks.create({
         projectId: project.id,
         title: `跟进图谱问答：${questionSummary}`,
+        taskType: 'requirement',
         description: [
           request.body?.intent ?? '基于这次图谱问答创建可执行跟进任务。',
           `问题：${userMessage.content}`,
@@ -5706,6 +5754,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       const task = tasks.create({
         projectId: project.id,
         title: `分析图谱视图：${view.title}`,
+        taskType: 'requirement',
         description: [request.body?.intent ?? '基于当前代码图谱视图分析架构风险、影响范围和建议验收范围。', `视图类型：${view.viewType}`, `节点数：${view.nodes.length}`, `边数：${view.edges.length}`].join('\n'),
         createdFrom: 'graph_view',
         sourceContext: {
@@ -7604,6 +7653,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       const task = tasks.create({
         projectId: session.projectId,
         title: request.body?.title?.trim() || `继续会话：${session.command}`,
+        taskType: 'requirement',
         description: [
           instruction,
           `Runtime 会话：${session.id}`,
@@ -10698,10 +10748,16 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
   }
 
   function createTaskRuntimePrompt(task: ZeusTaskRecord, descriptionSupplement?: string): string {
-    const taskDescription = [task.description.trim(), descriptionSupplement?.trim() ?? ''].filter(Boolean).join('\n\n');
     return buildAiRuntimePrompt({
       taskTitle: task.title,
-      taskDescription,
+      taskType: task.taskType,
+      taskDescription: task.description,
+      defectCurrentState: task.defectCurrentState,
+      defectExpectedOutcome: task.defectExpectedOutcome,
+      defectReproductionSteps: task.defectReproductionSteps,
+      optimizationCurrentState: task.optimizationCurrentState,
+      optimizationExpectedOutcome: task.optimizationExpectedOutcome,
+      supplementalInfo: descriptionSupplement,
     });
   }
 
@@ -13237,6 +13293,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     const task = tasks.create({
       projectId,
       title: `分析图谱节点：${node.name}`,
+      taskType: 'requirement',
       description: [intent ?? '基于代码图谱分析该节点的实现风险、影响范围和建议验证范围。', `节点类型：${node.nodeType}`, `来源：${node.sourceRef}${lineStart ? `:${lineStart}${lineEnd ? `-${lineEnd}` : ''}` : ''}`].join('\n'),
       createdFrom: 'graph_node',
       sourceContext: {
@@ -14764,7 +14821,13 @@ function exportLocalBusinessData(db: ZeusDatabase, exportedAt: string): LocalDat
       `SELECT id,
                 project_id,
                 title,
+                task_type,
                 description,
+                defect_current_state,
+                defect_expected_outcome,
+                defect_reproduction_steps,
+                optimization_current_state,
+                optimization_expected_outcome,
                 management_status,
                 status,
                 tags_json,
@@ -14833,13 +14896,20 @@ function importLocalBusinessData(db: ZeusDatabase, snapshot: LocalDataExportSnap
   }
   for (const task of tasks) {
     db.execute(
-      `INSERT OR REPLACE INTO tasks (id, project_id, title, description, management_status, status, tags_json, template_id, task_code, task_sequence, priority, created_from, source_context_json, archived, created_at, updated_at, deleted_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, NULL)`,
+      `INSERT OR REPLACE INTO tasks (id, project_id, title, task_type, description, defect_current_state, defect_expected_outcome, defect_reproduction_steps,
+        optimization_current_state, optimization_expected_outcome, management_status, status, tags_json, template_id, task_code, task_sequence, priority, created_from, source_context_json, archived, created_at, updated_at, deleted_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, NULL)`,
       [
         task.id,
         task.projectId,
         task.title,
+        isTaskType(task.taskType) ? task.taskType : 'requirement',
         task.description,
+        task.defectCurrentState ?? '',
+        task.defectExpectedOutcome ?? '',
+        task.defectReproductionSteps ?? '',
+        task.optimizationCurrentState ?? '',
+        task.optimizationExpectedOutcome ?? '',
         isTaskManagementStatus(task.managementStatus) ? task.managementStatus : 'todo',
         task.status,
         JSON.stringify(task.tags),
@@ -14958,7 +15028,13 @@ interface PortableTaskDbRow {
   id: string;
   project_id: string;
   title: string;
+  task_type: string;
   description: string;
+  defect_current_state: string;
+  defect_expected_outcome: string;
+  defect_reproduction_steps: string;
+  optimization_current_state: string;
+  optimization_expected_outcome: string;
   management_status: string;
   status: string;
   tags_json: string;
@@ -15014,7 +15090,13 @@ function mapPortableTaskRow(row: PortableTaskDbRow): PortableTaskRecord {
     id: row.id,
     projectId: row.project_id,
     title: row.title,
+    taskType: isTaskType(row.task_type) ? row.task_type : 'requirement',
     description: row.description,
+    defectCurrentState: row.defect_current_state,
+    defectExpectedOutcome: row.defect_expected_outcome,
+    defectReproductionSteps: row.defect_reproduction_steps,
+    optimizationCurrentState: row.optimization_current_state,
+    optimizationExpectedOutcome: row.optimization_expected_outcome,
     managementStatus: isTaskManagementStatus(row.management_status) ? row.management_status : 'todo',
     status: row.status,
     tags: parseStringArrayJson(row.tags_json),

@@ -63,7 +63,14 @@ export interface CheckAiCliAdapterOptions {
 
 export interface AiRuntimePromptInput {
   taskTitle: string;
+  taskType: 'requirement' | 'defect' | 'optimization';
   taskDescription?: string;
+  defectCurrentState?: string;
+  defectExpectedOutcome?: string;
+  defectReproductionSteps?: string;
+  optimizationCurrentState?: string;
+  optimizationExpectedOutcome?: string;
+  supplementalInfo?: string;
 }
 
 export interface AiCliAdapterInvocation {
@@ -127,7 +134,16 @@ export function listAiCliAdapters(): AiCliAdapterDescriptor[] {
 
 /** 构造正式任务首发正文；运行配置和附件必须通过各自通道传递。 */
 export function buildAiRuntimePrompt(input: AiRuntimePromptInput): string {
-  return [`任务标题：${input.taskTitle.trim()}`, `任务描述：${input.taskDescription?.trim() || '未提供'}`].join('\n');
+  const lines = [`任务标题：${input.taskTitle.trim()}`];
+  if (input.taskType === 'defect') {
+    lines.push('任务类型：缺陷', `现状：${input.defectCurrentState?.trim() || '未提供'}`, `预期：${input.defectExpectedOutcome?.trim() || '未提供'}`, `复现步骤：${input.defectReproductionSteps?.trim() || '未提供'}`);
+  } else if (input.taskType === 'optimization') {
+    lines.push('任务类型：优化', `现状：${input.optimizationCurrentState?.trim() || '未提供'}`, `预期：${input.optimizationExpectedOutcome?.trim() || '未提供'}`);
+  } else {
+    lines.push('任务类型：需求', `需求描述：${input.taskDescription?.trim() || '未提供'}`);
+  }
+  if (input.supplementalInfo?.trim()) lines.push(`补充信息：${input.supplementalInfo.trim()}`);
+  return lines.join('\n');
 }
 
 export function isNonCodexAiCliAdapterId(value: unknown): value is NonCodexAiCliAdapterId {

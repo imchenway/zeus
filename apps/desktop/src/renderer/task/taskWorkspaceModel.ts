@@ -11,6 +11,7 @@ import type {
   TaskTableColumnPreferences,
   TaskTableColumnWidth,
   TaskTableSortState,
+  TaskType,
 } from '../apiClient.js';
 import type { NativeConversationChoice, NativeSessionState } from '../session/sessionTypes.js';
 
@@ -25,6 +26,7 @@ export type TaskSourceLabels = Partial<Record<string, string>>;
 export type { TaskAgentRunStatus } from '../apiClient.js';
 
 export const taskManagementStatuses: TaskManagementStatus[] = ['todo', 'in_development', 'in_testing', 'awaiting_acceptance', 'blocked', 'completed', 'cancelled'];
+export const taskTypes: TaskType[] = ['requirement', 'defect', 'optimization'];
 const allowedTaskStatusTransitions: Record<TaskStatus, readonly TaskStatus[]> = {
   draft: ['ready', 'cancelled'],
   // ready -> running 会创建 Runtime 会话，必须逐任务进入显式 conversation chooser，不能作为批量状态迁移。
@@ -40,6 +42,7 @@ const allowedTaskStatusTransitions: Record<TaskStatus, readonly TaskStatus[]> = 
 export const defaultTaskTableColumnOrder: TaskTableColumnKey[] = [
   'code',
   'intent',
+  'taskType',
   'managementStatus',
   'branchStatus',
   'runStatus',
@@ -54,10 +57,11 @@ export const defaultTaskTableColumnOrder: TaskTableColumnKey[] = [
   'rawId',
   'createdFrom',
 ];
-export const defaultVisibleTaskTableColumns: TaskTableColumnKey[] = ['code', 'intent', 'managementStatus', 'branchStatus', 'runStatus', 'source', 'createdAt', 'updatedAt'];
+export const defaultVisibleTaskTableColumns: TaskTableColumnKey[] = ['code', 'intent', 'taskType', 'managementStatus', 'branchStatus', 'runStatus', 'source', 'createdAt', 'updatedAt'];
 export const defaultTaskTableColumnWidths: Record<TaskTableColumnKey, number> = {
   code: 112,
   intent: 280,
+  taskType: 96,
   managementStatus: 112,
   branchStatus: 128,
   runStatus: 132,
@@ -95,23 +99,16 @@ const preBranchStatusDefaultTaskTableColumnOrder: TaskTableColumnKey[] = [
   'createdFrom',
 ];
 const preBranchStatusDefaultVisibleTaskTableColumns: TaskTableColumnKey[] = ['code', 'intent', 'managementStatus', 'runStatus', 'source', 'createdAt', 'updatedAt'];
-const previousDefaultTaskTableColumnOrder: TaskTableColumnKey[] = [
-  'code',
-  'intent',
-  'managementStatus',
-  'runStatus',
-  'source',
-  'updatedAt',
-  'createdAt',
-  'template',
-  'project',
-  'priority',
-  'description',
-  'runtimeSession',
-  'rawId',
-  'createdFrom',
+const previousDefaultTaskTableColumns: Array<{ visible: TaskTableColumnKey[]; order: TaskTableColumnKey[] }> = [
+  {
+    visible: ['code', 'intent', 'managementStatus', 'runStatus', 'source', 'createdAt', 'updatedAt'],
+    order: ['code', 'intent', 'managementStatus', 'runStatus', 'source', 'createdAt', 'updatedAt', 'template', 'project', 'priority', 'description', 'runtimeSession', 'rawId', 'createdFrom'],
+  },
+  {
+    visible: ['code', 'intent', 'managementStatus', 'runStatus', 'source', 'updatedAt'],
+    order: ['code', 'intent', 'managementStatus', 'runStatus', 'source', 'updatedAt', 'createdAt', 'template', 'project', 'priority', 'description', 'runtimeSession', 'rawId', 'createdFrom'],
+  },
 ];
-const previousDefaultVisibleTaskTableColumns: TaskTableColumnKey[] = ['code', 'intent', 'managementStatus', 'runStatus', 'source', 'updatedAt'];
 const taskTableColumnKeySet = new Set<TaskTableColumnKey>(defaultTaskTableColumnOrder);
 const legacyTaskTableColumnKeySet = new Set(['nextAction', 'aiExecution', 'signals']);
 const legacyTaskTableColumnWidthScale = { compact: 0.78, standard: 1, wide: 1.35 } as const;
@@ -197,9 +194,7 @@ export function normalizeTaskTableColumnPreferences(input?: unknown): TaskTableC
   const order = normalizeColumnKeys(migrateLegacyTaskTableColumnKeys(preferences.columnOrder), defaultTaskTableColumnOrder);
   if (hasLegacyColumns) visibleWithRequired = placeStatusColumnsAfterIntent(visibleWithRequired);
   let migratedOrder = hasLegacyColumns ? placeStatusColumnsAfterIntent(order) : order;
-  const usesPreviousDefault =
-    (arraysEqual(visibleWithRequired, preBranchStatusDefaultVisibleTaskTableColumns) && arraysEqual(migratedOrder, preBranchStatusDefaultTaskTableColumnOrder)) ||
-    (arraysEqual(visibleWithRequired, previousDefaultVisibleTaskTableColumns) && arraysEqual(migratedOrder, previousDefaultTaskTableColumnOrder));
+  const usesPreviousDefault = previousDefaultTaskTableColumns.some((defaults) => arraysEqual(visibleWithRequired, defaults.visible) && arraysEqual(migratedOrder, defaults.order));
   if (usesPreviousDefault) {
     visibleWithRequired = [...defaultVisibleTaskTableColumns];
     migratedOrder = [...defaultTaskTableColumnOrder];
@@ -403,7 +398,22 @@ export function filterVisibleTasks(tasks: TaskRecord[], query: string, status: T
   const normalizedTag = tag.trim().toLowerCase();
   return tasks.filter((task) => {
     const matchesQuery =
-      !normalizedQuery || [task.taskCode ?? '', task.title, task.description ?? '', task.id, task.createdFrom ?? '', task.sourceContextJson ?? '', task.priority ?? ''].some((value) => value.toLowerCase().includes(normalizedQuery));
+      !normalizedQuery ||
+      [
+        task.taskCode ?? '',
+        task.title,
+        task.taskType,
+        task.description ?? '',
+        task.defectCurrentState ?? '',
+        task.defectExpectedOutcome ?? '',
+        task.defectReproductionSteps ?? '',
+        task.optimizationCurrentState ?? '',
+        task.optimizationExpectedOutcome ?? '',
+        task.id,
+        task.createdFrom ?? '',
+        task.sourceContextJson ?? '',
+        task.priority ?? '',
+      ].some((value) => value.toLowerCase().includes(normalizedQuery));
     const managementStatus = resolveTaskManagementStatus(task);
     const matchesStatus = status === 'unfinished' ? managementStatus !== 'completed' && managementStatus !== 'cancelled' : !status || managementStatus === status;
     const matchesTag = !normalizedTag || task.tags?.some((item) => item.toLowerCase().includes(normalizedTag));
@@ -432,22 +442,24 @@ export function createTaskWorkspaceViewModel(input: TaskWorkspaceViewModelInput)
     }
   }
   const candidateTasks = (input.viewMode ?? 'hierarchy') === 'hierarchy' ? input.tasks.filter((task) => hierarchyVisibleTaskIds.has(task.id)) : filteredTasks;
-  const unsortedRows = candidateTasks.map((task) => {
-    const conversations = input.taskConversations?.[task.id] ?? [];
-    return {
-      id: task.id,
-      task,
-      selected: task.id === input.selectedTaskId,
-      bulkSelected: false,
-      action: 'open-detail' as const,
-      runStatusConversationId: resolveTaskAgentRunStatusConversation(conversations)?.id,
-      minHitArea: 44,
-      depth: 0,
-      hasChildren: false,
-      expanded: false,
-      cells: buildTaskTableCells(task, input.runtimeSessions ?? [], input.projectName, conversations, input.conversationRunStatuses ?? {}, input.managementStatusLabels, input.runStatusLabels, input.appLanguage === 'en-US'),
-    };
-  });
+    const unsortedRows = filteredTasks.map((task) => ({
+        id: task.id,
+        task,
+        selected: task.id === input.selectedTaskId,
+        bulkSelected: false,
+        action: 'open-detail' as const,
+        minHitArea: 44,
+        cells: buildTaskTableCells(
+            task,
+            input.runtimeSessions ?? [],
+            input.projectName,
+            input.taskConversations?.[task.id] ?? [],
+            input.conversationRunStatuses ?? {},
+            input.managementStatusLabels,
+            input.runStatusLabels,
+            input.appLanguage ?? 'zh-CN',
+        ),
+    }));
   const rows =
     (input.viewMode ?? 'hierarchy') === 'hierarchy'
       ? flattenHierarchyRows(unsortedRows, filteredTaskIds, input.expandedTaskIds ?? [], hasActiveTaskFilters(input), columnPreferences.sort, enumSortOrders, input.appLanguage ?? 'zh-CN')
@@ -556,6 +568,7 @@ function sortTaskRows(rows: TaskRowViewModel[], sort: TaskTableSortState, enumSo
 }
 
 function resolveTaskTableEnumOrder(columnKey: TaskTableColumnKey, orders: TaskTableEnumSortOrders): readonly string[] | undefined {
+  if (columnKey === 'taskType') return taskTypes;
   if (columnKey === 'priority') return orders.priority;
   if (columnKey === 'managementStatus') return orders.managementStatus;
   if (columnKey === 'branchStatus') return taskBranchStatusSortOrder;
@@ -689,15 +702,23 @@ function buildTaskTableCells(
   managementStatusLabels?: Partial<Record<TaskManagementStatus, string>>,
   runStatusLabels?: Partial<Record<TaskAgentRunStatus, string>>,
   english = false,
+  language: 'zh-CN' | 'en-US' = 'zh-CN',
 ): Record<TaskTableColumnKey, TaskTableCellViewModel> {
   const taskRuntimeSession = findLinkedRuntimeSession(task, runtimeSessions);
   const displayProjectName = projectName?.trim() || '当前项目';
   const runStatus = resolveTaskAgentRunStatus(conversations, conversationRunStatuses);
   const managementStatus = resolveTaskManagementStatus(task);
   const branchStatus = resolveTaskBranchStatus(conversations);
+  const activeContent =
+    task.taskType === 'defect'
+      ? [task.defectCurrentState, task.defectExpectedOutcome, task.defectReproductionSteps].find((value) => value?.trim())
+      : task.taskType === 'optimization'
+        ? [task.optimizationCurrentState, task.optimizationExpectedOutcome].find((value) => value?.trim())
+        : task.description;
   return {
     code: { primary: task.taskCode || task.id, sortValue: task.taskCode || task.id },
     intent: { primary: task.title, sortValue: task.title },
+    taskType: { primary: formatTaskType(task.taskType, language), sortValue: task.taskType },
     managementStatus: {
       primary: formatTaskManagementStatus(managementStatus, managementStatusLabels),
       sortValue: managementStatus,
@@ -713,7 +734,7 @@ function buildTaskTableCells(
     template: { primary: task.templateId ?? '未绑定模板', sortValue: task.templateId ?? null },
     project: { primary: displayProjectName, sortValue: displayProjectName },
     priority: { primary: task.priority ?? '未设置', sortValue: task.priority ?? null },
-    description: { primary: task.description ?? '无描述', sortValue: task.description?.trim() || null },
+    description: { primary: activeContent?.trim() || (language === 'zh-CN' ? '无内容' : 'No content'), sortValue: activeContent?.trim() || null },
     runtimeSession: {
       primary: taskRuntimeSession?.id ?? '无运行会话',
       secondary: taskRuntimeSession ? `状态：${taskRuntimeSession.status}` : undefined,
@@ -725,6 +746,16 @@ function buildTaskTableCells(
 }
 
 export function resolveTaskBranchStatus(conversations: NativeConversationChoice[]): TaskBranchStatus {
+export function formatTaskType(taskType: TaskType, language: 'zh-CN' | 'en-US' = 'zh-CN'): string {
+  const labels: Record<TaskType, [string, string]> = {
+    requirement: ['需求', 'Requirement'],
+    defect: ['缺陷', 'Defect'],
+    optimization: ['优化', 'Optimization'],
+  };
+  return labels[taskType]?.[language === 'zh-CN' ? 0 : 1] ?? taskType;
+}
+
+function resolveTaskDeliveryStatus(conversations: NativeConversationChoice[], english: boolean): string | undefined {
   const workspaces = Array.from(
     new Map(
       conversations

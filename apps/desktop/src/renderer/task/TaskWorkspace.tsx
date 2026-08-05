@@ -251,6 +251,7 @@ export interface TaskWorkspaceCopy {
   allState: string;
   codeColumnTitle: string;
   intentColumnTitle: string;
+  taskTypeColumnTitle: string;
   managementStatusColumnTitle: string;
   branchStatusColumnTitle: string;
   runStatusColumnTitle: string;
@@ -351,6 +352,7 @@ function getTaskTableColumnTrack(columnKey: TaskTableColumnKey, preferences: Tas
 const taskTableColumnAlignment: Record<TaskTableColumnKey, 'start' | 'end'> = {
   code: 'start',
   intent: 'start',
+  taskType: 'start',
   managementStatus: 'start',
   branchStatus: 'start',
   runStatus: 'start',
@@ -457,6 +459,7 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
   const columnLabels: Record<TaskTableColumnKey, string> = {
     code: props.copy.codeColumnTitle,
     intent: props.copy.intentColumnTitle,
+    taskType: props.copy.taskTypeColumnTitle,
     managementStatus: props.copy.managementStatusColumnTitle,
     branchStatus: props.copy.branchStatusColumnTitle,
     runStatus: props.copy.runStatusColumnTitle,

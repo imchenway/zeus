@@ -27,16 +27,16 @@ import type {
   TurnChangeSet,
   TurnChangeSetOperationResult,
 } from './session/sessionTypes.js';
-import type { CommandArtifact, CommandConfirmation, CommandDefinition, CommandDefinitionInput, CommandRun, TaskAttachmentReference, TaskManagementStatus, TaskPriority, TaskStatusFilter } from '@zeus/shared';
+import type { CommandArtifact, CommandConfirmation, CommandDefinition, CommandDefinitionInput, CommandRun, TaskAttachmentReference, TaskManagementStatus, TaskPriority, TaskStatusFilter, TaskType } from '@zeus/shared';
 
-export type { CommandArtifact, CommandConfirmation, CommandDefinition, CommandDefinitionInput, CommandParameterDefinition, CommandRun, CommandRunStatus, TaskManagementStatus, TaskPriority, TaskStatusFilter } from '@zeus/shared';
+export type { CommandArtifact, CommandConfirmation, CommandDefinition, CommandDefinitionInput, CommandParameterDefinition, CommandRun, CommandRunStatus, TaskManagementStatus, TaskPriority, TaskStatusFilter, TaskType } from '@zeus/shared';
 
 export type TaskStatus = 'draft' | 'ready' | 'running' | 'paused' | 'waiting_confirmation' | 'completed' | 'failed' | 'cancelled';
 export type TaskAgentRunStatus = 'not_started' | 'connecting' | 'reconnecting' | 'running' | 'waiting_user' | 'waiting_approval' | 'paused' | 'idle' | 'failed' | 'legacy_readonly';
 export type TaskTableColumnKey =
   | 'code'
   | 'intent'
-  | 'managementStatus'
+  | 'taskType' | 'managementStatus'
   | 'branchStatus'
   | 'runStatus'
   | 'source'
@@ -169,7 +169,13 @@ export interface TaskRecord {
   parentTaskId?: string | null;
   relatedTaskIds?: string[];
   title: string;
+  taskType: TaskType;
   description?: string;
+  defectCurrentState?: string;
+  defectExpectedOutcome?: string;
+  defectReproductionSteps?: string;
+  optimizationCurrentState?: string;
+  optimizationExpectedOutcome?: string;
   managementStatus?: TaskManagementStatus;
   status: TaskStatus;
   priority?: string;
@@ -1080,7 +1086,13 @@ export interface CreateTaskRequest {
   projectId: string;
   parentTaskId?: string | null;
   title: string;
+  taskType: TaskType;
   description: string;
+  defectCurrentState?: string;
+  defectExpectedOutcome?: string;
+  defectReproductionSteps?: string;
+  optimizationCurrentState?: string;
+  optimizationExpectedOutcome?: string;
   sourceContext: Record<string, unknown>;
   tags?: string[];
   priority: TaskPriority;
@@ -1108,14 +1120,20 @@ export interface LoadTasksRequest {
   query?: string;
   managementStatus?: TaskManagementStatus;
   tag?: string;
-  sortBy?: 'createdAt' | 'updatedAt' | 'title' | 'managementStatus';
+  sortBy?: 'createdAt' | 'updatedAt' | 'title' | 'taskType' | 'managementStatus';
   sortDirection?: 'asc' | 'desc';
 }
 
 export interface UpdateTaskRequest {
   expectedUpdatedAt: string;
   title?: string;
+  taskType?: TaskType;
   description?: string;
+  defectCurrentState?: string;
+  defectExpectedOutcome?: string;
+  defectReproductionSteps?: string;
+  optimizationCurrentState?: string;
+  optimizationExpectedOutcome?: string;
   priority?: TaskPriority;
   tags?: string[];
   attachments?: TaskAttachmentReference[];

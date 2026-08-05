@@ -3,7 +3,7 @@ import type { TaskAttachmentReference } from '@zeus/shared';
 export type TaskAttachmentKind = TaskAttachmentReference['kind'];
 
 export interface TaskAttachmentRestoreTarget {
-  field: 'title' | 'description' | 'tags';
+  field: 'title' | 'description' | 'defectCurrentState' | 'defectExpectedOutcome' | 'defectReproductionSteps' | 'optimizationCurrentState' | 'optimizationExpectedOutcome' | 'tags';
   start: number;
   end: number;
 }
