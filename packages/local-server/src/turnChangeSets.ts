@@ -1,25 +1,7 @@
-import {createHash, randomUUID} from 'node:crypto';
-import {
-  chmodSync,
-  existsSync,
-  lstatSync,
-  mkdirSync,
-  readFileSync,
-  realpathSync,
-  renameSync,
-  statSync,
-  unlinkSync,
-  writeFileSync,
-} from 'node:fs';
-import {basename, dirname, isAbsolute, join, relative, resolve, sep} from 'node:path';
-import type {
-  TurnChangeConflict,
-  TurnChangeFile,
-  TurnChangeFileType,
-  TurnChangeSet,
-  TurnChangeSetOperationRequest,
-  TurnChangeSetOperationResult,
-} from '@zeus/shared';
+import { createHash, randomUUID } from 'node:crypto';
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import type { TurnChangeConflict, TurnChangeFile, TurnChangeFileType, TurnChangeSet, TurnChangeSetOperationRequest, TurnChangeSetOperationResult } from '@zeus/shared';
 import {
   type AuditLogRepository,
   type IdempotencyRequestRepository,
@@ -35,7 +17,7 @@ import {
 
 interface ProviderFileUpdateChange {
   path: string;
-  kind: {type: 'add'} | {type: 'delete'} | {type: 'update'; move_path?: string | null};
+  kind: { type: 'add' } | { type: 'delete' } | { type: 'update'; move_path?: string | null };
   diff: string;
 }
 
@@ -62,27 +44,12 @@ export interface TurnChangeSetCaptureInput {
 
 export interface TurnChangeSetService {
   capture(input: TurnChangeSetCaptureInput): TurnChangeSet | null;
-  updateUnifiedDiff(input: {
-    conversation: ZeusConversationWithMessagesRecord;
-    turn: ZeusConversationTurnRecord;
-    diff: string;
-    timestamp: string;
-  }): TurnChangeSet;
-  seal(input: {
-    conversation: ZeusConversationWithMessagesRecord;
-    turn: ZeusConversationTurnRecord;
-    timestamp: string;
-  }): TurnChangeSet | null;
+  updateUnifiedDiff(input: { conversation: ZeusConversationWithMessagesRecord; turn: ZeusConversationTurnRecord; diff: string; timestamp: string }): TurnChangeSet;
+  seal(input: { conversation: ZeusConversationWithMessagesRecord; turn: ZeusConversationTurnRecord; timestamp: string }): TurnChangeSet | null;
   getById(changeSetId: string): TurnChangeSet | null;
   getByTurn(conversationId: string, turnId: string): TurnChangeSet | null;
   listByConversation(conversationId: string): TurnChangeSet[];
-  operate(input: {
-    projectId: string;
-    conversationId: string;
-    turnId: string;
-    action: 'undo' | 'reapply';
-    request: TurnChangeSetOperationRequest;
-  }): Promise<TurnChangeSetOperationResult>;
+  operate(input: { projectId: string; conversationId: string; turnId: string; action: 'undo' | 'reapply'; request: TurnChangeSetOperationRequest }): Promise<TurnChangeSetOperationResult>;
   recoverInterruptedOperations(): Promise<void>;
 }
 
@@ -108,13 +75,9 @@ export function createTurnChangeSetService(options: CreateTurnChangeSetServiceOp
   const maxFileBytes = options.maxFileBytes ?? 20 * 1024 * 1024;
   const maxChangeSetBytes = options.maxChangeSetBytes ?? 100 * 1024 * 1024;
   const busy = new Set<string>();
-  mkdirSync(options.recoveryRoot, {recursive: true, mode: 0o700});
+  mkdirSync(options.recoveryRoot, { recursive: true, mode: 0o700 });
 
-  function ensureChangeSet(
-    conversation: ZeusConversationWithMessagesRecord,
-    turn: ZeusConversationTurnRecord,
-    timestamp: string,
-  ): ZeusTurnChangeSetRecord {
+  function ensureChangeSet(conversation: ZeusConversationWithMessagesRecord, turn: ZeusConversationTurnRecord, timestamp: string): ZeusTurnChangeSetRecord {
     const existing = options.changeSets.getByTurn(conversation.id, turn.id);
     if (existing) return existing;
     if (!turn.providerTurnId) throw turnChangeSetError('ZEUS_TURN_CHANGE_SET_PROVIDER_ID_MISSING', 'The provider turn id is required before capturing file changes.');
@@ -144,26 +107,15 @@ export function createTurnChangeSetService(options: CreateTurnChangeSetServiceOp
     let capturedBytes = existingCaptureBytes(changeSet.id);
     changes.forEach((change, sourceIndex) => {
       const paths = changePaths(change, executionRoot);
-      const existing = options.files
-        .listByChangeSet(changeSet.id)
-        .find((candidate) => candidate.sourceItemId === input.providerItemId && candidate.sourceIndex === sourceIndex);
+      const existing = options.files.listByChangeSet(changeSet.id).find((candidate) => candidate.sourceItemId === input.providerItemId && candidate.sourceIndex === sourceIndex);
       const snapshotPath = input.phase === 'pre' ? paths.oldAbsolutePath : paths.newAbsolutePath;
       const expectedAbsent = input.phase === 'pre' ? paths.oldPath === null : paths.newPath === null;
-      const snapshot = expectedAbsent
-        ? absentSnapshot()
-        : snapshotPath
-          ? captureSnapshot(changeSet.id, input.providerItemId, sourceIndex, input.phase, snapshotPath, capturedBytes)
-          : unavailableSnapshot('Missing authorized file path.');
+      const snapshot = expectedAbsent ? absentSnapshot() : snapshotPath ? captureSnapshot(changeSet.id, input.providerItemId, sourceIndex, input.phase, snapshotPath, capturedBytes) : unavailableSnapshot('Missing authorized file path.');
       if (snapshot.blobRef) capturedBytes += statSync(snapshot.blobRef).size;
       const counts = countDiffLines(change.diff);
       const binary = isBinaryDiff(change.diff);
       const changeType = binary ? 'binary' : paths.changeType;
-      let pre =
-        input.phase === 'pre'
-          ? snapshot
-          : existing
-            ? snapshotFromRecord(existing, 'pre')
-            : unavailableSnapshot('The provider patch was observed after the pre-image capture point.');
+      let pre = input.phase === 'pre' ? snapshot : existing ? snapshotFromRecord(existing, 'pre') : unavailableSnapshot('The provider patch was observed after the pre-image capture point.');
       const post = input.phase === 'post' ? snapshot : existing ? snapshotFromRecord(existing, 'post') : unavailableSnapshot('Post-image has not been captured yet.');
       if (input.phase === 'post' && changeType !== 'binary') {
         pre = reconcileTextPreImage({
@@ -178,12 +130,8 @@ export function createTurnChangeSetService(options: CreateTurnChangeSetServiceOp
         });
         if (pre.blobRef && pre.blobRef !== existing?.preBlobRef) capturedBytes += statSync(pre.blobRef).size;
       }
-      const semanticUnavailableReason =
-        input.phase === 'post' ? snapshotSemanticUnavailableReason(changeType, pre, post, change.diff) : null;
-      const unavailableReason =
-        input.phase === 'post'
-          ? pre.unavailableReason ?? post.unavailableReason ?? semanticUnavailableReason
-          : pre.unavailableReason ?? post.unavailableReason;
+      const semanticUnavailableReason = input.phase === 'post' ? snapshotSemanticUnavailableReason(changeType, pre, post, change.diff) : null;
+      const unavailableReason = input.phase === 'post' ? (pre.unavailableReason ?? post.unavailableReason ?? semanticUnavailableReason) : (pre.unavailableReason ?? post.unavailableReason);
       options.files.upsert({
         changeSetId: changeSet.id,
         sourceItemId: input.providerItemId,
@@ -220,14 +168,7 @@ export function createTurnChangeSetService(options: CreateTurnChangeSetServiceOp
     return result;
   }
 
-  function captureSnapshot(
-    changeSetId: string,
-    providerItemId: string,
-    sourceIndex: number,
-    phase: 'pre' | 'post',
-    absolutePath: string,
-    capturedBytes: number,
-  ): SnapshotState {
+  function captureSnapshot(changeSetId: string, providerItemId: string, sourceIndex: number, phase: 'pre' | 'post', absolutePath: string, capturedBytes: number): SnapshotState {
     try {
       const pathStat = lstatSync(absolutePath);
       if (pathStat.isSymbolicLink()) return unavailableSnapshot('Symbolic-link targets are not eligible for Undo/Reapply.');
@@ -241,23 +182,15 @@ export function createTurnChangeSetService(options: CreateTurnChangeSetServiceOp
     }
   }
 
-  function captureBytesSnapshot(
-    changeSetId: string,
-    providerItemId: string,
-    sourceIndex: number,
-    phase: 'pre' | 'post',
-    bytes: Buffer,
-    mode: number,
-    capturedBytes: number,
-  ): SnapshotState {
+  function captureBytesSnapshot(changeSetId: string, providerItemId: string, sourceIndex: number, phase: 'pre' | 'post', bytes: Buffer, mode: number, capturedBytes: number): SnapshotState {
     if (bytes.length > maxFileBytes) return unavailableSnapshot('File exceeds the per-file recovery limit.');
     if (capturedBytes + bytes.length > maxChangeSetBytes) return unavailableSnapshot('Turn changes exceed the recovery capacity limit.');
     const directory = join(options.recoveryRoot, changeSetId, 'blobs');
-    mkdirSync(directory, {recursive: true, mode: 0o700});
+    mkdirSync(directory, { recursive: true, mode: 0o700 });
     const digest = createHash('sha256').update(bytes).digest('hex');
     const name = `${safeSegment(providerItemId)}-${sourceIndex}-${phase}-${digest}.blob`;
     const blobRef = join(directory, name);
-    if (!existsSync(blobRef)) writeFileSync(blobRef, bytes, {mode: 0o600, flag: 'wx'});
+    if (!existsSync(blobRef)) writeFileSync(blobRef, bytes, { mode: 0o600, flag: 'wx' });
     return {
       exists: true,
       hash: `sha256:${digest}`,
@@ -291,31 +224,14 @@ export function createTurnChangeSetService(options: CreateTurnChangeSetServiceOp
     if (!verifiedPost || !verifiedPost.equals(postBytes)) {
       return unavailableSnapshot('The reconstructed pre-image did not reproduce the provider post-image.');
     }
-    const reconstructedMode =
-      input.pre.mode ??
-      (input.changeType === 'deleted'
-        ? providerPreImageMode(input.change.diff)
-        : input.post.mode);
+    const reconstructedMode = input.pre.mode ?? (input.changeType === 'deleted' ? providerPreImageMode(input.change.diff) : input.post.mode);
     if (reconstructedMode === null) {
       return unavailableSnapshot('The deleted file content was reconstructed, but its original permissions were not available for safe recovery.');
     }
-    return captureBytesSnapshot(
-      input.changeSetId,
-      input.providerItemId,
-      input.sourceIndex,
-      'pre',
-      reconstructed,
-      reconstructedMode,
-      input.capturedBytes,
-    );
+    return captureBytesSnapshot(input.changeSetId, input.providerItemId, input.sourceIndex, 'pre', reconstructed, reconstructedMode, input.capturedBytes);
   }
 
-  function updateUnifiedDiff(input: {
-    conversation: ZeusConversationWithMessagesRecord;
-    turn: ZeusConversationTurnRecord;
-    diff: string;
-    timestamp: string;
-  }): TurnChangeSet {
+  function updateUnifiedDiff(input: { conversation: ZeusConversationWithMessagesRecord; turn: ZeusConversationTurnRecord; diff: string; timestamp: string }): TurnChangeSet {
     const changeSet = ensureChangeSet(input.conversation, input.turn, input.timestamp);
     const updated = options.changeSets.upsert({
       ...changeSet,
@@ -327,20 +243,19 @@ export function createTurnChangeSetService(options: CreateTurnChangeSetServiceOp
     return result;
   }
 
-  function seal(input: {
-    conversation: ZeusConversationWithMessagesRecord;
-    turn: ZeusConversationTurnRecord;
-    timestamp: string;
-  }): TurnChangeSet | null {
+  function seal(input: { conversation: ZeusConversationWithMessagesRecord; turn: ZeusConversationTurnRecord; timestamp: string }): TurnChangeSet | null {
     const changeSet = options.changeSets.getByTurn(input.conversation.id, input.turn.id);
     if (!changeSet) return null;
     const files = aggregateChangeFiles(options.files.listByChangeSet(changeSet.id));
     if (files.length === 0) return null;
     const incompleteFile = files.find((file) => !file.reversible);
-    const unavailableReason = incompleteFile
-      ? incompleteFile.unavailableReason ?? 'Turn change recovery data is incomplete.'
-      : null;
-    const unifiedDiff = changeSet.unifiedDiff || files.map((file) => file.unifiedDiff).filter(Boolean).join('\n');
+    const unavailableReason = incompleteFile ? (incompleteFile.unavailableReason ?? 'Turn change recovery data is incomplete.') : null;
+    const unifiedDiff =
+      changeSet.unifiedDiff ||
+      files
+        .map((file) => file.unifiedDiff)
+        .filter(Boolean)
+        .join('\n');
     const state = unavailableReason ? 'unavailable' : 'applied';
     options.changeSets.upsert({
       ...changeSet,
@@ -369,25 +284,12 @@ export function createTurnChangeSetService(options: CreateTurnChangeSetServiceOp
   }
 
   function listByConversation(conversationId: string): TurnChangeSet[] {
-    return options.changeSets
-      .listByConversation(conversationId)
-      .map((record) => toPublicChangeSet(record, aggregateChangeFiles(options.files.listByChangeSet(record.id))));
+    return options.changeSets.listByConversation(conversationId).map((record) => toPublicChangeSet(record, aggregateChangeFiles(options.files.listByChangeSet(record.id))));
   }
 
-  async function operate(input: {
-    projectId: string;
-    conversationId: string;
-    turnId: string;
-    action: 'undo' | 'reapply';
-    request: TurnChangeSetOperationRequest;
-  }): Promise<TurnChangeSetOperationResult> {
+  async function operate(input: { projectId: string; conversationId: string; turnId: string; action: 'undo' | 'reapply'; request: TurnChangeSetOperationRequest }): Promise<TurnChangeSetOperationResult> {
     const changeSet = options.changeSets.getById(input.request.changeSetId);
-    if (
-      !changeSet ||
-      changeSet.projectId !== input.projectId ||
-      changeSet.conversationId !== input.conversationId ||
-      changeSet.turnId !== input.turnId
-    ) {
+    if (!changeSet || changeSet.projectId !== input.projectId || changeSet.conversationId !== input.conversationId || changeSet.turnId !== input.turnId) {
       throw turnChangeSetError('ZEUS_TURN_CHANGE_SET_NOT_FOUND', 'Turn change set not found.');
     }
     const expectedState = input.action === 'undo' ? 'applied' : 'undone';
@@ -395,7 +297,7 @@ export function createTurnChangeSetService(options: CreateTurnChangeSetServiceOp
       throw turnChangeSetError('ZEUS_TURN_CHANGE_SET_EXPECTED_STATE_INVALID', `Expected state must be ${expectedState} for ${input.action}.`);
     }
     const requestHash = createHash('sha256')
-      .update(JSON.stringify({changeSetId: changeSet.id, expectedState, action: input.action}))
+      .update(JSON.stringify({ changeSetId: changeSet.id, expectedState, action: input.action }))
       .digest('hex');
     const scope = `turn-change-set:${changeSet.id}:${input.action}`;
     const idempotency = options.idempotency.createOrGet({
@@ -433,7 +335,7 @@ export function createTurnChangeSetService(options: CreateTurnChangeSetServiceOp
         idempotencyKey: input.request.idempotencyKey,
         status: 'failed',
         httpStatus: changeSetErrorStatus(error),
-        response: {error: errorCode(error), message: error instanceof Error ? error.message : String(error)},
+        response: { error: errorCode(error), message: error instanceof Error ? error.message : String(error) },
         resourceId: changeSet.id,
         updatedAt: now(),
       });
@@ -472,11 +374,11 @@ export function createTurnChangeSetService(options: CreateTurnChangeSetServiceOp
       });
       const publicChangeSet = requirePublicChangeSet(changeSet.id);
       broadcastChangeSet(publicChangeSet);
-      throw Object.assign(turnChangeSetError(conflict.code, conflict.message), {paths: conflicts});
+      throw Object.assign(turnChangeSetError(conflict.code, conflict.message), { paths: conflicts });
     }
     const operationId = randomUUID();
     const journalDirectory = join(options.recoveryRoot, changeSet.id, 'journals', operationId);
-    mkdirSync(journalDirectory, {recursive: true, mode: 0o700});
+    mkdirSync(journalDirectory, { recursive: true, mode: 0o700 });
     const journalPath = join(journalDirectory, 'journal.json');
     const journal = {
       version: 1,
@@ -500,11 +402,11 @@ export function createTurnChangeSetService(options: CreateTurnChangeSetServiceOp
     try {
       applyFileSnapshots(executionRoot, files, action === 'undo' ? 'pre' : 'post');
       applied = true;
-      writeJsonAtomic(journalPath, {...journal, status: 'completed', completedAt: now()});
+      writeJsonAtomic(journalPath, { ...journal, status: 'completed', completedAt: now() });
     } catch (error) {
       try {
         applyFileSnapshots(executionRoot, files, action === 'undo' ? 'post' : 'pre');
-        writeJsonAtomic(journalPath, {...journal, status: 'rolled_back', rolledBackAt: now()});
+        writeJsonAtomic(journalPath, { ...journal, status: 'rolled_back', rolledBackAt: now() });
         options.changeSets.upsert({
           ...changeSet,
           state: fromState,
@@ -550,7 +452,7 @@ export function createTurnChangeSetService(options: CreateTurnChangeSetServiceOp
     });
     const publicChangeSet = requirePublicChangeSet(changeSet.id);
     broadcastChangeSet(publicChangeSet);
-    return {changeSet: publicChangeSet, auditEventId: audit.id};
+    return { changeSet: publicChangeSet, auditEventId: audit.id };
   }
 
   async function recoverInterruptedOperations(): Promise<void> {
@@ -571,7 +473,7 @@ export function createTurnChangeSetService(options: CreateTurnChangeSetServiceOp
       const restoredState = changeSet.state === 'undoing' ? 'applied' : 'undone';
       try {
         applyFileSnapshots(resolve(executionRoot), files, restore);
-        options.changeSets.upsert({...changeSet, state: restoredState, updatedAt: now()});
+        options.changeSets.upsert({ ...changeSet, state: restoredState, updatedAt: now() });
       } catch (error) {
         const conflict: TurnChangeConflict = {
           code: 'ZEUS_TURN_CHANGE_SET_RECOVERY_REQUIRED',
@@ -646,17 +548,20 @@ function normalizeProviderChanges(value: unknown): ProviderFileUpdateChange[] {
     if (!isRecord(candidate) || typeof candidate.path !== 'string' || !candidate.path.trim() || typeof candidate.diff !== 'string' || !isRecord(candidate.kind)) continue;
     const type = candidate.kind.type;
     if (type === 'add' || type === 'delete') {
-      changes.push({path: candidate.path, diff: candidate.diff, kind: {type}});
+      changes.push({ path: candidate.path, diff: candidate.diff, kind: { type } });
       continue;
     }
     if (type === 'update' && (candidate.kind.move_path === undefined || candidate.kind.move_path === null || typeof candidate.kind.move_path === 'string')) {
-      changes.push({path: candidate.path, diff: candidate.diff, kind: {type, move_path: candidate.kind.move_path ?? null}});
+      changes.push({ path: candidate.path, diff: candidate.diff, kind: { type, move_path: candidate.kind.move_path ?? null } });
     }
   }
   return changes;
 }
 
-function changePaths(change: ProviderFileUpdateChange, executionRoot: string): {
+function changePaths(
+  change: ProviderFileUpdateChange,
+  executionRoot: string,
+): {
   oldPath: string | null;
   newPath: string | null;
   oldAbsolutePath: string | null;
@@ -665,10 +570,10 @@ function changePaths(change: ProviderFileUpdateChange, executionRoot: string): {
 } {
   const sourcePath = normalizeProjectRelativePath(change.path, executionRoot);
   if (change.kind.type === 'add') {
-    return {oldPath: null, newPath: sourcePath.relativePath, oldAbsolutePath: null, newAbsolutePath: sourcePath.absolutePath, changeType: 'added'};
+    return { oldPath: null, newPath: sourcePath.relativePath, oldAbsolutePath: null, newAbsolutePath: sourcePath.absolutePath, changeType: 'added' };
   }
   if (change.kind.type === 'delete') {
-    return {oldPath: sourcePath.relativePath, newPath: null, oldAbsolutePath: sourcePath.absolutePath, newAbsolutePath: null, changeType: 'deleted'};
+    return { oldPath: sourcePath.relativePath, newPath: null, oldAbsolutePath: sourcePath.absolutePath, newAbsolutePath: null, changeType: 'deleted' };
   }
   const movePath = change.kind.move_path ? normalizeProjectRelativePath(change.kind.move_path, executionRoot) : null;
   return {
@@ -680,7 +585,7 @@ function changePaths(change: ProviderFileUpdateChange, executionRoot: string): {
   };
 }
 
-function normalizeProjectRelativePath(path: string, executionRoot: string): {absolutePath: string; relativePath: string} {
+function normalizeProjectRelativePath(path: string, executionRoot: string): { absolutePath: string; relativePath: string } {
   if (!path || path.includes('\0')) throw turnChangeSetError('ZEUS_TURN_CHANGE_SET_PATH_INVALID', 'Provider file change path is invalid.');
   const root = resolve(executionRoot);
   const absolutePath = resolve(isAbsolute(path) ? path : resolve(root, path));
@@ -688,7 +593,7 @@ function normalizeProjectRelativePath(path: string, executionRoot: string): {abs
     throw turnChangeSetError('ZEUS_TURN_CHANGE_SET_PATH_FORBIDDEN', 'Provider file change path is outside the conversation execution root.');
   }
   validateExistingAncestor(absolutePath, root);
-  return {absolutePath, relativePath: relative(root, absolutePath).split(sep).join('/')};
+  return { absolutePath, relativePath: relative(root, absolutePath).split(sep).join('/') };
 }
 
 function validateExistingAncestor(path: string, root: string): void {
@@ -702,7 +607,7 @@ function validateExistingAncestor(path: string, root: string): void {
       }
       return;
     } catch (error) {
-      if (error instanceof Error && 'code' in error && (error as Error & {code?: unknown}).code !== 'ENOENT') throw error;
+      if (error instanceof Error && 'code' in error && (error as Error & { code?: unknown }).code !== 'ENOENT') throw error;
       const parent = dirname(ancestor);
       if (parent === ancestor) throw turnChangeSetError('ZEUS_TURN_CHANGE_SET_PATH_FORBIDDEN', 'No trusted ancestor exists for the provider file change path.');
       ancestor = parent;
@@ -716,7 +621,7 @@ function aggregateChangeFiles(files: ZeusTurnChangeFileRecord[]): AggregatedChan
     const key = `${file.oldPath ?? ''}\0${file.newPath ?? ''}`;
     const existing = byPath.get(key);
     if (!existing) {
-      byPath.set(key, {...file, sourceIds: file.sourceItemId ? [file.sourceItemId] : []});
+      byPath.set(key, { ...file, sourceIds: file.sourceItemId ? [file.sourceItemId] : [] });
       continue;
     }
     byPath.set(key, {
@@ -736,23 +641,14 @@ function aggregateChangeFiles(files: ZeusTurnChangeFileRecord[]): AggregatedChan
       sourceIds: [...existing.sourceIds, ...(file.sourceItemId ? [file.sourceItemId] : [])],
     });
   }
-  return [...byPath.values()]
-    .filter((file) => !isNetZeroSamePathChange(file))
-    .sort((left, right) => (left.newPath ?? left.oldPath ?? '').localeCompare(right.newPath ?? right.oldPath ?? ''));
+  return [...byPath.values()].filter((file) => !isNetZeroSamePathChange(file)).sort((left, right) => (left.newPath ?? left.oldPath ?? '').localeCompare(right.newPath ?? right.oldPath ?? ''));
 }
 
 function isNetZeroSamePathChange(file: AggregatedChangeFile): boolean {
   if (!file.oldPath || file.oldPath !== file.newPath || file.preExists !== file.postExists) return false;
   if (!file.reversible || file.unavailableReason) return false;
   if (!file.preExists) return true;
-  return (
-    file.preHash !== null
-    && file.postHash !== null
-    && file.preMode !== null
-    && file.postMode !== null
-    && file.preHash === file.postHash
-    && file.preMode === file.postMode
-  );
+  return file.preHash !== null && file.postHash !== null && file.preMode !== null && file.postMode !== null && file.preHash === file.postHash && file.preMode === file.postMode;
 }
 
 function toPublicChangeSet(record: ZeusTurnChangeSetRecord, files: AggregatedChangeFile[]): TurnChangeSet {
@@ -790,7 +686,7 @@ function toPublicChangeSet(record: ZeusTurnChangeSetRecord, files: AggregatedCha
   };
 }
 
-function countDiffLines(diff: string): {added: number; deleted: number} {
+function countDiffLines(diff: string): { added: number; deleted: number } {
   let added = 0;
   let deleted = 0;
   for (const line of diff.replace(/\r\n?/gu, '\n').split('\n')) {
@@ -798,7 +694,7 @@ function countDiffLines(diff: string): {added: number; deleted: number} {
     if (line.startsWith('+')) added += 1;
     else if (line.startsWith('-')) deleted += 1;
   }
-  return {added, deleted};
+  return { added, deleted };
 }
 
 function isBinaryDiff(diff: string): boolean {
@@ -813,11 +709,11 @@ function providerPreImageMode(diff: string): number | null {
 }
 
 function absentSnapshot(): SnapshotState {
-  return {exists: false, hash: null, blobRef: null, mode: null, unavailableReason: null};
+  return { exists: false, hash: null, blobRef: null, mode: null, unavailableReason: null };
 }
 
 function unavailableSnapshot(reason: string): SnapshotState {
-  return {exists: false, hash: null, blobRef: null, mode: null, unavailableReason: reason};
+  return { exists: false, hash: null, blobRef: null, mode: null, unavailableReason: reason };
 }
 
 function snapshotFromRecord(file: ZeusTurnChangeFileRecord, phase: 'pre' | 'post'): SnapshotState {
@@ -827,23 +723,18 @@ function snapshotFromRecord(file: ZeusTurnChangeFileRecord, phase: 'pre' | 'post
         hash: file.preHash,
         blobRef: file.preBlobRef,
         mode: file.preMode,
-        unavailableReason: file.preExists && (!file.preHash || !file.preBlobRef) ? file.unavailableReason ?? 'Pre-image recovery data is incomplete.' : null,
+        unavailableReason: file.preExists && (!file.preHash || !file.preBlobRef) ? (file.unavailableReason ?? 'Pre-image recovery data is incomplete.') : null,
       }
     : {
         exists: file.postExists,
         hash: file.postHash,
         blobRef: file.postBlobRef,
         mode: file.postMode,
-        unavailableReason: file.postExists && (!file.postHash || !file.postBlobRef) ? file.unavailableReason ?? 'Post-image recovery data is incomplete.' : null,
+        unavailableReason: file.postExists && (!file.postHash || !file.postBlobRef) ? (file.unavailableReason ?? 'Post-image recovery data is incomplete.') : null,
       };
 }
 
-function snapshotSemanticUnavailableReason(
-  changeType: TurnChangeFileType,
-  pre: SnapshotState,
-  post: SnapshotState,
-  diff: string,
-): string | null {
+function snapshotSemanticUnavailableReason(changeType: TurnChangeFileType, pre: SnapshotState, post: SnapshotState, diff: string): string | null {
   if (changeType === 'added') {
     if (pre.exists || !post.exists) return 'Added-file recovery snapshots do not match the provider change.';
   } else if (changeType === 'deleted') {
@@ -852,9 +743,7 @@ function snapshotSemanticUnavailableReason(
     return 'Modified-file recovery requires both pre-image and post-image snapshots.';
   }
   if (changeType === 'binary') {
-    return pre.exists && post.exists && pre.hash === post.hash
-      ? 'The binary pre-image and post-image are identical, so the provider event arrived too late for safe recovery.'
-      : null;
+    return pre.exists && post.exists && pre.hash === post.hash ? 'The binary pre-image and post-image are identical, so the provider event arrived too late for safe recovery.' : null;
   }
   const counts = countDiffLines(diff);
   if (counts.added + counts.deleted > 0 && pre.exists && post.exists && pre.hash === post.hash) {
@@ -907,7 +796,7 @@ function applyUnifiedDiffBytes(baseBytes: Buffer, diff: string, direction: 'forw
   return Buffer.from(normalized.eol === '\r\n' ? patched.replace(/\n/gu, '\r\n') : patched, 'utf8');
 }
 
-function normalizePatchText(value: string): {text: string; eol: '\n' | '\r\n'} | null {
+function normalizePatchText(value: string): { text: string; eol: '\n' | '\r\n' } | null {
   const hasCrLf = value.includes('\r\n');
   const withoutCrLf = value.replace(/\r\n/gu, '');
   if (withoutCrLf.includes('\r')) return null;
@@ -956,8 +845,7 @@ function applyUnifiedDiffText(baseText: string, diff: string, direction: 'forwar
 
     const isLastHunk = hunkIndex === hunks.length - 1;
     if (isLastHunk && sourceCursor === source.lines.length) {
-      trailingNewline =
-        output.length === 0 ? false : lastEmittedPatchLine ? !lastEmittedPatchLine.noNewline : source.trailingNewline;
+      trailingNewline = output.length === 0 ? false : lastEmittedPatchLine ? !lastEmittedPatchLine.noNewline : source.trailingNewline;
     }
   }
 
@@ -1007,11 +895,11 @@ function parseUnifiedDiffHunks(diff: string): UnifiedDiffHunk[] | null {
   return hunks;
 }
 
-function splitPatchLines(value: string): {lines: string[]; trailingNewline: boolean} {
-  if (value === '') return {lines: [], trailingNewline: false};
+function splitPatchLines(value: string): { lines: string[]; trailingNewline: boolean } {
+  if (value === '') return { lines: [], trailingNewline: false };
   const trailingNewline = value.endsWith('\n');
   const body = trailingNewline ? value.slice(0, -1) : value;
-  return {lines: body.split('\n'), trailingNewline};
+  return { lines: body.split('\n'), trailingNewline };
 }
 
 function joinPatchLines(lines: string[], trailingNewline: boolean): string {
@@ -1025,7 +913,7 @@ function digestFileStates(files: AggregatedChangeFile[], phase: 'pre' | 'post'):
     const path = phase === 'pre' ? file.oldPath : file.newPath;
     const exists = phase === 'pre' ? file.preExists : file.postExists;
     const digest = phase === 'pre' ? file.preHash : file.postHash;
-    hash.update(`${path ?? ''}\0${exists ? digest ?? 'missing' : absentDigest}\0`);
+    hash.update(`${path ?? ''}\0${exists ? (digest ?? 'missing') : absentDigest}\0`);
   }
   return `sha256:${hash.digest('hex')}`;
 }
@@ -1052,7 +940,7 @@ function validateOperationPreconditions(projectRoot: string, files: AggregatedCh
 }
 
 function applyFileSnapshots(projectRoot: string, files: AggregatedChangeFile[], phase: 'pre' | 'post'): void {
-  const writes: Array<{path: string; blobRef: string; mode: number | null}> = [];
+  const writes: Array<{ path: string; blobRef: string; mode: number | null }> = [];
   const removals = new Set<string>();
   for (const file of files) {
     const primaryRelativePath = phase === 'pre' ? file.oldPath : file.newPath;
@@ -1072,7 +960,7 @@ function applyFileSnapshots(projectRoot: string, files: AggregatedChangeFile[], 
     if (!blobRef || !existsSync(blobRef)) {
       throw turnChangeSetError('ZEUS_TURN_CHANGE_SET_BLOB_MISSING', `Recovery data is missing for ${primaryRelativePath}.`);
     }
-    writes.push({path: absolutePath, blobRef, mode});
+    writes.push({ path: absolutePath, blobRef, mode });
   }
   for (const path of removals) removeRegularFileIfPresent(path);
   for (const write of writes) writeFileAtomically(write.path, readFileSync(write.blobRef), write.mode);
@@ -1092,10 +980,10 @@ function removeRegularFileIfPresent(path: string): void {
 }
 
 function writeFileAtomically(path: string, bytes: Buffer, mode: number | null): void {
-  mkdirSync(dirname(path), {recursive: true});
+  mkdirSync(dirname(path), { recursive: true });
   const temporaryPath = join(dirname(path), `.${basename(path)}.zeus-${randomUUID()}`);
   try {
-    writeFileSync(temporaryPath, bytes, {mode: mode ?? 0o644, flag: 'wx'});
+    writeFileSync(temporaryPath, bytes, { mode: mode ?? 0o644, flag: 'wx' });
     if (mode !== null) chmodSync(temporaryPath, mode);
     renameSync(temporaryPath, path);
   } catch (error) {
@@ -1108,20 +996,20 @@ function writeFileAtomically(path: string, bytes: Buffer, mode: number | null): 
   }
 }
 
-function currentFileState(path: string): {exists: boolean; hash: string | null} {
+function currentFileState(path: string): { exists: boolean; hash: string | null } {
   try {
     const stat = lstatSync(path);
-    if (stat.isSymbolicLink() || !stat.isFile()) return {exists: true, hash: 'unsupported'};
-    return {exists: true, hash: hashBytes(readFileSync(path))};
+    if (stat.isSymbolicLink() || !stat.isFile()) return { exists: true, hash: 'unsupported' };
+    return { exists: true, hash: hashBytes(readFileSync(path)) };
   } catch (error) {
-    if (isNodeError(error) && error.code === 'ENOENT') return {exists: false, hash: null};
+    if (isNodeError(error) && error.code === 'ENOENT') return { exists: false, hash: null };
     throw error;
   }
 }
 
 function writeJsonAtomic(path: string, value: unknown): void {
   const temporaryPath = `${path}.${randomUUID()}.tmp`;
-  writeFileSync(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, {mode: 0o600, flag: 'wx'});
+  writeFileSync(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600, flag: 'wx' });
   renameSync(temporaryPath, path);
 }
 
@@ -1143,7 +1031,7 @@ function parseConflict(value: string | null): TurnChangeConflict | null {
   try {
     const parsed = JSON.parse(value) as unknown;
     if (!isRecord(parsed) || typeof parsed.code !== 'string' || typeof parsed.message !== 'string' || !Array.isArray(parsed.paths) || !parsed.paths.every((path) => typeof path === 'string')) return null;
-    return {code: parsed.code, message: parsed.message, paths: parsed.paths};
+    return { code: parsed.code, message: parsed.message, paths: parsed.paths };
   } catch {
     return null;
   }
@@ -1159,8 +1047,8 @@ function parseOperationResult(value: string): TurnChangeSetOperationResult | nul
   }
 }
 
-function turnChangeSetError(code: string, message: string): Error & {code: string} {
-  return Object.assign(new Error(message), {code});
+function turnChangeSetError(code: string, message: string): Error & { code: string } {
+  return Object.assign(new Error(message), { code });
 }
 
 export function changeSetErrorStatus(error: unknown): number {
@@ -1174,9 +1062,7 @@ export function changeSetErrorStatus(error: unknown): number {
 }
 
 export function errorCode(error: unknown): string {
-  return error instanceof Error && 'code' in error && typeof (error as Error & {code?: unknown}).code === 'string'
-    ? String((error as Error & {code: string}).code)
-    : 'ZEUS_TURN_CHANGE_SET_OPERATION_FAILED';
+  return error instanceof Error && 'code' in error && typeof (error as Error & { code?: unknown }).code === 'string' ? String((error as Error & { code: string }).code) : 'ZEUS_TURN_CHANGE_SET_OPERATION_FAILED';
 }
 
 function isNodeError(error: unknown): error is NodeJS.ErrnoException {
