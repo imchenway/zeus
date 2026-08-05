@@ -21,6 +21,16 @@ export function isTaskPriority(value: unknown): value is TaskPriority {
   return typeof value === 'string' && taskPriorityOrder.includes(value as TaskPriority);
 }
 
+/** 任务类型只表达工作目标；不会改变任务状态、优先级或执行方式。 */
+export const taskTypeOrder = ['requirement', 'defect', 'optimization'] as const;
+
+export type TaskType = (typeof taskTypeOrder)[number];
+
+/** 对 API、导入数据和数据库回填值做统一任务类型校验。 */
+export function isTaskType(value: unknown): value is TaskType {
+  return typeof value === 'string' && taskTypeOrder.includes(value as TaskType);
+}
+
 /** 项目管理阶段与 Coding Agent 执行状态严格分离；这里只描述任务在交付流程中的位置。 */
 export type TaskManagementStatus = 'todo' | 'in_development' | 'in_testing' | 'awaiting_acceptance' | 'blocked' | 'completed' | 'cancelled';
 

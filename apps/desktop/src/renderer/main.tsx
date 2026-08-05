@@ -93,7 +93,13 @@ async function renderWithClient(client: DashboardClient): Promise<void> {
           await client.createTask({
             projectId,
             title: draft.title,
+            taskType: draft.taskType,
             description: draft.description,
+            defectCurrentState: draft.defectCurrentState,
+            defectExpectedOutcome: draft.defectExpectedOutcome,
+            defectReproductionSteps: draft.defectReproductionSteps,
+            optimizationCurrentState: draft.optimizationCurrentState,
+            optimizationExpectedOutcome: draft.optimizationExpectedOutcome,
             tags: draft.tags,
             priority: draft.priority,
             sourceContext: {

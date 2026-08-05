@@ -174,6 +174,7 @@ import {
   type TaskRecord,
   type TaskStatus,
   type TaskStatusFilter,
+  type TaskType,
   type TaskTableColumnPreferences,
   type TaskTemplateRecord,
   type TelegramNotificationSettings,
@@ -226,9 +227,43 @@ type InlineRecoveryAction = {
 };
 type ControlBusyProps = { 'aria-busy'?: true; 'data-loading'?: 'true' };
 type TaskCreateAttachment = TaskAttachmentView;
-type TaskCreateFormState = { title: string; description: string; priority: TaskPriority; tags: string; attachments: TaskCreateAttachment[] };
-type TaskCreateTextField = Extract<keyof TaskCreateFormState, 'title' | 'description' | 'tags'>;
-type TaskCreateDraft = { title: string; description: string; priority: TaskPriority; tags: string[]; attachments: ReturnType<typeof toPersistedTaskAttachment>[] };
+type TaskCreateFormState = {
+  title: string;
+  taskType: TaskType | '';
+  description: string;
+  defectCurrentState: string;
+  defectExpectedOutcome: string;
+  defectReproductionSteps: string;
+  optimizationCurrentState: string;
+  optimizationExpectedOutcome: string;
+  priority: TaskPriority;
+  tags: string;
+  attachments: TaskCreateAttachment[];
+};
+type TaskCreateTextField = Extract<
+  keyof TaskCreateFormState,
+  | 'title'
+  | 'description'
+  | 'defectCurrentState'
+  | 'defectExpectedOutcome'
+  | 'defectReproductionSteps'
+  | 'optimizationCurrentState'
+  | 'optimizationExpectedOutcome'
+  | 'tags'
+>;
+type TaskCreateDraft = {
+  title: string;
+  taskType: TaskType;
+  description: string;
+  defectCurrentState: string;
+  defectExpectedOutcome: string;
+  defectReproductionSteps: string;
+  optimizationCurrentState: string;
+  optimizationExpectedOutcome: string;
+  priority: TaskPriority;
+  tags: string[];
+  attachments: ReturnType<typeof toPersistedTaskAttachment>[];
+};
 type TaskResourcePayload = { name?: string; type?: string; data?: ArrayBuffer; text?: string; kind?: 'image' | 'file' | 'pasted_text' };
 type TaskResourceAuthorizationResult = { resources: TaskCreateAttachment[]; failedCount: number };
 type NativeConversationAppClient = SessionControllerClient &
@@ -993,8 +1028,21 @@ const languageCopy = {
       taskCreateDialogTitle: '创建任务',
       taskCreateTitleLabel: '任务标题',
       taskCreateTitlePlaceholder: '例如：修复任务表格列可见性',
-      taskCreateDescriptionLabel: '任务要求 / 意图',
-      taskCreateDescriptionPlaceholder: '描述期望行为、验收标准和必要上下文',
+      taskCreateTypeLabel: '任务类型',
+      taskCreateTypePlaceholder: '请选择类型',
+      taskCreateTypeOptions: [
+        { value: 'requirement', label: '需求' },
+        { value: 'defect', label: '缺陷' },
+        { value: 'optimization', label: '优化' },
+      ],
+      taskCreateDescriptionLabel: '需求描述',
+      taskCreateDescriptionPlaceholder: '描述需求内容、验收标准和必要上下文',
+      taskCreateCurrentStateLabel: '现状',
+      taskCreateCurrentStatePlaceholder: '描述当前实际表现',
+      taskCreateExpectedOutcomeLabel: '预期',
+      taskCreateExpectedOutcomePlaceholder: '描述期望达到的结果',
+      taskCreateReproductionStepsLabel: '复现步骤',
+      taskCreateReproductionStepsPlaceholder: '描述如何复现当前问题',
       taskCreatePriorityLabel: '优先级',
       taskCreatePriorityOptions: [
         { value: 'p0', label: 'P0：立即开始处理' },
@@ -1024,6 +1072,7 @@ const languageCopy = {
       taskCreateSubmitting: '创建中',
       taskCreateClose: '关闭创建任务弹窗',
       taskCreateTitleRequired: '请输入任务标题',
+      taskCreateTypeRequired: '请选择任务类型',
       taskCreateSubmitFailed: '创建任务失败，请保留输入后重试。',
       today: '今天',
       emptyTitle: '还没有任务',
@@ -1141,6 +1190,7 @@ const languageCopy = {
       allState: '全部状态',
       codeColumnTitle: '任务编码',
       intentColumnTitle: '任务',
+      taskTypeColumnTitle: '类型',
       managementStatusColumnTitle: '任务状态',
       runStatusColumnTitle: '运行状态',
       sourceColumnTitle: '上下文来源',
@@ -2407,8 +2457,21 @@ const languageCopy = {
       taskCreateDialogTitle: 'Create task',
       taskCreateTitleLabel: 'Task title',
       taskCreateTitlePlaceholder: 'For example: Fix task table column visibility',
-      taskCreateDescriptionLabel: 'Task request / intent',
-      taskCreateDescriptionPlaceholder: 'Describe the expected behavior, acceptance criteria, and required context',
+      taskCreateTypeLabel: 'Task type',
+      taskCreateTypePlaceholder: 'Choose a type',
+      taskCreateTypeOptions: [
+        { value: 'requirement', label: 'Requirement' },
+        { value: 'defect', label: 'Defect' },
+        { value: 'optimization', label: 'Optimization' },
+      ],
+      taskCreateDescriptionLabel: 'Requirement description',
+      taskCreateDescriptionPlaceholder: 'Describe the requirement, acceptance criteria, and required context',
+      taskCreateCurrentStateLabel: 'Current state',
+      taskCreateCurrentStatePlaceholder: 'Describe the current behavior',
+      taskCreateExpectedOutcomeLabel: 'Expected outcome',
+      taskCreateExpectedOutcomePlaceholder: 'Describe the expected result',
+      taskCreateReproductionStepsLabel: 'Reproduction steps',
+      taskCreateReproductionStepsPlaceholder: 'Describe how to reproduce the issue',
       taskCreatePriorityLabel: 'Priority',
       taskCreatePriorityOptions: [
         { value: 'p0', label: 'P0: Start handling immediately' },
@@ -2438,6 +2501,7 @@ const languageCopy = {
       taskCreateSubmitting: 'Creating',
       taskCreateClose: 'Close create task dialog',
       taskCreateTitleRequired: 'Enter a task title',
+      taskCreateTypeRequired: 'Choose a task type',
       taskCreateSubmitFailed: 'Task creation failed. Your input is preserved for retry.',
       today: 'Today',
       emptyTitle: 'No tasks yet',
@@ -2555,6 +2619,7 @@ const languageCopy = {
       allState: 'All states',
       codeColumnTitle: 'Task code',
       intentColumnTitle: 'Task',
+      taskTypeColumnTitle: 'Type',
       managementStatusColumnTitle: 'Task status',
       runStatusColumnTitle: 'Run status',
       sourceColumnTitle: 'Context source',
@@ -3673,8 +3738,17 @@ const languageCopy = {
       taskCreateDialogTitle: string;
       taskCreateTitleLabel: string;
       taskCreateTitlePlaceholder: string;
+      taskCreateTypeLabel: string;
+      taskCreateTypePlaceholder: string;
+      taskCreateTypeOptions: readonly { value: TaskType; label: string }[];
       taskCreateDescriptionLabel: string;
       taskCreateDescriptionPlaceholder: string;
+      taskCreateCurrentStateLabel: string;
+      taskCreateCurrentStatePlaceholder: string;
+      taskCreateExpectedOutcomeLabel: string;
+      taskCreateExpectedOutcomePlaceholder: string;
+      taskCreateReproductionStepsLabel: string;
+      taskCreateReproductionStepsPlaceholder: string;
       taskCreatePriorityLabel: string;
       taskCreatePriorityOptions: readonly { value: TaskPriority; label: string }[];
       taskCreateTagsLabel: string;
@@ -3698,6 +3772,7 @@ const languageCopy = {
       taskCreateSubmitting: string;
       taskCreateClose: string;
       taskCreateTitleRequired: string;
+      taskCreateTypeRequired: string;
       taskCreateSubmitFailed: string;
       today: string;
       emptyTitle: string;
@@ -3781,6 +3856,7 @@ const languageCopy = {
       allState: string;
       codeColumnTitle: string;
       intentColumnTitle: string;
+      taskTypeColumnTitle: string;
       managementStatusColumnTitle: string;
       runStatusColumnTitle: string;
       sourceColumnTitle: string;
@@ -4958,16 +5034,23 @@ export function buildTaskCreateInitialForm(_appLanguage: AppLanguage): TaskCreat
   void _appLanguage;
   return {
     title: '',
+    taskType: '',
     description: '',
+    defectCurrentState: '',
+    defectExpectedOutcome: '',
+    defectReproductionSteps: '',
+    optimizationCurrentState: '',
+    optimizationExpectedOutcome: '',
     priority: 'p3',
     tags: '',
     attachments: [],
   };
 }
 
-export function normalizeTaskCreateDraft(form: TaskCreateFormState, titleRequiredMessage: string): { draft: TaskCreateDraft } | { error: string } {
+export function normalizeTaskCreateDraft(form: TaskCreateFormState, titleRequiredMessage: string, typeRequiredMessage: string): { draft: TaskCreateDraft } | { error: string } {
   const title = form.title.trim();
   if (!title) return { error: titleRequiredMessage };
+  if (!form.taskType) return { error: typeRequiredMessage };
   const seenTags = new Set<string>();
   const tags = form.tags
     .split(',')
@@ -4980,7 +5063,13 @@ export function normalizeTaskCreateDraft(form: TaskCreateFormState, titleRequire
   return {
     draft: {
       title,
+      taskType: form.taskType,
       description: form.description.trim(),
+      defectCurrentState: form.defectCurrentState.trim(),
+      defectExpectedOutcome: form.defectExpectedOutcome.trim(),
+      defectReproductionSteps: form.defectReproductionSteps.trim(),
+      optimizationCurrentState: form.optimizationCurrentState.trim(),
+      optimizationExpectedOutcome: form.optimizationExpectedOutcome.trim(),
       priority: form.priority,
       tags,
       // 任务持久化只保存 Zeus 托管后的本机路径与元信息；data URL 预览只留在本次 UI 状态，避免把大图写入任务 JSON。
@@ -5257,6 +5346,7 @@ function TaskCreateModal(props: {
   busy: boolean;
   titleInputRef: RefObject<HTMLInputElement | null>;
   onFormChange: (field: TaskCreateTextField, value: string) => void;
+  onTaskTypeChange: (taskType: TaskType | '') => void;
   onPriorityChange: (priority: TaskPriority) => void;
   onChooseAttachments: () => void;
   onAuthorizeFiles: (files: File[], source: 'paste' | 'drop') => Promise<TaskResourceAuthorizationResult>;
@@ -5272,6 +5362,10 @@ function TaskCreateModal(props: {
   const pasteShortcutFallbackTokenRef = useRef(0);
   const [resourceProcessingCount, setResourceProcessingCount] = useState(0);
   const [resourceDragDepth, setResourceDragDepth] = useState(0);
+  const taskTypeOptions = useMemo(
+    () => [{ value: '' as const, label: props.copy.taskCreateTypePlaceholder, disabled: true }, ...props.copy.taskCreateTypeOptions],
+    [props.copy.taskCreateTypeOptions, props.copy.taskCreateTypePlaceholder],
+  );
   if (!props.open) return null;
   const describedBy = props.error ? 'task-create-error' : undefined;
   const resourcesBusy = resourceProcessingCount > 0;
@@ -5411,10 +5505,11 @@ function TaskCreateModal(props: {
 
   function restoreTaskCreateText(attachment: TaskCreateAttachment): void {
     if (!attachment.restorableText || interactionBusy) return;
+    const defaultRestoreField = activeTaskCreateContentField(props.form.taskType);
     const restoreTarget = attachment.restoreTarget ?? {
-      field: 'description' as const,
-      start: props.form.description.length,
-      end: props.form.description.length,
+      field: defaultRestoreField,
+      start: props.form[defaultRestoreField].length,
+      end: props.form[defaultRestoreField].length,
     };
     const currentValue = props.form[restoreTarget.field];
     const start = Math.min(restoreTarget.start, currentValue.length);
@@ -5490,19 +5585,20 @@ function TaskCreateModal(props: {
               disabled={interactionBusy}
             />
           </div>
-          <div className="task-create-field task-create-description-field">
-            <span id="task-create-description-label">{props.copy.taskCreateDescriptionLabel}</span>
-            <textarea
-              id="task-create-description-input"
-              className="task-create-description-input"
-              value={props.form.description}
-              placeholder={props.copy.taskCreateDescriptionPlaceholder}
-              aria-labelledby="task-create-description-label"
-              onChange={(event) => props.onFormChange('description', event.currentTarget.value)}
-              disabled={interactionBusy}
-            />
-          </div>
           <div className="task-create-two-column-row">
+            <div className="task-create-field task-create-type-field">
+              <span id="task-create-type-label">{props.copy.taskCreateTypeLabel}</span>
+              <ZeusSelect
+                size="regular"
+                className="task-create-type-select"
+                ariaLabel={props.copy.taskCreateTypeLabel}
+                value={props.form.taskType}
+                options={taskTypeOptions}
+                onChange={props.onTaskTypeChange}
+                searchable={false}
+                disabled={interactionBusy}
+              />
+            </div>
             <div className="task-create-field task-create-priority-field">
               <span id="task-create-priority-label">{props.copy.taskCreatePriorityLabel}</span>
               <ZeusSelect
@@ -5516,18 +5612,100 @@ function TaskCreateModal(props: {
                 disabled={interactionBusy}
               />
             </div>
-            <div className="task-create-field task-create-tags-field">
-              <span id="task-create-tags-label">{props.copy.taskCreateTagsLabel}</span>
-              <input
-                id="task-create-tags-input"
-                className="task-create-tags-input"
-                value={props.form.tags}
-                placeholder={props.copy.taskCreateTagsPlaceholder}
-                aria-labelledby="task-create-tags-label"
-                onChange={(event) => props.onFormChange('tags', event.currentTarget.value)}
+          </div>
+          {props.form.taskType === 'requirement' ? (
+            <div className="task-create-field task-create-description-field">
+              <span id="task-create-description-label">{props.copy.taskCreateDescriptionLabel}</span>
+              <textarea
+                id="task-create-description-input"
+                className="task-create-description-input"
+                value={props.form.description}
+                placeholder={props.copy.taskCreateDescriptionPlaceholder}
+                aria-labelledby="task-create-description-label"
+                onChange={(event) => props.onFormChange('description', event.currentTarget.value)}
                 disabled={interactionBusy}
               />
             </div>
+          ) : null}
+          {props.form.taskType === 'defect' ? (
+            <>
+              <div className="task-create-field task-create-description-field">
+                <span id="task-create-defect-current-state-label">{props.copy.taskCreateCurrentStateLabel}</span>
+                <textarea
+                  id="task-create-defect-current-state-input"
+                  className="task-create-description-input"
+                  value={props.form.defectCurrentState}
+                  placeholder={props.copy.taskCreateCurrentStatePlaceholder}
+                  aria-labelledby="task-create-defect-current-state-label"
+                  onChange={(event) => props.onFormChange('defectCurrentState', event.currentTarget.value)}
+                  disabled={interactionBusy}
+                />
+              </div>
+              <div className="task-create-field task-create-description-field">
+                <span id="task-create-defect-expected-outcome-label">{props.copy.taskCreateExpectedOutcomeLabel}</span>
+                <textarea
+                  id="task-create-defect-expected-outcome-input"
+                  className="task-create-description-input"
+                  value={props.form.defectExpectedOutcome}
+                  placeholder={props.copy.taskCreateExpectedOutcomePlaceholder}
+                  aria-labelledby="task-create-defect-expected-outcome-label"
+                  onChange={(event) => props.onFormChange('defectExpectedOutcome', event.currentTarget.value)}
+                  disabled={interactionBusy}
+                />
+              </div>
+              <div className="task-create-field task-create-description-field">
+                <span id="task-create-defect-reproduction-steps-label">{props.copy.taskCreateReproductionStepsLabel}</span>
+                <textarea
+                  id="task-create-defect-reproduction-steps-input"
+                  className="task-create-description-input"
+                  value={props.form.defectReproductionSteps}
+                  placeholder={props.copy.taskCreateReproductionStepsPlaceholder}
+                  aria-labelledby="task-create-defect-reproduction-steps-label"
+                  onChange={(event) => props.onFormChange('defectReproductionSteps', event.currentTarget.value)}
+                  disabled={interactionBusy}
+                />
+              </div>
+            </>
+          ) : null}
+          {props.form.taskType === 'optimization' ? (
+            <>
+              <div className="task-create-field task-create-description-field">
+                <span id="task-create-optimization-current-state-label">{props.copy.taskCreateCurrentStateLabel}</span>
+                <textarea
+                  id="task-create-optimization-current-state-input"
+                  className="task-create-description-input"
+                  value={props.form.optimizationCurrentState}
+                  placeholder={props.copy.taskCreateCurrentStatePlaceholder}
+                  aria-labelledby="task-create-optimization-current-state-label"
+                  onChange={(event) => props.onFormChange('optimizationCurrentState', event.currentTarget.value)}
+                  disabled={interactionBusy}
+                />
+              </div>
+              <div className="task-create-field task-create-description-field">
+                <span id="task-create-optimization-expected-outcome-label">{props.copy.taskCreateExpectedOutcomeLabel}</span>
+                <textarea
+                  id="task-create-optimization-expected-outcome-input"
+                  className="task-create-description-input"
+                  value={props.form.optimizationExpectedOutcome}
+                  placeholder={props.copy.taskCreateExpectedOutcomePlaceholder}
+                  aria-labelledby="task-create-optimization-expected-outcome-label"
+                  onChange={(event) => props.onFormChange('optimizationExpectedOutcome', event.currentTarget.value)}
+                  disabled={interactionBusy}
+                />
+              </div>
+            </>
+          ) : null}
+          <div className="task-create-field task-create-tags-field">
+            <span id="task-create-tags-label">{props.copy.taskCreateTagsLabel}</span>
+            <input
+              id="task-create-tags-input"
+              className="task-create-tags-input"
+              value={props.form.tags}
+              placeholder={props.copy.taskCreateTagsPlaceholder}
+              aria-labelledby="task-create-tags-label"
+              onChange={(event) => props.onFormChange('tags', event.currentTarget.value)}
+              disabled={interactionBusy}
+            />
           </div>
           <section className="task-create-attachments" aria-label={props.copy.taskCreateAttachmentsLabel}>
             <div className="task-create-attachments-heading">
@@ -5711,9 +5889,19 @@ function safelyReadClipboardData(clipboardData: DataTransfer, type: string): str
 
 function resolveTaskCreatePasteField(target: EventTarget): { field: TaskCreateTextField; control: HTMLInputElement | HTMLTextAreaElement } | undefined {
   if (!(target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement)) return undefined;
-  if (target.id === 'task-create-title-input') return { field: 'title', control: target };
-  if (target.id === 'task-create-description-input') return { field: 'description', control: target };
-  if (target.id === 'task-create-tags-input') return { field: 'tags', control: target };
+  const fieldByControlId = new Map<TaskCreateTextField, string>([
+    ['title', 'task-create-title-input'],
+    ['description', 'task-create-description-input'],
+    ['defectCurrentState', 'task-create-defect-current-state-input'],
+    ['defectExpectedOutcome', 'task-create-defect-expected-outcome-input'],
+    ['defectReproductionSteps', 'task-create-defect-reproduction-steps-input'],
+    ['optimizationCurrentState', 'task-create-optimization-current-state-input'],
+    ['optimizationExpectedOutcome', 'task-create-optimization-expected-outcome-input'],
+    ['tags', 'task-create-tags-input'],
+  ]);
+  for (const [field, controlId] of fieldByControlId) {
+    if (target.id === controlId) return { field, control: target };
+  }
   return undefined;
 }
 
@@ -5752,9 +5940,24 @@ function taskCreateDataTransferHasFiles(dataTransfer: DataTransfer): boolean {
 }
 
 function taskCreateControlId(field: TaskCreateTextField): string {
-  if (field === 'title') return 'task-create-title-input';
-  if (field === 'tags') return 'task-create-tags-input';
-  return 'task-create-description-input';
+  const controlIds: Record<TaskCreateTextField, string> = {
+    title: 'task-create-title-input',
+    description: 'task-create-description-input',
+    defectCurrentState: 'task-create-defect-current-state-input',
+    defectExpectedOutcome: 'task-create-defect-expected-outcome-input',
+    defectReproductionSteps: 'task-create-defect-reproduction-steps-input',
+    optimizationCurrentState: 'task-create-optimization-current-state-input',
+    optimizationExpectedOutcome: 'task-create-optimization-expected-outcome-input',
+    tags: 'task-create-tags-input',
+  };
+  return controlIds[field];
+}
+
+/** 未记录原粘贴位置时，把可恢复长文本放回当前类型的第一个正文栏。 */
+function activeTaskCreateContentField(taskType: TaskType | ''): Extract<TaskCreateTextField, 'description' | 'defectCurrentState' | 'optimizationCurrentState'> {
+  if (taskType === 'defect') return 'defectCurrentState';
+  if (taskType === 'optimization') return 'optimizationCurrentState';
+  return 'description';
 }
 
 /** Codex macOS 风格纯色设置 pane：用标题、留白和控件边界分组，不再用灰度条带或横线切割内容。 */
@@ -7809,6 +8012,12 @@ export function App(props: {
     if (field === 'title') setTaskCreateError('');
   }
 
+  function updateTaskCreateType(taskType: TaskType | ''): void {
+    // 只切换当前展示的字段组，不清空其他类型的草稿，用户切回时可继续编辑。
+    setTaskCreateForm((current) => ({ ...current, taskType }));
+    if (taskType) setTaskCreateError('');
+  }
+
   function updateTaskCreatePriority(priority: TaskPriority): void {
     setTaskCreateForm((current) => ({ ...current, priority }));
   }
@@ -7892,10 +8101,14 @@ export function App(props: {
 
   async function submitTaskCreateModal(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
-    const normalized = normalizeTaskCreateDraft(taskCreateForm, taskWorkspaceCopy.taskCreateTitleRequired);
+    const normalized = normalizeTaskCreateDraft(taskCreateForm, taskWorkspaceCopy.taskCreateTitleRequired, taskWorkspaceCopy.taskCreateTypeRequired);
     if ('error' in normalized) {
       setTaskCreateError(normalized.error);
-      taskCreateTitleInputRef.current?.focus();
+      if (normalized.error === taskWorkspaceCopy.taskCreateTypeRequired) {
+        window.requestAnimationFrame(() => document.querySelector<HTMLButtonElement>('.task-create-type-select > button')?.focus());
+      } else {
+        taskCreateTitleInputRef.current?.focus();
+      }
       return;
     }
     const created = await createProjectTaskFromDraft(normalized.draft);
@@ -10714,6 +10927,7 @@ export function App(props: {
                     busy={creatingTaskBusy}
                     titleInputRef={taskCreateTitleInputRef}
                     onFormChange={updateTaskCreateForm}
+                    onTaskTypeChange={updateTaskCreateType}
                     onPriorityChange={updateTaskCreatePriority}
                     onChooseAttachments={() => void chooseTaskCreateAttachments()}
                     onAuthorizeFiles={authorizeTaskCreateFiles}

@@ -27,9 +27,20 @@ export type TaskModelPushPreferences = Pick<TaskModelPushForm, 'model' | 'effort
 
 const preferencesKeyPrefix = 'zeus.task-model-push-preferences:v1:';
 
-export function buildTaskModelPushMessage(task: Pick<TaskRecord, 'title' | 'description'>, supplementalInfo: string): string {
-  const description = [task.description?.trim() ?? '', supplementalInfo.trim()].filter(Boolean).join('\n\n') || '未提供';
-  return `任务标题：${task.title.trim()}\n任务描述：${description}`;
+export function buildTaskModelPushMessage(
+  task: Pick<TaskRecord, 'title' | 'taskType' | 'description' | 'defectCurrentState' | 'defectExpectedOutcome' | 'defectReproductionSteps' | 'optimizationCurrentState' | 'optimizationExpectedOutcome'>,
+  supplementalInfo: string,
+): string {
+  const lines = [`任务标题：${task.title.trim()}`];
+  if (task.taskType === 'defect') {
+    lines.push('任务类型：缺陷', `现状：${task.defectCurrentState?.trim() || '未提供'}`, `预期：${task.defectExpectedOutcome?.trim() || '未提供'}`, `复现步骤：${task.defectReproductionSteps?.trim() || '未提供'}`);
+  } else if (task.taskType === 'optimization') {
+    lines.push('任务类型：优化', `现状：${task.optimizationCurrentState?.trim() || '未提供'}`, `预期：${task.optimizationExpectedOutcome?.trim() || '未提供'}`);
+  } else {
+    lines.push('任务类型：需求', `需求描述：${task.description?.trim() || '未提供'}`);
+  }
+  if (supplementalInfo.trim()) lines.push(`补充信息：${supplementalInfo.trim()}`);
+  return lines.join('\n');
 }
 
 export function readTaskModelPushPreferences(storage: Pick<Storage, 'getItem'> | undefined, projectId: string): TaskModelPushPreferences | null {

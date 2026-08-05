@@ -8,9 +8,11 @@ import {
   type ConversationResourcePresentation,
   isTaskManagementStatus,
   isTaskPriority,
+  isTaskType,
   type TaskAttachmentReference,
   type TaskManagementStatus,
   type TaskPriority,
+  type TaskType,
   type TurnChangeFileType,
   type TurnChangeSetState,
 } from '@zeus/shared';
@@ -18,8 +20,8 @@ import { migrateCommandCenterSchema } from './commands.js';
 
 export * from './commands.js';
 
-export { isTaskManagementStatus, isTaskPriority };
-export type { TaskManagementStatus, TaskPriority };
+export { isTaskManagementStatus, isTaskPriority, isTaskType };
+export type { TaskManagementStatus, TaskPriority, TaskType };
 
 export interface ZeusProjectRecord {
   id: string;
@@ -61,7 +63,13 @@ export interface ZeusTaskRecord {
   taskCode: string;
   taskSequence: number | null;
   title: string;
+  taskType: TaskType;
   description: string;
+  defectCurrentState: string;
+  defectExpectedOutcome: string;
+  defectReproductionSteps: string;
+  optimizationCurrentState: string;
+  optimizationExpectedOutcome: string;
   managementStatus: TaskManagementStatus;
   status: 'draft' | 'ready' | 'running' | 'paused' | 'waiting_confirmation' | 'completed' | 'failed' | 'cancelled';
   priority: string;
@@ -266,7 +274,13 @@ export interface ProjectArchiveConfirmation {
 export interface CreateTaskInput {
   projectId: string;
   title: string;
+  taskType: TaskType;
   description: string;
+  defectCurrentState?: string;
+  defectExpectedOutcome?: string;
+  defectReproductionSteps?: string;
+  optimizationCurrentState?: string;
+  optimizationExpectedOutcome?: string;
   createdFrom: string;
   sourceContext: Record<string, unknown>;
   priority?: TaskPriority;
@@ -298,19 +312,40 @@ export interface TaskListOptions {
   status?: ZeusTaskRecord['status'];
   managementStatus?: TaskManagementStatus;
   tag?: string;
-  sortBy?: 'createdAt' | 'updatedAt' | 'title' | 'status' | 'managementStatus';
+  sortBy?: 'createdAt' | 'updatedAt' | 'title' | 'taskType' | 'status' | 'managementStatus';
   sortDirection?: 'asc' | 'desc';
 }
 
 export interface UpdateTaskInput {
   title?: string;
+  taskType?: TaskType;
   description?: string;
+  defectCurrentState?: string;
+  defectExpectedOutcome?: string;
+  defectReproductionSteps?: string;
+  optimizationCurrentState?: string;
+  optimizationExpectedOutcome?: string;
   allowCodeChanges?: boolean;
   allowTests?: boolean;
   allowGitCommit?: boolean;
 }
 
-export type TaskEditableField = 'title' | 'description' | 'priority' | 'tags' | 'attachments' | 'sourceContext' | 'allowCodeChanges' | 'allowTests' | 'allowGitCommit';
+export type TaskEditableField =
+  | 'title'
+  | 'taskType'
+  | 'description'
+  | 'defectCurrentState'
+  | 'defectExpectedOutcome'
+  | 'defectReproductionSteps'
+  | 'optimizationCurrentState'
+  | 'optimizationExpectedOutcome'
+  | 'priority'
+  | 'tags'
+  | 'attachments'
+  | 'sourceContext'
+  | 'allowCodeChanges'
+  | 'allowTests'
+  | 'allowGitCommit';
 
 export interface UpdateTaskContentInput extends UpdateTaskInput {
   expectedUpdatedAt: string;
@@ -1159,6 +1194,7 @@ export async function createZeusDatabase(filePath: string): Promise<ZeusDatabase
   migrateCoreSchema(zeusDb);
   migrateRetiredUnitTestTemplate(zeusDb);
   migrateTaskManagementStatus(zeusDb);
+  migrateTaskTypesAndContents(zeusDb);
   migrateCodexNativeConversationSchema(zeusDb);
   migrateAgentRuntimeSchema(zeusDb);
   migrateTaskGitWorkspaceSchema(zeusDb);
@@ -1208,7 +1244,13 @@ function migrateCoreSchema(db: ZeusDatabase): void {
       id TEXT PRIMARY KEY,
       project_id TEXT NOT NULL,
       title TEXT NOT NULL,
+      task_type TEXT NOT NULL DEFAULT 'requirement',
       description TEXT NOT NULL,
+      defect_current_state TEXT NOT NULL DEFAULT '',
+      defect_expected_outcome TEXT NOT NULL DEFAULT '',
+      defect_reproduction_steps TEXT NOT NULL DEFAULT '',
+      optimization_current_state TEXT NOT NULL DEFAULT '',
+      optimization_expected_outcome TEXT NOT NULL DEFAULT '',
       management_status TEXT NOT NULL DEFAULT 'todo',
       status TEXT NOT NULL,
       priority TEXT NOT NULL DEFAULT 'normal',
@@ -1521,6 +1563,34 @@ function migrateTaskManagementStatus(db: ZeusDatabase): void {
     migrationId,
     description: '拆分项目管理任务状态与 Coding Agent 执行状态',
     checksumSource: 'tasks.management_status:v1:todo,in_development,in_testing,awaiting_acceptance,blocked,completed,cancelled',
+  });
+}
+
+function migrateTaskTypesAndContents(db: ZeusDatabase): void {
+  const migrationId = '20260805_0001_task_types_and_contents';
+  if (db.get<{ migration_id: string }>(`SELECT migration_id FROM schema_migrations WHERE migration_id = ?`, [migrationId])) return;
+  const columns = [
+    `task_type TEXT NOT NULL DEFAULT 'requirement'`,
+    `defect_current_state TEXT NOT NULL DEFAULT ''`,
+    `defect_expected_outcome TEXT NOT NULL DEFAULT ''`,
+    `defect_reproduction_steps TEXT NOT NULL DEFAULT ''`,
+    `optimization_current_state TEXT NOT NULL DEFAULT ''`,
+    `optimization_expected_outcome TEXT NOT NULL DEFAULT ''`,
+  ];
+  for (const column of columns) {
+    try {
+      db.execute(`ALTER TABLE tasks ADD COLUMN ${column}`);
+    } catch {
+      // 新数据库建表时已经包含这些字段；旧数据库重复执行时也安全忽略。
+    }
+  }
+  // 历史任务按用户确认口径统一归为需求；未知脏值同样收敛到合法类型。
+  db.execute(`UPDATE tasks SET task_type = 'requirement' WHERE task_type IS NULL OR task_type NOT IN ('requirement', 'defect', 'optimization')`);
+  db.execute(`CREATE INDEX IF NOT EXISTS idx_tasks_project_type_updated_at ON tasks(project_id, task_type, updated_at)`);
+  recordSchemaMigration(db, {
+    migrationId,
+    description: '增加任务类型与类型专属内容，历史任务统一迁移为需求',
+    checksumSource: 'tasks.task_type:requirement,defect,optimization:typed-content',
   });
 }
 
@@ -2206,7 +2276,26 @@ function filterAndSortTasks(records: ZeusTaskRecord[], options: TaskListOptions)
   const query = options.query?.trim().toLowerCase();
   const tag = options.tag?.trim();
   const filtered = records.filter((record) => {
-    const matchesQuery = !query || [record.taskCode, record.id, record.title, record.description, record.createdFrom, record.sourceContextJson, record.priority].join('\n').toLowerCase().includes(query);
+    const matchesQuery =
+      !query ||
+      [
+        record.taskCode,
+        record.id,
+        record.title,
+        record.taskType,
+        record.description,
+        record.defectCurrentState,
+        record.defectExpectedOutcome,
+        record.defectReproductionSteps,
+        record.optimizationCurrentState,
+        record.optimizationExpectedOutcome,
+        record.createdFrom,
+        record.sourceContextJson,
+        record.priority,
+      ]
+        .join('\n')
+        .toLowerCase()
+        .includes(query);
     const matchesStatus = !options.status || record.status === options.status;
     const matchesManagementStatus = !options.managementStatus || record.managementStatus === options.managementStatus;
     const matchesTag = !tag || record.tags.includes(tag);
@@ -2466,7 +2555,9 @@ export class ProjectRepository {
   }
 }
 
-const selectTaskFields = `id, project_id, task_code, task_sequence, title, description, management_status, status, priority, tags_json, template_id,
+const selectTaskFields = `id, project_id, task_code, task_sequence, title, task_type, description,
+  defect_current_state, defect_expected_outcome, defect_reproduction_steps, optimization_current_state, optimization_expected_outcome,
+  management_status, status, priority, tags_json, template_id,
   allow_code_changes, allow_tests, allow_git_commit, created_from, source_context_json, created_at, updated_at`;
 
 /** 任务仓储保存真实任务定义，初始状态统一为 ready，等待用户或 runtime 执行。 */
@@ -2488,7 +2579,13 @@ export class TaskRepository {
       taskCode: formatTaskCode(taskSequence),
       taskSequence,
       title: input.title,
+      taskType: input.taskType,
       description: input.description,
+      defectCurrentState: input.defectCurrentState ?? '',
+      defectExpectedOutcome: input.defectExpectedOutcome ?? '',
+      defectReproductionSteps: input.defectReproductionSteps ?? '',
+      optimizationCurrentState: input.optimizationCurrentState ?? '',
+      optimizationExpectedOutcome: input.optimizationExpectedOutcome ?? '',
       managementStatus: 'todo',
       status: 'ready',
       priority: input.priority ?? 'p3',
@@ -2503,16 +2600,24 @@ export class TaskRepository {
       updatedAt: timestamp,
     };
     this.db.execute(
-      `INSERT INTO tasks (id, project_id, task_code, task_sequence, title, description, management_status, status, priority, tags_json, template_id,
+      `INSERT INTO tasks (id, project_id, task_code, task_sequence, title, task_type, description,
+        defect_current_state, defect_expected_outcome, defect_reproduction_steps, optimization_current_state, optimization_expected_outcome,
+        management_status, status, priority, tags_json, template_id,
         allow_code_changes, allow_tests, allow_git_commit, created_from, source_context_json, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         record.id,
         record.projectId,
         record.taskCode,
         record.taskSequence,
         record.title,
+        record.taskType,
         record.description,
+        record.defectCurrentState,
+        record.defectExpectedOutcome,
+        record.defectReproductionSteps,
+        record.optimizationCurrentState,
+        record.optimizationExpectedOutcome,
         record.managementStatus,
         record.status,
         record.priority,
@@ -2536,6 +2641,7 @@ export class TaskRepository {
     return this.create({
       projectId: input.projectId,
       title: input.title ?? input.template.name,
+      taskType: 'requirement',
       description,
       createdFrom: 'template',
       templateId: input.template.id,
@@ -2618,9 +2724,15 @@ export class TaskRepository {
       throw new Error(`Zeus task not found: ${taskId}`);
     }
     const timestamp = nextIsoTimestamp(existing.updatedAt);
-    this.db.execute(`UPDATE tasks SET title = ?, description = ?, allow_code_changes = ?, allow_tests = ?, allow_git_commit = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`, [
+    this.db.execute(`UPDATE tasks SET title = ?, task_type = ?, description = ?, defect_current_state = ?, defect_expected_outcome = ?, defect_reproduction_steps = ?, optimization_current_state = ?, optimization_expected_outcome = ?, allow_code_changes = ?, allow_tests = ?, allow_git_commit = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`, [
       input.title ?? existing.title,
+      input.taskType ?? existing.taskType,
       input.description ?? existing.description,
+      input.defectCurrentState ?? existing.defectCurrentState,
+      input.defectExpectedOutcome ?? existing.defectExpectedOutcome,
+      input.defectReproductionSteps ?? existing.defectReproductionSteps,
+      input.optimizationCurrentState ?? existing.optimizationCurrentState,
+      input.optimizationExpectedOutcome ?? existing.optimizationExpectedOutcome,
       (input.allowCodeChanges ?? existing.allowCodeChanges) ? 1 : 0,
       (input.allowTests ?? existing.allowTests) ? 1 : 0,
       (input.allowGitCommit ?? existing.allowGitCommit) ? 1 : 0,
@@ -2648,7 +2760,16 @@ export class TaskRepository {
       if (!title) {
         throw Object.assign(new Error('Task title is required.'), { code: 'ZEUS_TASK_TITLE_REQUIRED' as const });
       }
+      const taskType = input.taskType ?? existing.taskType;
+      if (!isTaskType(taskType)) {
+        throw Object.assign(new Error('Task type is required.'), { code: 'ZEUS_INVALID_TASK_TYPE' as const });
+      }
       const description = input.description ?? existing.description;
+      const defectCurrentState = input.defectCurrentState ?? existing.defectCurrentState;
+      const defectExpectedOutcome = input.defectExpectedOutcome ?? existing.defectExpectedOutcome;
+      const defectReproductionSteps = input.defectReproductionSteps ?? existing.defectReproductionSteps;
+      const optimizationCurrentState = input.optimizationCurrentState ?? existing.optimizationCurrentState;
+      const optimizationExpectedOutcome = input.optimizationExpectedOutcome ?? existing.optimizationExpectedOutcome;
       const priority = input.priority ?? existing.priority;
       const tags = input.tags === undefined ? existing.tags : normalizeTags(input.tags);
       const allowCodeChanges = input.allowCodeChanges ?? existing.allowCodeChanges;
@@ -2659,7 +2780,13 @@ export class TaskRepository {
       const sourceContextJson = JSON.stringify(sourceContext);
       const changedFields: TaskEditableField[] = [];
       if (title !== existing.title) changedFields.push('title');
+      if (taskType !== existing.taskType) changedFields.push('taskType');
       if (description !== existing.description) changedFields.push('description');
+      if (defectCurrentState !== existing.defectCurrentState) changedFields.push('defectCurrentState');
+      if (defectExpectedOutcome !== existing.defectExpectedOutcome) changedFields.push('defectExpectedOutcome');
+      if (defectReproductionSteps !== existing.defectReproductionSteps) changedFields.push('defectReproductionSteps');
+      if (optimizationCurrentState !== existing.optimizationCurrentState) changedFields.push('optimizationCurrentState');
+      if (optimizationExpectedOutcome !== existing.optimizationExpectedOutcome) changedFields.push('optimizationExpectedOutcome');
       if (priority !== existing.priority) changedFields.push('priority');
       if (canonicalJson(tags) !== canonicalJson(existing.tags)) changedFields.push('tags');
       if (input.attachments !== undefined && canonicalJson(sourceContext.attachments) !== canonicalJson(previousSourceContext.attachments)) changedFields.push('attachments');
@@ -2682,10 +2809,29 @@ export class TaskRepository {
       const timestamp = nextIsoTimestamp(existing.updatedAt);
       this.db.execute(
         `UPDATE tasks
-         SET title = ?, description = ?, priority = ?, tags_json = ?, source_context_json = ?,
+         SET title = ?, task_type = ?, description = ?, defect_current_state = ?, defect_expected_outcome = ?, defect_reproduction_steps = ?,
+             optimization_current_state = ?, optimization_expected_outcome = ?, priority = ?, tags_json = ?, source_context_json = ?,
              allow_code_changes = ?, allow_tests = ?, allow_git_commit = ?, updated_at = ?
          WHERE id = ? AND updated_at = ? AND deleted_at IS NULL`,
-        [title, description, priority, JSON.stringify(tags), sourceContextJson, allowCodeChanges ? 1 : 0, allowTests ? 1 : 0, allowGitCommit ? 1 : 0, timestamp, taskId, input.expectedUpdatedAt],
+        [
+          title,
+          taskType,
+          description,
+          defectCurrentState,
+          defectExpectedOutcome,
+          defectReproductionSteps,
+          optimizationCurrentState,
+          optimizationExpectedOutcome,
+          priority,
+          JSON.stringify(tags),
+          sourceContextJson,
+          allowCodeChanges ? 1 : 0,
+          allowTests ? 1 : 0,
+          allowGitCommit ? 1 : 0,
+          timestamp,
+          taskId,
+          input.expectedUpdatedAt,
+        ],
       );
       const modifiedRows = this.db.get<{ count: number }>(`SELECT changes() AS count`)?.count ?? 0;
       if (modifiedRows !== 1) {
@@ -5454,7 +5600,13 @@ interface DbTaskRow {
   task_code: string | null;
   task_sequence: number | null;
   title: string;
+  task_type: string;
   description: string;
+  defect_current_state: string;
+  defect_expected_outcome: string;
+  defect_reproduction_steps: string;
+  optimization_current_state: string;
+  optimization_expected_outcome: string;
   management_status: string;
   status: ZeusTaskRecord['status'];
   priority: string;
@@ -5951,7 +6103,13 @@ function mapTaskRow(row: DbTaskRow): ZeusTaskRecord {
     taskCode: normalizeTaskCode(row.task_code, sequence),
     taskSequence: sequence,
     title: row.title,
+    taskType: isTaskType(row.task_type) ? row.task_type : 'requirement',
     description: row.description,
+    defectCurrentState: row.defect_current_state ?? '',
+    defectExpectedOutcome: row.defect_expected_outcome ?? '',
+    defectReproductionSteps: row.defect_reproduction_steps ?? '',
+    optimizationCurrentState: row.optimization_current_state ?? '',
+    optimizationExpectedOutcome: row.optimization_expected_outcome ?? '',
     managementStatus: isTaskManagementStatus(row.management_status) ? row.management_status : 'todo',
     status: row.status,
     priority: row.priority || 'normal',

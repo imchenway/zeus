@@ -113,12 +113,14 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
 
   const openListbox = (nextActiveValue = props.value) => {
     if (props.disabled || enabledOptions.length === 0) return;
+    const resolvedActiveValue = enabledOptions.some((option) => option.value === nextActiveValue) ? nextActiveValue : enabledOptions[0]?.value;
+    if (!resolvedActiveValue) return;
     setQuery('');
-    setActiveValue(nextActiveValue);
+    setActiveValue(resolvedActiveValue);
     syncPopoverLayout();
     setOpen(true);
     // 长列表优先聚焦搜索；任务工具栏这类短列表直接聚焦选项，避免顶部搜索灰区抢占视觉。
-    focusElement(searchable ? (searchRef.current ?? undefined) : (optionRefs.current.get(nextActiveValue) ?? undefined));
+    focusElement(searchable ? (searchRef.current ?? undefined) : (optionRefs.current.get(resolvedActiveValue) ?? undefined));
   };
 
   const selectOption = (value: T) => {

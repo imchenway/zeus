@@ -1,12 +1,12 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import { isTaskPriority, type TaskAttachmentReference } from '@zeus/shared';
-import type { TaskEventRecord, TaskManagementStatus, TaskPriority, TaskRecord, UpdateTaskRequest } from '../apiClient.js';
+import type { TaskEventRecord, TaskManagementStatus, TaskPriority, TaskRecord, TaskType, UpdateTaskRequest } from '../apiClient.js';
 import type { NativeConversationChoice } from '../session/sessionTypes.js';
 import { Button } from '../ui/Button.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 import { TaskAttachmentPreviewList } from './TaskAttachmentPreviewList.js';
 import { mergeTaskAttachments, parseTaskAttachments, toPersistedTaskAttachment, type TaskAttachmentView } from './taskAttachments.js';
-import { formatTaskSource, formatTaskUpdatedAt, resolveTaskManagementStatus, taskManagementStatuses, type TaskSourceLabels } from './taskWorkspaceModel.js';
+import { formatTaskSource, formatTaskType, formatTaskUpdatedAt, resolveTaskManagementStatus, taskManagementStatuses, taskTypes, type TaskSourceLabels } from './taskWorkspaceModel.js';
 
 export interface TaskDetailPaneCopy {
   requestTitle: string;
@@ -86,6 +86,14 @@ type TaskEditCopy = {
   loadLatest: string;
   saveFailed: string;
   conflict: string;
+};
+
+type TaskTypedContentField = {
+  key: string;
+  label: string;
+  value: string;
+  buildPatch: (value: string) => Omit<UpdateTaskRequest, 'expectedUpdatedAt'>;
+  valueFromTask: (task: TaskRecord) => string;
 };
 
 const taskEditCopies: Record<'zh-CN' | 'en-US', TaskEditCopy> = {
@@ -533,6 +541,58 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
   const priorityOptions: ReadonlyArray<{ value: string; label: string; disabled?: boolean }> = isTaskPriority(taskPriority)
     ? props.priorityOptions
     : [{ value: taskPriority, label: `${taskPriority.toUpperCase()} (${zh ? '历史值' : 'legacy'})`, disabled: true }, ...props.priorityOptions];
+  const taskTypeOptions: ReadonlyArray<{ value: TaskType; label: string }> = taskTypes.map((taskType) => ({ value: taskType, label: formatTaskType(taskType, props.language) }));
+  const typedContentFields: TaskTypedContentField[] =
+    props.task.taskType === 'defect'
+      ? [
+          {
+            key: 'defect-current-state',
+            label: zh ? '现状' : 'Current state',
+            value: props.task.defectCurrentState ?? '',
+            buildPatch: (defectCurrentState) => ({ defectCurrentState }),
+            valueFromTask: (task) => task.defectCurrentState ?? '',
+          },
+          {
+            key: 'defect-expected-outcome',
+            label: zh ? '预期' : 'Expected outcome',
+            value: props.task.defectExpectedOutcome ?? '',
+            buildPatch: (defectExpectedOutcome) => ({ defectExpectedOutcome }),
+            valueFromTask: (task) => task.defectExpectedOutcome ?? '',
+          },
+          {
+            key: 'defect-reproduction-steps',
+            label: zh ? '复现步骤' : 'Reproduction steps',
+            value: props.task.defectReproductionSteps ?? '',
+            buildPatch: (defectReproductionSteps) => ({ defectReproductionSteps }),
+            valueFromTask: (task) => task.defectReproductionSteps ?? '',
+          },
+        ]
+      : props.task.taskType === 'optimization'
+        ? [
+            {
+              key: 'optimization-current-state',
+              label: zh ? '现状' : 'Current state',
+              value: props.task.optimizationCurrentState ?? '',
+              buildPatch: (optimizationCurrentState) => ({ optimizationCurrentState }),
+              valueFromTask: (task) => task.optimizationCurrentState ?? '',
+            },
+            {
+              key: 'optimization-expected-outcome',
+              label: zh ? '预期' : 'Expected outcome',
+              value: props.task.optimizationExpectedOutcome ?? '',
+              buildPatch: (optimizationExpectedOutcome) => ({ optimizationExpectedOutcome }),
+              valueFromTask: (task) => task.optimizationExpectedOutcome ?? '',
+            },
+          ]
+        : [
+            {
+              key: 'requirement-description',
+              label: zh ? '需求描述' : 'Requirement description',
+              value: props.task.description ?? '',
+              buildPatch: (description) => ({ description }),
+              valueFromTask: (task) => task.description ?? '',
+            },
+          ];
 
   return (
     <section className="product-drawer-pane task-detail-pane-content task-detail-pane-shell" aria-label={props.task.title}>
@@ -572,6 +632,18 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
 
       <section className="task-detail-summary-grid task-detail-task-facts" aria-label={props.copy.metadataTitle}>
         <span className="task-detail-summary-row">
+          <small>{zh ? '类型' : 'Type'}</small>
+          <TaskImmediateSelect
+            task={props.task}
+            value={props.task.taskType}
+            options={taskTypeOptions}
+            ariaLabel={zh ? '修改任务类型' : 'Change task type'}
+            copy={editCopy}
+            disabled={props.busy}
+            onSave={(taskType, expectedUpdatedAt) => props.onUpdateTaskContent(props.task.id, { expectedUpdatedAt, taskType })}
+          />
+        </span>
+        <span className="task-detail-summary-row">
           <small>{props.copy.sourceLabel ?? '上下文来源'}</small>
           <strong>{formatTaskSource(props.task, props.copy.sourceLabels)}</strong>
         </span>
@@ -608,23 +680,25 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
         </span>
       </section>
 
-      <section className="task-detail-block task-detail-request-block" aria-label={props.copy.requestTitle}>
-        <span className="task-detail-section-heading">
-          <strong>{props.copy.requestTitle}</strong>
-        </span>
-        <InlineTaskTextField
-          task={props.task}
-          label={editCopy.editDescription}
-          value={props.task.description ?? ''}
-          display={<span className="task-detail-request-text">{props.task.description || props.copy.noRequest}</span>}
-          multiline
-          copy={editCopy}
-          disabled={props.busy}
-          buildPatch={(description) => ({ description })}
-          valueFromTask={(task) => task.description ?? ''}
-          onSave={(input) => props.onUpdateTaskContent(props.task.id, input)}
-        />
-      </section>
+      {typedContentFields.map((field) => (
+        <section key={field.key} className="task-detail-block task-detail-request-block" aria-label={field.label}>
+          <span className="task-detail-section-heading">
+            <strong>{field.label}</strong>
+          </span>
+          <InlineTaskTextField
+            task={props.task}
+            label={`${zh ? '编辑' : 'Edit'}${zh ? '' : ' '}${field.label}`}
+            value={field.value}
+            display={<span className="task-detail-request-text">{field.value || props.copy.noRequest}</span>}
+            multiline
+            copy={editCopy}
+            disabled={props.busy}
+            buildPatch={field.buildPatch}
+            valueFromTask={field.valueFromTask}
+            onSave={(input) => props.onUpdateTaskContent(props.task.id, input)}
+          />
+        </section>
+      ))}
 
       <section className="task-detail-block task-detail-tags" aria-label={zh ? '任务标签' : 'Task tags'}>
         <span className="task-detail-section-heading">
