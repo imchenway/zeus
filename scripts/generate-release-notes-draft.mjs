@@ -20,6 +20,7 @@ const baseTag = resolveBaseTag(process.env.BASE_TAG);
 const headSha = git(['rev-parse', 'HEAD']);
 const shortHeadSha = git(['rev-parse', '--short=12', 'HEAD']);
 const branch = git(['branch', '--show-current']) || '(detached HEAD)';
+const unresolvedMarkerPattern = /(?<![\p{L}\p{N}])(?:待确认|待验证|待发布门禁确认|尚未确认|尚未验证)(?![\p{L}\p{N}])|\b(?:TODO|TBD)\b/iu;
 
 assertAncestor(baseTag, headSha);
 assertVersionAfterBase(releaseVersion, baseTag);
@@ -334,7 +335,7 @@ function validateDraft(markdown) {
   if (!automatedRelease && !markdown.includes('待发布门禁确认')) {
     throw new Error('发布内容没有保留“待发布门禁确认”的验证边界。');
   }
-  const unresolvedMarker = markdown.match(/待.{0,6}(?:确认|验证)|尚未(?:确认|验证)|TODO|TBD/iu)?.[0];
+  const unresolvedMarker = markdown.match(unresolvedMarkerPattern)?.[0];
   if (automatedRelease && unresolvedMarker) {
     throw new Error(`自动发布内容包含未解决占位“${unresolvedMarker}”，拒绝进入版本写入阶段。`);
   }

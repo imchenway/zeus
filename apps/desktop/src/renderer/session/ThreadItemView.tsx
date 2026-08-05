@@ -328,7 +328,7 @@ export function SafeMarkdown(props: {
     [labels.copied, labels.copyCode, language, props.onLoadResourcePreview, props.onOpenResource, resources],
   );
   return (
-    <div className="session-markdown" data-truncated={bounded.truncated || undefined}>
+    <div className="session-markdown zeus-fidelity-markdown" data-truncated={bounded.truncated || undefined}>
       <Markdown components={components} remarkPlugins={[remarkGfm, [limitMarkdownComplexity, { label: labels.complexityTruncated }]]} urlTransform={(url) => url}>
         {boundMarkdownCodeBlocks(bounded.text)}
       </Markdown>

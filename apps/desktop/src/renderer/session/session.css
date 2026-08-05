@@ -6748,7 +6748,7 @@
 }
 
 .session-codex-parity-v1 .session-reasoning-summary {
-    align-items: center;
+    align-items: start;
     color: var(--session-text-muted);
     display: grid;
     font-size: 13px;
@@ -6762,9 +6762,9 @@
 }
 
 .session-codex-parity-v1 .session-reasoning-summary > span:last-child {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    min-inline-size: 0;
+    overflow-wrap: anywhere;
+    white-space: break-spaces;
 }
 
 .session-codex-parity-v1 .session-reasoning-summary-icon {

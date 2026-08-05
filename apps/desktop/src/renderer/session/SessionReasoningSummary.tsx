@@ -20,7 +20,7 @@ export function SessionReasoningSummary(props: { item: NativeSessionItemBuffer; 
       <span className="session-reasoning-summary-icon" aria-hidden="true">
         <StatusIcon weight={props.status === 'completed' ? 'fill' : 'regular'} />
       </span>
-      <span>{text}</span>
+      <span className="zeus-fidelity-text">{text}</span>
     </p>
   );
 }
@@ -68,8 +68,9 @@ function stringSegments(value: unknown): string[] {
 
 function cleanReasoningSummary(value: string): string {
   const text = value.trim();
+  if (!text) return '';
   const bold = /^\*\*([^\n]+)\*\*$/u.exec(text);
-  return (bold?.[1] ?? text).trim();
+  return bold?.[1] ?? value;
 }
 
 function reasoningStatusIcon(status: ReasoningSummaryStatus) {

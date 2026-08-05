@@ -173,7 +173,7 @@ export function SessionPlanProgress(props: { plan: NativeTurnPlanSnapshot; langu
         </button>
         <div id={popoverId} className="session-plan-popover" hidden={!open}>
           <div className="session-plan-body">
-            {props.plan.explanation ? <p>{props.plan.explanation}</p> : null}
+            {props.plan.explanation ? <p className="zeus-fidelity-text">{props.plan.explanation}</p> : null}
             <ol>
               {steps.map((step, index) => {
                 const StepIcon = step.status === 'completed' ? CheckCircle : step.status === 'inProgress' ? CircleNotch : Circle;

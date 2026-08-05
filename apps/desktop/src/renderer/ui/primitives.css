@@ -14,6 +14,19 @@
   --zeus-source-list-row-motion: 140ms var(--zeus-motion-ease-out);
 }
 
+/* 保真正文保留来源中的全部空白；软换行只改变显示，不改写原始内容。 */
+.macos-ai-app .zeus-fidelity-text {
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+  white-space: break-spaces;
+}
+
+/* Markdown 继续使用既有安全解析，只让可阅读文字块遵循正文空白规则。 */
+.macos-ai-app .zeus-fidelity-markdown :where(h1, h2, h3, h4, p, li, blockquote, th, td) {
+  overflow-wrap: anywhere;
+  white-space: break-spaces;
+}
+
 /* 滚动条：参考 Codex 的透明轨道与低对比度滑块，hover / active 时再增强可见性。 */
 .macos-ai-app,
 .macos-ai-app :where(*) {

@@ -618,7 +618,7 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
           task={props.task}
           label={editCopy.editDescription}
           value={props.task.description ?? ''}
-          display={<span className="task-detail-request-text">{props.task.description || props.copy.noRequest}</span>}
+          display={<span className="task-detail-request-text zeus-fidelity-text">{props.task.description || props.copy.noRequest}</span>}
           multiline
           copy={editCopy}
           disabled={props.busy}

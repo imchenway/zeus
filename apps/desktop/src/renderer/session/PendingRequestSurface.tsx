@@ -192,7 +192,7 @@ export function PendingRequestSurface(props: PendingRequestSurfaceProps) {
           <legend>{copy.approval}</legend>
           <p className="session-request-impact">
             <strong>{copy.impact}</strong>
-            <span>{requestImpact(props.request, props.language)}</span>
+            <span className="zeus-fidelity-text">{requestImpact(props.request, props.language)}</span>
           </p>
           <p className="session-request-mode">
             <strong>{copy.mode}</strong>
@@ -322,7 +322,7 @@ function CompactApprovalPanel(props: CompactApprovalPanelProps) {
           <Icon aria-hidden="true" />
           <span>{props.kind === 'command' ? copy.terminal : copy.fileChange}</span>
         </header>
-        <p className="session-compact-approval-impact">{requestImpact(props.request, props.language)}</p>
+        <p className="session-compact-approval-impact zeus-fidelity-text">{requestImpact(props.request, props.language)}</p>
         <pre className="session-request-preview">{preview}</pre>
         <p className="session-compact-approval-mode">
           {copy.mode}: {mode}
@@ -530,7 +530,7 @@ function RequestUserInputPanel(props: PendingRequestSurfaceProps & { questions: 
       >
         <fieldset disabled={props.busy}>
           <header>
-            <strong>{currentQuestion.question}</strong>
+            <strong className="zeus-fidelity-text">{currentQuestion.question}</strong>
             <button type="button" aria-label={zh ? '关闭' : 'Close'} onClick={() => void skip()}>
               <X aria-hidden="true" />
             </button>
@@ -555,7 +555,7 @@ function RequestUserInputPanel(props: PendingRequestSurfaceProps & { questions: 
                   <span className="session-question-option-copy">
                     <strong>{presentation.label}</strong>
                     {presentation.recommended ? <em>{zh ? '推荐' : 'Recommended'}</em> : null}
-                    {option.description ? <small>{option.description}</small> : null}
+                    {option.description ? <small className="zeus-fidelity-text">{option.description}</small> : null}
                   </span>
                   {currentQuestion.kind === 'multiple' ? (
                     <span className="session-question-check" aria-hidden="true">
