@@ -48,6 +48,8 @@ import {
 } from '@zeus/ai-runtime';
 import type { BrowserAutomationPort } from './browserAutomation.js';
 import { resolveConversationAttachmentGrant } from './conversationAttachmentGrant.js';
+import { createModelConnectionService, type SaveModelConnectionRequest } from './modelConnectionService.js';
+import { createPiNativeConversationCoordinator } from './piNativeConversationCoordinator.js';
 import { createMacOSKeychainStore, getSecretPresenceLabel, type SecretPresenceLabel } from '@zeus/security-core';
 import {
   buildTaskEnvironmentRootPath,
@@ -1735,6 +1737,26 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     await db.save();
   }
   const secretStore = createMacOSKeychainStore();
+  const modelConnections = createModelConnectionService({
+    settings,
+    secretStore,
+    save: () => db.save(),
+    listProjectIds: () => projects.list().map((project) => project.id),
+    now: () => now().toISOString(),
+  });
+  const piNativeCoordinator = createPiNativeConversationCoordinator({
+    db,
+    conversations,
+    turns: conversationTurns,
+    items: conversationItems,
+    submissions: conversationSubmissions,
+    requests: conversationRequests,
+    modelConnections,
+    agentDirectory: join(dirname(options.dbPath), 'pi-agent'),
+    sessionDirectory: join(dirname(options.dbPath), 'pi-sessions'),
+    now: () => now().toISOString(),
+    publish: publishNativeConversationEvent,
+  });
   const runtimePersistenceWrites: Array<Promise<void>> = [];
   const runtimePidExists = processPidExists;
   const runtimeKillPid = processKillPid;
@@ -2874,14 +2896,14 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
         });
       }
       try {
-        assertRequestedAgentIsCodex(request.body ?? {});
+        assertRequestedAgentKind(request.body ?? {});
       } catch (error) {
         return sendNativeConversationApiError(reply, error);
       }
-      if (conversation.agentKind && conversation.agentKind !== 'codex') {
+      if (conversation.agentKind === 'claude') {
         return reply.code(409).send({
           error: 'ZEUS_AGENT_NOT_AVAILABLE',
-          message: `${conversation.agentKind} Agent 当前尚未开放。`,
+          message: 'Claude Agent 当前尚未开放。',
         });
       }
       const content = typeof request.body?.content === 'string' ? request.body.content.trim() : '';
@@ -3165,14 +3187,20 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
           {},
           202,
           async (stableOperationId, lifecycle) => {
-            const operation = await codexNativeCoordinator.interruptTurn({
-              conversationId: conversation.id,
-              providerTurnId: request.params.turnId,
-              providerWriteLifecycle: {
-                markPrepared: () => lifecycle.markPrepared(startedResourceId),
-                markRpcStarted: () => lifecycle.markRpcStarted(startedResourceId),
-              },
-            });
+            const operation = conversation.agentKind === 'pi'
+              ? await (async () => {
+                  await lifecycle.markPrepared(startedResourceId);
+                  lifecycle.markRpcStarted(startedResourceId);
+                  return piNativeCoordinator.interruptTurn({ conversation, providerTurnId: request.params.turnId });
+                })()
+              : await codexNativeCoordinator.interruptTurn({
+                  conversationId: conversation.id,
+                  providerTurnId: request.params.turnId,
+                  providerWriteLifecycle: {
+                    markPrepared: () => lifecycle.markPrepared(startedResourceId),
+                    markRpcStarted: () => lifecycle.markRpcStarted(startedResourceId),
+                  },
+                });
             const updatedConversation = conversations.getById(conversation.id);
             const submission = operation.submissionId ? conversationSubmissions.getById(operation.submissionId) : undefined;
             if (!updatedConversation) throw nativeApiError('ZEUS_NATIVE_ACCEPTANCE_NOT_DURABLE', 'Native interrupt acceptance was not persisted.');
@@ -3242,14 +3270,20 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
           202,
           async (stableOperationId, lifecycle) => {
             const response = normalizeNativeServerRequestResponse(providerRequest.requestKind, request.body ?? {});
-            await codexNativeCoordinator.respondToRequest({
-              requestId: providerRequest.id,
-              response,
-              providerWriteLifecycle: {
-                markPrepared: () => lifecycle.markPrepared(startedResourceId),
-                markRpcStarted: () => lifecycle.markRpcStarted(startedResourceId),
-              },
-            });
+            if (conversation.agentKind === 'pi') {
+              await lifecycle.markPrepared(startedResourceId);
+              lifecycle.markRpcStarted(startedResourceId);
+              await piNativeCoordinator.respondToRequest({ requestId: providerRequest.id, response });
+            } else {
+              await codexNativeCoordinator.respondToRequest({
+                requestId: providerRequest.id,
+                response,
+                providerWriteLifecycle: {
+                  markPrepared: () => lifecycle.markPrepared(startedResourceId),
+                  markRpcStarted: () => lifecycle.markRpcStarted(startedResourceId),
+                },
+              });
+            }
             const resolved = conversationRequests.getById(providerRequest.id);
             if (!resolved) throw nativeApiError('ZEUS_NATIVE_ACCEPTANCE_NOT_DURABLE', 'Native request response was not persisted.');
             return {
@@ -6555,6 +6589,102 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     return { items: registry.listAll() };
   });
 
+  server.get('/api/model-connections', async () => ({ items: await modelConnections.list() }));
+
+  server.post('/api/model-connections', async (request: FastifyRequest<{ Body: SaveModelConnectionRequest }>, reply) => {
+    try {
+      const connection = await modelConnections.create(request.body ?? ({} as SaveModelConnectionRequest));
+      appendAuditLog({
+        actorType: 'local_api',
+        action: 'model.connection.created',
+        resourceType: 'model_connection',
+        resourceId: connection.id,
+        payload: { name: connection.name, templateId: connection.templateId, baseUrl: connection.baseUrl, modelCount: connection.models.length, apiKeyConfigured: connection.apiKeyConfigured },
+      });
+      return reply.code(201).send(connection);
+    } catch (error) {
+      return sendModelConnectionError(reply, error);
+    }
+  });
+
+  server.put('/api/model-connections/:connectionId', async (request: FastifyRequest<{ Params: { connectionId: string }; Body: SaveModelConnectionRequest }>, reply) => {
+    try {
+      const connection = await modelConnections.update(request.params.connectionId, request.body ?? ({} as SaveModelConnectionRequest));
+      appendAuditLog({
+        actorType: 'local_api',
+        action: 'model.connection.updated',
+        resourceType: 'model_connection',
+        resourceId: connection.id,
+        payload: { name: connection.name, templateId: connection.templateId, baseUrl: connection.baseUrl, modelCount: connection.models.length, apiKeyConfigured: connection.apiKeyConfigured },
+      });
+      return connection;
+    } catch (error) {
+      return sendModelConnectionError(reply, error);
+    }
+  });
+
+  server.delete('/api/model-connections/:connectionId', async (request: FastifyRequest<{ Params: { connectionId: string } }>, reply) => {
+    try {
+      await modelConnections.remove(request.params.connectionId);
+      appendAuditLog({ actorType: 'local_api', action: 'model.connection.deleted', resourceType: 'model_connection', resourceId: request.params.connectionId, payload: {} });
+      return reply.code(204).send();
+    } catch (error) {
+      return sendModelConnectionError(reply, error);
+    }
+  });
+
+  server.delete('/api/model-connections/:connectionId/api-key', async (request: FastifyRequest<{ Params: { connectionId: string } }>, reply) => {
+    try {
+      const connection = await modelConnections.clearApiKey(request.params.connectionId);
+      appendAuditLog({ actorType: 'local_api', action: 'model.connection.api_key.cleared', resourceType: 'model_connection', resourceId: connection.id, payload: {} });
+      return connection;
+    } catch (error) {
+      return sendModelConnectionError(reply, error);
+    }
+  });
+
+  server.post('/api/model-connections/:connectionId/models/refresh', async (request: FastifyRequest<{ Params: { connectionId: string } }>, reply) => {
+    try {
+      const result = await modelConnections.refreshModels(request.params.connectionId);
+      appendAuditLog({
+        actorType: 'local_api',
+        action: 'model.connection.catalog.refreshed',
+        resourceType: 'model_connection',
+        resourceId: result.connection.id,
+        payload: { discoveredModelCount: result.discoveredModelIds.length, addedModelCount: result.addedModelIds.length, checkedAt: result.checkedAt },
+      });
+      return result;
+    } catch (error) {
+      return sendModelConnectionError(reply, error);
+    }
+  });
+
+  server.post('/api/model-connections/:connectionId/diagnose', async (request: FastifyRequest<{ Params: { connectionId: string } }>) => modelConnections.diagnose(request.params.connectionId));
+
+  server.get('/api/models/catalog', async () => ({ items: await modelConnections.listSelectableModels() }));
+
+  server.get('/api/projects/:projectId/model-selection', async (request: FastifyRequest<{ Params: { projectId: string } }>, reply) => {
+    if (!projects.getById(request.params.projectId)) return reply.code(404).send({ error: 'ZEUS_PROJECT_NOT_FOUND', message: 'Project not found' });
+    return modelConnections.getProjectSelection(request.params.projectId);
+  });
+
+  server.put('/api/projects/:projectId/model-selection', async (request: FastifyRequest<{ Params: { projectId: string }; Body: unknown }>, reply) => {
+    if (!projects.getById(request.params.projectId)) return reply.code(404).send({ error: 'ZEUS_PROJECT_NOT_FOUND', message: 'Project not found' });
+    try {
+      const selection = await modelConnections.saveProjectSelection(request.params.projectId, request.body);
+      appendAuditLog({
+        actorType: 'local_api',
+        action: 'project.model_selection.updated',
+        resourceType: 'project',
+        resourceId: request.params.projectId,
+        payload: { modelCount: selection.allowedModelRefs.length, defaultModelRef: selection.defaultModelRef },
+      });
+      return selection;
+    } catch (error) {
+      return sendModelConnectionError(reply, error);
+    }
+  });
+
   server.get('/api/runtime/settings', async (): Promise<RuntimeSettingsSnapshot> => runtimeSettings);
 
   server.put('/api/runtime/settings', async (request: FastifyRequest<{ Body: UpdateRuntimeSettingsBody }>, reply) => {
@@ -8662,6 +8792,11 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     }
     try {
       await codexNativeCoordinator.close({ mode: settleCodexPendingOnClose ? 'final' : 'handoff' });
+    } catch (error) {
+      cleanupErrors.push(error);
+    }
+    try {
+      await piNativeCoordinator.close();
     } catch (error) {
       cleanupErrors.push(error);
     }
@@ -11222,7 +11357,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       agent: {
         kind: conversation.agentKind,
         transport: conversation.agentTransport,
-        supportStatus: conversation.agentKind === 'codex' && codexNativeEnabled ? 'verified' : 'unavailable',
+        supportStatus: conversation.agentKind === 'codex' && codexNativeEnabled ? 'verified' : conversation.agentKind === 'pi' ? 'experimental' : 'unavailable',
         capabilitySnapshotId: conversation.capabilitySnapshotId,
       },
       model: {
@@ -11471,7 +11606,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     const active = [...turns].reverse().find((turn) => turn.status === 'running' || turn.status === 'dispatching' || turn.status === 'waiting');
     if (active?.providerTurnId) {
       if (active.status === 'waiting') {
-        const pending = conversationRequests.listByConversation(conversation.id).find((request) => request.turnId === active.id && request.status === 'pending' && codexAppServerManager.hasGeneration(request.transportGenerationId));
+        const pending = conversationRequests.listByConversation(conversation.id).find((request) => request.turnId === active.id && request.status === 'pending' && (conversation.agentKind === 'pi' || codexAppServerManager.hasGeneration(request.transportGenerationId)));
         if (pending) {
           return {
             type: 'waiting' as const,
@@ -11535,6 +11670,8 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       }
     }
     let selectedModel: string | null = null;
+    let selectedModelSourceId: string | null = conversation.modelSourceId;
+    let selectedAgentKind: 'codex' | 'pi' = conversation.agentKind === 'pi' ? 'pi' : 'codex';
     let selectedEffort: string | null = null;
     let selectedServiceTier: string | null | undefined;
     if (requestedModel || requestedEffort || requestedServiceTier.present) {
@@ -11542,15 +11679,40 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       const model = requestedModel ?? conversation.providerModel ?? capabilities.preferredModel;
       const capability = capabilities.models.find((candidate) => candidate.model === model || candidate.id === model);
       if (!capability) throw nativeApiError('ZEUS_INVALID_CONVERSATION_SETTINGS', 'Selected Codex model is not available in the current app-server generation.');
-      if (requestedEffort && !capability.supportedReasoningEfforts.includes(requestedEffort)) {
+      if (capability.available === false) throw nativeApiError('ZEUS_MODEL_NOT_READY', capability.availabilityReason || '所选模型当前不可运行。');
+      if (requestedEffort && !capability.supportedReasoningEfforts.some((effort) => effort === requestedEffort)) {
         throw nativeApiError('ZEUS_INVALID_CONVERSATION_SETTINGS', 'Selected reasoning effort is not supported by the selected Codex model.');
       }
       selectedModel = capability.model;
+      selectedModelSourceId = capability.sourceId ?? null;
+      selectedAgentKind = capability.agentKind ?? 'codex';
       selectedEffort = requestedEffort ?? capability.defaultReasoningEffort ?? capability.supportedReasoningEfforts[0] ?? null;
       selectedServiceTier = normalizeServiceTierForCapability(requestedServiceTier, capability);
     }
     const clientUserMessageId = normalizeNativeClientUserMessageId(body.clientUserMessageId, `native-client-${createHash('sha256').update(`${conversation.id}\0${idempotencyKey}`).digest('hex').slice(0, 24)}`);
-    let nativeOperation = await codexNativeCoordinator.submitMessage({
+    if (selectedAgentKind !== (conversation.agentKind === 'pi' ? 'pi' : 'codex')) {
+      throw nativeApiError('ZEUS_AGENT_SWITCH_REQUIRES_NEW_CONVERSATION', '不能在同一会话内切换 Codex 与 Pi，请新建会话。');
+    }
+    let nativeOperation = conversation.agentKind === 'pi'
+      ? delivery === 'steer_now'
+        ? await piNativeCoordinator.steerMessage({
+            conversation,
+            submissionId: `conversation_submission_${createHash('sha256').update(`${stableOperationId}\0pi-steer`).digest('hex').slice(0, 24)}`,
+            content,
+            expectedTurnId: expectedTurnId!,
+            idempotencyKey,
+            clientUserMessageId,
+          })
+        : await piNativeCoordinator.submitMessage({
+            conversation,
+            submissionId: `conversation_submission_${createHash('sha256').update(`${stableOperationId}\0pi-submission`).digest('hex').slice(0, 24)}`,
+            content,
+            model: { sourceId: selectedModelSourceId, modelId: selectedModel ?? conversation.modelId ?? conversation.providerModel ?? '', displayName: null },
+            ...(selectedEffort ? { thinkingLevel: selectedEffort } : {}),
+            idempotencyKey,
+            clientUserMessageId,
+          })
+      : await codexNativeCoordinator.submitMessage({
       conversationId: conversation.id,
       content,
       ...(displayText ? { displayText } : {}),
@@ -11564,7 +11726,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       idempotencyKey,
       clientUserMessageId,
       providerWriteLifecycle,
-    });
+        });
     const persisted = conversationSubmissions.getById(nativeOperation.submissionId);
     if (!persisted) throw nativeApiError('ZEUS_NATIVE_ACCEPTANCE_NOT_DURABLE', 'Native message submission was not persisted.');
     const input = parseJsonObject(persisted.inputJson);
@@ -11606,7 +11768,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       ]);
     }
     await db.save();
-    if (delivery === 'steer_now') nativeOperation = await codexNativeCoordinator.sendQueuedNow({ conversationId: conversation.id, submissionId: persisted.id, providerWriteLifecycle });
+    if (delivery === 'steer_now' && conversation.agentKind !== 'pi') nativeOperation = await codexNativeCoordinator.sendQueuedNow({ conversationId: conversation.id, submissionId: persisted.id, providerWriteLifecycle });
     const updatedConversation = conversations.getById(conversation.id);
     const updatedSubmission = conversationSubmissions.getById(persisted.id);
     if (!updatedConversation || !updatedSubmission) throw nativeApiError('ZEUS_NATIVE_ACCEPTANCE_NOT_DURABLE', 'Native message acceptance was not persisted.');
@@ -11916,7 +12078,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
   }
 
   async function executeTaskConversationIdempotent(project: ZeusProjectRecord, task: ZeusTaskRecord, body: StartTaskConversationBody | Record<string, unknown>, idempotencyKey: string) {
-    assertRequestedAgentIsCodex(body);
+    assertRequestedAgentKind(body);
     const scope = `task-conversation:${task.id}`;
     const requestHash = nativeIdempotencyRequestHash(body);
     const stableOperationId = nativeStableOperationId(scope, idempotencyKey, requestHash);
@@ -12000,7 +12162,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
         return providerWriteLifecycle.markRpcStarted(resourceId);
       },
     };
-    let nativeOperation: Awaited<ReturnType<typeof codexNativeCoordinator.startTaskConversation>>;
+    let nativeOperation: { conversationId: string; submissionId: string; providerThreadId: string | null; providerTurnId: string | null; status: string };
     if (body.mode === 'create') {
       if (body.source === 'task_push') {
         if (body.content !== undefined || body.attachments !== undefined) {
@@ -12018,10 +12180,11 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
         const capabilities = await resolveTaskPushCapabilities(project, task);
         const selectedModel = capabilities.models.find((candidate) => candidate.model === modelName || candidate.id === modelName);
         if (!selectedModel) throw nativeApiError('ZEUS_CODEX_MODEL_UNAVAILABLE', `Configured Codex model is unavailable: ${modelName}`);
+        if (selectedModel.available === false) throw nativeApiError('ZEUS_MODEL_NOT_READY', selectedModel.availabilityReason || '所选模型当前不可运行。');
         const requestedServiceTier = readServiceTierOverride(body);
         const serviceTier = normalizeServiceTierForCapability(requestedServiceTier, selectedModel);
         const selectedEffort = effort || selectedModel.defaultReasoningEffort || selectedModel.supportedReasoningEfforts[0] || '';
-        if (selectedEffort && !selectedModel.supportedReasoningEfforts.includes(selectedEffort)) {
+        if (selectedEffort && !selectedModel.supportedReasoningEfforts.some((candidate) => candidate === selectedEffort)) {
           throw nativeApiError('ZEUS_CODEX_EFFORT_UNAVAILABLE', `Configured Codex effort is unavailable: ${selectedEffort}`);
         }
         if (!isNativeApiRecord(body.workspace) || body.workspace.mode !== 'create') {
@@ -12029,7 +12192,24 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
         }
         const taskEnvironment = await resolveTaskPushEnvironment(project, task, body.workspace, stableOperationId);
         const attachmentInput = normalizeTaskPushAttachments(task, project.localPath);
-        nativeOperation = await codexNativeCoordinator.startTaskConversation({
+        nativeOperation = selectedModel.agentKind === 'pi'
+          ? await piNativeCoordinator.startConversation({
+              conversationId: reservation.conversationId,
+              submissionId: reservation.submissionId,
+              projectId: project.id,
+              taskId: task.id,
+              taskTitle: task.title,
+              cwd: taskEnvironment.cwd,
+              prompt: buildTaskPushPrompt(task, supplementalInfo),
+              model: { sourceId: selectedModel.sourceId ?? null, modelId: selectedModel.model, displayName: selectedModel.displayName ?? null },
+              ...(selectedEffort ? { thinkingLevel: selectedEffort } : {}),
+              permissionMode,
+              idempotencyKey,
+              clientUserMessageId,
+              environmentId: taskEnvironment.environment.id,
+              ...(taskEnvironment.workspaces[0] ? { workspaceId: taskEnvironment.workspaces[0].id } : {}),
+            })
+          : await codexNativeCoordinator.startTaskConversation({
           conversationId: reservation.conversationId,
           submissionId: reservation.submissionId,
           projectId: project.id,
@@ -12056,7 +12236,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
           idempotencyKey,
           clientUserMessageId,
           providerWriteLifecycle: reservedLifecycle,
-        });
+            });
       } else {
         if (body.content !== undefined && typeof body.content !== 'string') throw nativeApiError('ZEUS_INVALID_CONVERSATION_START', 'Create content must be a string.');
         const collaborationMode = body.collaborationMode === undefined ? 'default' : parseConversationCollaborationMode(body.collaborationMode);
@@ -12481,6 +12661,14 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     return reply.code(statusCode).send({ error: code, message, ...(code.includes('STALE') || code.includes('RECOVERY_REQUIRED') ? { recoveryRequired: true } : {}) });
   }
 
+  function sendModelConnectionError(reply: FastifyReply, error: unknown) {
+    const candidate = error as { code?: unknown; statusCode?: unknown; message?: unknown };
+    const code = typeof candidate?.code === 'string' ? candidate.code : 'ZEUS_MODEL_CONNECTION_FAILED';
+    const statusCode = typeof candidate?.statusCode === 'number' && candidate.statusCode >= 400 && candidate.statusCode <= 599 ? candidate.statusCode : code.endsWith('_NOT_FOUND') ? 404 : 400;
+    const message = typeof candidate?.message === 'string' && candidate.message.trim() ? candidate.message : '模型连接操作失败。';
+    return reply.code(statusCode).send({ error: code, message });
+  }
+
   function nativeApiError(code: string, message: string): Error & { code: string } {
     return Object.assign(new Error(message), { code });
   }
@@ -12490,6 +12678,12 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     if (value.agentKind === 'pi' || value.agentKind === 'claude') {
       throw nativeApiError('ZEUS_AGENT_NOT_AVAILABLE', `${value.agentKind === 'pi' ? 'Pi' : 'Claude'} Agent 当前尚未开放。`);
     }
+    throw nativeApiError('ZEUS_INVALID_AGENT_KIND', 'agentKind must be codex, pi, claude, or omitted.');
+  }
+
+  function assertRequestedAgentKind(value: unknown): void {
+    if (!isNativeApiRecord(value) || value.agentKind === undefined || value.agentKind === 'codex' || value.agentKind === 'pi') return;
+    if (value.agentKind === 'claude') throw nativeApiError('ZEUS_AGENT_NOT_AVAILABLE', 'Claude Agent 当前尚未开放。');
     throw nativeApiError('ZEUS_INVALID_AGENT_KIND', 'agentKind must be codex, pi, claude, or omitted.');
   }
 
@@ -13030,24 +13224,51 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
   }
 
   async function resolveConversationCapabilities(project: ZeusProjectRecord) {
-    if (!codexNativeEnabled) throw nativeApiError('ZEUS_CODEX_NATIVE_DISABLED', 'Codex native conversation writes are disabled by ZEUS_CODEX_NATIVE_ENABLED.');
-    const capabilities = await codexAppServerManager.ensureReady({ commandPath: currentCodexRuntimeCommandPath(), ...(codexExternalAgentHome ? { externalAgentHome: codexExternalAgentHome } : {}) });
-    const models = capabilities.models.map((model) => ({
+    const piSelection = await modelConnections.getProjectSelection(project.id);
+    const piCatalog = await modelConnections.listSelectableModels();
+    const allowedPi = piCatalog.filter((model) => piSelection.allowedModelRefs.includes(model.id));
+    const codexCapabilities = codexNativeEnabled
+      ? await codexAppServerManager.ensureReady({ commandPath: currentCodexRuntimeCommandPath(), ...(codexExternalAgentHome ? { externalAgentHome: codexExternalAgentHome } : {}) })
+      : null;
+    const codexModels = (codexCapabilities?.models ?? []).map((model) => ({
       id: model.id,
       model: model.model,
+      agentKind: 'codex' as const,
+      sourceId: 'codex',
+      sourceName: 'Codex',
+      available: true,
+      availabilityReason: 'Codex app-server 已报告该模型。',
       ...(model.displayName ? { displayName: model.displayName } : {}),
       supportedReasoningEfforts: [...model.supportedReasoningEfforts],
       ...(model.defaultReasoningEffort ? { defaultReasoningEffort: model.defaultReasoningEffort } : {}),
       serviceTiers: model.serviceTiers.map((tier) => ({ ...tier })),
       ...(model.defaultServiceTier !== undefined ? { defaultServiceTier: model.defaultServiceTier } : {}),
     }));
-    if (models.length === 0) throw nativeApiError('ZEUS_CODEX_MODEL_UNAVAILABLE', 'Codex app-server did not report an available model.');
+    const piModels = allowedPi.map((model) => ({
+      id: model.id,
+      model: model.model,
+      displayName: model.displayName,
+      agentKind: 'pi' as const,
+      sourceId: model.sourceId,
+      sourceName: model.sourceName,
+      available: model.available,
+      availabilityReason: model.availabilityReason,
+      supportedReasoningEfforts: [...model.supportedReasoningEfforts],
+      defaultReasoningEffort: model.defaultReasoningEffort,
+      serviceTiers: [] as Array<{ id: string; name: string; description: string }>,
+      defaultServiceTier: null,
+      speedLabel: model.speedLabel,
+      tools: model.tools,
+      imageInput: model.imageInput,
+    }));
+    const models = [...codexModels, ...piModels];
+    if (models.length === 0) throw nativeApiError('ZEUS_MODEL_UNAVAILABLE', '当前项目没有可用的 Codex 或 Pi 模型。');
     const projectConfig = readProjectConfig(project.id);
     const configuredModel = projectConfig.defaultModel ?? runtimeSettings.adapterModels.codex;
-    const preferredModel = models.find((candidate) => candidate.model === configuredModel || candidate.id === configuredModel)?.model ?? models[0]!.model;
+    const preferredModel = models.find((candidate) => candidate.id === piSelection.defaultModelRef && candidate.available !== false)?.id ?? models.find((candidate) => (candidate.model === configuredModel || candidate.id === configuredModel) && candidate.available !== false)?.id ?? models.find((candidate) => candidate.available !== false)?.id ?? models[0]!.id;
     return {
-      generationId: capabilities.generationId,
-      initializedAt: capabilities.initializedAt,
+      generationId: codexCapabilities?.generationId ?? 'pi-sdk',
+      initializedAt: codexCapabilities?.initializedAt ?? now().toISOString(),
       projectId: project.id,
       preferredModel,
       models,

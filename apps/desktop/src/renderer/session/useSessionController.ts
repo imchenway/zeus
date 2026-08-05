@@ -144,6 +144,7 @@ interface PendingSendEnvelope {
   delivery: 'queue' | 'steer_now';
   expectedTurnId?: string;
   model?: string;
+  agentKind?: 'codex' | 'pi';
   effort?: string;
   serviceTier?: string | null;
   permissionMode?: NativePermissionMode;
@@ -822,6 +823,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
           pendingSend.delivery === delivery &&
           pendingSend.expectedTurnId === normalizedExpectedTurnId &&
           pendingSend.model === settings?.model &&
+          pendingSend.agentKind === settings?.agentKind &&
           pendingSend.effort === settings?.effort &&
           pendingSend.serviceTier === settings?.serviceTier &&
           pendingSend.permissionMode === requestedPermissionMode &&
@@ -849,6 +851,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
         delivery,
         ...(normalizedExpectedTurnId ? { expectedTurnId: normalizedExpectedTurnId } : {}),
         ...(appliedSettings?.model ? { model: appliedSettings.model } : {}),
+        ...(appliedSettings?.agentKind ? { agentKind: appliedSettings.agentKind } : {}),
         ...(appliedSettings?.effort ? { effort: appliedSettings.effort } : {}),
         ...(appliedSettings && Object.prototype.hasOwnProperty.call(appliedSettings, 'serviceTier') ? { serviceTier: appliedSettings.serviceTier } : {}),
         ...(appliedSettings ? { permissionMode: appliedSettings.permissionMode } : {}),
@@ -867,6 +870,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
           pendingSend.delivery === delivery &&
           pendingSend.expectedTurnId === normalizedExpectedTurnId &&
           pendingSend.model === appliedSettings?.model &&
+          pendingSend.agentKind === appliedSettings?.agentKind &&
           pendingSend.effort === appliedSettings?.effort &&
           pendingSend.permissionMode === (appliedSettings ? appliedSettings.permissionMode : undefined) &&
           pendingSend.collaborationMode === requestedCollaborationMode
@@ -883,6 +887,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
           delivery,
           ...(normalizedExpectedTurnId ? { expectedTurnId: normalizedExpectedTurnId } : {}),
           ...(appliedSettings?.model ? { model: appliedSettings.model } : {}),
+          ...(appliedSettings?.agentKind ? { agentKind: appliedSettings.agentKind } : {}),
           ...(appliedSettings?.effort ? { effort: appliedSettings.effort } : {}),
           ...(appliedSettings && Object.prototype.hasOwnProperty.call(appliedSettings, 'serviceTier') ? { serviceTier: appliedSettings.serviceTier } : {}),
           ...(appliedSettings ? { permissionMode: appliedSettings.permissionMode } : {}),
@@ -925,6 +930,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
               delivery: envelope.delivery,
               ...(envelope.expectedTurnId ? { expectedTurnId: envelope.expectedTurnId } : {}),
               ...(envelope.model ? { model: envelope.model } : {}),
+              ...(envelope.agentKind ? { agentKind: envelope.agentKind } : {}),
               ...(envelope.effort ? { effort: envelope.effort } : {}),
               ...(Object.prototype.hasOwnProperty.call(envelope, 'serviceTier') ? { serviceTier: envelope.serviceTier } : {}),
               ...(envelope.permissionMode ? { permissionMode: envelope.permissionMode } : {}),

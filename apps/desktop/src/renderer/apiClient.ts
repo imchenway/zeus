@@ -247,6 +247,96 @@ export interface SecuritySecretsSnapshot {
   externalApiKey: SecretPresence;
 }
 
+export type ModelConnectionTemplateId = 'custom' | 'deepseek' | 'bailian';
+export type ModelCapabilityState = 'supported' | 'unsupported' | 'unverified';
+export type ModelThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+export type ModelThinkingFormat = 'openai' | 'openrouter' | 'deepseek' | 'together' | 'zai' | 'qwen' | 'qwen-chat-template' | 'string-thinking' | 'ant-ling';
+
+export interface ModelCapabilityEvidence {
+  source: 'template' | 'catalog' | 'manual' | 'probe';
+  state: ModelCapabilityState;
+  checkedAt: string | null;
+  reason: string;
+}
+
+export interface ModelConnectionModel {
+  id: string;
+  displayName: string;
+  enabled: boolean;
+  contextWindow: number;
+  maxTokens: number;
+  speedLabel: 'standard' | 'high_speed' | 'flash' | 'turbo';
+  capability: {
+    reasoning: {
+      state: ModelCapabilityState;
+      levels: ModelThinkingLevel[];
+      defaultLevel: ModelThinkingLevel;
+      thinkingFormat: ModelThinkingFormat;
+    };
+    tools: ModelCapabilityEvidence;
+    imageInput: ModelCapabilityEvidence;
+    streaming: ModelCapabilityEvidence;
+    usage: ModelCapabilityEvidence;
+  };
+}
+
+export interface ModelConnectionRecord {
+  id: string;
+  name: string;
+  templateId: ModelConnectionTemplateId;
+  baseUrl: string;
+  modelsPath: string;
+  enabled: boolean;
+  apiKeyConfigured: boolean;
+  models: ModelConnectionModel[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SaveModelConnectionRequest {
+  name: string;
+  templateId: ModelConnectionTemplateId;
+  baseUrl: string;
+  modelsPath: string;
+  enabled: boolean;
+  models: ModelConnectionModel[];
+  apiKey?: string;
+}
+
+export interface ModelConnectionDiagnostic {
+  ok: boolean;
+  stage: 'configuration' | 'credential' | 'catalog';
+  code: string;
+  message: string;
+  checkedAt: string;
+  discoveredModelCount: number | null;
+}
+
+export interface SelectablePiModel {
+  id: string;
+  model: string;
+  displayName: string;
+  sourceId: string;
+  sourceName: string;
+  agentKind: 'pi';
+  enabled: boolean;
+  available: boolean;
+  availabilityReason: string;
+  supportedReasoningEfforts: ModelThinkingLevel[];
+  defaultReasoningEffort: ModelThinkingLevel;
+  serviceTiers: [];
+  defaultServiceTier: null;
+  speedLabel: ModelConnectionModel['speedLabel'];
+  tools: ModelCapabilityState;
+  imageInput: ModelCapabilityState;
+}
+
+export interface ProjectModelSelection {
+  projectId: string;
+  allowedModelRefs: string[];
+  defaultModelRef: string | null;
+}
+
 export interface ProjectDatabaseSecretSnapshot {
   connectionName: string | null;
   password: SecretPresence;
@@ -1250,6 +1340,16 @@ export interface ProjectArchiveConfirmation {
 export interface DashboardClient {
   connectEvents: (onEvent: (event: ZeusRealtimeEvent) => void, options?: { afterEventId?: string }) => WebSocket;
   loadAgents: () => Promise<AgentCatalogSnapshot>;
+  loadModelConnections: () => Promise<ModelConnectionRecord[]>;
+  createModelConnection: (input: SaveModelConnectionRequest) => Promise<ModelConnectionRecord>;
+  updateModelConnection: (connectionId: string, input: SaveModelConnectionRequest) => Promise<ModelConnectionRecord>;
+  deleteModelConnection: (connectionId: string) => Promise<void>;
+  clearModelConnectionApiKey: (connectionId: string) => Promise<ModelConnectionRecord>;
+  refreshModelConnectionModels: (connectionId: string) => Promise<{ connection: ModelConnectionRecord; discoveredModelIds: string[]; addedModelIds: string[]; checkedAt: string }>;
+  diagnoseModelConnection: (connectionId: string) => Promise<ModelConnectionDiagnostic>;
+  loadSelectablePiModels: () => Promise<SelectablePiModel[]>;
+  loadProjectModelSelection: (projectId: string) => Promise<ProjectModelSelection>;
+  saveProjectModelSelection: (projectId: string, input: ProjectModelSelection) => Promise<ProjectModelSelection>;
   loadArchivedConversations: () => Promise<ArchivedConversationChoicesSnapshot>;
   loadProjectConversationChoices: (projectId: string) => Promise<NativeProjectConversationChoicesSnapshot>;
   startProjectConversation: (projectId: string, input: StartProjectConversationRequest) => Promise<NativeOperationAcceptance>;
@@ -1571,6 +1671,17 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
   return {
     connectEvents: (onEvent, eventOptions) => connectZeusEvents(currentOptions, onEvent, eventOptions),
     loadAgents: () => request<AgentCatalogSnapshot>('/api/agents'),
+    loadModelConnections: async () => (await request<{ items: ModelConnectionRecord[] }>('/api/model-connections')).items,
+    createModelConnection: (input) => request<ModelConnectionRecord>('/api/model-connections', { method: 'POST', body: JSON.stringify(input) }),
+    updateModelConnection: (connectionId, input) => request<ModelConnectionRecord>(`/api/model-connections/${encodeURIComponent(connectionId)}`, { method: 'PUT', body: JSON.stringify(input) }),
+    deleteModelConnection: (connectionId) => request<void>(`/api/model-connections/${encodeURIComponent(connectionId)}`, { method: 'DELETE' }),
+    clearModelConnectionApiKey: (connectionId) => request<ModelConnectionRecord>(`/api/model-connections/${encodeURIComponent(connectionId)}/api-key`, { method: 'DELETE' }),
+    refreshModelConnectionModels: (connectionId) =>
+      request<{ connection: ModelConnectionRecord; discoveredModelIds: string[]; addedModelIds: string[]; checkedAt: string }>(`/api/model-connections/${encodeURIComponent(connectionId)}/models/refresh`, { method: 'POST' }),
+    diagnoseModelConnection: (connectionId) => request<ModelConnectionDiagnostic>(`/api/model-connections/${encodeURIComponent(connectionId)}/diagnose`, { method: 'POST' }),
+    loadSelectablePiModels: async () => (await request<{ items: SelectablePiModel[] }>('/api/models/catalog')).items,
+    loadProjectModelSelection: (projectId) => request<ProjectModelSelection>(`/api/projects/${encodeURIComponent(projectId)}/model-selection`),
+    saveProjectModelSelection: (projectId, input) => request<ProjectModelSelection>(`/api/projects/${encodeURIComponent(projectId)}/model-selection`, { method: 'PUT', body: JSON.stringify(input) }),
     loadArchivedConversations: () => request<ArchivedConversationChoicesSnapshot>('/api/conversations/archived'),
     loadProjectConversationChoices: (projectId) => request<NativeProjectConversationChoicesSnapshot>(`/api/projects/${encodeURIComponent(projectId)}/conversation-choices`),
     startProjectConversation: (projectId, input) => {

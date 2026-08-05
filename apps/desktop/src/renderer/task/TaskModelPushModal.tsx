@@ -88,7 +88,7 @@ export function resolveTaskModelPushInitialForm(capabilities: CodexTaskPushCapab
   if (!selectedModel) throw new Error('Codex app-server did not report an available model.');
   const effort = rememberedModel && remembered && selectedModel.supportedReasoningEfforts.includes(remembered.effort) ? remembered.effort : (selectedModel.defaultReasoningEffort ?? selectedModel.supportedReasoningEfforts[0] ?? '');
   return {
-    model: selectedModel.model,
+    model: selectedModel.id,
     effort,
     serviceTier: normalizeServiceTierSelection(serviceTier, selectedModel).selection,
     serviceTierDowngraded: serviceTier.type === 'catalog' && !selectedModel.serviceTiers.some((tier) => tier.id === serviceTier.id),
@@ -140,7 +140,7 @@ export function TaskModelPushModal(props: {
     const normalizedTier = normalizeServiceTierSelection(props.form.serviceTier, capability);
     props.onChange({
       ...props.form,
-      model: capability?.model ?? model,
+      model: capability?.id ?? model,
       effort: capability?.defaultReasoningEffort ?? capability?.supportedReasoningEfforts[0] ?? '',
       serviceTier: normalizedTier.selection,
       serviceTierDowngraded: normalizedTier.downgraded,
@@ -252,8 +252,9 @@ export function TaskModelPushModal(props: {
                 ariaLabel={zh ? '模型' : 'Model'}
                 value={props.form.model}
                 options={(props.capabilities?.models ?? []).map((model) => ({
-                  value: model.model,
-                  label: model.displayName ?? model.model,
+                  value: model.id,
+                  label: `${model.sourceName ? `${model.sourceName} / ` : ''}${model.displayName ?? model.model}${model.speedLabel && model.speedLabel !== 'standard' ? ` · ${model.speedLabel}` : ''}`,
+                  disabled: model.available === false,
                 }))}
                 onChange={onModelChange}
                 disabled={!props.capabilities || busy}

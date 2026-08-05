@@ -63,6 +63,8 @@ export interface StartAgentRunInput {
   session: AgentSessionIdentity;
   content: string;
   clientRequestId: string;
+  model?: AgentModelIdentity;
+  thinkingLevel?: string;
 }
 
 export interface SteerAgentRunInput extends StartAgentRunInput {
