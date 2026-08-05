@@ -92,6 +92,7 @@ async function renderWithClient(client: DashboardClient): Promise<void> {
         onCreateTaskDraft={async (projectId, draft) => {
           await client.createTask({
             projectId,
+            parentTaskId: draft.parentTaskId,
             title: draft.title,
             description: draft.description,
             tags: draft.tags,
@@ -118,12 +119,16 @@ async function renderWithClient(client: DashboardClient): Promise<void> {
           await client.updateTask(taskId, input);
           return client.loadDashboard();
         }}
+        onUpdateTaskRelationships={async (taskId, input) => {
+          await client.updateTaskRelationships(taskId, input);
+          return client.loadDashboard();
+        }}
         onUpdateTaskTags={async (taskId, tags, expectedUpdatedAt) => {
           await client.updateTaskTags(taskId, tags, expectedUpdatedAt);
           return client.loadDashboard();
         }}
-        onDeleteTask={async (taskId) => {
-          await client.deleteTask(taskId);
+        onDeleteTask={async (taskId, input) => {
+          await client.deleteTask(taskId, input);
           return client.loadDashboard();
         }}
         onRunTask={async (taskId) => {

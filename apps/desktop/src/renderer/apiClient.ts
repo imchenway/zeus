@@ -166,6 +166,8 @@ export interface TaskRecord {
   projectId: string;
   taskCode?: string;
   taskSequence?: number | null;
+  parentTaskId?: string | null;
+  relatedTaskIds?: string[];
   title: string;
   description?: string;
   managementStatus?: TaskManagementStatus;
@@ -457,6 +459,8 @@ export interface AppShellSettings {
   taskTableColumnsByProject?: Record<string, TaskTableColumnPreferences>;
   taskTableEnumSortOrders?: TaskTableEnumSortOrders;
   taskStatusFilterByProject?: Record<string, TaskStatusFilter>;
+  taskViewModeByProject?: Record<string, 'hierarchy' | 'flat'>;
+  taskExpandedIdsByProject?: Record<string, string[]>;
   localLogDirectory: string;
   localConfigPath: string;
   dataPortability: {
@@ -485,6 +489,8 @@ export type UpdateAppShellSettingsRequest = Pick<
   taskTableColumnsByProject?: Record<string, TaskTableColumnPreferences>;
   taskTableEnumSortOrders?: TaskTableEnumSortOrders;
   taskStatusFilterByProject?: Record<string, TaskStatusFilter>;
+  taskViewModeByProject?: Record<string, 'hierarchy' | 'flat'>;
+  taskExpandedIdsByProject?: Record<string, string[]>;
 };
 
 export interface ClearLocalCachesResult {
@@ -1072,11 +1078,29 @@ export interface LoadProjectsRequest {
 
 export interface CreateTaskRequest {
   projectId: string;
+  parentTaskId?: string | null;
   title: string;
   description: string;
   sourceContext: Record<string, unknown>;
   tags?: string[];
   priority: TaskPriority;
+}
+
+export interface UpdateTaskRelationshipsRequest {
+  expectedUpdatedAt: string;
+  parentTaskId?: string | null;
+  relatedTaskIds?: string[];
+}
+
+export interface DeleteTaskRequest {
+  childStrategy?: 'reparent' | 'delete_descendants' | 'make_roots';
+  replacementParentTaskId?: string;
+}
+
+export interface DeleteTaskResult {
+  task: TaskRecord;
+  deletedTaskIds: string[];
+  movedChildTaskIds: string[];
 }
 
 export interface LoadTasksRequest {
@@ -1411,8 +1435,9 @@ export interface DashboardClient {
   loadTasks: (input: LoadTasksRequest) => Promise<TaskRecord[]>;
   loadTask: (taskId: string) => Promise<TaskRecord>;
   updateTask: (taskId: string, input: UpdateTaskRequest) => Promise<TaskRecord>;
+  updateTaskRelationships: (taskId: string, input: UpdateTaskRelationshipsRequest) => Promise<TaskRecord>;
   updateTaskTags: (taskId: string, tags: string[], expectedUpdatedAt: string) => Promise<TaskRecord>;
-  deleteTask: (taskId: string) => Promise<TaskRecord>;
+  deleteTask: (taskId: string, input?: DeleteTaskRequest) => Promise<DeleteTaskResult>;
   runTask: (taskId: string) => Promise<TaskRuntimeControlResult>;
   pauseTask: (taskId: string) => Promise<TaskRecord>;
   continueTask: (taskId: string) => Promise<TaskRuntimeControlResult>;
@@ -1958,12 +1983,17 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
         method: 'PATCH',
         body: JSON.stringify(input),
       }),
+    updateTaskRelationships: (taskId, input) =>
+      request<TaskRecord>(`/api/tasks/${taskId}/relationships`, {
+        method: 'PATCH',
+        body: JSON.stringify(input),
+      }),
     updateTaskTags: (taskId, tags, expectedUpdatedAt) =>
       request<TaskRecord>(`/api/tasks/${taskId}/tags`, {
         method: 'PUT',
         body: JSON.stringify({ tags, expectedUpdatedAt }),
       }),
-    deleteTask: (taskId) => request<TaskRecord>(`/api/tasks/${taskId}`, { method: 'DELETE' }),
+    deleteTask: (taskId, input = {}) => request<DeleteTaskResult>(`/api/tasks/${taskId}`, { method: 'DELETE', body: JSON.stringify(input) }),
     runTask: (taskId) =>
       request<TaskRuntimeControlResult>(`/api/tasks/${taskId}/run`, {
         method: 'POST',

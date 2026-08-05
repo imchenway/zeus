@@ -22,6 +22,7 @@ import {
   type TaskAgentRunStatus,
   type TaskBranchStatus,
   type TaskTableColumnDropPosition,
+  type TaskWorkspaceViewMode,
   taskManagementStatuses,
   toggleTaskTableColumn,
 } from './taskWorkspaceModel.js';
@@ -317,6 +318,8 @@ export interface TaskWorkspaceProps {
   bulkActionStatus?: TaskWorkspaceBulkActionStatus;
   listState?: TaskWorkspaceListState;
   activeProjectId?: string;
+  viewMode: TaskWorkspaceViewMode;
+  expandedTaskIds?: readonly string[];
   onSearchChange: (value: string) => void;
   onStatusFilterChange: (value: TaskStatusFilter) => void;
   onTagFilterChange: (value: string) => void;
@@ -325,6 +328,8 @@ export interface TaskWorkspaceProps {
   onCreateTask: () => void;
   onOpenTaskDetail: (taskId: string) => void;
   onOpenTaskConversation?: (taskId: string, conversationId: string) => void;
+  onViewModeChange: (viewMode: TaskWorkspaceViewMode) => void;
+  onToggleTaskExpanded: (taskId: string) => void;
   onToggleTaskSelection?: (taskId: string, selected: boolean) => void;
   onToggleAllVisibleTaskSelection?: (taskIds: string[], selected: boolean) => void;
   onClearTaskSelection?: () => void;
@@ -446,6 +451,8 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
     taskTableColumns: props.taskTableColumns,
     taskTableEnumSortOrders: props.taskTableEnumSortOrders,
     appLanguage: props.appLanguage,
+    viewMode: props.viewMode,
+    expandedTaskIds: props.expandedTaskIds,
   });
   const columnLabels: Record<TaskTableColumnKey, string> = {
     code: props.copy.codeColumnTitle,
@@ -730,6 +737,14 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
             ))}
           </div>
           <div className="task-table-view-actions" aria-label={isEnglishCopy ? 'Task view actions' : '任务视图动作'}>
+            <div className="task-table-view-mode-segments" role="group" aria-label={isEnglishCopy ? 'Task layout' : '任务排列方式'}>
+              <button className="task-table-view-pill" type="button" aria-pressed={props.viewMode === 'hierarchy'} onClick={() => props.onViewModeChange('hierarchy')}>
+                {isEnglishCopy ? 'Hierarchy' : '层级'}
+              </button>
+              <button className="task-table-view-pill" type="button" aria-pressed={props.viewMode === 'flat'} onClick={() => props.onViewModeChange('flat')}>
+                {isEnglishCopy ? 'Flat' : '平铺'}
+              </button>
+            </div>
             <button
               className="task-table-view-pill task-table-view-bulk-pill"
               type="button"
@@ -1154,7 +1169,24 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
                             }}
                           />
                         ) : columnKey === 'intent' ? (
-                          <span className="task-table-title-text">{cell.primary}</span>
+                          <span className="task-table-title-hierarchy" style={{ paddingInlineStart: `${row.depth * 22}px` }}>
+                            {props.viewMode === 'hierarchy' ? (
+                              <button
+                                type="button"
+                                className="task-table-hierarchy-toggle"
+                                aria-label={row.hasChildren ? (isEnglishCopy ? `${row.expanded ? 'Collapse' : 'Expand'} ${task.title}` : `${row.expanded ? '收起' : '展开'}${task.title}`) : undefined}
+                                aria-expanded={row.hasChildren ? row.expanded : undefined}
+                                disabled={!row.hasChildren}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  if (row.hasChildren) props.onToggleTaskExpanded(task.id);
+                                }}
+                              >
+                                <span aria-hidden="true">{row.hasChildren ? (row.expanded ? '▾' : '▸') : '·'}</span>
+                              </button>
+                            ) : null}
+                            <span className="task-table-title-text">{cell.primary}</span>
+                          </span>
                         ) : (
                           <strong>{cell.primary}</strong>
                         )}

@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import { isTaskPriority, type TaskAttachmentReference } from '@zeus/shared';
-import type { TaskEventRecord, TaskManagementStatus, TaskPriority, TaskRecord, UpdateTaskRequest } from '../apiClient.js';
+import { ZeusApiError, type TaskEventRecord, type TaskManagementStatus, type TaskPriority, type TaskRecord, type UpdateTaskRelationshipsRequest, type UpdateTaskRequest } from '../apiClient.js';
 import type { NativeConversationChoice } from '../session/sessionTypes.js';
 import { Button } from '../ui/Button.js';
 import { ZeusSelect } from '../ZeusSelect.js';
@@ -45,6 +45,7 @@ export interface TaskDetailPaneCopy {
 export interface TaskDetailPaneContentProps {
   language: 'zh-CN' | 'en-US';
   task: TaskRecord;
+  allTasks: TaskRecord[];
   events: TaskEventRecord[];
   copy: TaskDetailPaneCopy;
   statusLabels: Record<TaskManagementStatus | '', string>;
@@ -59,6 +60,9 @@ export interface TaskDetailPaneContentProps {
   onCommitCode?: (taskId: string) => void;
   onPushCode?: (taskId: string) => void;
   onUpdateTaskContent: (taskId: string, input: UpdateTaskRequest) => Promise<TaskEditResult>;
+  onUpdateRelationships: (taskId: string, input: UpdateTaskRelationshipsRequest) => Promise<TaskEditResult>;
+  onCreateChild: (taskId: string) => void;
+  onDeleteTask: (taskId: string) => void;
   onManagementStatusChange: (taskId: string, status: TaskManagementStatus, expectedUpdatedAt: string) => Promise<TaskEditResult | undefined>;
   onChooseAttachments?: () => Promise<TaskAttachmentView[]>;
   onReloadConversations?: (taskId: string) => void;
@@ -447,9 +451,13 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
   const undoTimerRef = useRef<number | null>(null);
   const [attachmentSaveState, setAttachmentSaveState] = useState<TaskFieldSaveState>({ kind: 'idle' });
   const [undoAttachment, setUndoAttachment] = useState<TaskAttachmentView | null>(null);
+  const [relationshipSaveState, setRelationshipSaveState] = useState<TaskFieldSaveState>({ kind: 'idle' });
+  const [relatedTaskCandidateId, setRelatedTaskCandidateId] = useState('');
   useEffect(() => {
     setAttachmentSaveState({ kind: 'idle' });
     setUndoAttachment(null);
+    setRelationshipSaveState({ kind: 'idle' });
+    setRelatedTaskCandidateId('');
     desiredAttachmentsRef.current = [];
     if (undoTimerRef.current !== null) window.clearTimeout(undoTimerRef.current);
   }, [props.task.id]);
@@ -469,6 +477,75 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
     ).values(),
   );
   const hasWritableTaskWorkspace = taskWorkspaces.some((workspace) => (workspace.state === 'ready' || workspace.state === 'failed') && Boolean(workspace.worktreePath));
+  const taskById = new Map(props.allTasks.map((task) => [task.id, task]));
+  const directChildren = props.allTasks.filter((task) => task.parentTaskId === props.task.id).sort((left, right) => (right.updatedAt ?? '').localeCompare(left.updatedAt ?? ''));
+  const relatedTasks = (props.task.relatedTaskIds ?? [])
+    .map((taskId) => taskById.get(taskId))
+    .filter((task): task is TaskRecord => Boolean(task))
+    .sort((left, right) => (right.updatedAt ?? '').localeCompare(left.updatedAt ?? ''));
+  const relatedCandidateTasks = props.allTasks.filter((task) => task.id !== props.task.id && !(props.task.relatedTaskIds ?? []).includes(task.id));
+  const currentBranchTaskIds = new Set<string>([props.task.id]);
+  let branchChanged = true;
+  while (branchChanged) {
+    branchChanged = false;
+    for (const task of props.allTasks) {
+      if (task.parentTaskId && currentBranchTaskIds.has(task.parentTaskId) && !currentBranchTaskIds.has(task.id)) {
+        currentBranchTaskIds.add(task.id);
+        branchChanged = true;
+      }
+    }
+  }
+  function hierarchyDepth(task: TaskRecord): number {
+    let depth = 1;
+    let parentTaskId = task.parentTaskId ?? null;
+    const visited = new Set<string>();
+    while (parentTaskId && !visited.has(parentTaskId)) {
+      visited.add(parentTaskId);
+      depth += 1;
+      parentTaskId = taskById.get(parentTaskId)?.parentTaskId ?? null;
+    }
+    return depth;
+  }
+  function subtreeHeight(taskId: string): number {
+    const children = props.allTasks.filter((task) => task.parentTaskId === taskId);
+    return children.length === 0 ? 1 : 1 + Math.max(...children.map((task) => subtreeHeight(task.id)));
+  }
+  const currentSubtreeHeight = subtreeHeight(props.task.id);
+  const validParentTasks = props.allTasks.filter((task) => !currentBranchTaskIds.has(task.id) && hierarchyDepth(task) + currentSubtreeHeight <= 3);
+  let currentTaskDepth = 1;
+  let currentParentTaskId = props.task.parentTaskId ?? null;
+  const visitedParentTaskIds = new Set<string>();
+  while (currentParentTaskId && !visitedParentTaskIds.has(currentParentTaskId)) {
+    visitedParentTaskIds.add(currentParentTaskId);
+    currentTaskDepth += 1;
+    currentParentTaskId = taskById.get(currentParentTaskId)?.parentTaskId ?? null;
+  }
+
+  async function saveRelationships(input: Omit<UpdateTaskRelationshipsRequest, 'expectedUpdatedAt'>): Promise<void> {
+    const expectedUpdatedAt = props.task.updatedAt ?? '';
+    if (!expectedUpdatedAt) {
+      setRelationshipSaveState({ kind: 'error', message: editCopy.saveFailed });
+      return;
+    }
+    setRelationshipSaveState({ kind: 'saving' });
+    try {
+      const result = await props.onUpdateRelationships(props.task.id, { ...input, expectedUpdatedAt });
+      setRelationshipSaveState(result.kind === 'conflict' ? { kind: 'conflict', latest: result.latest } : { kind: 'saved' });
+      if (result.kind === 'updated') setRelatedTaskCandidateId('');
+    } catch (error) {
+      const relationshipMessage =
+        error instanceof ZeusApiError && error.error === 'ZEUS_TASK_HIERARCHY_DEPTH_EXCEEDED'
+          ? zh
+            ? '调整后会超过三级任务层级，无法保存。请先调整当前任务下面的结构，或选择更高层级的父任务。'
+            : 'This change would exceed the three-level task hierarchy and cannot be saved.'
+          : error instanceof ZeusApiError && error.error === 'ZEUS_TASK_PARENT_CYCLE'
+            ? zh
+              ? '不能把当前任务移动到它自己下面。'
+              : 'A task cannot be moved below itself.'
+            : taskEditErrorMessage(error, editCopy.saveFailed);
+      setRelationshipSaveState({ kind: 'error', message: relationshipMessage });
+    }
+  }
 
   async function saveAttachmentReferences(attachments: TaskAttachmentReference[], expectedUpdatedAt: string): Promise<TaskEditResult | null> {
     if (!expectedUpdatedAt) {
@@ -657,6 +734,84 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
         />
       </section>
 
+      <section className="task-detail-block task-detail-relationships" aria-label={zh ? '任务关系' : 'Task relationships'}>
+        <span className="task-detail-section-heading">
+          <span>
+            <strong>{zh ? '父子关系' : 'Hierarchy'}</strong>
+            <small>{zh ? `当前第 ${currentTaskDepth} 级，最多三级` : `Level ${currentTaskDepth} of 3`}</small>
+          </span>
+          <Button variant="secondary" size="compact" onClick={() => props.onCreateChild(props.task.id)} disabled={props.busy || currentTaskDepth >= 3}>
+            {zh ? '新增子任务' : 'Add child task'}
+          </Button>
+        </span>
+        <label className="task-detail-relationship-control">
+          <small>{zh ? '父任务' : 'Parent task'}</small>
+          <ZeusSelect
+            size="regular"
+            ariaLabel={zh ? '更换父任务' : 'Change parent task'}
+            value={props.task.parentTaskId ?? ''}
+            options={[{ value: '', label: zh ? '无父任务（根任务）' : 'No parent (root task)' }, ...validParentTasks.map((task) => ({ value: task.id, label: `${task.taskCode ?? task.id} · ${task.title}` }))]}
+            onChange={(parentTaskId) => void saveRelationships({ parentTaskId: parentTaskId || null })}
+            disabled={props.busy || relationshipSaveState.kind === 'saving'}
+          />
+        </label>
+        {directChildren.length > 0 ? (
+          <div className="task-detail-relationship-list">
+            <small>{zh ? `直接子任务 ${directChildren.length} 个` : `${directChildren.length} direct children`}</small>
+            {directChildren.map((task) => (
+              <span key={task.id} className="task-detail-relationship-row">
+                <strong>{task.title}</strong>
+                <small>{task.taskCode ?? task.id}</small>
+              </span>
+            ))}
+          </div>
+        ) : null}
+
+        <span className="task-detail-section-heading task-detail-related-heading">
+          <span>
+            <strong>{zh ? '关联任务' : 'Related tasks'}</strong>
+            <small>{relatedTasks.length}</small>
+          </span>
+        </span>
+        <div className="task-detail-related-add">
+          <ZeusSelect
+            size="regular"
+            ariaLabel={zh ? '选择要关联的任务' : 'Choose a related task'}
+            value={relatedTaskCandidateId}
+            options={relatedCandidateTasks.map((task) => ({ value: task.id, label: `${task.taskCode ?? task.id} · ${task.title}` }))}
+            onChange={setRelatedTaskCandidateId}
+            disabled={props.busy || relationshipSaveState.kind === 'saving' || relatedCandidateTasks.length === 0}
+          />
+          <Button
+            variant="secondary"
+            size="compact"
+            disabled={!relatedTaskCandidateId || props.busy || relationshipSaveState.kind === 'saving'}
+            onClick={() => void saveRelationships({ relatedTaskIds: [...(props.task.relatedTaskIds ?? []), relatedTaskCandidateId] })}
+          >
+            {zh ? '添加关联' : 'Add relation'}
+          </Button>
+        </div>
+        <div className="task-detail-relationship-list" role="list">
+          {relatedTasks.map((task) => (
+            <span key={task.id} className="task-detail-relationship-row" role="listitem">
+              <span>
+                <strong>{task.title}</strong>
+                <small>{task.taskCode ?? task.id}</small>
+              </span>
+              <Button
+                variant="secondary"
+                size="compact"
+                onClick={() => void saveRelationships({ relatedTaskIds: (props.task.relatedTaskIds ?? []).filter((taskId) => taskId !== task.id) })}
+                disabled={props.busy || relationshipSaveState.kind === 'saving'}
+              >
+                {zh ? '移除' : 'Remove'}
+              </Button>
+            </span>
+          ))}
+        </div>
+        <TaskEditFeedback state={relationshipSaveState} copy={editCopy} statusId={`${attachmentStatusId}-relationships`} />
+      </section>
+
       <section className="task-detail-block task-detail-attachments" aria-label={props.copy.attachmentsTitle ?? '图片与附件'} aria-busy={attachmentSaveState.kind === 'saving' || undefined}>
         <span className="task-detail-section-heading">
           <span>
@@ -826,6 +981,9 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
               {zh ? '代码交付…' : 'Code delivery…'}
             </Button>
           ) : null}
+          <Button variant="danger" size="regular" onClick={() => props.onDeleteTask(props.task.id)} disabled={props.busy}>
+            {zh ? '删除任务…' : 'Delete task…'}
+          </Button>
         </span>
       </section>
     </section>
