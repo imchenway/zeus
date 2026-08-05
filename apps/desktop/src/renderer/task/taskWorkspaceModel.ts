@@ -455,16 +455,7 @@ export function createTaskWorkspaceViewModel(input: TaskWorkspaceViewModelInput)
       depth: 0,
       hasChildren: false,
       expanded: false,
-      cells: buildTaskTableCells(
-        task,
-        input.runtimeSessions ?? [],
-        input.projectName,
-        taskConversations,
-        input.conversationRunStatuses ?? {},
-        input.managementStatusLabels,
-        input.runStatusLabels,
-        input.appLanguage ?? 'zh-CN',
-      ),
+      cells: buildTaskTableCells(task, input.runtimeSessions ?? [], input.projectName, taskConversations, input.conversationRunStatuses ?? {}, input.managementStatusLabels, input.runStatusLabels, input.appLanguage ?? 'zh-CN'),
     };
   });
   const rows =

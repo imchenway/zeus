@@ -696,7 +696,23 @@ interface UpdateRuntimeSettingsBody {
 
 type AppAppearance = 'system' | 'light' | 'dark';
 type AppLanguage = 'zh-CN' | 'en-US';
-type TaskTableColumnKey = 'code' | 'intent' | 'taskType' | 'managementStatus' | 'branchStatus' | 'runStatus' | 'source' | 'updatedAt' | 'createdAt' | 'template' | 'project' | 'priority' | 'description' | 'runtimeSession' | 'rawId' | 'createdFrom';
+type TaskTableColumnKey =
+  | 'code'
+  | 'intent'
+  | 'taskType'
+  | 'managementStatus'
+  | 'branchStatus'
+  | 'runStatus'
+  | 'source'
+  | 'updatedAt'
+  | 'createdAt'
+  | 'template'
+  | 'project'
+  | 'priority'
+  | 'description'
+  | 'runtimeSession'
+  | 'rawId'
+  | 'createdFrom';
 type TaskTableColumnWidth = number;
 type TaskTableSortDirection = 'asc' | 'desc';
 type TaskAgentRunStatus = 'not_started' | 'connecting' | 'reconnecting' | 'running' | 'waiting_user' | 'waiting_approval' | 'paused' | 'idle' | 'failed' | 'legacy_readonly';
@@ -722,7 +738,8 @@ interface TaskTableEnumSortOrders {
 const defaultTaskTableColumnOrder: TaskTableColumnKey[] = [
   'code',
   'intent',
-  'taskType', 'managementStatus',
+  'taskType',
+  'managementStatus',
   'branchStatus',
   'runStatus',
   'source',
@@ -812,9 +829,7 @@ function normalizeTaskTableColumnPreferences(value: unknown): TaskTableColumnPre
   const order = normalizeTaskTableColumnKeys(migrateLegacyTaskTableColumnKeys(input.columnOrder), defaultTaskTableColumnOrder);
   if (hasLegacyColumns) visibleWithRequired = placeStatusColumnsAfterIntent(visibleWithRequired);
   let migratedOrder = hasLegacyColumns ? placeStatusColumnsAfterIntent(order) : order;
-  const usesPreviousDefault = previousDefaultTaskTableColumns.some(
-    (defaults) => taskTableColumnArraysEqual(visibleWithRequired, defaults.visible) && taskTableColumnArraysEqual(migratedOrder, defaults.order),
-  );
+  const usesPreviousDefault = previousDefaultTaskTableColumns.some((defaults) => taskTableColumnArraysEqual(visibleWithRequired, defaults.visible) && taskTableColumnArraysEqual(migratedOrder, defaults.order));
   if (usesPreviousDefault) {
     visibleWithRequired = [...defaultVisibleTaskTableColumns];
     migratedOrder = [...defaultTaskTableColumnOrder];
@@ -4674,9 +4689,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       });
     }
     if (
-      [body.description, body.defectCurrentState, body.defectExpectedOutcome, body.defectReproductionSteps, body.optimizationCurrentState, body.optimizationExpectedOutcome].some(
-        (value) => value !== undefined && typeof value !== 'string',
-      )
+      [body.description, body.defectCurrentState, body.defectExpectedOutcome, body.defectReproductionSteps, body.optimizationCurrentState, body.optimizationExpectedOutcome].some((value) => value !== undefined && typeof value !== 'string')
     ) {
       return reply.code(400).send({
         error: 'ZEUS_INVALID_TASK_CONTENT',
@@ -4705,12 +4718,12 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
         parentTaskId: body.parentTaskId,
         title: body.title,
         taskType: body.taskType,
-      description: body.description ?? '',
-      defectCurrentState: body.defectCurrentState,
-      defectExpectedOutcome: body.defectExpectedOutcome,
-      defectReproductionSteps: body.defectReproductionSteps,
-      optimizationCurrentState: body.optimizationCurrentState,
-      optimizationExpectedOutcome: body.optimizationExpectedOutcome,
+        description: body.description ?? '',
+        defectCurrentState: body.defectCurrentState,
+        defectExpectedOutcome: body.defectExpectedOutcome,
+        defectReproductionSteps: body.defectReproductionSteps,
+        optimizationCurrentState: body.optimizationCurrentState,
+        optimizationExpectedOutcome: body.optimizationExpectedOutcome,
         createdFrom: 'user',
         sourceContext: body.sourceContext ?? {},
         tags: body.tags,
@@ -4741,9 +4754,9 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       payload: {
         taskId: task.id,
         projectId: task.projectId,
-          title: task.title,
-          taskType: task.taskType,
-          status: task.status,
+        title: task.title,
+        taskType: task.taskType,
+        status: task.status,
         priority: task.priority,
       },
     });
@@ -5247,11 +5260,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       if (body.description !== undefined && typeof body.description !== 'string') {
         return reply.code(400).send({ error: 'ZEUS_INVALID_TASK_DESCRIPTION', message: 'Task description must be a string.' });
       }
-      if (
-        [body.defectCurrentState, body.defectExpectedOutcome, body.defectReproductionSteps, body.optimizationCurrentState, body.optimizationExpectedOutcome].some(
-          (value) => value !== undefined && typeof value !== 'string',
-        )
-      ) {
+      if ([body.defectCurrentState, body.defectExpectedOutcome, body.defectReproductionSteps, body.optimizationCurrentState, body.optimizationExpectedOutcome].some((value) => value !== undefined && typeof value !== 'string')) {
         return reply.code(400).send({ error: 'ZEUS_INVALID_TASK_CONTENT', message: 'Task type content fields must be strings when provided.' });
       }
       if (body.priority !== undefined && !isTaskPriority(body.priority)) {

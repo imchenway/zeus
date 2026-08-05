@@ -37,7 +37,8 @@ export type TaskAgentRunStatus = 'not_started' | 'connecting' | 'reconnecting' |
 export type TaskTableColumnKey =
   | 'code'
   | 'intent'
-  | 'taskType' | 'managementStatus'
+  | 'taskType'
+  | 'managementStatus'
   | 'branchStatus'
   | 'runStatus'
   | 'source'
@@ -2126,8 +2127,7 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
 export function normalizeDashboardSnapshot(snapshot: DashboardSnapshot): DashboardSnapshot {
   return {
     ...snapshot,
-    conversationAttentionByProject:
-      snapshot.conversationAttentionByProject && typeof snapshot.conversationAttentionByProject === 'object' ? snapshot.conversationAttentionByProject : {},
+    conversationAttentionByProject: snapshot.conversationAttentionByProject && typeof snapshot.conversationAttentionByProject === 'object' ? snapshot.conversationAttentionByProject : {},
   };
 }
 

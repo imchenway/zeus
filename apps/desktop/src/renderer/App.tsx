@@ -227,7 +227,9 @@ type InlineRecoveryAction = {
 };
 type ControlBusyProps = { 'aria-busy'?: true; 'data-loading'?: 'true' };
 type TaskCreateAttachment = TaskAttachmentView;
-type TaskCreateFormState = { parentTaskId: string | null; title: string;
+type TaskCreateFormState = {
+  parentTaskId: string | null;
+  title: string;
   taskType: TaskType | '';
   description: string;
   defectCurrentState: string;
@@ -239,17 +241,10 @@ type TaskCreateFormState = { parentTaskId: string | null; title: string;
   tags: string;
   attachments: TaskCreateAttachment[];
 };
-type TaskCreateTextField = Extract<
-  keyof TaskCreateFormState,
-  | 'title'
-  | 'description'
-  | 'defectCurrentState'
-  | 'defectExpectedOutcome'
-  | 'defectReproductionSteps'
-  | 'optimizationCurrentState'
-  | 'optimizationExpectedOutcome'
-  | 'tags'
->;type TaskCreateDraft = { parentTaskId: string | null; title: string;
+type TaskCreateTextField = Extract<keyof TaskCreateFormState, 'title' | 'description' | 'defectCurrentState' | 'defectExpectedOutcome' | 'defectReproductionSteps' | 'optimizationCurrentState' | 'optimizationExpectedOutcome' | 'tags'>;
+type TaskCreateDraft = {
+  parentTaskId: string | null;
+  title: string;
   taskType: TaskType;
   description: string;
   defectCurrentState: string;
@@ -5480,10 +5475,7 @@ function TaskCreateModal(props: {
   const pasteShortcutFallbackTokenRef = useRef(0);
   const [resourceProcessingCount, setResourceProcessingCount] = useState(0);
   const [resourceDragDepth, setResourceDragDepth] = useState(0);
-  const taskTypeOptions = useMemo(
-    () => [{ value: '' as const, label: props.copy.taskCreateTypePlaceholder, disabled: true }, ...props.copy.taskCreateTypeOptions],
-    [props.copy.taskCreateTypeOptions, props.copy.taskCreateTypePlaceholder],
-  );
+  const taskTypeOptions = useMemo(() => [{ value: '' as const, label: props.copy.taskCreateTypePlaceholder, disabled: true }, ...props.copy.taskCreateTypeOptions], [props.copy.taskCreateTypeOptions, props.copy.taskCreateTypePlaceholder]);
   if (!props.open) return null;
   const describedBy = props.error ? 'task-create-error' : undefined;
   const resourcesBusy = resourceProcessingCount > 0;

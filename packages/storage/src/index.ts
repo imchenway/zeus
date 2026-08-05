@@ -2693,34 +2693,34 @@ export class TaskRepository {
         management_status, status, priority, tags_json, template_id,
         allow_code_changes, allow_tests, allow_git_commit, created_from, source_context_json, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        record.id,
-        record.projectId,
-        record.taskCode,
-        record.taskSequence,
-        record.parentTaskId,
-        record.title,
-        record.taskType,
-        record.description,
-        record.defectCurrentState,
-        record.defectExpectedOutcome,
-        record.defectReproductionSteps,
-        record.optimizationCurrentState,
-        record.optimizationExpectedOutcome,
-        record.managementStatus,
-        record.status,
-        record.priority,
-        JSON.stringify(record.tags),
-        record.templateId,
-        record.allowCodeChanges ? 1 : 0,
-        record.allowTests ? 1 : 0,
-        record.allowGitCommit ? 1 : 0,
-        record.createdFrom,
-        record.sourceContextJson,
-        record.createdAt,
-        record.updatedAt,
-      ],
-    );
+        [
+          record.id,
+          record.projectId,
+          record.taskCode,
+          record.taskSequence,
+          record.parentTaskId,
+          record.title,
+          record.taskType,
+          record.description,
+          record.defectCurrentState,
+          record.defectExpectedOutcome,
+          record.defectReproductionSteps,
+          record.optimizationCurrentState,
+          record.optimizationExpectedOutcome,
+          record.managementStatus,
+          record.status,
+          record.priority,
+          JSON.stringify(record.tags),
+          record.templateId,
+          record.allowCodeChanges ? 1 : 0,
+          record.allowTests ? 1 : 0,
+          record.allowGitCommit ? 1 : 0,
+          record.createdFrom,
+          record.sourceContextJson,
+          record.createdAt,
+          record.updatedAt,
+        ],
+      );
       return record;
     });
   }
@@ -2814,21 +2814,24 @@ export class TaskRepository {
       throw new Error(`Zeus task not found: ${taskId}`);
     }
     const timestamp = nextIsoTimestamp(existing.updatedAt);
-    this.db.execute(`UPDATE tasks SET title = ?, task_type = ?, description = ?, defect_current_state = ?, defect_expected_outcome = ?, defect_reproduction_steps = ?, optimization_current_state = ?, optimization_expected_outcome = ?, allow_code_changes = ?, allow_tests = ?, allow_git_commit = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`, [
-      input.title ?? existing.title,
-      input.taskType ?? existing.taskType,
-      input.description ?? existing.description,
-      input.defectCurrentState ?? existing.defectCurrentState,
-      input.defectExpectedOutcome ?? existing.defectExpectedOutcome,
-      input.defectReproductionSteps ?? existing.defectReproductionSteps,
-      input.optimizationCurrentState ?? existing.optimizationCurrentState,
-      input.optimizationExpectedOutcome ?? existing.optimizationExpectedOutcome,
-      (input.allowCodeChanges ?? existing.allowCodeChanges) ? 1 : 0,
-      (input.allowTests ?? existing.allowTests) ? 1 : 0,
-      (input.allowGitCommit ?? existing.allowGitCommit) ? 1 : 0,
-      timestamp,
-      taskId,
-    ]);
+    this.db.execute(
+      `UPDATE tasks SET title = ?, task_type = ?, description = ?, defect_current_state = ?, defect_expected_outcome = ?, defect_reproduction_steps = ?, optimization_current_state = ?, optimization_expected_outcome = ?, allow_code_changes = ?, allow_tests = ?, allow_git_commit = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`,
+      [
+        input.title ?? existing.title,
+        input.taskType ?? existing.taskType,
+        input.description ?? existing.description,
+        input.defectCurrentState ?? existing.defectCurrentState,
+        input.defectExpectedOutcome ?? existing.defectExpectedOutcome,
+        input.defectReproductionSteps ?? existing.defectReproductionSteps,
+        input.optimizationCurrentState ?? existing.optimizationCurrentState,
+        input.optimizationExpectedOutcome ?? existing.optimizationExpectedOutcome,
+        (input.allowCodeChanges ?? existing.allowCodeChanges) ? 1 : 0,
+        (input.allowTests ?? existing.allowTests) ? 1 : 0,
+        (input.allowGitCommit ?? existing.allowGitCommit) ? 1 : 0,
+        timestamp,
+        taskId,
+      ],
+    );
     const updated = this.getById(taskId);
     if (!updated) {
       throw new Error(`Zeus task not found: ${taskId}`);
