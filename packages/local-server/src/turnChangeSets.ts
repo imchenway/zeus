@@ -94,6 +94,7 @@ export interface CreateTurnChangeSetServiceOptions {
   auditLogs: AuditLogRepository;
   idempotency: IdempotencyRequestRepository;
   recoveryRoot: string;
+  getConversationRoot?: (conversationId: string) => string | null;
   broadcast?: (type: string, payload: Record<string, unknown>) => void;
   now?: () => string;
   maxFileBytes?: number;
@@ -138,10 +139,11 @@ export function createTurnChangeSetService(options: CreateTurnChangeSetServiceOp
     if (changes.length === 0) return null;
     const project = options.projects.getById(input.conversation.projectId);
     if (!project) throw turnChangeSetError('ZEUS_TURN_CHANGE_SET_PROJECT_MISSING', 'The project for this turn change set no longer exists.');
+    const executionRoot = conversationExecutionRoot(input.conversation.id, project.localPath);
     const changeSet = ensureChangeSet(input.conversation, input.turn, input.timestamp);
     let capturedBytes = existingCaptureBytes(changeSet.id);
     changes.forEach((change, sourceIndex) => {
-      const paths = changePaths(change, project.localPath);
+      const paths = changePaths(change, executionRoot);
       const existing = options.files
         .listByChangeSet(changeSet.id)
         .find((candidate) => candidate.sourceItemId === input.providerItemId && candidate.sourceIndex === sourceIndex);
@@ -445,6 +447,7 @@ export function createTurnChangeSetService(options: CreateTurnChangeSetServiceOp
   function executeOperation(changeSet: ZeusTurnChangeSetRecord, action: 'undo' | 'reapply'): TurnChangeSetOperationResult {
     const project = options.projects.getById(changeSet.projectId);
     if (!project) throw turnChangeSetError('ZEUS_TURN_CHANGE_SET_PROJECT_MISSING', 'The project for this turn change set no longer exists.');
+    const executionRoot = conversationExecutionRoot(changeSet.conversationId, project.localPath);
     const files = aggregateChangeFiles(options.files.listByChangeSet(changeSet.id));
     if (files.length === 0 || files.some((file) => !file.reversible)) {
       throw turnChangeSetError('ZEUS_TURN_CHANGE_SET_UNAVAILABLE', changeSet.unavailableReason ?? 'This turn does not have complete recovery data.');
@@ -454,7 +457,7 @@ export function createTurnChangeSetService(options: CreateTurnChangeSetServiceOp
     if (changeSet.state !== fromState && changeSet.state !== 'conflicted') {
       throw turnChangeSetError('ZEUS_TURN_CHANGE_SET_STATE_CONFLICT', `Turn change set is ${changeSet.state}; expected ${fromState}.`);
     }
-    const conflicts = validateOperationPreconditions(project.localPath, files, action);
+    const conflicts = validateOperationPreconditions(executionRoot, files, action);
     if (conflicts.length > 0) {
       const conflict: TurnChangeConflict = {
         code: 'ZEUS_TURN_CHANGE_SET_CONTENT_CONFLICT',
@@ -495,12 +498,12 @@ export function createTurnChangeSetService(options: CreateTurnChangeSetServiceOp
     });
     let applied = false;
     try {
-      applyFileSnapshots(project.localPath, files, action === 'undo' ? 'pre' : 'post');
+      applyFileSnapshots(executionRoot, files, action === 'undo' ? 'pre' : 'post');
       applied = true;
       writeJsonAtomic(journalPath, {...journal, status: 'completed', completedAt: now()});
     } catch (error) {
       try {
-        applyFileSnapshots(project.localPath, files, action === 'undo' ? 'post' : 'pre');
+        applyFileSnapshots(executionRoot, files, action === 'undo' ? 'post' : 'pre');
         writeJsonAtomic(journalPath, {...journal, status: 'rolled_back', rolledBackAt: now()});
         options.changeSets.upsert({
           ...changeSet,
@@ -554,11 +557,12 @@ export function createTurnChangeSetService(options: CreateTurnChangeSetServiceOp
     for (const changeSet of options.changeSets.listInProgress()) {
       const project = options.projects.getById(changeSet.projectId);
       const files = aggregateChangeFiles(options.files.listByChangeSet(changeSet.id));
-      if (!project || files.length === 0) {
+      const executionRoot = project ? (options.getConversationRoot?.(changeSet.conversationId) ?? (options.getConversationRoot ? null : project.localPath)) : null;
+      if (!project || !executionRoot || files.length === 0) {
         options.changeSets.upsert({
           ...changeSet,
           state: 'unavailable',
-          unavailableReason: 'Interrupted operation recovery data is incomplete.',
+          unavailableReason: !executionRoot ? 'The conversation execution root is unavailable.' : 'Interrupted operation recovery data is incomplete.',
           updatedAt: now(),
         });
         continue;
@@ -566,7 +570,7 @@ export function createTurnChangeSetService(options: CreateTurnChangeSetServiceOp
       const restore = changeSet.state === 'undoing' ? 'post' : 'pre';
       const restoredState = changeSet.state === 'undoing' ? 'applied' : 'undone';
       try {
-        applyFileSnapshots(project.localPath, files, restore);
+        applyFileSnapshots(resolve(executionRoot), files, restore);
         options.changeSets.upsert({...changeSet, state: restoredState, updatedAt: now()});
       } catch (error) {
         const conflict: TurnChangeConflict = {
@@ -599,6 +603,14 @@ export function createTurnChangeSetService(options: CreateTurnChangeSetServiceOp
     const value = getById(changeSetId);
     if (!value) throw turnChangeSetError('ZEUS_TURN_CHANGE_SET_NOT_FOUND', 'Turn change set not found.');
     return value;
+  }
+
+  function conversationExecutionRoot(conversationId: string, projectRoot: string): string {
+    const configuredRoot = options.getConversationRoot?.(conversationId) ?? (options.getConversationRoot ? null : projectRoot);
+    if (!configuredRoot) {
+      throw turnChangeSetError('ZEUS_TURN_CHANGE_SET_ROOT_UNAVAILABLE', 'The conversation execution root is unavailable.');
+    }
+    return resolve(configuredRoot);
   }
 
   return {
@@ -644,21 +656,21 @@ function normalizeProviderChanges(value: unknown): ProviderFileUpdateChange[] {
   return changes;
 }
 
-function changePaths(change: ProviderFileUpdateChange, projectRoot: string): {
+function changePaths(change: ProviderFileUpdateChange, executionRoot: string): {
   oldPath: string | null;
   newPath: string | null;
   oldAbsolutePath: string | null;
   newAbsolutePath: string | null;
   changeType: Exclude<TurnChangeFileType, 'binary'>;
 } {
-  const sourcePath = normalizeProjectRelativePath(change.path, projectRoot);
+  const sourcePath = normalizeProjectRelativePath(change.path, executionRoot);
   if (change.kind.type === 'add') {
     return {oldPath: null, newPath: sourcePath.relativePath, oldAbsolutePath: null, newAbsolutePath: sourcePath.absolutePath, changeType: 'added'};
   }
   if (change.kind.type === 'delete') {
     return {oldPath: sourcePath.relativePath, newPath: null, oldAbsolutePath: sourcePath.absolutePath, newAbsolutePath: null, changeType: 'deleted'};
   }
-  const movePath = change.kind.move_path ? normalizeProjectRelativePath(change.kind.move_path, projectRoot) : null;
+  const movePath = change.kind.move_path ? normalizeProjectRelativePath(change.kind.move_path, executionRoot) : null;
   return {
     oldPath: sourcePath.relativePath,
     newPath: movePath?.relativePath ?? sourcePath.relativePath,
@@ -668,12 +680,12 @@ function changePaths(change: ProviderFileUpdateChange, projectRoot: string): {
   };
 }
 
-function normalizeProjectRelativePath(path: string, projectRoot: string): {absolutePath: string; relativePath: string} {
+function normalizeProjectRelativePath(path: string, executionRoot: string): {absolutePath: string; relativePath: string} {
   if (!path || path.includes('\0')) throw turnChangeSetError('ZEUS_TURN_CHANGE_SET_PATH_INVALID', 'Provider file change path is invalid.');
-  const root = resolve(projectRoot);
+  const root = resolve(executionRoot);
   const absolutePath = resolve(isAbsolute(path) ? path : resolve(root, path));
   if (!isInsideRoot(absolutePath, root) || absolutePath === root) {
-    throw turnChangeSetError('ZEUS_TURN_CHANGE_SET_PATH_FORBIDDEN', 'Provider file change path is outside the project root.');
+    throw turnChangeSetError('ZEUS_TURN_CHANGE_SET_PATH_FORBIDDEN', 'Provider file change path is outside the conversation execution root.');
   }
   validateExistingAncestor(absolutePath, root);
   return {absolutePath, relativePath: relative(root, absolutePath).split(sep).join('/')};
@@ -686,7 +698,7 @@ function validateExistingAncestor(path: string, root: string): void {
     try {
       const ancestorRealPath = realpathSync(ancestor);
       if (!isInsideRoot(ancestorRealPath, rootRealPath)) {
-        throw turnChangeSetError('ZEUS_TURN_CHANGE_SET_PATH_FORBIDDEN', 'Provider file change path resolves outside the project root.');
+        throw turnChangeSetError('ZEUS_TURN_CHANGE_SET_PATH_FORBIDDEN', 'Provider file change path resolves outside the conversation execution root.');
       }
       return;
     } catch (error) {

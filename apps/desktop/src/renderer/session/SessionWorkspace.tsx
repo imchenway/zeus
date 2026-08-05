@@ -60,6 +60,7 @@ export type SessionStartMode = 'create' | 'resume' | 'reference_legacy';
 export interface SessionWorkspaceStartInput {
   mode: SessionStartMode;
   task: SessionWorkspaceTask;
+  inheritConversationId?: string;
   conversation?: NativeConversationChoice;
   legacyMessageIds?: string[];
   content: string;
@@ -137,6 +138,7 @@ type StartNativeConversationPayload =
       mode: 'create';
       content: string;
       attachments?: NativeConversationAttachment[];
+      inheritConversationId?: string;
       permissionMode: NativePermissionMode;
       collaborationMode: NativeCollaborationMode;
       serviceTier?: string | null;
@@ -638,6 +640,7 @@ function buildStartNativeConversationPayload(input: SessionWorkspaceStartInput):
       mode: 'create',
       content,
       ...(input.attachments?.length ? { attachments: input.attachments } : {}),
+      ...(input.inheritConversationId ? { inheritConversationId: input.inheritConversationId } : {}),
       permissionMode: input.permissionMode ?? 'auto',
       collaborationMode: input.collaborationMode ?? 'default',
       ...serviceTierWireOverride(input.serviceTierSelection),
@@ -693,6 +696,7 @@ function isStartNativeConversationRequest(value: unknown): value is StartNativeC
   if (request.mode === 'create') {
     return (
       (Boolean(request.content.trim()) || (Array.isArray(request.attachments) && request.attachments.length > 0)) &&
+      (request.inheritConversationId === undefined || (typeof request.inheritConversationId === 'string' && Boolean(request.inheritConversationId))) &&
       permissionModeField(request.permissionMode) !== undefined &&
       (request.collaborationMode === 'default' || request.collaborationMode === 'plan') &&
       serviceTierOverrideField(request.serviceTier)
@@ -999,6 +1003,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
 
   useEffect(() => {
     contextReturnFocusRef.current = null;
+    setStartFreshOpen(false);
     setComposerRuntimeSettings(readConversationNextTurnSettings(browserConversationStorage(), props.conversation?.projectId ?? '', props.conversation?.id ?? ''));
     lastNextTurnSettingsSyncRef.current = null;
     setContextWorkspace({ kind: 'none' });
@@ -1602,13 +1607,14 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                     />
                   </section>
                 ) : freshStartRequired ? (
-                  recoveryDecisionPending ? null : owner ? (
+                  recoveryDecisionPending || !startFreshOpen ? null : owner ? (
                     <NewConversationComposer
                       key={`fresh-conversation:${unsentDraft.key}`}
                       language={props.language}
                       owner={owner}
                       task={props.task}
-                      autoFocus={startFreshOpen || Boolean(props.state.error?.recoveryRequired)}
+                      inheritConversationId={owner.kind === 'task' ? props.conversation?.id : undefined}
+                      autoFocus
                       docked
                       initialContent={unsentDraft.content}
                       initialAttachments={unsentDraft.attachments}
@@ -1791,6 +1797,7 @@ function NewConversationComposer(props: {
   language: SessionUiLanguage;
   owner?: SessionConversationOwner;
   task: SessionWorkspaceTask | null;
+  inheritConversationId?: string;
   autoFocus?: boolean;
   docked?: boolean;
   initialContent?: string;
@@ -1895,6 +1902,7 @@ function NewConversationComposer(props: {
         accepted = await props.onStartTask({
           mode: 'create',
           task: props.task,
+          ...(props.inheritConversationId ? { inheritConversationId: props.inheritConversationId } : {}),
           content,
           attachments,
           permissionMode,

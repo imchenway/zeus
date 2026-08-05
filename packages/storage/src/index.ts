@@ -4931,6 +4931,31 @@ export class ConversationSubmissionRepository {
     if (!updated) throw new Error(`Conversation submission not found: ${id}`);
     return updated;
   }
+
+  requeueRejectedSteer(id: string, updatedAt = nowIso()): ZeusConversationSubmissionRecord {
+    const existing = this.getById(id);
+    if (!existing) throw new Error(`Conversation submission not found: ${id}`);
+    const parsedInput = parseStoredJson(existing.inputJson);
+    if (!isPlainRecord(parsedInput)) throw new Error(`Conversation submission input is invalid: ${id}`);
+    // Provider 明确拒绝已结束轮次的 steer 时，这条输入从未进入模型；清除旧轮次绑定后按普通队列消息继续处理。
+    this.db.execute(
+      `UPDATE conversation_submissions
+       SET kind = 'message', requested_delivery = 'queue', status = 'queued', input_json = ?,
+           target_provider_turn_id = NULL, provider_turn_id = NULL, paused_reason = NULL,
+           error_json = NULL, dispatched_at = NULL, resolved_at = NULL, updated_at = ?
+       WHERE id = ?`,
+      [
+        JSON.stringify({
+          ...parsedInput,
+          delivery: 'queue',
+          expectedTurnId: null,
+        }),
+        updatedAt,
+        id,
+      ],
+    );
+    return this.getById(id)!;
+  }
 }
 
 export class ConversationServerRequestRepository {

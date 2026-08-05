@@ -594,6 +594,7 @@ export type StartNativeConversationRequest =
       mode: 'create';
       content?: string;
       attachments?: NativeConversationAttachment[];
+      inheritConversationId?: string;
       permissionMode: NativePermissionMode;
       collaborationMode: NativeCollaborationMode;
       serviceTier?: string | null;

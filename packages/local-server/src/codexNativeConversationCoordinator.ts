@@ -1106,6 +1106,35 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     try {
       await options.manager.steerTurn({ threadId: providerThreadId, turnId, clientUserMessageId: submission.clientMessageId, input: submissionProviderInput(submission, context) });
     } catch (error) {
+      if (isProviderTurnAlreadyEndedSteerError(error)) {
+        let requeued = options.submissions.requeueRejectedSteer(submission.id, now());
+        await persist();
+        // 先让已经到达的 turn/completed 事件收敛旧轮次，再尝试读取一次权威快照；两者失败都不能把明确未发送的输入升级成未知副作用。
+        await providerEventChain.catch(() => undefined);
+        const currentConversation = requireConversation(conversation.id);
+        try {
+          const snapshot = await options.manager.readThread({ threadId: providerThreadId });
+          const generationId = options.manager.generationForThread(providerThreadId) ?? readyGenerationId();
+          if (generationId) reconcileConversationSnapshot(currentConversation, snapshot, generationId);
+        } catch (reconcileError) {
+          options.broadcast('conversation.native.steer_requeued', {
+            conversationId: conversation.id,
+            providerThreadId,
+            providerTurnId: turnId,
+            submissionId: submission.id,
+            reconciliationError: serializeError(reconcileError),
+          });
+        }
+        // 恢复对账可能按“重启后的未发送内容”暂停队列；本次输入来自当前用户动作，应继续作为普通下一轮排队。
+        requeued = options.submissions.requeueRejectedSteer(submission.id, now());
+        await persist();
+        options.broadcast('conversation.queue.changed', {
+          conversationId: conversation.id,
+          queue: toQueueSnapshot(conversation.id),
+        });
+        requestQueueDrain();
+        return accepted(requeued, 'queued', providerThreadId, null);
+      }
       options.submissions.updateStatus(submission.id, 'paused', {
         providerTurnId: turnId,
         pausedReason: 'recovery_required',
@@ -3916,6 +3945,10 @@ function serializeError(error: unknown): { message: string; code?: string } {
 
 function isProviderThreadArchivedError(error: unknown): boolean {
   return /\bis archived\b[\s\S]*\bunarchive\b/i.test(error instanceof Error ? error.message : String(error));
+}
+
+function isProviderTurnAlreadyEndedSteerError(error: unknown): boolean {
+  return /\bno active turn to steer\b/i.test(error instanceof Error ? error.message : String(error));
 }
 
 function coordinatorError(code: string, message: string): Error & { code: string } {

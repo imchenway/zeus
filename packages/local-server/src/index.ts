@@ -1478,6 +1478,7 @@ type StartTaskConversationBody = (
       mode: 'create';
       content?: string;
       attachments?: NativeConversationAttachment[];
+      inheritConversationId?: string;
       permissionMode?: ConversationPermissionMode;
       source?: 'task_push';
       model?: string;
@@ -1807,6 +1808,10 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     auditLogs,
     idempotency: idempotencyRequests,
     recoveryRoot: join(dirname(options.dbPath), 'turn-change-sets'),
+    getConversationRoot: (conversationId) => {
+      const conversation = conversations.getById(conversationId);
+      return conversation ? resolveNativeConversationExecutionRoot(conversation) : null;
+    },
     broadcast: publishNativeConversationEvent,
     now: () => now().toISOString(),
   });
@@ -11421,7 +11426,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     };
   }
 
-  async function readNativeConversationExecutionContext(conversation: ZeusConversationWithMessagesRecord): Promise<{ cwd: string | null; branch: string | null; isGitRepository: boolean | null }> {
+  function resolveNativeConversationExecutionRoot(conversation: ZeusConversationWithMessagesRecord): string | null {
     const contextualSubmission = conversationSubmissions.listByConversation(conversation.id).find((submission) => {
       const context = parseJsonObject(submission.inputJson).context;
       return isNativeApiRecord(context) && typeof context.projectLocalPath === 'string' && Boolean(context.projectLocalPath.trim());
@@ -11430,16 +11435,19 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     const workspace = conversation.workspaceId ? taskWorkspaces.getById(conversation.workspaceId) : undefined;
     const environment = conversation.environmentId ? taskEnvironments.getById(conversation.environmentId) : undefined;
     const project = projects.getById(conversation.projectId);
-    const cwdSource =
-      isNativeApiRecord(persistedContext) && typeof persistedContext.projectLocalPath === 'string' && persistedContext.projectLocalPath.trim()
-        ? persistedContext.projectLocalPath
-        : workspace?.worktreePath
-          ? workspace.worktreePath
-          : environment?.rootPath
-            ? environment.rootPath
-            : conversation.taskId
-              ? null
-              : (project?.localPath ?? projectRoot);
+    return isNativeApiRecord(persistedContext) && typeof persistedContext.projectLocalPath === 'string' && persistedContext.projectLocalPath.trim()
+      ? persistedContext.projectLocalPath
+      : workspace?.worktreePath
+        ? workspace.worktreePath
+        : environment?.rootPath
+          ? environment.rootPath
+          : conversation.taskId
+            ? null
+            : (project?.localPath ?? projectRoot);
+  }
+
+  async function readNativeConversationExecutionContext(conversation: ZeusConversationWithMessagesRecord): Promise<{ cwd: string | null; branch: string | null; isGitRepository: boolean | null }> {
+    const cwdSource = resolveNativeConversationExecutionRoot(conversation);
     if (!cwdSource) return { cwd: null, branch: null, isGitRepository: null };
     const cwd = resolve(cwdSource);
     const git = await getGitWorkingContext(cwd);
@@ -12064,12 +12072,36 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
         const selectedModel = capabilities.models.find((candidate) => candidate.model === capabilities.preferredModel || candidate.id === capabilities.preferredModel) ?? capabilities.models[0]!;
         const requestedServiceTier = readServiceTierOverride(body);
         const serviceTier = normalizeServiceTierForCapability(requestedServiceTier, selectedModel);
+        const inheritConversationId = typeof body.inheritConversationId === 'string' ? body.inheritConversationId.trim() : '';
+        let inheritedEnvironment: Awaited<ReturnType<typeof resolveTaskPushEnvironment>> | null = null;
+        if (inheritConversationId) {
+          const sourceConversation = conversations.getById(inheritConversationId);
+          if (!sourceConversation || sourceConversation.projectId !== project.id || sourceConversation.taskId !== task.id) {
+            throw nativeApiError('ZEUS_TASK_EXECUTION_CONTEXT_INVALID', 'The source conversation does not belong to this task.');
+          }
+          if (!sourceConversation.environmentId && !sourceConversation.workspaceId) {
+            throw nativeApiError('ZEUS_TASK_EXECUTION_CONTEXT_REQUIRED', 'The source task conversation has no persisted execution workspace.');
+          }
+          inheritedEnvironment = await resolveTaskPushEnvironment(
+            project,
+            task,
+            sourceConversation.environmentId ? { mode: 'existing', environmentId: sourceConversation.environmentId } : { mode: 'existing', workspaceId: sourceConversation.workspaceId },
+            stableOperationId,
+          );
+        }
         nativeOperation = await codexNativeCoordinator.startTaskConversation({
           conversationId: reservation.conversationId,
           submissionId: reservation.submissionId,
           projectId: project.id,
-          projectLocalPath: project.localPath,
+          projectLocalPath: inheritedEnvironment?.cwd ?? project.localPath,
           taskId: task.id,
+          ...(inheritedEnvironment
+            ? {
+                environmentId: inheritedEnvironment.environment.id,
+                ...(inheritedEnvironment.workspaces[0] ? { workspaceId: inheritedEnvironment.workspaces[0].id } : {}),
+                writableRoots: inheritedEnvironment.writableRoots,
+              }
+            : {}),
           taskTitle: task.title,
           prompt: content,
           attachments,
