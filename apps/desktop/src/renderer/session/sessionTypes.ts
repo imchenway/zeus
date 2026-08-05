@@ -340,19 +340,6 @@ export interface CodexTaskRepositoryCapability extends ProjectRepositoryRecord {
   suggestedBranchName: string;
 }
 
-export interface CodexTaskEnvironmentCapability {
-  id: string;
-  projectId: string;
-  taskId: string;
-  rootPath: string | null;
-  state: 'ready' | 'reclaimed' | 'failed';
-  lastError: string | null;
-  createdAt: string;
-  updatedAt: string;
-  workspaces: CodexTaskWorkspaceCapability[];
-  selectable: boolean;
-}
-
 export interface CodexTaskPushCapabilities {
   generationId: string;
   initializedAt: string;
@@ -371,7 +358,6 @@ export interface CodexTaskPushCapabilities {
     clean: boolean;
   }>;
   sharedWritablePaths: ProjectSharedPathRecord[];
-  environments: CodexTaskEnvironmentCapability[];
   git: {
     primaryWorkspacePath: string;
     primaryBranch: string;
@@ -382,7 +368,6 @@ export interface CodexTaskPushCapabilities {
     suggestedBranchName: string;
     worktreeRoot: string;
   };
-  workspaces: CodexTaskWorkspaceCapability[];
 }
 
 export interface TaskWorkspaceRecord {
@@ -405,11 +390,6 @@ export interface TaskWorkspaceRecord {
   lastError: string | null;
   createdAt: string;
   updatedAt: string;
-}
-
-export interface CodexTaskWorkspaceCapability extends TaskWorkspaceRecord {
-  clean: boolean | null;
-  selectable: boolean;
 }
 
 export interface TaskGitFileStatus {
@@ -588,7 +568,7 @@ export interface StartTaskModelPushRequest {
   serviceTier?: string | null;
   workMode: 'default' | 'plan';
   permissionMode: NativePermissionMode;
-  workspace: { mode: 'create'; repositories: Array<{ repositoryId: string; sourceRef: string; branchName: string }> } | { mode: 'existing'; environmentId: string };
+  workspace: { mode: 'create'; repositories: Array<{ repositoryId: string; sourceRef: string; branchName: string }> };
   supplementalInfo?: string;
   idempotencyKey: string;
   clientUserMessageId: string;
