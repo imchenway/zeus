@@ -44,6 +44,7 @@ export interface StartPiConversationInput {
   projectId: string;
   taskId?: string;
   taskTitle?: string;
+  conversationTitle?: string;
   cwd: string;
   prompt: string;
   model: AgentModelIdentity;
@@ -91,7 +92,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       ...(input.taskId ? { taskId: input.taskId } : {}),
       ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
       ...(input.environmentId ? { environmentId: input.environmentId } : {}),
-      title: input.taskTitle ?? (input.prompt.slice(0, 80) || 'Pi 会话'),
+      title: input.conversationTitle?.trim().slice(0, 80) || input.taskTitle || input.prompt.slice(0, 80) || 'Pi 会话',
       status: 'running',
       transportKind: 'codex_native',
       providerId: `pi:${input.model.sourceId ?? 'custom'}`,

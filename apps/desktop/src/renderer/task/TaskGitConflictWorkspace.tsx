@@ -1,6 +1,6 @@
 import { MagicWand } from '@phosphor-icons/react/MagicWand';
-import { useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import type { TaskIntegrationConflictFile, TaskIntegrationRecord } from '../session/sessionTypes.js';
+import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
+import type { TaskIntegrationConflictAiDraft, TaskIntegrationConflictFile, TaskIntegrationRecord } from '../session/sessionTypes.js';
 import { Button } from '../ui/Button.js';
 
 type ConflictChoice = 'source' | 'task' | 'both';
@@ -22,6 +22,21 @@ interface DiffOperation {
   text: string;
 }
 
+interface MergeEdit {
+  start: number;
+  end: number;
+  replacement: string[];
+}
+
+interface CodeSnippet {
+  text: string;
+  startOffset: number;
+  endOffset: number;
+  startLine: number;
+  conflictStartLine: number;
+  conflictEndLine: number;
+}
+
 const slashCommentSyntaxPattern = buildSyntaxPattern('\\/\\/.*$|\\/\\*.*?\\*\\/');
 const hashCommentSyntaxPattern = buildSyntaxPattern('#.*$');
 
@@ -36,6 +51,7 @@ export function resolveSimpleConflictDraft(content: string, fullBase: string): {
 export function TaskGitConflictWorkspace(props: {
   zh: boolean;
   busy: boolean;
+  aiBusy: boolean;
   integration: TaskIntegrationRecord;
   taskBranch: string;
   conflictPath: string;
@@ -43,25 +59,38 @@ export function TaskGitConflictWorkspace(props: {
   resultContent: string;
   onSelectPath: (path: string) => void;
   onResultChange: (content: string) => void;
+  onAskAi: () => Promise<TaskIntegrationConflictAiDraft>;
 }) {
   const blocks = useMemo(() => parseConflictBlocks(props.resultContent), [props.resultContent]);
-  const deferredBlocks = useDeferredValue(blocks);
-  const [revealOffset, setRevealOffset] = useState<number | null>(null);
+  const [selectedBlockIndex, setSelectedBlockIndex] = useState(0);
+  const [viewMode, setViewMode] = useState<'focused' | 'full'>('focused');
   const [mergeFeedback, setMergeFeedback] = useState<string | null>(null);
+  const [undoDraft, setUndoDraft] = useState<string | null>(null);
+  const activeBlock = blocks[Math.min(selectedBlockIndex, Math.max(0, blocks.length - 1))] ?? null;
 
   useEffect(() => {
     setMergeFeedback(null);
-    setRevealOffset(null);
+    setSelectedBlockIndex(0);
+    setViewMode('focused');
+    setUndoDraft(null);
   }, [props.conflictPath]);
 
+  useEffect(() => {
+    if (selectedBlockIndex >= blocks.length && blocks.length > 0) setSelectedBlockIndex(blocks.length - 1);
+  }, [blocks.length, selectedBlockIndex]);
+
   function chooseBlock(block: ConflictBlock, choice: ConflictChoice): void {
+    setUndoDraft(props.resultContent);
     props.onResultChange(replaceConflictBlock(props.resultContent, block, choice));
     setMergeFeedback(props.zh ? `已处理第 ${blocks.indexOf(block) + 1} 个冲突块，保存前不会写入文件。` : `Conflict ${blocks.indexOf(block) + 1} resolved in the draft. The file is unchanged until you save.`);
   }
 
   function mergeSimpleConflicts(): void {
     const result = resolveSimpleConflictDraft(props.resultContent, props.conflict?.base ?? '');
-    if (result.resolved > 0) props.onResultChange(result.content);
+    if (result.resolved > 0) {
+      setUndoDraft(props.resultContent);
+      props.onResultChange(result.content);
+    }
     setMergeFeedback(
       props.zh
         ? result.resolved > 0
@@ -71,6 +100,34 @@ export function TaskGitConflictWorkspace(props: {
           ? `Merged ${result.resolved} simple conflict(s); ${result.remaining} still need review.`
           : `No simple conflicts could be merged safely; ${result.remaining} still need review.`,
     );
+  }
+
+  async function askAi(): Promise<void> {
+    const before = props.resultContent;
+    try {
+      const result = await props.onAskAi();
+      const next = applyConflictAiDraft(before, result.suggestions);
+      if (next.applied === 0) {
+        setMergeFeedback(props.zh ? 'AI 没有返回可应用的冲突块。' : 'AI did not return an applicable conflict block.');
+        return;
+      }
+      setUndoDraft(before);
+      props.onResultChange(next.content);
+      const identity = `${result.agentKind === 'pi' ? 'Pi' : 'Codex'} · ${result.modelId}`;
+      const explanations = result.suggestions.map((suggestion) => `${suggestion.index + 1}. ${suggestion.explanation}`).join('；');
+      setMergeFeedback(
+        props.zh ? `${identity} 已生成 ${next.applied} 个冲突草稿，保存前不会写入文件。${explanations ? ` ${explanations}` : ''}` : `${identity} drafted ${next.applied} conflict resolution(s). The file is unchanged until you save.`,
+      );
+    } catch {
+      // 具体失败原因由代码交付弹窗统一展示，避免在两个状态区重复报错。
+    }
+  }
+
+  function undoLastDraft(): void {
+    if (undoDraft === null) return;
+    props.onResultChange(undoDraft);
+    setUndoDraft(null);
+    setMergeFeedback(props.zh ? '已撤销上一次冲突草稿操作。' : 'The last conflict draft action was undone.');
   }
 
   return (
@@ -97,6 +154,15 @@ export function TaskGitConflictWorkspace(props: {
                 {mergeFeedback}
               </small>
             ) : null}
+            <Button variant="secondary" size="compact" onClick={undoLastDraft} disabled={props.busy || undoDraft === null}>
+              {props.zh ? '撤销' : 'Undo'}
+            </Button>
+            <Button variant="secondary" size="compact" onClick={() => setViewMode((current) => (current === 'focused' ? 'full' : 'focused'))} disabled={!props.conflict}>
+              {viewMode === 'focused' ? (props.zh ? '查看完整文件' : 'View full file') : props.zh ? '返回冲突' : 'Back to conflict'}
+            </Button>
+            <Button variant="secondary" size="compact" busy={props.aiBusy} onClick={() => void askAi()} disabled={!props.conflict || props.busy || blocks.length === 0}>
+              {props.zh ? 'AI 处理' : 'Resolve with AI'}
+            </Button>
             <Button
               variant="secondary"
               size="compact"
@@ -115,8 +181,8 @@ export function TaskGitConflictWorkspace(props: {
         {blocks.length > 0 ? (
           <nav className="task-git-conflict-block-rail" aria-label={props.zh ? '未解决冲突块' : 'Unresolved conflict blocks'}>
             {blocks.map((block, index) => (
-              <section key={block.id} aria-label={props.zh ? `冲突 ${index + 1}` : `Conflict ${index + 1}`}>
-                <button type="button" className="task-git-conflict-block-location" onClick={() => setRevealOffset(block.start)}>
+              <section key={block.id} className={index === selectedBlockIndex ? 'is-active' : ''} aria-label={props.zh ? `冲突 ${index + 1}` : `Conflict ${index + 1}`}>
+                <button type="button" className="task-git-conflict-block-location" onClick={() => setSelectedBlockIndex(index)}>
                   {props.zh ? `冲突 ${index + 1} · 第 ${block.startLine} 行` : `Conflict ${index + 1} · line ${block.startLine}`}
                 </button>
                 <span>
@@ -139,62 +205,126 @@ export function TaskGitConflictWorkspace(props: {
           </p>
         )}
 
-        <div className="task-git-conflict-columns">
-          <HighlightedCodePane title={props.zh ? '目标分支' : 'Target branch'} path={props.conflictPath} content={props.conflict?.source ?? ''} base={props.conflict?.base ?? ''} conflictBlocks={deferredBlocks} side="source" />
-          <HighlightedResultEditor
-            title={props.zh ? '合并结果' : 'Merge result'}
+        {viewMode === 'full' ? (
+          <FullFileColumns
             path={props.conflictPath}
-            content={props.resultContent}
-            base={props.conflict?.base ?? ''}
+            source={props.conflict?.source ?? ''}
+            result={props.resultContent}
+            task={props.conflict?.task ?? ''}
             disabled={!props.conflict || props.busy}
-            revealOffset={revealOffset}
-            onChange={props.onResultChange}
+            targetTitle={props.zh ? '目标分支' : 'Target branch'}
+            resultTitle={props.zh ? '合并结果' : 'Merge result'}
+            taskTitle={props.zh ? '任务分支' : 'Task branch'}
+            initialLine={activeBlock?.startLine ?? 1}
+            onResultChange={props.onResultChange}
           />
-          <HighlightedCodePane title={props.zh ? '任务分支' : 'Task branch'} path={props.conflictPath} content={props.conflict?.task ?? ''} base={props.conflict?.base ?? ''} conflictBlocks={deferredBlocks} side="task" />
-        </div>
+        ) : activeBlock && props.conflict ? (
+          <FocusedConflictColumns
+            path={props.conflictPath}
+            block={activeBlock}
+            blockIndex={Math.min(selectedBlockIndex, blocks.length - 1)}
+            blocks={blocks}
+            source={props.conflict.source}
+            result={props.resultContent}
+            task={props.conflict.task}
+            disabled={props.busy}
+            targetTitle={props.zh ? '目标分支' : 'Target branch'}
+            resultTitle={props.zh ? '合并结果' : 'Merge result'}
+            taskTitle={props.zh ? '任务分支' : 'Task branch'}
+            onResultChange={props.onResultChange}
+          />
+        ) : (
+          <div className="task-git-conflict-review-complete">
+            <strong>{props.zh ? '当前文件没有未解决冲突' : 'No unresolved conflicts remain'}</strong>
+            <span>{props.zh ? '可以查看完整文件，或直接保存结果并继续。' : 'Review the full file or save the draft to continue.'}</span>
+          </div>
+        )}
       </main>
     </div>
   );
 }
 
-function HighlightedCodePane(props: { title: string; path: string; content: string; base: string; conflictBlocks: ConflictBlock[]; side: 'source' | 'task' }) {
-  const lineKinds = useMemo(() => {
-    const kinds = changedLineKinds(props.base, props.content);
-    markConflictSideLines(kinds, props.content, props.conflictBlocks, props.side);
-    return kinds;
-  }, [props.base, props.content, props.conflictBlocks, props.side]);
+function FocusedConflictColumns(props: {
+  path: string;
+  block: ConflictBlock;
+  blockIndex: number;
+  blocks: ConflictBlock[];
+  source: string;
+  result: string;
+  task: string;
+  disabled: boolean;
+  targetTitle: string;
+  resultTitle: string;
+  taskTitle: string;
+  onResultChange: (content: string) => void;
+}) {
+  const sourceSnippet = useMemo(() => buildSideSnippet(props.source, props.blocks, props.blockIndex, 'source'), [props.source, props.blocks, props.blockIndex]);
+  const taskSnippet = useMemo(() => buildSideSnippet(props.task, props.blocks, props.blockIndex, 'task'), [props.task, props.blocks, props.blockIndex]);
+  const resultSnippet = useMemo(() => buildOffsetSnippet(props.result, props.block.start, props.block.end), [props.result, props.block.start, props.block.end]);
+  const sourceRef = useRef<HTMLPreElement>(null);
+  const resultRef = useRef<HTMLTextAreaElement>(null);
+  const taskRef = useRef<HTMLPreElement>(null);
+
+  function syncScroll(source: HTMLElement): void {
+    for (const pane of [sourceRef.current, resultRef.current, taskRef.current]) {
+      if (!pane || pane === source) continue;
+      if (Math.abs(pane.scrollTop - source.scrollTop) > 1) pane.scrollTop = source.scrollTop;
+      if (Math.abs(pane.scrollLeft - source.scrollLeft) > 1) pane.scrollLeft = source.scrollLeft;
+    }
+  }
+
+  return (
+    <div className="task-git-conflict-columns is-focused">
+      <FocusedCodePane paneRef={sourceRef} title={props.targetTitle} path={props.path} snippet={sourceSnippet} onScroll={syncScroll} />
+      <FocusedResultEditor
+        textareaRef={resultRef}
+        title={props.resultTitle}
+        path={props.path}
+        snippet={resultSnippet}
+        disabled={props.disabled}
+        onScroll={syncScroll}
+        onChange={(content) => props.onResultChange(`${props.result.slice(0, resultSnippet.startOffset)}${content}${props.result.slice(resultSnippet.endOffset)}`)}
+      />
+      <FocusedCodePane paneRef={taskRef} title={props.taskTitle} path={props.path} snippet={taskSnippet} onScroll={syncScroll} />
+    </div>
+  );
+}
+
+function FocusedCodePane(props: { paneRef: RefObject<HTMLPreElement | null>; title: string; path: string; snippet: CodeSnippet; onScroll: (source: HTMLElement) => void }) {
+  const lineKinds = useMemo(() => conflictLineKinds(props.snippet), [props.snippet]);
   return (
     <section className="task-git-conflict-code-pane">
       <strong>{props.title}</strong>
-      <pre className="task-git-highlighted-code">{renderCodeLines(props.content, props.path, lineKinds)}</pre>
+      <pre ref={props.paneRef} className="task-git-highlighted-code" onScroll={(event) => props.onScroll(event.currentTarget)}>
+        {renderCodeLines(props.snippet.text, props.path, lineKinds, props.snippet.startLine - 1)}
+      </pre>
     </section>
   );
 }
 
-function HighlightedResultEditor(props: { title: string; path: string; content: string; base: string; disabled: boolean; revealOffset: number | null; onChange: (content: string) => void }) {
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+function FocusedResultEditor(props: {
+  textareaRef: RefObject<HTMLTextAreaElement | null>;
+  title: string;
+  path: string;
+  snippet: CodeSnippet;
+  disabled: boolean;
+  onChange: (content: string) => void;
+  onScroll: (source: HTMLElement) => void;
+}) {
   const highlightRef = useRef<HTMLPreElement>(null);
-  const deferredContent = useDeferredValue(props.content);
   const lineKinds = useMemo(() => {
-    const kinds = changedLineKinds(props.base, deferredContent);
-    for (const block of parseConflictBlocks(deferredContent)) {
+    const kinds = new Map<number, LineKind>();
+    for (const block of parseConflictBlocks(props.snippet.text)) {
       for (let line = block.startLine - 1; line < block.endLine; line += 1) kinds.set(line, 'conflict');
     }
     return kinds;
-  }, [props.base, deferredContent]);
-
-  useEffect(() => {
-    if (props.revealOffset === null || !textareaRef.current) return;
-    const line = props.content.slice(0, props.revealOffset).split('\n').length - 1;
-    const nextTop = Math.max(0, line * 18.6 - textareaRef.current.clientHeight * 0.25);
-    textareaRef.current.scrollTop = nextTop;
-    if (highlightRef.current) highlightRef.current.scrollTop = nextTop;
-  }, [props.revealOffset, props.content]);
+  }, [props.snippet.text]);
 
   function syncScroll(): void {
-    if (!textareaRef.current || !highlightRef.current) return;
-    highlightRef.current.scrollTop = textareaRef.current.scrollTop;
-    highlightRef.current.scrollLeft = textareaRef.current.scrollLeft;
+    if (!props.textareaRef.current || !highlightRef.current) return;
+    highlightRef.current.scrollTop = props.textareaRef.current.scrollTop;
+    highlightRef.current.scrollLeft = props.textareaRef.current.scrollLeft;
+    props.onScroll(props.textareaRef.current);
   }
 
   return (
@@ -202,12 +332,143 @@ function HighlightedResultEditor(props: { title: string; path: string; content: 
       <strong>{props.title}</strong>
       <span className="task-git-conflict-edit-surface">
         <pre ref={highlightRef} className="task-git-highlighted-code" aria-hidden="true">
-          {renderCodeLines(deferredContent, props.path, lineKinds)}
+          {renderCodeLines(props.snippet.text, props.path, lineKinds, props.snippet.startLine - 1)}
         </pre>
-        <textarea ref={textareaRef} value={props.content} onChange={(event) => props.onChange(event.target.value)} onScroll={syncScroll} disabled={props.disabled} spellCheck={false} aria-label={props.title} />
+        <textarea ref={props.textareaRef} value={props.snippet.text} onChange={(event) => props.onChange(event.target.value)} onScroll={syncScroll} disabled={props.disabled} spellCheck={false} aria-label={props.title} />
       </span>
     </label>
   );
+}
+
+function FullFileColumns(props: {
+  path: string;
+  source: string;
+  result: string;
+  task: string;
+  disabled: boolean;
+  targetTitle: string;
+  resultTitle: string;
+  taskTitle: string;
+  initialLine: number;
+  onResultChange: (content: string) => void;
+}) {
+  const sourceRef = useRef<HTMLTextAreaElement>(null);
+  const resultRef = useRef<HTMLTextAreaElement>(null);
+  const taskRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    const top = Math.max(0, (props.initialLine - 4) * 18.6);
+    for (const pane of [sourceRef.current, resultRef.current, taskRef.current]) if (pane) pane.scrollTop = top;
+  }, [props.path, props.initialLine]);
+
+  function syncScroll(source: HTMLTextAreaElement): void {
+    for (const pane of [sourceRef.current, resultRef.current, taskRef.current]) {
+      if (!pane || pane === source) continue;
+      if (Math.abs(pane.scrollTop - source.scrollTop) > 1) pane.scrollTop = source.scrollTop;
+    }
+  }
+
+  return (
+    <div className="task-git-conflict-columns is-full">
+      <FullFilePane textareaRef={sourceRef} title={props.targetTitle} content={props.source} readOnly onScroll={syncScroll} />
+      <FullFilePane textareaRef={resultRef} title={props.resultTitle} content={props.result} readOnly={props.disabled} onChange={props.onResultChange} onScroll={syncScroll} />
+      <FullFilePane textareaRef={taskRef} title={props.taskTitle} content={props.task} readOnly onScroll={syncScroll} />
+    </div>
+  );
+}
+
+function FullFilePane(props: { textareaRef: RefObject<HTMLTextAreaElement | null>; title: string; content: string; readOnly: boolean; onChange?: (content: string) => void; onScroll: (source: HTMLTextAreaElement) => void }) {
+  return (
+    <label className="task-git-conflict-code-pane task-git-conflict-full-pane">
+      <strong>{props.title}</strong>
+      <textarea
+        ref={props.textareaRef}
+        value={props.content}
+        readOnly={props.readOnly}
+        onChange={props.onChange ? (event) => props.onChange?.(event.target.value) : undefined}
+        onScroll={(event) => props.onScroll(event.currentTarget)}
+        spellCheck={false}
+        aria-label={props.title}
+      />
+    </label>
+  );
+}
+
+function buildOffsetSnippet(content: string, conflictStart: number, conflictEnd: number, contextLines = 7): CodeSnippet {
+  let startOffset = Math.max(0, Math.min(conflictStart, content.length));
+  let endOffset = Math.max(startOffset, Math.min(conflictEnd, content.length));
+  for (let index = 0; index < contextLines && startOffset > 0; index += 1) {
+    const previousLine = content.lastIndexOf('\n', Math.max(0, startOffset - 2));
+    startOffset = previousLine < 0 ? 0 : previousLine + 1;
+  }
+  for (let index = 0; index < contextLines && endOffset < content.length; index += 1) {
+    const nextLine = content.indexOf('\n', endOffset);
+    endOffset = nextLine < 0 ? content.length : nextLine + 1;
+  }
+  const conflictStartLine = countNewlines(content.slice(startOffset, conflictStart));
+  const conflictLineCount = Math.max(1, blockLineCount(content.slice(conflictStart, conflictEnd)));
+  return {
+    text: content.slice(startOffset, endOffset),
+    startOffset,
+    endOffset,
+    startLine: countLines(content, startOffset),
+    conflictStartLine,
+    conflictEndLine: conflictStartLine + conflictLineCount,
+  };
+}
+
+function buildSideSnippet(content: string, blocks: ConflictBlock[], blockIndex: number, side: 'source' | 'task'): CodeSnippet {
+  let cursor = 0;
+  let found = -1;
+  for (let index = 0; index <= blockIndex; index += 1) {
+    const needle = blocks[index]?.[side] ?? '';
+    if (!needle) continue;
+    found = content.indexOf(needle, cursor);
+    if (found < 0) break;
+    cursor = found + needle.length;
+  }
+  const selected = blocks[blockIndex]?.[side] ?? '';
+  if (found < 0 && selected) found = content.indexOf(selected);
+  if (found < 0) {
+    const approximateOffset = Math.min(content.length, Math.max(0, lineStartOffset(content, blocks[blockIndex]?.startLine ?? 1)));
+    return buildOffsetSnippet(content, approximateOffset, approximateOffset);
+  }
+  return buildOffsetSnippet(content, found, found + selected.length);
+}
+
+function conflictLineKinds(snippet: CodeSnippet): Map<number, LineKind> {
+  const kinds = new Map<number, LineKind>();
+  for (let line = snippet.conflictStartLine; line < snippet.conflictEndLine; line += 1) kinds.set(line, 'conflict');
+  return kinds;
+}
+
+function lineStartOffset(content: string, lineNumber: number): number {
+  if (lineNumber <= 1) return 0;
+  let offset = 0;
+  for (let line = 1; line < lineNumber; line += 1) {
+    const next = content.indexOf('\n', offset);
+    if (next < 0) return content.length;
+    offset = next + 1;
+  }
+  return offset;
+}
+
+function applyConflictAiDraft(content: string, suggestions: TaskIntegrationConflictAiDraft['suggestions']): { content: string; applied: number } {
+  const blocks = parseConflictBlocks(content);
+  const unique = new Map<number, string>();
+  for (const suggestion of suggestions) {
+    if (!Number.isInteger(suggestion.index) || suggestion.index < 0 || suggestion.index >= blocks.length) continue;
+    if (/^(?:<<<<<<<|=======|>>>>>>>)/mu.test(suggestion.content)) continue;
+    unique.set(suggestion.index, suggestion.content);
+  }
+  let next = content;
+  let applied = 0;
+  for (const [index, replacement] of [...unique.entries()].sort((left, right) => right[0] - left[0])) {
+    const block = blocks[index];
+    next = `${next.slice(0, block.start)}${replacement}${next.slice(block.end)}`;
+    applied += 1;
+  }
+  return { content: next, applied };
 }
 
 function parseConflictBlocks(content: string): ConflictBlock[] {
@@ -260,16 +521,21 @@ function inferSimpleMerge(fullBaseInput: string, sourceInput: string, taskInput:
   const baseLines = normalizeLineEndings(fullBaseInput).split('\n');
   const sourceLineCount = blockLineCount(sourceInput);
   const taskLineCount = blockLineCount(taskInput);
-  if (sourceLineCount === 0 || sourceLineCount !== taskLineCount || sourceLineCount > baseLines.length) return null;
+  if (sourceLineCount === 0 || taskLineCount === 0) return null;
   const lineEnding = sourceInput.includes('\r\n') || taskInput.includes('\r\n') || fullBaseInput.includes('\r\n') ? '\r\n' : '\n';
   const trailingLineEnding = /\r?\n$/u.test(sourceInput) || /\r?\n$/u.test(taskInput);
   const candidates = new Set<string>();
-  for (let index = 0; index <= baseLines.length - sourceLineCount; index += 1) {
-    const baseBlock = `${baseLines.slice(index, index + sourceLineCount).join(lineEnding)}${trailingLineEnding ? lineEnding : ''}`;
-    if (!isPlausibleSimpleBase(baseBlock, sourceInput) || !isPlausibleSimpleBase(baseBlock, taskInput)) continue;
-    const merged = mergeSimpleBlock(baseBlock, sourceInput, taskInput);
-    if (merged !== null) candidates.add(merged);
-    if (candidates.size > 1) return null;
+  const minimumWindow = Math.max(1, Math.min(sourceLineCount, taskLineCount) - 2);
+  const maximumWindow = Math.min(baseLines.length, Math.max(sourceLineCount, taskLineCount) + 2);
+  if (baseLines.length * Math.max(1, maximumWindow - minimumWindow + 1) > 200_000) return null;
+  for (let lineCount = minimumWindow; lineCount <= maximumWindow; lineCount += 1) {
+    for (let index = 0; index <= baseLines.length - lineCount; index += 1) {
+      const baseBlock = `${baseLines.slice(index, index + lineCount).join(lineEnding)}${trailingLineEnding ? lineEnding : ''}`;
+      if (!isPlausibleSimpleBase(baseBlock, sourceInput) || !isPlausibleSimpleBase(baseBlock, taskInput)) continue;
+      const merged = mergeSimpleBlock(baseBlock, sourceInput, taskInput);
+      if (merged !== null) candidates.add(merged);
+      if (candidates.size > 1) return null;
+    }
   }
   return candidates.size === 1 ? [...candidates][0] : null;
 }
@@ -284,9 +550,11 @@ function isPlausibleSimpleBase(baseInput: string, variantInput: string): boolean
   const base = normalizeLineEndings(baseInput);
   const variant = normalizeLineEndings(variantInput);
   if (base === variant) return true;
-  const edit = contiguousEdit(base, variant);
-  const unchangedLength = base.length - (edit.end - edit.start);
-  return unchangedLength >= Math.min(base.length, Math.max(4, Math.ceil(base.length * 0.4)));
+  const baseTokens = tokenizeMergeContent(base).filter((token) => !/^\s+$/u.test(token));
+  const variantTokens = tokenizeMergeContent(variant).filter((token) => !/^\s+$/u.test(token));
+  if (baseTokens.length === 0 || variantTokens.length === 0) return false;
+  const unchanged = diffLines(baseTokens, variantTokens).filter((operation) => operation.type === 'equal').length;
+  return unchanged >= Math.min(baseTokens.length, variantTokens.length) * 0.4;
 }
 
 function mergeSimpleBlock(baseInput: string, sourceInput: string, taskInput: string): string | null {
@@ -294,89 +562,76 @@ function mergeSimpleBlock(baseInput: string, sourceInput: string, taskInput: str
   if (sourceInput === baseInput) return taskInput;
   if (taskInput === baseInput) return sourceInput;
   const lineEnding = sourceInput.includes('\r\n') || taskInput.includes('\r\n') || baseInput.includes('\r\n') ? '\r\n' : '\n';
-  const base = normalizeLineEndings(baseInput).split('\n');
-  const source = normalizeLineEndings(sourceInput).split('\n');
-  const task = normalizeLineEndings(taskInput).split('\n');
-  if (base.length !== source.length || base.length !== task.length) return null;
-  const merged: string[] = [];
-  for (let index = 0; index < base.length; index += 1) {
-    const line = mergeSimpleLine(base[index], source[index], task[index]);
-    if (line === null) return null;
-    merged.push(line);
-  }
-  return merged.join(lineEnding);
+  const base = tokenizeMergeContent(normalizeLineEndings(baseInput));
+  const source = tokenizeMergeContent(normalizeLineEndings(sourceInput));
+  const task = tokenizeMergeContent(normalizeLineEndings(taskInput));
+  if (base.length + source.length + task.length > 36_000) return null;
+  const strict = mergeTokenChanges(base, source, task, false);
+  if (strict !== null) return strict.join('').replace(/\n/gu, lineEnding);
+  const whitespaceTolerant = mergeTokenChanges(base, source, task, true);
+  return whitespaceTolerant === null ? null : whitespaceTolerant.join('').replace(/\n/gu, lineEnding);
 }
 
-function mergeSimpleLine(base: string, source: string, task: string): string | null {
-  if (source === task) return source;
-  if (source === base) return task;
-  if (task === base) return source;
-  const sourceEdit = contiguousEdit(base, source);
-  const taskEdit = contiguousEdit(base, task);
-  if (sourceEdit.start === taskEdit.start && sourceEdit.end === taskEdit.end && sourceEdit.replacement === taskEdit.replacement) return source;
-  const separate = sourceEdit.end <= taskEdit.start || taskEdit.end <= sourceEdit.start;
-  const sameInsertionPoint = sourceEdit.start === sourceEdit.end && taskEdit.start === taskEdit.end && sourceEdit.start === taskEdit.start;
-  if (!separate || sameInsertionPoint) return null;
-  let result = base;
-  const edits = [sourceEdit, taskEdit].sort((left, right) => right.start - left.start);
-  for (const edit of edits) result = `${result.slice(0, edit.start)}${edit.replacement}${result.slice(edit.end)}`;
+function tokenizeMergeContent(content: string): string[] {
+  return content.match(/\n|[ \t]+|[\p{L}\p{N}_$]+|[^\p{L}\p{N}_$ \t\n]/gu) ?? [];
+}
+
+function mergeTokenChanges(base: string[], source: string[], task: string[], ignoreWhitespace: boolean): string[] | null {
+  const sourceEdits = buildMergeEdits(base, source, ignoreWhitespace);
+  const taskEdits = buildMergeEdits(base, task, ignoreWhitespace);
+  const edits: MergeEdit[] = [];
+  for (const edit of [...sourceEdits, ...taskEdits]) {
+    if (edits.some((existing) => sameMergeEdit(existing, edit))) continue;
+    if (edits.some((existing) => mergeEditsConflict(existing, edit))) return null;
+    edits.push(edit);
+  }
+  const result = [...base];
+  edits.sort((left, right) => right.start - left.start || right.end - left.end).forEach((edit) => result.splice(edit.start, edit.end - edit.start, ...edit.replacement));
   return result;
 }
 
-function contiguousEdit(base: string, variant: string): { start: number; end: number; replacement: string } {
-  let start = 0;
-  while (start < base.length && start < variant.length && base[start] === variant[start]) start += 1;
-  let baseEnd = base.length;
-  let variantEnd = variant.length;
-  while (baseEnd > start && variantEnd > start && base[baseEnd - 1] === variant[variantEnd - 1]) {
-    baseEnd -= 1;
-    variantEnd -= 1;
-  }
-  return { start, end: baseEnd, replacement: variant.slice(start, variantEnd) };
-}
-
-function changedLineKinds(baseContent: string, sideContent: string): Map<number, LineKind> {
-  const baseLines = normalizeLineEndings(baseContent).split('\n');
-  const sideLines = normalizeLineEndings(sideContent).split('\n');
-  if (baseLines.length * sideLines.length > 4_000_000) return changedLineKindsForLargeFile(baseLines, sideLines);
-  const operations = diffLines(baseLines, sideLines);
-  const kinds = new Map<number, LineKind>();
-  let sideLine = 0;
-  let index = 0;
-  while (index < operations.length) {
-    if (operations[index].type === 'equal') {
-      sideLine += 1;
-      index += 1;
-      continue;
-    }
-    let deleted = 0;
-    const inserted: number[] = [];
-    while (index < operations.length && operations[index].type !== 'equal') {
-      if (operations[index].type === 'delete') deleted += 1;
-      if (operations[index].type === 'insert') {
-        inserted.push(sideLine);
-        sideLine += 1;
+function buildMergeEdits(base: string[], variant: string[], ignoreWhitespace: boolean): MergeEdit[] {
+  const comparable = (token: string): string => (ignoreWhitespace && /^\s+$/u.test(token) ? ' ' : token);
+  const operations = diffLines(base.map(comparable), variant.map(comparable));
+  const edits: MergeEdit[] = [];
+  let baseIndex = 0;
+  let variantIndex = 0;
+  let current: MergeEdit | null = null;
+  const flush = (): void => {
+    if (current) edits.push(current);
+    current = null;
+  };
+  for (const operation of operations) {
+    if (operation.type === 'equal') {
+      flush();
+      baseIndex += 1;
+      variantIndex += 1;
+    } else {
+      current ??= { start: baseIndex, end: baseIndex, replacement: [] };
+      if (operation.type === 'delete') {
+        baseIndex += 1;
+        current.end = baseIndex;
+      } else {
+        current.replacement.push(variant[variantIndex]);
+        variantIndex += 1;
       }
-      index += 1;
     }
-    for (const line of inserted) kinds.set(line, deleted > 0 ? 'modified' : 'added');
   }
-  return kinds;
+  flush();
+  return edits;
 }
 
-function changedLineKindsForLargeFile(baseLines: string[], sideLines: string[]): Map<number, LineKind> {
-  const kinds = new Map<number, LineKind>();
-  let prefix = 0;
-  while (prefix < baseLines.length && prefix < sideLines.length && baseLines[prefix] === sideLines[prefix]) prefix += 1;
-  let baseSuffix = baseLines.length - 1;
-  let sideSuffix = sideLines.length - 1;
-  while (baseSuffix >= prefix && sideSuffix >= prefix && baseLines[baseSuffix] === sideLines[sideSuffix]) {
-    baseSuffix -= 1;
-    sideSuffix -= 1;
-  }
-  const kind: LineKind = baseSuffix < prefix ? 'added' : 'modified';
-  for (let line = prefix; line <= sideSuffix; line += 1) kinds.set(line, kind);
-  return kinds;
+function sameMergeEdit(left: MergeEdit, right: MergeEdit): boolean {
+  return left.start === right.start && left.end === right.end && left.replacement.length === right.replacement.length && left.replacement.every((token, index) => token === right.replacement[index]);
+}
+
+function mergeEditsConflict(left: MergeEdit, right: MergeEdit): boolean {
+  const leftInsertion = left.start === left.end;
+  const rightInsertion = right.start === right.end;
+  if (leftInsertion && rightInsertion) return left.start === right.start;
+  if (leftInsertion) return left.start >= right.start && left.start <= right.end;
+  if (rightInsertion) return right.start >= left.start && right.start <= left.end;
+  return left.start < right.end && right.start < left.end;
 }
 
 function diffLines(before: string[], after: string[]): DiffOperation[] {
@@ -445,33 +700,11 @@ function backtrackDiff(trace: Array<Map<number, number>>, before: string[], afte
   return operations.reverse();
 }
 
-function markConflictSideLines(kinds: Map<number, LineKind>, content: string, blocks: ConflictBlock[], side: 'source' | 'task'): void {
-  const lines = normalizeLineEndings(content).split('\n');
-  let cursor = 0;
-  for (const block of blocks) {
-    const needle = normalizeLineEndings(block[side])
-      .split('\n')
-      .filter((line, index, all) => !(index === all.length - 1 && line === ''));
-    if (needle.length === 0) continue;
-    const found = findLineSequence(lines, needle, cursor);
-    if (found < 0) continue;
-    for (let index = 0; index < needle.length; index += 1) kinds.set(found + index, 'conflict');
-    cursor = found + needle.length;
-  }
-}
-
-function findLineSequence(lines: string[], needle: string[], start: number): number {
-  for (let index = start; index <= lines.length - needle.length; index += 1) {
-    if (needle.every((line, offset) => lines[index + offset] === line)) return index;
-  }
-  return -1;
-}
-
-function renderCodeLines(content: string, path: string, lineKinds: Map<number, LineKind>): ReactNode[] {
+function renderCodeLines(content: string, path: string, lineKinds: Map<number, LineKind>, lineNumberOffset = 0): ReactNode[] {
   const lines = normalizeLineEndings(content).split('\n');
   return lines.map((line, index) => (
     <span key={index} className="task-git-code-line" data-kind={lineKinds.get(index)}>
-      <span className="task-git-code-line-number">{index + 1}</span>
+      <span className="task-git-code-line-number">{lineNumberOffset + index + 1}</span>
       <code>{highlightSyntax(line, path)}</code>
       {index < lines.length - 1 ? '\n' : null}
     </span>

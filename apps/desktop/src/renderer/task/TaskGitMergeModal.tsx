@@ -5,6 +5,7 @@ import type {
   TaskGitDiffSummary,
   TaskGitFileDiff,
   TaskGitFileStatus,
+  TaskIntegrationConflictAiDraft,
   TaskIntegrationConflictFile,
   TaskIntegrationRecord,
   TaskIntegrationResult,
@@ -26,12 +27,13 @@ type DeliveryClient = Pick<
   | 'loadTaskIntegrations'
   | 'startTaskIntegration'
   | 'loadTaskIntegrationConflict'
+  | 'assistTaskIntegrationConflict'
   | 'resolveTaskIntegrationConflict'
   | 'finalizeTaskIntegration'
 >;
 
 type DiffScope = 'committed' | 'working';
-type BusyAction = 'loading' | 'commit' | 'push' | 'merge' | 'conflict' | null;
+type BusyAction = 'loading' | 'commit' | 'push' | 'merge' | 'conflict' | 'ai' | null;
 
 interface DeliveryFile {
   path: string;
@@ -296,6 +298,20 @@ export function TaskGitMergeModal(props: { open: boolean; language: 'zh-CN' | 'e
     }
   }
 
+  async function askAiForConflictDraft(): Promise<TaskIntegrationConflictAiDraft> {
+    if (!props.task || !props.client || !activeConflict || !conflictPath) throw new Error(zh ? '当前没有可处理的冲突。' : 'No conflict is available.');
+    setBusyAction('ai');
+    setError(null);
+    try {
+      return await props.client.assistTaskIntegrationConflict(props.task.id, activeConflict.id, conflictPath, resultContent);
+    } catch (reason) {
+      setError(errorMessage(reason, zh));
+      throw reason;
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
   async function finalize(): Promise<void> {
     if (!props.task || !props.client || !integration) return;
     setBusyAction('merge');
@@ -371,6 +387,7 @@ export function TaskGitMergeModal(props: { open: boolean; language: 'zh-CN' | 'e
             <TaskGitConflictWorkspace
               zh={zh}
               busy={busy}
+              aiBusy={busyAction === 'ai'}
               integration={unresolvedConflict}
               taskBranch={selectedWorkspace?.branchName ?? ''}
               conflictPath={conflictPath}
@@ -378,6 +395,7 @@ export function TaskGitMergeModal(props: { open: boolean; language: 'zh-CN' | 'e
               resultContent={resultContent}
               onSelectPath={setConflictPath}
               onResultChange={setResultContent}
+              onAskAi={askAiForConflictDraft}
             />
           ) : conflictReadyToFinalize && activeConflict ? (
             <ConflictCompletion zh={zh} targetBranch={activeConflict.targetBranch} taskBranch={selectedWorkspace?.branchName ?? ''} remoteName={selectedWorkspace?.remoteName ?? ''} />

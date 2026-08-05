@@ -50,6 +50,7 @@ import type { BrowserAutomationPort } from './browserAutomation.js';
 import { resolveConversationAttachmentGrant } from './conversationAttachmentGrant.js';
 import { createModelConnectionService, type SaveModelConnectionRequest } from './modelConnectionService.js';
 import { createPiNativeConversationCoordinator } from './piNativeConversationCoordinator.js';
+import { buildTaskConflictAiPrompt, parseTaskConflictAiAnswer, parseTaskConflictAiBlocks } from './taskConflictAi.js';
 import { createMacOSKeychainStore, getSecretPresenceLabel, type SecretPresenceLabel } from '@zeus/security-core';
 import {
   buildTaskEnvironmentRootPath,
@@ -1393,6 +1394,10 @@ interface StartTaskIntegrationBody {
 }
 
 interface ResolveTaskIntegrationConflictBody {
+  content?: string;
+}
+
+interface AssistTaskIntegrationConflictBody {
   content?: string;
 }
 
@@ -4333,6 +4338,99 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       return sendTaskGitApiError(reply, error);
     }
   });
+
+  server.post(
+    '/api/tasks/:taskId/integrations/:integrationId/conflict/ai-draft',
+    async (request: FastifyRequest<{ Params: { taskId: string; integrationId: string }; Querystring: { path?: string }; Body: AssistTaskIntegrationConflictBody }>, reply) => {
+      const resolved = resolveTaskIntegrationRequest(request.params.taskId, request.params.integrationId);
+      if ('error' in resolved) return reply.code(resolved.status).send(resolved.error);
+      if (!resolved.integration.integrationPath) return reply.code(409).send({ error: 'ZEUS_TASK_INTEGRATION_PATH_UNAVAILABLE', message: 'Integration worktree is unavailable.' });
+      const path = request.query.path?.trim();
+      if (!path) return reply.code(400).send({ error: 'ZEUS_GIT_PATH_REQUIRED', message: 'path is required' });
+      const content = request.body?.content;
+      if (typeof content !== 'string') return reply.code(400).send({ error: 'ZEUS_TASK_CONFLICT_CONTENT_REQUIRED', message: 'Conflict draft content is required.' });
+      if (content.length > 2_000_000) return reply.code(413).send({ error: 'ZEUS_TASK_CONFLICT_TOO_LARGE', message: '当前冲突草稿过大，无法交给 AI 处理。' });
+      try {
+        const blocks = parseTaskConflictAiBlocks(content);
+        if (blocks.length === 0) throw nativeApiError('ZEUS_CONFLICT_AI_NO_CONFLICT', '当前文件没有仍需 AI 处理的冲突块。');
+        if (blocks.length > 50) throw nativeApiError('ZEUS_CONFLICT_AI_TOO_MANY_BLOCKS', '当前文件的冲突块过多，请先人工处理一部分。');
+        const modelConversation = conversations
+          .listByTask(resolved.task.id)
+          .filter((conversation) => (conversation.agentKind === 'codex' || conversation.agentKind === 'pi') && Boolean(conversation.modelId ?? conversation.providerModel))
+          .sort((left, right) => Number(right.workspaceId === resolved.workspace.id) - Number(left.workspaceId === resolved.workspace.id))[0];
+        if (!modelConversation || (modelConversation.agentKind !== 'codex' && modelConversation.agentKind !== 'pi')) {
+          throw nativeApiError('ZEUS_CONFLICT_AI_MODEL_SELECTION_REQUIRED', '这条任务开发线没有可沿用的 AI 模型，请先选择模型。');
+        }
+        const modelId = modelConversation.modelId ?? modelConversation.providerModel;
+        if (!modelId) throw nativeApiError('ZEUS_CONFLICT_AI_MODEL_SELECTION_REQUIRED', '这条任务开发线没有可沿用的 AI 模型，请先选择模型。');
+        const settings = conversations.getNextTurnSettings(modelConversation.id);
+        const prompt = buildTaskConflictAiPrompt({
+          path,
+          targetBranch: resolved.integration.targetBranch,
+          taskBranch: resolved.workspace.branchName,
+          blocks,
+        });
+        const conversationId = randomUUID();
+        const submissionId = randomUUID();
+        const operation =
+          modelConversation.agentKind === 'pi'
+            ? await piNativeCoordinator.startConversation({
+                conversationId,
+                submissionId,
+                projectId: resolved.project.id,
+                taskId: resolved.task.id,
+                taskTitle: resolved.task.title,
+                conversationTitle: `冲突处理：${path}`,
+                cwd: resolved.integration.integrationPath,
+                prompt,
+                model: { sourceId: modelConversation.modelSourceId, modelId, displayName: null },
+                ...(settings?.effort ? { thinkingLevel: settings.effort } : {}),
+                permissionMode: 'read-only',
+                idempotencyKey: randomUUID(),
+                clientUserMessageId: randomUUID(),
+                workspaceId: resolved.workspace.id,
+                ...(resolved.workspace.environmentId ? { environmentId: resolved.workspace.environmentId } : {}),
+              })
+            : await codexNativeCoordinator.startTaskConversation({
+                conversationId,
+                submissionId,
+                projectId: resolved.project.id,
+                projectLocalPath: resolved.integration.integrationPath,
+                taskId: resolved.task.id,
+                workspaceId: resolved.workspace.id,
+                ...(resolved.workspace.environmentId ? { environmentId: resolved.workspace.environmentId } : {}),
+                conversationTitle: `冲突处理：${path}`,
+                taskTitle: resolved.task.title,
+                prompt,
+                model: modelId,
+                ...(settings?.effort ? { effort: settings.effort } : {}),
+                ...(settings && Object.prototype.hasOwnProperty.call(settings, 'serviceTier') ? { serviceTier: settings.serviceTier } : {}),
+                allowCodeChanges: false,
+                allowTests: false,
+                allowGitCommit: false,
+                permissionMode: 'read-only',
+                applyLegacyTaskGuards: false,
+                idempotencyKey: randomUUID(),
+                clientUserMessageId: randomUUID(),
+              });
+        if (operation.status !== 'active' || !operation.providerTurnId) {
+          throw nativeApiError('ZEUS_CONFLICT_AI_BUSY', '任务模型当前没有可用执行位，请稍后重试。');
+        }
+        const answer = await waitForTaskConflictAiAnswer(operation.conversationId, operation.providerTurnId, runtimeSettings.executionTimeoutSeconds * 1_000);
+        const suggestions = parseTaskConflictAiAnswer(answer, blocks);
+        return {
+          path,
+          agentKind: modelConversation.agentKind,
+          modelSourceId: modelConversation.modelSourceId,
+          modelId,
+          conversationId: operation.conversationId,
+          suggestions,
+        };
+      } catch (error) {
+        return sendTaskGitApiError(reply, error);
+      }
+    },
+  );
 
   server.put(
     '/api/tasks/:taskId/integrations/:integrationId/conflict',
@@ -13226,6 +13324,27 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
           ? 409
           : 500;
     return reply.code(status).send({ error: code, message: error instanceof Error ? error.message : 'Task Git operation failed.' });
+  }
+
+  async function waitForTaskConflictAiAnswer(conversationId: string, providerTurnId: string, timeoutMs: number): Promise<string> {
+    const deadline = Date.now() + Math.max(1_000, timeoutMs);
+    while (Date.now() < deadline) {
+      const turn = conversationTurns.listByConversation(conversationId).find((candidate) => candidate.providerTurnId === providerTurnId);
+      if (turn?.status === 'failed') throw nativeApiError('ZEUS_CONFLICT_AI_FAILED', 'AI 处理冲突失败，请打开对应会话查看原因。');
+      if (turn?.status === 'interrupted') throw nativeApiError('ZEUS_CONFLICT_AI_INTERRUPTED', 'AI 处理冲突已中断。');
+      if (turn?.status === 'completed') {
+        const conversation = conversations.getById(conversationId);
+        const answer = conversation?.messages
+          .filter((message) => message.role === 'assistant' && message.providerTurnId === providerTurnId)
+          .map((message) => message.content)
+          .join('\n')
+          .trim();
+        if (!answer) throw nativeApiError('ZEUS_CONFLICT_AI_RESPONSE_EMPTY', 'AI 已结束，但没有返回冲突草稿。');
+        return answer;
+      }
+      await new Promise<void>((resolveWait) => setTimeout(resolveWait, 120));
+    }
+    throw nativeApiError('ZEUS_CONFLICT_AI_TIMEOUT', 'AI 处理冲突超时；对应会话仍保留，可打开查看状态。');
   }
 
   async function resolveConversationCapabilities(project: ZeusProjectRecord) {

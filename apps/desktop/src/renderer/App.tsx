@@ -315,6 +315,7 @@ type NativeConversationAppClient = SessionControllerClient &
     | 'loadTaskIntegrations'
     | 'startTaskIntegration'
     | 'loadTaskIntegrationConflict'
+    | 'assistTaskIntegrationConflict'
     | 'resolveTaskIntegrationConflict'
     | 'finalizeTaskIntegration'
   >;
