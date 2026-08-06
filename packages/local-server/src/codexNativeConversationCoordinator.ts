@@ -376,26 +376,6 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     return {
       conversationId,
       state: runStates.get(conversationId) ?? { type: 'idle' },
-<<<<<<< HEAD
-      submissions: entries.map((submission, index) => ({
-        id: submission.id,
-        conversationId: submission.conversationId,
-        content:
-          submissionText(submission) ||
-          submissionAttachments(submission)
-            .map((attachment) => attachment.name)
-            .join('、'),
-        status: submission.status as 'queued' | 'paused' | 'failed',
-        delivery: 'queue',
-        attachments: submissionAttachments(submission),
-        clientUserMessageId: submission.clientMessageId,
-        position: submission.queuePosition ?? index + 1,
-        providerTurnId: submission.providerTurnId,
-        pausedReason: submission.pausedReason,
-        createdAt: submission.createdAt,
-        updatedAt: submission.updatedAt,
-      })),
-=======
       submissions: entries.map((submission, index) => {
         const input = parseJsonRecord(submission.inputJson);
         return {
@@ -418,7 +398,6 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
           updatedAt: submission.updatedAt,
         };
       }),
->>>>>>> zeus/ZEUS-000041-task-01
     };
   }
 
@@ -1918,7 +1897,57 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     let drainAfterTurn = false;
     let createdPlanImplementationRequest: ReturnType<ConversationPlanActionRepository['getById']> | null = null;
 
-    if (event.method === 'transport/server_request_identity_conflict' && event.requestId !== undefined) {
+    if (event.method === 'serverRequest/resolved') {
+      const providerRequestId = typeof params.requestId === 'string' || typeof params.requestId === 'number' ? params.requestId : null;
+      if (providerRequestId === null) throw coordinatorError('ZEUS_NATIVE_PROVIDER_EVENT_INVALID', 'Codex serverRequest/resolved omitted requestId.');
+      const request = options.requests.getByProvider(event.generationId, providerRequestId);
+      if (request?.status === 'pending') {
+        const durableConversation = options.conversations.getById(request.conversationId);
+        if (durableConversation) {
+          clearAutoResolutionTimer(request.id);
+          options.requests.resolveExternally(request.id, { source: 'provider', resolvedAt: event.receivedAt });
+          const turn = request.turnId ? options.turns.getById(request.turnId) : undefined;
+          if (turn?.providerTurnId) {
+            const nextPending = options.requests
+              .listByConversation(durableConversation.id)
+              .find((candidate) => candidate.turnId === turn.id && candidate.status === 'pending' && options.manager.hasGeneration(candidate.transportGenerationId));
+            if (nextPending) {
+              options.turns.upsert({ ...turn, status: 'waiting', updatedAt: event.receivedAt });
+              options.conversations.bindProvider(durableConversation.id, {
+                providerId: 'codex',
+                providerThreadId: turn.providerThreadId,
+                providerModel: durableConversation.providerModel,
+                providerState: 'waiting',
+              });
+              runStates.set(durableConversation.id, {
+                type: 'waiting',
+                turnId: turn.providerTurnId,
+                requestId: nextPending.id,
+                reason: nextPending.requestKind === 'request_user_input' ? 'user_input' : 'approval',
+              });
+            } else {
+              options.turns.upsert({ ...turn, status: 'running', updatedAt: event.receivedAt });
+              options.conversations.bindProvider(durableConversation.id, {
+                providerId: 'codex',
+                providerThreadId: turn.providerThreadId,
+                providerModel: durableConversation.providerModel,
+                providerState: 'active',
+              });
+              runStates.set(durableConversation.id, { type: 'active', turnId: turn.providerTurnId, phase: 'prework' });
+            }
+          }
+          broadcast = {
+            type: 'conversation.request.resolved',
+            payload: {
+              conversationId: durableConversation.id,
+              requestId: request.id,
+              requestKind: request.requestKind,
+              resolvedBy: 'provider',
+            },
+          };
+        }
+      }
+    } else if (event.method === 'transport/server_request_identity_conflict' && event.requestId !== undefined) {
       const request = options.requests.getByProvider(event.generationId, event.requestId);
       if (request?.status === 'pending') {
         const durableConversation = options.conversations.getById(request.conversationId);

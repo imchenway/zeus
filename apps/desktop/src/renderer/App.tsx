@@ -96,6 +96,7 @@ import {
 import { TaskWorkspace } from './task/TaskWorkspace.js';
 import { LegacyChatImportSettings } from './settings/LegacyChatImportSettings.js';
 import { BrowserSettingsPane } from './settings/BrowserSettingsPane.js';
+import { CodexRemoteControlSettings } from './settings/CodexRemoteControlSettings.js';
 import { type TaskAttachmentRestoreTarget, type TaskAttachmentView, toPersistedTaskAttachment } from './task/taskAttachments.js';
 import {
   defaultTaskTableEnumSortOrders,
@@ -258,6 +259,12 @@ type NativeConversationAppClient = SessionControllerClient &
     | 'resolveTaskIntegrationConflict'
     | 'assistTaskIntegrationConflict'
     | 'finalizeTaskIntegration'
+    | 'loadCodexRemoteControl'
+    | 'enableCodexRemoteControl'
+    | 'disableCodexRemoteControl'
+    | 'startCodexRemoteControlPairing'
+    | 'loadCodexRemoteControlPairingStatus'
+    | 'revokeCodexRemoteControlClient'
   >;
 type NativeConversationChoiceLoadState = 'empty' | 'loading' | 'ready' | 'error';
 
@@ -3667,6 +3674,7 @@ const languageCopy = {
       statusAria: string;
       statusSelectAria: string;
       taskStatusSelectAria: (taskTitle: string) => string;
+      taskPrioritySelectAria: (taskTitle: string) => string;
       detailStatusSelectAria: string;
       statusTitle: string;
       unfinishedStatusFilter: string;
@@ -10847,8 +10855,12 @@ export function App(props: {
                       pendingProjectServiceTierPreferencesRef.current.delete(conversationId);
                     }
                   }}
-                  onStartConversation={startNativeConversation}
-                  onStartProjectConversation={startProjectConversation}
+                  onStartConversation={async (input) => {
+                    await startNativeConversation(input);
+                  }}
+                  onStartProjectConversation={async (input) => {
+                    await startProjectConversation(input);
+                  }}
                   onOpenTaskDetail={(taskId) => void openTaskDetailPane(taskId)}
                 />
               ) : (
@@ -10881,8 +10893,12 @@ export function App(props: {
                   }
                   loadError={selectedNativeConversation && (selectedNativeConversation.readOnly || selectedNativeConversation.transportKind !== 'codex_native') ? nativeLegacyMessageError : nativeSessionChoiceTaskState?.error}
                   actions={{
-                    onStartConversation: startNativeConversation,
-                    onStartProjectConversation: startProjectConversation,
+                    onStartConversation: async (input) => {
+                      await startNativeConversation(input);
+                    },
+                    onStartProjectConversation: async (input) => {
+                      await startProjectConversation(input);
+                    },
                     onOpenTaskDetail: (taskId) => void openTaskDetailPane(taskId),
                     onLoadCapabilities: props.nativeConversationClient?.loadCodexConversationCapabilities,
                     onChooseStartAttachments: props.onChooseConversationResources ? chooseNativeConversationAttachments : undefined,
@@ -11932,6 +11948,7 @@ export function App(props: {
                         {settingsWorkspaceCopy.runtime.saveDefaultAdapter}
                       </button>
                     </NativeSettingsPane>
+                    <CodexRemoteControlSettings language={appShellSettings.appLanguage} client={props.nativeConversationClient ?? null} />
                     <LegacyChatImportSettings
                       language={appShellSettings.appLanguage}
                       snapshot={codexLegacyImportSnapshot}

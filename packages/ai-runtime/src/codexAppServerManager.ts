@@ -1,6 +1,9 @@
 import { spawn as nodeSpawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { EventEmitter } from 'node:events';
+import { createConnection } from 'node:net';
 import { isAbsolute } from 'node:path';
+import { WebSocket, type RawData } from 'ws';
 import {
   CodexJsonLineDecoder,
   type CodexWireId,
@@ -208,8 +211,40 @@ export interface CodexRuntimeGenerationSnapshot {
   pendingRequestCount: number;
 }
 
+export type CodexRemoteControlConnectionStatus = 'disabled' | 'connecting' | 'connected' | 'errored';
+
+export interface CodexRemoteControlStatus {
+  status: CodexRemoteControlConnectionStatus;
+  serverName: string;
+  installationId: string;
+  environmentId: string | null;
+}
+
+export interface CodexRemoteControlPairing {
+  pairingCode: string;
+  manualPairingCode: string | null;
+  environmentId: string;
+  expiresAt: number;
+}
+
+export interface CodexRemoteControlClient {
+  clientId: string;
+  displayName: string | null;
+  deviceType: string | null;
+  platform: string | null;
+  osVersion: string | null;
+  deviceModel: string | null;
+  appVersion: string | null;
+  lastSeenAt: number | null;
+}
+
+export interface CodexRemoteControlClientsPage {
+  data: CodexRemoteControlClient[];
+  nextCursor: string | null;
+}
+
 export interface CodexAppServerManager {
-  ensureReady(input: { commandPath: string; externalAgentHome?: string }): Promise<CodexCapabilitiesSnapshot>;
+  ensureReady(input: { commandPath: string; externalAgentHome?: string; remoteControl?: boolean }): Promise<CodexCapabilitiesSnapshot>;
   startThread(input: CodexThreadStartInput): Promise<CodexThreadSnapshot>;
   resumeThread(input: { threadId: string; cwd?: string }): Promise<CodexThreadSnapshot>;
 
@@ -219,6 +254,13 @@ export interface CodexAppServerManager {
   steerTurn(input: CodexTurnSteerInput): Promise<{ turnId: string }>;
   interruptTurn(input: { threadId: string; turnId: string }): Promise<void>;
   respondToServerRequest(input: CodexServerRequestResponse): Promise<void>;
+  readRemoteControlStatus(): Promise<CodexRemoteControlStatus>;
+  enableRemoteControl(input?: { ephemeral?: boolean }): Promise<CodexRemoteControlStatus>;
+  disableRemoteControl(input?: { ephemeral?: boolean }): Promise<CodexRemoteControlStatus>;
+  startRemoteControlPairing(input?: { manualCode?: boolean }): Promise<CodexRemoteControlPairing>;
+  readRemoteControlPairingStatus(input: { pairingCode?: string | null; manualPairingCode?: string | null }): Promise<{ claimed: boolean }>;
+  listRemoteControlClients(input: { environmentId: string; cursor?: string | null; limit?: number | null; order?: 'asc' | 'desc' | null }): Promise<CodexRemoteControlClientsPage>;
+  revokeRemoteControlClient(input: { environmentId: string; clientId: string }): Promise<void>;
   detectExternalAgentConfig(input?: ExternalAgentConfigDetectParams): Promise<ExternalAgentConfigDetectResponse>;
   startExternalAgentImport(input: ExternalAgentConfigImportParams): Promise<ExternalAgentConfigImportResponse>;
   readExternalAgentImportHistories(): Promise<ExternalAgentConfigImportHistory[]>;
@@ -301,6 +343,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
   let child: CodexAppServerProcess | null = null;
   let commandPath: string | null = null;
   let externalAgentHome: string | null = null;
+  let remoteControlTransport = false;
   let readyPromise: Promise<CodexCapabilitiesSnapshot> | null = null;
   let restartTimer: ReturnType<typeof setTimeout> | null = null;
   let rejectScheduledRestart: ((error: Error) => void) | null = null;
@@ -308,6 +351,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
   let requestSequence = 0;
   let eventSequence = 0;
   let diagnosticSequence = 0;
+  let remoteControlEnabled = false;
   let preparingForShutdown = false;
   let closePromise: Promise<void> | null = null;
 
@@ -326,13 +370,14 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
     startedTurns.clear();
     state = { type: 'starting', generationId };
     const decoder = new CodexJsonLineDecoder();
-    const spawned = spawn(command, ['app-server', ...(options.appServerFlags ?? []), '--listen', 'stdio://'], {
-      env: {
-        ...process.env,
-        PATH: expandCliSearchPath(),
-        ...(externalAgentHome === null ? {} : { ZEUS_CODEX_EXTERNAL_AGENT_HOME: externalAgentHome }),
-      },
-    });
+    const env = {
+      ...process.env,
+      PATH: expandCliSearchPath(),
+      ...(externalAgentHome === null ? {} : { ZEUS_CODEX_EXTERNAL_AGENT_HOME: externalAgentHome }),
+    };
+    const spawned = remoteControlTransport
+      ? spawnRemoteControlCodexAppServer(command, { env })
+      : spawn(command, ['app-server', ...(options.appServerFlags ?? []), '--listen', 'stdio://'], { env });
     trackProcessExit(spawned);
     child = spawned;
     spawned.stdout.on('data', (chunk) => {
@@ -378,6 +423,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
       write({ method: 'initialized' });
       const modelList = await rpc(generationId, 'model/list', {});
       const models = parseModels(modelList);
+      if (remoteControlEnabled || remoteControlTransport) await rpc(generationId, 'remoteControl/enable', {});
       const capabilities: CodexCapabilitiesSnapshot = {
         generationId,
         initializedAt: now(),
@@ -544,6 +590,11 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
         serverRequests.set(requestKey, { generationId, method: message.method, params: message.params, paramsIdentity, state: 'pending' });
       }
     }
+    if (message.method === 'serverRequest/resolved') {
+      const params = isRecord(message.params) ? message.params : {};
+      const resolvedRequestId = typeof params.requestId === 'string' || typeof params.requestId === 'number' ? params.requestId : null;
+      if (resolvedRequestId !== null) serverRequests.delete(serverRequestKey(generationId, resolvedRequestId));
+    }
     emitEvent(generationId, message.method, message.params, requestId);
     if (message.method === 'externalAgentConfig/import/progress' || message.method === 'externalAgentConfig/import/completed') {
       try {
@@ -639,8 +690,14 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
       if (commandPath !== null && externalAgentHome !== requestedExternalAgentHome) {
         return Promise.reject(managerError('ZEUS_CODEX_EXTERNAL_AGENT_HOME_CHANGED', 'Codex external-agent home cannot change while the manager is active.'));
       }
+      const requestedRemoteControlTransport = input.remoteControl === true;
+      if (commandPath !== null && remoteControlTransport !== requestedRemoteControlTransport) {
+        return Promise.reject(managerError('ZEUS_CODEX_REMOTE_CONTROL_TRANSPORT_CHANGED', 'Codex remote-control transport cannot change while the manager is active.'));
+      }
       commandPath = input.commandPath;
       externalAgentHome = requestedExternalAgentHome;
+      remoteControlTransport = requestedRemoteControlTransport;
+      if (remoteControlTransport) remoteControlEnabled = true;
       if (state.type === 'ready') return Promise.resolve(state.capabilities);
       if (readyPromise) return readyPromise;
       readyPromise = start(input.commandPath);
@@ -803,6 +860,40 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
       write({ id: input.requestId, result });
       request.state = 'responded';
     },
+    async readRemoteControlStatus() {
+      const capabilities = await awaitCapabilities();
+      return parseRemoteControlStatus(await rpc(capabilities.generationId, 'remoteControl/status/read', undefined));
+    },
+    async enableRemoteControl(input = {}) {
+      const capabilities = await awaitCapabilities();
+      const status = parseRemoteControlStatus(await rpc(capabilities.generationId, 'remoteControl/enable', compactObject({ ephemeral: input.ephemeral })));
+      remoteControlEnabled = true;
+      return status;
+    },
+    async disableRemoteControl(input = {}) {
+      const capabilities = await awaitCapabilities();
+      const status = parseRemoteControlStatus(await rpc(capabilities.generationId, 'remoteControl/disable', compactObject({ ephemeral: input.ephemeral })));
+      remoteControlEnabled = false;
+      return status;
+    },
+    async startRemoteControlPairing(input = {}) {
+      const capabilities = await awaitCapabilities();
+      return parseRemoteControlPairing(await rpc(capabilities.generationId, 'remoteControl/pairing/start', compactObject({ manualCode: input.manualCode })));
+    },
+    async readRemoteControlPairingStatus(input) {
+      const capabilities = await awaitCapabilities();
+      const response = asRecord(await rpc(capabilities.generationId, 'remoteControl/pairing/status', compactObject(input)));
+      if (typeof response.claimed !== 'boolean') throw managerError('ZEUS_CODEX_INVALID_RESPONSE', 'Codex remote pairing status omitted claimed.');
+      return { claimed: response.claimed };
+    },
+    async listRemoteControlClients(input) {
+      const capabilities = await awaitCapabilities();
+      return parseRemoteControlClients(await rpc(capabilities.generationId, 'remoteControl/client/list', compactObject(input)));
+    },
+    async revokeRemoteControlClient(input) {
+      const capabilities = await awaitCapabilities();
+      await rpc(capabilities.generationId, 'remoteControl/client/revoke', input);
+    },
     async detectExternalAgentConfig(input = {}) {
       const capabilities = await awaitCapabilities();
       return parseExternalAgentConfigDetectResponse(
@@ -899,6 +990,165 @@ function spawnNodeCodexAppServer(command: string, args: string[], options?: Code
   return child as unknown as CodexAppServerProcess;
 }
 
+/**
+ * 连接官方 Remote Control 守护进程，并把 WebSocket 文本帧适配为现有 JSONL 传输。
+ * 守护进程由官方 CLI 管理；Zeus 退出只断开自己的控制连接，不擅自停止用户已启用的远程宿主。
+ */
+function spawnRemoteControlCodexAppServer(command: string, options: CodexAppServerSpawnOptions): CodexAppServerProcess {
+  const stdout = new EventEmitter() as CodexAppServerReadable;
+  const stderr = new EventEmitter() as CodexAppServerReadable;
+  const lifecycle = new EventEmitter();
+  const pendingMessages: string[] = [];
+  let inputBuffer = '';
+  let socket: WebSocket | null = null;
+  let stopping = false;
+  let exited = false;
+
+  function finishExit(code: number | null, signal: NodeJS.Signals | null): void {
+    if (exited) return;
+    exited = true;
+    lifecycle.emit('exit', code, signal);
+  }
+
+  function fail(error: Error): void {
+    if (stopping || exited) return;
+    (stderr as EventEmitter).emit('data', error.message);
+    lifecycle.emit('error', error);
+    finishExit(1, null);
+  }
+
+  function sendMessage(message: string): void {
+    if (socket?.readyState === WebSocket.OPEN) {
+      socket.send(message);
+      return;
+    }
+    pendingMessages.push(message);
+  }
+
+  const processAdapter: CodexAppServerProcess = {
+    // 该值只用于区分“尚未生成系统进程”的 spawn 失败；真实守护进程 PID 由官方 CLI 管理。
+    pid: process.pid,
+    stdin: {
+      write(chunk) {
+        inputBuffer += typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8');
+        const lines = inputBuffer.split('\n');
+        inputBuffer = lines.pop() ?? '';
+        for (const line of lines) {
+          if (line.trim()) sendMessage(line);
+        }
+        return true;
+      },
+    },
+    stdout,
+    stderr,
+    on(event, listener) {
+      lifecycle.on(event, listener);
+      return this;
+    },
+    kill(signal = 'SIGTERM') {
+      if (stopping || exited) return false;
+      stopping = true;
+      if (socket && socket.readyState === WebSocket.OPEN) {
+        socket.close(1000, 'Zeus transport closed');
+        const forceClose = setTimeout(() => socket?.terminate(), 500);
+        forceClose.unref();
+      } else {
+        socket?.terminate();
+        finishExit(null, signal);
+      }
+      return true;
+    },
+  };
+
+  void (async () => {
+    const daemon = await startRemoteControlDaemon(command, options.env, (chunk) => (stderr as EventEmitter).emit('data', chunk));
+    if (stopping || exited) return;
+    socket = new WebSocket('ws://localhost/rpc', {
+      createConnection: () => createConnection({ path: daemon.socketPath }),
+      perMessageDeflate: false,
+    });
+    socket.on('open', () => {
+      for (const message of pendingMessages.splice(0)) socket?.send(message);
+    });
+    socket.on('message', (data: RawData) => {
+      const text = rawWebSocketText(data);
+      if (text !== null) (stdout as EventEmitter).emit('data', Buffer.from(`${text}\n`, 'utf8'));
+    });
+    socket.on('error', (error) => fail(error instanceof Error ? error : new Error('Codex Remote Control WebSocket failed.')));
+    socket.on('close', () => finishExit(stopping ? null : 1, stopping ? 'SIGTERM' : null));
+  })().catch((error: unknown) => fail(asError(error)));
+
+  return processAdapter;
+}
+
+async function startRemoteControlDaemon(command: string, env: NodeJS.ProcessEnv, onStderr: (chunk: Buffer | string) => void): Promise<{ socketPath: string }> {
+  return new Promise((resolve, reject) => {
+    const child = nodeSpawn(command, ['remote-control', 'start', '--json'], { shell: false, stdio: ['ignore', 'pipe', 'pipe'], env });
+    let stdout = '';
+    let stderr = '';
+    const timeout = setTimeout(() => {
+      child.kill('SIGTERM');
+      reject(managerError('ZEUS_CODEX_REMOTE_CONTROL_START_TIMEOUT', 'Codex Remote Control 守护进程启动超时。'));
+    }, 30_000);
+    timeout.unref();
+    child.stdout.on('data', (chunk: Buffer | string) => {
+      stdout += toBuffer(chunk).toString('utf8');
+    });
+    child.stderr.on('data', (chunk: Buffer | string) => {
+      stderr += toBuffer(chunk).toString('utf8');
+      onStderr(chunk);
+    });
+    child.once('error', (error) => {
+      clearTimeout(timeout);
+      reject(error);
+    });
+    child.once('exit', (code, signal) => {
+      clearTimeout(timeout);
+      if (code !== 0) {
+        reject(
+          managerError(
+            'ZEUS_CODEX_REMOTE_CONTROL_START_FAILED',
+            `官方 Codex Remote Control 守护进程启动失败（${String(code ?? signal ?? 'unknown')}）：${stderr.trim() || '没有返回诊断信息'}。请确认 Zeus 使用官方独立安装版 Codex CLI。`,
+          ),
+        );
+        return;
+      }
+      try {
+        const result = parseLastJsonObject(stdout);
+        const daemon = asRecord(result.daemon);
+        const socketPath = typeof daemon.socketPath === 'string' ? daemon.socketPath : null;
+        if (!socketPath || !isAbsolute(socketPath)) throw new Error('启动结果没有返回绝对控制套接字路径。');
+        resolve({ socketPath });
+      } catch (error) {
+        reject(managerError('ZEUS_CODEX_REMOTE_CONTROL_START_INVALID', `无法读取 Codex Remote Control 启动结果：${asError(error).message}`));
+      }
+    });
+  });
+}
+
+function rawWebSocketText(data: RawData): string | null {
+  if (typeof data === 'string') return data;
+  if (Buffer.isBuffer(data)) return data.toString('utf8');
+  if (Array.isArray(data)) return Buffer.concat(data).toString('utf8');
+  if (data instanceof ArrayBuffer) return Buffer.from(data).toString('utf8');
+  return null;
+}
+
+function parseLastJsonObject(value: string): Record<string, unknown> {
+  const lines = value
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    try {
+      return asRecord(JSON.parse(lines[index]!));
+    } catch {
+      // 官方 CLI 可能在 JSON 前输出升级提示，只取最后一个有效 JSON 对象。
+    }
+  }
+  throw new Error('Codex CLI 没有返回 JSON 启动结果。');
+}
+
 function parseModels(value: unknown): CodexModelCapability[] {
   const response = asRecord(value);
   if (!Array.isArray(response.data)) throw managerError('ZEUS_CODEX_INVALID_RESPONSE', 'Codex model/list response omitted data.');
@@ -963,6 +1213,71 @@ function parseTurn(value: unknown, threadId: string): CodexTurnSnapshot {
   const turn = asRecord(value);
   if (typeof turn.id !== 'string') throw managerError('ZEUS_CODEX_INVALID_RESPONSE', 'Codex turn response omitted id.');
   return { ...turn, id: turn.id, threadId };
+}
+
+function parseRemoteControlStatus(value: unknown): CodexRemoteControlStatus {
+  const response = asRecord(value);
+  if (!['disabled', 'connecting', 'connected', 'errored'].includes(String(response.status))) {
+    throw managerError('ZEUS_CODEX_INVALID_RESPONSE', 'Codex remote control returned an invalid status.');
+  }
+  if (typeof response.serverName !== 'string' || typeof response.installationId !== 'string' || (response.environmentId !== null && typeof response.environmentId !== 'string')) {
+    throw managerError('ZEUS_CODEX_INVALID_RESPONSE', 'Codex remote control returned an invalid identity.');
+  }
+  return {
+    status: response.status as CodexRemoteControlConnectionStatus,
+    serverName: response.serverName,
+    installationId: response.installationId,
+    environmentId: response.environmentId,
+  };
+}
+
+function parseRemoteControlPairing(value: unknown): CodexRemoteControlPairing {
+  const response = asRecord(value);
+  if (
+    typeof response.pairingCode !== 'string' ||
+    (response.manualPairingCode !== null && typeof response.manualPairingCode !== 'string') ||
+    typeof response.environmentId !== 'string' ||
+    typeof response.expiresAt !== 'number' ||
+    !Number.isSafeInteger(response.expiresAt)
+  ) {
+    throw managerError('ZEUS_CODEX_INVALID_RESPONSE', 'Codex remote control returned invalid pairing data.');
+  }
+  return {
+    pairingCode: response.pairingCode,
+    manualPairingCode: response.manualPairingCode,
+    environmentId: response.environmentId,
+    expiresAt: response.expiresAt,
+  };
+}
+
+function parseRemoteControlClients(value: unknown): CodexRemoteControlClientsPage {
+  const response = asRecord(value);
+  if (!Array.isArray(response.data) || (response.nextCursor !== null && typeof response.nextCursor !== 'string')) {
+    throw managerError('ZEUS_CODEX_INVALID_RESPONSE', 'Codex remote control returned an invalid client list.');
+  }
+  return {
+    data: response.data.map((value) => {
+      const client = asRecord(value);
+      if (typeof client.clientId !== 'string') throw managerError('ZEUS_CODEX_INVALID_RESPONSE', 'Codex remote control returned an invalid client.');
+      for (const key of ['displayName', 'deviceType', 'platform', 'osVersion', 'deviceModel', 'appVersion'] as const) {
+        if (client[key] !== null && typeof client[key] !== 'string') throw managerError('ZEUS_CODEX_INVALID_RESPONSE', 'Codex remote control returned invalid client metadata.');
+      }
+      if (client.lastSeenAt !== null && (typeof client.lastSeenAt !== 'number' || !Number.isSafeInteger(client.lastSeenAt))) {
+        throw managerError('ZEUS_CODEX_INVALID_RESPONSE', 'Codex remote control returned an invalid client timestamp.');
+      }
+      return {
+        clientId: client.clientId,
+        displayName: client.displayName as string | null,
+        deviceType: client.deviceType as string | null,
+        platform: client.platform as string | null,
+        osVersion: client.osVersion as string | null,
+        deviceModel: client.deviceModel as string | null,
+        appVersion: client.appVersion as string | null,
+        lastSeenAt: client.lastSeenAt,
+      };
+    }),
+    nextCursor: response.nextCursor,
+  };
 }
 
 function normalizeThreadSandbox(sandbox: CodexSandboxPolicy): { mode: 'read-only' | 'workspace-write' | 'danger-full-access'; runtimeWorkspaceRoots?: string[] } {

@@ -12,6 +12,7 @@ interface RuntimeEntry {
   manager: CodexAppServerManager;
   commandPath: string;
   externalAgentHome: string | null;
+  remoteControl: boolean;
   capabilities: CodexCapabilitiesSnapshot;
   threads: Set<string>;
   activeTurns: Map<string, string>;
@@ -45,6 +46,7 @@ export function createCodexRuntimeGenerationManager(): CodexAppServerManager {
   let preparingForShutdown = false;
   let closePromise: Promise<void> | null = null;
   let activationChain: Promise<unknown> = Promise.resolve();
+  let remoteControlEnabled = false;
 
   function requireActiveEntry(): RuntimeEntry {
     if (!activeEntry || preparingForShutdown) throw managerError('ZEUS_CODEX_NOT_READY', 'Codex runtime generation manager is not ready.');
@@ -118,6 +120,11 @@ export function createCodexRuntimeGenerationManager(): CodexAppServerManager {
         threadId,
       });
     }
+    if (event.method === 'serverRequest/resolved') {
+      const resolvedRequestId = typeof params.requestId === 'string' || typeof params.requestId === 'number' ? params.requestId : null;
+      if (resolvedRequestId !== null) entry.pendingRequests.delete(requestKey(event.generationId, resolvedRequestId));
+      void tryDrain(entry);
+    }
     if (event.method === 'turn/completed' && threadId) {
       const turn = isRecord(params.turn) ? params.turn : {};
       const turnId = typeof turn.id === 'string' ? turn.id : typeof params.turnId === 'string' ? params.turnId : entry.activeTurns.get(threadId);
@@ -152,11 +159,13 @@ export function createCodexRuntimeGenerationManager(): CodexAppServerManager {
     }
   }
 
-  async function activate(input: { commandPath: string; externalAgentHome?: string }): Promise<CodexCapabilitiesSnapshot> {
+  async function activate(input: { commandPath: string; externalAgentHome?: string; remoteControl?: boolean }): Promise<CodexCapabilitiesSnapshot> {
     if (preparingForShutdown) throw managerError('ZEUS_CODEX_CLOSED', 'Codex runtime generation manager is closing.');
     const requestedHome = input.externalAgentHome ?? null;
-    if (activeEntry && activeEntry.commandPath === input.commandPath && activeEntry.externalAgentHome === requestedHome) {
-      const capabilities = await activeEntry.manager.ensureReady(input);
+    const requestedRemoteControl = input.remoteControl ?? remoteControlEnabled;
+    const normalizedInput = { ...input, remoteControl: requestedRemoteControl };
+    if (activeEntry && activeEntry.commandPath === input.commandPath && activeEntry.externalAgentHome === requestedHome && activeEntry.remoteControl === requestedRemoteControl) {
+      const capabilities = await activeEntry.manager.ensureReady(normalizedInput);
       activeEntry.capabilities = capabilities;
       rememberGeneration(activeEntry, capabilities.generationId);
       return capabilities;
@@ -167,6 +176,7 @@ export function createCodexRuntimeGenerationManager(): CodexAppServerManager {
       manager,
       commandPath: input.commandPath,
       externalAgentHome: requestedHome,
+      remoteControl: requestedRemoteControl,
       capabilities: {
         generationId: '',
         initializedAt: '',
@@ -185,11 +195,13 @@ export function createCodexRuntimeGenerationManager(): CodexAppServerManager {
     provisional.unsubscribeExternalImport = manager.subscribeExternalAgentImport(forwardExternalImport);
     entries.add(provisional);
     try {
-      const capabilities = await manager.ensureReady(input);
+      const capabilities = await manager.ensureReady(normalizedInput);
       provisional.capabilities = capabilities;
       rememberGeneration(provisional, capabilities.generationId);
+      if (requestedRemoteControl) await manager.enableRemoteControl();
       const previous = activeEntry;
       activeEntry = provisional;
+      if (requestedRemoteControl) remoteControlEnabled = true;
       if (previous) void tryDrain(previous);
       return capabilities;
     } catch (error) {
@@ -276,6 +288,47 @@ export function createCodexRuntimeGenerationManager(): CodexAppServerManager {
       await entry.manager.respondToServerRequest(input);
       entry.pendingRequests.delete(requestKey(input.generationId, input.requestId));
       void tryDrain(entry);
+    },
+    async readRemoteControlStatus() {
+      return requireActiveEntry().manager.readRemoteControlStatus();
+    },
+    async enableRemoteControl(input = {}) {
+      const current = requireActiveEntry();
+      if ([...entries].some((entry) => entry.activeTurns.size > 0 || entry.pendingRequests.size > 0)) {
+        throw managerError('ZEUS_CODEX_REMOTE_CONTROL_BUSY', '请先让正在运行或等待回答的会话结束，再启用远程接管；切换执行宿主不能安全搬移进行中的请求。');
+      }
+      remoteControlEnabled = true;
+      await activate({
+        commandPath: current.commandPath,
+        ...(current.externalAgentHome ? { externalAgentHome: current.externalAgentHome } : {}),
+        remoteControl: true,
+      });
+      return requireActiveEntry().manager.enableRemoteControl(input);
+    },
+    async disableRemoteControl(input = {}) {
+      const active = requireActiveEntry();
+      const status = await active.manager.disableRemoteControl(input);
+      remoteControlEnabled = false;
+      if ([...entries].every((entry) => entry.activeTurns.size === 0 && entry.pendingRequests.size === 0)) {
+        await activate({
+          commandPath: active.commandPath,
+          ...(active.externalAgentHome ? { externalAgentHome: active.externalAgentHome } : {}),
+          remoteControl: false,
+        });
+      }
+      return status;
+    },
+    async startRemoteControlPairing(input = {}) {
+      return requireActiveEntry().manager.startRemoteControlPairing(input);
+    },
+    async readRemoteControlPairingStatus(input) {
+      return requireActiveEntry().manager.readRemoteControlPairingStatus(input);
+    },
+    async listRemoteControlClients(input) {
+      return requireActiveEntry().manager.listRemoteControlClients(input);
+    },
+    async revokeRemoteControlClient(input) {
+      await requireActiveEntry().manager.revokeRemoteControlClient(input);
     },
     async detectExternalAgentConfig(input) {
       return requireActiveEntry().manager.detectExternalAgentConfig(input);

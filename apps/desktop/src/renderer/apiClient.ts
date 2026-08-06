@@ -596,6 +596,36 @@ export interface RuntimeStatusSnapshot {
   };
 }
 
+export interface CodexRemoteControlClient {
+  clientId: string;
+  displayName: string | null;
+  deviceType: string | null;
+  platform: string | null;
+  osVersion: string | null;
+  deviceModel: string | null;
+  appVersion: string | null;
+  lastSeenAt: number | null;
+}
+
+export interface CodexRemoteControlSnapshot {
+  enabled: boolean;
+  status: {
+    status: 'disabled' | 'connecting' | 'connected' | 'errored';
+    serverName: string;
+    installationId: string;
+    environmentId: string | null;
+  };
+  clients: CodexRemoteControlClient[];
+}
+
+export interface CodexRemoteControlPairing {
+  pairingCode: string;
+  manualPairingCode: string | null;
+  environmentId: string;
+  expiresAt: number;
+  claimed: boolean;
+}
+
 export type AiRuntimeSessionStatus = 'running' | 'exited' | 'failed' | 'stopped' | 'orphan_detected' | 'lost';
 
 export interface AiRuntimeSession {
@@ -1285,6 +1315,12 @@ export interface DashboardClient {
   reorderNativeQueue: (projectId: string, conversationId: string, orderedSubmissionIds: string[]) => Promise<NativeQueueSnapshot>;
   loadDashboard: () => Promise<DashboardSnapshot>;
   loadRuntimeStatus: () => Promise<RuntimeStatusSnapshot>;
+  loadCodexRemoteControl: () => Promise<CodexRemoteControlSnapshot>;
+  enableCodexRemoteControl: () => Promise<CodexRemoteControlSnapshot>;
+  disableCodexRemoteControl: () => Promise<CodexRemoteControlSnapshot>;
+  startCodexRemoteControlPairing: () => Promise<CodexRemoteControlPairing>;
+  loadCodexRemoteControlPairingStatus: (input: { pairingCode?: string | null; manualPairingCode?: string | null }) => Promise<{ claimed: boolean }>;
+  revokeCodexRemoteControlClient: (environmentId: string, clientId: string) => Promise<CodexRemoteControlSnapshot>;
   loadRuntimeSettings: () => Promise<RuntimeSettings>;
   saveRuntimeSettings: (input: RuntimeSettings) => Promise<RuntimeSettings>;
   loadCodeMapSettings: () => Promise<CodeMapSettings>;
@@ -1677,6 +1713,13 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
       }),
     loadDashboard: () => request<DashboardSnapshot>('/api/dashboard'),
     loadRuntimeStatus: () => request<RuntimeStatusSnapshot>('/api/settings/runtime-status'),
+    loadCodexRemoteControl: () => request<CodexRemoteControlSnapshot>('/api/codex/remote-control'),
+    enableCodexRemoteControl: () => request<CodexRemoteControlSnapshot>('/api/codex/remote-control/enable', { method: 'POST' }),
+    disableCodexRemoteControl: () => request<CodexRemoteControlSnapshot>('/api/codex/remote-control/disable', { method: 'POST' }),
+    startCodexRemoteControlPairing: () => request<CodexRemoteControlPairing>('/api/codex/remote-control/pairing', { method: 'POST' }),
+    loadCodexRemoteControlPairingStatus: (input) => request<{ claimed: boolean }>('/api/codex/remote-control/pairing/status', { method: 'POST', body: JSON.stringify(input) }),
+    revokeCodexRemoteControlClient: (environmentId, clientId) =>
+      request<CodexRemoteControlSnapshot>(`/api/codex/remote-control/clients/${encodeURIComponent(clientId)}?environmentId=${encodeURIComponent(environmentId)}`, { method: 'DELETE' }),
     loadRuntimeSettings: () => request<RuntimeSettings>('/api/runtime/settings'),
     saveRuntimeSettings: (input) =>
       request<RuntimeSettings>('/api/runtime/settings', {
