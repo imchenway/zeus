@@ -267,8 +267,10 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   function contextFromSubmission(submission: ZeusConversationSubmissionRecord): ConversationDispatchContext {
     const parsed = parseJsonRecord(submission.inputJson);
     const context = isRecord(parsed.context) ? parsed.context : {};
+    const conversationProjectId = options.conversations.getById(submission.conversationId)?.projectId;
     return {
-      projectId: requireString(context.projectId, 'submission projectId'),
+      // 早期持久 submission 可能缺少 projectId；会话归属是同一事实的权威兼容来源。
+      projectId: requireString(typeof context.projectId === 'string' && context.projectId ? context.projectId : conversationProjectId, 'submission projectId'),
       projectLocalPath: requireString(context.projectLocalPath, 'submission projectLocalPath'),
       taskId: typeof context.taskId === 'string' ? context.taskId : null,
       model: requireString(context.model, 'submission model'),

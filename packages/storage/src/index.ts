@@ -1660,7 +1660,13 @@ function migrateTaskGitWorkspaceSchema(db: ZeusDatabase): void {
       updated_at TEXT NOT NULL
     )
   `);
-  db.execute(`CREATE UNIQUE INDEX IF NOT EXISTS idx_task_workspaces_project_branch ON task_workspaces(project_id, branch_name)`);
+  const usesRepositoryScopedWorkspaces = Boolean(db.get<{ name: string }>(`SELECT name FROM pragma_table_info('task_workspaces') WHERE name = 'repository_id'`));
+  if (usesRepositoryScopedWorkspaces) {
+    // 多仓模型允许同一项目的不同仓库使用同名任务分支，旧项目级唯一索引必须先移除。
+    db.execute(`DROP INDEX IF EXISTS idx_task_workspaces_project_branch`);
+  } else {
+    db.execute(`CREATE UNIQUE INDEX IF NOT EXISTS idx_task_workspaces_project_branch ON task_workspaces(project_id, branch_name)`);
+  }
   db.execute(`CREATE UNIQUE INDEX IF NOT EXISTS idx_task_workspaces_worktree_path ON task_workspaces(worktree_path) WHERE worktree_path IS NOT NULL`);
   db.execute(`CREATE INDEX IF NOT EXISTS idx_task_workspaces_task_state ON task_workspaces(task_id, state, updated_at)`);
   try {
