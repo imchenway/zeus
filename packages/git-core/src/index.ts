@@ -271,7 +271,7 @@ export async function discoverGitRepositories(containerPath: string, maxDepth = 
   const containerRoot = canonicalFilesystemPath(containerPath);
   const candidates: string[] = [];
   const seen = new Set<string>();
-  const skippedDirectories = new Set(['.git', '.zeus-worktrees', 'node_modules', 'dist', 'build', 'target', '.next', '.turbo', '.cache']);
+  const skippedDirectories = new Set(['.git', '.tmp', '.zeus-worktrees', 'node_modules', 'dist', 'build', 'target', '.next', '.turbo', '.cache']);
 
   async function visit(directoryPath: string, depth: number): Promise<void> {
     if (depth > maxDepth) return;
