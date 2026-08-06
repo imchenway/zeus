@@ -980,6 +980,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const pendingRequests = props.state?.pendingRequests.filter((request) => request.status === 'pending') ?? [];
   const pendingPlanImplementationRequests = props.state?.planImplementationRequests.filter((request) => request.status === 'pending').slice(-1) ?? [];
   const blockingPendingRequest = pendingRequests[0] ?? null;
+  const blockingUserInputRequest = blockingPendingRequest && requestKind(blockingPendingRequest) === 'request_user_input' ? blockingPendingRequest : null;
   const blockingPlanImplementationRequest = blockingPendingRequest ? null : (pendingPlanImplementationRequests[0] ?? null);
   const blockingInteractionCount = pendingRequests.length + pendingPlanImplementationRequests.length;
   const planWorkspaceItem = planWorkspaceItemId ? (Object.values(props.state?.items ?? {}).find((item) => item.type === 'plan' && (item.localItemId === planWorkspaceItemId || item.itemId === planWorkspaceItemId)) ?? null) : null;
@@ -1590,7 +1591,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                     {renderQueuedConversationMessages()}
                   </section>
                 ) : null}
-                {props.suppressComposer ? null : freshStartRequired ? (
+                {props.suppressComposer || blockingUserInputRequest ? null : freshStartRequired ? (
                   owner ? (
                     <NewConversationComposer
                       key={`fresh-conversation:${unsentDraft.key}`}

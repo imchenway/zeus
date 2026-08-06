@@ -57,7 +57,7 @@ const labels = {
     cancel: '取消',
     submit: '提交回答',
     other: '其他',
-    otherPlaceholder: '否，并告诉 Codex 应该如何做得不同',
+    otherPlaceholder: '否，并告诉 Zeus 应该如何做得不同',
     loading: '正在读取请求详情，详情完整前不能决策。',
     impact: '影响',
     secret: '敏感回答仅发送给当前本机 app-server，不会显示在会话记录中。',
@@ -91,7 +91,7 @@ const labels = {
     cancel: 'Cancel',
     submit: 'Submit answers',
     other: 'Other',
-    otherPlaceholder: 'No, tell Codex what to do differently',
+    otherPlaceholder: 'No, tell Zeus what to do differently',
     loading: 'Loading request details. Decisions remain unavailable until details are complete.',
     impact: 'Impact',
     secret: 'Secret answers are sent only to the current local app-server and are not shown in the transcript.',
@@ -405,9 +405,10 @@ function RequestUserInputPanel(props: PendingRequestSurfaceProps & { questions: 
   const [otherAnswers, setOtherAnswers] = useState<Record<string, string>>(restored.otherAnswers);
   const [questionIndex, setQuestionIndex] = useState(0);
   const [remainingMs, setRemainingMs] = useState(() => requestRemainingMs(props.request));
+  const [locallyResponding, setLocallyResponding] = useState(false);
   const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const freeformRef = useRef<HTMLInputElement | HTMLTextAreaElement | null>(null);
-  const otherTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const otherAnswerRef = useRef<HTMLInputElement | HTMLTextAreaElement | null>(null);
   const snoozedRef = useRef(props.request.autoResolutionState === 'snoozed');
   const snoozePromiseRef = useRef<Promise<void> | null>(null);
   const [, setLocallySnoozed] = useState(snoozedRef.current);
@@ -416,6 +417,7 @@ function RequestUserInputPanel(props: PendingRequestSurfaceProps & { questions: 
   const currentOtherAnswer = otherAnswers[currentQuestion.id] ?? '';
   const currentComplete = questionAnswerComplete(currentQuestion, selectedValues, otherAnswers[currentQuestion.id]);
   const allComplete = areRequiredRequestAnswersComplete(props.questions, answers, otherAnswers);
+  const responding = props.busy === true || locallyResponding;
   const hasSensitiveDraft = props.questions.some((question) => question.secret && ((answers[question.id] ?? []).some((value) => Boolean(value.trim())) || Boolean(otherAnswers[question.id]?.trim())));
 
   useEffect(() => {
@@ -429,8 +431,8 @@ function RequestUserInputPanel(props: PendingRequestSurfaceProps & { questions: 
   }, [answers, otherAnswers, props.questions, props.request.id]);
 
   useLayoutEffect(() => {
-    if (currentQuestion.secret || !otherTextareaRef.current) return;
-    autosizeTextarea(otherTextareaRef.current, 30, 0.24);
+    if (currentQuestion.secret || !(otherAnswerRef.current instanceof HTMLTextAreaElement)) return;
+    autosizeTextarea(otherAnswerRef.current, 30, 0.24);
   }, [currentOtherAnswer, currentQuestion.id, currentQuestion.secret]);
 
   useEffect(() => {
@@ -457,9 +459,15 @@ function RequestUserInputPanel(props: PendingRequestSurfaceProps & { questions: 
   }
 
   async function finish(nextAnswers = answers, nextOtherAnswers = otherAnswers): Promise<void> {
-    await (snoozePromiseRef.current ?? Promise.resolve());
-    clearRuiDraft(props.request.id);
-    await props.onRespond(props.request.id, buildPendingRequestResponse(props.request, nextAnswers, nextOtherAnswers));
+    if (responding) return;
+    setLocallyResponding(true);
+    try {
+      await (snoozePromiseRef.current ?? Promise.resolve());
+      clearRuiDraft(props.request.id);
+      await props.onRespond(props.request.id, buildPendingRequestResponse(props.request, nextAnswers, nextOtherAnswers));
+    } finally {
+      setLocallyResponding(false);
+    }
   }
 
   function advance(nextAnswers = answers, nextOtherAnswers = otherAnswers): void {
@@ -468,6 +476,7 @@ function RequestUserInputPanel(props: PendingRequestSurfaceProps & { questions: 
   }
 
   function selectOption(optionLabel: string): void {
+    if (responding) return;
     snooze();
     const checked = !selectedValues.includes(optionLabel);
     const nextAnswers = updateQuestionAnswers(answers, currentQuestion, optionLabel, checked);
@@ -485,8 +494,10 @@ function RequestUserInputPanel(props: PendingRequestSurfaceProps & { questions: 
       else event.currentTarget.blur();
       return;
     }
-    // 单行敏感输入中的 Enter 也只能留在输入状态，提交必须点击明确按钮。
-    if (event.key === 'Enter' && event.currentTarget instanceof HTMLInputElement) event.preventDefault();
+    if (event.key !== 'Enter' || event.nativeEvent.isComposing) return;
+    if (event.shiftKey && event.currentTarget instanceof HTMLTextAreaElement) return;
+    event.preventDefault();
+    if (currentComplete && !responding) advance();
   }
 
   function handleKeyboard(event: KeyboardEvent<HTMLElement>): void {
@@ -511,16 +522,28 @@ function RequestUserInputPanel(props: PendingRequestSurfaceProps & { questions: 
   }
 
   async function skip(): Promise<void> {
-    await (snoozePromiseRef.current ?? Promise.resolve());
-    clearRuiDraft(props.request.id);
-    await props.onRespond(props.request.id, { type: 'userInput', answers: {} });
+    if (responding) return;
+    setLocallyResponding(true);
+    try {
+      await (snoozePromiseRef.current ?? Promise.resolve());
+      clearRuiDraft(props.request.id);
+      await props.onRespond(props.request.id, { type: 'userInput', answers: {} });
+    } finally {
+      setLocallyResponding(false);
+    }
+  }
+
+  function activateOtherAnswer(): void {
+    const controlValue = otherAnswerControlValue(currentQuestion);
+    if (!selectedValues.includes(controlValue)) selectOption(controlValue);
+    window.requestAnimationFrame(() => otherAnswerRef.current?.focus());
   }
 
   return (
     <section className="session-request-user-input-surface" onKeyDown={handleKeyboard}>
       <p className="session-question-status" role="status">
         <Question aria-hidden="true" />
-        {zh ? `正在询问 ${props.questions.length} 个问题` : `Asking ${props.questions.length} question${props.questions.length === 1 ? '' : 's'}`}
+        {responding ? (zh ? '正在处理回答' : 'Processing response') : zh ? `正在询问 ${props.questions.length} 个问题` : `Asking ${props.questions.length} question${props.questions.length === 1 ? '' : 's'}`}
         {props.questions.length > 1 ? (
           <small>
             {questionIndex + 1}/{props.questions.length}
@@ -530,15 +553,14 @@ function RequestUserInputPanel(props: PendingRequestSurfaceProps & { questions: 
       </p>
       <form
         className="session-question-panel session-rui-request"
-        aria-busy={props.busy || undefined}
-        data-inline-footer={(props.questions.length === 1 && currentQuestion.allowOther) || undefined}
+        aria-busy={responding || undefined}
         data-error={Boolean(props.error) || undefined}
         onSubmit={(event) => {
           event.preventDefault();
-          if (currentComplete && !props.busy) advance();
+          if (currentComplete && !responding) advance();
         }}
       >
-        <fieldset disabled={props.busy}>
+        <fieldset disabled={responding}>
           <header>
             <strong className="zeus-fidelity-text">{currentQuestion.question}</strong>
             <button type="button" aria-label={zh ? '关闭' : 'Close'} onClick={() => void skip()}>
@@ -565,8 +587,8 @@ function RequestUserInputPanel(props: PendingRequestSurfaceProps & { questions: 
                   <span className="session-question-option-copy">
                     <strong>{presentation.label}</strong>
                     {presentation.recommended ? <em>{zh ? '推荐' : 'Recommended'}</em> : null}
-                    {option.description ? <small className="zeus-fidelity-text">{option.description}</small> : null}
                   </span>
+                  {option.description ? <small className="session-question-option-description zeus-fidelity-text">{option.description}</small> : <small className="session-question-option-description" aria-hidden="true" />}
                   {currentQuestion.kind === 'multiple' ? (
                     <span className="session-question-check" aria-hidden="true">
                       {checked ? <Check /> : null}
@@ -587,17 +609,25 @@ function RequestUserInputPanel(props: PendingRequestSurfaceProps & { questions: 
                   value={otherAnswerControlValue(currentQuestion)}
                   className="session-question-index"
                   aria-label={zh ? '其他回答' : 'Other answer'}
-                  onClick={() => selectOption(otherAnswerControlValue(currentQuestion))}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    activateOtherAnswer();
+                  }}
                 >
                   <PencilSimple aria-hidden="true" />
                 </button>
                 {currentQuestion.secret ? (
                   <input
+                    ref={otherAnswerRef as React.RefObject<HTMLInputElement>}
                     aria-label={`${zh ? '其他' : 'Other'}: ${currentQuestion.header}`}
+                    aria-keyshortcuts="Enter"
                     {...answerInputSecurityAttributes(true)}
                     value={otherAnswers[currentQuestion.id] ?? ''}
                     placeholder={copy.otherPlaceholder}
-                    disabled={!selectedValues.includes(otherAnswerControlValue(currentQuestion))}
+                    readOnly={!selectedValues.includes(otherAnswerControlValue(currentQuestion))}
+                    onFocus={() => {
+                      if (!selectedValues.includes(otherAnswerControlValue(currentQuestion))) activateOtherAnswer();
+                    }}
                     onChange={(event) => {
                       const value = event.currentTarget.value;
                       void snooze();
@@ -610,12 +640,16 @@ function RequestUserInputPanel(props: PendingRequestSurfaceProps & { questions: 
                   />
                 ) : (
                   <textarea
-                    ref={otherTextareaRef}
+                    ref={otherAnswerRef as React.RefObject<HTMLTextAreaElement>}
                     rows={1}
                     aria-label={`${zh ? '其他' : 'Other'}: ${currentQuestion.header}`}
+                    aria-keyshortcuts="Enter Shift+Enter"
                     value={currentOtherAnswer}
                     placeholder={copy.otherPlaceholder}
-                    disabled={!selectedValues.includes(otherAnswerControlValue(currentQuestion))}
+                    readOnly={!selectedValues.includes(otherAnswerControlValue(currentQuestion))}
+                    onFocus={() => {
+                      if (!selectedValues.includes(otherAnswerControlValue(currentQuestion))) activateOtherAnswer();
+                    }}
                     onChange={(event) => {
                       const value = event.currentTarget.value;
                       void snooze();
@@ -634,6 +668,7 @@ function RequestUserInputPanel(props: PendingRequestSurfaceProps & { questions: 
                 <input
                   ref={freeformRef as React.RefObject<HTMLInputElement>}
                   className="session-question-freeform"
+                  aria-keyshortcuts="Enter"
                   {...answerInputSecurityAttributes(true)}
                   value={selectedValues[0] ?? ''}
                   onChange={(event) => {
@@ -650,6 +685,7 @@ function RequestUserInputPanel(props: PendingRequestSurfaceProps & { questions: 
                 <textarea
                   ref={freeformRef as React.RefObject<HTMLTextAreaElement>}
                   className="session-question-freeform"
+                  aria-keyshortcuts="Enter Shift+Enter"
                   value={selectedValues[0] ?? ''}
                   onChange={(event) => {
                     const value = event.currentTarget.value;
@@ -686,7 +722,7 @@ function RequestUserInputPanel(props: PendingRequestSurfaceProps & { questions: 
               </button>
               {(currentQuestion.kind !== 'single' || selectedValues.includes(otherAnswerControlValue(currentQuestion))) && (
                 <button type="submit" disabled={!currentComplete || (questionIndex === props.questions.length - 1 && !allComplete)}>
-                  {props.busy ? (zh ? '正在提交' : 'Submitting') : questionIndex === props.questions.length - 1 ? (zh ? '提交' : 'Submit') : zh ? '继续' : 'Continue'}
+                  {responding ? (zh ? '正在提交' : 'Submitting') : questionIndex === props.questions.length - 1 ? (zh ? '提交' : 'Submit') : zh ? '继续' : 'Continue'}
                 </button>
               )}
             </span>
