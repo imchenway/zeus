@@ -5315,6 +5315,51 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     },
   );
 
+  server.get('/api/codex/account', async (_request, reply) => {
+    try {
+      await codexAppServerManager.ensureReady({
+        commandPath: currentCodexRuntimeCommandPath(),
+        ...(codexExternalAgentHome ? { externalAgentHome: codexExternalAgentHome } : {}),
+      });
+      return await codexAppServerManager.readAccount();
+    } catch (error) {
+      return sendNativeConversationApiError(reply, error);
+    }
+  });
+
+  server.post('/api/codex/account/login/chatgpt', async (_request, reply) => {
+    try {
+      await codexAppServerManager.ensureReady({
+        commandPath: currentCodexRuntimeCommandPath(),
+        ...(codexExternalAgentHome ? { externalAgentHome: codexExternalAgentHome } : {}),
+      });
+      return await codexAppServerManager.startChatGptLogin();
+    } catch (error) {
+      return sendNativeConversationApiError(reply, error);
+    }
+  });
+
+  server.post(
+    '/api/codex/account/login/:loginId/cancel',
+    async (
+      request: FastifyRequest<{
+        Params: { loginId: string };
+      }>,
+      reply,
+    ) => {
+      try {
+        await codexAppServerManager.ensureReady({
+          commandPath: currentCodexRuntimeCommandPath(),
+          ...(codexExternalAgentHome ? { externalAgentHome: codexExternalAgentHome } : {}),
+        });
+        await codexAppServerManager.cancelChatGptLogin({ loginId: request.params.loginId });
+        return { cancelled: true };
+      } catch (error) {
+        return sendNativeConversationApiError(reply, error);
+      }
+    },
+  );
+
   server.post(
     '/api/tasks/:taskId/conversations',
     async (
@@ -12450,6 +12495,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
         const selectedModel = capabilities.models.find((candidate) => candidate.model === modelName || candidate.id === modelName);
         if (!selectedModel) throw nativeApiError('ZEUS_CODEX_MODEL_UNAVAILABLE', `Configured Codex model is unavailable: ${modelName}`);
         if (selectedModel.available === false) throw nativeApiError('ZEUS_MODEL_NOT_READY', selectedModel.availabilityReason || '所选模型当前不可运行。');
+        if (selectedModel.agentKind !== 'pi') await assertCodexAccountReady();
         const requestedServiceTier = readServiceTierOverride(body);
         const serviceTier = normalizeServiceTierForCapability(requestedServiceTier, selectedModel);
         const selectedEffort = effort || selectedModel.defaultReasoningEffort || selectedModel.supportedReasoningEfforts[0] || '';
@@ -12923,6 +12969,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     const statusCode = code.endsWith('_NOT_FOUND')
       ? 404
       : code.includes('CONFLICT') ||
+          code.includes('LOGIN_REQUIRED') ||
           code.includes('CHOICE_REQUIRED') ||
           code.includes('READ_ONLY') ||
           code.includes('NOT_EDITABLE') ||
@@ -13639,6 +13686,15 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     const piCatalog = await modelConnections.listSelectableModels();
     const allowedPi = piCatalog.filter((model) => piSelection.allowedModelRefs.includes(model.id));
     const codexCapabilities = codexNativeEnabled ? await codexAppServerManager.ensureReady({ commandPath: currentCodexRuntimeCommandPath(), ...(codexExternalAgentHome ? { externalAgentHome: codexExternalAgentHome } : {}) }) : null;
+    const codexAccount = codexCapabilities
+      ? await codexAppServerManager.readAccount()
+      : {
+          generationId: 'codex-disabled',
+          requiresOpenaiAuth: false,
+          signedIn: false,
+          accountType: null,
+          planType: null,
+        };
     const codexModels = (codexCapabilities?.models ?? []).map((model) => ({
       id: model.id,
       model: model.model,
@@ -13685,7 +13741,14 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       projectId: project.id,
       preferredModel,
       models,
+      codexAccount,
     };
+  }
+
+  async function assertCodexAccountReady(): Promise<void> {
+    const account = await codexAppServerManager.readAccount({ refreshToken: true });
+    if (!account.requiresOpenaiAuth || account.signedIn) return;
+    throw nativeApiError('ZEUS_CODEX_LOGIN_REQUIRED', 'Zeus 专属 Codex 尚未登录。请先完成登录，再创建会话。');
   }
 
   function readServiceTierOverride(value: object): { present: false } | { present: true; value: string | null } {

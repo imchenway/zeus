@@ -2,6 +2,8 @@ import type {
   AgentCatalogSnapshot,
   ArchivedConversationChoicesSnapshot,
   CodexConversationCapabilities,
+  CodexAccountSnapshot,
+  CodexChatGptLogin,
   CodexTaskPushCapabilities,
   ConversationResourcePreview,
   NativeCollaborationMode,
@@ -1385,6 +1387,9 @@ export interface DashboardClient {
   startNativeConversation: (taskId: string, input: StartNativeConversationRequest) => Promise<NativeOperationAcceptance>;
   loadCodexTaskPushCapabilities: (projectId: string, taskId: string) => Promise<CodexTaskPushCapabilities>;
   loadCodexConversationCapabilities: (projectId: string) => Promise<CodexConversationCapabilities>;
+  loadCodexAccount: () => Promise<CodexAccountSnapshot>;
+  startCodexChatGptLogin: () => Promise<CodexChatGptLogin>;
+  cancelCodexChatGptLogin: (loginId: string) => Promise<void>;
   startTaskModelPush: (taskId: string, input: StartTaskModelPushRequest) => Promise<NativeOperationAcceptance>;
   loadTaskGitWorkspaces: (taskId: string) => Promise<TaskWorkspacesSnapshot>;
   loadTaskWorkspaceFileDiff: (
@@ -1731,6 +1736,11 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
     loadTaskConversationChoices: (taskId) => request<NativeConversationChoicesSnapshot>(`/api/tasks/${encodeURIComponent(taskId)}/conversation-choices`),
     loadCodexTaskPushCapabilities: (projectId, taskId) => request<CodexTaskPushCapabilities>(`/api/projects/${encodeURIComponent(projectId)}/codex-task-push-capabilities?taskId=${encodeURIComponent(taskId)}`),
     loadCodexConversationCapabilities: (projectId) => request<CodexConversationCapabilities>(`/api/projects/${encodeURIComponent(projectId)}/codex-conversation-capabilities`),
+    loadCodexAccount: () => request<CodexAccountSnapshot>('/api/codex/account'),
+    startCodexChatGptLogin: () => request<CodexChatGptLogin>('/api/codex/account/login/chatgpt', { method: 'POST' }),
+    cancelCodexChatGptLogin: async (loginId) => {
+      await request<{ cancelled: true }>(`/api/codex/account/login/${encodeURIComponent(loginId)}/cancel`, { method: 'POST' });
+    },
     startTaskModelPush: (taskId, input) => {
       const { idempotencyKey, ...body } = input;
       return request<NativeOperationAcceptance>(`/api/tasks/${encodeURIComponent(taskId)}/conversations`, {

@@ -362,6 +362,20 @@ export interface CodexTaskRepositoryCapability extends ProjectRepositoryRecord {
   suggestedBranchName: string;
 }
 
+export interface CodexAccountSnapshot {
+  generationId: string;
+  requiresOpenaiAuth: boolean;
+  signedIn: boolean;
+  accountType: string | null;
+  planType: string | null;
+}
+
+export interface CodexChatGptLogin {
+  generationId: string;
+  loginId: string;
+  authUrl: string;
+}
+
 export interface CodexTaskPushCapabilities {
   generationId: string;
   initializedAt: string;
@@ -370,6 +384,7 @@ export interface CodexTaskPushCapabilities {
   canonicalPrompt: string;
   preferredModel: string;
   models: CodexTaskPushModelCapability[];
+  codexAccount: CodexAccountSnapshot;
   repositories: CodexTaskRepositoryCapability[];
   directWorkspace: {
     path: string;
@@ -577,6 +592,7 @@ export interface CodexConversationCapabilities {
   projectId: string;
   preferredModel: string;
   models: CodexTaskPushModelCapability[];
+  codexAccount: CodexAccountSnapshot;
 }
 
 export interface NativeTurnSettingsSelection {

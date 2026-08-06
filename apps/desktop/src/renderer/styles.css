@@ -12261,6 +12261,25 @@ a {
   margin: 0;
   color: var(--zeus-product-muted);
 }
+.macos-ai-app .task-model-push-account {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--zeus-warning-line, var(--zeus-product-line-soft));
+  border-radius: 12px;
+  background: var(--zeus-product-panel-muted);
+}
+.macos-ai-app .task-model-push-account > span {
+  display: grid;
+  gap: 3px;
+}
+.macos-ai-app .task-model-push-account small,
+.macos-ai-app .task-model-push-account p {
+  margin: 0;
+  color: var(--zeus-product-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
 .macos-ai-app .task-model-push-error {
   margin: 0;
   color: var(--zeus-danger-text);
