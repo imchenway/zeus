@@ -66,6 +66,7 @@ export interface PrepareTaskWorktreeInput {
   existingRemoteRef?: string;
   worktreePath?: string;
   includeLocalChanges?: boolean;
+  ignoredPaths?: string[];
 }
 
 export interface PreparedTaskWorktree {
@@ -99,6 +100,7 @@ export interface CommitAndPushTaskWorkspaceInput {
   cwd: string;
   message: string;
   selectedPaths: string[];
+  ignoredPaths?: string[];
   remoteName?: string;
   remoteBranch?: string;
   push: boolean;
@@ -116,6 +118,7 @@ export interface CommitAndPushTaskWorkspaceResult {
 
 export interface PushTaskWorkspaceInput {
   cwd: string;
+  ignoredPaths?: string[];
   remoteName?: string;
   remoteBranch?: string;
 }
@@ -400,7 +403,7 @@ export async function prepareTaskWorktree(input: PrepareTaskWorktreeInput): Prom
     } else {
       await runGit(context.topLevel, ['worktree', 'add', '-b', branchName, worktreePath, sourceHeadSha]);
     }
-    const localChangesApplied = input.includeLocalChanges === true && !input.existingBranch ? await applyLocalChangesToTaskWorktree(context.topLevel, worktreePath) : false;
+    const localChangesApplied = input.includeLocalChanges === true && !input.existingBranch ? await applyLocalChangesToTaskWorktree(context.topLevel, worktreePath, input.ignoredPaths) : false;
     const headSha = await resolveCommit(worktreePath, 'HEAD');
     return {
       topLevel: context.topLevel,
@@ -422,15 +425,17 @@ export async function prepareTaskWorktree(input: PrepareTaskWorktreeInput): Prom
  * 与 Codex 托管 worktree 一致，把来源工作目录的 staged、unstaged、未跟踪文件和
  * `.worktreeinclude` 命中的忽略文件应用到新任务工作区。任一步失败都会由调用方回收。
  */
-async function applyLocalChangesToTaskWorktree(sourcePath: string, targetPath: string): Promise<boolean> {
-  const stagedPatch = await readGitDiffAllowChanges(sourcePath, ['diff', '--cached', '--binary', '--', '.']);
-  const unstagedPatch = await readGitDiffAllowChanges(sourcePath, ['diff', '--binary', '--', '.']);
-  const untracked = splitNullRecords((await runGit(sourcePath, ['ls-files', '--others', '--exclude-standard', '-z'])).stdout);
+async function applyLocalChangesToTaskWorktree(sourcePath: string, targetPath: string, ignoredPaths: string[] = []): Promise<boolean> {
+  const ignored = ignoredPaths.map((path) => requireSafeWorkspacePath(path));
+  const pathspec = ['.', ...ignored.flatMap((path) => [`:(exclude)${path}`, `:(exclude)${path}/**`])];
+  const stagedPatch = await readGitDiffAllowChanges(sourcePath, ['diff', '--cached', '--binary', '--', ...pathspec]);
+  const unstagedPatch = await readGitDiffAllowChanges(sourcePath, ['diff', '--binary', '--', ...pathspec]);
+  const untracked = splitNullRecords((await runGit(sourcePath, ['ls-files', '--others', '--exclude-standard', '-z', '--', ...pathspec])).stdout);
   const includeFile = join(sourcePath, '.worktreeinclude');
   const includeExists = await lstat(includeFile)
     .then((entry) => entry.isFile())
     .catch(() => false);
-  const includedIgnored = includeExists ? splitNullRecords((await runGit(sourcePath, ['ls-files', '--others', '--ignored', `--exclude-from=${includeFile}`, '-z'])).stdout) : [];
+  const includedIgnored = includeExists ? splitNullRecords((await runGit(sourcePath, ['ls-files', '--others', '--ignored', `--exclude-from=${includeFile}`, '-z', '--', ...pathspec])).stdout) : [];
   const copyPaths = Array.from(new Set([...untracked, ...includedIgnored]));
   const hasChanges = Boolean(stagedPatch || unstagedPatch || copyPaths.length > 0);
   if (!hasChanges) return false;
@@ -481,16 +486,19 @@ export async function cleanupPreparedTaskWorktree(input: { repositoryPath: strin
 }
 
 /** 汇总 IDEA 式提交窗口所需的 staged、unstaged、untracked 与冲突状态。 */
-export async function getTaskWorkspaceReview(cwd: string): Promise<TaskWorkspaceReview> {
+export async function getTaskWorkspaceReview(cwd: string, ignoredPaths: string[] = []): Promise<TaskWorkspaceReview> {
   const context = await getGitRepositoryContext(cwd);
   if (!context.isRepository) throw gitCoreError('ZEUS_GIT_REPOSITORY_REQUIRED', 'Task workspace is not a Git repository.');
+  const ignored = ignoredPaths.map((path) => requireSafeWorkspacePath(path));
+  const isIgnored = (path: string): boolean => ignored.some((ignoredPath) => path === ignoredPath || path.startsWith(`${ignoredPath}/`));
+  const diffPathspec = ['.', ...ignored.flatMap((path) => [`:(exclude)${path}`, `:(exclude)${path}/**`])];
   // Porcelain 的前两列包含有意义的空格，不能经过通用 splitLines 的 trim。
   const porcelain = (await runGit(cwd, ['status', '--porcelain=v1', '-z', '-uall'])).stdout;
-  const fileStatuses = parseGitPorcelainEntries(porcelain);
+  const fileStatuses = parseGitPorcelainEntries(porcelain).filter((file) => !isIgnored(file.path) && (!file.originalPath || !isIgnored(file.originalPath)));
   const upstream = (await readGitStdout(cwd, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'])) || null;
   const counts = upstream ? parseAheadBehind(await readGitStdout(cwd, ['rev-list', '--left-right', '--count', `${upstream}...HEAD`])) : { ahead: 0, behind: 0 };
-  const unstagedText = await readGitDiffAllowChanges(cwd, ['diff', '--binary', '--', '.']);
-  const stagedText = await readGitDiffAllowChanges(cwd, ['diff', '--cached', '--binary', '--', '.']);
+  const unstagedText = await readGitDiffAllowChanges(cwd, ['diff', '--binary', '--', ...diffPathspec]);
+  const stagedText = await readGitDiffAllowChanges(cwd, ['diff', '--cached', '--binary', '--', ...diffPathspec]);
   return {
     cwd: resolve(cwd),
     branch: context.branch,
@@ -574,10 +582,16 @@ export async function getRemoteBranchHead(cwd: string, remoteName: string, remot
  * 该函数不会选择文件、猜测提交说明或静默合并来源分支。
  */
 export async function commitAndPushTaskWorkspace(input: CommitAndPushTaskWorkspaceInput): Promise<CommitAndPushTaskWorkspaceResult> {
-  const review = await getTaskWorkspaceReview(input.cwd);
+  const review = await getTaskWorkspaceReview(input.cwd, input.ignoredPaths);
   if (review.branch === 'detached') throw gitCoreError('ZEUS_TASK_WORKSPACE_DETACHED', 'Task workspace is detached and cannot be committed.');
   if (review.conflictFiles.length > 0) throw gitCoreError('ZEUS_TASK_WORKSPACE_CONFLICTED', 'Resolve all conflicts before committing.');
+  const ignored = (input.ignoredPaths ?? []).map((path) => requireSafeWorkspacePath(path));
   const paths = input.selectedPaths.map((path) => requireSafeWorkspacePath(path));
+  if (paths.some((path) => ignored.some((ignoredPath) => path === ignoredPath || path.startsWith(`${ignoredPath}/`)))) {
+    throw gitCoreError('ZEUS_TASK_GIT_PATH_INVALID', 'Shared paths and nested repositories cannot be committed from their parent workspace.');
+  }
+  // 来源目录里的暂存改动可能先被带入 worktree；共享目录和子仓库必须从父仓 index 中明确退出。
+  if (ignored.length > 0) await runGit(input.cwd, ['reset', '-q', 'HEAD', '--', ...ignored]);
   if (paths.length > 0) await runGit(input.cwd, ['add', '-A', '--', ...paths]);
   const stagedNames = splitLines(await readGitStdout(input.cwd, ['diff', '--cached', '--name-only']));
   let committed = false;
@@ -605,7 +619,7 @@ export async function commitAndPushTaskWorkspace(input: CommitAndPushTaskWorkspa
  * 该函数不读取或写入 index，也不会把未提交和已暂存改动带入远端。
  */
 export async function pushTaskWorkspace(input: PushTaskWorkspaceInput): Promise<PushTaskWorkspaceResult> {
-  const review = await getTaskWorkspaceReview(input.cwd);
+  const review = await getTaskWorkspaceReview(input.cwd, input.ignoredPaths);
   if (review.branch === 'detached') throw gitCoreError('ZEUS_TASK_WORKSPACE_DETACHED', 'Task workspace is detached and cannot be pushed.');
   if (review.conflictFiles.length > 0) throw gitCoreError('ZEUS_TASK_WORKSPACE_CONFLICTED', 'Resolve all conflicts before pushing.');
 
@@ -627,8 +641,9 @@ export async function reclaimTaskWorktree(input: {
   remoteName: string;
   remoteBranch: string;
   sourceHeadSha: string;
+  ignoredPaths?: string[];
 }): Promise<{ headSha: string; remoteHeadSha: string | null; unchanged: boolean }> {
-  const review = await getTaskWorkspaceReview(input.worktreePath);
+  const review = await getTaskWorkspaceReview(input.worktreePath, input.ignoredPaths);
   if (!review.clean) throw gitCoreError('ZEUS_TASK_WORKSPACE_DIRTY', 'Task worktree still contains uncommitted changes.');
   const unchanged = review.headSha === input.sourceHeadSha;
   const remoteHeadSha = unchanged ? null : await readRemoteHead(input.worktreePath, input.remoteName, input.remoteBranch);
@@ -638,21 +653,21 @@ export async function reclaimTaskWorktree(input: {
   const context = await getGitRepositoryContext(input.repositoryPath);
   const registered = context.worktrees.find((entry) => canonicalFilesystemPath(entry.path) === canonicalFilesystemPath(input.worktreePath));
   if (!registered) throw gitCoreError('ZEUS_TASK_WORKTREE_NOT_REGISTERED', 'Task worktree is not registered in the project repository.');
-  await runGit(context.topLevel, ['worktree', 'remove', input.worktreePath]);
+  await runGit(context.topLevel, ['worktree', 'remove', ...(input.ignoredPaths?.length ? ['--force'] : []), input.worktreePath]);
   await rm(input.worktreePath, { recursive: true, force: true });
   return { headSha: review.headSha, remoteHeadSha, unchanged };
 }
 
 /** 目标分支已完成交付后回收干净的任务 worktree；任务分支不要求存在远端副本。 */
-export async function reclaimDeliveredTaskWorktree(input: { repositoryPath: string; worktreePath: string }): Promise<{
+export async function reclaimDeliveredTaskWorktree(input: { repositoryPath: string; worktreePath: string; ignoredPaths?: string[] }): Promise<{
   headSha: string;
 }> {
-  const review = await getTaskWorkspaceReview(input.worktreePath);
+  const review = await getTaskWorkspaceReview(input.worktreePath, input.ignoredPaths);
   if (!review.clean) throw gitCoreError('ZEUS_TASK_WORKSPACE_DIRTY', 'Task worktree still contains uncommitted changes.');
   const context = await getGitRepositoryContext(input.repositoryPath);
   const registered = context.worktrees.find((entry) => canonicalFilesystemPath(entry.path) === canonicalFilesystemPath(input.worktreePath));
   if (!registered) throw gitCoreError('ZEUS_TASK_WORKTREE_NOT_REGISTERED', 'Task worktree is not registered in the project repository.');
-  await runGit(context.topLevel, ['worktree', 'remove', input.worktreePath]);
+  await runGit(context.topLevel, ['worktree', 'remove', ...(input.ignoredPaths?.length ? ['--force'] : []), input.worktreePath]);
   await rm(input.worktreePath, { recursive: true, force: true });
   return { headSha: review.headSha };
 }
