@@ -6,7 +6,7 @@ import type { ConversationResource, NativePendingRequest, NativeSessionItemBuffe
 import type { ConversationFileLocation, ConversationOpenTarget } from '@zeus/shared';
 import { useThreadScrollController } from './useThreadScrollController.js';
 import { TurnChangeCard } from './TurnChanges.js';
-import { QueuedConversationMessages, visibleQueuedSubmissions } from './QueuedConversationMessages.js';
+import { visibleQueuedSubmissions } from './QueuedConversationMessages.js';
 import { latestReasoningItemsByTurn, reasoningSummaryStatus, SessionReasoningSummary } from './SessionReasoningSummary.js';
 import { AnsweredRequestHistory, isAnsweredUserInputRequest } from './AnsweredRequestHistory.js';
 
@@ -20,12 +20,6 @@ export interface ConversationTranscriptProps {
   onOpenResource?: (resource: ConversationResource, target: ConversationOpenTarget, location?: ConversationFileLocation) => void | Promise<void>;
   onReviewTurnChanges?: (changeSet: TurnChangeSet, fileId?: string) => void;
   onOperateTurnChangeSet?: (changeSet: TurnChangeSet, action: 'undo' | 'reapply') => Promise<TurnChangeSetOperationResult>;
-  onEditQueuedSubmission?: (submissionId: string, content: string) => void | Promise<void>;
-  onDeleteQueuedSubmission?: (submissionId: string) => void | Promise<void>;
-  onSendQueuedNow?: (submissionId: string) => void | Promise<void>;
-  onReorderQueue?: (orderedSubmissionIds: string[]) => void | Promise<void>;
-  onResumeQueue?: () => void | Promise<void>;
-  onRetryQueue?: () => void | Promise<void>;
 }
 
 export function ConversationTranscript(props: ConversationTranscriptProps) {
@@ -191,16 +185,6 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
               {props.language === 'zh-CN' ? '正在思考' : 'Thinking'}
             </p>
           ) : null}
-          <QueuedConversationMessages
-            state={props.state}
-            language={props.language}
-            onEdit={props.onEditQueuedSubmission}
-            onDelete={props.onDeleteQueuedSubmission}
-            onSendNow={props.onSendQueuedNow}
-            onReorder={props.onReorderQueue}
-            onResume={props.onResumeQueue}
-            onRetry={props.onRetryQueue}
-          />
           {queuedOptimisticItems.map((item) => (
             <ThreadItemView key={item.key} item={item} language={props.language} />
           ))}
