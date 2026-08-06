@@ -5103,6 +5103,18 @@ export class ConversationServerRequestRepository {
     return this.getById(id)!;
   }
 
+  /** 记录请求已由 Codex 的其他已授权客户端回答；Zeus 不持久化它看不到的答案正文。 */
+  resolveExternally(id: string, input: { source: 'codex_remote_control' | 'provider'; resolvedAt: string }): ZeusConversationServerRequestRecord {
+    const existing = this.getById(id);
+    if (!existing) throw new Error(`Conversation server request not found: ${id}`);
+    this.db.execute(`UPDATE conversation_server_requests SET status = 'resolved', response_json = ?, resolved_at = ? WHERE id = ? AND status = 'pending'`, [
+      JSON.stringify({ type: 'external_resolution', source: input.source }),
+      input.resolvedAt,
+      id,
+    ]);
+    return this.getById(id)!;
+  }
+
   fail(id: string, input: { error: unknown; resolvedAt: string }): ZeusConversationServerRequestRecord {
     const existing = this.getById(id);
     if (!existing) throw new Error(`Conversation server request not found: ${id}`);

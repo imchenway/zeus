@@ -91,6 +91,7 @@ import { acceptTaskModelPushPendingState, createTaskModelPushPendingState, failT
 import { TaskWorkspace } from './task/TaskWorkspace.js';
 import { LegacyChatImportSettings } from './settings/LegacyChatImportSettings.js';
 import { BrowserSettingsPane } from './settings/BrowserSettingsPane.js';
+import { CodexRemoteControlSettings } from './settings/CodexRemoteControlSettings.js';
 import { ModelConnectionsSettingsPane } from './settings/ModelConnectionsSettingsPane.js';
 import { ProjectModelsSettings } from './settings/ProjectModelsSettings.js';
 import { type TaskAttachmentRestoreTarget, type TaskAttachmentView, toPersistedTaskAttachment } from './task/taskAttachments.js';
@@ -315,6 +316,12 @@ type NativeConversationAppClient = SessionControllerClient &
     | 'assistTaskIntegrationConflict'
     | 'resolveTaskIntegrationConflict'
     | 'finalizeTaskIntegration'
+    | 'loadCodexRemoteControl'
+    | 'enableCodexRemoteControl'
+    | 'disableCodexRemoteControl'
+    | 'startCodexRemoteControlPairing'
+    | 'loadCodexRemoteControlPairingStatus'
+    | 'revokeCodexRemoteControlClient'
   >;
 type NativeConversationChoiceLoadState = 'empty' | 'loading' | 'ready' | 'error';
 
@@ -12594,6 +12601,7 @@ export function App(props: {
                         {settingsWorkspaceCopy.runtime.saveDefaultAdapter}
                       </button>
                     </NativeSettingsPane>
+                    <CodexRemoteControlSettings language={appShellSettings.appLanguage} client={props.nativeConversationClient ?? null} />
                     <LegacyChatImportSettings
                       language={appShellSettings.appLanguage}
                       snapshot={codexLegacyImportSnapshot}

@@ -36,6 +36,9 @@ import {
   buildAiRuntimePrompt,
   checkAiCliAdapter,
   type CodexAppServerManager,
+  type CodexRemoteControlClient,
+  type CodexRemoteControlPairing,
+  type CodexRemoteControlStatus,
   createAgentCapabilityCatalog,
   createAiRuntimeSessionManager,
   createCodexAppServerManager,
@@ -510,6 +513,16 @@ interface RuntimeStatusSnapshot {
     provider: 'node-pty' | 'child_process';
     pty: { available: boolean; reason: string };
   };
+}
+
+interface CodexRemoteControlSnapshot {
+  enabled: boolean;
+  status: CodexRemoteControlStatus;
+  clients: CodexRemoteControlClient[];
+}
+
+interface CodexRemoteControlPairingSnapshot extends CodexRemoteControlPairing {
+  claimed: boolean;
 }
 
 interface SecuritySecretsSnapshot {
@@ -1565,6 +1578,7 @@ const telegramNotificationSettingsKey = 'telegram.notificationSettings';
 const telegramSecuritySettingsKey = 'telegram.securitySettings';
 const runtimeSettingsKey = 'runtime.settings';
 const codeMapSettingsKey = 'codeMap.settings';
+const codexRemoteControlEnabledSettingKey = 'codex.remote_control.enabled';
 const projectConfigSettingsPrefix = 'project.config.';
 const defaultRuntimeSettings: RuntimeSettingsSnapshot = {
   defaultAdapterId: 'codex',
@@ -1727,6 +1741,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
   let telegramSecuritySettings: TelegramSecuritySettingsSnapshot = normalizeTelegramSecuritySettings(settings.getJson<TelegramSecuritySettingsSnapshot>(telegramSecuritySettingsKey), { allowedUserIds: options.telegramAllowedUserIds ?? [] });
   let runtimeSettings: RuntimeSettingsSnapshot = normalizeRuntimeSettings(settings.getJson<RuntimeSettingsSnapshot>(runtimeSettingsKey));
   let codeMapSettings: CodeMapSettingsSnapshot = normalizeCodeMapSettings(settings.getJson<CodeMapSettingsSnapshot>(codeMapSettingsKey)) ?? defaultCodeMapSettings;
+  let codexRemoteControlEnabled = settings.getJson<boolean>(codexRemoteControlEnabledSettingKey) === true;
   let memoryGraphCache: ProjectGraph | null = null;
   const persistedAppShellSettings = settings.getJson<AppShellSettingsSnapshot>(appShellSettingsKey);
   let appShellSettings: AppShellSettingsSnapshot = normalizeAppShellSettings(persistedAppShellSettings, localLogDirectory, localConfigPath);
@@ -1899,6 +1914,21 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     }
     if (cleanupErrors.length > 0) throw new AggregateError([factoryError, ...cleanupErrors], 'Zeus native coordinator creation and cleanup failed.');
     throw factoryError;
+  }
+  if (codexNativeEnabled && codexRemoteControlEnabled) {
+    void codexAppServerManager
+      .ensureReady({ commandPath: currentCodexRuntimeCommandPath(), ...(codexExternalAgentHome ? { externalAgentHome: codexExternalAgentHome } : {}), remoteControl: true })
+      .then(() => codexAppServerManager.enableRemoteControl())
+      .catch(async (error) => {
+        auditLogs.append({
+          actorType: 'system',
+          action: 'codex.remote_control.restore_failed',
+          resourceType: 'settings',
+          payload: { error: error instanceof Error ? { name: error.name, message: error.message } : { message: String(error) } },
+          createdAt: now().toISOString(),
+        });
+        await db.save();
+      });
   }
   if (codexNativeEnabled) {
     try {
@@ -8428,6 +8458,84 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       terminal: runtimeTerminalStatus,
     }),
   );
+
+  async function ensureCodexRemoteControlReady(): Promise<void> {
+    await codexAppServerManager.ensureReady({
+      commandPath: currentCodexRuntimeCommandPath(),
+      ...(codexExternalAgentHome ? { externalAgentHome: codexExternalAgentHome } : {}),
+      ...(codexRemoteControlEnabled ? { remoteControl: true } : {}),
+    });
+  }
+
+  async function buildCodexRemoteControlSnapshot(status?: CodexRemoteControlStatus): Promise<CodexRemoteControlSnapshot> {
+    await ensureCodexRemoteControlReady();
+    const currentStatus = status ?? (await codexAppServerManager.readRemoteControlStatus());
+    const clients = currentStatus.environmentId ? (await codexAppServerManager.listRemoteControlClients({ environmentId: currentStatus.environmentId, limit: 100, order: 'desc' })).data : [];
+    return { enabled: codexRemoteControlEnabled, status: currentStatus, clients };
+  }
+
+  server.get('/api/codex/remote-control', async (): Promise<CodexRemoteControlSnapshot> => buildCodexRemoteControlSnapshot());
+
+  server.post('/api/codex/remote-control/enable', async (): Promise<CodexRemoteControlSnapshot> => {
+    await ensureCodexRemoteControlReady();
+    const status = await codexAppServerManager.enableRemoteControl();
+    codexRemoteControlEnabled = true;
+    settings.setJson(codexRemoteControlEnabledSettingKey, true);
+    auditLogs.append({
+      actorType: 'user',
+      action: 'codex.remote_control.enabled',
+      resourceType: 'settings',
+      ...(status.environmentId ? { resourceId: status.environmentId } : {}),
+      payload: { status: status.status, serverName: status.serverName },
+      createdAt: now().toISOString(),
+    });
+    await db.save();
+    return buildCodexRemoteControlSnapshot(status);
+  });
+
+  server.post('/api/codex/remote-control/disable', async (): Promise<CodexRemoteControlSnapshot> => {
+    await ensureCodexRemoteControlReady();
+    const status = await codexAppServerManager.disableRemoteControl();
+    codexRemoteControlEnabled = false;
+    settings.setJson(codexRemoteControlEnabledSettingKey, false);
+    auditLogs.append({
+      actorType: 'user',
+      action: 'codex.remote_control.disabled',
+      resourceType: 'settings',
+      ...(status.environmentId ? { resourceId: status.environmentId } : {}),
+      payload: { status: status.status, serverName: status.serverName },
+      createdAt: now().toISOString(),
+    });
+    await db.save();
+    return buildCodexRemoteControlSnapshot(status);
+  });
+
+  server.post('/api/codex/remote-control/pairing', async (_request, reply): Promise<CodexRemoteControlPairingSnapshot | unknown> => {
+    await ensureCodexRemoteControlReady();
+    const status = await codexAppServerManager.readRemoteControlStatus();
+    if (status.status === 'disabled') {
+      return reply.code(409).send({ error: 'ZEUS_CODEX_REMOTE_CONTROL_DISABLED', message: 'Enable Codex Remote Control before pairing a device.' });
+    }
+    const pairing = await codexAppServerManager.startRemoteControlPairing({ manualCode: true });
+    return { ...pairing, claimed: false };
+  });
+
+  server.post('/api/codex/remote-control/pairing/status', async (request: FastifyRequest<{ Body: { pairingCode?: string | null; manualPairingCode?: string | null } }>, reply): Promise<{ claimed: boolean } | unknown> => {
+    const pairingCode = typeof request.body?.pairingCode === 'string' ? request.body.pairingCode : null;
+    const manualPairingCode = typeof request.body?.manualPairingCode === 'string' ? request.body.manualPairingCode : null;
+    if (!pairingCode && !manualPairingCode) return reply.code(400).send({ error: 'ZEUS_CODEX_REMOTE_PAIRING_CODE_REQUIRED', message: 'A pairing code is required.' });
+    await ensureCodexRemoteControlReady();
+    return codexAppServerManager.readRemoteControlPairingStatus(pairingCode ? { pairingCode } : { manualPairingCode });
+  });
+
+  server.delete('/api/codex/remote-control/clients/:clientId', async (request: FastifyRequest<{ Params: { clientId: string }; Querystring: { environmentId?: string } }>, reply): Promise<CodexRemoteControlSnapshot | unknown> => {
+    const environmentId = request.query.environmentId?.trim();
+    const clientId = request.params.clientId?.trim();
+    if (!environmentId || !clientId) return reply.code(400).send({ error: 'ZEUS_CODEX_REMOTE_CLIENT_ID_REQUIRED', message: 'Environment and client identifiers are required.' });
+    await ensureCodexRemoteControlReady();
+    await codexAppServerManager.revokeRemoteControlClient({ environmentId, clientId });
+    return buildCodexRemoteControlSnapshot();
+  });
 
   server.get(
     '/api/security/secrets',
