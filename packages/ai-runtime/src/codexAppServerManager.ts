@@ -375,9 +375,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
       PATH: expandCliSearchPath(),
       ...(externalAgentHome === null ? {} : { ZEUS_CODEX_EXTERNAL_AGENT_HOME: externalAgentHome }),
     };
-    const spawned = remoteControlTransport
-      ? spawnRemoteControlCodexAppServer(command, { env })
-      : spawn(command, ['app-server', ...(options.appServerFlags ?? []), '--listen', 'stdio://'], { env });
+    const spawned = remoteControlTransport ? spawnRemoteControlCodexAppServer(command, { env }) : spawn(command, ['app-server', ...(options.appServerFlags ?? []), '--listen', 'stdio://'], { env });
     trackProcessExit(spawned);
     child = spawned;
     spawned.stdout.on('data', (chunk) => {
@@ -1111,10 +1109,7 @@ async function startRemoteControlDaemon(command: string, env: NodeJS.ProcessEnv,
       clearTimeout(timeout);
       if (code !== 0) {
         reject(
-          managerError(
-            'ZEUS_CODEX_REMOTE_CONTROL_START_FAILED',
-            `官方 Codex Remote Control 守护进程启动失败（${String(code ?? signal ?? 'unknown')}）：${stderr.trim() || '没有返回诊断信息'}。请确认 Zeus 使用官方独立安装版 Codex CLI。`,
-          ),
+          managerError('ZEUS_CODEX_REMOTE_CONTROL_START_FAILED', `官方 Codex Remote Control 守护进程启动失败（${String(code ?? signal ?? 'unknown')}）：${stderr.trim() || '没有返回诊断信息'}。请确认 Zeus 使用官方独立安装版 Codex CLI。`),
         );
         return;
       }
