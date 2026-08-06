@@ -10992,3 +10992,84 @@
     outline-offset: 2px;
   }
 }
+
+/* ZEUS-0101：统一选项行对齐，并让操作区保持在自由输入框下方。 */
+.session-codex-parity-v1 .session-rui-request .session-question-options {
+  column-gap: 8px;
+  grid-template-columns: 32px fit-content(15rem) minmax(0, 1fr) auto;
+  row-gap: 6px;
+}
+
+.session-codex-parity-v1 .session-rui-request .session-question-option {
+  border-radius: 14px;
+  column-gap: 8px;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
+  transition:
+    background-color 120ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 120ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.session-codex-parity-v1 .session-rui-request .session-question-option:active:not(:disabled) {
+  transform: scale(0.995);
+}
+
+.session-codex-parity-v1 .session-rui-request .session-question-option-copy {
+  flex-wrap: nowrap;
+  gap: 8px;
+}
+
+.session-codex-parity-v1 .session-rui-request .session-question-option-description {
+  align-self: center;
+  color: var(--session-text-muted);
+  font-size: 12px;
+  line-height: 18px;
+  min-inline-size: 0;
+}
+
+.session-codex-parity-v1 .session-rui-request .session-question-other,
+.session-codex-parity-v1 .session-rui-request .session-question-freeform {
+  grid-column: 1 / -1;
+}
+
+.session-codex-parity-v1 .session-rui-request .session-question-other:not([data-selected='true']) {
+  cursor: text;
+}
+
+.session-codex-parity-v1 .session-rui-request .session-question-other > :where(input, textarea)[readonly] {
+  background: transparent;
+  border-color: transparent;
+  color: var(--session-text-muted);
+  cursor: text;
+  opacity: 1;
+}
+
+.session-codex-parity-v1 .session-rui-request footer {
+  padding: 10px 6px 0;
+}
+
+.session-codex-parity-v1 .session-rui-request footer button {
+  transition:
+    background-color 120ms cubic-bezier(0.22, 1, 0.36, 1),
+    border-color 120ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 120ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.session-codex-parity-v1 .session-rui-request footer button:hover:not(:disabled) {
+  background: var(--session-control-hover);
+}
+
+.session-codex-parity-v1 .session-rui-request footer button:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.session-codex-parity-v1 .session-rui-request footer button[type='submit']:hover:not(:disabled) {
+  background: color-mix(in oklab, var(--session-text) 88%, var(--session-canvas));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .session-codex-parity-v1 .session-rui-request .session-question-option,
+  .session-codex-parity-v1 .session-rui-request footer button {
+    transition: none;
+  }
+}
