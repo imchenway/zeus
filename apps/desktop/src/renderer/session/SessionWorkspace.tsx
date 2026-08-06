@@ -7,6 +7,7 @@ import type { ConversationFileLocation, ConversationOpenTarget, TurnChangeFile, 
 import { openConversationResourceInMain } from '../appShellBridge.js';
 import { canSteerActiveTurn, type ComposerRuntimeSettings, ConversationComposer, resolveComposerKeyIntent } from './ConversationComposer.js';
 import { ConversationTranscript } from './ConversationTranscript.js';
+import { QueuedConversationMessages } from './QueuedConversationMessages.js';
 import { SessionPlanProgress } from './SessionActivity.js';
 import { LegacyConversationBanner } from './LegacyConversationBanner.js';
 import { PendingRequestSurface, requestKind } from './PendingRequestSurface.js';
@@ -1411,6 +1412,22 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     );
   }
 
+  function renderQueuedConversationMessages(): ReactNode {
+    if (!props.state) return null;
+    return (
+      <QueuedConversationMessages
+        state={props.state}
+        language={props.language}
+        onEdit={actions.onEditQueuedSubmission}
+        onDelete={actions.onDeleteQueuedSubmission}
+        onSendNow={actions.onSendQueuedNow}
+        onReorder={actions.onReorderQueue}
+        onResume={actions.onResumeQueue}
+        onRetry={actions.onRestoreArchivedConversation}
+      />
+    );
+  }
+
   return (
     <section
       className="session-workspace-root"
@@ -1567,12 +1584,6 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                     });
                   }}
                   onOperateTurnChangeSet={actions.onOperateTurnChangeSet ? operateTurnChangeSet : undefined}
-                  onEditQueuedSubmission={actions.onEditQueuedSubmission}
-                  onDeleteQueuedSubmission={actions.onDeleteQueuedSubmission}
-                  onSendQueuedNow={actions.onSendQueuedNow}
-                  onReorderQueue={actions.onReorderQueue}
-                  onResumeQueue={actions.onResumeQueue}
-                  onRetryQueue={actions.onRestoreArchivedConversation}
                 />
                 {props.suppressComposer || !dockedPlan ? null : <SessionPlanProgress plan={dockedPlan} language={props.language} />}
                 {props.suppressComposer ? null : blockingPendingRequest ? (
@@ -1588,6 +1599,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                       onRespond={(_requestId, response) => respond(blockingPendingRequest, response)}
                       onSnooze={actions.onSnoozeRequest ? () => actions.onSnoozeRequest?.(blockingPendingRequest.id) : undefined}
                     />
+                    {renderQueuedConversationMessages()}
                   </section>
                 ) : blockingPlanImplementationRequest ? (
                   <section className="session-interaction-dock" aria-label={props.language === 'zh-CN' ? '待处理交互' : 'Pending interaction'}>
@@ -1600,6 +1612,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                       error={requestErrors[blockingPlanImplementationRequest.id]}
                       onRespond={(_requestId, response) => respondToPlanImplementationRequest(blockingPlanImplementationRequest, response)}
                     />
+                    {renderQueuedConversationMessages()}
                   </section>
                 ) : freshStartRequired ? (
                   recoveryDecisionPending ? null : owner ? (
@@ -1627,7 +1640,10 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                     <UnsentConversationContent language={props.language} submissions={unsentDraft.submissions} onRecover={() => setStartFreshOpen(true)} />
                   ) : null
                 ) : (
-                  renderConversationComposer()
+                  <>
+                    {renderQueuedConversationMessages()}
+                    {renderConversationComposer()}
+                  </>
                 )}
                 {interruptArmed ? (
                   <p className="session-interrupt-confirm" role="status">

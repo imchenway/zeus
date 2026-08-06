@@ -16,15 +16,25 @@ export interface QueuedConversationMessagesProps {
 
 const labels = {
   'zh-CN': {
-    region: '排队中的消息',
-    queued: '排队中',
-    paused: '排队中 · 已暂停',
+    region: '等待发送的后续消息',
+    heading: (count: number) => `后续消息（${count}）`,
+    active: '当前回复结束后按顺序自动发送。',
+    dispatching: '正在发送第一条后续消息。',
+    waitingUserInput: '完成上方选择后按顺序自动发送。',
+    waitingApproval: '完成上方审批后按顺序自动发送。',
+    waitingCapacity: '等待其他会话完成后按顺序自动发送。',
+    interrupted: '当前回复已中断，后续消息已暂停。',
+    transportUnavailable: '连接恢复后继续处理后续消息。',
+    providerArchived: '原会话已归档，恢复后由你确认发送。',
+    recoveryRequired: '会话需要恢复，这些消息不会自动重发。',
+    confirmationRequired: '这些消息需要你确认后再发送。',
     edit: '编辑',
     editLabel: '编辑队列消息',
     save: '保存',
     cancel: '取消',
     remove: '删除',
-    sendNow: '立即发送',
+    steer: '引导',
+    steerHelp: '补充给当前回复，不中断当前执行',
     moveUp: '上移',
     moveDown: '下移',
     resume: '继续发送',
@@ -35,15 +45,25 @@ const labels = {
     reordered: (position: number, total: number) => `队列消息已移到第 ${position} 项，共 ${total} 项`,
   },
   'en-US': {
-    region: 'Queued messages',
-    queued: 'Queued',
-    paused: 'Queued · Paused',
+    region: 'Follow-up messages waiting to send',
+    heading: (count: number) => `Follow-ups (${count})`,
+    active: 'Sends automatically in order after the current response.',
+    dispatching: 'Sending the first follow-up now.',
+    waitingUserInput: 'Sends automatically in order after you answer above.',
+    waitingApproval: 'Sends automatically in order after you approve above.',
+    waitingCapacity: 'Waiting for another conversation to finish, then sends automatically.',
+    interrupted: 'The current response was interrupted. Follow-ups are paused.',
+    transportUnavailable: 'Follow-ups continue after the connection recovers.',
+    providerArchived: 'The original conversation is archived. Restore it to confirm sending.',
+    recoveryRequired: 'The conversation needs recovery. These messages will not resend automatically.',
+    confirmationRequired: 'These messages need your confirmation before sending.',
     edit: 'Edit',
     editLabel: 'Edit queued message',
     save: 'Save',
     cancel: 'Cancel',
     remove: 'Delete',
-    sendNow: 'Send now',
+    steer: 'Steer',
+    steerHelp: 'Add to the current response without interrupting it',
     moveUp: 'Move up',
     moveDown: 'Move down',
     resume: 'Resume sending',
@@ -68,11 +88,9 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
   const writable =
     !props.state.error?.recoveryRequired &&
     props.state.transportState === 'ready' &&
-    props.state.conversationState !== 'legacy_readonly' &&
-    props.state.conversationState !== 'waiting_approval' &&
-    props.state.conversationState !== 'waiting_user_input';
+    props.state.conversationState !== 'legacy_readonly';
   const active = props.state.conversationState === 'active_prework' || props.state.conversationState === 'active_final_answer';
-  const paused = props.state.queue?.state.type === 'paused';
+  const queueExplanation = describeQueueState(props.state, queue, copy);
 
   useEffect(() => {
     if (editingId && !queue.some((submission) => submission.id === editingId)) {
@@ -132,16 +150,16 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
       <output className="session-sr-only" aria-live="polite" aria-atomic="true">
         {announcement}
       </output>
+      <header className="session-queued-messages-header">
+        <strong>{copy.heading(queue.length)}</strong>
+        <span role="status" aria-live="polite">
+          {queueExplanation}
+        </span>
+      </header>
       <ol>
         {queue.map((submission, index) => (
           <li key={submission.id}>
-            <article className="session-thread-item session-thread-item-user session-queued-message" data-queue-status={submission.status}>
-              <header className="session-thread-item-meta">
-                <span className="session-queued-message-status">
-                  <span aria-hidden="true" />
-                  {paused || submission.status === 'paused' ? copy.paused : copy.queued}
-                </span>
-              </header>
+            <article className="session-queued-message" data-queue-status={submission.status}>
               {editingId === submission.id ? (
                 <form className="session-queued-message-editor" onSubmit={(event) => void saveEdit(event, submission)}>
                   <label className="session-sr-only" htmlFor={`queued-message-${submission.id}`}>
@@ -167,7 +185,7 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
                   </footer>
                 </form>
               ) : (
-                <>
+                <div className="session-queued-message-content">
                   {submission.content.trim() ? <SafeMarkdown text={submission.content} language={props.language} /> : <p className="session-queued-message-empty">{copy.attachmentOnly}</p>}
                   {submission.attachments?.length ? (
                     <ul className="session-queued-message-attachments" aria-label={copy.attachments}>
@@ -176,7 +194,7 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
                       ))}
                     </ul>
                   ) : null}
-                </>
+                </div>
               )}
               {editingId === submission.id ? null : (
                 <footer className="session-queued-message-actions">
@@ -187,6 +205,18 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
                   ) : index === 0 && props.state.queue?.state.type === 'paused' && props.state.queue.state.reason === 'provider_archived' ? (
                     <button type="button" onClick={() => void props.onRetry?.()} disabled={!writable || busy || !props.onRetry}>
                       {copy.retry}
+                    </button>
+                  ) : null}
+                  {active && submission.status === 'queued' ? (
+                    <button
+                      type="button"
+                      className="session-queued-message-steer"
+                      title={copy.steerHelp}
+                      aria-label={`${copy.steer}. ${copy.steerHelp}`}
+                      onClick={() => void props.onSendNow?.(submission.id)}
+                      disabled={!writable || busy || !props.onSendNow}
+                    >
+                      {copy.steer}
                     </button>
                   ) : null}
                   <button
@@ -203,9 +233,6 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
                   <button type="button" onClick={() => void props.onDelete?.(submission.id)} disabled={!writable || busy || !props.onDelete}>
                     {copy.remove}
                   </button>
-                  <button type="button" onClick={() => void props.onSendNow?.(submission.id)} disabled={!active || !writable || busy || !props.onSendNow || submission.status !== 'queued'}>
-                    {copy.sendNow}
-                  </button>
                   <button type="button" onClick={() => reorder(submission, -1)} disabled={!writable || busy || !props.onReorder || index === 0}>
                     {copy.moveUp}
                   </button>
@@ -220,6 +247,23 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
       </ol>
     </section>
   );
+}
+
+function describeQueueState(state: NativeSessionState, queue: readonly NativeQueuedSubmission[], copy: (typeof labels)[SessionUiLanguage]): string {
+  if (state.conversationState === 'waiting_user_input') return copy.waitingUserInput;
+  if (state.conversationState === 'waiting_approval') return copy.waitingApproval;
+  const runState = state.queue?.state;
+  if (!runState) return copy.waitingCapacity;
+  if (runState.type === 'active') return copy.active;
+  if (runState.type === 'dispatching') return copy.dispatching;
+  if (runState.type === 'waiting') return runState.reason === 'user_input' ? copy.waitingUserInput : copy.waitingApproval;
+  if (runState.type === 'paused') {
+    if (runState.reason === 'interrupted') return copy.interrupted;
+    if (runState.reason === 'transport_unavailable') return copy.transportUnavailable;
+    if (runState.reason === 'provider_archived') return copy.providerArchived;
+    return copy.recoveryRequired;
+  }
+  return queue.every((submission) => submission.pausedReason === 'user_confirmation') ? copy.confirmationRequired : copy.waitingCapacity;
 }
 
 export function visibleQueuedSubmissions(queue: NativeQueueSnapshot | null): NativeQueuedSubmission[] {
