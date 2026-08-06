@@ -132,7 +132,7 @@ export function createPiSdkRuntimeDriver(options: CreatePiSdkRuntimeDriverOption
       agentDir: options.agentDirectory,
       modelRuntime: runtime,
       ...(model ? { model } : {}),
-      noTools: 'all',
+      noTools: 'builtin',
       customTools: createZeusTools(() => entryRef, options.toolBroker),
       resourceLoader,
       sessionManager,

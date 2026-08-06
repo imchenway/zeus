@@ -1,7 +1,7 @@
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import websocketPlugin from '@fastify/websocket';
 import { createHash, randomUUID } from 'node:crypto';
-import { accessSync, appendFileSync, constants as fsConstants, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { accessSync, appendFileSync, constants as fsConstants, cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, parse, relative, resolve, sep } from 'node:path';
 import { getNextTaskStatus, type TaskStatus } from '@zeus/task-core';
 import {
@@ -154,6 +154,7 @@ import { changeSetErrorStatus, createTurnChangeSetService, errorCode as turnChan
 import { createCommandCenter } from './commandCenter.js';
 import { migrateLegacyCodexThreads } from './legacyCodexThreadMigration.js';
 import { type CodexLegacyImportService, createCodexLegacyImportService } from './codexLegacyImportService.js';
+import { createCodexConfigImportService } from './codexConfigImportService.js';
 import { resolveWritableNonCodexLegacyConversation, type WritableNonCodexLegacyConversationContext } from './nonCodexLegacyRuntime.js';
 import {
   createTelegramBotMessageClient,
@@ -336,6 +337,8 @@ export interface CreateLocalServerOptions {
   codexNativeEnabled?: boolean;
   codexRuntimeCommandPath?: string | (() => string);
   codexLegacyImportRoot?: string;
+  codexHome?: string;
+  codexConfigImportSourceRoot?: string;
   releaseUpdateManifestUrl?: string;
   allowUntrustedReleaseUpdateTest?: boolean;
   /** Electron Main 管理的任务附件目录；只允许服务端从任务记录引用。 */
@@ -1592,6 +1595,31 @@ const defaultCodeMapSettings: CodeMapSettingsSnapshot = {
   moduleFlowManualNotes: '',
 };
 
+function migrateRuntimeDirectory(legacyPath: string, targetPath: string): string {
+  if (!existsSync(targetPath) && existsSync(legacyPath)) {
+    mkdirSync(dirname(targetPath), { recursive: true, mode: 0o700 });
+    // 旧目录保留作回退依据，复制成功后新运行内核只写入收敛后的目录。
+    cpSync(legacyPath, targetPath, { recursive: true, errorOnExist: true, force: false });
+  }
+  mkdirSync(targetPath, { recursive: true, mode: 0o700 });
+  return realpathSync(targetPath);
+}
+
+function ensurePiGlobalAgentProjection(codexHome: string | undefined, piAgentDirectory: string): void {
+  if (!codexHome) return;
+  mkdirSync(codexHome, { recursive: true, mode: 0o700 });
+  const canonicalCodexHome = realpathSync(codexHome);
+  const projectionPath = join(piAgentDirectory, 'AGENTS.md');
+  try {
+    lstatSync(projectionPath);
+    return;
+  } catch (error) {
+    if (!(error instanceof Error && 'code' in error && (error as NodeJS.ErrnoException).code === 'ENOENT')) throw error;
+  }
+  // Pi 只复用纯文本全局指令；Codex 插件、技能和配置格式不在这里伪装成 Pi 原生资源。
+  symlinkSync(relative(piAgentDirectory, join(canonicalCodexHome, 'AGENTS.md')), projectionPath);
+}
+
 function prepareTaskAttachmentRoot(path: string | undefined): string | undefined {
   if (!path) return undefined;
   mkdirSync(path, { recursive: true, mode: 0o700 });
@@ -1751,6 +1779,9 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     listProjectIds: () => projects.list().map((project) => project.id),
     now: () => now().toISOString(),
   });
+  const piAgentDirectory = migrateRuntimeDirectory(join(dirname(options.dbPath), 'pi-agent'), join(dirname(options.dbPath), 'agent-runtimes', 'pi', 'config'));
+  const piSessionDirectory = migrateRuntimeDirectory(join(dirname(options.dbPath), 'pi-sessions'), join(dirname(options.dbPath), 'agent-runtimes', 'pi', 'sessions'));
+  ensurePiGlobalAgentProjection(options.codexHome, piAgentDirectory);
   const piNativeCoordinator = createPiNativeConversationCoordinator({
     db,
     conversations,
@@ -1759,8 +1790,8 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     submissions: conversationSubmissions,
     requests: conversationRequests,
     modelConnections,
-    agentDirectory: join(dirname(options.dbPath), 'pi-agent'),
-    sessionDirectory: join(dirname(options.dbPath), 'pi-sessions'),
+    agentDirectory: piAgentDirectory,
+    sessionDirectory: piSessionDirectory,
     now: () => now().toISOString(),
     publish: publishNativeConversationEvent,
   });
@@ -1793,6 +1824,21 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
         return realpathSync(options.codexLegacyImportRoot!);
       })()
     : undefined;
+  const codexHome = options.codexHome
+    ? (() => {
+        mkdirSync(options.codexHome!, { recursive: true, mode: 0o700 });
+        return realpathSync(options.codexHome!);
+      })()
+    : undefined;
+  const codexConfigImportService =
+    codexHome && options.codexConfigImportSourceRoot
+      ? createCodexConfigImportService({
+          sourceRoot: options.codexConfigImportSourceRoot,
+          targetRoot: codexHome,
+          backupRoot: join(dirname(options.dbPath), 'imports', 'codex'),
+          now,
+        })
+      : undefined;
   const taskAttachmentRoot = prepareTaskAttachmentRoot(options.taskAttachmentRoot);
   const browserAttachmentRoot = prepareTaskAttachmentRoot(options.browserAttachmentRoot);
   const conversationAttachmentRoot = prepareTaskAttachmentRoot(options.conversationAttachmentRoot);
@@ -2568,6 +2614,42 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       };
     } catch (error) {
       return sendCodexLegacyImportError(reply, error);
+    }
+  });
+
+  server.get('/api/codex-config/import', async (_request, reply) => {
+    if (!codexConfigImportService) {
+      return reply.code(503).send({ error: 'ZEUS_CODEX_CONFIG_IMPORT_UNAVAILABLE', message: 'Codex configuration import is unavailable.' });
+    }
+    try {
+      return await codexConfigImportService.inspect();
+    } catch (error) {
+      return reply.code(500).send({ error: 'ZEUS_CODEX_CONFIG_IMPORT_FAILED', message: error instanceof Error ? error.message : 'Codex configuration inspection failed.' });
+    }
+  });
+
+  server.post('/api/codex-config/import', async (_request, reply) => {
+    if (!codexConfigImportService) {
+      return reply.code(503).send({ error: 'ZEUS_CODEX_CONFIG_IMPORT_UNAVAILABLE', message: 'Codex configuration import is unavailable.' });
+    }
+    try {
+      const result = await codexConfigImportService.import();
+      auditLogs.append({
+        actorType: 'user',
+        action: 'settings.codex_config.imported',
+        resourceType: 'settings',
+        payload: {
+          imported: result.imported,
+          skipped: result.skipped.map((entry) => ({ path: entry.path, reason: entry.reason })),
+          backupCreated: result.backupRoot !== null,
+          restartRequired: result.restartRequired,
+        },
+        createdAt: result.importedAt,
+      });
+      await db.save();
+      return result;
+    } catch (error) {
+      return reply.code(500).send({ error: 'ZEUS_CODEX_CONFIG_IMPORT_FAILED', message: error instanceof Error ? error.message : 'Codex configuration import failed.' });
     }
   });
 

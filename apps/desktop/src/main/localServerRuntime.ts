@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
+import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { createCodexRuntimeGenerationManager } from '@zeus/ai-runtime';
 import { type BrowserAutomationPort, hasCodexFinalizationOwnershipClaim, type RunningZeusLocalServer, startZeusLocalServer } from '@zeus/local-server';
@@ -58,6 +59,8 @@ export interface StartDesktopLocalServerOptions {
   telegramAllowedUserIds?: number[];
   codexNativeEnabled?: boolean;
   codexLegacyImportRoot?: string;
+  codexHome?: string;
+  codexConfigImportSourceRoot?: string;
   releaseUpdateManifestUrl?: string;
   allowUntrustedReleaseUpdateTest?: boolean;
   taskAttachmentRoot?: string;
@@ -396,6 +399,8 @@ export async function startOwnedDesktopLocalServer(options: StartDesktopLocalSer
       codexNativeEnabled: options.codexNativeEnabled ?? true,
       codexRuntimeCommandPath: 'codex',
       codexLegacyImportRoot: options.codexLegacyImportRoot,
+      codexHome: options.codexHome,
+      codexConfigImportSourceRoot: options.codexConfigImportSourceRoot,
       releaseUpdateManifestUrl: options.releaseUpdateManifestUrl,
       allowUntrustedReleaseUpdateTest: options.allowUntrustedReleaseUpdateTest,
       taskAttachmentRoot: options.taskAttachmentRoot,
@@ -540,6 +545,8 @@ async function connectOrLaunchExecutionHost(options: StartDesktopLocalServerOpti
     projectRoot: options.projectRoot,
     codexNativeEnabled: options.codexNativeEnabled ?? true,
     codexLegacyImportRoot: options.codexLegacyImportRoot ?? join(options.userDataPath, 'codex-legacy-import'),
+    codexHome: options.codexHome ?? join(options.userDataPath, 'agent-runtimes', 'codex'),
+    codexConfigImportSourceRoot: options.codexConfigImportSourceRoot ?? join(homedir(), '.codex'),
     releaseUpdateManifestUrl: options.releaseUpdateManifestUrl,
     allowUntrustedReleaseUpdateTest: options.allowUntrustedReleaseUpdateTest,
     taskAttachmentRoot: options.taskAttachmentRoot ?? join(options.userDataPath, 'task-attachments'),
@@ -558,6 +565,7 @@ async function connectOrLaunchExecutionHost(options: StartDesktopLocalServerOpti
       ...process.env,
       ELECTRON_RUN_AS_NODE: '1',
       ZEUS_EXECUTION_HOST_BOOTSTRAP_PATH: bootstrapPath,
+      CODEX_HOME: options.codexHome ?? join(options.userDataPath, 'agent-runtimes', 'codex'),
       ...(options.telegramToken ? { ZEUS_TELEGRAM_BOT_TOKEN: options.telegramToken } : {}),
     },
   });
