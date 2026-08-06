@@ -90,6 +90,7 @@ import {
 import { acceptTaskModelPushPendingState, createTaskModelPushPendingState, failTaskModelPushPendingState, retryTaskModelPushPendingState, type TaskModelPushPendingState } from './task/TaskModelPushPendingWorkspace.js';
 import { TaskWorkspace } from './task/TaskWorkspace.js';
 import { LegacyChatImportSettings } from './settings/LegacyChatImportSettings.js';
+import { CodexConfigImportSettings } from './settings/CodexConfigImportSettings.js';
 import { BrowserSettingsPane } from './settings/BrowserSettingsPane.js';
 import { CodexRemoteControlSettings } from './settings/CodexRemoteControlSettings.js';
 import { ModelConnectionsSettingsPane } from './settings/ModelConnectionsSettingsPane.js';
@@ -123,6 +124,8 @@ import {
   type AiRuntimeTerminalSnapshot,
   type AppShellSettings,
   type CodeMapSettings,
+  type CodexConfigImportPreview,
+  type CodexConfigImportResult,
   type CodexLegacyImportResult,
   type CodexLegacyImportSnapshot,
   createEmptyDashboardSnapshot,
@@ -6390,6 +6393,8 @@ export function App(props: {
   onLoadAppShellSettings?: () => Promise<AppShellSettings>;
   onLoadCodexLegacyImports?: () => Promise<CodexLegacyImportSnapshot>;
   onStartCodexLegacyImport?: (sourceConversationIds: string[]) => Promise<CodexLegacyImportResult>;
+  onInspectCodexConfigImport?: () => Promise<CodexConfigImportPreview>;
+  onImportCodexConfig?: () => Promise<CodexConfigImportResult>;
   onSaveAppShellSettings?: (
     input: Pick<
       AppShellSettings,
@@ -6714,6 +6719,10 @@ export function App(props: {
   const [codexLegacyImportLoading, setCodexLegacyImportLoading] = useState(false);
   const [codexLegacyImportBusy, setCodexLegacyImportBusy] = useState(false);
   const [codexLegacyImportError, setCodexLegacyImportError] = useState<string | null>(null);
+  const [codexConfigImportPreview, setCodexConfigImportPreview] = useState<CodexConfigImportPreview | null>(null);
+  const [codexConfigImportResult, setCodexConfigImportResult] = useState<CodexConfigImportResult | null>(null);
+  const [codexConfigImportLoading, setCodexConfigImportLoading] = useState(false);
+  const [codexConfigImportError, setCodexConfigImportError] = useState<string | null>(null);
   const [codeMapSettings, setCodeMapSettings] = useState<CodeMapSettings>(() => normalizeCodeMapSettings(props.initialCodeMapSettings));
   const [appShellSettings, setAppShellSettings] = useState<AppShellSettings>(() =>
     normalizeRendererAppShellSettings(
@@ -6993,6 +7002,11 @@ export function App(props: {
     if (activeNavTarget !== 'settings' || settingsCategory !== 'runtime' || codexLegacyImportSnapshot || codexLegacyImportLoading || !props.onLoadCodexLegacyImports) return;
     void refreshCodexLegacyImports();
   }, [activeNavTarget, codexLegacyImportLoading, codexLegacyImportSnapshot, props.onLoadCodexLegacyImports, settingsCategory]);
+
+  useEffect(() => {
+    if (activeNavTarget !== 'settings' || settingsCategory !== 'runtime' || codexConfigImportPreview || codexConfigImportLoading || !props.onInspectCodexConfigImport) return;
+    void refreshCodexConfigImport();
+  }, [activeNavTarget, codexConfigImportLoading, codexConfigImportPreview, props.onInspectCodexConfigImport, settingsCategory]);
   useEffect(() => {
     if (activeNavTarget !== 'settings' || settingsCategory !== 'data' || archivedConversationLoadState !== 'idle' || !props.nativeConversationClient) return;
     void refreshArchivedConversations();
@@ -9371,6 +9385,34 @@ export function App(props: {
       setCodexLegacyImportError(error instanceof Error ? error.message : String(error));
     } finally {
       setCodexLegacyImportBusy(false);
+    }
+  }
+
+  async function refreshCodexConfigImport(): Promise<void> {
+    if (!props.onInspectCodexConfigImport) return;
+    setCodexConfigImportLoading(true);
+    setCodexConfigImportError(null);
+    try {
+      setCodexConfigImportPreview(await props.onInspectCodexConfigImport());
+    } catch (error) {
+      setCodexConfigImportError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setCodexConfigImportLoading(false);
+    }
+  }
+
+  async function importCodexConfig(): Promise<void> {
+    if (!props.onImportCodexConfig) return;
+    setCodexConfigImportLoading(true);
+    setCodexConfigImportError(null);
+    try {
+      const result = await props.onImportCodexConfig();
+      setCodexConfigImportResult(result);
+      setCodexConfigImportPreview(result);
+    } catch (error) {
+      setCodexConfigImportError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setCodexConfigImportLoading(false);
     }
   }
 
@@ -12610,6 +12652,15 @@ export function App(props: {
                       error={codexLegacyImportError}
                       onRefresh={refreshCodexLegacyImports}
                       onImport={startCodexLegacyImport}
+                    />
+                    <CodexConfigImportSettings
+                      language={appShellSettings.appLanguage}
+                      preview={codexConfigImportPreview}
+                      result={codexConfigImportResult}
+                      loading={codexConfigImportLoading}
+                      error={codexConfigImportError}
+                      onRefresh={refreshCodexConfigImport}
+                      onImport={importCodexConfig}
                     />
                   </section>
                 ) : null}

@@ -12,6 +12,8 @@ export interface ExecutionHostBootstrap {
   projectRoot: string;
   codexNativeEnabled: boolean;
   codexLegacyImportRoot: string;
+  codexHome: string;
+  codexConfigImportSourceRoot: string;
   releaseUpdateManifestUrl?: string;
   allowUntrustedReleaseUpdateTest?: boolean;
   taskAttachmentRoot: string;
@@ -238,6 +240,8 @@ function isExecutionHostBootstrap(value: unknown): value is ExecutionHostBootstr
     isNonEmptyString(value.projectRoot) &&
     typeof value.codexNativeEnabled === 'boolean' &&
     isNonEmptyString(value.codexLegacyImportRoot) &&
+    isNonEmptyString(value.codexHome) &&
+    isNonEmptyString(value.codexConfigImportSourceRoot) &&
     (value.releaseUpdateManifestUrl === undefined || isNonEmptyString(value.releaseUpdateManifestUrl)) &&
     (value.allowUntrustedReleaseUpdateTest === undefined || typeof value.allowUntrustedReleaseUpdateTest === 'boolean') &&
     isNonEmptyString(value.taskAttachmentRoot) &&

@@ -122,6 +122,8 @@ async function runExecutionHost(): Promise<void> {
     telegramAllowedUserIds: bootstrap.telegramAllowedUserIds,
     codexNativeEnabled: bootstrap.codexNativeEnabled,
     codexLegacyImportRoot: bootstrap.codexLegacyImportRoot,
+    codexHome: bootstrap.codexHome,
+    codexConfigImportSourceRoot: bootstrap.codexConfigImportSourceRoot,
     releaseUpdateManifestUrl: bootstrap.releaseUpdateManifestUrl,
     allowUntrustedReleaseUpdateTest: bootstrap.allowUntrustedReleaseUpdateTest,
     taskAttachmentRoot: bootstrap.taskAttachmentRoot,

@@ -1,7 +1,8 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, Notification, screen, shell, Tray } from 'electron';
 import { execFile as execFileCallback } from 'node:child_process';
-import { constants as fsConstants, readFileSync } from 'node:fs';
+import { chmodSync, constants as fsConstants, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
+import { homedir } from 'node:os';
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { access, copyFile, cp, lstat, mkdir, readdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
@@ -106,9 +107,61 @@ function applyExplicitUserDataDirectory(): void {
     return;
   }
 
-  // 测试发行版必须拥有独立单实例锁、配置和数据库，正式版继续沿用既有目录。
-  if (isTestDistribution()) {
-    app.setPath('userData', join(app.getPath('appData'), testDistributionName));
+  const profileName = isTestDistribution() ? 'test' : app.isPackaged ? 'production' : 'development';
+  const target = join(homedir(), profileName === 'production' ? '.zeus' : profileName === 'test' ? '.zeus-test' : '.zeus-development');
+  const legacy = join(app.getPath('appData'), desktopDisplayName());
+  const targetInitialized = profileName === 'production' ? existsSync(join(target, 'zeus.db')) || existsSync(join(target, 'zeus.config.json')) : existsSync(target);
+  if (app.isPackaged && !targetInitialized && existsSync(legacy)) {
+    if (legacyExecutionHostIsRunning(legacy)) {
+      // 旧执行宿主仍可能写数据库；本次继续使用旧目录，待正常退出后的下一次启动再安全迁移。
+      app.setPath('userData', legacy);
+      return;
+    }
+    mkdirSync(dirname(target), { recursive: true, mode: 0o700 });
+    chmodSync(dirname(target), 0o700);
+    const staging = join(dirname(target), `.${profileName}.migrating-${process.pid}`);
+    rmSync(staging, { recursive: true, force: true });
+    // 首次切换只复制旧目录并保留原件，出现异常时仍可回退到旧版本 Zeus。
+    cpSync(legacy, staging, {
+      recursive: true,
+      errorOnExist: true,
+      force: false,
+      filter: (source) => {
+        const firstSegment = relative(legacy, source).split(sep)[0];
+        return firstSegment !== 'execution-host' && !['SingletonCookie', 'SingletonLock', 'SingletonSocket'].includes(firstSegment);
+      },
+    });
+    if (!existsSync(target)) {
+      renameSync(staging, target);
+    } else {
+      const movedEntries: string[] = [];
+      try {
+        for (const entryName of readdirSync(staging)) {
+          const destination = join(target, entryName);
+          if (existsSync(destination)) throw new Error(`Zeus 正式目录迁移遇到同名文件：${destination}`);
+          renameSync(join(staging, entryName), destination);
+          movedEntries.push(entryName);
+        }
+        rmSync(staging, { recursive: true, force: true });
+      } catch (error) {
+        for (const entryName of movedEntries.reverse()) renameSync(join(target, entryName), join(staging, entryName));
+        throw error;
+      }
+    }
+  }
+  mkdirSync(target, { recursive: true, mode: 0o700 });
+  chmodSync(target, 0o700);
+  app.setPath('userData', target);
+}
+
+function legacyExecutionHostIsRunning(legacyUserDataPath: string): boolean {
+  try {
+    const value = JSON.parse(readFileSync(join(legacyUserDataPath, 'execution-host', 'rendezvous.json'), 'utf8')) as { pid?: unknown };
+    if (typeof value.pid !== 'number' || !Number.isInteger(value.pid) || value.pid <= 0) return false;
+    process.kill(value.pid, 0);
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -1205,6 +1258,8 @@ async function initializeApplication(): Promise<void> {
     telegramAllowedUserIds: parseTelegramAllowedUserIds(process.env.ZEUS_TELEGRAM_ALLOWED_USER_IDS),
     codexNativeEnabled,
     codexLegacyImportRoot: join(userDataPath, 'codex-legacy-import'),
+    codexHome: join(userDataPath, 'agent-runtimes', 'codex'),
+    codexConfigImportSourceRoot: join(homedir(), '.codex'),
     releaseUpdateManifestUrl: allowUntrustedReleaseUpdateTest ? process.env.ZEUS_RELEASE_UPDATE_MANIFEST_URL : undefined,
     allowUntrustedReleaseUpdateTest,
     taskAttachmentRoot: join(userDataPath, 'task-attachments'),

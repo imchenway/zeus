@@ -1335,6 +1335,30 @@ export interface CodexLegacyImportResult {
   runs: CodexLegacyImportRun[];
 }
 
+export interface CodexConfigImportEntry {
+  path: string;
+  kind: 'file' | 'directory';
+  nodeCount: number;
+}
+
+export interface CodexConfigImportPreview {
+  available: boolean;
+  sourceRoot: string;
+  targetRoot: string;
+  entries: CodexConfigImportEntry[];
+  skipped: Array<{
+    path: string;
+    reason: 'missing' | 'symbolic_link' | 'unsupported_type' | 'contains_sensitive_assignment' | 'too_large';
+  }>;
+}
+
+export interface CodexConfigImportResult extends CodexConfigImportPreview {
+  imported: string[];
+  backupRoot: string | null;
+  importedAt: string;
+  restartRequired: boolean;
+}
+
 export interface ProjectArchiveConfirmation {
   projectId: string;
   confirmationText: string;
@@ -1416,6 +1440,8 @@ export interface DashboardClient {
   loadCodexLegacyImports: () => Promise<CodexLegacyImportSnapshot>;
   startCodexLegacyImport: (sourceConversationIds: string[]) => Promise<CodexLegacyImportResult>;
   loadCodexLegacyImport: (importId: string) => Promise<CodexLegacyImportResult>;
+  inspectCodexConfigImport: () => Promise<CodexConfigImportPreview>;
+  importCodexConfig: () => Promise<CodexConfigImportResult>;
   sendNativeMessage: (projectId: string, conversationId: string, input: SendNativeMessageRequest) => Promise<NativeOperationAcceptance>;
   editNativeQueuedSubmission: (projectId: string, conversationId: string, submissionId: string, content: string) => Promise<NativeQueueSnapshot>;
   deleteNativeQueuedSubmission: (projectId: string, conversationId: string, submissionId: string) => Promise<NativeQueueSnapshot>;
@@ -1813,6 +1839,8 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
         body: JSON.stringify({ sourceConversationIds }),
       }),
     loadCodexLegacyImport: (importId) => request<CodexLegacyImportResult>(`/api/codex-native/import/${encodeURIComponent(importId)}`),
+    inspectCodexConfigImport: () => request<CodexConfigImportPreview>('/api/codex-config/import'),
+    importCodexConfig: () => request<CodexConfigImportResult>('/api/codex-config/import', { method: 'POST' }),
     sendNativeMessage: (projectId, conversationId, input) => {
       const { idempotencyKey, ...body } = input;
       return request<NativeOperationAcceptance>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/messages`, {
