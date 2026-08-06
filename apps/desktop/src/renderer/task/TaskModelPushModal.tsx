@@ -310,21 +310,23 @@ export function TaskModelPushModal(props: {
                 emptyLabel={zh ? '没有匹配模型' : 'No matching models'}
               />
             </label>
-            <label>
-              <span>{zh ? '模型等级' : 'Reasoning effort'}</span>
-              <ZeusSelect
-                size="regular"
-                ariaLabel={zh ? '模型等级' : 'Reasoning effort'}
-                value={props.form.effort}
-                options={(selectedModel?.supportedReasoningEfforts ?? []).map((effort) => ({
-                  value: effort,
-                  label: effort,
-                }))}
-                onChange={(effort) => props.onChange({ ...props.form, effort })}
-                disabled={!selectedModel || busy}
-                searchable={false}
-              />
-            </label>
+            {selectedModel?.supportedReasoningEfforts.length ? (
+              <label>
+                <span>{zh ? '模型等级' : 'Reasoning effort'}</span>
+                <ZeusSelect
+                  size="regular"
+                  ariaLabel={zh ? '模型等级' : 'Reasoning effort'}
+                  value={props.form.effort}
+                  options={selectedModel.supportedReasoningEfforts.map((effort) => ({
+                    value: effort,
+                    label: effort,
+                  }))}
+                  onChange={(effort) => props.onChange({ ...props.form, effort })}
+                  disabled={busy}
+                  searchable={false}
+                />
+              </label>
+            ) : null}
             <label>
               <span>{zh ? '服务档位' : 'Service tier'}</span>
               <ZeusSelect

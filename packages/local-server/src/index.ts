@@ -11812,6 +11812,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
         providerTurnId: turn.providerTurnId,
         submissionId: turn.clientSubmissionId,
         status: turn.status,
+        error: parseConversationTurnFailure(turn.errorJson),
         plan: parseNativeTurnPlan(turn.planJson),
         startedAt: turn.startedAt,
         completedAt: turn.completedAt,
@@ -16247,9 +16248,88 @@ function redactSensitiveText(value: string): {
   let text = value;
   text = replace(text, /(\b(?:token|api[-_]?key|secret|password)\s*=\s*)[^\s"']+/giu, (_match, prefix) => `${prefix}[REDACTED]`);
   text = replace(text, /(--(?:api-key|token|secret|password)\s+)[^\s"']+/giu, (_match, prefix) => `${prefix}[REDACTED]`);
-  text = replace(text, /(\bbearer\s+)[^\s"']+/giu, (_match, prefix) => `${prefix}[REDACTED]`);
+  text = replace(text, /(\bbearer\s+)(?!or\s+basic\s+authentication\b)[^\s"']+/giu, (_match, prefix) => `${prefix}[REDACTED]`);
   text = replace(text, /\bsecret-[A-Za-z0-9._-]+/gu, '[REDACTED]');
   return { text, redacted };
+}
+
+function parseConversationTurnFailure(errorJson: string | null): {
+  category: 'authentication' | 'rate_limit' | 'network' | 'configuration' | 'permission' | 'unknown';
+  code: string | null;
+  message: string;
+  providerStatus: string | null;
+  additionalDetails: string[];
+} | null {
+  if (!errorJson) return null;
+  let value: Record<string, unknown>;
+  try {
+    const parsed: unknown = JSON.parse(errorJson);
+    if (!isConversationFailureRecord(parsed)) return conversationFailureFromText(typeof parsed === 'string' ? parsed : errorJson);
+    value = parsed;
+  } catch {
+    return conversationFailureFromText(errorJson);
+  }
+  const providerError = isConversationFailureRecord(value.providerError) ? value.providerError : null;
+  const message = sanitizeConversationFailureText(
+    typeof value.message === 'string' && value.message.trim()
+      ? value.message
+      : typeof providerError?.message === 'string' && providerError.message.trim()
+        ? providerError.message
+        : '智能体运行内核没有提供更具体的失败原因。',
+  );
+  const additionalDetails = [
+    typeof providerError?.additionalDetails === 'string' ? providerError.additionalDetails : null,
+    typeof providerError?.codexErrorInfo === 'string' ? `Codex: ${providerError.codexErrorInfo}` : null,
+  ]
+    .filter((detail): detail is string => Boolean(detail?.trim()))
+    .map(sanitizeConversationFailureText)
+    .filter((detail, index, details) => detail !== message && details.indexOf(detail) === index);
+  return {
+    category: classifyConversationFailure(message),
+    code: typeof value.code === 'string' && value.code.trim() ? value.code.trim().slice(0, 120) : null,
+    message,
+    providerStatus: typeof value.providerStatus === 'string' && value.providerStatus.trim() ? value.providerStatus.trim().slice(0, 120) : null,
+    additionalDetails,
+  };
+}
+
+function conversationFailureFromText(value: string): {
+  category: 'authentication' | 'rate_limit' | 'network' | 'configuration' | 'permission' | 'unknown';
+  code: null;
+  message: string;
+  providerStatus: null;
+  additionalDetails: [];
+} {
+  const message = sanitizeConversationFailureText(value) || '智能体运行内核没有提供更具体的失败原因。';
+  return { category: classifyConversationFailure(message), code: null, message, providerStatus: null, additionalDetails: [] };
+}
+
+function isConversationFailureRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/** 会话页只接收脱敏、无堆栈的失败正文；原始错误仍留在本机数据库用于诊断。 */
+function sanitizeConversationFailureText(value: string): string {
+  const withoutStack = value
+    .split(/\r?\n/u)
+    .filter((line) => !/^\s*at\s+/u.test(line))
+    .join(' ');
+  return redactSensitiveText(withoutStack).text
+    .replace(/file:\/\/\/Users\/[^\s,;:'"<>]+/giu, '[本机路径]')
+    .replace(/\/Users\/[^\s,;:'"<>]+/gu, '[本机路径]')
+    .replace(/[A-Za-z]:\\[^\s,;:'"<>]+/gu, '[本机路径]')
+    .replace(/\s+/gu, ' ')
+    .trim()
+    .slice(0, 1_000);
+}
+
+function classifyConversationFailure(message: string): 'authentication' | 'rate_limit' | 'network' | 'configuration' | 'permission' | 'unknown' {
+  if (/\b(?:401|403)\b|auth(?:entication|orization)?|unauthori[sz]ed|api[-_ ]?key|登录|鉴权/iu.test(message)) return 'authentication';
+  if (/\b429\b|rate[-_ ]?limit|too many requests|quota|限流|配额/iu.test(message)) return 'rate_limit';
+  if (/network|failed to fetch|connection|socket|timed?\s*out|timeout|dns|网络|连接|超时/iu.test(message)) return 'network';
+  if (/permission denied|sandbox|not allowed|forbidden|权限|沙箱/iu.test(message)) return 'permission';
+  if (/\b400\b|invalid|unsupported|unknown model|model not found|reasoning_effort|参数|模型.*(?:不存在|不支持)/iu.test(message)) return 'configuration';
+  return 'unknown';
 }
 
 function stringArraysEqual(left: string[], right: string[]): boolean {

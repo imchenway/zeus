@@ -223,7 +223,7 @@ export interface SecuritySecretsSnapshot {
   externalApiKey: SecretPresence;
 }
 
-export type ModelConnectionTemplateId = 'custom' | 'deepseek' | 'bailian';
+export type ModelConnectionTemplateId = 'custom' | 'deepseek' | 'bailian' | 'kimi' | 'zai';
 export type ModelCapabilityState = 'supported' | 'unsupported' | 'unverified';
 export type ModelThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 export type ModelThinkingFormat = 'openai' | 'openrouter' | 'deepseek' | 'together' | 'zai' | 'qwen' | 'qwen-chat-template' | 'string-thinking' | 'ant-ling';
@@ -299,7 +299,7 @@ export interface SelectablePiModel {
   available: boolean;
   availabilityReason: string;
   supportedReasoningEfforts: ModelThinkingLevel[];
-  defaultReasoningEffort: ModelThinkingLevel;
+  defaultReasoningEffort: ModelThinkingLevel | null;
   serviceTiers: [];
   defaultServiceTier: null;
   speedLabel: ModelConnectionModel['speedLabel'];

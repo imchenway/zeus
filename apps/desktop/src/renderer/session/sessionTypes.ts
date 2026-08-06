@@ -53,11 +53,22 @@ export interface NativeTurnSnapshot {
   providerTurnId: string | null;
   submissionId: string | null;
   status: string;
+  error?: NativeTurnFailureSnapshot | null;
   plan?: NativeTurnPlanSnapshot | null;
   startedAt: string | null;
   completedAt: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export type NativeTurnFailureCategory = 'authentication' | 'rate_limit' | 'network' | 'configuration' | 'permission' | 'unknown';
+
+export interface NativeTurnFailureSnapshot {
+  category: NativeTurnFailureCategory;
+  code: string | null;
+  message: string;
+  providerStatus: string | null;
+  additionalDetails: string[];
 }
 
 export interface NativeItemSnapshot {
@@ -327,7 +338,7 @@ export interface CodexTaskPushModelCapability {
   tools?: 'supported' | 'unsupported' | 'unverified';
   imageInput?: 'supported' | 'unsupported' | 'unverified';
   supportedReasoningEfforts: string[];
-  defaultReasoningEffort?: string;
+  defaultReasoningEffort?: string | null;
   serviceTiers: Array<{ id: string; name: string; description: string }>;
   defaultServiceTier?: string | null;
 }
