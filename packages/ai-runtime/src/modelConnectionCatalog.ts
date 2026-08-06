@@ -252,12 +252,7 @@ export function createConfiguredModelDefinition(id: string, input: Partial<Confi
   );
 }
 
-export function mergeDiscoveredModels(
-  existing: readonly ConfiguredModelDefinition[],
-  modelIds: readonly string[],
-  thinkingFormat: OpenAiThinkingFormat,
-  templateId: ModelConnectionTemplateId = 'custom',
-): ConfiguredModelDefinition[] {
+export function mergeDiscoveredModels(existing: readonly ConfiguredModelDefinition[], modelIds: readonly string[], thinkingFormat: OpenAiThinkingFormat, templateId: ModelConnectionTemplateId = 'custom'): ConfiguredModelDefinition[] {
   const byId = new Map(existing.map((model) => [model.id, model]));
   for (const rawId of modelIds) {
     const id = rawId.trim();

@@ -417,107 +417,106 @@ function ModelDefinitionEditor(props: { language: 'zh-CN' | 'en-US'; model: Mode
       </header>
       {props.readOnly ? (
         <p>
-          {zh ? '思考深度' : 'Reasoning effort'}：
-          {model.capability.reasoning.state === 'supported' ? model.capability.reasoning.levels.join(' / ') : zh ? '能力待确认，会话中隐藏' : 'Unverified; hidden in conversations'} · {zh ? '工具' : 'Tools'}：
-          {model.capability.tools.state} · {zh ? '图片' : 'Images'}：{model.capability.imageInput.state}
+          {zh ? '思考深度' : 'Reasoning effort'}：{model.capability.reasoning.state === 'supported' ? model.capability.reasoning.levels.join(' / ') : zh ? '能力待确认，会话中隐藏' : 'Unverified; hidden in conversations'} ·{' '}
+          {zh ? '工具' : 'Tools'}：{model.capability.tools.state} · {zh ? '图片' : 'Images'}：{model.capability.imageInput.state}
         </p>
       ) : (
         <div className="model-definition-grid">
-        <label>
-          <span>{zh ? '显示名称' : 'Display name'}</span>
-          <input value={model.displayName} onChange={(event) => props.onChange({ ...model, displayName: event.currentTarget.value })} />
-        </label>
-        <label>
-          <span>{zh ? '速度标签' : 'Speed label'}</span>
-          <ZeusSelect<ModelConnectionModel['speedLabel']>
-            ariaLabel={zh ? '速度标签' : 'Speed label'}
-            size="regular"
-            value={model.speedLabel}
-            onChange={(speedLabel) => props.onChange({ ...model, speedLabel })}
-            options={(['standard', 'high_speed', 'flash', 'turbo'] as const).map((value) => ({ value, label: value }))}
-          />
-        </label>
-        <label>
-          <span>{zh ? '思考能力' : 'Reasoning'}</span>
-          <ZeusSelect
-            ariaLabel={zh ? '思考能力' : 'Reasoning'}
-            size="regular"
-            value={model.capability.reasoning.state}
-            onChange={(state) =>
-              props.onChange({
-                ...model,
-                capability: {
-                  ...model.capability,
-                  reasoning: { ...model.capability.reasoning, state, levels: state === 'supported' ? model.capability.reasoning.levels : ['off'], defaultLevel: state === 'supported' ? model.capability.reasoning.defaultLevel : 'off' },
-                },
-              })
-            }
-            options={capabilityStates.map((state) => ({ value: state.value, label: zh ? state.zh : state.en }))}
-          />
-        </label>
-        <label>
-          <span>{zh ? '思考参数格式' : 'Thinking format'}</span>
-          <ZeusSelect
-            ariaLabel={zh ? '思考参数格式' : 'Thinking format'}
-            size="regular"
-            value={model.capability.reasoning.thinkingFormat}
-            onChange={(thinkingFormat) => props.onChange({ ...model, capability: { ...model.capability, reasoning: { ...model.capability.reasoning, thinkingFormat } } })}
-            options={thinkingFormats.map((value) => ({ value, label: value }))}
-          />
-        </label>
-        <label>
-          <span>{zh ? '推理等级' : 'Reasoning levels'}</span>
-          <input
-            disabled={model.capability.reasoning.state !== 'supported'}
-            value={model.capability.reasoning.levels.join(', ')}
-            onChange={(event) => {
-              const levels = thinkingLevels.filter((level) =>
-                event.currentTarget.value
-                  .split(',')
-                  .map((item) => item.trim())
-                  .includes(level),
-              );
-              const effective: ModelThinkingLevel[] = levels.length > 0 ? levels : ['off'];
-              props.onChange({
-                ...model,
-                capability: {
-                  ...model.capability,
-                  reasoning: { ...model.capability.reasoning, levels: effective, defaultLevel: effective.includes(model.capability.reasoning.defaultLevel) ? model.capability.reasoning.defaultLevel : effective[0]! },
-                },
-              });
-            }}
-          />
-        </label>
-        <label>
-          <span>{zh ? '默认推理等级' : 'Default reasoning'}</span>
-          <ZeusSelect
-            ariaLabel={zh ? '默认推理等级' : 'Default reasoning'}
-            size="regular"
-            value={model.capability.reasoning.defaultLevel}
-            onChange={(defaultLevel) => props.onChange({ ...model, capability: { ...model.capability, reasoning: { ...model.capability.reasoning, defaultLevel } } })}
-            options={model.capability.reasoning.levels.map((value) => ({ value, label: value }))}
-          />
-        </label>
-        <label>
-          <span>{zh ? '工具调用' : 'Tool calling'}</span>
-          <ZeusSelect
-            ariaLabel={zh ? '工具调用' : 'Tool calling'}
-            size="regular"
-            value={model.capability.tools.state}
-            onChange={(state) => updateEvidence('tools', state)}
-            options={capabilityStates.map((state) => ({ value: state.value, label: zh ? state.zh : state.en }))}
-          />
-        </label>
-        <label>
-          <span>{zh ? '图片输入' : 'Image input'}</span>
-          <ZeusSelect
-            ariaLabel={zh ? '图片输入' : 'Image input'}
-            size="regular"
-            value={model.capability.imageInput.state}
-            onChange={(state) => updateEvidence('imageInput', state)}
-            options={capabilityStates.map((state) => ({ value: state.value, label: zh ? state.zh : state.en }))}
-          />
-        </label>
+          <label>
+            <span>{zh ? '显示名称' : 'Display name'}</span>
+            <input value={model.displayName} onChange={(event) => props.onChange({ ...model, displayName: event.currentTarget.value })} />
+          </label>
+          <label>
+            <span>{zh ? '速度标签' : 'Speed label'}</span>
+            <ZeusSelect<ModelConnectionModel['speedLabel']>
+              ariaLabel={zh ? '速度标签' : 'Speed label'}
+              size="regular"
+              value={model.speedLabel}
+              onChange={(speedLabel) => props.onChange({ ...model, speedLabel })}
+              options={(['standard', 'high_speed', 'flash', 'turbo'] as const).map((value) => ({ value, label: value }))}
+            />
+          </label>
+          <label>
+            <span>{zh ? '思考能力' : 'Reasoning'}</span>
+            <ZeusSelect
+              ariaLabel={zh ? '思考能力' : 'Reasoning'}
+              size="regular"
+              value={model.capability.reasoning.state}
+              onChange={(state) =>
+                props.onChange({
+                  ...model,
+                  capability: {
+                    ...model.capability,
+                    reasoning: { ...model.capability.reasoning, state, levels: state === 'supported' ? model.capability.reasoning.levels : ['off'], defaultLevel: state === 'supported' ? model.capability.reasoning.defaultLevel : 'off' },
+                  },
+                })
+              }
+              options={capabilityStates.map((state) => ({ value: state.value, label: zh ? state.zh : state.en }))}
+            />
+          </label>
+          <label>
+            <span>{zh ? '思考参数格式' : 'Thinking format'}</span>
+            <ZeusSelect
+              ariaLabel={zh ? '思考参数格式' : 'Thinking format'}
+              size="regular"
+              value={model.capability.reasoning.thinkingFormat}
+              onChange={(thinkingFormat) => props.onChange({ ...model, capability: { ...model.capability, reasoning: { ...model.capability.reasoning, thinkingFormat } } })}
+              options={thinkingFormats.map((value) => ({ value, label: value }))}
+            />
+          </label>
+          <label>
+            <span>{zh ? '推理等级' : 'Reasoning levels'}</span>
+            <input
+              disabled={model.capability.reasoning.state !== 'supported'}
+              value={model.capability.reasoning.levels.join(', ')}
+              onChange={(event) => {
+                const levels = thinkingLevels.filter((level) =>
+                  event.currentTarget.value
+                    .split(',')
+                    .map((item) => item.trim())
+                    .includes(level),
+                );
+                const effective: ModelThinkingLevel[] = levels.length > 0 ? levels : ['off'];
+                props.onChange({
+                  ...model,
+                  capability: {
+                    ...model.capability,
+                    reasoning: { ...model.capability.reasoning, levels: effective, defaultLevel: effective.includes(model.capability.reasoning.defaultLevel) ? model.capability.reasoning.defaultLevel : effective[0]! },
+                  },
+                });
+              }}
+            />
+          </label>
+          <label>
+            <span>{zh ? '默认推理等级' : 'Default reasoning'}</span>
+            <ZeusSelect
+              ariaLabel={zh ? '默认推理等级' : 'Default reasoning'}
+              size="regular"
+              value={model.capability.reasoning.defaultLevel}
+              onChange={(defaultLevel) => props.onChange({ ...model, capability: { ...model.capability, reasoning: { ...model.capability.reasoning, defaultLevel } } })}
+              options={model.capability.reasoning.levels.map((value) => ({ value, label: value }))}
+            />
+          </label>
+          <label>
+            <span>{zh ? '工具调用' : 'Tool calling'}</span>
+            <ZeusSelect
+              ariaLabel={zh ? '工具调用' : 'Tool calling'}
+              size="regular"
+              value={model.capability.tools.state}
+              onChange={(state) => updateEvidence('tools', state)}
+              options={capabilityStates.map((state) => ({ value: state.value, label: zh ? state.zh : state.en }))}
+            />
+          </label>
+          <label>
+            <span>{zh ? '图片输入' : 'Image input'}</span>
+            <ZeusSelect
+              ariaLabel={zh ? '图片输入' : 'Image input'}
+              size="regular"
+              value={model.capability.imageInput.state}
+              onChange={(state) => updateEvidence('imageInput', state)}
+              options={capabilityStates.map((state) => ({ value: state.value, label: zh ? state.zh : state.en }))}
+            />
+          </label>
         </div>
       )}
     </article>

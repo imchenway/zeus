@@ -16271,16 +16271,9 @@ function parseConversationTurnFailure(errorJson: string | null): {
   }
   const providerError = isConversationFailureRecord(value.providerError) ? value.providerError : null;
   const message = sanitizeConversationFailureText(
-    typeof value.message === 'string' && value.message.trim()
-      ? value.message
-      : typeof providerError?.message === 'string' && providerError.message.trim()
-        ? providerError.message
-        : '智能体运行内核没有提供更具体的失败原因。',
+    typeof value.message === 'string' && value.message.trim() ? value.message : typeof providerError?.message === 'string' && providerError.message.trim() ? providerError.message : '智能体运行内核没有提供更具体的失败原因。',
   );
-  const additionalDetails = [
-    typeof providerError?.additionalDetails === 'string' ? providerError.additionalDetails : null,
-    typeof providerError?.codexErrorInfo === 'string' ? `Codex: ${providerError.codexErrorInfo}` : null,
-  ]
+  const additionalDetails = [typeof providerError?.additionalDetails === 'string' ? providerError.additionalDetails : null, typeof providerError?.codexErrorInfo === 'string' ? `Codex: ${providerError.codexErrorInfo}` : null]
     .filter((detail): detail is string => Boolean(detail?.trim()))
     .map(sanitizeConversationFailureText)
     .filter((detail, index, details) => detail !== message && details.indexOf(detail) === index);
@@ -16314,8 +16307,8 @@ function sanitizeConversationFailureText(value: string): string {
     .split(/\r?\n/u)
     .filter((line) => !/^\s*at\s+/u.test(line))
     .join(' ');
-  return redactSensitiveText(withoutStack).text
-    .replace(/file:\/\/\/Users\/[^\s,;:'"<>]+/giu, '[本机路径]')
+  return redactSensitiveText(withoutStack)
+    .text.replace(/file:\/\/\/Users\/[^\s,;:'"<>]+/giu, '[本机路径]')
     .replace(/\/Users\/[^\s,;:'"<>]+/gu, '[本机路径]')
     .replace(/[A-Za-z]:\\[^\s,;:'"<>]+/gu, '[本机路径]')
     .replace(/\s+/gu, ' ')

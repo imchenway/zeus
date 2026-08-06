@@ -225,8 +225,7 @@ export function createModelConnectionService(options: { settings: SettingReposit
 }
 
 function withTemplateDefaults(input: SaveModelConnectionRequest): SaveModelConnectionRequest {
-  const templateId: ModelConnectionTemplateId =
-    input.templateId === 'deepseek' || input.templateId === 'bailian' || input.templateId === 'kimi' || input.templateId === 'zai' ? input.templateId : 'custom';
+  const templateId: ModelConnectionTemplateId = input.templateId === 'deepseek' || input.templateId === 'bailian' || input.templateId === 'kimi' || input.templateId === 'zai' ? input.templateId : 'custom';
   const template = templateId === 'custom' ? null : modelConnectionTemplates[templateId];
   return {
     ...input,
