@@ -15,6 +15,8 @@ export interface TaskModelPushForm {
   serviceTierDowngraded: boolean;
   workMode: 'default' | 'plan';
   permissionMode: NativePermissionMode;
+  workspaceMode: 'direct' | 'worktree';
+  directConcurrencyConfirmed: boolean;
   repositorySelections: Record<string, { sourceRef: string; branchName: string }>;
   supplementalInfo: string;
 }
@@ -22,7 +24,7 @@ export interface TaskModelPushForm {
 export type TaskModelPushModalStatus = 'loading' | 'ready' | 'submitting' | 'error';
 
 export type TaskModelPushPreferences = Pick<TaskModelPushForm, 'model' | 'effort' | 'workMode' | 'permissionMode'> & {
-  repositorySourceRefs: Record<string, string>;
+  workspaceMode?: 'direct' | 'worktree';
 };
 
 const preferencesKeyPrefix = 'zeus.task-model-push-preferences:v1:';
@@ -50,16 +52,12 @@ export function readTaskModelPushPreferences(storage: Pick<Storage, 'getItem'> |
     if (!value || typeof value.model !== 'string' || typeof value.effort !== 'string') return null;
     if (value.workMode !== 'default' && value.workMode !== 'plan') return null;
     if (value.permissionMode !== 'read-only' && value.permissionMode !== 'auto' && value.permissionMode !== 'full-access') return null;
-    const repositorySourceRefs =
-      value.repositorySourceRefs && typeof value.repositorySourceRefs === 'object' && !Array.isArray(value.repositorySourceRefs)
-        ? Object.fromEntries(Object.entries(value.repositorySourceRefs).filter((entry): entry is [string, string] => typeof entry[1] === 'string'))
-        : {};
     return {
       model: value.model,
       effort: value.effort,
       workMode: value.workMode,
       permissionMode: value.permissionMode,
-      repositorySourceRefs,
+      ...(value.workspaceMode === 'direct' || value.workspaceMode === 'worktree' ? { workspaceMode: value.workspaceMode } : {}),
     };
   } catch {
     return null;
@@ -68,8 +66,6 @@ export function readTaskModelPushPreferences(storage: Pick<Storage, 'getItem'> |
 
 export function writeTaskModelPushPreferences(storage: Pick<Storage, 'getItem' | 'setItem'> | undefined, projectId: string, form: TaskModelPushForm): void {
   if (!storage) return;
-  const rememberedSourceRefs = readTaskModelPushPreferences(storage, projectId)?.repositorySourceRefs ?? {};
-  const selectedSourceRefs = Object.fromEntries(Object.entries(form.repositorySelections).flatMap(([repositoryId, selection]) => (selection.sourceRef ? [[repositoryId, selection.sourceRef]] : [])));
   storage.setItem(
     `${preferencesKeyPrefix}${encodeURIComponent(projectId)}`,
     JSON.stringify({
@@ -77,7 +73,7 @@ export function writeTaskModelPushPreferences(storage: Pick<Storage, 'getItem' |
       effort: form.effort,
       workMode: form.workMode,
       permissionMode: form.permissionMode,
-      repositorySourceRefs: { ...rememberedSourceRefs, ...selectedSourceRefs },
+      workspaceMode: form.workspaceMode,
     } satisfies TaskModelPushPreferences),
   );
 }
@@ -95,14 +91,16 @@ export function resolveTaskModelPushInitialForm(capabilities: CodexTaskPushCapab
     workMode: remembered?.workMode ?? 'default',
     // 用户已确认：项目没有成功记忆时，权限必须回退为只读。
     permissionMode: remembered?.permissionMode ?? 'read-only',
+    workspaceMode: remembered?.workspaceMode ?? (capabilities.repositories.length > 0 ? 'worktree' : 'direct'),
+    directConcurrencyConfirmed: false,
     repositorySelections: Object.fromEntries(
       capabilities.repositories.map((repository) => {
-        const rememberedSourceRef = remembered?.repositorySourceRefs[repository.id] ?? '';
+        const currentSourceRef = repository.sourceRefs.find((source) => source.current)?.ref ?? '';
         return [
           repository.id,
           {
-            // 只恢复当前仍存在的来源分支，避免把已删除分支显示成有效默认值。
-            sourceRef: repository.sourceRefs.some((source) => source.ref === rememberedSourceRef) ? rememberedSourceRef : '',
+            // 每次推送都以仓库当前检出的分支为真实默认值，不继承其他开发线的来源。
+            sourceRef: currentSourceRef,
             branchName: repository.suggestedBranchName,
           },
         ];
@@ -133,7 +131,8 @@ export function TaskModelPushModal(props: {
   const attachments = parseTaskAttachments(props.task.sourceContextJson);
   const selectedModel = props.capabilities?.models.find((model) => model.model === props.form.model || model.id === props.form.model);
   const repositories = props.capabilities?.repositories ?? [];
-  const repositoryRegistrationRequired = props.capabilities?.repositoryRegistrationRequired === true;
+  const directWorkspaceBusy = (props.capabilities?.directWorkspace.activeWritableConversationCount ?? 0) > 0;
+  const directWorkspaceNeedsConfirmation = directWorkspaceBusy && props.form.permissionMode !== 'read-only';
 
   function onModelChange(model: string): void {
     const capability = props.capabilities?.models.find((candidate) => candidate.model === model || candidate.id === model);
@@ -168,9 +167,64 @@ export function TaskModelPushModal(props: {
           <section className="task-model-push-workspace" aria-label={zh ? '本次推送工作区' : 'Workspace for this push'}>
             <span className="task-model-push-section-heading">
               <strong>{zh ? '本次推送工作区' : 'Workspace for this push'}</strong>
-              <small>{zh ? '每次推送都会从本次选择的来源创建独立目录和分支' : 'Every push creates an isolated directory and branch from the selected source'}</small>
+              <small>{zh ? '直接使用项目目录，或按需创建独立分支和 worktree' : 'Use the project directory directly, or create isolated branches and worktrees'}</small>
             </span>
-            {repositories.length > 0 ? (
+            <fieldset className="task-model-push-mode-choice">
+              <legend>{zh ? '工作方式' : 'Workspace mode'}</legend>
+              <label className={props.form.workspaceMode === 'direct' ? 'is-selected' : undefined}>
+                <input
+                  type="radio"
+                  name="task-workspace-mode"
+                  value="direct"
+                  checked={props.form.workspaceMode === 'direct'}
+                  onChange={() => props.onChange({ ...props.form, workspaceMode: 'direct', directConcurrencyConfirmed: false })}
+                  disabled={busy}
+                />
+                <span>
+                  <strong>{zh ? '直接使用项目目录' : 'Use project directory directly'}</strong>
+                  <small>{zh ? '不创建分支或隔离目录，修改直接写入真实项目' : 'No branch or isolated directory; changes write to the real project'}</small>
+                </span>
+              </label>
+              <label className={props.form.workspaceMode === 'worktree' ? 'is-selected' : undefined}>
+                <input
+                  type="radio"
+                  name="task-workspace-mode"
+                  value="worktree"
+                  checked={props.form.workspaceMode === 'worktree'}
+                  onChange={() => props.onChange({ ...props.form, workspaceMode: 'worktree', directConcurrencyConfirmed: false })}
+                  disabled={busy}
+                />
+                <span>
+                  <strong>Worktree</strong>
+                  <small>{zh ? '自动发现全部 Git 仓库，并创建独立任务分支' : 'Discover all Git repositories and create isolated task branches'}</small>
+                </span>
+              </label>
+            </fieldset>
+            {props.form.workspaceMode === 'direct' ? (
+              <div className="task-model-push-direct-summary">
+                <small>
+                  {zh ? '工作目录' : 'Working directory'}：{props.capabilities?.directWorkspace.path ?? '—'}
+                </small>
+                <p className="task-model-push-warning">
+                  {zh ? 'AI 将直接读写项目真实目录；现有文件和当前 Git 分支不会被隔离。' : 'The agent writes directly to the real project directory; existing files and the current Git branch are not isolated.'}
+                </p>
+                {directWorkspaceNeedsConfirmation ? (
+                  <label className="task-model-push-concurrency-confirm">
+                    <input
+                      type="checkbox"
+                      checked={props.form.directConcurrencyConfirmed}
+                      onChange={(event) => props.onChange({ ...props.form, directConcurrencyConfirmed: event.currentTarget.checked })}
+                      disabled={busy}
+                    />
+                    <span>
+                      {zh
+                        ? `当前已有 ${props.capabilities?.directWorkspace.activeWritableConversationCount ?? 0} 条可写会话使用这个目录；我了解并发修改可能互相覆盖。`
+                        : `${props.capabilities?.directWorkspace.activeWritableConversationCount ?? 0} writable conversation(s) already use this directory; I understand concurrent changes may overwrite each other.`}
+                    </span>
+                  </label>
+                ) : null}
+              </div>
+            ) : repositories.length > 0 ? (
               <div className="task-model-push-repository-list">
                 {repositories.map((repository) => {
                   const selection = props.form.repositorySelections[repository.id] ?? { sourceRef: '', branchName: repository.suggestedBranchName };
@@ -228,20 +282,16 @@ export function TaskModelPushModal(props: {
                   );
                 })}
               </div>
-            ) : repositoryRegistrationRequired ? (
-              <p className="task-model-push-error" role="alert">
-                {zh
-                  ? `已发现 ${props.capabilities?.discoveredRepositories.length ?? 0} 个 Git 仓库，请先到项目设置确认任务仓库后再推送。`
-                  : `${props.capabilities?.discoveredRepositories.length ?? 0} Git repositories were found. Confirm the task repositories in project settings before pushing.`}
-              </p>
             ) : (
-              <p className="task-model-push-message">
-                {zh ? '该项目未登记 Git 仓库，将直接使用项目目录，不创建分支或 worktree。' : 'No Git repositories are registered. The project directory is used directly without branches or worktrees.'}
+              <p className="task-model-push-error" role="alert">
+                {zh ? '项目目录下没有发现 Git 仓库。请先自行初始化仓库，或改用“直接使用项目目录”。' : 'No Git repository was found. Initialize one first, or use the project directory directly.'}
               </p>
             )}
-            <small className="task-model-push-worktree-root">
-              {zh ? '新工作区路径' : 'New workspace path'}：{props.capabilities?.git.worktreeRoot ?? '—'}/&lt;{zh ? '项目' : 'project'}&gt;/&lt;{zh ? '推送标识' : 'push-id'}&gt;/{props.task.taskCode ?? props.task.id}
-            </small>
+            {props.form.workspaceMode === 'worktree' ? (
+              <small className="task-model-push-worktree-root">
+                {zh ? '新工作区路径' : 'New workspace path'}：{props.capabilities?.git.worktreeRoot ?? '—'}/&lt;{zh ? '项目' : 'project'}&gt;/&lt;{zh ? '推送标识' : 'push-id'}&gt;/{props.task.taskCode ?? props.task.id}
+              </small>
+            ) : null}
           </section>
 
           <div className="task-model-push-config-grid">
@@ -394,11 +444,13 @@ export function TaskModelPushModal(props: {
               disabled={
                 props.status === 'loading' ||
                 !props.form.model ||
-                repositoryRegistrationRequired ||
-                repositories.some((repository) => {
-                  const selection = props.form.repositorySelections[repository.id];
-                  return !selection?.sourceRef || !selection.branchName.trim();
-                })
+                (props.form.workspaceMode === 'direct'
+                  ? directWorkspaceNeedsConfirmation && !props.form.directConcurrencyConfirmed
+                  : repositories.length === 0 ||
+                    repositories.some((repository) => {
+                      const selection = props.form.repositorySelections[repository.id];
+                      return !selection?.sourceRef || !selection.branchName.trim();
+                    }))
               }
             >
               {busy ? (zh ? '正在创建…' : 'Creating…') : zh ? '创建新会话' : 'Create conversation'}

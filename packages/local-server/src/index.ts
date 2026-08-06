@@ -1203,7 +1203,6 @@ interface UpdateProjectBody {
 }
 
 interface UpdateProjectWorkspaceConfigBody {
-  repositories?: Array<{ localPath?: unknown }>;
   sharedWritablePaths?: Array<{ localPath?: unknown }>;
 }
 
@@ -1493,7 +1492,10 @@ type StartTaskConversationBody = (
       serviceTier?: string | null;
       workMode?: 'default' | 'plan';
       supplementalInfo?: string;
-      workspace?: { mode: 'create'; repositories: Array<{ repositoryId: string; sourceRef: string; branchName?: string }> } | { mode: 'create'; sourceRef: string; branchName?: string };
+      workspace?:
+        | { mode: 'direct'; confirmConcurrentWrites?: boolean }
+        | { mode: 'create'; repositories: Array<{ repositoryId: string; sourceRef: string; branchName?: string }> }
+        | { mode: 'create'; sourceRef: string; branchName?: string };
     }
   | { mode: 'resume'; conversationId: string; content: string }
   | { mode: 'reference_legacy'; sourceConversationId: string; messageIds: string[]; content: string; permissionMode?: ConversationPermissionMode }
@@ -3913,7 +3915,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
           return {
             ...workspace,
             activeConversationCount,
-            review: await getTaskWorkspaceReview(workspace.worktreePath),
+            review: await readTaskWorkspaceReview(workspace),
             branchComparison,
             remoteHeadSha,
             remoteVerified,
@@ -3982,6 +3984,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     const { task, workspace } = resolved;
     try {
       assertTaskWorkspaceWritable(workspace);
+      assertNestedTaskWorktreesReclaimed(workspace);
     } catch (error) {
       return sendTaskGitApiError(reply, error);
     }
@@ -3993,6 +3996,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     try {
       const result = await commitAndPushTaskWorkspace({
         cwd: workspace.worktreePath,
+        ignoredPaths: taskWorkspaceIgnoredPaths(workspace),
         message: request.body?.message?.trim() || `${task.taskCode}: ${task.title}`,
         selectedPaths,
         remoteName: workspace.remoteName,
@@ -4015,7 +4019,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
         createdAt: new Date().toISOString(),
       });
       await db.save();
-      return { workspace: taskWorkspaces.getById(workspace.id), result, review: await getTaskWorkspaceReview(workspace.worktreePath) };
+      return { workspace: taskWorkspaces.getById(workspace.id), result, review: await readTaskWorkspaceReview(workspace) };
     } catch (error) {
       taskWorkspaces.update(workspace.id, { state: 'failed', lastError: error instanceof Error ? error.message : 'Task workspace commit failed.' });
       await db.save();
@@ -4039,6 +4043,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     try {
       const result = await pushTaskWorkspace({
         cwd: workspace.worktreePath,
+        ignoredPaths: taskWorkspaceIgnoredPaths(workspace),
         remoteName: workspace.remoteName,
         remoteBranch: workspace.remoteBranch,
       });
@@ -4058,7 +4063,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
         createdAt: new Date().toISOString(),
       });
       await db.save();
-      return { workspace: taskWorkspaces.getById(workspace.id), result, review: await getTaskWorkspaceReview(workspace.worktreePath) };
+      return { workspace: taskWorkspaces.getById(workspace.id), result, review: await readTaskWorkspaceReview(workspace) };
     } catch (error) {
       taskWorkspaces.update(workspace.id, { state: 'failed', lastError: error instanceof Error ? error.message : 'Task workspace push failed.' });
       await db.save();
@@ -4117,8 +4122,10 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
         remoteName: workspace.remoteName,
         remoteBranch: workspace.remoteBranch,
         sourceHeadSha: workspace.sourceHeadSha,
+        ignoredPaths: taskWorkspaceIgnoredPaths(workspace),
       });
       const updated = taskWorkspaces.update(workspace.id, { worktreePath: null, headSha: result.headSha, state: 'reclaimed', lastError: null });
+      await reclaimDeferredDeliveredAncestors(workspace.environmentId);
       reconcileTaskEnvironmentState(workspace.environmentId);
       recordTaskEvent({
         taskId: task.id,
@@ -4141,6 +4148,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     const { task, project, workspace } = resolved;
     try {
       assertTaskWorkspaceWritable(workspace);
+      assertNestedTaskWorktreesReclaimed(workspace);
     } catch (error) {
       return sendTaskGitApiError(reply, error);
     }
@@ -4152,6 +4160,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
         confirmationText: request.body?.confirmationText?.trim() ?? '',
       });
       const updated = taskWorkspaces.update(workspace.id, { worktreePath: null, state: 'discarded', lastError: null });
+      await reclaimDeferredDeliveredAncestors(workspace.environmentId);
       reconcileTaskEnvironmentState(workspace.environmentId);
       recordTaskEvent({
         taskId: task.id,
@@ -4197,7 +4206,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     }
     if (workspace.worktreePath) {
       try {
-        const taskReview = await getTaskWorkspaceReview(workspace.worktreePath);
+        const taskReview = await readTaskWorkspaceReview(workspace);
         if (taskReview.conflictFiles.length > 0)
           return reply.code(409).send({
             error: 'ZEUS_TASK_WORKSPACE_CONFLICTED',
@@ -4736,22 +4745,6 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     return {
       projectId: project.id,
       containerPath: project.localPath,
-      repositories: projectRepositories.listByProject(project.id),
-      sharedWritablePaths: projectSharedPaths.listByProject(project.id),
-    };
-  });
-
-  server.get('/api/projects/:projectId/repositories/discover', async (request: FastifyRequest<{ Params: { projectId: string } }>, reply) => {
-    const project = projects.getById(request.params.projectId);
-    if (!project) return reply.code(404).send({ error: 'ZEUS_PROJECT_NOT_FOUND', message: 'Project not found' });
-    const candidates = await discoverGitRepositories(project.localPath);
-    const registered = projectRepositories.listByProject(project.id);
-    const registeredPaths = new Set(registered.map((repository) => repository.localPath));
-    return {
-      projectId: project.id,
-      containerPath: project.localPath,
-      candidates: candidates.map((candidate) => ({ ...candidate, registered: registeredPaths.has(candidate.localPath) })),
-      repositories: registered,
       sharedWritablePaths: projectSharedPaths.listByProject(project.id),
     };
   });
@@ -4760,25 +4753,10 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     const project = projects.getById(request.params.projectId);
     if (!project) return reply.code(404).send({ error: 'ZEUS_PROJECT_NOT_FOUND', message: 'Project not found' });
     try {
-      const repositoryPaths = normalizeProjectMemberDirectories(project, request.body?.repositories, 'repository');
       const sharedPaths = normalizeProjectMemberDirectories(project, request.body?.sharedWritablePaths, 'shared');
       assertProjectMemberPathsDoNotOverlap(
-        repositoryPaths.map((entry) => entry.localPath),
-        'Project repositories cannot contain one another.',
-      );
-      assertProjectMemberPathsDoNotOverlap(
-        [...repositoryPaths, ...sharedPaths].map((entry) => entry.localPath),
-        'Shared writable paths cannot overlap a registered repository or another shared path.',
-      );
-      for (const repository of repositoryPaths) {
-        const context = await getGitRepositoryContext(repository.localPath);
-        if (!context.isRepository || realpathSync(context.topLevel) !== repository.localPath) {
-          throw nativeApiError('ZEUS_PROJECT_REPOSITORY_INVALID', `Configured project repository is not a Git root: ${repository.relativePath}`);
-        }
-      }
-      const savedRepositories = projectRepositories.replaceForProject(
-        project.id,
-        repositoryPaths.map((entry) => ({ projectId: project.id, name: parse(entry.localPath).base || project.name, relativePath: entry.relativePath, localPath: entry.localPath })),
+        sharedPaths.map((entry) => entry.localPath),
+        'Shared writable paths cannot contain one another.',
       );
       const savedSharedPaths = projectSharedPaths.replaceForProject(
         project.id,
@@ -4791,12 +4769,11 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
         resourceId: project.id,
         payload: {
           projectId: project.id,
-          repositoryPaths: savedRepositories.map((repository) => repository.relativePath),
           sharedWritablePaths: savedSharedPaths.map((entry) => entry.relativePath),
         },
       });
       await db.save();
-      return { projectId: project.id, containerPath: project.localPath, repositories: savedRepositories, sharedWritablePaths: savedSharedPaths };
+      return { projectId: project.id, containerPath: project.localPath, sharedWritablePaths: savedSharedPaths };
     } catch (error) {
       return sendNativeConversationApiError(reply, error);
     }
@@ -12289,10 +12266,15 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
         if (selectedEffort && !selectedModel.supportedReasoningEfforts.some((candidate) => candidate === selectedEffort)) {
           throw nativeApiError('ZEUS_CODEX_EFFORT_UNAVAILABLE', `Configured Codex effort is unavailable: ${selectedEffort}`);
         }
-        if (!isNativeApiRecord(body.workspace) || body.workspace.mode !== 'create') {
-          throw nativeApiError('ZEUS_TASK_PUSH_WORKSPACE_CREATE_REQUIRED', 'Every task push must create an independent workspace from the selected source.');
+        if (!isNativeApiRecord(body.workspace) || (body.workspace.mode !== 'create' && body.workspace.mode !== 'direct')) {
+          throw nativeApiError('ZEUS_TASK_PUSH_WORKSPACE_MODE_REQUIRED', 'Choose the project directory or a worktree for this task push.');
         }
-        const taskEnvironment = await resolveTaskPushEnvironment(project, task, body.workspace, stableOperationId);
+        const directWorkspace = body.workspace.mode === 'direct';
+        const activeDirectWrites = directWorkspace && permissionMode !== 'read-only' ? countDirectProjectActiveWritableConversations(project.id) : 0;
+        if (activeDirectWrites > 0 && body.workspace.confirmConcurrentWrites !== true) {
+          throw nativeApiError('ZEUS_DIRECT_WORKSPACE_CONCURRENCY_CONFIRMATION_REQUIRED', `${activeDirectWrites} writable conversation(s) already use this project directory. Confirm concurrent writes before continuing.`);
+        }
+        const taskEnvironment = directWorkspace ? null : await resolveTaskPushEnvironment(project, task, body.workspace, stableOperationId);
         const attachmentInput = normalizeTaskPushAttachments(task, project.localPath);
         nativeOperation =
           selectedModel.agentKind === 'pi'
@@ -12302,25 +12284,33 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
                 projectId: project.id,
                 taskId: task.id,
                 taskTitle: task.title,
-                cwd: taskEnvironment.cwd,
+                cwd: taskEnvironment?.cwd ?? project.localPath,
                 prompt: buildTaskPushPrompt(task, supplementalInfo),
                 model: { sourceId: selectedModel.sourceId ?? null, modelId: selectedModel.model, displayName: selectedModel.displayName ?? null },
                 ...(selectedEffort ? { thinkingLevel: selectedEffort } : {}),
                 permissionMode,
                 idempotencyKey,
                 clientUserMessageId,
-                environmentId: taskEnvironment.environment.id,
-                ...(taskEnvironment.workspaces[0] ? { workspaceId: taskEnvironment.workspaces[0].id } : {}),
+                ...(taskEnvironment
+                  ? {
+                      environmentId: taskEnvironment.environment.id,
+                      ...(taskEnvironment.workspaces[0] ? { workspaceId: taskEnvironment.workspaces[0].id } : {}),
+                    }
+                  : {}),
               })
             : await codexNativeCoordinator.startTaskConversation({
                 conversationId: reservation.conversationId,
                 submissionId: reservation.submissionId,
                 projectId: project.id,
-                projectLocalPath: taskEnvironment.cwd,
+                projectLocalPath: taskEnvironment?.cwd ?? project.localPath,
                 taskId: task.id,
-                environmentId: taskEnvironment.environment.id,
-                ...(taskEnvironment.workspaces[0] ? { workspaceId: taskEnvironment.workspaces[0].id } : {}),
-                writableRoots: taskEnvironment.writableRoots,
+                ...(taskEnvironment
+                  ? {
+                      environmentId: taskEnvironment.environment.id,
+                      ...(taskEnvironment.workspaces[0] ? { workspaceId: taskEnvironment.workspaces[0].id } : {}),
+                      writableRoots: taskEnvironment.writableRoots,
+                    }
+                  : { writableRoots: [project.localPath] }),
                 taskTitle: task.title,
                 prompt: buildTaskPushPrompt(task, supplementalInfo),
                 attachments: attachmentInput.attachments,
@@ -12472,7 +12462,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       for (const taskWorkspace of environmentWorkspaces) {
         if (!taskWorkspace.worktreePath) continue;
         try {
-          const review = await getTaskWorkspaceReview(taskWorkspace.worktreePath);
+          const review = await readTaskWorkspaceReview(taskWorkspace);
           taskWorkspaces.update(taskWorkspace.id, { headSha: review.headSha, state: 'ready', lastError: null });
         } catch (error) {
           taskWorkspaces.update(taskWorkspace.id, { state: 'failed', lastError: error instanceof Error ? error.message : 'Task workspace review failed.' });
@@ -12834,22 +12824,57 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     return firstSupported;
   }
 
+  /** Worktree 仓库属于本次推送的实时事实，不再要求用户在项目设置中维护清单。 */
+  async function synchronizeDiscoveredProjectRepositories(project: ZeusProjectRecord): Promise<ZeusProjectRepositoryRecord[]> {
+    const discovered = await discoverGitRepositories(project.localPath);
+    const records = projectRepositories.replaceForProject(
+      project.id,
+      discovered.map((repository) => ({
+        projectId: project.id,
+        name: repository.name,
+        relativePath: repository.relativePath,
+        localPath: repository.localPath,
+      })),
+    );
+    await db.save();
+    return records;
+  }
+
+  function countDirectProjectActiveWritableConversations(projectId: string): number {
+    let offset = 0;
+    let count = 0;
+    while (true) {
+      const page = conversations.listByProject(projectId, { limit: 100, offset });
+      count += page.items.filter((conversation) => {
+        if (conversation.workspaceId || conversation.environmentId || conversation.permissionMode === 'read-only') return false;
+        return taskConversationHasActiveWork(conversation);
+      }).length;
+      offset += page.items.length;
+      if (page.items.length === 0 || offset >= page.total) return count;
+    }
+  }
+
   async function resolveTaskPushCapabilities(project: ZeusProjectRecord, task: ZeusTaskRecord) {
     const capabilities = await resolveConversationCapabilities(project);
-    const registeredRepositories = projectRepositories.listByProject(project.id);
-    const discoveredRepositories = registeredRepositories.length === 0 ? await discoverGitRepositories(project.localPath) : [];
+    const registeredRepositories = await synchronizeDiscoveredProjectRepositories(project);
     const repositoryCapabilities = await Promise.all(
       registeredRepositories.map(async (registeredRepository) => {
-        const [repository, gitStatus] = await Promise.all([getGitRepositoryContext(registeredRepository.localPath), getGitStatus(registeredRepository.localPath)]);
-        if (!repository.isRepository || repository.branch === 'detached') {
-          throw nativeApiError('ZEUS_PROJECT_REPOSITORY_UNAVAILABLE', `Project repository is unavailable or detached: ${registeredRepository.relativePath}`);
+        const [repository, review] = await Promise.all([
+          getGitRepositoryContext(registeredRepository.localPath),
+          getTaskWorkspaceReview(
+            registeredRepository.localPath,
+            projectRepositoryIgnoredPaths(project.id, registeredRepository.id, registeredRepository.localPath),
+          ),
+        ]);
+        if (!repository.isRepository) {
+          throw nativeApiError('ZEUS_PROJECT_REPOSITORY_UNAVAILABLE', `Project repository is unavailable: ${registeredRepository.relativePath}`);
         }
         const defaultRemoteName = repository.remotes.includes('origin') ? 'origin' : (repository.remotes[0] ?? '');
         return {
           ...registeredRepository,
           branch: repository.branch,
           headSha: repository.headSha,
-          clean: gitStatus.clean,
+          clean: review.clean,
           defaultRemoteName,
           sourceRefs: repository.localBranches.map((ref) => ({ ref, label: ref, kind: 'local' as const, current: ref === repository.branch })),
           suggestedBranchName: buildTaskBranchName(task.taskCode, task.title, taskEnvironments.listByTask(task.id).length + 1),
@@ -12862,14 +12887,10 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       taskId: task.id,
       canonicalPrompt: createTaskRuntimePrompt(task),
       repositories: repositoryCapabilities,
-      repositoryRegistrationRequired: registeredRepositories.length === 0 && discoveredRepositories.length > 0,
-      discoveredRepositories: discoveredRepositories.map((repository) => ({
-        name: repository.name,
-        relativePath: repository.relativePath,
-        localPath: repository.localPath,
-        branch: repository.branch,
-        clean: repository.clean,
-      })),
+      directWorkspace: {
+        path: project.localPath,
+        activeWritableConversationCount: countDirectProjectActiveWritableConversations(project.id),
+      },
       sharedWritablePaths: projectSharedPaths.listByProject(project.id),
       git: {
         primaryWorkspacePath: primaryRepository?.localPath ?? project.localPath,
@@ -12942,12 +12963,9 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       return { environment, workspaces: updated, cwd, writableRoots: resolveTaskEnvironmentWritableRoots(project, updated) };
     }
 
-    const registeredRepositories = projectRepositories.listByProject(project.id);
+    const registeredRepositories = await synchronizeDiscoveredProjectRepositories(project);
     if (registeredRepositories.length === 0) {
-      const discoveredRepositories = await discoverGitRepositories(project.localPath);
-      if (discoveredRepositories.length > 0) {
-        throw nativeApiError('ZEUS_PROJECT_REPOSITORY_REGISTRATION_REQUIRED', `Discovered ${discoveredRepositories.length} Git repositories. Confirm the task repositories in project settings before creating a task environment.`);
-      }
+      throw nativeApiError('ZEUS_WORKTREE_REPOSITORY_REQUIRED', 'No Git repository was found in the project directory. Initialize a repository or use the project directory directly.');
     }
     const requestedRepositories = Array.isArray(selection.repositories) ? selection.repositories : [];
     if (registeredRepositories.length !== requestedRepositories.length) {
@@ -13002,10 +13020,12 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
           existingBranch: false,
           worktreePath: join(environmentRoot, registeredRepository.relativePath),
           includeLocalChanges: true,
+          ignoredPaths: projectRepositoryIgnoredPaths(project.id, registeredRepository.id, registeredRepository.localPath),
         });
         const remoteName = repository.remotes.includes('origin') ? 'origin' : (repository.remotes[0] ?? '');
         preparedMembers.push({ repository: registeredRepository, prepared, remoteName });
       }
+      overlayTaskEnvironmentSharedPaths(environmentRoot, projectSharedPaths.listByProject(project.id));
     } catch (error) {
       for (const member of [...preparedMembers].reverse()) {
         await cleanupPreparedTaskWorktree({ repositoryPath: member.repository.localPath, worktreePath: member.prepared.worktreePath, branchName: member.prepared.branchName, removeBranch: true }).catch(() => undefined);
@@ -13112,6 +13132,16 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     visit(project.localPath, environmentRoot, '.');
   }
 
+  /** 共享目录覆盖任务 worktree 中的同名路径，始终指向项目里的持久真实目录。 */
+  function overlayTaskEnvironmentSharedPaths(environmentRoot: string, sharedPaths: ZeusProjectSharedPathRecord[]): void {
+    for (const sharedPath of sharedPaths) {
+      const targetPath = join(environmentRoot, sharedPath.relativePath);
+      rmSync(targetPath, { recursive: true, force: true });
+      mkdirSync(dirname(targetPath), { recursive: true });
+      symlinkSync(sharedPath.localPath, targetPath, 'dir');
+    }
+  }
+
   function assertTaskEnvironmentWritable(environment: ZeusTaskEnvironmentRecord): void {
     if (conversations.listByEnvironment(environment.id).some((conversation) => conversation.providerState === 'binding' || conversation.providerState === 'active' || conversation.providerState === 'waiting')) {
       throw nativeApiError('ZEUS_TASK_ENVIRONMENT_BUSY', 'The selected task environment already has an active writable Codex turn.');
@@ -13124,6 +13154,28 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     }
   }
 
+  /** 父子仓库的代码交付互不联动，但物理目录回收必须先子后父。 */
+  function assertNestedTaskWorktreesReclaimed(workspace: ZeusTaskWorkspaceRecord): void {
+    const nested = nestedTaskWorkspacesWithWorktree(workspace);
+    if (nested.length === 0) return;
+    throw nativeApiError(
+      'ZEUS_TASK_WORKSPACE_NESTED_BUSY',
+      `请先回收嵌套仓库的 Worktree：${nested.map((entry) => entry.repositoryRelativePath).join('、')}`,
+    );
+  }
+
+  function nestedTaskWorkspacesWithWorktree(workspace: ZeusTaskWorkspaceRecord): ZeusTaskWorkspaceRecord[] {
+    if (!workspace.environmentId || !workspace.worktreePath) return [];
+    return taskWorkspaces
+      .listByEnvironment(workspace.environmentId)
+      .filter(
+        (candidate) =>
+          candidate.id !== workspace.id &&
+          Boolean(candidate.worktreePath) &&
+          isPathInsideRoot(candidate.worktreePath!, workspace.worktreePath!),
+      );
+  }
+
   /** 来源分支远端交付成功后回收干净任务目录；清理失败不能反写成交付失败。 */
   async function markTaskWorkspaceDelivered(workspace: ZeusTaskWorkspaceRecord): Promise<boolean> {
     if (!workspace.worktreePath) {
@@ -13131,10 +13183,19 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       reconcileTaskEnvironmentState(workspace.environmentId);
       return false;
     }
+    const nested = nestedTaskWorkspacesWithWorktree(workspace);
+    if (nested.length > 0) {
+      taskWorkspaces.update(workspace.id, {
+        state: 'merged',
+        lastError: `目标分支已交付；等待嵌套仓库 Worktree 先回收：${nested.map((entry) => entry.repositoryRelativePath).join('、')}`,
+      });
+      return false;
+    }
     try {
       const reclaimed = await reclaimDeliveredTaskWorktree({
         repositoryPath: workspace.repositoryPath || projects.getById(workspace.projectId)?.localPath || '',
         worktreePath: workspace.worktreePath,
+        ignoredPaths: taskWorkspaceIgnoredPaths(workspace),
       });
       taskWorkspaces.update(workspace.id, {
         worktreePath: null,
@@ -13142,6 +13203,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
         state: 'merged',
         lastError: null,
       });
+      await reclaimDeferredDeliveredAncestors(workspace.environmentId);
       reconcileTaskEnvironmentState(workspace.environmentId);
       return true;
     } catch (error) {
@@ -13154,13 +13216,36 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     }
   }
 
+  /** 子仓库回收后，自动补收已经交付但此前因目录嵌套而保留的父仓库。 */
+  async function reclaimDeferredDeliveredAncestors(environmentId: string | null): Promise<void> {
+    if (!environmentId) return;
+    const candidates = taskWorkspaces
+      .listByEnvironment(environmentId)
+      .filter((workspace) => workspace.state === 'merged' && workspace.worktreePath)
+      .sort((left, right) => right.repositoryRelativePath.split('/').length - left.repositoryRelativePath.split('/').length);
+    for (const candidate of candidates) {
+      if (!candidate.worktreePath || nestedTaskWorkspacesWithWorktree(candidate).length > 0) continue;
+      try {
+        const reclaimed = await reclaimDeliveredTaskWorktree({
+          repositoryPath: candidate.repositoryPath || projects.getById(candidate.projectId)?.localPath || '',
+          worktreePath: candidate.worktreePath,
+          ignoredPaths: taskWorkspaceIgnoredPaths(candidate),
+        });
+        taskWorkspaces.update(candidate.id, { worktreePath: null, headSha: reclaimed.headSha, lastError: null });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Task worktree cleanup failed.';
+        taskWorkspaces.update(candidate.id, { lastError: `目标分支已交付，但任务 worktree 回收失败：${message}` });
+      }
+    }
+  }
+
   /** 仅当环境内所有仓库都完成交付、放弃或无变化回收后，才回收聚合目录。 */
   function reconcileTaskEnvironmentState(environmentId: string | null): void {
     if (!environmentId) return;
     const environment = taskEnvironments.getById(environmentId);
     if (!environment) return;
     const members = taskWorkspaces.listByEnvironment(environment.id);
-    if (members.length === 0 || members.some((workspace) => !['reclaimed', 'merged', 'discarded'].includes(workspace.state))) return;
+    if (members.length === 0 || members.some((workspace) => workspace.worktreePath || !['reclaimed', 'merged', 'discarded'].includes(workspace.state))) return;
     const project = projects.getById(environment.projectId);
     if (environment.rootPath && project && resolve(environment.rootPath) !== resolve(project.localPath)) {
       rmSync(environment.rootPath, { recursive: true, force: true });
@@ -13178,6 +13263,30 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     return count;
   }
 
+  /** 共享目录直接引用真实路径，不应作为所属仓库 worktree 的代码变化进入提交与回收门禁。 */
+  function taskWorkspaceIgnoredPaths(workspace: ZeusTaskWorkspaceRecord): string[] {
+    const repositoryPath = workspace.repositoryPath;
+    if (!repositoryPath) return [];
+    return projectRepositoryIgnoredPaths(workspace.projectId, workspace.repositoryId, repositoryPath);
+  }
+
+  function projectRepositoryIgnoredPaths(projectId: string, repositoryId: string | null, repositoryPath: string): string[] {
+    const nestedRepositories = projectRepositories
+      .listByProject(projectId)
+      .filter((entry) => entry.id !== repositoryId && isPathInsideRoot(entry.localPath, repositoryPath))
+      .map((entry) => entry.localPath);
+    const sharedPaths = projectSharedPaths
+      .listByProject(projectId)
+      .filter((entry) => isPathInsideRoot(entry.localPath, repositoryPath))
+      .map((entry) => entry.localPath);
+    return Array.from(new Set([...nestedRepositories, ...sharedPaths].map((localPath) => relative(repositoryPath, localPath).split(sep).join('/')).filter((path) => Boolean(path) && path !== '.')));
+  }
+
+  function readTaskWorkspaceReview(workspace: ZeusTaskWorkspaceRecord) {
+    if (!workspace.worktreePath) throw nativeApiError('ZEUS_TASK_WORKTREE_UNAVAILABLE', 'Task worktree is not available.');
+    return getTaskWorkspaceReview(workspace.worktreePath, taskWorkspaceIgnoredPaths(workspace));
+  }
+
   function listTaskWorkspaceConversations(workspace: ZeusTaskWorkspaceRecord): ZeusConversationWithMessagesRecord[] {
     return workspace.environmentId ? conversations.listByEnvironment(workspace.environmentId) : conversations.listByWorkspace(workspace.id);
   }
@@ -13187,7 +13296,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       taskWorkspaces.listByTask(taskId).map(async (workspace) => {
         if (!workspace.worktreePath) return { workspace, repositoryPath: workspace.repositoryPath || fallbackRepositoryPath, headSha: workspace.headSha, force: false };
         try {
-          const review = await getTaskWorkspaceReview(workspace.worktreePath);
+          const review = await readTaskWorkspaceReview(workspace);
           return {
             workspace,
             repositoryPath: workspace.repositoryPath || fallbackRepositoryPath,
@@ -13249,12 +13358,15 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
 
     let removedWorktrees = 0;
     const environmentIds = new Set<string>();
-    for (const plan of cleanup.workspaces) {
+    const workspacePlans = [...cleanup.workspaces].sort(
+      (left, right) => right.workspace.repositoryRelativePath.split('/').length - left.workspace.repositoryRelativePath.split('/').length,
+    );
+    for (const plan of workspacePlans) {
       if (plan.workspace.worktreePath) {
         const result = await removeTaskWorktreeForTerminalStatus({
           repositoryPath: plan.repositoryPath,
           worktreePath: plan.workspace.worktreePath,
-          force: plan.force,
+          force: plan.force || taskWorkspaceIgnoredPaths(plan.workspace).length > 0,
         });
         if (result.removed) removedWorktrees += 1;
       }

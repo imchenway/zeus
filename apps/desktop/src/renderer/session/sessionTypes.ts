@@ -371,14 +371,10 @@ export interface CodexTaskPushCapabilities {
   preferredModel: string;
   models: CodexTaskPushModelCapability[];
   repositories: CodexTaskRepositoryCapability[];
-  repositoryRegistrationRequired: boolean;
-  discoveredRepositories: Array<{
-    name: string;
-    relativePath: string;
-    localPath: string;
-    branch: string;
-    clean: boolean;
-  }>;
+  directWorkspace: {
+    path: string;
+    activeWritableConversationCount: number;
+  };
   sharedWritablePaths: ProjectSharedPathRecord[];
   git: {
     primaryWorkspacePath: string;
@@ -601,7 +597,9 @@ export interface StartTaskModelPushRequest {
   serviceTier?: string | null;
   workMode: 'default' | 'plan';
   permissionMode: NativePermissionMode;
-  workspace: { mode: 'create'; repositories: Array<{ repositoryId: string; sourceRef: string; branchName: string }> };
+  workspace:
+    | { mode: 'direct'; confirmConcurrentWrites: boolean }
+    | { mode: 'create'; repositories: Array<{ repositoryId: string; sourceRef: string; branchName: string }> };
   supplementalInfo?: string;
   idempotencyKey: string;
   clientUserMessageId: string;

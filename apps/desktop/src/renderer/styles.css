@@ -12073,6 +12073,78 @@ a {
   font: inherit;
 }
 
+.macos-ai-app .task-model-push-mode-choice {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  min-inline-size: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.macos-ai-app .task-model-push-mode-choice legend {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+
+.macos-ai-app .task-model-push-mode-choice > label {
+  display: flex;
+  gap: 9px;
+  align-items: flex-start;
+  min-inline-size: 0;
+  padding: 10px;
+  border: 1px solid var(--zeus-control-border);
+  border-radius: 10px;
+  background: var(--zeus-control-bg);
+  cursor: pointer;
+}
+
+.macos-ai-app .task-model-push-mode-choice > label.is-selected {
+  border-color: var(--zeus-accent-primary);
+  box-shadow: var(--zeus-control-focus);
+}
+
+.macos-ai-app .task-model-push-mode-choice input,
+.macos-ai-app .task-model-push-concurrency-confirm input {
+  inline-size: 16px;
+  min-block-size: 16px;
+  margin: 2px 0 0;
+  padding: 0;
+  flex: 0 0 auto;
+}
+
+.macos-ai-app .task-model-push-mode-choice label > span {
+  display: grid;
+  gap: 2px;
+  min-inline-size: 0;
+}
+
+.macos-ai-app .task-model-push-mode-choice small,
+.macos-ai-app .task-model-push-direct-summary > small {
+  color: var(--zeus-product-muted);
+}
+
+.macos-ai-app .task-model-push-direct-summary {
+  display: grid;
+  gap: 8px;
+}
+
+.macos-ai-app .task-model-push-concurrency-confirm {
+  display: flex;
+  gap: 9px;
+  align-items: flex-start;
+  padding: 9px 10px;
+  border: 1px solid var(--zeus-warning-line, var(--zeus-control-border));
+  border-radius: 9px;
+  color: var(--zeus-product-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .macos-ai-app .task-model-push-repository-list {
   display: grid;
   gap: 12px;
@@ -12106,29 +12178,10 @@ a {
 }
 
 .workspace-drawer-portal-root.macos-ai-app .project-workspace-config-body,
-.workspace-drawer-portal-root.macos-ai-app .project-repository-choice-list,
 .workspace-drawer-portal-root.macos-ai-app .project-shared-paths-field {
   display: grid;
   gap: 10px;
   min-width: 0;
-}
-
-.workspace-drawer-portal-root.macos-ai-app .project-repository-choice-list {
-  margin: 0;
-  padding: 12px;
-  border: 1px solid var(--zeus-product-line-soft);
-  border-radius: 10px;
-}
-
-.workspace-drawer-portal-root.macos-ai-app .project-repository-choice-list label {
-  display: flex;
-  gap: 10px;
-  align-items: flex-start;
-}
-
-.workspace-drawer-portal-root.macos-ai-app .project-repository-choice-list label > span {
-  display: grid;
-  gap: 2px;
 }
 
 .workspace-drawer-portal-root.macos-ai-app .project-shared-paths-field textarea {
@@ -12219,7 +12272,8 @@ a {
 
 @media (max-width: 680px) {
   .macos-ai-app .task-model-push-config-grid,
-  .macos-ai-app .task-model-push-workspace-grid {
+  .macos-ai-app .task-model-push-workspace-grid,
+  .macos-ai-app .task-model-push-mode-choice {
     grid-template-columns: minmax(0, 1fr);
   }
 }
