@@ -85,10 +85,7 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
   const [saving, setSaving] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const busy = Boolean(props.state.busyOperation);
-  const writable =
-    !props.state.error?.recoveryRequired &&
-    props.state.transportState === 'ready' &&
-    props.state.conversationState !== 'legacy_readonly';
+  const writable = !props.state.error?.recoveryRequired && props.state.transportState === 'ready' && props.state.conversationState !== 'legacy_readonly';
   const active = props.state.conversationState === 'active_prework' || props.state.conversationState === 'active_final_answer';
   const queueExplanation = describeQueueState(props.state, queue, copy);
 

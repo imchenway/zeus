@@ -210,12 +210,7 @@ export function TaskModelPushModal(props: {
                 </p>
                 {directWorkspaceNeedsConfirmation ? (
                   <label className="task-model-push-concurrency-confirm">
-                    <input
-                      type="checkbox"
-                      checked={props.form.directConcurrencyConfirmed}
-                      onChange={(event) => props.onChange({ ...props.form, directConcurrencyConfirmed: event.currentTarget.checked })}
-                      disabled={busy}
-                    />
+                    <input type="checkbox" checked={props.form.directConcurrencyConfirmed} onChange={(event) => props.onChange({ ...props.form, directConcurrencyConfirmed: event.currentTarget.checked })} disabled={busy} />
                     <span>
                       {zh
                         ? `当前已有 ${props.capabilities?.directWorkspace.activeWritableConversationCount ?? 0} 条可写会话使用这个目录；我了解并发修改可能互相覆盖。`

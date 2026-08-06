@@ -12861,10 +12861,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       registeredRepositories.map(async (registeredRepository) => {
         const [repository, review] = await Promise.all([
           getGitRepositoryContext(registeredRepository.localPath),
-          getTaskWorkspaceReview(
-            registeredRepository.localPath,
-            projectRepositoryIgnoredPaths(project.id, registeredRepository.id, registeredRepository.localPath),
-          ),
+          getTaskWorkspaceReview(registeredRepository.localPath, projectRepositoryIgnoredPaths(project.id, registeredRepository.id, registeredRepository.localPath)),
         ]);
         if (!repository.isRepository) {
           throw nativeApiError('ZEUS_PROJECT_REPOSITORY_UNAVAILABLE', `Project repository is unavailable: ${registeredRepository.relativePath}`);
@@ -13158,22 +13155,12 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
   function assertNestedTaskWorktreesReclaimed(workspace: ZeusTaskWorkspaceRecord): void {
     const nested = nestedTaskWorkspacesWithWorktree(workspace);
     if (nested.length === 0) return;
-    throw nativeApiError(
-      'ZEUS_TASK_WORKSPACE_NESTED_BUSY',
-      `请先回收嵌套仓库的 Worktree：${nested.map((entry) => entry.repositoryRelativePath).join('、')}`,
-    );
+    throw nativeApiError('ZEUS_TASK_WORKSPACE_NESTED_BUSY', `请先回收嵌套仓库的 Worktree：${nested.map((entry) => entry.repositoryRelativePath).join('、')}`);
   }
 
   function nestedTaskWorkspacesWithWorktree(workspace: ZeusTaskWorkspaceRecord): ZeusTaskWorkspaceRecord[] {
     if (!workspace.environmentId || !workspace.worktreePath) return [];
-    return taskWorkspaces
-      .listByEnvironment(workspace.environmentId)
-      .filter(
-        (candidate) =>
-          candidate.id !== workspace.id &&
-          Boolean(candidate.worktreePath) &&
-          isPathInsideRoot(candidate.worktreePath!, workspace.worktreePath!),
-      );
+    return taskWorkspaces.listByEnvironment(workspace.environmentId).filter((candidate) => candidate.id !== workspace.id && Boolean(candidate.worktreePath) && isPathInsideRoot(candidate.worktreePath!, workspace.worktreePath!));
   }
 
   /** 来源分支远端交付成功后回收干净任务目录；清理失败不能反写成交付失败。 */
@@ -13358,9 +13345,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
 
     let removedWorktrees = 0;
     const environmentIds = new Set<string>();
-    const workspacePlans = [...cleanup.workspaces].sort(
-      (left, right) => right.workspace.repositoryRelativePath.split('/').length - left.workspace.repositoryRelativePath.split('/').length,
-    );
+    const workspacePlans = [...cleanup.workspaces].sort((left, right) => right.workspace.repositoryRelativePath.split('/').length - left.workspace.repositoryRelativePath.split('/').length);
     for (const plan of workspacePlans) {
       if (plan.workspace.worktreePath) {
         const result = await removeTaskWorktreeForTerminalStatus({
