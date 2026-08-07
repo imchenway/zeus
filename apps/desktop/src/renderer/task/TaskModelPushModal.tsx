@@ -1,12 +1,22 @@
-import type { FormEvent, KeyboardEvent } from 'react';
-import type { TaskRecord } from '../apiClient.js';
-import type { CodexTaskPushCapabilities, NativePermissionMode, NativeServiceTierSelection } from '../session/sessionTypes.js';
-import { normalizeServiceTierSelection, serviceTierDescription, serviceTierOptions, serviceTierSelectionFromValue, serviceTierSelectionValue } from '../session/serviceTierSelection.js';
-import { Button } from '../ui/Button.js';
-import { ModalPortal } from '../ui/ModalPortal.js';
-import { ZeusSelect } from '../ZeusSelect.js';
-import { TaskAttachmentPreviewList } from './TaskAttachmentPreviewList.js';
-import { parseTaskAttachments } from './taskAttachments.js';
+import type {FormEvent, KeyboardEvent} from 'react';
+import type {TaskRecord} from '../apiClient.js';
+import type {
+    CodexTaskPushCapabilities,
+    NativePermissionMode,
+    NativeServiceTierSelection
+} from '../session/sessionTypes.js';
+import {
+    normalizeServiceTierSelection,
+    serviceTierDescription,
+    serviceTierOptions,
+    serviceTierSelectionFromValue,
+    serviceTierSelectionValue
+} from '../session/serviceTierSelection.js';
+import {Button} from '../ui/Button.js';
+import {ModalPortal} from '../ui/ModalPortal.js';
+import {ZeusSelect} from '../ZeusSelect.js';
+import {TaskAttachmentPreviewList} from './TaskAttachmentPreviewList.js';
+import {parseTaskAttachments} from './taskAttachments.js';
 
 export interface TaskModelPushForm {
   model: string;
@@ -17,7 +27,7 @@ export interface TaskModelPushForm {
   permissionMode: NativePermissionMode;
   workspaceMode: 'direct' | 'worktree';
   directConcurrencyConfirmed: boolean;
-  repositorySelections: Record<string, { sourceRef: string; branchName: string }>;
+    repositorySelections: Record<string, { sourceRef: string; branchName: string; includeLocalChanges: boolean }>;
   supplementalInfo: string;
 }
 
@@ -99,9 +109,10 @@ export function resolveTaskModelPushInitialForm(capabilities: CodexTaskPushCapab
         return [
           repository.id,
           {
-            // 每次推送都以仓库当前检出的分支为真实默认值，不继承其他开发线的来源。
+              // 远端模式按当前同名远端分支选默认值；纯本地模式才使用当前本地分支。
             sourceRef: currentSourceRef,
             branchName: repository.suggestedBranchName,
+              includeLocalChanges: false,
           },
         ];
       }),
@@ -225,7 +236,11 @@ export function TaskModelPushModal(props: {
             ) : repositories.length > 0 ? (
               <div className="task-model-push-repository-list">
                 {repositories.map((repository) => {
-                  const selection = props.form.repositorySelections[repository.id] ?? { sourceRef: '', branchName: repository.suggestedBranchName };
+                    const selection = props.form.repositorySelections[repository.id] ?? {
+                        sourceRef: '',
+                        branchName: repository.suggestedBranchName,
+                        includeLocalChanges: false
+                    };
                   return (
                     <fieldset key={repository.id} className="task-model-push-repository">
                       <legend>
@@ -243,7 +258,7 @@ export function TaskModelPushModal(props: {
                               { value: '', label: zh ? '请选择来源分支' : 'Select source branch', disabled: true },
                               ...repository.sourceRefs.map((source) => ({
                                 value: source.ref,
-                                label: `${source.label}${source.current ? (zh ? ' · 当前' : ' · current') : ''}`,
+                                  label: `${source.label}${source.current ? (zh ? ' · 当前同名分支' : ' · current branch name') : ''}`,
                               })),
                             ]}
                             onChange={(sourceRef) =>
@@ -271,10 +286,36 @@ export function TaskModelPushModal(props: {
                           />
                         </label>
                       </div>
-                      {repository.clean === false ? (
                         <p className="task-model-push-warning">
-                          {zh ? '该仓库的未提交改动会带入新任务工作区；忽略文件仅按 .worktreeinclude 带入。' : 'Uncommitted changes are copied into the new task workspace; ignored files are included only through .worktreeinclude.'}
+                            {repository.sourceMode === 'remote'
+                                ? zh
+                                    ? `来源来自刚刚刷新的 ${repository.defaultRemoteName}；原工作区的未提交内容不会带入。`
+                                    : `The source comes from the freshly updated ${repository.defaultRemoteName}; local uncommitted changes are not copied.`
+                                : zh
+                                    ? '该仓库没有远端，当前使用本地分支快照。默认不带入原工作区未提交内容。'
+                                    : 'This repository has no remote, so a local branch snapshot is used. Local uncommitted changes are excluded by default.'}
                         </p>
+                        {repository.sourceMode === 'local' && repository.clean === false ? (
+                            <label className="task-model-push-concurrency-confirm">
+                                <input
+                                    type="checkbox"
+                                    checked={selection.includeLocalChanges}
+                                    onChange={(event) =>
+                                        props.onChange({
+                                            ...props.form,
+                                            repositorySelections: {
+                                                ...props.form.repositorySelections,
+                                                [repository.id]: {
+                                                    ...selection,
+                                                    includeLocalChanges: event.currentTarget.checked
+                                                },
+                                            },
+                                        })
+                                    }
+                                    disabled={busy}
+                                />
+                                <span>{zh ? '显式带入这个纯本地仓库的未提交内容。' : 'Explicitly copy uncommitted changes from this local-only repository.'}</span>
+                            </label>
                       ) : null}
                     </fieldset>
                   );

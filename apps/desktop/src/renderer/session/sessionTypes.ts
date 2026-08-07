@@ -1,4 +1,9 @@
-import type { ConversationResource, TurnChangeSet, ZeusBrowserComment, ZeusBrowserPreparedSubmission } from '@zeus/shared';
+import type {
+    ConversationResource,
+    TurnChangeSet,
+    ZeusBrowserComment,
+    ZeusBrowserPreparedSubmission
+} from '@zeus/shared';
 
 export type { ConversationResource, ConversationResourcePreview, TurnChangeSet, TurnChangeSetOperationResult } from '@zeus/shared';
 
@@ -369,6 +374,7 @@ export interface CodexTaskRepositoryCapability extends ProjectRepositoryRecord {
   headSha: string;
   clean: boolean;
   defaultRemoteName: string;
+    sourceMode: 'remote' | 'local';
   sourceRefs: Array<{ ref: string; label: string; kind: 'local' | 'remote'; current: boolean }>;
   suggestedBranchName: string;
 }
@@ -506,6 +512,7 @@ export interface TaskWorkspaceSnapshot extends TaskWorkspaceRecord {
   activeConversationCount: number;
   primaryBranch: string | null;
   localBranches: string[];
+    targetBranches: string[];
   review: TaskWorkspaceReview | null;
   branchComparison: TaskBranchComparison | null;
   remoteHeadSha: string | null;
@@ -519,6 +526,7 @@ export interface TaskWorkspacesSnapshot {
   projectId: string;
   primaryBranch: string | null;
   localBranches: string[];
+    targetBranches: string[];
   items: TaskWorkspaceSnapshot[];
   workspaces: TaskWorkspaceSnapshot[];
 }
@@ -556,6 +564,7 @@ export interface TaskIntegrationRecord {
   workspaceId: string;
   targetBranch: string;
   targetHeadSha: string;
+    taskHeadSha: string | null;
   mode: 'merge' | 'squash';
   integrationPath: string | null;
   resultHeadSha: string | null;
@@ -582,6 +591,7 @@ export interface TaskIntegrationResult {
 
 export interface TaskIntegrationConflictFile {
   path: string;
+    fingerprint: string;
   base: string;
   source: string;
   task: string;
@@ -624,7 +634,15 @@ export interface StartTaskModelPushRequest {
   serviceTier?: string | null;
   workMode: 'default' | 'plan';
   permissionMode: NativePermissionMode;
-  workspace: { mode: 'direct'; confirmConcurrentWrites: boolean } | { mode: 'create'; repositories: Array<{ repositoryId: string; sourceRef: string; branchName: string }> };
+    workspace: { mode: 'direct'; confirmConcurrentWrites: boolean } | {
+        mode: 'create';
+        repositories: Array<{
+            repositoryId: string;
+            sourceRef: string;
+            branchName: string;
+            includeLocalChanges?: boolean
+        }>
+    };
   supplementalInfo?: string;
   idempotencyKey: string;
   clientUserMessageId: string;

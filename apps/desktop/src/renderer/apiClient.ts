@@ -1,37 +1,48 @@
 import type {
-  AgentCatalogSnapshot,
-  ArchivedConversationChoicesSnapshot,
-  CodexConversationCapabilities,
-  CodexAccountSnapshot,
-  CodexChatGptLogin,
-  CodexTaskPushCapabilities,
-  ConversationResourcePreview,
-  NativeCollaborationMode,
-  NativeConversationChoicesSnapshot,
-  NativeConversationSnapshot,
-  NativeNextTurnSettings,
-  NativeOperationAcceptance,
-  NativePendingRequest,
-  NativePermissionMode,
-  NativePlanImplementationRequest,
-  NativeProjectConversationChoicesSnapshot,
-  NativeQueueSnapshot,
-  SendNativeMessageRequest,
-  StartNativeConversationRequest,
-  StartProjectConversationRequest,
-  StartTaskModelPushRequest,
-  TaskGitDiffSummary,
-  TaskIntegrationConflictAiDraft,
-  TaskIntegrationConflictFile,
-  TaskIntegrationRecord,
-  TaskIntegrationResult,
-  TaskWorkspaceCommitResult,
-  TaskWorkspacePushResult,
-  TaskWorkspacesSnapshot,
-  TurnChangeSet,
-  TurnChangeSetOperationResult,
+    AgentCatalogSnapshot,
+    ArchivedConversationChoicesSnapshot,
+    CodexAccountSnapshot,
+    CodexChatGptLogin,
+    CodexConversationCapabilities,
+    CodexTaskPushCapabilities,
+    ConversationResourcePreview,
+    NativeCollaborationMode,
+    NativeConversationChoicesSnapshot,
+    NativeConversationSnapshot,
+    NativeNextTurnSettings,
+    NativeOperationAcceptance,
+    NativePendingRequest,
+    NativePermissionMode,
+    NativePlanImplementationRequest,
+    NativeProjectConversationChoicesSnapshot,
+    NativeQueueSnapshot,
+    SendNativeMessageRequest,
+    StartNativeConversationRequest,
+    StartProjectConversationRequest,
+    StartTaskModelPushRequest,
+    TaskGitDiffSummary,
+    TaskIntegrationConflictAiDraft,
+    TaskIntegrationConflictFile,
+    TaskIntegrationRecord,
+    TaskIntegrationResult,
+    TaskWorkspaceCommitResult,
+    TaskWorkspacePushResult,
+    TaskWorkspacesSnapshot,
+    TurnChangeSet,
+    TurnChangeSetOperationResult,
 } from './session/sessionTypes.js';
-import type { CommandArtifact, CommandConfirmation, CommandDefinition, CommandDefinitionInput, CommandRun, TaskAttachmentReference, TaskManagementStatus, TaskPriority, TaskStatusFilter, TaskType } from '@zeus/shared';
+import type {
+    CommandArtifact,
+    CommandConfirmation,
+    CommandDefinition,
+    CommandDefinitionInput,
+    CommandRun,
+    TaskAttachmentReference,
+    TaskManagementStatus,
+    TaskPriority,
+    TaskStatusFilter,
+    TaskType
+} from '@zeus/shared';
 
 export type { CommandArtifact, CommandConfirmation, CommandDefinition, CommandDefinitionInput, CommandParameterDefinition, CommandRun, CommandRunStatus, TaskManagementStatus, TaskPriority, TaskStatusFilter, TaskType } from '@zeus/shared';
 
@@ -1413,6 +1424,7 @@ export interface DashboardClient {
     input: {
       targetBranch: string;
       mode: 'merge' | 'squash';
+        prepareOnly?: boolean;
     },
   ) => Promise<{ integration: TaskIntegrationRecord; result?: TaskIntegrationResult }>;
   loadTaskIntegrationConflict: (taskId: string, integrationId: string, path: string) => Promise<TaskIntegrationConflictFile>;
