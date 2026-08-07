@@ -1,4 +1,4 @@
-import { type FormEvent, type KeyboardEvent, type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { memo, type FormEvent, type KeyboardEvent, type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { CopyIcon as Copy } from '@phosphor-icons/react/dist/csr/Copy';
 import { TerminalWindowIcon as TerminalWindow } from '@phosphor-icons/react/dist/csr/TerminalWindow';
 import Markdown, { type Components } from 'react-markdown';
@@ -15,8 +15,12 @@ export const MAX_MARKDOWN_CHARACTERS = 200_000;
 export const MAX_MARKDOWN_BLOCK_CHARACTERS = 50_000;
 export const MAX_MARKDOWN_BLOCKS = 512;
 export const MAX_MARKDOWN_NODES = 4_096;
-const STREAM_IDLE_FLUSH_MS = 80;
+const STREAM_IDLE_FLUSH_MS = 120;
 const STREAM_MAX_FLUSH_MS = 180;
+const STREAM_MIN_BATCH_CHARACTERS = 12;
+const STREAM_IMMEDIATE_CHUNK_CHARACTERS = 48;
+const STREAM_CATCH_UP_CHARACTERS = 96;
+const STREAM_STRUCTURED_IDLE_FLUSH_MS = 1_200;
 
 const copy = {
   'zh-CN': {
@@ -103,12 +107,13 @@ export function ThreadItemView(props: ThreadItemViewProps) {
   const [editError, setEditError] = useState<string | null>(null);
   const [submittingEdit, setSubmittingEdit] = useState(false);
   const editTextareaRef = useRef<HTMLTextAreaElement | null>(null);
-  const commentaryRef = useRef<HTMLDivElement | null>(null);
+  const articleRef = useRef<HTMLElement | null>(null);
   const role = itemRole(props.item);
   const itemText = transcriptItemText(props.item);
   const commentary = role === 'commentary';
-  const bufferedCommentary = useBufferedTranscriptText(itemText, commentary && props.item.status !== 'completed' && props.item.status !== 'failed');
-  const presentedItemText = commentary ? bufferedCommentary.text : itemText;
+  const naturalLanguageStream = role === 'assistant' || commentary;
+  const adaptiveText = useAdaptiveTranscriptText(itemText, naturalLanguageStream && props.item.status !== 'completed' && props.item.status !== 'failed');
+  const presentedItemText = naturalLanguageStream ? adaptiveText.text : itemText;
   const longUserMessage = role === 'user' && itemText.length > 640;
   const visibleText = longUserMessage && !expanded ? `${itemText.slice(0, 620).trimEnd()}…` : presentedItemText;
   const label = roleLabel(role, labels);
@@ -136,8 +141,8 @@ export function ThreadItemView(props: ThreadItemViewProps) {
   }, [editDraft, editing]);
 
   useLayoutEffect(() => {
-    if (!commentary || bufferedCommentary.revision === 0 || prefersReducedMotion()) return;
-    const latestBlock = commentaryRef.current?.querySelector<HTMLElement>('.session-markdown > :last-child');
+    if (!naturalLanguageStream || adaptiveText.revision === 0 || prefersReducedMotion()) return;
+    const latestBlock = articleRef.current?.querySelector<HTMLElement>('.session-markdown > :last-child');
     const animation = latestBlock?.animate(
       [
         { opacity: 0.68, transform: 'translateY(2px)' },
@@ -146,7 +151,7 @@ export function ThreadItemView(props: ThreadItemViewProps) {
       { duration: 140, easing: 'cubic-bezier(0.16, 1, 0.3, 1)' },
     );
     return () => animation?.cancel();
-  }, [bufferedCommentary.revision, commentary]);
+  }, [adaptiveText.revision, naturalLanguageStream]);
 
   async function submitEditedMessage(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
@@ -184,6 +189,7 @@ export function ThreadItemView(props: ThreadItemViewProps) {
 
   return (
     <article
+      ref={articleRef}
       className={`session-thread-item session-thread-item-${role}${props.isLatest ? ' is-latest' : ''}${role === 'assistant' && props.showAssistantActions ? ' is-latest-assistant' : ''}${messageExpanded ? ' is-message-expanded' : ''}${hasActions ? ' has-message-actions' : ''}${editing ? ' is-editing' : ''}`}
       data-item-status={props.item.status}
       data-item-phase={props.item.phase}
@@ -224,7 +230,7 @@ export function ThreadItemView(props: ThreadItemViewProps) {
       ) : command ? (
         <CommandExecutionItem item={props.item} language={props.language} />
       ) : commentary && visibleText ? (
-        <div ref={commentaryRef} className="session-commentary-flow" data-streaming={(props.item.status !== 'completed' && props.item.status !== 'failed') || undefined}>
+        <div className="session-commentary-flow" data-streaming={(props.item.status !== 'completed' && props.item.status !== 'failed') || undefined}>
           <SafeMarkdown text={visibleText} language={props.language} resources={props.item.resources} onOpenResource={props.onOpenResource} onLoadResourcePreview={props.onLoadResourcePreview} />
         </div>
       ) : visibleText ? (
@@ -277,7 +283,7 @@ export function ThreadItemView(props: ThreadItemViewProps) {
   );
 }
 
-export function SafeMarkdown(props: {
+export const SafeMarkdown = memo(function SafeMarkdown(props: {
   text: string;
   language?: SessionUiLanguage;
   resources?: ConversationResource[];
@@ -334,7 +340,7 @@ export function SafeMarkdown(props: {
       </Markdown>
     </div>
   );
-}
+});
 
 const emptyConversationResources: ConversationResource[] = [];
 
@@ -494,59 +500,146 @@ export function transcriptItemText(item: NativeSessionItemBuffer): string {
   return transcriptTextFragments([item.payload.summary, item.payload.content]).join('\n\n');
 }
 
-function useBufferedTranscriptText(text: string, enabled: boolean): { text: string; revision: number } {
+type AdaptiveFlushMode = 'semantic' | 'chunk' | 'catch_up' | 'idle' | 'max_wait';
+
+function useAdaptiveTranscriptText(text: string, enabled: boolean): { text: string; revision: number } {
   const [visible, setVisible] = useState(() => ({ text, revision: 0 }));
   const visibleTextRef = useRef(text);
   const targetTextRef = useRef(text);
+  const previousTargetTextRef = useRef(text);
   const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const maxTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const structuredIdleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  function clearTimers(): void {
+  function clearShortTimers(): void {
     if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
     if (maxTimerRef.current) clearTimeout(maxTimerRef.current);
     idleTimerRef.current = null;
     maxTimerRef.current = null;
   }
 
-  function commitTarget(): void {
-    clearTimers();
-    const next = targetTextRef.current;
+  function clearTimers(): void {
+    clearShortTimers();
+    if (structuredIdleTimerRef.current) clearTimeout(structuredIdleTimerRef.current);
+    structuredIdleTimerRef.current = null;
+  }
+
+  function commitVisibleText(next: string): void {
     if (next === visibleTextRef.current) return;
+    clearShortTimers();
+    if (next === targetTextRef.current && structuredIdleTimerRef.current) {
+      clearTimeout(structuredIdleTimerRef.current);
+      structuredIdleTimerRef.current = null;
+    }
     visibleTextRef.current = next;
     setVisible((current) => ({ text: next, revision: current.revision + 1 }));
   }
 
+  function commitTarget(mode: AdaptiveFlushMode): boolean {
+    const target = targetTextRef.current;
+    const current = visibleTextRef.current;
+    if (!target.startsWith(current)) {
+      commitVisibleText(target);
+      return true;
+    }
+    const safeEnd = structuredTailStart(target, current.length) ?? target.length;
+    if (safeEnd <= current.length) return false;
+    const safePending = target.slice(current.length, safeEnd);
+    const commitLength = adaptiveCommitLength(safePending, mode);
+    if (commitLength <= 0) return false;
+    commitVisibleText(target.slice(0, current.length + commitLength));
+    return true;
+  }
+
   useEffect(() => {
+    const previousTarget = previousTargetTextRef.current;
+    previousTargetTextRef.current = text;
     targetTextRef.current = text;
+    if (structuredIdleTimerRef.current) {
+      clearTimeout(structuredIdleTimerRef.current);
+      structuredIdleTimerRef.current = null;
+    }
     const prefixCompatible = text.startsWith(visibleTextRef.current);
-    if (!enabled || prefersReducedMotion() || !prefixCompatible) {
-      commitTarget();
+    if (!enabled || !prefixCompatible) {
+      clearTimers();
+      commitVisibleText(text);
       return;
     }
+    if (text === visibleTextRef.current) {
+      clearTimers();
+      return;
+    }
+    const addedCharacters = text.startsWith(previousTarget) ? text.length - previousTarget.length : text.length - visibleTextRef.current.length;
+    commitTarget('semantic');
+    if (text === visibleTextRef.current) return;
+    if (addedCharacters >= STREAM_IMMEDIATE_CHUNK_CHARACTERS) commitTarget('chunk');
     if (text === visibleTextRef.current) return;
     const pendingText = text.slice(visibleTextRef.current.length);
-    if (hasSemanticFlushBoundary(pendingText)) {
-      commitTarget();
-      return;
-    }
+    if (pendingText.length >= STREAM_CATCH_UP_CHARACTERS) commitTarget('catch_up');
+    if (text === visibleTextRef.current) return;
     if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
-    idleTimerRef.current = setTimeout(commitTarget, STREAM_IDLE_FLUSH_MS);
-    maxTimerRef.current ??= setTimeout(commitTarget, STREAM_MAX_FLUSH_MS);
+    idleTimerRef.current = setTimeout(() => {
+      idleTimerRef.current = null;
+      commitTarget('idle');
+    }, STREAM_IDLE_FLUSH_MS);
+    maxTimerRef.current ??= setTimeout(() => {
+      maxTimerRef.current = null;
+      commitTarget('max_wait');
+    }, STREAM_MAX_FLUSH_MS);
+    if (structuredTailStart(text, visibleTextRef.current.length) !== null) {
+      structuredIdleTimerRef.current = setTimeout(() => {
+        structuredIdleTimerRef.current = null;
+        commitVisibleText(targetTextRef.current);
+      }, STREAM_STRUCTURED_IDLE_FLUSH_MS);
+    }
   }, [enabled, text]);
 
-  useEffect(
-    () => () => {
-      if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
-      if (maxTimerRef.current) clearTimeout(maxTimerRef.current);
-    },
-    [],
-  );
+  useEffect(() => () => clearTimers(), []);
 
   return visible;
 }
 
-function hasSemanticFlushBoundary(value: string): boolean {
-  return /(?:\n|[。！？；!?;](?:\s|$)|\.(?:\s|$))/u.test(value);
+function adaptiveCommitLength(value: string, mode: AdaptiveFlushMode): number {
+  if (!value) return 0;
+  if (mode === 'chunk') return value.length;
+  const semanticBoundary = lastSemanticFlushBoundary(value);
+  if (semanticBoundary > 0) return semanticBoundary;
+  if (mode === 'semantic') return 0;
+  if ((mode === 'idle' || mode === 'max_wait') && value.length < STREAM_MIN_BATCH_CHARACTERS) return 0;
+  if (mode === 'catch_up' && value.length < STREAM_CATCH_UP_CHARACTERS) return 0;
+  return readableBatchBoundary(value);
+}
+
+function lastSemanticFlushBoundary(value: string): number {
+  const matches = value.matchAll(/(?:\n|[。！？；!?;](?:\s|$)|\.(?:\s|$))/gu);
+  let boundary = 0;
+  for (const match of matches) boundary = (match.index ?? 0) + match[0].length;
+  return boundary;
+}
+
+function readableBatchBoundary(value: string): number {
+  for (let index = value.length - 1; index >= STREAM_MIN_BATCH_CHARACTERS; index -= 1) {
+    if (/\s/u.test(value[index] ?? '')) return index + 1;
+  }
+  return value.length;
+}
+
+function structuredTailStart(value: string, visibleLength: number): number | null {
+  const lineStart = Math.max(visibleLength, value.lastIndexOf('\n') + 1);
+  const tail = value.slice(lineStart);
+  const candidates: number[] = [];
+  const markdownLinkTarget = tail.lastIndexOf('](');
+  if (markdownLinkTarget >= 0 && tail.indexOf(')', markdownLinkTarget + 2) < 0) {
+    const labelStart = tail.lastIndexOf('[', markdownLinkTarget);
+    candidates.push(lineStart + (labelStart >= 0 ? labelStart : markdownLinkTarget));
+  }
+  const bracketStart = tail.lastIndexOf('[');
+  if (bracketStart > tail.lastIndexOf(']')) candidates.push(lineStart + Math.max(0, bracketStart - (tail[bracketStart - 1] === '!' ? 1 : 0)));
+  const inlineCodeTicks = [...tail.matchAll(/(?<!`)`(?!`)/gu)];
+  if (inlineCodeTicks.length % 2 === 1) candidates.push(lineStart + (inlineCodeTicks.at(-1)?.index ?? 0));
+  const pathMatch = tail.match(/(?:^|[\s[(<{])((?:file:\/\/|https?:\/\/|~\/|\.{1,2}\/|\/(?:[^/\s)]+\/)+|[A-Za-z]:[\\/])[^\s)]*)$/u);
+  if (pathMatch?.index !== undefined) candidates.push(lineStart + pathMatch.index + pathMatch[0].length - pathMatch[1].length);
+  return candidates.length > 0 ? Math.min(...candidates) : null;
 }
 
 function prefersReducedMotion(): boolean {
