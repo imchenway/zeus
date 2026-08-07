@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 /* global console, process */
-import {spawn, spawnSync} from 'node:child_process';
-import {copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, writeFileSync} from 'node:fs';
-import {tmpdir} from 'node:os';
-import {basename, dirname, extname, isAbsolute, join, resolve, sep} from 'node:path';
-import {createInterface} from 'node:readline';
+import { spawn, spawnSync } from 'node:child_process';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { basename, dirname, extname, isAbsolute, join, resolve, sep } from 'node:path';
+import { createInterface } from 'node:readline';
 
 const repositoryRoot = resolve(import.meta.dirname, '..');
 const repository = 'imchenway/zeus';
@@ -348,38 +348,38 @@ function canRebindPreWriteState(state) {
 }
 
 function rebindUnpublishedReleaseRepair(state, headSha) {
-    const recoveringUnpushedCommit = state.phase === 'release_committed' && !state.gateSummaryPath;
-    const recoveringFailedPushedCommit = state.phase === 'main_pushed' && Boolean(state.gateSummaryPath);
-    if ((!recoveringUnpushedCommit && !recoveringFailedPushedCommit) || state.publishResultPath) return false;
+  const recoveringUnpushedCommit = state.phase === 'release_committed' && !state.gateSummaryPath;
+  const recoveringFailedPushedCommit = state.phase === 'main_pushed' && Boolean(state.gateSummaryPath);
+  if ((!recoveringUnpushedCommit && !recoveringFailedPushedCommit) || state.publishResultPath) return false;
   if (git(['status', '--short'])) return false;
   if (readMatchingPackageVersion() !== state.version) return false;
   if (resolveLocalTagSha(state.tag) || resolveRemoteReference(`refs/tags/${state.tag}`)) return false;
   if (capture('git', ['merge-base', '--is-ancestor', state.releaseCommit, headSha], true).status !== 0) return false;
   const remoteMainSha = resolveRemoteReference('refs/heads/main');
-    if (!remoteMainSha) return false;
-    const previousReleaseIsOnRemote = capture('git', ['merge-base', '--is-ancestor', state.releaseCommit, remoteMainSha], true).status === 0;
-    if (recoveringUnpushedCommit && previousReleaseIsOnRemote) return false;
-    if (recoveringFailedPushedCommit && (!previousReleaseIsOnRemote || remoteMainSha !== headSha)) return false;
-    if (recoveringFailedPushedCommit) assertNoActiveReleaseWorkflow();
+  if (!remoteMainSha) return false;
+  const previousReleaseIsOnRemote = capture('git', ['merge-base', '--is-ancestor', state.releaseCommit, remoteMainSha], true).status === 0;
+  if (recoveringUnpushedCommit && previousReleaseIsOnRemote) return false;
+  if (recoveringFailedPushedCommit && (!previousReleaseIsOnRemote || remoteMainSha !== headSha)) return false;
+  if (recoveringFailedPushedCommit) assertNoActiveReleaseWorkflow();
   assertAncestor(state.baseTag, headSha);
   state.sourceHead = headSha;
   state.releaseCommit = headSha;
-    state.gateSummaryPath = null;
-    state.publishResultPath = null;
+  state.gateSummaryPath = null;
+  state.publishResultPath = null;
   syncReleaseNotesSnapshot(state);
   state.phase = 'release_committed';
   writeState(state);
-    const recoverySource = recoveringFailedPushedCommit ? '已推送但未公开' : '尚未推送';
-    console.log(`${recoverySource}的 ${state.tag} 发布状态已重新绑定到修复提交 ${headSha.slice(0, 12)}。`);
+  const recoverySource = recoveringFailedPushedCommit ? '已推送但未公开' : '尚未推送';
+  console.log(`${recoverySource}的 ${state.tag} 发布状态已重新绑定到修复提交 ${headSha.slice(0, 12)}。`);
   return true;
 }
 
 function assertNoActiveReleaseWorkflow() {
-    const runs = JSON.parse(gh(['run', 'list', '--repo', repository, '--workflow', 'Release', '--limit', '50', '--json', 'databaseId,status,headSha,url']));
-    const activeRuns = runs.filter((run) => run.status !== 'completed');
-    if (activeRuns.length === 0) return;
-    const details = activeRuns.map((run) => `${run.databaseId}:${run.status}:${run.headSha}:${run.url}`).join('\n');
-    throw new Error(`仍有 Release Workflow 在运行或排队，拒绝重新绑定失败发布候选：\n${details}`);
+  const runs = JSON.parse(gh(['run', 'list', '--repo', repository, '--workflow', 'Release', '--limit', '50', '--json', 'databaseId,status,headSha,url']));
+  const activeRuns = runs.filter((run) => run.status !== 'completed');
+  if (activeRuns.length === 0) return;
+  const details = activeRuns.map((run) => `${run.databaseId}:${run.status}:${run.headSha}:${run.url}`).join('\n');
+  throw new Error(`仍有 Release Workflow 在运行或排队，拒绝重新绑定失败发布候选：\n${details}`);
 }
 
 function validateState(state, stableRelease) {
