@@ -5,6 +5,7 @@ import { accessSync, appendFileSync, constants as fsConstants, cpSync, existsSyn
 import { dirname, isAbsolute, join, parse, relative, resolve, sep } from 'node:path';
 import { getNextTaskStatus, type TaskStatus } from '@zeus/task-core';
 import {
+  buildTaskCommitMessageSuggestion,
   type CommandDefinition,
   commandNeedsHighRiskConfirmation,
   type ConversationResource,
@@ -4243,7 +4244,13 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       const result = await commitAndPushTaskWorkspace({
         cwd: workspace.worktreePath,
         ignoredPaths: taskWorkspaceIgnoredPaths(workspace),
-        message: request.body?.message?.trim() || `${task.taskCode}: ${task.title}`,
+        message:
+          request.body?.message?.trim() ||
+          buildTaskCommitMessageSuggestion({
+            taskType: task.taskType,
+            taskCode: task.taskCode,
+            taskTitle: task.title,
+          }),
         selectedPaths,
         remoteName: workspace.remoteName,
         remoteBranch: workspace.remoteBranch,

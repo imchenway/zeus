@@ -31,6 +31,17 @@ export function isTaskType(value: unknown): value is TaskType {
   return typeof value === 'string' && taskTypeOrder.includes(value as TaskType);
 }
 
+const taskCommitPrefixByType: Record<TaskType, 'feat' | 'fix' | 'perf'> = {
+  requirement: 'feat',
+  defect: 'fix',
+  optimization: 'perf',
+};
+
+/** 根据任务类型生成可编辑的任务提交说明建议值，不用于代码交付合入提交。 */
+export function buildTaskCommitMessageSuggestion(input: { taskType: TaskType; taskCode: string; taskTitle: string }): string {
+  return `${taskCommitPrefixByType[input.taskType]}: ${input.taskCode.trim()} ${input.taskTitle.trim()}`;
+}
+
 /** 项目管理阶段与 Coding Agent 执行状态严格分离；这里只描述任务在交付流程中的位置。 */
 export type TaskManagementStatus = 'todo' | 'in_development' | 'in_testing' | 'awaiting_acceptance' | 'blocked' | 'completed' | 'cancelled';
 

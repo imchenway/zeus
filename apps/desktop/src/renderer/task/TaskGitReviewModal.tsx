@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { buildTaskCommitMessageSuggestion } from '@zeus/shared';
 import { ZeusApiError, type DashboardClient, type TaskRecord } from '../apiClient.js';
 import type { TaskGitDiffSummary, TaskGitFileDiff, TaskGitFileStatus, TaskWorkspaceSnapshot, TaskWorkspacesSnapshot } from '../session/sessionTypes.js';
 import { Button } from '../ui/Button.js';
@@ -39,7 +40,13 @@ export function TaskGitReviewModal(props: {
     let cancelled = false;
     setStatus('loading');
     setError(null);
-    setMessage(`${props.task.taskCode ?? props.task.id}: ${props.task.title}`);
+    setMessage(
+      buildTaskCommitMessageSuggestion({
+        taskType: props.task.taskType,
+        taskCode: props.task.taskCode ?? props.task.id,
+        taskTitle: props.task.title,
+      }),
+    );
     void props.client
       .loadTaskGitWorkspaces(props.task.id)
       .then((next) => {
