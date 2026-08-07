@@ -95,7 +95,7 @@ import { BrowserSettingsPane } from './settings/BrowserSettingsPane.js';
 import { CodexRemoteControlSettings } from './settings/CodexRemoteControlSettings.js';
 import { ModelConnectionsSettingsPane } from './settings/ModelConnectionsSettingsPane.js';
 import { ProjectModelsSettings } from './settings/ProjectModelsSettings.js';
-import { type TaskAttachmentRestoreTarget, type TaskAttachmentView, toPersistedTaskAttachment } from './task/taskAttachments.js';
+import { type TaskAttachmentRestoreTarget, type TaskAttachmentView, type TaskResourceAuthorizationResult, type TaskResourcePayload, toPersistedTaskAttachment } from './task/taskAttachments.js';
 import {
   defaultTaskTableEnumSortOrders,
   filterVisibleTasks,
@@ -261,7 +261,6 @@ type TaskCreateDraft = {
   tags: string[];
   attachments: ReturnType<typeof toPersistedTaskAttachment>[];
 };
-type TaskResourcePayload = { name?: string; type?: string; data?: ArrayBuffer; text?: string; kind?: 'image' | 'file' | 'pasted_text' };
 type TaskModelPushNavigationTarget = {
   projectId?: string;
   activeNavTarget: MainNavTarget;
@@ -280,7 +279,6 @@ function taskModelPushNavigationTargetEqual(left: TaskModelPushNavigationTarget,
     left.taskDetailPaneTaskId === right.taskDetailPaneTaskId
   );
 }
-type TaskResourceAuthorizationResult = { resources: TaskCreateAttachment[]; failedCount: number };
 type NativeConversationAppClient = SessionControllerClient &
   Pick<
     DashboardClient,
@@ -11732,6 +11730,9 @@ export function App(props: {
                     onDeleteTask={(taskId) => setTaskDeleteDialogTaskId(taskId)}
                     onManagementStatusChange={(taskId, status, expectedUpdatedAt) => updateTaskManagementStatus(taskId, status, { expectedUpdatedAt })}
                     onChooseAttachments={props.onChooseTaskAttachments}
+                    onAuthorizeFiles={props.onAuthorizeTaskFiles}
+                    onMaterializeResources={props.onMaterializeTaskResources}
+                    onReadClipboardResources={props.onReadTaskClipboardResources}
                     onReloadConversations={(taskId) => void refreshNativeConversationChoices(taskId)}
                     onLoadAttachmentPreview={props.onLoadTaskAttachmentPreview}
                     onOpenAttachment={props.onOpenTaskAttachment}
