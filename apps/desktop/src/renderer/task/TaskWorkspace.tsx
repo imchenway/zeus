@@ -1,7 +1,7 @@
 import { type CSSProperties, type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, useCallback, useEffect, useId, useRef, useState } from 'react';
 import { CircleNotchIcon as CircleNotch } from '@phosphor-icons/react/dist/csr/CircleNotch';
 import { isTaskPriority } from '@zeus/shared';
-import type { AiRuntimeSession, RuntimeStatusSnapshot, TaskManagementStatus, TaskPriority, TaskRecord, TaskStatusFilter, TaskTableColumnKey, TaskTableEnumSortOrders, TaskTableColumnPreferences, UpdateTaskRequest } from '../apiClient.js';
+import type { AiRuntimeSession, RuntimeStatusSnapshot, TaskManagementStatus, TaskPriority, TaskRecord, TaskStatusFilter, TaskTableColumnKey, TaskTableEnumSortOrders, TaskTableColumnPreferences, TaskType, UpdateTaskRequest } from '../apiClient.js';
 import type { NativeConversationChoice } from '../session/sessionTypes.js';
 import { Button } from '../ui/Button.js';
 import { ZeusSelect } from '../ZeusSelect.js';
@@ -62,6 +62,12 @@ function taskPriorityTone(priority: string | number | null): TaskSemanticTone {
   if (priority === 'p2') return 'amber';
   if (priority === 'p3') return 'blue';
   return 'neutral';
+}
+
+function taskTypeTone(taskType: TaskType): TaskSemanticTone {
+  if (taskType === 'requirement') return 'violet';
+  if (taskType === 'defect') return 'red';
+  return 'green';
 }
 
 type TaskPriorityEditResult = { kind: 'updated'; task: TaskRecord } | { kind: 'conflict'; latest: TaskRecord };
@@ -636,6 +642,14 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
     setDragInsertion(null);
   };
 
+  const handleColumnDragStart = (event: ReactDragEvent<HTMLElement>, columnKey: TaskTableColumnKey) => {
+    setDraggedColumnKey(columnKey);
+    setDragPreviewColumnOrder([...model.columnPreferences.columnOrder]);
+    setDragInsertion(null);
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', columnKey);
+  };
+
   const handleColumnDragOver = (event: ReactDragEvent<HTMLElement>, targetColumnKey: TaskTableColumnKey) => {
     if (!draggedColumnKey || draggedColumnKey === targetColumnKey) return;
     event.preventDefault();
@@ -978,13 +992,7 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
                       aria-pressed={keyboardMovingColumnKey === columnKey}
                       aria-label={isEnglishCopy ? `Move ${columnLabels[columnKey]} column` : `移动${columnLabels[columnKey]}列`}
                       title={isEnglishCopy ? 'Drag to reorder. Keyboard: Space, arrows, Space.' : '拖动调整位置；键盘可按空格、方向键、空格。'}
-                      onDragStart={(event) => {
-                        setDraggedColumnKey(columnKey);
-                        setDragPreviewColumnOrder([...model.columnPreferences.columnOrder]);
-                        setDragInsertion(null);
-                        event.dataTransfer.effectAllowed = 'move';
-                        event.dataTransfer.setData('text/plain', columnKey);
-                      }}
+                      onDragStart={(event) => handleColumnDragStart(event, columnKey)}
                       onDragEnd={clearColumnDragPreview}
                       onKeyDown={(event) => handleColumnMoveKeyDown(event, columnKey)}
                     >
@@ -993,8 +1001,11 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
                     <button
                       type="button"
                       className="task-table-column-sort-button"
+                      draggable
                       aria-label={isEnglishCopy ? `Sort by ${columnLabels[columnKey]}; currently ${sortLabel}` : `按${columnLabels[columnKey]}排序；当前${sortLabel}`}
-                      title={isEnglishCopy ? `Sort: ${sortLabel}` : `排序：${sortLabel}`}
+                      title={isEnglishCopy ? `Click to sort (${sortLabel}); drag to reorder.` : `点击排序（${sortLabel}）；拖动调整列位置。`}
+                      onDragStart={(event) => handleColumnDragStart(event, columnKey)}
+                      onDragEnd={clearColumnDragPreview}
                       onClick={() => props.onTaskTableColumnsChange(cycleTaskTableSort(model.columnPreferences, columnKey))}
                     >
                       <span>{columnLabels[columnKey]}</span>
@@ -1119,7 +1130,11 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
                     const cell = row.cells[columnKey];
                     return (
                       <span className={taskTableCellClassName(columnKey, true)} role="gridcell" key={columnKey} data-column-label={columnLabels[columnKey]}>
-                        {columnKey === 'managementStatus' ? (
+                        {columnKey === 'taskType' ? (
+                          <span className={`task-status-chip task-type-chip task-status-tone-${taskTypeTone(task.taskType)}`}>
+                            <strong>{cell.primary}</strong>
+                          </span>
+                        ) : columnKey === 'managementStatus' ? (
                           <span className="task-table-row-status-control" onClick={(event) => event.stopPropagation()}>
                             <ZeusSelect
                               size="compact"

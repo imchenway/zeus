@@ -73,6 +73,20 @@ export interface CodexCapabilitiesSnapshot {
   supportedModels: string[];
 }
 
+export interface CodexAccountSnapshot {
+  generationId: string;
+  requiresOpenaiAuth: boolean;
+  signedIn: boolean;
+  accountType: string | null;
+  planType: string | null;
+}
+
+export interface CodexChatGptLogin {
+  generationId: string;
+  loginId: string;
+  authUrl: string;
+}
+
 export type CodexSandboxPolicy = { type: 'readOnly'; networkAccess: false } | { type: 'workspaceWrite'; writableRoots: string[]; networkAccess: boolean } | { type: 'dangerFullAccess' };
 export type CodexReasoningSummary = 'auto' | 'concise' | 'detailed' | 'none';
 
@@ -245,6 +259,9 @@ export interface CodexRemoteControlClientsPage {
 
 export interface CodexAppServerManager {
   ensureReady(input: { commandPath: string; externalAgentHome?: string; remoteControl?: boolean }): Promise<CodexCapabilitiesSnapshot>;
+  readAccount(input?: { refreshToken?: boolean }): Promise<CodexAccountSnapshot>;
+  startChatGptLogin(): Promise<CodexChatGptLogin>;
+  cancelChatGptLogin(input: { loginId: string }): Promise<void>;
   startThread(input: CodexThreadStartInput): Promise<CodexThreadSnapshot>;
   resumeThread(input: { threadId: string; cwd?: string }): Promise<CodexThreadSnapshot>;
   archiveThread(input: { threadId: string }): Promise<void>;
@@ -701,6 +718,31 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
       readyPromise = start(input.commandPath);
       void readyPromise.catch(() => undefined);
       return readyPromise;
+    },
+    async readAccount(input = {}) {
+      const capabilities = await awaitCapabilities();
+      return parseAccountSnapshot(
+        await rpc(capabilities.generationId, 'account/read', {
+          refreshToken: input.refreshToken === true,
+        }),
+        capabilities.generationId,
+      );
+    },
+    async startChatGptLogin() {
+      const capabilities = await awaitCapabilities();
+      return parseChatGptLogin(
+        await rpc(capabilities.generationId, 'account/login/start', {
+          type: 'chatgpt',
+          useHostedLoginSuccessPage: true,
+          appBrand: 'chatgpt',
+        }),
+        capabilities.generationId,
+      );
+    },
+    async cancelChatGptLogin(input) {
+      const capabilities = await awaitCapabilities();
+      if (!input.loginId.trim()) throw managerError('ZEUS_CODEX_LOGIN_ID_INVALID', 'Codex login id is required.');
+      await rpc(capabilities.generationId, 'account/login/cancel', { loginId: input.loginId });
     },
     async startThread(input) {
       const capabilities = await awaitCapabilities();
@@ -1213,6 +1255,47 @@ function parseTurn(value: unknown, threadId: string): CodexTurnSnapshot {
   const turn = asRecord(value);
   if (typeof turn.id !== 'string') throw managerError('ZEUS_CODEX_INVALID_RESPONSE', 'Codex turn response omitted id.');
   return { ...turn, id: turn.id, threadId };
+}
+
+function parseAccountSnapshot(value: unknown, generationId: string): CodexAccountSnapshot {
+  const response = asRecord(value);
+  if (typeof response.requiresOpenaiAuth !== 'boolean') {
+    throw managerError('ZEUS_CODEX_INVALID_RESPONSE', 'Codex account/read response omitted requiresOpenaiAuth.');
+  }
+  if (response.account !== null && !isRecord(response.account)) {
+    throw managerError('ZEUS_CODEX_INVALID_RESPONSE', 'Codex account/read returned an invalid account.');
+  }
+  const account = isRecord(response.account) ? response.account : null;
+  const accountType = account && typeof account.type === 'string' ? account.type : null;
+  const planType = account && typeof account.planType === 'string' ? account.planType : null;
+  return {
+    generationId,
+    requiresOpenaiAuth: response.requiresOpenaiAuth,
+    signedIn: account !== null,
+    accountType,
+    planType,
+  };
+}
+
+function parseChatGptLogin(value: unknown, generationId: string): CodexChatGptLogin {
+  const response = asRecord(value);
+  if (response.type !== 'chatgpt' || typeof response.loginId !== 'string' || !response.loginId || typeof response.authUrl !== 'string') {
+    throw managerError('ZEUS_CODEX_INVALID_RESPONSE', 'Codex account/login/start returned an invalid ChatGPT login.');
+  }
+  let authUrl: URL;
+  try {
+    authUrl = new URL(response.authUrl);
+  } catch {
+    throw managerError('ZEUS_CODEX_INVALID_RESPONSE', 'Codex account/login/start returned an invalid login URL.');
+  }
+  if (authUrl.protocol !== 'https:') {
+    throw managerError('ZEUS_CODEX_INVALID_RESPONSE', 'Codex account/login/start returned a non-HTTPS login URL.');
+  }
+  return {
+    generationId,
+    loginId: response.loginId,
+    authUrl: authUrl.href,
+  };
 }
 
 function parseRemoteControlStatus(value: unknown): CodexRemoteControlStatus {

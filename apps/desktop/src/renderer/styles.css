@@ -10426,6 +10426,7 @@ a {
 }
 
 .macos-ai-app .task-table-intent-cell,
+.macos-ai-app .task-table-taskType-cell,
 .macos-ai-app .task-table-managementStatus-cell,
 .macos-ai-app .task-table-branchStatus-cell,
 .macos-ai-app .task-table-runStatus-cell,
@@ -10590,6 +10591,13 @@ a {
   color: var(--task-status-tone);
   font-size: 11px;
   font-weight: 650;
+}
+
+.macos-ai-app .task-type-chip {
+  border-radius: 999px;
+  justify-content: center;
+  min-inline-size: 48px;
+  padding-inline: 9px;
 }
 
 .macos-ai-app .task-run-status-action {
@@ -12260,6 +12268,25 @@ a {
 .macos-ai-app .task-model-push-message {
   margin: 0;
   color: var(--zeus-product-muted);
+}
+.macos-ai-app .task-model-push-account {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--zeus-warning-line, var(--zeus-product-line-soft));
+  border-radius: 12px;
+  background: var(--zeus-product-panel-muted);
+}
+.macos-ai-app .task-model-push-account > span {
+  display: grid;
+  gap: 3px;
+}
+.macos-ai-app .task-model-push-account small,
+.macos-ai-app .task-model-push-account p {
+  margin: 0;
+  color: var(--zeus-product-muted);
+  font-size: 12px;
+  line-height: 1.5;
 }
 .macos-ai-app .task-model-push-error {
   margin: 0;
@@ -15428,6 +15455,10 @@ a {
   text-align: start;
 }
 
+.macos-ai-app .task-table-column-sort-button:active {
+  cursor: grabbing;
+}
+
 .macos-ai-app .task-table-align-end .task-table-column-sort-button {
   justify-content: flex-end;
   padding: 0 0 0 32px;
@@ -15493,8 +15524,8 @@ a {
 .macos-ai-app .task-table-column-resize-handle {
   cursor: col-resize;
   inset-block: 3px;
-  inset-inline-end: -4px;
-  inline-size: 8px;
+  inset-inline-end: -6px;
+  inline-size: 12px;
   position: absolute;
   touch-action: none;
   z-index: 3;
@@ -15505,8 +15536,8 @@ a {
   content: '';
   inline-size: 1px;
   inset-block: 4px;
-  inset-inline-start: 3px;
-  opacity: 0;
+  inset-inline-start: 5px;
+  opacity: 0.58;
   position: absolute;
   transition:
     background 120ms ease,

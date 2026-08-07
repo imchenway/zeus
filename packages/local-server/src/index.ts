@@ -904,10 +904,16 @@ function normalizeTaskTableColumnWidths(value: unknown): Partial<Record<TaskTabl
 }
 
 function normalizeTaskTableColumnWidth(columnKey: TaskTableColumnKey, value: unknown): number | null {
-  if (typeof value === 'number' && Number.isFinite(value)) return Math.min(640, Math.max(64, Math.round(value)));
+  if (typeof value === 'number' && Number.isFinite(value)) return clampTaskTableColumnWidth(columnKey, value);
   if (typeof value !== 'string' || !(value in legacyTaskTableColumnWidthScale)) return null;
   const scale = legacyTaskTableColumnWidthScale[value as keyof typeof legacyTaskTableColumnWidthScale];
-  return Math.round(defaultTaskTableColumnWidths[columnKey] * scale);
+  return clampTaskTableColumnWidth(columnKey, defaultTaskTableColumnWidths[columnKey] * scale);
+}
+
+function clampTaskTableColumnWidth(columnKey: TaskTableColumnKey, value: number): number {
+  // 服务端与渲染端使用同一可读下限和安全上限，避免保存后列宽跳变。
+  const min = columnKey === 'intent' || columnKey === 'description' ? 140 : columnKey === 'runtimeSession' || columnKey === 'rawId' ? 120 : 72;
+  return Math.min(640, Math.max(min, Math.round(value)));
 }
 
 function normalizeTaskTableSortState(value: unknown): TaskTableSortState {
@@ -1810,6 +1816,8 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     now: () => now().toISOString(),
     publish: publishNativeConversationEvent,
   });
+  const repairedPiAgentMessageProjectionCount = piNativeCoordinator.repairPersistedAgentMessageProjections();
+  if (repairedPiAgentMessageProjectionCount > 0) await db.save();
   const runtimePersistenceWrites: Array<Promise<void>> = [];
   const runtimePidExists = processPidExists;
   const runtimeKillPid = processKillPid;
@@ -5309,6 +5317,51 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       if (!project) return reply.code(404).send({ error: 'ZEUS_PROJECT_NOT_FOUND', message: 'Project not found' });
       try {
         return await resolveConversationCapabilities(project);
+      } catch (error) {
+        return sendNativeConversationApiError(reply, error);
+      }
+    },
+  );
+
+  server.get('/api/codex/account', async (_request, reply) => {
+    try {
+      await codexAppServerManager.ensureReady({
+        commandPath: currentCodexRuntimeCommandPath(),
+        ...(codexExternalAgentHome ? { externalAgentHome: codexExternalAgentHome } : {}),
+      });
+      return await codexAppServerManager.readAccount();
+    } catch (error) {
+      return sendNativeConversationApiError(reply, error);
+    }
+  });
+
+  server.post('/api/codex/account/login/chatgpt', async (_request, reply) => {
+    try {
+      await codexAppServerManager.ensureReady({
+        commandPath: currentCodexRuntimeCommandPath(),
+        ...(codexExternalAgentHome ? { externalAgentHome: codexExternalAgentHome } : {}),
+      });
+      return await codexAppServerManager.startChatGptLogin();
+    } catch (error) {
+      return sendNativeConversationApiError(reply, error);
+    }
+  });
+
+  server.post(
+    '/api/codex/account/login/:loginId/cancel',
+    async (
+      request: FastifyRequest<{
+        Params: { loginId: string };
+      }>,
+      reply,
+    ) => {
+      try {
+        await codexAppServerManager.ensureReady({
+          commandPath: currentCodexRuntimeCommandPath(),
+          ...(codexExternalAgentHome ? { externalAgentHome: codexExternalAgentHome } : {}),
+        });
+        await codexAppServerManager.cancelChatGptLogin({ loginId: request.params.loginId });
+        return { cancelled: true };
       } catch (error) {
         return sendNativeConversationApiError(reply, error);
       }
@@ -11767,6 +11820,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
         providerTurnId: turn.providerTurnId,
         submissionId: turn.clientSubmissionId,
         status: turn.status,
+        error: parseConversationTurnFailure(turn.errorJson),
         plan: parseNativeTurnPlan(turn.planJson),
         startedAt: turn.startedAt,
         completedAt: turn.completedAt,
@@ -12450,6 +12504,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
         const selectedModel = capabilities.models.find((candidate) => candidate.model === modelName || candidate.id === modelName);
         if (!selectedModel) throw nativeApiError('ZEUS_CODEX_MODEL_UNAVAILABLE', `Configured Codex model is unavailable: ${modelName}`);
         if (selectedModel.available === false) throw nativeApiError('ZEUS_MODEL_NOT_READY', selectedModel.availabilityReason || '所选模型当前不可运行。');
+        if (selectedModel.agentKind !== 'pi') await assertCodexAccountReady();
         const requestedServiceTier = readServiceTierOverride(body);
         const serviceTier = normalizeServiceTierForCapability(requestedServiceTier, selectedModel);
         const selectedEffort = effort || selectedModel.defaultReasoningEffort || selectedModel.supportedReasoningEfforts[0] || '';
@@ -12923,6 +12978,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     const statusCode = code.endsWith('_NOT_FOUND')
       ? 404
       : code.includes('CONFLICT') ||
+          code.includes('LOGIN_REQUIRED') ||
           code.includes('CHOICE_REQUIRED') ||
           code.includes('READ_ONLY') ||
           code.includes('NOT_EDITABLE') ||
@@ -13639,6 +13695,15 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     const piCatalog = await modelConnections.listSelectableModels();
     const allowedPi = piCatalog.filter((model) => piSelection.allowedModelRefs.includes(model.id));
     const codexCapabilities = codexNativeEnabled ? await codexAppServerManager.ensureReady({ commandPath: currentCodexRuntimeCommandPath(), ...(codexExternalAgentHome ? { externalAgentHome: codexExternalAgentHome } : {}) }) : null;
+    const codexAccount = codexCapabilities
+      ? await codexAppServerManager.readAccount()
+      : {
+          generationId: 'codex-disabled',
+          requiresOpenaiAuth: false,
+          signedIn: false,
+          accountType: null,
+          planType: null,
+        };
     const codexModels = (codexCapabilities?.models ?? []).map((model) => ({
       id: model.id,
       model: model.model,
@@ -13685,7 +13750,14 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       projectId: project.id,
       preferredModel,
       models,
+      codexAccount,
     };
+  }
+
+  async function assertCodexAccountReady(): Promise<void> {
+    const account = await codexAppServerManager.readAccount({ refreshToken: true });
+    if (!account.requiresOpenaiAuth || account.signedIn) return;
+    throw nativeApiError('ZEUS_CODEX_LOGIN_REQUIRED', 'Zeus 专属 Codex 尚未登录。请先完成登录，再创建会话。');
   }
 
   function readServiceTierOverride(value: object): { present: false } | { present: true; value: string | null } {
@@ -16184,9 +16256,88 @@ function redactSensitiveText(value: string): {
   let text = value;
   text = replace(text, /(\b(?:token|api[-_]?key|secret|password)\s*=\s*)[^\s"']+/giu, (_match, prefix) => `${prefix}[REDACTED]`);
   text = replace(text, /(--(?:api-key|token|secret|password)\s+)[^\s"']+/giu, (_match, prefix) => `${prefix}[REDACTED]`);
-  text = replace(text, /(\bbearer\s+)[^\s"']+/giu, (_match, prefix) => `${prefix}[REDACTED]`);
+  text = replace(text, /(\bbearer\s+)(?!or\s+basic\s+authentication\b)[^\s"']+/giu, (_match, prefix) => `${prefix}[REDACTED]`);
   text = replace(text, /\bsecret-[A-Za-z0-9._-]+/gu, '[REDACTED]');
   return { text, redacted };
+}
+
+function parseConversationTurnFailure(errorJson: string | null): {
+  category: 'authentication' | 'rate_limit' | 'network' | 'configuration' | 'permission' | 'unknown';
+  code: string | null;
+  message: string;
+  providerStatus: string | null;
+  additionalDetails: string[];
+} | null {
+  if (!errorJson) return null;
+  let value: Record<string, unknown>;
+  try {
+    const parsed: unknown = JSON.parse(errorJson);
+    if (!isConversationFailureRecord(parsed)) return conversationFailureFromText(typeof parsed === 'string' ? parsed : errorJson);
+    value = parsed;
+  } catch {
+    return conversationFailureFromText(errorJson);
+  }
+  const providerError = isConversationFailureRecord(value.providerError) ? value.providerError : null;
+  const message = sanitizeConversationFailureText(
+    typeof value.message === 'string' && value.message.trim()
+      ? value.message
+      : typeof providerError?.message === 'string' && providerError.message.trim()
+        ? providerError.message
+        : '智能体运行内核没有提供更具体的失败原因。',
+  );
+  const additionalDetails = [
+    typeof providerError?.additionalDetails === 'string' ? providerError.additionalDetails : null,
+    typeof providerError?.codexErrorInfo === 'string' ? `Codex: ${providerError.codexErrorInfo}` : null,
+  ]
+    .filter((detail): detail is string => Boolean(detail?.trim()))
+    .map(sanitizeConversationFailureText)
+    .filter((detail, index, details) => detail !== message && details.indexOf(detail) === index);
+  return {
+    category: classifyConversationFailure(message),
+    code: typeof value.code === 'string' && value.code.trim() ? value.code.trim().slice(0, 120) : null,
+    message,
+    providerStatus: typeof value.providerStatus === 'string' && value.providerStatus.trim() ? value.providerStatus.trim().slice(0, 120) : null,
+    additionalDetails,
+  };
+}
+
+function conversationFailureFromText(value: string): {
+  category: 'authentication' | 'rate_limit' | 'network' | 'configuration' | 'permission' | 'unknown';
+  code: null;
+  message: string;
+  providerStatus: null;
+  additionalDetails: [];
+} {
+  const message = sanitizeConversationFailureText(value) || '智能体运行内核没有提供更具体的失败原因。';
+  return { category: classifyConversationFailure(message), code: null, message, providerStatus: null, additionalDetails: [] };
+}
+
+function isConversationFailureRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/** 会话页只接收脱敏、无堆栈的失败正文；原始错误仍留在本机数据库用于诊断。 */
+function sanitizeConversationFailureText(value: string): string {
+  const withoutStack = value
+    .split(/\r?\n/u)
+    .filter((line) => !/^\s*at\s+/u.test(line))
+    .join(' ');
+  return redactSensitiveText(withoutStack).text
+    .replace(/file:\/\/\/Users\/[^\s,;:'"<>]+/giu, '[本机路径]')
+    .replace(/\/Users\/[^\s,;:'"<>]+/gu, '[本机路径]')
+    .replace(/[A-Za-z]:\\[^\s,;:'"<>]+/gu, '[本机路径]')
+    .replace(/\s+/gu, ' ')
+    .trim()
+    .slice(0, 1_000);
+}
+
+function classifyConversationFailure(message: string): 'authentication' | 'rate_limit' | 'network' | 'configuration' | 'permission' | 'unknown' {
+  if (/\b(?:401|403)\b|auth(?:entication|orization)?|unauthori[sz]ed|api[-_ ]?key|登录|鉴权/iu.test(message)) return 'authentication';
+  if (/\b429\b|rate[-_ ]?limit|too many requests|quota|限流|配额/iu.test(message)) return 'rate_limit';
+  if (/network|failed to fetch|connection|socket|timed?\s*out|timeout|dns|网络|连接|超时/iu.test(message)) return 'network';
+  if (/permission denied|sandbox|not allowed|forbidden|权限|沙箱/iu.test(message)) return 'permission';
+  if (/\b400\b|invalid|unsupported|unknown model|model not found|reasoning_effort|参数|模型.*(?:不存在|不支持)/iu.test(message)) return 'configuration';
+  return 'unknown';
 }
 
 function stringArraysEqual(left: string[], right: string[]): boolean {
