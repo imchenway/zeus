@@ -17,6 +17,7 @@ import { Button } from '../ui/Button.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 import { countConflictBlocks, TaskGitConflictWorkspace } from './TaskGitConflictWorkspace.js';
+import { TaskWorkspaceBranchList } from './TaskWorkspaceBranchList.js';
 
 type DeliveryClient = Pick<
   DashboardClient,
@@ -484,18 +485,7 @@ export function TaskGitMergeModal(props: { open: boolean; language: 'zh-CN' | 'e
             <div className="task-git-delivery-content">
               <DeliveryStepBar workspace={selectedWorkspace} remoteVerified={selectedWorkspace?.remoteVerified ?? false} alreadyDelivered={alreadyDelivered} zh={zh} />
               <div className="task-git-review-layout task-git-delivery-layout">
-                <aside className="task-git-review-workspaces" aria-label={zh ? '任务分支' : 'Task branches'}>
-                  <strong>
-                    {zh ? '任务分支' : 'Task branches'} <small>{workspaces?.items.length ?? 0}</small>
-                  </strong>
-                  {workspaces?.items.map((workspace) => (
-                    <button type="button" key={workspace.id} className={workspace.id === workspaceId ? 'is-active' : ''} onClick={() => selectWorkspace(workspace.id)} disabled={busy}>
-                      <span>{workspace.repositoryName || workspace.repositoryRelativePath || workspace.branchName}</span>
-                      <small>{workspace.repositoryRelativePath ? `${workspace.repositoryRelativePath} · ${workspace.branchName}` : workspace.branchName}</small>
-                      <small>{workspaceStateLabel(workspace, zh)}</small>
-                    </button>
-                  ))}
-                </aside>
+                <TaskWorkspaceBranchList workspaces={workspaces?.items ?? []} selectedWorkspaceId={workspaceId} zh={zh} disabled={busy} stateLabel={workspaceStateLabel} onSelect={selectWorkspace} />
 
                 <main className="task-git-review-main">
                   <section className="task-git-review-changes" aria-label={zh ? '代码变化' : 'Code changes'}>

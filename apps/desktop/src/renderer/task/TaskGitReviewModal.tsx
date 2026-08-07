@@ -4,6 +4,7 @@ import { ZeusApiError, type DashboardClient, type TaskRecord } from '../apiClien
 import type { TaskGitDiffSummary, TaskGitFileDiff, TaskGitFileStatus, TaskWorkspaceSnapshot, TaskWorkspacesSnapshot } from '../session/sessionTypes.js';
 import { Button } from '../ui/Button.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
+import { TaskWorkspaceBranchList } from './TaskWorkspaceBranchList.js';
 
 type ReviewMode = 'commit' | 'commit-only' | 'push-only' | 'delivery';
 type ReviewStatus = 'loading' | 'ready' | 'submitting' | 'error';
@@ -33,7 +34,6 @@ export function TaskGitReviewModal(props: {
 
   const activeWorkspace = snapshot?.items.find((workspace) => workspace.id === activeWorkspaceId) ?? null;
   const files = useMemo(() => collectReviewFiles(activeWorkspace), [activeWorkspace]);
-  const pendingWorkspaces = snapshot?.items.filter((workspace) => !closedWorkspaceStates.has(workspace.state)) ?? [];
 
   useEffect(() => {
     if (!props.open || !props.task || !props.client) return;
@@ -254,18 +254,7 @@ export function TaskGitReviewModal(props: {
         </header>
 
         <div className="task-git-review-layout">
-          <aside className="task-git-review-workspaces" aria-label={zh ? '任务分支' : 'Task branches'}>
-            <strong>
-              {zh ? '任务分支' : 'Task branches'} <small>{pendingWorkspaces.length}</small>
-            </strong>
-            {snapshot?.items.map((workspace) => (
-              <button type="button" key={workspace.id} className={workspace.id === activeWorkspaceId ? 'is-active' : ''} onClick={() => setActiveWorkspaceId(workspace.id)}>
-                <span>{workspace.repositoryName || workspace.repositoryRelativePath || workspace.branchName}</span>
-                <small>{workspace.repositoryRelativePath ? `${workspace.repositoryRelativePath} · ${workspace.branchName}` : workspace.branchName}</small>
-                <small>{workspaceStateLabel(workspace, zh)}</small>
-              </button>
-            ))}
-          </aside>
+          <TaskWorkspaceBranchList workspaces={snapshot?.items ?? []} selectedWorkspaceId={activeWorkspaceId} zh={zh} disabled={busy} stateLabel={workspaceStateLabel} onSelect={setActiveWorkspaceId} />
 
           <main className="task-git-review-main">
             <section className="task-git-review-changes" aria-label={zh ? '变更文件' : 'Changed files'}>
