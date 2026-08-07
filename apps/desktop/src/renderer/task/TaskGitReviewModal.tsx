@@ -326,7 +326,19 @@ export function TaskGitReviewModal(props: {
               </div>
               <div>
                 <dt>{zh ? '远端' : 'Remote'}</dt>
-                <dd>{activeWorkspace ? `${activeWorkspace.remoteName}/${activeWorkspace.remoteBranch}` : '—'}</dd>
+                <dd>
+                  {!activeWorkspace
+                    ? '—'
+                    : !activeWorkspace.remoteName
+                      ? zh
+                        ? '纯本地模式'
+                        : 'Local-only mode'
+                      : activeWorkspace.remoteRefreshError
+                        ? zh
+                          ? `${activeWorkspace.remoteName} · 当前不可用`
+                          : `${activeWorkspace.remoteName} · unavailable`
+                        : `${activeWorkspace.remoteName}/${activeWorkspace.remoteBranch}`}
+                </dd>
               </div>
               <div>
                 <dt>{zh ? '领先 / 落后' : 'Ahead / behind'}</dt>
@@ -345,6 +357,12 @@ export function TaskGitReviewModal(props: {
                 <small>
                   {zh ? '只推送当前 HEAD。未提交和已暂存改动会原样保留在本机，不会自动提交、回收或合入。' : 'Only the current HEAD will be pushed. Uncommitted and staged changes stay local and will not be committed, reclaimed, or merged.'}
                 </small>
+              </section>
+            ) : null}
+            {activeWorkspace?.remoteRefreshError ? (
+              <section className="task-git-review-push-scope">
+                <strong>{zh ? '远端操作暂不可用' : 'Remote actions unavailable'}</strong>
+                <small>{zh ? '网络或凭据恢复前不能拉取、推送或远端合入；本地查看和提交不受影响。' : 'Fetch, push, and remote merge are blocked until network access or credentials recover. Local review and commit remain available.'}</small>
               </section>
             ) : null}
             {activeWorkspace && activeWorkspace.activeConversationCount > 0 ? (
@@ -401,7 +419,12 @@ export function TaskGitReviewModal(props: {
             </Button>
             {props.mode === 'commit' ? (
               <>
-                <Button variant="secondary" size="regular" onClick={() => void commit(true)} disabled={busy || !activeWorkspace || activeWorkspace.activeConversationCount > 0 || activeReview?.conflictFiles.length !== 0}>
+                <Button
+                  variant="secondary"
+                  size="regular"
+                  onClick={() => void commit(true)}
+                  disabled={busy || !activeWorkspace || !activeWorkspace.remoteName || Boolean(activeWorkspace.remoteRefreshError) || activeWorkspace.activeConversationCount > 0 || activeReview?.conflictFiles.length !== 0}
+                >
                   {zh ? '提交并推送' : 'Commit and Push'}
                 </Button>
                 <Button
@@ -430,7 +453,15 @@ export function TaskGitReviewModal(props: {
                 size="regular"
                 busy={busy}
                 onClick={() => void push()}
-                disabled={busy || !activeWorkspace || activeWorkspace.activeConversationCount > 0 || activeReview?.conflictFiles.length !== 0 || closedWorkspaceStates.has(activeWorkspace.state)}
+                disabled={
+                  busy ||
+                  !activeWorkspace ||
+                  !activeWorkspace.remoteName ||
+                  Boolean(activeWorkspace.remoteRefreshError) ||
+                  activeWorkspace.activeConversationCount > 0 ||
+                  activeReview?.conflictFiles.length !== 0 ||
+                  closedWorkspaceStates.has(activeWorkspace.state)
+                }
               >
                 {zh ? '推送代码' : 'Push Code'}
               </Button>
@@ -477,6 +508,7 @@ function workspaceStateLabel(workspace: TaskWorkspaceSnapshot, zh: boolean): str
   if (workspace.state === 'merged') return zh ? '已合入' : 'Merged';
   if (workspace.state === 'discarded') return zh ? '已放弃' : 'Discarded';
   if (workspace.review?.conflictFiles.length) return zh ? '存在冲突' : 'Conflicted';
+  if (workspace.remoteRefreshError && workspace.review?.clean) return zh ? '工作区干净 · 远端受阻' : 'Clean · remote unavailable';
   if (workspace.review?.clean) return zh ? '工作区干净' : 'Clean';
   return zh ? '待审查' : 'Review required';
 }

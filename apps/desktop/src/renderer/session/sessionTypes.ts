@@ -512,6 +512,7 @@ export interface TaskWorkspaceSnapshot extends TaskWorkspaceRecord {
   branchComparison: TaskBranchComparison | null;
   remoteHeadSha: string | null;
   remoteVerified: boolean;
+  remoteRefreshError: string | null;
   reviewError?: string;
   comparisonError?: string;
 }

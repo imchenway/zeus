@@ -88,7 +88,7 @@ export function TaskGitMergeModal(props: { open: boolean; language: 'zh-CN' | 'e
   const busy = busyAction !== null;
   const workspaceClean = selectedWorkspace?.review?.clean ?? selectedWorkspace?.worktreePath === null;
   const commitReady = Boolean(selectedWorkspace && workspaceClean && selectedWorkspace.activeConversationCount === 0 && selectedWorkspace.state !== 'discarded');
-  const pushReady = Boolean(selectedWorkspace?.worktreePath && selectedWorkspace.remoteName && commitReady);
+  const pushReady = Boolean(selectedWorkspace?.worktreePath && selectedWorkspace.remoteName && !selectedWorkspace.remoteRefreshError && commitReady);
   const mergeReady = Boolean(selectedWorkspace?.branchComparison && commitReady && targetBranch && targetBranch !== selectedWorkspace.branchName && !pendingLocalSync && (!selectedWorkspace.remoteName || selectedWorkspace.remoteVerified));
   const targetOptions = useMemo(() => buildTargetOptions(workspaces, selectedWorkspace, zh), [workspaces, selectedWorkspace, zh]);
   const deliveredIntegration = integrations.find((candidate) => candidate.workspaceId === selectedWorkspace?.id && candidate.targetBranch === targetBranch && candidate.state === 'merged') ?? null;
@@ -577,13 +577,17 @@ export function TaskGitMergeModal(props: { open: boolean; language: 'zh-CN' | 'e
                           ? zh
                             ? '纯本地模式'
                             : 'Local-only mode'
-                          : selectedWorkspace.remoteVerified
+                          : selectedWorkspace.remoteRefreshError
                             ? zh
-                              ? '与最新远端完全一致'
-                              : 'Exactly matches latest remote'
-                            : zh
-                              ? '必须先推送并校验'
-                              : 'Push and verification required'}
+                              ? '远端当前不可用 · 本地提交可用'
+                              : 'Remote unavailable · local commit available'
+                            : selectedWorkspace.remoteVerified
+                              ? zh
+                                ? '与最新远端完全一致'
+                                : 'Exactly matches latest remote'
+                              : zh
+                                ? '必须先推送并校验'
+                                : 'Push and verification required'}
                       </dd>
                     </div>
                   </dl>
@@ -619,15 +623,33 @@ export function TaskGitMergeModal(props: { open: boolean; language: 'zh-CN' | 'e
                     <strong>{selectedWorkspace?.remoteName ? (zh ? '③ 推送任务分支（必需）' : '③ Push task branch (required)') : zh ? '③ 纯本地模式' : '③ Local-only mode'}</strong>
                     <small>
                       {selectedWorkspace?.remoteName
-                        ? zh
-                          ? '合入前必须与最新远端任务分支完全一致；不会强制覆盖远端。'
-                          : 'The local task HEAD must exactly match the latest remote task branch before merging; force push is never used.'
+                        ? selectedWorkspace.remoteRefreshError
+                          ? zh
+                            ? '远端刷新失败；本地查看和提交仍可用，推送与远端合入需在网络或凭据恢复后进行。'
+                            : 'Remote refresh failed. Local review and commit remain available; push and remote merge require restored network access or credentials.'
+                          : zh
+                            ? '合入前必须与最新远端任务分支完全一致；不会强制覆盖远端。'
+                            : 'The local task HEAD must exactly match the latest remote task branch before merging; force push is never used.'
                         : zh
                           ? '该仓库未配置远端，仍可提交并合入本地目标分支。'
                           : 'No remote is configured; local commit and merge remain available.'}
                     </small>
                     <Button variant="secondary" size="compact" busy={busyAction === 'push'} onClick={() => void push()} disabled={busy || !pushReady}>
-                      {!selectedWorkspace?.remoteName ? (zh ? '未配置远端' : 'No remote configured') : selectedWorkspace.remoteVerified ? (zh ? '重新推送' : 'Push again') : zh ? '推送任务分支' : 'Push task branch'}
+                      {!selectedWorkspace?.remoteName
+                        ? zh
+                          ? '未配置远端'
+                          : 'No remote configured'
+                        : selectedWorkspace.remoteRefreshError
+                          ? zh
+                            ? '远端不可用'
+                            : 'Remote unavailable'
+                          : selectedWorkspace.remoteVerified
+                            ? zh
+                              ? '重新推送'
+                              : 'Push again'
+                            : zh
+                              ? '推送任务分支'
+                              : 'Push task branch'}
                     </Button>
                   </section>
 
@@ -829,6 +851,7 @@ function workspaceStateLabel(workspace: TaskWorkspaceSnapshot, zh: boolean): str
   const workingCount = collectWorkingFiles(workspace).length;
   if (workingCount > 0) return zh ? `${workingCount} 个未提交文件` : `${workingCount} uncommitted file(s)`;
   if (workspace.remoteVerified) return zh ? '已提交 · 已推送' : 'Committed · pushed';
+  if (workspace.remoteRefreshError) return zh ? '已提交 · 远端受阻' : 'Committed · remote unavailable';
   if (workspace.remoteName) return zh ? '已提交 · 待推送' : 'Committed · push required';
   return zh ? '已提交 · 本地可合入' : 'Committed · locally merge ready';
 }
