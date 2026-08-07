@@ -7054,7 +7054,7 @@
   gap: 9px;
   grid-template-columns: 19px minmax(0, 1fr);
   line-height: 1.5;
-  margin: 0;
+  margin-block: 0;
   min-block-size: 28px;
   padding: 0 2px;
 }

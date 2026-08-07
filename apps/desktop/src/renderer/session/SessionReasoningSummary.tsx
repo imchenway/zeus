@@ -25,12 +25,27 @@ export function SessionReasoningSummary(props: { item: NativeSessionItemBuffer; 
   );
 }
 
-export function latestReasoningItemsByTurn(items: readonly NativeSessionItemBuffer[]): NativeSessionItemBuffer[] {
+export function latestReasoningItemsByTurn(items: readonly NativeSessionItemBuffer[], activeTurnId: string | null = null): NativeSessionItemBuffer[] {
   const latestKeyByTurn = new Map<string, string>();
   for (const item of items) {
     if (isReasoningItem(item) && latestReasoningSummaryText(item)) latestKeyByTurn.set(item.turnId, item.key);
   }
-  return items.filter((item) => !isReasoningItem(item) || latestKeyByTurn.get(item.turnId) === item.key);
+  const projectedItems = items.filter((item) => !isReasoningItem(item) || latestKeyByTurn.get(item.turnId) === item.key);
+  if (!activeTurnId) return projectedItems;
+
+  const activeReasoningIndex = projectedItems.findIndex((item) => item.turnId === activeTurnId && isReasoningItem(item));
+  if (activeReasoningIndex < 0) return projectedItems;
+
+  let lastActiveTurnItemIndex = activeReasoningIndex;
+  for (let index = activeReasoningIndex + 1; index < projectedItems.length; index += 1) {
+    if (projectedItems[index]!.turnId === activeTurnId) lastActiveTurnItemIndex = index;
+  }
+  if (lastActiveTurnItemIndex === activeReasoningIndex) return projectedItems;
+
+  const reorderedItems = [...projectedItems];
+  const [activeReasoningItem] = reorderedItems.splice(activeReasoningIndex, 1);
+  reorderedItems.splice(lastActiveTurnItemIndex, 0, activeReasoningItem!);
+  return reorderedItems;
 }
 
 export function latestReasoningSummaryText(item: NativeSessionItemBuffer): string {
