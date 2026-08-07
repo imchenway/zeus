@@ -143,6 +143,10 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   let queueDrainPromise: Promise<void> | null = null;
   let handoffPromise: Promise<void> | null = null;
   let finalizationPromise: Promise<void> | null = null;
+  let scheduledPersistTimer: ReturnType<typeof setTimeout> | null = null;
+  let scheduledPersistDeadlineTimer: ReturnType<typeof setTimeout> | null = null;
+  let scheduledPersistDirty = false;
+  let persistenceChain = Promise.resolve();
 
   const unsubscribe = options.manager.subscribe((event) => {
     if (event.method === 'item/tool/call') {
@@ -160,6 +164,60 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
 
   async function persist(): Promise<void> {
     await options.db.save();
+  }
+
+  function clearScheduledPersistTimers(): void {
+    if (scheduledPersistTimer) clearTimeout(scheduledPersistTimer);
+    if (scheduledPersistDeadlineTimer) clearTimeout(scheduledPersistDeadlineTimer);
+    scheduledPersistTimer = null;
+    scheduledPersistDeadlineTimer = null;
+  }
+
+  function enqueuePersist(): Promise<void> {
+    const run = persistenceChain.then(() => persist());
+    // 单次失败由当前调用者处理；后续保存仍需能够继续尝试。
+    persistenceChain = run.catch(() => undefined);
+    return run;
+  }
+
+  async function flushScheduledPersist(): Promise<void> {
+    clearScheduledPersistTimers();
+    if (!scheduledPersistDirty) {
+      await persistenceChain;
+      return;
+    }
+    scheduledPersistDirty = false;
+    await enqueuePersist();
+  }
+
+  function reportScheduledPersistFailure(error: unknown): void {
+    options.broadcast('codex.native.error', {
+      error: 'ZEUS_CODEX_PERSIST_FAILED',
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+
+  /**
+   * 过程事件先更新内存与界面，再在安静窗口合并落盘；持续输出最长十秒必须形成一次持久检查点。
+   * 询问、审批和轮次边界不走这里，由事件处理器立即 flush。
+   */
+  function schedulePersist(): void {
+    scheduledPersistDirty = true;
+    if (scheduledPersistTimer) clearTimeout(scheduledPersistTimer);
+    scheduledPersistTimer = setTimeout(() => {
+      scheduledPersistTimer = null;
+      void flushScheduledPersist().catch(reportScheduledPersistFailure);
+    }, 2_000);
+    if (!scheduledPersistDeadlineTimer) {
+      scheduledPersistDeadlineTimer = setTimeout(() => {
+        scheduledPersistDeadlineTimer = null;
+        void flushScheduledPersist().catch(reportScheduledPersistFailure);
+      }, 10_000);
+    }
+  }
+
+  function requiresImmediatePersist(event: CodexAppServerEvent, createdPlanImplementationRequest: unknown): boolean {
+    return event.requestId !== undefined || event.method === 'turn/started' || event.method === 'turn/completed' || event.method === 'serverRequest/resolved' || createdPlanImplementationRequest !== null;
   }
 
   function syncItemResources(
@@ -2829,7 +2887,12 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
 
     processedEvents.add(identity);
     options.settings.setJson(processedEventsSettingKey, [...processedEvents].slice(-10_000));
-    await persist();
+    if (requiresImmediatePersist(event, createdPlanImplementationRequest)) {
+      scheduledPersistDirty = true;
+      await flushScheduledPersist();
+    } else {
+      schedulePersist();
+    }
     if (broadcast) {
       options.broadcast(broadcast.type, {
         ...broadcast.payload,
@@ -2927,6 +2990,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     const activeQueueDrain = queueDrainPromise;
     handoffPromise = (async () => {
       await Promise.all([acceptedProviderEventChain, activeQueueDrain]);
+      await flushScheduledPersist();
       closed = true;
       for (const key of [...turnResultWaiters.keys()]) rejectTurnResultWaiters(key, waiterError);
     })();

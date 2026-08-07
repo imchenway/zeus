@@ -1,5 +1,5 @@
-import { createHash } from 'node:crypto';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { createHash, randomUUID } from 'node:crypto';
+import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { nanoid } from 'nanoid';
 import initSqlJs, { type Database, type SqlJsStatic, type SqlValue } from 'sql.js';
@@ -1068,6 +1068,10 @@ async function loadSqlModule(): Promise<SqlJsStatic> {
 
 /** Zeus SQLite 包装器：负责迁移、保存和运行态诊断查询。 */
 export class ZeusDatabase {
+  private requestedSaveRevision = 0;
+  private persistedSaveRevision = 0;
+  private saveLoop: Promise<void> | null = null;
+
   constructor(
     private readonly db: Database,
     private readonly filePath: string,
@@ -1103,7 +1107,36 @@ export class ZeusDatabase {
 
   async save(): Promise<void> {
     await mkdir(dirname(this.filePath), { recursive: true });
-    await writeFile(this.filePath, Buffer.from(this.db.export()));
+    const requestedRevision = ++this.requestedSaveRevision;
+    while (this.persistedSaveRevision < requestedRevision) {
+      if (!this.saveLoop) {
+        const loop = this.runSaveLoop();
+        const trackedLoop = loop.finally(() => {
+          if (this.saveLoop === trackedLoop) this.saveLoop = null;
+        });
+        this.saveLoop = trackedLoop;
+      }
+      await this.saveLoop;
+    }
+  }
+
+  /**
+   * 同一时刻只允许一个完整数据库导出；并发保存合并到当前写入后的至多一次补写。
+   * 临时文件与正式库位于同一目录，rename 后磁盘上不会暴露半写数据库。
+   */
+  private async runSaveLoop(): Promise<void> {
+    while (this.persistedSaveRevision < this.requestedSaveRevision) {
+      const targetRevision = this.requestedSaveRevision;
+      const temporaryPath = `${this.filePath}.saving-${process.pid}-${randomUUID()}`;
+      try {
+        await writeFile(temporaryPath, Buffer.from(this.db.export()), { mode: 0o600 });
+        await rename(temporaryPath, this.filePath);
+        this.persistedSaveRevision = targetRevision;
+      } catch (error) {
+        await unlink(temporaryPath).catch(() => undefined);
+        throw error;
+      }
+    }
   }
 
   transaction<T>(operation: () => T): T {
