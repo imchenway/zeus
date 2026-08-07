@@ -1318,7 +1318,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   }
 
   async function restoreArchivedConversationsWithPendingSubmissions(): Promise<void> {
-    for (const conversation of options.conversations.listNativeBound()) {
+    for (const conversation of options.conversations.listNativeBound('codex')) {
       if (conversation.providerState !== 'archived') continue;
       const hasPendingSubmission = options.submissions.listByConversation(conversation.id).some((submission) => submission.status === 'queued' || (submission.status === 'paused' && submission.pausedReason === 'provider_archived'));
       if (!hasPendingSubmission) continue;
@@ -1732,6 +1732,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       await ensureGenerationReconciled(true);
     } catch (error) {
       for (const submission of options.submissions.listRecoverable()) {
+        if (options.conversations.getById(submission.conversationId)?.agentKind !== 'codex') continue;
         if (submission.status !== 'dispatching' && submission.status !== 'active') continue;
         options.submissions.updateStatus(submission.id, 'paused', { pausedReason: 'recovery_required', error: { code: 'ZEUS_NATIVE_UNKNOWN_DISPATCH_WINDOW', cause: serializeError(error) } });
         runStates.set(submission.conversationId, { type: 'paused', reason: 'recovery_required' });
@@ -1741,7 +1742,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     }
     recoverCompletedPlanImplementationRequests();
     await persist();
-    for (const conversation of options.conversations.listNativeBound()) {
+    for (const conversation of options.conversations.listNativeBound('codex')) {
       for (const request of options.requests.listByConversation(conversation.id)) scheduleAutoResolution(request);
     }
     await restoreArchivedConversationsWithPendingSubmissions();
@@ -1749,7 +1750,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   }
 
   function recoverCompletedPlanImplementationRequests(): void {
-    for (const conversation of options.conversations.listNativeBound()) {
+    for (const conversation of options.conversations.listNativeBound('codex')) {
       const submissions = options.submissions.listByConversation(conversation.id);
       for (const turn of options.turns.listByConversation(conversation.id)) {
         if (turn.status !== 'completed') continue;
@@ -1806,6 +1807,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     const heads = new Map<string, ZeusConversationSubmissionRecord>();
     for (const submission of options.submissions.listRecoverable()) {
       if (submission.status !== 'queued') continue;
+      if (options.conversations.getById(submission.conversationId)?.agentKind !== 'codex') continue;
       const current = heads.get(submission.conversationId);
       if (!current || compareConversationQueueOrder(submission, current) < 0) heads.set(submission.conversationId, submission);
     }
@@ -1837,7 +1839,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
 
   async function reconcileBoundConversations(generationId: string): Promise<void> {
     const boundConversationIds = new Set<string>();
-    for (const conversation of options.conversations.listNativeBound()) {
+    for (const conversation of options.conversations.listNativeBound('codex')) {
       boundConversationIds.add(conversation.id);
       try {
         recoverStaleInteractionRequests(conversation.id, generationId);
@@ -1863,6 +1865,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       await persist();
     }
     for (const submission of options.submissions.listRecoverable()) {
+      if (options.conversations.getById(submission.conversationId)?.agentKind !== 'codex') continue;
       if ((submission.status !== 'dispatching' && submission.status !== 'active') || boundConversationIds.has(submission.conversationId)) continue;
       markSubmissionRecoveryRequired(submission, coordinatorError('ZEUS_NATIVE_UNKNOWN_DISPATCH_WINDOW', 'Native submission has no recoverable provider thread.'));
     }
@@ -2962,7 +2965,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         const interrupts: Promise<void>[] = [];
         const interruptedTurns = new Set<string>();
         // Ephemeral terminalization moves providerState to closed, so snapshot bound conversations before that transition.
-        const nativeBoundConversations = options.conversations.listNativeBound();
+        const nativeBoundConversations = options.conversations.listNativeBound('codex');
 
         for (const [conversationId, context] of [...contexts]) {
           if (!context.ephemeral) continue;
@@ -3062,7 +3065,9 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
 
   function requireConversation(conversationId: string): ZeusConversationWithMessagesRecord {
     const conversation = options.conversations.getById(conversationId);
-    if (!conversation || conversation.transportKind !== 'codex_native') throw coordinatorError('ZEUS_NATIVE_CONVERSATION_NOT_FOUND', 'Native conversation was not found.');
+    if (!conversation || conversation.transportKind !== 'codex_native' || conversation.agentKind !== 'codex') {
+      throw coordinatorError('ZEUS_NATIVE_CONVERSATION_NOT_FOUND', 'Codex native conversation was not found.');
+    }
     return conversation;
   }
 
