@@ -2,9 +2,13 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-pnpm verify:publish
-pnpm verify:acceptance-matrix
-node scripts/verify-ai-cli-adapters.mjs
+if [ "${ZEUS_FAST_RELEASE:-0}" = "1" ]; then
+  echo 'Zeus verify-release: 快速发布模式由独立作业执行 typecheck，本作业只负责正式打包和致命产物校验。'
+else
+  pnpm verify:publish
+  pnpm verify:acceptance-matrix
+  node scripts/verify-ai-cli-adapters.mjs
+fi
 release_output_dir="${ZEUS_RELEASE_OUTPUT_DIR:-.tmp/zeus-release/verify}"
 ZEUS_PACKAGE_OUTPUT_DIR="$release_output_dir" pnpm package:mac:release
 

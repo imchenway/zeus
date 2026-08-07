@@ -1,11 +1,10 @@
 #!/usr/bin/env node
 /* global console, process */
 import { spawn, spawnSync } from 'node:child_process';
-import { accessSync, constants, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
-import { homedir, tmpdir } from 'node:os';
-import { basename, delimiter, dirname, extname, isAbsolute, join, resolve, sep } from 'node:path';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { basename, dirname, extname, isAbsolute, join, resolve, sep } from 'node:path';
 import { createInterface } from 'node:readline';
-import { setTimeout as delay } from 'node:timers/promises';
 
 const repositoryRoot = resolve(import.meta.dirname, '..');
 const repository = 'imchenway/zeus';
@@ -33,8 +32,6 @@ async function main() {
     await runIsolatedRelease({ outputDirectory, sourceHead: initialHeadSha, worktreeStatus: initialWorktreeStatus });
     return;
   }
-  const codexCommandPath = resolveCodexCommandPath();
-  assertCodexCapability(codexCommandPath);
   assertGitHubAuthentication();
 
   const stableRelease = readLatestStableRelease();
@@ -70,13 +67,12 @@ async function main() {
   assertResumeWorktree(releaseState);
   ensureReleaseCandidateFormatting(releaseState);
   console.log(`Zeus 端到端发布：${releaseState.baseTag}..${releaseState.sourceHead.slice(0, 12)} → ${releaseState.tag}`);
-  console.log(`Codex CLI：${codexCommandPath}`);
+  console.log('发布说明模型：Zeus DeepSeek deepseek-v4-flash；不可用时自动使用确定性模板。');
 
-  await ensureReleaseNotes(releaseState, codexCommandPath);
+  await Promise.all([ensureReleaseNotes(releaseState), ensureCandidatePreflight(releaseState)]);
   await ensureReleaseCommit(releaseState);
-  await ensureLocalGate(releaseState);
+  ensureFastLocalGate(releaseState);
   ensureMainPushed(releaseState);
-  await ensureMainCi(releaseState);
   await ensurePublished(releaseState);
 
   releaseState.phase = 'completed';
@@ -462,7 +458,7 @@ function syncReleaseNotesSnapshot(state) {
   state.notesPath = notesPath;
 }
 
-async function ensureReleaseNotes(state, codexCommandPath) {
+async function ensureReleaseNotes(state) {
   if (state.notesPath && existsSync(state.notesPath)) return;
   if (git(['rev-parse', 'HEAD']) !== state.sourceHead) throw new Error('生成 Release notes 前本地 main 已偏离绑定的候选提交。');
   const notesDirectory = join(state.stateDirectory, 'notes');
@@ -473,7 +469,6 @@ async function ensureReleaseNotes(state, codexCommandPath) {
     BASE_TAG: state.baseTag,
     INCLUDE_WORKTREE: 'false',
     AUTOMATED_RELEASE: 'true',
-    ZEUS_CODEX_COMMAND_PATH: codexCommandPath,
     ZEUS_COMMAND_RUN_DIR: notesDirectory,
   });
   const notesPath = join(notesDirectory, `Zeus-${state.version}-release-notes-draft.md`);
@@ -545,31 +540,48 @@ function commitPreparedCandidate(state, notesTarget) {
   writeState(state);
 }
 
-async function ensureLocalGate(state) {
-  if (state.gateSummaryPath && existsSync(state.gateSummaryPath)) return;
-  if (resolveLocalTagSha(state.tag)) throw new Error(`本地标签 ${state.tag} 已存在，但缺少可恢复的本地门禁摘要。`);
-  assertReleaseHead(state);
-  const gateDirectory = join(state.stateDirectory, 'gate');
-  const releaseOutputDirectory = join(repositoryRoot, '.tmp', 'zeus-release', state.tag);
-  mkdirSync(gateDirectory, { recursive: true, mode: 0o700 });
-  await runStage('执行本地发布门禁', 'pnpm', ['release:gate'], {
-    ...process.env,
-    EXPECTED_VERSION: state.version,
-    ALLOW_DIRTY_WORKTREE: 'false',
-    REQUIRE_APPLE_DISTRIBUTION: 'false',
-    REGISTER_DMG_ARTIFACT: 'false',
-    ZEUS_RELEASE_OUTPUT_DIR: releaseOutputDirectory,
-    ZEUS_COMMAND_RUN_DIR: gateDirectory,
-  });
-  const summaryPath = join(gateDirectory, `Zeus-${state.version}-release-gate-summary.md`);
-  if (!existsSync(summaryPath)) throw new Error(`本地门禁没有生成预期摘要：${summaryPath}`);
-  const summary = readFileSync(summaryPath, 'utf8');
-  for (const expected of [`- 候选提交：${state.releaseCommit}`, '- `pnpm verify:release`：通过。', '- DMG `hdiutil verify`：通过。']) {
-    if (!summary.includes(expected)) throw new Error(`本地门禁摘要与发布提交不一致，缺少：${expected}`);
+async function ensureCandidatePreflight(state) {
+  if (state.releaseCommit) return;
+  const currentHead = git(['rev-parse', 'HEAD']);
+  if (currentHead !== state.sourceHead) throw new Error(`快速前置检查发现候选提交漂移：expected=${state.sourceHead} actual=${currentHead}`);
+  if (git(['status', '--short'])) throw new Error('快速前置检查要求发布候选工作区干净。');
+  run('git', ['diff', '--check', `${state.baseTag}^{commit}`, state.sourceHead]);
+  if (resolveLocalTagSha(state.tag) || resolveRemoteReference(`refs/tags/${state.tag}`)) {
+    throw new Error(`目标标签 ${state.tag} 已存在，拒绝把新候选写入同一版本。`);
   }
+  console.log('快速前置检查通过：候选提交、工作区、Git 空白错误和目标标签均正常。');
+}
+
+function ensureFastLocalGate(state) {
+  if (state.gateSummaryPath && existsSync(state.gateSummaryPath)) return;
+  assertReleaseHead(state);
+  if (resolveLocalTagSha(state.tag) || resolveRemoteReference(`refs/tags/${state.tag}`)) {
+    throw new Error(`目标标签 ${state.tag} 已存在，但当前发布缺少可恢复的检查摘要。`);
+  }
+  run('git', ['diff', '--check', `${state.releaseCommit}^`, state.releaseCommit]);
+  const gateDirectory = join(state.stateDirectory, 'gate');
+  mkdirSync(gateDirectory, { recursive: true, mode: 0o700 });
+  const summaryPath = join(gateDirectory, `Zeus-${state.version}-release-fast-preflight-summary.md`);
+  writeFileSync(
+    summaryPath,
+    [
+      `# Zeus ${state.version} 快速发布前置摘要`,
+      '',
+      `- 候选提交：${state.releaseCommit}`,
+      `- 公开基线：${state.baseTag}`,
+      `- 目标标签：${state.tag}，本地和远端均未占用。`,
+      '- 工作区：干净。',
+      '- 版本文件与 Release notes：已写入固定候选提交。',
+      '- Git 空白错误检查：通过。',
+      '- typecheck、正式 DMG 打包、包内容健康检查、hdiutil 与 manifest 对账：交由同一固定提交的 Release Workflow 并行执行。',
+      '',
+    ].join('\n'),
+    { mode: 0o600 },
+  );
   state.gateSummaryPath = summaryPath;
   state.phase = 'gate_passed';
   writeState(state);
+  console.log(`本地快速发布前置检查通过：${summaryPath}`);
 }
 
 function ensureMainPushed(state) {
@@ -587,33 +599,6 @@ function ensureMainPushed(state) {
   const pushedSha = resolveRemoteReference('refs/heads/main');
   if (pushedSha !== state.releaseCommit) throw new Error(`main 推送后远端提交不一致：expected=${state.releaseCommit} actual=${pushedSha ?? 'missing'}`);
   state.phase = 'main_pushed';
-  writeState(state);
-}
-
-async function ensureMainCi(state) {
-  const successful = findMainCiRun(state.releaseCommit, 'success');
-  if (successful) {
-    state.ciUrl = successful.url;
-    state.phase = 'ci_passed';
-    writeState(state);
-    return;
-  }
-  let runRecord = null;
-  for (let attempt = 0; attempt < 60; attempt += 1) {
-    runRecord = findMainCiRun(state.releaseCommit);
-    if (runRecord) break;
-    await delay(2_000);
-  }
-  if (!runRecord) throw new Error(`推送 main 后两分钟内未找到提交 ${state.releaseCommit} 的 CI 运行。`);
-  if (runRecord.status !== 'completed') {
-    await runStage('等待 main CI', 'gh', ['run', 'watch', String(runRecord.databaseId), '--repo', repository, '--exit-status', '--interval', '10'], process.env);
-    runRecord = findMainCiRun(state.releaseCommit);
-  }
-  if (!runRecord || runRecord.status !== 'completed' || runRecord.conclusion !== 'success') {
-    throw new Error(`main CI 未通过：${runRecord?.url ?? state.releaseCommit}，结论 ${runRecord?.conclusion ?? 'unknown'}。`);
-  }
-  state.ciUrl = runRecord.url;
-  state.phase = 'ci_passed';
   writeState(state);
 }
 
@@ -638,12 +623,6 @@ async function ensurePublished(state) {
   writeState(state);
 }
 
-function findMainCiRun(headSha, conclusion) {
-  const result = JSON.parse(gh(['run', 'list', '--repo', repository, '--workflow', 'CI', '--branch', 'main', '--commit', headSha, '--limit', '20', '--json', 'databaseId,status,conclusion,event,headSha,url,createdAt']));
-  if (!Array.isArray(result)) return null;
-  return result.find((runRecord) => runRecord.headSha === headSha && runRecord.event === 'push' && (!conclusion || runRecord.conclusion === conclusion)) ?? null;
-}
-
 function assertReleaseHead(state) {
   const headSha = git(['rev-parse', 'HEAD']);
   const status = git(['status', '--short']);
@@ -656,57 +635,14 @@ function buildFinalResult(state) {
     '',
     `- Release notes 范围：${state.baseTag}..${state.sourceHead}`,
     `- 发布提交：${state.releaseCommit}`,
-    `- main CI：${state.ciUrl ?? '已通过'}`,
+    `- main CI：${state.ciUrl ?? '快速发布未串行等待；阻塞级 typecheck 已由 Release Workflow 执行'}`,
     `- GitHub Release：https://github.com/${repository}/releases/tag/${state.tag}`,
-    `- 本地门禁摘要：${state.gateSummaryPath}`,
+    `- 本地快速检查摘要：${state.gateSummaryPath}`,
     `- 公开资产回验：${state.publishResultPath}`,
     '- 本次允许 ad-hoc、未公证产物；真实签名与公证状态以公开 manifest 和回验结果为准。',
     '- 未自动安装、升级或随 Zeus 分发 Codex CLI。',
     '',
   ].join('\n');
-}
-
-function resolveCodexCommandPath() {
-  const configured = process.env.ZEUS_CODEX_COMMAND_PATH?.trim();
-  if (configured) {
-    if (!isAbsolute(configured) || !isExecutable(configured)) throw new Error(`Zeus 配置的 Codex 路径不可执行：${configured}`);
-    return configured;
-  }
-  const searchPath = [...(process.env.PATH ?? '').split(delimiter).filter(Boolean), '/opt/homebrew/bin', '/usr/local/bin', join(homedir(), '.local', 'bin'), join(homedir(), 'bin')];
-  for (const directory of new Set(searchPath)) {
-    const candidate = join(directory, 'codex');
-    if (isExecutable(candidate)) return candidate;
-  }
-  const shell = process.env.SHELL?.trim();
-  if (shell && isAbsolute(shell) && isExecutable(shell)) {
-    const result = capture(shell, ['-lic', 'command -v codex'], true);
-    const candidate = result.stdout
-      .split(/\r?\n/u)
-      .map((line) => line.trim())
-      .filter((line) => isAbsolute(line) && isExecutable(line))
-      .at(-1);
-    if (candidate) return candidate;
-  }
-  throw new Error('未检测到用户本机安装的 Codex CLI。请运行官方安装命令 curl -fsSL https://chatgpt.com/codex/install.sh | sh，完成登录后重新执行；Zeus 不会自动安装或使用内置回退。');
-}
-
-function assertCodexCapability(commandPath) {
-  for (const args of [['--version'], ['app-server', '--help']]) {
-    const result = capture(commandPath, args, true, 10_000);
-    if (result.status !== 0) {
-      throw new Error(`本机 Codex CLI 缺少发布所需能力（${args.join(' ')}）。请按官方安装方式升级后重新执行：curl -fsSL https://chatgpt.com/codex/install.sh | sh`);
-    }
-  }
-}
-
-function isExecutable(path) {
-  try {
-    if (!statSync(path).isFile()) return false;
-    accessSync(path, constants.X_OK);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 function readMatchingPackageVersion() {

@@ -58,6 +58,7 @@ import type { BrowserAutomationPort } from './browserAutomation.js';
 import { resolveConversationAttachmentGrant } from './conversationAttachmentGrant.js';
 import { createModelConnectionService, type SaveModelConnectionRequest } from './modelConnectionService.js';
 import { createPiNativeConversationCoordinator } from './piNativeConversationCoordinator.js';
+import { generateReleaseNotesWithDeepSeek } from './releaseNotesGeneration.js';
 import { buildTaskConflictAiPrompt, parseTaskConflictAiAnswer, parseTaskConflictAiBlocks } from './taskConflictAi.js';
 import { createMacOSKeychainStore, getSecretPresenceLabel, type SecretPresenceLabel } from '@zeus/security-core';
 import {
@@ -2277,10 +2278,46 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
   let telegramMessageSender: TelegramMessageSender | undefined;
   let telegramPollingTimer: ReturnType<typeof setInterval> | undefined;
   let boundPort: number | null = null;
+  const releaseNotesCapabilities = new Map<string, { token: string; projectId: string; expiresAt: number; used: boolean }>();
+  const releaseNotesAuthorizedRequests = new WeakSet<object>();
 
   server.decorate('setZeusBoundPort', (port: number) => {
     boundPort = port;
   });
+
+  function createReleaseNotesCapability(input: { runId: string; projectId: string }): { url: string; token: string } {
+    if (!boundPort) throw new Error('Zeus 本机服务尚未完成端口绑定，无法创建发布说明能力。');
+    const token = `zeus_release_notes_${randomUUID().replace(/-/gu, '')}${randomUUID().replace(/-/gu, '')}`;
+    releaseNotesCapabilities.set(input.runId, {
+      token,
+      projectId: input.projectId,
+      expiresAt: Date.now() + 10 * 60 * 1_000,
+      used: false,
+    });
+    return {
+      url: `http://${zeusLocalServerHost}:${boundPort}/api/command-runs/${encodeURIComponent(input.runId)}/release-notes`,
+      token,
+    };
+  }
+
+  function revokeReleaseNotesCapability(runId: string): void {
+    releaseNotesCapabilities.delete(runId);
+  }
+
+  function authorizeReleaseNotesRequest(request: FastifyRequest): boolean {
+    const match = request.url.match(/^\/api\/command-runs\/([^/?]+)\/release-notes(?:\?|$)/u);
+    if (!match) return false;
+    const runId = decodeURIComponent(match[1] ?? '');
+    const capability = releaseNotesCapabilities.get(runId);
+    if (!capability || capability.used || capability.expiresAt <= Date.now()) {
+      if (capability?.expiresAt && capability.expiresAt <= Date.now()) releaseNotesCapabilities.delete(runId);
+      return false;
+    }
+    if (request.headers.authorization !== `Bearer ${capability.token}`) return false;
+    capability.used = true;
+    releaseNotesAuthorizedRequests.add(request);
+    return true;
+  }
 
   function appendAuditLog(input: Omit<AppendAuditLogInput, 'createdAt'> & { createdAt?: string }): void {
     auditLogs.append({
@@ -2614,6 +2651,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     if (!request.url.startsWith('/api/')) return;
     if (request.method === 'OPTIONS') return;
     if (request.url.startsWith('/api/events') && isAuthorizedRealtimeRequest(request)) return;
+    if (authorizeReleaseNotesRequest(request)) return;
     const header = request.headers.authorization;
     if (header !== `Bearer ${options.apiToken}`) {
       await reply.code(401).send({
@@ -2622,6 +2660,40 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       });
     }
   });
+
+  server.post(
+    '/api/command-runs/:runId/release-notes',
+    async (
+      request: FastifyRequest<{
+        Params: { runId: string };
+        Body: { model?: unknown; prompt?: unknown };
+      }>,
+      reply,
+    ) => {
+      const capability = releaseNotesCapabilities.get(request.params.runId);
+      const run = commandRuns.getById(request.params.runId);
+      if (!releaseNotesAuthorizedRequests.has(request) || !capability?.used || !run || run.projectId !== capability.projectId) {
+        return reply.code(403).send({
+          error: 'ZEUS_RELEASE_NOTES_CAPABILITY_REQUIRED',
+          message: '发布说明能力无效、已使用或与命令不匹配。',
+        });
+      }
+      try {
+        const model = typeof request.body?.model === 'string' ? request.body.model : '';
+        const prompt = typeof request.body?.prompt === 'string' ? request.body.prompt : '';
+        return await generateReleaseNotesWithDeepSeek(modelConnections, { model, prompt });
+      } catch (error) {
+        const statusCode = typeof error === 'object' && error !== null && 'statusCode' in error && typeof error.statusCode === 'number' ? error.statusCode : 500;
+        const code = typeof error === 'object' && error !== null && 'code' in error && typeof error.code === 'string' ? error.code : 'ZEUS_RELEASE_NOTES_GENERATION_FAILED';
+        return reply.code(statusCode).send({
+          error: code,
+          message: error instanceof Error ? error.message : '发布说明生成失败。',
+        });
+      } finally {
+        revokeReleaseNotesCapability(request.params.runId);
+      }
+    },
+  );
 
   const commandCenter = createCommandCenter({
     server,
@@ -2633,6 +2705,8 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     commandRunsDirectory: join(dirname(options.dbPath), 'command-runs'),
     readProjectSecurity: (projectId) => readProjectConfig(projectId).security,
     buildRuntimeProcessEnv,
+    createReleaseNotesCapability,
+    revokeReleaseNotesCapability,
     appendAuditLog,
     publishRealtimeEvent,
     save: () => db.save(),

@@ -1,13 +1,7 @@
-import {createHash, randomUUID} from 'node:crypto';
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  realpathSync,
-  statSync,
-} from 'node:fs';
-import {extname, isAbsolute, join, relative, resolve} from 'node:path';
-import type {FastifyInstance, FastifyReply, FastifyRequest} from 'fastify';
+import { createHash, randomUUID } from 'node:crypto';
+import { existsSync, mkdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { extname, isAbsolute, join, relative, resolve } from 'node:path';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import {
   commandNeedsHighRiskConfirmation,
   commandParameterValueMatchesType,
@@ -21,16 +15,8 @@ import {
   type CommandRunTrigger,
   type CommandScope,
 } from '@zeus/shared';
-import type {AiRuntimeLogEntry, AiRuntimeSession, AiRuntimeSessionManager} from '@zeus/ai-runtime';
-import {
-  CommandArtifactRepository,
-  CommandDefinitionRepository,
-  CommandRunRepository,
-  type AppendAuditLogInput,
-  type ProjectRepository,
-  type RuntimeSessionRepository,
-  type ZeusDatabase,
-} from '@zeus/storage';
+import type { AiRuntimeLogEntry, AiRuntimeSession, AiRuntimeSessionManager } from '@zeus/ai-runtime';
+import { CommandArtifactRepository, CommandDefinitionRepository, CommandRunRepository, type AppendAuditLogInput, type ProjectRepository, type RuntimeSessionRepository, type ZeusDatabase } from '@zeus/storage';
 
 interface CommandCenterOptions {
   server: FastifyInstance;
@@ -40,9 +26,11 @@ interface CommandCenterOptions {
   aiRuntimeManager: AiRuntimeSessionManager;
   commandScriptsDirectory: string;
   commandRunsDirectory: string;
-  readProjectSecurity: (projectId: string) => {allowShell: boolean; allowGitWrite: boolean};
+  readProjectSecurity: (projectId: string) => { allowShell: boolean; allowGitWrite: boolean };
   buildRuntimeProcessEnv: () => NodeJS.ProcessEnv;
-  appendAuditLog: (input: Omit<AppendAuditLogInput, 'createdAt'> & {createdAt?: string}) => void;
+  createReleaseNotesCapability?: (input: { runId: string; projectId: string }) => { url: string; token: string };
+  revokeReleaseNotesCapability?: (runId: string) => void;
+  appendAuditLog: (input: Omit<AppendAuditLogInput, 'createdAt'> & { createdAt?: string }) => void;
   publishRealtimeEvent: (type: string, payload: Record<string, unknown>) => unknown;
   save: () => Promise<void>;
   now?: () => Date;
@@ -83,150 +71,101 @@ export function createCommandCenter(options: CommandCenterOptions): CommandCente
   const now = options.now ?? (() => new Date());
   const confirmationTtlMs = options.confirmationTtlMs ?? 10 * 60 * 1000;
 
-  mkdirSync(options.commandScriptsDirectory, {recursive: true, mode: 0o700});
-  mkdirSync(options.commandRunsDirectory, {recursive: true, mode: 0o700});
+  mkdirSync(options.commandScriptsDirectory, { recursive: true, mode: 0o700 });
+  mkdirSync(options.commandRunsDirectory, { recursive: true, mode: 0o700 });
   recoverInterruptedRuns();
 
   options.server.get('/api/commands/global', async () => definitions.listGlobal());
 
-  options.server.post(
-    '/api/commands/global',
-    async (request: FastifyRequest<{Body: CommandDefinitionInput}>, reply) =>
-      createDefinition('global', null, request.body, reply),
+  options.server.post('/api/commands/global', async (request: FastifyRequest<{ Body: CommandDefinitionInput }>, reply) => createDefinition('global', null, request.body, reply));
+
+  options.server.patch('/api/commands/global/:commandId', async (request: FastifyRequest<{ Params: { commandId: string }; Body: Partial<CommandDefinitionInput> }>, reply) =>
+    updateDefinition('global', null, request.params.commandId, request.body, reply),
   );
 
-  options.server.patch(
-    '/api/commands/global/:commandId',
-    async (request: FastifyRequest<{Params: {commandId: string}; Body: Partial<CommandDefinitionInput>}>, reply) =>
-      updateDefinition('global', null, request.params.commandId, request.body, reply),
+  options.server.delete('/api/commands/global/:commandId', async (request: FastifyRequest<{ Params: { commandId: string } }>, reply) => deleteDefinition('global', null, request.params.commandId, reply));
+
+  options.server.get('/api/projects/:projectId/commands', async (request: FastifyRequest<{ Params: { projectId: string } }>, reply) => {
+    if (!requireProject(request.params.projectId, reply)) return;
+    return definitions.listMerged(request.params.projectId);
+  });
+
+  options.server.post('/api/projects/:projectId/commands', async (request: FastifyRequest<{ Params: { projectId: string }; Body: CommandDefinitionInput }>, reply) => {
+    if (!requireProject(request.params.projectId, reply)) return;
+    return createDefinition('project', request.params.projectId, request.body, reply);
+  });
+
+  options.server.patch('/api/projects/:projectId/commands/:commandId', async (request: FastifyRequest<{ Params: { projectId: string; commandId: string }; Body: Partial<CommandDefinitionInput> }>, reply) => {
+    if (!requireProject(request.params.projectId, reply)) return;
+    return updateDefinition('project', request.params.projectId, request.params.commandId, request.body, reply);
+  });
+
+  options.server.delete('/api/projects/:projectId/commands/:commandId', async (request: FastifyRequest<{ Params: { projectId: string; commandId: string } }>, reply) => {
+    if (!requireProject(request.params.projectId, reply)) return;
+    return deleteDefinition('project', request.params.projectId, request.params.commandId, reply);
+  });
+
+  options.server.post('/api/projects/:projectId/commands/:commandId/confirmations', async (request: FastifyRequest<{ Params: { projectId: string; commandId: string }; Body: CommandConfirmationBody }>, reply) =>
+    createConfirmation(request.params.projectId, request.params.commandId, request.body, reply),
   );
 
-  options.server.delete(
-    '/api/commands/global/:commandId',
-    async (request: FastifyRequest<{Params: {commandId: string}}>, reply) =>
-      deleteDefinition('global', null, request.params.commandId, reply),
+  options.server.post('/api/projects/:projectId/commands/:commandId/runs', async (request: FastifyRequest<{ Params: { projectId: string; commandId: string }; Body: CommandRunBody }>, reply) =>
+    startRun(request.params.projectId, request.params.commandId, request.body, reply),
   );
 
-  options.server.get(
-    '/api/projects/:projectId/commands',
-    async (request: FastifyRequest<{Params: {projectId: string}}>, reply) => {
-      if (!requireProject(request.params.projectId, reply)) return;
-      return definitions.listMerged(request.params.projectId);
-    },
-  );
+  options.server.get('/api/projects/:projectId/command-runs', async (request: FastifyRequest<{ Params: { projectId: string }; Querystring: { limit?: string } }>, reply) => {
+    if (!requireProject(request.params.projectId, reply)) return;
+    expireConfirmations();
+    const requestedLimit = Number(request.query.limit ?? 100);
+    return runs.listByProject(request.params.projectId, Number.isFinite(requestedLimit) ? requestedLimit : 100);
+  });
 
-  options.server.post(
-    '/api/projects/:projectId/commands',
-    async (request: FastifyRequest<{Params: {projectId: string}; Body: CommandDefinitionInput}>, reply) => {
-      if (!requireProject(request.params.projectId, reply)) return;
-      return createDefinition('project', request.params.projectId, request.body, reply);
-    },
-  );
+  options.server.get('/api/command-runs/:runId', async (request: FastifyRequest<{ Params: { runId: string } }>, reply) => {
+    const run = runs.getById(request.params.runId);
+    if (!run) return notFound(reply, 'ZEUS_COMMAND_RUN_NOT_FOUND', 'Command run not found');
+    return {
+      run,
+      artifacts: artifacts.listByRun(run.id),
+      runtimeSession: run.runtimeSessionId ? (options.runtimeSessions.getById(run.runtimeSessionId) ?? null) : null,
+      logs: run.runtimeSessionId ? options.runtimeSessions.listLogs(run.runtimeSessionId) : [],
+    };
+  });
 
-  options.server.patch(
-    '/api/projects/:projectId/commands/:commandId',
-    async (
-      request: FastifyRequest<{Params: {projectId: string; commandId: string}; Body: Partial<CommandDefinitionInput>}>,
-      reply,
-    ) => {
-      if (!requireProject(request.params.projectId, reply)) return;
-      return updateDefinition('project', request.params.projectId, request.params.commandId, request.body, reply);
-    },
-  );
+  options.server.post('/api/command-runs/:runId/stop', async (request: FastifyRequest<{ Params: { runId: string } }>, reply) => {
+    const run = runs.getById(request.params.runId);
+    if (!run) return notFound(reply, 'ZEUS_COMMAND_RUN_NOT_FOUND', 'Command run not found');
+    if (run.status !== 'running' || !run.runtimeSessionId) {
+      return reply.code(409).send({ error: 'ZEUS_COMMAND_RUN_NOT_RUNNING', message: 'Command run is not running' });
+    }
+    clearRunTimeout(run.id);
+    options.revokeReleaseNotesCapability?.(run.id);
+    const endedAt = now().toISOString();
+    const updated = runs.update(run.id, { status: 'cancelled', endedAt, failureReason: '用户停止执行' });
+    options.aiRuntimeManager.stopSession(run.runtimeSessionId);
+    scheduleForceKill(run.id, run.runtimeSessionId);
+    appendRunAudit('command.run.cancelled', updated);
+    publishRun('command.run.cancelled', updated);
+    await options.save();
+    return updated;
+  });
 
-  options.server.delete(
-    '/api/projects/:projectId/commands/:commandId',
-    async (request: FastifyRequest<{Params: {projectId: string; commandId: string}}>, reply) => {
-      if (!requireProject(request.params.projectId, reply)) return;
-      return deleteDefinition('project', request.params.projectId, request.params.commandId, reply);
-    },
-  );
+  options.server.get('/api/command-artifacts/:artifactId/content', async (request: FastifyRequest<{ Params: { artifactId: string } }>, reply) => {
+    const artifact = findArtifactById(request.params.artifactId);
+    if (!artifact) return notFound(reply, 'ZEUS_COMMAND_ARTIFACT_NOT_FOUND', 'Command artifact not found');
+    const run = runs.getById(artifact.runId);
+    if (!run) return notFound(reply, 'ZEUS_COMMAND_RUN_NOT_FOUND', 'Command run not found');
+    const runDirectory = commandRunDirectory(run.id);
+    const verified = verifyArtifactPath(artifact.absolutePath, runDirectory);
+    if (!verified) return reply.code(410).send({ error: 'ZEUS_COMMAND_ARTIFACT_UNAVAILABLE', message: 'Command artifact is no longer available' });
+    reply.type(artifact.mimeType ?? 'application/octet-stream');
+    return reply.send(readFileSync(verified));
+  });
 
-  options.server.post(
-    '/api/projects/:projectId/commands/:commandId/confirmations',
-    async (
-      request: FastifyRequest<{Params: {projectId: string; commandId: string}; Body: CommandConfirmationBody}>,
-      reply,
-    ) => createConfirmation(request.params.projectId, request.params.commandId, request.body, reply),
-  );
-
-  options.server.post(
-    '/api/projects/:projectId/commands/:commandId/runs',
-    async (
-      request: FastifyRequest<{Params: {projectId: string; commandId: string}; Body: CommandRunBody}>,
-      reply,
-    ) => startRun(request.params.projectId, request.params.commandId, request.body, reply),
-  );
-
-  options.server.get(
-    '/api/projects/:projectId/command-runs',
-    async (request: FastifyRequest<{Params: {projectId: string}; Querystring: {limit?: string}}>, reply) => {
-      if (!requireProject(request.params.projectId, reply)) return;
-      expireConfirmations();
-      const requestedLimit = Number(request.query.limit ?? 100);
-      return runs.listByProject(request.params.projectId, Number.isFinite(requestedLimit) ? requestedLimit : 100);
-    },
-  );
-
-  options.server.get(
-    '/api/command-runs/:runId',
-    async (request: FastifyRequest<{Params: {runId: string}}>, reply) => {
-      const run = runs.getById(request.params.runId);
-      if (!run) return notFound(reply, 'ZEUS_COMMAND_RUN_NOT_FOUND', 'Command run not found');
-      return {
-        run,
-        artifacts: artifacts.listByRun(run.id),
-        runtimeSession: run.runtimeSessionId ? options.runtimeSessions.getById(run.runtimeSessionId) ?? null : null,
-        logs: run.runtimeSessionId ? options.runtimeSessions.listLogs(run.runtimeSessionId) : [],
-      };
-    },
-  );
-
-  options.server.post(
-    '/api/command-runs/:runId/stop',
-    async (request: FastifyRequest<{Params: {runId: string}}>, reply) => {
-      const run = runs.getById(request.params.runId);
-      if (!run) return notFound(reply, 'ZEUS_COMMAND_RUN_NOT_FOUND', 'Command run not found');
-      if (run.status !== 'running' || !run.runtimeSessionId) {
-        return reply.code(409).send({error: 'ZEUS_COMMAND_RUN_NOT_RUNNING', message: 'Command run is not running'});
-      }
-      clearRunTimeout(run.id);
-      const endedAt = now().toISOString();
-      const updated = runs.update(run.id, {status: 'cancelled', endedAt, failureReason: '用户停止执行'});
-      options.aiRuntimeManager.stopSession(run.runtimeSessionId);
-      scheduleForceKill(run.id, run.runtimeSessionId);
-      appendRunAudit('command.run.cancelled', updated);
-      publishRun('command.run.cancelled', updated);
-      await options.save();
-      return updated;
-    },
-  );
-
-  options.server.get(
-    '/api/command-artifacts/:artifactId/content',
-    async (request: FastifyRequest<{Params: {artifactId: string}}>, reply) => {
-      const artifact = findArtifactById(request.params.artifactId);
-      if (!artifact) return notFound(reply, 'ZEUS_COMMAND_ARTIFACT_NOT_FOUND', 'Command artifact not found');
-      const run = runs.getById(artifact.runId);
-      if (!run) return notFound(reply, 'ZEUS_COMMAND_RUN_NOT_FOUND', 'Command run not found');
-      const runDirectory = commandRunDirectory(run.id);
-      const verified = verifyArtifactPath(artifact.absolutePath, runDirectory);
-      if (!verified) return reply.code(410).send({error: 'ZEUS_COMMAND_ARTIFACT_UNAVAILABLE', message: 'Command artifact is no longer available'});
-      reply.type(artifact.mimeType ?? 'application/octet-stream');
-      return reply.send(readFileSync(verified));
-    },
-  );
-
-  async function createDefinition(
-    scope: CommandScope,
-    projectId: string | null,
-    rawInput: CommandDefinitionInput,
-    reply: FastifyReply,
-  ): Promise<CommandDefinition | unknown> {
+  async function createDefinition(scope: CommandScope, projectId: string | null, rawInput: CommandDefinitionInput, reply: FastifyReply): Promise<CommandDefinition | unknown> {
     const input = normalizeDefinitionInput(rawInput);
-    if (!input) return invalidDefinition(reply, [{field: 'body', message: '命令定义格式无效。'}]);
+    if (!input) return invalidDefinition(reply, [{ field: 'body', message: '命令定义格式无效。' }]);
     const issues = validateCommandDefinitionInput(input);
-    if (scope === 'global' && projectId !== null) issues.push({field: 'projectId', message: '全局命令不能绑定项目。'});
+    if (scope === 'global' && projectId !== null) issues.push({ field: 'projectId', message: '全局命令不能绑定项目。' });
     const conflicts = definitions.findTokenConflicts({
       scope,
       projectId,
@@ -240,7 +179,7 @@ export function createCommandCenter(options: CommandCenterOptions): CommandCente
       });
     }
     if (issues.length > 0) return invalidDefinition(reply, issues);
-    const created = definitions.create({...input, scope, projectId});
+    const created = definitions.create({ ...input, scope, projectId });
     options.appendAuditLog({
       actorType: 'local_api',
       action: 'command.definition.created',
@@ -253,13 +192,7 @@ export function createCommandCenter(options: CommandCenterOptions): CommandCente
     return reply.code(201).send(created);
   }
 
-  async function updateDefinition(
-    expectedScope: CommandScope,
-    expectedProjectId: string | null,
-    commandId: string,
-    patch: Partial<CommandDefinitionInput>,
-    reply: FastifyReply,
-  ): Promise<CommandDefinition | unknown> {
+  async function updateDefinition(expectedScope: CommandScope, expectedProjectId: string | null, commandId: string, patch: Partial<CommandDefinitionInput>, reply: FastifyReply): Promise<CommandDefinition | unknown> {
     const existing = definitions.getById(commandId);
     if (!existing || existing.scope !== expectedScope || existing.projectId !== expectedProjectId) {
       return notFound(reply, 'ZEUS_COMMAND_NOT_FOUND', 'Command definition not found');
@@ -276,7 +209,7 @@ export function createCommandCenter(options: CommandCenterOptions): CommandCente
       telegramEnabled: patch.telegramEnabled ?? existing.telegramEnabled,
       riskFlags: patch.riskFlags ?? existing.riskFlags,
     });
-    if (!input) return invalidDefinition(reply, [{field: 'body', message: '命令定义格式无效。'}]);
+    if (!input) return invalidDefinition(reply, [{ field: 'body', message: '命令定义格式无效。' }]);
     const issues = validateCommandDefinitionInput(input);
     const conflicts = definitions.findTokenConflicts({
       scope: existing.scope,
@@ -292,7 +225,7 @@ export function createCommandCenter(options: CommandCenterOptions): CommandCente
       });
     }
     if (issues.length > 0) return invalidDefinition(reply, issues);
-    const updated = definitions.update(existing.id, {...input, revision: existing.revision + 1});
+    const updated = definitions.update(existing.id, { ...input, revision: existing.revision + 1 });
     invalidateCommandConfirmations(existing.id, '命令定义已变化');
     options.appendAuditLog({
       actorType: 'local_api',
@@ -306,12 +239,7 @@ export function createCommandCenter(options: CommandCenterOptions): CommandCente
     return updated;
   }
 
-  async function deleteDefinition(
-    expectedScope: CommandScope,
-    expectedProjectId: string | null,
-    commandId: string,
-    reply: FastifyReply,
-  ): Promise<CommandDefinition | unknown> {
+  async function deleteDefinition(expectedScope: CommandScope, expectedProjectId: string | null, commandId: string, reply: FastifyReply): Promise<CommandDefinition | unknown> {
     const existing = definitions.getById(commandId);
     if (!existing || existing.scope !== expectedScope || existing.projectId !== expectedProjectId) {
       return notFound(reply, 'ZEUS_COMMAND_NOT_FOUND', 'Command definition not found');
@@ -330,12 +258,7 @@ export function createCommandCenter(options: CommandCenterOptions): CommandCente
     return existing;
   }
 
-  async function createConfirmation(
-    projectId: string,
-    commandId: string,
-    body: CommandConfirmationBody | undefined,
-    reply: FastifyReply,
-  ): Promise<CommandConfirmation | unknown> {
+  async function createConfirmation(projectId: string, commandId: string, body: CommandConfirmationBody | undefined, reply: FastifyReply): Promise<CommandConfirmation | unknown> {
     expireConfirmations();
     const project = requireProject(projectId, reply);
     if (!project) return;
@@ -343,11 +266,11 @@ export function createCommandCenter(options: CommandCenterOptions): CommandCente
     if (!command || (command.scope === 'project' && command.projectId !== projectId)) {
       return notFound(reply, 'ZEUS_COMMAND_NOT_FOUND', 'Command definition not found');
     }
-    if (!command.enabled) return reply.code(409).send({error: 'ZEUS_COMMAND_DISABLED', message: 'Command is disabled'});
+    if (!command.enabled) return reply.code(409).send({ error: 'ZEUS_COMMAND_DISABLED', message: 'Command is disabled' });
     const permissionError = commandPermissionError(projectId, command);
     if (permissionError) return reply.code(403).send(permissionError);
     const parameters = normalizeRunParameters(command.parameters, body?.parameters ?? {});
-    if ('issues' in parameters) return reply.code(400).send({error: 'ZEUS_INVALID_COMMAND_PARAMETERS', message: 'Command parameters are invalid', issues: parameters.issues});
+    if ('issues' in parameters) return reply.code(400).send({ error: 'ZEUS_INVALID_COMMAND_PARAMETERS', message: 'Command parameters are invalid', issues: parameters.issues });
     const riskLevel = commandNeedsHighRiskConfirmation(command.riskFlags) ? 'high' : 'normal';
     const trigger = body?.trigger === 'telegram' ? 'telegram' : 'desktop';
     const parameterSnapshot = nonSensitiveParameterSnapshot(command.parameters, parameters.values);
@@ -403,12 +326,7 @@ export function createCommandCenter(options: CommandCenterOptions): CommandCente
     return reply.code(201).send(toPublicConfirmation(confirmation));
   }
 
-  async function startRun(
-    projectId: string,
-    commandId: string,
-    body: CommandRunBody | undefined,
-    reply: FastifyReply,
-  ): Promise<CommandRun | unknown> {
+  async function startRun(projectId: string, commandId: string, body: CommandRunBody | undefined, reply: FastifyReply): Promise<CommandRun | unknown> {
     expireConfirmations();
     const project = requireProject(projectId, reply);
     if (!project) return;
@@ -418,13 +336,13 @@ export function createCommandCenter(options: CommandCenterOptions): CommandCente
     }
     const confirmation = body?.confirmationId ? confirmations.get(body.confirmationId) : undefined;
     if (!confirmation) {
-      return reply.code(400).send({error: 'ZEUS_COMMAND_CONFIRMATION_REQUIRED', message: 'A valid command confirmation is required'});
+      return reply.code(400).send({ error: 'ZEUS_COMMAND_CONFIRMATION_REQUIRED', message: 'A valid command confirmation is required' });
     }
     const parameters = normalizeRunParameters(command.parameters, body?.parameters ?? {});
     if ('issues' in parameters) {
       rejectConfirmation(confirmation, '命令参数已变化');
       await options.save();
-      return reply.code(400).send({error: 'ZEUS_INVALID_COMMAND_PARAMETERS', message: 'Command parameters are invalid', issues: parameters.issues});
+      return reply.code(400).send({ error: 'ZEUS_INVALID_COMMAND_PARAMETERS', message: 'Command parameters are invalid', issues: parameters.issues });
     }
     const unchanged =
       command.enabled &&
@@ -436,7 +354,7 @@ export function createCommandCenter(options: CommandCenterOptions): CommandCente
     if (!unchanged) {
       rejectConfirmation(confirmation, '命令、项目、目录或参数在确认后发生变化');
       await options.save();
-      return reply.code(409).send({error: 'ZEUS_COMMAND_CONFIRMATION_STALE', message: 'Command confirmation is no longer valid'});
+      return reply.code(409).send({ error: 'ZEUS_COMMAND_CONFIRMATION_STALE', message: 'Command confirmation is no longer valid' });
     }
     const permissionError = commandPermissionError(projectId, command);
     if (permissionError) {
@@ -446,7 +364,8 @@ export function createCommandCenter(options: CommandCenterOptions): CommandCente
     }
     confirmations.delete(confirmation.id);
     const runDirectory = commandRunDirectory(confirmation.runId);
-    mkdirSync(runDirectory, {recursive: true, mode: 0o700});
+    mkdirSync(runDirectory, { recursive: true, mode: 0o700 });
+    const releaseNotesCapability = isReleaseCommand(command.command) ? options.createReleaseNotesCapability?.({ runId: confirmation.runId, projectId }) : undefined;
     const environment = {
       ...options.buildRuntimeProcessEnv(),
       ...parameterEnvironment(command.parameters, parameters.values),
@@ -455,6 +374,12 @@ export function createCommandCenter(options: CommandCenterOptions): CommandCente
       ZEUS_COMMAND_RUN_DIR: runDirectory,
       ZEUS_COMMAND_ID: command.id,
       ZEUS_COMMAND_RUN_ID: confirmation.runId,
+      ...(releaseNotesCapability
+        ? {
+            ZEUS_RELEASE_NOTES_API_URL: releaseNotesCapability.url,
+            ZEUS_RELEASE_NOTES_CAPABILITY: releaseNotesCapability.token,
+          }
+        : {}),
     };
     try {
       const session = await options.aiRuntimeManager.startSession({
@@ -463,7 +388,7 @@ export function createCommandCenter(options: CommandCenterOptions): CommandCente
         args: ['-lc', command.command],
         cwd: project.localPath,
         env: environment,
-        redactValues: confirmation.sensitiveValues,
+        redactValues: [...confirmation.sensitiveValues, ...(releaseNotesCapability ? [releaseNotesCapability.token] : [])],
       });
       const startedAt = now().toISOString();
       const updated = runs.update(confirmation.runId, {
@@ -478,6 +403,7 @@ export function createCommandCenter(options: CommandCenterOptions): CommandCente
       await options.save();
       return reply.code(201).send(updated);
     } catch (error) {
+      options.revokeReleaseNotesCapability?.(confirmation.runId);
       const failed = runs.update(confirmation.runId, {
         status: 'failed',
         failureReason: error instanceof Error ? error.message : String(error),
@@ -486,7 +412,7 @@ export function createCommandCenter(options: CommandCenterOptions): CommandCente
       appendRunAudit('command.run.failed', failed);
       publishRun('command.run.failed', failed);
       await options.save();
-      return reply.code(400).send({error: 'ZEUS_COMMAND_RUN_REJECTED', message: failed.failureReason, run: failed});
+      return reply.code(400).send({ error: 'ZEUS_COMMAND_RUN_REJECTED', message: failed.failureReason, run: failed });
     }
   }
 
@@ -498,12 +424,13 @@ export function createCommandCenter(options: CommandCenterOptions): CommandCente
       return;
     }
     clearRunTimeout(run.id);
+    options.revokeReleaseNotesCapability?.(run.id);
     const endedAt = session.endedAt ?? now().toISOString();
     const next =
       session.status === 'exited' && session.exitCode === 0
-        ? {status: 'succeeded' as const, exitCode: 0, endedAt, failureReason: null}
+        ? { status: 'succeeded' as const, exitCode: 0, endedAt, failureReason: null }
         : session.status === 'stopped'
-          ? {status: 'cancelled' as const, exitCode: session.exitCode ?? null, endedAt, failureReason: '执行已停止'}
+          ? { status: 'cancelled' as const, exitCode: session.exitCode ?? null, endedAt, failureReason: '执行已停止' }
           : {
               status: 'failed' as const,
               exitCode: session.exitCode ?? null,
@@ -537,7 +464,7 @@ export function createCommandCenter(options: CommandCenterOptions): CommandCente
         action: 'command.artifact.rejected',
         resourceType: 'command_run',
         resourceId: run.id,
-        payload: {runId: run.id, requestedPath: rawPath, reason: 'outside_run_directory_or_not_file'},
+        payload: { runId: run.id, requestedPath: rawPath, reason: 'outside_run_directory_or_not_file' },
       });
       return;
     }
@@ -555,7 +482,7 @@ export function createCommandCenter(options: CommandCenterOptions): CommandCente
       action: 'command.artifact.registered',
       resourceType: 'command_artifact',
       resourceId: artifact.id,
-      payload: {runId: run.id, relativePath: artifact.relativePath, byteLength: artifact.byteLength, mimeType: artifact.mimeType},
+      payload: { runId: run.id, relativePath: artifact.relativePath, byteLength: artifact.byteLength, mimeType: artifact.mimeType },
     });
     options.publishRealtimeEvent('command.artifact.registered', {
       runId: run.id,
@@ -625,7 +552,7 @@ export function createCommandCenter(options: CommandCenterOptions): CommandCente
     confirmations.delete(confirmation.id);
     const run = runs.getById(confirmation.runId);
     if (!run || run.status !== 'pending_confirmation') return;
-    const rejected = runs.update(run.id, {status: 'rejected', failureReason: reason, endedAt: now().toISOString()});
+    const rejected = runs.update(run.id, { status: 'rejected', failureReason: reason, endedAt: now().toISOString() });
     appendRunAudit('command.confirmation.rejected', rejected);
     publishRun('command.confirmation.rejected', rejected);
   }
@@ -646,13 +573,13 @@ export function createCommandCenter(options: CommandCenterOptions): CommandCente
     return project;
   }
 
-  function commandPermissionError(projectId: string, command: CommandDefinition): {error: string; message: string} | null {
+  function commandPermissionError(projectId: string, command: CommandDefinition): { error: string; message: string } | null {
     const security = options.readProjectSecurity(projectId);
     if (!security.allowShell) {
-      return {error: 'ZEUS_COMMAND_SHELL_PERMISSION_REQUIRED', message: 'Project must enable allowShell before commands can run'};
+      return { error: 'ZEUS_COMMAND_SHELL_PERMISSION_REQUIRED', message: 'Project must enable allowShell before commands can run' };
     }
     if (command.riskFlags.gitWrite && !security.allowGitWrite) {
-      return {error: 'ZEUS_COMMAND_GIT_WRITE_PERMISSION_REQUIRED', message: 'Project must enable allowGitWrite before this command can run'};
+      return { error: 'ZEUS_COMMAND_GIT_WRITE_PERMISSION_REQUIRED', message: 'Project must enable allowGitWrite before this command can run' };
     }
     return null;
   }
@@ -703,10 +630,7 @@ export function createCommandCenter(options: CommandCenterOptions): CommandCente
       mime_type: string | null;
       byte_length: number;
       created_at: string;
-    }>(
-      `SELECT id, run_id, relative_path, absolute_path, mime_type, byte_length, created_at FROM command_artifacts WHERE id = ?`,
-      [artifactId],
-    );
+    }>(`SELECT id, run_id, relative_path, absolute_path, mime_type, byte_length, created_at FROM command_artifacts WHERE id = ?`, [artifactId]);
     return row
       ? {
           id: row.id,
@@ -766,6 +690,7 @@ export function createCommandCenter(options: CommandCenterOptions): CommandCente
       }
     }
     for (const run of runs.listActive()) {
+      options.revokeReleaseNotesCapability?.(run.id);
       if (run.status !== 'running' || !run.runtimeSessionId) continue;
       try {
         options.aiRuntimeManager.killSession(run.runtimeSessionId, 'SIGKILL');
@@ -779,7 +704,11 @@ export function createCommandCenter(options: CommandCenterOptions): CommandCente
     artifactBuffers.clear();
   }
 
-  return {handleRuntimeSessionChange, handleRuntimeLog, close};
+  return { handleRuntimeSessionChange, handleRuntimeLog, close };
+}
+
+function isReleaseCommand(command: string): boolean {
+  return /^pnpm(?:\s+run)?\s+release$/u.test(command.trim());
 }
 
 function normalizeDefinitionInput(input: CommandDefinitionInput | undefined): CommandDefinitionInput | null {
@@ -805,7 +734,7 @@ function normalizeDefinitionInput(input: CommandDefinitionInput | undefined): Co
     timeoutSeconds: input.timeoutSeconds ?? 300,
     enabled: input.enabled ?? true,
     telegramEnabled: input.telegramEnabled ?? false,
-    riskFlags: {...defaultCommandRiskFlags, ...(input.riskFlags ?? {})},
+    riskFlags: { ...defaultCommandRiskFlags, ...(input.riskFlags ?? {}) },
   };
 }
 
@@ -822,39 +751,31 @@ function isCommandParameterDefinition(value: unknown): value is CommandParameter
   );
 }
 
-function normalizeRunParameters(
-  definitions: CommandParameterDefinition[],
-  rawValues: Record<string, unknown>,
-):
-  | {values: Record<string, string | number | boolean>}
-  | {issues: Array<{field: string; message: string}>} {
+function normalizeRunParameters(definitions: CommandParameterDefinition[], rawValues: Record<string, unknown>): { values: Record<string, string | number | boolean> } | { issues: Array<{ field: string; message: string }> } {
   if (!rawValues || typeof rawValues !== 'object' || Array.isArray(rawValues)) {
-    return {issues: [{field: 'parameters', message: '参数必须是对象。'}]};
+    return { issues: [{ field: 'parameters', message: '参数必须是对象。' }] };
   }
   const declaredKeys = new Set(definitions.map((definition) => definition.key));
   const unknownKeys = Object.keys(rawValues).filter((key) => !declaredKeys.has(key));
-  const issues = unknownKeys.map((key) => ({field: key, message: '参数未在命令中声明。'}));
+  const issues = unknownKeys.map((key) => ({ field: key, message: '参数未在命令中声明。' }));
   const values: Record<string, string | number | boolean> = {};
   for (const definition of definitions) {
     const rawValue = rawValues[definition.key] ?? definition.defaultValue;
     const missing = rawValue === undefined || (definition.type === 'string' && rawValue === '');
     if (missing) {
-      if (definition.required) issues.push({field: definition.key, message: '参数为必填项。'});
+      if (definition.required) issues.push({ field: definition.key, message: '参数为必填项。' });
       continue;
     }
     if (!commandParameterValueMatchesType(rawValue, definition.type)) {
-      issues.push({field: definition.key, message: `参数类型必须是 ${definition.type}。`});
+      issues.push({ field: definition.key, message: `参数类型必须是 ${definition.type}。` });
       continue;
     }
     values[definition.key] = rawValue;
   }
-  return issues.length > 0 ? {issues} : {values};
+  return issues.length > 0 ? { issues } : { values };
 }
 
-function nonSensitiveParameterSnapshot(
-  definitions: CommandParameterDefinition[],
-  values: Record<string, string | number | boolean>,
-): Record<string, string | number | boolean> {
+function nonSensitiveParameterSnapshot(definitions: CommandParameterDefinition[], values: Record<string, string | number | boolean>): Record<string, string | number | boolean> {
   const snapshot: Record<string, string | number | boolean> = {};
   for (const definition of definitions) {
     if (definition.sensitive || values[definition.key] === undefined) continue;
@@ -863,20 +784,14 @@ function nonSensitiveParameterSnapshot(
   return snapshot;
 }
 
-function sensitiveParameterValues(
-  definitions: CommandParameterDefinition[],
-  values: Record<string, string | number | boolean>,
-): string[] {
+function sensitiveParameterValues(definitions: CommandParameterDefinition[], values: Record<string, string | number | boolean>): string[] {
   return definitions
     .filter((definition) => definition.sensitive && values[definition.key] !== undefined)
     .map((definition) => String(values[definition.key]))
     .filter((value) => value.length > 0);
 }
 
-function parameterEnvironment(
-  definitions: CommandParameterDefinition[],
-  values: Record<string, string | number | boolean>,
-): NodeJS.ProcessEnv {
+function parameterEnvironment(definitions: CommandParameterDefinition[], values: Record<string, string | number | boolean>): NodeJS.ProcessEnv {
   const environment: NodeJS.ProcessEnv = {};
   for (const definition of definitions) {
     const value = values[definition.key];
@@ -893,7 +808,7 @@ function digestParameters(values: Record<string, string | number | boolean>): st
   return createHash('sha256').update(JSON.stringify(ordered)).digest('hex');
 }
 
-function toPublicConfirmation(confirmation: StoredCommandConfirmation): CommandConfirmation & {runId: string} {
+function toPublicConfirmation(confirmation: StoredCommandConfirmation): CommandConfirmation & { runId: string } {
   return {
     id: confirmation.id,
     runId: confirmation.runId,
@@ -934,12 +849,12 @@ function definitionEventPayload(definition: CommandDefinition): Record<string, u
   };
 }
 
-function invalidDefinition(reply: FastifyReply, issues: Array<{field: string; message: string}>) {
-  return reply.code(400).send({error: 'ZEUS_INVALID_COMMAND_DEFINITION', message: 'Command definition is invalid', issues});
+function invalidDefinition(reply: FastifyReply, issues: Array<{ field: string; message: string }>) {
+  return reply.code(400).send({ error: 'ZEUS_INVALID_COMMAND_DEFINITION', message: 'Command definition is invalid', issues });
 }
 
 function notFound(reply: FastifyReply, error: string, message: string) {
-  return reply.code(404).send({error, message});
+  return reply.code(404).send({ error, message });
 }
 
 function verifyArtifactPath(candidatePath: string, runDirectory: string): string | null {
