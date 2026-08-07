@@ -4772,6 +4772,14 @@ export class ConversationRepository {
     });
   }
 
+  /** 父任务上下文选择需要同时看到未归档和已归档会话，不改变常规会话列表的隐藏规则。 */
+  listAllByTask(taskId: string): ZeusConversationWithMessagesRecord[] {
+    return this.db.select<DbConversationRow>(`SELECT ${selectConversationFields} FROM conversations WHERE task_id = ? ORDER BY created_at ASC, id`, [taskId]).map((row) => {
+      const conversation = mapConversationRow(row);
+      return { ...conversation, messages: this.listMessages(conversation.id) };
+    });
+  }
+
   listBySessionId(sessionId: string): ZeusConversationWithMessagesRecord[] {
     return this.db
       .select<DbConversationRow>(

@@ -83,6 +83,7 @@ import {
   buildTaskModelPushMessage,
   readTaskModelPushPreferences,
   resolveTaskModelPushInitialForm,
+  selectedTaskPushParentContexts,
   type TaskModelPushForm,
   TaskModelPushModal,
   type TaskModelPushModalStatus,
@@ -6828,6 +6829,7 @@ export function App(props: {
     workspaceMode: 'direct',
     directConcurrencyConfirmed: false,
     repositorySelections: {},
+    parentContextSelections: {},
     supplementalInfo: '',
   });
   const [taskModelPushStatus, setTaskModelPushStatus] = useState<TaskModelPushModalStatus>('loading');
@@ -8971,6 +8973,7 @@ export function App(props: {
       workspaceMode: 'direct',
       directConcurrencyConfirmed: false,
       repositorySelections: {},
+      parentContextSelections: {},
       supplementalInfo: '',
     });
     setTaskModelPushStatus('loading');
@@ -9094,7 +9097,7 @@ export function App(props: {
 
   function continueTaskModelPush(task: TaskRecord, capabilities: CodexTaskPushCapabilities, form: TaskModelPushForm): void {
     if (taskModelPushDispatchingTaskIdsRef.current.has(task.id)) return;
-    const fingerprint = JSON.stringify({ taskId: task.id, projectId: task.projectId, form });
+    const fingerprint = JSON.stringify({ taskId: task.id, projectId: task.projectId, parentContextRevision: capabilities.parentContextRevision, form });
     const persistedEnvelope = taskModelPushEnvelopeRef.current.get(task.id);
     const request: StartTaskModelPushRequest =
       persistedEnvelope?.fingerprint === fingerprint
@@ -9121,6 +9124,19 @@ export function App(props: {
                     })),
                   },
             ...(form.supplementalInfo.trim() ? { supplementalInfo: form.supplementalInfo.trim() } : {}),
+            ...(capabilities.parentContextOptions.length > 0
+              ? {
+                  parentContext: {
+                    revision: capabilities.parentContextRevision,
+                    selections: capabilities.parentContextOptions.flatMap((option) => {
+                      const selection = form.parentContextSelections[option.taskId];
+                      return selection?.selected
+                        ? [{ taskId: option.taskId, conversationIds: selection.conversationIds, attachmentKeys: selection.attachmentKeys }]
+                        : [];
+                    }),
+                  },
+                }
+              : {}),
             idempotencyKey: createSessionOperationId(),
             clientUserMessageId: createSessionOperationId(),
           };
@@ -9135,7 +9151,7 @@ export function App(props: {
         projectName: targetProject?.name ?? task.projectId,
         request,
         form,
-        prompt: buildTaskModelPushMessage(task, form.supplementalInfo),
+        prompt: buildTaskModelPushMessage(task, form.supplementalInfo, selectedTaskPushParentContexts(capabilities.parentContextOptions, form.parentContextSelections)),
       }),
       origin: taskModelPushNavigationRef.current,
     };
@@ -9217,7 +9233,65 @@ export function App(props: {
           .catch((error: unknown) => recordLocalError('task-model-push-task-refresh', error));
       }
     } catch (error) {
+      if (error instanceof ZeusApiError && error.error === 'ZEUS_TASK_PUSH_PARENT_CONTEXT_CHANGED') {
+        void refreshChangedTaskModelPushParentContext(pending);
+        return;
+      }
       failTaskModelPushDispatch(pending, redactLocalUiErrorMessage(errorToLocalUiMessage(error)));
+    }
+  }
+
+  async function refreshChangedTaskModelPushParentContext(pending: TrackedTaskModelPushState): Promise<void> {
+    const client = props.nativeConversationClient;
+    taskModelPushDispatchingTaskIdsRef.current.delete(pending.task.id);
+    taskModelPushEnvelopeRef.current.delete(pending.task.id);
+    setTaskModelPushPendingByTask((current) => {
+      const active = current[pending.task.id];
+      if (active?.request.idempotencyKey !== pending.request.idempotencyKey) return current;
+      const next = { ...current };
+      delete next[pending.task.id];
+      return next;
+    });
+    setTaskModelPushTaskId(pending.task.id);
+    setTaskModelPushCapabilities(null);
+    setTaskModelPushForm(pending.form);
+    setTaskModelPushStatus('loading');
+    setTaskModelPushError(appShellSettings.appLanguage === 'zh-CN' ? '父任务上下文已变化，正在刷新选项；当前配置会保留。' : 'Parent task context changed. Refreshing options while preserving your configuration.');
+    if (!client) {
+      setTaskModelPushStatus('error');
+      return;
+    }
+    const requestVersion = taskModelPushCapabilityRequestRef.current + 1;
+    taskModelPushCapabilityRequestRef.current = requestVersion;
+    try {
+      const capabilities = await client.loadCodexTaskPushCapabilities(pending.task.projectId, pending.task.id);
+      if (taskModelPushCapabilityRequestRef.current !== requestVersion) return;
+      const parentContextSelections = Object.fromEntries(
+        capabilities.parentContextOptions.flatMap((option) => {
+          const previous = pending.form.parentContextSelections[option.taskId];
+          if (!previous?.selected) return [];
+          const conversationIds = new Set(option.conversations.filter((conversation) => conversation.available).map((conversation) => conversation.id));
+          const attachmentKeys = new Set(option.attachments.filter((attachment) => attachment.available).map((attachment) => attachment.key));
+          return [
+            [
+              option.taskId,
+              {
+                selected: true,
+                conversationIds: previous.conversationIds.filter((id) => conversationIds.has(id)),
+                attachmentKeys: previous.attachmentKeys.filter((key) => attachmentKeys.has(key)),
+              },
+            ],
+          ];
+        }),
+      );
+      setTaskModelPushCapabilities(capabilities);
+      setTaskModelPushForm({ ...pending.form, parentContextSelections });
+      setTaskModelPushStatus('ready');
+      setTaskModelPushError(appShellSettings.appLanguage === 'zh-CN' ? '父任务上下文已刷新；模型、工作区、补充信息和仍有效的选择已保留，请重新确认。' : 'Parent task context was refreshed. Model, workspace, supplemental information, and still-valid selections were preserved. Review and confirm again.');
+    } catch (error) {
+      if (taskModelPushCapabilityRequestRef.current !== requestVersion) return;
+      setTaskModelPushStatus('error');
+      setTaskModelPushError(redactLocalUiErrorMessage(errorToLocalUiMessage(error)));
     }
   }
 

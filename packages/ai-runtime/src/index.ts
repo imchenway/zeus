@@ -4,6 +4,7 @@ import { spawn as nodeSpawn } from 'node:child_process';
 import { basename, delimiter, isAbsolute, relative, resolve } from 'node:path';
 import { createRequire } from 'node:module';
 import { normalizeTerminalChunk } from '@zeus/terminal-core';
+import { buildTaskPushPrompt, type TaskPushPromptInput } from '@zeus/shared';
 import { expandCliSearchPath } from './cliSearchPath.js';
 
 export * from './codexAppServerManager.js';
@@ -63,17 +64,7 @@ export interface CheckAiCliAdapterOptions {
   now?: () => string;
 }
 
-export interface AiRuntimePromptInput {
-  taskTitle: string;
-  taskType: 'requirement' | 'defect' | 'optimization';
-  taskDescription?: string;
-  defectCurrentState?: string;
-  defectExpectedOutcome?: string;
-  defectReproductionSteps?: string;
-  optimizationCurrentState?: string;
-  optimizationExpectedOutcome?: string;
-  supplementalInfo?: string;
-}
+export type AiRuntimePromptInput = TaskPushPromptInput;
 
 export interface AiCliAdapterInvocation {
   adapterId: NonCodexAiCliAdapterId;
@@ -136,16 +127,7 @@ export function listAiCliAdapters(): AiCliAdapterDescriptor[] {
 
 /** 构造正式任务首发正文；运行配置和附件必须通过各自通道传递。 */
 export function buildAiRuntimePrompt(input: AiRuntimePromptInput): string {
-  const lines = [`任务标题：${input.taskTitle.trim()}`];
-  if (input.taskType === 'defect') {
-    lines.push('任务类型：缺陷', `现状：${input.defectCurrentState?.trim() || '未提供'}`, `预期：${input.defectExpectedOutcome?.trim() || '未提供'}`, `复现步骤：${input.defectReproductionSteps?.trim() || '未提供'}`);
-  } else if (input.taskType === 'optimization') {
-    lines.push('任务类型：优化', `现状：${input.optimizationCurrentState?.trim() || '未提供'}`, `预期：${input.optimizationExpectedOutcome?.trim() || '未提供'}`);
-  } else {
-    lines.push('任务类型：需求', `需求描述：${input.taskDescription?.trim() || '未提供'}`);
-  }
-  if (input.supplementalInfo?.trim()) lines.push(`补充信息：${input.supplementalInfo.trim()}`);
-  return lines.join('\n');
+  return buildTaskPushPrompt(input);
 }
 
 export function isNonCodexAiCliAdapterId(value: unknown): value is NonCodexAiCliAdapterId {

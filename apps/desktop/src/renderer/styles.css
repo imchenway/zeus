@@ -12282,10 +12282,104 @@ a {
 }
 
 .macos-ai-app .task-model-push-canonical,
-.macos-ai-app .task-model-push-attachments {
+.macos-ai-app .task-model-push-attachments,
+.macos-ai-app .task-model-push-parent-context {
   display: grid;
   gap: 8px;
   min-inline-size: 0;
+}
+
+.macos-ai-app .task-model-push-parent-context {
+  padding: 12px;
+  border: 1px solid var(--zeus-product-line-soft);
+  border-radius: 12px;
+  background: var(--zeus-product-panel-muted);
+}
+
+.macos-ai-app .task-model-push-parent-list {
+  display: grid;
+  gap: 10px;
+}
+
+.macos-ai-app .task-model-push-parent {
+  min-inline-size: 0;
+  margin: 0;
+  padding: 10px;
+  border: 1px solid var(--zeus-control-border);
+  border-radius: 10px;
+  background: var(--zeus-control-bg);
+}
+
+.macos-ai-app .task-model-push-parent.is-selected {
+  border-color: var(--zeus-accent-primary);
+}
+
+.macos-ai-app .task-model-push-parent legend {
+  max-inline-size: 100%;
+  padding-inline: 4px;
+}
+
+.macos-ai-app .task-model-push-parent legend label,
+.macos-ai-app .task-model-push-parent-resources label {
+  display: flex;
+  min-inline-size: 0;
+  gap: 8px;
+  align-items: flex-start;
+  cursor: pointer;
+}
+
+.macos-ai-app .task-model-push-parent input {
+  inline-size: 16px;
+  block-size: 16px;
+  flex: 0 0 auto;
+  margin: 2px 0 0;
+}
+
+.macos-ai-app .task-model-push-parent input:focus-visible {
+  outline: 2px solid var(--zeus-accent-primary);
+  outline-offset: 2px;
+}
+
+.macos-ai-app .task-model-push-parent label > span {
+  display: grid;
+  min-inline-size: 0;
+  gap: 2px;
+}
+
+.macos-ai-app .task-model-push-parent label small {
+  overflow-wrap: anywhere;
+  color: var(--zeus-product-muted);
+  line-height: 1.45;
+}
+
+.macos-ai-app .task-model-push-parent-resources {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  padding-block-start: 8px;
+}
+
+.macos-ai-app .task-model-push-parent-resources > div {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-inline-size: 0;
+}
+
+.macos-ai-app .task-model-push-parent-resources label {
+  padding: 7px 8px;
+  border-radius: 8px;
+  background: var(--zeus-product-panel);
+}
+
+.macos-ai-app .task-model-push-parent-resources label.is-unavailable {
+  cursor: not-allowed;
+  opacity: 0.66;
+}
+
+.macos-ai-app .task-model-push-parent-resource-warning {
+  color: var(--zeus-danger-text);
+  line-height: 1.45;
 }
 
 .macos-ai-app .task-model-push-canonical pre {
@@ -12344,7 +12438,8 @@ a {
 @media (max-width: 680px) {
   .macos-ai-app .task-model-push-config-grid,
   .macos-ai-app .task-model-push-workspace-grid,
-  .macos-ai-app .task-model-push-mode-choice {
+  .macos-ai-app .task-model-push-mode-choice,
+  .macos-ai-app .task-model-push-parent-resources {
     grid-template-columns: minmax(0, 1fr);
   }
 }

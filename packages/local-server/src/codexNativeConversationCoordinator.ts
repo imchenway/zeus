@@ -124,6 +124,11 @@ export interface CodexNativeConversationRuntime extends CodexNativeConversationC
 const providerEventErrorsSettingKey = 'codex.native.provider_event_errors';
 const providerEventHotReceiptLimit = 10_000;
 
+/** 只接收 app-server 明确返回的绝对路径；缺失或相对路径都不推测本地会话位置。 */
+function threadPath(snapshot: CodexThreadSnapshot): string | undefined {
+  return typeof snapshot.path === 'string' && snapshot.path.trim() && isAbsolute(snapshot.path.trim()) ? snapshot.path.trim() : undefined;
+}
+
 export function createCodexNativeConversationCoordinator(options: CreateCodexNativeConversationCoordinatorOptions): CodexNativeConversationRuntime {
   const now = options.now ?? (() => new Date().toISOString());
   const operationId = options.operationId ?? randomUUID;
@@ -1273,6 +1278,18 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     assertConversationCanBeArchived(conversation);
     const providerThreadId = requireString(conversation.providerThreadId, 'provider thread id');
     if (conversation.providerState !== 'archived') await options.manager.archiveThread({ threadId: providerThreadId });
+    let archivedThreadPath: string | undefined;
+    try {
+      archivedThreadPath = threadPath(await options.manager.readThread({ threadId: providerThreadId }));
+    } catch {
+      // 旧版 app-server 可能不允许读取已归档线程；此时保留上次已确认路径，不自行猜测。
+    }
+    if (archivedThreadPath) {
+      options.conversations.updateProviderThreadPath(conversation.id, {
+        providerThreadId,
+        providerThreadPath: archivedThreadPath,
+      });
+    }
     options.conversations.bindProvider(conversation.id, {
       providerId: 'codex',
       providerThreadId,
@@ -1957,6 +1974,13 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   }
 
   function reconcileConversationSnapshot(conversation: ZeusConversationWithMessagesRecord, snapshot: CodexThreadSnapshot, generationId: string): void {
+    const snapshotPath = threadPath(snapshot);
+    if (snapshotPath && conversation.nativeSessionPath !== snapshotPath) {
+      conversation = options.conversations.updateProviderThreadPath(conversation.id, {
+        providerThreadId: requireString(conversation.providerThreadId, 'provider thread id'),
+        providerThreadPath: snapshotPath,
+      });
+    }
     const submissions = options.submissions.listByConversation(conversation.id);
     const inFlight = submissions.filter((submission) => submission.status === 'dispatching' || submission.status === 'active');
     if (inFlight.length === 0) {
@@ -2919,10 +2943,11 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   }
 
   function persistThreadProviderSettings(conversationId: string, thread: CodexThreadSnapshot): void {
-    if (typeof thread.path === 'string' && thread.path.trim()) {
+    const providerThreadPath = threadPath(thread);
+    if (providerThreadPath) {
       options.conversations.updateProviderThreadPath(conversationId, {
         providerThreadId: thread.id,
-        providerThreadPath: thread.path,
+        providerThreadPath,
       });
     }
     const settings = thread.providerSettings;
