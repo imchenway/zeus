@@ -365,9 +365,9 @@ function normalizeTaskTableColumnWidth(columnKey: TaskTableColumnKey, value: unk
 }
 
 export function getTaskTableColumnWidthBounds(columnKey: TaskTableColumnKey): { min: number; max: number } {
-  if (columnKey === 'intent' || columnKey === 'description') return { min: 140, max: 560 };
-  if (columnKey === 'runtimeSession' || columnKey === 'rawId') return { min: 120, max: 520 };
-  return { min: 72, max: 420 };
+  if (columnKey === 'intent' || columnKey === 'description') return { min: 140, max: 640 };
+  if (columnKey === 'runtimeSession' || columnKey === 'rawId') return { min: 120, max: 640 };
+  return { min: 72, max: 640 };
 }
 
 export function clampTaskTableColumnWidth(columnKey: TaskTableColumnKey, value: number): number {
