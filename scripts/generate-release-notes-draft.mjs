@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 /* global console, process */
-import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
-import { URL } from 'node:url';
+import {spawnSync} from 'node:child_process';
+import {mkdirSync, mkdtempSync, readFileSync, writeFileSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join, resolve} from 'node:path';
+import {URL} from 'node:url';
 
 process.on('uncaughtException', (error) => {
   console.error(error instanceof Error ? error.message : String(error));
@@ -37,20 +37,31 @@ const prompt = buildPrompt(evidencePath, evidence);
 
 console.log(`Zeus 发布内容草稿：版本 ${releaseVersion}，范围 ${baseTag}..${shortHeadSha}`);
 let response;
+let usedDeterministicFallback = false;
 try {
   response = await requestDeepSeekReleaseNotes(prompt);
   console.log('发布说明已由 Zeus 配置的 deepseek-v4-flash 生成。');
 } catch (error) {
   console.warn(`deepseek-v4-flash 生成发布说明失败，使用确定性模板继续：${error instanceof Error ? error.message : String(error)}`);
   response = buildDeterministicFallback();
+    usedDeterministicFallback = true;
 }
 
 if (automatedRelease && (response.confidence !== 'high' || !Array.isArray(response.uncertainties) || response.uncertainties.length > 0)) {
   console.warn(`AI 发布内容没有达到无人值守置信要求，使用确定性模板继续：confidence=${response.confidence ?? 'missing'} uncertainties=${JSON.stringify(response.uncertainties ?? 'missing')}`);
   response = buildDeterministicFallback();
+    usedDeterministicFallback = true;
 }
-const markdown = normalizeMarkdown(response.markdown);
-validateDraft(markdown);
+let markdown = normalizeMarkdown(response.markdown);
+try {
+    validateDraft(markdown);
+} catch (error) {
+    if (!automatedRelease || usedDeterministicFallback) throw error;
+    console.warn(`AI 发布内容未通过确定性校验，使用确定性模板继续：${error instanceof Error ? error.message : String(error)}`);
+    response = buildDeterministicFallback();
+    markdown = normalizeMarkdown(response.markdown);
+    validateDraft(markdown);
+}
 writeFileSync(draftPath, markdown, { mode: 0o600 });
 
 console.log(`发布内容草稿：${draftPath}`);
@@ -146,7 +157,7 @@ function buildPrompt(currentEvidencePath, currentEvidence) {
 5. 当前公开制品若仍是 ad-hoc、未公证，只能描述为手动升级，不得声称应用内自动安装可用。
 6. 必须使用简体中文，标题必须精确为“# Zeus ${releaseVersion} 更新内容”。
 7. 必须包含“## 如何升级”“## 系统要求与已知限制”“## 发布验证”三个二级标题；前面按真实变化生成一至四个用户向主题。
-8. “如何升级”必须包含 Homebrew 命令 \`brew upgrade --cask imchenway/tap/zeus\` 和版本化 DMG 手动升级方式。
+8. “如何升级”必须包含 Homebrew 命令 \`brew upgrade --cask imchenway/tap/zeus\` 和版本化 DMG 手动升级方式，并原样包含文件名 \`Zeus-${releaseVersion}-arm64.dmg\`。
 9. 不写营销套话，不虚构性能数字，不使用源码行号或内部任务编号充当用户说明。
 10. 这是草稿，不要写 GitHub Release 已发布、Tap 已同步或用户已经完成升级。
 ${automatedRelease ? '11. 本次用于无人值守发布。confidence 只评价正文中的用户向变更事实；这些事实均有明确证据时设为 high 且 uncertainties 返回空数组。版本写入、后续门禁、正式制品和公开发布将在草稿通过后由编排器执行，它们尚未发生是确定的流程阶段，不是 uncertainty；必须在“发布验证”中准确写成后续动作。任何用户向变更事实的疑点都必须放入 uncertainties，禁止用“待确认”“待验证”“TODO”“TBD”等占位语掩盖。已有证据支持的限制影响可以如实使用“可能”等概率表达。' : '11. 发布验证没有同一候选提交证据时，保留“待发布门禁确认”。'}
