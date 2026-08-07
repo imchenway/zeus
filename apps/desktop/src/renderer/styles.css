@@ -12433,11 +12433,46 @@ a {
   padding: 4px 6px 8px;
 }
 
-.macos-ai-app .task-git-review-workspaces > button {
+.macos-ai-app .task-git-workspace-branch-group {
+  min-inline-size: 0;
+  display: grid;
+  gap: 4px;
+  padding-block: 5px;
+  border-block-start: 1px solid var(--zeus-product-line-soft);
+}
+
+.macos-ai-app .task-git-workspace-branch-group:first-of-type {
+  border-block-start: 0;
+}
+
+.macos-ai-app .task-git-workspace-branch-group > header {
+  min-inline-size: 0;
+  display: grid;
+  gap: 2px;
+  padding: 3px 6px;
+}
+
+.macos-ai-app .task-git-workspace-branch-group > header strong,
+.macos-ai-app .task-git-workspace-branch-group > header small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.macos-ai-app .task-git-workspace-branch-group > header small {
+  color: var(--zeus-product-muted);
+}
+
+.macos-ai-app .task-git-workspace-branch-group > div {
+  display: grid;
+  gap: 3px;
+}
+
+.macos-ai-app .task-git-workspace-branch-group > div > button {
   display: grid;
   gap: 3px;
   inline-size: 100%;
-  padding: 9px 10px;
+  padding: 7px 10px 7px 14px;
   border: 1px solid transparent;
   border-radius: 8px;
   background: transparent;
@@ -12445,13 +12480,13 @@ a {
   text-align: start;
 }
 
-.macos-ai-app .task-git-review-workspaces > button:hover,
-.macos-ai-app .task-git-review-workspaces > button.is-active {
+.macos-ai-app .task-git-workspace-branch-group > div > button:hover,
+.macos-ai-app .task-git-workspace-branch-group > div > button.is-active {
   border-color: var(--zeus-control-border);
   background: var(--zeus-control-bg);
 }
 
-.macos-ai-app .task-git-review-workspaces > button small {
+.macos-ai-app .task-git-workspace-branch-group > div > button small {
   overflow: hidden;
   color: var(--zeus-product-muted);
   text-overflow: ellipsis;

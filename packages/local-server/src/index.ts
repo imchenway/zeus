@@ -13455,23 +13455,34 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
           throw nativeApiError('ZEUS_PROJECT_REPOSITORY_UNAVAILABLE', `Project repository is unavailable: ${registeredRepository.relativePath}`);
         }
         const defaultRemoteName = repository.remotes.includes('origin') ? 'origin' : (repository.remotes[0] ?? '');
-        const refreshedRemote = defaultRemoteName ? await fetchGitRemote(registeredRepository.localPath, defaultRemoteName) : null;
-        const sourceRefs = refreshedRemote
-          ? refreshedRemote.branches.map((ref) => {
-              const branch = ref.slice(`${defaultRemoteName}/`.length);
-              return {
+        let refreshedRemote: Awaited<ReturnType<typeof fetchGitRemote>> | null = null;
+        let remoteRefreshError: string | null = null;
+        if (defaultRemoteName) {
+          try {
+            refreshedRemote = await fetchGitRemote(registeredRepository.localPath, defaultRemoteName);
+          } catch (error) {
+            // 仓库发现与远端可用性是两件事；远端失败不能把已发现的 Git 仓库伪报为不存在。
+            remoteRefreshError = taskGitErrorCode(error);
+          }
+        }
+        const sourceRefs = remoteRefreshError
+          ? []
+          : refreshedRemote
+            ? refreshedRemote.branches.map((ref) => {
+                const branch = ref.slice(`${defaultRemoteName}/`.length);
+                return {
+                  ref,
+                  label: `${branch} · ${defaultRemoteName}`,
+                  kind: 'remote' as const,
+                  current: branch === repository.branch,
+                };
+              })
+            : repository.localBranches.map((ref) => ({
                 ref,
-                label: `${branch} · ${defaultRemoteName}`,
-                kind: 'remote' as const,
-                current: branch === repository.branch,
-              };
-            })
-          : repository.localBranches.map((ref) => ({
-              ref,
-              label: ref,
-              kind: 'local' as const,
-              current: ref === repository.branch,
-            }));
+                label: ref,
+                kind: 'local' as const,
+                current: ref === repository.branch,
+              }));
         return {
           ...registeredRepository,
           branch: repository.branch,
@@ -13479,6 +13490,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
           clean: review.clean,
           defaultRemoteName,
           sourceMode: defaultRemoteName ? ('remote' as const) : ('local' as const),
+          remoteRefreshError,
           sourceRefs,
           suggestedBranchName: buildTaskBranchName(task.taskCode, task.title, taskEnvironments.listByTask(task.id).length + 1),
         };

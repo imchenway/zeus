@@ -223,6 +223,16 @@ export function TaskModelPushModal(props: {
                   </label>
                 ) : null}
               </div>
+            ) : !props.capabilities ? (
+              <p className={props.status === 'error' ? 'task-model-push-error' : 'task-model-push-message'} role="status">
+                {props.status === 'error'
+                  ? zh
+                    ? 'Git 仓库检查未完成，不能判断项目是否存在仓库。请根据下方错误处理后重试。'
+                    : 'The Git repository check did not complete, so repository presence is unknown. Resolve the error below and try again.'
+                  : zh
+                    ? '正在扫描项目目录下的 Git 仓库…'
+                    : 'Scanning the project directory for Git repositories…'}
+              </p>
             ) : repositories.length > 0 ? (
               <div className="task-model-push-repository-list">
                 {repositories.map((repository) => {
@@ -257,7 +267,7 @@ export function TaskModelPushModal(props: {
                                 repositorySelections: { ...props.form.repositorySelections, [repository.id]: { ...selection, sourceRef } },
                               })
                             }
-                            disabled={!props.capabilities || busy}
+                            disabled={!props.capabilities || busy || Boolean(repository.remoteRefreshError)}
                             searchPlaceholder={zh ? '搜索分支' : 'Search branches'}
                           />
                         </label>
@@ -276,14 +286,18 @@ export function TaskModelPushModal(props: {
                           />
                         </label>
                       </div>
-                      <p className="task-model-push-warning">
-                        {repository.sourceMode === 'remote'
+                      <p className={repository.remoteRefreshError ? 'task-model-push-error' : 'task-model-push-warning'}>
+                        {repository.remoteRefreshError
                           ? zh
-                            ? `来源来自刚刚刷新的 ${repository.defaultRemoteName}；原工作区的未提交内容不会带入。`
-                            : `The source comes from the freshly updated ${repository.defaultRemoteName}; local uncommitted changes are not copied.`
-                          : zh
-                            ? '该仓库没有远端，当前使用本地分支快照。默认不带入原工作区未提交内容。'
-                            : 'This repository has no remote, so a local branch snapshot is used. Local uncommitted changes are excluded by default.'}
+                            ? `已发现该 Git 仓库，但 ${repository.defaultRemoteName} 远端刷新失败。为避免使用旧分支，修复网络或仓库凭据后请重新打开弹窗。`
+                            : `This Git repository was found, but ${repository.defaultRemoteName} could not be refreshed. To avoid stale branches, fix network or repository credentials and reopen this dialog.`
+                          : repository.sourceMode === 'remote'
+                            ? zh
+                              ? `来源来自刚刚刷新的 ${repository.defaultRemoteName}；原工作区的未提交内容不会带入。`
+                              : `The source comes from the freshly updated ${repository.defaultRemoteName}; local uncommitted changes are not copied.`
+                            : zh
+                              ? '该仓库没有远端，当前使用本地分支快照。默认不带入原工作区未提交内容。'
+                              : 'This repository has no remote, so a local branch snapshot is used. Local uncommitted changes are excluded by default.'}
                       </p>
                       {repository.sourceMode === 'local' && repository.clean === false ? (
                         <label className="task-model-push-concurrency-confirm">
@@ -499,7 +513,7 @@ export function TaskModelPushModal(props: {
                   : repositories.length === 0 ||
                     repositories.some((repository) => {
                       const selection = props.form.repositorySelections[repository.id];
-                      return !selection?.sourceRef || !selection.branchName.trim();
+                      return Boolean(repository.remoteRefreshError) || !selection?.sourceRef || !selection.branchName.trim();
                     }))
               }
             >

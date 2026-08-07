@@ -376,6 +376,7 @@ export interface CodexTaskRepositoryCapability extends ProjectRepositoryRecord {
   clean: boolean;
   defaultRemoteName: string;
   sourceMode: 'remote' | 'local';
+  remoteRefreshError: string | null;
   sourceRefs: Array<{ ref: string; label: string; kind: 'local' | 'remote'; current: boolean }>;
   suggestedBranchName: string;
 }
