@@ -4217,6 +4217,22 @@ export class ConversationRepository {
     return updated;
   }
 
+  updateProviderThreadPath(conversationId: string, input: { providerThreadId: string; providerThreadPath: string }): ZeusConversationWithMessagesRecord {
+    const providerThreadPath = input.providerThreadPath;
+    if (!providerThreadPath.trim()) throw new Error('Provider thread path is required.');
+    this.db.execute(
+      `UPDATE conversations SET provider_thread_path = ?, native_session_path = ?
+       WHERE id = ? AND provider_thread_id = ?`,
+      [providerThreadPath, providerThreadPath, conversationId, input.providerThreadId],
+    );
+    const updated = this.getById(conversationId);
+    if (!updated) throw new Error(`Zeus conversation not found: ${conversationId}`);
+    if (updated.providerThreadId !== input.providerThreadId || updated.providerThreadPath !== providerThreadPath || updated.nativeSessionPath !== providerThreadPath) {
+      throw new Error(`Zeus conversation provider thread does not match: ${conversationId}`);
+    }
+    return updated;
+  }
+
   upsertProviderSettingsSnapshot(conversationId: string, snapshot: ConversationProviderSettingsSnapshot): ConversationProviderSettingsSnapshot | undefined {
     return this.upsertConversationSnapshot(conversationId, 'provider_settings_json', snapshot);
   }

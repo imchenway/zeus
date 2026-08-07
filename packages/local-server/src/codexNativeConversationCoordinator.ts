@@ -2850,6 +2850,12 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   }
 
   function persistThreadProviderSettings(conversationId: string, thread: CodexThreadSnapshot): void {
+    if (typeof thread.path === 'string' && thread.path.trim()) {
+      options.conversations.updateProviderThreadPath(conversationId, {
+        providerThreadId: thread.id,
+        providerThreadPath: thread.path,
+      });
+    }
     const settings = thread.providerSettings;
     if (!settings) return;
     options.conversations.upsertProviderSettingsSnapshot(conversationId, {

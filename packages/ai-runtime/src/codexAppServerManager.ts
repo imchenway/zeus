@@ -123,6 +123,7 @@ export interface CodexThreadStartInput {
 
 export interface CodexThreadSnapshot {
   id: string;
+  path?: string | null;
   turns?: unknown[];
   providerSettings?: {
     generationId: string;

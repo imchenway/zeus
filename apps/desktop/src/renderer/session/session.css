@@ -566,40 +566,36 @@
   display: none;
 }
 
-.session-codex-parity-v1 .session-runtime-execution-context {
+.session-codex-parity-v1 .session-runtime-context-row {
   align-items: center;
   color: var(--session-text-muted);
-  display: flex;
+  display: grid;
   gap: 12px;
+  grid-template-columns: minmax(0, 1fr) minmax(120px, 44%);
   min-inline-size: 0;
   padding-inline-start: 1px;
   white-space: nowrap;
 }
 
-.session-codex-parity-v1 .session-runtime-execution-context > span {
+.session-codex-parity-v1 .session-runtime-native-context {
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+}
+
+.session-codex-parity-v1 .session-runtime-context-row > span {
   align-items: center;
   display: inline-flex;
   gap: 5px;
   min-inline-size: 0;
-}
-
-.session-codex-parity-v1 .session-runtime-execution-context > span:first-child {
-  flex: 1 1 auto;
   overflow: hidden;
 }
 
-.session-codex-parity-v1 .session-runtime-execution-context > span:last-child {
-  flex: 0 1 44%;
-  overflow: hidden;
-}
-
-.session-codex-parity-v1 .session-runtime-execution-context b {
+.session-codex-parity-v1 .session-runtime-context-row b {
   color: var(--session-text);
   flex: 0 0 auto;
   font-weight: 570;
 }
 
-.session-codex-parity-v1 .session-runtime-execution-context code {
+.session-codex-parity-v1 .session-runtime-context-row code {
   color: inherit;
   font-family: var(--zeus-mono-font, 'SFMono-Regular', 'SF Mono', Consolas, monospace);
   font-size: 10px;
@@ -6394,40 +6390,36 @@
   display: none;
 }
 
-.session-codex-parity-v1 .session-runtime-execution-context {
+.session-codex-parity-v1 .session-runtime-context-row {
   align-items: center;
   color: var(--session-text-muted);
-  display: flex;
+  display: grid;
   gap: 12px;
+  grid-template-columns: minmax(0, 1fr) minmax(120px, 44%);
   min-inline-size: 0;
   padding-inline-start: 1px;
   white-space: nowrap;
 }
 
-.session-codex-parity-v1 .session-runtime-execution-context > span {
+.session-codex-parity-v1 .session-runtime-native-context {
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+}
+
+.session-codex-parity-v1 .session-runtime-context-row > span {
   align-items: center;
   display: inline-flex;
   gap: 5px;
   min-inline-size: 0;
-}
-
-.session-codex-parity-v1 .session-runtime-execution-context > span:first-child {
-  flex: 1 1 auto;
   overflow: hidden;
 }
 
-.session-codex-parity-v1 .session-runtime-execution-context > span:last-child {
-  flex: 0 1 44%;
-  overflow: hidden;
-}
-
-.session-codex-parity-v1 .session-runtime-execution-context b {
+.session-codex-parity-v1 .session-runtime-context-row b {
   color: var(--session-text);
   flex: 0 0 auto;
   font-weight: 570;
 }
 
-.session-codex-parity-v1 .session-runtime-execution-context code {
+.session-codex-parity-v1 .session-runtime-context-row code {
   color: inherit;
   font-family: var(--zeus-mono-font, 'SFMono-Regular', 'SF Mono', Consolas, monospace);
   font-size: 10px;

@@ -386,6 +386,7 @@ export function buildStartNativeConversationRequest(input: SessionWorkspaceStart
 export function nativeConversationChoiceFromAcceptance(acceptance: NativeOperationAcceptance, task: SessionWorkspaceTask, now = new Date().toISOString()): NativeConversationChoice {
   const conversation = acceptance.conversation;
   const provider = isRecord(conversation.provider) ? conversation.provider : {};
+  const nativeSession = isRecord(conversation.nativeSession) ? conversation.nativeSession : {};
   return {
     id: acceptance.conversation.id,
     projectId: stringField(conversation.projectId) ?? task.projectId,
@@ -400,6 +401,10 @@ export function nativeConversationChoiceFromAcceptance(acceptance: NativeOperati
     providerThreadId: stringField(conversation.providerThreadId) ?? stringField(provider.threadId),
     providerModel: stringField(conversation.providerModel) ?? stringField(provider.model),
     providerState: stringField(conversation.providerState) ?? stringField(provider.state),
+    nativeSession: {
+      id: stringField(nativeSession.id) ?? stringField(conversation.providerThreadId) ?? stringField(provider.threadId),
+      path: nullableStringField(nativeSession.path),
+    },
     permissionMode: permissionModeField(conversation.permissionMode),
     collaborationMode: conversation.collaborationMode === 'plan' ? 'plan' : 'default',
     createdAt: stringField(conversation.createdAt) ?? now,
@@ -482,6 +487,7 @@ export function createProjectConversationStartEnvelopeManager(options: { storage
 export function projectConversationChoiceFromAcceptance(acceptance: NativeOperationAcceptance, owner: Extract<SessionConversationOwner, { kind: 'project' }>, now = new Date().toISOString()): NativeConversationChoice {
   const conversation = acceptance.conversation;
   const provider = isRecord(conversation.provider) ? conversation.provider : {};
+  const nativeSession = isRecord(conversation.nativeSession) ? conversation.nativeSession : {};
   return {
     id: conversation.id,
     projectId: stringField(conversation.projectId) ?? owner.projectId,
@@ -496,6 +502,10 @@ export function projectConversationChoiceFromAcceptance(acceptance: NativeOperat
     providerThreadId: stringField(conversation.providerThreadId) ?? stringField(provider.threadId),
     providerModel: stringField(conversation.providerModel) ?? stringField(provider.model),
     providerState: stringField(conversation.providerState) ?? stringField(provider.state),
+    nativeSession: {
+      id: stringField(nativeSession.id) ?? stringField(conversation.providerThreadId) ?? stringField(provider.threadId),
+      path: nullableStringField(nativeSession.path),
+    },
     permissionMode: permissionModeField(conversation.permissionMode),
     collaborationMode: conversation.collaborationMode === 'plan' ? 'plan' : 'default',
     createdAt: stringField(conversation.createdAt) ?? now,
@@ -812,6 +822,8 @@ const labels = {
     usage: 'Token 用量',
     cwd: '当前目录',
     branch: '当前分支',
+    sessionId: '会话 ID',
+    jsonlPath: 'JSONL 文件',
     nonGitDirectory: '非 Git 目录',
     unavailable: '不可用',
     rateLimits: '账户限额',
@@ -858,6 +870,8 @@ const labels = {
     usage: 'Token usage',
     cwd: 'Current directory',
     branch: 'Current branch',
+    sessionId: 'Session ID',
+    jsonlPath: 'JSONL file',
     nonGitDirectory: 'Not a Git directory',
     unavailable: 'Unavailable',
     rateLimits: 'Account rate limits',
@@ -2178,6 +2192,9 @@ function SessionRuntimeDetails(props: { state: NativeSessionState; conversation:
   const executionContext = props.state.snapshot?.executionContext;
   const executionCwd = executionContext?.cwd ?? copy.unavailable;
   const executionBranch = executionContext?.cwd ? (executionContext.branch ?? copy.nonGitDirectory) : copy.unavailable;
+  const nativeSession = props.state.snapshot?.nativeSession ?? props.conversation?.nativeSession;
+  const nativeSessionId = nativeSession?.id ?? props.state.providerThreadId ?? props.conversation?.providerThreadId ?? copy.unavailable;
+  const nativeSessionPath = nativeSession?.path ?? copy.unavailable;
   return (
     <details className="session-runtime-details" data-severity={warning ? 'warning' : 'ready'} aria-label={copy.runtimeDetails}>
       <summary>
@@ -2192,7 +2209,7 @@ function SessionRuntimeDetails(props: { state: NativeSessionState; conversation:
           </span>
         </span>
         {executionContext ? (
-          <small className="session-runtime-execution-context">
+          <small className="session-runtime-context-row session-runtime-execution-context">
             <span title={executionCwd}>
               <b>{copy.cwd}</b>
               <code>{executionCwd}</code>
@@ -2200,6 +2217,18 @@ function SessionRuntimeDetails(props: { state: NativeSessionState; conversation:
             <span title={executionBranch}>
               <b>{copy.branch}</b>
               <code>{executionBranch}</code>
+            </span>
+          </small>
+        ) : null}
+        {nativeSession?.id || nativeSession?.path || props.state.providerThreadId || props.conversation?.providerThreadId ? (
+          <small className="session-runtime-context-row session-runtime-native-context">
+            <span title={nativeSessionId}>
+              <b>{copy.sessionId}</b>
+              <code>{nativeSessionId}</code>
+            </span>
+            <span title={nativeSessionPath}>
+              <b>{copy.jsonlPath}</b>
+              <code>{nativeSessionPath}</code>
             </span>
           </small>
         ) : null}
