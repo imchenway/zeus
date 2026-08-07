@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { buildTaskCommitMessageSuggestion } from '@zeus/shared';
 import { type DashboardClient, type TaskRecord, ZeusApiError } from '../apiClient.js';
 import type {
   TaskBranchFileChange,
@@ -101,7 +102,13 @@ export function TaskGitMergeModal(props: { open: boolean; language: 'zh-CN' | 'e
     setError(null);
     setFeedback(null);
     conflictDraftsRef.current = {};
-    setMessage(`${props.task.taskCode ?? props.task.id}: ${props.task.title}`);
+    setMessage(
+      buildTaskCommitMessageSuggestion({
+        taskType: props.task.taskType,
+        taskCode: props.task.taskCode ?? props.task.id,
+        taskTitle: props.task.title,
+      }),
+    );
     void Promise.all([props.client.loadTaskGitWorkspaces(props.task.id), props.client.loadTaskIntegrations(props.task.id)])
       .then(([workspaceSnapshot, integrationSnapshot]) => {
         if (cancelled) return;
