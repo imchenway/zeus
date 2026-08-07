@@ -288,6 +288,7 @@ export interface CreateTaskInput {
   optimizationExpectedOutcome?: string;
   createdFrom: string;
   sourceContext: Record<string, unknown>;
+  managementStatus?: TaskManagementStatus;
   priority?: TaskPriority;
   templateId?: string;
   tags?: string[];
@@ -325,6 +326,7 @@ export interface CreateTaskTemplateInput {
 export interface CreateTaskFromTemplateInput {
   projectId: string;
   template: ZeusTaskTemplateRecord;
+  managementStatus?: TaskManagementStatus;
   title?: string;
   variables?: Record<string, string>;
 }
@@ -2722,7 +2724,7 @@ export class TaskRepository {
         defectReproductionSteps: input.defectReproductionSteps ?? '',
         optimizationCurrentState: input.optimizationCurrentState ?? '',
         optimizationExpectedOutcome: input.optimizationExpectedOutcome ?? '',
-        managementStatus: 'todo',
+        managementStatus: isTaskManagementStatus(input.managementStatus) ? input.managementStatus : 'todo',
         status: 'ready',
         priority: input.priority ?? 'p3',
         allowCodeChanges: input.allowCodeChanges === true,
@@ -2781,6 +2783,7 @@ export class TaskRepository {
       title: input.title ?? input.template.name,
       taskType: 'requirement',
       description,
+      managementStatus: input.managementStatus,
       createdFrom: 'template',
       templateId: input.template.id,
       sourceContext: {
@@ -2854,6 +2857,17 @@ export class TaskRepository {
     const updated = this.getById(taskId);
     if (!updated) throw new Error(`Zeus task not found: ${taskId}`);
     return updated;
+  }
+
+  replaceManagementStatusForProject(projectId: string, fromStatus: TaskManagementStatus, toStatus: TaskManagementStatus): ZeusTaskRecord[] {
+    if (!isTaskManagementStatus(fromStatus) || !isTaskManagementStatus(toStatus)) throw new Error('Unknown Zeus task management status replacement.');
+    if (fromStatus === toStatus) return [];
+    return this.db.transaction(() => {
+      const taskIds = this.db
+        .select<{ id: string }>(`SELECT id FROM tasks WHERE project_id = ? AND management_status = ? AND deleted_at IS NULL ORDER BY created_at ASC`, [projectId, fromStatus])
+        .map((row) => row.id);
+      return taskIds.map((taskId) => this.updateManagementStatus(taskId, toStatus));
+    });
   }
 
   update(taskId: string, input: UpdateTaskInput): ZeusTaskRecord {

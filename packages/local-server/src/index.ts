@@ -6,12 +6,16 @@ import { dirname, isAbsolute, join, parse, relative, resolve, sep } from 'node:p
 import { getNextTaskStatus, type TaskStatus } from '@zeus/task-core';
 import {
   buildTaskCommitMessageSuggestion,
+  cloneTaskManagementStatusConfig,
   type CommandDefinition,
   commandNeedsHighRiskConfirmation,
   type ConversationResource,
   type ConversationResourcePreview,
   isTaskStatusFilter,
+  defaultTaskManagementStatusConfig,
+  normalizeTaskManagementStatusConfig,
   type TaskAttachmentReference,
+  type TaskManagementStatusConfig,
   type TaskStatusFilter,
   validateCommandDefinitionInput,
 } from '@zeus/shared';
@@ -972,6 +976,19 @@ function normalizeTaskExpandedIdsByProject(value: unknown): Record<string, strin
   return normalized;
 }
 
+function normalizeTaskManagementStatusByProject(value: unknown, template: TaskManagementStatusConfig): Record<string, TaskManagementStatusConfig> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const normalized: Record<string, TaskManagementStatusConfig> = {};
+  for (const [projectId, config] of Object.entries(value)) {
+    const normalizedProjectId = projectId.trim();
+    const containsControlCharacter = Array.from(normalizedProjectId).some((character) => character.charCodeAt(0) <= 31 || character.charCodeAt(0) === 127);
+    if (!normalizedProjectId || normalizedProjectId.length > 160 || containsControlCharacter) continue;
+    normalized[normalizedProjectId] = normalizeTaskManagementStatusConfig(config, template);
+    if (Object.keys(normalized).length >= 100) break;
+  }
+  return normalized;
+}
+
 function normalizeTaskTableEnumSortOrders(value: unknown): TaskTableEnumSortOrders {
   const input = value && typeof value === 'object' && !Array.isArray(value) ? (value as Partial<TaskTableEnumSortOrders>) : {};
   return {
@@ -1036,6 +1053,8 @@ interface AppShellSettingsSnapshot {
   taskTableColumns: TaskTableColumnPreferences;
   taskTableColumnsByProject: Record<string, TaskTableColumnPreferences>;
   taskTableEnumSortOrders: TaskTableEnumSortOrders;
+  taskManagementStatusTemplate: TaskManagementStatusConfig;
+  taskManagementStatusByProject: Record<string, TaskManagementStatusConfig>;
   taskStatusFilterByProject: Record<string, TaskStatusFilter>;
   taskViewModeByProject: Record<string, 'hierarchy' | 'flat'>;
   taskExpandedIdsByProject: Record<string, string[]>;
@@ -1072,6 +1091,10 @@ interface UpdateAppShellSettingsBody {
   taskTableColumns?: Partial<TaskTableColumnPreferences>;
   taskTableColumnsByProject?: Record<string, TaskTableColumnPreferences>;
   taskTableEnumSortOrders?: TaskTableEnumSortOrders;
+  taskManagementStatusTemplate?: TaskManagementStatusConfig;
+  taskManagementStatusByProject?: Record<string, TaskManagementStatusConfig>;
+  /** 删除状态时只作为本次保存的迁移指令，不进入持久设置。 */
+  taskManagementStatusReplacements?: Record<string, Record<string, string>>;
   taskStatusFilterByProject?: Record<string, TaskStatusFilter>;
   taskViewModeByProject?: Record<string, 'hierarchy' | 'flat'>;
   taskExpandedIdsByProject?: Record<string, string[]>;
@@ -1896,18 +1919,38 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
   let memoryGraphCache: ProjectGraph | null = null;
   const persistedAppShellSettings = settings.getJson<AppShellSettingsSnapshot>(appShellSettingsKey);
   let appShellSettings: AppShellSettingsSnapshot = normalizeAppShellSettings(persistedAppShellSettings, localLogDirectory, localConfigPath);
+  const missingTaskStatusProjectIds = projects.list().map((project) => project.id).filter((projectId) => !appShellSettings.taskManagementStatusByProject[projectId]);
+  if (missingTaskStatusProjectIds.length > 0) {
+    appShellSettings = {
+      ...appShellSettings,
+      taskManagementStatusByProject: {
+        ...appShellSettings.taskManagementStatusByProject,
+        ...Object.fromEntries(missingTaskStatusProjectIds.map((projectId) => [projectId, cloneTaskManagementStatusConfig(appShellSettings.taskManagementStatusTemplate)])),
+      },
+    };
+  }
   if (
-    persistedAppShellSettings &&
-    (JSON.stringify(persistedAppShellSettings.taskTableColumns) !== JSON.stringify(appShellSettings.taskTableColumns) ||
+    missingTaskStatusProjectIds.length > 0 ||
+    (persistedAppShellSettings &&
+      (JSON.stringify(persistedAppShellSettings.taskTableColumns) !== JSON.stringify(appShellSettings.taskTableColumns) ||
       JSON.stringify(persistedAppShellSettings.taskTableColumnsByProject) !== JSON.stringify(appShellSettings.taskTableColumnsByProject) ||
       JSON.stringify(persistedAppShellSettings.taskTableEnumSortOrders) !== JSON.stringify(appShellSettings.taskTableEnumSortOrders) ||
+      JSON.stringify(persistedAppShellSettings.taskManagementStatusTemplate) !== JSON.stringify(appShellSettings.taskManagementStatusTemplate) ||
+      JSON.stringify(persistedAppShellSettings.taskManagementStatusByProject) !== JSON.stringify(appShellSettings.taskManagementStatusByProject) ||
       JSON.stringify(persistedAppShellSettings.taskStatusFilterByProject) !== JSON.stringify(appShellSettings.taskStatusFilterByProject) ||
       JSON.stringify(persistedAppShellSettings.taskViewModeByProject) !== JSON.stringify(appShellSettings.taskViewModeByProject) ||
-      JSON.stringify(persistedAppShellSettings.taskExpandedIdsByProject) !== JSON.stringify(appShellSettings.taskExpandedIdsByProject))
+      JSON.stringify(persistedAppShellSettings.taskExpandedIdsByProject) !== JSON.stringify(appShellSettings.taskExpandedIdsByProject)))
   ) {
     // 旧列键、旧默认顺序、新增列宽和项目筛选偏好都只迁移一次并立即落库，避免每次启动重复改写本机视图配置。
     settings.setJson(appShellSettingsKey, appShellSettings);
     await db.save();
+  }
+  function resolveTaskManagementStatusConfigForProject(projectId: string): TaskManagementStatusConfig {
+    return appShellSettings.taskManagementStatusByProject[projectId] ?? appShellSettings.taskManagementStatusTemplate;
+  }
+
+  function isConfiguredTaskManagementStatus(projectId: string, status: unknown): status is TaskManagementStatus {
+    return typeof status === 'string' && resolveTaskManagementStatusConfigForProject(projectId).statuses.some((definition) => definition.id === status);
   }
   const secretStore = createMacOSKeychainStore();
   const modelConnections = createModelConnectionService({
@@ -4987,6 +5030,14 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     }
     // 创建项目时写入用户选择的默认 AI 偏好，同时保留真实文件检测得到的语言和依赖配置。
     settings.setJson(projectConfigSettingsPrefix + project.id, initialProjectConfig);
+    appShellSettings = {
+      ...appShellSettings,
+      taskManagementStatusByProject: {
+        ...appShellSettings.taskManagementStatusByProject,
+        [project.id]: cloneTaskManagementStatusConfig(appShellSettings.taskManagementStatusTemplate),
+      },
+    };
+    settings.setJson(appShellSettingsKey, appShellSettings);
     appendAuditLog({
       actorType: 'local_api',
       action: 'project.config.detected',
@@ -5213,6 +5264,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     try {
       task = tasks.create({
         projectId: body.projectId,
+        managementStatus: resolveTaskManagementStatusConfigForProject(body.projectId).roles.defaultStatusId,
         parentTaskId: body.parentTaskId,
         title: body.title,
         taskType: body.taskType,
@@ -5339,7 +5391,8 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     ) => {
       const existing = tasks.getById(request.params.taskId);
       if (!existing) return reply.code(404).send({ error: 'ZEUS_TASK_NOT_FOUND', message: 'Task not found' });
-      if (!isTaskManagementStatus(request.body?.status)) {
+      const projectStatusConfig = resolveTaskManagementStatusConfigForProject(existing.projectId);
+      if (!isConfiguredTaskManagementStatus(existing.projectId, request.body?.status)) {
         return reply.code(400).send({
           error: 'ZEUS_INVALID_TASK_MANAGEMENT_STATUS',
           message: 'Unknown task management status',
@@ -5364,7 +5417,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
           currentUpdatedAt: existing.updatedAt,
         });
       }
-      if (request.body.status === 'completed' || request.body.status === 'cancelled') {
+      if (request.body.status === projectStatusConfig.roles.completedStatusId || request.body.status === projectStatusConfig.roles.cancelledStatusId) {
         const project = projects.getById(existing.projectId);
         if (!project) return reply.code(404).send({ error: 'ZEUS_PROJECT_NOT_FOUND', message: 'Project not found' });
         const cleanup = await inspectTaskTerminalCleanup(existing.id, project.localPath);
@@ -6146,6 +6199,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       }
       const task = tasks.createFromTemplate({
         projectId: project.id,
+        managementStatus: resolveTaskManagementStatusConfigForProject(project.id).roles.defaultStatusId,
         template,
         title: body.title,
         variables: body.variables,
@@ -6205,6 +6259,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       const questionSummary = userMessage.content.slice(0, 48);
       const task = tasks.create({
         projectId: project.id,
+        managementStatus: resolveTaskManagementStatusConfigForProject(project.id).roles.defaultStatusId,
         title: `跟进图谱问答：${questionSummary}`,
         taskType: 'requirement',
         description: [
@@ -6340,6 +6395,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       const sourceEdges = view.edges.slice(0, 40);
       const task = tasks.create({
         projectId: project.id,
+        managementStatus: resolveTaskManagementStatusConfigForProject(project.id).roles.defaultStatusId,
         title: `分析图谱视图：${view.title}`,
         taskType: 'requirement',
         description: [request.body?.intent ?? '基于当前代码图谱视图分析架构风险、影响范围和建议验收范围。', `视图类型：${view.viewType}`, `节点数：${view.nodes.length}`, `边数：${view.edges.length}`].join('\n'),
@@ -7223,9 +7279,51 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
 
   server.get('/api/settings/app-shell', async (): Promise<AppShellSettingsSnapshot> => appShellSettings);
 
-  server.put('/api/settings/app-shell', async (request: FastifyRequest<{ Body: UpdateAppShellSettingsBody }>): Promise<AppShellSettingsSnapshot> => {
-    appShellSettings = patchAppShellSettings(appShellSettings, request.body ?? {});
+  server.put('/api/settings/app-shell', async (request: FastifyRequest<{ Body: UpdateAppShellSettingsBody }>, reply): Promise<AppShellSettingsSnapshot | unknown> => {
+    const previousSettings = appShellSettings;
+    const nextSettings = patchAppShellSettings(previousSettings, request.body ?? {});
+    const migrationOperations: Array<{ projectId: string; fromStatus: TaskManagementStatus; toStatus: TaskManagementStatus }> = [];
+    if (Object.prototype.hasOwnProperty.call(request.body ?? {}, 'taskManagementStatusByProject')) {
+      for (const project of projects.list()) {
+        const previousConfig = previousSettings.taskManagementStatusByProject[project.id] ?? previousSettings.taskManagementStatusTemplate;
+        const nextConfig = nextSettings.taskManagementStatusByProject[project.id] ?? nextSettings.taskManagementStatusTemplate;
+        const nextStatusIds = new Set(nextConfig.statuses.map((status) => status.id));
+        const removedStatusIds = previousConfig.statuses.map((status) => status.id).filter((statusId) => !nextStatusIds.has(statusId));
+        for (const removedStatusId of removedStatusIds) {
+          if (nextSettings.taskStatusFilterByProject[project.id] === removedStatusId) nextSettings.taskStatusFilterByProject[project.id] = 'unfinished';
+          const replacementStatusId = request.body.taskManagementStatusReplacements?.[project.id]?.[removedStatusId];
+          const taskCount = tasks.listByProject(project.id, { managementStatus: removedStatusId }).length + tasks.listArchivedByProject(project.id, { managementStatus: removedStatusId }).length;
+          const carriesSystemBehavior = Object.values(previousConfig.roles).includes(removedStatusId);
+          if ((taskCount > 0 || carriesSystemBehavior) && (!replacementStatusId || !nextStatusIds.has(replacementStatusId))) {
+            return reply.code(409).send({
+              error: 'ZEUS_TASK_MANAGEMENT_STATUS_REPLACEMENT_REQUIRED',
+              message: 'A replacement status is required before deleting a status that is in use.',
+              projectId: project.id,
+              statusId: removedStatusId,
+              taskCount,
+            });
+          }
+          if (replacementStatusId && nextStatusIds.has(replacementStatusId)) {
+            migrationOperations.push({ projectId: project.id, fromStatus: removedStatusId, toStatus: replacementStatusId });
+            for (const roleName of Object.keys(nextConfig.roles) as Array<keyof typeof nextConfig.roles>) {
+              if (previousConfig.roles[roleName] === removedStatusId) nextConfig.roles[roleName] = replacementStatusId;
+            }
+          }
+        }
+      }
+    }
+    const migratedTasks = migrationOperations.flatMap((operation) => tasks.replaceManagementStatusForProject(operation.projectId, operation.fromStatus, operation.toStatus).map((task) => ({ task, operation })));
+    appShellSettings = nextSettings;
     settings.setJson(appShellSettingsKey, appShellSettings);
+    for (const { task, operation } of migratedTasks) {
+      recordTaskEvent({
+        taskId: task.id,
+        eventType: 'task.management_status.migrated',
+        title: '任务管理状态配置迁移',
+        payload: { from: operation.fromStatus, to: task.managementStatus },
+      });
+      publishRealtimeEvent('task.updated', { taskId: task.id, projectId: task.projectId, changedFields: ['managementStatus'], updatedAt: task.updatedAt });
+    }
     appendAuditLog({
       actorType: 'local_api',
       action: 'settings.app_shell.updated',
@@ -7249,6 +7347,9 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
         taskTableColumns: appShellSettings.taskTableColumns,
         taskTableColumnsByProject: appShellSettings.taskTableColumnsByProject,
         taskTableEnumSortOrders: appShellSettings.taskTableEnumSortOrders,
+        taskManagementStatusTemplate: appShellSettings.taskManagementStatusTemplate,
+        taskManagementStatusProjectCount: Object.keys(appShellSettings.taskManagementStatusByProject).length,
+        migratedTaskManagementStatusCount: migratedTasks.length,
         taskStatusFilterByProject: appShellSettings.taskStatusFilterByProject,
         taskViewModeByProject: appShellSettings.taskViewModeByProject,
         taskExpandedIdsByProject: appShellSettings.taskExpandedIdsByProject,
@@ -8335,6 +8436,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       const instruction = request.body?.instruction?.trim() || '基于真实 Runtime 会话继续分析后续处理事项。';
       const task = tasks.create({
         projectId: session.projectId,
+        managementStatus: resolveTaskManagementStatusConfigForProject(session.projectId).roles.defaultStatusId,
         title: request.body?.title?.trim() || `继续会话：${session.command}`,
         taskType: 'requirement',
         description: [
@@ -9892,6 +9994,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
   function normalizeAppShellSettings(value: AppShellSettingsSnapshot | undefined, fallbackLogDirectory: string, fallbackConfigPath: string): AppShellSettingsSnapshot {
     const appearance: AppAppearance = value?.appearance === 'light' || value?.appearance === 'dark' || value?.appearance === 'system' ? value.appearance : 'system';
     const appLanguage: AppLanguage = value?.appLanguage === 'en-US' ? 'en-US' : 'zh-CN';
+    const taskManagementStatusTemplate = normalizeTaskManagementStatusConfig(value?.taskManagementStatusTemplate, defaultTaskManagementStatusConfig);
     return {
       appLanguage,
       appearance,
@@ -9910,6 +10013,8 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       taskTableColumns: normalizeTaskTableColumnPreferences(value?.taskTableColumns),
       taskTableColumnsByProject: normalizeTaskTableColumnsByProject(value?.taskTableColumnsByProject),
       taskTableEnumSortOrders: normalizeTaskTableEnumSortOrders(value?.taskTableEnumSortOrders),
+      taskManagementStatusTemplate,
+      taskManagementStatusByProject: normalizeTaskManagementStatusByProject(value?.taskManagementStatusByProject, taskManagementStatusTemplate),
       taskStatusFilterByProject: normalizeTaskStatusFilterByProject(value?.taskStatusFilterByProject),
       taskViewModeByProject: normalizeTaskViewModeByProject(value?.taskViewModeByProject),
       taskExpandedIdsByProject: normalizeTaskExpandedIdsByProject(value?.taskExpandedIdsByProject),
@@ -9954,6 +10059,10 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
           : current.taskTableColumns,
         taskTableColumnsByProject: Object.prototype.hasOwnProperty.call(input, 'taskTableColumnsByProject') ? normalizeTaskTableColumnsByProject(input.taskTableColumnsByProject) : current.taskTableColumnsByProject,
         taskTableEnumSortOrders: Object.prototype.hasOwnProperty.call(input, 'taskTableEnumSortOrders') ? normalizeTaskTableEnumSortOrders(input.taskTableEnumSortOrders) : current.taskTableEnumSortOrders,
+        taskManagementStatusTemplate: Object.prototype.hasOwnProperty.call(input, 'taskManagementStatusTemplate') ? normalizeTaskManagementStatusConfig(input.taskManagementStatusTemplate, current.taskManagementStatusTemplate) : current.taskManagementStatusTemplate,
+        taskManagementStatusByProject: Object.prototype.hasOwnProperty.call(input, 'taskManagementStatusByProject')
+          ? normalizeTaskManagementStatusByProject(input.taskManagementStatusByProject, Object.prototype.hasOwnProperty.call(input, 'taskManagementStatusTemplate') ? normalizeTaskManagementStatusConfig(input.taskManagementStatusTemplate, current.taskManagementStatusTemplate) : current.taskManagementStatusTemplate)
+          : current.taskManagementStatusByProject,
         taskStatusFilterByProject: Object.prototype.hasOwnProperty.call(input, 'taskStatusFilterByProject') ? normalizeTaskStatusFilterByProject(input.taskStatusFilterByProject) : current.taskStatusFilterByProject,
         taskViewModeByProject: Object.prototype.hasOwnProperty.call(input, 'taskViewModeByProject') ? normalizeTaskViewModeByProject(input.taskViewModeByProject) : current.taskViewModeByProject,
         taskExpandedIdsByProject: Object.prototype.hasOwnProperty.call(input, 'taskExpandedIdsByProject') ? normalizeTaskExpandedIdsByProject(input.taskExpandedIdsByProject) : current.taskExpandedIdsByProject,
@@ -12918,12 +13027,13 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       }
       if (nativeOperation.status === 'active') {
         const latestTask = tasks.getById(task.id);
-        if (latestTask?.managementStatus === 'todo') {
-          const updatedTask = tasks.updateManagementStatus(latestTask.id, 'in_development', latestTask.updatedAt);
+        const projectStatusConfig = resolveTaskManagementStatusConfigForProject(task.projectId);
+        if (latestTask?.managementStatus === projectStatusConfig.roles.defaultStatusId) {
+          const updatedTask = tasks.updateManagementStatus(latestTask.id, projectStatusConfig.roles.pushedStatusId, latestTask.updatedAt);
           recordTaskEvent({
             taskId: updatedTask.id,
             eventType: 'task.management_status.changed',
-            title: '任务推送成功，已进入开发中',
+            title: '任务推送成功，管理状态已更新',
             payload: {
               from: latestTask.managementStatus,
               to: updatedTask.managementStatus,
@@ -14425,6 +14535,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     // 节点任务创建只依赖真实图谱节点和边；调用方负责校验 projectId 是否来自有效项目。
     const task = tasks.create({
       projectId,
+      managementStatus: resolveTaskManagementStatusConfigForProject(projectId).roles.defaultStatusId,
       title: `分析图谱节点：${node.name}`,
       taskType: 'requirement',
       description: [intent ?? '基于代码图谱分析该节点的实现风险、影响范围和建议验证范围。', `节点类型：${node.nodeType}`, `来源：${node.sourceRef}${lineStart ? `:${lineStart}${lineEnd ? `-${lineEnd}` : ''}` : ''}`].join('\n'),

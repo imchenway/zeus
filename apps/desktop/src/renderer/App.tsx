@@ -34,7 +34,14 @@ import {
   toReactFlowElements,
   toSigmaGraph,
 } from '@zeus/diagram-engine';
-import { isTaskStatusFilter } from '@zeus/shared';
+import {
+  cloneTaskManagementStatusConfig,
+  defaultTaskManagementStatusConfig,
+  isTaskStatusFilter,
+  normalizeTaskManagementStatusConfig,
+  type TaskManagementStatusConfig,
+  type TaskManagementStatusDefinition,
+} from '@zeus/shared';
 import '@xterm/xterm/css/xterm.css';
 import '@xyflow/react/dist/style.css';
 import './styles.css';
@@ -96,6 +103,7 @@ import { BrowserSettingsPane } from './settings/BrowserSettingsPane.js';
 import { CodexRemoteControlSettings } from './settings/CodexRemoteControlSettings.js';
 import { ModelConnectionsSettingsPane } from './settings/ModelConnectionsSettingsPane.js';
 import { ProjectModelsSettings } from './settings/ProjectModelsSettings.js';
+import { TaskManagementStatusEditor } from './settings/TaskManagementStatusEditor.js';
 import { type TaskAttachmentRestoreTarget, type TaskAttachmentView, type TaskResourceAuthorizationResult, type TaskResourcePayload, toPersistedTaskAttachment } from './task/taskAttachments.js';
 import {
   defaultTaskTableEnumSortOrders,
@@ -104,7 +112,6 @@ import {
   normalizeTaskTableEnumSortOrders,
   resolveTaskManagementStatus,
   taskAgentRunStatusFromSession,
-  taskManagementStatuses,
   type TaskWorkspaceViewMode,
 } from './task/taskWorkspaceModel.js';
 import { ZeusSelect } from './ZeusSelect.js';
@@ -516,10 +523,12 @@ type AppShellSettingsSavePayload = Pick<
   | 'taskTableColumns'
   | 'taskTableColumnsByProject'
   | 'taskTableEnumSortOrders'
+  | 'taskManagementStatusTemplate'
+  | 'taskManagementStatusByProject'
   | 'taskStatusFilterByProject'
   | 'taskViewModeByProject'
   | 'taskExpandedIdsByProject'
->;
+> & { taskManagementStatusReplacements?: Record<string, Record<string, string>> };
 
 function createSessionOperationId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
@@ -739,8 +748,7 @@ function updateConversationChoiceSnapshotCollection<
 const GRAPH_NODE_TASK_SUCCESS_DISMISS_MS = 2200;
 const GRAPH_SOURCE_OPEN_FEEDBACK_DISMISS_MS = 2400;
 const workModeValues = ['plan', 'develop', 'review', 'debug'] as const;
-const taskStatusFilterValues: readonly TaskStatusFilter[] = ['', 'unfinished', ...taskManagementStatuses];
-const taskManagementStatusLabels: Record<AppLanguage, Record<TaskManagementStatus | '', string>> = {
+const taskManagementStatusLabels: Record<AppLanguage, Record<string, string>> = {
   'zh-CN': {
     '': '全部',
     todo: '待开始',
@@ -762,6 +770,24 @@ const taskManagementStatusLabels: Record<AppLanguage, Record<TaskManagementStatu
     cancelled: 'Cancelled',
   },
 };
+
+function resolveTaskManagementStatusConfig(settings: AppShellSettings, projectId?: string): TaskManagementStatusConfig {
+  const template = normalizeTaskManagementStatusConfig(settings.taskManagementStatusTemplate, defaultTaskManagementStatusConfig);
+  return projectId ? normalizeTaskManagementStatusConfig(settings.taskManagementStatusByProject?.[projectId], template) : template;
+}
+
+function formatConfiguredTaskManagementStatus(status: TaskManagementStatusDefinition | string, config: TaskManagementStatusConfig, language: AppLanguage): string {
+  const definition = typeof status === 'string' ? config.statuses.find((candidate) => candidate.id === status) : status;
+  if (!definition) return typeof status === 'string' ? status : status.id;
+  return definition.label?.trim() || taskManagementStatusLabels[language][definition.id] || definition.id;
+}
+
+function buildConfiguredTaskManagementStatusLabels(config: TaskManagementStatusConfig, language: AppLanguage): Record<TaskManagementStatus | '', string> {
+  return {
+    '': taskManagementStatusLabels[language][''],
+    ...Object.fromEntries(config.statuses.map((status) => [status.id, formatConfiguredTaskManagementStatus(status, config, language)])),
+  };
+}
 const taskAgentRunStatusLabels: Record<AppLanguage, Record<TaskAgentRunStatus, string>> = {
   'zh-CN': {
     not_started: '未启动',
@@ -4945,19 +4971,27 @@ function normalizeRendererAppShellSettings(settings: AppShellSettings): AppShell
       .filter(([projectId]) => Boolean(projectId.trim()))
       .map(([projectId, preferences]) => [projectId.trim(), normalizeTaskTableColumnPreferences(preferences)]),
   );
+  const taskManagementStatusTemplate = normalizeTaskManagementStatusConfig(settings.taskManagementStatusTemplate, defaultTaskManagementStatusConfig);
+  const taskManagementStatusByProject = Object.fromEntries(
+    Object.entries(settings.taskManagementStatusByProject ?? {})
+      .filter(([projectId]) => Boolean(projectId.trim()))
+      .map(([projectId, config]) => [projectId.trim(), normalizeTaskManagementStatusConfig(config, taskManagementStatusTemplate)]),
+  );
   return {
     ...settings,
     collapsedProjectIds: Array.isArray(settings.collapsedProjectIds) ? [...new Set(settings.collapsedProjectIds.filter((id): id is string => typeof id === 'string' && Boolean(id.trim())).map((id) => id.trim()))].slice(0, 100) : [],
     taskTableColumns: normalizeTaskTableColumnPreferences(settings.taskTableColumns),
     taskTableColumnsByProject,
     taskTableEnumSortOrders: normalizeTaskTableEnumSortOrders(settings.taskTableEnumSortOrders),
+    taskManagementStatusTemplate,
+    taskManagementStatusByProject,
     taskStatusFilterByProject: normalizeTaskStatusFilterByProject(settings.taskStatusFilterByProject),
     taskViewModeByProject: normalizeTaskViewModeByProject(settings.taskViewModeByProject),
     taskExpandedIdsByProject: normalizeTaskExpandedIdsByProject(settings.taskExpandedIdsByProject),
   };
 }
 
-export function toAppShellSettingsSavePayload(settings: AppShellSettings): AppShellSettingsSavePayload {
+export function toAppShellSettingsSavePayload(settings: AppShellSettings, taskManagementStatusReplacements?: Record<string, Record<string, string>>): AppShellSettingsSavePayload {
   const taskTableColumns = normalizeTaskTableColumnPreferences(settings.taskTableColumns);
   const taskTableColumnsByProject = Object.fromEntries(Object.entries(settings.taskTableColumnsByProject ?? {}).map(([projectId, preferences]) => [projectId, normalizeTaskTableColumnPreferences(preferences)]));
   const taskStatusFilterByProject = normalizeTaskStatusFilterByProject(settings.taskStatusFilterByProject);
@@ -4984,6 +5018,11 @@ export function toAppShellSettingsSavePayload(settings: AppShellSettings): AppSh
     },
     taskTableColumnsByProject,
     taskTableEnumSortOrders: normalizeTaskTableEnumSortOrders(settings.taskTableEnumSortOrders),
+    taskManagementStatusTemplate: normalizeTaskManagementStatusConfig(settings.taskManagementStatusTemplate, defaultTaskManagementStatusConfig),
+    taskManagementStatusByProject: Object.fromEntries(
+      Object.entries(settings.taskManagementStatusByProject ?? {}).map(([projectId, config]) => [projectId, normalizeTaskManagementStatusConfig(config, resolveTaskManagementStatusConfig(settings))]),
+    ),
+    ...(taskManagementStatusReplacements && Object.keys(taskManagementStatusReplacements).length > 0 ? { taskManagementStatusReplacements } : {}),
     taskStatusFilterByProject,
     taskViewModeByProject: normalizeTaskViewModeByProject(settings.taskViewModeByProject),
     taskExpandedIdsByProject: normalizeTaskExpandedIdsByProject(settings.taskExpandedIdsByProject),
@@ -5001,7 +5040,8 @@ function resolveTaskTableColumnsForProject(settings: AppShellSettings, projectId
 function resolveTaskStatusFilterForProject(settings: AppShellSettings, projectId: string | undefined): TaskStatusFilter {
   if (!projectId) return 'unfinished';
   const filter = settings.taskStatusFilterByProject?.[projectId];
-  return isTaskStatusFilter(filter) ? filter : 'unfinished';
+  if (filter === '' || filter === 'unfinished') return filter;
+  return isTaskStatusFilter(filter) && resolveTaskManagementStatusConfig(settings, projectId).statuses.some((status) => status.id === filter) ? filter : 'unfinished';
 }
 
 function taskTableColumnPreferencesEqual(left: TaskTableColumnPreferences, right: TaskTableColumnPreferences): boolean {
@@ -6399,31 +6439,7 @@ export function App(props: {
   onStartCodexLegacyImport?: (sourceConversationIds: string[]) => Promise<CodexLegacyImportResult>;
   onInspectCodexConfigImport?: () => Promise<CodexConfigImportPreview>;
   onImportCodexConfig?: () => Promise<CodexConfigImportResult>;
-  onSaveAppShellSettings?: (
-    input: Pick<
-      AppShellSettings,
-      | 'appLanguage'
-      | 'appearance'
-      | 'webviewDebugEnabled'
-      | 'developerModeEnabled'
-      | 'multiWindowEnabled'
-      | 'backgroundModeEnabled'
-      | 'desktopNotificationsEnabled'
-      | 'openAtLoginEnabled'
-      | 'autoUpdateChannel'
-      | 'defaultProjectId'
-      | 'pinnedProjectIds'
-      | 'collapsedProjectIds'
-      | 'defaultModel'
-      | 'defaultTaskTemplateId'
-      | 'taskTableColumns'
-      | 'taskTableColumnsByProject'
-      | 'taskTableEnumSortOrders'
-      | 'taskStatusFilterByProject'
-      | 'taskViewModeByProject'
-      | 'taskExpandedIdsByProject'
-    >,
-  ) => Promise<AppShellSettings>;
+  onSaveAppShellSettings?: (input: AppShellSettingsSavePayload) => Promise<AppShellSettings>;
   onClearLocalCaches?: () => Promise<{
     cleared: boolean;
     clearedCaches: Array<'code-index' | 'graph-view' | 'layout'>;
@@ -6748,6 +6764,8 @@ export function App(props: {
         taskTableColumns: normalizeTaskTableColumnPreferences(),
         taskTableColumnsByProject: {},
         taskTableEnumSortOrders: defaultTaskTableEnumSortOrders,
+        taskManagementStatusTemplate: cloneTaskManagementStatusConfig(defaultTaskManagementStatusConfig),
+        taskManagementStatusByProject: {},
         taskStatusFilterByProject: {},
         taskViewModeByProject: {},
         taskExpandedIdsByProject: {},
@@ -6763,6 +6781,23 @@ export function App(props: {
       },
     ),
   );
+  const [taskStatusSettingsTargetId, setTaskStatusSettingsTargetId] = useState<string>(() => snapshot.projects[0]?.id ?? '__template__');
+  const [taskManagementStatusReplacements, setTaskManagementStatusReplacements] = useState<Record<string, Record<string, string>>>({});
+  useEffect(() => {
+    setAppShellSettings((current) => {
+      const template = resolveTaskManagementStatusConfig(current);
+      const currentByProject = current.taskManagementStatusByProject ?? {};
+      const missingProjectIds = snapshot.projects.map((project) => project.id).filter((projectId) => !currentByProject[projectId]);
+      if (missingProjectIds.length === 0) return current;
+      return {
+        ...current,
+        taskManagementStatusByProject: {
+          ...currentByProject,
+          ...Object.fromEntries(missingProjectIds.map((projectId) => [projectId, cloneTaskManagementStatusConfig(template)])),
+        },
+      };
+    });
+  }, [snapshot.projects]);
   useEffect(() => {
     const root = document.documentElement;
     root.dataset.zeusTheme = appShellSettings.appearance;
@@ -7273,6 +7308,10 @@ export function App(props: {
     }
     return Object.fromEntries(entries);
   }, [graphConversations, nativeLegacyConversationDetails, selectedGraphConversation]);
+  const activeTaskManagementStatusConfig = resolveTaskManagementStatusConfig(appShellSettings, activeProjectId);
+  const activeTaskManagementStatusLabels = buildConfiguredTaskManagementStatusLabels(activeTaskManagementStatusConfig, appShellSettings.appLanguage);
+  const activeTaskManagementStatusIds = activeTaskManagementStatusConfig.statuses.map((status) => status.id);
+  const taskStatusFilterValues: readonly TaskStatusFilter[] = ['', 'unfinished', ...activeTaskManagementStatusIds];
   const selectedTask = conversationDraftOpen ? undefined : taskDetail && (!activeProjectId || taskDetail.projectId === activeProjectId) ? taskDetail : currentProjectTasks[0];
   const selectedTaskConversation = useMemo(() => {
     if (!selectedTask) return undefined;
@@ -7283,7 +7322,14 @@ export function App(props: {
       .filter((conversation) => !conversation.archived && conversation.projectId === selectedTask.projectId && conversation.taskId === selectedTask.id)
       .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0];
   }, [graphConversations, selectedGraphConversation, selectedTask?.id, selectedTask?.projectId]);
-  const visibleTasks = useMemo(() => filterVisibleTasks(currentProjectTasks, taskSearchQuery, taskStatusFilter, taskTagFilter), [currentProjectTasks, taskSearchQuery, taskStatusFilter, taskTagFilter]);
+  const visibleTasks = useMemo(
+    () =>
+      filterVisibleTasks(currentProjectTasks, taskSearchQuery, taskStatusFilter, taskTagFilter, {
+        completed: activeTaskManagementStatusConfig.roles.completedStatusId,
+        cancelled: activeTaskManagementStatusConfig.roles.cancelledStatusId,
+      }),
+    [activeTaskManagementStatusConfig.roles.cancelledStatusId, activeTaskManagementStatusConfig.roles.completedStatusId, currentProjectTasks, taskSearchQuery, taskStatusFilter, taskTagFilter],
+  );
 
   useEffect(() => {
     selectedTaskConversationRef.current = selectedTaskConversation;
@@ -7455,8 +7501,27 @@ export function App(props: {
       }
     : undefined;
   const currentRuntimeAdapterDisplayName = formatRuntimeAdapterDisplayName(runtimeSettings.defaultAdapterId, runtimeAdapters, settingsWorkspaceCopy.runtime);
-  const taskTableEnumSortOrders = normalizeTaskTableEnumSortOrders(appShellSettings.taskTableEnumSortOrders);
+  const taskTableEnumSortOrders = normalizeTaskTableEnumSortOrders(
+    { ...appShellSettings.taskTableEnumSortOrders, managementStatus: activeTaskManagementStatusIds },
+    activeTaskManagementStatusIds,
+  );
   const taskPriorityLabels = Object.fromEntries(taskWorkspaceCopy.taskCreatePriorityOptions.map((option) => [option.value, option.label])) as Record<TaskPriority, string>;
+  const taskStatusSettingsProject = snapshot.projects.find((project) => project.id === taskStatusSettingsTargetId);
+  const effectiveTaskStatusSettingsTargetId = taskStatusSettingsProject ? taskStatusSettingsProject.id : '__template__';
+  const taskStatusSettingsConfig =
+    effectiveTaskStatusSettingsTargetId === '__template__'
+      ? resolveTaskManagementStatusConfig(appShellSettings)
+      : resolveTaskManagementStatusConfig(appShellSettings, effectiveTaskStatusSettingsTargetId);
+  const taskStatusSettingsUsageCounts =
+    effectiveTaskStatusSettingsTargetId === '__template__'
+      ? {}
+      : snapshot.tasks
+          .filter((task) => task.projectId === effectiveTaskStatusSettingsTargetId)
+          .reduce<Record<string, number>>((counts, task) => {
+            const managementStatus = resolveTaskManagementStatus(task);
+            counts[managementStatus] = (counts[managementStatus] ?? 0) + 1;
+            return counts;
+          }, {});
   const changedFiles = gitDiff?.files ?? snapshot.git.changedFiles;
 
   useEffect(() => {
@@ -8860,6 +8925,8 @@ export function App(props: {
     const currentTask = (taskDetail?.id === taskId ? taskDetail : undefined) ?? snapshot.tasks.find((task) => task.id === taskId);
     if (!props.onUpdateTaskManagementStatus || !currentTask || resolveTaskManagementStatus(currentTask) === status) return;
     const updateManagementStatus = props.onUpdateTaskManagementStatus;
+    const projectStatusConfig = resolveTaskManagementStatusConfig(appShellSettings, currentTask.projectId);
+    const statusLabel = formatConfiguredTaskManagementStatus(status, projectStatusConfig, appShellSettings.appLanguage);
     return enqueueTaskMutation(taskId, async () => {
       const expectedUpdatedAt = resolveTaskMutationVersion(taskId, options.expectedUpdatedAt ?? currentTask.updatedAt ?? '');
       setActionState('updating-task');
@@ -8868,12 +8935,12 @@ export function App(props: {
         try {
           nextSnapshot = await updateManagementStatus(taskId, status, expectedUpdatedAt);
         } catch (error) {
-          const terminalStatus = status === 'completed' || status === 'cancelled';
+          const terminalStatus = status === projectStatusConfig.roles.completedStatusId || status === projectStatusConfig.roles.cancelledStatusId;
           if (!(terminalStatus && error instanceof ZeusApiError && error.error === 'ZEUS_TASK_WORKTREE_CLEANUP_CONFIRMATION_REQUIRED')) throw error;
           const confirmed = window.confirm(
             appShellSettings.appLanguage === 'zh-CN'
-              ? `此任务存在未提交内容或活动会话。继续将停止并归档关联会话，永久删除任务 worktree 中未提交和未跟踪的文件，然后把任务标记为“${taskManagementStatusLabels['zh-CN'][status]}”。是否继续？`
-              : `This task has local changes or active sessions. Continuing will stop and archive related sessions, permanently delete uncommitted and untracked files in the task worktrees, and mark the task as “${taskManagementStatusLabels['en-US'][status]}”. Continue?`,
+              ? `此任务存在未提交内容或活动会话。继续将停止并归档关联会话，永久删除任务 worktree 中未提交和未跟踪的文件，然后把任务标记为“${statusLabel}”。是否继续？`
+              : `This task has local changes or active sessions. Continuing will stop and archive related sessions, permanently delete uncommitted and untracked files in the task worktrees, and mark the task as “${statusLabel}”. Continue?`,
           );
           if (!confirmed) {
             setActionState('idle');
@@ -9622,12 +9689,35 @@ export function App(props: {
     }
   }
 
+  function updateTaskManagementStatusConfigDraft(config: TaskManagementStatusConfig, deletion?: { removedStatusId: string; replacementStatusId?: string }): void {
+    const nextConfig = cloneTaskManagementStatusConfig(config);
+    setAppShellSettings((current) => {
+      if (effectiveTaskStatusSettingsTargetId === '__template__') return { ...current, taskManagementStatusTemplate: nextConfig };
+      return {
+        ...current,
+        taskManagementStatusByProject: {
+          ...(current.taskManagementStatusByProject ?? {}),
+          [effectiveTaskStatusSettingsTargetId]: nextConfig,
+        },
+      };
+    });
+    if (effectiveTaskStatusSettingsTargetId !== '__template__' && deletion?.replacementStatusId) {
+      setTaskManagementStatusReplacements((current) => ({
+        ...current,
+        [effectiveTaskStatusSettingsTargetId]: {
+          ...(current[effectiveTaskStatusSettingsTargetId] ?? {}),
+          [deletion.removedStatusId]: deletion.replacementStatusId!,
+        },
+      }));
+    }
+  }
+
   async function saveAppShellSettings(): Promise<void> {
     if (!props.onSaveAppShellSettings) return;
     setActionState('loading-runtime');
     try {
       // 通用设置只保存本机偏好，不写入任何业务假数据或密钥明文。
-      const savedSettings = await props.onSaveAppShellSettings(toAppShellSettingsSavePayload(appShellSettings));
+      const savedSettings = await props.onSaveAppShellSettings(toAppShellSettingsSavePayload(appShellSettings, taskManagementStatusReplacements));
       setAppShellSettings((currentSettings) =>
         mergeAppShellSettingsSaveResponse({
           currentSettings,
@@ -9644,6 +9734,7 @@ export function App(props: {
           openAtLoginEnabled: savedSettings.openAtLoginEnabled,
         },
       });
+      setTaskManagementStatusReplacements({});
       setActionState('idle');
     } catch (error) {
       recordLocalError('renderer-action', error);
@@ -9662,7 +9753,7 @@ export function App(props: {
     setAppShellSettings(nextSettings);
     if (!props.onSaveAppShellSettings) return;
     try {
-      const savedSettings = await props.onSaveAppShellSettings(toAppShellSettingsSavePayload(nextSettings));
+      const savedSettings = await props.onSaveAppShellSettings(toAppShellSettingsSavePayload(nextSettings, taskManagementStatusReplacements));
       setAppShellSettings((currentSettings) =>
         mergeAppShellSettingsSaveResponse({
           currentSettings,
@@ -9690,7 +9781,7 @@ export function App(props: {
     setAppShellSettings(nextSettings);
     if (!props.onSaveAppShellSettings) return;
     try {
-      const savedSettings = await props.onSaveAppShellSettings(toAppShellSettingsSavePayload(nextSettings));
+      const savedSettings = await props.onSaveAppShellSettings(toAppShellSettingsSavePayload(nextSettings, taskManagementStatusReplacements));
       setAppShellSettings((currentSettings) => mergeAppShellSettingsSaveResponse({ currentSettings, savedSettings }));
     } catch (error) {
       recordLocalError('task-view-preference-save', error);
@@ -9718,7 +9809,7 @@ export function App(props: {
     );
     setTaskTableLayoutSaveBusy(true);
     try {
-      const savedSettings = props.onSaveAppShellSettings ? normalizeRendererAppShellSettings(await props.onSaveAppShellSettings(toAppShellSettingsSavePayload(nextSettings))) : nextSettings;
+      const savedSettings = props.onSaveAppShellSettings ? normalizeRendererAppShellSettings(await props.onSaveAppShellSettings(toAppShellSettingsSavePayload(nextSettings, taskManagementStatusReplacements))) : nextSettings;
       setAppShellSettings((currentSettings) => ({
         ...savedSettings,
         taskStatusFilterByProject: currentSettings.taskStatusFilterByProject,
@@ -9851,6 +9942,8 @@ export function App(props: {
                   taskTableColumns: normalizeTaskTableColumnPreferences(appShellSettings.taskTableColumns),
                   taskTableColumnsByProject: Object.fromEntries(Object.entries(appShellSettings.taskTableColumnsByProject ?? {}).map(([projectId, preferences]) => [projectId, normalizeTaskTableColumnPreferences(preferences)])),
                   taskTableEnumSortOrders: normalizeTaskTableEnumSortOrders(appShellSettings.taskTableEnumSortOrders),
+                  taskManagementStatusTemplate: resolveTaskManagementStatusConfig(appShellSettings),
+                  taskManagementStatusByProject: appShellSettings.taskManagementStatusByProject ?? {},
                   taskStatusFilterByProject: normalizeTaskStatusFilterByProject(appShellSettings.taskStatusFilterByProject),
                 },
                 runtime: runtimeSettings,
@@ -10376,7 +10469,7 @@ export function App(props: {
     setAppShellSettings(nextSettings);
     if (!props.onSaveAppShellSettings) return;
     try {
-      const savedSettings = await props.onSaveAppShellSettings(toAppShellSettingsSavePayload(nextSettings));
+      const savedSettings = await props.onSaveAppShellSettings(toAppShellSettingsSavePayload(nextSettings, taskManagementStatusReplacements));
       setAppShellSettings((currentSettings) =>
         mergeAppShellSettingsSaveResponse({
           currentSettings,
@@ -10395,7 +10488,7 @@ export function App(props: {
     setAppShellSettings(nextSettings);
     if (!props.onSaveAppShellSettings) return;
     try {
-      const savedSettings = await props.onSaveAppShellSettings(toAppShellSettingsSavePayload(nextSettings));
+      const savedSettings = await props.onSaveAppShellSettings(toAppShellSettingsSavePayload(nextSettings, taskManagementStatusReplacements));
       setAppShellSettings((currentSettings) => ({
         ...mergeAppShellSettingsSaveResponse({
           currentSettings,
@@ -11525,7 +11618,10 @@ export function App(props: {
                     statusFilter={taskStatusFilter}
                     tagFilter={taskTagFilter}
                     statusOptions={taskStatusFilterValues}
-                    statusLabels={taskManagementStatusLabels[appShellSettings.appLanguage]}
+                    statusLabels={activeTaskManagementStatusLabels}
+                    statusDefinitions={activeTaskManagementStatusConfig.statuses}
+                    completedStatusId={activeTaskManagementStatusConfig.roles.completedStatusId}
+                    cancelledStatusId={activeTaskManagementStatusConfig.roles.cancelledStatusId}
                     runStatusLabels={taskAgentRunStatusLabels[appShellSettings.appLanguage]}
                     priorityOptions={taskWorkspaceCopy.taskCreatePriorityOptions}
                     copy={taskWorkspaceCopy}
@@ -11535,7 +11631,7 @@ export function App(props: {
                     taskConversations={currentTaskConversationChoices}
                     conversationRunStatuses={nativeConversationTaskRunStatuses}
                     taskTableColumns={activeTaskTableColumns}
-                    taskTableEnumSortOrders={appShellSettings.taskTableEnumSortOrders}
+                    taskTableEnumSortOrders={taskTableEnumSortOrders}
                     taskTableLayoutDirty={taskTableLayoutDirty}
                     creatingTaskBusy={creatingTaskBusy}
                     bulkActionBusy={updatingTaskBusy}
@@ -11715,7 +11811,8 @@ export function App(props: {
                     allTasks={currentProjectTasks}
                     events={taskEvents.filter((event) => event.taskId === taskDetailPaneTask.id)}
                     copy={taskWorkspaceCopy}
-                    statusLabels={taskManagementStatusLabels[appShellSettings.appLanguage]}
+                    statusLabels={activeTaskManagementStatusLabels}
+                    statusDefinitions={activeTaskManagementStatusConfig.statuses}
                     priorityOptions={taskWorkspaceCopy.taskCreatePriorityOptions}
                     busy={updatingTaskBusy}
                     conversations={taskDetailPaneConversations}
@@ -12469,16 +12566,46 @@ export function App(props: {
                 {settingsCategory === 'tasks' ? (
                   <section className="settings-product-pane task-list-settings-pane" aria-label={settingsWorkspaceCopy.categories.tasks}>
                     <h2 className="settings-page-title">{settingsWorkspaceCopy.categories.tasks}</h2>
-                    <section className="settings-product-section" aria-labelledby="task-list-sort-settings-title">
+                    <section className="settings-product-section" aria-labelledby="task-status-config-title">
                       <header className="settings-section-heading">
-                        <strong id="task-list-sort-settings-title">{appShellSettings.appLanguage === 'zh-CN' ? '枚举值升序规则' : 'Enum ascending order'}</strong>
+                        <strong id="task-status-config-title">{appShellSettings.appLanguage === 'zh-CN' ? '任务状态' : 'Task statuses'}</strong>
                         <span>
                           {appShellSettings.appLanguage === 'zh-CN'
-                            ? '拖动定义升序；降序会反转该顺序，空值始终排在最后。此设置对所有项目生效。'
-                            : 'Drag to define ascending order. Descending reverses it, while empty values always stay last. This applies to every project.'}
+                            ? '每个项目独立维护状态名称、颜色和顺序。删除使用中的状态时，先迁移任务再删除。'
+                            : 'Each project owns its status names, colors, and order. In-use statuses migrate before deletion.'}
                         </span>
                       </header>
-                      <div className="task-enum-order-grid">
+                      <label className="task-status-config-scope">
+                        <span>{appShellSettings.appLanguage === 'zh-CN' ? '配置对象' : 'Configuration target'}</span>
+                        <ZeusSelect
+                          size="regular"
+                          ariaLabel={appShellSettings.appLanguage === 'zh-CN' ? '选择任务状态配置对象' : 'Choose task status configuration target'}
+                          value={effectiveTaskStatusSettingsTargetId}
+                          onChange={setTaskStatusSettingsTargetId}
+                          options={[
+                            { value: '__template__', label: appShellSettings.appLanguage === 'zh-CN' ? '新项目默认模板' : 'New project default template' },
+                            ...snapshot.projects.map((project) => ({ value: project.id, label: project.name })),
+                          ]}
+                        />
+                      </label>
+                      <TaskManagementStatusEditor
+                        language={appShellSettings.appLanguage}
+                        config={taskStatusSettingsConfig}
+                        usageCounts={taskStatusSettingsUsageCounts}
+                        labelForStatus={(status) => formatConfiguredTaskManagementStatus(status, taskStatusSettingsConfig, appShellSettings.appLanguage)}
+                        onChange={updateTaskManagementStatusConfigDraft}
+                      />
+                    </section>
+                    <section className="settings-product-section" aria-labelledby="task-list-sort-settings-title">
+                      <header className="settings-section-heading">
+                        <strong id="task-list-sort-settings-title">{appShellSettings.appLanguage === 'zh-CN' ? '其他枚举升序规则' : 'Other enum ascending order'}</strong>
+                        <span>
+                          {appShellSettings.appLanguage === 'zh-CN'
+                            ? '优先级和运行状态仍为系统固定值；拖动定义升序，降序会反转该顺序。此设置对所有项目生效。'
+                            : 'Priority and run status remain fixed system values. Drag to define ascending order; descending reverses it. This applies to every project.'}
+                        </span>
+                      </header>
+                      <div className="task-enum-order-grid task-enum-order-grid-secondary">
                         <TaskEnumOrderEditor
                           language={appShellSettings.appLanguage}
                           title={appShellSettings.appLanguage === 'zh-CN' ? '优先级' : 'Priority'}
@@ -12488,18 +12615,6 @@ export function App(props: {
                             setAppShellSettings((current) => ({
                               ...current,
                               taskTableEnumSortOrders: normalizeTaskTableEnumSortOrders({ ...current.taskTableEnumSortOrders, priority }),
-                            }))
-                          }
-                        />
-                        <TaskEnumOrderEditor
-                          language={appShellSettings.appLanguage}
-                          title={appShellSettings.appLanguage === 'zh-CN' ? '管理状态' : 'Management status'}
-                          description={appShellSettings.appLanguage === 'zh-CN' ? '任务交付阶段顺序' : 'Task delivery stage order'}
-                          items={taskTableEnumSortOrders.managementStatus.map((value) => ({ value, label: taskManagementStatusLabels[appShellSettings.appLanguage][value] }))}
-                          onChange={(managementStatus) =>
-                            setAppShellSettings((current) => ({
-                              ...current,
-                              taskTableEnumSortOrders: normalizeTaskTableEnumSortOrders({ ...current.taskTableEnumSortOrders, managementStatus }),
                             }))
                           }
                         />
@@ -13333,6 +13448,8 @@ function toSafeAppShellImport(
       | 'taskTableColumns'
       | 'taskTableColumnsByProject'
       | 'taskTableEnumSortOrders'
+      | 'taskManagementStatusTemplate'
+      | 'taskManagementStatusByProject'
       | 'taskStatusFilterByProject'
       | 'taskViewModeByProject'
       | 'taskExpandedIdsByProject'
@@ -13357,6 +13474,10 @@ function toSafeAppShellImport(
     taskTableColumns: normalizeTaskTableColumnPreferences(raw.taskTableColumns),
     taskTableColumnsByProject: Object.fromEntries(Object.entries(raw.taskTableColumnsByProject ?? {}).map(([projectId, preferences]) => [projectId, normalizeTaskTableColumnPreferences(preferences)])),
     taskTableEnumSortOrders: normalizeTaskTableEnumSortOrders(raw.taskTableEnumSortOrders),
+    taskManagementStatusTemplate: normalizeTaskManagementStatusConfig(raw.taskManagementStatusTemplate, defaultTaskManagementStatusConfig),
+    taskManagementStatusByProject: Object.fromEntries(
+      Object.entries(raw.taskManagementStatusByProject ?? {}).map(([projectId, config]) => [projectId, normalizeTaskManagementStatusConfig(config, normalizeTaskManagementStatusConfig(raw.taskManagementStatusTemplate, defaultTaskManagementStatusConfig))]),
+    ),
     taskStatusFilterByProject: normalizeTaskStatusFilterByProject(raw.taskStatusFilterByProject),
     taskViewModeByProject: normalizeTaskViewModeByProject(raw.taskViewModeByProject),
     taskExpandedIdsByProject: normalizeTaskExpandedIdsByProject(raw.taskExpandedIdsByProject),

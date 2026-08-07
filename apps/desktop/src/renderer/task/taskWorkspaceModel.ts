@@ -131,6 +131,9 @@ export interface TaskWorkspaceViewModelInput extends TaskWorkspaceFilters {
   taskConversations?: Record<string, NativeConversationChoice[]>;
   conversationRunStatuses?: Record<string, TaskAgentRunStatus>;
   managementStatusLabels?: Partial<Record<TaskManagementStatus, string>>;
+  managementStatuses?: readonly TaskManagementStatus[];
+  completedManagementStatusId?: TaskManagementStatus;
+  cancelledManagementStatusId?: TaskManagementStatus;
   runStatusLabels?: Partial<Record<TaskAgentRunStatus, string>>;
   projectName?: string;
   taskTableColumns?: unknown;
@@ -324,11 +327,11 @@ export function cycleTaskTableSort(preferences: TaskTableColumnPreferences, colu
   return normalizeTaskTableColumnPreferences({ ...normalized, sort });
 }
 
-export function normalizeTaskTableEnumSortOrders(value?: unknown): TaskTableEnumSortOrders {
+export function normalizeTaskTableEnumSortOrders(value?: unknown, managementStatuses: readonly TaskManagementStatus[] = taskManagementStatuses): TaskTableEnumSortOrders {
   const input = isRecord(value) ? value : {};
   return {
     priority: normalizeEnumOrder(input.priority, defaultTaskTableEnumSortOrders.priority),
-    managementStatus: normalizeEnumOrder(input.managementStatus, defaultTaskTableEnumSortOrders.managementStatus),
+    managementStatus: normalizeEnumOrder(input.managementStatus, managementStatuses.length > 0 ? managementStatuses : defaultTaskTableEnumSortOrders.managementStatus),
     runStatus: normalizeEnumOrder(input.runStatus, defaultTaskTableEnumSortOrders.runStatus),
   };
 }
@@ -394,7 +397,7 @@ export function hasActiveTaskFilters(filters: TaskWorkspaceFilters): boolean {
   return Boolean(filters.query.trim() || filters.status || filters.tag.trim());
 }
 
-export function filterVisibleTasks(tasks: TaskRecord[], query: string, status: TaskStatusFilter, tag: string): TaskRecord[] {
+export function filterVisibleTasks(tasks: TaskRecord[], query: string, status: TaskStatusFilter, tag: string, terminalStatusIds: { completed: string; cancelled: string } = { completed: 'completed', cancelled: 'cancelled' }): TaskRecord[] {
   const normalizedQuery = query.trim().toLowerCase();
   const normalizedTag = tag.trim().toLowerCase();
   return tasks.filter((task) => {
@@ -416,16 +419,20 @@ export function filterVisibleTasks(tasks: TaskRecord[], query: string, status: T
         task.priority ?? '',
       ].some((value) => value.toLowerCase().includes(normalizedQuery));
     const managementStatus = resolveTaskManagementStatus(task);
-    const matchesStatus = status === 'unfinished' ? managementStatus !== 'completed' && managementStatus !== 'cancelled' : !status || managementStatus === status;
+    const matchesStatus = status === 'unfinished' ? managementStatus !== terminalStatusIds.completed && managementStatus !== terminalStatusIds.cancelled : !status || managementStatus === status;
     const matchesTag = !normalizedTag || task.tags?.some((item) => item.toLowerCase().includes(normalizedTag));
     return matchesQuery && matchesStatus && matchesTag;
   });
 }
 
 export function createTaskWorkspaceViewModel(input: TaskWorkspaceViewModelInput): TaskWorkspaceViewModel {
-  const filteredTasks = filterVisibleTasks(input.tasks, input.query, input.status, input.tag);
+  const managementStatuses = input.managementStatuses?.length ? [...input.managementStatuses] : taskManagementStatuses;
+  const filteredTasks = filterVisibleTasks(input.tasks, input.query, input.status, input.tag, {
+    completed: input.completedManagementStatusId ?? 'completed',
+    cancelled: input.cancelledManagementStatusId ?? 'cancelled',
+  });
   const columnPreferences = normalizeTaskTableColumnPreferences(input.taskTableColumns);
-  const enumSortOrders = normalizeTaskTableEnumSortOrders(input.taskTableEnumSortOrders);
+  const enumSortOrders = normalizeTaskTableEnumSortOrders(input.taskTableEnumSortOrders, managementStatuses);
   const taskById = new Map(input.tasks.map((task) => [task.id, task]));
   const filteredTaskIds = new Set(filteredTasks.map((task) => task.id));
   const hierarchyVisibleTaskIds = new Set(filteredTaskIds);
@@ -471,7 +478,7 @@ export function createTaskWorkspaceViewModel(input: TaskWorkspaceViewModelInput)
   const hasActiveFilters = hasActiveTaskFilters(input);
   const emptyState: TaskWorkspaceEmptyState = input.tasks.length === 0 ? 'empty' : visibleTasks.length === 0 && hasActiveFilters ? 'no-results' : undefined;
   const visibleColumnSet = new Set(columnPreferences.visibleColumnKeys);
-  const bulkStatusEligibility = buildBulkStatusEligibility(selectedVisibleTasks);
+  const bulkStatusEligibility = buildBulkStatusEligibility(selectedVisibleTasks, managementStatuses);
   for (const row of rows) row.bulkSelected = selectedTaskIdSet.has(row.id);
   return {
     totalCount: input.tasks.length,
@@ -575,8 +582,8 @@ function resolveTaskTableEnumOrder(columnKey: TaskTableColumnKey, orders: TaskTa
   return undefined;
 }
 
-function buildBulkStatusEligibility(tasks: TaskRecord[]): Record<TaskManagementStatus, TaskBulkStatusEligibility> {
-  return taskManagementStatuses.reduce<Record<TaskManagementStatus, TaskBulkStatusEligibility>>(
+function buildBulkStatusEligibility(tasks: TaskRecord[], managementStatuses: readonly TaskManagementStatus[]): Record<TaskManagementStatus, TaskBulkStatusEligibility> {
+  return managementStatuses.reduce<Record<TaskManagementStatus, TaskBulkStatusEligibility>>(
     (eligibility, targetStatus) => {
       const eligibleTaskIds: string[] = [];
       const skippedTaskIds: string[] = [];
@@ -827,7 +834,7 @@ export function resolveTaskAgentRunStatusConversation(conversations: NativeConve
 }
 
 export function formatTaskManagementStatus(status: TaskManagementStatus, labels?: Partial<Record<TaskManagementStatus, string>>): string {
-  const defaultLabels: Record<TaskManagementStatus, string> = {
+  const defaultLabels: Record<string, string> = {
     todo: '待开始',
     in_development: '开发中',
     in_testing: '测试中',
@@ -836,7 +843,7 @@ export function formatTaskManagementStatus(status: TaskManagementStatus, labels?
     completed: '已完成',
     cancelled: '已取消',
   };
-  return labels?.[status] ?? defaultLabels[status];
+  return labels?.[status] ?? defaultLabels[status] ?? status;
 }
 
 export function resolveTaskManagementStatus(task: Pick<TaskRecord, 'managementStatus' | 'status'>): TaskManagementStatus {
