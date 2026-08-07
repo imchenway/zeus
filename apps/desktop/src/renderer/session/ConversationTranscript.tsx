@@ -39,7 +39,14 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     () => props.state.itemOrder.map((key) => props.state.items[key]).filter((entry): entry is NativeSessionItemBuffer => Boolean(entry) && isVisibleTranscriptItem(entry)),
     [props.state.itemOrder, props.state.items],
   );
-  const items = useMemo(() => latestReasoningItemsByTurn(projectedItems.filter((entry) => !entry.optimistic)), [projectedItems]);
+  const items = useMemo(
+    () =>
+      latestReasoningItemsByTurn(
+        projectedItems.filter((entry) => !entry.optimistic),
+        props.state.activeTurnId,
+      ),
+    [projectedItems, props.state.activeTurnId],
+  );
   const immediateOptimisticItems = useMemo(() => projectedItems.filter((entry) => entry.optimistic && entry.status !== 'queued' && !queuedClientIds.has(entry.clientUserMessageId ?? '')), [projectedItems, queuedClientIds]);
   const queuedOptimisticItems = useMemo(() => projectedItems.filter((entry) => entry.optimistic && entry.status === 'queued' && !queuedClientIds.has(entry.clientUserMessageId ?? '')), [projectedItems, queuedClientIds]);
   const lastUserKey = [...items].reverse().find((entry) => `${entry.type}`.toLocaleLowerCase().includes('user'))?.key;
