@@ -123,6 +123,8 @@ export interface CodexThreadStartInput {
 
 export interface CodexThreadSnapshot {
   id: string;
+  /** app-server 可选返回的真实 JSONL 文件路径；字段不稳定，缺失时不得猜测。 */
+  path?: string | null;
   turns?: unknown[];
   providerSettings?: {
     generationId: string;

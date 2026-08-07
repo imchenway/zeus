@@ -1,4 +1,4 @@
-import type { ConversationResource, TurnChangeSet, ZeusBrowserComment, ZeusBrowserPreparedSubmission } from '@zeus/shared';
+import type { ConversationResource, TaskPushParentContextOption, TaskPushParentContextSelection, TurnChangeSet, ZeusBrowserComment, ZeusBrowserPreparedSubmission } from '@zeus/shared';
 
 export type { ConversationResource, ConversationResourcePreview, TurnChangeSet, TurnChangeSetOperationResult } from '@zeus/shared';
 
@@ -343,6 +343,7 @@ export interface CodexTaskPushModelCapability {
   speedLabel?: 'standard' | 'high_speed' | 'flash' | 'turbo';
   tools?: 'supported' | 'unsupported' | 'unverified';
   imageInput?: 'supported' | 'unsupported' | 'unverified';
+  attachmentInput: 'supported' | 'unsupported' | 'unverified';
   supportedReasoningEfforts: string[];
   defaultReasoningEffort?: string | null;
   serviceTiers: Array<{ id: string; name: string; description: string }>;
@@ -401,6 +402,8 @@ export interface CodexTaskPushCapabilities {
   projectId: string;
   taskId: string;
   canonicalPrompt: string;
+  parentContextRevision: string;
+  parentContextOptions: TaskPushParentContextOption[];
   preferredModel: string;
   models: CodexTaskPushModelCapability[];
   codexAccount: CodexAccountSnapshot;
@@ -649,6 +652,10 @@ export interface StartTaskModelPushRequest {
         }>;
       };
   supplementalInfo?: string;
+  parentContext?: {
+    revision: string;
+    selections: TaskPushParentContextSelection[];
+  };
   idempotencyKey: string;
   clientUserMessageId: string;
 }

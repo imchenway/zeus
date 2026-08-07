@@ -14,6 +14,10 @@ import {
   isTaskStatusFilter,
   defaultTaskManagementStatusConfig,
   normalizeTaskManagementStatusConfig,
+  type TaskPushParentAttachmentOption,
+  type TaskPushParentContextOption,
+  type TaskPushParentContextSelection,
+  type TaskPushPromptParentContext,
   type TaskAttachmentReference,
   type TaskManagementStatusConfig,
   type TaskStatusFilter,
@@ -12845,7 +12849,6 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
         const selectedModel = capabilities.models.find((candidate) => candidate.model === modelName || candidate.id === modelName);
         if (!selectedModel) throw nativeApiError('ZEUS_CODEX_MODEL_UNAVAILABLE', `Configured Codex model is unavailable: ${modelName}`);
         if (selectedModel.available === false) throw nativeApiError('ZEUS_MODEL_NOT_READY', selectedModel.availabilityReason || '所选模型当前不可运行。');
-        if (selectedModel.agentKind !== 'pi') await assertCodexAccountReady();
         const requestedServiceTier = readServiceTierOverride(body);
         const serviceTier = normalizeServiceTierForCapability(requestedServiceTier, selectedModel);
         const selectedEffort = effort || selectedModel.defaultReasoningEffort || selectedModel.supportedReasoningEfforts[0] || '';
@@ -12860,8 +12863,13 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
         if (activeDirectWrites > 0 && body.workspace.confirmConcurrentWrites !== true) {
           throw nativeApiError('ZEUS_DIRECT_WORKSPACE_CONCURRENCY_CONFIRMATION_REQUIRED', `${activeDirectWrites} writable conversation(s) already use this project directory. Confirm concurrent writes before continuing.`);
         }
+        const parentContextInput = resolveSelectedTaskPushParentContext(project, task, (body as Record<string, unknown>).parentContext);
+        const attachmentInput = mergeTaskPushAttachmentInputs(normalizeTaskPushAttachments(task, project.localPath), parentContextInput.attachmentInput);
+        if (selectedModel.attachmentInput !== 'supported' && attachmentInput.attachments.length > 0) {
+          throw nativeApiError('ZEUS_TASK_PUSH_ATTACHMENTS_UNSUPPORTED', `所选 ${selectedModel.sourceName ?? selectedModel.agentKind ?? '运行内核'} 不支持结构化附件输入，未创建会话。`);
+        }
+        if (selectedModel.agentKind !== 'pi') await assertCodexAccountReady();
         const taskEnvironment = directWorkspace ? null : await resolveTaskPushEnvironment(project, task, body.workspace, stableOperationId);
-        const attachmentInput = normalizeTaskPushAttachments(task, project.localPath);
         nativeOperation =
           selectedModel.agentKind === 'pi'
             ? await piNativeCoordinator.startConversation({
@@ -12871,7 +12879,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
                 taskId: task.id,
                 taskTitle: task.title,
                 cwd: taskEnvironment?.cwd ?? project.localPath,
-                prompt: buildTaskPushPrompt(task, supplementalInfo),
+                prompt: buildTaskPushPrompt(task, supplementalInfo, parentContextInput.parentContexts),
                 model: { sourceId: selectedModel.sourceId ?? null, modelId: selectedModel.model, displayName: selectedModel.displayName ?? null },
                 ...(selectedEffort ? { thinkingLevel: selectedEffort } : {}),
                 permissionMode,
@@ -12898,7 +12906,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
                     }
                   : { writableRoots: [project.localPath] }),
                 taskTitle: task.title,
-                prompt: buildTaskPushPrompt(task, supplementalInfo),
+                prompt: buildTaskPushPrompt(task, supplementalInfo, parentContextInput.parentContexts),
                 attachments: attachmentInput.attachments,
                 allowedAttachmentRoots: attachmentInput.allowedRoots,
                 model: selectedModel.model,
@@ -13332,6 +13340,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
           code.includes('EXCEEDS_POLICY') ||
           code.includes('EXCEEDS_REQUEST') ||
           code.includes('ATTACHMENT_UNAVAILABLE') ||
+          code.includes('CONTEXT_CHANGED') ||
           code.includes('NATIVE_DISABLED') ||
           code.includes('NOT_AVAILABLE') ||
           code.includes('STALE')
@@ -13444,6 +13453,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
 
   async function resolveTaskPushCapabilities(project: ZeusProjectRecord, task: ZeusTaskRecord) {
     const capabilities = await resolveConversationCapabilities(project);
+    const parentContext = resolveTaskPushParentContextState(project, task);
     const registeredRepositories = await synchronizeDiscoveredProjectRepositories(project);
     const repositoryCapabilities = await Promise.all(
       registeredRepositories.map(async (registeredRepository) => {
@@ -13501,6 +13511,8 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       ...capabilities,
       taskId: task.id,
       canonicalPrompt: createTaskRuntimePrompt(task),
+      parentContextRevision: parentContext.revision,
+      parentContextOptions: parentContext.options,
       repositories: repositoryCapabilities,
       directWorkspace: {
         path: project.localPath,
@@ -14137,6 +14149,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       sourceName: 'Codex',
       available: true,
       availabilityReason: 'Codex app-server 已报告该模型。',
+      attachmentInput: 'supported' as const,
       ...(model.displayName ? { displayName: model.displayName } : {}),
       supportedReasoningEfforts: [...model.supportedReasoningEfforts],
       ...(model.defaultReasoningEffort ? { defaultReasoningEffort: model.defaultReasoningEffort } : {}),
@@ -14159,6 +14172,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       speedLabel: model.speedLabel,
       tools: model.tools,
       imageInput: model.imageInput,
+      attachmentInput: 'unsupported' as const,
     }));
     const models = [...codexModels, ...piModels];
     if (models.length === 0) throw nativeApiError('ZEUS_MODEL_UNAVAILABLE', '当前项目没有可用的 Codex 或 Pi 模型。');
@@ -14199,58 +14213,263 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     return capability.serviceTiers.some((tier) => tier.id === requested.value) ? requested.value : null;
   }
 
-  function buildTaskPushPrompt(task: ZeusTaskRecord, supplementalInfo: string): string {
-    return createTaskRuntimePrompt(task, supplementalInfo);
+  function taskPushPromptContent(task: ZeusTaskRecord) {
+    return {
+      taskTitle: task.title,
+      taskType: task.taskType,
+      taskDescription: task.description,
+      defectCurrentState: task.defectCurrentState,
+      defectExpectedOutcome: task.defectExpectedOutcome,
+      defectReproductionSteps: task.defectReproductionSteps,
+      optimizationCurrentState: task.optimizationCurrentState,
+      optimizationExpectedOutcome: task.optimizationExpectedOutcome,
+    };
+  }
+
+  function buildTaskPushPrompt(task: ZeusTaskRecord, supplementalInfo: string, parentContexts: TaskPushPromptParentContext[] = []): string {
+    return buildAiRuntimePrompt({ ...taskPushPromptContent(task), supplementalInfo, parentContexts });
+  }
+
+  interface InspectedTaskPushAttachment {
+    option: TaskPushParentAttachmentOption;
+    attachment?: NativeConversationAttachment;
+  }
+
+  function taskPushTrustedAttachmentRoots(projectLocalPath: string): string[] {
+    return [realpathSync(projectLocalPath), ...(taskAttachmentRoot ? [taskAttachmentRoot] : [])];
+  }
+
+  function inspectTaskPushAttachment(task: ZeusTaskRecord, rawAttachment: unknown, index: number, allowedRoots: string[]): InspectedTaskPushAttachment {
+    const candidate = isNativeApiRecord(rawAttachment) ? rawAttachment : {};
+    const storedPath = typeof candidate.path === 'string' ? candidate.path.trim() : '';
+    const path = resolveCurrentManagedTaskAttachmentPath(candidate, taskAttachmentRoot) ?? storedPath;
+    const name = typeof candidate.name === 'string' && candidate.name.trim() ? candidate.name.trim() : path ? parse(path).base : `附件 ${index + 1}`;
+    const kind = candidate.kind === 'image' || candidate.kind === 'directory' || candidate.kind === 'pasted_text' ? candidate.kind : 'file';
+    const key = `parent-attachment-${createHash('sha256').update(`${task.id}\0${index}\0${name}`).digest('hex').slice(0, 24)}`;
+    const unavailable = (reason: string): InspectedTaskPushAttachment => ({
+      option: { key, name, kind, available: false, unavailableReason: reason },
+    });
+    if (!path || !isAbsolute(path)) return unavailable('附件没有可验证的本机绝对路径。');
+    try {
+      const canonicalPath = realpathSync(path);
+      const resource = statSync(canonicalPath);
+      if (
+        (!resource.isFile() && !resource.isDirectory()) ||
+        !allowedRoots.some((root) => {
+          const relativePath = relative(root, canonicalPath);
+          return relativePath !== '..' && !relativePath.startsWith(`..${sep}`) && !isAbsolute(relativePath);
+        })
+      ) {
+        return unavailable('附件不在服务端认可的托管资源目录内。');
+      }
+      const storedMime = typeof candidate.mimeType === 'string' && candidate.mimeType.trim() ? candidate.mimeType.trim() : '';
+      const normalizedKind = resource.isDirectory() ? 'directory' : kind;
+      const mime = resource.isDirectory() ? 'inode/directory' : storedMime || (normalizedKind === 'image' ? 'image/*' : normalizedKind === 'pasted_text' ? 'text/plain' : 'application/octet-stream');
+      if (resource.isFile() && (resource.size === 0 || (normalizedKind === 'image' && !hasTaskImageSignature(mime.toLowerCase(), readFileSync(canonicalPath))))) {
+        return unavailable('附件为空或图片签名不受支持。');
+      }
+      return {
+        option: {
+          key,
+          name,
+          kind: normalizedKind,
+          ...(storedMime ? { mimeType: storedMime } : {}),
+          size: resource.isDirectory() ? 0 : resource.size,
+          available: true,
+          unavailableReason: null,
+        },
+        attachment: { name, mime, size: resource.isDirectory() ? 0 : resource.size, localPath: canonicalPath },
+      };
+    } catch {
+      return unavailable('附件已缺失或当前不可读取。');
+    }
+  }
+
+  function inspectTaskPushAttachments(task: ZeusTaskRecord, projectLocalPath: string): { inspected: InspectedTaskPushAttachment[]; allowedRoots: string[] } {
+    const sourceContext = parseTaskSourceContext(task);
+    const rawAttachments = Array.isArray(sourceContext.attachments) ? sourceContext.attachments : [];
+    const allowedRoots = taskPushTrustedAttachmentRoots(projectLocalPath);
+    return { inspected: rawAttachments.map((attachment, index) => inspectTaskPushAttachment(task, attachment, index, allowedRoots)), allowedRoots };
   }
 
   function normalizeTaskPushAttachments(task: ZeusTaskRecord, projectLocalPath: string): { attachments: NativeConversationAttachment[]; allowedRoots: string[] } {
-    const sourceContext = parseTaskSourceContext(task);
-    const rawAttachments = Array.isArray(sourceContext.attachments) ? sourceContext.attachments : [];
-    const projectRoot = realpathSync(projectLocalPath);
-    const allowedRoots = [projectRoot, ...(taskAttachmentRoot ? [taskAttachmentRoot] : [])];
-    const unavailable: string[] = [];
-    const attachments: NativeConversationAttachment[] = [];
-    for (const [index, rawAttachment] of rawAttachments.entries()) {
-      const candidate = isNativeApiRecord(rawAttachment) ? rawAttachment : {};
-      const storedPath = typeof candidate.path === 'string' ? candidate.path.trim() : '';
-      const path = resolveCurrentManagedTaskAttachmentPath(candidate, taskAttachmentRoot) ?? storedPath;
-      const name = typeof candidate.name === 'string' && candidate.name.trim() ? candidate.name.trim() : path ? parse(path).base : `附件 ${index + 1}`;
-      if (!path || !isAbsolute(path)) {
-        unavailable.push(name);
-        continue;
-      }
-      try {
-        const canonicalPath = realpathSync(path);
-        const resource = statSync(canonicalPath);
-        if (
-          (!resource.isFile() && !resource.isDirectory()) ||
-          !allowedRoots.some((root) => {
-            const relativePath = relative(root, canonicalPath);
-            return relativePath !== '..' && !relativePath.startsWith(`..${sep}`) && !isAbsolute(relativePath);
-          })
-        ) {
-          throw new Error('outside trusted task attachment roots');
-        }
-        const storedMime = typeof candidate.mimeType === 'string' && candidate.mimeType.trim() ? candidate.mimeType.trim() : '';
-        const kind = resource.isDirectory() ? 'directory' : candidate.kind === 'image' ? 'image' : candidate.kind === 'pasted_text' ? 'pasted_text' : 'file';
-        const mime = resource.isDirectory() ? 'inode/directory' : storedMime || (kind === 'image' ? 'image/*' : kind === 'pasted_text' ? 'text/plain' : 'application/octet-stream');
-        if (resource.isFile() && (resource.size === 0 || (kind === 'image' && !hasTaskImageSignature(mime.toLowerCase(), readFileSync(canonicalPath))))) {
-          throw new Error('empty or unsupported image attachment');
-        }
-        attachments.push({
-          name,
-          mime,
-          size: resource.isDirectory() ? 0 : resource.size,
-          localPath: canonicalPath,
-        });
-      } catch {
-        unavailable.push(name);
-      }
-    }
+    const { inspected, allowedRoots } = inspectTaskPushAttachments(task, projectLocalPath);
+    const unavailable = inspected.filter((entry) => !entry.attachment).map((entry) => entry.option.name);
     if (unavailable.length > 0) {
       throw nativeApiError('ZEUS_TASK_PUSH_ATTACHMENT_UNAVAILABLE', `以下附件不可用，未创建会话：${unavailable.join('、')}`);
     }
-    return { attachments, allowedRoots };
+    return { attachments: inspected.flatMap((entry) => (entry.attachment ? [entry.attachment] : [])), allowedRoots };
+  }
+
+  function listTaskPushAncestors(task: ZeusTaskRecord, projectId: string): ZeusTaskRecord[] {
+    const ancestors: ZeusTaskRecord[] = [];
+    const seen = new Set([task.id]);
+    let parentTaskId = task.parentTaskId;
+    while (parentTaskId && ancestors.length < 2) {
+      if (seen.has(parentTaskId)) break;
+      seen.add(parentTaskId);
+      const parent = tasks.getById(parentTaskId);
+      if (!parent || parent.projectId !== projectId) break;
+      ancestors.push(parent);
+      parentTaskId = parent.parentTaskId;
+    }
+    return ancestors.reverse();
+  }
+
+  function inspectTaskPushConversationPath(conversation: ZeusConversationWithMessagesRecord): { path: string | null; available: boolean; unavailableReason: string | null } {
+    const storedPath = conversation.nativeSessionPath?.trim() ?? '';
+    if (!storedPath) return { path: null, available: false, unavailableReason: 'app-server 未返回该会话的 JSONL 文件路径。' };
+    if (!isAbsolute(storedPath) || !storedPath.toLowerCase().endsWith('.jsonl')) {
+      return { path: null, available: false, unavailableReason: '会话路径不是绝对 JSONL 文件路径。' };
+    }
+    try {
+      if (lstatSync(storedPath).isSymbolicLink()) return { path: null, available: false, unavailableReason: '会话路径是符号链接，不能作为普通 JSONL 文件发送。' };
+      const canonicalPath = realpathSync(storedPath);
+      if (!statSync(canonicalPath).isFile()) return { path: null, available: false, unavailableReason: '会话路径不是普通文件。' };
+      return { path: canonicalPath, available: true, unavailableReason: null };
+    } catch {
+      return { path: null, available: false, unavailableReason: '会话 JSONL 文件已缺失或当前不可读取。' };
+    }
+  }
+
+  interface TaskPushParentContextState {
+    options: TaskPushParentContextOption[];
+    revision: string;
+    tasksById: Map<string, ZeusTaskRecord>;
+    attachmentsByTaskId: Map<string, InspectedTaskPushAttachment[]>;
+  }
+
+  function resolveTaskPushParentContextState(project: ZeusProjectRecord, task: ZeusTaskRecord): TaskPushParentContextState {
+    const ancestors = listTaskPushAncestors(task, project.id);
+    const tasksById = new Map<string, ZeusTaskRecord>();
+    const attachmentsByTaskId = new Map<string, InspectedTaskPushAttachment[]>();
+    const revisionResources: unknown[] = [];
+    const options = ancestors.map((ancestor, index): TaskPushParentContextOption => {
+      tasksById.set(ancestor.id, ancestor);
+      const inspectedAttachments = inspectTaskPushAttachments(ancestor, project.localPath).inspected;
+      attachmentsByTaskId.set(ancestor.id, inspectedAttachments);
+      const conversationOptions = conversations.listAllByTask(ancestor.id).map((conversation) => {
+        const availability = inspectTaskPushConversationPath(conversation);
+        revisionResources.push({ type: 'conversation', taskId: ancestor.id, id: conversation.id, path: availability.path, available: availability.available, archived: conversation.archived });
+        return {
+          id: conversation.id,
+          title: conversation.title,
+          createdAt: conversation.createdAt,
+          archived: conversation.archived,
+          ...availability,
+        };
+      });
+      for (const attachment of inspectedAttachments) {
+        revisionResources.push({ type: 'attachment', taskId: ancestor.id, option: attachment.option, localPath: attachment.attachment?.localPath ?? null });
+      }
+      return {
+        taskId: ancestor.id,
+        taskCode: ancestor.taskCode,
+        depth: index + 1,
+        ...taskPushPromptContent(ancestor),
+        conversations: conversationOptions,
+        attachments: inspectedAttachments.map((entry) => entry.option),
+      };
+    });
+    const revision = createHash('sha256').update(JSON.stringify({ options, revisionResources })).digest('hex');
+    return { options, revision, tasksById, attachmentsByTaskId };
+  }
+
+  function parseTaskPushSelectionStringArray(value: unknown, field: string): string[] {
+    if (!Array.isArray(value) || !value.every((entry) => typeof entry === 'string' && entry.trim())) {
+      throw nativeApiError('ZEUS_INVALID_TASK_PUSH_PARENT_CONTEXT', `${field} must be an array of non-empty strings.`);
+    }
+    const normalized = value.map((entry) => String(entry).trim());
+    if (new Set(normalized).size !== normalized.length) throw nativeApiError('ZEUS_INVALID_TASK_PUSH_PARENT_CONTEXT', `${field} contains duplicate items.`);
+    return normalized;
+  }
+
+  function resolveSelectedTaskPushParentContext(
+    project: ZeusProjectRecord,
+    task: ZeusTaskRecord,
+    value: unknown,
+  ): { parentContexts: TaskPushPromptParentContext[]; attachmentInput: { attachments: NativeConversationAttachment[]; allowedRoots: string[] } } {
+    if (value === undefined) return { parentContexts: [], attachmentInput: { attachments: [], allowedRoots: [] } };
+    if (!isNativeApiRecord(value) || typeof value.revision !== 'string' || !Array.isArray(value.selections)) {
+      throw nativeApiError('ZEUS_INVALID_TASK_PUSH_PARENT_CONTEXT', 'parentContext must contain a revision and selections array.');
+    }
+    const selections = value.selections.map((rawSelection): TaskPushParentContextSelection => {
+      if (!isNativeApiRecord(rawSelection) || typeof rawSelection.taskId !== 'string' || !rawSelection.taskId.trim()) {
+        throw nativeApiError('ZEUS_INVALID_TASK_PUSH_PARENT_CONTEXT', 'Each parent context selection requires taskId.');
+      }
+      return {
+        taskId: rawSelection.taskId.trim(),
+        conversationIds: parseTaskPushSelectionStringArray(rawSelection.conversationIds, 'conversationIds'),
+        attachmentKeys: parseTaskPushSelectionStringArray(rawSelection.attachmentKeys, 'attachmentKeys'),
+      };
+    });
+    if (new Set(selections.map((selection) => selection.taskId)).size !== selections.length) {
+      throw nativeApiError('ZEUS_INVALID_TASK_PUSH_PARENT_CONTEXT', 'parentContext contains duplicate task selections.');
+    }
+    const state = resolveTaskPushParentContextState(project, task);
+    if (value.revision !== state.revision) {
+      for (const selection of selections) {
+        const option = state.options.find((candidate) => candidate.taskId === selection.taskId);
+        if (!option) continue;
+        const attachmentByKey = new Map((state.attachmentsByTaskId.get(option.taskId) ?? []).map((attachment) => [attachment.option.key, attachment]));
+        for (const attachmentKey of selection.attachmentKeys) {
+          const attachment = attachmentByKey.get(attachmentKey);
+          if (!attachment?.attachment) {
+            const name = attachment?.option.name ?? `选择标识 ${attachmentKey}`;
+            throw nativeApiError('ZEUS_TASK_PUSH_ATTACHMENT_UNAVAILABLE', `父任务 ${option.taskCode} 的附件“${name}”已失效，未创建会话。`);
+          }
+        }
+      }
+      throw nativeApiError('ZEUS_TASK_PUSH_PARENT_CONTEXT_CHANGED', '父任务上下文已变化，请刷新弹窗后重新确认。');
+    }
+    const selectionByTaskId = new Map(selections.map((selection) => [selection.taskId, selection]));
+    for (const selection of selections) {
+      if (!state.tasksById.has(selection.taskId)) {
+        throw nativeApiError('ZEUS_TASK_PUSH_PARENT_CONTEXT_CHANGED', '父任务上下文已变化，请刷新弹窗后重新确认。');
+      }
+    }
+    const selectedAttachments: NativeConversationAttachment[] = [];
+    const parentContexts: TaskPushPromptParentContext[] = [];
+    for (const option of state.options) {
+      const selection = selectionByTaskId.get(option.taskId);
+      if (!selection) continue;
+      const conversationById = new Map(option.conversations.map((conversation) => [conversation.id, conversation]));
+      const conversationPaths = selection.conversationIds.map((conversationId) => {
+        const conversation = conversationById.get(conversationId);
+        if (!conversation?.available || !conversation.path) {
+          throw nativeApiError('ZEUS_TASK_PUSH_PARENT_CONTEXT_CHANGED', `父任务 ${option.taskCode} 的会话文件已变化，请刷新后重试。`);
+        }
+        return conversation.path;
+      });
+      const attachmentByKey = new Map((state.attachmentsByTaskId.get(option.taskId) ?? []).map((attachment) => [attachment.option.key, attachment]));
+      for (const attachmentKey of selection.attachmentKeys) {
+        const attachment = attachmentByKey.get(attachmentKey);
+        if (!attachment?.attachment) {
+          const name = attachment?.option.name ?? attachmentKey;
+          throw nativeApiError('ZEUS_TASK_PUSH_ATTACHMENT_UNAVAILABLE', `父任务 ${option.taskCode} 的附件“${name}”已失效，未创建会话。`);
+        }
+        selectedAttachments.push(attachment.attachment);
+      }
+      const parentTask = state.tasksById.get(option.taskId)!;
+      parentContexts.push({ taskId: option.taskId, taskCode: option.taskCode, ...taskPushPromptContent(parentTask), conversationPaths });
+    }
+    return {
+      parentContexts,
+      attachmentInput: { attachments: selectedAttachments, allowedRoots: selectedAttachments.length > 0 ? taskPushTrustedAttachmentRoots(project.localPath) : [] },
+    };
+  }
+
+  function mergeTaskPushAttachmentInputs(...inputs: Array<{ attachments: NativeConversationAttachment[]; allowedRoots: string[] }>) {
+    const attachments = new Map<string, NativeConversationAttachment>();
+    const allowedRoots = new Set<string>();
+    for (const input of inputs) {
+      for (const attachment of input.attachments) {
+        if (!attachment.localPath) throw nativeApiError('ZEUS_TASK_PUSH_ATTACHMENT_UNAVAILABLE', `附件“${attachment.name}”缺少服务端确认的真实路径，未创建会话。`);
+        attachments.set(attachment.localPath, attachment);
+      }
+      for (const root of input.allowedRoots) allowedRoots.add(root);
+    }
+    return { attachments: [...attachments.values()], allowedRoots: [...allowedRoots] };
   }
 
   async function startTaskNativeConversation(project: ZeusProjectRecord, task: ZeusTaskRecord, eventType: string, eventTitle: string, instruction?: string) {

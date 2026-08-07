@@ -1,4 +1,6 @@
 /** Zeus 任务状态：只描述真实任务生命周期，不承载任何示例或 mock 业务数据。 */
+export * from './taskPush.js';
+
 export type TaskStatus = 'draft' | 'ready' | 'running' | 'paused' | 'waiting_confirmation' | 'completed' | 'failed' | 'cancelled';
 
 /** 任务优先级只表达处理顺序；P0 不会隐式启动任务或 AI 会话。 */
