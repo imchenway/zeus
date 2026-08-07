@@ -51,10 +51,7 @@ export function buildTaskModelPushMessage(
 }
 
 /** 按服务端给出的根到父顺序生成正文上下文；附件只走结构化通道，不进入文本。 */
-export function selectedTaskPushParentContexts(
-  options: TaskPushParentContextOption[],
-  selections: TaskModelPushForm['parentContextSelections'],
-): TaskPushPromptParentContext[] {
+export function selectedTaskPushParentContexts(options: TaskPushParentContextOption[], selections: TaskModelPushForm['parentContextSelections']): TaskPushPromptParentContext[] {
   return options.flatMap((option) => {
     const selection = selections[option.taskId];
     if (!selection?.selected) return [];
@@ -172,7 +169,10 @@ export function TaskModelPushModal(props: {
   const directWorkspaceNeedsConfirmation = directWorkspaceBusy && props.form.permissionMode !== 'read-only';
   const parentContextOptions = props.capabilities?.parentContextOptions ?? [];
   const selectedParentContexts = selectedTaskPushParentContexts(parentContextOptions, props.form.parentContextSelections);
-  const selectedParentAttachmentCount = parentContextOptions.reduce((count, option) => count + (props.form.parentContextSelections[option.taskId]?.selected ? props.form.parentContextSelections[option.taskId]?.attachmentKeys.length ?? 0 : 0), 0);
+  const selectedParentAttachmentCount = parentContextOptions.reduce(
+    (count, option) => count + (props.form.parentContextSelections[option.taskId]?.selected ? (props.form.parentContextSelections[option.taskId]?.attachmentKeys.length ?? 0) : 0),
+    0,
+  );
   const attachmentsUnsupported = selectedModel?.attachmentInput !== 'supported' && (attachments.length > 0 || selectedParentAttachmentCount > 0);
 
   function onModelChange(model: string): void {
@@ -530,8 +530,10 @@ export function TaskModelPushModal(props: {
                         <label>
                           <input type="checkbox" checked={selection.selected} onChange={(event) => toggleParentTask(option, event.currentTarget.checked)} disabled={busy} />
                           <span>
-                            <strong>{option.taskCode} · {option.taskTitle}</strong>
-                            <small>{option.taskType === 'defect' ? (zh ? '缺陷' : 'Defect') : option.taskType === 'optimization' ? (zh ? '优化' : 'Optimization') : (zh ? '需求' : 'Requirement')}</small>
+                            <strong>
+                              {option.taskCode} · {option.taskTitle}
+                            </strong>
+                            <small>{option.taskType === 'defect' ? (zh ? '缺陷' : 'Defect') : option.taskType === 'optimization' ? (zh ? '优化' : 'Optimization') : zh ? '需求' : 'Requirement'}</small>
                           </span>
                         </label>
                       </legend>
@@ -539,41 +541,56 @@ export function TaskModelPushModal(props: {
                         <div className="task-model-push-parent-resources">
                           <div>
                             <strong>{zh ? '内部会话' : 'Sessions'}</strong>
-                            {option.conversations.length > 0 ? option.conversations.map((conversation) => (
-                              <label key={conversation.id} className={!conversation.available ? 'is-unavailable' : undefined}>
-                                <input
-                                  type="checkbox"
-                                  checked={selectedConversations.has(conversation.id)}
-                                  onChange={(event) => toggleParentResource(option.taskId, 'conversationIds', conversation.id, event.currentTarget.checked)}
-                                  disabled={busy || !conversation.available}
-                                />
-                                <span>
-                                  <strong>{conversation.title}</strong>
-                                  <small>{conversation.archived ? (zh ? '已归档 · ' : 'Archived · ') : ''}{conversation.available ? conversation.path : conversation.unavailableReason}</small>
-                                </span>
-                              </label>
-                            )) : <small>{zh ? '没有会话' : 'No sessions'}</small>}
+                            {option.conversations.length > 0 ? (
+                              option.conversations.map((conversation) => (
+                                <label key={conversation.id} className={!conversation.available ? 'is-unavailable' : undefined}>
+                                  <input
+                                    type="checkbox"
+                                    checked={selectedConversations.has(conversation.id)}
+                                    onChange={(event) => toggleParentResource(option.taskId, 'conversationIds', conversation.id, event.currentTarget.checked)}
+                                    disabled={busy || !conversation.available}
+                                  />
+                                  <span>
+                                    <strong>{conversation.title}</strong>
+                                    <small>
+                                      {conversation.archived ? (zh ? '已归档 · ' : 'Archived · ') : ''}
+                                      {conversation.available ? conversation.path : conversation.unavailableReason}
+                                    </small>
+                                  </span>
+                                </label>
+                              ))
+                            ) : (
+                              <small>{zh ? '没有会话' : 'No sessions'}</small>
+                            )}
                           </div>
                           <div>
                             <strong>{zh ? '父任务附件' : 'Parent attachments'}</strong>
-                            {selectedModel?.attachmentInput !== 'supported' ? <small className="task-model-push-parent-resource-warning">{zh ? '所选运行内核不支持结构化附件输入；会话路径仍可选择。' : 'The selected runtime does not support structured attachments; session paths remain available.'}</small> : null}
-                            {option.attachments.length > 0 ? option.attachments.map((attachment) => {
-                              const checked = selectedAttachments.has(attachment.key);
-                              return (
-                                <label key={attachment.key} className={!attachment.available ? 'is-unavailable' : undefined}>
-                                  <input
-                                    type="checkbox"
-                                    checked={checked}
-                                    onChange={(event) => toggleParentResource(option.taskId, 'attachmentKeys', attachment.key, event.currentTarget.checked)}
-                                    disabled={busy || !attachment.available || (selectedModel?.attachmentInput !== 'supported' && !checked)}
-                                  />
-                                  <span>
-                                    <strong>{attachment.name}</strong>
-                                    <small>{attachment.available ? `${attachment.kind}${attachment.size !== undefined ? ` · ${attachment.size} B` : ''}` : attachment.unavailableReason}</small>
-                                  </span>
-                                </label>
-                              );
-                            }) : <small>{zh ? '没有附件' : 'No attachments'}</small>}
+                            {selectedModel?.attachmentInput !== 'supported' ? (
+                              <small className="task-model-push-parent-resource-warning">
+                                {zh ? '所选运行内核不支持结构化附件输入；会话路径仍可选择。' : 'The selected runtime does not support structured attachments; session paths remain available.'}
+                              </small>
+                            ) : null}
+                            {option.attachments.length > 0 ? (
+                              option.attachments.map((attachment) => {
+                                const checked = selectedAttachments.has(attachment.key);
+                                return (
+                                  <label key={attachment.key} className={!attachment.available ? 'is-unavailable' : undefined}>
+                                    <input
+                                      type="checkbox"
+                                      checked={checked}
+                                      onChange={(event) => toggleParentResource(option.taskId, 'attachmentKeys', attachment.key, event.currentTarget.checked)}
+                                      disabled={busy || !attachment.available || (selectedModel?.attachmentInput !== 'supported' && !checked)}
+                                    />
+                                    <span>
+                                      <strong>{attachment.name}</strong>
+                                      <small>{attachment.available ? `${attachment.kind}${attachment.size !== undefined ? ` · ${attachment.size} B` : ''}` : attachment.unavailableReason}</small>
+                                    </span>
+                                  </label>
+                                );
+                              })
+                            ) : (
+                              <small>{zh ? '没有附件' : 'No attachments'}</small>
+                            )}
                           </div>
                         </div>
                       ) : null}
@@ -613,8 +630,14 @@ export function TaskModelPushModal(props: {
             ) : (
               <small>{zh ? '无附件' : 'No attachments'}</small>
             )}
-            {selectedParentAttachmentCount > 0 ? <small>{zh ? `另有 ${selectedParentAttachmentCount} 个父任务附件，将通过结构化附件通道发送。` : `${selectedParentAttachmentCount} parent attachment(s) will be sent through the structured attachment channel.`}</small> : null}
-            {attachmentsUnsupported ? <small className="task-model-push-error">{zh ? '所选运行内核不支持当前已选附件，请更换模型或取消父附件选择。' : 'The selected runtime does not support the current attachments. Choose another model or clear parent attachments.'}</small> : null}
+            {selectedParentAttachmentCount > 0 ? (
+              <small>{zh ? `另有 ${selectedParentAttachmentCount} 个父任务附件，将通过结构化附件通道发送。` : `${selectedParentAttachmentCount} parent attachment(s) will be sent through the structured attachment channel.`}</small>
+            ) : null}
+            {attachmentsUnsupported ? (
+              <small className="task-model-push-error">
+                {zh ? '所选运行内核不支持当前已选附件，请更换模型或取消父附件选择。' : 'The selected runtime does not support the current attachments. Choose another model or clear parent attachments.'}
+              </small>
+            ) : null}
           </section>
 
           {props.status === 'loading' ? <p className="task-model-push-message">{zh ? '正在连接 app-server 并读取可用模型…' : 'Connecting to app-server and loading models…'}</p> : null}

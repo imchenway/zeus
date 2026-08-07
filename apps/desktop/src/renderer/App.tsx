@@ -9130,9 +9130,7 @@ export function App(props: {
                     revision: capabilities.parentContextRevision,
                     selections: capabilities.parentContextOptions.flatMap((option) => {
                       const selection = form.parentContextSelections[option.taskId];
-                      return selection?.selected
-                        ? [{ taskId: option.taskId, conversationIds: selection.conversationIds, attachmentKeys: selection.attachmentKeys }]
-                        : [];
+                      return selection?.selected ? [{ taskId: option.taskId, conversationIds: selection.conversationIds, attachmentKeys: selection.attachmentKeys }] : [];
                     }),
                   },
                 }
@@ -9287,7 +9285,11 @@ export function App(props: {
       setTaskModelPushCapabilities(capabilities);
       setTaskModelPushForm({ ...pending.form, parentContextSelections });
       setTaskModelPushStatus('ready');
-      setTaskModelPushError(appShellSettings.appLanguage === 'zh-CN' ? '父任务上下文已刷新；模型、工作区、补充信息和仍有效的选择已保留，请重新确认。' : 'Parent task context was refreshed. Model, workspace, supplemental information, and still-valid selections were preserved. Review and confirm again.');
+      setTaskModelPushError(
+        appShellSettings.appLanguage === 'zh-CN'
+          ? '父任务上下文已刷新；模型、工作区、补充信息和仍有效的选择已保留，请重新确认。'
+          : 'Parent task context was refreshed. Model, workspace, supplemental information, and still-valid selections were preserved. Review and confirm again.',
+      );
     } catch (error) {
       if (taskModelPushCapabilityRequestRef.current !== requestVersion) return;
       setTaskModelPushStatus('error');

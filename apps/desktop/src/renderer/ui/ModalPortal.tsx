@@ -1,5 +1,5 @@
-import {useEffect, useRef, type KeyboardEvent, type ReactNode} from 'react';
-import {createPortal} from 'react-dom';
+import { useEffect, useRef, type KeyboardEvent, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 
 export interface ModalPortalProps {
   rootClassName?: string;
@@ -17,7 +17,7 @@ export function ModalPortal(props: ModalPortalProps) {
     if (!root || typeof document === 'undefined') return;
     const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const backgroundElements = [...document.body.children].filter((element): element is HTMLElement => element instanceof HTMLElement && element !== root);
-    const backgroundState = backgroundElements.map((element) => ({element, ariaHidden: element.getAttribute('aria-hidden'), inert: element.inert}));
+    const backgroundState = backgroundElements.map((element) => ({ element, ariaHidden: element.getAttribute('aria-hidden'), inert: element.inert }));
     for (const element of backgroundElements) {
       element.setAttribute('aria-hidden', 'true');
       element.inert = true;
@@ -38,7 +38,7 @@ export function ModalPortal(props: ModalPortalProps) {
     return () => {
       window.cancelAnimationFrame(animationFrame);
       document.removeEventListener('focusin', containProgrammaticFocus);
-      for (const {element, ariaHidden, inert} of backgroundState) {
+      for (const { element, ariaHidden, inert } of backgroundState) {
         if (ariaHidden === null) element.removeAttribute('aria-hidden');
         else element.setAttribute('aria-hidden', ariaHidden);
         element.inert = inert;
@@ -71,13 +71,7 @@ export function ModalPortal(props: ModalPortalProps) {
   }
 
   const modalSurface = (
-    <div
-      ref={rootRef}
-      className={['macos-ai-app', 'zeus-modal-portal-root', props.rootClassName].filter(Boolean).join(' ')}
-      data-zeus-primitive="modal"
-      tabIndex={-1}
-      onKeyDown={containKeyboardFocus}
-    >
+    <div ref={rootRef} className={['macos-ai-app', 'zeus-modal-portal-root', props.rootClassName].filter(Boolean).join(' ')} data-zeus-primitive="modal" tabIndex={-1} onKeyDown={containKeyboardFocus}>
       <div
         className={['zeus-modal-backdrop', props.backdropClassName].filter(Boolean).join(' ')}
         data-motion-surface="backdrop"
