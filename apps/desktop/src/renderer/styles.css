@@ -7333,6 +7333,10 @@ a {
   text-align: start;
 }
 
+.macos-ai-app .zeus-select-trigger:has(.zeus-select-value-color) {
+  grid-template-columns: 10px minmax(0, 1fr) 14px;
+}
+
 .macos-ai-app .zeus-select-trigger:hover:not(:disabled) {
   background: var(--zeus-select-trigger-hover-bg);
   border-color: var(--zeus-select-line-hover);
@@ -7514,6 +7518,18 @@ a {
   padding: 4px 8px 4px 12px;
   text-align: start;
   white-space: nowrap;
+}
+
+.macos-ai-app .zeus-select-option:has(.zeus-select-option-color) {
+  grid-template-columns: 10px minmax(0, 1fr) 16px;
+}
+
+.macos-ai-app :where(.zeus-select-option-color, .zeus-select-value-color) {
+  block-size: 9px;
+  border: 1px solid color-mix(in srgb, currentColor 24%, transparent);
+  border-radius: 50%;
+  flex: 0 0 auto;
+  inline-size: 9px;
 }
 
 .macos-ai-app .zeus-select-option:hover:not(:disabled),
@@ -10555,6 +10571,7 @@ a {
 
 .macos-ai-app :where(.task-status-chip, .task-status-select) {
   --task-status-tone: var(--zeus-product-muted);
+  --task-status-tone-text: var(--task-status-tone);
   --task-status-tone-bg: color-mix(in srgb, var(--task-status-tone) 10%, var(--zeus-product-panel));
   --task-status-tone-line: color-mix(in srgb, var(--task-status-tone) 28%, var(--zeus-product-line-soft));
 }
@@ -10562,7 +10579,11 @@ a {
 .macos-ai-app .task-status-select .zeus-select-trigger {
   background: var(--task-status-tone-bg);
   border-color: var(--task-status-tone-line);
-  color: var(--task-status-tone);
+  color: var(--task-status-tone-text);
+}
+
+.macos-ai-app :where(.task-status-chip, .task-status-select).task-status-custom {
+  --task-status-tone-text: color-mix(in oklab, var(--task-status-tone) 72%, var(--zeus-product-text));
 }
 
 .macos-ai-app :where(.task-status-chip, .task-status-select).task-status-tone-blue,
@@ -10600,7 +10621,7 @@ a {
   background: var(--task-status-tone-bg);
   border: 1px solid var(--task-status-tone-line);
   border-radius: 7px;
-  color: var(--task-status-tone);
+  color: var(--task-status-tone-text);
   display: inline-flex;
   gap: 5px;
   inline-size: fit-content;
@@ -10611,7 +10632,7 @@ a {
 }
 
 .macos-ai-app .task-status-chip strong {
-  color: var(--task-status-tone);
+  color: var(--task-status-tone-text);
   font-size: 11px;
   font-weight: 650;
 }
@@ -14918,6 +14939,14 @@ a {
   padding: 0 9px;
 }
 
+.macos-ai-app .task-status-filter-dot {
+  block-size: 7px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  inline-size: 7px;
+  margin-inline-end: 5px;
+}
+
 .macos-ai-app .task-table-status-segment:hover,
 .macos-ai-app .task-table-status-segment:focus-visible {
   background: var(--zeus-source-list-hover);
@@ -15642,6 +15671,10 @@ a {
   margin-block-start: 14px;
 }
 
+.macos-ai-app .task-enum-order-grid-secondary {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .macos-ai-app .task-enum-order-editor {
   border: 1px solid var(--zeus-product-line-soft);
   border-radius: 10px;
@@ -15731,6 +15764,150 @@ a {
   gap: 1px;
 }
 
+.macos-ai-app .task-status-config-scope {
+  align-items: end;
+  display: grid;
+  gap: 6px;
+  grid-template-columns: minmax(0, 320px);
+  margin-block-start: 14px;
+}
+
+.macos-ai-app .task-status-config-scope > span {
+  color: var(--zeus-product-muted);
+  font-size: 11px;
+  font-weight: 620;
+}
+
+.macos-ai-app .task-status-config-editor {
+  display: grid;
+  gap: 10px;
+  margin-block-start: 12px;
+}
+
+.macos-ai-app .task-status-config-list {
+  border: 1px solid var(--zeus-product-line-soft);
+  border-radius: 10px;
+  display: grid;
+  list-style: none;
+  margin: 0;
+  padding: 5px;
+}
+
+.macos-ai-app .task-status-config-list li {
+  align-items: center;
+  border-radius: 7px;
+  display: grid;
+  gap: 7px;
+  grid-template-columns: 24px 24px minmax(128px, 1fr) 122px auto;
+  min-block-size: 42px;
+  padding: 4px 5px;
+}
+
+.macos-ai-app .task-status-config-list li:hover {
+  background: var(--zeus-source-list-hover);
+}
+
+.macos-ai-app .task-status-config-list li.dragging {
+  background: color-mix(in srgb, var(--zeus-product-accent) 10%, transparent);
+}
+
+.macos-ai-app .task-status-config-drag-handle,
+.macos-ai-app .task-status-config-actions button {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: var(--zeus-product-muted);
+  display: inline-flex;
+  font: inherit;
+  justify-content: center;
+  min-block-size: 26px;
+  min-inline-size: 26px;
+  padding: 0;
+}
+
+.macos-ai-app .task-status-config-drag-handle {
+  cursor: grab;
+  font-size: 9px;
+  letter-spacing: -2px;
+}
+
+.macos-ai-app .task-status-config-drag-handle:focus-visible,
+.macos-ai-app .task-status-config-actions button:focus-visible,
+.macos-ai-app .task-status-config-name input:focus-visible,
+.macos-ai-app .task-status-config-color input:focus-visible {
+  box-shadow: var(--zeus-control-focus);
+  outline: 0;
+}
+
+.macos-ai-app .task-status-config-rank {
+  color: var(--zeus-product-subtle);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.macos-ai-app .task-status-config-name input {
+  background: var(--zeus-control-bg);
+  border: 1px solid var(--zeus-control-border);
+  border-radius: 7px;
+  color: var(--zeus-product-text);
+  inline-size: 100%;
+  min-block-size: 30px;
+  padding: 4px 8px;
+}
+
+.macos-ai-app .task-status-config-color {
+  align-items: center;
+  color: var(--zeus-product-muted);
+  display: flex;
+  font-family: var(--zeus-font-mono, monospace);
+  font-size: 10px;
+  gap: 7px;
+}
+
+.macos-ai-app .task-status-config-color input {
+  background: transparent;
+  border: 1px solid var(--zeus-control-border);
+  border-radius: 7px;
+  block-size: 30px;
+  inline-size: 38px;
+  padding: 2px;
+}
+
+.macos-ai-app .task-status-config-actions {
+  display: inline-flex;
+  gap: 1px;
+}
+
+.macos-ai-app .task-status-config-actions .task-status-config-delete {
+  color: var(--zeus-danger-text);
+  font-size: 16px;
+}
+
+.macos-ai-app .task-status-delete-dialog {
+  display: grid;
+  gap: 16px;
+  inline-size: min(430px, calc(100vw - 32px));
+  padding: 20px;
+}
+
+.macos-ai-app .task-status-delete-dialog header {
+  display: grid;
+  gap: 7px;
+}
+
+.macos-ai-app .task-status-delete-dialog header p {
+  color: var(--zeus-product-muted);
+  line-height: 18px;
+  margin: 0;
+}
+
+.macos-ai-app .task-status-delete-dialog footer {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
 .macos-ai-app .task-list-settings-actions {
   display: flex;
   gap: 8px;
@@ -15746,6 +15923,14 @@ a {
 
   .macos-ai-app .task-enum-order-grid {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .macos-ai-app .task-status-config-list li {
+    grid-template-columns: 24px 24px minmax(0, 1fr) auto;
+  }
+
+  .macos-ai-app .task-status-config-color {
+    grid-column: 3 / 5;
   }
 
   .macos-ai-app .task-table-primary-toolbar .task-toolbar-search,

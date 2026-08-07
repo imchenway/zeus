@@ -1,6 +1,7 @@
 import { type CSSProperties, type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, useCallback, useEffect, useId, useRef, useState } from 'react';
 import { CircleNotchIcon as CircleNotch } from '@phosphor-icons/react/dist/csr/CircleNotch';
 import { isTaskPriority } from '@zeus/shared';
+import type { TaskManagementStatusDefinition } from '@zeus/shared';
 import type {
   AiRuntimeSession,
   RuntimeStatusSnapshot,
@@ -42,15 +43,6 @@ import {
 type TaskSemanticTone = 'neutral' | 'blue' | 'violet' | 'green' | 'amber' | 'orange' | 'red';
 
 const animatedTaskRunStatuses = new Set<TaskAgentRunStatus>(['connecting', 'reconnecting', 'running', 'waiting_user', 'waiting_approval']);
-
-function taskManagementStatusTone(status: TaskManagementStatus): TaskSemanticTone {
-  if (status === 'in_development') return 'blue';
-  if (status === 'in_testing') return 'violet';
-  if (status === 'awaiting_acceptance') return 'amber';
-  if (status === 'blocked') return 'red';
-  if (status === 'completed') return 'green';
-  return 'neutral';
-}
 
 function taskRunStatusTone(status: TaskAgentRunStatus): TaskSemanticTone {
   if (status === 'connecting' || status === 'reconnecting' || status === 'running') return 'blue';
@@ -320,6 +312,9 @@ export interface TaskWorkspaceProps {
   tagFilter: string;
   statusOptions: readonly TaskStatusFilter[];
   statusLabels: Record<TaskManagementStatus | '', string>;
+  statusDefinitions: readonly TaskManagementStatusDefinition[];
+  completedStatusId: TaskManagementStatus;
+  cancelledStatusId: TaskManagementStatus;
   runStatusLabels: Record<TaskAgentRunStatus, string>;
   priorityOptions: ReadonlyArray<{ value: TaskPriority; label: string }>;
   copy: TaskWorkspaceCopy;
@@ -439,7 +434,7 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
   const [dragInsertion, setDragInsertion] = useState<{ targetColumnKey: TaskTableColumnKey; position: TaskTableColumnDropPosition } | null>(null);
   const [keyboardMovingColumnKey, setKeyboardMovingColumnKey] = useState<TaskTableColumnKey | null>(null);
   const [columnInteractionAnnouncement, setColumnInteractionAnnouncement] = useState('');
-  const [bulkTargetStatus, setBulkTargetStatus] = useState<TaskManagementStatus>('todo');
+  const [bulkTargetStatus, setBulkTargetStatus] = useState<TaskManagementStatus>(() => props.statusDefinitions[0]?.id ?? 'todo');
   const keyboardMoveStartOrderRef = useRef<TaskTableColumnKey[] | null>(null);
   const resizeStateRef = useRef<{ columnKey: TaskTableColumnKey; startX: number; startWidth: number } | null>(null);
   const fieldSettingsTriggerRef = useRef<HTMLButtonElement | null>(null);
@@ -466,6 +461,9 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
     taskConversations: props.taskConversations,
     conversationRunStatuses: props.conversationRunStatuses,
     managementStatusLabels: props.statusLabels,
+    managementStatuses: props.statusDefinitions.map((status) => status.id),
+    completedManagementStatusId: props.completedStatusId,
+    cancelledManagementStatusId: props.cancelledStatusId,
     runStatusLabels: props.runStatusLabels,
     projectName: props.projectName,
     taskTableColumns: props.taskTableColumns,
@@ -492,11 +490,12 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
     rawId: props.copy.rawIdColumnTitle,
     createdFrom: props.copy.createdFromColumnTitle,
   };
-  const configuredStatusOptions = props.statusOptions.filter((status): status is TaskManagementStatus => taskManagementStatuses.includes(status as TaskManagementStatus));
+  const configuredStatusOptions = props.statusDefinitions.map((status) => status.id);
   const bulkStatusOptions = configuredStatusOptions.length > 0 ? configuredStatusOptions : taskManagementStatuses;
+  const statusColorById = new Map(props.statusDefinitions.map((status) => [status.id, status.color]));
   const statusLabel = (status: TaskStatusFilter) =>
     status === 'unfinished' ? props.copy.unfinishedStatusFilter : status === '' ? props.statusLabels[''] || (props.copy.taskCountPrefix === 'Tasks' ? 'All' : '全部') : props.statusLabels[status] || formatTaskManagementStatus(status);
-  const bulkTargetEligibility = model.bulkStatusEligibility[bulkTargetStatus];
+  const bulkTargetEligibility = model.bulkStatusEligibility[bulkTargetStatus] ?? { targetStatus: bulkTargetStatus, eligibleTaskIds: [], skippedTaskIds: [] };
   const selectedVisibleCount = model.selectedVisibleTaskIds.length;
   const bulkActionBusy = Boolean(props.bulkActionBusy);
   const bulkActionStatus = props.bulkActionStatus ?? { kind: 'idle' as const };
@@ -518,6 +517,11 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
     minWidth: `max(100%, ${Math.round(taskTableContentWidth)}px)`,
   } as CSSProperties & Record<'--task-table-grid-template', string>;
   const hasExpandedTaskTableColumns = taskTableContentWidth > 880;
+
+  useEffect(() => {
+    if (bulkStatusOptions.includes(bulkTargetStatus)) return;
+    setBulkTargetStatus(bulkStatusOptions[0] ?? 'todo');
+  }, [bulkStatusOptions, bulkTargetStatus]);
   const listClassName = [
     'task-list-workbench task-list-protagonist zeus-source-list',
     showEmptyState ? 'task-list-empty' : undefined,
@@ -761,6 +765,7 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
             <span className="sr-only">{props.copy.statusTitle}</span>
             {statusSegmentOptions.map((status) => (
               <button className="task-table-status-segment" type="button" aria-pressed={props.statusFilter === status} key={status || 'all'} onClick={() => props.onStatusFilterChange(status)}>
+                {status !== '' && status !== 'unfinished' ? <span className="task-status-filter-dot" style={{ backgroundColor: statusColorById.get(status) ?? '#6b7280' }} aria-hidden="true" /> : null}
                 {statusLabel(status)}
               </button>
             ))}
@@ -926,6 +931,7 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
                 options={bulkStatusOptions.map((status) => ({
                   value: status,
                   label: statusLabel(status),
+                  color: statusColorById.get(status),
                 }))}
               />
             </label>
@@ -1155,9 +1161,11 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
                               options={bulkStatusOptions.map((status) => ({
                                 value: status,
                                 label: statusLabel(status),
+                                color: statusColorById.get(status),
                               }))}
                               onChange={(status) => props.onTaskStatusChange?.(task.id, status)}
-                              className={`task-status-select task-status-tone-${taskManagementStatusTone(managementStatus)}`}
+                              className="task-status-select task-status-custom"
+                              style={{ '--task-status-tone': statusColorById.get(managementStatus) ?? '#6b7280' } as CSSProperties}
                               disabled={props.statusChangeBusy || !props.onTaskStatusChange}
                               searchable={false}
                             />

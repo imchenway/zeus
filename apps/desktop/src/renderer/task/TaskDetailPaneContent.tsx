@@ -1,5 +1,5 @@
-import { useEffect, useId, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
-import { isTaskPriority, type TaskAttachmentReference } from '@zeus/shared';
+import { useEffect, useId, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
+import { isTaskPriority, type TaskAttachmentReference, type TaskManagementStatusDefinition } from '@zeus/shared';
 import { ZeusApiError, type TaskEventRecord, type TaskManagementStatus, type TaskPriority, type TaskRecord, type TaskType, type UpdateTaskRelationshipsRequest, type UpdateTaskRequest } from '../apiClient.js';
 import type { NativeConversationChoice } from '../session/sessionTypes.js';
 import { Button } from '../ui/Button.js';
@@ -7,7 +7,7 @@ import { PENDING_RESOURCE_LONG_TEXT_THRESHOLD } from '../ui/pendingResourcePolic
 import { ZeusSelect } from '../ZeusSelect.js';
 import { TaskAttachmentPreviewList } from './TaskAttachmentPreviewList.js';
 import { mergeTaskAttachments, parseTaskAttachments, toPersistedTaskAttachment, type TaskAttachmentView, type TaskResourceAuthorizationResult, type TaskResourcePayload } from './taskAttachments.js';
-import { formatTaskSource, formatTaskType, formatTaskUpdatedAt, resolveTaskManagementStatus, taskManagementStatuses, taskTypes, type TaskSourceLabels } from './taskWorkspaceModel.js';
+import { formatTaskSource, formatTaskType, formatTaskUpdatedAt, resolveTaskManagementStatus, taskTypes, type TaskSourceLabels } from './taskWorkspaceModel.js';
 
 export interface TaskDetailPaneCopy {
   requestTitle: string;
@@ -50,6 +50,7 @@ export interface TaskDetailPaneContentProps {
   events: TaskEventRecord[];
   copy: TaskDetailPaneCopy;
   statusLabels: Record<TaskManagementStatus | '', string>;
+  statusDefinitions: readonly TaskManagementStatusDefinition[];
   priorityOptions: ReadonlyArray<{ value: TaskPriority; label: string }>;
   busy: boolean;
   conversations?: NativeConversationChoice[];
@@ -471,11 +472,12 @@ function InlineTaskTextField(props: {
 function TaskImmediateSelect<T extends string>(props: {
   task: TaskRecord;
   value: T;
-  options: ReadonlyArray<{ value: T; label: string; disabled?: boolean }>;
+  options: ReadonlyArray<{ value: T; label: string; color?: string; disabled?: boolean }>;
   ariaLabel: string;
   copy: TaskEditCopy;
   disabled?: boolean;
   className?: string;
+  colorized?: boolean;
   onSave: (value: T, expectedUpdatedAt: string) => Promise<TaskEditResult | undefined>;
 }) {
   const statusId = `${useId()}-status`;
@@ -536,6 +538,8 @@ function TaskImmediateSelect<T extends string>(props: {
         ariaLabel={props.ariaLabel}
         value={displayValue}
         options={props.options}
+        className={props.colorized ? 'task-status-select task-status-custom' : undefined}
+        style={props.colorized ? ({ '--task-status-tone': props.options.find((option) => option.value === displayValue)?.color ?? '#6b7280' } as CSSProperties) : undefined}
         onChange={(value) => {
           const expectedUpdatedAt = props.task.updatedAt ?? '';
           if (value === props.value) return;
@@ -904,10 +908,12 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
           <TaskImmediateSelect
             task={props.task}
             value={managementStatus}
-            options={taskManagementStatuses.map((status) => ({
-              value: status,
-              label: props.statusLabels[status],
+            options={props.statusDefinitions.map((status) => ({
+              value: status.id,
+              label: props.statusLabels[status.id] ?? status.id,
+              color: status.color,
             }))}
+            colorized
             ariaLabel={props.copy.detailStatusSelectAria}
             copy={editCopy}
             disabled={props.busy}

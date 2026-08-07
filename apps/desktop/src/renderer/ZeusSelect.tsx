@@ -1,9 +1,10 @@
 import { createPortal } from 'react-dom';
-import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 
 export interface ZeusSelectOption<T extends string> {
   value: T;
   label: string;
+  color?: string;
   disabled?: boolean;
 }
 
@@ -15,6 +16,7 @@ export interface ZeusSelectProps<T extends string> {
   onChange: (value: T) => void;
   triggerLabel?: string;
   className?: string;
+  style?: CSSProperties;
   disabled?: boolean;
   searchPlaceholder?: string;
   emptyLabel?: string;
@@ -321,6 +323,7 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
                 onClick={() => selectOption(option.value)}
                 onKeyDown={(event) => handleOptionKeyDown(event, option)}
               >
+                {option.color ? <span className="zeus-select-option-color" style={{ backgroundColor: option.color }} aria-hidden="true" /> : null}
                 <span className="zeus-select-option-label">{option.label}</span>
                 <span className="zeus-select-option-check" aria-hidden="true">
                   {option.value === props.value ? '✓' : ''}
@@ -343,6 +346,7 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
       data-zeus-primitive="select"
       data-zeus-select-placement={open ? (popoverLayout?.placement ?? 'bottom') : 'bottom'}
       data-control-size={props.size}
+      style={props.style}
       ref={rootRef}
     >
       {/* 触发器只保留在业务布局中；popover 通过 portal 提升到应用壳层，禁止扩大表单滚动区域。 */}
@@ -361,6 +365,7 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
         onClick={() => (open ? closeListbox(false) : openListbox(props.value))}
         onKeyDown={handleTriggerKeyDown}
       >
+        {selectedOption?.color ? <span className="zeus-select-value-color" style={{ backgroundColor: selectedOption.color }} aria-hidden="true" /> : null}
         <span className="zeus-select-value">{props.triggerLabel ?? selectedOption?.label ?? props.value}</span>
         <span className="zeus-select-chevron" aria-hidden="true" />
       </button>
