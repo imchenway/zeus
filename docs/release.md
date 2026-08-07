@@ -11,11 +11,11 @@ ad-hoc 签名的 unsigned DMG，但必须显式标注签名、公证和 Gatekeep
 - `pnpm verify:publish`：本地、普通 CI 与完整 Release 共用的发布前入口；检查本次变更文件格式、Git 空白错误、lint、typecheck 和 build。
 - `pnpm package:mac`：日常开发与真实运行验收入口，只生成独立身份、独立用户数据的 `Zeus Test.app` 与测试 DMG。
 - `pnpm package:mac:release`：只供正式发布链路内部调用，生成生产身份 `Zeus.app`；缺少发布标记时拒绝执行。
-- `pnpm verify:release`：先复用 `verify:publish`，再执行 AI CLI adapter 探针和 macOS 打包，并生成内部 Homebrew Cask 与公开更新清单。
-- `pnpm release:notes:draft`：基于最近公开标签到候选提交的真实范围生成 Release notes 草稿和证据。
+- `pnpm verify:release`：默认先复用 `verify:publish`，再执行 AI CLI adapter 探针和 macOS 打包，并生成内部 Homebrew Cask 与公开更新清单；Release Workflow 设置 `ZEUS_FAST_RELEASE=1` 时只执行正式打包和致命产物校验，阻塞级 `typecheck` 由并行作业负责。
+- `pnpm release:notes:draft`：基于最近公开标签到候选提交的真实范围，通过 Zeus SecretStore 中的 DeepSeek `deepseek-v4-flash` 生成 Release notes；模型不可用或低置信时使用确定性模板，不阻断快速发布。
 - `pnpm release:prepare`：默认只生成候选计划；显式写入时同步版本与已审阅 Release notes。
 - `pnpm release:gate`：对干净候选提交执行完整本地发布门禁，并输出绑定提交的摘要与快照。
-- `pnpm release:publish`：默认只做远程前置检查；显式确认后创建标签、触发 Release Workflow，并回下载公开资产完成对账。
+- `pnpm release:publish`：默认只做远程前置检查；显式确认后以固定候选 SHA 触发 Release Workflow。Workflow 在检查与打包通过后才创建标签；发布后默认只下载 manifest，并使用 GitHub 服务端摘要完成轻量对账。
 - `pnpm release:commands:sync`：把四条发布命令按仓库声明预览或幂等同步到指定 Zeus 项目。
 
 普通推送和 GitHub CI 都只需执行：
@@ -25,6 +25,20 @@ pnpm verify:publish
 ```
 
 CI 通过 `ZEUS_VERIFY_BASE` 与 `ZEUS_VERIFY_HEAD` 传入本次推送或 PR 的提交范围；本地则自动合并未提交、已暂存、未跟踪和尚未推送的变更。Prettier 只检查该范围内的代码与配置文件，避免历史格式欠账让每次无关文档提交都固定失败。优点是本地与远端结果一致、执行入口简单；缺点是正式推送前会执行一次完整生产构建，耗时高于只跑 lint。依赖审计按需单独运行 `pnpm security:audit`，不放进普通推送或实用发布的自动门禁。
+
+## 快速一键发布
+
+`pnpm release` 的默认路径只阻止无法编译、无法形成正式 DMG、产物清单错配或无法公开等致命问题：
+
+1. 本机并行执行快速只读前置检查与 `deepseek-v4-flash` 发布说明生成。
+2. 固定版本、Release notes 和候选提交后推送 `main`，不再串行等待 main push CI。
+3. Release Workflow 对精确候选 SHA 并行执行 `typecheck` 与正式 DMG 打包／产物校验。
+4. 所有阻塞作业成功后才创建 annotated tag、GitHub Release 并同步 Homebrew Cask。
+5. 本机下载 manifest，并核对 GitHub 资产的服务端 SHA-256、字节数、Release notes 和 Cask；不默认下载完整 DMG。
+
+显式设置 `DEEP_VERIFY_PUBLIC_DMG=true` 后，发布后对账会额外下载完整公开 DMG、执行 `hdiutil verify` 并重新计算 SHA-256。该模式适合重要版本或异常排查，不作为快速迭代的默认完成条件。
+
+优点：代码检查与正式打包按两者较慢的一项计时，且移除公开 DMG 下载的网络波动，目标完成时间约 5～8 分钟。缺点：并行作业增加 Actions Runner 用量，普通 lint、完整验收矩阵和 AI CLI 探针不再阻塞每个快速版本，应通过 PR CI、手工完整 `pnpm verify:release` 或定时巡检补充。
 
 ## 产物
 
@@ -40,9 +54,7 @@ Release 附件。生产候选只做非 GUI 结构、签名、DMG 和清单校验
 
 ## 发布门禁
 
-普通发布前门禁必须覆盖变更文件格式、Git 空白错误、lint、typecheck 和 build。完整 macOS 发布门禁在此基础上继续覆盖
-acceptance matrix、AI CLI adapter 探针、生产候选打包、包内 Electron 加载和包内 renderer/main 非 GUI 健康检查。普通任务的真实
-GUI 验收只使用 `pnpm package:mac` 生成的 `Zeus Test.app`。
+PR 与手工完整发布门禁继续覆盖变更文件格式、Git 空白错误、lint、typecheck 和 build。快速一键发布只把 `typecheck`、生产候选打包、包内 Electron 加载、包内 renderer/main 非 GUI 健康检查、DMG 与 manifest 一致性作为阻塞项。acceptance matrix、AI CLI adapter 探针和完整 `verify:publish` 仍可由手工 `pnpm verify:release` 执行。普通任务的真实 GUI 验收只使用 `pnpm package:mac` 生成的 `Zeus Test.app`。
 
 ### 当前公开稳定基线（0.1.14）
 

@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 /* global console, process */
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { homedir, tmpdir } from 'node:os';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { URL } from 'node:url';
 
 process.on('uncaughtException', (error) => {
   console.error(error instanceof Error ? error.message : String(error));
@@ -14,7 +15,6 @@ const repositoryRoot = resolve(import.meta.dirname, '..');
 const releaseVersion = requiredVersion(process.env.RELEASE_VERSION);
 const includeWorktree = parseBoolean(process.env.INCLUDE_WORKTREE, true);
 const releaseContext = boundedText(process.env.RELEASE_CONTEXT, 2_000);
-const releaseModel = optionalModel(process.env.RELEASE_MODEL);
 const automatedRelease = parseBoolean(process.env.AUTOMATED_RELEASE, false);
 const baseTag = resolveBaseTag(process.env.BASE_TAG);
 const headSha = git(['rev-parse', 'HEAD']);
@@ -29,91 +29,29 @@ const outputDirectory = resolveOutputDirectory(releaseVersion, shortHeadSha);
 mkdirSync(outputDirectory, { recursive: true, mode: 0o700 });
 
 const evidencePath = join(outputDirectory, `Zeus-${releaseVersion}-release-evidence.md`);
-const schemaPath = join(outputDirectory, 'release-notes-output.schema.json');
-const rawResponsePath = join(outputDirectory, 'release-notes-response.json');
 const draftPath = join(outputDirectory, `Zeus-${releaseVersion}-release-notes-draft.md`);
 const evidence = buildEvidence();
 
 writeFileSync(evidencePath, evidence, { mode: 0o600 });
-writeFileSync(
-  schemaPath,
-  `${JSON.stringify(
-    {
-      type: 'object',
-      additionalProperties: false,
-      properties: automatedRelease
-        ? {
-            markdown: { type: 'string' },
-            confidence: { type: 'string', enum: ['high', 'medium', 'low'] },
-            uncertainties: { type: 'array', items: { type: 'string' } },
-          }
-        : { markdown: { type: 'string' } },
-      required: automatedRelease ? ['markdown', 'confidence', 'uncertainties'] : ['markdown'],
-    },
-    null,
-    2,
-  )}\n`,
-  { mode: 0o600 },
-);
-
-const prompt = buildPrompt(evidencePath);
-const codexArgs = [
-  'exec',
-  '--ephemeral',
-  '--ignore-user-config',
-  '--sandbox',
-  'read-only',
-  '--skip-git-repo-check',
-  '--cd',
-  outputDirectory,
-  '--output-schema',
-  schemaPath,
-  '--output-last-message',
-  rawResponsePath,
-  '--color',
-  'never',
-  '-c',
-  'model_reasoning_effort="high"',
-  '-c',
-  'project_doc_max_bytes=0',
-];
-if (releaseModel) codexArgs.push('--model', releaseModel);
-codexArgs.push('-');
+const prompt = buildPrompt(evidencePath, evidence);
 
 console.log(`Zeus 发布内容草稿：版本 ${releaseVersion}，范围 ${baseTag}..${shortHeadSha}`);
-console.log('正在调用 Codex 只读分析真实变更；该步骤不会修改项目、Git 历史或远端状态。');
-
-const isolatedCodexHome = createIsolatedCodexHome();
-let codex;
+let response;
 try {
-  codex = spawnSync(process.env.ZEUS_CODEX_COMMAND_PATH?.trim() || 'codex', codexArgs, {
-    cwd: outputDirectory,
-    env: { ...process.env, CODEX_HOME: isolatedCodexHome },
-    input: prompt,
-    encoding: 'utf8',
-    maxBuffer: 16 * 1024 * 1024,
-    stdio: ['pipe', 'ignore', 'pipe'],
-  });
-} finally {
-  rmSync(isolatedCodexHome, { recursive: true, force: true });
-}
-if (codex.error) {
-  throw new Error(`无法启动 Codex CLI：${codex.error.message}`);
-}
-if (codex.status !== 0) {
-  const diagnostic = codex.stderr?.trim().slice(-4_000);
-  throw new Error(`Codex CLI 生成发布内容失败，退出码 ${codex.status ?? 'unknown'}。${diagnostic ? `\n${diagnostic}` : ''}`);
+  response = await requestDeepSeekReleaseNotes(prompt);
+  console.log('发布说明已由 Zeus 配置的 deepseek-v4-flash 生成。');
+} catch (error) {
+  console.warn(`deepseek-v4-flash 生成发布说明失败，使用确定性模板继续：${error instanceof Error ? error.message : String(error)}`);
+  response = buildDeterministicFallback();
 }
 
-const response = parseResponse(rawResponsePath);
 if (automatedRelease && (response.confidence !== 'high' || !Array.isArray(response.uncertainties) || response.uncertainties.length > 0)) {
-  throw new Error(`AI 发布内容没有达到自动发布要求：confidence=${response.confidence ?? 'missing'} uncertainties=${JSON.stringify(response.uncertainties ?? 'missing')}`);
+  console.warn(`AI 发布内容没有达到无人值守置信要求，使用确定性模板继续：confidence=${response.confidence ?? 'missing'} uncertainties=${JSON.stringify(response.uncertainties ?? 'missing')}`);
+  response = buildDeterministicFallback();
 }
 const markdown = normalizeMarkdown(response.markdown);
 validateDraft(markdown);
 writeFileSync(draftPath, markdown, { mode: 0o600 });
-rmSync(schemaPath, { force: true });
-rmSync(rawResponsePath, { force: true });
 
 console.log(`发布内容草稿：${draftPath}`);
 console.log(`生成证据：${evidencePath}`);
@@ -187,8 +125,9 @@ function buildEvidence() {
   ].join('\n');
 }
 
-function buildPrompt(currentEvidencePath) {
+function buildPrompt(currentEvidencePath, currentEvidence) {
   const ignoredReleaseNotes = join(repositoryRoot, 'docs', 'releases', `v${releaseVersion}.md`);
+  const committedDiff = boundedModelContext(git(['diff', '--no-ext-diff', '--unified=2', `${baseTag}..${headSha}`], { maxBuffer: 16 * 1024 * 1024 }), 160_000);
   return `你负责为 Zeus ${releaseVersion} 生成一份面向用户的候选 Release notes。
 
 这只是只读内容生成，不发布、不修改源码、不运行验证命令。最终响应必须满足输出 Schema；markdown 字段只能包含 Release notes 正文，confidence、uncertainties 或生成过程说明只能放在各自字段，禁止追加到 markdown。
@@ -211,6 +150,16 @@ function buildPrompt(currentEvidencePath) {
 9. 不写营销套话，不虚构性能数字，不使用源码行号或内部任务编号充当用户说明。
 10. 这是草稿，不要写 GitHub Release 已发布、Tap 已同步或用户已经完成升级。
 ${automatedRelease ? '11. 本次用于无人值守发布。confidence 只评价正文中的用户向变更事实；这些事实均有明确证据时设为 high 且 uncertainties 返回空数组。版本写入、后续门禁、正式制品和公开发布将在草稿通过后由编排器执行，它们尚未发生是确定的流程阶段，不是 uncertainty；必须在“发布验证”中准确写成后续动作。任何用户向变更事实的疑点都必须放入 uncertainties，禁止用“待确认”“待验证”“TODO”“TBD”等占位语掩盖。已有证据支持的限制影响可以如实使用“可能”等概率表达。' : '11. 发布验证没有同一候选提交证据时，保留“待发布门禁确认”。'}
+
+你无法读取本机文件，只能使用下面随请求提供的真实证据。最终只返回一个 JSON 对象，不要使用 Markdown 代码围栏；字段为 markdown、confidence、uncertainties。
+
+<release_evidence>
+${boundedModelContext(currentEvidence, 120_000)}
+</release_evidence>
+
+<committed_diff>
+${committedDiff}
+</committed_diff>
 `;
 }
 
@@ -274,27 +223,10 @@ function boundedText(rawValue, maxLength) {
   return value;
 }
 
-function optionalModel(rawValue) {
-  const value = rawValue?.trim() ?? '';
-  if (value && !/^[A-Za-z0-9._-]{1,80}$/u.test(value)) throw new Error(`RELEASE_MODEL 格式无效：${value}`);
-  return value;
-}
-
 function resolveOutputDirectory(version, shortSha) {
   const commandRunDirectory = process.env.ZEUS_COMMAND_RUN_DIR?.trim();
   if (commandRunDirectory) return resolve(commandRunDirectory);
   return mkdtempSync(join(tmpdir(), `zeus-release-draft-${version}-${shortSha}-`));
-}
-
-function createIsolatedCodexHome() {
-  const sourceHome = resolve(process.env.CODEX_HOME?.trim() || join(homedir(), '.codex'));
-  const sourceAuth = join(sourceHome, 'auth.json');
-  if (!existsSync(sourceAuth)) {
-    throw new Error('未找到现有 Codex CLI 登录信息；请先在终端完成 codex login。');
-  }
-  const isolatedHome = mkdtempSync(join(tmpdir(), 'zeus-release-codex-home-'));
-  symlinkSync(sourceAuth, join(isolatedHome, 'auth.json'));
-  return isolatedHome;
 }
 
 function readPackageVersion(path) {
@@ -306,14 +238,74 @@ function readMinimumSystemVersion() {
   return builderConfig.match(/^\s*minimumSystemVersion:\s*["']?([^\s"']+)/mu)?.[1];
 }
 
-function parseResponse(path) {
-  try {
-    const value = JSON.parse(readFileSync(path, 'utf8'));
-    if (!value || typeof value.markdown !== 'string') throw new Error('响应缺少 markdown 字段');
-    return value;
-  } catch (error) {
-    throw new Error(`Codex 返回的结构化发布内容无效：${error instanceof Error ? error.message : String(error)}`);
+async function requestDeepSeekReleaseNotes(prompt) {
+  const rawUrl = process.env.ZEUS_RELEASE_NOTES_API_URL?.trim() ?? '';
+  const capability = process.env.ZEUS_RELEASE_NOTES_CAPABILITY?.trim() ?? '';
+  if (!rawUrl || !capability) throw new Error('当前命令没有 Zeus 发布说明能力令牌');
+  const url = new URL(rawUrl);
+  if (url.protocol !== 'http:' || !['127.0.0.1', 'localhost', '::1'].includes(url.hostname)) {
+    throw new Error('发布说明能力只允许调用 Zeus 本机服务');
   }
+  const controller = new globalThis.AbortController();
+  const timeout = globalThis.setTimeout(() => controller.abort(), 90_000);
+  try {
+    const apiResponse = await globalThis.fetch(url, {
+      method: 'POST',
+      headers: { Accept: 'application/json', Authorization: `Bearer ${capability}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: 'deepseek-v4-flash', prompt }),
+      signal: controller.signal,
+    });
+    const payload = await apiResponse.json().catch(() => null);
+    if (!apiResponse.ok) {
+      const message = payload && typeof payload.message === 'string' ? payload.message : `HTTP ${apiResponse.status}`;
+      throw new Error(message);
+    }
+    const output = payload?.output;
+    if (!output || typeof output.markdown !== 'string') throw new Error('Zeus 本机服务没有返回有效发布说明');
+    return output;
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') throw new Error('deepseek-v4-flash 在 90 秒内没有返回');
+    throw error;
+  } finally {
+    globalThis.clearTimeout(timeout);
+  }
+}
+
+function buildDeterministicFallback() {
+  const validationLine = automatedRelease ? '- 公开前将由 Release Workflow 对固定候选提交执行类型检查、正式打包、DMG 完整性和更新清单一致性校验。' : '- 当前为候选草稿，正式结果待发布门禁确认。';
+  return {
+    markdown: [
+      `# Zeus ${releaseVersion} 更新内容`,
+      '',
+      '## 本次更新',
+      '',
+      `- 本版本收录了 ${baseTag} 之后进入固定候选提交的功能改进与问题修复。`,
+      '- AI 发布说明不可用时采用保守模板，不根据缺失证据扩写具体功能。',
+      '',
+      '## 如何升级',
+      '',
+      '- Homebrew 用户可执行 `brew upgrade --cask imchenway/tap/zeus`。',
+      `- 也可以下载 \`Zeus-${releaseVersion}-arm64.dmg\`，退出正在运行的 Zeus 后覆盖安装。`,
+      '',
+      '## 系统要求与已知限制',
+      '',
+      `- 最低系统版本：macOS ${readMinimumSystemVersion() ?? '以公开安装包配置为准'}。`,
+      '- 若公开清单显示应用尚未完成 Developer ID 签名或 Apple 公证，首次启动可能需要按 macOS 提示手动确认。',
+      '',
+      '## 发布验证',
+      '',
+      validationLine,
+      '- 发布完成后将核对 GitHub 资产服务端摘要、更新清单与 Homebrew Cask。',
+      '',
+    ].join('\n'),
+    confidence: 'high',
+    uncertainties: [],
+  };
+}
+
+function boundedModelContext(value, maxLength) {
+  if (value.length <= maxLength) return value;
+  return `${value.slice(0, maxLength)}\n\n[内容超过 ${maxLength} 字符，已截断]`;
 }
 
 function normalizeMarkdown(value) {
