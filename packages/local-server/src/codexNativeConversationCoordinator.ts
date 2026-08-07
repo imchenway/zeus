@@ -474,6 +474,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
 
   async function startTaskConversation(input: StartTaskConversationInput): Promise<NativeAcceptedOperation> {
     assertOpen();
+    await assertCodexAccountReady();
     const additionalContext = resolveLegacyReference(input);
     const existingConversation = input.conversationId ? options.conversations.getById(input.conversationId) : undefined;
     const permissionMode = existingConversation?.permissionMode ?? input.permissionMode ?? (input.allowCodeChanges ? 'auto' : 'read-only');
@@ -538,6 +539,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
 
   async function startProjectConversation(input: StartProjectConversationInput): Promise<NativeAcceptedOperation> {
     assertOpen();
+    await assertCodexAccountReady();
     const title = projectConversationTitle(input.prompt, input.attachments);
     const existingConversation = input.conversationId ? options.conversations.getById(input.conversationId) : undefined;
     const permissionMode = existingConversation?.permissionMode ?? input.permissionMode ?? 'auto';
@@ -594,8 +596,16 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     throw coordinatorError('ZEUS_INVALID_CONVERSATION_START', 'Project conversation content or attachments are required.');
   }
 
+  /** 创建任何产品会话前复验账号，避免先持久化一条必然失败的占位会话。 */
+  async function assertCodexAccountReady(): Promise<void> {
+    const account = await options.manager.readAccount({ refreshToken: true });
+    if (!account.requiresOpenaiAuth || account.signedIn) return;
+    throw coordinatorError('ZEUS_CODEX_LOGIN_REQUIRED', 'Zeus 专属 Codex 尚未登录。请先完成登录，再创建会话。');
+  }
+
   async function startEphemeralConversation(input: StartNativeEphemeralConversationInput): Promise<NativeAcceptedOperation> {
     assertOpen();
+    await assertCodexAccountReady();
     const context: ConversationDispatchContext = {
       projectId: input.projectId,
       projectLocalPath: resolve(input.projectLocalPath),

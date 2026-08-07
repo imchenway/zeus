@@ -105,9 +105,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
         disabled: capability.available === false,
       }))
     : [{ value: selectedModel, label: selectedModel || copy.unsynced }];
-  const effortOptions = selectedCapability?.supportedReasoningEfforts.length
-    ? selectedCapability.supportedReasoningEfforts.map((effort) => ({ value: effort, label: effort }))
-    : [{ value: selectedEffort, label: selectedEffort || copy.unsynced }];
+  const effortOptions = selectedCapability?.supportedReasoningEfforts.map((effort) => ({ value: effort, label: effort })) ?? [];
   const tierOptions = serviceTierOptions(selectedCapability, props.language, false);
   const inputResources = useConversationInputResources({
     textareaRef,
@@ -277,16 +275,18 @@ export function ConversationComposer(props: ConversationComposerProps) {
                   props.onRuntimeSettingsChange?.({ model, agentKind: capability?.agentKind, effort, ...serviceTierWireOverride(normalizedTier.selection), permissionMode: props.permissionMode, collaborationMode: props.collaborationMode });
                 }}
               />
-              <ComposerDropdown
-                label={copy.effort}
-                value={selectedEffort}
-                options={effortOptions}
-                disabled={!settingsWritable || !selectedCapability?.supportedReasoningEfforts.length}
-                onChange={(effort) => {
-                  setSelectedEffort(effort);
-                  props.onRuntimeSettingsChange?.({ model: selectedModel, effort, ...serviceTierWireOverride(selectedServiceTier), permissionMode: props.permissionMode, collaborationMode: props.collaborationMode });
-                }}
-              />
+              {effortOptions.length > 0 ? (
+                <ComposerDropdown
+                  label={copy.effort}
+                  value={selectedEffort}
+                  options={effortOptions}
+                  disabled={!settingsWritable}
+                  onChange={(effort) => {
+                    setSelectedEffort(effort);
+                    props.onRuntimeSettingsChange?.({ model: selectedModel, effort, ...serviceTierWireOverride(selectedServiceTier), permissionMode: props.permissionMode, collaborationMode: props.collaborationMode });
+                  }}
+                />
+              ) : null}
               <ComposerDropdown
                 label={copy.serviceTier}
                 value={serviceTierSelectionValue(selectedServiceTier)}

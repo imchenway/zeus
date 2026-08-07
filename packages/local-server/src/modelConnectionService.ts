@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import {
   buildModelsUrl,
-  createConfiguredModelDefinition,
+  createTemplateConfiguredModelDefinition,
   listSelectablePiModels,
   mergeDiscoveredModels,
   modelConnectionSecretAccount,
@@ -170,7 +170,7 @@ export function createModelConnectionService(options: { settings: SettingReposit
       const modelIds = await fetchModelIds(connection);
       const previousIds = new Set(connection.models.map((model) => model.id));
       const thinkingFormat = connection.templateId === 'custom' ? 'openai' : modelConnectionTemplates[connection.templateId].thinkingFormat;
-      const models = mergeDiscoveredModels(connection.models, modelIds, thinkingFormat);
+      const models = mergeDiscoveredModels(connection.models, modelIds, thinkingFormat, connection.templateId);
       const updated = await saveConnection(connection.id, { ...connection, models }, connection);
       return {
         connection: updated,
@@ -225,7 +225,8 @@ export function createModelConnectionService(options: { settings: SettingReposit
 }
 
 function withTemplateDefaults(input: SaveModelConnectionRequest): SaveModelConnectionRequest {
-  const templateId: ModelConnectionTemplateId = input.templateId === 'deepseek' || input.templateId === 'bailian' ? input.templateId : 'custom';
+  const templateId: ModelConnectionTemplateId =
+    input.templateId === 'deepseek' || input.templateId === 'bailian' || input.templateId === 'kimi' || input.templateId === 'zai' ? input.templateId : 'custom';
   const template = templateId === 'custom' ? null : modelConnectionTemplates[templateId];
   return {
     ...input,
@@ -237,8 +238,7 @@ function withTemplateDefaults(input: SaveModelConnectionRequest): SaveModelConne
 }
 
 export function createManualModel(id: string, templateId: ModelConnectionTemplateId): ConfiguredModelDefinition {
-  const thinkingFormat = templateId === 'custom' ? 'openai' : modelConnectionTemplates[templateId].thinkingFormat;
-  return createConfiguredModelDefinition(id, {}, thinkingFormat);
+  return createTemplateConfiguredModelDefinition(id, templateId);
 }
 
 export function referencesForConnection(connection: ModelConnectionRecord): string[] {

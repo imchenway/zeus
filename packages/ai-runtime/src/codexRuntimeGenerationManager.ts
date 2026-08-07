@@ -242,6 +242,15 @@ export function createCodexRuntimeGenerationManager(): CodexAppServerManager {
       activationChain = activation.catch(() => undefined);
       return activation;
     },
+    async readAccount(input = {}) {
+      return requireActiveEntry().manager.readAccount(input);
+    },
+    async startChatGptLogin() {
+      return requireActiveEntry().manager.startChatGptLogin();
+    },
+    async cancelChatGptLogin(input) {
+      await requireActiveEntry().manager.cancelChatGptLogin(input);
+    },
     async startThread(input) {
       const entry = requireActiveEntry();
       const thread = await entry.manager.startThread(input);

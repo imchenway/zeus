@@ -22,6 +22,8 @@ const templateDefaults: Record<ModelConnectionTemplateId, { name: string; baseUr
   custom: { name: '', baseUrl: '', modelsPath: '/models', thinkingFormat: 'openai' },
   deepseek: { name: 'DeepSeek', baseUrl: 'https://api.deepseek.com/v1', modelsPath: '/models', thinkingFormat: 'deepseek' },
   bailian: { name: '阿里云百炼', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', modelsPath: '/models', thinkingFormat: 'qwen' },
+  kimi: { name: 'Kimi', baseUrl: 'https://api.moonshot.cn/v1', modelsPath: '/models', thinkingFormat: 'openai' },
+  zai: { name: 'Z.AI / GLM', baseUrl: 'https://api.z.ai/api/paas/v4', modelsPath: '/models', thinkingFormat: 'zai' },
 };
 
 const thinkingLevels: ModelThinkingLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
@@ -249,40 +251,46 @@ export function ModelConnectionsSettingsPane(props: { language: 'zh-CN' | 'en-US
                   { value: 'custom', label: zh ? '自定义兼容供应商' : 'Custom compatible provider' },
                   { value: 'deepseek', label: 'DeepSeek' },
                   { value: 'bailian', label: zh ? '阿里云百炼' : 'Alibaba Bailian' },
+                  { value: 'kimi', label: 'Kimi' },
+                  { value: 'zai', label: 'Z.AI / GLM' },
                 ]}
               />
             </label>
-            <label>
-              <span>{zh ? '连接名称' : 'Connection name'}</span>
-              <input
-                value={draft.name}
-                onChange={(event) => {
-                  const name = event.currentTarget.value;
-                  setDraft((value) => ({ ...value, name }));
-                }}
-              />
-            </label>
-            <label className="model-connection-wide-field">
-              <span>{zh ? '服务地址' : 'Base URL'}</span>
-              <input
-                value={draft.baseUrl}
-                placeholder="https://api.example.com/v1"
-                onChange={(event) => {
-                  const baseUrl = event.currentTarget.value;
-                  setDraft((value) => ({ ...value, baseUrl }));
-                }}
-              />
-            </label>
-            <label>
-              <span>{zh ? '模型目录路径' : 'Models path'}</span>
-              <input
-                value={draft.modelsPath}
-                onChange={(event) => {
-                  const modelsPath = event.currentTarget.value;
-                  setDraft((value) => ({ ...value, modelsPath }));
-                }}
-              />
-            </label>
+            {draft.templateId === 'custom' ? (
+              <>
+                <label>
+                  <span>{zh ? '连接名称' : 'Connection name'}</span>
+                  <input
+                    value={draft.name}
+                    onChange={(event) => {
+                      const name = event.currentTarget.value;
+                      setDraft((value) => ({ ...value, name }));
+                    }}
+                  />
+                </label>
+                <label className="model-connection-wide-field">
+                  <span>{zh ? '服务地址' : 'Base URL'}</span>
+                  <input
+                    value={draft.baseUrl}
+                    placeholder="https://api.example.com/v1"
+                    onChange={(event) => {
+                      const baseUrl = event.currentTarget.value;
+                      setDraft((value) => ({ ...value, baseUrl }));
+                    }}
+                  />
+                </label>
+                <label>
+                  <span>{zh ? '模型目录路径' : 'Models path'}</span>
+                  <input
+                    value={draft.modelsPath}
+                    onChange={(event) => {
+                      const modelsPath = event.currentTarget.value;
+                      setDraft((value) => ({ ...value, modelsPath }));
+                    }}
+                  />
+                </label>
+              </>
+            ) : null}
             <label>
               <span>{current?.apiKeyConfigured ? (zh ? '替换 API Key' : 'Replace API key') : 'API Key'}</span>
               <input
@@ -315,20 +323,33 @@ export function ModelConnectionsSettingsPane(props: { language: 'zh-CN' | 'en-US
                 <strong>{zh ? '模型与能力档案' : 'Models and capability profiles'}</strong>
                 <small>{zh ? '高速标签属于模型本身；首版 Pi Chat 不显示 Fast 服务档位。' : 'Speed labels describe models. Pi Chat does not expose a Fast service tier.'}</small>
               </span>
-              <span className="model-add-row">
-                <input aria-label={zh ? '手工模型 ID' : 'Manual model ID'} placeholder={zh ? '手工模型 ID' : 'Manual model ID'} value={newModelId} onChange={(event) => setNewModelId(event.currentTarget.value)} />
-                <Button variant="secondary" size="compact" onClick={addManualModel} disabled={!newModelId.trim()}>
-                  {zh ? '添加' : 'Add'}
-                </Button>
-              </span>
+              {draft.templateId === 'custom' ? (
+                <span className="model-add-row">
+                  <input aria-label={zh ? '手工模型 ID' : 'Manual model ID'} placeholder={zh ? '手工模型 ID' : 'Manual model ID'} value={newModelId} onChange={(event) => setNewModelId(event.currentTarget.value)} />
+                  <Button variant="secondary" size="compact" onClick={addManualModel} disabled={!newModelId.trim()}>
+                    {zh ? '添加' : 'Add'}
+                  </Button>
+                </span>
+              ) : null}
             </header>
-            {draft.models.length === 0 ? <p>{zh ? '可以先保存 API Key 后自动获取，也可以手工添加模型。' : 'Save an API key to fetch models, or add models manually.'}</p> : null}
+            {draft.models.length === 0 ? (
+              <p>
+                {draft.templateId === 'custom'
+                  ? zh
+                    ? '可以先保存 API Key 后自动获取，也可以手工添加模型。'
+                    : 'Save an API key to fetch models, or add models manually.'
+                  : zh
+                    ? '保存 API Key 后获取该渠道返回的候选模型。'
+                    : 'Save the API key, then fetch the candidate models returned by this channel.'}
+              </p>
+            ) : null}
             <div className="model-definition-list">
               {draft.models.map((model) => (
                 <ModelDefinitionEditor
                   key={model.id}
                   language={props.language}
                   model={model}
+                  readOnly={draft.templateId !== 'custom'}
                   onChange={(next) => updateModel(model.id, () => next)}
                   onRemove={() => setDraft((value) => ({ ...value, models: value.models.filter((candidate) => candidate.id !== model.id) }))}
                 />
@@ -369,7 +390,7 @@ export function ModelConnectionsSettingsPane(props: { language: 'zh-CN' | 'en-US
   );
 }
 
-function ModelDefinitionEditor(props: { language: 'zh-CN' | 'en-US'; model: ModelConnectionModel; onChange: (model: ModelConnectionModel) => void; onRemove: () => void }) {
+function ModelDefinitionEditor(props: { language: 'zh-CN' | 'en-US'; model: ModelConnectionModel; readOnly: boolean; onChange: (model: ModelConnectionModel) => void; onRemove: () => void }) {
   const zh = props.language === 'zh-CN';
   const model = props.model;
   const updateEvidence = (field: 'tools' | 'imageInput', state: ModelCapabilityState): void => {
@@ -388,11 +409,20 @@ function ModelDefinitionEditor(props: { language: 'zh-CN' | 'en-US'; model: Mode
           <input type="checkbox" checked={model.enabled} onChange={(event) => props.onChange({ ...model, enabled: event.currentTarget.checked })} />
           <strong>{model.id}</strong>
         </label>
-        <button type="button" onClick={props.onRemove} aria-label={zh ? `移除模型 ${model.id}` : `Remove model ${model.id}`}>
-          ×
-        </button>
+        {props.readOnly ? null : (
+          <button type="button" onClick={props.onRemove} aria-label={zh ? `移除模型 ${model.id}` : `Remove model ${model.id}`}>
+            ×
+          </button>
+        )}
       </header>
-      <div className="model-definition-grid">
+      {props.readOnly ? (
+        <p>
+          {zh ? '思考深度' : 'Reasoning effort'}：
+          {model.capability.reasoning.state === 'supported' ? model.capability.reasoning.levels.join(' / ') : zh ? '能力待确认，会话中隐藏' : 'Unverified; hidden in conversations'} · {zh ? '工具' : 'Tools'}：
+          {model.capability.tools.state} · {zh ? '图片' : 'Images'}：{model.capability.imageInput.state}
+        </p>
+      ) : (
+        <div className="model-definition-grid">
         <label>
           <span>{zh ? '显示名称' : 'Display name'}</span>
           <input value={model.displayName} onChange={(event) => props.onChange({ ...model, displayName: event.currentTarget.value })} />
@@ -488,7 +518,8 @@ function ModelDefinitionEditor(props: { language: 'zh-CN' | 'en-US'; model: Mode
             options={capabilityStates.map((state) => ({ value: state.value, label: zh ? state.zh : state.en }))}
           />
         </label>
-      </div>
+        </div>
+      )}
     </article>
   );
 }
