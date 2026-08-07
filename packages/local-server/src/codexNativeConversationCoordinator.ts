@@ -11,6 +11,8 @@ import {
   type ConversationNextTurnSettings,
   type ConversationPermissionMode,
   ConversationPlanActionRepository,
+  type ProviderEventReceiptInput,
+  ProviderEventReceiptRepository,
   ConversationRepository,
   ConversationResourceRepository,
   type ConversationServerRequestKind,
@@ -101,6 +103,7 @@ export interface CreateCodexNativeConversationCoordinatorOptions {
   submissions: ConversationSubmissionRepository;
   requests: ConversationServerRequestRepository;
   planActions?: ConversationPlanActionRepository;
+  receipts?: ProviderEventReceiptRepository;
   settings: SettingRepository;
   getConcurrency: (projectId: string) => { project: number; global: number; maxPerProject: number; maxGlobal: number };
   broadcast: (type: string, payload: Record<string, unknown>) => void;
@@ -118,17 +121,19 @@ export interface CodexNativeConversationRuntime extends CodexNativeConversationC
   close(input?: { mode: 'handoff' | 'final' }): Promise<void>;
 }
 
-const processedEventsSettingKey = 'codex.native.processed_provider_events';
 const providerEventErrorsSettingKey = 'codex.native.provider_event_errors';
+const providerEventHotReceiptLimit = 10_000;
 
 export function createCodexNativeConversationCoordinator(options: CreateCodexNativeConversationCoordinatorOptions): CodexNativeConversationRuntime {
   const now = options.now ?? (() => new Date().toISOString());
   const operationId = options.operationId ?? randomUUID;
   const planActions = options.planActions ?? new ConversationPlanActionRepository(options.db);
   const resources = options.resources ?? new ConversationResourceRepository(options.db);
+  const receipts = options.receipts ?? new ProviderEventReceiptRepository(options.db);
   const runStates = new Map<string, NativeConversationRunState>();
   const contexts = new Map<string, ConversationDispatchContext>();
-  const processedEvents = new Set(options.settings.getJson<string[]>(processedEventsSettingKey) ?? []);
+  const hotReceiptIdentities = new Set<string>();
+  const maintainedReceiptGenerations = new Set<string>();
   const completedTurnResults = new Map<string, NativeTurnResult>();
   const failedTurnResults = new Map<string, Error & { code: string }>();
   const turnResultWaiters = new Map<string, NativeTurnResultWaiter[]>();
@@ -140,6 +145,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   let providerEventChain = Promise.resolve();
   let generationReconcileChain = Promise.resolve();
   let reconciledGenerationId: string | null = null;
+  let hotReceiptGenerationId: string | null = null;
   let queueDrainPromise: Promise<void> | null = null;
   let handoffPromise: Promise<void> | null = null;
   let finalizationPromise: Promise<void> | null = null;
@@ -2164,7 +2170,6 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       providerState: 'paused',
     });
     runStates.set(input.conversation.id, { type: 'paused', reason: 'recovery_required' });
-    await persist();
     if (input.providerTurnId) {
       try {
         await options.manager.interruptTurn({ threadId: input.threadId, turnId: input.providerTurnId });
@@ -2178,7 +2183,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   async function handleProviderEvent(event: CodexAppServerEvent): Promise<void> {
     if (closed) return;
     const identity = eventIdentity(event);
-    if (processedEvents.has(identity)) return;
+    if (hasProcessedProviderEvent(event, identity)) return;
     const params = isRecord(event.params) ? event.params : {};
     const threadId = typeof params.threadId === 'string' ? params.threadId : null;
     const conversation = threadId ? options.conversations.getByProviderThreadId(threadId) : undefined;
@@ -2885,8 +2890,9 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       }
     }
 
-    processedEvents.add(identity);
-    options.settings.setJson(processedEventsSettingKey, [...processedEvents].slice(-10_000));
+    receipts.record(providerEventReceipt(event, identity));
+    maintainProviderReceiptGenerations(event.generationId);
+    rememberProcessedProviderEvent(event, identity);
     if (requiresImmediatePersist(event, createdPlanImplementationRequest)) {
       scheduledPersistDirty = true;
       await flushScheduledPersist();
@@ -2967,8 +2973,10 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
           });
         }
       }
-      processedEvents.add(eventIdentity(event));
-      options.settings.setJson(processedEventsSettingKey, [...processedEvents].slice(-10_000));
+      const identity = eventIdentity(event);
+      receipts.record(providerEventReceipt(event, identity));
+      maintainProviderReceiptGenerations(event.generationId);
+      rememberProcessedProviderEvent(event, identity);
       await persist();
       options.broadcast(conversation ? 'conversation.native.error' : 'codex.native.error', errorEntry);
     } catch (diagnosticError) {
@@ -2984,6 +2992,33 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         // Provider 监听器异常不得污染 manager 的后续事件链。
       }
     }
+  }
+
+  function hasProcessedProviderEvent(event: CodexAppServerEvent, identity: string): boolean {
+    if (hotReceiptGenerationId === event.generationId && hotReceiptIdentities.has(identity)) return true;
+    if (!receipts.has(identity)) return false;
+    rememberProcessedProviderEvent(event, identity);
+    return true;
+  }
+
+  function rememberProcessedProviderEvent(event: CodexAppServerEvent, identity: string): void {
+    if (hotReceiptGenerationId !== event.generationId) {
+      hotReceiptGenerationId = event.generationId;
+      hotReceiptIdentities.clear();
+    }
+    hotReceiptIdentities.add(identity);
+    while (hotReceiptIdentities.size > providerEventHotReceiptLimit) {
+      const oldestIdentity = hotReceiptIdentities.values().next().value;
+      if (typeof oldestIdentity !== 'string') break;
+      hotReceiptIdentities.delete(oldestIdentity);
+    }
+  }
+
+  function maintainProviderReceiptGenerations(generationId: string): void {
+    if (maintainedReceiptGenerations.has(generationId)) return;
+    maintainedReceiptGenerations.add(generationId);
+    const retiredGenerationIds = receipts.listGenerationIds().filter((candidate) => candidate !== generationId && !options.manager.hasGeneration(candidate));
+    receipts.deleteGenerations(retiredGenerationIds);
   }
 
   function beginHandoff(waiterError: Error): Promise<void> {
@@ -3240,6 +3275,21 @@ function permissionModeFromValue(value: unknown, fallback: ConversationPermissio
 function eventIdentity(event: CodexAppServerEvent): string {
   const params = isRecord(event.params) ? event.params : {};
   return [event.generationId, event.sequence, event.method, params.threadId ?? '', providerTurnIdFrom(params) ?? '', providerItemIdFrom(params) ?? '', event.requestId ?? ''].join('|');
+}
+
+function providerEventReceipt(event: CodexAppServerEvent, identity: string): ProviderEventReceiptInput {
+  const params = isRecord(event.params) ? event.params : {};
+  return {
+    identity,
+    generationId: event.generationId,
+    sequence: event.sequence,
+    method: event.method,
+    threadId: typeof params.threadId === 'string' ? params.threadId : null,
+    providerTurnId: providerTurnIdFrom(params),
+    providerItemId: providerItemIdFrom(params),
+    requestId: event.requestId === undefined ? null : String(event.requestId),
+    receivedAt: event.receivedAt,
+  };
 }
 
 function providerTurnIdFrom(params: Record<string, unknown>): string | null {

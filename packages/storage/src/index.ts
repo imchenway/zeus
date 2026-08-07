@@ -1,8 +1,9 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, rename, stat, statfs, unlink } from 'node:fs/promises';
 import { dirname } from 'node:path';
+import { backup, DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import { nanoid } from 'nanoid';
-import initSqlJs, { type Database, type SqlJsStatic, type SqlValue } from 'sql.js';
+import initSqlJs, { type Database as SqlJsDatabase, type SqlJsStatic, type SqlValue as SqlJsValue } from 'sql.js';
 import {
   type ConversationResourceKind,
   type ConversationResourcePresentation,
@@ -22,6 +23,7 @@ export * from './commands.js';
 
 export { isTaskManagementStatus, isTaskPriority, isTaskType };
 export type { TaskManagementStatus, TaskPriority, TaskType };
+export type SqlValue = SQLInputValue;
 
 export interface ZeusProjectRecord {
   id: string;
@@ -1058,6 +1060,13 @@ const builtInTaskTemplates = [
   },
 ] as const;
 
+const NATIVE_SQLITE_MIGRATION_ID = '20260808_0001_native_sqlite_wal';
+const PROVIDER_EVENT_RECEIPTS_MIGRATION_ID = '20260808_0002_provider_event_receipts';
+const NATIVE_SQLITE_BACKUP_SUFFIX = '.pre-native-sqlite.bak';
+const SQLITE_BUSY_TIMEOUT_MS = 5_000;
+const SQLITE_BACKUP_FREE_SPACE_RESERVE_BYTES = 64 * 1024 * 1024;
+const LEGACY_PROCESSED_PROVIDER_EVENTS_SETTING_KEY = 'codex.native.processed_provider_events';
+
 let sqlModulePromise: Promise<SqlJsStatic> | undefined;
 
 /** 加载 sql.js SQLite 引擎；保持单例，避免每次打开数据库都重复初始化 wasm。 */
@@ -1071,27 +1080,29 @@ export class ZeusDatabase {
   private requestedSaveRevision = 0;
   private persistedSaveRevision = 0;
   private saveLoop: Promise<void> | null = null;
+  private savepointSequence = 0;
+  private savepointDepth = 0;
+  private closed = false;
+  private writeFailure: Error | null = null;
 
-  constructor(
-    private readonly db: Database,
-    private readonly filePath: string,
-  ) {}
+  constructor(private readonly db: DatabaseSync) {}
 
   execute(sql: string, params: SqlValue[] = []): void {
-    this.db.run(sql, params);
+    this.assertWritable();
+    if (isSqlTransactionControl(sql)) {
+      throw new Error('ZeusDatabase.execute 不接受事务控制语句，请使用 transaction() 或 save()。');
+    }
+    this.ensurePendingTransaction();
+    if (params.length === 0) {
+      this.db.exec(sql);
+      return;
+    }
+    this.db.prepare(sql).run(...params);
   }
 
   select<T>(sql: string, params: SqlValue[] = []): T[] {
-    const stmt = this.db.prepare(sql, params);
-    const rows: T[] = [];
-    try {
-      while (stmt.step()) {
-        rows.push(stmt.getAsObject() as T);
-      }
-    } finally {
-      stmt.free();
-    }
-    return rows;
+    this.assertOpen();
+    return this.db.prepare(sql).all(...params) as unknown as T[];
   }
 
   get<T>(sql: string, params: SqlValue[] = []): T | undefined {
@@ -1106,7 +1117,8 @@ export class ZeusDatabase {
   }
 
   async save(): Promise<void> {
-    await mkdir(dirname(this.filePath), { recursive: true });
+    this.assertWritable();
+    if (this.savepointDepth > 0) throw new Error('事务回调执行期间不能调用 ZeusDatabase.save()。');
     const requestedRevision = ++this.requestedSaveRevision;
     while (this.persistedSaveRevision < requestedRevision) {
       if (!this.saveLoop) {
@@ -1121,35 +1133,111 @@ export class ZeusDatabase {
   }
 
   /**
-   * 同一时刻只允许一个完整数据库导出；并发保存合并到当前写入后的至多一次补写。
-   * 临时文件与正式库位于同一目录，rename 后磁盘上不会暴露半写数据库。
+   * 同一时刻只提交一个待持久事务；并发保存会合并到当前提交后的至多一次补提交流程。
+   * SQLite WAL 只追加变化页，不再生成或替换完整数据库文件。
    */
   private async runSaveLoop(): Promise<void> {
     while (this.persistedSaveRevision < this.requestedSaveRevision) {
       const targetRevision = this.requestedSaveRevision;
-      const temporaryPath = `${this.filePath}.saving-${process.pid}-${randomUUID()}`;
       try {
-        await writeFile(temporaryPath, Buffer.from(this.db.export()), { mode: 0o600 });
-        await rename(temporaryPath, this.filePath);
+        if (this.db.isTransaction) this.db.exec('COMMIT');
         this.persistedSaveRevision = targetRevision;
       } catch (error) {
-        await unlink(temporaryPath).catch(() => undefined);
-        throw error;
+        this.writeFailure = storageWriteError('Zeus SQLite 提交失败，存储已进入只读故障态。', error);
+        throw this.writeFailure;
       }
     }
   }
 
   transaction<T>(operation: () => T): T {
-    this.execute('BEGIN');
+    this.assertWritable();
+    this.ensurePendingTransaction();
+    const savepointName = `zeus_transaction_${++this.savepointSequence}`;
+    this.db.exec(`SAVEPOINT ${savepointName}`);
+    this.savepointDepth += 1;
     try {
       const result = operation();
-      this.execute('COMMIT');
+      if (result instanceof Promise) throw new Error('ZeusDatabase.transaction 只接受同步事务回调。');
+      this.db.exec(`RELEASE SAVEPOINT ${savepointName}`);
       return result;
     } catch (error) {
-      this.execute('ROLLBACK');
+      try {
+        this.db.exec(`ROLLBACK TO SAVEPOINT ${savepointName}`);
+        this.db.exec(`RELEASE SAVEPOINT ${savepointName}`);
+      } catch (rollbackError) {
+        this.writeFailure = storageWriteError('Zeus SQLite 保存点回滚失败，存储已进入只读故障态。', rollbackError);
+        throw new AggregateError([error, this.writeFailure], 'Zeus SQLite 事务与回滚同时失败。');
+      }
       throw error;
+    } finally {
+      this.savepointDepth -= 1;
     }
   }
+
+  /** 正常关闭会先提交、截断 WAL，再释放数据库句柄。 */
+  async close(): Promise<void> {
+    if (this.closed) return;
+    const errors: unknown[] = [];
+    try {
+      await this.save();
+    } catch (error) {
+      errors.push(error);
+    }
+    if (errors.length === 0) {
+      try {
+        this.db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+    if (this.db.isTransaction) {
+      try {
+        this.db.exec('ROLLBACK');
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+    try {
+      this.db.close();
+      this.closed = true;
+    } catch (error) {
+      errors.push(error);
+    }
+    if (errors.length === 1) throw errors[0];
+    if (errors.length > 1) throw new AggregateError(errors, 'Zeus SQLite 关闭失败。');
+  }
+
+  /** 启动失败时丢弃未提交变化，正式运行路径不得调用。 */
+  discardAndClose(): void {
+    if (this.closed) return;
+    try {
+      if (this.db.isTransaction) this.db.exec('ROLLBACK');
+    } finally {
+      this.db.close();
+      this.closed = true;
+    }
+  }
+
+  private ensurePendingTransaction(): void {
+    if (!this.db.isTransaction) this.db.exec('BEGIN IMMEDIATE');
+  }
+
+  private assertOpen(): void {
+    if (this.closed || !this.db.isOpen) throw new Error('Zeus SQLite 已关闭。');
+  }
+
+  private assertWritable(): void {
+    this.assertOpen();
+    if (this.writeFailure) throw this.writeFailure;
+  }
+}
+
+function isSqlTransactionControl(sql: string): boolean {
+  return /^\s*(?:BEGIN|COMMIT|ROLLBACK|SAVEPOINT|RELEASE)\b/iu.test(sql);
+}
+
+function storageWriteError(message: string, cause: unknown): Error {
+  return cause instanceof Error ? new Error(`${message} ${cause.message}`, { cause }) : new Error(`${message} ${String(cause)}`);
 }
 
 export interface SqliteSchemaIntrospectionSnapshot {
@@ -1196,18 +1284,18 @@ export async function introspectSqliteSchema(filePath: string): Promise<SqliteSc
   }
 }
 
-function selectSqliteObjects(sqlite: Database, sql: string): Array<Record<string, SqlValue>> {
+function selectSqliteObjects(sqlite: SqlJsDatabase, sql: string): Array<Record<string, SqlJsValue>> {
   const stmt = sqlite.prepare(sql);
-  const rows: Array<Record<string, SqlValue>> = [];
+  const rows: Array<Record<string, SqlJsValue>> = [];
   try {
-    while (stmt.step()) rows.push(stmt.getAsObject() as Record<string, SqlValue>);
+    while (stmt.step()) rows.push(stmt.getAsObject() as Record<string, SqlJsValue>);
   } finally {
     stmt.free();
   }
   return rows;
 }
 
-function renderSqliteCreateTable(sqlite: Database, tableName: string): string {
+function renderSqliteCreateTable(sqlite: SqlJsDatabase, tableName: string): string {
   const columns = selectSqliteObjects(sqlite, `PRAGMA table_info(${quoteSqliteIdentifier(tableName)})`);
   const foreignKeys = selectSqliteObjects(sqlite, `PRAGMA foreign_key_list(${quoteSqliteIdentifier(tableName)})`);
   const columnLines = columns.map((column) => {
@@ -1224,7 +1312,7 @@ function renderSqliteCreateTable(sqlite: Database, tableName: string): string {
   return `CREATE TABLE ${quoteSqliteIdentifier(tableName)} (\n${[...columnLines, ...foreignKeyLines].join(',\n')}\n)`;
 }
 
-function renderSqliteCreateIndexes(sqlite: Database, tableName: string): SqliteSchemaIntrospectionSnapshot['statements'] {
+function renderSqliteCreateIndexes(sqlite: SqlJsDatabase, tableName: string): SqliteSchemaIntrospectionSnapshot['statements'] {
   return selectSqliteObjects(sqlite, `PRAGMA index_list(${quoteSqliteIdentifier(tableName)})`)
     .filter((index) => String(index.origin ?? 'c') === 'c')
     .flatMap((index) => {
@@ -1251,29 +1339,213 @@ function quoteSqliteIdentifier(value: string): string {
 
 /** 创建或打开 Zeus SQLite 数据库，并执行幂等迁移；不会写入任何 seed 业务记录。 */
 export async function createZeusDatabase(filePath: string): Promise<ZeusDatabase> {
-  const SQL = await loadSqlModule();
-  let db: Database;
-  try {
-    const bytes = await readFile(filePath);
-    db = new SQL.Database(bytes);
-  } catch {
-    db = new SQL.Database();
+  const parentPath = dirname(filePath);
+  await mkdir(parentPath, { recursive: true, mode: 0o700 });
+  const databaseExists = await pathExists(filePath);
+
+  if (databaseExists) {
+    const sourceDb = openNativeSqlite(filePath, true);
+    try {
+      assertDatabaseQuickCheck(sourceDb, '现有 Zeus 数据库');
+      if (!hasNativeSqliteMigration(sourceDb)) await ensureNativeSqliteBackup(sourceDb, filePath);
+    } finally {
+      sourceDb.close();
+    }
   }
-  const zeusDb = new ZeusDatabase(db, filePath);
-  migrateCoreSchema(zeusDb);
-  migrateRetiredUnitTestTemplate(zeusDb);
-  migrateTaskManagementStatus(zeusDb);
-  migrateTaskTypesAndContents(zeusDb);
-  migrateCodexNativeConversationSchema(zeusDb);
-  migrateConversationStageSchema(zeusDb);
-  migrateAgentRuntimeSchema(zeusDb);
-  migrateTaskGitWorkspaceSchema(zeusDb);
-  migrateMultiRepositoryTaskSchema(zeusDb);
-  migrateCodexLegacyImportSchema(zeusDb);
-  migrateMcpServerIdentifierFalsePositiveCleanup(zeusDb);
-  migrateContextCompactionItemClassification(zeusDb);
-  migrateCommandCenterSchema(zeusDb);
-  return zeusDb;
+
+  const nativeDb = openNativeSqlite(filePath, false);
+  try {
+    await chmod(filePath, 0o600);
+    configureNativeSqlite(nativeDb);
+  } catch (error) {
+    nativeDb.close();
+    throw error;
+  }
+
+  const zeusDb = new ZeusDatabase(nativeDb);
+  try {
+    migrateCoreSchema(zeusDb);
+    migrateRetiredUnitTestTemplate(zeusDb);
+    migrateTaskManagementStatus(zeusDb);
+    migrateTaskTypesAndContents(zeusDb);
+    migrateCodexNativeConversationSchema(zeusDb);
+    migrateConversationStageSchema(zeusDb);
+    migrateAgentRuntimeSchema(zeusDb);
+    migrateTaskGitWorkspaceSchema(zeusDb);
+    migrateMultiRepositoryTaskSchema(zeusDb);
+    migrateCodexLegacyImportSchema(zeusDb);
+    migrateMcpServerIdentifierFalsePositiveCleanup(zeusDb);
+    migrateContextCompactionItemClassification(zeusDb);
+    migrateCommandCenterSchema(zeusDb);
+    migrateProviderEventReceipts(zeusDb);
+    recordSchemaMigration(zeusDb, {
+      migrationId: NATIVE_SQLITE_MIGRATION_ID,
+      description: '切换为原生 SQLite WAL 增量持久化',
+      checksumSource: 'node:sqlite,WAL,synchronous=FULL,busy_timeout=5000,wal_autocheckpoint=1000',
+    });
+    await zeusDb.save();
+    assertDatabaseQuickCheck(nativeDb, '迁移后的 Zeus 数据库');
+    return zeusDb;
+  } catch (error) {
+    zeusDb.discardAndClose();
+    throw error;
+  }
+}
+
+function openNativeSqlite(filePath: string, readOnly: boolean): DatabaseSync {
+  return new DatabaseSync(filePath, {
+    readOnly,
+    timeout: SQLITE_BUSY_TIMEOUT_MS,
+    enableForeignKeyConstraints: true,
+    enableDoubleQuotedStringLiterals: false,
+    allowExtension: false,
+  });
+}
+
+function configureNativeSqlite(db: DatabaseSync): void {
+  const journalMode = db.prepare('PRAGMA journal_mode = WAL').get();
+  if (String(journalMode?.journal_mode ?? '').toLowerCase() !== 'wal') throw new Error('Zeus SQLite 无法启用 WAL，已中止启动。');
+  db.exec(`PRAGMA synchronous = FULL`);
+  db.exec(`PRAGMA foreign_keys = ON`);
+  db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+  db.exec(`PRAGMA wal_autocheckpoint = 1000`);
+  db.enableDefensive(true);
+}
+
+function hasNativeSqliteMigration(db: DatabaseSync): boolean {
+  const ledger = db.prepare(`SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'`).get();
+  if (!ledger) return false;
+  return Boolean(db.prepare(`SELECT 1 AS present FROM schema_migrations WHERE migration_id = ?`).get(NATIVE_SQLITE_MIGRATION_ID));
+}
+
+async function ensureNativeSqliteBackup(sourceDb: DatabaseSync, filePath: string): Promise<void> {
+  const backupPath = `${filePath}${NATIVE_SQLITE_BACKUP_SUFFIX}`;
+  const sourcePageCount = sqlitePageCount(sourceDb);
+  if (await pathExists(backupPath)) {
+    const existingBackup = openNativeSqlite(backupPath, true);
+    try {
+      assertDatabaseQuickCheck(existingBackup, '现有原生 SQLite 迁移备份');
+      if (sqlitePageCount(existingBackup) !== sourcePageCount) throw new Error(`原生 SQLite 迁移备份与源数据库页数不一致：${backupPath}`);
+      return;
+    } finally {
+      existingBackup.close();
+    }
+  }
+
+  const sourceStats = await stat(filePath);
+  const filesystemStats = await statfs(dirname(filePath));
+  const availableBytes = filesystemStats.bavail * filesystemStats.bsize;
+  const logicalDatabaseBytes = sourcePageCount * sqlitePageSize(sourceDb);
+  const requiredBytes = Math.max(sourceStats.size, logicalDatabaseBytes) + SQLITE_BACKUP_FREE_SPACE_RESERVE_BYTES;
+  if (availableBytes < requiredBytes) {
+    throw new Error(`原生 SQLite 迁移至少需要 ${requiredBytes} 字节可用空间，当前仅有 ${availableBytes} 字节。`);
+  }
+
+  const temporaryBackupPath = `${backupPath}.creating-${process.pid}-${randomUUID()}`;
+  try {
+    await backup(sourceDb, temporaryBackupPath);
+    await chmod(temporaryBackupPath, 0o600);
+    const createdBackup = openNativeSqlite(temporaryBackupPath, true);
+    try {
+      assertDatabaseQuickCheck(createdBackup, '新建原生 SQLite 迁移备份');
+      if (sqlitePageCount(createdBackup) !== sourcePageCount) throw new Error(`新建原生 SQLite 迁移备份与源数据库页数不一致：${temporaryBackupPath}`);
+    } finally {
+      createdBackup.close();
+    }
+    await rename(temporaryBackupPath, backupPath);
+  } catch (error) {
+    await unlink(temporaryBackupPath).catch(() => undefined);
+    throw error;
+  }
+}
+
+function sqlitePageCount(db: DatabaseSync): number {
+  const row = db.prepare('PRAGMA page_count').get();
+  const value = Number(row?.page_count ?? -1);
+  if (!Number.isSafeInteger(value) || value < 0) throw new Error('Zeus SQLite 无法读取数据库页数。');
+  return value;
+}
+
+function sqlitePageSize(db: DatabaseSync): number {
+  const row = db.prepare('PRAGMA page_size').get();
+  const value = Number(row?.page_size ?? 0);
+  if (!Number.isSafeInteger(value) || value <= 0) throw new Error('Zeus SQLite 无法读取数据库页大小。');
+  return value;
+}
+
+function assertDatabaseQuickCheck(db: DatabaseSync, label: string): void {
+  const rows = db.prepare('PRAGMA quick_check').all();
+  const messages = rows.flatMap((row) => Object.values(row)).map(String);
+  if (messages.length !== 1 || messages[0]?.toLowerCase() !== 'ok') throw new Error(`${label}完整性检查失败：${messages.join('; ') || '无检查结果'}`);
+}
+
+async function pathExists(filePath: string): Promise<boolean> {
+  try {
+    await stat(filePath);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    throw error;
+  }
+}
+
+function migrateProviderEventReceipts(db: ZeusDatabase): void {
+  db.execute(`
+    CREATE TABLE IF NOT EXISTS provider_event_receipts (
+      identity TEXT PRIMARY KEY,
+      generation_id TEXT NOT NULL,
+      sequence INTEGER NOT NULL,
+      method TEXT NOT NULL,
+      thread_id TEXT NOT NULL,
+      provider_turn_id TEXT NOT NULL,
+      provider_item_id TEXT NOT NULL,
+      request_id TEXT NOT NULL,
+      received_at TEXT NOT NULL,
+      UNIQUE (generation_id, sequence, method, thread_id, provider_turn_id, provider_item_id, request_id)
+    )
+  `);
+  db.execute(`CREATE INDEX IF NOT EXISTS idx_provider_event_receipts_generation_sequence ON provider_event_receipts(generation_id, sequence)`);
+  if (db.get<{ migration_id: string }>(`SELECT migration_id FROM schema_migrations WHERE migration_id = ?`, [PROVIDER_EVENT_RECEIPTS_MIGRATION_ID])) return;
+
+  const legacySetting = db.get<{ value_json: string }>(`SELECT value_json FROM settings WHERE key = ?`, [LEGACY_PROCESSED_PROVIDER_EVENTS_SETTING_KEY]);
+  if (legacySetting) {
+    let identities: unknown;
+    try {
+      identities = JSON.parse(legacySetting.value_json);
+    } catch (error) {
+      throw storageWriteError('历史 Provider 事件去重记录无法解析，已保留原数据并中止迁移。', error);
+    }
+    if (!Array.isArray(identities) || identities.some((identity) => typeof identity !== 'string' || !identity)) {
+      throw new Error('历史 Provider 事件去重记录格式非法，已保留原数据并中止迁移。');
+    }
+    const receipts = new ProviderEventReceiptRepository(db);
+    for (const identity of new Set(identities)) {
+      const [generationId = 'legacy', sequenceValue = '-1', method = 'legacy', threadId = '', providerTurnId = '', providerItemId = ''] = identity.split('|');
+      const parsedSequence = Number(sequenceValue);
+      receipts.record({
+        identity,
+        generationId,
+        sequence: Number.isSafeInteger(parsedSequence) ? parsedSequence : -1,
+        method,
+        threadId,
+        providerTurnId,
+        providerItemId,
+        // 旧格式以完整 identity 占位，避免两个不完整旧记录触发复合唯一键冲突。
+        requestId: identity,
+        receivedAt: nowIso(),
+      });
+    }
+    for (const identity of new Set(identities)) {
+      if (!receipts.has(identity)) throw new Error(`Provider 事件回执迁移校验失败：${identity}`);
+    }
+    db.execute(`DELETE FROM settings WHERE key = ?`, [LEGACY_PROCESSED_PROVIDER_EVENTS_SETTING_KEY]);
+  }
+
+  recordSchemaMigration(db, {
+    migrationId: PROVIDER_EVENT_RECEIPTS_MIGRATION_ID,
+    description: '将 Provider 事件去重记录迁移为逐行事务回执',
+    checksumSource: 'provider_event_receipts:identity,generation_id,sequence,method,thread_id,provider_turn_id,provider_item_id,request_id,received_at',
+  });
 }
 
 function migrateCoreSchema(db: ZeusDatabase): void {
@@ -1308,7 +1580,7 @@ function migrateCoreSchema(db: ZeusDatabase): void {
   try {
     db.execute(`ALTER TABLE projects ADD COLUMN default_template_id TEXT`);
   } catch {
-    // 列已存在时忽略；sql.js 不支持 ADD COLUMN IF NOT EXISTS。
+    // 列已存在时忽略；SQLite 不支持 ADD COLUMN IF NOT EXISTS。
   }
   db.execute(`
     CREATE TABLE IF NOT EXISTS tasks (
@@ -1411,7 +1683,7 @@ function migrateCoreSchema(db: ZeusDatabase): void {
     try {
       db.execute(statement);
     } catch {
-      // 列已存在时忽略；sql.js 不支持 ADD COLUMN IF NOT EXISTS。
+      // 列已存在时忽略；SQLite 不支持 ADD COLUMN IF NOT EXISTS。
     }
   }
 
@@ -1561,17 +1833,17 @@ function migrateCoreSchema(db: ZeusDatabase): void {
   try {
     db.execute(`ALTER TABLE task_templates ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0`);
   } catch {
-    // 列已存在时忽略；sql.js 不支持 ADD COLUMN IF NOT EXISTS。
+    // 列已存在时忽略；SQLite 不支持 ADD COLUMN IF NOT EXISTS。
   }
   try {
     db.execute(`ALTER TABLE task_templates ADD COLUMN category TEXT NOT NULL DEFAULT 'general'`);
   } catch {
-    // 列已存在时忽略；sql.js 不支持 ADD COLUMN IF NOT EXISTS。
+    // 列已存在时忽略；SQLite 不支持 ADD COLUMN IF NOT EXISTS。
   }
   try {
     db.execute(`ALTER TABLE task_templates ADD COLUMN default_options_json TEXT NOT NULL DEFAULT '{}'`);
   } catch {
-    // 列已存在时忽略；sql.js 不支持 ADD COLUMN IF NOT EXISTS。
+    // 列已存在时忽略；SQLite 不支持 ADD COLUMN IF NOT EXISTS。
   }
 
   const timestamp = nowIso();
@@ -1713,7 +1985,7 @@ function migrateTaskGitWorkspaceSchema(db: ZeusDatabase): void {
   try {
     db.execute(`ALTER TABLE conversations ADD COLUMN workspace_id TEXT`);
   } catch {
-    // 新库可能已经完成迁移；sql.js 不支持 ADD COLUMN IF NOT EXISTS。
+    // 新库可能已经完成迁移；SQLite 不支持 ADD COLUMN IF NOT EXISTS。
   }
   db.execute(`CREATE INDEX IF NOT EXISTS idx_conversations_workspace_updated_at ON conversations(workspace_id, updated_at)`);
   db.execute(`
@@ -1751,7 +2023,7 @@ function migrateTaskGitWorkspaceSchema(db: ZeusDatabase): void {
     try {
       db.execute(statement);
     } catch {
-      // sql.js 不支持 ADD COLUMN IF NOT EXISTS；字段存在时保留当前数据。
+      // SQLite 不支持 ADD COLUMN IF NOT EXISTS；字段存在时保留当前数据。
     }
   }
   db.execute(`CREATE INDEX IF NOT EXISTS idx_task_integrations_task_state ON task_integrations(task_id, state, updated_at)`);
@@ -1832,7 +2104,7 @@ function migrateMultiRepositoryTaskSchema(db: ZeusDatabase): void {
     try {
       db.execute(statement);
     } catch {
-      // sql.js 不支持 ADD COLUMN IF NOT EXISTS；字段存在时保留当前数据。
+      // SQLite 不支持 ADD COLUMN IF NOT EXISTS；字段存在时保留当前数据。
     }
   }
 
@@ -1923,7 +2195,7 @@ function migrateCodexNativeConversationSchema(db: ZeusDatabase): void {
     try {
       db.execute(statement);
     } catch {
-      // sql.js 不支持 ADD COLUMN IF NOT EXISTS；重复打开数据库时忽略已存在字段。
+      // SQLite 不支持 ADD COLUMN IF NOT EXISTS；重复打开数据库时忽略已存在字段。
     }
   }
 
@@ -2062,7 +2334,7 @@ function migrateCodexNativeConversationSchema(db: ZeusDatabase): void {
     try {
       db.execute(statement);
     } catch {
-      // sql.js 不支持 ADD COLUMN IF NOT EXISTS；重复打开数据库时忽略已存在字段。
+      // SQLite 不支持 ADD COLUMN IF NOT EXISTS；重复打开数据库时忽略已存在字段。
     }
   }
   db.execute(`CREATE UNIQUE INDEX IF NOT EXISTS idx_conversation_messages_provider_item ON conversation_messages(conversation_id, provider_item_id) WHERE provider_item_id IS NOT NULL`);
@@ -2111,7 +2383,7 @@ function migrateConversationStageSchema(db: ZeusDatabase): void {
     try {
       db.execute(statement);
     } catch {
-      // sql.js 不支持 ADD COLUMN IF NOT EXISTS；字段存在时保持当前数据。
+      // SQLite 不支持 ADD COLUMN IF NOT EXISTS；字段存在时保持当前数据。
     }
   }
   db.execute(`CREATE INDEX IF NOT EXISTS idx_conversations_project_stage_updated_at ON conversations(project_id, stage_updated_at DESC, created_at DESC, id DESC)`);
@@ -2146,7 +2418,7 @@ function migrateAgentRuntimeSchema(db: ZeusDatabase): void {
     try {
       db.execute(statement);
     } catch {
-      // sql.js 不支持 ADD COLUMN IF NOT EXISTS；字段存在时保持当前数据。
+      // SQLite 不支持 ADD COLUMN IF NOT EXISTS；字段存在时保持当前数据。
     }
   }
 
@@ -2471,6 +2743,47 @@ function filterAndSortTasks(records: ZeusTaskRecord[], options: TaskListOptions)
     const rightValue = String(right[sortBy]);
     return leftValue.localeCompare(rightValue) * direction;
   });
+}
+
+export interface ProviderEventReceiptInput {
+  identity: string;
+  generationId: string;
+  sequence: number;
+  method: string;
+  threadId?: string | null;
+  providerTurnId?: string | null;
+  providerItemId?: string | null;
+  requestId?: string | null;
+  receivedAt: string;
+}
+
+/** Provider 回执和业务投影共用 ZeusDatabase 的待持久事务，避免去重状态与业务状态分裂。 */
+export class ProviderEventReceiptRepository {
+  constructor(private readonly db: ZeusDatabase) {}
+
+  has(identity: string): boolean {
+    return Boolean(this.db.get<{ identity: string }>(`SELECT identity FROM provider_event_receipts WHERE identity = ?`, [identity]));
+  }
+
+  record(input: ProviderEventReceiptInput): void {
+    this.db.execute(
+      `INSERT INTO provider_event_receipts
+         (identity, generation_id, sequence, method, thread_id, provider_turn_id, provider_item_id, request_id, received_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(identity) DO NOTHING`,
+      [input.identity, input.generationId, input.sequence, input.method, input.threadId ?? '', input.providerTurnId ?? '', input.providerItemId ?? '', input.requestId ?? '', input.receivedAt],
+    );
+  }
+
+  listGenerationIds(): string[] {
+    return this.db.select<{ generation_id: string }>(`SELECT DISTINCT generation_id FROM provider_event_receipts`).map((row) => row.generation_id);
+  }
+
+  deleteGenerations(generationIds: readonly string[]): void {
+    if (generationIds.length === 0) return;
+    const placeholders = generationIds.map(() => '?').join(', ');
+    this.db.execute(`DELETE FROM provider_event_receipts WHERE generation_id IN (${placeholders})`, [...generationIds]);
+  }
 }
 
 /** 设置仓储保存本机偏好与通知策略，不存储 token、密码等敏感明文。 */
@@ -5224,14 +5537,9 @@ export class ConversationSubmissionRepository {
     if (orderedSubmissionIds.length !== queued.length || new Set(orderedSubmissionIds).size !== queued.length || orderedSubmissionIds.some((id) => !queued.some((entry) => entry.id === id))) {
       throw Object.assign(new Error('Queued submission reorder must contain every queued or paused submission exactly once.'), { code: 'ZEUS_NATIVE_QUEUE_REORDER_INVALID' as const });
     }
-    this.db.execute('BEGIN');
-    try {
+    this.db.transaction(() => {
       orderedSubmissionIds.forEach((id, index) => this.db.execute(`UPDATE conversation_submissions SET queue_position = ?, updated_at = ? WHERE id = ? AND conversation_id = ?`, [index + 1, updatedAt, id, conversationId]));
-      this.db.execute('COMMIT');
-    } catch (error) {
-      this.db.execute('ROLLBACK');
-      throw error;
-    }
+    });
     return this.listByConversation(conversationId).filter((entry) => entry.status === 'queued' || entry.status === 'paused' || entry.status === 'failed');
   }
 
