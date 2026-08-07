@@ -174,19 +174,15 @@ export async function migrateLegacyCodexThreads(input: LegacyCodexThreadMigratio
       }
 
       try {
-        input.db.execute('BEGIN');
-        const conversation = existing ?? createImportedConversation(input, candidate);
-        importProviderSnapshot(input, candidate, conversation);
-        input.db.execute('COMMIT');
+        const conversation = input.db.transaction(() => {
+          const importedConversation = existing ?? createImportedConversation(input, candidate);
+          importProviderSnapshot(input, candidate, importedConversation);
+          return importedConversation;
+        });
         const entry = { sourceConversationId: source.id, runtimeSessionId: runtime.id, conversationId: conversation.id, providerThreadId };
         if (existing) report.existing.push(entry);
         else report.imported.push(entry);
       } catch {
-        try {
-          input.db.execute('ROLLBACK');
-        } catch {
-          // 原始失败仍是迁移诊断依据；回滚失败不得继续归档来源。
-        }
         sourceComplete = false;
         report.skipped.push({ sourceConversationId: source.id, runtimeSessionId: runtime.id, reason: 'provider_snapshot_import_failed' });
       }

@@ -129,9 +129,11 @@ import {
   ProjectRepository,
   ProjectRepositoryRegistrationRepository,
   ProjectSharedPathRepository,
+  ProviderEventReceiptRepository,
   type RuntimeLogStream,
   RuntimeSessionRepository,
   SettingRepository,
+  type SqlValue,
   TaskEnvironmentRepository,
   TaskEventRepository,
   TaskIntegrationRepository,
@@ -1840,8 +1842,21 @@ interface TelegramRuntimeConfirmation {
 
 /** 创建 Zeus 本地服务实例；监听动作由 Electron Main 决定。 */
 export async function createLocalServer(options: CreateLocalServerOptions): Promise<FastifyInstance> {
-  const taskAttachmentRoot = prepareTaskAttachmentRoot(options.taskAttachmentRoot);
   const db = await createZeusDatabase(options.dbPath);
+  try {
+    return await createLocalServerWithDatabase(options, db);
+  } catch (error) {
+    try {
+      db.discardAndClose();
+    } catch (closeError) {
+      throw new AggregateError([error, closeError], 'Zeus local-server 启动与数据库回滚关闭同时失败。');
+    }
+    throw error;
+  }
+}
+
+async function createLocalServerWithDatabase(options: CreateLocalServerOptions, db: ZeusDatabase): Promise<FastifyInstance> {
+  const taskAttachmentRoot = prepareTaskAttachmentRoot(options.taskAttachmentRoot);
   const attachmentRepair = repairMovedTaskAttachmentReferences(db, taskAttachmentRoot);
   if (attachmentRepair.repairedAttachmentCount > 0) {
     await db.save();
@@ -1873,6 +1888,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
   const conversationSubmissions = new ConversationSubmissionRepository(db);
   const conversationRequests = new ConversationServerRequestRepository(db);
   const conversationPlanActions = new ConversationPlanActionRepository(db);
+  const providerEventReceipts = new ProviderEventReceiptRepository(db);
   const idempotencyRequests = new IdempotencyRequestRepository(db);
   const gitSnapshots = new GitSnapshotRepository(db);
   const recoveredInterruptedScans = projects.recoverInterruptedScans();
@@ -1881,7 +1897,21 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     await db.save();
   }
   const server = Fastify({ logger: false });
-  await server.register(websocketPlugin);
+  let closeLocalServerResources: (() => Promise<void>) | null = null;
+  server.addHook('onClose', async () => {
+    if (closeLocalServerResources) await closeLocalServerResources();
+    else await db.close();
+  });
+  try {
+    await server.register(websocketPlugin);
+  } catch (error) {
+    try {
+      await server.close();
+    } catch (closeError) {
+      throw new AggregateError([error, closeError], 'Zeus local-server 初始化与数据库关闭同时失败。');
+    }
+    throw error;
+  }
   const projectRoot = options.projectRoot ?? process.cwd();
   const readGitStatus = getGitStatus;
   const readGitDiff = getGitDiff;
@@ -2095,6 +2125,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       submissions: conversationSubmissions,
       requests: conversationRequests,
       planActions: conversationPlanActions,
+      receipts: providerEventReceipts,
       settings,
       browserAutomation: options.browserAutomation,
       trustedAttachmentRoots: trustedConversationAttachmentRoots,
@@ -9492,7 +9523,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     return getTelegramPollingService() ? getTelegramPollingService()!.stop() : { running: false, offset: 0, lastError: null, handledUpdates: 0 };
   });
 
-  server.addHook('onClose', async () => {
+  closeLocalServerResources = async () => {
     const cleanupErrors: unknown[] = [];
     commandCenter.close();
     if (telegramPollingTimer) {
@@ -9531,9 +9562,14 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
         cleanupErrors.push(error);
       }
     }
+    try {
+      await db.close();
+    } catch (error) {
+      cleanupErrors.push(error);
+    }
     if (cleanupErrors.length === 1) throw cleanupErrors[0];
     if (cleanupErrors.length > 1) throw new AggregateError(cleanupErrors, 'Zeus local-server shutdown cleanup failed.');
-  });
+  };
 
   async function executeConfirmedGitOperationBody(body: ExecuteGitOperationBody | undefined, reply: FastifyReply): Promise<unknown> {
     if (!body?.confirmationId || !body.operation) {
@@ -15340,7 +15376,7 @@ async function toRuntimeStatus(runtimeSettings: RuntimeSettingsSnapshot): Promis
 
 function readGraphEdgeDetail(
   db: {
-    get: <T>(sql: string, params?: import('sql.js').SqlValue[]) => T | undefined;
+    get: <T>(sql: string, params?: SqlValue[]) => T | undefined;
   },
   edgeId: string,
 ): GraphEdgeDetail | undefined {
@@ -15376,8 +15412,8 @@ function readGraphEdgeDetail(
 
 function readGraphNeighborhood(
   db: {
-    get: <T>(sql: string, params?: import('sql.js').SqlValue[]) => T | undefined;
-    select: <T>(sql: string, params?: import('sql.js').SqlValue[]) => T[];
+    get: <T>(sql: string, params?: SqlValue[]) => T | undefined;
+    select: <T>(sql: string, params?: SqlValue[]) => T[];
   },
   nodeId: string,
   depth: number,
@@ -15522,7 +15558,7 @@ function searchGraphNodesInMemory(graph: ProjectGraph, rawQuery: string, nodeTyp
   };
 }
 
-function searchGraphNodes(db: { select: <T>(sql: string, params?: import('sql.js').SqlValue[]) => T[] }, rawQuery: string, nodeType?: string, edgeType?: string, rawMinConfidence?: string, projectName?: string): GraphSearchResult {
+function searchGraphNodes(db: { select: <T>(sql: string, params?: SqlValue[]) => T[] }, rawQuery: string, nodeType?: string, edgeType?: string, rawMinConfidence?: string, projectName?: string): GraphSearchResult {
   const { query, nodeType: normalizedType, edgeType: normalizedEdgeType, minConfidence } = normalizeGraphSearchFilters(rawQuery, nodeType, edgeType, rawMinConfidence);
   const rows = db.select<{
     id: string;
@@ -15598,8 +15634,8 @@ function searchGraphNodes(db: { select: <T>(sql: string, params?: import('sql.js
 
 function writeTaskCompletionToGraphNode(
   db: {
-    get: <T>(sql: string, params?: import('sql.js').SqlValue[]) => T | undefined;
-    execute: (sql: string, params?: import('sql.js').SqlValue[]) => void;
+    get: <T>(sql: string, params?: SqlValue[]) => T | undefined;
+    execute: (sql: string, params?: SqlValue[]) => void;
   },
   task: ZeusTaskRecord,
 ): { nodeId: string; sourceRef: string; taskId: string } | undefined {
@@ -15672,7 +15708,7 @@ function buildReadonlyGitChanges(diff: GitDiffSummary): Array<{
 
 function readGraphNodeById(
   db: {
-    get: <T>(sql: string, params?: import('sql.js').SqlValue[]) => T | undefined;
+    get: <T>(sql: string, params?: SqlValue[]) => T | undefined;
   },
   nodeId: string,
   projectName?: string,
@@ -15702,7 +15738,7 @@ function readGraphNodeById(
   };
 }
 
-function readGraphNodeIdsBySourceRef(db: { select: <T>(sql: string, params?: import('sql.js').SqlValue[]) => T[] }, sourceRef: string): string[] {
+function readGraphNodeIdsBySourceRef(db: { select: <T>(sql: string, params?: SqlValue[]) => T[] }, sourceRef: string): string[] {
   return db
     .select<{ id: string }>(
       `SELECT id
@@ -15714,7 +15750,7 @@ function readGraphNodeIdsBySourceRef(db: { select: <T>(sql: string, params?: imp
     .map((node) => node.id);
 }
 
-function readGraphEdgesByNodeId(db: { select: <T>(sql: string, params?: import('sql.js').SqlValue[]) => T[] }, nodeId: string, projectName?: string): GraphViewSnapshot['edges'] {
+function readGraphEdgesByNodeId(db: { select: <T>(sql: string, params?: SqlValue[]) => T[] }, nodeId: string, projectName?: string): GraphViewSnapshot['edges'] {
   return db
     .select<{
       id: string;
@@ -15743,8 +15779,8 @@ function readGraphEdgesByNodeId(db: { select: <T>(sql: string, params?: import('
 // 项目级图谱读取必须带 projectName 过滤，否则同 view_type 的第一条缓存会把 Zeus 图谱串到其他项目。
 function readGraphView(
   db: {
-    get: <T>(sql: string, params?: import('sql.js').SqlValue[]) => T | undefined;
-    select: <T>(sql: string, params?: import('sql.js').SqlValue[]) => T[];
+    get: <T>(sql: string, params?: SqlValue[]) => T | undefined;
+    select: <T>(sql: string, params?: SqlValue[]) => T[];
   },
   viewType: string,
   projectName?: string,
@@ -16050,7 +16086,7 @@ function readGraphSummary(db: { countRows: (tableName: string) => number }): {
 
 function readGraphSummaryByProject(
   db: {
-    get: <T>(sql: string, params?: import('sql.js').SqlValue[]) => T | undefined;
+    get: <T>(sql: string, params?: SqlValue[]) => T | undefined;
   },
   projectName: string,
 ): { nodeCount: number; edgeCount: number; viewCount: number } {
@@ -16838,7 +16874,7 @@ function stringArraysEqual(left: string[], right: string[]): boolean {
   return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
-function clearPersistedGraphCache(db: { execute: (sql: string, params?: import('sql.js').SqlValue[]) => void }, projectName: string): void {
+function clearPersistedGraphCache(db: { execute: (sql: string, params?: SqlValue[]) => void }, projectName: string): void {
   ensureGraphCacheTables(db);
   // 图缓存禁用时只返回本次扫描结果，不保留旧 SQLite 视图，避免 UI 读取到过期图谱。
   db.execute('DELETE FROM code_symbols WHERE project_name = ?', [projectName]);
@@ -16847,7 +16883,7 @@ function clearPersistedGraphCache(db: { execute: (sql: string, params?: import('
   db.execute('DELETE FROM graph_views WHERE project_name = ?', [projectName]);
 }
 
-function clearAllPersistedGraphCaches(db: { execute: (sql: string, params?: import('sql.js').SqlValue[]) => void }): void {
+function clearAllPersistedGraphCaches(db: { execute: (sql: string, params?: SqlValue[]) => void }): void {
   ensureGraphCacheTables(db);
   // 设置页缓存清理只删除可重建的代码索引/图谱/布局缓存，不触碰项目、任务、Runtime 日志或 Git 快照。
   db.execute('DELETE FROM code_symbols');
@@ -16890,7 +16926,7 @@ function compactProjectGraphForRuntimeCache(graph: ProjectGraph): ProjectGraph {
     edgeIds: view.edgeIds.filter((edgeId) => retainedConcreteEdgeIds.has(edgeId)),
     layout: {
       ...view.layout,
-      // 大型项目只把各视图实际可打开的节点坐标留进运行时缓存，防止 sql.js 在 Electron 主进程里为不可见全量符号撑爆内存。
+      // 大型项目只把各视图实际可打开的节点坐标留进运行时缓存，防止 Electron 主进程为不可见全量符号撑爆内存。
       positions: view.layout.positions.filter((position) => retainedConcreteNodeIds.has(position.nodeId)),
     },
   }));
@@ -16903,7 +16939,7 @@ function compactProjectGraphForRuntimeCache(graph: ProjectGraph): ProjectGraph {
   };
 }
 
-function ensureGraphCacheTables(db: { execute: (sql: string, params?: import('sql.js').SqlValue[]) => void }): void {
+function ensureGraphCacheTables(db: { execute: (sql: string, params?: SqlValue[]) => void }): void {
   db.execute(`
     CREATE TABLE IF NOT EXISTS code_symbols (
       id TEXT PRIMARY KEY,
@@ -16960,7 +16996,7 @@ function ensureGraphCacheTables(db: { execute: (sql: string, params?: import('sq
   `);
 }
 
-function persistScanAndGraph(db: { execute: (sql: string, params?: import('sql.js').SqlValue[]) => void }, scan: ProjectScanResult, graph: ProjectGraph): void {
+function persistScanAndGraph(db: { execute: (sql: string, params?: SqlValue[]) => void }, scan: ProjectScanResult, graph: ProjectGraph): void {
   ensureGraphCacheTables(db);
   db.execute('DELETE FROM code_symbols WHERE project_name = ?', [scan.projectName]);
   db.execute('DELETE FROM project_nodes WHERE project_name = ?', [scan.projectName]);
