@@ -237,21 +237,23 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       const text = messageText(message);
       if (!text) return;
       const itemId = `pi_message_${event.nativeRunId}`;
-      options.items.upsertCompleted({
+      const isToolUseStage = message.stopReason === 'toolUse';
+      const itemInput = {
         conversationId: run.conversationId,
         turnId: run.turnId,
         providerThreadId: event.nativeSessionId ?? '',
         providerTurnId: run.providerTurnId,
         providerItemId: itemId,
-        itemType: 'agentMessage',
-        phase: 'final_answer',
-        payload: { agentKind: 'pi' },
+        itemType: 'agentMessage' as const,
+        phase: isToolUseStage ? ('prework' as const) : ('final_answer' as const),
+        payload: { agentKind: 'pi', stopReason: message.stopReason },
         textContent: text,
-        completedAt: event.createdAt,
         updatedAt: event.createdAt,
-        agentKind: 'pi',
+        agentKind: 'pi' as const,
         nativeItemId: itemId,
-      });
+      };
+      if (isToolUseStage) options.items.upsertProgress({ ...itemInput, status: 'in_progress' });
+      else options.items.upsertCompleted({ ...itemInput, status: 'completed', completedAt: event.createdAt });
       options.conversations.appendMessage({
         conversationId: run.conversationId,
         role: 'assistant',
@@ -263,7 +265,15 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         providerTurnId: run.providerTurnId,
         providerItemId: itemId,
       });
-      publish('conversation.item.completed', run.conversationId, { turnId: run.providerTurnId, itemId, itemType: 'agentMessage', status: 'completed', phase: 'final_answer', textContent: text });
+      publish(isToolUseStage ? 'conversation.item.started' : 'conversation.item.completed', run.conversationId, {
+        turnId: run.providerTurnId,
+        itemId,
+        itemType: 'agentMessage',
+        itemPayload: { agentKind: 'pi', stopReason: message.stopReason },
+        status: isToolUseStage ? 'in_progress' : 'completed',
+        phase: isToolUseStage ? 'prework' : 'final_answer',
+        textContent: text,
+      });
     }
     if (event.type === 'agent_settled' || event.type === 'runtime_error') {
       const failed = event.type === 'runtime_error';
@@ -371,6 +381,25 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     return { text: result.stdout.trim() || '没有匹配结果。' };
   }
 
+  function repairPersistedAgentMessageProjections(): number {
+    let repaired = 0;
+    for (const conversation of options.conversations.listNativeBound()) {
+      for (const message of conversation.messages) {
+        if (message.role !== 'assistant' || message.source !== 'pi_sdk' || !message.providerThreadId || !message.providerItemId) continue;
+        const item = options.items.getByProvider(message.providerThreadId, message.providerItemId);
+        if (!item || item.agentKind !== 'pi' || item.itemType !== 'agentMessage' || item.status !== 'completed' || item.textContent === message.content) continue;
+        options.items.replaceCompletedPiAgentMessage({
+          providerThreadId: message.providerThreadId,
+          providerItemId: message.providerItemId,
+          textContent: message.content,
+          updatedAt: options.now(),
+        });
+        repaired += 1;
+      }
+    }
+    return repaired;
+  }
+
   async function requestApproval(context: PiConversationContext, request: PiZeusToolRequest): Promise<boolean> {
     const kind = request.toolName === 'bash' ? 'command' : 'file';
     const activeRun = [...runs.values()].reverse().find((candidate) => candidate.conversationId === context.conversationId);
@@ -412,6 +441,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
   }
 
   return {
+    repairPersistedAgentMessageProjections,
     startConversation,
     submitMessage,
     steerMessage,

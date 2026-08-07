@@ -95,7 +95,7 @@ import { BrowserSettingsPane } from './settings/BrowserSettingsPane.js';
 import { CodexRemoteControlSettings } from './settings/CodexRemoteControlSettings.js';
 import { ModelConnectionsSettingsPane } from './settings/ModelConnectionsSettingsPane.js';
 import { ProjectModelsSettings } from './settings/ProjectModelsSettings.js';
-import { type TaskAttachmentRestoreTarget, type TaskAttachmentView, toPersistedTaskAttachment } from './task/taskAttachments.js';
+import { type TaskAttachmentRestoreTarget, type TaskAttachmentView, type TaskResourceAuthorizationResult, type TaskResourcePayload, toPersistedTaskAttachment } from './task/taskAttachments.js';
 import {
   defaultTaskTableEnumSortOrders,
   filterVisibleTasks,
@@ -261,7 +261,6 @@ type TaskCreateDraft = {
   tags: string[];
   attachments: ReturnType<typeof toPersistedTaskAttachment>[];
 };
-type TaskResourcePayload = { name?: string; type?: string; data?: ArrayBuffer; text?: string; kind?: 'image' | 'file' | 'pasted_text' };
 type TaskModelPushNavigationTarget = {
   projectId?: string;
   activeNavTarget: MainNavTarget;
@@ -280,7 +279,6 @@ function taskModelPushNavigationTargetEqual(left: TaskModelPushNavigationTarget,
     left.taskDetailPaneTaskId === right.taskDetailPaneTaskId
   );
 }
-type TaskResourceAuthorizationResult = { resources: TaskCreateAttachment[]; failedCount: number };
 type NativeConversationAppClient = SessionControllerClient &
   Pick<
     DashboardClient,
@@ -292,6 +290,9 @@ type NativeConversationAppClient = SessionControllerClient &
     | 'loadTaskConversationChoices'
     | 'startNativeConversation'
     | 'loadCodexTaskPushCapabilities'
+    | 'loadCodexAccount'
+    | 'startCodexChatGptLogin'
+    | 'cancelCodexChatGptLogin'
     | 'startTaskModelPush'
     | 'loadModelConnections'
     | 'createModelConnection'
@@ -6808,6 +6809,8 @@ export function App(props: {
   } | null>(null);
   const [taskGitMergeTaskId, setTaskGitMergeTaskId] = useState<string | null>(null);
   const taskModelPushCapabilityRequestRef = useRef(0);
+  const taskModelPushLoginRequestRef = useRef(0);
+  const taskModelPushLoginIdRef = useRef<string | null>(null);
   const taskModelPushEnvelopeRef = useRef(new Map<string, { fingerprint: string; request: StartTaskModelPushRequest }>());
   const taskModelPushDispatchingTaskIdsRef = useRef(new Set<string>());
   const pendingProjectServiceTierPreferencesRef = useRef(new Map<string, { projectId: string; clientUserMessageId: string; selection: NativeServiceTierSelection }>());
@@ -8940,6 +8943,10 @@ export function App(props: {
 
   function closeTaskModelPush(): void {
     if (taskModelPushStatus === 'submitting') return;
+    taskModelPushLoginRequestRef.current += 1;
+    const loginId = taskModelPushLoginIdRef.current;
+    taskModelPushLoginIdRef.current = null;
+    if (loginId && props.nativeConversationClient) void props.nativeConversationClient.cancelCodexChatGptLogin(loginId).catch((error) => recordLocalError('codex-login-cancel', error));
     taskModelPushCapabilityRequestRef.current += 1;
     if (taskModelPushTaskId) taskModelPushEnvelopeRef.current.delete(taskModelPushTaskId);
     setTaskModelPushTaskId(null);
@@ -8951,33 +8958,110 @@ export function App(props: {
     event.preventDefault();
     const task = snapshot.tasks.find((candidate) => candidate.id === taskModelPushTaskId);
     const client = props.nativeConversationClient;
-    if (!task || !client || !taskModelPushCapabilities || taskModelPushStatus === 'submitting' || taskModelPushDispatchingTaskIdsRef.current.has(task.id)) return;
-    const fingerprint = JSON.stringify({ taskId: task.id, projectId: task.projectId, form: taskModelPushForm });
+    const capabilities = taskModelPushCapabilities;
+    const form = taskModelPushForm;
+    if (!task || !client || !capabilities || taskModelPushStatus === 'authenticating' || taskModelPushStatus === 'submitting' || taskModelPushDispatchingTaskIdsRef.current.has(task.id)) return;
+    const selectedModel = capabilities.models.find((model) => model.id === form.model || model.model === form.model);
+    if (selectedModel?.agentKind !== 'pi' && capabilities.codexAccount.requiresOpenaiAuth && !capabilities.codexAccount.signedIn) {
+      void authenticateCodexAndContinueTaskModelPush(task, client, capabilities, form);
+      return;
+    }
+    continueTaskModelPush(task, capabilities, form);
+  }
+
+  async function authenticateCodexAndContinueTaskModelPush(task: TaskRecord, client: NativeConversationAppClient, capabilities: CodexTaskPushCapabilities, form: TaskModelPushForm): Promise<void> {
+    const requestVersion = taskModelPushLoginRequestRef.current + 1;
+    taskModelPushLoginRequestRef.current = requestVersion;
+    taskModelPushLoginIdRef.current = null;
+    setTaskModelPushStatus('authenticating');
+    setTaskModelPushError(null);
+    try {
+      const login = await client.startCodexChatGptLogin();
+      if (taskModelPushLoginRequestRef.current !== requestVersion) {
+        await client.cancelCodexChatGptLogin(login.loginId).catch(() => undefined);
+        return;
+      }
+      taskModelPushLoginIdRef.current = login.loginId;
+      const opened = await openExternalHttpsUrlInMain({
+        zeus: typeof window === 'undefined' ? undefined : window.zeus,
+        url: login.authUrl,
+      });
+      if (!opened.opened) throw new Error('ZEUS_CODEX_LOGIN_BROWSER_OPEN_FAILED');
+
+      const deadline = Date.now() + 5 * 60_000;
+      while (Date.now() < deadline) {
+        if (taskModelPushLoginRequestRef.current !== requestVersion) return;
+        const account = await client.loadCodexAccount();
+        if (taskModelPushLoginRequestRef.current !== requestVersion) return;
+        if (account.signedIn || !account.requiresOpenaiAuth) {
+          taskModelPushLoginIdRef.current = null;
+          const updatedCapabilities = { ...capabilities, codexAccount: account };
+          setTaskModelPushCapabilities(updatedCapabilities);
+          setTaskModelPushStatus('ready');
+          continueTaskModelPush(task, updatedCapabilities, form);
+          return;
+        }
+        await new Promise<void>((resolve) => window.setTimeout(resolve, 800));
+      }
+      throw new Error('ZEUS_CODEX_LOGIN_TIMED_OUT');
+    } catch (error) {
+      if (taskModelPushLoginRequestRef.current !== requestVersion) return;
+      const loginId = taskModelPushLoginIdRef.current;
+      taskModelPushLoginIdRef.current = null;
+      if (loginId) await client.cancelCodexChatGptLogin(loginId).catch(() => undefined);
+      setTaskModelPushStatus('ready');
+      const message =
+        error instanceof Error && error.message === 'ZEUS_CODEX_LOGIN_BROWSER_OPEN_FAILED'
+          ? appShellSettings.appLanguage === 'zh-CN'
+            ? '无法安全打开官方登录页。请检查系统浏览器设置后重试。'
+            : 'The official sign-in page could not be opened safely. Check your browser settings and try again.'
+          : error instanceof Error && error.message === 'ZEUS_CODEX_LOGIN_TIMED_OUT'
+            ? appShellSettings.appLanguage === 'zh-CN'
+              ? '登录等待超时，当前配置已保留。请重新点击“登录并继续”。'
+              : 'Sign-in timed out. Your configuration was preserved; choose “Sign in and continue” to try again.'
+            : redactLocalUiErrorMessage(errorToLocalUiMessage(error));
+      setTaskModelPushError(message);
+    }
+  }
+
+  function cancelTaskModelPushAuthentication(): void {
+    const client = props.nativeConversationClient;
+    const loginId = taskModelPushLoginIdRef.current;
+    taskModelPushLoginRequestRef.current += 1;
+    taskModelPushLoginIdRef.current = null;
+    setTaskModelPushStatus('ready');
+    setTaskModelPushError(null);
+    if (client && loginId) void client.cancelCodexChatGptLogin(loginId).catch((error) => recordLocalError('codex-login-cancel', error));
+  }
+
+  function continueTaskModelPush(task: TaskRecord, capabilities: CodexTaskPushCapabilities, form: TaskModelPushForm): void {
+    if (taskModelPushDispatchingTaskIdsRef.current.has(task.id)) return;
+    const fingerprint = JSON.stringify({ taskId: task.id, projectId: task.projectId, form });
     const persistedEnvelope = taskModelPushEnvelopeRef.current.get(task.id);
     const request: StartTaskModelPushRequest =
       persistedEnvelope?.fingerprint === fingerprint
         ? persistedEnvelope.request
         : {
-            agentKind: taskModelPushCapabilities.models.find((model) => model.id === taskModelPushForm.model || model.model === taskModelPushForm.model)?.agentKind ?? 'codex',
+            agentKind: capabilities.models.find((model) => model.id === form.model || model.model === form.model)?.agentKind ?? 'codex',
             mode: 'create',
             source: 'task_push',
-            model: taskModelPushForm.model,
-            ...(taskModelPushForm.effort ? { effort: taskModelPushForm.effort } : {}),
-            ...serviceTierWireOverride(taskModelPushForm.serviceTier),
-            workMode: taskModelPushForm.workMode,
-            permissionMode: taskModelPushForm.permissionMode,
+            model: form.model,
+            ...(form.effort ? { effort: form.effort } : {}),
+            ...serviceTierWireOverride(form.serviceTier),
+            workMode: form.workMode,
+            permissionMode: form.permissionMode,
             workspace:
-              taskModelPushForm.workspaceMode === 'direct'
-                ? { mode: 'direct', confirmConcurrentWrites: taskModelPushForm.directConcurrencyConfirmed }
+              form.workspaceMode === 'direct'
+                ? { mode: 'direct', confirmConcurrentWrites: form.directConcurrencyConfirmed }
                 : {
                     mode: 'create',
-                    repositories: taskModelPushCapabilities.repositories.map((repository) => ({
+                    repositories: capabilities.repositories.map((repository) => ({
                       repositoryId: repository.id,
-                      sourceRef: taskModelPushForm.repositorySelections[repository.id]?.sourceRef ?? '',
-                      branchName: taskModelPushForm.repositorySelections[repository.id]?.branchName ?? '',
+                      sourceRef: form.repositorySelections[repository.id]?.sourceRef ?? '',
+                      branchName: form.repositorySelections[repository.id]?.branchName ?? '',
                     })),
                   },
-            ...(taskModelPushForm.supplementalInfo.trim() ? { supplementalInfo: taskModelPushForm.supplementalInfo.trim() } : {}),
+            ...(form.supplementalInfo.trim() ? { supplementalInfo: form.supplementalInfo.trim() } : {}),
             idempotencyKey: createSessionOperationId(),
             clientUserMessageId: createSessionOperationId(),
           };
@@ -8991,8 +9075,8 @@ export function App(props: {
         task,
         projectName: targetProject?.name ?? task.projectId,
         request,
-        form: taskModelPushForm,
-        prompt: buildTaskModelPushMessage(task, taskModelPushForm.supplementalInfo),
+        form,
+        prompt: buildTaskModelPushMessage(task, form.supplementalInfo),
       }),
       origin: taskModelPushNavigationRef.current,
     };
@@ -11588,6 +11672,7 @@ export function App(props: {
                 error={taskModelPushError}
                 onChange={setTaskModelPushForm}
                 onClose={closeTaskModelPush}
+                onCancelAuthentication={cancelTaskModelPushAuthentication}
                 onSubmit={(event) => void submitTaskModelPush(event)}
                 onLoadAttachmentPreview={props.onLoadTaskAttachmentPreview}
                 onOpenAttachment={props.onOpenTaskAttachment}
@@ -11645,6 +11730,9 @@ export function App(props: {
                     onDeleteTask={(taskId) => setTaskDeleteDialogTaskId(taskId)}
                     onManagementStatusChange={(taskId, status, expectedUpdatedAt) => updateTaskManagementStatus(taskId, status, { expectedUpdatedAt })}
                     onChooseAttachments={props.onChooseTaskAttachments}
+                    onAuthorizeFiles={props.onAuthorizeTaskFiles}
+                    onMaterializeResources={props.onMaterializeTaskResources}
+                    onReadClipboardResources={props.onReadTaskClipboardResources}
                     onReloadConversations={(taskId) => void refreshNativeConversationChoices(taskId)}
                     onLoadAttachmentPreview={props.onLoadTaskAttachmentPreview}
                     onOpenAttachment={props.onOpenTaskAttachment}

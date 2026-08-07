@@ -1,11 +1,12 @@
-import { useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import { isTaskPriority, type TaskAttachmentReference } from '@zeus/shared';
 import { ZeusApiError, type TaskEventRecord, type TaskManagementStatus, type TaskPriority, type TaskRecord, type TaskType, type UpdateTaskRelationshipsRequest, type UpdateTaskRequest } from '../apiClient.js';
 import type { NativeConversationChoice } from '../session/sessionTypes.js';
 import { Button } from '../ui/Button.js';
+import { PENDING_RESOURCE_LONG_TEXT_THRESHOLD } from '../ui/pendingResourcePolicy.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 import { TaskAttachmentPreviewList } from './TaskAttachmentPreviewList.js';
-import { mergeTaskAttachments, parseTaskAttachments, toPersistedTaskAttachment, type TaskAttachmentView } from './taskAttachments.js';
+import { mergeTaskAttachments, parseTaskAttachments, toPersistedTaskAttachment, type TaskAttachmentView, type TaskResourceAuthorizationResult, type TaskResourcePayload } from './taskAttachments.js';
 import { formatTaskSource, formatTaskType, formatTaskUpdatedAt, resolveTaskManagementStatus, taskManagementStatuses, taskTypes, type TaskSourceLabels } from './taskWorkspaceModel.js';
 
 export interface TaskDetailPaneCopy {
@@ -67,6 +68,9 @@ export interface TaskDetailPaneContentProps {
   onDeleteTask: (taskId: string) => void;
   onManagementStatusChange: (taskId: string, status: TaskManagementStatus, expectedUpdatedAt: string) => Promise<TaskEditResult | undefined>;
   onChooseAttachments?: () => Promise<TaskAttachmentView[]>;
+  onAuthorizeFiles?: (files: File[], source: 'paste') => Promise<TaskResourceAuthorizationResult>;
+  onMaterializeResources?: (resources: TaskResourcePayload[]) => Promise<TaskAttachmentView[]>;
+  onReadClipboardResources?: () => Promise<{ resources: TaskAttachmentView[]; text: string }>;
   onReloadConversations?: (taskId: string) => void;
   onLoadAttachmentPreview?: (path: string) => Promise<{ previewUrl: string; mimeType: string } | null>;
   onOpenAttachment?: (path: string) => Promise<{ opened: boolean; error?: string }>;
@@ -97,6 +101,17 @@ type TaskTypedContentField = {
   value: string;
   buildPatch: (value: string) => Omit<UpdateTaskRequest, 'expectedUpdatedAt'>;
   valueFromTask: (task: TaskRecord) => string;
+};
+
+type TaskAttachmentPasteRequest = {
+  files: File[];
+  plainText: string;
+  readNativeClipboard: boolean;
+};
+
+type TaskAttachmentPasteResult = {
+  insertText?: string;
+  updatedAt?: string;
 };
 
 const taskEditCopies: Record<'zh-CN' | 'en-US', TaskEditCopy> = {
@@ -149,6 +164,31 @@ function taskTagsDraft(tags: string[] | undefined): string {
   return (tags ?? []).join(', ');
 }
 
+function readTaskClipboardText(clipboardData: DataTransfer): string {
+  try {
+    return clipboardData.getData('text/plain');
+  } catch {
+    return '';
+  }
+}
+
+function taskClipboardFiles(clipboardData: DataTransfer): File[] {
+  const candidates = [
+    ...Array.from(clipboardData.files),
+    ...Array.from(clipboardData.items)
+      .filter((item) => item.kind === 'file')
+      .map((item) => item.getAsFile())
+      .filter((file): file is File => file !== null),
+  ];
+  const seen = new Set<string>();
+  return candidates.filter((file) => {
+    const fingerprint = `${file.name}:${file.type}:${file.size}:${file.lastModified}`;
+    if (seen.has(fingerprint)) return false;
+    seen.add(fingerprint);
+    return true;
+  });
+}
+
 function TaskEditFeedback(props: { state: TaskFieldSaveState; copy: TaskEditCopy; statusId: string; onRetry?: () => void; onLoadLatest?: () => void }) {
   if (props.state.kind !== 'error' && props.state.kind !== 'conflict') return null;
   const message = props.state.kind === 'conflict' ? props.copy.conflict : `${props.copy.saveFailed}：${props.state.message}`;
@@ -198,12 +238,14 @@ function InlineTaskTextField(props: {
   buildPatch: (value: string) => Omit<UpdateTaskRequest, 'expectedUpdatedAt'>;
   valueFromTask: (task: TaskRecord) => string;
   onSave: (input: UpdateTaskRequest) => Promise<TaskEditResult>;
+  onPasteResources?: (request: TaskAttachmentPasteRequest) => Promise<TaskAttachmentPasteResult>;
 }) {
   const statusId = `${useId()}-status`;
   const inputRef = useRef<HTMLInputElement | HTMLTextAreaElement | null>(null);
   const baseUpdatedAtRef = useRef(props.task.updatedAt ?? '');
   const composingRef = useRef(false);
   const suppressBlurRef = useRef(false);
+  const pasteShortcutFallbackTokenRef = useRef(0);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(props.value);
   const [saveState, setSaveState] = useState<TaskFieldSaveState>({ kind: 'idle' });
@@ -219,6 +261,13 @@ function InlineTaskTextField(props: {
     inputRef.current?.focus();
     if (inputRef.current instanceof HTMLInputElement) inputRef.current.select();
   }, [editing]);
+
+  useEffect(
+    () => () => {
+      pasteShortcutFallbackTokenRef.current += 1;
+    },
+    [],
+  );
 
   function beginEditing(): void {
     if (props.disabled) return;
@@ -276,6 +325,7 @@ function InlineTaskTextField(props: {
   }
 
   function handleKeyDown(event: ReactKeyboardEvent<HTMLInputElement | HTMLTextAreaElement>): void {
+    handlePasteShortcutFallback(event);
     if (event.key === 'Escape') {
       event.preventDefault();
       event.stopPropagation();
@@ -294,6 +344,62 @@ function InlineTaskTextField(props: {
       event.preventDefault();
       event.currentTarget.blur();
     }
+  }
+
+  function insertPastedText(control: HTMLInputElement | HTMLTextAreaElement, text: string, selectionStart: number, selectionEnd: number): void {
+    if (!text) return;
+    const nextCaretPosition = selectionStart + text.length;
+    setDraft((current) => `${current.slice(0, selectionStart)}${text}${current.slice(selectionEnd)}`);
+    window.requestAnimationFrame(() => {
+      if (document.activeElement !== control) return;
+      control.setSelectionRange(nextCaretPosition, nextCaretPosition);
+    });
+  }
+
+  async function applyPasteRequest(control: HTMLInputElement | HTMLTextAreaElement, request: TaskAttachmentPasteRequest, selectionStart: number, selectionEnd: number): Promise<void> {
+    if (!props.onPasteResources) {
+      insertPastedText(control, request.plainText, selectionStart, selectionEnd);
+      return;
+    }
+    const result = await props.onPasteResources(request);
+    if (result.updatedAt) baseUpdatedAtRef.current = result.updatedAt;
+    if (result.insertText) insertPastedText(control, result.insertText, selectionStart, selectionEnd);
+  }
+
+  function handlePasteShortcutFallback(event: ReactKeyboardEvent<HTMLInputElement | HTMLTextAreaElement>): void {
+    if (!props.onPasteResources || saveState.kind === 'saving' || typeof window === 'undefined') return;
+    if (event.key.toLowerCase() !== 'v' || (!event.metaKey && !event.ctrlKey) || event.altKey) return;
+    const control = event.currentTarget;
+    const selectionStart = control.selectionStart ?? control.value.length;
+    const selectionEnd = control.selectionEnd ?? selectionStart;
+    const fallbackToken = pasteShortcutFallbackTokenRef.current + 1;
+    pasteShortcutFallbackTokenRef.current = fallbackToken;
+    // Finder 与 Paste.app 有时只触发粘贴快捷键；正常 paste 到达时会取消这次原生兜底。
+    window.setTimeout(() => {
+      if (pasteShortcutFallbackTokenRef.current !== fallbackToken) return;
+      void applyPasteRequest(control, { files: [], plainText: '', readNativeClipboard: true }, selectionStart, selectionEnd)
+        .catch(() => undefined)
+        .finally(() => {
+          if (pasteShortcutFallbackTokenRef.current === fallbackToken) pasteShortcutFallbackTokenRef.current += 1;
+        });
+    }, 120);
+  }
+
+  function handlePaste(event: ReactClipboardEvent<HTMLInputElement | HTMLTextAreaElement>): void {
+    if (!props.onPasteResources || saveState.kind === 'saving') return;
+    pasteShortcutFallbackTokenRef.current += 1;
+    const control = event.currentTarget;
+    const selectionStart = control.selectionStart ?? control.value.length;
+    const selectionEnd = control.selectionEnd ?? selectionStart;
+    const request: TaskAttachmentPasteRequest = {
+      files: taskClipboardFiles(event.clipboardData),
+      plainText: readTaskClipboardText(event.clipboardData),
+      readNativeClipboard: true,
+    };
+    event.preventDefault();
+    void applyPasteRequest(control, request, selectionStart, selectionEnd).catch(() => {
+      if (request.files.length === 0) insertPastedText(control, request.plainText, selectionStart, selectionEnd);
+    });
   }
 
   function retrySave(): void {
@@ -316,7 +422,7 @@ function InlineTaskTextField(props: {
     'aria-busy': saveState.kind === 'saving' || undefined,
     'aria-invalid': saveState.kind === 'error' || saveState.kind === 'conflict' ? true : undefined,
     className: 'task-inline-edit-control',
-    disabled: props.disabled || saveState.kind === 'saving',
+    disabled: saveState.kind === 'saving',
     value: draft,
     onBlur: handleBlur,
     onChange: (event: { currentTarget: { value: string } }) => setDraft(event.currentTarget.value),
@@ -327,6 +433,7 @@ function InlineTaskTextField(props: {
       composingRef.current = false;
     },
     onKeyDown: handleKeyDown,
+    onPaste: handlePaste,
   };
 
   return (
@@ -459,7 +566,8 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
   const modelPushCreating = props.modelPushOperation?.status === 'submitting';
   const modelPushFailed = props.modelPushOperation?.status === 'failed';
   const attachmentStatusId = `${useId()}-status`;
-  const desiredAttachmentsRef = useRef<TaskAttachmentReference[]>([]);
+  const desiredAttachmentsRef = useRef<TaskAttachmentReference[]>(taskAttachments.map(toPersistedTaskAttachment));
+  const attachmentPasteRetryRef = useRef<(() => Promise<void>) | null>(null);
   const undoTimerRef = useRef<number | null>(null);
   const [attachmentSaveState, setAttachmentSaveState] = useState<TaskFieldSaveState>({ kind: 'idle' });
   const [undoAttachment, setUndoAttachment] = useState<TaskAttachmentView | null>(null);
@@ -470,9 +578,13 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
     setUndoAttachment(null);
     setRelationshipSaveState({ kind: 'idle' });
     setRelatedTaskCandidateId('');
-    desiredAttachmentsRef.current = [];
+    attachmentPasteRetryRef.current = null;
     if (undoTimerRef.current !== null) window.clearTimeout(undoTimerRef.current);
   }, [props.task.id]);
+  useEffect(() => {
+    if (attachmentSaveState.kind === 'saving' || attachmentSaveState.kind === 'error' || attachmentSaveState.kind === 'conflict') return;
+    desiredAttachmentsRef.current = parseTaskAttachments(props.task.sourceContextJson).map(toPersistedTaskAttachment);
+  }, [attachmentSaveState.kind, props.task.id, props.task.sourceContextJson]);
   useEffect(
     () => () => {
       if (undoTimerRef.current !== null) window.clearTimeout(undoTimerRef.current);
@@ -580,6 +692,89 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
     }
   }
 
+  function taskPasteErrorMessage(failedCount?: number): string {
+    if (failedCount && failedCount > 0) {
+      return zh ? `${failedCount} 个粘贴资源读取失败，请重试。` : `${failedCount} pasted resource(s) could not be read. Try again.`;
+    }
+    return zh ? '无法读取或保存粘贴附件，请重试。' : 'The pasted attachment could not be read or saved. Try again.';
+  }
+
+  async function pasteTaskDetailResources(request: TaskAttachmentPasteRequest): Promise<TaskAttachmentPasteResult> {
+    const retryOperation = async () => {
+      await pasteTaskDetailResources(request);
+    };
+    let additions: TaskAttachmentView[] = [];
+    let failedCount = 0;
+    let text = request.plainText;
+    let nativeReadFailed = false;
+
+    setAttachmentSaveState({ kind: 'saving' });
+    try {
+      if (request.readNativeClipboard && props.onReadClipboardResources) {
+        try {
+          const nativeResult = await props.onReadClipboardResources();
+          additions = nativeResult.resources;
+          text = nativeResult.text || text;
+        } catch {
+          nativeReadFailed = true;
+        }
+      }
+
+      if (additions.length === 0 && request.files.length > 0) {
+        if (!props.onAuthorizeFiles) throw new Error('Task attachment authorization is unavailable.');
+        const result = await props.onAuthorizeFiles(request.files, 'paste');
+        additions = result.resources;
+        failedCount = result.failedCount;
+      }
+
+      if (additions.length === 0 && text.length >= PENDING_RESOURCE_LONG_TEXT_THRESHOLD) {
+        if (!props.onMaterializeResources) throw new Error('Task attachment materialization is unavailable.');
+        additions = await props.onMaterializeResources([{ name: 'Pasted text.txt', type: 'text/plain', text, kind: 'pasted_text' }]);
+        if (additions.length === 0) throw new Error('Task attachment materialization returned no resource.');
+      }
+
+      if (additions.length === 0) {
+        if (failedCount > 0 || request.files.length > 0 || (nativeReadFailed && !text)) {
+          attachmentPasteRetryRef.current = retryOperation;
+          setAttachmentSaveState({ kind: 'error', message: taskPasteErrorMessage(failedCount || request.files.length) });
+          return {};
+        }
+        attachmentPasteRetryRef.current = null;
+        setAttachmentSaveState({ kind: 'idle' });
+        return { insertText: text };
+      }
+
+      const nextAttachments = mergeTaskAttachments(desiredAttachmentsRef.current, additions);
+      const result = await saveAttachmentReferences(nextAttachments, props.task.updatedAt ?? '');
+      if (!result) {
+        attachmentPasteRetryRef.current = null;
+        return {};
+      }
+      if (result.kind === 'conflict') {
+        attachmentPasteRetryRef.current = null;
+        return { updatedAt: result.latest.updatedAt };
+      }
+
+      if (failedCount > 0) {
+        attachmentPasteRetryRef.current = retryOperation;
+        setAttachmentSaveState({ kind: 'error', message: taskPasteErrorMessage(failedCount) });
+      } else {
+        attachmentPasteRetryRef.current = null;
+      }
+      return { updatedAt: result.task.updatedAt };
+    } catch {
+      const resourceLikePaste = request.files.length > 0 || text.length >= PENDING_RESOURCE_LONG_TEXT_THRESHOLD;
+      if (!resourceLikePaste && request.plainText) {
+        attachmentPasteRetryRef.current = null;
+        setAttachmentSaveState({ kind: 'idle' });
+        return { insertText: request.plainText };
+      }
+      attachmentPasteRetryRef.current = retryOperation;
+      setAttachmentSaveState({ kind: 'error', message: taskPasteErrorMessage() });
+      return {};
+    }
+  }
+
   async function chooseAttachments(): Promise<void> {
     if (!props.onChooseAttachments) return;
     try {
@@ -613,12 +808,17 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
   }
 
   function retryAttachmentSave(): void {
+    if (attachmentPasteRetryRef.current) {
+      void attachmentPasteRetryRef.current();
+      return;
+    }
     const expectedUpdatedAt = attachmentSaveState.kind === 'conflict' ? (attachmentSaveState.latest.updatedAt ?? '') : (props.task.updatedAt ?? '');
     void saveAttachmentReferences(desiredAttachmentsRef.current, expectedUpdatedAt);
   }
 
   function loadLatestAttachments(): void {
-    desiredAttachmentsRef.current = [];
+    desiredAttachmentsRef.current = taskAttachments.map(toPersistedTaskAttachment);
+    attachmentPasteRetryRef.current = null;
     setAttachmentSaveState({ kind: 'idle' });
   }
 
@@ -697,6 +897,7 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
             buildPatch={(title) => ({ title: title.trim() })}
             valueFromTask={(task) => task.title}
             onSave={(input) => props.onUpdateTaskContent(props.task.id, input)}
+            onPasteResources={pasteTaskDetailResources}
           />
         </span>
         <span className="task-detail-pane-status-control">
@@ -779,6 +980,7 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
             buildPatch={field.buildPatch}
             valueFromTask={field.valueFromTask}
             onSave={(input) => props.onUpdateTaskContent(props.task.id, input)}
+            onPasteResources={pasteTaskDetailResources}
           />
         </section>
       ))}
@@ -809,6 +1011,7 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
           buildPatch={(tags) => ({ tags: normalizeTaskTagsInput(tags) })}
           valueFromTask={(task) => taskTagsDraft(task.tags)}
           onSave={(input) => props.onUpdateTaskContent(props.task.id, input)}
+          onPasteResources={pasteTaskDetailResources}
         />
       </section>
 

@@ -397,7 +397,8 @@ function toPiModelConfig(model: ConfiguredModelDefinition) {
     name: model.displayName,
     reasoning: model.capability.reasoning.state === 'supported',
     thinkingLevelMap: Object.fromEntries([...piThinkingLevels].map((level) => [level, supportedLevels.has(level) ? level : null])),
-    input: model.capability.imageInput.state === 'supported' ? (['text', 'image'] as Array<'text' | 'image'>) : (['text'] as Array<'text' | 'image'>),
+    // 未验证不等于不支持；只有明确失败证据才能关闭图片入口。
+    input: model.capability.imageInput.state !== 'unsupported' ? (['text', 'image'] as Array<'text' | 'image'>) : (['text'] as Array<'text' | 'image'>),
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: model.contextWindow,
     maxTokens: model.maxTokens,
