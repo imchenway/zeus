@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 /* global console, process */
-import { existsSync } from 'node:fs';
-import { mkdir, readdir, rm } from 'node:fs/promises';
-import { homedir } from 'node:os';
-import { basename, dirname, join, resolve } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
-import { execFileSync, spawn } from 'node:child_process';
-import { verifyPackagedApp } from './verify-packaged-app-health.mjs';
+import {existsSync} from 'node:fs';
+import {mkdir, readdir, rm} from 'node:fs/promises';
+import {homedir} from 'node:os';
+import {basename, dirname, join, resolve} from 'node:path';
+import {fileURLToPath, pathToFileURL} from 'node:url';
+import {execFileSync, spawn} from 'node:child_process';
+import {verifyPackagedApp} from './verify-packaged-app-health.mjs';
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const rootDir = resolve(scriptDir, '..');
@@ -215,7 +215,8 @@ export async function packageMac() {
   const electronDist = await prepareElectronDist(version, arch);
   const appPath = packagedAppPathForArch(arch, variant, outputRoot);
   await assertPackagedAppIsNotRunning(appPath);
-  await run('pnpm', ['build'], { cwd: desktopDir });
+    // 打包必须从当前源码构建全部工作区依赖，不能依赖本机残留的包级 dist 目录。
+    await run('pnpm', ['build'], {cwd: rootDir});
   const packageEnv = buildMacNativeDependencyEnv(omitEmptyAppleReleaseEnvironment(process.env));
   const signingArgs = buildElectronBuilderSigningArgs(packageEnv);
   const electronDistArgs = electronDist ? [`--config.electronDist=${electronDist}`] : [];
