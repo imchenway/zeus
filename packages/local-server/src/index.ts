@@ -1,207 +1,176 @@
-import Fastify, {type FastifyInstance, type FastifyReply, type FastifyRequest} from 'fastify';
+import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import websocketPlugin from '@fastify/websocket';
-import {createHash, randomUUID} from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import { accessSync, appendFileSync, constants as fsConstants, cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { dirname, isAbsolute, join, parse, relative, resolve, sep } from 'node:path';
+import { getNextTaskStatus, type TaskStatus } from '@zeus/task-core';
 import {
-    accessSync,
-    appendFileSync,
-    constants as fsConstants,
-    cpSync,
-    existsSync,
-    lstatSync,
-    mkdirSync,
-    readdirSync,
-    readFileSync,
-    realpathSync,
-    rmSync,
-    statSync,
-    symlinkSync,
-    writeFileSync
-} from 'node:fs';
-import {dirname, isAbsolute, join, parse, relative, resolve, sep} from 'node:path';
-import {getNextTaskStatus, type TaskStatus} from '@zeus/task-core';
-import {
-    type CommandDefinition,
-    commandNeedsHighRiskConfirmation,
-    type ConversationResource,
-    type ConversationResourcePreview,
-    isTaskStatusFilter,
-    type TaskAttachmentReference,
-    type TaskStatusFilter,
-    validateCommandDefinitionInput,
+  type CommandDefinition,
+  commandNeedsHighRiskConfirmation,
+  type ConversationResource,
+  type ConversationResourcePreview,
+  isTaskStatusFilter,
+  type TaskAttachmentReference,
+  type TaskStatusFilter,
+  validateCommandDefinitionInput,
 } from '@zeus/shared';
-import {type ProjectScanResult, scanProjectSource} from '@zeus/code-indexer';
-import {buildProjectGraph, GRAPH_VIEW_SCHEMA_VERSION, type ProjectGraph} from '@zeus/graph-engine';
+import { type ProjectScanResult, scanProjectSource } from '@zeus/code-indexer';
+import { buildProjectGraph, GRAPH_VIEW_SCHEMA_VERSION, type ProjectGraph } from '@zeus/graph-engine';
+import { createDefaultProjectConfig, normalizeProjectConfig, type ProjectConfigSnapshot, type UpdateProjectConfigBody } from '@zeus/project-core';
 import {
-    createDefaultProjectConfig,
-    normalizeProjectConfig,
-    type ProjectConfigSnapshot,
-    type UpdateProjectConfigBody
-} from '@zeus/project-core';
-import {
-    type AutoUpdatePolicy,
-    buildAutoUpdatePolicy,
-    detectReleaseReadiness,
-    evaluateReleaseUpdateAvailability,
-    parseReleaseUpdateManifest,
-    type ReleaseReadiness,
-    type ReleaseUpdateArtifactArch,
-    type ReleaseUpdateManifest,
-    type ReleaseUpdateStatus,
+  type AutoUpdatePolicy,
+  buildAutoUpdatePolicy,
+  detectReleaseReadiness,
+  evaluateReleaseUpdateAvailability,
+  parseReleaseUpdateManifest,
+  type ReleaseReadiness,
+  type ReleaseUpdateArtifactArch,
+  type ReleaseUpdateManifest,
+  type ReleaseUpdateStatus,
 } from '@zeus/release-core';
 import {
-    type AiCliAdapterDescriptor,
-    type AiRuntimeLogEntry,
-    type AiRuntimeSession,
-    type AiRuntimeTerminalSnapshot,
-    buildAiRuntimePrompt,
-    checkAiCliAdapter,
-    type CodexAppServerManager,
-    type CodexRemoteControlClient,
-    type CodexRemoteControlPairing,
-    type CodexRemoteControlStatus,
-    createAgentCapabilityCatalog,
-    createAiRuntimeSessionManager,
-    createCodexAppServerManager,
-    createNonCodexAiCliAdapterInvocation,
-    createOptionalNodePtyRuntimeSpawn,
-    expandCliSearchPath,
-    isNonCodexAiCliAdapterId,
-    listAiCliAdapters,
-    type NonCodexAiCliAdapterId,
+  type AiCliAdapterDescriptor,
+  type AiRuntimeLogEntry,
+  type AiRuntimeSession,
+  type AiRuntimeTerminalSnapshot,
+  buildAiRuntimePrompt,
+  checkAiCliAdapter,
+  type CodexAppServerManager,
+  type CodexRemoteControlClient,
+  type CodexRemoteControlPairing,
+  type CodexRemoteControlStatus,
+  createAgentCapabilityCatalog,
+  createAiRuntimeSessionManager,
+  createCodexAppServerManager,
+  createNonCodexAiCliAdapterInvocation,
+  createOptionalNodePtyRuntimeSpawn,
+  expandCliSearchPath,
+  isNonCodexAiCliAdapterId,
+  listAiCliAdapters,
+  type NonCodexAiCliAdapterId,
 } from '@zeus/ai-runtime';
-import type {BrowserAutomationPort} from './browserAutomation.js';
-import {resolveConversationAttachmentGrant} from './conversationAttachmentGrant.js';
-import {createModelConnectionService, type SaveModelConnectionRequest} from './modelConnectionService.js';
-import {createPiNativeConversationCoordinator} from './piNativeConversationCoordinator.js';
-import {buildTaskConflictAiPrompt, parseTaskConflictAiAnswer, parseTaskConflictAiBlocks} from './taskConflictAi.js';
-import {createMacOSKeychainStore, getSecretPresenceLabel, type SecretPresenceLabel} from '@zeus/security-core';
+import type { BrowserAutomationPort } from './browserAutomation.js';
+import { resolveConversationAttachmentGrant } from './conversationAttachmentGrant.js';
+import { createModelConnectionService, type SaveModelConnectionRequest } from './modelConnectionService.js';
+import { createPiNativeConversationCoordinator } from './piNativeConversationCoordinator.js';
+import { buildTaskConflictAiPrompt, parseTaskConflictAiAnswer, parseTaskConflictAiBlocks } from './taskConflictAi.js';
+import { createMacOSKeychainStore, getSecretPresenceLabel, type SecretPresenceLabel } from '@zeus/security-core';
 import {
-    buildGitPatchExport,
-    buildTaskBranchName,
-    buildTaskEnvironmentRootPath,
-    cleanupPreparedTaskWorktree,
-    commitAndPushTaskWorkspace,
-    completeTaskIntegrationCommit,
-    confirmGitOperation,
-    createGitOperationConfirmation,
-    discardTaskWorktree,
-    discoverGitRepositories,
-    executeHighRiskGitOperation,
-    fetchGitRemote,
-    finalizeTaskBranchIntegration,
-    getGitBranchHead,
-    getGitDiff,
-    getGitRepositoryContext,
-    getGitStatus,
-    getGitWorkingContext,
-    getRemoteTrackingBranchHead,
-    getTaskBranchComparison,
-    getTaskBranchFileDiff,
-    getTaskWorkspaceFileDiff,
-    getTaskWorkspaceReview,
-    type GitDiffSummary,
-    type GitOperationConfirmation,
-    type GitPatchExport,
-    type GitStatusSummary,
-    type HighRiskGitOperation,
-    isGitConfirmationExpired,
-    prepareTaskWorktree,
-    pushTaskWorkspace,
-    readTaskIntegrationConflict,
-    reclaimDeliveredTaskWorktree,
-    reclaimTaskWorktree,
-    rejectGitOperation,
-    removeTaskWorktreeForTerminalStatus,
-    startTaskBranchIntegration,
-    writeTaskIntegrationResolution,
+  buildGitPatchExport,
+  buildTaskBranchName,
+  buildTaskEnvironmentRootPath,
+  cleanupPreparedTaskWorktree,
+  commitAndPushTaskWorkspace,
+  completeTaskIntegrationCommit,
+  confirmGitOperation,
+  createGitOperationConfirmation,
+  discardTaskWorktree,
+  discoverGitRepositories,
+  executeHighRiskGitOperation,
+  fetchGitRemote,
+  finalizeTaskBranchIntegration,
+  getGitBranchHead,
+  getGitDiff,
+  getGitRepositoryContext,
+  getGitStatus,
+  getGitWorkingContext,
+  getRemoteTrackingBranchHead,
+  getTaskBranchComparison,
+  getTaskBranchFileDiff,
+  getTaskWorkspaceFileDiff,
+  getTaskWorkspaceReview,
+  type GitDiffSummary,
+  type GitOperationConfirmation,
+  type GitPatchExport,
+  type GitStatusSummary,
+  type HighRiskGitOperation,
+  isGitConfirmationExpired,
+  prepareTaskWorktree,
+  pushTaskWorkspace,
+  readTaskIntegrationConflict,
+  reclaimDeliveredTaskWorktree,
+  reclaimTaskWorktree,
+  rejectGitOperation,
+  removeTaskWorktreeForTerminalStatus,
+  startTaskBranchIntegration,
+  writeTaskIntegrationResolution,
 } from '@zeus/git-core';
 import {
-    type AppendAuditLogInput,
-    AuditLogRepository,
-    CodexLegacyImportRepository,
-    CommandArtifactRepository,
-    CommandDefinitionRepository,
-    CommandRunRepository,
-    type ConversationCollaborationMode,
-    ConversationItemRepository,
-    type ConversationNextTurnSettings,
-    type ConversationPermissionMode,
-    ConversationPlanActionRepository,
-    ConversationRepository,
-    ConversationResourceRepository,
-    ConversationServerRequestRepository,
-    ConversationSubmissionRepository,
-    ConversationTurnRepository,
-    type CreateTaskEventInput,
-    createZeusDatabase,
-    GitSnapshotRepository,
-    IdempotencyRequestRepository,
-    introspectSqliteSchema,
-    isTaskManagementStatus,
-    isTaskPriority,
-    isTaskType,
-    ProjectRepository,
-    ProjectRepositoryRegistrationRepository,
-    ProjectSharedPathRepository,
-    type RuntimeLogStream,
-    RuntimeSessionRepository,
-    SettingRepository,
-    TaskEnvironmentRepository,
-    TaskEventRepository,
-    TaskIntegrationRepository,
-    type TaskManagementStatus,
-    type TaskPriority,
-    TaskRepository,
-    TaskTemplateRepository,
-    type TaskType,
-    TaskWorkspaceRepository,
-    TerminalEventRepository,
-    TurnChangeFileRepository,
-    TurnChangeSetRepository,
-    type ZeusAuditLogRecord,
-    type ZeusConversationResourceRecord,
-    type ZeusConversationWithMessagesRecord,
-    type ZeusDatabase,
-    type ZeusProjectRecord,
-    type ZeusProjectRepositoryRecord,
-    type ZeusProjectSharedPathRecord,
-    type ZeusRuntimeLogRecord,
-    type ZeusRuntimeSessionRecord,
-    type ZeusTaskEnvironmentRecord,
-    type ZeusTaskIntegrationRecord,
-    type ZeusTaskRecord,
-    type ZeusTaskWorkspaceRecord,
+  type AppendAuditLogInput,
+  AuditLogRepository,
+  CodexLegacyImportRepository,
+  CommandArtifactRepository,
+  CommandDefinitionRepository,
+  CommandRunRepository,
+  type ConversationCollaborationMode,
+  ConversationItemRepository,
+  type ConversationNextTurnSettings,
+  type ConversationPermissionMode,
+  ConversationPlanActionRepository,
+  ConversationRepository,
+  ConversationResourceRepository,
+  ConversationServerRequestRepository,
+  ConversationSubmissionRepository,
+  ConversationTurnRepository,
+  type CreateTaskEventInput,
+  createZeusDatabase,
+  GitSnapshotRepository,
+  IdempotencyRequestRepository,
+  introspectSqliteSchema,
+  isTaskManagementStatus,
+  isTaskPriority,
+  isTaskType,
+  ProjectRepository,
+  ProjectRepositoryRegistrationRepository,
+  ProjectSharedPathRepository,
+  type RuntimeLogStream,
+  RuntimeSessionRepository,
+  SettingRepository,
+  TaskEnvironmentRepository,
+  TaskEventRepository,
+  TaskIntegrationRepository,
+  type TaskManagementStatus,
+  type TaskPriority,
+  TaskRepository,
+  TaskTemplateRepository,
+  type TaskType,
+  TaskWorkspaceRepository,
+  TerminalEventRepository,
+  TurnChangeFileRepository,
+  TurnChangeSetRepository,
+  type ZeusAuditLogRecord,
+  type ZeusConversationResourceRecord,
+  type ZeusConversationWithMessagesRecord,
+  type ZeusDatabase,
+  type ZeusProjectRecord,
+  type ZeusProjectRepositoryRecord,
+  type ZeusProjectSharedPathRecord,
+  type ZeusRuntimeLogRecord,
+  type ZeusRuntimeSessionRecord,
+  type ZeusTaskEnvironmentRecord,
+  type ZeusTaskIntegrationRecord,
+  type ZeusTaskRecord,
+  type ZeusTaskWorkspaceRecord,
 } from '@zeus/storage';
-import {createCodexNativeConversationCoordinator} from './codexNativeConversationCoordinator.js';
+import { createCodexNativeConversationCoordinator } from './codexNativeConversationCoordinator.js';
+import { normalizeConversationResources, toConversationResource, toConversationResourceOpenIntent } from './conversationResources.js';
+import { changeSetErrorStatus, createTurnChangeSetService, errorCode as turnChangeSetErrorCode } from './turnChangeSets.js';
+import { createCommandCenter } from './commandCenter.js';
+import { migrateLegacyCodexThreads } from './legacyCodexThreadMigration.js';
+import { type CodexLegacyImportService, createCodexLegacyImportService } from './codexLegacyImportService.js';
+import { createCodexConfigImportService } from './codexConfigImportService.js';
+import { resolveWritableNonCodexLegacyConversation, type WritableNonCodexLegacyConversationContext } from './nonCodexLegacyRuntime.js';
 import {
-    normalizeConversationResources,
-    toConversationResource,
-    toConversationResourceOpenIntent
-} from './conversationResources.js';
-import {
-    changeSetErrorStatus,
-    createTurnChangeSetService,
-    errorCode as turnChangeSetErrorCode
-} from './turnChangeSets.js';
-import {createCommandCenter} from './commandCenter.js';
-import {migrateLegacyCodexThreads} from './legacyCodexThreadMigration.js';
-import {type CodexLegacyImportService, createCodexLegacyImportService} from './codexLegacyImportService.js';
-import {createCodexConfigImportService} from './codexConfigImportService.js';
-import {
-    resolveWritableNonCodexLegacyConversation,
-    type WritableNonCodexLegacyConversationContext
-} from './nonCodexLegacyRuntime.js';
-import {
-    createTelegramBotMessageClient,
-    createTelegramLongPollingClient,
-    createTelegramPollingService,
-    dispatchTelegramUpdate,
-    getTelegramConfigurationState,
-    type TelegramCommand,
-    type TelegramCommandResponse,
-    type TelegramMessageSender,
-    type TelegramPollingService,
-    type TelegramUpdate,
+  createTelegramBotMessageClient,
+  createTelegramLongPollingClient,
+  createTelegramPollingService,
+  dispatchTelegramUpdate,
+  getTelegramConfigurationState,
+  type TelegramCommand,
+  type TelegramCommandResponse,
+  type TelegramMessageSender,
+  type TelegramPollingService,
+  type TelegramUpdate,
 } from '@zeus/telegram-adapter';
 
 export type { BrowserAutomationContentItem, BrowserAutomationPort, BrowserAutomationToolCall } from './browserAutomation.js';
@@ -1682,106 +1651,109 @@ function prepareTaskAttachmentRoot(path: string | undefined): string | undefined
 }
 
 type ManagedTaskAttachmentRepairResult = {
-    repairedAttachmentCount: number;
-    repairedTaskCount: number;
+  repairedAttachmentCount: number;
+  repairedTaskCount: number;
 };
 
 function inspectTaskManagedResource(resourcePath: string): { bytes: number; digest: string } {
-    const resource = lstatSync(resourcePath);
-    if (resource.isSymbolicLink()) throw new Error('symbolic links are not trusted task attachments');
-    if (resource.isFile()) {
-        const bytes = readFileSync(resourcePath);
-        return {bytes: bytes.byteLength, digest: createHash('sha256').update('file\0').update(bytes).digest('hex')};
-    }
-    if (!resource.isDirectory()) throw new Error('unsupported task attachment type');
-    const digest = createHash('sha256').update('directory\0');
-    let bytes = 0;
-    for (const entryName of readdirSync(resourcePath).sort()) {
-        const entry = inspectTaskManagedResource(join(resourcePath, entryName));
-        bytes += entry.bytes;
-        digest.update(entryName).update('\0').update(entry.digest).update('\0');
-    }
-    return {bytes, digest: digest.digest('hex')};
+  const resource = lstatSync(resourcePath);
+  if (resource.isSymbolicLink()) throw new Error('symbolic links are not trusted task attachments');
+  if (resource.isFile()) {
+    const bytes = readFileSync(resourcePath);
+    return { bytes: bytes.byteLength, digest: createHash('sha256').update('file\0').update(bytes).digest('hex') };
+  }
+  if (!resource.isDirectory()) throw new Error('unsupported task attachment type');
+  const digest = createHash('sha256').update('directory\0');
+  let bytes = 0;
+  for (const entryName of readdirSync(resourcePath).sort()) {
+    const entry = inspectTaskManagedResource(join(resourcePath, entryName));
+    bytes += entry.bytes;
+    digest.update(entryName).update('\0').update(entry.digest).update('\0');
+  }
+  return { bytes, digest: digest.digest('hex') };
 }
 
 function resolveCurrentManagedTaskAttachmentPath(attachment: Record<string, unknown>, taskAttachmentRoot: string | undefined): string | undefined {
-    if (!taskAttachmentRoot) return undefined;
-    const storedPath = typeof attachment.path === 'string' ? attachment.path.trim() : '';
-    if (!storedPath || !isAbsolute(storedPath)) return undefined;
-    try {
-        const currentRoot = realpathSync(taskAttachmentRoot);
-        const storedRealPath = realpathSync(storedPath);
-        if (isPathInsideRoot(storedRealPath, currentRoot) && storedRealPath !== currentRoot) return storedRealPath;
-    } catch {
-        // 历史绝对路径可能已经不存在；继续尝试当前托管目录中的同一资源标识。
+  if (!taskAttachmentRoot) return undefined;
+  const storedPath = typeof attachment.path === 'string' ? attachment.path.trim() : '';
+  if (!storedPath || !isAbsolute(storedPath)) return undefined;
+  try {
+    const currentRoot = realpathSync(taskAttachmentRoot);
+    const storedRealPath = realpathSync(storedPath);
+    if (isPathInsideRoot(storedRealPath, currentRoot) && storedRealPath !== currentRoot) return storedRealPath;
+  } catch {
+    // 历史绝对路径可能已经不存在；继续尝试当前托管目录中的同一资源标识。
+  }
+  if (parse(dirname(storedPath)).base !== 'task-attachments') return undefined;
+  const managedResourceName = parse(storedPath).base;
+  if (!/^\d{13}-[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}-.+/iu.test(managedResourceName)) return undefined;
+  try {
+    const currentRoot = realpathSync(taskAttachmentRoot);
+    const candidatePath = realpathSync(join(currentRoot, managedResourceName));
+    if (!isPathInsideRoot(candidatePath, currentRoot) || candidatePath === currentRoot) return undefined;
+    const candidate = statSync(candidatePath);
+    const storedKind = typeof attachment.kind === 'string' ? attachment.kind : '';
+    if ((storedKind === 'directory') !== candidate.isDirectory()) return undefined;
+    if (!candidate.isFile() && !candidate.isDirectory()) return undefined;
+    const storedSize = typeof attachment.size === 'number' && Number.isFinite(attachment.size) ? attachment.size : undefined;
+    if (candidate.isFile() && storedSize !== undefined && candidate.size !== storedSize) return undefined;
+    let candidateInspection: ReturnType<typeof inspectTaskManagedResource> | undefined;
+    if (candidate.isDirectory() && storedSize !== undefined) {
+      candidateInspection = inspectTaskManagedResource(candidatePath);
+      if (candidateInspection.bytes !== storedSize) return undefined;
     }
-    if (parse(dirname(storedPath)).base !== 'task-attachments') return undefined;
-    const managedResourceName = parse(storedPath).base;
-    if (!/^\d{13}-[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}-.+/iu.test(managedResourceName)) return undefined;
-    try {
-        const currentRoot = realpathSync(taskAttachmentRoot);
-        const candidatePath = realpathSync(join(currentRoot, managedResourceName));
-        if (!isPathInsideRoot(candidatePath, currentRoot) || candidatePath === currentRoot) return undefined;
-        const candidate = statSync(candidatePath);
-        const storedKind = typeof attachment.kind === 'string' ? attachment.kind : '';
-        if ((storedKind === 'directory') !== candidate.isDirectory()) return undefined;
-        if (!candidate.isFile() && !candidate.isDirectory()) return undefined;
-        const storedSize = typeof attachment.size === 'number' && Number.isFinite(attachment.size) ? attachment.size : undefined;
-        if (candidate.isFile() && storedSize !== undefined && candidate.size !== storedSize) return undefined;
-        let candidateInspection: ReturnType<typeof inspectTaskManagedResource> | undefined;
-        if (candidate.isDirectory() && storedSize !== undefined) {
-            candidateInspection = inspectTaskManagedResource(candidatePath);
-            if (candidateInspection.bytes !== storedSize) return undefined;
-        }
 
-        if (existsSync(storedPath)) {
-            const storedRealPath = realpathSync(storedPath);
-            if (storedRealPath !== candidatePath) {
-                candidateInspection ??= inspectTaskManagedResource(candidatePath);
-                if (inspectTaskManagedResource(storedRealPath).digest !== candidateInspection.digest) return undefined;
-            }
-        } else {
-            // 原目录已经清理时，只能依据受信当前目录、稳定资源名、类型和已保存大小恢复。
-        }
-        return candidatePath;
-    } catch {
-        return undefined;
+    if (existsSync(storedPath)) {
+      const storedRealPath = realpathSync(storedPath);
+      if (storedRealPath !== candidatePath) {
+        candidateInspection ??= inspectTaskManagedResource(candidatePath);
+        if (inspectTaskManagedResource(storedRealPath).digest !== candidateInspection.digest) return undefined;
+      }
+    } else {
+      // 原目录已经清理时，只能依据受信当前目录、稳定资源名、类型和已保存大小恢复。
     }
+    return candidatePath;
+  } catch {
+    return undefined;
+  }
 }
 
 function repairMovedTaskAttachmentReferences(db: ZeusDatabase, taskAttachmentRoot: string | undefined): ManagedTaskAttachmentRepairResult {
-    if (!taskAttachmentRoot) return {repairedAttachmentCount: 0, repairedTaskCount: 0};
-    let repairedAttachmentCount = 0;
-    let repairedTaskCount = 0;
-    for (const row of db.select<{ id: string; source_context_json: string }>(`SELECT id, source_context_json
+  if (!taskAttachmentRoot) return { repairedAttachmentCount: 0, repairedTaskCount: 0 };
+  let repairedAttachmentCount = 0;
+  let repairedTaskCount = 0;
+  for (const row of db.select<{ id: string; source_context_json: string }>(`SELECT id, source_context_json
                                                                               FROM tasks
                                                                               WHERE deleted_at IS NULL`)) {
-        let sourceContext: Record<string, unknown>;
-        try {
-            const parsed = JSON.parse(row.source_context_json) as unknown;
-            if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) continue;
-            sourceContext = parsed as Record<string, unknown>;
-        } catch {
-            continue;
-        }
-        if (!Array.isArray(sourceContext.attachments)) continue;
-        let taskChanged = false;
-        const attachments = sourceContext.attachments.map((rawAttachment) => {
-            if (!rawAttachment || typeof rawAttachment !== 'object' || Array.isArray(rawAttachment)) return rawAttachment;
-            const attachment = rawAttachment as Record<string, unknown>;
-            const currentPath = resolveCurrentManagedTaskAttachmentPath(attachment, taskAttachmentRoot);
-            if (!currentPath || currentPath === attachment.path) return rawAttachment;
-            taskChanged = true;
-            repairedAttachmentCount += 1;
-            return {...attachment, path: currentPath};
-        });
-        if (!taskChanged) continue;
-        db.execute(`UPDATE tasks
-                    SET source_context_json = ?
-                    WHERE id = ?`, [JSON.stringify({...sourceContext, attachments}), row.id]);
-        repairedTaskCount += 1;
+    let sourceContext: Record<string, unknown>;
+    try {
+      const parsed = JSON.parse(row.source_context_json) as unknown;
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) continue;
+      sourceContext = parsed as Record<string, unknown>;
+    } catch {
+      continue;
     }
-    return {repairedAttachmentCount, repairedTaskCount};
+    if (!Array.isArray(sourceContext.attachments)) continue;
+    let taskChanged = false;
+    const attachments = sourceContext.attachments.map((rawAttachment) => {
+      if (!rawAttachment || typeof rawAttachment !== 'object' || Array.isArray(rawAttachment)) return rawAttachment;
+      const attachment = rawAttachment as Record<string, unknown>;
+      const currentPath = resolveCurrentManagedTaskAttachmentPath(attachment, taskAttachmentRoot);
+      if (!currentPath || currentPath === attachment.path) return rawAttachment;
+      taskChanged = true;
+      repairedAttachmentCount += 1;
+      return { ...attachment, path: currentPath };
+    });
+    if (!taskChanged) continue;
+    db.execute(
+      `UPDATE tasks
+                    SET source_context_json = ?
+                    WHERE id = ?`,
+      [JSON.stringify({ ...sourceContext, attachments }), row.id],
+    );
+    repairedTaskCount += 1;
+  }
+  return { repairedAttachmentCount, repairedTaskCount };
 }
 
 function hasTaskImageSignature(mime: string, bytes: Buffer): boolean {
@@ -1843,13 +1815,13 @@ interface TelegramRuntimeConfirmation {
 
 /** 创建 Zeus 本地服务实例；监听动作由 Electron Main 决定。 */
 export async function createLocalServer(options: CreateLocalServerOptions): Promise<FastifyInstance> {
-    const taskAttachmentRoot = prepareTaskAttachmentRoot(options.taskAttachmentRoot);
+  const taskAttachmentRoot = prepareTaskAttachmentRoot(options.taskAttachmentRoot);
   const db = await createZeusDatabase(options.dbPath);
-    const attachmentRepair = repairMovedTaskAttachmentReferences(db, taskAttachmentRoot);
-    if (attachmentRepair.repairedAttachmentCount > 0) {
-        await db.save();
-        console.info(`Zeus 已恢复 ${attachmentRepair.repairedTaskCount} 个历史任务中的 ${attachmentRepair.repairedAttachmentCount} 个托管附件引用。`);
-    }
+  const attachmentRepair = repairMovedTaskAttachmentReferences(db, taskAttachmentRoot);
+  if (attachmentRepair.repairedAttachmentCount > 0) {
+    await db.save();
+    console.info(`Zeus 已恢复 ${attachmentRepair.repairedTaskCount} 个历史任务中的 ${attachmentRepair.repairedAttachmentCount} 个托管附件引用。`);
+  }
   const projects = new ProjectRepository(db);
   const projectRepositories = new ProjectRepositoryRegistrationRepository(db);
   const projectSharedPaths = new ProjectSharedPathRepository(db);
@@ -14065,8 +14037,8 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     const attachments: NativeConversationAttachment[] = [];
     for (const [index, rawAttachment] of rawAttachments.entries()) {
       const candidate = isNativeApiRecord(rawAttachment) ? rawAttachment : {};
-        const storedPath = typeof candidate.path === 'string' ? candidate.path.trim() : '';
-        const path = resolveCurrentManagedTaskAttachmentPath(candidate, taskAttachmentRoot) ?? storedPath;
+      const storedPath = typeof candidate.path === 'string' ? candidate.path.trim() : '';
+      const path = resolveCurrentManagedTaskAttachmentPath(candidate, taskAttachmentRoot) ?? storedPath;
       const name = typeof candidate.name === 'string' && candidate.name.trim() ? candidate.name.trim() : path ? parse(path).base : `附件 ${index + 1}`;
       if (!path || !isAbsolute(path)) {
         unavailable.push(name);
