@@ -455,10 +455,8 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
       if (child === spawned) {
         spawned.kill('SIGTERM');
       }
-      throw managerError(
-        'ZEUS_CODEX_DEPENDENCY_UNAVAILABLE',
-        `用户本机 Codex CLI 无法启动兼容的 app-server（${command}）：${failure.message}。请运行官方安装命令 curl -fsSL https://chatgpt.com/codex/install.sh | sh，完成登录后在 Zeus 设置中重新检测；Zeus 不会自动安装或使用内置回退。`,
-      );
+      const unavailableReason = remoteControlTransport ? `Zeus 无法启动会话远程接管所需的 Codex Remote Control（${command}）：${failure.message}` : `用户本机 Codex CLI 无法启动兼容的 app-server（${command}）：${failure.message}`;
+      throw managerError('ZEUS_CODEX_DEPENDENCY_UNAVAILABLE', `${unavailableReason}。请运行官方安装命令 curl -fsSL https://chatgpt.com/codex/install.sh | sh，完成登录后在 Zeus 设置中重新检测；Zeus 不会自动安装或使用内置回退。`);
     });
   }
 
@@ -1071,8 +1069,7 @@ function spawnRemoteControlCodexAppServer(command: string, options: CodexAppServ
   }
 
   const processAdapter: CodexAppServerProcess = {
-    // 该值只用于区分“尚未生成系统进程”的 spawn 失败；真实守护进程 PID 由官方 CLI 管理。
-    pid: process.pid,
+    // 守护进程由官方 CLI 管理，Zeus 只持有 WebSocket，不能把自身 PID 伪装成 Codex 子进程。
     stdin: {
       write(chunk) {
         inputBuffer += typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8');
@@ -1150,9 +1147,8 @@ async function startRemoteControlDaemon(command: string, env: NodeJS.ProcessEnv,
     child.once('exit', (code, signal) => {
       clearTimeout(timeout);
       if (code !== 0) {
-        reject(
-          managerError('ZEUS_CODEX_REMOTE_CONTROL_START_FAILED', `官方 Codex Remote Control 守护进程启动失败（${String(code ?? signal ?? 'unknown')}）：${stderr.trim() || '没有返回诊断信息'}。请确认 Zeus 使用官方独立安装版 Codex CLI。`),
-        );
+        const diagnostic = summarizeStderr(stderr);
+        reject(managerError('ZEUS_CODEX_REMOTE_CONTROL_START_FAILED', `官方 Codex Remote Control 守护进程启动失败（${String(code ?? signal ?? 'unknown')}）：${diagnostic || '没有返回诊断信息'}。请确认 Zeus 使用官方独立安装版 Codex CLI。`));
         return;
       }
       try {
