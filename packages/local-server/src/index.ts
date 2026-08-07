@@ -1933,8 +1933,9 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     now: () => now().toISOString(),
     publish: publishNativeConversationEvent,
   });
+  const repairedPiConversationIdentityCount = piNativeCoordinator.repairPersistedConversationIdentities();
   const repairedPiAgentMessageProjectionCount = piNativeCoordinator.repairPersistedAgentMessageProjections();
-  if (repairedPiAgentMessageProjectionCount > 0) await db.save();
+  if (repairedPiConversationIdentityCount > 0 || repairedPiAgentMessageProjectionCount > 0) await db.save();
   const runtimePersistenceWrites: Array<Promise<void>> = [];
   const runtimePidExists = processPidExists;
   const runtimeKillPid = processKillPid;
@@ -2175,7 +2176,13 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     await codexNativeCoordinator.close({ mode: 'final' });
   };
   await turnChangeSetService.recoverInterruptedOperations();
-  if (codexNativeEnabled && (conversations.listNativeBound().length > 0 || conversationSubmissions.listRecoverable().some((submission) => submission.status === 'dispatching' || submission.status === 'active'))) {
+  if (
+    codexNativeEnabled &&
+    (conversations.listNativeBound('codex').length > 0 ||
+      conversationSubmissions
+        .listRecoverable()
+        .some((submission) => conversations.getById(submission.conversationId)?.agentKind === 'codex' && (submission.status === 'dispatching' || submission.status === 'active')))
+  ) {
     try {
       await codexNativeCoordinator.recover();
     } catch (recoveryError) {
@@ -2351,7 +2358,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       typeof payload.conversationId === 'string'
         ? [payload.conversationId]
         : mappedType === 'conversation.rateLimits.changed' || mappedType === 'conversation.mcpStartup.changed'
-          ? conversations.listNativeBound().map((conversation) => conversation.id)
+          ? conversations.listNativeBound('codex').map((conversation) => conversation.id)
           : [];
     for (const conversationId of new Set(conversationIds)) {
       const conversation = conversations.getById(conversationId);

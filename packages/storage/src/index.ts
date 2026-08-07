@@ -4196,15 +4196,49 @@ export class ConversationRepository {
     return { ...conversation, messages: this.listMessages(conversation.id) };
   }
 
-  listNativeBound(): ZeusConversationWithMessagesRecord[] {
+  listNativeBound(agentKind?: ConversationAgentKind): ZeusConversationWithMessagesRecord[] {
+    const agentClause = agentKind ? ' AND agent_kind = ?' : '';
     return this.db
       .select<DbConversationRow>(
-        `SELECT ${selectConversationFields} FROM conversations WHERE transport_kind = 'codex_native' AND provider_thread_id IS NOT NULL AND provider_state NOT IN ('closed', 'failed') AND archived = 0 ORDER BY created_at, id`,
+        `SELECT ${selectConversationFields} FROM conversations WHERE transport_kind = 'codex_native' AND provider_thread_id IS NOT NULL AND provider_state NOT IN ('closed', 'failed') AND archived = 0${agentClause} ORDER BY created_at, id`,
+        agentKind ? [agentKind] : [],
       )
       .map((row) => {
         const conversation = mapConversationRow(row);
         return { ...conversation, messages: this.listMessages(conversation.id) };
       });
+  }
+
+  /** 身份修复候选包含已归档或失败会话，保证历史记录恢复后仍按原 Agent 路由。 */
+  listNativeIdentityCandidates(): ZeusConversationWithMessagesRecord[] {
+    return this.db
+      .select<DbConversationRow>(`SELECT ${selectConversationFields} FROM conversations WHERE transport_kind = 'codex_native' AND provider_thread_id IS NOT NULL ORDER BY created_at, id`)
+      .map((row) => {
+        const conversation = mapConversationRow(row);
+        return { ...conversation, messages: this.listMessages(conversation.id) };
+      });
+  }
+
+  /** 只有调用方已经核验 Pi 原生会话和消息证据时，才允许纠正被 Codex 恢复器污染的主身份。 */
+  repairPiAgentIdentity(input: { conversationId: string; nativeSessionId: string; nativeSessionPath: string; modelSourceId: string }): boolean {
+    this.db.execute(
+      `UPDATE conversations
+       SET provider_id = ?, provider_protocol_version = 'sdk',
+           provider_binary_version = CASE WHEN provider_binary_version LIKE 'pi-sdk-%' THEN provider_binary_version ELSE NULL END,
+           agent_kind = 'pi', agent_transport = 'sdk'
+       WHERE id = ? AND transport_kind = 'codex_native' AND COALESCE(agent_kind, '') <> 'pi'
+         AND provider_thread_id = native_session_id AND provider_thread_id = ?
+         AND provider_thread_path = native_session_path AND native_session_path = ?
+         AND model_source_id = ?
+         AND EXISTS (
+           SELECT 1 FROM conversation_messages
+           WHERE conversation_messages.conversation_id = conversations.id
+             AND conversation_messages.source = 'pi_sdk'
+             AND conversation_messages.provider_thread_id = conversations.native_session_id
+         )`,
+      [`pi:${input.modelSourceId}`, input.conversationId, input.nativeSessionId, input.nativeSessionPath, input.modelSourceId],
+    );
+    return (this.db.get<{ count: number }>(`SELECT changes() AS count`)?.count ?? 0) === 1;
   }
 
   /** 侧边栏状态聚合只读取会话主记录，不加载消息正文。 */

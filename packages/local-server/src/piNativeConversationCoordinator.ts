@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { realpathSync } from 'node:fs';
 import { readdir, readFile, writeFile } from 'node:fs/promises';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
@@ -400,6 +401,38 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     return repaired;
   }
 
+  function repairPersistedConversationIdentities(): number {
+    let repaired = 0;
+    const sessionRoot = resolve(options.sessionDirectory);
+    for (const conversation of options.conversations.listNativeIdentityCandidates()) {
+      if (
+        conversation.agentKind === 'pi' ||
+        !conversation.providerThreadId ||
+        !conversation.providerThreadPath ||
+        !conversation.nativeSessionId ||
+        !conversation.nativeSessionPath ||
+        !conversation.modelSourceId ||
+        conversation.providerThreadId !== conversation.nativeSessionId ||
+        conversation.providerThreadPath !== conversation.nativeSessionPath ||
+        !isPathInsideDirectory(conversation.nativeSessionPath, sessionRoot) ||
+        !conversation.messages.some((message) => isPersistedPiMessageEvidence(message, conversation.nativeSessionId!))
+      ) {
+        continue;
+      }
+      if (
+        options.conversations.repairPiAgentIdentity({
+          conversationId: conversation.id,
+          nativeSessionId: conversation.nativeSessionId,
+          nativeSessionPath: conversation.nativeSessionPath,
+          modelSourceId: conversation.modelSourceId,
+        })
+      ) {
+        repaired += 1;
+      }
+    }
+    return repaired;
+  }
+
   async function requestApproval(context: PiConversationContext, request: PiZeusToolRequest): Promise<boolean> {
     const kind = request.toolName === 'bash' ? 'command' : 'file';
     const activeRun = [...runs.values()].reverse().find((candidate) => candidate.conversationId === context.conversationId);
@@ -441,6 +474,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
   }
 
   return {
+    repairPersistedConversationIdentities,
     repairPersistedAgentMessageProjections,
     startConversation,
     submitMessage,
@@ -499,6 +533,24 @@ function safePath(cwd: string, value: string): string {
   const rel = relative(resolve(cwd), candidate);
   if (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) throw piError('ZEUS_PI_PATH_OUTSIDE_WORKSPACE', 'Pi 工具不能访问当前工作区之外的路径。');
   return candidate;
+}
+
+function isPathInsideDirectory(path: string, directory: string): boolean {
+  try {
+    const candidate = relative(realpathSync(directory), realpathSync(path));
+    return candidate !== '' && candidate !== '..' && !candidate.startsWith(`..${sep}`) && !isAbsolute(candidate);
+  } catch {
+    return false;
+  }
+}
+
+function isPersistedPiMessageEvidence(message: { source: string; providerThreadId: string | null; metadataJson: string }, nativeSessionId: string): boolean {
+  if (message.source !== 'pi_sdk' || message.providerThreadId !== nativeSessionId) return false;
+  try {
+    return asRecord(JSON.parse(message.metadataJson)).agentKind === 'pi';
+  } catch {
+    return false;
+  }
 }
 
 function resolveConversationCwd(conversation: ZeusConversationWithMessagesRecord): string {
