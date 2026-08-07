@@ -91,7 +91,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: 恢复 Electron 构建缓存
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/Library/Caches/electron
           key: zeus-electron-macos-${{ runner.arch }}-${{ hashFiles('apps/desktop/electron-builder.yml', 'pnpm-lock.yaml') }}
