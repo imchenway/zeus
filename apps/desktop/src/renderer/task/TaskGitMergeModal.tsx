@@ -1,21 +1,21 @@
-import {useEffect, useMemo, useRef, useState} from 'react';
-import {type DashboardClient, type TaskRecord, ZeusApiError} from '../apiClient.js';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { type DashboardClient, type TaskRecord, ZeusApiError } from '../apiClient.js';
 import type {
-    TaskBranchFileChange,
-    TaskGitDiffSummary,
-    TaskGitFileDiff,
-    TaskGitFileStatus,
-    TaskIntegrationConflictAiDraft,
-    TaskIntegrationConflictFile,
-    TaskIntegrationRecord,
-    TaskIntegrationResult,
-    TaskWorkspaceSnapshot,
-    TaskWorkspacesSnapshot,
+  TaskBranchFileChange,
+  TaskGitDiffSummary,
+  TaskGitFileDiff,
+  TaskGitFileStatus,
+  TaskIntegrationConflictAiDraft,
+  TaskIntegrationConflictFile,
+  TaskIntegrationRecord,
+  TaskIntegrationResult,
+  TaskWorkspaceSnapshot,
+  TaskWorkspacesSnapshot,
 } from '../session/sessionTypes.js';
-import {Button} from '../ui/Button.js';
-import {ModalPortal} from '../ui/ModalPortal.js';
-import {ZeusSelect} from '../ZeusSelect.js';
-import {countConflictBlocks, TaskGitConflictWorkspace} from './TaskGitConflictWorkspace.js';
+import { Button } from '../ui/Button.js';
+import { ModalPortal } from '../ui/ModalPortal.js';
+import { ZeusSelect } from '../ZeusSelect.js';
+import { countConflictBlocks, TaskGitConflictWorkspace } from './TaskGitConflictWorkspace.js';
 
 type DeliveryClient = Pick<
   DashboardClient,
@@ -49,8 +49,8 @@ interface DeliveryFeedback {
 }
 
 interface ConflictDraft {
-    fingerprint: string;
-    content: string;
+  fingerprint: string;
+  content: string;
 }
 
 export function TaskGitMergeModal(props: { open: boolean; language: 'zh-CN' | 'en-US'; task: TaskRecord | null; projectName?: string; client: DeliveryClient | null; onChanged?: () => void | Promise<void>; onClose: () => void }) {
@@ -70,7 +70,7 @@ export function TaskGitMergeModal(props: { open: boolean; language: 'zh-CN' | 'e
   const [conflictPath, setConflictPath] = useState('');
   const [conflict, setConflict] = useState<TaskIntegrationConflictFile | null>(null);
   const [resultContent, setResultContent] = useState('');
-    const conflictDraftsRef = useRef<Record<string, ConflictDraft>>({});
+  const conflictDraftsRef = useRef<Record<string, ConflictDraft>>({});
   const [busyAction, setBusyAction] = useState<BusyAction>(null);
   const [snapshotRevision, setSnapshotRevision] = useState(0);
   const [feedback, setFeedback] = useState<DeliveryFeedback | null>(null);
@@ -88,14 +88,7 @@ export function TaskGitMergeModal(props: { open: boolean; language: 'zh-CN' | 'e
   const workspaceClean = selectedWorkspace?.review?.clean ?? selectedWorkspace?.worktreePath === null;
   const commitReady = Boolean(selectedWorkspace && workspaceClean && selectedWorkspace.activeConversationCount === 0 && selectedWorkspace.state !== 'discarded');
   const pushReady = Boolean(selectedWorkspace?.worktreePath && selectedWorkspace.remoteName && commitReady);
-    const mergeReady = Boolean(
-        selectedWorkspace?.branchComparison &&
-        commitReady &&
-        targetBranch &&
-        targetBranch !== selectedWorkspace.branchName &&
-        !pendingLocalSync &&
-        (!selectedWorkspace.remoteName || selectedWorkspace.remoteVerified),
-    );
+  const mergeReady = Boolean(selectedWorkspace?.branchComparison && commitReady && targetBranch && targetBranch !== selectedWorkspace.branchName && !pendingLocalSync && (!selectedWorkspace.remoteName || selectedWorkspace.remoteVerified));
   const targetOptions = useMemo(() => buildTargetOptions(workspaces, selectedWorkspace, zh), [workspaces, selectedWorkspace, zh]);
   const deliveredIntegration = integrations.find((candidate) => candidate.workspaceId === selectedWorkspace?.id && candidate.targetBranch === targetBranch && candidate.state === 'merged') ?? null;
   const alreadyDelivered = Boolean(deliveredIntegration || (selectedWorkspace?.state === 'merged' && targetBranch === selectedWorkspace.sourceBranch));
@@ -107,7 +100,7 @@ export function TaskGitMergeModal(props: { open: boolean; language: 'zh-CN' | 'e
     setBusyAction('loading');
     setError(null);
     setFeedback(null);
-      conflictDraftsRef.current = {};
+    conflictDraftsRef.current = {};
     setMessage(`${props.task.taskCode ?? props.task.id}: ${props.task.title}`);
     void Promise.all([props.client.loadTaskGitWorkspaces(props.task.id), props.client.loadTaskIntegrations(props.task.id)])
       .then(([workspaceSnapshot, integrationSnapshot]) => {
@@ -177,22 +170,22 @@ export function TaskGitMergeModal(props: { open: boolean; language: 'zh-CN' | 'e
       .then((next) => {
         if (cancelled) return;
         setConflict(next);
-          const savedDraft = conflictDraftsRef.current[next.path];
-          if (savedDraft?.fingerprint === next.fingerprint) {
-              setResultContent(savedDraft.content);
-              setFeedback({
-                  tone: 'warning',
-                  text: zh ? '目标分支更新后已按最新提交重建；相同冲突的草稿已回填，请重新确认并保存。' : 'The target advanced and the candidate was rebuilt. A matching draft was restored; review and save it again.',
-              });
-          } else {
-              setResultContent(next.result);
-              if (savedDraft) {
-                  setFeedback({
-                      tone: 'warning',
-                      text: zh ? '目标分支更新后冲突内容已经变化，旧草稿未自动套用，请重新处理。' : 'The conflict changed after rebuilding, so the previous draft was not applied.',
-                  });
-              }
+        const savedDraft = conflictDraftsRef.current[next.path];
+        if (savedDraft?.fingerprint === next.fingerprint) {
+          setResultContent(savedDraft.content);
+          setFeedback({
+            tone: 'warning',
+            text: zh ? '目标分支更新后已按最新提交重建；相同冲突的草稿已回填，请重新确认并保存。' : 'The target advanced and the candidate was rebuilt. A matching draft was restored; review and save it again.',
+          });
+        } else {
+          setResultContent(next.result);
+          if (savedDraft) {
+            setFeedback({
+              tone: 'warning',
+              text: zh ? '目标分支更新后冲突内容已经变化，旧草稿未自动套用，请重新处理。' : 'The conflict changed after rebuilding, so the previous draft was not applied.',
+            });
           }
+        }
         setBusyAction(null);
       })
       .catch((reason: unknown) => {
@@ -218,7 +211,7 @@ export function TaskGitMergeModal(props: { open: boolean; language: 'zh-CN' | 'e
     const nextWorkspace = workspaceSnapshot.items.find((workspace) => workspace.id === preferredWorkspaceId) ?? workspaceSnapshot.items[0] ?? null;
     if (nextWorkspace) {
       setWorkspaceId(nextWorkspace.id);
-        setTargetBranch((current) => (nextWorkspace.targetBranches.includes(current) && current !== nextWorkspace.branchName ? current : resolveInitialTargetBranch(workspaceSnapshot, nextWorkspace)));
+      setTargetBranch((current) => (nextWorkspace.targetBranches.includes(current) && current !== nextWorkspace.branchName ? current : resolveInitialTargetBranch(workspaceSnapshot, nextWorkspace)));
     }
   }
 
@@ -312,11 +305,13 @@ export function TaskGitMergeModal(props: { open: boolean; language: 'zh-CN' | 'e
     if (!props.task || !props.client || !activeConflict || !conflictPath) return;
     setBusyAction('conflict');
     setError(null);
-      const nextDrafts = conflict ? {
+    const nextDrafts = conflict
+      ? {
           ...conflictDraftsRef.current,
-          [conflictPath]: {fingerprint: conflict.fingerprint, content: resultContent}
-      } : conflictDraftsRef.current;
-      conflictDraftsRef.current = nextDrafts;
+          [conflictPath]: { fingerprint: conflict.fingerprint, content: resultContent },
+        }
+      : conflictDraftsRef.current;
+    conflictDraftsRef.current = nextDrafts;
     try {
       const response = await props.client.resolveTaskIntegrationConflict(props.task.id, activeConflict.id, conflictPath, resultContent);
       setIntegration(response.integration);
@@ -326,15 +321,15 @@ export function TaskGitMergeModal(props: { open: boolean; language: 'zh-CN' | 'e
       await reload(activeConflict.workspaceId);
       await props.onChanged?.();
     } catch (reason) {
-        if (isTargetHeadChanged(reason) && selectedWorkspace) {
-            try {
-                await rebuildStaleIntegration(selectedWorkspace, nextDrafts);
-            } catch (rebuildReason) {
-                setError(errorMessage(rebuildReason, zh));
-            }
-        } else {
-            setError(errorMessage(reason, zh));
+      if (isTargetHeadChanged(reason) && selectedWorkspace) {
+        try {
+          await rebuildStaleIntegration(selectedWorkspace, nextDrafts);
+        } catch (rebuildReason) {
+          setError(errorMessage(rebuildReason, zh));
         }
+      } else {
+        setError(errorMessage(reason, zh));
+      }
     } finally {
       setBusyAction(null);
     }
@@ -365,48 +360,48 @@ export function TaskGitMergeModal(props: { open: boolean; language: 'zh-CN' | 'e
       await props.onChanged?.();
       setFeedback(deliveryFeedback(response.result, zh));
     } catch (reason) {
-        if (isTargetHeadChanged(reason) && selectedWorkspace) {
-            try {
-                await rebuildStaleIntegration(selectedWorkspace, conflictDraftsRef.current);
-            } catch (rebuildReason) {
-                setError(errorMessage(rebuildReason, zh));
-            }
-        } else {
-            setError(errorMessage(reason, zh));
+      if (isTargetHeadChanged(reason) && selectedWorkspace) {
+        try {
+          await rebuildStaleIntegration(selectedWorkspace, conflictDraftsRef.current);
+        } catch (rebuildReason) {
+          setError(errorMessage(rebuildReason, zh));
         }
+      } else {
+        setError(errorMessage(reason, zh));
+      }
     } finally {
       setBusyAction(null);
     }
   }
 
-    async function rebuildStaleIntegration(workspace: TaskWorkspaceSnapshot, drafts: Record<string, ConflictDraft>): Promise<void> {
-        if (!props.task || !props.client) return;
-        conflictDraftsRef.current = drafts;
-        const response = await props.client.startTaskIntegration(props.task.id, workspace.id, {
-            targetBranch,
-            mode,
-            prepareOnly: Object.keys(drafts).length > 0,
-        });
-        setIntegration(response.integration);
-        setConflictPath(response.integration.conflictFiles[0] ?? '');
-        await reload(workspace.id);
-        await props.onChanged?.();
-        setFeedback(
-            response.result
-                ? deliveryFeedback(response.result, zh)
-                : {
-                    tone: 'warning',
-                    text:
-                        Object.keys(drafts).length > 0
-                            ? zh
-                                ? '目标分支已更新，合入候选已从最新远端提交重建；已有草稿会按冲突指纹逐项核对。'
-                                : 'The target advanced. The candidate was rebuilt from the latest remote commit, and saved drafts will be checked by conflict fingerprint.'
-                            : zh
-                                ? '目标分支已更新，合入候选已自动从最新远端提交重建。'
-                                : 'The target advanced. The candidate was automatically rebuilt from the latest remote commit.',
-                },
-        );
-    }
+  async function rebuildStaleIntegration(workspace: TaskWorkspaceSnapshot, drafts: Record<string, ConflictDraft>): Promise<void> {
+    if (!props.task || !props.client) return;
+    conflictDraftsRef.current = drafts;
+    const response = await props.client.startTaskIntegration(props.task.id, workspace.id, {
+      targetBranch,
+      mode,
+      prepareOnly: Object.keys(drafts).length > 0,
+    });
+    setIntegration(response.integration);
+    setConflictPath(response.integration.conflictFiles[0] ?? '');
+    await reload(workspace.id);
+    await props.onChanged?.();
+    setFeedback(
+      response.result
+        ? deliveryFeedback(response.result, zh)
+        : {
+            tone: 'warning',
+            text:
+              Object.keys(drafts).length > 0
+                ? zh
+                  ? '目标分支已更新，合入候选已从最新远端提交重建；已有草稿会按冲突指纹逐项核对。'
+                  : 'The target advanced. The candidate was rebuilt from the latest remote commit, and saved drafts will be checked by conflict fingerprint.'
+                : zh
+                  ? '目标分支已更新，合入候选已自动从最新远端提交重建。'
+                  : 'The target advanced. The candidate was automatically rebuilt from the latest remote commit.',
+          },
+    );
+  }
 
   function selectWorkspace(nextId: string): void {
     const nextWorkspace = workspaces?.items.find((workspace) => workspace.id === nextId) ?? null;
@@ -570,19 +565,19 @@ export function TaskGitMergeModal(props: { open: boolean; language: 'zh-CN' | 'e
                     </div>
                     <div>
                       <dt>{zh ? '任务分支远端' : 'Task branch remote'}</dt>
-                        <dd>
-                            {!selectedWorkspace?.remoteName
-                                ? zh
-                                    ? '纯本地模式'
-                                    : 'Local-only mode'
-                                : selectedWorkspace.remoteVerified
-                                    ? zh
-                                        ? '与最新远端完全一致'
-                                        : 'Exactly matches latest remote'
-                                    : zh
-                                        ? '必须先推送并校验'
-                                        : 'Push and verification required'}
-                        </dd>
+                      <dd>
+                        {!selectedWorkspace?.remoteName
+                          ? zh
+                            ? '纯本地模式'
+                            : 'Local-only mode'
+                          : selectedWorkspace.remoteVerified
+                            ? zh
+                              ? '与最新远端完全一致'
+                              : 'Exactly matches latest remote'
+                            : zh
+                              ? '必须先推送并校验'
+                              : 'Push and verification required'}
+                      </dd>
                     </div>
                   </dl>
 
@@ -614,12 +609,12 @@ export function TaskGitMergeModal(props: { open: boolean; language: 'zh-CN' | 'e
                   </section>
 
                   <section className={`task-git-delivery-action-step${selectedWorkspace?.remoteVerified ? ' is-complete' : ''}`}>
-                      <strong>{selectedWorkspace?.remoteName ? (zh ? '③ 推送任务分支（必需）' : '③ Push task branch (required)') : zh ? '③ 纯本地模式' : '③ Local-only mode'}</strong>
+                    <strong>{selectedWorkspace?.remoteName ? (zh ? '③ 推送任务分支（必需）' : '③ Push task branch (required)') : zh ? '③ 纯本地模式' : '③ Local-only mode'}</strong>
                     <small>
                       {selectedWorkspace?.remoteName
                         ? zh
-                              ? '合入前必须与最新远端任务分支完全一致；不会强制覆盖远端。'
-                              : 'The local task HEAD must exactly match the latest remote task branch before merging; force push is never used.'
+                          ? '合入前必须与最新远端任务分支完全一致；不会强制覆盖远端。'
+                          : 'The local task HEAD must exactly match the latest remote task branch before merging; force push is never used.'
                         : zh
                           ? '该仓库未配置远端，仍可提交并合入本地目标分支。'
                           : 'No remote is configured; local commit and merge remain available.'}
@@ -720,13 +715,13 @@ function DeliveryStepBar(props: { workspace: TaskWorkspaceSnapshot | null; remot
       state: props.workspace?.branchComparison ? 'done' : 'current',
     },
     { label: props.zh ? '② 提交' : '② Commit', state: workingCount === 0 ? 'done' : 'current' },
-      {
-          label: props.workspace?.remoteName ? (props.zh ? '③ 推送校验' : '③ Push verification') : props.zh ? '③ 纯本地' : '③ Local only',
-          state: !props.workspace?.remoteName || props.remoteVerified ? 'done' : 'locked',
-      },
+    {
+      label: props.workspace?.remoteName ? (props.zh ? '③ 推送校验' : '③ Push verification') : props.zh ? '③ 纯本地' : '③ Local only',
+      state: !props.workspace?.remoteName || props.remoteVerified ? 'done' : 'locked',
+    },
     {
       label: props.zh ? '④ 合入' : '④ Merge',
-        state: props.alreadyDelivered ? 'done' : workingCount === 0 && (!props.workspace?.remoteName || props.remoteVerified) ? 'current' : 'locked',
+      state: props.alreadyDelivered ? 'done' : workingCount === 0 && (!props.workspace?.remoteName || props.remoteVerified) ? 'current' : 'locked',
     },
   ];
   return (
@@ -805,7 +800,7 @@ function buildTargetOptions(
   label: string;
 }> {
   if (!workspaces || !workspace) return [];
-    return workspace.targetBranches
+  return workspace.targetBranches
     .filter((branch) => branch !== workspace.branchName)
     .sort((left, right) => (left === workspace.sourceBranch ? -1 : right === workspace.sourceBranch ? 1 : left.localeCompare(right)))
     .map((branch) => ({
@@ -816,8 +811,8 @@ function buildTargetOptions(
 
 function resolveInitialTargetBranch(workspaces: TaskWorkspacesSnapshot | null, workspace: TaskWorkspaceSnapshot | null | undefined): string {
   if (!workspaces || !workspace) return '';
-    if (workspace.targetBranches.includes(workspace.sourceBranch)) return workspace.sourceBranch;
-    return workspace.targetBranches.find((branch) => branch !== workspace.branchName) ?? '';
+  if (workspace.targetBranches.includes(workspace.sourceBranch)) return workspace.sourceBranch;
+  return workspace.targetBranches.find((branch) => branch !== workspace.branchName) ?? '';
 }
 
 function workspaceStateLabel(workspace: TaskWorkspaceSnapshot, zh: boolean): string {
@@ -827,8 +822,8 @@ function workspaceStateLabel(workspace: TaskWorkspaceSnapshot, zh: boolean): str
   const workingCount = collectWorkingFiles(workspace).length;
   if (workingCount > 0) return zh ? `${workingCount} 个未提交文件` : `${workingCount} uncommitted file(s)`;
   if (workspace.remoteVerified) return zh ? '已提交 · 已推送' : 'Committed · pushed';
-    if (workspace.remoteName) return zh ? '已提交 · 待推送' : 'Committed · push required';
-    return zh ? '已提交 · 本地可合入' : 'Committed · locally merge ready';
+  if (workspace.remoteName) return zh ? '已提交 · 待推送' : 'Committed · push required';
+  return zh ? '已提交 · 本地可合入' : 'Committed · locally merge ready';
 }
 
 function committedFileLabel(changeType: TaskGitFileDiff['changeType'], zh: boolean): string {
@@ -928,7 +923,7 @@ function shortSha(value: string): string {
 }
 
 function isTargetHeadChanged(error: unknown): boolean {
-    return error instanceof ZeusApiError && error.error === 'ZEUS_TARGET_HEAD_CHANGED';
+  return error instanceof ZeusApiError && error.error === 'ZEUS_TARGET_HEAD_CHANGED';
 }
 
 function errorMessage(error: unknown, zh: boolean): string {
@@ -938,12 +933,12 @@ function errorMessage(error: unknown, zh: boolean): string {
       ZEUS_TASK_WORKSPACE_CONFLICTED: '任务工作区存在未解决冲突，请先完成冲突处理。',
       ZEUS_TASK_WORKSPACE_DIRTY: '任务分支还有未提交代码，请先完成提交再合入。',
       ZEUS_TASK_WORKTREE_UNAVAILABLE: '任务 worktree 当前不可用，不能执行提交或任务分支推送。',
-        ZEUS_TARGET_BRANCH_UNAVAILABLE: '请选择刷新后仍然可用的目标分支。',
-        ZEUS_TARGET_HEAD_CHANGED: '目标分支在合入期间发生变化，正在从最新远端提交安全重建。',
-        ZEUS_TASK_HEAD_CHANGED: '任务分支在合入候选创建后发生变化，请先确认并重新推送任务分支。',
-        ZEUS_TASK_BRANCH_PUSH_REQUIRED: '任务分支必须先推送，并与刷新后的远端任务分支完全一致。',
-        ZEUS_TASK_REMOTE_DIVERGED: '远端任务分支包含本地没有的提交，已停止普通推送；请先人工处理分支差异。',
-        ZEUS_GIT_REMOTE_REFRESH_FAILED: '远端分支刷新失败，不能使用旧记录继续；请检查网络或仓库凭据。',
+      ZEUS_TARGET_BRANCH_UNAVAILABLE: '请选择刷新后仍然可用的目标分支。',
+      ZEUS_TARGET_HEAD_CHANGED: '目标分支在合入期间发生变化，正在从最新远端提交安全重建。',
+      ZEUS_TASK_HEAD_CHANGED: '任务分支在合入候选创建后发生变化，请先确认并重新推送任务分支。',
+      ZEUS_TASK_BRANCH_PUSH_REQUIRED: '任务分支必须先推送，并与刷新后的远端任务分支完全一致。',
+      ZEUS_TASK_REMOTE_DIVERGED: '远端任务分支包含本地没有的提交，已停止普通推送；请先人工处理分支差异。',
+      ZEUS_GIT_REMOTE_REFRESH_FAILED: '远端分支刷新失败，不能使用旧记录继续；请检查网络或仓库凭据。',
       ZEUS_TASK_REMOTE_VERIFICATION_FAILED: '远端提交校验失败，请检查网络和远端分支状态后重试。',
       ZEUS_GIT_COMMAND_FAILED: 'Git 操作失败，请检查分支和远端状态后重试。',
     };

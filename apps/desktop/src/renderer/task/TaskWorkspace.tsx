@@ -1,7 +1,19 @@
 import { type CSSProperties, type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, useCallback, useEffect, useId, useRef, useState } from 'react';
 import { CircleNotchIcon as CircleNotch } from '@phosphor-icons/react/dist/csr/CircleNotch';
 import { isTaskPriority } from '@zeus/shared';
-import type { AiRuntimeSession, RuntimeStatusSnapshot, TaskManagementStatus, TaskPriority, TaskRecord, TaskStatusFilter, TaskTableColumnKey, TaskTableEnumSortOrders, TaskTableColumnPreferences, TaskType, UpdateTaskRequest } from '../apiClient.js';
+import type {
+  AiRuntimeSession,
+  RuntimeStatusSnapshot,
+  TaskManagementStatus,
+  TaskPriority,
+  TaskRecord,
+  TaskStatusFilter,
+  TaskTableColumnKey,
+  TaskTableEnumSortOrders,
+  TaskTableColumnPreferences,
+  TaskType,
+  UpdateTaskRequest,
+} from '../apiClient.js';
 import type { NativeConversationChoice } from '../session/sessionTypes.js';
 import { Button } from '../ui/Button.js';
 import { ZeusSelect } from '../ZeusSelect.js';

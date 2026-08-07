@@ -1,9 +1,9 @@
-import {execFile} from 'node:child_process';
-import {createHash} from 'node:crypto';
-import {realpathSync} from 'node:fs';
-import {copyFile, lstat, mkdir, readdir, readFile, rm, writeFile} from 'node:fs/promises';
-import {basename, dirname, isAbsolute, join, relative, resolve, sep} from 'node:path';
-import {promisify} from 'node:util';
+import { execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { realpathSync } from 'node:fs';
+import { copyFile, lstat, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
 
@@ -63,8 +63,8 @@ export interface PrepareTaskWorktreeInput {
   workspaceId: string;
   branchName: string;
   sourceRef: string;
-    sourceKind?: 'local' | 'remote';
-    sourceBranch?: string;
+  sourceKind?: 'local' | 'remote';
+  sourceBranch?: string;
   existingBranch: boolean;
   existingRemoteRef?: string;
   worktreePath?: string;
@@ -172,7 +172,7 @@ export interface TaskBranchIntegrationStartResult {
 
 export interface TaskIntegrationConflictFile {
   path: string;
-    fingerprint: string;
+  fingerprint: string;
   base: string;
   source: string;
   task: string;
@@ -366,14 +366,14 @@ export async function prepareTaskWorktree(input: PrepareTaskWorktreeInput): Prom
   const context = await getGitRepositoryContext(input.repositoryPath);
   if (!context.isRepository) throw gitCoreError('ZEUS_GIT_REPOSITORY_REQUIRED', 'The selected project is not a Git repository.');
   const branchName = await assertValidGitBranchName(context.topLevel, input.branchName);
-    // 新建工作区按调用方已刷新并确认的本地或远端引用冻结精确提交；恢复只接受持久化对象 ID。
-    const sourceRef = input.existingBranch ? requireGitObjectId(input.sourceRef, 'source commit') : input.sourceRef.trim();
-    const sourceBranch = input.existingBranch
-        ? input.sourceBranch?.trim() || sourceRef
-        : input.sourceKind === 'remote'
-            ? await assertRemoteBranchExists(context.topLevel, sourceRef, input.sourceBranch)
-            : await assertNamedBranchExists(context.topLevel, sourceRef, 'source branch');
-    const sourceHeadSha = await resolveCommit(context.topLevel, input.existingBranch ? sourceRef : input.sourceKind === 'remote' ? `refs/remotes/${sourceRef}` : localBranchRef(sourceRef));
+  // 新建工作区按调用方已刷新并确认的本地或远端引用冻结精确提交；恢复只接受持久化对象 ID。
+  const sourceRef = input.existingBranch ? requireGitObjectId(input.sourceRef, 'source commit') : input.sourceRef.trim();
+  const sourceBranch = input.existingBranch
+    ? input.sourceBranch?.trim() || sourceRef
+    : input.sourceKind === 'remote'
+      ? await assertRemoteBranchExists(context.topLevel, sourceRef, input.sourceBranch)
+      : await assertNamedBranchExists(context.topLevel, sourceRef, 'source branch');
+  const sourceHeadSha = await resolveCommit(context.topLevel, input.existingBranch ? sourceRef : input.sourceKind === 'remote' ? `refs/remotes/${sourceRef}` : localBranchRef(sourceRef));
   const registered = context.worktrees.find((entry) => entry.branch === branchName);
   if (registered) {
     if (!input.existingBranch) {
@@ -384,7 +384,7 @@ export async function prepareTaskWorktree(input: PrepareTaskWorktreeInput): Prom
       topLevel: context.topLevel,
       worktreePath: registered.path,
       branchName,
-        sourceBranch,
+      sourceBranch,
       sourceHeadSha,
       headSha,
       reused: true,
@@ -418,7 +418,7 @@ export async function prepareTaskWorktree(input: PrepareTaskWorktreeInput): Prom
       topLevel: context.topLevel,
       worktreePath,
       branchName,
-        sourceBranch,
+      sourceBranch,
       sourceHeadSha,
       headSha,
       reused: false,
@@ -537,8 +537,8 @@ export async function getTaskWorkspaceFileDiff(cwd: string, path: string): Promi
 export async function getTaskBranchComparison(repositoryPath: string, sourceBranch: string, taskBranch: string, frozenSourceHeadSha?: string): Promise<TaskBranchComparison> {
   const context = await getGitRepositoryContext(repositoryPath);
   if (!context.isRepository) throw gitCoreError('ZEUS_GIT_REPOSITORY_REQUIRED', 'The selected project is not a Git repository.');
-    const [safeSourceBranch, safeTaskBranch] = await Promise.all([assertGitBranchFormat(context.topLevel, sourceBranch, 'source branch'), assertNamedBranchExists(context.topLevel, taskBranch, 'task branch')]);
-    const sourceBranchRef = frozenSourceHeadSha ? requireGitObjectId(frozenSourceHeadSha, 'source commit') : localBranchRef(await assertNamedBranchExists(context.topLevel, safeSourceBranch, 'source branch'));
+  const [safeSourceBranch, safeTaskBranch] = await Promise.all([assertGitBranchFormat(context.topLevel, sourceBranch, 'source branch'), assertNamedBranchExists(context.topLevel, taskBranch, 'task branch')]);
+  const sourceBranchRef = frozenSourceHeadSha ? requireGitObjectId(frozenSourceHeadSha, 'source commit') : localBranchRef(await assertNamedBranchExists(context.topLevel, safeSourceBranch, 'source branch'));
   const taskBranchRef = localBranchRef(safeTaskBranch);
   const [sourceHeadSha, taskHeadSha] = await Promise.all([resolveCommit(context.topLevel, sourceBranchRef), resolveCommit(context.topLevel, taskBranchRef)]);
   const mergeBaseSha = await requireGitStdout(context.topLevel, ['merge-base', sourceBranchRef, taskBranchRef]);
@@ -568,7 +568,7 @@ export async function getTaskBranchComparison(repositoryPath: string, sourceBran
 /** 读取任务分支单个文件的已提交差异，不依赖任务 worktree 是否仍然存在。 */
 export async function getTaskBranchFileDiff(repositoryPath: string, sourceBranch: string, taskBranch: string, path: string, frozenSourceHeadSha?: string): Promise<TaskWorkspaceFileDiff> {
   const safePath = requireSafeWorkspacePath(path);
-    const comparison = await getTaskBranchComparison(repositoryPath, sourceBranch, taskBranch, frozenSourceHeadSha);
+  const comparison = await getTaskBranchComparison(repositoryPath, sourceBranch, taskBranch, frozenSourceHeadSha);
   const diffText = await readGitDiffAllowChanges(repositoryPath, ['diff', '--binary', `${comparison.mergeBaseSha}..${comparison.taskHeadSha}`, '--', safePath]);
   return { path: safePath, diff: diffSummaryFromText(diffText) };
 }
@@ -590,35 +590,38 @@ export async function getRemoteBranchHead(cwd: string, remoteName: string, remot
  * 刷新一个明确远端并返回该次刷新后的分支快照。
  * 刷新失败必须由调用方阻断当前动作，不能继续使用旧的远端跟踪引用。
  */
-export async function fetchGitRemote(cwd: string, remoteName: string): Promise<{
-    remoteName: string;
-    branches: string[]
+export async function fetchGitRemote(
+  cwd: string,
+  remoteName: string,
+): Promise<{
+  remoteName: string;
+  branches: string[];
 }> {
-    const remote = requireSafeGitRef(remoteName, 'remote');
-    const context = await getGitRepositoryContext(cwd);
-    if (!context.isRepository) throw gitCoreError('ZEUS_GIT_REPOSITORY_REQUIRED', 'The selected project is not a Git repository.');
-    if (!context.remotes.includes(remote)) throw gitCoreError('ZEUS_TASK_GIT_REMOTE_UNAVAILABLE', `Git remote is not configured: ${remote}`);
-    try {
-        await execFileAsync('git', ['fetch', '--prune', '--no-tags', remote, `+refs/heads/*:refs/remotes/${remote}/*`], {
-            cwd: context.topLevel,
-            maxBuffer: 20 * 1024 * 1024
-        });
-    } catch (error) {
-        const message = error instanceof Error ? error.message : `Failed to refresh ${remote}.`;
-        throw gitCoreError('ZEUS_GIT_REMOTE_REFRESH_FAILED', message);
-    }
-    const refreshed = await getGitRepositoryContext(context.topLevel);
-    return {
-        remoteName: remote,
-        branches: refreshed.remoteBranches.filter((ref) => ref.startsWith(`${remote}/`)),
-    };
+  const remote = requireSafeGitRef(remoteName, 'remote');
+  const context = await getGitRepositoryContext(cwd);
+  if (!context.isRepository) throw gitCoreError('ZEUS_GIT_REPOSITORY_REQUIRED', 'The selected project is not a Git repository.');
+  if (!context.remotes.includes(remote)) throw gitCoreError('ZEUS_TASK_GIT_REMOTE_UNAVAILABLE', `Git remote is not configured: ${remote}`);
+  try {
+    await execFileAsync('git', ['fetch', '--prune', '--no-tags', remote, `+refs/heads/*:refs/remotes/${remote}/*`], {
+      cwd: context.topLevel,
+      maxBuffer: 20 * 1024 * 1024,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : `Failed to refresh ${remote}.`;
+    throw gitCoreError('ZEUS_GIT_REMOTE_REFRESH_FAILED', message);
+  }
+  const refreshed = await getGitRepositoryContext(context.topLevel);
+  return {
+    remoteName: remote,
+    branches: refreshed.remoteBranches.filter((ref) => ref.startsWith(`${remote}/`)),
+  };
 }
 
 /** 读取已经刷新到本机的远端跟踪分支提交；不会再次访问网络。 */
 export async function getRemoteTrackingBranchHead(cwd: string, remoteName: string, remoteBranch: string): Promise<string | null> {
-    const remote = requireSafeGitRef(remoteName, 'remote');
-    const branch = await assertGitBranchFormat(cwd, remoteBranch, 'remote branch');
-    return readCommitIfPresent(cwd, `refs/remotes/${remote}/${branch}`);
+  const remote = requireSafeGitRef(remoteName, 'remote');
+  const branch = await assertGitBranchFormat(cwd, remoteBranch, 'remote branch');
+  return readCommitIfPresent(cwd, `refs/remotes/${remote}/${branch}`);
 }
 
 /**
@@ -649,7 +652,7 @@ export async function commitAndPushTaskWorkspace(input: CommitAndPushTaskWorkspa
   const remoteBranch = await assertGitBranchFormat(input.cwd, input.remoteBranch || review.branch, 'remote branch');
   let remoteHeadSha: string | null = null;
   if (input.push) {
-      remoteHeadSha = await pushCurrentTaskHead(input.cwd, remoteName, remoteBranch, headSha);
+    remoteHeadSha = await pushCurrentTaskHead(input.cwd, remoteName, remoteBranch, headSha);
   }
   return { branch: review.branch, headSha, committed, pushed: input.push, remoteName, remoteBranch, remoteHeadSha };
 }
@@ -666,37 +669,37 @@ export async function pushTaskWorkspace(input: PushTaskWorkspaceInput): Promise<
   const headSha = review.headSha;
   const remoteName = requireSafeGitRef(input.remoteName || 'origin', 'remote');
   const remoteBranch = await assertGitBranchFormat(input.cwd, input.remoteBranch || review.branch, 'remote branch');
-    const remoteHeadSha = await pushCurrentTaskHead(input.cwd, remoteName, remoteBranch, headSha);
-    return {branch: review.branch, headSha, remoteName, remoteBranch, remoteHeadSha};
+  const remoteHeadSha = await pushCurrentTaskHead(input.cwd, remoteName, remoteBranch, headSha);
+  return { branch: review.branch, headSha, remoteName, remoteBranch, remoteHeadSha };
 }
 
 /** 刷新并校验远端任务分支后执行普通推送；远端领先或分叉时拒绝覆盖。 */
 async function pushCurrentTaskHead(cwd: string, remoteName: string, remoteBranch: string, headSha: string): Promise<string> {
+  await fetchGitRemote(cwd, remoteName);
+  const trackingRef = `refs/remotes/${remoteName}/${remoteBranch}`;
+  const remoteHeadBeforePush = await readCommitIfPresent(cwd, trackingRef);
+  if (remoteHeadBeforePush && remoteHeadBeforePush !== headSha) {
+    const { remoteOnly } = await compareCommits(cwd, remoteHeadBeforePush, headSha);
+    if (remoteOnly > 0) {
+      throw gitCoreError('ZEUS_TASK_REMOTE_DIVERGED', `Remote task branch ${remoteName}/${remoteBranch} contains commits that are not in local HEAD.`);
+    }
+  }
+  try {
+    await runGit(cwd, ['push', '--set-upstream', remoteName, `HEAD:refs/heads/${remoteBranch}`]);
+  } catch (error) {
     await fetchGitRemote(cwd, remoteName);
-    const trackingRef = `refs/remotes/${remoteName}/${remoteBranch}`;
-    const remoteHeadBeforePush = await readCommitIfPresent(cwd, trackingRef);
-    if (remoteHeadBeforePush && remoteHeadBeforePush !== headSha) {
-        const {remoteOnly} = await compareCommits(cwd, remoteHeadBeforePush, headSha);
-        if (remoteOnly > 0) {
-            throw gitCoreError('ZEUS_TASK_REMOTE_DIVERGED', `Remote task branch ${remoteName}/${remoteBranch} contains commits that are not in local HEAD.`);
-        }
+    const latestRemoteHead = await readCommitIfPresent(cwd, trackingRef);
+    if (latestRemoteHead && latestRemoteHead !== headSha) {
+      const { remoteOnly } = await compareCommits(cwd, latestRemoteHead, headSha);
+      if (remoteOnly > 0) throw gitCoreError('ZEUS_TASK_REMOTE_DIVERGED', `Remote task branch ${remoteName}/${remoteBranch} advanced before the push completed.`);
     }
-    try {
-        await runGit(cwd, ['push', '--set-upstream', remoteName, `HEAD:refs/heads/${remoteBranch}`]);
-    } catch (error) {
-        await fetchGitRemote(cwd, remoteName);
-        const latestRemoteHead = await readCommitIfPresent(cwd, trackingRef);
-        if (latestRemoteHead && latestRemoteHead !== headSha) {
-            const {remoteOnly} = await compareCommits(cwd, latestRemoteHead, headSha);
-            if (remoteOnly > 0) throw gitCoreError('ZEUS_TASK_REMOTE_DIVERGED', `Remote task branch ${remoteName}/${remoteBranch} advanced before the push completed.`);
-        }
-        throw error;
-    }
-    const remoteHeadSha = await readRemoteHead(cwd, remoteName, remoteBranch);
+    throw error;
+  }
+  const remoteHeadSha = await readRemoteHead(cwd, remoteName, remoteBranch);
   if (remoteHeadSha !== headSha) {
     throw gitCoreError('ZEUS_TASK_REMOTE_VERIFICATION_FAILED', `Remote ${remoteName}/${remoteBranch} does not match local HEAD after push.`);
   }
-    return remoteHeadSha;
+  return remoteHeadSha;
 }
 
 /** 仅当 worktree 干净且远端精确包含本地 HEAD 时回收物理目录。 */
@@ -796,16 +799,16 @@ export async function startTaskBranchIntegration(input: {
   projectSlug: string;
   integrationId: string;
   targetBranch: string;
-    targetRef?: string;
+  targetRef?: string;
   taskBranch: string;
   mode: 'merge' | 'squash';
   commitMessage: string;
 }): Promise<TaskBranchIntegrationStartResult> {
   const context = await getGitRepositoryContext(input.repositoryPath);
   if (!context.isRepository) throw gitCoreError('ZEUS_GIT_REPOSITORY_REQUIRED', 'The selected project is not a Git repository.');
-    const [targetBranch, taskBranch] = await Promise.all([assertGitBranchFormat(context.topLevel, input.targetBranch, 'target branch'), assertNamedBranchExists(context.topLevel, input.taskBranch, 'task branch')]);
-    const targetRef = input.targetRef?.trim() || localBranchRef(await assertNamedBranchExists(context.topLevel, targetBranch, 'target branch'));
-    const targetHeadSha = await resolveCommit(context.topLevel, targetRef);
+  const [targetBranch, taskBranch] = await Promise.all([assertGitBranchFormat(context.topLevel, input.targetBranch, 'target branch'), assertNamedBranchExists(context.topLevel, input.taskBranch, 'task branch')]);
+  const targetRef = input.targetRef?.trim() || localBranchRef(await assertNamedBranchExists(context.topLevel, targetBranch, 'target branch'));
+  const targetHeadSha = await resolveCommit(context.topLevel, targetRef);
   const taskHeadSha = await resolveCommit(context.topLevel, localBranchRef(taskBranch));
   const integrationPath = join(dirname(context.topLevel), '.zeus-worktrees', safePathSegment(input.projectSlug || basename(context.topLevel)), '.integration', safePathSegment(input.integrationId));
   const registered = context.worktrees.find((entry) => canonicalFilesystemPath(entry.path) === canonicalFilesystemPath(integrationPath));
@@ -815,9 +818,9 @@ export async function startTaskBranchIntegration(input: {
   }
   try {
     if (input.mode === 'merge') {
-        await runGit(integrationPath, ['-c', 'merge.conflictStyle=diff3', 'merge', '--no-ff', '--no-edit', taskHeadSha]);
+      await runGit(integrationPath, ['-c', 'merge.conflictStyle=diff3', 'merge', '--no-ff', '--no-edit', taskHeadSha]);
     } else {
-        await runGit(integrationPath, ['-c', 'merge.conflictStyle=diff3', 'merge', '--squash', taskHeadSha]);
+      await runGit(integrationPath, ['-c', 'merge.conflictStyle=diff3', 'merge', '--squash', taskHeadSha]);
       const staged = splitLines(await readGitStdout(integrationPath, ['diff', '--cached', '--name-only']));
       if (staged.length > 0) await runGit(integrationPath, ['commit', '-m', requireSafeGitText(input.commitMessage, 'commit message')]);
     }
@@ -860,8 +863,8 @@ export async function readTaskIntegrationConflict(integrationPath: string, path:
     readGitStageText(integrationPath, 3, safePath),
     readWorkspaceText(integrationPath, safePath),
   ]);
-    const fingerprint = createHash('sha256').update(safePath).update('\0').update(base).update('\0').update(source).update('\0').update(task).digest('hex');
-    return {path: safePath, fingerprint, base, source, task, result};
+  const fingerprint = createHash('sha256').update(safePath).update('\0').update(base).update('\0').update(source).update('\0').update(task).digest('hex');
+  return { path: safePath, fingerprint, base, source, task, result };
 }
 
 /** 保存用户确认后的中间结果并暂存；未解决的其他文件保持冲突态。 */
@@ -902,26 +905,26 @@ export async function finalizeTaskBranchIntegration(input: {
   const targetBranch = await assertGitBranchFormat(input.repositoryPath, input.targetBranch, 'target branch');
   const remoteName = input.remoteName ? requireSafeGitRef(input.remoteName, 'remote') : '';
   const resultHeadSha = requireGitObjectId(input.resultHeadSha, 'integration result');
-    let targetHeadSha: string | null;
-    if (remoteName) {
-        await fetchGitRemote(input.repositoryPath, remoteName);
-        targetHeadSha = await getRemoteTrackingBranchHead(input.repositoryPath, remoteName, targetBranch);
-    } else {
-        targetHeadSha = await getGitBranchHead(input.repositoryPath, targetBranch);
-    }
+  let targetHeadSha: string | null;
+  if (remoteName) {
+    await fetchGitRemote(input.repositoryPath, remoteName);
+    targetHeadSha = await getRemoteTrackingBranchHead(input.repositoryPath, remoteName, targetBranch);
+  } else {
+    targetHeadSha = await getGitBranchHead(input.repositoryPath, targetBranch);
+  }
   if (targetHeadSha !== input.targetHeadSha) throw gitCoreError('ZEUS_TARGET_HEAD_CHANGED', 'Target branch advanced while the integration was being prepared.');
 
   // 配置远端时，推送源是隔离目录中的确定提交；未配置远端时仍允许完成本地交付。
   let remoteHeadSha: string | null = null;
   if (remoteName) {
-      try {
-          await runGit(input.integrationPath, ['push', remoteName, `${resultHeadSha}:refs/heads/${targetBranch}`]);
-      } catch (error) {
-          await fetchGitRemote(input.repositoryPath, remoteName);
-          const latestTargetHead = await getRemoteTrackingBranchHead(input.repositoryPath, remoteName, targetBranch);
-          if (latestTargetHead !== input.targetHeadSha) throw gitCoreError('ZEUS_TARGET_HEAD_CHANGED', 'Remote target branch advanced before the integration push completed.');
-          throw error;
-      }
+    try {
+      await runGit(input.integrationPath, ['push', remoteName, `${resultHeadSha}:refs/heads/${targetBranch}`]);
+    } catch (error) {
+      await fetchGitRemote(input.repositoryPath, remoteName);
+      const latestTargetHead = await getRemoteTrackingBranchHead(input.repositoryPath, remoteName, targetBranch);
+      if (latestTargetHead !== input.targetHeadSha) throw gitCoreError('ZEUS_TARGET_HEAD_CHANGED', 'Remote target branch advanced before the integration push completed.');
+      throw error;
+    }
     remoteHeadSha = await readRemoteHead(input.integrationPath, remoteName, targetBranch);
     if (remoteHeadSha !== resultHeadSha) throw gitCoreError('ZEUS_TASK_REMOTE_VERIFICATION_FAILED', 'Remote target branch does not match the merged result.');
   }
@@ -963,7 +966,7 @@ async function syncLocalTargetBranch(input: {
   if (checkedOut) {
     try {
       const review = await getTaskWorkspaceReview(checkedOut.path);
-        if (!review.clean) {
+      if (!review.clean) {
         return { localSyncStatus: 'pending', localHeadSha: review.headSha, localWorktreePath: checkedOut.path };
       }
       await runGit(checkedOut.path, ['merge', '--ff-only', input.resultHeadSha]);
@@ -979,19 +982,19 @@ async function syncLocalTargetBranch(input: {
     }
   }
 
-    const currentLocalHead = await readCommitIfPresent(input.repositoryPath, localBranchRef(input.targetBranch));
+  const currentLocalHead = await readCommitIfPresent(input.repositoryPath, localBranchRef(input.targetBranch));
   try {
-      if (currentLocalHead) {
-          const {localOnly} = await compareCommits(input.repositoryPath, input.resultHeadSha, currentLocalHead);
-          if (localOnly > 0) {
-              return {localSyncStatus: 'pending', localHeadSha: currentLocalHead, localWorktreePath: null};
-          }
-          await runGit(input.repositoryPath, ['update-ref', `refs/heads/${input.targetBranch}`, input.resultHeadSha, currentLocalHead]);
-      } else {
-          await runGit(input.repositoryPath, ['update-ref', `refs/heads/${input.targetBranch}`, input.resultHeadSha]);
+    if (currentLocalHead) {
+      const { localOnly } = await compareCommits(input.repositoryPath, input.resultHeadSha, currentLocalHead);
+      if (localOnly > 0) {
+        return { localSyncStatus: 'pending', localHeadSha: currentLocalHead, localWorktreePath: null };
       }
+      await runGit(input.repositoryPath, ['update-ref', `refs/heads/${input.targetBranch}`, input.resultHeadSha, currentLocalHead]);
+    } else {
+      await runGit(input.repositoryPath, ['update-ref', `refs/heads/${input.targetBranch}`, input.resultHeadSha]);
+    }
   } catch {
-      const localHeadSha = await resolveCommit(input.repositoryPath, localBranchRef(input.targetBranch)).catch(() => currentLocalHead ?? input.targetHeadSha);
+    const localHeadSha = await resolveCommit(input.repositoryPath, localBranchRef(input.targetBranch)).catch(() => currentLocalHead ?? input.targetHeadSha);
     return {
       localSyncStatus: localHeadSha === input.resultHeadSha ? 'synced' : 'pending',
       localHeadSha,
@@ -1227,31 +1230,35 @@ async function assertNamedBranchExists(cwd: string, branchName: string, label = 
 
 /** 校验一次远端刷新快照中的分支，并返回不含远端名前缀的业务分支名。 */
 async function assertRemoteBranchExists(cwd: string, remoteRef: string, expectedBranch?: string): Promise<string> {
-    const normalized = remoteRef.trim();
-    const separator = normalized.indexOf('/');
-    if (separator <= 0) throw gitCoreError('ZEUS_TASK_SOURCE_BRANCH_INVALID', `Remote source branch is invalid: ${normalized}`);
-    const remoteName = requireSafeGitRef(normalized.slice(0, separator), 'remote');
-    const branch = await assertGitBranchFormat(cwd, expectedBranch?.trim() || normalized.slice(separator + 1), 'source branch');
-    if (normalized !== `${remoteName}/${branch}`) throw gitCoreError('ZEUS_TASK_SOURCE_BRANCH_INVALID', `Remote source branch does not match its selected remote: ${normalized}`);
-    const exists = await readGitStdout(cwd, ['show-ref', '--verify', '--hash', `refs/remotes/${remoteName}/${branch}`]);
-    if (!exists) throw gitCoreError('ZEUS_GIT_BRANCH_NOT_FOUND', `Remote branch does not exist in the refreshed snapshot: ${normalized}`);
-    return branch;
+  const normalized = remoteRef.trim();
+  const separator = normalized.indexOf('/');
+  if (separator <= 0) throw gitCoreError('ZEUS_TASK_SOURCE_BRANCH_INVALID', `Remote source branch is invalid: ${normalized}`);
+  const remoteName = requireSafeGitRef(normalized.slice(0, separator), 'remote');
+  const branch = await assertGitBranchFormat(cwd, expectedBranch?.trim() || normalized.slice(separator + 1), 'source branch');
+  if (normalized !== `${remoteName}/${branch}`) throw gitCoreError('ZEUS_TASK_SOURCE_BRANCH_INVALID', `Remote source branch does not match its selected remote: ${normalized}`);
+  const exists = await readGitStdout(cwd, ['show-ref', '--verify', '--hash', `refs/remotes/${remoteName}/${branch}`]);
+  if (!exists) throw gitCoreError('ZEUS_GIT_BRANCH_NOT_FOUND', `Remote branch does not exist in the refreshed snapshot: ${normalized}`);
+  return branch;
 }
 
 async function readCommitIfPresent(cwd: string, ref: string): Promise<string | null> {
-    const stdout = await readGitStdout(cwd, ['rev-parse', '--verify', `${ref}^{commit}`]);
-    return /^[0-9a-f]{40,64}$/u.test(stdout) ? stdout : null;
+  const stdout = await readGitStdout(cwd, ['rev-parse', '--verify', `${ref}^{commit}`]);
+  return /^[0-9a-f]{40,64}$/u.test(stdout) ? stdout : null;
 }
 
-async function compareCommits(cwd: string, remoteCommit: string, localCommit: string): Promise<{
-    remoteOnly: number;
-    localOnly: number
+async function compareCommits(
+  cwd: string,
+  remoteCommit: string,
+  localCommit: string,
+): Promise<{
+  remoteOnly: number;
+  localOnly: number;
 }> {
-    const [remoteOnlyText = '0', localOnlyText = '0'] = (await requireGitStdout(cwd, ['rev-list', '--left-right', '--count', `${remoteCommit}...${localCommit}`])).split(/\s+/u);
-    return {
-        remoteOnly: Number.parseInt(remoteOnlyText, 10) || 0,
-        localOnly: Number.parseInt(localOnlyText, 10) || 0,
-    };
+  const [remoteOnlyText = '0', localOnlyText = '0'] = (await requireGitStdout(cwd, ['rev-list', '--left-right', '--count', `${remoteCommit}...${localCommit}`])).split(/\s+/u);
+  return {
+    remoteOnly: Number.parseInt(remoteOnlyText, 10) || 0,
+    localOnly: Number.parseInt(localOnlyText, 10) || 0,
+  };
 }
 
 function parseGitWorktreeList(stdout: string): GitWorktreeEntry[] {

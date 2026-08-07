@@ -1,22 +1,22 @@
-import {createHash} from 'node:crypto';
-import {mkdir, readFile, writeFile} from 'node:fs/promises';
-import {dirname} from 'node:path';
-import {nanoid} from 'nanoid';
-import initSqlJs, {type Database, type SqlJsStatic, type SqlValue} from 'sql.js';
+import { createHash } from 'node:crypto';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { dirname } from 'node:path';
+import { nanoid } from 'nanoid';
+import initSqlJs, { type Database, type SqlJsStatic, type SqlValue } from 'sql.js';
 import {
-    type ConversationResourceKind,
-    type ConversationResourcePresentation,
-    isTaskManagementStatus,
-    isTaskPriority,
-    isTaskType,
-    type TaskAttachmentReference,
-    type TaskManagementStatus,
-    type TaskPriority,
-    type TaskType,
-    type TurnChangeFileType,
-    type TurnChangeSetState,
+  type ConversationResourceKind,
+  type ConversationResourcePresentation,
+  isTaskManagementStatus,
+  isTaskPriority,
+  isTaskType,
+  type TaskAttachmentReference,
+  type TaskManagementStatus,
+  type TaskPriority,
+  type TaskType,
+  type TurnChangeFileType,
+  type TurnChangeSetState,
 } from '@zeus/shared';
-import {migrateCommandCenterSchema} from './commands.js';
+import { migrateCommandCenterSchema } from './commands.js';
 
 export * from './commands.js';
 
@@ -194,7 +194,7 @@ export interface ZeusTaskIntegrationRecord {
   workspaceId: string;
   targetBranch: string;
   targetHeadSha: string;
-    taskHeadSha: string | null;
+  taskHeadSha: string | null;
   mode: TaskIntegrationMode;
   integrationPath: string | null;
   resultHeadSha: string | null;
@@ -215,7 +215,7 @@ export interface CreateTaskIntegrationInput {
   workspaceId: string;
   targetBranch: string;
   targetHeadSha: string;
-    taskHeadSha: string;
+  taskHeadSha: string;
   mode: TaskIntegrationMode;
   integrationPath?: string;
   state?: TaskIntegrationState;
@@ -1706,7 +1706,7 @@ function migrateTaskGitWorkspaceSchema(db: ZeusDatabase): void {
             ADD COLUMN local_head_sha TEXT`,
     `ALTER TABLE task_integrations
             ADD COLUMN local_worktree_path TEXT`,
-      `ALTER TABLE task_integrations
+    `ALTER TABLE task_integrations
           ADD COLUMN task_head_sha TEXT`,
   ]) {
     try {
@@ -1728,11 +1728,11 @@ function migrateTaskGitWorkspaceSchema(db: ZeusDatabase): void {
     description: '记录任务分支远端交付后的本地目标分支同步状态',
     checksumSource: 'task_integrations:local_sync_status,local_head_sha,local_worktree_path',
   });
-    recordSchemaMigration(db, {
-        migrationId: '20260807_0003_task_integration_task_head',
-        description: '冻结任务分支合入候选使用的精确提交',
-        checksumSource: 'task_integrations:task_head_sha',
-    });
+  recordSchemaMigration(db, {
+    migrationId: '20260807_0003_task_integration_task_head',
+    description: '冻结任务分支合入候选使用的精确提交',
+    checksumSource: 'task_integrations:task_head_sha',
+  });
 }
 
 /**
@@ -3429,7 +3429,7 @@ export class TaskIntegrationRepository {
       workspaceId: input.workspaceId,
       targetBranch: input.targetBranch,
       targetHeadSha: input.targetHeadSha,
-        taskHeadSha: input.taskHeadSha,
+      taskHeadSha: input.taskHeadSha,
       mode,
       integrationPath: input.integrationPath ?? null,
       resultHeadSha: null,
@@ -3448,7 +3448,7 @@ export class TaskIntegrationRepository {
         result_head_sha, state, local_sync_status, local_head_sha, local_worktree_path,
         conflict_files_json, last_error, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL, NULL, NULL, '[]', NULL, ?, ?)`,
-        [record.id, record.projectId, record.taskId, record.workspaceId, record.targetBranch, record.targetHeadSha, record.taskHeadSha, record.mode, record.integrationPath, record.state, record.createdAt, record.updatedAt],
+      [record.id, record.projectId, record.taskId, record.workspaceId, record.targetBranch, record.targetHeadSha, record.taskHeadSha, record.mode, record.integrationPath, record.state, record.createdAt, record.updatedAt],
     );
     return record;
   }
@@ -6138,7 +6138,7 @@ interface DbTaskIntegrationRow {
   workspace_id: string;
   target_branch: string;
   target_head_sha: string;
-    task_head_sha: string | null;
+  task_head_sha: string | null;
   mode: TaskIntegrationMode;
   integration_path: string | null;
   result_head_sha: string | null;
@@ -6656,7 +6656,7 @@ function mapTaskIntegrationRow(row: DbTaskIntegrationRow): ZeusTaskIntegrationRe
     workspaceId: row.workspace_id,
     targetBranch: row.target_branch,
     targetHeadSha: row.target_head_sha,
-      taskHeadSha: row.task_head_sha,
+    taskHeadSha: row.task_head_sha,
     mode: assertEnum(row.mode, ['merge', 'squash'] as const, 'task integration mode'),
     integrationPath: row.integration_path,
     resultHeadSha: row.result_head_sha,
