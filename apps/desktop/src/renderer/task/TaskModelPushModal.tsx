@@ -21,7 +21,7 @@ export interface TaskModelPushForm {
   supplementalInfo: string;
 }
 
-export type TaskModelPushModalStatus = 'loading' | 'ready' | 'submitting' | 'error';
+export type TaskModelPushModalStatus = 'loading' | 'ready' | 'authenticating' | 'submitting' | 'error';
 
 export type TaskModelPushPreferences = Pick<TaskModelPushForm, 'model' | 'effort' | 'workMode' | 'permissionMode'> & {
   workspaceMode?: 'direct' | 'worktree';
@@ -121,15 +121,18 @@ export function TaskModelPushModal(props: {
   error: string | null;
   onChange: (next: TaskModelPushForm) => void;
   onClose: () => void;
+  onCancelAuthentication: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   onLoadAttachmentPreview?: (path: string) => Promise<{ previewUrl: string; mimeType: string } | null>;
   onOpenAttachment?: (path: string) => Promise<{ opened: boolean; error?: string }>;
 }) {
   if (!props.open || !props.task) return null;
   const zh = props.language === 'zh-CN';
-  const busy = props.status === 'submitting';
+  const authenticating = props.status === 'authenticating';
+  const busy = authenticating || props.status === 'submitting';
   const attachments = parseTaskAttachments(props.task.sourceContextJson);
   const selectedModel = props.capabilities?.models.find((model) => model.model === props.form.model || model.id === props.form.model);
+  const codexLoginRequired = selectedModel?.agentKind !== 'pi' && props.capabilities?.codexAccount.requiresOpenaiAuth === true && !props.capabilities.codexAccount.signedIn;
   const repositories = props.capabilities?.repositories ?? [];
   const directWorkspaceBusy = (props.capabilities?.directWorkspace.activeWritableConversationCount ?? 0) > 0;
   const directWorkspaceNeedsConfirmation = directWorkspaceBusy && props.form.permissionMode !== 'read-only';
@@ -307,21 +310,23 @@ export function TaskModelPushModal(props: {
                 emptyLabel={zh ? '没有匹配模型' : 'No matching models'}
               />
             </label>
-            <label>
-              <span>{zh ? '模型等级' : 'Reasoning effort'}</span>
-              <ZeusSelect
-                size="regular"
-                ariaLabel={zh ? '模型等级' : 'Reasoning effort'}
-                value={props.form.effort}
-                options={(selectedModel?.supportedReasoningEfforts ?? []).map((effort) => ({
-                  value: effort,
-                  label: effort,
-                }))}
-                onChange={(effort) => props.onChange({ ...props.form, effort })}
-                disabled={!selectedModel || busy}
-                searchable={false}
-              />
-            </label>
+            {selectedModel?.supportedReasoningEfforts.length ? (
+              <label>
+                <span>{zh ? '模型等级' : 'Reasoning effort'}</span>
+                <ZeusSelect
+                  size="regular"
+                  ariaLabel={zh ? '模型等级' : 'Reasoning effort'}
+                  value={props.form.effort}
+                  options={selectedModel.supportedReasoningEfforts.map((effort) => ({
+                    value: effort,
+                    label: effort,
+                  }))}
+                  onChange={(effort) => props.onChange({ ...props.form, effort })}
+                  disabled={busy}
+                  searchable={false}
+                />
+              </label>
+            ) : null}
             <label>
               <span>{zh ? '服务档位' : 'Service tier'}</span>
               <ZeusSelect
@@ -374,6 +379,24 @@ export function TaskModelPushModal(props: {
                 : 'The selected model does not support the previous Fast tier. The model was kept and the tier changed to Standard.'
               : serviceTierDescription(props.form.serviceTier, selectedModel, props.language)}
           </p>
+
+          {codexLoginRequired || authenticating ? (
+            <section className="task-model-push-account" aria-live="polite">
+              <span>
+                <strong>{zh ? 'Zeus 专属 Codex 需要登录' : 'Sign in to Codex for Zeus'}</strong>
+                <small>{zh ? 'Zeus 与 Codex App 使用独立账号状态，不会复制或覆盖 Codex App 的登录信息。' : 'Zeus keeps a separate account state and does not copy or overwrite the Codex App sign-in.'}</small>
+              </span>
+              <p>
+                {authenticating
+                  ? zh
+                    ? '浏览器已打开。完成登录后，这里会自动继续创建当前会话。'
+                    : 'Your browser is open. This conversation will be created automatically after sign-in.'
+                  : zh
+                    ? '点击“登录并继续”后会打开官方登录页；当前模型、工作区和补充信息都会保留。'
+                    : 'Choose “Sign in and continue” to open the official sign-in page. Your current configuration will be preserved.'}
+              </p>
+            </section>
+          ) : null}
 
           <label className="task-model-push-supplement">
             <span>{zh ? '补充信息（可选）' : 'Supplemental information (optional)'}</span>
@@ -428,8 +451,8 @@ export function TaskModelPushModal(props: {
         <footer className="task-model-push-footer">
           <small>{zh ? '确认后会创建新会话并立即进入；历史会话不会被覆盖。' : 'A new conversation will be created and opened; history remains unchanged.'}</small>
           <span>
-            <Button variant="secondary" size="regular" onClick={props.onClose} disabled={busy}>
-              {zh ? '取消' : 'Cancel'}
+            <Button variant="secondary" size="regular" onClick={authenticating ? props.onCancelAuthentication : props.onClose} disabled={props.status === 'submitting'}>
+              {authenticating ? (zh ? '取消登录' : 'Cancel sign-in') : zh ? '取消' : 'Cancel'}
             </Button>
             <Button
               type="submit"
@@ -437,6 +460,7 @@ export function TaskModelPushModal(props: {
               size="regular"
               busy={busy}
               disabled={
+                busy ||
                 props.status === 'loading' ||
                 !props.form.model ||
                 (props.form.workspaceMode === 'direct'
@@ -448,7 +472,21 @@ export function TaskModelPushModal(props: {
                     }))
               }
             >
-              {busy ? (zh ? '正在创建…' : 'Creating…') : zh ? '创建新会话' : 'Create conversation'}
+              {authenticating
+                ? zh
+                  ? '等待登录…'
+                  : 'Waiting for sign-in…'
+                : props.status === 'submitting'
+                  ? zh
+                    ? '正在创建…'
+                    : 'Creating…'
+                  : codexLoginRequired
+                    ? zh
+                      ? '登录并继续'
+                      : 'Sign in and continue'
+                    : zh
+                      ? '创建新会话'
+                      : 'Create conversation'}
             </Button>
           </span>
         </footer>

@@ -1,4 +1,4 @@
-export type ModelConnectionTemplateId = 'custom' | 'deepseek' | 'bailian';
+export type ModelConnectionTemplateId = 'custom' | 'deepseek' | 'bailian' | 'kimi' | 'zai';
 
 export type ModelCapabilityState = 'supported' | 'unsupported' | 'unverified';
 
@@ -76,7 +76,7 @@ export interface SelectablePiModel {
   available: boolean;
   availabilityReason: string;
   supportedReasoningEfforts: PiThinkingLevel[];
-  defaultReasoningEffort: PiThinkingLevel;
+  defaultReasoningEffort: PiThinkingLevel | null;
   serviceTiers: [];
   defaultServiceTier: null;
   speedLabel: ConfiguredModelDefinition['speedLabel'];
@@ -102,6 +102,18 @@ export const modelConnectionTemplates: Record<Exclude<ModelConnectionTemplateId,
     modelsPath: '/models',
     thinkingFormat: 'qwen',
   },
+  kimi: {
+    name: 'Kimi',
+    baseUrl: 'https://api.moonshot.cn/v1',
+    modelsPath: '/models',
+    thinkingFormat: 'openai',
+  },
+  zai: {
+    name: 'Z.AI / GLM',
+    baseUrl: 'https://api.z.ai/api/paas/v4',
+    modelsPath: '/models',
+    thinkingFormat: 'zai',
+  },
 };
 
 export function modelRef(sourceId: string, modelId: string): string {
@@ -126,7 +138,7 @@ export function normalizeModelConnection(input: SaveModelConnectionInput, option
   const name = normalizeSingleLine(input.name || template?.name || '', '连接名称', 80);
   const baseUrl = normalizeModelBaseUrl(input.baseUrl || template?.baseUrl || '');
   const modelsPath = normalizeModelsPath(input.modelsPath ?? template?.modelsPath ?? '/models');
-  const models = normalizeConfiguredModels(input.models ?? [], template?.thinkingFormat ?? 'openai');
+  const models = normalizeConfiguredModels(input.models ?? [], template?.thinkingFormat ?? 'openai').map((model) => applyTemplateReasoningProfile(model, templateId));
   return {
     id: normalizeIdentifier(options.id, '连接 ID'),
     name,
@@ -204,8 +216,8 @@ export function listSelectablePiModels(connections: readonly ModelConnectionReco
         enabled: connection.enabled && model.enabled,
         available: available && model.capability.tools.state !== 'unsupported',
         availabilityReason,
-        supportedReasoningEfforts: model.capability.reasoning.state === 'supported' ? [...model.capability.reasoning.levels] : ['off'],
-        defaultReasoningEffort: model.capability.reasoning.state === 'supported' ? model.capability.reasoning.defaultLevel : 'off',
+        supportedReasoningEfforts: model.capability.reasoning.state === 'supported' ? [...model.capability.reasoning.levels] : [],
+        defaultReasoningEffort: model.capability.reasoning.state === 'supported' ? model.capability.reasoning.defaultLevel : null,
         serviceTiers: [] as [],
         defaultServiceTier: null,
         speedLabel: model.speedLabel,
@@ -240,14 +252,19 @@ export function createConfiguredModelDefinition(id: string, input: Partial<Confi
   );
 }
 
-export function mergeDiscoveredModels(existing: readonly ConfiguredModelDefinition[], modelIds: readonly string[], thinkingFormat: OpenAiThinkingFormat): ConfiguredModelDefinition[] {
+export function mergeDiscoveredModels(existing: readonly ConfiguredModelDefinition[], modelIds: readonly string[], thinkingFormat: OpenAiThinkingFormat, templateId: ModelConnectionTemplateId = 'custom'): ConfiguredModelDefinition[] {
   const byId = new Map(existing.map((model) => [model.id, model]));
   for (const rawId of modelIds) {
     const id = rawId.trim();
     if (!id || byId.has(id)) continue;
-    byId.set(id, createConfiguredModelDefinition(id, {}, thinkingFormat));
+    byId.set(id, applyTemplateReasoningProfile(createConfiguredModelDefinition(id, {}, thinkingFormat), templateId));
   }
-  return [...byId.values()];
+  return [...byId.values()].map((model) => applyTemplateReasoningProfile(model, templateId));
+}
+
+export function createTemplateConfiguredModelDefinition(id: string, templateId: ModelConnectionTemplateId): ConfiguredModelDefinition {
+  const thinkingFormat = templateId === 'custom' ? 'openai' : modelConnectionTemplates[templateId].thinkingFormat;
+  return applyTemplateReasoningProfile(createConfiguredModelDefinition(id, {}, thinkingFormat), templateId);
 }
 
 export function modelConnectionSecretAccount(connectionId: string): string {
@@ -278,6 +295,34 @@ function normalizeConfiguredModel(value: ConfiguredModelDefinition, fallbackThin
   const speedLabel = speedLabels.has(value.speedLabel) ? value.speedLabel : inferSpeedLabel(id);
   const capability = normalizeCapability(value.capability, fallbackThinkingFormat);
   return { id, displayName, enabled: value.enabled !== false, contextWindow, maxTokens, speedLabel, capability };
+}
+
+/** 仅替换历史系统默认值，用户已经编辑过的能力配置保持原样。 */
+function applyTemplateReasoningProfile(model: ConfiguredModelDefinition, templateId: ModelConnectionTemplateId): ConfiguredModelDefinition {
+  const reasoning = model.capability.reasoning;
+  if (reasoning.state !== 'unverified' || reasoning.levels.length !== 1 || reasoning.levels[0] !== 'off' || reasoning.defaultLevel !== 'off') return model;
+  const normalizedId = model.id.toLowerCase();
+  let levels: PiThinkingLevel[] | null = null;
+  let thinkingFormat = reasoning.thinkingFormat;
+  if (templateId === 'deepseek' && /^deepseek-v4-flash(?:-|$)/u.test(normalizedId)) {
+    levels = ['low', 'high', 'max'];
+    thinkingFormat = 'deepseek';
+  } else if (templateId === 'deepseek' && /^deepseek-v4-pro(?:-|$)/u.test(normalizedId)) {
+    levels = ['high', 'max'];
+    thinkingFormat = 'deepseek';
+  } else if (templateId === 'bailian' && /^deepseek-v4-(?:flash|pro)(?:-|$)/u.test(normalizedId)) {
+    // 百炼会把 low/medium 合并为 high、xhigh 合并为 max，界面只展示真实不同的档位。
+    levels = ['high', 'max'];
+    thinkingFormat = 'qwen';
+  }
+  if (!levels) return model;
+  return {
+    ...model,
+    capability: {
+      ...model.capability,
+      reasoning: { state: 'supported', levels, defaultLevel: 'high', thinkingFormat },
+    },
+  };
 }
 
 function normalizeCapability(value: ConfiguredModelCapability, fallbackThinkingFormat: OpenAiThinkingFormat): ConfiguredModelCapability {
@@ -323,7 +368,7 @@ function normalizeCapabilityState(value: unknown): ModelCapabilityState {
 }
 
 function normalizeTemplateId(value: unknown): ModelConnectionTemplateId {
-  return value === 'deepseek' || value === 'bailian' ? value : 'custom';
+  return value === 'deepseek' || value === 'bailian' || value === 'kimi' || value === 'zai' ? value : 'custom';
 }
 
 function normalizeModelBaseUrl(value: unknown): string {

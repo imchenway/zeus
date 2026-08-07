@@ -53,11 +53,22 @@ export interface NativeTurnSnapshot {
   providerTurnId: string | null;
   submissionId: string | null;
   status: string;
+  error?: NativeTurnFailureSnapshot | null;
   plan?: NativeTurnPlanSnapshot | null;
   startedAt: string | null;
   completedAt: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export type NativeTurnFailureCategory = 'authentication' | 'rate_limit' | 'network' | 'configuration' | 'permission' | 'unknown';
+
+export interface NativeTurnFailureSnapshot {
+  category: NativeTurnFailureCategory;
+  code: string | null;
+  message: string;
+  providerStatus: string | null;
+  additionalDetails: string[];
 }
 
 export interface NativeItemSnapshot {
@@ -327,7 +338,7 @@ export interface CodexTaskPushModelCapability {
   tools?: 'supported' | 'unsupported' | 'unverified';
   imageInput?: 'supported' | 'unsupported' | 'unverified';
   supportedReasoningEfforts: string[];
-  defaultReasoningEffort?: string;
+  defaultReasoningEffort?: string | null;
   serviceTiers: Array<{ id: string; name: string; description: string }>;
   defaultServiceTier?: string | null;
 }
@@ -362,6 +373,20 @@ export interface CodexTaskRepositoryCapability extends ProjectRepositoryRecord {
   suggestedBranchName: string;
 }
 
+export interface CodexAccountSnapshot {
+  generationId: string;
+  requiresOpenaiAuth: boolean;
+  signedIn: boolean;
+  accountType: string | null;
+  planType: string | null;
+}
+
+export interface CodexChatGptLogin {
+  generationId: string;
+  loginId: string;
+  authUrl: string;
+}
+
 export interface CodexTaskPushCapabilities {
   generationId: string;
   initializedAt: string;
@@ -370,6 +395,7 @@ export interface CodexTaskPushCapabilities {
   canonicalPrompt: string;
   preferredModel: string;
   models: CodexTaskPushModelCapability[];
+  codexAccount: CodexAccountSnapshot;
   repositories: CodexTaskRepositoryCapability[];
   directWorkspace: {
     path: string;
@@ -577,6 +603,7 @@ export interface CodexConversationCapabilities {
   projectId: string;
   preferredModel: string;
   models: CodexTaskPushModelCapability[];
+  codexAccount: CodexAccountSnapshot;
 }
 
 export interface NativeTurnSettingsSelection {

@@ -2,7 +2,7 @@ import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 
 import { isOperationalActivityItem, SessionActivityGroup, SessionTurnDuration } from './SessionActivity.js';
 import { itemRole, type SessionUiLanguage, ThreadItemView, transcriptItemText } from './ThreadItemView.js';
 import { PlanSummary } from './PlanSummary.js';
-import type { ConversationResource, NativePendingRequest, NativeSessionItemBuffer, NativeSessionState, TurnChangeSet, TurnChangeSetOperationResult } from './sessionTypes.js';
+import type { ConversationResource, NativePendingRequest, NativeSessionItemBuffer, NativeSessionState, NativeTurnFailureSnapshot, TurnChangeSet, TurnChangeSetOperationResult } from './sessionTypes.js';
 import type { ConversationFileLocation, ConversationOpenTarget } from '@zeus/shared';
 import { useThreadScrollController } from './useThreadScrollController.js';
 import { TurnChangeCard } from './TurnChanges.js';
@@ -47,6 +47,12 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   const answeredRequests = useMemo(() => props.state.pendingRequests.filter(isAnsweredUserInputRequest), [props.state.pendingRequests]);
   const transcriptRows = useMemo(() => projectTranscriptRows(items, answeredRequests), [answeredRequests, items]);
   const lastItemKeyByTurn = useMemo(() => Object.fromEntries(items.map((item) => [item.turnId, item.key])), [items]);
+  const orphanFailedTurns = useMemo(() => {
+    const visibleTurnIds = new Set(items.map((item) => item.turnId));
+    return Object.values(props.state.turnsByProviderId)
+      .filter((turn) => turn.status === 'failed' && turn.error && !visibleTurnIds.has(turn.providerTurnId ?? ''))
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+  }, [items, props.state.turnsByProviderId]);
   const showThinking = shouldShowTranscriptThinking(props.state);
   const historyHydrated = props.state.snapshot !== null;
   const historyUnavailable = !historyHydrated && (props.state.transportState === 'reconnecting' || props.state.transportState === 'failed');
@@ -165,6 +171,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
                   {closesVisibleTurn && changeSet && changeSet.state !== 'capturing' && (changeSet.fileCount > 0 || changeSet.state === 'conflicted') ? (
                     <TurnChangeCard changeSet={changeSet} language={props.language} onReview={props.onReviewTurnChanges} onOperate={props.onOperateTurnChangeSet} />
                   ) : null}
+                  {closesVisibleTurn && turn?.status === 'failed' && turn.error ? <TurnFailureCard failure={turn.error} language={props.language} /> : null}
                   {closesVisibleTurn && turn ? <SessionTurnDuration turn={turn} requests={props.state.pendingRequests} language={props.language} /> : null}
                 </Fragment>
               );
@@ -176,6 +183,9 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
               {props.language === 'zh-CN' ? '历史消息暂不可用；连接恢复后会自动显示。' : 'History is temporarily unavailable and will reappear after the connection recovers.'}
             </p>
           ) : null}
+          {orphanFailedTurns.map((turn) => (
+            <TurnFailureCard key={`turn-failure:${turn.providerTurnId ?? turn.id}`} failure={turn.error!} language={props.language} />
+          ))}
           {immediateOptimisticItems.map((item) => (
             <ThreadItemView key={item.key} item={item} language={props.language} isLatest />
           ))}
@@ -211,6 +221,69 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
       </div>
     </>
   );
+}
+
+function TurnFailureCard(props: { failure: NativeTurnFailureSnapshot; language: SessionUiLanguage }) {
+  const zh = props.language === 'zh-CN';
+  const copy = failureCopy(props.failure.category, zh);
+  return (
+    <article className="session-turn-failure" role="alert" aria-label={zh ? '会话失败原因' : 'Conversation failure reason'}>
+      <strong>{zh ? '本轮执行失败' : 'This turn failed'}</strong>
+      <p>{copy.reason}</p>
+      <small>{copy.recovery}</small>
+      <details className="session-turn-failure-details">
+        <summary>{zh ? '技术详情' : 'Technical details'}</summary>
+        <dl>
+          {props.failure.code ? (
+            <>
+              <dt>{zh ? '错误代码' : 'Error code'}</dt>
+              <dd>{props.failure.code}</dd>
+            </>
+          ) : null}
+          {props.failure.providerStatus ? (
+            <>
+              <dt>{zh ? '运行状态' : 'Provider status'}</dt>
+              <dd>{props.failure.providerStatus}</dd>
+            </>
+          ) : null}
+          <dt>{zh ? '原始原因（已脱敏）' : 'Original reason (redacted)'}</dt>
+          <dd>{props.failure.message}</dd>
+          {props.failure.additionalDetails.map((detail) => (
+            <Fragment key={detail}>
+              <dt>{zh ? '补充信息' : 'Additional detail'}</dt>
+              <dd>{detail}</dd>
+            </Fragment>
+          ))}
+        </dl>
+      </details>
+    </article>
+  );
+}
+
+function failureCopy(category: NativeTurnFailureSnapshot['category'], zh: boolean): { reason: string; recovery: string } {
+  if (category === 'authentication')
+    return zh
+      ? { reason: '登录状态或 API Key 未通过认证，模型服务拒绝了本轮请求。', recovery: '请完成对应运行内核的登录，或检查模型连接中的 API Key，然后重新发送。' }
+      : { reason: 'The model service rejected this turn because the login or API key was not accepted.', recovery: 'Sign in to the selected runtime or check the model connection API key, then send again.' };
+  if (category === 'rate_limit')
+    return zh
+      ? { reason: '模型服务触发了限流或配额限制。', recovery: '请稍后重试，或检查账号配额和并发限制。' }
+      : { reason: 'The model service rate limit or quota was reached.', recovery: 'Try again later, or check the account quota and concurrency limits.' };
+  if (category === 'network')
+    return zh
+      ? { reason: 'Zeus 与模型服务之间的网络连接中断或超时。', recovery: '请检查网络和服务地址，连接恢复后重新发送。' }
+      : { reason: 'The connection between Zeus and the model service failed or timed out.', recovery: 'Check the network and service URL, then send again after connectivity recovers.' };
+  if (category === 'configuration')
+    return zh
+      ? { reason: '当前模型或请求参数不被接入渠道接受。', recovery: '请检查所选模型、思考深度和接入渠道后重新发送。' }
+      : { reason: 'The selected channel rejected the model or request parameters.', recovery: 'Check the model, reasoning effort, and access channel, then send again.' };
+  if (category === 'permission')
+    return zh
+      ? { reason: '本轮操作被权限或安全边界阻止。', recovery: '请检查项目授权和权限模式，再决定是否重新发送。' }
+      : { reason: 'A permission or safety boundary blocked this turn.', recovery: 'Review the project authorization and permission mode before sending again.' };
+  return zh
+    ? { reason: '智能体运行内核报告本轮失败。', recovery: '请展开技术详情查看真实原因，修复后重新发送。' }
+    : { reason: 'The agent runtime reported that this turn failed.', recovery: 'Open the technical details for the reported cause, fix it, and send again.' };
 }
 
 export type TranscriptRow =
