@@ -1814,6 +1814,70 @@
   font-weight: 620;
 }
 
+.session-codex-parity-v1 .session-turn-failure {
+    background: color-mix(in srgb, var(--session-danger) 7%, var(--session-control));
+    border: 1px solid color-mix(in srgb, var(--session-danger) 28%, var(--session-line));
+    border-radius: 12px;
+    box-sizing: border-box;
+    color: var(--session-text);
+    display: grid;
+    gap: 7px;
+    inline-size: min(var(--session-thread-max), 100%);
+    margin-inline: auto;
+    padding: 13px 15px;
+}
+
+.session-codex-parity-v1 .session-turn-failure > strong {
+    color: var(--session-danger);
+    font-size: 13px;
+}
+
+.session-codex-parity-v1 .session-turn-failure > :where(p, small) {
+    margin: 0;
+    overflow-wrap: anywhere;
+}
+
+.session-codex-parity-v1 .session-turn-failure > p {
+    font-size: 13px;
+    line-height: 1.55;
+}
+
+.session-codex-parity-v1 .session-turn-failure > small {
+    color: var(--session-text-muted);
+    line-height: 1.5;
+}
+
+.session-codex-parity-v1 .session-turn-failure-details {
+    border-block-start: 1px solid color-mix(in srgb, var(--session-danger) 18%, var(--session-line-soft));
+    color: var(--session-text-muted);
+    margin-block-start: 2px;
+    padding-block-start: 8px;
+}
+
+.session-codex-parity-v1 .session-turn-failure-details summary {
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 620;
+}
+
+.session-codex-parity-v1 .session-turn-failure-details dl {
+    display: grid;
+    font-size: 11px;
+    gap: 5px 12px;
+    grid-template-columns: max-content minmax(0, 1fr);
+    margin: 9px 0 0;
+}
+
+.session-codex-parity-v1 .session-turn-failure-details :where(dt, dd) {
+    margin: 0;
+    overflow-wrap: anywhere;
+}
+
+.session-codex-parity-v1 .session-turn-failure-details dt {
+    color: var(--session-text);
+    font-weight: 620;
+}
+
 .session-codex-parity-v1 .session-plan-dock {
   flex: 0 0 auto;
   inline-size: min(var(--session-composer-max), calc(100% - (2 * var(--session-gutter))));

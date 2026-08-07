@@ -27,7 +27,7 @@ interface ZeusSelectPopoverLayout {
   top: number;
   left: number;
   width: number;
-  maxHeight: number;
+  placement: 'top' | 'bottom';
 }
 
 const tabbableSelector = ['a[href]', 'button:not([disabled])', 'input:not([disabled]):not([type="hidden"])', 'select:not([disabled])', 'textarea:not([disabled])', '[contenteditable="true"]', '[tabindex]:not([tabindex="-1"])'].join(',');
@@ -89,15 +89,29 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
     const triggerRect = trigger.getBoundingClientRect();
     const viewportPadding = 8;
     const popoverGap = 6;
-    const top = triggerRect.bottom + popoverGap;
     const width = Math.min(Math.max(triggerRect.width, props.popoverMinWidth ?? 0), Math.max(0, window.innerWidth - viewportPadding * 2));
     const left = Math.min(Math.max(triggerRect.left, viewportPadding), Math.max(viewportPadding, window.innerWidth - width - viewportPadding));
-    const availableHeight = Math.max(72, window.innerHeight - top - viewportPadding);
-    setPopoverLayout({
+    const popoverHeight = popoverRef.current?.offsetHeight ?? 0;
+    const bottomTop = triggerRect.bottom + popoverGap;
+    const availableBottomHeight = Math.max(0, window.innerHeight - bottomTop - viewportPadding);
+    const placement = popoverHeight > 0 && popoverHeight > availableBottomHeight ? 'top' : 'bottom';
+    const top = placement === 'top' ? triggerRect.top - popoverGap - popoverHeight : bottomTop;
+    const nextLayout: ZeusSelectPopoverLayout = {
       top,
       left,
       width,
-      maxHeight: Math.min(availableHeight, window.innerHeight * 0.56, 430),
+      placement,
+    };
+    setPopoverLayout((currentLayout) => {
+      if (
+        currentLayout?.top === nextLayout.top &&
+        currentLayout.left === nextLayout.left &&
+        currentLayout.width === nextLayout.width &&
+        currentLayout.placement === nextLayout.placement
+      ) {
+        return currentLayout;
+      }
+      return nextLayout;
     });
   }, [props.popoverMinWidth]);
 
@@ -230,6 +244,7 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
     syncPopoverLayout();
     const resizeObserver = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(syncPopoverLayout);
     if (triggerRef.current) resizeObserver?.observe(triggerRef.current);
+    if (popoverRef.current) resizeObserver?.observe(popoverRef.current);
     window.addEventListener('resize', syncPopoverLayout);
     document.addEventListener('scroll', syncPopoverLayout, true);
     return () => {
@@ -264,14 +279,13 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
         ref={popoverRef}
         className="zeus-select-popover"
         data-motion-surface="popover"
-        data-zeus-select-placement="bottom"
+        data-zeus-select-placement={popoverLayout?.placement ?? 'bottom'}
         style={
           popoverLayout
             ? {
                 top: popoverLayout.top,
                 left: popoverLayout.left,
                 width: popoverLayout.width,
-                maxHeight: popoverLayout.maxHeight,
               }
             : { visibility: 'hidden' }
         }
@@ -329,7 +343,13 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
   ) : null;
 
   return (
-    <span className={props.className ? `zeus-select ${props.className}` : 'zeus-select'} data-zeus-primitive="select" data-zeus-select-placement="bottom" data-control-size={props.size} ref={rootRef}>
+    <span
+      className={props.className ? `zeus-select ${props.className}` : 'zeus-select'}
+      data-zeus-primitive="select"
+      data-zeus-select-placement={open ? (popoverLayout?.placement ?? 'bottom') : 'bottom'}
+      data-control-size={props.size}
+      ref={rootRef}
+    >
       {/* 触发器只保留在业务布局中；popover 通过 portal 提升到应用壳层，禁止扩大表单滚动区域。 */}
       <button
         ref={triggerRef}

@@ -7052,6 +7052,18 @@ a {
   }
 }
 
+@keyframes zeus-select-popover-enter-top {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 4px, 0) scale(0.985);
+  }
+
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
 @keyframes zeus-popover-exit {
   from {
     opacity: 1;
@@ -7288,9 +7300,9 @@ a {
   color: var(--zeus-product-text);
 }
 
-/* 2026-06-24 ZeusSelect 下方弹层最终覆盖：产品下拉不再使用 macOS 原生 select 菜单，避免系统把已选项覆盖到控件上方；popover 必须固定从触发器下方展开。 */
+/* 2026-08-07 ZeusSelect 视口边缘定位覆盖：产品下拉不再使用 macOS 原生 select 菜单；下方容纳不下完整菜单时改为向上展开。 */
 /* 2026-06-24 ZeusSelect Codex 式浮层最终覆盖：触发器使用安静浮层，弹层使用搜索行、选中勾选和柔和阴影，避免蓝色块与错位灰 rail。 */
-/* 2026-06-24 ZeusSelect 密度返修最终覆盖：保留下方展开动效，但控件、搜索、选项和勾选都回到 13px 产品表格密度，去掉顶部灰底的重控件感。 */
+/* 2026-08-07 ZeusSelect 密度与方向动效覆盖：保留上下方向对应的展开动效，控件、搜索、选项和勾选继续使用 13px 产品表格密度。 */
 .macos-ai-app .zeus-select {
   display: grid;
   inline-size: 100%;
@@ -7385,6 +7397,11 @@ a {
   z-index: 1;
 }
 
+.macos-ai-app .zeus-select-popover[data-zeus-select-placement='top'] {
+  animation-name: zeus-select-popover-enter-top;
+  transform-origin: bottom center;
+}
+
 .macos-ai-app .zeus-select-popover::before {
   background: var(--zeus-select-popover-bg);
   border-block-start: 1px solid oklch(84% 0.001 255 / 0.9);
@@ -7396,6 +7413,12 @@ a {
   inset-inline-start: 42px;
   position: absolute;
   transform: rotate(45deg);
+}
+
+.macos-ai-app .zeus-select-popover[data-zeus-select-placement='top']::before {
+  inset-block-end: -5px;
+  inset-block-start: auto;
+  transform: rotate(225deg);
 }
 
 .macos-ai-app .zeus-select-popover[hidden] {
@@ -7468,7 +7491,7 @@ a {
 .macos-ai-app .zeus-select-listbox {
   display: grid;
   gap: 0;
-  max-block-size: min(46vh, 340px);
+  max-block-size: 340px;
   overflow: auto;
   overscroll-behavior: contain;
   padding-block: 2px;
