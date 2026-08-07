@@ -195,6 +195,10 @@
   color: var(--zeus-control-muted-text);
 }
 
+.command-run-duration {
+  font-variant-numeric: tabular-nums;
+}
+
 .status-succeeded {
   color: var(--zeus-control-success-text, #207a43);
 }
@@ -224,6 +228,10 @@
   gap: 8px;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   margin: 14px 0;
+}
+
+.command-run-detail dl {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .command-run-detail dl div,
