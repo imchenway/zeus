@@ -21,6 +21,8 @@ function conversation(id: string, taskId: string, updatedAt: string, hasUnreadCo
         title: id,
         summary: null,
         status: 'active',
+        stage: 'ready',
+        stageUpdatedAt: updatedAt,
         transportKind: 'codex_native',
         providerId: 'codex',
         providerThreadId: `thread-${id}`,

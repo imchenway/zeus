@@ -27,6 +27,7 @@ import type {
   NativeCollaborationMode,
   NativeConversationAttachment,
   NativeConversationChoice,
+  NativeConversationStage,
   NativeQueuedSubmission,
   NativeOperationAcceptance,
   NativePendingRequest,
@@ -392,6 +393,8 @@ export function nativeConversationChoiceFromAcceptance(acceptance: NativeOperati
     title: stringField(conversation.title) ?? task.title,
     summary: nullableStringField(conversation.summary),
     status: stringField(conversation.status) ?? 'active',
+    stage: conversationStageField(conversation.stage) ?? 'created',
+    stageUpdatedAt: stringField(conversation.stageUpdatedAt) ?? stringField(conversation.createdAt) ?? now,
     transportKind: stringField(conversation.transportKind) ?? 'codex_native',
     providerId: stringField(conversation.providerId) ?? stringField(provider.id) ?? 'codex',
     providerThreadId: stringField(conversation.providerThreadId) ?? stringField(provider.threadId),
@@ -486,6 +489,8 @@ export function projectConversationChoiceFromAcceptance(acceptance: NativeOperat
     title: stringField(conversation.title) ?? owner.projectName,
     summary: nullableStringField(conversation.summary),
     status: stringField(conversation.status) ?? 'active',
+    stage: conversationStageField(conversation.stage) ?? 'created',
+    stageUpdatedAt: stringField(conversation.stageUpdatedAt) ?? stringField(conversation.createdAt) ?? now,
     transportKind: stringField(conversation.transportKind) ?? 'codex_native',
     providerId: stringField(conversation.providerId) ?? stringField(provider.id) ?? 'codex',
     providerThreadId: stringField(conversation.providerThreadId) ?? stringField(provider.threadId),
@@ -589,6 +594,10 @@ function nullableStringField(value: unknown): string | null {
 
 function permissionModeField(value: unknown): NativePermissionMode | undefined {
   return value === 'read-only' || value === 'auto' || value === 'full-access' ? value : undefined;
+}
+
+function conversationStageField(value: unknown): NativeConversationStage | undefined {
+  return value === 'created' || value === 'connecting' || value === 'queued' || value === 'running' || value === 'waiting_user' || value === 'waiting_approval' || value === 'completed' || value === 'failed' || value === 'paused' || value === 'ready' || value === 'archived' ? value : undefined;
 }
 
 /**

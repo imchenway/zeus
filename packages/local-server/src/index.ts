@@ -11771,7 +11771,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       const page = conversations.listByProject(projectId, { limit: 100, offset });
       history.push(...page.items.filter((conversation) => conversation.taskId === taskId));
       offset += page.items.length;
-      if (offset >= page.total || page.items.length === 0) return history;
+      if (offset >= page.total || page.items.length === 0) return history.sort(compareConversationStageUpdatedDesc);
     }
   }
 
@@ -11803,8 +11803,12 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
         }),
       );
       offset += page.items.length;
-      if (offset >= page.total || page.items.length === 0) return history;
+      if (offset >= page.total || page.items.length === 0) return history.sort(compareConversationStageUpdatedDesc);
     }
+  }
+
+  function compareConversationStageUpdatedDesc(left: ZeusConversationWithMessagesRecord, right: ZeusConversationWithMessagesRecord): number {
+    return right.stageUpdatedAt.localeCompare(left.stageUpdatedAt) || right.createdAt.localeCompare(left.createdAt) || right.id.localeCompare(left.id);
   }
 
   /** 侧边栏只聚合用户可进入的会话；待回复覆盖运行中，暂停、失败和完成未读不参与。 */
@@ -11847,6 +11851,8 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
       title: conversation.title,
       summary: conversation.summary,
       status: conversation.status,
+      stage: conversation.stage,
+      stageUpdatedAt: conversation.stageUpdatedAt,
       transportKind: conversation.transportKind,
       providerId: conversation.providerId,
       providerThreadId: conversation.providerThreadId,

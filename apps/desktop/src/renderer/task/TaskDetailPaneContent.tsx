@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState, type ClipboardEvent as ReactClipboa
 import { isTaskPriority, type TaskAttachmentReference } from '@zeus/shared';
 import { ZeusApiError, type TaskEventRecord, type TaskManagementStatus, type TaskPriority, type TaskRecord, type TaskType, type UpdateTaskRelationshipsRequest, type UpdateTaskRequest } from '../apiClient.js';
 import type { NativeConversationChoice } from '../session/sessionTypes.js';
+import { compareConversationCreatedAsc } from '../session/conversationOrdering.js';
 import { Button } from '../ui/Button.js';
 import { PENDING_RESOURCE_LONG_TEXT_THRESHOLD } from '../ui/pendingResourcePolicy.js';
 import { ZeusSelect } from '../ZeusSelect.js';
@@ -591,7 +592,7 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
     },
     [],
   );
-  const conversations = [...(props.conversations ?? [])].filter((conversation) => !conversation.archived).sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+  const conversations = [...(props.conversations ?? [])].filter((conversation) => !conversation.archived).sort(compareConversationCreatedAsc);
   const taskWorkspaces = Array.from(
     new Map(
       conversations

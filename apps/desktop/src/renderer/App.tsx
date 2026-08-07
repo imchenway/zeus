@@ -71,6 +71,7 @@ import type {
   StartTaskModelPushRequest,
 } from './session/sessionTypes.js';
 import { selectHasConfirmedUserMessage } from './session/sessionSelectors.js';
+import { compareConversationStageUpdatedDesc } from './session/conversationOrdering.js';
 import { rememberSessionHotState, type SessionHotCache } from './session/sessionHotCache.js';
 import { createHydratedSessionState } from './session/sessionReducer.js';
 import { readProjectServiceTierPreference, serviceTierWireOverride, writeProjectServiceTierPreference } from './session/serviceTierSelection.js';
@@ -385,7 +386,7 @@ export function createNativeConversationChoiceLoadCoordinator(): NativeConversat
       if (!isCurrent(taskId, requestVersion)) return null;
       const loadedIds = new Set(snapshot.choices.map((choice) => choice.id));
       const preserved = [...(acceptedByTask.get(taskId)?.values() ?? [])].filter((choice) => !loadedIds.has(choice.id));
-      const choices = [...preserved, ...snapshot.choices].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+      const choices = [...preserved, ...snapshot.choices].sort(compareConversationStageUpdatedDesc);
       return {
         ...snapshot,
         hasHistory: choices.length > 0,
@@ -426,7 +427,7 @@ export function createNativeProjectConversationChoiceLoadCoordinator(): NativePr
       if (!isCurrent(projectId, requestVersion) || snapshot.projectId !== projectId) return null;
       const loadedIds = new Set(snapshot.choices.map((choice) => choice.id));
       const preserved = [...(acceptedByProject.get(projectId)?.values() ?? [])].filter((choice) => !loadedIds.has(choice.id));
-      const choices = [...preserved, ...snapshot.choices].filter((choice) => choice.projectId === projectId && choice.taskId === null).sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+      const choices = [...preserved, ...snapshot.choices].filter((choice) => choice.projectId === projectId && choice.taskId === null).sort(compareConversationStageUpdatedDesc);
       return { projectId, choices, items: choices };
     },
   };
@@ -659,7 +660,7 @@ export function resolveSelectedNativeConversationForProject(choices: NativeConve
 
 export function resolveTaskConversationToView(snapshot: NativeConversationChoicesSnapshot | undefined): NativeConversationChoice | null {
   if (!snapshot?.choices.length) return null;
-  return snapshot.choices.reduce((latest, candidate) => (candidate.updatedAt.localeCompare(latest.updatedAt) > 0 ? candidate : latest));
+  return [...snapshot.choices].sort(compareConversationStageUpdatedDesc)[0] ?? null;
 }
 
 export function updateConversationChoiceCompletionUnread<
@@ -698,6 +699,8 @@ export function updateConversationChoiceFromNativeSnapshot<
       title: nativeSnapshot.title,
       summary: nativeSnapshot.summary,
       status: nativeSnapshot.status,
+      stage: nativeSnapshot.stage,
+      stageUpdatedAt: nativeSnapshot.stageUpdatedAt,
       transportKind: nativeSnapshot.transportKind,
       providerId: nativeSnapshot.providerId,
       providerThreadId: nativeSnapshot.providerThreadId,
@@ -711,8 +714,8 @@ export function updateConversationChoiceFromNativeSnapshot<
       collaborationMode: nativeSnapshot.collaborationMode,
     };
   };
-  const choices = snapshot.choices.map(update).sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
-  const items = snapshot.items.map(update).sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+  const choices = snapshot.choices.map(update).sort(compareConversationStageUpdatedDesc);
+  const items = snapshot.items.map(update).sort(compareConversationStageUpdatedDesc);
   return changed ? { ...snapshot, choices, items } : snapshot;
 }
 
@@ -7108,7 +7111,7 @@ export function App(props: {
   const currentProjectTasks = useMemo(() => (activeProjectId ? snapshot.tasks.filter((task) => task.projectId === activeProjectId) : snapshot.tasks), [activeProjectId, snapshot.tasks]);
   const currentTaskConversationChoices = useMemo(() => Object.fromEntries(currentProjectTasks.map((task) => [task.id, nativeConversationChoicesByTask[task.id]?.choices ?? []])), [currentProjectTasks, nativeConversationChoicesByTask]);
   const nativeConversationChoices = useMemo(
-    () => [...Object.values(nativeConversationChoicesByProject), ...Object.values(nativeConversationChoicesByTask)].flatMap((entry) => entry.choices).sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
+    () => [...Object.values(nativeConversationChoicesByProject), ...Object.values(nativeConversationChoicesByTask)].flatMap((entry) => entry.choices).sort(compareConversationStageUpdatedDesc),
     [nativeConversationChoicesByProject, nativeConversationChoicesByTask],
   );
   const selectedNativeConversation = useMemo(
@@ -7165,14 +7168,14 @@ export function App(props: {
       orderedProjects.map((project) => ({
         projectId: project.id,
         projectName: project.name,
-        conversations: [...(nativeConversationChoicesByProject[project.id]?.choices ?? [])].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
+        conversations: [...(nativeConversationChoicesByProject[project.id]?.choices ?? [])].sort(compareConversationStageUpdatedDesc),
         tasks: snapshot.tasks
           .filter((task) => task.projectId === project.id)
           .map((task) => ({
             taskId: task.id,
             taskCode: task.taskCode?.trim() || task.id,
             taskTitle: task.title,
-            conversations: [...(nativeConversationChoicesByTask[task.id]?.choices ?? [])].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
+            conversations: [...(nativeConversationChoicesByTask[task.id]?.choices ?? [])].sort(compareConversationStageUpdatedDesc),
           })),
       })),
     [nativeConversationChoicesByProject, nativeConversationChoicesByTask, orderedProjects, snapshot.tasks],
