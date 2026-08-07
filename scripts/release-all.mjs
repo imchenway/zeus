@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 /* global console, process */
-import { spawn, spawnSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { basename, dirname, extname, isAbsolute, join, resolve, sep } from 'node:path';
-import { createInterface } from 'node:readline';
+import {spawn, spawnSync} from 'node:child_process';
+import {copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, writeFileSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {basename, dirname, extname, isAbsolute, join, resolve, sep} from 'node:path';
+import {createInterface} from 'node:readline';
 
 const repositoryRoot = resolve(import.meta.dirname, '..');
 const repository = 'imchenway/zeus';
@@ -359,7 +359,8 @@ function rebindUnpublishedReleaseRepair(state, headSha) {
   if (!remoteMainSha) return false;
   const previousReleaseIsOnRemote = capture('git', ['merge-base', '--is-ancestor', state.releaseCommit, remoteMainSha], true).status === 0;
   if (recoveringUnpushedCommit && previousReleaseIsOnRemote) return false;
-  if (recoveringFailedPushedCommit && (!previousReleaseIsOnRemote || remoteMainSha !== headSha)) return false;
+    const localMainContainsRemote = capture('git', ['merge-base', '--is-ancestor', remoteMainSha, headSha], true).status === 0;
+    if (recoveringFailedPushedCommit && (!previousReleaseIsOnRemote || !localMainContainsRemote)) return false;
   if (recoveringFailedPushedCommit) assertNoActiveReleaseWorkflow();
   assertAncestor(state.baseTag, headSha);
   state.sourceHead = headSha;
