@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 /* global console, process */
-import {spawnSync} from 'node:child_process';
-import {mkdirSync, mkdtempSync, readFileSync, writeFileSync} from 'node:fs';
-import {tmpdir} from 'node:os';
-import {join, resolve} from 'node:path';
-import {URL} from 'node:url';
+import { spawnSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { URL } from 'node:url';
 
 process.on('uncaughtException', (error) => {
   console.error(error instanceof Error ? error.message : String(error));
@@ -44,23 +44,23 @@ try {
 } catch (error) {
   console.warn(`deepseek-v4-flash 生成发布说明失败，使用确定性模板继续：${error instanceof Error ? error.message : String(error)}`);
   response = buildDeterministicFallback();
-    usedDeterministicFallback = true;
+  usedDeterministicFallback = true;
 }
 
 if (automatedRelease && (response.confidence !== 'high' || !Array.isArray(response.uncertainties) || response.uncertainties.length > 0)) {
   console.warn(`AI 发布内容没有达到无人值守置信要求，使用确定性模板继续：confidence=${response.confidence ?? 'missing'} uncertainties=${JSON.stringify(response.uncertainties ?? 'missing')}`);
   response = buildDeterministicFallback();
-    usedDeterministicFallback = true;
+  usedDeterministicFallback = true;
 }
 let markdown = normalizeMarkdown(response.markdown);
 try {
-    validateDraft(markdown);
+  validateDraft(markdown);
 } catch (error) {
-    if (!automatedRelease || usedDeterministicFallback) throw error;
-    console.warn(`AI 发布内容未通过确定性校验，使用确定性模板继续：${error instanceof Error ? error.message : String(error)}`);
-    response = buildDeterministicFallback();
-    markdown = normalizeMarkdown(response.markdown);
-    validateDraft(markdown);
+  if (!automatedRelease || usedDeterministicFallback) throw error;
+  console.warn(`AI 发布内容未通过确定性校验，使用确定性模板继续：${error instanceof Error ? error.message : String(error)}`);
+  response = buildDeterministicFallback();
+  markdown = normalizeMarkdown(response.markdown);
+  validateDraft(markdown);
 }
 writeFileSync(draftPath, markdown, { mode: 0o600 });
 
