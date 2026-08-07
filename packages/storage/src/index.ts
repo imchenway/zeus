@@ -2074,10 +2074,7 @@ function migrateCodexNativeConversationSchema(db: ZeusDatabase): void {
 function migrateConversationStageSchema(db: ZeusDatabase): void {
   const migrationId = '20260807_0001_conversation_stage_updated_at';
   const alreadyMigrated = db.get<{ migration_id: string }>(`SELECT migration_id FROM schema_migrations WHERE migration_id = ?`, [migrationId]);
-  for (const statement of [
-    `ALTER TABLE conversations ADD COLUMN stage TEXT NOT NULL DEFAULT 'created'`,
-    `ALTER TABLE conversations ADD COLUMN stage_updated_at TEXT NOT NULL DEFAULT ''`,
-  ]) {
+  for (const statement of [`ALTER TABLE conversations ADD COLUMN stage TEXT NOT NULL DEFAULT 'created'`, `ALTER TABLE conversations ADD COLUMN stage_updated_at TEXT NOT NULL DEFAULT ''`]) {
     try {
       db.execute(statement);
     } catch {
@@ -2863,9 +2860,7 @@ export class TaskRepository {
     if (!isTaskManagementStatus(fromStatus) || !isTaskManagementStatus(toStatus)) throw new Error('Unknown Zeus task management status replacement.');
     if (fromStatus === toStatus) return [];
     return this.db.transaction(() => {
-      const taskIds = this.db
-        .select<{ id: string }>(`SELECT id FROM tasks WHERE project_id = ? AND management_status = ? AND deleted_at IS NULL ORDER BY created_at ASC`, [projectId, fromStatus])
-        .map((row) => row.id);
+      const taskIds = this.db.select<{ id: string }>(`SELECT id FROM tasks WHERE project_id = ? AND management_status = ? AND deleted_at IS NULL ORDER BY created_at ASC`, [projectId, fromStatus]).map((row) => row.id);
       return taskIds.map((taskId) => this.updateManagementStatus(taskId, toStatus));
     });
   }
@@ -3896,10 +3891,7 @@ function deriveConversationStageProjection(db: ZeusDatabase, conversationId: str
   if (!conversation) return null;
   if (conversation.archived === 1 || conversation.provider_state === 'archived') return { stage: 'archived', evidenceAt: conversation.created_at };
 
-  const pendingPlanAction = db.get<{ created_at: string }>(
-    `SELECT created_at FROM conversation_plan_actions WHERE conversation_id = ? AND status = 'pending' ORDER BY created_at DESC, id DESC LIMIT 1`,
-    [conversationId],
-  );
+  const pendingPlanAction = db.get<{ created_at: string }>(`SELECT created_at FROM conversation_plan_actions WHERE conversation_id = ? AND status = 'pending' ORDER BY created_at DESC, id DESC LIMIT 1`, [conversationId]);
   if (pendingPlanAction) return { stage: 'waiting_user', evidenceAt: pendingPlanAction.created_at };
 
   const pendingRequest = db.get<{ request_kind: ConversationServerRequestKind; created_at: string }>(
@@ -3913,10 +3905,9 @@ function deriveConversationStageProjection(db: ZeusDatabase, conversationId: str
     };
   }
 
-  const activeTurn = db.get<{ started_at: string | null; updated_at: string }>(
-    `SELECT started_at, updated_at FROM conversation_turns WHERE conversation_id = ? AND status = 'running' ORDER BY updated_at DESC, id DESC LIMIT 1`,
-    [conversationId],
-  );
+  const activeTurn = db.get<{ started_at: string | null; updated_at: string }>(`SELECT started_at, updated_at FROM conversation_turns WHERE conversation_id = ? AND status = 'running' ORDER BY updated_at DESC, id DESC LIMIT 1`, [
+    conversationId,
+  ]);
   const activeSubmission = db.get<{ dispatched_at: string | null; updated_at: string }>(
     `SELECT dispatched_at, updated_at FROM conversation_submissions WHERE conversation_id = ? AND status = 'active' ORDER BY updated_at DESC, id DESC LIMIT 1`,
     [conversationId],
@@ -3940,10 +3931,9 @@ function deriveConversationStageProjection(db: ZeusDatabase, conversationId: str
     return { stage: 'queued', evidenceAt: latestIso(queuedSubmission.created_at, latestTerminal?.completed_at, latestTerminal?.updated_at) };
   }
 
-  const latestTurn = db.get<{ status: string; completed_at: string | null; updated_at: string }>(
-    `SELECT status, completed_at, updated_at FROM conversation_turns WHERE conversation_id = ? ORDER BY updated_at DESC, id DESC LIMIT 1`,
-    [conversationId],
-  );
+  const latestTurn = db.get<{ status: string; completed_at: string | null; updated_at: string }>(`SELECT status, completed_at, updated_at FROM conversation_turns WHERE conversation_id = ? ORDER BY updated_at DESC, id DESC LIMIT 1`, [
+    conversationId,
+  ]);
   const latestSubmission = db.get<{ status: string; resolved_at: string | null; updated_at: string }>(
     `SELECT status, resolved_at, updated_at FROM conversation_submissions WHERE conversation_id = ? ORDER BY updated_at DESC, id DESC LIMIT 1`,
     [conversationId],
@@ -4366,12 +4356,10 @@ export class ConversationRepository {
 
   /** 身份修复候选包含已归档或失败会话，保证历史记录恢复后仍按原 Agent 路由。 */
   listNativeIdentityCandidates(): ZeusConversationWithMessagesRecord[] {
-    return this.db
-      .select<DbConversationRow>(`SELECT ${selectConversationFields} FROM conversations WHERE transport_kind = 'codex_native' AND provider_thread_id IS NOT NULL ORDER BY created_at, id`)
-      .map((row) => {
-        const conversation = mapConversationRow(row);
-        return { ...conversation, messages: this.listMessages(conversation.id) };
-      });
+    return this.db.select<DbConversationRow>(`SELECT ${selectConversationFields} FROM conversations WHERE transport_kind = 'codex_native' AND provider_thread_id IS NOT NULL ORDER BY created_at, id`).map((row) => {
+      const conversation = mapConversationRow(row);
+      return { ...conversation, messages: this.listMessages(conversation.id) };
+    });
   }
 
   /** 只有调用方已经核验 Pi 原生会话和消息证据时，才允许纠正被 Codex 恢复器污染的主身份。 */

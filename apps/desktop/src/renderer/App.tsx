@@ -34,14 +34,7 @@ import {
   toReactFlowElements,
   toSigmaGraph,
 } from '@zeus/diagram-engine';
-import {
-  cloneTaskManagementStatusConfig,
-  defaultTaskManagementStatusConfig,
-  isTaskStatusFilter,
-  normalizeTaskManagementStatusConfig,
-  type TaskManagementStatusConfig,
-  type TaskManagementStatusDefinition,
-} from '@zeus/shared';
+import { cloneTaskManagementStatusConfig, defaultTaskManagementStatusConfig, isTaskStatusFilter, normalizeTaskManagementStatusConfig, type TaskManagementStatusConfig, type TaskManagementStatusDefinition } from '@zeus/shared';
 import '@xterm/xterm/css/xterm.css';
 import '@xyflow/react/dist/style.css';
 import './styles.css';
@@ -7501,17 +7494,11 @@ export function App(props: {
       }
     : undefined;
   const currentRuntimeAdapterDisplayName = formatRuntimeAdapterDisplayName(runtimeSettings.defaultAdapterId, runtimeAdapters, settingsWorkspaceCopy.runtime);
-  const taskTableEnumSortOrders = normalizeTaskTableEnumSortOrders(
-    { ...appShellSettings.taskTableEnumSortOrders, managementStatus: activeTaskManagementStatusIds },
-    activeTaskManagementStatusIds,
-  );
+  const taskTableEnumSortOrders = normalizeTaskTableEnumSortOrders({ ...appShellSettings.taskTableEnumSortOrders, managementStatus: activeTaskManagementStatusIds }, activeTaskManagementStatusIds);
   const taskPriorityLabels = Object.fromEntries(taskWorkspaceCopy.taskCreatePriorityOptions.map((option) => [option.value, option.label])) as Record<TaskPriority, string>;
   const taskStatusSettingsProject = snapshot.projects.find((project) => project.id === taskStatusSettingsTargetId);
   const effectiveTaskStatusSettingsTargetId = taskStatusSettingsProject ? taskStatusSettingsProject.id : '__template__';
-  const taskStatusSettingsConfig =
-    effectiveTaskStatusSettingsTargetId === '__template__'
-      ? resolveTaskManagementStatusConfig(appShellSettings)
-      : resolveTaskManagementStatusConfig(appShellSettings, effectiveTaskStatusSettingsTargetId);
+  const taskStatusSettingsConfig = effectiveTaskStatusSettingsTargetId === '__template__' ? resolveTaskManagementStatusConfig(appShellSettings) : resolveTaskManagementStatusConfig(appShellSettings, effectiveTaskStatusSettingsTargetId);
   const taskStatusSettingsUsageCounts =
     effectiveTaskStatusSettingsTargetId === '__template__'
       ? {}
@@ -13476,7 +13463,10 @@ function toSafeAppShellImport(
     taskTableEnumSortOrders: normalizeTaskTableEnumSortOrders(raw.taskTableEnumSortOrders),
     taskManagementStatusTemplate: normalizeTaskManagementStatusConfig(raw.taskManagementStatusTemplate, defaultTaskManagementStatusConfig),
     taskManagementStatusByProject: Object.fromEntries(
-      Object.entries(raw.taskManagementStatusByProject ?? {}).map(([projectId, config]) => [projectId, normalizeTaskManagementStatusConfig(config, normalizeTaskManagementStatusConfig(raw.taskManagementStatusTemplate, defaultTaskManagementStatusConfig))]),
+      Object.entries(raw.taskManagementStatusByProject ?? {}).map(([projectId, config]) => [
+        projectId,
+        normalizeTaskManagementStatusConfig(config, normalizeTaskManagementStatusConfig(raw.taskManagementStatusTemplate, defaultTaskManagementStatusConfig)),
+      ]),
     ),
     taskStatusFilterByProject: normalizeTaskStatusFilterByProject(raw.taskStatusFilterByProject),
     taskViewModeByProject: normalizeTaskViewModeByProject(raw.taskViewModeByProject),

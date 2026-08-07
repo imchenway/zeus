@@ -597,7 +597,19 @@ function permissionModeField(value: unknown): NativePermissionMode | undefined {
 }
 
 function conversationStageField(value: unknown): NativeConversationStage | undefined {
-  return value === 'created' || value === 'connecting' || value === 'queued' || value === 'running' || value === 'waiting_user' || value === 'waiting_approval' || value === 'completed' || value === 'failed' || value === 'paused' || value === 'ready' || value === 'archived' ? value : undefined;
+  return value === 'created' ||
+    value === 'connecting' ||
+    value === 'queued' ||
+    value === 'running' ||
+    value === 'waiting_user' ||
+    value === 'waiting_approval' ||
+    value === 'completed' ||
+    value === 'failed' ||
+    value === 'paused' ||
+    value === 'ready' ||
+    value === 'archived'
+    ? value
+    : undefined;
 }
 
 /**

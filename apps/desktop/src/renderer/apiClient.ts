@@ -31,9 +31,34 @@ import type {
   TurnChangeSet,
   TurnChangeSetOperationResult,
 } from './session/sessionTypes.js';
-import type { CommandArtifact, CommandConfirmation, CommandDefinition, CommandDefinitionInput, CommandRun, TaskAttachmentReference, TaskManagementStatus, TaskManagementStatusConfig, TaskPriority, TaskStatusFilter, TaskType } from '@zeus/shared';
+import type {
+  CommandArtifact,
+  CommandConfirmation,
+  CommandDefinition,
+  CommandDefinitionInput,
+  CommandRun,
+  TaskAttachmentReference,
+  TaskManagementStatus,
+  TaskManagementStatusConfig,
+  TaskPriority,
+  TaskStatusFilter,
+  TaskType,
+} from '@zeus/shared';
 
-export type { CommandArtifact, CommandConfirmation, CommandDefinition, CommandDefinitionInput, CommandParameterDefinition, CommandRun, CommandRunStatus, TaskManagementStatus, TaskManagementStatusConfig, TaskPriority, TaskStatusFilter, TaskType } from '@zeus/shared';
+export type {
+  CommandArtifact,
+  CommandConfirmation,
+  CommandDefinition,
+  CommandDefinitionInput,
+  CommandParameterDefinition,
+  CommandRun,
+  CommandRunStatus,
+  TaskManagementStatus,
+  TaskManagementStatusConfig,
+  TaskPriority,
+  TaskStatusFilter,
+  TaskType,
+} from '@zeus/shared';
 
 export type TaskStatus = 'draft' | 'ready' | 'running' | 'paused' | 'waiting_confirmation' | 'completed' | 'failed' | 'cancelled';
 export type TaskAgentRunStatus = 'not_started' | 'connecting' | 'reconnecting' | 'running' | 'waiting_user' | 'waiting_approval' | 'paused' | 'idle' | 'failed' | 'legacy_readonly';

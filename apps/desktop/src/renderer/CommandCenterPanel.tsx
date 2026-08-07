@@ -1,25 +1,15 @@
-import {useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent} from 'react';
-import {ClockCounterClockwiseIcon as ClockCounterClockwise} from '@phosphor-icons/react/dist/csr/ClockCounterClockwise';
-import {GlobeIcon as Globe} from '@phosphor-icons/react/dist/csr/Globe';
-import {PencilSimpleIcon as PencilSimple} from '@phosphor-icons/react/dist/csr/PencilSimple';
-import {PlayIcon as Play} from '@phosphor-icons/react/dist/csr/Play';
-import {PlusIcon as Plus} from '@phosphor-icons/react/dist/csr/Plus';
-import {StopIcon as Stop} from '@phosphor-icons/react/dist/csr/Stop';
-import {TrashIcon as Trash} from '@phosphor-icons/react/dist/csr/Trash';
-import {commandNeedsHighRiskConfirmation, type CommandRiskFlags} from '@zeus/shared';
-import type {
-  CommandDefinition,
-  CommandDefinitionInput,
-  CommandParameterDefinition,
-  CommandRun,
-  CommandRunDetail,
-  DashboardClient,
-  ProjectConfig,
-  ProjectRecord,
-  SaveProjectConfigRequest,
-} from './apiClient.js';
-import {Button} from './ui/Button.js';
-import {ModalPortal} from './ui/ModalPortal.js';
+import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
+import { ClockCounterClockwiseIcon as ClockCounterClockwise } from '@phosphor-icons/react/dist/csr/ClockCounterClockwise';
+import { GlobeIcon as Globe } from '@phosphor-icons/react/dist/csr/Globe';
+import { PencilSimpleIcon as PencilSimple } from '@phosphor-icons/react/dist/csr/PencilSimple';
+import { PlayIcon as Play } from '@phosphor-icons/react/dist/csr/Play';
+import { PlusIcon as Plus } from '@phosphor-icons/react/dist/csr/Plus';
+import { StopIcon as Stop } from '@phosphor-icons/react/dist/csr/Stop';
+import { TrashIcon as Trash } from '@phosphor-icons/react/dist/csr/Trash';
+import { commandNeedsHighRiskConfirmation, type CommandRiskFlags } from '@zeus/shared';
+import type { CommandDefinition, CommandDefinitionInput, CommandParameterDefinition, CommandRun, CommandRunDetail, DashboardClient, ProjectConfig, ProjectRecord, SaveProjectConfigRequest } from './apiClient.js';
+import { Button } from './ui/Button.js';
+import { ModalPortal } from './ui/ModalPortal.js';
 import './commandCenter.css';
 
 export interface CommandCenterPanelProps {
@@ -57,11 +47,11 @@ const emptyDraft: CommandDraft = {
   timeoutSeconds: '300',
   enabled: true,
   telegramEnabled: false,
-  riskFlags: {gitWrite: false, outsideProjectWrite: false, externalServiceWrite: false},
+  riskFlags: { gitWrite: false, outsideProjectWrite: false, externalServiceWrite: false },
   parameters: [],
 };
 
-function CommandRunDurationValue(props: {run: CommandRun; zh: boolean}) {
+function CommandRunDurationValue(props: { run: CommandRun; zh: boolean }) {
   const shouldTick = props.run.status === 'running' && Boolean(props.run.startedAt) && !props.run.endedAt;
   const [nowMs, setNowMs] = useState(() => Date.now());
 
@@ -100,12 +90,7 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
     let active = true;
     setLoading(true);
     setError(null);
-    const request =
-      props.mode === 'global'
-        ? props.client.loadGlobalCommands()
-        : props.project
-          ? props.client.loadProjectCommands(props.project.id)
-          : Promise.resolve([]);
+    const request = props.mode === 'global' ? props.client.loadGlobalCommands() : props.project ? props.client.loadProjectCommands(props.project.id) : Promise.resolve([]);
     void request
       .then((items) => {
         if (active) setCommands(items);
@@ -177,12 +162,7 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
   );
 
   async function reloadCommands(): Promise<void> {
-    const items =
-      props.mode === 'global'
-        ? await props.client.loadGlobalCommands()
-        : props.project
-          ? await props.client.loadProjectCommands(props.project.id)
-          : [];
+    const items = props.mode === 'global' ? await props.client.loadGlobalCommands() : props.project ? await props.client.loadProjectCommands(props.project.id) : [];
     setCommands(items);
   }
 
@@ -194,7 +174,7 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
   }
 
   function openCreate(): void {
-    setDraft({...emptyDraft, riskFlags: {...emptyDraft.riskFlags}, parameters: []});
+    setDraft({ ...emptyDraft, riskFlags: { ...emptyDraft.riskFlags }, parameters: [] });
     setEditing('new');
     setError(null);
   }
@@ -209,8 +189,8 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
       timeoutSeconds: String(command.timeoutSeconds),
       enabled: command.enabled,
       telegramEnabled: command.telegramEnabled,
-      riskFlags: {...command.riskFlags},
-      parameters: command.parameters.map((parameter) => ({...parameter})),
+      riskFlags: { ...command.riskFlags },
+      parameters: command.parameters.map((parameter) => ({ ...parameter })),
     });
     setEditing(command);
     setError(null);
@@ -282,7 +262,7 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
       const missingShell = !config.security.allowShell;
       const missingGitWrite = command.riskFlags.gitWrite && !config.security.allowGitWrite;
       if (missingShell || missingGitWrite) {
-        setPermissionRequest({command, missingShell, missingGitWrite});
+        setPermissionRequest({ command, missingShell, missingGitWrite });
         return;
       }
       showRunConfirmation(command);
@@ -354,20 +334,13 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
     if (artifactPreviewUrls[artifactId]) return;
     try {
       const blob = await props.client.loadCommandArtifact(artifactId);
-      setArtifactPreviewUrls((current) => ({...current, [artifactId]: URL.createObjectURL(blob)}));
+      setArtifactPreviewUrls((current) => ({ ...current, [artifactId]: URL.createObjectURL(blob) }));
     } catch (previewError) {
       setError(toMessage(previewError));
     }
   }
 
-  const heading =
-    props.mode === 'global'
-      ? zh
-        ? '全局命令'
-        : 'Global commands'
-      : zh
-        ? `${props.project?.name ?? '项目'}命令`
-        : `${props.project?.name ?? 'Project'} commands`;
+  const heading = props.mode === 'global' ? (zh ? '全局命令' : 'Global commands') : zh ? `${props.project?.name ?? '项目'}命令` : `${props.project?.name ?? 'Project'} commands`;
 
   return (
     <section className="command-center" aria-labelledby="command-center-title">
@@ -416,8 +389,7 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
                   <span>{command.description || command.command}</span>
                   <small>
                     {command.aliases.length > 0 ? `${zh ? '别名' : 'Aliases'}: ${command.aliases.join(', ')} · ` : ''}
-                    {command.timeoutSeconds}s · {command.telegramEnabled ? 'Telegram on' : 'Telegram off'} ·{' '}
-                    {command.enabled ? (zh ? '已启用' : 'Enabled') : zh ? '已停用' : 'Disabled'}
+                    {command.timeoutSeconds}s · {command.telegramEnabled ? 'Telegram on' : 'Telegram off'} · {command.enabled ? (zh ? '已启用' : 'Enabled') : zh ? '已停用' : 'Disabled'}
                   </small>
                 </span>
                 <span className="command-definition-actions">
@@ -466,13 +438,7 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
             <div className="command-run-layout">
               <div className="command-run-list" role="list">
                 {runs.map((run) => (
-                  <button
-                    type="button"
-                    role="listitem"
-                    className={selectedRunId === run.id ? 'selected' : ''}
-                    onClick={() => setSelectedRunId(run.id)}
-                    key={run.id}
-                  >
+                  <button type="button" role="listitem" className={selectedRunId === run.id ? 'selected' : ''} onClick={() => setSelectedRunId(run.id)} key={run.id}>
                     <span>
                       <strong>{run.commandSnapshot.title}</strong>
                       <small>
@@ -498,10 +464,24 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
                     ) : null}
                   </header>
                   <dl>
-                    <div><dt>{zh ? '状态' : 'Status'}</dt><dd>{runStatusLabel(runDetail.run.status, zh)}</dd></div>
-                    <div><dt>{zh ? '实际耗时' : 'Duration'}</dt><dd><CommandRunDurationValue run={runDetail.run} zh={zh} /></dd></div>
-                    <div><dt>{zh ? '超时上限' : 'Timeout limit'}</dt><dd>{runDetail.run.timeoutSeconds}s</dd></div>
-                    <div><dt>{zh ? '退出码' : 'Exit code'}</dt><dd>{runDetail.run.exitCode ?? '—'}</dd></div>
+                    <div>
+                      <dt>{zh ? '状态' : 'Status'}</dt>
+                      <dd>{runStatusLabel(runDetail.run.status, zh)}</dd>
+                    </div>
+                    <div>
+                      <dt>{zh ? '实际耗时' : 'Duration'}</dt>
+                      <dd>
+                        <CommandRunDurationValue run={runDetail.run} zh={zh} />
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>{zh ? '超时上限' : 'Timeout limit'}</dt>
+                      <dd>{runDetail.run.timeoutSeconds}s</dd>
+                    </div>
+                    <div>
+                      <dt>{zh ? '退出码' : 'Exit code'}</dt>
+                      <dd>{runDetail.run.exitCode ?? '—'}</dd>
+                    </div>
                   </dl>
                   {runDetail.run.failureReason ? <p className="command-run-failure">{runDetail.run.failureReason}</p> : null}
                   <pre className="command-run-log" aria-label={zh ? '终端日志' : 'Terminal logs'}>
@@ -515,9 +495,7 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
                           <button type="button" onClick={() => void previewArtifact(artifact.id)}>
                             {artifact.relativePath} · {formatBytes(artifact.byteLength)}
                           </button>
-                          {artifact.mimeType?.startsWith('image/') && artifactPreviewUrls[artifact.id] ? (
-                            <img src={artifactPreviewUrls[artifact.id]} alt={artifact.relativePath} />
-                          ) : null}
+                          {artifact.mimeType?.startsWith('image/') && artifactPreviewUrls[artifact.id] ? <img src={artifactPreviewUrls[artifact.id]} alt={artifact.relativePath} /> : null}
                         </div>
                       ))}
                     </section>
@@ -545,15 +523,7 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
       ) : null}
 
       {permissionRequest && props.project ? (
-        <CommandPermissionModal
-          request={permissionRequest}
-          project={props.project}
-          busy={busy}
-          error={error}
-          language={props.language}
-          onClose={() => setPermissionRequest(null)}
-          onContinue={() => void enablePermissionsAndContinue()}
-        />
+        <CommandPermissionModal request={permissionRequest} project={props.project} busy={busy} error={error} language={props.language} onClose={() => setPermissionRequest(null)} onContinue={() => void enablePermissionsAndContinue()} />
       ) : null}
 
       {runningCommand && props.project ? (
@@ -584,120 +554,163 @@ function CommandDefinitionModal(props: {
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
   const zh = props.language === 'zh-CN';
-  const update = <K extends keyof CommandDraft>(key: K, value: CommandDraft[K]) => props.onChange({...props.draft, [key]: value});
+  const update = <K extends keyof CommandDraft>(key: K, value: CommandDraft[K]) => props.onChange({ ...props.draft, [key]: value });
   const updateParameter = (index: number, patch: Partial<CommandParameterDefinition>) =>
     update(
       'parameters',
-      props.draft.parameters.map((parameter, parameterIndex) => parameterIndex === index ? {...parameter, ...patch} : parameter),
+      props.draft.parameters.map((parameter, parameterIndex) => (parameterIndex === index ? { ...parameter, ...patch } : parameter)),
     );
   const handleKeyDown = (event: KeyboardEvent<HTMLFormElement>) => {
     if (event.key === 'Escape' && !props.busy) props.onClose();
   };
   return (
-    <ModalPortal
-      rootClassName="command-modal-portal-root"
-      backdropClassName="command-modal-backdrop"
-      dismissDisabled={props.busy}
-      onDismiss={props.onClose}
-    >
-      <form
-        className="command-modal command-definition-modal command-editor-form zeus-solid-form-surface"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="command-definition-modal-title"
-        onSubmit={props.onSubmit}
-        onKeyDown={handleKeyDown}
-      >
+    <ModalPortal rootClassName="command-modal-portal-root" backdropClassName="command-modal-backdrop" dismissDisabled={props.busy} onDismiss={props.onClose}>
+      <form className="command-modal command-definition-modal command-editor-form zeus-solid-form-surface" role="dialog" aria-modal="true" aria-labelledby="command-definition-modal-title" onSubmit={props.onSubmit} onKeyDown={handleKeyDown}>
         <header className="command-modal-header">
           <span>
             <h3 id="command-definition-modal-title">{props.title}</h3>
             <p>{zh ? '命令在目标项目根目录中通过 sh -lc 执行。' : 'Commands run through sh -lc in the target project root.'}</p>
           </span>
-          <button type="button" aria-label={zh ? '关闭' : 'Close'} onClick={props.onClose} disabled={props.busy}>×</button>
+          <button type="button" aria-label={zh ? '关闭' : 'Close'} onClick={props.onClose} disabled={props.busy}>
+            ×
+          </button>
         </header>
         <div className="command-modal-body">
-          {props.error ? <p className="command-modal-error" role="alert">{props.error}</p> : null}
+          {props.error ? (
+            <p className="command-modal-error" role="alert">
+              {props.error}
+            </p>
+          ) : null}
           <div className="command-editor-grid">
-            <label>{zh ? '名称' : 'Name'}<input autoFocus required value={props.draft.name} onChange={(event) => update('name', event.currentTarget.value)} placeholder="my-command" /></label>
-            <label>{zh ? '标题' : 'Title'}<input required maxLength={80} value={props.draft.title} onChange={(event) => update('title', event.currentTarget.value)} /></label>
-            <label className="wide">{zh ? '别名（逗号分隔）' : 'Aliases (comma separated)'}<input value={props.draft.aliases} onChange={(event) => update('aliases', event.currentTarget.value)} /></label>
-            <label className="wide">{zh ? '说明' : 'Description'}<textarea maxLength={400} rows={2} value={props.draft.description} onChange={(event) => update('description', event.currentTarget.value)} /></label>
-            <label className="wide">{zh ? '命令' : 'Command'}<textarea required maxLength={1024} rows={4} value={props.draft.command} onChange={(event) => update('command', event.currentTarget.value)} /></label>
-            <label>{zh ? '超时（秒）' : 'Timeout (seconds)'}<input required type="number" min={5} max={3600} value={props.draft.timeoutSeconds} onChange={(event) => update('timeoutSeconds', event.currentTarget.value)} /></label>
+            <label>
+              {zh ? '名称' : 'Name'}
+              <input autoFocus required value={props.draft.name} onChange={(event) => update('name', event.currentTarget.value)} placeholder="my-command" />
+            </label>
+            <label>
+              {zh ? '标题' : 'Title'}
+              <input required maxLength={80} value={props.draft.title} onChange={(event) => update('title', event.currentTarget.value)} />
+            </label>
+            <label className="wide">
+              {zh ? '别名（逗号分隔）' : 'Aliases (comma separated)'}
+              <input value={props.draft.aliases} onChange={(event) => update('aliases', event.currentTarget.value)} />
+            </label>
+            <label className="wide">
+              {zh ? '说明' : 'Description'}
+              <textarea maxLength={400} rows={2} value={props.draft.description} onChange={(event) => update('description', event.currentTarget.value)} />
+            </label>
+            <label className="wide">
+              {zh ? '命令' : 'Command'}
+              <textarea required maxLength={1024} rows={4} value={props.draft.command} onChange={(event) => update('command', event.currentTarget.value)} />
+            </label>
+            <label>
+              {zh ? '超时（秒）' : 'Timeout (seconds)'}
+              <input required type="number" min={5} max={3600} value={props.draft.timeoutSeconds} onChange={(event) => update('timeoutSeconds', event.currentTarget.value)} />
+            </label>
           </div>
           <fieldset className="command-editor-switches">
             <legend>{zh ? '可用性与风险' : 'Availability and risk'}</legend>
             <Check label={zh ? '启用命令' : 'Enable command'} checked={props.draft.enabled} onChange={(checked) => update('enabled', checked)} />
             <Check label={zh ? '允许 Telegram' : 'Allow Telegram'} checked={props.draft.telegramEnabled} onChange={(checked) => update('telegramEnabled', checked)} />
-            <Check label={zh ? 'Git 写入' : 'Git write'} checked={props.draft.riskFlags.gitWrite} onChange={(checked) => update('riskFlags', {...props.draft.riskFlags, gitWrite: checked})} />
-            <Check label={zh ? '项目外写入' : 'Outside-project write'} checked={props.draft.riskFlags.outsideProjectWrite} onChange={(checked) => update('riskFlags', {...props.draft.riskFlags, outsideProjectWrite: checked})} />
-            <Check label={zh ? '外部服务写入' : 'External service write'} checked={props.draft.riskFlags.externalServiceWrite} onChange={(checked) => update('riskFlags', {...props.draft.riskFlags, externalServiceWrite: checked})} />
+            <Check label={zh ? 'Git 写入' : 'Git write'} checked={props.draft.riskFlags.gitWrite} onChange={(checked) => update('riskFlags', { ...props.draft.riskFlags, gitWrite: checked })} />
+            <Check label={zh ? '项目外写入' : 'Outside-project write'} checked={props.draft.riskFlags.outsideProjectWrite} onChange={(checked) => update('riskFlags', { ...props.draft.riskFlags, outsideProjectWrite: checked })} />
+            <Check label={zh ? '外部服务写入' : 'External service write'} checked={props.draft.riskFlags.externalServiceWrite} onChange={(checked) => update('riskFlags', { ...props.draft.riskFlags, externalServiceWrite: checked })} />
           </fieldset>
           <section className="command-parameter-editor" aria-labelledby="command-parameter-heading">
             <header>
-              <span><strong id="command-parameter-heading">{zh ? '声明式参数' : 'Declarative parameters'}</strong><small>{zh ? '参数以环境变量注入；ZEUS_* 为保留名称。' : 'Parameters are injected as environment variables; ZEUS_* is reserved.'}</small></span>
-              <Button size="compact" onClick={() => update('parameters', [...props.draft.parameters, newParameter()])}><Plus aria-hidden="true" />{zh ? '添加参数' : 'Add parameter'}</Button>
+              <span>
+                <strong id="command-parameter-heading">{zh ? '声明式参数' : 'Declarative parameters'}</strong>
+                <small>{zh ? '参数以环境变量注入；ZEUS_* 为保留名称。' : 'Parameters are injected as environment variables; ZEUS_* is reserved.'}</small>
+              </span>
+              <Button size="compact" onClick={() => update('parameters', [...props.draft.parameters, newParameter()])}>
+                <Plus aria-hidden="true" />
+                {zh ? '添加参数' : 'Add parameter'}
+              </Button>
             </header>
             {props.draft.parameters.map((parameter, index) => (
               <fieldset className="command-parameter-row" key={`${parameter.key}-${index}`}>
                 <legend>{zh ? `参数 ${index + 1}` : `Parameter ${index + 1}`}</legend>
-                <label>{zh ? '环境变量' : 'Environment key'}<input required value={parameter.key} onChange={(event) => updateParameter(index, {key: event.currentTarget.value.toLocaleUpperCase()})} placeholder="DEPTH" /></label>
-                <label>{zh ? '标签' : 'Label'}<input required value={parameter.label} onChange={(event) => updateParameter(index, {label: event.currentTarget.value})} /></label>
-                <label>{zh ? '类型' : 'Type'}
-                  <select value={parameter.type} onChange={(event) => updateParameter(index, {type: event.currentTarget.value as CommandParameterDefinition['type'], defaultValue: undefined})}>
-                    <option value="string">string</option><option value="number">number</option><option value="boolean">boolean</option>
+                <label>
+                  {zh ? '环境变量' : 'Environment key'}
+                  <input required value={parameter.key} onChange={(event) => updateParameter(index, { key: event.currentTarget.value.toLocaleUpperCase() })} placeholder="DEPTH" />
+                </label>
+                <label>
+                  {zh ? '标签' : 'Label'}
+                  <input required value={parameter.label} onChange={(event) => updateParameter(index, { label: event.currentTarget.value })} />
+                </label>
+                <label>
+                  {zh ? '类型' : 'Type'}
+                  <select value={parameter.type} onChange={(event) => updateParameter(index, { type: event.currentTarget.value as CommandParameterDefinition['type'], defaultValue: undefined })}>
+                    <option value="string">string</option>
+                    <option value="number">number</option>
+                    <option value="boolean">boolean</option>
                   </select>
                 </label>
-                <label>{zh ? '默认值' : 'Default value'}
+                <label>
+                  {zh ? '默认值' : 'Default value'}
                   {parameter.type === 'boolean' ? (
-                    <select value={parameter.defaultValue === undefined ? '' : parameter.defaultValue ? 'true' : 'false'} disabled={parameter.sensitive} onChange={(event) => updateParameter(index, {defaultValue: event.currentTarget.value === '' ? undefined : event.currentTarget.value === 'true'})}>
-                      <option value="">{zh ? '无' : 'None'}</option><option value="true">true</option><option value="false">false</option>
+                    <select
+                      value={parameter.defaultValue === undefined ? '' : parameter.defaultValue ? 'true' : 'false'}
+                      disabled={parameter.sensitive}
+                      onChange={(event) => updateParameter(index, { defaultValue: event.currentTarget.value === '' ? undefined : event.currentTarget.value === 'true' })}
+                    >
+                      <option value="">{zh ? '无' : 'None'}</option>
+                      <option value="true">true</option>
+                      <option value="false">false</option>
                     </select>
                   ) : (
                     <input
                       type={parameter.type === 'number' ? 'number' : 'text'}
                       disabled={parameter.sensitive}
                       value={parameter.defaultValue === undefined ? '' : String(parameter.defaultValue)}
-                      onChange={(event) => updateParameter(index, {defaultValue: event.currentTarget.value === '' ? undefined : parameter.type === 'number' ? Number(event.currentTarget.value) : event.currentTarget.value})}
+                      onChange={(event) => updateParameter(index, { defaultValue: event.currentTarget.value === '' ? undefined : parameter.type === 'number' ? Number(event.currentTarget.value) : event.currentTarget.value })}
                     />
                   )}
                 </label>
-                <label className="wide">{zh ? '说明' : 'Description'}<input maxLength={200} value={parameter.description} onChange={(event) => updateParameter(index, {description: event.currentTarget.value})} /></label>
+                <label className="wide">
+                  {zh ? '说明' : 'Description'}
+                  <input maxLength={200} value={parameter.description} onChange={(event) => updateParameter(index, { description: event.currentTarget.value })} />
+                </label>
                 <span className="command-parameter-flags">
-                  <Check label={zh ? '必填' : 'Required'} checked={parameter.required} onChange={(checked) => updateParameter(index, {required: checked})} />
-                  <Check label={zh ? '敏感' : 'Sensitive'} checked={parameter.sensitive} onChange={(checked) => updateParameter(index, {sensitive: checked, defaultValue: checked ? undefined : parameter.defaultValue})} />
-                  <Button size="compact" variant="danger" onClick={() => update('parameters', props.draft.parameters.filter((_, parameterIndex) => parameterIndex !== index))}><Trash aria-hidden="true" />{zh ? '移除' : 'Remove'}</Button>
+                  <Check label={zh ? '必填' : 'Required'} checked={parameter.required} onChange={(checked) => updateParameter(index, { required: checked })} />
+                  <Check label={zh ? '敏感' : 'Sensitive'} checked={parameter.sensitive} onChange={(checked) => updateParameter(index, { sensitive: checked, defaultValue: checked ? undefined : parameter.defaultValue })} />
+                  <Button
+                    size="compact"
+                    variant="danger"
+                    onClick={() =>
+                      update(
+                        'parameters',
+                        props.draft.parameters.filter((_, parameterIndex) => parameterIndex !== index),
+                      )
+                    }
+                  >
+                    <Trash aria-hidden="true" />
+                    {zh ? '移除' : 'Remove'}
+                  </Button>
                 </span>
               </fieldset>
             ))}
           </section>
         </div>
-        <footer className="command-modal-footer"><Button onClick={props.onClose} disabled={props.busy}>{zh ? '取消' : 'Cancel'}</Button><Button type="submit" variant="primary" busy={props.busy}>{zh ? '保存命令' : 'Save command'}</Button></footer>
+        <footer className="command-modal-footer">
+          <Button onClick={props.onClose} disabled={props.busy}>
+            {zh ? '取消' : 'Cancel'}
+          </Button>
+          <Button type="submit" variant="primary" busy={props.busy}>
+            {zh ? '保存命令' : 'Save command'}
+          </Button>
+        </footer>
       </form>
     </ModalPortal>
   );
 }
 
-function CommandPermissionModal(props: {
-  request: CommandPermissionRequest;
-  project: ProjectRecord;
-  busy: boolean;
-  error: string | null;
-  language: 'zh-CN' | 'en-US';
-  onClose: () => void;
-  onContinue: () => void;
-}) {
+function CommandPermissionModal(props: { request: CommandPermissionRequest; project: ProjectRecord; busy: boolean; error: string | null; language: 'zh-CN' | 'en-US'; onClose: () => void; onContinue: () => void }) {
   const zh = props.language === 'zh-CN';
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key === 'Escape' && !props.busy) props.onClose();
   };
   return (
-    <ModalPortal
-      rootClassName="command-modal-portal-root"
-      backdropClassName="command-modal-backdrop"
-      dismissDisabled={props.busy}
-      onDismiss={props.onClose}
-    >
+    <ModalPortal rootClassName="command-modal-portal-root" backdropClassName="command-modal-backdrop" dismissDisabled={props.busy} onDismiss={props.onClose}>
       <div
         className="command-modal command-permission-modal zeus-solid-form-surface"
         role="dialog"
@@ -709,27 +722,43 @@ function CommandPermissionModal(props: {
         <header className="command-modal-header">
           <span>
             <h3 id="command-permission-modal-title">{zh ? '开启项目命令权限' : 'Enable project command permissions'}</h3>
-            <p>{props.project.name} · {props.request.command.title}</p>
+            <p>
+              {props.project.name} · {props.request.command.title}
+            </p>
           </span>
-          <button type="button" aria-label={zh ? '关闭' : 'Close'} onClick={props.onClose} disabled={props.busy}>×</button>
+          <button type="button" aria-label={zh ? '关闭' : 'Close'} onClick={props.onClose} disabled={props.busy}>
+            ×
+          </button>
         </header>
         <div className="command-modal-body command-permission-body">
-          {props.error ? <p className="command-modal-error" role="alert">{props.error}</p> : null}
+          {props.error ? (
+            <p className="command-modal-error" role="alert">
+              {props.error}
+            </p>
+          ) : null}
           <p id="command-permission-modal-description">
-            {zh
-              ? '运行此命令前需要开启下列项目权限。权限会保存到当前项目，但不会因此立即执行命令。'
-              : 'This command needs the following project permissions. They will be saved for this project, but the command will not run yet.'}
+            {zh ? '运行此命令前需要开启下列项目权限。权限会保存到当前项目，但不会因此立即执行命令。' : 'This command needs the following project permissions. They will be saved for this project, but the command will not run yet.'}
           </p>
           <ul>
-            {props.request.missingShell ? <li><strong>{zh ? 'Shell' : 'Shell'}</strong><span>{zh ? '允许任务请求当前项目的 Shell 能力。' : 'Allow tasks to request Shell access for this project.'}</span></li> : null}
-            {props.request.missingGitWrite ? <li><strong>{zh ? 'Git 写操作' : 'Git write'}</strong><span>{zh ? '允许此项目中的命令执行 Git 写操作。' : 'Allow commands in this project to perform Git writes.'}</span></li> : null}
+            {props.request.missingShell ? (
+              <li>
+                <strong>{zh ? 'Shell' : 'Shell'}</strong>
+                <span>{zh ? '允许任务请求当前项目的 Shell 能力。' : 'Allow tasks to request Shell access for this project.'}</span>
+              </li>
+            ) : null}
+            {props.request.missingGitWrite ? (
+              <li>
+                <strong>{zh ? 'Git 写操作' : 'Git write'}</strong>
+                <span>{zh ? '允许此项目中的命令执行 Git 写操作。' : 'Allow commands in this project to perform Git writes.'}</span>
+              </li>
+            ) : null}
           </ul>
-          <p className="command-permission-next-step">
-            {zh ? '开启后仍会进入本次运行确认；只有再次点击“确认并运行”才会执行。' : 'After enabling, you will still review this run. It executes only after you select “Confirm and run”.'}
-          </p>
+          <p className="command-permission-next-step">{zh ? '开启后仍会进入本次运行确认；只有再次点击“确认并运行”才会执行。' : 'After enabling, you will still review this run. It executes only after you select “Confirm and run”.'}</p>
         </div>
         <footer className="command-modal-footer">
-          <Button autoFocus onClick={props.onClose} disabled={props.busy}>{zh ? '取消' : 'Cancel'}</Button>
+          <Button autoFocus onClick={props.onClose} disabled={props.busy}>
+            {zh ? '取消' : 'Cancel'}
+          </Button>
           <Button variant={props.request.missingGitWrite ? 'danger' : 'primary'} busy={props.busy} onClick={props.onContinue}>
             {zh ? '开启并继续' : 'Enable and continue'}
           </Button>
@@ -757,43 +786,53 @@ function CommandRunModal(props: {
     if (event.key === 'Escape' && !props.busy) props.onClose();
   };
   return (
-    <ModalPortal
-      rootClassName="command-modal-portal-root"
-      backdropClassName="command-modal-backdrop"
-      dismissDisabled={props.busy}
-      onDismiss={props.onClose}
-    >
-      <form
-        className="command-modal command-run-modal command-run-form zeus-solid-form-surface"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="command-run-modal-title"
-        onSubmit={props.onSubmit}
-        onKeyDown={handleKeyDown}
-      >
+    <ModalPortal rootClassName="command-modal-portal-root" backdropClassName="command-modal-backdrop" dismissDisabled={props.busy} onDismiss={props.onClose}>
+      <form className="command-modal command-run-modal command-run-form zeus-solid-form-surface" role="dialog" aria-modal="true" aria-labelledby="command-run-modal-title" onSubmit={props.onSubmit} onKeyDown={handleKeyDown}>
         <header className="command-modal-header">
-          <span><h3 id="command-run-modal-title">{props.command.title}</h3><code>{props.command.command}</code></span>
-          <button type="button" aria-label={zh ? '关闭' : 'Close'} onClick={props.onClose} disabled={props.busy}>×</button>
+          <span>
+            <h3 id="command-run-modal-title">{props.command.title}</h3>
+            <code>{props.command.command}</code>
+          </span>
+          <button type="button" aria-label={zh ? '关闭' : 'Close'} onClick={props.onClose} disabled={props.busy}>
+            ×
+          </button>
         </header>
         <div className="command-modal-body">
-          {props.error ? <p className="command-modal-error" role="alert">{props.error}</p> : null}
+          {props.error ? (
+            <p className="command-modal-error" role="alert">
+              {props.error}
+            </p>
+          ) : null}
           <dl>
-            <div><dt>{zh ? '项目目录' : 'Project directory'}</dt><dd>{props.project.localPath}</dd></div>
-            <div><dt>{zh ? '超时' : 'Timeout'}</dt><dd>{props.command.timeoutSeconds}s</dd></div>
-            <div><dt>{zh ? '风险' : 'Risk'}</dt><dd>{highRisk ? (zh ? '高风险' : 'High risk') : zh ? '普通' : 'Normal'}</dd></div>
+            <div>
+              <dt>{zh ? '项目目录' : 'Project directory'}</dt>
+              <dd>{props.project.localPath}</dd>
+            </div>
+            <div>
+              <dt>{zh ? '超时' : 'Timeout'}</dt>
+              <dd>{props.command.timeoutSeconds}s</dd>
+            </div>
+            <div>
+              <dt>{zh ? '风险' : 'Risk'}</dt>
+              <dd>{highRisk ? (zh ? '高风险' : 'High risk') : zh ? '普通' : 'Normal'}</dd>
+            </div>
           </dl>
           {props.command.parameters.map((parameter, index) => (
             <label key={parameter.key}>
-              {parameter.label}<small>{parameter.key}{parameter.required ? ' · required' : ''}</small>
+              {parameter.label}
+              <small>
+                {parameter.key}
+                {parameter.required ? ' · required' : ''}
+              </small>
               {parameter.type === 'boolean' ? (
-                <input autoFocus={index === 0} type="checkbox" checked={Boolean(props.values[parameter.key])} onChange={(event) => props.onValuesChange({...props.values, [parameter.key]: event.currentTarget.checked})} />
+                <input autoFocus={index === 0} type="checkbox" checked={Boolean(props.values[parameter.key])} onChange={(event) => props.onValuesChange({ ...props.values, [parameter.key]: event.currentTarget.checked })} />
               ) : (
                 <input
                   autoFocus={index === 0}
                   required={parameter.required}
                   type={parameter.sensitive ? 'password' : parameter.type === 'number' ? 'number' : 'text'}
                   value={String(props.values[parameter.key] ?? '')}
-                  onChange={(event) => props.onValuesChange({...props.values, [parameter.key]: parameter.type === 'number' ? Number(event.currentTarget.value) : event.currentTarget.value})}
+                  onChange={(event) => props.onValuesChange({ ...props.values, [parameter.key]: parameter.type === 'number' ? Number(event.currentTarget.value) : event.currentTarget.value })}
                 />
               )}
               {parameter.description ? <small>{parameter.description}</small> : null}
@@ -802,32 +841,49 @@ function CommandRunModal(props: {
           {highRisk ? (
             <section className="command-high-risk-summary" aria-label={zh ? '高风险操作说明' : 'High-risk operation details'}>
               <strong>{zh ? '本次运行包含高风险操作' : 'This run includes high-risk operations'}</strong>
-              <ul>{riskLabels.map((label) => <li key={label}>{label}</li>)}</ul>
+              <ul>
+                {riskLabels.map((label) => (
+                  <li key={label}>{label}</li>
+                ))}
+              </ul>
               <p>{zh ? '请核对命令、项目目录和参数；点击确认按钮即授权本次执行。' : 'Review the command, project directory, and parameters. Selecting the confirmation button authorizes this run.'}</p>
             </section>
           ) : null}
         </div>
         <footer className="command-modal-footer">
-          <Button onClick={props.onClose} disabled={props.busy}>{zh ? '取消' : 'Cancel'}</Button>
-          <Button autoFocus={props.command.parameters.length === 0} type="submit" variant={highRisk ? 'danger' : 'primary'} busy={props.busy}><Play aria-hidden="true" />{zh ? '确认并运行' : 'Confirm and run'}</Button>
+          <Button onClick={props.onClose} disabled={props.busy}>
+            {zh ? '取消' : 'Cancel'}
+          </Button>
+          <Button autoFocus={props.command.parameters.length === 0} type="submit" variant={highRisk ? 'danger' : 'primary'} busy={props.busy}>
+            <Play aria-hidden="true" />
+            {zh ? '确认并运行' : 'Confirm and run'}
+          </Button>
         </footer>
       </form>
     </ModalPortal>
   );
 }
 
-function Check(props: {label: string; checked: boolean; onChange: (checked: boolean) => void}) {
-  return <label className="command-check"><input type="checkbox" checked={props.checked} onChange={(event) => props.onChange(event.currentTarget.checked)} /><span>{props.label}</span></label>;
+function Check(props: { label: string; checked: boolean; onChange: (checked: boolean) => void }) {
+  return (
+    <label className="command-check">
+      <input type="checkbox" checked={props.checked} onChange={(event) => props.onChange(event.currentTarget.checked)} />
+      <span>{props.label}</span>
+    </label>
+  );
 }
 
 function newParameter(): CommandParameterDefinition {
-  return {key: '', label: '', description: '', type: 'string', required: false, sensitive: false};
+  return { key: '', label: '', description: '', type: 'string', required: false, sensitive: false };
 }
 
 function draftToInput(draft: CommandDraft): CommandDefinitionInput {
   return {
     name: draft.name.trim(),
-    aliases: draft.aliases.split(',').map((alias) => alias.trim()).filter(Boolean),
+    aliases: draft.aliases
+      .split(',')
+      .map((alias) => alias.trim())
+      .filter(Boolean),
     title: draft.title.trim(),
     description: draft.description.trim(),
     command: draft.command.trim(),
@@ -835,7 +891,7 @@ function draftToInput(draft: CommandDraft): CommandDefinitionInput {
     enabled: draft.enabled,
     telegramEnabled: draft.telegramEnabled,
     riskFlags: draft.riskFlags,
-    parameters: draft.parameters.map((parameter) => ({...parameter, key: parameter.key.trim(), label: parameter.label.trim(), description: parameter.description.trim()})),
+    parameters: draft.parameters.map((parameter) => ({ ...parameter, key: parameter.key.trim(), label: parameter.label.trim(), description: parameter.description.trim() })),
   };
 }
 
@@ -878,7 +934,7 @@ function runStatusLabel(status: CommandRun['status'], zh: boolean): string {
 }
 
 function formatRunTime(value: string): string {
-  return new Intl.DateTimeFormat(undefined, {month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'}).format(new Date(value));
+  return new Intl.DateTimeFormat(undefined, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date(value));
 }
 
 function formatRunDuration(run: CommandRun, nowMs: number, zh: boolean): string {

@@ -1919,7 +1919,10 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
   let memoryGraphCache: ProjectGraph | null = null;
   const persistedAppShellSettings = settings.getJson<AppShellSettingsSnapshot>(appShellSettingsKey);
   let appShellSettings: AppShellSettingsSnapshot = normalizeAppShellSettings(persistedAppShellSettings, localLogDirectory, localConfigPath);
-  const missingTaskStatusProjectIds = projects.list().map((project) => project.id).filter((projectId) => !appShellSettings.taskManagementStatusByProject[projectId]);
+  const missingTaskStatusProjectIds = projects
+    .list()
+    .map((project) => project.id)
+    .filter((projectId) => !appShellSettings.taskManagementStatusByProject[projectId]);
   if (missingTaskStatusProjectIds.length > 0) {
     appShellSettings = {
       ...appShellSettings,
@@ -1933,13 +1936,13 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
     missingTaskStatusProjectIds.length > 0 ||
     (persistedAppShellSettings &&
       (JSON.stringify(persistedAppShellSettings.taskTableColumns) !== JSON.stringify(appShellSettings.taskTableColumns) ||
-      JSON.stringify(persistedAppShellSettings.taskTableColumnsByProject) !== JSON.stringify(appShellSettings.taskTableColumnsByProject) ||
-      JSON.stringify(persistedAppShellSettings.taskTableEnumSortOrders) !== JSON.stringify(appShellSettings.taskTableEnumSortOrders) ||
-      JSON.stringify(persistedAppShellSettings.taskManagementStatusTemplate) !== JSON.stringify(appShellSettings.taskManagementStatusTemplate) ||
-      JSON.stringify(persistedAppShellSettings.taskManagementStatusByProject) !== JSON.stringify(appShellSettings.taskManagementStatusByProject) ||
-      JSON.stringify(persistedAppShellSettings.taskStatusFilterByProject) !== JSON.stringify(appShellSettings.taskStatusFilterByProject) ||
-      JSON.stringify(persistedAppShellSettings.taskViewModeByProject) !== JSON.stringify(appShellSettings.taskViewModeByProject) ||
-      JSON.stringify(persistedAppShellSettings.taskExpandedIdsByProject) !== JSON.stringify(appShellSettings.taskExpandedIdsByProject)))
+        JSON.stringify(persistedAppShellSettings.taskTableColumnsByProject) !== JSON.stringify(appShellSettings.taskTableColumnsByProject) ||
+        JSON.stringify(persistedAppShellSettings.taskTableEnumSortOrders) !== JSON.stringify(appShellSettings.taskTableEnumSortOrders) ||
+        JSON.stringify(persistedAppShellSettings.taskManagementStatusTemplate) !== JSON.stringify(appShellSettings.taskManagementStatusTemplate) ||
+        JSON.stringify(persistedAppShellSettings.taskManagementStatusByProject) !== JSON.stringify(appShellSettings.taskManagementStatusByProject) ||
+        JSON.stringify(persistedAppShellSettings.taskStatusFilterByProject) !== JSON.stringify(appShellSettings.taskStatusFilterByProject) ||
+        JSON.stringify(persistedAppShellSettings.taskViewModeByProject) !== JSON.stringify(appShellSettings.taskViewModeByProject) ||
+        JSON.stringify(persistedAppShellSettings.taskExpandedIdsByProject) !== JSON.stringify(appShellSettings.taskExpandedIdsByProject)))
   ) {
     // 旧列键、旧默认顺序、新增列宽和项目筛选偏好都只迁移一次并立即落库，避免每次启动重复改写本机视图配置。
     settings.setJson(appShellSettingsKey, appShellSettings);
@@ -2222,9 +2225,7 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
   if (
     codexNativeEnabled &&
     (conversations.listNativeBound('codex').length > 0 ||
-      conversationSubmissions
-        .listRecoverable()
-        .some((submission) => conversations.getById(submission.conversationId)?.agentKind === 'codex' && (submission.status === 'dispatching' || submission.status === 'active')))
+      conversationSubmissions.listRecoverable().some((submission) => conversations.getById(submission.conversationId)?.agentKind === 'codex' && (submission.status === 'dispatching' || submission.status === 'active')))
   ) {
     try {
       await codexNativeCoordinator.recover();
@@ -10080,9 +10081,16 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
           : current.taskTableColumns,
         taskTableColumnsByProject: Object.prototype.hasOwnProperty.call(input, 'taskTableColumnsByProject') ? normalizeTaskTableColumnsByProject(input.taskTableColumnsByProject) : current.taskTableColumnsByProject,
         taskTableEnumSortOrders: Object.prototype.hasOwnProperty.call(input, 'taskTableEnumSortOrders') ? normalizeTaskTableEnumSortOrders(input.taskTableEnumSortOrders) : current.taskTableEnumSortOrders,
-        taskManagementStatusTemplate: Object.prototype.hasOwnProperty.call(input, 'taskManagementStatusTemplate') ? normalizeTaskManagementStatusConfig(input.taskManagementStatusTemplate, current.taskManagementStatusTemplate) : current.taskManagementStatusTemplate,
+        taskManagementStatusTemplate: Object.prototype.hasOwnProperty.call(input, 'taskManagementStatusTemplate')
+          ? normalizeTaskManagementStatusConfig(input.taskManagementStatusTemplate, current.taskManagementStatusTemplate)
+          : current.taskManagementStatusTemplate,
         taskManagementStatusByProject: Object.prototype.hasOwnProperty.call(input, 'taskManagementStatusByProject')
-          ? normalizeTaskManagementStatusByProject(input.taskManagementStatusByProject, Object.prototype.hasOwnProperty.call(input, 'taskManagementStatusTemplate') ? normalizeTaskManagementStatusConfig(input.taskManagementStatusTemplate, current.taskManagementStatusTemplate) : current.taskManagementStatusTemplate)
+          ? normalizeTaskManagementStatusByProject(
+              input.taskManagementStatusByProject,
+              Object.prototype.hasOwnProperty.call(input, 'taskManagementStatusTemplate')
+                ? normalizeTaskManagementStatusConfig(input.taskManagementStatusTemplate, current.taskManagementStatusTemplate)
+                : current.taskManagementStatusTemplate,
+            )
           : current.taskManagementStatusByProject,
         taskStatusFilterByProject: Object.prototype.hasOwnProperty.call(input, 'taskStatusFilterByProject') ? normalizeTaskStatusFilterByProject(input.taskStatusFilterByProject) : current.taskStatusFilterByProject,
         taskViewModeByProject: Object.prototype.hasOwnProperty.call(input, 'taskViewModeByProject') ? normalizeTaskViewModeByProject(input.taskViewModeByProject) : current.taskViewModeByProject,

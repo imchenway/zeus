@@ -147,7 +147,9 @@ export function TaskManagementStatusEditor(props: TaskManagementStatusEditorProp
             >
               <span aria-hidden="true">⋮⋮</span>
             </button>
-            <span className="task-status-config-rank" aria-hidden="true">{index + 1}</span>
+            <span className="task-status-config-rank" aria-hidden="true">
+              {index + 1}
+            </span>
             <StatusNameInput
               language={props.language}
               index={index}
@@ -176,20 +178,47 @@ export function TaskManagementStatusEditor(props: TaskManagementStatusEditorProp
               <span aria-hidden="true">{status.color.toUpperCase()}</span>
             </label>
             <span className="task-status-config-actions">
-              <button type="button" aria-label={zh ? `上移 ${props.labelForStatus(status)}` : `Move ${props.labelForStatus(status)} up`} disabled={index === 0} onClick={() => props.onChange(moveStatus(props.config, status.id, index - 1))}>↑</button>
-              <button type="button" aria-label={zh ? `下移 ${props.labelForStatus(status)}` : `Move ${props.labelForStatus(status)} down`} disabled={index === props.config.statuses.length - 1} onClick={() => props.onChange(moveStatus(props.config, status.id, index + 1))}>↓</button>
-              <button type="button" className="task-status-config-delete" aria-label={zh ? `删除 ${props.labelForStatus(status)}` : `Delete ${props.labelForStatus(status)}`} disabled={props.config.statuses.length <= 1} onClick={() => requestDelete(status)}>×</button>
+              <button type="button" aria-label={zh ? `上移 ${props.labelForStatus(status)}` : `Move ${props.labelForStatus(status)} up`} disabled={index === 0} onClick={() => props.onChange(moveStatus(props.config, status.id, index - 1))}>
+                ↑
+              </button>
+              <button
+                type="button"
+                aria-label={zh ? `下移 ${props.labelForStatus(status)}` : `Move ${props.labelForStatus(status)} down`}
+                disabled={index === props.config.statuses.length - 1}
+                onClick={() => props.onChange(moveStatus(props.config, status.id, index + 1))}
+              >
+                ↓
+              </button>
+              <button
+                type="button"
+                className="task-status-config-delete"
+                aria-label={zh ? `删除 ${props.labelForStatus(status)}` : `Delete ${props.labelForStatus(status)}`}
+                disabled={props.config.statuses.length <= 1}
+                onClick={() => requestDelete(status)}
+              >
+                ×
+              </button>
             </span>
           </li>
         ))}
       </ol>
-      <Button variant="secondary" size="compact" onClick={addStatus}>{zh ? '新增状态' : 'Add status'}</Button>
+      <Button variant="secondary" size="compact" onClick={addStatus}>
+        {zh ? '新增状态' : 'Add status'}
+      </Button>
       {pendingDeletion && deletingStatus ? (
         <ModalPortal rootClassName="task-status-delete-portal" backdropClassName="task-create-modal-backdrop" onDismiss={() => setPendingDeletion(null)}>
           <section className="task-status-delete-dialog zeus-solid-form-surface" role="dialog" aria-modal="true" aria-labelledby="task-status-delete-title">
             <header>
               <strong id="task-status-delete-title">{zh ? `删除“${props.labelForStatus(deletingStatus)}”` : `Delete “${props.labelForStatus(deletingStatus)}”`}</strong>
-              <p>{pendingDeletion.taskCount > 0 ? (zh ? `有 ${pendingDeletion.taskCount} 个任务正在使用这个状态。请选择替代状态，保存时会先迁移任务。` : `${pendingDeletion.taskCount} tasks use this status. Choose a replacement; tasks will migrate before deletion.`) : (zh ? '这个状态承接现有任务行为。请选择接续该行为的替代状态。' : 'This status carries existing task behavior. Choose a replacement for that behavior.')}</p>
+              <p>
+                {pendingDeletion.taskCount > 0
+                  ? zh
+                    ? `有 ${pendingDeletion.taskCount} 个任务正在使用这个状态。请选择替代状态，保存时会先迁移任务。`
+                    : `${pendingDeletion.taskCount} tasks use this status. Choose a replacement; tasks will migrate before deletion.`
+                  : zh
+                    ? '这个状态承接现有任务行为。请选择接续该行为的替代状态。'
+                    : 'This status carries existing task behavior. Choose a replacement for that behavior.'}
+              </p>
             </header>
             <ZeusSelect
               size="regular"
@@ -200,7 +229,9 @@ export function TaskManagementStatusEditor(props: TaskManagementStatusEditorProp
               options={deletionAlternatives.map((status) => ({ value: status.id, label: props.labelForStatus(status), color: status.color }))}
             />
             <footer>
-              <Button variant="secondary" onClick={() => setPendingDeletion(null)}>{zh ? '取消' : 'Cancel'}</Button>
+              <Button variant="secondary" onClick={() => setPendingDeletion(null)}>
+                {zh ? '取消' : 'Cancel'}
+              </Button>
               <Button
                 variant="danger"
                 disabled={!pendingDeletion.replacementStatusId}
