@@ -313,7 +313,6 @@ export function createCodexRuntimeGenerationManager(): CodexAppServerManager {
       if ([...entries].some((entry) => entry.activeTurns.size > 0 || entry.pendingRequests.size > 0)) {
         throw managerError('ZEUS_CODEX_REMOTE_CONTROL_BUSY', '请先让正在运行或等待回答的会话结束，再启用远程接管；切换执行宿主不能安全搬移进行中的请求。');
       }
-      remoteControlEnabled = true;
       await activate({
         commandPath: current.commandPath,
         ...(current.externalAgentHome ? { externalAgentHome: current.externalAgentHome } : {}),

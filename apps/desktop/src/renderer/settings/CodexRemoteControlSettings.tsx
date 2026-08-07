@@ -13,8 +13,8 @@ interface CodexRemoteControlSettingsProps {
 
 const copy = {
   'zh-CN': {
-    title: 'Codex 远程接管',
-    intro: '让 Codex iOS 或其他已授权客户端接入 Zeus 当前执行现场。远端会看到并回答原始选项框；等待回答期间不会把普通消息当作答案。',
+    title: 'Zeus 会话远程接管',
+    intro: '让 Codex iOS 或其他已授权客户端远程操作 Zeus 当前执行现场。远端会看到并回答原始选项框；等待回答期间不会把普通消息当作答案。',
     unavailable: '当前环境没有可用的 Codex 远程接管接口。',
     loading: '正在读取远程接管状态…',
     refresh: '刷新',
@@ -26,7 +26,10 @@ const copy = {
     connecting: '连接中',
     connected: '已连接',
     errored: '连接异常',
-    statusHelp: '由本机 Codex CLI 的官方 Remote Control 提供；Zeus 不另造一套消息同步。',
+    statusHelp: '手机端操作的是 Zeus 当前会话；设备配对和连接由本机 Codex CLI 的官方 Remote Control 提供。',
+    connectionFailed: '远程接管未能启动',
+    recoveryHelp: '按下方真实原因完成安装或登录后重试。Zeus 不会自动安装或切换外部程序。',
+    retry: '重新检测并重试',
     server: '本机名称',
     hostNameHelp: 'iOS 显示系统机器名，可能与 Codex App 宿主同名；请用 Zeus 项目名或会话标题区分。',
     environment: '远程环境',
@@ -46,8 +49,8 @@ const copy = {
     failed: '远程接管操作失败。',
   },
   'en-US': {
-    title: 'Codex Remote Control',
-    intro: 'Lets Codex on iOS or another authorized client join the live Zeus execution. Remote clients answer the original prompt; ordinary messages are not treated as answers while it is pending.',
+    title: 'Zeus Session Remote Control',
+    intro: 'Lets Codex on iOS or another authorized client remotely operate the live Zeus execution. Remote clients answer the original prompt; ordinary messages are not treated as answers while it is pending.',
     unavailable: 'Codex Remote Control is unavailable in this environment.',
     loading: 'Loading Remote Control status…',
     refresh: 'Refresh',
@@ -59,7 +62,10 @@ const copy = {
     connecting: 'Connecting',
     connected: 'Connected',
     errored: 'Connection error',
-    statusHelp: 'Provided by the official Remote Control in the local Codex CLI. Zeus does not create a separate message mirror.',
+    statusHelp: 'The mobile client operates the current Zeus session; device pairing and connectivity use the official Remote Control in the local Codex CLI.',
+    connectionFailed: 'Remote Control did not start',
+    recoveryHelp: 'Follow the actual reason below to install or sign in, then retry. Zeus does not automatically install or switch external programs.',
+    retry: 'Check again and retry',
     server: 'Host name',
     hostNameHelp: 'iOS shows the system host name, which can match a Codex App host. Identify Zeus by its project or conversation title.',
     environment: 'Remote environment',
@@ -200,6 +206,24 @@ export function CodexRemoteControlSettings(props: CodexRemoteControlSettingsProp
             </button>
           </span>
         </section>
+        {error ? (
+          <section className="settings-config-row codex-remote-control-recovery" aria-label={labels.connectionFailed}>
+            <span className="settings-row-copy">
+              <strong>{labels.connectionFailed}</strong>
+              <small>{labels.recoveryHelp}</small>
+            </span>
+            <span className="settings-row-field">
+              <span role="alert">{error}</span>
+            </span>
+            <span className="settings-row-action-rail">
+              {!snapshot?.enabled ? (
+                <button type="button" disabled={busy || !props.client} onClick={() => void run(() => props.client!.enableCodexRemoteControl())}>
+                  {labels.retry}
+                </button>
+              ) : null}
+            </span>
+          </section>
+        ) : null}
         {snapshot ? (
           <section className="settings-state-row" aria-label={labels.server}>
             <strong>{labels.server}</strong>
@@ -263,7 +287,6 @@ export function CodexRemoteControlSettings(props: CodexRemoteControlSettingsProp
         </section>
       </section>
       {message ? <p role="status">{message}</p> : null}
-      {error ? <p role="alert">{error}</p> : null}
     </section>
   );
 }
