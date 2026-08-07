@@ -1,22 +1,22 @@
-import {createHash} from 'node:crypto';
-import {mkdir, readFile, writeFile} from 'node:fs/promises';
-import {dirname} from 'node:path';
-import {nanoid} from 'nanoid';
-import initSqlJs, {type Database, type SqlJsStatic, type SqlValue} from 'sql.js';
+import { createHash } from 'node:crypto';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { dirname } from 'node:path';
+import { nanoid } from 'nanoid';
+import initSqlJs, { type Database, type SqlJsStatic, type SqlValue } from 'sql.js';
 import {
-    type ConversationResourceKind,
-    type ConversationResourcePresentation,
-    isTaskManagementStatus,
-    isTaskPriority,
-    isTaskType,
-    type TaskAttachmentReference,
-    type TaskManagementStatus,
-    type TaskPriority,
-    type TaskType,
-    type TurnChangeFileType,
-    type TurnChangeSetState,
+  type ConversationResourceKind,
+  type ConversationResourcePresentation,
+  isTaskManagementStatus,
+  isTaskPriority,
+  isTaskType,
+  type TaskAttachmentReference,
+  type TaskManagementStatus,
+  type TaskPriority,
+  type TaskType,
+  type TurnChangeFileType,
+  type TurnChangeSetState,
 } from '@zeus/shared';
-import {migrateCommandCenterSchema} from './commands.js';
+import { migrateCommandCenterSchema } from './commands.js';
 
 export * from './commands.js';
 
@@ -4666,18 +4666,13 @@ export class ConversationItemRepository {
     return this.getByProvider(input.providerThreadId, input.providerItemId)!;
   }
 
-    /**
-     * 修复旧版 Pi 已完成回答投影：消息表已有最终正文时，只替换同一 Pi 回答项的展示正文。
-     * 该入口不改变轮次状态，也不允许把其他类型或进行中的项目强制封口。
-     */
-    replaceCompletedPiAgentMessage(input: {
-        providerThreadId: string;
-        providerItemId: string;
-        textContent: string;
-        updatedAt: string
-    }): ZeusConversationItemRecord | undefined {
-        this.db.execute(
-            `UPDATE conversation_items
+  /**
+   * 修复旧版 Pi 已完成回答投影：消息表已有最终正文时，只替换同一 Pi 回答项的展示正文。
+   * 该入口不改变轮次状态，也不允许把其他类型或进行中的项目强制封口。
+   */
+  replaceCompletedPiAgentMessage(input: { providerThreadId: string; providerItemId: string; textContent: string; updatedAt: string }): ZeusConversationItemRecord | undefined {
+    this.db.execute(
+      `UPDATE conversation_items
              SET text_content = ?,
                  phase = 'final_answer',
                  updated_at = ?
@@ -4686,10 +4681,10 @@ export class ConversationItemRepository {
                AND item_type = 'agentMessage'
                AND status = 'completed'
                AND agent_kind = 'pi'`,
-            [input.textContent, input.updatedAt, input.providerThreadId, input.providerItemId],
-        );
-        return this.getByProvider(input.providerThreadId, input.providerItemId);
-    }
+      [input.textContent, input.updatedAt, input.providerThreadId, input.providerItemId],
+    );
+    return this.getByProvider(input.providerThreadId, input.providerItemId);
+  }
 
   getByProvider(providerThreadId: string, providerItemId: string): ZeusConversationItemRecord | undefined {
     const row = this.db.get<DbConversationItemRow>(`SELECT * FROM conversation_items WHERE provider_thread_id = ? AND provider_item_id = ?`, [providerThreadId, providerItemId]);
@@ -5115,29 +5110,29 @@ export class ConversationServerRequestRepository {
    * 这里只恢复待处理投影并写入明确交接标记；真正回复时必须重新校验原请求与用户答案。
    */
   restorePendingAfterHostHandoff(id: string, input: { sourceInstanceId: string; capturedAt: string; restoredAt: string }): ZeusConversationServerRequestRecord {
-      return this.restorePendingAfterTransportRecovery(id, {
-          recoveryReason: 'host_handoff',
-          sourceInstanceId: input.sourceInstanceId,
-          capturedAt: input.capturedAt,
-          restoredAt: input.restoredAt,
-      });
+    return this.restorePendingAfterTransportRecovery(id, {
+      recoveryReason: 'host_handoff',
+      sourceInstanceId: input.sourceInstanceId,
+      capturedAt: input.capturedAt,
+      restoredAt: input.restoredAt,
+    });
   }
 
-    /**
-     * app-server 请求通道退出后，旧请求不能再通过原 RPC 作答，但仍可作为一次显式续接的恢复点。
-     * 该标记只恢复 Zeus 侧交互，不会把旧请求伪装成当前 app-server 的有效请求。
-     */
-    restorePendingAfterTransportRecovery(
-        id: string,
-        input: {
-            recoveryReason: 'host_handoff' | 'app_server_generation_changed';
-            restoredAt: string;
-            sourceInstanceId?: string;
-            capturedAt?: string;
-            sourceGenerationId?: string;
-            currentGenerationId?: string | null;
-        },
-    ): ZeusConversationServerRequestRecord {
+  /**
+   * app-server 请求通道退出后，旧请求不能再通过原 RPC 作答，但仍可作为一次显式续接的恢复点。
+   * 该标记只恢复 Zeus 侧交互，不会把旧请求伪装成当前 app-server 的有效请求。
+   */
+  restorePendingAfterTransportRecovery(
+    id: string,
+    input: {
+      recoveryReason: 'host_handoff' | 'app_server_generation_changed';
+      restoredAt: string;
+      sourceInstanceId?: string;
+      capturedAt?: string;
+      sourceGenerationId?: string;
+      currentGenerationId?: string | null;
+    },
+  ): ZeusConversationServerRequestRecord {
     const existing = this.getById(id);
     if (!existing) throw new Error(`Conversation server request not found: ${id}`);
     this.db.execute(
@@ -5146,13 +5141,13 @@ export class ConversationServerRequestRepository {
        WHERE id = ?`,
       [
         JSON.stringify({
-            interactionRecoveryCheckpoint: true,
-            recoveryReason: input.recoveryReason,
-            ...(input.recoveryReason === 'host_handoff' ? {handoffCheckpoint: true} : {}),
-            ...(input.sourceInstanceId ? {sourceInstanceId: input.sourceInstanceId} : {}),
-            ...(input.capturedAt ? {capturedAt: input.capturedAt} : {}),
-            ...(input.sourceGenerationId ? {sourceGenerationId: input.sourceGenerationId} : {}),
-            ...(input.currentGenerationId !== undefined ? {currentGenerationId: input.currentGenerationId} : {}),
+          interactionRecoveryCheckpoint: true,
+          recoveryReason: input.recoveryReason,
+          ...(input.recoveryReason === 'host_handoff' ? { handoffCheckpoint: true } : {}),
+          ...(input.sourceInstanceId ? { sourceInstanceId: input.sourceInstanceId } : {}),
+          ...(input.capturedAt ? { capturedAt: input.capturedAt } : {}),
+          ...(input.sourceGenerationId ? { sourceGenerationId: input.sourceGenerationId } : {}),
+          ...(input.currentGenerationId !== undefined ? { currentGenerationId: input.currentGenerationId } : {}),
           restoredAt: input.restoredAt,
         }),
         id,

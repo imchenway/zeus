@@ -103,12 +103,7 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
       placement,
     };
     setPopoverLayout((currentLayout) => {
-      if (
-        currentLayout?.top === nextLayout.top &&
-        currentLayout.left === nextLayout.left &&
-        currentLayout.width === nextLayout.width &&
-        currentLayout.placement === nextLayout.placement
-      ) {
+      if (currentLayout?.top === nextLayout.top && currentLayout.left === nextLayout.left && currentLayout.width === nextLayout.width && currentLayout.placement === nextLayout.placement) {
         return currentLayout;
       }
       return nextLayout;

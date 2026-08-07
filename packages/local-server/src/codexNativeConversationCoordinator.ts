@@ -1,65 +1,55 @@
-import {createHash, randomUUID} from 'node:crypto';
-import {realpathSync, statSync} from 'node:fs';
-import {dirname, extname, isAbsolute, relative, resolve} from 'node:path';
-import type {
-    CodexAppServerEvent,
-    CodexAppServerManager,
-    CodexCommandApprovalDecision,
-    CodexSandboxPolicy,
-    CodexServerRequestResponse,
-    CodexThreadSnapshot
-} from '@zeus/ai-runtime';
+import { createHash, randomUUID } from 'node:crypto';
+import { realpathSync, statSync } from 'node:fs';
+import { dirname, extname, isAbsolute, relative, resolve } from 'node:path';
+import type { CodexAppServerEvent, CodexAppServerManager, CodexCommandApprovalDecision, CodexSandboxPolicy, CodexServerRequestResponse, CodexThreadSnapshot } from '@zeus/ai-runtime';
 import {
-    type CodexMcpServerStartupState,
-    type ConversationCollaborationMode,
-    type ConversationItemPhase,
-    ConversationItemRepository,
-    type ConversationItemType,
-    type ConversationNextTurnSettings,
-    type ConversationPermissionMode,
-    ConversationPlanActionRepository,
-    ConversationRepository,
-    ConversationResourceRepository,
-    type ConversationServerRequestKind,
-    ConversationServerRequestRepository,
-    ConversationSubmissionRepository,
-    ConversationTurnRepository,
-    SettingRepository,
-    type ZeusConversationServerRequestRecord,
-    type ZeusConversationSubmissionRecord,
-    type ZeusConversationTurnRecord,
-    type ZeusConversationWithMessagesRecord,
-    type ZeusDatabase,
+  type CodexMcpServerStartupState,
+  type ConversationCollaborationMode,
+  type ConversationItemPhase,
+  ConversationItemRepository,
+  type ConversationItemType,
+  type ConversationNextTurnSettings,
+  type ConversationPermissionMode,
+  ConversationPlanActionRepository,
+  ConversationRepository,
+  ConversationResourceRepository,
+  type ConversationServerRequestKind,
+  ConversationServerRequestRepository,
+  ConversationSubmissionRepository,
+  ConversationTurnRepository,
+  SettingRepository,
+  type ZeusConversationServerRequestRecord,
+  type ZeusConversationSubmissionRecord,
+  type ZeusConversationTurnRecord,
+  type ZeusConversationWithMessagesRecord,
+  type ZeusDatabase,
 } from '@zeus/storage';
 import type {
-    ArchiveConversationInput,
-    CodexNativeConversationCoordinator,
-    InterruptNativeTurnInput,
-    NativeAcceptedOperation,
-    NativeConversationAttachmentInput,
-    NativeConversationRunState,
-    NativeProviderWriteLifecycle,
-    NativeQueueSnapshot,
-    NativeTurnResult,
-    RespondNativeRequestInput,
-    RespondPlanImplementationRequestInput,
-    RestoreArchivedConversationInput,
-    SendQueuedNowInput,
-    SnoozeNativeRequestInput,
-    StartNativeEphemeralConversationInput,
-    StartProjectConversationInput,
-    StartTaskConversationInput,
-    SubmitNativeMessageInput,
-    WaitForNativeTurnResultInput,
+  ArchiveConversationInput,
+  CodexNativeConversationCoordinator,
+  InterruptNativeTurnInput,
+  NativeAcceptedOperation,
+  NativeConversationAttachmentInput,
+  NativeConversationRunState,
+  NativeProviderWriteLifecycle,
+  NativeQueueSnapshot,
+  NativeTurnResult,
+  RespondNativeRequestInput,
+  RespondPlanImplementationRequestInput,
+  RestoreArchivedConversationInput,
+  SendQueuedNowInput,
+  SnoozeNativeRequestInput,
+  StartNativeEphemeralConversationInput,
+  StartProjectConversationInput,
+  StartTaskConversationInput,
+  SubmitNativeMessageInput,
+  WaitForNativeTurnResultInput,
 } from './codexNativeConversationContracts.js';
-import {
-    parseCanonicalRequestUserInputQuestions,
-    validateCanonicalRequestUserInputAnswers
-} from './codexNativeRuiValidation.js';
-import type {BrowserAutomationPort} from './browserAutomation.js';
-import {zeusBrowserDynamicTools} from './browserDynamicTools.js';
-import {normalizeConversationResources, toConversationResource} from './conversationResources.js';
-import type {TurnChangeSetService} from './turnChangeSets.js';
+import { parseCanonicalRequestUserInputQuestions, validateCanonicalRequestUserInputAnswers } from './codexNativeRuiValidation.js';
+import type { BrowserAutomationPort } from './browserAutomation.js';
+import { zeusBrowserDynamicTools } from './browserDynamicTools.js';
+import { normalizeConversationResources, toConversationResource } from './conversationResources.js';
+import type { TurnChangeSetService } from './turnChangeSets.js';
 
 interface ConversationDispatchContext {
   projectId: string;
@@ -763,7 +753,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     const activeTurn = [...options.turns.listByConversation(conversation.id)].reverse().find((turn) => turn.status === 'running' || turn.status === 'waiting' || turn.status === 'dispatching');
     if (activeTurn?.providerTurnId) {
       if (activeTurn.status === 'waiting') {
-          const pending = options.requests.listByConversation(conversation.id).find((request) => request.turnId === activeTurn.id && isPendingInteractionAuthority(request));
+        const pending = options.requests.listByConversation(conversation.id).find((request) => request.turnId === activeTurn.id && isPendingInteractionAuthority(request));
         if (pending) {
           return {
             type: 'waiting',
@@ -783,19 +773,19 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     return state.type === 'ready' ? state.generationId : null;
   }
 
-    function recoverStaleInteractionRequests(conversationId: string, currentGenerationId: string): void {
+  function recoverStaleInteractionRequests(conversationId: string, currentGenerationId: string): void {
     const timestamp = now();
-        const requests = options.requests.listByConversation(conversationId);
-        const latestRequest = requests.at(-1);
-        for (const request of requests) {
-            if (options.manager.hasGeneration(request.transportGenerationId) || isInteractionRecoveryCheckpointRequest(request)) continue;
-            const recoverableFailure = request.id === latestRequest?.id && isRetiredGenerationFailure(request);
-            if (request.status !== 'pending' && !recoverableFailure) continue;
-            options.requests.restorePendingAfterTransportRecovery(request.id, {
-                recoveryReason: 'app_server_generation_changed',
-                sourceGenerationId: request.transportGenerationId,
-                currentGenerationId,
-                restoredAt: timestamp,
+    const requests = options.requests.listByConversation(conversationId);
+    const latestRequest = requests.at(-1);
+    for (const request of requests) {
+      if (options.manager.hasGeneration(request.transportGenerationId) || isInteractionRecoveryCheckpointRequest(request)) continue;
+      const recoverableFailure = request.id === latestRequest?.id && isRetiredGenerationFailure(request);
+      if (request.status !== 'pending' && !recoverableFailure) continue;
+      options.requests.restorePendingAfterTransportRecovery(request.id, {
+        recoveryReason: 'app_server_generation_changed',
+        sourceGenerationId: request.transportGenerationId,
+        currentGenerationId,
+        restoredAt: timestamp,
       });
     }
   }
@@ -1402,21 +1392,21 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     }
     const currentGenerationId = readyGenerationId();
     if (!options.manager.hasGeneration(request.transportGenerationId)) {
-        if (!isInteractionRecoveryCheckpointRequest(request)) {
-            options.requests.restorePendingAfterTransportRecovery(request.id, {
-                recoveryReason: 'app_server_generation_changed',
-                sourceGenerationId: request.transportGenerationId,
+      if (!isInteractionRecoveryCheckpointRequest(request)) {
+        options.requests.restorePendingAfterTransportRecovery(request.id, {
+          recoveryReason: 'app_server_generation_changed',
+          sourceGenerationId: request.transportGenerationId,
           currentGenerationId,
-                restoredAt: now(),
-            });
-        }
-        const recoveredRequest = options.requests.getById(request.id) ?? request;
-        return respondAfterInteractionRecovery({
-            request: recoveredRequest,
-            conversation,
-            response: stripRequestTransport(wireResponse),
-            input
+          restoredAt: now(),
         });
+      }
+      const recoveredRequest = options.requests.getById(request.id) ?? request;
+      return respondAfterInteractionRecovery({
+        request: recoveredRequest,
+        conversation,
+        response: stripRequestTransport(wireResponse),
+        input,
+      });
     }
     await input.providerWriteLifecycle?.markPrepared(request.id);
     input.providerWriteLifecycle?.markRpcStarted(request.id);
@@ -1478,30 +1468,30 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     };
   }
 
-    function isInteractionRecoveryCheckpointRequest(request: ZeusConversationServerRequestRecord): boolean {
+  function isInteractionRecoveryCheckpointRequest(request: ZeusConversationServerRequestRecord): boolean {
     if (!request.responseJson) return false;
     try {
-        const response = parseJsonRecord(request.responseJson);
-        return response.interactionRecoveryCheckpoint === true || response.handoffCheckpoint === true;
-    } catch {
-        return false;
-    }
-    }
-
-    function isRetiredGenerationFailure(request: ZeusConversationServerRequestRecord): boolean {
-        if (request.status !== 'failed' || !request.responseJson) return false;
-        try {
-            return parseJsonRecord(request.responseJson).error === 'ZEUS_CODEX_REQUEST_GENERATION_STALE';
+      const response = parseJsonRecord(request.responseJson);
+      return response.interactionRecoveryCheckpoint === true || response.handoffCheckpoint === true;
     } catch {
       return false;
     }
   }
 
-    function isPendingInteractionAuthority(request: ZeusConversationServerRequestRecord): boolean {
-        return request.status === 'pending' && (options.manager.hasGeneration(request.transportGenerationId) || isInteractionRecoveryCheckpointRequest(request));
+  function isRetiredGenerationFailure(request: ZeusConversationServerRequestRecord): boolean {
+    if (request.status !== 'failed' || !request.responseJson) return false;
+    try {
+      return parseJsonRecord(request.responseJson).error === 'ZEUS_CODEX_REQUEST_GENERATION_STALE';
+    } catch {
+      return false;
     }
+  }
 
-    async function respondAfterInteractionRecovery(inputValue: {
+  function isPendingInteractionAuthority(request: ZeusConversationServerRequestRecord): boolean {
+    return request.status === 'pending' && (options.manager.hasGeneration(request.transportGenerationId) || isInteractionRecoveryCheckpointRequest(request));
+  }
+
+  async function respondAfterInteractionRecovery(inputValue: {
     request: ZeusConversationServerRequestRecord;
     conversation: ZeusConversationWithMessagesRecord;
     response: RespondNativeRequestInput['response'];
@@ -1533,19 +1523,25 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     });
     runStates.set(conversation.id, { type: 'idle' });
 
-        const actualContent = buildInteractionRecoveryContinuation(request, response);
-        const displayText = buildInteractionRecoveryDisplayText(request, response);
-        const persistedContent = secret ? buildInteractionRecoveryContinuation(request, {
+    const actualContent = buildInteractionRecoveryContinuation(request, response);
+    const displayText = buildInteractionRecoveryDisplayText(request, response);
+    const persistedContent = secret
+      ? buildInteractionRecoveryContinuation(
+          request,
+          {
             type: 'request_user_input',
-            answers: {}
-        }, '敏感回答仅在本次恢复执行的内存中传递，未写入本地记录。') : actualContent;
+            answers: {},
+          },
+          '敏感回答仅在本次恢复执行的内存中传递，未写入本地记录。',
+        )
+      : actualContent;
     const context = contextWithLatestNextTurnSettings(conversation.id, contexts.get(conversation.id) ?? contextFromConversation(conversation));
     const submission = createSubmission(
       conversation.id,
       persistedContent,
       {
-          idempotencyKey: `interaction-recovery-response:${request.id}`,
-          clientUserMessageId: `interaction-recovery-response:${request.id}`,
+        idempotencyKey: `interaction-recovery-response:${request.id}`,
+        clientUserMessageId: `interaction-recovery-response:${request.id}`,
         displayText,
       },
       context,
@@ -1556,7 +1552,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       conversationId: conversation.id,
       requestId: request.id,
       requestKind: request.requestKind,
-        resumedAfterTransportRecovery: true,
+      resumedAfterTransportRecovery: true,
     });
     try {
       await ensureGenerationReconciled();
@@ -1844,7 +1840,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     for (const conversation of options.conversations.listNativeBound()) {
       boundConversationIds.add(conversation.id);
       try {
-          recoverStaleInteractionRequests(conversation.id, generationId);
+        recoverStaleInteractionRequests(conversation.id, generationId);
         const contextual = options.submissions.listByConversation(conversation.id).find((submission) => isRecord(parseJsonRecord(submission.inputJson).context));
         if (contextual) contexts.set(conversation.id, contextFromSubmission(contextual));
         const providerThreadId = requireString(conversation.providerThreadId, 'provider thread id');
@@ -1853,7 +1849,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         const authoritativeGenerationId = options.manager.generationForThread(providerThreadId) ?? generationId;
         const snapshot = await options.manager.readThread({ threadId: providerThreadId });
         reconcileConversationSnapshot(conversation, snapshot, authoritativeGenerationId);
-          restoreRecoverableInteractionState(conversation.id);
+        restoreRecoverableInteractionState(conversation.id);
       } catch (error) {
         if (isProviderThreadArchivedError(error)) markConversationProviderArchived(conversation.id, error);
         else markConversationRecoveryRequired(conversation.id, error);
@@ -1872,26 +1868,26 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     }
   }
 
-    function restoreRecoverableInteractionState(conversationId: string): void {
-        const request = options.requests.listByConversation(conversationId).find((candidate) => isPendingInteractionAuthority(candidate));
-        if (!request?.turnId) return;
-        const turn = options.turns.getById(request.turnId);
-        const conversation = options.conversations.getById(conversationId);
-        if (!turn?.providerTurnId || !conversation?.providerThreadId) return;
-        options.turns.upsert({...turn, status: 'waiting', completedAt: null, updatedAt: now()});
-        options.conversations.bindProvider(conversation.id, {
-            providerId: 'codex',
-            providerThreadId: conversation.providerThreadId,
-            providerModel: conversation.providerModel,
-            providerState: 'waiting',
-        });
-        runStates.set(conversation.id, {
-            type: 'waiting',
-            turnId: turn.providerTurnId,
-            requestId: request.id,
-            reason: request.requestKind === 'request_user_input' ? 'user_input' : 'approval',
-        });
-    }
+  function restoreRecoverableInteractionState(conversationId: string): void {
+    const request = options.requests.listByConversation(conversationId).find((candidate) => isPendingInteractionAuthority(candidate));
+    if (!request?.turnId) return;
+    const turn = options.turns.getById(request.turnId);
+    const conversation = options.conversations.getById(conversationId);
+    if (!turn?.providerTurnId || !conversation?.providerThreadId) return;
+    options.turns.upsert({ ...turn, status: 'waiting', completedAt: null, updatedAt: now() });
+    options.conversations.bindProvider(conversation.id, {
+      providerId: 'codex',
+      providerThreadId: conversation.providerThreadId,
+      providerModel: conversation.providerModel,
+      providerState: 'waiting',
+    });
+    runStates.set(conversation.id, {
+      type: 'waiting',
+      turnId: turn.providerTurnId,
+      requestId: request.id,
+      reason: request.requestKind === 'request_user_input' ? 'user_input' : 'approval',
+    });
+  }
 
   function reconcileConversationSnapshot(conversation: ZeusConversationWithMessagesRecord, snapshot: CodexThreadSnapshot, generationId: string): void {
     const submissions = options.submissions.listByConversation(conversation.id);
@@ -3103,9 +3099,9 @@ function stripRequestTransport(response: CodexServerRequestResponse): RespondNat
 function buildInteractionRecoveryContinuation(request: ZeusConversationServerRequestRecord, response: RespondNativeRequestInput['response'], privacyNote?: string): string {
   const approvalBoundary = request.requestKind === 'command' || request.requestKind === 'file' || request.requestKind === 'permissions';
   return [
-      'Zeus 已在请求通道切换后的安全恢复点继续当前会话。请从这里继续，不要重复此前已经完成的操作或副作用。',
-      `待处理请求类型：${request.requestKind}`,
-      `待处理请求：${request.payloadJson}`,
+    'Zeus 已在请求通道切换后的安全恢复点继续当前会话。请从这里继续，不要重复此前已经完成的操作或副作用。',
+    `待处理请求类型：${request.requestKind}`,
+    `待处理请求：${request.payloadJson}`,
     `用户本次回复：${JSON.stringify(response)}`,
     ...(approvalBoundary ? ['安全边界：这次决定只针对上面记录的原操作。若继续执行命令、文件修改或权限操作，必须重新发出完全明确的操作请求，由 Zeus 按新宿主的当前策略再次校验；不得把该决定套用到任何不同操作。'] : []),
     ...(privacyNote ? [privacyNote] : []),
