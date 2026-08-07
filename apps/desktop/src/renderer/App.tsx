@@ -708,6 +708,7 @@ export function updateConversationChoiceFromNativeSnapshot<
       providerThreadId: nativeSnapshot.providerThreadId,
       providerModel: nativeSnapshot.providerModel,
       providerState: nativeSnapshot.providerState,
+      nativeSession: nativeSnapshot.nativeSession,
       pendingRequestKind: nativeSnapshot.pendingRequestKind,
       createdAt: nativeSnapshot.createdAt,
       updatedAt: nativeSnapshot.updatedAt,
