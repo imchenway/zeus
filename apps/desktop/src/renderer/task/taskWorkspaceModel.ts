@@ -14,6 +14,7 @@ import type {
   TaskType,
 } from '../apiClient.js';
 import type { NativeConversationChoice, NativeSessionState } from '../session/sessionTypes.js';
+import { compareConversationStageUpdatedDesc } from '../session/conversationOrdering.js';
 
 export type TaskWorkspaceEmptyState = 'empty' | 'no-results' | undefined;
 export type TaskWorkspaceViewMode = 'hierarchy' | 'flat';
@@ -822,7 +823,7 @@ export function resolveTaskAgentRunStatus(conversations: NativeConversationChoic
 
 export function resolveTaskAgentRunStatusConversation(conversations: NativeConversationChoice[]): NativeConversationChoice | undefined {
   if (conversations.length === 0) return undefined;
-  return conversations.reduce((current, candidate) => (candidate.updatedAt.localeCompare(current.updatedAt) > 0 ? candidate : current));
+  return [...conversations].sort(compareConversationStageUpdatedDesc)[0];
 }
 
 export function formatTaskManagementStatus(status: TaskManagementStatus, labels?: Partial<Record<TaskManagementStatus, string>>): string {

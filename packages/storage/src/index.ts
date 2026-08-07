@@ -529,6 +529,8 @@ export interface ZeusConversationRecord {
   title: string;
   summary: string | null;
   status: string;
+  stage: ConversationStage;
+  stageUpdatedAt: string;
   createdAt: string;
   updatedAt: string;
   archived: boolean;
@@ -557,6 +559,7 @@ export interface ZeusConversationRecord {
 }
 
 export type ConversationTransportKind = 'legacy_cli' | 'codex_native';
+export type ConversationStage = 'created' | 'connecting' | 'queued' | 'running' | 'waiting_user' | 'waiting_approval' | 'completed' | 'failed' | 'paused' | 'ready' | 'archived';
 export type ConversationAgentKind = 'codex' | 'pi' | 'claude';
 export type ConversationAgentTransport = 'app_server' | 'rpc' | 'sdk';
 export type ConversationProviderState = 'unbound' | 'binding' | 'ready' | 'active' | 'waiting' | 'paused' | 'archived' | 'closed' | 'failed';
@@ -1227,6 +1230,7 @@ export async function createZeusDatabase(filePath: string): Promise<ZeusDatabase
   migrateTaskManagementStatus(zeusDb);
   migrateTaskTypesAndContents(zeusDb);
   migrateCodexNativeConversationSchema(zeusDb);
+  migrateConversationStageSchema(zeusDb);
   migrateAgentRuntimeSchema(zeusDb);
   migrateTaskGitWorkspaceSchema(zeusDb);
   migrateMultiRepositoryTaskSchema(zeusDb);
@@ -2062,6 +2066,34 @@ function migrateCodexNativeConversationSchema(db: ZeusDatabase): void {
     migrationId: '20260727_0008_conversation_resources_and_turn_change_sets',
     description: '增加会话资源与执行轮次变更集持久化',
     checksumSource: 'conversation_resources,turn_change_sets,turn_change_files:resource_authority,turn_patch_undo_reapply:v1',
+  });
+}
+
+function migrateConversationStageSchema(db: ZeusDatabase): void {
+  const migrationId = '20260807_0001_conversation_stage_updated_at';
+  const alreadyMigrated = db.get<{ migration_id: string }>(`SELECT migration_id FROM schema_migrations WHERE migration_id = ?`, [migrationId]);
+  for (const statement of [
+    `ALTER TABLE conversations ADD COLUMN stage TEXT NOT NULL DEFAULT 'created'`,
+    `ALTER TABLE conversations ADD COLUMN stage_updated_at TEXT NOT NULL DEFAULT ''`,
+  ]) {
+    try {
+      db.execute(statement);
+    } catch {
+      // sql.js 不支持 ADD COLUMN IF NOT EXISTS；字段存在时保持当前数据。
+    }
+  }
+  db.execute(`CREATE INDEX IF NOT EXISTS idx_conversations_project_stage_updated_at ON conversations(project_id, stage_updated_at DESC, created_at DESC, id DESC)`);
+  if (!alreadyMigrated) {
+    for (const row of db.select<{ id: string; created_at: string }>(`SELECT id, created_at FROM conversations`)) {
+      const projection = deriveConversationStageProjection(db, row.id);
+      if (!projection) continue;
+      db.execute(`UPDATE conversations SET stage = ?, stage_updated_at = ? WHERE id = ?`, [projection.stage, projection.evidenceAt || row.created_at, row.id]);
+    }
+  }
+  recordSchemaMigration(db, {
+    migrationId,
+    description: '增加独立会话阶段与阶段更新时间，并从历史执行事实回填',
+    checksumSource: 'conversations:stage,stage_updated_at:turns,submissions,requests,created_at:v1',
   });
 }
 
@@ -3825,12 +3857,112 @@ export class TerminalEventRepository {
   }
 }
 
-const selectConversationFields = `id, project_id, task_id, session_id, title, summary, status, created_at, updated_at, archived,
+const selectConversationFields = `id, project_id, task_id, session_id, title, summary, status, stage, stage_updated_at, created_at, updated_at, archived,
   transport_kind, provider_id, provider_thread_id, provider_thread_path, provider_model, provider_state,
   provider_protocol_version, provider_binary_version, legacy_source_conversation_id, provider_settings_json, provider_token_usage_json, permission_mode, collaboration_mode, next_turn_settings_json, completion_unread, workspace_id, environment_id,
   agent_kind, agent_transport, model_source_id, model_id, native_session_id, native_session_path, capability_snapshot_id`;
 const selectConversationMessageFields = `id, conversation_id, role, content, source, metadata_json, created_at,
   provider_thread_id, provider_turn_id, provider_item_id, client_message_id`;
+
+function latestIso(...values: Array<string | null | undefined>): string {
+  return values.filter((value): value is string => Boolean(value)).sort((left, right) => right.localeCompare(left))[0] ?? '';
+}
+
+/**
+ * 从持久执行事实投影当前会话阶段。该投影不读取会话正文、配置或阅读状态，避免非阶段变化污染排序。
+ */
+function deriveConversationStageProjection(db: ZeusDatabase, conversationId: string): { stage: ConversationStage; evidenceAt: string } | null {
+  const conversation = db.get<{
+    archived: number;
+    transport_kind: ConversationTransportKind;
+    status: string;
+    provider_state: ConversationProviderState;
+    created_at: string;
+  }>(`SELECT archived, transport_kind, status, provider_state, created_at FROM conversations WHERE id = ?`, [conversationId]);
+  if (!conversation) return null;
+  if (conversation.archived === 1 || conversation.provider_state === 'archived') return { stage: 'archived', evidenceAt: conversation.created_at };
+
+  const pendingPlanAction = db.get<{ created_at: string }>(
+    `SELECT created_at FROM conversation_plan_actions WHERE conversation_id = ? AND status = 'pending' ORDER BY created_at DESC, id DESC LIMIT 1`,
+    [conversationId],
+  );
+  if (pendingPlanAction) return { stage: 'waiting_user', evidenceAt: pendingPlanAction.created_at };
+
+  const pendingRequest = db.get<{ request_kind: ConversationServerRequestKind; created_at: string }>(
+    `SELECT request_kind, created_at FROM conversation_server_requests WHERE conversation_id = ? AND status = 'pending' ORDER BY created_at DESC, id DESC LIMIT 1`,
+    [conversationId],
+  );
+  if (pendingRequest) {
+    return {
+      stage: pendingRequest.request_kind === 'request_user_input' ? 'waiting_user' : 'waiting_approval',
+      evidenceAt: pendingRequest.created_at,
+    };
+  }
+
+  const activeTurn = db.get<{ started_at: string | null; updated_at: string }>(
+    `SELECT started_at, updated_at FROM conversation_turns WHERE conversation_id = ? AND status = 'running' ORDER BY updated_at DESC, id DESC LIMIT 1`,
+    [conversationId],
+  );
+  const activeSubmission = db.get<{ dispatched_at: string | null; updated_at: string }>(
+    `SELECT dispatched_at, updated_at FROM conversation_submissions WHERE conversation_id = ? AND status = 'active' ORDER BY updated_at DESC, id DESC LIMIT 1`,
+    [conversationId],
+  );
+  if (activeTurn || activeSubmission || conversation.provider_state === 'active' || conversation.status === 'running') {
+    return {
+      stage: 'running',
+      evidenceAt: latestIso(activeTurn?.started_at, activeTurn?.updated_at, activeSubmission?.dispatched_at, activeSubmission?.updated_at, conversation.created_at),
+    };
+  }
+
+  const queuedSubmission = db.get<{ created_at: string; updated_at: string }>(
+    `SELECT created_at, updated_at FROM conversation_submissions WHERE conversation_id = ? AND status IN ('queued', 'dispatching') ORDER BY created_at ASC, id ASC LIMIT 1`,
+    [conversationId],
+  );
+  if (queuedSubmission) {
+    const latestTerminal = db.get<{ completed_at: string | null; updated_at: string }>(
+      `SELECT completed_at, updated_at FROM conversation_turns WHERE conversation_id = ? AND status IN ('completed', 'interrupted', 'failed') ORDER BY COALESCE(completed_at, updated_at) DESC, id DESC LIMIT 1`,
+      [conversationId],
+    );
+    return { stage: 'queued', evidenceAt: latestIso(queuedSubmission.created_at, latestTerminal?.completed_at, latestTerminal?.updated_at) };
+  }
+
+  const latestTurn = db.get<{ status: string; completed_at: string | null; updated_at: string }>(
+    `SELECT status, completed_at, updated_at FROM conversation_turns WHERE conversation_id = ? ORDER BY updated_at DESC, id DESC LIMIT 1`,
+    [conversationId],
+  );
+  const latestSubmission = db.get<{ status: string; resolved_at: string | null; updated_at: string }>(
+    `SELECT status, resolved_at, updated_at FROM conversation_submissions WHERE conversation_id = ? ORDER BY updated_at DESC, id DESC LIMIT 1`,
+    [conversationId],
+  );
+  const terminalEvidenceAt = latestIso(latestTurn?.completed_at, latestTurn?.updated_at, latestSubmission?.resolved_at, latestSubmission?.updated_at, conversation.created_at);
+  if (conversation.provider_state === 'paused') return { stage: 'paused', evidenceAt: terminalEvidenceAt };
+  if (conversation.provider_state === 'failed' || conversation.status === 'failed') return { stage: 'failed', evidenceAt: terminalEvidenceAt };
+  if (conversation.provider_state === 'waiting') return { stage: 'waiting_approval', evidenceAt: terminalEvidenceAt };
+  if (conversation.provider_state === 'closed') return { stage: 'completed', evidenceAt: terminalEvidenceAt };
+  if (conversation.transport_kind === 'legacy_cli') return { stage: 'completed', evidenceAt: conversation.created_at };
+  if (conversation.provider_state === 'binding' || conversation.provider_state === 'unbound' || conversation.status === 'starting') {
+    return { stage: 'connecting', evidenceAt: conversation.created_at };
+  }
+  if (conversation.provider_state === 'ready') {
+    if (latestTurn?.status === 'failed') return { stage: 'failed', evidenceAt: terminalEvidenceAt };
+    if (latestTurn?.status === 'paused' || latestTurn?.status === 'interrupted') return { stage: 'paused', evidenceAt: terminalEvidenceAt };
+    if (latestTurn?.status === 'completed') return { stage: 'completed', evidenceAt: terminalEvidenceAt };
+    return { stage: 'ready', evidenceAt: terminalEvidenceAt };
+  }
+  if (latestTurn?.status === 'waiting') return { stage: 'waiting_approval', evidenceAt: terminalEvidenceAt };
+  if (latestTurn?.status === 'failed' || latestSubmission?.status === 'failed') return { stage: 'failed', evidenceAt: terminalEvidenceAt };
+  if (latestTurn?.status === 'paused' || latestTurn?.status === 'interrupted' || latestSubmission?.status === 'paused') return { stage: 'paused', evidenceAt: terminalEvidenceAt };
+  if (latestTurn?.status === 'completed' || latestSubmission?.status === 'completed') return { stage: 'completed', evidenceAt: terminalEvidenceAt };
+  return { stage: 'created', evidenceAt: conversation.created_at };
+}
+
+/** 只有阶段枚举真正变化时才推进阶段时间，不触碰会话最后更新时间。 */
+function syncConversationStage(db: ZeusDatabase, conversationId: string, occurredAt = nowIso()): void {
+  const current = db.get<{ stage: ConversationStage; stage_updated_at: string }>(`SELECT stage, stage_updated_at FROM conversations WHERE id = ?`, [conversationId]);
+  const projection = deriveConversationStageProjection(db, conversationId);
+  if (!current || !projection || current.stage === projection.stage) return;
+  db.execute(`UPDATE conversations SET stage = ?, stage_updated_at = ? WHERE id = ?`, [projection.stage, occurredAt, conversationId]);
+}
 
 /** 保存一次真实能力检查的版本与结论，不保存命令原文、密钥或对话正文。 */
 export class AgentCapabilitySnapshotRepository {
@@ -3892,6 +4024,8 @@ export class ConversationRepository {
       title: input.title,
       summary: input.summary ?? null,
       status: input.status ?? 'open',
+      stage: 'created',
+      stageUpdatedAt: timestamp,
       createdAt: timestamp,
       updatedAt: timestamp,
       archived: false,
@@ -3919,11 +4053,11 @@ export class ConversationRepository {
       capabilitySnapshotId: input.capabilitySnapshotId ?? null,
     };
     this.db.execute(
-      `INSERT INTO conversations (id, project_id, task_id, workspace_id, environment_id, session_id, title, summary, status, created_at, updated_at, archived,
+      `INSERT INTO conversations (id, project_id, task_id, workspace_id, environment_id, session_id, title, summary, status, stage, stage_updated_at, created_at, updated_at, archived,
         transport_kind, provider_id, provider_thread_id, provider_thread_path, provider_model, provider_state,
         provider_protocol_version, provider_binary_version, legacy_source_conversation_id, provider_settings_json, provider_token_usage_json, permission_mode, collaboration_mode, next_turn_settings_json, completion_unread,
         agent_kind, agent_transport, model_source_id, model_id, native_session_id, native_session_path, capability_snapshot_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)`,
       [
         record.id,
         record.projectId,
@@ -3934,6 +4068,8 @@ export class ConversationRepository {
         record.title,
         record.summary,
         record.status,
+        record.stage,
+        record.stageUpdatedAt,
         record.createdAt,
         record.updatedAt,
         record.transportKind,
@@ -3959,7 +4095,8 @@ export class ConversationRepository {
         record.capabilitySnapshotId,
       ],
     );
-    return record;
+    syncConversationStage(this.db, record.id, timestamp);
+    return this.getById(record.id) ?? record;
   }
 
   updatePermissionMode(conversationId: string, permissionMode: ConversationPermissionMode): ZeusConversationWithMessagesRecord {
@@ -4070,6 +4207,7 @@ export class ConversationRepository {
         conversationId,
       ],
     );
+    syncConversationStage(this.db, conversationId, timestamp);
     const updated = this.getById(conversationId);
     if (!updated) throw new Error(`Zeus conversation not found: ${conversationId}`);
     return updated;
@@ -4133,6 +4271,7 @@ export class ConversationRepository {
       values.push(input.summary ?? null);
     }
     this.db.execute(`UPDATE conversations SET ${assignments.join(', ')} WHERE id = ?`, [...values, conversationId]);
+    syncConversationStage(this.db, conversationId, timestamp);
     const updated = this.getById(conversationId);
     if (!updated) {
       throw new Error(`Zeus conversation not found: ${conversationId}`);
@@ -4144,8 +4283,9 @@ export class ConversationRepository {
   updateAgentRuntime(conversationId: string, input: { providerState?: ConversationProviderState; status?: string; modelSourceId?: string | null; modelId?: string | null; providerModel?: string | null }): ZeusConversationWithMessagesRecord {
     const existing = this.getById(conversationId);
     if (!existing) throw new Error(`Zeus conversation not found: ${conversationId}`);
+    const timestamp = nowIso();
     const assignments = ['updated_at = ?'];
-    const values: Array<string | number | null> = [nowIso()];
+    const values: Array<string | number | null> = [timestamp];
     if (input.providerState) {
       assignments.push('provider_state = ?');
       values.push(assertEnum(input.providerState, ['unbound', 'binding', 'ready', 'active', 'waiting', 'paused', 'archived', 'closed', 'failed'] as const, 'conversation provider state'));
@@ -4167,6 +4307,7 @@ export class ConversationRepository {
       values.push(input.providerModel ?? null);
     }
     this.db.execute(`UPDATE conversations SET ${assignments.join(', ')} WHERE id = ?`, [...values, conversationId]);
+    syncConversationStage(this.db, conversationId, timestamp);
     return this.getById(conversationId)!;
   }
 
@@ -4319,6 +4460,7 @@ export class ConversationRepository {
     const timestamp = nowIso();
     // 归档只隐藏会话列表，不删除消息，保证图谱问答证据链可恢复。
     this.db.execute(`UPDATE conversations SET archived = ?, updated_at = ? WHERE id = ${toSqlStringLiteral(conversationId)}`, [1, timestamp]);
+    syncConversationStage(this.db, conversationId, timestamp);
     const archived = this.getById(conversationId);
     if (!archived) {
       throw new Error(`Zeus conversation not found: ${conversationId}`);
@@ -4333,6 +4475,7 @@ export class ConversationRepository {
     }
     const timestamp = nowIso();
     this.db.execute(`UPDATE conversations SET archived = ?, updated_at = ? WHERE id = ${toSqlStringLiteral(conversationId)}`, [0, timestamp]);
+    syncConversationStage(this.db, conversationId, timestamp);
     const restored = this.getById(conversationId);
     if (!restored) {
       throw new Error(`Zeus conversation not found: ${conversationId}`);
@@ -4544,6 +4687,7 @@ export class ConversationTurnRepository {
         input.nativeRunId ?? input.providerTurnId,
       ],
     );
+    syncConversationStage(this.db, input.conversationId, input.updatedAt);
     return mapConversationTurnRow(this.db.get<DbConversationTurnRow>(`SELECT * FROM conversation_turns WHERE id = ?`, [id])!);
   }
 
@@ -4995,6 +5139,7 @@ export class ConversationSubmissionRepository {
         input.resolvedAt ?? null,
       ],
     );
+    syncConversationStage(this.db, input.conversationId, input.createdAt);
     return this.getById(id)!;
   }
 
@@ -5045,12 +5190,14 @@ export class ConversationSubmissionRepository {
     input: { providerTurnId?: string | null; pausedReason?: string | null; error?: unknown; dispatchedAt?: string | null; resolvedAt?: string | null; updatedAt?: string } = {},
   ): ZeusConversationSubmissionRecord {
     const status = assertEnum(statusValue, ['queued', 'dispatching', 'active', 'paused', 'completed', 'resolved', 'failed', 'cancelled', 'deleted'] as const, 'conversation submission status');
+    const updatedAt = input.updatedAt ?? nowIso();
     this.db.execute(
       `UPDATE conversation_submissions SET status = ?, provider_turn_id = COALESCE(?, provider_turn_id), paused_reason = ?, error_json = ?, dispatched_at = COALESCE(?, dispatched_at), resolved_at = COALESCE(?, resolved_at), updated_at = ? WHERE id = ?`,
-      [status, input.providerTurnId ?? null, input.pausedReason ?? null, input.error === undefined ? null : JSON.stringify(input.error), input.dispatchedAt ?? null, input.resolvedAt ?? null, input.updatedAt ?? nowIso(), id],
+      [status, input.providerTurnId ?? null, input.pausedReason ?? null, input.error === undefined ? null : JSON.stringify(input.error), input.dispatchedAt ?? null, input.resolvedAt ?? null, updatedAt, id],
     );
     const updated = this.getById(id);
     if (!updated) throw new Error(`Conversation submission not found: ${id}`);
+    syncConversationStage(this.db, updated.conversationId, updatedAt);
     return updated;
   }
 
@@ -5076,7 +5223,9 @@ export class ConversationSubmissionRepository {
         id,
       ],
     );
-    return this.getById(id)!;
+    const updated = this.getById(id)!;
+    syncConversationStage(this.db, updated.conversationId, updatedAt);
+    return updated;
   }
 }
 
@@ -5137,6 +5286,7 @@ export class ConversationServerRequestRepository {
     const stored = this.db.get<DbConversationServerRequestRow>(`SELECT * FROM conversation_server_requests WHERE transport_generation_id = ? AND provider_request_id_json = ?`, [input.transportGenerationId, providerRequestIdJson]);
     if (!stored) throw new Error('Conversation server request insert did not persist a record.');
     assertConversationServerRequestIdentity(stored, requestKind, payload, containsSecret);
+    syncConversationStage(this.db, input.conversationId, input.createdAt);
     return mapConversationServerRequestRow(stored);
   }
 
@@ -5147,6 +5297,7 @@ export class ConversationServerRequestRepository {
     const secret = input.isSecret === true || existing.containsSecret || hasSecretUserInputQuestion(persistedPayload);
     const responseJson = secret ? JSON.stringify(createSecretResponseSummary(persistedPayload, input.response, input.questionIds, input.answerCount)) : JSON.stringify(input.response);
     this.db.execute(`UPDATE conversation_server_requests SET status = 'resolved', response_json = ?, contains_secret = ?, resolved_at = ? WHERE id = ?`, [responseJson, secret ? 1 : 0, input.resolvedAt, id]);
+    syncConversationStage(this.db, existing.conversationId, input.resolvedAt);
     return this.getById(id)!;
   }
 
@@ -5198,6 +5349,7 @@ export class ConversationServerRequestRepository {
         id,
       ],
     );
+    syncConversationStage(this.db, existing.conversationId, input.restoredAt);
     return this.getById(id)!;
   }
 
@@ -5210,6 +5362,7 @@ export class ConversationServerRequestRepository {
       input.resolvedAt,
       id,
     ]);
+    syncConversationStage(this.db, existing.conversationId, input.resolvedAt);
     return this.getById(id)!;
   }
 
@@ -5217,6 +5370,7 @@ export class ConversationServerRequestRepository {
     const existing = this.getById(id);
     if (!existing) throw new Error(`Conversation server request not found: ${id}`);
     this.db.execute(`UPDATE conversation_server_requests SET status = 'failed', response_json = ?, resolved_at = ? WHERE id = ?`, [JSON.stringify(input.error), input.resolvedAt, id]);
+    syncConversationStage(this.db, existing.conversationId, input.resolvedAt);
     return this.getById(id)!;
   }
 
@@ -5224,6 +5378,7 @@ export class ConversationServerRequestRepository {
     const existing = this.getById(id);
     if (!existing) throw new Error(`Conversation server request not found: ${id}`);
     this.db.execute(`UPDATE conversation_server_requests SET status = 'expired', response_json = ?, resolved_at = ? WHERE id = ? AND status IN ('pending', 'resolved')`, [JSON.stringify(input.response), input.resolvedAt, id]);
+    syncConversationStage(this.db, existing.conversationId, input.resolvedAt);
     return this.getById(id)!;
   }
 
@@ -5275,7 +5430,9 @@ export class ConversationPlanActionRepository {
          VALUES (?, ?, ?, ?, 'pending', NULL, ?, NULL, ?)`,
         [id, input.conversationId, input.turnId, input.planItemId, input.createdAt, input.createdAt],
       );
-      return this.getById(id)!;
+      const created = this.getById(id)!;
+      syncConversationStage(this.db, input.conversationId, input.createdAt);
+      return created;
     });
   }
 
@@ -5327,7 +5484,9 @@ export class ConversationPlanActionRepository {
       throw Object.assign(new Error('Plan implementation request is stale or already resolved.'), { code: 'ZEUS_PLAN_IMPLEMENTATION_REQUEST_STALE' as const });
     }
     this.db.execute(`UPDATE conversation_plan_actions SET status = ?, submission_id = ?, resolved_at = ?, updated_at = ? WHERE id = ? AND status = 'pending'`, [status, input.submissionId ?? null, input.resolvedAt, input.resolvedAt, id]);
-    return this.getById(id)!;
+    const updated = this.getById(id)!;
+    syncConversationStage(this.db, conversationId, input.resolvedAt);
+    return updated;
   }
 }
 
@@ -5800,6 +5959,8 @@ interface DbConversationRow {
   title: string;
   summary: string | null;
   status: string;
+  stage: ConversationStage;
+  stage_updated_at: string;
   created_at: string;
   updated_at: string;
   archived: number;
@@ -6271,6 +6432,8 @@ function mapConversationRow(row: DbConversationRow): ZeusConversationRecord {
     title: row.title,
     summary: row.summary,
     status: row.status,
+    stage: assertEnum(row.stage, ['created', 'connecting', 'queued', 'running', 'waiting_user', 'waiting_approval', 'completed', 'failed', 'paused', 'ready', 'archived'] as const, 'conversation stage'),
+    stageUpdatedAt: row.stage_updated_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     archived: row.archived === 1,

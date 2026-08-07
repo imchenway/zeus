@@ -6,6 +6,7 @@ import { DotsThreeVerticalIcon as DotsThreeVertical } from '@phosphor-icons/reac
 import { PlusIcon as Plus } from '@phosphor-icons/react/dist/csr/Plus';
 import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/csr/WarningCircle';
 import type { NativeConversationChoice, NativeConversationSnapshot, NativeSessionState } from './sessionTypes.js';
+import { compareConversationStageUpdatedDesc } from './conversationOrdering.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
 
 export interface ProjectConversationTaskGroup {
@@ -334,7 +335,7 @@ function flattenProjectConversations(project: ProjectConversationGroup): {
         displayTitle: task ? task.taskTitle : conversation.title,
       };
     })
-    .sort((left, right) => right.conversation.updatedAt.localeCompare(left.conversation.updatedAt));
+    .sort((left, right) => compareConversationStageUpdatedDesc(left.conversation, right.conversation));
   return { project, conversations };
 }
 

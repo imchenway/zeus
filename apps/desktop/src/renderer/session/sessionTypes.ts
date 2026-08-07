@@ -179,6 +179,8 @@ export interface NativeConversationExecutionContext {
   isGitRepository: boolean | null;
 }
 
+export type NativeConversationStage = 'created' | 'connecting' | 'queued' | 'running' | 'waiting_user' | 'waiting_approval' | 'completed' | 'failed' | 'paused' | 'ready' | 'archived';
+
 export interface NativeConversationSnapshot {
   id: string;
   projectId: string;
@@ -187,6 +189,8 @@ export interface NativeConversationSnapshot {
   title: string;
   summary: string | null;
   status: string;
+  stage: NativeConversationStage;
+  stageUpdatedAt: string;
   transportKind: 'codex_native' | 'legacy_cli' | string;
   providerId: string | null;
   providerThreadId: string | null;
@@ -246,6 +250,8 @@ export interface NativeConversationChoice {
   title: string;
   summary: string | null;
   status: string;
+  stage: NativeConversationStage;
+  stageUpdatedAt: string;
   transportKind: string;
   providerId: string | null;
   providerThreadId: string | null;
