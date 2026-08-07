@@ -61,6 +61,19 @@ const emptyDraft: CommandDraft = {
   parameters: [],
 };
 
+function CommandRunDurationValue(props: {run: CommandRun; zh: boolean}) {
+  const shouldTick = props.run.status === 'running' && Boolean(props.run.startedAt) && !props.run.endedAt;
+  const [nowMs, setNowMs] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (!shouldTick) return undefined;
+    const timer = window.setInterval(() => setNowMs(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [shouldTick, props.run.startedAt]);
+
+  return <span className="command-run-duration">{formatRunDuration(props.run, nowMs, props.zh)}</span>;
+}
+
 export function CommandCenterPanel(props: CommandCenterPanelProps) {
   const zh = props.language === 'zh-CN';
   const [commands, setCommands] = useState<CommandDefinition[]>([]);
@@ -462,7 +475,9 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
                   >
                     <span>
                       <strong>{run.commandSnapshot.title}</strong>
-                      <small>{formatRunTime(run.createdAt)}</small>
+                      <small>
+                        {formatRunTime(run.createdAt)} · {zh ? '耗时' : 'Duration'} <CommandRunDurationValue run={run} zh={zh} />
+                      </small>
                     </span>
                     <span className={`command-run-status status-${run.status}`}>{runStatusLabel(run.status, zh)}</span>
                   </button>
@@ -484,7 +499,8 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
                   </header>
                   <dl>
                     <div><dt>{zh ? '状态' : 'Status'}</dt><dd>{runStatusLabel(runDetail.run.status, zh)}</dd></div>
-                    <div><dt>{zh ? '超时' : 'Timeout'}</dt><dd>{runDetail.run.timeoutSeconds}s</dd></div>
+                    <div><dt>{zh ? '实际耗时' : 'Duration'}</dt><dd><CommandRunDurationValue run={runDetail.run} zh={zh} /></dd></div>
+                    <div><dt>{zh ? '超时上限' : 'Timeout limit'}</dt><dd>{runDetail.run.timeoutSeconds}s</dd></div>
                     <div><dt>{zh ? '退出码' : 'Exit code'}</dt><dd>{runDetail.run.exitCode ?? '—'}</dd></div>
                   </dl>
                   {runDetail.run.failureReason ? <p className="command-run-failure">{runDetail.run.failureReason}</p> : null}
@@ -863,6 +879,21 @@ function runStatusLabel(status: CommandRun['status'], zh: boolean): string {
 
 function formatRunTime(value: string): string {
   return new Intl.DateTimeFormat(undefined, {month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'}).format(new Date(value));
+}
+
+function formatRunDuration(run: CommandRun, nowMs: number, zh: boolean): string {
+  if (!run.startedAt) return zh ? '未启动' : 'Not started';
+  const startedAtMs = Date.parse(run.startedAt);
+  const endedAtMs = run.endedAt ? Date.parse(run.endedAt) : nowMs;
+  if (!Number.isFinite(startedAtMs) || !Number.isFinite(endedAtMs)) return '—';
+
+  const totalSeconds = Math.floor(Math.max(0, endedAtMs - startedAtMs) / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) return `${hours}h ${String(minutes).padStart(2, '0')}m ${String(seconds).padStart(2, '0')}s`;
+  if (minutes > 0) return `${minutes}m ${String(seconds).padStart(2, '0')}s`;
+  return `${seconds}s`;
 }
 
 function formatBytes(value: number): string {
