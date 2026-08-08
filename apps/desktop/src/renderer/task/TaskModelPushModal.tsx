@@ -175,7 +175,6 @@ export function TaskModelPushModal(props: {
     (count, option) => count + (props.form.parentContextSelections[option.taskId]?.selected ? (props.form.parentContextSelections[option.taskId]?.attachmentKeys.length ?? 0) : 0),
     0,
   );
-  const attachmentsUnsupported = selectedModel?.attachmentInput !== 'supported' && (attachments.length > 0 || selectedParentAttachmentCount > 0);
 
   function onModelChange(model: string): void {
     const capability = props.capabilities?.models.find((candidate) => candidate.model === model || candidate.id === model);
@@ -586,11 +585,6 @@ export function TaskModelPushModal(props: {
                           </div>
                           <div>
                             <strong>{zh ? '父任务附件' : 'Parent attachments'}</strong>
-                            {selectedModel?.attachmentInput !== 'supported' ? (
-                              <small className="task-model-push-parent-resource-warning">
-                                {zh ? '所选运行内核不支持结构化附件输入；会话路径仍可选择。' : 'The selected runtime does not support structured attachments; session paths remain available.'}
-                              </small>
-                            ) : null}
                             {option.attachments.length > 0 ? (
                               option.attachments.map((attachment) => {
                                 const checked = selectedAttachments.has(attachment.key);
@@ -600,7 +594,7 @@ export function TaskModelPushModal(props: {
                                       type="checkbox"
                                       checked={checked}
                                       onChange={(event) => toggleParentResource(option.taskId, 'attachmentKeys', attachment.key, event.currentTarget.checked)}
-                                      disabled={busy || !attachment.available || (selectedModel?.attachmentInput !== 'supported' && !checked)}
+                                      disabled={busy || !attachment.available}
                                     />
                                     <span>
                                       <strong>{attachment.name}</strong>
@@ -652,12 +646,7 @@ export function TaskModelPushModal(props: {
               <small>{zh ? '无附件' : 'No attachments'}</small>
             )}
             {selectedParentAttachmentCount > 0 ? (
-              <small>{zh ? `另有 ${selectedParentAttachmentCount} 个父任务附件，将通过结构化附件通道发送。` : `${selectedParentAttachmentCount} parent attachment(s) will be sent through the structured attachment channel.`}</small>
-            ) : null}
-            {attachmentsUnsupported ? (
-              <small className="task-model-push-error">
-                {zh ? '所选运行内核不支持当前已选附件，请更换模型或取消父附件选择。' : 'The selected runtime does not support the current attachments. Choose another model or clear parent attachments.'}
-              </small>
+              <small>{zh ? `另有 ${selectedParentAttachmentCount} 个父任务附件，将随本次推送发送。` : `${selectedParentAttachmentCount} parent attachment(s) will be sent with this push.`}</small>
             ) : null}
           </section>
 
@@ -684,7 +673,6 @@ export function TaskModelPushModal(props: {
                 busy ||
                 props.status === 'loading' ||
                 !props.form.model ||
-                attachmentsUnsupported ||
                 (props.form.workspaceMode === 'direct'
                   ? directWorkspaceNeedsConfirmation && !props.form.directConcurrencyConfirmed
                   : repositories.length === 0 ||

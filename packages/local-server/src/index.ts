@@ -13079,9 +13079,6 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         }
         const parentContextInput = resolveSelectedTaskPushParentContext(project, task, (body as Record<string, unknown>).parentContext);
         const attachmentInput = mergeTaskPushAttachmentInputs(normalizeTaskPushAttachments(task, project.localPath), parentContextInput.attachmentInput);
-        if (selectedModel.attachmentInput !== 'supported' && attachmentInput.attachments.length > 0) {
-          throw nativeApiError('ZEUS_TASK_PUSH_ATTACHMENTS_UNSUPPORTED', `所选 ${selectedModel.sourceName ?? selectedModel.agentKind ?? '运行内核'} 不支持结构化附件输入，未创建会话。`);
-        }
         if (selectedModel.agentKind !== 'pi') await assertCodexAccountReady();
         const taskEnvironment = directWorkspace ? null : await resolveTaskPushEnvironment(project, task, body.workspace, stableOperationId);
         nativeOperation =
@@ -13096,6 +13093,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
                 prompt: buildTaskPushPrompt(task, supplementalInfo, parentContextInput.parentContexts),
                 model: { sourceId: selectedModel.sourceId ?? null, modelId: selectedModel.model, displayName: selectedModel.displayName ?? null },
                 ...(selectedEffort ? { thinkingLevel: selectedEffort } : {}),
+                attachments: attachmentInput.attachments,
+                allowedAttachmentRoots: attachmentInput.allowedRoots,
                 permissionMode,
                 idempotencyKey,
                 clientUserMessageId,
@@ -14367,7 +14366,6 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       sourceName: 'Codex',
       available: true,
       availabilityReason: 'Codex app-server 已报告该模型。',
-      attachmentInput: 'supported' as const,
       ...(model.displayName ? { displayName: model.displayName } : {}),
       supportedReasoningEfforts: [...model.supportedReasoningEfforts],
       ...(model.defaultReasoningEffort ? { defaultReasoningEffort: model.defaultReasoningEffort } : {}),
@@ -14390,7 +14388,6 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       speedLabel: model.speedLabel,
       tools: model.tools,
       imageInput: model.imageInput,
-      attachmentInput: 'unsupported' as const,
     }));
     const models = [...codexModels, ...piModels];
     if (models.length === 0) throw nativeApiError('ZEUS_MODEL_UNAVAILABLE', '当前项目没有可用的 Codex 或 Pi 模型。');
