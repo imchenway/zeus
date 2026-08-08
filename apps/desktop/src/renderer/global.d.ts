@@ -96,6 +96,7 @@ declare global {
         filePath: string | null;
         snapshot?: LocalBusinessDataSnapshot;
       }>;
+      clearNetworkCache: () => Promise<{ cleared: boolean; clearedAt: string }>;
       exportPatchToFile: (patch: unknown) => Promise<{ saved: boolean; filePath: string | null }>;
       openGraphSource: (source: { projectRoot?: string; sourceRef: string; lineStart?: number }) => Promise<{
         opened: boolean;

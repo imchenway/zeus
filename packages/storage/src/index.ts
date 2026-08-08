@@ -4126,6 +4126,36 @@ export class RuntimeSessionRepository {
     return { ...existing, deletedAt, updatedAt: deletedAt };
   }
 
+  /**
+   * 只返回没有任务归属、未收藏、已归档或已删除且早于保留边界的终态会话。
+   * 活动会话和任务证据默认豁免，避免把“到期”误当成可以删除业务历史。
+   */
+  listLogRetentionCandidates(cutoff: string): ZeusRuntimeSessionRecord[] {
+    return this.db
+      .select<DbRuntimeSessionRow>(
+        runtimeSessionSelectSql(
+          `WHERE task_id IS NULL
+             AND favorite = 0
+             AND status <> 'running'
+             AND (archived = 1 OR deleted_at IS NOT NULL)
+             AND COALESCE(ended_at, updated_at) < ?
+             AND (EXISTS (SELECT 1 FROM runtime_logs WHERE runtime_logs.session_id = runtime_sessions.id)
+               OR EXISTS (SELECT 1 FROM terminal_events WHERE terminal_events.session_id = runtime_sessions.id))
+           ORDER BY COALESCE(ended_at, updated_at), id`,
+        ),
+        [cutoff],
+      )
+      .map(mapRuntimeSessionRow);
+  }
+
+  purgeRetainedLogs(sessionId: string): { runtimeLogCount: number; terminalEventCount: number } {
+    const runtimeLogCount = this.db.get<{ count: number }>(`SELECT COUNT(*) AS count FROM runtime_logs WHERE session_id = ?`, [sessionId])?.count ?? 0;
+    const terminalEventCount = this.db.get<{ count: number }>(`SELECT COUNT(*) AS count FROM terminal_events WHERE session_id = ?`, [sessionId])?.count ?? 0;
+    this.db.execute(`DELETE FROM runtime_logs WHERE session_id = ?`, [sessionId]);
+    this.db.execute(`DELETE FROM terminal_events WHERE session_id = ?`, [sessionId]);
+    return { runtimeLogCount, terminalEventCount };
+  }
+
   generateSummary(sessionId: string): ZeusRuntimeSessionRecord {
     const existing = this.getById(sessionId);
     if (!existing) throw new Error(`Runtime session not found: ${sessionId}`);

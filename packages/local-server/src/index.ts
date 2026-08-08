@@ -1,8 +1,8 @@
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import websocketPlugin from '@fastify/websocket';
 import { createHash, randomUUID } from 'node:crypto';
-import { accessSync, appendFileSync, constants as fsConstants, cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
-import { dirname, isAbsolute, join, parse, relative, resolve, sep } from 'node:path';
+import { accessSync, appendFileSync, constants as fsConstants, cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { basename, dirname, isAbsolute, join, parse, relative, resolve, sep } from 'node:path';
 import { getNextTaskStatus, type TaskStatus } from '@zeus/task-core';
 import {
   buildTaskCommitMessageSuggestion,
@@ -171,6 +171,7 @@ import { createCommandCenter } from './commandCenter.js';
 import { migrateLegacyCodexThreads } from './legacyCodexThreadMigration.js';
 import { type CodexLegacyImportService, createCodexLegacyImportService } from './codexLegacyImportService.js';
 import { createCodexConfigImportService } from './codexConfigImportService.js';
+import { createZeusDataLayoutForDatabase, type ZeusDataLayout } from './zeusDataLayout.js';
 import { resolveWritableNonCodexLegacyConversation, type WritableNonCodexLegacyConversationContext } from './nonCodexLegacyRuntime.js';
 import {
   createTelegramBotMessageClient,
@@ -187,6 +188,8 @@ import {
 
 export type { BrowserAutomationContentItem, BrowserAutomationPort, BrowserAutomationToolCall } from './browserAutomation.js';
 export { createConversationAttachmentGrant, resolveConversationAttachmentGrant } from './conversationAttachmentGrant.js';
+export { createLegacyFlatZeusDataLayout, createZeusDataLayout, createZeusDataLayoutForDatabase } from './zeusDataLayout.js';
+export type { ZeusDataLayout, ZeusDataLayoutKind, ZeusDataLifecycle, ZeusDataOwner, ZeusDataPathDescriptor, ZeusDataPathKey } from './zeusDataLayout.js';
 
 export const zeusLocalServerHost = '127.0.0.1' as const;
 const nativeConversationAttentionEventTypes = new Set(['conversation.turn.started', 'conversation.turn.completed', 'conversation.queue.changed', 'conversation.request.created', 'conversation.request.resolved', 'conversation.native.error']);
@@ -337,6 +340,8 @@ function sourceLanguageForPath(path: string): string | null {
 export interface CreateLocalServerOptions {
   dbPath: string;
   apiToken: string;
+  /** Zeus 本机数据路径登记表；未传入时从数据库所在目录生成兼容布局。 */
+  dataLayout?: ZeusDataLayout;
   localConfigPath?: string;
   projectRoot?: string;
   currentAppVersion?: string | (() => string);
@@ -1860,7 +1865,9 @@ export async function createLocalServer(options: CreateLocalServerOptions): Prom
 }
 
 async function createLocalServerWithDatabase(options: CreateLocalServerOptions, db: ZeusDatabase): Promise<FastifyInstance> {
-  const taskAttachmentRoot = prepareTaskAttachmentRoot(options.taskAttachmentRoot);
+  const dataLayout = options.dataLayout ?? createZeusDataLayoutForDatabase(options.dbPath);
+  if (resolve(dataLayout.database) !== resolve(options.dbPath)) throw new Error('Zeus 数据路径登记表与数据库路径不一致。');
+  const taskAttachmentRoot = prepareTaskAttachmentRoot(options.taskAttachmentRoot ?? dataLayout.taskAttachments);
   const attachmentRepair = repairMovedTaskAttachmentReferences(db, taskAttachmentRoot);
   if (attachmentRepair.repairedAttachmentCount > 0) {
     await db.save();
@@ -1937,11 +1944,11 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   const gitConfirmationTtlMs = 10 * 60 * 1000;
   const now = () => new Date();
   const appShellSettingsKey = 'app.shell.settings';
-  const localLogDirectory = `${options.dbPath}.logs`;
-  const localConfigPath = options.localConfigPath ?? join(dirname(options.dbPath), 'zeus.config.json');
+  const localLogDirectory = dataLayout.localLogs;
+  const localConfigPath = options.localConfigPath ?? dataLayout.localConfig;
   // 本地日志目录是设计书明确要求的物理落点；服务启动时创建，避免 UI 只展示一个不存在的路径。
   mkdirSync(localLogDirectory, { recursive: true });
-  const runtimeSessionDirectory = join(dirname(options.dbPath), 'sessions');
+  const runtimeSessionDirectory = dataLayout.runtimeSessions;
   let telegramNotificationSettings: TelegramNotificationSettingsSnapshot = normalizeTelegramNotificationSettings(settings.getJson<TelegramNotificationSettingsSnapshot>(telegramNotificationSettingsKey), {
     enabled: true,
     chatIds: options.telegramNotificationChatIds ?? options.telegramAllowedUserIds ?? [],
@@ -1949,6 +1956,19 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   });
   let telegramSecuritySettings: TelegramSecuritySettingsSnapshot = normalizeTelegramSecuritySettings(settings.getJson<TelegramSecuritySettingsSnapshot>(telegramSecuritySettingsKey), { allowedUserIds: options.telegramAllowedUserIds ?? [] });
   let runtimeSettings: RuntimeSettingsSnapshot = normalizeRuntimeSettings(settings.getJson<RuntimeSettingsSnapshot>(runtimeSettingsKey));
+  const runRuntimeLogRetention = async (): Promise<RuntimeLogRetentionResult> => {
+    const result = applyRuntimeLogRetention({
+      runtimeSessions,
+      auditLogs,
+      sessionRoot: runtimeSessionDirectory,
+      retentionDays: runtimeSettings.logRetentionDays,
+      now: now(),
+    });
+    if (result.quarantinedSessionCount > 0) await db.save();
+    markRuntimeLogRetentionCommitted(result);
+    return result;
+  };
+  await runRuntimeLogRetention();
   let codeMapSettings: CodeMapSettingsSnapshot = normalizeCodeMapSettings(settings.getJson<CodeMapSettingsSnapshot>(codeMapSettingsKey)) ?? defaultCodeMapSettings;
   let codexRemoteControlEnabled = settings.getJson<boolean>(codexRemoteControlEnabledSettingKey) === true;
   let memoryGraphCache: ProjectGraph | null = null;
@@ -1998,9 +2018,9 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     listProjectIds: () => projects.list().map((project) => project.id),
     now: () => now().toISOString(),
   });
-  const piAgentDirectory = migrateRuntimeDirectory(join(dirname(options.dbPath), 'pi-agent'), join(dirname(options.dbPath), 'agent-runtimes', 'pi', 'config'));
-  const piSessionDirectory = migrateRuntimeDirectory(join(dirname(options.dbPath), 'pi-sessions'), join(dirname(options.dbPath), 'agent-runtimes', 'pi', 'sessions'));
-  ensurePiGlobalAgentProjection(options.codexHome, piAgentDirectory);
+  const piAgentDirectory = migrateRuntimeDirectory(join(dataLayout.root, 'pi-agent'), dataLayout.piConfig);
+  const piSessionDirectory = migrateRuntimeDirectory(join(dataLayout.root, 'pi-sessions'), dataLayout.piSessions);
+  ensurePiGlobalAgentProjection(options.codexHome ?? dataLayout.codexHome, piAgentDirectory);
   const piNativeCoordinator = createPiNativeConversationCoordinator({
     db,
     conversations,
@@ -2046,10 +2066,11 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         return realpathSync(options.codexLegacyImportRoot!);
       })()
     : undefined;
-  const codexHome = options.codexHome
+  const configuredCodexHome = options.codexHome ?? dataLayout.codexHome;
+  const codexHome = configuredCodexHome
     ? (() => {
-        mkdirSync(options.codexHome!, { recursive: true, mode: 0o700 });
-        return realpathSync(options.codexHome!);
+        mkdirSync(configuredCodexHome, { recursive: true, mode: 0o700 });
+        return realpathSync(configuredCodexHome);
       })()
     : undefined;
   const codexConfigImportService =
@@ -2057,12 +2078,12 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       ? createCodexConfigImportService({
           sourceRoot: options.codexConfigImportSourceRoot,
           targetRoot: codexHome,
-          backupRoot: join(dirname(options.dbPath), 'imports', 'codex'),
+          backupRoot: dataLayout.codexConfigImportBackups,
           now,
         })
       : undefined;
-  const browserAttachmentRoot = prepareTaskAttachmentRoot(options.browserAttachmentRoot);
-  const conversationAttachmentRoot = prepareTaskAttachmentRoot(options.conversationAttachmentRoot);
+  const browserAttachmentRoot = prepareTaskAttachmentRoot(options.browserAttachmentRoot ?? dataLayout.browserComments);
+  const conversationAttachmentRoot = prepareTaskAttachmentRoot(options.conversationAttachmentRoot ?? dataLayout.conversationAttachments);
   const trustedConversationAttachmentRoots = [taskAttachmentRoot, browserAttachmentRoot, conversationAttachmentRoot].filter((root): root is string => Boolean(root));
   let conversationResourceBackfillCount = 0;
   for (const conversation of conversations.listNativeBound()) {
@@ -2103,7 +2124,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     projects,
     auditLogs,
     idempotency: idempotencyRequests,
-    recoveryRoot: join(dirname(options.dbPath), 'turn-change-sets'),
+    recoveryRoot: dataLayout.turnChangeSets,
     getConversationRoot: (conversationId) => {
       const conversation = conversations.getById(conversationId);
       return conversation ? resolveNativeConversationExecutionRoot(conversation) : null;
@@ -2736,8 +2757,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     projects,
     runtimeSessions,
     aiRuntimeManager,
-    commandScriptsDirectory: join(dirname(options.dbPath), 'command-scripts'),
-    commandRunsDirectory: join(dirname(options.dbPath), 'command-runs'),
+    commandScriptsDirectory: dataLayout.commandScripts,
+    commandRunsDirectory: dataLayout.commandRuns,
     readProjectSecurity: (projectId) => readProjectConfig(projectId).security,
     buildRuntimeProcessEnv,
     createReleaseNotesCapability,
@@ -7405,6 +7426,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     };
     settings.setJson(runtimeSettingsKey, runtimeSettings);
     await db.save();
+    await runRuntimeLogRetention();
     return runtimeSettings;
   });
 
@@ -7490,7 +7512,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     return appShellSettings;
   });
 
-  server.post('/api/settings/cache/clear', async (): Promise<ClearCacheResult> => {
+  const clearCodeGraphCache = async (): Promise<ClearCacheResult> => {
     const clearedAt = new Date().toISOString();
     memoryGraphCache = null;
     clearAllPersistedGraphCaches(db);
@@ -7498,8 +7520,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     settings.setJson(appShellSettingsKey, appShellSettings);
     appendAuditLog({
       actorType: 'local_api',
-      action: 'settings.cache.cleared',
-      resourceType: 'cache',
+      action: 'settings.code_graph_cache.cleared',
+      resourceType: 'code_graph_cache',
       payload: {
         clearedCaches: ['code-index', 'graph-view', 'layout'],
         clearedAt,
@@ -7511,7 +7533,10 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       clearedCaches: ['code-index', 'graph-view', 'layout'],
       clearedAt,
     };
-  });
+  };
+  server.post('/api/settings/code-graph-cache/clear', clearCodeGraphCache);
+  // 保留旧端点供升级期间仍连接旧 Renderer 的窗口使用；产品文案不再把图谱投影称为全部缓存。
+  server.post('/api/settings/cache/clear', clearCodeGraphCache);
 
   server.get('/api/settings/export', async (): Promise<LocalSettingsExportSnapshot> => {
     const exportedAt = new Date().toISOString();
@@ -11376,7 +11401,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
 
   function verifyTelegramCommandArtifact(runId: string, artifactPath: string): string | null {
     try {
-      const runRoot = realpathSync(join(dirname(options.dbPath), 'command-runs', runId));
+      const runRoot = realpathSync(join(dataLayout.commandRuns, runId));
       const artifactRealPath = realpathSync(artifactPath);
       if (!isPathInsideRoot(artifactRealPath, runRoot) || artifactRealPath === runRoot) return null;
       return statSync(artifactRealPath).isFile() ? artifactRealPath : null;
@@ -15406,6 +15431,133 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   }
 
   return server;
+}
+
+interface RuntimeLogRetentionManifest {
+  kind: 'runtime-log-retention';
+  status: 'pending' | 'committed';
+  transactionId: string;
+  createdAt: string;
+  cutoff: string;
+  sessionIds: string[];
+  movedSessionIds: string[];
+  runtimeLogCount: number;
+  terminalEventCount: number;
+}
+
+interface RuntimeLogRetentionResult {
+  quarantinedSessionCount: number;
+  manifestPath: string | null;
+  manifest: RuntimeLogRetentionManifest | null;
+}
+
+const runtimeLogRetentionQuarantineName = '.retention-quarantine';
+const runtimeLogRetentionGraceMs = 7 * 24 * 60 * 60 * 1_000;
+
+/** Runtime 日志到期后先隔离七天；崩溃时恢复 pending 事务，禁止直接物理删除活动证据。 */
+function applyRuntimeLogRetention(input: {
+  runtimeSessions: RuntimeSessionRepository;
+  auditLogs: AuditLogRepository;
+  sessionRoot: string;
+  retentionDays: number;
+  now: Date;
+}): RuntimeLogRetentionResult {
+  const quarantineRoot = join(input.sessionRoot, runtimeLogRetentionQuarantineName);
+  mkdirSync(quarantineRoot, { recursive: true, mode: 0o700 });
+  recoverAndCollectRuntimeLogQuarantine(input.sessionRoot, quarantineRoot, input.now.getTime());
+  const cutoff = new Date(input.now.getTime() - input.retentionDays * 24 * 60 * 60 * 1_000).toISOString();
+  const candidates = input.runtimeSessions.listLogRetentionCandidates(cutoff);
+  if (candidates.length === 0) return { quarantinedSessionCount: 0, manifestPath: null, manifest: null };
+
+  const transactionId = `${input.now.toISOString().replace(/[:.]/gu, '-')}-${randomUUID()}`;
+  const transactionRoot = join(quarantineRoot, transactionId);
+  mkdirSync(transactionRoot, { recursive: false, mode: 0o700 });
+  const manifestPath = join(transactionRoot, 'manifest.json');
+  const manifest: RuntimeLogRetentionManifest = {
+    kind: 'runtime-log-retention',
+    status: 'pending',
+    transactionId,
+    createdAt: input.now.toISOString(),
+    cutoff,
+    sessionIds: candidates.map((session) => session.id),
+    movedSessionIds: [],
+    runtimeLogCount: 0,
+    terminalEventCount: 0,
+  };
+  writeRuntimeLogRetentionManifest(manifestPath, manifest);
+
+  for (const session of candidates) {
+    if (basename(session.id) !== session.id || session.id === '.' || session.id === '..') throw new Error('Runtime 日志保留候选包含非法会话标识。');
+    const source = join(input.sessionRoot, session.id);
+    if (existsSync(source)) {
+      const sourceStat = lstatSync(source);
+      if (!sourceStat.isDirectory() || sourceStat.isSymbolicLink()) throw new Error('Runtime 日志保留候选不是受管目录。');
+      renameSync(source, join(transactionRoot, session.id));
+      manifest.movedSessionIds.push(session.id);
+      writeRuntimeLogRetentionManifest(manifestPath, manifest);
+    }
+    const purged = input.runtimeSessions.purgeRetainedLogs(session.id);
+    manifest.runtimeLogCount += purged.runtimeLogCount;
+    manifest.terminalEventCount += purged.terminalEventCount;
+  }
+  writeRuntimeLogRetentionManifest(manifestPath, manifest);
+  input.auditLogs.append({
+    actorType: 'system',
+    action: 'runtime.logs.retention_quarantined',
+    resourceType: 'runtime_log',
+    resourceId: transactionId,
+    payload: {
+      retentionDays: input.retentionDays,
+      cutoff,
+      sessionCount: candidates.length,
+      movedSessionCount: manifest.movedSessionIds.length,
+      runtimeLogCount: manifest.runtimeLogCount,
+      terminalEventCount: manifest.terminalEventCount,
+      graceDays: runtimeLogRetentionGraceMs / (24 * 60 * 60 * 1_000),
+    },
+    createdAt: input.now.toISOString(),
+  });
+  return { quarantinedSessionCount: candidates.length, manifestPath, manifest };
+}
+
+function markRuntimeLogRetentionCommitted(result: RuntimeLogRetentionResult): void {
+  if (!result.manifestPath || !result.manifest) return;
+  writeRuntimeLogRetentionManifest(result.manifestPath, { ...result.manifest, status: 'committed' });
+}
+
+function recoverAndCollectRuntimeLogQuarantine(sessionRoot: string, quarantineRoot: string, nowMs: number): void {
+  for (const transactionName of readdirSync(quarantineRoot)) {
+    const transactionRoot = join(quarantineRoot, transactionName);
+    const transactionStat = lstatSync(transactionRoot);
+    if (!transactionStat.isDirectory() || transactionStat.isSymbolicLink()) continue;
+    const manifestPath = join(transactionRoot, 'manifest.json');
+    let manifest: RuntimeLogRetentionManifest;
+    try {
+      manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as RuntimeLogRetentionManifest;
+    } catch {
+      continue;
+    }
+    if (manifest.kind !== 'runtime-log-retention' || !Array.isArray(manifest.movedSessionIds)) continue;
+    if (manifest.status === 'committed') {
+      const createdAt = Date.parse(manifest.createdAt);
+      if (Number.isFinite(createdAt) && nowMs - createdAt >= runtimeLogRetentionGraceMs) rmSync(transactionRoot, { recursive: true, force: true });
+      continue;
+    }
+    for (const sessionId of manifest.movedSessionIds) {
+      if (basename(sessionId) !== sessionId || sessionId === '.' || sessionId === '..') continue;
+      const quarantined = join(transactionRoot, sessionId);
+      const destination = join(sessionRoot, sessionId);
+      if (existsSync(quarantined) && !existsSync(destination)) renameSync(quarantined, destination);
+    }
+    const remaining = readdirSync(transactionRoot).filter((name) => name !== 'manifest.json');
+    if (remaining.length === 0) rmSync(transactionRoot, { recursive: true, force: true });
+  }
+}
+
+function writeRuntimeLogRetentionManifest(path: string, manifest: RuntimeLogRetentionManifest): void {
+  const temporary = `${path}.${randomUUID()}.tmp`;
+  writeFileSync(temporary, `${JSON.stringify(manifest, null, 2)}\n`, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
+  renameSync(temporary, path);
 }
 
 function sanitizeRuntimeFileName(value: string): string {

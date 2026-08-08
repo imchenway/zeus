@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, Notification, screen, shell, Tray } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, Notification, screen, session, shell, Tray } from 'electron';
 import { execFile as execFileCallback } from 'node:child_process';
 import { chmodSync, constants as fsConstants, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
@@ -41,6 +41,8 @@ import {
   readOrCreateConversationAttachmentGrantSecret,
 } from './conversationInputResources.js';
 import { cleanupStaleReleaseBackups, createReleaseUpdateService, type ReleaseUpdateService } from './releaseUpdateService.js';
+import { type ZeusDataLayout } from '@zeus/local-server';
+import { prepareZeusDataRoot } from './zeusDataMigration.js';
 
 let mainWindow: BrowserWindow | undefined;
 const windows = new Set<BrowserWindow>();
@@ -50,6 +52,8 @@ let releaseUpdateService: ReleaseUpdateService | undefined;
 let browserHost: BrowserHost | undefined;
 let conversationInputResources: ConversationInputResourceBroker | undefined;
 let systemNotificationBridge: SystemNotificationBridge | undefined;
+let zeusDataRootPath: string | undefined;
+let zeusDataLayout: ZeusDataLayout | undefined;
 let fatalStartup = false;
 let appShellSettings: MainAppShellSettings = {
   webviewDebugEnabled: false,
@@ -103,18 +107,25 @@ function applyExplicitUserDataDirectory(): void {
 
   const configured = process.env.ZEUS_USER_DATA_DIR?.trim();
   if (configured) {
-    app.setPath('userData', resolve(configured));
+    applyPreparedDataRoot(resolve(configured));
     return;
   }
 
   const profileName = isTestDistribution() ? 'test' : app.isPackaged ? 'production' : 'development';
   const target = join(homedir(), profileName === 'production' ? '.zeus' : profileName === 'test' ? '.zeus-test' : '.zeus-development');
-  const legacy = join(app.getPath('appData'), desktopDisplayName());
-  const targetInitialized = profileName === 'production' ? existsSync(join(target, 'zeus.db')) || existsSync(join(target, 'zeus.config.json')) : existsSync(target);
-  if (app.isPackaged && !targetInitialized && existsSync(legacy)) {
+  const legacyCandidates =
+    profileName === 'production'
+      ? [join(app.getPath('appData'), '@zeus', 'desktop'), join(app.getPath('appData'), desktopDisplayName())].filter((path, index, paths) => paths.indexOf(path) === index)
+      : [];
+  const targetInitialized =
+    profileName === 'production'
+      ? existsSync(join(target, 'data', 'zeus.db')) || existsSync(join(target, 'zeus.db')) || existsSync(join(target, 'zeus.config.json'))
+      : existsSync(target);
+  const legacy = legacyCandidates.find((path) => existsSync(join(path, 'zeus.db')) || existsSync(join(path, 'zeus.config.json')));
+  if (app.isPackaged && !targetInitialized && legacy) {
     if (legacyExecutionHostIsRunning(legacy)) {
       // 旧执行宿主仍可能写数据库；本次继续使用旧目录，待正常退出后的下一次启动再安全迁移。
-      app.setPath('userData', legacy);
+      applyPreparedDataRoot(legacy);
       return;
     }
     mkdirSync(dirname(target), { recursive: true, mode: 0o700 });
@@ -149,9 +160,19 @@ function applyExplicitUserDataDirectory(): void {
       }
     }
   }
-  mkdirSync(target, { recursive: true, mode: 0o700 });
-  chmodSync(target, 0o700);
-  app.setPath('userData', target);
+  applyPreparedDataRoot(target, legacyCandidates);
+}
+
+function applyPreparedDataRoot(root: string, legacyRoots: readonly string[] = []): void {
+  const preparation = prepareZeusDataRoot(root, legacyRoots);
+  zeusDataRootPath = preparation.layout.root;
+  zeusDataLayout = preparation.layout;
+  app.setPath('userData', preparation.layout.electronUserData);
+}
+
+function activeZeusDataLayout(): ZeusDataLayout {
+  if (!zeusDataLayout || !zeusDataRootPath) throw new Error('Zeus 本机数据目录尚未准备完成。');
+  return zeusDataLayout;
 }
 
 function legacyExecutionHostIsRunning(legacyUserDataPath: string): boolean {
@@ -819,6 +840,12 @@ function setupIpc(): void {
       readTextFile: (path) => readFile(path, 'utf8'),
     }),
   );
+  ipcMain.handle('zeus:clear-network-cache', async (event) => {
+    const requestingWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow)) throw new Error('Network cache cleanup is unavailable for this window.');
+    await session.defaultSession.clearCache();
+    return { cleared: true, clearedAt: new Date().toISOString() };
+  });
   ipcMain.handle('zeus:export-patch', (_event, patch: unknown) =>
     exportPatchToFile({
       patch: patch as { fileName: string; mimeType: string; patchText: string },
@@ -996,7 +1023,7 @@ const maximumTaskRestorableTextCharacters = 25_000;
 const taskLongPasteThreshold = 5_000;
 
 function taskAttachmentDirectory(): string {
-  return join(app.getPath('userData'), 'task-attachments');
+  return activeZeusDataLayout().taskAttachments;
 }
 
 function isInsideTaskAttachmentDirectory(filePath: string): boolean {
@@ -1224,10 +1251,11 @@ async function saveTaskAttachmentPayloads(attachments: TaskResourcePayload[]): P
 
 async function initializeApplication(): Promise<void> {
   await app.whenReady();
-  const userDataPath = app.getPath('userData');
-  const browserAttachmentRoot = join(userDataPath, 'browser-comments');
-  const conversationAttachmentRoot = join(userDataPath, 'conversation-attachments');
-  const conversationAttachmentGrantSecretPath = join(userDataPath, 'conversation-attachment-grant.secret');
+  const dataLayout = activeZeusDataLayout();
+  const userDataPath = dataLayout.root;
+  const browserAttachmentRoot = dataLayout.browserComments;
+  const conversationAttachmentRoot = dataLayout.conversationAttachments;
+  const conversationAttachmentGrantSecretPath = dataLayout.conversationAttachmentGrantSecret;
   const conversationAttachmentGrantSecret = await readOrCreateConversationAttachmentGrantSecret(conversationAttachmentGrantSecretPath);
   conversationInputResources = createConversationInputResourceBroker({
     attachmentRoot: conversationAttachmentRoot,
@@ -1242,7 +1270,7 @@ async function initializeApplication(): Promise<void> {
     clipboardReadOptions: { readSystemFileReferences: readMacOSClipboardFileReferences },
   });
   browserHost = createBrowserHost({
-    userDataPath,
+    statePath: dataLayout.browserState,
     preloadPath: join(desktopRoot(), 'dist/preload/browser-page.cjs'),
     attachmentRoot: browserAttachmentRoot,
     defaultDownloadDirectory: app.getPath('downloads'),
@@ -1252,17 +1280,18 @@ async function initializeApplication(): Promise<void> {
   const allowUntrustedReleaseUpdateTest = isTestDistribution() && process.env.ZEUS_ALLOW_UNTRUSTED_UPDATE_TEST === '1';
   localServerRuntime = await startDesktopLocalServer({
     userDataPath,
+    dataLayout,
     projectRoot: mainProjectRoot,
     appVersion: app.getVersion(),
     telegramToken: process.env.ZEUS_TELEGRAM_BOT_TOKEN,
     telegramAllowedUserIds: parseTelegramAllowedUserIds(process.env.ZEUS_TELEGRAM_ALLOWED_USER_IDS),
     codexNativeEnabled,
-    codexLegacyImportRoot: join(userDataPath, 'codex-legacy-import'),
-    codexHome: join(userDataPath, 'agent-runtimes', 'codex'),
+    codexLegacyImportRoot: dataLayout.codexLegacyImports,
+    codexHome: dataLayout.codexHome,
     codexConfigImportSourceRoot: join(homedir(), '.codex'),
     releaseUpdateManifestUrl: allowUntrustedReleaseUpdateTest ? process.env.ZEUS_RELEASE_UPDATE_MANIFEST_URL : undefined,
     allowUntrustedReleaseUpdateTest,
-    taskAttachmentRoot: join(userDataPath, 'task-attachments'),
+    taskAttachmentRoot: dataLayout.taskAttachments,
     browserAttachmentRoot,
     conversationAttachmentRoot,
     conversationAttachmentGrantSecret,
@@ -1447,9 +1476,8 @@ async function loadMainAppShellSettings(config: { baseUrl: string; apiToken: str
 
 /** 限制 Renderer 传入的 Runtime 日志源路径，避免借导出能力读取任意本机敏感文件。 */
 function isRuntimeLogSourcePathAllowed(sourceFilePath: string): boolean {
-  const dbPath = localServerRuntime?.dbPath;
-  if (!dbPath) return false;
-  const sessionsRoot = resolve(dirname(dbPath), 'sessions');
+  if (!localServerRuntime) return false;
+  const sessionsRoot = activeZeusDataLayout().runtimeSessions;
   const resolvedSourcePath = resolve(sourceFilePath);
   return basename(resolvedSourcePath) === 'terminal.normalized.log' && resolvedSourcePath.startsWith(`${sessionsRoot}${sep}`);
 }

@@ -1959,7 +1959,11 @@ const languageCopy = {
         notImportedExported: '尚未导入/导出',
         exportSettings: '导出设置',
         importSettings: '导入设置',
-        clearCache: '清理缓存',
+        clearCache: '重建代码图谱缓存',
+        clearNetworkCache: '清理网络缓存',
+        cacheAria: '可重建缓存清理',
+        cacheTitle: '本机可重建缓存',
+        cacheDescription: '网络缓存只清除可重新下载的 HTTP 资源，不会清除 Cookie、登录状态或站点授权；代码图谱缓存会在下次扫描时重建。',
         exported: (target: string) => `最近导出：${target}，密钥已脱敏`,
         imported: (target: string, changed: string) => `最近导入：${target}，${changed}`,
         noSettingsChanged: '无设置变更',
@@ -3408,7 +3412,11 @@ const languageCopy = {
         notImportedExported: 'Not imported or exported yet',
         exportSettings: 'Export settings',
         importSettings: 'Import settings',
-        clearCache: 'Clear cache',
+        clearCache: 'Rebuild code graph cache',
+        clearNetworkCache: 'Clear network cache',
+        cacheAria: 'Reconstructible cache cleanup',
+        cacheTitle: 'Reconstructible local caches',
+        cacheDescription: 'Network cache removes only downloadable HTTP resources, without clearing cookies, sign-ins, or site grants. Code graph cache is rebuilt by the next scan.',
         exported: (target: string) => `Last export: ${target}; secrets redacted`,
         imported: (target: string, changed: string) => `Last import: ${target}; ${changed}`,
         noSettingsChanged: 'No settings changed',
@@ -4630,6 +4638,10 @@ const languageCopy = {
         exportSettings: string;
         importSettings: string;
         clearCache: string;
+        clearNetworkCache: string;
+        cacheAria: string;
+        cacheTitle: string;
+        cacheDescription: string;
         exported: (target: string) => string;
         imported: (target: string, changed: string) => string;
         noSettingsChanged: string;
@@ -9957,6 +9969,17 @@ export function App(props: {
     }
   }
 
+  async function clearNetworkCache(): Promise<void> {
+    if (!window.zeus?.clearNetworkCache) return;
+    setActionState('loading-runtime');
+    try {
+      await window.zeus.clearNetworkCache();
+      setActionState('idle');
+    } catch (error) {
+      recordLocalError('renderer-action', error);
+    }
+  }
+
   async function exportLocalSettings(): Promise<void> {
     if (!props.onExportLocalSettings) return;
     setActionState('loading-runtime');
@@ -13210,8 +13233,20 @@ export function App(props: {
                           <button type="button" onClick={importLocalSettings} disabled={!props.onImportLocalSettings || loadingRuntimeBusy} {...controlBusyProps(loadingRuntimeBusy)}>
                             {settingsWorkspaceCopy.data.importSettings}
                           </button>
+                        </span>
+                      </section>
+                      <section className="settings-data-portability-row" aria-label={settingsWorkspaceCopy.data.cacheAria}>
+                        <span className="settings-row-copy">
+                          <strong>{settingsWorkspaceCopy.data.cacheTitle}</strong>
+                          <small>{settingsWorkspaceCopy.data.cacheDescription}</small>
+                        </span>
+                        <span className="settings-row-field" />
+                        <span className="settings-row-action-rail">
                           <button type="button" onClick={clearLocalCaches} disabled={!props.onClearLocalCaches || loadingRuntimeBusy} {...controlBusyProps(loadingRuntimeBusy)}>
                             {settingsWorkspaceCopy.data.clearCache}
+                          </button>
+                          <button type="button" onClick={clearNetworkCache} disabled={!window.zeus?.clearNetworkCache || loadingRuntimeBusy} {...controlBusyProps(loadingRuntimeBusy)}>
+                            {settingsWorkspaceCopy.data.clearNetworkCache}
                           </button>
                         </span>
                       </section>
