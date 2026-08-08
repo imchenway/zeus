@@ -97,7 +97,7 @@ export interface ThreadItemViewProps {
   onLoadResourcePreview?: (resource: ConversationResource) => Promise<ConversationResourcePreview>;
 }
 
-export function ThreadItemView(props: ThreadItemViewProps) {
+export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemViewProps) {
   const labels = copy[props.language];
   const [expanded, setExpanded] = useState(false);
   const [messageExpanded, setMessageExpanded] = useState(false);
@@ -112,7 +112,8 @@ export function ThreadItemView(props: ThreadItemViewProps) {
   const itemText = transcriptItemText(props.item);
   const commentary = role === 'commentary';
   const naturalLanguageStream = role === 'assistant' || commentary;
-  const adaptiveText = useAdaptiveTranscriptText(itemText, naturalLanguageStream && props.item.status !== 'completed' && props.item.status !== 'failed');
+  const streamActive = naturalLanguageStream && props.item.status !== 'completed' && props.item.status !== 'failed';
+  const adaptiveText = useAdaptiveTranscriptText(itemText, streamActive);
   const presentedItemText = naturalLanguageStream ? adaptiveText.text : itemText;
   const longUserMessage = role === 'user' && itemText.length > 640;
   const visibleText = longUserMessage && !expanded ? `${itemText.slice(0, 620).trimEnd()}…` : presentedItemText;
@@ -229,12 +230,28 @@ export function ThreadItemView(props: ThreadItemViewProps) {
         </form>
       ) : command ? (
         <CommandExecutionItem item={props.item} language={props.language} />
-      ) : commentary && visibleText ? (
+      ) : commentary && (visibleText || (streamActive && itemText)) ? (
         <div className="session-commentary-flow" data-streaming={(props.item.status !== 'completed' && props.item.status !== 'failed') || undefined}>
-          <SafeMarkdown text={visibleText} language={props.language} resources={props.item.resources} onOpenResource={props.onOpenResource} onLoadResourcePreview={props.onLoadResourcePreview} />
+          <TranscriptMarkdown
+            text={visibleText}
+            sourceText={itemText}
+            streaming={streamActive}
+            language={props.language}
+            resources={props.item.resources}
+            onOpenResource={props.onOpenResource}
+            onLoadResourcePreview={props.onLoadResourcePreview}
+          />
         </div>
-      ) : visibleText ? (
-        <SafeMarkdown text={visibleText} language={props.language} resources={props.item.resources} onOpenResource={props.onOpenResource} onLoadResourcePreview={props.onLoadResourcePreview} />
+      ) : naturalLanguageStream && (visibleText || (streamActive && itemText)) ? (
+        <TranscriptMarkdown
+          text={visibleText}
+          sourceText={itemText}
+          streaming={streamActive}
+          language={props.language}
+          resources={props.item.resources}
+          onOpenResource={props.onOpenResource}
+          onLoadResourcePreview={props.onLoadResourcePreview}
+        />
       ) : role === 'assistant' && props.item.status !== 'completed' ? (
         <span className="session-thinking-indicator">{labels.thinking}</span>
       ) : null}
@@ -281,6 +298,110 @@ export function ThreadItemView(props: ThreadItemViewProps) {
       ) : null}
     </article>
   );
+});
+
+interface TranscriptMarkdownProps {
+  text: string;
+  sourceText: string;
+  streaming: boolean;
+  language: SessionUiLanguage;
+  resources?: ConversationResource[];
+  onOpenResource?: (resource: ConversationResource, target: ConversationOpenTarget, location?: ConversationFileLocation) => void | Promise<void>;
+  onLoadResourcePreview?: (resource: ConversationResource) => Promise<ConversationResourcePreview>;
+}
+
+const TranscriptMarkdown = memo(function TranscriptMarkdown(props: TranscriptMarkdownProps) {
+  const projection = useMemo(() => splitStreamingMarkdown(props.text, props.streaming), [props.streaming, props.text]);
+  const streamKind = useMemo(() => markdownStreamKind(props.sourceText), [props.sourceText]);
+  if (!props.streaming) {
+    return <SafeMarkdown text={props.text} language={props.language} resources={props.resources} onOpenResource={props.onOpenResource} onLoadResourcePreview={props.onLoadResourcePreview} />;
+  }
+  if (!props.text.trim()) {
+    return <StreamingMarkdownPlaceholder kind={streamKind} language={props.language} />;
+  }
+  return (
+    <div className="session-streaming-markdown">
+      {projection.stableBlocks.map((block, index) => (
+        <SafeMarkdown key={`stable-${index}`} text={block} language={props.language} resources={props.resources} onOpenResource={props.onOpenResource} onLoadResourcePreview={props.onLoadResourcePreview} />
+      ))}
+      {projection.tail ? (
+        projection.tailKind === 'table' || projection.tailKind === 'fence' ? (
+          <StreamingMarkdownPlaceholder kind={projection.tailKind} language={props.language} />
+        ) : (
+          <SafeMarkdown key={`tail-${projection.stableBlocks.length}`} text={projection.tail} language={props.language} resources={props.resources} onOpenResource={props.onOpenResource} onLoadResourcePreview={props.onLoadResourcePreview} />
+        )
+      ) : null}
+    </div>
+  );
+});
+
+function StreamingMarkdownPlaceholder(props: { kind: 'plain' | 'table' | 'fence'; language: SessionUiLanguage }): ReactNode {
+  const label =
+    props.language === 'zh-CN'
+      ? props.kind === 'table'
+        ? '正在整理表格'
+        : props.kind === 'fence'
+          ? '正在整理代码块'
+          : '正在整理内容'
+      : props.kind === 'table'
+        ? 'Preparing table'
+        : props.kind === 'fence'
+          ? 'Preparing code block'
+          : 'Preparing content';
+  return (
+    <div className={`session-streaming-markdown-placeholder is-${props.kind}`} role="status" aria-label={label}>
+      <span />
+      <span />
+      <span />
+    </div>
+  );
+}
+
+interface StreamingMarkdownProjection {
+  stableBlocks: string[];
+  tail: string;
+  tailKind: 'plain' | 'table' | 'fence';
+}
+
+function splitStreamingMarkdown(text: string, streaming: boolean): StreamingMarkdownProjection {
+  if (!streaming) return { stableBlocks: [], tail: text, tailKind: markdownStreamKind(text) };
+  const normalized = text.replace(/\r\n?/gu, '\n');
+  const lines = normalized.split('\n');
+  const blocks: string[] = [];
+  let blockStart = 0;
+  let fenceMarker: string | null = null;
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index] ?? '';
+    const fence = line.match(/^\s*(`{3,}|~{3,})/u)?.[1] ?? null;
+    if (fenceMarker) {
+      if (fence && fence[0] === fenceMarker[0] && fence.length >= fenceMarker.length) {
+        fenceMarker = null;
+        blocks.push(lines.slice(blockStart, index + 1).join('\n'));
+        blockStart = index + 1;
+      }
+      continue;
+    }
+    if (fence) {
+      fenceMarker = fence;
+      continue;
+    }
+    if (!line.trim() && index > blockStart) {
+      blocks.push(lines.slice(blockStart, index).join('\n'));
+      blockStart = index + 1;
+    }
+  }
+  const tail = lines.slice(blockStart).join('\n').trim();
+  const stableBlocks = blocks.map((block) => block.trim()).filter(Boolean);
+  return { stableBlocks, tail, tailKind: markdownStreamKind(tail) };
+}
+
+function markdownStreamKind(text: string): 'plain' | 'table' | 'fence' {
+  if (!text.trim()) return 'plain';
+  const lines = text.trim().split('\n');
+  const fenceCount = lines.filter((line) => /^\s*(`{3,}|~{3,})/u.test(line)).length;
+  if (fenceCount % 2 === 1) return 'fence';
+  if (lines.length >= 2 && /\|/u.test(lines[0] ?? '') && /^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$/u.test(lines[1] ?? '')) return 'table';
+  return 'plain';
 }
 
 export const SafeMarkdown = memo(function SafeMarkdown(props: {
