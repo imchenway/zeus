@@ -1585,6 +1585,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                     setContextWorkspace({ kind: 'plan', itemId: item.localItemId ?? item.itemId });
                   }}
                   onOpenResource={openConversationResource}
+                  onLoadResourcePreview={actions.onLoadResourcePreview}
                   onReviewTurnChanges={(changeSet, fileId) => {
                     contextReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
                     setContextFullWidth(false);

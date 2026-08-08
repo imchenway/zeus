@@ -5,7 +5,14 @@ import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { createCodexRuntimeGenerationManager } from '@zeus/ai-runtime';
-import { type BrowserAutomationPort, hasCodexFinalizationOwnershipClaim, type RunningZeusLocalServer, startZeusLocalServer } from '@zeus/local-server';
+import {
+  createZeusDataLayout,
+  type BrowserAutomationPort,
+  hasCodexFinalizationOwnershipClaim,
+  type RunningZeusLocalServer,
+  startZeusLocalServer,
+  type ZeusDataLayout,
+} from '@zeus/local-server';
 import { startDesktopBrowserAutomationBridge } from './browserAutomationBridge.js';
 import { createExecutionHostControlClient, executionHostProtocolVersion, type ExecutionHostRendezvous, type ExecutionHostWorkStatus, readExecutionHostRendezvous, writeExecutionHostBootstrap } from './executionHostProtocol.js';
 
@@ -51,6 +58,7 @@ interface ExecutionHostHandoffCheckpoint {
 
 export interface StartDesktopLocalServerOptions {
   userDataPath: string;
+  dataLayout?: ZeusDataLayout;
   projectRoot: string;
   appVersion?: string;
   currentAppVersion?: () => string;
@@ -105,7 +113,7 @@ async function writeDesktopLocalAppConfig(input: { configPath: string; userDataP
     updatedAt: new Date().toISOString(),
   };
 
-  await mkdir(input.userDataPath, { recursive: true });
+  await mkdir(dirname(input.configPath), { recursive: true });
   await writeFile(input.configPath, `${JSON.stringify(configFile, null, 2)}\n`, 'utf8');
 }
 
@@ -265,7 +273,7 @@ export async function startDesktopLocalServer(options: StartDesktopLocalServerOp
 
     return {
       dbPath: connection.dbPath,
-      configPath: join(options.userDataPath, 'zeus.config.json'),
+      configPath: (options.dataLayout ?? createZeusDataLayout(options.userDataPath)).localConfig,
       config,
       executionHost,
       getStatus: async () => {
@@ -347,8 +355,9 @@ export async function startDesktopLocalServer(options: StartDesktopLocalServerOp
 /** 独立执行宿主拥有 Local Server、SQLite 与 Codex app-server；该函数不能由 Renderer 生命周期直接关闭。 */
 export async function startOwnedDesktopLocalServer(options: StartDesktopLocalServerOptions): Promise<DesktopLocalServerRuntime> {
   const apiToken = options.apiToken ?? randomBytes(24).toString('base64url');
-  const dbPath = join(options.userDataPath, 'zeus.db');
-  const configPath = join(options.userDataPath, 'zeus.config.json');
+  const dataLayout = options.dataLayout ?? createZeusDataLayout(options.userDataPath);
+  const dbPath = dataLayout.database;
+  const configPath = dataLayout.localConfig;
   const restartDelayMs = 1_000;
   const codexAppServerManager = createCodexRuntimeGenerationManager();
   let closingIntentionally = false;
@@ -390,6 +399,7 @@ export async function startOwnedDesktopLocalServer(options: StartDesktopLocalSer
   async function launchServer(): Promise<RunningZeusLocalServer> {
     const server = await startZeusLocalServer({
       dbPath,
+      dataLayout,
       localConfigPath: configPath,
       apiToken,
       projectRoot: options.projectRoot,
@@ -534,6 +544,7 @@ export async function startOwnedDesktopLocalServer(options: StartDesktopLocalSer
 }
 
 async function connectOrLaunchExecutionHost(options: StartDesktopLocalServerOptions): Promise<ExecutionHostRendezvous> {
+  const dataLayout = options.dataLayout ?? createZeusDataLayout(options.userDataPath);
   const existing = await readHealthyExecutionHost(options.userDataPath);
   if (existing) return existing;
 
@@ -544,14 +555,14 @@ async function connectOrLaunchExecutionHost(options: StartDesktopLocalServerOpti
     userDataPath: options.userDataPath,
     projectRoot: options.projectRoot,
     codexNativeEnabled: options.codexNativeEnabled ?? true,
-    codexLegacyImportRoot: options.codexLegacyImportRoot ?? join(options.userDataPath, 'codex-legacy-import'),
-    codexHome: options.codexHome ?? join(options.userDataPath, 'agent-runtimes', 'codex'),
+    codexLegacyImportRoot: options.codexLegacyImportRoot ?? dataLayout.codexLegacyImports,
+    codexHome: options.codexHome ?? dataLayout.codexHome,
     codexConfigImportSourceRoot: options.codexConfigImportSourceRoot ?? join(homedir(), '.codex'),
     releaseUpdateManifestUrl: options.releaseUpdateManifestUrl,
     allowUntrustedReleaseUpdateTest: options.allowUntrustedReleaseUpdateTest,
-    taskAttachmentRoot: options.taskAttachmentRoot ?? join(options.userDataPath, 'task-attachments'),
-    browserAttachmentRoot: options.browserAttachmentRoot ?? join(options.userDataPath, 'browser-comments'),
-    conversationAttachmentRoot: options.conversationAttachmentRoot ?? join(options.userDataPath, 'conversation-attachments'),
+    taskAttachmentRoot: options.taskAttachmentRoot ?? dataLayout.taskAttachments,
+    browserAttachmentRoot: options.browserAttachmentRoot ?? dataLayout.browserComments,
+    conversationAttachmentRoot: options.conversationAttachmentRoot ?? dataLayout.conversationAttachments,
     conversationAttachmentGrantSecretPath: options.conversationAttachmentGrantSecretPath!,
     telegramAllowedUserIds: options.telegramAllowedUserIds,
     appVersion: options.appVersion?.trim() || '0.0.0',
@@ -565,7 +576,7 @@ async function connectOrLaunchExecutionHost(options: StartDesktopLocalServerOpti
       ...process.env,
       ELECTRON_RUN_AS_NODE: '1',
       ZEUS_EXECUTION_HOST_BOOTSTRAP_PATH: bootstrapPath,
-      CODEX_HOME: options.codexHome ?? join(options.userDataPath, 'agent-runtimes', 'codex'),
+      CODEX_HOME: options.codexHome ?? dataLayout.codexHome,
       ...(options.telegramToken ? { ZEUS_TELEGRAM_BOT_TOKEN: options.telegramToken } : {}),
     },
   });

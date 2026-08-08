@@ -1,0 +1,2385 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>系统架构｜ZEUS-0135 升级完成后的 .zeus 完整目录</title>
+  <style>
+:root{--ink:#102033;--muted:#5a6c80;--paper:#fbfdff;--panel:rgba(255,255,255,.9);--line:#8db3d8;--blue:#1f6fb2;--blue-soft:#e8f3ff;--green:#17785a;--green-soft:#e9f8f2;--amber:#986506;--amber-soft:#fff6de;--red:#a63a3a;--red-soft:#fff0f0;--violet:#6254ad;--violet-soft:#f1efff;--shadow:0 16px 42px rgba(20,57,92,.085);--radius:20px}*{box-sizing:border-box}body{margin:0;color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",Arial,sans-serif;background:radial-gradient(circle at 18% 3%,rgba(214,233,255,.78),transparent 30rem),radial-gradient(circle at 78% 6%,rgba(228,246,239,.8),transparent 28rem),linear-gradient(rgba(93,133,173,.045) 1px,transparent 1px),linear-gradient(90deg,rgba(93,133,173,.045) 1px,transparent 1px),linear-gradient(180deg,#fff 0%,#f7fbff 54%,#fbfdff 100%);background-size:auto,auto,28px 28px,28px 28px,auto;overflow-x:clip}main{width:min(1360px,calc(100vw - 32px));margin:0 auto;padding:20px 0}h1{font-size:clamp(24px,2.8vw,32px);line-height:1.18;letter-spacing:-.025em;margin:0 0 10px}.summary{margin:0 0 14px;color:var(--muted);line-height:1.65}.canvas,.template-layout{border:1px solid rgba(141,179,216,.48);border-radius:24px;background:rgba(255,255,255,.78);box-shadow:var(--shadow);padding:18px}.slot{display:grid;grid-template-rows:auto auto;align-content:center;justify-items:center;gap:4px;text-align:center;min-height:64px;border:1px solid rgba(141,179,216,.58);border-radius:16px;background:rgba(255,255,255,.95);padding:10px 12px;overflow-wrap:anywhere}.slot b{display:block;max-width:100%;font-size:13px;line-height:1.2}.slot span{display:block;max-width:100%;margin-top:0;color:var(--muted);font-size:12px;line-height:1.45}.core{border-color:rgba(31,111,178,.56);background:linear-gradient(180deg,#fff,var(--blue-soft))}.support{border-color:rgba(98,84,173,.45);background:linear-gradient(180deg,#fff,var(--violet-soft))}.data{border-color:rgba(23,120,90,.45);background:linear-gradient(180deg,#fff,var(--green-soft))}.risk{border-color:rgba(166,58,58,.42);background:linear-gradient(180deg,#fff,var(--red-soft))}.ops{border-color:rgba(152,101,6,.42);background:linear-gradient(180deg,#fff,var(--amber-soft))}.arrow{position:relative;min-height:2px;background:var(--blue);align-self:center}.arrow:after{content:"";position:absolute;right:-1px;top:-5px;border-left:10px solid var(--blue);border-top:6px solid transparent;border-bottom:6px solid transparent}.v-arrow{width:2px;min-height:38px;background:var(--blue);justify-self:center;position:relative}.v-arrow:after{content:"";position:absolute;left:-5px;bottom:-1px;border-top:10px solid var(--blue);border-left:6px solid transparent;border-right:6px solid transparent}@media(max-width:48rem){main{width:min(100vw - 20px,760px)}.template-layout{display:grid!important;grid-template-columns:1fr!important}.arrow{height:28px;width:2px;margin:auto}.arrow:after{right:-5px;top:22px;border-left:6px solid transparent;border-right:6px solid transparent;border-top:10px solid var(--blue);border-bottom:0}}
+
+
+.router-pipeline{display:grid;grid-template-columns:1fr 28px 1.2fr 28px 1.2fr 28px 1fr;gap:12px;align-items:center}.router-group{display:grid;gap:10px}.boundary-hub{display:grid;grid-template-columns:1fr 1.25fr 1fr;grid-template-rows:auto auto;gap:16px}.boundary-box{grid-row:1/3;border:2px dashed rgba(31,111,178,.46);border-radius:28px;padding:18px;display:grid;gap:12px}.entry-core-foundation{display:grid;grid-template-columns:170px 1fr 210px;grid-template-rows:auto auto auto;gap:14px}.entry-core-foundation .foundation{grid-column:1/4}.whitebox-cluster{display:grid;grid-template-columns:170px 1fr 170px;gap:16px}.component-box{border:2px solid rgba(31,111,178,.42);border-radius:22px;padding:16px;display:grid;grid-template-columns:repeat(2,1fr);gap:12px}.environment-zones{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}.env-zone{border:1.5px solid rgba(141,179,216,.58);border-radius:22px;padding:14px;display:grid;gap:12px}.north-south-layers{display:grid;gap:12px}.north-south-layers .layer{display:grid;grid-template-columns:180px 1fr 1fr;gap:12px}.data-domain-map{display:grid;grid-template-columns:180px 1fr 180px;grid-template-rows:auto auto;gap:14px}.domain-center{grid-row:1/3;display:grid;grid-template-columns:repeat(2,1fr);gap:12px;border:1.5px solid rgba(23,120,90,.4);border-radius:22px;padding:14px}.dfd-trust-boundary{display:grid;grid-template-columns:180px 1fr 180px;gap:16px}.trust-box{border:2px dashed rgba(166,58,58,.42);border-radius:24px;padding:16px;display:grid;grid-template-columns:1fr 1fr;gap:12px}.contract-mesh{display:grid;grid-template-columns:1fr 220px 1fr;gap:16px}.contract-center{display:grid;gap:12px;border:1.6px solid rgba(31,111,178,.44);border-radius:22px;padding:14px}.event-bus{display:grid;grid-template-rows:auto 68px auto;gap:14px}.bus-line{display:grid;place-items:center;border-radius:18px;background:linear-gradient(90deg,var(--blue-soft),var(--violet-soft));border:1.5px solid rgba(98,84,173,.38);font-weight:900}.event-row{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.network-zones{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}.security-threat-controls{display:grid;grid-template-columns:1fr 1.2fr 1fr;gap:16px}.security-center{border:2px dashed rgba(166,58,58,.42);border-radius:24px;padding:16px;display:grid;gap:12px}.identity-access-path{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;align-items:center}.failure-domain-recovery{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px}.failure-domain{border:1.5px dashed rgba(166,58,58,.34);border-radius:22px;padding:14px;display:grid;gap:12px}.telemetry-pipeline{display:grid;grid-template-columns:repeat(5,1fr);gap:12px}.delivery-rail{display:grid;grid-template-columns:repeat(6,1fr);gap:12px}.rail-stage{min-height:128px}.stack{display:grid;gap:12px}.wide{grid-column:1/-1}
+[data-diagram-title-region]{display:flex;align-items:flex-end;justify-content:space-between;gap:20px}
+.north-south-layers{display:block;padding:14px}
+.north-south-layers .architecture-map{display:block;inline-size:100%;block-size:auto;border:1px solid rgba(141,179,216,.44);border-radius:22px;background:linear-gradient(rgba(38,102,154,.038) 1px,transparent 1px),linear-gradient(90deg,rgba(38,102,154,.038) 1px,transparent 1px),linear-gradient(180deg,#fff,#f8fbff);background-size:22px 22px,22px 22px,auto}
+.svg-node-card{display:grid;grid-template-columns:2.65rem minmax(0,1fr);align-items:center;gap:.72rem;block-size:100%;padding:.55rem .85rem;text-align:start}
+.svg-node-icon{display:grid;inline-size:2.35rem;block-size:2.35rem;place-items:center;border-radius:.75rem;background:rgba(232,243,255,.9);font-size:1.45rem;line-height:1}
+.svg-node-text{display:grid;gap:.18rem;min-inline-size:0}
+.svg-node-text b{color:#102033;font-size:.9rem;line-height:1.18}
+.svg-node-text small{color:#5a6c80;font-size:.72rem;line-height:1.3;overflow-wrap:anywhere}
+.layer-node{display:flex;block-size:100%;flex-direction:column;gap:.42rem;padding:.48rem .72rem;text-align:start}
+.layer-node-head{display:flex;align-items:center;justify-content:center;gap:.68rem;text-align:left}
+.layer-node-head>span:last-child{min-inline-size:0}
+.layer-node-head .svg-node-icon{inline-size:2.3rem;block-size:2.3rem;font-size:1.35rem}
+.layer-node-head b{display:block;color:#102033;font-size:.88rem;line-height:1.16}
+.layer-node-head small{display:block;margin-block-start:.12rem;color:#5a6c80;font-size:.7rem;line-height:1.28}
+.layer-module-grid{display:grid;grid-template-columns:repeat(var(--module-cols,4),minmax(0,1fr));gap:.45rem}
+.layer-module{display:flex;text-decoration:none;min-inline-size:0;align-items:center;justify-content:center;padding:.48rem .4rem;border:1px solid rgba(141,179,216,.58);border-radius:.66rem;background:rgba(255,255,255,.96);box-shadow:0 .2rem .65rem rgba(20,57,92,.05);color:#294963;font-size:.7rem;font-weight:780;line-height:1.18;text-align:center;overflow-wrap:anywhere}
+.layer-module.checked{border-color:rgba(32,164,118,.48);background:#f0fbf7}
+.layer-module.pending{border-color:rgba(228,154,16,.58);border-style:dashed;background:#fff9ec}
+.architecture-map .arch-node{fill:#fff;stroke-width:1.6;filter:url(#logical-layering-soft-shadow);transition:stroke-width .15s ease,filter .15s ease}
+.architecture-map .node-observed{stroke:#7db0de}
+.architecture-map .node-checked{stroke:#6db89e}
+.architecture-map .node-unverified{stroke:#d4a64c;stroke-dasharray:6 4}
+.architecture-map [data-diagram-node-id]:hover .arch-node,.architecture-map [data-diagram-node-id]:focus-visible .arch-node{stroke-width:2.6;filter:url(#logical-layering-active-shadow)}
+.fallback-region-index{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,12rem),1fr));gap:.5rem;margin:.8rem 0}
+.fallback-region-index span{padding:.55rem .65rem;border:1px solid rgba(141,179,216,.45);border-radius:.75rem;background:#fff;color:#5a6c80;font-size:.75rem;line-height:1.4}
+.fallback-region-index b{display:block;color:#17324d}
+@media(max-width:48rem){[data-diagram-title-region]{align-items:flex-start;flex-direction:column;gap:0}}
+</style>
+  <style data-artifact-shell-kernel="1">
+[data-diagram-title-region] {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas: "copy controls";
+  align-items: start;
+  gap: .75rem 1.5rem;
+  max-inline-size: 100%;
+}
+
+[data-diagram-title-copy] {
+  grid-area: copy;
+  min-inline-size: 0;
+}
+
+[data-diagram-view-title="1"] {
+  display: flex;
+  min-inline-size: 0;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+
+[data-diagram-view-separator]::before {
+  content: "｜";
+  color: #7b93aa;
+  font-weight: 700;
+}
+
+[data-artifact-shell-controls] {
+  grid-area: controls;
+  display: flex;
+  min-inline-size: max-content;
+  max-inline-size: 100%;
+  align-items: flex-start;
+  justify-content: flex-end;
+}
+
+[data-artifact-shell-controls][data-controls-state="empty"] {
+  display: none;
+}
+
+[data-diagram-grid-surface="1"] {
+  background-image:
+    linear-gradient(rgba(42, 105, 159, .045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(42, 105, 159, .045) 1px, transparent 1px),
+    linear-gradient(180deg, #fff, #f9fcff);
+  background-size: 24px 24px, 24px 24px, auto;
+}
+
+[data-diagram-reading-guide="1"][data-reading-guide-for] {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: "groups";
+  align-items: start;
+  gap: 0;
+  inline-size: fit-content;
+  max-inline-size: min(calc(100% - 1.5rem), calc(100vw - 2.75rem));
+  margin: .75rem .75rem 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+[data-diagram-stage] > [data-diagram-reading-guide="1"][data-reading-guide-for] {
+  position: relative;
+  z-index: 4;
+  transform: translateX(var(--guide-scroll-offset, 0px));
+}
+
+[data-reading-guide-groups] {
+  grid-area: groups;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas:
+    "relations"
+    "evidence";
+  align-items: start;
+  gap: .42rem;
+  min-inline-size: 0;
+}
+
+[data-reading-guide-group="relations"] {
+  grid-area: relations;
+}
+
+[data-reading-guide-group="evidence"] {
+  grid-area: evidence;
+}
+
+[data-reading-guide-group] {
+  display: flex;
+  align-items: center;
+  gap: .35rem .6rem;
+  min-inline-size: 0;
+  flex-wrap: wrap;
+}
+
+[data-reading-guide-group-title] {
+  display: inline-flex;
+  min-block-size: 1.35rem;
+  align-items: center;
+  padding: .12rem .38rem;
+  border: 1px solid #a8c4df;
+  border-radius: .3rem;
+  background: #e8f3ff;
+  color: #0c4f83;
+  font-size: .72rem;
+  font-weight: 900;
+  letter-spacing: .025em;
+  white-space: nowrap;
+  box-shadow: 0 .08rem .2rem rgba(20, 57, 92, .08);
+}
+
+[data-reading-guide-item],
+[data-diagram-reading-guide="1"] [data-evidence-id] {
+  display: inline-flex;
+  align-items: center;
+  gap: .35rem;
+  min-inline-size: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+[data-reading-guide-item] b,
+[data-diagram-reading-guide="1"] [data-evidence-id] b {
+  margin: 0;
+  color: #38546f;
+  font-size: .7rem;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+
+[data-diagram-reading-guide="1"] [data-evidence-id] span {
+  display: none;
+}
+
+[data-line-swatch] {
+  position: relative;
+  display: inline-block;
+  inline-size: 2rem;
+  block-size: .75rem;
+  flex: 0 0 auto;
+}
+
+[data-line-swatch]::before {
+  content: "";
+  position: absolute;
+  inset-inline: 0 .32rem;
+  inset-block-start: .3rem;
+  border-block-start: 3px var(--guide-line-style, solid) var(--guide-line-color, #0877ff);
+}
+
+[data-line-swatch]::after {
+  content: "";
+  position: absolute;
+  inset-inline-end: 0;
+  inset-block-start: .06rem;
+  border-inline-start: .5rem solid var(--guide-line-color, #0877ff);
+  border-block: .34rem solid transparent;
+}
+
+[data-line-kind="line-02"] {
+  --guide-line-color: #00a56a;
+}
+
+[data-line-kind="line-03"] {
+  --guide-line-color: #7c3aed;
+  --guide-line-style: dashed;
+}
+
+[data-line-kind="line-04"] {
+  --guide-line-color: #f59e0b;
+  --guide-line-style: dotted;
+}
+
+[data-diagram-reading-guide="1"] [data-evidence-id]::before {
+  content: "";
+  inline-size: .68rem;
+  block-size: .68rem;
+  flex: 0 0 auto;
+  border: 2px solid;
+  border-radius: .3rem;
+  background: #fff;
+}
+
+[data-diagram-reading-guide="1"] [data-evidence-source-kind="file"]::before {
+  border-color: #2787df;
+  background: #e8f3ff;
+}
+
+[data-diagram-reading-guide="1"] [data-evidence-source-kind="test"]::before {
+  border-color: #20a476;
+  background: #e9f8f2;
+}
+
+[data-diagram-reading-guide="1"] [data-evidence-status="unresolved"]::before {
+  border-color: #e49a10;
+  border-style: dashed;
+  background: #fff6de;
+}
+
+[data-diagram-controls],
+[data-sequence-toolbar] {
+  position: relative;
+  display: none;
+  max-inline-size: 100%;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .375rem;
+  margin: 0;
+  padding: .35rem;
+  border: 1px solid rgba(141, 179, 216, .72);
+  border-radius: .625rem;
+  background: #fff;
+  box-shadow: 0 .25rem .75rem rgba(20, 57, 92, .08);
+}
+
+[data-diagram-controls][data-diagram-controls-visible="true"],
+[data-sequence-toolbar]:not([hidden]) {
+  display: inline-flex;
+}
+
+[data-diagram-controls] button,
+[data-sequence-toolbar] button {
+  appearance: none;
+  min-block-size: 2.75rem;
+  padding-inline: .9rem;
+  border: 1px solid rgba(141, 179, 216, .78);
+  border-radius: .5rem;
+  background: #f7fbff;
+  color: #17324d;
+  font: inherit;
+  font-size: .8125rem;
+  font-weight: 750;
+  line-height: 1;
+  cursor: pointer;
+  transition: background-color .16s ease, border-color .16s ease, box-shadow .16s ease;
+}
+
+[data-diagram-controls] button:hover,
+[data-sequence-toolbar] button:hover {
+  border-color: #5f96c8;
+  background: #e8f3ff;
+}
+
+[data-diagram-controls] button[aria-pressed="true"],
+[data-sequence-toolbar] button[aria-pressed="true"] {
+  border-color: #1f6fb2;
+  background: #1f6fb2;
+  color: #fff;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .28);
+}
+
+[data-diagram-controls] button:focus-visible,
+[data-sequence-toolbar] button:focus-visible {
+  outline: 3px solid #77b8f2;
+  outline-offset: 2px;
+}
+
+[data-diagram-controls] button:disabled,
+[data-sequence-toolbar] button:disabled {
+  opacity: .48;
+  cursor: not-allowed;
+}
+
+[data-diagram-zoom-status],
+[data-sequence-scale-status] {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (max-width: 64rem) {
+  [data-diagram-title-region] {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "copy"
+      "controls";
+  }
+
+  [data-artifact-shell-controls] {
+    min-inline-size: 0;
+    justify-content: flex-start;
+    justify-self: stretch;
+  }
+}
+
+@media (max-width: 48rem) {
+  [data-diagram-reading-guide="1"] {
+    inline-size: calc(100% - 1rem);
+    max-inline-size: calc(100% - 1rem);
+    margin: .5rem .5rem 0;
+  }
+
+  [data-reading-guide-group] {
+    align-items: flex-start;
+  }
+}
+
+@media print {
+  [data-diagram-title-region] {
+    display: block;
+  }
+
+  [data-artifact-shell-controls] {
+    display: none !important;
+  }
+
+  [data-diagram-reading-guide="1"] {
+    break-inside: avoid;
+    background: #fff;
+    box-shadow: none;
+  }
+}
+</style>
+  <style data-adaptive-viewport-kernel="1">
+[data-diagram-canvas][data-diagram-contract="1"] {
+  --diagram-scale: 1;
+  box-sizing: border-box;
+  max-inline-size: 100%;
+  min-inline-size: 0;
+  transform-origin: top left;
+}
+
+[data-diagram-width="contained"] { inline-size: 100%; margin-inline: 0; }
+[data-diagram-width="auto"] { inline-size: 100%; }
+[data-diagram-width="wide"] { inline-size: 100%; overflow-x: auto; overflow-y: hidden; }
+[data-diagram-height="flow"] { block-size: auto; }
+[data-diagram-height="auto"] { max-block-size: clamp(32.5rem, 75vh, 56.25rem); overflow: auto; }
+[data-diagram-height="scroll"] { max-block-size: clamp(32.5rem, 75vh, 56.25rem); overflow: auto; }
+[data-diagram-scaled="true"] > [data-diagram-stage] {
+  transform: scale(var(--diagram-scale));
+  transform-origin: top left;
+}
+.diagram-fallback { display: none; }
+
+html:not(.vibe-js) [data-diagram-canvas] > [data-diagram-stage] {
+  display: none;
+}
+
+html:not(.vibe-js) [data-fallback-for] {
+  display: block;
+}
+
+@media (max-width: 48rem) {
+  [data-diagram-mobile="stack"] [data-diagram-group-id] { position: static; }
+  [data-diagram-mobile="summary"] {
+    overflow: auto;
+  }
+  [data-diagram-mobile="summary"] > [data-diagram-stage] {
+    display: block;
+    min-inline-size: max(var(--diagram-mobile-stage-min, 60rem), 100%) !important;
+  }
+}
+
+@media print {
+  [data-diagram-canvas] { max-block-size: none; overflow: visible; transform: none; }
+  [data-diagram-canvas] > [data-diagram-stage] { display: none; }
+  .diagram-fallback { display: block; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-diagram-canvas] { scroll-behavior: auto; }
+}
+</style>
+  <style data-progressive-disclosure-kernel="1">
+[data-diagram-detail][hidden] { display: none; }
+[data-diagram-detail]:target { display: block; }
+
+[data-diagram-detail-trigger][data-detail-for] {
+  cursor: pointer;
+}
+
+[data-diagram-detail-trigger][data-detail-for]:focus-visible {
+  outline: 3px solid #0877ff;
+  outline-offset: 2px;
+}
+
+[data-node-detail-region] {
+  margin-block-start: .875rem;
+  padding: .875rem;
+  border: 1px solid rgba(141, 179, 216, .5);
+  border-radius: 1rem;
+  background: rgba(247, 251, 255, .84);
+}
+
+[data-node-detail-region] > header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: .4rem 1rem;
+  margin-block-end: .7rem;
+}
+
+[data-node-detail-region] h2 {
+  margin: 0;
+  color: #17324d;
+  font-size: .95rem;
+}
+
+[data-node-detail-region] header p {
+  margin: 0;
+  color: #5a6c80;
+  font-size: .75rem;
+}
+
+[data-node-detail-grid] {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr));
+  gap: .55rem;
+}
+
+details[data-diagram-detail] {
+  position: relative;
+  display: block;
+  min-inline-size: 0;
+  border: 1px solid rgba(141, 179, 216, .54);
+  border-radius: .8rem;
+  background: rgba(255, 255, 255, .96);
+  overflow: clip;
+}
+
+details[data-diagram-detail] > summary {
+  cursor: pointer;
+  padding: .7rem .8rem;
+  color: #17324d;
+  font-size: .8125rem;
+  font-weight: 780;
+}
+
+details[data-diagram-detail] > summary:focus-visible {
+  outline: 3px solid color-mix(in srgb, currentColor 58%, transparent);
+  outline-offset: 4px;
+}
+
+details[data-diagram-detail] > :not(summary, [data-diagram-detail-close]) {
+  margin: 0;
+  padding: 0 .8rem .8rem;
+  color: #52677d;
+  font-size: .8rem;
+  line-height: 1.6;
+}
+
+[data-diagram-detail-close] {
+  display: none;
+}
+
+html[data-progressive-disclosure-enhanced="true"] [data-node-detail-region] {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  pointer-events: none;
+}
+
+html[data-progressive-disclosure-enhanced="true"] [data-node-detail-region][data-runtime-active="true"] {
+  display: block;
+}
+
+html[data-progressive-disclosure-enhanced="true"] [data-node-detail-region] > header {
+  display: none;
+}
+
+html[data-progressive-disclosure-enhanced="true"] [data-node-detail-grid] {
+  position: fixed;
+  inset-block-start: var(--detail-top, 1rem);
+  inset-inline-start: var(--detail-left, 1rem);
+  z-index: 1;
+  display: block;
+  inline-size: var(--detail-width, min(22rem, calc(100vw - 1.5rem)));
+  max-block-size: min(26rem, calc(100vh - 1.5rem));
+  overflow: auto;
+  overscroll-behavior: contain;
+  border: 1px solid rgba(94, 151, 207, .72);
+  border-radius: .75rem;
+  background: #fff;
+  box-shadow: 0 1rem 2.5rem rgba(20, 57, 92, .22);
+  pointer-events: auto;
+}
+
+html[data-progressive-disclosure-enhanced="true"] [data-node-detail-grid]::before {
+  content: "";
+  position: sticky;
+  inset-block-start: 0;
+  z-index: 2;
+  display: block;
+  block-size: .24rem;
+  background: #0877ff;
+}
+
+html[data-progressive-disclosure-enhanced="true"] details[data-diagram-detail] {
+  display: none;
+  min-block-size: 0;
+  padding: .95rem 1rem 1rem;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  overflow: visible;
+}
+
+html[data-progressive-disclosure-enhanced="true"] details[data-diagram-detail][data-runtime-open="true"] {
+  display: block;
+}
+
+html[data-progressive-disclosure-enhanced="true"] details[data-diagram-detail] > summary {
+  padding: .15rem 2.65rem .7rem .1rem;
+  border-block-end: 1px solid rgba(141, 179, 216, .48);
+  color: #102033;
+  font-size: 1rem;
+  font-weight: 850;
+  list-style: none;
+}
+
+html[data-progressive-disclosure-enhanced="true"] details[data-diagram-detail] > summary::-webkit-details-marker {
+  display: none;
+}
+
+html[data-progressive-disclosure-enhanced="true"] details[data-diagram-detail] > :not(summary, [data-diagram-detail-close]) {
+  padding: .8rem .1rem .05rem;
+  color: #38546f;
+  font-size: .84rem;
+  line-height: 1.68;
+}
+
+html[data-progressive-disclosure-enhanced="true"] [data-diagram-detail-close] {
+  position: absolute;
+  inset-block-start: .72rem;
+  inset-inline-end: .72rem;
+  display: grid;
+  inline-size: 2rem;
+  block-size: 2rem;
+  place-items: center;
+  padding: 0;
+  border: 1px solid rgba(94, 151, 207, .68);
+  border-radius: 999px;
+  background: #fff;
+  color: #17324d;
+  font: inherit;
+  font-size: 1.12rem;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 .3rem .8rem rgba(20, 57, 92, .1);
+}
+
+html[data-progressive-disclosure-enhanced="true"] [data-diagram-detail-close]:hover {
+  border-color: #0877ff;
+  background: #e8f3ff;
+}
+
+html[data-progressive-disclosure-enhanced="true"] [data-diagram-detail-close]:focus-visible {
+  outline: 3px solid #77b8f2;
+  outline-offset: 2px;
+}
+
+@media (max-width: 48rem) {
+  [data-node-detail-region] > header { align-items: flex-start; flex-direction: column; }
+  [data-node-detail-grid] { grid-template-columns: 1fr; }
+  html[data-progressive-disclosure-enhanced="true"] [data-node-detail-grid] {
+    inline-size: var(--detail-width, min(21rem, calc(100vw - 1.25rem)));
+    max-block-size: min(22rem, calc(100vh - 1.25rem));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html[data-progressive-disclosure-enhanced="true"] [data-node-detail-grid] {
+    scroll-behavior: auto;
+  }
+}
+
+@media print {
+  [data-node-detail-region],
+  html[data-progressive-disclosure-enhanced="true"] [data-node-detail-region] {
+    position: static;
+    display: block;
+    margin-block-start: .875rem;
+    padding: .875rem;
+    border: 1px solid #b9cfe2;
+    background: #fff;
+    pointer-events: auto;
+  }
+  html[data-progressive-disclosure-enhanced="true"] [data-node-detail-region] > header {
+    display: flex;
+  }
+  [data-node-detail-grid],
+  html[data-progressive-disclosure-enhanced="true"] [data-node-detail-grid] {
+    position: static;
+    display: grid;
+    inline-size: auto;
+    max-block-size: none;
+    grid-template-columns: 1fr 1fr;
+    overflow: visible;
+    border: 0;
+    box-shadow: none;
+  }
+  html[data-progressive-disclosure-enhanced="true"] [data-node-detail-grid]::before {
+    display: none;
+  }
+  [data-diagram-detail][hidden],
+  html[data-progressive-disclosure-enhanced="true"] details[data-diagram-detail],
+  html[data-progressive-disclosure-enhanced="true"] details[data-diagram-detail][data-runtime-open="true"] {
+    display: block !important;
+    min-block-size: 0;
+    padding: 0;
+    border: 1px solid #b9cfe2;
+    border-radius: .8rem;
+  }
+  details[data-diagram-detail] > :not(summary, [data-diagram-detail-close]) {
+    display: block !important;
+  }
+  [data-diagram-detail-close] { display: none !important; }
+}
+</style>
+  <style data-semantic-relations-kernel="1">
+[data-architecture-canvas="1"] [data-diagram-visible-relation-id] {
+  vector-effect: non-scaling-stroke;
+}
+
+[data-semantic-edge-ledger] {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: .45rem;
+  margin-block-start: 1rem;
+  padding: .75rem 0 0;
+  border: 0;
+  border-block-start: 1px dashed rgba(90, 108, 128, .38);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: #5a6c80;
+}
+[data-semantic-edge-ledger] > h2 {
+  margin: 0;
+  color: #6b7c8e;
+  font-size: .68rem;
+  font-weight: 750;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+[data-semantic-edge-grid] {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
+  gap: .25rem 1rem;
+}
+[data-semantic-edge] {
+  display: grid;
+  gap: .15rem;
+  min-inline-size: 0;
+  padding: .25rem 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+[data-semantic-edge-route] {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 1.25rem minmax(0, 1fr);
+  align-items: center;
+  gap: .25rem;
+}
+[data-semantic-edge-route] b {
+  min-inline-size: 0;
+  color: #52677b;
+  font-size: .68rem;
+  font-weight: 700;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+[data-semantic-edge-route] b:last-child { text-align: end; }
+[data-semantic-edge-route] i {
+  display: grid;
+  min-block-size: 1rem;
+  place-items: center;
+  color: #8293a5;
+  font-style: normal;
+  line-height: 1;
+}
+[data-semantic-edge-route] i::before {
+  content: "↪";
+}
+[data-semantic-edge-route] i::after {
+  content: none;
+}
+[data-semantic-edge-label] {
+  color: #738497;
+  font-size: .66rem;
+  line-height: 1.35;
+}
+
+@media (max-width: 48rem) {
+  [data-semantic-edge-grid] { grid-template-columns: 1fr; }
+}
+
+@media print {
+  [data-semantic-edge-ledger] { break-inside: avoid; background: transparent; }
+}
+</style>
+  <style data-template-contract="1">[data-diagram-id="logical-layering"]>[data-diagram-stage]{min-inline-size:60rem}.semantic-relation{position:absolute;inline-size:1px;block-size:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}@media(max-width:48rem){[data-diagram-id="logical-layering"]>[data-diagram-stage]{min-inline-size:0}}</style>
+
+</head>
+<body>
+<main data-diagram-type="system-architecture"
+      data-diagram-grammar="system-architecture-presentation"
+      data-template-family="system-architecture"
+      data-template-id="logical-layering"
+      data-template-layout="north-south-layers"
+      data-template-contract-version="2"
+      data-system-arch-view="logical"
+      data-routing-confidence="high">
+    <header data-diagram-title-region data-artifact-shell-title="1">
+    <div data-diagram-title-copy><h1 data-slot="title" data-diagram-view-title="1"><span data-diagram-view-type>系统架构</span><span data-diagram-view-separator aria-hidden="true"></span><span data-diagram-view-subject>ZEUS-0135 升级完成后的 .zeus 完整目录</span></h1><p class="summary" data-slot="summary">目标完成态：~/.zeus 只保留六个职责清晰的一级分区；旧根在校验后物理删除，不再把约 2.37 GiB 的重复副本留在磁盘。图中用于快速理解，配套任务文档给出逐层完整静态树。</p></div>
+
+    <div data-artifact-shell-controls aria-label="图表缩放控制">
+
+      <div data-diagram-controls="logical-layering" data-diagram-status-fit="适应宽度" data-diagram-status-fits="100% 可完整显示" data-diagram-status-scroll="横向滚动" aria-label="图表缩放"><button type="button" data-diagram-zoom-control="0.75" aria-pressed="false">75%</button><button type="button" data-diagram-zoom-control="0.9" aria-pressed="false">90%</button><button type="button" data-diagram-zoom-control="1" aria-pressed="false">100%</button><button type="button" data-diagram-zoom-control="fit" aria-pressed="true">自动</button><output data-diagram-zoom-status aria-live="polite">适应宽度</output></div></div>
+  </header>
+
+<div data-diagram-canvas data-diagram-contract="1" data-diagram-id="logical-layering" data-diagram-profile="graph" data-diagram-width="auto" data-diagram-height="flow" data-diagram-mobile="summary" data-diagram-controls-mode="persistent" data-max-top-whitespace-ratio="0.04" data-max-bottom-whitespace-ratio="0.02" data-min-horizontal-utilization-ratio="0.9" data-diagram-topology="north-south-layered-dag" data-primary-direction="north-to-south">
+
+<section data-diagram-stage data-reading-guide="logical-layering" class="template-layout north-south-layers" aria-label="ZEUS-0135 升级完成后的 .zeus 目录架构图" data-diagram-grid-surface="1">
+    <section data-slot="evidence-and-notes" data-evidence-ledger="1" data-diagram-reading-guide="1" aria-label="图表阅读指南" data-reading-guide-for="logical-layering">
+
+    <div data-reading-guide-groups>
+      <div data-reading-guide-group="relations"><span data-reading-guide-group-title>阅读关系</span><span data-reading-guide-item data-line-kind="line-01" data-guide-relations="layout-relation-001 layout-relation-002"><i data-line-swatch aria-hidden="true"></i><b>目录总览</b></span><span data-reading-guide-item data-line-kind="line-02" data-guide-relations="layout-relation-003 layout-relation-004 layout-relation-005 layout-relation-006"><i data-line-swatch aria-hidden="true"></i><b>展开详情</b></span><span data-reading-guide-item data-line-kind="line-03" data-guide-relations="layout-relation-007 layout-relation-008"><i data-line-swatch aria-hidden="true"></i><b>迁移校验</b></span><span data-reading-guide-item data-line-kind="line-04" data-guide-relations="layout-relation-009 layout-relation-010"><i data-line-swatch aria-hidden="true"></i><b>旧根回收</b></span></div>
+      <div data-reading-guide-group="evidence"><span data-reading-guide-group-title>证据状态</span><article data-evidence-id="evidence-observed-logical-layering" data-evidence-status="observed" data-evidence-for="layout-node-001 layout-node-002 layout-node-003 layout-node-004 layout-node-005 layout-node-006 layout-node-007" data-evidence-source-kind="file" data-evidence-source="packages/local-server/src/zeusDataLayout.ts"><b>已实现结构</b></article><article data-evidence-id="evidence-check-logical-layering" data-evidence-status="observed" data-evidence-for="layout-node-008" data-evidence-source-kind="test" data-evidence-source="docs/ZEUS-0135_.zeus目录整顿.md"><b>副本演练通过</b></article><article data-evidence-id="evidence-unresolved-logical-layering" data-evidence-status="unresolved" data-evidence-for="layout-node-009" data-evidence-source-kind="runtime" data-evidence-source="正式 Zeus 主机仍在运行；本机迁移与旧根删除待停机执行"><b>正式本机待执行</b></article></div>
+    </div>
+
+  </section>
+
+    <svg class="architecture-map" data-architecture-canvas="1" data-architecture-topology="layered-dag" viewBox="0 0 1500 1650" role="img" aria-labelledby="logical-layering-map-title logical-layering-map-description">
+      <title id="logical-layering-map-title">ZEUS-0135 升级完成后的 .zeus 目录总览</title>
+      <desc id="logical-layering-map-description">唯一权威根下固定为六个一级分区；图中连线表示阅读顺序，真实父子层级以配套任务文档中的完整静态树为准。</desc>
+      <defs>
+        <marker id="logical-layering-architecture-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#0877ff"></path></marker>
+        <filter id="logical-layering-soft-shadow" x="-20%" y="-30%" width="140%" height="170%"><feDropShadow dx="0" dy="7" stdDeviation="7" flood-color="#14395c" flood-opacity=".10"></feDropShadow></filter>
+        <filter id="logical-layering-active-shadow" x="-24%" y="-38%" width="148%" height="190%"><feDropShadow dx="0" dy="9" stdDeviation="9" flood-color="#1f6fb2" flood-opacity=".18"></feDropShadow></filter>
+        <linearGradient id="logical-layering-blue-head" x1="0" x2="1"><stop offset="0" stop-color="#2f79d7"></stop><stop offset="1" stop-color="#2356bd"></stop></linearGradient>
+        <linearGradient id="logical-layering-violet-head" x1="0" x2="1"><stop offset="0" stop-color="#7467c8"></stop><stop offset="1" stop-color="#5545a9"></stop></linearGradient>
+        <linearGradient id="logical-layering-green-head" x1="0" x2="1"><stop offset="0" stop-color="#278464"></stop><stop offset="1" stop-color="#3da680"></stop></linearGradient>
+        <linearGradient id="logical-layering-amber-head" x1="0" x2="1"><stop offset="0" stop-color="#c78a24"></stop><stop offset="1" stop-color="#a56712"></stop></linearGradient>
+      </defs>
+      <rect x="24" y="12" width="1452" height="1626" rx="28" fill="rgba(255,255,255,.56)" stroke="#d6e4f1"></rect>
+      <g aria-label="目录分区与阅读层级">
+        <g data-diagram-group-id="layout-group-001" data-semantic-role="authoritative-root" data-diagram-rank="0" data-diagram-region="rank-01" data-architecture-rank-id="layout-rank-001"><rect x="70" y="60" width="1360" height="190" rx="22" fill="#f3f8ff" stroke="#9cc1e4" data-architecture-boundary="layout-boundary-001"></rect><rect x="70" y="60" width="1360" height="38" rx="20" fill="url(#logical-layering-blue-head)"></rect><text x="750" y="85" text-anchor="middle" fill="#fff" font-size="13.5" font-weight="850">唯一权威根</text><text x="1400" y="85" text-anchor="end" fill="#dcecff" font-size="11.5" font-weight="750">固定六个一级分区</text></g>
+        <g data-diagram-group-id="layout-group-002" data-semantic-role="core-managed-data" data-diagram-rank="1" data-diagram-region="rank-02" data-architecture-rank-id="layout-rank-002"><rect x="70" y="280" width="1360" height="240" rx="22" fill="#f7f5ff" stroke="#b8b0e8" data-architecture-boundary="layout-boundary-002"></rect><rect x="70" y="280" width="1360" height="38" rx="20" fill="url(#logical-layering-violet-head)"></rect><text x="750" y="305" text-anchor="middle" fill="#fff" font-size="13.5" font-weight="850">核心事实与托管资产</text></g>
+        <g data-diagram-group-id="layout-group-003" data-semantic-role="provider-user-state" data-diagram-rank="2" data-diagram-region="rank-03" data-architecture-rank-id="layout-rank-003"><rect x="70" y="550" width="1360" height="260" rx="22" fill="#f3f8ff" stroke="#9cc1e4" data-architecture-boundary="layout-boundary-003"></rect><rect x="70" y="550" width="1360" height="38" rx="20" fill="url(#logical-layering-blue-head)"></rect><text x="750" y="575" text-anchor="middle" fill="#fff" font-size="13.5" font-weight="850">Provider 与用户状态</text></g>
+        <g data-diagram-group-id="layout-group-004" data-semantic-role="runtime-control" data-diagram-rank="3" data-diagram-region="rank-04" data-architecture-rank-id="layout-rank-004"><rect x="70" y="840" width="1360" height="230" rx="22" fill="#eef9f5" stroke="#98d3be" data-architecture-boundary="layout-boundary-004"></rect><rect x="70" y="840" width="1360" height="38" rx="20" fill="url(#logical-layering-green-head)"></rect><text x="750" y="865" text-anchor="middle" fill="#fff" font-size="13.5" font-weight="850">运行控制</text></g>
+        <g data-diagram-group-id="layout-group-005" data-semantic-role="backup-static-reference" data-diagram-rank="4" data-diagram-region="rank-05" data-architecture-rank-id="layout-rank-005"><rect x="70" y="1100" width="1360" height="260" rx="22" fill="#eef9f5" stroke="#98d3be" data-architecture-boundary="layout-boundary-005"></rect><rect x="70" y="1100" width="1360" height="38" rx="20" fill="url(#logical-layering-green-head)"></rect><text x="750" y="1125" text-anchor="middle" fill="#fff" font-size="13.5" font-weight="850">备份、校验与完整树</text></g>
+        <g data-diagram-group-id="layout-group-006" data-semantic-role="legacy-retirement-result" data-diagram-rank="5" data-diagram-region="rank-06" data-architecture-rank-id="layout-rank-006"><rect x="70" y="1390" width="1360" height="230" rx="22" fill="#fff9ed" stroke="#e4bf7b" data-architecture-boundary="layout-boundary-006"></rect><rect x="70" y="1390" width="1360" height="38" rx="20" fill="url(#logical-layering-amber-head)"></rect><text x="750" y="1415" text-anchor="middle" fill="#fff" font-size="13.5" font-weight="850">外部旧根回收结果</text><text x="1400" y="1415" text-anchor="end" fill="#fff4da" font-size="11.5" font-weight="750">目标完成态</text></g>
+      </g>
+      <g data-architecture-relations="1" fill="none" stroke="#0877ff" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round">
+        <g data-architecture-branch-id="layout-branch-001">
+          <path d="M750 224V280H420V332" marker-end="url(#logical-layering-architecture-arrow)" data-diagram-visible-relation-id="layout-relation-001" data-from="layout-node-001" data-to="layout-node-002" data-relation-kind="overview-read" data-primary-relation="true"></path>
+          <path d="M750 224V280H1080V332" marker-end="url(#logical-layering-architecture-arrow)" data-diagram-visible-relation-id="layout-relation-002" data-from="layout-node-001" data-to="layout-node-003" data-relation-kind="overview-read" data-primary-relation="true"></path>
+        </g>
+        <path d="M420 492V602" marker-end="url(#logical-layering-architecture-arrow)" data-diagram-visible-relation-id="layout-relation-003" data-from="layout-node-002" data-to="layout-node-004" data-relation-kind="detail-read" data-primary-relation="true"></path>
+        <path d="M1080 492V602" marker-end="url(#logical-layering-architecture-arrow)" data-diagram-visible-relation-id="layout-relation-004" data-from="layout-node-003" data-to="layout-node-005" data-relation-kind="detail-read" data-primary-relation="true"></path>
+        <g data-architecture-merge-id="layout-merge-001">
+          <path d="M420 782V840H620V892" marker-end="url(#logical-layering-architecture-arrow)" data-diagram-visible-relation-id="layout-relation-005" data-from="layout-node-004" data-to="layout-node-006" data-relation-kind="detail-read" data-primary-relation="true"></path>
+          <path d="M1080 782V840H880V892" marker-end="url(#logical-layering-architecture-arrow)" data-diagram-visible-relation-id="layout-relation-006" data-from="layout-node-005" data-to="layout-node-006" data-relation-kind="detail-read" data-primary-relation="true"></path>
+        </g>
+        <g data-architecture-branch-id="layout-branch-002">
+          <path d="M750 1042V1100H420V1152" marker-end="url(#logical-layering-architecture-arrow)" data-diagram-visible-relation-id="layout-relation-007" data-from="layout-node-006" data-to="layout-node-007" data-relation-kind="migration-check" data-primary-relation="true"></path>
+          <path d="M750 1042V1100H1080V1152" marker-end="url(#logical-layering-architecture-arrow)" data-diagram-visible-relation-id="layout-relation-008" data-from="layout-node-006" data-to="layout-node-008" data-relation-kind="migration-check" data-primary-relation="true"></path>
+        </g>
+        <g data-architecture-merge-id="layout-merge-002">
+          <path d="M420 1332V1390H620V1442" marker-end="url(#logical-layering-architecture-arrow)" data-diagram-visible-relation-id="layout-relation-009" data-from="layout-node-007" data-to="layout-node-009" data-relation-kind="legacy-retirement" data-primary-relation="true"></path>
+          <path d="M1080 1332V1390H880V1442" marker-end="url(#logical-layering-architecture-arrow)" data-diagram-visible-relation-id="layout-relation-010" data-from="layout-node-008" data-to="layout-node-009" data-relation-kind="legacy-retirement" data-primary-relation="true"></path>
+        </g>
+      </g>
+      <g data-architecture-landmarks="1">
+        <g id="layout-node-001" data-architecture-landmark-for="layout-node-001" data-diagram-node-id="layout-node-001" data-semantic-role="authoritative-root" data-diagram-rank="0" data-diagram-region="rank-01" data-evidence-visual="observed" data-detail-for="layout-detail-001" data-node-primary-label="权威根 · ~/.zeus/"><rect class="arch-node node-observed" x="130" y="112" width="1240" height="112" rx="18"></rect><foreignObject x="138" y="120" width="1224" height="96"><div class="layer-node" style="--module-cols:6"><a class="layer-node-head" data-diagram-detail-trigger="primary" data-detail-for="layout-detail-001" href="#layout-detail-001" aria-expanded="false"><span class="svg-node-icon" data-node-icon aria-hidden="true">🗂️</span><span><b data-node-title data-slot="layout-slot-001">权威根 · ~/.zeus/</b><small data-node-summary data-slot="layout-slot-002">Zeus 唯一权威数据根；一级目录固定且职责互斥</small></span></a><div class="layer-module-grid"><a class="layer-module" data-diagram-detail-trigger="auxiliary" data-detail-for="layout-detail-010" href="#layout-detail-010" aria-expanded="false">核心数据 · data/</a><a class="layer-module" data-diagram-detail-trigger="auxiliary" data-detail-for="layout-detail-011" href="#layout-detail-011" aria-expanded="false">托管产物 · artifacts/</a><a class="layer-module" data-diagram-detail-trigger="auxiliary" data-detail-for="layout-detail-012" href="#layout-detail-012" aria-expanded="false">Provider 家目录 · providers/</a><a class="layer-module" data-diagram-detail-trigger="auxiliary" data-detail-for="layout-detail-013" href="#layout-detail-013" aria-expanded="false">回滚备份 · backups/</a><a class="layer-module" data-diagram-detail-trigger="auxiliary" data-detail-for="layout-detail-014" href="#layout-detail-014" aria-expanded="false">运行控制 · runtime/</a><a class="layer-module" data-diagram-detail-trigger="auxiliary" data-detail-for="layout-detail-015" href="#layout-detail-015" aria-expanded="false">用户状态 · profile/</a></div></div></foreignObject></g>
+        <g id="layout-node-002" data-architecture-landmark-for="layout-node-002" data-architecture-peer-group="layout-peer-group-001" data-diagram-node-id="layout-node-002" data-semantic-role="core-data" data-diagram-rank="1" data-diagram-region="rank-02" data-evidence-visual="observed" data-detail-for="layout-detail-002" data-node-primary-label="核心数据 · data/"><rect class="arch-node node-observed" x="110" y="332" width="620" height="160" rx="18"></rect><foreignObject x="118" y="340" width="604" height="144"><div class="layer-node" style="--module-cols:2"><a class="layer-node-head" data-diagram-detail-trigger="primary" data-detail-for="layout-detail-002" href="#layout-detail-002" aria-expanded="false"><span class="svg-node-icon" data-node-icon aria-hidden="true">🧱</span><span><b data-node-title data-slot="layout-slot-003">核心数据 · data/</b><small data-node-summary data-slot="layout-slot-004">数据库、配置、密钥与本地服务日志</small></span></a><div class="layer-module-grid"><a class="layer-module" data-diagram-detail-trigger="auxiliary" data-detail-for="layout-detail-016" href="#layout-detail-016" aria-expanded="false">主数据库 · zeus.db</a><a class="layer-module" data-diagram-detail-trigger="auxiliary" data-detail-for="layout-detail-017" href="#layout-detail-017" aria-expanded="false">SQLite 旁路文件</a><a class="layer-module" data-diagram-detail-trigger="auxiliary" data-detail-for="layout-detail-018" href="#layout-detail-018" aria-expanded="false">zeus.config.json</a><a class="layer-module" data-diagram-detail-trigger="auxiliary" data-detail-for="layout-detail-019" href="#layout-detail-019" aria-expanded="false">密钥与 logs/</a></div></div></foreignObject></g>
+        <g id="layout-node-003" data-architecture-landmark-for="layout-node-003" data-architecture-peer-group="layout-peer-group-001" data-diagram-node-id="layout-node-003" data-semantic-role="managed-artifacts" data-diagram-rank="1" data-diagram-region="rank-02" data-evidence-visual="observed" data-detail-for="layout-detail-003" data-node-primary-label="托管产物 · artifacts/"><rect class="arch-node node-observed" x="770" y="332" width="620" height="160" rx="18"></rect><foreignObject x="778" y="340" width="604" height="144"><div class="layer-node" style="--module-cols:2"><a class="layer-node-head" data-diagram-detail-trigger="primary" data-detail-for="layout-detail-003" href="#layout-detail-003" aria-expanded="false"><span class="svg-node-icon" data-node-icon aria-hidden="true">📦</span><span><b data-node-title data-slot="layout-slot-005">托管产物 · artifacts/</b><small data-node-summary data-slot="layout-slot-006">由 Zeus 管理、可追溯到任务与会话的业务产物</small></span></a><div class="layer-module-grid"><a class="layer-module" data-diagram-detail-trigger="auxiliary" data-detail-for="layout-detail-020" href="#layout-detail-020" aria-expanded="false">任务与会话附件</a><a class="layer-module" data-diagram-detail-trigger="auxiliary" data-detail-for="layout-detail-021" href="#layout-detail-021" aria-expanded="false">浏览器批注与变更集</a><a class="layer-module" data-diagram-detail-trigger="auxiliary" data-detail-for="layout-detail-022" href="#layout-detail-022" aria-expanded="false">runtime-sessions/</a><a class="layer-module" data-diagram-detail-trigger="auxiliary" data-detail-for="layout-detail-023" href="#layout-detail-023" aria-expanded="false">命令脚本与运行记录</a></div></div></foreignObject></g>
+        <g id="layout-node-004" data-architecture-landmark-for="layout-node-004" data-architecture-peer-group="layout-peer-group-002" data-diagram-node-id="layout-node-004" data-semantic-role="provider-home" data-diagram-rank="2" data-diagram-region="rank-03" data-evidence-visual="observed" data-detail-for="layout-detail-004" data-node-primary-label="Provider 家目录 · providers/"><rect class="arch-node node-observed" x="110" y="602" width="620" height="180" rx="18"></rect><foreignObject x="118" y="610" width="604" height="164"><div class="layer-node" style="--module-cols:3"><a class="layer-node-head" data-diagram-detail-trigger="primary" data-detail-for="layout-detail-004" href="#layout-detail-004" aria-expanded="false"><span class="svg-node-icon" data-node-icon aria-hidden="true">🔌</span><span><b data-node-title data-slot="layout-slot-007">Provider 家目录 · providers/</b><small data-node-summary data-slot="layout-slot-008">各智能体 Provider 的独立家目录，互不混放</small></span></a><div class="layer-module-grid"><a class="layer-module" data-diagram-detail-trigger="auxiliary" data-detail-for="layout-detail-024" href="#layout-detail-024" aria-expanded="false">Codex 家目录 · codex/</a><a class="layer-module" data-diagram-detail-trigger="auxiliary" data-detail-for="layout-detail-025" href="#layout-detail-025" aria-expanded="false">Codex 配置与规则</a><a class="layer-module" data-diagram-detail-trigger="auxiliary" data-detail-for="layout-detail-026" href="#layout-detail-026" aria-expanded="false">Codex 会话与插件</a><a class="layer-module" data-diagram-detail-trigger="auxiliary" data-detail-for="layout-detail-027" href="#layout-detail-027" aria-expanded="false">pi/config/</a><a class="layer-module" data-diagram-detail-trigger="auxiliary" data-detail-for="layout-detail-028" href="#layout-detail-028" aria-expanded="false">pi/sessions/</a><a class="layer-module" data-diagram-detail-trigger="auxiliary" data-detail-for="layout-detail-029" href="#layout-detail-029" aria-expanded="false">Provider 动态内容</a></div></div></foreignObject></g>
+        <g id="layout-node-005" data-architecture-landmark-for="layout-node-005" data-architecture-peer-group="layout-peer-group-002" data-diagram-node-id="layout-node-005" data-semantic-role="user-profile" data-diagram-rank="2" data-diagram-region="rank-03" data-evidence-visual="observed" data-detail-for="layout-detail-005" data-node-primary-label="用户状态 · profile/"><rect class="arch-node node-observed" x="770" y="602" width="620" height="180" rx="18"></rect><foreignObject x="778" y="610" width="604" height="164"><div class="layer-node" style="--module-cols:3"><a class="layer-node-head" data-diagram-detail-trigger="primary" data-detail-for="layout-detail-005" href="#layout-detail-005" aria-expanded="false"><span class="svg-node-icon" data-node-icon aria-hidden="true">👤</span><span><b data-node-title data-slot="layout-slot-009">用户状态 · profile/</b><small data-node-summary data-slot="layout-slot-010">浏览器状态与 Electron 用户数据统一归档</small></span></a><div class="layer-module-grid"><a class="layer-module" data-diagram-detail-trigger="auxiliary" data-detail-for="layout-detail-030" href="#layout-detail-030" aria-expanded="false">browser/state.json</a><a class="layer-module" data-diagram-detail-trigger="auxiliary" data-detail-for="layout-detail-031" href="#layout-detail-031" aria-expanded="false">窗口状态</a><a class="layer-module" data-diagram-detail-trigger="auxiliary" data-detail-for="layout-detail-032" href="#layout-detail-032" aria-expanded="false">Chromium 缓存</a><a class="layer-module" data-diagram-detail-trigger="auxiliary" data-detail-for="layout-detail-033" href="#layout-detail-033" aria-expanded="false">本地与会话存储</a><a class="layer-module" data-diagram-detail-trigger="auxiliary" data-detail-for="layout-detail-034" href="#layout-detail-034" aria-expanded="false">zeus-browser 分区</a><a class="layer-module" data-diagram-detail-trigger="auxiliary" data-detail-for="layout-detail-035" href="#layout-detail-035" aria-expanded="false">动态运行文件</a></div></div></foreignObject></g>
+        <g id="layout-node-006" data-architecture-landmark-for="layout-node-006" data-diagram-node-id="layout-node-006" data-semantic-role="runtime-control" data-diagram-rank="3" data-diagram-region="rank-04" data-evidence-visual="checked" data-detail-for="layout-detail-006" data-node-primary-label="运行控制 · runtime/"><rect class="arch-node node-checked" x="110" y="892" width="1280" height="150" rx="18"></rect><foreignObject x="118" y="900" width="1264" height="134"><div class="layer-node" style="--module-cols:4"><a class="layer-node-head" data-diagram-detail-trigger="primary" data-detail-for="layout-detail-006" href="#layout-detail-006" aria-expanded="false"><span class="svg-node-icon" data-node-icon aria-hidden="true">⚙️</span><span><b data-node-title data-slot="layout-slot-011">运行控制 · runtime/</b><small data-node-summary data-slot="layout-slot-012">只保存运行控制、更新、迁移与隔离现场</small></span></a><div class="layer-module-grid"><a class="layer-module checked" data-diagram-detail-trigger="auxiliary" data-detail-for="layout-detail-036" href="#layout-detail-036" aria-expanded="false">execution-host/</a><a class="layer-module checked" data-diagram-detail-trigger="auxiliary" data-detail-for="layout-detail-037" href="#layout-detail-037" aria-expanded="false">主机锁 · host.lock</a><a class="layer-module checked" data-diagram-detail-trigger="auxiliary" data-detail-for="layout-detail-038" href="#layout-detail-038" aria-expanded="false">会合信息 · rendezvous.json</a><a class="layer-module checked" data-diagram-detail-trigger="auxiliary" data-detail-for="layout-detail-039" href="#layout-detail-039" aria-expanded="false">主机日志 · host.log</a><a class="layer-module checked" data-diagram-detail-trigger="auxiliary" data-detail-for="layout-detail-040" href="#layout-detail-040" aria-expanded="false">启动引导 · bootstrap-*</a><a class="layer-module checked" data-diagram-detail-trigger="auxiliary" data-detail-for="layout-detail-041" href="#layout-detail-041" aria-expanded="false">updates/downloads/</a><a class="layer-module checked" data-diagram-detail-trigger="auxiliary" data-detail-for="layout-detail-042" href="#layout-detail-042" aria-expanded="false">安装记录 · installer-*</a><a class="layer-module checked" data-diagram-detail-trigger="auxiliary" data-detail-for="layout-detail-043" href="#layout-detail-043" aria-expanded="false">migrations/ 与 quarantine/</a></div></div></foreignObject></g>
+        <g id="layout-node-007" data-architecture-landmark-for="layout-node-007" data-architecture-peer-group="layout-peer-group-003" data-diagram-node-id="layout-node-007" data-semantic-role="rollback-evidence" data-diagram-rank="4" data-diagram-region="rank-05" data-evidence-visual="checked" data-detail-for="layout-detail-007" data-node-primary-label="回滚备份 · backups/"><rect class="arch-node node-checked" x="110" y="1152" width="620" height="180" rx="18"></rect><foreignObject x="118" y="1160" width="604" height="164"><div class="layer-node" style="--module-cols:3"><a class="layer-node-head" data-diagram-detail-trigger="primary" data-detail-for="layout-detail-007" href="#layout-detail-007" aria-expanded="false"><span class="svg-node-icon" data-node-icon aria-hidden="true">🛟</span><span><b data-node-title data-slot="layout-slot-013">回滚备份 · backups/</b><small data-node-summary data-slot="layout-slot-014">只保留可解释、可回滚、带事务边界的备份</small></span></a><div class="layer-module-grid"><a class="layer-module checked" data-diagram-detail-trigger="auxiliary" data-detail-for="layout-detail-044" href="#layout-detail-044" aria-expanded="false">database/</a><a class="layer-module checked" data-diagram-detail-trigger="auxiliary" data-detail-for="layout-detail-045" href="#layout-detail-045" aria-expanded="false">分层迁移快照</a><a class="layer-module checked" data-diagram-detail-trigger="auxiliary" data-detail-for="layout-detail-046" href="#layout-detail-046" aria-expanded="false">原生 SQLite 快照</a><a class="layer-module checked" data-diagram-detail-trigger="auxiliary" data-detail-for="layout-detail-047" href="#layout-detail-047" aria-expanded="false">imports/codex/</a><a class="layer-module checked" data-diagram-detail-trigger="auxiliary" data-detail-for="layout-detail-048" href="#layout-detail-048" aria-expanded="false">codex-legacy/</a><a class="layer-module checked" data-diagram-detail-trigger="auxiliary" data-detail-for="layout-detail-049" href="#layout-detail-049" aria-expanded="false">legacy-roots/</a></div></div></foreignObject></g>
+        <g id="layout-node-008" data-architecture-landmark-for="layout-node-008" data-architecture-peer-group="layout-peer-group-003" data-diagram-node-id="layout-node-008" data-semantic-role="exact-hierarchy-reference" data-diagram-rank="4" data-diagram-region="rank-05" data-evidence-visual="unverified" data-detail-for="layout-detail-008" data-node-primary-label="完整静态树与规则"><rect class="arch-node node-unverified" x="770" y="1152" width="620" height="180" rx="18"></rect><foreignObject x="778" y="1160" width="604" height="164"><div class="layer-node" style="--module-cols:3"><a class="layer-node-head" data-diagram-detail-trigger="primary" data-detail-for="layout-detail-008" href="#layout-detail-008" aria-expanded="false"><span class="svg-node-icon" data-node-icon aria-hidden="true">🌳</span><span><b data-node-title data-slot="layout-slot-015">完整静态树与规则</b><small data-node-summary data-slot="layout-slot-016">逐层列出固定路径，并标明运行中、按需与外部动态项</small></span></a><div class="layer-module-grid"><a class="layer-module" data-diagram-detail-trigger="auxiliary" data-detail-for="layout-detail-050" href="#layout-detail-050" aria-expanded="false">固定目录</a><a class="layer-module" data-diagram-detail-trigger="auxiliary" data-detail-for="layout-detail-051" href="#layout-detail-051" aria-expanded="false">[运行中] 标记</a><a class="layer-module" data-diagram-detail-trigger="auxiliary" data-detail-for="layout-detail-052" href="#layout-detail-052" aria-expanded="false">[按需] 标记</a><a class="layer-module" data-diagram-detail-trigger="auxiliary" data-detail-for="layout-detail-053" href="#layout-detail-053" aria-expanded="false">省略号含义</a><a class="layer-module pending" data-diagram-detail-trigger="auxiliary" data-detail-for="layout-detail-054" href="#layout-detail-054" aria-expanded="false">一级仅六项</a><a class="layer-module pending" data-diagram-detail-trigger="auxiliary" data-detail-for="layout-detail-055" href="#layout-detail-055" aria-expanded="false">旧根不入树</a></div></div></foreignObject></g>
+        <g id="layout-node-009" data-architecture-landmark-for="layout-node-009" data-diagram-node-id="layout-node-009" data-semantic-role="legacy-root-retirement" data-diagram-rank="5" data-diagram-region="rank-06" data-evidence-visual="unverified" data-detail-for="layout-detail-009" data-node-primary-label="旧根回收结果"><rect class="arch-node node-unverified" x="110" y="1442" width="1280" height="160" rx="18"></rect><foreignObject x="118" y="1450" width="1264" height="144"><div class="layer-node" style="--module-cols:4"><a class="layer-node-head" data-diagram-detail-trigger="primary" data-detail-for="layout-detail-009" href="#layout-detail-009" aria-expanded="false"><span class="svg-node-icon" data-node-icon aria-hidden="true">♻️</span><span><b data-node-title data-slot="layout-slot-017">旧根回收结果</b><small data-node-summary data-slot="layout-slot-018">迁移校验通过后物理删除旧根，只保留小型删除凭证</small></span></a><div class="layer-module-grid"><a class="layer-module checked" data-diagram-detail-trigger="auxiliary" data-detail-for="layout-detail-056" href="#layout-detail-056" aria-expanded="false">删除 @zeus/desktop</a><a class="layer-module checked" data-diagram-detail-trigger="auxiliary" data-detail-for="layout-detail-057" href="#layout-detail-057" aria-expanded="false">仅留删除记录</a><a class="layer-module checked" data-diagram-detail-trigger="auxiliary" data-detail-for="layout-detail-058" href="#layout-detail-058" aria-expanded="false">不保留 2.37 GiB 副本</a><a class="layer-module checked" data-diagram-detail-trigger="auxiliary" data-detail-for="layout-detail-059" href="#layout-detail-059" aria-expanded="false">原子切换</a><a class="layer-module pending" data-diagram-detail-trigger="auxiliary" data-detail-for="layout-detail-060" href="#layout-detail-060" aria-expanded="false">逐文件校验</a><a class="layer-module pending" data-diagram-detail-trigger="auxiliary" data-detail-for="layout-detail-061" href="#layout-detail-061" aria-expanded="false">不形成双根</a><a class="layer-module pending" data-diagram-detail-trigger="auxiliary" data-detail-for="layout-detail-062" href="#layout-detail-062" aria-expanded="false">副本演练已通过</a><a class="layer-module pending" data-diagram-detail-trigger="auxiliary" data-detail-for="layout-detail-063" href="#layout-detail-063" aria-expanded="false">正式本机待执行</a></div></div></foreignObject></g>
+      </g>
+    </svg>
+    <span class="semantic-relation" data-diagram-relation-id="layout-relation-001" data-from="layout-node-001" data-to="layout-node-002" data-relation-kind="overview-read" data-primary-relation="true" data-semantic="从权威根阅读核心事实">先看核心事实</span><span class="semantic-relation" data-diagram-relation-id="layout-relation-002" data-from="layout-node-001" data-to="layout-node-003" data-relation-kind="overview-read" data-primary-relation="true" data-semantic="从权威根阅读托管资产">再看托管资产</span><span class="semantic-relation" data-diagram-relation-id="layout-relation-003" data-from="layout-node-002" data-to="layout-node-004" data-relation-kind="detail-read" data-primary-relation="true" data-semantic="从核心事实展开 Provider">展开 Provider 目录</span><span class="semantic-relation" data-diagram-relation-id="layout-relation-004" data-from="layout-node-003" data-to="layout-node-005" data-relation-kind="detail-read" data-primary-relation="true" data-semantic="从托管资产展开用户状态">展开用户状态</span><span class="semantic-relation" data-diagram-relation-id="layout-relation-005" data-from="layout-node-004" data-to="layout-node-006" data-relation-kind="detail-read" data-primary-relation="true" data-semantic="Provider 状态汇入运行控制">汇入运行控制</span><span class="semantic-relation" data-diagram-relation-id="layout-relation-006" data-from="layout-node-005" data-to="layout-node-006" data-relation-kind="detail-read" data-primary-relation="true" data-semantic="用户状态汇入运行控制">汇入运行控制</span><span class="semantic-relation" data-diagram-relation-id="layout-relation-007" data-from="layout-node-006" data-to="layout-node-007" data-relation-kind="migration-check" data-primary-relation="true" data-semantic="从运行控制查看备份">查看备份边界</span><span class="semantic-relation" data-diagram-relation-id="layout-relation-008" data-from="layout-node-006" data-to="layout-node-008" data-relation-kind="migration-check" data-primary-relation="true" data-semantic="从运行控制查看完整树">查看完整静态树</span><span class="semantic-relation" data-diagram-relation-id="layout-relation-009" data-from="layout-node-007" data-to="layout-node-009" data-relation-kind="legacy-retirement" data-primary-relation="true" data-semantic="从备份确认旧根回收">确认旧根回收</span><span class="semantic-relation" data-diagram-relation-id="layout-relation-010" data-from="layout-node-008" data-to="layout-node-009" data-relation-kind="legacy-retirement" data-primary-relation="true" data-semantic="从完整树确认完成态">确认最终完成态</span>
+  </section>
+    <section data-node-detail-region data-detail-close-label="关闭详情" aria-label="目录节点详细说明"><header><h2 data-slot="layout-slot-019">节点说明</h2><p data-slot="layout-slot-020">点击上方目录或子项可查看职责、边界与迁移后的处理方式。</p></header><div data-node-detail-grid>
+      <details id="layout-detail-001" data-diagram-detail="layout-detail-001" data-diagram-detail-id="layout-detail-001" data-detail-for="layout-node-001"><summary>权威根 · ~/.zeus/</summary><p data-slot="layout-slot-021">升级完成后，Zeus 只认这一处根目录。六个一级分区按“事实、产物、Provider、备份、运行、用户状态”拆开，避免再次出现职责重叠。</p></details>
+      <details id="layout-detail-002" data-diagram-detail="layout-detail-002" data-diagram-detail-id="layout-detail-002" data-detail-for="layout-node-002"><summary>data/：核心事实</summary><p data-slot="layout-slot-022">保存数据库、配置、附件授权密钥及本地服务日志。数据库运行期间允许出现 WAL 与 SHM 旁路文件，停止后由 SQLite 自行收敛。</p></details>
+      <details id="layout-detail-003" data-diagram-detail="layout-detail-003" data-diagram-detail-id="layout-detail-003" data-detail-for="layout-node-003"><summary>artifacts/：业务产物</summary><p data-slot="layout-slot-023">附件、浏览器批注、轮次变更集、Provider 运行会话和命令记录都归到这里；保留逻辑按产物类别独立执行。</p></details>
+      <details id="layout-detail-004" data-diagram-detail="layout-detail-004" data-diagram-detail-id="layout-detail-004" data-detail-for="layout-node-004"><summary>providers/：Provider 家目录</summary><p data-slot="layout-slot-024">Codex 与 Pi 各自拥有独立目录。Zeus 固定 Provider 根和迁移边界，但 Provider 内部新增的缓存、插件或会话子项由 Provider 自主管理。</p></details>
+      <details id="layout-detail-005" data-diagram-detail="layout-detail-005" data-diagram-detail-id="layout-detail-005" data-detail-for="layout-node-005"><summary>profile/：用户状态</summary><p data-slot="layout-slot-025">浏览器状态和 Electron 用户数据都进入 profile。Chromium 会动态创建缓存、存储、Cookie 与单例锁等文件，不再散落到根目录。</p></details>
+      <details id="layout-detail-006" data-diagram-detail="layout-detail-006" data-diagram-detail-id="layout-detail-006" data-detail-for="layout-node-006"><summary>runtime/：运行控制</summary><p data-slot="layout-slot-026">执行主机、更新下载、安装引导、迁移凭证和隔离区集中在 runtime。这里的短期文件允许在完成后清理，不承载业务事实。</p></details>
+      <details id="layout-detail-007" data-diagram-detail="layout-detail-007" data-diagram-detail-id="layout-detail-007" data-detail-for="layout-node-007"><summary>backups/：可回滚证据</summary><p data-slot="layout-slot-027">数据库快照、Provider 导入事务和旧根删除凭证分开保存。生成型缓存不进入导入备份，避免备份再次膨胀。</p></details>
+      <details id="layout-detail-008" data-diagram-detail="layout-detail-008" data-diagram-detail-id="layout-detail-008" data-detail-for="layout-node-008"><summary>完整静态树与规则</summary><p data-slot="layout-slot-028">页面下方给出逐层静态树。[运行中] 表示进程存活时才出现；[按需] 表示相关能力使用后创建；省略号只代表 Provider 或 Chromium 自主管理的动态内容。</p></details>
+      <details id="layout-detail-009" data-diagram-detail="layout-detail-009" data-diagram-detail-id="layout-detail-009" data-detail-for="layout-node-009"><summary>旧根回收结果</summary><p data-slot="layout-slot-029">目标完成态不会继续保留 旧根路径为 /Users/david/Library/Application Support/@zeus/desktop。校验完成后物理删除旧根，仅在 backups/legacy-roots/ 留一份很小的删除记录。</p></details>
+      <details id="layout-detail-010" data-diagram-detail="layout-detail-010"><summary>核心数据 · data/</summary><p>数据库、配置、密钥和本地服务日志的唯一归属。</p></details>
+      <details id="layout-detail-011" data-diagram-detail="layout-detail-011"><summary>托管产物 · artifacts/</summary><p>Zeus 托管的附件、批注、变更集、会话和命令产物。</p></details>
+      <details id="layout-detail-012" data-diagram-detail="layout-detail-012"><summary>Provider 家目录 · providers/</summary><p>Codex、Pi 等 Provider 的独立家目录。</p></details>
+      <details id="layout-detail-013" data-diagram-detail="layout-detail-013"><summary>回滚备份 · backups/</summary><p>数据库、导入事务和旧根删除凭证。</p></details>
+      <details id="layout-detail-014" data-diagram-detail="layout-detail-014"><summary>运行控制 · runtime/</summary><p>执行主机、更新、迁移及隔离现场。</p></details>
+      <details id="layout-detail-015" data-diagram-detail="layout-detail-015"><summary>用户状态 · profile/</summary><p>浏览器和 Electron 用户状态。</p></details>
+      <details id="layout-detail-016" data-diagram-detail="layout-detail-016"><summary>主数据库 · zeus.db</summary><p>主数据库文件，是本地核心事实源。</p></details>
+      <details id="layout-detail-017" data-diagram-detail="layout-detail-017"><summary>SQLite 旁路文件</summary><p>zeus.db-wal 与 zeus.db-shm 仅在数据库运行时出现。</p></details>
+      <details id="layout-detail-018" data-diagram-detail="layout-detail-018"><summary>zeus.config.json</summary><p>本地服务与应用配置。</p></details>
+      <details id="layout-detail-019" data-diagram-detail="layout-detail-019"><summary>密钥与 logs/</summary><p>conversation-attachment-grant.secret，以及 logs/local-server/。</p></details>
+      <details id="layout-detail-020" data-diagram-detail="layout-detail-020"><summary>任务与会话附件</summary><p>task-attachments/ 与 conversation-attachments/ 分开保存。</p></details>
+      <details id="layout-detail-021" data-diagram-detail="layout-detail-021"><summary>浏览器批注与变更集</summary><p>browser-comments/ 与 turn-change-sets/。</p></details>
+      <details id="layout-detail-022" data-diagram-detail="layout-detail-022"><summary>runtime-sessions/</summary><p>Provider 运行会话；保留清理时先进入 .retention-quarantine/ 事务目录。</p></details>
+      <details id="layout-detail-023" data-diagram-detail="layout-detail-023"><summary>命令脚本与运行记录</summary><p>command-scripts/ 与 command-runs/。</p></details>
+      <details id="layout-detail-024" data-diagram-detail="layout-detail-024"><summary>Codex 家目录 · codex/</summary><p>Codex Home 的唯一归属。</p></details>
+      <details id="layout-detail-025" data-diagram-detail="layout-detail-025"><summary>Codex 配置与规则</summary><p>Codex 用户配置包括 config.toml、AGENTS.md、rules/、prompts/ 和 skills/。</p></details>
+      <details id="layout-detail-026" data-diagram-detail="layout-detail-026"><summary>Codex 会话与插件</summary><p>sessions/、plugins/、memories/、cache/ 等由 Codex 管理。</p></details>
+      <details id="layout-detail-027" data-diagram-detail="layout-detail-027"><summary>pi/config/</summary><p>Pi 的配置目录。</p></details>
+      <details id="layout-detail-028" data-diagram-detail="layout-detail-028"><summary>pi/sessions/</summary><p>Pi 的会话目录。</p></details>
+      <details id="layout-detail-029" data-diagram-detail="layout-detail-029"><summary>Provider 动态内容</summary><p>Provider 可新增缓存、锁、临时目录；不改变 Zeus 六个一级分区。</p></details>
+      <details id="layout-detail-030" data-diagram-detail="layout-detail-030"><summary>browser/state.json</summary><p>Zeus 浏览器自身的轻量状态。</p></details>
+      <details id="layout-detail-031" data-diagram-detail="layout-detail-031"><summary>窗口状态</summary><p>窗口状态文件为 electron/main-window-state.json。</p></details>
+      <details id="layout-detail-032" data-diagram-detail="layout-detail-032"><summary>Chromium 缓存</summary><p>Cache/、Code Cache/、GPUCache/、DawnGraphiteCache/ 与 DawnWebGPUCache/。</p></details>
+      <details id="layout-detail-033" data-diagram-detail="layout-detail-033"><summary>本地与会话存储</summary><p>Cookies、DIPS、Local State、Preferences、Local Storage/、Session Storage/ 等。</p></details>
+      <details id="layout-detail-034" data-diagram-detail="layout-detail-034"><summary>zeus-browser 分区</summary><p>Partitions/zeus-browser/ 保存站点数据、缓存和 Service Worker 等。</p></details>
+      <details id="layout-detail-035" data-diagram-detail="layout-detail-035"><summary>动态运行文件</summary><p>Singleton*、Network Persistent State 等由 Chromium 在运行时生成。</p></details>
+      <details id="layout-detail-036" data-diagram-detail="layout-detail-036"><summary>execution-host/</summary><p>正式执行主机的锁、会合信息、日志和短期引导文件。</p></details>
+      <details id="layout-detail-037" data-diagram-detail="layout-detail-037"><summary>主机锁 · host.lock</summary><p>执行主机互斥锁，仅运行时存在。</p></details>
+      <details id="layout-detail-038" data-diagram-detail="layout-detail-038"><summary>会合信息 · rendezvous.json</summary><p>正式主机的连接会合信息。</p></details>
+      <details id="layout-detail-039" data-diagram-detail="layout-detail-039"><summary>主机日志 · host.log</summary><p>执行主机日志。</p></details>
+      <details id="layout-detail-040" data-diagram-detail="layout-detail-040"><summary>启动引导 · bootstrap-*</summary><p>短期启动引导 JSON，按生命周期清理。</p></details>
+      <details id="layout-detail-041" data-diagram-detail="layout-detail-041"><summary>updates/downloads/</summary><p>按版本保存下载中的更新包。</p></details>
+      <details id="layout-detail-042" data-diagram-detail="layout-detail-042"><summary>安装记录 · installer-*</summary><p>安装器引导与结果文件，属于短期运行记录。</p></details>
+      <details id="layout-detail-043" data-diagram-detail="layout-detail-043"><summary>migrations/ 与 quarantine/</summary><p>迁移凭证按事务记录；异常项进入隔离区。</p></details>
+      <details id="layout-detail-044" data-diagram-detail="layout-detail-044"><summary>database/</summary><p>数据库回滚快照的统一目录。</p></details>
+      <details id="layout-detail-045" data-diagram-detail="layout-detail-045"><summary>分层迁移快照</summary><p>zeus.db.pre-layered-时间戳-事务号.bak。</p></details>
+      <details id="layout-detail-046" data-diagram-detail="layout-detail-046"><summary>原生 SQLite 快照</summary><p>旧格式转换需要时保留 zeus.db.pre-native-sqlite.bak，后续可清理。</p></details>
+      <details id="layout-detail-047" data-diagram-detail="layout-detail-047"><summary>imports/codex/</summary><p>每次 Codex 导入按事务保存 manifest 和被覆盖的用户配置。</p></details>
+      <details id="layout-detail-048" data-diagram-detail="layout-detail-048"><summary>codex-legacy/</summary><p>旧 Codex 数据的兼容导入备份区。</p></details>
+      <details id="layout-detail-049" data-diagram-detail="layout-detail-049"><summary>legacy-roots/</summary><p>只保存旧根删除记录，不保存整份旧根。</p></details>
+      <details id="layout-detail-050" data-diagram-detail="layout-detail-050"><summary>固定目录</summary><p>完整树列出 Zeus 固定管理的所有目录和关键文件。</p></details>
+      <details id="layout-detail-051" data-diagram-detail="layout-detail-051"><summary>[运行中] 标记</summary><p>仅在 SQLite、执行主机或 Chromium 运行时存在。</p></details>
+      <details id="layout-detail-052" data-diagram-detail="layout-detail-052"><summary>[按需] 标记</summary><p>相关功能首次使用后才创建。</p></details>
+      <details id="layout-detail-053" data-diagram-detail="layout-detail-053"><summary>省略号含义</summary><p>只省略 Provider 或 Chromium 自主管理且会演进的内部项。</p></details>
+      <details id="layout-detail-054" data-diagram-detail="layout-detail-054"><summary>一级仅六项</summary><p>六个一级目录依次为 data、artifacts、providers、backups、runtime、profile。</p></details>
+      <details id="layout-detail-055" data-diagram-detail="layout-detail-055"><summary>旧根不入树</summary><p>旧根位于 .zeus 外部，成功迁移后直接删除。</p></details>
+      <details id="layout-detail-056" data-diagram-detail="layout-detail-056"><summary>删除 @zeus/desktop</summary><p>完成校验后物理删除 旧根路径为 /Users/david/Library/Application Support/@zeus/desktop。</p></details>
+      <details id="layout-detail-057" data-diagram-detail="layout-detail-057"><summary>仅留删除记录</summary><p>backups/legacy-roots/时间戳-旧根.json 记录来源、校验和删除结果。</p></details>
+      <details id="layout-detail-058" data-diagram-detail="layout-detail-058"><summary>不保留 2.37 GiB 副本</summary><p>旧根不是备份；可回滚内容已经按数据库与导入事务拆分保存。</p></details>
+      <details id="layout-detail-059" data-diagram-detail="layout-detail-059"><summary>原子切换</summary><p>新布局先准备并校验，再切换权威路径，避免半迁移状态。</p></details>
+      <details id="layout-detail-060" data-diagram-detail="layout-detail-060"><summary>逐文件校验</summary><p>副本演练已校验 4,126 个文件和 3 个目录的大小与 SHA。</p></details>
+      <details id="layout-detail-061" data-diagram-detail="layout-detail-061"><summary>不形成双根</summary><p>运行代码只解析 .zeus 新路径，不继续回读旧根。</p></details>
+      <details id="layout-detail-062" data-diagram-detail="layout-detail-062"><summary>副本演练已通过</summary><p>演练完成 46 项移动、6,846 行路径重写，并删除旧根副本。</p></details>
+      <details id="layout-detail-063" data-diagram-detail="layout-detail-063"><summary>正式本机待执行</summary><p>正式 Zeus 主机仍在运行；本机迁移和真实旧根删除必须在停机窗口执行。</p></details>
+    </div></section></div>
+  <details class="diagram-fallback" open data-fallback-for="logical-layering"><summary>无脚本阅读模式</summary><div class="fallback-region-index"><span><b>权威根</b>固定六个一级分区</span><span><b>核心数据</b>data 与 artifacts</span><span><b>状态边界</b>providers 与 profile</span><span><b>运行控制</b>runtime</span><span><b>备份与树</b>backups 与完整静态树</span><span><b>回收结果</b>旧根不再保留</span></div><section data-semantic-edge-ledger aria-label="无脚本阅读关系清单"><h2>阅读顺序关系</h2><div data-semantic-edge-grid>
+    <article data-semantic-edge data-fallback-relation-id="layout-relation-001" data-from="layout-node-001" data-to="layout-node-002" data-relation-kind="overview-read" data-primary-relation="true"><span data-semantic-edge-route><b>权威根 · ~/.zeus/</b><i aria-hidden="true"></i><b>核心数据 · data/</b></span><span data-semantic-edge-label>先看核心事实</span></article>
+    <article data-semantic-edge data-fallback-relation-id="layout-relation-002" data-from="layout-node-001" data-to="layout-node-003" data-relation-kind="overview-read" data-primary-relation="true"><span data-semantic-edge-route><b>权威根 · ~/.zeus/</b><i aria-hidden="true"></i><b>托管产物 · artifacts/</b></span><span data-semantic-edge-label>再看托管资产</span></article>
+    <article data-semantic-edge data-fallback-relation-id="layout-relation-003" data-from="layout-node-002" data-to="layout-node-004" data-relation-kind="detail-read" data-primary-relation="true"><span data-semantic-edge-route><b>核心数据 · data/</b><i aria-hidden="true"></i><b>Provider 家目录 · providers/</b></span><span data-semantic-edge-label>展开 Provider 目录</span></article>
+    <article data-semantic-edge data-fallback-relation-id="layout-relation-004" data-from="layout-node-003" data-to="layout-node-005" data-relation-kind="detail-read" data-primary-relation="true"><span data-semantic-edge-route><b>托管产物 · artifacts/</b><i aria-hidden="true"></i><b>用户状态 · profile/</b></span><span data-semantic-edge-label>展开用户状态</span></article>
+    <article data-semantic-edge data-fallback-relation-id="layout-relation-005" data-from="layout-node-004" data-to="layout-node-006" data-relation-kind="detail-read" data-primary-relation="true"><span data-semantic-edge-route><b>Provider 家目录 · providers/</b><i aria-hidden="true"></i><b>运行控制 · runtime/</b></span><span data-semantic-edge-label>汇入运行控制</span></article>
+    <article data-semantic-edge data-fallback-relation-id="layout-relation-006" data-from="layout-node-005" data-to="layout-node-006" data-relation-kind="detail-read" data-primary-relation="true"><span data-semantic-edge-route><b>用户状态 · profile/</b><i aria-hidden="true"></i><b>运行控制 · runtime/</b></span><span data-semantic-edge-label>汇入运行控制</span></article>
+    <article data-semantic-edge data-fallback-relation-id="layout-relation-007" data-from="layout-node-006" data-to="layout-node-007" data-relation-kind="migration-check" data-primary-relation="true"><span data-semantic-edge-route><b>运行控制 · runtime/</b><i aria-hidden="true"></i><b>回滚备份 · backups/</b></span><span data-semantic-edge-label>查看备份边界</span></article>
+    <article data-semantic-edge data-fallback-relation-id="layout-relation-008" data-from="layout-node-006" data-to="layout-node-008" data-relation-kind="migration-check" data-primary-relation="true"><span data-semantic-edge-route><b>运行控制 · runtime/</b><i aria-hidden="true"></i><b>完整静态树与规则</b></span><span data-semantic-edge-label>查看完整静态树</span></article>
+    <article data-semantic-edge data-fallback-relation-id="layout-relation-009" data-from="layout-node-007" data-to="layout-node-009" data-relation-kind="legacy-retirement" data-primary-relation="true"><span data-semantic-edge-route><b>回滚备份 · backups/</b><i aria-hidden="true"></i><b>旧根回收结果</b></span><span data-semantic-edge-label>确认旧根回收</span></article>
+    <article data-semantic-edge data-fallback-relation-id="layout-relation-010" data-from="layout-node-008" data-to="layout-node-009" data-relation-kind="legacy-retirement" data-primary-relation="true"><span data-semantic-edge-route><b>完整静态树与规则</b><i aria-hidden="true"></i><b>旧根回收结果</b></span><span data-semantic-edge-label>确认最终完成态</span></article>
+  </div></section></details>
+</main>
+<script data-adaptive-viewport-kernel="1">
+(() => {
+  "use strict";
+  const allowed = new Set(["fit", "0.75", "0.9", "1"]);
+  const managed = new Set();
+  const autoCentered = new WeakSet();
+  const requestedByCanvas = new WeakMap();
+  let resizeFrame = 0;
+
+  const stageFor = (canvas) => canvas.querySelector(":scope > [data-diagram-stage]");
+  const alignGuide = (canvas) => {
+    const stage = stageFor(canvas);
+    const guide = stage?.querySelector(":scope > [data-diagram-reading-guide='1']");
+    if (!guide) return;
+    const rawScale = canvas.hasAttribute("data-diagram-scaled")
+      ? Number.parseFloat(getComputedStyle(canvas).getPropertyValue("--diagram-scale") || "1")
+      : 1;
+    const scale = Number.isFinite(rawScale) && rawScale > 0 ? rawScale : 1;
+    guide.style.setProperty("--guide-scroll-offset", `${canvas.scrollLeft / scale}px`);
+  };
+  const controlsFor = (canvas, root = document) =>
+    Array.from(root.querySelectorAll("[data-diagram-controls]")).filter(
+      (controls) => controls.dataset.diagramControls === canvas.dataset.diagramId
+    );
+  const reset = (canvas) => {
+    canvas.style.removeProperty("--diagram-scale");
+    canvas.removeAttribute("data-diagram-scaled");
+  };
+  const reflect = (controls, requested, applied, message) => {
+    controls.querySelectorAll("[data-diagram-zoom-control]").forEach((button) => {
+      button.setAttribute(
+        "aria-pressed",
+        String(button.dataset.diagramZoomControl === requested && applied)
+      );
+    });
+    const status = controls.querySelector("[data-diagram-zoom-status]");
+    if (status) {
+      status.textContent = message;
+      if ("value" in status) status.value = message;
+    }
+  };
+  const revealControls = (canvas, visible, overflow, root = document) => {
+    controlsFor(canvas, root).forEach((controls) => {
+      controls.hidden = !visible;
+      controls.dataset.diagramControlsVisible = String(visible);
+      controls.dataset.diagramOverflow = String(overflow);
+    });
+  };
+  const retest = (canvas, requested = requestedByCanvas.get(canvas) || canvas.dataset.diagramZoom || "fit") => {
+    reset(canvas);
+    if (!allowed.has(requested)) requested = "fit";
+    requestedByCanvas.set(canvas, requested);
+    const stage = stageFor(canvas);
+    if (!stage || !canvas.clientWidth || !stage.scrollWidth) {
+      revealControls(canvas, false, false);
+      return false;
+    }
+    const overflow = stage.scrollWidth > canvas.clientWidth + 1;
+    const controlsVisible = true;
+    revealControls(canvas, controlsVisible, overflow);
+    const controls = controlsFor(canvas);
+    const scale = requested === "fit"
+      ? Math.min(1, canvas.clientWidth / stage.scrollWidth)
+      : Number(requested);
+    const applied = Number.isFinite(scale) && scale >= 0.75 && scale <= 1;
+    if (applied) {
+      canvas.style.setProperty("--diagram-scale", String(scale));
+      canvas.setAttribute("data-diagram-scaled", "true");
+    } else if (
+      requested === "fit"
+      && canvas.dataset.primaryDirection === "north-to-south"
+      && !autoCentered.has(canvas)
+    ) {
+      canvas.scrollLeft = Math.max(0, (stage.scrollWidth - canvas.clientWidth) / 2);
+      autoCentered.add(canvas);
+    }
+    controls.forEach((item) => {
+      const message = applied
+        ? (
+          requested === "fit"
+            ? (
+              overflow
+                ? item.dataset.diagramStatusFit || "Fit width"
+                : item.dataset.diagramStatusFits || "Fits at 100%"
+            )
+            : `${Number(requested) * 100}%`
+        )
+        : item.dataset.diagramStatusScroll || "Scroll";
+      reflect(item, requested, applied, message);
+    });
+    alignGuide(canvas);
+    return applied;
+  };
+  const apply = (canvas, requested = "fit") => {
+    if (!allowed.has(requested)) return false;
+    if (requested === "fit") autoCentered.delete(canvas);
+    return retest(canvas, requested);
+  };
+  const scheduleRetest = () => {
+    if (resizeFrame) return;
+    resizeFrame = requestAnimationFrame(() => {
+      resizeFrame = 0;
+      managed.forEach((canvas) => retest(canvas));
+    });
+  };
+  const bind = (root = document) => {
+    root.querySelectorAll("[data-diagram-controls]").forEach((controls) => {
+      const id = controls.dataset.diagramControls;
+      const canvas = id
+        ? Array.from(root.querySelectorAll("[data-diagram-id]")).find(
+            (candidate) => candidate.dataset.diagramId === id
+          )
+        : null;
+      if (!canvas || controls.dataset.diagramBound === "true") return;
+      controls.dataset.diagramBound = "true";
+      controls.hidden = true;
+      canvas.addEventListener("scroll", () => alignGuide(canvas), { passive: true });
+      controls.addEventListener("click", (event) => {
+        const button = event.target.closest("[data-diagram-zoom-control]");
+        if (!button || !controls.contains(button)) return;
+        const requested = button.dataset.diagramZoomControl;
+        apply(canvas, requested);
+      });
+    });
+  };
+  const resizeObserver = typeof ResizeObserver === "function"
+    ? new ResizeObserver(scheduleRetest)
+    : null;
+  const enhance = (root = document) => {
+    bind(root);
+    root.querySelectorAll('[data-diagram-canvas][data-diagram-contract="1"]')
+      .forEach((canvas) => {
+        try {
+          if (!managed.has(canvas)) {
+            managed.add(canvas);
+            if (resizeObserver) {
+              resizeObserver.observe(canvas);
+              const stage = stageFor(canvas);
+              if (stage) resizeObserver.observe(stage);
+            }
+          }
+          retest(canvas, canvas.dataset.diagramZoom || "fit");
+        } catch (_error) {
+          reset(canvas);
+          revealControls(canvas, false, false, root);
+        }
+      });
+  };
+  if (!resizeObserver) globalThis.addEventListener("resize", scheduleRetest, { passive: true });
+  globalThis.VibeDiagramViewport = Object.freeze({ apply, bind, enhance, reset, retest });
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", () => enhance(), { once: true });
+  } else {
+    enhance();
+  }
+})();
+</script>
+<script data-progressive-disclosure-kernel="1">
+(() => {
+  "use strict";
+  const activeByRoot = new WeakMap();
+  const returnFocusByRoot = new WeakMap();
+  const boundRoots = new WeakSet();
+  const lifecycleAuditByRoot = new WeakMap();
+  const isNativeDetails = (detail) => detail.matches("details");
+  const documentElementFor = (root) =>
+    root.nodeType === Node.DOCUMENT_NODE ? root.documentElement : root.ownerDocument.documentElement;
+  const viewFor = (root) =>
+    root.nodeType === Node.DOCUMENT_NODE
+      ? root.defaultView
+      : root.ownerDocument.defaultView;
+  const decodedHashFor = (view) => {
+    try {
+      return decodeURIComponent(view?.location.hash.slice(1) || "");
+    } catch (_error) {
+      return "";
+    }
+  };
+  const detailTriggerSelector = "[data-diagram-detail-trigger][data-detail-for]";
+  const triggersFor = (root, id) =>
+    Array.from(root.querySelectorAll(detailTriggerSelector)).filter(
+      (trigger) => trigger.dataset.detailFor === id
+    );
+  const reflect = (root, id, expanded) => {
+    triggersFor(root, id).forEach((trigger) => {
+      trigger.setAttribute("aria-expanded", String(expanded));
+    });
+  };
+  const regionFor = (detail) => detail.closest("[data-node-detail-region]");
+  const gridFor = (detail) => detail.closest("[data-node-detail-grid]");
+  const portalRegions = (root) => {
+    const documentRoot = root.nodeType === Node.DOCUMENT_NODE
+      ? root
+      : root.ownerDocument;
+    const host = documentRoot?.body;
+    if (!host) return;
+    Array.from(root.querySelectorAll("[data-node-detail-region]")).forEach((region) => {
+      if (region.parentElement === host) return;
+      region.dataset.runtimeDetailPortal = "true";
+      host.append(region);
+    });
+  };
+  const syncDocumentState = (root) => {
+    const documentElement = documentElementFor(root);
+    documentElement.setAttribute("data-progressive-disclosure-enhanced", "true");
+    documentElement.toggleAttribute(
+      "data-progressive-disclosure-open",
+      Boolean(root.querySelector("[data-node-detail-region][data-runtime-active='true']"))
+    );
+  };
+  const ensureCloseButton = (root, detail) => {
+    let button = detail.querySelector(":scope > [data-diagram-detail-close]");
+    if (button) return button;
+    const region = regionFor(detail);
+    button = detail.ownerDocument.createElement("button");
+    button.type = "button";
+    button.dataset.diagramDetailClose = "true";
+    button.setAttribute(
+      "aria-label",
+      region?.dataset.detailCloseLabel || "Close node details"
+    );
+    button.textContent = "×";
+    button.addEventListener("click", () => close(root, true));
+    detail.append(button);
+    return button;
+  };
+  const clamp = (value, minimum, maximum) =>
+    Math.min(Math.max(value, minimum), Math.max(minimum, maximum));
+  const place = (detail, trigger) => {
+    const grid = gridFor(detail);
+    const view = detail.ownerDocument.defaultView;
+    if (!grid || !view) return;
+    const margin = 12;
+    const gap = 10;
+    const viewportWidth = Math.max(0, view.innerWidth);
+    const viewportHeight = Math.max(0, view.innerHeight);
+    const width = Math.min(352, Math.max(240, viewportWidth - margin * 2));
+    grid.style.setProperty("--detail-width", `${width}px`);
+    grid.style.setProperty("--detail-left", `${margin}px`);
+    grid.style.setProperty("--detail-top", `${margin}px`);
+    const popupRect = grid.getBoundingClientRect();
+    const popupWidth = width;
+    const popupHeight = Math.min(
+      popupRect.height || 240,
+      Math.max(160, viewportHeight - margin * 2)
+    );
+    const triggerRect = trigger?.getBoundingClientRect();
+    let left = clamp((viewportWidth - popupWidth) / 2, margin, viewportWidth - popupWidth - margin);
+    let top = clamp((viewportHeight - popupHeight) / 2, margin, viewportHeight - popupHeight - margin);
+    let side = "center";
+    if (triggerRect) {
+      if (
+        viewportWidth >= 768
+        && triggerRect.right + gap + popupWidth <= viewportWidth - margin
+      ) {
+        left = triggerRect.right + gap;
+        side = "right";
+      } else if (
+        viewportWidth >= 768
+        && triggerRect.left - gap - popupWidth >= margin
+      ) {
+        left = triggerRect.left - gap - popupWidth;
+        side = "left";
+      } else {
+        left = clamp(
+          triggerRect.left + triggerRect.width / 2 - popupWidth / 2,
+          margin,
+          viewportWidth - popupWidth - margin
+        );
+        side = "center";
+      }
+      top = clamp(
+        triggerRect.top + triggerRect.height / 2 - popupHeight / 2,
+        margin,
+        viewportHeight - popupHeight - margin
+      );
+    }
+    left = clamp(left, margin, viewportWidth - popupWidth - margin);
+    top = clamp(top, margin, viewportHeight - popupHeight - margin);
+    grid.style.setProperty("--detail-left", `${Math.round(left)}px`);
+    grid.style.setProperty("--detail-top", `${Math.round(top)}px`);
+    const renderedRect = grid.getBoundingClientRect();
+    if (renderedRect.left < margin) left += margin - renderedRect.left;
+    if (renderedRect.right > viewportWidth - margin) {
+      left -= renderedRect.right - (viewportWidth - margin);
+    }
+    if (renderedRect.top < margin) top += margin - renderedRect.top;
+    if (renderedRect.bottom > viewportHeight - margin) {
+      top -= renderedRect.bottom - (viewportHeight - margin);
+    }
+    left = clamp(left, margin, viewportWidth - renderedRect.width - margin);
+    top = clamp(top, margin, viewportHeight - renderedRect.height - margin);
+    grid.style.setProperty("--detail-left", `${Math.round(left)}px`);
+    grid.style.setProperty("--detail-top", `${Math.round(top)}px`);
+    grid.dataset.popupSide = side;
+  };
+  const restoreDetail = (root, detail) => {
+    const id = detail.dataset.diagramDetail;
+    if (isNativeDetails(detail)) {
+      const wasOpen = detail.getAttribute("data-runtime-was-open") === "true";
+      detail.open = wasOpen;
+      detail.removeAttribute("data-runtime-was-open");
+    } else {
+      const wasHidden = detail.getAttribute("data-runtime-was-hidden") === "true";
+      detail.hidden = wasHidden;
+      detail.removeAttribute("data-runtime-was-hidden");
+    }
+    detail.removeAttribute("data-runtime-open");
+    detail.removeAttribute("role");
+    detail.removeAttribute("aria-modal");
+    const grid = gridFor(detail);
+    if (grid) {
+      grid.style.removeProperty("--detail-width");
+      grid.style.removeProperty("--detail-left");
+      grid.style.removeProperty("--detail-top");
+      delete grid.dataset.popupSide;
+    }
+    regionFor(detail)?.removeAttribute("data-runtime-active");
+    reflect(root, id, isNativeDetails(detail) && detail.open);
+  };
+  const close = (root = document, restoreFocus = true, clearHash = true) => {
+    const detail = activeByRoot.get(root);
+    if (!detail) return false;
+    const id = detail.dataset.diagramDetail;
+    restoreDetail(root, detail);
+    activeByRoot.delete(root);
+    syncDocumentState(root);
+    const view = viewFor(root);
+    if (
+      clearHash
+      && view
+      && decodedHashFor(view) === id
+    ) {
+      view.history.replaceState(
+        view.history.state,
+        "",
+        `${view.location.pathname}${view.location.search}`
+      );
+    }
+    if (restoreFocus) {
+      const trigger = returnFocusByRoot.get(root);
+      if (trigger?.isConnected) trigger.focus({ preventScroll: true });
+    }
+    returnFocusByRoot.delete(root);
+    return true;
+  };
+  const reset = (root = document) => {
+    close(root, false);
+    root.querySelectorAll("[data-diagram-detail][data-runtime-open]").forEach((detail) => {
+      restoreDetail(root, detail);
+    });
+    root.querySelectorAll("[data-node-detail-region][data-runtime-active]").forEach((region) => {
+      region.removeAttribute("data-runtime-active");
+    });
+    syncDocumentState(root);
+  };
+  const open = (root, id, trigger = null, updateHash = true) => {
+    const detail = root.querySelector(`[data-diagram-detail="${CSS.escape(id)}"]`);
+    if (!detail) return false;
+    const previous = activeByRoot.get(root);
+    if (previous && previous !== detail) restoreDetail(root, previous);
+    if (!detail.hasAttribute("data-runtime-open")) {
+      if (isNativeDetails(detail)) {
+        detail.setAttribute("data-runtime-was-open", String(detail.open));
+      } else {
+        detail.setAttribute("data-runtime-was-hidden", String(detail.hidden));
+      }
+    }
+    if (isNativeDetails(detail)) {
+      detail.open = true;
+    } else {
+      detail.hidden = false;
+    }
+    detail.setAttribute("data-runtime-open", "true");
+    detail.setAttribute("role", "dialog");
+    detail.setAttribute("aria-modal", "false");
+    regionFor(detail)?.setAttribute("data-runtime-active", "true");
+    activeByRoot.set(root, detail);
+    returnFocusByRoot.set(root, trigger || detail.ownerDocument.activeElement);
+    ensureCloseButton(root, detail);
+    reflect(root, id, true);
+    syncDocumentState(root);
+    place(detail, trigger);
+    const view = viewFor(root);
+    if (updateHash && view) {
+      const nextHash = `#${encodeURIComponent(id)}`;
+      if (view.location.hash !== nextHash) {
+        view.history.pushState(view.history.state, "", nextHash);
+      }
+    }
+    const focusTarget = detail.querySelector("summary") || detail;
+    focusTarget.focus({ preventScroll: true });
+    return true;
+  };
+  const bind = (root = document) => {
+    const triggers = root.querySelectorAll(detailTriggerSelector);
+    if (!triggers.length) return;
+    portalRegions(root);
+    syncDocumentState(root);
+    triggers.forEach((trigger) => {
+      const id = trigger.dataset.detailFor;
+      const detail = id
+        ? root.querySelector(`[data-diagram-detail="${CSS.escape(id)}"]`)
+        : null;
+      if (!detail || trigger.dataset.diagramDetailBound === "true") return;
+      trigger.dataset.diagramDetailBound = "true";
+      trigger.setAttribute("aria-controls", detail.id);
+      reflect(root, id, false);
+      trigger.addEventListener("click", (event) => {
+        event.preventDefault();
+        open(root, id, trigger);
+      });
+      if (isNativeDetails(detail) && detail.dataset.diagramToggleBound !== "true") {
+        detail.dataset.diagramToggleBound = "true";
+        detail.addEventListener("toggle", () => {
+          const runtimeOpen = detail.getAttribute("data-runtime-open") === "true";
+          if (runtimeOpen && !detail.open) close(root, true);
+          else reflect(root, id, detail.open);
+        });
+      }
+    });
+    if (boundRoots.has(root)) return;
+    boundRoots.add(root);
+    root.addEventListener("pointerdown", (event) => {
+      const detail = activeByRoot.get(root);
+      if (!detail) return;
+      const trigger = returnFocusByRoot.get(root);
+      if (!detail.contains(event.target) && !trigger?.contains(event.target)) {
+        close(root, false);
+      }
+    });
+    root.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && close(root, true)) event.preventDefault();
+    });
+    const view = viewFor(root);
+    const openFromHash = () => {
+      if (!view?.location.hash) return false;
+      const id = decodedHashFor(view);
+      return open(root, id, null, false);
+    };
+    view?.addEventListener("hashchange", () => {
+      if (!openFromHash()) close(root, false, false);
+    });
+    const reposition = () => {
+      const detail = activeByRoot.get(root);
+      if (detail) place(detail, returnFocusByRoot.get(root));
+    };
+    view?.addEventListener("resize", reposition);
+    view?.addEventListener("scroll", reposition, true);
+    openFromHash();
+  };
+  const auditLifecycle = (root = document) => {
+    const view = viewFor(root);
+    const documentElement = documentElementFor(root);
+    const triggers = Array.from(root.querySelectorAll(detailTriggerSelector));
+    const auditKey = `${view?.innerWidth || 0}x${view?.innerHeight || 0}:${triggers.length}`;
+    const cached = lifecycleAuditByRoot.get(root);
+    if (cached?.key === auditKey) return cached.result;
+    const issues = new Set();
+    const originalHash = view?.location.hash || "";
+    const originalFocus = root.activeElement;
+    const uniqueTriggers = new Map();
+    triggers.forEach((trigger) => {
+      const id = (trigger.dataset.detailFor || "").trim();
+      if (id && !uniqueTriggers.has(id)) uniqueTriggers.set(id, trigger);
+    });
+    const viewportPlacement = (element) => {
+      if (!element || !view) {
+        return { fits: false, trace: "missing" };
+      }
+      const rect = element.getBoundingClientRect();
+      const fits = (
+        rect.left >= -1
+        && rect.top >= -1
+        && rect.right <= view.innerWidth + 1
+        && rect.bottom <= view.innerHeight + 1
+      );
+      return {
+        fits,
+        trace: [
+          Math.round(rect.left),
+          Math.round(rect.top),
+          Math.round(rect.right),
+          Math.round(rect.bottom),
+          view.innerWidth,
+          view.innerHeight
+        ].join(",")
+      };
+    };
+    uniqueTriggers.forEach((trigger, id) => {
+      if (!open(root, id, trigger, false)) {
+        issues.add(`open:${id}`);
+        return;
+      }
+      const detail = activeByRoot.get(root);
+      const grid = gridFor(detail);
+      if (
+        detail?.dataset.diagramDetail !== id
+        || detail.getAttribute("role") !== "dialog"
+        || !regionFor(detail)?.hasAttribute("data-runtime-active")
+        || !detail.querySelector(":scope > [data-diagram-detail-close]")
+      ) {
+        issues.add(`dialog-state:${id}`);
+      }
+      place(detail, trigger);
+      const placement = viewportPlacement(grid);
+      if (!placement.fits) issues.add(`placement:${id}:${placement.trace}`);
+      if (!close(root, true, false)) issues.add(`close:${id}`);
+      if (root.activeElement !== trigger) issues.add(`focus-return:${id}`);
+    });
+    const first = uniqueTriggers.entries().next().value;
+    if (first) {
+      const [id, trigger] = first;
+      open(root, id, trigger, false);
+      root.dispatchEvent(
+        new view.KeyboardEvent("keydown", { key: "Escape", bubbles: true })
+      );
+      if (activeByRoot.has(root) || root.activeElement !== trigger) {
+        issues.add(`escape:${id}`);
+        close(root, true, false);
+      }
+      open(root, id, trigger, false);
+      const pointerTarget = root.body || documentElement;
+      pointerTarget.dispatchEvent(
+        new view.Event("pointerdown", { bubbles: true, cancelable: true })
+      );
+      if (activeByRoot.has(root)) {
+        issues.add(`outside:${id}`);
+        close(root, false, false);
+      }
+      if (view?.history) {
+        view.history.replaceState(view.history.state, "", `#${encodeURIComponent(id)}`);
+        view.dispatchEvent(new view.HashChangeEvent("hashchange"));
+        if (activeByRoot.get(root)?.dataset.diagramDetail !== id) {
+          issues.add(`deep-link:${id}`);
+        }
+        close(root, false, false);
+        view.history.replaceState(
+          view.history.state,
+          "",
+          `${view.location.pathname}${view.location.search}${originalHash}`
+        );
+      }
+    }
+    if (originalFocus?.isConnected && typeof originalFocus.focus === "function") {
+      originalFocus.focus({ preventScroll: true });
+    }
+    const ordered = Array.from(issues).sort();
+    const result = Object.freeze({
+      count: uniqueTriggers.size,
+      issues: Object.freeze(ordered),
+      passed: ordered.length === 0
+    });
+    lifecycleAuditByRoot.set(root, { key: auditKey, result });
+    documentElement.dataset.detailLifecycleAudit = result.passed ? "passed" : "failed";
+    documentElement.dataset.detailLifecycleCount = String(result.count);
+    if (ordered.length) {
+      documentElement.dataset.detailLifecycleIssues = ordered.join("|").slice(0, 2048);
+    } else {
+      delete documentElement.dataset.detailLifecycleIssues;
+    }
+    return result;
+  };
+  const enhance = (root = document) => bind(root);
+  globalThis.VibeDiagramDisclosure = Object.freeze({
+    auditLifecycle,
+    bind,
+    close,
+    enhance,
+    open,
+    reset
+  });
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", () => enhance(), { once: true });
+  } else {
+    enhance();
+  }
+})();
+</script>
+<script data-artifact-shell-preview-kernel="1">
+(() => {
+  "use strict";
+  document.documentElement.classList.add("vibe-js");
+
+  const unresolvedCanvasText = /^\s*\{\{canvas-text-\d{3}\}\}\s*$/;
+  const detailTriggerSelector = "[data-diagram-detail-trigger]";
+  const declaredRelationSelector = "[data-diagram-relation-id]";
+  const geometricCarrierSelector = [
+    "svg path[data-diagram-visible-relation-id]",
+    "svg line[data-diagram-visible-relation-id]",
+    "svg polyline[data-diagram-visible-relation-id]",
+    "svg polygon[data-diagram-visible-relation-id]"
+  ].join(", ");
+  const fallbackCarrierSelector = [
+    "[data-fallback-relation-id]",
+    '[data-visible-relation-kind="edge"][data-diagram-visible-relation-id]'
+  ].join(", ");
+  const auditRoots = "[data-diagram-canvas], [data-sequence-canvas]";
+  const epsilon = 1;
+  const permitsOverflow = (element, axis) => {
+    const owner = element.closest?.("[data-diagram-overflow-intent]");
+    const intent = owner?.dataset.diagramOverflowIntent || "";
+    return intent === "both-scroll" || intent === `${axis}-scroll`;
+  };
+
+  const localizeShell = () => {
+    const language = (document.documentElement.lang || "").toLowerCase();
+    const isChinese = language === "zh" || language.startsWith("zh-");
+    const groupLabels = {
+      relations: isChinese ? "\u5173\u7cfb\u7c7b\u578b" : "Line types",
+      evidence: isChinese ? "\u8bc1\u636e\u72b6\u6001" : "Evidence states"
+    };
+    document.querySelectorAll("[data-reading-guide-group]").forEach((group) => {
+      const label = group.querySelector(":scope > [data-reading-guide-group-title]");
+      const text = groupLabels[group.dataset.readingGuideGroup];
+      if (label && text) label.textContent = text;
+    });
+    const evidenceLabels = {
+      "evidence-observed": isChinese ? "\u7528\u6237\u63d0\u4f9b\u4e8b\u5b9e" : "Observed implementation",
+      "evidence-check": isChinese ? "\u5df2\u5b8c\u6210\u68c0\u67e5" : "Completed check",
+      "evidence-unresolved": isChinese ? "\u5c1a\u672a\u9a8c\u8bc1" : "Not yet verified"
+    };
+    document.querySelectorAll("[data-evidence-id] > b").forEach((label) => {
+      const text = evidenceLabels[label.parentElement?.dataset.evidenceId];
+      if (text) label.textContent = text;
+    });
+    document.querySelectorAll(
+      "[data-diagram-zoom-control='fit'], [data-sequence-scale='fit']"
+    ).forEach((button) => {
+      button.textContent = "\u81ea\u9002\u5e94";
+    });
+  };
+
+  const suppressUnfilledCanvasText = (root) => {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    const unresolvedNodes = [];
+    while (walker.nextNode()) {
+      if (unresolvedCanvasText.test(walker.currentNode.nodeValue || "")) {
+        unresolvedNodes.push(walker.currentNode);
+      }
+    }
+    unresolvedNodes.forEach((node) => {
+      node.nodeValue = "";
+    });
+    if (unresolvedNodes.length) {
+      root.setAttribute("data-template-preview", "unfilled");
+    }
+  };
+
+  const isVisible = (element) => {
+    const style = getComputedStyle(element);
+    const rect = element.getBoundingClientRect();
+    return (
+      style.display !== "none" &&
+      style.visibility !== "hidden" &&
+      Number.parseFloat(style.opacity || "1") > 0 &&
+      rect.width > epsilon &&
+      rect.height > epsilon
+    );
+  };
+
+  const isRendered = (element) => {
+    const style = getComputedStyle(element);
+    return (
+      style.display !== "none" &&
+      style.visibility !== "hidden" &&
+      Number.parseFloat(style.opacity || "1") > 0 &&
+      element.getClientRects().length > 0
+    );
+  };
+
+  const localNameOf = (element) => (
+    element.localName || element.tagName || ""
+  ).toLowerCase();
+
+  const overlaps = (left, right, inset = epsilon) => (
+    left.left + inset < right.right &&
+    left.right - inset > right.left &&
+    left.top + inset < right.bottom &&
+    left.bottom - inset > right.top
+  );
+
+  const containsPoint = (rect, point, inset = 2) => (
+    point.x > rect.left + inset &&
+    point.x < rect.right - inset &&
+    point.y > rect.top + inset &&
+    point.y < rect.bottom - inset
+  );
+
+  const escapesBounds = (outer, inner, tolerance = epsilon) => (
+    inner.left < outer.left - tolerance ||
+    inner.right > outer.right + tolerance ||
+    inner.top < outer.top - tolerance ||
+    inner.bottom > outer.bottom + tolerance
+  );
+
+  const pointOnBoundary = (rect, point, tolerance = 6) => {
+    const withinHorizontal = point.x >= rect.left - tolerance && point.x <= rect.right + tolerance;
+    const withinVertical = point.y >= rect.top - tolerance && point.y <= rect.bottom + tolerance;
+    return (
+      (withinHorizontal && (
+        Math.abs(point.y - rect.top) <= tolerance ||
+        Math.abs(point.y - rect.bottom) <= tolerance
+      )) ||
+      (withinVertical && (
+        Math.abs(point.x - rect.left) <= tolerance ||
+        Math.abs(point.x - rect.right) <= tolerance
+      ))
+    );
+  };
+
+  const numericAttribute = (element, name) => {
+    const value = Number.parseFloat(element.getAttribute(name) || "");
+    return Number.isFinite(value) ? value : null;
+  };
+
+  const parseColor = (value) => {
+    const normalized = (value || "").trim();
+    if (normalized === "transparent" || normalized === "none") {
+      return { red: 0, green: 0, blue: 0, alpha: 0 };
+    }
+    const hex = normalized.match(/^#([\da-f]{3,8})$/i);
+    if (hex) {
+      let payload = hex[1];
+      if (payload.length === 3 || payload.length === 4) {
+        payload = Array.from(payload, (part) => part + part).join("");
+      }
+      if (payload.length === 6 || payload.length === 8) {
+        return {
+          red: Number.parseInt(payload.slice(0, 2), 16) / 255,
+          green: Number.parseInt(payload.slice(2, 4), 16) / 255,
+          blue: Number.parseInt(payload.slice(4, 6), 16) / 255,
+          alpha: payload.length === 8
+            ? Number.parseInt(payload.slice(6, 8), 16) / 255
+            : 1
+        };
+      }
+    }
+    const match = normalized.match(
+      /rgba?\(\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)(?:\s*[,/]\s*(\d*(?:\.\d+)?))?\s*\)/
+    );
+    if (!match) return null;
+    return {
+      red: Number(match[1]) / 255,
+      green: Number(match[2]) / 255,
+      blue: Number(match[3]) / 255,
+      alpha: match[4] === undefined || match[4] === "" ? 1 : Number(match[4])
+    };
+  };
+
+  const pointOnScreen = (path, distance) => {
+    const point = path.getPointAtLength(distance);
+    const matrix = path.getScreenCTM();
+    if (!matrix) return null;
+    const transformed = new DOMPoint(point.x, point.y).matrixTransform(matrix);
+    return { x: transformed.x, y: transformed.y };
+  };
+
+  const auditDetailLinks = (canvas, addIssue) => {
+    const documentRoot = canvas.ownerDocument;
+    canvas.querySelectorAll(detailTriggerSelector).forEach((trigger) => {
+      const detailId = (trigger.dataset.detailFor || "").trim();
+      const triggerIdentity = (
+        trigger.getAttribute("aria-label") ||
+        trigger.getAttribute("data-node-primary-label") ||
+        trigger.textContent ||
+        ""
+      ).trim();
+      if (!detailId) {
+        addIssue(
+          "detail-trigger-target-empty",
+          triggerIdentity || trigger.dataset.diagramDetailTrigger || "unnamed-trigger"
+        );
+        return;
+      }
+      if (!triggerIdentity) {
+        addIssue("detail-trigger-empty", detailId);
+      }
+      const detail = documentRoot.getElementById(detailId);
+      if (!detail) {
+        addIssue("detail-target-missing", detailId);
+        return;
+      }
+      if (localNameOf(trigger) !== "a" || trigger.getAttribute("href") !== `#${detailId}`) {
+        addIssue("detail-trigger-not-native-link", detailId);
+      }
+      if (
+        localNameOf(detail) !== "details" ||
+        detail.id !== detailId ||
+        detail.dataset.diagramDetail !== detailId
+      ) {
+        addIssue("detail-target-not-native-details", detailId);
+      }
+    });
+  };
+
+  const auditNodeGeometry = (canvas, addIssue) => {
+    const nodes = Array.from(canvas.querySelectorAll("[data-diagram-node-id]")).filter(isVisible);
+    for (let leftIndex = 0; leftIndex < nodes.length; leftIndex += 1) {
+      const left = nodes[leftIndex];
+      const leftRect = left.getBoundingClientRect();
+      for (let rightIndex = leftIndex + 1; rightIndex < nodes.length; rightIndex += 1) {
+        const right = nodes[rightIndex];
+        if (left.contains(right) || right.contains(left)) continue;
+        if (overlaps(leftRect, right.getBoundingClientRect(), 2)) {
+          addIssue(
+            "node-overlap",
+            `${left.dataset.diagramNodeId || leftIndex}:${right.dataset.diagramNodeId || rightIndex}`
+          );
+        }
+      }
+    }
+
+    nodes.forEach((node) => {
+      const nodeId = node.dataset.diagramNodeId || "unnamed-node";
+      if (
+        "scrollWidth" in node &&
+        "clientWidth" in node &&
+        (
+          (
+            node.scrollWidth > node.clientWidth + epsilon &&
+            !permitsOverflow(node, "horizontal")
+          ) ||
+          (
+            node.scrollHeight > node.clientHeight + epsilon &&
+            !permitsOverflow(node, "vertical")
+          )
+        )
+      ) {
+        addIssue("node-content-overflow", nodeId);
+      }
+
+      node.querySelectorAll("*").forEach((content) => {
+        if (!isRendered(content)) return;
+        if (
+          "scrollWidth" in content &&
+          "clientWidth" in content &&
+          (
+            (
+              content.scrollWidth > content.clientWidth + epsilon &&
+              !permitsOverflow(content, "horizontal")
+            ) ||
+            (
+              content.scrollHeight > content.clientHeight + epsilon &&
+              !permitsOverflow(content, "vertical")
+            )
+          )
+        ) {
+          addIssue("node-content-overflow", nodeId);
+        }
+      });
+
+      const svgSurface = Array.from(node.children).find(
+        (child) => localNameOf(child) === "rect" && isRendered(child)
+      );
+      if (!svgSurface) return;
+      const surfaceRect = svgSurface.getBoundingClientRect();
+      node.querySelectorAll("text, foreignObject").forEach((content) => {
+        if (!isRendered(content)) return;
+        const contentRect = content.getBoundingClientRect();
+        if (escapesBounds(surfaceRect, contentRect, 2)) {
+          addIssue("node-content-overflow", nodeId);
+        }
+      });
+    });
+
+    canvas.querySelectorAll("[data-architecture-landmark-for]").forEach((landmark) => {
+      if (!isRendered(landmark)) return;
+      const nodeId = (landmark.dataset.architectureLandmarkFor || "").trim();
+      const surface = Array.from(landmark.children).find(
+        (child) => localNameOf(child) === "rect" && isRendered(child)
+      );
+      if (!surface) return;
+      const surfaceRect = surface.getBoundingClientRect();
+      landmark.querySelectorAll("text, foreignObject").forEach((content) => {
+        if (!isRendered(content)) return;
+        if (escapesBounds(surfaceRect, content.getBoundingClientRect(), 2)) {
+          addIssue("node-content-overflow", nodeId || "unnamed-landmark");
+        }
+      });
+    });
+
+    canvas.querySelectorAll("foreignObject > *").forEach((content) => {
+      if (!isRendered(content)) return;
+      if (
+        "scrollWidth" in content &&
+        "clientWidth" in content &&
+        "scrollHeight" in content &&
+        "clientHeight" in content &&
+        (
+          (
+            content.scrollWidth > content.clientWidth + epsilon &&
+            !permitsOverflow(content, "horizontal")
+          ) ||
+          (
+            content.scrollHeight > content.clientHeight + epsilon &&
+            !permitsOverflow(content, "vertical")
+          )
+        )
+      ) {
+        addIssue(
+          "node-content-overflow",
+          content.closest("[data-diagram-node-id]")?.dataset.diagramNodeId || localNameOf(content)
+        );
+      }
+    });
+
+    canvas.querySelectorAll("[data-diagram-detail-trigger='auxiliary']").forEach((trigger) => {
+      if (!isRendered(trigger)) return;
+      const svgSurface = trigger.querySelector("rect, path, polygon, circle, ellipse");
+      const surface = svgSurface || trigger;
+      const surfaceStyle = getComputedStyle(surface);
+      const color = parseColor(
+        svgSurface
+          ? surfaceStyle.fill || svgSurface.getAttribute("fill") || ""
+          : surfaceStyle.backgroundColor
+      );
+      if (!color || color.alpha < 0.85) {
+        addIssue("auxiliary-node-background-transparent", trigger.dataset.detailFor || "unknown");
+        return;
+      }
+      const luminance = color.red * 0.2126 + color.green * 0.7152 + color.blue * 0.0722;
+      if (luminance < 0.72) {
+        addIssue("auxiliary-node-background-too-dark", trigger.dataset.detailFor || "unknown");
+      }
+    });
+  };
+
+  const auditRoutes = (canvas, addIssue) => {
+    const nodeRects = new Map(
+      Array.from(canvas.querySelectorAll("[data-diagram-node-id]"))
+        .filter(isVisible)
+        .map((node) => [node.dataset.diagramNodeId, node.getBoundingClientRect()])
+    );
+    canvas.querySelectorAll("[data-architecture-landmark-for]").forEach((landmark) => {
+      if (!isRendered(landmark)) return;
+      const nodeId = (landmark.dataset.architectureLandmarkFor || "").trim();
+      if (!nodeId) return;
+      const surface = Array.from(landmark.children).find(
+        (child) => localNameOf(child) === "rect" && isRendered(child)
+      );
+      nodeRects.set(nodeId, (surface || landmark).getBoundingClientRect());
+    });
+    const labels = Array.from(canvas.querySelectorAll("svg text")).filter(isVisible);
+    const declaredRelations = Array.from(canvas.querySelectorAll(declaredRelationSelector));
+    const declaredById = new Map(
+      declaredRelations
+        .map((relation) => [(relation.dataset.diagramRelationId || "").trim(), relation])
+        .filter(([relationId]) => Boolean(relationId))
+    );
+    const declaredRelationIds = new Set(declaredById.keys());
+    const primaryStage = canvas.querySelector(":scope > [data-diagram-stage]") || canvas;
+    if (!isRendered(primaryStage)) {
+      const canvasId = canvas.dataset.diagramId || canvas.dataset.sequenceId || "";
+      const fallbackRoot = canvasId
+        ? canvas.ownerDocument.querySelector(
+          `[data-fallback-for="${CSS.escape(canvasId)}"]`
+        )
+        : null;
+      const fallbackByRelation = new Map();
+      if (fallbackRoot && isRendered(fallbackRoot)) {
+        fallbackRoot.querySelectorAll(fallbackCarrierSelector).forEach((carrier) => {
+          const relationId = (
+            carrier.dataset.fallbackRelationId ||
+            carrier.dataset.diagramVisibleRelationId ||
+            ""
+          ).trim();
+          if (!relationId) {
+            addIssue("fallback-relation-id-missing", canvasId || "unnamed-canvas");
+            return;
+          }
+          const values = fallbackByRelation.get(relationId) || [];
+          values.push(carrier);
+          fallbackByRelation.set(relationId, values);
+          if (!declaredById.has(relationId)) {
+            addIssue("fallback-relation-not-declared", relationId);
+          }
+        });
+      }
+      declaredById.forEach((declaration, relationId) => {
+        const fallbackCarriers = fallbackByRelation.get(relationId) || [];
+        if (!fallbackCarriers.length) {
+          addIssue("missing-geometric-carrier", relationId);
+          addIssue("declared-route-not-audited", relationId);
+          return;
+        }
+        if (fallbackCarriers.length !== 1) {
+          addIssue("fallback-relation-duplicate", relationId);
+          addIssue("declared-route-not-audited", relationId);
+          return;
+        }
+        const fallback = fallbackCarriers[0];
+        if (
+          (fallback.dataset.from || "") !== (declaration.dataset.from || "") ||
+          (fallback.dataset.to || "") !== (declaration.dataset.to || "") ||
+          (fallback.dataset.relationKind || "") !== (declaration.dataset.relationKind || "")
+        ) {
+          addIssue("fallback-relation-not-equivalent", relationId);
+          addIssue("declared-route-not-audited", relationId);
+        }
+      });
+      return;
+    }
+
+    const carriers = Array.from(primaryStage.querySelectorAll(geometricCarrierSelector))
+      .filter(isRendered);
+    const carriersByRelation = new Map();
+    carriers.forEach((carrier) => {
+      const relationId = (carrier.dataset.diagramVisibleRelationId || "").trim();
+      if (!relationId) return;
+      const values = carriersByRelation.get(relationId) || [];
+      values.push(carrier);
+      carriersByRelation.set(relationId, values);
+    });
+
+    declaredRelationIds.forEach((relationId) => {
+      if (!carriersByRelation.has(relationId)) {
+        addIssue("missing-geometric-carrier", relationId);
+      }
+    });
+
+    const auditedRelationIds = new Set();
+    carriers
+      .filter((carrier) => localNameOf(carrier) === "path")
+      .forEach((path) => {
+        const relationId = path.dataset.diagramVisibleRelationId || "unknown";
+        if (typeof path.getTotalLength !== "function") return;
+        let length = Number.NaN;
+        try {
+          length = path.getTotalLength();
+        } catch (_error) {
+          return;
+        }
+        auditedRelationIds.add(relationId);
+        if (!Number.isFinite(length) || length < 24) {
+          addIssue("route-too-short", relationId);
+          return;
+        }
+        if (!path.getAttribute("marker-end")) {
+          addIssue("route-arrowhead-missing", relationId);
+        }
+        const sourceId = path.dataset.from || "";
+        const targetId = path.dataset.to || "";
+        const sourceRect = nodeRects.get(sourceId);
+        const targetRect = nodeRects.get(targetId);
+        const startPoint = pointOnScreen(path, 0);
+        const endPoint = pointOnScreen(path, length);
+        if (!sourceRect || !startPoint || !pointOnBoundary(sourceRect, startPoint)) {
+          addIssue("route-source-not-anchored", relationId);
+        }
+        if (!targetRect || !endPoint || !pointOnBoundary(targetRect, endPoint)) {
+          addIssue("route-target-not-anchored", relationId);
+        }
+        const sampleCount = Math.max(8, Math.min(96, Math.ceil(length / 12)));
+        for (let index = 1; index < sampleCount; index += 1) {
+          const progress = index / sampleCount;
+          const point = pointOnScreen(path, length * progress);
+          if (!point) break;
+          for (const [nodeId, rect] of nodeRects) {
+            if (
+              (nodeId === sourceId && progress < 0.08) ||
+              (nodeId === targetId && progress > 0.92)
+            ) {
+              continue;
+            }
+            if (containsPoint(rect, point, 3)) {
+              addIssue("route-crosses-node", `${relationId}:${nodeId}`);
+            }
+          }
+          for (const label of labels) {
+            if (label.dataset.routeLabelFor === relationId) continue;
+            if (containsPoint(label.getBoundingClientRect(), point, 1)) {
+              addIssue("route-crosses-label", relationId);
+              break;
+            }
+          }
+        }
+      });
+
+    declaredRelationIds.forEach((relationId) => {
+      if (!auditedRelationIds.has(relationId)) {
+        addIssue("declared-route-not-audited", relationId);
+      }
+    });
+  };
+
+  const auditUtilization = (canvas, addIssue) => {
+    const svg = canvas.querySelector("svg[data-architecture-canvas]");
+    if (!svg?.viewBox?.baseVal) return;
+    const boundaries = Array.from(
+      svg.querySelectorAll("rect[data-architecture-boundary]")
+    ).map((rect) => ({
+      x: numericAttribute(rect, "x"),
+      y: numericAttribute(rect, "y"),
+      width: numericAttribute(rect, "width"),
+      height: numericAttribute(rect, "height")
+    })).filter((item) => Object.values(item).every((value) => value !== null));
+    if (!boundaries.length) return;
+    const viewBox = svg.viewBox.baseVal;
+    const left = Math.min(...boundaries.map((item) => item.x));
+    const top = Math.min(...boundaries.map((item) => item.y));
+    const right = Math.max(...boundaries.map((item) => item.x + item.width));
+    const bottom = Math.max(...boundaries.map((item) => item.y + item.height));
+    const ratios = {
+      top: (top - viewBox.y) / viewBox.height,
+      bottom: (viewBox.y + viewBox.height - bottom) / viewBox.height,
+      horizontal: (right - left) / viewBox.width
+    };
+    const thresholds = {
+      top: numericAttribute(canvas, "data-max-top-whitespace-ratio"),
+      bottom: numericAttribute(canvas, "data-max-bottom-whitespace-ratio"),
+      horizontal: numericAttribute(canvas, "data-min-horizontal-utilization-ratio")
+    };
+    if (thresholds.top !== null && ratios.top > thresholds.top + 0.0001) {
+      addIssue("canvas-top-whitespace", ratios.top.toFixed(4));
+    }
+    if (thresholds.bottom !== null && ratios.bottom > thresholds.bottom + 0.0001) {
+      addIssue("canvas-bottom-whitespace", ratios.bottom.toFixed(4));
+    }
+    if (thresholds.horizontal !== null && ratios.horizontal < thresholds.horizontal - 0.0001) {
+      addIssue("canvas-horizontal-underuse", ratios.horizontal.toFixed(4));
+    }
+  };
+
+  const controlsAreAvailable = (controls) => {
+    if (!controls) return false;
+    if (controls.hasAttribute("data-diagram-controls")) {
+      return controls.dataset.diagramControlsVisible === "true";
+    }
+    return !controls.hidden;
+  };
+
+  const reflectTitleControlState = (controls) => {
+    const controlRegion = controls?.closest("[data-artifact-shell-controls]");
+    if (!controlRegion) return;
+    const hasVisibleControl = Array.from(
+      controlRegion.querySelectorAll("[data-diagram-controls], [data-sequence-toolbar]")
+    ).some(controlsAreAvailable);
+    controlRegion.dataset.controlsState = hasVisibleControl ? "active" : "empty";
+  };
+
+  const localGuideFor = (canvas, canvasId) => (
+    canvas.querySelector(
+      `:scope > [data-diagram-reading-guide='1'][data-reading-guide-for="${CSS.escape(canvasId)}"]`
+    ) || canvas.querySelector(
+      `:scope > [data-diagram-stage] > [data-diagram-reading-guide='1'][data-reading-guide-for="${CSS.escape(canvasId)}"]`
+    )
+  );
+
+  const usableLineColor = (value) => {
+    const normalized = String(value || "").trim().toLowerCase();
+    return normalized && normalized !== "none" && normalized !== "transparent" &&
+      normalized !== "rgba(0, 0, 0, 0)";
+  };
+
+  const relationVisual = (relation) => {
+    const style = getComputedStyle(relation);
+    const color = [
+      style.stroke,
+      style.borderBlockStartColor,
+      style.borderTopColor,
+      style.color
+    ].find(usableLineColor) || "#0877ff";
+    const dash = String(style.strokeDasharray || "").trim().toLowerCase();
+    const borderStyle = [style.borderBlockStartStyle, style.borderTopStyle]
+      .find((value) => value && value !== "none") || "solid";
+    return {
+      color,
+      lineStyle: dash && dash !== "none" && dash !== "0px" ? "dashed" : borderStyle
+    };
+  };
+
+  const auditGuideRelations = (canvas, guide, addIssue) => {
+    const items = Array.from(
+      guide.querySelectorAll("[data-reading-guide-item]:has([data-line-swatch])")
+    );
+    if (!items.some((item) => item.hasAttribute("data-guide-relations"))) return;
+    const covered = new Set();
+    items.forEach((item, index) => {
+      const ids = (item.dataset.guideRelations || "").trim().split(/\s+/).filter(Boolean);
+      if (!ids.length) {
+        addIssue("guide-relation-binding-missing", String(index + 1));
+        return;
+      }
+      const visuals = [];
+      ids.forEach((relationId) => {
+        const relation = canvas.querySelector(
+          `[data-diagram-visible-relation-id="${CSS.escape(relationId)}"]`
+        );
+        if (!relation) {
+          addIssue("guide-relation-target-missing", relationId);
+          return;
+        }
+        covered.add(relationId);
+        visuals.push(relationVisual(relation));
+      });
+      const signatures = new Set(
+        visuals.map((visual) => `${visual.color}|${visual.lineStyle}`)
+      );
+      if (signatures.size > 1) {
+        addIssue("guide-relation-style-mismatch", String(index + 1));
+        return;
+      }
+      const visual = visuals[0];
+      if (visual) {
+        item.style.setProperty("--guide-line-color", visual.color);
+        item.style.setProperty("--guide-line-style", visual.lineStyle);
+      }
+    });
+    canvas.querySelectorAll("[data-diagram-visible-relation-id]").forEach((relation) => {
+      const relationId = relation.dataset.diagramVisibleRelationId || "";
+      if (relationId && !covered.has(relationId)) {
+        addIssue("guide-relation-uncovered", relationId);
+      }
+    });
+  };
+
+  const auditControls = (canvas, addIssue) => {
+    const controlScope = (canvas.dataset.diagramControlScope || "").trim();
+    if (controlScope === "embedded") {
+      const composition = canvas.closest("[data-diagram-composition-root]");
+      const primary = composition?.querySelector(
+        '[data-diagram-control-scope="primary"]'
+      );
+      const primaryId = primary?.dataset.diagramId || primary?.dataset.sequenceId || "";
+      const primaryControls = primaryId
+        ? document.querySelector(
+            `[data-diagram-controls="${CSS.escape(primaryId)}"], [data-sequence-controls="${CSS.escape(primaryId)}"]`
+          )
+        : null;
+      if (!composition || !primary || !primaryControls) {
+        addIssue(
+          "embedded-control-scope-invalid",
+          canvas.dataset.diagramId || canvas.dataset.sequenceId || "unnamed-canvas"
+        );
+      }
+      return;
+    }
+    const canvasId = canvas.dataset.diagramId || canvas.dataset.sequenceId || "";
+    const controls = document.querySelector(
+      `[data-diagram-controls="${CSS.escape(canvasId)}"], [data-sequence-controls="${CSS.escape(canvasId)}"]`
+    );
+    if (!controls) {
+      addIssue("zoom-controls-missing", canvasId || "unnamed-canvas");
+      return;
+    }
+    reflectTitleControlState(controls);
+    if (!controlsAreAvailable(controls)) {
+      addIssue("zoom-controls-not-visible", canvasId || "unnamed-canvas");
+    }
+    const controlRegion = controls.closest("[data-artifact-shell-controls]");
+    const titleRegion = controlRegion?.closest("[data-artifact-shell-title='1']");
+    if (!controlRegion || !titleRegion) {
+      addIssue("title-control-region-missing", canvasId || "unnamed-canvas");
+      return;
+    }
+    const scaleAttribute = controls.hasAttribute("data-sequence-toolbar")
+      ? "sequenceScale"
+      : "diagramZoomControl";
+    const scaleSelector = controls.hasAttribute("data-sequence-toolbar")
+      ? "[data-sequence-scale]"
+      : "[data-diagram-zoom-control]";
+    const scaleOrder = Array.from(controls.querySelectorAll(scaleSelector))
+      .map((button) => button.dataset[scaleAttribute]);
+    if (scaleOrder.join("|") !== "0.75|0.9|1|fit") {
+      addIssue("zoom-control-order", scaleOrder.join("|") || "empty");
+    }
+    const guide = localGuideFor(canvas, canvasId);
+    if (!guide) {
+      addIssue("local-reading-guide-missing", canvasId || "unnamed-canvas");
+      return;
+    }
+    const gridSurface = guide.closest('[data-diagram-grid-surface="1"]');
+    if (!gridSurface || !canvas.contains(gridSurface)) {
+      addIssue("local-guide-grid-surface-missing", canvasId || "unnamed-canvas");
+    } else {
+      const surfaceStyle = getComputedStyle(gridSurface);
+      const gridSizes = surfaceStyle.backgroundSize
+        .split(",")
+        .map((value) => value.trim());
+      if (
+        surfaceStyle.backgroundImage === "none" ||
+        !gridSizes.some((value) => value === "24px 24px")
+      ) {
+        addIssue("local-guide-grid-pattern-missing", canvasId || "unnamed-canvas");
+      }
+    }
+    auditGuideRelations(canvas, guide, addIssue);
+    if (isRendered(guide) && isRendered(canvas)) {
+      const guideRect = guide.getBoundingClientRect();
+      const canvasRect = canvas.getBoundingClientRect();
+      if (
+        guideRect.left < canvasRect.left - epsilon ||
+        guideRect.top < canvasRect.top - epsilon ||
+        guideRect.right > canvasRect.right + epsilon ||
+        guideRect.bottom > canvasRect.bottom + epsilon
+      ) {
+        addIssue(
+          "local-guide-outside-canvas",
+          `${Math.round(guideRect.left - canvasRect.left)}:${Math.round(guideRect.top - canvasRect.top)}`
+        );
+      }
+    }
+  };
+
+  const audit = (canvas) => {
+    const issues = new Set();
+    const addIssue = (code, target) => issues.add(`${code}:${target}`);
+    auditDetailLinks(canvas, addIssue);
+    auditNodeGeometry(canvas, addIssue);
+    auditRoutes(canvas, addIssue);
+    auditUtilization(canvas, addIssue);
+    auditControls(canvas, addIssue);
+    if (document.documentElement.scrollWidth > document.documentElement.clientWidth + epsilon) {
+      addIssue("page-horizontal-overflow", document.documentElement.scrollWidth);
+    }
+    const ordered = Array.from(issues).sort();
+    canvas.setAttribute(
+      "data-computed-layout-audit",
+      ordered.length ? "failed" : "passed"
+    );
+    canvas.setAttribute("data-computed-layout-issue-count", String(ordered.length));
+    if (ordered.length) {
+      canvas.dataset.computedLayoutIssues = ordered.join("|").slice(0, 2048);
+    } else {
+      delete canvas.dataset.computedLayoutIssues;
+    }
+    canvas.dispatchEvent(
+      new CustomEvent("vibe-diagram:layout-audit", {
+        bubbles: true,
+        detail: { issues: ordered, passed: ordered.length === 0 }
+      })
+    );
+    return ordered;
+  };
+
+  const auditAll = (root = document) => {
+    const results = new Map();
+    root.querySelectorAll(auditRoots).forEach((canvas) => {
+      results.set(canvas.dataset.diagramId || canvas.dataset.sequenceId || "canvas", audit(canvas));
+    });
+    const disclosure = globalThis.VibeDiagramDisclosure?.auditLifecycle?.(root);
+    const disclosureIssues = Array.isArray(disclosure?.issues)
+      ? disclosure.issues
+      : [];
+    const failures = Array.from(results.values()).reduce(
+      (total, issues) => total + issues.length,
+      0
+    ) + disclosureIssues.length;
+    document.documentElement.dataset.computedLayoutAudit = failures ? "failed" : "passed";
+    document.documentElement.dataset.computedLayoutIssueCount = String(failures);
+    if (disclosureIssues.length) {
+      document.documentElement.dataset.computedLayoutIssues =
+        disclosureIssues.map((issue) => `detail-lifecycle:${issue}`).join("|").slice(0, 2048);
+    } else {
+      delete document.documentElement.dataset.computedLayoutIssues;
+    }
+    return results;
+  };
+
+  const reflectDetailState = (detail) => {
+    if (!detail?.id) return;
+    document.querySelectorAll(
+      `${detailTriggerSelector}[data-detail-for="${CSS.escape(detail.id)}"]`
+    ).forEach((trigger) => {
+      trigger.setAttribute("aria-expanded", detail.open ? "true" : "false");
+    });
+  };
+
+  const openDetailTarget = (trigger, { focus = true } = {}) => {
+    const detailId = (trigger?.dataset.detailFor || "").trim();
+    const detail = detailId ? document.getElementById(detailId) : null;
+    if (
+      !detail ||
+      localNameOf(detail) !== "details" ||
+      detail.dataset.diagramDetail !== detailId
+    ) {
+      return false;
+    }
+    detail.open = true;
+    reflectDetailState(detail);
+    if (focus) {
+      requestAnimationFrame(() => {
+        detail.querySelector("summary")?.focus({ preventScroll: true });
+      });
+    }
+    return true;
+  };
+
+  const enhanceDetailLinks = () => {
+    document.querySelectorAll("details[data-diagram-detail]").forEach((detail) => {
+      reflectDetailState(detail);
+      detail.addEventListener("toggle", () => reflectDetailState(detail));
+    });
+    document.addEventListener("click", (event) => {
+      if (
+        event.defaultPrevented ||
+        event.button !== 0 ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.shiftKey ||
+        event.altKey
+      ) {
+        return;
+      }
+      const trigger = event.target.closest?.(detailTriggerSelector);
+      if (trigger) openDetailTarget(trigger);
+    }, { capture: true });
+    const openHashTarget = () => {
+      const detailId = decodeURIComponent(location.hash.slice(1));
+      if (!detailId) return;
+      const trigger = document.querySelector(
+        `${detailTriggerSelector}[data-detail-for="${CSS.escape(detailId)}"]`
+      );
+      if (trigger) openDetailTarget(trigger, { focus: false });
+    };
+    addEventListener("hashchange", openHashTarget);
+    openHashTarget();
+  };
+
+  let auditQueued = false;
+  const scheduleAudit = () => {
+    if (auditQueued) return;
+    auditQueued = true;
+    requestAnimationFrame(() => {
+      auditQueued = false;
+      auditAll();
+    });
+  };
+
+  const enhance = () => {
+    localizeShell();
+    document
+      .querySelectorAll(auditRoots)
+      .forEach(suppressUnfilledCanvasText);
+    if (!globalThis.VibeDiagramDisclosure) enhanceDetailLinks();
+    globalThis.VibeDiagramQuality = Object.freeze({ audit, auditAll, scheduleAudit });
+    scheduleAudit();
+    document.fonts?.ready.then(scheduleAudit, scheduleAudit);
+    if ("ResizeObserver" in globalThis) {
+      const observer = new ResizeObserver(scheduleAudit);
+      document.querySelectorAll(
+        `${auditRoots}, [data-diagram-reading-guide="1"], [data-artifact-shell-controls]`
+      ).forEach(
+        (element) => observer.observe(element)
+      );
+    } else {
+      addEventListener("resize", scheduleAudit);
+    }
+    if ("MutationObserver" in globalThis) {
+      const observer = new MutationObserver(scheduleAudit);
+      document.querySelectorAll("[data-diagram-controls], [data-sequence-toolbar]").forEach(
+        (controls) => observer.observe(controls, {
+          attributes: true,
+          attributeFilter: ["hidden", "data-diagram-controls-visible"]
+        })
+      );
+    }
+  };
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", enhance, { once: true });
+  } else {
+    enhance();
+  }
+})();
+</script>
+</body>
+</html>
+
+

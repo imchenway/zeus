@@ -343,7 +343,6 @@ export interface CodexTaskPushModelCapability {
   speedLabel?: 'standard' | 'high_speed' | 'flash' | 'turbo';
   tools?: 'supported' | 'unsupported' | 'unverified';
   imageInput?: 'supported' | 'unsupported' | 'unverified';
-  attachmentInput: 'supported' | 'unsupported' | 'unverified';
   supportedReasoningEfforts: string[];
   defaultReasoningEffort?: string | null;
   serviceTiers: Array<{ id: string; name: string; description: string }>;

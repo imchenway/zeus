@@ -12386,11 +12386,6 @@ a {
   opacity: 0.66;
 }
 
-.macos-ai-app .task-model-push-parent-resource-warning {
-  color: var(--zeus-danger-text);
-  line-height: 1.45;
-}
-
 .macos-ai-app .task-model-push-canonical pre {
   max-block-size: 180px;
   overflow: auto;

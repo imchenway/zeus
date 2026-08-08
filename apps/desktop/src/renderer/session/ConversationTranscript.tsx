@@ -2,7 +2,7 @@ import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 
 import { isOperationalActivityItem, SessionActivityGroup, SessionTurnDuration } from './SessionActivity.js';
 import { itemRole, type SessionUiLanguage, ThreadItemView, transcriptItemText } from './ThreadItemView.js';
 import { PlanSummary } from './PlanSummary.js';
-import type { ConversationResource, NativePendingRequest, NativeSessionItemBuffer, NativeSessionState, NativeTurnFailureSnapshot, TurnChangeSet, TurnChangeSetOperationResult } from './sessionTypes.js';
+import type { ConversationResource, ConversationResourcePreview, NativePendingRequest, NativeSessionItemBuffer, NativeSessionState, NativeTurnFailureSnapshot, TurnChangeSet, TurnChangeSetOperationResult } from './sessionTypes.js';
 import type { ConversationFileLocation, ConversationOpenTarget } from '@zeus/shared';
 import { useThreadScrollController } from './useThreadScrollController.js';
 import { TurnChangeCard } from './TurnChanges.js';
@@ -18,6 +18,7 @@ export interface ConversationTranscriptProps {
   openPlanItemId?: string | null;
   onOpenPlan?: (item: NativeSessionItemBuffer) => void;
   onOpenResource?: (resource: ConversationResource, target: ConversationOpenTarget, location?: ConversationFileLocation) => void | Promise<void>;
+  onLoadResourcePreview?: (resource: ConversationResource) => Promise<ConversationResourcePreview>;
   onReviewTurnChanges?: (changeSet: TurnChangeSet, fileId?: string) => void;
   onOperateTurnChangeSet?: (changeSet: TurnChangeSet, action: 'undo' | 'reapply') => Promise<TurnChangeSetOperationResult>;
 }
@@ -170,6 +171,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
                         onEdit={props.onEditUserItem}
                         onRetry={props.onRetryItem}
                         onOpenResource={props.onOpenResource}
+                        onLoadResourcePreview={props.onLoadResourcePreview}
                       />
                     )
                   ) : (

@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { chmod, lstat, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { createLegacyFlatZeusDataLayout, createZeusDataLayout } from '@zeus/local-server';
 
 export const executionHostProtocolVersion = 1;
 export const executionHostRendezvousFileName = 'rendezvous.json';
@@ -112,7 +114,9 @@ export interface ExecutionHostControlClient {
 }
 
 export function executionHostDirectory(userDataPath: string): string {
-  return join(userDataPath, 'execution-host');
+  return existsSync(join(userDataPath, 'data'))
+    ? createZeusDataLayout(userDataPath).executionHost
+    : createLegacyFlatZeusDataLayout(userDataPath).executionHost;
 }
 
 export function executionHostRendezvousPath(userDataPath: string): string {
