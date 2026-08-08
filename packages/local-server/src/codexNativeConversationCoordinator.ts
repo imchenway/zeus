@@ -154,6 +154,9 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   let queueDrainPromise: Promise<void> | null = null;
   let handoffPromise: Promise<void> | null = null;
   let finalizationPromise: Promise<void> | null = null;
+  const readableDeltaCoalesceMs = 40;
+  const pendingReadableDeltas = new Map<string, { latest: CodexAppServerEvent; events: CodexAppServerEvent[] }>();
+  let readableDeltaFlushTimer: ReturnType<typeof setTimeout> | null = null;
   let scheduledPersistTimer: ReturnType<typeof setTimeout> | null = null;
   let scheduledPersistDeadlineTimer: ReturnType<typeof setTimeout> | null = null;
   let scheduledPersistDirty = false;
@@ -164,9 +167,70 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       void handleDynamicBrowserToolCall(event);
       return;
     }
+    return enqueueProviderEvent(event);
+  });
+
+  function enqueueProviderEvent(event: CodexAppServerEvent): Promise<void> {
+    if (isReadableItemTextDeltaEvent(event.method) && readableDeltaKey(event) && typeof readableDeltaText(event) === 'string') {
+      if (isKnownProviderEvent(event)) return providerEventChain;
+      const key = readableDeltaKey(event)!;
+      const previous = pendingReadableDeltas.get(key);
+      if (previous) {
+        previous.events.push(event);
+        previous.latest = event;
+        pendingReadableDeltas.delete(key);
+        pendingReadableDeltas.set(key, previous);
+      } else {
+        pendingReadableDeltas.set(key, { latest: event, events: [event] });
+      }
+      scheduleReadableDeltaFlush();
+      return providerEventChain;
+    }
+    flushReadableDeltas();
     providerEventChain = providerEventChain.then(() => handleProviderEvent(event)).catch((error) => safelyHandleProviderEventError(event, error));
     return providerEventChain;
-  });
+  }
+
+  function scheduleReadableDeltaFlush(): void {
+    if (readableDeltaFlushTimer) return;
+    readableDeltaFlushTimer = setTimeout(() => {
+      readableDeltaFlushTimer = null;
+      flushReadableDeltas();
+    }, readableDeltaCoalesceMs);
+  }
+
+  function flushReadableDeltas(): void {
+    if (readableDeltaFlushTimer) clearTimeout(readableDeltaFlushTimer);
+    readableDeltaFlushTimer = null;
+    if (pendingReadableDeltas.size === 0) return;
+    const batches = [...pendingReadableDeltas.values()];
+    pendingReadableDeltas.clear();
+    providerEventChain = providerEventChain
+      .then(async () => {
+        for (const batch of batches) {
+          const latest = batch.latest;
+          const latestParams = isRecord(latest.params) ? latest.params : {};
+          const mergedEvent: CodexAppServerEvent = {
+            ...latest,
+            params: {
+              ...latestParams,
+              delta: batch.events.map((event) => readableDeltaText(event) ?? '').join(''),
+            },
+          };
+          try {
+            await handleProviderEvent(mergedEvent, batch.events);
+          } catch (error) {
+            await safelyHandleProviderEventError(mergedEvent, error, batch.events);
+          }
+        }
+      })
+      .catch(() => undefined);
+  }
+
+  function isKnownProviderEvent(event: CodexAppServerEvent): boolean {
+    const identity = eventIdentity(event);
+    return hotReceiptGenerationId === event.generationId && hotReceiptIdentities.has(identity) ? true : receipts.has(identity);
+  }
 
   function assertOpen(): void {
     if (closing || closed) throw coordinatorError('ZEUS_CODEX_COORDINATOR_CLOSED', 'Codex native conversation coordinator is closed.');
@@ -2204,7 +2268,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     return recoveryError;
   }
 
-  async function handleProviderEvent(event: CodexAppServerEvent): Promise<void> {
+  async function handleProviderEvent(event: CodexAppServerEvent, receiptEvents: readonly CodexAppServerEvent[] = [event]): Promise<void> {
     if (closed) return;
     const identity = eventIdentity(event);
     if (hasProcessedProviderEvent(event, identity)) return;
@@ -2914,9 +2978,12 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       }
     }
 
-    receipts.record(providerEventReceipt(event, identity));
-    maintainProviderReceiptGenerations(event.generationId);
-    rememberProcessedProviderEvent(event, identity);
+    for (const receiptEvent of receiptEvents) {
+      const receiptIdentity = eventIdentity(receiptEvent);
+      receipts.record(providerEventReceipt(receiptEvent, receiptIdentity));
+      maintainProviderReceiptGenerations(receiptEvent.generationId);
+      rememberProcessedProviderEvent(receiptEvent, receiptIdentity);
+    }
     if (requiresImmediatePersist(event, createdPlanImplementationRequest)) {
       scheduledPersistDirty = true;
       await flushScheduledPersist();
@@ -2961,7 +3028,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     });
   }
 
-  async function safelyHandleProviderEventError(event: CodexAppServerEvent, error: unknown): Promise<void> {
+  async function safelyHandleProviderEventError(event: CodexAppServerEvent, error: unknown, receiptEvents: readonly CodexAppServerEvent[] = [event]): Promise<void> {
     try {
       const params = isRecord(event.params) ? event.params : {};
       const threadId = typeof params.threadId === 'string' ? params.threadId : null;
@@ -2998,10 +3065,12 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
           });
         }
       }
-      const identity = eventIdentity(event);
-      receipts.record(providerEventReceipt(event, identity));
-      maintainProviderReceiptGenerations(event.generationId);
-      rememberProcessedProviderEvent(event, identity);
+      for (const receiptEvent of receiptEvents) {
+        const identity = eventIdentity(receiptEvent);
+        receipts.record(providerEventReceipt(receiptEvent, identity));
+        maintainProviderReceiptGenerations(receiptEvent.generationId);
+        rememberProcessedProviderEvent(receiptEvent, identity);
+      }
       await persist();
       options.broadcast(conversation ? 'conversation.native.error' : 'codex.native.error', errorEntry);
     } catch (diagnosticError) {
@@ -3051,6 +3120,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     closing = true;
     for (const requestId of [...autoResolutionTimers.keys()]) clearAutoResolutionTimer(requestId);
     unsubscribe();
+    flushReadableDeltas();
     // unsubscribe 后冻结已接收链；这些 handler 仍可完整持久化和广播，closed 只能在 drain 之后设置。
     const acceptedProviderEventChain = providerEventChain;
     const activeQueueDrain = queueDrainPromise;
@@ -3437,6 +3507,20 @@ function providerItemIdFrom(params: Record<string, unknown>): string | null {
 
 function isReadableItemTextDeltaEvent(method: string): boolean {
   return method === 'item/agentMessage/delta' || method === 'item/plan/delta';
+}
+
+function readableDeltaKey(event: CodexAppServerEvent): string | null {
+  if (!isReadableItemTextDeltaEvent(event.method) || !isRecord(event.params)) return null;
+  const threadId = typeof event.params.threadId === 'string' ? event.params.threadId : null;
+  const turnId = providerTurnIdFrom(event.params);
+  const itemId = providerItemIdFrom(event.params);
+  if (!threadId || !turnId || !itemId) return null;
+  return [event.generationId, threadId, turnId, itemId, event.method].join(':');
+}
+
+function readableDeltaText(event: CodexAppServerEvent): string | null {
+  if (!isRecord(event.params) || typeof event.params.delta !== 'string') return null;
+  return event.params.delta;
 }
 
 function itemTypeFromMethod(method: string): ConversationItemType {

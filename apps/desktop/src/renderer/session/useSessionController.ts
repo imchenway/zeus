@@ -26,6 +26,8 @@ import {
 } from './sessionTypes.js';
 
 export const reconnectBackoffMs = [250, 500, 1_000, 2_000, 5_000] as const;
+// 同一个会话项的短增量只在一小段窗口内合并，避免把 React 更新频率绑定到 provider 的字符频率。
+const RENDER_DELTA_COALESCE_MS = 40;
 
 export function reconnectDelayMs(attempt: number): number {
   return reconnectBackoffMs[Math.min(Math.max(0, Math.floor(attempt) - 1), reconnectBackoffMs.length - 1)]!;
@@ -231,6 +233,8 @@ export function createSessionController(options: CreateSessionControllerOptions)
   let requestRefreshAgain = false;
   const resolvedRequestIds = new Set<string>();
   let targetedHydrationBuffer: NativeConversationEvent[] | null = null;
+  const pendingRenderDeltas = new Map<string, NativeConversationEvent>();
+  let renderDeltaTimer: ReturnType<typeof setTimeout> | null = null;
   let activeOperation: { key: string; promise: Promise<unknown> } | null = null;
   const listeners = new Set<() => void>();
   const createId = options.createId ?? defaultCreateId;
@@ -350,11 +354,40 @@ export function createSessionController(options: CreateSessionControllerOptions)
     }
   }
 
+  function flushRenderDeltas(): void {
+    if (renderDeltaTimer) clearTimeout(renderDeltaTimer);
+    renderDeltaTimer = null;
+    if (pendingRenderDeltas.size === 0) return;
+    const events = [...pendingRenderDeltas.values()];
+    pendingRenderDeltas.clear();
+    for (const event of events) applyEventImmediately(event);
+  }
+
+  function queueRenderDelta(event: NativeConversationEvent): void {
+    if (!isEventForController(event)) return;
+    const key = renderDeltaKey(event);
+    if (!key) {
+      flushRenderDeltas();
+      applyEventImmediately(event);
+      return;
+    }
+    // Map 的删除再写入保留“最后一次到达”的顺序，避免合并后出现跨 item 的旧顺序。
+    pendingRenderDeltas.delete(key);
+    pendingRenderDeltas.set(key, event);
+    if (!renderDeltaTimer) renderDeltaTimer = setTimeout(flushRenderDeltas, RENDER_DELTA_COALESCE_MS);
+  }
+
   function applyEvent(event: NativeConversationEvent): void {
     if (targetedHydrationBuffer) {
       targetedHydrationBuffer.push(event);
       return;
     }
+    if (event.type === 'conversation.item.delta') {
+      queueRenderDelta(event);
+      return;
+    }
+    // 完成态、请求态和 turn 边界必须先看到之前所有增量；完成事件本身仍立即到达 reducer。
+    flushRenderDeltas();
     applyEventImmediately(event);
   }
 
@@ -495,7 +528,8 @@ export function createSessionController(options: CreateSessionControllerOptions)
       }
     } finally {
       if (targetedHydrationBuffer === buffered) targetedHydrationBuffer = null;
-      for (const event of buffered) applyEventImmediately(event);
+      for (const event of buffered) applyEvent(event);
+      flushRenderDeltas();
     }
   }
 
@@ -644,6 +678,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
 
   async function hydrate(reconnecting: boolean, canRefreshSocketConfig: boolean): Promise<void> {
     if (disposed) return;
+    flushRenderDeltas();
     const token = ++connectionToken;
     socketLifecycle?.markInactive();
     socket?.close();
@@ -759,6 +794,9 @@ export function createSessionController(options: CreateSessionControllerOptions)
     dispose() {
       if (disposed) return;
       disposed = true;
+      if (renderDeltaTimer) clearTimeout(renderDeltaTimer);
+      renderDeltaTimer = null;
+      pendingRenderDeltas.clear();
       cancelReconnectLoop();
       connectionToken += 1;
       socketLifecycle?.markInactive();
@@ -1210,6 +1248,13 @@ function mergeAttachments(left: NativeConversationAttachment[], right: NativeCon
 function eventRequestId(event: NativeConversationEvent): string | null {
   const requestId = event.payload.requestId;
   return typeof requestId === 'string' && requestId.trim() ? requestId : null;
+}
+
+function renderDeltaKey(event: NativeConversationEvent): string | null {
+  if (event.type !== 'conversation.item.delta') return null;
+  const { conversationId, generationId, threadId, turnId, itemId } = event.payload;
+  if (!threadId || !turnId || !itemId) return null;
+  return [conversationId, generationId, threadId, turnId, itemId].join(':');
 }
 
 function snapshotRequiresRecovery(snapshot: NativeConversationSnapshot): boolean {

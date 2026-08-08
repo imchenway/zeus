@@ -1932,6 +1932,10 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   const eventSubscribers = new Set<ZeusRealtimeSocket>();
   const nativeLocalEventGenerationId = `zeus-local-${randomUUID()}`;
   let nativeLocalEventSequence = 0;
+  // provider 可能以字符级频率发送增量；只在本地推送层合并同一 item，完成态仍是强制边界。
+  const nativeDeltaCoalesceMs = 40;
+  const pendingNativeDeltaEvents = new Map<string, { type: string; payload: Record<string, unknown> }>();
+  let nativeDeltaFlushTimer: ReturnType<typeof setTimeout> | null = null;
   const nativeIdempotentInFlight = new Map<string, { requestHash: string; promise: Promise<{ statusCode: number; body: unknown }> }>();
   const telegramConfirmationTtlMs = 10 * 60 * 1000;
   const gitConfirmationTtlMs = 10 * 60 * 1000;
@@ -2453,6 +2457,29 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     return event;
   }
 
+  function flushPendingNativeDeltaEvents(): void {
+    if (nativeDeltaFlushTimer) clearTimeout(nativeDeltaFlushTimer);
+    nativeDeltaFlushTimer = null;
+    if (pendingNativeDeltaEvents.size === 0) return;
+    const pending = [...pendingNativeDeltaEvents.values()];
+    pendingNativeDeltaEvents.clear();
+    for (const event of pending) publishRealtimeEvent(event.type, event.payload);
+  }
+
+  function scheduleNativeDeltaFlush(): void {
+    if (nativeDeltaFlushTimer) return;
+    nativeDeltaFlushTimer = setTimeout(flushPendingNativeDeltaEvents, nativeDeltaCoalesceMs);
+  }
+
+  function nativeDeltaEventKey(conversationId: string, payload: Record<string, unknown>): string | null {
+    const threadId = typeof payload.threadId === 'string' ? payload.threadId : typeof payload.providerThreadId === 'string' ? payload.providerThreadId : null;
+    const turnId = typeof payload.turnId === 'string' ? payload.turnId : typeof payload.providerTurnId === 'string' ? payload.providerTurnId : null;
+    const itemId = typeof payload.itemId === 'string' ? payload.itemId : typeof payload.providerItemId === 'string' ? payload.providerItemId : null;
+    const generationId = typeof payload.generationId === 'string' ? payload.generationId : nativeLocalEventGenerationId;
+    if (!threadId || !turnId || !itemId) return null;
+    return [conversationId, generationId, threadId, turnId, itemId].join(':');
+  }
+
   function publishNativeConversationEvent(type: string, payload: Record<string, unknown>): void {
     const mappedType =
       type === 'conversation.item.updated'
@@ -2476,12 +2503,13 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         : mappedType === 'conversation.rateLimits.changed' || mappedType === 'conversation.mcpStartup.changed'
           ? conversations.listNativeBound('codex').map((conversation) => conversation.id)
           : [];
+    if (mappedType !== 'conversation.item.delta') flushPendingNativeDeltaEvents();
     for (const conversationId of new Set(conversationIds)) {
       const conversation = conversations.getById(conversationId);
       if (!conversation || conversation.transportKind !== 'codex_native') continue;
       const generationId = typeof payload.generationId === 'string' ? payload.generationId : nativeLocalEventGenerationId;
       const sequence = typeof payload.sequence === 'number' ? payload.sequence : ++nativeLocalEventSequence;
-      publishRealtimeEvent(mappedType, {
+      const eventPayload = {
         ...payload,
         ...(mappedType === 'conversation.queue.changed' ? { queue: toNativeQueueApiSnapshot(conversation) } : {}),
         ...(nativeConversationAttentionEventTypes.has(mappedType) ? { conversationAttentionState: buildProjectConversationAttentionByProject([conversation.projectId])[conversation.projectId] ?? 'idle' } : {}),
@@ -2498,7 +2526,19 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         ...(typeof payload.itemId === 'string' ? { itemId: payload.itemId } : typeof payload.providerItemId === 'string' ? { itemId: payload.providerItemId } : {}),
         generationId,
         sequence,
-      });
+      } satisfies Record<string, unknown>;
+      if (mappedType === 'conversation.item.delta') {
+        const key = nativeDeltaEventKey(conversationId, eventPayload);
+        if (key) {
+          // 删除后再写入，保持跨 item 增量的最后到达顺序；同一 item 只保留最新累计文本。
+          pendingNativeDeltaEvents.delete(key);
+          pendingNativeDeltaEvents.set(key, { type: mappedType, payload: eventPayload });
+          scheduleNativeDeltaFlush();
+          continue;
+        }
+        flushPendingNativeDeltaEvents();
+      }
+      publishRealtimeEvent(mappedType, eventPayload);
     }
   }
 
@@ -9529,6 +9569,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
 
   closeLocalServerResources = async () => {
     const cleanupErrors: unknown[] = [];
+    flushPendingNativeDeltaEvents();
     commandCenter.close();
     if (telegramPollingTimer) {
       clearInterval(telegramPollingTimer);

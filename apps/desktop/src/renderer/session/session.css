@@ -974,6 +974,54 @@
   overflow-wrap: anywhere;
 }
 
+/* 流式内容按完整块呈现；表格和代码块未闭合时先给出轻量骨架，避免逐字符重排整棵 Markdown 树。 */
+.session-codex-parity-v1 .session-streaming-markdown {
+  display: grid;
+  gap: 12px;
+  inline-size: min(var(--session-markdown-max), 100%);
+}
+
+.session-codex-parity-v1 .session-streaming-markdown > .session-markdown {
+  min-inline-size: 0;
+}
+
+.session-codex-parity-v1 .session-streaming-markdown-placeholder {
+  display: grid;
+  gap: 7px;
+  inline-size: min(31rem, 92%);
+  padding-block: 3px 8px;
+}
+
+.session-codex-parity-v1 .session-streaming-markdown-placeholder span {
+  background: linear-gradient(90deg, var(--session-line-soft) 0%, color-mix(in srgb, var(--session-line-soft) 42%, var(--session-canvas)) 46%, var(--session-line-soft) 72%);
+  background-size: 220% 100%;
+  block-size: 9px;
+  border-radius: 999px;
+  inline-size: 82%;
+  animation: session-streaming-skeleton 1200ms ease-in-out infinite;
+}
+
+.session-codex-parity-v1 .session-streaming-markdown-placeholder span:nth-child(2) {
+  inline-size: 94%;
+}
+
+.session-codex-parity-v1 .session-streaming-markdown-placeholder span:nth-child(3) {
+  inline-size: 63%;
+}
+
+.session-codex-parity-v1 .session-streaming-markdown-placeholder.is-table {
+  border: 1px solid var(--session-line-soft);
+  border-radius: 8px;
+  padding: 11px 12px;
+}
+
+.session-codex-parity-v1 .session-streaming-markdown-placeholder.is-fence {
+  background: var(--session-control);
+  border: 1px solid var(--session-line-soft);
+  border-radius: 8px;
+  padding: 13px 14px;
+}
+
 .session-codex-parity-v1 .session-thread-item-user .session-markdown {
   inline-size: 100%;
 }
@@ -3040,6 +3088,15 @@
   from {
     opacity: 0;
     transform: translateY(3px);
+  }
+}
+
+@keyframes session-streaming-skeleton {
+  from {
+    background-position: 120% 0;
+  }
+  to {
+    background-position: -120% 0;
   }
 }
 
