@@ -78,6 +78,7 @@ contextBridge.exposeInMainWorld('zeus', {
   exportSettingsSnapshotToFile: (snapshot: unknown) => ipcRenderer.invoke('zeus:export-settings-snapshot', snapshot),
   importSettingsSnapshotFromFile: () => ipcRenderer.invoke('zeus:import-settings-snapshot'),
   importBusinessDataSnapshotFromFile: () => ipcRenderer.invoke('zeus:import-business-data-snapshot'),
+  clearNetworkCache: () => ipcRenderer.invoke('zeus:clear-network-cache'),
   exportPatchToFile: (patch: unknown) => ipcRenderer.invoke('zeus:export-patch', patch),
   openGraphSource: (source: unknown) => ipcRenderer.invoke('zeus:open-graph-source', source),
   openExternalHttpsUrl: (url: string) => ipcRenderer.invoke('zeus:open-external-https-url', url),

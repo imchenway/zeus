@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { chmod, lstat, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
+import { createLegacyFlatZeusDataLayout, createZeusDataLayout } from '@zeus/local-server';
 
 export const releaseInstallerProtocolVersion = 1;
 
@@ -27,7 +29,9 @@ export interface ReleaseInstallerResult {
 }
 
 export function releaseUpdateDirectory(userDataPath: string): string {
-  return join(userDataPath, 'updates');
+  return existsSync(join(userDataPath, 'data'))
+    ? createZeusDataLayout(userDataPath).releaseUpdates
+    : createLegacyFlatZeusDataLayout(userDataPath).releaseUpdates;
 }
 
 export function releaseInstallerResultPath(userDataPath: string, transactionId: string): string {

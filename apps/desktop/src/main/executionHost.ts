@@ -8,6 +8,7 @@ import {
   type ExecutionHostBrowserBridgeRegistration,
   type ExecutionHostControlStatus,
   type ExecutionHostLeaseStatus,
+  executionHostDirectory,
   executionHostLockPath,
   executionHostProtocolVersion,
   type ExecutionHostRendezvous,
@@ -38,7 +39,7 @@ async function runExecutionHost(): Promise<void> {
 
   const lockPath = executionHostLockPath(bootstrap.userDataPath);
   const lock = await acquireExecutionHostLock(lockPath);
-  const logPath = join(bootstrap.userDataPath, 'execution-host', 'host.log');
+  const logPath = join(executionHostDirectory(bootstrap.userDataPath), 'host.log');
   const instanceId = bootstrap.requestedInstanceId;
   const startedAt = new Date().toISOString();
   const apiToken = randomBytes(32).toString('base64url');

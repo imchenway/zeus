@@ -13,7 +13,7 @@ import {
 import {randomUUID} from 'node:crypto';
 import {readFileSync} from 'node:fs';
 import {mkdir, readFile, realpath, rename, rm, stat, unlink, writeFile} from 'node:fs/promises';
-import {basename, isAbsolute, join, relative, resolve} from 'node:path';
+import {basename, dirname, isAbsolute, join, relative, resolve} from 'node:path';
 import type {
   ZeusBrowserApprovalDecision,
   ZeusBrowserApprovalRequest,
@@ -68,7 +68,7 @@ interface BrowserDownload {
 }
 
 interface CreateBrowserHostOptions {
-  userDataPath: string;
+  statePath: string;
   preloadPath: string;
   attachmentRoot: string;
   defaultDownloadDirectory: string;
@@ -155,7 +155,7 @@ export class BrowserHost implements BrowserAutomationPort {
 
   constructor(private readonly options: CreateBrowserHostOptions) {
     this.now = options.now ?? (() => new Date().toISOString());
-    this.statePath = join(options.userDataPath, 'browser-state.json');
+    this.statePath = resolve(options.statePath);
     this.attachmentRoot = resolve(options.attachmentRoot);
     this.settings = defaultSettings(options);
     this.browserSession = session.fromPartition(browserPartition, {cache: true});
@@ -1198,7 +1198,7 @@ export class BrowserHost implements BrowserAutomationPort {
       activeTabByConversation: Object.fromEntries(this.activeTabByConversation),
       tabs: [...this.tabs.values()].map((tab) => ({snapshot: tab.snapshot})),
     };
-    await mkdir(this.options.userDataPath, {recursive: true});
+    await mkdir(dirname(this.statePath), {recursive: true});
     const temporaryPath = `${this.statePath}.tmp`;
     await writeFile(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, {encoding: 'utf8', mode: 0o600});
     await rename(temporaryPath, this.statePath);

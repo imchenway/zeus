@@ -1382,7 +1382,7 @@ export interface CodexConfigImportPreview {
   entries: CodexConfigImportEntry[];
   skipped: Array<{
     path: string;
-    reason: 'missing' | 'symbolic_link' | 'unsupported_type' | 'contains_sensitive_assignment' | 'too_large';
+    reason: 'missing' | 'symbolic_link' | 'unsupported_type' | 'contains_sensitive_assignment' | 'too_large' | 'generated_runtime';
   }>;
 }
 
@@ -1964,7 +1964,7 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
         body: JSON.stringify(input),
       }),
     clearLocalCaches: () =>
-      request<ClearLocalCachesResult>('/api/settings/cache/clear', {
+      request<ClearLocalCachesResult>('/api/settings/code-graph-cache/clear', {
         method: 'POST',
       }),
     exportLocalSettings: () => request<LocalSettingsExportSnapshot>('/api/settings/export'),

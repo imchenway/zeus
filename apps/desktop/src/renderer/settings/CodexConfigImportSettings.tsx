@@ -20,7 +20,7 @@ const copy = {
     empty: '没有发现可安全导入的 Codex 配置。',
     source: '来源',
     target: 'Zeus 目录',
-    skipped: (count: number) => `另有 ${count} 项因缺失、安全限制或格式不支持而跳过。`,
+    skipped: (count: number) => `另有 ${count} 项因缺失、安全限制、格式不支持或属于可重装运行缓存而跳过。`,
     completed: (count: number) => `已导入 ${count} 项。重启 Zeus 后，新 Codex 会话开始使用这些配置。`,
   },
   'en-US': {
@@ -32,7 +32,7 @@ const copy = {
     empty: 'No Codex configuration is available for safe import.',
     source: 'Source',
     target: 'Zeus directory',
-    skipped: (count: number) => `${count} additional item(s) were skipped because they are missing, unsafe, or unsupported.`,
+    skipped: (count: number) => `${count} additional item(s) were skipped because they are missing, unsafe, unsupported, or generated runtime cache.`,
     completed: (count: number) => `${count} item(s) imported. Restart Zeus before starting a new Codex conversation.`,
   },
 } as const;

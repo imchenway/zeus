@@ -2,7 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { cp, lstat, mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 
-const importEntries = ['config.toml', 'AGENTS.md', 'rules', 'prompts', 'skills', 'plugins'] as const;
+const directImportEntries = ['config.toml', 'AGENTS.md', 'rules', 'prompts', 'skills'] as const;
+const generatedPluginEntries = new Set(['.plugin-appserver', '.remote-plugin-install-staging', '.tmp', 'cache']);
 const sensitiveAssignment = /\b[A-Za-z0-9_.-]*(?:api[_-]?key|token|secret|password|credential)[A-Za-z0-9_.-]*\s*=\s*/iu;
 const maximumImportedNodes = 20_000;
 
@@ -14,7 +15,7 @@ export interface CodexConfigImportEntry {
 
 export interface CodexConfigImportSkippedEntry {
   path: string;
-  reason: 'missing' | 'symbolic_link' | 'unsupported_type' | 'contains_sensitive_assignment' | 'too_large';
+  reason: 'missing' | 'symbolic_link' | 'unsupported_type' | 'contains_sensitive_assignment' | 'too_large' | 'generated_runtime';
 }
 
 export interface CodexConfigImportPreview {
@@ -58,7 +59,7 @@ export function createCodexConfigImportService(options: { sourceRoot: string; ta
     }
     if (!sourceAvailable) return { available: false, sourceRoot, targetRoot, entries, skipped };
 
-    for (const entryName of importEntries) {
+    for (const entryName of directImportEntries) {
       const source = join(sourceRoot, entryName);
       try {
         const stat = await lstat(source);
@@ -86,7 +87,59 @@ export function createCodexConfigImportService(options: { sourceRoot: string; ta
         else throw error;
       }
     }
+    await inspectPluginEntries(entries, skipped);
     return { available: entries.length > 0, sourceRoot, targetRoot, entries, skipped };
+  }
+
+  async function inspectPluginEntries(entries: CodexConfigImportEntry[], skipped: CodexConfigImportSkippedEntry[]): Promise<void> {
+    const pluginsRoot = join(sourceRoot, 'plugins');
+    let names: string[];
+    try {
+      const pluginsStat = await lstat(pluginsRoot);
+      if (pluginsStat.isSymbolicLink()) {
+        skipped.push({ path: 'plugins', reason: 'symbolic_link' });
+        return;
+      }
+      if (!pluginsStat.isDirectory()) {
+        skipped.push({ path: 'plugins', reason: 'unsupported_type' });
+        return;
+      }
+      names = await readdir(pluginsRoot);
+    } catch (error) {
+      if (isNodeError(error, 'ENOENT')) {
+        skipped.push({ path: 'plugins', reason: 'missing' });
+        return;
+      }
+      throw error;
+    }
+    for (const name of names.sort()) {
+      const relativePath = join('plugins', name);
+      if (generatedPluginEntries.has(name) || name === '.DS_Store') {
+        skipped.push({ path: relativePath, reason: 'generated_runtime' });
+        continue;
+      }
+      const source = join(sourceRoot, relativePath);
+      try {
+        const entryStat = await lstat(source);
+        if (entryStat.isSymbolicLink()) {
+          skipped.push({ path: relativePath, reason: 'symbolic_link' });
+          continue;
+        }
+        if (!entryStat.isFile() && !entryStat.isDirectory()) {
+          skipped.push({ path: relativePath, reason: 'unsupported_type' });
+          continue;
+        }
+        const nodeCount = await countSafeNodes(source, sourceRoot, new Set<string>());
+        if (nodeCount > maximumImportedNodes) {
+          skipped.push({ path: relativePath, reason: 'too_large' });
+          continue;
+        }
+        entries.push({ path: relativePath, kind: entryStat.isDirectory() ? 'directory' : 'file', nodeCount });
+      } catch (error) {
+        if (error instanceof UnsafeSymbolicLinkError) skipped.push({ path: relativePath, reason: 'symbolic_link' });
+        else throw error;
+      }
+    }
   }
 
   async function importConfiguration(): Promise<CodexConfigImportResult> {
@@ -104,6 +157,7 @@ export function createCodexConfigImportService(options: { sourceRoot: string; ta
     let wroteBackup = false;
     try {
       for (const entry of preview.entries) {
+        await mkdir(dirname(join(stagingRoot, entry.path)), { recursive: true, mode: 0o700 });
         await cp(join(sourceRoot, entry.path), join(stagingRoot, entry.path), {
           recursive: entry.kind === 'directory',
           dereference: true,
@@ -119,10 +173,12 @@ export function createCodexConfigImportService(options: { sourceRoot: string; ta
       }
       for (const entry of preview.entries) {
         const target = join(targetRoot, entry.path);
+        await mkdir(dirname(target), { recursive: true, mode: 0o700 });
         try {
           await lstat(target);
-          await mkdir(transactionBackupRoot, { recursive: true, mode: 0o700 });
-          await rename(target, join(transactionBackupRoot, entry.path));
+          const backupTarget = join(transactionBackupRoot, entry.path);
+          await mkdir(dirname(backupTarget), { recursive: true, mode: 0o700 });
+          await rename(target, backupTarget);
           backedUp.push(entry.path);
           wroteBackup = true;
         } catch (error) {
@@ -130,6 +186,26 @@ export function createCodexConfigImportService(options: { sourceRoot: string; ta
         }
         await rename(join(stagingRoot, entry.path), target);
         imported.push(entry.path);
+      }
+      if (wroteBackup) {
+        await writeFile(
+          join(transactionBackupRoot, 'manifest.json'),
+          `${JSON.stringify(
+            {
+              kind: 'codex-config-import-backup',
+              transactionId,
+              createdAt: importedAt,
+              sourceRoot,
+              targetRoot,
+              importedEntries: imported,
+              recoverableEntries: backedUp,
+              excludedGeneratedEntries: preview.skipped.filter((entry) => entry.reason === 'generated_runtime').map((entry) => entry.path),
+            },
+            null,
+            2,
+          )}\n`,
+          { encoding: 'utf8', flag: 'wx', mode: 0o600 },
+        );
       }
       return {
         ...preview,
