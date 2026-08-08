@@ -1,30 +1,12 @@
-import {execFile} from 'node:child_process';
-import {realpathSync, statSync} from 'node:fs';
-import {readdir, readFile, writeFile} from 'node:fs/promises';
-import {extname, isAbsolute, relative, resolve, sep} from 'node:path';
-import {promisify} from 'node:util';
-import {
-    type AgentImageInput,
-    type AgentModelIdentity,
-    type AgentRuntimeEvent,
-    type AgentSessionIdentity,
-    createPiSdkRuntimeDriver,
-    modelRef,
-    type PiZeusToolBroker,
-    type PiZeusToolRequest,
-    type PiZeusToolResult
-} from '@zeus/ai-runtime';
-import type {
-    ConversationItemRepository,
-    ConversationRepository,
-    ConversationServerRequestRepository,
-    ConversationSubmissionRepository,
-    ConversationTurnRepository,
-    ZeusConversationWithMessagesRecord,
-    ZeusDatabase
-} from '@zeus/storage';
-import type {ModelConnectionService} from './modelConnectionService.js';
-import type {NativeConversationAttachmentInput} from './codexNativeConversationContracts.js';
+import { execFile } from 'node:child_process';
+import { realpathSync, statSync } from 'node:fs';
+import { readdir, readFile, writeFile } from 'node:fs/promises';
+import { extname, isAbsolute, relative, resolve, sep } from 'node:path';
+import { promisify } from 'node:util';
+import { type AgentImageInput, type AgentModelIdentity, type AgentRuntimeEvent, type AgentSessionIdentity, createPiSdkRuntimeDriver, modelRef, type PiZeusToolBroker, type PiZeusToolRequest, type PiZeusToolResult } from '@zeus/ai-runtime';
+import type { ConversationItemRepository, ConversationRepository, ConversationServerRequestRepository, ConversationSubmissionRepository, ConversationTurnRepository, ZeusConversationWithMessagesRecord, ZeusDatabase } from '@zeus/storage';
+import type { ModelConnectionService } from './modelConnectionService.js';
+import type { NativeConversationAttachmentInput } from './codexNativeConversationContracts.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -364,7 +346,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     }
   }
 
-    function appendUserProjection(conversationId: string, threadId: string, turnId: string, providerTurnId: string, content: string, clientMessageId: string, createdAt: string, attachments: NativeConversationAttachmentInput[] = []): void {
+  function appendUserProjection(conversationId: string, threadId: string, turnId: string, providerTurnId: string, content: string, clientMessageId: string, createdAt: string, attachments: NativeConversationAttachmentInput[] = []): void {
     const itemId = `pi_user_${clientMessageId}`;
     const attachmentMetadata = persistedPiAttachmentMetadata(attachments);
     options.items.upsertCompleted({

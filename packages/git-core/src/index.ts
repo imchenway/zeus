@@ -1,9 +1,9 @@
-import {execFile} from 'node:child_process';
-import {createHash} from 'node:crypto';
-import {realpathSync} from 'node:fs';
-import {copyFile, lstat, mkdir, readdir, readFile, rm, writeFile} from 'node:fs/promises';
-import {basename, dirname, isAbsolute, join, relative, resolve, sep} from 'node:path';
-import {promisify} from 'node:util';
+import { execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { realpathSync } from 'node:fs';
+import { copyFile, lstat, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
 
@@ -898,13 +898,7 @@ export async function completeTaskIntegrationCommit(input: { integrationPath: st
 }
 
 /** 重新校验目标分支提交后只同步本地来源分支；远端推送由独立用户动作完成。 */
-export async function finalizeTaskBranchIntegration(input: {
-    repositoryPath: string;
-    integrationPath: string;
-    targetBranch: string;
-    targetHeadSha: string;
-    resultHeadSha: string
-}): Promise<FinalizedTaskBranchIntegration> {
+export async function finalizeTaskBranchIntegration(input: { repositoryPath: string; integrationPath: string; targetBranch: string; targetHeadSha: string; resultHeadSha: string }): Promise<FinalizedTaskBranchIntegration> {
   const targetBranch = await assertGitBranchFormat(input.repositoryPath, input.targetBranch, 'target branch');
   const resultHeadSha = requireGitObjectId(input.resultHeadSha, 'integration result');
   const targetHeadSha = await readCommitIfPresent(input.repositoryPath, localBranchRef(targetBranch));

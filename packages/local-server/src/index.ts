@@ -1,222 +1,190 @@
-import Fastify, {type FastifyInstance, type FastifyReply, type FastifyRequest} from 'fastify';
+import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import websocketPlugin from '@fastify/websocket';
-import {createHash, randomUUID} from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import { accessSync, appendFileSync, constants as fsConstants, cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { basename, dirname, isAbsolute, join, parse, relative, resolve, sep } from 'node:path';
+import { getNextTaskStatus, type TaskStatus } from '@zeus/task-core';
 import {
-    accessSync,
-    appendFileSync,
-    constants as fsConstants,
-    cpSync,
-    existsSync,
-    lstatSync,
-    mkdirSync,
-    readdirSync,
-    readFileSync,
-    realpathSync,
-    renameSync,
-    rmSync,
-    statSync,
-    symlinkSync,
-    writeFileSync
-} from 'node:fs';
-import {basename, dirname, isAbsolute, join, parse, relative, resolve, sep} from 'node:path';
-import {getNextTaskStatus, type TaskStatus} from '@zeus/task-core';
-import {
-    buildTaskCommitMessageSuggestion,
-    cloneTaskManagementStatusConfig,
-    type CommandDefinition,
-    commandNeedsHighRiskConfirmation,
-    type ConversationResource,
-    type ConversationResourcePreview,
-    defaultTaskManagementStatusConfig,
-    isTaskStatusFilter,
-    normalizeTaskManagementStatusConfig,
-    type TaskAttachmentReference,
-    type TaskManagementStatusConfig,
-    type TaskPushParentAttachmentOption,
-    type TaskPushParentContextOption,
-    type TaskPushParentContextSelection,
-    type TaskPushPromptParentContext,
-    type TaskStatusFilter,
-    validateCommandDefinitionInput,
+  buildTaskCommitMessageSuggestion,
+  cloneTaskManagementStatusConfig,
+  type CommandDefinition,
+  commandNeedsHighRiskConfirmation,
+  type ConversationResource,
+  type ConversationResourcePreview,
+  defaultTaskManagementStatusConfig,
+  isTaskStatusFilter,
+  normalizeTaskManagementStatusConfig,
+  type TaskAttachmentReference,
+  type TaskManagementStatusConfig,
+  type TaskPushParentAttachmentOption,
+  type TaskPushParentContextOption,
+  type TaskPushParentContextSelection,
+  type TaskPushPromptParentContext,
+  type TaskStatusFilter,
+  validateCommandDefinitionInput,
 } from '@zeus/shared';
-import {type ProjectScanResult, scanProjectSource} from '@zeus/code-indexer';
-import {buildProjectGraph, GRAPH_VIEW_SCHEMA_VERSION, type ProjectGraph} from '@zeus/graph-engine';
+import { type ProjectScanResult, scanProjectSource } from '@zeus/code-indexer';
+import { buildProjectGraph, GRAPH_VIEW_SCHEMA_VERSION, type ProjectGraph } from '@zeus/graph-engine';
+import { createDefaultProjectConfig, normalizeProjectConfig, type ProjectConfigSnapshot, type UpdateProjectConfigBody } from '@zeus/project-core';
 import {
-    createDefaultProjectConfig,
-    normalizeProjectConfig,
-    type ProjectConfigSnapshot,
-    type UpdateProjectConfigBody
-} from '@zeus/project-core';
-import {
-    type AutoUpdatePolicy,
-    buildAutoUpdatePolicy,
-    detectReleaseReadiness,
-    evaluateReleaseUpdateAvailability,
-    parseReleaseUpdateManifest,
-    type ReleaseReadiness,
-    type ReleaseUpdateArtifactArch,
-    type ReleaseUpdateManifest,
-    type ReleaseUpdateStatus,
+  type AutoUpdatePolicy,
+  buildAutoUpdatePolicy,
+  detectReleaseReadiness,
+  evaluateReleaseUpdateAvailability,
+  parseReleaseUpdateManifest,
+  type ReleaseReadiness,
+  type ReleaseUpdateArtifactArch,
+  type ReleaseUpdateManifest,
+  type ReleaseUpdateStatus,
 } from '@zeus/release-core';
 import {
-    type AiCliAdapterDescriptor,
-    type AiRuntimeLogEntry,
-    type AiRuntimeSession,
-    type AiRuntimeTerminalSnapshot,
-    buildAiRuntimePrompt,
-    checkAiCliAdapter,
-    type CodexAppServerManager,
-    type CodexRemoteControlClient,
-    type CodexRemoteControlPairing,
-    type CodexRemoteControlStatus,
-    createAgentCapabilityCatalog,
-    createAiRuntimeSessionManager,
-    createCodexAppServerManager,
-    createNonCodexAiCliAdapterInvocation,
-    createOptionalNodePtyRuntimeSpawn,
-    expandCliSearchPath,
-    isNonCodexAiCliAdapterId,
-    listAiCliAdapters,
-    type NonCodexAiCliAdapterId,
+  type AiCliAdapterDescriptor,
+  type AiRuntimeLogEntry,
+  type AiRuntimeSession,
+  type AiRuntimeTerminalSnapshot,
+  buildAiRuntimePrompt,
+  checkAiCliAdapter,
+  type CodexAppServerManager,
+  type CodexRemoteControlClient,
+  type CodexRemoteControlPairing,
+  type CodexRemoteControlStatus,
+  createAgentCapabilityCatalog,
+  createAiRuntimeSessionManager,
+  createCodexAppServerManager,
+  createNonCodexAiCliAdapterInvocation,
+  createOptionalNodePtyRuntimeSpawn,
+  expandCliSearchPath,
+  isNonCodexAiCliAdapterId,
+  listAiCliAdapters,
+  type NonCodexAiCliAdapterId,
 } from '@zeus/ai-runtime';
-import type {BrowserAutomationPort} from './browserAutomation.js';
-import {resolveConversationAttachmentGrant} from './conversationAttachmentGrant.js';
-import {createModelConnectionService, type SaveModelConnectionRequest} from './modelConnectionService.js';
-import {createPiNativeConversationCoordinator} from './piNativeConversationCoordinator.js';
-import {generateReleaseNotesWithDeepSeek} from './releaseNotesGeneration.js';
-import {buildTaskConflictAiPrompt, parseTaskConflictAiAnswer, parseTaskConflictAiBlocks} from './taskConflictAi.js';
-import {createMacOSKeychainStore, getSecretPresenceLabel, type SecretPresenceLabel} from '@zeus/security-core';
+import type { BrowserAutomationPort } from './browserAutomation.js';
+import { resolveConversationAttachmentGrant } from './conversationAttachmentGrant.js';
+import { createModelConnectionService, type SaveModelConnectionRequest } from './modelConnectionService.js';
+import { createPiNativeConversationCoordinator } from './piNativeConversationCoordinator.js';
+import { generateReleaseNotesWithDeepSeek } from './releaseNotesGeneration.js';
+import { buildTaskConflictAiPrompt, parseTaskConflictAiAnswer, parseTaskConflictAiBlocks } from './taskConflictAi.js';
+import { createMacOSKeychainStore, getSecretPresenceLabel, type SecretPresenceLabel } from '@zeus/security-core';
 import {
-    buildGitPatchExport,
-    buildTaskBranchName,
-    buildTaskEnvironmentRootPath,
-    cleanupPreparedTaskWorktree,
-    commitTaskWorkspace,
-    completeTaskIntegrationCommit,
-    confirmGitOperation,
-    createGitOperationConfirmation,
-    discardTaskWorktree,
-    discoverGitRepositories,
-    executeHighRiskGitOperation,
-    fetchGitRemote,
-    finalizeTaskBranchIntegration,
-    getGitBranchHead,
-    getGitDiff,
-    getGitRepositoryContext,
-    getGitStatus,
-    getGitWorkingContext,
-    getRemoteTrackingBranchHead,
-    getTaskBranchComparison,
-    getTaskBranchFileDiff,
-    getTaskWorkspaceFileDiff,
-    getTaskWorkspaceReview,
-    type GitDiffSummary,
-    type GitOperationConfirmation,
-    type GitPatchExport,
-    type GitStatusSummary,
-    type HighRiskGitOperation,
-    isGitConfirmationExpired,
-    prepareTaskWorktree,
-    pushLocalBranch,
-    pushTaskWorkspace,
-    readTaskIntegrationConflict,
-    reclaimDeliveredTaskWorktree,
-    reclaimTaskWorktree,
-    rejectGitOperation,
-    removeTaskWorktreeForTerminalStatus,
-    startTaskBranchIntegration,
-    writeTaskIntegrationResolution,
+  buildGitPatchExport,
+  buildTaskBranchName,
+  buildTaskEnvironmentRootPath,
+  cleanupPreparedTaskWorktree,
+  commitTaskWorkspace,
+  completeTaskIntegrationCommit,
+  confirmGitOperation,
+  createGitOperationConfirmation,
+  discardTaskWorktree,
+  discoverGitRepositories,
+  executeHighRiskGitOperation,
+  fetchGitRemote,
+  finalizeTaskBranchIntegration,
+  getGitBranchHead,
+  getGitDiff,
+  getGitRepositoryContext,
+  getGitStatus,
+  getGitWorkingContext,
+  getRemoteTrackingBranchHead,
+  getTaskBranchComparison,
+  getTaskBranchFileDiff,
+  getTaskWorkspaceFileDiff,
+  getTaskWorkspaceReview,
+  type GitDiffSummary,
+  type GitOperationConfirmation,
+  type GitPatchExport,
+  type GitStatusSummary,
+  type HighRiskGitOperation,
+  isGitConfirmationExpired,
+  prepareTaskWorktree,
+  pushLocalBranch,
+  pushTaskWorkspace,
+  readTaskIntegrationConflict,
+  reclaimDeliveredTaskWorktree,
+  reclaimTaskWorktree,
+  rejectGitOperation,
+  removeTaskWorktreeForTerminalStatus,
+  startTaskBranchIntegration,
+  writeTaskIntegrationResolution,
 } from '@zeus/git-core';
 import {
-    type AppendAuditLogInput,
-    AuditLogRepository,
-    CodexLegacyImportRepository,
-    CommandArtifactRepository,
-    CommandDefinitionRepository,
-    CommandRunRepository,
-    type ConversationCollaborationMode,
-    ConversationItemRepository,
-    type ConversationNextTurnSettings,
-    type ConversationPermissionMode,
-    ConversationPlanActionRepository,
-    ConversationRepository,
-    ConversationResourceRepository,
-    ConversationServerRequestRepository,
-    ConversationSubmissionRepository,
-    ConversationTurnRepository,
-    type CreateTaskEventInput,
-    createZeusDatabase,
-    GitSnapshotRepository,
-    IdempotencyRequestRepository,
-    introspectSqliteSchema,
-    isTaskManagementStatus,
-    isTaskPriority,
-    isTaskType,
-    ProjectRepository,
-    ProjectRepositoryRegistrationRepository,
-    ProjectSharedPathRepository,
-    ProviderEventReceiptRepository,
-    type RuntimeLogStream,
-    RuntimeSessionRepository,
-    SettingRepository,
-    type SqlValue,
-    TaskEnvironmentRepository,
-    TaskEventRepository,
-    TaskIntegrationRepository,
-    type TaskManagementStatus,
-    type TaskPriority,
-    TaskRepository,
-    TaskTemplateRepository,
-    type TaskType,
-    TaskWorkspaceRepository,
-    TerminalEventRepository,
-    TurnChangeFileRepository,
-    TurnChangeSetRepository,
-    type ZeusAuditLogRecord,
-    type ZeusConversationResourceRecord,
-    type ZeusConversationWithMessagesRecord,
-    type ZeusDatabase,
-    type ZeusProjectRecord,
-    type ZeusProjectRepositoryRecord,
-    type ZeusProjectSharedPathRecord,
-    type ZeusRuntimeLogRecord,
-    type ZeusRuntimeSessionRecord,
-    type ZeusTaskEnvironmentRecord,
-    type ZeusTaskIntegrationRecord,
-    type ZeusTaskRecord,
-    type ZeusTaskWorkspaceRecord,
+  type AppendAuditLogInput,
+  AuditLogRepository,
+  CodexLegacyImportRepository,
+  CommandArtifactRepository,
+  CommandDefinitionRepository,
+  CommandRunRepository,
+  type ConversationCollaborationMode,
+  ConversationItemRepository,
+  type ConversationNextTurnSettings,
+  type ConversationPermissionMode,
+  ConversationPlanActionRepository,
+  ConversationRepository,
+  ConversationResourceRepository,
+  ConversationServerRequestRepository,
+  ConversationSubmissionRepository,
+  ConversationTurnRepository,
+  type CreateTaskEventInput,
+  createZeusDatabase,
+  GitSnapshotRepository,
+  IdempotencyRequestRepository,
+  introspectSqliteSchema,
+  isTaskManagementStatus,
+  isTaskPriority,
+  isTaskType,
+  ProjectRepository,
+  ProjectRepositoryRegistrationRepository,
+  ProjectSharedPathRepository,
+  ProviderEventReceiptRepository,
+  type RuntimeLogStream,
+  RuntimeSessionRepository,
+  SettingRepository,
+  type SqlValue,
+  TaskEnvironmentRepository,
+  TaskEventRepository,
+  TaskIntegrationRepository,
+  type TaskManagementStatus,
+  type TaskPriority,
+  TaskRepository,
+  TaskTemplateRepository,
+  type TaskType,
+  TaskWorkspaceRepository,
+  TerminalEventRepository,
+  TurnChangeFileRepository,
+  TurnChangeSetRepository,
+  type ZeusAuditLogRecord,
+  type ZeusConversationResourceRecord,
+  type ZeusConversationWithMessagesRecord,
+  type ZeusDatabase,
+  type ZeusProjectRecord,
+  type ZeusProjectRepositoryRecord,
+  type ZeusProjectSharedPathRecord,
+  type ZeusRuntimeLogRecord,
+  type ZeusRuntimeSessionRecord,
+  type ZeusTaskEnvironmentRecord,
+  type ZeusTaskIntegrationRecord,
+  type ZeusTaskRecord,
+  type ZeusTaskWorkspaceRecord,
 } from '@zeus/storage';
-import {createCodexNativeConversationCoordinator} from './codexNativeConversationCoordinator.js';
+import { createCodexNativeConversationCoordinator } from './codexNativeConversationCoordinator.js';
+import { normalizeConversationResources, toConversationResource, toConversationResourceOpenIntent } from './conversationResources.js';
+import { changeSetErrorStatus, createTurnChangeSetService, errorCode as turnChangeSetErrorCode } from './turnChangeSets.js';
+import { createCommandCenter } from './commandCenter.js';
+import { migrateLegacyCodexThreads } from './legacyCodexThreadMigration.js';
+import { type CodexLegacyImportService, createCodexLegacyImportService } from './codexLegacyImportService.js';
+import { createCodexConfigImportService } from './codexConfigImportService.js';
+import { createZeusDataLayoutForDatabase, type ZeusDataLayout } from './zeusDataLayout.js';
+import { resolveWritableNonCodexLegacyConversation, type WritableNonCodexLegacyConversationContext } from './nonCodexLegacyRuntime.js';
 import {
-    normalizeConversationResources,
-    toConversationResource,
-    toConversationResourceOpenIntent
-} from './conversationResources.js';
-import {
-    changeSetErrorStatus,
-    createTurnChangeSetService,
-    errorCode as turnChangeSetErrorCode
-} from './turnChangeSets.js';
-import {createCommandCenter} from './commandCenter.js';
-import {migrateLegacyCodexThreads} from './legacyCodexThreadMigration.js';
-import {type CodexLegacyImportService, createCodexLegacyImportService} from './codexLegacyImportService.js';
-import {createCodexConfigImportService} from './codexConfigImportService.js';
-import {createZeusDataLayoutForDatabase, type ZeusDataLayout} from './zeusDataLayout.js';
-import {
-    resolveWritableNonCodexLegacyConversation,
-    type WritableNonCodexLegacyConversationContext
-} from './nonCodexLegacyRuntime.js';
-import {
-    createTelegramBotMessageClient,
-    createTelegramLongPollingClient,
-    createTelegramPollingService,
-    dispatchTelegramUpdate,
-    getTelegramConfigurationState,
-    type TelegramCommand,
-    type TelegramCommandResponse,
-    type TelegramMessageSender,
-    type TelegramPollingService,
-    type TelegramUpdate,
+  createTelegramBotMessageClient,
+  createTelegramLongPollingClient,
+  createTelegramPollingService,
+  dispatchTelegramUpdate,
+  getTelegramConfigurationState,
+  type TelegramCommand,
+  type TelegramCommandResponse,
+  type TelegramMessageSender,
+  type TelegramPollingService,
+  type TelegramUpdate,
 } from '@zeus/telegram-adapter';
 
 export type { BrowserAutomationContentItem, BrowserAutomationPort, BrowserAutomationToolCall } from './browserAutomation.js';
@@ -15561,13 +15529,7 @@ const runtimeLogRetentionQuarantineName = '.retention-quarantine';
 const runtimeLogRetentionGraceMs = 7 * 24 * 60 * 60 * 1_000;
 
 /** Runtime 日志到期后先隔离七天；崩溃时恢复 pending 事务，禁止直接物理删除活动证据。 */
-function applyRuntimeLogRetention(input: {
-    runtimeSessions: RuntimeSessionRepository;
-    auditLogs: AuditLogRepository;
-    sessionRoot: string;
-    retentionDays: number;
-    now: Date
-}): RuntimeLogRetentionResult {
+function applyRuntimeLogRetention(input: { runtimeSessions: RuntimeSessionRepository; auditLogs: AuditLogRepository; sessionRoot: string; retentionDays: number; now: Date }): RuntimeLogRetentionResult {
   const quarantineRoot = join(input.sessionRoot, runtimeLogRetentionQuarantineName);
   mkdirSync(quarantineRoot, { recursive: true, mode: 0o700 });
   recoverAndCollectRuntimeLogQuarantine(input.sessionRoot, quarantineRoot, input.now.getTime());

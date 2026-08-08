@@ -1,23 +1,13 @@
-import type {FormEvent, KeyboardEvent} from 'react';
-import {buildTaskPushPrompt, type TaskPushParentContextOption, type TaskPushPromptParentContext} from '@zeus/shared';
-import type {TaskRecord} from '../apiClient.js';
-import type {
-    CodexTaskPushCapabilities,
-    NativePermissionMode,
-    NativeServiceTierSelection
-} from '../session/sessionTypes.js';
-import {
-    normalizeServiceTierSelection,
-    serviceTierDescription,
-    serviceTierOptions,
-    serviceTierSelectionFromValue,
-    serviceTierSelectionValue
-} from '../session/serviceTierSelection.js';
-import {Button} from '../ui/Button.js';
-import {ModalPortal} from '../ui/ModalPortal.js';
-import {ZeusSelect} from '../ZeusSelect.js';
-import {TaskAttachmentPreviewList} from './TaskAttachmentPreviewList.js';
-import {parseTaskAttachments} from './taskAttachments.js';
+import type { FormEvent, KeyboardEvent } from 'react';
+import { buildTaskPushPrompt, type TaskPushParentContextOption, type TaskPushPromptParentContext } from '@zeus/shared';
+import type { TaskRecord } from '../apiClient.js';
+import type { CodexTaskPushCapabilities, NativePermissionMode, NativeServiceTierSelection } from '../session/sessionTypes.js';
+import { normalizeServiceTierSelection, serviceTierDescription, serviceTierOptions, serviceTierSelectionFromValue, serviceTierSelectionValue } from '../session/serviceTierSelection.js';
+import { Button } from '../ui/Button.js';
+import { ModalPortal } from '../ui/ModalPortal.js';
+import { ZeusSelect } from '../ZeusSelect.js';
+import { TaskAttachmentPreviewList } from './TaskAttachmentPreviewList.js';
+import { parseTaskAttachments } from './taskAttachments.js';
 
 export interface TaskModelPushForm {
   model: string;
@@ -336,7 +326,7 @@ export function TaskModelPushModal(props: {
                               ...repository.sourceRefs.map((source) => ({
                                 value: source.ref,
                                 label: `${source.label}${source.current ? (zh ? ' · 当前分支' : ' · current branch') : ''}`,
-                                  group: source.kind === 'local' ? (zh ? '本地分支' : 'Local branches') : zh ? `${source.group} 远端分支` : `${source.group} remote branches`,
+                                group: source.kind === 'local' ? (zh ? '本地分支' : 'Local branches') : zh ? `${source.group} 远端分支` : `${source.group} remote branches`,
                               })),
                             ]}
                             onChange={(sourceRef) =>
@@ -648,8 +638,7 @@ export function TaskModelPushModal(props: {
             ) : (
               <small>{zh ? '无附件' : 'No attachments'}</small>
             )}
-              {selectedParentAttachmentCount > 0 ?
-                  <small>{zh ? `另有 ${selectedParentAttachmentCount} 个父任务附件，将随本次推送发送。` : `${selectedParentAttachmentCount} parent attachment(s) will be sent with this push.`}</small> : null}
+            {selectedParentAttachmentCount > 0 ? <small>{zh ? `另有 ${selectedParentAttachmentCount} 个父任务附件，将随本次推送发送。` : `${selectedParentAttachmentCount} parent attachment(s) will be sent with this push.`}</small> : null}
           </section>
 
           {props.status === 'loading' ? <p className="task-model-push-message">{zh ? '正在连接 app-server 并读取可用模型…' : 'Connecting to app-server and loading models…'}</p> : null}

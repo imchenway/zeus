@@ -1,27 +1,13 @@
-import {spawn} from 'node:child_process';
-import {randomBytes, randomUUID} from 'node:crypto';
-import {mkdir, writeFile} from 'node:fs/promises';
-import {dirname, join} from 'node:path';
-import {homedir} from 'node:os';
-import {fileURLToPath} from 'node:url';
-import {createCodexRuntimeGenerationManager} from '@zeus/ai-runtime';
-import {
-    type BrowserAutomationPort,
-    createZeusDataLayout,
-    hasCodexFinalizationOwnershipClaim,
-    type RunningZeusLocalServer,
-    startZeusLocalServer,
-    type ZeusDataLayout
-} from '@zeus/local-server';
-import {startDesktopBrowserAutomationBridge} from './browserAutomationBridge.js';
-import {
-    createExecutionHostControlClient,
-    executionHostProtocolVersion,
-    type ExecutionHostRendezvous,
-    type ExecutionHostWorkStatus,
-    readExecutionHostRendezvous,
-    writeExecutionHostBootstrap
-} from './executionHostProtocol.js';
+import { spawn } from 'node:child_process';
+import { randomBytes, randomUUID } from 'node:crypto';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
+import { homedir } from 'node:os';
+import { fileURLToPath } from 'node:url';
+import { createCodexRuntimeGenerationManager } from '@zeus/ai-runtime';
+import { type BrowserAutomationPort, createZeusDataLayout, hasCodexFinalizationOwnershipClaim, type RunningZeusLocalServer, startZeusLocalServer, type ZeusDataLayout } from '@zeus/local-server';
+import { startDesktopBrowserAutomationBridge } from './browserAutomationBridge.js';
+import { createExecutionHostControlClient, executionHostProtocolVersion, type ExecutionHostRendezvous, type ExecutionHostWorkStatus, readExecutionHostRendezvous, writeExecutionHostBootstrap } from './executionHostProtocol.js';
 
 export interface RendererLocalServerConfig {
   baseUrl: string;

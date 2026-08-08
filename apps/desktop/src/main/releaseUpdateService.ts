@@ -1,16 +1,12 @@
-import {execFile as execFileCallback, spawn} from 'node:child_process';
-import {createHash, randomUUID} from 'node:crypto';
-import {constants as fsConstants, existsSync, realpathSync} from 'node:fs';
-import {access, chmod, lstat, mkdir, open, readdir, readFile, rename, rm} from 'node:fs/promises';
-import {basename, dirname, join, relative, resolve} from 'node:path';
-import {fileURLToPath} from 'node:url';
-import {promisify} from 'node:util';
-import {createLegacyFlatZeusDataLayout, createZeusDataLayout} from '@zeus/local-server';
-import {
-    releaseInstallerProtocolVersion,
-    releaseInstallerResultPath,
-    writeReleaseInstallerBootstrap
-} from './releaseInstallerProtocol.js';
+import { execFile as execFileCallback, spawn } from 'node:child_process';
+import { createHash, randomUUID } from 'node:crypto';
+import { constants as fsConstants, existsSync, realpathSync } from 'node:fs';
+import { access, chmod, lstat, mkdir, open, readdir, readFile, rename, rm } from 'node:fs/promises';
+import { basename, dirname, join, relative, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
+import { createLegacyFlatZeusDataLayout, createZeusDataLayout } from '@zeus/local-server';
+import { releaseInstallerProtocolVersion, releaseInstallerResultPath, writeReleaseInstallerBootstrap } from './releaseInstallerProtocol.js';
 
 const execFile = promisify(execFileCallback);
 const maximumUpdateBytes = 2 * 1024 * 1024 * 1024;
@@ -111,7 +107,7 @@ export function createReleaseUpdateService(options: CreateReleaseUpdateServiceOp
         assertDownloadAllowed(update, options);
         const artifact = update.artifact!;
         if (basename(artifact.fileName) !== artifact.fileName) throw new Error('更新包文件名包含非法路径。');
-          const dataLayout = existsSync(join(options.userDataPath, 'data')) ? createZeusDataLayout(options.userDataPath) : createLegacyFlatZeusDataLayout(options.userDataPath);
+        const dataLayout = existsSync(join(options.userDataPath, 'data')) ? createZeusDataLayout(options.userDataPath) : createLegacyFlatZeusDataLayout(options.userDataPath);
         const downloadDirectory = join(dataLayout.releaseUpdates, 'downloads', update.latestVersion);
         await mkdir(downloadDirectory, { recursive: true, mode: 0o700 });
         await chmod(downloadDirectory, 0o700);

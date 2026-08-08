@@ -1,21 +1,8 @@
-import {createHash, randomUUID} from 'node:crypto';
-import {
-    chmodSync,
-    copyFileSync,
-    existsSync,
-    lstatSync,
-    mkdirSync,
-    readdirSync,
-    readFileSync,
-    renameSync,
-    rmdirSync,
-    rmSync,
-    statSync,
-    writeFileSync
-} from 'node:fs';
-import {basename, dirname, isAbsolute, join, relative, resolve, sep} from 'node:path';
-import {DatabaseSync} from 'node:sqlite';
-import {createLegacyFlatZeusDataLayout, createZeusDataLayout, type ZeusDataLayout} from '@zeus/local-server';
+import { createHash, randomUUID } from 'node:crypto';
+import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
+import { createLegacyFlatZeusDataLayout, createZeusDataLayout, type ZeusDataLayout } from '@zeus/local-server';
 
 export type ZeusDataPreparationStatus = 'initialized' | 'already-layered' | 'migrated' | 'legacy-host-active';
 
@@ -218,11 +205,7 @@ export function retireVerifiedLegacyRoot(rootPath: string, legacyRootPath: strin
   return { removedBytes: inventory.bytes, removedFiles: inventory.files };
 }
 
-function migrateFlatRoot(input: {
-    flat: ZeusDataLayout;
-    layered: ZeusDataLayout;
-    legacyRoots: readonly string[]
-}): ZeusDataPreparationResult {
+function migrateFlatRoot(input: { flat: ZeusDataLayout; layered: ZeusDataLayout; legacyRoots: readonly string[] }): ZeusDataPreparationResult {
   const { flat, layered } = input;
   const migrationId = randomUUID();
   const createdAt = new Date().toISOString();
@@ -366,10 +349,10 @@ function rebindDatabasePaths(databasePath: string, mappings: readonly PathMappin
     for (const [table, column] of jsonPathColumns) rewritten += rewriteJsonColumn(db, table, column, mappings);
     db.exec('COMMIT');
     assertDatabaseQuickCheckConnection(db);
-      const remaining = collectManagedPaths(
-          db,
-          mappings.map((mapping) => mapping.source),
-      );
+    const remaining = collectManagedPaths(
+      db,
+      mappings.map((mapping) => mapping.source),
+    );
     if (remaining.size > 0) throw new Error(`Zeus 路径重绑后仍有 ${remaining.size} 个托管字段指向旧位置。`);
     return rewritten;
   } catch (error) {
@@ -538,7 +521,7 @@ function validateRetiredLegacyRootRecovery(db: DatabaseSync, legacyRoot: string,
   if (!evidence) throw new Error(`Zeus 数据库仍引用已不存在的旧根，且缺少可信回收记录：${legacyRoot}`);
   const { validation } = evidence;
   if (managedPaths.length !== validation.managedPathCount) {
-      throw new Error(`Zeus 已回收旧根的当前引用数为 ${managedPaths.length}，与原校验清单 ${validation.managedPathCount} 不一致，拒绝自动恢复。`);
+    throw new Error(`Zeus 已回收旧根的当前引用数为 ${managedPaths.length}，与原校验清单 ${validation.managedPathCount} 不一致，拒绝自动恢复。`);
   }
   if (validation.fileCount + validation.directoryCount + validation.authoritativeOverrideCount !== validation.managedPathCount) {
     throw new Error('Zeus 旧根原校验清单计数不闭合，拒绝自动恢复。');
@@ -552,10 +535,13 @@ function validateRetiredLegacyRootRecovery(db: DatabaseSync, legacyRoot: string,
   return { ...validation, evidenceMode: 'retired-record' };
 }
 
-function readLegacyRootRetirementEvidence(layout: ZeusDataLayout, legacyRoot: string): {
-    record: LegacyRootRetirementRecord;
-    manifest: MigrationManifest;
-    validation: LegacyRootValidation
+function readLegacyRootRetirementEvidence(
+  layout: ZeusDataLayout,
+  legacyRoot: string,
+): {
+  record: LegacyRootRetirementRecord;
+  manifest: MigrationManifest;
+  validation: LegacyRootValidation;
 } | null {
   const recordDirectory = join(layout.backupsDirectory, 'legacy-roots');
   if (!existsSync(recordDirectory) || !existsSync(layout.migrationState)) return null;
@@ -584,7 +570,7 @@ function readLegacyRootRetirementEvidence(layout: ZeusDataLayout, legacyRoot: st
       const expectedManifestPath = join(layout.migrationState, `${manifest.createdAt.replaceAll(':', '-')}-${manifest.id}.json`);
       const removedAt = Date.parse(record.removedAt);
       const createdAt = Date.parse(manifest.createdAt);
-        if (manifest.schema !== 1 || manifest.status !== 'committed' || manifest.root !== layout.root || manifestPath !== expectedManifestPath || !Number.isFinite(removedAt) || !Number.isFinite(createdAt) || removedAt < createdAt) {
+      if (manifest.schema !== 1 || manifest.status !== 'committed' || manifest.root !== layout.root || manifestPath !== expectedManifestPath || !Number.isFinite(removedAt) || !Number.isFinite(createdAt) || removedAt < createdAt) {
         continue;
       }
       const validation = manifest.validatedLegacyRoots.find((item) => item.root === legacyRoot);
@@ -598,13 +584,13 @@ function readLegacyRootRetirementEvidence(layout: ZeusDataLayout, legacyRoot: st
 }
 
 function rewriteManagedPath(value: string, mappings: readonly PathMapping[]): string {
-    if (
-        !isManagedPathString(
-            value,
-            mappings.map((mapping) => mapping.source),
-        )
+  if (
+    !isManagedPathString(
+      value,
+      mappings.map((mapping) => mapping.source),
     )
-        return value;
+  )
+    return value;
   for (const mapping of mappings) {
     if (value === mapping.source) return mapping.destination;
     if (value.startsWith(`${mapping.source}${sep}`)) return join(mapping.destination, relative(mapping.source, value));
@@ -706,11 +692,14 @@ function cleanupStaleExecutionHostFiles(directory: string): void {
   }
 }
 
-function cleanupSupersededBackups(layout: ZeusDataLayout, currentDatabaseBackupPath: string): {
-    removedBytes: number;
-    removedFiles: number;
-    removedEntries: string[];
-    failedEntries: string[]
+function cleanupSupersededBackups(
+  layout: ZeusDataLayout,
+  currentDatabaseBackupPath: string,
+): {
+  removedBytes: number;
+  removedFiles: number;
+  removedEntries: string[];
+  failedEntries: string[];
 } {
   const candidates: string[] = [];
   if (existsSync(layout.databaseBackups)) {
@@ -808,8 +797,8 @@ function pathEntryExists(path: string): boolean {
 }
 
 function fileTimestamp(): string {
-    return new Date()
-        .toISOString()
-        .replaceAll(':', '-')
-        .replace(/\.\d{3}Z$/u, 'Z');
+  return new Date()
+    .toISOString()
+    .replaceAll(':', '-')
+    .replace(/\.\d{3}Z$/u, 'Z');
 }

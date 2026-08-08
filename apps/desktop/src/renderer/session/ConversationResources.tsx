@@ -1,41 +1,25 @@
-import {
-    type ComponentType,
-    type CSSProperties,
-    type KeyboardEvent,
-    type ReactNode,
-    useEffect,
-    useLayoutEffect,
-    useRef,
-    useState
-} from 'react';
-import {createPortal} from 'react-dom';
-import {CaretDownIcon as CaretDown} from '@phosphor-icons/react/dist/csr/CaretDown';
-import {FileIcon as File} from '@phosphor-icons/react/dist/csr/File';
-import {FileArchiveIcon as FileArchive} from '@phosphor-icons/react/dist/csr/FileArchive';
-import {FileCodeIcon as FileCode} from '@phosphor-icons/react/dist/csr/FileCode';
-import {FileCssIcon as FileCss} from '@phosphor-icons/react/dist/csr/FileCss';
-import {FileDocIcon as FileDoc} from '@phosphor-icons/react/dist/csr/FileDoc';
-import {FileHtmlIcon as FileHtml} from '@phosphor-icons/react/dist/csr/FileHtml';
-import {FileImageIcon as FileImage} from '@phosphor-icons/react/dist/csr/FileImage';
-import {FileJsIcon as FileJs} from '@phosphor-icons/react/dist/csr/FileJs';
-import {FileMdIcon as FileMd} from '@phosphor-icons/react/dist/csr/FileMd';
-import {FilePdfIcon as FilePdf} from '@phosphor-icons/react/dist/csr/FilePdf';
-import {FilePptIcon as FilePpt} from '@phosphor-icons/react/dist/csr/FilePpt';
-import {FileSqlIcon as FileSql} from '@phosphor-icons/react/dist/csr/FileSql';
-import {FileTsIcon as FileTs} from '@phosphor-icons/react/dist/csr/FileTs';
-import {FileXlsIcon as FileXls} from '@phosphor-icons/react/dist/csr/FileXls';
-import {GlobeSimpleIcon as GlobeSimple} from '@phosphor-icons/react/dist/csr/GlobeSimple';
-import {GithubLogoIcon as GithubLogo} from '@phosphor-icons/react/dist/csr/GithubLogo';
-import type {
-    ConversationFileIconKind,
-    ConversationFileLocation,
-    ConversationOpenTarget,
-    ConversationResource,
-    ConversationResourceOpenTarget,
-    ConversationResourcePreview
-} from '@zeus/shared';
-import {listConversationResourceOpenTargetsInMain} from '../appShellBridge.js';
-import type {SessionUiLanguage} from './ThreadItemView.js';
+import { type ComponentType, type CSSProperties, type KeyboardEvent, type ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { CaretDownIcon as CaretDown } from '@phosphor-icons/react/dist/csr/CaretDown';
+import { FileIcon as File } from '@phosphor-icons/react/dist/csr/File';
+import { FileArchiveIcon as FileArchive } from '@phosphor-icons/react/dist/csr/FileArchive';
+import { FileCodeIcon as FileCode } from '@phosphor-icons/react/dist/csr/FileCode';
+import { FileCssIcon as FileCss } from '@phosphor-icons/react/dist/csr/FileCss';
+import { FileDocIcon as FileDoc } from '@phosphor-icons/react/dist/csr/FileDoc';
+import { FileHtmlIcon as FileHtml } from '@phosphor-icons/react/dist/csr/FileHtml';
+import { FileImageIcon as FileImage } from '@phosphor-icons/react/dist/csr/FileImage';
+import { FileJsIcon as FileJs } from '@phosphor-icons/react/dist/csr/FileJs';
+import { FileMdIcon as FileMd } from '@phosphor-icons/react/dist/csr/FileMd';
+import { FilePdfIcon as FilePdf } from '@phosphor-icons/react/dist/csr/FilePdf';
+import { FilePptIcon as FilePpt } from '@phosphor-icons/react/dist/csr/FilePpt';
+import { FileSqlIcon as FileSql } from '@phosphor-icons/react/dist/csr/FileSql';
+import { FileTsIcon as FileTs } from '@phosphor-icons/react/dist/csr/FileTs';
+import { FileXlsIcon as FileXls } from '@phosphor-icons/react/dist/csr/FileXls';
+import { GlobeSimpleIcon as GlobeSimple } from '@phosphor-icons/react/dist/csr/GlobeSimple';
+import { GithubLogoIcon as GithubLogo } from '@phosphor-icons/react/dist/csr/GithubLogo';
+import type { ConversationFileIconKind, ConversationFileLocation, ConversationOpenTarget, ConversationResource, ConversationResourceOpenTarget, ConversationResourcePreview } from '@zeus/shared';
+import { listConversationResourceOpenTargetsInMain } from '../appShellBridge.js';
+import type { SessionUiLanguage } from './ThreadItemView.js';
 
 export interface ConversationResourceInteraction {
   onOpenResource?: (resource: ConversationResource, target: ConversationOpenTarget, location?: ConversationFileLocation) => void | Promise<void>;
@@ -99,8 +83,7 @@ export function ConversationMarkdownImage(
     language: SessionUiLanguage;
   },
 ) {
-    return <ConversationImagePreview {...props} className="session-markdown-image"
-                                     placeholderClassName="session-markdown-image-placeholder"/>;
+  return <ConversationImagePreview {...props} className="session-markdown-image" placeholderClassName="session-markdown-image-placeholder" />;
 }
 
 function ConversationImagePreview(
@@ -227,8 +210,7 @@ function ConversationImagePreview(
       onClick={() => void open()}
     >
       {preview ? (
-          <img src={preview.dataUrl} alt={props.label} loading="lazy"
-               onError={() => reportPreviewFailure(languageRef.current === 'zh-CN' ? '图片预览加载失败。' : 'The image preview failed to load.')}/>
+        <img src={preview.dataUrl} alt={props.label} loading="lazy" onError={() => reportPreviewFailure(languageRef.current === 'zh-CN' ? '图片预览加载失败。' : 'The image preview failed to load.')} />
       ) : (
         <span className={props.placeholderClassName} role="status">
           <FileImage aria-hidden="true" weight="duotone" />
@@ -250,15 +232,13 @@ export function ConversationResourceCards(
   if (resources.length === 0) return null;
   return (
     <section className="session-resource-card-list" aria-label={props.language === 'zh-CN' ? '会话资源' : 'Conversation resources'}>
-        {resources.map((resource) =>
+      {resources.map((resource) =>
         isImageResource(resource) ? (
-            <ConversationResourceImage key={resource.id} resource={resource} language={props.language}
-                                       onOpenResource={props.onOpenResource}
-                                       onLoadResourcePreview={props.onLoadResourcePreview}/>
+          <ConversationResourceImage key={resource.id} resource={resource} language={props.language} onOpenResource={props.onOpenResource} onLoadResourcePreview={props.onLoadResourcePreview} />
         ) : (
           <ConversationResourceCard key={resource.id} resource={resource} language={props.language} onOpenResource={props.onOpenResource} />
         ),
-        )}
+      )}
     </section>
   );
 }
