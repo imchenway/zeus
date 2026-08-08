@@ -119,6 +119,7 @@ export function TaskGitReviewModal(props: {
 
   async function commit(push: boolean): Promise<void> {
     if (!props.task || !props.client || !activeWorkspace) return;
+    if (props.mode === 'delivery' && activeWorkspace.activeConversationCount > 0 && !confirmActiveSessionRisk('delivery', activeWorkspace.activeConversationCount, zh)) return;
     setStatus('submitting');
     setError(null);
     try {
@@ -169,6 +170,7 @@ export function TaskGitReviewModal(props: {
 
   async function reclaimWithoutCommit(): Promise<void> {
     if (!props.task || !props.client || !activeWorkspace || props.mode === 'commit' || props.mode === 'commit-only' || props.mode === 'push-only') return;
+    if (activeWorkspace.activeConversationCount > 0 && !confirmActiveSessionRisk('reclaim', activeWorkspace.activeConversationCount, zh)) return;
     setStatus('submitting');
     setError(null);
     try {
@@ -187,6 +189,7 @@ export function TaskGitReviewModal(props: {
 
   async function discard(): Promise<void> {
     if (!props.task || !props.client || !activeWorkspace || props.mode === 'commit' || props.mode === 'commit-only' || props.mode === 'push-only') return;
+    if (activeWorkspace.activeConversationCount > 0 && !confirmActiveSessionRisk('discard', activeWorkspace.activeConversationCount, zh)) return;
     setStatus('submitting');
     setError(null);
     try {
@@ -350,8 +353,12 @@ export function TaskGitReviewModal(props: {
             ) : null}
             {activeWorkspace?.remoteRefreshError ? (
               <section className="task-git-review-push-scope">
-                <strong>{zh ? '远端操作暂不可用' : 'Remote actions unavailable'}</strong>
-                <small>{zh ? '网络或凭据恢复前不能拉取、推送或远端合入；本地查看和提交不受影响。' : 'Fetch, push, and remote merge are blocked until network access or credentials recover. Local review and commit remain available.'}</small>
+                <strong>{zh ? '远端刷新失败' : 'Remote refresh failed'}</strong>
+                <small>
+                  {zh
+                    ? '本地查看和提交仍可继续；尝试推送或远端合入时会显示真实 Git 错误，不使用旧远端记录。'
+                    : 'Local review and commit remain available. Push or remote merge will show the real Git error and will not use stale remote records.'}
+                </small>
               </section>
             ) : null}
             {activeWorkspace && activeWorkspace.activeConversationCount > 0 ? (
@@ -359,8 +366,8 @@ export function TaskGitReviewModal(props: {
                 <strong>{zh ? '活动会话' : 'Active sessions'}</strong>
                 <small>
                   {zh
-                    ? `${activeWorkspace.activeConversationCount} 个会话仍可能写入此分支。停止后才能提交或回收。`
-                    : `${activeWorkspace.activeConversationCount} conversations may still write to this branch. Stop them before commit or reclaim.`}
+                    ? `${activeWorkspace.activeConversationCount} 个会话仍可能写入此分支。本次提交只包含当前已经落盘的内容，后续变化可以继续提交。`
+                    : `${activeWorkspace.activeConversationCount} conversation(s) may still write to this branch. This commit only includes content written so far; later changes can be committed again.`}
                 </small>
                 <Button variant="secondary" size="compact" onClick={() => void stopSessions()} disabled={busy}>
                   {zh ? '停止活动会话' : 'Stop active sessions'}
@@ -408,32 +415,15 @@ export function TaskGitReviewModal(props: {
             </Button>
             {props.mode === 'commit' ? (
               <>
-                <Button
-                  variant="secondary"
-                  size="regular"
-                  onClick={() => void commit(true)}
-                  disabled={busy || !activeWorkspace || !activeWorkspace.remoteName || Boolean(activeWorkspace.remoteRefreshError) || activeWorkspace.activeConversationCount > 0 || activeReview?.conflictFiles.length !== 0}
-                >
+                <Button variant="secondary" size="regular" onClick={() => void commit(true)} disabled={busy || !activeWorkspace || !activeWorkspace.remoteName || activeReview?.conflictFiles.length !== 0}>
                   {zh ? '提交并推送' : 'Commit and Push'}
                 </Button>
-                <Button
-                  variant="primary"
-                  size="regular"
-                  busy={busy}
-                  onClick={() => void commit(false)}
-                  disabled={busy || !activeWorkspace || activeWorkspace.activeConversationCount > 0 || files.length === 0 || selectedPaths.length === 0 || activeReview?.conflictFiles.length !== 0}
-                >
+                <Button variant="primary" size="regular" busy={busy} onClick={() => void commit(false)} disabled={busy || !activeWorkspace || files.length === 0 || selectedPaths.length === 0 || activeReview?.conflictFiles.length !== 0}>
                   {zh ? '提交' : 'Commit'}
                 </Button>
               </>
             ) : props.mode === 'commit-only' ? (
-              <Button
-                variant="primary"
-                size="regular"
-                busy={busy}
-                onClick={() => void commit(false)}
-                disabled={busy || !activeWorkspace || activeWorkspace.activeConversationCount > 0 || files.length === 0 || selectedPaths.length === 0 || activeReview?.conflictFiles.length !== 0}
-              >
+              <Button variant="primary" size="regular" busy={busy} onClick={() => void commit(false)} disabled={busy || !activeWorkspace || files.length === 0 || selectedPaths.length === 0 || activeReview?.conflictFiles.length !== 0}>
                 {zh ? '提交代码' : 'Commit Code'}
               </Button>
             ) : props.mode === 'push-only' ? (
@@ -442,30 +432,16 @@ export function TaskGitReviewModal(props: {
                 size="regular"
                 busy={busy}
                 onClick={() => void push()}
-                disabled={
-                  busy ||
-                  !activeWorkspace ||
-                  !activeWorkspace.remoteName ||
-                  Boolean(activeWorkspace.remoteRefreshError) ||
-                  activeWorkspace.activeConversationCount > 0 ||
-                  activeReview?.conflictFiles.length !== 0 ||
-                  closedWorkspaceStates.has(activeWorkspace.state)
-                }
+                disabled={busy || !activeWorkspace || !activeWorkspace.remoteName || activeReview?.conflictFiles.length !== 0 || closedWorkspaceStates.has(activeWorkspace.state)}
               >
                 {zh ? '推送代码' : 'Push Code'}
               </Button>
             ) : canReclaimUnchanged ? (
-              <Button variant="primary" size="regular" busy={busy} onClick={() => void reclaimWithoutCommit()} disabled={busy || activeWorkspace.activeConversationCount > 0}>
+              <Button variant="primary" size="regular" busy={busy} onClick={() => void reclaimWithoutCommit()} disabled={busy}>
                 {zh ? '确认无变更并回收' : 'Confirm unchanged and reclaim'}
               </Button>
             ) : (
-              <Button
-                variant="primary"
-                size="regular"
-                busy={busy}
-                onClick={() => void commit(true)}
-                disabled={busy || !activeWorkspace || activeWorkspace.activeConversationCount > 0 || activeReview?.conflictFiles.length !== 0 || (files.length > 0 && selectedPaths.length === 0)}
-              >
+              <Button variant="primary" size="regular" busy={busy} onClick={() => void commit(true)} disabled={busy || !activeWorkspace || activeReview?.conflictFiles.length !== 0 || (files.length > 0 && selectedPaths.length === 0)}>
                 {props.mode === 'delivery' && files.length === 0 ? (zh ? '推送、验证并回收' : 'Push, verify, and reclaim') : zh ? '提交并推送' : 'Commit and Push'}
               </Button>
             )}
@@ -473,6 +449,25 @@ export function TaskGitReviewModal(props: {
         </footer>
       </section>
     </ModalPortal>
+  );
+}
+
+function confirmActiveSessionRisk(action: 'delivery' | 'reclaim' | 'discard', activeConversationCount: number, zh: boolean): boolean {
+  const actionLabel = zh
+    ? action === 'discard'
+      ? '放弃任务分支'
+      : action === 'reclaim'
+        ? '回收任务 worktree'
+        : '准备代码交付'
+    : action === 'discard'
+      ? 'discard the task branch'
+      : action === 'reclaim'
+        ? 'reclaim the task worktree'
+        : 'prepare code delivery';
+  return window.confirm(
+    zh
+      ? `当前仍有 ${activeConversationCount} 个活动会话可能写入此分支。继续${actionLabel}可能让后续写入失败或丢失工作区现场；已落盘内容不会自动替你补交。确定继续吗？`
+      : `${activeConversationCount} active conversation(s) may still write to this branch. Continuing to ${actionLabel} may interrupt later writes or remove the worktree. Content already written will not be committed automatically. Continue?`,
   );
 }
 
@@ -532,7 +527,6 @@ function SideBySideDiff(props: { diff: TaskGitFileDiff | null; zh: boolean }) {
 function errorMessage(error: unknown, zh: boolean): string {
   if (zh && error instanceof ZeusApiError) {
     const localizedMessages: Record<string, string> = {
-      ZEUS_TASK_WORKSPACE_BUSY: '仍有会话可能写入当前任务分支，请先停止活动会话。',
       ZEUS_TASK_WORKSPACE_CONFLICTED: '任务工作区存在未解决冲突，请先完成冲突处理。',
       ZEUS_TASK_WORKSPACE_DETACHED: '任务工作区当前未绑定命名分支，无法提交或推送。',
       ZEUS_TASK_WORKTREE_UNAVAILABLE: '任务 worktree 当前不可用，无法提交或推送。',
