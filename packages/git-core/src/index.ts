@@ -1,9 +1,9 @@
-import {execFile} from 'node:child_process';
-import {createHash} from 'node:crypto';
-import {realpathSync} from 'node:fs';
-import {copyFile, lstat, mkdir, readdir, readFile, rm, writeFile} from 'node:fs/promises';
-import {basename, dirname, isAbsolute, join, relative, resolve, sep} from 'node:path';
-import {promisify} from 'node:util';
+import { execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { realpathSync } from 'node:fs';
+import { copyFile, lstat, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
 
@@ -110,7 +110,7 @@ export interface CommitTaskWorkspaceResult {
   branch: string;
   headSha: string;
   committed: boolean;
-    formattedPaths: string[];
+  formattedPaths: string[];
 }
 
 export interface PushTaskWorkspaceInput {
@@ -637,30 +637,30 @@ export async function commitTaskWorkspace(input: CommitTaskWorkspaceInput): Prom
   if (paths.some((path) => ignored.some((ignoredPath) => path === ignoredPath || path.startsWith(`${ignoredPath}/`)))) {
     throw gitCoreError('ZEUS_TASK_GIT_PATH_INVALID', 'Shared paths and nested repositories cannot be committed from their parent workspace.');
   }
-    const formattedPaths = await formatTaskCommitPaths(input.cwd, paths);
+  const formattedPaths = await formatTaskCommitPaths(input.cwd, paths);
   // 来源目录里的暂存改动可能先被带入 worktree；共享目录和子仓库必须从父仓 index 中明确退出。
   if (ignored.length > 0) await runGit(input.cwd, ['reset', '-q', 'HEAD', '--', ...ignored]);
   if (paths.length > 0) await runGit(input.cwd, ['add', '-A', '--', ...paths]);
-    if (paths.length > 0) {
-        try {
-            await execFileAsync('git', ['diff', '--cached', '--check', '--', ...paths], {
-                cwd: input.cwd,
-                maxBuffer: 10 * 1024 * 1024
-            });
-        } catch (error) {
-            throw gitCoreError('ZEUS_TASK_PRECOMMIT_WHITESPACE_FAILED', `提交前 Git 空白检查失败：${commandFailureDetail(error)}`);
-        }
+  if (paths.length > 0) {
+    try {
+      await execFileAsync('git', ['diff', '--cached', '--check', '--', ...paths], {
+        cwd: input.cwd,
+        maxBuffer: 10 * 1024 * 1024,
+      });
+    } catch (error) {
+      throw gitCoreError('ZEUS_TASK_PRECOMMIT_WHITESPACE_FAILED', `提交前 Git 空白检查失败：${commandFailureDetail(error)}`);
     }
-    const stagedNames = paths.length > 0 ? splitLines(await readGitStdout(input.cwd, ['diff', '--cached', '--name-only', '--', ...paths])) : [];
+  }
+  const stagedNames = paths.length > 0 ? splitLines(await readGitStdout(input.cwd, ['diff', '--cached', '--name-only', '--', ...paths])) : [];
   let committed = false;
   if (stagedNames.length > 0) {
-      // 只提交用户本次选中的路径；其他预先暂存的改动继续留在 index，不得绕过本次门禁混入提交。
-      await runGit(input.cwd, ['commit', '-m', requireSafeGitText(input.message, 'commit message'), '--', ...paths]);
+    // 只提交用户本次选中的路径；其他预先暂存的改动继续留在 index，不得绕过本次门禁混入提交。
+    await runGit(input.cwd, ['commit', '-m', requireSafeGitText(input.message, 'commit message'), '--', ...paths]);
     committed = true;
   }
 
   const headSha = await resolveCommit(input.cwd, 'HEAD');
-    return {branch: review.branch, headSha, committed, formattedPaths};
+  return { branch: review.branch, headSha, committed, formattedPaths };
 }
 
 /**
@@ -1311,82 +1311,82 @@ function requireSafeWorkspacePath(value: string): string {
 
 /** 项目显式使用本地 Prettier 时，只整理本次提交选中的现存普通文件。 */
 async function formatTaskCommitPaths(cwd: string, selectedPaths: string[]): Promise<string[]> {
-    if (!(await projectDeclaresPrettier(cwd))) return [];
+  if (!(await projectDeclaresPrettier(cwd))) return [];
 
-    const prettierPath = await resolveTaskPrettierPath(cwd);
-    if (!prettierPath) throw gitCoreError('ZEUS_TASK_PRECOMMIT_FORMAT_UNAVAILABLE', '项目配置了 Prettier，但仓库尚未安装本地 Prettier。请先安装项目依赖再提交。');
+  const prettierPath = await resolveTaskPrettierPath(cwd);
+  if (!prettierPath) throw gitCoreError('ZEUS_TASK_PRECOMMIT_FORMAT_UNAVAILABLE', '项目配置了 Prettier，但仓库尚未安装本地 Prettier。请先安装项目依赖再提交。');
 
-    const existingFiles: string[] = [];
-    const before = new Map<string, Buffer>();
-    for (const path of selectedPaths) {
-        const absolutePath = resolve(cwd, path);
-        if (!isPathInside(cwd, absolutePath)) throw gitCoreError('ZEUS_GIT_PATH_INVALID', `Workspace path escapes the task worktree: ${path}`);
-        const entry = await lstat(absolutePath).catch(() => null);
-        // 符号链接不交给格式化器，避免跟随链接改写任务工作区之外的目标。
-        if (!entry?.isFile() || entry.isSymbolicLink()) continue;
-        existingFiles.push(path);
-        before.set(path, await readFile(absolutePath));
-    }
-    if (existingFiles.length === 0) return [];
+  const existingFiles: string[] = [];
+  const before = new Map<string, Buffer>();
+  for (const path of selectedPaths) {
+    const absolutePath = resolve(cwd, path);
+    if (!isPathInside(cwd, absolutePath)) throw gitCoreError('ZEUS_GIT_PATH_INVALID', `Workspace path escapes the task worktree: ${path}`);
+    const entry = await lstat(absolutePath).catch(() => null);
+    // 符号链接不交给格式化器，避免跟随链接改写任务工作区之外的目标。
+    if (!entry?.isFile() || entry.isSymbolicLink()) continue;
+    existingFiles.push(path);
+    before.set(path, await readFile(absolutePath));
+  }
+  if (existingFiles.length === 0) return [];
 
-    const ignorePath = join(cwd, '.prettierignore');
-    const ignoreEntry = await lstat(ignorePath).catch(() => null);
-    const commonArgs = [...(ignoreEntry?.isFile() ? ['--ignore-path', '.prettierignore'] : []), '--ignore-unknown'];
-    const absoluteFiles = existingFiles.map((path) => resolve(cwd, path));
-    try {
-        await execFileAsync(prettierPath, ['--write', ...commonArgs, ...absoluteFiles], {
-            cwd,
-            maxBuffer: 20 * 1024 * 1024
-        });
-        await execFileAsync(prettierPath, ['--check', ...commonArgs, ...absoluteFiles], {
-            cwd,
-            maxBuffer: 20 * 1024 * 1024
-        });
-    } catch (error) {
-        throw gitCoreError('ZEUS_TASK_PRECOMMIT_FORMAT_FAILED', `提交前 Prettier 格式化失败：${commandFailureDetail(error)}`);
-    }
+  const ignorePath = join(cwd, '.prettierignore');
+  const ignoreEntry = await lstat(ignorePath).catch(() => null);
+  const commonArgs = [...(ignoreEntry?.isFile() ? ['--ignore-path', '.prettierignore'] : []), '--ignore-unknown'];
+  const absoluteFiles = existingFiles.map((path) => resolve(cwd, path));
+  try {
+    await execFileAsync(prettierPath, ['--write', ...commonArgs, ...absoluteFiles], {
+      cwd,
+      maxBuffer: 20 * 1024 * 1024,
+    });
+    await execFileAsync(prettierPath, ['--check', ...commonArgs, ...absoluteFiles], {
+      cwd,
+      maxBuffer: 20 * 1024 * 1024,
+    });
+  } catch (error) {
+    throw gitCoreError('ZEUS_TASK_PRECOMMIT_FORMAT_FAILED', `提交前 Prettier 格式化失败：${commandFailureDetail(error)}`);
+  }
 
-    const formattedPaths: string[] = [];
-    for (const path of existingFiles) {
-        const previous = before.get(path);
-        const current = await readFile(resolve(cwd, path));
-        if (previous && !previous.equals(current)) formattedPaths.push(path);
-    }
-    return formattedPaths;
+  const formattedPaths: string[] = [];
+  for (const path of existingFiles) {
+    const previous = before.get(path);
+    const current = await readFile(resolve(cwd, path));
+    if (previous && !previous.equals(current)) formattedPaths.push(path);
+  }
+  return formattedPaths;
 }
 
 async function resolveTaskPrettierPath(cwd: string): Promise<string | null> {
-    const candidates = [join(cwd, 'node_modules', '.bin', 'prettier')];
-    // Git worktree 默认不复制 node_modules；允许复用同一仓库主工作区已经安装的固定版本。
-    const commonGitDirectory = await readGitStdout(cwd, ['rev-parse', '--path-format=absolute', '--git-common-dir']).catch(() => null);
-    if (commonGitDirectory) candidates.push(join(dirname(commonGitDirectory), 'node_modules', '.bin', 'prettier'));
-    for (const candidate of new Set(candidates)) {
-        const entry = await lstat(candidate).catch(() => null);
-        if (entry && !entry.isDirectory()) return candidate;
-    }
-    return null;
+  const candidates = [join(cwd, 'node_modules', '.bin', 'prettier')];
+  // Git worktree 默认不复制 node_modules；允许复用同一仓库主工作区已经安装的固定版本。
+  const commonGitDirectory = await readGitStdout(cwd, ['rev-parse', '--path-format=absolute', '--git-common-dir']).catch(() => null);
+  if (commonGitDirectory) candidates.push(join(dirname(commonGitDirectory), 'node_modules', '.bin', 'prettier'));
+  for (const candidate of new Set(candidates)) {
+    const entry = await lstat(candidate).catch(() => null);
+    if (entry && !entry.isDirectory()) return candidate;
+  }
+  return null;
 }
 
 async function projectDeclaresPrettier(cwd: string): Promise<boolean> {
-    const packageJsonPath = join(cwd, 'package.json');
-    const packageJson = await readFile(packageJsonPath, 'utf8').catch(() => null);
-    if (!packageJson) return false;
-    try {
-        const manifest = JSON.parse(packageJson) as Record<string, unknown>;
-        return ['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies'].some((field) => {
-            const dependencies = manifest[field];
-            return typeof dependencies === 'object' && dependencies !== null && Object.prototype.hasOwnProperty.call(dependencies, 'prettier');
-        });
-    } catch {
-        // package.json 正在编辑且暂时不是合法 JSON 时，仍识别显式声明，交由 Prettier 给出准确错误。
-        return /"prettier"\s*:/u.test(packageJson);
-    }
+  const packageJsonPath = join(cwd, 'package.json');
+  const packageJson = await readFile(packageJsonPath, 'utf8').catch(() => null);
+  if (!packageJson) return false;
+  try {
+    const manifest = JSON.parse(packageJson) as Record<string, unknown>;
+    return ['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies'].some((field) => {
+      const dependencies = manifest[field];
+      return typeof dependencies === 'object' && dependencies !== null && Object.prototype.hasOwnProperty.call(dependencies, 'prettier');
+    });
+  } catch {
+    // package.json 正在编辑且暂时不是合法 JSON 时，仍识别显式声明，交由 Prettier 给出准确错误。
+    return /"prettier"\s*:/u.test(packageJson);
+  }
 }
 
 function commandFailureDetail(error: unknown): string {
-    const failure = error as { stderr?: unknown; stdout?: unknown; message?: unknown };
-    const detail = [failure.stderr, failure.stdout, failure.message].find((value) => typeof value === 'string' && value.trim());
-    return typeof detail === 'string' ? detail.trim().slice(0, 4_000) : '命令执行失败。';
+  const failure = error as { stderr?: unknown; stdout?: unknown; message?: unknown };
+  const detail = [failure.stderr, failure.stdout, failure.message].find((value) => typeof value === 'string' && value.trim());
+  return typeof detail === 'string' ? detail.trim().slice(0, 4_000) : '命令执行失败。';
 }
 
 /** 统一 macOS 等系统上的符号链接路径，避免同一 worktree 因 /tmp 与 /private/tmp 被误判。 */
