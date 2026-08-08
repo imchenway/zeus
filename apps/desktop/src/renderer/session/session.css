@@ -4429,13 +4429,68 @@
 .session-codex-parity-v1 .session-resource-card-list {
   display: grid;
   gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(128px, 220px));
   inline-size: 100%;
   margin-block: 14px 4px;
   max-inline-size: 100%;
   min-inline-size: 0;
 }
 
+.session-codex-parity-v1 .session-resource-image {
+  align-items: center;
+  appearance: none;
+  background: var(--session-canvas);
+  border: 1px solid var(--session-line);
+  border-radius: 10px;
+  color: var(--session-text-muted);
+  display: flex;
+  inline-size: min(220px, 100%);
+  justify-content: center;
+  max-block-size: min(38vh, 220px);
+  min-block-size: 112px;
+  min-inline-size: 0;
+  overflow: hidden;
+  padding: 0;
+  position: relative;
+  text-align: start;
+}
+
+.session-codex-parity-v1 .session-resource-image:hover,
+.session-codex-parity-v1 .session-resource-image:focus-visible {
+  border-color: var(--session-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--session-accent) 13%, transparent);
+}
+
+.session-codex-parity-v1 .session-resource-image[data-error='true'] {
+  border-color: color-mix(in srgb, var(--session-danger) 40%, var(--session-line));
+}
+
+.session-codex-parity-v1 .session-resource-image > img {
+  block-size: auto;
+  display: block;
+  inline-size: auto;
+  max-block-size: min(38vh, 220px);
+  max-inline-size: 100%;
+  object-fit: contain;
+}
+
+.session-codex-parity-v1 .session-resource-image-placeholder {
+  align-items: center;
+  display: flex;
+  gap: 9px;
+  justify-content: center;
+  min-block-size: 112px;
+  padding: 18px;
+}
+
+.session-codex-parity-v1 .session-resource-image-placeholder > svg {
+  block-size: 22px;
+  flex: 0 0 auto;
+  inline-size: 22px;
+}
+
 .session-codex-parity-v1 .session-resource-card {
+  grid-column: 1 / -1;
   align-items: center;
   background: var(--session-canvas);
   border: 1px solid var(--session-line);
@@ -5193,6 +5248,10 @@
 }
 
 @media (max-width: 760px) {
+  .session-codex-parity-v1 .session-resource-card-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .session-codex-parity-v1 .session-resource-card {
     align-items: stretch;
     flex-wrap: wrap;
@@ -9842,13 +9901,68 @@
 .session-codex-parity-v1 .session-resource-card-list {
   display: grid;
   gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(128px, 220px));
   inline-size: 100%;
   margin-block: 14px 4px;
   max-inline-size: 100%;
   min-inline-size: 0;
 }
 
+.session-codex-parity-v1 .session-resource-image {
+  align-items: center;
+  appearance: none;
+  background: var(--session-canvas);
+  border: 1px solid var(--session-line);
+  border-radius: 10px;
+  color: var(--session-text-muted);
+  display: flex;
+  inline-size: min(220px, 100%);
+  justify-content: center;
+  max-block-size: min(38vh, 220px);
+  min-block-size: 112px;
+  min-inline-size: 0;
+  overflow: hidden;
+  padding: 0;
+  position: relative;
+  text-align: start;
+}
+
+.session-codex-parity-v1 .session-resource-image:hover,
+.session-codex-parity-v1 .session-resource-image:focus-visible {
+  border-color: var(--session-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--session-accent) 13%, transparent);
+}
+
+.session-codex-parity-v1 .session-resource-image[data-error='true'] {
+  border-color: color-mix(in srgb, var(--session-danger) 40%, var(--session-line));
+}
+
+.session-codex-parity-v1 .session-resource-image > img {
+  block-size: auto;
+  display: block;
+  inline-size: auto;
+  max-block-size: min(38vh, 220px);
+  max-inline-size: 100%;
+  object-fit: contain;
+}
+
+.session-codex-parity-v1 .session-resource-image-placeholder {
+  align-items: center;
+  display: flex;
+  gap: 9px;
+  justify-content: center;
+  min-block-size: 112px;
+  padding: 18px;
+}
+
+.session-codex-parity-v1 .session-resource-image-placeholder > svg {
+  block-size: 22px;
+  flex: 0 0 auto;
+  inline-size: 22px;
+}
+
 .session-codex-parity-v1 .session-resource-card {
+  grid-column: 1 / -1;
   align-items: center;
   background: var(--session-canvas);
   border: 1px solid var(--session-line);
@@ -10606,6 +10720,10 @@
 }
 
 @media (max-width: 760px) {
+  .session-codex-parity-v1 .session-resource-card-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .session-codex-parity-v1 .session-resource-card {
     align-items: stretch;
     flex-wrap: wrap;
