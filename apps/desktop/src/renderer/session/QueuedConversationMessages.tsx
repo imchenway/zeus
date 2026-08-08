@@ -1,7 +1,7 @@
-import { type FormEvent, type KeyboardEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import type { NativeQueueSnapshot, NativeQueuedSubmission, NativeSessionState } from './sessionTypes.js';
-import { SafeMarkdown, type SessionUiLanguage } from './ThreadItemView.js';
-import { autosizeTextarea } from './textareaAutosize.js';
+import {type FormEvent, type KeyboardEvent, useEffect, useLayoutEffect, useMemo, useRef, useState} from 'react';
+import type {NativeQueuedSubmission, NativeQueueSnapshot, NativeSessionState} from './sessionTypes.js';
+import {SafeMarkdown, type SessionUiLanguage} from './ThreadItemView.js';
+import {autosizeTextarea} from './textareaAutosize.js';
 
 export interface QueuedConversationMessagesProps {
   state: NativeSessionState;
@@ -186,7 +186,11 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
               ) : (
                 <div className="session-queued-message-content">
                   {submission.content.trim() ? <SafeMarkdown text={submission.content} language={props.language} /> : <p className="session-queued-message-empty">{copy.attachmentOnly}</p>}
-                  {submission.error?.message ? <small className="session-queued-message-error" role="alert">{submission.error.message}</small> : null}
+                    {submission.error?.message ? (
+                        <small className="session-queued-message-error" role="alert">
+                            {submission.error.message}
+                        </small>
+                    ) : null}
                   {submission.attachments?.length ? (
                     <ul className="session-queued-message-attachments" aria-label={copy.attachments}>
                       {submission.attachments.map((attachment) => (

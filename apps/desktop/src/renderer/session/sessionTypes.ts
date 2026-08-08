@@ -1,4 +1,11 @@
-import type { ConversationResource, TaskPushParentContextOption, TaskPushParentContextSelection, TurnChangeSet, ZeusBrowserComment, ZeusBrowserPreparedSubmission } from '@zeus/shared';
+import type {
+    ConversationResource,
+    TaskPushParentContextOption,
+    TaskPushParentContextSelection,
+    TurnChangeSet,
+    ZeusBrowserComment,
+    ZeusBrowserPreparedSubmission
+} from '@zeus/shared';
 
 export type { ConversationResource, ConversationResourcePreview, TurnChangeSet, TurnChangeSetOperationResult } from '@zeus/shared';
 
@@ -550,6 +557,7 @@ export interface TaskWorkspaceCommitResult {
     branch: string;
     headSha: string;
     committed: boolean;
+      formattedPaths: string[];
   };
   review: TaskWorkspaceReview;
 }

@@ -1,23 +1,23 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { buildTaskCommitMessageSuggestion } from '@zeus/shared';
-import { type DashboardClient, type TaskRecord, ZeusApiError } from '../apiClient.js';
+import {useEffect, useMemo, useRef, useState} from 'react';
+import {buildTaskCommitMessageSuggestion} from '@zeus/shared';
+import {type DashboardClient, type TaskRecord, ZeusApiError} from '../apiClient.js';
 import type {
-  TaskBranchFileChange,
-  TaskGitDiffSummary,
-  TaskGitFileDiff,
-  TaskGitFileStatus,
-  TaskIntegrationConflictAiDraft,
-  TaskIntegrationConflictFile,
-  TaskIntegrationRecord,
-  TaskIntegrationResult,
-  TaskWorkspaceSnapshot,
-  TaskWorkspacesSnapshot,
+    TaskBranchFileChange,
+    TaskGitDiffSummary,
+    TaskGitFileDiff,
+    TaskGitFileStatus,
+    TaskIntegrationConflictAiDraft,
+    TaskIntegrationConflictFile,
+    TaskIntegrationRecord,
+    TaskIntegrationResult,
+    TaskWorkspaceSnapshot,
+    TaskWorkspacesSnapshot,
 } from '../session/sessionTypes.js';
-import { Button } from '../ui/Button.js';
-import { ModalPortal } from '../ui/ModalPortal.js';
-import { ZeusSelect } from '../ZeusSelect.js';
-import { countConflictBlocks, TaskGitConflictWorkspace } from './TaskGitConflictWorkspace.js';
-import { TaskWorkspaceBranchList } from './TaskWorkspaceBranchList.js';
+import {Button} from '../ui/Button.js';
+import {ModalPortal} from '../ui/ModalPortal.js';
+import {ZeusSelect} from '../ZeusSelect.js';
+import {countConflictBlocks, TaskGitConflictWorkspace} from './TaskGitConflictWorkspace.js';
+import {TaskWorkspaceBranchList} from './TaskWorkspaceBranchList.js';
 
 type DeliveryClient = Pick<
   DashboardClient,
@@ -233,9 +233,12 @@ export function TaskGitMergeModal(props: { open: boolean; language: 'zh-CN' | 'e
       await reload(selectedWorkspace.id);
       await props.onChanged?.();
       setDiffScope('committed');
+        const formattedCount = response.result.formattedPaths.length;
       setFeedback({
         tone: 'success',
-        text: zh ? `提交完成 · ${shortSha(response.result.headSha)}` : `Commit created · ${shortSha(response.result.headSha)}`,
+          text: zh
+              ? `提交完成 · ${shortSha(response.result.headSha)}${formattedCount > 0 ? ` · 已自动格式化 ${formattedCount} 个文件` : ''}`
+              : `Commit created · ${shortSha(response.result.headSha)}${formattedCount > 0 ? ` · Auto-formatted ${formattedCount} file${formattedCount === 1 ? '' : 's'}` : ''}`,
       });
     } catch (reason) {
       setError(errorMessage(reason, zh));
