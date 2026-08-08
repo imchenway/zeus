@@ -46,7 +46,7 @@
     "@types/react-dom": "^19.2.3",
     "@types/sql.js": "^1.4.11",
     "@types/ws": "^8.18.1",
-    "@vitejs/plugin-react": "^6.0.2",
+    "@vitejs/plugin-react": "^6.0.5",
     "electron": "42.4.0",
     "electron-builder": "^26.0.12",
     "eslint": "^9.29.0",
