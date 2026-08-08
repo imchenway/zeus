@@ -1878,6 +1878,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   const tasks = new TaskRepository(db);
   const taskEnvironments = new TaskEnvironmentRepository(db);
   const taskWorkspaces = new TaskWorkspaceRepository(db);
+  const taskConversationExecutionContextPromises = new Map<string, Promise<{ projectLocalPath: string; writableRoots: string[] } | null>>();
   const taskIntegrations = new TaskIntegrationRepository(db);
   const taskEvents = new TaskEventRepository(db);
   const taskTemplates = new TaskTemplateRepository(db);
@@ -2158,6 +2159,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       browserAutomation: options.browserAutomation,
       trustedAttachmentRoots: trustedConversationAttachmentRoots,
       getProjectRoot: (projectId) => projects.getById(projectId)?.localPath ?? null,
+      ensureExecutionContext: ensureNativeConversationExecutionContext,
       getConcurrency: (projectId) => {
         const runningLegacy = listUniqueRunningRuntimeSessions();
         return {
@@ -3901,6 +3903,28 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       }
       try {
         const snapshot = await codexNativeCoordinator.resumeInterruptedQueue({ conversationId: conversation.id });
+        publishNativeConversationEvent('conversation.queue.changed', { conversationId: conversation.id });
+        return reply.code(202).send(snapshot);
+      } catch (error) {
+        return sendNativeConversationApiError(reply, error);
+      }
+    },
+  );
+
+  server.post(
+    '/api/projects/:projectId/conversations/:conversationId/queue/recover',
+    async (
+      request: FastifyRequest<{
+        Params: { projectId: string; conversationId: string };
+      }>,
+      reply,
+    ) => {
+      const conversation = conversations.getById(request.params.conversationId);
+      if (!conversation || conversation.projectId !== request.params.projectId || conversation.transportKind !== 'codex_native') {
+        return reply.code(404).send({ error: 'ZEUS_NATIVE_CONVERSATION_NOT_FOUND', message: 'Native conversation not found' });
+      }
+      try {
+        const snapshot = await codexNativeCoordinator.recoverQueue({ conversationId: conversation.id });
         publishNativeConversationEvent('conversation.queue.changed', { conversationId: conversation.id });
         return reply.code(202).send(snapshot);
       } catch (error) {
@@ -12295,8 +12319,21 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       position: submission.queuePosition,
       providerTurnId: submission.providerTurnId,
       pausedReason: submission.pausedReason,
+      error: toNativeSubmissionError(submission.errorJson),
       createdAt: submission.createdAt,
       updatedAt: submission.updatedAt,
+    };
+  }
+
+  function toNativeSubmissionError(errorJson: string | null): { code: string; message: string; recoveryRequired: boolean } | null {
+    if (!errorJson) return null;
+    const parsed = parseJsonObject(errorJson);
+    const code = typeof parsed.code === 'string' && parsed.code.trim() ? parsed.code : 'ZEUS_NATIVE_SUBMISSION_FAILED';
+    const message = typeof parsed.message === 'string' && parsed.message.trim() ? parsed.message : 'Native message submission failed.';
+    return {
+      code,
+      message,
+      recoveryRequired: parsed.recoveryRequired === true || code.includes('RECOVERY') || code.includes('WORKTREE_UNAVAILABLE'),
     };
   }
 
@@ -12448,6 +12485,14 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     const workspace = conversation.workspaceId ? taskWorkspaces.getById(conversation.workspaceId) : undefined;
     const environment = conversation.environmentId ? taskEnvironments.getById(conversation.environmentId) : undefined;
     const project = projects.getById(conversation.projectId);
+    if (conversation.taskId) {
+      const projectPath = project?.localPath ? resolve(project.localPath) : null;
+      const environmentPath = environment?.rootPath ? resolve(environment.rootPath) : null;
+      if (environmentPath && existsSync(environmentPath) && environmentPath !== projectPath) return environmentPath;
+      const workspacePath = workspace?.worktreePath ? resolve(workspace.worktreePath) : null;
+      if (workspacePath && existsSync(workspacePath) && workspacePath !== projectPath) return workspacePath;
+      return null;
+    }
     return isNativeApiRecord(persistedContext) && typeof persistedContext.projectLocalPath === 'string' && persistedContext.projectLocalPath.trim()
       ? persistedContext.projectLocalPath
       : workspace?.worktreePath
@@ -12457,6 +12502,121 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           : conversation.taskId
             ? null
             : (project?.localPath ?? projectRoot);
+  }
+
+  async function ensureNativeConversationExecutionContext(input: {
+    conversationId: string;
+    mode: 'reconcile' | 'submit' | 'dispatch' | 'recover_queue' | 'restore';
+  }): Promise<{ projectLocalPath: string; writableRoots: string[] } | null> {
+    const lockConversation = conversations.getById(input.conversationId);
+    const lockKey = `${lockConversation?.projectId ?? 'conversation'}:${lockConversation?.environmentId ?? lockConversation?.workspaceId ?? input.conversationId}`;
+    const existing = taskConversationExecutionContextPromises.get(lockKey);
+    if (existing) return existing;
+    const promise = (async () => {
+      const conversation = conversations.getById(input.conversationId);
+      if (!conversation || !conversation.taskId || (conversation.archived && input.mode !== 'restore') || (conversation.providerState === 'archived' && input.mode !== 'restore')) return null;
+      const project = projects.getById(conversation.projectId);
+      const task = tasks.getById(conversation.taskId);
+      const workspace = conversation.workspaceId ? taskWorkspaces.getById(conversation.workspaceId) : undefined;
+      const environmentId = conversation.environmentId ?? workspace?.environmentId ?? null;
+      const environment = environmentId ? taskEnvironments.getById(environmentId) : undefined;
+      if (!project || !task || !workspace) {
+        throw nativeApiError('ZEUS_NATIVE_CONVERSATION_WORKTREE_UNAVAILABLE', 'The task conversation no longer has a recoverable task workspace.');
+      }
+      if (workspace.state === 'discarded' || environment?.state === 'failed') {
+        throw nativeApiError('ZEUS_NATIVE_CONVERSATION_WORKTREE_UNAVAILABLE', 'The task workspace was discarded and cannot be restored for this conversation.');
+      }
+      const members = environment ? taskWorkspaces.listByEnvironment(environment.id) : [workspace];
+      if (members.length === 0 || members.some((member) => member.state === 'discarded')) {
+        throw nativeApiError('ZEUS_NATIVE_CONVERSATION_WORKTREE_UNAVAILABLE', 'The task environment has no recoverable repository workspace.');
+      }
+      const projectRoot = resolve(project.localPath);
+      const worktreeContainerRoot = resolve(join(dirname(projectRoot), '.zeus-worktrees'));
+      const environmentRoot = resolve(
+        environment?.rootPath && resolve(environment.rootPath) !== projectRoot
+          ? environment.rootPath
+          : buildTaskEnvironmentRootPath(project.localPath, project.slug, task.taskCode, environment?.id ?? workspace.id),
+      );
+      if (environmentRoot === projectRoot || !isPathInsideRoot(environmentRoot, worktreeContainerRoot)) {
+        throw nativeApiError('ZEUS_NATIVE_CONVERSATION_WORKTREE_UNAVAILABLE', 'The recorded task workspace path is unsafe; Zeus will not use the project root as a fallback.');
+      }
+
+      const registeredRepositories = projectRepositories.listByProject(project.id);
+      const sharedPaths = projectSharedPaths.listByProject(project.id);
+      const needsEnvironmentContainer = members.length > 1 || members.some((member) => member.repositoryRelativePath !== '.') || sharedPaths.length > 0;
+      const createdEnvironmentRoot = needsEnvironmentContainer && !existsSync(environmentRoot);
+      const prepared: Array<{ workspace: ZeusTaskWorkspaceRecord; prepared: Awaited<ReturnType<typeof prepareTaskWorktree>> }> = [];
+      try {
+        if (createdEnvironmentRoot) {
+          mkdirSync(environmentRoot, { recursive: true });
+          mirrorTaskEnvironmentContainer(project, environmentRoot, registeredRepositories, sharedPaths);
+        } else if (needsEnvironmentContainer) {
+          mkdirSync(environmentRoot, { recursive: true });
+        }
+        for (const member of members) {
+          const repositoryPath = resolve(member.repositoryPath || project.localPath);
+          const memberRelativePath = member.repositoryRelativePath || '.';
+          const memberWorktreePath = resolve(join(environmentRoot, memberRelativePath));
+          if (memberWorktreePath === projectRoot || !isPathInsideRoot(memberWorktreePath, worktreeContainerRoot)) {
+            throw nativeApiError('ZEUS_NATIVE_CONVERSATION_WORKTREE_UNAVAILABLE', `Task workspace path is outside the isolated worktree root: ${memberRelativePath}`);
+          }
+          const sourceRef = member.sourceHeadSha || member.headSha;
+          if (!sourceRef) throw nativeApiError('ZEUS_NATIVE_CONVERSATION_WORKTREE_UNAVAILABLE', `Task workspace has no recoverable source commit: ${member.branchName}`);
+          const restored = await prepareTaskWorktree({
+            repositoryPath,
+            projectSlug: project.slug,
+            taskCode: task.taskCode,
+            taskTitle: task.title,
+            workspaceId: member.id,
+            branchName: member.branchName,
+            sourceRef,
+            sourceBranch: member.sourceBranch,
+            existingBranch: true,
+            ...(member.remoteName && member.remoteBranch ? { existingRemoteRef: `${member.remoteName}/${member.remoteBranch}` } : {}),
+            worktreePath: memberWorktreePath,
+          });
+          prepared.push({ workspace: member, prepared: restored });
+        }
+        if (needsEnvironmentContainer) overlayTaskEnvironmentSharedPaths(environmentRoot, sharedPaths);
+      } catch (error) {
+        for (const entry of [...prepared].reverse()) {
+          if (entry.prepared.reused) continue;
+          await cleanupPreparedTaskWorktree({
+            repositoryPath: entry.workspace.repositoryPath || project.localPath,
+            worktreePath: entry.prepared.worktreePath,
+            branchName: entry.workspace.branchName,
+            removeBranch: false,
+          }).catch(() => undefined);
+        }
+        if (createdEnvironmentRoot) rmSync(environmentRoot, { recursive: true, force: true });
+        const detail = error instanceof Error ? error.message : String(error);
+        throw nativeApiError('ZEUS_NATIVE_CONVERSATION_WORKTREE_UNAVAILABLE', `The task conversation worktree could not be restored: ${detail}`);
+      }
+
+      const updatedWorkspaces = db.transaction(() => {
+        if (environment) taskEnvironments.update(environment.id, { rootPath: environmentRoot, state: 'ready', lastError: null });
+        return prepared.map(({ workspace, prepared: restored }) => taskWorkspaces.update(workspace.id, { worktreePath: restored.worktreePath, headSha: restored.headSha, state: 'ready', lastError: null }));
+      });
+      await db.save();
+      recordTaskEvent({
+        taskId: task.id,
+        eventType: 'task.conversation.worktree.rehydrated',
+        title: '任务会话工作区已恢复',
+        payload: {
+          conversationId: conversation.id,
+          environmentId: environment?.id ?? null,
+          workspaces: updatedWorkspaces.map((entry) => ({ workspaceId: entry.id, branchName: entry.branchName, worktreePath: entry.worktreePath })),
+        },
+      });
+      const writableRoots = environment ? resolveTaskEnvironmentWritableRoots(project, updatedWorkspaces) : updatedWorkspaces.flatMap((entry) => (entry.worktreePath ? [entry.worktreePath] : []));
+      return { projectLocalPath: environment ? environmentRoot : resolve(updatedWorkspaces[0]?.worktreePath ?? environmentRoot), writableRoots };
+    })();
+    taskConversationExecutionContextPromises.set(lockKey, promise);
+    try {
+      return await promise;
+    } finally {
+      if (taskConversationExecutionContextPromises.get(lockKey) === promise) taskConversationExecutionContextPromises.delete(lockKey);
+    }
   }
 
   async function readNativeConversationExecutionContext(conversation: ZeusConversationWithMessagesRecord): Promise<{ cwd: string | null; branch: string | null; isGitRepository: boolean | null }> {
@@ -12502,6 +12662,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     if (paused.some((submission) => submission.pausedReason === 'recovery_required')) return { type: 'paused' as const, reason: 'recovery_required' as const };
     if (paused.some((submission) => submission.pausedReason === 'interrupted')) return { type: 'paused' as const, reason: 'interrupted' as const };
     if (paused.some((submission) => submission.pausedReason === 'transport_unavailable')) return { type: 'paused' as const, reason: 'transport_unavailable' as const };
+    if (conversation.providerState === 'paused') return { type: 'paused' as const, reason: 'recovery_required' as const };
     if (paused.length > 0 && paused.every((submission) => submission.pausedReason === 'user_confirmation')) return { type: 'idle' as const };
     if (paused.length > 0) return { type: 'paused' as const, reason: 'recovery_required' as const };
     return { type: 'idle' as const };

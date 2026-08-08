@@ -926,6 +926,12 @@
   margin: 0;
 }
 
+.session-codex-parity-v1 .session-queued-message-error {
+  color: var(--session-danger);
+  display: block;
+  margin-block-start: 4px;
+}
+
 .session-codex-parity-v1 .session-thread-item-assistant,
 .session-codex-parity-v1 .session-thread-item-commentary,
 .session-codex-parity-v1 .session-thread-item-tool,

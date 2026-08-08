@@ -58,6 +58,7 @@ export interface SessionControllerClient {
   reorderNativeQueue(projectId: string, conversationId: string, orderedSubmissionIds: string[]): Promise<NativeQueueSnapshot>;
   sendNativeQueuedNow(projectId: string, conversationId: string, submissionId: string): Promise<NativeOperationAcceptance>;
   resumeNativeQueue(projectId: string, conversationId: string): Promise<NativeQueueSnapshot>;
+  recoverNativeQueue(projectId: string, conversationId: string): Promise<NativeQueueSnapshot>;
   interruptNativeTurn(projectId: string, conversationId: string, turnId: string): Promise<NativeOperationAcceptance>;
   respondToNativeRequest(projectId: string, conversationId: string, requestId: string, response: Record<string, unknown>): Promise<{ operation: Record<string, unknown>; request: NativePendingRequest }>;
 
@@ -115,6 +116,7 @@ export interface SessionController {
   reorderQueue(orderedSubmissionIds: string[]): Promise<NativeQueueSnapshot>;
   sendQueuedNow(submissionId: string): Promise<NativeOperationAcceptance>;
   resumeQueue(): Promise<NativeQueueSnapshot>;
+  recoverQueue(): Promise<NativeQueueSnapshot>;
 
   restoreArchivedConversation(): Promise<NativeConversationSnapshot>;
   interruptActiveTurn(): Promise<NativeOperationAcceptance>;
@@ -1036,6 +1038,15 @@ export function createSessionController(options: CreateSessionControllerOptions)
         'queue:resume',
         () => options.client.resumeNativeQueue(options.projectId, options.conversationId),
         (queue) => dispatch({ type: 'queue_hydrated', queue }),
+      );
+    },
+    recoverQueue() {
+      return runOperation(
+        'queue:recover',
+        () => options.client.recoverNativeQueue(options.projectId, options.conversationId),
+        (queue) => dispatch({ type: 'queue_hydrated', queue }),
+        true,
+        true,
       );
     },
     restoreArchivedConversation() {

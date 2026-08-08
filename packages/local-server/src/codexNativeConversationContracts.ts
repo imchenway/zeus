@@ -19,6 +19,12 @@ export interface NativeAcceptedOperation {
   providerTurnId: string | null;
 }
 
+export interface NativeSubmissionError {
+  code: string;
+  message: string;
+  recoveryRequired: boolean;
+}
+
 export interface NativeQueuedSubmission {
   id: string;
   conversationId: string;
@@ -31,6 +37,7 @@ export interface NativeQueuedSubmission {
   position: number;
   providerTurnId: null;
   pausedReason: string | null;
+  error: NativeSubmissionError | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -164,6 +171,10 @@ export interface ResumeNativeQueueInput {
   conversationId: string;
 }
 
+export interface RecoverNativeQueueInput {
+  conversationId: string;
+}
+
 export interface RestoreArchivedConversationInput {
   conversationId: string;
 }
@@ -225,6 +236,7 @@ export interface CodexNativeConversationCoordinator {
   reorderQueue(input: ReorderNativeQueueInput): Promise<NativeQueueSnapshot>;
   sendQueuedNow(input: SendQueuedNowInput): Promise<NativeAcceptedOperation>;
   resumeInterruptedQueue(input: ResumeNativeQueueInput): Promise<NativeQueueSnapshot>;
+  recoverQueue(input: RecoverNativeQueueInput): Promise<NativeQueueSnapshot>;
   archiveConversation(input: ArchiveConversationInput): Promise<NativeQueueSnapshot>;
   restoreArchivedConversation(input: RestoreArchivedConversationInput): Promise<NativeQueueSnapshot>;
   interruptTurn(input: InterruptNativeTurnInput): Promise<NativeAcceptedOperation>;

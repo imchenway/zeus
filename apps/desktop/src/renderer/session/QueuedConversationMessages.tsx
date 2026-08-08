@@ -12,6 +12,7 @@ export interface QueuedConversationMessagesProps {
   onReorder?: (orderedSubmissionIds: string[]) => void | Promise<void>;
   onResume?: () => void | Promise<void>;
   onRetry?: () => void | Promise<void>;
+  onRecover?: () => void | Promise<void>;
 }
 
 const labels = {
@@ -86,6 +87,7 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const busy = Boolean(props.state.busyOperation);
   const writable = !props.state.error?.recoveryRequired && props.state.transportState === 'ready' && props.state.conversationState !== 'legacy_readonly';
+  const recoveryActionable = props.state.transportState === 'ready' && props.state.conversationState !== 'legacy_readonly';
   const active = props.state.conversationState === 'active_prework' || props.state.conversationState === 'active_final_answer';
   const queueExplanation = describeQueueState(props.state, queue, copy);
 
@@ -103,7 +105,7 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
     autosizeTextarea(textareaRef.current, 72, 0.42);
   }, [editDraft, editingId]);
 
-  if (queue.length === 0 || props.state.error?.recoveryRequired || props.state.snapshot?.providerState === 'failed' || props.state.snapshot?.providerState === 'closed') return null;
+  if (queue.length === 0 || props.state.snapshot?.providerState === 'failed' || props.state.snapshot?.providerState === 'closed') return null;
 
   async function saveEdit(event: FormEvent<HTMLFormElement>, submission: NativeQueuedSubmission): Promise<void> {
     event.preventDefault();
@@ -184,6 +186,7 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
               ) : (
                 <div className="session-queued-message-content">
                   {submission.content.trim() ? <SafeMarkdown text={submission.content} language={props.language} /> : <p className="session-queued-message-empty">{copy.attachmentOnly}</p>}
+                  {submission.error?.message ? <small className="session-queued-message-error" role="alert">{submission.error.message}</small> : null}
                   {submission.attachments?.length ? (
                     <ul className="session-queued-message-attachments" aria-label={copy.attachments}>
                       {submission.attachments.map((attachment) => (
@@ -198,6 +201,10 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
                   {index === 0 && props.state.queue?.state.type === 'paused' && props.state.queue.state.reason === 'interrupted' ? (
                     <button type="button" onClick={() => void props.onResume?.()} disabled={!writable || busy || !props.onResume}>
                       {copy.resume}
+                    </button>
+                  ) : index === 0 && props.state.queue?.state.type === 'paused' && props.state.queue.state.reason === 'recovery_required' ? (
+                    <button type="button" onClick={() => void props.onRecover?.()} disabled={!recoveryActionable || busy || !props.onRecover}>
+                      {copy.retry}
                     </button>
                   ) : index === 0 && props.state.queue?.state.type === 'paused' && props.state.queue.state.reason === 'provider_archived' ? (
                     <button type="button" onClick={() => void props.onRetry?.()} disabled={!writable || busy || !props.onRetry}>
