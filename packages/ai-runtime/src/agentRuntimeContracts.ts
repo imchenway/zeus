@@ -59,12 +59,18 @@ export interface ResumeAgentSessionInput {
   cwd?: string;
 }
 
+export interface AgentImageInput {
+  data: string;
+  mimeType: string;
+}
+
 export interface StartAgentRunInput {
   session: AgentSessionIdentity;
   content: string;
   clientRequestId: string;
   model?: AgentModelIdentity;
   thinkingLevel?: string;
+  images?: AgentImageInput[];
 }
 
 export interface SteerAgentRunInput extends StartAgentRunInput {

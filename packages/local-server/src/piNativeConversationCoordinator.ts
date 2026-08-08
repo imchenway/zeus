@@ -1,11 +1,12 @@
 import { execFile } from 'node:child_process';
-import { realpathSync } from 'node:fs';
+import { realpathSync, statSync } from 'node:fs';
 import { readdir, readFile, writeFile } from 'node:fs/promises';
-import { isAbsolute, relative, resolve, sep } from 'node:path';
+import { extname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
-import { type AgentModelIdentity, type AgentRuntimeEvent, type AgentSessionIdentity, createPiSdkRuntimeDriver, modelRef, type PiZeusToolBroker, type PiZeusToolRequest, type PiZeusToolResult } from '@zeus/ai-runtime';
+import { type AgentImageInput, type AgentModelIdentity, type AgentRuntimeEvent, type AgentSessionIdentity, createPiSdkRuntimeDriver, modelRef, type PiZeusToolBroker, type PiZeusToolRequest, type PiZeusToolResult } from '@zeus/ai-runtime';
 import type { ConversationItemRepository, ConversationRepository, ConversationServerRequestRepository, ConversationSubmissionRepository, ConversationTurnRepository, ZeusConversationWithMessagesRecord, ZeusDatabase } from '@zeus/storage';
 import type { ModelConnectionService } from './modelConnectionService.js';
+import type { NativeConversationAttachmentInput } from './codexNativeConversationContracts.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -15,6 +16,7 @@ interface PiConversationContext {
   taskId: string | null;
   cwd: string;
   permissionMode: 'read-only' | 'auto' | 'full-access';
+  attachmentRoots: string[];
   session: AgentSessionIdentity;
 }
 
@@ -55,6 +57,15 @@ export interface StartPiConversationInput {
   clientUserMessageId: string;
   workspaceId?: string;
   environmentId?: string;
+  attachments?: NativeConversationAttachmentInput[];
+  allowedAttachmentRoots?: string[];
+}
+
+interface PiAttachmentResolution {
+  attachments: NativeConversationAttachmentInput[];
+  images: AgentImageInput[];
+  pathReferences: Array<{ name: string; path: string }>;
+  allowedRoots: string[];
 }
 
 /** Pi SDK 会话的 Zeus 宿主：会话、消息、工具和审批都以 Zeus 为权威状态。 */
@@ -85,6 +96,8 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
   const unsubscribe = driver.subscribe((event) => void handleRuntimeEvent(event));
 
   async function startConversation(input: StartPiConversationInput) {
+    const attachmentInput = await resolvePiAttachmentInput(input.attachments ?? [], input.allowedAttachmentRoots ?? []);
+    const providerPrompt = appendPiAttachmentReferences(input.prompt, attachmentInput.pathReferences);
     const session = await driver.openSession({ cwd: input.cwd, model: input.model });
     const createdAt = options.now();
     options.conversations.create({
@@ -112,7 +125,15 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       nativeSessionId: session.nativeSessionId,
       nativeSessionPath: session.nativeSessionPath ?? undefined,
     });
-    contexts.set(session.nativeSessionId, { conversationId: input.conversationId, projectId: input.projectId, taskId: input.taskId ?? null, cwd: input.cwd, permissionMode: input.permissionMode, session });
+    contexts.set(session.nativeSessionId, {
+      conversationId: input.conversationId,
+      projectId: input.projectId,
+      taskId: input.taskId ?? null,
+      cwd: input.cwd,
+      permissionMode: input.permissionMode,
+      attachmentRoots: attachmentInput.allowedRoots,
+      session,
+    });
     const submission = options.submissions.createOrGet({
       id: input.submissionId,
       conversationId: input.conversationId,
@@ -122,11 +143,29 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       kind: 'message',
       requestedDelivery: 'queue',
       status: 'dispatching',
-      input: { text: input.prompt, context: { projectLocalPath: input.cwd, model: input.model.modelId, modelSourceId: input.model.sourceId, agentKind: 'pi', thinkingLevel: input.thinkingLevel } },
+      input: {
+        text: providerPrompt,
+        ...(attachmentInput.attachments.length > 0 ? { attachments: attachmentInput.attachments } : {}),
+        context: {
+          projectLocalPath: input.cwd,
+          model: input.model.modelId,
+          modelSourceId: input.model.sourceId,
+          agentKind: 'pi',
+          thinkingLevel: input.thinkingLevel,
+          ...(attachmentInput.allowedRoots.length > 0 ? { allowedAttachmentRoots: attachmentInput.allowedRoots } : {}),
+        },
+      },
       createdAt,
       dispatchedAt: createdAt,
     });
-    const run = await driver.startRun({ session, content: input.prompt, clientRequestId: input.clientUserMessageId, model: input.model, ...(input.thinkingLevel ? { thinkingLevel: input.thinkingLevel } : {}) });
+    const run = await driver.startRun({
+      session,
+      content: providerPrompt,
+      clientRequestId: input.clientUserMessageId,
+      model: input.model,
+      ...(input.thinkingLevel ? { thinkingLevel: input.thinkingLevel } : {}),
+      ...(attachmentInput.images.length > 0 ? { images: attachmentInput.images } : {}),
+    });
     const turn = options.turns.upsert({
       conversationId: input.conversationId,
       providerThreadId: session.nativeSessionId,
@@ -140,7 +179,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       agentKind: 'pi',
       nativeRunId: run.nativeRunId,
     });
-    appendUserProjection(input.conversationId, session.nativeSessionId, turn.id, run.nativeRunId, input.prompt, input.clientUserMessageId, createdAt);
+    appendUserProjection(input.conversationId, session.nativeSessionId, turn.id, run.nativeRunId, input.prompt, input.clientUserMessageId, createdAt, attachmentInput.attachments);
     options.submissions.updateStatus(submission.id, 'active', { providerTurnId: run.nativeRunId, updatedAt: run.acceptedAt });
     runs.set(run.nativeRunId, { conversationId: input.conversationId, submissionId: submission.id, turnId: turn.id, providerTurnId: run.nativeRunId });
     await options.db.save();
@@ -154,7 +193,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       if (!input.conversation.nativeSessionId || !input.conversation.nativeSessionPath) throw piError('ZEUS_PI_SESSION_UNAVAILABLE', 'Pi 会话缺少可恢复的会话文件。');
       const cwd = resolveConversationCwd(input.conversation);
       const session = await driver.resumeSession({ nativeSessionId: input.conversation.nativeSessionId, nativeSessionPath: input.conversation.nativeSessionPath, cwd });
-      context = { conversationId: input.conversation.id, projectId: input.conversation.projectId, taskId: input.conversation.taskId, cwd, permissionMode: input.conversation.permissionMode, session };
+      context = { conversationId: input.conversation.id, projectId: input.conversation.projectId, taskId: input.conversation.taskId, cwd, permissionMode: input.conversation.permissionMode, attachmentRoots: [], session };
       contexts.set(session.nativeSessionId, context);
     }
     const createdAt = options.now();
@@ -307,8 +346,18 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     }
   }
 
-  function appendUserProjection(conversationId: string, threadId: string, turnId: string, providerTurnId: string, content: string, clientMessageId: string, createdAt: string): void {
+  function appendUserProjection(
+    conversationId: string,
+    threadId: string,
+    turnId: string,
+    providerTurnId: string,
+    content: string,
+    clientMessageId: string,
+    createdAt: string,
+    attachments: NativeConversationAttachmentInput[] = [],
+  ): void {
     const itemId = `pi_user_${clientMessageId}`;
+    const attachmentMetadata = persistedPiAttachmentMetadata(attachments);
     options.items.upsertCompleted({
       conversationId,
       turnId,
@@ -317,7 +366,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       providerItemId: itemId,
       itemType: 'userMessage',
       phase: 'prework',
-      payload: { clientUserMessageId: clientMessageId, agentKind: 'pi' },
+      payload: { clientUserMessageId: clientMessageId, agentKind: 'pi', ...(attachmentMetadata.length > 0 ? { attachments: attachmentMetadata } : {}) },
       textContent: content,
       completedAt: createdAt,
       updatedAt: createdAt,
@@ -329,7 +378,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       role: 'user',
       content,
       source: 'pi_sdk',
-      metadata: { clientUserMessageId: clientMessageId, agentKind: 'pi', cwd: contexts.get(threadId)?.cwd },
+      metadata: { clientUserMessageId: clientMessageId, agentKind: 'pi', cwd: contexts.get(threadId)?.cwd, ...(attachmentMetadata.length > 0 ? { attachments: attachmentMetadata } : {}) },
       createdAt,
       providerThreadId: threadId,
       providerTurnId,
@@ -352,7 +401,8 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       const result = await execFileAsync('/bin/zsh', ['-lc', command], { cwd: context.cwd, timeout: 120_000, maxBuffer: 4 * 1024 * 1024 });
       return { text: `${result.stdout}${result.stderr}`.trim() || '命令执行完成。' };
     }
-    const path = safePath(context.cwd, typeof request.args.path === 'string' ? request.args.path : '.');
+    const readOnlyTool = request.toolName === 'read' || request.toolName === 'grep' || request.toolName === 'find' || request.toolName === 'ls';
+    const path = safePath(context.cwd, typeof request.args.path === 'string' ? request.args.path : '.', readOnlyTool ? context.attachmentRoots : []);
     if (request.toolName === 'read') {
       const text = await readFile(path, 'utf8');
       const offset = numberArg(request.args.offset, 0);
@@ -528,11 +578,110 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
   };
 }
 
-function safePath(cwd: string, value: string): string {
+const supportedPiImageMimeExtensions: Readonly<Record<string, readonly string[]>> = {
+  'image/png': ['.png'],
+  'image/jpeg': ['.jpg', '.jpeg'],
+  'image/gif': ['.gif'],
+  'image/webp': ['.webp'],
+  'image/bmp': ['.bmp'],
+  'image/heic': ['.heic', '.heif'],
+  'image/tiff': ['.tif', '.tiff'],
+};
+
+async function resolvePiAttachmentInput(attachments: NativeConversationAttachmentInput[], allowedAttachmentRoots: string[]): Promise<PiAttachmentResolution> {
+  const allowedRoots = [...new Set(allowedAttachmentRoots.map(existingDirectoryRealpath).filter((root): root is string => root !== null))];
+  const normalizedAttachments: NativeConversationAttachmentInput[] = [];
+  const images: AgentImageInput[] = [];
+  const pathReferences: Array<{ name: string; path: string }> = [];
+
+  for (const attachment of attachments) {
+    if (attachment.uploadRef) throw piError('ZEUS_PI_ATTACHMENT_UPLOAD_UNSUPPORTED', 'Pi 图片输入暂不支持未解析的上传引用。');
+    if (!attachment.localPath || !isAbsolute(attachment.localPath)) throw piError('ZEUS_PI_ATTACHMENT_INPUT_INVALID', 'Pi 附件必须是服务端确认的绝对本机路径。');
+
+    let canonicalPath: string;
+    let pathStat: ReturnType<typeof statSync>;
+    try {
+      canonicalPath = realpathSync(attachment.localPath);
+      pathStat = statSync(canonicalPath);
+      const exactlyAuthorized = Boolean(attachment.authorizedPath) && realpathSync(attachment.authorizedPath!) === canonicalPath;
+      if ((!exactlyAuthorized && !allowedRoots.some((root) => isInsideRoot(canonicalPath, root))) || (!pathStat.isFile() && !pathStat.isDirectory())) {
+        throw new Error('附件不在可信目录内或不是可读取资源。');
+      }
+    } catch {
+      throw piError('ZEUS_PI_ATTACHMENT_PATH_UNAVAILABLE', 'Pi 附件必须解析为可信目录内的文件或目录。');
+    }
+
+    const normalizedAttachment: NativeConversationAttachmentInput = {
+      ...attachment,
+      localPath: canonicalPath,
+      ...(attachment.authorizedPath ? { authorizedPath: canonicalPath } : {}),
+    };
+    normalizedAttachments.push(normalizedAttachment);
+
+    const imageMime = pathStat.isFile() ? resolvePiImageMime(attachment.mime, canonicalPath) : null;
+    if (imageMime) {
+      try {
+        images.push({ data: (await readFile(canonicalPath)).toString('base64'), mimeType: imageMime });
+      } catch {
+        throw piError('ZEUS_PI_ATTACHMENT_READ_FAILED', `Pi 附件“${attachment.name}”当前无法读取。`);
+      }
+    } else {
+      pathReferences.push({ name: attachment.name, path: canonicalPath });
+    }
+  }
+
+  return { attachments: normalizedAttachments, images, pathReferences, allowedRoots };
+}
+
+function resolvePiImageMime(mime: string, canonicalPath: string): string | null {
+  const normalizedMime = mime.trim().toLowerCase();
+  if (normalizedMime === 'image/*') {
+    const extension = extname(canonicalPath).toLowerCase();
+    return Object.entries(supportedPiImageMimeExtensions).find(([, extensions]) => extensions.includes(extension))?.[0] ?? null;
+  }
+  return normalizedMime.startsWith('image/') ? normalizedMime : null;
+}
+
+function appendPiAttachmentReferences(prompt: string, pathReferences: Array<{ name: string; path: string }>): string {
+  if (pathReferences.length === 0) return prompt;
+  return `${prompt}\n\n附件路径（请按需读取）：\n${pathReferences.map((attachment) => `- ${attachment.name}: ${attachment.path}`).join('\n')}`;
+}
+
+function persistedPiAttachmentMetadata(attachments: NativeConversationAttachmentInput[]): Array<Record<string, unknown>> {
+  return attachments.map((attachment) => ({
+    name: attachment.name,
+    mime: attachment.mime,
+    size: attachment.size,
+    ...(attachment.localPath ? { localPath: attachment.localPath } : {}),
+    ...(attachment.uploadRef ? { uploadRef: attachment.uploadRef } : {}),
+  }));
+}
+
+function existingDirectoryRealpath(value: string): string | null {
+  try {
+    const realPath = realpathSync(resolve(value));
+    return statSync(realPath).isDirectory() ? realPath : null;
+  } catch {
+    return null;
+  }
+}
+
+function isInsideRoot(path: string, root: string): boolean {
+  const rel = relative(resolve(root), resolve(path));
+  return rel === '' || (!rel.startsWith('..') && rel !== '..' && !isAbsolute(rel));
+}
+
+function safePath(cwd: string, value: string, attachmentRoots: readonly string[] = []): string {
   const candidate = resolve(cwd, value);
   const rel = relative(resolve(cwd), candidate);
-  if (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) throw piError('ZEUS_PI_PATH_OUTSIDE_WORKSPACE', 'Pi 工具不能访问当前工作区之外的路径。');
-  return candidate;
+  if (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel)) return candidate;
+  try {
+    const canonicalPath = realpathSync(candidate);
+    if (attachmentRoots.some((root) => isInsideRoot(canonicalPath, root))) return canonicalPath;
+  } catch {
+    // 外部附件路径不存在时仍然拒绝，不能用未经确认的路径扩大读取范围。
+  }
+  throw piError('ZEUS_PI_PATH_OUTSIDE_WORKSPACE', 'Pi 工具不能访问当前工作区之外的路径。');
 }
 
 function isPathInsideDirectory(path: string, directory: string): boolean {

@@ -190,11 +190,20 @@ export function createPiSdkRuntimeDriver(options: CreatePiSdkRuntimeDriverOption
     const nativeRunId = mode === 'steer' ? entry.activeRunId! : `pi_run_${randomUUID()}`;
     entry.activeRunId = nativeRunId;
     const acceptedAt = now();
-    const operation = mode === 'steer' ? entry.session.steer(input.content) : mode === 'follow_up' ? entry.session.followUp(input.content) : entry.session.prompt(input.content);
+    const images = input.images?.map((image): { type: 'image'; data: string; mimeType: string } => ({ type: 'image', data: image.data, mimeType: image.mimeType }));
+    const operation =
+      mode === 'steer'
+        ? entry.session.steer(input.content, images)
+        : mode === 'follow_up'
+          ? entry.session.followUp(input.content, images)
+          : entry.session.prompt(input.content, images?.length ? { images } : undefined);
     void operation.catch((error: unknown) => {
       const payload = { message: error instanceof Error ? error.message : String(error), code: readErrorCode(error) };
-      publishSyntheticEvent(entry, nativeRunId, 'runtime_error', payload);
-      entry.activeRunId = null;
+      // 等协调器登记已接受轮次后再投递错误，避免同步失败事件被忽略。
+      queueMicrotask(() => {
+        publishSyntheticEvent(entry, nativeRunId, 'runtime_error', payload);
+        entry.activeRunId = null;
+      });
     });
     return { nativeRunId, acceptedAt };
   }
@@ -397,8 +406,8 @@ function toPiModelConfig(model: ConfiguredModelDefinition) {
     name: model.displayName,
     reasoning: model.capability.reasoning.state === 'supported',
     thinkingLevelMap: Object.fromEntries([...piThinkingLevels].map((level) => [level, supportedLevels.has(level) ? level : null])),
-    // 未验证不等于不支持；只有明确失败证据才能关闭图片入口。
-    input: model.capability.imageInput.state !== 'unsupported' ? (['text', 'image'] as Array<'text' | 'image'>) : (['text'] as Array<'text' | 'image'>),
+    // 模型是否接受图片由实际运行内核和服务商判断，不使用本地能力档案预先拦截。
+    input: ['text', 'image'] as Array<'text' | 'image'>,
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: model.contextWindow,
     maxTokens: model.maxTokens,
