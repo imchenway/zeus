@@ -12213,8 +12213,17 @@ a {
 .macos-ai-app .task-model-push-repository legend {
   display: flex;
   gap: 8px;
-  align-items: baseline;
+  align-items: center;
+  justify-content: space-between;
+  width: calc(100% - 8px);
   padding: 0 4px;
+}
+
+.macos-ai-app .task-model-push-repository legend > span {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  min-width: 0;
 }
 
 .macos-ai-app .task-model-push-repository legend small {

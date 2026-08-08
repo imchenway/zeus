@@ -1,11 +1,12 @@
 import { createPortal } from 'react-dom';
-import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 
 export interface ZeusSelectOption<T extends string> {
   value: T;
   label: string;
   color?: string;
   disabled?: boolean;
+  group?: string;
 }
 
 export interface ZeusSelectProps<T extends string> {
@@ -306,29 +307,36 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
         <span id={listboxId} className="zeus-select-listbox" role="listbox" aria-label={props.ariaLabel}>
           {visibleOptions.length > 0 ? (
             visibleOptions.map((option, index) => (
-              <button
-                key={`${option.value || 'empty'}-${index}`}
-                ref={(element) => {
-                  if (element) optionRefs.current.set(option.value, element);
-                  else optionRefs.current.delete(option.value);
-                }}
-                id={`${listboxId}-option-${index}`}
-                type="button"
-                className="zeus-select-option"
-                role="option"
-                aria-selected={option.value === props.value}
-                tabIndex={open && option.value === activeValue ? 0 : -1}
-                disabled={option.disabled}
-                data-value={option.value}
-                onClick={() => selectOption(option.value)}
-                onKeyDown={(event) => handleOptionKeyDown(event, option)}
-              >
-                {option.color ? <span className="zeus-select-option-color" style={{ backgroundColor: option.color }} aria-hidden="true" /> : null}
-                <span className="zeus-select-option-label">{option.label}</span>
-                <span className="zeus-select-option-check" aria-hidden="true">
-                  {option.value === props.value ? '✓' : ''}
-                </span>
-              </button>
+              <Fragment key={`${option.value || 'empty'}-${index}`}>
+                {option.group && visibleOptions[index - 1]?.group !== option.group ? (
+                  <span className="zeus-select-option-group" role="presentation">
+                    {option.group}
+                  </span>
+                ) : null}
+                <button
+                  ref={(element) => {
+                    if (element) optionRefs.current.set(option.value, element);
+                    else optionRefs.current.delete(option.value);
+                  }}
+                  id={`${listboxId}-option-${index}`}
+                  type="button"
+                  className="zeus-select-option"
+                  role="option"
+                  aria-label={option.group ? `${option.group}: ${option.label}` : option.label}
+                  aria-selected={option.value === props.value}
+                  tabIndex={open && option.value === activeValue ? 0 : -1}
+                  disabled={option.disabled}
+                  data-value={option.value}
+                  onClick={() => selectOption(option.value)}
+                  onKeyDown={(event) => handleOptionKeyDown(event, option)}
+                >
+                  {option.color ? <span className="zeus-select-option-color" style={{ backgroundColor: option.color }} aria-hidden="true" /> : null}
+                  <span className="zeus-select-option-label">{option.label}</span>
+                  <span className="zeus-select-option-check" aria-hidden="true">
+                    {option.value === props.value ? '✓' : ''}
+                  </span>
+                </button>
+              </Fragment>
             ))
           ) : (
             <span className="zeus-select-empty" role="status">

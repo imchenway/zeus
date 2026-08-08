@@ -117,33 +117,16 @@ export function TaskGitReviewModal(props: {
     return next;
   }
 
-  async function commit(push: boolean): Promise<void> {
+  async function commit(): Promise<void> {
     if (!props.task || !props.client || !activeWorkspace) return;
     setStatus('submitting');
     setError(null);
     try {
-      const result = await props.client.commitTaskWorkspace(props.task.id, activeWorkspace.id, {
+      await props.client.commitTaskWorkspace(props.task.id, activeWorkspace.id, {
         message,
         selectedPaths,
-        push,
       });
-      if (props.mode === 'commit' || props.mode === 'commit-only') {
-        await reload(activeWorkspace.id);
-        setStatus('ready');
-        return;
-      }
-      if (!result.review.clean) {
-        await reload(activeWorkspace.id);
-        setStatus('error');
-        setError(zh ? '仍有未选中的变更。请全部审查并提交后再准备代码交付。' : 'Unselected changes remain. Review and commit them before preparing code delivery.');
-        return;
-      }
-      await props.client.reclaimTaskWorkspace(props.task.id, activeWorkspace.id);
-      await reload();
-      if (props.mode === 'delivery') {
-        props.onClose();
-        return;
-      }
+      await reload(activeWorkspace.id);
       setStatus('ready');
     } catch (reason) {
       setStatus('error');
@@ -322,11 +305,7 @@ export function TaskGitReviewModal(props: {
                       ? zh
                         ? '纯本地模式'
                         : 'Local-only mode'
-                      : activeWorkspace.remoteRefreshError
-                        ? zh
-                          ? `${activeWorkspace.remoteName} · 当前不可用`
-                          : `${activeWorkspace.remoteName} · unavailable`
-                        : `${activeWorkspace.remoteName}/${activeWorkspace.remoteBranch}`}
+                      : `${activeWorkspace.remoteName}/${activeWorkspace.remoteBranch}`}
                 </dd>
               </div>
               <div>
@@ -346,12 +325,6 @@ export function TaskGitReviewModal(props: {
                 <small>
                   {zh ? '只推送当前 HEAD。未提交和已暂存改动会原样保留在本机，不会自动提交、回收或合入。' : 'Only the current HEAD will be pushed. Uncommitted and staged changes stay local and will not be committed, reclaimed, or merged.'}
                 </small>
-              </section>
-            ) : null}
-            {activeWorkspace?.remoteRefreshError ? (
-              <section className="task-git-review-push-scope">
-                <strong>{zh ? '远端操作暂不可用' : 'Remote actions unavailable'}</strong>
-                <small>{zh ? '网络或凭据恢复前不能拉取、推送或远端合入；本地查看和提交不受影响。' : 'Fetch, push, and remote merge are blocked until network access or credentials recover. Local review and commit remain available.'}</small>
               </section>
             ) : null}
             {activeWorkspace && activeWorkspace.activeConversationCount > 0 ? (
@@ -407,31 +380,21 @@ export function TaskGitReviewModal(props: {
               {zh ? '取消' : 'Cancel'}
             </Button>
             {props.mode === 'commit' ? (
-              <>
-                <Button
-                  variant="secondary"
-                  size="regular"
-                  onClick={() => void commit(true)}
-                  disabled={busy || !activeWorkspace || !activeWorkspace.remoteName || Boolean(activeWorkspace.remoteRefreshError) || activeWorkspace.activeConversationCount > 0 || activeReview?.conflictFiles.length !== 0}
-                >
-                  {zh ? '提交并推送' : 'Commit and Push'}
-                </Button>
-                <Button
-                  variant="primary"
-                  size="regular"
-                  busy={busy}
-                  onClick={() => void commit(false)}
-                  disabled={busy || !activeWorkspace || activeWorkspace.activeConversationCount > 0 || files.length === 0 || selectedPaths.length === 0 || activeReview?.conflictFiles.length !== 0}
-                >
-                  {zh ? '提交' : 'Commit'}
-                </Button>
-              </>
+              <Button
+                variant="primary"
+                size="regular"
+                busy={busy}
+                onClick={() => void commit()}
+                disabled={busy || !activeWorkspace || activeWorkspace.activeConversationCount > 0 || files.length === 0 || selectedPaths.length === 0 || activeReview?.conflictFiles.length !== 0}
+              >
+                {zh ? '提交' : 'Commit'}
+              </Button>
             ) : props.mode === 'commit-only' ? (
               <Button
                 variant="primary"
                 size="regular"
                 busy={busy}
-                onClick={() => void commit(false)}
+                onClick={() => void commit()}
                 disabled={busy || !activeWorkspace || activeWorkspace.activeConversationCount > 0 || files.length === 0 || selectedPaths.length === 0 || activeReview?.conflictFiles.length !== 0}
               >
                 {zh ? '提交代码' : 'Commit Code'}
@@ -446,7 +409,6 @@ export function TaskGitReviewModal(props: {
                   busy ||
                   !activeWorkspace ||
                   !activeWorkspace.remoteName ||
-                  Boolean(activeWorkspace.remoteRefreshError) ||
                   activeWorkspace.activeConversationCount > 0 ||
                   activeReview?.conflictFiles.length !== 0 ||
                   closedWorkspaceStates.has(activeWorkspace.state)
@@ -463,10 +425,10 @@ export function TaskGitReviewModal(props: {
                 variant="primary"
                 size="regular"
                 busy={busy}
-                onClick={() => void commit(true)}
+                onClick={() => void commit()}
                 disabled={busy || !activeWorkspace || activeWorkspace.activeConversationCount > 0 || activeReview?.conflictFiles.length !== 0 || (files.length > 0 && selectedPaths.length === 0)}
               >
-                {props.mode === 'delivery' && files.length === 0 ? (zh ? '推送、验证并回收' : 'Push, verify, and reclaim') : zh ? '提交并推送' : 'Commit and Push'}
+                {zh ? '提交代码' : 'Commit Code'}
               </Button>
             )}
           </span>
@@ -497,7 +459,6 @@ function workspaceStateLabel(workspace: TaskWorkspaceSnapshot, zh: boolean): str
   if (workspace.state === 'merged') return zh ? '已合入' : 'Merged';
   if (workspace.state === 'discarded') return zh ? '已放弃' : 'Discarded';
   if (workspace.review?.conflictFiles.length) return zh ? '存在冲突' : 'Conflicted';
-  if (workspace.remoteRefreshError && workspace.review?.clean) return zh ? '工作区干净 · 远端受阻' : 'Clean · remote unavailable';
   if (workspace.review?.clean) return zh ? '工作区干净' : 'Clean';
   return zh ? '待审查' : 'Review required';
 }
