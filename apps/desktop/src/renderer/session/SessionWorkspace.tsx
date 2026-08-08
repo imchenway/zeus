@@ -100,6 +100,7 @@ export interface SessionWorkspaceActions {
   onSendQueuedNow?: (submissionId: string) => void | Promise<void>;
   onReorderQueue?: (orderedSubmissionIds: string[]) => void | Promise<void>;
   onResumeQueue?: () => void | Promise<void>;
+  onRecoverQueue?: () => void | Promise<void>;
   onRestoreArchivedConversation?: () => void | Promise<void>;
   onRespondToRequest?: (requestId: string, response: Record<string, unknown>) => void | Promise<void>;
   onEditUserItem?: (item: NativeSessionItemBuffer, content: string) => void | Promise<void>;
@@ -344,6 +345,7 @@ export function createConnectedSessionActions(input: { controller: SessionContro
     onSendQueuedNow: (submissionId) => (recoveryRequired ? Promise.resolve() : settle(input.controller.sendQueuedNow(submissionId))),
     onReorderQueue: (orderedSubmissionIds) => (recoveryRequired ? Promise.resolve() : settle(input.controller.reorderQueue(orderedSubmissionIds))),
     onResumeQueue: () => (recoveryRequired ? Promise.resolve() : settle(input.controller.resumeQueue())),
+    onRecoverQueue: () => settle(input.controller.recoverQueue()),
     onRestoreArchivedConversation: () => (recoveryRequired ? Promise.resolve() : settle(input.controller.restoreArchivedConversation())),
     onRespondToRequest: (requestId, response) => (recoveryRequired ? Promise.resolve() : input.controller.respondToRequest(requestId, response).then(() => undefined)),
     onRespondToPlanImplementationRequest: (requestId, response) => (recoveryRequired ? Promise.resolve() : input.controller.respondToPlanImplementationRequest(requestId, response)),
@@ -1448,6 +1450,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
         onReorder={actions.onReorderQueue}
         onResume={actions.onResumeQueue}
         onRetry={actions.onRestoreArchivedConversation}
+        onRecover={actions.onRecoverQueue}
       />
     );
   }

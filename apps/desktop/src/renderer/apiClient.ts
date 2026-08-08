@@ -1506,6 +1506,7 @@ export interface DashboardClient {
     conversation: NativeConversationSnapshot;
   }>;
   resumeNativeQueue: (projectId: string, conversationId: string) => Promise<NativeQueueSnapshot>;
+  recoverNativeQueue: (projectId: string, conversationId: string) => Promise<NativeQueueSnapshot>;
   reorderNativeQueue: (projectId: string, conversationId: string, orderedSubmissionIds: string[]) => Promise<NativeQueueSnapshot>;
   loadDashboard: () => Promise<DashboardSnapshot>;
   loadRuntimeStatus: () => Promise<RuntimeStatusSnapshot>;
@@ -1931,6 +1932,7 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
         conversation: NativeConversationSnapshot;
       }>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/plan-implementation-requests/${encodeURIComponent(requestId)}/respond`, { method: 'POST', body: JSON.stringify(input) }),
     resumeNativeQueue: (projectId, conversationId) => request<NativeQueueSnapshot>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/queue/resume`, { method: 'POST' }),
+    recoverNativeQueue: (projectId, conversationId) => request<NativeQueueSnapshot>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/queue/recover`, { method: 'POST' }),
     reorderNativeQueue: (projectId, conversationId, orderedSubmissionIds) =>
       request<NativeQueueSnapshot>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/queue/reorder`, {
         method: 'POST',

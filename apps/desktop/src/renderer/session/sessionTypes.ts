@@ -98,6 +98,11 @@ export interface NativeQueuedSubmission {
   position: number;
   providerTurnId?: string | null;
   pausedReason: string | null;
+  error?: {
+    code: string;
+    message: string;
+    recoveryRequired: boolean;
+  } | null;
   createdAt?: string;
   updatedAt?: string;
 }
