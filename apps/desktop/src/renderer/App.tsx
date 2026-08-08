@@ -292,6 +292,7 @@ type NativeConversationAppClient = SessionControllerClient &
     | 'loadTaskConversationChoices'
     | 'startNativeConversation'
     | 'loadCodexTaskPushCapabilities'
+    | 'refreshTaskPushRepositoryRemote'
     | 'loadCodexAccount'
     | 'startCodexChatGptLogin'
     | 'cancelCodexChatGptLogin'
@@ -322,6 +323,7 @@ type NativeConversationAppClient = SessionControllerClient &
     | 'assistTaskIntegrationConflict'
     | 'resolveTaskIntegrationConflict'
     | 'finalizeTaskIntegration'
+    | 'pushTaskIntegration'
     | 'loadCodexRemoteControl'
     | 'enableCodexRemoteControl'
     | 'disableCodexRemoteControl'
@@ -6833,6 +6835,7 @@ export function App(props: {
     supplementalInfo: '',
   });
   const [taskModelPushStatus, setTaskModelPushStatus] = useState<TaskModelPushModalStatus>('loading');
+  const [taskModelPushRefreshingRepositoryId, setTaskModelPushRefreshingRepositoryId] = useState<string | null>(null);
   const [taskModelPushError, setTaskModelPushError] = useState<string | null>(null);
   const [taskModelPushPendingByTask, setTaskModelPushPendingByTask] = useState<Record<string, TrackedTaskModelPushState>>({});
   const [taskModelPushAnnouncement, setTaskModelPushAnnouncement] = useState('');
@@ -8977,6 +8980,7 @@ export function App(props: {
       supplementalInfo: '',
     });
     setTaskModelPushStatus('loading');
+    setTaskModelPushRefreshingRepositoryId(null);
     setTaskModelPushError(null);
     taskModelPushEnvelopeRef.current.delete(task.id);
     const requestVersion = taskModelPushCapabilityRequestRef.current + 1;
@@ -9012,7 +9016,57 @@ export function App(props: {
     if (taskModelPushTaskId) taskModelPushEnvelopeRef.current.delete(taskModelPushTaskId);
     setTaskModelPushTaskId(null);
     setTaskModelPushCapabilities(null);
+    setTaskModelPushRefreshingRepositoryId(null);
     setTaskModelPushError(null);
+  }
+
+  async function refreshTaskModelPushRepository(repositoryId: string): Promise<void> {
+    const task = snapshot.tasks.find((candidate) => candidate.id === taskModelPushTaskId);
+    const client = props.nativeConversationClient;
+    if (!task || !client || !taskModelPushCapabilities || taskModelPushRefreshingRepositoryId) return;
+    const requestVersion = taskModelPushCapabilityRequestRef.current;
+    setTaskModelPushRefreshingRepositoryId(repositoryId);
+    setTaskModelPushError(null);
+    try {
+      const repository = await client.refreshTaskPushRepositoryRemote(task.projectId, task.id, repositoryId);
+      if (taskModelPushCapabilityRequestRef.current !== requestVersion) return;
+      setTaskModelPushCapabilities((current) => {
+        if (!current || current.taskId !== task.id) return current;
+        const primary = current.git.primaryWorkspacePath === repository.localPath;
+        return {
+          ...current,
+          repositories: current.repositories.map((candidate) => (candidate.id === repository.id ? repository : candidate)),
+          git: primary
+            ? {
+                ...current.git,
+                primaryBranch: repository.branch,
+                primaryHeadSha: repository.headSha,
+                primaryClean: repository.clean,
+                defaultRemoteName: repository.defaultRemoteName,
+                sourceRefs: repository.sourceRefs,
+                suggestedBranchName: repository.suggestedBranchName,
+              }
+            : current.git,
+        };
+      });
+      setTaskModelPushForm((current) => {
+        const selection = current.repositorySelections[repository.id];
+        if (!selection || repository.sourceRefs.some((source) => source.ref === selection.sourceRef)) return current;
+        const fallback = repository.sourceRefs.find((source) => source.current)?.ref ?? repository.sourceRefs[0]?.ref ?? '';
+        return {
+          ...current,
+          repositorySelections: {
+            ...current.repositorySelections,
+            [repository.id]: { ...selection, sourceRef: fallback, includeLocalChanges: false },
+          },
+        };
+      });
+    } catch (error) {
+      if (taskModelPushCapabilityRequestRef.current !== requestVersion) return;
+      setTaskModelPushError(redactLocalUiErrorMessage(errorToLocalUiMessage(error)));
+    } finally {
+      if (taskModelPushCapabilityRequestRef.current === requestVersion) setTaskModelPushRefreshingRepositoryId(null);
+    }
   }
 
   function submitTaskModelPush(event: FormEvent<HTMLFormElement>): void {
@@ -9120,7 +9174,7 @@ export function App(props: {
                       repositoryId: repository.id,
                       sourceRef: form.repositorySelections[repository.id]?.sourceRef ?? '',
                       branchName: form.repositorySelections[repository.id]?.branchName ?? '',
-                      includeLocalChanges: repository.sourceMode === 'local' && form.repositorySelections[repository.id]?.includeLocalChanges === true,
+                      includeLocalChanges: form.repositorySelections[repository.id]?.includeLocalChanges === true,
                     })),
                   },
             ...(form.supplementalInfo.trim() ? { supplementalInfo: form.supplementalInfo.trim() } : {}),
@@ -11833,8 +11887,10 @@ export function App(props: {
                 capabilities={taskModelPushCapabilities}
                 form={taskModelPushForm}
                 status={taskModelPushStatus}
+                refreshingRepositoryId={taskModelPushRefreshingRepositoryId}
                 error={taskModelPushError}
                 onChange={setTaskModelPushForm}
+                onRefreshRepository={(repositoryId) => void refreshTaskModelPushRepository(repositoryId)}
                 onClose={closeTaskModelPush}
                 onCancelAuthentication={cancelTaskModelPushAuthentication}
                 onSubmit={(event) => void submitTaskModelPush(event)}

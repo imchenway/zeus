@@ -376,9 +376,9 @@ export interface CodexTaskRepositoryCapability extends ProjectRepositoryRecord {
   headSha: string;
   clean: boolean;
   defaultRemoteName: string;
-  sourceMode: 'remote' | 'local';
+  remoteRefreshStatus: 'not_requested' | 'succeeded' | 'failed';
   remoteRefreshError: string | null;
-  sourceRefs: Array<{ ref: string; label: string; kind: 'local' | 'remote'; current: boolean }>;
+  sourceRefs: Array<{ ref: string; label: string; kind: 'local' | 'remote'; group: string; current: boolean }>;
   suggestedBranchName: string;
 }
 
@@ -419,7 +419,7 @@ export interface CodexTaskPushCapabilities {
     primaryHeadSha: string;
     primaryClean: boolean;
     defaultRemoteName: string;
-    sourceRefs: Array<{ ref: string; label: string; kind: 'local' | 'remote'; current: boolean }>;
+    sourceRefs: Array<{ ref: string; label: string; kind: 'local' | 'remote'; group: string; current: boolean }>;
     suggestedBranchName: string;
     worktreeRoot: string;
   };
@@ -522,6 +522,9 @@ export interface TaskWorkspaceSnapshot extends TaskWorkspaceRecord {
   branchComparison: TaskBranchComparison | null;
   remoteHeadSha: string | null;
   remoteVerified: boolean;
+  sourceLocalHeadSha: string | null;
+  sourceRemoteHeadSha: string | null;
+  sourceRemoteVerified: boolean;
   remoteRefreshError: string | null;
   reviewError?: string;
   comparisonError?: string;
@@ -543,10 +546,6 @@ export interface TaskWorkspaceCommitResult {
     branch: string;
     headSha: string;
     committed: boolean;
-    pushed: boolean;
-    remoteName: string;
-    remoteBranch: string;
-    remoteHeadSha: string | null;
   };
   review: TaskWorkspaceReview;
 }
@@ -561,6 +560,18 @@ export interface TaskWorkspacePushResult {
     remoteHeadSha: string;
   };
   review: TaskWorkspaceReview;
+}
+
+export interface TaskIntegrationPushResult {
+  integration: TaskIntegrationRecord;
+  workspace: TaskWorkspaceRecord;
+  result: {
+    branch: string;
+    headSha: string;
+    remoteName: string;
+    remoteBranch: string;
+    remoteHeadSha: string;
+  };
 }
 
 export interface TaskIntegrationRecord {

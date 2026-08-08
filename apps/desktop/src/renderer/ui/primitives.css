@@ -531,6 +531,16 @@
   font-size: 13px;
 }
 
+.macos-ai-app .zeus-select-portal-root[data-zeus-primitive='select-popover'] .zeus-select-option-group {
+  color: var(--zeus-product-text-muted);
+  display: block;
+  font-size: 10px;
+  font-weight: 680;
+  letter-spacing: 0.04em;
+  padding: 8px 10px 3px;
+  text-transform: uppercase;
+}
+
 .macos-ai-app .zeus-select[data-zeus-primitive='select'][data-control-size='regular'] > .zeus-select-trigger {
   min-block-size: 32px;
 }

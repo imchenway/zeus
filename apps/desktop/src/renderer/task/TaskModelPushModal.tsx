@@ -149,8 +149,10 @@ export function TaskModelPushModal(props: {
   capabilities: CodexTaskPushCapabilities | null;
   form: TaskModelPushForm;
   status: TaskModelPushModalStatus;
+  refreshingRepositoryId: string | null;
   error: string | null;
   onChange: (next: TaskModelPushForm) => void;
+  onRefreshRepository: (repositoryId: string) => void;
   onClose: () => void;
   onCancelAuthentication: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
@@ -300,11 +302,18 @@ export function TaskModelPushModal(props: {
                     branchName: repository.suggestedBranchName,
                     includeLocalChanges: false,
                   };
+                  const selectedSource = repository.sourceRefs.find((source) => source.ref === selection.sourceRef);
+                  const refreshing = props.refreshingRepositoryId === repository.id;
                   return (
                     <fieldset key={repository.id} className="task-model-push-repository">
                       <legend>
-                        <strong>{repository.name}</strong>
-                        <small>{repository.relativePath}</small>
+                        <span>
+                          <strong>{repository.name}</strong>
+                          <small>{repository.relativePath}</small>
+                        </span>
+                        <Button variant="secondary" size="compact" busy={refreshing} onClick={() => props.onRefreshRepository(repository.id)} disabled={busy || refreshing || !repository.defaultRemoteName}>
+                          {refreshing ? (zh ? '正在刷新…' : 'Refreshing…') : zh ? '刷新远端分支' : 'Refresh remote branches'}
+                        </Button>
                       </legend>
                       <div className="task-model-push-workspace-grid">
                         <label>
@@ -317,7 +326,15 @@ export function TaskModelPushModal(props: {
                               { value: '', label: zh ? '请选择来源分支' : 'Select source branch', disabled: true },
                               ...repository.sourceRefs.map((source) => ({
                                 value: source.ref,
-                                label: `${source.label}${source.current ? (zh ? ' · 当前同名分支' : ' · current branch name') : ''}`,
+                                label: `${source.label}${source.current ? (zh ? ' · 当前分支' : ' · current branch') : ''}`,
+                                group:
+                                  source.kind === 'local'
+                                    ? zh
+                                      ? '本地分支'
+                                      : 'Local branches'
+                                    : zh
+                                      ? `${source.group} 远端分支`
+                                      : `${source.group} remote branches`,
                               })),
                             ]}
                             onChange={(sourceRef) =>
@@ -326,7 +343,7 @@ export function TaskModelPushModal(props: {
                                 repositorySelections: { ...props.form.repositorySelections, [repository.id]: { ...selection, sourceRef } },
                               })
                             }
-                            disabled={!props.capabilities || busy || Boolean(repository.remoteRefreshError)}
+                            disabled={!props.capabilities || busy || refreshing}
                             searchPlaceholder={zh ? '搜索分支' : 'Search branches'}
                           />
                         </label>
@@ -348,17 +365,21 @@ export function TaskModelPushModal(props: {
                       <p className={repository.remoteRefreshError ? 'task-model-push-error' : 'task-model-push-warning'}>
                         {repository.remoteRefreshError
                           ? zh
-                            ? `已发现该 Git 仓库，但 ${repository.defaultRemoteName} 远端刷新失败。为避免使用旧分支，修复网络或仓库凭据后请重新打开弹窗。`
-                            : `This Git repository was found, but ${repository.defaultRemoteName} could not be refreshed. To avoid stale branches, fix network or repository credentials and reopen this dialog.`
-                          : repository.sourceMode === 'remote'
+                            ? `远端刷新失败：${repository.remoteRefreshError}。本地分支、已知远端分支和当前选择不受影响。`
+                            : `Remote refresh failed: ${repository.remoteRefreshError}. Local branches, known remote branches, and the current selection remain available.`
+                          : repository.remoteRefreshStatus === 'succeeded'
                             ? zh
-                              ? `来源来自刚刚刷新的 ${repository.defaultRemoteName}；原工作区的未提交内容不会带入。`
-                              : `The source comes from the freshly updated ${repository.defaultRemoteName}; local uncommitted changes are not copied.`
-                            : zh
-                              ? '该仓库没有远端，当前使用本地分支快照。默认不带入原工作区未提交内容。'
-                              : 'This repository has no remote, so a local branch snapshot is used. Local uncommitted changes are excluded by default.'}
+                              ? '远端分支已手动刷新。来源分支仍由你选择。'
+                              : 'Remote branches were refreshed manually. The source branch remains your choice.'
+                            : repository.defaultRemoteName
+                              ? zh
+                                ? '当前展示本地分支和本机已知的远端分支；需要最新远端状态时再手动刷新。'
+                                : 'Local branches and locally known remote branches are shown. Refresh manually when current remote state is needed.'
+                              : zh
+                                ? '该仓库没有远端，当前使用本地分支快照。默认不带入原工作区未提交内容。'
+                                : 'This repository has no remote, so a local branch snapshot is used. Local uncommitted changes are excluded by default.'}
                       </p>
-                      {repository.sourceMode === 'local' && repository.clean === false ? (
+                      {selectedSource?.kind === 'local' && repository.clean === false ? (
                         <label className="task-model-push-concurrency-confirm">
                           <input
                             type="checkbox"
@@ -377,7 +398,7 @@ export function TaskModelPushModal(props: {
                             }
                             disabled={busy}
                           />
-                          <span>{zh ? '显式带入这个纯本地仓库的未提交内容。' : 'Explicitly copy uncommitted changes from this local-only repository.'}</span>
+                          <span>{zh ? '显式带入当前项目目录中的未提交内容。' : 'Explicitly copy uncommitted changes from the current project directory.'}</span>
                         </label>
                       ) : null}
                     </fieldset>
@@ -669,7 +690,7 @@ export function TaskModelPushModal(props: {
                   : repositories.length === 0 ||
                     repositories.some((repository) => {
                       const selection = props.form.repositorySelections[repository.id];
-                      return Boolean(repository.remoteRefreshError) || !selection?.sourceRef || !selection.branchName.trim();
+                      return !selection?.sourceRef || !selection.branchName.trim();
                     }))
               }
             >

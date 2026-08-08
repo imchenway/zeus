@@ -4,6 +4,7 @@ import type {
   CodexAccountSnapshot,
   CodexChatGptLogin,
   CodexConversationCapabilities,
+  CodexTaskRepositoryCapability,
   CodexTaskPushCapabilities,
   ConversationResourcePreview,
   NativeCollaborationMode,
@@ -25,6 +26,7 @@ import type {
   TaskIntegrationConflictFile,
   TaskIntegrationRecord,
   TaskIntegrationResult,
+  TaskIntegrationPushResult,
   TaskWorkspaceCommitResult,
   TaskWorkspacePushResult,
   TaskWorkspacesSnapshot,
@@ -1416,6 +1418,7 @@ export interface DashboardClient {
   loadTaskConversationChoices: (taskId: string) => Promise<NativeConversationChoicesSnapshot>;
   startNativeConversation: (taskId: string, input: StartNativeConversationRequest) => Promise<NativeOperationAcceptance>;
   loadCodexTaskPushCapabilities: (projectId: string, taskId: string) => Promise<CodexTaskPushCapabilities>;
+  refreshTaskPushRepositoryRemote: (projectId: string, taskId: string, repositoryId: string) => Promise<CodexTaskRepositoryCapability>;
   loadCodexConversationCapabilities: (projectId: string) => Promise<CodexConversationCapabilities>;
   loadCodexAccount: () => Promise<CodexAccountSnapshot>;
   startCodexChatGptLogin: () => Promise<CodexChatGptLogin>;
@@ -1431,8 +1434,9 @@ export interface DashboardClient {
     path: string;
     diff: TaskGitDiffSummary;
   }>;
-  commitTaskWorkspace: (taskId: string, workspaceId: string, input: { message: string; selectedPaths: string[]; push: boolean }) => Promise<TaskWorkspaceCommitResult>;
+  commitTaskWorkspace: (taskId: string, workspaceId: string, input: { message: string; selectedPaths: string[] }) => Promise<TaskWorkspaceCommitResult>;
   pushTaskWorkspace: (taskId: string, workspaceId: string) => Promise<TaskWorkspacePushResult>;
+  pushTaskIntegration: (taskId: string, integrationId: string) => Promise<TaskIntegrationPushResult>;
   reclaimTaskWorkspace: (taskId: string, workspaceId: string) => Promise<{ workspace: unknown; result?: unknown }>;
   discardTaskWorkspace: (taskId: string, workspaceId: string, confirmationText: string) => Promise<{ workspace: unknown; result: unknown }>;
   stopTaskWorkspaceSessions: (taskId: string, workspaceId: string) => Promise<{ workspaceId: string; interrupted: number; cancelled: number }>;
@@ -1766,6 +1770,11 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
     },
     loadTaskConversationChoices: (taskId) => request<NativeConversationChoicesSnapshot>(`/api/tasks/${encodeURIComponent(taskId)}/conversation-choices`),
     loadCodexTaskPushCapabilities: (projectId, taskId) => request<CodexTaskPushCapabilities>(`/api/projects/${encodeURIComponent(projectId)}/codex-task-push-capabilities?taskId=${encodeURIComponent(taskId)}`),
+    refreshTaskPushRepositoryRemote: (projectId, taskId, repositoryId) =>
+      request<CodexTaskRepositoryCapability>(
+        `/api/projects/${encodeURIComponent(projectId)}/codex-task-push-capabilities/repositories/${encodeURIComponent(repositoryId)}/refresh-remote?taskId=${encodeURIComponent(taskId)}`,
+        { method: 'POST', body: JSON.stringify({}) },
+      ),
     loadCodexConversationCapabilities: (projectId) => request<CodexConversationCapabilities>(`/api/projects/${encodeURIComponent(projectId)}/codex-conversation-capabilities`),
     loadCodexAccount: () => request<CodexAccountSnapshot>('/api/codex/account'),
     startCodexChatGptLogin: () => request<CodexChatGptLogin>('/api/codex/account/login/chatgpt', { method: 'POST' }),
@@ -1793,6 +1802,11 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
       }),
     pushTaskWorkspace: (taskId, workspaceId) =>
       request<TaskWorkspacePushResult>(`/api/tasks/${encodeURIComponent(taskId)}/git-workspaces/${encodeURIComponent(workspaceId)}/push`, {
+        method: 'POST',
+        body: JSON.stringify({}),
+      }),
+    pushTaskIntegration: (taskId, integrationId) =>
+      request<TaskIntegrationPushResult>(`/api/tasks/${encodeURIComponent(taskId)}/integrations/${encodeURIComponent(integrationId)}/push`, {
         method: 'POST',
         body: JSON.stringify({}),
       }),
