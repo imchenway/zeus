@@ -1,37 +1,33 @@
 import {
-  BrowserWindow,
-  WebContentsView,
-  clipboard,
-  dialog,
-  ipcMain,
-  session,
-  type IpcMainInvokeEvent,
-  type Rectangle,
-  type Session,
-  type WebContents,
+    BrowserWindow,
+    clipboard,
+    dialog,
+    ipcMain,
+    type IpcMainInvokeEvent,
+    type Rectangle,
+    session,
+    type Session,
+    type WebContents,
+    WebContentsView
 } from 'electron';
 import {randomUUID} from 'node:crypto';
 import {readFileSync} from 'node:fs';
 import {mkdir, readFile, realpath, rename, rm, stat, unlink, writeFile} from 'node:fs/promises';
 import {basename, dirname, isAbsolute, join, relative, resolve} from 'node:path';
 import type {
-  ZeusBrowserApprovalDecision,
-  ZeusBrowserApprovalRequest,
-  ZeusBrowserCommand,
-  ZeusBrowserComment,
-  ZeusBrowserConversationSnapshot,
-  ZeusBrowserDesignChange,
-  ZeusBrowserEvent,
-  ZeusBrowserPageAnchor,
-  ZeusBrowserPreparedSubmission,
-  ZeusBrowserSettings,
-  ZeusBrowserTabSnapshot,
+    ZeusBrowserApprovalDecision,
+    ZeusBrowserApprovalRequest,
+    ZeusBrowserCommand,
+    ZeusBrowserComment,
+    ZeusBrowserConversationSnapshot,
+    ZeusBrowserDesignChange,
+    ZeusBrowserEvent,
+    ZeusBrowserPageAnchor,
+    ZeusBrowserPreparedSubmission,
+    ZeusBrowserSettings,
+    ZeusBrowserTabSnapshot,
 } from '@zeus/shared';
-import type {
-  BrowserAutomationContentItem,
-  BrowserAutomationPort,
-  BrowserAutomationToolCall,
-} from '@zeus/local-server';
+import type {BrowserAutomationContentItem, BrowserAutomationPort, BrowserAutomationToolCall} from '@zeus/local-server';
 
 interface PersistedBrowserTab {
   snapshot: ZeusBrowserTabSnapshot;
@@ -117,7 +113,12 @@ function defaultSettings(options: CreateBrowserHostOptions): ZeusBrowserSettings
   };
 }
 
-function emptyTabSnapshot(input: {id: string; conversationId: string; url: string; now: string}): ZeusBrowserTabSnapshot {
+function emptyTabSnapshot(input: {
+    id: string;
+    conversationId: string;
+    url: string;
+    now: string
+}): ZeusBrowserTabSnapshot {
   return {
     id: input.id,
     conversationId: input.conversationId,
@@ -158,7 +159,7 @@ export class BrowserHost implements BrowserAutomationPort {
     this.statePath = resolve(options.statePath);
     this.attachmentRoot = resolve(options.attachmentRoot);
     this.settings = defaultSettings(options);
-    this.browserSession = session.fromPartition(browserPartition, {cache: true});
+      this.browserSession = session.fromPartition(browserPartition, {cache: true});
     this.restorePersistedState();
     this.configureSession();
   }
@@ -190,7 +191,7 @@ export class BrowserHost implements BrowserAutomationPort {
       const value = asRecord(input);
       return this.openTab(window, {
         conversationId: requireNonEmptyString(value.conversationId, 'conversationId'),
-        ...(typeof value.url === 'string' ? {url: value.url} : {}),
+          ...(typeof value.url === 'string' ? {url: value.url} : {}),
       });
     });
     ipcMain.handle('zeus:browser:activate-tab', async (event, input: unknown) => {
@@ -207,12 +208,7 @@ export class BrowserHost implements BrowserAutomationPort {
     ipcMain.handle('zeus:browser:command', async (event, input: unknown) => {
       const window = this.requireRendererWindow(event);
       const value = asRecord(input);
-      await this.runManualCommand(
-        window,
-        requireNonEmptyString(value.conversationId, 'conversationId'),
-        requireNonEmptyString(value.tabId, 'tabId'),
-        value.command as ZeusBrowserCommand,
-      );
+        await this.runManualCommand(window, requireNonEmptyString(value.conversationId, 'conversationId'), requireNonEmptyString(value.tabId, 'tabId'), value.command as ZeusBrowserCommand);
       return this.snapshotFor(requireNonEmptyString(value.conversationId, 'conversationId'));
     });
     ipcMain.handle('zeus:browser:set-layout', async (event, input: unknown) => {
@@ -223,7 +219,7 @@ export class BrowserHost implements BrowserAutomationPort {
       const visible = value.visible === true;
       const bounds = normalizeBounds(value.bounds);
       await this.setLayout(window, conversationId, tabId, bounds, visible);
-      return {applied: true};
+        return {applied: true};
     });
     ipcMain.handle('zeus:browser:prepare-comments', async (event, input: unknown) => {
       this.requireRendererWindow(event);
@@ -250,24 +246,21 @@ export class BrowserHost implements BrowserAutomationPort {
     ipcMain.handle('zeus:browser:respond-approval', (event, input: unknown) => {
       this.requireRendererWindow(event);
       const value = asRecord(input);
-      return this.respondToApproval(
-        requireNonEmptyString(value.requestId, 'requestId'),
-        normalizeApprovalDecision(value.decision),
-      );
+        return this.respondToApproval(requireNonEmptyString(value.requestId, 'requestId'), normalizeApprovalDecision(value.decision));
     });
     ipcMain.handle('zeus:browser:get-settings', (event) => {
       this.requireRendererWindow(event);
-      return {...this.settings};
+        return {...this.settings};
     });
     ipcMain.handle('zeus:browser:update-settings', async (event, input: unknown) => {
       this.requireRendererWindow(event);
       await this.updateSettings(input);
-      return {...this.settings};
+        return {...this.settings};
     });
     ipcMain.handle('zeus:browser:clear-data', async (event) => {
       this.requireRendererWindow(event);
       await this.clearBrowsingData();
-      return {cleared: true};
+        return {cleared: true};
     });
     ipcMain.handle('zeus:browser-page:get-state', (event) => {
       const tab = this.requirePageTab(event);
@@ -278,11 +271,14 @@ export class BrowserHost implements BrowserAutomationPort {
     });
     ipcMain.handle('zeus:browser-page:set-annotation-mode', (event, enabled: unknown) => {
       const tab = this.requirePageTab(event);
-      tab.snapshot = {...tab.snapshot, annotationMode: enabled === true, updatedAt: this.now()};
-      tab.view?.webContents.send('zeus-browser-page:command', {type: 'set_annotation_mode', enabled: tab.snapshot.annotationMode});
+        tab.snapshot = {...tab.snapshot, annotationMode: enabled === true, updatedAt: this.now()};
+        tab.view?.webContents.send('zeus-browser-page:command', {
+            type: 'set_annotation_mode',
+            enabled: tab.snapshot.annotationMode
+        });
       this.schedulePersist();
       this.emitSnapshot(tab.snapshot.conversationId);
-      return {annotationMode: tab.snapshot.annotationMode};
+        return {annotationMode: tab.snapshot.annotationMode};
     });
     ipcMain.handle('zeus:browser-page:save-comment', async (event, input: unknown) => {
       const tab = this.requirePageTab(event);
@@ -291,31 +287,39 @@ export class BrowserHost implements BrowserAutomationPort {
   }
 
   getSettings(): ZeusBrowserSettings {
-    return {...this.settings};
+      return {...this.settings};
   }
 
-  async openConversationResource(
-    window: BrowserWindow,
-    input: {conversationId: string; url: string},
-  ): Promise<ZeusBrowserConversationSnapshot> {
+    async openConversationResource(window: BrowserWindow, input: {
+        conversationId: string;
+        url: string
+    }): Promise<ZeusBrowserConversationSnapshot> {
     const snapshot = await this.openTab(window, input);
     this.emitOpenRequested(input.conversationId);
     return snapshot;
   }
 
-  async invoke(input: BrowserAutomationToolCall): Promise<{contentItems: BrowserAutomationContentItem[]; success: boolean}> {
+    async invoke(input: BrowserAutomationToolCall): Promise<{
+        contentItems: BrowserAutomationContentItem[];
+        success: boolean
+    }> {
     if (!this.settings.enabled) return toolText('The Zeus built-in browser is disabled in Settings.', false);
     const args = input.arguments;
     if (input.tool === 'list_tabs') {
-      return toolJson(this.snapshotFor(input.conversationId).tabs.map(({id, title, url, loading}) => ({id, title, url, loading})));
+        return toolJson(this.snapshotFor(input.conversationId).tabs.map(({id, title, url, loading}) => ({
+            id,
+            title,
+            url,
+            loading
+        })));
     }
     if (input.tool === 'open') {
       const url = normalizeBrowserUrl(requireNonEmptyString(args.url, 'url'));
       await this.ensureAgentSiteAccess(input.conversationId, undefined, url);
       const window = this.preferredWindow(input.conversationId);
-      const snapshot = await this.openTab(window, {conversationId: input.conversationId, url});
+        const snapshot = await this.openTab(window, {conversationId: input.conversationId, url});
       this.emitOpenRequested(input.conversationId);
-      return toolJson({tabId: snapshot.activeTabId, url});
+        return toolJson({tabId: snapshot.activeTabId, url});
     }
     if (input.tool === 'clipboard') return this.invokeClipboardTool(input);
     if (input.tool === 'downloads') {
@@ -327,12 +331,12 @@ export class BrowserHost implements BrowserAutomationPort {
       const window = this.preferredWindow(input.conversationId);
       await this.activateTab(window, input.conversationId, selected.snapshot.id);
       this.emitOpenRequested(input.conversationId);
-      return toolJson({selected: selected.snapshot.id, url: selected.snapshot.url});
+        return toolJson({selected: selected.snapshot.id, url: selected.snapshot.url});
     }
     if (input.tool === 'close_tab') {
       const closing = this.requireConversationTab(input.conversationId, requireNonEmptyString(args.tabId, 'tabId'));
       await this.closeTab(this.preferredWindow(input.conversationId), input.conversationId, closing.snapshot.id);
-      return toolJson({closed: closing.snapshot.id});
+        return toolJson({closed: closing.snapshot.id});
     }
 
     const tab = await this.resolveToolTab(input.conversationId, optionalString(args.tabId));
@@ -341,7 +345,7 @@ export class BrowserHost implements BrowserAutomationPort {
       await this.ensureAgentSiteAccess(input.conversationId, tab.snapshot.id, url);
       await this.ensureView(tab).webContents.loadURL(url);
       this.emitOpenRequested(input.conversationId);
-      return toolJson({tabId: tab.snapshot.id, url});
+        return toolJson({tabId: tab.snapshot.id, url});
     }
 
     await this.ensureAgentSiteAccess(input.conversationId, tab.snapshot.id, tab.snapshot.url);
@@ -365,7 +369,7 @@ export class BrowserHost implements BrowserAutomationPort {
         return this.invokeWaitTool(tab, args);
       case 'screenshot': {
         const image = await this.ensureView(tab).webContents.capturePage();
-        return {contentItems: [{type: 'inputImage', imageUrl: image.toDataURL()}], success: true};
+          return {contentItems: [{type: 'inputImage', imageUrl: image.toDataURL()}], success: true};
       }
       case 'developer':
         return this.invokeDeveloperTool(input, tab);
@@ -403,7 +407,7 @@ export class BrowserHost implements BrowserAutomationPort {
       for (const entry of parsed.tabs ?? []) {
         const snapshot = normalizePersistedTab(entry?.snapshot);
         if (!snapshot) continue;
-        this.tabs.set(snapshot.id, {snapshot, refs: new Map()});
+          this.tabs.set(snapshot.id, {snapshot, refs: new Map()});
       }
     } catch {
       // 首次启动或损坏的本机浏览器元数据都回退到空状态；Chromium profile 不在此文件中。
@@ -497,12 +501,15 @@ export class BrowserHost implements BrowserAutomationPort {
     return window;
   }
 
-  private async openTab(window: BrowserWindow, input: {conversationId: string; url?: string}): Promise<ZeusBrowserConversationSnapshot> {
+    private async openTab(window: BrowserWindow, input: {
+        conversationId: string;
+        url?: string
+    }): Promise<ZeusBrowserConversationSnapshot> {
     if (!this.settings.enabled) throw new Error('The built-in browser is disabled in Settings.');
     const url = input.url ? normalizeBrowserUrl(input.url) : 'about:blank';
     const id = `browser-tab-${randomUUID()}`;
     const tab: LiveBrowserTab = {
-      snapshot: emptyTabSnapshot({id, conversationId: input.conversationId, url, now: this.now()}),
+        snapshot: emptyTabSnapshot({id, conversationId: input.conversationId, url, now: this.now()}),
       ownerWindowId: window.id,
       refs: new Map(),
     };
@@ -610,7 +617,7 @@ export class BrowserHost implements BrowserAutomationPort {
     view.webContents.on('did-navigate-in-page', update);
     view.webContents.on('page-title-updated', update);
     view.webContents.on('page-favicon-updated', (_event, favicons) => {
-      tab.snapshot = {...tab.snapshot, ...(favicons[0] ? {faviconUrl: favicons[0]} : {}), updatedAt: this.now()};
+        tab.snapshot = {...tab.snapshot, ...(favicons[0] ? {faviconUrl: favicons[0]} : {}), updatedAt: this.now()};
       this.emitSnapshot(tab.snapshot.conversationId);
     });
     view.webContents.on('dom-ready', () => {
@@ -622,13 +629,16 @@ export class BrowserHost implements BrowserAutomationPort {
       update();
     });
     view.webContents.on('render-process-gone', () => {
-      tab.snapshot = {...tab.snapshot, crashed: true, loading: false, updatedAt: this.now()};
+        tab.snapshot = {...tab.snapshot, crashed: true, loading: false, updatedAt: this.now()};
       this.emitSnapshot(tab.snapshot.conversationId);
     });
-    view.webContents.setWindowOpenHandler(({url}) => {
+      view.webContents.setWindowOpenHandler(({url}) => {
       const ownerWindow = tab.ownerWindowId ? this.windows.get(tab.ownerWindowId) : undefined;
-      if (ownerWindow && !ownerWindow.isDestroyed()) void this.openTab(ownerWindow, {conversationId: tab.snapshot.conversationId, url});
-      return {action: 'deny'};
+          if (ownerWindow && !ownerWindow.isDestroyed()) void this.openTab(ownerWindow, {
+              conversationId: tab.snapshot.conversationId,
+              url
+          });
+          return {action: 'deny'};
     });
     if (loadSnapshotUrl && tab.snapshot.url && tab.snapshot.url !== 'about:blank') {
       void view.webContents.loadURL(tab.snapshot.url).catch((error) => this.emitError(tab, error));
@@ -660,8 +670,8 @@ export class BrowserHost implements BrowserAutomationPort {
         view.webContents.stop();
         break;
       case 'set_annotation_mode':
-        tab.snapshot = {...tab.snapshot, annotationMode: command.enabled, updatedAt: this.now()};
-        view.webContents.send('zeus-browser-page:command', {type: 'set_annotation_mode', enabled: command.enabled});
+          tab.snapshot = {...tab.snapshot, annotationMode: command.enabled, updatedAt: this.now()};
+          view.webContents.send('zeus-browser-page:command', {type: 'set_annotation_mode', enabled: command.enabled});
         this.emitSnapshot(conversationId);
         break;
       case 'clear_comments': {
@@ -683,7 +693,11 @@ export class BrowserHost implements BrowserAutomationPort {
       case 'delete_comment': {
         const comment = tab.snapshot.comments.find((candidate) => candidate.id === command.commentId && candidate.status === 'draft');
         if (!comment) return;
-        tab.snapshot = {...tab.snapshot, comments: tab.snapshot.comments.filter((candidate) => candidate.id !== command.commentId), updatedAt: this.now()};
+          tab.snapshot = {
+              ...tab.snapshot,
+              comments: tab.snapshot.comments.filter((candidate) => candidate.id !== command.commentId),
+              updatedAt: this.now()
+          };
         if (comment.screenshotPath) void unlink(comment.screenshotPath).catch(() => undefined);
         this.syncPageComments(tab);
         this.schedulePersist();
@@ -691,7 +705,7 @@ export class BrowserHost implements BrowserAutomationPort {
         break;
       }
       case 'focus_comment':
-        view.webContents.send('zeus-browser-page:command', {type: 'focus_comment', commentId: command.commentId});
+          view.webContents.send('zeus-browser-page:command', {type: 'focus_comment', commentId: command.commentId});
         break;
     }
   }
@@ -715,36 +729,36 @@ export class BrowserHost implements BrowserAutomationPort {
       createdAt: timestamp,
       updatedAt: timestamp,
     };
-    tab.snapshot = {...tab.snapshot, comments: [...tab.snapshot.comments, comment], updatedAt: timestamp};
+      tab.snapshot = {...tab.snapshot, comments: [...tab.snapshot.comments, comment], updatedAt: timestamp};
     this.syncPageComments(tab);
     const shouldCapture = this.settings.screenshotMode === 'always' || anchor.kind === 'region' || designChanges.length > 0;
     if (shouldCapture && tab.view && !tab.view.webContents.isDestroyed()) {
       try {
-        await mkdir(this.attachmentRoot, {recursive: true, mode: 0o700});
+          await mkdir(this.attachmentRoot, {recursive: true, mode: 0o700});
         await new Promise((resolveDelay) => setTimeout(resolveDelay, 40));
         const screenshotPath = join(this.attachmentRoot, `${comment.id}.png`);
         const image = await tab.view.webContents.capturePage();
-        await writeFile(screenshotPath, image.toPNG(), {mode: 0o600});
+          await writeFile(screenshotPath, image.toPNG(), {mode: 0o600});
         comment.screenshotPath = screenshotPath;
         comment.updatedAt = this.now();
         tab.snapshot = {
           ...tab.snapshot,
-          comments: tab.snapshot.comments.map((candidate) => (candidate.id === comment.id ? {...comment} : candidate)),
+            comments: tab.snapshot.comments.map((candidate) => (candidate.id === comment.id ? {...comment} : candidate)),
           updatedAt: comment.updatedAt,
         };
       } catch (error) {
-        this.emitError(
-          tab,
-          new Error(`The comment was saved, but its screenshot could not be captured: ${error instanceof Error ? error.message : String(error)}`),
-        );
+          this.emitError(tab, new Error(`The comment was saved, but its screenshot could not be captured: ${error instanceof Error ? error.message : String(error)}`));
       }
     }
     this.schedulePersist();
     this.emitSnapshot(tab.snapshot.conversationId);
-    return {...comment};
+      return {...comment};
   }
 
-  private async loadCommentPreview(pathValue: unknown): Promise<{previewUrl: string; mimeType: 'image/png'} | null> {
+    private async loadCommentPreview(pathValue: unknown): Promise<{
+        previewUrl: string;
+        mimeType: 'image/png'
+    } | null> {
     if (typeof pathValue !== 'string' || !pathValue) return null;
     try {
       const [rootPath, candidatePath] = await Promise.all([realpath(this.attachmentRoot), realpath(pathValue)]);
@@ -753,7 +767,7 @@ export class BrowserHost implements BrowserAutomationPort {
       const file = await stat(candidatePath);
       if (!file.isFile() || file.size <= 0 || file.size > 30 * 1024 * 1024 || !candidatePath.toLowerCase().endsWith('.png')) return null;
       const data = await readFile(candidatePath);
-      return {previewUrl: `data:image/png;base64,${data.toString('base64')}`, mimeType: 'image/png'};
+        return {previewUrl: `data:image/png;base64,${data.toString('base64')}`, mimeType: 'image/png'};
     } catch {
       return null;
     }
@@ -794,7 +808,11 @@ export class BrowserHost implements BrowserAutomationPort {
     const timestamp = this.now();
     tab.snapshot = {
       ...tab.snapshot,
-      comments: tab.snapshot.comments.map((comment) => (sent.has(comment.id) && comment.status === 'draft' ? {...comment, status: 'sent', updatedAt: timestamp} : comment)),
+        comments: tab.snapshot.comments.map((comment) => (sent.has(comment.id) && comment.status === 'draft' ? {
+            ...comment,
+            status: 'sent',
+            updatedAt: timestamp
+        } : comment)),
       updatedAt: timestamp,
     };
     this.syncPageComments(tab);
@@ -817,21 +835,21 @@ export class BrowserHost implements BrowserAutomationPort {
       .map((tab) => structuredClone(tab.snapshot))
       .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
     const activeCandidate = this.activeTabByConversation.get(conversationId);
-    const activeTabId = tabs.some((tab) => tab.id === activeCandidate) ? activeCandidate! : tabs.at(-1)?.id ?? null;
+      const activeTabId = tabs.some((tab) => tab.id === activeCandidate) ? activeCandidate! : (tabs.at(-1)?.id ?? null);
     return {
       conversationId,
       tabs,
       activeTabId,
-      pendingApprovals: [...this.pendingApprovals.values()].map(({request}) => request).filter((request) => request.conversationId === conversationId),
+        pendingApprovals: [...this.pendingApprovals.values()].map(({request}) => request).filter((request) => request.conversationId === conversationId),
     };
   }
 
   private emitSnapshot(conversationId: string): void {
-    this.emit({type: 'snapshot', snapshot: this.snapshotFor(conversationId)});
+      this.emit({type: 'snapshot', snapshot: this.snapshotFor(conversationId)});
   }
 
   private emitOpenRequested(conversationId: string): void {
-    this.emit({type: 'open_requested', conversationId});
+      this.emit({type: 'open_requested', conversationId});
   }
 
   private emitDownload(download: BrowserDownload): void {
@@ -841,7 +859,7 @@ export class BrowserHost implements BrowserAutomationPort {
       tabId: download.tabId,
       state: download.state,
       fileName: download.fileName,
-      ...(download.path ? {path: download.path} : {}),
+        ...(download.path ? {path: download.path} : {}),
     });
   }
 
@@ -874,7 +892,7 @@ export class BrowserHost implements BrowserAutomationPort {
     if (requestedTabId) return this.requireConversationTab(conversationId, requestedTabId);
     const active = this.activeTabByConversation.get(conversationId);
     if (active) return this.requireConversationTab(conversationId, active);
-    const snapshot = await this.openTab(this.preferredWindow(conversationId), {conversationId});
+      const snapshot = await this.openTab(this.preferredWindow(conversationId), {conversationId});
     return this.requireConversationTab(conversationId, snapshot.activeTabId!);
   }
 
@@ -909,32 +927,35 @@ export class BrowserHost implements BrowserAutomationPort {
         resolveDecision('deny');
       }, approvalTimeoutMs);
       timer.unref();
-      this.pendingApprovals.set(request.id, {request, resolve: resolveDecision, timer});
+        this.pendingApprovals.set(request.id, {request, resolve: resolveDecision, timer});
       this.emitSnapshot(request.conversationId);
       this.emitOpenRequested(request.conversationId);
     });
   }
 
-  private respondToApproval(requestId: string, decision: ZeusBrowserApprovalDecision): {resolved: boolean} {
+    private respondToApproval(requestId: string, decision: ZeusBrowserApprovalDecision): { resolved: boolean } {
     const pending = this.pendingApprovals.get(requestId);
-    if (!pending) return {resolved: false};
+        if (!pending) return {resolved: false};
     clearTimeout(pending.timer);
     this.pendingApprovals.delete(requestId);
     if (pending.request.kind === 'site' && pending.request.origin) {
       if (decision === 'allow_site') this.originRules.set(pending.request.origin, 'allow');
       if (decision === 'allow_all') {
         this.originRules.set('*', 'allow');
-        this.settings = {...this.settings, allowAgentAllSites: true};
+          this.settings = {...this.settings, allowAgentAllSites: true};
       }
       if (decision === 'deny') this.originRules.set(pending.request.origin, 'deny');
     }
     pending.resolve(decision);
     this.schedulePersist();
     this.emitSnapshot(pending.request.conversationId);
-    return {resolved: true};
+        return {resolved: true};
   }
 
-  private async invokeHistoryTool(input: BrowserAutomationToolCall, tab: LiveBrowserTab, action: string): Promise<{contentItems: BrowserAutomationContentItem[]; success: boolean}> {
+    private async invokeHistoryTool(input: BrowserAutomationToolCall, tab: LiveBrowserTab, action: string): Promise<{
+        contentItems: BrowserAutomationContentItem[];
+        success: boolean
+    }> {
     const webContents = this.ensureView(tab).webContents;
     const history = webContents.navigationHistory;
     const targetOffset = action === 'back' ? -1 : action === 'forward' ? 1 : 0;
@@ -949,14 +970,16 @@ export class BrowserHost implements BrowserAutomationPort {
     else if (action === 'reload') webContents.reload();
     else if (action === 'stop') webContents.stop();
     else if (!['back', 'forward', 'reload', 'stop'].includes(action)) return toolText(`Unsupported history action: ${action}`, false);
-    return toolJson({action, url: webContents.getURL()});
+        return toolJson({action, url: webContents.getURL()});
   }
 
   private async pageSnapshot(tab: LiveBrowserTab, maxElements: number): Promise<Record<string, unknown>> {
-    const result = (await this.ensureView(tab).webContents.executeJavaScript(
-      `(${pageSnapshotScript})(${JSON.stringify(maxElements)})`,
-      true,
-    )) as {title: string; url: string; text: string; elements: Array<{ref: string; selector: string; [key: string]: unknown}>};
+      const result = (await this.ensureView(tab).webContents.executeJavaScript(`(${pageSnapshotScript})(${JSON.stringify(maxElements)})`, true)) as {
+          title: string;
+          url: string;
+          text: string;
+          elements: Array<{ ref: string; selector: string; [key: string]: unknown }>;
+      };
     tab.refs.clear();
     for (const element of result.elements ?? []) {
       if (typeof element.ref === 'string' && typeof element.selector === 'string') tab.refs.set(element.ref, element.selector);
@@ -969,13 +992,13 @@ export class BrowserHost implements BrowserAutomationPort {
   }
 
   private async elementInfo(tab: LiveBrowserTab, selector: string): Promise<BrowserToolElementInfo> {
-    return (await this.ensureView(tab).webContents.executeJavaScript(
-      `(${elementInfoScript})(${JSON.stringify(selector)})`,
-      true,
-    )) as BrowserToolElementInfo;
+      return (await this.ensureView(tab).webContents.executeJavaScript(`(${elementInfoScript})(${JSON.stringify(selector)})`, true)) as BrowserToolElementInfo;
   }
 
-  private async invokeClickTool(input: BrowserAutomationToolCall, tab: LiveBrowserTab): Promise<{contentItems: BrowserAutomationContentItem[]; success: boolean}> {
+    private async invokeClickTool(input: BrowserAutomationToolCall, tab: LiveBrowserTab): Promise<{
+        contentItems: BrowserAutomationContentItem[];
+        success: boolean
+    }> {
     const selector = this.resolveTarget(tab, requireNonEmptyString(input.arguments.target, 'target'));
     const info = await this.elementInfo(tab, selector);
     if (info.fileInput) return toolText('Automated file uploads are not supported. Ask the user to choose the file manually.', false);
@@ -999,7 +1022,10 @@ export class BrowserHost implements BrowserAutomationPort {
     return toolJson(result);
   }
 
-  private async invokeTypeTool(input: BrowserAutomationToolCall, tab: LiveBrowserTab): Promise<{contentItems: BrowserAutomationContentItem[]; success: boolean}> {
+    private async invokeTypeTool(input: BrowserAutomationToolCall, tab: LiveBrowserTab): Promise<{
+        contentItems: BrowserAutomationContentItem[];
+        success: boolean
+    }> {
     const selector = this.resolveTarget(tab, requireNonEmptyString(input.arguments.target, 'target'));
     const text = requireString(input.arguments.text, 'text').slice(0, 100_000);
     const info = await this.elementInfo(tab, selector);
@@ -1016,15 +1042,18 @@ export class BrowserHost implements BrowserAutomationPort {
       });
       if (decision === 'deny') return toolText('The user denied typing into the sensitive field.', false);
     }
-    const result = await this.ensureView(tab).webContents.executeJavaScript(
-      `(${typeIntoElementScript})(${JSON.stringify(selector)}, ${JSON.stringify(text)}, ${input.arguments.replace !== false ? 'true' : 'false'})`,
-      true,
-    );
+        const result = await this.ensureView(tab).webContents.executeJavaScript(`(${typeIntoElementScript})(${JSON.stringify(selector)}, ${JSON.stringify(text)}, ${input.arguments.replace !== false ? 'true' : 'false'})`, true);
     return toolJson(result);
   }
 
-  private async invokePressTool(input: BrowserAutomationToolCall, tab: LiveBrowserTab, keyChord: string): Promise<{contentItems: BrowserAutomationContentItem[]; success: boolean}> {
-    const parts = keyChord.split('+').map((part) => part.trim()).filter(Boolean);
+    private async invokePressTool(input: BrowserAutomationToolCall, tab: LiveBrowserTab, keyChord: string): Promise<{
+        contentItems: BrowserAutomationContentItem[];
+        success: boolean
+    }> {
+        const parts = keyChord
+            .split('+')
+            .map((part) => part.trim())
+            .filter(Boolean);
     const keyCode = parts.at(-1);
     if (!keyCode) return toolText('A keyboard key is required.', false);
     const modifiers: Array<'meta' | 'control' | 'alt' | 'shift'> = [];
@@ -1059,39 +1088,45 @@ export class BrowserHost implements BrowserAutomationPort {
       });
       if (decision === 'deny') return toolText('The user denied the sensitive key action.', false);
     }
-    webContents.sendInputEvent({type: 'keyDown', keyCode, modifiers});
-    webContents.sendInputEvent({type: 'keyUp', keyCode, modifiers});
-    return toolJson({pressed: keyChord});
+        webContents.sendInputEvent({type: 'keyDown', keyCode, modifiers});
+        webContents.sendInputEvent({type: 'keyUp', keyCode, modifiers});
+        return toolJson({pressed: keyChord});
   }
 
-  private async invokeScrollTool(tab: LiveBrowserTab, args: Record<string, unknown>): Promise<{contentItems: BrowserAutomationContentItem[]; success: boolean}> {
+    private async invokeScrollTool(tab: LiveBrowserTab, args: Record<string, unknown>): Promise<{
+        contentItems: BrowserAutomationContentItem[];
+        success: boolean
+    }> {
     const selector = optionalString(args.target);
     const x = finiteNumber(args.x, 0);
     const y = finiteNumber(args.y, 600);
-    const result = await this.ensureView(tab).webContents.executeJavaScript(
-      `(${scrollScript})(${JSON.stringify(selector ? this.resolveTarget(tab, selector) : null)}, ${JSON.stringify(x)}, ${JSON.stringify(y)})`,
-      true,
-    );
+        const result = await this.ensureView(tab).webContents.executeJavaScript(`(${scrollScript})(${JSON.stringify(selector ? this.resolveTarget(tab, selector) : null)}, ${JSON.stringify(x)}, ${JSON.stringify(y)})`, true);
     return toolJson(result);
   }
 
-  private async invokeWaitTool(tab: LiveBrowserTab, args: Record<string, unknown>): Promise<{contentItems: BrowserAutomationContentItem[]; success: boolean}> {
+    private async invokeWaitTool(tab: LiveBrowserTab, args: Record<string, unknown>): Promise<{
+        contentItems: BrowserAutomationContentItem[];
+        success: boolean
+    }> {
     const selector = optionalString(args.selector);
     const timeoutMs = boundedInteger(args.timeoutMs, 5_000, 0, 30_000);
     const startedAt = Date.now();
     while (Date.now() - startedAt <= timeoutMs) {
       if (!selector) {
         await new Promise((resolveDelay) => setTimeout(resolveDelay, timeoutMs));
-        return toolJson({waitedMs: timeoutMs});
+          return toolJson({waitedMs: timeoutMs});
       }
       const found = await this.ensureView(tab).webContents.executeJavaScript(`Boolean(document.querySelector(${JSON.stringify(selector)}))`, true);
-      if (found) return toolJson({selector, found: true, waitedMs: Date.now() - startedAt});
+        if (found) return toolJson({selector, found: true, waitedMs: Date.now() - startedAt});
       await new Promise((resolveDelay) => setTimeout(resolveDelay, Math.min(250, Math.max(0, timeoutMs - (Date.now() - startedAt)))));
     }
     return toolText(`Timed out waiting for selector: ${selector}`, false);
   }
 
-  private async invokeClipboardTool(input: BrowserAutomationToolCall): Promise<{contentItems: BrowserAutomationContentItem[]; success: boolean}> {
+    private async invokeClipboardTool(input: BrowserAutomationToolCall): Promise<{
+        contentItems: BrowserAutomationContentItem[];
+        success: boolean
+    }> {
     const action = requireNonEmptyString(input.arguments.action, 'action');
     const decision = await this.requestApproval({
       conversationId: input.conversationId,
@@ -1104,12 +1139,15 @@ export class BrowserHost implements BrowserAutomationPort {
     if (action === 'read') return toolText(clipboard.readText(), true);
     if (action === 'write') {
       clipboard.writeText(requireString(input.arguments.text, 'text'));
-      return toolJson({written: true});
+        return toolJson({written: true});
     }
     return toolText(`Unsupported clipboard action: ${action}`, false);
   }
 
-  private async invokeDeveloperTool(input: BrowserAutomationToolCall, tab: LiveBrowserTab): Promise<{contentItems: BrowserAutomationContentItem[]; success: boolean}> {
+    private async invokeDeveloperTool(input: BrowserAutomationToolCall, tab: LiveBrowserTab): Promise<{
+        contentItems: BrowserAutomationContentItem[];
+        success: boolean
+    }> {
     if (!this.settings.fullCdpEnabled) return toolText('Full CDP access is disabled in Browser Settings.', false);
     const method = requireNonEmptyString(input.arguments.method, 'method');
     const params = isPlainRecord(input.arguments.params) ? input.arguments.params : {};
@@ -1137,7 +1175,7 @@ export class BrowserHost implements BrowserAutomationPort {
     this.settings = normalizeSettings(input, this.settings);
     if (this.settings.allowAgentAllSites) this.originRules.set('*', 'allow');
     else this.originRules.delete('*');
-    await mkdir(this.settings.downloadDirectory, {recursive: true});
+      await mkdir(this.settings.downloadDirectory, {recursive: true});
     if (!this.settings.enabled) {
       for (const tabId of [...this.visibleTabByWindow.values()]) this.detachTab(tabId);
     }
@@ -1148,8 +1186,8 @@ export class BrowserHost implements BrowserAutomationPort {
     await this.browserSession.clearCache();
     await this.browserSession.clearStorageData();
     await this.browserSession.clearAuthCache();
-    await rm(this.attachmentRoot, {recursive: true, force: true});
-    await mkdir(this.attachmentRoot, {recursive: true, mode: 0o700});
+      await rm(this.attachmentRoot, {recursive: true, force: true});
+      await mkdir(this.attachmentRoot, {recursive: true, mode: 0o700});
     for (const pending of this.pendingApprovals.values()) {
       clearTimeout(pending.timer);
       pending.resolve('deny');
@@ -1158,13 +1196,20 @@ export class BrowserHost implements BrowserAutomationPort {
     this.originRules.clear();
     this.grantedWebPermissions.clear();
     this.downloads.length = 0;
-    this.settings = {...this.settings, allowAgentAllSites: false};
+      this.settings = {...this.settings, allowAgentAllSites: false};
     for (const tab of this.tabs.values()) {
       if (tab.view && !tab.view.webContents.isDestroyed()) {
         await tab.view.webContents.loadURL('about:blank');
         tab.view.webContents.navigationHistory.clear();
       }
-      tab.snapshot = {...tab.snapshot, url: 'about:blank', title: 'New tab', comments: [], annotationMode: false, updatedAt: this.now()};
+        tab.snapshot = {
+            ...tab.snapshot,
+            url: 'about:blank',
+            title: 'New tab',
+            comments: [],
+            annotationMode: false,
+            updatedAt: this.now()
+        };
     }
     if (this.persistenceTimer) {
       clearTimeout(this.persistenceTimer);
@@ -1196,11 +1241,11 @@ export class BrowserHost implements BrowserAutomationPort {
       settings: this.settings,
       originRules: Object.fromEntries(this.originRules),
       activeTabByConversation: Object.fromEntries(this.activeTabByConversation),
-      tabs: [...this.tabs.values()].map((tab) => ({snapshot: tab.snapshot})),
+        tabs: [...this.tabs.values()].map((tab) => ({snapshot: tab.snapshot})),
     };
-    await mkdir(dirname(this.statePath), {recursive: true});
+      await mkdir(dirname(this.statePath), {recursive: true});
     const temporaryPath = `${this.statePath}.tmp`;
-    await writeFile(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, {encoding: 'utf8', mode: 0o600});
+      await writeFile(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, {encoding: 'utf8', mode: 0o600});
     await rename(temporaryPath, this.statePath);
   }
 }
@@ -1213,11 +1258,7 @@ function normalizeBrowserUrl(value: string): string {
   const trimmed = value.trim();
   if (!trimmed) return 'about:blank';
   if (/\s/u.test(trimmed) && !/^[a-z][a-z0-9+.-]*:/iu.test(trimmed)) return `https://www.google.com/search?q=${encodeURIComponent(trimmed)}`;
-  const withProtocol = /^[a-z][a-z0-9+.-]*:/iu.test(trimmed)
-    ? trimmed
-    : /^(localhost|127(?:\.\d{1,3}){3}|\[?::1\]?)(:\d+)?(?:\/|$)/iu.test(trimmed)
-      ? `http://${trimmed}`
-      : `https://${trimmed}`;
+    const withProtocol = /^[a-z][a-z0-9+.-]*:/iu.test(trimmed) ? trimmed : /^(localhost|127(?:\.\d{1,3}){3}|\[?::1\]?)(:\d+)?(?:\/|$)/iu.test(trimmed) ? `http://${trimmed}` : `https://${trimmed}`;
   const url = new URL(withProtocol);
   if (!['http:', 'https:', 'file:', 'about:'].includes(url.protocol)) throw new TypeError(`Unsupported browser URL protocol: ${url.protocol}`);
   if ((url.protocol === 'http:' || url.protocol === 'https:') && (url.username || url.password)) throw new TypeError('Browser URLs with embedded credentials are not allowed.');
@@ -1231,7 +1272,7 @@ function normalizeBounds(value: unknown): Rectangle {
   const y = Math.max(0, Math.round(finiteNumber(record.y, 0)));
   const width = Math.max(1, Math.round(finiteNumber(record.width, 1)));
   const height = Math.max(1, Math.round(finiteNumber(record.height, 1)));
-  return {x, y, width, height};
+    return {x, y, width, height};
 }
 
 function normalizeApprovalDecision(value: unknown): ZeusBrowserApprovalDecision {
@@ -1241,10 +1282,7 @@ function normalizeApprovalDecision(value: unknown): ZeusBrowserApprovalDecision 
 
 function normalizeSettings(value: unknown, fallback: ZeusBrowserSettings): ZeusBrowserSettings {
   const record = value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
-  const downloadDirectory =
-    typeof record.downloadDirectory === 'string' && isAbsolute(record.downloadDirectory.trim())
-      ? resolve(record.downloadDirectory.trim())
-      : fallback.downloadDirectory;
+    const downloadDirectory = typeof record.downloadDirectory === 'string' && isAbsolute(record.downloadDirectory.trim()) ? resolve(record.downloadDirectory.trim()) : fallback.downloadDirectory;
   return {
     enabled: typeof record.enabled === 'boolean' ? record.enabled : fallback.enabled,
     downloadDirectory,
@@ -1263,14 +1301,7 @@ function webLinkOpenTarget(value: unknown): ZeusBrowserSettings['webLinkOpenTarg
 }
 
 function fileOpenTarget(value: unknown): ZeusBrowserSettings['fileOpenTarget'] | null {
-  return value === 'zeus_source' ||
-    value === 'system_default' ||
-    value === 'editor:vscode' ||
-    value === 'editor:vscode-insiders' ||
-    value === 'editor:cursor' ||
-    value === 'editor:windsurf'
-    ? value
-    : null;
+    return value === 'zeus_source' || value === 'system_default' || value === 'editor:vscode' || value === 'editor:vscode-insiders' || value === 'editor:cursor' || value === 'editor:windsurf' ? value : null;
 }
 
 function normalizePersistedTab(value: unknown): ZeusBrowserTabSnapshot | null {
@@ -1280,14 +1311,17 @@ function normalizePersistedTab(value: unknown): ZeusBrowserTabSnapshot | null {
     const conversationId = requireNonEmptyString(record.conversationId, 'conversation id');
     const url = normalizeBrowserUrl(typeof record.url === 'string' ? record.url : 'about:blank');
     const comments = Array.isArray(record.comments)
-      ? record.comments.map(normalizePersistedComment).filter((comment): comment is ZeusBrowserComment => Boolean(comment)).slice(-maxPersistedCommentsPerTab)
+        ? record.comments
+            .map(normalizePersistedComment)
+            .filter((comment): comment is ZeusBrowserComment => Boolean(comment))
+            .slice(-maxPersistedCommentsPerTab)
       : [];
     return {
       id,
       conversationId,
       url,
       title: typeof record.title === 'string' && record.title ? record.title.slice(0, 500) : url,
-      ...(typeof record.faviconUrl === 'string' ? {faviconUrl: record.faviconUrl} : {}),
+        ...(typeof record.faviconUrl === 'string' ? {faviconUrl: record.faviconUrl} : {}),
       loading: false,
       canGoBack: false,
       canGoForward: false,
@@ -1314,7 +1348,7 @@ function normalizePersistedComment(value: unknown): ZeusBrowserComment | null {
       body: requireNonEmptyString(record.body, 'comment body').slice(0, maxCommentBodyLength),
       anchor,
       designChanges: normalizeDesignChanges(record.designChanges),
-      ...(typeof record.screenshotPath === 'string' && isAbsolute(record.screenshotPath) ? {screenshotPath: resolve(record.screenshotPath)} : {}),
+        ...(typeof record.screenshotPath === 'string' && isAbsolute(record.screenshotPath) ? {screenshotPath: resolve(record.screenshotPath)} : {}),
       status: record.status === 'sent' ? 'sent' : 'draft',
       createdAt: typeof record.createdAt === 'string' ? record.createdAt : new Date().toISOString(),
       updatedAt: typeof record.updatedAt === 'string' ? record.updatedAt : new Date().toISOString(),
@@ -1338,26 +1372,38 @@ function normalizePageAnchor(value: unknown): ZeusBrowserPageAnchor {
     pageUrl: requireString(record.pageUrl, 'pageUrl').slice(0, 8_000),
     frameUrl: requireString(record.frameUrl, 'frameUrl').slice(0, 8_000),
     pageTitle: requireString(record.pageTitle, 'pageTitle').slice(0, 1_000),
-    ...(optionalString(record.selector) ? {selector: optionalString(record.selector)!.slice(0, 4_000)} : {}),
-    ...(optionalString(record.elementPath) ? {elementPath: optionalString(record.elementPath)!.slice(0, 8_000)} : {}),
-    ...(Array.isArray(record.shadowHostPath) ? {shadowHostPath: record.shadowHostPath.filter((entry): entry is string => typeof entry === 'string').slice(0, 20).map((entry) => entry.slice(0, 1_000))} : {}),
+      ...(optionalString(record.selector) ? {selector: optionalString(record.selector)!.slice(0, 4_000)} : {}),
+      ...(optionalString(record.elementPath) ? {elementPath: optionalString(record.elementPath)!.slice(0, 8_000)} : {}),
+      ...(Array.isArray(record.shadowHostPath)
+          ? {
+              shadowHostPath: record.shadowHostPath
+                  .filter((entry): entry is string => typeof entry === 'string')
+                  .slice(0, 20)
+                  .map((entry) => entry.slice(0, 1_000)),
+          }
+          : {}),
     frameDepth: boundedInteger(record.frameDepth, 0, 0, 32),
-    ...(optionalString(record.role) ? {role: optionalString(record.role)!.slice(0, 200)} : {}),
-    ...(optionalString(record.accessibleName) ? {accessibleName: optionalString(record.accessibleName)!.slice(0, 1_000)} : {}),
-    ...(optionalString(record.tagName) ? {tagName: optionalString(record.tagName)!.slice(0, 100)} : {}),
-    ...(optionalString(record.immediateText) ? {immediateText: optionalString(record.immediateText)!.slice(0, 4_000)} : {}),
-    ...(optionalString(record.nearbyText) ? {nearbyText: optionalString(record.nearbyText)!.slice(0, 4_000)} : {}),
+      ...(optionalString(record.role) ? {role: optionalString(record.role)!.slice(0, 200)} : {}),
+      ...(optionalString(record.accessibleName) ? {accessibleName: optionalString(record.accessibleName)!.slice(0, 1_000)} : {}),
+      ...(optionalString(record.tagName) ? {tagName: optionalString(record.tagName)!.slice(0, 100)} : {}),
+      ...(optionalString(record.immediateText) ? {immediateText: optionalString(record.immediateText)!.slice(0, 4_000)} : {}),
+      ...(optionalString(record.nearbyText) ? {nearbyText: optionalString(record.nearbyText)!.slice(0, 4_000)} : {}),
     rect,
-    ...(markerRecord ? {marker: {x: finiteNumber(markerRecord.x, rect.x + rect.width / 2), y: finiteNumber(markerRecord.y, rect.y)}} : {}),
+      ...(markerRecord ? {
+          marker: {
+              x: finiteNumber(markerRecord.x, rect.x + rect.width / 2),
+              y: finiteNumber(markerRecord.y, rect.y)
+          }
+      } : {}),
     ...(textRangeRecord
       ? {
           textRange: {
             text: requireString(textRangeRecord.text, 'selected text').slice(0, 20_000),
-            ...(optionalString(textRangeRecord.startSelector) ? {startSelector: optionalString(textRangeRecord.startSelector)!.slice(0, 4_000)} : {}),
-            ...(Number.isInteger(textRangeRecord.startOffset) ? {startOffset: Math.max(0, Number(textRangeRecord.startOffset))} : {}),
-            ...(optionalString(textRangeRecord.endSelector) ? {endSelector: optionalString(textRangeRecord.endSelector)!.slice(0, 4_000)} : {}),
-            ...(Number.isInteger(textRangeRecord.endOffset) ? {endOffset: Math.max(0, Number(textRangeRecord.endOffset))} : {}),
-            ...(textRangeRecord.direction === 'backward' ? {direction: 'backward' as const} : {direction: 'forward' as const}),
+              ...(optionalString(textRangeRecord.startSelector) ? {startSelector: optionalString(textRangeRecord.startSelector)!.slice(0, 4_000)} : {}),
+              ...(Number.isInteger(textRangeRecord.startOffset) ? {startOffset: Math.max(0, Number(textRangeRecord.startOffset))} : {}),
+              ...(optionalString(textRangeRecord.endSelector) ? {endSelector: optionalString(textRangeRecord.endSelector)!.slice(0, 4_000)} : {}),
+              ...(Number.isInteger(textRangeRecord.endOffset) ? {endOffset: Math.max(0, Number(textRangeRecord.endOffset))} : {}),
+              ...(textRangeRecord.direction === 'backward' ? {direction: 'backward' as const} : {direction: 'forward' as const}),
             rects: Array.isArray(textRangeRecord.rects) ? textRangeRecord.rects.slice(0, 200).map(normalizeAnchorRect) : [rect],
           },
         }
@@ -1367,7 +1413,7 @@ function normalizePageAnchor(value: unknown): ZeusBrowserPageAnchor {
       height: Math.max(1, finiteNumber(viewport.height, 1)),
       deviceScaleFactor: Math.max(0.1, finiteNumber(viewport.deviceScaleFactor, 1)),
     },
-    scroll: {x: finiteNumber(scroll.x, 0), y: finiteNumber(scroll.y, 0)},
+      scroll: {x: finiteNumber(scroll.x, 0), y: finiteNumber(scroll.y, 0)},
     fixed: record.fixed === true,
   };
 }
@@ -1392,8 +1438,8 @@ function normalizeDesignChanges(value: unknown): ZeusBrowserDesignChange[] {
     return [
       {
         kind: record.kind,
-        ...(optionalString(record.selector) ? {selector: optionalString(record.selector)!.slice(0, 4_000)} : {}),
-        ...(optionalString(record.property) ? {property: optionalString(record.property)!.slice(0, 200)} : {}),
+          ...(optionalString(record.selector) ? {selector: optionalString(record.selector)!.slice(0, 4_000)} : {}),
+          ...(optionalString(record.property) ? {property: optionalString(record.property)!.slice(0, 200)} : {}),
         previous: record.previous.slice(0, 20_000),
         next: record.next.slice(0, 20_000),
       },
@@ -1415,10 +1461,7 @@ function serializeBrowserComments(tab: ZeusBrowserTabSnapshot, comments: ZeusBro
     lines.push(`## ${comment.number}. ${anchor.kind} comment`);
     lines.push(`- Frame URL: ${JSON.stringify(anchor.frameUrl)}`);
     if (anchor.role || anchor.accessibleName) {
-      const target = [
-        ...(anchor.role ? [`role=${JSON.stringify(anchor.role)}`] : []),
-        ...(anchor.accessibleName ? [`name=${JSON.stringify(anchor.accessibleName)}`] : []),
-      ].join(', ');
+        const target = [...(anchor.role ? [`role=${JSON.stringify(anchor.role)}`] : []), ...(anchor.accessibleName ? [`name=${JSON.stringify(anchor.accessibleName)}`] : [])].join(', ');
       lines.push(`- Target: ${target}`);
     }
     if (anchor.selector) lines.push(`- Selector: ${JSON.stringify(anchor.selector)}`);
@@ -1433,16 +1476,16 @@ function serializeBrowserComments(tab: ZeusBrowserTabSnapshot, comments: ZeusBro
       lines.push('- Requested design changes:');
       for (const change of comment.designChanges) {
         lines.push(
-          change.kind === 'text'
-            ? `  - Text: ${JSON.stringify(change.previous)} -> ${JSON.stringify(change.next)}`
-            : `  - CSS ${change.property ?? 'property'}: ${JSON.stringify(change.previous)} -> ${JSON.stringify(change.next)}`,
+            change.kind === 'text' ? `  - Text: ${JSON.stringify(change.previous)} -> ${JSON.stringify(change.next)}` : `  - CSS ${change.property ?? 'property'}: ${JSON.stringify(change.previous)} -> ${JSON.stringify(change.next)}`,
         );
       }
     }
     if (comment.screenshotPath) lines.push(`- Screenshot: ${basename(comment.screenshotPath)}`);
     lines.push('');
   }
-  lines.push('Implement these requests in the source that owns the rendered UI. Treat the temporary Adjust preview as intent only; do not copy Zeus preview attributes into project code. Re-open the page and verify the result in the built-in browser.');
+    lines.push(
+        'Implement these requests in the source that owns the rendered UI. Treat the temporary Adjust preview as intent only; do not copy Zeus preview attributes into project code. Re-open the page and verify the result in the built-in browser.',
+    );
   return lines.join('\n');
 }
 
@@ -1504,12 +1547,15 @@ function round(value: number): number {
   return Math.round(value * 10) / 10;
 }
 
-function toolText(text: string, success: boolean): {contentItems: BrowserAutomationContentItem[]; success: boolean} {
-  return {contentItems: [{type: 'inputText', text}], success};
+function toolText(text: string, success: boolean): { contentItems: BrowserAutomationContentItem[]; success: boolean } {
+    return {contentItems: [{type: 'inputText', text}], success};
 }
 
-function toolJson(value: unknown): {contentItems: BrowserAutomationContentItem[]; success: true} {
-  return toolText(JSON.stringify(value, null, 2), true) as {contentItems: BrowserAutomationContentItem[]; success: true};
+function toolJson(value: unknown): { contentItems: BrowserAutomationContentItem[]; success: true } {
+    return toolText(JSON.stringify(value, null, 2), true) as {
+        contentItems: BrowserAutomationContentItem[];
+        success: true
+    };
 }
 
 const pageSnapshotScript = function pageSnapshot(maxElements: number) {
@@ -1547,7 +1593,7 @@ const pageSnapshotScript = function pageSnapshot(maxElements: number) {
       text: (element.textContent || '').trim().replace(/\s+/gu, ' ').slice(0, 300),
       type: element.getAttribute('type') || '',
       href: element instanceof HTMLAnchorElement ? element.href : '',
-      rect: {x: rect.x, y: rect.y, width: rect.width, height: rect.height},
+        rect: {x: rect.x, y: rect.y, width: rect.width, height: rect.height},
     });
   }
   return {
@@ -1564,11 +1610,7 @@ const elementInfoScript = function elementInfo(selector: string) {
   const input = element instanceof HTMLInputElement ? element : null;
   const button = element instanceof HTMLButtonElement ? element : null;
   const form = input?.form || button?.form || null;
-  const navigationUrl = element instanceof HTMLAnchorElement
-    ? element.href
-    : form
-      ? (input?.formAction || button?.formAction || form.action)
-      : '';
+    const navigationUrl = element instanceof HTMLAnchorElement ? element.href : form ? input?.formAction || button?.formAction || form.action : '';
   const editable = Boolean(input || element instanceof HTMLTextAreaElement || element instanceof HTMLSelectElement || (element as HTMLElement).isContentEditable);
   return {
     selector,
@@ -1589,17 +1631,17 @@ const elementInfoScript = function elementInfo(selector: string) {
 const clickElementScript = function clickElement(selector: string) {
   const element = document.querySelector(selector) as HTMLElement | null;
   if (!element) throw new Error(`Element not found: ${selector}`);
-  element.scrollIntoView({block: 'center', inline: 'center'});
-  element.focus({preventScroll: true});
+    element.scrollIntoView({block: 'center', inline: 'center'});
+    element.focus({preventScroll: true});
   element.click();
-  return {clicked: selector, url: location.href};
+    return {clicked: selector, url: location.href};
 }.toString();
 
 const typeIntoElementScript = function typeIntoElement(selector: string, text: string, replace: boolean) {
   const element = document.querySelector(selector) as HTMLInputElement | HTMLTextAreaElement | HTMLElement | null;
   if (!element) throw new Error(`Element not found: ${selector}`);
-  element.scrollIntoView({block: 'center', inline: 'center'});
-  element.focus({preventScroll: true});
+    element.scrollIntoView({block: 'center', inline: 'center'});
+    element.focus({preventScroll: true});
   if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
     if (element instanceof HTMLInputElement && element.type === 'file') throw new Error('Automated file uploads are not supported.');
     const prototype = element instanceof HTMLInputElement ? HTMLInputElement.prototype : HTMLTextAreaElement.prototype;
@@ -1610,9 +1652,9 @@ const typeIntoElementScript = function typeIntoElement(selector: string, text: s
   } else {
     throw new Error(`Element is not editable: ${selector}`);
   }
-  element.dispatchEvent(new InputEvent('input', {bubbles: true, inputType: 'insertText', data: text}));
-  element.dispatchEvent(new Event('change', {bubbles: true}));
-  return {typed: selector, length: text.length};
+    element.dispatchEvent(new InputEvent('input', {bubbles: true, inputType: 'insertText', data: text}));
+    element.dispatchEvent(new Event('change', {bubbles: true}));
+    return {typed: selector, length: text.length};
 }.toString();
 
 const activeElementNavigationScript = function activeElementNavigation() {
@@ -1620,13 +1662,13 @@ const activeElementNavigationScript = function activeElementNavigation() {
   const input = element instanceof HTMLInputElement ? element : null;
   const button = element instanceof HTMLButtonElement ? element : null;
   const form = input?.form || button?.form || null;
-  return form ? (input?.formAction || button?.formAction || form.action) : '';
+    return form ? input?.formAction || button?.formAction || form.action : '';
 }.toString();
 
 const scrollScript = function scrollElement(selector: string | null, x: number, y: number) {
   const target = selector ? document.querySelector(selector) : window;
   if (!target) throw new Error(`Scroll target not found: ${selector}`);
-  if (target === window) window.scrollBy({left: x, top: y, behavior: 'auto'});
-  else (target as HTMLElement).scrollBy({left: x, top: y, behavior: 'auto'});
-  return {target: selector || 'window', x, y, scrollX: window.scrollX, scrollY: window.scrollY};
+    if (target === window) window.scrollBy({left: x, top: y, behavior: 'auto'});
+    else (target as HTMLElement).scrollBy({left: x, top: y, behavior: 'auto'});
+    return {target: selector || 'window', x, y, scrollX: window.scrollX, scrollY: window.scrollY};
 }.toString();

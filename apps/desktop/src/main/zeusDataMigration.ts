@@ -1,21 +1,21 @@
-import { createHash, randomUUID } from 'node:crypto';
+import {createHash, randomUUID} from 'node:crypto';
 import {
-  chmodSync,
-  copyFileSync,
-  existsSync,
-  lstatSync,
-  mkdirSync,
-  readFileSync,
-  readdirSync,
-  renameSync,
-  rmdirSync,
-  rmSync,
-  statSync,
-  writeFileSync,
+    chmodSync,
+    copyFileSync,
+    existsSync,
+    lstatSync,
+    mkdirSync,
+    readdirSync,
+    readFileSync,
+    renameSync,
+    rmdirSync,
+    rmSync,
+    statSync,
+    writeFileSync
 } from 'node:fs';
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
-import { createLegacyFlatZeusDataLayout, createZeusDataLayout, type ZeusDataLayout } from '@zeus/local-server';
+import {basename, dirname, isAbsolute, join, relative, resolve, sep} from 'node:path';
+import {DatabaseSync} from 'node:sqlite';
+import {createLegacyFlatZeusDataLayout, createZeusDataLayout, type ZeusDataLayout} from '@zeus/local-server';
 
 export type ZeusDataPreparationStatus = 'initialized' | 'already-layered' | 'migrated' | 'legacy-host-active';
 
@@ -121,17 +121,7 @@ const jsonPathColumns = [
   ['conversation_submissions', 'input_json'],
 ] as const;
 
-const contentMirroredLegacyTopLevels = new Set([
-  'task-attachments',
-  'conversation-attachments',
-  'browser-comments',
-  'sessions',
-  'turn-change-sets',
-  'command-runs',
-  'command-scripts',
-  'pi-sessions',
-  'agent-runtimes',
-]);
+const contentMirroredLegacyTopLevels = new Set(['task-attachments', 'conversation-attachments', 'browser-comments', 'sessions', 'turn-change-sets', 'command-runs', 'command-scripts', 'pi-sessions', 'agent-runtimes']);
 
 /**
  * 在 Electron 建立 profile 前准备 Zeus 本机资料目录。
@@ -229,9 +219,9 @@ export function retireVerifiedLegacyRoot(rootPath: string, legacyRootPath: strin
 }
 
 function migrateFlatRoot(input: {
-  flat: ZeusDataLayout;
-  layered: ZeusDataLayout;
-  legacyRoots: readonly string[];
+    flat: ZeusDataLayout;
+    layered: ZeusDataLayout;
+    legacyRoots: readonly string[]
 }): ZeusDataPreparationResult {
   const { flat, layered } = input;
   const migrationId = randomUUID();
@@ -376,7 +366,10 @@ function rebindDatabasePaths(databasePath: string, mappings: readonly PathMappin
     for (const [table, column] of jsonPathColumns) rewritten += rewriteJsonColumn(db, table, column, mappings);
     db.exec('COMMIT');
     assertDatabaseQuickCheckConnection(db);
-    const remaining = collectManagedPaths(db, mappings.map((mapping) => mapping.source));
+      const remaining = collectManagedPaths(
+          db,
+          mappings.map((mapping) => mapping.source),
+      );
     if (remaining.size > 0) throw new Error(`Zeus 路径重绑后仍有 ${remaining.size} 个托管字段指向旧位置。`);
     return rewritten;
   } catch (error) {
@@ -540,20 +533,12 @@ function validateLegacyRootMirror(db: DatabaseSync, legacyRoot: string, authorit
  * 处理“旧根已按已提交清单回收，但数据库回滚到迁移前快照”的恢复场景。
  * 旧根已经不存在时不能重新比较内容，只能复用原逐路径校验证据，并要求当前镜像集合完全一致。
  */
-function validateRetiredLegacyRootRecovery(
-  db: DatabaseSync,
-  legacyRoot: string,
-  authoritativeRoot: string,
-  layered: ZeusDataLayout,
-  managedPaths: readonly string[],
-): LegacyRootValidation {
+function validateRetiredLegacyRootRecovery(db: DatabaseSync, legacyRoot: string, authoritativeRoot: string, layered: ZeusDataLayout, managedPaths: readonly string[]): LegacyRootValidation {
   const evidence = readLegacyRootRetirementEvidence(layered, legacyRoot);
   if (!evidence) throw new Error(`Zeus 数据库仍引用已不存在的旧根，且缺少可信回收记录：${legacyRoot}`);
   const { validation } = evidence;
   if (managedPaths.length !== validation.managedPathCount) {
-    throw new Error(
-      `Zeus 已回收旧根的当前引用数为 ${managedPaths.length}，与原校验清单 ${validation.managedPathCount} 不一致，拒绝自动恢复。`,
-    );
+      throw new Error(`Zeus 已回收旧根的当前引用数为 ${managedPaths.length}，与原校验清单 ${validation.managedPathCount} 不一致，拒绝自动恢复。`);
   }
   if (validation.fileCount + validation.directoryCount + validation.authoritativeOverrideCount !== validation.managedPathCount) {
     throw new Error('Zeus 旧根原校验清单计数不闭合，拒绝自动恢复。');
@@ -567,10 +552,11 @@ function validateRetiredLegacyRootRecovery(
   return { ...validation, evidenceMode: 'retired-record' };
 }
 
-function readLegacyRootRetirementEvidence(
-  layout: ZeusDataLayout,
-  legacyRoot: string,
-): { record: LegacyRootRetirementRecord; manifest: MigrationManifest; validation: LegacyRootValidation } | null {
+function readLegacyRootRetirementEvidence(layout: ZeusDataLayout, legacyRoot: string): {
+    record: LegacyRootRetirementRecord;
+    manifest: MigrationManifest;
+    validation: LegacyRootValidation
+} | null {
   const recordDirectory = join(layout.backupsDirectory, 'legacy-roots');
   if (!existsSync(recordDirectory) || !existsSync(layout.migrationState)) return null;
   const recordNames = readdirSync(recordDirectory)
@@ -598,15 +584,7 @@ function readLegacyRootRetirementEvidence(
       const expectedManifestPath = join(layout.migrationState, `${manifest.createdAt.replaceAll(':', '-')}-${manifest.id}.json`);
       const removedAt = Date.parse(record.removedAt);
       const createdAt = Date.parse(manifest.createdAt);
-      if (
-        manifest.schema !== 1 ||
-        manifest.status !== 'committed' ||
-        manifest.root !== layout.root ||
-        manifestPath !== expectedManifestPath ||
-        !Number.isFinite(removedAt) ||
-        !Number.isFinite(createdAt) ||
-        removedAt < createdAt
-      ) {
+        if (manifest.schema !== 1 || manifest.status !== 'committed' || manifest.root !== layout.root || manifestPath !== expectedManifestPath || !Number.isFinite(removedAt) || !Number.isFinite(createdAt) || removedAt < createdAt) {
         continue;
       }
       const validation = manifest.validatedLegacyRoots.find((item) => item.root === legacyRoot);
@@ -620,7 +598,13 @@ function readLegacyRootRetirementEvidence(
 }
 
 function rewriteManagedPath(value: string, mappings: readonly PathMapping[]): string {
-  if (!isManagedPathString(value, mappings.map((mapping) => mapping.source))) return value;
+    if (
+        !isManagedPathString(
+            value,
+            mappings.map((mapping) => mapping.source),
+        )
+    )
+        return value;
   for (const mapping of mappings) {
     if (value === mapping.source) return mapping.destination;
     if (value.startsWith(`${mapping.source}${sep}`)) return join(mapping.destination, relative(mapping.source, value));
@@ -722,10 +706,12 @@ function cleanupStaleExecutionHostFiles(directory: string): void {
   }
 }
 
-function cleanupSupersededBackups(
-  layout: ZeusDataLayout,
-  currentDatabaseBackupPath: string,
-): { removedBytes: number; removedFiles: number; removedEntries: string[]; failedEntries: string[] } {
+function cleanupSupersededBackups(layout: ZeusDataLayout, currentDatabaseBackupPath: string): {
+    removedBytes: number;
+    removedFiles: number;
+    removedEntries: string[];
+    failedEntries: string[]
+} {
   const candidates: string[] = [];
   if (existsSync(layout.databaseBackups)) {
     for (const name of readdirSync(layout.databaseBackups)) {
@@ -822,5 +808,8 @@ function pathEntryExists(path: string): boolean {
 }
 
 function fileTimestamp(): string {
-  return new Date().toISOString().replaceAll(':', '-').replace(/\.\d{3}Z$/u, 'Z');
+    return new Date()
+        .toISOString()
+        .replaceAll(':', '-')
+        .replace(/\.\d{3}Z$/u, 'Z');
 }

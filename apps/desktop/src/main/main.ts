@@ -1,48 +1,108 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, Notification, screen, session, shell, Tray } from 'electron';
-import { execFile as execFileCallback } from 'node:child_process';
-import { chmodSync, constants as fsConstants, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync } from 'node:fs';
-import { randomUUID } from 'node:crypto';
-import { homedir } from 'node:os';
-import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { access, copyFile, cp, lstat, mkdir, readdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
-import { pathToFileURL } from 'node:url';
-import { promisify } from 'node:util';
-import { createBeforeQuitCleanupHandler, type DesktopLocalServerRuntime, parseCodexNativeEnabled, startDesktopLocalServer } from './localServerRuntime.js';
-import { createStartupCoordinator } from './startupCoordinator.js';
-import { terminateAfterFatalStartup } from './fatalStartup.js';
-import { createRendererBootstrapMonitor } from './rendererBootstrapMonitor.js';
-import { exportMermaidDiagramToFile, exportPlantUmlDiagramToFile } from './mermaidExport.js';
-import { exportPatchToFile } from './patchExport.js';
-import { exportRuntimeLogsToFile } from './runtimeLogExport.js';
-import { chooseProjectDirectory } from './projectDirectoryPicker.js';
-import { exportSettingsSnapshotToFile, importBusinessDataSnapshotFromFile, importSettingsSnapshotFromFile } from './settingsPortability.js';
-import { type GraphSourceLocation, openGraphSourceLocation } from './sourceOpen.js';
-import { buildAppShellMenuTemplate, buildLoginItemSettings, buildMenuBarTrayTemplate, type MainAppShellSettings, shouldQuitWhenAllWindowsClosed, shouldUseSystemNotifications } from './appShellPolicy.js';
-import { createSystemNotificationBridge, type SystemNotificationBridge } from './systemNotifications.js';
-import { openLocalLogDirectory } from './localLogDirectory.js';
-import { openExternalHttpsUrl } from './externalOpen.js';
-import { createPersistedMainWindowState, findSavedWindowDisplay, type PersistedMainWindowState, readPersistedMainWindowState, resolveMainWindowState, writePersistedMainWindowState } from './windowState.js';
-import { applyRestoredMainWindowPlacement, createWindowStatePersistenceGate, waitForSavedWindowDisplay, type WindowStatePersistenceGate } from './windowRestoration.js';
 import {
-  buildTaskAttachmentPreviewDataUrl,
-  coerceTaskClipboardAttachmentBuffer,
-  inferTaskClipboardAttachmentMimeType,
-  readTaskClipboardAttachmentsFromClipboard,
-  readTaskClipboardFileReferencesFromClipboard,
-  type TaskClipboardAttachmentPayload,
+    app,
+    BrowserWindow,
+    clipboard,
+    dialog,
+    ipcMain,
+    Menu,
+    nativeImage,
+    Notification,
+    screen,
+    session,
+    shell,
+    Tray
+} from 'electron';
+import {execFile as execFileCallback} from 'node:child_process';
+import {
+    chmodSync,
+    constants as fsConstants,
+    cpSync,
+    existsSync,
+    mkdirSync,
+    readdirSync,
+    readFileSync,
+    renameSync,
+    rmSync
+} from 'node:fs';
+import {randomUUID} from 'node:crypto';
+import {homedir} from 'node:os';
+import {basename, dirname, extname, isAbsolute, join, relative, resolve, sep} from 'node:path';
+import {access, copyFile, cp, lstat, mkdir, readdir, readFile, realpath, stat, writeFile} from 'node:fs/promises';
+import {pathToFileURL} from 'node:url';
+import {promisify} from 'node:util';
+import {
+    createBeforeQuitCleanupHandler,
+    type DesktopLocalServerRuntime,
+    parseCodexNativeEnabled,
+    startDesktopLocalServer
+} from './localServerRuntime.js';
+import {createStartupCoordinator} from './startupCoordinator.js';
+import {terminateAfterFatalStartup} from './fatalStartup.js';
+import {createRendererBootstrapMonitor} from './rendererBootstrapMonitor.js';
+import {exportMermaidDiagramToFile, exportPlantUmlDiagramToFile} from './mermaidExport.js';
+import {exportPatchToFile} from './patchExport.js';
+import {exportRuntimeLogsToFile} from './runtimeLogExport.js';
+import {chooseProjectDirectory} from './projectDirectoryPicker.js';
+import {
+    exportSettingsSnapshotToFile,
+    importBusinessDataSnapshotFromFile,
+    importSettingsSnapshotFromFile
+} from './settingsPortability.js';
+import {type GraphSourceLocation, openGraphSourceLocation} from './sourceOpen.js';
+import {
+    buildAppShellMenuTemplate,
+    buildLoginItemSettings,
+    buildMenuBarTrayTemplate,
+    type MainAppShellSettings,
+    shouldQuitWhenAllWindowsClosed,
+    shouldUseSystemNotifications
+} from './appShellPolicy.js';
+import {createSystemNotificationBridge, type SystemNotificationBridge} from './systemNotifications.js';
+import {openLocalLogDirectory} from './localLogDirectory.js';
+import {openExternalHttpsUrl} from './externalOpen.js';
+import {
+    createPersistedMainWindowState,
+    findSavedWindowDisplay,
+    type PersistedMainWindowState,
+    readPersistedMainWindowState,
+    resolveMainWindowState,
+    writePersistedMainWindowState
+} from './windowState.js';
+import {
+    applyRestoredMainWindowPlacement,
+    createWindowStatePersistenceGate,
+    waitForSavedWindowDisplay,
+    type WindowStatePersistenceGate
+} from './windowRestoration.js';
+import {
+    buildTaskAttachmentPreviewDataUrl,
+    coerceTaskClipboardAttachmentBuffer,
+    inferTaskClipboardAttachmentMimeType,
+    readTaskClipboardAttachmentsFromClipboard,
+    readTaskClipboardFileReferencesFromClipboard,
+    type TaskClipboardAttachmentPayload,
 } from './taskClipboard.js';
-import { type BrowserHost, createBrowserHost } from './browserHost.js';
-import { type ConversationResourceRequest, listConversationResourceOpenTargets, openConversationResource, type OpenConversationResourceRequest } from './conversationResourceOpen.js';
+import {type BrowserHost, createBrowserHost} from './browserHost.js';
 import {
-  type ConversationInputResourceBroker,
-  type ConversationInputResourceSource,
-  type ConversationResourcePayload,
-  createConversationInputResourceBroker,
-  readOrCreateConversationAttachmentGrantSecret,
+    type ConversationResourceRequest,
+    listConversationResourceOpenTargets,
+    openConversationResource,
+    type OpenConversationResourceRequest
+} from './conversationResourceOpen.js';
+import {
+    type ConversationInputResourceBroker,
+    type ConversationInputResourceSource,
+    type ConversationResourcePayload,
+    createConversationInputResourceBroker,
+    readOrCreateConversationAttachmentGrantSecret,
 } from './conversationInputResources.js';
-import { cleanupStaleReleaseBackups, createReleaseUpdateService, type ReleaseUpdateService } from './releaseUpdateService.js';
-import { type ZeusDataLayout } from '@zeus/local-server';
-import { prepareZeusDataRoot } from './zeusDataMigration.js';
+import {
+    cleanupStaleReleaseBackups,
+    createReleaseUpdateService,
+    type ReleaseUpdateService
+} from './releaseUpdateService.js';
+import {type ZeusDataLayout} from '@zeus/local-server';
+import {prepareZeusDataRoot} from './zeusDataMigration.js';
 
 let mainWindow: BrowserWindow | undefined;
 const windows = new Set<BrowserWindow>();
@@ -113,14 +173,8 @@ function applyExplicitUserDataDirectory(): void {
 
   const profileName = isTestDistribution() ? 'test' : app.isPackaged ? 'production' : 'development';
   const target = join(homedir(), profileName === 'production' ? '.zeus' : profileName === 'test' ? '.zeus-test' : '.zeus-development');
-  const legacyCandidates =
-    profileName === 'production'
-      ? [join(app.getPath('appData'), '@zeus', 'desktop'), join(app.getPath('appData'), desktopDisplayName())].filter((path, index, paths) => paths.indexOf(path) === index)
-      : [];
-  const targetInitialized =
-    profileName === 'production'
-      ? existsSync(join(target, 'data', 'zeus.db')) || existsSync(join(target, 'zeus.db')) || existsSync(join(target, 'zeus.config.json'))
-      : existsSync(target);
+    const legacyCandidates = profileName === 'production' ? [join(app.getPath('appData'), '@zeus', 'desktop'), join(app.getPath('appData'), desktopDisplayName())].filter((path, index, paths) => paths.indexOf(path) === index) : [];
+    const targetInitialized = profileName === 'production' ? existsSync(join(target, 'data', 'zeus.db')) || existsSync(join(target, 'zeus.db')) || existsSync(join(target, 'zeus.config.json')) : existsSync(target);
   const legacy = legacyCandidates.find((path) => existsSync(join(path, 'zeus.db')) || existsSync(join(path, 'zeus.config.json')));
   if (app.isPackaged && !targetInitialized && legacy) {
     if (legacyExecutionHostIsRunning(legacy)) {

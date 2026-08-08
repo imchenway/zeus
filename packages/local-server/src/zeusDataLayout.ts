@@ -1,4 +1,4 @@
-import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
+import {basename, dirname, isAbsolute, join, resolve} from 'node:path';
 
 export type ZeusDataOwner = 'zeus' | 'electron' | 'browser' | 'provider';
 export type ZeusDataLifecycle = 'core' | 'managed' | 'backup' | 'cache' | 'runtime';
@@ -182,14 +182,15 @@ function normalizeRoot(rootPath: string): string {
 }
 
 function finalizeLayout(layout: Omit<ZeusDataLayout, 'entries'>): ZeusDataLayout {
-  const entry = (
-    key: ZeusDataPathKey,
-    owner: ZeusDataOwner,
-    lifecycle: ZeusDataLifecycle,
-    reconstructible: boolean,
-    userClearable: boolean,
-    clearEffect: string | null,
-  ): ZeusDataPathDescriptor => ({ key, path: layout[key], owner, lifecycle, reconstructible, userClearable, clearEffect });
+    const entry = (key: ZeusDataPathKey, owner: ZeusDataOwner, lifecycle: ZeusDataLifecycle, reconstructible: boolean, userClearable: boolean, clearEffect: string | null): ZeusDataPathDescriptor => ({
+        key,
+        path: layout[key],
+        owner,
+        lifecycle,
+        reconstructible,
+        userClearable,
+        clearEffect,
+    });
   return {
     ...layout,
     entries: [

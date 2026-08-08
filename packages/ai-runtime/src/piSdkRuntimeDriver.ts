@@ -1,27 +1,37 @@
-import { randomUUID } from 'node:crypto';
-import { mkdir } from 'node:fs/promises';
-import { resolve } from 'node:path';
-import { createAgentSession, DefaultResourceLoader, defineTool, ModelRuntime, SessionManager, SettingsManager, type AgentSession, type AgentSessionEvent, type ToolDefinition } from '@earendil-works/pi-coding-agent';
-import { Type } from 'typebox';
+import {randomUUID} from 'node:crypto';
+import {mkdir} from 'node:fs/promises';
+import {resolve} from 'node:path';
+import {
+    type AgentSession,
+    type AgentSessionEvent,
+    createAgentSession,
+    DefaultResourceLoader,
+    defineTool,
+    ModelRuntime,
+    SessionManager,
+    SettingsManager,
+    type ToolDefinition
+} from '@earendil-works/pi-coding-agent';
+import {Type} from 'typebox';
 import type {
-  AcceptedAgentRun,
-  AgentDescriptor,
-  AgentModelIdentity,
-  AgentRuntimeDriver,
-  AgentRuntimeEvent,
-  AgentRuntimeProbe,
-  AgentSessionIdentity,
-  AgentSessionSnapshot,
-  FollowUpAgentRunInput,
-  InterruptAgentRunInput,
-  OpenAgentSessionInput,
-  ReadAgentSessionInput,
-  RespondAgentInteractionInput,
-  ResumeAgentSessionInput,
-  StartAgentRunInput,
-  SteerAgentRunInput,
+    AcceptedAgentRun,
+    AgentDescriptor,
+    AgentModelIdentity,
+    AgentRuntimeDriver,
+    AgentRuntimeEvent,
+    AgentRuntimeProbe,
+    AgentSessionIdentity,
+    AgentSessionSnapshot,
+    FollowUpAgentRunInput,
+    InterruptAgentRunInput,
+    OpenAgentSessionInput,
+    ReadAgentSessionInput,
+    RespondAgentInteractionInput,
+    ResumeAgentSessionInput,
+    StartAgentRunInput,
+    SteerAgentRunInput,
 } from './agentRuntimeContracts.js';
-import type { ConfiguredModelDefinition, ModelConnectionRecord, PiThinkingLevel } from './modelConnectionCatalog.js';
+import type {ConfiguredModelDefinition, ModelConnectionRecord, PiThinkingLevel} from './modelConnectionCatalog.js';
 
 export interface PiRuntimeConnection extends ModelConnectionRecord {
   apiKey?: string;
@@ -191,12 +201,7 @@ export function createPiSdkRuntimeDriver(options: CreatePiSdkRuntimeDriverOption
     entry.activeRunId = nativeRunId;
     const acceptedAt = now();
     const images = input.images?.map((image): { type: 'image'; data: string; mimeType: string } => ({ type: 'image', data: image.data, mimeType: image.mimeType }));
-    const operation =
-      mode === 'steer'
-        ? entry.session.steer(input.content, images)
-        : mode === 'follow_up'
-          ? entry.session.followUp(input.content, images)
-          : entry.session.prompt(input.content, images?.length ? { images } : undefined);
+      const operation = mode === 'steer' ? entry.session.steer(input.content, images) : mode === 'follow_up' ? entry.session.followUp(input.content, images) : entry.session.prompt(input.content, images?.length ? {images} : undefined);
     void operation.catch((error: unknown) => {
       const payload = { message: error instanceof Error ? error.message : String(error), code: readErrorCode(error) };
       // 等协调器登记已接受轮次后再投递错误，避免同步失败事件被忽略。

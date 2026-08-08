@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 /* global console, process */
-import { spawn, spawnSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { basename, dirname, extname, isAbsolute, join, resolve, sep } from 'node:path';
-import { createInterface } from 'node:readline';
+import {spawn, spawnSync} from 'node:child_process';
+import {copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, writeFileSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {basename, dirname, extname, isAbsolute, join, resolve, sep} from 'node:path';
+import {createInterface} from 'node:readline';
 
 const repositoryRoot = resolve(import.meta.dirname, '..');
 const repository = 'imchenway/zeus';
@@ -23,6 +23,7 @@ async function main() {
   mkdirSync(outputDirectory, { recursive: true, mode: 0o700 });
   assertRepositoryPreflight();
   const initialHeadSha = git(['rev-parse', 'HEAD']);
+    assertCommittedCandidateWhitespace(initialHeadSha);
   const initialWorktreeStatus = git(['status', '--short']);
   const isolationValidation = parseBooleanEnvironment(isolationValidationEnvironment, false);
   if (isolationValidation && (!initialWorktreeStatus || process.env[isolatedSourceEnvironment])) {
@@ -65,11 +66,12 @@ async function main() {
 
   const releaseState = state.value;
   assertResumeWorktree(releaseState);
-  ensureReleaseCandidateFormatting(releaseState);
+    await ensureCandidatePreflight(releaseState);
+    assertReleaseCandidateFormatting(releaseState);
   console.log(`Zeus 端到端发布：${releaseState.baseTag}..${releaseState.sourceHead.slice(0, 12)} → ${releaseState.tag}`);
   console.log('发布说明模型：Zeus DeepSeek deepseek-v4-flash；不可用时自动使用确定性模板。');
 
-  await Promise.all([ensureReleaseNotes(releaseState), ensureCandidatePreflight(releaseState)]);
+    await ensureReleaseNotes(releaseState);
   await ensureReleaseCommit(releaseState);
   ensureFastLocalGate(releaseState);
   ensureMainPushed(releaseState);
@@ -250,6 +252,16 @@ function assertRepositoryPreflight() {
   if (process.platform !== 'darwin') throw new Error('Zeus 完整发布只能在 macOS 上执行。');
 }
 
+function assertCommittedCandidateWhitespace(headSha) {
+    const baseTagResult = capture('git', ['describe', '--tags', '--match', 'v[0-9]*.[0-9]*.[0-9]*', '--abbrev=0', headSha], true);
+    const baseTag = baseTagResult.stdout.trim();
+    if (baseTagResult.status !== 0 || !/^v\d+\.\d+\.\d+$/u.test(baseTag)) {
+        throw new Error(`发布前无法确认候选提交的本地稳定基线：${baseTagResult.stderr.trim() || baseTagResult.stdout.trim() || 'missing'}`);
+    }
+    run('git', ['diff', '--check', `${baseTag}^{commit}`, headSha]);
+    console.log(`发布候选快速空白检查通过：${baseTag}..${headSha.slice(0, 12)}`);
+}
+
 function assertGitHubAuthentication() {
   const result = capture('gh', ['auth', 'status', '--hostname', 'github.com'], true);
   if (result.status !== 0) throw new Error(`GitHub CLI 未完成可用登录：${result.stderr.trim() || result.stdout.trim() || result.status}`);
@@ -418,52 +430,22 @@ function assertResumeWorktree(state) {
   if (unexpected.length > 0) throw new Error(`恢复现场包含发布候选以外的工作区变更：\n${unexpected.join('\n')}`);
 }
 
-function ensureReleaseCandidateFormatting(state) {
+function assertReleaseCandidateFormatting(state) {
   if (!['initialized', 'notes_generated', 'release_committed'].includes(state.phase)) return;
   const currentHead = git(['rev-parse', 'HEAD']);
   const expectedHead = state.releaseCommit ?? state.sourceHead;
-  if (currentHead !== expectedHead) throw new Error(`自动整理前本地 main 已偏离候选提交：expected=${expectedHead} actual=${currentHead}`);
+    if (currentHead !== expectedHead) throw new Error(`格式检查前本地 main 已偏离候选提交：expected=${expectedHead} actual=${currentHead}`);
   const worktreeStatus = git(['status', '--short']);
-  if (worktreeStatus) throw new Error(`自动整理只能从干净候选开始：\n${worktreeStatus}`);
+    if (worktreeStatus) throw new Error(`格式检查要求干净候选：\n${worktreeStatus}`);
   const paths = git(['diff', '--name-only', '--diff-filter=ACMR', `${state.baseTag}^{commit}`, currentHead, '--'])
     .split(/\r?\n/u)
     .filter((path) => path && formatExtensions.has(extname(path)) && existsSync(join(repositoryRoot, path)))
     .sort();
   if (paths.length === 0) return;
 
-  console.log(`\n[自动整理发布候选] Prettier --write（${paths.length} 个文件）`);
-  run('pnpm', ['exec', 'prettier', '--write', '--ignore-path', '.prettierignore', ...paths]);
-  const statusAfterFormatting = git(['status', '--short']);
-  if (!statusAfterFormatting) {
-    console.log('发布候选已经符合格式，无需创建整理提交。');
-    return;
-  }
-  const changedPaths = statusAfterFormatting
-    .split(/\r?\n/u)
-    .map((line) => line.slice(3).split(' -> ').at(-1))
-    .filter(Boolean);
-  const allowedPaths = new Set(paths);
-  const unexpectedPaths = changedPaths.filter((path) => !allowedPaths.has(path));
-  if (unexpectedPaths.length > 0) throw new Error(`自动整理产生范围外变化：\n${unexpectedPaths.join('\n')}`);
-
-  run('pnpm', ['exec', 'prettier', '--check', '--ignore-path', '.prettierignore', ...changedPaths]);
-  run('git', ['diff', '--check', '--', ...changedPaths]);
-  run('git', ['add', '--', ...changedPaths]);
-  run('git', ['diff', '--cached', '--check', '--', ...changedPaths]);
-  run('git', ['commit', '-m', 'chore: format release candidate']);
-
-  const formattedCommit = git(['rev-parse', 'HEAD']);
-  state.sourceHead = formattedCommit;
-  if (state.phase === 'release_committed') {
-    state.releaseCommit = formattedCommit;
-    syncReleaseNotesSnapshot(state);
-  } else {
-    state.releaseCommit = null;
-    state.notesPath = null;
-    state.phase = 'initialized';
-  }
-  writeState(state);
-  console.log(`发布候选格式变化已形成独立提交 ${formattedCommit.slice(0, 12)}。`);
+    console.log(`\n[检查发布候选格式] Prettier --check（${paths.length} 个文件）`);
+    run('pnpm', ['exec', 'prettier', '--check', '--ignore-path', '.prettierignore', ...paths]);
+    console.log('发布候选格式检查通过；发布脚本没有改写代码或创建格式提交。');
 }
 
 function syncReleaseNotesSnapshot(state) {

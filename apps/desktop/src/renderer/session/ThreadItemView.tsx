@@ -1,13 +1,33 @@
-import { memo, type FormEvent, type KeyboardEvent, type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { CopyIcon as Copy } from '@phosphor-icons/react/dist/csr/Copy';
-import { TerminalWindowIcon as TerminalWindow } from '@phosphor-icons/react/dist/csr/TerminalWindow';
-import Markdown, { type Components } from 'react-markdown';
+import {
+    type FormEvent,
+    type KeyboardEvent,
+    memo,
+    type ReactNode,
+    useEffect,
+    useLayoutEffect,
+    useMemo,
+    useRef,
+    useState
+} from 'react';
+import {CopyIcon as Copy} from '@phosphor-icons/react/dist/csr/Copy';
+import {TerminalWindowIcon as TerminalWindow} from '@phosphor-icons/react/dist/csr/TerminalWindow';
+import Markdown, {type Components} from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { MessageCheckIcon, MessageEditIcon, MessageExpandIcon, MessageThumbIcon } from './SessionMessageIcons.js';
-import type { NativeSessionItemBuffer } from './sessionTypes.js';
-import { autosizeTextarea } from './textareaAutosize.js';
-import type { ConversationFileLocation, ConversationOpenTarget, ConversationResource, ConversationResourcePreview } from '@zeus/shared';
-import { ConversationInlineResource, ConversationMarkdownImage, ConversationResourceCards, isImageResource } from './ConversationResources.js';
+import {MessageCheckIcon, MessageEditIcon, MessageExpandIcon, MessageThumbIcon} from './SessionMessageIcons.js';
+import type {NativeSessionItemBuffer} from './sessionTypes.js';
+import {autosizeTextarea} from './textareaAutosize.js';
+import type {
+    ConversationFileLocation,
+    ConversationOpenTarget,
+    ConversationResource,
+    ConversationResourcePreview
+} from '@zeus/shared';
+import {
+    ConversationInlineResource,
+    ConversationMarkdownImage,
+    ConversationResourceCards,
+    isImageResource
+} from './ConversationResources.js';
 
 export type SessionUiLanguage = 'zh-CN' | 'en-US';
 export type ThreadItemRole = 'user' | 'assistant' | 'commentary' | 'tool' | 'file' | 'request' | 'error' | 'unknown';
@@ -257,12 +277,9 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
       ) : null}
       {!command ? <TypedItemFacts item={props.item} role={role} language={props.language} /> : null}
       <ItemAttachments item={props.item} label={labels.attachments} />
-      <ConversationResourceCards
-        resources={props.item.resources}
-        language={props.language}
-        onOpenResource={props.onOpenResource}
-        onLoadResourcePreview={props.onLoadResourcePreview}
-      />
+        <ConversationResourceCards resources={props.item.resources} language={props.language}
+                                   onOpenResource={props.onOpenResource}
+                                   onLoadResourcePreview={props.onLoadResourcePreview}/>
       <ItemImages item={props.item} label={labels.image} />
       {hasActions ? (
         <footer className="session-thread-item-actions" data-message-actions={role}>
