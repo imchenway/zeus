@@ -12955,7 +12955,9 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         if (supplementalInfo.length > 20_000) throw nativeApiError('ZEUS_INVALID_TASK_PUSH', 'Task push supplementalInfo must be no longer than 20000 characters.');
         const permissionMode = body.permissionMode === undefined ? 'read-only' : parseConversationPermissionMode(body.permissionMode);
         if (!permissionMode) throw nativeApiError('ZEUS_INVALID_PERMISSION_MODE', 'permissionMode must be read-only, auto, or full-access.');
-        const capabilities = await resolveTaskPushCapabilities(project, task);
+        // 提交阶段只需要复验模型、账户和附件能力；仓库发现与远端刷新由
+        // resolveTaskPushEnvironment 在冻结工作区引用时统一完成，不能在这里重复执行。
+        const capabilities = await resolveTaskPushExecutionCapabilities(project);
         const selectedModel = capabilities.models.find((candidate) => candidate.model === modelName || candidate.id === modelName);
         if (!selectedModel) throw nativeApiError('ZEUS_CODEX_MODEL_UNAVAILABLE', `Configured Codex model is unavailable: ${modelName}`);
         if (selectedModel.available === false) throw nativeApiError('ZEUS_MODEL_NOT_READY', selectedModel.availabilityReason || '所选模型当前不可运行。');
@@ -13640,6 +13642,15 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         worktreeRoot: join(dirname(project.localPath), '.zeus-worktrees'),
       },
     };
+  }
+
+  /**
+   * 任务推送提交的轻量能力复验，不读取 Git 仓库或刷新远端。
+   * 弹窗读取能力时已经需要完整 Git 快照；真正创建工作区时还会再次刷新远端并冻结来源提交。
+   * 提交阶段只复验模型和运行能力，避免在工作区准备前再做一次完整仓库扫描。
+   */
+  async function resolveTaskPushExecutionCapabilities(project: ZeusProjectRecord) {
+    return resolveConversationCapabilities(project);
   }
 
   async function resolveTaskPushEnvironment(
