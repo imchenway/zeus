@@ -4318,14 +4318,32 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     if (!task) return reply.code(404).send({ error: 'ZEUS_TASK_NOT_FOUND', message: 'Task not found' });
     const project = projects.getById(task.projectId);
     if (!project) return reply.code(404).send({ error: 'ZEUS_PROJECT_NOT_FOUND', message: 'Project not found' });
+    const remoteRefreshes = new Map<string, ReturnType<typeof fetchGitRemote>>();
+    const refreshWorkspaceRemote = (repositoryPath: string, remoteName: string): ReturnType<typeof fetchGitRemote> => {
+      const key = `${repositoryPath}\0${remoteName}`;
+      const existing = remoteRefreshes.get(key);
+      if (existing) return existing;
+      const refresh = fetchGitRemote(repositoryPath, remoteName);
+      remoteRefreshes.set(key, refresh);
+      return refresh;
+    };
     let items: Array<Record<string, unknown>>;
     try {
       items = await Promise.all(
         taskWorkspaces.listByTask(task.id).map(async (workspace) => {
           const repositoryPath = workspace.repositoryPath || project.localPath;
           const repository = await getGitRepositoryContext(repositoryPath);
-          // 工作区读取只投影本地 Git 事实；远端访问必须由用户点击推送或刷新按钮触发。
-          const targetBranches = repository.localBranches;
+          let refreshedRemote: Awaited<ReturnType<typeof fetchGitRemote>> | null = null;
+          let remoteRefreshError: string | null = null;
+          if (workspace.remoteName) {
+            try {
+              refreshedRemote = await refreshWorkspaceRemote(repositoryPath, workspace.remoteName);
+            } catch (error) {
+              // 远端故障只限制当前仓库的远端动作，本机差异和本地提交必须继续可用。
+              remoteRefreshError = taskGitErrorCode(error);
+            }
+          }
+          const targetBranches = workspace.remoteName ? (refreshedRemote?.branches.map((ref) => ref.slice(`${workspace.remoteName}/`.length)) ?? []) : repository.localBranches;
           const activeConversationCount = countTaskWorkspaceActiveConversations(workspace);
           let branchComparison = null;
           let comparisonError: string | undefined;
@@ -4334,11 +4352,11 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           } catch (error) {
             comparisonError = error instanceof Error ? error.message : 'Task branch comparison failed.';
           }
-          const remoteHeadSha = workspace.remoteName ? await getRemoteTrackingBranchHead(repositoryPath, workspace.remoteName, workspace.remoteBranch) : null;
+          const remoteHeadSha = workspace.remoteName && refreshedRemote ? await getRemoteTrackingBranchHead(repositoryPath, workspace.remoteName, workspace.remoteBranch) : null;
           const expectedHeadSha = branchComparison?.taskHeadSha ?? workspace.headSha;
           const remoteVerified = Boolean(expectedHeadSha && remoteHeadSha === expectedHeadSha);
           const sourceLocalHeadSha = await getGitBranchHead(repositoryPath, workspace.sourceBranch).catch(() => null);
-          const sourceRemoteHeadSha = workspace.remoteName ? await getRemoteTrackingBranchHead(repositoryPath, workspace.remoteName, workspace.sourceBranch) : null;
+          const sourceRemoteHeadSha = workspace.remoteName && refreshedRemote ? await getRemoteTrackingBranchHead(repositoryPath, workspace.remoteName, workspace.sourceBranch) : null;
           const sourceRemoteVerified = Boolean(sourceLocalHeadSha && sourceRemoteHeadSha === sourceLocalHeadSha);
           if (!workspace.worktreePath || workspace.state === 'reclaimed' || workspace.state === 'merged' || workspace.state === 'discarded') {
             return {
@@ -4348,7 +4366,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
               branchComparison,
               remoteHeadSha,
               remoteVerified,
-              remoteRefreshError: null,
+              remoteRefreshError,
               sourceLocalHeadSha,
               sourceRemoteHeadSha,
               sourceRemoteVerified,
@@ -4366,7 +4384,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
               branchComparison,
               remoteHeadSha,
               remoteVerified,
-              remoteRefreshError: null,
+              remoteRefreshError,
               sourceLocalHeadSha,
               sourceRemoteHeadSha,
               sourceRemoteVerified,
@@ -4384,7 +4402,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
               branchComparison,
               remoteHeadSha,
               remoteVerified,
-              remoteRefreshError: null,
+              remoteRefreshError,
               sourceLocalHeadSha,
               sourceRemoteHeadSha,
               sourceRemoteVerified,
@@ -4444,7 +4462,6 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     if ('error' in resolved) return reply.code(resolved.status).send(resolved.error);
     const { task, workspace } = resolved;
     try {
-      assertTaskWorkspaceWritable(workspace);
       assertNestedTaskWorktreesReclaimed(workspace);
     } catch (error) {
       return sendTaskGitApiError(reply, error);
@@ -4492,11 +4509,6 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     const resolved = resolveTaskWorkspaceRequest(request.params.taskId, request.params.workspaceId);
     if ('error' in resolved) return reply.code(resolved.status).send(resolved.error);
     const { task, workspace } = resolved;
-    try {
-      assertTaskWorkspaceWritable(workspace);
-    } catch (error) {
-      return sendTaskGitApiError(reply, error);
-    }
     if (!workspace.worktreePath) return reply.code(409).send({ error: 'ZEUS_TASK_WORKTREE_UNAVAILABLE', message: 'Task worktree is not available.' });
     if (!workspace.remoteName) {
       return reply.code(409).send({ error: 'ZEUS_TASK_GIT_REMOTE_UNAVAILABLE', message: 'This repository has no Git remote. Configure a remote before pushing.' });
@@ -4566,11 +4578,6 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     const resolved = resolveTaskWorkspaceRequest(request.params.taskId, request.params.workspaceId);
     if ('error' in resolved) return reply.code(resolved.status).send(resolved.error);
     const { task, project, workspace } = resolved;
-    try {
-      assertTaskWorkspaceWritable(workspace);
-    } catch (error) {
-      return sendTaskGitApiError(reply, error);
-    }
     if (!workspace.worktreePath) {
       if (workspace.state === 'reclaimed') return { workspace };
       return reply.code(409).send({ error: 'ZEUS_TASK_WORKTREE_UNAVAILABLE', message: 'Task worktree is not available.' });
@@ -4607,7 +4614,6 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     if ('error' in resolved) return reply.code(resolved.status).send(resolved.error);
     const { task, project, workspace } = resolved;
     try {
-      assertTaskWorkspaceWritable(workspace);
       assertNestedTaskWorktreesReclaimed(workspace);
     } catch (error) {
       return sendTaskGitApiError(reply, error);
@@ -4650,11 +4656,6 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         error: 'ZEUS_TASK_WORKSPACE_CLOSED',
         message: 'Discarded task branches cannot be merged.',
       });
-    }
-    try {
-      assertTaskWorkspaceWritable(workspace);
-    } catch (error) {
-      return sendTaskGitApiError(reply, error);
     }
     const repositoryPath = workspace.repositoryPath || project.localPath;
     const repository = await getGitRepositoryContext(repositoryPath);
@@ -13992,12 +13993,6 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     }
   }
 
-  function assertTaskWorkspaceWritable(workspace: ZeusTaskWorkspaceRecord): void {
-    if (countTaskWorkspaceActiveConversations(workspace) > 0) {
-      throw nativeApiError('ZEUS_TASK_WORKSPACE_BUSY', `Task branch ${workspace.branchName} already has an active writable Codex turn.`);
-    }
-  }
-
   /** 父子仓库的代码交付互不联动，但物理目录回收必须先子后父。 */
   function assertNestedTaskWorktreesReclaimed(workspace: ZeusTaskWorkspaceRecord): void {
     const nested = nestedTaskWorkspacesWithWorktree(workspace);
@@ -14284,14 +14279,13 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
 
   function sendTaskGitApiError(reply: FastifyReply, error: unknown) {
     const code = taskGitErrorCode(error);
-    const status =
-      code.endsWith('_NOT_FOUND')
-        ? 404
-        : code.endsWith('_INVALID') || code.endsWith('_REQUIRED')
-          ? 400
-          : /_(?:DIRTY|CONFLICTED|FAILED|BUSY|CHANGED|UNAVAILABLE|ALREADY_EXISTS|ALREADY_MANAGED|CLOSED|VERIFICATION_FAILED|DIVERGED)$/u.test(code)
-            ? 409
-            : 500;
+    const status = code.endsWith('_NOT_FOUND')
+      ? 404
+      : code.endsWith('_INVALID') || code.endsWith('_REQUIRED')
+        ? 400
+        : /_(?:DIRTY|CONFLICTED|FAILED|BUSY|CHANGED|UNAVAILABLE|ALREADY_EXISTS|ALREADY_MANAGED|CLOSED|VERIFICATION_FAILED|DIVERGED)$/u.test(code)
+          ? 409
+          : 500;
     return reply.code(status).send({ error: code, message: error instanceof Error ? error.message : 'Task Git operation failed.' });
   }
 

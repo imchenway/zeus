@@ -88,7 +88,7 @@ export function TaskGitMergeModal(props: { open: boolean; language: 'zh-CN' | 'e
   const pendingLocalSync = integration?.state === 'pending_local_sync' ? integration : null;
   const busy = busyAction !== null;
   const workspaceClean = selectedWorkspace?.review?.clean ?? selectedWorkspace?.worktreePath === null;
-  const commitReady = Boolean(selectedWorkspace && workspaceClean && selectedWorkspace.activeConversationCount === 0 && selectedWorkspace.state !== 'discarded');
+  const commitReady = Boolean(selectedWorkspace && workspaceClean && selectedWorkspace.state !== 'discarded');
   const mergeReady = Boolean(selectedWorkspace?.branchComparison && commitReady && targetBranch && targetBranch !== selectedWorkspace.branchName && !pendingLocalSync);
   const deliveredIntegration = integrations.find((candidate) => candidate.workspaceId === selectedWorkspace?.id && candidate.targetBranch === targetBranch && candidate.state === 'merged') ?? null;
   const alreadyDelivered = Boolean(deliveredIntegration || (selectedWorkspace?.state === 'merged' && targetBranch === selectedWorkspace.sourceBranch));
@@ -287,6 +287,7 @@ export function TaskGitMergeModal(props: { open: boolean; language: 'zh-CN' | 'e
 
   async function start(): Promise<void> {
     if (!props.task || !props.client || !selectedWorkspace || !mergeReady || alreadyDelivered) return;
+    if (targetBranch === selectedWorkspace.sourceBranch && selectedWorkspace.activeConversationCount > 0 && !confirmActiveSessionRisk(selectedWorkspace.activeConversationCount, zh)) return;
     setBusyAction('merge');
     setError(null);
     setFeedback(null);
@@ -357,6 +358,7 @@ export function TaskGitMergeModal(props: { open: boolean; language: 'zh-CN' | 'e
 
   async function finalize(): Promise<void> {
     if (!props.task || !props.client || !integration) return;
+    if (selectedWorkspace && integration.targetBranch === selectedWorkspace.sourceBranch && selectedWorkspace.activeConversationCount > 0 && !confirmActiveSessionRisk(selectedWorkspace.activeConversationCount, zh)) return;
     setBusyAction('merge');
     setError(null);
     try {
@@ -564,7 +566,11 @@ export function TaskGitMergeModal(props: { open: boolean; language: 'zh-CN' | 'e
                           ? zh
                             ? '纯本地模式'
                             : 'Local-only mode'
-                          : selectedWorkspace.sourceRemoteVerified
+                          : selectedWorkspace.remoteRefreshError
+                            ? zh
+                              ? `远端刷新失败：${selectedWorkspace.remoteRefreshError}`
+                              : `Remote refresh failed: ${selectedWorkspace.remoteRefreshError}`
+                            : selectedWorkspace.sourceRemoteVerified
                               ? zh
                                 ? '本机记录显示已推送'
                                 : 'Locally recorded as pushed'
@@ -578,7 +584,11 @@ export function TaskGitMergeModal(props: { open: boolean; language: 'zh-CN' | 'e
                   {selectedWorkspace && selectedWorkspace.activeConversationCount > 0 ? (
                     <section className="task-git-review-active-sessions">
                       <strong>{zh ? '活动会话仍在写入' : 'Active sessions are still writing'}</strong>
-                      <small>{zh ? `${selectedWorkspace.activeConversationCount} 个会话需要先停止。` : `Stop ${selectedWorkspace.activeConversationCount} active session(s) first.`}</small>
+                      <small>
+                        {zh
+                          ? `${selectedWorkspace.activeConversationCount} 个会话仍可能写入此分支。提交和推送可以继续；只有可能回收 worktree 的合入操作需要额外确认。`
+                          : `${selectedWorkspace.activeConversationCount} active session(s) may still write to this branch. Commit and push can continue; only a merge that may reclaim the worktree asks for extra confirmation.`}
+                      </small>
                       <Button variant="secondary" size="compact" onClick={() => void stopSessions()} disabled={busy}>
                         {zh ? '停止活动会话' : 'Stop active sessions'}
                       </Button>
@@ -591,13 +601,7 @@ export function TaskGitMergeModal(props: { open: boolean; language: 'zh-CN' | 'e
                       {workingFiles.length === 0 ? (zh ? '本机变化已全部进入提交。' : 'All local changes are committed.') : zh ? `还有 ${workingFiles.length} 个未提交文件。` : `${workingFiles.length} uncommitted file(s) remain.`}
                     </small>
                     {workingFiles.length > 0 ? <textarea value={message} onChange={(event) => setMessage(event.target.value)} disabled={busy} aria-label={zh ? '提交说明' : 'Commit message'} /> : null}
-                    <Button
-                      variant="secondary"
-                      size="compact"
-                      busy={busyAction === 'commit'}
-                      onClick={() => void commit()}
-                      disabled={busy || !selectedWorkspace?.worktreePath || workingFiles.length === 0 || selectedPaths.length === 0 || selectedWorkspace.activeConversationCount > 0}
-                    >
+                    <Button variant="secondary" size="compact" busy={busyAction === 'commit'} onClick={() => void commit()} disabled={busy || !selectedWorkspace?.worktreePath || workingFiles.length === 0 || selectedPaths.length === 0}>
                       {zh ? '提交选中文件' : 'Commit selected files'}
                     </Button>
                   </section>
@@ -620,13 +624,7 @@ export function TaskGitMergeModal(props: { open: boolean; language: 'zh-CN' | 'e
                       searchable={false}
                     />
                     <Button variant="primary" size="compact" busy={busyAction === 'merge'} onClick={() => void start()} disabled={busy || !mergeReady || alreadyDelivered}>
-                      {alreadyDelivered
-                        ? zh
-                          ? '已合入来源分支'
-                          : 'Merged into source branch'
-                        : zh
-                          ? '合入来源分支'
-                          : 'Merge into source branch'}
+                      {alreadyDelivered ? (zh ? '已合入来源分支' : 'Merged into source branch') : zh ? '合入来源分支' : 'Merge into source branch'}
                     </Button>
                     {pendingLocalSync ? (
                       <small className="task-git-delivery-local-pending">
@@ -743,7 +741,9 @@ function ConflictCompletion(props: { zh: boolean; targetBranch: string; taskBran
       <span aria-hidden="true">✓</span>
       <strong>{props.zh ? '冲突已全部处理' : 'All conflicts are resolved'}</strong>
       <p>
-        {props.zh ? '合入结果已经准备好。确认后将生成合入提交，并同步到本地来源分支；远端推送仍由独立按钮按需执行。' : 'The merge result is ready. Confirm to create the merge commit and sync the local source branch. Remote push remains an optional separate action.'}
+        {props.zh
+          ? '合入结果已经准备好。确认后将生成合入提交，并同步到本地来源分支；远端推送仍由独立按钮按需执行。'
+          : 'The merge result is ready. Confirm to create the merge commit and sync the local source branch. Remote push remains an optional separate action.'}
       </p>
       <dl>
         <div>
@@ -789,6 +789,14 @@ function workspaceStateLabel(workspace: TaskWorkspaceSnapshot, zh: boolean): str
   const workingCount = collectWorkingFiles(workspace).length;
   if (workingCount > 0) return zh ? `${workingCount} 个未提交文件` : `${workingCount} uncommitted file(s)`;
   return zh ? '已提交 · 可合入' : 'Committed · merge ready';
+}
+
+function confirmActiveSessionRisk(activeConversationCount: number, zh: boolean): boolean {
+  return window.confirm(
+    zh
+      ? `当前仍有 ${activeConversationCount} 个活动会话可能写入此分支。合入来源分支成功后可能回收任务 worktree，后续写入可能失败或丢失工作区现场。确定继续吗？`
+      : `${activeConversationCount} active conversation(s) may still write to this branch. Merging into the source branch may reclaim the task worktree, which can interrupt later writes or remove the worktree. Continue?`,
+  );
 }
 
 function committedFileLabel(changeType: TaskGitFileDiff['changeType'], zh: boolean): string {
@@ -881,7 +889,6 @@ function isTargetHeadChanged(error: unknown): boolean {
 function errorMessage(error: unknown, zh: boolean): string {
   if (zh && error instanceof ZeusApiError) {
     const localizedMessages: Record<string, string> = {
-      ZEUS_TASK_WORKSPACE_BUSY: '仍有会话可能写入当前任务分支，请先停止活动会话。',
       ZEUS_TASK_WORKSPACE_CONFLICTED: '任务工作区存在未解决冲突，请先完成冲突处理。',
       ZEUS_TASK_WORKSPACE_DIRTY: '任务分支还有未提交代码，请先完成提交再合入。',
       ZEUS_TASK_WORKTREE_UNAVAILABLE: '任务 worktree 当前不可用，不能执行提交或任务分支推送。',
