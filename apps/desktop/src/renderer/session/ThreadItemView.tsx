@@ -7,7 +7,7 @@ import { MessageCheckIcon, MessageEditIcon, MessageExpandIcon, MessageThumbIcon 
 import type { NativeSessionItemBuffer } from './sessionTypes.js';
 import { autosizeTextarea } from './textareaAutosize.js';
 import type { ConversationFileLocation, ConversationOpenTarget, ConversationResource, ConversationResourcePreview } from '@zeus/shared';
-import { ConversationInlineResource, ConversationMarkdownImage, ConversationResourceCards } from './ConversationResources.js';
+import { ConversationInlineResource, ConversationMarkdownImage, ConversationResourceCards, isImageResource } from './ConversationResources.js';
 
 export type SessionUiLanguage = 'zh-CN' | 'en-US';
 export type ThreadItemRole = 'user' | 'assistant' | 'commentary' | 'tool' | 'file' | 'request' | 'error' | 'unknown';
@@ -240,7 +240,12 @@ export function ThreadItemView(props: ThreadItemViewProps) {
       ) : null}
       {!command ? <TypedItemFacts item={props.item} role={role} language={props.language} /> : null}
       <ItemAttachments item={props.item} label={labels.attachments} />
-      <ConversationResourceCards resources={props.item.resources} language={props.language} onOpenResource={props.onOpenResource} />
+      <ConversationResourceCards
+        resources={props.item.resources}
+        language={props.language}
+        onOpenResource={props.onOpenResource}
+        onLoadResourcePreview={props.onLoadResourcePreview}
+      />
       <ItemImages item={props.item} label={labels.image} />
       {hasActions ? (
         <footer className="session-thread-item-actions" data-message-actions={role}>
@@ -437,10 +442,6 @@ function markdownNodeText(node: ReactNode): string {
 
 function matchingInlineResource(resources: ConversationResource[], label: string, href: string): ConversationResource | null {
   return resources.find((resource) => resource.presentation === 'inline' && inlineResourceMatches(resource, label, href)) ?? null;
-}
-
-function isImageResource(resource: ConversationResource): boolean {
-  return resource.kind === 'attachment' ? resource.previewKind === 'image' : resource.kind === 'file' && resource.iconKind === 'image';
 }
 
 function inlineResourceMatches(resource: ConversationResource, label: string, href: string): boolean {

@@ -83,12 +83,40 @@ export function ConversationMarkdownImage(
     language: SessionUiLanguage;
   },
 ) {
+  return (
+    <ConversationImagePreview
+      {...props}
+      className="session-markdown-image"
+      placeholderClassName="session-markdown-image-placeholder"
+    />
+  );
+}
+
+function ConversationImagePreview(
+  props: ConversationResourceInteraction & {
+    resource: ConversationResource;
+    label: string;
+    language: SessionUiLanguage;
+    className: string;
+    placeholderClassName: string;
+    onPreviewFailure?: (message: string) => void;
+  },
+) {
   const rootRef = useRef<HTMLButtonElement | null>(null);
   const [visible, setVisible] = useState(false);
   const [preview, setPreview] = useState<Extract<ConversationResourcePreview, { kind: 'image' }> | null>(null);
   const [loading, setLoading] = useState(false);
   const [opening, setOpening] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const resourceRef = useRef(props.resource);
+  const languageRef = useRef(props.language);
+  const loadPreviewRef = useRef(props.onLoadResourcePreview);
+  const previewFailureRef = useRef(props.onPreviewFailure);
+  const failureReportedRef = useRef(false);
+  resourceRef.current = props.resource;
+  languageRef.current = props.language;
+  loadPreviewRef.current = props.onLoadResourcePreview;
+  previewFailureRef.current = props.onPreviewFailure;
 
   useEffect(() => {
     const root = rootRef.current;
@@ -112,21 +140,26 @@ export function ConversationMarkdownImage(
   useEffect(() => {
     setPreview(null);
     setError(null);
+    setVisible(false);
+    failureReportedRef.current = false;
   }, [props.resource.id]);
 
   useEffect(() => {
-    if (!visible || !props.onLoadResourcePreview) return;
+    const loadPreview = loadPreviewRef.current;
+    if (!visible || !loadPreview) return;
     let active = true;
     setLoading(true);
-    void props
-      .onLoadResourcePreview(props.resource)
+    void loadPreview(resourceRef.current)
       .then((result) => {
         if (!active) return;
-        if (result.kind !== 'image') throw new Error(props.language === 'zh-CN' ? '该资源不是可预览图片。' : 'This resource is not a previewable image.');
+        if (result.kind !== 'image') {
+          reportPreviewFailure(languageRef.current === 'zh-CN' ? '该资源不是可预览图片。' : 'This resource is not a previewable image.');
+          return;
+        }
         setPreview(result);
       })
       .catch((loadError) => {
-        if (active) setError(loadError instanceof Error ? loadError.message : String(loadError));
+        if (active) reportPreviewFailure(loadError instanceof Error ? loadError.message : String(loadError));
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -134,7 +167,14 @@ export function ConversationMarkdownImage(
     return () => {
       active = false;
     };
-  }, [props.language, props.onLoadResourcePreview, props.resource, visible]);
+  }, [props.resource.id, Boolean(props.onLoadResourcePreview), visible]);
+
+  function reportPreviewFailure(message: string): void {
+    setError(message);
+    if (failureReportedRef.current) return;
+    failureReportedRef.current = true;
+    previewFailureRef.current?.(message);
+  }
 
   async function open(): Promise<void> {
     if (!props.onOpenResource || opening) return;
@@ -149,7 +189,7 @@ export function ConversationMarkdownImage(
     }
   }
 
-  const unavailable = !props.onLoadResourcePreview;
+  const unavailable = !loadPreviewRef.current;
   const status = error
     ? props.language === 'zh-CN'
       ? '图片无法预览，仍可尝试打开'
@@ -168,7 +208,7 @@ export function ConversationMarkdownImage(
     <button
       ref={rootRef}
       type="button"
-      className="session-markdown-image"
+      className={props.className}
       aria-label={`${props.language === 'zh-CN' ? '在 Zeus 中预览' : 'Preview in Zeus'}：${props.label}`}
       aria-busy={loading || opening || undefined}
       data-error={Boolean(error) || undefined}
@@ -176,9 +216,14 @@ export function ConversationMarkdownImage(
       onClick={() => void open()}
     >
       {preview ? (
-        <img src={preview.dataUrl} alt={props.label} loading="lazy" />
+        <img
+          src={preview.dataUrl}
+          alt={props.label}
+          loading="lazy"
+          onError={() => reportPreviewFailure(languageRef.current === 'zh-CN' ? '图片预览加载失败。' : 'The image preview failed to load.')}
+        />
       ) : (
-        <span className="session-markdown-image-placeholder" role="status">
+        <span className={props.placeholderClassName} role="status">
           <FileImage aria-hidden="true" weight="duotone" />
           <span>{status}</span>
         </span>
@@ -199,9 +244,52 @@ export function ConversationResourceCards(
   return (
     <section className="session-resource-card-list" aria-label={props.language === 'zh-CN' ? '会话资源' : 'Conversation resources'}>
       {resources.map((resource) => (
-        <ConversationResourceCard key={resource.id} resource={resource} language={props.language} onOpenResource={props.onOpenResource} />
+        isImageResource(resource) ? (
+          <ConversationResourceImage
+            key={resource.id}
+            resource={resource}
+            language={props.language}
+            onOpenResource={props.onOpenResource}
+            onLoadResourcePreview={props.onLoadResourcePreview}
+          />
+        ) : (
+          <ConversationResourceCard key={resource.id} resource={resource} language={props.language} onOpenResource={props.onOpenResource} />
+        )
       ))}
     </section>
+  );
+}
+
+function ConversationResourceImage(
+  props: ConversationResourceInteraction & {
+    resource: ConversationResource;
+    language: SessionUiLanguage;
+  },
+) {
+  const [previewError, setPreviewError] = useState<string | null>(null);
+
+  if (!props.onLoadResourcePreview || previewError) {
+    return (
+      <ConversationResourceCard
+        resource={props.resource}
+        language={props.language}
+        onOpenResource={props.onOpenResource}
+        initialError={previewError ?? (props.language === 'zh-CN' ? '图片预览不可用，仍可尝试打开' : 'Image preview unavailable; you can still try to open it')}
+      />
+    );
+  }
+
+  return (
+    <ConversationImagePreview
+      resource={props.resource}
+      label={props.resource.displayName}
+      language={props.language}
+      onOpenResource={props.onOpenResource}
+      onLoadResourcePreview={props.onLoadResourcePreview}
+      className="session-resource-image"
+      placeholderClassName="session-resource-image-placeholder"
+      onPreviewFailure={setPreviewError}
+    />
   );
 }
 
@@ -209,10 +297,11 @@ function ConversationResourceCard(
   props: ConversationResourceInteraction & {
     resource: ConversationResource;
     language: SessionUiLanguage;
+    initialError?: string;
   },
 ) {
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(props.initialError ?? null);
   const subtitle = resourceSubtitle(props.resource, props.language);
 
   async function open(target = defaultOpenTarget(props.resource)): Promise<void> {
@@ -433,6 +522,10 @@ function focusAdjacentDocumentControl(trigger: HTMLButtonElement | null, backwar
 
 export function defaultOpenTarget(resource: ConversationResource): ConversationOpenTarget {
   return resource.kind === 'website' && resource.url.startsWith('mailto:') ? 'system_default' : 'preferred';
+}
+
+export function isImageResource(resource: ConversationResource): boolean {
+  return resource.kind === 'attachment' ? resource.previewKind === 'image' : resource.kind === 'file' && resource.iconKind === 'image';
 }
 
 function ResourceIcon(props: { resource: ConversationResource }) {
