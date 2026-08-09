@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { realpathSync } from 'node:fs';
-import { copyFile, lstat, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { copyFile, lstat, mkdir, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 
@@ -1315,6 +1315,8 @@ async function formatTaskCommitPaths(cwd: string, selectedPaths: string[]): Prom
 
   const prettierPath = await resolveTaskPrettierPath(cwd);
   if (!prettierPath) throw gitCoreError('ZEUS_TASK_PRECOMMIT_FORMAT_UNAVAILABLE', '项目配置了 Prettier，但仓库尚未安装本地 Prettier。请先安装项目依赖再提交。');
+  const prettierEntrypoint = await resolveTaskPrettierEntrypoint(prettierPath);
+  if (!prettierEntrypoint) throw gitCoreError('ZEUS_TASK_PRECOMMIT_FORMAT_UNAVAILABLE', '项目配置了 Prettier，但本地 Prettier 入口无法解析。请先安装项目依赖再提交。');
 
   const existingFiles: string[] = [];
   const before = new Map<string, Buffer>();
@@ -1333,13 +1335,16 @@ async function formatTaskCommitPaths(cwd: string, selectedPaths: string[]): Prom
   const ignoreEntry = await lstat(ignorePath).catch(() => null);
   const commonArgs = [...(ignoreEntry?.isFile() ? ['--ignore-path', '.prettierignore'] : []), '--ignore-unknown'];
   const absoluteFiles = existingFiles.map((path) => resolve(cwd, path));
+  const prettierEnvironment = process.versions.electron ? { ...process.env, ELECTRON_RUN_AS_NODE: '1' } : process.env;
   try {
-    await execFileAsync(prettierPath, ['--write', ...commonArgs, ...absoluteFiles], {
+    await execFileAsync(process.execPath, [prettierEntrypoint, '--write', ...commonArgs, ...absoluteFiles], {
       cwd,
+      env: prettierEnvironment,
       maxBuffer: 20 * 1024 * 1024,
     });
-    await execFileAsync(prettierPath, ['--check', ...commonArgs, ...absoluteFiles], {
+    await execFileAsync(process.execPath, [prettierEntrypoint, '--check', ...commonArgs, ...absoluteFiles], {
       cwd,
+      env: prettierEnvironment,
       maxBuffer: 20 * 1024 * 1024,
     });
   } catch (error) {
@@ -1365,6 +1370,44 @@ async function resolveTaskPrettierPath(cwd: string): Promise<string | null> {
     if (entry && !entry.isDirectory()) return candidate;
   }
   return null;
+}
+
+/** 解析项目本地 Prettier 的 JavaScript 入口，避免执行依赖外部 node 命令的 shell 包装器。 */
+async function resolveTaskPrettierEntrypoint(prettierPath: string): Promise<string | null> {
+  const resolvedPath = await realpath(prettierPath).catch(() => null);
+  if (resolvedPath && isJavaScriptEntrypoint(resolvedPath)) return resolvedPath;
+
+  const packageRoot = resolve(dirname(prettierPath), '..', 'prettier');
+  const packageManifest = await readFile(join(packageRoot, 'package.json'), 'utf8').catch(() => null);
+  if (!packageManifest) return null;
+
+  let binPath: string | null = null;
+  try {
+    const manifest = JSON.parse(packageManifest) as { bin?: unknown };
+    binPath = readPrettierBinPath(manifest.bin);
+  } catch {
+    return null;
+  }
+  if (!binPath) return null;
+
+  const entrypoint = resolve(packageRoot, binPath);
+  if (!isPathInside(packageRoot, entrypoint)) return null;
+  const entry = await lstat(entrypoint).catch(() => null);
+  return entry && !entry.isDirectory() ? entrypoint : null;
+}
+
+function readPrettierBinPath(value: unknown): string | null {
+  if (typeof value === 'string') return value;
+  if (!value || typeof value !== 'object') return null;
+  const entries = value as Record<string, unknown>;
+  const preferred = entries.prettier;
+  if (typeof preferred === 'string') return preferred;
+  const firstPath = Object.values(entries).find((entry) => typeof entry === 'string');
+  return typeof firstPath === 'string' ? firstPath : null;
+}
+
+function isJavaScriptEntrypoint(value: string): boolean {
+  return /\.(?:cjs|mjs|js)$/iu.test(value);
 }
 
 async function projectDeclaresPrettier(cwd: string): Promise<boolean> {
