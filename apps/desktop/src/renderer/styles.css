@@ -13512,6 +13512,181 @@ a {
   outline: 2px solid color-mix(in oklab, var(--zeus-accent, #3977db) 52%, transparent);
 }
 
+.macos-ai-app .task-git-conflict-feedback.is-warning {
+  color: var(--zeus-danger-text);
+}
+
+.macos-ai-app .task-git-conflict-block-rail section.is-resolved {
+  border-color: color-mix(in oklab, var(--zeus-success-text, #267a4c) 55%, var(--zeus-product-line));
+  background: color-mix(in oklab, var(--zeus-success-bg, #eaf6ee) 70%, var(--zeus-product-panel));
+}
+
+.macos-ai-app .task-git-conflict-block-rail section.is-manual {
+  border-color: color-mix(in oklab, var(--zeus-accent, #3977db) 65%, var(--zeus-product-line));
+  background: color-mix(in oklab, var(--zeus-accent, #3977db) 10%, var(--zeus-product-panel));
+}
+
+.macos-ai-app .task-git-conflict-block-status {
+  flex-wrap: wrap;
+}
+
+.macos-ai-app .task-git-conflict-block-status > small {
+  inline-size: 100%;
+  padding: 0 7px 3px;
+  color: var(--zeus-danger-text);
+  font-size: 10px;
+}
+
+.macos-ai-app .task-git-conflict-block-state {
+  padding-inline: 4px;
+  color: var(--zeus-product-muted);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.macos-ai-app .task-git-conflict-side-pane {
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+
+.macos-ai-app .task-git-conflict-pane-header {
+  min-inline-size: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0;
+  border: 0;
+  background: var(--zeus-product-panel-muted);
+}
+
+.macos-ai-app .task-git-conflict-pane-header > strong {
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.macos-ai-app .task-git-conflict-side-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 3px;
+}
+
+.macos-ai-app .task-git-conflict-side-actions button,
+.macos-ai-app .task-git-conflict-full-control button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-block-size: 24px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--zeus-product-muted);
+  font: inherit;
+  font-size: 11px;
+}
+
+.macos-ai-app .task-git-conflict-side-actions button:hover:not(:disabled),
+.macos-ai-app .task-git-conflict-side-actions button:focus-visible,
+.macos-ai-app .task-git-conflict-full-control button:hover:not(:disabled),
+.macos-ai-app .task-git-conflict-full-control button:focus-visible {
+  border-color: var(--zeus-control-border);
+  background: var(--zeus-control-bg);
+  color: var(--zeus-product-text);
+}
+
+.macos-ai-app .task-git-conflict-side-actions button:disabled,
+.macos-ai-app .task-git-conflict-full-control button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.macos-ai-app .task-git-conflict-side-actions svg,
+.macos-ai-app .task-git-conflict-full-control svg {
+  inline-size: 14px;
+  block-size: 14px;
+}
+
+.macos-ai-app .task-git-conflict-side-actions .task-git-conflict-accept {
+  gap: 3px;
+  padding-inline: 6px;
+  color: var(--zeus-success-text, #267a4c);
+}
+
+.macos-ai-app .task-git-conflict-side-actions .task-git-conflict-ignore {
+  inline-size: 24px;
+  padding: 0;
+  color: var(--zeus-danger-text);
+}
+
+.macos-ai-app .task-git-conflict-side-state {
+  min-block-size: 18px;
+  padding: 0 10px 3px;
+  color: var(--zeus-product-muted);
+  font-size: 10px;
+}
+
+.macos-ai-app .task-git-conflict-side-pane.is-accepted .task-git-conflict-side-state {
+  color: var(--zeus-success-text, #267a4c);
+}
+
+.macos-ai-app .task-git-conflict-side-pane.is-ignored .task-git-conflict-side-state {
+  color: var(--zeus-product-muted);
+  text-decoration: line-through;
+}
+
+.macos-ai-app .task-git-conflict-full-pane.is-result {
+  position: relative;
+}
+
+.macos-ai-app .task-git-conflict-full-editor-surface {
+  position: relative;
+  display: block;
+  min-inline-size: 0;
+  min-block-size: 0;
+  block-size: 100%;
+  overflow: hidden;
+}
+
+.macos-ai-app .task-git-conflict-full-editor-surface > textarea {
+  position: absolute;
+  inset: 0;
+}
+
+.macos-ai-app .task-git-conflict-full-controls {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-end: 3px;
+  inline-size: 30px;
+  pointer-events: none;
+}
+
+.macos-ai-app .task-git-conflict-full-control {
+  position: absolute;
+  inset-inline-end: 0;
+  display: flex;
+  gap: 1px;
+  padding: 2px;
+  border: 1px solid color-mix(in oklab, var(--zeus-danger-line) 60%, var(--zeus-product-line));
+  border-radius: 5px;
+  background: color-mix(in oklab, var(--zeus-danger-bg) 76%, var(--zeus-product-panel));
+  pointer-events: auto;
+  transform: translateY(-2px);
+}
+
+.macos-ai-app .task-git-conflict-full-control.is-resolved,
+.macos-ai-app .task-git-conflict-full-control.is-manual {
+  border-color: color-mix(in oklab, var(--zeus-success-text, #267a4c) 55%, var(--zeus-product-line));
+  opacity: 0.72;
+}
+
+.macos-ai-app .task-git-conflict-full-control button {
+  min-block-size: 20px;
+  inline-size: 20px;
+  padding: 0;
+}
+
 @media (max-width: 880px) {
   .macos-ai-app .task-git-merge-config,
   .macos-ai-app .task-git-merge-flow {
