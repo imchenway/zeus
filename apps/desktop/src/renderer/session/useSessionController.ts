@@ -161,6 +161,8 @@ interface PendingSendEnvelope {
   browserCommentsMarked?: boolean;
 }
 
+type FailedSendReconciliation = { kind: 'durable'; acceptance: NativeOperationAcceptance } | { kind: 'absent' } | { kind: 'unknown' };
+
 interface PersistedDraft {
   draft: string;
   attachments: NativeConversationAttachment[];
@@ -428,7 +430,11 @@ export function createSessionController(options: CreateSessionControllerOptions)
   }
 
   function acceptedEnvelopeIsDurable(snapshot: NativeConversationSnapshot, envelope: PendingSendEnvelope): boolean {
-    return snapshot.submissions.some((submission) => submission.clientUserMessageId === envelope.clientUserMessageId) || snapshot.messages.some((message) => message.metadata.clientUserMessageId === envelope.clientUserMessageId);
+    return (
+      snapshot.submissions.some((submission) => submission.clientUserMessageId === envelope.clientUserMessageId) ||
+      snapshot.messages.some((message) => message.metadata.clientUserMessageId === envelope.clientUserMessageId) ||
+      snapshot.items.some((item) => snapshotItemClientUserMessageId(item) === envelope.clientUserMessageId)
+    );
   }
 
   function acceptedStatus(acceptance: NativeOperationAcceptance): string {
@@ -485,8 +491,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
       persistDraft();
       return;
     }
-    const optimisticKey = nativeOptimisticKey(state, pendingSend.clientUserMessageId);
-    if (!state.items[optimisticKey]) projectAcceptedEnvelope(pendingSend);
+    if (!hasNativeOptimisticItem(state, pendingSend.clientUserMessageId)) projectAcceptedEnvelope(pendingSend);
   }
 
   async function reconcileAcceptedSend(): Promise<void> {
@@ -529,6 +534,55 @@ export function createSessionController(options: CreateSessionControllerOptions)
         });
         persistDraft();
       }
+    } finally {
+      if (targetedHydrationBuffer === buffered) targetedHydrationBuffer = null;
+      for (const event of buffered) applyEvent(event);
+      flushRenderDeltas();
+    }
+  }
+
+  function acceptanceFromDurableSnapshot(snapshot: NativeConversationSnapshot, envelope: PendingSendEnvelope): NativeOperationAcceptance {
+    const submission = snapshot.submissions.find((candidate) => candidate.clientUserMessageId === envelope.clientUserMessageId);
+    return {
+      operation: {
+        status: submission?.status ?? 'accepted',
+        recovered: true,
+        clientUserMessageId: envelope.clientUserMessageId,
+      },
+      conversation: {
+        id: snapshot.id,
+        recovered: true,
+      },
+      ...(submission
+        ? {
+            submission: {
+              id: submission.id,
+              status: submission.status,
+              ...(submission.clientUserMessageId ? { clientUserMessageId: submission.clientUserMessageId } : {}),
+              ...(submission.providerTurnId ? { providerTurnId: submission.providerTurnId } : {}),
+            },
+          }
+        : {}),
+    };
+  }
+
+  async function reconcileFailedSend(envelope: PendingSendEnvelope): Promise<FailedSendReconciliation> {
+    const buffered: NativeConversationEvent[] = [];
+    targetedHydrationBuffer = buffered;
+    try {
+      const snapshot = await options.client.loadNativeConversation(options.projectId, options.conversationId);
+      if (disposed || pendingSend !== envelope) return { kind: 'unknown' };
+      dispatch({ type: 'snapshot_hydrated', snapshot: withoutResolvedRequests(snapshot) });
+      if (!acceptedEnvelopeIsDurable(snapshot, envelope)) return { kind: 'absent' };
+
+      const acceptance = acceptanceFromDurableSnapshot(snapshot, envelope);
+      pendingSend = { ...envelope, deliveryState: 'accepted', acceptance };
+      dispatch({ type: 'send_accepted', clientUserMessageId: envelope.clientUserMessageId, status: acceptedStatus(acceptance) });
+      void markEnvelopeBrowserCommentsSent(pendingSend);
+      persistDraft();
+      return { kind: 'durable', acceptance };
+    } catch {
+      return { kind: 'unknown' };
     } finally {
       if (targetedHydrationBuffer === buffered) targetedHydrationBuffer = null;
       for (const event of buffered) applyEvent(event);
@@ -984,17 +1038,31 @@ export function createSessionController(options: CreateSessionControllerOptions)
             persistDraft();
             return acceptance;
           } catch (error) {
+            const reconciliation = await reconcileFailedSend(envelope);
+            if (reconciliation.kind === 'durable') return reconciliation.acceptance;
             const sessionError = toSessionError(error, true);
             rememberRecoveryRequired(sessionError);
-            dispatch({
-              type: 'send_failed',
-              clientUserMessageId: envelope.clientUserMessageId,
-              draft: envelope.draft,
-              attachments: envelope.composerAttachments,
-              browserSubmission: envelope.browserSubmission,
-              previousConversationState,
-              error: sessionError,
-            });
+            dispatch(
+              reconciliation.kind === 'unknown'
+                ? {
+                    type: 'send_uncertain',
+                    clientUserMessageId: envelope.clientUserMessageId,
+                    draft: envelope.draft,
+                    attachments: envelope.composerAttachments,
+                    browserSubmission: envelope.browserSubmission,
+                    previousConversationState,
+                    error: sessionError,
+                  }
+                : {
+                    type: 'send_failed',
+                    clientUserMessageId: envelope.clientUserMessageId,
+                    draft: envelope.draft,
+                    attachments: envelope.composerAttachments,
+                    browserSubmission: envelope.browserSubmission,
+                    previousConversationState,
+                    error: sessionError,
+                  },
+            );
             persistDraft();
             throw error;
           }
@@ -1228,6 +1296,11 @@ function nativeOptimisticKey(state: NativeSessionState, clientUserMessageId: str
   return [state.conversationId ?? 'pending-conversation', state.providerThreadId ?? 'pending-thread', `pending:${clientUserMessageId}`, clientUserMessageId].map((part) => encodeURIComponent(part)).join('/');
 }
 
+function hasNativeOptimisticItem(state: NativeSessionState, clientUserMessageId: string): boolean {
+  const directItem = state.items[nativeOptimisticKey(state, clientUserMessageId)];
+  return Boolean(directItem?.optimistic || Object.values(state.items).some((item) => item.optimistic && (item.clientUserMessageId === clientUserMessageId || item.durableClientUserMessageId === clientUserMessageId)));
+}
+
 function isNativeAttachment(value: unknown): value is NativeConversationAttachment {
   if (typeof value !== 'object' || value === null) return false;
   const attachment = value as { name?: unknown; mime?: unknown; size?: unknown; localPath?: unknown; uploadRef?: unknown };
@@ -1272,6 +1345,13 @@ function snapshotRequiresRecovery(snapshot: NativeConversationSnapshot): boolean
   return (
     (snapshot.queue.state.type === 'paused' && snapshot.queue.state.reason === 'recovery_required') || snapshot.submissions.some((submission) => submission.status === 'recovery_required' || submission.pausedReason === 'recovery_required')
   );
+}
+
+function snapshotItemClientUserMessageId(item: { type: string; payload: Record<string, unknown> }): string | null {
+  const normalizedType = item.type.toLocaleLowerCase().replace(/[\s_\-/]+/gu, '');
+  if (normalizedType !== 'usermessage' && normalizedType !== 'user') return null;
+  const clientId = item.payload.clientId ?? item.payload.clientUserMessageId;
+  return typeof clientId === 'string' && clientId.trim() ? clientId : null;
 }
 
 function isManualConfirmationSubmission(submission: NativeQueuedSubmission): boolean {

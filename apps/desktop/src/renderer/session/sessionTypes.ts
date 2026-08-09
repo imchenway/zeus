@@ -241,6 +241,7 @@ export interface NativeConversationMessage {
   content: string;
   source: string;
   metadata: Record<string, unknown>;
+  providerItemId?: string | null;
   resources?: ConversationResource[];
   createdAt: string;
 }
@@ -858,6 +859,7 @@ export interface NativeSessionItemBuffer {
   threadId: string;
   turnId: string;
   itemId: string;
+  providerItemId?: string;
   localItemId?: string;
   type: string;
   status: string;

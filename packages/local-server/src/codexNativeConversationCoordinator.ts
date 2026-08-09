@@ -1254,15 +1254,21 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     const existingClientIds = new Set(
       conversation.messages
         .filter((message) => message.providerItemId !== providerItemId)
-        .map((message) => message.clientMessageId)
+        .map(conversationMessageClientId)
         .filter((value): value is string => Boolean(value)),
     );
     const submissions = options.submissions.listByConversation(conversation.id);
-    const durableClientId = providerClientId ?? existingProviderMessage?.clientMessageId ?? null;
+    const existingProviderClientId = existingProviderMessage ? conversationMessageClientId(existingProviderMessage) : null;
+    const providerClientIdIsAvailable = providerClientId !== null && !existingClientIds.has(providerClientId);
+    // 同一 Provider 项的重复事件沿用原绑定；新项优先使用 Provider 返回的客户端 ID。
+    // 若 Provider 返回的 ID 已绑定到其他项，不把另一条 submission 错绑过来。
+    const durableClientId = existingProviderClientId ?? (providerClientIdIsAvailable ? providerClientId : null);
     const submission = durableClientId
       ? submissions.find((entry) => entry.clientMessageId === durableClientId)
-      : (submissions.find((entry) => entry.id === turn.clientSubmissionId && !existingClientIds.has(entry.clientMessageId)) ??
-        submissions.find((entry) => entry.providerTurnId === turn.providerTurnId && !existingClientIds.has(entry.clientMessageId)));
+      : providerClientId
+        ? undefined
+        : (submissions.find((entry) => entry.id === turn.clientSubmissionId && !existingClientIds.has(entry.clientMessageId)) ??
+          submissions.find((entry) => entry.providerTurnId === turn.providerTurnId && !existingClientIds.has(entry.clientMessageId)));
     const clientMessageId = durableClientId ?? submission?.clientMessageId ?? null;
     const visibleContent = typeof itemPayload.displayText === 'string' && itemPayload.displayText.trim() ? itemPayload.displayText : content;
     options.conversations.appendMessage({
@@ -1285,6 +1291,12 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       ...(clientMessageId ? { clientMessageId } : {}),
     });
     return clientMessageId;
+  }
+
+  function conversationMessageClientId(message: { clientMessageId: string | null; metadataJson: string }): string | null {
+    if (message.clientMessageId?.trim()) return message.clientMessageId;
+    const metadata = parseJsonRecord(message.metadataJson);
+    return typeof metadata.clientUserMessageId === 'string' && metadata.clientUserMessageId.trim() ? metadata.clientUserMessageId : null;
   }
 
   function submissionPresentation(turn: ZeusConversationTurnRecord): Record<string, unknown> {
