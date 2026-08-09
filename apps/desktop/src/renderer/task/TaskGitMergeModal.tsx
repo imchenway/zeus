@@ -56,7 +56,25 @@ interface ConflictDraft {
   document: ConflictDocument;
 }
 
-export function TaskGitMergeModal(props: { open: boolean; language: 'zh-CN' | 'en-US'; task: TaskRecord | null; projectName?: string; client: DeliveryClient | null; onChanged?: () => void | Promise<void>; onClose: () => void }) {
+interface TaskGitMergeModalProps {
+  open: boolean;
+  language: 'zh-CN' | 'en-US';
+  task: TaskRecord | null;
+  projectName?: string;
+  client: DeliveryClient | null;
+  onChanged?: () => void | Promise<void>;
+  onClose: () => void;
+}
+
+type TaskGitMergeModalContentProps = Omit<TaskGitMergeModalProps, 'task'> & { task: TaskRecord };
+
+export function TaskGitMergeModal(props: TaskGitMergeModalProps) {
+  if (!props.open || !props.task) return null;
+  // 任务身份同时决定弹窗内全部瞬态状态；关闭或切换任务时必须卸载旧实例，禁止把旧工作区带入新任务请求。
+  return <TaskGitMergeModalContent key={props.task.id} {...props} task={props.task} />;
+}
+
+function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
   const zh = props.language === 'zh-CN';
   const [workspaces, setWorkspaces] = useState<TaskWorkspacesSnapshot | null>(null);
   const [integrations, setIntegrations] = useState<TaskIntegrationRecord[]>([]);
@@ -204,8 +222,6 @@ export function TaskGitMergeModal(props: { open: boolean; language: 'zh-CN' | 'e
       cancelled = true;
     };
   }, [props.task?.id, props.client, activeConflict?.id, conflictPath, zh]);
-
-  if (!props.open || !props.task) return null;
 
   async function reload(preferredWorkspaceId = workspaceId): Promise<void> {
     if (!props.task || !props.client) return;
@@ -909,6 +925,7 @@ function isTargetHeadChanged(error: unknown): boolean {
 function errorMessage(error: unknown, zh: boolean): string {
   if (zh && error instanceof ZeusApiError) {
     const localizedMessages: Record<string, string> = {
+      ZEUS_TASK_WORKSPACE_NOT_FOUND: '当前任务工作区已不存在，请关闭后重新打开该任务的代码交付。',
       ZEUS_TASK_WORKSPACE_CONFLICTED: '任务工作区存在未解决冲突，请先完成冲突处理。',
       ZEUS_TASK_WORKSPACE_DIRTY: '任务分支还有未提交代码，请先完成提交再合入。',
       ZEUS_TASK_WORKTREE_UNAVAILABLE: '任务 worktree 当前不可用，不能执行提交或任务分支推送。',
