@@ -87,6 +87,7 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
   const [message, setMessage] = useState('');
   const [mode, setMode] = useState<'merge' | 'squash'>('merge');
   const [integration, setIntegration] = useState<TaskIntegrationRecord | null>(null);
+  const [conflictWorkspaceOpen, setConflictWorkspaceOpen] = useState(false);
   const [conflictPath, setConflictPath] = useState('');
   const [conflict, setConflict] = useState<TaskIntegrationConflictFile | null>(null);
   const [conflictDocument, setConflictDocument] = useState<ConflictDocument | null>(null);
@@ -102,8 +103,8 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
   const committedFiles = useMemo(() => (selectedWorkspace?.branchComparison?.files ?? []).map((file) => toCommittedDeliveryFile(file, zh)), [selectedWorkspace?.branchComparison?.files, zh]);
   const visibleFiles = diffScope === 'committed' ? committedFiles : workingFiles.map((file) => toWorkingDeliveryFile(file, zh));
   const activeConflict = integration?.state === 'conflicted' ? integration : null;
-  const unresolvedConflict = activeConflict && activeConflict.conflictFiles.length > 0 ? activeConflict : null;
-  const conflictReadyToFinalize = Boolean(activeConflict && activeConflict.conflictFiles.length === 0);
+  const unresolvedConflict = conflictWorkspaceOpen && activeConflict && activeConflict.conflictFiles.length > 0 ? activeConflict : null;
+  const conflictReadyToFinalize = Boolean(conflictWorkspaceOpen && activeConflict && activeConflict.conflictFiles.length === 0);
   const pendingLocalSync = integration?.state === 'pending_local_sync' ? integration : null;
   const busy = busyAction !== null;
   const workspaceClean = selectedWorkspace?.review?.clean ?? selectedWorkspace?.worktreePath === null;
@@ -120,6 +121,7 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
     setBusyAction('loading');
     setError(null);
     setFeedback(null);
+    setConflictWorkspaceOpen(false);
     conflictDraftsRef.current = {};
     setMessage(
       buildTaskCommitMessageSuggestion({
@@ -133,11 +135,12 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
         if (cancelled) return;
         setWorkspaces(workspaceSnapshot);
         setIntegrations(integrationSnapshot.items);
-        const recoverable = integrationSnapshot.items.find((candidate) => candidate.state === 'conflicted' || candidate.state === 'pending_local_sync');
-        const firstWorkspace = workspaceSnapshot.items.find((workspace) => workspace.id === recoverable?.workspaceId) ?? workspaceSnapshot.items.find((workspace) => workspace.state !== 'discarded') ?? workspaceSnapshot.items[0];
+        const firstWorkspace = workspaceSnapshot.items.find((workspace) => workspace.state !== 'discarded') ?? workspaceSnapshot.items[0];
+        const recoverable = findRecoverableIntegration(integrationSnapshot.items, firstWorkspace?.id);
         setWorkspaceId(firstWorkspace?.id ?? '');
         setIntegration(recoverable ?? null);
-        setConflictPath(recoverable?.conflictFiles[0] ?? '');
+        setMode(recoverable?.mode ?? 'merge');
+        setConflictPath('');
         setSnapshotRevision((current) => current + 1);
         setBusyAction(null);
       })
@@ -318,6 +321,7 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
       });
       setIntegration(response.integration);
       setConflictPath(response.integration.conflictFiles[0] ?? '');
+      setConflictWorkspaceOpen(response.integration.state === 'conflicted');
       await reload(selectedWorkspace.id);
       await props.onChanged?.();
       if (response.result) setFeedback(deliveryFeedback(response.result, zh));
@@ -386,6 +390,7 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
     try {
       const response = await props.client.finalizeTaskIntegration(props.task.id, integration.id);
       setIntegration(response.integration);
+      setConflictWorkspaceOpen(false);
       await reload(integration.workspaceId);
       await props.onChanged?.();
       setFeedback(deliveryFeedback(response.result, zh));
@@ -414,6 +419,7 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
     });
     setIntegration(response.integration);
     setConflictPath(response.integration.conflictFiles[0] ?? '');
+    setConflictWorkspaceOpen(response.integration.state === 'conflicted');
     await reload(workspace.id);
     await props.onChanged?.();
     setFeedback(
@@ -452,9 +458,11 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
     const nextWorkspace = workspaces?.items.find((workspace) => workspace.id === nextId) ?? null;
     setWorkspaceId(nextId);
     setDiffScope('committed');
-    const recoverable = integrations.find((candidate) => candidate.workspaceId === nextId && (candidate.state === 'conflicted' || candidate.state === 'pending_local_sync'));
+    const recoverable = findRecoverableIntegration(integrations, nextId);
     setIntegration(recoverable ?? null);
-    setConflictPath(recoverable?.conflictFiles[0] ?? '');
+    setMode(recoverable?.mode ?? 'merge');
+    setConflictWorkspaceOpen(false);
+    setConflictPath('');
     setError(null);
     setFeedback(
       nextWorkspace
@@ -466,29 +474,33 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
     );
   }
 
+  function openConflictWorkspace(): void {
+    if (!activeConflict) return;
+    setConflictPath((current) => current || activeConflict.conflictFiles[0] || '');
+    setConflictWorkspaceOpen(true);
+    setError(null);
+    setFeedback(null);
+  }
+
+  function returnToDelivery(): void {
+    rememberConflictDraft();
+    setConflictWorkspaceOpen(false);
+    setError(null);
+    setFeedback({
+      tone: 'info',
+      text: zh ? '合入候选仍保留，可继续查看其他任务分支；未保存草稿仅在本次窗口内保留。' : 'The integration candidate is preserved. You can review other task branches; unsaved drafts remain available only in this window.',
+    });
+  }
+
   const integrationResult = deliveredIntegration ?? (selectedWorkspace?.state === 'merged' ? integrations.find((candidate) => candidate.workspaceId === selectedWorkspace.id && candidate.state === 'merged') : null);
 
   return (
     <ModalPortal rootClassName="task-git-merge-portal-root" backdropClassName="task-git-merge-backdrop" dismissDisabled={busy} onDismiss={props.onClose}>
-      <section className={`task-git-merge-modal task-git-delivery-modal${activeConflict ? ' is-conflicted' : ''}`} role="dialog" aria-modal="true" aria-labelledby="task-git-merge-title">
+      <section className={`task-git-merge-modal task-git-delivery-modal${conflictWorkspaceOpen && activeConflict ? ' is-conflicted' : ''}`} role="dialog" aria-modal="true" aria-labelledby="task-git-merge-title">
         <header className="task-git-merge-header">
           <span>
             <strong id="task-git-merge-title">
-              {unresolvedConflict
-                ? zh
-                  ? '解决合入冲突'
-                  : 'Resolve Merge Conflicts'
-                : conflictReadyToFinalize
-                  ? zh
-                    ? '确认完成合入'
-                    : 'Confirm Merge Completion'
-                  : pendingLocalSync
-                    ? zh
-                      ? '同步本地目标分支'
-                      : 'Sync Local Target Branch'
-                    : zh
-                      ? '代码交付'
-                      : 'Code Delivery'}
+              {unresolvedConflict ? (zh ? '解决合入冲突' : 'Resolve Merge Conflicts') : conflictReadyToFinalize ? (zh ? '确认完成合入' : 'Confirm Merge Completion') : zh ? '代码交付' : 'Code Delivery'}
             </strong>
             <small>
               {props.projectName ? `${props.projectName} · ` : ''}
@@ -520,7 +532,14 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
             <div className="task-git-delivery-content">
               <DeliveryStepBar workspace={selectedWorkspace} alreadyDelivered={alreadyDelivered} sourcePushed={selectedWorkspace?.sourceRemoteVerified ?? false} zh={zh} />
               <div className="task-git-review-layout task-git-delivery-layout">
-                <TaskWorkspaceBranchList workspaces={workspaces?.items ?? []} selectedWorkspaceId={workspaceId} zh={zh} disabled={busy} stateLabel={workspaceStateLabel} onSelect={selectWorkspace} />
+                <TaskWorkspaceBranchList
+                  workspaces={workspaces?.items ?? []}
+                  selectedWorkspaceId={workspaceId}
+                  zh={zh}
+                  disabled={busy}
+                  stateLabel={(workspace, localizedZh) => workspaceStateLabel(workspace, localizedZh, findRecoverableIntegration(integrations, workspace.id))}
+                  onSelect={selectWorkspace}
+                />
 
                 <main className="task-git-review-main">
                   <section className="task-git-review-changes" aria-label={zh ? '代码变化' : 'Code changes'}>
@@ -659,9 +678,26 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
                       disabled={busy}
                       searchable={false}
                     />
-                    <Button variant="primary" size="compact" busy={busyAction === 'merge'} onClick={() => void start()} disabled={busy || !mergeReady || alreadyDelivered}>
-                      {alreadyDelivered ? (zh ? '已合入来源分支' : 'Merged into source branch') : zh ? '合入来源分支' : 'Merge into source branch'}
-                    </Button>
+                    {activeConflict ? (
+                      <>
+                        <small className="task-git-delivery-local-pending">
+                          {activeConflict.conflictFiles.length > 0
+                            ? zh
+                              ? `上次合入保留了 ${activeConflict.conflictFiles.length} 个冲突文件。可先查看其他分支，处理时再进入冲突编辑器。`
+                              : `The previous merge preserved ${activeConflict.conflictFiles.length} conflicted file(s). You can review other branches before resuming.`
+                            : zh
+                              ? '上次合入的冲突已经处理完，正在等待确认完成。'
+                              : 'The previous merge conflicts are resolved and waiting for final confirmation.'}
+                        </small>
+                        <Button variant="primary" size="compact" onClick={openConflictWorkspace} disabled={busy}>
+                          {activeConflict.conflictFiles.length > 0 ? (zh ? '继续处理冲突' : 'Resume conflict resolution') : zh ? '确认完成合入' : 'Confirm merge completion'}
+                        </Button>
+                      </>
+                    ) : (
+                      <Button variant="primary" size="compact" busy={busyAction === 'merge'} onClick={() => void start()} disabled={busy || !mergeReady || alreadyDelivered}>
+                        {alreadyDelivered ? (zh ? '已合入来源分支' : 'Merged into source branch') : zh ? '合入来源分支' : 'Merge into source branch'}
+                      </Button>
+                    )}
                     {pendingLocalSync ? (
                       <small className="task-git-delivery-local-pending">
                         {zh ? '合入结果已保留；来源分支存在未提交改动。处理原目录后，在底部重新同步。' : 'The integration result is preserved. Clean the source worktree, then retry local sync below.'}
@@ -719,10 +755,10 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
         </div>
 
         <footer className="task-git-merge-footer">
-          <Button variant="secondary" size="regular" onClick={props.onClose} disabled={busy}>
-            {zh ? '关闭' : 'Close'}
+          <Button variant="secondary" size="regular" onClick={conflictWorkspaceOpen ? returnToDelivery : props.onClose} disabled={busy}>
+            {conflictWorkspaceOpen ? (zh ? '返回代码交付' : 'Back to code delivery') : zh ? '关闭' : 'Close'}
           </Button>
-          {activeConflict ? (
+          {conflictWorkspaceOpen && activeConflict ? (
             activeConflict.conflictFiles.length > 0 ? (
               <Button variant="primary" size="regular" busy={busyAction === 'conflict'} onClick={() => void saveResolution()} disabled={!conflict || unresolvedConflictBlocks > 0}>
                 {unresolvedConflictBlocks > 0 ? (zh ? `还有 ${unresolvedConflictBlocks} 个冲突未处理` : `${unresolvedConflictBlocks} conflict(s) unresolved`) : zh ? '保存结果并继续' : 'Save result and continue'}
@@ -815,7 +851,11 @@ function toWorkingDeliveryFile(file: TaskGitFileStatus, zh: boolean): DeliveryFi
   return { path: file.path, label: workingFileLabel(file, zh), additions: 0, deletions: 0, workingFile: file };
 }
 
-function workspaceStateLabel(workspace: TaskWorkspaceSnapshot, zh: boolean): string {
+function workspaceStateLabel(workspace: TaskWorkspaceSnapshot, zh: boolean, recovery?: TaskIntegrationRecord): string {
+  if (recovery?.state === 'conflicted') {
+    return recovery.conflictFiles.length > 0 ? (zh ? `${recovery.conflictFiles.length} 个冲突待处理` : `${recovery.conflictFiles.length} conflict(s) pending`) : zh ? '冲突已处理 · 待确认' : 'Conflicts resolved · confirm';
+  }
+  if (recovery?.state === 'pending_local_sync') return zh ? '合入完成 · 待同步' : 'Merged · sync pending';
   if (workspace.state === 'merged') {
     if (!workspace.remoteName) return zh ? '已合入 · 无远端' : 'Merged · no remote';
     return workspace.sourceRemoteVerified ? (zh ? '已合入 · 已推送' : 'Merged · pushed') : zh ? '已合入 · 推送可选' : 'Merged · push optional';
@@ -825,6 +865,11 @@ function workspaceStateLabel(workspace: TaskWorkspaceSnapshot, zh: boolean): str
   const workingCount = collectWorkingFiles(workspace).length;
   if (workingCount > 0) return zh ? `${workingCount} 个未提交文件` : `${workingCount} uncommitted file(s)`;
   return zh ? '已提交 · 可合入' : 'Committed · merge ready';
+}
+
+function findRecoverableIntegration(integrations: TaskIntegrationRecord[], workspaceId?: string): TaskIntegrationRecord | undefined {
+  if (!workspaceId) return undefined;
+  return integrations.find((candidate) => candidate.workspaceId === workspaceId && (candidate.state === 'conflicted' || candidate.state === 'pending_local_sync'));
 }
 
 function confirmActiveSessionRisk(activeConversationCount: number, zh: boolean): boolean {
