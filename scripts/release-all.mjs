@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 /* global console, process */
-import { spawn, spawnSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { basename, dirname, extname, isAbsolute, join, resolve, sep } from 'node:path';
-import { createInterface } from 'node:readline';
+import {spawn, spawnSync} from 'node:child_process';
+import {copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, writeFileSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {basename, dirname, extname, isAbsolute, join, resolve, sep} from 'node:path';
+import {createInterface} from 'node:readline';
 
 const repositoryRoot = resolve(import.meta.dirname, '..');
 const repository = 'imchenway/zeus';
@@ -258,7 +258,7 @@ function assertCommittedCandidateWhitespace(headSha) {
   if (baseTagResult.status !== 0 || !/^v\d+\.\d+\.\d+$/u.test(baseTag)) {
     throw new Error(`发布前无法确认候选提交的本地稳定基线：${baseTagResult.stderr.trim() || baseTagResult.stdout.trim() || 'missing'}`);
   }
-  run('git', ['diff', '--check', `${baseTag}^{commit}`, headSha]);
+    runGit(['diff', '--check', `${baseTag}^{commit}`, headSha]);
   console.log(`发布候选快速空白检查通过：${baseTag}..${headSha.slice(0, 12)}`);
 }
 
@@ -276,7 +276,7 @@ function readLatestStableRelease() {
 }
 
 function fetchReleaseFacts(tag) {
-  run('git', ['fetch', 'origin', 'refs/heads/main:refs/remotes/origin/main', `refs/tags/${tag}:refs/tags/${tag}`]);
+    runGit(['fetch', 'origin', 'refs/heads/main:refs/remotes/origin/main', `refs/tags/${tag}:refs/tags/${tag}`]);
 }
 
 function assertMainRelationship(headSha) {
@@ -529,8 +529,8 @@ function isPreparedWorktree(state, notesTarget) {
 }
 
 function commitPreparedCandidate(state, notesTarget) {
-  run('git', ['add', '--', ...releaseFiles, notesTarget]);
-  run('git', ['commit', '-m', `chore(release): ${state.tag}`]);
+    runGit(['add', '--', ...releaseFiles, notesTarget]);
+    runGit(['commit', '-m', `chore(release): ${state.tag}`]);
   const releaseCommit = git(['rev-parse', 'HEAD']);
   const parent = git(['rev-parse', 'HEAD^']);
   if (parent !== state.sourceHead) throw new Error(`发布提交父提交不一致：expected=${state.sourceHead} actual=${parent}`);
@@ -545,7 +545,7 @@ async function ensureCandidatePreflight(state) {
   const currentHead = git(['rev-parse', 'HEAD']);
   if (currentHead !== state.sourceHead) throw new Error(`快速前置检查发现候选提交漂移：expected=${state.sourceHead} actual=${currentHead}`);
   if (git(['status', '--short'])) throw new Error('快速前置检查要求发布候选工作区干净。');
-  run('git', ['diff', '--check', `${state.baseTag}^{commit}`, state.sourceHead]);
+    runGit(['diff', '--check', `${state.baseTag}^{commit}`, state.sourceHead]);
   if (resolveLocalTagSha(state.tag) || resolveRemoteReference(`refs/tags/${state.tag}`)) {
     throw new Error(`目标标签 ${state.tag} 已存在，拒绝把新候选写入同一版本。`);
   }
@@ -558,7 +558,7 @@ function ensureFastLocalGate(state) {
   if (resolveLocalTagSha(state.tag) || resolveRemoteReference(`refs/tags/${state.tag}`)) {
     throw new Error(`目标标签 ${state.tag} 已存在，但当前发布缺少可恢复的检查摘要。`);
   }
-  run('git', ['diff', '--check', `${state.releaseCommit}^`, state.releaseCommit]);
+    runGit(['diff', '--check', `${state.releaseCommit}^`, state.releaseCommit]);
   const gateDirectory = join(state.stateDirectory, 'gate');
   mkdirSync(gateDirectory, { recursive: true, mode: 0o700 });
   const summaryPath = join(gateDirectory, `Zeus-${state.version}-release-fast-preflight-summary.md`);
@@ -595,7 +595,7 @@ function ensureMainPushed(state) {
   if (!remoteMainSha || capture('git', ['merge-base', '--is-ancestor', remoteMainSha, state.releaseCommit], true).status !== 0) {
     throw new Error(`推送前 origin/main 已领先或分叉，拒绝自动合并或强推：remote=${remoteMainSha ?? 'missing'} release=${state.releaseCommit}`);
   }
-  run('git', ['push', 'origin', 'refs/heads/main:refs/heads/main']);
+    runGit(['push', 'origin', 'refs/heads/main:refs/heads/main']);
   const pushedSha = resolveRemoteReference('refs/heads/main');
   if (pushedSha !== state.releaseCommit) throw new Error(`main 推送后远端提交不一致：expected=${state.releaseCommit} actual=${pushedSha ?? 'missing'}`);
   state.phase = 'main_pushed';
@@ -756,6 +756,10 @@ function run(command, args) {
   const result = spawnSync(command, args, { cwd: repositoryRoot, encoding: 'utf8', stdio: 'inherit' });
   if (result.error) throw result.error;
   if (result.status !== 0) throw new Error(`${command} ${args.join(' ')} 执行失败，退出码 ${result.status ?? 'unknown'}。`);
+}
+
+function runGit(args) {
+    run('git', ['--no-pager', ...args]);
 }
 
 function capture(command, args, allowFailure = false, timeout = 30_000) {
