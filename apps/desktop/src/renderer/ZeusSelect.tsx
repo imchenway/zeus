@@ -121,7 +121,7 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
   const openListbox = (nextActiveValue = props.value) => {
     if (props.disabled || enabledOptions.length === 0) return;
     const resolvedActiveValue = enabledOptions.some((option) => option.value === nextActiveValue) ? nextActiveValue : enabledOptions[0]?.value;
-    if (!resolvedActiveValue) return;
+    if (resolvedActiveValue === undefined) return;
     setQuery('');
     setActiveValue(resolvedActiveValue);
     syncPopoverLayout();
@@ -141,7 +141,7 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
     const currentIndex = enabledVisibleOptions.findIndex((option) => option.value === activeValue);
     const nextIndex = direction === 'first' ? 0 : direction === 'last' ? enabledVisibleOptions.length - 1 : Math.min(Math.max(currentIndex + direction, 0), enabledVisibleOptions.length - 1);
     const nextValue = enabledVisibleOptions[nextIndex]?.value;
-    if (!nextValue) return;
+    if (nextValue === undefined) return;
     setActiveValue(nextValue);
     focusOption(nextValue);
   };
@@ -203,14 +203,14 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
     } else if (event.key === 'ArrowDown') {
       event.preventDefault();
       const nextValue = enabledVisibleOptions.find((option) => option.value === activeValue)?.value ?? enabledVisibleOptions[0]?.value;
-      if (nextValue) {
+      if (nextValue !== undefined) {
         setActiveValue(nextValue);
         focusOption(nextValue);
       }
     } else if (event.key === 'ArrowUp') {
       event.preventDefault();
       const nextValue = enabledVisibleOptions.at(-1)?.value;
-      if (nextValue) {
+      if (nextValue !== undefined) {
         setActiveValue(nextValue);
         focusOption(nextValue);
       }
