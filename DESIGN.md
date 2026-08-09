@@ -237,7 +237,7 @@ quality_gates:
 - 原语组件统一拥有 DOM 结构、键盘语义、hover、focus、selected、disabled、动效和 reduced-motion；业务页面只提供内容并选择显式变体。
 - `Button` 使用 `primary / secondary / danger` 语义变体和 `compact / regular` 尺寸；三种变体统一高度、字号、圆角、内边距、可见边框、焦点环、禁用和忙碌状态。危险按钮必须使用危险色边框与危险色焦点环，深色模式不得退回普通按钮的浅色描边。业务页面不得借用其他页面按钮 class，也不得为单个弹窗重写危险按钮皮肤。
 - `Select` 的尺寸使用 `compact / regular / roomy` 组件属性，不通过父页面选择器推断。
-- `Select` 展开层必须通过 portal 提升到应用壳层，并按触发器的视口坐标固定定位；下方能完整容纳菜单时向下展开，否则向上完整展开，不比较两侧剩余空间，不因视口高度额外压缩菜单；展开层不得留在表单、抽屉或其他滚动容器中扩大 `scrollHeight`，展开前后业务布局尺寸必须保持不变。
+- `Select` 展开层必须通过 portal 提升到应用壳层，并按触发器的视口坐标固定定位；浮层至少与触发器等宽，并按本次打开时的完整选项内容自适应宽度，最大不超过视口安全边界；触发器和业务布局不得随浮层变宽。下方能完整容纳菜单时向下展开，否则向上完整展开，不比较两侧剩余空间，不因视口高度额外压缩菜单；展开层不得留在表单、抽屉或其他滚动容器中扩大 `scrollHeight`，展开前后业务布局尺寸必须保持不变；达到视口宽度上限时只允许选项文字省略，不允许换行或横向滚动。
 - `ModalPortal` 是所有阻断式表单弹窗的唯一 body portal 壳层。portal 根层必须保持透明，只有 `backdrop` 可以绘制 `--zeus-overlay-backdrop-bg` 与 `--zeus-overlay-backdrop-filter`；禁止把主题画布色刷到覆盖全窗口的 portal 根层。弹窗 footer 的确认、取消与危险动作必须复用全局 `Button` 尺寸。
 - `Drawer` 的形态使用 `floating / sheet`，所有生产抽屉统一使用 `dimmed` 遮罩并消费与 `ModalPortal` 相同的遮罩与虚化 token；禁止任务详情、项目配置或其他业务抽屉恢复透明遮罩。允许的组合由 TypeScript 属性约束，不通过业务 class 名或 `:has()` 推断。
 - `SourceListRow` 共享 `--zeus-source-list-hover`、`--zeus-source-list-selected` 和圆角 token，但必须显式选择表面范围：`content` 只包裹身份内容，`fill` 覆盖整行导航目标；项目根行和项目内页面入口使用 `fill`，使项目根行的统一圆角表面包含右侧操作槽。项目根行使用 `--zeus-source-list-root-row-radius: 10px` 与 `30px` 总高，紧凑子行使用 `--zeus-source-list-row-radius: 8px` 与 `26px` 总高。
@@ -802,7 +802,7 @@ quality_gates:
 - 原语组件统一拥有 DOM 结构、键盘语义、hover、focus、selected、disabled、动效和 reduced-motion；业务页面只提供内容并选择显式变体。
 - `Button` 使用 `primary / secondary / danger` 语义变体和 `compact / regular` 尺寸；三种变体统一高度、字号、圆角、内边距、可见边框、焦点环、禁用和忙碌状态。危险按钮必须使用危险色边框与危险色焦点环，深色模式不得退回普通按钮的浅色描边。业务页面不得借用其他页面按钮 class，也不得为单个弹窗重写危险按钮皮肤。
 - `Select` 的尺寸使用 `compact / regular / roomy` 组件属性，不通过父页面选择器推断。
-- `Select` 展开层必须通过 portal 提升到应用壳层，并按触发器的视口坐标固定定位；下方能完整容纳菜单时向下展开，否则向上完整展开，不比较两侧剩余空间，不因视口高度额外压缩菜单；展开层不得留在表单、抽屉或其他滚动容器中扩大 `scrollHeight`，展开前后业务布局尺寸必须保持不变。
+- `Select` 展开层必须通过 portal 提升到应用壳层，并按触发器的视口坐标固定定位；浮层至少与触发器等宽，并按本次打开时的完整选项内容自适应宽度，最大不超过视口安全边界；触发器和业务布局不得随浮层变宽。下方能完整容纳菜单时向下展开，否则向上完整展开，不比较两侧剩余空间，不因视口高度额外压缩菜单；展开层不得留在表单、抽屉或其他滚动容器中扩大 `scrollHeight`，展开前后业务布局尺寸必须保持不变；达到视口宽度上限时只允许选项文字省略，不允许换行或横向滚动。
 - `ModalPortal` 是所有阻断式表单弹窗的唯一 body portal 壳层。portal 根层必须保持透明，只有 `backdrop` 可以绘制 `--zeus-overlay-backdrop-bg` 与 `--zeus-overlay-backdrop-filter`；禁止把主题画布色刷到覆盖全窗口的 portal 根层。弹窗 footer 的确认、取消与危险动作必须复用全局 `Button` 尺寸。
 - `Drawer` 的形态使用 `floating / sheet`，所有生产抽屉统一使用 `dimmed` 遮罩并消费与 `ModalPortal` 相同的遮罩与虚化 token；禁止任务详情、项目配置或其他业务抽屉恢复透明遮罩。允许的组合由 TypeScript 属性约束，不通过业务 class 名或 `:has()` 推断。
 - `SourceListRow` 共享 `--zeus-source-list-hover`、`--zeus-source-list-selected` 和圆角 token，但必须显式选择表面范围：`content` 只包裹身份内容，`fill` 覆盖整行导航目标；项目根行和项目内页面入口使用 `fill`，使项目根行的统一圆角表面包含右侧操作槽。项目根行使用 `--zeus-source-list-root-row-radius: 10px` 与 `30px` 总高，紧凑子行使用 `--zeus-source-list-row-radius: 8px` 与 `26px` 总高。

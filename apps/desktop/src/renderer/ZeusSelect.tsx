@@ -46,6 +46,20 @@ function filterSelectOptions<T extends string>(options: readonly ZeusSelectOptio
   return options.filter((option) => `${option.label} ${option.value}`.toLocaleLowerCase().includes(normalizedQuery));
 }
 
+function measurePopoverContentWidth(popover: HTMLElement, maxWidth: number): number {
+  const previousWidth = popover.style.width;
+  const previousMinWidth = popover.style.minWidth;
+  const previousMaxWidth = popover.style.maxWidth;
+  popover.style.width = 'max-content';
+  popover.style.minWidth = '0px';
+  popover.style.maxWidth = `${maxWidth}px`;
+  const measuredWidth = popover.getBoundingClientRect().width;
+  popover.style.width = previousWidth;
+  popover.style.minWidth = previousMinWidth;
+  popover.style.maxWidth = previousMaxWidth;
+  return measuredWidth;
+}
+
 export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
   const generatedId = useId();
   const rootRef = useRef<HTMLSpanElement | null>(null);
@@ -53,6 +67,7 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
   const popoverRef = useRef<HTMLSpanElement | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
   const optionRefs = useRef(new Map<T, HTMLButtonElement>());
+  const popoverContentWidthRef = useRef(0);
   const enabledOptions = useMemo(() => props.options.filter((option) => !option.disabled), [props.options]);
   const searchable = props.searchable ?? props.options.length > 8;
   const selectedOption = props.options.find((option) => option.value === props.value) ?? props.options[0];
@@ -92,7 +107,11 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
     const triggerRect = trigger.getBoundingClientRect();
     const viewportPadding = 8;
     const popoverGap = 6;
-    const width = Math.min(Math.max(triggerRect.width, props.popoverMinWidth ?? 0), Math.max(0, window.innerWidth - viewportPadding * 2));
+    const maxWidth = Math.max(0, window.innerWidth - viewportPadding * 2);
+    if (popoverRef.current) {
+      popoverContentWidthRef.current = Math.max(popoverContentWidthRef.current, measurePopoverContentWidth(popoverRef.current, maxWidth));
+    }
+    const width = Math.min(Math.max(triggerRect.width, props.popoverMinWidth ?? 0, popoverContentWidthRef.current), maxWidth);
     const left = Math.min(Math.max(triggerRect.left, viewportPadding), Math.max(viewportPadding, window.innerWidth - width - viewportPadding));
     const popoverHeight = popoverRef.current?.offsetHeight ?? 0;
     const bottomTop = triggerRect.bottom + popoverGap;
@@ -124,7 +143,8 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
     if (!resolvedActiveValue) return;
     setQuery('');
     setActiveValue(resolvedActiveValue);
-    syncPopoverLayout();
+    popoverContentWidthRef.current = 0;
+    setPopoverLayout(null);
     setOpen(true);
     // 长列表优先聚焦搜索；任务工具栏这类短列表直接聚焦选项，避免顶部搜索灰区抢占视觉。
     focusElement(searchable ? (searchRef.current ?? undefined) : (optionRefs.current.get(resolvedActiveValue) ?? undefined));
@@ -250,7 +270,7 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
       window.removeEventListener('resize', syncPopoverLayout);
       document.removeEventListener('scroll', syncPopoverLayout, true);
     };
-  }, [open, syncPopoverLayout]);
+  }, [open, searchPlaceholder, searchable, syncPopoverLayout, visibleOptions]);
 
   useEffect(() => {
     if (!open || typeof window === 'undefined') return undefined;
