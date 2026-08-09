@@ -40,16 +40,27 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     () => props.state.itemOrder.map((key) => props.state.items[key]).filter((entry): entry is NativeSessionItemBuffer => Boolean(entry) && isVisibleTranscriptItem(entry)),
     [props.state.itemOrder, props.state.items],
   );
+  const collapsedErrorItems = useMemo(() => collapseRepeatedErrorItems(projectedItems), [projectedItems]);
+  const providerErrorItemsByTurn = useMemo(() => groupErrorItemsByTurn(collapsedErrorItems), [collapsedErrorItems]);
+  const transcriptItems = useMemo(
+    () =>
+      collapsedErrorItems.filter((item) => {
+        const turn = props.state.turnsByProviderId[item.turnId];
+        // 轮次失败卡片已经承载底层原因时，不再把同一诊断事件单独画成第二张红卡。
+        return !(itemRole(item) === 'error' && turn?.status === 'failed' && turn.error);
+      }),
+    [collapsedErrorItems, props.state.turnsByProviderId],
+  );
   const items = useMemo(
     () =>
       latestReasoningItemsByTurn(
-        projectedItems.filter((entry) => !entry.optimistic),
+        transcriptItems.filter((entry) => !entry.optimistic),
         props.state.activeTurnId,
       ),
-    [projectedItems, props.state.activeTurnId],
+    [props.state.activeTurnId, transcriptItems],
   );
-  const immediateOptimisticItems = useMemo(() => projectedItems.filter((entry) => entry.optimistic && entry.status !== 'queued' && !queuedClientIds.has(entry.clientUserMessageId ?? '')), [projectedItems, queuedClientIds]);
-  const queuedOptimisticItems = useMemo(() => projectedItems.filter((entry) => entry.optimistic && entry.status === 'queued' && !queuedClientIds.has(entry.clientUserMessageId ?? '')), [projectedItems, queuedClientIds]);
+  const immediateOptimisticItems = useMemo(() => transcriptItems.filter((entry) => entry.optimistic && entry.status !== 'queued' && !queuedClientIds.has(entry.clientUserMessageId ?? '')), [queuedClientIds, transcriptItems]);
+  const queuedOptimisticItems = useMemo(() => transcriptItems.filter((entry) => entry.optimistic && entry.status === 'queued' && !queuedClientIds.has(entry.clientUserMessageId ?? '')), [queuedClientIds, transcriptItems]);
   const lastUserKey = [...items].reverse().find((entry) => `${entry.type}`.toLocaleLowerCase().includes('user'))?.key;
   const lastAssistantKey = [...items].reverse().find((entry) => itemRole(entry) === 'assistant')?.key;
   const answeredRequests = useMemo(() => props.state.pendingRequests.filter(isAnsweredUserInputRequest), [props.state.pendingRequests]);
@@ -185,7 +196,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
                   {closesVisibleTurn && changeSet && changeSet.state !== 'capturing' && (changeSet.fileCount > 0 || changeSet.state === 'conflicted') ? (
                     <TurnChangeCard changeSet={changeSet} language={props.language} onReview={props.onReviewTurnChanges} onOperate={props.onOperateTurnChangeSet} />
                   ) : null}
-                  {closesVisibleTurn && turn?.status === 'failed' && turn.error ? <TurnFailureCard failure={turn.error} language={props.language} /> : null}
+                  {closesVisibleTurn && turn?.status === 'failed' && turn.error ? <TurnFailureCard failure={turn.error} language={props.language} providerErrors={providerErrorItemsByTurn.get(lastRowItem.turnId)} /> : null}
                   {closesVisibleTurn && turn ? <SessionTurnDuration turn={turn} requests={props.state.pendingRequests} language={props.language} /> : null}
                 </Fragment>
               );
@@ -198,7 +209,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
             </p>
           ) : null}
           {orphanFailedTurns.map((turn) => (
-            <TurnFailureCard key={`turn-failure:${turn.providerTurnId ?? turn.id}`} failure={turn.error!} language={props.language} />
+            <TurnFailureCard key={`turn-failure:${turn.providerTurnId ?? turn.id}`} failure={turn.error!} language={props.language} providerErrors={providerErrorItemsByTurn.get(turn.providerTurnId ?? '')} />
           ))}
           {immediateOptimisticItems.map((item) => (
             <ThreadItemView key={item.key} item={item} language={props.language} isLatest onVisibleContentChange={maintainLatestPosition} />
@@ -236,9 +247,10 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   );
 }
 
-function TurnFailureCard(props: { failure: NativeTurnFailureSnapshot; language: SessionUiLanguage }) {
+function TurnFailureCard(props: { failure: NativeTurnFailureSnapshot; language: SessionUiLanguage; providerErrors?: readonly NativeSessionItemBuffer[] }) {
   const zh = props.language === 'zh-CN';
   const copy = failureCopy(props.failure.category, zh);
+  const providerDetails = (props.providerErrors ?? []).map(providerErrorDetails);
   return (
     <article className="session-turn-failure" role="alert" aria-label={zh ? '会话失败原因' : 'Conversation failure reason'}>
       <strong>{zh ? '本轮执行失败' : 'This turn failed'}</strong>
@@ -261,6 +273,24 @@ function TurnFailureCard(props: { failure: NativeTurnFailureSnapshot; language: 
           ) : null}
           <dt>{zh ? '原始原因（已脱敏）' : 'Original reason (redacted)'}</dt>
           <dd>{props.failure.message}</dd>
+          {providerDetails.map((detail) => (
+            <Fragment key={`${detail.code ?? ''}:${detail.message}:${detail.method ?? ''}`}>
+              {detail.code ? (
+                <>
+                  <dt>{zh ? '底层错误代码' : 'Provider error code'}</dt>
+                  <dd>{detail.code}</dd>
+                </>
+              ) : null}
+              <dt>{zh ? '底层错误' : 'Provider error'}</dt>
+              <dd>{detail.message}</dd>
+              {detail.method ? (
+                <>
+                  <dt>{zh ? '触发事件' : 'Provider event'}</dt>
+                  <dd>{detail.method}</dd>
+                </>
+              ) : null}
+            </Fragment>
+          ))}
           {props.failure.additionalDetails.map((detail) => (
             <Fragment key={detail}>
               <dt>{zh ? '补充信息' : 'Additional detail'}</dt>
@@ -307,6 +337,61 @@ export type TranscriptRow =
       key: string;
       items: NativeSessionItemBuffer[];
     };
+
+function collapseRepeatedErrorItems(items: readonly NativeSessionItemBuffer[]): NativeSessionItemBuffer[] {
+  const seen = new Set<string>();
+  const result: NativeSessionItemBuffer[] = [];
+  for (const item of items) {
+    if (itemRole(item) !== 'error') {
+      result.push(item);
+      continue;
+    }
+    // Provider 事件异常仍保留首条原始诊断；后续相同错误只在展示层合并，避免一轮出现多张相同红卡。
+    const key = `${item.turnId}\u0000${providerErrorFingerprint(item)}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(item);
+  }
+  return result;
+}
+
+function groupErrorItemsByTurn(items: readonly NativeSessionItemBuffer[]): Map<string, NativeSessionItemBuffer[]> {
+  const grouped = new Map<string, NativeSessionItemBuffer[]>();
+  for (const item of items) {
+    if (itemRole(item) !== 'error') continue;
+    const turnItems = grouped.get(item.turnId) ?? [];
+    turnItems.push(item);
+    grouped.set(item.turnId, turnItems);
+  }
+  return grouped;
+}
+
+function providerErrorFingerprint(item: NativeSessionItemBuffer): string {
+  const detail = providerErrorDetails(item);
+  const fingerprint = `${detail.code ?? ''}\u001f${detail.message}`;
+  return fingerprint === '\u001f' ? (item.providerItemId ?? item.key) : fingerprint;
+}
+
+function providerErrorDetails(item: NativeSessionItemBuffer): { code: string | null; message: string; method: string | null } {
+  const nestedError = recordValue(item.payload.error);
+  const code = primitiveValue(nestedError?.code ?? item.payload.code);
+  const message = primitiveValue(nestedError?.message ?? item.payload.message ?? item.text) ?? '';
+  return {
+    code,
+    message,
+    method: primitiveValue(item.payload.method),
+  };
+}
+
+function recordValue(value: unknown): Record<string, unknown> | null {
+  return typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
+
+function primitiveValue(value: unknown): string | null {
+  if (typeof value === 'string' && value.trim()) return value.trim();
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  return null;
+}
 
 export function projectTranscriptRows(items: readonly NativeSessionItemBuffer[], answeredRequests: readonly NativePendingRequest[] = []): TranscriptRow[] {
   const rows: TranscriptRow[] = [];
