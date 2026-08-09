@@ -1865,67 +1865,67 @@
 }
 
 .session-codex-parity-v1 .session-turn-failure {
-    background: color-mix(in srgb, var(--session-danger) 7%, var(--session-control));
-    border: 1px solid color-mix(in srgb, var(--session-danger) 28%, var(--session-line));
-    border-radius: 12px;
-    box-sizing: border-box;
-    color: var(--session-text);
-    display: grid;
-    gap: 7px;
-    inline-size: min(var(--session-thread-max), 100%);
-    margin-inline: auto;
-    padding: 13px 15px;
+  background: color-mix(in srgb, var(--session-danger) 7%, var(--session-control));
+  border: 1px solid color-mix(in srgb, var(--session-danger) 28%, var(--session-line));
+  border-radius: 12px;
+  box-sizing: border-box;
+  color: var(--session-text);
+  display: grid;
+  gap: 7px;
+  inline-size: min(var(--session-thread-max), 100%);
+  margin-inline: auto;
+  padding: 13px 15px;
 }
 
 .session-codex-parity-v1 .session-turn-failure > strong {
-    color: var(--session-danger);
-    font-size: 13px;
+  color: var(--session-danger);
+  font-size: 13px;
 }
 
 .session-codex-parity-v1 .session-turn-failure > :where(p, small) {
-    margin: 0;
-    overflow-wrap: anywhere;
+  margin: 0;
+  overflow-wrap: anywhere;
 }
 
 .session-codex-parity-v1 .session-turn-failure > p {
-    font-size: 13px;
-    line-height: 1.55;
+  font-size: 13px;
+  line-height: 1.55;
 }
 
 .session-codex-parity-v1 .session-turn-failure > small {
-    color: var(--session-text-muted);
-    line-height: 1.5;
+  color: var(--session-text-muted);
+  line-height: 1.5;
 }
 
 .session-codex-parity-v1 .session-turn-failure-details {
-    border-block-start: 1px solid color-mix(in srgb, var(--session-danger) 18%, var(--session-line-soft));
-    color: var(--session-text-muted);
-    margin-block-start: 2px;
-    padding-block-start: 8px;
+  border-block-start: 1px solid color-mix(in srgb, var(--session-danger) 18%, var(--session-line-soft));
+  color: var(--session-text-muted);
+  margin-block-start: 2px;
+  padding-block-start: 8px;
 }
 
 .session-codex-parity-v1 .session-turn-failure-details summary {
-    cursor: pointer;
-    font-size: 12px;
-    font-weight: 620;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 620;
 }
 
 .session-codex-parity-v1 .session-turn-failure-details dl {
-    display: grid;
-    font-size: 11px;
-    gap: 5px 12px;
-    grid-template-columns: max-content minmax(0, 1fr);
-    margin: 9px 0 0;
+  display: grid;
+  font-size: 11px;
+  gap: 5px 12px;
+  grid-template-columns: max-content minmax(0, 1fr);
+  margin: 9px 0 0;
 }
 
 .session-codex-parity-v1 .session-turn-failure-details :where(dt, dd) {
-    margin: 0;
-    overflow-wrap: anywhere;
+  margin: 0;
+  overflow-wrap: anywhere;
 }
 
 .session-codex-parity-v1 .session-turn-failure-details dt {
-    color: var(--session-text);
-    font-weight: 620;
+  color: var(--session-text);
+  font-weight: 620;
 }
 
 .session-codex-parity-v1 .session-plan-dock {
@@ -4729,9 +4729,9 @@
   min-inline-size: 0;
 }
 
-.session-codex-parity-v1 .session-turn-change-summary strong {
+.session-codex-parity-v1 .session-turn-change-title {
   font-size: 15px;
-  font-weight: 580;
+  font-weight: 400;
   line-height: 22px;
 }
 
@@ -4766,7 +4766,7 @@
 .session-codex-parity-v1 .session-turn-change-card nav {
   align-items: center;
   display: flex;
-  gap: 5px;
+  gap: 3px;
 }
 
 .session-codex-parity-v1 .session-turn-change-card nav > button {
@@ -4774,13 +4774,14 @@
   appearance: none;
   background: transparent;
   border: 0;
-  border-radius: 9px;
+  border-radius: 7px;
   cursor: pointer;
   display: inline-flex;
+  font-size: 13px;
   font-weight: 540;
-  gap: 6px;
-  min-block-size: 36px;
-  padding: 0 10px;
+  gap: 4px;
+  min-block-size: 28px;
+  padding: 0 8px;
 }
 
 .session-codex-parity-v1 .session-turn-change-card nav > button:hover {
@@ -4793,13 +4794,13 @@
 }
 
 .session-codex-parity-v1 .session-turn-change-card nav svg {
-  block-size: 17px;
-  inline-size: 17px;
+  block-size: 15px;
+  inline-size: 15px;
 }
 
 .session-codex-parity-v1 .session-turn-change-review {
   border: 1px solid var(--session-line) !important;
-  padding-inline: 15px !important;
+  padding-inline: 10px !important;
 }
 
 .session-codex-parity-v1 .session-turn-change-error {
@@ -10201,9 +10202,9 @@
   min-inline-size: 0;
 }
 
-.session-codex-parity-v1 .session-turn-change-summary strong {
+.session-codex-parity-v1 .session-turn-change-title {
   font-size: 15px;
-  font-weight: 580;
+  font-weight: 400;
   line-height: 22px;
 }
 
@@ -10238,7 +10239,7 @@
 .session-codex-parity-v1 .session-turn-change-card nav {
   align-items: center;
   display: flex;
-  gap: 5px;
+  gap: 3px;
 }
 
 .session-codex-parity-v1 .session-turn-change-card nav > button {
@@ -10246,13 +10247,14 @@
   appearance: none;
   background: transparent;
   border: 0;
-  border-radius: 9px;
+  border-radius: 7px;
   cursor: pointer;
   display: inline-flex;
+  font-size: 13px;
   font-weight: 540;
-  gap: 6px;
-  min-block-size: 36px;
-  padding: 0 10px;
+  gap: 4px;
+  min-block-size: 28px;
+  padding: 0 8px;
 }
 
 .session-codex-parity-v1 .session-turn-change-card nav > button:hover {
@@ -10265,13 +10267,13 @@
 }
 
 .session-codex-parity-v1 .session-turn-change-card nav svg {
-  block-size: 17px;
-  inline-size: 17px;
+  block-size: 15px;
+  inline-size: 15px;
 }
 
 .session-codex-parity-v1 .session-turn-change-review {
   border: 1px solid var(--session-line) !important;
-  padding-inline: 15px !important;
+  padding-inline: 10px !important;
 }
 
 .session-codex-parity-v1 .session-turn-change-error {
