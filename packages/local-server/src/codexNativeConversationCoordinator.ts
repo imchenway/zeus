@@ -50,6 +50,7 @@ import type {
   WaitForNativeTurnResultInput,
 } from './codexNativeConversationContracts.js';
 import { parseCanonicalRequestUserInputQuestions, validateCanonicalRequestUserInputAnswers } from './codexNativeRuiValidation.js';
+import { chooseNativeUserMessageContent, resolveNativeUserMessageSubmission, type ResolvedNativeUserMessageSubmission } from './codexNativeUserMessageProjection.js';
 import type { BrowserAutomationPort } from './browserAutomation.js';
 import { zeusBrowserDynamicTools } from './browserDynamicTools.js';
 import { normalizeConversationResources, toConversationResource } from './conversationResources.js';
@@ -1248,8 +1249,11 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     }
   }
 
-  function persistProviderUserMessage(conversation: ZeusConversationWithMessagesRecord, turn: ZeusConversationTurnRecord, itemPayload: Record<string, unknown>, content: string, providerItemId: string, createdAt: string): string | null {
-    const providerClientId = typeof itemPayload.clientId === 'string' && itemPayload.clientId.trim() ? itemPayload.clientId : null;
+  interface NativeUserMessageProjection extends ResolvedNativeUserMessageSubmission {
+    content: string;
+  }
+
+  function projectProviderUserMessage(conversation: ZeusConversationWithMessagesRecord, turn: ZeusConversationTurnRecord, itemPayload: Record<string, unknown>, providerContent: string, providerItemId: string): NativeUserMessageProjection {
     const existingProviderMessage = conversation.messages.find((message) => message.providerItemId === providerItemId);
     const existingClientIds = new Set(
       conversation.messages
@@ -1258,23 +1262,43 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         .filter((value): value is string => Boolean(value)),
     );
     const submissions = options.submissions.listByConversation(conversation.id);
-    const existingProviderClientId = existingProviderMessage ? conversationMessageClientId(existingProviderMessage) : null;
-    const providerClientIdIsAvailable = providerClientId !== null && !existingClientIds.has(providerClientId);
-    // 同一 Provider 项的重复事件沿用原绑定；新项优先使用 Provider 返回的客户端 ID。
-    // 若 Provider 返回的 ID 已绑定到其他项，不把另一条 submission 错绑过来。
-    const durableClientId = existingProviderClientId ?? (providerClientIdIsAvailable ? providerClientId : null);
-    const submission = durableClientId
-      ? submissions.find((entry) => entry.clientMessageId === durableClientId)
-      : providerClientId
-        ? undefined
-        : (submissions.find((entry) => entry.id === turn.clientSubmissionId && !existingClientIds.has(entry.clientMessageId)) ??
-          submissions.find((entry) => entry.providerTurnId === turn.providerTurnId && !existingClientIds.has(entry.clientMessageId)));
-    const clientMessageId = durableClientId ?? submission?.clientMessageId ?? null;
-    const visibleContent = typeof itemPayload.displayText === 'string' && itemPayload.displayText.trim() ? itemPayload.displayText : content;
+    const resolved = resolveNativeUserMessageSubmission({
+      submissions,
+      providerClientId: typeof itemPayload.clientId === 'string' ? itemPayload.clientId : null,
+      clientSubmissionId: turn.clientSubmissionId,
+      providerTurnId: turn.providerTurnId,
+      existingMessage: existingProviderMessage ? { clientMessageId: conversationMessageClientId(existingProviderMessage) } : undefined,
+      existingClientMessageIds: existingClientIds,
+    });
+    const submissionInput = resolved.submission ? parseJsonRecord(resolved.submission.inputJson) : {};
+    return {
+      ...resolved,
+      content: chooseNativeUserMessageContent({
+        displayText: itemPayload.displayText,
+        submissionDisplayText: submissionInput.displayText,
+        submissionText: resolved.submission ? submissionText(resolved.submission) : undefined,
+        existingContent: existingProviderMessage?.content,
+        providerContent,
+      }),
+    };
+  }
+
+  function persistProviderUserMessage(
+    conversation: ZeusConversationWithMessagesRecord,
+    itemPayload: Record<string, unknown>,
+    projection: NativeUserMessageProjection,
+    providerTurnId: string,
+    providerThreadId: string,
+    providerItemId: string,
+    createdAt: string,
+  ): string | null {
+    const existingProviderMessage = conversation.messages.find((message) => message.providerItemId === providerItemId);
+    const clientMessageId = projection.clientMessageId;
+    const submission = projection.submission;
     options.conversations.appendMessage({
       conversationId: conversation.id,
       role: 'user',
-      content: visibleContent,
+      content: projection.content,
       source: 'codex_native',
       metadata: {
         ...(existingProviderMessage ? parseJsonRecord(existingProviderMessage.metadataJson) : {}),
@@ -1285,8 +1309,8 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         ...(typeof itemPayload.planItemId === 'string' ? { planItemId: itemPayload.planItemId } : {}),
       },
       createdAt,
-      providerThreadId: turn.providerThreadId,
-      providerTurnId: requireString(turn.providerTurnId, 'provider turn id'),
+      providerThreadId,
+      providerTurnId,
       providerItemId,
       ...(clientMessageId ? { clientMessageId } : {}),
     });
@@ -2701,19 +2725,35 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       const turn = providerTurnId ? options.turns.listByConversation(conversation.id).find((candidate) => candidate.providerTurnId === providerTurnId) : undefined;
       if (!providerTurnId || !providerItemId || !turn) return;
       const presentedItemPayload = itemPayload.type === 'userMessage' ? { ...itemPayload, ...submissionPresentation(turn) } : itemPayload;
-      const item = options.items.appendDelta({
-        conversationId: conversation.id,
-        turnId: turn.id,
-        providerThreadId: threadId,
-        providerTurnId,
-        providerItemId,
-        itemType: itemTypeFromValue(itemPayload.type),
-        phase: phaseFromItem(itemPayload),
-        payload: presentedItemPayload,
-        delta: '',
-        startedAt: event.receivedAt,
-        updatedAt: event.receivedAt,
-      });
+      const itemType = itemTypeFromValue(itemPayload.type);
+      const userMessageProjection = itemType === 'userMessage' ? projectProviderUserMessage(conversation, turn, presentedItemPayload, itemText(itemPayload), providerItemId) : null;
+      const item = userMessageProjection
+        ? options.items.upsertProgress({
+            conversationId: conversation.id,
+            turnId: turn.id,
+            providerThreadId: threadId,
+            providerTurnId,
+            providerItemId,
+            itemType,
+            phase: phaseFromItem(itemPayload),
+            payload: presentedItemPayload,
+            textContent: userMessageProjection.content,
+            startedAt: event.receivedAt,
+            updatedAt: event.receivedAt,
+          })
+        : options.items.appendDelta({
+            conversationId: conversation.id,
+            turnId: turn.id,
+            providerThreadId: threadId,
+            providerTurnId,
+            providerItemId,
+            itemType,
+            phase: phaseFromItem(itemPayload),
+            payload: presentedItemPayload,
+            delta: '',
+            startedAt: event.receivedAt,
+            updatedAt: event.receivedAt,
+          });
       if (item.itemType === 'fileChange') {
         options.changeSets?.capture({
           conversation,
@@ -2724,8 +2764,9 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
           timestamp: event.receivedAt,
         });
       }
-      const durableClientMessageId = item.itemType === 'userMessage' ? persistProviderUserMessage(conversation, turn, presentedItemPayload, item.textContent || itemText(itemPayload), providerItemId, event.receivedAt) : null;
-      const itemResources = syncItemResources(conversation, turn, item, presentedItemPayload, item.textContent || itemText(itemPayload), event.receivedAt);
+      const durableClientMessageId =
+        item.itemType === 'userMessage' && userMessageProjection ? persistProviderUserMessage(conversation, presentedItemPayload, userMessageProjection, providerTurnId, threadId, providerItemId, event.receivedAt) : null;
+      const itemResources = syncItemResources(conversation, turn, item, presentedItemPayload, item.textContent, event.receivedAt);
       broadcast = {
         type: 'conversation.item.started',
         payload: {
@@ -2735,7 +2776,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
           providerItemId,
           itemType: item.itemType,
           itemPayload: { ...parseJsonRecord(item.payloadJson), ...(item.itemType === 'userMessage' ? { clientId: durableClientMessageId } : {}) },
-          textContent: item.itemType === 'userMessage' ? itemText(itemPayload) : item.textContent,
+          textContent: item.textContent,
           status: item.status,
           phase: item.phase,
           itemResources,
@@ -2925,7 +2966,10 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       const presentedItemPayload = itemPayload.type === 'userMessage' ? { ...itemPayload, ...submissionPresentation(turn) } : itemPayload;
       const itemType = itemTypeFromValue(itemPayload.type);
       const existing = options.items.getByProvider(threadId, providerItemId);
-      const completedProjection = completedItemProjection(existing, presentedItemPayload, itemType);
+      const userMessageProjection = itemType === 'userMessage' ? projectProviderUserMessage(conversation, turn, presentedItemPayload, itemText(itemPayload), providerItemId) : null;
+      const completedProjection = userMessageProjection
+        ? { ...completedItemProjection(existing, presentedItemPayload, itemType), textContent: userMessageProjection.content }
+        : completedItemProjection(existing, presentedItemPayload, itemType);
       const item = options.items.upsertCompleted({
         conversationId: conversation.id,
         turnId: turn.id,
@@ -2942,8 +2986,8 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         updatedAt: event.receivedAt,
       });
       let durableClientMessageId: string | null = null;
-      if (item.itemType === 'userMessage') {
-        durableClientMessageId = persistProviderUserMessage(conversation, turn, presentedItemPayload, item.textContent, providerItemId, event.receivedAt);
+      if (item.itemType === 'userMessage' && userMessageProjection) {
+        durableClientMessageId = persistProviderUserMessage(conversation, presentedItemPayload, userMessageProjection, providerTurnId, threadId, providerItemId, event.receivedAt);
       } else if (item.itemType === 'agentMessage') {
         options.conversations.appendMessage({
           conversationId: conversation.id,
