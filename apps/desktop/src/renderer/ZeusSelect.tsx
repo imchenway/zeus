@@ -55,7 +55,7 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
   const optionRefs = useRef(new Map<T, HTMLButtonElement>());
   const enabledOptions = useMemo(() => props.options.filter((option) => !option.disabled), [props.options]);
   const searchable = props.searchable ?? props.options.length > 8;
-  const selectedOption = props.options.find((option) => option.value === props.value) ?? props.options[0];
+  const selectedOption = props.options.find((option) => option.value === props.value);
   const [open, setOpen] = useState(false);
   const [activeValue, setActiveValue] = useState<T>(props.value);
   const [query, setQuery] = useState('');

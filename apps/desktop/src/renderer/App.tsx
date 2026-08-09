@@ -6083,9 +6083,9 @@ function TaskDeleteRelationshipDialog(props: { task?: TaskRecord; allTasks: Task
                 size="regular"
                 ariaLabel={zh ? '选择新的父任务' : 'Choose the new parent task'}
                 value={replacementParentTaskId}
-                options={replacementCandidates.map((task) => ({ value: task.id, label: `${task.taskCode ?? task.id} · ${task.title}` }))}
+                options={[{ value: '', label: zh ? '请选择新的父任务' : 'Select a replacement parent', disabled: true }, ...replacementCandidates.map((task) => ({ value: task.id, label: `${task.taskCode ?? task.id} · ${task.title}` }))]}
                 onChange={setReplacementParentTaskId}
-                disabled={props.busy}
+                disabled={props.busy || replacementCandidates.length === 0}
               />
             ) : null}
             <label>
