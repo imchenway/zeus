@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 /* global console, process */
-import {spawn, spawnSync} from 'node:child_process';
-import {copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, writeFileSync} from 'node:fs';
-import {tmpdir} from 'node:os';
-import {basename, dirname, extname, isAbsolute, join, resolve, sep} from 'node:path';
-import {createInterface} from 'node:readline';
+import { spawn, spawnSync } from 'node:child_process';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { basename, dirname, extname, isAbsolute, join, resolve, sep } from 'node:path';
+import { createInterface } from 'node:readline';
 
 const repositoryRoot = resolve(import.meta.dirname, '..');
 const repository = 'imchenway/zeus';
@@ -23,7 +23,7 @@ async function main() {
   mkdirSync(outputDirectory, { recursive: true, mode: 0o700 });
   assertRepositoryPreflight();
   const initialHeadSha = git(['rev-parse', 'HEAD']);
-    inspectCommittedCandidateWhitespace(initialHeadSha);
+  inspectCommittedCandidateWhitespace(initialHeadSha);
   const initialWorktreeStatus = git(['status', '--short']);
   const isolationValidation = parseBooleanEnvironment(isolationValidationEnvironment, false);
   if (isolationValidation && (!initialWorktreeStatus || process.env[isolatedSourceEnvironment])) {
@@ -66,7 +66,7 @@ async function main() {
 
   const releaseState = state.value;
   assertResumeWorktree(releaseState);
-    formatReleaseCandidate(releaseState);
+  formatReleaseCandidate(releaseState);
   await ensureCandidatePreflight(releaseState);
   console.log(`Zeus 端到端发布：${releaseState.baseTag}..${releaseState.sourceHead.slice(0, 12)} → ${releaseState.tag}`);
   console.log('发布说明模型：Zeus DeepSeek deepseek-v4-flash；不可用时自动使用确定性模板。');
@@ -258,12 +258,12 @@ function inspectCommittedCandidateWhitespace(headSha) {
   if (baseTagResult.status !== 0 || !/^v\d+\.\d+\.\d+$/u.test(baseTag)) {
     throw new Error(`发布前无法确认候选提交的本地稳定基线：${baseTagResult.stderr.trim() || baseTagResult.stdout.trim() || 'missing'}`);
   }
-    const result = capture('git', ['--no-pager', 'diff', '--check', `${baseTag}^{commit}`, headSha], true);
-    if (result.status === 0) {
-        console.log(`发布候选快速空白检查通过：${baseTag}..${headSha.slice(0, 12)}`);
-        return;
-    }
-    console.log(`发布候选存在可修复的格式或空白问题，将进入自动格式化阶段：${baseTag}..${headSha.slice(0, 12)}`);
+  const result = capture('git', ['--no-pager', 'diff', '--check', `${baseTag}^{commit}`, headSha], true);
+  if (result.status === 0) {
+    console.log(`发布候选快速空白检查通过：${baseTag}..${headSha.slice(0, 12)}`);
+    return;
+  }
+  console.log(`发布候选存在可修复的格式或空白问题，将进入自动格式化阶段：${baseTag}..${headSha.slice(0, 12)}`);
 }
 
 function assertGitHubAuthentication() {
@@ -280,7 +280,7 @@ function readLatestStableRelease() {
 }
 
 function fetchReleaseFacts(tag) {
-    runGit(['fetch', 'origin', 'refs/heads/main:refs/remotes/origin/main', `refs/tags/${tag}:refs/tags/${tag}`]);
+  runGit(['fetch', 'origin', 'refs/heads/main:refs/remotes/origin/main', `refs/tags/${tag}:refs/tags/${tag}`]);
 }
 
 function assertMainRelationship(headSha) {
@@ -447,54 +447,54 @@ function formatReleaseCandidate(state) {
     .sort();
   if (paths.length === 0) return;
 
-    if (state.releaseCommit) {
-        console.log(`\n[检查发布提交格式] Prettier --check（${paths.length} 个文件）`);
-        run('pnpm', ['exec', 'prettier', '--check', '--ignore-path', '.prettierignore', ...paths]);
-        console.log('发布提交格式检查通过。');
-        return;
-    }
+  if (state.releaseCommit) {
+    console.log(`\n[检查发布提交格式] Prettier --check（${paths.length} 个文件）`);
+    run('pnpm', ['exec', 'prettier', '--check', '--ignore-path', '.prettierignore', ...paths]);
+    console.log('发布提交格式检查通过。');
+    return;
+  }
 
-    console.log(`\n[自动修复发布候选格式] Prettier --write（${paths.length} 个文件）`);
-    run('pnpm', ['exec', 'prettier', '--write', '--ignore-path', '.prettierignore', ...paths]);
-    console.log(`\n[复核发布候选格式] Prettier --check（${paths.length} 个文件）`);
+  console.log(`\n[自动修复发布候选格式] Prettier --write（${paths.length} 个文件）`);
+  run('pnpm', ['exec', 'prettier', '--write', '--ignore-path', '.prettierignore', ...paths]);
+  console.log(`\n[复核发布候选格式] Prettier --check（${paths.length} 个文件）`);
   run('pnpm', ['exec', 'prettier', '--check', '--ignore-path', '.prettierignore', ...paths]);
-    const formattedStatus = git(['status', '--short']);
-    if (!formattedStatus) {
-        console.log('发布候选原本已符合格式规范，无需创建格式提交。');
-        return;
-    }
+  const formattedStatus = git(['status', '--short']);
+  if (!formattedStatus) {
+    console.log('发布候选原本已符合格式规范，无需创建格式提交。');
+    return;
+  }
 
-    const candidatePaths = new Set(paths);
-    const formattedPaths = formattedStatus
-        .split(/\r?\n/u)
-        .map((line) => line.slice(3).split(' -> ').at(-1))
-        .filter(Boolean)
-        .sort();
-    const unexpectedPaths = formattedPaths.filter((path) => !candidatePaths.has(path));
-    if (unexpectedPaths.length > 0) {
-        throw new Error(`自动格式化产生了候选范围之外的变更，拒绝提交：\n${unexpectedPaths.join('\n')}`);
-    }
+  const candidatePaths = new Set(paths);
+  const formattedPaths = formattedStatus
+    .split(/\r?\n/u)
+    .map((line) => line.slice(3).split(' -> ').at(-1))
+    .filter(Boolean)
+    .sort();
+  const unexpectedPaths = formattedPaths.filter((path) => !candidatePaths.has(path));
+  if (unexpectedPaths.length > 0) {
+    throw new Error(`自动格式化产生了候选范围之外的变更，拒绝提交：\n${unexpectedPaths.join('\n')}`);
+  }
 
-    runGit(['add', '--', ...formattedPaths]);
-    runGit(['diff', '--cached', '--check', '--', ...formattedPaths]);
-    runGit(['commit', '-m', `style(release): 自动修复 ${state.tag} 候选格式`, '--', ...formattedPaths]);
-    const formattedHead = git(['rev-parse', 'HEAD']);
-    const formattedParent = git(['rev-parse', 'HEAD^']);
-    if (formattedParent !== state.sourceHead) {
-        throw new Error(`自动格式提交父提交不一致：expected=${state.sourceHead} actual=${formattedParent}`);
-    }
-    const committedPaths = git(['diff-tree', '--no-commit-id', '--name-only', '-r', formattedHead]).split(/\r?\n/u).filter(Boolean).sort();
-    if (JSON.stringify(committedPaths) !== JSON.stringify(formattedPaths)) {
-        throw new Error(`自动格式提交包含非预期文件：\n${committedPaths.join('\n')}`);
-    }
-    if (git(['status', '--short'])) throw new Error('自动格式提交完成后工作区仍有未提交变更。');
+  runGit(['add', '--', ...formattedPaths]);
+  runGit(['diff', '--cached', '--check', '--', ...formattedPaths]);
+  runGit(['commit', '-m', `style(release): 自动修复 ${state.tag} 候选格式`, '--', ...formattedPaths]);
+  const formattedHead = git(['rev-parse', 'HEAD']);
+  const formattedParent = git(['rev-parse', 'HEAD^']);
+  if (formattedParent !== state.sourceHead) {
+    throw new Error(`自动格式提交父提交不一致：expected=${state.sourceHead} actual=${formattedParent}`);
+  }
+  const committedPaths = git(['diff-tree', '--no-commit-id', '--name-only', '-r', formattedHead]).split(/\r?\n/u).filter(Boolean).sort();
+  if (JSON.stringify(committedPaths) !== JSON.stringify(formattedPaths)) {
+    throw new Error(`自动格式提交包含非预期文件：\n${committedPaths.join('\n')}`);
+  }
+  if (git(['status', '--short'])) throw new Error('自动格式提交完成后工作区仍有未提交变更。');
 
-    state.sourceHead = formattedHead;
-    state.releaseCommit = null;
-    state.notesPath = null;
-    state.phase = 'initialized';
-    writeState(state);
-    console.log(`发布候选格式已自动修复并提交：${formattedHead.slice(0, 12)}（${formattedPaths.length} 个文件）`);
+  state.sourceHead = formattedHead;
+  state.releaseCommit = null;
+  state.notesPath = null;
+  state.phase = 'initialized';
+  writeState(state);
+  console.log(`发布候选格式已自动修复并提交：${formattedHead.slice(0, 12)}（${formattedPaths.length} 个文件）`);
 }
 
 function syncReleaseNotesSnapshot(state) {
@@ -578,8 +578,8 @@ function isPreparedWorktree(state, notesTarget) {
 }
 
 function commitPreparedCandidate(state, notesTarget) {
-    runGit(['add', '--', ...releaseFiles, notesTarget]);
-    runGit(['commit', '-m', `chore(release): ${state.tag}`]);
+  runGit(['add', '--', ...releaseFiles, notesTarget]);
+  runGit(['commit', '-m', `chore(release): ${state.tag}`]);
   const releaseCommit = git(['rev-parse', 'HEAD']);
   const parent = git(['rev-parse', 'HEAD^']);
   if (parent !== state.sourceHead) throw new Error(`发布提交父提交不一致：expected=${state.sourceHead} actual=${parent}`);
@@ -594,7 +594,7 @@ async function ensureCandidatePreflight(state) {
   const currentHead = git(['rev-parse', 'HEAD']);
   if (currentHead !== state.sourceHead) throw new Error(`快速前置检查发现候选提交漂移：expected=${state.sourceHead} actual=${currentHead}`);
   if (git(['status', '--short'])) throw new Error('快速前置检查要求发布候选工作区干净。');
-    runGit(['diff', '--check', `${state.baseTag}^{commit}`, state.sourceHead]);
+  runGit(['diff', '--check', `${state.baseTag}^{commit}`, state.sourceHead]);
   if (resolveLocalTagSha(state.tag) || resolveRemoteReference(`refs/tags/${state.tag}`)) {
     throw new Error(`目标标签 ${state.tag} 已存在，拒绝把新候选写入同一版本。`);
   }
@@ -607,7 +607,7 @@ function ensureFastLocalGate(state) {
   if (resolveLocalTagSha(state.tag) || resolveRemoteReference(`refs/tags/${state.tag}`)) {
     throw new Error(`目标标签 ${state.tag} 已存在，但当前发布缺少可恢复的检查摘要。`);
   }
-    runGit(['diff', '--check', `${state.releaseCommit}^`, state.releaseCommit]);
+  runGit(['diff', '--check', `${state.releaseCommit}^`, state.releaseCommit]);
   const gateDirectory = join(state.stateDirectory, 'gate');
   mkdirSync(gateDirectory, { recursive: true, mode: 0o700 });
   const summaryPath = join(gateDirectory, `Zeus-${state.version}-release-fast-preflight-summary.md`);
@@ -644,7 +644,7 @@ function ensureMainPushed(state) {
   if (!remoteMainSha || capture('git', ['merge-base', '--is-ancestor', remoteMainSha, state.releaseCommit], true).status !== 0) {
     throw new Error(`推送前 origin/main 已领先或分叉，拒绝自动合并或强推：remote=${remoteMainSha ?? 'missing'} release=${state.releaseCommit}`);
   }
-    runGit(['push', 'origin', 'refs/heads/main:refs/heads/main']);
+  runGit(['push', 'origin', 'refs/heads/main:refs/heads/main']);
   const pushedSha = resolveRemoteReference('refs/heads/main');
   if (pushedSha !== state.releaseCommit) throw new Error(`main 推送后远端提交不一致：expected=${state.releaseCommit} actual=${pushedSha ?? 'missing'}`);
   state.phase = 'main_pushed';
@@ -808,7 +808,7 @@ function run(command, args) {
 }
 
 function runGit(args) {
-    run('git', ['--no-pager', ...args]);
+  run('git', ['--no-pager', ...args]);
 }
 
 function capture(command, args, allowFailure = false, timeout = 30_000) {
