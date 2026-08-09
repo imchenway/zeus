@@ -95,6 +95,7 @@ export interface ThreadItemViewProps {
   onRetry?: (item: NativeSessionItemBuffer) => void;
   onOpenResource?: (resource: ConversationResource, target: ConversationOpenTarget, location?: ConversationFileLocation) => void | Promise<void>;
   onLoadResourcePreview?: (resource: ConversationResource) => Promise<ConversationResourcePreview>;
+  onVisibleContentChange?: () => void;
 }
 
 export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemViewProps) {
@@ -140,6 +141,12 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
     if (!editing || !editTextareaRef.current) return;
     autosizeTextarea(editTextareaRef.current, 72, 0.48);
   }, [editDraft, editing]);
+
+  useLayoutEffect(() => {
+    if (adaptiveText.revision === 0) return;
+    // 自适应流式文本在子组件内提交，通知会话容器重新检查底部跟随状态。
+    props.onVisibleContentChange?.();
+  }, [adaptiveText.revision, props.onVisibleContentChange]);
 
   useLayoutEffect(() => {
     if (!naturalLanguageStream || adaptiveText.revision === 0 || prefersReducedMotion()) return;
