@@ -7393,6 +7393,8 @@ a {
     0 2px 8px oklch(20% 0.008 255 / 0.08);
   display: grid;
   gap: 2px;
+  inline-size: max-content;
+  max-inline-size: calc(100vw - 16px);
   overflow: visible;
   padding: 6px;
   pointer-events: auto;
@@ -7496,7 +7498,8 @@ a {
   display: grid;
   gap: 0;
   max-block-size: 340px;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   overscroll-behavior: contain;
   padding-block: 2px;
 }
