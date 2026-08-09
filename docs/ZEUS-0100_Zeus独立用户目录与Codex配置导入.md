@@ -26,7 +26,7 @@ Codex App ~/.codex -> Zeus ~/.zeus -> Codex App Server / Pi
 | Codex App 数据 | `~/.codex` | 仅作为导入来源，Zeus 不直接续写 |
 | 模型密钥 | macOS 钥匙串 | 不写入 `.zeus` 的普通文件、数据库、日志或 JSONL |
 
-正式版直接使用 `~/.zeus`；`Zeus Test.app` 使用 `~/.zeus-test`；开发环境使用 `~/.zeus-development`。三者必须拥有不同数据库、运行目录、会话和单实例锁，并且不互相嵌套。
+正式版直接使用 `~/.zeus`；`Zeus Test.app` 使用 `~/.zeus-test/instance-<app-path-hash>`；开发环境使用 `~/.zeus-development`。三者必须拥有不同数据库、运行目录、会话和单实例锁，并且不互相嵌套。测试根按 App bundle 路径分桶，避免多个任务 worktree 同时测试时共享 SQLite。
 
 ## 建议目录布局
 
@@ -53,7 +53,8 @@ Codex App ~/.codex -> Zeus ~/.zeus -> Codex App Server / Pi
 ```
 
 ```text
-~/.zeus-test/          Zeus Test.app
+~/.zeus-test/          Zeus Test.app 的实例根集合
+  instance-<hash>/     某一个测试 App bundle 的独立数据根
 ~/.zeus-development/   开发服务器
 ```
 
@@ -125,7 +126,7 @@ Codex 历史会话属于单独的“导入历史会话”能力，不与“导�
 
 截至本次实现记录：
 
-- 正式版已直接使用 `~/.zeus`，测试版和开发环境分别使用 `~/.zeus-test`、`~/.zeus-development`；显式 `ZEUS_USER_DATA_DIR` 仍优先；
+- 正式版已直接使用 `~/.zeus`，测试版默认使用按 App bundle 路径分桶的 `~/.zeus-test/instance-<app-path-hash>`，开发环境使用 `~/.zeus-development`；显式 `ZEUS_USER_DATA_DIR` 仍优先；
 - 首次迁移会保留旧 Electron 用户目录，只复制稳定数据，不复制执行宿主和 Chromium 单实例锁；旧执行宿主仍运行时延后迁移；
 - 已为执行宿主注入 Zeus 专属 `CODEX_HOME`；
 - Pi 配置与会话已收敛到 `agent-runtimes/pi`，旧 Pi 目录首次读取时复制迁移并保留原件；

@@ -1,7 +1,7 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, Notification, screen, session, shell, Tray } from 'electron';
 import { execFile as execFileCallback } from 'node:child_process';
 import { chmodSync, constants as fsConstants, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync } from 'node:fs';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { access, copyFile, cp, lstat, mkdir, readdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
@@ -90,6 +90,13 @@ function desktopDisplayName(): string {
   return isTestDistribution() ? testDistributionName : 'Zeus';
 }
 
+function defaultTestDataRoot(): string {
+  // 每个打包 App 的路径代表一个任务 worktree，按路径隔离后多个任务可以并行验收而不共享 SQLite。
+  const appIdentity = resolve(process.execPath);
+  const identityHash = createHash('sha256').update(appIdentity).digest('hex').slice(0, 16);
+  return join(homedir(), '.zeus-test', `instance-${identityHash}`);
+}
+
 /**
  * 移除 Chromium Safe Storage 对 macOS 钥匙串的读取申请。
  * 用户已明确要求 Zeus 不再弹出 `@zeus/desktop Safe Storage` 授权框；
@@ -112,7 +119,7 @@ function applyExplicitUserDataDirectory(): void {
   }
 
   const profileName = isTestDistribution() ? 'test' : app.isPackaged ? 'production' : 'development';
-  const target = join(homedir(), profileName === 'production' ? '.zeus' : profileName === 'test' ? '.zeus-test' : '.zeus-development');
+  const target = join(homedir(), profileName === 'production' ? '.zeus' : profileName === 'test' ? defaultTestDataRoot() : '.zeus-development');
   const legacyCandidates = profileName === 'production' ? [join(app.getPath('appData'), '@zeus', 'desktop'), join(app.getPath('appData'), desktopDisplayName())].filter((path, index, paths) => paths.indexOf(path) === index) : [];
   const targetInitialized = profileName === 'production' ? existsSync(join(target, 'data', 'zeus.db')) || existsSync(join(target, 'zeus.db')) || existsSync(join(target, 'zeus.config.json')) : existsSync(target);
   const legacy = legacyCandidates.find((path) => existsSync(join(path, 'zeus.db')) || existsSync(join(path, 'zeus.config.json')));
