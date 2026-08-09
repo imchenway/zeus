@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { isOperationalActivityItem, SessionActivityGroup, SessionTurnDuration } from './SessionActivity.js';
 import { itemRole, type SessionUiLanguage, ThreadItemView, transcriptItemText } from './ThreadItemView.js';
 import { PlanSummary } from './PlanSummary.js';
@@ -65,13 +65,21 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   const historyHydrated = props.state.snapshot !== null;
   const historyUnavailable = !historyHydrated && (props.state.transportState === 'reconnecting' || props.state.transportState === 'failed');
   const latestSubmittedMessageId = [...immediateOptimisticItems, ...queuedOptimisticItems].at(-1)?.clientUserMessageId ?? null;
+  const maintainLatestPosition = useCallback(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const effect = scrollController.onDelta(metrics(container), Date.now());
+    if (effect.type !== 'scroll_to_bottom') return;
+    scrollToLatest(container);
+    setReturnToLatestVisible(false);
+  }, [scrollController]);
 
   useLayoutEffect(() => {
     const container = containerRef.current;
     const conversationId = props.state.conversationId;
     if (!container || !historyHydrated || !conversationId || positionedConversationIdRef.current === conversationId) return;
     positionedConversationIdRef.current = conversationId;
-    container.scrollTo({ top: container.scrollHeight, behavior: 'instant' });
+    scrollToLatest(container);
     setReturnToLatestVisible(false);
   }, [historyHydrated, props.state.conversationId, props.state.transcriptRevision]);
 
@@ -79,9 +87,9 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     const container = containerRef.current;
     if (!container || !latestSubmittedMessageId || latestSubmittedMessageIdRef.current === latestSubmittedMessageId) return;
     latestSubmittedMessageIdRef.current = latestSubmittedMessageId;
-    const effect = scrollController.onUserMessageSubmitted();
+    const effect = scrollController.onExplicitLatestRequest();
     if (effect.type !== 'scroll_to_bottom') return;
-    container.scrollTo({ top: container.scrollHeight, behavior: 'instant' });
+    scrollToLatest(container);
     setReturnToLatestVisible(false);
   }, [latestSubmittedMessageId, scrollController]);
 
@@ -119,13 +127,9 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     return () => cancel();
   }, [props.state.activeTurnId, scrollController, turnSpacerHeight]);
 
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
-    const effect = scrollController.onDelta(metrics(container), Date.now());
-    if (effect.type !== 'scroll_to_bottom') return;
-    container.scrollTo({ top: container.scrollHeight, behavior: prefersReducedMotion() ? 'instant' : 'smooth' });
-  }, [props.state.transcriptRevision, scrollController]);
+  useLayoutEffect(() => {
+    maintainLatestPosition();
+  }, [maintainLatestPosition, props.state.transcriptRevision]);
 
   return (
     <>
@@ -172,6 +176,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
                         onRetry={props.onRetryItem}
                         onOpenResource={props.onOpenResource}
                         onLoadResourcePreview={props.onLoadResourcePreview}
+                        onVisibleContentChange={maintainLatestPosition}
                       />
                     )
                   ) : (
@@ -196,7 +201,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
             <TurnFailureCard key={`turn-failure:${turn.providerTurnId ?? turn.id}`} failure={turn.error!} language={props.language} />
           ))}
           {immediateOptimisticItems.map((item) => (
-            <ThreadItemView key={item.key} item={item} language={props.language} isLatest />
+            <ThreadItemView key={item.key} item={item} language={props.language} isLatest onVisibleContentChange={maintainLatestPosition} />
           ))}
           {showThinking ? (
             <p className="session-transcript-thinking" role="status" aria-live="polite">
@@ -205,7 +210,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
             </p>
           ) : null}
           {queuedOptimisticItems.map((item) => (
-            <ThreadItemView key={item.key} item={item} language={props.language} />
+            <ThreadItemView key={item.key} item={item} language={props.language} onVisibleContentChange={maintainLatestPosition} />
           ))}
           {turnSpacerHeight > 0 && props.state.activeTurnId ? <span className="session-latest-turn-spacer" style={{ blockSize: `${turnSpacerHeight}px` }} aria-hidden="true" /> : null}
         </section>
@@ -218,10 +223,9 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
           onClick={() => {
             const container = containerRef.current;
             if (!container) return;
-            container.scrollTo({
-              top: container.scrollHeight,
-              behavior: prefersReducedMotion() ? 'instant' : 'smooth',
-            });
+            const effect = scrollController.onExplicitLatestRequest();
+            if (effect.type !== 'scroll_to_bottom') return;
+            scrollToLatest(container);
             setReturnToLatestVisible(false);
           }}
         >
@@ -388,10 +392,11 @@ function metrics(element: HTMLElement) {
   return { scrollTop: element.scrollTop, scrollHeight: element.scrollHeight, clientHeight: element.clientHeight };
 }
 
-function normalizeItemType(value: string): string {
-  return value.toLocaleLowerCase().replace(/[\s_\-/]+/gu, '');
+function scrollToLatest(container: Pick<HTMLElement, 'scrollHeight' | 'scrollTo'>): void {
+  // 自动跟随必须即时定位，避免程序滚动事件被误判为用户主动阅读历史。
+  container.scrollTo({ top: container.scrollHeight, behavior: 'instant' });
 }
 
-function prefersReducedMotion(): boolean {
-  return typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true;
+function normalizeItemType(value: string): string {
+  return value.toLocaleLowerCase().replace(/[\s_\-/]+/gu, '');
 }
