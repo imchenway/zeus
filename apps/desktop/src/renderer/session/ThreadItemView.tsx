@@ -249,6 +249,8 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
             onLoadResourcePreview={props.onLoadResourcePreview}
           />
         </div>
+      ) : role === 'user' && visibleText ? (
+        <SafeMarkdown text={visibleText} language={props.language} resources={props.item.resources} onOpenResource={props.onOpenResource} onLoadResourcePreview={props.onLoadResourcePreview} />
       ) : naturalLanguageStream && (visibleText || (streamActive && itemText)) ? (
         <TranscriptMarkdown
           text={visibleText}
