@@ -14,7 +14,7 @@ interface CodexRemoteControlSettingsProps {
 const copy = {
   'zh-CN': {
     title: 'Zeus 会话远程接管',
-    intro: '让 Codex iOS 或其他已授权客户端远程操作 Zeus 当前执行现场。远端会看到并回答原始选项框；等待回答期间不会把普通消息当作答案。',
+    intro: '让 Codex iOS 或其他已授权客户端远程操作 Zeus 执行现场。启用不会中断当前工作；已在进行的轮次保留在原宿主，完成后的后续轮次再接入远程。',
     unavailable: '当前环境没有可用的 Codex 远程接管接口。',
     loading: '正在读取远程接管状态…',
     refresh: '刷新',
@@ -26,7 +26,7 @@ const copy = {
     connecting: '连接中',
     connected: '已连接',
     errored: '连接异常',
-    statusHelp: '手机端操作的是 Zeus 当前会话；设备配对和连接由本机 Codex CLI 的官方 Remote Control 提供。',
+    statusHelp: '新会话和空闲会话使用远程宿主；设备配对和连接由本机 Codex CLI 的官方 Remote Control 提供。',
     connectionFailed: '远程接管未能启动',
     recoveryHelp: '按下方真实原因完成安装或登录后重试。Zeus 不会自动安装或切换外部程序。',
     retry: '重新检测并重试',
@@ -50,7 +50,8 @@ const copy = {
   },
   'en-US': {
     title: 'Zeus Session Remote Control',
-    intro: 'Lets Codex on iOS or another authorized client remotely operate the live Zeus execution. Remote clients answer the original prompt; ordinary messages are not treated as answers while it is pending.',
+    intro:
+      'Lets Codex on iOS or another authorized client remotely operate Zeus executions. Enabling it does not interrupt current work; in-progress turns stay on their original host, and later turns connect to Remote Control after they finish.',
     unavailable: 'Codex Remote Control is unavailable in this environment.',
     loading: 'Loading Remote Control status…',
     refresh: 'Refresh',
@@ -62,7 +63,7 @@ const copy = {
     connecting: 'Connecting',
     connected: 'Connected',
     errored: 'Connection error',
-    statusHelp: 'The mobile client operates the current Zeus session; device pairing and connectivity use the official Remote Control in the local Codex CLI.',
+    statusHelp: 'New and idle sessions use the remote host; device pairing and connectivity use the official Remote Control in the local Codex CLI.',
     connectionFailed: 'Remote Control did not start',
     recoveryHelp: 'Follow the actual reason below to install or sign in, then retry. Zeus does not automatically install or switch external programs.',
     retry: 'Check again and retry',
