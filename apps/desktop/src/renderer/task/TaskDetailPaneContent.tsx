@@ -1066,7 +1066,7 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
             size="regular"
             ariaLabel={zh ? '选择要关联的任务' : 'Choose a related task'}
             value={relatedTaskCandidateId}
-            options={relatedCandidateTasks.map((task) => ({ value: task.id, label: `${task.taskCode ?? task.id} · ${task.title}` }))}
+            options={[{ value: '', label: zh ? '请选择要关联的任务' : 'Select a task to relate', disabled: true }, ...relatedCandidateTasks.map((task) => ({ value: task.id, label: `${task.taskCode ?? task.id} · ${task.title}` }))]}
             onChange={setRelatedTaskCandidateId}
             disabled={props.busy || relationshipSaveState.kind === 'saving' || relatedCandidateTasks.length === 0}
           />
