@@ -1,23 +1,18 @@
-import {type FocusEvent, type KeyboardEvent, memo, useEffect, useId, useMemo, useRef, useState} from 'react';
-import {CaretDownIcon as CaretDown} from '@phosphor-icons/react/dist/csr/CaretDown';
-import {CheckCircleIcon as CheckCircle} from '@phosphor-icons/react/dist/csr/CheckCircle';
-import {CircleIcon as Circle} from '@phosphor-icons/react/dist/csr/Circle';
-import {CircleNotchIcon as CircleNotch} from '@phosphor-icons/react/dist/csr/CircleNotch';
-import {BookOpenIcon as BookOpen} from '@phosphor-icons/react/dist/csr/BookOpen';
-import {ImageIcon as Image} from '@phosphor-icons/react/dist/csr/Image';
-import {ListChecksIcon as ListChecks} from '@phosphor-icons/react/dist/csr/ListChecks';
-import {MagnifyingGlassIcon as MagnifyingGlass} from '@phosphor-icons/react/dist/csr/MagnifyingGlass';
-import {PencilSimpleIcon as PencilSimple} from '@phosphor-icons/react/dist/csr/PencilSimple';
-import {PlugsIcon as Plugs} from '@phosphor-icons/react/dist/csr/Plugs';
-import {TerminalWindowIcon as TerminalWindow} from '@phosphor-icons/react/dist/csr/TerminalWindow';
-import {WrenchIcon as Wrench} from '@phosphor-icons/react/dist/csr/Wrench';
-import type {
-    NativePendingRequest,
-    NativeSessionItemBuffer,
-    NativeTurnPlanSnapshot,
-    NativeTurnSnapshot
-} from './sessionTypes.js';
-import type {SessionUiLanguage} from './ThreadItemView.js';
+import { type FocusEvent, type KeyboardEvent, memo, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { CaretDownIcon as CaretDown } from '@phosphor-icons/react/dist/csr/CaretDown';
+import { CheckCircleIcon as CheckCircle } from '@phosphor-icons/react/dist/csr/CheckCircle';
+import { CircleIcon as Circle } from '@phosphor-icons/react/dist/csr/Circle';
+import { CircleNotchIcon as CircleNotch } from '@phosphor-icons/react/dist/csr/CircleNotch';
+import { BookOpenIcon as BookOpen } from '@phosphor-icons/react/dist/csr/BookOpen';
+import { ImageIcon as Image } from '@phosphor-icons/react/dist/csr/Image';
+import { ListChecksIcon as ListChecks } from '@phosphor-icons/react/dist/csr/ListChecks';
+import { MagnifyingGlassIcon as MagnifyingGlass } from '@phosphor-icons/react/dist/csr/MagnifyingGlass';
+import { PencilSimpleIcon as PencilSimple } from '@phosphor-icons/react/dist/csr/PencilSimple';
+import { PlugsIcon as Plugs } from '@phosphor-icons/react/dist/csr/Plugs';
+import { TerminalWindowIcon as TerminalWindow } from '@phosphor-icons/react/dist/csr/TerminalWindow';
+import { WrenchIcon as Wrench } from '@phosphor-icons/react/dist/csr/Wrench';
+import type { NativePendingRequest, NativeSessionItemBuffer, NativeTurnPlanSnapshot, NativeTurnSnapshot } from './sessionTypes.js';
+import type { SessionUiLanguage } from './ThreadItemView.js';
 
 const operationalTypes = new Set(['commandexecution', 'command', 'mcptoolcall', 'dynamictoolcall', 'websearch', 'imageview', 'toolcall', 'tool', 'filechange', 'file', 'contextcompaction']);
 const MAX_ACTIVITY_OUTPUT_CHARACTERS = 40_000;
@@ -28,10 +23,7 @@ export function isOperationalActivityItem(item: NativeSessionItemBuffer): boolea
   return operationalTypes.has(type);
 }
 
-export const SessionActivityGroup = memo(function SessionActivityGroup(props: {
-    items: NativeSessionItemBuffer[];
-    language: SessionUiLanguage
-}) {
+export const SessionActivityGroup = memo(function SessionActivityGroup(props: { items: NativeSessionItemBuffer[]; language: SessionUiLanguage }) {
   const liveItem = [...props.items].reverse().find((item) => item.status !== 'completed' && item.status !== 'failed') ?? null;
   const active = Boolean(liveItem);
   const summary = activitySummary(props.items, props.language, active);
@@ -53,35 +45,38 @@ export const SessionActivityGroup = memo(function SessionActivityGroup(props: {
           <span>{summary}</span>
           <CaretDown className="session-activity-caret" aria-hidden="true" weight="bold" />
         </summary>
-          {open ? (
-              <div className="session-activity-body">
-                  {skillNames.length > 0 ? (
-                      <p className="session-activity-skills">
-                          <span>{props.language === 'zh-CN' ? '技能' : 'Skills'}</span>
-                          {skillNames.map((name) => (
-                              <code key={name}>{name}</code>
-                          ))}
-                      </p>
-                  ) : null}
-                  <ol>
-                      {props.items.map((item) => (
-                          <ActivityItemRow key={item.key} item={item} language={props.language}/>
-                      ))}
-                  </ol>
-              </div>
-          ) : null}
+        {open ? (
+          <div className="session-activity-body">
+            {skillNames.length > 0 ? (
+              <p className="session-activity-skills">
+                <span>{props.language === 'zh-CN' ? '技能' : 'Skills'}</span>
+                {skillNames.map((name) => (
+                  <code key={name}>{name}</code>
+                ))}
+              </p>
+            ) : null}
+            <ol>
+              {props.items.map((item) => (
+                <ActivityItemRow key={item.key} item={item} language={props.language} />
+              ))}
+            </ol>
+          </div>
+        ) : null}
       </details>
       {liveItem && !open ? <ActivityLiveRow item={liveItem} language={props.language} /> : null}
     </section>
   );
 }, sameActivityGroupProps);
 
-function sameActivityGroupProps(previous: Readonly<{
+function sameActivityGroupProps(
+  previous: Readonly<{
     items: NativeSessionItemBuffer[];
-    language: SessionUiLanguage
-}>, next: Readonly<{ items: NativeSessionItemBuffer[]; language: SessionUiLanguage }>): boolean {
-    if (previous.language !== next.language || previous.items.length !== next.items.length) return false;
-    return previous.items.every((item, index) => item === next.items[index]);
+    language: SessionUiLanguage;
+  }>,
+  next: Readonly<{ items: NativeSessionItemBuffer[]; language: SessionUiLanguage }>,
+): boolean {
+  if (previous.language !== next.language || previous.items.length !== next.items.length) return false;
+  return previous.items.every((item, index) => item === next.items[index]);
 }
 
 function ActivityLiveRow(props: { item: NativeSessionItemBuffer; language: SessionUiLanguage }) {
@@ -96,15 +91,12 @@ function ActivityLiveRow(props: { item: NativeSessionItemBuffer; language: Sessi
   );
 }
 
-const ActivityItemRow = memo(function ActivityItemRow(props: {
-    item: NativeSessionItemBuffer;
-    language: SessionUiLanguage
-}) {
+const ActivityItemRow = memo(function ActivityItemRow(props: { item: NativeSessionItemBuffer; language: SessionUiLanguage }) {
   const title = activityItemTitle(props.item, props.language);
   const detail = activityItemDetail(props.item);
-    const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(false);
   const Icon = activityItemIcon(props.item);
-    const outputPreview = open && detail?.output ? activityOutputPreview(detail.output) : null;
+  const outputPreview = open && detail?.output ? activityOutputPreview(detail.output) : null;
   return (
     <li data-status={props.item.status}>
       <span className="session-activity-item-icon" aria-hidden="true">
@@ -112,26 +104,25 @@ const ActivityItemRow = memo(function ActivityItemRow(props: {
       </span>
       <div className="session-activity-item-copy">
         {detail ? (
-            <details className="session-activity-item-detail" open={open}
-                     onToggle={(event) => setOpen(event.currentTarget.open)}>
+          <details className="session-activity-item-detail" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
             <summary className="session-activity-item-summary">
               <span className="session-activity-item-title">{title}</span>
               <CaretDown className="session-activity-item-caret" aria-hidden="true" weight="bold" />
             </summary>
-                {open ? (
-                    <div className="session-activity-item-detail-body">
-                        {detail.command ? <code>{detail.command}</code> : null}
-                        {detail.cwd ? <small>{detail.cwd}</small> : null}
-                        {outputPreview ? <pre>{outputPreview.text}</pre> : null}
-                        {outputPreview?.truncated ? (
-                            <small>
-                                {props.language === 'zh-CN'
-                                    ? `输出较大，仅显示前 ${MAX_ACTIVITY_OUTPUT_CHARACTERS.toLocaleString('zh-CN')} 个字符。`
-                                    : `Large output; showing the first ${MAX_ACTIVITY_OUTPUT_CHARACTERS.toLocaleString('en-US')} characters.`}
-                            </small>
-                        ) : null}
-                    </div>
+            {open ? (
+              <div className="session-activity-item-detail-body">
+                {detail.command ? <code>{detail.command}</code> : null}
+                {detail.cwd ? <small>{detail.cwd}</small> : null}
+                {outputPreview ? <pre>{outputPreview.text}</pre> : null}
+                {outputPreview?.truncated ? (
+                  <small>
+                    {props.language === 'zh-CN'
+                      ? `输出较大，仅显示前 ${MAX_ACTIVITY_OUTPUT_CHARACTERS.toLocaleString('zh-CN')} 个字符。`
+                      : `Large output; showing the first ${MAX_ACTIVITY_OUTPUT_CHARACTERS.toLocaleString('en-US')} characters.`}
+                  </small>
                 ) : null}
+              </div>
+            ) : null}
           </details>
         ) : (
           <span className="session-activity-item-title">{title}</span>
@@ -142,8 +133,8 @@ const ActivityItemRow = memo(function ActivityItemRow(props: {
 });
 
 function activityOutputPreview(output: string): { text: string; truncated: boolean } {
-    if (output.length <= MAX_ACTIVITY_OUTPUT_CHARACTERS) return {text: output, truncated: false};
-    return {text: output.slice(0, MAX_ACTIVITY_OUTPUT_CHARACTERS), truncated: true};
+  if (output.length <= MAX_ACTIVITY_OUTPUT_CHARACTERS) return { text: output, truncated: false };
+  return { text: output.slice(0, MAX_ACTIVITY_OUTPUT_CHARACTERS), truncated: true };
 }
 
 export function SessionPlanProgress(props: { plan: NativeTurnPlanSnapshot; language: SessionUiLanguage }) {
