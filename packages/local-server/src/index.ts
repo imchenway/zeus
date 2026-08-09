@@ -12406,6 +12406,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           content: message.content,
           source: message.source,
           metadata: parseJsonObject(message.metadataJson),
+          providerItemId: message.providerItemId,
           resources: providerItem ? (resourcesByItemId.get(providerItem.id) ?? []) : [],
           createdAt: message.createdAt,
         };

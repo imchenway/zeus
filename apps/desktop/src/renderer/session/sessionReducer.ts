@@ -54,6 +54,15 @@ export type NativeSessionAction =
       previousConversationState: ConversationState;
       error: NativeSessionError;
     }
+  | {
+      type: 'send_uncertain';
+      clientUserMessageId: string;
+      draft: string;
+      attachments: NativeConversationAttachment[];
+      browserSubmission: ZeusBrowserPreparedSubmission | null;
+      previousConversationState: ConversationState;
+      error: NativeSessionError;
+    }
   | { type: 'send_accepted'; clientUserMessageId: string; status: string }
   | { type: 'send_reconciliation_failed'; error: NativeSessionError }
   | { type: 'send_succeeded' };
@@ -164,14 +173,15 @@ export function sessionReducer(state: NativeSessionState, action: NativeSessionA
     case 'send_started':
       return addOptimisticUserItem(state, action);
     case 'send_failed': {
-      const optimisticKey = optimisticUserItemKey(state, action.clientUserMessageId);
+      const optimisticEntry = optimisticUserItemEntry(state, action.clientUserMessageId);
+      const optimisticKey = optimisticEntry?.[0] ?? optimisticUserItemKey(state, action.clientUserMessageId);
       const items = { ...state.items };
-      delete items[optimisticKey];
+      if (optimisticEntry) delete items[optimisticKey];
       return {
         ...state,
         items,
         itemOrder: state.itemOrder.filter((key) => key !== optimisticKey),
-        transcriptRevision: state.transcriptRevision + (optimisticKey in state.items ? 1 : 0),
+        transcriptRevision: state.transcriptRevision + (optimisticEntry ? 1 : 0),
         conversationState: action.previousConversationState,
         draft: action.draft,
         attachments: action.attachments,
@@ -179,9 +189,35 @@ export function sessionReducer(state: NativeSessionState, action: NativeSessionA
         error: action.error,
       };
     }
+    case 'send_uncertain': {
+      const optimisticEntry = optimisticUserItemEntry(state, action.clientUserMessageId);
+      const optimisticKey = optimisticEntry?.[0] ?? optimisticUserItemKey(state, action.clientUserMessageId);
+      const optimistic = optimisticEntry?.[1];
+      return {
+        ...state,
+        ...(optimistic
+          ? {
+              items: {
+                ...state.items,
+                [optimisticKey]: {
+                  ...optimistic,
+                  status: 'pending',
+                },
+              },
+            }
+          : {}),
+        conversationState: action.previousConversationState,
+        draft: action.draft,
+        attachments: action.attachments,
+        browserSubmission: action.browserSubmission,
+        error: action.error,
+        transcriptRevision: state.transcriptRevision + (optimistic ? 1 : 0),
+      };
+    }
     case 'send_accepted': {
-      const optimisticKey = optimisticUserItemKey(state, action.clientUserMessageId);
-      const optimistic = state.items[optimisticKey];
+      const optimisticEntry = optimisticUserItemEntry(state, action.clientUserMessageId);
+      const optimisticKey = optimisticEntry?.[0] ?? optimisticUserItemKey(state, action.clientUserMessageId);
+      const optimistic = optimisticEntry?.[1];
       if (!optimistic) return { ...state, error: null };
       return {
         ...state,
@@ -204,22 +240,39 @@ function hydrateSnapshot(state: NativeSessionState, snapshot: NativeConversation
   const items: Record<string, NativeSessionItemBuffer> = {};
   const orderedItems: Array<{ key: string; timestamp: string; stableIndex: number }> = [];
   const threadId = snapshot.providerThreadId ?? 'unbound-thread';
+  const previousOptimisticStableIndexes = new Map<string, number>();
+  state.itemOrder.forEach((key, index) => {
+    const item = state.items[key];
+    if (!item?.optimistic || item.conversationId !== snapshot.id) return;
+    for (const clientId of userMessageClientIds(item)) previousOptimisticStableIndexes.set(clientId, index);
+  });
   let stableIndex = 0;
+  const providerItemKeyById = new Map<string, string>();
+  const providerUserItemKeyByClientId = new Map<string, string>();
+  const durableClientIds = new Set<string>();
+  const durableUserClientIds = new Set<string>();
+  const stableIndexForClient = (clientId: string | null): number => {
+    const previousIndex = clientId ? previousOptimisticStableIndexes.get(clientId) : undefined;
+    if (previousIndex !== undefined) {
+      stableIndex = Math.max(stableIndex, previousIndex + 1);
+      return previousIndex;
+    }
+    return stableIndex++;
+  };
 
   for (const item of snapshot.items) {
-    // Provider userMessage items are also projected into the authoritative
-    // conversation_messages table. Render that durable projection once so the
-    // provider item and transcript row cannot create duplicate user bubbles.
-    if (item.type === 'userMessage') continue;
     const turnId = providerTurnIdByLocalId.get(item.turnId) ?? item.turnId;
     const itemId = item.providerItemId ?? item.id;
     const key = nativeSessionItemKey(snapshot.id, threadId, turnId, itemId);
+    const itemClientId = isUserMessageType(item.type) ? (stringValue(item.payload.clientId) ?? stringValue(item.payload.clientUserMessageId)) : null;
+    if (itemClientId && providerUserItemKeyByClientId.has(itemClientId)) continue;
     items[key] = {
       key,
       conversationId: snapshot.id,
       threadId,
       turnId,
       itemId,
+      ...(item.providerItemId ? { providerItemId: item.providerItemId } : {}),
       localItemId: item.id,
       type: item.type,
       status: item.status,
@@ -228,17 +281,45 @@ function hydrateSnapshot(state: NativeSessionState, snapshot: NativeConversation
       payload: item.payload,
       resources: item.resources ?? [],
       updatedAt: item.updatedAt,
+      ...(itemClientId ? { clientUserMessageId: itemClientId, durableClientUserMessageId: itemClientId } : {}),
     };
-    orderedItems.push({ key, timestamp: item.startedAt ?? item.updatedAt, stableIndex: stableIndex++ });
+    orderedItems.push({ key, timestamp: item.startedAt ?? item.updatedAt, stableIndex: stableIndexForClient(itemClientId) });
+    if (item.providerItemId) providerItemKeyById.set(item.providerItemId, key);
+    if (itemClientId) {
+      durableClientIds.add(itemClientId);
+      providerUserItemKeyByClientId.set(itemClientId, key);
+    }
   }
 
-  const durableClientIds = new Set<string>();
   for (const message of snapshot.messages) {
     const clientUserMessageId = stringValue(message.metadata.clientUserMessageId);
     if (clientUserMessageId) durableClientIds.add(clientUserMessageId);
     // Native assistant content is represented by the provider item DTO, which has the
     // provider turn/item identity needed for incremental reconciliation.
     if (message.role === 'assistant') continue;
+    if (message.role === 'user' && clientUserMessageId && durableUserClientIds.has(clientUserMessageId)) continue;
+    if (message.role === 'user' && clientUserMessageId) durableUserClientIds.add(clientUserMessageId);
+    const providerItemKey = message.providerItemId ? providerItemKeyById.get(message.providerItemId) : clientUserMessageId ? providerUserItemKeyByClientId.get(clientUserMessageId) : undefined;
+    if (message.role === 'user' && providerItemKey) {
+      const providerItem = items[providerItemKey];
+      if (providerItem) {
+        items[providerItemKey] = {
+          ...providerItem,
+          status: 'completed',
+          text: message.content || providerItem.text,
+          payload: {
+            ...providerItem.payload,
+            ...message.metadata,
+            ...(clientUserMessageId ? { clientId: clientUserMessageId } : {}),
+          },
+          resources: message.resources ?? providerItem.resources,
+          optimistic: false,
+          ...(clientUserMessageId ? { clientUserMessageId, durableClientUserMessageId: clientUserMessageId } : {}),
+          updatedAt: message.createdAt,
+        };
+        continue;
+      }
+    }
     const turnId = `message:${message.id}`;
     const key = nativeSessionItemKey(snapshot.id, threadId, turnId, message.id);
     items[key] = {
@@ -256,9 +337,10 @@ function hydrateSnapshot(state: NativeSessionState, snapshot: NativeConversation
       resources: message.resources ?? [],
       optimistic: false,
       ...(clientUserMessageId ? { clientUserMessageId } : {}),
+      ...(message.providerItemId ? { providerItemId: message.providerItemId } : {}),
       updatedAt: message.createdAt,
     };
-    orderedItems.push({ key, timestamp: message.createdAt, stableIndex: stableIndex++ });
+    orderedItems.push({ key, timestamp: message.createdAt, stableIndex: stableIndexForClient(clientUserMessageId) });
   }
 
   // A pending user message is renderer-owned until a durable conversation_message with
@@ -268,7 +350,7 @@ function hydrateSnapshot(state: NativeSessionState, snapshot: NativeConversation
     if (!item?.optimistic || item.conversationId !== snapshot.id || key in items) continue;
     if ((item.clientUserMessageId && durableClientIds.has(item.clientUserMessageId)) || (item.durableClientUserMessageId && durableClientIds.has(item.durableClientUserMessageId))) continue;
     items[key] = item;
-    orderedItems.push({ key, timestamp: item.updatedAt ?? snapshot.updatedAt, stableIndex: stableIndex++ });
+    orderedItems.push({ key, timestamp: item.updatedAt ?? snapshot.updatedAt, stableIndex: stableIndexForClient(item.clientUserMessageId ?? item.durableClientUserMessageId ?? null) });
   }
 
   const activeTurnId = activeTurnFromSnapshot(snapshot);
@@ -524,38 +606,37 @@ function reduceItemEvent(state: NativeSessionState, event: NativeConversationEve
   const incomingPayload = isRecord(payload.itemPayload) ? payload.itemPayload : null;
   const incomingResources = Array.isArray(payload.itemResources) ? payload.itemResources : null;
   const effectiveType = completed ? (incomingType ?? previous?.type ?? 'providerItem') : (previous?.type ?? incomingType ?? 'providerItem');
-  const providerClientId = effectiveType === 'userMessage' && incomingPayload ? stringValue(incomingPayload.clientId) : null;
-  const optimisticEntry = providerClientId ? Object.entries(state.items).find(([, item]) => item.optimistic && (item.clientUserMessageId === providerClientId || item.durableClientUserMessageId === providerClientId)) : undefined;
+  const providerClientId = isUserMessageType(effectiveType) && incomingPayload ? stringValue(incomingPayload.clientId) : null;
+  const matchedUserEntry = isUserMessageType(effectiveType)
+    ? Object.entries(state.items).find(([, item]) => isUserMessageItem(item) && ((providerClientId !== null && userMessageClientIds(item).includes(providerClientId)) || item.providerItemId === itemId))
+    : undefined;
+  const optimisticEntry = matchedUserEntry?.[1].optimistic ? matchedUserEntry : undefined;
+  const matchedUserItem = matchedUserEntry?.[1];
   const optimisticText = optimisticEntry?.[1].text ?? '';
+  const matchedUserText = matchedUserItem?.text ?? '';
+  const resolvedClientId = matchedUserItem?.clientUserMessageId ?? matchedUserItem?.durableClientUserMessageId ?? providerClientId;
   const next: NativeSessionItemBuffer = {
     key,
     conversationId,
     threadId,
     turnId,
     itemId,
+    providerItemId: itemId,
     type: effectiveType,
     status: stringValue(payload.status) ?? (completed ? 'completed' : (previous?.status ?? 'in_progress')),
-    phase: stringValue(payload.phase) ?? previous?.phase ?? 'prework',
-    text: completed ? incomingText || previous?.text || optimisticText : reconcileCumulativeText(previous?.text ?? optimisticText, incomingText),
+    phase: stringValue(payload.phase) ?? previous?.phase ?? matchedUserItem?.phase ?? 'prework',
+    text: completed ? incomingText || previous?.text || matchedUserText || optimisticText : reconcileCumulativeText(previous?.text ?? matchedUserText ?? optimisticText, incomingText),
     // 进行中事件以 started 的类型壳为基础合并权威进度字段；completed 仍是最终投影。
-    payload: completed ? (incomingPayload ?? previous?.payload ?? {}) : mergeProgressPayload(previous?.payload, incomingPayload),
-    resources: completed ? (incomingResources ?? previous?.resources ?? []) : (previous?.resources ?? incomingResources ?? []),
-    ...(providerClientId ? { clientUserMessageId: providerClientId, durableClientUserMessageId: providerClientId, optimistic: false } : {}),
+    payload: completed ? (incomingPayload ?? previous?.payload ?? matchedUserItem?.payload ?? {}) : mergeProgressPayload(previous?.payload ?? matchedUserItem?.payload, incomingPayload),
+    resources: completed ? (incomingResources ?? previous?.resources ?? matchedUserItem?.resources ?? []) : (previous?.resources ?? matchedUserItem?.resources ?? incomingResources ?? []),
+    ...(resolvedClientId ? { clientUserMessageId: resolvedClientId, durableClientUserMessageId: resolvedClientId, optimistic: false } : {}),
     updatedAt: event.createdAt,
   };
   const isNew = previous === undefined;
-  const optimisticKey = optimisticEntry?.[0];
-  const wasQueuedOptimistic = optimisticEntry?.[1].status === 'queued';
+  const matchedKey = matchedUserEntry?.[0];
   const items = { ...state.items, [key]: next };
-  if (optimisticKey && optimisticKey !== key) delete items[optimisticKey];
-  const itemOrder =
-    optimisticKey && optimisticKey !== key
-      ? wasQueuedOptimistic
-        ? [...state.itemOrder.filter((entry) => entry !== optimisticKey && entry !== key), key]
-        : [...new Set(state.itemOrder.map((entry) => (entry === optimisticKey ? key : entry)))]
-      : isNew
-        ? [...state.itemOrder, key]
-        : state.itemOrder;
+  if (matchedKey && matchedKey !== key) delete items[matchedKey];
+  const itemOrder = matchedKey && matchedKey !== key ? [...new Set(state.itemOrder.map((entry) => (entry === matchedKey ? key : entry)))] : isNew ? [...state.itemOrder, key] : state.itemOrder;
   const phase = next.phase === 'final_answer' ? 'active_final_answer' : 'active_prework';
   const terminal = Boolean(state.terminalTurnIds[turnId]);
   const visibleFeedbackEpoch = itemProvidesVisibleFeedback(next) ? state.feedbackEpoch : state.visibleFeedbackEpoch;
@@ -599,7 +680,8 @@ function mergeProgressPayload(previous: Record<string, unknown> | undefined, inc
 }
 
 function addOptimisticUserItem(state: NativeSessionState, action: Extract<NativeSessionAction, { type: 'send_started' }>): NativeSessionState {
-  const key = optimisticUserItemKey(state, action.clientUserMessageId);
+  const existingOptimisticEntry = optimisticUserItemEntry(state, action.clientUserMessageId);
+  const key = existingOptimisticEntry?.[0] ?? optimisticUserItemKey(state, action.clientUserMessageId);
   const conversationId = state.conversationId ?? 'pending-conversation';
   const threadId = state.providerThreadId ?? 'pending-thread';
   const item: NativeSessionItemBuffer = {
@@ -626,7 +708,7 @@ function addOptimisticUserItem(state: NativeSessionState, action: Extract<Native
   return {
     ...state,
     items: { ...state.items, [key]: item },
-    itemOrder: state.items[key] ? state.itemOrder : [...state.itemOrder, key],
+    itemOrder: existingOptimisticEntry || state.items[key] ? state.itemOrder : [...state.itemOrder, key],
     transcriptRevision: state.transcriptRevision + 1,
     conversationState: keepActiveState ? action.previousConversationState : 'starting_turn',
     draft: '',
@@ -634,6 +716,26 @@ function addOptimisticUserItem(state: NativeSessionState, action: Extract<Native
     browserSubmission: null,
     error: null,
   };
+}
+
+function isUserMessageItem(item: NativeSessionItemBuffer): boolean {
+  return isUserMessageType(item.type);
+}
+
+function isUserMessageType(type: string): boolean {
+  const normalized = type.toLocaleLowerCase().replace(/[\s_\-/]+/gu, '');
+  return normalized === 'usermessage' || normalized === 'user';
+}
+
+function userMessageClientIds(item: NativeSessionItemBuffer): string[] {
+  return [item.clientUserMessageId, item.durableClientUserMessageId].filter((value, index, values): value is string => Boolean(value) && values.indexOf(value) === index);
+}
+
+function optimisticUserItemEntry(state: NativeSessionState, clientUserMessageId: string): [string, NativeSessionItemBuffer] | undefined {
+  const directKey = optimisticUserItemKey(state, clientUserMessageId);
+  const directItem = state.items[directKey];
+  if (directItem?.optimistic) return [directKey, directItem];
+  return Object.entries(state.items).find(([, item]) => item.optimistic && isUserMessageItem(item) && userMessageClientIds(item).includes(clientUserMessageId));
 }
 
 function optimisticUserItemKey(state: NativeSessionState, clientUserMessageId: string): string {
