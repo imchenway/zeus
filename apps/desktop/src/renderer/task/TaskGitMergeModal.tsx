@@ -16,7 +16,8 @@ import type {
 import { Button } from '../ui/Button.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
 import { ZeusSelect } from '../ZeusSelect.js';
-import { countConflictBlocks, TaskGitConflictWorkspace } from './TaskGitConflictWorkspace.js';
+import { TaskGitConflictWorkspace } from './TaskGitConflictWorkspace.js';
+import { createConflictDocument, countUnresolvedConflictBlocks, serializeConflictForGit, type ConflictDocument } from './taskConflictModel.js';
 import { TaskWorkspaceBranchList } from './TaskWorkspaceBranchList.js';
 
 type DeliveryClient = Pick<
@@ -52,7 +53,7 @@ interface DeliveryFeedback {
 
 interface ConflictDraft {
   fingerprint: string;
-  content: string;
+  document: ConflictDocument;
 }
 
 export function TaskGitMergeModal(props: { open: boolean; language: 'zh-CN' | 'en-US'; task: TaskRecord | null; projectName?: string; client: DeliveryClient | null; onChanged?: () => void | Promise<void>; onClose: () => void }) {
@@ -70,7 +71,7 @@ export function TaskGitMergeModal(props: { open: boolean; language: 'zh-CN' | 'e
   const [integration, setIntegration] = useState<TaskIntegrationRecord | null>(null);
   const [conflictPath, setConflictPath] = useState('');
   const [conflict, setConflict] = useState<TaskIntegrationConflictFile | null>(null);
-  const [resultContent, setResultContent] = useState('');
+  const [conflictDocument, setConflictDocument] = useState<ConflictDocument | null>(null);
   const conflictDraftsRef = useRef<Record<string, ConflictDraft>>({});
   const [busyAction, setBusyAction] = useState<BusyAction>(null);
   const [snapshotRevision, setSnapshotRevision] = useState(0);
@@ -93,7 +94,7 @@ export function TaskGitMergeModal(props: { open: boolean; language: 'zh-CN' | 'e
   const deliveredIntegration = integrations.find((candidate) => candidate.workspaceId === selectedWorkspace?.id && candidate.targetBranch === targetBranch && candidate.state === 'merged') ?? null;
   const alreadyDelivered = Boolean(deliveredIntegration || (selectedWorkspace?.state === 'merged' && targetBranch === selectedWorkspace.sourceBranch));
   const pushReady = Boolean(deliveredIntegration && selectedWorkspace?.remoteName && !pendingLocalSync);
-  const unresolvedConflictBlocks = useMemo(() => countConflictBlocks(resultContent), [resultContent]);
+  const unresolvedConflictBlocks = useMemo(() => countUnresolvedConflictBlocks(conflictDocument), [conflictDocument]);
 
   useEffect(() => {
     if (!props.open || !props.task || !props.client) return;
@@ -166,7 +167,7 @@ export function TaskGitMergeModal(props: { open: boolean; language: 'zh-CN' | 'e
   useEffect(() => {
     if (!props.task || !props.client || !activeConflict || !conflictPath) {
       setConflict(null);
-      setResultContent('');
+      setConflictDocument(null);
       return;
     }
     let cancelled = false;
@@ -178,13 +179,13 @@ export function TaskGitMergeModal(props: { open: boolean; language: 'zh-CN' | 'e
         setConflict(next);
         const savedDraft = conflictDraftsRef.current[next.path];
         if (savedDraft?.fingerprint === next.fingerprint) {
-          setResultContent(savedDraft.content);
+          setConflictDocument(savedDraft.document);
           setFeedback({
             tone: 'warning',
             text: zh ? '目标分支更新后已按最新提交重建；相同冲突的草稿已回填，请重新确认并保存。' : 'The target advanced and the candidate was rebuilt. A matching draft was restored; review and save it again.',
           });
         } else {
-          setResultContent(next.result);
+          setConflictDocument(createConflictDocument(next));
           if (savedDraft) {
             setFeedback({
               tone: 'warning',
@@ -315,15 +316,17 @@ export function TaskGitMergeModal(props: { open: boolean; language: 'zh-CN' | 'e
     if (!props.task || !props.client || !activeConflict || !conflictPath) return;
     setBusyAction('conflict');
     setError(null);
-    const nextDrafts = conflict
-      ? {
-          ...conflictDraftsRef.current,
-          [conflictPath]: { fingerprint: conflict.fingerprint, content: resultContent },
-        }
-      : conflictDraftsRef.current;
+    const nextDrafts =
+      conflict && conflictDocument
+        ? {
+            ...conflictDraftsRef.current,
+            [conflictPath]: { fingerprint: conflict.fingerprint, document: conflictDocument },
+          }
+        : conflictDraftsRef.current;
     conflictDraftsRef.current = nextDrafts;
     try {
-      const response = await props.client.resolveTaskIntegrationConflict(props.task.id, activeConflict.id, conflictPath, resultContent);
+      if (!conflictDocument) return;
+      const response = await props.client.resolveTaskIntegrationConflict(props.task.id, activeConflict.id, conflictPath, serializeConflictForGit(conflictDocument));
       setIntegration(response.integration);
       const nextPath = response.result.remainingConflictFiles[0] ?? '';
       setConflictPath(nextPath);
@@ -345,12 +348,12 @@ export function TaskGitMergeModal(props: { open: boolean; language: 'zh-CN' | 'e
     }
   }
 
-  async function askAiForConflictDraft(): Promise<TaskIntegrationConflictAiDraft> {
+  async function askAiForConflictDraft(content: string): Promise<TaskIntegrationConflictAiDraft> {
     if (!props.task || !props.client || !activeConflict || !conflictPath) throw new Error(zh ? '当前没有可处理的冲突。' : 'No conflict is available.');
     setBusyAction('ai');
     setError(null);
     try {
-      return await props.client.assistTaskIntegrationConflict(props.task.id, activeConflict.id, conflictPath, resultContent);
+      return await props.client.assistTaskIntegrationConflict(props.task.id, activeConflict.id, conflictPath, content);
     } catch (reason) {
       setError(errorMessage(reason, zh));
       throw reason;
@@ -414,7 +417,22 @@ export function TaskGitMergeModal(props: { open: boolean; language: 'zh-CN' | 'e
     );
   }
 
+  function rememberConflictDraft(): void {
+    if (!conflict || !conflictDocument || !conflictPath) return;
+    conflictDraftsRef.current = {
+      ...conflictDraftsRef.current,
+      [conflictPath]: { fingerprint: conflict.fingerprint, document: conflictDocument },
+    };
+  }
+
+  function selectConflictPath(nextPath: string): void {
+    if (nextPath === conflictPath) return;
+    rememberConflictDraft();
+    setConflictPath(nextPath);
+  }
+
   function selectWorkspace(nextId: string): void {
+    rememberConflictDraft();
     const nextWorkspace = workspaces?.items.find((workspace) => workspace.id === nextId) ?? null;
     setWorkspaceId(nextId);
     setDiffScope('committed');
@@ -475,10 +493,9 @@ export function TaskGitMergeModal(props: { open: boolean; language: 'zh-CN' | 'e
               integration={unresolvedConflict}
               taskBranch={selectedWorkspace?.branchName ?? ''}
               conflictPath={conflictPath}
-              conflict={conflict}
-              resultContent={resultContent}
-              onSelectPath={setConflictPath}
-              onResultChange={setResultContent}
+              onSelectPath={selectConflictPath}
+              conflict={conflictDocument}
+              onDocumentChange={setConflictDocument}
               onAskAi={askAiForConflictDraft}
             />
           ) : conflictReadyToFinalize && activeConflict ? (
