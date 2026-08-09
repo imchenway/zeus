@@ -166,6 +166,7 @@ import {
   type ZeusTaskWorkspaceRecord,
 } from '@zeus/storage';
 import { createCodexNativeConversationCoordinator } from './codexNativeConversationCoordinator.js';
+import { chooseNativeUserMessageContent, resolveNativeUserMessageSubmission } from './codexNativeUserMessageProjection.js';
 import { normalizeConversationResources, toConversationResource, toConversationResourceOpenIntent } from './conversationResources.js';
 import { changeSetErrorStatus, createTurnChangeSetService, errorCode as turnChangeSetErrorCode } from './turnChangeSets.js';
 import { createCommandCenter } from './commandCenter.js';
@@ -12388,6 +12389,12 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     const rateLimits = settings.getCodexRateLimitsSnapshot();
     const mcpStartup = settings.getCodexMcpStartupStatusSnapshot();
     const executionContext = await readNativeConversationExecutionContext(conversation);
+    const nativeUserMessageClientIds = new Set(
+      conversation.messages
+        .filter((message) => message.role === 'user' && message.source === 'codex_native')
+        .map((message) => message.clientMessageId)
+        .filter((value): value is string => Boolean(value)),
+    );
     return {
       ...toGraphConversationHistoryItem(conversation),
       ...toNativeConversationSummary(conversation),
@@ -12399,13 +12406,34 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       executionContext,
       messages: conversation.messages.map((message) => {
         const providerItem = message.providerItemId ? itemByProviderItemId.get(message.providerItemId) : undefined;
+        const metadata = parseJsonObject(message.metadataJson);
+        const userMessageProjection =
+          message.role === 'user' && message.source === 'codex_native'
+            ? resolveNativeUserMessageSubmission({
+                submissions,
+                providerClientId: message.clientMessageId ?? (typeof metadata.clientUserMessageId === 'string' ? metadata.clientUserMessageId : null),
+                providerTurnId: message.providerTurnId,
+                existingMessage: message,
+                existingClientMessageIds: new Set([...nativeUserMessageClientIds].filter((value) => value !== message.clientMessageId)),
+              })
+            : null;
+        const submissionInput = userMessageProjection?.submission ? parseJsonObject(userMessageProjection.submission.inputJson) : {};
+        const content = userMessageProjection
+          ? chooseNativeUserMessageContent({
+              displayText: metadata.displayText,
+              submissionDisplayText: submissionInput.displayText,
+              submissionText: userMessageProjection.submission ? (typeof submissionInput.text === 'string' ? submissionInput.text : undefined) : undefined,
+              existingContent: message.content,
+              providerContent: message.content,
+            })
+          : message.content;
         return {
           id: message.id,
           conversationId: message.conversationId,
           role: message.role,
-          content: message.content,
+          content,
           source: message.source,
-          metadata: parseJsonObject(message.metadataJson),
+          metadata,
           resources: providerItem ? (resourcesByItemId.get(providerItem.id) ?? []) : [],
           createdAt: message.createdAt,
         };
