@@ -43,7 +43,7 @@ import './ui/primitives.css';
 import { notifyMainAppShellSettingsChanged, openExternalHttpsUrlInMain } from './appShellBridge.js';
 import { PENDING_RESOURCE_LONG_TEXT_THRESHOLD } from './ui/pendingResourcePolicy.js';
 import { TaskAttachmentPreviewList } from './task/TaskAttachmentPreviewList.js';
-import { type ConversationTreeRuntimeState, conversationTreeRuntimeStateFromSession, conversationTreeRuntimeStateFromSnapshot, type ProjectConversationGroup, ProjectConversationTree } from './session/ProjectConversationTree.js';
+import { type ConversationTreeRuntimeState, conversationTreeRuntimeStateFromConversation, conversationTreeRuntimeStateFromSession, type ProjectConversationGroup, ProjectConversationTree } from './session/ProjectConversationTree.js';
 import {
   ConnectedSessionWorkspace,
   createNativeConversationStartEnvelopeManager,
@@ -63,7 +63,6 @@ import type {
   NativeConversationAttachment,
   NativeConversationChoice,
   NativeConversationChoicesSnapshot,
-  NativeConversationSnapshot,
   NativeProjectConversationChoicesSnapshot,
   NativeServiceTierSelection,
   NativeSessionState,
@@ -73,7 +72,6 @@ import type {
 import { selectHasConfirmedUserMessage } from './session/sessionSelectors.js';
 import { compareConversationStageUpdatedDesc } from './session/conversationOrdering.js';
 import { rememberSessionHotState, type SessionHotCache } from './session/sessionHotCache.js';
-import { createHydratedSessionState } from './session/sessionReducer.js';
 import { readProjectServiceTierPreference, serviceTierWireOverride, writeProjectServiceTierPreference } from './session/serviceTierSelection.js';
 import type { SessionControllerClient } from './session/useSessionController.js';
 import { TaskDetailPaneContent, type TaskEditResult } from './task/TaskDetailPaneContent.js';
@@ -105,6 +103,7 @@ import {
   normalizeTaskTableColumnPreferences,
   normalizeTaskTableEnumSortOrders,
   resolveTaskManagementStatus,
+  taskAgentRunStatusFromConversation,
   taskAgentRunStatusFromSession,
   type TaskWorkspaceViewMode,
 } from './task/taskWorkspaceModel.js';
@@ -285,11 +284,13 @@ type NativeConversationAppClient = SessionControllerClient &
   Pick<
     DashboardClient,
     | 'loadProjectConversationChoices'
+    | 'loadProjectConversationChoiceGroups'
     | 'loadArchivedConversations'
     | 'archiveNativeConversation'
     | 'restoreConversationArchive'
     | 'startProjectConversation'
     | 'loadTaskConversationChoices'
+    | 'loadNativeConversationChoice'
     | 'startNativeConversation'
     | 'loadCodexTaskPushCapabilities'
     | 'refreshTaskPushRepositoryRemote'
@@ -393,7 +394,7 @@ export function createNativeConversationChoiceLoadCoordinator(): NativeConversat
       return {
         ...snapshot,
         hasHistory: choices.length > 0,
-        requiresChoice: choices.length > 1,
+        requiresChoice: choices.length > 0,
         choices,
         items: choices,
       };
@@ -405,6 +406,7 @@ export interface NativeProjectConversationChoiceLoadCoordinator {
   begin(projectId: string): number;
   isCurrent(projectId: string, requestVersion: number): boolean;
   preserveAccepted(choice: NativeConversationChoice): void;
+  forget(projectId: string, conversationId: string): void;
   commit(projectId: string, requestVersion: number, snapshot: NativeProjectConversationChoicesSnapshot): NativeProjectConversationChoicesSnapshot | null;
 }
 
@@ -425,6 +427,12 @@ export function createNativeProjectConversationChoiceLoadCoordinator(): NativePr
       const accepted = acceptedByProject.get(choice.projectId) ?? new Map<string, NativeConversationChoice>();
       accepted.set(choice.id, choice);
       acceptedByProject.set(choice.projectId, accepted);
+    },
+    forget(projectId, conversationId) {
+      const accepted = acceptedByProject.get(projectId);
+      if (!accepted) return;
+      accepted.delete(conversationId);
+      if (accepted.size === 0) acceptedByProject.delete(projectId);
     },
     commit(projectId, requestVersion, snapshot) {
       if (!isCurrent(projectId, requestVersion) || snapshot.projectId !== projectId) return null;
@@ -458,9 +466,106 @@ export type TaskRuntimeConversationNavigation = {
 };
 
 export function shouldRefreshConversationForRuntimeEvent(event: ZeusRealtimeEvent, conversation: Pick<GraphConversationHistoryItem, 'sessionId' | 'archived'> | undefined): boolean {
+  if (event.type !== 'runtime.session.ended') return false;
+  const sessionId = typeof event.payload.sessionId === 'string' ? event.payload.sessionId : undefined;
+  return Boolean(sessionId && conversation && !conversation.archived && conversation.sessionId === sessionId);
+}
+
+const realtimeRuntimeConversationMessageLimit = 2_000;
+const realtimeRuntimeConversationByteLimit = 4 * 1024 * 1024;
+const realtimeRuntimeConversationEncoder = new TextEncoder();
+
+function isRuntimeConversationOutputEvent(event: ZeusRealtimeEvent, conversation: Pick<GraphConversationHistoryItem, 'sessionId' | 'archived'> | undefined): boolean {
   if (event.type !== 'runtime.session.output' && event.type !== 'runtime.session.error') return false;
   const sessionId = typeof event.payload.sessionId === 'string' ? event.payload.sessionId : undefined;
   return Boolean(sessionId && conversation && !conversation.archived && conversation.sessionId === sessionId);
+}
+
+function appendRuntimeOutputEventsToConversation(conversation: GraphConversationHistoryItem, events: readonly ZeusRealtimeEvent[]): GraphConversationHistoryItem {
+  if (!conversation.sessionId) return conversation;
+  const matchingEvents = events.filter((event) => event.payload.sessionId === conversation.sessionId);
+  if (matchingEvents.length === 0) return conversation;
+  const isRealtimeRuntimeMessage = (source: string): boolean => source === 'runtime_stdout_realtime' || source === 'runtime_stderr_realtime' || source === 'runtime_realtime_projection';
+  const persistedMessages = [] as GraphConversationHistoryItem['messages'];
+  const realtimeMessages = [] as GraphConversationHistoryItem['messages'];
+  const existingLogIds = new Set<string>();
+  for (const message of conversation.messages) {
+    const runtimeLogId = typeof message.metadata.runtimeLogId === 'string' ? message.metadata.runtimeLogId : null;
+    if (runtimeLogId) existingLogIds.add(runtimeLogId);
+    if (!isRealtimeRuntimeMessage(message.source)) persistedMessages.push(message);
+    else if (message.source !== 'runtime_realtime_projection') realtimeMessages.push(message);
+  }
+
+  let latestCreatedAt = conversation.updatedAt;
+  let appended = false;
+  for (const event of matchingEvents) {
+    const sessionId = typeof event.payload.sessionId === 'string' ? event.payload.sessionId : null;
+    const logId = typeof event.payload.logId === 'string' ? event.payload.logId : null;
+    const text = typeof event.payload.text === 'string' ? event.payload.text : null;
+    const createdAt = typeof event.payload.createdAt === 'string' ? event.payload.createdAt : event.createdAt;
+    const stream = event.payload.stream === 'stderr' ? 'stderr' : 'stdout';
+    if (!sessionId || !logId || text === null || conversation.sessionId !== sessionId || existingLogIds.has(logId)) continue;
+    existingLogIds.add(logId);
+    realtimeMessages.push({
+      id: `runtime_realtime_${logId}`,
+      conversationId: conversation.id,
+      role: stream === 'stderr' ? 'system' : 'assistant',
+      content: text,
+      source: stream === 'stderr' ? 'runtime_stderr_realtime' : 'runtime_stdout_realtime',
+      metadata: {
+        sessionId,
+        runtimeLogId: logId,
+        stream,
+        textTruncated: event.payload.textTruncated === true,
+        runtimeLogBytes: realtimeRuntimeConversationEncoder.encode(text).byteLength,
+      },
+      createdAt,
+    });
+    latestCreatedAt = createdAt;
+    appended = true;
+  }
+  if (!appended) return conversation;
+
+  const kept = [] as typeof realtimeMessages;
+  let usedBytes = 0;
+  let truncated = realtimeMessages.length > realtimeRuntimeConversationMessageLimit;
+  for (let index = realtimeMessages.length - 1; index >= 0 && kept.length < realtimeRuntimeConversationMessageLimit; index -= 1) {
+    const message = realtimeMessages[index]!;
+    const bytes = typeof message.metadata.runtimeLogBytes === 'number' ? message.metadata.runtimeLogBytes : realtimeRuntimeConversationEncoder.encode(message.content).byteLength;
+    if (bytes > realtimeRuntimeConversationByteLimit || usedBytes + bytes > realtimeRuntimeConversationByteLimit) {
+      truncated = true;
+      continue;
+    }
+    kept.push(message);
+    usedBytes += bytes;
+  }
+  kept.reverse();
+  if (truncated) {
+    kept.unshift({
+      id: `runtime_realtime_projection_${conversation.sessionId ?? conversation.id}`,
+      conversationId: conversation.id,
+      role: 'system',
+      content: '实时会话仅显示最近约 4MB Runtime 输出；完整历史请查看 Runtime 日志。',
+      source: 'runtime_realtime_projection',
+      metadata: { sessionId: conversation.sessionId, logsTruncated: true },
+      createdAt: kept[0]?.createdAt ?? latestCreatedAt,
+    });
+  }
+  return { ...conversation, status: 'running', updatedAt: latestCreatedAt, messages: [...persistedMessages, ...kept] };
+}
+
+function applyRuntimeEndedEventToConversation(conversation: GraphConversationHistoryItem, event: ZeusRealtimeEvent): GraphConversationHistoryItem {
+  const sessionId = typeof event.payload.sessionId === 'string' ? event.payload.sessionId : null;
+  if (!sessionId || conversation.sessionId !== sessionId) return conversation;
+  const status = typeof event.payload.status === 'string' ? event.payload.status : conversation.status;
+  const endedAt = typeof event.payload.endedAt === 'string' ? event.payload.endedAt : event.createdAt;
+  const exitCode = typeof event.payload.exitCode === 'number' ? event.payload.exitCode : null;
+  return {
+    ...conversation,
+    status,
+    summary: `Runtime 会话 ${sessionId} 已结束${exitCode === null ? '' : `，exitCode=${exitCode}`}`,
+    updatedAt: endedAt,
+  };
 }
 
 const nativeConversationListLifecycleEventTypes = new Set([
@@ -480,18 +585,6 @@ function isProjectConversationAttentionState(value: unknown): value is ProjectCo
 
 export function shouldRefreshNativeConversationListForRealtimeEvent(event: ZeusRealtimeEvent): boolean {
   return nativeConversationListLifecycleEventTypes.has(event.type) && typeof event.payload.projectId === 'string' && typeof event.payload.conversationId === 'string';
-}
-
-function taskAgentRunStatusFromConversationTreeRuntimeState(state: ConversationTreeRuntimeState): TaskAgentRunStatus {
-  if (state === 'connecting') return 'connecting';
-  if (state === 'reconnecting') return 'reconnecting';
-  if (state === 'pending_user_input') return 'waiting_user';
-  if (state === 'pending_approval') return 'waiting_approval';
-  if (state === 'paused') return 'paused';
-  if (state === 'ready') return 'idle';
-  if (state === 'error') return 'failed';
-  if (state === 'legacy_readonly') return 'legacy_readonly';
-  return 'running';
 }
 
 type AppLanguage = AppShellSettings['appLanguage'];
@@ -687,59 +780,25 @@ export function updateConversationChoiceCompletionUnread<
   return { ...snapshot, choices, items };
 }
 
-export function updateConversationChoiceFromNativeSnapshot<
-  Snapshot extends {
-    choices: NativeConversationChoice[];
-    items: NativeConversationChoice[];
-  },
->(snapshot: Snapshot, nativeSnapshot: NativeConversationSnapshot): Snapshot {
-  let changed = false;
-  const update = (choice: NativeConversationChoice): NativeConversationChoice => {
-    if (choice.id !== nativeSnapshot.id) return choice;
-    changed = true;
-    return {
-      ...choice,
-      projectId: nativeSnapshot.projectId,
-      taskId: nativeSnapshot.taskId,
-      title: nativeSnapshot.title,
-      summary: nativeSnapshot.summary,
-      status: nativeSnapshot.status,
-      stage: nativeSnapshot.stage,
-      stageUpdatedAt: nativeSnapshot.stageUpdatedAt,
-      transportKind: nativeSnapshot.transportKind,
-      providerId: nativeSnapshot.providerId,
-      providerThreadId: nativeSnapshot.providerThreadId,
-      providerModel: nativeSnapshot.providerModel,
-      providerState: nativeSnapshot.providerState,
-      nativeSession: nativeSnapshot.nativeSession,
-      pendingRequestKind: nativeSnapshot.pendingRequestKind,
-      createdAt: nativeSnapshot.createdAt,
-      updatedAt: nativeSnapshot.updatedAt,
-      archived: nativeSnapshot.archived,
-      permissionMode: nativeSnapshot.permissionMode,
-      collaborationMode: nativeSnapshot.collaborationMode,
-    };
+function upsertTaskConversationChoiceSnapshot(taskId: string, snapshot: NativeConversationChoicesSnapshot | undefined, metadata: NativeConversationChoice): NativeConversationChoicesSnapshot {
+  const choices = metadata.archived
+    ? (snapshot?.choices ?? []).filter((choice) => choice.id !== metadata.id)
+    : [metadata, ...(snapshot?.choices ?? []).filter((choice) => choice.id !== metadata.id)].sort(compareConversationStageUpdatedDesc);
+  return {
+    taskId,
+    projectId: metadata.projectId,
+    hasHistory: choices.length > 0,
+    requiresChoice: choices.length > 0,
+    choices,
+    items: choices,
   };
-  const choices = snapshot.choices.map(update).sort(compareConversationStageUpdatedDesc);
-  const items = snapshot.items.map(update).sort(compareConversationStageUpdatedDesc);
-  return changed ? { ...snapshot, choices, items } : snapshot;
 }
 
-function updateConversationChoiceSnapshotCollection<
-  Snapshot extends {
-    choices: NativeConversationChoice[];
-    items: NativeConversationChoice[];
-  },
->(collection: Record<string, Snapshot>, nativeSnapshot: NativeConversationSnapshot): Record<string, Snapshot> {
-  let changed = false;
-  const next = Object.fromEntries(
-    Object.entries(collection).map(([key, snapshot]) => {
-      const updated = updateConversationChoiceFromNativeSnapshot(snapshot, nativeSnapshot);
-      if (updated !== snapshot) changed = true;
-      return [key, updated];
-    }),
-  ) as Record<string, Snapshot>;
-  return changed ? next : collection;
+function upsertProjectConversationChoiceSnapshot(snapshot: NativeProjectConversationChoicesSnapshot | undefined, metadata: NativeConversationChoice): NativeProjectConversationChoicesSnapshot {
+  const choices = metadata.archived
+    ? (snapshot?.choices ?? []).filter((choice) => choice.id !== metadata.id)
+    : [metadata, ...(snapshot?.choices ?? []).filter((choice) => choice.id !== metadata.id)].sort(compareConversationStageUpdatedDesc);
+  return { projectId: metadata.projectId, choices, items: choices };
 }
 
 const GRAPH_NODE_TASK_SUCCESS_DISMISS_MS = 2200;
@@ -7125,7 +7184,6 @@ export function App(props: {
   const graphConversationDetailRequestVersionRef = useRef(0);
   const activeGraphViewTypeRef = useRef<GraphViewType | undefined>(undefined);
   const selectedTaskConversationRef = useRef<GraphConversationHistoryItem | undefined>(undefined);
-  const pendingRealtimeConversationRefreshIdsRef = useRef<Set<string>>(new Set());
   const pendingRealtimeTaskRefreshIdsRef = useRef<Set<string>>(new Set());
   const pendingRealtimeNativeConversationRefreshIdsRef = useRef<Set<string>>(new Set());
   const repeatRealtimeNativeConversationRefreshIdsRef = useRef<Set<string>>(new Set());
@@ -7155,6 +7213,7 @@ export function App(props: {
     resetGraphWorkspace(activeProjectId);
   }, [activeProjectId, graphProjectId]);
   const currentProjectTasks = useMemo(() => (activeProjectId ? snapshot.tasks.filter((task) => task.projectId === activeProjectId) : snapshot.tasks), [activeProjectId, snapshot.tasks]);
+  const currentProjectTaskIdsSignature = useMemo(() => JSON.stringify(currentProjectTasks.map((task) => task.id)), [currentProjectTasks]);
   const currentTaskConversationChoices = useMemo(() => Object.fromEntries(currentProjectTasks.map((task) => [task.id, nativeConversationChoicesByTask[task.id]?.choices ?? []])), [currentProjectTasks, nativeConversationChoicesByTask]);
   const nativeConversationChoices = useMemo(
     () => [...Object.values(nativeConversationChoicesByProject), ...Object.values(nativeConversationChoicesByTask)].flatMap((entry) => entry.choices).sort(compareConversationStageUpdatedDesc),
@@ -7247,47 +7306,59 @@ export function App(props: {
     let cancelled = false;
     const projectId = activeProjectId;
     const projectRequestVersion = nativeProjectConversationChoiceLoadCoordinator.begin(projectId);
-    const taskLoads = currentProjectTasks.map((task) => ({ task, requestVersion: nativeConversationChoiceLoadCoordinator.begin(task.id) }));
+    const taskLoads = (JSON.parse(currentProjectTaskIdsSignature) as string[]).map((taskId) => ({ taskId, requestVersion: nativeConversationChoiceLoadCoordinator.begin(taskId) }));
     setNativeConversationChoiceProjectStates((current) => ({ ...current, [projectId]: beginNativeConversationChoiceTaskLoad(current[projectId]) }));
     setNativeConversationChoiceTaskStates((current) => ({
       ...current,
-      ...Object.fromEntries(taskLoads.map(({ task }) => [task.id, beginNativeConversationChoiceTaskLoad(current[task.id])])),
+      ...Object.fromEntries(taskLoads.map(({ taskId }) => [taskId, beginNativeConversationChoiceTaskLoad(current[taskId])])),
     }));
 
-    void client.loadProjectConversationChoices(projectId).then(
+    void client.loadProjectConversationChoiceGroups(projectId).then(
       (snapshot) => {
-        if (cancelled || !nativeProjectConversationChoiceLoadCoordinator.isCurrent(projectId, projectRequestVersion)) return;
-        const merged = nativeProjectConversationChoiceLoadCoordinator.commit(projectId, projectRequestVersion, snapshot);
-        if (!merged) return;
-        setNativeConversationChoicesByProject((current) => ({ ...current, [projectId]: merged }));
-        setNativeConversationChoiceProjectStates((current) => ({ ...current, [projectId]: completeNativeConversationChoiceTaskLoad(current[projectId]) }));
+        if (cancelled) return;
+        const mergedProjectChoices = nativeProjectConversationChoiceLoadCoordinator.isCurrent(projectId, projectRequestVersion)
+          ? nativeProjectConversationChoiceLoadCoordinator.commit(projectId, projectRequestVersion, snapshot.projectChoices)
+          : null;
+        const mergedTaskChoices = taskLoads.flatMap(({ taskId, requestVersion }) => {
+          const loaded = snapshot.taskChoicesByTaskId[taskId] ?? {
+            taskId,
+            projectId,
+            hasHistory: false,
+            requiresChoice: false,
+            choices: [],
+            items: [],
+          };
+          const merged = nativeConversationChoiceLoadCoordinator.commit(taskId, requestVersion, loaded);
+          return merged ? ([[taskId, merged]] as const) : [];
+        });
+        if (mergedProjectChoices) setNativeConversationChoicesByProject((current) => ({ ...current, [projectId]: mergedProjectChoices }));
+        if (mergedTaskChoices.length > 0) setNativeConversationChoicesByTask((current) => ({ ...current, ...Object.fromEntries(mergedTaskChoices) }));
+        if (mergedProjectChoices) setNativeConversationChoiceProjectStates((current) => ({ ...current, [projectId]: completeNativeConversationChoiceTaskLoad(current[projectId]) }));
+        if (mergedTaskChoices.length > 0) {
+          setNativeConversationChoiceTaskStates((current) => ({
+            ...current,
+            ...Object.fromEntries(mergedTaskChoices.map(([taskId]) => [taskId, completeNativeConversationChoiceTaskLoad(current[taskId])])),
+          }));
+        }
       },
       (error) => {
-        if (cancelled || !nativeProjectConversationChoiceLoadCoordinator.isCurrent(projectId, projectRequestVersion)) return;
-        setNativeConversationChoiceProjectStates((current) => ({ ...current, [projectId]: failNativeConversationChoiceTaskLoad(current[projectId], errorToLocalUiMessage(error)) }));
+        if (cancelled) return;
+        const message = errorToLocalUiMessage(error);
+        if (nativeProjectConversationChoiceLoadCoordinator.isCurrent(projectId, projectRequestVersion)) {
+          setNativeConversationChoiceProjectStates((current) => ({ ...current, [projectId]: failNativeConversationChoiceTaskLoad(current[projectId], message) }));
+        }
+        setNativeConversationChoiceTaskStates((current) => ({
+          ...current,
+          ...Object.fromEntries(
+            taskLoads.filter(({ taskId, requestVersion }) => nativeConversationChoiceLoadCoordinator.isCurrent(taskId, requestVersion)).map(({ taskId }) => [taskId, failNativeConversationChoiceTaskLoad(current[taskId], message)]),
+          ),
+        }));
       },
     );
-
-    void Promise.allSettled(taskLoads.map(({ task }) => client.loadTaskConversationChoices(task.id))).then((results) => {
-      if (cancelled) return;
-      results.forEach((result, index) => {
-        const load = taskLoads[index];
-        if (!load || !nativeConversationChoiceLoadCoordinator.isCurrent(load.task.id, load.requestVersion)) return;
-        if (result.status === 'fulfilled') {
-          const merged = nativeConversationChoiceLoadCoordinator.commit(load.task.id, load.requestVersion, result.value);
-          if (!merged) return;
-          setNativeConversationChoicesByTask((current) => ({ ...current, [load.task.id]: merged }));
-          setNativeConversationChoiceTaskStates((current) => ({ ...current, [load.task.id]: completeNativeConversationChoiceTaskLoad(current[load.task.id]) }));
-          return;
-        }
-        const message = errorToLocalUiMessage(result.reason);
-        setNativeConversationChoiceTaskStates((current) => ({ ...current, [load.task.id]: failNativeConversationChoiceTaskLoad(current[load.task.id], message) }));
-      });
-    });
     return () => {
       cancelled = true;
     };
-  }, [activeProjectId, activeProjectSection, currentProjectTasks, nativeConversationChoiceLoadCoordinator, nativeProjectConversationChoiceLoadCoordinator, props.nativeConversationClient]);
+  }, [activeProjectId, activeProjectSection, currentProjectTaskIdsSignature, nativeConversationChoiceLoadCoordinator, nativeProjectConversationChoiceLoadCoordinator, props.nativeConversationClient]);
 
   const nativeSessionTaskRecord = selectedNativeConversation?.taskId
     ? snapshot.tasks.find((task) => task.id === selectedNativeConversation.taskId)
@@ -7356,8 +7427,37 @@ export function App(props: {
 
   useEffect(() => {
     const subscribeRealtimeEvents = props.onSubscribeRealtimeEvents;
-    const loadGraphConversation = props.onLoadGraphConversation;
     if (!subscribeRealtimeEvents) return;
+    let pendingRuntimeConversationEvents: ZeusRealtimeEvent[] = [];
+    let runtimeConversationFlushTimer: number | undefined;
+    const flushRuntimeConversationEvents = (): void => {
+      if (runtimeConversationFlushTimer) window.clearTimeout(runtimeConversationFlushTimer);
+      runtimeConversationFlushTimer = undefined;
+      if (pendingRuntimeConversationEvents.length === 0) return;
+      const events = pendingRuntimeConversationEvents;
+      pendingRuntimeConversationEvents = [];
+      const sessionIds = new Set(events.map((event) => event.payload.sessionId).filter((sessionId): sessionId is string => typeof sessionId === 'string'));
+      const appendEvents = (conversation: GraphConversationHistoryItem): GraphConversationHistoryItem =>
+        conversation.sessionId && sessionIds.has(conversation.sessionId) ? appendRuntimeOutputEventsToConversation(conversation, events) : conversation;
+      setGraphConversations((current) => {
+        let changed = false;
+        const next = current.map((conversation) => {
+          const updated = appendEvents(conversation);
+          if (updated !== conversation) changed = true;
+          return updated;
+        });
+        return changed ? next : current;
+      });
+      setSelectedGraphConversation((current) => (current ? appendEvents(current) : current));
+    };
+    const queueRuntimeConversationEvent = (event: ZeusRealtimeEvent): void => {
+      pendingRuntimeConversationEvents.push(event);
+      if (pendingRuntimeConversationEvents.length >= 100) {
+        flushRuntimeConversationEvents();
+        return;
+      }
+      runtimeConversationFlushTimer ??= window.setTimeout(flushRuntimeConversationEvents, 100);
+    };
     const refreshNativeConversationList = (projectId: string, conversationId: string): void => {
       const client = props.nativeConversationClient;
       if (!client) return;
@@ -7367,40 +7467,34 @@ export function App(props: {
       }
       pendingRealtimeNativeConversationRefreshIdsRef.current.add(conversationId);
       void client
-        .loadNativeConversation(projectId, conversationId)
-        .then(async (nativeSnapshot) => {
-          if (nativeSnapshot.id !== conversationId || nativeSnapshot.projectId !== projectId) return;
-          const knownConversation = nativeSnapshot.taskId
-            ? nativeConversationChoicesByTaskRef.current[nativeSnapshot.taskId]?.choices.some((choice) => choice.id === conversationId) === true
-            : nativeConversationChoicesByProjectRef.current[projectId]?.choices.some((choice) => choice.id === conversationId) === true;
-          if (knownConversation) {
-            setNativeConversationChoicesByProject((current) => updateConversationChoiceSnapshotCollection(current, nativeSnapshot));
-            setNativeConversationChoicesByTask((current) => updateConversationChoiceSnapshotCollection(current, nativeSnapshot));
-          } else if (nativeSnapshot.taskId) {
-            const taskId = nativeSnapshot.taskId;
-            const requestVersion = nativeConversationChoiceLoadCoordinator.begin(taskId);
-            const choices = await client.loadTaskConversationChoices(taskId);
-            const merged = nativeConversationChoiceLoadCoordinator.commit(taskId, requestVersion, choices);
-            if (merged) {
-              nativeConversationChoicesByTaskRef.current = { ...nativeConversationChoicesByTaskRef.current, [taskId]: merged };
-              setNativeConversationChoicesByTask((current) => ({ ...current, [taskId]: merged }));
-              setNativeConversationChoiceTaskStates((current) => ({ ...current, [taskId]: completeNativeConversationChoiceTaskLoad(current[taskId]) }));
-            }
+        .loadNativeConversationChoice(projectId, conversationId)
+        .then((metadata) => {
+          if (metadata.id !== conversationId || metadata.projectId !== projectId) return;
+          if (metadata.taskId) {
+            const taskId = metadata.taskId;
+            // 使更早发出的批量快照失效，避免旧状态覆盖实时轻量投影。
+            nativeConversationChoiceLoadCoordinator.begin(taskId);
+            setNativeConversationChoicesByTask((current) => {
+              const next = { ...current, [taskId]: upsertTaskConversationChoiceSnapshot(taskId, current[taskId], metadata) };
+              nativeConversationChoicesByTaskRef.current = next;
+              return next;
+            });
+            setNativeConversationChoiceTaskStates((current) => ({ ...current, [taskId]: completeNativeConversationChoiceTaskLoad(current[taskId]) }));
           } else {
-            const requestVersion = nativeProjectConversationChoiceLoadCoordinator.begin(projectId);
-            const choices = await client.loadProjectConversationChoices(projectId);
-            const merged = nativeProjectConversationChoiceLoadCoordinator.commit(projectId, requestVersion, choices);
-            if (merged) {
-              nativeConversationChoicesByProjectRef.current = { ...nativeConversationChoicesByProjectRef.current, [projectId]: merged };
-              setNativeConversationChoicesByProject((current) => ({ ...current, [projectId]: merged }));
-              setNativeConversationChoiceProjectStates((current) => ({ ...current, [projectId]: completeNativeConversationChoiceTaskLoad(current[projectId]) }));
-            }
+            nativeProjectConversationChoiceLoadCoordinator.begin(projectId);
+            setNativeConversationChoicesByProject((current) => {
+              const next = { ...current, [projectId]: upsertProjectConversationChoiceSnapshot(current[projectId], metadata) };
+              nativeConversationChoicesByProjectRef.current = next;
+              return next;
+            });
+            setNativeConversationChoiceProjectStates((current) => ({ ...current, [projectId]: completeNativeConversationChoiceTaskLoad(current[projectId]) }));
           }
-          const runtimeState = conversationTreeRuntimeStateFromSnapshot(nativeSnapshot);
-          rememberSessionHotState(nativeConversationHotCacheRef.current, conversationId, createHydratedSessionState(nativeSnapshot));
-          setNativeConversationRuntimeStates((current) => (current[conversationId] === runtimeState ? current : { ...current, [conversationId]: runtimeState }));
-          const taskRunStatus = taskAgentRunStatusFromConversationTreeRuntimeState(runtimeState);
-          setNativeConversationTaskRunStatuses((current) => (current[conversationId] === taskRunStatus ? current : { ...current, [conversationId]: taskRunStatus }));
+          if (selectedNativeConversationIdRef.current !== conversationId) {
+            const runtimeState = conversationTreeRuntimeStateFromConversation(metadata);
+            setNativeConversationRuntimeStates((current) => (current[conversationId] === runtimeState ? current : { ...current, [conversationId]: runtimeState }));
+            const taskRunStatus = taskAgentRunStatusFromConversation(metadata);
+            setNativeConversationTaskRunStatuses((current) => (current[conversationId] === taskRunStatus ? current : { ...current, [conversationId]: taskRunStatus }));
+          }
         })
         .catch((error: unknown) => recordLocalError('conversation-list-realtime-refresh', error))
         .finally(() => {
@@ -7430,6 +7524,10 @@ export function App(props: {
       }
       if (event.type === 'conversation.thread.archived' && typeof event.payload.conversationId === 'string') {
         const conversationId = event.payload.conversationId;
+        const taskId = typeof event.payload.taskId === 'string' ? event.payload.taskId : null;
+        const projectId = typeof event.payload.projectId === 'string' ? event.payload.projectId : null;
+        if (taskId) nativeConversationChoiceLoadCoordinator.forget(taskId, conversationId);
+        else if (projectId) nativeProjectConversationChoiceLoadCoordinator.forget(projectId, conversationId);
         setNativeConversationChoicesByProject((current) =>
           Object.fromEntries(
             Object.entries(current).map(([projectId, choices]) => [
@@ -7481,24 +7579,32 @@ export function App(props: {
             });
         }
       }
-      if (!loadGraphConversation) return;
-      if (!shouldRefreshConversationForRuntimeEvent(event, selectedTaskConversationRef.current)) return;
       const conversation = selectedTaskConversationRef.current;
+      if (isRuntimeConversationOutputEvent(event, conversation)) {
+        queueRuntimeConversationEvent(event);
+        return;
+      }
+      if (!shouldRefreshConversationForRuntimeEvent(event, conversation)) return;
       if (!conversation) return;
-      const projectId = conversation.projectId || activeProjectIdRef.current;
-      if (!projectId || pendingRealtimeConversationRefreshIdsRef.current.has(conversation.id)) return;
-      pendingRealtimeConversationRefreshIdsRef.current.add(conversation.id);
-      void loadGraphConversation(projectId, conversation.id)
-        .then((updatedConversation) => upsertGraphConversation(updatedConversation))
-        .catch((error: unknown) => recordLocalError('conversation-realtime-refresh', error))
-        .finally(() => {
-          pendingRealtimeConversationRefreshIdsRef.current.delete(conversation.id);
-        });
+      flushRuntimeConversationEvents();
+      setGraphConversations((current) => current.map((candidate) => (candidate.id === conversation.id ? applyRuntimeEndedEventToConversation(candidate, event) : candidate)));
+      setSelectedGraphConversation((current) => (current?.id === conversation.id ? applyRuntimeEndedEventToConversation(current, event) : current));
     });
     return () => {
+      if (runtimeConversationFlushTimer) window.clearTimeout(runtimeConversationFlushTimer);
+      pendingRuntimeConversationEvents = [];
       if (unsubscribe) unsubscribe();
     };
-  }, [acknowledgeNativeConversationCompletion, mergeTaskRecord, props.nativeConversationClient, props.onLoadGraphConversation, props.onLoadTask, props.onSubscribeRealtimeEvents, setNativeConversationCompletionUnread]);
+  }, [
+    acknowledgeNativeConversationCompletion,
+    mergeTaskRecord,
+    nativeConversationChoiceLoadCoordinator,
+    nativeProjectConversationChoiceLoadCoordinator,
+    props.nativeConversationClient,
+    props.onLoadTask,
+    props.onSubscribeRealtimeEvents,
+    setNativeConversationCompletionUnread,
+  ]);
 
   const taskDetailPaneTask = taskDetailPaneTaskId ? (taskDetail?.id === taskDetailPaneTaskId ? taskDetail : snapshot.tasks.find((task) => task.id === taskDetailPaneTaskId)) : undefined;
   const taskDetailPaneConversations = taskDetailPaneTask ? (nativeConversationChoicesByTask[taskDetailPaneTask.id]?.choices ?? []) : [];
@@ -8637,6 +8743,7 @@ export function App(props: {
     if (!client || !conversation.taskId) return;
     try {
       await client.archiveNativeConversation(conversation.projectId, conversation.id);
+      nativeConversationChoiceLoadCoordinator.forget(conversation.taskId, conversation.id);
       if (selectedNativeConversationIdRef.current === conversation.id) {
         selectedNativeConversationIdRef.current = null;
         setSelectedNativeConversationId(null);
@@ -17872,6 +17979,8 @@ function parseRuntimeTerminalEnvText(text: string): RuntimeSettings['terminalEnv
 }
 
 export function resolveRuntimeNormalizedLogPath(events: AiRuntimeTerminalEvent[]): string | undefined {
+  const normalizedPath = events.find((event) => event.rawChunkPath?.endsWith('/terminal.normalized.log'))?.rawChunkPath;
+  if (normalizedPath) return normalizedPath;
   const chunkPath = events.find((event) => event.rawChunkPath?.includes('/chunks/'))?.rawChunkPath;
   if (!chunkPath) return undefined;
   return chunkPath.replace(/\/chunks\/[^/]+$/u, '/terminal.normalized.log');

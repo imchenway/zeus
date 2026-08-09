@@ -8,6 +8,7 @@ import type {
   CodexTaskRepositoryCapability,
   ConversationResourcePreview,
   NativeCollaborationMode,
+  NativeConversationChoice,
   NativeConversationChoicesSnapshot,
   NativeConversationSnapshot,
   NativeNextTurnSettings,
@@ -83,6 +84,12 @@ export type TaskTableColumnKey =
   | 'createdFrom';
 export type TaskTableColumnWidth = number;
 export type TaskTableSortDirection = 'asc' | 'desc';
+
+export interface NativeProjectConversationChoiceGroupsSnapshot {
+  projectId: string;
+  projectChoices: NativeProjectConversationChoicesSnapshot;
+  taskChoicesByTaskId: Record<string, NativeConversationChoicesSnapshot>;
+}
 
 export interface TaskTableSortState {
   columnKey: TaskTableColumnKey | null;
@@ -771,6 +778,17 @@ export interface CommandRunDetail {
   artifacts: CommandArtifact[];
   runtimeSession: AiRuntimeSession | null;
   logs: AiRuntimeLogEntry[];
+  afterSeq: number;
+  nextSeq: number;
+  logTotal: number;
+  hasMoreLogs: boolean;
+  logsTruncated?: boolean;
+}
+
+export interface LoadCommandRunOptions {
+  afterSeq?: number;
+  logLimit?: number;
+  tail?: boolean;
 }
 
 export interface CreateCommandConfirmationRequest {
@@ -791,6 +809,7 @@ export interface AiRuntimeTerminalSnapshot {
   command: string;
   cwd: string;
   logs: AiRuntimeLogEntry[];
+  logsTruncated?: boolean;
   capturedAt: string;
 }
 
@@ -1414,6 +1433,7 @@ export interface DashboardClient {
   saveProjectModelSelection: (projectId: string, input: ProjectModelSelection) => Promise<ProjectModelSelection>;
   loadArchivedConversations: () => Promise<ArchivedConversationChoicesSnapshot>;
   loadProjectConversationChoices: (projectId: string) => Promise<NativeProjectConversationChoicesSnapshot>;
+  loadProjectConversationChoiceGroups: (projectId: string) => Promise<NativeProjectConversationChoiceGroupsSnapshot>;
   startProjectConversation: (projectId: string, input: StartProjectConversationRequest) => Promise<NativeOperationAcceptance>;
   loadTaskConversationChoices: (taskId: string) => Promise<NativeConversationChoicesSnapshot>;
   startNativeConversation: (taskId: string, input: StartNativeConversationRequest) => Promise<NativeOperationAcceptance>;
@@ -1461,6 +1481,8 @@ export interface DashboardClient {
     result: TaskIntegrationResult;
   }>;
   loadNativeConversation: (projectId: string, conversationId: string) => Promise<NativeConversationSnapshot>;
+  loadNativePendingRequests: (projectId: string, conversationId: string) => Promise<{ conversationId: string; requests: NativePendingRequest[] }>;
+  loadNativeConversationChoice: (projectId: string, conversationId: string) => Promise<NativeConversationChoice>;
   archiveNativeConversation: (projectId: string, conversationId: string) => Promise<GraphConversationHistoryItem>;
   restoreConversationArchive: (projectId: string, conversationId: string) => Promise<GraphConversationHistoryItem>;
   loadConversationResourcePreview: (projectId: string, conversationId: string, resourceId: string) => Promise<ConversationResourcePreview>;
@@ -1538,7 +1560,7 @@ export interface DashboardClient {
   createCommandConfirmation: (projectId: string, commandId: string, input: CreateCommandConfirmationRequest) => Promise<CommandConfirmationResponse>;
   startCommandRun: (projectId: string, commandId: string, input: StartCommandRunRequest) => Promise<CommandRun>;
   loadCommandRuns: (projectId: string, limit?: number) => Promise<CommandRun[]>;
-  loadCommandRun: (runId: string) => Promise<CommandRunDetail>;
+  loadCommandRun: (runId: string, options?: LoadCommandRunOptions) => Promise<CommandRunDetail>;
   stopCommandRun: (runId: string) => Promise<CommandRun>;
   loadCommandArtifact: (artifactId: string) => Promise<Blob>;
   loadRuntimeAdapters: () => Promise<AiRuntimeAdapterDescriptor[]>;
@@ -1761,6 +1783,7 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
     saveProjectModelSelection: (projectId, input) => request<ProjectModelSelection>(`/api/projects/${encodeURIComponent(projectId)}/model-selection`, { method: 'PUT', body: JSON.stringify(input) }),
     loadArchivedConversations: () => request<ArchivedConversationChoicesSnapshot>('/api/conversations/archived'),
     loadProjectConversationChoices: (projectId) => request<NativeProjectConversationChoicesSnapshot>(`/api/projects/${encodeURIComponent(projectId)}/conversation-choices`),
+    loadProjectConversationChoiceGroups: (projectId) => request<NativeProjectConversationChoiceGroupsSnapshot>(`/api/projects/${encodeURIComponent(projectId)}/conversation-choice-groups`),
     startProjectConversation: (projectId, input) => {
       const { idempotencyKey, ...body } = input;
       return request<NativeOperationAcceptance>(`/api/projects/${encodeURIComponent(projectId)}/conversations`, {
@@ -1860,6 +1883,9 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
       });
     },
     loadNativeConversation: (projectId, conversationId) => request<NativeConversationSnapshot>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}`),
+    loadNativePendingRequests: (projectId, conversationId) =>
+      request<{ conversationId: string; requests: NativePendingRequest[] }>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/pending-requests`),
+    loadNativeConversationChoice: (projectId, conversationId) => request<NativeConversationChoice>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/choice`),
     archiveNativeConversation: (projectId, conversationId) => request<GraphConversationHistoryItem>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/archive`, { method: 'POST' }),
     restoreConversationArchive: (projectId, conversationId) => request<GraphConversationHistoryItem>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/restore`, { method: 'POST' }),
     loadConversationResourcePreview: (projectId, conversationId, resourceId) =>
@@ -2001,7 +2027,14 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
         body: JSON.stringify(input),
       }),
     loadCommandRuns: (projectId, limit = 100) => request<CommandRun[]>(`/api/projects/${encodeURIComponent(projectId)}/command-runs?limit=${encodeURIComponent(String(limit))}`),
-    loadCommandRun: (runId) => request<CommandRunDetail>(`/api/command-runs/${encodeURIComponent(runId)}`),
+    loadCommandRun: (runId, options = {}) => {
+      const params = new URLSearchParams();
+      if (options.afterSeq !== undefined) params.set('afterSeq', String(options.afterSeq));
+      if (options.logLimit !== undefined) params.set('logLimit', String(options.logLimit));
+      if (options.tail !== undefined) params.set('tail', String(options.tail));
+      const query = params.size > 0 ? `?${params.toString()}` : '';
+      return request<CommandRunDetail>(`/api/command-runs/${encodeURIComponent(runId)}${query}`);
+    },
     stopCommandRun: (runId) => request<CommandRun>(`/api/command-runs/${encodeURIComponent(runId)}/stop`, { method: 'POST' }),
     loadCommandArtifact: (artifactId) => requestBlob(`/api/command-artifacts/${encodeURIComponent(artifactId)}/content`),
     loadRuntimeAdapters: () => request<AiRuntimeAdapterDescriptor[]>('/api/runtime/adapters'),

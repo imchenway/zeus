@@ -806,7 +806,8 @@ export function taskAgentRunStatusFromSession(state: NativeSessionState): TaskAg
   return 'running';
 }
 
-export function taskAgentRunStatusFromConversation(conversation: Pick<NativeConversationChoice, 'status' | 'transportKind' | 'providerState' | 'pendingRequestKind'> & { readOnly?: boolean }): TaskAgentRunStatus {
+export function taskAgentRunStatusFromConversation(conversation: Pick<NativeConversationChoice, 'status' | 'transportKind' | 'providerState' | 'pendingRequestKind' | 'taskRunStatus'> & { readOnly?: boolean }): TaskAgentRunStatus {
+  if (conversation.taskRunStatus) return conversation.taskRunStatus;
   if (conversation.readOnly || conversation.transportKind !== 'codex_native') return 'legacy_readonly';
   const providerState = `${conversation.providerState ?? ''}`.toLowerCase();
   const recordState = conversation.status.toLowerCase();

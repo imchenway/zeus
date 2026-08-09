@@ -70,7 +70,7 @@ async function main() {
   }
 
   if (workflowRun) {
-    run('gh', ['run', 'watch', String(workflowRun.databaseId), '--repo', repository, '--exit-status', '--interval', '10']);
+    workflowRun = await waitForWorkflowRun(workflowRun);
     release = readRelease(tag);
   }
   if (!release.exists) throw new Error(`Release Workflow 结束后仍未找到 GitHub Release：${tag}`);
@@ -469,6 +469,72 @@ async function waitForDispatchedRun(headSha, dispatchedAt) {
     await delay(2_000);
   }
   return null;
+}
+
+async function waitForWorkflowRun(workflowRun) {
+  let previousSnapshot = null;
+  let consecutiveReadFailures = 0;
+  while (true) {
+    const result = ghJson(['run', 'view', String(workflowRun.databaseId), '--repo', repository, '--json', 'databaseId,status,conclusion,url,jobs'], true);
+    if (!result.ok || !result.value || typeof result.value.status !== 'string') {
+      consecutiveReadFailures += 1;
+      const reason = result.error || 'GitHub CLI 返回了无效响应';
+      if (consecutiveReadFailures >= 3) {
+        throw new Error(`连续 3 次无法读取 Release Workflow 状态：${reason}`);
+      }
+      console.warn(`暂时无法读取 Release Workflow 状态，10 秒后重试（${consecutiveReadFailures}/3）：${reason}`);
+      await delay(10_000);
+      continue;
+    }
+    consecutiveReadFailures = 0;
+
+    const snapshot = buildWorkflowProgressSnapshot(result.value);
+    printWorkflowProgressChanges(snapshot, previousSnapshot);
+    previousSnapshot = snapshot;
+
+    if (snapshot.status === 'completed') {
+      if (snapshot.conclusion !== 'success') {
+        throw new Error(`Release Workflow 未成功完成：conclusion=${snapshot.conclusion || 'unknown'} ${result.value.url || workflowRun.url}`);
+      }
+      return { ...workflowRun, ...result.value };
+    }
+    await delay(10_000);
+  }
+}
+
+function buildWorkflowProgressSnapshot(workflowRun) {
+  return {
+    status: workflowRun.status,
+    conclusion: workflowRun.conclusion || null,
+    jobs: Array.isArray(workflowRun.jobs)
+      ? workflowRun.jobs.map((job) => {
+          const steps = Array.isArray(job.steps) ? job.steps : [];
+          const phase = steps.find((step) => step.status === 'in_progress') ?? steps.find((step) => ['queued', 'pending', 'waiting'].includes(step.status)) ?? steps.findLast((step) => step.status === 'completed') ?? null;
+          return {
+            name: job.name,
+            status: job.status,
+            conclusion: job.conclusion || null,
+            phaseName: phase?.name ?? null,
+            phaseStatus: phase?.status ?? null,
+            phaseConclusion: phase?.conclusion || null,
+          };
+        })
+      : [],
+  };
+}
+
+function printWorkflowProgressChanges(snapshot, previousSnapshot) {
+  if (!previousSnapshot || snapshot.status !== previousSnapshot.status || snapshot.conclusion !== previousSnapshot.conclusion) {
+    console.log(`Release Workflow 状态：${snapshot.status}${snapshot.conclusion ? `/${snapshot.conclusion}` : ''}`);
+  }
+
+  const previousJobs = new Map((previousSnapshot?.jobs ?? []).map((job) => [job.name, job]));
+  for (const job of snapshot.jobs) {
+    const previousJob = previousJobs.get(job.name);
+    if (previousJob && JSON.stringify(job) === JSON.stringify(previousJob)) continue;
+    const phase = job.phaseName ? `，阶段=${job.phaseName} (${job.phaseStatus}${job.phaseConclusion ? `/${job.phaseConclusion}` : ''})` : '';
+    console.log(`Release Workflow 作业：${job.name}=${job.status}${job.conclusion ? `/${job.conclusion}` : ''}${phase}`);
+  }
 }
 
 function resolveLocalTagSha(tag) {

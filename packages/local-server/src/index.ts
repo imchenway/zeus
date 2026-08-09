@@ -1,6 +1,7 @@
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import websocketPlugin from '@fastify/websocket';
 import { createHash, randomUUID } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 import { accessSync, appendFileSync, constants as fsConstants, cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, parse, relative, resolve, sep } from 'node:path';
 import { getNextTaskStatus, type TaskStatus } from '@zeus/task-core';
@@ -152,6 +153,7 @@ import {
   TurnChangeFileRepository,
   TurnChangeSetRepository,
   type ZeusAuditLogRecord,
+  type ZeusConversationRecord,
   type ZeusConversationResourceRecord,
   type ZeusConversationWithMessagesRecord,
   type ZeusDatabase,
@@ -2041,9 +2043,13 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   const repairedPiConversationIdentityCount = piNativeCoordinator.repairPersistedConversationIdentities();
   const repairedPiAgentMessageProjectionCount = piNativeCoordinator.repairPersistedAgentMessageProjections();
   if (repairedPiConversationIdentityCount > 0 || repairedPiAgentMessageProjectionCount > 0) await db.save();
-  const runtimePersistenceWrites: Array<Promise<void>> = [];
-  const runtimePidExists = processPidExists;
-  const runtimeKillPid = processKillPid;
+  const runtimePersistenceWrites = new Set<Promise<void>>();
+  const runtimePersistenceErrors: unknown[] = [];
+  let runtimePersistenceSaveTimer: ReturnType<typeof setTimeout> | undefined;
+  let runtimePersistenceSavePending = false;
+  const runtimeLogFileBatches = new Map<string, AiRuntimeLogEntry[]>();
+  const runtimeLogFileWriteErrors: unknown[] = [];
+  let runtimeLogFileFlushTimer: ReturnType<typeof setTimeout> | undefined;
   const optionalNodePty = createOptionalNodePtyRuntimeSpawn();
   const runtimeTerminalStatus: RuntimeStatusSnapshot['terminal'] = {
     provider: optionalNodePty.spawn ? 'node-pty' : 'child_process',
@@ -2057,6 +2063,17 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     allowedRoots: () => projects.list().map((project) => project.localPath),
     spawn: optionalNodePty.spawn,
     onSessionChange: persistRuntimeSession,
+    onProcessIdentity: async ({ sessionId, token }) => {
+      runtimeSessions.setProcessIdentity(sessionId, token);
+      // 身份必须先提交到 WAL 再启动子进程；否则 App 在 spawn 后瞬间崩溃会留下无法安全核验的孤儿树。
+      await db.save();
+    },
+    onProcessStarted: async ({ sessionId, pid }) => {
+      if (!isSafeRuntimeProcessId(pid)) throw new Error(`Runtime 会话 ${sessionId} 未返回可持久化的进程组标识。`);
+      runtimeSessions.updateStatus(sessionId, { status: 'running', pid });
+      // spawn 后立即持久化 PID/PGID；完成前启动调用不会返回，失败则 manager 会强杀刚创建的进程树。
+      await db.save();
+    },
     onLog: persistRuntimeLog,
   });
   const ownsCodexAppServerManager = options.codexAppServerManager === undefined;
@@ -2090,7 +2107,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   const conversationAttachmentRoot = prepareTaskAttachmentRoot(options.conversationAttachmentRoot ?? dataLayout.conversationAttachments);
   const trustedConversationAttachmentRoots = [taskAttachmentRoot, browserAttachmentRoot, conversationAttachmentRoot].filter((root): root is string => Boolean(root));
   let conversationResourceBackfillCount = 0;
-  for (const conversation of conversations.listNativeBound()) {
+  for (const conversation of conversations.listNativeBoundRecords()) {
     const project = projects.getById(conversation.projectId);
     if (!project) continue;
     const submissions = conversationSubmissions.listByConversation(conversation.id);
@@ -2130,7 +2147,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     idempotency: idempotencyRequests,
     recoveryRoot: dataLayout.turnChangeSets,
     getConversationRoot: (conversationId) => {
-      const conversation = conversations.getById(conversationId);
+      const conversation = conversations.getRecordById(conversationId);
       return conversation ? resolveNativeConversationExecutionRoot(conversation) : null;
     },
     broadcast: publishNativeConversationEvent,
@@ -2286,8 +2303,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   await turnChangeSetService.recoverInterruptedOperations();
   if (
     codexNativeEnabled &&
-    (conversations.listNativeBound('codex').length > 0 ||
-      conversationSubmissions.listRecoverable().some((submission) => conversations.getById(submission.conversationId)?.agentKind === 'codex' && (submission.status === 'dispatching' || submission.status === 'active')))
+    (conversations.listNativeBoundRecords('codex').length > 0 ||
+      conversationSubmissions.listRecoverable().some((submission) => conversations.getRecordById(submission.conversationId)?.agentKind === 'codex' && (submission.status === 'dispatching' || submission.status === 'active')))
   ) {
     try {
       await codexNativeCoordinator.recover();
@@ -2523,11 +2540,12 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       typeof payload.conversationId === 'string'
         ? [payload.conversationId]
         : mappedType === 'conversation.rateLimits.changed' || mappedType === 'conversation.mcpStartup.changed'
-          ? conversations.listNativeBound('codex').map((conversation) => conversation.id)
+          ? conversations.listNativeBoundRecords('codex').map((conversation) => conversation.id)
           : [];
     if (mappedType !== 'conversation.item.delta') flushPendingNativeDeltaEvents();
     for (const conversationId of new Set(conversationIds)) {
-      const conversation = conversations.getById(conversationId);
+      // 实时事件只需要会话元数据；禁止在每个增量事件中加载整段消息历史。
+      const conversation = conversations.getRecordById(conversationId);
       if (!conversation || conversation.transportKind !== 'codex_native') continue;
       const generationId = typeof payload.generationId === 'string' ? payload.generationId : nativeLocalEventGenerationId;
       const sequence = typeof payload.sequence === 'number' ? payload.sequence : ++nativeLocalEventSequence;
@@ -2814,14 +2832,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   function buildExecutionHostWorkStatusSnapshot(): ExecutionHostWorkStatusSnapshot {
     const transport = codexAppServerManager.getState();
     const activeTurnCount = conversationSubmissions.listRecoverable().filter((submission) => submission.status === 'dispatching' || submission.status === 'active').length;
-    const effectfulTurnCount = conversations
-      .listNativeBound()
-      .flatMap((conversation) => conversationTurns.listByConversation(conversation.id))
-      .filter((turn) => turn.status === 'dispatching' || turn.status === 'running').length;
-    const waitingRequestCount = conversations
-      .listNativeBound()
-      .flatMap((conversation) => conversationRequests.listByConversation(conversation.id))
-      .filter((request) => request.status === 'pending').length;
+    const effectfulTurnCount = conversationTurns.listInProgress().filter((turn) => turn.status === 'dispatching' || turn.status === 'running').length;
+    const waitingRequestCount = conversationRequests.listPending().length;
     const activeRuntimeCount = aiRuntimeManager.listSessions().filter((session) => session.status === 'running').length;
     const activeCommandRunCount = commandRuns.listActive().length;
     return {
@@ -3214,6 +3226,54 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         await db.save();
       }
       return reply.code(204).send();
+    },
+  );
+
+  server.get(
+    '/api/projects/:projectId/conversations/:conversationId/choice',
+    async (
+      request: FastifyRequest<{
+        Params: { projectId: string; conversationId: string };
+      }>,
+      reply,
+    ) => {
+      const project = projects.getById(request.params.projectId);
+      if (!project) return reply.code(404).send({ error: 'ZEUS_PROJECT_NOT_FOUND', message: 'Project not found' });
+      const conversation = conversations.getRecordById(request.params.conversationId);
+      if (!conversation || conversation.projectId !== project.id) {
+        return reply.code(404).send({ error: 'ZEUS_CONVERSATION_NOT_FOUND', message: 'Conversation not found' });
+      }
+      return toNativeConversationChoice(conversation, buildNativeConversationChoiceProjectionContext(project.id));
+    },
+  );
+
+  server.get(
+    '/api/projects/:projectId/conversations/:conversationId/pending-requests',
+    async (
+      request: FastifyRequest<{
+        Params: { projectId: string; conversationId: string };
+      }>,
+      reply,
+    ) => {
+      const project = projects.getById(request.params.projectId);
+      if (!project) return reply.code(404).send({ error: 'ZEUS_PROJECT_NOT_FOUND', message: 'Project not found' });
+      const conversation = conversations.getRecordById(request.params.conversationId);
+      if (!conversation || conversation.projectId !== project.id) {
+        return reply.code(404).send({ error: 'ZEUS_CONVERSATION_NOT_FOUND', message: 'Conversation not found' });
+      }
+      return {
+        conversationId: conversation.id,
+        requests: conversationRequests.listPendingByConversation(conversation.id).map((persistedRequest) => {
+          const snapshot = toNativeServerRequest(persistedRequest);
+          const turn = persistedRequest.turnId ? conversationTurns.getById(persistedRequest.turnId) : undefined;
+          const item = persistedRequest.itemId ? conversationItems.getById(persistedRequest.itemId) : undefined;
+          return {
+            ...snapshot,
+            turnId: turn?.providerTurnId ?? snapshot.turnId,
+            itemId: item?.providerItemId ?? snapshot.itemId,
+          };
+        }),
+      };
     },
   );
 
@@ -4072,7 +4132,12 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   });
 
   server.get('/api/conversations/archived', async () => {
-    const choices = listArchivedTaskConversationHistory().map(toNativeConversationChoice);
+    const contextByProjectId = new Map<string, NativeConversationChoiceProjectionContext>();
+    const choices = listArchivedTaskConversationHistory().map((conversation) => {
+      const context = contextByProjectId.get(conversation.projectId) ?? buildNativeConversationChoiceProjectionContext(conversation.projectId);
+      contextByProjectId.set(conversation.projectId, context);
+      return toNativeConversationChoice(conversation, context);
+    });
     return { choices, items: choices };
   });
 
@@ -5712,8 +5777,15 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   server.get('/api/projects/:projectId/conversation-choices', async (request: FastifyRequest<{ Params: { projectId: string } }>, reply) => {
     const project = projects.getById(request.params.projectId);
     if (!project) return reply.code(404).send({ error: 'ZEUS_PROJECT_NOT_FOUND', message: 'Project not found' });
-    const choices = listProjectConversationHistory(project.id).map(toNativeConversationChoice);
+    const context = buildNativeConversationChoiceProjectionContext(project.id);
+    const choices = listProjectConversationHistory(project.id).map((conversation) => toNativeConversationChoice(conversation, context));
     return { projectId: project.id, choices, items: choices };
+  });
+
+  server.get('/api/projects/:projectId/conversation-choice-groups', async (request: FastifyRequest<{ Params: { projectId: string } }>, reply) => {
+    const project = projects.getById(request.params.projectId);
+    if (!project) return reply.code(404).send({ error: 'ZEUS_PROJECT_NOT_FOUND', message: 'Project not found' });
+    return buildNativeProjectConversationChoiceGroups(project.id);
   });
 
   server.post(
@@ -5743,16 +5815,9 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     if (!task) return reply.code(404).send({ error: 'ZEUS_TASK_NOT_FOUND', message: 'Task not found' });
     const project = projects.getById(task.projectId);
     if (!project) return reply.code(404).send({ error: 'ZEUS_PROJECT_NOT_FOUND', message: 'Project not found' });
-    const history = listTaskConversationHistory(task.id, project.id);
-    const choices = history.map(toNativeConversationChoice);
-    return {
-      taskId: task.id,
-      projectId: project.id,
-      hasHistory: choices.length > 0,
-      requiresChoice: choices.length > 0,
-      choices,
-      items: choices,
-    };
+    const context = buildNativeConversationChoiceProjectionContext(project.id);
+    const choices = listTaskConversationHistory(task.id, project.id).map((conversation) => toNativeConversationChoice(conversation, context));
+    return toNativeTaskConversationChoicesSnapshot(task.id, project.id, choices);
   });
 
   server.get(
@@ -8327,18 +8392,14 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         });
       }
       const hasLogQuery = Boolean(request.query.query || request.query.stream || request.query.limit || request.query.offset);
-      const memoryLogs = aiRuntimeManager.getLogs(request.params.sessionId);
-      if (!hasLogQuery) return memoryLogs.length > 0 ? memoryLogs : runtimeSessions.listLogs(request.params.sessionId).map(toAiRuntimeLogEntry);
+      if (!hasLogQuery) return listRuntimeLogsForRenderer(request.params.sessionId).logs;
 
-      const page =
-        memoryLogs.length > 0
-          ? filterRuntimeMemoryLogs(memoryLogs, request.query)
-          : runtimeSessions.searchLogs(request.params.sessionId, {
-              query: request.query.query,
-              stream: normalizeRuntimeLogStream(request.query.stream),
-              limit: parseBoundedInteger(request.query.limit, 200, 1, 1_000),
-              offset: parseBoundedInteger(request.query.offset, 0, 0, 100_000),
-            });
+      const page = runtimeSessions.searchLogs(request.params.sessionId, {
+        query: request.query.query,
+        stream: normalizeRuntimeLogStream(request.query.stream),
+        limit: parseBoundedInteger(request.query.limit, 200, 1, 1_000),
+        offset: parseBoundedInteger(request.query.offset, 0, 0, 2_147_483_647),
+      });
       return {
         sessionId: request.params.sessionId,
         query: page.query,
@@ -8475,24 +8536,22 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   );
 
   server.get('/api/runtime/sessions/:sessionId/terminal', async (request: FastifyRequest<{ Params: { sessionId: string } }>, reply): Promise<AiRuntimeTerminalSnapshot | unknown> => {
-    try {
-      return aiRuntimeManager.getTerminalSnapshot(request.params.sessionId);
-    } catch {
-      const session = runtimeSessions.getById(request.params.sessionId);
-      if (!session)
-        return reply.code(404).send({
-          error: 'ZEUS_RUNTIME_SESSION_NOT_FOUND',
-          message: 'AI Runtime session not found',
-        });
-      return {
-        sessionId: session.id,
-        status: session.status,
-        command: [session.command, ...parseRuntimeArgs(session.argsJson)].join(' '),
-        cwd: session.cwd,
-        logs: runtimeSessions.listLogs(session.id).map(toAiRuntimeLogEntry),
-        capturedAt: new Date().toISOString(),
-      };
-    }
+    const session = aiRuntimeManager.getSession(request.params.sessionId) ?? toAiRuntimeSessionOrUndefined(runtimeSessions.getById(request.params.sessionId));
+    if (!session)
+      return reply.code(404).send({
+        error: 'ZEUS_RUNTIME_SESSION_NOT_FOUND',
+        message: 'AI Runtime session not found',
+      });
+    const rendererTail = listRuntimeLogsForRenderer(session.id);
+    return {
+      sessionId: session.id,
+      status: session.status,
+      command: [session.command, ...session.args].join(' '),
+      cwd: session.cwd,
+      logs: rendererTail.logs,
+      logsTruncated: rendererTail.truncated,
+      capturedAt: new Date().toISOString(),
+    };
   });
 
   server.get(
@@ -8511,7 +8570,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         });
       }
       const limit = parseBoundedInteger(request.query.limit, 200, 1, 1_000);
-      const offset = parseBoundedInteger(request.query.offset, 0, 0, 100_000);
+      const offset = parseBoundedInteger(request.query.offset, 0, 0, 2_147_483_647);
       // terminal_events 是终端回放的审计事实表；分页下推到 SQLite，避免长会话全量读入内存。
       const page = terminalEvents.listBySessionPage(request.params.sessionId, {
         limit,
@@ -8529,10 +8588,12 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
 
   server.post('/api/runtime/sessions/:sessionId/stop', async (request: FastifyRequest<{ Params: { sessionId: string } }>, reply) => {
     try {
-      const session = aiRuntimeManager.stopSession(request.params.sessionId);
+      const current = aiRuntimeManager.getSession(request.params.sessionId);
+      const session =
+        current && !runtimeSessionIsConfirmedTerminal(current) && !runtimeSessionMayOwnProcess(current.status) ? aiRuntimeManager.killSession(request.params.sessionId, 'SIGKILL') : aiRuntimeManager.stopSession(request.params.sessionId);
       appendAuditLog({
         actorType: 'local_api',
-        action: 'runtime.session.stopped',
+        action: 'runtime.session.stop_requested',
         resourceType: 'runtime_session',
         resourceId: session.id,
         payload: {
@@ -8542,16 +8603,27 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           status: session.status,
         },
       });
-      publishRuntimeSessionEvent('runtime.session.stopped', session);
+      // 真正终态由子进程 close 在 stdout/stderr 排空后发布；这里仅广播停止请求。
+      publishRuntimeSessionEvent('runtime.session.stop_requested', session);
       await db.save();
       return session;
-    } catch {
-      const persisted = stopPersistedOrphanRuntimeSession(request.params.sessionId);
-      if (!persisted)
-        return reply.code(404).send({
-          error: 'ZEUS_RUNTIME_SESSION_NOT_FOUND',
-          message: 'AI Runtime session not found',
+    } catch (managerError) {
+      let persisted: AiRuntimeSession | null;
+      try {
+        persisted = await stopPersistedOrphanRuntimeSession(request.params.sessionId);
+      } catch (error) {
+        return reply.code(409).send({
+          error: 'ZEUS_RUNTIME_ORPHAN_STOP_FAILED',
+          message: error instanceof Error ? error.message : 'Runtime 孤儿进程树终止失败，仍保留待处理状态。',
         });
+      }
+      if (!persisted) {
+        const stored = runtimeSessions.getById(request.params.sessionId);
+        return reply.code(stored ? 409 : 404).send({
+          error: stored ? 'ZEUS_RUNTIME_SESSION_STOP_FAILED' : 'ZEUS_RUNTIME_SESSION_NOT_FOUND',
+          message: stored ? (managerError instanceof Error ? managerError.message : 'Runtime session stop failed') : 'AI Runtime session not found',
+        });
+      }
       await db.save();
       return persisted;
     }
@@ -8618,28 +8690,32 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   );
 
   server.post('/api/runtime/sessions/:sessionId/archive', async (request: FastifyRequest<{ Params: { sessionId: string } }>, reply) => {
-    try {
-      const session = runtimeSessions.archive(request.params.sessionId);
-      appendAuditLog({
-        actorType: 'local_api',
-        action: 'runtime.session.archived',
-        resourceType: 'runtime_session',
-        resourceId: session.id,
-        payload: {
-          sessionId: session.id,
-          projectId: session.projectId,
-          taskId: session.taskId,
-          archived: true,
-        },
-      });
-      await db.save();
-      return toAiRuntimeSession(session);
-    } catch {
+    const existing = runtimeSessions.getById(request.params.sessionId);
+    if (!existing)
       return reply.code(404).send({
         error: 'ZEUS_RUNTIME_SESSION_NOT_FOUND',
         message: 'AI Runtime session not found',
       });
-    }
+    if (!runtimeSessionIsConfirmedTerminal(existing))
+      return reply.code(409).send({
+        error: 'ZEUS_RUNTIME_SESSION_ACTIVE',
+        message: '运行中或待确认的 Runtime 会话不能归档，请先停止并确认整个进程树已经退出。',
+      });
+    const session = runtimeSessions.archive(request.params.sessionId);
+    appendAuditLog({
+      actorType: 'local_api',
+      action: 'runtime.session.archived',
+      resourceType: 'runtime_session',
+      resourceId: session.id,
+      payload: {
+        sessionId: session.id,
+        projectId: session.projectId,
+        taskId: session.taskId,
+        archived: true,
+      },
+    });
+    await db.save();
+    return toAiRuntimeSession(session);
   });
 
   server.post('/api/runtime/sessions/:sessionId/restore', async (request: FastifyRequest<{ Params: { sessionId: string } }>, reply) => {
@@ -8689,7 +8765,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           message: 'Runtime session project not found',
         });
       }
-      const logs = runtimeSessions.listLogs(session.id);
+      const logs = runtimeSessions.listRecentLogs(session.id, 10).map(toAiRuntimeLogEntry);
+      const logCount = runtimeSessions.searchLogs(session.id, { limit: 1 }).total;
       const instruction = request.body?.instruction?.trim() || '基于真实 Runtime 会话继续分析后续处理事项。';
       const task = tasks.create({
         projectId: session.projectId,
@@ -8701,7 +8778,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           `Runtime 会话：${session.id}`,
           `命令：${[session.command, ...parseRuntimeArgs(session.argsJson)].join(' ')}`,
           `工作目录：${session.cwd}`,
-          `日志摘要：${session.summary ?? logs[0]?.text ?? '未生成摘要'}`,
+          `日志摘要：${session.summary ?? logs.at(-1)?.text ?? '未生成摘要'}`,
         ].join('\n'),
         createdFrom: 'runtime_session',
         sourceContext: {
@@ -8718,7 +8795,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         taskId: task.id,
         eventType: 'task.created.from_runtime_session',
         title: '任务从 Runtime 会话创建',
-        payload: { runtimeSessionId: session.id, logCount: logs.length },
+        payload: { runtimeSessionId: session.id, logCount },
       });
       appendAuditLog({
         actorType: 'local_api',
@@ -8739,28 +8816,32 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   );
 
   server.delete('/api/runtime/sessions/:sessionId', async (request: FastifyRequest<{ Params: { sessionId: string } }>, reply) => {
-    try {
-      const session = runtimeSessions.delete(request.params.sessionId);
-      appendAuditLog({
-        actorType: 'local_api',
-        action: 'runtime.session.deleted',
-        resourceType: 'runtime_session',
-        resourceId: session.id,
-        payload: {
-          sessionId: session.id,
-          projectId: session.projectId,
-          taskId: session.taskId,
-          deletedAt: session.deletedAt,
-        },
-      });
-      await db.save();
-      return toAiRuntimeSession(session);
-    } catch {
+    const existing = runtimeSessions.getById(request.params.sessionId);
+    if (!existing)
       return reply.code(404).send({
         error: 'ZEUS_RUNTIME_SESSION_NOT_FOUND',
         message: 'AI Runtime session not found',
       });
-    }
+    if (!runtimeSessionIsConfirmedTerminal(existing))
+      return reply.code(409).send({
+        error: 'ZEUS_RUNTIME_SESSION_ACTIVE',
+        message: '运行中或待确认的 Runtime 会话不能删除，请先停止并确认整个进程树已经退出。',
+      });
+    const session = runtimeSessions.delete(request.params.sessionId);
+    appendAuditLog({
+      actorType: 'local_api',
+      action: 'runtime.session.deleted',
+      resourceType: 'runtime_session',
+      resourceId: session.id,
+      payload: {
+        sessionId: session.id,
+        projectId: session.projectId,
+        taskId: session.taskId,
+        deletedAt: session.deletedAt,
+      },
+    });
+    await db.save();
+    return toAiRuntimeSession(session);
   });
 
   server.post('/api/git/confirmations', async (request: FastifyRequest<{ Body: CreateGitConfirmationBody }>, reply) => {
@@ -9676,8 +9757,29 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     } catch (error) {
       cleanupErrors.push(error);
     }
+    // 只要 manager 仍保有活动进程所有权，就保留数据库与回调边界并低频重试。
+    // 不能在子进程仍可能运行时关闭 DB 并让 execution host 强退，否则会留下无人管理的高能耗进程树。
+    while (true) {
+      try {
+        // 先等待 Runtime 子进程与 stdout/stderr 排空，再执行最后一次保存和数据库关闭。
+        await aiRuntimeManager.close();
+        break;
+      } catch (error) {
+        const stillOwnsProcess = aiRuntimeManager.listSessions().some((session) => runtimeSessionMayOwnProcess(session.status));
+        if (!stillOwnsProcess) {
+          cleanupErrors.push(error);
+          break;
+        }
+        await new Promise<void>((resolveRetry) => setTimeout(resolveRetry, 250));
+      }
+    }
     try {
-      await Promise.all(runtimePersistenceWrites);
+      flushRuntimeLogFileWrites();
+    } catch (error) {
+      cleanupErrors.push(error);
+    }
+    try {
+      await flushRuntimePersistenceWrites();
     } catch (error) {
       cleanupErrors.push(error);
     }
@@ -9847,8 +9949,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     const token = await readTelegramToken();
     const chatIds = telegramNotificationSettings.chatIds;
     if (!token || chatIds.length === 0) return;
-    const logs = runtimeSessions.listLogs(log.sessionId);
-    const logCount = logs.length;
+    const logCount = runtimeSessions.searchLogs(log.sessionId, { limit: 1 }).total;
     if (logCount === 0 || logCount % telegramRuntimeSummaryLogInterval !== 0) return;
     const sentCounts = telegramRuntimeSummarySentLogCounts.get(log.sessionId) ?? new Set<number>();
     if (sentCounts.has(logCount)) return;
@@ -9857,8 +9958,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
 
     const task = tasks.getById(session.taskId);
     if (!task) return;
-    const recentLogs = logs
-      .slice(-telegramRuntimeSummaryLogInterval)
+    const recentLogs = runtimeSessions
+      .listRecentLogs(log.sessionId, telegramRuntimeSummaryLogInterval)
       .map((entry) => `${entry.stream}: ${entry.text}`)
       .join('\n')
       .slice(0, 1200);
@@ -10885,7 +10986,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   function markRuntimeSessionConversationsInactive(session: Pick<AiRuntimeSession, 'id' | 'status' | 'endedAt' | 'exitCode'>): void {
     if (session.status === 'running') return;
     const summary = formatRuntimeSessionConversationSummary(session);
-    for (const conversation of conversations.listBySessionId(session.id)) {
+    for (const conversation of conversations.listRecordsBySessionId(session.id)) {
       if (conversation.status === session.status && conversation.summary === summary) continue;
       conversations.updateRuntimeState(conversation.id, {
         status: session.status,
@@ -10912,65 +11013,132 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     }
   }
 
-  function mirrorExistingRuntimeLogsToConversation(sessionId: string, conversationId: string): ZeusConversationWithMessagesRecord {
-    for (const log of listAllRuntimeLogs(sessionId)) {
-      mirrorRuntimeLogToConversation(conversationId, log);
-    }
-    const updated = conversations.getById(conversationId);
-    if (!updated) {
-      throw new Error(`Zeus conversation not found: ${conversationId}`);
-    }
-    return updated;
-  }
-
-  function listAllRuntimeLogs(sessionId: string): AiRuntimeLogEntry[] {
-    const logs: AiRuntimeLogEntry[] = [];
-    let offset = 0;
-    while (true) {
-      const page = runtimeSessions.searchLogs(sessionId, { limit: 1_000, offset });
-      logs.push(...page.items.map(toAiRuntimeLogEntry));
-      if (page.items.length < page.limit) break;
-      offset += page.items.length;
-    }
-    return logs;
-  }
-
-  function mirrorRuntimeLogToBoundTaskConversations(log: AiRuntimeLogEntry): void {
-    if (!shouldMirrorRuntimeLogToConversation(log)) return;
-    for (const conversation of conversations.listBySessionId(log.sessionId)) {
-      mirrorRuntimeLogToConversation(conversation.id, log);
-    }
-  }
-
-  function shouldMirrorRuntimeLogToConversation(log: AiRuntimeLogEntry): boolean {
-    return (log.stream === 'stdout' || log.stream === 'stderr') && log.text.trim().length > 0;
-  }
-
-  function mirrorRuntimeLogToConversation(conversationId: string, log: AiRuntimeLogEntry): void {
-    if (!shouldMirrorRuntimeLogToConversation(log)) return;
-    const conversation = conversations.getById(conversationId);
-    if (!conversation || !conversation.taskId) return;
-    const alreadyMirrored = conversation.messages.some((message) => parseJsonObject(message.metadataJson).runtimeLogId === log.id);
-    if (alreadyMirrored) return;
-    const stream = log.stream === 'stderr' ? 'stderr' : 'stdout';
-    conversations.appendMessage({
-      conversationId,
-      role: stream === 'stdout' ? 'assistant' : 'system',
-      content: log.text,
-      source: stream === 'stdout' ? 'runtime_stdout' : 'runtime_stderr',
-      metadata: {
-        sessionId: log.sessionId,
-        runtimeLogId: log.id,
-        stream,
-      },
-      createdAt: log.createdAt,
+  function persistRuntimeConversationSummary(sessionId: string): void {
+    const page = runtimeSessions.searchLogs(sessionId, {
+      tail: true,
+      limit: 2_000,
+      byteBudget: 4 * 1024 * 1024,
     });
+    const logs = page.items.map(toAiRuntimeLogEntry).filter((log) => log.stream === 'stdout' || log.stream === 'stderr');
+    for (const conversation of conversations.listRecordsBySessionId(sessionId)) {
+      if (!conversation.taskId) continue;
+      for (const stream of ['stdout', 'stderr'] as const) {
+        const streamLogs = logs.filter((log) => log.stream === stream);
+        if (streamLogs.length === 0) continue;
+        conversations.appendMessage({
+          conversationId: conversation.id,
+          role: stream === 'stdout' ? 'assistant' : 'system',
+          content: streamLogs.map((log) => log.text).join(''),
+          source: stream === 'stdout' ? 'runtime_stdout_summary' : 'runtime_stderr_summary',
+          metadata: {
+            sessionId,
+            stream,
+            runtimeSummary: true,
+            logsTruncated: page.truncated,
+            logCount: streamLogs.length,
+          },
+          createdAt: streamLogs.at(-1)?.createdAt ?? new Date().toISOString(),
+          providerThreadId: sessionId,
+          providerItemId: `${sessionId}-runtime-${stream}-summary`,
+        });
+      }
+      if (page.truncated) {
+        conversations.appendMessage({
+          conversationId: conversation.id,
+          role: 'system',
+          content: 'Runtime 输出超过会话展示上限，仅保存最近约 4MB 摘要；完整历史请查看 Runtime 日志。',
+          source: 'runtime_log_projection',
+          metadata: { sessionId, runtimeSummary: true, logsTruncated: true },
+          createdAt: logs.at(-1)?.createdAt ?? new Date().toISOString(),
+          providerThreadId: sessionId,
+          providerItemId: `${sessionId}-runtime-projection-summary`,
+        });
+      }
+    }
   }
 
-  function stopPersistedOrphanRuntimeSession(sessionId: string): AiRuntimeSession | null {
+  function listRuntimeLogsForRenderer(sessionId: string): { logs: AiRuntimeLogEntry[]; truncated: boolean } {
+    const recentWithSentinel = runtimeSessions.listRecentLogs(sessionId, 2_001).map(toAiRuntimeLogEntry);
+    const truncatedByStorageProjection = recentWithSentinel.some((entry) => entry.id.startsWith('runtime_log_projection_marker_'));
+    const truncatedByCount = recentWithSentinel.length > 2_000;
+    const recent = truncatedByCount ? recentWithSentinel.slice(-2_000) : recentWithSentinel;
+    const byteBudget = 4 * 1024 * 1024;
+    const markerText = '[界面仅显示最近的 Runtime 日志；完整历史请使用分页检索或导出。]\n';
+    const markerBytes = Buffer.byteLength(markerText);
+    const kept: AiRuntimeLogEntry[] = [];
+    let keptBytes = markerBytes;
+    let compactedEntry = false;
+    for (let index = recent.length - 1; index >= 0; index -= 1) {
+      const entry = recent[index]!;
+      const entryBytes = Buffer.byteLength(entry.text);
+      if (keptBytes + entryBytes <= byteBudget) {
+        kept.unshift(entry);
+        keptBytes += entryBytes;
+        continue;
+      }
+      if (kept.length === 0) {
+        kept.unshift({ ...entry, text: compactUtf8Tail(entry.text, byteBudget - markerBytes) });
+        compactedEntry = true;
+      }
+      break;
+    }
+    const truncated = truncatedByStorageProjection || compactedEntry || truncatedByCount || recent.length > kept.length;
+    if (!truncated) return { logs: kept, truncated: false };
+    return {
+      truncated: true,
+      logs: [
+        {
+          id: `${sessionId}-renderer-tail-marker`,
+          sessionId,
+          stream: 'system',
+          text: markerText,
+          createdAt: kept[0]?.createdAt ?? new Date().toISOString(),
+        },
+        ...kept,
+      ],
+    };
+  }
+
+  function compactUtf8Tail(text: string, byteBudget: number): string {
+    const encoded = Buffer.from(text);
+    if (encoded.byteLength <= byteBudget) return text;
+    let start = Math.max(0, encoded.byteLength - byteBudget);
+    while (start < encoded.byteLength && (encoded[start]! & 0xc0) === 0x80) start += 1;
+    return encoded.subarray(start).toString('utf8');
+  }
+
+  async function stopPersistedOrphanRuntimeSession(sessionId: string): Promise<AiRuntimeSession | null> {
     const existing = runtimeSessions.getById(sessionId);
-    if (!existing || existing.status !== 'orphan_detected' || typeof existing.pid !== 'number') return null;
-    runtimeKillPid(existing.pid, 'SIGTERM');
+    if (!existing || existing.status !== 'orphan_detected') return null;
+    if (!isSafeRuntimeProcessId(existing.pid) || existing.pid === process.pid || existing.pid === process.ppid) {
+      throw new Error(`Runtime 孤儿会话 ${sessionId} 缺少可安全终止的进程标识，已保留 orphan_detected 状态。`);
+    }
+
+    const target = resolvePersistedRuntimeProcessTarget(existing.pid);
+    if (target) {
+      assertPersistedRuntimeProcessIdentity(target, existing.processIdentityToken, sessionId);
+      try {
+        signalPersistedRuntimeProcessTarget(target, 'SIGTERM');
+      } catch (error) {
+        throw new Error(`Runtime 孤儿进程树 ${existing.pid} 无法接收 SIGTERM，已保留 orphan_detected 状态：${error instanceof Error ? error.message : String(error)}`);
+      }
+      let exited = await waitForPersistedRuntimeProcessTargetExit(target, 5_000);
+      if (!exited) {
+        // TERM 等待期间原进程树可能退出且相同 PGID 被复用；强杀前必须重新核验随机出生身份。
+        assertPersistedRuntimeProcessIdentity(target, existing.processIdentityToken, sessionId);
+        try {
+          signalPersistedRuntimeProcessTarget(target, 'SIGKILL');
+        } catch (error) {
+          throw new Error(`Runtime 孤儿进程树 ${existing.pid} 无法接收 SIGKILL，已保留 orphan_detected 状态：${error instanceof Error ? error.message : String(error)}`);
+        }
+        exited = await waitForPersistedRuntimeProcessTargetExit(target, 5_000);
+      }
+      if (!exited) {
+        assertPersistedRuntimeProcessIdentity(target, existing.processIdentityToken, sessionId);
+        throw new Error(`Runtime 孤儿进程树 ${existing.pid} 在强制终止后仍存活，已保留 orphan_detected 状态。`);
+      }
+    }
+
     const stopped = runtimeSessions.updateStatus(sessionId, {
       status: 'stopped',
       exitCode: existing.exitCode,
@@ -10981,7 +11149,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       id: `${sessionId}-orphan-stop-${randomUUID()}`,
       sessionId,
       stream: 'system',
-      text: `已终止 orphan_detected Runtime 会话 PID ${existing.pid}`,
+      text: `已确认终止 orphan_detected Runtime 会话进程树 PID ${existing.pid}`,
       createdAt: new Date().toISOString(),
     });
     appendAuditLog({
@@ -11008,17 +11176,37 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
 
   async function recoverPersistedRuntimeSessions(): Promise<void> {
     let changed = false;
-    for (const session of runtimeSessions.list({ archived: false }).filter((item) => item.status === 'running')) {
+    for (const session of runtimeSessions.listUnfinishedForRecovery()) {
       const pid = session.pid;
-      const pidStillExists = typeof pid === 'number' && runtimePidExists(pid);
-      const status = pidStillExists ? 'orphan_detected' : 'lost';
-      const message = pidStillExists ? 'Runtime 会话恢复状态：orphan_detected，原 PID 仍存在，请重新附着或终止。' : 'Runtime 会话恢复状态：lost，原 PID 不存在，已保留已收集日志。';
-      const recovered = runtimeSessions.updateStatus(session.id, {
+      const hasPersistedProcessId = isSafeRuntimeProcessId(pid);
+      const discovery = hasPersistedProcessId ? null : discoverPersistedRuntimeProcessTargetByIdentity(session.processIdentityToken);
+      const target = hasPersistedProcessId ? resolvePersistedRuntimeProcessTarget(pid) : discovery?.target;
+      const recoveredPid = target?.pid ?? pid;
+      const identity = target ? inspectPersistedRuntimeProcessIdentity(target, session.processIdentityToken) : null;
+      // 只要同 PGID 仍存在就保留 orphan；PID 从未落盘时也不能仅凭 token 扫描未命中断言进程不存在。
+      const status = target || !hasPersistedProcessId ? 'orphan_detected' : 'lost';
+      const message =
+        status === 'lost'
+          ? 'Runtime 会话恢复状态：lost，原进程树不存在，已保留已收集日志。'
+          : identity === 'verified'
+            ? discovery?.state === 'found'
+              ? 'Runtime 会话恢复状态：orphan_detected，已通过持久身份找回 spawn 后未及时落盘的进程组，请重新附着或终止。'
+              : 'Runtime 会话恢复状态：orphan_detected，原进程树仍存在且身份已核验，请重新附着或终止。'
+            : identity === 'mismatch'
+              ? 'Runtime 会话恢复状态：orphan_detected，同 PGID 仍存在但身份 token 未命中；可能是环境已被清理或 PID 复用，为避免误杀，停止操作将保持 fail-closed。'
+              : !hasPersistedProcessId
+                ? 'Runtime 会话恢复状态：orphan_detected，spawn 后 PID 未完整落盘且未能找回唯一进程组；为避免漏掉后台进程或误杀，停止操作将保持 fail-closed。'
+                : 'Runtime 会话恢复状态：orphan_detected，原进程树可能仍存在但缺少可核验身份；为避免误杀，停止操作将保持 fail-closed。';
+      const wasHidden = session.archived || session.deletedAt !== null;
+      const pidRecovered = recoveredPid !== pid;
+      if (session.status === status && !wasHidden && !pidRecovered) continue;
+      let recovered = runtimeSessions.updateStatus(session.id, {
         status,
         exitCode: session.exitCode,
-        endedAt: pidStillExists ? session.endedAt : new Date().toISOString(),
-        pid,
+        endedAt: status === 'orphan_detected' ? session.endedAt : new Date().toISOString(),
+        pid: recoveredPid,
       });
+      if (status === 'orphan_detected' && wasHidden) recovered = runtimeSessions.restoreForRecovery(session.id);
       markRuntimeSessionConversationsInactive(toAiRuntimeSession(recovered));
       runtimeSessions.appendLog({
         id: `${session.id}-recovery-${randomUUID()}`,
@@ -11037,7 +11225,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
             sessionId: session.id,
             from: session.status,
             to: recovered.status,
-            pid: pid ?? null,
+            pid: recoveredPid ?? null,
             message,
           },
         });
@@ -11051,7 +11239,10 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           sessionId: session.id,
           from: session.status,
           to: recovered.status,
-          pid: pid ?? null,
+          pid: recoveredPid ?? null,
+          identity,
+          discovery: discovery?.state ?? null,
+          restoredVisibility: status === 'orphan_detected' && wasHidden,
         },
       });
       changed = true;
@@ -11480,7 +11671,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   }
 
   function formatTelegramCommandRunStatus(run: import('@zeus/shared').CommandRun): string {
-    const logs = run.runtimeSessionId ? runtimeSessions.listLogs(run.runtimeSessionId).slice(-8) : [];
+    const logs = run.runtimeSessionId ? runtimeSessions.listRecentLogs(run.runtimeSessionId, 8) : [];
     const tail = logs
       .filter((log) => log.stream === 'stdout' || log.stream === 'stderr')
       .map((log) => log.text.trim())
@@ -12077,7 +12268,6 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         status: 'running',
         summary: `Runtime 会话 ${session.id}`,
       });
-      const conversationWithRuntimeLogs = mirrorExistingRuntimeLogsToConversation(session.id, runningConversation.id);
       recordTaskEvent({
         taskId: runningTask.id,
         eventType: 'task.runtime.reconnect',
@@ -12085,7 +12275,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         payload: {
           runtimeSessionId: session.id,
           previousSessionId,
-          conversationId: conversationWithRuntimeLogs.id,
+          conversationId: runningConversation.id,
           projectId: project.id,
           adapterId: invocation.adapterId,
           argCount: invocation.args.length,
@@ -12101,7 +12291,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           previousSessionId,
           projectId: project.id,
           taskId: runningTask.id,
-          conversationId: conversationWithRuntimeLogs.id,
+          conversationId: runningConversation.id,
           command: session.command,
           cwd: session.cwd,
           source: 'conversation.message',
@@ -12110,9 +12300,9 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       publishRuntimeSessionEvent('runtime.session.created', session, {
         source: 'task.runtime.reconnect',
         previousSessionId,
-        conversationId: conversationWithRuntimeLogs.id,
+        conversationId: runningConversation.id,
       });
-      return { runtimeSession: session, conversation: conversationWithRuntimeLogs };
+      return { runtimeSession: session, conversation: runningConversation };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return { runtimeError: { message } };
@@ -12150,51 +12340,104 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     return withMessages;
   }
 
-  function listTaskConversationHistory(taskId: string, projectId: string): ZeusConversationWithMessagesRecord[] {
-    const history: ZeusConversationWithMessagesRecord[] = [];
-    let offset = 0;
-    while (true) {
-      const page = conversations.listByProject(projectId, { limit: 100, offset });
-      history.push(...page.items.filter((conversation) => conversation.taskId === taskId));
-      offset += page.items.length;
-      if (offset >= page.total || page.items.length === 0) return history.sort(compareConversationStageUpdatedDesc);
-    }
+  function listTaskConversationHistory(taskId: string, projectId: string): ZeusConversationRecord[] {
+    return conversations
+      .listRecordsByTask(taskId)
+      .filter((conversation) => conversation.projectId === projectId)
+      .sort(compareConversationStageUpdatedDesc);
   }
 
-  function listArchivedTaskConversationHistory(): ZeusConversationWithMessagesRecord[] {
-    const history: ZeusConversationWithMessagesRecord[] = [];
+  function listArchivedTaskConversationHistory(): ZeusConversationRecord[] {
+    const history: ZeusConversationRecord[] = [];
     for (const project of [...projects.list(), ...projects.listArchived()]) {
-      let offset = 0;
-      while (true) {
-        const page = conversations.listByProject(project.id, { archived: true, limit: 100, offset });
-        history.push(...page.items.filter((conversation) => conversation.taskId !== null));
-        offset += page.items.length;
-        if (offset >= page.total || page.items.length === 0) break;
-      }
+      history.push(...conversations.listRecordsByProject(project.id, { archived: true }).filter((conversation) => conversation.taskId !== null));
     }
     return history.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
   }
 
-  function listProjectConversationHistory(projectId: string): ZeusConversationWithMessagesRecord[] {
-    const history: ZeusConversationWithMessagesRecord[] = [];
-    let offset = 0;
-    while (true) {
-      const page = conversations.listByProject(projectId, { limit: 100, offset });
-      history.push(
-        ...page.items.filter((conversation) => {
-          if (conversation.taskId !== null || conversation.archived) return false;
-          const firstSubmission = conversationSubmissions.listByConversation(conversation.id)[0];
-          const context = firstSubmission ? parseJsonObject(firstSubmission.inputJson).context : undefined;
-          return !isNativeApiRecord(context) || context.ephemeral !== true;
-        }),
-      );
-      offset += page.items.length;
-      if (offset >= page.total || page.items.length === 0) return history.sort(compareConversationStageUpdatedDesc);
-    }
+  function listProjectConversationHistory(projectId: string): ZeusConversationRecord[] {
+    return conversations.listRecordsByProject(projectId).filter(isVisibleProjectConversation).sort(compareConversationStageUpdatedDesc);
   }
 
-  function compareConversationStageUpdatedDesc(left: ZeusConversationWithMessagesRecord, right: ZeusConversationWithMessagesRecord): number {
+  function isVisibleProjectConversation(conversation: ZeusConversationRecord): boolean {
+    if (conversation.taskId !== null || conversation.archived) return false;
+    const firstSubmission = conversationSubmissions.getFirstByConversation(conversation.id);
+    const context = firstSubmission ? parseJsonObject(firstSubmission.inputJson).context : undefined;
+    return !isNativeApiRecord(context) || context.ephemeral !== true;
+  }
+
+  function compareConversationStageUpdatedDesc(left: Pick<ZeusConversationRecord, 'id' | 'stageUpdatedAt' | 'createdAt'>, right: Pick<ZeusConversationRecord, 'id' | 'stageUpdatedAt' | 'createdAt'>): number {
     return right.stageUpdatedAt.localeCompare(left.stageUpdatedAt) || right.createdAt.localeCompare(left.createdAt) || right.id.localeCompare(left.id);
+  }
+
+  type NativeConversationChoiceSubmission = ReturnType<ConversationSubmissionRepository['listRecoverable']>[number];
+  type NativeConversationChoiceTurn = ReturnType<ConversationTurnRepository['listInProgress']>[number];
+  type NativeConversationChoiceProjectionContext = {
+    pendingRequestKindByConversationId: ReadonlyMap<string, 'approval' | 'user_input'>;
+    workspaceById: ReadonlyMap<string, ZeusTaskWorkspaceRecord>;
+    recoverableSubmissionsByConversationId: ReadonlyMap<string, readonly NativeConversationChoiceSubmission[]>;
+    inProgressTurnsByConversationId: ReadonlyMap<string, readonly NativeConversationChoiceTurn[]>;
+  };
+
+  function buildNativeConversationChoiceProjectionContext(projectId: string): NativeConversationChoiceProjectionContext {
+    const pendingRequestKindByConversationId = new Map<string, 'approval' | 'user_input'>();
+    for (const request of conversationRequests.listPending()) {
+      if (!pendingRequestKindByConversationId.has(request.conversationId)) {
+        pendingRequestKindByConversationId.set(request.conversationId, request.requestKind === 'request_user_input' ? 'user_input' : 'approval');
+      }
+    }
+    const recoverableSubmissionsByConversationId = new Map<string, ReturnType<ConversationSubmissionRepository['listRecoverable']>>();
+    for (const submission of conversationSubmissions.listRecoverable()) {
+      const entries = recoverableSubmissionsByConversationId.get(submission.conversationId) ?? [];
+      entries.push(submission);
+      recoverableSubmissionsByConversationId.set(submission.conversationId, entries);
+    }
+    const inProgressTurnsByConversationId = new Map<string, ReturnType<ConversationTurnRepository['listInProgress']>>();
+    for (const turn of conversationTurns.listInProgress()) {
+      const entries = inProgressTurnsByConversationId.get(turn.conversationId) ?? [];
+      entries.push(turn);
+      inProgressTurnsByConversationId.set(turn.conversationId, entries);
+    }
+    return {
+      pendingRequestKindByConversationId,
+      workspaceById: new Map(taskWorkspaces.listByProject(projectId).map((workspace) => [workspace.id, workspace])),
+      recoverableSubmissionsByConversationId,
+      inProgressTurnsByConversationId,
+    };
+  }
+
+  function toNativeTaskConversationChoicesSnapshot(taskId: string, projectId: string, choices: ReturnType<typeof toNativeConversationChoice>[]) {
+    const sortedChoices = [...choices].sort(compareConversationStageUpdatedDesc);
+    return {
+      taskId,
+      projectId,
+      hasHistory: sortedChoices.length > 0,
+      requiresChoice: sortedChoices.length > 0,
+      choices: sortedChoices,
+      items: sortedChoices,
+    };
+  }
+
+  function buildNativeProjectConversationChoiceGroups(projectId: string) {
+    const records = conversations.listRecordsByProject(projectId);
+    const context = buildNativeConversationChoiceProjectionContext(projectId);
+    const projectChoices: ReturnType<typeof toNativeConversationChoice>[] = [];
+    const taskChoices = new Map<string, ReturnType<typeof toNativeConversationChoice>[]>(tasks.listByProject(projectId).map((task) => [task.id, []]));
+    for (const conversation of records) {
+      if (conversation.taskId === null) {
+        if (isVisibleProjectConversation(conversation)) projectChoices.push(toNativeConversationChoice(conversation, context));
+        continue;
+      }
+      const choices = taskChoices.get(conversation.taskId) ?? [];
+      choices.push(toNativeConversationChoice(conversation, context));
+      taskChoices.set(conversation.taskId, choices);
+    }
+    const sortedProjectChoices = projectChoices.sort(compareConversationStageUpdatedDesc);
+    return {
+      projectId,
+      projectChoices: { projectId, choices: sortedProjectChoices, items: sortedProjectChoices },
+      taskChoicesByTaskId: Object.fromEntries([...taskChoices].map(([taskId, choices]) => [taskId, toNativeTaskConversationChoicesSnapshot(taskId, projectId, choices)])),
+    };
   }
 
   /** 侧边栏只聚合用户可进入的会话；待回复覆盖运行中，暂停、失败和完成未读不参与。 */
@@ -12212,7 +12455,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       const replyRequired = pendingRequestConversationIds.has(conversation.id) || conversation.providerState === 'waiting';
       const running = runningSubmissionConversationIds.has(conversation.id) || conversation.providerState === 'binding' || conversation.providerState === 'active' || conversation.status === 'starting' || conversation.status === 'running';
       if (!replyRequired && !running) continue;
-      const firstSubmission = conversationSubmissions.listByConversation(conversation.id)[0];
+      const firstSubmission = conversationSubmissions.getFirstByConversation(conversation.id);
       const context = firstSubmission ? parseJsonObject(firstSubmission.inputJson).context : undefined;
       if (isNativeApiRecord(context) && context.ephemeral === true) continue;
       if (replyRequired) {
@@ -12225,15 +12468,20 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     return Object.fromEntries(states);
   }
 
-  function toNativeConversationSummary(conversation: ZeusConversationWithMessagesRecord) {
-    const pendingRequest = conversationRequests.listByConversation(conversation.id).find((request) => request.status === 'pending');
+  function toNativeConversationSummary(conversation: ZeusConversationRecord, context?: NativeConversationChoiceProjectionContext) {
+    const pendingRequestKind = context
+      ? (context.pendingRequestKindByConversationId.get(conversation.id) ?? null)
+      : (() => {
+          const pendingRequest = conversationRequests.listPendingByConversation(conversation.id)[0];
+          return pendingRequest ? (pendingRequest.requestKind === 'request_user_input' ? 'user_input' : 'approval') : null;
+        })();
     return {
       id: conversation.id,
       projectId: conversation.projectId,
       taskId: conversation.taskId,
       workspaceId: conversation.workspaceId,
       environmentId: conversation.environmentId,
-      workspace: conversation.workspaceId ? (taskWorkspaces.getById(conversation.workspaceId) ?? null) : null,
+      workspace: conversation.workspaceId ? (context ? (context.workspaceById.get(conversation.workspaceId) ?? null) : (taskWorkspaces.getById(conversation.workspaceId) ?? null)) : null,
       title: conversation.title,
       summary: conversation.summary,
       status: conversation.status,
@@ -12248,7 +12496,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       permissionMode: conversation.permissionMode,
       collaborationMode: conversation.collaborationMode,
       hasUnreadCompletion: conversation.completionUnread,
-      pendingRequestKind: pendingRequest ? (pendingRequest.requestKind === 'request_user_input' ? 'user_input' : 'approval') : null,
+      pendingRequestKind,
       provider: {
         id: conversation.providerId,
         threadId: conversation.providerThreadId,
@@ -12297,12 +12545,55 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     return reply.code(status).send({ error: code, message: error instanceof Error ? error.message : 'Codex legacy import failed.' });
   }
 
-  function toNativeConversationChoice(conversation: ZeusConversationWithMessagesRecord) {
+  function toNativeConversationChoice(conversation: ZeusConversationRecord, context?: NativeConversationChoiceProjectionContext) {
+    const projectionContext = context ?? buildNativeConversationChoiceProjectionContext(conversation.projectId);
+    const listState = projectNativeConversationChoiceState(conversation, projectionContext);
     return {
-      ...toNativeConversationSummary(conversation),
+      ...toNativeConversationSummary(conversation, projectionContext),
+      listRuntimeState: listState.runtimeState,
+      taskRunStatus: listState.taskRunStatus,
       resumable: conversation.transportKind === 'codex_native' && !conversation.archived && conversation.providerState !== 'closed' && conversation.providerState !== 'failed',
       readOnly: conversation.transportKind === 'legacy_cli',
     };
+  }
+
+  function projectNativeConversationChoiceState(
+    conversation: ZeusConversationRecord,
+    context: NativeConversationChoiceProjectionContext,
+  ): {
+    runtimeState: 'connecting' | 'reconnecting' | 'paused' | 'queued' | 'ready' | 'streaming' | 'pending_approval' | 'pending_user_input' | 'error' | 'legacy_readonly';
+    taskRunStatus: 'connecting' | 'reconnecting' | 'running' | 'waiting_user' | 'waiting_approval' | 'paused' | 'idle' | 'failed' | 'legacy_readonly';
+  } {
+    if (conversation.transportKind !== 'codex_native') return { runtimeState: 'legacy_readonly', taskRunStatus: 'legacy_readonly' };
+    const providerState = `${conversation.providerState ?? ''}`.toLowerCase();
+    const recordState = conversation.status.toLowerCase();
+    if (providerState.includes('failed') || providerState.includes('error') || recordState.includes('failed') || recordState.includes('error')) return { runtimeState: 'error', taskRunStatus: 'failed' };
+    if (providerState.includes('reconnect')) return { runtimeState: 'reconnecting', taskRunStatus: 'reconnecting' };
+    if (providerState.includes('connect') || providerState.includes('hydrat') || providerState.includes('disconnected')) return { runtimeState: 'connecting', taskRunStatus: 'connecting' };
+
+    const submissions = context.recoverableSubmissionsByConversationId.get(conversation.id) ?? [];
+    const pendingRequestKind = context.pendingRequestKindByConversationId.get(conversation.id);
+    if (providerState === 'archived') {
+      const hasQueuedWork = submissions.some((submission) => (submission.status === 'queued' || submission.status === 'paused') && !submission.providerTurnId);
+      return hasQueuedWork ? { runtimeState: 'queued', taskRunStatus: 'running' } : { runtimeState: 'ready', taskRunStatus: 'idle' };
+    }
+
+    const activeTurn = [...(context.inProgressTurnsByConversationId.get(conversation.id) ?? [])].reverse().find((turn) => (turn.status === 'running' || turn.status === 'dispatching' || turn.status === 'waiting') && turn.providerTurnId);
+    if (activeTurn) {
+      if (activeTurn.status === 'waiting' && pendingRequestKind === 'user_input') return { runtimeState: 'pending_user_input', taskRunStatus: 'waiting_user' };
+      if (activeTurn.status === 'waiting' && pendingRequestKind === 'approval') return { runtimeState: 'pending_approval', taskRunStatus: 'waiting_approval' };
+      return { runtimeState: 'streaming', taskRunStatus: 'running' };
+    }
+
+    const paused = submissions.filter((submission) => submission.status === 'paused');
+    if (paused.some((submission) => submission.pausedReason === 'recovery_required') || providerState === 'paused') return { runtimeState: 'error', taskRunStatus: 'failed' };
+    if (paused.length > 0 && !paused.every((submission) => submission.pausedReason === 'user_confirmation')) return { runtimeState: 'paused', taskRunStatus: 'paused' };
+    if (pendingRequestKind === 'user_input') return { runtimeState: 'pending_user_input', taskRunStatus: 'waiting_user' };
+    if (pendingRequestKind === 'approval') return { runtimeState: 'pending_approval', taskRunStatus: 'waiting_approval' };
+    if (submissions.some((submission) => submission.status === 'dispatching' || submission.status === 'active')) return { runtimeState: 'streaming', taskRunStatus: 'running' };
+    if (submissions.some((submission) => submission.status === 'queued')) return { runtimeState: 'queued', taskRunStatus: 'running' };
+    if (providerState.includes('active') || providerState.includes('running') || providerState.includes('starting')) return { runtimeState: 'streaming', taskRunStatus: 'running' };
+    return { runtimeState: 'ready', taskRunStatus: 'idle' };
   }
 
   function toNativeSubmission(submission: NonNullable<ReturnType<ConversationSubmissionRepository['getById']>>) {
@@ -12476,7 +12767,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     };
   }
 
-  function resolveNativeConversationExecutionRoot(conversation: ZeusConversationWithMessagesRecord): string | null {
+  function resolveNativeConversationExecutionRoot(conversation: ZeusConversationRecord): string | null {
     const contextualSubmission = conversationSubmissions.listByConversation(conversation.id).find((submission) => {
       const context = parseJsonObject(submission.inputJson).context;
       return isNativeApiRecord(context) && typeof context.projectLocalPath === 'string' && Boolean(context.projectLocalPath.trim());
@@ -12622,26 +12913,25 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     return { cwd, branch: git.branch, isGitRepository: git.isRepository };
   }
 
-  function toNativeQueueApiSnapshot(conversation: ZeusConversationWithMessagesRecord, submissions = conversationSubmissions.listByConversation(conversation.id)) {
+  function toNativeQueueApiSnapshot(conversation: ZeusConversationRecord, submissions = conversationSubmissions.listQueueByConversation(conversation.id)) {
     return {
       state: inferNativeConversationSnapshotState(conversation),
       submissions: submissions.filter((submission) => (submission.status === 'queued' || submission.status === 'paused') && !submission.providerTurnId).map(toNativeSubmission),
     };
   }
 
-  function inferNativeConversationSnapshotState(conversation: ZeusConversationWithMessagesRecord) {
+  function inferNativeConversationSnapshotState(conversation: ZeusConversationRecord) {
     if (conversation.providerState === 'archived')
       return {
         type: 'paused' as const,
         reason: 'provider_archived' as const,
       };
-    const turns = conversationTurns.listByConversation(conversation.id);
-    const active = [...turns].reverse().find((turn) => turn.status === 'running' || turn.status === 'dispatching' || turn.status === 'waiting');
+    const active = conversationTurns.getLatestActiveByConversation(conversation.id);
     if (active?.providerTurnId) {
       if (active.status === 'waiting') {
         const pending = conversationRequests
-          .listByConversation(conversation.id)
-          .find((request) => request.turnId === active.id && request.status === 'pending' && (conversation.agentKind === 'pi' || codexAppServerManager.hasGeneration(request.transportGenerationId)));
+          .listPendingByConversation(conversation.id)
+          .find((request) => request.turnId === active.id && (conversation.agentKind === 'pi' || codexAppServerManager.hasGeneration(request.transportGenerationId)));
         if (pending) {
           return {
             type: 'waiting' as const,
@@ -12653,7 +12943,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       }
       return { type: 'active' as const, turnId: active.providerTurnId, phase: 'prework' as const };
     }
-    const paused = conversationSubmissions.listByConversation(conversation.id).filter((submission) => submission.status === 'paused');
+    const paused = conversationSubmissions.listQueueByConversation(conversation.id).filter((submission) => submission.status === 'paused');
     if (paused.some((submission) => submission.pausedReason === 'recovery_required')) return { type: 'paused' as const, reason: 'recovery_required' as const };
     if (paused.some((submission) => submission.pausedReason === 'interrupted')) return { type: 'paused' as const, reason: 'interrupted' as const };
     if (paused.some((submission) => submission.pausedReason === 'transport_unavailable')) return { type: 'paused' as const, reason: 'transport_unavailable' as const };
@@ -14321,7 +14611,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     const taskConversations = conversations.listByTask(taskId);
     const activeConversationCount = taskConversations.filter((conversation) => taskConversationHasActiveWork(conversation)).length;
     const taskRuntimeSessions = runtimeSessions.list({ taskId, archived: false });
-    const activeRuntimeSessionCount = taskRuntimeSessions.filter((session) => session.status === 'running').length;
+    const activeRuntimeSessionCount = taskRuntimeSessions.filter((session) => !runtimeSessionIsConfirmedTerminal(session)).length;
     return {
       workspaces: workspacePlans,
       conversations: taskConversations,
@@ -14339,6 +14629,28 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   }
 
   async function closeTaskResourcesForTerminalStatus(taskId: string, cleanup: Awaited<ReturnType<typeof inspectTaskTerminalCleanup>>): Promise<void> {
+    const activeRuntimeSessions = cleanup.runtimeSessions.filter((session) => !runtimeSessionIsConfirmedTerminal(session));
+    if (activeRuntimeSessions.length > 0) {
+      const persistedOnly: string[] = [];
+      for (const session of activeRuntimeSessions) {
+        const managed = aiRuntimeManager.getSession(session.id);
+        if (!managed) {
+          persistedOnly.push(session.id);
+          continue;
+        }
+        if (managed.status === 'running') {
+          aiRuntimeManager.stopSession(session.id);
+          aiRuntimeManager.killSession(session.id, 'SIGKILL');
+        } else if (managed.status === 'orphan_detected') {
+          aiRuntimeManager.stopSession(session.id);
+        } else {
+          aiRuntimeManager.killSession(session.id, 'SIGKILL');
+        }
+      }
+      const persistedHint = persistedOnly.length > 0 ? `；以下跨重启会话需先在 Runtime 中单独停止：${persistedOnly.join('、')}` : '';
+      throw nativeApiError('ZEUS_TASK_RUNTIME_CLEANUP_BUSY', `已向活动 Runtime 发出终止请求，请等待进程树进入确认终态后重试任务状态变更${persistedHint}`);
+    }
+
     let interrupted = 0;
     let cancelled = 0;
     for (const conversation of cleanup.conversations) {
@@ -14358,11 +14670,6 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         conversationSubmissions.updateStatus(submission.id, 'cancelled', { resolvedAt: new Date().toISOString() });
         cancelled += 1;
       }
-    }
-
-    const runningRuntimeIds = new Set(cleanup.runtimeSessions.filter((session) => session.status === 'running').map((session) => session.id));
-    for (const session of aiRuntimeManager.listSessions()) {
-      if (runningRuntimeIds.has(session.id)) aiRuntimeManager.stopSession(session.id);
     }
 
     let removedWorktrees = 0;
@@ -14389,7 +14696,12 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     for (const environmentId of environmentIds) reconcileTaskEnvironmentState(environmentId);
 
     for (const conversation of cleanup.conversations) conversations.archive(conversation.id);
-    for (const session of cleanup.runtimeSessions) runtimeSessions.archive(session.id);
+    for (const session of cleanup.runtimeSessions) {
+      const latest = runtimeSessions.getById(session.id);
+      if (!latest) continue;
+      if (!runtimeSessionIsConfirmedTerminal(latest)) throw new Error(`Runtime 会话 ${latest.id} 的进程树尚未确认退出，不能归档任务资源。`);
+      runtimeSessions.archive(session.id);
+    }
     recordTaskEvent({
       taskId,
       eventType: 'task.terminal_resources.cleaned',
@@ -14989,7 +15301,6 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         status: 'running',
         summary: `Runtime 会话 ${session.id}`,
       });
-      runningConversation = mirrorExistingRuntimeLogsToConversation(session.id, runningConversation.id);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const failedAt = new Date().toISOString();
@@ -15109,7 +15420,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     });
   }
 
-  function publishRuntimeSessionEvent(type: 'runtime.session.created' | 'runtime.session.stopped', session: AiRuntimeSession, extra: Record<string, unknown> = {}): void {
+  function publishRuntimeSessionEvent(type: 'runtime.session.created' | 'runtime.session.stop_requested' | 'runtime.session.stopped', session: AiRuntimeSession, extra: Record<string, unknown> = {}): void {
     publishRealtimeEvent(type, {
       sessionId: session.id,
       projectId: session.projectId,
@@ -15123,11 +15434,15 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
 
   function publishRuntimeLogEvent(log: AiRuntimeLogEntry): void {
     if (log.stream !== 'stdout' && log.stream !== 'stderr') return;
+    const realtimeByteBudget = 64 * 1024;
+    const realtimeMarker = '[实时事件仅携带该日志块末尾，完整内容已写入 Runtime 日志]\n';
+    const text = Buffer.byteLength(log.text) <= realtimeByteBudget ? log.text : `${realtimeMarker}${compactUtf8Tail(log.text, realtimeByteBudget - Buffer.byteLength(realtimeMarker))}`;
     publishRealtimeEvent(log.stream === 'stderr' ? 'runtime.session.error' : 'runtime.session.output', {
       sessionId: log.sessionId,
       logId: log.id,
       stream: log.stream,
-      text: log.text,
+      text,
+      textTruncated: text !== log.text,
       createdAt: log.createdAt,
     });
   }
@@ -15255,23 +15570,25 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     return { taskId: args.find((arg) => arg !== '--full'), full };
   }
 
-  function collectTaskRuntimeLogRows(task: ZeusTaskRecord): Array<{ session: AiRuntimeSession; log: AiRuntimeLogEntry }> {
+  function listTaskRuntimeSessions(task: ZeusTaskRecord): AiRuntimeSession[] {
     const memorySessions = aiRuntimeManager.listSessions().filter((session) => session.taskId === task.id);
     const persistedSessions = runtimeSessions.list({ taskId: task.id, archived: false }).map(toAiRuntimeSession);
     const sessionsById = new Map<string, AiRuntimeSession>();
     for (const session of [...persistedSessions, ...memorySessions]) sessionsById.set(session.id, session);
-    return [...sessionsById.values()].flatMap((session) => {
-      const memoryLogs = aiRuntimeManager.getLogs(session.id);
-      const logs = memoryLogs.length > 0 ? memoryLogs : runtimeSessions.listLogs(session.id).map(toAiRuntimeLogEntry);
-      return logs.map((log) => ({ session, log }));
-    });
+    return [...sessionsById.values()];
+  }
+
+  function collectRecentTaskRuntimeLogRows(task: ZeusTaskRecord): Array<{ session: AiRuntimeSession; log: AiRuntimeLogEntry }> {
+    return listTaskRuntimeSessions(task)
+      .flatMap((session) => runtimeSessions.listRecentLogs(session.id, 8).map((log) => ({ session, log: toAiRuntimeLogEntry(log) })))
+      .sort((left, right) => left.log.createdAt.localeCompare(right.log.createdAt) || left.log.id.localeCompare(right.log.id));
   }
 
   async function formatTelegramTaskLogs(taskId: string | undefined, options: { full?: boolean } = {}): Promise<string> {
     if (!taskId) return '请提供任务 ID：/logs <taskId>';
     const task = tasks.getById(taskId);
     if (!task) return `未找到任务：${taskId}`;
-    const rows = collectTaskRuntimeLogRows(task);
+    const rows = collectRecentTaskRuntimeLogRows(task);
     if (rows.length === 0) return `Runtime 日志为空：任务 ${task.title} (${task.id}) 暂无真实会话日志。`;
     if (options.full) {
       const project = projects.getById(task.projectId);
@@ -15283,9 +15600,11 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         async () => {
           const currentTask = tasks.getById(task.id);
           if (!currentTask) return `未找到任务：${task.id}`;
-          const currentRows = collectTaskRuntimeLogRows(currentTask);
-          if (currentRows.length === 0) return `Runtime 日志为空：任务 ${currentTask.title} (${currentTask.id}) 暂无真实会话日志。`;
-          return exportTelegramTaskLogs(currentTask, currentRows);
+          const currentSessions = listTaskRuntimeSessions(currentTask);
+          if (currentSessions.length === 0 || currentSessions.every((session) => runtimeSessions.listRecentLogs(session.id, 1).length === 0)) {
+            return `Runtime 日志为空：任务 ${currentTask.title} (${currentTask.id}) 暂无真实会话日志。`;
+          }
+          return exportTelegramTaskLogs(currentTask, currentSessions);
         },
         { affectsTaskStatus: false },
       );
@@ -15294,21 +15613,31 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     return [`Runtime 日志：${task.title} (${task.id})`, ...latestRows.map(({ session, log }) => `- ${session.command} · ${log.stream}: ${redactSensitiveText(log.text.trim()).text}`)].join('\n');
   }
 
-  function exportTelegramTaskLogs(task: ZeusTaskRecord, rows: Array<{ session: AiRuntimeSession; log: AiRuntimeLogEntry }>): string {
+  function exportTelegramTaskLogs(task: ZeusTaskRecord, sessions: readonly AiRuntimeSession[]): string {
     const exportDirectory = join(localLogDirectory, 'telegram-exports', sanitizeRuntimeFileName(task.id));
     mkdirSync(exportDirectory, { recursive: true });
     const exportFileName = `${now().toISOString().replace(/[:.]/gu, '-')}-${sanitizeRuntimeFileName(task.id)}.log`;
     const exportPath = join(exportDirectory, exportFileName);
-    const sessionIds = new Set(rows.map(({ session }) => session.id));
-    // Telegram 只返回文件路径与统计，完整正文落本地脱敏文件，避免长日志和密钥片段进入聊天窗口。
-    const body = rows
-      .map(({ session, log }) => {
-        const text = redactSensitiveText(log.text.trimEnd()).text;
-        return `${log.createdAt} ${session.id} ${session.command} [${log.stream}] ${text}`;
-      })
-      .join('\n');
-    writeFileSync(exportPath, `${body}\n`, 'utf8');
-    return [`Runtime 日志已导出：${task.title} (${task.id})`, `会话 ${sessionIds.size} 个 · 日志 ${rows.length} 行`, `文件：${exportPath}`].join('\n');
+    writeFileSync(exportPath, '', 'utf8');
+    let logCount = 0;
+    for (const session of sessions) {
+      let afterSeq = 0;
+      while (true) {
+        const page = runtimeSessions.searchLogs(session.id, { afterSeq, limit: 1_000 });
+        if (page.items.length === 0) break;
+        const body = page.items
+          .map((log) => {
+            const text = redactSensitiveText(log.text.trimEnd()).text;
+            return `${log.createdAt} ${session.id} ${session.command} [${log.stream}] ${text}`;
+          })
+          .join('\n');
+        appendFileSync(exportPath, `${body}\n`, 'utf8');
+        logCount += page.items.length;
+        if (!page.hasMore || page.nextSeq <= afterSeq) break;
+        afterSeq = page.nextSeq;
+      }
+    }
+    return [`Runtime 日志已导出：${task.title} (${task.id})`, `会话 ${sessions.length} 个 · 日志 ${logCount} 行`, `文件：${exportPath}`].join('\n');
   }
 
   async function formatTelegramGraphAsk(projectRef: string | undefined, question: string): Promise<string> {
@@ -15390,7 +15719,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       cwd: project.localPath,
       env: buildRuntimeProcessEnv(),
     });
-    await waitForRuntimeSessionExit(session.id);
+    await waitForRuntimeSessionExit(session.id, runtimeSettings.executionTimeoutSeconds * 1_000);
     await db.save();
     const answer = collectRuntimeAnswer(session.id);
     return {
@@ -15487,22 +15816,34 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     ].join('\n');
   }
 
-  async function waitForRuntimeSessionExit(sessionId: string): Promise<void> {
-    for (let index = 0; index < 20; index += 1) {
-      const session = aiRuntimeManager.getSession(sessionId);
-      if (session && session.status !== 'running') return;
-      await new Promise((resolve) => setTimeout(resolve, 5));
+  async function waitForRuntimeSessionExit(sessionId: string, timeoutMs: number): Promise<void> {
+    if (await aiRuntimeManager.waitForSessionCompletion(sessionId, timeoutMs)) return;
+    // 超时后必须先请求停止并等待 close 排空；仍不退出时再强制结束，禁止留下后台耗能进程。
+    aiRuntimeManager.stopSession(sessionId);
+    if (!(await aiRuntimeManager.waitForSessionCompletion(sessionId, 5_000))) {
+      aiRuntimeManager.killSession(sessionId, 'SIGKILL');
+      if (!(await aiRuntimeManager.waitForSessionCompletion(sessionId, 5_000))) {
+        throw Object.assign(new Error('AI Runtime 超时且无法完成日志排空。'), { code: 'ZEUS_AI_RUNTIME_DRAIN_TIMEOUT' });
+      }
     }
+    throw Object.assign(new Error('AI Runtime 执行超时，已终止后台进程。'), { code: 'ZEUS_AI_RUNTIME_EXECUTION_TIMEOUT' });
   }
 
   function collectRuntimeAnswer(sessionId: string): string {
-    return aiRuntimeManager
-      .getLogs(sessionId)
+    // 自动收集答案也必须有内存上限，避免异常超长 stdout 一次性进入主进程。
+    const page = runtimeSessions.searchLogs(sessionId, {
+      stream: 'stdout',
+      tail: true,
+      limit: 2_000,
+      byteBudget: 4 * 1024 * 1024,
+    });
+    const answer = page.items
       .filter((log) => log.stream === 'stdout')
       .map((log) => log.text.trim())
       .filter(Boolean)
       .join('\n')
       .trim();
+    return page.truncated ? `[Runtime 输出过长，仅采用最近 4MB；完整历史请查看 Runtime 日志。]\n${answer}`.trim() : answer;
   }
 
   async function formatTelegramTaskDiff(taskId: string | undefined): Promise<string> {
@@ -15583,15 +15924,23 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       });
     }
     if (session.status === 'exited' || session.status === 'failed' || session.status === 'stopped') {
+      persistRuntimeConversationSummary(session.id);
       markRuntimeSessionConversationsInactive(session);
+      // close 已保证 stdout/stderr 排空；终态发布前合并写入最后一批文件日志。
+      try {
+        flushRuntimeLogFileWrites();
+      } catch (error) {
+        runtimePersistenceErrors.push(error);
+      }
     }
-    if (session.status === 'exited' || session.status === 'failed') {
+    if (session.status === 'exited' || session.status === 'failed' || session.status === 'stopped') {
       publishRuntimeSessionEnded(session);
     }
+    if (session.status === 'stopped') publishRuntimeSessionEvent('runtime.session.stopped', session);
     writeRuntimeSessionMetadata(session);
     commandCenter.handleRuntimeSessionChange(session);
     void notifyTelegramCommandRunSession(session);
-    runtimePersistenceWrites.push(db.save());
+    scheduleRuntimePersistenceSave(session.status !== 'running');
     if (session.status !== 'running') {
       void codexNativeCoordinator.capacityChanged().catch((error) => {
         publishRealtimeEvent('conversation.native.queue_dispatch_failed', {
@@ -15604,15 +15953,55 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   }
 
   function persistRuntimeLog(log: AiRuntimeLogEntry): void {
-    runtimeSessions.appendLog(log);
-    mirrorRuntimeLogToBoundTaskConversations(log);
-    const rawChunkPath = writeRuntimeSessionLogFiles(log);
+    const persisted = runtimeSessions.appendLog(log);
+    // 相同日志 ID 的重复回调不得再次写文件、广播、镜像或触发通知。
+    if (!persisted.inserted) return;
+    const rawChunkPath = queueRuntimeSessionLogFileWrite(log);
     terminalEvents.setRawChunkPathByRuntimeLogId(log.id, rawChunkPath);
     publishRuntimeLogEvent(log);
     commandCenter.handleRuntimeLog(log);
     void notifyTelegramCommandRunLog(log);
     void notifyTelegramRuntimeProgressSummary(log);
-    runtimePersistenceWrites.push(db.save());
+    scheduleRuntimePersistenceSave();
+  }
+
+  function scheduleRuntimePersistenceSave(immediate = false): void {
+    runtimePersistenceSavePending = true;
+    if (immediate) {
+      if (runtimePersistenceSaveTimer) clearTimeout(runtimePersistenceSaveTimer);
+      runtimePersistenceSaveTimer = undefined;
+      commitScheduledRuntimePersistenceSave();
+      return;
+    }
+    if (runtimePersistenceSaveTimer) return;
+    runtimePersistenceSaveTimer = setTimeout(() => {
+      runtimePersistenceSaveTimer = undefined;
+      commitScheduledRuntimePersistenceSave();
+    }, 100);
+    runtimePersistenceSaveTimer.unref?.();
+  }
+
+  function commitScheduledRuntimePersistenceSave(): void {
+    if (!runtimePersistenceSavePending) return;
+    runtimePersistenceSavePending = false;
+    const write = db.save();
+    runtimePersistenceWrites.add(write);
+    void write
+      .catch((error: unknown) => {
+        runtimePersistenceErrors.push(error);
+      })
+      .finally(() => runtimePersistenceWrites.delete(write));
+  }
+
+  async function flushRuntimePersistenceWrites(): Promise<void> {
+    do {
+      if (runtimePersistenceSaveTimer) clearTimeout(runtimePersistenceSaveTimer);
+      runtimePersistenceSaveTimer = undefined;
+      commitScheduledRuntimePersistenceSave();
+      await Promise.allSettled([...runtimePersistenceWrites]);
+    } while (runtimePersistenceSavePending || runtimePersistenceSaveTimer || runtimePersistenceWrites.size > 0);
+    if (runtimePersistenceErrors.length === 1) throw runtimePersistenceErrors.shift();
+    if (runtimePersistenceErrors.length > 1) throw new AggregateError(runtimePersistenceErrors.splice(0), 'AI Runtime 持久化失败。');
   }
 
   function runtimeSessionDataDirectory(sessionId: string): string {
@@ -15621,7 +16010,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
 
   function ensureRuntimeSessionDataDirectory(sessionId: string): string {
     const sessionDirectory = runtimeSessionDataDirectory(sessionId);
-    mkdirSync(join(sessionDirectory, 'chunks'), { recursive: true });
+    mkdirSync(sessionDirectory, { recursive: true });
     return sessionDirectory;
   }
 
@@ -15650,14 +16039,45 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     );
   }
 
-  function writeRuntimeSessionLogFiles(log: AiRuntimeLogEntry): string {
+  function queueRuntimeSessionLogFileWrite(log: AiRuntimeLogEntry): string {
     const sessionDirectory = ensureRuntimeSessionDataDirectory(log.sessionId);
-    const chunkPath = join(sessionDirectory, 'chunks', `${sanitizeRuntimeFileName(log.id)}.log`);
-    // terminal.raw.log 保存运行时输出主体；当前日志在 AI Runtime 层已完成敏感字段脱敏。
-    appendFileSync(join(sessionDirectory, 'terminal.raw.log'), `${log.text}${log.text.endsWith('\n') ? '' : '\n'}`, 'utf8');
-    appendFileSync(join(sessionDirectory, 'terminal.normalized.log'), `${log.createdAt} [${log.stream}] ${log.text}${log.text.endsWith('\n') ? '' : '\n'}`, 'utf8');
-    writeFileSync(chunkPath, log.text, 'utf8');
-    return chunkPath;
+    const batch = runtimeLogFileBatches.get(log.sessionId) ?? [];
+    batch.push(log);
+    runtimeLogFileBatches.set(log.sessionId, batch);
+    if (!runtimeLogFileFlushTimer) {
+      runtimeLogFileFlushTimer = setTimeout(() => {
+        runtimeLogFileFlushTimer = undefined;
+        try {
+          flushRuntimeLogFileWrites();
+        } catch (error) {
+          // 定时批次失败需保留到终态或关闭阶段统一上报，避免异步回调直接击穿进程。
+          runtimeLogFileWriteErrors.push(error);
+        }
+      }, 100);
+      runtimeLogFileFlushTimer.unref?.();
+    }
+    // 终端事件直接指向规范化日志，避免每个 stdout chunk 再制造一个小文件。
+    return join(sessionDirectory, 'terminal.normalized.log');
+  }
+
+  function flushRuntimeLogFileWrites(): void {
+    if (runtimeLogFileFlushTimer) clearTimeout(runtimeLogFileFlushTimer);
+    runtimeLogFileFlushTimer = undefined;
+    const pending = [...runtimeLogFileBatches];
+    runtimeLogFileBatches.clear();
+    for (const [sessionId, logs] of pending) {
+      if (logs.length === 0) continue;
+      try {
+        const sessionDirectory = ensureRuntimeSessionDataDirectory(sessionId);
+        // 每 100ms 每个会话最多两次追加，避免每个输出块三次同步文件系统调用和海量 chunks 小文件。
+        appendFileSync(join(sessionDirectory, 'terminal.raw.log'), logs.map((log) => `${log.text}${log.text.endsWith('\n') ? '' : '\n'}`).join(''), 'utf8');
+        appendFileSync(join(sessionDirectory, 'terminal.normalized.log'), logs.map((log) => `${log.createdAt} [${log.stream}] ${log.text}${log.text.endsWith('\n') ? '' : '\n'}`).join(''), 'utf8');
+      } catch (error) {
+        runtimeLogFileWriteErrors.push(error);
+      }
+    }
+    if (runtimeLogFileWriteErrors.length === 1) throw runtimeLogFileWriteErrors.shift();
+    if (runtimeLogFileWriteErrors.length > 1) throw new AggregateError(runtimeLogFileWriteErrors.splice(0), 'AI Runtime 文件日志写入失败。');
   }
 
   return server;
@@ -15878,17 +16298,138 @@ function toAiRuntimeSession(record: ZeusRuntimeSessionRecord): AiRuntimeSession 
   };
 }
 
-function processPidExists(pid: number): boolean {
+function runtimeSessionMayOwnProcess(status: string): boolean {
+  return status === 'running' || status === 'orphan_detected';
+}
+
+function runtimeSessionIsConfirmedTerminal(session: { status: string; endedAt?: string | null }): boolean {
+  return (session.status === 'exited' || session.status === 'failed' || session.status === 'stopped' || session.status === 'lost') && Boolean(session.endedAt);
+}
+
+interface PersistedRuntimeProcessTarget {
+  kind: 'process_group' | 'process';
+  pid: number;
+}
+
+type PersistedRuntimeProcessIdentityState = 'verified' | 'mismatch' | 'unavailable';
+
+type PersistedRuntimeProcessDiscovery = { state: 'found'; target: PersistedRuntimeProcessTarget } | { state: 'not_found' | 'unavailable'; target: null };
+
+const persistedRuntimeProcessIdentityEnvironmentKey = 'ZEUS_RUNTIME_PROCESS_IDENTITY_TOKEN';
+const persistedRuntimeProcessIdentityTokenPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+
+function runtimeProcessSignalErrorCode(error: unknown): string | null {
+  return error && typeof error === 'object' && 'code' in error && typeof error.code === 'string' ? error.code : null;
+}
+
+function isSafeRuntimeProcessId(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 1;
+}
+
+function persistedRuntimeProcessTargetExists(target: PersistedRuntimeProcessTarget): boolean {
+  const signalTarget = target.kind === 'process_group' ? -target.pid : target.pid;
   try {
-    process.kill(pid, 0);
+    process.kill(signalTarget, 0);
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    // EPERM 等错误表示目标仍可能存在；只有 ESRCH 可以确认已经消失。
+    return runtimeProcessSignalErrorCode(error) !== 'ESRCH';
   }
 }
 
-function processKillPid(pid: number, signal: NodeJS.Signals): void {
-  process.kill(pid, signal);
+function resolvePersistedRuntimeProcessTarget(pid: number): PersistedRuntimeProcessTarget | null {
+  if (!isSafeRuntimeProcessId(pid)) return null;
+  if (process.platform !== 'win32') {
+    const processGroup = { kind: 'process_group' as const, pid };
+    // 两种 POSIX Runtime spawn 都以子 PID 建立独立进程组；组已消失时禁止回退正 PID，避免重启后误杀复用同一 PID 的无关进程。
+    return persistedRuntimeProcessTargetExists(processGroup) ? processGroup : null;
+  }
+  const processTarget = { kind: 'process' as const, pid };
+  return persistedRuntimeProcessTargetExists(processTarget) ? processTarget : null;
+}
+
+function inspectPersistedRuntimeProcessIdentity(target: PersistedRuntimeProcessTarget, token: string | null): PersistedRuntimeProcessIdentityState {
+  if (!token || !persistedRuntimeProcessIdentityTokenPattern.test(token)) return 'unavailable';
+  // Windows 无法通过当前标准库可靠读取其他进程的出生身份；跨重启停止必须 fail-closed，不能只凭可复用 PID 发信号。
+  if (target.kind !== 'process_group' || process.platform === 'win32') return 'unavailable';
+  const processList = spawnSync('/bin/ps', ['-axo', 'pid=,pgid='], {
+    encoding: 'utf8',
+    timeout: 2_000,
+    maxBuffer: 1024 * 1024,
+  });
+  if (processList.error || processList.status !== 0 || typeof processList.stdout !== 'string') return 'unavailable';
+  const memberPids = processList.stdout
+    .split('\n')
+    .map((line) => line.trim().match(/^(\d+)\s+(\d+)$/u))
+    .filter((match): match is RegExpMatchArray => Boolean(match))
+    .filter((match) => Number(match[2]) === target.pid)
+    .map((match) => Number(match[1]))
+    .filter(isSafeRuntimeProcessId);
+  if (memberPids.length === 0 || memberPids.length > 256) return 'unavailable';
+
+  const expectedEnvironmentEntry = `${persistedRuntimeProcessIdentityEnvironmentKey}=${token}`;
+  // 一次批量读取整个进程组的环境，避免逐成员同步调用 ps 在异常大进程组下阻塞数分钟。
+  const environments = spawnSync('/bin/ps', ['eww', '-p', memberPids.join(','), '-o', 'command='], {
+    encoding: 'utf8',
+    timeout: 3_000,
+    maxBuffer: 8 * 1024 * 1024,
+  });
+  if (environments.error || environments.status !== 0 || typeof environments.stdout !== 'string') return 'unavailable';
+  return environments.stdout.split(/\s+/u).includes(expectedEnvironmentEntry) ? 'verified' : 'mismatch';
+}
+
+function discoverPersistedRuntimeProcessTargetByIdentity(token: string | null): PersistedRuntimeProcessDiscovery {
+  if (!token || !persistedRuntimeProcessIdentityTokenPattern.test(token) || process.platform === 'win32' || typeof process.getuid !== 'function') {
+    return { state: 'unavailable', target: null };
+  }
+  // 只在异常的 token 已落盘但 PID 缺失窗口执行一次同用户扫描；正常启动和常规恢复不会走这条较重路径。
+  const processList = spawnSync('/bin/ps', ['eww', '-U', String(process.getuid()), '-o', 'pid=,pgid=,command='], {
+    encoding: 'utf8',
+    timeout: 5_000,
+    maxBuffer: 32 * 1024 * 1024,
+  });
+  if (processList.error || processList.status !== 0 || typeof processList.stdout !== 'string') return { state: 'unavailable', target: null };
+  const expectedEnvironmentEntry = `${persistedRuntimeProcessIdentityEnvironmentKey}=${token}`;
+  const matchingGroups = new Set<number>();
+  for (const line of processList.stdout.split('\n')) {
+    if (!line.split(/\s+/u).includes(expectedEnvironmentEntry)) continue;
+    const match = line.match(/^\s*(\d+)\s+(\d+)\s+/u);
+    if (!match) return { state: 'unavailable', target: null };
+    const processGroupId = Number(match[2]);
+    if (!isSafeRuntimeProcessId(processGroupId)) return { state: 'unavailable', target: null };
+    matchingGroups.add(processGroupId);
+  }
+  if (matchingGroups.size === 0) return { state: 'not_found', target: null };
+  if (matchingGroups.size !== 1) return { state: 'unavailable', target: null };
+  const target = { kind: 'process_group' as const, pid: [...matchingGroups][0]! };
+  return persistedRuntimeProcessTargetExists(target) ? { state: 'found', target } : { state: 'not_found', target: null };
+}
+
+function assertPersistedRuntimeProcessIdentity(target: PersistedRuntimeProcessTarget, token: string | null, sessionId: string): void {
+  const identity = inspectPersistedRuntimeProcessIdentity(target, token);
+  if (identity === 'verified') return;
+  const reason = identity === 'mismatch' ? '当前进程组身份与该 Runtime 会话不匹配，可能发生 PID 复用' : '缺少可核验的跨重启进程身份';
+  throw new Error(`Runtime 孤儿会话 ${sessionId} ${reason}，已保留 orphan_detected 状态且未向任何进程发送信号。`);
+}
+
+function signalPersistedRuntimeProcessTarget(target: PersistedRuntimeProcessTarget, signal: NodeJS.Signals): void {
+  const signalTarget = target.kind === 'process_group' ? -target.pid : target.pid;
+  try {
+    process.kill(signalTarget, signal);
+  } catch (error) {
+    // 探活与发信号之间目标可能自然退出，此时等价于终止完成。
+    if (runtimeProcessSignalErrorCode(error) === 'ESRCH') return;
+    throw error;
+  }
+}
+
+async function waitForPersistedRuntimeProcessTargetExit(target: PersistedRuntimeProcessTarget, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (persistedRuntimeProcessTargetExists(target)) {
+    if (Date.now() >= deadline) return false;
+    await new Promise<void>((resolveWait) => setTimeout(resolveWait, 50));
+  }
+  return true;
 }
 
 function normalizeRuntimeLogStream(stream: RuntimeLogStream | undefined): RuntimeLogStream | undefined {
@@ -15899,37 +16440,6 @@ function parseBoundedInteger(raw: string | undefined, fallback: number, min: num
   const value = Number(raw);
   if (!Number.isFinite(value)) return fallback;
   return Math.min(max, Math.max(min, Math.trunc(value)));
-}
-
-function filterRuntimeMemoryLogs(
-  logs: AiRuntimeLogEntry[],
-  query: ListRuntimeLogsQuery,
-): {
-  items: AiRuntimeLogEntry[];
-  total: number;
-  limit: number;
-  offset: number;
-  query: string | null;
-  stream: RuntimeLogStream | null;
-} {
-  const rawQuery = query.query?.trim() || null;
-  const normalizedQuery = rawQuery?.toLowerCase() || null;
-  const stream = normalizeRuntimeLogStream(query.stream) ?? null;
-  const limit = parseBoundedInteger(query.limit, 200, 1, 1_000);
-  const offset = parseBoundedInteger(query.offset, 0, 0, 100_000);
-  const filtered = logs.filter((log) => {
-    if (stream && log.stream !== stream) return false;
-    if (!normalizedQuery) return true;
-    return `${log.stream} ${log.text} ${log.createdAt}`.toLowerCase().includes(normalizedQuery);
-  });
-  return {
-    items: filtered.slice(offset, offset + limit),
-    total: filtered.length,
-    limit,
-    offset,
-    query: rawQuery,
-    stream,
-  };
 }
 
 function toAiRuntimeLogEntry(record: ZeusRuntimeLogRecord): AiRuntimeLogEntry {

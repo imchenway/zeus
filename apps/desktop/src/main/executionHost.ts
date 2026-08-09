@@ -103,8 +103,9 @@ async function runExecutionHost(): Promise<void> {
     closePromise = (async () => {
       await record('execution_host.closing', { reason });
       if (monitor) clearInterval(monitor);
-      await closeHttpServer(controlServer).catch(() => undefined);
+      // Runtime 进程树完全退出前保留控制面；否则极端终止失败后宿主无法继续收口。
       await runtime?.close('final_quit');
+      await closeHttpServer(controlServer).catch(() => undefined);
       await removeExecutionHostRendezvous(bootstrap.userDataPath, instanceId);
       await lock.close().catch(() => undefined);
       await unlink(lockPath).catch(() => undefined);
@@ -187,7 +188,12 @@ async function runExecutionHost(): Promise<void> {
       },
       shutdown: async () => {
         setImmediate(() => {
-          void closeHost('final_quit').finally(() => process.exit(0));
+          void closeHost('final_quit')
+            .then(() => process.exit(0))
+            .catch(async (error: unknown) => {
+              await record('execution_host.close_failed', { reason: 'final_quit', message: error instanceof Error ? error.message : String(error) }).catch(() => undefined);
+              process.exit(1);
+            });
         });
       },
     });
@@ -237,7 +243,12 @@ async function runExecutionHost(): Promise<void> {
   monitor.unref();
 
   const handleSignal = (signal: NodeJS.Signals) => {
-    void closeHost(signal).finally(() => process.exit(0));
+    void closeHost(signal)
+      .then(() => process.exit(0))
+      .catch(async (error: unknown) => {
+        await record('execution_host.close_failed', { reason: signal, message: error instanceof Error ? error.message : String(error) }).catch(() => undefined);
+        process.exit(1);
+      });
   };
   process.once('SIGTERM', handleSignal);
   process.once('SIGINT', handleSignal);

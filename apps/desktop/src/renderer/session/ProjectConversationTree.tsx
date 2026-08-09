@@ -382,7 +382,10 @@ export function conversationTreeRuntimeStateFromSnapshot(snapshot: NativeConvers
   return fallback;
 }
 
-export function conversationTreeRuntimeStateFromConversation(conversation: Pick<NativeConversationChoice, 'status' | 'transportKind' | 'providerState' | 'pendingRequestKind'> & { readOnly?: boolean }): ConversationTreeRuntimeState {
+export function conversationTreeRuntimeStateFromConversation(
+  conversation: Pick<NativeConversationChoice, 'status' | 'transportKind' | 'providerState' | 'pendingRequestKind' | 'listRuntimeState'> & { readOnly?: boolean },
+): ConversationTreeRuntimeState {
+  if (conversation.listRuntimeState) return conversation.listRuntimeState;
   if (conversation.readOnly || conversation.transportKind !== 'codex_native') return 'legacy_readonly';
   const providerState = `${conversation.providerState ?? ''}`.toLocaleLowerCase();
   const recordState = conversation.status.toLocaleLowerCase();

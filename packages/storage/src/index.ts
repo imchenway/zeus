@@ -402,6 +402,8 @@ export interface ZeusTaskEventRecord {
 
 export type RuntimeSessionStatus = 'running' | 'exited' | 'failed' | 'stopped' | 'orphan_detected' | 'lost';
 export type RuntimeLogStream = 'system' | 'stdout' | 'stderr';
+const DEFAULT_RUNTIME_LOG_PROJECTION_BYTES = 4 * 1024 * 1024;
+const RUNTIME_LOG_PROJECTION_MARKER_TEXT = '[该轻量日志投影已按约 4 MB 预算省略部分内容；完整历史仍保存在 Runtime。]\n';
 
 export interface ZeusRuntimeSessionRecord {
   id: string;
@@ -412,6 +414,7 @@ export interface ZeusRuntimeSessionRecord {
   cwd: string;
   status: RuntimeSessionStatus;
   pid: number | null;
+  processIdentityToken: string | null;
   exitCode: number | null;
   summary: string | null;
   favorite: boolean;
@@ -458,6 +461,11 @@ export interface AppendRuntimeLogInput {
   createdAt: string;
 }
 
+export interface AppendRuntimeLogResult {
+  record: ZeusRuntimeLogRecord;
+  inserted: boolean;
+}
+
 export interface RuntimeSessionListOptions {
   query?: string;
   projectId?: string;
@@ -471,6 +479,12 @@ export interface RuntimeLogListOptions {
   stream?: RuntimeLogStream;
   limit?: number;
   offset?: number;
+  /** 命令详情增量读取使用持久化终端序号，避免 OFFSET 在并发追加时漂移。 */
+  afterSeq?: number;
+  /** 终态首次打开时只读取展示预算内的末尾日志。 */
+  tail?: boolean;
+  /** 轻量投影的 UTF-8 正文字节预算；不传时保留完整分页语义。 */
+  byteBudget?: number;
 }
 
 export interface RuntimeLogListResult {
@@ -478,6 +492,10 @@ export interface RuntimeLogListResult {
   total: number;
   limit: number;
   offset: number;
+  afterSeq: number;
+  nextSeq: number;
+  hasMore: boolean;
+  truncated: boolean;
   query: string | null;
   stream: RuntimeLogStream | null;
 }
@@ -627,6 +645,10 @@ export interface ConversationListOptions {
   query?: string;
   limit?: number;
   offset?: number;
+  archived?: boolean;
+}
+
+export interface ConversationRecordListOptions {
   archived?: boolean;
 }
 
@@ -1663,6 +1685,7 @@ function migrateCoreSchema(db: ZeusDatabase): void {
       cwd TEXT NOT NULL,
       status TEXT NOT NULL,
       pid INTEGER,
+      process_identity_token TEXT,
       exit_code INTEGER,
       summary TEXT,
       favorite INTEGER NOT NULL DEFAULT 0,
@@ -1679,6 +1702,7 @@ function migrateCoreSchema(db: ZeusDatabase): void {
     `ALTER TABLE runtime_sessions ADD COLUMN favorite INTEGER NOT NULL DEFAULT 0`,
     `ALTER TABLE runtime_sessions ADD COLUMN archived INTEGER NOT NULL DEFAULT 0`,
     `ALTER TABLE runtime_sessions ADD COLUMN deleted_at TEXT`,
+    `ALTER TABLE runtime_sessions ADD COLUMN process_identity_token TEXT`,
   ]) {
     try {
       db.execute(statement);
@@ -1820,6 +1844,8 @@ function migrateCoreSchema(db: ZeusDatabase): void {
     `CREATE INDEX IF NOT EXISTS idx_tasks_project_sequence ON tasks(project_id, task_sequence)`,
     `CREATE INDEX IF NOT EXISTS idx_task_events_task_created_at ON task_events(task_id, created_at)`,
     `CREATE INDEX IF NOT EXISTS idx_runtime_sessions_task_status ON runtime_sessions(task_id, status)`,
+    `CREATE INDEX IF NOT EXISTS idx_runtime_sessions_status ON runtime_sessions(status)`,
+    `CREATE INDEX IF NOT EXISTS idx_runtime_logs_session_id ON runtime_logs(session_id)`,
     `CREATE INDEX IF NOT EXISTS idx_terminal_events_session_seq ON terminal_events(session_id, seq)`,
     `CREATE INDEX IF NOT EXISTS idx_conversations_project_updated_at ON conversations(project_id, updated_at)`,
     `CREATE INDEX IF NOT EXISTS idx_conversation_messages_conversation_created_at ON conversation_messages(conversation_id, created_at)`,
@@ -2215,6 +2241,7 @@ function migrateCodexNativeConversationSchema(db: ZeusDatabase): void {
     // 新库已在 CREATE TABLE 中包含该列；旧库只补一次。
   }
   db.execute(`CREATE UNIQUE INDEX IF NOT EXISTS idx_conversation_turn_provider ON conversation_turns(provider_thread_id, provider_turn_id) WHERE provider_turn_id IS NOT NULL`);
+  db.execute(`CREATE INDEX IF NOT EXISTS idx_conversation_turn_active ON conversation_turns(conversation_id, status, created_at, id)`);
 
   db.execute(`
     CREATE TABLE IF NOT EXISTS conversation_items (
@@ -2288,6 +2315,8 @@ function migrateCodexNativeConversationSchema(db: ZeusDatabase): void {
     )
   `);
   db.execute(`CREATE UNIQUE INDEX IF NOT EXISTS idx_conversation_submission_idempotency ON conversation_submissions(conversation_id, idempotency_key)`);
+  db.execute(`CREATE INDEX IF NOT EXISTS idx_conversation_submission_created ON conversation_submissions(conversation_id, created_at, id)`);
+  db.execute(`CREATE INDEX IF NOT EXISTS idx_conversation_submission_queue ON conversation_submissions(conversation_id, status, queue_position, created_at, id)`);
   if (needsCollaborationModeBackfill) backfillConversationCollaborationModes(db);
 
   db.execute(`
@@ -2300,6 +2329,7 @@ function migrateCodexNativeConversationSchema(db: ZeusDatabase): void {
     )
   `);
   db.execute(`CREATE UNIQUE INDEX IF NOT EXISTS idx_conversation_server_request_provider ON conversation_server_requests(transport_generation_id, provider_request_id_json)`);
+  db.execute(`CREATE INDEX IF NOT EXISTS idx_conversation_server_request_pending ON conversation_server_requests(conversation_id, status, created_at, id)`);
   try {
     db.execute(`ALTER TABLE conversation_server_requests ADD COLUMN auto_resolution_state TEXT NOT NULL DEFAULT 'none'`);
   } catch {
@@ -3971,6 +4001,14 @@ export class TaskEventRepository {
   }
 }
 
+function assertRuntimeSessionCanBeHidden(session: ZeusRuntimeSessionRecord, operation: 'archive' | 'delete'): void {
+  const confirmedTerminal = (session.status === 'exited' || session.status === 'failed' || session.status === 'stopped' || session.status === 'lost') && Boolean(session.endedAt);
+  if (confirmedTerminal) return;
+  throw Object.assign(new Error(`Runtime session ${session.id} must reach a terminal status before ${operation}.`), {
+    code: 'ZEUS_RUNTIME_SESSION_UNFINISHED',
+  });
+}
+
 /** Runtime 会话仓储保存真实 AI CLI 会话和终端日志，支持 App 重启后恢复列表。 */
 export class RuntimeSessionRepository {
   constructor(private readonly db: ZeusDatabase) {}
@@ -3986,6 +4024,7 @@ export class RuntimeSessionRepository {
       cwd: input.cwd,
       status: input.status,
       pid: input.pid ?? null,
+      processIdentityToken: null,
       exitCode: null,
       summary: null,
       favorite: false,
@@ -3997,8 +4036,8 @@ export class RuntimeSessionRepository {
       deletedAt: null,
     };
     this.db.execute(
-      `INSERT OR REPLACE INTO runtime_sessions (id, project_id, task_id, command, args_json, cwd, status, pid, exit_code, summary, favorite, archived, started_at, ended_at, created_at, updated_at, deleted_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT OR REPLACE INTO runtime_sessions (id, project_id, task_id, command, args_json, cwd, status, pid, process_identity_token, exit_code, summary, favorite, archived, started_at, ended_at, created_at, updated_at, deleted_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         record.id,
         record.projectId,
@@ -4008,6 +4047,7 @@ export class RuntimeSessionRepository {
         record.cwd,
         record.status,
         record.pid,
+        record.processIdentityToken,
         record.exitCode,
         record.summary,
         0,
@@ -4023,7 +4063,7 @@ export class RuntimeSessionRepository {
   }
 
   updateStatus(sessionId: string, input: UpdateRuntimeSessionStatusInput): ZeusRuntimeSessionRecord {
-    const existing = this.getById(sessionId);
+    const existing = this.getByIdIncludingDeleted(sessionId);
     if (!existing) throw new Error(`Runtime session not found: ${sessionId}`);
     const updatedAt = nowIso();
     this.db.execute(`UPDATE runtime_sessions SET status = ?, exit_code = ?, ended_at = ?, pid = COALESCE(?, pid), updated_at = ? WHERE id = ?`, [
@@ -4034,7 +4074,7 @@ export class RuntimeSessionRepository {
       updatedAt,
       sessionId,
     ]);
-    return this.getById(sessionId)!;
+    return this.getByIdIncludingDeleted(sessionId)!;
   }
 
   getById(sessionId: string): ZeusRuntimeSessionRecord | undefined {
@@ -4042,29 +4082,70 @@ export class RuntimeSessionRepository {
     return row ? mapRuntimeSessionRow(row) : undefined;
   }
 
-  list(options: RuntimeSessionListOptions = {}): ZeusRuntimeSessionRecord[] {
-    const query = options.query?.trim().toLowerCase();
-    const rows = this.db
-      .select<DbRuntimeSessionRow>(runtimeSessionSelectSql(`WHERE deleted_at IS NULL AND archived = ? AND (? IS NULL OR project_id = ?) AND (? IS NULL OR task_id = ?) AND (? = 0 OR favorite = 1) ORDER BY started_at DESC, id DESC`), [
-        options.archived ? 1 : 0,
-        options.projectId ?? null,
-        options.projectId ?? null,
-        options.taskId ?? null,
-        options.taskId ?? null,
-        options.favoriteOnly ? 1 : 0,
-      ])
-      .map(mapRuntimeSessionRow);
-    if (!query) return rows;
-    return rows.filter((session) => {
-      const logsText = this.listLogs(session.id)
-        .map((log) => log.text)
-        .join('\n')
-        .toLowerCase();
-      return `${session.command}\n${session.cwd}\n${session.summary ?? ''}\n${logsText}`.toLowerCase().includes(query);
-    });
+  /** 启动恢复必须覆盖已归档和软删除记录，不能因可见性过滤漏掉仍在运行的进程。 */
+  getByIdIncludingDeleted(sessionId: string): ZeusRuntimeSessionRecord | undefined {
+    const row = this.db.get<DbRuntimeSessionRow>(runtimeSessionSelectSql(`WHERE id = ? LIMIT 1`), [sessionId]);
+    return row ? mapRuntimeSessionRow(row) : undefined;
   }
 
-  appendLog(input: AppendRuntimeLogInput): ZeusRuntimeLogRecord {
+  listUnfinishedForRecovery(): ZeusRuntimeSessionRecord[] {
+    return this.db.select<DbRuntimeSessionRow>(runtimeSessionSelectSql(`WHERE status IN ('running', 'orphan_detected') ORDER BY started_at, id`)).map(mapRuntimeSessionRow);
+  }
+
+  /** 进程身份只能首次写入或幂等重放，禁止替换后把旧进程误认成新进程。 */
+  setProcessIdentity(sessionId: string, token: string): void {
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(token)) {
+      throw new Error('ZEUS_RUNTIME_PROCESS_IDENTITY_INVALID');
+    }
+    const existing = this.getByIdIncludingDeleted(sessionId);
+    if (!existing) throw new Error(`Runtime session not found: ${sessionId}`);
+    if (existing.processIdentityToken && existing.processIdentityToken !== token) {
+      throw new Error(`ZEUS_RUNTIME_PROCESS_IDENTITY_CONFLICT: ${sessionId}`);
+    }
+    if (existing.processIdentityToken === token) return;
+    this.db.execute(`UPDATE runtime_sessions SET process_identity_token = ?, updated_at = ? WHERE id = ?`, [token, nowIso(), sessionId]);
+  }
+
+  /** 发现仍活动的隐藏记录时先恢复可见性，确保用户能够检查并停止，不能静默留在归档或回收站。 */
+  restoreForRecovery(sessionId: string): ZeusRuntimeSessionRecord {
+    const existing = this.getByIdIncludingDeleted(sessionId);
+    if (!existing) throw new Error(`Runtime session not found: ${sessionId}`);
+    if (existing.status !== 'running' && existing.status !== 'orphan_detected') {
+      throw new Error(`ZEUS_RUNTIME_RECOVERY_NOT_UNFINISHED: ${sessionId}`);
+    }
+    const updatedAt = nowIso();
+    this.db.execute(`UPDATE runtime_sessions SET archived = 0, deleted_at = NULL, updated_at = ? WHERE id = ?`, [updatedAt, sessionId]);
+    return this.getById(sessionId)!;
+  }
+
+  list(options: RuntimeSessionListOptions = {}): ZeusRuntimeSessionRecord[] {
+    const query = options.query?.trim().toLowerCase();
+    const queryClause = query
+      ? `AND (
+           LOWER(command) LIKE ?
+           OR LOWER(cwd) LIKE ?
+           OR LOWER(COALESCE(summary, '')) LIKE ?
+           OR EXISTS (
+             SELECT 1 FROM runtime_logs
+             WHERE runtime_logs.session_id = runtime_sessions.id
+               AND (LOWER(runtime_logs.text) LIKE ? OR LOWER(runtime_logs.stream) LIKE ? OR LOWER(runtime_logs.created_at) LIKE ?)
+           )
+         )`
+      : '';
+    const params: SqlValue[] = [options.archived ? 1 : 0, options.projectId ?? null, options.projectId ?? null, options.taskId ?? null, options.taskId ?? null, options.favoriteOnly ? 1 : 0];
+    if (query) {
+      const like = `%${query}%`;
+      params.push(like, like, like, like, like, like);
+    }
+    return this.db
+      .select<DbRuntimeSessionRow>(
+        runtimeSessionSelectSql(`WHERE deleted_at IS NULL AND archived = ? AND (? IS NULL OR project_id = ?) AND (? IS NULL OR task_id = ?) AND (? = 0 OR favorite = 1) ${queryClause} ORDER BY started_at DESC, id DESC`),
+        params,
+      )
+      .map(mapRuntimeSessionRow);
+  }
+
+  appendLog(input: AppendRuntimeLogInput): AppendRuntimeLogResult {
     const record: ZeusRuntimeLogRecord = {
       id: input.id,
       sessionId: input.sessionId,
@@ -4072,35 +4153,179 @@ export class RuntimeSessionRepository {
       text: input.text,
       createdAt: input.createdAt,
     };
-    this.db.execute(`INSERT OR REPLACE INTO runtime_logs (id, session_id, stream, text, created_at) VALUES (?, ?, ?, ?, ?)`, [record.id, record.sessionId, record.stream, record.text, record.createdAt]);
-    this.appendTerminalEventFromRuntimeLog(record);
-    return record;
+    const existingRow = this.db.get<DbRuntimeLogRow>(`SELECT id, session_id, stream, text, created_at FROM runtime_logs WHERE id = ? LIMIT 1`, [record.id]);
+    if (existingRow) {
+      const existing = mapRuntimeLogRow(existingRow);
+      if (existing.sessionId !== record.sessionId || existing.stream !== record.stream || existing.text !== record.text || existing.createdAt !== record.createdAt) {
+        throw new Error(`ZEUS_RUNTIME_LOG_ID_CONFLICT: ${record.id}`);
+      }
+      return { record: existing, inserted: false };
+    }
+    this.db.transaction(() => {
+      this.db.execute(`INSERT INTO runtime_logs (id, session_id, stream, text, created_at) VALUES (?, ?, ?, ?, ?)`, [record.id, record.sessionId, record.stream, record.text, record.createdAt]);
+      this.appendTerminalEventFromRuntimeLog(record);
+    });
+    return { record, inserted: true };
   }
 
   listLogs(sessionId: string): ZeusRuntimeLogRecord[] {
-    return this.searchLogs(sessionId).items;
+    return this.db
+      .select<DbRuntimeLogRow>(
+        `SELECT runtime_logs.id, runtime_logs.session_id, runtime_logs.stream, runtime_logs.text, runtime_logs.created_at
+         FROM terminal_events
+         INNER JOIN runtime_logs ON runtime_logs.id = substr(terminal_events.id, 16) AND runtime_logs.session_id = terminal_events.session_id
+         WHERE terminal_events.session_id = ?
+         ORDER BY terminal_events.seq ASC`,
+        [sessionId],
+      )
+      .map(mapRuntimeLogRow);
+  }
+
+  /** 高频状态投影先读取长度元数据，再按字节预算取正文，避免巨型日志先进入 Node 堆。 */
+  listRecentLogs(sessionId: string, limit = 8, byteBudget = DEFAULT_RUNTIME_LOG_PROJECTION_BYTES): ZeusRuntimeLogRecord[] {
+    const boundedLimit = clampPositiveInteger(limit, 8, 1, 2_500);
+    const boundedByteBudget = clampPositiveInteger(byteBudget, DEFAULT_RUNTIME_LOG_PROJECTION_BYTES, 1_024, 16 * 1024 * 1024);
+    const metadata = this.db.select<DbRuntimeLogMetadataRow>(
+      `SELECT runtime_logs.id, runtime_logs.session_id, runtime_logs.stream, runtime_logs.created_at,
+              terminal_events.seq AS sequence, length(CAST(runtime_logs.text AS BLOB)) AS byte_length
+         FROM terminal_events
+         INNER JOIN runtime_logs ON runtime_logs.id = substr(terminal_events.id, 16) AND runtime_logs.session_id = terminal_events.session_id
+         WHERE terminal_events.session_id = ?
+         ORDER BY terminal_events.seq DESC
+         LIMIT ?`,
+      [sessionId, boundedLimit],
+    );
+    const projection = takeRuntimeLogMetadataWithinBudget(metadata, boundedByteBudget);
+    const items = this.listLogsBySequenceRange(sessionId, projection.items);
+    if (projection.truncated) items.unshift(createRuntimeLogProjectionMarker(sessionId, metadata[0]?.created_at));
+    return items;
   }
 
   searchLogs(sessionId: string, options: RuntimeLogListOptions = {}): RuntimeLogListResult {
     const query = options.query?.trim() || null;
     const stream = options.stream ?? null;
-    const limit = clampPositiveInteger(options.limit, 200, 1, 1_000);
-    const offset = clampPositiveInteger(options.offset, 0, 0, 100_000);
-    const clauses = ['session_id = ?'];
+    const limit = clampPositiveInteger(options.limit, 200, 1, 2_000);
+    const offset = clampPositiveInteger(options.offset, 0, 0, 2_147_483_647);
+    const afterSeq = clampPositiveInteger(options.afterSeq, 0, 0, Number.MAX_SAFE_INTEGER);
+    const byteBudget = options.byteBudget === undefined ? null : clampPositiveInteger(options.byteBudget, DEFAULT_RUNTIME_LOG_PROJECTION_BYTES, 1_024, 16 * 1024 * 1024);
+    const clauses = ['terminal_events.session_id = ?'];
     const params: SqlValue[] = [sessionId];
     if (stream) {
-      clauses.push('stream = ?');
+      clauses.push('runtime_logs.stream = ?');
       params.push(stream);
     }
     if (query) {
-      clauses.push('(LOWER(text) LIKE ? OR LOWER(stream) LIKE ? OR LOWER(created_at) LIKE ?)');
+      clauses.push('(LOWER(runtime_logs.text) LIKE ? OR LOWER(runtime_logs.stream) LIKE ? OR LOWER(runtime_logs.created_at) LIKE ?)');
       const like = `%${query.toLowerCase()}%`;
       params.push(like, like, like);
     }
     const whereSql = clauses.join(' AND ');
-    const total = this.db.get<{ count: number }>(`SELECT COUNT(*) AS count FROM runtime_logs WHERE ${whereSql}`, params)?.count ?? 0;
-    const rows = this.db.select<DbRuntimeLogRow>(`SELECT id, session_id, stream, text, created_at FROM runtime_logs WHERE ${whereSql} ORDER BY created_at ASC, id ASC LIMIT ? OFFSET ?`, [...params, limit, offset]).map(mapRuntimeLogRow);
-    return { items: rows, total, limit, offset, query, stream };
+    const fromSql = `FROM terminal_events
+      INNER JOIN runtime_logs ON runtime_logs.id = substr(terminal_events.id, 16) AND runtime_logs.session_id = terminal_events.session_id`;
+    const selectSql = `SELECT runtime_logs.id, runtime_logs.session_id, runtime_logs.stream, runtime_logs.text, runtime_logs.created_at, terminal_events.seq AS sequence`;
+    // 无筛选时 seq 是会话内持久单调序号，MAX 可直接走 session+seq 索引，避免 1 Hz 轮询反复 COUNT 全历史。
+    const total =
+      query || stream
+        ? (this.db.get<{ count: number }>(`SELECT COUNT(*) AS count ${fromSql} WHERE ${whereSql}`, params)?.count ?? 0)
+        : (this.db.get<{ count: number }>(`SELECT COALESCE(MAX(seq), 0) AS count FROM terminal_events WHERE session_id = ?`, [sessionId])?.count ?? 0);
+
+    if (options.tail && byteBudget !== null) {
+      const metadata = this.db.select<DbRuntimeLogMetadataRow>(
+        `SELECT runtime_logs.id, runtime_logs.session_id, runtime_logs.stream, runtime_logs.created_at,
+                terminal_events.seq AS sequence, length(CAST(runtime_logs.text AS BLOB)) AS byte_length
+         ${fromSql} WHERE ${whereSql} ORDER BY terminal_events.seq DESC LIMIT ?`,
+        [...params, limit],
+      );
+      const projection = takeRuntimeLogMetadataWithinBudget(metadata, byteBudget);
+      const sequenceClause = runtimeLogSequenceRangeClause(projection.items);
+      const rows = sequenceClause ? this.db.select<DbSequencedRuntimeLogRow>(`${selectSql} ${fromSql} WHERE ${whereSql} AND ${sequenceClause.sql} ORDER BY terminal_events.seq ASC`, [...params, ...sequenceClause.params]) : [];
+      const items = rows.map(mapRuntimeLogRow);
+      if (projection.truncated) items.unshift(createRuntimeLogProjectionMarker(sessionId, metadata[0]?.created_at));
+      return {
+        items,
+        total,
+        limit,
+        offset: Math.max(0, total - metadata.length),
+        afterSeq,
+        nextSeq: metadata[0]?.sequence ?? afterSeq,
+        hasMore: false,
+        truncated: projection.truncated || total > metadata.length,
+        query,
+        stream,
+      };
+    }
+
+    if (options.tail) {
+      const rows = this.db.select<DbSequencedRuntimeLogRow>(`${selectSql} ${fromSql} WHERE ${whereSql} ORDER BY terminal_events.seq DESC LIMIT ?`, [...params, limit]).reverse();
+      const nextSeq = rows.at(-1)?.sequence ?? afterSeq;
+      return {
+        items: rows.map(mapRuntimeLogRow),
+        total,
+        limit,
+        offset: Math.max(0, total - rows.length),
+        afterSeq,
+        nextSeq,
+        hasMore: false,
+        truncated: total > rows.length,
+        query,
+        stream,
+      };
+    }
+
+    if (options.afterSeq !== undefined && byteBudget !== null) {
+      const metadata = this.db.select<DbRuntimeLogMetadataRow>(
+        `SELECT runtime_logs.id, runtime_logs.session_id, runtime_logs.stream, runtime_logs.created_at,
+                terminal_events.seq AS sequence, length(CAST(runtime_logs.text AS BLOB)) AS byte_length
+         ${fromSql} WHERE ${whereSql} AND terminal_events.seq > ? ORDER BY terminal_events.seq ASC LIMIT ?`,
+        [...params, afterSeq, limit + 1],
+      );
+      const hasMore = metadata.length > limit;
+      const pageMetadata = hasMore ? metadata.slice(0, limit) : metadata;
+      const nextSeq = pageMetadata.at(-1)?.sequence ?? afterSeq;
+      const projection = takeRuntimeLogMetadataWithinBudget([...pageMetadata].reverse(), byteBudget);
+      const sequenceClause = runtimeLogSequenceRangeClause(projection.items);
+      const rows = sequenceClause ? this.db.select<DbSequencedRuntimeLogRow>(`${selectSql} ${fromSql} WHERE ${whereSql} AND ${sequenceClause.sql} ORDER BY terminal_events.seq ASC`, [...params, ...sequenceClause.params]) : [];
+      const items = rows.map(mapRuntimeLogRow);
+      if (projection.truncated) items.unshift(createRuntimeLogProjectionMarker(sessionId, pageMetadata[0]?.created_at));
+      return { items, total, limit, offset: 0, afterSeq, nextSeq, hasMore, truncated: projection.truncated, query, stream };
+    }
+
+    if (options.afterSeq !== undefined) {
+      const rows = this.db.select<DbSequencedRuntimeLogRow>(`${selectSql} ${fromSql} WHERE ${whereSql} AND terminal_events.seq > ? ORDER BY terminal_events.seq ASC LIMIT ?`, [...params, afterSeq, limit + 1]);
+      const hasMore = rows.length > limit;
+      const pageRows = hasMore ? rows.slice(0, limit) : rows;
+      const nextSeq = pageRows.at(-1)?.sequence ?? afterSeq;
+      return { items: pageRows.map(mapRuntimeLogRow), total, limit, offset: 0, afterSeq, nextSeq, hasMore, truncated: false, query, stream };
+    }
+
+    const rows = this.db.select<DbSequencedRuntimeLogRow>(`${selectSql} ${fromSql} WHERE ${whereSql} ORDER BY terminal_events.seq ASC LIMIT ? OFFSET ?`, [...params, limit, offset]);
+    return {
+      items: rows.map(mapRuntimeLogRow),
+      total,
+      limit,
+      offset,
+      afterSeq,
+      nextSeq: rows.at(-1)?.sequence ?? afterSeq,
+      hasMore: offset + rows.length < total,
+      truncated: false,
+      query,
+      stream,
+    };
+  }
+
+  private listLogsBySequenceRange(sessionId: string, metadata: DbRuntimeLogMetadataRow[]): ZeusRuntimeLogRecord[] {
+    const sequenceClause = runtimeLogSequenceRangeClause(metadata);
+    if (!sequenceClause) return [];
+    return this.db
+      .select<DbRuntimeLogRow>(
+        `SELECT runtime_logs.id, runtime_logs.session_id, runtime_logs.stream, runtime_logs.text, runtime_logs.created_at
+         FROM terminal_events
+         INNER JOIN runtime_logs ON runtime_logs.id = substr(terminal_events.id, 16) AND runtime_logs.session_id = terminal_events.session_id
+         WHERE terminal_events.session_id = ? AND ${sequenceClause.sql}
+         ORDER BY terminal_events.seq ASC`,
+        [sessionId, ...sequenceClause.params],
+      )
+      .map(mapRuntimeLogRow);
   }
 
   setFavorite(sessionId: string, favorite: boolean): ZeusRuntimeSessionRecord {
@@ -4109,6 +4334,9 @@ export class RuntimeSessionRepository {
   }
 
   archive(sessionId: string): ZeusRuntimeSessionRecord {
+    const existing = this.getById(sessionId);
+    if (!existing) throw new Error(`Runtime session not found: ${sessionId}`);
+    assertRuntimeSessionCanBeHidden(existing, 'archive');
     this.updateFlag(sessionId, 'archived', true);
     return this.getById(sessionId)!;
   }
@@ -4121,6 +4349,7 @@ export class RuntimeSessionRepository {
   delete(sessionId: string): ZeusRuntimeSessionRecord {
     const existing = this.getById(sessionId);
     if (!existing) throw new Error(`Runtime session not found: ${sessionId}`);
+    assertRuntimeSessionCanBeHidden(existing, 'delete');
     const deletedAt = nowIso();
     this.db.execute(`UPDATE runtime_sessions SET deleted_at = ?, updated_at = ? WHERE id = ?`, [deletedAt, deletedAt, sessionId]);
     return { ...existing, deletedAt, updatedAt: deletedAt };
@@ -4136,7 +4365,8 @@ export class RuntimeSessionRepository {
         runtimeSessionSelectSql(
           `WHERE task_id IS NULL
              AND favorite = 0
-             AND status <> 'running'
+             AND status IN ('exited', 'failed', 'stopped', 'lost')
+             AND ended_at IS NOT NULL
              AND (archived = 1 OR deleted_at IS NOT NULL)
              AND COALESCE(ended_at, updated_at) < ?
              AND (EXISTS (SELECT 1 FROM runtime_logs WHERE runtime_logs.session_id = runtime_sessions.id)
@@ -4159,11 +4389,36 @@ export class RuntimeSessionRepository {
   generateSummary(sessionId: string): ZeusRuntimeSessionRecord {
     const existing = this.getById(sessionId);
     if (!existing) throw new Error(`Runtime session not found: ${sessionId}`);
-    const realLogs = this.listLogs(sessionId)
-      .map((log) => log.text.trim())
-      .filter(Boolean);
+    const realLogs: string[] = [];
+    let afterSeq = 0;
+    let remainingCharacters = 500;
+    while (remainingCharacters > 0) {
+      const rows = this.db.select<{ sequence: number; excerpt: string }>(
+        `SELECT terminal_events.seq AS sequence, substr(trim(runtime_logs.text), 1, 500) AS excerpt
+           FROM terminal_events
+           INNER JOIN runtime_logs ON runtime_logs.id = substr(terminal_events.id, 16) AND runtime_logs.session_id = terminal_events.session_id
+          WHERE terminal_events.session_id = ? AND terminal_events.seq > ? AND length(trim(runtime_logs.text)) > 0
+          ORDER BY terminal_events.seq ASC
+          LIMIT 32`,
+        [sessionId, afterSeq],
+      );
+      if (rows.length === 0) break;
+      for (const row of rows) {
+        const separatorLength = realLogs.length > 0 ? 1 : 0;
+        const available = remainingCharacters - separatorLength;
+        if (available <= 0) {
+          remainingCharacters = 0;
+          break;
+        }
+        realLogs.push(row.excerpt.slice(0, available));
+        remainingCharacters -= separatorLength + Math.min(row.excerpt.length, available);
+        afterSeq = row.sequence;
+        if (remainingCharacters <= 0) break;
+      }
+      if (rows.length < 32) break;
+    }
     // 摘要只能来自真实 Runtime 日志；没有日志时保持 null，由 UI 展示“未生成摘要”。
-    const summary = realLogs.length > 0 ? realLogs.join('\n').slice(0, 500) : null;
+    const summary = realLogs.length > 0 ? realLogs.join('\n') : null;
     const updatedAt = nowIso();
     this.db.execute(`UPDATE runtime_sessions SET summary = ?, updated_at = ? WHERE id = ?`, [summary, updatedAt, sessionId]);
     return this.getById(sessionId)!;
@@ -4181,11 +4436,40 @@ export class RuntimeSessionRepository {
     const session = this.getById(record.sessionId);
     const nextSeq = this.db.get<{ next_seq: number }>(`SELECT COALESCE(MAX(seq), 0) + 1 AS next_seq FROM terminal_events WHERE session_id = ?`, [record.sessionId])?.next_seq ?? 1;
     this.db.execute(
-      `INSERT OR REPLACE INTO terminal_events (id, session_id, task_id, seq, event_type, content, raw_chunk_path, created_at)
+      `INSERT INTO terminal_events (id, session_id, task_id, seq, event_type, content, raw_chunk_path, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [`terminal_event_${record.id}`, record.sessionId, session?.taskId ?? null, nextSeq, record.stream, record.text, null, record.createdAt],
+      // 正文只保存在 runtime_logs；terminal_events 保留稳定序号和引用，读取回放时再关联正文。
+      [`terminal_event_${record.id}`, record.sessionId, session?.taskId ?? null, nextSeq, record.stream, '', null, record.createdAt],
     );
   }
+}
+
+function takeRuntimeLogMetadataWithinBudget(metadata: DbRuntimeLogMetadataRow[], byteBudget: number): { items: DbRuntimeLogMetadataRow[]; truncated: boolean } {
+  const markerBytes = Buffer.byteLength(RUNTIME_LOG_PROJECTION_MARKER_TEXT, 'utf8');
+  let remainingBytes = Math.max(0, byteBudget - markerBytes);
+  const items: DbRuntimeLogMetadataRow[] = [];
+  for (const entry of metadata) {
+    if (entry.byte_length > remainingBytes) return { items, truncated: true };
+    items.push(entry);
+    remainingBytes -= entry.byte_length;
+  }
+  return { items, truncated: false };
+}
+
+function runtimeLogSequenceRangeClause(metadata: DbRuntimeLogMetadataRow[]): { sql: string; params: SqlValue[] } | null {
+  if (metadata.length === 0) return null;
+  const sequences = metadata.map((entry) => entry.sequence);
+  return { sql: 'terminal_events.seq BETWEEN ? AND ?', params: [Math.min(...sequences), Math.max(...sequences)] };
+}
+
+function createRuntimeLogProjectionMarker(sessionId: string, createdAt?: string): ZeusRuntimeLogRecord {
+  return {
+    id: `runtime_log_projection_marker_${sessionId}`,
+    sessionId,
+    stream: 'system',
+    text: RUNTIME_LOG_PROJECTION_MARKER_TEXT,
+    createdAt: createdAt ?? nowIso(),
+  };
 }
 
 /** 终端事件仓储按 session+seq 持久化真实输出，后续可支撑 PTY 回放与审计。 */
@@ -4214,8 +4498,15 @@ export class TerminalEventRepository {
   listBySession(sessionId: string): ZeusTerminalEventRecord[] {
     return this.db
       .select<DbTerminalEventRow>(
-        `SELECT id, session_id, task_id, seq, event_type, content, raw_chunk_path, created_at
-       FROM terminal_events WHERE session_id = ? ORDER BY seq ASC, created_at ASC`,
+        `SELECT terminal_events.id, terminal_events.session_id, terminal_events.task_id, terminal_events.seq,
+                terminal_events.event_type, COALESCE(runtime_logs.text, terminal_events.content) AS content,
+                terminal_events.raw_chunk_path, terminal_events.created_at
+           FROM terminal_events
+           LEFT JOIN runtime_logs
+             ON terminal_events.id = 'terminal_event_' || runtime_logs.id
+            AND terminal_events.session_id = runtime_logs.session_id
+          WHERE terminal_events.session_id = ?
+          ORDER BY terminal_events.seq ASC, terminal_events.created_at ASC`,
         [sessionId],
       )
       .map(mapTerminalEventRow);
@@ -4224,12 +4515,20 @@ export class TerminalEventRepository {
   /** 按 session 和 seq 做稳定 SQL 分页，避免终端长会话回放时一次性加载全量事件。 */
   listBySessionPage(sessionId: string, options: TerminalEventListOptions = {}): TerminalEventListResult {
     const limit = clampPositiveInteger(options.limit, 200, 1, 1_000);
-    const offset = clampPositiveInteger(options.offset, 0, 0, 100_000);
+    const offset = clampPositiveInteger(options.offset, 0, 0, 2_147_483_647);
     const total = this.db.get<{ count: number }>(`SELECT COUNT(*) AS count FROM terminal_events WHERE session_id = ?`, [sessionId])?.count ?? 0;
     const items = this.db
       .select<DbTerminalEventRow>(
-        `SELECT id, session_id, task_id, seq, event_type, content, raw_chunk_path, created_at
-       FROM terminal_events WHERE session_id = ? ORDER BY seq ASC, created_at ASC LIMIT ? OFFSET ?`,
+        `SELECT terminal_events.id, terminal_events.session_id, terminal_events.task_id, terminal_events.seq,
+                terminal_events.event_type, COALESCE(runtime_logs.text, terminal_events.content) AS content,
+                terminal_events.raw_chunk_path, terminal_events.created_at
+           FROM terminal_events
+           LEFT JOIN runtime_logs
+             ON terminal_events.id = 'terminal_event_' || runtime_logs.id
+            AND terminal_events.session_id = runtime_logs.session_id
+          WHERE terminal_events.session_id = ?
+          ORDER BY terminal_events.seq ASC, terminal_events.created_at ASC
+          LIMIT ? OFFSET ?`,
         [sessionId, limit, offset],
       )
       .map(mapTerminalEventRow);
@@ -4716,13 +5015,14 @@ export class ConversationRepository {
       .map(mapConversationMessageRow);
   }
 
+  getRecordById(conversationId: string): ZeusConversationRecord | undefined {
+    const row = this.db.get<DbConversationRow>(`SELECT ${selectConversationFields} FROM conversations WHERE id = ?`, [conversationId]);
+    return row ? mapConversationRow(row) : undefined;
+  }
+
   getById(conversationId: string): ZeusConversationWithMessagesRecord | undefined {
-    const row = this.db.get<DbConversationRow>(
-      `SELECT ${selectConversationFields}
-       FROM conversations WHERE id = ${toSqlStringLiteral(conversationId)}`,
-    );
-    if (!row) return undefined;
-    const conversation = mapConversationRow(row);
+    const conversation = this.getRecordById(conversationId);
+    if (!conversation) return undefined;
     return { ...conversation, messages: this.listMessages(conversation.id) };
   }
 
@@ -4733,17 +5033,19 @@ export class ConversationRepository {
     return { ...conversation, messages: this.listMessages(conversation.id) };
   }
 
-  listNativeBound(agentKind?: ConversationAgentKind): ZeusConversationWithMessagesRecord[] {
+  /** 只读取已绑定原生会话元数据，供状态投影和枚举路径使用。 */
+  listNativeBoundRecords(agentKind?: ConversationAgentKind): ZeusConversationRecord[] {
     const agentClause = agentKind ? ' AND agent_kind = ?' : '';
     return this.db
       .select<DbConversationRow>(
         `SELECT ${selectConversationFields} FROM conversations WHERE transport_kind = 'codex_native' AND provider_thread_id IS NOT NULL AND provider_state NOT IN ('closed', 'failed') AND archived = 0${agentClause} ORDER BY created_at, id`,
         agentKind ? [agentKind] : [],
       )
-      .map((row) => {
-        const conversation = mapConversationRow(row);
-        return { ...conversation, messages: this.listMessages(conversation.id) };
-      });
+      .map(mapConversationRow);
+  }
+
+  listNativeBound(agentKind?: ConversationAgentKind): ZeusConversationWithMessagesRecord[] {
+    return this.listNativeBoundRecords(agentKind).map((conversation) => ({ ...conversation, messages: this.listMessages(conversation.id) }));
   }
 
   /** 身份修复候选包含已归档或失败会话，保证历史记录恢复后仍按原 Agent 路由。 */
@@ -4779,6 +5081,25 @@ export class ConversationRepository {
   /** 侧边栏状态聚合只读取会话主记录，不加载消息正文。 */
   listUnarchivedRecords(): ZeusConversationRecord[] {
     return this.db.select<DbConversationRow>(`SELECT ${selectConversationFields} FROM conversations WHERE archived = 0 ORDER BY updated_at DESC, id DESC`).map(mapConversationRow);
+  }
+
+  /** 会话选择列表只读取主记录，避免为每条会话加载完整消息正文。 */
+  listRecordsByProject(projectId: string, options: ConversationRecordListOptions = {}): ZeusConversationRecord[] {
+    return this.db
+      .select<DbConversationRow>(`SELECT ${selectConversationFields} FROM conversations WHERE project_id = ? AND archived = ? ORDER BY stage_updated_at DESC, created_at DESC, id DESC`, [projectId, options.archived === true ? 1 : 0])
+      .map(mapConversationRow);
+  }
+
+  /** 精准任务刷新沿用同一元数据投影，不再扫描项目会话或消息。 */
+  listRecordsByTask(taskId: string, options: ConversationRecordListOptions = {}): ZeusConversationRecord[] {
+    return this.db
+      .select<DbConversationRow>(`SELECT ${selectConversationFields} FROM conversations WHERE task_id = ? AND archived = ? ORDER BY stage_updated_at DESC, created_at DESC, id DESC`, [taskId, options.archived === true ? 1 : 0])
+      .map(mapConversationRow);
+  }
+
+  /** Runtime 日志镜像按会话身份定位时只需要主记录，不读取历史消息。 */
+  listRecordsBySessionId(sessionId: string): ZeusConversationRecord[] {
+    return this.db.select<DbConversationRow>(`SELECT ${selectConversationFields} FROM conversations WHERE session_id = ? ORDER BY updated_at DESC, id DESC`, [sessionId]).map(mapConversationRow);
   }
 
   listByWorkspace(workspaceId: string): ZeusConversationWithMessagesRecord[] {
@@ -5116,6 +5437,32 @@ export class ConversationTurnRepository {
   listByConversation(conversationId: string): ZeusConversationTurnRecord[] {
     return this.db.select<DbConversationTurnRow>(`SELECT * FROM conversation_turns WHERE conversation_id = ? ORDER BY created_at, id`, [conversationId]).map(mapConversationTurnRow);
   }
+
+  getLatestActiveByConversation(conversationId: string): ZeusConversationTurnRecord | undefined {
+    const row = this.db.get<DbConversationTurnRow>(
+      `SELECT id, conversation_id, provider_thread_id, provider_turn_id, client_submission_id, status,
+              NULL AS error_json, NULL AS plan_json, started_at, completed_at, created_at, updated_at, agent_kind, native_run_id
+         FROM conversation_turns
+        WHERE conversation_id = ? AND status IN ('running', 'dispatching', 'waiting')
+        ORDER BY created_at DESC, id DESC
+        LIMIT 1`,
+      [conversationId],
+    );
+    return row ? mapConversationTurnRow(row) : undefined;
+  }
+
+  /** 批量投影会话运行态时不加载错误和计划正文，避免逐会话查询与大 JSON 放大。 */
+  listInProgress(): ZeusConversationTurnRecord[] {
+    return this.db
+      .select<DbConversationTurnRow>(
+        `SELECT id, conversation_id, provider_thread_id, provider_turn_id, client_submission_id, status,
+                NULL AS error_json, NULL AS plan_json, started_at, completed_at, created_at, updated_at, agent_kind, native_run_id
+         FROM conversation_turns
+         WHERE status IN ('queued', 'dispatching', 'running', 'waiting', 'paused')
+         ORDER BY conversation_id, created_at, id`,
+      )
+      .map(mapConversationTurnRow);
+  }
 }
 
 type ConversationItemBaseInput = {
@@ -5279,6 +5626,11 @@ export class ConversationItemRepository {
 
   getByProvider(providerThreadId: string, providerItemId: string): ZeusConversationItemRecord | undefined {
     const row = this.db.get<DbConversationItemRow>(`SELECT * FROM conversation_items WHERE provider_thread_id = ? AND provider_item_id = ?`, [providerThreadId, providerItemId]);
+    return row ? mapConversationItemRow(row) : undefined;
+  }
+
+  getById(id: string): ZeusConversationItemRecord | undefined {
+    const row = this.db.get<DbConversationItemRow>(`SELECT * FROM conversation_items WHERE id = ?`, [id]);
     return row ? mapConversationItemRow(row) : undefined;
   }
 
@@ -5554,6 +5906,17 @@ export class ConversationSubmissionRepository {
     return this.db.select<DbConversationSubmissionRow>(`SELECT * FROM conversation_submissions WHERE conversation_id = ? ORDER BY queue_position, created_at, id`, [conversationId]).map(mapConversationSubmissionRow);
   }
 
+  getFirstByConversation(conversationId: string): ZeusConversationSubmissionRecord | undefined {
+    const row = this.db.get<DbConversationSubmissionRow>(`SELECT * FROM conversation_submissions WHERE conversation_id = ? ORDER BY created_at, id LIMIT 1`, [conversationId]);
+    return row ? mapConversationSubmissionRow(row) : undefined;
+  }
+
+  listQueueByConversation(conversationId: string): ZeusConversationSubmissionRecord[] {
+    return this.db
+      .select<DbConversationSubmissionRow>(`SELECT * FROM conversation_submissions WHERE conversation_id = ? AND status IN ('queued', 'paused') ORDER BY queue_position, created_at, id`, [conversationId])
+      .map(mapConversationSubmissionRow);
+  }
+
   listRecoverable(): ZeusConversationSubmissionRecord[] {
     return this.db
       .select<DbConversationSubmissionRow>(`SELECT * FROM conversation_submissions WHERE status IN ('queued', 'dispatching', 'active', 'paused') ORDER BY conversation_id, queue_position, created_at, id`)
@@ -5802,6 +6165,10 @@ export class ConversationServerRequestRepository {
 
   listByConversation(conversationId: string): ZeusConversationServerRequestRecord[] {
     return this.db.select<DbConversationServerRequestRow>(`SELECT * FROM conversation_server_requests WHERE conversation_id = ? ORDER BY created_at, id`, [conversationId]).map(mapConversationServerRequestRow);
+  }
+
+  listPendingByConversation(conversationId: string): ZeusConversationServerRequestRecord[] {
+    return this.db.select<DbConversationServerRequestRow>(`SELECT * FROM conversation_server_requests WHERE conversation_id = ? AND status = 'pending' ORDER BY created_at, id`, [conversationId]).map(mapConversationServerRequestRow);
   }
 
   listPending(): ZeusConversationServerRequestRecord[] {
@@ -6316,6 +6683,7 @@ interface DbRuntimeSessionRow {
   cwd: string;
   status: RuntimeSessionStatus;
   pid: number | null;
+  process_identity_token: string | null;
   exit_code: number | null;
   summary: string | null;
   favorite: number;
@@ -6333,6 +6701,19 @@ interface DbRuntimeLogRow {
   stream: RuntimeLogStream;
   text: string;
   created_at: string;
+}
+
+interface DbSequencedRuntimeLogRow extends DbRuntimeLogRow {
+  sequence: number;
+}
+
+interface DbRuntimeLogMetadataRow {
+  id: string;
+  session_id: string;
+  stream: RuntimeLogStream;
+  created_at: string;
+  sequence: number;
+  byte_length: number;
 }
 
 interface DbTerminalEventRow {
@@ -6778,6 +7159,7 @@ function mapRuntimeSessionRow(row: DbRuntimeSessionRow): ZeusRuntimeSessionRecor
     cwd: row.cwd,
     status: row.status,
     pid: row.pid,
+    processIdentityToken: row.process_identity_token,
     exitCode: row.exit_code,
     summary: row.summary,
     favorite: row.favorite === 1,
@@ -6791,7 +7173,7 @@ function mapRuntimeSessionRow(row: DbRuntimeSessionRow): ZeusRuntimeSessionRecor
 }
 
 function runtimeSessionSelectSql(whereClause: string): string {
-  return `SELECT id, project_id, task_id, command, args_json, cwd, status, pid, exit_code, summary, favorite, archived, started_at, ended_at, created_at, updated_at, deleted_at
+  return `SELECT id, project_id, task_id, command, args_json, cwd, status, pid, process_identity_token, exit_code, summary, favorite, archived, started_at, ended_at, created_at, updated_at, deleted_at
           FROM runtime_sessions ${whereClause}`;
 }
 

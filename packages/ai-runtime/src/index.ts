@@ -1,6 +1,8 @@
 import { constants } from 'node:fs';
 import { access, realpath } from 'node:fs/promises';
 import { spawn as nodeSpawn } from 'node:child_process';
+import { Buffer } from 'node:buffer';
+import { randomUUID } from 'node:crypto';
 import { basename, delimiter, isAbsolute, relative, resolve } from 'node:path';
 import { createRequire } from 'node:module';
 import { normalizeTerminalChunk } from '@zeus/terminal-core';
@@ -300,7 +302,7 @@ export interface AiRuntimeSpawnOptions {
 
 export interface AiRuntimeProcessHandle {
   pid?: number;
-  on(event: 'stdout' | 'stderr' | 'exit' | 'error', callback: (value: unknown) => void): AiRuntimeProcessHandle;
+  on(event: 'stdout' | 'stderr' | 'exit' | 'close' | 'error', callback: (value: unknown) => void): AiRuntimeProcessHandle;
   kill(signal?: NodeJS.Signals): void;
   write?(input: string): void;
   resize?(cols: number, rows: number): void;
@@ -350,7 +352,7 @@ export function createNodePtyRuntimeSpawn(pty: NodePtyRuntimeModule, options: Cr
       pid: child.pid,
       on(event, callback) {
         if (event === 'stdout') child.onData((chunk) => callback(chunk));
-        if (event === 'exit') child.onExit((exit) => callback(typeof exit.exitCode === 'number' ? exit.exitCode : null));
+        if (event === 'exit' || event === 'close') child.onExit((exit) => callback(typeof exit.exitCode === 'number' ? exit.exitCode : null));
         return this;
       },
       kill(signal) {
@@ -415,6 +417,7 @@ export interface AiRuntimeTerminalSnapshot {
   command: string;
   cwd: string;
   logs: AiRuntimeLogEntry[];
+  logsTruncated: boolean;
   capturedAt: string;
 }
 
@@ -427,8 +430,10 @@ export interface AiRuntimeSessionManager {
   interruptSession(sessionId: string): AiRuntimeSession;
   resizeSession(sessionId: string, cols: number, rows: number): AiRuntimeSession;
   getTerminalSnapshot(sessionId: string): AiRuntimeTerminalSnapshot;
+  waitForSessionCompletion(sessionId: string, timeoutMs: number): Promise<boolean>;
   stopSession(sessionId: string): AiRuntimeSession;
   killSession(sessionId: string, signal: NodeJS.Signals): AiRuntimeSession;
+  close(): Promise<void>;
 }
 
 export interface CreateAiRuntimeSessionManagerOptions {
@@ -437,8 +442,20 @@ export interface CreateAiRuntimeSessionManagerOptions {
   spawn?: AiRuntimeSpawn;
   now?: () => string;
   onSessionChange?: (session: AiRuntimeSession) => void;
+  /** 仅供持久层保存跨重启进程身份；不得进入可序列化会话或对外 API。 */
+  onProcessIdentity?: (identity: { sessionId: string; token: string }) => void | Promise<void>;
+  /** spawn 后立即持久化真实 PID；回调完成前 Runtime 不会向调用方报告启动成功。 */
+  onProcessStarted?: (process: { sessionId: string; pid: number }) => void | Promise<void>;
   onLog?: (log: AiRuntimeLogEntry) => void;
 }
+
+const MAX_IN_MEMORY_RUNTIME_LOG_ENTRIES = 2_000;
+const MAX_IN_MEMORY_RUNTIME_LOG_BYTES = 4 * 1024 * 1024;
+const MAX_IN_MEMORY_RUNTIME_LOG_SESSIONS = 8;
+const MAX_IN_MEMORY_RUNTIME_SESSIONS = 64;
+const RUNTIME_PROCESS_IDENTITY_ENV = 'ZEUS_RUNTIME_PROCESS_IDENTITY_TOKEN';
+const RUNTIME_STOP_TERM_GRACE_MS = 500;
+const RUNTIME_STOP_KILL_WAIT_MS = 5_000;
 
 /** 检测 AI CLI 是否存在；只报告真实可用性，不伪造执行输出。 */
 export async function detectAiCli(descriptor: AiCliDescriptor): Promise<AiCliStatus> {
@@ -546,7 +563,7 @@ function runCommandOnce(commandPath: string, args: string[]): Promise<AiCliProbe
         exitCode: 1,
       });
     });
-    child.on('exit', (code) => {
+    child.on('close', (code) => {
       clearTimeout(timeout);
       resolveProbe({
         stdout: Buffer.concat(stdoutChunks).toString('utf8'),
@@ -583,8 +600,25 @@ function codexInstallationGuidance(reason: string): string {
 export function createAiRuntimeSessionManager(options: CreateAiRuntimeSessionManagerOptions): AiRuntimeSessionManager {
   const sessions = new Map<string, AiRuntimeSession>();
   const logs = new Map<string, AiRuntimeLogEntry[]>();
+  const logSequences = new Map<string, number>();
+  const logBytes = new Map<string, number>();
+  const truncatedLogSessions = new Set<string>();
   const handles = new Map<string, AiRuntimeProcessHandle>();
+  const closedProcessHandles = new WeakSet<AiRuntimeProcessHandle>();
+  const stopRequestedSessions = new Set<string>();
+  const completionPromises = new Map<string, Promise<void>>();
+  const completionResolvers = new Map<string, () => void>();
+  const pendingProcessStarted = new Map<string, Promise<void>>();
+  const processStartedResolvers = new Map<string, () => void>();
+  const processStartedFailureSessions = new Set<string>();
+  const closeFinalizers = new Map<string, Promise<void>>();
+  const stopEscalations = new Map<string, Promise<void>>();
+  const orphanFinalizers = new Map<string, Promise<void>>();
   const redactedValues = new Map<string, string[]>();
+  const runtimeLifecycleErrors: unknown[] = [];
+  let closing = false;
+  let closed = false;
+  let closePromise: Promise<void> | undefined;
   const spawn = options.spawn ?? spawnWithNodeChildProcess;
   const now = options.now ?? (() => new Date().toISOString());
 
@@ -594,21 +628,61 @@ export function createAiRuntimeSessionManager(options: CreateAiRuntimeSessionMan
   }
 
   function appendLog(sessionId: string, stream: AiRuntimeLogStream, text: string): void {
+    if (closed) return;
     const entries = logs.get(sessionId) ?? [];
     const exactValues = redactedValues.get(sessionId) ?? [];
+    const sequence = (logSequences.get(sessionId) ?? 0) + 1;
+    logSequences.set(sessionId, sequence);
     const entry = {
-      id: `${sessionId}-log-${entries.length + 1}`,
+      id: `${sessionId}-log-${sequence}`,
       sessionId,
       stream,
       text: redactExactValues(redactSensitiveText(text), exactValues),
       createdAt: now(),
     };
-    entries.push(entry);
+    const cachedEntry = compactRuntimeLogForMemory(entry);
+    if (cachedEntry !== entry) truncatedLogSessions.add(sessionId);
+    entries.push(cachedEntry);
+    let cachedBytes = (logBytes.get(sessionId) ?? 0) + Buffer.byteLength(cachedEntry.text);
+    while (entries.length > 1 && (entries.length > MAX_IN_MEMORY_RUNTIME_LOG_ENTRIES || cachedBytes > MAX_IN_MEMORY_RUNTIME_LOG_BYTES)) {
+      const removed = entries.shift();
+      if (removed) {
+        cachedBytes -= Buffer.byteLength(removed.text);
+        truncatedLogSessions.add(sessionId);
+      }
+    }
     logs.set(sessionId, entries);
+    logBytes.set(sessionId, cachedBytes);
+    pruneRuntimeLogCaches(sessionId);
     options.onLog?.(entry);
   }
 
+  function pruneRuntimeLogCaches(currentSessionId: string): void {
+    if (logs.size <= MAX_IN_MEMORY_RUNTIME_LOG_SESSIONS) return;
+    for (const cachedSessionId of logs.keys()) {
+      if (logs.size <= MAX_IN_MEMORY_RUNTIME_LOG_SESSIONS) break;
+      if (cachedSessionId === currentSessionId || sessions.get(cachedSessionId)?.status === 'running') continue;
+      logs.delete(cachedSessionId);
+      logBytes.delete(cachedSessionId);
+      truncatedLogSessions.add(cachedSessionId);
+    }
+  }
+
+  function pruneCompletedRuntimeSessions(): void {
+    if (sessions.size < MAX_IN_MEMORY_RUNTIME_SESSIONS) return;
+    for (const [sessionId, session] of sessions) {
+      if (sessions.size < MAX_IN_MEMORY_RUNTIME_SESSIONS) break;
+      if (session.status === 'running' || handles.has(sessionId)) continue;
+      sessions.delete(sessionId);
+      logs.delete(sessionId);
+      logSequences.delete(sessionId);
+      logBytes.delete(sessionId);
+      truncatedLogSessions.delete(sessionId);
+    }
+  }
+
   function appendProcessOutput(sessionId: string, stream: 'stdout' | 'stderr', value: unknown): void {
+    if (closed) return;
     const text = normalizeProcessChunk(value);
     appendLog(sessionId, stream, text);
     const parsed = parseAiRuntimeOutputState(text);
@@ -618,9 +692,263 @@ export function createAiRuntimeSessionManager(options: CreateAiRuntimeSessionMan
     }
   }
 
+  function runtimeSignalErrorCode(error: unknown): string | null {
+    return error && typeof error === 'object' && 'code' in error && typeof error.code === 'string' ? error.code : null;
+  }
+
+  function signalRuntimeHandle(handle: AiRuntimeProcessHandle, signal: NodeJS.Signals): void {
+    if (process.platform !== 'win32' && typeof handle.pid === 'number' && Number.isSafeInteger(handle.pid) && handle.pid > 0) {
+      try {
+        // 两种 POSIX spawn adapter 都以 child PID 建立独立进程组；禁止回退正 PID，避免退出后 PID 复用误杀。
+        process.kill(-handle.pid, signal);
+        return;
+      } catch (error) {
+        if (runtimeSignalErrorCode(error) === 'ESRCH') return;
+        throw error;
+      }
+    }
+    handle.kill(signal);
+  }
+
+  function runtimeProcessTreeIsAlive(handle: AiRuntimeProcessHandle): boolean {
+    // 无 PID 时只有真实 close 事件能够证明进程已退出；不能把“无法探测”误当成“不存活”。
+    if (typeof handle.pid !== 'number' || !Number.isSafeInteger(handle.pid) || handle.pid <= 0) return !closedProcessHandles.has(handle);
+    if (process.platform !== 'win32') {
+      try {
+        process.kill(-handle.pid, 0);
+        return true;
+      } catch (error) {
+        return runtimeSignalErrorCode(error) !== 'ESRCH';
+      }
+    }
+    try {
+      process.kill(handle.pid, 0);
+      return true;
+    } catch (error) {
+      return runtimeSignalErrorCode(error) !== 'ESRCH';
+    }
+  }
+
+  async function waitForRuntimeProcessTrees(targets: readonly AiRuntimeProcessHandle[], timeoutMs: number): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+    while (targets.some(runtimeProcessTreeIsAlive)) {
+      if (Date.now() >= deadline) return false;
+      await new Promise((resolveWait) => setTimeout(resolveWait, 50));
+    }
+    return true;
+  }
+
+  async function finalizeRuntimeSessionClose(sessionId: string, handle: AiRuntimeProcessHandle, value: unknown): Promise<void> {
+    await pendingProcessStarted.get(sessionId);
+    if (closed || handles.get(sessionId) !== handle) return;
+    let processTreeExited = !runtimeProcessTreeIsAlive(handle);
+    if (!processTreeExited) {
+      try {
+        signalRuntimeHandle(handle, 'SIGTERM');
+        processTreeExited = await waitForRuntimeProcessTrees([handle], 500);
+        if (!processTreeExited) {
+          signalRuntimeHandle(handle, 'SIGKILL');
+          processTreeExited = await waitForRuntimeProcessTrees([handle], 5_000);
+        }
+      } catch (error) {
+        runtimeLifecycleErrors.push(error);
+      }
+    }
+    const current = sessions.get(sessionId);
+    if (current) {
+      if (processTreeExited && processStartedFailureSessions.has(sessionId)) current.status = 'failed';
+      else if (processTreeExited && current.status === 'running') current.status = stopRequestedSessions.has(sessionId) ? 'stopped' : 'exited';
+      if (!processTreeExited) current.status = 'orphan_detected';
+      current.exitCode = typeof value === 'number' ? value : null;
+      current.endedAt = processTreeExited ? now() : undefined;
+      try {
+        appendLog(sessionId, 'system', processTreeExited ? `AI Runtime 会话已退出：${current.exitCode ?? 'unknown'}` : 'AI Runtime 主进程已退出，但进程组未能确认清理完成。');
+      } catch (error) {
+        runtimeLifecycleErrors.push(error);
+      }
+      try {
+        options.onSessionChange?.(current);
+      } catch (error) {
+        runtimeLifecycleErrors.push(error);
+      }
+    }
+    if (!processTreeExited) {
+      stopRequestedSessions.add(sessionId);
+      runtimeLifecycleErrors.push(new Error(`AI Runtime 主进程 ${handle.pid ?? sessionId} 已退出，但进程组仍存活。`));
+      return;
+    }
+    handles.delete(sessionId);
+    stopRequestedSessions.delete(sessionId);
+    redactedValues.delete(sessionId);
+    completionResolvers.get(sessionId)?.();
+    completionResolvers.delete(sessionId);
+    completionPromises.delete(sessionId);
+    processStartedFailureSessions.delete(sessionId);
+  }
+
+  function settleProcessStarted(sessionId: string): void {
+    processStartedResolvers.get(sessionId)?.();
+    processStartedResolvers.delete(sessionId);
+    pendingProcessStarted.delete(sessionId);
+  }
+
+  function scheduleRuntimeSessionCloseFinalization(sessionId: string, handle: AiRuntimeProcessHandle, value: unknown): Promise<void> {
+    const existing = closeFinalizers.get(sessionId);
+    if (existing) return existing;
+    const finalizer = finalizeRuntimeSessionClose(sessionId, handle, value).finally(() => {
+      if (closeFinalizers.get(sessionId) === finalizer) closeFinalizers.delete(sessionId);
+    });
+    closeFinalizers.set(sessionId, finalizer);
+    return finalizer;
+  }
+
+  function scheduleRuntimeStopEscalation(sessionId: string, handle: AiRuntimeProcessHandle): void {
+    if (stopEscalations.has(sessionId)) return;
+    const escalation = (async () => {
+      let processTreeExited = await waitForRuntimeProcessTrees([handle], RUNTIME_STOP_TERM_GRACE_MS);
+      if (closed || handles.get(sessionId) !== handle) return;
+      if (!processTreeExited) {
+        try {
+          signalRuntimeHandle(handle, 'SIGKILL');
+          appendLog(sessionId, 'system', 'AI Runtime 会话未在宽限期内退出，已升级为强制终止进程组');
+        } catch (error) {
+          runtimeLifecycleErrors.push(error);
+        }
+        const completion = completionPromises.get(sessionId);
+        const [treeExitedAfterKill, closeCompleted] = await Promise.all([
+          waitForRuntimeProcessTrees([handle], RUNTIME_STOP_KILL_WAIT_MS),
+          completion ? waitForRuntimeCompletions([completion], RUNTIME_STOP_KILL_WAIT_MS) : Promise.resolve(handles.get(sessionId) !== handle),
+        ]);
+        processTreeExited = treeExitedAfterKill;
+        if (closed || handles.get(sessionId) !== handle) return;
+        if (!processTreeExited && !closeCompleted) {
+          const current = sessions.get(sessionId);
+          if (current) {
+            current.status = 'orphan_detected';
+            current.endedAt = undefined;
+            try {
+              appendLog(sessionId, 'system', 'AI Runtime 强制终止后仍未确认进程树退出，已保留 handle 供再次停止。');
+            } catch (error) {
+              runtimeLifecycleErrors.push(error);
+            }
+            if (!closing) {
+              try {
+                options.onSessionChange?.(current);
+              } catch (error) {
+                runtimeLifecycleErrors.push(error);
+              }
+            }
+          }
+          return;
+        }
+      } else {
+        const completion = completionPromises.get(sessionId);
+        if (completion && !(await waitForRuntimeCompletions([completion], RUNTIME_STOP_TERM_GRACE_MS)) && handles.get(sessionId) === handle) {
+          // 进程树已退出但 adapter 未及时发布 close 时，仍走同一个终态 finalizer。
+          await scheduleRuntimeSessionCloseFinalization(sessionId, handle, null);
+        }
+        return;
+      }
+      if (processTreeExited && handles.get(sessionId) === handle) await scheduleRuntimeSessionCloseFinalization(sessionId, handle, null);
+    })()
+      .catch((error) => {
+        runtimeLifecycleErrors.push(error);
+      })
+      .finally(() => {
+        if (stopEscalations.get(sessionId) === escalation) stopEscalations.delete(sessionId);
+      });
+    stopEscalations.set(sessionId, escalation);
+  }
+
+  async function terminateRuntimeAfterProcessStartedFailure(session: AiRuntimeSession, handle: AiRuntimeProcessHandle, completion: Promise<void>, error: unknown): Promise<void> {
+    const alreadyFinalized = handles.get(session.id) !== handle;
+    try {
+      appendLog(session.id, 'system', error instanceof Error ? error.message : String(error));
+    } catch (logError) {
+      runtimeLifecycleErrors.push(logError);
+    }
+
+    if (alreadyFinalized) {
+      // close 可能在异步持久化期间先完成；此时补写 failed，不能再向已退出且可能复用的 PID 发信号。
+      if (!closing && !closed) {
+        try {
+          options.onSessionChange?.(session);
+        } catch (persistenceError) {
+          runtimeLifecycleErrors.push(persistenceError);
+        }
+      }
+      return;
+    }
+
+    try {
+      // PID 未持久化成功时不能允许进程继续运行；POSIX 路径会优先终止整个进程组。
+      signalRuntimeHandle(handle, 'SIGKILL');
+    } catch (signalError) {
+      runtimeLifecycleErrors.push(signalError);
+    }
+    try {
+      const [processTreeExited, closeCompleted] = await Promise.all([waitForRuntimeProcessTrees([handle], 5_000), waitForRuntimeCompletions([completion], 5_000)]);
+      if (processTreeExited && !closeCompleted && handles.get(session.id) === handle) {
+        // 极端 adapter 没有发布 close 时，以已确认消失的进程树作为终态屏障，仍由统一 finalizer 清理 handle。
+        await scheduleRuntimeSessionCloseFinalization(session.id, handle, null);
+      }
+      if (!processTreeExited && !closeCompleted) {
+        // 不删除 handle；manager close/后续 close 仍可继续收口，避免把存活进程变成不可追踪后台任务。
+        session.status = 'orphan_detected';
+        session.endedAt = undefined;
+        try {
+          options.onSessionChange?.(session);
+        } catch (persistenceError) {
+          runtimeLifecycleErrors.push(persistenceError);
+        }
+        scheduleOrphanRuntimeFinalization(session.id, handle);
+        runtimeLifecycleErrors.push(new Error(`AI Runtime 进程 ${handle.pid ?? session.id} 在 PID 持久化失败并发送 SIGKILL 后仍未确认退出。`));
+      }
+    } catch (finalizationError) {
+      // 清理错误另行汇总；startSession 必须把 PID 持久化的原始错误交还调用方。
+      runtimeLifecycleErrors.push(finalizationError);
+    }
+  }
+
+  function scheduleOrphanRuntimeFinalization(sessionId: string, handle: AiRuntimeProcessHandle): void {
+    if (orphanFinalizers.has(sessionId)) return;
+    const finalizer = (async () => {
+      if (!(await waitForRuntimeProcessTrees([handle], 5_000))) {
+        runtimeLifecycleErrors.push(new Error(`AI Runtime 孤儿进程组 ${handle.pid ?? sessionId} 在 SIGKILL 后仍存活。`));
+        return;
+      }
+      if (closed || handles.get(sessionId) !== handle) return;
+      const current = sessions.get(sessionId);
+      if (current) {
+        current.status = processStartedFailureSessions.has(sessionId) ? 'failed' : stopRequestedSessions.has(sessionId) ? 'stopped' : 'failed';
+        current.endedAt = now();
+        try {
+          appendLog(sessionId, 'system', 'AI Runtime 孤儿进程组已确认终止。');
+        } catch (error) {
+          runtimeLifecycleErrors.push(error);
+        }
+        try {
+          options.onSessionChange?.(current);
+        } catch (error) {
+          runtimeLifecycleErrors.push(error);
+        }
+      }
+      handles.delete(sessionId);
+      stopRequestedSessions.delete(sessionId);
+      redactedValues.delete(sessionId);
+      completionResolvers.get(sessionId)?.();
+      completionResolvers.delete(sessionId);
+      completionPromises.delete(sessionId);
+      processStartedFailureSessions.delete(sessionId);
+    })().finally(() => orphanFinalizers.delete(sessionId));
+    orphanFinalizers.set(sessionId, finalizer);
+  }
+
   return {
     async startSession(input) {
+      if (closing || closed) throw new Error('AI Runtime 正在关闭，不能启动新会话。');
       assertCwdInsideAllowedRoots(input.cwd, resolveAllowedRoots());
+      pruneCompletedRuntimeSessions();
       const session: AiRuntimeSession = {
         id: `ai-session-${Date.now()}-${Math.random().toString(16).slice(2)}`,
         projectId: input.projectId,
@@ -631,45 +959,88 @@ export function createAiRuntimeSessionManager(options: CreateAiRuntimeSessionMan
         status: 'running',
         startedAt: now(),
       };
+      const processIdentityToken = randomUUID();
       sessions.set(session.id, session);
-      redactedValues.set(
-        session.id,
-        (input.redactValues ?? []).filter((value) => value.length > 0),
-      );
-      options.onSessionChange?.(session);
-      appendLog(session.id, 'system', `启动 AI Runtime 会话：${[input.command, ...(input.args ?? [])].join(' ')}`);
-      const handle = spawn(input.command, input.args ?? [], {
-        cwd: input.cwd,
-        env: input.env,
+      const completion = new Promise<void>((resolveCompletion) => {
+        completionResolvers.set(session.id, resolveCompletion);
       });
+      completionPromises.set(session.id, completion);
+      const processStarted = new Promise<void>((resolveProcessStarted) => {
+        processStartedResolvers.set(session.id, resolveProcessStarted);
+      });
+      pendingProcessStarted.set(session.id, processStarted);
+      redactedValues.set(session.id, [...(input.redactValues ?? []).filter((value) => value.length > 0), processIdentityToken]);
+      let handle: AiRuntimeProcessHandle;
+      try {
+        options.onSessionChange?.(session);
+        // 先等待身份落盘，再启动进程；持久化失败时不能留下无法安全识别的后台进程。
+        await options.onProcessIdentity?.({ sessionId: session.id, token: processIdentityToken });
+        if (closing || closed) throw new Error('AI Runtime 正在关闭，不能继续启动新会话。');
+        if (stopRequestedSessions.has(session.id)) throw new Error('AI Runtime 会话在 spawn 前已收到停止请求，已取消启动。');
+        appendLog(session.id, 'system', `启动 AI Runtime 会话：${[input.command, ...(input.args ?? [])].join(' ')}`);
+        handle = spawn(input.command, input.args ?? [], {
+          cwd: input.cwd,
+          env: {
+            ...(input.env ?? process.env),
+            [RUNTIME_PROCESS_IDENTITY_ENV]: processIdentityToken,
+          },
+        });
+      } catch (error) {
+        session.status = 'failed';
+        session.endedAt = now();
+        settleProcessStarted(session.id);
+        try {
+          appendLog(session.id, 'system', error instanceof Error ? error.message : String(error));
+        } catch (logError) {
+          runtimeLifecycleErrors.push(logError);
+        }
+        redactedValues.delete(session.id);
+        if (!closing && !closed) {
+          try {
+            options.onSessionChange?.(session);
+          } catch (persistenceError) {
+            runtimeLifecycleErrors.push(persistenceError);
+          }
+        }
+        completionResolvers.get(session.id)?.();
+        completionResolvers.delete(session.id);
+        completionPromises.delete(session.id);
+        stopRequestedSessions.delete(session.id);
+        throw error;
+      }
       session.pid = handle.pid;
       handles.set(session.id, handle);
-      // 子进程 PID 只有 spawn 后才可得，需再次通知持久化层，保证重启恢复能基于真实 PID 判断 orphan/lost。
-      options.onSessionChange?.(session);
-      handle
-        .on('stdout', (value) => appendProcessOutput(session.id, 'stdout', value))
-        .on('stderr', (value) => appendProcessOutput(session.id, 'stderr', value))
-        .on('error', (value) => {
-          const current = sessions.get(session.id);
-          if (!current) return;
-          current.status = 'failed';
-          current.endedAt = now();
-          appendLog(session.id, 'system', value instanceof Error ? value.message : String(value));
-          handles.delete(session.id);
-          redactedValues.delete(session.id);
-          options.onSessionChange?.(current);
-        })
-        .on('exit', (value) => {
-          const current = sessions.get(session.id);
-          if (!current) return;
-          if (current.status === 'running') current.status = 'exited';
-          current.exitCode = typeof value === 'number' ? value : null;
-          current.endedAt = now();
-          appendLog(session.id, 'system', `AI Runtime 会话已退出：${current.exitCode ?? 'unknown'}`);
-          handles.delete(session.id);
-          redactedValues.delete(session.id);
-          options.onSessionChange?.(current);
-        });
+      try {
+        handle
+          .on('stdout', (value) => appendProcessOutput(session.id, 'stdout', value))
+          .on('stderr', (value) => appendProcessOutput(session.id, 'stderr', value))
+          .on('error', (value) => {
+            if (closed) return;
+            const current = sessions.get(session.id);
+            if (!current) return;
+            current.status = 'failed';
+            appendLog(session.id, 'system', value instanceof Error ? value.message : String(value));
+          })
+          // close 在 stdout/stderr 都关闭后触发，作为日志已排空的终态屏障；exit 可能早于最后一批输出。
+          .on('close', (value) => {
+            closedProcessHandles.add(handle);
+            void scheduleRuntimeSessionCloseFinalization(session.id, handle, value);
+          });
+        if (options.onProcessStarted) {
+          if (typeof handle.pid !== 'number' || !Number.isSafeInteger(handle.pid) || handle.pid <= 0) throw new Error('AI Runtime spawn 后未返回可持久化的进程 PID。');
+          await options.onProcessStarted({ sessionId: session.id, pid: handle.pid });
+        }
+        if (closing || closed) throw new Error('AI Runtime 在进程 PID 持久化期间开始关闭，已取消本次启动。');
+        settleProcessStarted(session.id);
+        // PID 已持久化后再发布带 PID 的运行态；若进程已在 callback 期间退出，close 已负责发布真实终态。
+        if (!closing && !closed && handles.get(session.id) === handle && session.status === 'running') options.onSessionChange?.(session);
+      } catch (error) {
+        session.status = 'failed';
+        processStartedFailureSessions.add(session.id);
+        settleProcessStarted(session.id);
+        await terminateRuntimeAfterProcessStartedFailure(session, handle, completion, error);
+        throw error;
+      }
       return session;
     },
     getSession(sessionId) {
@@ -693,7 +1064,7 @@ export function createAiRuntimeSessionManager(options: CreateAiRuntimeSessionMan
       const session = requireRuntimeSession(sessions, sessionId);
       const handle = handles.get(sessionId);
       if (!handle) throw new Error('AI Runtime session not found');
-      handle.kill('SIGINT');
+      signalRuntimeHandle(handle, 'SIGINT');
       appendLog(sessionId, 'system', '已发送 interrupt 到 AI Runtime 会话');
       return session;
     },
@@ -714,28 +1085,136 @@ export function createAiRuntimeSessionManager(options: CreateAiRuntimeSessionMan
         command: [session.command, ...session.args].join(' '),
         cwd: session.cwd,
         logs: logs.get(sessionId) ?? [],
+        logsTruncated: truncatedLogSessions.has(sessionId),
         capturedAt: now(),
       };
+    },
+    async waitForSessionCompletion(sessionId, timeoutMs) {
+      const completion = completionPromises.get(sessionId);
+      if (!completion) return sessions.get(sessionId)?.status !== 'running';
+      return waitForRuntimeCompletions([completion], timeoutMs);
     },
     stopSession(sessionId) {
       const session = requireRuntimeSession(sessions, sessionId);
       const handle = handles.get(sessionId);
-      if (session.status === 'running') {
-        handle?.kill('SIGTERM');
-        session.status = 'stopped';
-        session.endedAt = now();
-        options.onSessionChange?.(session);
+      if (session.status === 'orphan_detected' && handle) {
+        if (stopEscalations.has(sessionId) || orphanFinalizers.has(sessionId)) return session;
+        stopRequestedSessions.add(sessionId);
+        signalRuntimeHandle(handle, 'SIGKILL');
+        scheduleOrphanRuntimeFinalization(sessionId, handle);
+        appendLog(sessionId, 'system', '已重新强制终止 AI Runtime 孤儿进程组');
+        return session;
+      }
+      if (session.status === 'running' && !stopRequestedSessions.has(sessionId)) {
+        stopRequestedSessions.add(sessionId);
+        try {
+          if (handle) signalRuntimeHandle(handle, 'SIGTERM');
+        } catch (error) {
+          stopRequestedSessions.delete(sessionId);
+          throw error;
+        }
+        if (handle) scheduleRuntimeStopEscalation(sessionId, handle);
         appendLog(sessionId, 'system', 'AI Runtime 会话已请求停止');
       }
       return session;
     },
     killSession(sessionId, signal) {
       const session = requireRuntimeSession(sessions, sessionId);
-      handles.get(sessionId)?.kill(signal);
+      const handle = handles.get(sessionId);
+      if (handle) signalRuntimeHandle(handle, signal);
       appendLog(sessionId, 'system', `已向 AI Runtime 会话发送 ${signal}`);
+      if (session.status === 'orphan_detected' && handle && signal === 'SIGKILL') scheduleOrphanRuntimeFinalization(sessionId, handle);
       return session;
     },
+    close() {
+      closePromise ??= closeRuntimeManager().catch((error) => {
+        // 未确认清理完成时保留 manager 与 handle，可由调用方再次 stop/close，不能把失败 close 固化为假成功。
+        if (!closed) closePromise = undefined;
+        throw error;
+      });
+      return closePromise;
+    },
   };
+
+  async function closeRuntimeManager(): Promise<void> {
+    closing = true;
+    const pending = [...completionPromises.values(), ...pendingProcessStarted.values(), ...stopEscalations.values()];
+    const terminationErrors: unknown[] = runtimeLifecycleErrors.splice(0);
+    for (const [sessionId, handle] of handles) {
+      stopRequestedSessions.add(sessionId);
+      try {
+        signalRuntimeHandle(handle, 'SIGTERM');
+      } catch (error) {
+        terminationErrors.push(error);
+      }
+    }
+    let drained = pending.length === 0 || (await waitForRuntimeCompletions(pending, 5_000));
+    if (!drained || handles.size > 0) {
+      for (const handle of handles.values()) {
+        try {
+          signalRuntimeHandle(handle, 'SIGKILL');
+        } catch (error) {
+          terminationErrors.push(error);
+        }
+      }
+      if (!drained) drained = await waitForRuntimeCompletions(pending, 5_000);
+    }
+    const confirmedExitedWithoutClose = [...handles.entries()].filter(([sessionId, handle]) => !pendingProcessStarted.has(sessionId) && !runtimeProcessTreeIsAlive(handle));
+    await Promise.all(confirmedExitedWithoutClose.map(([sessionId, handle]) => scheduleRuntimeSessionCloseFinalization(sessionId, handle, null)));
+    if (!drained) drained = await waitForRuntimeCompletions(pending, 1_000);
+    if (!drained || handles.size > 0) {
+      // 未确认退出时保持 orphan + handle；调用方必须处理 close 失败，不能继续关闭数据库或制造假终态。
+      for (const [sessionId] of handles) {
+        const session = sessions.get(sessionId);
+        if (session) {
+          session.status = 'orphan_detected';
+          session.endedAt = undefined;
+          try {
+            appendLog(sessionId, 'system', 'AI Runtime 强制关闭后仍未确认进程树退出，已保留 handle 等待继续终止。');
+          } catch (error) {
+            terminationErrors.push(error);
+          }
+          try {
+            options.onSessionChange?.(session);
+          } catch (error) {
+            terminationErrors.push(error);
+          }
+        }
+      }
+      terminationErrors.push(new Error(`AI Runtime 关闭超时，仍保留未确认终止的启动回调或进程 handle；drained=${drained} handles=${handles.size}。`));
+      if (terminationErrors.length === 1) throw terminationErrors[0];
+      throw new AggregateError(terminationErrors, 'AI Runtime 关闭时存在多个进程终结错误。');
+    }
+    closed = true;
+    terminationErrors.push(...runtimeLifecycleErrors.splice(0));
+    if (terminationErrors.length === 1) throw terminationErrors[0];
+    if (terminationErrors.length > 1) throw new AggregateError(terminationErrors, 'AI Runtime 关闭时存在多个进程终结错误。');
+  }
+}
+
+function compactRuntimeLogForMemory(entry: AiRuntimeLogEntry): AiRuntimeLogEntry {
+  const encoded = Buffer.from(entry.text);
+  if (encoded.byteLength <= MAX_IN_MEMORY_RUNTIME_LOG_BYTES) return entry;
+  const marker = '[内存仅保留该超大日志块的末尾，完整内容已写入持久化日志]\n';
+  const markerBytes = Buffer.byteLength(marker);
+  let suffixStart = encoded.byteLength - (MAX_IN_MEMORY_RUNTIME_LOG_BYTES - markerBytes);
+  while (suffixStart < encoded.byteLength && (encoded[suffixStart]! & 0xc0) === 0x80) suffixStart += 1;
+  const suffix = encoded.subarray(suffixStart).toString('utf8');
+  return { ...entry, text: `${marker}${suffix}` };
+}
+
+async function waitForRuntimeCompletions(completions: readonly Promise<void>[], timeoutMs: number): Promise<boolean> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      Promise.all(completions).then(() => true),
+      new Promise<boolean>((resolveTimeout) => {
+        timeout = setTimeout(() => resolveTimeout(false), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
 }
 
 function spawnWithNodeChildProcess(command: string, args: string[], options: AiRuntimeSpawnOptions): AiRuntimeProcessHandle {
@@ -753,6 +1232,7 @@ function spawnWithNodeChildProcess(command: string, args: string[], options: AiR
       if (event === 'stdout') child.stdout?.on('data', callback);
       if (event === 'stderr') child.stderr?.on('data', callback);
       if (event === 'exit') child.on('exit', callback);
+      if (event === 'close') child.on('close', callback);
       if (event === 'error') child.on('error', callback);
       return this;
     },

@@ -36,6 +36,7 @@ export function reconnectDelayMs(attempt: number): number {
 export interface SessionControllerClient {
   loadCodexConversationCapabilities?(projectId: string): Promise<CodexConversationCapabilities>;
   loadNativeConversation(projectId: string, conversationId: string): Promise<NativeConversationSnapshot>;
+  loadNativePendingRequests(projectId: string, conversationId: string): Promise<{ conversationId: string; requests: NativePendingRequest[] }>;
   loadConversationResourcePreview?(projectId: string, conversationId: string, resourceId: string): Promise<ConversationResourcePreview>;
   loadTurnChangeSet?(projectId: string, conversationId: string, turnId: string): Promise<TurnChangeSet>;
   operateTurnChangeSet?(
@@ -552,14 +553,13 @@ export function createSessionController(options: CreateSessionControllerOptions)
       do {
         requestRefreshAgain = false;
         const refreshIdentityEpoch = identityEpoch;
-        const expectedThreadId = state.providerThreadId;
-        const snapshot = await options.client.loadNativeConversation(options.projectId, options.conversationId);
+        const snapshot = await options.client.loadNativePendingRequests(options.projectId, options.conversationId);
         if (disposed || token !== connectionToken) return;
-        if (refreshIdentityEpoch !== identityEpoch || snapshot.providerThreadId !== expectedThreadId) {
+        if (refreshIdentityEpoch !== identityEpoch || snapshot.conversationId !== options.conversationId) {
           if (requestRefreshAgain) continue;
           return;
         }
-        dispatch({ type: 'pending_requests_hydrated', requests: snapshot.requests.filter((request) => !resolvedRequestIds.has(request.id)), turns: snapshot.turns, items: snapshot.items });
+        dispatch({ type: 'pending_requests_hydrated', requests: snapshot.requests.filter((request) => !resolvedRequestIds.has(request.id)) });
       } while (requestRefreshAgain && !disposed && token === connectionToken);
     })()
       .catch(() => {

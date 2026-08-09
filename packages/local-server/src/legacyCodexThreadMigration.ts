@@ -14,6 +14,7 @@ import type {
   RuntimeSessionRepository,
   TaskEventRepository,
   TaskRepository,
+  ZeusConversationRecord,
   ZeusConversationWithMessagesRecord,
   ZeusDatabase,
   ZeusRuntimeSessionRecord,
@@ -70,7 +71,7 @@ export interface LegacyCodexThreadMigrationReport {
 }
 
 interface LegacyRuntimeLink {
-  source: ZeusConversationWithMessagesRecord;
+  source: ZeusConversationRecord;
   runtimeSessionId: string;
 }
 
@@ -112,11 +113,8 @@ export async function migrateLegacyCodexThreads(input: LegacyCodexThreadMigratio
         report.skipped.push({ sourceConversationId: source.id, runtimeSessionId: runtime.id, reason: 'invalid_runtime_transport' });
         continue;
       }
-      const logText = input.runtimeSessions
-        .listLogs(runtime.id)
-        .map((log) => log.text)
-        .join('\n');
-      const threadIds = extractProviderThreadIds(logText);
+      const logIdentity = readLegacyRuntimeLogIdentity(input.db, runtime.id);
+      const threadIds = logIdentity.threadIds;
       if (threadIds.length !== 1) {
         sourceComplete = false;
         report.skipped.push({
@@ -128,7 +126,7 @@ export async function migrateLegacyCodexThreads(input: LegacyCodexThreadMigratio
       }
 
       const providerThreadId = threadIds[0]!;
-      const providerModel = firstMatch(logText, /^model:\s*(\S+)/imu);
+      const providerModel = logIdentity.providerModel;
       if (!providerModel) {
         sourceComplete = false;
         report.skipped.push({ sourceConversationId: source.id, runtimeSessionId: runtime.id, reason: 'missing_provider_model' });
@@ -157,7 +155,7 @@ export async function migrateLegacyCodexThreads(input: LegacyCodexThreadMigratio
           runtime,
           providerThreadId,
           providerModel,
-          providerBinaryVersion: firstMatch(logText, /^OpenAI Codex v(\S+)/imu),
+          providerBinaryVersion: logIdentity.providerBinaryVersion,
           snapshot,
         };
       } catch {
@@ -198,21 +196,15 @@ export async function migrateLegacyCodexThreads(input: LegacyCodexThreadMigratio
   return report;
 }
 
-function listLegacySources(projects: ProjectRepository, conversations: ConversationRepository): ZeusConversationWithMessagesRecord[] {
-  const sources: ZeusConversationWithMessagesRecord[] = [];
+function listLegacySources(projects: ProjectRepository, conversations: ConversationRepository): ZeusConversationRecord[] {
+  const sources: ZeusConversationRecord[] = [];
   for (const project of projects.list()) {
-    let offset = 0;
-    while (true) {
-      const page = conversations.listByProject(project.id, { limit: 100, offset });
-      sources.push(...page.items.filter((conversation) => conversation.transportKind === 'legacy_cli' && conversation.taskId));
-      offset += page.items.length;
-      if (page.items.length === 0 || offset >= page.total) break;
-    }
+    sources.push(...conversations.listRecordsByProject(project.id).filter((conversation) => conversation.transportKind === 'legacy_cli' && conversation.taskId));
   }
   return sources.sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
 }
 
-function linkedRuntimeSessions(source: ZeusConversationWithMessagesRecord, taskEvents: TaskEventRepository): LegacyRuntimeLink[] {
+function linkedRuntimeSessions(source: ZeusConversationRecord, taskEvents: TaskEventRepository): LegacyRuntimeLink[] {
   if (!source.taskId) return [];
   const runtimeIds = new Set<string>();
   for (const event of taskEvents.listByTask(source.taskId)) {
@@ -228,6 +220,31 @@ function extractProviderThreadIds(logText: string): string[] {
   const ids = new Set<string>();
   for (const match of logText.matchAll(CODEX_THREAD_ID_PATTERN)) ids.add(match[1]!.toLowerCase());
   return [...ids];
+}
+
+function readLegacyRuntimeLogIdentity(db: ZeusDatabase, sessionId: string): { threadIds: string[]; providerModel: string | null; providerBinaryVersion: string | null } {
+  const threadText = readBoundedRuntimeLogMatches(db, sessionId, 'session id:', 32, 512).join('\n');
+  const modelText = readBoundedRuntimeLogMatches(db, sessionId, 'model:', 8, 512).join('\n');
+  const versionText = readBoundedRuntimeLogMatches(db, sessionId, 'openai codex v', 8, 512).join('\n');
+  return {
+    threadIds: extractProviderThreadIds(threadText),
+    providerModel: firstMatch(modelText, /^model:\s*(\S+)/imu),
+    providerBinaryVersion: firstMatch(versionText, /^OpenAI Codex v(\S+)/imu),
+  };
+}
+
+function readBoundedRuntimeLogMatches(db: ZeusDatabase, sessionId: string, needle: string, limit: number, excerptCharacters: number): string[] {
+  return db
+    .select<{ excerpt: string }>(
+      `SELECT substr(runtime_logs.text, instr(lower(runtime_logs.text), ?), ?) AS excerpt
+         FROM terminal_events
+         INNER JOIN runtime_logs ON runtime_logs.id = substr(terminal_events.id, 16) AND runtime_logs.session_id = terminal_events.session_id
+        WHERE terminal_events.session_id = ? AND instr(lower(runtime_logs.text), ?) > 0
+        ORDER BY terminal_events.seq ASC
+        LIMIT ?`,
+      [needle, excerptCharacters, sessionId, needle, limit],
+    )
+    .map((row) => row.excerpt);
 }
 
 function isCodexExecRuntime(runtime: ZeusRuntimeSessionRecord): boolean {

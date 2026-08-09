@@ -16,7 +16,19 @@ import {
   type CommandScope,
 } from '@zeus/shared';
 import type { AiRuntimeLogEntry, AiRuntimeSession, AiRuntimeSessionManager } from '@zeus/ai-runtime';
-import { CommandArtifactRepository, CommandDefinitionRepository, CommandRunRepository, type AppendAuditLogInput, type ProjectRepository, type RuntimeSessionRepository, type ZeusDatabase } from '@zeus/storage';
+import {
+  CommandArtifactRepository,
+  CommandDefinitionRepository,
+  CommandRunRepository,
+  type AppendAuditLogInput,
+  type ProjectRepository,
+  type RuntimeSessionRepository,
+  type ZeusDatabase,
+  type ZeusRuntimeLogRecord,
+  type ZeusRuntimeSessionRecord,
+} from '@zeus/storage';
+
+const MAX_COMMAND_RUN_LOG_PAYLOAD_BYTES = 4 * 1024 * 1024;
 
 interface CommandCenterOptions {
   server: FastifyInstance;
@@ -120,14 +132,26 @@ export function createCommandCenter(options: CommandCenterOptions): CommandCente
     return runs.listByProject(request.params.projectId, Number.isFinite(requestedLimit) ? requestedLimit : 100);
   });
 
-  options.server.get('/api/command-runs/:runId', async (request: FastifyRequest<{ Params: { runId: string } }>, reply) => {
+  options.server.get('/api/command-runs/:runId', async (request: FastifyRequest<{ Params: { runId: string }; Querystring: { afterSeq?: string; logLimit?: string; tail?: string } }>, reply) => {
     const run = runs.getById(request.params.runId);
     if (!run) return notFound(reply, 'ZEUS_COMMAND_RUN_NOT_FOUND', 'Command run not found');
+    const afterSeq = parseBoundedCommandRunInteger(request.query.afterSeq, 0, 0, Number.MAX_SAFE_INTEGER);
+    const logLimit = parseBoundedCommandRunInteger(request.query.logLimit, 200, 1, 2_000);
+    const tail = run.status !== 'running' && afterSeq === 0 && request.query.tail === 'true';
+    const logPage = run.runtimeSessionId
+      ? options.runtimeSessions.searchLogs(run.runtimeSessionId, { afterSeq, limit: logLimit, tail, byteBudget: MAX_COMMAND_RUN_LOG_PAYLOAD_BYTES })
+      : { items: [], total: 0, afterSeq, nextSeq: afterSeq, hasMore: false, truncated: false };
+    const boundedLogs = boundCommandRunLogs(logPage.items, afterSeq, logPage.nextSeq);
     return {
       run,
       artifacts: artifacts.listByRun(run.id),
-      runtimeSession: run.runtimeSessionId ? (options.runtimeSessions.getById(run.runtimeSessionId) ?? null) : null,
-      logs: run.runtimeSessionId ? options.runtimeSessions.listLogs(run.runtimeSessionId) : [],
+      runtimeSession: run.runtimeSessionId ? toPublicRuntimeSession(options.runtimeSessions.getById(run.runtimeSessionId)) : null,
+      logs: boundedLogs.items,
+      afterSeq: logPage.afterSeq,
+      nextSeq: logPage.nextSeq,
+      logTotal: logPage.total,
+      hasMoreLogs: logPage.hasMore,
+      logsTruncated: logPage.truncated || boundedLogs.truncated,
     };
   });
 
@@ -822,6 +846,35 @@ function toPublicConfirmation(confirmation: StoredCommandConfirmation): CommandC
   };
 }
 
+function toPublicRuntimeSession(record: ZeusRuntimeSessionRecord | undefined): AiRuntimeSession | null {
+  if (!record) return null;
+  let args: string[] = [];
+  try {
+    const parsed = JSON.parse(record.argsJson) as unknown;
+    if (Array.isArray(parsed)) args = parsed.filter((value): value is string => typeof value === 'string');
+  } catch {
+    args = [];
+  }
+  // 只逐字段返回公开投影，进程身份 token 等恢复专用字段绝不能进入命令详情 JSON。
+  return {
+    id: record.id,
+    projectId: record.projectId,
+    taskId: record.taskId ?? undefined,
+    command: record.command,
+    args,
+    cwd: record.cwd,
+    status: record.status,
+    pid: record.pid ?? undefined,
+    exitCode: record.exitCode,
+    summary: record.summary,
+    favorite: record.favorite,
+    archived: record.archived,
+    deletedAt: record.deletedAt,
+    startedAt: record.startedAt,
+    endedAt: record.endedAt ?? undefined,
+  };
+}
+
 function definitionAuditPayload(definition: CommandDefinition): Record<string, unknown> {
   return {
     commandId: definition.id,
@@ -868,6 +921,43 @@ function verifyArtifactPath(candidatePath: string, runDirectory: string): string
   } catch {
     return null;
   }
+}
+
+/** 命令详情是高频轻量投影；巨型原始日志只留在 Runtime，避免单次响应压垮 renderer。 */
+function boundCommandRunLogs(items: ZeusRuntimeLogRecord[], afterSeq: number, nextSeq: number): { items: ZeusRuntimeLogRecord[]; truncated: boolean } {
+  const contentBudget = MAX_COMMAND_RUN_LOG_PAYLOAD_BYTES - 1_024;
+  const selected: ZeusRuntimeLogRecord[] = [];
+  let usedBytes = 0;
+  let skippedCount = 0;
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const item = items[index]!;
+    const itemBytes = Buffer.byteLength(item.text, 'utf8');
+    if (itemBytes > contentBudget || usedBytes + itemBytes > contentBudget) {
+      skippedCount += 1;
+      continue;
+    }
+    selected.push(item);
+    usedBytes += itemBytes;
+  }
+  selected.reverse();
+  if (skippedCount === 0) return { items: selected, truncated: false };
+  const reference = items[0];
+  if (reference) {
+    selected.unshift({
+      id: `command_log_budget_${reference.sessionId}_${afterSeq}_${nextSeq}`,
+      sessionId: reference.sessionId,
+      stream: 'system',
+      text: `[命令详情已省略 ${skippedCount} 个超出约 4 MB 展示预算的日志块，完整内容请在 Runtime 日志中查看。]\n`,
+      createdAt: reference.createdAt,
+    });
+  }
+  return { items: selected, truncated: true };
+}
+
+function parseBoundedCommandRunInteger(value: string | undefined, fallback: number, minimum: number, maximum: number): number {
+  const parsed = Number(value ?? fallback);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(maximum, Math.max(minimum, Math.trunc(parsed)));
 }
 
 function mimeTypeForPath(path: string): string | null {

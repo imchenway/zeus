@@ -159,13 +159,26 @@ jobs:
           ZEUS_FAST_RELEASE: '1'
           ZEUS_RELEASE_OUTPUT_DIR: dist
         run: pnpm verify:release
-      - uses: actions/upload-artifact@v4
+      - name: 上传已校验正式产物
+        id: upload_release_artifact
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
         with:
           name: zeus-macos-${{ inputs.commit_sha != '' && inputs.commit_sha || github.sha }}
           path: |
             dist/Zeus-*.dmg
             dist/zeus-release-manifest.json
             dist/homebrew/zeus.rb
+      - name: 首次上传失败后安全重试一次
+        if: ${{ steps.upload_release_artifact.outcome == 'failure' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: zeus-macos-${{ inputs.commit_sha != '' && inputs.commit_sha || github.sha }}
+          path: |
+            dist/Zeus-*.dmg
+            dist/zeus-release-manifest.json
+            dist/homebrew/zeus.rb
+          overwrite: true
 
   publish:
     if: ${{ inputs.publish_release }}

@@ -268,6 +268,10 @@ export interface NativeConversationChoice {
   archived: boolean;
   hasUnreadCompletion: boolean;
   pendingRequestKind: 'approval' | 'user_input' | null;
+  /** 服务端基于队列、轮次和请求元数据计算的列表状态，避免列表刷新读取完整会话。 */
+  listRuntimeState?: 'connecting' | 'reconnecting' | 'paused' | 'queued' | 'ready' | 'streaming' | 'pending_approval' | 'pending_user_input' | 'error' | 'legacy_readonly';
+  /** 与列表状态同源的任务运行状态，避免客户端从不完整元数据重复猜测。 */
+  taskRunStatus?: 'not_started' | 'connecting' | 'reconnecting' | 'running' | 'waiting_user' | 'waiting_approval' | 'paused' | 'idle' | 'failed' | 'legacy_readonly';
   resumable: boolean;
   readOnly: boolean;
   permissionMode?: NativePermissionMode;

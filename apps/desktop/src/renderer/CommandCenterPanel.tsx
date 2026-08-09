@@ -51,6 +51,11 @@ const emptyDraft: CommandDraft = {
   parameters: [],
 };
 
+const COMMAND_RUN_LOG_PAGE_SIZE = 1_000;
+const MAX_DISPLAYED_COMMAND_RUN_LOGS = 2_000;
+const MAX_DISPLAYED_COMMAND_RUN_LOG_BYTES = 4 * 1024 * 1024;
+const UTF8_ENCODER = new TextEncoder();
+
 function CommandRunDurationValue(props: { run: CommandRun; zh: boolean }) {
   const shouldTick = props.run.status === 'running' && Boolean(props.run.startedAt) && !props.run.endedAt;
   const [nowMs, setNowMs] = useState(() => Date.now());
@@ -82,9 +87,11 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
   const [runDetail, setRunDetail] = useState<CommandRunDetail | null>(null);
   const [artifactPreviewUrls, setArtifactPreviewUrls] = useState<Record<string, string>>({});
   const artifactPreviewUrlsRef = useRef<Record<string, string>>({});
+  const runLogCursorRef = useRef<{ runId: string | null; nextSeq: number }>({ runId: null, nextSeq: 0 });
 
   const canMaintain = props.mode === 'global' || Boolean(props.project);
   const activeRuns = useMemo(() => runs.filter((run) => run.status === 'running'), [runs]);
+  const selectedRunIsActive = runs.some((run) => run.id === selectedRunId && run.status === 'running');
 
   useEffect(() => {
     let active = true;
@@ -128,27 +135,61 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
   useEffect(() => {
     if (!selectedRunId) {
       setRunDetail(null);
+      runLogCursorRef.current = { runId: null, nextSeq: 0 };
       return;
     }
+    if (runLogCursorRef.current.runId !== selectedRunId) {
+      runLogCursorRef.current = { runId: selectedRunId, nextSeq: 0 };
+      setRunDetail((current) => (current?.run.id === selectedRunId ? current : null));
+    }
     let active = true;
-    const load = () =>
-      props.client
-        .loadCommandRun(selectedRunId)
-        .then((detail) => {
-          if (!active) return;
-          setRunDetail(detail);
-          setRuns((current) => current.map((run) => (run.id === detail.run.id ? detail.run : run)));
-        })
-        .catch((loadError) => {
-          if (active) setError(toMessage(loadError));
+    let loading = false;
+    const load = async () => {
+      if (loading) return;
+      loading = true;
+      try {
+        const requestedAfterSeq = runLogCursorRef.current.runId === selectedRunId ? runLogCursorRef.current.nextSeq : 0;
+        const loadTail = !selectedRunIsActive && requestedAfterSeq === 0;
+        let detail = await props.client.loadCommandRun(selectedRunId, {
+          afterSeq: requestedAfterSeq,
+          logLimit: loadTail ? MAX_DISPLAYED_COMMAND_RUN_LOGS : COMMAND_RUN_LOG_PAGE_SIZE,
+          tail: loadTail,
         });
+        if (!active) return;
+        let skippedHistoricalLogs = Boolean(detail.logsTruncated) || (detail.hasMoreLogs && detail.nextSeq <= requestedAfterSeq);
+        if (detail.run.status !== 'running' && !loadTail && detail.hasMoreLogs) {
+          // 终态只重取一次展示预算内的尾部，禁止无间隔追赶整段积压历史。
+          detail = await props.client.loadCommandRun(selectedRunId, {
+            afterSeq: 0,
+            logLimit: MAX_DISPLAYED_COMMAND_RUN_LOGS,
+            tail: true,
+          });
+          if (!active) return;
+          skippedHistoricalLogs = true;
+        }
+        runLogCursorRef.current = { runId: selectedRunId, nextSeq: detail.nextSeq };
+        setRunDetail((current) => mergeCommandRunDetail(current, detail, skippedHistoricalLogs));
+        setRuns((current) => {
+          const index = current.findIndex((run) => run.id === detail.run.id);
+          if (index < 0) return [detail.run, ...current];
+          if (commandRunStateMatches(current[index]!, detail.run)) return current;
+          const next = [...current];
+          next[index] = detail.run;
+          return next;
+        });
+      } catch (loadError) {
+        if (active) setError(toMessage(loadError));
+      } finally {
+        loading = false;
+      }
+    };
     void load();
-    const timer = activeRuns.some((run) => run.id === selectedRunId) ? window.setInterval(() => void load(), 1000) : undefined;
+    const timer = selectedRunIsActive ? window.setInterval(() => void load(), 1000) : undefined;
     return () => {
       active = false;
       if (timer) window.clearInterval(timer);
     };
-  }, [activeRuns, props.client, selectedRunId]);
+  }, [props.client, selectedRunId, selectedRunIsActive]);
 
   useEffect(() => {
     artifactPreviewUrlsRef.current = artifactPreviewUrls;
@@ -485,7 +526,11 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
                   </dl>
                   {runDetail.run.failureReason ? <p className="command-run-failure">{runDetail.run.failureReason}</p> : null}
                   <pre className="command-run-log" aria-label={zh ? '终端日志' : 'Terminal logs'}>
-                    {runDetail.logs.length > 0 ? runDetail.logs.map((log) => log.text).join('') : zh ? '暂无日志。' : 'No logs yet.'}
+                    {runDetail.logs.length > 0
+                      ? `${runDetail.logsTruncated ? (zh ? '…仅显示最新日志，完整历史已保存在 Runtime 日志中。\n' : '…Showing recent logs only. The complete history remains in Runtime logs.\n') : ''}${runDetail.logs.map((log) => log.text).join('')}`
+                      : zh
+                        ? '暂无日志。'
+                        : 'No logs yet.'}
                   </pre>
                   {runDetail.artifacts.length > 0 ? (
                     <section className="command-artifacts" aria-label={zh ? '命令产物' : 'Command artifacts'}>
@@ -931,6 +976,58 @@ function runStatusLabel(status: CommandRun['status'], zh: boolean): string {
     rejected: ['已拒绝', 'Rejected'],
   };
   return labels[status][zh ? 0 : 1];
+}
+
+function mergeCommandRunDetail(current: CommandRunDetail | null, incoming: CommandRunDetail, skippedHistoricalLogs: boolean): CommandRunDetail {
+  const canAppend = current?.run.id === incoming.run.id && incoming.afterSeq > 0;
+  const combinedLogs = canAppend ? [...current.logs, ...incoming.logs] : incoming.logs;
+  const boundedLogs = boundDisplayedCommandRunLogs(combinedLogs);
+  const logsTruncated = Boolean(current?.logsTruncated) || skippedHistoricalLogs || boundedLogs.truncated;
+  const logs = boundedLogs.items;
+  if (!skippedHistoricalLogs && incoming.logs.length === 0 && current && commandRunDetailMetadataMatches(current, incoming) && current.logTotal === incoming.logTotal && current.hasMoreLogs === incoming.hasMoreLogs) {
+    return current;
+  }
+  return { ...incoming, logs, logsTruncated };
+}
+
+function commandRunDetailMetadataMatches(left: CommandRunDetail, right: CommandRunDetail): boolean {
+  if (!commandRunStateMatches(left.run, right.run)) return false;
+  if (left.runtimeSession?.status !== right.runtimeSession?.status || left.runtimeSession?.endedAt !== right.runtimeSession?.endedAt || left.runtimeSession?.exitCode !== right.runtimeSession?.exitCode) return false;
+  if (left.artifacts.length !== right.artifacts.length) return false;
+  return left.artifacts.every((artifact, index) => {
+    const candidate = right.artifacts[index];
+    return candidate?.id === artifact.id && candidate.byteLength === artifact.byteLength && candidate.relativePath === artifact.relativePath;
+  });
+}
+
+function commandRunStateMatches(left: CommandRun, right: CommandRun): boolean {
+  return (
+    left.updatedAt === right.updatedAt &&
+    left.status === right.status &&
+    left.runtimeSessionId === right.runtimeSessionId &&
+    left.startedAt === right.startedAt &&
+    left.endedAt === right.endedAt &&
+    left.exitCode === right.exitCode &&
+    left.failureReason === right.failureReason
+  );
+}
+
+function boundDisplayedCommandRunLogs(logs: CommandRunDetail['logs']): { items: CommandRunDetail['logs']; truncated: boolean } {
+  const items: CommandRunDetail['logs'] = [];
+  let usedBytes = 0;
+  let truncated = logs.length > MAX_DISPLAYED_COMMAND_RUN_LOGS;
+  for (let index = logs.length - 1; index >= 0 && items.length < MAX_DISPLAYED_COMMAND_RUN_LOGS; index -= 1) {
+    const log = logs[index]!;
+    const bytes = UTF8_ENCODER.encode(log.text).byteLength;
+    if (bytes > MAX_DISPLAYED_COMMAND_RUN_LOG_BYTES || usedBytes + bytes > MAX_DISPLAYED_COMMAND_RUN_LOG_BYTES) {
+      truncated = true;
+      continue;
+    }
+    items.push(log);
+    usedBytes += bytes;
+  }
+  items.reverse();
+  return { items, truncated };
 }
 
 function formatRunTime(value: string): string {
