@@ -10,7 +10,7 @@ type ReviewMode = 'commit' | 'commit-only' | 'push-only' | 'delivery';
 type ReviewStatus = 'loading' | 'ready' | 'submitting' | 'error';
 const closedWorkspaceStates = new Set(['reclaimed', 'merged', 'discarded']);
 
-export function TaskGitReviewModal(props: {
+interface TaskGitReviewModalProps {
   open: boolean;
   language: 'zh-CN' | 'en-US';
   task: TaskRecord | null;
@@ -19,7 +19,18 @@ export function TaskGitReviewModal(props: {
   mode: ReviewMode;
   preferredWorkspaceId?: string | null;
   onClose: () => void;
-}) {
+}
+
+type TaskGitReviewModalContentProps = Omit<TaskGitReviewModalProps, 'task'> & { task: TaskRecord };
+
+export function TaskGitReviewModal(props: TaskGitReviewModalProps) {
+  if (!props.open || !props.task) return null;
+  const contextKey = `${props.task.id}:${props.mode}:${props.preferredWorkspaceId ?? ''}`;
+  // 提交、推送和指定工作区分别拥有独立瞬态状态，关闭或切换入口时不得复用旧任务的选择与异步请求。
+  return <TaskGitReviewModalContent key={contextKey} {...props} task={props.task} />;
+}
+
+function TaskGitReviewModalContent(props: TaskGitReviewModalContentProps) {
   const zh = props.language === 'zh-CN';
   const [snapshot, setSnapshot] = useState<TaskWorkspacesSnapshot | null>(null);
   const [activeWorkspaceId, setActiveWorkspaceId] = useState('');
@@ -104,8 +115,6 @@ export function TaskGitReviewModal(props: {
       cancelled = true;
     };
   }, [props.task?.id, props.client, activeWorkspace?.id, selectedFile]);
-
-  if (!props.open || !props.task) return null;
 
   async function reload(preferredWorkspaceId?: string): Promise<TaskWorkspacesSnapshot> {
     if (!props.task || !props.client) throw new Error('Task Git client is unavailable.');
@@ -482,6 +491,7 @@ function confirmActiveSessionRisk(action: 'reclaim' | 'discard', activeConversat
 function errorMessage(error: unknown, zh: boolean): string {
   if (zh && error instanceof ZeusApiError) {
     const localizedMessages: Record<string, string> = {
+      ZEUS_TASK_WORKSPACE_NOT_FOUND: '当前任务工作区已不存在，请关闭后重新打开该任务的提交或推送窗口。',
       ZEUS_TASK_WORKSPACE_CONFLICTED: '任务工作区存在未解决冲突，请先完成冲突处理。',
       ZEUS_TASK_WORKSPACE_DETACHED: '任务工作区当前未绑定命名分支，无法提交或推送。',
       ZEUS_TASK_WORKTREE_UNAVAILABLE: '任务 worktree 当前不可用，无法提交或推送。',
