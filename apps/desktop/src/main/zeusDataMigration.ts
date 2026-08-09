@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, closeSync, copyFileSync, existsSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmdirSync, rmSync, statSync, unlinkSync, writeFileSync, writeSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { createLegacyFlatZeusDataLayout, createZeusDataLayout, type ZeusDataLayout } from '@zeus/local-server';
@@ -109,6 +109,9 @@ const jsonPathColumns = [
 ] as const;
 
 const contentMirroredLegacyTopLevels = new Set(['task-attachments', 'conversation-attachments', 'browser-comments', 'sessions', 'turn-change-sets', 'command-runs', 'command-scripts', 'pi-sessions', 'agent-runtimes']);
+const dataRootPreparationTimeoutMs = 15_000;
+const staleDataRootPreparationLockMs = 30_000;
+const dataRootPreparationWaitBuffer = new Int32Array(new SharedArrayBuffer(4));
 
 /**
  * 在 Electron 建立 profile 前准备 Zeus 本机资料目录。
@@ -116,6 +119,15 @@ const contentMirroredLegacyTopLevels = new Set(['task-attachments', 'conversatio
  */
 export function prepareZeusDataRoot(rootPath: string, legacyRoots: readonly string[] = []): ZeusDataPreparationResult {
   const root = normalizeAbsolutePath(rootPath, 'Zeus 数据根目录');
+  const releasePreparationLock = acquireDataRootPreparationLock(root);
+  try {
+    return prepareZeusDataRootWithoutLock(root, legacyRoots);
+  } finally {
+    releasePreparationLock();
+  }
+}
+
+function prepareZeusDataRootWithoutLock(root: string, legacyRoots: readonly string[] = []): ZeusDataPreparationResult {
   const layered = createZeusDataLayout(root);
   const flat = createLegacyFlatZeusDataLayout(root);
   const hasLayeredDatabase = existsSync(layered.database);
@@ -138,6 +150,83 @@ export function prepareZeusDataRoot(rootPath: string, legacyRoots: readonly stri
   }
 
   return migrateFlatRoot({ flat, layered, legacyRoots });
+}
+
+function acquireDataRootPreparationLock(root: string): () => void {
+  const lockPath = join(dirname(root), `.${basename(root)}.zeus-data-preparation.lock`);
+  mkdirSync(dirname(lockPath), { recursive: true, mode: 0o700 });
+  const deadline = Date.now() + dataRootPreparationTimeoutMs;
+  const ownerToken = randomUUID();
+
+  while (Date.now() < deadline) {
+    try {
+      const fileDescriptor = openSync(lockPath, 'wx', 0o600);
+      try {
+        writeSync(
+          fileDescriptor,
+          JSON.stringify({
+            pid: process.pid,
+            root,
+            ownerToken,
+            startedAt: new Date().toISOString(),
+          }),
+        );
+      } finally {
+        closeSync(fileDescriptor);
+      }
+
+      let released = false;
+      return () => {
+        if (released) return;
+        released = true;
+        try {
+          const owner = JSON.parse(readFileSync(lockPath, 'utf8')) as { pid?: unknown; ownerToken?: unknown };
+          if (owner.pid === process.pid && owner.ownerToken === ownerToken) unlinkSync(lockPath);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+        }
+      };
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+      if (isStaleDataRootPreparationLock(lockPath)) {
+        try {
+          unlinkSync(lockPath);
+        } catch (unlinkError) {
+          if ((unlinkError as NodeJS.ErrnoException).code !== 'ENOENT') throw unlinkError;
+        }
+        continue;
+      }
+      Atomics.wait(dataRootPreparationWaitBuffer, 0, 0, 50);
+    }
+  }
+
+  throw new Error(`Zeus 数据根正在被另一个进程准备：${root}`);
+}
+
+function isStaleDataRootPreparationLock(lockPath: string): boolean {
+  let lockStat;
+  try {
+    lockStat = statSync(lockPath);
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'ENOENT';
+  }
+
+  try {
+    const owner = JSON.parse(readFileSync(lockPath, 'utf8')) as { pid?: unknown };
+    if (typeof owner.pid === 'number' && Number.isInteger(owner.pid) && owner.pid > 0) {
+      try {
+        process.kill(owner.pid, 0);
+        return false;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'EPERM') return false;
+        return true;
+      }
+    }
+  } catch {
+    // 文件可能正处于写入阶段，先按时间窗口保护它，避免误删别的进程刚创建的锁。
+  }
+
+  return Date.now() - lockStat.mtimeMs > staleDataRootPreparationLockMs;
 }
 
 export function readLatestZeusDataMigrationManifest(rootPath: string): MigrationManifest | null {
