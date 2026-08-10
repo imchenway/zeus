@@ -1,6 +1,6 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, Notification, screen, session, shell, Tray } from 'electron';
 import { execFile as execFileCallback } from 'node:child_process';
-import { chmodSync, constants as fsConstants, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync } from 'node:fs';
+import { chmodSync, constants as fsConstants, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, type FSWatcher } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
@@ -43,6 +43,8 @@ import {
 import { cleanupStaleReleaseBackups, createReleaseUpdateService, type ReleaseUpdateService } from './releaseUpdateService.js';
 import { type ZeusDataLayout } from '@zeus/local-server';
 import { prepareZeusDataRoot } from './zeusDataMigration.js';
+import { ProjectSourceWorkspaceService } from './projectSourceWorkspace.js';
+import type { CreateProjectSourceEntryInput, MoveProjectSourceEntryInput, SaveProjectSourceFileInput, TrashProjectSourceEntryInput } from '@zeus/shared';
 
 let mainWindow: BrowserWindow | undefined;
 const windows = new Set<BrowserWindow>();
@@ -54,6 +56,7 @@ let conversationInputResources: ConversationInputResourceBroker | undefined;
 let systemNotificationBridge: SystemNotificationBridge | undefined;
 let zeusDataRootPath: string | undefined;
 let zeusDataLayout: ZeusDataLayout | undefined;
+let projectSourceWorkspace: ProjectSourceWorkspaceService | undefined;
 let fatalStartup = false;
 let appShellSettings: MainAppShellSettings = {
   webviewDebugEnabled: false,
@@ -67,10 +70,12 @@ const windowStateSaveTimers = new Map<number, ReturnType<typeof setTimeout>>();
 const windowStateActivationTimers = new Map<number, ReturnType<typeof setTimeout>>();
 const windowStatePersistenceGates = new Map<number, WindowStatePersistenceGate>();
 const taskTableLayoutDirtyWindowIds = new Set<number>();
+const unsavedChangeKeysByWindow = new Map<number, Set<string>>();
 const sensitiveRequestDraftIdsByWindow = new Map<number, Set<string>>();
 const taskTableLayoutCloseApprovedWindowIds = new Set<number>();
 const pendingTaskTableLayoutWindowCloseIds = new Set<number>();
 const pendingNativeUpdateCheckWindowIds = new Set<number>();
+const projectSourceWatchers = new Map<number, { projectId: string; watcher: FSWatcher }>();
 let taskTableLayoutQuitPending = false;
 let taskTableLayoutQuitApproved = false;
 let upgradeHandoffRequested = false;
@@ -261,7 +266,7 @@ function registerMainWindowStatePersistence(window: BrowserWindow): void {
     if (taskTableLayoutQuitApproved || taskTableLayoutCloseApprovedWindowIds.has(window.id) || !taskTableLayoutDirtyWindowIds.has(window.id)) return;
     event.preventDefault();
     pendingTaskTableLayoutWindowCloseIds.add(window.id);
-    window.webContents.send('zeus:task-table-layout-close-requested');
+    window.webContents.send('zeus:unsaved-changes-close-requested');
   });
 }
 
@@ -403,6 +408,7 @@ async function createWindow(): Promise<void> {
 
   windows.add(window);
   mainWindow = window;
+  const sourceWatcherKey = window.webContents.id;
   window.on('closed', () => {
     browserHost?.unregisterWindow(window);
     const timer = windowStateSaveTimers.get(window.id);
@@ -413,10 +419,13 @@ async function createWindow(): Promise<void> {
     windowStateActivationTimers.delete(window.id);
     windowStatePersistenceGates.delete(window.id);
     taskTableLayoutDirtyWindowIds.delete(window.id);
+    unsavedChangeKeysByWindow.delete(window.id);
     sensitiveRequestDraftIdsByWindow.delete(window.id);
     taskTableLayoutCloseApprovedWindowIds.delete(window.id);
     pendingTaskTableLayoutWindowCloseIds.delete(window.id);
     pendingNativeUpdateCheckWindowIds.delete(window.id);
+    projectSourceWatchers.get(sourceWatcherKey)?.watcher.close();
+    projectSourceWatchers.delete(sourceWatcherKey);
     rendererBootstrapMonitor.dispose(window);
     windows.delete(window);
     if (mainWindow === window) mainWindow = [...windows].at(-1);
@@ -577,12 +586,115 @@ function conversationResourceOpenServices(requestingWindow: BrowserWindow) {
   };
 }
 
+async function loadProjectRootForSourceWorkspace(projectId: string): Promise<string> {
+  if (!localServerRuntime) throw new Error('Zeus local server is not ready.');
+  const config = await localServerRuntime.refreshConfig();
+  const response = await fetch(`${config.baseUrl}/api/projects/${encodeURIComponent(projectId)}`, {
+    headers: { authorization: `Bearer ${config.apiToken}` },
+  });
+  const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+  if (!response.ok) {
+    throw Object.assign(new Error(typeof payload.message === 'string' ? payload.message : '项目不存在。'), {
+      code: typeof payload.error === 'string' ? payload.error : 'ZEUS_PROJECT_NOT_FOUND',
+    });
+  }
+  if (typeof payload.localPath !== 'string' || !payload.localPath.trim()) throw new Error('项目目录不可用。');
+  return payload.localPath;
+}
+
+function requireProjectSourceWorkspace(event: Electron.IpcMainInvokeEvent): ProjectSourceWorkspaceService {
+  const requestingWindow = BrowserWindow.fromWebContents(event.sender);
+  if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow) || !projectSourceWorkspace) {
+    throw new Error('项目源码请求来自不受信任窗口或源码服务尚未就绪。');
+  }
+  return projectSourceWorkspace;
+}
+
+function auditProjectSourceStructure(action: 'create' | 'move' | 'trash', projectId: string, relativePath: string, targetRelativePath?: string): void {
+  // 结构审计只记录动作和相对路径，绝不记录源码正文。
+  console.info('[project-source-audit]', JSON.stringify({ action, projectId, relativePath, ...(targetRelativePath ? { targetRelativePath } : {}) }));
+}
+
 function setupIpc(): void {
   ipcMain.handle('zeus:get-local-server-config', async () => {
     if (!localServerRuntime) {
       throw new Error('Zeus local server is not ready');
     }
     return localServerRuntime.refreshConfig();
+  });
+  ipcMain.handle('zeus:project-source:list-directory', (event, input: { projectId?: unknown; relativePath?: unknown }) => {
+    const service = requireProjectSourceWorkspace(event);
+    if (typeof input?.projectId !== 'string' || (input.relativePath !== undefined && typeof input.relativePath !== 'string')) throw new TypeError('项目源码目录请求无效。');
+    return service.listDirectory(input.projectId, input.relativePath ?? '');
+  });
+  ipcMain.handle('zeus:project-source:search', (event, input: { projectId?: unknown; query?: unknown }) => {
+    const service = requireProjectSourceWorkspace(event);
+    if (typeof input?.projectId !== 'string' || typeof input.query !== 'string') throw new TypeError('项目源码搜索请求无效。');
+    return service.search(input.projectId, input.query);
+  });
+  ipcMain.handle('zeus:project-source:read-file', (event, input: { projectId?: unknown; relativePath?: unknown }) => {
+    const service = requireProjectSourceWorkspace(event);
+    if (typeof input?.projectId !== 'string' || typeof input.relativePath !== 'string') throw new TypeError('项目源码读取请求无效。');
+    return service.readFile(input.projectId, input.relativePath);
+  });
+  ipcMain.handle('zeus:project-source:save-file', (event, input: SaveProjectSourceFileInput) => {
+    if (!input || typeof input.projectId !== 'string' || typeof input.relativePath !== 'string' || typeof input.content !== 'string' || !input.expectedRevision || typeof input.expectedRevision.sha256 !== 'string') {
+      throw new TypeError('项目源码保存请求无效。');
+    }
+    return requireProjectSourceWorkspace(event).saveFile(input);
+  });
+  ipcMain.handle('zeus:project-source:create-entry', async (event, input: CreateProjectSourceEntryInput) => {
+    if (!input || typeof input.projectId !== 'string' || typeof input.parentRelativePath !== 'string' || typeof input.name !== 'string' || (input.kind !== 'file' && input.kind !== 'directory')) {
+      throw new TypeError('项目源码新建请求无效。');
+    }
+    const entry = await requireProjectSourceWorkspace(event).createEntry(input);
+    auditProjectSourceStructure('create', input.projectId, entry.relativePath);
+    return entry;
+  });
+  ipcMain.handle('zeus:project-source:move-entry', async (event, input: MoveProjectSourceEntryInput) => {
+    if (!input || typeof input.projectId !== 'string' || typeof input.relativePath !== 'string' || typeof input.targetParentRelativePath !== 'string' || typeof input.targetName !== 'string') {
+      throw new TypeError('项目源码移动请求无效。');
+    }
+    const entry = await requireProjectSourceWorkspace(event).moveEntry(input);
+    auditProjectSourceStructure('move', input.projectId, input.relativePath, entry.relativePath);
+    return entry;
+  });
+  ipcMain.handle('zeus:project-source:trash-entry', async (event, input: TrashProjectSourceEntryInput) => {
+    if (!input || typeof input.projectId !== 'string' || typeof input.relativePath !== 'string') throw new TypeError('项目源码删除请求无效。');
+    const result = await requireProjectSourceWorkspace(event).trashEntry(input.projectId, input.relativePath);
+    auditProjectSourceStructure('trash', input.projectId, input.relativePath);
+    return result;
+  });
+  ipcMain.handle('zeus:project-source:reveal-entry', async (event, input: { projectId?: unknown; relativePath?: unknown }) => {
+    const service = requireProjectSourceWorkspace(event);
+    if (typeof input?.projectId !== 'string' || typeof input.relativePath !== 'string') throw new TypeError('项目源码定位请求无效。');
+    const path = await service.revealPath(input.projectId, input.relativePath);
+    shell.showItemInFolder(path);
+    return { revealed: true, relativePath: input.relativePath };
+  });
+  ipcMain.handle('zeus:project-source:open-external', async (event, input: { projectId?: unknown; relativePath?: unknown }) => {
+    const service = requireProjectSourceWorkspace(event);
+    if (typeof input?.projectId !== 'string' || typeof input.relativePath !== 'string') throw new TypeError('项目源码外部打开请求无效。');
+    const path = await service.revealPath(input.projectId, input.relativePath);
+    const error = await shell.openPath(path);
+    if (error) throw new Error(error);
+    return { opened: true, relativePath: input.relativePath };
+  });
+  ipcMain.handle('zeus:project-source:watch', async (event, projectId: unknown) => {
+    const service = requireProjectSourceWorkspace(event);
+    if (typeof projectId !== 'string') throw new TypeError('项目源码监听请求无效。');
+    projectSourceWatchers.get(event.sender.id)?.watcher.close();
+    const watcher = await service.watch(projectId, (sourceEvent) => {
+      if (!event.sender.isDestroyed()) event.sender.send('zeus:project-source-event', sourceEvent);
+    });
+    projectSourceWatchers.set(event.sender.id, { projectId, watcher });
+    return { watching: true, projectId };
+  });
+  ipcMain.handle('zeus:project-source:unwatch', (event) => {
+    requireProjectSourceWorkspace(event);
+    projectSourceWatchers.get(event.sender.id)?.watcher.close();
+    projectSourceWatchers.delete(event.sender.id);
+    return { watching: false };
   });
   ipcMain.on('zeus:renderer-bootstrap-failed', (event, message: unknown) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
@@ -608,8 +720,32 @@ function setupIpc(): void {
   ipcMain.on('zeus:task-table-layout-dirty-changed', (event, dirty: unknown) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
     if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow)) return;
-    if (dirty === true) taskTableLayoutDirtyWindowIds.add(requestingWindow.id);
-    else taskTableLayoutDirtyWindowIds.delete(requestingWindow.id);
+    const keys = unsavedChangeKeysByWindow.get(requestingWindow.id) ?? new Set<string>();
+    if (dirty === true) keys.add('task-table-layout');
+    else keys.delete('task-table-layout');
+    if (keys.size > 0) {
+      unsavedChangeKeysByWindow.set(requestingWindow.id, keys);
+      taskTableLayoutDirtyWindowIds.add(requestingWindow.id);
+    } else {
+      unsavedChangeKeysByWindow.delete(requestingWindow.id);
+      taskTableLayoutDirtyWindowIds.delete(requestingWindow.id);
+    }
+  });
+  ipcMain.on('zeus:unsaved-change-state', (event, payload: unknown) => {
+    const requestingWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow) || !payload || typeof payload !== 'object') return;
+    const key = typeof (payload as { key?: unknown }).key === 'string' ? (payload as { key: string }).key.trim() : '';
+    if (!/^[a-z0-9:-]{1,80}$/u.test(key)) return;
+    const keys = unsavedChangeKeysByWindow.get(requestingWindow.id) ?? new Set<string>();
+    if ((payload as { dirty?: unknown }).dirty === true) keys.add(key);
+    else keys.delete(key);
+    if (keys.size > 0) {
+      unsavedChangeKeysByWindow.set(requestingWindow.id, keys);
+      taskTableLayoutDirtyWindowIds.add(requestingWindow.id);
+    } else {
+      unsavedChangeKeysByWindow.delete(requestingWindow.id);
+      taskTableLayoutDirtyWindowIds.delete(requestingWindow.id);
+    }
   });
   ipcMain.on('zeus:sensitive-request-draft-changed', (event, payload: unknown) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
@@ -634,6 +770,30 @@ function setupIpc(): void {
       return;
     }
     taskTableLayoutDirtyWindowIds.delete(requestingWindow.id);
+    unsavedChangeKeysByWindow.delete(requestingWindow.id);
+    taskTableLayoutCloseApprovedWindowIds.add(requestingWindow.id);
+    if (taskTableLayoutQuitPending) {
+      if (taskTableLayoutDirtyWindowIds.size === 0) {
+        taskTableLayoutQuitApproved = true;
+        taskTableLayoutQuitPending = false;
+        app.quit();
+      }
+      return;
+    }
+    if (pendingTaskTableLayoutWindowCloseIds.delete(requestingWindow.id)) requestingWindow.close();
+  });
+  ipcMain.on('zeus:unsaved-changes-close-resolution', (event, resolution: unknown) => {
+    const requestingWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow)) return;
+    const proceed = Boolean(resolution && typeof resolution === 'object' && (resolution as { proceed?: unknown }).proceed === true);
+    if (!proceed) {
+      pendingTaskTableLayoutWindowCloseIds.delete(requestingWindow.id);
+      taskTableLayoutQuitPending = false;
+      taskTableLayoutQuitApproved = false;
+      return;
+    }
+    taskTableLayoutDirtyWindowIds.delete(requestingWindow.id);
+    unsavedChangeKeysByWindow.delete(requestingWindow.id);
     taskTableLayoutCloseApprovedWindowIds.add(requestingWindow.id);
     if (taskTableLayoutQuitPending) {
       if (taskTableLayoutDirtyWindowIds.size === 0) {
@@ -1309,6 +1469,10 @@ async function initializeApplication(): Promise<void> {
       }
     },
   });
+  projectSourceWorkspace = new ProjectSourceWorkspaceService({
+    loadProjectRoot: loadProjectRootForSourceWorkspace,
+    trashItem: (path) => shell.trashItem(path),
+  });
   if (app.isPackaged) {
     releaseUpdateService = createReleaseUpdateService({
       userDataPath,
@@ -1418,7 +1582,7 @@ app.on(
       taskTableLayoutQuitPending = true;
       for (const window of windows) {
         if (!window.isDestroyed() && taskTableLayoutDirtyWindowIds.has(window.id)) {
-          window.webContents.send('zeus:task-table-layout-close-requested');
+          window.webContents.send('zeus:unsaved-changes-close-requested');
         }
       }
     },

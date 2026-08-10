@@ -1,6 +1,17 @@
 import type { DashboardClientOptions, LocalBusinessDataSnapshot, LocalSettingsExportSnapshot, ReleaseUpdateOperationSnapshot } from './apiClient.js';
 import type { ZeusBrowserApprovalDecision, ZeusBrowserCommand, ZeusBrowserConversationSnapshot, ZeusBrowserEvent, ZeusBrowserPreparedSubmission, ZeusBrowserSettings } from '@zeus/shared';
 import type { ConversationFileLocation, ConversationOpenTarget, ConversationResourceOpenTarget } from '@zeus/shared';
+import type {
+  CreateProjectSourceEntryInput,
+  MoveProjectSourceEntryInput,
+  ProjectSourceDirectorySnapshot,
+  ProjectSourceDocument,
+  ProjectSourceEntry,
+  ProjectSourceEvent,
+  ProjectSourceSearchResult,
+  SaveProjectSourceFileInput,
+  TrashProjectSourceEntryInput,
+} from '@zeus/shared';
 
 type ConversationInputResourceBridge = {
   name: string;
@@ -28,6 +39,18 @@ declare global {
     zeus?: {
       appName: 'Zeus';
       getLocalServerConfig: () => Promise<DashboardClientOptions>;
+      listProjectSourceDirectory: (input: { projectId: string; relativePath: string }) => Promise<ProjectSourceDirectorySnapshot>;
+      searchProjectSourceEntries: (input: { projectId: string; query: string }) => Promise<ProjectSourceSearchResult>;
+      readProjectSourceFile: (input: { projectId: string; relativePath: string }) => Promise<ProjectSourceDocument>;
+      saveProjectSourceFile: (input: SaveProjectSourceFileInput) => Promise<ProjectSourceDocument>;
+      createProjectSourceEntry: (input: CreateProjectSourceEntryInput) => Promise<ProjectSourceEntry>;
+      moveProjectSourceEntry: (input: MoveProjectSourceEntryInput) => Promise<ProjectSourceEntry>;
+      trashProjectSourceEntry: (input: TrashProjectSourceEntryInput) => Promise<{ trashed: true; relativePath: string }>;
+      revealProjectSourceEntry: (input: { projectId: string; relativePath: string }) => Promise<{ revealed: true; relativePath: string }>;
+      openProjectSourceExternally: (input: { projectId: string; relativePath: string }) => Promise<{ opened: true; relativePath: string }>;
+      watchProjectSource: (projectId: string) => Promise<{ watching: true; projectId: string }>;
+      unwatchProjectSource: () => Promise<{ watching: false }>;
+      onProjectSourceEvent: (listener: (event: ProjectSourceEvent) => void) => () => void;
       reportRendererFatalFailure: (message: string) => void;
       reportRendererBootstrapReady: () => void;
       chooseProjectDirectory: () => Promise<string | null>;
@@ -124,9 +147,12 @@ declare global {
         openAtLoginEnabled: boolean;
       }) => Promise<{ applied: boolean }>;
       notifyTaskTableLayoutDirty: (dirty: boolean) => void;
+      setUnsavedChangeState: (key: string, dirty: boolean) => void;
       notifySensitiveRequestDraft: (payload: { requestId: string; present: boolean }) => void;
       resolveTaskTableLayoutCloseRequest: (proceed: boolean) => void;
+      resolveUnsavedChangesCloseRequest: (proceed: boolean) => void;
       onTaskTableLayoutCloseRequested: (listener: () => void) => () => void;
+      onUnsavedChangesCloseRequested: (listener: () => void) => () => void;
       exportRuntimeLogsToFile: (payload: {
         fileName: string;
         mimeType: 'text/plain';

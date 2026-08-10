@@ -34,7 +34,15 @@ import {
   toReactFlowElements,
   toSigmaGraph,
 } from '@zeus/diagram-engine';
-import { cloneTaskManagementStatusConfig, defaultTaskManagementStatusConfig, isTaskStatusFilter, normalizeTaskManagementStatusConfig, type TaskManagementStatusConfig, type TaskManagementStatusDefinition } from '@zeus/shared';
+import {
+  cloneTaskManagementStatusConfig,
+  defaultTaskManagementStatusConfig,
+  isTaskStatusFilter,
+  normalizeTaskManagementStatusConfig,
+  type ProjectCodeWorkspacePreference,
+  type TaskManagementStatusConfig,
+  type TaskManagementStatusDefinition,
+} from '@zeus/shared';
 import '@xterm/xterm/css/xterm.css';
 import '@xyflow/react/dist/style.css';
 import './styles.css';
@@ -113,6 +121,7 @@ import { ModalPortal } from './ui/ModalPortal.js';
 import { SourceListRow } from './ui/SourceListRow.js';
 import { WorkspaceDrawer } from './ui/WorkspaceDrawer.js';
 import { CommandCenterPanel } from './CommandCenterPanel.js';
+import { ProjectSourceWorkspace, type ProjectSourceWorkspaceHandle } from './code/ProjectSourceWorkspace.js';
 import { ReleaseUpdateDialog, type ReleaseUpdateDialogState } from './release/ReleaseUpdateDialog.js';
 import { ArchitectureGraphCanvas, buildArchitectureLayerModel, canRenderArchitectureLayerModel, type ArchitectureLayerModel } from './graph/ArchitectureGraphCanvas.js';
 import {
@@ -205,7 +214,8 @@ export {
 
 type MainNavTarget = 'projects' | 'conversations' | 'settings';
 type LegacyMainNavTarget = MainNavTarget | 'dashboard' | 'tasks' | 'code-map' | 'runtime' | 'git-diff' | 'telegram' | 'settings-data';
-type ProjectWorkspaceSection = 'tasks' | 'code' | 'sessions' | 'commands' | 'project-settings';
+type ProjectWorkspaceSection = 'tasks' | 'code' | 'sessions' | 'project-settings';
+type ProjectCodeWorkspaceMode = 'source' | 'graph' | 'commands';
 type ProjectDetailPanel = 'diff' | 'edit' | 'config' | 'archive' | undefined;
 type ConversationDrawer = 'runtime' | 'context' | 'changes' | 'templates' | undefined;
 type TaskConversationDrawerTarget = Readonly<{ taskId: string; conversationId: string }> | undefined;
@@ -622,6 +632,7 @@ type AppShellSettingsSavePayload = Pick<
   | 'taskStatusFilterByProject'
   | 'taskViewModeByProject'
   | 'taskExpandedIdsByProject'
+  | 'codeWorkspaceByProject'
 > & { taskManagementStatusReplacements?: Record<string, Record<string, string>> };
 
 function createSessionOperationId(): string {
@@ -3899,7 +3910,7 @@ const languageCopy = {
       renameRequired: string;
       pinned: string;
       labelSeparator: string;
-      sections: Record<Exclude<ProjectWorkspaceSection, 'project-settings'>, string>;
+      sections: Record<'tasks' | 'code' | 'sessions' | 'commands', string>;
       current: string;
       conversationRunning: string;
       conversationReplyRequired: string;
@@ -5063,6 +5074,34 @@ function normalizeTaskExpandedIdsByProject(value: unknown): Record<string, strin
   );
 }
 
+function normalizeCodeWorkspaceByProject(value: unknown): Record<string, ProjectCodeWorkspacePreference> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .filter(([projectId, preference]) => Boolean(projectId.trim()) && preference && typeof preference === 'object' && !Array.isArray(preference))
+      .slice(0, 100)
+      .map(([projectId, preference]) => {
+        const raw = preference as Partial<ProjectCodeWorkspacePreference>;
+        const normalizePaths = (paths: unknown, limit: number) =>
+          Array.isArray(paths)
+            ? [
+                ...new Set(
+                  paths
+                    .filter((path): path is string => typeof path === 'string')
+                    .map((path) => path.trim().replaceAll('\\', '/'))
+                    .filter((path) => Boolean(path) && !path.startsWith('/') && !path.split('/').includes('..') && !path.split('/').includes('.git')),
+                ),
+              ].slice(0, limit)
+            : [];
+        const openFiles = normalizePaths(raw.openFiles, 20);
+        const activeFile = typeof raw.activeFile === 'string' && normalizePaths([raw.activeFile], 1).length === 1 ? raw.activeFile : null;
+        const expandedDirectories = normalizePaths(raw.expandedDirectories, 200);
+        const treeWidth = Math.max(200, Math.min(420, Math.round(typeof raw.treeWidth === 'number' && Number.isFinite(raw.treeWidth) ? raw.treeWidth : 260)));
+        return [projectId.trim(), { openFiles, activeFile, expandedDirectories, treeWidth } satisfies ProjectCodeWorkspacePreference];
+      }),
+  );
+}
+
 function normalizeRendererAppShellSettings(settings: AppShellSettings): AppShellSettings {
   const taskTableColumnsByProject = Object.fromEntries(
     Object.entries(settings.taskTableColumnsByProject ?? {})
@@ -5086,6 +5125,7 @@ function normalizeRendererAppShellSettings(settings: AppShellSettings): AppShell
     taskStatusFilterByProject: normalizeTaskStatusFilterByProject(settings.taskStatusFilterByProject),
     taskViewModeByProject: normalizeTaskViewModeByProject(settings.taskViewModeByProject),
     taskExpandedIdsByProject: normalizeTaskExpandedIdsByProject(settings.taskExpandedIdsByProject),
+    codeWorkspaceByProject: normalizeCodeWorkspaceByProject(settings.codeWorkspaceByProject),
   };
 }
 
@@ -5124,6 +5164,7 @@ export function toAppShellSettingsSavePayload(settings: AppShellSettings, taskMa
     taskStatusFilterByProject,
     taskViewModeByProject: normalizeTaskViewModeByProject(settings.taskViewModeByProject),
     taskExpandedIdsByProject: normalizeTaskExpandedIdsByProject(settings.taskExpandedIdsByProject),
+    codeWorkspaceByProject: normalizeCodeWorkspaceByProject(settings.codeWorkspaceByProject),
   };
 }
 
@@ -5159,6 +5200,7 @@ export function resolveTaskTableColumnsSaveResponse(input: { currentSettings: Ap
     taskStatusFilterByProject: currentSettings.taskStatusFilterByProject,
     taskViewModeByProject: currentSettings.taskViewModeByProject,
     taskExpandedIdsByProject: currentSettings.taskExpandedIdsByProject,
+    codeWorkspaceByProject: currentSettings.codeWorkspaceByProject,
   };
 }
 
@@ -5174,6 +5216,7 @@ export function mergeAppShellSettingsSaveResponse(input: { currentSettings: AppS
     taskStatusFilterByProject: currentSettings.taskStatusFilterByProject,
     taskViewModeByProject: currentSettings.taskViewModeByProject,
     taskExpandedIdsByProject: currentSettings.taskExpandedIdsByProject,
+    codeWorkspaceByProject: currentSettings.codeWorkspaceByProject,
   };
 }
 
@@ -5379,7 +5422,7 @@ function normalizeMainNavTarget(hash: string | undefined): MainNavTarget {
   const target = hash?.replace(/^#/, '');
   if (!target) return 'conversations';
   if (target === 'dashboard' || target === 'tasks' || target === 'runtime' || target === 'conversations') return 'conversations';
-  if (target === 'code-map' || target === 'git-diff' || target === 'projects') return 'projects';
+  if (target === 'code-map' || target === 'git-diff' || target === 'projects' || target === 'project-commands' || target.startsWith('project-code')) return 'projects';
   if (target === 'telegram' || target === 'settings' || target?.startsWith('settings-')) return 'settings';
   return 'conversations';
 }
@@ -5544,6 +5587,7 @@ function inferInitialProjectSection(props: {
   initialArchivedProjects?: ProjectRecord[];
   snapshot?: DashboardSnapshot;
 }): ProjectWorkspaceSection {
+  if (typeof window !== 'undefined' && (window.location.hash === '#project-commands' || window.location.hash.startsWith('#project-code'))) return 'code';
   if (props.initialProjectConfig || props.initialProjectDatabaseSecret) return 'project-settings';
   if (props.initialMainNavTarget === 'tasks') return 'tasks';
   if (props.initialMainNavTarget === 'code-map' || props.initialMainNavTarget === 'git-diff' || props.initialMainNavTarget === 'projects') return 'code';
@@ -6650,6 +6694,10 @@ export function App(props: {
 }) {
   const [activeNavTarget, setActiveNavTarget] = useState<MainNavTarget>(() => inferInitialMainNavTarget(props));
   const [activeProjectSection, setActiveProjectSection] = useState<ProjectWorkspaceSection>(() => inferInitialProjectSection(props));
+  const [projectCodeWorkspaceMode, setProjectCodeWorkspaceMode] = useState<ProjectCodeWorkspaceMode>(() => (typeof window !== 'undefined' && window.location.hash === '#project-commands' ? 'commands' : 'source'));
+  const [visitedCodeWorkspaceModes, setVisitedCodeWorkspaceModes] = useState<Set<ProjectCodeWorkspaceMode>>(() => new Set(typeof window !== 'undefined' && window.location.hash === '#project-commands' ? ['source', 'commands'] : ['source']));
+  const projectSourceWorkspaceRef = useRef<ProjectSourceWorkspaceHandle | null>(null);
+  const [sourceWorkspaceDirty, setSourceWorkspaceDirty] = useState(false);
   const workspaceScrollRef = useRef<HTMLElement | null>(null);
   const [snapshot, setSnapshot] = useState<DashboardSnapshot>(() => props.snapshot ?? createEmptyDashboardSnapshot());
   const [gitDiff, setGitDiff] = useState<GitDiffSummary | undefined>(() => props.initialGitDiff);
@@ -6868,6 +6916,7 @@ export function App(props: {
         taskStatusFilterByProject: {},
         taskViewModeByProject: {},
         taskExpandedIdsByProject: {},
+        codeWorkspaceByProject: {},
         localLogDirectory: 'Zeus/logs',
         localConfigPath: 'Zeus/zeus.config.json',
         dataPortability: {
@@ -6879,6 +6928,50 @@ export function App(props: {
         lastCacheClearAt: null,
       },
     ),
+  );
+  const appShellSettingsRef = useRef(appShellSettings);
+  const codeWorkspacePreferenceTimerRef = useRef<number | null>(null);
+  appShellSettingsRef.current = appShellSettings;
+  const persistCodeWorkspacePreference = useCallback(
+    (projectId: string, preference: ProjectCodeWorkspacePreference) => {
+      const normalizedPreference = normalizeCodeWorkspaceByProject({ [projectId]: preference })[projectId];
+      if (!normalizedPreference) return;
+      const current = appShellSettingsRef.current;
+      if (JSON.stringify(current.codeWorkspaceByProject?.[projectId]) === JSON.stringify(normalizedPreference)) return;
+      const next = normalizeRendererAppShellSettings({
+        ...current,
+        codeWorkspaceByProject: { ...(current.codeWorkspaceByProject ?? {}), [projectId]: normalizedPreference },
+      });
+      appShellSettingsRef.current = next;
+      setAppShellSettings(next);
+      if (codeWorkspacePreferenceTimerRef.current !== null) window.clearTimeout(codeWorkspacePreferenceTimerRef.current);
+      codeWorkspacePreferenceTimerRef.current = window.setTimeout(() => {
+        codeWorkspacePreferenceTimerRef.current = null;
+        if (!props.onSaveAppShellSettings) return;
+        void props
+          .onSaveAppShellSettings(toAppShellSettingsSavePayload(next))
+          .then((savedSettings) => {
+            setAppShellSettings((latest) => ({
+              ...normalizeRendererAppShellSettings(savedSettings),
+              codeWorkspaceByProject: latest.codeWorkspaceByProject,
+              taskTableColumns: latest.taskTableColumns,
+              taskTableColumnsByProject: latest.taskTableColumnsByProject,
+              taskTableEnumSortOrders: latest.taskTableEnumSortOrders,
+              taskStatusFilterByProject: latest.taskStatusFilterByProject,
+              taskViewModeByProject: latest.taskViewModeByProject,
+              taskExpandedIdsByProject: latest.taskExpandedIdsByProject,
+            }));
+          })
+          .catch((error) => recordLocalError('renderer-action', error));
+      }, 400);
+    },
+    [props.onSaveAppShellSettings],
+  );
+  useEffect(
+    () => () => {
+      if (codeWorkspacePreferenceTimerRef.current !== null) window.clearTimeout(codeWorkspacePreferenceTimerRef.current);
+    },
+    [],
   );
   const [taskStatusSettingsTargetId, setTaskStatusSettingsTargetId] = useState<string>(() => snapshot.projects[0]?.id ?? '__template__');
   const [taskManagementStatusReplacements, setTaskManagementStatusReplacements] = useState<Record<string, Record<string, string>>>({});
@@ -7169,6 +7262,10 @@ export function App(props: {
   const [taskTableLayoutScopeDialogOpen, setTaskTableLayoutScopeDialogOpen] = useState(false);
   const [taskTableLayoutLeaveDialogOpen, setTaskTableLayoutLeaveDialogOpen] = useState(false);
   const [taskTableLayoutSaveBusy, setTaskTableLayoutSaveBusy] = useState(false);
+  const [sourceWorkspaceLeaveDialogOpen, setSourceWorkspaceLeaveDialogOpen] = useState(false);
+  const [sourceWorkspaceSaveBusy, setSourceWorkspaceSaveBusy] = useState(false);
+  const pendingSourceWorkspaceLeaveRef = useRef<(() => void) | null>(null);
+  const pendingSourceWorkspaceLeaveCancelRef = useRef<(() => void) | null>(null);
   const pendingTaskTableLayoutLeaveRef = useRef<(() => void) | null>(null);
   const pendingTaskTableLayoutLeaveCancelRef = useRef<(() => void) | null>(null);
   const saveTaskTableLayoutThenLeaveRef = useRef(false);
@@ -7177,22 +7274,30 @@ export function App(props: {
     setTaskTableLayoutDraft({ projectId: activeProjectId, preferences: persistedTaskTableColumns });
   }, [activeProjectId, persistedTaskTableColumns, taskTableLayoutDraft.projectId]);
   useEffect(() => {
-    window.zeus?.notifyTaskTableLayoutDirty?.(taskTableLayoutDirty);
-  }, [taskTableLayoutDirty]);
+    const bridge = window.zeus;
+    if (bridge?.setUnsavedChangeState) {
+      bridge.setUnsavedChangeState('task-table-layout', taskTableLayoutDirty);
+      bridge.setUnsavedChangeState('project-source', sourceWorkspaceDirty);
+    } else {
+      bridge?.notifyTaskTableLayoutDirty?.(taskTableLayoutDirty || sourceWorkspaceDirty);
+    }
+  }, [sourceWorkspaceDirty, taskTableLayoutDirty]);
   useEffect(() => {
     const bridge = window.zeus;
-    if (!bridge?.onTaskTableLayoutCloseRequested || !bridge.resolveTaskTableLayoutCloseRequest) return;
-    return bridge.onTaskTableLayoutCloseRequested(() => {
-      if (!taskTableLayoutDirty) {
-        bridge.resolveTaskTableLayoutCloseRequest(true);
+    const subscribe = bridge?.onUnsavedChangesCloseRequested ?? bridge?.onTaskTableLayoutCloseRequested;
+    const resolve = bridge?.resolveUnsavedChangesCloseRequest ?? bridge?.resolveTaskTableLayoutCloseRequest;
+    if (!subscribe || !resolve) return;
+    return subscribe(() => {
+      if (!taskTableLayoutDirty && !sourceWorkspaceDirty) {
+        resolve(true);
         return;
       }
-      requestTaskTableLayoutLeave(
-        () => bridge.resolveTaskTableLayoutCloseRequest(true),
-        () => bridge.resolveTaskTableLayoutCloseRequest(false),
+      requestWorkspaceLeave(
+        () => resolve(true),
+        () => resolve(false),
       );
     });
-  }, [taskTableLayoutDirty]);
+  }, [sourceWorkspaceDirty, taskTableLayoutDirty]);
   const activeProjectIdRef = useRef<string | undefined>(activeProjectId);
   const taskModelPushNavigationRef = useRef<TaskModelPushNavigationTarget>({
     projectId: activeProjectId,
@@ -8277,10 +8382,20 @@ export function App(props: {
   async function handleCodeMapAction(): Promise<void> {
     handleMainNavigate('projects');
     setActiveProjectSection('code');
-    if (activeProjectId && selectedProject?.scanStatus === 'completed' && !activeGraphView) {
+    await selectProjectCodeWorkspaceMode('graph');
+  }
+
+  async function selectProjectCodeWorkspaceMode(mode: ProjectCodeWorkspaceMode): Promise<void> {
+    setProjectCodeWorkspaceMode(mode);
+    setVisitedCodeWorkspaceModes((current) => new Set(current).add(mode));
+    if (typeof window !== 'undefined') window.history.replaceState(null, '', mode === 'commands' ? '#project-commands' : `#project-code-${mode}`);
+    if (mode !== 'graph' || !activeProjectId || !selectedProject) return;
+    const currentGraphReady = graphProjectId === activeProjectId && activeGraphView && isProjectGraphViewForProject(activeGraphView, selectedProject, { requireProjectIdentity: true });
+    if (currentGraphReady) return;
+    resetGraphWorkspace(activeProjectId);
+    if (selectedProject.scanStatus === 'completed') {
       const loadedGraphView = await openProjectGraphView(activeProjectId, 'architecture');
-      if (!loadedGraphView) await scanActiveProjectGraph();
-      return;
+      if (loadedGraphView) return;
     }
     await scanActiveProjectGraph();
   }
@@ -8295,7 +8410,7 @@ export function App(props: {
     if (!activeGraphView) return null;
     return (
       <section className="project-code-map-stage" aria-label={codeWorkspaceCopy.graphDrawerAria}>
-        {/* 代码逻辑图是代码页主角：真实图谱直接成为代码页首层舞台，不再藏进项目抽屉。 */}
+        {/* 图谱按首次进入模式再加载，源码工作台始终保持已打开标签和草稿。 */}
         <CodeMapView
           isActive={activeProjectSection === 'code'}
           graphView={activeGraphView}
@@ -8511,6 +8626,21 @@ export function App(props: {
   }
 
   async function openGraphSourceFromCodeMap(source: { sourceRef: string; lineStart?: number }): Promise<void> {
+    const projectRoot = selectedProject?.localPath.replace(/\/+$/u, '');
+    const normalizedSource = source.sourceRef.replaceAll('\\', '/');
+    const relativePath = projectRoot && normalizedSource.startsWith(`${projectRoot}/`) ? normalizedSource.slice(projectRoot.length + 1) : normalizedSource.startsWith('/') ? null : normalizedSource.replace(/^\.\//u, '');
+    if (relativePath) {
+      setGraphSourceOpenFeedback('opening');
+      try {
+        await projectSourceWorkspaceRef.current?.openFile(relativePath, source.lineStart);
+        setProjectCodeWorkspaceMode('source');
+        setVisitedCodeWorkspaceModes((current) => new Set(current).add('source'));
+        setGraphSourceOpenFeedback('opened');
+        return;
+      } catch (error) {
+        recordLocalError('renderer-action', error);
+      }
+    }
     if (!props.onOpenGraphSource) {
       setGraphSourceOpenFeedback('failed');
       return;
@@ -9979,6 +10109,14 @@ export function App(props: {
   }
 
   async function installReleaseUpdate(update: ReleaseUpdateStatusSnapshot): Promise<void> {
+    if (sourceWorkspaceDirty || taskTableLayoutDirty) {
+      requestWorkspaceLeave(() => void performReleaseUpdateInstall(update));
+      return;
+    }
+    await performReleaseUpdateInstall(update);
+  }
+
+  async function performReleaseUpdateInstall(update: ReleaseUpdateStatusSnapshot): Promise<void> {
     if (!props.onDownloadReleaseUpdate || !props.onInstallReleaseUpdate) {
       setReleaseUpdateDialogState({
         kind: 'failed',
@@ -10200,6 +10338,47 @@ export function App(props: {
     pendingTaskTableLayoutLeaveRef.current = leave;
     pendingTaskTableLayoutLeaveCancelRef.current = cancel ?? null;
     setTaskTableLayoutLeaveDialogOpen(true);
+  }
+
+  function requestWorkspaceLeave(leave: () => void, cancel?: () => void): void {
+    if (sourceWorkspaceDirty) {
+      pendingSourceWorkspaceLeaveRef.current = () => requestTaskTableLayoutLeave(leave, cancel);
+      pendingSourceWorkspaceLeaveCancelRef.current = cancel ?? null;
+      setSourceWorkspaceLeaveDialogOpen(true);
+      return;
+    }
+    requestTaskTableLayoutLeave(leave, cancel);
+  }
+
+  function cancelSourceWorkspaceLeave(): void {
+    const cancel = pendingSourceWorkspaceLeaveCancelRef.current;
+    pendingSourceWorkspaceLeaveRef.current = null;
+    pendingSourceWorkspaceLeaveCancelRef.current = null;
+    setSourceWorkspaceLeaveDialogOpen(false);
+    cancel?.();
+  }
+
+  function discardSourceWorkspaceAndLeave(): void {
+    projectSourceWorkspaceRef.current?.discardAll();
+    setSourceWorkspaceLeaveDialogOpen(false);
+    const leave = pendingSourceWorkspaceLeaveRef.current;
+    pendingSourceWorkspaceLeaveRef.current = null;
+    pendingSourceWorkspaceLeaveCancelRef.current = null;
+    leave?.();
+  }
+
+  async function saveSourceWorkspaceAndLeave(): Promise<void> {
+    setSourceWorkspaceSaveBusy(true);
+    try {
+      if (!(await projectSourceWorkspaceRef.current?.saveAll())) return;
+      setSourceWorkspaceLeaveDialogOpen(false);
+      const leave = pendingSourceWorkspaceLeaveRef.current;
+      pendingSourceWorkspaceLeaveRef.current = null;
+      pendingSourceWorkspaceLeaveCancelRef.current = null;
+      leave?.();
+    } finally {
+      setSourceWorkspaceSaveBusy(false);
+    }
   }
 
   function cancelTaskTableLayoutLeave(): void {
@@ -10801,7 +10980,7 @@ export function App(props: {
       navigate();
       return;
     }
-    requestTaskTableLayoutLeave(navigate);
+    requestWorkspaceLeave(navigate);
   }
 
   function openProjectSection(project: ProjectRecord, section: ProjectWorkspaceSection): void {
@@ -10809,14 +10988,13 @@ export function App(props: {
       activeProjectIdRef.current = project.id;
       setProjectDetail(project);
       setConversationDraftOpen(false);
-      setActiveNavTarget(section === 'project-settings' || section === 'code' || section === 'commands' ? 'projects' : 'conversations');
+      setActiveNavTarget(section === 'project-settings' || section === 'code' ? 'projects' : 'conversations');
       setActiveProjectSection(section);
-      setProjectPanel(section === 'project-settings' ? 'config' : undefined);
-      const projectGraphIsAlreadyCurrent = graphProjectId === project.id && graphView !== undefined && isProjectGraphViewForProject(graphView, project, { requireProjectIdentity: true });
-      if (section === 'code' && !projectGraphIsAlreadyCurrent) {
-        resetGraphWorkspace(project.id);
-        if (project.scanStatus === 'completed') void openProjectGraphView(project.id, 'architecture');
+      if (section === 'code') {
+        setProjectCodeWorkspaceMode('source');
+        setVisitedCodeWorkspaceModes((current) => new Set(current).add('source'));
       }
+      setProjectPanel(section === 'project-settings' ? 'config' : undefined);
       if (section === 'project-settings') void loadProjectConfig(project.id);
       if (typeof window !== 'undefined') {
         window.history.replaceState(null, '', `#project-${section}`);
@@ -10827,7 +11005,7 @@ export function App(props: {
       navigate();
       return;
     }
-    requestTaskTableLayoutLeave(navigate);
+    requestWorkspaceLeave(navigate);
   }
 
   async function togglePinnedProject(projectId: string): Promise<void> {
@@ -11169,6 +11347,32 @@ export function App(props: {
           onInstall={(update) => void installReleaseUpdate(update)}
         />
       ) : null}
+      <TaskTableLayoutDecisionDialog
+        open={sourceWorkspaceLeaveDialogOpen}
+        title={appShellSettings.appLanguage === 'zh-CN' ? '源码修改尚未保存' : 'Source changes are not saved'}
+        description={
+          appShellSettings.appLanguage === 'zh-CN'
+            ? '离开代码页、切换项目或退出应用前，请保存全部文件、放弃草稿，或取消本次操作。切换图谱和命令不会触发此提示。'
+            : 'Before leaving the code page, switching projects, or quitting, save all files, discard drafts, or cancel. Switching Graph or Commands keeps the drafts.'
+        }
+        busy={sourceWorkspaceSaveBusy}
+        actions={[
+          { id: 'cancel-source-leave', label: appShellSettings.appLanguage === 'zh-CN' ? '取消' : 'Cancel', onClick: cancelSourceWorkspaceLeave },
+          {
+            id: 'discard-source-leave',
+            label: appShellSettings.appLanguage === 'zh-CN' ? '放弃' : 'Discard',
+            variant: 'danger',
+            onClick: discardSourceWorkspaceAndLeave,
+          },
+          {
+            id: 'save-source-leave',
+            label: appShellSettings.appLanguage === 'zh-CN' ? '保存全部' : 'Save all',
+            variant: 'primary',
+            onClick: () => void saveSourceWorkspaceAndLeave(),
+          },
+        ]}
+        onCancel={cancelSourceWorkspaceLeave}
+      />
       {activeNavTarget !== 'settings' ? (
         <SidebarNav
           activeNavTarget={activeNavTarget}
@@ -11234,34 +11438,85 @@ export function App(props: {
           </section>
         ) : null}
 
-        {activeNavTarget !== 'settings' && activeProjectSection === 'commands' && selectedProject && props.commandClient ? (
-          <section className="workspace-view workspace-view-command-center" aria-label={appShellSettings.appLanguage === 'zh-CN' ? '项目命令' : 'Project commands'}>
-            <CommandCenterPanel mode="project" project={selectedProject} client={props.commandClient} language={appShellSettings.appLanguage} />
+        {activeNavTarget !== 'settings' && activeProjectSection === 'code' && selectedProject ? (
+          <section className="workspace-view workspace-view-project-code project-code-workspace" aria-label={codeWorkspaceCopy.projectCodeAria}>
+            <header className="project-code-mode-toolbar">
+              <span>
+                <strong>{appShellSettings.appLanguage === 'zh-CN' ? '代码工作台' : 'Code workspace'}</strong>
+                <small>{selectedProject.name}</small>
+              </span>
+              <nav aria-label={appShellSettings.appLanguage === 'zh-CN' ? '代码工作区模式' : 'Code workspace mode'}>
+                {(
+                  [
+                    ['source', appShellSettings.appLanguage === 'zh-CN' ? '源码' : 'Source'],
+                    ['graph', appShellSettings.appLanguage === 'zh-CN' ? '图谱' : 'Graph'],
+                    ['commands', appShellSettings.appLanguage === 'zh-CN' ? '命令' : 'Commands'],
+                  ] as const
+                ).map(([mode, label]) => (
+                  <button
+                    type="button"
+                    key={mode}
+                    className={projectCodeWorkspaceMode === mode ? 'active' : ''}
+                    aria-current={projectCodeWorkspaceMode === mode ? 'page' : undefined}
+                    onClick={() => void selectProjectCodeWorkspaceMode(mode)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </nav>
+            </header>
+            <div className="project-code-mode-host">
+              <div className="project-code-mode-pane" hidden={projectCodeWorkspaceMode !== 'source'}>
+                <ProjectSourceWorkspace
+                  key={selectedProject.id}
+                  ref={projectSourceWorkspaceRef}
+                  project={selectedProject}
+                  language={appShellSettings.appLanguage}
+                  preference={appShellSettings.codeWorkspaceByProject?.[selectedProject.id]}
+                  onPreferenceChange={(preference) => persistCodeWorkspacePreference(selectedProject.id, preference)}
+                  onDirtyChange={setSourceWorkspaceDirty}
+                  onOpenExternal={(relativePath, line) => void props.onOpenGraphSource?.({ sourceRef: relativePath, lineStart: line, projectRoot: selectedProject.localPath })}
+                />
+              </div>
+              {visitedCodeWorkspaceModes.has('graph') ? (
+                <div className="project-code-mode-pane project-code-graph-pane" hidden={projectCodeWorkspaceMode !== 'graph'}>
+                  {activeGraphView ? (
+                    renderProjectCodeMapStage()
+                  ) : (
+                    <section className="project-code-mode-empty" aria-live="polite">
+                      <strong>{scanBusy ? codeWorkspaceCopy.scanning : codeWorkspaceCopy.graphTitle}</strong>
+                      <span>{scanState === 'failed' ? codeWorkspaceCopy.retryScan : codeWorkspaceCopy.waitingRealScan}</span>
+                      <Button variant="primary" busy={scanBusy} onClick={() => void selectProjectCodeWorkspaceMode('graph')}>
+                        {codeMapActionLabel()}
+                      </Button>
+                    </section>
+                  )}
+                </div>
+              ) : null}
+              {visitedCodeWorkspaceModes.has('commands') ? (
+                <div className="project-code-mode-pane project-code-command-pane" hidden={projectCodeWorkspaceMode !== 'commands'}>
+                  {props.commandClient ? <CommandCenterPanel mode="project" project={selectedProject} client={props.commandClient} language={appShellSettings.appLanguage} /> : null}
+                </div>
+              ) : null}
+            </div>
           </section>
         ) : null}
 
-        {activeNavTarget !== 'settings' && (activeProjectSection === 'code' || activeProjectSection === 'project-settings') ? (
-          <section
-            className={`workspace-view ${activeProjectSection === 'project-settings' ? 'workspace-view-project-settings' : 'workspace-view-project-code'}`}
-            aria-label={activeProjectSection === 'project-settings' ? codeWorkspaceCopy.projectSettingsAria : codeWorkspaceCopy.projectCodeAria}
-          >
+        {activeNavTarget !== 'settings' && activeProjectSection === 'project-settings' ? (
+          <section className="workspace-view workspace-view-project-settings" aria-label={codeWorkspaceCopy.projectSettingsAria}>
             <section className="workspace-detail-pane project-detail-pane" aria-label={codeWorkspaceCopy.detailAria}>
               {selectedProject ? (
-                <div className={`project-repository-workbench ${activeProjectSection === 'code' ? 'project-code-workbench' : 'project-settings-workbench'}`}>
-                  {/* 代码图谱页直接进入工作舞台；对象身份栏只保留给项目设置页。 */}
-                  {activeProjectSection === 'project-settings' ? (
-                    <section className="project-repository-status-row zeus-object-toolbar" aria-label={codeWorkspaceCopy.repositoryAria}>
-                      <span className="native-folder-icon zeus-avatar-token zeus-object-toolbar-avatar" aria-hidden="true" />
-                      <span className="project-repository-main zeus-object-toolbar-copy">
-                        <strong>{selectedProject.name}</strong>
-                        <span>{selectedProject.localPath}</span>
-                      </span>
-                      <span className="project-state-meta zeus-object-toolbar-status">{codeWorkspaceCopy.stateProjectSettings}</span>
-                    </section>
-                  ) : null}
+                <div className="project-repository-workbench project-settings-workbench">
+                  <section className="project-repository-status-row zeus-object-toolbar" aria-label={codeWorkspaceCopy.repositoryAria}>
+                    <span className="native-folder-icon zeus-avatar-token zeus-object-toolbar-avatar" aria-hidden="true" />
+                    <span className="project-repository-main zeus-object-toolbar-copy">
+                      <strong>{selectedProject.name}</strong>
+                      <span>{selectedProject.localPath}</span>
+                    </span>
+                    <span className="project-state-meta zeus-object-toolbar-status">{codeWorkspaceCopy.stateProjectSettings}</span>
+                  </section>
 
                   <section className="project-code-primary" aria-label={codeWorkspaceCopy.overviewAria}>
-                    {activeProjectSection === 'code' ? renderProjectCodeMapStage() : null}
                     {activeProjectSection === 'project-settings' || !activeGraphView ? (
                       <section className="project-code-context-rail" aria-label={codeWorkspaceCopy.contextRailAria}>
                         <section className="code-repository-facts" aria-label={codeWorkspaceCopy.repositoryStatusAria}>
@@ -13862,6 +14117,7 @@ function toSafeAppShellImport(
       | 'taskStatusFilterByProject'
       | 'taskViewModeByProject'
       | 'taskExpandedIdsByProject'
+      | 'codeWorkspaceByProject'
     >
   | undefined {
   if (!raw) return undefined;
@@ -13893,6 +14149,7 @@ function toSafeAppShellImport(
     taskStatusFilterByProject: normalizeTaskStatusFilterByProject(raw.taskStatusFilterByProject),
     taskViewModeByProject: normalizeTaskViewModeByProject(raw.taskViewModeByProject),
     taskExpandedIdsByProject: normalizeTaskExpandedIdsByProject(raw.taskExpandedIdsByProject),
+    codeWorkspaceByProject: normalizeCodeWorkspaceByProject(raw.codeWorkspaceByProject),
   };
 }
 
@@ -17732,7 +17989,6 @@ function SidebarNav(props: {
                             </svg>
                           ),
                         },
-                        { id: 'commands', label: copy.sections.commands, icon: '▶' },
                       ] satisfies Array<{ id: ProjectWorkspaceSection; label: string; icon: ReactNode }>
                     ).map((item) => {
                       const current = isActiveProject && props.activeProjectSection === item.id;
