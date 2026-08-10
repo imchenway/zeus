@@ -11354,3 +11354,164 @@
     transition: none;
   }
 }
+
+/* ZEUS-0117：文件编辑审批对齐参考图，同时保留真实权限模式和安全决策边界。 */
+.session-codex-parity-v1 .session-approval-request.is-compact-approval {
+  border-radius: 18px;
+  padding: 18px 24px 16px;
+}
+
+.session-codex-parity-v1 .session-approval-request.is-compact-approval > fieldset {
+  gap: 12px;
+}
+
+.session-codex-parity-v1 .session-compact-approval-heading {
+  font-size: 13px;
+  justify-content: space-between;
+  min-block-size: 20px;
+}
+
+.session-codex-parity-v1 .session-compact-approval-identity {
+  align-items: center;
+  display: inline-flex;
+  gap: 9px;
+}
+
+.session-codex-parity-v1 .session-compact-approval-identity svg {
+  block-size: 17px;
+  inline-size: 17px;
+}
+
+.session-codex-parity-v1 .session-compact-approval-question {
+  color: var(--session-text);
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 21px;
+  margin: 0;
+}
+
+.session-codex-parity-v1 .session-compact-approval-mode {
+  color: var(--session-text-muted);
+  font-size: 11px;
+  line-height: 18px;
+  white-space: nowrap;
+}
+
+.session-codex-parity-v1 .session-file-approval-targets {
+  background: var(--session-canvas);
+  border: 1px solid var(--session-line-soft);
+  border-radius: 10px;
+  display: grid;
+  gap: 4px;
+  min-inline-size: 0;
+  padding: 9px 12px;
+}
+
+.session-codex-parity-v1 .session-file-approval-targets ul {
+  display: grid;
+  gap: 5px;
+  list-style: none;
+  margin: 0;
+  min-inline-size: 0;
+  padding: 0;
+}
+
+.session-codex-parity-v1 .session-file-approval-targets li {
+  min-inline-size: 0;
+}
+
+.session-codex-parity-v1 .session-file-approval-targets code {
+  display: block;
+  font-family: 'SFMono-Regular', 'SF Mono', Consolas, monospace;
+  font-size: 13px;
+  line-height: 18px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-codex-parity-v1 .session-file-approval-directory,
+.session-codex-parity-v1 .session-file-approval-targets > small {
+  color: var(--session-text-muted);
+}
+
+.session-codex-parity-v1 .session-file-approval-name {
+  color: var(--session-text);
+  font-weight: 620;
+}
+
+.session-codex-parity-v1 .session-file-approval-targets > small {
+  font-size: 10px;
+  line-height: 14px;
+}
+
+.session-codex-parity-v1 .session-compact-approval-actions {
+  margin-block-start: 2px;
+}
+
+.session-codex-parity-v1 .session-compact-approval-actions button {
+  font-size: 13px;
+  font-weight: 560;
+  line-height: 18px;
+  min-block-size: 28px;
+}
+
+.session-codex-parity-v1 .session-compact-approval-actions button:focus-visible {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--session-accent) 24%, transparent);
+  outline: none;
+}
+
+.session-codex-parity-v1 .session-approval-grant-control {
+  gap: 0;
+}
+
+.session-codex-parity-v1 .session-approval-grant-control > .session-request-accept {
+  border-end-end-radius: 0 !important;
+  border-start-end-radius: 0 !important;
+}
+
+.session-codex-parity-v1 .session-approval-grant-control > .session-request-grant-chevron {
+  border-end-start-radius: 0 !important;
+  border-start-start-radius: 0 !important;
+  margin-inline-start: -1px;
+}
+
+.session-codex-parity-v1 .session-approval-grant-menu {
+  min-inline-size: 170px;
+  padding: 5px;
+}
+
+.session-codex-parity-v1 .session-approval-grant-menu button {
+  min-block-size: 34px;
+  padding: 7px 9px;
+}
+
+.session-codex-parity-v1 .session-approval-grant-menu-label {
+  align-items: center;
+  display: flex;
+  gap: 16px;
+  inline-size: 100%;
+  justify-content: space-between;
+}
+
+.session-codex-parity-v1 .session-approval-grant-info {
+  align-items: center;
+  color: var(--session-text-muted);
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+
+.session-codex-parity-v1 .session-approval-grant-info svg {
+  block-size: 14px;
+  inline-size: 14px;
+}
+
+@media (max-width: 559px) {
+  .session-codex-parity-v1 .session-approval-request.is-compact-approval {
+    padding: 14px;
+  }
+
+  .session-codex-parity-v1 .session-compact-approval-actions {
+    flex-wrap: wrap;
+  }
+}

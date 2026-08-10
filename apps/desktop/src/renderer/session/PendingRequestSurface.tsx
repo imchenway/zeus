@@ -2,7 +2,6 @@ import { type KeyboardEvent, useEffect, useLayoutEffect, useMemo, useRef, useSta
 import { ArrowRightIcon as ArrowRight } from '@phosphor-icons/react/dist/csr/ArrowRight';
 import { CheckIcon as Check } from '@phosphor-icons/react/dist/csr/Check';
 import { CaretDownIcon as CaretDown } from '@phosphor-icons/react/dist/csr/CaretDown';
-import { FileTextIcon as FileText } from '@phosphor-icons/react/dist/csr/FileText';
 import { InfoIcon as Info } from '@phosphor-icons/react/dist/csr/Info';
 import { PencilSimpleIcon as PencilSimple } from '@phosphor-icons/react/dist/csr/PencilSimple';
 import { QuestionIcon as Question } from '@phosphor-icons/react/dist/csr/Question';
@@ -39,6 +38,7 @@ export interface PendingRequestSurfaceProps {
   autoFocus?: boolean;
   onRespond: (requestId: string, response: Record<string, unknown>) => void | Promise<void>;
   permissionMode?: NativePermissionMode;
+  filePaths?: readonly string[];
   onSnooze?: () => void | Promise<void>;
 }
 
@@ -76,6 +76,11 @@ const labels = {
     required: '必填',
     terminal: '终端',
     fileChange: '文件变更',
+    runCommand: '运行命令',
+    editFiles: '编辑文件',
+    commandQuestion: '是否允许 Zeus 运行以下命令？',
+    fileQuestion: '是否允许 Zeus 编辑以下文件？',
+    moreFiles: (count: number) => `另有 ${count} 个文件`,
     grantOptions: '授权选项',
     similarCommandRule: '适用规则',
     allEditScope: '本会话仅对已审批文件免重复询问；新文件仍可能再次申请。',
@@ -110,6 +115,11 @@ const labels = {
     required: 'Required',
     terminal: 'Terminal',
     fileChange: 'File changes',
+    runCommand: 'Run command',
+    editFiles: 'Edit files',
+    commandQuestion: 'Allow Zeus to run the following command?',
+    fileQuestion: 'Allow Zeus to edit the following files?',
+    moreFiles: (count: number) => `${count} more file${count === 1 ? '' : 's'}`,
     grantOptions: 'Grant options',
     similarCommandRule: 'Applies to',
     allEditScope: 'Previously approved files are remembered for this session; new files may still ask again.',
@@ -165,13 +175,16 @@ export function PendingRequestSurface(props: PendingRequestSurfaceProps) {
 
   if (!isRui) {
     if (kind === 'command' || kind === 'file') {
-      const incompleteApproval = !hasCompleteApprovalDetails(props.request);
+      const filePaths = kind === 'file' ? approvalFilePaths(props.request, props.filePaths) : [];
+      const incompleteApproval = !hasCompleteApprovalDetails(props.request) || (kind === 'file' && filePaths.length === 0);
+      const compactDecisions = incompleteApproval ? decisions.filter(isFailClosedDecision) : decisions;
       return (
         <CompactApprovalPanel
           request={props.request}
           kind={kind}
           language={props.language}
-          decisions={decisions}
+          decisions={compactDecisions}
+          filePaths={filePaths}
           busy={props.busy === true}
           error={props.error}
           autoFocus={props.autoFocus !== false}
@@ -245,6 +258,7 @@ interface CompactApprovalPanelProps {
   kind: 'command' | 'file';
   language: SessionUiLanguage;
   decisions: SupportedRequestDecision[];
+  filePaths: readonly string[];
   busy: boolean;
   error?: string | null;
   autoFocus: boolean;
@@ -313,20 +327,22 @@ function CompactApprovalPanel(props: CompactApprovalPanelProps) {
 
   const preview = requestPreview(props.request, copy.cwd);
   const mode = permissionModeLabel(props.permissionMode, props.language);
-  const Icon = props.kind === 'command' ? TerminalWindow : FileText;
+  const Icon = props.kind === 'command' ? TerminalWindow : PencilSimple;
   return (
     <section className="session-pending-request session-approval-request is-compact-approval" aria-busy={props.busy || undefined}>
       <fieldset disabled={props.busy}>
         <legend className="sr-only">{copy.approval}</legend>
         <header className="session-compact-approval-heading">
-          <Icon aria-hidden="true" />
-          <span>{props.kind === 'command' ? copy.terminal : copy.fileChange}</span>
+          <span className="session-compact-approval-identity">
+            <Icon aria-hidden="true" />
+            <span>{props.kind === 'command' ? copy.runCommand : copy.editFiles}</span>
+          </span>
+          <span className="session-compact-approval-mode" title={`${copy.mode}: ${mode}`}>
+            {mode}
+          </span>
         </header>
-        <p className="session-compact-approval-impact zeus-fidelity-text">{requestImpact(props.request, props.language)}</p>
-        <pre className="session-request-preview">{preview}</pre>
-        <p className="session-compact-approval-mode">
-          {copy.mode}: {mode}
-        </p>
+        <h2 className="session-compact-approval-question zeus-fidelity-text">{props.kind === 'command' ? copy.commandQuestion : copy.fileQuestion}</h2>
+        {props.kind === 'file' ? props.filePaths.length > 0 ? <FileApprovalTargetList paths={props.filePaths} moreLabel={copy.moreFiles} /> : null : <pre className="session-request-preview">{preview}</pre>}
         {props.incompleteApproval ? (
           <p className="session-request-invalid" role="alert">
             <strong>{copy.incompleteApproval}</strong>
@@ -368,17 +384,18 @@ function CompactApprovalPanel(props: CompactApprovalPanelProps) {
                     role="menuitem"
                     onClick={() => choose(decision)}
                   >
-                    <span>{props.kind === 'file' && decision === 'acceptForSession' ? copy.allowAllEdits : copy[decision]}</span>
+                    <span className="session-approval-grant-menu-label">
+                      <span>{props.kind === 'file' && decision === 'acceptForSession' ? copy.allowAllEdits : copy[decision]}</span>
+                      {props.kind === 'file' && decision === 'acceptForSession' ? (
+                        <span className="session-approval-grant-info" role="img" aria-label={copy.allEditScope} title={copy.allEditScope}>
+                          <Info aria-hidden="true" />
+                        </span>
+                      ) : null}
+                    </span>
                     {decision === 'acceptWithExecpolicyAmendment' && amendment ? (
                       <small>
                         <Info aria-hidden="true" />
                         {copy.similarCommandRule}: {amendment.acceptWithExecpolicyAmendment.execpolicy_amendment.join(' ')}
-                      </small>
-                    ) : null}
-                    {props.kind === 'file' && decision === 'acceptForSession' ? (
-                      <small>
-                        <Info aria-hidden="true" />
-                        {copy.allEditScope}
                       </small>
                     ) : null}
                   </button>
@@ -395,6 +412,39 @@ function CompactApprovalPanel(props: CompactApprovalPanelProps) {
       </fieldset>
     </section>
   );
+}
+
+function FileApprovalTargetList(props: { paths: readonly string[]; moreLabel: (count: number) => string }) {
+  const visiblePaths = props.paths.slice(0, 4);
+  const remainingCount = props.paths.length - visiblePaths.length;
+  return (
+    <div className="session-file-approval-targets">
+      <ul>
+        {visiblePaths.map((path) => {
+          const parts = approvalPathParts(path);
+          return (
+            <li key={path}>
+              <code title={path}>
+                <span className="session-file-approval-directory">{parts.directory}</span>
+                <span className="session-file-approval-name">{parts.name}</span>
+              </code>
+            </li>
+          );
+        })}
+      </ul>
+      {remainingCount > 0 ? <small>{props.moreLabel(remainingCount)}</small> : null}
+    </div>
+  );
+}
+
+function approvalFilePaths(request: NativePendingRequest, linkedPaths: readonly string[] | undefined): string[] {
+  const candidates = [request.payload.path, request.payload.filePath, request.payload.targetPath, ...(linkedPaths ?? [])];
+  return [...new Set(candidates.flatMap((value) => (typeof value === 'string' && value.trim() ? [value.trim()] : [])))];
+}
+
+function approvalPathParts(path: string): { directory: string; name: string } {
+  const match = /^(.*[\\/])([^\\/]+)$/.exec(path);
+  return match ? { directory: match[1]!, name: match[2]! } : { directory: '', name: path };
 }
 
 function RequestUserInputPanel(props: PendingRequestSurfaceProps & { questions: RequestQuestion[] }) {

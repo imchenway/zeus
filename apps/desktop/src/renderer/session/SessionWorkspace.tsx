@@ -1608,6 +1608,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                       request={blockingPendingRequest}
                       language={props.language}
                       permissionMode={props.state?.snapshot?.permissionMode ?? 'read-only'}
+                      filePaths={linkedFileApprovalPaths(props.state, blockingPendingRequest)}
                       autoFocus
                       busy={Boolean(props.state?.error?.recoveryRequired) || isRequestResponseBusy(props.state?.busyOperation ?? null, blockingPendingRequest.id)}
                       error={requestErrors[blockingPendingRequest.id]}
@@ -2297,6 +2298,22 @@ function runtimeValueFragments(value: unknown, path: string[] = []): string[] {
 
 function humanizeRuntimeKey(value: string): string {
   return value.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/[_-]+/g, ' ');
+}
+
+function linkedFileApprovalPaths(state: NativeSessionState | null, request: NativePendingRequest): string[] {
+  const providerItemId = stringField(request.payload.itemId);
+  if (!state || requestKind(request) !== 'file' || !providerItemId) return [];
+  const linkedItem = Object.values(state.items).find((item) => item.itemId === providerItemId || item.providerItemId === providerItemId);
+  if (!linkedItem || linkedItem.type.replace(/[^a-z]/gi, '').toLowerCase() !== 'filechange' || !Array.isArray(linkedItem.payload.changes)) return [];
+  return [
+    ...new Set(
+      linkedItem.payload.changes.flatMap((change) => {
+        if (!isRecord(change)) return [];
+        const path = stringField(change.path);
+        return path ? [path] : [];
+      }),
+    ),
+  ];
 }
 
 function sessionStatus(state: NativeSessionState | null, loadState: SessionWorkspaceProps['loadState'], copy: (typeof labels)[SessionUiLanguage]): SessionWorkspaceStatus {
