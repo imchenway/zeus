@@ -1,17 +1,17 @@
 import { useMemo } from 'react';
-import type { TaskWorkspaceSnapshot } from '../session/sessionTypes.js';
+import type { TaskWorkspaceIndexSnapshot } from '../session/sessionTypes.js';
 
-interface TaskWorkspaceBranchGroup {
+interface TaskWorkspaceBranchGroup<Workspace extends TaskWorkspaceIndexSnapshot> {
   branchName: string;
-  workspaces: TaskWorkspaceSnapshot[];
+  workspaces: Workspace[];
 }
 
-export function TaskWorkspaceBranchList(props: {
-  workspaces: TaskWorkspaceSnapshot[];
+export function TaskWorkspaceBranchList<Workspace extends TaskWorkspaceIndexSnapshot>(props: {
+  workspaces: Workspace[];
   selectedWorkspaceId: string;
   zh: boolean;
   disabled?: boolean;
-  stateLabel: (workspace: TaskWorkspaceSnapshot, zh: boolean) => string;
+  stateLabel: (workspace: Workspace, zh: boolean) => string;
   onSelect: (workspaceId: string) => void;
 }) {
   const groups = useMemo(() => groupTaskWorkspacesByCurrentBranch(props.workspaces), [props.workspaces]);
@@ -54,10 +54,10 @@ export function TaskWorkspaceBranchList(props: {
   );
 }
 
-function groupTaskWorkspacesByCurrentBranch(workspaces: TaskWorkspaceSnapshot[]): TaskWorkspaceBranchGroup[] {
-  const groups = new Map<string, TaskWorkspaceSnapshot[]>();
+function groupTaskWorkspacesByCurrentBranch<Workspace extends TaskWorkspaceIndexSnapshot>(workspaces: Workspace[]): TaskWorkspaceBranchGroup<Workspace>[] {
+  const groups = new Map<string, Workspace[]>();
   for (const workspace of workspaces) {
-    const branchName = workspace.review?.branch.trim() || workspace.branchName;
+    const branchName = workspace.branchName;
     const existing = groups.get(branchName);
     if (existing) existing.push(workspace);
     else groups.set(branchName, [workspace]);

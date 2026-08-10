@@ -12803,6 +12803,39 @@ a {
   color: var(--zeus-product-muted);
 }
 
+.macos-ai-app .task-git-review-batch-result {
+  display: grid;
+  gap: 6px;
+  max-block-size: 160px;
+  overflow: auto;
+  padding: 9px 16px;
+  border-block-start: 1px solid var(--zeus-product-line-soft);
+  background: var(--zeus-product-panel);
+}
+
+.macos-ai-app .task-git-review-batch-result ol {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.macos-ai-app .task-git-review-batch-result li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.macos-ai-app .task-git-review-batch-result li[data-status='failed'] {
+  color: var(--zeus-danger-text);
+}
+
+.macos-ai-app .task-git-review-batch-result li small {
+  color: inherit;
+  text-align: end;
+}
+
 .macos-ai-app .task-git-review-footer {
   border-block-start: 0;
 }

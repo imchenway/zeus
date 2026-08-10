@@ -313,9 +313,13 @@ type NativeConversationAppClient = SessionControllerClient &
     | 'saveProjectWorkspaceConfig'
     | 'acknowledgeNativeConversationCompletion'
     | 'loadTaskGitWorkspaces'
+    | 'loadTaskGitWorkspaceIndex'
+    | 'loadTaskGitWorkspaceSnapshot'
     | 'loadTaskWorkspaceFileDiff'
     | 'commitTaskWorkspace'
+    | 'commitAllTaskWorkspaces'
     | 'pushTaskWorkspace'
+    | 'pushAllTaskWorkspaces'
     | 'reclaimTaskWorkspace'
     | 'discardTaskWorkspace'
     | 'stopTaskWorkspaceSessions'
@@ -9369,7 +9373,7 @@ export function App(props: {
 
   function continueTaskModelPush(task: TaskRecord, capabilities: CodexTaskPushCapabilities, form: TaskModelPushForm): void {
     if (taskModelPushDispatchingTaskIdsRef.current.has(task.id)) return;
-    const fingerprint = JSON.stringify({ taskId: task.id, projectId: task.projectId, parentContextRevision: capabilities.parentContextRevision, form });
+    const fingerprint = JSON.stringify({ taskId: task.id, projectId: task.projectId, parentContextRevision: capabilities.parentContextRevision, repositoryRevision: capabilities.repositoryRevision, form });
     const persistedEnvelope = taskModelPushEnvelopeRef.current.get(task.id);
     const request: StartTaskModelPushRequest =
       persistedEnvelope?.fingerprint === fingerprint
@@ -9388,6 +9392,7 @@ export function App(props: {
                 ? { mode: 'direct', confirmConcurrentWrites: form.directConcurrencyConfirmed }
                 : {
                     mode: 'create',
+                    repositoryRevision: capabilities.repositoryRevision,
                     repositories: capabilities.repositories.map((repository) => ({
                       repositoryId: repository.id,
                       sourceRef: form.repositorySelections[repository.id]?.sourceRef ?? '',
