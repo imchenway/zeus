@@ -7,23 +7,7 @@ export interface ConversationFileLocation {
   endLine?: number;
 }
 
-export type ConversationFileIconKind =
-  | 'code'
-  | 'java'
-  | 'javascript'
-  | 'typescript'
-  | 'json'
-  | 'markdown'
-  | 'sql'
-  | 'html'
-  | 'css'
-  | 'image'
-  | 'pdf'
-  | 'spreadsheet'
-  | 'presentation'
-  | 'document'
-  | 'archive'
-  | 'file';
+export type ConversationFileIconKind = 'code' | 'java' | 'javascript' | 'typescript' | 'json' | 'markdown' | 'sql' | 'html' | 'css' | 'image' | 'pdf' | 'spreadsheet' | 'presentation' | 'document' | 'archive' | 'file';
 
 interface ConversationResourceBase {
   id: string;
@@ -62,23 +46,9 @@ export interface ConversationAttachmentResource extends ConversationResourceBase
   iconKind: ConversationFileIconKind;
 }
 
-export type ConversationResource =
-  | ConversationFileResource
-  | ConversationWebsiteResource
-  | ConversationAttachmentResource;
+export type ConversationResource = ConversationFileResource | ConversationWebsiteResource | ConversationAttachmentResource;
 
-export type ConversationOpenTarget =
-  | 'preferred'
-  | 'zeus_source'
-  | 'zeus_browser'
-  | 'system_default'
-  | 'file_manager'
-  | 'copy_link'
-  | 'copy_path'
-  | 'editor:vscode'
-  | 'editor:vscode-insiders'
-  | 'editor:cursor'
-  | 'editor:windsurf';
+export type ConversationOpenTarget = 'preferred' | 'zeus_source' | 'zeus_browser' | 'system_default' | 'file_manager' | 'copy_link' | 'copy_path' | 'editor:vscode' | 'editor:vscode-insiders' | 'editor:cursor' | 'editor:windsurf';
 
 export interface ConversationResourceOpenTarget {
   id: ConversationOpenTarget;
@@ -108,14 +78,9 @@ export interface ConversationImagePreview {
 
 export type ConversationResourcePreview = ConversationSourcePreview | ConversationImagePreview;
 
-export type TurnChangeSetState =
-  | 'capturing'
-  | 'applied'
-  | 'undoing'
-  | 'undone'
-  | 'reapplying'
-  | 'conflicted'
-  | 'unavailable';
+export type TurnChangeSetState = 'capturing' | 'applied' | 'undoing' | 'undone' | 'reapplying' | 'conflicted' | 'unavailable';
+
+export const historicalTurnChangeUnavailableReason = 'Historical file-change records are available, but safe Undo/Reapply snapshots were not captured.';
 
 export type TurnChangeFileType = 'added' | 'deleted' | 'modified' | 'renamed' | 'binary';
 

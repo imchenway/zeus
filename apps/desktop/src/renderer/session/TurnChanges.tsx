@@ -9,7 +9,7 @@ import { FilesIcon as Files } from '@phosphor-icons/react/dist/csr/Files';
 import { GitDiffIcon as GitDiff } from '@phosphor-icons/react/dist/csr/GitDiff';
 import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/csr/WarningCircle';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
-import type { TurnChangeFile, TurnChangeSet, TurnChangeSetOperationResult } from '@zeus/shared';
+import { historicalTurnChangeUnavailableReason, type TurnChangeFile, type TurnChangeSet, type TurnChangeSetOperationResult } from '@zeus/shared';
 import type { SessionUiLanguage } from './ThreadItemView.js';
 
 type ChangeAction = 'undo' | 'reapply';
@@ -89,7 +89,7 @@ export function TurnChangeCard(props: {
       {!changeSet.conflict && changeSet.state === 'unavailable' && changeSet.unavailableReason ? (
         <p className="session-turn-change-error" role="status">
           <WarningCircle aria-hidden="true" />
-          <span>{changeSet.unavailableReason}</span>
+          <span>{unavailableReason(changeSet.unavailableReason, props.language)}</span>
         </p>
       ) : null}
       {visibleFiles.length ? (
@@ -223,7 +223,7 @@ export function TurnDiffWorkspace(props: {
       {!changeSet.conflict && changeSet.state === 'unavailable' && changeSet.unavailableReason ? (
         <p className="session-turn-change-error session-turn-diff-error" role="status">
           <WarningCircle aria-hidden="true" />
-          <span>{changeSet.unavailableReason}</span>
+          <span>{unavailableReason(changeSet.unavailableReason, props.language)}</span>
         </p>
       ) : null}
       <div className="session-turn-diff-layout">
@@ -302,6 +302,11 @@ function availableAction(changeSet: TurnChangeSet): ChangeAction | null {
   if (changeSet.state === 'applied') return 'undo';
   if (changeSet.state === 'undone') return 'reapply';
   return null;
+}
+
+function unavailableReason(reason: string, language: SessionUiLanguage): string {
+  if (reason !== historicalTurnChangeUnavailableReason) return reason;
+  return language === 'zh-CN' ? '已保留这一轮的历史文件变更记录，但缺少可安全撤销或重新应用的文件快照。' : reason;
 }
 
 function changeSetTitle(changeSet: TurnChangeSet, language: SessionUiLanguage): string {
