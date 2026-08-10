@@ -409,7 +409,9 @@ function itemStatus(item: Record<string, unknown>): ConversationItemStatus {
 }
 
 function itemPhase(item: Record<string, unknown>): ConversationItemPhase {
-  return item.phase === 'final_answer' || item.phase === 'finalAnswer' || item.type === 'agentMessage' ? 'final_answer' : 'prework';
+  if (item.phase === 'final_answer' || item.phase === 'finalAnswer') return 'final_answer';
+  if (typeof item.phase === 'string' && item.phase.trim().length > 0) return 'prework';
+  return item.type === 'agentMessage' ? 'final_answer' : 'prework';
 }
 
 function itemText(item: Record<string, unknown>): string {

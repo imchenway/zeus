@@ -197,7 +197,9 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
                   <Fragment key={row.key}>
                     <SessionTurnDuration turn={turn} requests={props.state.pendingRequests} language={props.language}>
                       {row.rows.map((child) => (
-                        <Fragment key={child.key}>{renderTranscriptRow(child, transcriptRowRenderOptions(props, items, showThinking && props.state.activeTurnId === row.turnId, lastUserKey, lastAssistantKey, true, maintainLatestPosition))}</Fragment>
+                        <Fragment key={child.key}>
+                          {renderTranscriptRow(child, transcriptRowRenderOptions(props, items, showThinking && props.state.activeTurnId === row.turnId, lastUserKey, lastAssistantKey, true, maintainLatestPosition))}
+                        </Fragment>
                       ))}
                       {showThinking && props.state.activeTurnId === row.turnId ? <TranscriptThinking language={props.language} /> : null}
                     </SessionTurnDuration>
@@ -542,7 +544,8 @@ function transcriptRowContainsItemKey(row: TranscriptRow, itemKey: string | unde
 }
 
 export function isFinalAnswerItem(item: NativeSessionItemBuffer): boolean {
-  return itemRole(item) === 'assistant' && (item.phase === 'final_answer' || item.phase === 'finalAnswer');
+  const providerPhase = typeof item.payload.phase === 'string' ? item.payload.phase : item.phase;
+  return itemRole(item) === 'assistant' && (providerPhase === 'final_answer' || providerPhase === 'finalAnswer');
 }
 
 export function projectTranscriptRows(items: readonly NativeSessionItemBuffer[], answeredRequests: readonly NativePendingRequest[] = []): TranscriptRow[] {

@@ -3975,7 +3975,9 @@ function itemTypeFromValue(value: unknown): ConversationItemType {
 }
 
 function phaseFromItem(item: Record<string, unknown>): ConversationItemPhase {
-  return item.phase === 'final_answer' || item.phase === 'finalAnswer' ? 'final_answer' : item.type === 'agentMessage' ? 'final_answer' : 'prework';
+  if (item.phase === 'final_answer' || item.phase === 'finalAnswer') return 'final_answer';
+  if (typeof item.phase === 'string' && item.phase.trim().length > 0) return 'prework';
+  return item.type === 'agentMessage' ? 'final_answer' : 'prework';
 }
 
 function itemText(item: Record<string, unknown>): string {

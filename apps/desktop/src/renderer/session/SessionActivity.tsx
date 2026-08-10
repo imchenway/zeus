@@ -237,7 +237,7 @@ export function SessionTurnDuration(props: { turn: NativeTurnSnapshot; requests:
   }, [active]);
   const duration = useMemo(() => turnDurationMs(props.turn, props.requests, now), [now, props.requests, props.turn]);
   if (duration === null) return null;
-  const value = formatDuration(duration);
+  const value = formatDuration(duration, props.language);
   const label = props.language === 'zh-CN' ? `已处理 ${value}` : active ? `Processing for ${value}` : `Processed in ${value}`;
   const hasDetails = props.children !== undefined && props.children !== null;
   const time = <time dateTime={`PT${Math.max(0, Math.round(duration / 1_000))}S`}>{label}</time>;
@@ -455,11 +455,14 @@ function turnDurationMs(turn: NativeTurnSnapshot, requests: NativePendingRequest
   return Math.max(0, endedAt - startedAt - waitingMs);
 }
 
-function formatDuration(durationMs: number): string {
+function formatDuration(durationMs: number, language: SessionUiLanguage): string {
   const totalSeconds = Math.max(0, Math.round(durationMs / 1_000));
   const hours = Math.floor(totalSeconds / 3_600);
   const minutes = Math.floor((totalSeconds % 3_600) / 60);
   const seconds = totalSeconds % 60;
+  if (language === 'zh-CN') {
+    return [hours > 0 ? `${hours}时` : null, minutes > 0 || hours > 0 ? `${minutes}分` : null, `${seconds}秒`].filter(Boolean).join('');
+  }
   return [hours > 0 ? `${hours}h` : null, minutes > 0 || hours > 0 ? `${minutes}m` : null, `${seconds}s`].filter(Boolean).join(' ');
 }
 
