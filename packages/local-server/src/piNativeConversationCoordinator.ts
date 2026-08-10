@@ -144,7 +144,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     options.submissions.updateStatus(submission.id, 'active', { providerTurnId: run.nativeRunId, updatedAt: run.acceptedAt });
     runs.set(run.nativeRunId, { conversationId: input.conversationId, submissionId: submission.id, turnId: turn.id, providerTurnId: run.nativeRunId });
     await options.db.save();
-    publish('conversation.turn.started', input.conversationId, { turnId: run.nativeRunId, submissionId: submission.id, status: 'running' });
+    publish('conversation.turn.started', input.conversationId, { turnId: run.nativeRunId, submissionId: submission.id, status: 'running', startedAt: run.acceptedAt });
     return { conversationId: input.conversationId, submissionId: submission.id, providerThreadId: session.nativeSessionId, providerTurnId: run.nativeRunId, status: 'active' as const };
   }
 
@@ -196,7 +196,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     });
     runs.set(run.nativeRunId, { conversationId: input.conversation.id, submissionId: submission.id, turnId: turn.id, providerTurnId: run.nativeRunId });
     await options.db.save();
-    publish('conversation.turn.started', input.conversation.id, { turnId: run.nativeRunId, submissionId: submission.id, status: 'running' });
+    publish('conversation.turn.started', input.conversation.id, { turnId: run.nativeRunId, submissionId: submission.id, status: 'running', startedAt: run.acceptedAt });
     return { conversationId: input.conversation.id, submissionId: submission.id, providerThreadId: context.session.nativeSessionId, providerTurnId: run.nativeRunId, status: 'active' as const };
   }
 
@@ -280,6 +280,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       const failed = event.type === 'runtime_error';
       const interrupted = interruptedRuns.delete(event.nativeRunId);
       const status = interrupted ? 'interrupted' : failed ? 'failed' : 'completed';
+      const existingTurn = options.turns.getById(run.turnId);
       options.turns.upsert({
         id: run.turnId,
         conversationId: run.conversationId,
@@ -287,9 +288,9 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         providerTurnId: run.providerTurnId,
         clientSubmissionId: run.submissionId,
         status,
-        startedAt: null,
+        startedAt: existingTurn?.startedAt ?? null,
         completedAt: event.createdAt,
-        createdAt: event.createdAt,
+        createdAt: existingTurn?.createdAt ?? event.createdAt,
         updatedAt: event.createdAt,
         ...(failed ? { error: payload } : {}),
         agentKind: 'pi',
@@ -303,7 +304,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       options.conversations.updateAgentRuntime(run.conversationId, { providerState: interrupted ? 'paused' : failed ? 'failed' : 'ready', status: failed ? 'failed' : 'open' });
       runs.delete(event.nativeRunId);
       await options.db.save();
-      publish('conversation.turn.completed', run.conversationId, { turnId: run.providerTurnId, submissionId: run.submissionId, status });
+      publish('conversation.turn.completed', run.conversationId, { turnId: run.providerTurnId, submissionId: run.submissionId, status, completedAt: event.createdAt });
     }
   }
 
@@ -500,7 +501,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         runs.delete(input.providerTurnId);
         interruptedRuns.delete(input.providerTurnId);
         await options.db.save();
-        publish('conversation.turn.completed', run.conversationId, { turnId: run.providerTurnId, submissionId: run.submissionId, status: 'interrupted' });
+        publish('conversation.turn.completed', run.conversationId, { turnId: run.providerTurnId, submissionId: run.submissionId, status: 'interrupted', completedAt: timestamp });
       }
       return { submissionId: run.submissionId };
     },
