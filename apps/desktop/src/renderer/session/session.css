@@ -521,15 +521,25 @@
 
 .session-codex-parity-v1 .session-thread-title-copy {
   display: grid;
+  flex: 1 1 auto;
   gap: 1px;
   min-inline-size: 0;
 }
 
-.session-codex-parity-v1 .session-thread-title-copy :where(strong, .session-thread-task-title) {
+.session-codex-parity-v1 .session-thread-title-row {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  min-inline-size: 0;
+}
+
+.session-codex-parity-v1 .session-thread-title-row > :where(strong, .session-thread-task-title) {
+  flex: 0 1 auto;
   font-size: 15px;
   font-weight: 620;
   letter-spacing: -0.012em;
   line-height: 20px;
+  min-inline-size: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -581,7 +591,7 @@
   gap: 6px;
 }
 
-/* ZEUS-0161：任务管理状态与会话运行状态并列，颜色继续来自项目状态配置。 */
+/* ZEUS-0161：任务管理状态紧跟任务标题，颜色继续来自项目状态配置。 */
 .session-codex-parity-v1 .session-thread-task-status {
   flex: 0 0 auto;
   min-block-size: 24px;
@@ -6613,15 +6623,25 @@
 
 .session-codex-parity-v1 .session-thread-title-copy {
   display: grid;
+  flex: 1 1 auto;
   gap: 1px;
   min-inline-size: 0;
 }
 
-.session-codex-parity-v1 .session-thread-title-copy :where(strong, .session-thread-task-title) {
+.session-codex-parity-v1 .session-thread-title-row {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  min-inline-size: 0;
+}
+
+.session-codex-parity-v1 .session-thread-title-row > :where(strong, .session-thread-task-title) {
+  flex: 0 1 auto;
   font-size: 15px;
   font-weight: 620;
   letter-spacing: -0.012em;
   line-height: 20px;
+  min-inline-size: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

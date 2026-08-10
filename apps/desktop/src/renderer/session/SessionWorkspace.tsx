@@ -1521,35 +1521,37 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
       {displayedHeader ? (
         <header className="session-thread-header" data-motion-title={titleMotion}>
           <span className="session-thread-title-copy">
-            {displayedHeader.taskId && actions.onOpenTaskDetail ? (
-              <button
-                type="button"
-                className="session-thread-task-title"
-                title={displayedHeader.title}
-                aria-label={props.language === 'zh-CN' ? `打开任务详情：${displayedHeader.title}` : `Open task details: ${displayedHeader.title}`}
-                onClick={() => {
-                  if (displayedHeader.taskId) actions.onOpenTaskDetail?.(displayedHeader.taskId);
-                }}
-              >
-                {displayedHeader.title}
-              </button>
-            ) : (
-              <strong title={displayedHeader.title}>{displayedHeader.title}</strong>
-            )}
+            <span className="session-thread-title-row">
+              {displayedHeader.taskId && actions.onOpenTaskDetail ? (
+                <button
+                  type="button"
+                  className="session-thread-task-title"
+                  title={displayedHeader.title}
+                  aria-label={props.language === 'zh-CN' ? `打开任务详情：${displayedHeader.title}` : `Open task details: ${displayedHeader.title}`}
+                  onClick={() => {
+                    if (displayedHeader.taskId) actions.onOpenTaskDetail?.(displayedHeader.taskId);
+                  }}
+                >
+                  {displayedHeader.title}
+                </button>
+              ) : (
+                <strong title={displayedHeader.title}>{displayedHeader.title}</strong>
+              )}
+              {displayedHeader.taskManagementStatus ? (
+                <span
+                  className="task-status-chip task-status-custom session-thread-task-status"
+                  style={{ '--task-status-tone': displayedHeader.taskManagementStatus.color } as CSSProperties}
+                  role="status"
+                  aria-label={props.language === 'zh-CN' ? `任务状态：${displayedHeader.taskManagementStatus.label}` : `Task status: ${displayedHeader.taskManagementStatus.label}`}
+                  title={props.language === 'zh-CN' ? `任务状态：${displayedHeader.taskManagementStatus.label}` : `Task status: ${displayedHeader.taskManagementStatus.label}`}
+                >
+                  <strong>{displayedHeader.taskManagementStatus.label}</strong>
+                </span>
+              ) : null}
+            </span>
             {displayedHeader.contextLabel ? <small>{displayedHeader.contextLabel}</small> : null}
           </span>
           <div className="session-thread-header-actions">
-            {displayedHeader.taskManagementStatus ? (
-              <span
-                className="task-status-chip task-status-custom session-thread-task-status"
-                style={{ '--task-status-tone': displayedHeader.taskManagementStatus.color } as CSSProperties}
-                role="status"
-                aria-label={props.language === 'zh-CN' ? `任务状态：${displayedHeader.taskManagementStatus.label}` : `Task status: ${displayedHeader.taskManagementStatus.label}`}
-                title={props.language === 'zh-CN' ? `任务状态：${displayedHeader.taskManagementStatus.label}` : `Task status: ${displayedHeader.taskManagementStatus.label}`}
-              >
-                <strong>{displayedHeader.taskManagementStatus.label}</strong>
-              </span>
-            ) : null}
             {!legacy && props.conversation ? (
               <button
                 type="button"
