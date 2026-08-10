@@ -935,9 +935,13 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     };
   }
 
+  function interruptedQueueSubmissions(submissions: readonly ZeusConversationSubmissionRecord[]): ZeusConversationSubmissionRecord[] {
+    return submissions.filter((submission) => !submission.providerTurnId && (submission.status === 'queued' || (submission.status === 'paused' && submission.pausedReason === 'interrupted')));
+  }
+
   function inferRunState(conversation: ZeusConversationWithMessagesRecord): NativeConversationRunState {
     if (conversation.providerState === 'archived') return { type: 'paused', reason: 'provider_archived' };
-    if (options.submissions.listByConversation(conversation.id).some((submission) => submission.status === 'paused' && submission.pausedReason === 'interrupted')) {
+    if (interruptedQueueSubmissions(options.submissions.listByConversation(conversation.id)).some((submission) => submission.status === 'paused')) {
       return { type: 'paused', reason: 'interrupted' };
     }
     const activeTurn = [...options.turns.listByConversation(conversation.id)].reverse().find((turn) => turn.status === 'running' || turn.status === 'waiting' || turn.status === 'dispatching');
@@ -1446,6 +1450,10 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     input.providerWriteLifecycle?.markRpcStarted(input.providerTurnId);
     await persist();
     await options.manager.interruptTurn({ threadId: providerThreadId, turnId: input.providerTurnId });
+    const terminalResult = await waitForTurnResult({ conversationId: conversation.id, providerTurnId: input.providerTurnId });
+    if (terminalResult.status !== 'interrupted') {
+      throw coordinatorError('ZEUS_NATIVE_INTERRUPT_OUTCOME_UNKNOWN', 'Codex did not confirm a terminal outcome for the interrupted turn.');
+    }
     const submission = options.submissions.listByConversation(conversation.id).find((entry) => entry.providerTurnId === input.providerTurnId);
     return {
       operationId: operationId(),
@@ -1462,11 +1470,11 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     const conversation = requireConversation(input.conversationId);
     const state = runStates.get(conversation.id) ?? inferRunState(conversation);
     if (state.type !== 'paused' || state.reason !== 'interrupted') throw coordinatorError('ZEUS_NATIVE_QUEUE_NOT_INTERRUPTED', 'Queue is not paused by an interrupted turn.');
-    const paused = options.submissions.listByConversation(conversation.id).filter((entry) => entry.status === 'paused' && entry.pausedReason === 'interrupted');
+    const paused = options.submissions.listByConversation(conversation.id).filter((entry) => entry.status === 'paused' && entry.pausedReason === 'interrupted' && !entry.providerTurnId);
     for (const submission of paused) options.submissions.updateStatus(submission.id, 'queued');
     runStates.set(conversation.id, { type: 'idle' });
     await persist();
-    const next = options.submissions.listByConversation(conversation.id).find((entry) => entry.status === 'queued');
+    const next = options.submissions.listByConversation(conversation.id).find((entry) => entry.status === 'queued' && !entry.providerTurnId);
     if (next) await dispatchSubmission(conversation, next);
     return toQueueSnapshot(conversation.id);
   }
@@ -2286,9 +2294,16 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         runStates.set(conversation.id, { type: 'idle' });
       } else if (classification === 'interrupted') {
         options.submissions.updateStatus(submission.id, 'completed', { providerTurnId, resolvedAt: timestamp });
-        for (const queued of submissions.filter((entry) => entry.status === 'queued')) options.submissions.updateStatus(queued.id, 'paused', { pausedReason: 'interrupted' });
-        options.conversations.bindProvider(conversation.id, { providerId: 'codex', providerThreadId: turn.providerThreadId, providerModel: conversation.providerModel, providerState: 'paused' });
-        runStates.set(conversation.id, { type: 'paused', reason: 'interrupted' });
+        const interruptedQueue = interruptedQueueSubmissions(submissions);
+        for (const queued of interruptedQueue.filter((entry) => entry.status === 'queued')) options.submissions.updateStatus(queued.id, 'paused', { pausedReason: 'interrupted' });
+        const hasInterruptedQueue = interruptedQueue.length > 0;
+        options.conversations.bindProvider(conversation.id, {
+          providerId: 'codex',
+          providerThreadId: turn.providerThreadId,
+          providerModel: conversation.providerModel,
+          providerState: hasInterruptedQueue ? 'paused' : 'ready',
+        });
+        runStates.set(conversation.id, hasInterruptedQueue ? { type: 'paused', reason: 'interrupted' } : { type: 'idle' });
       } else {
         const failureParams = { turn: snapshotTurn };
         const failure = providerTurnFailure(failureParams, providerTurnId);
@@ -2455,6 +2470,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     const conversation = threadId ? options.conversations.getByProviderThreadId(threadId) : undefined;
     let broadcast: { type: string; payload: Record<string, unknown> } | null = null;
     let drainAfterTurn = false;
+    let queueChangedAfterTurn = false;
     let createdPlanImplementationRequest: ReturnType<ConversationPlanActionRepository['getById']> | null = null;
 
     if (event.method === 'serverRequest/resolved') {
@@ -2662,16 +2678,19 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         for (const queued of submissions.filter((entry) => entry.status === 'queued')) options.submissions.updateStatus(queued.id, 'paused', { pausedReason: 'recovery_required' });
         runStates.set(conversation.id, { type: 'paused', reason: 'recovery_required' });
       } else if (interrupted) {
-        for (const queued of options.submissions.listByConversation(conversation.id).filter((entry) => entry.status === 'queued')) options.submissions.updateStatus(queued.id, 'paused', { pausedReason: 'interrupted' });
-        runStates.set(conversation.id, { type: 'paused', reason: 'interrupted' });
+        const interruptedQueue = interruptedQueueSubmissions(submissions);
+        for (const queued of interruptedQueue.filter((entry) => entry.status === 'queued')) options.submissions.updateStatus(queued.id, 'paused', { pausedReason: 'interrupted' });
+        const hasInterruptedQueue = interruptedQueue.length > 0;
+        runStates.set(conversation.id, hasInterruptedQueue ? { type: 'paused', reason: 'interrupted' } : { type: 'idle' });
       } else {
         runStates.set(conversation.id, { type: 'idle' });
       }
+      const hasInterruptedQueue = interrupted && interruptedQueueSubmissions(submissions).length > 0;
       options.conversations.bindProvider(conversation.id, {
         providerId: 'codex',
         providerThreadId: threadId,
         providerModel: conversation.providerModel,
-        providerState: failed ? 'failed' : interrupted ? 'paused' : 'ready',
+        providerState: failed ? 'failed' : interrupted && hasInterruptedQueue ? 'paused' : 'ready',
       });
       const ephemeral = contexts.get(conversation.id)?.ephemeral === true;
       if (!failed && !interrupted && !ephemeral) options.conversations.setCompletionUnread(conversation.id, true);
@@ -2717,7 +2736,8 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
           hasUnreadCompletion: options.conversations.getById(conversation.id)?.completionUnread === true,
         },
       };
-      drainAfterTurn = !failed;
+      queueChangedAfterTurn = interrupted;
+      drainAfterTurn = !failed && !interrupted;
     } else if (event.method === 'item/started' && conversation && threadId) {
       const providerTurnId = providerTurnIdFrom(params);
       const itemPayload = isRecord(params.item) ? params.item : {};
@@ -3193,6 +3213,12 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         ...broadcast.payload,
         generationId: event.generationId,
         sequence: event.sequence,
+      });
+    }
+    if (queueChangedAfterTurn && conversation) {
+      options.broadcast('conversation.queue.changed', {
+        conversationId: conversation.id,
+        providerThreadId: conversation.providerThreadId,
       });
     }
     if (createdPlanImplementationRequest) {
