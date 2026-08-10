@@ -99,17 +99,26 @@
 /* ZEUS-0160：宽屏空闲区直接承载环境卡；右侧工作面或窄窗口继续使用顶部按钮。 */
 .session-codex-parity-v1 .session-quick-actions-card[data-presentation='persistent'] {
   inline-size: 300px;
-  inset: auto;
+  inset-block-start: 16px;
+  inset-inline-end: 16px;
   max-block-size: calc(100vh - 90px);
-  position: static;
+  pointer-events: auto;
+  position: absolute;
 }
 
 .session-codex-parity-v1 .session-quick-actions-anchor[data-presentation='persistent'] {
-  block-size: auto;
-  inline-size: 300px;
-  inset-block-start: calc(100% + 16px);
-  inset-inline-end: 16px;
-  position: absolute;
+  block-size: 0;
+  inline-size: 0;
+}
+
+/* 常驻卡片挂在完整顶部状态区之后，让摘要栏展开高度自然参与避让。 */
+.session-codex-parity-v1 .session-quick-actions-persistent-host {
+  block-size: 0;
+  flex: 0 0 0;
+  inline-size: 100%;
+  pointer-events: none;
+  position: relative;
+  z-index: 30;
 }
 
 .session-codex-parity-v1 .session-quick-actions-card > header,

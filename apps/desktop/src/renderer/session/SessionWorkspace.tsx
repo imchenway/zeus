@@ -1035,6 +1035,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const [interruptArmed, setInterruptArmed] = useState(false);
   const [contextWorkspace, setContextWorkspace] = useState<SessionContextWorkspace>({ kind: 'none' });
   const [contextMounted, setContextMounted] = useState(false);
+  const [quickActionsPersistentHost, setQuickActionsPersistentHost] = useState<HTMLDivElement | null>(null);
   const [contextFullWidth, setContextFullWidth] = useState(false);
   const [browserPaneShare, setBrowserPaneShare] = useState(56);
   const [browserResizing, setBrowserResizing] = useState(false);
@@ -1589,6 +1590,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                 conversation={props.conversation}
                 state={props.state}
                 task={props.task}
+                persistentHost={quickActionsPersistentHost}
                 forceCollapsed={contextOpen || contextMounted}
                 suppressed={props.quickActionsSuppressed}
                 onLoadTaskWorkspaces={actions.onLoadTaskWorkspaces}
@@ -1676,6 +1678,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                     ) : null}
                   </section>
                 ) : null}
+                <div ref={setQuickActionsPersistentHost} className="session-quick-actions-persistent-host" />
                 <ConversationTranscript
                   state={props.state}
                   language={props.language}
