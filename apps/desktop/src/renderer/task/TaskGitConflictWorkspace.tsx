@@ -2,7 +2,7 @@ import { ArrowLeftIcon as ArrowLeft } from '@phosphor-icons/react/dist/csr/Arrow
 import { ArrowRightIcon as ArrowRight } from '@phosphor-icons/react/dist/csr/ArrowRight';
 import { MagicWandIcon as MagicWand } from '@phosphor-icons/react/dist/csr/MagicWand';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
-import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
 import type { TaskIntegrationRecord } from '../session/sessionTypes.js';
 import { Button } from '../ui/Button.js';
 import {
@@ -53,6 +53,9 @@ export function TaskGitConflictWorkspace(props: {
   const [mergeFeedback, setMergeFeedback] = useState<string | null>(null);
   const [undoDraft, setUndoDraft] = useState<ConflictDocument | null>(null);
   const activeBlock = blocks[Math.min(selectedBlockIndex, Math.max(0, blocks.length - 1))] ?? null;
+  const deferredDocument = useDeferredValue(document);
+  const simpleResolution = useMemo(() => (deferredDocument ? resolveSimpleConflictDocument(deferredDocument) : null), [deferredDocument]);
+  const simpleResolutionReady = deferredDocument === document;
 
   useEffect(() => {
     setMergeFeedback(null);
@@ -88,8 +91,8 @@ export function TaskGitConflictWorkspace(props: {
   }
 
   function mergeSimpleConflicts(): void {
-    if (!document) return;
-    const result = resolveSimpleConflictDocument(document);
+    if (!document || !simpleResolutionReady || !simpleResolution || simpleResolution.resolved === 0) return;
+    const result = simpleResolution;
     if (result.resolved > 0) props.onDocumentChange(result.document);
     if (result.resolved > 0) setUndoDraft(document);
     setMergeFeedback(
@@ -180,12 +183,36 @@ export function TaskGitConflictWorkspace(props: {
               size="compact"
               className="task-git-conflict-magic"
               onClick={mergeSimpleConflicts}
-              disabled={!document || props.busy || unresolvedCount === 0}
-              title={props.zh ? '自动合并当前文件中能确定的简单冲突' : 'Merge safe simple conflicts in this file'}
+              disabled={!document || props.busy || unresolvedCount === 0 || !simpleResolutionReady || !simpleResolution || simpleResolution.resolved === 0}
+              title={
+                !simpleResolutionReady
+                  ? props.zh
+                    ? '正在分析当前草稿中的简单冲突'
+                    : 'Checking the current draft for simple conflicts'
+                  : simpleResolution && simpleResolution.resolved > 0
+                    ? props.zh
+                      ? `可安全自动合并 ${simpleResolution.resolved} 个简单冲突`
+                      : `Safely merge ${simpleResolution.resolved} simple conflict(s)`
+                    : props.zh
+                      ? '当前没有可安全自动合并的冲突，请手工编辑或使用 AI 处理'
+                      : 'No conflict can be merged safely. Edit manually or use AI.'
+              }
               aria-label={props.zh ? '自动合并简单冲突' : 'Resolve simple conflicts'}
             >
               <MagicWand aria-hidden="true" weight="regular" />
-              <span>{props.zh ? '合并简单冲突' : 'Resolve simple conflicts'}</span>
+              <span>
+                {!simpleResolutionReady
+                  ? props.zh
+                    ? '正在分析…'
+                    : 'Checking…'
+                  : simpleResolution && simpleResolution.resolved > 0
+                    ? props.zh
+                      ? `合并 ${simpleResolution.resolved} 个简单冲突`
+                      : `Resolve ${simpleResolution.resolved} simple conflict(s)`
+                    : props.zh
+                      ? '无可自动合并项'
+                      : 'No safe auto-merge'}
+              </span>
             </Button>
           </span>
         </div>
@@ -387,11 +414,15 @@ function FullFileColumns(props: {
   const sourceRef = useRef<HTMLTextAreaElement>(null);
   const resultRef = useRef<HTMLTextAreaElement>(null);
   const taskRef = useRef<HTMLTextAreaElement>(null);
+  const documentRef = useRef(props.document);
+  documentRef.current = props.document;
 
   useEffect(() => {
-    const top = Math.max(0, ((props.initialBlock ? countNewlines(props.document?.visibleContent.slice(0, props.initialBlock.visibleStart) ?? '') : 0) - 4) * 18.6);
+    // 只在进入文件或切换冲突块时定位；受控文本每次输入都不应重置用户滚动位置。
+    const currentDocument = documentRef.current;
+    const top = Math.max(0, ((props.initialBlock ? countNewlines(currentDocument?.visibleContent.slice(0, props.initialBlock.visibleStart) ?? '') : 0) - 4) * 18.6);
     for (const pane of [sourceRef.current, resultRef.current, taskRef.current]) if (pane) pane.scrollTop = top;
-  }, [props.path, props.initialBlock?.id, props.document?.visibleContent]);
+  }, [props.path, props.initialBlock?.id]);
 
   function syncScroll(source: HTMLTextAreaElement): void {
     for (const pane of [sourceRef.current, resultRef.current, taskRef.current]) {
