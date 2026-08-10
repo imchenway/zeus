@@ -2625,9 +2625,16 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       if (!conversation || conversation.transportKind !== 'codex_native') continue;
       const generationId = typeof payload.generationId === 'string' ? payload.generationId : nativeLocalEventGenerationId;
       const sequence = typeof payload.sequence === 'number' ? payload.sequence : ++nativeLocalEventSequence;
+      const steeringSubmission = mappedType === 'conversation.submission.steering' && typeof payload.submissionId === 'string' ? conversationSubmissions.getById(payload.submissionId) : undefined;
       const eventPayload = {
         ...payload,
         ...(mappedType === 'conversation.queue.changed' ? { queue: toNativeQueueApiSnapshot(conversation) } : {}),
+        ...(mappedType === 'conversation.submission.steering' && steeringSubmission
+          ? {
+              submission: toNativeSubmission(steeringSubmission),
+              queue: toNativeQueueApiSnapshot(conversation),
+            }
+          : {}),
         ...(nativeConversationAttentionEventTypes.has(mappedType) ? { conversationAttentionState: buildProjectConversationAttentionByProject([conversation.projectId])[conversation.projectId] ?? 'idle' } : {}),
         projectId: conversation.projectId,
         conversationId: conversation.id,
@@ -3763,7 +3770,13 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
             if (persistedResourceId !== startedResourceId) return undefined;
             const updatedConversation = conversations.getById(conversation.id);
             const submission = conversationSubmissions.getById(request.params.submissionId);
-            if (!updatedConversation || !submission || submission.status !== 'resolved' || !submission.providerTurnId) return undefined;
+            if (
+              !updatedConversation ||
+              !submission ||
+              !submission.providerTurnId ||
+              (submission.status !== 'dispatching' && submission.status !== 'resolved' && !(submission.status === 'paused' && submission.pausedReason === 'recovery_required'))
+            )
+              return undefined;
             return { statusCode: 202, body: toNativeDurableAcceptance(stableOperationId, request.params.submissionId, updatedConversation, submission) };
           },
           startedResourceId,

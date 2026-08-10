@@ -1119,6 +1119,22 @@ quality_gates:
 
 完整口径、Codex App 对照和验证记录见 `docs/ZEUS-0078_没看懂这是在排什么队.md`。
 
+## ZEUS-0102 引导消息生命周期契约
+
+- Codex 引导采用“排队 → 引导中 → 已确认”三段生命周期。`turn/steer` 返回成功只代表 Provider 接受请求，submission 必须继续保持 `steer_now + dispatching`，不得提前写成 `resolved`。
+- `conversation.submission.steering` 必须同时携带当前 submission 和最新队列快照。Renderer 在一次状态更新中移除后续消息并创建当前轮次内的用户消息投影，禁止出现列表和对话记录之间的空白窗口。
+- 只有 Provider `userMessage.clientId` 与 submission 的 `clientUserMessageId` 精确相等时，服务端才把 submission 标记为 `resolved`，Renderer 才原位替换“引导中”投影。正文相同、轮次相同或当前 submission 都不能作为确认依据。
+- 完整会话快照必须从持久化的 `steer_now + dispatching` submission 重建“引导中”用户消息；`paused + recovery_required` 重建为“引导结果待确认”。刷新、切换会话和应用重启不得让正文或附件消失。
+- Provider 明确拒绝已结束轮次时，沿用后续消息规则重新排入下一轮；RPC 结果未知、终态轮次缺少精确用户消息或恢复无法确认时，保留同一 submission 并进入恢复保护，禁止自动重发。
+- 待确认投影属于当前轮次但尚未成为普通历史消息，必须显示文字状态，不得只依赖颜色；待确认期间禁止编辑和重复引导，附件继续由同一 submission 提供。
+- 该契约只收紧 Codex 引导语义，不改变普通排队和自动派发、Pi 消息协议、并发限制及用户问答协议。
+
+优点：消息从用户点击开始持续可见，界面状态与 Provider 事实一致，精确身份关联可以避免重复消息和误确认。
+
+代价：服务端、实时事件和 Renderer 必须共同维护三段生命周期，并为写入结果未知保留显式恢复状态。
+
+根因、接口范围和验证记录见 `docs/ZEUS-0102_排队消息点击立即发送后不见了.md`。
+
 ## ZEUS-0103 任务详情粘贴附件契约
 
 - 任务详情中的标题、类型专属内容和标签编辑框，与创建任务表单使用同一任务资源管线；普通文字保持文字粘贴，图片、文件、文件夹和超长文本自动转为任务附件。

@@ -8,7 +8,7 @@ export type NativeConversationRunState =
   | { type: 'waiting'; turnId: string; requestId: string; reason: 'approval' | 'user_input' }
   | { type: 'paused'; reason: 'interrupted' | 'transport_unavailable' | 'provider_archived' | 'recovery_required' };
 
-export type NativeOperationStatus = 'queued' | 'active' | 'steered' | 'interrupted' | 'responded' | 'provider_archived' | 'recovery_required';
+export type NativeOperationStatus = 'queued' | 'active' | 'steering' | 'steered' | 'interrupted' | 'responded' | 'provider_archived' | 'recovery_required';
 
 export interface NativeAcceptedOperation {
   operationId: string;

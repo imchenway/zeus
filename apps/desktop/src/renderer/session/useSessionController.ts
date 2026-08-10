@@ -1101,7 +1101,10 @@ export function createSessionController(options: CreateSessionControllerOptions)
       return runOperation(
         `queue:send-now:${submissionId}`,
         () => options.client.sendNativeQueuedNow(options.projectId, options.conversationId, submissionId),
-        () => undefined,
+        (acceptance) => {
+          if (!acceptance.submission) return;
+          dispatch({ type: 'steering_submission_hydrated', submission: acceptance.submission as unknown as NativeQueuedSubmission });
+        },
       );
     },
     resumeQueue() {

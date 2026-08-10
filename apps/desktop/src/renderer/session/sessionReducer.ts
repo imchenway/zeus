@@ -9,6 +9,7 @@ import type {
   NativePlanImplementationRequest,
   NativeProviderSettingsSnapshot,
   NativeProviderValueSnapshot,
+  NativeQueuedSubmission,
   NativeQueueSnapshot,
   NativeSessionError,
   NativeSessionItemBuffer,
@@ -26,6 +27,7 @@ export type NativeSessionAction =
   | { type: 'next_turn_settings_changed'; settings: NativeNextTurnSettings }
   | { type: 'pending_requests_hydrated'; requests: NativePendingRequest[]; turns?: NativeTurnSnapshot[]; items?: NativeItemSnapshot[] }
   | { type: 'queue_hydrated'; queue: NativeQueueSnapshot }
+  | { type: 'steering_submission_hydrated'; submission: NativeQueuedSubmission; queue?: NativeQueueSnapshot }
   | { type: 'operation_started'; operation: string }
   | { type: 'operation_finished'; operation: string; error?: NativeSessionError | null }
   | { type: 'interrupt_started'; turnId: string }
@@ -156,6 +158,8 @@ export function sessionReducer(state: NativeSessionState, action: NativeSessionA
       const recoveryError = recoveryErrorFromQueue(action.queue);
       return { ...state, queue: action.queue, conversationState: conversationStateFromQueue(action.queue, state), ...(recoveryError ? { error: recoveryError } : {}) };
     }
+    case 'steering_submission_hydrated':
+      return projectSteeringSubmission(state, action.submission, action.queue);
     case 'operation_started':
       return { ...state, busyOperation: action.operation, error: state.error?.recoveryRequired ? state.error : null };
     case 'operation_finished':
@@ -213,7 +217,7 @@ export function sessionReducer(state: NativeSessionState, action: NativeSessionA
                 ...state.items,
                 [optimisticKey]: {
                   ...optimistic,
-                  status: 'pending',
+                  status: 'unconfirmed',
                 },
               },
             }
@@ -353,6 +357,19 @@ function hydrateSnapshot(state: NativeSessionState, snapshot: NativeConversation
       updatedAt: message.createdAt,
     };
     orderedItems.push({ key, timestamp: message.createdAt, stableIndex: stableIndexForClient(clientUserMessageId) });
+  }
+
+  // Provider 尚未回放精确 userMessage 时，从持久 submission 恢复当前轮次中的引导投影。
+  for (const submission of snapshot.submissions) {
+    const clientUserMessageId = submission.clientUserMessageId;
+    const providerTurnId = submission.providerTurnId;
+    const pendingStatus = submission.status === 'dispatching' || (submission.status === 'paused' && submission.pausedReason === 'recovery_required');
+    if (submission.delivery !== 'steer_now' || !pendingStatus || !clientUserMessageId || !providerTurnId || durableClientIds.has(clientUserMessageId)) continue;
+    const itemId = `steering:${submission.id}`;
+    const key = nativeSessionItemKey(snapshot.id, threadId, providerTurnId, itemId);
+    items[key] = steeringSubmissionItem(snapshot.id, threadId, submission, key, itemId);
+    orderedItems.push({ key, timestamp: submission.createdAt ?? snapshot.updatedAt, stableIndex: stableIndexForClient(clientUserMessageId) });
+    durableClientIds.add(clientUserMessageId);
   }
 
   // A pending user message is renderer-owned until a durable conversation_message with
@@ -540,6 +557,11 @@ function reduceNativeEvent(state: NativeSessionState, event: NativeConversationE
       const recoveryError = queue ? recoveryErrorFromQueue(queue) : null;
       return queue ? { ...base, queue, transcriptRevision: base.transcriptRevision + 1, conversationState: conversationStateFromQueue(queue, base), ...(recoveryError ? { error: recoveryError } : {}) } : base;
     }
+    case 'conversation.submission.steering': {
+      const submission = isRecord(payload.submission) ? (payload.submission as unknown as NativeQueuedSubmission) : null;
+      const queue = isRecord(payload.queue) ? (payload.queue as unknown as NativeQueueSnapshot) : undefined;
+      return submission ? projectSteeringSubmission(base, submission, queue) : base;
+    }
     case 'conversation.request.created': {
       if (suppressRequestAuthority) return base;
       const requestId = stringValue(payload.requestId);
@@ -654,7 +676,7 @@ function reduceItemEvent(state: NativeSessionState, event: NativeConversationEve
   const effectiveType = completed ? (incomingType ?? previous?.type ?? 'providerItem') : (previous?.type ?? incomingType ?? 'providerItem');
   const providerClientId = isUserMessageType(effectiveType) && incomingPayload ? stringValue(incomingPayload.clientId) : null;
   const matchedUserEntry = isUserMessageType(effectiveType)
-    ? Object.entries(state.items).find(([, item]) => isUserMessageItem(item) && ((providerClientId !== null && userMessageClientIds(item).includes(providerClientId)) || item.providerItemId === itemId))
+    ? Object.entries(state.items).find(([, item]) => isUserMessageItem(item) && ((providerClientId !== null && userMessageClientIds(item).includes(providerClientId)) || (!item.optimistic && item.providerItemId === itemId)))
     : undefined;
   const optimisticEntry = matchedUserEntry?.[1].optimistic ? matchedUserEntry : undefined;
   const matchedUserItem = matchedUserEntry?.[1];
@@ -742,6 +764,7 @@ function addOptimisticUserItem(state: NativeSessionState, action: Extract<Native
     text: action.draft,
     payload: {
       attachments: action.submittedAttachments,
+      delivery: action.delivery,
       ...(action.browserComments.length ? { browserComments: action.browserComments } : {}),
     },
     resources: [],
@@ -761,6 +784,73 @@ function addOptimisticUserItem(state: NativeSessionState, action: Extract<Native
     attachments: [],
     browserSubmission: null,
     error: null,
+  };
+}
+
+function projectSteeringSubmission(state: NativeSessionState, submission: NativeQueuedSubmission, authoritativeQueue?: NativeQueueSnapshot): NativeSessionState {
+  const queue = authoritativeQueue ?? (state.queue ? { ...state.queue, submissions: state.queue.submissions.filter((entry) => entry.id !== submission.id) } : null);
+  const clientUserMessageId = submission.clientUserMessageId;
+  const turnId = submission.providerTurnId;
+  const conversationId = state.conversationId;
+  const threadId = state.providerThreadId;
+  if (submission.delivery !== 'steer_now' || !clientUserMessageId || !turnId || !conversationId || !threadId) {
+    return queue ? { ...state, queue, conversationState: conversationStateFromQueue(queue, state) } : state;
+  }
+  const matchedEntry = Object.entries(state.items).find(([, item]) => isUserMessageItem(item) && userMessageClientIds(item).includes(clientUserMessageId));
+  if (matchedEntry && !matchedEntry[1].optimistic) return queue ? { ...state, queue, conversationState: conversationStateFromQueue(queue, state) } : state;
+  const itemId = `steering:${submission.id}`;
+  const key = nativeSessionItemKey(conversationId, threadId, turnId, itemId);
+  const previousKey = matchedEntry?.[0];
+  const previous = matchedEntry?.[1];
+  const item: NativeSessionItemBuffer = {
+    ...steeringSubmissionItem(conversationId, threadId, submission, key, itemId),
+    ...(previous
+      ? {
+          text: submission.content || previous.text,
+          resources: previous.resources,
+          payload: { ...previous.payload, ...steeringSubmissionPayload(submission) },
+        }
+      : {}),
+  };
+  const items = { ...state.items, [key]: item };
+  if (previousKey && previousKey !== key) delete items[previousKey];
+  const itemOrder = previousKey ? [...new Set(state.itemOrder.map((entry) => (entry === previousKey ? key : entry)))] : state.itemOrder.includes(key) ? state.itemOrder : [...state.itemOrder, key];
+  return {
+    ...state,
+    items,
+    itemOrder,
+    ...(queue ? { queue, conversationState: conversationStateFromQueue(queue, state) } : {}),
+    transcriptRevision: state.transcriptRevision + 1,
+  };
+}
+
+function steeringSubmissionItem(conversationId: string, threadId: string, submission: NativeQueuedSubmission, key: string, itemId: string): NativeSessionItemBuffer {
+  return {
+    key,
+    conversationId,
+    threadId,
+    turnId: submission.providerTurnId!,
+    itemId,
+    type: 'userMessage',
+    status: submission.status,
+    phase: 'prework',
+    text: submission.content,
+    payload: steeringSubmissionPayload(submission),
+    resources: [],
+    optimistic: true,
+    clientUserMessageId: submission.clientUserMessageId,
+    durableClientUserMessageId: submission.clientUserMessageId,
+    updatedAt: submission.updatedAt ?? submission.createdAt,
+  };
+}
+
+function steeringSubmissionPayload(submission: NativeQueuedSubmission): Record<string, unknown> {
+  return {
+    delivery: 'steer_now',
+    submissionId: submission.id,
+    attachments: submission.attachments ?? [],
+    ...(submission.pausedReason ? { pausedReason: submission.pausedReason } : {}),
+    ...(submission.error ? { error: submission.error } : {}),
   };
 }
 

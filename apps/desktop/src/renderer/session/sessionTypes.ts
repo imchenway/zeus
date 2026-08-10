@@ -842,6 +842,7 @@ export type NativeConversationEvent =
   | NativeEvent<'conversation.rateLimits.changed', NativeEventIdentity & { value: Record<string, unknown> }>
   | NativeEvent<'conversation.mcpStartup.changed', NativeEventIdentity & { value: Record<string, unknown> }>
   | NativeEvent<'conversation.queue.changed', NativeEventIdentity & { queue: NativeQueueSnapshot }>
+  | NativeEvent<'conversation.submission.steering', NativeEventIdentity & { submission: NativeQueuedSubmission; queue: NativeQueueSnapshot }>
   | NativeEvent<'conversation.request.created', NativeEventIdentity & { turnId?: string; requestId: string; requestKind: string }>
   | NativeEvent<'conversation.request.resolved', NativeEventIdentity & { turnId?: string; requestId: string; requestKind?: string }>
   | NativeEvent<'conversation.request.snoozed', NativeEventIdentity & { requestId: string }>
@@ -879,6 +880,7 @@ export const nativeConversationEventTypes = new Set<NativeConversationEvent['typ
   'conversation.rateLimits.changed',
   'conversation.mcpStartup.changed',
   'conversation.queue.changed',
+  'conversation.submission.steering',
   'conversation.request.created',
   'conversation.request.resolved',
   'conversation.request.snoozed',
