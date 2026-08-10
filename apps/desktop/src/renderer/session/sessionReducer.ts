@@ -710,7 +710,7 @@ function itemProvidesVisibleFeedback(item: NativeSessionItemBuffer): boolean {
   const type = item.type.toLocaleLowerCase().replace(/[\s_\-/]+/gu, '');
   if (type === 'usermessage' || type === 'user') return false;
   if (item.text.trim()) return true;
-  return ['commandexecution', 'command', 'mcptoolcall', 'dynamictoolcall', 'websearch', 'imageview', 'toolcall', 'tool', 'filechange', 'file'].includes(type);
+  return ['commandexecution', 'command', 'mcptoolcall', 'dynamictoolcall', 'websearch', 'imageview', 'imagegeneration', 'toolcall', 'tool', 'filechange', 'file'].includes(type);
 }
 
 function mergeProgressPayload(previous: Record<string, unknown> | undefined, incoming: Record<string, unknown> | null): Record<string, unknown> {

@@ -7,10 +7,10 @@ import { MessageCheckIcon, MessageEditIcon, MessageExpandIcon, MessageThumbIcon 
 import type { NativeSessionItemBuffer } from './sessionTypes.js';
 import { autosizeTextarea } from './textareaAutosize.js';
 import type { ConversationFileLocation, ConversationOpenTarget, ConversationResource, ConversationResourcePreview } from '@zeus/shared';
-import { ConversationInlineResource, ConversationMarkdownImage, ConversationResourceCards, isImageResource } from './ConversationResources.js';
+import { ConversationGeneratedImage, ConversationInlineResource, ConversationMarkdownImage, ConversationResourceCards, isImageResource } from './ConversationResources.js';
 
 export type SessionUiLanguage = 'zh-CN' | 'en-US';
-export type ThreadItemRole = 'user' | 'assistant' | 'commentary' | 'tool' | 'file' | 'request' | 'error' | 'unknown';
+export type ThreadItemRole = 'user' | 'assistant' | 'commentary' | 'tool' | 'file' | 'image' | 'request' | 'error' | 'unknown';
 export const MAX_MARKDOWN_CHARACTERS = 200_000;
 export const MAX_MARKDOWN_BLOCK_CHARACTERS = 50_000;
 export const MAX_MARKDOWN_BLOCKS = 512;
@@ -48,7 +48,8 @@ const copy = {
     bad: '不好的回答',
     expandMessage: '展开消息',
     collapseMessage: '收起消息',
-    image: '会话图片',
+    image: '生成的图片',
+    conversationImage: '会话图片',
     attachments: '附件',
     details: '技术详情',
     complexityTruncated: '内容过于复杂，已截断',
@@ -78,7 +79,8 @@ const copy = {
     bad: 'Bad response',
     expandMessage: 'Expand message',
     collapseMessage: 'Collapse message',
-    image: 'Conversation image',
+    image: 'Generated image',
+    conversationImage: 'Conversation image',
     attachments: 'Attachments',
     details: 'Technical details',
     complexityTruncated: 'Content complexity truncated',
@@ -235,6 +237,8 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
             </button>
           </footer>
         </form>
+      ) : role === 'image' ? (
+        <GeneratedImageItem item={props.item} language={props.language} onOpenResource={props.onOpenResource} onLoadResourcePreview={props.onLoadResourcePreview} onVisibleContentChange={props.onVisibleContentChange} />
       ) : command ? (
         <CommandExecutionItem item={props.item} language={props.language} />
       ) : commentary && (visibleText || (streamActive && itemText)) ? (
@@ -266,8 +270,8 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
       ) : null}
       {!command ? <TypedItemFacts item={props.item} role={role} language={props.language} /> : null}
       <ItemAttachments item={props.item} label={labels.attachments} />
-      <ConversationResourceCards resources={props.item.resources} language={props.language} onOpenResource={props.onOpenResource} onLoadResourcePreview={props.onLoadResourcePreview} />
-      <ItemImages item={props.item} label={labels.image} />
+      {role !== 'image' ? <ConversationResourceCards resources={props.item.resources} language={props.language} onOpenResource={props.onOpenResource} onLoadResourcePreview={props.onLoadResourcePreview} /> : null}
+      <ItemImages item={props.item} label={labels.conversationImage} />
       {hasActions ? (
         <footer className="session-thread-item-actions" data-message-actions={role}>
           {role === 'user' && messageTimestamp && timestampSource ? <MessageTimestamp dateTime={timestampSource} value={messageTimestamp} /> : null}
@@ -609,6 +613,7 @@ export function itemRole(item: NativeSessionItemBuffer): ThreadItemRole {
   if (type === 'agentmessage' || type === 'assistantmessage' || type === 'assistant' || type === 'message') return 'assistant';
   if (type === 'reasoning' || type === 'plan' || type === 'commentary' || type === 'analysis') return 'commentary';
   if (type === 'filechange' || type === 'file') return 'file';
+  if (type === 'imagegeneration') return item.status === 'failed' ? 'error' : 'image';
   if (['commandexecution', 'command', 'mcptoolcall', 'dynamictoolcall', 'websearch', 'imageview', 'toolcall', 'tool'].includes(type)) return 'tool';
   if (type.includes('request') || type.includes('approval')) return 'request';
   if (type === 'error' || type.endsWith('error') || item.status === 'failed') return 'error';
@@ -788,7 +793,7 @@ function roleLabel(role: ThreadItemRole, labels: (typeof copy)[SessionUiLanguage
 }
 
 function TypedItemFacts(props: { item: NativeSessionItemBuffer; role: ThreadItemRole; language: SessionUiLanguage }) {
-  if (props.role === 'user' || props.role === 'assistant' || props.role === 'commentary') return null;
+  if (props.role === 'user' || props.role === 'assistant' || props.role === 'commentary' || props.role === 'image') return null;
   const facts = itemFacts(props.item, props.role);
   if (facts.length === 0 && props.role !== 'unknown') return null;
   return (
@@ -806,6 +811,45 @@ function TypedItemFacts(props: { item: NativeSessionItemBuffer; role: ThreadItem
       ) : null}
       {props.role === 'unknown' || props.role === 'error' ? <pre>{safePayloadJson(props.item.payload)}</pre> : null}
     </details>
+  );
+}
+
+function GeneratedImageItem(props: {
+  item: NativeSessionItemBuffer;
+  language: SessionUiLanguage;
+  onOpenResource?: (resource: ConversationResource, target: ConversationOpenTarget, location?: ConversationFileLocation) => void | Promise<void>;
+  onLoadResourcePreview?: (resource: ConversationResource) => Promise<ConversationResourcePreview>;
+  onVisibleContentChange?: () => void;
+}) {
+  if (props.item.status !== 'completed') {
+    return (
+      <div className="session-generated-image-progress" role="status">
+        <span className="session-thinking-indicator">{props.language === 'zh-CN' ? '正在生成图片' : 'Generating image'}</span>
+      </div>
+    );
+  }
+  const images = props.item.resources.filter(isImageResource);
+  if (images.length === 0) {
+    return (
+      <div className="session-generated-image-unavailable" role="status">
+        {props.language === 'zh-CN' ? '生成图片文件不可用' : 'Generated image file unavailable'}
+      </div>
+    );
+  }
+  return (
+    <div className="session-generated-image-list">
+      {images.map((resource, index) => (
+        <ConversationGeneratedImage
+          key={resource.id}
+          resource={resource}
+          label={images.length > 1 ? `${copy[props.language].image} ${index + 1}` : copy[props.language].image}
+          language={props.language}
+          onOpenResource={props.onOpenResource}
+          onLoadResourcePreview={props.onLoadResourcePreview}
+          onVisibleContentChange={props.onVisibleContentChange}
+        />
+      ))}
+    </div>
   );
 }
 

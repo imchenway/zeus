@@ -4059,6 +4059,91 @@
   }
 }
 
+.session-codex-parity-v1 .session-generated-image-list {
+  display: grid;
+  gap: 12px;
+  inline-size: 100%;
+  min-inline-size: 0;
+}
+
+.session-codex-parity-v1 .session-generated-image {
+  appearance: none;
+  background: var(--session-code);
+  border: 1px solid var(--session-line-soft);
+  border-radius: 10px;
+  color: var(--session-text-muted);
+  display: block;
+  inline-size: 100%;
+  max-inline-size: 720px;
+  min-block-size: 160px;
+  overflow: hidden;
+  padding: 0;
+  position: relative;
+  text-align: start;
+}
+
+.session-codex-parity-v1 .session-generated-image:hover,
+.session-codex-parity-v1 .session-generated-image:focus-visible {
+  border-color: var(--session-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--session-accent) 13%, transparent);
+  outline: none;
+}
+
+.session-codex-parity-v1 .session-generated-image[data-error='true'] {
+  border-color: color-mix(in srgb, var(--session-danger) 40%, var(--session-line));
+}
+
+.session-codex-parity-v1 .session-generated-image > img {
+  block-size: auto;
+  display: block;
+  inline-size: 100%;
+  max-block-size: min(62vh, 720px);
+  object-fit: contain;
+}
+
+.session-codex-parity-v1 .session-generated-image-placeholder,
+.session-codex-parity-v1 .session-generated-image-progress,
+.session-codex-parity-v1 .session-generated-image-unavailable {
+  align-items: center;
+  display: flex;
+  min-block-size: 160px;
+  padding: 18px;
+}
+
+.session-codex-parity-v1 .session-generated-image-placeholder {
+  gap: 9px;
+  justify-content: center;
+}
+
+.session-codex-parity-v1 .session-generated-image-placeholder > svg {
+  block-size: 22px;
+  flex: 0 0 auto;
+  inline-size: 22px;
+}
+
+.session-codex-parity-v1 .session-generated-image-progress,
+.session-codex-parity-v1 .session-generated-image-unavailable {
+  border: 1px dashed var(--session-line);
+  border-radius: 10px;
+  color: var(--session-text-muted);
+  inline-size: 100%;
+  justify-content: center;
+  max-inline-size: 720px;
+}
+
+.session-codex-parity-v1 .session-generated-image-unavailable {
+  border-color: color-mix(in srgb, var(--session-danger) 36%, var(--session-line));
+}
+
+@media (max-width: 559px) {
+  .session-codex-parity-v1 .session-generated-image,
+  .session-codex-parity-v1 .session-generated-image-progress,
+  .session-codex-parity-v1 .session-generated-image-unavailable {
+    max-inline-size: 100%;
+    min-block-size: 128px;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .session-codex-parity-v1,
   .session-codex-parity-v1 * {

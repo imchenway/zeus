@@ -86,6 +86,17 @@ export function ConversationMarkdownImage(
   return <ConversationImagePreview {...props} className="session-markdown-image" placeholderClassName="session-markdown-image-placeholder" />;
 }
 
+export function ConversationGeneratedImage(
+  props: ConversationResourceInteraction & {
+    resource: ConversationResource;
+    label: string;
+    language: SessionUiLanguage;
+    onVisibleContentChange?: () => void;
+  },
+) {
+  return <ConversationImagePreview {...props} className="session-generated-image" placeholderClassName="session-generated-image-placeholder" />;
+}
+
 function ConversationImagePreview(
   props: ConversationResourceInteraction & {
     resource: ConversationResource;
@@ -94,6 +105,7 @@ function ConversationImagePreview(
     className: string;
     placeholderClassName: string;
     onPreviewFailure?: (message: string) => void;
+    onVisibleContentChange?: () => void;
   },
 ) {
   const rootRef = useRef<HTMLButtonElement | null>(null);
@@ -106,11 +118,17 @@ function ConversationImagePreview(
   const languageRef = useRef(props.language);
   const loadPreviewRef = useRef(props.onLoadResourcePreview);
   const previewFailureRef = useRef(props.onPreviewFailure);
+  const visibleContentChangeRef = useRef(props.onVisibleContentChange);
   const failureReportedRef = useRef(false);
   resourceRef.current = props.resource;
   languageRef.current = props.language;
   loadPreviewRef.current = props.onLoadResourcePreview;
   previewFailureRef.current = props.onPreviewFailure;
+  visibleContentChangeRef.current = props.onVisibleContentChange;
+
+  useLayoutEffect(() => {
+    visibleContentChangeRef.current?.();
+  }, [error, preview]);
 
   useEffect(() => {
     const root = rootRef.current;

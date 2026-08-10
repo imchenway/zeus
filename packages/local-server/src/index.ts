@@ -176,7 +176,7 @@ import {
 import { createCodexNativeConversationCoordinator } from './codexNativeConversationCoordinator.js';
 import { createCodexUsageService } from './codexUsageService.js';
 import { chooseNativeUserMessageContent, resolveNativeUserMessageSubmission } from './codexNativeUserMessageProjection.js';
-import { normalizeConversationResources, toConversationResource, toConversationResourceOpenIntent } from './conversationResources.js';
+import { normalizeConversationResources, sanitizeConversationItemPayload, toConversationResource, toConversationResourceOpenIntent } from './conversationResources.js';
 import { changeSetErrorStatus, createTurnChangeSetService, errorCode as turnChangeSetErrorCode, projectHistoricalTurnChangeSet } from './turnChangeSets.js';
 import { createCommandCenter } from './commandCenter.js';
 import { migrateLegacyCodexThreads } from './legacyCodexThreadMigration.js';
@@ -2178,6 +2178,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   const browserAttachmentRoot = prepareTaskAttachmentRoot(options.browserAttachmentRoot ?? dataLayout.browserComments);
   const conversationAttachmentRoot = prepareTaskAttachmentRoot(options.conversationAttachmentRoot ?? dataLayout.conversationAttachments);
   const trustedConversationAttachmentRoots = [taskAttachmentRoot, browserAttachmentRoot, conversationAttachmentRoot].filter((root): root is string => Boolean(root));
+  const generatedImageRoot = codexHome ? join(codexHome, 'generated_images') : undefined;
   let conversationResourceBackfillCount = 0;
   for (const conversation of conversations.listNativeBoundRecords()) {
     const project = projects.getById(conversation.projectId);
@@ -2201,6 +2202,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         payload: submission ? { ...payload, attachments: parseJsonObject(submission.inputJson).attachments } : payload,
         text: item.textContent,
         trustedAttachmentRoots: trustedConversationAttachmentRoots,
+        generatedImageRoot,
         now: item.updatedAt,
       });
       const existing = existingResourcesByItem.get(item.id) ?? [];
@@ -2264,6 +2266,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       usage: codexUsageService,
       browserAutomation: options.browserAutomation,
       trustedAttachmentRoots: trustedConversationAttachmentRoots,
+      generatedImageRoot,
       getProjectRoot: (projectId) => projects.getById(projectId)?.localPath ?? null,
       ensureExecutionContext: ensureNativeConversationExecutionContext,
       getConcurrency: (projectId) => {
@@ -13195,7 +13198,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         status: item.status,
         phase: item.phase,
         text: item.textContent,
-        payload: parseJsonObject(item.payloadJson),
+        payload: sanitizeConversationItemPayload(parseJsonObject(item.payloadJson)),
         resources: resourcesByItemId.get(item.id) ?? [],
         startedAt: item.startedAt,
         completedAt: item.completedAt,
