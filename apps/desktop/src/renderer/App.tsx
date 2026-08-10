@@ -2028,14 +2028,15 @@ const languageCopy = {
         exported: (target: string) => `最近导出：${target}，密钥已脱敏`,
         imported: (target: string, changed: string) => `最近导入：${target}，${changed}`,
         noSettingsChanged: '无设置变更',
-        archivedConversationsAria: '已归档任务会话',
+        archivedConversationsAria: '已归档会话',
         archivedConversationsTitle: '已归档会话',
-        archivedConversationsDescription: '归档会话保留消息和任务关联；恢复后会回到原项目与原任务。',
+        archivedConversationsDescription: '归档会话保留消息和原有归属；恢复后会回到原项目或原任务。',
         loadingArchivedConversations: '正在读取已归档会话…',
         archivedConversationsError: '读取已归档会话失败。',
         retryArchivedConversations: '重试',
-        emptyArchivedConversations: '暂无已归档任务会话。',
+        emptyArchivedConversations: '暂无已归档会话。',
         archivedConversationContext: (project: string, taskCode: string) => `${project} · ${taskCode}`,
+        archivedProjectConversationContext: (project: string) => `${project} · 项目对话`,
         restoreArchivedConversation: '恢复',
         restoringArchivedConversation: '正在恢复…',
       },
@@ -3481,14 +3482,15 @@ const languageCopy = {
         exported: (target: string) => `Last export: ${target}; secrets redacted`,
         imported: (target: string, changed: string) => `Last import: ${target}; ${changed}`,
         noSettingsChanged: 'No settings changed',
-        archivedConversationsAria: 'Archived task conversations',
+        archivedConversationsAria: 'Archived conversations',
         archivedConversationsTitle: 'Archived conversations',
-        archivedConversationsDescription: 'Archived conversations keep their messages and task links. Restoring returns them to the original project and task.',
+        archivedConversationsDescription: 'Archived conversations keep their messages and original ownership. Restoring returns them to the original project or task.',
         loadingArchivedConversations: 'Loading archived conversations…',
         archivedConversationsError: 'Failed to load archived conversations.',
         retryArchivedConversations: 'Retry',
-        emptyArchivedConversations: 'No archived task conversations.',
+        emptyArchivedConversations: 'No archived conversations.',
         archivedConversationContext: (project: string, taskCode: string) => `${project} · ${taskCode}`,
+        archivedProjectConversationContext: (project: string) => `${project} · Project conversation`,
         restoreArchivedConversation: 'Unarchive',
         restoringArchivedConversation: 'Restoring…',
       },
@@ -4714,6 +4716,7 @@ const languageCopy = {
         retryArchivedConversations: string;
         emptyArchivedConversations: string;
         archivedConversationContext: (project: string, taskCode: string) => string;
+        archivedProjectConversationContext: (project: string) => string;
         restoreArchivedConversation: string;
         restoringArchivedConversation: string;
       };
@@ -8736,12 +8739,13 @@ export function App(props: {
     }
   }
 
-  async function archiveTaskConversation(conversation: NativeConversationChoice): Promise<void> {
+  async function archiveConversation(conversation: NativeConversationChoice): Promise<void> {
     const client = props.nativeConversationClient;
-    if (!client || !conversation.taskId) return;
+    if (!client) return;
     try {
       await client.archiveNativeConversation(conversation.projectId, conversation.id);
-      nativeConversationChoiceLoadCoordinator.forget(conversation.taskId, conversation.id);
+      if (conversation.taskId) nativeConversationChoiceLoadCoordinator.forget(conversation.taskId, conversation.id);
+      else nativeProjectConversationChoiceLoadCoordinator.forget(conversation.projectId, conversation.id);
       if (selectedNativeConversationIdRef.current === conversation.id) {
         selectedNativeConversationIdRef.current = null;
         setSelectedNativeConversationId(null);
@@ -8752,7 +8756,7 @@ export function App(props: {
         delete next[conversation.id];
         return next;
       });
-      await Promise.all([refreshNativeConversationChoices(conversation.taskId), refreshArchivedConversations()]);
+      await Promise.all([conversation.taskId ? refreshNativeConversationChoices(conversation.taskId) : refreshNativeProjectConversationChoices(conversation.projectId), refreshArchivedConversations()]);
     } catch (error) {
       recordLocalError('conversation-archive', error);
       throw error;
@@ -11879,7 +11883,7 @@ export function App(props: {
                     prepareNativeConversationForTask(taskId);
                     setSessionSourceRailOpen(false);
                   }}
-                  onArchiveConversation={archiveTaskConversation}
+                  onArchiveConversation={archiveConversation}
                   language={appShellSettings.appLanguage}
                 />
               </aside>
@@ -13471,7 +13475,11 @@ export function App(props: {
                               <span className="settings-archived-conversation-item" key={conversation.id}>
                                 <span className="settings-archived-conversation-copy">
                                   <strong>{task?.title ?? conversation.title}</strong>
-                                  <small>{settingsWorkspaceCopy.data.archivedConversationContext(project?.name ?? conversation.projectId, task?.taskCode ?? conversation.taskId ?? conversation.id)}</small>
+                                  <small>
+                                    {task
+                                      ? settingsWorkspaceCopy.data.archivedConversationContext(project?.name ?? conversation.projectId, task.taskCode ?? task.id)
+                                      : settingsWorkspaceCopy.data.archivedProjectConversationContext(project?.name ?? conversation.projectId)}
+                                  </small>
                                   <small>{formatArchivedConversationDate(conversation.updatedAt, appShellSettings.appLanguage)}</small>
                                 </span>
                                 <button type="button" disabled={restoringArchivedConversationId !== null} onClick={() => void restoreTaskConversation(conversation)}>

@@ -129,7 +129,7 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
               {conversations.map(({ conversation, displayTitle }) => {
                 const current = conversation.id === props.selectedConversationId;
                 const runtimeState = props.conversationStates?.[conversation.id] ?? conversationTreeRuntimeStateFromConversation(conversation);
-                const archiveAvailable = conversation.taskId !== null && conversationCanBeArchived(runtimeState);
+                const archiveAvailable = conversationCanBeArchived(runtimeState);
                 const archiveUnavailableReason = runtimeState === 'legacy_readonly' ? copy.archiveLegacyUnavailable : copy.archiveUnavailable;
                 const menuOpen = openMenuConversationId === conversation.id;
                 const archiving = archivingConversationId === conversation.id;
@@ -147,7 +147,7 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
                       <strong title={displayTitle}>{displayTitle}</strong>
                       <ConversationRowState conversation={conversation} runtimeState={runtimeState} current={current} language={props.language} />
                     </button>
-                    {conversation.taskId !== null && props.onArchiveConversation ? (
+                    {props.onArchiveConversation ? (
                       <span className={`session-conversation-row-actions${menuOpen ? ' is-open' : ''}`}>
                         <button
                           ref={(element) => {

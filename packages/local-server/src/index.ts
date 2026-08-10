@@ -4147,7 +4147,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
 
   server.get('/api/conversations/archived', async () => {
     const contextByProjectId = new Map<string, NativeConversationChoiceProjectionContext>();
-    const choices = listArchivedTaskConversationHistory().map((conversation) => {
+    const choices = listArchivedConversationHistory().map((conversation) => {
       const context = contextByProjectId.get(conversation.projectId) ?? buildNativeConversationChoiceProjectionContext(conversation.projectId);
       contextByProjectId.set(conversation.projectId, context);
       return toNativeConversationChoice(conversation, context);
@@ -12410,10 +12410,10 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       .sort(compareConversationStageUpdatedDesc);
   }
 
-  function listArchivedTaskConversationHistory(): ZeusConversationRecord[] {
+  function listArchivedConversationHistory(): ZeusConversationRecord[] {
     const history: ZeusConversationRecord[] = [];
     for (const project of [...projects.list(), ...projects.listArchived()]) {
-      history.push(...conversations.listRecordsByProject(project.id, { archived: true }).filter((conversation) => conversation.taskId !== null));
+      history.push(...conversations.listRecordsByProject(project.id, { archived: true }).filter((conversation) => conversation.taskId !== null || isProjectConversationHistoryItem(conversation)));
     }
     return history.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
   }
@@ -12423,7 +12423,11 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   }
 
   function isVisibleProjectConversation(conversation: ZeusConversationRecord): boolean {
-    if (conversation.taskId !== null || conversation.archived) return false;
+    return !conversation.archived && isProjectConversationHistoryItem(conversation);
+  }
+
+  function isProjectConversationHistoryItem(conversation: ZeusConversationRecord): boolean {
+    if (conversation.taskId !== null) return false;
     const firstSubmission = conversationSubmissions.getFirstByConversation(conversation.id);
     const context = firstSubmission ? parseJsonObject(firstSubmission.inputJson).context : undefined;
     return !isNativeApiRecord(context) || context.ephemeral !== true;
