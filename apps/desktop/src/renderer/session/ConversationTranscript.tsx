@@ -530,6 +530,8 @@ export function projectTranscriptTurnRows(rows: readonly TranscriptRow[]): Trans
 function isTurnProcessRow(row: TranscriptRow): boolean {
   if (row.kind === 'answered_request') return false;
   if (row.kind === 'activity') return true;
+  // 计划是交给用户审核的最终产物，必须独立展示，不能折叠进“已处理”过程。
+  if (row.item.type === 'plan') return false;
   return itemRole(row.item) !== 'user' && !isFinalAnswerItem(row.item);
 }
 

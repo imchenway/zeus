@@ -197,6 +197,7 @@ export interface ConnectedSessionWorkspaceProps {
   onStartConversation?: SessionWorkspaceActions['onStartConversation'];
   onStartProjectConversation?: SessionWorkspaceActions['onStartProjectConversation'];
   onOpenTaskDetail?: SessionWorkspaceActions['onOpenTaskDetail'];
+  quickActionsSuppressed?: boolean;
   readOnlyGate?: SessionReadOnlyGate;
   onLoadTaskWorkspaces?: SessionWorkspaceActions['onLoadTaskWorkspaces'];
   onOpenTaskGitReview?: SessionWorkspaceActions['onOpenTaskGitReview'];
@@ -247,6 +248,7 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
       choices={props.choices}
       capabilities={capabilities}
       suppressComposer={Boolean(props.readOnlyGate)}
+      quickActionsSuppressed={props.quickActionsSuppressed}
       readOnlyGate={props.readOnlyGate}
       actions={{
         ...createConnectedSessionActions({ controller, state, onChooseAttachments: props.onChooseAttachments }),
@@ -799,6 +801,7 @@ export interface SessionWorkspaceProps {
   tasks?: SessionWorkspaceTask[];
   choices?: NativeConversationChoice[];
   suppressComposer?: boolean;
+  quickActionsSuppressed?: boolean;
   readOnlyGate?: SessionReadOnlyGate;
   capabilities?: CodexConversationCapabilities | null;
   choicesKnown?: boolean;
@@ -1587,6 +1590,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                 state={props.state}
                 task={props.task}
                 forceCollapsed={contextOpen || contextMounted}
+                suppressed={props.quickActionsSuppressed}
                 onLoadTaskWorkspaces={actions.onLoadTaskWorkspaces}
                 onOpenTaskDetail={actions.onOpenTaskDetail}
                 onOpenGitReview={actions.onOpenTaskGitReview}

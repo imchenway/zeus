@@ -88,7 +88,8 @@
   inset-block-start: calc(100% + 8px);
   inset-inline-end: 0;
   max-block-size: min(620px, calc(100vh - 86px));
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   padding: 14px;
   position: absolute;
   text-align: start;
@@ -98,13 +99,17 @@
 /* ZEUS-0160：宽屏空闲区直接承载环境卡；右侧工作面或窄窗口继续使用顶部按钮。 */
 .session-codex-parity-v1 .session-quick-actions-card[data-presentation='persistent'] {
   inline-size: 300px;
-  inset-block-start: calc(100% + 14px);
-  max-block-size: calc(100vh - 92px);
+  inset: auto;
+  max-block-size: calc(100vh - 90px);
+  position: static;
 }
 
 .session-codex-parity-v1 .session-quick-actions-anchor[data-presentation='persistent'] {
-  block-size: 30px;
-  inline-size: 0;
+  block-size: auto;
+  inline-size: 300px;
+  inset-block-start: calc(100% + 16px);
+  inset-inline-end: 16px;
+  position: absolute;
 }
 
 .session-codex-parity-v1 .session-quick-actions-card > header,
@@ -254,6 +259,7 @@
   display: flex;
   gap: 9px;
   inline-size: 100%;
+  min-inline-size: 0;
   min-block-size: 34px;
   padding: 5px 8px;
   text-align: start;
@@ -272,6 +278,9 @@
 
 .session-codex-parity-v1 .session-quick-actions-sources li span > span,
 .session-codex-parity-v1 .session-quick-actions-sources li button > span {
+  flex: 1 1 auto;
+  max-inline-size: 100%;
+  min-inline-size: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
