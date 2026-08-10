@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { realpathSync, statSync } from 'node:fs';
 import { dirname, extname, isAbsolute, relative, resolve } from 'node:path';
 import type { CodexAppServerEvent, CodexAppServerManager, CodexCommandApprovalDecision, CodexSandboxPolicy, CodexServerRequestResponse, CodexThreadSnapshot } from '@zeus/ai-runtime';
+import { calculateCacheHitRate, type NativeTokenUsageSnapshot, type TokenUsageBreakdown } from '@zeus/shared';
 import {
   type CodexMcpServerStartupState,
   type ConversationCollaborationMode,
@@ -56,6 +57,7 @@ import type { BrowserAutomationPort } from './browserAutomation.js';
 import { zeusBrowserDynamicTools } from './browserDynamicTools.js';
 import { normalizeConversationResources, toConversationResource } from './conversationResources.js';
 import type { TurnChangeSetService } from './turnChangeSets.js';
+import type { CodexUsageService } from './codexUsageService.js';
 
 interface ConversationDispatchContext {
   projectId: string;
@@ -118,6 +120,7 @@ export interface CreateCodexNativeConversationCoordinatorOptions {
   planActions?: ConversationPlanActionRepository;
   receipts?: ProviderEventReceiptRepository;
   settings: SettingRepository;
+  usage?: CodexUsageService;
   getConcurrency: (projectId: string) => { project: number; global: number; maxPerProject: number; maxGlobal: number };
   broadcast: (type: string, payload: Record<string, unknown>) => void;
   now?: () => string;
@@ -3224,21 +3227,60 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       broadcast = { type: 'conversation.provider.settings.updated', payload: { conversationId: conversation.id, ...snapshot } };
     } else if (event.method === 'thread/tokenUsage/updated' && conversation) {
       const tokenUsage = isRecord(params.tokenUsage) ? params.tokenUsage : params;
-      const usage = isRecord(tokenUsage.total) ? tokenUsage.total : tokenUsage;
-      const snapshot = {
-        generationId: event.generationId,
-        sequence: event.sequence,
-        inputTokens: requireNumber(usage.inputTokens, 'inputTokens'),
-        outputTokens: requireNumber(usage.outputTokens, 'outputTokens'),
-        totalTokens: requireNumber(usage.totalTokens, 'totalTokens'),
-      };
+      const total = tokenUsageBreakdown(isRecord(tokenUsage.total) ? tokenUsage.total : tokenUsage);
+      const last = tokenUsageBreakdown(isRecord(tokenUsage.last) ? tokenUsage.last : tokenUsage);
+      const providerTurnId = requireString(providerTurnIdFrom(params), 'provider turn id');
+      const turn = options.turns.listByConversation(conversation.id).find((candidate) => candidate.providerTurnId === providerTurnId);
+      const submission = turn ? options.submissions.getById(turn.clientSubmissionId) : undefined;
+      let context: ConversationDispatchContext | null = null;
+      if (submission) {
+        try {
+          context = contextFromSubmission(submission);
+        } catch {
+          context = null;
+        }
+      }
+      const settings = options.conversations.getProviderSettingsSnapshot(conversation.id);
+      const model = context?.model ?? settings?.model ?? conversation.providerModel;
+      if (!model) throw coordinatorError('ZEUS_NATIVE_PROVIDER_EVENT_INVALID', 'Token usage event cannot resolve its model.');
+      const modelContextWindow = tokenUsage.modelContextWindow === null || tokenUsage.modelContextWindow === undefined ? null : requireNumber(tokenUsage.modelContextWindow, 'modelContextWindow');
+      const snapshot: NativeTokenUsageSnapshot = options.usage
+        ? await options.usage.recordTurn({
+            generationId: event.generationId,
+            sequence: event.sequence,
+            projectId: conversation.projectId,
+            conversationId: conversation.id,
+            providerThreadId: requireString(conversation.providerThreadId, 'provider thread id'),
+            providerTurnId,
+            model,
+            serviceTier: context?.serviceTier ?? settings?.serviceTier ?? null,
+            total,
+            last,
+            modelContextWindow,
+            occurredAt: event.receivedAt,
+          })
+        : {
+            generationId: event.generationId,
+            sequence: event.sequence,
+            total,
+            last,
+            modelContextWindow,
+            cacheHitRate: calculateCacheHitRate(total),
+            estimatedCredits: null,
+            apiEquivalentUsd: null,
+            cacheSavingsUsd: null,
+            priceCoverage: null,
+            pricingCatalogDate: null,
+            pricingSourceUrls: [],
+            historyComplete: false,
+          };
       options.conversations.upsertProviderTokenUsageSnapshot(conversation.id, snapshot);
       broadcast = { type: 'conversation.provider.token_usage.updated', payload: { conversationId: conversation.id, ...snapshot } };
     } else if (event.method === 'account/rateLimits/updated') {
-      const value = isRecord(params.rateLimits) ? params.rateLimits : params;
-      const snapshot = { generationId: event.generationId, sequence: event.sequence, value };
-      options.settings.upsertCodexRateLimitsSnapshot(snapshot);
-      broadcast = { type: 'codex.rate_limits.updated', payload: snapshot };
+      // 官方协议明确这是稀疏更新；只把它当作重读信号，不用不完整包覆盖快照。
+      options.usage?.handleSparseRateLimitUpdate();
+    } else if (event.method === 'account/updated') {
+      options.usage?.handleAccountChanged();
     } else if (event.method === 'mcpServer/startupStatus/updated') {
       const legacyStatuses = isRecord(params.statuses) ? normalizeMcpStartupStatusMap(params.statuses) : null;
       const currentStatus = legacyStatuses ? null : normalizeSingleMcpStartupStatus(params);
@@ -4651,6 +4693,22 @@ function requireString(value: unknown, label: string): string {
 
 function requireNumber(value: unknown, label: string): number {
   if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) throw coordinatorError('ZEUS_NATIVE_PROVIDER_EVENT_INVALID', `Invalid ${label}.`);
+  return value;
+}
+
+function tokenUsageBreakdown(value: Record<string, unknown>): TokenUsageBreakdown {
+  return {
+    totalTokens: requireSafeInteger(value.totalTokens, 'totalTokens'),
+    inputTokens: requireSafeInteger(value.inputTokens, 'inputTokens'),
+    cachedInputTokens: requireSafeInteger(value.cachedInputTokens ?? 0, 'cachedInputTokens'),
+    cacheWriteInputTokens: requireSafeInteger(value.cacheWriteInputTokens ?? 0, 'cacheWriteInputTokens'),
+    outputTokens: requireSafeInteger(value.outputTokens, 'outputTokens'),
+    reasoningOutputTokens: requireSafeInteger(value.reasoningOutputTokens ?? 0, 'reasoningOutputTokens'),
+  };
+}
+
+function requireSafeInteger(value: unknown, label: string): number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) throw coordinatorError('ZEUS_NATIVE_PROVIDER_EVENT_INVALID', `Invalid ${label}.`);
   return value;
 }
 

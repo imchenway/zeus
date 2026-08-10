@@ -846,6 +846,16 @@ const labels = {
     runtimeDetails: '运行时详情',
     model: '模型',
     usage: 'Token 用量',
+    cacheHitRate: '缓存 Token 命中率',
+    cacheRead: '缓存读取',
+    cacheWrite: '缓存写入',
+    reasoningOutput: '推理输出',
+    contextUsage: '上下文占用',
+    estimatedCredits: '估算 Credits',
+    apiEquivalentUsd: 'API 等价美元',
+    priceCoverage: '费用覆盖率',
+    priceSource: '价格来源',
+    collectionNotice: '该指标自用量采集启用后开始记录',
     cwd: '当前目录',
     branch: '当前分支',
     sessionId: '会话 ID',
@@ -894,6 +904,16 @@ const labels = {
     runtimeDetails: 'Runtime details',
     model: 'Model',
     usage: 'Token usage',
+    cacheHitRate: 'Cached-token hit rate',
+    cacheRead: 'Cache reads',
+    cacheWrite: 'Cache writes',
+    reasoningOutput: 'Reasoning output',
+    contextUsage: 'Context usage',
+    estimatedCredits: 'Estimated Credits',
+    apiEquivalentUsd: 'API-equivalent USD',
+    priceCoverage: 'Price coverage',
+    priceSource: 'Price source',
+    collectionNotice: 'This metric is recorded only since usage collection was enabled',
     cwd: 'Current directory',
     branch: 'Current branch',
     sessionId: 'Session ID',
@@ -2253,9 +2273,8 @@ function SessionRuntimeDetails(props: { state: NativeSessionState; conversation:
         : 'Standard'
       : (props.capabilities?.models.flatMap((candidate) => candidate.serviceTiers).find((tier) => tier.id === rawServiceTier)?.name ?? rawServiceTier);
   const usage = props.state.tokenUsage;
-  const rateLimits = props.state.rateLimits?.value ?? null;
   const mcpStartup = props.state.mcpStartup?.value ?? null;
-  const warning = runtimeValueNeedsAttention(rateLimits) || runtimeValueNeedsAttention(mcpStartup);
+  const warning = runtimeValueNeedsAttention(mcpStartup);
   const modelLabel = [model, effort, serviceTier].join(' · ');
   const executionContext = props.state.snapshot?.executionContext;
   const executionCwd = executionContext?.cwd ?? copy.unavailable;
@@ -2267,39 +2286,11 @@ function SessionRuntimeDetails(props: { state: NativeSessionState; conversation:
     <details className="session-runtime-details" data-severity={warning ? 'warning' : 'ready'} aria-label={copy.runtimeDetails}>
       <summary>
         <span className="session-runtime-summary-primary">
-          {modelLabel ? <span>{modelLabel}</span> : null}
-          {usage ? <TokenUsageValue count={usage.totalTokens} label="tokens" language={props.language} /> : null}
-          {rateLimits ? <span>{runtimeValueHeadline(rateLimits)}</span> : null}
-          {mcpStartup ? <span>{runtimeValueHeadline(mcpStartup)}</span> : null}
-          <span className="session-runtime-severity">
-            <span aria-hidden="true">{warning ? '!' : '·'}</span>
-            {warning ? copy.runtimeAttention : copy.runtimeReady}
+          {usage ? <TokenUsageValue count={usage.total.totalTokens} label="tokens" language={props.language} /> : <span>{copy.unavailable}</span>}
+          <span>
+            {copy.cacheHitRate} {formatPercentage(usage?.cacheHitRate ?? null, props.language)}
           </span>
         </span>
-        {executionContext ? (
-          <small className="session-runtime-context-row session-runtime-execution-context">
-            <span title={executionCwd}>
-              <b>{copy.cwd}</b>
-              <code>{executionCwd}</code>
-            </span>
-            <span title={executionBranch}>
-              <b>{copy.branch}</b>
-              <code>{executionBranch}</code>
-            </span>
-          </small>
-        ) : null}
-        {nativeSession?.id || nativeSession?.path || props.state.providerThreadId || props.conversation?.providerThreadId ? (
-          <small className="session-runtime-context-row session-runtime-native-context">
-            <span title={nativeSessionId}>
-              <b>{copy.sessionId}</b>
-              <code>{nativeSessionId}</code>
-            </span>
-            <span title={nativeSessionPath}>
-              <b>{copy.jsonlPath}</b>
-              <code>{nativeSessionPath}</code>
-            </span>
-          </small>
-        ) : null}
       </summary>
       <dl>
         {modelLabel ? (
@@ -2309,20 +2300,48 @@ function SessionRuntimeDetails(props: { state: NativeSessionState; conversation:
           </div>
         ) : null}
         {usage ? (
-          <div>
-            <dt>{copy.usage}</dt>
-            <dd>
-              <TokenUsageValue count={usage.totalTokens} label="tokens" language={props.language} /> · <TokenUsageValue count={usage.inputTokens} label="in" language={props.language} /> ·{' '}
-              <TokenUsageValue count={usage.outputTokens} label="out" language={props.language} />
-            </dd>
-          </div>
+          <>
+            <RuntimeUsageRow label={copy.usage} value={<TokenUsageValue count={usage.total.totalTokens} label="tokens" language={props.language} />} />
+            <RuntimeUsageRow label={props.language === 'zh-CN' ? '输入' : 'Input'} value={<TokenUsageValue count={usage.total.inputTokens} label="in" language={props.language} />} />
+            <RuntimeUsageRow label={copy.cacheRead} value={<TokenUsageValue count={usage.total.cachedInputTokens} label="tokens" language={props.language} />} />
+            <RuntimeUsageRow label={copy.cacheWrite} value={<TokenUsageValue count={usage.total.cacheWriteInputTokens} label="tokens" language={props.language} />} />
+            <RuntimeUsageRow label={props.language === 'zh-CN' ? '输出' : 'Output'} value={<TokenUsageValue count={usage.total.outputTokens} label="out" language={props.language} />} />
+            <RuntimeUsageRow label={copy.reasoningOutput} value={<TokenUsageValue count={usage.total.reasoningOutputTokens} label="tokens" language={props.language} />} />
+            <RuntimeUsageRow label={copy.cacheHitRate} value={formatPercentage(usage.cacheHitRate, props.language)} />
+            <RuntimeUsageRow
+              label={copy.contextUsage}
+              value={
+                usage.modelContextWindow
+                  ? `${formatPercentage(usage.last.inputTokens / usage.modelContextWindow, props.language)} · ${formatTokenCount(usage.last.inputTokens, props.language).exact} / ${formatTokenCount(usage.modelContextWindow, props.language).exact}`
+                  : copy.unavailable
+              }
+            />
+            <RuntimeUsageRow label={copy.estimatedCredits} value={formatEstimatedCost(usage.estimatedCredits, 'Credits', props.language)} />
+            <RuntimeUsageRow label={copy.apiEquivalentUsd} value={formatEstimatedCost(usage.apiEquivalentUsd, 'USD', props.language)} />
+            <RuntimeUsageRow label={copy.priceCoverage} value={formatPercentage(usage.priceCoverage, props.language)} />
+            <RuntimeUsageRow
+              label={copy.priceSource}
+              value={
+                usage.pricingCatalogDate ? (
+                  usage.pricingSourceUrls[0] ? (
+                    <a href={usage.pricingSourceUrls[0]} target="_blank" rel="noreferrer">
+                      {usage.pricingCatalogDate}
+                    </a>
+                  ) : (
+                    usage.pricingCatalogDate
+                  )
+                ) : (
+                  copy.unavailable
+                )
+              }
+            />
+            {!usage.historyComplete ? <RuntimeUsageRow label={props.language === 'zh-CN' ? '历史口径' : 'History'} value={copy.collectionNotice} /> : null}
+          </>
         ) : null}
-        {rateLimits ? (
-          <div>
-            <dt>{copy.rateLimits}</dt>
-            <dd>{runtimeValueSummary(rateLimits)}</dd>
-          </div>
-        ) : null}
+        {executionContext ? <RuntimeUsageRow label={copy.cwd} value={<code title={executionCwd}>{executionCwd}</code>} /> : null}
+        {executionContext ? <RuntimeUsageRow label={copy.branch} value={<code title={executionBranch}>{executionBranch}</code>} /> : null}
+        {nativeSession?.id || props.state.providerThreadId || props.conversation?.providerThreadId ? <RuntimeUsageRow label={copy.sessionId} value={<code title={nativeSessionId}>{nativeSessionId}</code>} /> : null}
+        {nativeSession?.path ? <RuntimeUsageRow label={copy.jsonlPath} value={<code title={nativeSessionPath}>{nativeSessionPath}</code>} /> : null}
         {mcpStartup ? (
           <div>
             <dt>{copy.mcpStartup}</dt>
@@ -2334,16 +2353,32 @@ function SessionRuntimeDetails(props: { state: NativeSessionState; conversation:
   );
 }
 
+function RuntimeUsageRow(props: { label: string; value: ReactNode }) {
+  return (
+    <div>
+      <dt>{props.label}</dt>
+      <dd>{props.value}</dd>
+    </div>
+  );
+}
+
+function formatPercentage(value: number | null, language: SessionUiLanguage): string {
+  if (value === null || !Number.isFinite(value)) return labels[language].unavailable;
+  return new Intl.NumberFormat(language, { style: 'percent', maximumFractionDigits: 1 }).format(Math.max(0, value));
+}
+
+function formatEstimatedCost(value: number | null, unit: 'Credits' | 'USD', language: SessionUiLanguage): string {
+  if (value === null || !Number.isFinite(value)) return labels[language].unavailable;
+  const formatted = new Intl.NumberFormat(language, { minimumFractionDigits: value > 0 && value < 0.01 ? 4 : 2, maximumFractionDigits: 6 }).format(value);
+  return unit === 'USD' ? `~$${formatted}` : `~${formatted} Credits`;
+}
+
 function runtimeValueNeedsAttention(value: unknown, key = ''): boolean {
   if (typeof value === 'number') return /remaining|available|balance/i.test(key) && value <= 0;
   if (typeof value === 'string') return /^(error|failed|degraded|unavailable|blocked|exhausted)$/i.test(value.trim());
   if (Array.isArray(value)) return value.some((entry) => runtimeValueNeedsAttention(entry, key));
   if (!value || typeof value !== 'object') return false;
   return Object.entries(value).some(([entryKey, entryValue]) => runtimeValueNeedsAttention(entryValue, entryKey));
-}
-
-function runtimeValueHeadline(value: Record<string, unknown>): string {
-  return runtimeValueFragments(value).slice(0, 2).join(' · ');
 }
 
 function runtimeValueSummary(value: Record<string, unknown>): string {

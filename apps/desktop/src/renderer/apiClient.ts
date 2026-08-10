@@ -46,6 +46,9 @@ import type {
   TaskPriority,
   TaskStatusFilter,
   TaskType,
+  CodexUsageAnalyticsSnapshot,
+  CodexUsageRange,
+  CodexUsageSummarySnapshot,
 } from '@zeus/shared';
 
 export type {
@@ -1446,6 +1449,8 @@ export interface DashboardClient {
   refreshTaskPushRepositoryRemote: (projectId: string, taskId: string, repositoryId: string) => Promise<CodexTaskRepositoryCapability>;
   loadCodexConversationCapabilities: (projectId: string) => Promise<CodexConversationCapabilities>;
   loadCodexAccount: () => Promise<CodexAccountSnapshot>;
+  loadCodexUsageSummary: () => Promise<CodexUsageSummarySnapshot>;
+  loadCodexUsageAnalytics: (input: { range: CodexUsageRange; projectId?: string; model?: string }) => Promise<CodexUsageAnalyticsSnapshot>;
   startCodexChatGptLogin: () => Promise<CodexChatGptLogin>;
   cancelCodexChatGptLogin: (loginId: string) => Promise<void>;
   startTaskModelPush: (taskId: string, input: StartTaskModelPushRequest) => Promise<NativeOperationAcceptance>;
@@ -1806,6 +1811,13 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
       }),
     loadCodexConversationCapabilities: (projectId) => request<CodexConversationCapabilities>(`/api/projects/${encodeURIComponent(projectId)}/codex-conversation-capabilities`),
     loadCodexAccount: () => request<CodexAccountSnapshot>('/api/codex/account'),
+    loadCodexUsageSummary: () => request<CodexUsageSummarySnapshot>('/api/codex/usage-summary'),
+    loadCodexUsageAnalytics: (input) => {
+      const query = new URLSearchParams({ range: input.range });
+      if (input.projectId) query.set('projectId', input.projectId);
+      if (input.model) query.set('model', input.model);
+      return request<CodexUsageAnalyticsSnapshot>(`/api/codex/usage-analytics?${query.toString()}`);
+    },
     startCodexChatGptLogin: () => request<CodexChatGptLogin>('/api/codex/account/login/chatgpt', { method: 'POST' }),
     cancelCodexChatGptLogin: async (loginId) => {
       await request<{ cancelled: true }>(`/api/codex/account/login/${encodeURIComponent(loginId)}/cancel`, { method: 'POST' });

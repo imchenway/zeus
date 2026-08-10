@@ -5,6 +5,8 @@ import { backup, DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import { nanoid } from 'nanoid';
 import initSqlJs, { type Database as SqlJsDatabase, type SqlJsStatic, type SqlValue as SqlJsValue } from 'sql.js';
 import {
+  type CodexUsageEstimate,
+  type TokenUsageBreakdown,
   type ConversationResourceKind,
   type ConversationResourcePresentation,
   isTaskManagementStatus,
@@ -732,9 +734,56 @@ export interface ConversationProviderSettingsSnapshot extends ProviderSequenceSn
 }
 
 export interface ConversationProviderTokenUsageSnapshot extends ProviderSequenceSnapshot {
-  inputTokens: number;
-  outputTokens: number;
-  totalTokens: number;
+  total: TokenUsageBreakdown;
+  last: TokenUsageBreakdown;
+  modelContextWindow: number | null;
+  cacheHitRate: number | null;
+  estimatedCredits: number | null;
+  apiEquivalentUsd: number | null;
+  cacheSavingsUsd: number | null;
+  priceCoverage: number | null;
+  pricingCatalogDate: string | null;
+  pricingSourceUrls: string[];
+  historyComplete: boolean;
+}
+
+export interface CodexUsageLedgerRecord {
+  id: string;
+  providerId: string;
+  accountScopeId: string;
+  projectId: string;
+  conversationId: string;
+  providerThreadId: string;
+  providerTurnId: string;
+  model: string;
+  serviceTier: string | null;
+  usage: TokenUsageBreakdown;
+  estimate: CodexUsageEstimate;
+  occurredAt: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface UpsertCodexUsageLedgerInput {
+  providerId: string;
+  accountScopeId: string;
+  projectId: string;
+  conversationId: string;
+  providerThreadId: string;
+  providerTurnId: string;
+  model: string;
+  serviceTier?: string | null;
+  usage: TokenUsageBreakdown;
+  estimate: CodexUsageEstimate;
+  occurredAt: string;
+}
+
+export interface ListCodexUsageLedgerInput {
+  accountScopeId?: string | null;
+  since?: string | null;
+  projectId?: string | null;
+  model?: string | null;
+  conversationId?: string | null;
 }
 
 export type ProviderVisibleJson = null | boolean | number | string | ProviderVisibleJson[] | { [key: string]: ProviderVisibleJson };
@@ -1391,6 +1440,7 @@ export async function createZeusDatabase(filePath: string): Promise<ZeusDatabase
     migrateTaskManagementStatus(zeusDb);
     migrateTaskTypesAndContents(zeusDb);
     migrateCodexNativeConversationSchema(zeusDb);
+    migrateCodexUsageLedgerSchema(zeusDb);
     migrateConversationStageSchema(zeusDb);
     migrateAgentRuntimeSchema(zeusDb);
     migrateTaskGitWorkspaceSchema(zeusDb);
@@ -2403,6 +2453,42 @@ function migrateCodexNativeConversationSchema(db: ZeusDatabase): void {
     migrationId: '20260727_0008_conversation_resources_and_turn_change_sets',
     description: '增加会话资源与执行轮次变更集持久化',
     checksumSource: 'conversation_resources,turn_change_sets,turn_change_files:resource_authority,turn_patch_undo_reapply:v1',
+  });
+}
+
+function migrateCodexUsageLedgerSchema(db: ZeusDatabase): void {
+  db.execute(`
+    CREATE TABLE IF NOT EXISTS codex_usage_ledger (
+      id TEXT PRIMARY KEY,
+      provider_id TEXT NOT NULL,
+      account_scope_id TEXT NOT NULL,
+      project_id TEXT NOT NULL,
+      conversation_id TEXT NOT NULL,
+      provider_thread_id TEXT NOT NULL,
+      provider_turn_id TEXT NOT NULL,
+      model TEXT NOT NULL,
+      service_tier TEXT,
+      total_tokens INTEGER NOT NULL,
+      input_tokens INTEGER NOT NULL,
+      cached_input_tokens INTEGER NOT NULL,
+      cache_write_input_tokens INTEGER NOT NULL,
+      output_tokens INTEGER NOT NULL,
+      reasoning_output_tokens INTEGER NOT NULL,
+      estimate_json TEXT NOT NULL,
+      occurred_at TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE (provider_id, provider_thread_id, provider_turn_id)
+    )
+  `);
+  db.execute(`CREATE INDEX IF NOT EXISTS idx_codex_usage_ledger_occurred ON codex_usage_ledger(occurred_at, id)`);
+  db.execute(`CREATE INDEX IF NOT EXISTS idx_codex_usage_ledger_project_occurred ON codex_usage_ledger(project_id, occurred_at, id)`);
+  db.execute(`CREATE INDEX IF NOT EXISTS idx_codex_usage_ledger_conversation_occurred ON codex_usage_ledger(conversation_id, occurred_at, id)`);
+  db.execute(`CREATE INDEX IF NOT EXISTS idx_codex_usage_ledger_model_occurred ON codex_usage_ledger(model, occurred_at, id)`);
+  recordSchemaMigration(db, {
+    migrationId: '20260810_0001_codex_usage_ledger',
+    description: '增加与项目、会话生命周期独立的 Codex 逐轮用量账本',
+    checksumSource: 'codex_usage_ledger:provider,account_scope,project,conversation,thread,turn,model,tier,token_breakdown,estimate,occurred_at',
   });
 }
 
@@ -4921,7 +5007,35 @@ export class ConversationRepository {
   }
 
   getProviderTokenUsageSnapshot(conversationId: string): ConversationProviderTokenUsageSnapshot | undefined {
-    return this.getConversationSnapshot<ConversationProviderTokenUsageSnapshot>(conversationId, 'provider_token_usage_json');
+    const snapshot = this.getConversationSnapshot<ConversationProviderTokenUsageSnapshot & { inputTokens?: number; outputTokens?: number; totalTokens?: number }>(conversationId, 'provider_token_usage_json');
+    if (!snapshot) return undefined;
+    if (snapshot.total && snapshot.last) return snapshot;
+    if ([snapshot.inputTokens, snapshot.outputTokens, snapshot.totalTokens].every((value) => typeof value === 'number' && Number.isFinite(value) && value >= 0)) {
+      const total: TokenUsageBreakdown = {
+        totalTokens: snapshot.totalTokens!,
+        inputTokens: snapshot.inputTokens!,
+        cachedInputTokens: 0,
+        cacheWriteInputTokens: 0,
+        outputTokens: snapshot.outputTokens!,
+        reasoningOutputTokens: 0,
+      };
+      return {
+        generationId: snapshot.generationId,
+        sequence: snapshot.sequence,
+        total,
+        last: { totalTokens: 0, inputTokens: 0, cachedInputTokens: 0, cacheWriteInputTokens: 0, outputTokens: 0, reasoningOutputTokens: 0 },
+        modelContextWindow: null,
+        cacheHitRate: null,
+        estimatedCredits: null,
+        apiEquivalentUsd: null,
+        cacheSavingsUsd: null,
+        priceCoverage: null,
+        pricingCatalogDate: null,
+        pricingSourceUrls: [],
+        historyComplete: false,
+      };
+    }
+    return undefined;
   }
 
   private upsertConversationSnapshot<T extends ProviderSequenceSnapshot>(conversationId: string, column: 'provider_settings_json' | 'provider_token_usage_json', snapshot: T): T | undefined {
@@ -5462,6 +5576,105 @@ export class ConversationTurnRepository {
          ORDER BY conversation_id, created_at, id`,
       )
       .map(mapConversationTurnRow);
+  }
+}
+
+/** Codex 用量账本不建立外键，被引用对象删除后仍保留真实历史消耗。 */
+export class CodexUsageLedgerRepository {
+  constructor(private readonly db: ZeusDatabase) {}
+
+  upsert(input: UpsertCodexUsageLedgerInput): CodexUsageLedgerRecord {
+    validateTokenUsageBreakdown(input.usage);
+    validateCodexUsageEstimate(input.estimate);
+    if (![input.providerId, input.accountScopeId, input.projectId, input.conversationId, input.providerThreadId, input.providerTurnId, input.model].every((value) => value.trim())) {
+      throw new Error('Codex usage ledger identity is incomplete');
+    }
+    const existing = this.findByProviderTurn(input.providerId, input.providerThreadId, input.providerTurnId);
+    const timestamp = nowIso();
+    const id = existing?.id ?? `codex_usage_${nanoid(12)}`;
+    const createdAt = existing?.createdAt ?? timestamp;
+    this.db.execute(
+      `INSERT INTO codex_usage_ledger
+         (id, provider_id, account_scope_id, project_id, conversation_id, provider_thread_id, provider_turn_id, model, service_tier,
+          total_tokens, input_tokens, cached_input_tokens, cache_write_input_tokens, output_tokens, reasoning_output_tokens,
+          estimate_json, occurred_at, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(provider_id, provider_thread_id, provider_turn_id) DO UPDATE SET
+         account_scope_id = excluded.account_scope_id,
+         project_id = excluded.project_id,
+         conversation_id = excluded.conversation_id,
+         model = excluded.model,
+         service_tier = excluded.service_tier,
+         total_tokens = excluded.total_tokens,
+         input_tokens = excluded.input_tokens,
+         cached_input_tokens = excluded.cached_input_tokens,
+         cache_write_input_tokens = excluded.cache_write_input_tokens,
+         output_tokens = excluded.output_tokens,
+         reasoning_output_tokens = excluded.reasoning_output_tokens,
+         estimate_json = excluded.estimate_json,
+         occurred_at = excluded.occurred_at,
+         updated_at = excluded.updated_at`,
+      [
+        id,
+        input.providerId,
+        input.accountScopeId,
+        input.projectId,
+        input.conversationId,
+        input.providerThreadId,
+        input.providerTurnId,
+        input.model,
+        input.serviceTier ?? null,
+        input.usage.totalTokens,
+        input.usage.inputTokens,
+        input.usage.cachedInputTokens,
+        input.usage.cacheWriteInputTokens,
+        input.usage.outputTokens,
+        input.usage.reasoningOutputTokens,
+        JSON.stringify(input.estimate),
+        input.occurredAt,
+        createdAt,
+        timestamp,
+      ],
+    );
+    return this.findByProviderTurn(input.providerId, input.providerThreadId, input.providerTurnId)!;
+  }
+
+  findByProviderTurn(providerId: string, providerThreadId: string, providerTurnId: string): CodexUsageLedgerRecord | undefined {
+    const row = this.db.get<DbCodexUsageLedgerRow>(`SELECT * FROM codex_usage_ledger WHERE provider_id = ? AND provider_thread_id = ? AND provider_turn_id = ?`, [providerId, providerThreadId, providerTurnId]);
+    return row ? mapCodexUsageLedgerRow(row) : undefined;
+  }
+
+  list(input: ListCodexUsageLedgerInput = {}): CodexUsageLedgerRecord[] {
+    const clauses: string[] = [];
+    const values: SQLInputValue[] = [];
+    if (input.accountScopeId) {
+      clauses.push('account_scope_id = ?');
+      values.push(input.accountScopeId);
+    }
+    if (input.since) {
+      clauses.push('occurred_at >= ?');
+      values.push(input.since);
+    }
+    if (input.projectId) {
+      clauses.push('project_id = ?');
+      values.push(input.projectId);
+    }
+    if (input.model) {
+      clauses.push('model = ?');
+      values.push(input.model);
+    }
+    if (input.conversationId) {
+      clauses.push('conversation_id = ?');
+      values.push(input.conversationId);
+    }
+    const where = clauses.length > 0 ? ` WHERE ${clauses.join(' AND ')}` : '';
+    return this.db.select<DbCodexUsageLedgerRow>(`SELECT * FROM codex_usage_ledger${where} ORDER BY occurred_at ASC, id ASC`, values).map(mapCodexUsageLedgerRow);
+  }
+
+  collectionStartedAt(accountScopeId?: string | null): string | null {
+    return accountScopeId
+      ? (this.db.get<{ occurred_at: string }>(`SELECT occurred_at FROM codex_usage_ledger WHERE account_scope_id = ? ORDER BY occurred_at ASC, id ASC LIMIT 1`, [accountScopeId])?.occurred_at ?? null)
+      : (this.db.get<{ occurred_at: string }>(`SELECT occurred_at FROM codex_usage_ledger ORDER BY occurred_at ASC, id ASC LIMIT 1`)?.occurred_at ?? null);
   }
 }
 
@@ -6360,9 +6573,36 @@ function validateNextTurnSettings(settings: unknown): asserts settings is Conver
 function validateProviderTokenUsageSnapshot(snapshot: unknown): asserts snapshot is ConversationProviderTokenUsageSnapshot {
   assertProviderSequenceSnapshot(snapshot);
   const candidate = snapshot as ProviderSequenceSnapshot & Record<string, unknown>;
-  assertNoSecretLikeProviderKeys(candidate, new Set(['inputtokens', 'outputtokens', 'totaltokens']));
-  assertOnlyKeys(candidate, ['generationId', 'sequence', 'inputTokens', 'outputTokens', 'totalTokens'], 'provider token usage snapshot');
-  if (![candidate.inputTokens, candidate.outputTokens, candidate.totalTokens].every((value) => typeof value === 'number' && Number.isFinite(value) && value >= 0)) throw new Error('Invalid provider token usage snapshot');
+  assertNoSecretLikeProviderKeys(candidate, new Set(['inputtokens', 'cachedinputtokens', 'cachewriteinputtokens', 'outputtokens', 'reasoningoutputtokens', 'totaltokens']));
+  assertOnlyKeys(
+    candidate,
+    ['generationId', 'sequence', 'total', 'last', 'modelContextWindow', 'cacheHitRate', 'estimatedCredits', 'apiEquivalentUsd', 'cacheSavingsUsd', 'priceCoverage', 'pricingCatalogDate', 'pricingSourceUrls', 'historyComplete'],
+    'provider token usage snapshot',
+  );
+  validateTokenUsageBreakdown(candidate.total);
+  validateTokenUsageBreakdown(candidate.last);
+  for (const value of [candidate.modelContextWindow, candidate.cacheHitRate, candidate.estimatedCredits, candidate.apiEquivalentUsd, candidate.cacheSavingsUsd, candidate.priceCoverage]) {
+    if (value !== null && (typeof value !== 'number' || !Number.isFinite(value) || value < 0)) throw new Error('Invalid provider token usage snapshot');
+  }
+  if ((candidate.pricingCatalogDate !== null && typeof candidate.pricingCatalogDate !== 'string') || !Array.isArray(candidate.pricingSourceUrls) || candidate.pricingSourceUrls.some((url) => typeof url !== 'string')) {
+    throw new Error('Invalid provider token usage snapshot');
+  }
+  if (typeof candidate.historyComplete !== 'boolean') throw new Error('Invalid provider token usage snapshot');
+}
+
+function validateTokenUsageBreakdown(value: unknown): asserts value is TokenUsageBreakdown {
+  if (!isPlainRecord(value)) throw new Error('Invalid token usage breakdown');
+  assertOnlyKeys(value, ['totalTokens', 'inputTokens', 'cachedInputTokens', 'cacheWriteInputTokens', 'outputTokens', 'reasoningOutputTokens'], 'token usage breakdown');
+  if (Object.values(value).some((entry) => typeof entry !== 'number' || !Number.isSafeInteger(entry) || entry < 0)) throw new Error('Invalid token usage breakdown');
+}
+
+function validateCodexUsageEstimate(value: unknown): asserts value is CodexUsageEstimate {
+  if (!isPlainRecord(value) || !isPlainRecord(value.rateSnapshot)) throw new Error('Invalid Codex usage estimate');
+  assertNoSecretLikeProviderKeys(value, new Set(['input', 'cachedinput', 'cachewrite', 'output', 'billabletokens', 'pricedtokens']));
+  for (const candidate of [value.credits, value.apiEquivalentUsd, value.cacheSavingsUsd, value.coverage]) {
+    if (candidate !== null && (typeof candidate !== 'number' || !Number.isFinite(candidate) || candidate < 0)) throw new Error('Invalid Codex usage estimate');
+  }
+  if (![value.pricedTokens, value.billableTokens].every((candidate) => typeof candidate === 'number' && Number.isSafeInteger(candidate) && candidate >= 0)) throw new Error('Invalid Codex usage estimate');
 }
 
 function validateRateLimitsSnapshot(snapshot: unknown): asserts snapshot is CodexRateLimitsSnapshot {
@@ -6813,6 +7053,28 @@ interface DbConversationTurnRow {
   updated_at: string;
   agent_kind: ConversationAgentKind | null;
   native_run_id: string | null;
+}
+
+interface DbCodexUsageLedgerRow {
+  id: string;
+  provider_id: string;
+  account_scope_id: string;
+  project_id: string;
+  conversation_id: string;
+  provider_thread_id: string;
+  provider_turn_id: string;
+  model: string;
+  service_tier: string | null;
+  total_tokens: number;
+  input_tokens: number;
+  cached_input_tokens: number;
+  cache_write_input_tokens: number;
+  output_tokens: number;
+  reasoning_output_tokens: number;
+  estimate_json: string;
+  occurred_at: string;
+  created_at: string;
+  updated_at: string;
 }
 
 interface DbConversationItemRow {
@@ -7293,6 +7555,34 @@ function mapConversationTurnRow(row: DbConversationTurnRow): ZeusConversationTur
     updatedAt: row.updated_at,
     agentKind: row.agent_kind,
     nativeRunId: row.native_run_id,
+  };
+}
+
+function mapCodexUsageLedgerRow(row: DbCodexUsageLedgerRow): CodexUsageLedgerRecord {
+  const estimate = JSON.parse(row.estimate_json) as CodexUsageEstimate;
+  validateCodexUsageEstimate(estimate);
+  return {
+    id: row.id,
+    providerId: row.provider_id,
+    accountScopeId: row.account_scope_id,
+    projectId: row.project_id,
+    conversationId: row.conversation_id,
+    providerThreadId: row.provider_thread_id,
+    providerTurnId: row.provider_turn_id,
+    model: row.model,
+    serviceTier: row.service_tier,
+    usage: {
+      totalTokens: row.total_tokens,
+      inputTokens: row.input_tokens,
+      cachedInputTokens: row.cached_input_tokens,
+      cacheWriteInputTokens: row.cache_write_input_tokens,
+      outputTokens: row.output_tokens,
+      reasoningOutputTokens: row.reasoning_output_tokens,
+    },
+    estimate,
+    occurredAt: row.occurred_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
   };
 }
 

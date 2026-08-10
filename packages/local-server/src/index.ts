@@ -111,6 +111,7 @@ import {
 import {
   type AppendAuditLogInput,
   AuditLogRepository,
+  CodexUsageLedgerRepository,
   CodexLegacyImportRepository,
   CommandArtifactRepository,
   CommandDefinitionRepository,
@@ -169,6 +170,7 @@ import {
   type ZeusTaskWorkspaceRecord,
 } from '@zeus/storage';
 import { createCodexNativeConversationCoordinator } from './codexNativeConversationCoordinator.js';
+import { createCodexUsageService } from './codexUsageService.js';
 import { chooseNativeUserMessageContent, resolveNativeUserMessageSubmission } from './codexNativeUserMessageProjection.js';
 import { normalizeConversationResources, toConversationResource, toConversationResourceOpenIntent } from './conversationResources.js';
 import { changeSetErrorStatus, createTurnChangeSetService, errorCode as turnChangeSetErrorCode, projectHistoricalTurnChangeSet } from './turnChangeSets.js';
@@ -1906,6 +1908,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   const settings = new SettingRepository(db);
   const auditLogs = new AuditLogRepository(db);
   const conversations = new ConversationRepository(db);
+  const codexUsageLedger = new CodexUsageLedgerRepository(db);
   const codexLegacyImports = new CodexLegacyImportRepository(db);
   const conversationTurns = new ConversationTurnRepository(db);
   const conversationItems = new ConversationItemRepository(db);
@@ -1964,6 +1967,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   const gitConfirmationTtlMs = 10 * 60 * 1000;
   const now = () => new Date();
   const appShellSettingsKey = 'app.shell.settings';
+  const codexAccountFingerprintSaltKey = 'codex.usage.account_fingerprint_salt';
   const localLogDirectory = dataLayout.localLogs;
   const localConfigPath = options.localConfigPath ?? dataLayout.localConfig;
   // 本地日志目录是设计书明确要求的物理落点；服务启动时创建，避免 UI 只展示一个不存在的路径。
@@ -2202,7 +2206,23 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     now: () => now().toISOString(),
   });
   let settleCodexPendingOnClose = ownsCodexAppServerManager;
-  const codexAppServerManager = options.codexAppServerManager ?? createCodexAppServerManager();
+  let codexAccountFingerprintSalt = settings.getJson<string>(codexAccountFingerprintSaltKey)?.trim();
+  if (!codexAccountFingerprintSalt) {
+    codexAccountFingerprintSalt = randomUUID();
+    settings.setJson(codexAccountFingerprintSaltKey, codexAccountFingerprintSalt);
+    await db.save();
+  }
+  const codexAppServerManager = options.codexAppServerManager ?? createCodexAppServerManager({ accountFingerprintSalt: codexAccountFingerprintSalt });
+  const codexUsageService = createCodexUsageService({
+    manager: codexAppServerManager,
+    ledger: codexUsageLedger,
+    conversations,
+    projects,
+    settings,
+    broadcast: publishRealtimeEvent,
+    persist: () => db.save(),
+    now: () => now().toISOString(),
+  });
   let codexNativeCoordinator: ReturnType<typeof createCodexNativeConversationCoordinator>;
   try {
     codexNativeCoordinator = createCodexNativeConversationCoordinator({
@@ -2221,6 +2241,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       planActions: conversationPlanActions,
       receipts: providerEventReceipts,
       settings,
+      usage: codexUsageService,
       browserAutomation: options.browserAutomation,
       trustedAttachmentRoots: trustedConversationAttachmentRoots,
       getProjectRoot: (projectId) => projects.getById(projectId)?.localPath ?? null,
@@ -6080,6 +6101,42 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       return sendNativeConversationApiError(reply, error);
     }
   });
+
+  server.get('/api/codex/usage-summary', async () => {
+    await codexAppServerManager
+      .ensureReady({
+        commandPath: currentCodexRuntimeCommandPath(),
+        ...(codexExternalAgentHome ? { externalAgentHome: codexExternalAgentHome } : {}),
+      })
+      .catch(() => undefined);
+    return codexUsageService.readSummary();
+  });
+
+  server.get(
+    '/api/codex/usage-analytics',
+    async (
+      request: FastifyRequest<{
+        Querystring: { range?: string; projectId?: string; model?: string };
+      }>,
+      reply,
+    ) => {
+      const range = request.query.range ?? '30d';
+      if (range !== '7d' && range !== '30d' && range !== '90d' && range !== 'all') {
+        return reply.code(400).send({ error: 'ZEUS_CODEX_USAGE_RANGE_INVALID', message: 'range must be 7d, 30d, 90d, or all.' });
+      }
+      await codexAppServerManager
+        .ensureReady({
+          commandPath: currentCodexRuntimeCommandPath(),
+          ...(codexExternalAgentHome ? { externalAgentHome: codexExternalAgentHome } : {}),
+        })
+        .catch(() => undefined);
+      return codexUsageService.readAnalytics({
+        range,
+        projectId: request.query.projectId?.trim() || null,
+        model: request.query.model?.trim() || null,
+      });
+    },
+  );
 
   server.post('/api/codex/account/login/chatgpt', async (_request, reply) => {
     try {
