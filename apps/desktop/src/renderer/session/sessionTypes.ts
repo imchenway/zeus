@@ -625,13 +625,13 @@ export interface TaskIntegrationConflictFile {
   result: string;
 }
 
-export interface TaskIntegrationConflictAiDraft {
+export interface TaskIntegrationConflictAiSession {
   path: string;
   agentKind: 'codex' | 'pi';
   modelSourceId: string | null;
   modelId: string;
   conversationId: string;
-  suggestions: Array<{ index: number; content: string; explanation: string }>;
+  status: string;
 }
 
 export interface CodexConversationCapabilities {

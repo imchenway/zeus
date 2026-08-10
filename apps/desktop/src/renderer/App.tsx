@@ -321,7 +321,7 @@ type NativeConversationAppClient = SessionControllerClient &
     | 'loadTaskIntegrations'
     | 'startTaskIntegration'
     | 'loadTaskIntegrationConflict'
-    | 'assistTaskIntegrationConflict'
+    | 'startTaskIntegrationConflictAi'
     | 'resolveTaskIntegrationConflict'
     | 'finalizeTaskIntegration'
     | 'pushTaskIntegration'
@@ -8840,6 +8840,24 @@ export function App(props: {
     workspaceScrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
+  async function openTaskConflictAiConversation(taskId: string, conversationId: string): Promise<void> {
+    const choices = await refreshNativeConversationChoices(taskId);
+    const conversation = choices?.choices.find((candidate) => candidate.id === conversationId);
+    if (!conversation) throw new Error('冲突处理会话已创建，但暂时无法从会话列表读取。');
+    const targetProject = snapshot.projects.find((project) => project.id === conversation.projectId);
+    if (targetProject) {
+      activeProjectIdRef.current = targetProject.id;
+      setProjectDetail(targetProject);
+    }
+    setTaskGitMergeTaskId(null);
+    setTaskDetailPaneTaskId(undefined);
+    setTaskConversationDrawerTarget(undefined);
+    setConversationDrawer(undefined);
+    await selectNativeConversation(conversation);
+    if (typeof window !== 'undefined') window.history.replaceState(null, '', '#project-sessions');
+    workspaceScrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
   async function openTaskConversationDrawer(taskId: string, conversationId: string): Promise<void> {
     const conversation = nativeConversationChoicesByTask[taskId]?.choices.find((candidate) => candidate.id === conversationId);
     if (!conversation) return;
@@ -12041,6 +12059,7 @@ export function App(props: {
                       ]).then(() => undefined)
                     : Promise.resolve()
                 }
+                onOpenConversation={(taskId, conversationId) => openTaskConflictAiConversation(taskId, conversationId)}
                 onClose={() => setTaskGitMergeTaskId(null)}
               />
               {taskDetailPaneTask ? (

@@ -1,4 +1,4 @@
-import type { TaskIntegrationConflictAiDraft, TaskIntegrationConflictFile } from '../session/sessionTypes.js';
+import type { TaskIntegrationConflictFile } from '../session/sessionTypes.js';
 
 export type ConflictSide = 'source' | 'task';
 export type ConflictSideState = 'pending' | 'accepted' | 'ignored';
@@ -247,27 +247,6 @@ export function resolveSimpleConflictDocument(document: ConflictDocument): { doc
     resolved += 1;
   }
   return { document: next, resolved, remaining: countUnresolvedConflictBlocks(next) };
-}
-
-export function applyConflictAiDraft(document: ConflictDocument, suggestions: TaskIntegrationConflictAiDraft['suggestions']): { document: ConflictDocument; applied: number } {
-  const pending = document.blocks.filter((block) => block.status === 'pending');
-  const unique = new Map<number, string>();
-  for (const suggestion of suggestions) {
-    if (!Number.isInteger(suggestion.index) || suggestion.index < 0 || suggestion.index >= pending.length) continue;
-    if (/^(?:<<<<<<<|=======|>>>>>>>)/mu.test(suggestion.content)) continue;
-    unique.set(suggestion.index, suggestion.content);
-  }
-  let next = document;
-  let applied = 0;
-  for (const [suggestionIndex, replacement] of [...unique.entries()].sort((left, right) => right[0] - left[0])) {
-    const block = pending[suggestionIndex];
-    const index = next.blocks.findIndex((candidate) => candidate.id === block.id);
-    if (index < 0) continue;
-    const nextBlock = { ...next.blocks[index], visibleText: replacement, status: 'manual' as const, combinationError: false };
-    next = replaceBlock(next, index, replacement, nextBlock);
-    applied += 1;
-  }
-  return { document: next, applied };
 }
 
 export function resolveSimpleConflictDraft(content: string, fullBase: string): { content: string; resolved: number; remaining: number } {

@@ -3,10 +3,9 @@ import { ArrowRightIcon as ArrowRight } from '@phosphor-icons/react/dist/csr/Arr
 import { MagicWandIcon as MagicWand } from '@phosphor-icons/react/dist/csr/MagicWand';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
-import type { TaskIntegrationConflictAiDraft, TaskIntegrationRecord } from '../session/sessionTypes.js';
+import type { TaskIntegrationRecord } from '../session/sessionTypes.js';
 import { Button } from '../ui/Button.js';
 import {
-  applyConflictAiDraft,
   applyConflictDocumentEdit,
   applyConflictSideAction,
   countUnresolvedConflictBlocks,
@@ -44,7 +43,7 @@ export function TaskGitConflictWorkspace(props: {
   conflict: ConflictDocument | null;
   onSelectPath: (path: string) => void;
   onDocumentChange: (document: ConflictDocument) => void;
-  onAskAi: (content: string) => Promise<TaskIntegrationConflictAiDraft>;
+  onAskAi: (content: string) => Promise<void>;
 }) {
   const document = props.conflict;
   const blocks = document?.blocks ?? [];
@@ -106,21 +105,8 @@ export function TaskGitConflictWorkspace(props: {
 
   async function askAi(): Promise<void> {
     if (!document) return;
-    const before = document;
     try {
-      const result = await props.onAskAi(serializeConflictForAi(before));
-      const next = applyConflictAiDraft(before, result.suggestions);
-      if (next.applied === 0) {
-        setMergeFeedback(props.zh ? 'AI 没有返回可应用的冲突块。' : 'AI did not return an applicable conflict block.');
-        return;
-      }
-      setUndoDraft(before);
-      props.onDocumentChange(next.document);
-      const identity = `${result.agentKind === 'pi' ? 'Pi' : 'Codex'} · ${result.modelId}`;
-      const explanations = result.suggestions.map((suggestion) => `${suggestion.index + 1}. ${suggestion.explanation}`).join('；');
-      setMergeFeedback(
-        props.zh ? `${identity} 已生成 ${next.applied} 个冲突草稿，保存前不会写入文件。${explanations ? ` ${explanations}` : ''}` : `${identity} drafted ${next.applied} conflict resolution(s). The file is unchanged until you save.`,
-      );
+      await props.onAskAi(serializeConflictForAi(document));
     } catch {
       // 具体失败原因由代码交付弹窗统一展示，避免在两个状态区重复报错。
     }
@@ -179,7 +165,14 @@ export function TaskGitConflictWorkspace(props: {
             <Button variant="secondary" size="compact" onClick={() => setViewMode((current) => (current === 'focused' ? 'full' : 'focused'))} disabled={!document}>
               {viewMode === 'focused' ? (props.zh ? '查看完整文件' : 'View full file') : props.zh ? '返回冲突' : 'Back to conflict'}
             </Button>
-            <Button variant="secondary" size="compact" busy={props.aiBusy} onClick={() => void askAi()} disabled={!document || props.busy || unresolvedCount === 0}>
+            <Button
+              variant="secondary"
+              size="compact"
+              busy={props.aiBusy}
+              onClick={() => void askAi()}
+              disabled={!document || props.busy || unresolvedCount === 0}
+              title={props.zh ? `打开会话，由 AI 完成本地合入 ${props.integration.targetBranch}；不会推送远端` : `Open a conversation and let AI complete the local merge into ${props.integration.targetBranch}; no remote push`}
+            >
               {props.zh ? 'AI 处理' : 'Resolve with AI'}
             </Button>
             <Button

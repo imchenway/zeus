@@ -6,7 +6,6 @@ import type {
   TaskGitDiffSummary,
   TaskGitFileDiff,
   TaskGitFileStatus,
-  TaskIntegrationConflictAiDraft,
   TaskIntegrationConflictFile,
   TaskIntegrationRecord,
   TaskIntegrationResult,
@@ -30,7 +29,7 @@ type DeliveryClient = Pick<
   | 'loadTaskIntegrations'
   | 'startTaskIntegration'
   | 'loadTaskIntegrationConflict'
-  | 'assistTaskIntegrationConflict'
+  | 'startTaskIntegrationConflictAi'
   | 'resolveTaskIntegrationConflict'
   | 'finalizeTaskIntegration'
 >;
@@ -63,6 +62,7 @@ interface TaskGitMergeModalProps {
   projectName?: string;
   client: DeliveryClient | null;
   onChanged?: () => void | Promise<void>;
+  onOpenConversation: (taskId: string, conversationId: string) => void | Promise<void>;
   onClose: () => void;
 }
 
@@ -368,12 +368,13 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
     }
   }
 
-  async function askAiForConflictDraft(content: string): Promise<TaskIntegrationConflictAiDraft> {
+  async function startAiConflictSession(content: string): Promise<void> {
     if (!props.task || !props.client || !activeConflict || !conflictPath) throw new Error(zh ? '当前没有可处理的冲突。' : 'No conflict is available.');
     setBusyAction('ai');
     setError(null);
     try {
-      return await props.client.assistTaskIntegrationConflict(props.task.id, activeConflict.id, conflictPath, content);
+      const operation = await props.client.startTaskIntegrationConflictAi(props.task.id, activeConflict.id, conflictPath, content);
+      await props.onOpenConversation(props.task.id, operation.conversationId);
     } catch (reason) {
       setError(errorMessage(reason, zh));
       throw reason;
@@ -524,7 +525,7 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
               onSelectPath={selectConflictPath}
               conflict={conflictDocument}
               onDocumentChange={setConflictDocument}
-              onAskAi={askAiForConflictDraft}
+              onAskAi={startAiConflictSession}
             />
           ) : conflictReadyToFinalize && activeConflict ? (
             <ConflictCompletion zh={zh} targetBranch={activeConflict.targetBranch} taskBranch={selectedWorkspace?.branchName ?? ''} />
