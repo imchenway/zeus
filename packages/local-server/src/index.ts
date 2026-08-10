@@ -12516,7 +12516,9 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     for (const conversation of conversations.listUnarchivedRecords()) {
       if (!targetProjectIds.has(conversation.projectId)) continue;
       const replyRequired = pendingRequestConversationIds.has(conversation.id) || conversation.providerState === 'waiting';
-      const running = runningSubmissionConversationIds.has(conversation.id) || conversation.providerState === 'binding' || conversation.providerState === 'active' || conversation.status === 'starting' || conversation.status === 'running';
+      // Codex 会话创建后的 starting 不会随每轮执行收敛；只有旧 Runtime 会话继续以记录状态表达真实进程阶段。
+      const legacyRuntimeRunning = conversation.transportKind === 'legacy_cli' && (conversation.status === 'starting' || conversation.status === 'running');
+      const running = runningSubmissionConversationIds.has(conversation.id) || conversation.providerState === 'binding' || conversation.providerState === 'active' || legacyRuntimeRunning;
       if (!replyRequired && !running) continue;
       const firstSubmission = conversationSubmissions.getFirstByConversation(conversation.id);
       const context = firstSubmission ? parseJsonObject(firstSubmission.inputJson).context : undefined;
