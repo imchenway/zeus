@@ -779,7 +779,20 @@ export interface ZeusConversationTurnRecord {
   nativeRunId: string | null;
 }
 
-export type ConversationItemType = 'userMessage' | 'agentMessage' | 'reasoning' | 'commandExecution' | 'fileChange' | 'mcpToolCall' | 'dynamicToolCall' | 'plan' | 'imageView' | 'webSearch' | 'contextCompaction' | 'error';
+export type ConversationItemType =
+  | 'userMessage'
+  | 'agentMessage'
+  | 'reasoning'
+  | 'commandExecution'
+  | 'fileChange'
+  | 'mcpToolCall'
+  | 'dynamicToolCall'
+  | 'plan'
+  | 'imageView'
+  | 'imageGeneration'
+  | 'webSearch'
+  | 'contextCompaction'
+  | 'error';
 export type ConversationItemStatus = 'in_progress' | 'completed' | 'failed';
 export type ConversationItemPhase = 'prework' | 'final_answer';
 export interface ZeusConversationItemRecord {
@@ -1398,6 +1411,7 @@ export async function createZeusDatabase(filePath: string): Promise<ZeusDatabase
     migrateCodexLegacyImportSchema(zeusDb);
     migrateMcpServerIdentifierFalsePositiveCleanup(zeusDb);
     migrateContextCompactionItemClassification(zeusDb);
+    migrateImageGenerationItemClassification(zeusDb);
     migrateCommandCenterSchema(zeusDb);
     migrateProviderEventReceipts(zeusDb);
     recordSchemaMigration(zeusDb, {
@@ -2606,6 +2620,36 @@ function migrateContextCompactionItemClassification(db: ZeusDatabase): void {
       migrationId,
       description: '修正上下文整理条目被误分类为执行错误的历史记录',
       checksumSource: 'context_compaction:item_type:error_to_contextCompaction:20260804',
+    });
+  });
+}
+
+function migrateImageGenerationItemClassification(db: ZeusDatabase): void {
+  const migrationId = '20260810_0001_image_generation_item_classification';
+  if (
+    db.get<{
+      migration_id: string;
+    }>(`SELECT migration_id FROM schema_migrations WHERE migration_id = ?`, [migrationId])
+  )
+    return;
+
+  db.transaction(() => {
+    const candidates = db.select<{ id: string; payload_json: string }>(`SELECT id, payload_json FROM conversation_items WHERE item_type = 'error'`);
+    for (const candidate of candidates) {
+      try {
+        const payload = JSON.parse(candidate.payload_json) as unknown;
+        if (isPlainRecord(payload) && payload.type === 'imageGeneration') {
+          db.execute(`UPDATE conversation_items SET item_type = 'imageGeneration' WHERE id = ? AND item_type = 'error'`, [candidate.id]);
+        }
+      } catch {
+        // 非法历史负载保持原样；本迁移只修正能够精确识别的图片生成条目。
+      }
+    }
+
+    recordSchemaMigration(db, {
+      migrationId,
+      description: '修正图片生成条目被误分类为执行错误的历史记录',
+      checksumSource: 'image_generation:item_type:error_to_imageGeneration:20260810',
     });
   });
 }
@@ -5486,7 +5530,7 @@ export class ConversationItemRepository {
   appendDelta(input: ConversationItemBaseInput & { delta: string; status?: ConversationItemStatus }): ZeusConversationItemRecord {
     const itemType = assertEnum(
       input.itemType,
-      ['userMessage', 'agentMessage', 'reasoning', 'commandExecution', 'fileChange', 'mcpToolCall', 'dynamicToolCall', 'plan', 'imageView', 'webSearch', 'contextCompaction', 'error'] as const,
+      ['userMessage', 'agentMessage', 'reasoning', 'commandExecution', 'fileChange', 'mcpToolCall', 'dynamicToolCall', 'plan', 'imageView', 'imageGeneration', 'webSearch', 'contextCompaction', 'error'] as const,
       'conversation item type',
     );
     const status = assertEnum(input.status ?? 'in_progress', ['in_progress', 'completed', 'failed'] as const, 'conversation item status');
@@ -5526,7 +5570,7 @@ export class ConversationItemRepository {
   upsertProgress(input: ConversationItemBaseInput & { textContent: string; status?: ConversationItemStatus }): ZeusConversationItemRecord {
     const itemType = assertEnum(
       input.itemType,
-      ['userMessage', 'agentMessage', 'reasoning', 'commandExecution', 'fileChange', 'mcpToolCall', 'dynamicToolCall', 'plan', 'imageView', 'webSearch', 'contextCompaction', 'error'] as const,
+      ['userMessage', 'agentMessage', 'reasoning', 'commandExecution', 'fileChange', 'mcpToolCall', 'dynamicToolCall', 'plan', 'imageView', 'imageGeneration', 'webSearch', 'contextCompaction', 'error'] as const,
       'conversation item type',
     );
     const status = assertEnum(input.status ?? 'in_progress', ['in_progress', 'completed', 'failed'] as const, 'conversation item status');
@@ -5566,7 +5610,7 @@ export class ConversationItemRepository {
   upsertCompleted(input: ConversationItemBaseInput & { textContent: string; completedAt: string | null; status?: ConversationItemStatus }): ZeusConversationItemRecord {
     const itemType = assertEnum(
       input.itemType,
-      ['userMessage', 'agentMessage', 'reasoning', 'commandExecution', 'fileChange', 'mcpToolCall', 'dynamicToolCall', 'plan', 'imageView', 'webSearch', 'contextCompaction', 'error'] as const,
+      ['userMessage', 'agentMessage', 'reasoning', 'commandExecution', 'fileChange', 'mcpToolCall', 'dynamicToolCall', 'plan', 'imageView', 'imageGeneration', 'webSearch', 'contextCompaction', 'error'] as const,
       'conversation item type',
     );
     const status = assertEnum(input.status ?? 'completed', ['in_progress', 'completed', 'failed'] as const, 'conversation item status');

@@ -54,7 +54,7 @@ import { parseCanonicalRequestUserInputQuestions, validateCanonicalRequestUserIn
 import { chooseNativeUserMessageContent, resolveNativeUserMessageSubmission, type ResolvedNativeUserMessageSubmission } from './codexNativeUserMessageProjection.js';
 import type { BrowserAutomationPort } from './browserAutomation.js';
 import { zeusBrowserDynamicTools } from './browserDynamicTools.js';
-import { normalizeConversationResources, toConversationResource } from './conversationResources.js';
+import { normalizeConversationResources, sanitizeConversationItemPayload, toConversationResource } from './conversationResources.js';
 import type { TurnChangeSetService } from './turnChangeSets.js';
 
 interface ConversationDispatchContext {
@@ -125,6 +125,7 @@ export interface CreateCodexNativeConversationCoordinatorOptions {
   turnResultTimeoutMs?: number;
   browserAutomation?: BrowserAutomationPort;
   trustedAttachmentRoots?: string[];
+  generatedImageRoot?: string;
   getProjectRoot?: (projectId: string) => string | null;
   ensureExecutionContext?: (input: { conversationId: string; mode: 'reconcile' | 'submit' | 'dispatch' | 'recover_queue' | 'restore' }) => Promise<{ projectLocalPath: string; writableRoots?: string[] } | null>;
 }
@@ -332,6 +333,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       payload: resourcePayload,
       text,
       trustedAttachmentRoots: options.trustedAttachmentRoots ?? [],
+      generatedImageRoot: options.generatedImageRoot,
       now: timestamp,
     });
     return resources
@@ -2907,7 +2909,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       const providerItemId = providerItemIdFrom(params);
       const turn = providerTurnId ? options.turns.listByConversation(conversation.id).find((candidate) => candidate.providerTurnId === providerTurnId) : undefined;
       if (!providerTurnId || !providerItemId || !turn) return;
-      const presentedItemPayload = itemPayload.type === 'userMessage' ? { ...itemPayload, ...submissionPresentation(conversation.id, turn, itemPayload) } : itemPayload;
+      const presentedItemPayload = sanitizeConversationItemPayload(itemPayload.type === 'userMessage' ? { ...itemPayload, ...submissionPresentation(conversation.id, turn, itemPayload) } : itemPayload);
       const itemType = itemTypeFromValue(itemPayload.type);
       const userMessageProjection = itemType === 'userMessage' ? projectProviderUserMessage(conversation, turn, presentedItemPayload, itemText(itemPayload), providerItemId) : null;
       const item = userMessageProjection
@@ -3146,7 +3148,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       const providerItemId = providerItemIdFrom(params);
       const turn = providerTurnId ? options.turns.listByConversation(conversation.id).find((candidate) => candidate.providerTurnId === providerTurnId) : undefined;
       if (!providerTurnId || !providerItemId || !turn) return;
-      const presentedItemPayload = itemPayload.type === 'userMessage' ? { ...itemPayload, ...submissionPresentation(conversation.id, turn, itemPayload) } : itemPayload;
+      const presentedItemPayload = sanitizeConversationItemPayload(itemPayload.type === 'userMessage' ? { ...itemPayload, ...submissionPresentation(conversation.id, turn, itemPayload) } : itemPayload);
       const itemType = itemTypeFromValue(itemPayload.type);
       const existing = options.items.getByProvider(threadId, providerItemId);
       const userMessageProjection = itemType === 'userMessage' ? projectProviderUserMessage(conversation, turn, presentedItemPayload, itemText(itemPayload), providerItemId) : null;
@@ -3918,7 +3920,7 @@ function itemTypeFromMethod(method: string): ConversationItemType {
 
 function itemTypeFromValue(value: unknown): ConversationItemType {
   const normalized = typeof value === 'string' ? value : 'error';
-  const allowed: ConversationItemType[] = ['userMessage', 'agentMessage', 'reasoning', 'commandExecution', 'fileChange', 'mcpToolCall', 'dynamicToolCall', 'plan', 'imageView', 'webSearch', 'contextCompaction', 'error'];
+  const allowed: ConversationItemType[] = ['userMessage', 'agentMessage', 'reasoning', 'commandExecution', 'fileChange', 'mcpToolCall', 'dynamicToolCall', 'plan', 'imageView', 'imageGeneration', 'webSearch', 'contextCompaction', 'error'];
   return allowed.includes(normalized as ConversationItemType) ? (normalized as ConversationItemType) : 'error';
 }
 
@@ -3990,7 +3992,7 @@ function completedItemProjection(existing: { payloadJson: string; textContent: s
     ...(existingPresentation || completedPresentation ? { presentation: { ...(existingPresentation ?? {}), ...(completedPresentation ?? {}) } } : {}),
   };
 
-  if (itemType !== 'reasoning') return { payload, textContent: itemText(completedPayload) };
+  if (itemType !== 'reasoning') return { payload: sanitizeConversationItemPayload(payload), textContent: itemText(completedPayload) };
 
   const completedSummary = readableReasoningSummary(completedPayload);
   const presentation = isRecord(payload.presentation) ? payload.presentation : {};

@@ -1,17 +1,9 @@
-import {createHash} from 'node:crypto';
-import {closeSync, openSync, readSync, realpathSync, statSync} from 'node:fs';
-import {basename, dirname, extname, isAbsolute, relative, resolve, sep} from 'node:path';
-import {fileURLToPath} from 'node:url';
-import type {
-  ConversationAttachmentResource,
-  ConversationFileIconKind,
-  ConversationFileLocation,
-  ConversationFileResource,
-  ConversationResource,
-  ConversationResourcePresentation,
-  ConversationWebsiteResource,
-} from '@zeus/shared';
-import type {ZeusConversationItemRecord, ZeusConversationResourceRecord} from '@zeus/storage';
+import { createHash } from 'node:crypto';
+import { closeSync, openSync, readSync, realpathSync, statSync } from 'node:fs';
+import { basename, dirname, extname, isAbsolute, relative, resolve, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import type { ConversationAttachmentResource, ConversationFileIconKind, ConversationFileLocation, ConversationFileResource, ConversationResource, ConversationResourcePresentation, ConversationWebsiteResource } from '@zeus/shared';
+import type { ZeusConversationItemRecord, ZeusConversationResourceRecord } from '@zeus/storage';
 
 interface ResourceCandidateBase {
   sourceIndex: number;
@@ -59,6 +51,7 @@ export interface NormalizeConversationResourcesInput {
   payload: Record<string, unknown>;
   text: string;
   trustedAttachmentRoots: readonly string[];
+  generatedImageRoot?: string;
   now: string;
 }
 
@@ -79,11 +72,20 @@ const markdownLinkPattern = /\[([^\]\n]+)\]\(([^)\n]+)\)/gu;
 const maximumResourceUrlLength = 8_192;
 const maximumResourcesPerItem = 128;
 
-export function normalizeConversationResources(
-  input: NormalizeConversationResourcesInput,
-): Array<Omit<ZeusConversationResourceRecord, 'createdAt' | 'updatedAt'>> {
+export function normalizeConversationResources(input: NormalizeConversationResourcesInput): Array<Omit<ZeusConversationResourceRecord, 'createdAt' | 'updatedAt'>> {
   const candidates: ResourceCandidate[] = [];
   let sourceIndex = 0;
+
+  const generatedImage = normalizeGeneratedImageResource({
+    sourceIndex,
+    item: input.item,
+    payload: input.payload,
+    generatedImageRoot: input.generatedImageRoot,
+  });
+  if (generatedImage) {
+    candidates.push(generatedImage);
+    sourceIndex += 1;
+  }
 
   for (const link of markdownLinks(input.text)) {
     const candidate = normalizeLinkedResource({
@@ -164,11 +166,89 @@ export function normalizeConversationResources(
   });
 }
 
-function normalizeFileChangeResource(input: {
-  sourceIndex: number;
-  path: string;
-  projectRoot: string;
-}): FileResourceCandidate | null {
+/**
+ * 图片生成负载只保留会话恢复与状态展示所需的元数据，避免 base64 结果进入数据库或 Renderer。
+ */
+export function sanitizeConversationItemPayload(payload: Record<string, unknown>): Record<string, unknown> {
+  if (payload.type !== 'imageGeneration') return payload;
+  const allowedKeys = [
+    'type',
+    'id',
+    'callId',
+    'call_id',
+    'status',
+    'prompt',
+    'revisedPrompt',
+    'revised_prompt',
+    'savedPath',
+    'saved_path',
+    'outputHint',
+    'output_hint',
+    'error',
+    'message',
+    'startedAt',
+    'completedAt',
+    'presentation',
+  ] as const;
+  return Object.fromEntries(allowedKeys.flatMap((key) => (Object.prototype.hasOwnProperty.call(payload, key) ? [[key, payload[key]]] : [])));
+}
+
+function normalizeGeneratedImageResource(input: { sourceIndex: number; item: ZeusConversationItemRecord; payload: Record<string, unknown>; generatedImageRoot?: string }): AttachmentResourceCandidate | null {
+  if (input.item.itemType !== 'imageGeneration' && input.payload.type !== 'imageGeneration') return null;
+  if (input.item.status !== 'completed' || !input.generatedImageRoot || !input.item.providerThreadId) return null;
+  const savedPath = stringValue(input.payload.savedPath ?? input.payload.saved_path);
+  if (!savedPath || !isAbsolute(savedPath)) return null;
+
+  const generatedImageRoot = resolve(input.generatedImageRoot);
+  const sessionRoot = resolve(generatedImageRoot, input.item.providerThreadId);
+  if (!isInsideRoot(sessionRoot, generatedImageRoot) || sessionRoot === generatedImageRoot) return null;
+  const resolved = resolveAuthorizedPath(savedPath, [sessionRoot]);
+  if (!resolved) return null;
+
+  let regularFile = false;
+  try {
+    regularFile = statSync(resolved.absolutePath).isFile();
+  } catch {
+    return null;
+  }
+  const mimeType = generatedImageMimeType(resolved.absolutePath);
+  if (!regularFile || !mimeType) return null;
+  const displayName = basename(resolved.absolutePath);
+  return {
+    kind: 'attachment',
+    sourceIndex: input.sourceIndex,
+    presentation: 'card',
+    displayName,
+    absolutePath: resolved.absolutePath,
+    allowedRoot: resolved.allowedRoot,
+    attachmentRef: displayName,
+    mimeType,
+    previewKind: 'image',
+    iconKind: 'image',
+  };
+}
+
+function generatedImageMimeType(path: string): string | null {
+  const extension = extname(path).toLocaleLowerCase();
+  let descriptor: number | null = null;
+  try {
+    descriptor = openSync(path, 'r');
+    const header = Buffer.alloc(12);
+    const bytesRead = readSync(descriptor, header, 0, header.length, 0);
+    if (extension === '.png' && bytesRead >= 8 && header.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'image/png';
+    if ((extension === '.jpg' || extension === '.jpeg') && bytesRead >= 3 && header[0] === 0xff && header[1] === 0xd8 && header[2] === 0xff) return 'image/jpeg';
+    const asciiHeader = header.subarray(0, bytesRead).toString('ascii');
+    if (extension === '.gif' && (asciiHeader.startsWith('GIF87a') || asciiHeader.startsWith('GIF89a'))) return 'image/gif';
+    if (extension === '.webp' && bytesRead >= 12 && asciiHeader.startsWith('RIFF') && asciiHeader.slice(8, 12) === 'WEBP') return 'image/webp';
+    return null;
+  } catch {
+    return null;
+  } finally {
+    if (descriptor !== null) closeSync(descriptor);
+  }
+}
+
+function normalizeFileChangeResource(input: { sourceIndex: number; path: string; projectRoot: string }): FileResourceCandidate | null {
   const parsedFile = parseFileReference(input.path, input.projectRoot);
   if (!parsedFile) return null;
   return {
@@ -187,10 +267,7 @@ function normalizeFileChangeResource(input: {
 
 function fileChangeResourcePaths(value: Record<string, unknown>): string[] {
   const kind = isRecord(value.kind) ? value.kind : {};
-  return [
-    stringValue(kind.move_path ?? kind.movePath),
-    stringValue(value.path),
-  ].filter((path, index, paths): path is string => Boolean(path) && paths.indexOf(path) === index);
+  return [stringValue(kind.move_path ?? kind.movePath), stringValue(value.path)].filter((path, index, paths): path is string => Boolean(path) && paths.indexOf(path) === index);
 }
 
 export function toConversationResource(record: ZeusConversationResourceRecord): ConversationResource | null {
@@ -218,8 +295,8 @@ export function toConversationResource(record: ZeusConversationResourceRecord): 
       kind: 'file',
       projectRelativePath,
       iconKind,
-      ...(location ? {location} : {}),
-      ...(stringValue(display.mimeType) ? {mimeType: stringValue(display.mimeType)!} : {}),
+      ...(location ? { location } : {}),
+      ...(stringValue(display.mimeType) ? { mimeType: stringValue(display.mimeType)! } : {}),
     } satisfies ConversationFileResource;
   }
   if (record.kind === 'website') {
@@ -232,7 +309,7 @@ export function toConversationResource(record: ZeusConversationResourceRecord): 
       url,
       domain,
       local: display.local === true,
-      ...(stringValue(display.title) ? {title: stringValue(display.title)!} : {}),
+      ...(stringValue(display.title) ? { title: stringValue(display.title)! } : {}),
     } satisfies ConversationWebsiteResource;
   }
   const attachmentRef = stringValue(display.attachmentRef);
@@ -245,7 +322,7 @@ export function toConversationResource(record: ZeusConversationResourceRecord): 
     attachmentRef,
     previewKind,
     iconKind,
-    ...(stringValue(display.mimeType) ? {mimeType: stringValue(display.mimeType)!} : {}),
+    ...(stringValue(display.mimeType) ? { mimeType: stringValue(display.mimeType)! } : {}),
   } satisfies ConversationAttachmentResource;
 }
 
@@ -264,13 +341,7 @@ export function toConversationResourceOpenIntent(record: ZeusConversationResourc
   };
 }
 
-function normalizeLinkedResource(input: {
-  sourceIndex: number;
-  label: string;
-  href: string;
-  presentation: ConversationResourcePresentation;
-  projectRoot: string;
-}): ResourceCandidate | null {
+function normalizeLinkedResource(input: { sourceIndex: number; label: string; href: string; presentation: ConversationResourcePresentation; projectRoot: string }): ResourceCandidate | null {
   const website = normalizeWebsiteUrl(input.href);
   if (website) {
     return {
@@ -298,10 +369,7 @@ function normalizeLinkedResource(input: {
   };
 }
 
-function localHtmlArtifactCard(
-  candidate: ResourceCandidate,
-  sourceIndex: number,
-): FileResourceCandidate | null {
+function localHtmlArtifactCard(candidate: ResourceCandidate, sourceIndex: number): FileResourceCandidate | null {
   if (candidate.kind !== 'file' || candidate.iconKind !== 'html') return null;
   return {
     ...candidate,
@@ -322,7 +390,12 @@ function htmlDocumentTitle(path: string): string | null {
     const readBytes = readSync(descriptor, bytes, 0, bytes.length, 0);
     const match = /<title(?:\s[^>]*)?>([\s\S]*?)<\/title\s*>/iu.exec(bytes.subarray(0, readBytes).toString('utf8'));
     if (!match?.[1]) return null;
-    const title = decodeHtmlText(match[1].replace(/<[^>]*>/gu, ' ').replace(/\s+/gu, ' ').trim());
+    const title = decodeHtmlText(
+      match[1]
+        .replace(/<[^>]*>/gu, ' ')
+        .replace(/\s+/gu, ' ')
+        .trim(),
+    );
     return title ? title.slice(0, 240) : null;
   } catch {
     return null;
@@ -354,17 +427,10 @@ function safeCodePoint(value: number, fallback: string): string {
   return String.fromCodePoint(value);
 }
 
-function normalizeAttachmentResource(input: {
-  sourceIndex: number;
-  value: Record<string, unknown>;
-  projectRoot: string;
-  trustedAttachmentRoots: readonly string[];
-}): AttachmentResourceCandidate | null {
+function normalizeAttachmentResource(input: { sourceIndex: number; value: Record<string, unknown>; projectRoot: string; trustedAttachmentRoots: readonly string[] }): AttachmentResourceCandidate | null {
   const rawPath = stringValue(input.value.localPath ?? input.value.path ?? input.value.filePath);
   if (!rawPath) return null;
-  const resolved =
-    resolveExactAttachmentGrant(rawPath, stringValue(input.value.authorizedPath)) ??
-    resolveAuthorizedPath(rawPath, [input.projectRoot, ...input.trustedAttachmentRoots]);
+  const resolved = resolveExactAttachmentGrant(rawPath, stringValue(input.value.authorizedPath)) ?? resolveAuthorizedPath(rawPath, [input.projectRoot, ...input.trustedAttachmentRoots]);
   if (!resolved) return null;
   const mimeType = stringValue(input.value.mime ?? input.value.mimeType) ?? undefined;
   const displayName = stringValue(input.value.name) ?? basename(resolved.absolutePath);
@@ -376,31 +442,23 @@ function normalizeAttachmentResource(input: {
     absolutePath: resolved.absolutePath,
     allowedRoot: resolved.allowedRoot,
     attachmentRef: displayName,
-    ...(mimeType ? {mimeType} : {}),
+    ...(mimeType ? { mimeType } : {}),
     previewKind: previewKindForPath(resolved.absolutePath, mimeType),
     iconKind: iconKindForPath(resolved.absolutePath, mimeType),
   };
 }
 
-function resolveExactAttachmentGrant(
-  rawPath: string,
-  authorizedPath: string | null,
-): {absolutePath: string; allowedRoot: string} | null {
+function resolveExactAttachmentGrant(rawPath: string, authorizedPath: string | null): { absolutePath: string; allowedRoot: string } | null {
   if (!authorizedPath || rawPath.includes('\0') || authorizedPath.includes('\0')) return null;
   const absolutePath = resolve(rawPath);
   const exactPath = resolve(authorizedPath);
   const absoluteRealPath = safeRealpath(absolutePath);
   const exactRealPath = safeRealpath(exactPath);
   if (!absoluteRealPath || !exactRealPath || absoluteRealPath !== exactRealPath) return null;
-  return {absolutePath: absoluteRealPath, allowedRoot: dirname(absoluteRealPath)};
+  return { absolutePath: absoluteRealPath, allowedRoot: dirname(absoluteRealPath) };
 }
 
-function normalizeStructuredResource(input: {
-  sourceIndex: number;
-  value: Record<string, unknown>;
-  projectRoot: string;
-  trustedAttachmentRoots: readonly string[];
-}): ResourceCandidate | null {
+function normalizeStructuredResource(input: { sourceIndex: number; value: Record<string, unknown>; projectRoot: string; trustedAttachmentRoots: readonly string[] }): ResourceCandidate | null {
   const url = stringValue(input.value.url ?? input.value.href);
   if (url) {
     const website = normalizeWebsiteUrl(url);
@@ -411,7 +469,7 @@ function normalizeStructuredResource(input: {
         sourceIndex: input.sourceIndex,
         presentation: 'card',
         displayName: title ?? website.domain,
-        ...(title ? {title} : {}),
+        ...(title ? { title } : {}),
         ...website,
       };
     }
@@ -429,7 +487,7 @@ function normalizeStructuredResource(input: {
       absolutePath: resolvedAttachment.absolutePath,
       allowedRoot: resolvedAttachment.allowedRoot,
       attachmentRef: stringValue(input.value.name) ?? basename(resolvedAttachment.absolutePath),
-      ...(mimeType ? {mimeType} : {}),
+      ...(mimeType ? { mimeType } : {}),
       previewKind: previewKindForPath(resolvedAttachment.absolutePath, mimeType),
       iconKind: iconKindForPath(resolvedAttachment.absolutePath, mimeType),
     };
@@ -446,15 +504,12 @@ function normalizeStructuredResource(input: {
     projectRoot: parsedFile.projectRoot,
     allowedRoot: parsedFile.projectRoot,
     location: parsedFile.location,
-    ...(mimeType ? {mimeType} : {}),
+    ...(mimeType ? { mimeType } : {}),
     iconKind: iconKindForPath(parsedFile.absolutePath, mimeType),
   };
 }
 
-function parseFileReference(
-  rawReference: string,
-  projectRoot: string,
-): {absolutePath: string; projectRelativePath: string; projectRoot: string; location?: ConversationFileLocation} | null {
+function parseFileReference(rawReference: string, projectRoot: string): { absolutePath: string; projectRelativePath: string; projectRoot: string; location?: ConversationFileLocation } | null {
   let reference = rawReference.trim();
   if (!reference || reference.includes('\0')) return null;
   let location: ConversationFileLocation | undefined;
@@ -479,7 +534,7 @@ function parseFileReference(
       if (suffix) {
         location = normalizeLocation({
           line: Number(suffix[1]),
-          ...(suffix[2] ? {column: Number(suffix[2])} : {}),
+          ...(suffix[2] ? { column: Number(suffix[2]) } : {}),
         });
         reference = reference.slice(0, suffix.index);
       }
@@ -506,11 +561,11 @@ function parseFileReference(
     absolutePath,
     projectRelativePath,
     projectRoot: root,
-    ...(location ? {location} : {}),
+    ...(location ? { location } : {}),
   };
 }
 
-function normalizeWebsiteUrl(rawUrl: string): {url: string; domain: string; local: boolean} | null {
+function normalizeWebsiteUrl(rawUrl: string): { url: string; domain: string; local: boolean } | null {
   if (!rawUrl || rawUrl.length > maximumResourceUrlLength) return null;
   try {
     const url = new URL(rawUrl);
@@ -518,7 +573,7 @@ function normalizeWebsiteUrl(rawUrl: string): {url: string; domain: string; loca
     if (url.protocol === 'mailto:') {
       const address = url.pathname.trim();
       if (!address) return null;
-      return {url: url.href, domain: address, local: false};
+      return { url: url.href, domain: address, local: false };
     }
     if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
     if (!url.hostname) return null;
@@ -533,7 +588,7 @@ function normalizeWebsiteUrl(rawUrl: string): {url: string; domain: string; loca
   }
 }
 
-function resolveAuthorizedPath(rawPath: string, roots: readonly string[]): {absolutePath: string; allowedRoot: string} | null {
+function resolveAuthorizedPath(rawPath: string, roots: readonly string[]): { absolutePath: string; allowedRoot: string } | null {
   if (!rawPath || rawPath.includes('\0')) return null;
   const absolutePath = resolve(rawPath);
   for (const candidateRoot of roots) {
@@ -546,7 +601,7 @@ function resolveAuthorizedPath(rawPath: string, roots: readonly string[]): {abso
     while (true) {
       const ancestorRealPath = safeRealpath(ancestor);
       if (ancestorRealPath) {
-        if (isInsideRoot(ancestorRealPath, rootRealPath)) return {absolutePath, allowedRoot};
+        if (isInsideRoot(ancestorRealPath, rootRealPath)) return { absolutePath, allowedRoot };
         break;
       }
       const parent = dirname(ancestor);
@@ -570,14 +625,14 @@ function safeRealpath(path: string): string | null {
   }
 }
 
-function markdownLinks(text: string): Array<{label: string; href: string}> {
-  const links: Array<{label: string; href: string}> = [];
+function markdownLinks(text: string): Array<{ label: string; href: string }> {
+  const links: Array<{ label: string; href: string }> = [];
   let match: RegExpExecArray | null;
   markdownLinkPattern.lastIndex = 0;
   while ((match = markdownLinkPattern.exec(text))) {
     const label = (match[1] ?? '').trim();
     const href = (match[2] ?? '').trim().replace(/^<|>$/gu, '');
-    if (label && href) links.push({label, href});
+    if (label && href) links.push({ label, href });
     if (links.length >= maximumResourcesPerItem) break;
   }
   return links;
@@ -589,8 +644,8 @@ function displayForCandidate(candidate: ResourceCandidate): Record<string, unkno
       displayName: candidate.displayName,
       projectRelativePath: candidate.projectRelativePath,
       iconKind: candidate.iconKind,
-      ...(candidate.location ? {location: candidate.location} : {}),
-      ...(candidate.mimeType ? {mimeType: candidate.mimeType} : {}),
+      ...(candidate.location ? { location: candidate.location } : {}),
+      ...(candidate.mimeType ? { mimeType: candidate.mimeType } : {}),
     };
   }
   if (candidate.kind === 'website') {
@@ -598,7 +653,7 @@ function displayForCandidate(candidate: ResourceCandidate): Record<string, unkno
       displayName: candidate.displayName,
       domain: candidate.domain,
       local: candidate.local,
-      ...(candidate.title ? {title: candidate.title} : {}),
+      ...(candidate.title ? { title: candidate.title } : {}),
     };
   }
   return {
@@ -606,26 +661,26 @@ function displayForCandidate(candidate: ResourceCandidate): Record<string, unkno
     attachmentRef: candidate.attachmentRef,
     previewKind: candidate.previewKind,
     iconKind: candidate.iconKind,
-    ...(candidate.mimeType ? {mimeType: candidate.mimeType} : {}),
+    ...(candidate.mimeType ? { mimeType: candidate.mimeType } : {}),
   };
 }
 
 function targetForCandidate(candidate: ResourceCandidate): Record<string, unknown> {
-  if (candidate.kind === 'website') return {url: candidate.url};
+  if (candidate.kind === 'website') return { url: candidate.url };
   return {
     absolutePath: candidate.absolutePath,
-    ...(candidate.kind === 'file' ? {projectRoot: candidate.projectRoot, projectRelativePath: candidate.projectRelativePath, location: candidate.location ?? null} : {}),
+    ...(candidate.kind === 'file' ? { projectRoot: candidate.projectRoot, projectRelativePath: candidate.projectRelativePath, location: candidate.location ?? null } : {}),
   };
 }
 
 function authorityForCandidate(candidate: ResourceCandidate): Record<string, unknown> {
-  if (candidate.kind === 'website') return {allowedSchemes: ['http:', 'https:', 'mailto:']};
-  return {allowedRoot: candidate.allowedRoot};
+  if (candidate.kind === 'website') return { allowedSchemes: ['http:', 'https:', 'mailto:'] };
+  return { allowedRoot: candidate.allowedRoot };
 }
 
 function digestResourceCandidate(candidate: ResourceCandidate): string {
   return createHash('sha256')
-    .update(JSON.stringify({kind: candidate.kind, target: targetForCandidate(candidate)}))
+    .update(JSON.stringify({ kind: candidate.kind, target: targetForCandidate(candidate) }))
     .digest('hex');
 }
 
@@ -648,7 +703,7 @@ function locationFromHash(hash: string): ConversationFileLocation | undefined {
   if (!match) return undefined;
   return normalizeLocation({
     line: Number(match[1]),
-    ...(match[2] ? {endLine: Number(match[2])} : {}),
+    ...(match[2] ? { endLine: Number(match[2]) } : {}),
   });
 }
 
@@ -659,9 +714,9 @@ function normalizeLocation(value: unknown): ConversationFileLocation | undefined
   const endLine = positiveInteger(value.endLine);
   if (!line && !column && !endLine) return undefined;
   return {
-    ...(line ? {line} : {}),
-    ...(column ? {column} : {}),
-    ...(endLine && (!line || endLine >= line) ? {endLine} : {}),
+    ...(line ? { line } : {}),
+    ...(column ? { column } : {}),
+    ...(endLine && (!line || endLine >= line) ? { endLine } : {}),
   };
 }
 
@@ -697,24 +752,7 @@ function previewKindForPath(path: string, mimeType?: string): 'image' | 'documen
 }
 
 function fileIconKindValue(value: unknown): ConversationFileIconKind | null {
-  const allowed: ConversationFileIconKind[] = [
-    'code',
-    'java',
-    'javascript',
-    'typescript',
-    'json',
-    'markdown',
-    'sql',
-    'html',
-    'css',
-    'image',
-    'pdf',
-    'spreadsheet',
-    'presentation',
-    'document',
-    'archive',
-    'file',
-  ];
+  const allowed: ConversationFileIconKind[] = ['code', 'java', 'javascript', 'typescript', 'json', 'markdown', 'sql', 'html', 'css', 'image', 'pdf', 'spreadsheet', 'presentation', 'document', 'archive', 'file'];
   return typeof value === 'string' && allowed.includes(value as ConversationFileIconKind) ? (value as ConversationFileIconKind) : null;
 }
 
