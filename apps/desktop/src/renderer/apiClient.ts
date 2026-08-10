@@ -23,7 +23,7 @@ import type {
   StartProjectConversationRequest,
   StartTaskModelPushRequest,
   TaskGitDiffSummary,
-  TaskIntegrationConflictAiDraft,
+  TaskIntegrationConflictAiSession,
   TaskIntegrationConflictFile,
   TaskIntegrationPushResult,
   TaskIntegrationRecord,
@@ -1471,7 +1471,7 @@ export interface DashboardClient {
     },
   ) => Promise<{ integration: TaskIntegrationRecord; result?: TaskIntegrationResult }>;
   loadTaskIntegrationConflict: (taskId: string, integrationId: string, path: string) => Promise<TaskIntegrationConflictFile>;
-  assistTaskIntegrationConflict: (taskId: string, integrationId: string, path: string, content: string) => Promise<TaskIntegrationConflictAiDraft>;
+  startTaskIntegrationConflictAi: (taskId: string, integrationId: string, path: string, content: string) => Promise<TaskIntegrationConflictAiSession>;
   resolveTaskIntegrationConflict: (taskId: string, integrationId: string, path: string, content: string) => Promise<{ integration: TaskIntegrationRecord; result: { path: string; remainingConflictFiles: string[] } }>;
   finalizeTaskIntegration: (
     taskId: string,
@@ -1856,8 +1856,8 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
         body: JSON.stringify(input),
       }),
     loadTaskIntegrationConflict: (taskId, integrationId, path) => request<TaskIntegrationConflictFile>(`/api/tasks/${encodeURIComponent(taskId)}/integrations/${encodeURIComponent(integrationId)}/conflict?path=${encodeURIComponent(path)}`),
-    assistTaskIntegrationConflict: (taskId, integrationId, path, content) =>
-      request<TaskIntegrationConflictAiDraft>(`/api/tasks/${encodeURIComponent(taskId)}/integrations/${encodeURIComponent(integrationId)}/conflict/ai-draft?path=${encodeURIComponent(path)}`, {
+    startTaskIntegrationConflictAi: (taskId, integrationId, path, content) =>
+      request<TaskIntegrationConflictAiSession>(`/api/tasks/${encodeURIComponent(taskId)}/integrations/${encodeURIComponent(integrationId)}/conflict/ai-session?path=${encodeURIComponent(path)}`, {
         method: 'POST',
         body: JSON.stringify({ content }),
       }),

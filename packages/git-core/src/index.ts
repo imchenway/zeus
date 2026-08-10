@@ -896,6 +896,16 @@ export async function writeTaskIntegrationResolution(integrationPath: string, pa
   return { path: safePath, remainingConflictFiles };
 }
 
+/** AI 接管前只把当前三栏草稿写入隔离工作区，保留未解决 marker，不暂存也不生成提交。 */
+export async function writeTaskIntegrationDraft(integrationPath: string, path: string, content: string): Promise<{ path: string }> {
+  const safePath = requireSafeWorkspacePath(path);
+  if (content.includes('\0')) throw gitCoreError('ZEUS_TASK_CONFLICT_BINARY_UNSUPPORTED', 'Binary conflict resolution is not supported in the text editor.');
+  const absolutePath = resolve(integrationPath, safePath);
+  if (!isPathInside(integrationPath, absolutePath)) throw gitCoreError('ZEUS_GIT_PATH_INVALID', `Conflict path escapes the integration worktree: ${safePath}`);
+  await writeFile(absolutePath, content, 'utf8');
+  return { path: safePath };
+}
+
 /** 冲突全部解决后生成合入候选提交；仍有冲突时拒绝继续。 */
 export async function completeTaskIntegrationCommit(input: { integrationPath: string; mode: 'merge' | 'squash'; commitMessage: string }): Promise<{ resultHeadSha: string }> {
   const conflicts = splitLines(await readGitStdout(input.integrationPath, ['diff', '--name-only', '--diff-filter=U']));
