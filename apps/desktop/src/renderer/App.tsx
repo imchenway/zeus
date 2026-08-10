@@ -8841,10 +8841,18 @@ export function App(props: {
   }
 
   async function openTaskConflictAiConversation(taskId: string, conversationId: string): Promise<void> {
-    const choices = await refreshNativeConversationChoices(taskId);
-    const conversation = choices?.choices.find((candidate) => candidate.id === conversationId);
-    if (!conversation) throw new Error('冲突处理会话已创建，但暂时无法从会话列表读取。');
-    const targetProject = snapshot.projects.find((project) => project.id === conversation.projectId);
+    let conversation: NativeConversationChoice | undefined;
+    for (let attempt = 0; attempt < 3 && !conversation; attempt += 1) {
+      try {
+        const choices = await refreshNativeConversationChoices(taskId);
+        conversation = choices?.choices.find((candidate) => candidate.id === conversationId);
+      } catch {
+        // 会话已由启动接口持久化；列表短暂失败不能被伪装成 AI 创建失败。
+      }
+      if (!conversation && attempt < 2) await new Promise<void>((resolve) => window.setTimeout(resolve, 160));
+    }
+    const task = snapshot.tasks.find((candidate) => candidate.id === taskId);
+    const targetProject = snapshot.projects.find((project) => project.id === (conversation?.projectId ?? task?.projectId));
     if (targetProject) {
       activeProjectIdRef.current = targetProject.id;
       setProjectDetail(targetProject);
@@ -8853,7 +8861,17 @@ export function App(props: {
     setTaskDetailPaneTaskId(undefined);
     setTaskConversationDrawerTarget(undefined);
     setConversationDrawer(undefined);
-    await selectNativeConversation(conversation);
+    if (conversation) {
+      await selectNativeConversation(conversation);
+    } else {
+      // 暂时未读到新会话时仍进入正确任务的会话页；后续列表刷新命中后会按 id 自动选中。
+      if (task) setTaskDetail(task);
+      selectedNativeConversationIdRef.current = conversationId;
+      setSelectedNativeConversationId(conversationId);
+      setConversationDraftOpen(false);
+      setActiveNavTarget('conversations');
+      setActiveProjectSection('sessions');
+    }
     if (typeof window !== 'undefined') window.history.replaceState(null, '', '#project-sessions');
     workspaceScrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
   }
