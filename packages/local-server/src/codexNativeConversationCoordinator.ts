@@ -46,6 +46,7 @@ import type {
   StartNativeEphemeralConversationInput,
   StartProjectConversationInput,
   StartTaskConversationInput,
+  SteerNativeMessageInput,
   SubmitNativeMessageInput,
   WaitForNativeTurnResultInput,
 } from './codexNativeConversationContracts.js';
@@ -84,6 +85,8 @@ interface PersistedSubmissionInput {
   displayText?: string;
   origin?: 'implement_plan';
   planItemId?: string;
+  delivery?: 'queue' | 'steer_now';
+  expectedTurnId?: string | null;
 }
 
 interface NativeTurnResultWaiter {
@@ -310,7 +313,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   ) {
     const projectRoot = contexts.get(conversation.id)?.projectLocalPath ?? options.getProjectRoot?.(conversation.projectId) ?? null;
     if (!projectRoot) return [];
-    const submission = item.itemType === 'userMessage' ? options.submissions.listByConversation(conversation.id).find((candidate) => candidate.id === turn.clientSubmissionId || candidate.providerTurnId === turn.providerTurnId) : undefined;
+    const submission = item.itemType === 'userMessage' ? submissionForProviderUserItem(conversation.id, turn, payload) : undefined;
     const resourcePayload = submission ? { ...payload, attachments: submissionAttachments(submission) } : payload;
     const normalized = normalizeConversationResources({
       projectId: conversation.projectId,
@@ -921,6 +924,110 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     return dispatchSubmission(refreshed, submission, input.providerWriteLifecycle);
   }
 
+  async function steerMessage(input: SteerNativeMessageInput): Promise<NativeAcceptedOperation> {
+    assertOpen();
+    const conversation = requireConversation(input.conversationId);
+    const context = contextWithLatestNextTurnSettings(conversation.id, contexts.get(conversation.id) ?? contextFromConversation(conversation));
+    const queuedCount = options.submissions.listByConversation(conversation.id).filter((entry) => entry.status === 'queued' || entry.status === 'paused' || entry.status === 'failed').length;
+    const payload: PersistedSubmissionInput = {
+      text: input.content,
+      ...(input.attachments?.length ? { attachments: input.attachments } : {}),
+      ...(input.browserComments?.length ? { browserComments: input.browserComments } : {}),
+      context,
+      ...(input.displayText ? { displayText: input.displayText } : {}),
+      delivery: 'steer_now',
+      expectedTurnId: input.expectedTurnId,
+    };
+    const submission = options.submissions.createOrGet({
+      conversationId: conversation.id,
+      idempotencyKey: input.idempotencyKey,
+      requestHash: requestHash(payload),
+      clientMessageId: input.clientUserMessageId,
+      kind: 'steer',
+      requestedDelivery: 'send_now',
+      status: 'dispatching',
+      queuePosition: queuedCount + 1,
+      input: payload,
+      targetProviderTurnId: input.expectedTurnId,
+      providerTurnId: input.expectedTurnId,
+      createdAt: now(),
+      dispatchedAt: now(),
+    });
+    await persist();
+    await input.providerWriteLifecycle?.markPrepared(submission.id);
+
+    const state = runStates.get(conversation.id) ?? inferRunState(conversation);
+    if ((state.type !== 'active' && state.type !== 'waiting') || state.turnId !== input.expectedTurnId) {
+      const requeued = options.submissions.requeueRejectedSteer(submission.id, now());
+      await persist();
+      options.broadcast('conversation.queue.changed', {
+        conversationId: conversation.id,
+        queue: toQueueSnapshot(conversation.id),
+      });
+      requestQueueDrain();
+      return accepted(requeued, 'queued', conversation.providerThreadId, null);
+    }
+
+    const providerThreadId = requireString(conversation.providerThreadId, 'provider thread id');
+    input.providerWriteLifecycle?.markRpcStarted(submission.id);
+    try {
+      await options.manager.steerTurn({
+        threadId: providerThreadId,
+        turnId: input.expectedTurnId,
+        clientUserMessageId: submission.clientMessageId,
+        input: submissionProviderInput(submission, context),
+      });
+    } catch (error) {
+      if (isProviderTurnAlreadyEndedSteerError(error)) {
+        options.submissions.requeueRejectedSteer(submission.id, now());
+        await persist();
+        await providerEventChain.catch(() => undefined);
+        try {
+          const snapshot = await options.manager.readThread({ threadId: providerThreadId });
+          const generationId = options.manager.generationForThread(providerThreadId) ?? readyGenerationId();
+          if (generationId) reconcileConversationSnapshot(requireConversation(conversation.id), snapshot, generationId);
+        } catch (reconcileError) {
+          options.broadcast('conversation.native.steer_requeued', {
+            conversationId: conversation.id,
+            providerThreadId,
+            providerTurnId: input.expectedTurnId,
+            submissionId: submission.id,
+            reconciliationError: serializeError(reconcileError),
+          });
+        }
+        const confirmedQueued = options.submissions.requeueRejectedSteer(submission.id, now());
+        await persist();
+        options.broadcast('conversation.queue.changed', {
+          conversationId: conversation.id,
+          queue: toQueueSnapshot(conversation.id),
+        });
+        requestQueueDrain();
+        return accepted(confirmedQueued, 'queued', providerThreadId, null);
+      }
+      options.submissions.updateStatus(submission.id, 'paused', {
+        providerTurnId: input.expectedTurnId,
+        pausedReason: 'recovery_required',
+        error: serializeError(error),
+        updatedAt: now(),
+      });
+      await persist();
+      throw error;
+    }
+
+    const resolved = options.submissions.updateStatus(submission.id, 'resolved', {
+      providerTurnId: input.expectedTurnId,
+      resolvedAt: now(),
+    });
+    await persist();
+    options.broadcast('conversation.submission.steered', {
+      conversationId: conversation.id,
+      submissionId: submission.id,
+      providerThreadId,
+      providerTurnId: input.expectedTurnId,
+    });
+    return accepted(resolved, 'steered', providerThreadId, input.expectedTurnId);
+  }
+
   function contextFromConversation(conversation: ZeusConversationWithMessagesRecord): ConversationDispatchContext {
     const submissions = options.submissions.listByConversation(conversation.id);
     const activeTurn = [...options.turns.listByConversation(conversation.id)].reverse().find((turn) => turn.status === 'running' || turn.status === 'waiting' || turn.status === 'dispatching');
@@ -1327,8 +1434,14 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     return typeof metadata.clientUserMessageId === 'string' && metadata.clientUserMessageId.trim() ? metadata.clientUserMessageId : null;
   }
 
-  function submissionPresentation(turn: ZeusConversationTurnRecord): Record<string, unknown> {
-    const submission = options.submissions.getById(turn.clientSubmissionId);
+  function submissionForProviderUserItem(conversationId: string, turn: ZeusConversationTurnRecord, itemPayload: Record<string, unknown>): ZeusConversationSubmissionRecord | undefined {
+    const submissions = options.submissions.listByConversation(conversationId);
+    const providerClientId = typeof itemPayload.clientId === 'string' && itemPayload.clientId.trim() ? itemPayload.clientId : null;
+    return (providerClientId ? submissions.find((candidate) => candidate.clientMessageId === providerClientId) : undefined) ?? submissions.find((candidate) => candidate.id === turn.clientSubmissionId);
+  }
+
+  function submissionPresentation(conversationId: string, turn: ZeusConversationTurnRecord, itemPayload: Record<string, unknown>): Record<string, unknown> {
+    const submission = submissionForProviderUserItem(conversationId, turn, itemPayload);
     if (!submission) return {};
     const input = parseJsonRecord(submission.inputJson);
     return {
@@ -2744,7 +2857,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       const providerItemId = providerItemIdFrom(params);
       const turn = providerTurnId ? options.turns.listByConversation(conversation.id).find((candidate) => candidate.providerTurnId === providerTurnId) : undefined;
       if (!providerTurnId || !providerItemId || !turn) return;
-      const presentedItemPayload = itemPayload.type === 'userMessage' ? { ...itemPayload, ...submissionPresentation(turn) } : itemPayload;
+      const presentedItemPayload = itemPayload.type === 'userMessage' ? { ...itemPayload, ...submissionPresentation(conversation.id, turn, itemPayload) } : itemPayload;
       const itemType = itemTypeFromValue(itemPayload.type);
       const userMessageProjection = itemType === 'userMessage' ? projectProviderUserMessage(conversation, turn, presentedItemPayload, itemText(itemPayload), providerItemId) : null;
       const item = userMessageProjection
@@ -2983,7 +3096,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       const providerItemId = providerItemIdFrom(params);
       const turn = providerTurnId ? options.turns.listByConversation(conversation.id).find((candidate) => candidate.providerTurnId === providerTurnId) : undefined;
       if (!providerTurnId || !providerItemId || !turn) return;
-      const presentedItemPayload = itemPayload.type === 'userMessage' ? { ...itemPayload, ...submissionPresentation(turn) } : itemPayload;
+      const presentedItemPayload = itemPayload.type === 'userMessage' ? { ...itemPayload, ...submissionPresentation(conversation.id, turn, itemPayload) } : itemPayload;
       const itemType = itemTypeFromValue(itemPayload.type);
       const existing = options.items.getByProvider(threadId, providerItemId);
       const userMessageProjection = itemType === 'userMessage' ? projectProviderUserMessage(conversation, turn, presentedItemPayload, itemText(itemPayload), providerItemId) : null;
@@ -3363,6 +3476,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     startEphemeralConversation,
     waitForTurnResult,
     submitMessage,
+    steerMessage,
     editQueuedSubmission,
     deleteQueuedSubmission,
     reorderQueue,
