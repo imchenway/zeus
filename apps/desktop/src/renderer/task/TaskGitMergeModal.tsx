@@ -110,8 +110,18 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
   const workspaceClean = selectedWorkspace?.review?.clean ?? selectedWorkspace?.worktreePath === null;
   const commitReady = Boolean(selectedWorkspace && workspaceClean && selectedWorkspace.state !== 'discarded');
   const mergeReady = Boolean(selectedWorkspace?.branchComparison && commitReady && targetBranch && targetBranch !== selectedWorkspace.branchName && !pendingLocalSync);
-  const deliveredIntegration = integrations.find((candidate) => candidate.workspaceId === selectedWorkspace?.id && candidate.targetBranch === targetBranch && candidate.state === 'merged') ?? null;
-  const alreadyDelivered = Boolean(deliveredIntegration || (selectedWorkspace?.state === 'merged' && targetBranch === selectedWorkspace.sourceBranch));
+  const currentTaskHeadSha = selectedWorkspace?.branchComparison?.taskHeadSha ?? selectedWorkspace?.review?.headSha ?? selectedWorkspace?.headSha ?? null;
+  const workspaceHeadMatchesCurrentBranch = Boolean(selectedWorkspace?.state === 'merged' && selectedWorkspace.headSha && selectedWorkspace.headSha === currentTaskHeadSha);
+  // “已合入”只描述当前任务 HEAD；历史成功记录不能阻止同一分支的新提交再次交付。
+  const deliveredIntegration =
+    integrations.find(
+      (candidate) =>
+        candidate.workspaceId === selectedWorkspace?.id &&
+        candidate.targetBranch === targetBranch &&
+        candidate.state === 'merged' &&
+        (candidate.taskHeadSha ? candidate.taskHeadSha === currentTaskHeadSha : workspaceHeadMatchesCurrentBranch),
+    ) ?? null;
+  const alreadyDelivered = Boolean(deliveredIntegration || (workspaceHeadMatchesCurrentBranch && targetBranch === selectedWorkspace?.sourceBranch));
   const pushReady = Boolean(deliveredIntegration && selectedWorkspace?.remoteName && !pendingLocalSync);
   const unresolvedConflictBlocks = useMemo(() => countUnresolvedConflictBlocks(conflictDocument), [conflictDocument]);
 
