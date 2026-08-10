@@ -95,6 +95,24 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
   });
   const unsubscribe = driver.subscribe((event) => void handleRuntimeEvent(event));
 
+  function settleInterruptedRun(run: PiRunContext, timestamp: string): void {
+    const submissions = options.submissions.listByConversation(run.conversationId);
+    const unsent = submissions.filter((submission) => !submission.providerTurnId && (submission.status === 'queued' || submission.status === 'paused'));
+    for (const submission of unsent) {
+      if (submission.status === 'queued') options.submissions.updateStatus(submission.id, 'paused', { pausedReason: 'interrupted', updatedAt: timestamp });
+    }
+    const blocksResume = unsent.some((submission) => submission.status === 'queued' || submission.pausedReason !== 'user_confirmation');
+    options.submissions.updateStatus(run.submissionId, 'completed', {
+      providerTurnId: run.providerTurnId,
+      resolvedAt: timestamp,
+      updatedAt: timestamp,
+    });
+    options.conversations.updateAgentRuntime(run.conversationId, {
+      providerState: blocksResume ? 'paused' : 'ready',
+      status: 'open',
+    });
+  }
+
   async function startConversation(input: StartPiConversationInput) {
     const attachmentInput = await resolvePiAttachmentInput(input.attachments ?? [], input.allowedAttachmentRoots ?? []);
     const providerPrompt = appendPiAttachmentReferences(input.prompt, attachmentInput.pathReferences);
@@ -335,14 +353,15 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         nativeRunId: run.providerTurnId,
       });
       if (interrupted) {
-        options.submissions.updateStatus(run.submissionId, 'paused', { pausedReason: 'interrupted', resolvedAt: event.createdAt, updatedAt: event.createdAt });
+        settleInterruptedRun(run, event.createdAt);
       } else {
         options.submissions.updateStatus(run.submissionId, failed ? 'failed' : 'completed', { ...(failed ? { error: payload } : {}), resolvedAt: event.createdAt, updatedAt: event.createdAt });
+        options.conversations.updateAgentRuntime(run.conversationId, { providerState: failed ? 'failed' : 'ready', status: failed ? 'failed' : 'open' });
       }
-      options.conversations.updateAgentRuntime(run.conversationId, { providerState: interrupted ? 'paused' : failed ? 'failed' : 'ready', status: failed ? 'failed' : 'open' });
       runs.delete(event.nativeRunId);
       await options.db.save();
       publish('conversation.turn.completed', run.conversationId, { turnId: run.providerTurnId, submissionId: run.submissionId, status });
+      if (interrupted) publish('conversation.queue.changed', run.conversationId, { turnId: run.providerTurnId, submissionId: run.submissionId });
     }
   }
 
@@ -536,12 +555,12 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         const timestamp = options.now();
         const turn = options.turns.getById(run.turnId);
         if (turn) options.turns.upsert({ ...turn, status: 'interrupted', completedAt: timestamp, updatedAt: timestamp, agentKind: 'pi', nativeRunId: input.providerTurnId });
-        options.submissions.updateStatus(run.submissionId, 'paused', { pausedReason: 'interrupted', resolvedAt: timestamp, updatedAt: timestamp });
-        options.conversations.updateAgentRuntime(run.conversationId, { providerState: 'paused', status: 'open' });
+        settleInterruptedRun(run, timestamp);
         runs.delete(input.providerTurnId);
         interruptedRuns.delete(input.providerTurnId);
         await options.db.save();
         publish('conversation.turn.completed', run.conversationId, { turnId: run.providerTurnId, submissionId: run.submissionId, status: 'interrupted' });
+        publish('conversation.queue.changed', run.conversationId, { turnId: run.providerTurnId, submissionId: run.submissionId });
       }
       return { submissionId: run.submissionId };
     },

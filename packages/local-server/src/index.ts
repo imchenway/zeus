@@ -12653,7 +12653,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       }
       return { type: 'active' as const, turnId: active.providerTurnId, phase: 'prework' as const };
     }
-    const paused = conversationSubmissions.listByConversation(conversation.id).filter((submission) => submission.status === 'paused');
+    const paused = conversationSubmissions.listByConversation(conversation.id).filter((submission) => submission.status === 'paused' && !submission.providerTurnId);
     if (paused.some((submission) => submission.pausedReason === 'recovery_required')) return { type: 'paused' as const, reason: 'recovery_required' as const };
     if (paused.some((submission) => submission.pausedReason === 'interrupted')) return { type: 'paused' as const, reason: 'interrupted' as const };
     if (paused.some((submission) => submission.pausedReason === 'transport_unavailable')) return { type: 'paused' as const, reason: 'transport_unavailable' as const };
