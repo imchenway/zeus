@@ -75,7 +75,7 @@ function taskTypeTone(taskType: TaskType): TaskSemanticTone {
 }
 
 type TaskPriorityEditResult = { kind: 'updated'; task: TaskRecord } | { kind: 'conflict'; latest: TaskRecord };
-type TaskPrioritySaveState = { kind: 'idle' } | { kind: 'saving' } | { kind: 'saved' } | { kind: 'error'; message: string } | { kind: 'conflict'; latest: TaskRecord };
+type TaskPrioritySaveState = { kind: 'idle' } | { kind: 'saving' } | { kind: 'error'; message: string } | { kind: 'conflict'; latest: TaskRecord };
 
 function TaskPriorityControl(props: {
   task: TaskRecord;
@@ -110,7 +110,7 @@ function TaskPriorityControl(props: {
         return;
       }
       desiredValueRef.current = null;
-      setSaveState({ kind: 'saved' });
+      setSaveState({ kind: 'idle' });
     } catch (error) {
       setSaveState({ kind: 'error', message: error instanceof Error && error.message.trim() ? error.message : zh ? '保存失败' : 'Save failed' });
     }
@@ -131,28 +131,11 @@ function TaskPriorityControl(props: {
     setSaveState({ kind: 'idle' });
   }
 
-  const feedback =
-    saveState.kind === 'saving'
-      ? zh
-        ? '保存中…'
-        : 'Saving…'
-      : saveState.kind === 'saved'
-        ? zh
-          ? '已保存'
-          : 'Saved'
-        : saveState.kind === 'conflict'
-          ? zh
-            ? '保存冲突'
-            : 'Conflict'
-          : saveState.kind === 'error'
-            ? zh
-              ? `保存失败：${saveState.message}`
-              : `Save failed: ${saveState.message}`
-            : null;
+  const feedback = saveState.kind === 'conflict' ? (zh ? '保存冲突' : 'Conflict') : saveState.kind === 'error' ? (zh ? `保存失败：${saveState.message}` : `Save failed: ${saveState.message}`) : null;
   const triggerLabel = isTaskPriority(displayValue) ? displayValue.toUpperCase() : legacyLabel;
 
   return (
-    <span className="task-table-priority-control" data-state={saveState.kind} onClick={(event) => event.stopPropagation()}>
+    <span className={`task-table-priority-control${saveState.kind === 'saving' ? ' is-saving' : ''}`} data-state={saveState.kind} aria-busy={saveState.kind === 'saving' || undefined} onClick={(event) => event.stopPropagation()}>
       <ZeusSelect
         size="compact"
         ariaLabel={props.ariaLabel}
@@ -182,6 +165,7 @@ function TaskPriorityControl(props: {
         disabled={props.disabled || saveState.kind === 'saving'}
         searchable={false}
       />
+      {saveState.kind === 'saving' ? <span className="task-save-spinner" aria-hidden="true" /> : null}
       {feedback ? (
         <span className={`task-table-priority-feedback${saveState.kind === 'error' || saveState.kind === 'conflict' ? ' is-error' : ''}`}>
           <small id={statusId} role="status" aria-live="polite">

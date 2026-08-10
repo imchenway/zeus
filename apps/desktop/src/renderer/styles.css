@@ -10687,10 +10687,15 @@ a {
   align-content: center;
   display: grid;
   gap: 2px;
+  position: relative;
 }
 
 .macos-ai-app .task-table-priority-control .zeus-select-trigger {
   justify-content: space-between;
+}
+
+.macos-ai-app .task-table-priority-control.is-saving .zeus-select-chevron {
+  opacity: 0;
 }
 
 .macos-ai-app .task-table-priority-feedback {
