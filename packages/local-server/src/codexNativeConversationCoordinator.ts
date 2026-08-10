@@ -92,6 +92,13 @@ interface NativeTurnResultWaiter {
   timer: ReturnType<typeof setTimeout>;
 }
 
+interface NativeConversationDispatchLease {
+  submissionId: string;
+  lifecycles: Set<NativeProviderWriteLifecycle>;
+  rpcStartedResourceId: string | null;
+  promise?: Promise<NativeAcceptedOperation>;
+}
+
 export interface CreateCodexNativeConversationCoordinatorOptions {
   manager: CodexAppServerManager;
   enabled?: boolean;
@@ -142,6 +149,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   const runStates = new Map<string, NativeConversationRunState>();
   const contexts = new Map<string, ConversationDispatchContext>();
   const executionContextPromises = new Map<string, Promise<void>>();
+  const dispatchLeases = new Map<string, NativeConversationDispatchLease>();
   const hotReceiptIdentities = new Set<string>();
   const maintainedReceiptGenerations = new Set<string>();
   const completedTurnResults = new Map<string, NativeTurnResult>();
@@ -1014,11 +1022,42 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     }
   }
 
-  async function dispatchSubmission(
+  function dispatchSubmission(
     conversationInput: ZeusConversationWithMessagesRecord | ReturnType<ConversationRepository['create']>,
     submission: ZeusConversationSubmissionRecord,
     providerWriteLifecycle?: NativeProviderWriteLifecycle,
     providerArchiveRecoveryAttempted = false,
+  ): Promise<NativeAcceptedOperation> {
+    // 接口直派和后台队列排空共享会话级派发租约；同一提交只能启动一次 Provider 轮次。
+    const activeLease = dispatchLeases.get(conversationInput.id);
+    if (activeLease) {
+      if (activeLease.submissionId !== submission.id) {
+        const conversation = options.conversations.getById(conversationInput.id);
+        return Promise.resolve(accepted(submission, 'queued', conversation?.providerThreadId ?? null, null));
+      }
+      attachDispatchLifecycle(activeLease, providerWriteLifecycle);
+      if (activeLease.promise) return activeLease.promise;
+    }
+
+    const lease: NativeConversationDispatchLease = {
+      submissionId: submission.id,
+      lifecycles: new Set(),
+      rpcStartedResourceId: null,
+    };
+    attachDispatchLifecycle(lease, providerWriteLifecycle);
+    const promise = dispatchSubmissionWithLease(conversationInput, submission, lease, providerArchiveRecoveryAttempted).finally(() => {
+      if (dispatchLeases.get(conversationInput.id) === lease) dispatchLeases.delete(conversationInput.id);
+    });
+    lease.promise = promise;
+    dispatchLeases.set(conversationInput.id, lease);
+    return promise;
+  }
+
+  async function dispatchSubmissionWithLease(
+    conversationInput: ZeusConversationWithMessagesRecord | ReturnType<ConversationRepository['create']>,
+    submission: ZeusConversationSubmissionRecord,
+    lease: NativeConversationDispatchLease,
+    providerArchiveRecoveryAttempted: boolean,
   ): Promise<NativeAcceptedOperation> {
     let conversation = options.conversations.getById(conversationInput.id);
     if (!conversation) throw coordinatorError('ZEUS_NATIVE_CONVERSATION_NOT_FOUND', 'Native conversation was not found.');
@@ -1050,7 +1089,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       await ensureGenerationReconciled();
       conversation = options.conversations.getById(conversation.id) ?? conversation;
       if (!hasConcurrency(context)) return accepted(submission, 'queued', conversation.providerThreadId, null);
-      providerWriteLifecycle?.markRpcStarted(submission.id);
+      markDispatchRpcStarted(lease, submission.id);
       runStates.set(conversation.id, { type: 'dispatching', submissionId: submission.id });
       options.submissions.updateStatus(submission.id, 'dispatching', { dispatchedAt: now() });
       await persist();
@@ -1165,7 +1204,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
             await restoreArchivedProviderThread(conversation.id);
             const retrySubmission = options.submissions.getById(submission.id);
             const retryConversation = options.conversations.getById(conversation.id);
-            if (retrySubmission && retryConversation) return dispatchSubmission(retryConversation, retrySubmission, providerWriteLifecycle, true);
+            if (retrySubmission && retryConversation) return dispatchSubmissionWithLease(retryConversation, retrySubmission, lease, true);
           } catch {
             // 恢复函数已保留原始消息与可重试状态。
           }
@@ -1180,6 +1219,17 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       requestQueueDrain();
       return accepted(submission, 'recovery_required', providerThreadId, null);
     }
+  }
+
+  function attachDispatchLifecycle(lease: NativeConversationDispatchLease, lifecycle: NativeProviderWriteLifecycle | undefined): void {
+    if (!lifecycle || lease.lifecycles.has(lifecycle)) return;
+    lease.lifecycles.add(lifecycle);
+    if (lease.rpcStartedResourceId) lifecycle.markRpcStarted(lease.rpcStartedResourceId);
+  }
+
+  function markDispatchRpcStarted(lease: NativeConversationDispatchLease, resourceId: string): void {
+    lease.rpcStartedResourceId = resourceId;
+    for (const lifecycle of lease.lifecycles) lifecycle.markRpcStarted(resourceId);
   }
 
   async function closeEphemeralConversation(conversationId: string, providerTurnId: string | null, submissionStatus: 'cancelled' | 'failed', error: unknown, interrupt: boolean): Promise<void> {
