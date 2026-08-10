@@ -3784,6 +3784,74 @@
   }
 }
 
+/* 终态任务会话保留完整历史，但继续交互必须与重新打开任务同一步完成。 */
+.session-task-readonly-gate {
+  align-items: center;
+  background: color-mix(in oklab, var(--session-control) 82%, transparent);
+  border-block-end: 1px solid var(--session-line-soft);
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+  padding: 10px 20px;
+}
+
+.session-task-readonly-gate > span {
+  display: grid;
+  gap: 2px;
+  min-inline-size: 0;
+}
+
+.session-task-readonly-gate strong {
+  color: var(--session-text);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.session-task-readonly-gate small,
+.session-task-readonly-gate em {
+  color: var(--session-text-muted);
+  font-size: 11px;
+  font-style: normal;
+  line-height: 16px;
+}
+
+.session-task-readonly-gate em {
+  color: var(--session-danger);
+}
+
+.session-task-readonly-gate button {
+  background: var(--session-control);
+  border: 1px solid var(--session-line-soft);
+  border-radius: 7px;
+  color: var(--session-text);
+  flex: 0 0 auto;
+  font: inherit;
+  min-block-size: 28px;
+  padding-inline: 10px;
+}
+
+.session-task-readonly-gate button:hover:not(:disabled) {
+  background: var(--session-control-hover);
+}
+
+.session-task-readonly-gate button:focus-visible {
+  outline: 2px solid var(--session-focus);
+  outline-offset: 2px;
+}
+
+.session-task-readonly-gate button:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
+@media (max-width: 760px) {
+  .session-task-readonly-gate {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 8px;
+  }
+}
+
 /* 内置浏览器保持与会话工作区同一层级；真正页面由 Electron WebContentsView 放入 viewport 占位区。 */
 .session-codex-parity-v1 .session-thread-header-actions {
   align-items: center;
