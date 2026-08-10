@@ -849,6 +849,22 @@ function buildConfiguredTaskManagementStatusLabels(config: TaskManagementStatusC
     ...Object.fromEntries(config.statuses.map((status) => [status.id, formatConfiguredTaskManagementStatus(status, config, language)])),
   };
 }
+
+function createSessionWorkspaceTask(task: TaskRecord, settings: AppShellSettings, language: AppLanguage): SessionWorkspaceTask {
+  const config = resolveTaskManagementStatusConfig(settings, task.projectId);
+  const managementStatusId = resolveTaskManagementStatus(task);
+  const definition = config.statuses.find((status) => status.id === managementStatusId);
+  return {
+    id: task.id,
+    projectId: task.projectId,
+    title: task.title,
+    managementStatus: {
+      id: managementStatusId,
+      label: formatConfiguredTaskManagementStatus(definition ?? managementStatusId, config, language),
+      color: definition?.color ?? '#6b7280',
+    },
+  };
+}
 const taskAgentRunStatusLabels: Record<AppLanguage, Record<TaskAgentRunStatus, string>> = {
   'zh-CN': {
     not_started: '未启动',
@@ -7398,7 +7414,7 @@ export function App(props: {
     nativeSessionTaskStatusConfig &&
     (resolveTaskManagementStatus(nativeSessionTaskRecord) === nativeSessionTaskStatusConfig.roles.completedStatusId || resolveTaskManagementStatus(nativeSessionTaskRecord) === nativeSessionTaskStatusConfig.roles.cancelledStatusId),
   );
-  const nativeSessionTask: SessionWorkspaceTask | null = nativeSessionTaskRecord ? { id: nativeSessionTaskRecord.id, projectId: nativeSessionTaskRecord.projectId, title: nativeSessionTaskRecord.title } : null;
+  const nativeSessionTask: SessionWorkspaceTask | null = nativeSessionTaskRecord ? createSessionWorkspaceTask(nativeSessionTaskRecord, appShellSettings, appShellSettings.appLanguage) : null;
   const nativeSessionProject = activeProjectId ? snapshot.projects.find((project) => project.id === activeProjectId) : undefined;
   const nativeSessionOwner: SessionConversationOwner | undefined = nativeSessionTask
     ? {
@@ -11071,7 +11087,7 @@ export function App(props: {
         conversation={selectedNativeConversation}
         task={nativeSessionTask}
         owner={nativeSessionOwner}
-        tasks={currentProjectTasks.map((task) => ({ id: task.id, projectId: task.projectId, title: task.title }))}
+        tasks={currentProjectTasks.map((task) => createSessionWorkspaceTask(task, appShellSettings, appShellSettings.appLanguage))}
         choices={nativeSessionChoices}
         suppressComposer={Boolean(taskReadOnlyGate)}
         readOnlyGate={taskReadOnlyGate}

@@ -581,6 +581,13 @@
   gap: 6px;
 }
 
+/* ZEUS-0161：任务管理状态与会话运行状态并列，颜色继续来自项目状态配置。 */
+.session-codex-parity-v1 .session-thread-task-status {
+  flex: 0 0 auto;
+  min-block-size: 24px;
+  white-space: nowrap;
+}
+
 .session-codex-parity-v1 .session-thread-status-warning {
   color: var(--session-warning);
 }
@@ -11863,5 +11870,38 @@
 
   .session-codex-parity-v1 .session-compact-approval-actions {
     flex-wrap: wrap;
+  }
+}
+
+/* 放在会话页全部细化规则之后，确保窄窗口优先保留任务标题与任务状态。 */
+@media (max-width: 759px) {
+  .session-codex-parity-v1 .session-thread-header-actions {
+    gap: 6px;
+  }
+
+  .session-codex-parity-v1 .session-browser-toggle > span {
+    block-size: 1px;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    inline-size: 1px;
+    overflow: hidden;
+    position: absolute;
+    white-space: nowrap;
+  }
+
+  .session-codex-parity-v1 .session-browser-toggle {
+    padding-inline: 7px;
+  }
+}
+
+@media (max-width: 559px) {
+  .session-codex-parity-v1 .session-thread-status > :last-child {
+    block-size: 1px;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    inline-size: 1px;
+    overflow: hidden;
+    position: absolute;
+    white-space: nowrap;
   }
 }

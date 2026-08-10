@@ -1,4 +1,4 @@
-import { type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ArrowsClockwiseIcon as ArrowsClockwise } from '@phosphor-icons/react/dist/csr/ArrowsClockwise';
 import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/csr/WarningCircle';
 import { GlobeSimpleIcon as GlobeSimple } from '@phosphor-icons/react/dist/csr/GlobeSimple';
@@ -57,6 +57,11 @@ export interface SessionWorkspaceTask {
   id: string;
   projectId: string;
   title: string;
+  managementStatus?: {
+    id: string;
+    label: string;
+    color: string;
+  };
 }
 
 export type SessionStartMode = 'create' | 'resume' | 'reference_legacy';
@@ -398,8 +403,8 @@ export function buildStartNativeConversationRequest(input: SessionWorkspaceStart
   return { ...buildStartNativeConversationPayload(input), idempotencyKey: createId(), clientUserMessageId: createId() } as StartNativeConversationRequest;
 }
 
-/** Converts a durable start acceptance into a selectable row before any best-effort history refresh. */
-export function nativeConversationChoiceFromAcceptance(acceptance: NativeOperationAcceptance, task: SessionWorkspaceTask, now = new Date().toISOString()): NativeConversationChoice {
+/** 在尽力刷新历史记录前，先把已持久接受的启动结果转成可选会话行。 */
+export function nativeConversationChoiceFromAcceptance(acceptance: NativeOperationAcceptance, task: Pick<SessionWorkspaceTask, 'id' | 'projectId' | 'title'>, now = new Date().toISOString()): NativeConversationChoice {
   const conversation = acceptance.conversation;
   const provider = isRecord(conversation.provider) ? conversation.provider : {};
   const nativeSession = isRecord(conversation.nativeSession) ? conversation.nativeSession : {};
@@ -969,6 +974,7 @@ export interface SessionHeaderSnapshot {
   title: string;
   contextLabel: string | null;
   taskId: string | null;
+  taskManagementStatus: SessionWorkspaceTask['managementStatus'] | null;
   status: SessionWorkspaceStatus;
 }
 
@@ -988,6 +994,7 @@ export function createSessionHeaderSnapshot(
     title: taskTitle ?? conversation.title,
     contextLabel: taskId ? null : ((owner?.kind === 'project' ? owner.projectName : null) ?? conversation.summary ?? conversation.projectId),
     taskId,
+    taskManagementStatus: task?.managementStatus ?? null,
     status: sessionStatus(state, loadState, labels[language]),
   };
 }
@@ -1512,6 +1519,17 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
             {displayedHeader.contextLabel ? <small>{displayedHeader.contextLabel}</small> : null}
           </span>
           <div className="session-thread-header-actions">
+            {displayedHeader.taskManagementStatus ? (
+              <span
+                className="task-status-chip task-status-custom session-thread-task-status"
+                style={{ '--task-status-tone': displayedHeader.taskManagementStatus.color } as CSSProperties}
+                role="status"
+                aria-label={props.language === 'zh-CN' ? `任务状态：${displayedHeader.taskManagementStatus.label}` : `Task status: ${displayedHeader.taskManagementStatus.label}`}
+                title={props.language === 'zh-CN' ? `任务状态：${displayedHeader.taskManagementStatus.label}` : `Task status: ${displayedHeader.taskManagementStatus.label}`}
+              >
+                <strong>{displayedHeader.taskManagementStatus.label}</strong>
+              </span>
+            ) : null}
             {!legacy && props.conversation ? (
               <button
                 type="button"
