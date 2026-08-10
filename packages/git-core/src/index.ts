@@ -53,10 +53,12 @@ export interface DiscoveredGitRepository {
   clean: boolean;
   localBranches: string[];
   remotes: string[];
+  context: GitRepositoryContext;
 }
 
 export interface PrepareTaskWorktreeInput {
   repositoryPath: string;
+  repositoryContext?: GitRepositoryContext;
   projectSlug: string;
   taskCode: string;
   taskTitle: string;
@@ -255,12 +257,19 @@ export interface GitPatchExport {
 export async function getGitRepositoryContext(cwd: string): Promise<GitRepositoryContext> {
   try {
     const topLevel = await requireGitStdout(cwd, ['rev-parse', '--show-toplevel']);
-    const branch = (await requireGitStdout(cwd, ['branch', '--show-current'])) || 'detached';
-    const headSha = await requireGitStdout(cwd, ['rev-parse', 'HEAD']);
-    const localBranches = splitLines(await readGitStdout(cwd, ['for-each-ref', '--format=%(refname:short)', 'refs/heads']));
-    const remoteBranches = splitLines(await readGitStdout(cwd, ['for-each-ref', '--format=%(refname:short)', 'refs/remotes'])).filter((ref) => !ref.endsWith('/HEAD'));
-    const remotes = splitLines(await readGitStdout(cwd, ['remote']));
-    const worktrees = parseGitWorktreeList(await requireGitStdout(cwd, ['worktree', 'list', '--porcelain']));
+    const [rawBranch, headSha, rawLocalBranches, rawRemoteBranches, rawRemotes, rawWorktrees] = await Promise.all([
+      requireGitStdout(topLevel, ['branch', '--show-current']),
+      requireGitStdout(topLevel, ['rev-parse', 'HEAD']),
+      readGitStdout(topLevel, ['for-each-ref', '--format=%(refname:short)', 'refs/heads']),
+      readGitStdout(topLevel, ['for-each-ref', '--format=%(refname:short)', 'refs/remotes']),
+      readGitStdout(topLevel, ['remote']),
+      requireGitStdout(topLevel, ['worktree', 'list', '--porcelain']),
+    ]);
+    const branch = rawBranch || 'detached';
+    const localBranches = splitLines(rawLocalBranches);
+    const remoteBranches = splitLines(rawRemoteBranches).filter((ref) => !ref.endsWith('/HEAD'));
+    const remotes = splitLines(rawRemotes);
+    const worktrees = parseGitWorktreeList(rawWorktrees);
     return { isRepository: true, topLevel, branch, headSha, localBranches, remoteBranches, remotes, worktrees };
   } catch {
     return { isRepository: false, topLevel: '', branch: '', headSha: '', localBranches: [], remoteBranches: [], remotes: [], worktrees: [] };
@@ -277,47 +286,60 @@ export async function discoverGitRepositories(containerPath: string, maxDepth = 
   const seen = new Set<string>();
   const skippedDirectories = new Set(['.git', '.tmp', '.zeus-worktrees', 'node_modules', 'dist', 'build', 'target', '.next', '.turbo', '.cache']);
 
-  async function visit(directoryPath: string, depth: number): Promise<void> {
-    if (depth > maxDepth) return;
-    try {
-      const gitMarker = await lstat(join(directoryPath, '.git')).catch(() => null);
-      if (gitMarker?.isDirectory() || gitMarker?.isFile()) {
-        const repositoryRoot = canonicalFilesystemPath(directoryPath);
-        if (!seen.has(repositoryRoot)) {
-          seen.add(repositoryRoot);
-          candidates.push(repositoryRoot);
+  let currentLevel = [containerRoot];
+  for (let depth = 0; depth <= maxDepth && currentLevel.length > 0; depth += 1) {
+    const nested = await mapWithConcurrency(currentLevel, 8, async (directoryPath) => {
+      try {
+        const [gitMarker, entries] = await Promise.all([lstat(join(directoryPath, '.git')).catch(() => null), readdir(directoryPath, { withFileTypes: true })]);
+        if (gitMarker?.isDirectory() || gitMarker?.isFile()) {
+          const repositoryRoot = canonicalFilesystemPath(directoryPath);
+          if (!seen.has(repositoryRoot)) {
+            seen.add(repositoryRoot);
+            candidates.push(repositoryRoot);
+          }
         }
+        if (depth === maxDepth) return [];
+        return entries.filter((entry) => entry.isDirectory() && !entry.isSymbolicLink() && !skippedDirectories.has(entry.name)).map((entry) => join(directoryPath, entry.name));
+      } catch {
+        // 单个无权限或消失目录不应让整个候选扫描失败。
+        return [];
       }
-      const entries = await readdir(directoryPath, { withFileTypes: true });
-      for (const entry of entries) {
-        if (!entry.isDirectory() || entry.isSymbolicLink() || skippedDirectories.has(entry.name)) continue;
-        await visit(join(directoryPath, entry.name), depth + 1);
-      }
-    } catch {
-      // 单个无权限或消失目录不应让整个候选扫描失败。
-    }
+    });
+    currentLevel = nested.flat();
   }
-
-  await visit(containerRoot, 0);
-  const discovered = await Promise.all(
-    candidates.map(async (localPath) => {
-      const [context, status] = await Promise.all([getGitRepositoryContext(localPath), getGitStatus(localPath)]);
-      if (!context.isRepository || canonicalFilesystemPath(context.topLevel) !== localPath) return null;
-      const repositoryRelativePath = relative(containerRoot, localPath);
-      if (repositoryRelativePath === '..' || repositoryRelativePath.startsWith(`..${sep}`) || isAbsolute(repositoryRelativePath)) return null;
-      return {
-        name: basename(localPath),
-        relativePath: repositoryRelativePath ? repositoryRelativePath.split(sep).join('/') : '.',
-        localPath,
-        branch: context.branch,
-        headSha: context.headSha,
-        clean: status.clean,
-        localBranches: context.localBranches,
-        remotes: context.remotes,
-      } satisfies DiscoveredGitRepository;
-    }),
-  );
+  const discovered = await mapWithConcurrency(candidates, 4, async (localPath) => {
+    const [context, clean] = await Promise.all([getGitRepositoryContext(localPath), getGitWorktreeClean(localPath)]);
+    if (!context.isRepository || canonicalFilesystemPath(context.topLevel) !== localPath) return null;
+    const repositoryRelativePath = relative(containerRoot, localPath);
+    if (repositoryRelativePath === '..' || repositoryRelativePath.startsWith(`..${sep}`) || isAbsolute(repositoryRelativePath)) return null;
+    return {
+      name: basename(localPath),
+      relativePath: repositoryRelativePath ? repositoryRelativePath.split(sep).join('/') : '.',
+      localPath,
+      branch: context.branch,
+      headSha: context.headSha,
+      clean,
+      localBranches: context.localBranches,
+      remotes: context.remotes,
+      context,
+    } satisfies DiscoveredGitRepository;
+  });
   return discovered.filter((candidate): candidate is DiscoveredGitRepository => candidate !== null).sort((left, right) => left.relativePath.localeCompare(right.relativePath));
+}
+
+async function mapWithConcurrency<Input, Output>(items: Input[], concurrency: number, operation: (item: Input, index: number) => Promise<Output>): Promise<Output[]> {
+  const results = new Array<Output>(items.length);
+  let nextIndex = 0;
+  const worker = async (): Promise<void> => {
+    while (true) {
+      const index = nextIndex;
+      nextIndex += 1;
+      if (index >= items.length) return;
+      results[index] = await operation(items[index]!, index);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(Math.max(1, concurrency), items.length) }, () => worker()));
+  return results;
 }
 
 /** 为一次任务推送生成共同根目录；逐仓 worktree 会按原相对路径放在该根目录内。 */
@@ -363,7 +385,7 @@ export async function assertValidGitBranchName(cwd: string, branchName: string):
  * 从而保证一个任务开发分支同时只有一个物理写工作区。
  */
 export async function prepareTaskWorktree(input: PrepareTaskWorktreeInput): Promise<PreparedTaskWorktree> {
-  const context = await getGitRepositoryContext(input.repositoryPath);
+  const context = input.repositoryContext ?? (await getGitRepositoryContext(input.repositoryPath));
   if (!context.isRepository) throw gitCoreError('ZEUS_GIT_REPOSITORY_REQUIRED', 'The selected project is not a Git repository.');
   const branchName = await assertValidGitBranchName(context.topLevel, input.branchName);
   // 新建工作区按调用方选中的本机可用引用冻结精确提交；恢复只接受持久化对象 ID。
@@ -495,19 +517,23 @@ export async function cleanupPreparedTaskWorktree(input: { repositoryPath: strin
 }
 
 /** 汇总 IDEA 式提交窗口所需的 staged、unstaged、untracked 与冲突状态。 */
-export async function getTaskWorkspaceReview(cwd: string, ignoredPaths: string[] = []): Promise<TaskWorkspaceReview> {
-  const context = await getGitRepositoryContext(cwd);
+export async function getTaskWorkspaceReview(cwd: string, ignoredPaths: string[] = [], repositoryContext?: GitRepositoryContext): Promise<TaskWorkspaceReview> {
+  const context = repositoryContext ?? (await getGitRepositoryContext(cwd));
   if (!context.isRepository) throw gitCoreError('ZEUS_GIT_REPOSITORY_REQUIRED', 'Task workspace is not a Git repository.');
   const ignored = ignoredPaths.map((path) => requireSafeWorkspacePath(path));
   const isIgnored = (path: string): boolean => ignored.some((ignoredPath) => path === ignoredPath || path.startsWith(`${ignoredPath}/`));
   const diffPathspec = ['.', ...ignored.flatMap((path) => [`:(exclude)${path}`, `:(exclude)${path}/**`])];
   // Porcelain 的前两列包含有意义的空格，不能经过通用 splitLines 的 trim。
-  const porcelain = (await runGit(cwd, ['status', '--porcelain=v1', '-z', '-uall'])).stdout;
+  const porcelainPromise = runGit(cwd, ['status', '--porcelain=v1', '-z', '-uall', '--', ...diffPathspec]).then((result) => result.stdout);
+  const upstreamPromise = readGitStdout(cwd, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}']).then((value) => value || null);
+  const unstagedStatPromise = runGit(cwd, ['diff', '--numstat', '-z', '--', ...diffPathspec]).then((result) => result.stdout);
+  const stagedStatPromise = runGit(cwd, ['diff', '--cached', '--numstat', '-z', '--', ...diffPathspec]).then((result) => result.stdout);
+  const [porcelain, upstream, unstagedStat, stagedStat] = await Promise.all([porcelainPromise, upstreamPromise, unstagedStatPromise, stagedStatPromise]);
   const fileStatuses = parseGitPorcelainEntries(porcelain).filter((file) => !isIgnored(file.path) && (!file.originalPath || !isIgnored(file.originalPath)));
-  const upstream = (await readGitStdout(cwd, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'])) || null;
   const counts = upstream ? parseAheadBehind(await readGitStdout(cwd, ['rev-list', '--left-right', '--count', `${upstream}...HEAD`])) : { ahead: 0, behind: 0 };
-  const unstagedText = await readGitDiffAllowChanges(cwd, ['diff', '--binary', '--', ...diffPathspec]);
-  const stagedText = await readGitDiffAllowChanges(cwd, ['diff', '--cached', '--binary', '--', ...diffPathspec]);
+  const stagedFiles = fileStatuses.filter((file) => file.indexStatus !== ' ' && file.indexStatus !== '?');
+  const unstagedFiles = fileStatuses.filter((file) => file.workingTreeStatus !== ' ' && file.workingTreeStatus !== '?');
+  const untrackedFiles = fileStatuses.filter((file) => file.indexStatus === '?' && file.workingTreeStatus === '?');
   return {
     cwd: resolve(cwd),
     branch: context.branch,
@@ -516,12 +542,60 @@ export async function getTaskWorkspaceReview(cwd: string, ignoredPaths: string[]
     ...counts,
     clean: fileStatuses.length === 0,
     conflictFiles: fileStatuses.filter((file) => file.category === 'conflict').map((file) => file.path),
-    stagedFiles: fileStatuses.filter((file) => file.indexStatus !== ' ' && file.indexStatus !== '?'),
-    unstagedFiles: fileStatuses.filter((file) => file.workingTreeStatus !== ' ' && file.workingTreeStatus !== '?'),
-    untrackedFiles: fileStatuses.filter((file) => file.indexStatus === '?' && file.workingTreeStatus === '?'),
-    stagedDiff: diffSummaryFromText(stagedText),
-    unstagedDiff: diffSummaryFromText(unstagedText),
+    stagedFiles,
+    unstagedFiles,
+    untrackedFiles,
+    stagedDiff: gitDiffStatSummary(stagedStat, stagedFiles),
+    unstagedDiff: gitDiffStatSummary(unstagedStat, unstagedFiles),
   };
+}
+
+/** 只读取工作区是否干净，避免为能力列表生成完整差异。 */
+export async function getGitWorktreeClean(cwd: string, ignoredPaths: string[] = []): Promise<boolean> {
+  const ignored = ignoredPaths.map((path) => requireSafeWorkspacePath(path));
+  const pathspec = ['.', ...ignored.flatMap((path) => [`:(exclude)${path}`, `:(exclude)${path}/**`])];
+  return (await runGit(cwd, ['status', '--porcelain=v1', '-z', '-uall', '--', ...pathspec])).stdout.length === 0;
+}
+
+function gitDiffStatSummary(stdout: string, statuses: GitFileStatus[]): GitDiffSummary {
+  const statusByPath = new Map(statuses.map((status) => [status.path, status]));
+  const fileDiffs = parseGitNumStat(stdout).map((entry): GitFileDiff => {
+    const status = statusByPath.get(entry.path);
+    const changeType: GitDiffFileChangeType = status?.category === 'added' || status?.category === 'deleted' || status?.category === 'renamed' ? status.category : 'modified';
+    const originalPath = entry.originalPath ?? status?.originalPath;
+    return {
+      oldPath: changeType === 'added' ? '' : (originalPath ?? entry.path),
+      newPath: changeType === 'deleted' ? '' : entry.path,
+      changeType,
+      addedLines: entry.additions,
+      deletedLines: entry.deletions,
+      hunks: [],
+    };
+  });
+  return { isRepository: true, files: fileDiffs.map((file) => file.newPath || file.oldPath), diffText: '', fileDiffs };
+}
+
+function parseGitNumStat(stdout: string): Array<{ path: string; originalPath?: string; additions: number; deletions: number }> {
+  const records = stdout.split('\0');
+  const entries: Array<{ path: string; originalPath?: string; additions: number; deletions: number }> = [];
+  for (let index = 0; index < records.length; index += 1) {
+    const record = records[index] ?? '';
+    if (!record) continue;
+    const firstTab = record.indexOf('\t');
+    const secondTab = firstTab >= 0 ? record.indexOf('\t', firstTab + 1) : -1;
+    if (firstTab < 0 || secondTab < 0) continue;
+    const additions = Number.parseInt(record.slice(0, firstTab), 10);
+    const deletions = Number.parseInt(record.slice(firstTab + 1, secondTab), 10);
+    const inlinePath = record.slice(secondTab + 1);
+    if (inlinePath) {
+      entries.push({ path: inlinePath, additions: Number.isFinite(additions) ? additions : 0, deletions: Number.isFinite(deletions) ? deletions : 0 });
+      continue;
+    }
+    const originalPath = records[++index] ?? '';
+    const path = records[++index] ?? originalPath;
+    if (path) entries.push({ path, ...(originalPath && originalPath !== path ? { originalPath } : {}), additions: Number.isFinite(additions) ? additions : 0, deletions: Number.isFinite(deletions) ? deletions : 0 });
+  }
+  return entries;
 }
 
 /** 读取提交窗口当前文件的 HEAD 对比；未跟踪文件以 /dev/null 为旧版本。 */
@@ -534,24 +608,29 @@ export async function getTaskWorkspaceFileDiff(cwd: string, path: string): Promi
 }
 
 /** 读取任务分支相对来源分支共同起点产生的已提交代码成果。 */
-export async function getTaskBranchComparison(repositoryPath: string, sourceBranch: string, taskBranch: string, frozenSourceHeadSha?: string): Promise<TaskBranchComparison> {
-  const context = await getGitRepositoryContext(repositoryPath);
+export async function getTaskBranchComparison(repositoryPath: string, sourceBranch: string, taskBranch: string, frozenSourceHeadSha?: string, repositoryContext?: GitRepositoryContext): Promise<TaskBranchComparison> {
+  const context = repositoryContext ?? (await getGitRepositoryContext(repositoryPath));
   if (!context.isRepository) throw gitCoreError('ZEUS_GIT_REPOSITORY_REQUIRED', 'The selected project is not a Git repository.');
   const [safeSourceBranch, safeTaskBranch] = await Promise.all([assertGitBranchFormat(context.topLevel, sourceBranch, 'source branch'), assertNamedBranchExists(context.topLevel, taskBranch, 'task branch')]);
   const sourceBranchRef = frozenSourceHeadSha ? requireGitObjectId(frozenSourceHeadSha, 'source commit') : localBranchRef(await assertNamedBranchExists(context.topLevel, safeSourceBranch, 'source branch'));
   const taskBranchRef = localBranchRef(safeTaskBranch);
   const [sourceHeadSha, taskHeadSha] = await Promise.all([resolveCommit(context.topLevel, sourceBranchRef), resolveCommit(context.topLevel, taskBranchRef)]);
-  const mergeBaseSha = await requireGitStdout(context.topLevel, ['merge-base', sourceBranchRef, taskBranchRef]);
-  const counts = parseAheadBehind(await readGitStdout(context.topLevel, ['rev-list', '--left-right', '--count', `${sourceBranchRef}...${taskBranchRef}`]));
-  const diffText = await readGitDiffAllowChanges(context.topLevel, ['diff', '--binary', `${mergeBaseSha}..${taskHeadSha}`, '--', '.']);
-  const files = parseGitUnifiedDiff(diffText).map((file) => {
-    const path = file.newPath || file.oldPath;
+  const [mergeBaseSha, rawCounts, numStat, nameStatus] = await Promise.all([
+    requireGitStdout(context.topLevel, ['merge-base', sourceBranchRef, taskBranchRef]),
+    readGitStdout(context.topLevel, ['rev-list', '--left-right', '--count', `${sourceBranchRef}...${taskBranchRef}`]),
+    runGit(context.topLevel, ['diff', '--numstat', '-z', `${sourceBranchRef}...${taskBranchRef}`, '--', '.']).then((result) => result.stdout),
+    runGit(context.topLevel, ['diff', '--name-status', '-z', `${sourceBranchRef}...${taskBranchRef}`, '--', '.']).then((result) => result.stdout),
+  ]);
+  const counts = parseAheadBehind(rawCounts);
+  const statsByPath = new Map(parseGitNumStat(numStat).map((entry) => [entry.path, entry]));
+  const files = parseGitNameStatus(nameStatus).map((entry) => {
+    const stats = statsByPath.get(entry.path);
     return {
-      path,
-      ...(file.oldPath && file.oldPath !== path ? { originalPath: file.oldPath } : {}),
-      changeType: file.changeType,
-      additions: file.addedLines,
-      deletions: file.deletedLines,
+      path: entry.path,
+      ...(entry.originalPath ? { originalPath: entry.originalPath } : {}),
+      changeType: entry.changeType,
+      additions: stats?.additions ?? 0,
+      deletions: stats?.deletions ?? 0,
     };
   });
   return {
@@ -565,6 +644,27 @@ export async function getTaskBranchComparison(repositoryPath: string, sourceBran
   };
 }
 
+function parseGitNameStatus(stdout: string): Array<{ path: string; originalPath?: string; changeType: GitDiffFileChangeType }> {
+  const records = stdout.split('\0');
+  const entries: Array<{ path: string; originalPath?: string; changeType: GitDiffFileChangeType }> = [];
+  for (let index = 0; index < records.length; ) {
+    const status = records[index++] ?? '';
+    if (!status) continue;
+    const code = status[0] ?? 'M';
+    if (code === 'R' || code === 'C') {
+      const originalPath = records[index++] ?? '';
+      const path = records[index++] ?? '';
+      if (path) entries.push({ path, ...(originalPath ? { originalPath } : {}), changeType: code === 'R' ? 'renamed' : 'copied' });
+      continue;
+    }
+    const path = records[index++] ?? '';
+    if (!path) continue;
+    const changeType: GitDiffFileChangeType = code === 'A' ? 'added' : code === 'D' ? 'deleted' : 'modified';
+    entries.push({ path, changeType });
+  }
+  return entries;
+}
+
 /** 读取任务分支单个文件的已提交差异，不依赖任务 worktree 是否仍然存在。 */
 export async function getTaskBranchFileDiff(repositoryPath: string, sourceBranch: string, taskBranch: string, path: string, frozenSourceHeadSha?: string): Promise<TaskWorkspaceFileDiff> {
   const safePath = requireSafeWorkspacePath(path);
@@ -574,8 +674,8 @@ export async function getTaskBranchFileDiff(repositoryPath: string, sourceBranch
 }
 
 /** 读取本地命名分支提交，供服务端建立合入并发基线。 */
-export async function getGitBranchHead(repositoryPath: string, branchName: string): Promise<string> {
-  const context = await getGitRepositoryContext(repositoryPath);
+export async function getGitBranchHead(repositoryPath: string, branchName: string, repositoryContext?: GitRepositoryContext): Promise<string> {
+  const context = repositoryContext ?? (await getGitRepositoryContext(repositoryPath));
   if (!context.isRepository) throw gitCoreError('ZEUS_GIT_REPOSITORY_REQUIRED', 'The selected project is not a Git repository.');
   const safeBranch = await assertNamedBranchExists(context.topLevel, branchName);
   return resolveCommit(context.topLevel, localBranchRef(safeBranch));

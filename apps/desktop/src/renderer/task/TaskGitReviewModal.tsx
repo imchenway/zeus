@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { buildTaskCommitMessageSuggestion } from '@zeus/shared';
 import { ZeusApiError, type DashboardClient, type TaskRecord } from '../apiClient.js';
-import type { TaskGitDiffSummary, TaskGitFileDiff, TaskGitFileStatus, TaskWorkspaceSnapshot, TaskWorkspacesSnapshot } from '../session/sessionTypes.js';
+import type { BatchTaskWorkspaceResponse, TaskGitDiffSummary, TaskGitFileDiff, TaskGitFileStatus, TaskWorkspaceIndexCollection, TaskWorkspaceIndexSnapshot, TaskWorkspaceSnapshot } from '../session/sessionTypes.js';
 import { Button } from '../ui/Button.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
 import { TaskWorkspaceBranchList } from './TaskWorkspaceBranchList.js';
@@ -15,7 +15,19 @@ interface TaskGitReviewModalProps {
   language: 'zh-CN' | 'en-US';
   task: TaskRecord | null;
   projectName?: string;
-  client: Pick<DashboardClient, 'loadTaskGitWorkspaces' | 'loadTaskWorkspaceFileDiff' | 'commitTaskWorkspace' | 'pushTaskWorkspace' | 'reclaimTaskWorkspace' | 'discardTaskWorkspace' | 'stopTaskWorkspaceSessions'> | null;
+  client: Pick<
+    DashboardClient,
+    | 'loadTaskGitWorkspaceIndex'
+    | 'loadTaskGitWorkspaceSnapshot'
+    | 'loadTaskWorkspaceFileDiff'
+    | 'commitTaskWorkspace'
+    | 'commitAllTaskWorkspaces'
+    | 'pushTaskWorkspace'
+    | 'pushAllTaskWorkspaces'
+    | 'reclaimTaskWorkspace'
+    | 'discardTaskWorkspace'
+    | 'stopTaskWorkspaceSessions'
+  > | null;
   mode: ReviewMode;
   preferredWorkspaceId?: string | null;
   onClose: () => void;
@@ -32,7 +44,9 @@ export function TaskGitReviewModal(props: TaskGitReviewModalProps) {
 
 function TaskGitReviewModalContent(props: TaskGitReviewModalContentProps) {
   const zh = props.language === 'zh-CN';
-  const [snapshot, setSnapshot] = useState<TaskWorkspacesSnapshot | null>(null);
+  const [workspaceIndex, setWorkspaceIndex] = useState<TaskWorkspaceIndexCollection | null>(null);
+  const [workspaceDetails, setWorkspaceDetails] = useState<Record<string, TaskWorkspaceSnapshot>>({});
+  const [detailStates, setDetailStates] = useState<Record<string, 'loading' | 'error'>>({});
   const [activeWorkspaceId, setActiveWorkspaceId] = useState('');
   const [selectedPaths, setSelectedPaths] = useState<string[]>([]);
   const [selectedFile, setSelectedFile] = useState('');
@@ -42,8 +56,10 @@ function TaskGitReviewModalContent(props: TaskGitReviewModalContentProps) {
   const [error, setError] = useState<string | null>(null);
   const [discardOpen, setDiscardOpen] = useState(false);
   const [discardConfirmation, setDiscardConfirmation] = useState('');
+  const [batchResult, setBatchResult] = useState<BatchTaskWorkspaceResponse | null>(null);
 
-  const activeWorkspace = snapshot?.items.find((workspace) => workspace.id === activeWorkspaceId) ?? null;
+  const activeWorkspaceIndex = workspaceIndex?.items.find((workspace) => workspace.id === activeWorkspaceId) ?? null;
+  const activeWorkspace = workspaceDetails[activeWorkspaceId] ?? null;
   const files = useMemo(() => collectReviewFiles(activeWorkspace), [activeWorkspace]);
 
   useEffect(() => {
@@ -59,10 +75,10 @@ function TaskGitReviewModalContent(props: TaskGitReviewModalContentProps) {
       }),
     );
     void props.client
-      .loadTaskGitWorkspaces(props.task.id)
+      .loadTaskGitWorkspaceIndex(props.task.id)
       .then((next) => {
         if (cancelled) return;
-        setSnapshot(next);
+        setWorkspaceIndex(next);
         const preferredWorkspace = next.items.find((workspace) => workspace.id === props.preferredWorkspaceId);
         if (props.mode === 'delivery' && preferredWorkspace && closedWorkspaceStates.has(preferredWorkspace.state)) {
           props.onClose();
@@ -88,14 +104,38 @@ function TaskGitReviewModalContent(props: TaskGitReviewModalContentProps) {
   }, [props.open, props.task?.id, props.client, props.mode, props.preferredWorkspaceId]);
 
   useEffect(() => {
-    const current = snapshot?.items.find((workspace) => workspace.id === activeWorkspaceId);
-    const nextFiles = collectReviewFiles(current ?? null);
+    if (!props.task || !props.client || !activeWorkspaceId || activeWorkspace) return;
+    let cancelled = false;
+    setDetailStates((current) => ({ ...current, [activeWorkspaceId]: 'loading' }));
+    void props.client
+      .loadTaskGitWorkspaceSnapshot(props.task.id, activeWorkspaceId)
+      .then(({ workspace }) => {
+        if (cancelled) return;
+        setWorkspaceDetails((current) => ({ ...current, [workspace.id]: workspace }));
+        setDetailStates((current) => {
+          const next = { ...current };
+          delete next[workspace.id];
+          return next;
+        });
+      })
+      .catch((reason: unknown) => {
+        if (cancelled) return;
+        setDetailStates((current) => ({ ...current, [activeWorkspaceId]: 'error' }));
+        setError(errorMessage(reason, zh));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [props.task?.id, props.client, activeWorkspaceId, activeWorkspace]);
+
+  useEffect(() => {
+    const nextFiles = collectReviewFiles(activeWorkspace);
     setSelectedPaths(nextFiles.map((file) => file.path));
     setSelectedFile(nextFiles[0]?.path ?? '');
     setFileDiff(null);
     setDiscardOpen(false);
     setDiscardConfirmation('');
-  }, [snapshot, activeWorkspaceId]);
+  }, [activeWorkspaceId, activeWorkspace]);
 
   useEffect(() => {
     if (!props.task || !props.client || !activeWorkspace || !selectedFile || !activeWorkspace.review) {
@@ -116,14 +156,20 @@ function TaskGitReviewModalContent(props: TaskGitReviewModalContentProps) {
     };
   }, [props.task?.id, props.client, activeWorkspace?.id, selectedFile]);
 
-  async function reload(preferredWorkspaceId?: string): Promise<TaskWorkspacesSnapshot> {
+  async function reload(preferredWorkspaceId?: string, invalidatedWorkspaceId = preferredWorkspaceId): Promise<void> {
     if (!props.task || !props.client) throw new Error('Task Git client is unavailable.');
-    const next = await props.client.loadTaskGitWorkspaces(props.task.id);
-    setSnapshot(next);
+    const next = await props.client.loadTaskGitWorkspaceIndex(props.task.id);
+    setWorkspaceIndex(next);
+    if (invalidatedWorkspaceId) {
+      setWorkspaceDetails((current) => {
+        const updated = { ...current };
+        delete updated[invalidatedWorkspaceId];
+        return updated;
+      });
+    }
     const preferred = preferredWorkspaceId ? next.items.find((workspace) => workspace.id === preferredWorkspaceId && !closedWorkspaceStates.has(workspace.state)) : undefined;
     const firstPending = preferred ?? next.items.find((workspace) => !closedWorkspaceStates.has(workspace.state));
     setActiveWorkspaceId(firstPending?.id ?? next.items[0]?.id ?? '');
-    return next;
   }
 
   async function commit(): Promise<void> {
@@ -166,7 +212,7 @@ function TaskGitReviewModalContent(props: TaskGitReviewModalContentProps) {
     setError(null);
     try {
       await props.client.reclaimTaskWorkspace(props.task.id, activeWorkspace.id);
-      await reload();
+      await reload(undefined, activeWorkspace.id);
       if (props.mode === 'delivery') {
         props.onClose();
         return;
@@ -185,7 +231,7 @@ function TaskGitReviewModalContent(props: TaskGitReviewModalContentProps) {
     setError(null);
     try {
       await props.client.discardTaskWorkspace(props.task.id, activeWorkspace.id, discardConfirmation);
-      await reload();
+      await reload(undefined, activeWorkspace.id);
       if (props.mode === 'delivery') {
         props.onClose();
         return;
@@ -204,6 +250,40 @@ function TaskGitReviewModalContent(props: TaskGitReviewModalContentProps) {
     try {
       await props.client.stopTaskWorkspaceSessions(props.task.id, activeWorkspace.id);
       await reload(activeWorkspace.id);
+      setStatus('ready');
+    } catch (reason) {
+      setStatus('error');
+      setError(errorMessage(reason, zh));
+    }
+  }
+
+  async function commitAll(): Promise<void> {
+    if (!props.client) return;
+    setStatus('submitting');
+    setError(null);
+    setBatchResult(null);
+    try {
+      const result = await props.client.commitAllTaskWorkspaces(props.task.id, { message });
+      setBatchResult(result);
+      setWorkspaceDetails({});
+      await reload(activeWorkspaceId);
+      setStatus('ready');
+    } catch (reason) {
+      setStatus('error');
+      setError(errorMessage(reason, zh));
+    }
+  }
+
+  async function pushAll(): Promise<void> {
+    if (!props.client) return;
+    setStatus('submitting');
+    setError(null);
+    setBatchResult(null);
+    try {
+      const result = await props.client.pushAllTaskWorkspaces(props.task.id);
+      setBatchResult(result);
+      setWorkspaceDetails({});
+      await reload(activeWorkspaceId);
       setStatus('ready');
     } catch (reason) {
       setStatus('error');
@@ -248,7 +328,17 @@ function TaskGitReviewModalContent(props: TaskGitReviewModalContentProps) {
         </header>
 
         <div className="task-git-review-layout">
-          <TaskWorkspaceBranchList workspaces={snapshot?.items ?? []} selectedWorkspaceId={activeWorkspaceId} zh={zh} disabled={busy} stateLabel={workspaceStateLabel} onSelect={setActiveWorkspaceId} />
+          <TaskWorkspaceBranchList
+            workspaces={workspaceIndex?.items ?? []}
+            selectedWorkspaceId={activeWorkspaceId}
+            zh={zh}
+            disabled={busy}
+            stateLabel={(workspace, languageIsChinese) => workspaceStateLabel(workspace, workspaceDetails[workspace.id], detailStates[workspace.id], languageIsChinese)}
+            onSelect={(workspaceId) => {
+              setActiveWorkspaceId(workspaceId);
+              setError(null);
+            }}
+          />
 
           <main className="task-git-review-main">
             <section className="task-git-review-changes" aria-label={zh ? '变更文件' : 'Changed files'}>
@@ -256,7 +346,8 @@ function TaskGitReviewModalContent(props: TaskGitReviewModalContentProps) {
                 <strong>{props.mode === 'push-only' ? (zh ? '本机未提交变更' : 'Local uncommitted changes') : zh ? '变更' : 'Changes'}</strong>
                 <small>{files.length}</small>
               </span>
-              {status === 'loading' ? <p>{zh ? '正在读取 Git 状态…' : 'Loading Git status…'}</p> : null}
+              {status === 'loading' || detailStates[activeWorkspaceId] === 'loading' ? <p>{zh ? '正在读取当前仓库 Git 状态…' : 'Loading Git status for this repository…'}</p> : null}
+              {detailStates[activeWorkspaceId] === 'error' ? <p className="task-git-review-error">{zh ? '当前仓库读取失败，其他仓库仍可继续操作。' : 'This repository failed to load. Other repositories remain available.'}</p> : null}
               {activeWorkspace?.reviewError ? <p className="task-git-review-error">{activeWorkspace.reviewError}</p> : null}
               {activeReview?.conflictFiles.length ? (
                 <p className="task-git-review-error">{zh ? `存在 ${activeReview.conflictFiles.length} 个冲突文件，请先进入冲突处理。` : `${activeReview.conflictFiles.length} conflicted files require resolution.`}</p>
@@ -300,16 +391,16 @@ function TaskGitReviewModalContent(props: TaskGitReviewModalContentProps) {
           <aside className="task-git-review-options">
             <span>
               <strong>Git</strong>
-              <small>{activeWorkspace?.branchName ?? '—'}</small>
+              <small>{activeWorkspace?.branchName ?? activeWorkspaceIndex?.branchName ?? '—'}</small>
             </span>
             <dl>
               <div>
                 <dt>{zh ? '来源分支' : 'Source'}</dt>
-                <dd>{activeWorkspace?.sourceBranch ?? '—'}</dd>
+                <dd>{activeWorkspace?.sourceBranch ?? activeWorkspaceIndex?.sourceBranch ?? '—'}</dd>
               </div>
               <div>
                 <dt>{zh ? '远端' : 'Remote'}</dt>
-                <dd>{!activeWorkspace ? '—' : !activeWorkspace.remoteName ? (zh ? '纯本地模式' : 'Local-only mode') : `${activeWorkspace.remoteName}/${activeWorkspace.remoteBranch}`}</dd>
+                <dd>{!activeWorkspaceIndex ? '—' : !activeWorkspaceIndex.remoteName ? (zh ? '纯本地模式' : 'Local-only mode') : `${activeWorkspaceIndex.remoteName}/${activeWorkspaceIndex.remoteBranch}`}</dd>
               </div>
               <div>
                 <dt>{zh ? '领先 / 落后' : 'Ahead / behind'}</dt>
@@ -380,6 +471,24 @@ function TaskGitReviewModalContent(props: TaskGitReviewModalContentProps) {
           </p>
         ) : null}
 
+        {batchResult ? (
+          <section className="task-git-review-batch-result" aria-live="polite">
+            <strong>
+              {zh
+                ? `批量结果：成功 ${batchResult.summary.succeeded}，跳过 ${batchResult.summary.skipped}，失败 ${batchResult.summary.failed}`
+                : `Batch result: ${batchResult.summary.succeeded} succeeded, ${batchResult.summary.skipped} skipped, ${batchResult.summary.failed} failed`}
+            </strong>
+            <ol>
+              {batchResult.items.map((item) => (
+                <li key={item.workspaceId} data-status={item.status}>
+                  <span>{item.repositoryName || item.repositoryRelativePath}</span>
+                  <small>{item.message}</small>
+                </li>
+              ))}
+            </ol>
+          </section>
+        ) : null}
+
         <footer className="task-git-review-footer">
           <span>
             {props.mode !== 'commit' && props.mode !== 'commit-only' && props.mode !== 'push-only' && activeWorkspace && !closedWorkspaceStates.has(activeWorkspace.state) ? (
@@ -389,6 +498,15 @@ function TaskGitReviewModalContent(props: TaskGitReviewModalContentProps) {
             ) : null}
           </span>
           <span>
+            {props.mode === 'commit' || props.mode === 'commit-only' ? (
+              <Button variant="secondary" size="regular" busy={busy} onClick={() => void commitAll()} disabled={busy || !workspaceIndex?.items.length}>
+                {zh ? '提交全部有变化仓库' : 'Commit all changed repositories'}
+              </Button>
+            ) : props.mode === 'push-only' ? (
+              <Button variant="secondary" size="regular" busy={busy} onClick={() => void pushAll()} disabled={busy || !workspaceIndex?.items.length}>
+                {zh ? '推送全部已提交仓库' : 'Push all committed repositories'}
+              </Button>
+            ) : null}
             <Button variant="secondary" size="regular" onClick={props.onClose} disabled={busy}>
               {zh ? '取消' : 'Cancel'}
             </Button>
@@ -442,13 +560,16 @@ function fileStatusLabel(file: TaskGitFileStatus, zh: boolean): string {
   return labels[file.category];
 }
 
-function workspaceStateLabel(workspace: TaskWorkspaceSnapshot, zh: boolean): string {
+function workspaceStateLabel(workspace: TaskWorkspaceIndexSnapshot, detail: TaskWorkspaceSnapshot | undefined, loadState: 'loading' | 'error' | undefined, zh: boolean): string {
   if (workspace.state === 'reclaimed') return zh ? '已推送 · worktree 已回收' : 'Pushed · worktree reclaimed';
   if (workspace.state === 'merged') return zh ? '已合入' : 'Merged';
   if (workspace.state === 'discarded') return zh ? '已放弃' : 'Discarded';
-  if (workspace.review?.conflictFiles.length) return zh ? '存在冲突' : 'Conflicted';
-  if (workspace.remoteRefreshError && workspace.review?.clean) return zh ? '工作区干净 · 远端受阻' : 'Clean · remote unavailable';
-  if (workspace.review?.clean) return zh ? '工作区干净' : 'Clean';
+  if (loadState === 'loading') return zh ? '正在读取…' : 'Loading…';
+  if (loadState === 'error') return zh ? '读取失败' : 'Load failed';
+  if (!detail) return zh ? '尚未读取' : 'Not loaded';
+  if (detail.review?.conflictFiles.length) return zh ? '存在冲突' : 'Conflicted';
+  if (detail.remoteRefreshError && detail.review?.clean) return zh ? '工作区干净 · 远端受阻' : 'Clean · remote unavailable';
+  if (detail.review?.clean) return zh ? '工作区干净' : 'Clean';
   return zh ? '待审查' : 'Review required';
 }
 

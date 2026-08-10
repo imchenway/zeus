@@ -412,6 +412,7 @@ export interface CodexTaskPushCapabilities {
   taskId: string;
   canonicalPrompt: string;
   parentContextRevision: string;
+  repositoryRevision: string;
   parentContextOptions: TaskPushParentContextOption[];
   preferredModel: string;
   models: CodexTaskPushModelCapability[];
@@ -539,6 +540,21 @@ export interface TaskWorkspaceSnapshot extends TaskWorkspaceRecord {
   comparisonError?: string;
 }
 
+export interface TaskWorkspaceIndexSnapshot extends TaskWorkspaceRecord {
+  activeConversationCount: number;
+}
+
+export interface TaskWorkspaceIndexCollection {
+  taskId: string;
+  projectId: string;
+  items: TaskWorkspaceIndexSnapshot[];
+  workspaces: TaskWorkspaceIndexSnapshot[];
+}
+
+export interface TaskWorkspaceSnapshotResponse {
+  workspace: TaskWorkspaceSnapshot;
+}
+
 export interface TaskWorkspacesSnapshot {
   taskId: string;
   projectId: string;
@@ -570,6 +586,25 @@ export interface TaskWorkspacePushResult {
     remoteHeadSha: string;
   };
   review: TaskWorkspaceReview;
+}
+
+export interface BatchTaskWorkspaceResult {
+  workspaceId: string;
+  repositoryName: string;
+  repositoryRelativePath: string;
+  status: 'succeeded' | 'skipped' | 'failed';
+  message: string;
+  headSha?: string;
+}
+
+export interface BatchTaskWorkspaceResponse {
+  taskId: string;
+  items: BatchTaskWorkspaceResult[];
+  summary: {
+    succeeded: number;
+    skipped: number;
+    failed: number;
+  };
 }
 
 export interface TaskIntegrationPushResult {
@@ -665,6 +700,7 @@ export interface StartTaskModelPushRequest {
     | { mode: 'direct'; confirmConcurrentWrites: boolean }
     | {
         mode: 'create';
+        repositoryRevision: string;
         repositories: Array<{
           repositoryId: string;
           sourceRef: string;

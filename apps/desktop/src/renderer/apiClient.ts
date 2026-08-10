@@ -1,6 +1,7 @@
 import type {
   AgentCatalogSnapshot,
   ArchivedConversationChoicesSnapshot,
+  BatchTaskWorkspaceResponse,
   CodexAccountSnapshot,
   CodexChatGptLogin,
   CodexConversationCapabilities,
@@ -29,7 +30,9 @@ import type {
   TaskIntegrationRecord,
   TaskIntegrationResult,
   TaskWorkspaceCommitResult,
+  TaskWorkspaceIndexCollection,
   TaskWorkspacePushResult,
+  TaskWorkspaceSnapshotResponse,
   TaskWorkspacesSnapshot,
   TurnChangeSet,
   TurnChangeSetOperationResult,
@@ -1450,6 +1453,8 @@ export interface DashboardClient {
   cancelCodexChatGptLogin: (loginId: string) => Promise<void>;
   startTaskModelPush: (taskId: string, input: StartTaskModelPushRequest) => Promise<NativeOperationAcceptance>;
   loadTaskGitWorkspaces: (taskId: string) => Promise<TaskWorkspacesSnapshot>;
+  loadTaskGitWorkspaceIndex: (taskId: string) => Promise<TaskWorkspaceIndexCollection>;
+  loadTaskGitWorkspaceSnapshot: (taskId: string, workspaceId: string) => Promise<TaskWorkspaceSnapshotResponse>;
   loadTaskWorkspaceFileDiff: (
     taskId: string,
     workspaceId: string,
@@ -1460,7 +1465,9 @@ export interface DashboardClient {
     diff: TaskGitDiffSummary;
   }>;
   commitTaskWorkspace: (taskId: string, workspaceId: string, input: { message: string; selectedPaths: string[] }) => Promise<TaskWorkspaceCommitResult>;
+  commitAllTaskWorkspaces: (taskId: string, input: { message: string }) => Promise<BatchTaskWorkspaceResponse>;
   pushTaskWorkspace: (taskId: string, workspaceId: string) => Promise<TaskWorkspacePushResult>;
+  pushAllTaskWorkspaces: (taskId: string) => Promise<BatchTaskWorkspaceResponse>;
   pushTaskIntegration: (taskId: string, integrationId: string) => Promise<TaskIntegrationPushResult>;
   reclaimTaskWorkspace: (taskId: string, workspaceId: string) => Promise<{ workspace: unknown; result?: unknown }>;
   discardTaskWorkspace: (taskId: string, workspaceId: string, confirmationText: string) => Promise<{ workspace: unknown; result: unknown }>;
@@ -1819,6 +1826,8 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
       });
     },
     loadTaskGitWorkspaces: (taskId) => request<TaskWorkspacesSnapshot>(`/api/tasks/${encodeURIComponent(taskId)}/git-workspaces`),
+    loadTaskGitWorkspaceIndex: (taskId) => request<TaskWorkspaceIndexCollection>(`/api/tasks/${encodeURIComponent(taskId)}/git-workspaces/index`),
+    loadTaskGitWorkspaceSnapshot: (taskId, workspaceId) => request<TaskWorkspaceSnapshotResponse>(`/api/tasks/${encodeURIComponent(taskId)}/git-workspaces/${encodeURIComponent(workspaceId)}/snapshot`),
     loadTaskWorkspaceFileDiff: (taskId, workspaceId, path, scope = 'working') =>
       request<{
         path: string;
@@ -1829,8 +1838,18 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
         method: 'POST',
         body: JSON.stringify(input),
       }),
+    commitAllTaskWorkspaces: (taskId, input) =>
+      request<BatchTaskWorkspaceResponse>(`/api/tasks/${encodeURIComponent(taskId)}/git-workspaces/commit-all`, {
+        method: 'POST',
+        body: JSON.stringify(input),
+      }),
     pushTaskWorkspace: (taskId, workspaceId) =>
       request<TaskWorkspacePushResult>(`/api/tasks/${encodeURIComponent(taskId)}/git-workspaces/${encodeURIComponent(workspaceId)}/push`, {
+        method: 'POST',
+        body: JSON.stringify({}),
+      }),
+    pushAllTaskWorkspaces: (taskId) =>
+      request<BatchTaskWorkspaceResponse>(`/api/tasks/${encodeURIComponent(taskId)}/git-workspaces/push-all`, {
         method: 'POST',
         body: JSON.stringify({}),
       }),
