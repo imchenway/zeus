@@ -7833,7 +7833,6 @@ export function App(props: {
     } catch (error) {
       setProjectWorkspaceConfigStatus('error');
       setProjectWorkspaceConfigError(redactLocalUiErrorMessage(errorToLocalUiMessage(error)));
-      recordLocalError('project-workspace-config-load', error);
     }
   }
 
@@ -7851,7 +7850,6 @@ export function App(props: {
     } catch (error) {
       setProjectWorkspaceConfigStatus('error');
       setProjectWorkspaceConfigError(redactLocalUiErrorMessage(errorToLocalUiMessage(error)));
-      recordLocalError('project-workspace-config-save', error);
     }
   }
 
