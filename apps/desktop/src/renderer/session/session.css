@@ -3034,14 +3034,6 @@
   min-block-size: 24px;
 }
 
-.session-codex-parity-v1 .session-new-conversation[data-docked='true'] {
-  flex: 0 0 auto;
-}
-
-.session-codex-parity-v1 .session-new-conversation[data-docked='true'] .session-new-conversation-spacer {
-  display: none;
-}
-
 .session-codex-parity-v1 .session-new-conversation-composer {
   max-inline-size: 100%;
 }
