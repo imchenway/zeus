@@ -432,6 +432,20 @@ function reduceNativeEvent(state: NativeSessionState, event: NativeConversationE
       const turnId = stringValue(payload.turnId);
       if (!turnId || state.terminalTurnIds[turnId]) return base;
       const submissionId = stringValue(payload.submissionId);
+      const existingTurn = base.turnsByProviderId[turnId];
+      const startedAt = stringValue(payload.startedAt) ?? existingTurn?.startedAt ?? event.createdAt;
+      const turn: NativeTurnSnapshot = {
+        id: existingTurn?.id ?? turnId,
+        providerTurnId: existingTurn?.providerTurnId ?? turnId,
+        submissionId: existingTurn?.submissionId ?? submissionId,
+        status: stringValue(payload.status) ?? 'running',
+        error: existingTurn?.error ?? null,
+        plan: existingTurn?.plan ?? null,
+        startedAt,
+        completedAt: null,
+        createdAt: existingTurn?.createdAt ?? startedAt,
+        updatedAt: event.createdAt,
+      };
       const queue = base.queue
         ? {
             ...base.queue,
@@ -444,6 +458,7 @@ function reduceNativeEvent(state: NativeSessionState, event: NativeConversationE
         activeTurnId: turnId,
         startedTurnId: turnId,
         queue,
+        turnsByProviderId: { ...base.turnsByProviderId, [turnId]: turn },
         feedbackEpoch: base.feedbackEpoch + 1,
         transcriptRevision: base.transcriptRevision + 1,
         conversationState: 'active_prework',
@@ -453,11 +468,30 @@ function reduceNativeEvent(state: NativeSessionState, event: NativeConversationE
       const turnId = stringValue(payload.turnId);
       if (!turnId) return base;
       const status = terminalStatus(stringValue(payload.status) ?? 'completed');
-      const terminalTurnIds = { ...state.terminalTurnIds, [turnId]: status };
-      if (turnId !== state.activeTurnId) return { ...base, terminalTurnIds };
-      return {
+      const existingTurn = base.turnsByProviderId[turnId];
+      const completedAt = stringValue(payload.completedAt) ?? existingTurn?.completedAt ?? event.createdAt;
+      const turn: NativeTurnSnapshot = {
+        id: existingTurn?.id ?? turnId,
+        providerTurnId: existingTurn?.providerTurnId ?? turnId,
+        submissionId: existingTurn?.submissionId ?? stringValue(payload.submissionId),
+        status,
+        error: existingTurn?.error ?? null,
+        plan: existingTurn?.plan ?? null,
+        startedAt: existingTurn?.startedAt ?? stringValue(payload.startedAt),
+        completedAt,
+        createdAt: existingTurn?.createdAt ?? completedAt,
+        updatedAt: event.createdAt,
+      };
+      const terminalTurnIds = { ...base.terminalTurnIds, [turnId]: status };
+      const nextState = {
         ...base,
         terminalTurnIds,
+        turnsByProviderId: { ...base.turnsByProviderId, [turnId]: turn },
+        transcriptRevision: base.transcriptRevision + 1,
+      };
+      if (turnId !== state.activeTurnId) return nextState;
+      return {
+        ...nextState,
         activeTurnId: null,
         conversationState: status === 'failed' ? 'turn_failed' : 'native_idle',
       };

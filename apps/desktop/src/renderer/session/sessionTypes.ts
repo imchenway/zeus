@@ -812,6 +812,8 @@ type NativeTurnEventPayload = NativeEventIdentity & {
   turnId: string;
   status?: string;
   submissionId?: string;
+  startedAt?: string;
+  completedAt?: string;
   hasUnreadCompletion?: boolean;
 };
 type NativeItemEventPayload = NativeEventIdentity & {

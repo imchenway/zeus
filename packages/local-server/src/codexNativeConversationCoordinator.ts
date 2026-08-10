@@ -1280,7 +1280,14 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       await persist();
       // submission 已进入 provider 轮次后必须同步清出队列表面，避免其他窗口继续展示旧快照。
       options.broadcast('conversation.queue.changed', { conversationId: conversation.id, providerThreadId, providerTurnId: turn.id, submissionId: submission.id });
-      options.broadcast('conversation.turn.started', { conversationId: conversation.id, providerThreadId, providerTurnId: turn.id, submissionId: submission.id });
+      options.broadcast('conversation.turn.started', {
+        conversationId: conversation.id,
+        providerThreadId,
+        providerTurnId: turn.id,
+        submissionId: submission.id,
+        status: 'running',
+        startedAt: timestamp,
+      });
       return accepted(submission, 'active', providerThreadId, turn.id);
     } catch (error) {
       const current = options.conversations.getById(conversation.id);
@@ -2896,6 +2903,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
           providerThreadId: threadId,
           providerTurnId,
           status: terminalStatus,
+          completedAt: timestamp,
           hasUnreadCompletion: options.conversations.getById(conversation.id)?.completionUnread === true,
         },
       };

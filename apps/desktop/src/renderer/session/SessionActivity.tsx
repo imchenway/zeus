@@ -1,4 +1,4 @@
-import { type FocusEvent, type KeyboardEvent, memo, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { type FocusEvent, type KeyboardEvent, type ReactNode, memo, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { CaretDownIcon as CaretDown } from '@phosphor-icons/react/dist/csr/CaretDown';
 import { CheckCircleIcon as CheckCircle } from '@phosphor-icons/react/dist/csr/CheckCircle';
 import { CircleIcon as Circle } from '@phosphor-icons/react/dist/csr/Circle';
@@ -223,22 +223,41 @@ export function SessionPlanProgress(props: { plan: NativeTurnPlanSnapshot; langu
   );
 }
 
-export function SessionTurnDuration(props: { turn: NativeTurnSnapshot; requests: NativePendingRequest[]; language: SessionUiLanguage }) {
+export function SessionTurnDuration(props: { turn: NativeTurnSnapshot; requests: NativePendingRequest[]; language: SessionUiLanguage; children?: ReactNode }) {
   const [now, setNow] = useState(() => Date.now());
   const active = !props.turn.completedAt && (props.turn.status === 'running' || props.turn.status === 'waiting' || props.turn.status === 'dispatching');
+  const [open, setOpen] = useState(active);
   useEffect(() => {
     if (!active) return;
     const timer = window.setInterval(() => setNow(Date.now()), 1_000);
     return () => window.clearInterval(timer);
   }, [active]);
+  useEffect(() => {
+    setOpen(active);
+  }, [active]);
   const duration = useMemo(() => turnDurationMs(props.turn, props.requests, now), [now, props.requests, props.turn]);
   if (duration === null) return null;
   const value = formatDuration(duration);
   const label = props.language === 'zh-CN' ? `已处理 ${value}` : active ? `Processing for ${value}` : `Processed in ${value}`;
+  const hasDetails = props.children !== undefined && props.children !== null;
+  const time = <time dateTime={`PT${Math.max(0, Math.round(duration / 1_000))}S`}>{label}</time>;
+  const summary = (
+    <summary aria-label={label}>
+      {time}
+      {hasDetails ? <CaretDown className="session-turn-duration-caret" aria-hidden="true" weight="bold" /> : null}
+    </summary>
+  );
   return (
-    <p className="session-turn-duration" data-active={active || undefined}>
-      <time dateTime={`PT${Math.max(0, Math.round(duration / 1_000))}S`}>{label}</time>
-    </p>
+    <section className="session-turn-duration" data-active={active || undefined}>
+      {hasDetails ? (
+        <details open={active || open} onToggle={(event) => setOpen(event.currentTarget.open)}>
+          {summary}
+          <div className="session-turn-duration-body">{props.children}</div>
+        </details>
+      ) : (
+        <p>{time}</p>
+      )}
+    </section>
   );
 }
 
