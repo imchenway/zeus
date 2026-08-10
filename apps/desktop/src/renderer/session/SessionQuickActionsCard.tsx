@@ -18,6 +18,7 @@ interface SessionQuickActionsCardProps {
   state: NativeSessionState;
   task: { id: string; title: string } | null;
   forceCollapsed?: boolean;
+  suppressed?: boolean;
   onLoadTaskWorkspaces?: (taskId: string) => Promise<TaskWorkspacesSnapshot>;
   onOpenTaskDetail?: (taskId: string) => void;
   onOpenGitReview?: (taskId: string, workspaceId: string | null, mode: 'commit' | 'push-only') => void;
@@ -57,7 +58,8 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
   const canOpenReview = Boolean(taskId && workspace && props.onOpenGitReview);
   const canOpenDelivery = Boolean(taskId && props.onOpenGitDelivery);
   const persistent = hasPersistentSpace && !props.forceCollapsed;
-  const cardVisible = persistent || (open && !props.forceCollapsed);
+  const cardVisible = !props.suppressed && (persistent || open);
+  const cardMounted = cardVisible || Boolean(props.suppressed && persistent);
 
   useEffect(() => {
     const workspaceRoot = rootRef.current?.closest<HTMLElement>('.session-workspace-root');
@@ -77,6 +79,11 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
     if (!props.forceCollapsed) return;
     setOpen(false);
   }, [props.forceCollapsed]);
+
+  useEffect(() => {
+    if (!props.suppressed) return;
+    setOpen(false);
+  }, [props.suppressed]);
 
   useEffect(() => {
     setOpen(false);
@@ -152,7 +159,7 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
 
   return (
     <div className="session-quick-actions-anchor" ref={rootRef} data-presentation={persistent ? 'persistent' : 'collapsed'}>
-      {persistent ? null : (
+      {persistent || props.suppressed ? null : (
         <button
           ref={triggerRef}
           type="button"
@@ -167,8 +174,14 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
         </button>
       )}
 
-      {cardVisible ? (
-        <section className="session-quick-actions-card" data-presentation={persistent ? 'persistent' : 'popover'} role={persistent ? 'region' : 'dialog'} aria-label={zh ? '环境信息与快捷操作' : 'Environment information and quick actions'}>
+      {cardMounted ? (
+        <section
+          className="session-quick-actions-card"
+          data-presentation={persistent ? 'persistent' : 'popover'}
+          role={persistent ? 'region' : 'dialog'}
+          aria-label={zh ? '环境信息与快捷操作' : 'Environment information and quick actions'}
+          hidden={props.suppressed || undefined}
+        >
           <header>
             <strong>{zh ? '环境信息' : 'Environment'}</strong>
             {taskId && props.onOpenTaskDetail ? (

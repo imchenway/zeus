@@ -11236,6 +11236,7 @@ export function App(props: {
           initialCachedState={nativeConversationHotCacheRef.current.get(selectedNativeConversation.id)?.state}
           initialOptimisticState={selectedTaskModelPushOptimisticState}
           readOnlyGate={taskReadOnlyGate}
+          quickActionsSuppressed={Boolean(taskDetailPaneTaskId)}
           onChooseAttachments={props.onChooseConversationResources ? chooseNativeConversationAttachments : undefined}
           onStateChange={(conversationId, state) => {
             recordNativeConversationRuntimeState(conversationId, state);
@@ -11275,6 +11276,7 @@ export function App(props: {
         tasks={currentProjectTasks.map((task) => createSessionWorkspaceTask(task, appShellSettings, appShellSettings.appLanguage))}
         choices={nativeSessionChoices}
         suppressComposer={Boolean(taskReadOnlyGate)}
+        quickActionsSuppressed={Boolean(taskDetailPaneTaskId)}
         readOnlyGate={taskReadOnlyGate}
         autoFocusNewConversation={conversationDraftOpen}
         legacyMessages={nativeLegacyMessages}

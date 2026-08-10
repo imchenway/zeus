@@ -1428,7 +1428,8 @@ a {
 }
 
 /* 2026-06-24 全页面顶部交互命中区最终覆盖：隐藏标题栏的透明拖拽层位于 z-index 30，所有可能贴近窗口顶部的页面级按钮、搜索和下拉必须整体升到拖拽层之上。 */
-.macos-ai-app :where(.zeus-object-toolbar, .project-code-context-rail, .graph-view-selector-row, .graph-search-control-grid, .session-toolbar, .session-source-search-row, .settings-section-nav, .task-table-primary-toolbar) {
+.macos-ai-app
+  :where(.zeus-object-toolbar, .project-code-context-rail, .project-code-mode-toolbar, .graph-view-selector-row, .graph-search-control-grid, .session-toolbar, .session-source-search-row, .settings-section-nav, .task-table-primary-toolbar) {
   app-region: no-drag;
   -webkit-app-region: no-drag;
   pointer-events: auto;
@@ -1437,7 +1438,7 @@ a {
 }
 
 .macos-ai-app
-  :where(.zeus-object-toolbar, .project-code-context-rail, .graph-view-selector-row, .graph-search-control-grid, .session-toolbar, .session-source-search-row, .settings-section-nav, .task-table-primary-toolbar)
+  :where(.zeus-object-toolbar, .project-code-context-rail, .project-code-mode-toolbar, .graph-view-selector-row, .graph-search-control-grid, .session-toolbar, .session-source-search-row, .settings-section-nav, .task-table-primary-toolbar)
   :where(button, a, input, select, textarea, label) {
   pointer-events: auto;
 }
