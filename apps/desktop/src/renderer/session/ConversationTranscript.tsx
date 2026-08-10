@@ -26,6 +26,7 @@ export interface ConversationTranscriptProps {
 export function ConversationTranscript(props: ConversationTranscriptProps) {
   const containerRef = useRef<HTMLElement | null>(null);
   const previousTurnIdRef = useRef<string | null>(null);
+  const activeTurnTrackingInitializedRef = useRef(false);
   const pendingTurnPositionRef = useRef(false);
   const scrollController = useThreadScrollController();
   const [returnToLatestVisible, setReturnToLatestVisible] = useState(false);
@@ -112,7 +113,15 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
 
   useEffect(() => {
     const container = containerRef.current;
-    if (!container) return;
+    if (!container || !historyHydrated) return;
+    if (!activeTurnTrackingInitializedRef.current) {
+      // 首次水合得到的活动轮次属于既有会话现场，不能误当成当前页面刚开始的新轮次。
+      activeTurnTrackingInitializedRef.current = true;
+      previousTurnIdRef.current = props.state.activeTurnId;
+      pendingTurnPositionRef.current = false;
+      setTurnSpacerHeight(0);
+      return;
+    }
     if (props.state.activeTurnId && previousTurnIdRef.current !== props.state.activeTurnId) {
       const effect = scrollController.onTurnStarted(metrics(container), Date.now());
       if (effect.type === 'position_new_turn') {
@@ -125,7 +134,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
       setTurnSpacerHeight(0);
     }
     previousTurnIdRef.current = props.state.activeTurnId;
-  }, [props.state.activeTurnId, scrollController]);
+  }, [historyHydrated, props.state.activeTurnId, scrollController]);
 
   useLayoutEffect(() => {
     const container = containerRef.current;
