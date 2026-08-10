@@ -1020,25 +1020,28 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       options.submissions.updateStatus(submission.id, 'paused', {
         providerTurnId: input.expectedTurnId,
         pausedReason: 'recovery_required',
-        error: serializeError(error),
+        error: toRecoverySubmissionError(error),
         updatedAt: now(),
       });
       await persist();
+      options.broadcast('conversation.submission.steering', {
+        conversationId: conversation.id,
+        submissionId: submission.id,
+        providerThreadId,
+        providerTurnId: input.expectedTurnId,
+      });
       throw error;
     }
 
-    const resolved = options.submissions.updateStatus(submission.id, 'resolved', {
-      providerTurnId: input.expectedTurnId,
-      resolvedAt: now(),
-    });
-    await persist();
-    options.broadcast('conversation.submission.steered', {
+    // turn/steer 成功只证明 Provider 接受了请求，不证明对应用户消息已经进入轮次。
+    const steering = options.submissions.getById(submission.id) ?? submission;
+    options.broadcast('conversation.submission.steering', {
       conversationId: conversation.id,
       submissionId: submission.id,
       providerThreadId,
       providerTurnId: input.expectedTurnId,
     });
-    return accepted(resolved, 'steered', providerThreadId, input.expectedTurnId);
+    return accepted(steering, 'steering', providerThreadId, input.expectedTurnId);
   }
 
   function contextFromConversation(conversation: ZeusConversationWithMessagesRecord): ConversationDispatchContext {
@@ -1466,8 +1469,12 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     createdAt: string,
   ): string | null {
     const existingProviderMessage = conversation.messages.find((message) => message.providerItemId === providerItemId);
-    const clientMessageId = projection.clientMessageId;
-    const submission = projection.submission;
+    const projectedSubmission = projection.submission;
+    const providerClientId = typeof itemPayload.clientId === 'string' && itemPayload.clientId.trim() ? itemPayload.clientId : null;
+    // 引导确认身份只能来自 Provider 原始事件；禁止用当前轮次或 submission 回退补造 clientId。
+    const exactSteeringIdentity = !projectedSubmission || !isSteeringSubmission(projectedSubmission) || providerClientId === projectedSubmission.clientMessageId;
+    const clientMessageId = exactSteeringIdentity ? projection.clientMessageId : null;
+    const submission = exactSteeringIdentity ? projectedSubmission : undefined;
     options.conversations.appendMessage({
       conversationId: conversation.id,
       role: 'user',
@@ -1487,13 +1494,47 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       providerItemId,
       ...(clientMessageId ? { clientMessageId } : {}),
     });
+    resolveExactSteeringSubmission(conversation.id, itemPayload, providerThreadId, providerTurnId);
     return clientMessageId;
+  }
+
+  function resolveExactSteeringSubmission(conversationId: string, itemPayload: Record<string, unknown>, providerThreadId: string, providerTurnId: string): void {
+    const providerClientId = typeof itemPayload.clientId === 'string' && itemPayload.clientId.trim() ? itemPayload.clientId : null;
+    if (!providerClientId) return;
+    const submission = options.submissions
+      .listByConversation(conversationId)
+      .find(
+        (candidate) =>
+          candidate.kind === 'steer' &&
+          candidate.requestedDelivery === 'send_now' &&
+          candidate.clientMessageId === providerClientId &&
+          candidate.providerTurnId === providerTurnId &&
+          (candidate.status === 'dispatching' || (candidate.status === 'paused' && candidate.pausedReason === 'recovery_required')),
+      );
+    if (!submission) return;
+    options.submissions.updateStatus(submission.id, 'resolved', { providerTurnId, resolvedAt: now() });
+    options.broadcast('conversation.submission.steered', {
+      conversationId,
+      submissionId: submission.id,
+      providerThreadId,
+      providerTurnId,
+      clientUserMessageId: providerClientId,
+    });
   }
 
   function conversationMessageClientId(message: { clientMessageId: string | null; metadataJson: string }): string | null {
     if (message.clientMessageId?.trim()) return message.clientMessageId;
     const metadata = parseJsonRecord(message.metadataJson);
     return typeof metadata.clientUserMessageId === 'string' && metadata.clientUserMessageId.trim() ? metadata.clientUserMessageId : null;
+  }
+
+  function isSteeringSubmission(submission: ZeusConversationSubmissionRecord): boolean {
+    return submission.kind === 'steer' && submission.requestedDelivery === 'send_now';
+  }
+
+  function hasExactProviderUserMessage(conversation: ZeusConversationWithMessagesRecord, submission: ZeusConversationSubmissionRecord, providerTurnId: string): boolean {
+    const current = options.conversations.getById(conversation.id) ?? conversation;
+    return current.messages.some((message) => message.role === 'user' && message.providerTurnId === providerTurnId && conversationMessageClientId(message) === submission.clientMessageId);
   }
 
   function submissionForProviderUserItem(conversationId: string, turn: ZeusConversationTurnRecord, itemPayload: Record<string, unknown>): ZeusConversationSubmissionRecord | undefined {
@@ -1602,16 +1643,16 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       options.submissions.updateStatus(submission.id, 'paused', {
         providerTurnId: turnId,
         pausedReason: 'recovery_required',
-        error: serializeError(error),
+        error: toRecoverySubmissionError(error),
         updatedAt: now(),
       });
       await persist();
+      options.broadcast('conversation.submission.steering', { conversationId: conversation.id, submissionId: submission.id, providerThreadId, providerTurnId: turnId });
       throw error;
     }
-    options.submissions.updateStatus(submission.id, 'resolved', { providerTurnId: turnId, resolvedAt: now() });
-    await persist();
-    options.broadcast('conversation.submission.steered', { conversationId: conversation.id, submissionId: submission.id, providerThreadId, providerTurnId: turnId });
-    return accepted(submission, 'steered', providerThreadId, turnId);
+    const steering = options.submissions.getById(submission.id) ?? submission;
+    options.broadcast('conversation.submission.steering', { conversationId: conversation.id, submissionId: submission.id, providerThreadId, providerTurnId: turnId });
+    return accepted(steering, 'steering', providerThreadId, turnId);
   }
 
   async function interruptTurn(input: InterruptNativeTurnInput): Promise<NativeAcceptedOperation> {
@@ -2407,8 +2448,37 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       });
     }
     const submissions = options.submissions.listByConversation(conversation.id);
-    const inFlight = submissions.filter((submission) => submission.status === 'dispatching' || submission.status === 'active');
+    const pendingSteering = submissions.filter((submission) => isSteeringSubmission(submission) && (submission.status === 'dispatching' || (submission.status === 'paused' && submission.pausedReason === 'recovery_required')));
+    const inFlight = submissions.filter((submission) => !isSteeringSubmission(submission) && (submission.status === 'dispatching' || submission.status === 'active'));
+    for (const submission of pendingSteering) {
+      const snapshotTurn = findSnapshotTurn(snapshot, submission);
+      const providerTurnId = snapshotTurn && typeof snapshotTurn.id === 'string' ? snapshotTurn.id : submission.providerTurnId;
+      const classification = classifySnapshotTurn(snapshotTurn);
+      if (providerTurnId && hasExactProviderUserMessage(conversation, submission, providerTurnId)) {
+        if (submission.status !== 'resolved') options.submissions.updateStatus(submission.id, 'resolved', { providerTurnId, resolvedAt: now() });
+        continue;
+      }
+      if (!snapshotTurn || !providerTurnId || classification === 'unknown' || classification !== 'active') {
+        markSubmissionRecoveryRequired(submission, coordinatorError('ZEUS_NATIVE_STEER_OUTCOME_UNKNOWN', 'Provider thread state cannot confirm the steering user message.'));
+      }
+    }
     if (inFlight.length === 0) {
+      const unresolvedSteering = pendingSteering.some((submission) => {
+        const current = options.submissions.getById(submission.id);
+        return current?.status === 'paused' && current.pausedReason === 'recovery_required';
+      });
+      if (unresolvedSteering) {
+        if (conversation.providerThreadId && conversation.providerState !== 'archived' && conversation.providerState !== 'closed' && conversation.providerState !== 'failed') {
+          options.conversations.bindProvider(conversation.id, {
+            providerId: 'codex',
+            providerThreadId: conversation.providerThreadId,
+            providerModel: conversation.providerModel,
+            providerState: 'paused',
+          });
+        }
+        runStates.set(conversation.id, { type: 'paused', reason: 'recovery_required' });
+        return;
+      }
       if (!snapshotConfirmsIdleProviderThread(snapshot)) {
         markConversationRecoveryRequired(conversation.id, coordinatorError('ZEUS_NATIVE_PROVIDER_STATE_UNCONFIRMED', 'Provider thread state cannot confirm that there is no active turn.'));
         return;
@@ -2841,16 +2911,30 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       });
       options.changeSets?.seal({ conversation, turn, timestamp });
       const submissions = options.submissions.listByConversation(conversation.id);
-      const activeSubmission = submissions.find((entry) => entry.providerTurnId === providerTurnId && (entry.status === 'active' || entry.status === 'dispatching'));
+      const activeSubmission =
+        submissions.find((entry) => entry.id === turn.clientSubmissionId && !isSteeringSubmission(entry) && (entry.status === 'active' || entry.status === 'dispatching')) ??
+        submissions.find((entry) => entry.providerTurnId === providerTurnId && !isSteeringSubmission(entry) && (entry.status === 'active' || entry.status === 'dispatching'));
       if (activeSubmission) {
         options.submissions.updateStatus(activeSubmission.id, failed ? 'failed' : 'completed', {
           resolvedAt: timestamp,
           ...(failure ? { error: providerTurnFailureRecord(params, failure) } : {}),
         });
       }
+      const unconfirmedSteering = submissions.filter((entry) => entry.providerTurnId === providerTurnId && isSteeringSubmission(entry) && entry.status === 'dispatching' && !hasExactProviderUserMessage(conversation, entry, providerTurnId));
+      for (const steering of unconfirmedSteering) {
+        markSubmissionRecoveryRequired(steering, coordinatorError('ZEUS_NATIVE_STEER_OUTCOME_UNKNOWN', 'The provider turn ended without the matching steering user message.'));
+        options.broadcast('conversation.submission.steering', {
+          conversationId: conversation.id,
+          submissionId: steering.id,
+          providerThreadId: threadId,
+          providerTurnId,
+        });
+      }
       if (!failed && !interrupted) createdPlanImplementationRequest = ensurePlanImplementationRequest(conversation.id, turn, activeSubmission, timestamp);
       if (failed) {
         for (const queued of submissions.filter((entry) => entry.status === 'queued')) options.submissions.updateStatus(queued.id, 'paused', { pausedReason: 'recovery_required' });
+        runStates.set(conversation.id, { type: 'paused', reason: 'recovery_required' });
+      } else if (unconfirmedSteering.length > 0) {
         runStates.set(conversation.id, { type: 'paused', reason: 'recovery_required' });
       } else if (interrupted) {
         const interruptedQueue = interruptedQueueSubmissions(submissions);
@@ -2865,7 +2949,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         providerId: 'codex',
         providerThreadId: threadId,
         providerModel: conversation.providerModel,
-        providerState: failed ? 'failed' : interrupted && hasInterruptedQueue ? 'paused' : 'ready',
+        providerState: failed ? 'failed' : unconfirmedSteering.length > 0 || (interrupted && hasInterruptedQueue) ? 'paused' : 'ready',
       });
       const ephemeral = contexts.get(conversation.id)?.ephemeral === true;
       if (!failed && !interrupted && !ephemeral) options.conversations.setCompletionUnread(conversation.id, true);
@@ -2913,7 +2997,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         },
       };
       queueChangedAfterTurn = interrupted;
-      drainAfterTurn = !failed && !interrupted;
+      drainAfterTurn = !failed && !interrupted && unconfirmedSteering.length === 0;
     } else if (event.method === 'item/started' && conversation && threadId) {
       const providerTurnId = providerTurnIdFrom(params);
       const itemPayload = isRecord(params.item) ? params.item : {};

@@ -53,6 +53,10 @@ const copy = {
     attachments: '附件',
     details: '技术详情',
     complexityTruncated: '内容过于复杂，已截断',
+    queued: '排队中',
+    sending: '发送中',
+    steering: '引导中',
+    steerUnconfirmed: '引导结果待确认',
   },
   'en-US': {
     user: 'You',
@@ -84,6 +88,10 @@ const copy = {
     attachments: 'Attachments',
     details: 'Technical details',
     complexityTruncated: 'Content complexity truncated',
+    queued: 'Queued',
+    sending: 'Sending',
+    steering: 'Steering',
+    steerUnconfirmed: 'Steer outcome unconfirmed',
   },
 } as const;
 
@@ -98,6 +106,15 @@ export interface ThreadItemViewProps {
   onOpenResource?: (resource: ConversationResource, target: ConversationOpenTarget, location?: ConversationFileLocation) => void | Promise<void>;
   onLoadResourcePreview?: (resource: ConversationResource) => Promise<ConversationResourcePreview>;
   onVisibleContentChange?: () => void;
+}
+
+function optimisticDeliveryStatus(item: NativeSessionItemBuffer, labels: (typeof copy)[SessionUiLanguage]): string {
+  const delivery = primitiveText(item.payload.delivery);
+  if (delivery === 'steer_now') {
+    const unconfirmed = item.status === 'paused' || item.status === 'unconfirmed' || primitiveText(item.payload.pausedReason) === 'recovery_required';
+    return unconfirmed ? labels.steerUnconfirmed : labels.steering;
+  }
+  return item.status === 'queued' ? labels.queued : labels.sending;
 }
 
 export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemViewProps) {
@@ -125,6 +142,7 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
   const accessibleLabel = command ? (props.language === 'zh-CN' ? '命令执行' : 'Command execution') : label;
   const showVisibleRoleLabel = role !== 'user' && role !== 'assistant' && role !== 'commentary';
   const showMeta = !command && (showVisibleRoleLabel || props.item.optimistic);
+  const optimisticStatus = props.item.optimistic ? optimisticDeliveryStatus(props.item, labels) : null;
   const messageTimestamp = formatMessageTimestamp(props.item, props.language);
   const timestampSource = props.item.updatedAt ?? primitiveText(props.item.payload.createdAt);
   const canEdit = role === 'user' && props.isLatestUser && Boolean(props.onEdit) && !props.item.optimistic;
@@ -210,7 +228,11 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
       {showMeta ? (
         <header className="session-thread-item-meta">
           {showVisibleRoleLabel ? <strong>{label}</strong> : null}
-          {props.item.optimistic ? <span className="session-item-state">{props.item.status === 'queued' ? (props.language === 'zh-CN' ? '排队中' : 'Queued') : props.language === 'zh-CN' ? '发送中' : 'Sending'}</span> : null}
+          {optimisticStatus ? (
+            <span className="session-item-state" role="status" aria-live="polite" aria-atomic="true">
+              {optimisticStatus}
+            </span>
+          ) : null}
         </header>
       ) : null}
       {editing ? (
