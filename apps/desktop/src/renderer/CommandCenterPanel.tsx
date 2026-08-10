@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 import { ClockCounterClockwiseIcon as ClockCounterClockwise } from '@phosphor-icons/react/dist/csr/ClockCounterClockwise';
 import { GlobeIcon as Globe } from '@phosphor-icons/react/dist/csr/Globe';
 import { PencilSimpleIcon as PencilSimple } from '@phosphor-icons/react/dist/csr/PencilSimple';
@@ -54,6 +54,7 @@ const emptyDraft: CommandDraft = {
 const COMMAND_RUN_LOG_PAGE_SIZE = 1_000;
 const MAX_DISPLAYED_COMMAND_RUN_LOGS = 2_000;
 const MAX_DISPLAYED_COMMAND_RUN_LOG_BYTES = 4 * 1024 * 1024;
+const COMMAND_RUN_LOG_FOLLOW_DISTANCE_PX = 24;
 const UTF8_ENCODER = new TextEncoder();
 
 function CommandRunDurationValue(props: { run: CommandRun; zh: boolean }) {
@@ -67,6 +68,38 @@ function CommandRunDurationValue(props: { run: CommandRun; zh: boolean }) {
   }, [shouldTick, props.run.startedAt]);
 
   return <span className="command-run-duration">{formatRunDuration(props.run, nowMs, props.zh)}</span>;
+}
+
+function CommandRunLog(props: { runId: string; content: string; ariaLabel: string }) {
+  const containerRef = useRef<HTMLPreElement>(null);
+  const followedRunIdRef = useRef(props.runId);
+  const shouldFollowLatestRef = useRef(true);
+
+  useLayoutEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    if (followedRunIdRef.current !== props.runId) {
+      followedRunIdRef.current = props.runId;
+      shouldFollowLatestRef.current = true;
+    }
+    if (shouldFollowLatestRef.current) container.scrollTo({ top: container.scrollHeight, behavior: 'instant' });
+  }, [props.content, props.runId]);
+
+  return (
+    <pre
+      ref={containerRef}
+      className="command-run-log"
+      aria-label={props.ariaLabel}
+      onScroll={(event) => {
+        const container = event.currentTarget;
+        const distanceFromBottom = Math.max(0, container.scrollHeight - container.clientHeight - container.scrollTop);
+        // 用户主动上滚时保留历史阅读位置；手动回到底部后恢复跟随。
+        shouldFollowLatestRef.current = distanceFromBottom <= COMMAND_RUN_LOG_FOLLOW_DISTANCE_PX;
+      }}
+    >
+      {props.content}
+    </pre>
+  );
 }
 
 export function CommandCenterPanel(props: CommandCenterPanelProps) {
@@ -525,13 +558,17 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
                     </div>
                   </dl>
                   {runDetail.run.failureReason ? <p className="command-run-failure">{runDetail.run.failureReason}</p> : null}
-                  <pre className="command-run-log" aria-label={zh ? '终端日志' : 'Terminal logs'}>
-                    {runDetail.logs.length > 0
-                      ? `${runDetail.logsTruncated ? (zh ? '…仅显示最新日志，完整历史已保存在 Runtime 日志中。\n' : '…Showing recent logs only. The complete history remains in Runtime logs.\n') : ''}${runDetail.logs.map((log) => log.text).join('')}`
-                      : zh
-                        ? '暂无日志。'
-                        : 'No logs yet.'}
-                  </pre>
+                  <CommandRunLog
+                    runId={runDetail.run.id}
+                    ariaLabel={zh ? '终端日志' : 'Terminal logs'}
+                    content={
+                      runDetail.logs.length > 0
+                        ? `${runDetail.logsTruncated ? (zh ? '…仅显示最新日志，完整历史已保存在 Runtime 日志中。\n' : '…Showing recent logs only. The complete history remains in Runtime logs.\n') : ''}${runDetail.logs.map((log) => log.text).join('')}`
+                        : zh
+                          ? '暂无日志。'
+                          : 'No logs yet.'
+                    }
+                  />
                   {runDetail.artifacts.length > 0 ? (
                     <section className="command-artifacts" aria-label={zh ? '命令产物' : 'Command artifacts'}>
                       <strong>{zh ? '产物' : 'Artifacts'}</strong>
