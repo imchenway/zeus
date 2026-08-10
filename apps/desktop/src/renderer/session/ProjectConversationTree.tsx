@@ -1,8 +1,8 @@
 import { type KeyboardEvent, useEffect, useRef, useState } from 'react';
+import { ArchiveIcon as Archive } from '@phosphor-icons/react/dist/csr/Archive';
 import { ArrowSquareOutIcon as ArrowSquareOut } from '@phosphor-icons/react/dist/csr/ArrowSquareOut';
 import { CircleNotchIcon as CircleNotch } from '@phosphor-icons/react/dist/csr/CircleNotch';
 import { FolderIcon as Folder } from '@phosphor-icons/react/dist/csr/Folder';
-import { DotsThreeVerticalIcon as DotsThreeVertical } from '@phosphor-icons/react/dist/csr/DotsThreeVertical';
 import { PlusIcon as Plus } from '@phosphor-icons/react/dist/csr/Plus';
 import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/csr/WarningCircle';
 import type { NativeConversationChoice, NativeConversationSnapshot, NativeSessionState } from './sessionTypes.js';
@@ -52,7 +52,6 @@ const labels = {
     pending_user_input: '需要用户输入',
     error: '会话错误',
     legacy_readonly: '旧会话，只读',
-    moreActions: '更多会话操作',
     archive: '归档会话',
     archiveUnavailable: '会话仍在运行、排队或等待处理，暂时不能归档',
     archiveLegacyUnavailable: '旧版只读会话无法与 Codex 线程同步归档',
@@ -73,7 +72,6 @@ const labels = {
     pending_user_input: 'User input required',
     error: 'Thread error',
     legacy_readonly: 'Legacy, read-only',
-    moreActions: 'More conversation actions',
     archive: 'Archive conversation',
     archiveUnavailable: 'This conversation is running, queued, or waiting and cannot be archived yet',
     archiveLegacyUnavailable: 'Legacy read-only conversations cannot be archived together with their Codex thread',
@@ -88,32 +86,18 @@ interface FlattenedConversation {
 
 export function ProjectConversationTree(props: ProjectConversationTreeProps) {
   const copy = labels[props.language];
-  const [openMenuConversationId, setOpenMenuConversationId] = useState<string | null>(null);
   const [archivingConversationId, setArchivingConversationId] = useState<string | null>(null);
-  const menuTriggerRefs = useRef(new Map<string, HTMLButtonElement>());
   const flattenedGroups = props.groups.map(flattenProjectConversations);
   const conversationIds = flattenedGroups.flatMap((group) => group.conversations.map((entry) => entry.conversation.id));
   const fallbackTabStopId = props.selectedConversationId && conversationIds.includes(props.selectedConversationId) ? null : (conversationIds[0] ?? null);
-
-  useEffect(() => {
-    if (!openMenuConversationId) return;
-    const closeOnOutsidePointer = (event: PointerEvent) => {
-      const target = event.target;
-      if (!(target instanceof Element) || target.closest(`[data-conversation-menu-root="${openMenuConversationId}"]`)) return;
-      setOpenMenuConversationId(null);
-    };
-    document.addEventListener('pointerdown', closeOnOutsidePointer);
-    return () => document.removeEventListener('pointerdown', closeOnOutsidePointer);
-  }, [openMenuConversationId]);
 
   async function archiveConversation(conversation: NativeConversationChoice): Promise<void> {
     if (!props.onArchiveConversation || archivingConversationId) return;
     setArchivingConversationId(conversation.id);
     try {
       await props.onArchiveConversation(conversation);
-      setOpenMenuConversationId(null);
     } catch {
-      // 错误已由上层统一展示；保留菜单，避免失败操作看起来像已经成功。
+      // 错误已由上层统一展示，会话行保持原状便于用户重试。
     } finally {
       setArchivingConversationId(null);
     }
@@ -131,10 +115,10 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
                 const runtimeState = props.conversationStates?.[conversation.id] ?? conversationTreeRuntimeStateFromConversation(conversation);
                 const archiveAvailable = conversationCanBeArchived(runtimeState);
                 const archiveUnavailableReason = runtimeState === 'legacy_readonly' ? copy.archiveLegacyUnavailable : copy.archiveUnavailable;
-                const menuOpen = openMenuConversationId === conversation.id;
                 const archiving = archivingConversationId === conversation.id;
+                const archiveLabel = archiving ? copy.archiving : archiveAvailable ? copy.archive : archiveUnavailableReason;
                 return (
-                  <li className="session-conversation-tree-item" key={conversation.id} data-conversation-menu-root={conversation.id}>
+                  <li className="session-conversation-tree-item" key={conversation.id}>
                     <button
                       type="button"
                       className={`session-conversation-tree-row${current ? ' is-current' : ''}`}
@@ -148,40 +132,18 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
                       <ConversationRowState conversation={conversation} runtimeState={runtimeState} current={current} language={props.language} />
                     </button>
                     {props.onArchiveConversation ? (
-                      <span className={`session-conversation-row-actions${menuOpen ? ' is-open' : ''}`}>
-                        <button
-                          ref={(element) => {
-                            if (element) menuTriggerRefs.current.set(conversation.id, element);
-                            else menuTriggerRefs.current.delete(conversation.id);
-                          }}
-                          type="button"
-                          className="session-conversation-more-button"
-                          aria-label={`${copy.moreActions}: ${displayTitle}`}
-                          aria-haspopup="menu"
-                          aria-expanded={menuOpen}
-                          disabled={archiving}
-                          onClick={() => setOpenMenuConversationId(menuOpen ? null : conversation.id)}
-                        >
-                          <DotsThreeVertical aria-hidden="true" weight="bold" />
-                        </button>
-                        {menuOpen ? (
-                          <span
-                            className="session-conversation-row-menu"
-                            role="menu"
-                            aria-label={`${copy.moreActions}: ${displayTitle}`}
-                            onKeyDown={(event) => {
-                              if (event.key !== 'Escape') return;
-                              event.preventDefault();
-                              setOpenMenuConversationId(null);
-                              menuTriggerRefs.current.get(conversation.id)?.focus();
-                            }}
-                          >
-                            <button type="button" role="menuitem" autoFocus disabled={!archiveAvailable || archiving} title={archiveAvailable ? copy.archive : archiveUnavailableReason} onClick={() => void archiveConversation(conversation)}>
-                              {archiving ? copy.archiving : archiveAvailable ? copy.archive : archiveUnavailableReason}
-                            </button>
-                          </span>
-                        ) : null}
-                      </span>
+                      <button
+                        type="button"
+                        className="session-conversation-archive-button"
+                        aria-disabled={!archiveAvailable || archiving}
+                        aria-label={`${archiveLabel}: ${displayTitle}`}
+                        title={archiveLabel}
+                        onClick={() => {
+                          if (archiveAvailable && !archiving) void archiveConversation(conversation);
+                        }}
+                      >
+                        {archiving ? <CircleNotch className="session-conversation-archive-spinner" aria-hidden="true" /> : <Archive aria-hidden="true" />}
+                      </button>
                     ) : null}
                   </li>
                 );
