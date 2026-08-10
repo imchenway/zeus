@@ -95,6 +95,18 @@
   z-index: 80;
 }
 
+/* ZEUS-0160：宽屏空闲区直接承载环境卡；右侧工作面或窄窗口继续使用顶部按钮。 */
+.session-codex-parity-v1 .session-quick-actions-card[data-presentation='persistent'] {
+  inline-size: 300px;
+  inset-block-start: calc(100% + 14px);
+  max-block-size: calc(100vh - 92px);
+}
+
+.session-codex-parity-v1 .session-quick-actions-anchor[data-presentation='persistent'] {
+  block-size: 30px;
+  inline-size: 0;
+}
+
 .session-codex-parity-v1 .session-quick-actions-card > header,
 .session-codex-parity-v1 .session-quick-actions-sources > header {
   align-items: center;

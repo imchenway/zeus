@@ -17,6 +17,7 @@ interface SessionQuickActionsCardProps {
   conversation: NativeConversationChoice;
   state: NativeSessionState;
   task: { id: string; title: string } | null;
+  forceCollapsed?: boolean;
   onLoadTaskWorkspaces?: (taskId: string) => Promise<TaskWorkspacesSnapshot>;
   onOpenTaskDetail?: (taskId: string) => void;
   onOpenGitReview?: (taskId: string, workspaceId: string | null, mode: 'commit' | 'push-only') => void;
@@ -31,11 +32,15 @@ interface SourceRow {
   resource?: ConversationResource;
 }
 
+const PERSISTENT_CARD_MIN_WORKSPACE_WIDTH = 1440;
+
 export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
   const zh = props.language === 'zh-CN';
-  const rootRef = useRef<HTMLSpanElement | null>(null);
+  const rootRef = useRef<HTMLDivElement | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const loadedWorkspaceKeyRef = useRef<string | null>(null);
   const [open, setOpen] = useState(false);
+  const [hasPersistentSpace, setHasPersistentSpace] = useState(false);
   const [showAllSources, setShowAllSources] = useState(false);
   const [workspaces, setWorkspaces] = useState<TaskWorkspacesSnapshot | null>(null);
   const [workspaceState, setWorkspaceState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
@@ -52,6 +57,27 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
   const canPush = Boolean(workspace?.review?.clean && workspace.review.ahead > 0 && workspace.remoteName);
   const canOpenReview = Boolean(taskId && workspace && props.onOpenGitReview);
   const canCommitOrPush = canOpenReview && (dirty || canPush);
+  const persistent = hasPersistentSpace && !props.forceCollapsed;
+  const cardVisible = persistent || (open && !props.forceCollapsed);
+
+  useEffect(() => {
+    const workspaceRoot = rootRef.current?.closest<HTMLElement>('.session-workspace-root');
+    if (!workspaceRoot || typeof ResizeObserver === 'undefined') return;
+
+    const updatePresentation = (): void => {
+      const nextHasPersistentSpace = workspaceRoot.getBoundingClientRect().width >= PERSISTENT_CARD_MIN_WORKSPACE_WIDTH;
+      setHasPersistentSpace((current) => (current === nextHasPersistentSpace ? current : nextHasPersistentSpace));
+    };
+    updatePresentation();
+    const observer = new ResizeObserver(updatePresentation);
+    observer.observe(workspaceRoot);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    if (!props.forceCollapsed) return;
+    setOpen(false);
+  }, [props.forceCollapsed]);
 
   useEffect(() => {
     setOpen(false);
@@ -59,29 +85,38 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
     setWorkspaces(null);
     setWorkspaceState('idle');
     setWorkspaceError(null);
+    loadedWorkspaceKeyRef.current = null;
   }, [props.conversation.id]);
 
   useEffect(() => {
-    if (!open || !taskId || !props.onLoadTaskWorkspaces) return;
+    if (!cardVisible || !taskId || !props.onLoadTaskWorkspaces) return;
+    const workspaceKey = `${props.conversation.id}:${taskId}`;
+    if (loadedWorkspaceKeyRef.current === workspaceKey) return;
+    loadedWorkspaceKeyRef.current = workspaceKey;
     let active = true;
+    let settled = false;
     setWorkspaceState('loading');
     setWorkspaceError(null);
     void props
       .onLoadTaskWorkspaces(taskId)
       .then((snapshot) => {
+        settled = true;
         if (!active) return;
         setWorkspaces(snapshot);
         setWorkspaceState('ready');
       })
       .catch((error: unknown) => {
+        settled = true;
         if (!active) return;
+        loadedWorkspaceKeyRef.current = null;
         setWorkspaceState('error');
         setWorkspaceError(error instanceof Error ? error.message : String(error));
       });
     return () => {
       active = false;
+      if (!settled && loadedWorkspaceKeyRef.current === workspaceKey) loadedWorkspaceKeyRef.current = null;
     };
-  }, [open, props.onLoadTaskWorkspaces, taskId]);
+  }, [cardVisible, props.conversation.id, props.onLoadTaskWorkspaces, taskId]);
 
   useEffect(() => {
     if (!open) return;
@@ -111,22 +146,24 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
   }
 
   return (
-    <span className="session-quick-actions-anchor" ref={rootRef}>
-      <button
-        ref={triggerRef}
-        type="button"
-        className={`session-quick-actions-trigger ${open ? 'selected' : ''}`}
-        aria-expanded={open}
-        aria-haspopup="dialog"
-        title={zh ? '环境与快捷操作' : 'Environment and quick actions'}
-        onClick={() => setOpen((current) => !current)}
-      >
-        <GitDiff aria-hidden="true" weight="regular" />
-        <span>{zh ? '环境' : 'Environment'}</span>
-      </button>
+    <div className="session-quick-actions-anchor" ref={rootRef} data-presentation={persistent ? 'persistent' : 'collapsed'}>
+      {persistent ? null : (
+        <button
+          ref={triggerRef}
+          type="button"
+          className={`session-quick-actions-trigger ${open ? 'selected' : ''}`}
+          aria-expanded={open}
+          aria-haspopup="dialog"
+          title={zh ? '环境与快捷操作' : 'Environment and quick actions'}
+          onClick={() => setOpen((current) => !current)}
+        >
+          <GitDiff aria-hidden="true" weight="regular" />
+          <span>{zh ? '环境' : 'Environment'}</span>
+        </button>
+      )}
 
-      {open ? (
-        <section className="session-quick-actions-card" role="dialog" aria-label={zh ? '环境信息与快捷操作' : 'Environment information and quick actions'}>
+      {cardVisible ? (
+        <section className="session-quick-actions-card" data-presentation={persistent ? 'persistent' : 'popover'} role={persistent ? 'region' : 'dialog'} aria-label={zh ? '环境信息与快捷操作' : 'Environment information and quick actions'}>
           <header>
             <strong>{zh ? '环境信息' : 'Environment'}</strong>
             {taskId && props.onOpenTaskDetail ? (
@@ -268,7 +305,7 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
           ) : null}
         </section>
       ) : null}
-    </span>
+    </div>
   );
 }
 
