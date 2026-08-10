@@ -22,6 +22,8 @@ export interface TaskDetailPaneCopy {
   conversationLoading: string;
   conversationError: string;
   openConversation: string;
+  archivedConversation: string;
+  terminalConversationHelp: string;
   retryConversationLoad: string;
   detailStatusSelectAria: string;
   primaryActionsTitle: string;
@@ -54,6 +56,7 @@ export interface TaskDetailPaneContentProps {
   statusDefinitions: readonly TaskManagementStatusDefinition[];
   priorityOptions: ReadonlyArray<{ value: TaskPriority; label: string }>;
   busy: boolean;
+  terminalReadOnly: boolean;
   conversations?: NativeConversationChoice[];
   conversationsLoading?: boolean;
   conversationsError?: string | null;
@@ -596,7 +599,7 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
     },
     [],
   );
-  const conversations = [...(props.conversations ?? [])].filter((conversation) => !conversation.archived).sort(compareConversationCreatedAsc);
+  const conversations = [...(props.conversations ?? [])].filter((conversation) => props.terminalReadOnly || !conversation.archived).sort(compareConversationCreatedAsc);
   const taskWorkspaces = Array.from(
     new Map(
       conversations
@@ -1153,6 +1156,7 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
           <strong>{props.copy.conversationsTitle}</strong>
           <small>{conversations.length}</small>
         </span>
+        {props.terminalReadOnly && conversations.length > 0 ? <p className="task-detail-conversation-refresh-warning">{props.copy.terminalConversationHelp}</p> : null}
         {props.conversationsLoading && conversations.length === 0 ? (
           <p className="task-detail-conversation-state" role="status">
             {props.copy.conversationLoading}
@@ -1185,7 +1189,10 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
                   <button type="button" className="task-detail-conversation-row" aria-label={`${props.copy.openConversation}：${conversation.title}`} onClick={() => props.onOpenConversation(props.task.id, conversation.id)}>
                     <span>
                       <strong>{conversation.title}</strong>
-                      <small>{conversation.providerModel ?? conversation.summary ?? conversation.status}</small>
+                      <small>
+                        {conversation.archived ? `${props.copy.archivedConversation} · ` : ''}
+                        {conversation.providerModel ?? conversation.summary ?? conversation.status}
+                      </small>
                     </span>
                     <span className="task-detail-conversation-row-meta">
                       <time dateTime={conversation.updatedAt}>{formatTaskUpdatedAt(conversation.updatedAt, props.copy.updatedAtMissing ?? '未记录')}</time>
@@ -1281,8 +1288,15 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
           </span>
         ) : null}
         <span className="task-detail-action-buttons">
-          <Button variant="primary" size="regular" className="task-detail-primary-action" onClick={() => props.onPushNewConversation(props.task.id)} busy={props.busy || modelPushCreating} disabled={modelPushFailed}>
-            {modelPushCreating ? (zh ? '正在创建会话…' : 'Creating conversation…') : props.copy.pushNewConversation}
+          <Button
+            variant="primary"
+            size="regular"
+            className="task-detail-primary-action"
+            onClick={() => props.onPushNewConversation(props.task.id)}
+            busy={props.busy || modelPushCreating}
+            disabled={modelPushFailed || props.terminalReadOnly}
+          >
+            {props.terminalReadOnly ? (zh ? '重新打开任务后可新建会话' : 'Reopen task to start a conversation') : modelPushCreating ? (zh ? '正在创建会话…' : 'Creating conversation…') : props.copy.pushNewConversation}
           </Button>
           {props.onOpenCodeDelivery ? (
             <Button variant="secondary" size="regular" className="task-detail-secondary-action" onClick={() => props.onOpenCodeDelivery?.(props.task.id)} busy={props.busy}>

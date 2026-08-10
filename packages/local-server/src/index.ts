@@ -1342,6 +1342,7 @@ interface UpdateTaskManagementStatusBody {
   status: TaskManagementStatus;
   expectedUpdatedAt?: string;
   confirmWorktreeCleanup?: boolean;
+  reopenConversationId?: string;
 }
 
 interface UpdateTaskBody {
@@ -1883,6 +1884,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   const taskEnvironments = new TaskEnvironmentRepository(db);
   const taskWorkspaces = new TaskWorkspaceRepository(db);
   const taskConversationExecutionContextPromises = new Map<string, Promise<{ projectLocalPath: string; writableRoots: string[] } | null>>();
+  const taskConversationReopenInProgressIds = new Set<string>();
   const taskIntegrations = new TaskIntegrationRepository(db);
   const taskConflictAiOperations = new Map<string, { conversationId: string; submissionId: string; running: boolean; finalizing: boolean }>();
   const taskEvents = new TaskEventRepository(db);
@@ -3434,6 +3436,15 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           message: 'Conversation not found',
         });
       }
+      if (conversation.taskId) {
+        const task = tasks.getById(conversation.taskId);
+        if (task && taskManagementStatusIsTerminal(task)) {
+          return reply.code(409).send({
+            error: 'ZEUS_TASK_REOPEN_REQUIRED',
+            message: 'This task is completed or cancelled. Reopen the task and restore one archived conversation before continuing.',
+          });
+        }
+      }
       try {
         assertRequestedAgentKind(request.body ?? {});
       } catch (error) {
@@ -3942,6 +3953,15 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           message: 'Native conversation not found',
         });
       }
+      if (conversation.taskId) {
+        const task = tasks.getById(conversation.taskId);
+        if (task && taskManagementStatusIsTerminal(task)) {
+          return reply.code(409).send({
+            error: 'ZEUS_TASK_REOPEN_REQUIRED',
+            message: 'This task is completed or cancelled. Reopen the task and restore this conversation in the same action.',
+          });
+        }
+      }
       try {
         await codexNativeCoordinator.restoreArchivedConversation({ conversationId: conversation.id });
         const restored = conversations.getById(conversation.id);
@@ -4105,6 +4125,15 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           error: 'ZEUS_CONVERSATION_NOT_FOUND',
           message: 'Conversation not found',
         });
+      }
+      if (conversation.taskId) {
+        const task = tasks.getById(conversation.taskId);
+        if (task && taskManagementStatusIsTerminal(task)) {
+          return reply.code(409).send({
+            error: 'ZEUS_TASK_REOPEN_REQUIRED',
+            message: 'This task is completed or cancelled. Reopen the task and restore this conversation in the same action.',
+          });
+        }
       }
       if (conversation.transportKind === 'codex_native') {
         try {
@@ -5747,6 +5776,12 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           message: 'confirmWorktreeCleanup must be a boolean when provided.',
         });
       }
+      if (request.body.reopenConversationId !== undefined && (typeof request.body.reopenConversationId !== 'string' || !request.body.reopenConversationId.trim())) {
+        return reply.code(400).send({
+          error: 'ZEUS_INVALID_TASK_REOPEN_CONVERSATION',
+          message: 'reopenConversationId must be a non-empty string when provided.',
+        });
+      }
       if (existing.updatedAt !== request.body.expectedUpdatedAt) {
         return reply.code(409).send({
           error: 'ZEUS_TASK_EDIT_CONFLICT',
@@ -5774,10 +5809,51 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           return sendTaskGitApiError(reply, error);
         }
       }
+      const existingIsTerminal = taskManagementStatusIsTerminal(existing);
+      const targetIsTerminal = request.body.status === projectStatusConfig.roles.completedStatusId || request.body.status === projectStatusConfig.roles.cancelledStatusId;
+      let restoredConversation: ZeusConversationRecord | null = null;
+      if (existingIsTerminal && !targetIsTerminal) {
+        const taskConversationHistory = listTaskConversationHistory(existing.id, existing.projectId);
+        const requestedConversationId = request.body.reopenConversationId?.trim();
+        const reopenTarget = requestedConversationId ? taskConversationHistory.find((conversation) => conversation.id === requestedConversationId) : taskConversationHistory.find((conversation) => conversation.archived);
+        if (requestedConversationId && !reopenTarget) {
+          return reply.code(409).send({
+            error: 'ZEUS_TASK_REOPEN_CONVERSATION_NOT_FOUND',
+            message: 'The selected conversation does not belong to this task.',
+          });
+        }
+        if (reopenTarget?.archived) {
+          try {
+            if (reopenTarget.transportKind === 'codex_native') {
+              taskConversationReopenInProgressIds.add(reopenTarget.id);
+              try {
+                await codexNativeCoordinator.restoreArchivedConversation({ conversationId: reopenTarget.id });
+              } finally {
+                taskConversationReopenInProgressIds.delete(reopenTarget.id);
+              }
+            } else {
+              conversations.restore(reopenTarget.id);
+            }
+            restoredConversation = conversations.getRecordById(reopenTarget.id) ?? null;
+          } catch (error) {
+            return sendNativeConversationApiError(reply, error);
+          }
+        }
+        const latestTask = tasks.getById(existing.id);
+        if (!latestTask || latestTask.updatedAt !== request.body.expectedUpdatedAt) {
+          if (restoredConversation) await rollbackReopenedTaskConversation(restoredConversation);
+          return reply.code(409).send({
+            error: 'ZEUS_TASK_EDIT_CONFLICT',
+            message: 'Task changed while its conversation was being restored.',
+            currentUpdatedAt: latestTask?.updatedAt,
+          });
+        }
+      }
       let updated: ZeusTaskRecord;
       try {
         updated = tasks.updateManagementStatus(existing.id, request.body.status, request.body.expectedUpdatedAt);
       } catch (error) {
+        if (restoredConversation) await rollbackReopenedTaskConversation(restoredConversation);
         const conflict = taskEditConflictDetails(error);
         if (conflict?.code === 'ZEUS_TASK_EDIT_CONFLICT') {
           return reply.code(409).send({
@@ -5807,6 +5883,20 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           to: updated.managementStatus,
         },
       });
+      if (restoredConversation) {
+        appendAuditLog({
+          actorType: 'local_api',
+          action: 'conversation.restored',
+          resourceType: 'conversation',
+          resourceId: restoredConversation.id,
+          payload: {
+            projectId: restoredConversation.projectId,
+            taskId: updated.id,
+            conversationId: restoredConversation.id,
+            reason: 'task_reopened',
+          },
+        });
+      }
       publishRealtimeEvent('task.updated', {
         taskId: updated.id,
         projectId: updated.projectId,
@@ -5992,6 +6082,12 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     ) => {
       const task = tasks.getById(request.params.taskId);
       if (!task) return reply.code(404).send({ error: 'ZEUS_TASK_NOT_FOUND', message: 'Task not found' });
+      if (taskManagementStatusIsTerminal(task)) {
+        return reply.code(409).send({
+          error: 'ZEUS_TASK_REOPEN_REQUIRED',
+          message: 'This task is completed or cancelled. Reopen the task and restore one archived conversation before continuing.',
+        });
+      }
       const project = projects.getById(task.projectId);
       if (!project) return reply.code(404).send({ error: 'ZEUS_PROJECT_NOT_FOUND', message: 'Project not found' });
       const idempotencyKey = readIdempotencyKey(request);
@@ -6011,6 +6107,12 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     const task = tasks.getById(request.params.taskId);
     if (!task) {
       return reply.code(404).send({ error: 'ZEUS_TASK_NOT_FOUND', message: 'Task not found' });
+    }
+    if (taskManagementStatusIsTerminal(task)) {
+      return reply.code(409).send({
+        error: 'ZEUS_TASK_REOPEN_REQUIRED',
+        message: 'This task is completed or cancelled. Reopen the task before starting it again.',
+      });
     }
     const project = projects.getById(task.projectId);
     if (!project) {
@@ -6067,6 +6169,12 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     const task = tasks.getById(request.params.taskId);
     if (!task) {
       return reply.code(404).send({ error: 'ZEUS_TASK_NOT_FOUND', message: 'Task not found' });
+    }
+    if (taskManagementStatusIsTerminal(task)) {
+      return reply.code(409).send({
+        error: 'ZEUS_TASK_REOPEN_REQUIRED',
+        message: 'This task is completed or cancelled. Reopen the task before continuing it.',
+      });
     }
     const project = projects.getById(task.projectId);
     if (!project) {
@@ -12386,10 +12494,30 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   }
 
   function listTaskConversationHistory(taskId: string, projectId: string): ZeusConversationRecord[] {
-    return conversations
-      .listRecordsByTask(taskId)
-      .filter((conversation) => conversation.projectId === projectId)
-      .sort(compareConversationStageUpdatedDesc);
+    return [...conversations.listRecordsByTask(taskId), ...conversations.listRecordsByTask(taskId, { archived: true })].filter((conversation) => conversation.projectId === projectId).sort(compareConversationStageUpdatedDesc);
+  }
+
+  function taskManagementStatusIsTerminal(task: Pick<ZeusTaskRecord, 'projectId' | 'managementStatus'>): boolean {
+    const config = resolveTaskManagementStatusConfigForProject(task.projectId);
+    return task.managementStatus === config.roles.completedStatusId || task.managementStatus === config.roles.cancelledStatusId;
+  }
+
+  async function rollbackReopenedTaskConversation(conversation: ZeusConversationRecord): Promise<void> {
+    const latestConversation = conversations.getRecordById(conversation.id);
+    if (latestConversation && !latestConversation.archived) {
+      if (latestConversation.transportKind === 'codex_native') {
+        await codexNativeCoordinator.archiveConversation({ conversationId: latestConversation.id });
+      } else {
+        conversations.archive(latestConversation.id);
+      }
+    }
+    const task = conversation.taskId ? tasks.getById(conversation.taskId) : undefined;
+    const project = task ? projects.getById(task.projectId) : undefined;
+    if (task && project) {
+      const cleanup = await inspectTaskTerminalCleanup(task.id, project.localPath);
+      await closeTaskResourcesForTerminalStatus(task.id, cleanup);
+    }
+    await db.save();
   }
 
   function listArchivedConversationHistory(): ZeusConversationRecord[] {
@@ -12938,6 +13066,9 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       const environment = environmentId ? taskEnvironments.getById(environmentId) : undefined;
       if (!project || !task || !workspace) {
         throw nativeApiError('ZEUS_NATIVE_CONVERSATION_WORKTREE_UNAVAILABLE', 'The task conversation no longer has a recoverable task workspace.');
+      }
+      if (taskManagementStatusIsTerminal(task) && !taskConversationReopenInProgressIds.has(conversation.id)) {
+        throw nativeApiError('ZEUS_TASK_REOPEN_REQUIRED', 'This task is completed or cancelled. Reopen the task and restore this conversation in the same action.');
       }
       const conflictIntegration = taskConflictIntegrationForConversation(conversation);
       if (conflictIntegration?.integrationPath && existsSync(conflictIntegration.integrationPath)) {

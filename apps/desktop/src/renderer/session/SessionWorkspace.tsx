@@ -187,6 +187,7 @@ export interface ConnectedSessionWorkspaceProps {
   onStartConversation?: SessionWorkspaceActions['onStartConversation'];
   onStartProjectConversation?: SessionWorkspaceActions['onStartProjectConversation'];
   onOpenTaskDetail?: SessionWorkspaceActions['onOpenTaskDetail'];
+  readOnlyGate?: SessionReadOnlyGate;
 }
 
 export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps) {
@@ -232,6 +233,8 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
       owner={props.owner}
       choices={props.choices}
       capabilities={capabilities}
+      suppressComposer={Boolean(props.readOnlyGate)}
+      readOnlyGate={props.readOnlyGate}
       actions={{
         ...createConnectedSessionActions({ controller, state, onChooseAttachments: props.onChooseAttachments }),
         onOpenResource: async (resource, target, location) => {
@@ -780,6 +783,7 @@ export interface SessionWorkspaceProps {
   tasks?: SessionWorkspaceTask[];
   choices?: NativeConversationChoice[];
   suppressComposer?: boolean;
+  readOnlyGate?: SessionReadOnlyGate;
   capabilities?: CodexConversationCapabilities | null;
   choicesKnown?: boolean;
   legacyMessages?: Record<string, Array<{ id: string; role: string; content: string }>>;
@@ -787,6 +791,15 @@ export interface SessionWorkspaceProps {
   loadError?: string | null;
   autoFocusNewConversation?: boolean;
   actions?: SessionWorkspaceActions;
+}
+
+export interface SessionReadOnlyGate {
+  title: string;
+  description: string;
+  actionLabel: string;
+  busy?: boolean;
+  error?: string | null;
+  onAction: () => void | Promise<void>;
 }
 
 const labels = {
@@ -1009,6 +1022,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const previousBlockingInteractionCountRef = useRef(0);
   const composerFocusRestorationPendingRef = useRef(false);
   const legacy = props.conversation && (props.conversation.readOnly || props.conversation.transportKind !== 'codex_native');
+  const interactionReadOnly = Boolean(props.readOnlyGate);
   const effectiveProviderState = props.state?.snapshot?.providerState ?? props.conversation?.providerState ?? null;
   const effectiveResumable = props.state?.snapshot ? !['closed', 'failed'].includes(effectiveProviderState ?? '') : effectiveProviderState === 'archived' ? true : props.conversation?.resumable;
   const nonResumableNative = Boolean(props.conversation && !legacy && !effectiveResumable);
@@ -1052,19 +1066,19 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   }, [composerRuntimeSettings, legacy, props.capabilities, props.state]);
 
   useEffect(() => {
-    if (!props.state || legacy || !composerRuntimeSettings || !actions.onNextTurnSettingsChange) return;
+    if (!props.state || legacy || interactionReadOnly || !composerRuntimeSettings || !actions.onNextTurnSettingsChange) return;
     const signature = JSON.stringify(composerRuntimeSettings);
     if (lastNextTurnSettingsSyncRef.current === signature) return;
     lastNextTurnSettingsSyncRef.current = signature;
     void Promise.resolve(actions.onNextTurnSettingsChange(composerRuntimeSettings)).catch(() => {
       if (lastNextTurnSettingsSyncRef.current === signature) lastNextTurnSettingsSyncRef.current = null;
     });
-  }, [actions, composerRuntimeSettings, legacy, props.state?.transportState]);
+  }, [actions, composerRuntimeSettings, interactionReadOnly, legacy, props.state?.transportState]);
 
   function updateComposerRuntimeSettings(settings: ComposerRuntimeSettings): void {
     const projectId = props.state?.projectId ?? props.conversation?.projectId;
     const conversationId = props.state?.conversationId ?? props.conversation?.id;
-    if (!props.state || !projectId || !conversationId || legacy) return;
+    if (!props.state || !projectId || !conversationId || legacy || interactionReadOnly) return;
     writeConversationNextTurnSettings(browserConversationStorage(), projectId, conversationId, settings);
     lastNextTurnSettingsSyncRef.current = null;
     setComposerRuntimeSettings(settings);
@@ -1519,6 +1533,19 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
         </header>
       ) : null}
 
+      {props.readOnlyGate ? (
+        <section className="session-task-readonly-gate" role="note" aria-label={props.readOnlyGate.title}>
+          <span>
+            <strong>{props.readOnlyGate.title}</strong>
+            <small>{props.readOnlyGate.description}</small>
+            {props.readOnlyGate.error ? <em role="alert">{props.readOnlyGate.error}</em> : null}
+          </span>
+          <button type="button" onClick={() => void props.readOnlyGate?.onAction()} disabled={props.readOnlyGate.busy} aria-busy={props.readOnlyGate.busy || undefined}>
+            {props.readOnlyGate.busy ? (props.language === 'zh-CN' ? '正在重新打开…' : 'Reopening…') : props.readOnlyGate.actionLabel}
+          </button>
+        </section>
+      ) : null}
+
       {legacy && props.conversation ? (
         <>
           <LegacyConversationBanner conversation={props.conversation} language={props.language} onOpenImportSettings={actions.onOpenImportSettings} />
@@ -1582,8 +1609,8 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                 <ConversationTranscript
                   state={props.state}
                   language={props.language}
-                  onEditUserItem={actions.onEditUserItem}
-                  onRetryItem={actions.onRetryItem}
+                  onEditUserItem={interactionReadOnly ? undefined : actions.onEditUserItem}
+                  onRetryItem={interactionReadOnly ? undefined : actions.onRetryItem}
                   openPlanItemId={planWorkspaceItemId}
                   onOpenPlan={(item) => {
                     contextReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -1601,7 +1628,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                       ...(fileId ? { initialFileId: fileId } : {}),
                     });
                   }}
-                  onOperateTurnChangeSet={actions.onOperateTurnChangeSet ? operateTurnChangeSet : undefined}
+                  onOperateTurnChangeSet={!interactionReadOnly && actions.onOperateTurnChangeSet ? operateTurnChangeSet : undefined}
                 />
                 {props.suppressComposer || !dockedPlan ? null : <SessionPlanProgress plan={dockedPlan} language={props.language} />}
                 {props.suppressComposer ? null : blockingPendingRequest ? (
@@ -1698,7 +1725,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                       <BrowserWorkspace
                         conversationId={props.conversation.id}
                         language={props.language}
-                        disabled={nonResumableNative || Boolean(props.state.error?.recoveryRequired)}
+                        disabled={interactionReadOnly || nonResumableNative || Boolean(props.state.error?.recoveryRequired)}
                         suspended={browserResizing}
                         expanded={contextFullWidth}
                         onClose={closeContextWorkspace}
@@ -1727,7 +1754,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                         fullWidth={contextFullWidth}
                         onFullWidthChange={setContextFullWidth}
                         onClose={closeContextWorkspace}
-                        onOperate={actions.onOperateTurnChangeSet ? operateTurnChangeSet : undefined}
+                        onOperate={!interactionReadOnly && actions.onOperateTurnChangeSet ? operateTurnChangeSet : undefined}
                         onOpenFile={(file, line) => openTurnChangeFile(turnDiffChangeSet, file, line)}
                       />
                     ) : null}

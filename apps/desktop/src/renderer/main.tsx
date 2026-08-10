@@ -272,8 +272,8 @@ async function renderWithClient(client: DashboardClient, executionHostTransition
           await client.updateTaskStatus(taskId, status);
           return client.loadDashboard();
         }}
-        onUpdateTaskManagementStatus={async (taskId, status, expectedUpdatedAt, confirmWorktreeCleanup) => {
-          await client.updateTaskManagementStatus(taskId, status, expectedUpdatedAt, confirmWorktreeCleanup);
+        onUpdateTaskManagementStatus={async (taskId, status, expectedUpdatedAt, confirmWorktreeCleanup, reopenConversationId) => {
+          await client.updateTaskManagementStatus(taskId, status, expectedUpdatedAt, confirmWorktreeCleanup, reopenConversationId);
           return client.loadDashboard();
         }}
         onArchiveTask={async (taskId) => {
