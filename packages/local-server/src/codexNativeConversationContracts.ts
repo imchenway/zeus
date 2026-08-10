@@ -93,7 +93,7 @@ export interface StartTaskConversationInput {
   attachments?: NativeConversationAttachmentInput[];
   /** 服务端预检后允许 Codex 读取附件的目录；不接受 Renderer 自报信任根。 */
   allowedAttachmentRoots?: string[];
-  /** 任务“推送到模型”直接创建 app-server thread/turn，不复用旧 CLI Runtime 并发队列。 */
+  /** 用户明确触发并等待结果的任务操作直接创建 app-server thread/turn，不进入普通会话并发队列。 */
   bypassConcurrency?: boolean;
   /** Codex composer 的协作模式，仅用于显式任务推送。 */
   workMode?: 'default' | 'plan';

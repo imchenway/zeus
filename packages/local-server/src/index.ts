@@ -5025,11 +5025,18 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
                 allowGitCommit: false,
                 permissionMode: 'read-only',
                 applyLegacyTaskGuards: false,
+                // 冲突处理是用户正在等待结果的显式只读操作，不进入普通会话并发队列。
+                bypassConcurrency: true,
                 idempotencyKey: randomUUID(),
                 clientUserMessageId: randomUUID(),
               });
         if (operation.status !== 'active' || !operation.providerTurnId) {
-          throw nativeApiError('ZEUS_CONFLICT_AI_BUSY', '任务模型当前没有可用执行位，请稍后重试。');
+          const submissionError = toNativeSubmissionError(conversationSubmissions.getById(operation.submissionId)?.errorJson ?? null);
+          if (submissionError) throw nativeApiError(submissionError.code, submissionError.message);
+          throw nativeApiError(
+            'ZEUS_CONFLICT_AI_DISPATCH_FAILED',
+            operation.status === 'queued' ? 'AI 处理会话已创建，但消息尚未进入模型。请打开对应会话查看状态，避免重复点击。' : 'AI 处理会话已创建，但消息发送未完成。请打开对应会话查看原因，避免重复点击。',
+          );
         }
         const answer = await waitForTaskConflictAiAnswer(operation.conversationId, operation.providerTurnId, runtimeSettings.executionTimeoutSeconds * 1_000);
         const suggestions = parseTaskConflictAiAnswer(answer, blocks);
@@ -14822,7 +14829,10 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     const deadline = Date.now() + Math.max(1_000, timeoutMs);
     while (Date.now() < deadline) {
       const turn = conversationTurns.listByConversation(conversationId).find((candidate) => candidate.providerTurnId === providerTurnId);
-      if (turn?.status === 'failed') throw nativeApiError('ZEUS_CONFLICT_AI_FAILED', 'AI 处理冲突失败，请打开对应会话查看原因。');
+      if (turn?.status === 'failed') {
+        const failure = parseConversationTurnFailure(turn.errorJson);
+        throw nativeApiError(failure?.code ?? 'ZEUS_CONFLICT_AI_FAILED', failure?.message ?? 'AI 处理冲突失败，请打开对应会话查看原因。');
+      }
       if (turn?.status === 'interrupted') throw nativeApiError('ZEUS_CONFLICT_AI_INTERRUPTED', 'AI 处理冲突已中断。');
       if (turn?.status === 'completed') {
         const conversation = conversations.getById(conversationId);
