@@ -2,7 +2,7 @@ import { spawn as nodeSpawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { createConnection } from 'node:net';
-import { isAbsolute } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import { WebSocket, type RawData } from 'ws';
 import {
   CodexJsonLineDecoder,
@@ -458,7 +458,10 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
         spawned.kill('SIGTERM');
       }
       const unavailableReason = remoteControlTransport ? `Zeus 无法启动会话远程接管所需的 Codex Remote Control（${command}）：${failure.message}` : `用户本机 Codex CLI 无法启动兼容的 app-server（${command}）：${failure.message}`;
-      throw managerError('ZEUS_CODEX_DEPENDENCY_UNAVAILABLE', `${unavailableReason}。请运行官方安装命令 curl -fsSL https://chatgpt.com/codex/install.sh | sh，完成登录后在 Zeus 设置中重新检测；Zeus 不会自动安装或使用内置回退。`);
+      const recoveryGuidance = remoteControlTransport
+        ? codexRemoteControlRecoveryGuidance(env)
+        : '请运行官方安装命令 curl -fsSL https://chatgpt.com/codex/install.sh | sh，完成登录后在 Zeus 设置中重新检测；Zeus 不会自动安装或使用内置回退。';
+      throw managerError('ZEUS_CODEX_DEPENDENCY_UNAVAILABLE', `${unavailableReason}。${recoveryGuidance}`);
     });
   }
 
@@ -1187,6 +1190,20 @@ function parseLastJsonObject(value: string): Record<string, unknown> {
     }
   }
   throw new Error('Codex CLI 没有返回 JSON 启动结果。');
+}
+
+function codexRemoteControlRecoveryGuidance(env: NodeJS.ProcessEnv): string {
+  const codexHome = env.CODEX_HOME?.trim();
+  if (!codexHome || !isAbsolute(codexHome)) {
+    return '请运行官方安装命令 curl -fsSL https://chatgpt.com/codex/install.sh | sh，完成登录后在 Zeus 设置中重新检测；Zeus 不会自动安装或使用内置回退。';
+  }
+  const installDirectory = join(codexHome, 'bin');
+  const installCommand = `curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_HOME=${quotePosixShellArgument(codexHome)} CODEX_INSTALL_DIR=${quotePosixShellArgument(installDirectory)} sh`;
+  return `默认安装到其他 CODEX_HOME 不能修复 Zeus 的独立运行目录。请运行 ${installCommand}，完成 Zeus 专属 Codex 登录后在设置中重新检测；Zeus 不会自动安装或使用内置回退。`;
+}
+
+function quotePosixShellArgument(value: string): string {
+  return `'${value.replaceAll("'", `'"'"'`)}'`;
 }
 
 function parseModels(value: unknown): CodexModelCapability[] {
