@@ -55,6 +55,22 @@ async function authorizePendingResourceFiles(files: File[], source: 'paste' | 'd
 contextBridge.exposeInMainWorld('zeus', {
   appName: 'Zeus',
   getLocalServerConfig: () => ipcRenderer.invoke('zeus:get-local-server-config'),
+  listProjectSourceDirectory: (input: unknown) => ipcRenderer.invoke('zeus:project-source:list-directory', input),
+  searchProjectSourceEntries: (input: unknown) => ipcRenderer.invoke('zeus:project-source:search', input),
+  readProjectSourceFile: (input: unknown) => ipcRenderer.invoke('zeus:project-source:read-file', input),
+  saveProjectSourceFile: (input: unknown) => ipcRenderer.invoke('zeus:project-source:save-file', input),
+  createProjectSourceEntry: (input: unknown) => ipcRenderer.invoke('zeus:project-source:create-entry', input),
+  moveProjectSourceEntry: (input: unknown) => ipcRenderer.invoke('zeus:project-source:move-entry', input),
+  trashProjectSourceEntry: (input: unknown) => ipcRenderer.invoke('zeus:project-source:trash-entry', input),
+  revealProjectSourceEntry: (input: unknown) => ipcRenderer.invoke('zeus:project-source:reveal-entry', input),
+  openProjectSourceExternally: (input: unknown) => ipcRenderer.invoke('zeus:project-source:open-external', input),
+  watchProjectSource: (projectId: string) => ipcRenderer.invoke('zeus:project-source:watch', projectId),
+  unwatchProjectSource: () => ipcRenderer.invoke('zeus:project-source:unwatch'),
+  onProjectSourceEvent: (listener: (event: unknown) => void) => {
+    const handler = (_event: unknown, value: unknown) => listener(value);
+    ipcRenderer.on('zeus:project-source-event', handler);
+    return () => ipcRenderer.removeListener('zeus:project-source-event', handler);
+  },
   reportRendererFatalFailure: (message: string) => rendererBootstrapReporter.reportFailure(message),
   reportRendererBootstrapReady: () => rendererBootstrapReporter.reportReady(),
   chooseProjectDirectory: () => ipcRenderer.invoke('zeus:choose-project-directory'),
@@ -90,12 +106,19 @@ contextBridge.exposeInMainWorld('zeus', {
   exportPlantUmlDiagramToFile: (payload: unknown) => ipcRenderer.invoke('zeus:export-plantuml-diagram', payload),
   notifyAppShellSettingsChanged: (settings: unknown) => ipcRenderer.invoke('zeus:app-shell-settings-changed', settings),
   notifyTaskTableLayoutDirty: (dirty: boolean) => ipcRenderer.send('zeus:task-table-layout-dirty-changed', dirty),
+  setUnsavedChangeState: (key: string, dirty: boolean) => ipcRenderer.send('zeus:unsaved-change-state', { key, dirty }),
   notifySensitiveRequestDraft: (payload: { requestId: string; present: boolean }) => ipcRenderer.send('zeus:sensitive-request-draft-changed', payload),
   resolveTaskTableLayoutCloseRequest: (proceed: boolean) => ipcRenderer.send('zeus:task-table-layout-close-resolution', { proceed }),
+  resolveUnsavedChangesCloseRequest: (proceed: boolean) => ipcRenderer.send('zeus:unsaved-changes-close-resolution', { proceed }),
   onTaskTableLayoutCloseRequested: (listener: () => void) => {
     const handler = () => listener();
     ipcRenderer.on('zeus:task-table-layout-close-requested', handler);
     return () => ipcRenderer.removeListener('zeus:task-table-layout-close-requested', handler);
+  },
+  onUnsavedChangesCloseRequested: (listener: () => void) => {
+    const handler = () => listener();
+    ipcRenderer.on('zeus:unsaved-changes-close-requested', handler);
+    return () => ipcRenderer.removeListener('zeus:unsaved-changes-close-requested', handler);
   },
   exportRuntimeLogsToFile: (payload: unknown) => ipcRenderer.invoke('zeus:export-runtime-logs', payload),
   beginWindowDrag: (point: unknown) => ipcRenderer.invoke('zeus:window-drag-start', point),

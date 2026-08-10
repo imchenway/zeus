@@ -19246,3 +19246,115 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
     transition-duration: 0.001ms !important;
   }
 }
+/* 代码页以源码工作台为默认舞台；图谱和命令保留完整工作空间，并在切换时保持已挂载状态。 */
+.workspace-view-project-code.project-code-workspace {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0;
+}
+
+.project-code-mode-toolbar {
+  display: flex;
+  min-height: 42px;
+  align-items: center;
+  gap: 12px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--zeus-control-border);
+  background: var(--zeus-product-panel);
+  -webkit-app-region: no-drag;
+}
+
+.project-code-mode-toolbar > span {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.project-code-mode-toolbar strong {
+  font-size: 13px;
+}
+.project-code-mode-toolbar small {
+  overflow: hidden;
+  color: var(--zeus-control-muted-text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.project-code-mode-toolbar nav {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 7px;
+  background: var(--zeus-product-panel-muted);
+}
+.project-code-mode-toolbar nav button {
+  min-height: 28px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 5px;
+  color: var(--zeus-control-muted-text);
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+}
+.project-code-mode-toolbar nav button:hover {
+  color: var(--zeus-control-text);
+}
+.project-code-mode-toolbar nav button.active {
+  color: var(--zeus-control-text);
+  background: var(--zeus-product-panel);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 10%);
+}
+.project-code-mode-toolbar nav button:focus-visible {
+  outline: 2px solid var(--zeus-control-focus);
+  outline-offset: 1px;
+}
+
+.project-code-mode-host,
+.project-code-mode-pane {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+}
+
+.project-code-mode-pane[hidden] {
+  display: none;
+}
+.project-code-mode-pane > .project-code-map-stage,
+.project-code-mode-pane > .command-center {
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+}
+.project-code-command-pane {
+  overflow: auto;
+}
+.project-code-mode-empty {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 10px;
+  color: var(--zeus-control-muted-text);
+}
+.project-code-mode-empty strong {
+  color: var(--zeus-control-text);
+}
+
+@media (max-width: 720px) {
+  .project-code-mode-toolbar > span small {
+    display: none;
+  }
+  .project-code-mode-toolbar nav button {
+    padding: 0 8px;
+  }
+}

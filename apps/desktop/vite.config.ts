@@ -29,6 +29,13 @@ export default defineConfig({
               maxSize: 2 * 1024 * 1024,
             },
             {
+              // CodeMirror 与 Lezer 存在双向运行时引用，必须保持同一分块，避免体积拆分后构造器尚未初始化。
+              name: 'code-editor-runtime',
+              test: /node_modules[\\/](?:codemirror|@codemirror[\\/][^/]+|@lezer[\\/][^/]+|crelt|style-mod|w3c-keyname)[\\/]/u,
+              priority: 96,
+              maxSize: 2 * 1024 * 1024,
+            },
+            {
               name: 'motion-runtime',
               test: /node_modules[\\/](?:framer-motion|motion-dom|motion-utils)[\\/]/u,
               priority: 90,

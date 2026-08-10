@@ -15,6 +15,7 @@ import {
   defaultTaskManagementStatusConfig,
   isTaskStatusFilter,
   normalizeTaskManagementStatusConfig,
+  type ProjectCodeWorkspacePreference,
   type TaskAttachmentReference,
   type TaskManagementStatusConfig,
   type TaskPushParentAttachmentOption,
@@ -1084,6 +1085,7 @@ interface AppShellSettingsSnapshot {
   taskStatusFilterByProject: Record<string, TaskStatusFilter>;
   taskViewModeByProject: Record<string, 'hierarchy' | 'flat'>;
   taskExpandedIdsByProject: Record<string, string[]>;
+  codeWorkspaceByProject: Record<string, ProjectCodeWorkspacePreference>;
   localLogDirectory: string;
   localConfigPath: string;
   dataPortability: {
@@ -1124,6 +1126,7 @@ interface UpdateAppShellSettingsBody {
   taskStatusFilterByProject?: Record<string, TaskStatusFilter>;
   taskViewModeByProject?: Record<string, 'hierarchy' | 'flat'>;
   taskExpandedIdsByProject?: Record<string, string[]>;
+  codeWorkspaceByProject?: Record<string, ProjectCodeWorkspacePreference>;
 }
 
 interface ClearCacheResult {
@@ -7868,6 +7871,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         taskStatusFilterByProject: appShellSettings.taskStatusFilterByProject,
         taskViewModeByProject: appShellSettings.taskViewModeByProject,
         taskExpandedIdsByProject: appShellSettings.taskExpandedIdsByProject,
+        codeWorkspaceByProject: appShellSettings.codeWorkspaceByProject,
       },
     });
     await db.save();
@@ -10578,6 +10582,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       taskStatusFilterByProject: normalizeTaskStatusFilterByProject(value?.taskStatusFilterByProject),
       taskViewModeByProject: normalizeTaskViewModeByProject(value?.taskViewModeByProject),
       taskExpandedIdsByProject: normalizeTaskExpandedIdsByProject(value?.taskExpandedIdsByProject),
+      codeWorkspaceByProject: normalizeCodeWorkspaceByProject(value?.codeWorkspaceByProject),
       localLogDirectory: fallbackLogDirectory,
       // 本地配置文件路径由当前运行实例决定，不接受导入文件覆盖，避免误指向其他机器路径。
       localConfigPath: fallbackConfigPath,
@@ -10633,10 +10638,39 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         taskStatusFilterByProject: Object.prototype.hasOwnProperty.call(input, 'taskStatusFilterByProject') ? normalizeTaskStatusFilterByProject(input.taskStatusFilterByProject) : current.taskStatusFilterByProject,
         taskViewModeByProject: Object.prototype.hasOwnProperty.call(input, 'taskViewModeByProject') ? normalizeTaskViewModeByProject(input.taskViewModeByProject) : current.taskViewModeByProject,
         taskExpandedIdsByProject: Object.prototype.hasOwnProperty.call(input, 'taskExpandedIdsByProject') ? normalizeTaskExpandedIdsByProject(input.taskExpandedIdsByProject) : current.taskExpandedIdsByProject,
+        codeWorkspaceByProject: Object.prototype.hasOwnProperty.call(input, 'codeWorkspaceByProject') ? normalizeCodeWorkspaceByProject(input.codeWorkspaceByProject) : current.codeWorkspaceByProject,
       },
       current.localLogDirectory,
       current.localConfigPath,
     );
+  }
+
+  function normalizeCodeWorkspaceByProject(value: unknown): Record<string, ProjectCodeWorkspacePreference> {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+    const entries = Object.entries(value as Record<string, unknown>)
+      .filter(([projectId, preference]) => Boolean(projectId.trim()) && preference && typeof preference === 'object' && !Array.isArray(preference))
+      .slice(0, 100)
+      .map(([projectId, preference]) => {
+        const raw = preference as Partial<ProjectCodeWorkspacePreference>;
+        const openFiles = normalizeSourcePreferencePaths(raw.openFiles, 20);
+        const activeFile = typeof raw.activeFile === 'string' && normalizeSourcePreferencePaths([raw.activeFile], 1).length === 1 ? raw.activeFile : null;
+        const expandedDirectories = normalizeSourcePreferencePaths(raw.expandedDirectories, 200);
+        const treeWidth = Math.max(200, Math.min(420, Math.round(typeof raw.treeWidth === 'number' && Number.isFinite(raw.treeWidth) ? raw.treeWidth : 260)));
+        return [projectId.trim(), { openFiles, activeFile, expandedDirectories, treeWidth } satisfies ProjectCodeWorkspacePreference] as const;
+      });
+    return Object.fromEntries(entries);
+  }
+
+  function normalizeSourcePreferencePaths(value: unknown, limit: number): string[] {
+    if (!Array.isArray(value)) return [];
+    return [
+      ...new Set(
+        value
+          .filter((item): item is string => typeof item === 'string')
+          .map((item) => item.trim().replaceAll('\\', '/'))
+          .filter((item) => Boolean(item) && !item.startsWith('/') && !item.includes('\0') && !item.split('/').includes('..') && !item.split('/').includes('.git')),
+      ),
+    ].slice(0, limit);
   }
 
   function normalizeAppShellDefaultModel(value: unknown): string | null {

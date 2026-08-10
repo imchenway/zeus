@@ -40,6 +40,7 @@ import type {
   CommandDefinition,
   CommandDefinitionInput,
   CommandRun,
+  ProjectCodeWorkspacePreference,
   TaskAttachmentReference,
   TaskManagementStatus,
   TaskManagementStatusConfig,
@@ -571,6 +572,7 @@ export interface AppShellSettings {
   taskStatusFilterByProject?: Record<string, TaskStatusFilter>;
   taskViewModeByProject?: Record<string, 'hierarchy' | 'flat'>;
   taskExpandedIdsByProject?: Record<string, string[]>;
+  codeWorkspaceByProject?: Record<string, ProjectCodeWorkspacePreference>;
   localLogDirectory: string;
   localConfigPath: string;
   dataPortability: {
@@ -604,6 +606,7 @@ export type UpdateAppShellSettingsRequest = Pick<
   taskStatusFilterByProject?: Record<string, TaskStatusFilter>;
   taskViewModeByProject?: Record<string, 'hierarchy' | 'flat'>;
   taskExpandedIdsByProject?: Record<string, string[]>;
+  codeWorkspaceByProject?: Record<string, ProjectCodeWorkspacePreference>;
 };
 
 export interface ClearLocalCachesResult {
