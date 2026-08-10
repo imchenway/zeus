@@ -171,7 +171,7 @@ import {
 import { createCodexNativeConversationCoordinator } from './codexNativeConversationCoordinator.js';
 import { chooseNativeUserMessageContent, resolveNativeUserMessageSubmission } from './codexNativeUserMessageProjection.js';
 import { normalizeConversationResources, toConversationResource, toConversationResourceOpenIntent } from './conversationResources.js';
-import { changeSetErrorStatus, createTurnChangeSetService, errorCode as turnChangeSetErrorCode } from './turnChangeSets.js';
+import { changeSetErrorStatus, createTurnChangeSetService, errorCode as turnChangeSetErrorCode, projectHistoricalTurnChangeSet } from './turnChangeSets.js';
 import { createCommandCenter } from './commandCenter.js';
 import { migrateLegacyCodexThreads } from './legacyCodexThreadMigration.js';
 import { type CodexLegacyImportService, createCodexLegacyImportService } from './codexLegacyImportService.js';
@@ -12715,6 +12715,33 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   async function toNativeConversationSnapshot(conversation: ZeusConversationWithMessagesRecord) {
     const submissions = conversationSubmissions.listByConversation(conversation.id);
     const itemRecords = conversationItems.listByConversation(conversation.id);
+    const turnRecords = conversationTurns.listByConversation(conversation.id);
+    const persistedChangeSets = turnChangeSetService.listByConversation(conversation.id);
+    const persistedChangeSetByTurn = new Map(persistedChangeSets.map((changeSet) => [changeSet.turnId, changeSet]));
+    const submissionById = new Map(submissions.map((submission) => [submission.id, submission]));
+    const submissionByProviderTurnId = new Map(submissions.filter((submission) => submission.providerTurnId).map((submission) => [submission.providerTurnId, submission]));
+    const fileChangeItemsByTurn = new Map<string, typeof itemRecords>();
+    for (const item of itemRecords) {
+      if (!item.turnId || item.itemType !== 'fileChange') continue;
+      const turnItems = fileChangeItemsByTurn.get(item.turnId) ?? [];
+      turnItems.push(item);
+      fileChangeItemsByTurn.set(item.turnId, turnItems);
+    }
+    const fallbackExecutionRoot = resolveNativeConversationExecutionRoot(conversation);
+    const changeSets = turnRecords.flatMap((turn) => {
+      const submission = (turn.clientSubmissionId ? submissionById.get(turn.clientSubmissionId) : null) ?? (turn.providerTurnId ? submissionByProviderTurnId.get(turn.providerTurnId) : null);
+      const submissionContext = submission ? parseJsonObject(submission.inputJson).context : null;
+      const persistedRoot = isNativeApiRecord(submissionContext) && typeof submissionContext.projectLocalPath === 'string' && isAbsolute(submissionContext.projectLocalPath) ? submissionContext.projectLocalPath : null;
+      const projected = projectHistoricalTurnChangeSet({
+        existing: persistedChangeSetByTurn.get(turn.id) ?? null,
+        projectId: conversation.projectId,
+        conversationId: conversation.id,
+        turn,
+        items: fileChangeItemsByTurn.get(turn.id) ?? [],
+        executionRoot: persistedRoot ?? fallbackExecutionRoot,
+      });
+      return projected ? [projected] : [];
+    });
     const itemByProviderItemId = new Map(itemRecords.filter((item) => item.providerItemId).map((item) => [item.providerItemId, item]));
     const resourcesByItemId = new Map<string, ReturnType<typeof toConversationResource>[]>();
     for (const record of conversationResources.listByConversation(conversation.id)) {
@@ -12784,7 +12811,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           createdAt: message.createdAt,
         };
       }),
-      turns: conversationTurns.listByConversation(conversation.id).map((turn) => ({
+      turns: turnRecords.map((turn) => ({
         id: turn.id,
         providerTurnId: turn.providerTurnId,
         submissionId: turn.clientSubmissionId,
@@ -12811,7 +12838,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         updatedAt: item.updatedAt,
       })),
       submissions: submissions.map(toNativeSubmission),
-      changeSets: turnChangeSetService.listByConversation(conversation.id),
+      changeSets,
       queue: toNativeQueueApiSnapshot(conversation, submissions),
       requests: conversationRequests.listByConversation(conversation.id).map(toNativeServerRequest),
       planImplementationRequests: conversationPlanActions.listByConversation(conversation.id).map((request) => ({
