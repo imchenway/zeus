@@ -54,9 +54,8 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
   const sources = useMemo(() => collectSources(props.state), [props.state.attachments, props.state.items]);
   const visibleSources = showAllSources ? sources : sources.slice(0, 2);
   const dirty = workspace?.review ? !workspace.review.clean : false;
-  const canPush = Boolean(workspace?.review?.clean && workspace.review.ahead > 0 && workspace.remoteName);
   const canOpenReview = Boolean(taskId && workspace && props.onOpenGitReview);
-  const canCommitOrPush = canOpenReview && (dirty || canPush);
+  const canOpenDelivery = Boolean(taskId && props.onOpenGitDelivery);
   const persistent = hasPersistentSpace && !props.forceCollapsed;
   const cardVisible = persistent || (open && !props.forceCollapsed);
 
@@ -139,10 +138,16 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
     };
   }, [open]);
 
-  function openReview(mode: 'commit' | 'push-only'): void {
+  function openReview(): void {
     if (!taskId || !workspace || !props.onOpenGitReview) return;
     setOpen(false);
-    props.onOpenGitReview(taskId, workspace.id, mode);
+    props.onOpenGitReview(taskId, workspace.id, 'commit');
+  }
+
+  function openDelivery(): void {
+    if (!taskId || !props.onOpenGitDelivery) return;
+    setOpen(false);
+    props.onOpenGitDelivery(taskId);
   }
 
   return (
@@ -183,7 +188,7 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
           </header>
 
           <div className="session-quick-actions-list">
-            <button type="button" className="session-quick-actions-row" disabled={!canOpenReview} onClick={() => openReview('commit')}>
+            <button type="button" className="session-quick-actions-row" disabled={!canOpenReview} onClick={openReview}>
               <GitDiff aria-hidden="true" weight="regular" />
               <span className="session-quick-actions-copy">
                 <strong>{zh ? '变更' : 'Changes'}</strong>
@@ -211,50 +216,25 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
               </span>
             </div>
 
-            <button
-              type="button"
-              className="session-quick-actions-row"
-              disabled={!canCommitOrPush}
-              title={!taskId ? (zh ? '项目对话没有任务工作区' : 'Project conversations do not have a task workspace') : undefined}
-              onClick={() => openReview(dirty ? 'commit' : 'push-only')}
-            >
-              <GitDiff aria-hidden="true" weight="regular" />
+            <button type="button" className="session-quick-actions-row" disabled={!canOpenDelivery} title={!taskId ? (zh ? '项目对话没有任务工作区' : 'Project conversations do not have a task workspace') : undefined} onClick={openDelivery}>
+              <GithubLogo aria-hidden="true" weight="regular" />
               <span className="session-quick-actions-copy">
-                <strong>{zh ? '提交或推送' : 'Commit or push'}</strong>
+                <strong>{zh ? '代码交付' : 'Code delivery'}</strong>
                 <small>
                   {dirty
                     ? zh
                       ? `${changes.files} 个文件待提交`
                       : `${changes.files} files to commit`
-                    : canPush
-                      ? zh
-                        ? `${workspace?.review?.ahead ?? 0} 个提交待推送`
-                        : `${workspace?.review?.ahead ?? 0} commits to push`
-                      : zh
-                        ? '当前没有待处理内容'
-                        : 'Nothing to commit or push'}
+                    : workspace?.sourceBranch
+                      ? `${workspace.branchName} → ${workspace.sourceBranch}`
+                      : workspaceState === 'loading'
+                        ? zh
+                          ? '正在读取 Git 状态…'
+                          : 'Loading Git status…'
+                        : zh
+                          ? '查看、提交、合入与推送'
+                          : 'Review, commit, merge, and push'}
                 </small>
-              </span>
-            </button>
-
-            <button
-              type="button"
-              className="session-quick-actions-row"
-              disabled={!taskId || !workspace || !props.onOpenGitDelivery}
-              onClick={() => {
-                if (!taskId || !props.onOpenGitDelivery) return;
-                setOpen(false);
-                props.onOpenGitDelivery(taskId);
-              }}
-            >
-              <GithubLogo aria-hidden="true" weight="regular" />
-              <span className="session-quick-actions-copy">
-                <strong>{zh ? '比较分支' : 'Compare branch'}</strong>
-                {workspace?.sourceBranch ? (
-                  <small>
-                    {workspace.branchName} → {workspace.sourceBranch}
-                  </small>
-                ) : null}
               </span>
               <ArrowSquareOut aria-hidden="true" weight="regular" />
             </button>
