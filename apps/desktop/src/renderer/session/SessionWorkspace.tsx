@@ -1511,21 +1511,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
             )}
             {displayedHeader.contextLabel ? <small>{displayedHeader.contextLabel}</small> : null}
           </span>
-          <span className="session-thread-header-actions">
-            {!legacy && props.conversation && props.state ? (
-              <SessionQuickActionsCard
-                language={props.language}
-                conversation={props.conversation}
-                state={props.state}
-                task={props.task}
-                onLoadTaskWorkspaces={actions.onLoadTaskWorkspaces}
-                onOpenTaskDetail={actions.onOpenTaskDetail}
-                onOpenGitReview={actions.onOpenTaskGitReview}
-                onOpenGitDelivery={actions.onOpenTaskGitDelivery}
-                onAddSources={actions.onChooseAttachments}
-                onOpenSource={(resource) => openConversationResource(resource, defaultOpenTarget(resource))}
-              />
-            ) : null}
+          <div className="session-thread-header-actions">
             {!legacy && props.conversation ? (
               <button
                 type="button"
@@ -1554,7 +1540,22 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
               <span className="session-status-symbol" aria-hidden="true" />
               <span>{displayedHeader.status.label}</span>
             </span>
-          </span>
+            {!legacy && props.conversation && props.state ? (
+              <SessionQuickActionsCard
+                language={props.language}
+                conversation={props.conversation}
+                state={props.state}
+                task={props.task}
+                forceCollapsed={contextOpen || contextMounted}
+                onLoadTaskWorkspaces={actions.onLoadTaskWorkspaces}
+                onOpenTaskDetail={actions.onOpenTaskDetail}
+                onOpenGitReview={actions.onOpenTaskGitReview}
+                onOpenGitDelivery={actions.onOpenTaskGitDelivery}
+                onAddSources={actions.onChooseAttachments}
+                onOpenSource={(resource) => openConversationResource(resource, defaultOpenTarget(resource))}
+              />
+            ) : null}
+          </div>
         </header>
       ) : null}
 
