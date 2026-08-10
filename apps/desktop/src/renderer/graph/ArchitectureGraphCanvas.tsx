@@ -23,6 +23,11 @@ export type ArchitectureLayerModel = {
   objectCount: number;
 };
 
+/** 分层画布至少需要一个真实业务、共享或基础模块；只有项目边界时应回退到通用关系图。 */
+export function canRenderArchitectureLayerModel(model: ArchitectureLayerModel): boolean {
+  return model.workloads.length + model.sharedModules.length + model.foundationModules.length > 0;
+}
+
 type ArchitectureGraphCanvasProps = {
   model: ArchitectureLayerModel;
   appLanguage: 'zh-CN' | 'en-US';
