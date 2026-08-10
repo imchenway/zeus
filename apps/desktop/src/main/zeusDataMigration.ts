@@ -108,7 +108,7 @@ const jsonPathColumns = [
   ['conversation_submissions', 'input_json'],
 ] as const;
 
-const contentMirroredLegacyTopLevels = new Set(['task-attachments', 'conversation-attachments', 'browser-comments', 'sessions', 'turn-change-sets', 'command-runs', 'command-scripts', 'pi-sessions', 'agent-runtimes']);
+const contentMirroredLegacyTopLevels = new Set(['task-attachments', 'conversation-attachments', 'browser-comments', 'browser-downloads', 'sessions', 'turn-change-sets', 'command-runs', 'command-scripts', 'pi-sessions', 'agent-runtimes']);
 const dataRootPreparationTimeoutMs = 15_000;
 const staleDataRootPreparationLockMs = 30_000;
 const dataRootPreparationWaitBuffer = new Int32Array(new SharedArrayBuffer(4));
@@ -330,6 +330,7 @@ function migrateFlatRoot(input: { flat: ZeusDataLayout; layered: ZeusDataLayout;
     moveIfPresent(flat.conversationAttachments, layered.conversationAttachments, moves);
     moveIfPresent(flat.conversationAttachmentGrantSecret, layered.conversationAttachmentGrantSecret, moves);
     moveIfPresent(flat.browserComments, layered.browserComments, moves);
+    moveIfPresent(flat.browserDownloads, layered.browserDownloads, moves);
     moveIfPresent(flat.browserState, layered.browserState, moves);
     moveIfPresent(flat.turnChangeSets, layered.turnChangeSets, moves);
     moveIfPresent(flat.runtimeSessions, layered.runtimeSessions, moves);
@@ -393,6 +394,7 @@ function ensureLayeredDirectories(layout: ZeusDataLayout): void {
     layout.profileDirectory,
     layout.electronUserData,
     dirname(layout.browserState),
+    layout.browserDownloads,
   ];
   for (const directory of directories) mkdirSecure(directory);
 }
@@ -402,6 +404,7 @@ function buildPathMappings(flat: ZeusDataLayout, layered: ZeusDataLayout, legacy
     [flat.taskAttachments, layered.taskAttachments],
     [flat.conversationAttachments, layered.conversationAttachments],
     [flat.browserComments, layered.browserComments],
+    [flat.browserDownloads, layered.browserDownloads],
     [flat.turnChangeSets, layered.turnChangeSets],
     [flat.runtimeSessions, layered.runtimeSessions],
     [flat.commandScripts, layered.commandScripts],

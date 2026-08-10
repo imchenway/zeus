@@ -21,6 +21,7 @@ export type ZeusDataPathKey =
   | 'taskAttachments'
   | 'conversationAttachments'
   | 'browserComments'
+  | 'browserDownloads'
   | 'turnChangeSets'
   | 'runtimeSessions'
   | 'commandScripts'
@@ -55,6 +56,7 @@ export interface ZeusDataLayout {
   conversationAttachments: string;
   conversationAttachmentGrantSecret: string;
   browserComments: string;
+  browserDownloads: string;
   browserState: string;
   turnChangeSets: string;
   runtimeSessions: string;
@@ -106,6 +108,7 @@ export function createZeusDataLayout(rootPath: string): ZeusDataLayout {
     conversationAttachments: join(artifactsDirectory, 'conversation-attachments'),
     conversationAttachmentGrantSecret: join(dataDirectory, 'conversation-attachment-grant.secret'),
     browserComments: join(artifactsDirectory, 'browser-comments'),
+    browserDownloads: join(artifactsDirectory, 'browser-downloads'),
     browserState: join(profileDirectory, 'browser', 'state.json'),
     turnChangeSets: join(artifactsDirectory, 'turn-change-sets'),
     runtimeSessions: join(artifactsDirectory, 'runtime-sessions'),
@@ -150,6 +153,7 @@ export function createLegacyFlatZeusDataLayout(rootPath: string): ZeusDataLayout
     conversationAttachments: join(root, 'conversation-attachments'),
     conversationAttachmentGrantSecret: join(root, 'conversation-attachment-grant.secret'),
     browserComments: join(root, 'browser-comments'),
+    browserDownloads: join(root, 'browser-downloads'),
     browserState: join(root, 'browser-state.json'),
     turnChangeSets: join(root, 'turn-change-sets'),
     runtimeSessions: join(root, 'sessions'),
@@ -200,6 +204,7 @@ function finalizeLayout(layout: Omit<ZeusDataLayout, 'entries'>): ZeusDataLayout
       entry('taskAttachments', 'zeus', 'managed', false, false, null),
       entry('conversationAttachments', 'zeus', 'managed', false, false, null),
       entry('browserComments', 'browser', 'managed', false, false, null),
+      entry('browserDownloads', 'browser', 'managed', false, false, null),
       entry('turnChangeSets', 'zeus', 'managed', false, false, null),
       entry('runtimeSessions', 'zeus', 'managed', false, false, null),
       entry('commandScripts', 'zeus', 'managed', false, false, null),

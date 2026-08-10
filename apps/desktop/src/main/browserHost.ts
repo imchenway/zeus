@@ -57,6 +57,7 @@ interface CreateBrowserHostOptions {
   preloadPath: string;
   attachmentRoot: string;
   defaultDownloadDirectory: string;
+  legacySystemDownloadDirectory?: string;
   now?: () => string;
 }
 
@@ -387,6 +388,10 @@ export class BrowserHost implements BrowserAutomationPort {
       const parsed = JSON.parse(readFileSync(this.statePath, 'utf8')) as Partial<PersistedBrowserState>;
       if (parsed.version !== 1) return;
       this.settings = normalizeSettings(parsed.settings, this.settings);
+      if (this.options.legacySystemDownloadDirectory && resolve(this.settings.downloadDirectory) === resolve(this.options.legacySystemDownloadDirectory)) {
+        // 旧版本把系统“下载”目录当作内置浏览器默认值，会让普通设置操作也触发 macOS 文件夹授权。
+        this.settings = { ...this.settings, downloadDirectory: resolve(this.options.defaultDownloadDirectory) };
+      }
       for (const [origin, decision] of Object.entries(parsed.originRules ?? {})) {
         if ((decision === 'allow' || decision === 'deny') && isAllowedOrigin(origin)) this.originRules.set(origin, decision);
       }
@@ -1192,10 +1197,14 @@ export class BrowserHost implements BrowserAutomationPort {
   }
 
   private async updateSettings(input: unknown): Promise<void> {
+    const previousDownloadDirectory = this.settings.downloadDirectory;
     this.settings = normalizeSettings(input, this.settings);
     if (this.settings.allowAgentAllSites) this.originRules.set('*', 'allow');
     else this.originRules.delete('*');
-    await mkdir(this.settings.downloadDirectory, { recursive: true });
+    if (this.settings.downloadDirectory !== previousDownloadDirectory) {
+      // 只有用户明确修改下载路径时才触碰目标目录，普通浏览器设置不得扩大本机文件权限。
+      await mkdir(this.settings.downloadDirectory, { recursive: true });
+    }
     if (!this.settings.enabled) {
       for (const tabId of [...this.visibleTabByWindow.values()]) this.detachTab(tabId);
     }

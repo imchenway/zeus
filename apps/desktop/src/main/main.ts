@@ -1274,7 +1274,8 @@ async function initializeApplication(): Promise<void> {
     statePath: dataLayout.browserState,
     preloadPath: join(desktopRoot(), 'dist/preload/browser-page.cjs'),
     attachmentRoot: browserAttachmentRoot,
-    defaultDownloadDirectory: app.getPath('downloads'),
+    defaultDownloadDirectory: dataLayout.browserDownloads,
+    legacySystemDownloadDirectory: app.getPath('downloads'),
   });
   const mainProjectRoot = resolveMainProjectRoot();
   const codexNativeEnabled = parseCodexNativeEnabled(process.env.ZEUS_CODEX_NATIVE_ENABLED);
