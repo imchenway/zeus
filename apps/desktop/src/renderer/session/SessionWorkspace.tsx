@@ -1942,110 +1942,117 @@ function NewConversationComposer(props: {
     }
   }
 
-  return (
-    <section className="session-new-conversation" data-docked={props.docked || undefined}>
-      <span className="session-new-conversation-spacer" aria-hidden="true" />
-      <section
-        className="session-composer-shell session-new-conversation-composer"
-        aria-label={copy.newInput}
-        aria-busy={submitting || inputResources.processing || undefined}
-        data-resource-dragging={inputResources.dragging ? 'true' : 'false'}
-        onDragEnter={inputResources.handleDragEnter}
-        onDragOver={inputResources.handleDragOver}
-        onDragLeave={inputResources.handleDragLeave}
-        onDrop={inputResources.handleDrop}
-      >
-        {localError || (props.loadState === 'error' && props.loadError) ? (
-          <p className="session-new-conversation-error" role="alert">
-            {localError ?? props.loadError}
-          </p>
-        ) : null}
-        <ConversationComposerAttachments
-          attachments={attachments}
-          language={props.language}
-          disabled={submitting || inputResources.processing}
-          onRemove={(attachment) => setAttachments((current) => current.filter((candidate) => candidate !== attachment))}
-          onRestorePastedText={inputResources.restorePastedText}
+  const composer = (
+    <section
+      className="session-composer-shell session-new-conversation-composer"
+      aria-label={copy.newInput}
+      aria-busy={submitting || inputResources.processing || undefined}
+      data-resource-dragging={inputResources.dragging ? 'true' : 'false'}
+      onDragEnter={inputResources.handleDragEnter}
+      onDragOver={inputResources.handleDragOver}
+      onDragLeave={inputResources.handleDragLeave}
+      onDrop={inputResources.handleDrop}
+    >
+      {localError || (props.loadState === 'error' && props.loadError) ? (
+        <p className="session-new-conversation-error" role="alert">
+          {localError ?? props.loadError}
+        </p>
+      ) : null}
+      <ConversationComposerAttachments
+        attachments={attachments}
+        language={props.language}
+        disabled={submitting || inputResources.processing}
+        onRemove={(attachment) => setAttachments((current) => current.filter((candidate) => candidate !== attachment))}
+        onRestorePastedText={inputResources.restorePastedText}
+      />
+      <div className="session-composer-input-frame">
+        <textarea
+          ref={textareaRef}
+          aria-label={copy.newInput}
+          aria-keyshortcuts="Enter Shift+Enter"
+          autoFocus={props.autoFocus}
+          placeholder={copy.newPlaceholder}
+          value={content}
+          disabled={submitting || !props.owner}
+          onChange={(event) => setContent(event.currentTarget.value)}
+          onCompositionStart={() => setIsComposing(true)}
+          onCompositionEnd={() => setIsComposing(false)}
+          onPaste={inputResources.handlePaste}
+          onKeyDown={(event) => {
+            inputResources.handlePasteShortcut(event);
+            const intent = resolveComposerKeyIntent({ key: event.key, shiftKey: event.shiftKey, isComposing: isComposing || event.nativeEvent.isComposing, repeat: event.repeat });
+            if (intent !== 'submit') return;
+            event.preventDefault();
+            void submit();
+          }}
         />
-        <div className="session-composer-input-frame">
-          <textarea
-            ref={textareaRef}
-            aria-label={copy.newInput}
-            aria-keyshortcuts="Enter Shift+Enter"
-            autoFocus={props.autoFocus}
-            placeholder={copy.newPlaceholder}
-            value={content}
-            disabled={submitting || !props.owner}
-            onChange={(event) => setContent(event.currentTarget.value)}
-            onCompositionStart={() => setIsComposing(true)}
-            onCompositionEnd={() => setIsComposing(false)}
-            onPaste={inputResources.handlePaste}
-            onKeyDown={(event) => {
-              inputResources.handlePasteShortcut(event);
-              const intent = resolveComposerKeyIntent({ key: event.key, shiftKey: event.shiftKey, isComposing: isComposing || event.nativeEvent.isComposing, repeat: event.repeat });
-              if (intent !== 'submit') return;
-              event.preventDefault();
-              void submit();
-            }}
-          />
-          <div className="session-composer-command-row">
-            <span className="session-composer-leading-actions">
-              {props.onChooseAttachments ? (
-                <button
-                  type="button"
-                  aria-label={copy.attach}
-                  disabled={submitting || inputResources.processing || !props.owner}
-                  onClick={async () => {
-                    try {
-                      const selected = await props.onChooseAttachments?.();
-                      if (selected?.length) {
-                        setAttachments((current) => mergeConversationAttachments(current, selected));
-                      }
-                    } catch (error) {
-                      setLocalError(error instanceof Error ? error.message : String(error));
+        <div className="session-composer-command-row">
+          <span className="session-composer-leading-actions">
+            {props.onChooseAttachments ? (
+              <button
+                type="button"
+                aria-label={copy.attach}
+                disabled={submitting || inputResources.processing || !props.owner}
+                onClick={async () => {
+                  try {
+                    const selected = await props.onChooseAttachments?.();
+                    if (selected?.length) {
+                      setAttachments((current) => mergeConversationAttachments(current, selected));
                     }
-                  }}
-                >
-                  <span aria-hidden="true">＋</span>
-                </button>
-              ) : null}
-              <ComposerDropdown
-                label={props.language === 'zh-CN' ? '服务档位' : 'Service tier'}
-                value={serviceTierSelectionValue(serviceTierSelection)}
-                options={serviceTierOptions(selectedModel, props.language, true)}
-                disabled={submitting || !props.owner}
-                onChange={(value) => {
-                  setServiceTierSelection(serviceTierSelectionFromValue(value));
-                  setServiceTierDowngraded(false);
+                  } catch (error) {
+                    setLocalError(error instanceof Error ? error.message : String(error));
+                  }
                 }}
-              />
-              <PermissionModeControl language={props.language} value={permissionMode} disabled={submitting || !props.owner} onChange={setPermissionMode} />
-              <CollaborationModeControl language={props.language} value={collaborationMode} disabled={submitting || !props.owner} onChange={setCollaborationMode} />
+              >
+                <span aria-hidden="true">＋</span>
+              </button>
+            ) : null}
+            <ComposerDropdown
+              label={props.language === 'zh-CN' ? '服务档位' : 'Service tier'}
+              value={serviceTierSelectionValue(serviceTierSelection)}
+              options={serviceTierOptions(selectedModel, props.language, true)}
+              disabled={submitting || !props.owner}
+              onChange={(value) => {
+                setServiceTierSelection(serviceTierSelectionFromValue(value));
+                setServiceTierDowngraded(false);
+              }}
+            />
+            <PermissionModeControl language={props.language} value={permissionMode} disabled={submitting || !props.owner} onChange={setPermissionMode} />
+            <CollaborationModeControl language={props.language} value={collaborationMode} disabled={submitting || !props.owner} onChange={setCollaborationMode} />
+          </span>
+          <span className="session-composer-trailing-actions">
+            <span className="session-primary-command-slot" data-primary-command-slot="true">
+              <button
+                type="button"
+                className="session-send-button"
+                aria-label={copy.send}
+                onClick={() => void submit()}
+                disabled={submitting || inputResources.processing || !props.owner || (!content.trim() && attachments.length === 0)}
+                aria-busy={submitting || undefined}
+              >
+                {submitting ? <span className="session-command-spinner" aria-hidden="true" /> : <span aria-hidden="true">↑</span>}
+              </button>
             </span>
-            <span className="session-composer-trailing-actions">
-              <span className="session-primary-command-slot" data-primary-command-slot="true">
-                <button
-                  type="button"
-                  className="session-send-button"
-                  aria-label={copy.send}
-                  onClick={() => void submit()}
-                  disabled={submitting || inputResources.processing || !props.owner || (!content.trim() && attachments.length === 0)}
-                  aria-busy={submitting || undefined}
-                >
-                  {submitting ? <span className="session-command-spinner" aria-hidden="true" /> : <span aria-hidden="true">↑</span>}
-                </button>
-              </span>
-            </span>
-          </div>
-          <small className="session-service-tier-note" role={serviceTierDowngraded ? 'status' : undefined}>
-            {serviceTierDowngraded
-              ? props.language === 'zh-CN'
-                ? '当前模型不支持原 Fast 档位，已切换为标准。'
-                : 'The current model does not support the previous Fast tier. Standard is selected.'
-              : serviceTierDescription(serviceTierSelection, selectedModel, props.language)}
-          </small>
+          </span>
         </div>
-      </section>
+        <small className="session-service-tier-note" role={serviceTierDowngraded ? 'status' : undefined}>
+          {serviceTierDowngraded
+            ? props.language === 'zh-CN'
+              ? '当前模型不支持原 Fast 档位，已切换为标准。'
+              : 'The current model does not support the previous Fast tier. Standard is selected.'
+            : serviceTierDescription(serviceTierSelection, selectedModel, props.language)}
+        </small>
+      </div>
+    </section>
+  );
+
+  // 停靠态与普通输入框同为会话列的直接子项，避免恢复容器参与剩余空间分配后把输入框推到正文顶部。
+  if (props.docked) return composer;
+
+  return (
+    <section className="session-new-conversation">
+      <span className="session-new-conversation-spacer" aria-hidden="true" />
+      {composer}
     </section>
   );
 }
