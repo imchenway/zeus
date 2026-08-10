@@ -1,4 +1,4 @@
-import type { FormEvent, KeyboardEvent } from 'react';
+import { useMemo, type FormEvent, type KeyboardEvent } from 'react';
 import { buildTaskPushPrompt, type TaskPushParentContextOption, type TaskPushPromptParentContext } from '@zeus/shared';
 import type { TaskRecord } from '../apiClient.js';
 import type { CodexTaskPushCapabilities, NativePermissionMode, NativeServiceTierSelection } from '../session/sessionTypes.js';
@@ -29,7 +29,68 @@ export type TaskModelPushPreferences = Pick<TaskModelPushForm, 'model' | 'effort
   workspaceMode?: 'direct' | 'worktree';
 };
 
+type TaskPushRepositoryCapability = CodexTaskPushCapabilities['repositories'][number];
+type TaskPushSourceRef = TaskPushRepositoryCapability['sourceRefs'][number];
+
+interface TaskPushCommonSource {
+  key: string;
+  label: string;
+  kind: TaskPushSourceRef['kind'];
+  group: string;
+  refsByRepository: Record<string, string>;
+}
+
 const preferencesKeyPrefix = 'zeus.task-model-push-preferences:v1:';
+
+function taskPushSourceIdentity(source: TaskPushSourceRef): string {
+  return JSON.stringify([source.kind, source.kind === 'remote' ? source.group : '', source.label]);
+}
+
+/** 只聚合每个仓库都唯一存在的同来源分支，避免批量选择时猜测真实 Git 引用。 */
+function resolveTaskPushCommonSources(repositories: TaskPushRepositoryCapability[]): TaskPushCommonSource[] {
+  if (repositories.length < 2) return [];
+  const sourcesByRepository = repositories.map((repository) => {
+    const sourcesByIdentity = new Map<string, TaskPushSourceRef[]>();
+    for (const source of repository.sourceRefs) {
+      const key = taskPushSourceIdentity(source);
+      const matches = sourcesByIdentity.get(key) ?? [];
+      matches.push(source);
+      sourcesByIdentity.set(key, matches);
+    }
+    return sourcesByIdentity;
+  });
+  const commonSources: TaskPushCommonSource[] = [];
+  for (const [key, firstMatches] of sourcesByRepository[0] ?? []) {
+    if (firstMatches.length !== 1) continue;
+    const refsByRepository: Record<string, string> = {};
+    let complete = true;
+    for (let index = 0; index < repositories.length; index += 1) {
+      const repository = repositories[index];
+      const matches = sourcesByRepository[index]?.get(key);
+      if (!repository || matches?.length !== 1) {
+        complete = false;
+        break;
+      }
+      refsByRepository[repository.id] = matches[0]!.ref;
+    }
+    if (!complete) continue;
+    const source = firstMatches[0]!;
+    commonSources.push({ key, label: source.label, kind: source.kind, group: source.kind === 'remote' ? source.group : '', refsByRepository });
+  }
+  return commonSources.sort((left, right) => {
+    if (left.kind !== right.kind) return left.kind === 'local' ? -1 : 1;
+    return left.group.localeCompare(right.group) || left.label.localeCompare(right.label);
+  });
+}
+
+function resolveSelectedTaskPushCommonSourceKey(repositories: TaskPushRepositoryCapability[], selections: TaskModelPushForm['repositorySelections'], commonSources: TaskPushCommonSource[]): string {
+  return commonSources.find((source) => repositories.every((repository) => selections[repository.id]?.sourceRef === source.refsByRepository[repository.id]))?.key ?? '';
+}
+
+function taskPushCommonSourceLabel(source: TaskPushCommonSource, repositoryCount: number, zh: boolean): string {
+  if (zh) return `${source.label} · ${source.kind === 'local' ? '本地' : `${source.group} 远端`} · ${repositoryCount} 个仓库`;
+  return `${source.label} · ${source.kind === 'local' ? 'local' : `${source.group} remote`} · ${repositoryCount} repositories`;
+}
 
 export function buildTaskModelPushMessage(
   task: Pick<TaskRecord, 'title' | 'taskType' | 'description' | 'defectCurrentState' | 'defectExpectedOutcome' | 'defectReproductionSteps' | 'optimizationCurrentState' | 'optimizationExpectedOutcome'>,
@@ -159,6 +220,7 @@ export function TaskModelPushModal(props: {
   onLoadAttachmentPreview?: (path: string) => Promise<{ previewUrl: string; mimeType: string } | null>;
   onOpenAttachment?: (path: string) => Promise<{ opened: boolean; error?: string }>;
 }) {
+  const commonSources = useMemo(() => resolveTaskPushCommonSources(props.capabilities?.repositories ?? []), [props.capabilities?.repositories]);
   if (!props.open || !props.task) return null;
   const zh = props.language === 'zh-CN';
   const authenticating = props.status === 'authenticating';
@@ -167,6 +229,9 @@ export function TaskModelPushModal(props: {
   const selectedModel = props.capabilities?.models.find((model) => model.model === props.form.model || model.id === props.form.model);
   const codexLoginRequired = selectedModel?.agentKind !== 'pi' && props.capabilities?.codexAccount.requiresOpenaiAuth === true && !props.capabilities.codexAccount.signedIn;
   const repositories = props.capabilities?.repositories ?? [];
+  const selectedCommonSourceKey = resolveSelectedTaskPushCommonSourceKey(repositories, props.form.repositorySelections, commonSources);
+  const selectedCommonSource = commonSources.find((source) => source.key === selectedCommonSourceKey);
+  const hasRepositorySourceSelection = repositories.some((repository) => Boolean(props.form.repositorySelections[repository.id]?.sourceRef));
   const directWorkspaceBusy = (props.capabilities?.directWorkspace.activeWritableConversationCount ?? 0) > 0;
   const directWorkspaceNeedsConfirmation = directWorkspaceBusy && props.form.permissionMode !== 'read-only';
   const parentContextOptions = props.capabilities?.parentContextOptions ?? [];
@@ -212,6 +277,23 @@ export function TaskModelPushModal(props: {
         [taskId]: { ...current, [field]: selected ? [...values.filter((entry) => entry !== value), value] : values.filter((entry) => entry !== value) },
       },
     });
+  }
+
+  function applyCommonSource(sourceKey: string): void {
+    const commonSource = commonSources.find((source) => source.key === sourceKey);
+    if (!commonSource) return;
+    const repositorySelections = { ...props.form.repositorySelections };
+    for (const repository of repositories) {
+      const sourceRef = commonSource.refsByRepository[repository.id];
+      if (!sourceRef) return;
+      const current = repositorySelections[repository.id] ?? {
+        sourceRef: '',
+        branchName: repository.suggestedBranchName,
+        includeLocalChanges: false,
+      };
+      repositorySelections[repository.id] = { ...current, sourceRef };
+    }
+    props.onChange({ ...props.form, repositorySelections });
   }
 
   const modal = (
@@ -295,6 +377,60 @@ export function TaskModelPushModal(props: {
               </p>
             ) : repositories.length > 0 ? (
               <div className="task-model-push-repository-list">
+                {repositories.length > 1 ? (
+                  <section className="task-model-push-batch-source" aria-labelledby="task-model-push-batch-source-title">
+                    <span className="task-model-push-batch-source-heading">
+                      <strong id="task-model-push-batch-source-title">{zh ? '批量选择来源分支' : 'Select source branch for all repositories'}</strong>
+                      <small>{zh ? `${repositories.length} 个仓库` : `${repositories.length} repositories`}</small>
+                    </span>
+                    {commonSources.length > 0 ? (
+                      <ZeusSelect
+                        size="regular"
+                        ariaLabel={zh ? '批量选择来源分支' : 'Select source branch for all repositories'}
+                        ariaDescribedBy="task-model-push-batch-source-description"
+                        value={selectedCommonSourceKey}
+                        triggerLabel={
+                          selectedCommonSource
+                            ? taskPushCommonSourceLabel(selectedCommonSource, repositories.length, zh)
+                            : hasRepositorySourceSelection
+                              ? zh
+                                ? '逐仓选择不一致'
+                                : 'Repository selections differ'
+                              : zh
+                                ? '批量选择来源分支'
+                                : 'Select a source branch for all repositories'
+                        }
+                        options={commonSources.map((source) => ({
+                          value: source.key,
+                          label: taskPushCommonSourceLabel(source, repositories.length, zh),
+                          group: source.kind === 'local' ? (zh ? '本地分支' : 'Local branches') : zh ? `${source.group} 远端分支` : `${source.group} remote branches`,
+                        }))}
+                        onChange={applyCommonSource}
+                        disabled={busy || props.refreshingRepositoryId !== null}
+                        searchable
+                        searchPlaceholder={zh ? '搜索全部仓库共有的分支' : 'Search branches shared by all repositories'}
+                        emptyLabel={zh ? '没有匹配的共同来源分支' : 'No matching common source branch'}
+                      />
+                    ) : (
+                      <p className="task-model-push-batch-source-empty" role="status">
+                        {zh ? '没有全部仓库共同拥有且来源一致的分支，请继续逐仓选择。' : 'No source branch with the same origin exists in every repository. Select each repository below.'}
+                      </p>
+                    )}
+                    <small id="task-model-push-batch-source-description" aria-live="polite">
+                      {selectedCommonSource
+                        ? zh
+                          ? `已将 ${selectedCommonSource.label} 应用到全部仓库；仍可逐仓调整。`
+                          : `${selectedCommonSource.label} is applied to every repository. You can still adjust repositories individually.`
+                        : commonSources.length > 0 && hasRepositorySourceSelection
+                          ? zh
+                            ? '当前逐仓选择不一致；可重新批量应用，也可保留现状。'
+                            : 'Repository selections currently differ. Apply a common branch again or keep the individual choices.'
+                          : zh
+                            ? '这里只显示全部仓库都存在的同来源分支；应用后仍可逐仓调整。'
+                            : 'Only branches with the same origin in every repository are shown. You can still adjust repositories individually.'}
+                    </small>
+                  </section>
+                ) : null}
                 {repositories.map((repository) => {
                   const selection = props.form.repositorySelections[repository.id] ?? {
                     sourceRef: '',
