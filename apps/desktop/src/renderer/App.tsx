@@ -104,6 +104,7 @@ import { CodexRemoteControlSettings } from './settings/CodexRemoteControlSetting
 import { ModelConnectionsSettingsPane } from './settings/ModelConnectionsSettingsPane.js';
 import { ProjectModelsSettings } from './settings/ProjectModelsSettings.js';
 import { TaskManagementStatusEditor } from './settings/TaskManagementStatusEditor.js';
+import { CodexUsageSettingsPane, ZeusUsageTitlebar } from './settings/CodexUsageSettingsPane.js';
 import { type TaskAttachmentRestoreTarget, type TaskAttachmentView, type TaskResourceAuthorizationResult, type TaskResourcePayload, toPersistedTaskAttachment } from './task/taskAttachments.js';
 import {
   defaultTaskTableEnumSortOrders,
@@ -220,7 +221,7 @@ type ProjectDetailPanel = 'diff' | 'edit' | 'config' | 'archive' | undefined;
 type ConversationDrawer = 'runtime' | 'context' | 'changes' | 'templates' | undefined;
 type TaskConversationDrawerTarget = Readonly<{ taskId: string; conversationId: string }> | undefined;
 type TaskConversationReopenState = Readonly<{ conversationId: string; status: 'busy' | 'error'; error?: string }> | undefined;
-type SettingsCategory = 'general' | 'tasks' | 'runtime' | 'models' | 'browser' | 'telegram' | 'security' | 'commands' | 'git' | 'release' | 'data';
+type SettingsCategory = 'general' | 'usage' | 'tasks' | 'runtime' | 'models' | 'browser' | 'telegram' | 'security' | 'commands' | 'git' | 'release' | 'data';
 type DataPortabilityStatusState = { kind: 'idle' } | { kind: 'exported'; target: string } | { kind: 'imported'; target: string; changedSettings: string[] };
 type TaskBulkActionStatusState = { kind: 'idle' | 'running' | 'done' | 'failed'; message?: string };
 type RuntimeLogExportStatusState = { kind: 'idle' } | { kind: 'empty' } | { kind: 'cancelled' } | { kind: 'saved'; filePath: string } | { kind: 'failed' };
@@ -306,6 +307,8 @@ type NativeConversationAppClient = SessionControllerClient &
     | 'loadCodexTaskPushCapabilities'
     | 'refreshTaskPushRepositoryRemote'
     | 'loadCodexAccount'
+    | 'loadCodexUsageSummary'
+    | 'loadCodexUsageAnalytics'
     | 'startCodexChatGptLogin'
     | 'cancelCodexChatGptLogin'
     | 'startTaskModelPush'
@@ -1822,6 +1825,7 @@ const languageCopy = {
       localStatus: '本机',
       categories: {
         general: '通用',
+        usage: '用量',
         tasks: '任务列表',
         runtime: 'AI CLI / Runtime',
         models: '模型供应商',
@@ -3278,6 +3282,7 @@ const languageCopy = {
       localStatus: 'Local',
       categories: {
         general: 'General',
+        usage: 'Usage',
         tasks: 'Task list',
         runtime: 'AI CLI / Runtime',
         models: 'Model providers',
@@ -7234,6 +7239,7 @@ export function App(props: {
     if (props.initialReleaseStatus) return 'release';
     return 'general';
   });
+  const [codexUsageRevision, setCodexUsageRevision] = useState(0);
   useEffect(() => {
     if (activeNavTarget !== 'settings' || settingsCategory !== 'runtime' || codexLegacyImportSnapshot || codexLegacyImportLoading || !props.onLoadCodexLegacyImports) return;
     void refreshCodexLegacyImports();
@@ -7658,6 +7664,7 @@ export function App(props: {
         });
     };
     const unsubscribe = subscribeRealtimeEvents((event) => {
+      if (event.type === 'codex.usage.changed') setCodexUsageRevision((current) => current + 1);
       if (typeof event.payload.projectId === 'string' && isProjectConversationAttentionState(event.payload.conversationAttentionState)) {
         const projectId = event.payload.projectId;
         const attentionState = event.payload.conversationAttentionState;
@@ -11319,6 +11326,19 @@ export function App(props: {
       aria-label={uiCopy.shellAriaLabel}
     >
       <div className="window-drag-strip" aria-hidden="true" onPointerDown={handleWindowDragPointerDown} />
+      <ZeusUsageTitlebar
+        client={props.nativeConversationClient ?? null}
+        language={appShellSettings.appLanguage}
+        refreshRevision={codexUsageRevision}
+        onOpenFull={() => {
+          setSettingsCategory('usage');
+          handleMainNavigate('settings');
+        }}
+        onOpenConfiguration={() => {
+          setSettingsCategory('runtime');
+          handleMainNavigate('settings');
+        }}
+      />
       <output className="sr-only" aria-live="polite" aria-atomic="true">
         {taskModelPushAnnouncement}
       </output>
@@ -13016,6 +13036,7 @@ export function App(props: {
                       group: settingsWorkspaceCopy.sectionGroups.personal,
                       items: [
                         ['general', settingsWorkspaceCopy.categories.general, undefined],
+                        ['usage', settingsWorkspaceCopy.categories.usage, undefined],
                         ['tasks', settingsWorkspaceCopy.categories.tasks, undefined],
                         ['security', settingsWorkspaceCopy.categories.security, settingsWorkspaceCopy.protectedStatus],
                       ],
@@ -13211,6 +13232,7 @@ export function App(props: {
                     </section>
                   </section>
                 ) : null}
+                {settingsCategory === 'usage' ? <CodexUsageSettingsPane client={props.nativeConversationClient ?? null} language={appShellSettings.appLanguage} refreshRevision={codexUsageRevision} /> : null}
                 {settingsCategory === 'tasks' ? (
                   <section className="settings-product-pane task-list-settings-pane" aria-label={settingsWorkspaceCopy.categories.tasks}>
                     <h2 className="settings-page-title">{settingsWorkspaceCopy.categories.tasks}</h2>

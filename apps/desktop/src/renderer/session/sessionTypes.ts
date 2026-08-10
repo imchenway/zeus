@@ -1,4 +1,12 @@
-import type { ConversationResource, TaskPushParentContextOption, TaskPushParentContextSelection, TurnChangeSet, ZeusBrowserComment, ZeusBrowserPreparedSubmission } from '@zeus/shared';
+import type {
+  ConversationResource,
+  NativeTokenUsageSnapshot as SharedNativeTokenUsageSnapshot,
+  TaskPushParentContextOption,
+  TaskPushParentContextSelection,
+  TurnChangeSet,
+  ZeusBrowserComment,
+  ZeusBrowserPreparedSubmission,
+} from '@zeus/shared';
 
 export type { ConversationResource, ConversationResourcePreview, TurnChangeSet, TurnChangeSetOperationResult } from '@zeus/shared';
 
@@ -164,13 +172,7 @@ export interface NativeNextTurnSettings {
   collaborationMode: NativeCollaborationMode;
 }
 
-export interface NativeTokenUsageSnapshot {
-  generationId?: string;
-  sequence?: number;
-  inputTokens: number;
-  outputTokens: number;
-  totalTokens: number;
-}
+export type NativeTokenUsageSnapshot = SharedNativeTokenUsageSnapshot;
 
 export interface NativeProviderValueSnapshot {
   generationId?: string;
@@ -838,7 +840,7 @@ export type NativeConversationEvent =
   | NativeEvent<'conversation.item.delta', NativeItemEventPayload & { textContent: string }>
   | NativeEvent<'conversation.item.completed', NativeItemEventPayload & { textContent: string }>
   | NativeEvent<'conversation.settings.changed', NativeEventIdentity & { model: string; effort?: string }>
-  | NativeEvent<'conversation.tokenUsage.changed', NativeEventIdentity & { inputTokens: number; outputTokens: number; totalTokens: number }>
+  | NativeEvent<'conversation.tokenUsage.changed', NativeEventIdentity & SharedNativeTokenUsageSnapshot>
   | NativeEvent<'conversation.rateLimits.changed', NativeEventIdentity & { value: Record<string, unknown> }>
   | NativeEvent<'conversation.mcpStartup.changed', NativeEventIdentity & { value: Record<string, unknown> }>
   | NativeEvent<'conversation.queue.changed', NativeEventIdentity & { queue: NativeQueueSnapshot }>

@@ -982,12 +982,34 @@ function providerSettingsFrom(payload: Record<string, unknown>): NativeProviderS
 }
 
 function tokenUsageFrom(payload: Record<string, unknown>): NativeTokenUsageSnapshot {
+  const total = tokenBreakdownFrom(payload.total);
+  const last = tokenBreakdownFrom(payload.last);
   return {
-    ...(stringValue(payload.generationId) ? { generationId: stringValue(payload.generationId)! } : {}),
-    ...(numberValue(payload.sequence) !== null ? { sequence: numberValue(payload.sequence)! } : {}),
-    inputTokens: numberValue(payload.inputTokens) ?? 0,
-    outputTokens: numberValue(payload.outputTokens) ?? 0,
+    generationId: stringValue(payload.generationId) ?? '',
+    sequence: numberValue(payload.sequence) ?? 0,
+    total,
+    last,
+    modelContextWindow: numberValue(payload.modelContextWindow),
+    cacheHitRate: numberValue(payload.cacheHitRate),
+    estimatedCredits: numberValue(payload.estimatedCredits),
+    apiEquivalentUsd: numberValue(payload.apiEquivalentUsd),
+    cacheSavingsUsd: numberValue(payload.cacheSavingsUsd),
+    priceCoverage: numberValue(payload.priceCoverage),
+    pricingCatalogDate: stringValue(payload.pricingCatalogDate),
+    pricingSourceUrls: Array.isArray(payload.pricingSourceUrls) ? payload.pricingSourceUrls.filter((value): value is string => typeof value === 'string') : [],
+    historyComplete: payload.historyComplete === true,
+  };
+}
+
+function tokenBreakdownFrom(value: unknown): NativeTokenUsageSnapshot['total'] {
+  const payload = isRecord(value) ? value : {};
+  return {
     totalTokens: numberValue(payload.totalTokens) ?? 0,
+    inputTokens: numberValue(payload.inputTokens) ?? 0,
+    cachedInputTokens: numberValue(payload.cachedInputTokens) ?? 0,
+    cacheWriteInputTokens: numberValue(payload.cacheWriteInputTokens) ?? 0,
+    outputTokens: numberValue(payload.outputTokens) ?? 0,
+    reasoningOutputTokens: numberValue(payload.reasoningOutputTokens) ?? 0,
   };
 }
 

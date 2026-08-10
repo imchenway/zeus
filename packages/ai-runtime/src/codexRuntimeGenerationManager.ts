@@ -245,6 +245,12 @@ export function createCodexRuntimeGenerationManager(): CodexAppServerManager {
     async readAccount(input = {}) {
       return requireActiveEntry().manager.readAccount(input);
     },
+    async readAccountRateLimits() {
+      return requireActiveEntry().manager.readAccountRateLimits();
+    },
+    async readAccountUsage() {
+      return requireActiveEntry().manager.readAccountUsage();
+    },
     async startChatGptLogin() {
       return requireActiveEntry().manager.startChatGptLogin();
     },

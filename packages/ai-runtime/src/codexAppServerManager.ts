@@ -1,5 +1,5 @@
 import { spawn as nodeSpawn } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { createConnection } from 'node:net';
 import { isAbsolute, join } from 'node:path';
@@ -79,6 +79,43 @@ export interface CodexAccountSnapshot {
   signedIn: boolean;
   accountType: string | null;
   planType: string | null;
+  /** 只用于本机用量隔离，不暴露邮箱或认证信息。 */
+  accountScopeId: string;
+}
+
+export interface CodexRateLimitWindowSnapshot {
+  usedPercent: number;
+  windowDurationMins: number | null;
+  resetsAt: number | null;
+}
+
+export interface CodexRateLimitBucketSnapshot {
+  limitId: string | null;
+  limitName: string | null;
+  primary: CodexRateLimitWindowSnapshot | null;
+  secondary: CodexRateLimitWindowSnapshot | null;
+  credits: { hasCredits: boolean; unlimited: boolean; balance: string | null } | null;
+  planType: string | null;
+}
+
+export interface CodexAccountRateLimitsSnapshot {
+  generationId: string;
+  rateLimits: CodexRateLimitBucketSnapshot;
+  rateLimitsByLimitId: Record<string, CodexRateLimitBucketSnapshot> | null;
+}
+
+export interface CodexAccountUsageSummary {
+  lifetimeTokens: number | null;
+  peakDailyTokens: number | null;
+  longestRunningTurnSec: number | null;
+  currentStreakDays: number | null;
+  longestStreakDays: number | null;
+}
+
+export interface CodexAccountUsageSnapshot {
+  generationId: string;
+  summary: CodexAccountUsageSummary;
+  dailyUsageBuckets: Array<{ startDate: string; tokens: number }> | null;
 }
 
 export interface CodexChatGptLogin {
@@ -262,6 +299,8 @@ export interface CodexRemoteControlClientsPage {
 export interface CodexAppServerManager {
   ensureReady(input: { commandPath: string; externalAgentHome?: string; remoteControl?: boolean }): Promise<CodexCapabilitiesSnapshot>;
   readAccount(input?: { refreshToken?: boolean }): Promise<CodexAccountSnapshot>;
+  readAccountRateLimits(): Promise<CodexAccountRateLimitsSnapshot>;
+  readAccountUsage(): Promise<CodexAccountUsageSnapshot>;
   startChatGptLogin(): Promise<CodexChatGptLogin>;
   cancelChatGptLogin(input: { loginId: string }): Promise<void>;
   startThread(input: CodexThreadStartInput): Promise<CodexThreadSnapshot>;
@@ -312,6 +351,7 @@ interface CreateCodexAppServerManagerOptions {
   onDiagnostic?: (entry: { generationId: string; sequence: number; stderrSummary: string }) => void;
   eventReplayLimit?: number;
   shutdownTimeoutMs?: number;
+  accountFingerprintSalt?: string;
 }
 
 type ProcessExitTracker = { promise: Promise<void>; resolve: () => void; exited: boolean };
@@ -349,6 +389,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
   const requestTimeoutMs = options.requestTimeoutMs ?? 30_000;
   const eventReplayLimit = options.eventReplayLimit ?? 1_024;
   const shutdownTimeoutMs = Math.max(0, options.shutdownTimeoutMs ?? 5_000);
+  const accountFingerprintSalt = options.accountFingerprintSalt?.trim() || 'zeus-local-account-scope';
   const listeners = new Set<(event: CodexAppServerEvent) => void>();
   const externalAgentImportListeners = new Set<(event: ExternalAgentImportEvent) => void>();
   const eventReplayBuffer: CodexAppServerEvent[] = [];
@@ -729,7 +770,16 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
           refreshToken: input.refreshToken === true,
         }),
         capabilities.generationId,
+        accountFingerprintSalt,
       );
+    },
+    async readAccountRateLimits() {
+      const capabilities = await awaitCapabilities();
+      return parseAccountRateLimitsSnapshot(await rpc(capabilities.generationId, 'account/rateLimits/read', {}), capabilities.generationId);
+    },
+    async readAccountUsage() {
+      const capabilities = await awaitCapabilities();
+      return parseAccountUsageSnapshot(await rpc(capabilities.generationId, 'account/usage/read', {}), capabilities.generationId);
     },
     async startChatGptLogin() {
       const capabilities = await awaitCapabilities();
@@ -1272,7 +1322,7 @@ function parseTurn(value: unknown, threadId: string): CodexTurnSnapshot {
   return { ...turn, id: turn.id, threadId };
 }
 
-function parseAccountSnapshot(value: unknown, generationId: string): CodexAccountSnapshot {
+function parseAccountSnapshot(value: unknown, generationId: string, accountFingerprintSalt: string): CodexAccountSnapshot {
   const response = asRecord(value);
   if (typeof response.requiresOpenaiAuth !== 'boolean') {
     throw managerError('ZEUS_CODEX_INVALID_RESPONSE', 'Codex account/read response omitted requiresOpenaiAuth.');
@@ -1283,13 +1333,110 @@ function parseAccountSnapshot(value: unknown, generationId: string): CodexAccoun
   const account = isRecord(response.account) ? response.account : null;
   const accountType = account && typeof account.type === 'string' ? account.type : null;
   const planType = account && typeof account.planType === 'string' ? account.planType : null;
+  const identity = accountType === 'chatgpt' && account && typeof account.email === 'string' ? account.email.trim().toLowerCase() : (accountType ?? 'signed-out');
   return {
     generationId,
     requiresOpenaiAuth: response.requiresOpenaiAuth,
     signedIn: account !== null,
     accountType,
     planType,
+    accountScopeId: createHash('sha256').update(`zeus:codex:account:${accountFingerprintSalt}:${identity}`).digest('hex'),
   };
+}
+
+function parseAccountRateLimitsSnapshot(value: unknown, generationId: string): CodexAccountRateLimitsSnapshot {
+  const response = asRecord(value);
+  const rateLimits = parseRateLimitBucket(response.rateLimits);
+  let rateLimitsByLimitId: Record<string, CodexRateLimitBucketSnapshot> | null = null;
+  if (response.rateLimitsByLimitId !== null && response.rateLimitsByLimitId !== undefined) {
+    const buckets = asRecord(response.rateLimitsByLimitId);
+    rateLimitsByLimitId = Object.fromEntries(Object.entries(buckets).map(([limitId, bucket]) => [limitId, parseRateLimitBucket(bucket)]));
+  }
+  return { generationId, rateLimits, rateLimitsByLimitId };
+}
+
+function parseRateLimitBucket(value: unknown): CodexRateLimitBucketSnapshot {
+  const bucket = asRecord(value);
+  return {
+    limitId: nullableString(bucket.limitId),
+    limitName: nullableString(bucket.limitName),
+    primary: parseRateLimitWindow(bucket.primary),
+    secondary: parseRateLimitWindow(bucket.secondary),
+    credits: parseRateLimitCredits(bucket.credits),
+    planType: nullableString(bucket.planType),
+  };
+}
+
+function parseRateLimitWindow(value: unknown): CodexRateLimitWindowSnapshot | null {
+  if (value === null || value === undefined) return null;
+  const window = asRecord(value);
+  return {
+    usedPercent: nonNegativeNumber(window.usedPercent, 'rate limit usedPercent'),
+    windowDurationMins: nullableNonNegativeNumber(window.windowDurationMins, 'rate limit windowDurationMins'),
+    resetsAt: nullableNonNegativeNumber(window.resetsAt, 'rate limit resetsAt'),
+  };
+}
+
+function parseRateLimitCredits(value: unknown): CodexRateLimitBucketSnapshot['credits'] {
+  if (value === null || value === undefined) return null;
+  const credits = asRecord(value);
+  if (typeof credits.hasCredits !== 'boolean' || typeof credits.unlimited !== 'boolean' || (credits.balance !== null && typeof credits.balance !== 'string')) {
+    throw managerError('ZEUS_CODEX_INVALID_RESPONSE', 'Codex rate limits returned invalid credits.');
+  }
+  return { hasCredits: credits.hasCredits, unlimited: credits.unlimited, balance: credits.balance };
+}
+
+function parseAccountUsageSnapshot(value: unknown, generationId: string): CodexAccountUsageSnapshot {
+  const response = asRecord(value);
+  const summary = asRecord(response.summary);
+  let dailyUsageBuckets: CodexAccountUsageSnapshot['dailyUsageBuckets'] = null;
+  if (response.dailyUsageBuckets !== null && response.dailyUsageBuckets !== undefined) {
+    if (!Array.isArray(response.dailyUsageBuckets)) throw managerError('ZEUS_CODEX_INVALID_RESPONSE', 'Codex account usage returned invalid daily buckets.');
+    dailyUsageBuckets = response.dailyUsageBuckets.map((entry) => {
+      const bucket = asRecord(entry);
+      if (typeof bucket.startDate !== 'string' || !/^\d{4}-\d{2}-\d{2}$/u.test(bucket.startDate)) {
+        throw managerError('ZEUS_CODEX_INVALID_RESPONSE', 'Codex account usage returned an invalid bucket date.');
+      }
+      return { startDate: bucket.startDate, tokens: nonNegativeSafeInteger(bucket.tokens, 'daily usage tokens') };
+    });
+  }
+  return {
+    generationId,
+    summary: {
+      lifetimeTokens: nullableNonNegativeSafeInteger(summary.lifetimeTokens, 'lifetime tokens'),
+      peakDailyTokens: nullableNonNegativeSafeInteger(summary.peakDailyTokens, 'peak daily tokens'),
+      longestRunningTurnSec: nullableNonNegativeSafeInteger(summary.longestRunningTurnSec, 'longest running turn'),
+      currentStreakDays: nullableNonNegativeSafeInteger(summary.currentStreakDays, 'current streak'),
+      longestStreakDays: nullableNonNegativeSafeInteger(summary.longestStreakDays, 'longest streak'),
+    },
+    dailyUsageBuckets,
+  };
+}
+
+function nullableString(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value !== 'string') throw managerError('ZEUS_CODEX_INVALID_RESPONSE', 'Codex response returned an invalid string field.');
+  return value;
+}
+
+function nonNegativeNumber(value: unknown, label: string): number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) throw managerError('ZEUS_CODEX_INVALID_RESPONSE', `Codex response returned invalid ${label}.`);
+  return value;
+}
+
+function nullableNonNegativeNumber(value: unknown, label: string): number | null {
+  if (value === null || value === undefined) return null;
+  return nonNegativeNumber(value, label);
+}
+
+function nonNegativeSafeInteger(value: unknown, label: string): number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) throw managerError('ZEUS_CODEX_INVALID_RESPONSE', `Codex response returned invalid ${label}.`);
+  return value;
+}
+
+function nullableNonNegativeSafeInteger(value: unknown, label: string): number | null {
+  if (value === null || value === undefined) return null;
+  return nonNegativeSafeInteger(value, label);
 }
 
 function parseChatGptLogin(value: unknown, generationId: string): CodexChatGptLogin {
