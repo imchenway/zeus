@@ -13167,7 +13167,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     if (selectedAgentKind !== (conversation.agentKind === 'pi' ? 'pi' : 'codex')) {
       throw nativeApiError('ZEUS_AGENT_SWITCH_REQUIRES_NEW_CONVERSATION', '不能在同一会话内切换 Codex 与 Pi，请新建会话。');
     }
-    let nativeOperation =
+    const nativeOperation =
       conversation.agentKind === 'pi'
         ? delivery === 'steer_now'
           ? await piNativeCoordinator.steerMessage({
@@ -13187,21 +13187,33 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
               idempotencyKey,
               clientUserMessageId,
             })
-        : await codexNativeCoordinator.submitMessage({
-            conversationId: conversation.id,
-            content,
-            ...(displayText ? { displayText } : {}),
-            attachments,
-            browserComments,
-            ...(selectedModel ? { model: selectedModel } : {}),
-            ...(selectedEffort ? { effort: selectedEffort } : {}),
-            ...(requestedServiceTier.present ? { serviceTier: selectedServiceTier ?? null } : {}),
-            ...(permissionMode ? { permissionMode } : {}),
-            ...(collaborationMode ? { collaborationMode } : {}),
-            idempotencyKey,
-            clientUserMessageId,
-            providerWriteLifecycle,
-          });
+        : delivery === 'steer_now'
+          ? await codexNativeCoordinator.steerMessage({
+              conversationId: conversation.id,
+              content,
+              ...(displayText ? { displayText } : {}),
+              attachments,
+              browserComments,
+              expectedTurnId: expectedTurnId!,
+              idempotencyKey,
+              clientUserMessageId,
+              providerWriteLifecycle,
+            })
+          : await codexNativeCoordinator.submitMessage({
+              conversationId: conversation.id,
+              content,
+              ...(displayText ? { displayText } : {}),
+              attachments,
+              browserComments,
+              ...(selectedModel ? { model: selectedModel } : {}),
+              ...(selectedEffort ? { effort: selectedEffort } : {}),
+              ...(requestedServiceTier.present ? { serviceTier: selectedServiceTier ?? null } : {}),
+              ...(permissionMode ? { permissionMode } : {}),
+              ...(collaborationMode ? { collaborationMode } : {}),
+              idempotencyKey,
+              clientUserMessageId,
+              providerWriteLifecycle,
+            });
     const persisted = conversationSubmissions.getById(nativeOperation.submissionId);
     if (!persisted) throw nativeApiError('ZEUS_NATIVE_ACCEPTANCE_NOT_DURABLE', 'Native message submission was not persisted.');
     const input = parseJsonObject(persisted.inputJson);
@@ -13243,7 +13255,6 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       ]);
     }
     await db.save();
-    if (delivery === 'steer_now' && conversation.agentKind !== 'pi') nativeOperation = await codexNativeCoordinator.sendQueuedNow({ conversationId: conversation.id, submissionId: persisted.id, providerWriteLifecycle });
     const updatedConversation = conversations.getById(conversation.id);
     const updatedSubmission = conversationSubmissions.getById(persisted.id);
     if (!updatedConversation || !updatedSubmission) throw nativeApiError('ZEUS_NATIVE_ACCEPTANCE_NOT_DURABLE', 'Native message acceptance was not persisted.');

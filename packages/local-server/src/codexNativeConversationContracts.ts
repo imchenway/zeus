@@ -138,6 +138,18 @@ export interface SubmitNativeMessageInput {
   providerWriteLifecycle?: NativeProviderWriteLifecycle;
 }
 
+export interface SteerNativeMessageInput {
+  conversationId: string;
+  content: string;
+  displayText?: string;
+  attachments?: NativeConversationAttachmentInput[];
+  browserComments?: Record<string, unknown>[];
+  expectedTurnId: string;
+  idempotencyKey: string;
+  clientUserMessageId: string;
+  providerWriteLifecycle?: NativeProviderWriteLifecycle;
+}
+
 export interface RespondPlanImplementationRequestInput {
   conversationId: string;
   requestId: string;
@@ -231,6 +243,7 @@ export interface CodexNativeConversationCoordinator {
   startTaskConversation(input: StartTaskConversationInput): Promise<NativeAcceptedOperation>;
   startProjectConversation(input: StartProjectConversationInput): Promise<NativeAcceptedOperation>;
   submitMessage(input: SubmitNativeMessageInput): Promise<NativeAcceptedOperation>;
+  steerMessage(input: SteerNativeMessageInput): Promise<NativeAcceptedOperation>;
   editQueuedSubmission(input: EditQueuedSubmissionInput): Promise<NativeQueueSnapshot>;
   deleteQueuedSubmission(input: DeleteQueuedSubmissionInput): Promise<NativeQueueSnapshot>;
   reorderQueue(input: ReorderNativeQueueInput): Promise<NativeQueueSnapshot>;
