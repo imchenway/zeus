@@ -236,6 +236,10 @@ function isObjectLike(value: unknown): value is object {
   return (typeof value === 'object' && value !== null) || typeof value === 'function';
 }
 
+function quotePosixShellArgument(value: string): string {
+  return `'${value.replaceAll("'", `'"'"'`)}'`;
+}
+
 function readConversationResourcePreview(resource: Exclude<ConversationResource, { kind: 'website' }>, intent: ReturnType<typeof toConversationResourceOpenIntent>): ConversationResourcePreview {
   const absolutePath = typeof intent.target.absolutePath === 'string' ? resolve(intent.target.absolutePath) : '';
   const allowedRoot = typeof intent.authority.allowedRoot === 'string' ? resolve(intent.authority.allowedRoot) : '';
@@ -545,6 +549,11 @@ interface CodexRemoteControlSnapshot {
   enabled: boolean;
   status: CodexRemoteControlStatus;
   clients: CodexRemoteControlClient[];
+  managedStandalone: {
+    available: boolean;
+    commandPath: string | null;
+    installCommand: string;
+  };
 }
 
 interface CodexRemoteControlPairingSnapshot extends CodexRemoteControlPairing {
@@ -2085,7 +2094,6 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   const codexNativeEnabled = options.codexNativeEnabled !== false;
   const codexRuntimeCommandPath = options.codexRuntimeCommandPath;
   const configuredCodexRuntimeCommandPath = () => runtimeSettings.adapterCliPaths.codex?.trim() || (typeof codexRuntimeCommandPath === 'function' ? codexRuntimeCommandPath() : codexRuntimeCommandPath) || undefined;
-  const currentCodexRuntimeCommandPath = () => configuredCodexRuntimeCommandPath() || 'codex';
   const codexExternalAgentHome = options.codexLegacyImportRoot
     ? (() => {
         mkdirSync(options.codexLegacyImportRoot!, { recursive: true, mode: 0o700 });
@@ -2099,6 +2107,41 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         return realpathSync(configuredCodexHome);
       })()
     : undefined;
+  const readCodexRemoteControlStandalone = (): CodexRemoteControlSnapshot['managedStandalone'] => {
+    if (!codexHome) {
+      return {
+        available: false,
+        commandPath: null,
+        installCommand: 'curl -fsSL https://chatgpt.com/codex/install.sh | sh',
+      };
+    }
+    const commandPath = join(codexHome, 'packages', 'standalone', 'current', 'codex');
+    let available = false;
+    try {
+      accessSync(commandPath, fsConstants.X_OK);
+      available = true;
+    } catch {
+      // Remote Control 只能使用官方安装器在当前 CODEX_HOME 登记的固定入口。
+    }
+    const installDirectory = join(codexHome, 'bin');
+    return {
+      available,
+      commandPath,
+      installCommand: `curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_HOME=${quotePosixShellArgument(codexHome)} CODEX_INSTALL_DIR=${quotePosixShellArgument(installDirectory)} sh`,
+    };
+  };
+  const requireCodexRemoteControlCommandPath = (): string => {
+    const standalone = readCodexRemoteControlStandalone();
+    if (standalone.available && standalone.commandPath) return standalone.commandPath;
+    throw Object.assign(
+      nativeApiError(
+        'ZEUS_CODEX_REMOTE_CONTROL_STANDALONE_REQUIRED',
+        `Zeus 已检测到普通 Codex CLI，但远程接管必须在 Zeus 独立 Codex 目录中使用官方独立安装版。当前缺少 ${standalone.commandPath ?? '受管理的 Codex 固定入口'}。请运行：${standalone.installCommand}。安装后在 Zeus 完成 Codex 登录并点击刷新；Zeus 不会自动安装，也不会借用其他 CODEX_HOME 的守护进程。`,
+      ),
+      { statusCode: 409 },
+    );
+  };
+  const currentCodexRuntimeCommandPath = () => (codexRemoteControlEnabled ? requireCodexRemoteControlCommandPath() : configuredCodexRuntimeCommandPath() || 'codex');
   const codexConfigImportService =
     codexHome && options.codexConfigImportSourceRoot
       ? createCodexConfigImportService({
@@ -9384,11 +9427,11 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     }),
   );
 
-  async function ensureCodexRemoteControlReady(): Promise<void> {
+  async function ensureCodexRemoteControlReady(remoteControl = codexRemoteControlEnabled): Promise<void> {
     await codexAppServerManager.ensureReady({
-      commandPath: currentCodexRuntimeCommandPath(),
+      commandPath: remoteControl ? requireCodexRemoteControlCommandPath() : currentCodexRuntimeCommandPath(),
       ...(codexExternalAgentHome ? { externalAgentHome: codexExternalAgentHome } : {}),
-      ...(codexRemoteControlEnabled ? { remoteControl: true } : {}),
+      ...(remoteControl ? { remoteControl: true } : {}),
     });
   }
 
@@ -9396,13 +9439,13 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     await ensureCodexRemoteControlReady();
     const currentStatus = status ?? (await codexAppServerManager.readRemoteControlStatus());
     const clients = currentStatus.environmentId ? (await codexAppServerManager.listRemoteControlClients({ environmentId: currentStatus.environmentId, limit: 100, order: 'desc' })).data : [];
-    return { enabled: codexRemoteControlEnabled, status: currentStatus, clients };
+    return { enabled: codexRemoteControlEnabled, status: currentStatus, clients, managedStandalone: readCodexRemoteControlStandalone() };
   }
 
   server.get('/api/codex/remote-control', async (): Promise<CodexRemoteControlSnapshot> => buildCodexRemoteControlSnapshot());
 
   server.post('/api/codex/remote-control/enable', async (): Promise<CodexRemoteControlSnapshot> => {
-    await ensureCodexRemoteControlReady();
+    await ensureCodexRemoteControlReady(true);
     const status = await codexAppServerManager.enableRemoteControl();
     codexRemoteControlEnabled = true;
     settings.setJson(codexRemoteControlEnabledSettingKey, true);

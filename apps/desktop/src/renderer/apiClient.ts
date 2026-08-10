@@ -735,6 +735,11 @@ export interface CodexRemoteControlSnapshot {
     environmentId: string | null;
   };
   clients: CodexRemoteControlClient[];
+  managedStandalone?: {
+    available: boolean;
+    commandPath: string | null;
+    installCommand: string;
+  };
 }
 
 export interface CodexRemoteControlPairing {

@@ -27,8 +27,15 @@ const copy = {
     connected: '已连接',
     errored: '连接异常',
     statusHelp: '新会话和空闲会话使用远程宿主；设备配对和连接由本机 Codex CLI 的官方 Remote Control 提供。',
+    standaloneTitle: 'Remote Control 独立版',
+    standaloneReady: '已为 Zeus 安装',
+    standaloneMissing: '需要单独安装',
+    standaloneReadyHelp: '远程守护进程将从 Zeus 独立 Codex 目录的官方固定入口启动。',
+    standaloneMissingHelp: '普通 Codex CLI 已可用，但其他 CODEX_HOME 下的安装不能替代 Zeus 独立运行目录。复制命令到终端执行，完成 Zeus 专属登录后再刷新。',
+    copyInstall: '复制安装命令',
+    installCopied: '安装命令已复制。',
     connectionFailed: '远程接管未能启动',
-    recoveryHelp: '按下方真实原因完成安装或登录后重试。Zeus 不会自动安装或切换外部程序。',
+    recoveryHelp: '按下方真实原因完成登录、联网或授权恢复后重试。Zeus 不会自动安装或使用内置回退。',
     retry: '重新检测并重试',
     server: '本机名称',
     hostNameHelp: 'iOS 显示系统机器名，可能与 Codex App 宿主同名；请用 Zeus 项目名或会话标题区分。',
@@ -64,8 +71,15 @@ const copy = {
     connected: 'Connected',
     errored: 'Connection error',
     statusHelp: 'New and idle sessions use the remote host; device pairing and connectivity use the official Remote Control in the local Codex CLI.',
+    standaloneTitle: 'Remote Control standalone',
+    standaloneReady: 'Installed for Zeus',
+    standaloneMissing: 'Separate install required',
+    standaloneReadyHelp: "The remote daemon will start from the official fixed entry in Zeus's isolated Codex home.",
+    standaloneMissingHelp: "The regular Codex CLI is available, but an install under another CODEX_HOME cannot replace Zeus's isolated runtime. Copy this command to Terminal, finish the Zeus-specific login, and refresh.",
+    copyInstall: 'Copy install command',
+    installCopied: 'Install command copied.',
     connectionFailed: 'Remote Control did not start',
-    recoveryHelp: 'Follow the actual reason below to install or sign in, then retry. Zeus does not automatically install or switch external programs.',
+    recoveryHelp: 'Follow the actual reason below to restore login, network, or authorization, then retry. Zeus does not install automatically or use a bundled fallback.',
     retry: 'Check again and retry',
     server: 'Host name',
     hostNameHelp: 'iOS shows the system host name, which can match a Codex App host. Identify Zeus by its project or conversation title.',
@@ -168,6 +182,9 @@ export function CodexRemoteControlSettings(props: CodexRemoteControlSettingsProp
   }
 
   const stateLabel = snapshot ? labels[snapshot.status.status] : labels.loading;
+  const managedStandalone = snapshot?.managedStandalone;
+  const standaloneReady = managedStandalone?.available === true;
+  const standaloneBlocked = managedStandalone?.available === false;
   return (
     <section className="settings-product-section codex-remote-control-settings" aria-labelledby="codex-remote-control-title">
       <header className="settings-section-heading">
@@ -198,15 +215,34 @@ export function CodexRemoteControlSettings(props: CodexRemoteControlSettingsProp
                 {labels.disable}
               </button>
             ) : (
-              <button type="button" disabled={busy || !props.client} onClick={() => void run(() => props.client!.enableCodexRemoteControl())}>
+              <button type="button" disabled={busy || !props.client || standaloneBlocked} onClick={() => void run(() => props.client!.enableCodexRemoteControl())}>
                 {labels.enable}
               </button>
             )}
-            <button type="button" disabled={busy || !props.client} onClick={() => void pair()}>
+            <button type="button" disabled={busy || !props.client || standaloneBlocked} onClick={() => void pair()}>
               {labels.pair}
             </button>
           </span>
         </section>
+        {managedStandalone ? (
+          <section className="settings-config-row codex-remote-control-standalone" aria-label={labels.standaloneTitle}>
+            <span className="settings-row-copy">
+              <strong>{labels.standaloneTitle}</strong>
+              <small>{standaloneReady ? labels.standaloneReadyHelp : labels.standaloneMissingHelp}</small>
+            </span>
+            <span className="settings-row-field settings-evidence-list">
+              <span>{standaloneReady ? labels.standaloneReady : labels.standaloneMissing}</span>
+              <code>{standaloneReady ? managedStandalone.commandPath : managedStandalone.installCommand}</code>
+            </span>
+            <span className="settings-row-action-rail">
+              {!standaloneReady ? (
+                <button type="button" disabled={busy} onClick={() => void copyValue(managedStandalone.installCommand).then(() => setMessage(labels.installCopied))}>
+                  {labels.copyInstall}
+                </button>
+              ) : null}
+            </span>
+          </section>
+        ) : null}
         {error ? (
           <section className="settings-config-row codex-remote-control-recovery" aria-label={labels.connectionFailed}>
             <span className="settings-row-copy">
@@ -218,7 +254,7 @@ export function CodexRemoteControlSettings(props: CodexRemoteControlSettingsProp
             </span>
             <span className="settings-row-action-rail">
               {!snapshot?.enabled ? (
-                <button type="button" disabled={busy || !props.client} onClick={() => void run(() => props.client!.enableCodexRemoteControl())}>
+                <button type="button" disabled={busy || !props.client || standaloneBlocked} onClick={() => void run(() => props.client!.enableCodexRemoteControl())}>
                   {labels.retry}
                 </button>
               ) : null}
