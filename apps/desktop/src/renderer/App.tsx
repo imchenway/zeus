@@ -10958,6 +10958,9 @@ export function App(props: {
           onStartConversation={startNativeConversation}
           onStartProjectConversation={startProjectConversation}
           onOpenTaskDetail={onOpenTaskDetail}
+          onLoadTaskWorkspaces={props.nativeConversationClient.loadTaskGitWorkspaces}
+          onOpenTaskGitReview={(taskId, workspaceId, mode) => setTaskGitReviewState({ taskId, workspaceId, mode })}
+          onOpenTaskGitDelivery={(taskId) => setTaskGitMergeTaskId(taskId)}
         />
       );
     }
