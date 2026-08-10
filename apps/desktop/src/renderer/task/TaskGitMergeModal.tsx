@@ -93,6 +93,7 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
   const [conflictDocument, setConflictDocument] = useState<ConflictDocument | null>(null);
   const conflictDraftsRef = useRef<Record<string, ConflictDraft>>({});
   const [busyAction, setBusyAction] = useState<BusyAction>(null);
+  const [loadRevision, setLoadRevision] = useState(0);
   const [snapshotRevision, setSnapshotRevision] = useState(0);
   const [feedback, setFeedback] = useState<DeliveryFeedback | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -107,6 +108,8 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
   const conflictReadyToFinalize = Boolean(conflictWorkspaceOpen && activeConflict && activeConflict.conflictFiles.length === 0);
   const pendingLocalSync = integration?.state === 'pending_local_sync' ? integration : null;
   const busy = busyAction !== null;
+  const loading = busyAction === 'loading' && workspaces === null;
+  const dismissDisabled = busyAction !== null && busyAction !== 'loading';
   const workspaceClean = selectedWorkspace?.review?.clean ?? selectedWorkspace?.worktreePath === null;
   const commitReady = Boolean(selectedWorkspace && workspaceClean && selectedWorkspace.state !== 'discarded');
   const mergeReady = Boolean(selectedWorkspace?.branchComparison && commitReady && targetBranch && targetBranch !== selectedWorkspace.branchName && !pendingLocalSync);
@@ -162,7 +165,7 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
     return () => {
       cancelled = true;
     };
-  }, [props.open, props.task?.id, props.client, zh]);
+  }, [props.open, props.task?.id, props.client, zh, loadRevision]);
 
   useEffect(() => {
     const nextFiles = diffScope === 'committed' ? committedFiles : workingFiles.map((file) => toWorkingDeliveryFile(file, zh));
@@ -506,7 +509,7 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
   const integrationResult = deliveredIntegration ?? (selectedWorkspace?.state === 'merged' ? integrations.find((candidate) => candidate.workspaceId === selectedWorkspace.id && candidate.state === 'merged') : null);
 
   return (
-    <ModalPortal rootClassName="task-git-merge-portal-root" backdropClassName="task-git-merge-backdrop" dismissDisabled={busy} onDismiss={props.onClose}>
+    <ModalPortal rootClassName="task-git-merge-portal-root" backdropClassName="task-git-merge-backdrop" dismissDisabled={dismissDisabled} onDismiss={props.onClose}>
       <section className={`task-git-merge-modal task-git-delivery-modal${conflictWorkspaceOpen && activeConflict ? ' is-conflicted' : ''}`} role="dialog" aria-modal="true" aria-labelledby="task-git-merge-title">
         <header className="task-git-merge-header">
           <span>
@@ -518,13 +521,17 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
               {props.task.taskCode ?? props.task.id} · {props.task.title}
             </small>
           </span>
-          <button type="button" aria-label={zh ? '关闭' : 'Close'} onClick={props.onClose} disabled={busy}>
+          <button type="button" aria-label={zh ? '关闭' : 'Close'} onClick={props.onClose} disabled={dismissDisabled}>
             ×
           </button>
         </header>
 
         <div className="task-git-merge-content">
-          {unresolvedConflict ? (
+          {loading ? (
+            <InitialLoadState zh={zh} />
+          ) : !workspaces ? (
+            <InitialLoadState zh={zh} error={error} onRetry={() => setLoadRevision((current) => current + 1)} />
+          ) : unresolvedConflict ? (
             <TaskGitConflictWorkspace
               zh={zh}
               busy={busy}
@@ -758,7 +765,7 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
 
         <div className="task-git-merge-status" aria-live="polite">
           {feedback ? <p className={`task-git-delivery-feedback is-${feedback.tone}`}>{feedback.text}</p> : null}
-          {error ? (
+          {error && workspaces ? (
             <p className="task-git-merge-error" role="alert">
               {error}
             </p>
@@ -766,7 +773,7 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
         </div>
 
         <footer className="task-git-merge-footer">
-          <Button variant="secondary" size="regular" onClick={conflictWorkspaceOpen ? returnToDelivery : props.onClose} disabled={busy}>
+          <Button variant="secondary" size="regular" onClick={conflictWorkspaceOpen ? returnToDelivery : props.onClose} disabled={dismissDisabled}>
             {conflictWorkspaceOpen ? (zh ? '返回代码交付' : 'Back to code delivery') : zh ? '关闭' : 'Close'}
           </Button>
           {conflictWorkspaceOpen && activeConflict ? (
@@ -787,6 +794,20 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
         </footer>
       </section>
     </ModalPortal>
+  );
+}
+
+function InitialLoadState(props: { zh: boolean; error?: string | null; onRetry?: () => void }) {
+  return (
+    <section className="task-git-delivery-load-state" role={props.error ? 'alert' : 'status'}>
+      <strong>{props.error ? (props.zh ? '代码交付信息读取失败' : 'Code delivery could not be loaded') : props.zh ? '正在读取本机 Git 信息…' : 'Loading local Git information…'}</strong>
+      <small>{props.error ? props.error : props.zh ? '这里只读取本机分支、提交和工作区，不会连接远端仓库。' : 'This reads local branches, commits, and worktrees without contacting a remote repository.'}</small>
+      {props.onRetry ? (
+        <Button variant="secondary" size="compact" onClick={props.onRetry}>
+          {props.zh ? '重新读取' : 'Retry'}
+        </Button>
+      ) : null}
+    </section>
   );
 }
 
