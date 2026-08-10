@@ -114,7 +114,7 @@ import { SourceListRow } from './ui/SourceListRow.js';
 import { WorkspaceDrawer } from './ui/WorkspaceDrawer.js';
 import { CommandCenterPanel } from './CommandCenterPanel.js';
 import { ReleaseUpdateDialog, type ReleaseUpdateDialogState } from './release/ReleaseUpdateDialog.js';
-import { ArchitectureGraphCanvas, buildArchitectureLayerModel } from './graph/ArchitectureGraphCanvas.js';
+import { ArchitectureGraphCanvas, buildArchitectureLayerModel, canRenderArchitectureLayerModel, type ArchitectureLayerModel } from './graph/ArchitectureGraphCanvas.js';
 import {
   type AiRuntimeAdapterDescriptor,
   type AiRuntimeAdapterStatus,
@@ -14024,10 +14024,11 @@ function CodeMapView(props: {
     [focusedGraph.edges, focusedGraph.nodes, graphDrilldown],
   );
   const { nodes: visibleNodes, edges: visibleEdges, stats: visibleGraphStats } = visibleGraph;
-  const visibleArchitectureModel = useMemo(
+  const architectureLayerModel = useMemo(
     () => (!graphDrilldown && props.graphView.viewType === 'architecture' ? buildArchitectureLayerModel(visibleNodes, visibleEdges, props.graphView.title) : null),
     [graphDrilldown, props.graphView.title, props.graphView.viewType, visibleEdges, visibleNodes],
   );
+  const visibleArchitectureModel = architectureLayerModel && canRenderArchitectureLayerModel(architectureLayerModel) ? architectureLayerModel : null;
   const graphDrilldownLayout = useMemo(() => (graphDrilldown ? buildGraphNeighborhoodLayout(graphDrilldown.centerNode.id, visibleNodes, visibleEdges) : undefined), [graphDrilldown, visibleEdges, visibleNodes]);
   const inspectorGraphView = useMemo(
     () => ({
@@ -14649,6 +14650,7 @@ function CodeMapView(props: {
             edges={visibleEdges}
             layout={graphDrilldownLayout ?? props.graphView.layout}
             viewType={graphDrilldown ? 'module_detail' : (props.graphView.viewType as GraphViewType)}
+            architectureModel={visibleArchitectureModel}
             appLanguage={props.appLanguage}
             currentNodeId={selectedGraphSubject === 'node' ? (selectedGraphNode?.id ?? graphDrilldown?.centerNode.id) : graphDrilldown?.centerNode.id}
             currentEdgeId={selectedGraphSubject === 'edge' ? selectedGraphEdge?.id : null}
@@ -15813,6 +15815,7 @@ function GraphCanvas(props: {
   edges: Array<GraphViewSnapshot['edges'][number] | AggregatedGraphEdge>;
   layout?: GraphViewSnapshot['layout'];
   viewType?: GraphViewType;
+  architectureModel?: ArchitectureLayerModel | null;
   appLanguage: AppLanguage;
   currentNodeId?: string | null;
   currentEdgeId?: string | null;
@@ -15970,10 +15973,10 @@ function GraphCanvas(props: {
     );
   }
 
-  if (props.viewType === 'architecture') {
+  if (props.viewType === 'architecture' && props.architectureModel) {
     return (
       <ArchitectureGraphCanvas
-        model={buildArchitectureLayerModel(props.nodes, visibleEdges, props.title)}
+        model={props.architectureModel}
         appLanguage={props.appLanguage}
         zoom={camera.zoom}
         controls={canvasControls}

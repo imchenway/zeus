@@ -18833,6 +18833,24 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   padding: 2px 12px 14px;
 }
 
+/* 图谱工具始终是窄浮层，内部问答和历史按浮层宽度单列收敛，不能继续按整个窗口断点排版。 */
+.macos-ai-app
+  .project-code-map-stage
+  .code-map-tool-surface
+  :where(.graph-qa-compose-row, .graph-qa-question-row, .graph-qa-history-toolbar, .graph-qa-history-search-row, .graph-qa-history-row, .graph-qa-detail-header, .graph-qa-detail-meta-row) {
+  align-items: stretch;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.macos-ai-app .project-code-map-stage .code-map-tool-surface :where(.graph-qa-decision-rail, .graph-qa-toolbar-command-rail, .graph-qa-history-command-rail, .graph-qa-pagination-row) {
+  justify-content: flex-start;
+}
+
+.macos-ai-app .project-code-map-stage .code-map-tool-surface :where(.graph-qa-copy, .graph-qa-question-copy, .graph-qa-history-search-copy, .graph-qa-history-search-field) {
+  inline-size: 100%;
+  min-inline-size: 0;
+}
+
 .macos-ai-app .project-code-map-stage .code-map-graph-first .code-map-inspector-pane .graph-detail-workbench {
   background: transparent;
   border: 0;
