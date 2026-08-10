@@ -4442,32 +4442,14 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     if (!task) return reply.code(404).send({ error: 'ZEUS_TASK_NOT_FOUND', message: 'Task not found' });
     const project = projects.getById(task.projectId);
     if (!project) return reply.code(404).send({ error: 'ZEUS_PROJECT_NOT_FOUND', message: 'Project not found' });
-    const remoteRefreshes = new Map<string, ReturnType<typeof fetchGitRemote>>();
-    const refreshWorkspaceRemote = (repositoryPath: string, remoteName: string): ReturnType<typeof fetchGitRemote> => {
-      const key = `${repositoryPath}\0${remoteName}`;
-      const existing = remoteRefreshes.get(key);
-      if (existing) return existing;
-      const refresh = fetchGitRemote(repositoryPath, remoteName);
-      remoteRefreshes.set(key, refresh);
-      return refresh;
-    };
     let items: Array<Record<string, unknown>>;
     try {
       items = await Promise.all(
         taskWorkspaces.listByTask(task.id).map(async (workspace) => {
           const repositoryPath = workspace.repositoryPath || project.localPath;
           const repository = await getGitRepositoryContext(repositoryPath);
-          let refreshedRemote: Awaited<ReturnType<typeof fetchGitRemote>> | null = null;
-          let remoteRefreshError: string | null = null;
-          if (workspace.remoteName) {
-            try {
-              refreshedRemote = await refreshWorkspaceRemote(repositoryPath, workspace.remoteName);
-            } catch (error) {
-              // 远端故障只限制当前仓库的远端动作，本机差异和本地提交必须继续可用。
-              remoteRefreshError = taskGitErrorCode(error);
-            }
-          }
-          const targetBranches = workspace.remoteName ? (refreshedRemote?.branches.map((ref) => ref.slice(`${workspace.remoteName}/`.length)) ?? []) : repository.localBranches;
+          // 打开代码交付只读取本机 Git 快照；远端访问只能由用户明确触发的推送动作执行。
+          const targetBranches = repository.localBranches;
           const activeConversationCount = countTaskWorkspaceActiveConversations(workspace);
           let branchComparison = null;
           let comparisonError: string | undefined;
@@ -4476,11 +4458,11 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           } catch (error) {
             comparisonError = error instanceof Error ? error.message : 'Task branch comparison failed.';
           }
-          const remoteHeadSha = workspace.remoteName && refreshedRemote ? await getRemoteTrackingBranchHead(repositoryPath, workspace.remoteName, workspace.remoteBranch) : null;
+          const remoteHeadSha = workspace.remoteName ? await getRemoteTrackingBranchHead(repositoryPath, workspace.remoteName, workspace.remoteBranch) : null;
           const expectedHeadSha = branchComparison?.taskHeadSha ?? workspace.headSha;
           const remoteVerified = Boolean(expectedHeadSha && remoteHeadSha === expectedHeadSha);
           const sourceLocalHeadSha = await getGitBranchHead(repositoryPath, workspace.sourceBranch).catch(() => null);
-          const sourceRemoteHeadSha = workspace.remoteName && refreshedRemote ? await getRemoteTrackingBranchHead(repositoryPath, workspace.remoteName, workspace.sourceBranch) : null;
+          const sourceRemoteHeadSha = workspace.remoteName ? await getRemoteTrackingBranchHead(repositoryPath, workspace.remoteName, workspace.sourceBranch) : null;
           const sourceRemoteVerified = Boolean(sourceLocalHeadSha && sourceRemoteHeadSha === sourceLocalHeadSha);
           if (!workspace.worktreePath || workspace.state === 'reclaimed' || workspace.state === 'merged' || workspace.state === 'discarded') {
             return {
@@ -4490,7 +4472,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
               branchComparison,
               remoteHeadSha,
               remoteVerified,
-              remoteRefreshError,
+              remoteRefreshError: null,
               sourceLocalHeadSha,
               sourceRemoteHeadSha,
               sourceRemoteVerified,
@@ -4508,7 +4490,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
               branchComparison,
               remoteHeadSha,
               remoteVerified,
-              remoteRefreshError,
+              remoteRefreshError: null,
               sourceLocalHeadSha,
               sourceRemoteHeadSha,
               sourceRemoteVerified,
@@ -4526,7 +4508,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
               branchComparison,
               remoteHeadSha,
               remoteVerified,
-              remoteRefreshError,
+              remoteRefreshError: null,
               sourceLocalHeadSha,
               sourceRemoteHeadSha,
               sourceRemoteVerified,

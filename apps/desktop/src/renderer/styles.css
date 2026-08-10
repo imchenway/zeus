@@ -12865,6 +12865,27 @@ a {
   grid-template-rows: auto minmax(0, 1fr);
 }
 
+.macos-ai-app .task-git-delivery-load-state {
+  min-block-size: 0;
+  block-size: 100%;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 8px;
+  padding: 32px;
+  color: var(--zeus-product-muted);
+  text-align: center;
+}
+
+.macos-ai-app .task-git-delivery-load-state strong {
+  color: var(--zeus-product-text);
+}
+
+.macos-ai-app .task-git-delivery-load-state small {
+  max-inline-size: 520px;
+  line-height: 1.6;
+}
+
 .macos-ai-app .task-git-delivery-stepbar {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
