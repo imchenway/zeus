@@ -1,11 +1,10 @@
-import {useEffect, useState, type ReactNode} from 'react';
-import type {ZeusBrowserSettings} from '@zeus/shared';
-import {Button} from '../ui/Button.js';
+import { useEffect, useState, type ReactNode } from 'react';
+import type { ZeusBrowserSettings } from '@zeus/shared';
+import { Button } from '../ui/Button.js';
 
 interface BrowserSettingsPaneProps {
   language: 'zh-CN' | 'en-US';
 }
-
 const copy = {
   'zh-CN': {
     title: '内置浏览器',
@@ -29,7 +28,7 @@ const copy = {
     always: '始终',
     necessary: '必要时',
     downloads: '下载目录',
-    downloadsHelp: '浏览器下载默认保存到此本机绝对路径。',
+    downloadsHelp: '默认保存在 Zeus 私有资料目录，不会申请系统“下载”文件夹权限；改为其他受保护目录后，保存设置时可能由 macOS 询问。',
     askWhere: '每次询问保存位置',
     askWhereHelp: '开启后，下载开始前显示本机保存对话框。',
     allSites: '允许 Agent 访问所有站点',
@@ -69,7 +68,7 @@ const copy = {
     always: 'Always',
     necessary: 'When necessary',
     downloads: 'Download directory',
-    downloadsHelp: 'Browser downloads are saved to this absolute local path by default.',
+    downloadsHelp: 'The default Zeus-managed folder does not require access to the system Downloads folder. macOS may ask when you save another protected folder.',
     askWhere: 'Ask where to save each file',
     askWhereHelp: 'Shows a native save dialog before a download starts.',
     allSites: 'Allow Agent access to all sites',
@@ -116,14 +115,11 @@ export function BrowserSettingsPane(props: BrowserSettingsPaneProps) {
     };
   }, [labels.unavailable]);
 
-  function setBoolean(
-    key: 'enabled' | 'askWhereToSave' | 'allowAgentAllSites' | 'fullCdpEnabled',
-    value: boolean,
-  ): void {
+  function setBoolean(key: 'enabled' | 'askWhereToSave' | 'allowAgentAllSites' | 'fullCdpEnabled', value: boolean): void {
     if (!settings) return;
     if (value && key === 'allowAgentAllSites' && !window.confirm(labels.allSitesConfirm)) return;
     if (value && key === 'fullCdpEnabled' && !window.confirm(labels.cdpConfirm)) return;
-    setSettings({...settings, [key]: value});
+    setSettings({ ...settings, [key]: value });
     setStatus(null);
     setError(null);
   }
@@ -176,22 +172,19 @@ export function BrowserSettingsPane(props: BrowserSettingsPaneProps) {
       <p className="browser-settings-intro">{labels.intro}</p>
       <section className="native-settings-pane browser-settings-pane" aria-label={labels.title}>
         <BrowserSettingRow title={labels.enabled} description={labels.enabledHelp}>
-          <BrowserSwitch
-            label={labels.enabled}
-            checked={settings.enabled}
-            disabled={busy}
-            onChange={(checked) => setBoolean('enabled', checked)}
-          />
+          <BrowserSwitch label={labels.enabled} checked={settings.enabled} disabled={busy} onChange={(checked) => setBoolean('enabled', checked)} />
         </BrowserSettingRow>
         <BrowserSettingRow title={labels.webLinks} description={labels.webLinksHelp}>
           <select
             aria-label={labels.webLinks}
             value={settings.webLinkOpenTarget}
             disabled={busy}
-            onChange={(event) => setSettings({
-              ...settings,
-              webLinkOpenTarget: event.currentTarget.value as ZeusBrowserSettings['webLinkOpenTarget'],
-            })}
+            onChange={(event) =>
+              setSettings({
+                ...settings,
+                webLinkOpenTarget: event.currentTarget.value as ZeusBrowserSettings['webLinkOpenTarget'],
+              })
+            }
           >
             <option value="zeus_browser">{labels.zeusBrowser}</option>
             <option value="system_default">{labels.externalBrowser}</option>
@@ -202,10 +195,12 @@ export function BrowserSettingsPane(props: BrowserSettingsPaneProps) {
             aria-label={labels.localWeb}
             value={settings.localWebOpenTarget}
             disabled={busy}
-            onChange={(event) => setSettings({
-              ...settings,
-              localWebOpenTarget: event.currentTarget.value as ZeusBrowserSettings['localWebOpenTarget'],
-            })}
+            onChange={(event) =>
+              setSettings({
+                ...settings,
+                localWebOpenTarget: event.currentTarget.value as ZeusBrowserSettings['localWebOpenTarget'],
+              })
+            }
           >
             <option value="zeus_browser">{labels.zeusBrowser}</option>
             <option value="system_default">{labels.externalBrowser}</option>
@@ -216,10 +211,12 @@ export function BrowserSettingsPane(props: BrowserSettingsPaneProps) {
             aria-label={labels.files}
             value={settings.fileOpenTarget}
             disabled={busy}
-            onChange={(event) => setSettings({
-              ...settings,
-              fileOpenTarget: event.currentTarget.value as ZeusBrowserSettings['fileOpenTarget'],
-            })}
+            onChange={(event) =>
+              setSettings({
+                ...settings,
+                fileOpenTarget: event.currentTarget.value as ZeusBrowserSettings['fileOpenTarget'],
+              })
+            }
           >
             <option value="zeus_source">{labels.zeusPreview}</option>
             <option value="system_default">{labels.systemDefault}</option>
@@ -230,47 +227,22 @@ export function BrowserSettingsPane(props: BrowserSettingsPaneProps) {
           </select>
         </BrowserSettingRow>
         <BrowserSettingRow title={labels.screenshots} description={labels.screenshotsHelp}>
-          <select
-            aria-label={labels.screenshots}
-            value={settings.screenshotMode}
-            disabled={busy}
-            onChange={(event) => setSettings({...settings, screenshotMode: event.currentTarget.value as ZeusBrowserSettings['screenshotMode']})}
-          >
+          <select aria-label={labels.screenshots} value={settings.screenshotMode} disabled={busy} onChange={(event) => setSettings({ ...settings, screenshotMode: event.currentTarget.value as ZeusBrowserSettings['screenshotMode'] })}>
             <option value="always">{labels.always}</option>
             <option value="necessary">{labels.necessary}</option>
           </select>
         </BrowserSettingRow>
         <BrowserSettingRow title={labels.downloads} description={labels.downloadsHelp}>
-          <input
-            aria-label={labels.downloads}
-            value={settings.downloadDirectory}
-            disabled={busy}
-            onChange={(event) => setSettings({...settings, downloadDirectory: event.currentTarget.value})}
-          />
+          <input aria-label={labels.downloads} value={settings.downloadDirectory} disabled={busy} onChange={(event) => setSettings({ ...settings, downloadDirectory: event.currentTarget.value })} />
         </BrowserSettingRow>
         <BrowserSettingRow title={labels.askWhere} description={labels.askWhereHelp}>
-          <BrowserSwitch
-            label={labels.askWhere}
-            checked={settings.askWhereToSave}
-            disabled={busy}
-            onChange={(checked) => setBoolean('askWhereToSave', checked)}
-          />
+          <BrowserSwitch label={labels.askWhere} checked={settings.askWhereToSave} disabled={busy} onChange={(checked) => setBoolean('askWhereToSave', checked)} />
         </BrowserSettingRow>
         <BrowserSettingRow title={labels.allSites} description={labels.allSitesHelp} danger>
-          <BrowserSwitch
-            label={labels.allSites}
-            checked={settings.allowAgentAllSites}
-            disabled={busy}
-            onChange={(checked) => setBoolean('allowAgentAllSites', checked)}
-          />
+          <BrowserSwitch label={labels.allSites} checked={settings.allowAgentAllSites} disabled={busy} onChange={(checked) => setBoolean('allowAgentAllSites', checked)} />
         </BrowserSettingRow>
         <BrowserSettingRow title={labels.fullCdp} description={labels.fullCdpHelp} danger>
-          <BrowserSwitch
-            label={labels.fullCdp}
-            checked={settings.fullCdpEnabled}
-            disabled={busy}
-            onChange={(checked) => setBoolean('fullCdpEnabled', checked)}
-          />
+          <BrowserSwitch label={labels.fullCdp} checked={settings.fullCdpEnabled} disabled={busy} onChange={(checked) => setBoolean('fullCdpEnabled', checked)} />
         </BrowserSettingRow>
         <div className="browser-settings-actions">
           <Button variant="secondary" size="compact" onClick={() => void save()} busy={busy}>
@@ -289,12 +261,7 @@ export function BrowserSettingsPane(props: BrowserSettingsPaneProps) {
   );
 }
 
-function BrowserSettingRow(props: {
-  title: string;
-  description: string;
-  children: ReactNode;
-  danger?: boolean;
-}) {
+function BrowserSettingRow(props: { title: string; description: string; children: ReactNode; danger?: boolean }) {
   return (
     <div className={`native-control-row browser-settings-row ${props.danger ? 'danger' : ''}`}>
       <span className="native-control-copy">
@@ -306,22 +273,10 @@ function BrowserSettingRow(props: {
   );
 }
 
-function BrowserSwitch(props: {
-  label: string;
-  checked: boolean;
-  disabled?: boolean;
-  onChange: (checked: boolean) => void;
-}) {
+function BrowserSwitch(props: { label: string; checked: boolean; disabled?: boolean; onChange: (checked: boolean) => void }) {
   return (
     <span className="settings-switch-state">
-      <input
-        className="native-switch-input"
-        aria-label={props.label}
-        type="checkbox"
-        checked={props.checked}
-        disabled={props.disabled}
-        onChange={(event) => props.onChange(event.currentTarget.checked)}
-      />
+      <input className="native-switch-input" aria-label={props.label} type="checkbox" checked={props.checked} disabled={props.disabled} onChange={(event) => props.onChange(event.currentTarget.checked)} />
       <span className="native-switch-track" aria-hidden="true" />
     </span>
   );
