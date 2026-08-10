@@ -12210,6 +12210,40 @@ a {
   gap: 12px;
 }
 
+.macos-ai-app .task-model-push-batch-source {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+  padding: 11px 12px;
+  border: 1px solid var(--zeus-product-line-soft);
+  border-radius: 10px;
+  background: var(--zeus-control-bg);
+}
+
+.macos-ai-app .task-model-push-batch-source-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.macos-ai-app .task-model-push-batch-source-heading small,
+.macos-ai-app .task-model-push-batch-source > small {
+  color: var(--zeus-product-muted);
+}
+
+.macos-ai-app .task-model-push-batch-source .zeus-select {
+  inline-size: 100%;
+}
+
+.macos-ai-app .task-model-push-batch-source-empty {
+  margin: 0;
+  color: var(--zeus-product-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .macos-ai-app .task-model-push-repository {
   min-width: 0;
   margin: 0;
