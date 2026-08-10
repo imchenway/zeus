@@ -1001,7 +1001,10 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   currentHeaderRef.current = currentHeader;
   const [displayedHeader, setDisplayedHeader] = useState(currentHeader);
   const [titleMotion, setTitleMotion] = useState<'entered' | 'exiting'>('entered');
-  const [composerRuntimeSettings, setComposerRuntimeSettings] = useState<ComposerRuntimeSettings | null>(null);
+  // 会话重新挂载时先接管本地已确认的用户选择，避免旧热快照在首轮 effect 中覆盖尚在落盘的配置。
+  const [composerRuntimeSettings, setComposerRuntimeSettings] = useState<ComposerRuntimeSettings | null>(() =>
+    readConversationNextTurnSettings(browserConversationStorage(), props.conversation?.projectId ?? '', props.conversation?.id ?? ''),
+  );
   const lastNextTurnSettingsSyncRef = useRef<string | null>(null);
   const previousBlockingInteractionCountRef = useRef(0);
   const composerFocusRestorationPendingRef = useRef(false);

@@ -4,6 +4,7 @@ import type {
   NativeConversationEvent,
   NativeConversationSnapshot,
   NativeItemSnapshot,
+  NativeNextTurnSettings,
   NativePendingRequest,
   NativePlanImplementationRequest,
   NativeProviderSettingsSnapshot,
@@ -22,6 +23,7 @@ import type { ZeusBrowserComment, ZeusBrowserPreparedSubmission } from '@zeus/sh
 export type NativeSessionAction =
   | { type: 'transport_changed'; transportState: TransportState; reconnectAttempt?: number; error?: NativeSessionError | null }
   | { type: 'snapshot_hydrated'; snapshot: NativeConversationSnapshot }
+  | { type: 'next_turn_settings_changed'; settings: NativeNextTurnSettings }
   | { type: 'pending_requests_hydrated'; requests: NativePendingRequest[]; turns?: NativeTurnSnapshot[]; items?: NativeItemSnapshot[] }
   | { type: 'queue_hydrated'; queue: NativeQueueSnapshot }
   | { type: 'operation_started'; operation: string }
@@ -132,6 +134,16 @@ export function sessionReducer(state: NativeSessionState, action: NativeSessionA
       };
     case 'snapshot_hydrated':
       return hydrateSnapshot(state, action.snapshot);
+    case 'next_turn_settings_changed':
+      return state.snapshot
+        ? {
+            ...state,
+            snapshot: {
+              ...state.snapshot,
+              nextTurnSettings: action.settings,
+            },
+          }
+        : state;
     case 'pending_requests_hydrated': {
       const requests = normalizePendingRequests(state, action.requests, action.turns, action.items);
       return {

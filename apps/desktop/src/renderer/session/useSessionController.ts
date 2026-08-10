@@ -902,7 +902,10 @@ export function createSessionController(options: CreateSessionControllerOptions)
       );
     },
     setNextTurnSettings(settings) {
-      return options.client.updateNativeNextTurnSettings(options.projectId, options.conversationId, settings);
+      return options.client.updateNativeNextTurnSettings(options.projectId, options.conversationId, settings).then((updated) => {
+        if (!disposed) dispatch({ type: 'next_turn_settings_changed', settings: updated });
+        return updated;
+      });
     },
     send(delivery, expectedTurnId, settings) {
       if (recoveryRequired) return Promise.reject(sessionWriteBlockedError(recoveryRequired));
