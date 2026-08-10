@@ -40,6 +40,7 @@ import type {
   SessionConversationOwner,
   StartNativeConversationRequest,
   StartProjectConversationRequest,
+  TaskWorkspacesSnapshot,
   TurnChangeSet,
   TurnChangeSetOperationResult,
 } from './sessionTypes.js';
@@ -50,6 +51,7 @@ import { SafeMarkdown, type SessionUiLanguage } from './ThreadItemView.js';
 import { autosizeTextarea } from './textareaAutosize.js';
 import { ConversationComposerAttachments, conversationAttachmentIdentity } from './ConversationComposerAttachments.js';
 import { useConversationInputResources } from './useConversationInputResources.js';
+import { SessionQuickActionsCard } from './SessionQuickActionsCard.js';
 
 export interface SessionWorkspaceTask {
   id: string;
@@ -107,6 +109,9 @@ export interface SessionWorkspaceActions {
   onRetryItem?: (item: NativeSessionItemBuffer) => void;
   onSelectTask?: (task: SessionWorkspaceTask) => void;
   onOpenTaskDetail?: (taskId: string) => void;
+  onLoadTaskWorkspaces?: (taskId: string) => Promise<TaskWorkspacesSnapshot>;
+  onOpenTaskGitReview?: (taskId: string, workspaceId: string | null, mode: 'commit' | 'push-only') => void;
+  onOpenTaskGitDelivery?: (taskId: string) => void;
   onOpenImportSettings?: (conversation: NativeConversationChoice) => void;
   onNextTurnSettingsChange?: (settings: ComposerRuntimeSettings) => void | Promise<void>;
   onPermissionModeChange?: (permissionMode: NativePermissionMode) => void | Promise<void>;
@@ -188,6 +193,9 @@ export interface ConnectedSessionWorkspaceProps {
   onStartProjectConversation?: SessionWorkspaceActions['onStartProjectConversation'];
   onOpenTaskDetail?: SessionWorkspaceActions['onOpenTaskDetail'];
   readOnlyGate?: SessionReadOnlyGate;
+  onLoadTaskWorkspaces?: SessionWorkspaceActions['onLoadTaskWorkspaces'];
+  onOpenTaskGitReview?: SessionWorkspaceActions['onOpenTaskGitReview'];
+  onOpenTaskGitDelivery?: SessionWorkspaceActions['onOpenTaskGitDelivery'];
 }
 
 export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps) {
@@ -271,6 +279,9 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
         onStartConversation: props.onStartConversation,
         onStartProjectConversation: props.onStartProjectConversation,
         onOpenTaskDetail: props.onOpenTaskDetail,
+        onLoadTaskWorkspaces: props.onLoadTaskWorkspaces,
+        onOpenTaskGitReview: props.onOpenTaskGitReview,
+        onOpenTaskGitDelivery: props.onOpenTaskGitDelivery,
         onLoadCapabilities: props.client.loadCodexConversationCapabilities,
         onChooseStartAttachments: props.onChooseAttachments,
       }}
@@ -1501,6 +1512,20 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
             {displayedHeader.contextLabel ? <small>{displayedHeader.contextLabel}</small> : null}
           </span>
           <span className="session-thread-header-actions">
+            {!legacy && props.conversation && props.state ? (
+              <SessionQuickActionsCard
+                language={props.language}
+                conversation={props.conversation}
+                state={props.state}
+                task={props.task}
+                onLoadTaskWorkspaces={actions.onLoadTaskWorkspaces}
+                onOpenTaskDetail={actions.onOpenTaskDetail}
+                onOpenGitReview={actions.onOpenTaskGitReview}
+                onOpenGitDelivery={actions.onOpenTaskGitDelivery}
+                onAddSources={actions.onChooseAttachments}
+                onOpenSource={(resource) => openConversationResource(resource, defaultOpenTarget(resource))}
+              />
+            ) : null}
             {!legacy && props.conversation ? (
               <button
                 type="button"
