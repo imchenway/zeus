@@ -1,18 +1,10 @@
-import {useEffect, useMemo, useState} from 'react';
-import {buildTaskCommitMessageSuggestion} from '@zeus/shared';
-import {type DashboardClient, type TaskRecord, ZeusApiError} from '../apiClient.js';
-import type {
-    BatchTaskWorkspaceResponse,
-    TaskGitDiffSummary,
-    TaskGitFileDiff,
-    TaskGitFileStatus,
-    TaskWorkspaceIndexCollection,
-    TaskWorkspaceIndexSnapshot,
-    TaskWorkspaceSnapshot
-} from '../session/sessionTypes.js';
-import {Button} from '../ui/Button.js';
-import {ModalPortal} from '../ui/ModalPortal.js';
-import {TaskWorkspaceBranchList} from './TaskWorkspaceBranchList.js';
+import { useEffect, useMemo, useState } from 'react';
+import { buildTaskCommitMessageSuggestion } from '@zeus/shared';
+import { type DashboardClient, type TaskRecord, ZeusApiError } from '../apiClient.js';
+import type { BatchTaskWorkspaceResponse, TaskGitDiffSummary, TaskGitFileDiff, TaskGitFileStatus, TaskWorkspaceIndexCollection, TaskWorkspaceIndexSnapshot, TaskWorkspaceSnapshot } from '../session/sessionTypes.js';
+import { Button } from '../ui/Button.js';
+import { ModalPortal } from '../ui/ModalPortal.js';
+import { TaskWorkspaceBranchList } from './TaskWorkspaceBranchList.js';
 
 type ReviewMode = 'commit' | 'commit-only' | 'push-only' | 'delivery';
 type ReviewStatus = 'loading' | 'ready' | 'submitting' | 'error';
@@ -416,11 +408,11 @@ function TaskGitReviewModalContent(props: TaskGitReviewModalContentProps) {
             ) : null}
             {activeWorkspace && activeWorkspace.activeConversationCount > 0 ? (
               <section className="task-git-review-active-sessions">
-                  <strong>{zh ? '活动会话不阻止 Git 操作' : 'Active sessions do not block Git operations'}</strong>
+                <strong>{zh ? '活动会话不阻止 Git 操作' : 'Active sessions do not block Git operations'}</strong>
                 <small>
                   {zh
-                      ? `系统检测到 ${activeWorkspace.activeConversationCount} 个会话仍可能写入此分支。该状态只作提示，不参与提交或推送门禁；本次提交只包含当前已经落盘的内容，后续变化可以继续提交。`
-                      : `The system detected ${activeWorkspace.activeConversationCount} conversation(s) that may still write to this branch. This is informational only and never gates commit or push; this commit includes only content written so far, and later changes can be committed again.`}
+                    ? `系统检测到 ${activeWorkspace.activeConversationCount} 个会话仍可能写入此分支。该状态只作提示，不参与提交或推送门禁；本次提交只包含当前已经落盘的内容，后续变化可以继续提交。`
+                    : `The system detected ${activeWorkspace.activeConversationCount} conversation(s) that may still write to this branch. This is informational only and never gates commit or push; this commit includes only content written so far, and later changes can be committed again.`}
                 </small>
               </section>
             ) : null}
