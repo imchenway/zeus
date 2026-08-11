@@ -16077,6 +16077,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           payload: { integrationId: integration.id, attemptId: attempt.id, workspaceId: workspace.id, conversationId, targetBranch: integration.targetBranch, resultHeadSha: finalized.resultHeadSha },
         });
         await db.save();
+        publishRealtimeEvent('task.git_delivery.changed', { taskId: task.id, integrationId: integration.id, conversationId });
         return;
       }
       const taskWorktreeReclaimed = integration.targetBranch === workspace.sourceBranch ? await markTaskWorkspaceDelivered(workspace) : false;
@@ -16097,6 +16098,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         },
       });
       await db.save();
+      publishRealtimeEvent('task.git_delivery.changed', { taskId: task.id, integrationId: integration.id, conversationId });
     } catch (error) {
       const stale = isStaleTaskIntegrationError(error) || taskGitErrorCode(error) === 'ZEUS_TASK_INTEGRATION_ATTEMPT_STALE';
       taskIntegrationAttempts.update(attempt.id, {
@@ -16116,6 +16118,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         });
       }
       await db.save();
+      if (latestIntegration) publishRealtimeEvent('task.git_delivery.changed', { taskId: latestIntegration.taskId, integrationId: latestIntegration.id, conversationId });
       if (stale && latestIntegration) await cleanupTaskIntegrationAttemptWorktree(attempt.worktreePath, latestIntegration).catch(() => undefined);
     }
   }
@@ -16167,6 +16170,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           payload: { integrationId: integration.id, workspaceId: workspace.id, conversationId, targetBranch: integration.targetBranch, resultHeadSha: finalized.resultHeadSha },
         });
         await db.save();
+        publishRealtimeEvent('task.git_delivery.changed', { taskId: task.id, integrationId: integration.id, conversationId });
         return;
       }
       const taskWorktreeReclaimed = integration.targetBranch === workspace.sourceBranch ? await markTaskWorkspaceDelivered(workspace) : false;
@@ -16186,6 +16190,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         },
       });
       await db.save();
+      publishRealtimeEvent('task.git_delivery.changed', { taskId: task.id, integrationId: integration.id, conversationId });
     } catch (error) {
       const integration = taskIntegrations.getById(integrationId);
       if (integration && integration.state !== 'merged') {
@@ -16205,6 +16210,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           },
         });
         await db.save();
+        publishRealtimeEvent('task.git_delivery.changed', { taskId: integration.taskId, integrationId: integration.id, conversationId });
       }
     }
   }

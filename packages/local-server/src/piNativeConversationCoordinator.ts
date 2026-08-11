@@ -162,6 +162,12 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       nativeSessionId: session.nativeSessionId,
       nativeSessionPath: session.nativeSessionPath ?? undefined,
     });
+    options.conversations.updateNextTurnSettings(input.conversationId, {
+      model: input.model.sourceId ? modelRef(input.model.sourceId, input.model.modelId) : input.model.modelId,
+      ...(input.thinkingLevel ? { effort: input.thinkingLevel } : {}),
+      permissionMode: input.permissionMode,
+      collaborationMode: 'default',
+    });
     contexts.set(session.nativeSessionId, {
       conversationId: input.conversationId,
       projectId: input.projectId,

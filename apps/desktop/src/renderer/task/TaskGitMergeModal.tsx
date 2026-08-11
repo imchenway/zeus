@@ -114,6 +114,7 @@ interface TaskGitMergeModalProps {
   task: TaskRecord | null;
   projectName?: string;
   currentConversationWorkspaceId?: string | null;
+  refreshRevision?: number;
   client: DeliveryClient | null;
   executionReady?: boolean;
   onChanged?: () => void | Promise<void>;
@@ -346,6 +347,11 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
       setWorkspaceId(nextWorkspace.id);
     }
   }
+
+  useEffect(() => {
+    if (!props.refreshRevision || !props.task || !props.client) return;
+    void reload(workspaceId).catch((reason: unknown) => setError(errorMessage(reason, zh)));
+  }, [props.refreshRevision]);
 
   async function commit(): Promise<void> {
     if (!props.task || !props.client || !selectedWorkspace || selectedPaths.length === 0) return;
