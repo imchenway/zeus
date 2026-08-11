@@ -414,7 +414,6 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
   const [fieldSettingsOpen, setFieldSettingsOpen] = useState(false);
   const [moreSettingsOpen, setMoreSettingsOpen] = useState(false);
   const [draggedColumnKey, setDraggedColumnKey] = useState<TaskTableColumnKey | null>(null);
-  const [dragPreviewColumnOrder, setDragPreviewColumnOrder] = useState<TaskTableColumnKey[] | null>(null);
   const [dragInsertion, setDragInsertion] = useState<{ targetColumnKey: TaskTableColumnKey; position: TaskTableColumnDropPosition } | null>(null);
   const [keyboardMovingColumnKey, setKeyboardMovingColumnKey] = useState<TaskTableColumnKey | null>(null);
   const [columnInteractionAnnouncement, setColumnInteractionAnnouncement] = useState('');
@@ -490,10 +489,9 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
   // visual thesis: 任务表格像 macOS 原生工作台，选择列稳定，批量栏只在选择后低噪音出现，任务列表空态必须保持轻量行。
   // content plan: 顶部仍只服务筛选与新建；选择后追加批量状态、删除与结果提示；单任务详情在右侧悬浮抽屉中展开。
   // interaction thesis: checkbox 只负责选择，行内容负责打开详情，执行反馈通过 aria-live 告知而不打断表格浏览。
-  const renderedColumnPreferences = dragPreviewColumnOrder ? { ...model.columnPreferences, columnOrder: dragPreviewColumnOrder } : model.columnPreferences;
-  const renderedVisibleColumns = renderedColumnPreferences.columnOrder.filter((columnKey) => renderedColumnPreferences.visibleColumnKeys.includes(columnKey));
-  const taskTableContentGridTemplate = renderedVisibleColumns.map((columnKey) => getTaskTableColumnTrack(columnKey, renderedColumnPreferences)).join(' ');
-  const taskTableContentWidth = renderedVisibleColumns.reduce((total, columnKey) => total + (renderedColumnPreferences.columnWidths?.[columnKey] ?? defaultTaskTableColumnWidths[columnKey]), 32);
+  const renderedVisibleColumns = model.visibleColumns;
+  const taskTableContentGridTemplate = renderedVisibleColumns.map((columnKey) => getTaskTableColumnTrack(columnKey, model.columnPreferences)).join(' ');
+  const taskTableContentWidth = renderedVisibleColumns.reduce((total, columnKey) => total + (model.columnPreferences.columnWidths?.[columnKey] ?? defaultTaskTableColumnWidths[columnKey]), 32);
   // 动态列由模型偏好决定，并和选择列一起写入单一 CSS 变量，header/row 共用同一条轨道。
   const taskTableGridStyle = {
     '--task-table-grid-template': `minmax(32px, 32px) ${taskTableContentGridTemplate}`,
@@ -636,41 +634,43 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
     setColumnInteractionAnnouncement(isEnglishCopy ? `${title} is column ${position} of ${visibleColumns.length}.` : `${title} 已移至第 ${position} 列，共 ${visibleColumns.length} 列。`);
   };
 
-  const clearColumnDragPreview = () => {
+  const clearColumnDragState = () => {
     setDraggedColumnKey(null);
-    setDragPreviewColumnOrder(null);
     setDragInsertion(null);
   };
 
   const handleColumnDragStart = (event: ReactDragEvent<HTMLElement>, columnKey: TaskTableColumnKey) => {
     setDraggedColumnKey(columnKey);
-    setDragPreviewColumnOrder([...model.columnPreferences.columnOrder]);
     setDragInsertion(null);
     event.dataTransfer.effectAllowed = 'move';
     event.dataTransfer.setData('text/plain', columnKey);
   };
 
   const handleColumnDragOver = (event: ReactDragEvent<HTMLElement>, targetColumnKey: TaskTableColumnKey) => {
-    if (!draggedColumnKey || draggedColumnKey === targetColumnKey) return;
+    if (!draggedColumnKey) return;
     event.preventDefault();
     event.dataTransfer.dropEffect = 'move';
+    if (draggedColumnKey === targetColumnKey) {
+      setDragInsertion(null);
+      return;
+    }
     const bounds = event.currentTarget.getBoundingClientRect();
     const position: TaskTableColumnDropPosition = event.clientX < bounds.left + bounds.width / 2 ? 'before' : 'after';
-    const nextPreferences = placeTaskTableColumn(model.columnPreferences, draggedColumnKey, targetColumnKey, position);
-    setDragPreviewColumnOrder((current) => (arrayShallowEqual(current ?? [], nextPreferences.columnOrder) ? current : nextPreferences.columnOrder));
     setDragInsertion((current) => (current?.targetColumnKey === targetColumnKey && current.position === position ? current : { targetColumnKey, position }));
   };
 
-  const handleColumnDrop = (event: ReactDragEvent<HTMLElement>) => {
+  const handleColumnDrop = (event: ReactDragEvent<HTMLElement>, targetColumnKey: TaskTableColumnKey) => {
     event.preventDefault();
-    if (!draggedColumnKey || !dragPreviewColumnOrder) {
-      clearColumnDragPreview();
+    if (!draggedColumnKey || draggedColumnKey === targetColumnKey) {
+      clearColumnDragState();
       return;
     }
-    const nextPreferences = normalizeTaskTableColumnPreferences({ ...model.columnPreferences, columnOrder: dragPreviewColumnOrder });
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const position: TaskTableColumnDropPosition = event.clientX < bounds.left + bounds.width / 2 ? 'before' : 'after';
+    const nextPreferences = placeTaskTableColumn(model.columnPreferences, draggedColumnKey, targetColumnKey, position);
     props.onTaskTableColumnsChange(nextPreferences);
     announceColumnPosition(draggedColumnKey, nextPreferences);
-    clearColumnDragPreview();
+    clearColumnDragState();
   };
 
   const handleColumnMoveKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>, columnKey: TaskTableColumnKey) => {
@@ -985,7 +985,7 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
                     aria-sort={sortDirection === 'asc' ? 'ascending' : sortDirection === 'desc' ? 'descending' : 'none'}
                     key={columnKey}
                     onDragOver={(event) => handleColumnDragOver(event, columnKey)}
-                    onDrop={handleColumnDrop}
+                    onDrop={(event) => handleColumnDrop(event, columnKey)}
                   >
                     <button
                       type="button"
@@ -995,7 +995,7 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
                       aria-label={isEnglishCopy ? `Move ${columnLabels[columnKey]} column` : `移动${columnLabels[columnKey]}列`}
                       title={isEnglishCopy ? 'Drag to reorder. Keyboard: Space, arrows, Space.' : '拖动调整位置；键盘可按空格、方向键、空格。'}
                       onDragStart={(event) => handleColumnDragStart(event, columnKey)}
-                      onDragEnd={clearColumnDragPreview}
+                      onDragEnd={clearColumnDragState}
                       onKeyDown={(event) => handleColumnMoveKeyDown(event, columnKey)}
                     >
                       <span aria-hidden="true">⋮⋮</span>
@@ -1007,7 +1007,7 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
                       aria-label={isEnglishCopy ? `Sort by ${columnLabels[columnKey]}; currently ${sortLabel}` : `按${columnLabels[columnKey]}排序；当前${sortLabel}`}
                       title={isEnglishCopy ? `Click to sort (${sortLabel}); drag to reorder.` : `点击排序（${sortLabel}）；拖动调整列位置。`}
                       onDragStart={(event) => handleColumnDragStart(event, columnKey)}
-                      onDragEnd={clearColumnDragPreview}
+                      onDragEnd={clearColumnDragState}
                       onClick={() => props.onTaskTableColumnsChange(cycleTaskTableSort(model.columnPreferences, columnKey))}
                     >
                       <span>{columnLabels[columnKey]}</span>
