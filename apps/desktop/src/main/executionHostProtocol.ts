@@ -106,7 +106,10 @@ export interface ExecutionHostControlClient {
   detach(leaseId: string): Promise<ExecutionHostControlStatus>;
   stopActiveWork(): Promise<{
     requestedTurnCount: number;
+    closedSubmissionCount: number;
+    failedRequestCount: number;
     stoppedRuntimeCount: number;
+    stoppedCommandRunCount: number;
     failedTurns: Array<{ conversationId: string; providerTurnId: string; message: string }>;
     requestedAt: string;
   }>;
@@ -195,7 +198,10 @@ export function createExecutionHostControlClient(rendezvous: ExecutionHostRendez
     stopActiveWork: () =>
       request<{
         requestedTurnCount: number;
+        closedSubmissionCount: number;
+        failedRequestCount: number;
         stoppedRuntimeCount: number;
+        stoppedCommandRunCount: number;
         failedTurns: Array<{ conversationId: string; providerTurnId: string; message: string }>;
         requestedAt: string;
       }>('/work/stop', {

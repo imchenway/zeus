@@ -634,7 +634,10 @@ interface ExecutionHostWorkStatusSnapshot {
 
 interface ExecutionHostStopResult {
   requestedTurnCount: number;
+  closedSubmissionCount: number;
+  failedRequestCount: number;
   stoppedRuntimeCount: number;
+  stoppedCommandRunCount: number;
   failedTurns: Array<{ conversationId: string; providerTurnId: string; message: string }>;
   requestedAt: string;
 }
@@ -3075,32 +3078,75 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   server.post('/api/execution-host/stop-active', async (): Promise<ExecutionHostStopResult> => {
     const requestedAt = now().toISOString();
     const failedTurns: ExecutionHostStopResult['failedTurns'] = [];
-    const activeSubmissions = conversationSubmissions.listRecoverable().filter((submission) => (submission.status === 'dispatching' || submission.status === 'active') && submission.providerTurnId);
+    const recoverableSubmissions = conversationSubmissions.listRecoverable();
+    const activeSubmissions = recoverableSubmissions.filter((submission) => (submission.status === 'dispatching' || submission.status === 'active') && submission.providerTurnId);
     const requestedTurns = new Set<string>();
     for (const submission of activeSubmissions) {
       const providerTurnId = submission.providerTurnId!;
       const identity = `${submission.conversationId}\0${providerTurnId}`;
       if (requestedTurns.has(identity)) continue;
       requestedTurns.add(identity);
-      try {
-        await codexNativeCoordinator.interruptTurn({
-          conversationId: submission.conversationId,
-          providerTurnId,
-        });
-      } catch (error) {
+      const conversation = conversations.getById(submission.conversationId);
+      if (!conversation) continue;
+      const interrupt =
+        conversation.agentKind === 'pi'
+          ? piNativeCoordinator.interruptTurn({ conversation, providerTurnId })
+          : conversation.providerThreadId
+            ? codexAppServerManager.interruptTurn({ threadId: conversation.providerThreadId, turnId: providerTurnId })
+            : Promise.reject(new Error('活动轮次缺少 Provider 会话身份。'));
+      void interrupt.catch((error) => {
         failedTurns.push({
           conversationId: submission.conversationId,
           providerTurnId,
-          message: error instanceof Error ? error.message : '无法停止正在执行的轮次。',
+          message: error instanceof Error ? error.message : '无法发送执行轮次中断请求。',
         });
-      }
+      });
     }
+
+    const forcedExitError = {
+      code: 'ZEUS_FORCED_QUIT_INTERRUPTED',
+      message: '用户停止活动工作并退出 Zeus。',
+      providerOutcomeUnconfirmed: true,
+    };
+    const interruptedConversationIds = new Set<string>();
+    for (const turn of conversationTurns.listInProgress()) {
+      conversationTurns.upsert({
+        ...turn,
+        status: 'interrupted',
+        error: forcedExitError,
+        completedAt: requestedAt,
+        updatedAt: requestedAt,
+      });
+      interruptedConversationIds.add(turn.conversationId);
+    }
+    for (const submission of recoverableSubmissions) {
+      conversationSubmissions.updateStatus(submission.id, submission.providerTurnId ? 'completed' : 'cancelled', {
+        providerTurnId: submission.providerTurnId,
+        error: forcedExitError,
+        resolvedAt: requestedAt,
+        updatedAt: requestedAt,
+      });
+      interruptedConversationIds.add(submission.conversationId);
+    }
+    const pendingRequests = conversationRequests.listPending();
+    for (const request of pendingRequests) conversationRequests.fail(request.id, { error: forcedExitError, resolvedAt: requestedAt });
+    for (const conversationId of interruptedConversationIds) {
+      conversations.updateAgentRuntime(conversationId, { providerState: 'ready', status: 'open' });
+    }
+
+    const stoppedCommandRunCount = commandCenter.stopActiveRuns('用户停止活动工作并退出 Zeus');
     const activeRuntimeSessions = aiRuntimeManager.listSessions().filter((session) => session.status === 'running');
-    for (const session of activeRuntimeSessions) aiRuntimeManager.stopSession(session.id);
+    for (const session of activeRuntimeSessions) {
+      aiRuntimeManager.stopSession(session.id);
+      aiRuntimeManager.killSession(session.id, 'SIGKILL');
+    }
     await db.save();
     return {
       requestedTurnCount: requestedTurns.size,
+      closedSubmissionCount: recoverableSubmissions.length,
+      failedRequestCount: pendingRequests.length,
       stoppedRuntimeCount: activeRuntimeSessions.length,
+      stoppedCommandRunCount,
       failedTurns,
       requestedAt,
     };
