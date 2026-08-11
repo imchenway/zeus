@@ -17,6 +17,7 @@ body:has(.menu-bar-usage-root),
   --usage-muted: #747780;
   --usage-faint: #979aa3;
   --usage-line: rgb(20 22 28 / 9%);
+  --usage-edge: rgb(20 22 28 / 13%);
   --usage-accent: #4d61d8;
   --usage-accent-soft: #eef0ff;
   --usage-danger: #b64949;
@@ -42,6 +43,7 @@ body:has(.menu-bar-usage-root),
   --usage-muted: #a7a8b0;
   --usage-faint: #858690;
   --usage-line: rgb(255 255 255 / 10%);
+  --usage-edge: rgb(255 255 255 / 14%);
   --usage-accent: #8996ff;
   --usage-accent-soft: rgb(98 112 235 / 17%);
   --usage-danger: #ff9393;
@@ -58,6 +60,7 @@ body:has(.menu-bar-usage-root),
     --usage-muted: #a7a8b0;
     --usage-faint: #858690;
     --usage-line: rgb(255 255 255 / 10%);
+    --usage-edge: rgb(255 255 255 / 14%);
     --usage-accent: #8996ff;
     --usage-accent-soft: rgb(98 112 235 / 17%);
     --usage-danger: #ff9393;
@@ -83,12 +86,9 @@ body:has(.menu-bar-usage-root),
   inline-size: 100%;
   block-size: 100%;
   overflow: hidden;
-  border: 1px solid var(--usage-line);
+  border: 1px solid var(--usage-edge);
   border-radius: 18px;
   background: var(--usage-bg);
-  box-shadow:
-    0 17px 42px rgb(0 0 0 / 25%),
-    0 2px 8px rgb(0 0 0 / 12%);
   backdrop-filter: blur(28px) saturate(1.25);
   -webkit-backdrop-filter: blur(28px) saturate(1.25);
 }
