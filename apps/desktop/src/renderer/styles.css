@@ -10887,6 +10887,50 @@ a {
   justify-content: space-between;
 }
 
+/* 全局会话状态连接断开时保留最后已知投影，同时明确告知用户正在恢复权威快照。 */
+.macos-ai-app .conversation-status-sync-indicator {
+  align-items: center;
+  background: color-mix(in oklch, var(--zeus-product-panel) 94%, transparent);
+  border: 1px solid var(--zeus-product-line);
+  border-radius: 8px;
+  box-shadow: 0 8px 22px color-mix(in oklch, var(--zeus-product-shadow, black) 12%, transparent);
+  color: var(--zeus-product-muted);
+  display: inline-flex;
+  font-size: 11px;
+  font-weight: 580;
+  gap: 7px;
+  inset-block-start: 44px;
+  inset-inline-start: 50%;
+  line-height: 16px;
+  padding: 5px 9px;
+  pointer-events: none;
+  position: fixed;
+  transform: translateX(-50%);
+  z-index: 120;
+}
+
+.macos-ai-app .conversation-status-sync-spinner {
+  animation: conversation-status-sync-spin 0.85s linear infinite;
+  block-size: 11px;
+  border: 1.5px solid currentColor;
+  border-block-end-color: transparent;
+  border-radius: 50%;
+  inline-size: 11px;
+}
+
+@keyframes conversation-status-sync-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .macos-ai-app .conversation-status-sync-spinner {
+    animation: none;
+    border-block-end-color: currentColor;
+  }
+}
+
 /* 任务状态与优先级使用低饱和语义色；文字始终保留，运行中的动效直接复用会话列表的旋转标记。 */
 .macos-ai-app {
   --zeus-task-status-blue: oklch(48% 0.11 252);

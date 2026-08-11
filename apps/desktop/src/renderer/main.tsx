@@ -186,10 +186,7 @@ async function renderWithClient(client: DashboardClient, executionHostTransition
         onLoadGraphConversations={(projectId, input) => client.loadGraphConversations(projectId, input)}
         onLoadGraphConversation={(projectId, conversationId) => client.loadGraphConversation(projectId, conversationId)}
         onSendConversationMessage={(projectId, conversationId, content) => client.sendConversationMessage(projectId, conversationId, content)}
-        onSubscribeRealtimeEvents={(onEvent) => {
-          const socket = client.connectEvents(onEvent);
-          return () => socket.close();
-        }}
+        onSubscribeRealtimeEvents={(onEvent, onConnectionState) => client.subscribeEvents(onEvent, onConnectionState)}
         onArchiveGraphConversation={(projectId, conversationId) => client.archiveGraphConversation(projectId, conversationId)}
         onRestoreGraphConversation={(projectId, conversationId) => client.restoreGraphConversation(projectId, conversationId)}
         onCreateTaskFromGraphConversation={async (projectId, conversationId) => {
