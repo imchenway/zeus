@@ -1,25 +1,25 @@
 import type {
-    ConversationState,
-    NativeConversationAttachment,
-    NativeConversationEvent,
-    NativeConversationSnapshot,
-    NativeItemSnapshot,
-    NativeNextTurnSettings,
-    NativePendingRequest,
-    NativePlanImplementationRequest,
-    NativeProviderSettingsSnapshot,
-    NativeProviderValueSnapshot,
-    NativeQueuedSubmission,
-    NativeQueueSnapshot,
-    NativeSessionError,
-    NativeSessionItemBuffer,
-    NativeSessionState,
-    NativeTokenUsageSnapshot,
-    NativeTurnPlanSnapshot,
-    NativeTurnSnapshot,
-    TransportState,
+  ConversationState,
+  NativeConversationAttachment,
+  NativeConversationEvent,
+  NativeConversationSnapshot,
+  NativeItemSnapshot,
+  NativeNextTurnSettings,
+  NativePendingRequest,
+  NativePlanImplementationRequest,
+  NativeProviderSettingsSnapshot,
+  NativeProviderValueSnapshot,
+  NativeQueuedSubmission,
+  NativeQueueSnapshot,
+  NativeSessionError,
+  NativeSessionItemBuffer,
+  NativeSessionState,
+  NativeTokenUsageSnapshot,
+  NativeTurnPlanSnapshot,
+  NativeTurnSnapshot,
+  TransportState,
 } from './sessionTypes.js';
-import type {ZeusBrowserComment, ZeusBrowserPreparedSubmission} from '@zeus/shared';
+import type { ZeusBrowserComment, ZeusBrowserPreparedSubmission } from '@zeus/shared';
 
 export type NativeSessionAction =
   | { type: 'transport_changed'; transportState: TransportState; reconnectAttempt?: number; error?: NativeSessionError | null }
@@ -564,17 +564,17 @@ function reduceNativeEvent(state: NativeSessionState, event: NativeConversationE
       if (suppressRequestAuthority) return base;
       const requestId = stringValue(payload.requestId);
       const requestKind = stringValue(payload.requestKind) ?? 'approval';
-        const rawEventRequest = requestId ? pendingRequestFromEvent(payload.request, requestId) : null;
-        const eventRequest = rawEventRequest ? normalizePendingRequests(base, [rawEventRequest])[0] : null;
-        const pendingRequests = eventRequest
-            ? state.pendingRequests.some((request) => request.id === requestId)
-                ? state.pendingRequests.map((request) => (request.id === requestId ? eventRequest : request))
-                : [...state.pendingRequests, eventRequest]
-            : state.pendingRequests;
+      const rawEventRequest = requestId ? pendingRequestFromEvent(payload.request, requestId) : null;
+      const eventRequest = rawEventRequest ? normalizePendingRequests(base, [rawEventRequest])[0] : null;
+      const pendingRequests = eventRequest
+        ? state.pendingRequests.some((request) => request.id === requestId)
+          ? state.pendingRequests.map((request) => (request.id === requestId ? eventRequest : request))
+          : [...state.pendingRequests, eventRequest]
+        : state.pendingRequests;
       return {
         ...base,
         pendingRequests,
-          conversationState: eventRequest ? (requestKind === 'request_user_input' || requestKind === 'userInput' ? 'waiting_user_input' : 'waiting_approval') : base.conversationState,
+        conversationState: eventRequest ? (requestKind === 'request_user_input' || requestKind === 'userInput' ? 'waiting_user_input' : 'waiting_approval') : base.conversationState,
       };
     }
     case 'conversation.request.resolved': {
@@ -962,15 +962,15 @@ function requestConversationState(requests: NativePendingRequest[]): Conversatio
 }
 
 function pendingRequestFromEvent(value: unknown, requestId: string): NativePendingRequest | null {
-    if (!isRecord(value) || value.id !== requestId || typeof value.conversationId !== 'string' || typeof value.generationId !== 'string' || typeof value.type !== 'string' || typeof value.status !== 'string') return null;
-    if (!isRecord(value.payload) || Object.keys(value.payload).length === 0 || (value.response !== null && !isRecord(value.response))) return null;
-    if (typeof value.containsSecret !== 'boolean' || typeof value.createdAt !== 'string') return null;
-    if (value.turnId !== null && typeof value.turnId !== 'string') return null;
-    if (value.itemId !== null && typeof value.itemId !== 'string') return null;
-    if (value.expiresAt !== null && typeof value.expiresAt !== 'string') return null;
-    if (value.resolvedAt !== null && typeof value.resolvedAt !== 'string') return null;
-    if (value.autoResolutionState !== undefined && value.autoResolutionState !== 'none' && value.autoResolutionState !== 'scheduled' && value.autoResolutionState !== 'snoozed') return null;
-    return value as unknown as NativePendingRequest;
+  if (!isRecord(value) || value.id !== requestId || typeof value.conversationId !== 'string' || typeof value.generationId !== 'string' || typeof value.type !== 'string' || typeof value.status !== 'string') return null;
+  if (!isRecord(value.payload) || Object.keys(value.payload).length === 0 || (value.response !== null && !isRecord(value.response))) return null;
+  if (typeof value.containsSecret !== 'boolean' || typeof value.createdAt !== 'string') return null;
+  if (value.turnId !== null && typeof value.turnId !== 'string') return null;
+  if (value.itemId !== null && typeof value.itemId !== 'string') return null;
+  if (value.expiresAt !== null && typeof value.expiresAt !== 'string') return null;
+  if (value.resolvedAt !== null && typeof value.resolvedAt !== 'string') return null;
+  if (value.autoResolutionState !== undefined && value.autoResolutionState !== 'none' && value.autoResolutionState !== 'scheduled' && value.autoResolutionState !== 'snoozed') return null;
+  return value as unknown as NativePendingRequest;
 }
 
 function normalizePendingRequests(state: NativeSessionState, requests: NativePendingRequest[], turns = state.snapshot?.turns, items = state.snapshot?.items): NativePendingRequest[] {

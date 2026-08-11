@@ -1,16 +1,16 @@
-import {type KeyboardEvent, useEffect, useLayoutEffect, useMemo, useRef, useState} from 'react';
-import {ArrowRightIcon as ArrowRight} from '@phosphor-icons/react/dist/csr/ArrowRight';
-import {CheckIcon as Check} from '@phosphor-icons/react/dist/csr/Check';
-import {CaretDownIcon as CaretDown} from '@phosphor-icons/react/dist/csr/CaretDown';
-import {InfoIcon as Info} from '@phosphor-icons/react/dist/csr/Info';
-import {PencilSimpleIcon as PencilSimple} from '@phosphor-icons/react/dist/csr/PencilSimple';
-import {QuestionIcon as Question} from '@phosphor-icons/react/dist/csr/Question';
-import {TerminalWindowIcon as TerminalWindow} from '@phosphor-icons/react/dist/csr/TerminalWindow';
-import {XIcon as X} from '@phosphor-icons/react/dist/csr/X';
-import {openExternalHttpsUrlInMain} from '../appShellBridge.js';
-import type {NativePendingRequest, NativePermissionMode} from './sessionTypes.js';
-import type {SessionUiLanguage} from './ThreadItemView.js';
-import {autosizeTextarea} from './textareaAutosize.js';
+import { type KeyboardEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { ArrowRightIcon as ArrowRight } from '@phosphor-icons/react/dist/csr/ArrowRight';
+import { CheckIcon as Check } from '@phosphor-icons/react/dist/csr/Check';
+import { CaretDownIcon as CaretDown } from '@phosphor-icons/react/dist/csr/CaretDown';
+import { InfoIcon as Info } from '@phosphor-icons/react/dist/csr/Info';
+import { PencilSimpleIcon as PencilSimple } from '@phosphor-icons/react/dist/csr/PencilSimple';
+import { QuestionIcon as Question } from '@phosphor-icons/react/dist/csr/Question';
+import { TerminalWindowIcon as TerminalWindow } from '@phosphor-icons/react/dist/csr/TerminalWindow';
+import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
+import { openExternalHttpsUrlInMain } from '../appShellBridge.js';
+import type { NativePendingRequest, NativePermissionMode } from './sessionTypes.js';
+import type { SessionUiLanguage } from './ThreadItemView.js';
+import { autosizeTextarea } from './textareaAutosize.js';
 
 export interface RequestQuestionOption {
   label: string;
@@ -132,7 +132,7 @@ export function PendingRequestSurface(props: PendingRequestSurfaceProps) {
   const [mcpUrlError, setMcpUrlError] = useState<string | null>(null);
   const firstControlRef = useRef<HTMLInputElement | HTMLButtonElement | null>(null);
   const isRui = kind === 'request_user_input';
-    const hasDetails = isRui ? questions.length > 0 : hasPendingRequestDetails(props.request);
+  const hasDetails = isRui ? questions.length > 0 : hasPendingRequestDetails(props.request);
   const decisions = supportedRequestDecisions(props.request);
   const autofocusDecision = defaultAutofocusDecision(decisions);
 
@@ -162,7 +162,7 @@ export function PendingRequestSurface(props: PendingRequestSurfaceProps) {
     );
   }
 
-    if (!hasDetails) return null;
+  if (!hasDetails) return null;
 
   if (!isRui) {
     if (kind === 'command' || kind === 'file') {
@@ -994,8 +994,8 @@ export function requestKind(request: NativePendingRequest): PendingRequestKind {
 }
 
 export function hasPendingRequestDetails(request: NativePendingRequest): boolean {
-    if (requestKind(request) === 'request_user_input') return normalizeRequestQuestions(request).length > 0;
-    return Object.keys(request.payload).length > 0;
+  if (requestKind(request) === 'request_user_input') return normalizeRequestQuestions(request).length > 0;
+  return Object.keys(request.payload).length > 0;
 }
 
 export function supportedRequestDecisions(request: NativePendingRequest): SupportedRequestDecision[] {

@@ -1,31 +1,21 @@
-import {execFile} from 'node:child_process';
-import {realpathSync, statSync} from 'node:fs';
-import {readdir, readFile, writeFile} from 'node:fs/promises';
-import {extname, isAbsolute, relative, resolve, sep} from 'node:path';
-import {promisify} from 'node:util';
-import {
-    type AgentImageInput,
-    type AgentModelIdentity,
-    type AgentRuntimeEvent,
-    type AgentSessionIdentity,
-    createPiSdkRuntimeDriver,
-    modelRef,
-    type PiZeusToolBroker,
-    type PiZeusToolRequest,
-    type PiZeusToolResult
-} from '@zeus/ai-runtime';
+import { execFile } from 'node:child_process';
+import { realpathSync, statSync } from 'node:fs';
+import { readdir, readFile, writeFile } from 'node:fs/promises';
+import { extname, isAbsolute, relative, resolve, sep } from 'node:path';
+import { promisify } from 'node:util';
+import { type AgentImageInput, type AgentModelIdentity, type AgentRuntimeEvent, type AgentSessionIdentity, createPiSdkRuntimeDriver, modelRef, type PiZeusToolBroker, type PiZeusToolRequest, type PiZeusToolResult } from '@zeus/ai-runtime';
 import type {
-    ConversationItemRepository,
-    ConversationRepository,
-    ConversationServerRequestRepository,
-    ConversationSubmissionRepository,
-    ConversationTurnRepository,
-    ZeusConversationServerRequestRecord,
-    ZeusConversationWithMessagesRecord,
-    ZeusDatabase,
+  ConversationItemRepository,
+  ConversationRepository,
+  ConversationServerRequestRepository,
+  ConversationSubmissionRepository,
+  ConversationTurnRepository,
+  ZeusConversationServerRequestRecord,
+  ZeusConversationWithMessagesRecord,
+  ZeusDatabase,
 } from '@zeus/storage';
-import type {ModelConnectionService} from './modelConnectionService.js';
-import type {NativeConversationAttachmentInput} from './codexNativeConversationContracts.js';
+import type { ModelConnectionService } from './modelConnectionService.js';
+import type { NativeConversationAttachmentInput } from './codexNativeConversationContracts.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -532,11 +522,11 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       createdAt: timestamp,
     });
     await options.db.save();
-      publish('conversation.request.created', context.conversationId, {
-          requestId: persisted.id,
-          requestKind: kind,
-          request: nativePendingRequestProjection(persisted),
-      });
+    publish('conversation.request.created', context.conversationId, {
+      requestId: persisted.id,
+      requestKind: kind,
+      request: nativePendingRequestProjection(persisted),
+    });
     return new Promise<boolean>((resolveApproval, reject) => {
       const finish = (allowed: boolean) => {
         request.signal?.removeEventListener('abort', abort);
@@ -760,22 +750,22 @@ function readApprovalDecision(value: unknown): boolean {
 }
 
 function nativePendingRequestProjection(request: ZeusConversationServerRequestRecord): Record<string, unknown> {
-    return {
-        id: request.id,
-        conversationId: request.conversationId,
-        turnId: request.turnId,
-        itemId: request.itemId,
-        generationId: request.transportGenerationId,
-        type: request.requestKind === 'request_user_input' ? 'userInput' : request.requestKind === 'mcp' ? 'MCP' : request.requestKind,
-        status: request.status,
-        payload: asRecord(JSON.parse(request.payloadJson) as unknown),
-        response: request.responseJson ? asRecord(JSON.parse(request.responseJson) as unknown) : null,
-        containsSecret: request.containsSecret,
-        expiresAt: request.expiresAt,
-        autoResolutionState: request.autoResolutionState,
-        createdAt: request.createdAt,
-        resolvedAt: request.resolvedAt,
-    };
+  return {
+    id: request.id,
+    conversationId: request.conversationId,
+    turnId: request.turnId,
+    itemId: request.itemId,
+    generationId: request.transportGenerationId,
+    type: request.requestKind === 'request_user_input' ? 'userInput' : request.requestKind === 'mcp' ? 'MCP' : request.requestKind,
+    status: request.status,
+    payload: asRecord(JSON.parse(request.payloadJson) as unknown),
+    response: request.responseJson ? asRecord(JSON.parse(request.responseJson) as unknown) : null,
+    containsSecret: request.containsSecret,
+    expiresAt: request.expiresAt,
+    autoResolutionState: request.autoResolutionState,
+    createdAt: request.createdAt,
+    resolvedAt: request.resolvedAt,
+  };
 }
 
 function redactArgs(args: Record<string, unknown>): Record<string, unknown> {

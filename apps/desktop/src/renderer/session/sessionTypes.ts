@@ -1,11 +1,11 @@
 import type {
-    ConversationResource,
-    NativeTokenUsageSnapshot as SharedNativeTokenUsageSnapshot,
-    TaskPushParentContextOption,
-    TaskPushParentContextSelection,
-    TurnChangeSet,
-    ZeusBrowserComment,
-    ZeusBrowserPreparedSubmission,
+  ConversationResource,
+  NativeTokenUsageSnapshot as SharedNativeTokenUsageSnapshot,
+  TaskPushParentContextOption,
+  TaskPushParentContextSelection,
+  TurnChangeSet,
+  ZeusBrowserComment,
+  ZeusBrowserPreparedSubmission,
 } from '@zeus/shared';
 
 export type { ConversationResource, ConversationResourcePreview, TurnChangeSet, TurnChangeSetOperationResult } from '@zeus/shared';
@@ -845,12 +845,15 @@ export type NativeConversationEvent =
   | NativeEvent<'conversation.mcpStartup.changed', NativeEventIdentity & { value: Record<string, unknown> }>
   | NativeEvent<'conversation.queue.changed', NativeEventIdentity & { queue: NativeQueueSnapshot }>
   | NativeEvent<'conversation.submission.steering', NativeEventIdentity & { submission: NativeQueuedSubmission; queue: NativeQueueSnapshot }>
-    | NativeEvent<'conversation.request.created', NativeEventIdentity & {
-    turnId?: string;
-    requestId: string;
-    requestKind: string;
-    request?: NativePendingRequest
-}>
+  | NativeEvent<
+      'conversation.request.created',
+      NativeEventIdentity & {
+        turnId?: string;
+        requestId: string;
+        requestKind: string;
+        request?: NativePendingRequest;
+      }
+    >
   | NativeEvent<'conversation.request.resolved', NativeEventIdentity & { turnId?: string; requestId: string; requestKind?: string }>
   | NativeEvent<'conversation.request.snoozed', NativeEventIdentity & { requestId: string }>
   | NativeEvent<
