@@ -1665,6 +1665,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                 }}
                 onAddSources={actions.onChooseAttachments}
                 onOpenSource={(resource) => openConversationResource(resource, defaultOpenTarget(resource))}
+                onLoadResourcePreview={actions.onLoadResourcePreview}
               />
             ) : null}
           </div>

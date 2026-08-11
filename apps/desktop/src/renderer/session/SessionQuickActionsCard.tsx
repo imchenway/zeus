@@ -1,19 +1,30 @@
-import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import { type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ArrowSquareOutIcon as ArrowSquareOut } from '@phosphor-icons/react/dist/csr/ArrowSquareOut';
-import { CaretDownIcon as CaretDown } from '@phosphor-icons/react/dist/csr/CaretDown';
 import { FileIcon as File } from '@phosphor-icons/react/dist/csr/File';
 import { FileCodeIcon as FileCode } from '@phosphor-icons/react/dist/csr/FileCode';
+import { FileImageIcon as FileImage } from '@phosphor-icons/react/dist/csr/FileImage';
 import { FolderIcon as Folder } from '@phosphor-icons/react/dist/csr/Folder';
 import { GearSixIcon as GearSix } from '@phosphor-icons/react/dist/csr/GearSix';
 import { GitBranchIcon as GitBranch } from '@phosphor-icons/react/dist/csr/GitBranch';
 import { GitDiffIcon as GitDiff } from '@phosphor-icons/react/dist/csr/GitDiff';
 import { GithubLogoIcon as GithubLogo } from '@phosphor-icons/react/dist/csr/GithubLogo';
 import { PlusIcon as Plus } from '@phosphor-icons/react/dist/csr/Plus';
+import { ShareNetworkIcon as ShareNetwork } from '@phosphor-icons/react/dist/csr/ShareNetwork';
 import { TerminalWindowIcon as TerminalWindow } from '@phosphor-icons/react/dist/csr/TerminalWindow';
 import { conversationAttachmentIdentity } from './ConversationComposerAttachments.js';
+import { isImageResource, isPendingImageAttachment, ResourceIcon } from './ConversationResources.js';
 import { SessionCodeReviewDialog, type SessionCodeReviewSelection } from './SessionCodeReviewDialog.js';
-import type { CodexConversationCapabilities, ConversationResource, NativeConversationChoice, NativeSessionState, TaskWorkspaceSnapshot, TaskWorkspacesSnapshot } from './sessionTypes.js';
+import type {
+  CodexConversationCapabilities,
+  ConversationResource,
+  ConversationResourcePreview,
+  NativeConversationAttachment,
+  NativeConversationChoice,
+  NativeSessionState,
+  TaskWorkspaceSnapshot,
+  TaskWorkspacesSnapshot,
+} from './sessionTypes.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
 
 interface SessionQuickActionsCardProps {
@@ -34,19 +45,23 @@ interface SessionQuickActionsCardProps {
   onStartCodeReview?: (selection: SessionCodeReviewSelection) => void | boolean | Promise<void | boolean>;
   onAddSources?: () => void | Promise<void>;
   onOpenSource?: (resource: ConversationResource) => void | Promise<void>;
+  onLoadResourcePreview?: (resource: ConversationResource) => Promise<ConversationResourcePreview>;
 }
 
 interface SourceRow {
   id: string;
   label: string;
+  attachment?: NativeConversationAttachment;
   resource?: ConversationResource;
 }
 
 const PERSISTENT_CARD_MIN_WORKSPACE_WIDTH = 1440;
+const DEFAULT_VISIBLE_SOURCE_COUNT = 3;
 
 export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
   const zh = props.language === 'zh-CN';
   const rootRef = useRef<HTMLDivElement | null>(null);
+  const cardRef = useRef<HTMLElement | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const loadedWorkspaceKeyRef = useRef<string | null>(null);
   const [open, setOpen] = useState(false);
@@ -63,7 +78,7 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
   const branch = executionContext?.cwd ? executionContext.branch : (workspace?.review?.branch ?? workspace?.branchName ?? null);
   const changes = summarizeWorkspaceChanges(workspace);
   const sources = useMemo(() => collectSources(props.state), [props.state.attachments, props.state.items]);
-  const visibleSources = showAllSources ? sources : sources.slice(0, 2);
+  const visibleSources = showAllSources ? sources : sources.slice(0, DEFAULT_VISIBLE_SOURCE_COUNT);
   const dirty = workspace?.review ? !workspace.review.clean : false;
   const canOpenReview = Boolean(taskId && workspace && props.onOpenGitReview);
   const canOpenDelivery = Boolean(taskId && props.onOpenGitDelivery);
@@ -156,6 +171,57 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
     };
   }, [open]);
 
+  useLayoutEffect(() => {
+    if (!cardVisible) return;
+    const card = cardRef.current;
+    if (!card) return;
+
+    const updateAvailableHeight = (): void => {
+      const viewport = window.visualViewport;
+      const viewportBottom = viewport ? viewport.offsetTop + viewport.height : window.innerHeight;
+      const cardTop = card.getBoundingClientRect().top;
+      card.style.setProperty('--session-quick-actions-available-height', `${Math.max(0, Math.floor(viewportBottom - cardTop - 16))}px`);
+    };
+
+    const resizeObserver = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(updateAvailableHeight);
+    const persistentParent = persistent ? props.persistentHost?.parentElement : null;
+    const observePersistentLayout = (): void => {
+      if (!resizeObserver || !props.persistentHost) return;
+      resizeObserver.disconnect();
+      resizeObserver.observe(props.persistentHost);
+      let sibling = props.persistentHost.previousElementSibling;
+      while (sibling) {
+        if (sibling instanceof HTMLElement) resizeObserver.observe(sibling);
+        sibling = sibling.previousElementSibling;
+      }
+    };
+    if (persistent) observePersistentLayout();
+    else if (rootRef.current && resizeObserver) resizeObserver.observe(rootRef.current);
+
+    const mutationObserver =
+      persistentParent && typeof MutationObserver !== 'undefined'
+        ? new MutationObserver(() => {
+            observePersistentLayout();
+            updateAvailableHeight();
+          })
+        : null;
+    mutationObserver?.observe(persistentParent as HTMLElement, { childList: true });
+
+    const frame = window.requestAnimationFrame(updateAvailableHeight);
+    window.addEventListener('resize', updateAvailableHeight);
+    window.visualViewport?.addEventListener('resize', updateAvailableHeight);
+    window.visualViewport?.addEventListener('scroll', updateAvailableHeight);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      resizeObserver?.disconnect();
+      mutationObserver?.disconnect();
+      window.removeEventListener('resize', updateAvailableHeight);
+      window.visualViewport?.removeEventListener('resize', updateAvailableHeight);
+      window.visualViewport?.removeEventListener('scroll', updateAvailableHeight);
+      card.style.removeProperty('--session-quick-actions-available-height');
+    };
+  }, [cardVisible, persistent, props.persistentHost]);
+
   function openReview(): void {
     if (!taskId || !workspace || !props.onOpenGitReview) return;
     setOpen(false);
@@ -198,8 +264,10 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
       {cardMounted ? (
         <SessionQuickActionsCardMount persistent={persistent} host={props.persistentHost}>
           <section
+            ref={cardRef}
             className="session-quick-actions-card"
             data-presentation={persistent ? 'persistent' : 'popover'}
+            data-sources-expanded={showAllSources || undefined}
             role={persistent ? 'region' : 'dialog'}
             aria-label={zh ? '环境信息与快捷操作' : 'Environment information and quick actions'}
             hidden={props.suppressed || undefined}
@@ -314,13 +382,13 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
                     <li key={source.id}>
                       {source.resource && props.onOpenSource ? (
                         <button type="button" title={source.label} onClick={() => void props.onOpenSource?.(source.resource as ConversationResource)}>
-                          <File aria-hidden="true" weight="regular" />
-                          <span>{source.label}</span>
+                          <SessionQuickActionSourceVisual source={source} onLoadResourcePreview={props.onLoadResourcePreview} />
+                          <span className="session-quick-actions-source-label">{source.label}</span>
                         </button>
                       ) : (
                         <span title={source.label}>
-                          <File aria-hidden="true" weight="regular" />
-                          <span>{source.label}</span>
+                          <SessionQuickActionSourceVisual source={source} onLoadResourcePreview={props.onLoadResourcePreview} />
+                          <span className="session-quick-actions-source-label">{source.label}</span>
                         </span>
                       )}
                     </li>
@@ -329,10 +397,10 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
               ) : (
                 <p>{zh ? '当前会话还没有来源。' : 'No sources in this conversation yet.'}</p>
               )}
-              {sources.length > 2 ? (
+              {sources.length > DEFAULT_VISIBLE_SOURCE_COUNT ? (
                 <button type="button" className="session-quick-actions-view-all" aria-expanded={showAllSources} onClick={() => setShowAllSources((current) => !current)}>
-                  <CaretDown aria-hidden="true" weight="regular" />
-                  <span>{showAllSources ? (zh ? '收起' : 'Show less') : zh ? `查看全部（${sources.length}）` : `View all (${sources.length})`}</span>
+                  <ShareNetwork aria-hidden="true" weight="regular" />
+                  <span>{showAllSources ? (zh ? '收起' : 'Show less') : zh ? '查看全部' : 'View all'}</span>
                 </button>
               ) : null}
             </section>
@@ -358,6 +426,89 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
       />
     </div>
   );
+}
+
+function SessionQuickActionSourceVisual(props: { source: SourceRow; onLoadResourcePreview?: (resource: ConversationResource) => Promise<ConversationResourcePreview> }) {
+  const rootRef = useRef<HTMLSpanElement | null>(null);
+  const sourceRef = useRef(props.source);
+  const loadPreviewRef = useRef(props.onLoadResourcePreview);
+  const [visible, setVisible] = useState(false);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [previewFailed, setPreviewFailed] = useState(false);
+  sourceRef.current = props.source;
+  loadPreviewRef.current = props.onLoadResourcePreview;
+  const image = isImageSource(props.source);
+
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root || !image || visible) return;
+    if (typeof IntersectionObserver === 'undefined') {
+      setVisible(true);
+      return;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (!entries.some((entry) => entry.isIntersecting)) return;
+        setVisible(true);
+        observer.disconnect();
+      },
+      { rootMargin: '96px' },
+    );
+    observer.observe(root);
+    return () => observer.disconnect();
+  }, [image, visible]);
+
+  useEffect(() => {
+    if (!image || !visible) return;
+    let active = true;
+    setPreviewUrl(null);
+    setPreviewFailed(false);
+    void loadSourcePreview(sourceRef.current, loadPreviewRef.current)
+      .then((url) => {
+        if (!active) return;
+        if (url) setPreviewUrl(url);
+        else setPreviewFailed(true);
+      })
+      .catch(() => {
+        if (active) setPreviewFailed(true);
+      });
+    return () => {
+      active = false;
+    };
+  }, [image, props.source.id, visible]);
+
+  return (
+    <span ref={rootRef} className="session-quick-actions-source-visual" aria-hidden="true" data-image={image || undefined} data-preview-failed={previewFailed || undefined}>
+      {previewUrl && !previewFailed ? <img src={previewUrl} alt="" loading="lazy" onError={() => setPreviewFailed(true)} /> : <SourceFallbackIcon source={props.source} />}
+    </span>
+  );
+}
+
+function SourceFallbackIcon(props: { source: SourceRow }) {
+  if (props.source.resource) return <ResourceIcon resource={props.source.resource} />;
+  if (props.source.attachment && isPendingImageAttachment(props.source.attachment)) return <FileImage weight="duotone" />;
+  if (props.source.attachment?.kind === 'directory') return <Folder weight="duotone" />;
+  if (props.source.attachment?.kind === 'pasted_text') return <FileCode weight="duotone" />;
+  return <File weight="duotone" />;
+}
+
+function isImageSource(source: SourceRow): boolean {
+  if (source.resource) return isImageResource(source.resource);
+  return Boolean(source.attachment && isPendingImageAttachment(source.attachment));
+}
+
+async function loadSourcePreview(source: SourceRow, loadResourcePreview?: (resource: ConversationResource) => Promise<ConversationResourcePreview>): Promise<string | null> {
+  if (source.resource) {
+    if (!loadResourcePreview) return null;
+    const preview = await loadResourcePreview(source.resource);
+    return preview.kind === 'image' ? preview.dataUrl : null;
+  }
+  if (!source.attachment || !window.zeus?.getConversationResourcePreview) return null;
+  const preview = await window.zeus.getConversationResourcePreview({
+    ...(source.attachment.localPath ? { localPath: source.attachment.localPath } : {}),
+    ...(source.attachment.uploadRef ? { uploadRef: source.attachment.uploadRef } : {}),
+  });
+  return preview?.mimeType.startsWith('image/') ? preview.previewUrl : null;
 }
 
 function SessionQuickActionsCardMount(props: { persistent: boolean; host?: HTMLElement | null; children: ReactNode }) {
@@ -388,7 +539,7 @@ function collectSources(state: NativeSessionState): SourceRow[] {
   const byId = new Map<string, SourceRow>();
   for (const attachment of state.attachments) {
     const id = `attachment:${conversationAttachmentIdentity(attachment)}`;
-    byId.set(id, { id, label: attachment.name });
+    byId.set(id, { id, label: attachment.name, attachment });
   }
   for (const resource of Object.values(state.items).flatMap((item) => item.resources)) {
     byId.set(`resource:${resource.id}`, { id: `resource:${resource.id}`, label: resource.displayName, resource });

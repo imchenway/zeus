@@ -624,7 +624,7 @@ export function isImageResource(resource: ConversationResource): boolean {
   return resource.kind === 'attachment' ? resource.previewKind === 'image' : resource.kind === 'file' && resource.iconKind === 'image';
 }
 
-function ResourceIcon(props: { resource: ConversationResource }) {
+export function ResourceIcon(props: { resource: ConversationResource }) {
   if (props.resource.kind === 'file' && props.resource.presentation === 'card' && props.resource.iconKind === 'html') {
     return <GlobeSimple aria-hidden="true" weight="duotone" />;
   }
