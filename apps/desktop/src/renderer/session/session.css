@@ -4949,6 +4949,15 @@
   text-align: start;
 }
 
+.session-codex-parity-v1 .session-pending-attachment-image {
+  cursor: default;
+  margin: 0;
+}
+
+.session-codex-parity-v1 .session-pending-attachment-fallback {
+  cursor: default;
+}
+
 .session-codex-parity-v1 .session-resource-image:hover,
 .session-codex-parity-v1 .session-resource-image:focus-visible {
   border-color: var(--session-accent);
@@ -12158,4 +12167,10 @@
   .session-codex-parity-v1 .session-turn-duration-caret {
     transition: none;
   }
+}
+
+.session-codex-parity-v1 .session-pending-attachment-image:hover,
+.session-codex-parity-v1 .session-pending-attachment-image:focus-visible {
+  border-color: var(--session-line);
+  box-shadow: none;
 }

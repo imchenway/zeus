@@ -19,11 +19,106 @@ import { GlobeSimpleIcon as GlobeSimple } from '@phosphor-icons/react/dist/csr/G
 import { GithubLogoIcon as GithubLogo } from '@phosphor-icons/react/dist/csr/GithubLogo';
 import type { ConversationFileIconKind, ConversationFileLocation, ConversationOpenTarget, ConversationResource, ConversationResourceOpenTarget, ConversationResourcePreview } from '@zeus/shared';
 import { listConversationResourceOpenTargetsInMain } from '../appShellBridge.js';
+import type { NativeConversationAttachment } from './sessionTypes.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
 
 export interface ConversationResourceInteraction {
   onOpenResource?: (resource: ConversationResource, target: ConversationOpenTarget, location?: ConversationFileLocation) => void | Promise<void>;
   onLoadResourcePreview?: (resource: ConversationResource) => Promise<ConversationResourcePreview>;
+}
+
+export function isPendingImageAttachment(attachment: Pick<NativeConversationAttachment, 'kind' | 'mime'>): boolean {
+  return attachment.kind === 'image' || attachment.mime.startsWith('image/');
+}
+
+export function ConversationPendingAttachmentImages(props: { attachments: NativeConversationAttachment[]; language: SessionUiLanguage; onVisibleContentChange?: () => void }) {
+  const images = props.attachments.filter(isPendingImageAttachment);
+  if (images.length === 0) return null;
+  return (
+    <section className="session-resource-card-list session-pending-attachment-images" aria-label={props.language === 'zh-CN' ? '发送中的图片' : 'Images being sent'}>
+      {images.map((attachment) => (
+        <ConversationPendingAttachmentImage key={pendingAttachmentIdentity(attachment)} attachment={attachment} language={props.language} onVisibleContentChange={props.onVisibleContentChange} />
+      ))}
+    </section>
+  );
+}
+
+function ConversationPendingAttachmentImage(props: { attachment: NativeConversationAttachment; language: SessionUiLanguage; onVisibleContentChange?: () => void }) {
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const identity = pendingAttachmentIdentity(props.attachment);
+
+  useEffect(() => {
+    let active = true;
+    setPreviewUrl(null);
+    setFailed(false);
+    const loadPreview = window.zeus?.getConversationResourcePreview;
+    if (!loadPreview) {
+      setFailed(true);
+      setLoading(false);
+      return () => {
+        active = false;
+      };
+    }
+    setLoading(true);
+    void loadPreview({
+      ...(props.attachment.localPath ? { localPath: props.attachment.localPath } : {}),
+      ...(props.attachment.uploadRef ? { uploadRef: props.attachment.uploadRef } : {}),
+    })
+      .then((preview) => {
+        if (!active) return;
+        if (!preview?.previewUrl || !preview.mimeType.startsWith('image/')) {
+          setFailed(true);
+          return;
+        }
+        setPreviewUrl(preview.previewUrl);
+      })
+      .catch(() => {
+        if (active) setFailed(true);
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [identity, props.attachment.localPath, props.attachment.uploadRef]);
+
+  useLayoutEffect(() => {
+    props.onVisibleContentChange?.();
+  }, [failed, previewUrl, props.onVisibleContentChange]);
+
+  if (failed) {
+    return (
+      <article className="session-resource-card session-pending-attachment-fallback" data-resource-kind="attachment" data-error="true" title={props.attachment.name}>
+        <span className="session-resource-card-icon">
+          <FileImage aria-hidden="true" weight="duotone" />
+        </span>
+        <span className="session-resource-card-copy">
+          <strong>{props.attachment.name}</strong>
+          <small>{props.language === 'zh-CN' ? '图片预览不可用' : 'Image preview unavailable'}</small>
+        </span>
+      </article>
+    );
+  }
+
+  return (
+    <figure className="session-resource-image session-pending-attachment-image" aria-busy={loading || undefined} title={props.attachment.name}>
+      {previewUrl ? (
+        <img src={previewUrl} alt={props.attachment.name} onError={() => setFailed(true)} />
+      ) : (
+        <span className="session-resource-image-placeholder" role="status">
+          <FileImage aria-hidden="true" weight="duotone" />
+          <span>{props.language === 'zh-CN' ? '正在显示图片' : 'Showing image'}</span>
+        </span>
+      )}
+    </figure>
+  );
+}
+
+function pendingAttachmentIdentity(attachment: NativeConversationAttachment): string {
+  return attachment.localPath ?? attachment.uploadRef;
 }
 
 export function ConversationInlineResource(
