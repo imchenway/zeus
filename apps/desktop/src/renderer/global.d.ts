@@ -39,6 +39,10 @@ declare global {
     zeus?: {
       appName: 'Zeus';
       getLocalServerConfig: () => Promise<DashboardClientOptions>;
+      hideMenuBarUsage: () => Promise<{ hidden: true }>;
+      showMainWindowFromMenuBarUsage: () => Promise<{ shown: boolean }>;
+      openMenuBarUsageSettings: (category: 'usage' | 'runtime') => Promise<{ opened: boolean; category: 'usage' | 'runtime' }>;
+      quitFromMenuBarUsage: () => Promise<{ quitting: true }>;
       listProjectSourceDirectory: (input: { projectId: string; relativePath: string }) => Promise<ProjectSourceDirectorySnapshot>;
       searchProjectSourceEntries: (input: { projectId: string; query: string }) => Promise<ProjectSourceSearchResult>;
       readProjectSourceFile: (input: { projectId: string; relativePath: string }) => Promise<ProjectSourceDocument>;
