@@ -4,7 +4,7 @@ import { CheckCircleIcon as CheckCircle } from '@phosphor-icons/react/dist/csr/C
 import { MagicWandIcon as MagicWand } from '@phosphor-icons/react/dist/csr/MagicWand';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import { useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
-import type { TaskIntegrationRecord } from '../session/sessionTypes.js';
+import type { TaskIntegrationConflictPermissionMode, TaskIntegrationRecord } from '../session/sessionTypes.js';
 import { Button } from '../ui/Button.js';
 import {
   applyConflictDocumentEdit,
@@ -45,7 +45,7 @@ export function TaskGitConflictWorkspace(props: {
   conflict: ConflictDocument | null;
   onSelectPath: (path: string) => void;
   onDocumentChange: (document: ConflictDocument) => void;
-  onAskAi: (content: string) => Promise<void>;
+  onAskAi: (content: string, permissionMode: TaskIntegrationConflictPermissionMode) => Promise<void>;
 }) {
   const document = props.conflict;
   const blocks = document?.blocks ?? [];
@@ -54,6 +54,9 @@ export function TaskGitConflictWorkspace(props: {
   const [viewMode, setViewMode] = useState<'focused' | 'full'>('focused');
   const [mergeFeedback, setMergeFeedback] = useState<string | null>(null);
   const [undoDraft, setUndoDraft] = useState<ConflictDocument | null>(null);
+  const [aiPermissionOpen, setAiPermissionOpen] = useState(false);
+  const [aiPermissionMode, setAiPermissionMode] = useState<TaskIntegrationConflictPermissionMode>('auto');
+  const aiPermissionDialogRef = useRef<HTMLElement | null>(null);
   const currentFileResolved = document !== null && unresolvedCount === 0;
   const selectedBlock = blocks[Math.min(selectedBlockIndex, Math.max(0, blocks.length - 1))] ?? null;
   const activeBlock = currentFileResolved ? null : selectedBlock;
@@ -67,11 +70,17 @@ export function TaskGitConflictWorkspace(props: {
     setSelectedBlockIndex(0);
     setViewMode('focused');
     setUndoDraft(null);
+    setAiPermissionOpen(false);
   }, [props.conflictPath, document?.fingerprint]);
 
   useEffect(() => {
     if (selectedBlockIndex >= blocks.length && blocks.length > 0) setSelectedBlockIndex(blocks.length - 1);
   }, [blocks.length, selectedBlockIndex]);
+
+  useEffect(() => {
+    if (!aiPermissionOpen) return;
+    aiPermissionDialogRef.current?.querySelector<HTMLInputElement>('input:checked')?.focus();
+  }, [aiPermissionOpen]);
 
   function selectNextPending(next: ConflictDocument, currentBlockId?: string): void {
     const currentIndex = currentBlockId ? next.blocks.findIndex((block) => block.id === currentBlockId) : -1;
@@ -124,7 +133,8 @@ export function TaskGitConflictWorkspace(props: {
   async function askAi(): Promise<void> {
     if (!document) return;
     try {
-      await props.onAskAi(serializeConflictForAi(document));
+      await props.onAskAi(serializeConflictForAi(document), aiPermissionMode);
+      setAiPermissionOpen(false);
     } catch {
       // 具体失败原因由代码交付弹窗统一展示，避免在两个状态区重复报错。
     }
@@ -188,7 +198,7 @@ export function TaskGitConflictWorkspace(props: {
               variant="secondary"
               size="compact"
               busy={props.aiBusy}
-              onClick={() => void askAi()}
+              onClick={() => setAiPermissionOpen(true)}
               disabled={!document || props.busy || unresolvedCount === 0}
               title={props.zh ? `打开会话，由 AI 完成本地合入 ${props.integration.targetBranch}；不会推送远端` : `Open a conversation and let AI complete the local merge into ${props.integration.targetBranch}; no remote push`}
             >
@@ -230,6 +240,55 @@ export function TaskGitConflictWorkspace(props: {
             </Button>
           </span>
         </div>
+
+        {aiPermissionOpen ? (
+          <section className="task-git-conflict-ai-permission-backdrop" role="presentation">
+            <section
+              ref={aiPermissionDialogRef}
+              className="task-git-conflict-ai-permission"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="task-git-conflict-ai-permission-title"
+              onKeyDown={(event) => {
+                if (event.key !== 'Escape' || props.aiBusy) return;
+                event.preventDefault();
+                setAiPermissionOpen(false);
+              }}
+            >
+              <span>
+                <strong id="task-git-conflict-ai-permission-title">{props.zh ? '选择本次冲突处理权限' : 'Choose conflict resolution permissions'}</strong>
+                <small>
+                  {props.zh ? 'AI 需要修改并暂存 Zeus 隔离合并工作区。该选择只用于本次冲突处理会话。' : 'AI needs to edit and stage the isolated Zeus integration worktree. This choice applies only to this conflict resolution conversation.'}
+                </small>
+              </span>
+              <fieldset>
+                <legend>{props.zh ? '权限模式' : 'Permission mode'}</legend>
+                <label className={aiPermissionMode === 'auto' ? 'is-selected' : ''}>
+                  <input type="radio" name="task-conflict-ai-permission" value="auto" checked={aiPermissionMode === 'auto'} onChange={() => setAiPermissionMode('auto')} disabled={props.aiBusy} />
+                  <span>
+                    <strong>{props.zh ? '自动（推荐）' : 'Auto (recommended)'}</strong>
+                    <small>{props.zh ? '只写入隔离工作区，超出范围的操作仍需确认。' : 'Writes only inside the isolated worktree; out-of-scope actions still require approval.'}</small>
+                  </span>
+                </label>
+                <label className={aiPermissionMode === 'full-access' ? 'is-selected' : ''}>
+                  <input type="radio" name="task-conflict-ai-permission" value="full-access" checked={aiPermissionMode === 'full-access'} onChange={() => setAiPermissionMode('full-access')} disabled={props.aiBusy} />
+                  <span>
+                    <strong>{props.zh ? '完全访问' : 'Full access'}</strong>
+                    <small>{props.zh ? '命令不再逐次请求确认，只应在你信任当前仓库时使用。' : 'Commands no longer request approval individually. Use only when you trust this repository.'}</small>
+                  </span>
+                </label>
+              </fieldset>
+              <footer>
+                <Button variant="secondary" size="regular" onClick={() => setAiPermissionOpen(false)} disabled={props.aiBusy}>
+                  {props.zh ? '取消' : 'Cancel'}
+                </Button>
+                <Button variant="primary" size="regular" busy={props.aiBusy} onClick={() => void askAi()}>
+                  {props.zh ? `以${aiPermissionMode === 'auto' ? '自动' : '完全访问'}权限开始` : `Start with ${aiPermissionMode === 'auto' ? 'auto' : 'full access'}`}
+                </Button>
+              </footer>
+            </section>
+          </section>
+        ) : null}
 
         {!currentFileResolved ? (
           <nav className="task-git-conflict-block-rail" aria-label={props.zh ? '冲突块' : 'Conflict blocks'}>

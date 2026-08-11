@@ -13724,6 +13724,7 @@ a {
   min-block-size: 0;
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr);
+  position: relative;
 }
 
 .macos-ai-app .task-git-conflict-toolbar {
@@ -13767,6 +13768,88 @@ a {
 .macos-ai-app .task-git-conflict-magic svg {
   inline-size: 15px;
   block-size: 15px;
+}
+
+.macos-ai-app .task-git-conflict-ai-permission-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: var(--zeus-overlay-backdrop-bg);
+  backdrop-filter: var(--zeus-overlay-backdrop-filter);
+}
+
+.macos-ai-app .task-git-conflict-ai-permission {
+  inline-size: min(520px, 100%);
+  display: grid;
+  gap: 16px;
+  padding: 20px;
+  border: 1px solid var(--zeus-product-line);
+  border-radius: 14px;
+  background: var(--zeus-solid-surface-bg);
+  box-shadow: 0 24px 64px oklch(20% 0.01 255 / 0.25);
+}
+
+.macos-ai-app .task-git-conflict-ai-permission > span {
+  display: grid;
+  gap: 5px;
+}
+
+.macos-ai-app .task-git-conflict-ai-permission > span > strong {
+  font-size: 15px;
+}
+
+.macos-ai-app .task-git-conflict-ai-permission > span > small,
+.macos-ai-app .task-git-conflict-ai-permission label small {
+  color: var(--zeus-product-muted);
+  line-height: 1.5;
+}
+
+.macos-ai-app .task-git-conflict-ai-permission fieldset {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.macos-ai-app .task-git-conflict-ai-permission legend {
+  margin-block-end: 7px;
+  color: var(--zeus-product-muted);
+  font-size: 12px;
+}
+
+.macos-ai-app .task-git-conflict-ai-permission label {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  padding: 11px 12px;
+  border: 1px solid var(--zeus-product-line-soft);
+  border-radius: 10px;
+  background: var(--zeus-product-panel-muted);
+  cursor: pointer;
+}
+
+.macos-ai-app .task-git-conflict-ai-permission label.is-selected {
+  border-color: color-mix(in oklab, var(--zeus-accent, #3977db) 58%, var(--zeus-product-line));
+  background: color-mix(in oklab, var(--zeus-accent, #3977db) 8%, var(--zeus-product-panel));
+}
+
+.macos-ai-app .task-git-conflict-ai-permission label > input {
+  margin-block-start: 3px;
+}
+
+.macos-ai-app .task-git-conflict-ai-permission label > span {
+  display: grid;
+  gap: 3px;
+}
+
+.macos-ai-app .task-git-conflict-ai-permission > footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .macos-ai-app .task-git-conflict-block-rail {

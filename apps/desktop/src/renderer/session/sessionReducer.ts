@@ -363,15 +363,15 @@ function hydrateSnapshot(state: NativeSessionState, snapshot: NativeConversation
     orderedItems.push({ key, timestamp: message.createdAt, stableIndex: stableIndexForClient(clientUserMessageId) });
   }
 
-  // Provider 尚未回放精确 userMessage 时，从持久 submission 恢复当前轮次中的引导投影。
+  // Provider 尚未回放精确 userMessage 时，从持久 submission 立即恢复已进入轮次的用户消息。
   for (const submission of snapshot.submissions) {
     const clientUserMessageId = submission.clientUserMessageId;
     const providerTurnId = submission.providerTurnId;
-    const pendingStatus = submission.status === 'dispatching' || (submission.status === 'paused' && submission.pausedReason === 'recovery_required');
-    if (submission.delivery !== 'steer_now' || !pendingStatus || !clientUserMessageId || !providerTurnId || durableClientIds.has(clientUserMessageId)) continue;
-    const itemId = `steering:${submission.id}`;
+    const pendingStatus = submission.status === 'dispatching' || submission.status === 'active' || (submission.status === 'paused' && submission.pausedReason === 'recovery_required');
+    if (!pendingStatus || !clientUserMessageId || !providerTurnId || durableClientIds.has(clientUserMessageId)) continue;
+    const itemId = `${submission.delivery === 'steer_now' ? 'steering' : 'submission'}:${submission.id}`;
     const key = nativeSessionItemKey(snapshot.id, threadId, providerTurnId, itemId);
-    items[key] = steeringSubmissionItem(snapshot.id, threadId, submission, key, itemId);
+    items[key] = submissionUserMessageItem(snapshot.id, threadId, submission, key, itemId);
     orderedItems.push({ key, timestamp: submission.createdAt ?? snapshot.updatedAt, stableIndex: stableIndexForClient(clientUserMessageId) });
     durableClientIds.add(clientUserMessageId);
   }
@@ -815,12 +815,12 @@ function projectSteeringSubmission(state: NativeSessionState, submission: Native
   const previousKey = matchedEntry?.[0];
   const previous = matchedEntry?.[1];
   const item: NativeSessionItemBuffer = {
-    ...steeringSubmissionItem(conversationId, threadId, submission, key, itemId),
+    ...submissionUserMessageItem(conversationId, threadId, submission, key, itemId),
     ...(previous
       ? {
           text: submission.content || previous.text,
           resources: previous.resources,
-          payload: { ...previous.payload, ...steeringSubmissionPayload(submission) },
+          payload: { ...previous.payload, ...submissionUserMessagePayload(submission) },
         }
       : {}),
   };
@@ -836,7 +836,7 @@ function projectSteeringSubmission(state: NativeSessionState, submission: Native
   };
 }
 
-function steeringSubmissionItem(conversationId: string, threadId: string, submission: NativeQueuedSubmission, key: string, itemId: string): NativeSessionItemBuffer {
+function submissionUserMessageItem(conversationId: string, threadId: string, submission: NativeQueuedSubmission, key: string, itemId: string): NativeSessionItemBuffer {
   return {
     key,
     conversationId,
@@ -847,7 +847,7 @@ function steeringSubmissionItem(conversationId: string, threadId: string, submis
     status: submission.status,
     phase: 'prework',
     text: submission.content,
-    payload: steeringSubmissionPayload(submission),
+    payload: submissionUserMessagePayload(submission),
     resources: [],
     optimistic: true,
     clientUserMessageId: submission.clientUserMessageId,
@@ -857,9 +857,9 @@ function steeringSubmissionItem(conversationId: string, threadId: string, submis
   };
 }
 
-function steeringSubmissionPayload(submission: NativeQueuedSubmission): Record<string, unknown> {
+function submissionUserMessagePayload(submission: NativeQueuedSubmission): Record<string, unknown> {
   return {
-    delivery: 'steer_now',
+    delivery: submission.delivery ?? 'queue',
     submissionId: submission.id,
     attachments: submission.attachments ?? [],
     ...(submission.pausedReason ? { pausedReason: submission.pausedReason } : {}),

@@ -7,6 +7,7 @@ import type {
   TaskGitFileDiff,
   TaskGitFileStatus,
   TaskIntegrationConflictFile,
+  TaskIntegrationConflictPermissionMode,
   TaskIntegrationRecord,
   TaskIntegrationResult,
   TaskWorkspaceIndexCollection,
@@ -398,12 +399,12 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
     }
   }
 
-  async function startAiConflictSession(content: string): Promise<void> {
+  async function startAiConflictSession(content: string, permissionMode: TaskIntegrationConflictPermissionMode): Promise<void> {
     if (!props.task || !props.client || !activeConflict || !conflictPath) throw new Error(zh ? '当前没有可处理的冲突。' : 'No conflict is available.');
     setBusyAction('ai');
     setError(null);
     try {
-      const operation = await props.client.startTaskIntegrationConflictAi(props.task.id, activeConflict.id, conflictPath, content);
+      const operation = await props.client.startTaskIntegrationConflictAi(props.task.id, activeConflict.id, conflictPath, content, permissionMode);
       await props.onOpenConversation(props.task.id, operation.conversationId);
     } catch (reason) {
       setError(errorMessage(reason, zh));
