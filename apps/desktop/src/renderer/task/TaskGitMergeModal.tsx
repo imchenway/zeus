@@ -1,24 +1,29 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { buildTaskCommitMessageSuggestion } from '@zeus/shared';
-import { type DashboardClient, type TaskRecord, ZeusApiError } from '../apiClient.js';
+import {useEffect, useMemo, useRef, useState} from 'react';
+import {buildTaskCommitMessageSuggestion} from '@zeus/shared';
+import {type DashboardClient, type TaskRecord, ZeusApiError} from '../apiClient.js';
 import type {
-  TaskBranchFileChange,
-  TaskGitDiffSummary,
-  TaskGitFileDiff,
-  TaskGitFileStatus,
-  TaskIntegrationConflictFile,
-  TaskIntegrationRecord,
-  TaskIntegrationResult,
-  TaskWorkspaceIndexCollection,
-  TaskWorkspaceIndexSnapshot,
-  TaskWorkspaceSnapshot,
+    TaskBranchFileChange,
+    TaskGitDiffSummary,
+    TaskGitFileDiff,
+    TaskGitFileStatus,
+    TaskIntegrationConflictFile,
+    TaskIntegrationRecord,
+    TaskIntegrationResult,
+    TaskWorkspaceIndexCollection,
+    TaskWorkspaceIndexSnapshot,
+    TaskWorkspaceSnapshot,
 } from '../session/sessionTypes.js';
-import { Button } from '../ui/Button.js';
-import { ModalPortal } from '../ui/ModalPortal.js';
-import { ZeusSelect } from '../ZeusSelect.js';
-import { TaskGitConflictWorkspace } from './TaskGitConflictWorkspace.js';
-import { createConflictDocument, countUnresolvedConflictBlocks, serializeConflictForGit, type ConflictDocument } from './taskConflictModel.js';
-import { TaskWorkspaceBranchList } from './TaskWorkspaceBranchList.js';
+import {Button} from '../ui/Button.js';
+import {ModalPortal} from '../ui/ModalPortal.js';
+import {ZeusSelect} from '../ZeusSelect.js';
+import {TaskGitConflictWorkspace} from './TaskGitConflictWorkspace.js';
+import {
+    type ConflictDocument,
+    countUnresolvedConflictBlocks,
+    createConflictDocument,
+    serializeConflictForGit
+} from './taskConflictModel.js';
+import {TaskWorkspaceBranchList} from './TaskWorkspaceBranchList.js';
 
 type DeliveryClient = Pick<
   DashboardClient,
@@ -27,7 +32,6 @@ type DeliveryClient = Pick<
   | 'loadTaskWorkspaceFileDiff'
   | 'commitTaskWorkspace'
   | 'pushTaskIntegration'
-  | 'stopTaskWorkspaceSessions'
   | 'loadTaskIntegrations'
   | 'startTaskIntegration'
   | 'loadTaskIntegrationConflict'
@@ -331,25 +335,6 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
         text: zh
           ? `来源分支已推送到 ${response.result.remoteName}/${response.result.remoteBranch} · ${shortSha(response.result.remoteHeadSha)}`
           : `Source branch pushed to ${response.result.remoteName}/${response.result.remoteBranch} · ${shortSha(response.result.remoteHeadSha)}`,
-      });
-    } catch (reason) {
-      setError(errorMessage(reason, zh));
-    } finally {
-      setBusyAction(null);
-    }
-  }
-
-  async function stopSessions(): Promise<void> {
-    if (!props.task || !props.client || !selectedWorkspace) return;
-    setBusyAction('commit');
-    setError(null);
-    try {
-      await props.client.stopTaskWorkspaceSessions(props.task.id, selectedWorkspace.id);
-      await reload(selectedWorkspace.id);
-      await props.onChanged?.();
-      setFeedback({
-        tone: 'info',
-        text: zh ? '活动会话已停止，可以继续提交或合入。' : 'Active sessions stopped. Commit or merge can continue.',
       });
     } catch (reason) {
       setError(errorMessage(reason, zh));
@@ -695,15 +680,12 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
 
                   {selectedWorkspace && selectedWorkspace.activeConversationCount > 0 ? (
                     <section className="task-git-review-active-sessions">
-                      <strong>{zh ? '活动会话仍在写入' : 'Active sessions are still writing'}</strong>
+                        <strong>{zh ? '活动会话不阻止代码交付' : 'Active sessions do not block delivery'}</strong>
                       <small>
                         {zh
-                          ? `${selectedWorkspace.activeConversationCount} 个会话仍可能写入此分支。提交和推送可以继续；只有可能回收 worktree 的合入操作需要额外确认。`
-                          : `${selectedWorkspace.activeConversationCount} active session(s) may still write to this branch. Commit and push can continue; only a merge that may reclaim the worktree asks for extra confirmation.`}
+                            ? `系统检测到 ${selectedWorkspace.activeConversationCount} 个会话仍可能写入此分支。该状态只作提示，不参与提交或推送门禁；只有可能回收 worktree 的合入操作需要额外确认。`
+                            : `The system detected ${selectedWorkspace.activeConversationCount} session(s) that may still write to this branch. This is informational only and never gates commit or push; only a merge that may reclaim the worktree asks for extra confirmation.`}
                       </small>
-                      <Button variant="secondary" size="compact" onClick={() => void stopSessions()} disabled={busy}>
-                        {zh ? '停止活动会话' : 'Stop active sessions'}
-                      </Button>
                     </section>
                   ) : null}
 
@@ -923,23 +905,24 @@ function toWorkingDeliveryFile(file: TaskGitFileStatus, zh: boolean): DeliveryFi
 }
 
 function workspaceStateLabel(workspace: TaskWorkspaceIndexSnapshot, detail: TaskWorkspaceSnapshot | undefined, loadState: 'loading' | 'error' | undefined, zh: boolean, recovery?: TaskIntegrationRecord): string {
+    const activeSuffix = workspace.activeConversationCount > 0 ? (zh ? ` · ${workspace.activeConversationCount} 个会话活动` : ` · ${workspace.activeConversationCount} active session(s)`) : '';
   if (recovery?.state === 'conflicted') {
-    return recovery.conflictFiles.length > 0 ? (zh ? `${recovery.conflictFiles.length} 个冲突待处理` : `${recovery.conflictFiles.length} conflict(s) pending`) : zh ? '冲突已处理 · 待确认' : 'Conflicts resolved · confirm';
+      const status = recovery.conflictFiles.length > 0 ? (zh ? `${recovery.conflictFiles.length} 个冲突待处理` : `${recovery.conflictFiles.length} conflict(s) pending`) : zh ? '冲突已处理 · 待确认' : 'Conflicts resolved · confirm';
+      return `${status}${activeSuffix}`;
   }
-  if (recovery?.state === 'pending_local_sync') return zh ? '合入完成 · 待同步' : 'Merged · sync pending';
+    if (recovery?.state === 'pending_local_sync') return `${zh ? '合入完成 · 待同步' : 'Merged · sync pending'}${activeSuffix}`;
   if (workspace.state === 'merged') {
-    if (!workspace.remoteName) return zh ? '已合入 · 无远端' : 'Merged · no remote';
-    if (!detail) return zh ? '已合入 · 远端待读取' : 'Merged · remote not loaded';
-    return detail.sourceRemoteVerified ? (zh ? '已合入 · 已推送' : 'Merged · pushed') : zh ? '已合入 · 推送可选' : 'Merged · push optional';
+      if (!workspace.remoteName) return `${zh ? '已合入 · 无远端' : 'Merged · no remote'}${activeSuffix}`;
+      if (!detail) return `${zh ? '已合入 · 远端待读取' : 'Merged · remote not loaded'}${activeSuffix}`;
+      return `${detail.sourceRemoteVerified ? (zh ? '已合入 · 已推送' : 'Merged · pushed') : zh ? '已合入 · 推送可选' : 'Merged · push optional'}${activeSuffix}`;
   }
   if (workspace.state === 'discarded') return zh ? '已放弃' : 'Discarded';
-  if (workspace.activeConversationCount > 0) return zh ? '会话写入中' : 'Session writing';
-  if (loadState === 'loading') return zh ? '正在读取…' : 'Loading…';
-  if (loadState === 'error') return zh ? '读取失败' : 'Load failed';
-  if (!detail) return zh ? '尚未读取' : 'Not loaded';
+    if (loadState === 'loading') return `${zh ? '正在读取…' : 'Loading…'}${activeSuffix}`;
+    if (loadState === 'error') return `${zh ? '读取失败' : 'Load failed'}${activeSuffix}`;
+    if (!detail) return `${zh ? '尚未读取' : 'Not loaded'}${activeSuffix}`;
   const workingCount = collectWorkingFiles(detail).length;
-  if (workingCount > 0) return zh ? `${workingCount} 个未提交文件` : `${workingCount} uncommitted file(s)`;
-  return zh ? '已提交 · 可合入' : 'Committed · merge ready';
+    if (workingCount > 0) return `${zh ? `${workingCount} 个未提交文件` : `${workingCount} uncommitted file(s)`}${activeSuffix}`;
+    return `${zh ? '已提交 · 可合入' : 'Committed · merge ready'}${activeSuffix}`;
 }
 
 function findRecoverableIntegration(integrations: TaskIntegrationRecord[], workspaceId?: string): TaskIntegrationRecord | undefined {
