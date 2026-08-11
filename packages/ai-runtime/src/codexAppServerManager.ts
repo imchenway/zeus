@@ -203,6 +203,11 @@ export interface CodexTurnSnapshot {
   [key: string]: unknown;
 }
 
+export interface CodexThreadTurnsPage {
+  data: CodexTurnSnapshot[];
+  nextCursor: string | null;
+}
+
 interface CodexServerResponseBase {
   generationId: string;
   requestId: CodexWireId;
@@ -308,6 +313,7 @@ export interface CodexAppServerManager {
   archiveThread(input: { threadId: string }): Promise<void>;
   unarchiveThread(input: { threadId: string }): Promise<CodexThreadSnapshot>;
   readThread(input: { threadId: string }): Promise<CodexThreadSnapshot>;
+  listThreadTurns(input: { threadId: string; cursor?: string | null; limit?: number | null; sortDirection?: 'asc' | 'desc' | null; itemsView?: 'notLoaded' | 'summary' | 'full' | null }): Promise<CodexThreadTurnsPage>;
   startTurn(input: CodexTurnStartInput): Promise<CodexTurnSnapshot>;
   steerTurn(input: CodexTurnSteerInput): Promise<{ turnId: string }>;
   interruptTurn(input: { threadId: string; turnId: string }): Promise<void>;
@@ -849,6 +855,17 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
       const capabilities = await awaitCapabilities();
       const response = asRecord(await rpc(capabilities.generationId, 'thread/read', { threadId: input.threadId, includeTurns: true }));
       return parseThread(response.thread);
+    },
+    async listThreadTurns(input) {
+      const capabilities = await awaitCapabilities();
+      const response = asRecord(await rpc(capabilities.generationId, 'thread/turns/list', compactObject(input)));
+      if (!Array.isArray(response.data) || (response.nextCursor !== null && typeof response.nextCursor !== 'string')) {
+        throw managerError('ZEUS_CODEX_INVALID_RESPONSE', 'Codex thread/turns/list returned an invalid page.');
+      }
+      return {
+        data: response.data.map((turn) => parseTurn(turn, input.threadId)),
+        nextCursor: response.nextCursor,
+      };
     },
     async startTurn(input) {
       const capabilities = await awaitCapabilities();

@@ -135,6 +135,7 @@ import {
   type ConversationNextTurnSettings,
   type ConversationPermissionMode,
   ConversationPlanActionRepository,
+  ConversationProviderSyncCheckpointRepository,
   ConversationRepository,
   ConversationResourceRepository,
   ConversationServerRequestRepository,
@@ -1989,6 +1990,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   const conversationSubmissions = new ConversationSubmissionRepository(db);
   const conversationRequests = new ConversationServerRequestRepository(db);
   const conversationPlanActions = new ConversationPlanActionRepository(db);
+  const conversationProviderSyncCheckpoints = new ConversationProviderSyncCheckpointRepository(db);
   const providerEventReceipts = new ProviderEventReceiptRepository(db);
   const idempotencyRequests = new IdempotencyRequestRepository(db);
   const gitSnapshots = new GitSnapshotRepository(db);
@@ -2316,6 +2318,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       requests: conversationRequests,
       planActions: conversationPlanActions,
       receipts: providerEventReceipts,
+      syncCheckpoints: conversationProviderSyncCheckpoints,
       settings,
       usage: codexUsageService,
       browserAutomation: options.browserAutomation,

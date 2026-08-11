@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { realpathSync, statSync } from 'node:fs';
 import { dirname, extname, isAbsolute, relative, resolve } from 'node:path';
-import type { CodexAppServerEvent, CodexAppServerManager, CodexCommandApprovalDecision, CodexSandboxPolicy, CodexServerRequestResponse, CodexThreadSnapshot } from '@zeus/ai-runtime';
+import type { CodexAppServerEvent, CodexAppServerManager, CodexCommandApprovalDecision, CodexSandboxPolicy, CodexServerRequestResponse, CodexThreadSnapshot, CodexTurnSnapshot } from '@zeus/ai-runtime';
 import { buildTaskPushInputParts, calculateCacheHitRate, type NativeTokenUsageSnapshot, type TaskPushMessageLayout, type TokenUsageBreakdown } from '@zeus/shared';
 import {
   type CodexMcpServerStartupState,
@@ -12,6 +12,7 @@ import {
   type ConversationNextTurnSettings,
   type ConversationPermissionMode,
   ConversationPlanActionRepository,
+  ConversationProviderSyncCheckpointRepository,
   ConversationRepository,
   ConversationResourceRepository,
   type ConversationServerRequestKind,
@@ -120,6 +121,7 @@ export interface CreateCodexNativeConversationCoordinatorOptions {
   requests: ConversationServerRequestRepository;
   planActions?: ConversationPlanActionRepository;
   receipts?: ProviderEventReceiptRepository;
+  syncCheckpoints?: ConversationProviderSyncCheckpointRepository;
   settings: SettingRepository;
   usage?: CodexUsageService;
   getConcurrency: (projectId: string) => { project: number; global: number; maxPerProject: number; maxGlobal: number };
@@ -154,6 +156,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   const planActions = options.planActions ?? new ConversationPlanActionRepository(options.db);
   const resources = options.resources ?? new ConversationResourceRepository(options.db);
   const receipts = options.receipts ?? new ProviderEventReceiptRepository(options.db);
+  const syncCheckpoints = options.syncCheckpoints ?? new ConversationProviderSyncCheckpointRepository(options.db);
   const runStates = new Map<string, NativeConversationRunState>();
   const contexts = new Map<string, ConversationDispatchContext>();
   const executionContextPromises = new Map<string, Promise<void>>();
@@ -210,6 +213,14 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     flushReadableDeltas();
     providerEventChain = providerEventChain.then(() => handleProviderEvent(event)).catch((error) => safelyHandleProviderEventError(event, error));
     return providerEventChain;
+  }
+
+  function enqueueProviderTurnReconciliation(conversation: ZeusConversationWithMessagesRecord): Promise<void> {
+    flushReadableDeltas();
+    const reconciliation = providerEventChain.then(() => reconcileProviderTurnsSinceCheckpoint(conversation));
+    // 历史补偿与实时事件共用一条串行链，防止旧检查点覆盖刚接收的新轮次。
+    providerEventChain = reconciliation.catch(() => undefined);
+    return reconciliation;
   }
 
   function scheduleReadableDeltaFlush(): void {
@@ -1129,6 +1140,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     const context = contexts.get(conversation.id) ?? contextFromConversation(conversation);
     const resumed = await options.manager.resumeThread({ threadId: providerThreadId, cwd: context.projectLocalPath });
     persistThreadProviderSettings(conversation.id, resumed);
+    await enqueueProviderTurnReconciliation(requireConversation(conversation.id));
     const snapshot = await options.manager.readThread({ threadId: providerThreadId });
     if (!snapshotConfirmsIdleProviderThread(snapshot) || !snapshotConfirmsSafeResumeBoundary(snapshot, options.turns.listByConversation(conversation.id))) {
       throw coordinatorError('ZEUS_NATIVE_PROVIDER_STATE_UNCONFIRMED', 'Provider thread state cannot confirm that the previous turn is terminal.');
@@ -1306,7 +1318,9 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       });
       volatileSubmissionText.delete(submission.id);
       const timestamp = now();
+      const existingProviderTurn = options.turns.listByConversation(conversation.id).find((candidate) => candidate.providerTurnId === turn.id);
       options.turns.upsert({
+        ...(existingProviderTurn ? { id: existingProviderTurn.id } : {}),
         conversationId: conversation.id,
         providerThreadId,
         providerTurnId: turn.id,
@@ -1317,20 +1331,28 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         createdAt: timestamp,
         updatedAt: timestamp,
       });
+      const syncCheckpoint = syncCheckpoints.getByConversation(conversation.id);
+      if (syncCheckpoint) {
+        syncCheckpoints.advance({ conversationId: conversation.id, providerThreadId, lastSyncedTurnId: turn.id, timestamp });
+      } else {
+        syncCheckpoints.initialize({ conversationId: conversation.id, providerThreadId, baselineTurnId: turn.id, timestamp });
+      }
       options.submissions.updateStatus(submission.id, 'active', { providerTurnId: turn.id, dispatchedAt: timestamp });
       options.conversations.bindProvider(conversation.id, { providerId: 'codex', providerThreadId, providerModel: context.model, providerState: 'active' });
       runStates.set(conversation.id, { type: 'active', turnId: turn.id, phase: 'prework' });
       await persist();
       // submission 已进入 provider 轮次后必须同步清出队列表面，避免其他窗口继续展示旧快照。
       options.broadcast('conversation.queue.changed', { conversationId: conversation.id, providerThreadId, providerTurnId: turn.id, submissionId: submission.id });
-      options.broadcast('conversation.turn.started', {
-        conversationId: conversation.id,
-        providerThreadId,
-        providerTurnId: turn.id,
-        submissionId: submission.id,
-        status: 'running',
-        startedAt: timestamp,
-      });
+      if (!existingProviderTurn) {
+        options.broadcast('conversation.turn.started', {
+          conversationId: conversation.id,
+          providerThreadId,
+          providerTurnId: turn.id,
+          submissionId: submission.id,
+          status: 'running',
+          startedAt: timestamp,
+        });
+      }
       return accepted(submission, 'active', providerThreadId, turn.id);
     } catch (error) {
       const current = options.conversations.getById(conversation.id);
@@ -1510,13 +1532,18 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     const exactSteeringIdentity = !projectedSubmission || !isSteeringSubmission(projectedSubmission) || providerClientId === projectedSubmission.clientMessageId;
     const clientMessageId = exactSteeringIdentity ? projection.clientMessageId : null;
     const submission = exactSteeringIdentity ? projectedSubmission : undefined;
+    const existingMetadata = existingProviderMessage ? parseJsonRecord(existingProviderMessage.metadataJson) : {};
+    // 来源只属于 Zeus 本地投影，精确匹配回本机 submission 后必须移除远程标记，不能污染正文或 Provider 输入。
+    const stableMetadata = { ...existingMetadata };
+    delete stableMetadata.inputOrigin;
     options.conversations.appendMessage({
       conversationId: conversation.id,
       role: 'user',
       content: projection.content,
       source: 'codex_native',
       metadata: {
-        ...(existingProviderMessage ? parseJsonRecord(existingProviderMessage.metadataJson) : {}),
+        ...stableMetadata,
+        inputOrigin: submission ? 'zeus_local' : 'remote_device',
         ...(clientMessageId ? { clientUserMessageId: clientMessageId } : {}),
         ...(submission ? { attachments: submissionAttachments(submission) } : {}),
         ...(submission && submissionTaskPushLayout(submission) ? { taskPushLayout: submissionTaskPushLayout(submission) } : {}),
@@ -1576,14 +1603,17 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   function submissionForProviderUserItem(conversationId: string, turn: ZeusConversationTurnRecord, itemPayload: Record<string, unknown>): ZeusConversationSubmissionRecord | undefined {
     const submissions = options.submissions.listByConversation(conversationId);
     const providerClientId = typeof itemPayload.clientId === 'string' && itemPayload.clientId.trim() ? itemPayload.clientId : null;
-    return (providerClientId ? submissions.find((candidate) => candidate.clientMessageId === providerClientId) : undefined) ?? submissions.find((candidate) => candidate.id === turn.clientSubmissionId);
+    // 同一 turn 可以被远端继续引导；Provider 已给 clientId 时只能精确匹配，不能误绑到该 turn 的首条本机 submission。
+    if (providerClientId) return submissions.find((candidate) => candidate.clientMessageId === providerClientId);
+    return turn.clientSubmissionId ? submissions.find((candidate) => candidate.id === turn.clientSubmissionId) : undefined;
   }
 
   function submissionPresentation(conversationId: string, turn: ZeusConversationTurnRecord, itemPayload: Record<string, unknown>): Record<string, unknown> {
     const submission = submissionForProviderUserItem(conversationId, turn, itemPayload);
-    if (!submission) return {};
+    if (!submission) return { inputOrigin: 'remote_device' };
     const input = parseJsonRecord(submission.inputJson);
     return {
+      inputOrigin: 'zeus_local',
       ...(typeof input.displayText === 'string' && input.displayText.trim() ? { displayText: input.displayText } : {}),
       ...(isRecord(input.taskPushLayout) && input.taskPushLayout.kind === 'task_push' ? { taskPushLayout: input.taskPushLayout } : {}),
       ...(input.origin === 'implement_plan' ? { origin: input.origin } : {}),
@@ -1868,6 +1898,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       await options.manager.unarchiveThread({ threadId: providerThreadId });
       const resumed = await options.manager.resumeThread({ threadId: providerThreadId, cwd: context.projectLocalPath });
       persistThreadProviderSettings(conversation.id, resumed);
+      await enqueueProviderTurnReconciliation(requireConversation(conversation.id));
       const snapshot = await options.manager.readThread({ threadId: providerThreadId });
       for (const submission of options.submissions.listByConversation(conversation.id)) {
         if (submission.status === 'paused' && submission.pausedReason === 'provider_archived' && !submission.providerTurnId) {
@@ -2077,7 +2108,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     const previousTurn = request.turnId ? options.turns.getById(request.turnId) : undefined;
     if (previousTurn && previousTurn.status !== 'completed') {
       options.turns.upsert({ ...previousTurn, status: 'interrupted', completedAt: now(), updatedAt: now() });
-      const previousSubmission = options.submissions.getById(previousTurn.clientSubmissionId);
+      const previousSubmission = previousTurn.clientSubmissionId ? options.submissions.getById(previousTurn.clientSubmissionId) : undefined;
       if (previousSubmission && (previousSubmission.status === 'active' || previousSubmission.status === 'dispatching' || previousSubmission.status === 'paused')) {
         options.submissions.updateStatus(previousSubmission.id, 'completed', { resolvedAt: now() });
       }
@@ -2433,6 +2464,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         const resumed = await options.manager.resumeThread({ threadId: providerThreadId, ...(contexts.get(conversation.id)?.projectLocalPath ? { cwd: contexts.get(conversation.id)!.projectLocalPath } : {}) });
         persistThreadProviderSettings(conversation.id, resumed);
         const authoritativeGenerationId = options.manager.generationForThread(providerThreadId) ?? generationId;
+        await enqueueProviderTurnReconciliation(requireConversation(conversation.id));
         const snapshot = await options.manager.readThread({ threadId: providerThreadId });
         reconcileConversationSnapshot(conversation, snapshot, authoritativeGenerationId);
         restoreRecoverableInteractionState(conversation.id);
@@ -2476,6 +2508,239 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     });
   }
 
+  async function ensureProviderSyncCheckpoint(conversation: ZeusConversationWithMessagesRecord) {
+    const providerThreadId = requireString(conversation.providerThreadId, 'provider thread id');
+    const existing = syncCheckpoints.getByConversation(conversation.id);
+    if (existing) {
+      if (existing.providerThreadId !== providerThreadId) throw coordinatorError('ZEUS_NATIVE_SYNC_CHECKPOINT_CONFLICT', 'Provider sync checkpoint belongs to another thread.');
+      return existing;
+    }
+    const latest = await options.manager.listThreadTurns({ threadId: providerThreadId, limit: 1, sortDirection: 'desc', itemsView: 'notLoaded' });
+    return syncCheckpoints.initialize({
+      conversationId: conversation.id,
+      providerThreadId,
+      baselineTurnId: latest.data[0]?.id ?? null,
+      timestamp: now(),
+    });
+  }
+
+  async function reconcileProviderTurnsSinceCheckpoint(conversation: ZeusConversationWithMessagesRecord): Promise<void> {
+    const providerThreadId = requireString(conversation.providerThreadId, 'provider thread id');
+    const checkpoint = await ensureProviderSyncCheckpoint(conversation);
+    const turnsDescending: CodexTurnSnapshot[] = [];
+    const seenCursors = new Set<string>();
+    let cursor: string | null = null;
+    let checkpointIndex = -1;
+    do {
+      const page = await options.manager.listThreadTurns({
+        threadId: providerThreadId,
+        ...(cursor ? { cursor } : {}),
+        limit: 100,
+        sortDirection: 'desc',
+        itemsView: 'full',
+      });
+      for (const turn of page.data) {
+        if (turnsDescending.some((candidate) => candidate.id === turn.id)) continue;
+        turnsDescending.push(turn);
+      }
+      if (checkpoint.lastSyncedTurnId) checkpointIndex = turnsDescending.findIndex((turn) => turn.id === checkpoint.lastSyncedTurnId);
+      cursor = page.nextCursor;
+      if (cursor) {
+        if (seenCursors.has(cursor)) throw coordinatorError('ZEUS_NATIVE_SYNC_CURSOR_INVALID', 'Provider turn pagination repeated one cursor.');
+        seenCursors.add(cursor);
+      }
+    } while (cursor && (!checkpoint.lastSyncedTurnId || checkpointIndex < 0));
+
+    if (checkpoint.lastSyncedTurnId && checkpointIndex < 0) {
+      throw coordinatorError('ZEUS_NATIVE_SYNC_CHECKPOINT_MISSING', 'Provider history no longer contains the last synchronized turn; historical boundaries will not be guessed.');
+    }
+
+    const eligibleDescending = checkpoint.lastSyncedTurnId ? turnsDescending.slice(0, checkpointIndex + 1) : turnsDescending;
+    const localTurns = new Map(
+      options.turns
+        .listByConversation(conversation.id)
+        .filter((turn) => turn.providerTurnId)
+        .map((turn) => [turn.providerTurnId as string, turn]),
+    );
+    for (const providerTurn of [...eligibleDescending].reverse()) {
+      const existingTurn = localTurns.get(providerTurn.id);
+      // 首次启用时的基线只定义边界；它不在 Zeus 本地时不得作为历史缺口导入。
+      if (providerTurn.id === checkpoint.baselineTurnId && !existingTurn) continue;
+      const projected = projectProviderSnapshotTurn(conversation, providerThreadId, providerTurn, existingTurn);
+      localTurns.set(providerTurn.id, projected);
+    }
+
+    const newest = eligibleDescending[0];
+    if (newest) syncCheckpoints.advance({ conversationId: conversation.id, providerThreadId, lastSyncedTurnId: newest.id, timestamp: now() });
+  }
+
+  function projectProviderSnapshotTurn(conversation: ZeusConversationWithMessagesRecord, providerThreadId: string, providerTurn: CodexTurnSnapshot, existingTurn: ZeusConversationTurnRecord | undefined): ZeusConversationTurnRecord {
+    const classification = classifySnapshotTurn(providerTurn);
+    if (classification === 'unknown') throw coordinatorError('ZEUS_NATIVE_PROVIDER_TURN_INVALID', `Provider turn has an unknown status: ${providerTurn.id}`);
+    const timestamp = now();
+    const startedAt = providerTimestamp(providerTurn.startedAt, existingTurn?.startedAt ?? timestamp);
+    const completedAt = classification === 'active' ? null : providerTimestamp(providerTurn.completedAt, existingTurn?.completedAt ?? timestamp);
+    const submissions = options.submissions.listByConversation(conversation.id);
+    const providerClientId = providerTurnUserClientId(providerTurn);
+    const matchedSubmission = (providerClientId ? submissions.find((candidate) => candidate.clientMessageId === providerClientId) : undefined) ?? submissions.find((candidate) => candidate.providerTurnId === providerTurn.id);
+    const status = classification === 'active' ? 'running' : classification;
+    const wasTerminal = existingTurn?.status === 'completed' || existingTurn?.status === 'interrupted' || existingTurn?.status === 'failed';
+    const stateChanged = !existingTurn || existingTurn.status !== status;
+    const turn = options.turns.upsert({
+      ...(existingTurn ? { id: existingTurn.id } : {}),
+      conversationId: conversation.id,
+      providerThreadId,
+      providerTurnId: providerTurn.id,
+      clientSubmissionId: matchedSubmission?.id ?? existingTurn?.clientSubmissionId ?? null,
+      status,
+      ...(classification === 'failed' ? { error: providerTurnFailureRecord({ turn: providerTurn }, providerTurnFailure({ turn: providerTurn }, providerTurn.id)) } : {}),
+      startedAt,
+      completedAt,
+      createdAt: existingTurn?.createdAt ?? startedAt,
+      updatedAt: timestamp,
+    });
+
+    for (const candidate of Array.isArray(providerTurn.items) ? providerTurn.items : []) {
+      if (!isRecord(candidate)) continue;
+      projectProviderSnapshotItem(conversation, turn, candidate, classification, timestamp);
+    }
+
+    if (classification === 'active') {
+      if (matchedSubmission && (matchedSubmission.status === 'dispatching' || matchedSubmission.status === 'queued')) {
+        options.submissions.updateStatus(matchedSubmission.id, 'active', { providerTurnId: providerTurn.id, dispatchedAt: startedAt });
+      }
+      options.conversations.bindProvider(conversation.id, { providerId: 'codex', providerThreadId, providerModel: conversation.providerModel, providerState: 'active' });
+      runStates.set(conversation.id, { type: 'active', turnId: providerTurn.id, phase: 'prework' });
+      if (stateChanged) {
+        options.broadcast('conversation.turn.started', {
+          conversationId: conversation.id,
+          providerThreadId,
+          providerTurnId: providerTurn.id,
+          ...(turn.clientSubmissionId ? { submissionId: turn.clientSubmissionId } : {}),
+          status: 'running',
+          startedAt,
+        });
+      }
+    } else {
+      if (matchedSubmission && (matchedSubmission.status === 'active' || matchedSubmission.status === 'dispatching')) {
+        options.submissions.updateStatus(matchedSubmission.id, classification === 'failed' ? 'failed' : 'completed', { providerTurnId: providerTurn.id, resolvedAt: completedAt ?? timestamp });
+      }
+      if (classification === 'failed') {
+        const failureRecord = providerTurnFailureRecord({ turn: providerTurn }, providerTurnFailure({ turn: providerTurn }, providerTurn.id));
+        for (const queued of submissions.filter((entry) => entry.status === 'queued')) {
+          options.submissions.updateStatus(queued.id, 'paused', { pausedReason: 'recovery_required', error: failureRecord });
+        }
+      }
+      const interruptedQueue = classification === 'interrupted' ? interruptedQueueSubmissions(submissions) : [];
+      for (const queued of interruptedQueue.filter((entry) => entry.status === 'queued')) {
+        options.submissions.updateStatus(queued.id, 'paused', { pausedReason: 'interrupted' });
+      }
+      const interruptedWithQueue = classification === 'interrupted' && interruptedQueue.length > 0;
+      options.conversations.bindProvider(conversation.id, {
+        providerId: 'codex',
+        providerThreadId,
+        providerModel: conversation.providerModel,
+        providerState: classification === 'failed' ? 'failed' : interruptedWithQueue ? 'paused' : 'ready',
+      });
+      runStates.set(conversation.id, classification === 'failed' ? { type: 'paused', reason: 'recovery_required' } : interruptedWithQueue ? { type: 'paused', reason: 'interrupted' } : { type: 'idle' });
+      if (!wasTerminal) options.changeSets?.seal({ conversation, turn, timestamp });
+      if (classification === 'completed' && !wasTerminal) options.conversations.setCompletionUnread(conversation.id, true);
+      if (stateChanged) {
+        options.broadcast('conversation.turn.completed', {
+          conversationId: conversation.id,
+          providerThreadId,
+          providerTurnId: providerTurn.id,
+          status: classification,
+          completedAt: completedAt ?? timestamp,
+        });
+      }
+    }
+    return turn;
+  }
+
+  function projectProviderSnapshotItem(
+    conversation: ZeusConversationWithMessagesRecord,
+    turn: ZeusConversationTurnRecord,
+    itemPayload: Record<string, unknown>,
+    turnClassification: ReturnType<typeof classifySnapshotTurn>,
+    timestamp: string,
+  ): void {
+    const providerThreadId = turn.providerThreadId;
+    const providerTurnId = requireString(turn.providerTurnId, 'provider turn id');
+    const providerItemId = typeof itemPayload.id === 'string' && itemPayload.id.trim() ? itemPayload.id : null;
+    if (!providerItemId) return;
+    const itemType = itemTypeFromValue(itemPayload.type);
+    const presentedItemPayload = sanitizeConversationItemPayload(itemType === 'userMessage' ? { ...itemPayload, ...submissionPresentation(conversation.id, turn, itemPayload) } : itemPayload);
+    const existing = options.items.getByProvider(providerThreadId, providerItemId);
+    const userMessageProjection = itemType === 'userMessage' ? projectProviderUserMessage(conversation, turn, presentedItemPayload, itemText(itemPayload), providerItemId) : null;
+    const completedProjection = userMessageProjection
+      ? { ...completedItemProjection(existing, presentedItemPayload, itemType), textContent: userMessageProjection.content }
+      : completedItemProjection(existing, presentedItemPayload, itemType);
+    const itemFailed = itemPayload.status === 'failed';
+    const itemTerminal = turnClassification !== 'active' || itemFailed || itemPayload.status === 'completed';
+    const item = itemTerminal
+      ? options.items.upsertCompleted({
+          conversationId: conversation.id,
+          turnId: turn.id,
+          providerThreadId,
+          providerTurnId,
+          providerItemId,
+          itemType,
+          phase: phaseFromItem(itemPayload),
+          payload: completedProjection.payload,
+          textContent: completedProjection.textContent,
+          status: itemFailed ? 'failed' : 'completed',
+          startedAt: existing?.startedAt ?? turn.startedAt,
+          completedAt: itemFailed || turnClassification !== 'active' ? (turn.completedAt ?? timestamp) : timestamp,
+          updatedAt: timestamp,
+        })
+      : options.items.upsertProgress({
+          conversationId: conversation.id,
+          turnId: turn.id,
+          providerThreadId,
+          providerTurnId,
+          providerItemId,
+          itemType,
+          phase: phaseFromItem(itemPayload),
+          payload: completedProjection.payload,
+          textContent: completedProjection.textContent,
+          startedAt: existing?.startedAt ?? turn.startedAt,
+          updatedAt: timestamp,
+        });
+    let durableClientMessageId: string | null = null;
+    if (item.itemType === 'userMessage' && userMessageProjection) {
+      durableClientMessageId = persistProviderUserMessage(conversation, presentedItemPayload, userMessageProjection, providerTurnId, providerThreadId, providerItemId, timestamp);
+    } else if (item.itemType === 'agentMessage' && itemTerminal) {
+      options.conversations.appendMessage({
+        conversationId: conversation.id,
+        role: 'assistant',
+        content: item.textContent,
+        source: 'codex_native',
+        metadata: { phase: item.phase },
+        createdAt: timestamp,
+        providerThreadId,
+        providerTurnId,
+        providerItemId,
+      });
+    }
+    if (item.itemType === 'fileChange') {
+      options.changeSets?.capture({ conversation, turn, providerItemId, changes: itemPayload.changes, phase: itemTerminal ? 'post' : 'pre', timestamp });
+    }
+    const itemResources = syncItemResources(conversation, turn, item, presentedItemPayload, item.textContent, timestamp);
+    options.broadcast('conversation.item.updated', {
+      conversationId: conversation.id,
+      providerThreadId,
+      providerTurnId,
+      providerItemId,
+      itemType: item.itemType,
+      itemPayload: { ...parseJsonRecord(item.payloadJson), ...(item.itemType === 'userMessage' ? { clientId: durableClientMessageId } : {}) },
+      textContent: item.textContent,
+      status: item.status,
+      phase: item.phase,
+      itemResources,
+    });
+  }
+
   function reconcileConversationSnapshot(conversation: ZeusConversationWithMessagesRecord, snapshot: CodexThreadSnapshot, generationId: string): void {
     const snapshotPath = threadPath(snapshot);
     if (snapshotPath && conversation.nativeSessionPath !== snapshotPath) {
@@ -2500,6 +2765,20 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       }
     }
     if (inFlight.length === 0) {
+      const activeProviderTurn = (Array.isArray(snapshot.turns) ? snapshot.turns.filter(isRecord) : []).find((candidate) => classifySnapshotTurn(candidate) === 'active');
+      const activeProviderTurnId = activeProviderTurn && typeof activeProviderTurn.id === 'string' ? activeProviderTurn.id : null;
+      const projectedRemoteTurn = activeProviderTurnId ? options.turns.listByConversation(conversation.id).find((turn) => turn.providerTurnId === activeProviderTurnId && !turn.clientSubmissionId) : undefined;
+      if (activeProviderTurnId && projectedRemoteTurn) {
+        options.turns.upsert({ ...projectedRemoteTurn, status: 'running', completedAt: null, updatedAt: now() });
+        options.conversations.bindProvider(conversation.id, {
+          providerId: 'codex',
+          providerThreadId: requireString(conversation.providerThreadId, 'provider thread id'),
+          providerModel: conversation.providerModel,
+          providerState: 'active',
+        });
+        runStates.set(conversation.id, { type: 'active', turnId: activeProviderTurnId, phase: 'prework' });
+        return;
+      }
       const unresolvedSteering = pendingSteering.some((submission) => {
         const current = options.submissions.getById(submission.id);
         return current?.status === 'paused' && current.pausedReason === 'recovery_required';
@@ -2728,7 +3007,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     }
     if (input.turn) {
       options.turns.upsert({ ...input.turn, status: 'failed', error: interactionError, completedAt: input.timestamp, updatedAt: input.timestamp });
-      const activeSubmission = options.submissions.getById(input.turn.clientSubmissionId);
+      const activeSubmission = input.turn.clientSubmissionId ? options.submissions.getById(input.turn.clientSubmissionId) : undefined;
       if (activeSubmission && (activeSubmission.status === 'dispatching' || activeSubmission.status === 'active')) {
         options.submissions.updateStatus(activeSubmission.id, 'failed', {
           providerTurnId: input.providerTurnId,
@@ -2851,6 +3130,59 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
               providerTurnId,
               requestId: request.id,
               ...recoveryError,
+            },
+          };
+        }
+      }
+    } else if (event.method === 'turn/started' && conversation && threadId) {
+      const providerTurn = isRecord(params.turn) ? params.turn : params;
+      const providerTurnId = providerTurnIdFrom(params);
+      if (!providerTurnId) return;
+      const timestamp = providerTimestamp(providerTurn.startedAt, event.receivedAt);
+      const submissions = options.submissions.listByConversation(conversation.id);
+      const providerClientId = providerTurnUserClientId(providerTurn);
+      const matchedSubmission = (providerClientId ? submissions.find((candidate) => candidate.clientMessageId === providerClientId) : undefined) ?? submissions.find((candidate) => candidate.providerTurnId === providerTurnId);
+      const existingTurn = options.turns.listByConversation(conversation.id).find((candidate) => candidate.providerTurnId === providerTurnId);
+      const existingTerminal = existingTurn?.status === 'completed' || existingTurn?.status === 'interrupted' || existingTurn?.status === 'failed';
+      const turn =
+        existingTerminal && existingTurn
+          ? existingTurn
+          : options.turns.upsert({
+              ...(existingTurn ? { id: existingTurn.id } : {}),
+              conversationId: conversation.id,
+              providerThreadId: threadId,
+              providerTurnId,
+              clientSubmissionId: matchedSubmission?.id ?? existingTurn?.clientSubmissionId ?? null,
+              status: 'running',
+              startedAt: existingTurn?.startedAt ?? timestamp,
+              completedAt: null,
+              createdAt: existingTurn?.createdAt ?? timestamp,
+              updatedAt: event.receivedAt,
+            });
+      // 迟到的 started 事件不能把已经终态的轮次和会话重新激活。
+      if (!existingTerminal) {
+        if (matchedSubmission && (matchedSubmission.status === 'dispatching' || matchedSubmission.status === 'queued')) {
+          options.submissions.updateStatus(matchedSubmission.id, 'active', { providerTurnId, dispatchedAt: timestamp });
+        }
+        const checkpoint = syncCheckpoints.getByConversation(conversation.id);
+        if (checkpoint) {
+          syncCheckpoints.advance({ conversationId: conversation.id, providerThreadId: threadId, lastSyncedTurnId: providerTurnId, timestamp: event.receivedAt });
+        } else {
+          syncCheckpoints.initialize({ conversationId: conversation.id, providerThreadId: threadId, baselineTurnId: providerTurnId, timestamp: event.receivedAt });
+        }
+        options.conversations.bindProvider(conversation.id, { providerId: 'codex', providerThreadId: threadId, providerModel: conversation.providerModel, providerState: 'active' });
+        runStates.set(conversation.id, { type: 'active', turnId: providerTurnId, phase: 'prework' });
+        if (!existingTurn) {
+          broadcast = {
+            type: 'conversation.turn.started',
+            payload: {
+              conversationId: conversation.id,
+              projectId: conversation.projectId,
+              providerThreadId: threadId,
+              providerTurnId,
+              ...(turn.clientSubmissionId ? { submissionId: turn.clientSubmissionId } : {}),
+              status: 'running',
+              startedAt: turn.startedAt ?? timestamp,
             },
           };
         }
@@ -3368,7 +3700,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       const last = tokenUsageBreakdown(isRecord(tokenUsage.last) ? tokenUsage.last : tokenUsage);
       const providerTurnId = requireString(providerTurnIdFrom(params), 'provider turn id');
       const turn = options.turns.listByConversation(conversation.id).find((candidate) => candidate.providerTurnId === providerTurnId);
-      const submission = turn ? options.submissions.getById(turn.clientSubmissionId) : undefined;
+      const submission = turn?.clientSubmissionId ? options.submissions.getById(turn.clientSubmissionId) : undefined;
       let context: ConversationDispatchContext | null = null;
       if (submission) {
         try {
@@ -3986,6 +4318,21 @@ function providerEventReceipt(event: CodexAppServerEvent, identity: string): Pro
 function providerTurnIdFrom(params: Record<string, unknown>): string | null {
   const turn = isRecord(params.turn) ? params.turn : {};
   return typeof params.turnId === 'string' ? params.turnId : typeof turn.id === 'string' ? turn.id : null;
+}
+
+function providerTurnUserClientId(turn: Record<string, unknown>): string | null {
+  if (!Array.isArray(turn.items)) return null;
+  for (const candidate of turn.items) {
+    if (!isRecord(candidate) || candidate.type !== 'userMessage') continue;
+    if (typeof candidate.clientId === 'string' && candidate.clientId.trim()) return candidate.clientId;
+  }
+  return null;
+}
+
+function providerTimestamp(value: unknown, fallback: string): string {
+  if (typeof value === 'number' && Number.isFinite(value) && value >= 0) return new Date(value * 1_000).toISOString();
+  if (typeof value === 'string' && !Number.isNaN(Date.parse(value))) return new Date(value).toISOString();
+  return fallback;
 }
 
 function providerTurnStatus(params: Record<string, unknown>): string {

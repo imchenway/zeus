@@ -3,7 +3,7 @@ import { CopyIcon as Copy } from '@phosphor-icons/react/dist/csr/Copy';
 import { TerminalWindowIcon as TerminalWindow } from '@phosphor-icons/react/dist/csr/TerminalWindow';
 import Markdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { MessageCheckIcon, MessageEditIcon, MessageExpandIcon, MessageThumbIcon } from './SessionMessageIcons.js';
+import { MessageCheckIcon, MessageEditIcon, MessageExpandIcon, MessageRemoteDeviceIcon, MessageThumbIcon } from './SessionMessageIcons.js';
 import type { NativeConversationAttachment, NativeSessionItemBuffer } from './sessionTypes.js';
 import { autosizeTextarea } from './textareaAutosize.js';
 import type { ConversationFileLocation, ConversationOpenTarget, ConversationResource, ConversationResourcePreview, TaskPushMessageLayout } from '@zeus/shared';
@@ -57,6 +57,7 @@ const copy = {
     sending: '发送中',
     steering: '引导中',
     steerUnconfirmed: '引导结果待确认',
+    remoteDevice: '由远程设备发送',
   },
   'en-US': {
     user: 'You',
@@ -92,6 +93,7 @@ const copy = {
     sending: 'Sending',
     steering: 'Steering',
     steerUnconfirmed: 'Steer outcome unconfirmed',
+    remoteDevice: 'Sent from a remote device',
   },
 } as const;
 
@@ -271,6 +273,7 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
   const timestampSource = props.item.updatedAt ?? primitiveText(props.item.payload.createdAt);
   const canEdit = role === 'user' && props.isLatestUser && Boolean(props.onEdit) && !props.item.optimistic;
   const showRoleActions = role === 'user' || (role === 'assistant' && Boolean(props.showAssistantActions ?? props.isLatest));
+  const remoteDeviceInput = role === 'user' && props.item.payload.inputOrigin === 'remote_device';
   const hasActions = !editing && showRoleActions && (Boolean(visibleText) || longUserMessage || Boolean(messageTimestamp) || canEdit);
 
   useEffect(() => {
@@ -429,6 +432,11 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
       <ConversationPendingAttachmentImages attachments={pendingImageAttachments} language={props.language} onVisibleContentChange={props.onVisibleContentChange} />
       {role !== 'image' ? <ConversationResourceCards resources={unplacedResources} language={props.language} onOpenResource={props.onOpenResource} onLoadResourcePreview={props.onLoadResourcePreview} /> : null}
       {!taskPushLayout ? <ItemImages item={props.item} label={labels.conversationImage} /> : null}
+      {remoteDeviceInput ? (
+        <span className="session-message-remote-origin" aria-label={labels.remoteDevice} title={labels.remoteDevice}>
+          <MessageRemoteDeviceIcon />
+        </span>
+      ) : null}
       {hasActions ? (
         <footer className="session-thread-item-actions" data-message-actions={role}>
           {role === 'user' && messageTimestamp && timestampSource ? <MessageTimestamp dateTime={timestampSource} value={messageTimestamp} /> : null}
