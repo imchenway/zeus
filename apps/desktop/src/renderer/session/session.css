@@ -520,7 +520,7 @@
   }
 }
 
-.session-codex-parity-v1 .ai-workspace {
+.session-codex-parity-v1 :where(.ai-workspace, .session-workspace-root) {
   color: var(--session-text);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
   font-size: 14px;
@@ -1899,6 +1899,7 @@
   align-items: center;
   color: var(--session-text-muted);
   display: flex;
+  font-size: 14px;
   gap: 8px;
   inline-size: min(var(--session-thread-max), calc(100% - (2 * var(--session-gutter))));
   margin: 8px auto;
@@ -2010,14 +2011,14 @@
 
 .session-codex-parity-v1 .session-command-summary-copy strong {
   color: var(--session-text);
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 590;
 }
 
 .session-codex-parity-v1 .session-command-summary-copy code {
   color: var(--session-text-muted);
   font-family: 'SFMono-Regular', 'SF Mono', Consolas, monospace;
-  font-size: 10px;
+  font-size: 11px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2026,7 +2027,7 @@
 .session-codex-parity-v1 .session-command-status {
   border-radius: 999px;
   color: var(--session-text-muted);
-  font-size: 10px;
+  font-size: 11px;
   padding: 2px 7px;
 }
 
@@ -2055,7 +2056,7 @@
 }
 
 .session-codex-parity-v1 .session-commentary-flow .session-markdown {
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.65;
 }
 
@@ -2072,7 +2073,7 @@
   color: var(--session-text-muted);
   cursor: pointer;
   display: flex;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 590;
   gap: 9px;
   min-block-size: 28px;
@@ -2118,7 +2119,7 @@
   animation: session-markdown-block-reveal 140ms var(--session-ease-out) both;
   color: var(--session-text-muted);
   display: grid;
-  font-size: 12px;
+  font-size: 14px;
   gap: 8px;
   grid-template-columns: 20px minmax(0, 1fr);
   line-height: 1.45;
@@ -2194,7 +2195,7 @@
 .session-codex-parity-v1 .session-activity-item-title {
   color: var(--session-text-muted);
   display: block;
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1.45;
   min-inline-size: 0;
   overflow: hidden;
@@ -2250,7 +2251,7 @@
 .session-codex-parity-v1 .session-activity-item-detail-body :where(code, small, pre) {
   display: block;
   font-family: 'SFMono-Regular', 'SF Mono', Consolas, monospace;
-  font-size: 10px;
+  font-size: 11px;
   margin: 0;
   overflow-wrap: anywhere;
   white-space: pre-wrap;
@@ -6665,7 +6666,7 @@
   --zeus-project-menu-line: var(--session-line);
 }
 
-.session-codex-parity-v1 .ai-workspace {
+.session-codex-parity-v1 :where(.ai-workspace, .session-workspace-root) {
   color: var(--session-text);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
   font-size: 14px;
@@ -7669,6 +7670,7 @@
   align-items: center;
   color: var(--session-text-muted);
   display: flex;
+  font-size: 14px;
   gap: 8px;
   inline-size: min(var(--session-thread-max), calc(100% - (2 * var(--session-gutter))));
   margin: 8px auto;
@@ -7780,14 +7782,14 @@
 
 .session-codex-parity-v1 .session-command-summary-copy strong {
   color: var(--session-text);
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 590;
 }
 
 .session-codex-parity-v1 .session-command-summary-copy code {
   color: var(--session-text-muted);
   font-family: 'SFMono-Regular', 'SF Mono', Consolas, monospace;
-  font-size: 10px;
+  font-size: 11px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -7796,7 +7798,7 @@
 .session-codex-parity-v1 .session-command-status {
   border-radius: 999px;
   color: var(--session-text-muted);
-  font-size: 10px;
+  font-size: 11px;
   padding: 2px 7px;
 }
 
@@ -7825,7 +7827,7 @@
 }
 
 .session-codex-parity-v1 .session-commentary-flow .session-markdown {
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.65;
 }
 
@@ -7833,7 +7835,7 @@
   align-items: start;
   color: var(--session-text-muted);
   display: grid;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 590;
   gap: 9px;
   grid-template-columns: 19px minmax(0, 1fr);
@@ -7887,7 +7889,7 @@
   color: var(--session-text-muted);
   cursor: pointer;
   display: flex;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 590;
   gap: 9px;
   min-block-size: 28px;
@@ -7933,7 +7935,7 @@
   animation: session-markdown-block-reveal 140ms var(--session-ease-out) both;
   color: var(--session-text-muted);
   display: grid;
-  font-size: 12px;
+  font-size: 14px;
   gap: 8px;
   grid-template-columns: 20px minmax(0, 1fr);
   line-height: 1.45;
@@ -8009,7 +8011,7 @@
 .session-codex-parity-v1 .session-activity-item-title {
   color: var(--session-text-muted);
   display: block;
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1.45;
   min-inline-size: 0;
   overflow: hidden;
@@ -8065,7 +8067,7 @@
 .session-codex-parity-v1 .session-activity-item-detail-body :where(code, small, pre) {
   display: block;
   font-family: 'SFMono-Regular', 'SF Mono', Consolas, monospace;
-  font-size: 10px;
+  font-size: 11px;
   margin: 0;
   overflow-wrap: anywhere;
   white-space: pre-wrap;
