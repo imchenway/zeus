@@ -91,6 +91,7 @@ import {
   buildTaskModelPushLayout,
   readTaskModelPushPreferences,
   resolveTaskModelPushInitialForm,
+  selectedTaskPushCurrentConversationPaths,
   selectedTaskPushParentContexts,
   selectedTaskPushRelatedContexts,
   type TaskModelPushForm,
@@ -7083,6 +7084,7 @@ export function App(props: {
     workspaceMode: 'direct',
     directConcurrencyConfirmed: false,
     repositorySelections: {},
+    currentConversationIds: [],
     parentContextSelections: {},
     relatedContextSelections: {},
     supplementalInfo: '',
@@ -9528,6 +9530,7 @@ export function App(props: {
       workspaceMode: 'direct',
       directConcurrencyConfirmed: false,
       repositorySelections: {},
+      currentConversationIds: [],
       parentContextSelections: {},
       relatedContextSelections: {},
       supplementalInfo: '',
@@ -9734,6 +9737,7 @@ export function App(props: {
             ...(form.supplementalInfo.trim() ? { supplementalInfo: form.supplementalInfo.trim() } : {}),
             taskContext: {
               revision: capabilities.taskContextRevision,
+              currentConversationIds: form.currentConversationIds,
               parentSelections: capabilities.parentContextOptions.flatMap((option) => {
                 const selection = form.parentContextSelections[option.taskId];
                 return selection?.selected ? [{ taskId: option.taskId, conversationIds: selection.conversationIds, attachmentKeys: selection.attachmentKeys }] : [];
@@ -9751,16 +9755,17 @@ export function App(props: {
     setTaskModelPushStatus('submitting');
     setTaskModelPushError(null);
     const targetProject = snapshot.projects.find((project) => project.id === task.projectId);
+    const currentConversationPaths = selectedTaskPushCurrentConversationPaths(capabilities.currentConversationOptions, form.currentConversationIds);
     const parentContexts = selectedTaskPushParentContexts(capabilities.parentContextOptions, form.parentContextSelections);
     const relatedContexts = selectedTaskPushRelatedContexts(capabilities.relatedContextOptions, form.relatedContextSelections);
-    const layout = buildTaskModelPushLayout(task, form.supplementalInfo, capabilities.currentAttachmentOptions, parentContexts, relatedContexts);
+    const layout = buildTaskModelPushLayout(task, form.supplementalInfo, capabilities.currentAttachmentOptions, currentConversationPaths, parentContexts, relatedContexts);
     const pending: TrackedTaskModelPushState = {
       ...createTaskModelPushPendingState({
         task,
         projectName: targetProject?.name ?? task.projectId,
         request,
         form,
-        prompt: buildTaskModelPushMessage(task, form.supplementalInfo, capabilities.currentAttachmentOptions, parentContexts, relatedContexts),
+        prompt: buildTaskModelPushMessage(task, form.supplementalInfo, capabilities.currentAttachmentOptions, currentConversationPaths, parentContexts, relatedContexts),
         layout,
         currentAttachmentOptions: capabilities.currentAttachmentOptions,
         capabilities,
@@ -9955,6 +9960,8 @@ export function App(props: {
     try {
       const capabilities = await client.loadCodexTaskPushCapabilities(pending.task.projectId, pending.task.id);
       if (taskModelPushCapabilityRequestRef.current !== requestVersion) return;
+      const availableCurrentConversationIds = new Set(capabilities.currentConversationOptions.filter((conversation) => conversation.available).map((conversation) => conversation.id));
+      const currentConversationIds = pending.form.currentConversationIds.filter((id) => availableCurrentConversationIds.has(id));
       const parentContextSelections = Object.fromEntries(
         capabilities.parentContextOptions.flatMap((option) => {
           const previous = pending.form.parentContextSelections[option.taskId];
@@ -9992,7 +9999,7 @@ export function App(props: {
         }),
       );
       setTaskModelPushCapabilities(capabilities);
-      setTaskModelPushForm({ ...pending.form, parentContextSelections, relatedContextSelections });
+      setTaskModelPushForm({ ...pending.form, currentConversationIds, parentContextSelections, relatedContextSelections });
       setTaskModelPushStatus('ready');
       setTaskModelPushError(
         appShellSettings.appLanguage === 'zh-CN'

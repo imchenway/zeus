@@ -2,6 +2,7 @@ import { useMemo, type FormEvent, type KeyboardEvent } from 'react';
 import {
   buildTaskPushLayout,
   renderTaskPushLayoutText,
+  type TaskPushContextConversationOption,
   type TaskPushContextOption,
   type TaskPushMessageLayout,
   type TaskPushParentContextOption,
@@ -27,6 +28,7 @@ export interface TaskModelPushForm {
   workspaceMode: 'direct' | 'worktree';
   directConcurrencyConfirmed: boolean;
   repositorySelections: Record<string, { sourceRef: string; branchName: string; includeLocalChanges: boolean }>;
+  currentConversationIds: string[];
   parentContextSelections: Record<string, { selected: boolean; conversationIds: string[]; attachmentKeys: string[] }>;
   relatedContextSelections: Record<string, { selected: boolean; conversationIds: string[]; attachmentKeys: string[] }>;
   supplementalInfo: string;
@@ -105,16 +107,18 @@ export function buildTaskModelPushMessage(
   task: Pick<TaskRecord, 'id' | 'taskCode' | 'title' | 'taskType' | 'description' | 'defectCurrentState' | 'defectExpectedOutcome' | 'defectReproductionSteps' | 'optimizationCurrentState' | 'optimizationExpectedOutcome' | 'tags'>,
   supplementalInfo: string,
   currentAttachments: TaskPushPromptAttachment[] = [],
+  currentConversationPaths: string[] = [],
   parentContexts: TaskPushPromptParentContext[] = [],
   relatedContexts: TaskPushPromptRelatedContext[] = [],
 ): string {
-  return renderTaskPushLayoutText(buildTaskModelPushLayout(task, supplementalInfo, currentAttachments, parentContexts, relatedContexts));
+  return renderTaskPushLayoutText(buildTaskModelPushLayout(task, supplementalInfo, currentAttachments, currentConversationPaths, parentContexts, relatedContexts));
 }
 
 export function buildTaskModelPushLayout(
   task: Pick<TaskRecord, 'id' | 'taskCode' | 'title' | 'taskType' | 'description' | 'defectCurrentState' | 'defectExpectedOutcome' | 'defectReproductionSteps' | 'optimizationCurrentState' | 'optimizationExpectedOutcome' | 'tags'>,
   supplementalInfo: string,
   currentAttachments: TaskPushPromptAttachment[] = [],
+  currentConversationPaths: string[] = [],
   parentContexts: TaskPushPromptParentContext[] = [],
   relatedContexts: TaskPushPromptRelatedContext[] = [],
 ): TaskPushMessageLayout {
@@ -131,10 +135,16 @@ export function buildTaskModelPushLayout(
     optimizationExpectedOutcome: task.optimizationExpectedOutcome,
     tags: task.tags,
     attachments: currentAttachments,
+    conversationPaths: currentConversationPaths,
     supplementalInfo,
     parentContexts,
     relatedContexts,
   });
+}
+
+export function selectedTaskPushCurrentConversationPaths(options: TaskPushContextConversationOption[], conversationIds: string[]): string[] {
+  const selectedConversationIds = new Set(conversationIds);
+  return options.filter((conversation) => selectedConversationIds.has(conversation.id) && conversation.available && conversation.path).map((conversation) => conversation.path!);
 }
 
 /** 按服务端给出的根到父顺序生成正文上下文；附件只走结构化通道，不进入文本。 */
@@ -176,6 +186,44 @@ function selectedTaskPushContexts<T extends TaskPushContextOption>(
 }
 
 type TaskPushContextSelections = TaskModelPushForm['parentContextSelections'];
+
+function TaskPushCurrentConversationPicker(props: { options: TaskPushContextConversationOption[]; selectedIds: string[]; busy: boolean; zh: boolean; onChange: (conversationIds: string[]) => void }) {
+  if (props.options.length === 0) return null;
+  const selectedIds = new Set(props.selectedIds);
+  return (
+    <section className="task-model-push-parent-context task-model-push-current-conversations" aria-label={props.zh ? '当前任务历史会话信息' : 'Current task conversation history'}>
+      <span className="task-model-push-section-heading">
+        <strong>{props.zh ? '当前任务历史会话信息' : 'Current task conversation history'}</strong>
+        <small>{props.zh ? '选择本次需要发送的历史会话' : 'Select the previous conversations to send with this task'}</small>
+      </span>
+      <div className="task-model-push-parent-list">
+        <fieldset className="task-model-push-parent is-selected">
+          <div className="task-model-push-parent-resources">
+            <div>
+              {props.options.map((conversation) => (
+                <label key={conversation.id} className={!conversation.available ? 'is-unavailable' : undefined}>
+                  <input
+                    type="checkbox"
+                    checked={selectedIds.has(conversation.id)}
+                    onChange={(event) => props.onChange(event.currentTarget.checked ? [...props.selectedIds.filter((id) => id !== conversation.id), conversation.id] : props.selectedIds.filter((id) => id !== conversation.id))}
+                    disabled={props.busy || !conversation.available}
+                  />
+                  <span>
+                    <strong>{conversation.title}</strong>
+                    <small>
+                      {conversation.archived ? (props.zh ? '已归档 · ' : 'Archived · ') : ''}
+                      {conversation.available ? conversation.path : conversation.unavailableReason}
+                    </small>
+                  </span>
+                </label>
+              ))}
+            </div>
+          </div>
+        </fieldset>
+      </div>
+    </section>
+  );
+}
 
 function taskPushAttachmentFieldLabel(field: TaskPushPromptAttachment['field'], zh: boolean): string {
   const labels = zh
@@ -317,7 +365,7 @@ export function TaskPushLayoutPreview(props: { layout: TaskPushMessageLayout; la
           ))}
           {block.conversationPaths.length > 0 ? (
             <section className="task-push-layout-field">
-              <strong>会话文件路径</strong>
+              <strong>{block.contextKind === 'current' ? '当前任务历史会话信息' : '会话文件路径'}</strong>
               {block.conversationPaths.map((path) => (
                 <code key={path}>{path}</code>
               ))}
@@ -397,6 +445,7 @@ export function resolveTaskModelPushInitialForm(capabilities: CodexTaskPushCapab
         ];
       }),
     ),
+    currentConversationIds: [],
     parentContextSelections: {},
     relatedContextSelections: {},
     supplementalInfo: '',
@@ -435,9 +484,11 @@ export function TaskModelPushModal(props: {
   const parentContextOptions = props.capabilities?.parentContextOptions ?? [];
   const relatedContextOptions = props.capabilities?.relatedContextOptions ?? [];
   const currentAttachments = props.capabilities?.currentAttachmentOptions ?? [];
+  const currentConversationOptions = props.capabilities?.currentConversationOptions ?? [];
+  const selectedCurrentConversationPaths = selectedTaskPushCurrentConversationPaths(currentConversationOptions, props.form.currentConversationIds);
   const selectedParentContexts = selectedTaskPushParentContexts(parentContextOptions, props.form.parentContextSelections);
   const selectedRelatedContexts = selectedTaskPushRelatedContexts(relatedContextOptions, props.form.relatedContextSelections);
-  const taskPushLayout = buildTaskModelPushLayout(props.task, props.form.supplementalInfo, currentAttachments, selectedParentContexts, selectedRelatedContexts);
+  const taskPushLayout = buildTaskModelPushLayout(props.task, props.form.supplementalInfo, currentAttachments, selectedCurrentConversationPaths, selectedParentContexts, selectedRelatedContexts);
 
   function onModelChange(model: string): void {
     const capability = props.capabilities?.models.find((candidate) => candidate.model === model || candidate.id === model);
@@ -831,6 +882,14 @@ export function TaskModelPushModal(props: {
               </p>
             </section>
           ) : null}
+
+          <TaskPushCurrentConversationPicker
+            options={currentConversationOptions}
+            selectedIds={props.form.currentConversationIds}
+            busy={busy}
+            zh={zh}
+            onChange={(currentConversationIds) => props.onChange({ ...props.form, currentConversationIds })}
+          />
 
           <label className="task-model-push-supplement">
             <span>{zh ? '补充信息（可选）' : 'Supplemental information (optional)'}</span>

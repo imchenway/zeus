@@ -39,6 +39,7 @@ export interface TaskPushPromptInput extends TaskPushPromptTaskContent {
   taskId?: string;
   taskCode?: string;
   supplementalInfo?: string;
+  conversationPaths?: string[];
   parentContexts?: TaskPushPromptParentContext[];
   relatedContexts?: TaskPushPromptRelatedContext[];
 }
@@ -203,7 +204,8 @@ function appendTaskBlockParts(parts: TaskPushInputPart[], block: TaskPushLayoutT
     pushText(parts, `${field.text}\n`);
   }
   if (block.conversationPaths.length > 0) {
-    pushText(parts, `会话文件路径：\n${block.conversationPaths.map((path) => `- ${path}`).join('\n')}\n`);
+    const conversationLabel = block.contextKind === 'current' ? '当前任务历史会话信息' : '会话文件路径';
+    pushText(parts, `${conversationLabel}：\n${block.conversationPaths.map((path) => `- ${path}`).join('\n')}\n`);
   }
 }
 

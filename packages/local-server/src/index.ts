@@ -22,6 +22,7 @@ import {
   type TaskAttachmentReference,
   type TaskAttachmentField,
   type TaskManagementStatusConfig,
+  type TaskPushContextConversationOption,
   type TaskPushParentAttachmentOption,
   type TaskPushParentContextOption,
   type TaskPushParentContextSelection,
@@ -14245,6 +14246,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           task,
           supplementalInfo,
           currentAttachmentInput.promptAttachments.filter((attachment) => includedAttachmentKeys.has(attachment.key)),
+          taskContextInput.currentConversationPaths,
           filterContextAttachments(taskContextInput.parentContexts),
           filterContextAttachments(taskContextInput.relatedContexts),
         );
@@ -15053,6 +15055,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       canonicalPrompt: createTaskRuntimePrompt(task),
       taskContextRevision: taskContext.revision,
       parentContextRevision: taskContext.revision,
+      currentConversationOptions: taskContext.current.options,
       parentContextOptions: taskContext.parent.options,
       relatedContextOptions: taskContext.related.options,
       currentAttachmentOptions: currentAttachments.map((attachment) => attachment.option),
@@ -16009,10 +16012,11 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     task: ZeusTaskRecord,
     supplementalInfo: string,
     attachments: TaskPushPromptAttachment[],
+    currentConversationPaths: string[] = [],
     parentContexts: TaskPushPromptParentContext[] = [],
     relatedContexts: TaskPushPromptRelatedContext[] = [],
   ): TaskPushMessageLayout {
-    return buildTaskPushLayout({ taskId: task.id, taskCode: task.taskCode, ...taskPushPromptContent(task), attachments, supplementalInfo, parentContexts, relatedContexts });
+    return buildTaskPushLayout({ taskId: task.id, taskCode: task.taskCode, ...taskPushPromptContent(task), attachments, conversationPaths: currentConversationPaths, supplementalInfo, parentContexts, relatedContexts });
   }
 
   interface InspectedTaskPushAttachment {
@@ -16141,6 +16145,28 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     }
   }
 
+  interface TaskPushCurrentConversationState {
+    options: TaskPushContextConversationOption[];
+    revision: string;
+  }
+
+  function resolveTaskPushCurrentConversationState(task: ZeusTaskRecord): TaskPushCurrentConversationState {
+    const revisionResources: unknown[] = [];
+    const options = conversations.listAllByTask(task.id).map((conversation): TaskPushContextConversationOption => {
+      const availability = inspectTaskPushConversationPath(conversation);
+      revisionResources.push({ id: conversation.id, path: availability.path, available: availability.available, archived: conversation.archived });
+      return {
+        id: conversation.id,
+        title: conversation.title,
+        createdAt: conversation.createdAt,
+        archived: conversation.archived,
+        ...availability,
+      };
+    });
+    const revision = createHash('sha256').update(JSON.stringify({ options, revisionResources })).digest('hex');
+    return { options, revision };
+  }
+
   interface TaskPushParentContextState {
     options: TaskPushParentContextOption[];
     revision: string;
@@ -16227,18 +16253,20 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
 
   interface TaskPushContextState {
     revision: string;
+    current: TaskPushCurrentConversationState;
     parent: TaskPushParentContextState;
     related: TaskPushRelatedContextState;
   }
 
   function resolveTaskPushContextState(project: ZeusProjectRecord, task: ZeusTaskRecord): TaskPushContextState {
+    const current = resolveTaskPushCurrentConversationState(task);
     const parent = resolveTaskPushParentContextState(project, task);
     const related = resolveTaskPushRelatedContextState(project, task, new Set(parent.options.map((option) => option.taskId)));
     const currentAttachments = inspectTaskPushAttachments(task, project.localPath).inspected.map((attachment) => ({ option: attachment.option, localPath: attachment.attachment?.localPath ?? null }));
     const revision = createHash('sha256')
-      .update(JSON.stringify({ current: { updatedAt: task.updatedAt, content: taskPushPromptContent(task), attachments: currentAttachments }, parent: parent.revision, related: related.revision }))
+      .update(JSON.stringify({ current: { updatedAt: task.updatedAt, content: taskPushPromptContent(task), attachments: currentAttachments, conversations: current.revision }, parent: parent.revision, related: related.revision }))
       .digest('hex');
-    return { revision, parent, related };
+    return { revision, current, parent, related };
   }
 
   function parseTaskPushSelectionStringArray(value: unknown, field: string): string[] {
@@ -16273,14 +16301,16 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     task: ZeusTaskRecord,
     value: unknown,
   ): {
+    currentConversationPaths: string[];
     parentContexts: TaskPushPromptParentContext[];
     relatedContexts: TaskPushPromptRelatedContext[];
     attachmentInput: { attachments: NativeConversationAttachment[]; allowedRoots: string[] };
   } {
-    if (value === undefined) return { parentContexts: [], relatedContexts: [], attachmentInput: { attachments: [], allowedRoots: [] } };
+    if (value === undefined) return { currentConversationPaths: [], parentContexts: [], relatedContexts: [], attachmentInput: { attachments: [], allowedRoots: [] } };
     if (!isNativeApiRecord(value) || typeof value.revision !== 'string') {
       throw nativeApiError('ZEUS_INVALID_TASK_PUSH_CONTEXT', 'taskContext must contain a revision.');
     }
+    const currentConversationIds = value.currentConversationIds === undefined ? [] : parseTaskPushSelectionStringArray(value.currentConversationIds, 'currentConversationIds');
     const parentSelections = parseTaskPushContextSelections(value.parentSelections, 'parentSelections');
     const relatedSelections = parseTaskPushContextSelections(value.relatedSelections, 'relatedSelections');
     const state = resolveTaskPushContextState(project, task);
@@ -16290,6 +16320,15 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
 
     const selectedAttachments: NativeConversationAttachment[] = [];
     const allowedRoots = new Set<string>();
+    const currentConversationById = new Map(state.current.options.map((conversation) => [conversation.id, conversation]));
+    const currentConversationPaths = currentConversationIds.map((conversationId) => {
+      const conversation = currentConversationById.get(conversationId);
+      if (!conversation?.available || !conversation.path) {
+        throw nativeApiError('ZEUS_TASK_PUSH_CONTEXT_CHANGED', '当前任务历史会话信息已变化，请刷新后重试。');
+      }
+      allowedRoots.add(dirname(conversation.path));
+      return conversation.path;
+    });
     const resolveSelections = <T extends TaskPushPromptParentContext | TaskPushPromptRelatedContext>(input: {
       kindLabel: string;
       options: Array<TaskPushParentContextOption | TaskPushRelatedContextOption>;
@@ -16353,7 +16392,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       selections: relatedSelections,
     });
     for (const root of selectedAttachments.length > 0 ? taskPushTrustedAttachmentRoots(project.localPath) : []) allowedRoots.add(root);
-    return { parentContexts, relatedContexts, attachmentInput: { attachments: selectedAttachments, allowedRoots: [...allowedRoots] } };
+    return { currentConversationPaths, parentContexts, relatedContexts, attachmentInput: { attachments: selectedAttachments, allowedRoots: [...allowedRoots] } };
   }
 
   function mergeTaskPushAttachmentInputs(...inputs: Array<{ attachments: NativeConversationAttachment[]; allowedRoots: string[] }>) {
