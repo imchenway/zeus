@@ -1,16 +1,11 @@
 import { useEffect } from 'react';
 import { createRoot } from 'react-dom/client';
-import { App, buildGraphConversationTaskIntent, buildGraphNodeTaskIntent, buildProjectDirectoryResolution, buildTemplateTaskDraft } from './App.js';
 import { RendererErrorBoundary } from './ErrorBoundary.js';
 import { createDashboardClient, type DashboardClient, type ExecutionHostTransition } from './apiClient.js';
 import { openGraphSourceInMain, revealProjectInFinderInMain } from './appShellBridge.js';
 
-/** 选择真实仓库失败或取消时保留现有列表；开源分发包不能内置维护者本机路径。 */
-function resolveProjectDirectoryForCreation(selectedPath: string | null | undefined, appLanguage: Parameters<typeof buildProjectDirectoryResolution>[1]): { path: string | null; description: string } {
-  return buildProjectDirectoryResolution(selectedPath, appLanguage);
-}
-
 async function renderWithClient(client: DashboardClient, executionHostTransition?: ExecutionHostTransition): Promise<void> {
+  const { App, buildGraphConversationTaskIntent, buildGraphNodeTaskIntent, buildProjectDirectoryResolution, buildTemplateTaskDraft } = await import('./App.js');
   const snapshot = await client.loadDashboard();
   const appShellSettings = await client.loadAppShellSettings();
   const root = document.getElementById('root');
@@ -26,7 +21,8 @@ async function renderWithClient(client: DashboardClient, executionHostTransition
         commandClient={client}
         onChooseProjectDirectory={async () => {
           const selectedPath = await window.zeus?.chooseProjectDirectory?.();
-          const resolved = resolveProjectDirectoryForCreation(selectedPath, appShellSettings.appLanguage);
+          // 选择真实仓库失败或取消时保留现有列表；开源分发包不能内置维护者本机路径。
+          const resolved = buildProjectDirectoryResolution(selectedPath, appShellSettings.appLanguage);
           return resolved.path;
         }}
         onCreateCurrentProject={async (request) => {
@@ -295,6 +291,18 @@ async function renderWithClient(client: DashboardClient, executionHostTransition
   );
 }
 
+async function renderMenuBarUsageWithClient(client: DashboardClient): Promise<void> {
+  const [{ MenuBarUsageWindow }, appShellSettings] = await Promise.all([import('./settings/MenuBarUsageWindow.js'), client.loadAppShellSettings().catch(() => ({ appLanguage: 'zh-CN' as const, appearance: 'system' as const }))]);
+  const root = document.getElementById('root');
+  if (!root) throw new Error('Zeus renderer root element is missing');
+  document.body.dataset.surface = 'menu-bar-usage';
+  createRoot(root).render(
+    <RendererErrorBoundary appLanguage={appShellSettings.appLanguage} onFatalError={(message) => console.error('Zeus 菜单栏用量浮窗渲染失败', message)}>
+      <MenuBarUsageWindow client={client} language={appShellSettings.appLanguage} appearance={appShellSettings.appearance} />
+    </RendererErrorBoundary>,
+  );
+}
+
 /** React 首次 commit 后再通知 Main；在此之前的模块、加载和渲染异常都由启动监控器兜底。 */
 function RendererBootstrapReady(): null {
   useEffect(() => {
@@ -317,21 +325,24 @@ function gitOperationReason(operation: string): string {
   return reasons[operation] ?? '用户从 Git Diff 面板请求执行 Git 高风险操作';
 }
 
-async function hydrateDashboard(): Promise<void> {
+async function hydrateRenderer(): Promise<void> {
   if (!window.zeus?.getLocalServerConfig) throw new Error('Electron 本地桥接未就绪');
   const config = await window.zeus.getLocalServerConfig();
-  await renderWithClient(
-    createDashboardClient({
-      ...config,
-      refreshLocalServerConfig: window.zeus.getLocalServerConfig,
-    }),
-    config.executionHostTransition,
-  );
+  const client = createDashboardClient({
+    ...config,
+    refreshLocalServerConfig: window.zeus.getLocalServerConfig,
+  });
+  if (new URLSearchParams(window.location.search).get('surface') === 'menu-bar-usage') {
+    await renderMenuBarUsageWithClient(client);
+    return;
+  }
+  await renderWithClient(client, config.executionHostTransition);
 }
 
-hydrateDashboard().catch((error: unknown) => {
-  console.error('Zeus dashboard hydration failed', error);
-  reportRendererFatalFailure(error);
+hydrateRenderer().catch((error: unknown) => {
+  const isMenuBarUsage = new URLSearchParams(window.location.search).get('surface') === 'menu-bar-usage';
+  console.error(isMenuBarUsage ? 'Zeus menu bar usage hydration failed' : 'Zeus dashboard hydration failed', error);
+  if (!isMenuBarUsage) reportRendererFatalFailure(error);
 });
 
 function reportRendererFatalFailure(error: unknown): void {

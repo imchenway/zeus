@@ -51,6 +51,8 @@ import type { CreateProjectSourceEntryInput, MoveProjectSourceEntryInput, SavePr
 let mainWindow: BrowserWindow | undefined;
 const windows = new Set<BrowserWindow>();
 let tray: Tray | undefined;
+let menuBarUsageWindow: BrowserWindow | undefined;
+let menuBarUsageMenu: Menu | undefined;
 let localServerRuntime: DesktopLocalServerRuntime | undefined;
 let releaseUpdateService: ReleaseUpdateService | undefined;
 let homebrewUpdateController: HomebrewUpdateController | undefined;
@@ -87,6 +89,8 @@ const windowStateSaveDelayMs = 250;
 const windowStateActivationDelayMs = 500;
 const savedDisplayAvailabilityTimeoutMs = 2_000;
 const testDistributionName = 'Zeus Test';
+const menuBarUsageWindowSize = { width: 360, height: 520 } as const;
+const menuBarUsageWindowGap = 6;
 
 function isTestDistribution(): boolean {
   if (!app.isPackaged) return false;
@@ -362,6 +366,12 @@ function configureWindowSecurity(window: BrowserWindow, rendererUrl: string): vo
   window.webContents.session.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
 }
 
+function rendererEntryUrl(surface?: 'menu-bar-usage'): string {
+  const url = new URL(process.env.ZEUS_DEV_SERVER_URL ?? pathToFileURL(join(desktopRoot(), 'dist/renderer/index.html')).toString());
+  if (surface) url.searchParams.set('surface', surface);
+  return url.toString();
+}
+
 /** 创建 Zeus 主窗口；preload 会读取 Main 中启动的本地服务配置。 */
 async function createWindow(): Promise<void> {
   if (!appShellSettings.multiWindowEnabled && mainWindow && !mainWindow.isDestroyed()) {
@@ -437,6 +447,16 @@ async function createWindow(): Promise<void> {
     rendererBootstrapMonitor.dispose(window);
     windows.delete(window);
     if (mainWindow === window) mainWindow = [...windows].at(-1);
+    if (
+      windows.size === 0 &&
+      (isTestDistribution() ||
+        shouldQuitWhenAllWindowsClosed({
+          platform: process.platform,
+          backgroundModeEnabled: appShellSettings.backgroundModeEnabled,
+        }))
+    ) {
+      menuBarUsageWindow?.destroy();
+    }
   });
 
   let didRevealMainWindow = false;
@@ -463,7 +483,7 @@ async function createWindow(): Promise<void> {
   };
 
   window.once('ready-to-show', revealMainWindowOnce);
-  const rendererUrl = process.env.ZEUS_DEV_SERVER_URL ?? pathToFileURL(join(desktopRoot(), 'dist/renderer/index.html')).toString();
+  const rendererUrl = rendererEntryUrl();
   configureWindowSecurity(window, rendererUrl);
   if (process.env.ZEUS_DEV_SERVER_URL) {
     await window.loadURL(rendererUrl);
@@ -513,6 +533,14 @@ async function openSettingsFromMenu(): Promise<void> {
   await requestMainWindow();
   if (fatalStartup) return;
   await mainWindow?.webContents.executeJavaScript('globalThis.location.hash = "#settings-general";', true).catch(() => undefined);
+}
+
+/** 菜单栏浮窗只能跳转到已存在的设置页，不复制用量或账户配置流程。 */
+async function openSettingsFromMenuBarUsage(category: 'usage' | 'runtime'): Promise<void> {
+  hideMenuBarUsageWindow();
+  await requestMainWindow();
+  if (fatalStartup) return;
+  await mainWindow?.webContents.executeJavaScript(`globalThis.location.hash = "#settings-${category}";`, true).catch(() => undefined);
 }
 
 /** 从 macOS 原生菜单触发真实更新检查；结果、预取和重启决策全部留在非阻断原生窗口。 */
@@ -623,6 +651,29 @@ function setupIpc(): void {
       throw new Error('Zeus local server is not ready');
     }
     return localServerRuntime.refreshConfig();
+  });
+  ipcMain.handle('zeus:menu-bar-usage:hide', (event) => {
+    requireMenuBarUsageWindow(event);
+    hideMenuBarUsageWindow();
+    return { hidden: true };
+  });
+  ipcMain.handle('zeus:menu-bar-usage:show-main', async (event) => {
+    requireMenuBarUsageWindow(event);
+    hideMenuBarUsageWindow();
+    await requestMainWindow();
+    return { shown: !fatalStartup };
+  });
+  ipcMain.handle('zeus:menu-bar-usage:open-settings', async (event, category: unknown) => {
+    requireMenuBarUsageWindow(event);
+    if (category !== 'usage' && category !== 'runtime') throw new TypeError('菜单栏用量浮窗设置目标无效。');
+    await openSettingsFromMenuBarUsage(category);
+    return { opened: !fatalStartup, category };
+  });
+  ipcMain.handle('zeus:menu-bar-usage:quit', (event) => {
+    requireMenuBarUsageWindow(event);
+    hideMenuBarUsageWindow();
+    app.quit();
+    return { quitting: true };
   });
   ipcMain.handle('zeus:project-source:list-directory', (event, input: { projectId?: unknown; relativePath?: unknown }) => {
     const service = requireProjectSourceWorkspace(event);
@@ -1120,6 +1171,92 @@ function parseTelegramAllowedUserIds(raw: string | undefined): number[] {
     .filter((item) => Number.isSafeInteger(item));
 }
 
+function requireMenuBarUsageWindow(event: Electron.IpcMainInvokeEvent): BrowserWindow {
+  const requestingWindow = BrowserWindow.fromWebContents(event.sender);
+  if (!requestingWindow || requestingWindow.isDestroyed() || requestingWindow !== menuBarUsageWindow) {
+    throw new Error('菜单栏用量浮窗请求来自不受信任窗口。');
+  }
+  return requestingWindow;
+}
+
+function hideMenuBarUsageWindow(): void {
+  if (menuBarUsageWindow && !menuBarUsageWindow.isDestroyed()) menuBarUsageWindow.hide();
+}
+
+function positionMenuBarUsageWindow(window: BrowserWindow): void {
+  if (!tray || tray.isDestroyed()) return;
+  const trayBounds = tray.getBounds();
+  const display = screen.getDisplayNearestPoint({
+    x: Math.round(trayBounds.x + trayBounds.width / 2),
+    y: Math.round(trayBounds.y + trayBounds.height / 2),
+  });
+  const { workArea } = display;
+  const preferredX = Math.round(trayBounds.x + trayBounds.width / 2 - menuBarUsageWindowSize.width / 2);
+  const minX = workArea.x + menuBarUsageWindowGap;
+  const maxX = workArea.x + workArea.width - menuBarUsageWindowSize.width - menuBarUsageWindowGap;
+  const belowTrayY = Math.round(trayBounds.y + trayBounds.height + menuBarUsageWindowGap);
+  const maxY = workArea.y + workArea.height - menuBarUsageWindowSize.height - menuBarUsageWindowGap;
+  const preferredY = belowTrayY <= maxY ? belowTrayY : Math.round(trayBounds.y - menuBarUsageWindowSize.height - menuBarUsageWindowGap);
+  window.setPosition(Math.min(Math.max(preferredX, minX), Math.max(minX, maxX)), Math.min(Math.max(preferredY, workArea.y + menuBarUsageWindowGap), Math.max(workArea.y + menuBarUsageWindowGap, maxY)), false);
+}
+
+async function createMenuBarUsageWindow(): Promise<BrowserWindow> {
+  if (menuBarUsageWindow && !menuBarUsageWindow.isDestroyed()) return menuBarUsageWindow;
+  const window = new BrowserWindow({
+    ...menuBarUsageWindowSize,
+    title: appShellSettings.appLanguage === 'zh-CN' ? 'Zeus 用量' : 'Zeus Usage',
+    show: false,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    hasShadow: true,
+    webPreferences: {
+      preload: join(desktopRoot(), 'dist/preload/index.cjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      webSecurity: true,
+      allowRunningInsecureContent: false,
+    },
+  });
+  menuBarUsageWindow = window;
+  window.setAlwaysOnTop(true, 'pop-up-menu');
+  window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  window.on('blur', () => hideMenuBarUsageWindow());
+  window.on('closed', () => {
+    if (menuBarUsageWindow === window) menuBarUsageWindow = undefined;
+  });
+  window.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedUrl, isMainFrame) => {
+    if (isMainFrame && errorCode !== -3) console.warn(`Zeus 菜单栏用量浮窗加载失败：${validatedUrl} ${errorDescription} (${errorCode})`);
+  });
+  const rendererUrl = rendererEntryUrl('menu-bar-usage');
+  configureWindowSecurity(window, rendererUrl);
+  try {
+    await window.loadURL(rendererUrl);
+    return window;
+  } catch (error) {
+    window.destroy();
+    throw error;
+  }
+}
+
+async function toggleMenuBarUsageWindow(): Promise<void> {
+  if (fatalStartup) return;
+  const window = await createMenuBarUsageWindow();
+  if (window.isVisible()) {
+    window.hide();
+    return;
+  }
+  positionMenuBarUsageWindow(window);
+  window.show();
+  window.focus();
+}
+
 function setupTray(): void {
   if (!tray) {
     const trayIconPath = join(desktopRoot(), 'assets/trayTemplate.png');
@@ -1128,24 +1265,34 @@ function setupTray(): void {
     trayIcon.setTemplateImage(true);
     tray = new Tray(trayIcon);
     tray.setToolTip('Zeus');
+    tray.setIgnoreDoubleClickEvents(true);
   }
-  tray.setContextMenu(
-    Menu.buildFromTemplate(
-      buildMenuBarTrayTemplate({
-        settings: appShellSettings,
-        showMainWindow: () => {
-          void requestMainWindow();
-        },
-        createWindow: () => {
-          if (fatalStartup) return;
-          void createWindow().catch((error: unknown) => {
-            void startupCoordinator.fail(error);
-          });
-        },
-        quit: () => app.quit(),
-      }) as Electron.MenuItemConstructorOptions[],
-    ),
+  menuBarUsageMenu = Menu.buildFromTemplate(
+    buildMenuBarTrayTemplate({
+      settings: appShellSettings,
+      showMainWindow: () => {
+        hideMenuBarUsageWindow();
+        void requestMainWindow();
+      },
+      createWindow: () => {
+        hideMenuBarUsageWindow();
+        if (fatalStartup) return;
+        void createWindow().catch((error: unknown) => {
+          void startupCoordinator.fail(error);
+        });
+      },
+      quit: () => app.quit(),
+    }) as Electron.MenuItemConstructorOptions[],
   );
+  tray.removeAllListeners('click');
+  tray.removeAllListeners('right-click');
+  tray.on('click', () => {
+    void toggleMenuBarUsageWindow().catch((error: unknown) => console.warn('Zeus 菜单栏用量浮窗无法打开。', error));
+  });
+  tray.on('right-click', () => {
+    hideMenuBarUsageWindow();
+    if (menuBarUsageMenu) tray?.popUpContextMenu(menuBarUsageMenu);
+  });
 }
 
 function setupTraySafely(): void {

@@ -117,7 +117,7 @@ import { CodexRemoteControlSettings } from './settings/CodexRemoteControlSetting
 import { ModelConnectionsSettingsPane } from './settings/ModelConnectionsSettingsPane.js';
 import { ProjectModelsSettings } from './settings/ProjectModelsSettings.js';
 import { TaskManagementStatusEditor } from './settings/TaskManagementStatusEditor.js';
-import { CodexUsageSettingsPane, ZeusUsageTitlebar } from './settings/CodexUsageSettingsPane.js';
+import { CodexUsageSettingsPane } from './settings/CodexUsageSettingsPane.js';
 import {
   type TaskAttachmentCandidate,
   type TaskAttachmentRestoreTarget,
@@ -242,6 +242,7 @@ type ConversationDrawer = 'runtime' | 'context' | 'changes' | 'templates' | unde
 type TaskConversationDrawerTarget = Readonly<{ taskId: string; conversationId: string }> | undefined;
 type TaskConversationReopenState = Readonly<{ conversationId: string; status: 'busy' | 'error'; error?: string }> | undefined;
 type SettingsCategory = 'general' | 'usage' | 'tasks' | 'runtime' | 'models' | 'browser' | 'telegram' | 'security' | 'commands' | 'git' | 'release' | 'data';
+const SETTINGS_CATEGORIES = ['general', 'usage', 'tasks', 'runtime', 'models', 'browser', 'telegram', 'security', 'commands', 'git', 'release', 'data'] as const satisfies readonly SettingsCategory[];
 type DataPortabilityStatusState = { kind: 'idle' } | { kind: 'exported'; target: string } | { kind: 'imported'; target: string; changedSettings: string[] };
 type TaskBulkActionStatusState = { kind: 'idle' | 'running' | 'done' | 'failed'; message?: string };
 type RuntimeLogExportStatusState = { kind: 'idle' } | { kind: 'empty' } | { kind: 'cancelled' } | { kind: 'saved'; filePath: string } | { kind: 'failed' };
@@ -5448,6 +5449,12 @@ function readCurrentMainNavTarget(): MainNavTarget {
   return typeof window === 'undefined' ? 'conversations' : normalizeMainNavTarget(window.location.hash);
 }
 
+function readSettingsCategoryFromHash(): SettingsCategory | undefined {
+  if (typeof window === 'undefined') return undefined;
+  const target = window.location.hash.replace(/^#settings-/, '');
+  return SETTINGS_CATEGORIES.includes(target as SettingsCategory) ? (target as SettingsCategory) : undefined;
+}
+
 export function normalizeTaskRuntimeControlHandlerResult(result: TaskRuntimeControlHandlerResult): NormalizedTaskRuntimeControlHandlerResult {
   if ('snapshot' in result) {
     return {
@@ -7219,7 +7226,11 @@ export function App(props: {
     return () => window.clearTimeout(focusTitleInput);
   }, [taskCreateModalOpen]);
   useEffect(() => {
-    const syncActiveTarget = () => setActiveNavTarget(readCurrentMainNavTarget());
+    const syncActiveTarget = () => {
+      setActiveNavTarget(readCurrentMainNavTarget());
+      const categoryFromHash = readSettingsCategoryFromHash();
+      if (categoryFromHash) setSettingsCategory(categoryFromHash);
+    };
     syncActiveTarget();
     window.addEventListener('hashchange', syncActiveTarget);
     return () => window.removeEventListener('hashchange', syncActiveTarget);
@@ -7275,6 +7286,8 @@ export function App(props: {
     setTaskConversationDrawerTarget(undefined);
   }, [activeNavTarget, activeProjectSection]);
   const [settingsCategory, setSettingsCategory] = useState<SettingsCategory>(() => {
+    const categoryFromHash = readSettingsCategoryFromHash();
+    if (categoryFromHash) return categoryFromHash;
     if (props.initialMainNavTarget === 'settings-data') return 'data';
     if (props.initialMainNavTarget === 'telegram' || props.initialSecuritySecrets?.telegramBotToken.configured) return 'telegram';
     if (props.initialRuntimeSettings || props.initialRuntimeStatus) return 'runtime';
@@ -11659,19 +11672,6 @@ export function App(props: {
       aria-label={uiCopy.shellAriaLabel}
     >
       <div className="window-drag-strip" aria-hidden="true" onPointerDown={handleWindowDragPointerDown} />
-      <ZeusUsageTitlebar
-        client={props.nativeConversationClient ?? null}
-        language={appShellSettings.appLanguage}
-        refreshRevision={codexUsageRevision}
-        onOpenFull={() => {
-          setSettingsCategory('usage');
-          handleMainNavigate('settings');
-        }}
-        onOpenConfiguration={() => {
-          setSettingsCategory('runtime');
-          handleMainNavigate('settings');
-        }}
-      />
       <output className="sr-only" aria-live="polite" aria-atomic="true">
         {taskModelPushAnnouncement}
       </output>

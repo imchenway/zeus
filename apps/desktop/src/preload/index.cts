@@ -55,6 +55,10 @@ async function authorizePendingResourceFiles(files: File[], source: 'paste' | 'd
 contextBridge.exposeInMainWorld('zeus', {
   appName: 'Zeus',
   getLocalServerConfig: () => ipcRenderer.invoke('zeus:get-local-server-config'),
+  hideMenuBarUsage: () => ipcRenderer.invoke('zeus:menu-bar-usage:hide'),
+  showMainWindowFromMenuBarUsage: () => ipcRenderer.invoke('zeus:menu-bar-usage:show-main'),
+  openMenuBarUsageSettings: (category: 'usage' | 'runtime') => ipcRenderer.invoke('zeus:menu-bar-usage:open-settings', category),
+  quitFromMenuBarUsage: () => ipcRenderer.invoke('zeus:menu-bar-usage:quit'),
   listProjectSourceDirectory: (input: unknown) => ipcRenderer.invoke('zeus:project-source:list-directory', input),
   searchProjectSourceEntries: (input: unknown) => ipcRenderer.invoke('zeus:project-source:search', input),
   readProjectSourceFile: (input: unknown) => ipcRenderer.invoke('zeus:project-source:read-file', input),
