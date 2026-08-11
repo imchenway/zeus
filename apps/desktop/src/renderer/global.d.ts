@@ -1,4 +1,4 @@
-import type { DashboardClientOptions, LocalBusinessDataSnapshot, LocalSettingsExportSnapshot, ReleaseUpdateOperationSnapshot } from './apiClient.js';
+import type { DashboardClientOptions, LocalBusinessDataSnapshot, LocalSettingsExportSnapshot } from './apiClient.js';
 import type { ZeusBrowserApprovalDecision, ZeusBrowserCommand, ZeusBrowserConversationSnapshot, ZeusBrowserEvent, ZeusBrowserPreparedSubmission, ZeusBrowserSettings } from '@zeus/shared';
 import type { ConversationFileLocation, ConversationOpenTarget, ConversationResourceOpenTarget } from '@zeus/shared';
 import type {
@@ -127,8 +127,6 @@ declare global {
         lineStart?: number | null;
       }>;
       openExternalHttpsUrl: (url: string) => Promise<{ opened: boolean; url?: string; error?: string }>;
-      downloadReleaseUpdate: () => Promise<ReleaseUpdateOperationSnapshot>;
-      installReleaseUpdate: () => Promise<ReleaseUpdateOperationSnapshot>;
       listConversationResourceOpenTargets: (request: { projectId: string; conversationId: string; resourceId: string }) => Promise<{ resourceId: string; targets: ConversationResourceOpenTarget[] }>;
       openConversationResource: (request: { projectId: string; conversationId: string; resourceId: string; target: ConversationOpenTarget; location?: ConversationFileLocation }) => Promise<{
         opened: boolean;
@@ -140,6 +138,7 @@ declare global {
       exportMermaidDiagramToFile: (payload: { fileName: string; mimeType: 'text/vnd.mermaid'; content: string }) => Promise<{ saved: boolean; filePath: string | null }>;
       exportPlantUmlDiagramToFile: (payload: { fileName: string; mimeType: 'text/vnd.plantuml'; content: string }) => Promise<{ saved: boolean; filePath: string | null }>;
       notifyAppShellSettingsChanged: (settings: {
+        appLanguage: 'zh-CN' | 'en-US';
         webviewDebugEnabled: boolean;
         multiWindowEnabled: boolean;
         backgroundModeEnabled: boolean;
@@ -164,7 +163,6 @@ declare global {
       moveWindowDrag: (point: { screenX: number; screenY: number }) => Promise<{ dragging: boolean; x?: number; y?: number }>;
       endWindowDrag: () => Promise<{ dragging: false }>;
       onNativeNewConversation: (listener: () => void) => () => void;
-      onNativeCheckForUpdates: (listener: () => void) => () => void;
       getBrowserSnapshot: (conversationId: string) => Promise<ZeusBrowserConversationSnapshot>;
       openBrowserTab: (input: { conversationId: string; url?: string }) => Promise<ZeusBrowserConversationSnapshot>;
       activateBrowserTab: (input: { conversationId: string; tabId: string }) => Promise<ZeusBrowserConversationSnapshot>;

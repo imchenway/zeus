@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /* global console, process */
-import { existsSync, readFileSync } from 'node:fs';
+import { accessSync, constants, existsSync, readFileSync, statSync } from 'node:fs';
 import { basename, join, posix, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -126,6 +126,23 @@ export function assertNoPackagedCodexRuntime(appRoot) {
   return { dependency: 'user-installed' };
 }
 
+/** 更新流程依赖独立 AppKit 辅助程序，打包产物必须包含可执行文件，避免菜单进入后才失败。 */
+export function assertPackagedUpdateProgressHelper(appRoot) {
+  const helperPath = join(appRoot, 'Contents/Resources/app.asar.unpacked/dist/native/ZeusUpdateProgress');
+  if (!existsSync(helperPath)) {
+    throw new Error(`packaged app is missing native update progress helper: ${helperPath}`);
+  }
+  if (!statSync(helperPath).isFile()) {
+    throw new Error(`packaged update progress helper is not a file: ${helperPath}`);
+  }
+  try {
+    accessSync(helperPath, constants.X_OK);
+  } catch (error) {
+    throw new Error(`packaged update progress helper is not executable: ${helperPath}`, { cause: error });
+  }
+  return { helperPath };
+}
+
 export function verifyPackagedApp(appPath) {
   const appRoot = resolve(appPath);
   const asarPath = join(appRoot, 'Contents/Resources/app.asar');
@@ -137,6 +154,7 @@ export function verifyPackagedApp(appPath) {
   }
   readAsarTextFile(asarPath, mainPackage.main);
   const codex = assertNoPackagedCodexRuntime(appRoot);
+  const updateProgress = assertPackagedUpdateProgressHelper(appRoot);
   return {
     appName: basename(appRoot, '.app'),
     assetCount: renderer.assetCount,
@@ -144,6 +162,7 @@ export function verifyPackagedApp(appPath) {
     preload: preload.preloadPath,
     browserPagePreload: preload.browserPagePreloadPath,
     codex,
+    updateProgress,
   };
 }
 
@@ -154,7 +173,9 @@ async function main() {
     process.exit(2);
   }
   const health = verifyPackagedApp(appPath);
-  console.log(`packaged-health=${health.appName};rendererAssets=${health.assetCount};main=${health.main};preload=${health.preload};browserPagePreload=${health.browserPagePreload};codex=${health.codex.dependency}`);
+  console.log(
+    `packaged-health=${health.appName};rendererAssets=${health.assetCount};main=${health.main};preload=${health.preload};browserPagePreload=${health.browserPagePreload};codex=${health.codex.dependency};updateProgress=${basename(health.updateProgress.helperPath)}`,
+  );
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

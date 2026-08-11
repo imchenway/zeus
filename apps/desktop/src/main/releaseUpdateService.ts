@@ -60,6 +60,7 @@ interface PreparedUpdate {
 }
 
 export interface ReleaseUpdateService {
+  check(): Promise<DesktopReleaseUpdateStatus>;
   download(): Promise<DesktopReleaseUpdateOperation>;
   install(): Promise<DesktopReleaseUpdateOperation>;
 }
@@ -101,6 +102,7 @@ export function createReleaseUpdateService(options: CreateReleaseUpdateServiceOp
   }
 
   return {
+    check: () => loadUpdateStatus(options),
     download: () =>
       exclusive(async () => {
         const update = await loadUpdateStatus(options);

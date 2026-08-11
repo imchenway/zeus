@@ -1,10 +1,7 @@
-import type {
-  ConversationFileLocation,
-  ConversationOpenTarget,
-  ConversationResourceOpenTarget,
-} from '@zeus/shared';
+import type { ConversationFileLocation, ConversationOpenTarget, ConversationResourceOpenTarget } from '@zeus/shared';
 
 export interface MainAppShellSettingsChange {
+  appLanguage: 'zh-CN' | 'en-US';
   webviewDebugEnabled: boolean;
   multiWindowEnabled: boolean;
   backgroundModeEnabled: boolean;
@@ -44,18 +41,8 @@ export interface AppShellBridgeWindow {
     onTaskTableLayoutCloseRequested?: (listener: () => void) => () => void;
     openGraphSource?: (source: GraphSourceOpenRequest) => Promise<GraphSourceOpenResult>;
     openExternalHttpsUrl?: (url: string) => Promise<ExternalHttpsOpenResult>;
-    listConversationResourceOpenTargets?: (request: {
-      projectId: string;
-      conversationId: string;
-      resourceId: string;
-    }) => Promise<{resourceId: string; targets: ConversationResourceOpenTarget[]}>;
-    openConversationResource?: (request: {
-      projectId: string;
-      conversationId: string;
-      resourceId: string;
-      target: ConversationOpenTarget;
-      location?: ConversationFileLocation;
-    }) => Promise<{
+    listConversationResourceOpenTargets?: (request: { projectId: string; conversationId: string; resourceId: string }) => Promise<{ resourceId: string; targets: ConversationResourceOpenTarget[] }>;
+    openConversationResource?: (request: { projectId: string; conversationId: string; resourceId: string; target: ConversationOpenTarget; location?: ConversationFileLocation }) => Promise<{
       opened: boolean;
       resourceId: string;
       target: ConversationOpenTarget;
@@ -96,8 +83,8 @@ export async function listConversationResourceOpenTargetsInMain(input: {
   projectId: string;
   conversationId: string;
   resourceId: string;
-}): Promise<{resourceId: string; targets: ConversationResourceOpenTarget[]}> {
-  if (!input.zeus?.listConversationResourceOpenTargets) return {resourceId: input.resourceId, targets: []};
+}): Promise<{ resourceId: string; targets: ConversationResourceOpenTarget[] }> {
+  if (!input.zeus?.listConversationResourceOpenTargets) return { resourceId: input.resourceId, targets: [] };
   return input.zeus.listConversationResourceOpenTargets({
     projectId: input.projectId,
     conversationId: input.conversationId,
@@ -105,23 +92,16 @@ export async function listConversationResourceOpenTargetsInMain(input: {
   });
 }
 
-export async function openConversationResourceInMain(input: {
-  zeus: AppShellBridgeWindow['zeus'];
-  projectId: string;
-  conversationId: string;
-  resourceId: string;
-  target: ConversationOpenTarget;
-  location?: ConversationFileLocation;
-}) {
+export async function openConversationResourceInMain(input: { zeus: AppShellBridgeWindow['zeus']; projectId: string; conversationId: string; resourceId: string; target: ConversationOpenTarget; location?: ConversationFileLocation }) {
   if (!input.zeus?.openConversationResource) {
-    return {opened: false, resourceId: input.resourceId, target: input.target, error: 'conversation_resource_open_unavailable'} as const;
+    return { opened: false, resourceId: input.resourceId, target: input.target, error: 'conversation_resource_open_unavailable' } as const;
   }
   return input.zeus.openConversationResource({
     projectId: input.projectId,
     conversationId: input.conversationId,
     resourceId: input.resourceId,
     target: input.target,
-    ...(input.location ? {location: input.location} : {}),
+    ...(input.location ? { location: input.location } : {}),
   });
 }
 

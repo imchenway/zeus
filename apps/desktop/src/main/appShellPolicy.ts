@@ -1,5 +1,6 @@
 /** Electron Main 只依赖这三个开关来决定窗口、菜单与后台驻留策略。 */
 export interface MainAppShellSettings {
+  appLanguage: 'zh-CN' | 'en-US';
   webviewDebugEnabled: boolean;
   multiWindowEnabled: boolean;
   backgroundModeEnabled: boolean;
