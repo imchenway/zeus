@@ -94,6 +94,8 @@ export interface CreateSessionControllerOptions {
   client: SessionControllerClient;
   projectId: string;
   conversationId: string;
+  /** 本地首发工作面尚未绑定真实身份时只构造状态，不连接服务端。 */
+  enabled?: boolean;
   initialCachedState?: NativeSessionState;
   initialOptimisticState?: NativeSessionState;
   storage?: SessionDraftStorage;
@@ -211,14 +213,15 @@ export function createSessionController(options: CreateSessionControllerOptions)
     projectId: options.projectId,
     conversationId: options.conversationId,
     providerThreadId: initialCachedState?.providerThreadId ?? (initialOptimisticItems.length > 0 ? (options.initialOptimisticState?.providerThreadId ?? null) : null),
-    conversationState: initialCachedState?.conversationState ?? (initialOptimisticItems.length > 0 ? 'starting_turn' : 'native_loading'),
+    conversationState: initialCachedState?.conversationState ?? options.initialOptimisticState?.conversationState ?? (initialOptimisticItems.length > 0 ? 'starting_turn' : 'native_loading'),
     items: { ...cachedItems, ...optimisticItems },
     itemOrder,
     providerSettings: initialCachedState?.providerSettings ?? (initialOptimisticItems.length > 0 ? (options.initialOptimisticState?.providerSettings ?? null) : null),
     transcriptRevision: (initialCachedState?.transcriptRevision ?? 0) + initialOptimisticItems.filter((item) => !(item.key in cachedItems)).length,
-    draft: persisted.draft,
-    attachments: persisted.attachments,
-    browserSubmission: persisted.browserSubmission ?? null,
+    queue: initialCachedState?.queue ?? options.initialOptimisticState?.queue ?? null,
+    draft: persisted.draft || options.initialOptimisticState?.draft || '',
+    attachments: persisted.attachments.length > 0 ? persisted.attachments : (options.initialOptimisticState?.attachments ?? []),
+    browserSubmission: persisted.browserSubmission ?? options.initialOptimisticState?.browserSubmission ?? null,
     busyOperation: null,
     error: initialCachedState?.error?.recoveryRequired ? null : (initialCachedState?.error ?? null),
   };
@@ -1183,12 +1186,17 @@ export interface UseSessionControllerResult {
 }
 
 export function useSessionController(options: CreateSessionControllerOptions): UseSessionControllerResult {
-  const controller = useMemo(() => createSessionController(options), [options.client, options.projectId, options.conversationId, options.initialCachedState, options.initialOptimisticState, options.storage, options.createId]);
+  const controller = useMemo(
+    () => createSessionController(options),
+    [options.client, options.projectId, options.conversationId, options.enabled, options.initialCachedState, options.initialOptimisticState, options.storage, options.createId],
+  );
   const state = useSyncExternalStore(controller.subscribe, controller.getState, controller.getState);
   useEffect(() => {
+    // 尚未启动的控制器没有连接资源可释放；启用时会按新状态构造可工作的实例。
+    if (options.enabled === false) return;
     void controller.start().catch(() => undefined);
     return () => controller.dispose();
-  }, [controller]);
+  }, [controller, options.enabled]);
   return { state, controller };
 }
 

@@ -194,6 +194,13 @@ export interface ConnectedSessionWorkspaceProps {
   onStateChange?: (conversationId: string, state: NativeSessionState) => void;
   initialCachedState?: NativeSessionState;
   initialOptimisticState?: NativeSessionState;
+  initialCapabilities?: CodexConversationCapabilities | null;
+  /** false 时保持完整本地工作面，但绝不以临时身份连接服务端。 */
+  controllerEnabled?: boolean;
+  localState?: NativeSessionState;
+  localActions?: SessionWorkspaceActions;
+  creationStatus?: SessionWorkspaceProps['creationStatus'];
+  stableConversationId?: string;
   onStartConversation?: SessionWorkspaceActions['onStartConversation'];
   onStartProjectConversation?: SessionWorkspaceActions['onStartProjectConversation'];
   onOpenTaskDetail?: SessionWorkspaceActions['onOpenTaskDetail'];
@@ -205,18 +212,18 @@ export interface ConnectedSessionWorkspaceProps {
 }
 
 export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps) {
-  // 每个 conversation 由父层 key 隔离；初始乐观状态只在 controller 创建时接管一次，
-  // 后续即使父层清理 task-push pending，也不能重建 controller 或闪断真实 transcript。
-  const initialCachedState = useRef(props.initialCachedState).current;
-  const initialOptimisticState = useRef(props.initialOptimisticState).current;
+  // 真实 id 到达时只重建内部 controller，外层工作面和输入 DOM 保持同一 React 身份。
+  const initialCachedState = useMemo(() => props.initialCachedState, [props.controllerEnabled, props.conversation.id]);
+  const initialOptimisticState = useMemo(() => props.initialOptimisticState, [props.controllerEnabled, props.conversation.id]);
   const { state, controller } = useSessionController({
     client: props.client,
     projectId: props.conversation.projectId,
     conversationId: props.conversation.id,
     initialCachedState,
     initialOptimisticState,
+    enabled: props.controllerEnabled,
   });
-  const [capabilities, setCapabilities] = useState<CodexConversationCapabilities | null>(null);
+  const [capabilities, setCapabilities] = useState<CodexConversationCapabilities | null>(props.initialCapabilities ?? null);
   useEffect(() => {
     let active = true;
     const load = props.client.loadCodexConversationCapabilities;
@@ -236,13 +243,26 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
     };
   }, [props.client, props.conversation.projectId]);
   useEffect(() => {
+    if (props.controllerEnabled === false) return;
     props.onStateChange?.(props.conversation.id, state);
-  }, [props.conversation.id, props.onStateChange, state]);
+  }, [props.controllerEnabled, props.conversation.id, props.onStateChange, state]);
+  useEffect(() => {
+    if (props.controllerEnabled === false || !props.localState) return;
+    // 权威快照接管前继续承接用户输入，避免同一工作面切换读写身份时丢失草稿或附件。
+    controller.setDraft(props.localState.draft);
+    controller.setAttachments(props.localState.attachments);
+    controller.setBrowserSubmission(props.localState.browserSubmission);
+  }, [controller, props.controllerEnabled, props.localState?.attachments, props.localState?.browserSubmission, props.localState?.draft]);
+  const displayedConversation = props.stableConversationId ? { ...props.conversation, id: props.stableConversationId } : props.conversation;
+  const controllerReady = props.controllerEnabled !== false && state.transportState === 'ready' && state.snapshot?.id === props.conversation.id;
+  const controllerFailed = props.controllerEnabled !== false && state.transportState === 'failed';
+  const controllerVisible = controllerReady || controllerFailed;
+  const displayedState = controllerVisible ? state : (props.localState ?? state);
   return (
     <SessionWorkspace
       language={props.language}
-      state={state}
-      conversation={props.conversation}
+      state={displayedState}
+      conversation={displayedConversation}
       task={props.task}
       owner={props.owner}
       choices={props.choices}
@@ -250,60 +270,65 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
       suppressComposer={Boolean(props.readOnlyGate)}
       quickActionsSuppressed={props.quickActionsSuppressed}
       readOnlyGate={props.readOnlyGate}
+      creationStatus={controllerVisible ? undefined : props.creationStatus}
       actions={{
-        ...createConnectedSessionActions({ controller, state, onChooseAttachments: props.onChooseAttachments }),
-        onOpenResource: async (resource, target, location) => {
-          const result = await openConversationResourceInMain({
-            zeus: window.zeus,
-            projectId: props.conversation.projectId,
-            conversationId: props.conversation.id,
-            resourceId: resource.id,
-            target,
-            ...(location ? { location } : {}),
-          });
-          if (!result.opened) throw new Error(result.error ?? 'conversation_resource_open_failed');
-          if (result.mode !== 'zeus_source') return { opened: true, mode: result.mode };
-          if (!props.client.loadConversationResourcePreview) throw new Error('conversation_resource_preview_unavailable');
-          const preview = await props.client.loadConversationResourcePreview(props.conversation.projectId, props.conversation.id, resource.id);
-          return {
-            opened: true,
-            mode: result.mode,
-            preview: location ? { ...preview, location } : preview,
-          };
-        },
-        onLoadResourcePreview: async (resource) => {
-          if (!props.client.loadConversationResourcePreview) throw new Error('conversation_resource_preview_unavailable');
-          return props.client.loadConversationResourcePreview(props.conversation.projectId, props.conversation.id, resource.id);
-        },
-        onOpenTurnChangeFile: async (changeSet, file, target, location) => {
-          const result = await openTurnChangeFileInMain({
-            zeus: window.zeus,
-            projectId: props.conversation.projectId,
-            conversationId: props.conversation.id,
-            turnId: changeSet.providerTurnId,
-            changeSetId: changeSet.id,
-            fileId: file.id,
-            target,
-            ...(location ? { location } : {}),
-          });
-          if (!result.opened) throw new Error(result.error ?? 'turn_change_file_open_failed');
-          if (result.mode !== 'zeus_source') return { opened: true, mode: result.mode };
-          if (!props.client.loadTurnChangeFilePreview) throw new Error('turn_change_file_preview_unavailable');
-          const preview = await props.client.loadTurnChangeFilePreview(props.conversation.projectId, props.conversation.id, changeSet.providerTurnId, changeSet.id, file.id);
-          return {
-            opened: true,
-            mode: result.mode,
-            preview: location ? { ...preview, location } : preview,
-          };
-        },
-        onOperateTurnChangeSet: async (changeSet, action) => {
-          if (!props.client.operateTurnChangeSet) throw new Error('turn_change_set_operation_unavailable');
-          return props.client.operateTurnChangeSet(props.conversation.projectId, props.conversation.id, changeSet.providerTurnId, action, {
-            changeSetId: changeSet.id,
-            expectedState: action === 'undo' ? 'applied' : 'undone',
-            idempotencyKey: crypto.randomUUID(),
-          });
-        },
+        ...(controllerVisible ? createConnectedSessionActions({ controller, state, onChooseAttachments: props.onChooseAttachments }) : props.localActions),
+        ...(controllerVisible
+          ? {
+              onOpenResource: async (resource, target, location) => {
+                const result = await openConversationResourceInMain({
+                  zeus: window.zeus,
+                  projectId: props.conversation.projectId,
+                  conversationId: props.conversation.id,
+                  resourceId: resource.id,
+                  target,
+                  ...(location ? { location } : {}),
+                });
+                if (!result.opened) throw new Error(result.error ?? 'conversation_resource_open_failed');
+                if (result.mode !== 'zeus_source') return { opened: true, mode: result.mode };
+                if (!props.client.loadConversationResourcePreview) throw new Error('conversation_resource_preview_unavailable');
+                const preview = await props.client.loadConversationResourcePreview(props.conversation.projectId, props.conversation.id, resource.id);
+                return {
+                  opened: true,
+                  mode: result.mode,
+                  preview: location ? { ...preview, location } : preview,
+                };
+              },
+              onLoadResourcePreview: async (resource) => {
+                if (!props.client.loadConversationResourcePreview) throw new Error('conversation_resource_preview_unavailable');
+                return props.client.loadConversationResourcePreview(props.conversation.projectId, props.conversation.id, resource.id);
+              },
+              onOpenTurnChangeFile: async (changeSet, file, target, location) => {
+                const result = await openTurnChangeFileInMain({
+                  zeus: window.zeus,
+                  projectId: props.conversation.projectId,
+                  conversationId: props.conversation.id,
+                  turnId: changeSet.providerTurnId,
+                  changeSetId: changeSet.id,
+                  fileId: file.id,
+                  target,
+                  ...(location ? { location } : {}),
+                });
+                if (!result.opened) throw new Error(result.error ?? 'turn_change_file_open_failed');
+                if (result.mode !== 'zeus_source') return { opened: true, mode: result.mode };
+                if (!props.client.loadTurnChangeFilePreview) throw new Error('conversation_resource_preview_unavailable');
+                const preview = await props.client.loadTurnChangeFilePreview(props.conversation.projectId, props.conversation.id, changeSet.providerTurnId, changeSet.id, file.id);
+                return {
+                  opened: true,
+                  mode: result.mode,
+                  preview: location ? { ...preview, location } : preview,
+                };
+              },
+              onOperateTurnChangeSet: async (changeSet, action) => {
+                if (!props.client.operateTurnChangeSet) throw new Error('turn_change_set_operation_unavailable');
+                return props.client.operateTurnChangeSet(props.conversation.projectId, props.conversation.id, changeSet.providerTurnId, action, {
+                  changeSetId: changeSet.id,
+                  expectedState: action === 'undo' ? 'applied' : 'undone',
+                  idempotencyKey: crypto.randomUUID(),
+                });
+              },
+            }
+          : {}),
         onStartConversation: props.onStartConversation,
         onStartProjectConversation: props.onStartProjectConversation,
         onOpenTaskDetail: props.onOpenTaskDetail,
@@ -1200,12 +1225,12 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     const bridge = window.zeus;
     if (!bridge?.onBrowserEvent || !props.conversation) return;
     return bridge.onBrowserEvent((event) => {
-      if (event.type === 'open_requested' && event.conversationId === props.conversation?.id) {
+      if (event.type === 'open_requested' && event.conversationId === (props.state?.conversationId ?? props.conversation?.id)) {
         setContextFullWidth(false);
         setContextWorkspace({ kind: 'browser' });
       }
     });
-  }, [props.conversation]);
+  }, [props.conversation, props.state?.conversationId]);
 
   useEffect(() => {
     const handleShortcut = (event: KeyboardEvent): void => {
@@ -1804,7 +1829,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                   <div className="session-browser-pane">
                     {contextWorkspace.kind === 'browser' && actions.onStageBrowserComments ? (
                       <BrowserWorkspace
-                        conversationId={props.conversation.id}
+                        conversationId={props.state?.conversationId ?? props.conversation.id}
                         language={props.language}
                         disabled={interactionReadOnly || nonResumableNative}
                         suspended={browserResizing}
