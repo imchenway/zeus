@@ -8,6 +8,7 @@ import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/c
 import type { NativeConversationChoice, NativeConversationSnapshot, NativeSessionState } from './sessionTypes.js';
 import { compareConversationStageUpdatedDesc } from './conversationOrdering.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
+import { conversationDisplayTitle } from './conversationDisplayTitle.js';
 
 export interface ProjectConversationTaskGroup {
   taskId: string;
@@ -299,7 +300,7 @@ function flattenProjectConversations(project: ProjectConversationGroup): {
       const task = conversation.taskId ? taskById.get(conversation.taskId) : undefined;
       return {
         conversation,
-        displayTitle: task ? task.taskTitle : conversation.title,
+        displayTitle: conversationDisplayTitle(conversation.title, task?.taskTitle),
       };
     })
     .sort((left, right) => compareConversationStageUpdatedDesc(left.conversation, right.conversation));
