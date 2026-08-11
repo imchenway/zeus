@@ -16,19 +16,23 @@ export interface CanonicalRequestUserInputQuestion {
 export type CanonicalRequestUserInputQuestionsResult = { ok: true; questions: CanonicalRequestUserInputQuestion[] } | { ok: false; message: string };
 
 /**
- * 只接受 Codex 0.144 app-server request_user_input 的完整 canonical envelope。
- * `multiple` 是 Zeus 明确支持的可选扩展；其余别名不会被升级为权威字段。
+ * 严格校验 request_user_input 的核心权威字段，同时允许已确认类型的可选协议元数据。
+ * `multiple` 与 `isBlocking` 是 Zeus 明确支持的可选扩展；其余别名不会被升级为权威字段。
  */
 export function parseCanonicalRequestUserInputQuestions(payload: unknown): CanonicalRequestUserInputQuestionsResult {
-  const envelopeKeys = ['threadId', 'turnId', 'itemId', 'questions', 'autoResolutionMs'];
-  if (!isRecord(payload) || Object.keys(payload).length !== envelopeKeys.length || Object.keys(payload).some((key) => !envelopeKeys.includes(key))) {
-    return invalidQuestions('The pending request does not contain the exact canonical request_user_input envelope.');
+  const requiredEnvelopeKeys = ['threadId', 'turnId', 'itemId', 'questions', 'autoResolutionMs'];
+  const supportedEnvelopeKeys = [...requiredEnvelopeKeys, 'isBlocking'];
+  if (!isRecord(payload) || requiredEnvelopeKeys.some((key) => !Object.prototype.hasOwnProperty.call(payload, key)) || Object.keys(payload).some((key) => !supportedEnvelopeKeys.includes(key))) {
+    return invalidQuestions('The pending request does not contain a supported canonical request_user_input envelope.');
   }
   if (!nonEmptyString(payload.threadId) || !nonEmptyString(payload.turnId) || !nonEmptyString(payload.itemId)) {
     return invalidQuestions('The canonical request_user_input envelope requires non-empty threadId, turnId, and itemId fields.');
   }
   if (payload.autoResolutionMs !== null && (typeof payload.autoResolutionMs !== 'number' || !Number.isFinite(payload.autoResolutionMs) || payload.autoResolutionMs < 0)) {
     return invalidQuestions('The canonical request_user_input autoResolutionMs must be null or a finite nonnegative number.');
+  }
+  if (payload.isBlocking !== undefined && typeof payload.isBlocking !== 'boolean') {
+    return invalidQuestions('The optional request_user_input isBlocking field must be boolean.');
   }
   if (!Array.isArray(payload.questions) || payload.questions.length === 0) {
     return invalidQuestions('The pending request does not contain a complete canonical question set.');
@@ -84,8 +88,8 @@ export function validateCanonicalRequestUserInputAnswers(payload: unknown, answe
   if (!isRecord(answers)) return 'request_user_input answers must be an object.';
 
   const answerIds = Object.keys(answers);
-    // Codex App 将关闭、Escape、跳过和自动解决统一编码为空 answers；非空回答仍必须完整。
-    if (answerIds.length === 0) return null;
+  // Codex App 将关闭、Escape、跳过和自动解决统一编码为空 answers；非空回答仍必须完整。
+  if (answerIds.length === 0) return null;
   const questionIds = parsed.questions.map((question) => question.id);
   if (answerIds.length !== questionIds.length || answerIds.some((id) => !questionIds.includes(id))) {
     return 'request_user_input answer ids must exactly match the canonical question ids.';

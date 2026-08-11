@@ -10,7 +10,6 @@ export type SessionHotCache = Map<string, SessionHotCacheEntry>;
 
 /** 关键会话不参与普通最近使用数量淘汰，确保活动现场可立即恢复。 */
 export function isCriticalSessionState(state: NativeSessionState): boolean {
-  if (state.error?.recoveryRequired) return true;
   if (state.pendingRequests.some((request) => request.status === 'pending')) return true;
   if (state.planImplementationRequests.some((request) => request.status === 'pending')) return true;
   if (state.queue && (state.queue.state.type !== 'idle' || state.queue.submissions.some((submission) => submission.status === 'queued' || submission.status === 'paused'))) return true;

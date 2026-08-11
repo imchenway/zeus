@@ -20,7 +20,6 @@ export function selectHasConfirmedUserMessage(state: NativeSessionState, clientU
 }
 
 export function selectSessionStatusSemantics(state: NativeSessionState): SessionStatusSemantics {
-  if (state.error?.recoveryRequired) return { role: 'alert', ariaLive: 'assertive', label: state.error.message };
   switch (state.conversationState) {
     case 'legacy_readonly':
       return { role: 'status', ariaLive: 'polite', label: '此历史会话为只读' };
@@ -47,7 +46,6 @@ export function selectSessionStatusSemantics(state: NativeSessionState): Session
 }
 
 export function selectSessionComposerAction(state: NativeSessionState): SessionComposerAction {
-  if (state.error?.recoveryRequired) return 'disabled';
   if (state.transportState === 'connecting' || state.transportState === 'hydrating' || state.transportState === 'failed') return 'disabled';
   switch (state.conversationState) {
     case 'legacy_readonly':
@@ -64,7 +62,7 @@ export function selectSessionComposerAction(state: NativeSessionState): SessionC
     case 'waiting_user_input':
       return 'respond';
     case 'turn_failed':
-      return state.error?.retryable ? 'retry' : 'disabled';
+      return state.draft.trim() || state.attachments.length > 0 ? 'send' : 'disabled';
     case 'native_idle':
       return state.draft.trim() || state.attachments.length > 0 ? 'send' : 'disabled';
   }
@@ -81,7 +79,7 @@ export function selectSessionCapabilities(state: NativeSessionState): {
   const active = state.conversationState === 'active_prework' || state.conversationState === 'active_final_answer';
   return {
     canEditDraft: native && state.transportState !== 'failed' && state.conversationState !== 'legacy_readonly',
-    canSend: native && state.transportState === 'ready' && (state.conversationState === 'native_idle' || active),
+    canSend: native && state.transportState === 'ready' && (state.conversationState === 'native_idle' || state.conversationState === 'turn_failed' || active),
     canInterrupt: native && active && state.startedTurnId !== null && state.startedTurnId === state.activeTurnId,
     canRespondToRequest: native && (state.conversationState === 'waiting_approval' || state.conversationState === 'waiting_user_input'),
     canManageQueue: native && Boolean(state.queue?.submissions.length),

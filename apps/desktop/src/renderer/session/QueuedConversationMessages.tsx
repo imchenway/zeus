@@ -12,7 +12,6 @@ export interface QueuedConversationMessagesProps {
   onReorder?: (orderedSubmissionIds: string[]) => void | Promise<void>;
   onResume?: () => void | Promise<void>;
   onRetry?: () => void | Promise<void>;
-  onRecover?: () => void | Promise<void>;
 }
 
 const labels = {
@@ -27,7 +26,7 @@ const labels = {
     interrupted: '当前回复已中断，后续消息已暂停。',
     transportUnavailable: '连接恢复后继续处理后续消息。',
     providerArchived: '原会话已归档，恢复后由你确认发送。',
-    recoveryRequired: '会话需要恢复，这些消息不会自动重发。',
+    uncertain: '部分消息的接收结果尚未确认，不会自动重发。',
     confirmationRequired: '这些消息需要你确认后再发送。',
     edit: '编辑',
     editLabel: '编辑队列消息',
@@ -56,7 +55,7 @@ const labels = {
     interrupted: 'The current response was interrupted. Follow-ups are paused.',
     transportUnavailable: 'Follow-ups continue after the connection recovers.',
     providerArchived: 'The original conversation is archived. Restore it to confirm sending.',
-    recoveryRequired: 'The conversation needs recovery. These messages will not resend automatically.',
+    uncertain: 'Some message delivery results are unconfirmed and will not resend automatically.',
     confirmationRequired: 'These messages need your confirmation before sending.',
     edit: 'Edit',
     editLabel: 'Edit queued message',
@@ -86,8 +85,7 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
   const [saving, setSaving] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const busy = Boolean(props.state.busyOperation);
-  const writable = !props.state.error?.recoveryRequired && props.state.transportState === 'ready' && props.state.conversationState !== 'legacy_readonly';
-  const recoveryActionable = props.state.transportState === 'ready' && props.state.conversationState !== 'legacy_readonly';
+  const writable = props.state.transportState === 'ready' && props.state.conversationState !== 'legacy_readonly';
   const active = props.state.conversationState === 'active_prework' || props.state.conversationState === 'active_final_answer';
   const queueExplanation = describeQueueState(props.state, queue, copy);
 
@@ -206,10 +204,6 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
                     <button type="button" onClick={() => void props.onResume?.()} disabled={!writable || busy || !props.onResume}>
                       {copy.resume}
                     </button>
-                  ) : index === 0 && props.state.queue?.state.type === 'paused' && props.state.queue.state.reason === 'recovery_required' ? (
-                    <button type="button" onClick={() => void props.onRecover?.()} disabled={!recoveryActionable || busy || !props.onRecover}>
-                      {copy.retry}
-                    </button>
                   ) : index === 0 && props.state.queue?.state.type === 'paused' && props.state.queue.state.reason === 'provider_archived' ? (
                     <button type="button" onClick={() => void props.onRetry?.()} disabled={!writable || busy || !props.onRetry}>
                       {copy.retry}
@@ -269,7 +263,7 @@ function describeQueueState(state: NativeSessionState, queue: readonly NativeQue
     if (runState.reason === 'interrupted') return copy.interrupted;
     if (runState.reason === 'transport_unavailable') return copy.transportUnavailable;
     if (runState.reason === 'provider_archived') return copy.providerArchived;
-    return copy.recoveryRequired;
+    return copy.uncertain;
   }
   return queue.every((submission) => submission.pausedReason === 'user_confirmation') ? copy.confirmationRequired : copy.waitingCapacity;
 }

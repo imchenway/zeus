@@ -28,7 +28,6 @@ import type {
   NativeConversationAttachment,
   NativeConversationChoice,
   NativeConversationStage,
-  NativeQueuedSubmission,
   NativeOperationAcceptance,
   NativePendingRequest,
   NativePermissionMode,
@@ -341,7 +340,6 @@ export function resolveSessionWorkspaceEscape(input: {
 }
 
 export function createConnectedSessionActions(input: { controller: SessionController; state: NativeSessionState; onChooseAttachments?: () => Promise<NativeConversationAttachment[]> }): SessionWorkspaceActions {
-  const recoveryRequired = input.state.error?.recoveryRequired === true;
   const settle = async (operation: Promise<unknown>): Promise<void> => {
     try {
       await operation;
@@ -356,16 +354,15 @@ export function createConnectedSessionActions(input: { controller: SessionContro
     input.controller.setAttachments([...byIdentity.values()]);
   };
   return {
-    onReconnect: () => (recoveryRequired ? Promise.resolve() : settle(input.controller.reconnect())),
+    onReconnect: () => settle(input.controller.reconnect()),
     onDraftChange: input.controller.setDraft,
     onSubmit: (delivery, settings) => {
-      if (recoveryRequired) return Promise.resolve();
       const effectiveDelivery = delivery === 'steer_now' && canSteerActiveTurn(input.state) ? 'steer_now' : 'queue';
       return settle(input.controller.send(effectiveDelivery, effectiveDelivery === 'steer_now' ? (input.state.activeTurnId ?? undefined) : undefined, effectiveDelivery === 'queue' ? settings : undefined));
     },
     onStageBrowserComments: (prepared) => input.controller.setBrowserSubmission(prepared),
     onRemoveBrowserSubmission: () => input.controller.setBrowserSubmission(null),
-    onInterrupt: () => (recoveryRequired ? Promise.resolve() : settle(input.controller.interruptActiveTurn())),
+    onInterrupt: () => settle(input.controller.interruptActiveTurn()),
     ...(input.onChooseAttachments
       ? {
           onChooseAttachments: async () => {
@@ -380,26 +377,25 @@ export function createConnectedSessionActions(input: { controller: SessionContro
     },
     // 编辑器只有在服务端确认后才退出；失败必须向组件传播以保留用户草稿。
     onEditQueuedSubmission: async (submissionId, content) => {
-      if (recoveryRequired) return;
       await input.controller.editQueuedSubmission(submissionId, content);
     },
-    // 删除未进入 provider turn 的内容是本地软删除；即使原会话需要恢复，也必须允许用户在成功带入新会话后清理旧记录。
+    // 删除未进入 provider turn 的内容是本地软删除，不会触发 Provider 重发。
     onDeleteQueuedSubmission: (submissionId) => settle(input.controller.deleteQueuedSubmission(submissionId)),
-    onSendQueuedNow: (submissionId) => (recoveryRequired ? Promise.resolve() : settle(input.controller.sendQueuedNow(submissionId))),
-    onReorderQueue: (orderedSubmissionIds) => (recoveryRequired ? Promise.resolve() : settle(input.controller.reorderQueue(orderedSubmissionIds))),
-    onResumeQueue: () => (recoveryRequired ? Promise.resolve() : settle(input.controller.resumeQueue())),
+    onSendQueuedNow: (submissionId) => settle(input.controller.sendQueuedNow(submissionId)),
+    onReorderQueue: (orderedSubmissionIds) => settle(input.controller.reorderQueue(orderedSubmissionIds)),
+    onResumeQueue: () => settle(input.controller.resumeQueue()),
     onRecoverQueue: () => settle(input.controller.recoverQueue()),
-    onRestoreArchivedConversation: () => (recoveryRequired ? Promise.resolve() : settle(input.controller.restoreArchivedConversation())),
-    onRespondToRequest: (requestId, response) => (recoveryRequired ? Promise.resolve() : input.controller.respondToRequest(requestId, response).then(() => undefined)),
-    onRespondToPlanImplementationRequest: (requestId, response) => (recoveryRequired ? Promise.resolve() : input.controller.respondToPlanImplementationRequest(requestId, response)),
-    onSnoozeRequest: (requestId) => (recoveryRequired ? Promise.resolve() : input.controller.snoozeRequest(requestId).then(() => undefined)),
+    onRestoreArchivedConversation: () => settle(input.controller.restoreArchivedConversation()),
+    onRespondToRequest: (requestId, response) => input.controller.respondToRequest(requestId, response).then(() => undefined),
+    onRespondToPlanImplementationRequest: (requestId, response) => input.controller.respondToPlanImplementationRequest(requestId, response),
+    onSnoozeRequest: (requestId) => input.controller.snoozeRequest(requestId).then(() => undefined),
     onNextTurnSettingsChange: (settings) => input.controller.setNextTurnSettings(settings).then(() => undefined),
-    onPermissionModeChange: (permissionMode) => (recoveryRequired ? Promise.resolve() : settle(input.controller.setPermissionMode(permissionMode))),
-    onCollaborationModeChange: (collaborationMode) => (recoveryRequired ? Promise.resolve() : settle(input.controller.setCollaborationMode(collaborationMode))),
+    onPermissionModeChange: (permissionMode) => settle(input.controller.setPermissionMode(permissionMode)),
+    onCollaborationModeChange: (collaborationMode) => settle(input.controller.setCollaborationMode(collaborationMode)),
     onEditUserItem: async (_item, content) => {
       const current = input.controller.getState();
       const active = current.conversationState === 'active_prework' || current.conversationState === 'active_final_answer';
-      if (current.error?.recoveryRequired || current.transportState !== 'ready' || (!active && current.conversationState !== 'native_idle')) {
+      if (current.transportState !== 'ready' || (!active && current.conversationState !== 'native_idle')) {
         throw new Error('Conversation is not writable.');
       }
       input.controller.setDraft(content);
@@ -896,8 +892,6 @@ const labels = {
     mcpStartup: 'MCP 启动状态',
     runtimeReady: '运行时状态正常',
     runtimeAttention: '需要关注',
-    recoveryRequired: '可继续输入',
-    recoveryRequiredHelp: '直接在下方输入并发送，Zeus 会自动续接可用会话并保留任务执行现场。',
     legacyTranscript: '只读旧会话记录',
     unsynced: '未同步',
     exactValue: '精确值',
@@ -954,8 +948,6 @@ const labels = {
     mcpStartup: 'MCP startup',
     runtimeReady: 'Runtime status current',
     runtimeAttention: 'Attention required',
-    recoveryRequired: 'Ready for input',
-    recoveryRequiredHelp: 'Type and send below. Zeus will continue through an available conversation while preserving the task workspace.',
     legacyTranscript: 'Read-only legacy transcript',
     unsynced: 'Not synced',
     exactValue: 'exact value',
@@ -1090,11 +1082,6 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const effectiveProviderState = props.state?.snapshot?.providerState ?? props.conversation?.providerState ?? null;
   const effectiveResumable = props.state?.snapshot ? !['closed', 'failed'].includes(effectiveProviderState ?? '') : effectiveProviderState === 'archived' ? true : props.conversation?.resumable;
   const nonResumableNative = Boolean(props.conversation && !legacy && !effectiveResumable);
-  const freshStartRequired = nonResumableNative || Boolean(props.state?.error?.recoveryRequired);
-  const unsentDraft = useMemo(
-    () => createUnsentConversationDraft(freshStartRequired ? props.state?.queue?.submissions : undefined, props.state?.draft, props.state?.attachments),
-    [freshStartRequired, props.state?.attachments, props.state?.draft, props.state?.queue?.submissions],
-  );
   const pendingRequests = props.state?.pendingRequests.filter((request) => request.status === 'pending') ?? [];
   const pendingPlanImplementationRequests = props.state?.planImplementationRequests.filter((request) => request.status === 'pending').slice(-1) ?? [];
   const blockingPendingRequest = pendingRequests[0] ?? null;
@@ -1536,7 +1523,6 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
         onReorder={actions.onReorderQueue}
         onResume={actions.onResumeQueue}
         onRetry={actions.onRestoreArchivedConversation}
-        onRecover={actions.onRecoverQueue}
       />
     );
   }
@@ -1685,12 +1671,12 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                 <SessionRuntimeDetails state={props.state} conversation={props.conversation} language={props.language} capabilities={props.capabilities} />
                 {(props.state.transportState === 'hydrating' || props.state.transportState === 'connecting') && !props.state.snapshot ? <SessionLoading language={props.language} /> : null}
                 {props.state.transportState === 'reconnecting' ? <SessionReconnectNotice language={props.language} attempt={props.state.reconnectAttempt} onReconnect={actions.onReconnect} /> : null}
-                {props.state.transportState === 'failed' && !props.state.error?.recoveryRequired ? (
+                {props.state.transportState === 'failed' ? (
                   <section className="session-transport-failure" role="alert" data-retained-content={Boolean(props.state.snapshot) || undefined}>
                     <WarningCircle aria-hidden="true" weight="regular" />
                     <span className="session-transport-failure-copy">
-                      <strong>{props.state.error?.recoveryRequired ? copy.recoveryRequired : isServerBusyError(props.state.error) ? copy.serverBusy : copy.failed}</strong>
-                      <p>{props.state.error?.recoveryRequired ? copy.recoveryRequiredHelp : props.state.snapshot ? copy.refreshFailureHelp : isServerBusyError(props.state.error) ? copy.serverBusyHelp : copy.failureHelp}</p>
+                      <strong>{isServerBusyError(props.state.error) ? copy.serverBusy : copy.failed}</strong>
+                      <p>{props.state.transportState === 'failed' && props.state.snapshot ? copy.refreshFailureHelp : isServerBusyError(props.state.error) ? copy.serverBusyHelp : (props.state.error?.message ?? copy.failureHelp)}</p>
                       {errorMessage(props.state.error) || props.loadError ? (
                         <details className="session-error-details">
                           <summary>{copy.details}</summary>
@@ -1740,7 +1726,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                       permissionMode={props.state?.snapshot?.permissionMode ?? 'read-only'}
                       filePaths={linkedFileApprovalPaths(props.state, blockingPendingRequest)}
                       autoFocus
-                      busy={Boolean(props.state?.error?.recoveryRequired) || isRequestResponseBusy(props.state?.busyOperation ?? null, blockingPendingRequest.id)}
+                      busy={isRequestResponseBusy(props.state?.busyOperation ?? null, blockingPendingRequest.id)}
                       error={requestErrors[blockingPendingRequest.id]}
                       onRespond={(_requestId, response) => respond(blockingPendingRequest, response)}
                       onSnooze={actions.onSnoozeRequest ? () => actions.onSnoozeRequest?.(blockingPendingRequest.id) : undefined}
@@ -1761,34 +1747,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                     {renderQueuedConversationMessages()}
                   </section>
                 ) : null}
-                {props.suppressComposer || blockingUserInputRequest ? null : freshStartRequired ? (
-                  owner ? (
-                    <NewConversationComposer
-                      key={`fresh-conversation:${unsentDraft.key}`}
-                      language={props.language}
-                      owner={owner}
-                      task={props.task}
-                      inheritConversationId={owner.kind === 'task' ? props.conversation?.id : undefined}
-                      autoFocus
-                      docked
-                      initialContent={unsentDraft.content}
-                      initialAttachments={unsentDraft.attachments}
-                      capabilities={props.capabilities}
-                      onStartTask={actions.onStartConversation}
-                      onStartProject={actions.onStartProjectConversation}
-                      onLoadCapabilities={actions.onLoadCapabilities}
-                      onChooseAttachments={actions.onChooseStartAttachments}
-                      onAccepted={async () => {
-                        for (const submission of unsentDraft.submissions) {
-                          await actions.onDeleteQueuedSubmission?.(submission.id);
-                        }
-                        actions.onDraftChange?.('');
-                        for (const attachment of props.state?.attachments ?? []) actions.onRemoveAttachment?.(attachment);
-                        actions.onRemoveBrowserSubmission?.();
-                      }}
-                    />
-                  ) : null
-                ) : (
+                {props.suppressComposer || blockingUserInputRequest ? null : (
                   <>
                     {renderQueuedConversationMessages()}
                     {renderConversationComposer()}
@@ -1826,7 +1785,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                       <BrowserWorkspace
                         conversationId={props.conversation.id}
                         language={props.language}
-                        disabled={interactionReadOnly || nonResumableNative || Boolean(props.state.error?.recoveryRequired)}
+                        disabled={interactionReadOnly || nonResumableNative}
                         suspended={browserResizing}
                         expanded={contextFullWidth}
                         onClose={closeContextWorkspace}
@@ -2252,31 +2211,6 @@ function composerRuntimeSettingsFromState(state: NativeSessionState, capabilitie
   };
 }
 
-interface UnsentConversationDraft {
-  key: string;
-  content: string;
-  attachments: NativeConversationAttachment[];
-  submissions: NativeQueuedSubmission[];
-}
-
-function createUnsentConversationDraft(submissions: readonly NativeQueuedSubmission[] | undefined, currentDraft = '', currentAttachments: readonly NativeConversationAttachment[] = []): UnsentConversationDraft {
-  const unsent = (submissions ?? []).filter((submission) => (submission.status === 'queued' || submission.status === 'paused') && !submission.providerTurnId).sort((left, right) => left.position - right.position);
-  const recoveredContent = unsent
-    .map((submission) => submission.content.trim())
-    .filter(Boolean)
-    .join('\n\n');
-  const draftContent = currentDraft.trim();
-  return {
-    key: unsent.map((submission) => submission.id).join(':'),
-    content: recoveredContent === draftContent ? currentDraft : [recoveredContent, currentDraft].filter((part) => part.trim()).join('\n\n'),
-    attachments: mergeConversationAttachments(
-      [...currentAttachments],
-      unsent.flatMap((submission) => submission.attachments ?? []),
-    ),
-    submissions: unsent,
-  };
-}
-
 function mergeConversationAttachments(current: NativeConversationAttachment[], added: NativeConversationAttachment[]): NativeConversationAttachment[] {
   const byIdentity = new Map(current.map((attachment) => [conversationAttachmentIdentity(attachment), attachment]));
   added.forEach((attachment) => byIdentity.set(conversationAttachmentIdentity(attachment), attachment));
@@ -2484,7 +2418,6 @@ function sessionStatus(state: NativeSessionState | null, loadState: SessionWorks
       kind: 'warning',
       label: copy.reconnectingAttempt(state.reconnectAttempt),
     };
-  if (state.error?.recoveryRequired) return { kind: 'ready', label: copy.recoveryRequired };
   if (state.transportState === 'failed')
     return {
       kind: 'error',
