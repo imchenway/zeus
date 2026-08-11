@@ -1,17 +1,17 @@
-import {type KeyboardEvent, useEffect, useLayoutEffect, useMemo, useRef, useState} from 'react';
-import {ArrowRightIcon as ArrowRight} from '@phosphor-icons/react/dist/csr/ArrowRight';
-import {CheckIcon as Check} from '@phosphor-icons/react/dist/csr/Check';
-import {CaretDownIcon as CaretDown} from '@phosphor-icons/react/dist/csr/CaretDown';
-import {InfoIcon as Info} from '@phosphor-icons/react/dist/csr/Info';
-import {PencilSimpleIcon as PencilSimple} from '@phosphor-icons/react/dist/csr/PencilSimple';
-import {QuestionIcon as Question} from '@phosphor-icons/react/dist/csr/Question';
-import {TerminalWindowIcon as TerminalWindow} from '@phosphor-icons/react/dist/csr/TerminalWindow';
-import {XIcon as X} from '@phosphor-icons/react/dist/csr/X';
-import {parseCanonicalRequestUserInputQuestions} from '@zeus/shared';
-import {openExternalHttpsUrlInMain} from '../appShellBridge.js';
-import type {NativePendingRequest, NativePermissionMode} from './sessionTypes.js';
-import type {SessionUiLanguage} from './ThreadItemView.js';
-import {autosizeTextarea} from './textareaAutosize.js';
+import { type KeyboardEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { ArrowRightIcon as ArrowRight } from '@phosphor-icons/react/dist/csr/ArrowRight';
+import { CheckIcon as Check } from '@phosphor-icons/react/dist/csr/Check';
+import { CaretDownIcon as CaretDown } from '@phosphor-icons/react/dist/csr/CaretDown';
+import { InfoIcon as Info } from '@phosphor-icons/react/dist/csr/Info';
+import { PencilSimpleIcon as PencilSimple } from '@phosphor-icons/react/dist/csr/PencilSimple';
+import { QuestionIcon as Question } from '@phosphor-icons/react/dist/csr/Question';
+import { TerminalWindowIcon as TerminalWindow } from '@phosphor-icons/react/dist/csr/TerminalWindow';
+import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
+import { parseCanonicalRequestUserInputQuestions } from '@zeus/shared';
+import { openExternalHttpsUrlInMain } from '../appShellBridge.js';
+import type { NativePendingRequest, NativePermissionMode } from './sessionTypes.js';
+import type { SessionUiLanguage } from './ThreadItemView.js';
+import { autosizeTextarea } from './textareaAutosize.js';
 
 export interface RequestQuestionOption {
   label: string;
@@ -860,17 +860,17 @@ function updateQuestionAnswers(current: Record<string, string[]>, question: Requ
 }
 
 export function normalizeRequestQuestions(request: NativePendingRequest): RequestQuestion[] {
-    const parsed = parseCanonicalRequestUserInputQuestions(request.payload);
-    if (!parsed.ok) return [];
-    return parsed.questions.map((question) => ({
-        id: question.id,
-        header: question.header,
-        question: question.question,
-        kind: question.options === null ? 'freeform' : question.multiple ? 'multiple' : 'single',
-        secret: question.isSecret,
-        allowOther: question.isOther,
-        options: question.options ?? [],
-    }));
+  const parsed = parseCanonicalRequestUserInputQuestions(request.payload);
+  if (!parsed.ok) return [];
+  return parsed.questions.map((question) => ({
+    id: question.id,
+    header: question.header,
+    question: question.question,
+    kind: question.options === null ? 'freeform' : question.multiple ? 'multiple' : 'single',
+    secret: question.isSecret,
+    allowOther: question.isOther,
+    options: question.options ?? [],
+  }));
 }
 
 export function areRequiredRequestAnswersComplete(questions: readonly RequestQuestion[], answers: Record<string, string[]>, otherAnswers: Record<string, string> = {}): boolean {

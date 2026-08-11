@@ -1,7 +1,1 @@
-export {
-    parseCanonicalRequestUserInputQuestions,
-    validateCanonicalRequestUserInputAnswers,
-    type CanonicalRequestUserInputOption,
-    type CanonicalRequestUserInputQuestion,
-    type CanonicalRequestUserInputQuestionsResult
-} from '@zeus/shared';
+export { parseCanonicalRequestUserInputQuestions, validateCanonicalRequestUserInputAnswers, type CanonicalRequestUserInputOption, type CanonicalRequestUserInputQuestion, type CanonicalRequestUserInputQuestionsResult } from '@zeus/shared';
