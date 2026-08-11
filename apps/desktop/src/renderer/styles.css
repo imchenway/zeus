@@ -13127,11 +13127,53 @@ a {
   padding: 3px 6px;
 }
 
-.macos-ai-app .task-git-workspace-branch-group > header strong,
-.macos-ai-app .task-git-workspace-branch-group > header small {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.macos-ai-app .task-git-workspace-branch-group > header > span {
+  min-inline-size: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.macos-ai-app .task-git-workspace-branch-group > header strong {
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+  line-height: 1.4;
+}
+
+.macos-ai-app .task-git-workspace-branch-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.macos-ai-app .task-git-current-conversation-badge {
+  padding: 2px 6px;
+  border: 1px solid color-mix(in srgb, var(--zeus-accent-primary, #4c6fff) 34%, var(--zeus-product-line-soft));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--zeus-accent-primary, #4c6fff) 9%, var(--zeus-product-panel));
+  color: var(--zeus-product-text);
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 16px;
+}
+
+.macos-ai-app .task-git-workspace-branch-actions button {
+  padding: 2px 5px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--zeus-product-muted);
+  font-size: 10px;
+}
+
+.macos-ai-app .task-git-workspace-branch-actions button:hover,
+.macos-ai-app .task-git-workspace-branch-actions button:focus-visible {
+  background: var(--zeus-control-bg);
+  color: var(--zeus-product-text);
+}
+
+.macos-ai-app .task-git-workspace-branch-group.is-current-conversation {
+  border-block-start-color: color-mix(in srgb, var(--zeus-accent-primary, #4c6fff) 30%, var(--zeus-product-line-soft));
 }
 
 .macos-ai-app .task-git-workspace-branch-group > header small {
@@ -13371,6 +13413,12 @@ a {
   color: var(--zeus-product-muted);
 }
 
+.macos-ai-app .task-git-review-empty:has(button) {
+  display: grid;
+  justify-items: start;
+  gap: 10px;
+}
+
 .macos-ai-app .task-git-review-batch-result {
   display: grid;
   gap: 6px;
@@ -13455,6 +13503,37 @@ a {
   block-size: min(980px, calc(100vh - 28px));
   max-block-size: none;
   grid-template-rows: auto minmax(0, 1fr) auto auto;
+}
+
+body[data-surface='task-git-delivery'] {
+  background: var(--zeus-product-panel, oklch(99.8% 0.001 255));
+}
+
+.task-git-delivery-window-root.macos-ai-app.zeus-shell {
+  display: block;
+  inline-size: 100vw;
+  block-size: 100vh;
+  min-block-size: 0;
+  background: var(--zeus-product-panel);
+}
+
+body[data-surface='task-git-delivery'] .task-git-merge-backdrop {
+  padding: 0;
+  background: transparent;
+  backdrop-filter: none;
+}
+
+body[data-surface='task-git-delivery'] .task-git-delivery-modal {
+  inline-size: 100%;
+  block-size: 100%;
+  max-block-size: none;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+body[data-surface='task-git-delivery'] .task-git-delivery-layout {
+  grid-template-columns: minmax(280px, 340px) minmax(0, 1fr) minmax(300px, 340px);
 }
 
 .macos-ai-app .task-git-merge-content {

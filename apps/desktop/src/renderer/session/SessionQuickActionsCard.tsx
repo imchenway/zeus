@@ -40,7 +40,7 @@ interface SessionQuickActionsCardProps {
   onLoadTaskWorkspaces?: (taskId: string) => Promise<TaskWorkspacesSnapshot>;
   onOpenTaskDetail?: (taskId: string) => void;
   onOpenGitReview?: (taskId: string, workspaceId: string | null, mode: 'commit' | 'push-only') => void;
-  onOpenGitDelivery?: (taskId: string) => void;
+  onOpenGitDelivery?: (taskId: string, workspaceId: string | null) => void;
   onOpenProjectCommands?: () => void;
   onStartCodeReview?: (selection: SessionCodeReviewSelection) => void | boolean | Promise<void | boolean>;
   onAddSources?: () => void | Promise<void>;
@@ -231,7 +231,7 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
   function openDelivery(): void {
     if (!taskId || !props.onOpenGitDelivery) return;
     setOpen(false);
-    props.onOpenGitDelivery(taskId);
+    props.onOpenGitDelivery(taskId, workspace?.id ?? props.conversation.workspaceId ?? null);
   }
 
   function openCommands(): void {

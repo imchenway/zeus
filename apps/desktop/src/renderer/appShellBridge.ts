@@ -2,6 +2,7 @@ import type { ConversationFileLocation, ConversationOpenTarget, ConversationReso
 
 export interface MainAppShellSettingsChange {
   appLanguage: 'zh-CN' | 'en-US';
+  appearance: 'light' | 'dark' | 'system';
   webviewDebugEnabled: boolean;
   multiWindowEnabled: boolean;
   backgroundModeEnabled: boolean;

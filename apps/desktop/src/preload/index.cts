@@ -55,6 +55,32 @@ async function authorizePendingResourceFiles(files: File[], source: 'paste' | 'd
 contextBridge.exposeInMainWorld('zeus', {
   appName: 'Zeus',
   getLocalServerConfig: () => ipcRenderer.invoke('zeus:get-local-server-config'),
+  openTaskGitDeliveryWindow: (input: unknown) => ipcRenderer.invoke('zeus:task-git-delivery:open', input),
+  closeTaskGitDeliveryWindow: () => ipcRenderer.invoke('zeus:task-git-delivery:close'),
+  getTaskGitDeliveryCurrentContext: () => ipcRenderer.invoke('zeus:task-git-delivery:get-current-context'),
+  notifyTaskGitDeliveryCurrentContext: (context: unknown) => ipcRenderer.send('zeus:task-git-delivery:current-context-changed', context),
+  notifyTaskGitDeliveryChanged: (taskId: string) => ipcRenderer.send('zeus:task-git-delivery:changed', taskId),
+  openTaskGitDeliveryConversation: (input: unknown) => ipcRenderer.invoke('zeus:task-git-delivery:open-conversation', input),
+  onTaskGitDeliveryCurrentContext: (listener: (context: unknown) => void) => {
+    const handler = (_event: unknown, context: unknown) => listener(context);
+    ipcRenderer.on('zeus:task-git-delivery:current-context', handler);
+    return () => ipcRenderer.removeListener('zeus:task-git-delivery:current-context', handler);
+  },
+  onTaskGitDeliveryAppearance: (listener: (settings: unknown) => void) => {
+    const handler = (_event: unknown, settings: unknown) => listener(settings);
+    ipcRenderer.on('zeus:task-git-delivery:appearance', handler);
+    return () => ipcRenderer.removeListener('zeus:task-git-delivery:appearance', handler);
+  },
+  onTaskGitDeliveryChanged: (listener: (taskId: string) => void) => {
+    const handler = (_event: unknown, taskId: string) => listener(taskId);
+    ipcRenderer.on('zeus:task-git-delivery:changed', handler);
+    return () => ipcRenderer.removeListener('zeus:task-git-delivery:changed', handler);
+  },
+  onOpenTaskGitDeliveryConversation: (listener: (input: unknown) => void) => {
+    const handler = (_event: unknown, input: unknown) => listener(input);
+    ipcRenderer.on('zeus:task-git-delivery:open-conversation', handler);
+    return () => ipcRenderer.removeListener('zeus:task-git-delivery:open-conversation', handler);
+  },
   hideMenuBarUsage: () => ipcRenderer.invoke('zeus:menu-bar-usage:hide'),
   showMainWindowFromMenuBarUsage: () => ipcRenderer.invoke('zeus:menu-bar-usage:show-main'),
   openMenuBarUsageSettings: (category: 'usage' | 'runtime') => ipcRenderer.invoke('zeus:menu-bar-usage:open-settings', category),

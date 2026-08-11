@@ -303,6 +303,27 @@ async function renderMenuBarUsageWithClient(client: DashboardClient): Promise<vo
   );
 }
 
+async function renderTaskGitDeliveryWithClient(client: DashboardClient, taskId: string): Promise<void> {
+  const [{ TaskGitDeliveryWindow }, task, snapshot, appShellSettings, currentContext] = await Promise.all([
+    import('./task/TaskGitDeliveryWindow.js'),
+    client.loadTask(taskId),
+    client.loadDashboard(),
+    client.loadAppShellSettings(),
+    window.zeus?.getTaskGitDeliveryCurrentContext?.() ?? Promise.resolve({ taskId: null, workspaceId: null }),
+  ]);
+  const root = document.getElementById('root');
+  if (!root) throw new Error('Zeus renderer root element is missing');
+  const projectName = snapshot.projects.find((project) => project.id === task.projectId)?.name;
+  document.body.dataset.surface = 'task-git-delivery';
+  document.title = `${appShellSettings.appLanguage === 'zh-CN' ? '代码交付' : 'Code Delivery'} · ${task.taskCode ?? task.id}`;
+  createRoot(root).render(
+    <RendererErrorBoundary appLanguage={appShellSettings.appLanguage} onFatalError={(message) => console.error('Zeus 代码交付窗口渲染失败', message)}>
+      <TaskGitDeliveryWindow client={client} task={task} projectName={projectName} language={appShellSettings.appLanguage} appearance={appShellSettings.appearance} initialCurrentContext={currentContext} />
+      <RendererBootstrapReady />
+    </RendererErrorBoundary>,
+  );
+}
+
 /** React 首次 commit 后再通知 Main；在此之前的模块、加载和渲染异常都由启动监控器兜底。 */
 function RendererBootstrapReady(): null {
   useEffect(() => {
@@ -332,17 +353,30 @@ async function hydrateRenderer(): Promise<void> {
     ...config,
     refreshLocalServerConfig: window.zeus.getLocalServerConfig,
   });
-  if (new URLSearchParams(window.location.search).get('surface') === 'menu-bar-usage') {
+  const parameters = new URLSearchParams(window.location.search);
+  const surface = parameters.get('surface');
+  if (surface === 'menu-bar-usage') {
     await renderMenuBarUsageWithClient(client);
+    return;
+  }
+  if (surface === 'task-git-delivery') {
+    const taskId = parameters.get('taskId')?.trim();
+    if (!taskId) throw new Error('代码交付窗口缺少任务身份。');
+    await renderTaskGitDeliveryWithClient(client, taskId);
     return;
   }
   await renderWithClient(client, config.executionHostTransition);
 }
 
 hydrateRenderer().catch((error: unknown) => {
-  const isMenuBarUsage = new URLSearchParams(window.location.search).get('surface') === 'menu-bar-usage';
-  console.error(isMenuBarUsage ? 'Zeus menu bar usage hydration failed' : 'Zeus dashboard hydration failed', error);
-  if (!isMenuBarUsage) reportRendererFatalFailure(error);
+  const surface = new URLSearchParams(window.location.search).get('surface');
+  const auxiliarySurface = surface === 'menu-bar-usage' || surface === 'task-git-delivery';
+  console.error(surface === 'menu-bar-usage' ? 'Zeus menu bar usage hydration failed' : surface === 'task-git-delivery' ? 'Zeus task Git delivery hydration failed' : 'Zeus dashboard hydration failed', error);
+  if (surface === 'task-git-delivery') {
+    const root = document.getElementById('root');
+    if (root) root.textContent = '代码交付窗口加载失败，请关闭后重试。';
+  }
+  if (!auxiliarySurface) reportRendererFatalFailure(error);
 });
 
 function reportRendererFatalFailure(error: unknown): void {
