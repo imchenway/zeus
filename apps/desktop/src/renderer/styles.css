@@ -12496,21 +12496,87 @@ a {
 .macos-ai-app .task-model-push-mode-choice > label {
   display: flex;
   gap: 9px;
-  align-items: flex-start;
+  align-items: center;
   min-inline-size: 0;
   padding: 10px;
   border: 1px solid var(--zeus-control-border);
   border-radius: 10px;
   background: var(--zeus-control-bg);
   cursor: pointer;
+  transition:
+    background-color 120ms ease-out,
+    border-color 120ms ease-out,
+    box-shadow 120ms ease-out;
 }
 
 .macos-ai-app .task-model-push-mode-choice > label.is-selected {
-  border-color: var(--zeus-accent-primary);
+  border-color: var(--zeus-product-accent);
+  background: color-mix(in oklch, var(--zeus-product-accent) 7%, var(--zeus-control-bg));
+}
+
+.macos-ai-app .task-model-push-mode-choice > label:hover:not(:has(> input:disabled)) {
+  border-color: var(--zeus-control-border-hover);
+  background: var(--zeus-control-bg-hover);
+}
+
+.macos-ai-app .task-model-push-mode-choice > label.is-selected:hover:not(:has(> input:disabled)) {
+  border-color: var(--zeus-product-accent);
+  background: color-mix(in oklch, var(--zeus-product-accent) 10%, var(--zeus-control-bg));
+}
+
+.macos-ai-app .task-model-push-mode-choice > label:active:not(:has(> input:disabled)) {
+  background: var(--zeus-control-bg-active);
+}
+
+.macos-ai-app .task-model-push-mode-choice > label:has(> input:focus-visible) {
   box-shadow: var(--zeus-control-focus);
 }
 
-.macos-ai-app .task-model-push-mode-choice input,
+.macos-ai-app .task-model-push-mode-choice > label:has(> input:disabled) {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
+.macos-ai-app .task-model-push-mode-choice > label > input[type='radio'] {
+  appearance: none;
+  -webkit-appearance: none;
+  display: grid;
+  place-items: center;
+  inline-size: 16px;
+  block-size: 16px;
+  min-inline-size: 16px;
+  min-block-size: 16px;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--zeus-control-border);
+  border-radius: 50%;
+  background: var(--zeus-control-bg);
+  box-shadow: none;
+  flex: 0 0 auto;
+}
+
+.macos-ai-app .task-model-push-mode-choice > label > input[type='radio']::before {
+  inline-size: 8px;
+  block-size: 8px;
+  border-radius: 50%;
+  background: var(--zeus-product-accent);
+  content: '';
+  transform: scale(0);
+  transition: transform 120ms ease-out;
+}
+
+.macos-ai-app .task-model-push-mode-choice > label > input[type='radio']:checked {
+  border-color: var(--zeus-product-accent);
+}
+
+.macos-ai-app .task-model-push-mode-choice > label > input[type='radio']:checked::before {
+  transform: scale(1);
+}
+
+.macos-ai-app .task-model-push-mode-choice > label > input[type='radio']:focus-visible {
+  outline: none;
+}
+
 .macos-ai-app .task-model-push-concurrency-confirm input {
   inline-size: 16px;
   min-block-size: 16px;
@@ -12533,6 +12599,13 @@ a {
 .macos-ai-app .task-model-push-direct-summary {
   display: grid;
   gap: 8px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .macos-ai-app .task-model-push-mode-choice > label,
+  .macos-ai-app .task-model-push-mode-choice > label > input[type='radio']::before {
+    transition: none;
+  }
 }
 
 .macos-ai-app .task-model-push-concurrency-confirm {
