@@ -4387,10 +4387,11 @@
   gap: 3px;
 }
 
-.session-codex-parity-v1 .session-task-push-block > header small,
 .session-codex-parity-v1 .session-task-push-field > strong {
-  color: var(--session-text-muted);
-  font-size: 11px;
+  color: var(--session-text);
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 22px;
 }
 
 .session-codex-parity-v1 .session-task-push-field > code,

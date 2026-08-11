@@ -12955,10 +12955,11 @@ a {
   gap: 2px;
 }
 
-.macos-ai-app .task-push-layout-block > header small,
 .macos-ai-app .task-push-layout-field > strong {
-  color: var(--zeus-product-muted);
-  font-size: 11px;
+  color: var(--zeus-product-text);
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 22px;
 }
 
 .macos-ai-app .task-push-layout-field p {

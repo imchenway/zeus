@@ -134,44 +134,36 @@ const taskTypeLabels: Record<TaskType, string> = {
   optimization: '优化',
 };
 
-function activeTaskFields(input: TaskPushPromptTaskContent): Array<{ field: TaskAttachmentField; label: string; text: string }> {
-  const typedFields: Array<{ field: TaskAttachmentField; label: string; text: string }> =
-    input.taskType === 'defect'
+function taskContentFields(input: TaskPushPromptTaskContent): Array<{ field: TaskAttachmentField; label: string; text: string }> {
+  return input.taskType === 'defect'
+    ? [
+        { field: 'defectCurrentState', label: '现状', text: input.defectCurrentState?.trim() ?? '' },
+        { field: 'defectExpectedOutcome', label: '预期', text: input.defectExpectedOutcome?.trim() ?? '' },
+        { field: 'defectReproductionSteps', label: '复现步骤', text: input.defectReproductionSteps?.trim() ?? '' },
+      ]
+    : input.taskType === 'optimization'
       ? [
-          { field: 'defectCurrentState', label: '现状', text: input.defectCurrentState?.trim() || '未提供' },
-          { field: 'defectExpectedOutcome', label: '预期', text: input.defectExpectedOutcome?.trim() || '未提供' },
-          { field: 'defectReproductionSteps', label: '复现步骤', text: input.defectReproductionSteps?.trim() || '未提供' },
+          { field: 'optimizationCurrentState', label: '现状', text: input.optimizationCurrentState?.trim() ?? '' },
+          { field: 'optimizationExpectedOutcome', label: '预期', text: input.optimizationExpectedOutcome?.trim() ?? '' },
         ]
-      : input.taskType === 'optimization'
-        ? [
-            { field: 'optimizationCurrentState', label: '现状', text: input.optimizationCurrentState?.trim() || '未提供' },
-            { field: 'optimizationExpectedOutcome', label: '预期', text: input.optimizationExpectedOutcome?.trim() || '未提供' },
-          ]
-        : [{ field: 'description', label: '需求描述', text: input.taskDescription?.trim() || '未提供' }];
-  return [
-    ...typedFields,
-    {
-      field: 'tags',
-      label: '标签',
-      text:
-        input.tags
-          ?.map((tag) => tag.trim())
-          .filter(Boolean)
-          .join('，') || '未提供',
-    },
-  ];
+      : [{ field: 'description', label: '需求描述', text: input.taskDescription?.trim() ?? '' }];
+}
+
+function activeTaskFields(input: TaskPushPromptTaskContent, attachmentKeysByField: Map<TaskAttachmentField, string[]>): Array<{ field: TaskAttachmentField; label: string; text: string }> {
+  const typedFields = taskContentFields(input);
+  return typedFields.filter((field) => field.text.length > 0 || (attachmentKeysByField.get(field.field)?.length ?? 0) > 0);
 }
 
 function buildTaskBlock(input: TaskPushPromptTaskContent & { contextKind: TaskPushLayoutContextKind; taskId?: string; taskCode?: string; conversationPaths?: string[] }): TaskPushLayoutTaskBlock {
-  const activeFields = activeTaskFields(input);
-  const activeFieldNames = new Set(activeFields.map((field) => field.field));
-  const attachments = (input.attachments ?? []).filter((attachment) => activeFieldNames.has(attachment.field));
+  const contentFieldNames = new Set(taskContentFields(input).map((field) => field.field));
+  const attachments = (input.attachments ?? []).filter((attachment) => contentFieldNames.has(attachment.field));
   const attachmentKeysByField = new Map<TaskAttachmentField, string[]>();
   for (const attachment of attachments) {
     const keys = attachmentKeysByField.get(attachment.field) ?? [];
     keys.push(attachment.key);
     attachmentKeysByField.set(attachment.field, keys);
   }
+  const activeFields = activeTaskFields(input, attachmentKeysByField);
   return {
     contextKind: input.contextKind,
     ...(input.taskId ? { taskId: input.taskId } : {}),
@@ -207,11 +199,10 @@ function pushText(parts: TaskPushInputPart[], text: string): void {
 function appendTaskBlockParts(parts: TaskPushInputPart[], block: TaskPushLayoutTaskBlock): void {
   if (block.contextKind === 'current') pushText(parts, `${block.taskTitle}\n`);
   else pushText(parts, `${block.contextKind === 'parent' ? '父任务' : '关联任务'}：${block.taskCode ?? block.taskId ?? ''} · ${block.taskTitle}\n`);
-  pushText(parts, `任务类型：${block.taskTypeLabel}\n`);
   for (const field of block.fields) {
     pushText(parts, `${field.label}：\n`);
     for (const attachmentKey of field.attachmentKeys) parts.push({ type: 'attachment', attachmentKey });
-    pushText(parts, `${field.text}\n`);
+    pushText(parts, field.text ? `${field.text}\n` : '\n');
   }
   if (block.conversationPaths.length > 0) {
     pushText(parts, `会话文件路径：\n${block.conversationPaths.map((path) => `- ${path}`).join('\n')}\n`);
@@ -245,7 +236,10 @@ export function buildTaskPushInputParts(layout: TaskPushMessageLayout): TaskPush
     });
   }
   const last = parts.at(-1);
-  if (last?.type === 'text') last.text = last.text.trimEnd();
+  if (last?.type === 'text') {
+    last.text = last.text.trimEnd();
+    if (!last.text) parts.pop();
+  }
   return parts;
 }
 
