@@ -206,8 +206,6 @@ async function renderWithClient(client: DashboardClient, executionHostTransition
         onLoadRuntimeStatus={() => client.loadRuntimeStatus()}
         onLoadReleaseStatus={() => client.loadReleaseStatus()}
         onCheckReleaseUpdate={() => client.checkReleaseUpdate()}
-        onDownloadReleaseUpdate={() => window.zeus?.downloadReleaseUpdate?.() ?? client.downloadReleaseUpdate()}
-        onInstallReleaseUpdate={() => window.zeus?.installReleaseUpdate?.() ?? client.installReleaseUpdate()}
         onLoadRuntimeSettings={() => client.loadRuntimeSettings()}
         onSaveRuntimeSettings={(input) => client.saveRuntimeSettings(input)}
         onLoadCodeMapSettings={() => client.loadCodeMapSettings()}

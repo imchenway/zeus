@@ -98,8 +98,6 @@ contextBridge.exposeInMainWorld('zeus', {
   exportPatchToFile: (patch: unknown) => ipcRenderer.invoke('zeus:export-patch', patch),
   openGraphSource: (source: unknown) => ipcRenderer.invoke('zeus:open-graph-source', source),
   openExternalHttpsUrl: (url: string) => ipcRenderer.invoke('zeus:open-external-https-url', url),
-  downloadReleaseUpdate: () => ipcRenderer.invoke('zeus:release:download-update'),
-  installReleaseUpdate: () => ipcRenderer.invoke('zeus:release:install-update'),
   listConversationResourceOpenTargets: (request: unknown) => ipcRenderer.invoke('zeus:conversation-resource:list-open-targets', request),
   openConversationResource: (request: unknown) => ipcRenderer.invoke('zeus:conversation-resource:open', request),
   exportMermaidDiagramToFile: (payload: unknown) => ipcRenderer.invoke('zeus:export-mermaid-diagram', payload),
@@ -128,11 +126,6 @@ contextBridge.exposeInMainWorld('zeus', {
     const handler = () => listener();
     ipcRenderer.on('zeus:native-new-conversation', handler);
     return () => ipcRenderer.removeListener('zeus:native-new-conversation', handler);
-  },
-  onNativeCheckForUpdates: (listener: () => void) => {
-    const handler = () => listener();
-    ipcRenderer.on('zeus:native-check-for-updates', handler);
-    return () => ipcRenderer.removeListener('zeus:native-check-for-updates', handler);
   },
   getBrowserSnapshot: (conversationId: string) => ipcRenderer.invoke('zeus:browser:get-snapshot', conversationId),
   openBrowserTab: (input: unknown) => ipcRenderer.invoke('zeus:browser:open-tab', input),

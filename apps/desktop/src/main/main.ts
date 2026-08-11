@@ -41,6 +41,8 @@ import {
   readOrCreateConversationAttachmentGrantSecret,
 } from './conversationInputResources.js';
 import { cleanupStaleReleaseBackups, createReleaseUpdateService, type ReleaseUpdateService } from './releaseUpdateService.js';
+import { createHomebrewUpdateService } from './homebrewUpdateService.js';
+import { createHomebrewUpdateController, type HomebrewUpdateController } from './homebrewUpdateController.js';
 import { type ZeusDataLayout } from '@zeus/local-server';
 import { prepareZeusDataRoot } from './zeusDataMigration.js';
 import { ProjectSourceWorkspaceService } from './projectSourceWorkspace.js';
@@ -51,6 +53,7 @@ const windows = new Set<BrowserWindow>();
 let tray: Tray | undefined;
 let localServerRuntime: DesktopLocalServerRuntime | undefined;
 let releaseUpdateService: ReleaseUpdateService | undefined;
+let homebrewUpdateController: HomebrewUpdateController | undefined;
 let browserHost: BrowserHost | undefined;
 let conversationInputResources: ConversationInputResourceBroker | undefined;
 let systemNotificationBridge: SystemNotificationBridge | undefined;
@@ -59,6 +62,7 @@ let zeusDataLayout: ZeusDataLayout | undefined;
 let projectSourceWorkspace: ProjectSourceWorkspaceService | undefined;
 let fatalStartup = false;
 let appShellSettings: MainAppShellSettings = {
+  appLanguage: 'zh-CN',
   webviewDebugEnabled: false,
   multiWindowEnabled: true,
   backgroundModeEnabled: true,
@@ -74,7 +78,6 @@ const unsavedChangeKeysByWindow = new Map<number, Set<string>>();
 const sensitiveRequestDraftIdsByWindow = new Map<number, Set<string>>();
 const taskTableLayoutCloseApprovedWindowIds = new Set<number>();
 const pendingTaskTableLayoutWindowCloseIds = new Set<number>();
-const pendingNativeUpdateCheckWindowIds = new Set<number>();
 const projectSourceWatchers = new Map<number, { projectId: string; watcher: FSWatcher }>();
 let taskTableLayoutQuitPending = false;
 let taskTableLayoutQuitApproved = false;
@@ -197,6 +200,12 @@ applyExplicitUserDataDirectory();
 
 function desktopRoot(): string {
   return process.env.ZEUS_DESKTOP_DIR ?? app.getAppPath();
+}
+
+function nativeUpdateProgressHelperPath(): string {
+  const root = desktopRoot();
+  if (app.isPackaged && basename(root) === 'app.asar') return join(dirname(root), 'app.asar.unpacked', 'dist', 'native', 'ZeusUpdateProgress');
+  return join(root, 'dist', 'native', 'ZeusUpdateProgress');
 }
 
 function currentAppBundlePath(): string {
@@ -423,7 +432,6 @@ async function createWindow(): Promise<void> {
     sensitiveRequestDraftIdsByWindow.delete(window.id);
     taskTableLayoutCloseApprovedWindowIds.delete(window.id);
     pendingTaskTableLayoutWindowCloseIds.delete(window.id);
-    pendingNativeUpdateCheckWindowIds.delete(window.id);
     projectSourceWatchers.get(sourceWatcherKey)?.watcher.close();
     projectSourceWatchers.delete(sourceWatcherKey);
     rendererBootstrapMonitor.dispose(window);
@@ -507,17 +515,11 @@ async function openSettingsFromMenu(): Promise<void> {
   await mainWindow?.webContents.executeJavaScript('globalThis.location.hash = "#settings-general";', true).catch(() => undefined);
 }
 
-/** 从 macOS 原生菜单触发真实更新检查；结果和用户决策由 Renderer 的统一弹窗承载。 */
+/** 从 macOS 原生菜单触发真实更新检查；结果、预取和重启决策全部留在非阻断原生窗口。 */
 async function checkForUpdatesFromMenu(): Promise<void> {
   await requestMainWindow();
   if (fatalStartup) return;
-  const window = mainWindow;
-  if (!window || window.isDestroyed()) return;
-  if (!rendererBootstrapMonitor.isReady(window)) {
-    pendingNativeUpdateCheckWindowIds.add(window.id);
-    return;
-  }
-  window.webContents.send('zeus:native-check-for-updates');
+  await homebrewUpdateController?.showOrCheck();
 }
 
 /** 打开本机日志目录；长日志和导出文件留在用户 Mac 上，不发送到远端渠道。 */
@@ -706,9 +708,6 @@ function setupIpc(): void {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
     if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow)) return;
     rendererBootstrapMonitor.markReady(requestingWindow);
-    if (pendingNativeUpdateCheckWindowIds.delete(requestingWindow.id)) {
-      requestingWindow.webContents.send('zeus:native-check-for-updates');
-    }
   });
   ipcMain.on('zeus:renderer-runtime-failed', (event, message: unknown) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
@@ -1089,6 +1088,7 @@ function setupIpc(): void {
   );
   ipcMain.handle('zeus:app-shell-settings-changed', (_event, settings: Partial<MainAppShellSettings>) => {
     appShellSettings = {
+      appLanguage: settings.appLanguage === 'en-US' ? 'en-US' : 'zh-CN',
       webviewDebugEnabled: settings.webviewDebugEnabled === true,
       multiWindowEnabled: typeof settings.multiWindowEnabled === 'boolean' ? settings.multiWindowEnabled : appShellSettings.multiWindowEnabled,
       backgroundModeEnabled: typeof settings.backgroundModeEnabled === 'boolean' ? settings.backgroundModeEnabled : appShellSettings.backgroundModeEnabled,
@@ -1492,6 +1492,43 @@ async function initializeApplication(): Promise<void> {
         setImmediate(() => app.quit());
       },
     });
+    homebrewUpdateController = createHomebrewUpdateController({
+      helperPath: nativeUpdateProgressHelperPath(),
+      language: () => appShellSettings.appLanguage,
+      loadUpdateStatus: () => {
+        if (!releaseUpdateService) throw new Error('Zeus 发布更新服务尚未就绪。');
+        return releaseUpdateService.check();
+      },
+      homebrew: createHomebrewUpdateService({
+        currentAppPath: currentAppBundlePath(),
+        currentAppVersion: app.getVersion(),
+        testMode: isTestDistribution(),
+      }),
+      currentVersion: app.getVersion(),
+      bundleId: isTestDistribution() ? 'dev.hypha.zeus.test' : 'dev.hypha.zeus',
+      canInstall: () => {
+        if (taskTableLayoutDirtyWindowIds.size > 0 || [...unsavedChangeKeysByWindow.values()].some((keys) => keys.size > 0)) {
+          throw new Error('请先保存或放弃尚未保存的界面更改，再安装更新。');
+        }
+        if ([...sensitiveRequestDraftIdsByWindow.values()].some((requestIds) => requestIds.size > 0)) {
+          throw new Error('存在尚未提交的敏感回答。请先提交或清空敏感内容，再安装更新。');
+        }
+      },
+      onInstallReady: () => {
+        upgradeHandoffRequested = true;
+        taskTableLayoutQuitApproved = true;
+        setImmediate(() => app.quit());
+      },
+      notifyReady: (showProgress) => {
+        if (!appShellSettings.desktopNotificationsEnabled || !Notification.isSupported()) return;
+        const notification = new Notification({
+          title: appShellSettings.appLanguage === 'zh-CN' ? 'Zeus 更新已下载' : 'Zeus Update Downloaded',
+          body: appShellSettings.appLanguage === 'zh-CN' ? '更新已通过校验，等待你选择何时重启。' : 'The update passed verification and is waiting for you to choose when to restart.',
+        });
+        notification.on('click', showProgress);
+        notification.show();
+      },
+    });
   }
   appShellSettings = await loadMainAppShellSettings(localServerRuntime.config);
   applyLoginItemSettings();
@@ -1592,6 +1629,8 @@ app.on(
     },
     resolveQuitMode: resolveDesktopQuitMode,
     closeLocalServer: async (mode) => {
+      if (mode !== 'upgrade_handoff') homebrewUpdateController?.close();
+      homebrewUpdateController = undefined;
       await browserHost?.close();
       browserHost = undefined;
       conversationInputResources = undefined;
@@ -1631,6 +1670,7 @@ async function loadMainAppShellSettings(config: { baseUrl: string; apiToken: str
     if (!response.ok) return appShellSettings;
     const body = (await response.json()) as Partial<MainAppShellSettings>;
     return {
+      appLanguage: body.appLanguage === 'en-US' ? 'en-US' : 'zh-CN',
       webviewDebugEnabled: body.webviewDebugEnabled === true,
       multiWindowEnabled: typeof body.multiWindowEnabled === 'boolean' ? body.multiWindowEnabled : true,
       backgroundModeEnabled: typeof body.backgroundModeEnabled === 'boolean' ? body.backgroundModeEnabled : true,

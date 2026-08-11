@@ -123,7 +123,6 @@ import { SourceListRow } from './ui/SourceListRow.js';
 import { WorkspaceDrawer } from './ui/WorkspaceDrawer.js';
 import { CommandCenterPanel } from './CommandCenterPanel.js';
 import { ProjectSourceWorkspace, type ProjectSourceWorkspaceHandle } from './code/ProjectSourceWorkspace.js';
-import { ReleaseUpdateDialog, type ReleaseUpdateDialogState } from './release/ReleaseUpdateDialog.js';
 import { ArchitectureGraphCanvas, buildArchitectureLayerModel, canRenderArchitectureLayerModel, type ArchitectureLayerModel } from './graph/ArchitectureGraphCanvas.js';
 import {
   type AiRuntimeAdapterDescriptor,
@@ -171,7 +170,6 @@ import {
   type ProjectDatabaseSecretSnapshot,
   type ProjectRecord,
   type ReleaseStatusSnapshot,
-  type ReleaseUpdateOperationSnapshot,
   type ReleaseUpdateStatusSnapshot,
   type RuntimeOperationConfirmation,
   type RuntimeSettings,
@@ -2011,8 +2009,8 @@ const languageCopy = {
         },
         updateReasons: {
           current: '当前版本已不低于发布清单中的最新版本。',
-          availableManual: '当前 Release 产物未同时签名和公证，只允许打开 GitHub Release 手动安装。',
-          availableInstallable: '发现新版本，产物已签名并公证，可下载后安装。',
+          availableManual: '发现新版本，可由 Homebrew 在后台下载并校验，等待你确认重启。',
+          availableInstallable: '发现新版本，可由 Homebrew 在后台下载并校验，等待你确认重启。',
           noArtifact: '发现新版本，但没有匹配本机架构的 macOS 产物。',
           unavailable: '无法读取 GitHub Release 发布清单。',
         },
@@ -2022,7 +2020,7 @@ const languageCopy = {
           'GitHub Release workflow': '等待 GitHub Release 工作流',
           'signed and notarized artifacts': '需要已签名和公证的发布产物',
         },
-        installHelp: (automatic: boolean) => (automatic ? '已签名与公证，可下载后安装。' : '下载安装需要签名与公证；当前只打开 GitHub Release 手动安装。'),
+        installHelp: () => '从“Zeus”菜单选择“检查更新”，可在原生窗口中下载；下载完成前不会替换当前 App。',
         checking: '检查中',
         checkUpdates: '检查更新',
         versionAria: '软件更新版本',
@@ -2046,8 +2044,8 @@ const languageCopy = {
         updateFailed: '更新检查失败，请稍后重试。',
         recommendedActions: {
           none: '无需更新',
-          open_download_page: '打开下载页',
-          download_and_install: '下载并安装',
+          open_download_page: '使用 Homebrew 更新',
+          download_and_install: '使用 Homebrew 更新',
         },
       },
       data: {
@@ -3468,8 +3466,8 @@ const languageCopy = {
         },
         updateReasons: {
           current: 'The current version is already at or above the release manifest version.',
-          availableManual: 'Release artifacts are not both signed and notarized. Zeus only opens GitHub Release for manual installation.',
-          availableInstallable: 'A new signed and notarized release is available for download and installation.',
+          availableManual: 'A new version is available. Homebrew can download and verify it in the background, then wait for your restart confirmation.',
+          availableInstallable: 'A new version is available. Homebrew can download and verify it in the background, then wait for your restart confirmation.',
           noArtifact: 'A new version is available, but no macOS artifact matches this Mac architecture.',
           unavailable: 'Zeus could not read the GitHub Release manifest.',
         },
@@ -3479,7 +3477,7 @@ const languageCopy = {
           'GitHub Release workflow': 'GitHub Release workflow',
           'signed and notarized artifacts': 'signed and notarized artifacts',
         },
-        installHelp: (automatic: boolean) => (automatic ? 'Signed and notarized artifacts can be downloaded and installed.' : 'Installation requires signing and notarization. Currently opens GitHub Release for manual install.'),
+        installHelp: () => 'Choose Check for Updates from the Zeus menu to download in a native window. The current app is not replaced before the download completes.',
         checking: 'Checking',
         checkUpdates: 'Check updates',
         versionAria: 'Software update version',
@@ -3503,8 +3501,8 @@ const languageCopy = {
         updateFailed: 'Update check failed. Try again later.',
         recommendedActions: {
           none: 'No update needed',
-          open_download_page: 'Open download page',
-          download_and_install: 'Download and install',
+          open_download_page: 'Update with Homebrew',
+          download_and_install: 'Update with Homebrew',
         },
       },
       data: {
@@ -6642,8 +6640,6 @@ export function App(props: {
   onLoadSecurityAuditLogs?: () => Promise<SecurityAuditLogEntry[]>;
   onLoadReleaseStatus?: () => Promise<ReleaseStatusSnapshot>;
   onCheckReleaseUpdate?: () => Promise<ReleaseUpdateStatusSnapshot>;
-  onDownloadReleaseUpdate?: () => Promise<ReleaseUpdateOperationSnapshot>;
-  onInstallReleaseUpdate?: () => Promise<ReleaseUpdateOperationSnapshot>;
   onSaveTelegramBotToken?: (token: string) => Promise<SecuritySecretsSnapshot>;
   onClearTelegramBotToken?: () => Promise<SecuritySecretsSnapshot>;
   onSaveExternalApiKey?: (key: string) => Promise<SecuritySecretsSnapshot>;
@@ -7126,14 +7122,11 @@ export function App(props: {
         automaticInstallEnabled: false,
         recommendedAction: 'open_download_page',
         label: '暂未检查更新',
-        reason: '点击检查更新后读取 GitHub Release 发布清单；未签名或未公证的产物只允许手动安装。',
+        reason: '点击检查更新后读取 GitHub Release 发布清单；实际升级由 macOS 原生 Homebrew 更新窗口承载。',
         checkedAt: '',
       },
   );
   const [releaseUpdateCheckState, setReleaseUpdateCheckState] = useState<'idle' | 'loading' | 'failed'>('idle');
-  const [releaseUpdateDialogState, setReleaseUpdateDialogState] = useState<ReleaseUpdateDialogState | null>(null);
-  const releaseUpdateRequestIdRef = useRef(0);
-  const releaseUpdateMenuBusyRef = useRef(false);
   const [telegramTokenInput, setTelegramTokenInput] = useState('');
   const [telegramPollingStatus, setTelegramPollingStatus] = useState<TelegramPollingStatus>({
     running: false,
@@ -10065,104 +10058,18 @@ export function App(props: {
     }
   }
 
-  async function checkReleaseUpdate(presentDialog = false): Promise<void> {
+  async function checkReleaseUpdate(): Promise<void> {
     if (!props.onCheckReleaseUpdate) return;
-    if (presentDialog && releaseUpdateMenuBusyRef.current) return;
-    const requestId = releaseUpdateRequestIdRef.current + 1;
-    releaseUpdateRequestIdRef.current = requestId;
-    if (presentDialog) {
-      releaseUpdateMenuBusyRef.current = true;
-      setReleaseUpdateDialogState({ kind: 'checking' });
-    }
     setReleaseUpdateCheckState('loading');
     try {
       const update = await props.onCheckReleaseUpdate();
       setReleaseUpdateStatus(update);
       setReleaseUpdateCheckState('idle');
-      if (presentDialog && releaseUpdateRequestIdRef.current === requestId) {
-        setReleaseUpdateDialogState({ kind: 'result', update });
-      }
     } catch (error) {
       setReleaseUpdateCheckState('failed');
-      if (presentDialog && releaseUpdateRequestIdRef.current === requestId) {
-        setReleaseUpdateDialogState({ kind: 'failed' });
-      }
-      recordLocalError('renderer-action', error);
-    } finally {
-      if (presentDialog) releaseUpdateMenuBusyRef.current = false;
-    }
-  }
-
-  function closeReleaseUpdateDialog(): void {
-    releaseUpdateRequestIdRef.current += 1;
-    releaseUpdateMenuBusyRef.current = false;
-    setReleaseUpdateDialogState(null);
-  }
-
-  async function openReleaseUpdateDownloadPage(update: ReleaseUpdateStatusSnapshot): Promise<void> {
-    const result = await openExternalHttpsUrlInMain({
-      zeus: typeof window === 'undefined' ? undefined : window.zeus,
-      url: update.releasePageUrl,
-    });
-    if (result.opened) {
-      closeReleaseUpdateDialog();
-      return;
-    }
-    setReleaseUpdateDialogState({
-      kind: 'failed',
-      update,
-      reason: appShellSettings.appLanguage === 'zh-CN' ? '无法安全打开 GitHub Release 下载页。' : 'Zeus could not safely open the GitHub Release download page.',
-    });
-  }
-
-  async function installReleaseUpdate(update: ReleaseUpdateStatusSnapshot): Promise<void> {
-    if (sourceWorkspaceDirty || taskTableLayoutDirty) {
-      requestWorkspaceLeave(() => void performReleaseUpdateInstall(update));
-      return;
-    }
-    await performReleaseUpdateInstall(update);
-  }
-
-  async function performReleaseUpdateInstall(update: ReleaseUpdateStatusSnapshot): Promise<void> {
-    if (!props.onDownloadReleaseUpdate || !props.onInstallReleaseUpdate) {
-      setReleaseUpdateDialogState({
-        kind: 'failed',
-        update,
-        reason: appShellSettings.appLanguage === 'zh-CN' ? '当前构建没有可用的下载和安装桥接。' : 'This build does not provide the download and installation bridge.',
-      });
-      return;
-    }
-    setReleaseUpdateDialogState({ kind: 'installing', update });
-    try {
-      const download = await props.onDownloadReleaseUpdate();
-      if (!download.accepted) {
-        setReleaseUpdateDialogState({ kind: 'failed', update: download.update, reason: download.reason });
-        return;
-      }
-      const installation = await props.onInstallReleaseUpdate();
-      if (!installation.accepted) {
-        setReleaseUpdateDialogState({ kind: 'failed', update: installation.update, reason: installation.reason });
-        return;
-      }
-      setReleaseUpdateDialogState({ kind: 'installing', update: installation.update });
-    } catch (error) {
-      setReleaseUpdateDialogState({
-        kind: 'failed',
-        update,
-        reason: appShellSettings.appLanguage === 'zh-CN' ? '升级请求失败，请稍后重试。' : 'The update request failed. Try again later.',
-      });
       recordLocalError('renderer-action', error);
     }
   }
-
-  useEffect(() => {
-    const unsubscribe = window.zeus?.onNativeCheckForUpdates?.(() => {
-      void checkReleaseUpdate(true);
-    });
-    return () => {
-      if (unsubscribe) unsubscribe();
-    };
-  }, [props.onCheckReleaseUpdate]);
 
   async function checkRuntimeAdapter(adapterId: string): Promise<void> {
     if (!props.onCheckRuntimeAdapter) return;
@@ -10229,6 +10136,7 @@ export function App(props: {
       await notifyMainAppShellSettingsChanged({
         zeus: window.zeus,
         settings: {
+          appLanguage: savedSettings.appLanguage,
           webviewDebugEnabled: savedSettings.webviewDebugEnabled,
           multiWindowEnabled: savedSettings.multiWindowEnabled,
           backgroundModeEnabled: savedSettings.backgroundModeEnabled,
@@ -11359,16 +11267,6 @@ export function App(props: {
         onClose={closeProjectCreateDialog}
         onSubmit={(event) => void createCurrentProject(event)}
       />
-      {releaseUpdateDialogState ? (
-        <ReleaseUpdateDialog
-          language={appShellSettings.appLanguage === 'zh-CN' ? 'zh-CN' : 'en'}
-          state={releaseUpdateDialogState}
-          onDismiss={closeReleaseUpdateDialog}
-          onRetry={() => void checkReleaseUpdate(true)}
-          onOpenDownloadPage={(update) => void openReleaseUpdateDownloadPage(update)}
-          onInstall={(update) => void installReleaseUpdate(update)}
-        />
-      ) : null}
       <TaskTableLayoutDecisionDialog
         open={sourceWorkspaceLeaveDialogOpen}
         title={appShellSettings.appLanguage === 'zh-CN' ? '源码修改尚未保存' : 'Source changes are not saved'}
@@ -13744,12 +13642,12 @@ export function App(props: {
                             <small>{formatReleaseUpdateReason(releaseUpdateStatus, settingsWorkspaceCopy.release)}</small>
                           </span>
                           <span className="release-update-field">
-                            {/* 更新状态来自真实 Release 检查结果；未签名/未公证时只引导打开下载页，不伪装自动安装可用。 */}
+                            {/* 设置页保留发布清单证据；用户升级操作统一由 macOS 原生 Homebrew 窗口承载。 */}
                             <span>{formatReleaseUpdateLabel(releaseUpdateStatus, settingsWorkspaceCopy.release)}</span>
-                            <small>{settingsWorkspaceCopy.release.installHelp(releaseUpdateStatus.automaticInstallEnabled)}</small>
+                            <small>{settingsWorkspaceCopy.release.installHelp()}</small>
                           </span>
                           <span className="release-update-command-rail">
-                            <button type="button" onClick={() => void checkReleaseUpdate(false)} disabled={!props.onCheckReleaseUpdate || releaseUpdateBusy} {...controlBusyProps(releaseUpdateBusy)}>
+                            <button type="button" onClick={() => void checkReleaseUpdate()} disabled={!props.onCheckReleaseUpdate || releaseUpdateBusy} {...controlBusyProps(releaseUpdateBusy)}>
                               {releaseUpdateCheckState === 'loading' ? settingsWorkspaceCopy.release.checking : settingsWorkspaceCopy.release.checkUpdates}
                             </button>
                           </span>
