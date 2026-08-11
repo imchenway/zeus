@@ -4,10 +4,10 @@ import { TerminalWindowIcon as TerminalWindow } from '@phosphor-icons/react/dist
 import Markdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { MessageCheckIcon, MessageEditIcon, MessageExpandIcon, MessageThumbIcon } from './SessionMessageIcons.js';
-import type { NativeSessionItemBuffer } from './sessionTypes.js';
+import type { NativeConversationAttachment, NativeSessionItemBuffer } from './sessionTypes.js';
 import { autosizeTextarea } from './textareaAutosize.js';
 import type { ConversationFileLocation, ConversationOpenTarget, ConversationResource, ConversationResourcePreview, TaskPushMessageLayout } from '@zeus/shared';
-import { ConversationGeneratedImage, ConversationInlineResource, ConversationMarkdownImage, ConversationResourceCards, isImageResource } from './ConversationResources.js';
+import { ConversationGeneratedImage, ConversationInlineResource, ConversationMarkdownImage, ConversationPendingAttachmentImages, ConversationResourceCards, isImageResource, isPendingImageAttachment } from './ConversationResources.js';
 
 export type SessionUiLanguage = 'zh-CN' | 'en-US';
 export type ThreadItemRole = 'user' | 'assistant' | 'commentary' | 'tool' | 'file' | 'image' | 'request' | 'error' | 'unknown';
@@ -118,13 +118,20 @@ function resourceTaskPushAttachmentKey(resource: ConversationResource): string |
   return 'taskPushAttachmentKey' in resource && typeof resource.taskPushAttachmentKey === 'string' ? resource.taskPushAttachmentKey : null;
 }
 
-function TaskPushMessageContent(props: Pick<ThreadItemViewProps, 'language' | 'onOpenResource' | 'onLoadResourcePreview'> & { layout: TaskPushMessageLayout; resources: ConversationResource[] }) {
+function TaskPushMessageContent(
+  props: Pick<ThreadItemViewProps, 'language' | 'onOpenResource' | 'onLoadResourcePreview' | 'onVisibleContentChange'> & {
+    layout: TaskPushMessageLayout;
+    resources: ConversationResource[];
+    pendingAttachments: NativeConversationAttachment[];
+  },
+) {
   const resourcesByKey = new Map(
     props.resources.flatMap((resource) => {
       const key = resourceTaskPushAttachmentKey(resource);
       return key ? [[key, resource] as const] : [];
     }),
   );
+  const pendingImagesByKey = new Map(props.pendingAttachments.flatMap((attachment) => (attachment.taskPushAttachmentKey && isPendingImageAttachment(attachment) ? [[attachment.taskPushAttachmentKey, attachment] as const] : [])));
   return (
     <div className="session-task-push-layout">
       {props.layout.blocks.map((block) => (
@@ -139,11 +146,16 @@ function TaskPushMessageContent(props: Pick<ThreadItemViewProps, 'language' | 'o
               return resource ? [resource] : [];
             });
             const attachmentNames = new Map(block.attachments.map((attachment) => [attachment.key, attachment.name]));
-            const missingAttachmentKeys = field.attachmentKeys.filter((key) => !resourcesByKey.has(key));
+            const pendingImages = field.attachmentKeys.flatMap((key) => {
+              const attachment = pendingImagesByKey.get(key);
+              return attachment ? [attachment] : [];
+            });
+            const missingAttachmentKeys = field.attachmentKeys.filter((key) => !resourcesByKey.has(key) && !pendingImagesByKey.has(key));
             return (
               <section key={field.field} className="session-task-push-field">
                 <strong>{field.label}</strong>
                 <ConversationResourceCards resources={resources} language={props.language} onOpenResource={props.onOpenResource} onLoadResourcePreview={props.onLoadResourcePreview} />
+                <ConversationPendingAttachmentImages attachments={pendingImages} language={props.language} onVisibleContentChange={props.onVisibleContentChange} />
                 {missingAttachmentKeys.map((key) => (
                   <span key={key} className="session-task-push-resource-placeholder">
                     附件 · {attachmentNames.get(key) ?? key}
@@ -195,6 +207,9 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
   const articleRef = useRef<HTMLElement | null>(null);
   const role = itemRole(props.item);
   const taskPushLayout = role === 'user' ? taskPushMessageLayout(props.item.payload.taskPushLayout) : null;
+  const pendingAttachments = role === 'user' ? nativeConversationAttachments(props.item.payload.attachments) : [];
+  const hasAuthoritativeAttachmentResources = props.item.resources.some((resource) => resource.kind === 'attachment' && resource.presentation === 'card');
+  const pendingImageAttachments = !taskPushLayout && !hasAuthoritativeAttachmentResources ? pendingAttachments.filter(isPendingImageAttachment) : [];
   const taskPushAttachmentKeys = new Set(taskPushLayout?.blocks.flatMap((block) => block.attachments.map((attachment) => attachment.key)) ?? []);
   const unplacedResources = taskPushLayout
     ? props.item.resources.filter((resource) => {
@@ -349,7 +364,15 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
           />
         </div>
       ) : role === 'user' && taskPushLayout ? (
-        <TaskPushMessageContent layout={taskPushLayout} resources={props.item.resources} language={props.language} onOpenResource={props.onOpenResource} onLoadResourcePreview={props.onLoadResourcePreview} />
+        <TaskPushMessageContent
+          layout={taskPushLayout}
+          resources={props.item.resources}
+          pendingAttachments={hasAuthoritativeAttachmentResources ? [] : pendingAttachments}
+          language={props.language}
+          onOpenResource={props.onOpenResource}
+          onLoadResourcePreview={props.onLoadResourcePreview}
+          onVisibleContentChange={props.onVisibleContentChange}
+        />
       ) : role === 'user' && visibleText ? (
         <SafeMarkdown text={visibleText} language={props.language} resources={props.item.resources} onOpenResource={props.onOpenResource} onLoadResourcePreview={props.onLoadResourcePreview} />
       ) : naturalLanguageStream && (visibleText || (streamActive && itemText)) ? (
@@ -366,7 +389,8 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
         <span className="session-thinking-indicator">{labels.thinking}</span>
       ) : null}
       {!command ? <TypedItemFacts item={props.item} role={role} language={props.language} /> : null}
-      {!taskPushLayout ? <ItemAttachments item={props.item} label={labels.attachments} /> : null}
+      {!taskPushLayout ? <ItemAttachments item={props.item} label={labels.attachments} hideImages={pendingImageAttachments.length > 0} /> : null}
+      <ConversationPendingAttachmentImages attachments={pendingImageAttachments} language={props.language} onVisibleContentChange={props.onVisibleContentChange} />
       {role !== 'image' ? <ConversationResourceCards resources={unplacedResources} language={props.language} onOpenResource={props.onOpenResource} onLoadResourcePreview={props.onLoadResourcePreview} /> : null}
       {!taskPushLayout ? <ItemImages item={props.item} label={labels.conversationImage} /> : null}
       {hasActions ? (
@@ -1115,14 +1139,17 @@ function itemFacts(item: NativeSessionItemBuffer, role: ThreadItemRole): Array<[
   return pairs.flatMap(([label, value]) => (primitiveText(value) ? [[label, primitiveText(value)!]] : []));
 }
 
-function ItemAttachments(props: { item: NativeSessionItemBuffer; label: string }) {
+function ItemAttachments(props: { item: NativeSessionItemBuffer; label: string; hideImages?: boolean }) {
   if (props.item.resources.some((resource) => resource.kind === 'attachment' && resource.presentation === 'card')) return null;
   const raw = Array.isArray(props.item.payload.attachments) ? props.item.payload.attachments : [];
   const attachments = raw.flatMap((entry) => {
     if (!isRecord(entry)) return [];
+    const mime = primitiveText(entry.mime ?? entry.mimeType);
+    const kind = primitiveText(entry.kind);
+    if (props.hideImages && (kind === 'image' || mime?.startsWith('image/'))) return [];
     const name = primitiveText(entry.name ?? entry.path ?? entry.filePath);
     if (!name) return [];
-    return [{ name, meta: [primitiveText(entry.mime ?? entry.mimeType), primitiveText(entry.status)].filter(Boolean).join(' · ') }];
+    return [{ name, meta: [mime, primitiveText(entry.status)].filter(Boolean).join(' · ') }];
   });
   return attachments.length ? (
     <section className="session-item-attachments" aria-label={props.label}>
@@ -1136,6 +1163,31 @@ function ItemAttachments(props: { item: NativeSessionItemBuffer; label: string }
       </ul>
     </section>
   ) : null;
+}
+
+function nativeConversationAttachments(value: unknown): NativeConversationAttachment[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => {
+    if (!isRecord(entry)) return [];
+    const name = typeof entry.name === 'string' ? entry.name : '';
+    const mime = typeof entry.mime === 'string' ? entry.mime : '';
+    const size = typeof entry.size === 'number' ? entry.size : NaN;
+    const localPath = typeof entry.localPath === 'string' && entry.localPath ? entry.localPath : undefined;
+    const uploadRef = typeof entry.uploadRef === 'string' && entry.uploadRef ? entry.uploadRef : undefined;
+    if (!name || !mime || !Number.isSafeInteger(size) || size < 0 || (localPath ? 1 : 0) + (uploadRef ? 1 : 0) !== 1) return [];
+    const kind = entry.kind === 'image' || entry.kind === 'file' || entry.kind === 'directory' || entry.kind === 'pasted_text' ? entry.kind : undefined;
+    const taskPushAttachmentKey = typeof entry.taskPushAttachmentKey === 'string' && entry.taskPushAttachmentKey ? entry.taskPushAttachmentKey : undefined;
+    return [
+      {
+        name,
+        mime,
+        size,
+        ...(kind ? { kind } : {}),
+        ...(taskPushAttachmentKey ? { taskPushAttachmentKey } : {}),
+        ...(localPath ? { localPath } : { uploadRef: uploadRef! }),
+      } as NativeConversationAttachment,
+    ];
+  });
 }
 
 function ItemImages(props: { item: NativeSessionItemBuffer; label: string }) {

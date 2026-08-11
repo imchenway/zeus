@@ -1,6 +1,7 @@
 import { type FormEvent, type KeyboardEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { NativeQueuedSubmission, NativeQueueSnapshot, NativeSessionState } from './sessionTypes.js';
 import { SafeMarkdown, type SessionUiLanguage } from './ThreadItemView.js';
+import { ConversationPendingAttachmentImages, isPendingImageAttachment } from './ConversationResources.js';
 import { autosizeTextarea } from './textareaAutosize.js';
 
 export interface QueuedConversationMessagesProps {
@@ -189,9 +190,10 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
                       {submission.error.message}
                     </small>
                   ) : null}
-                  {submission.attachments?.length ? (
+                  <ConversationPendingAttachmentImages attachments={submission.attachments ?? []} language={props.language} />
+                  {queuedNonImageAttachments(submission).length ? (
                     <ul className="session-queued-message-attachments" aria-label={copy.attachments}>
-                      {submission.attachments.map((attachment) => (
+                      {queuedNonImageAttachments(submission).map((attachment) => (
                         <li key={`${attachment.name}:${attachment.localPath ?? attachment.uploadRef ?? ''}`}>{attachment.name}</li>
                       ))}
                     </ul>
@@ -249,6 +251,10 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
       </ol>
     </section>
   );
+}
+
+function queuedNonImageAttachments(submission: NativeQueuedSubmission) {
+  return (submission.attachments ?? []).filter((attachment) => !isPendingImageAttachment(attachment));
 }
 
 function describeQueueState(state: NativeSessionState, queue: readonly NativeQueuedSubmission[], copy: (typeof labels)[SessionUiLanguage]): string {
