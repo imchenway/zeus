@@ -68,6 +68,7 @@ interface CommandRunBody {
 export interface CommandCenterController {
   handleRuntimeSessionChange: (session: AiRuntimeSession) => void;
   handleRuntimeLog: (log: AiRuntimeLogEntry) => void;
+  stopActiveRuns: (reason: string) => number;
   close: () => void;
 }
 
@@ -700,6 +701,29 @@ export function createCommandCenter(options: CommandCenterOptions): CommandCente
     if (changed) void options.save();
   }
 
+  function stopActiveRuns(reason: string): number {
+    let stopped = 0;
+    for (const run of runs.listActive()) {
+      clearRunTimeout(run.id);
+      clearForceKill(run.id);
+      options.revokeReleaseNotesCapability?.(run.id);
+      const endedAt = now().toISOString();
+      const updated = runs.update(run.id, {
+        status: 'cancelled',
+        endedAt,
+        failureReason: reason,
+      });
+      if (run.runtimeSessionId) {
+        options.aiRuntimeManager.stopSession(run.runtimeSessionId);
+        options.aiRuntimeManager.killSession(run.runtimeSessionId, 'SIGKILL');
+      }
+      appendRunAudit('command.run.cancelled', updated);
+      publishRun('command.run.cancelled', updated);
+      stopped += 1;
+    }
+    return stopped;
+  }
+
   function close(): void {
     for (const timeout of timeoutHandles.values()) clearTimeout(timeout);
     for (const [runId, timeout] of forceKillHandles) {
@@ -728,7 +752,7 @@ export function createCommandCenter(options: CommandCenterOptions): CommandCente
     artifactBuffers.clear();
   }
 
-  return { handleRuntimeSessionChange, handleRuntimeLog, close };
+  return { handleRuntimeSessionChange, handleRuntimeLog, stopActiveRuns, close };
 }
 
 function isReleaseCommand(command: string): boolean {

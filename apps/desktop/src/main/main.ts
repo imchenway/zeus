@@ -1744,7 +1744,7 @@ if (!hasSingleInstanceLock) {
   void requestMainWindow();
 }
 
-async function resolveDesktopQuitMode(): Promise<'continue_in_background' | 'upgrade_handoff' | 'final_quit' | 'cancel'> {
+async function resolveDesktopQuitMode(): Promise<'continue_in_background' | 'upgrade_handoff' | 'final_quit' | 'force_quit' | 'cancel'> {
   if (upgradeHandoffRequested) return 'upgrade_handoff';
   const runtime = localServerRuntime;
   if (!runtime) return 'final_quit';
@@ -1760,8 +1760,8 @@ async function resolveDesktopQuitMode(): Promise<'continue_in_background' | 'upg
     type: 'warning' as const,
     title: '仍有任务正在运行',
     message: '退出 Zeus 时如何处理正在运行的任务？',
-    detail: `正在执行的轮次 ${status.activeTurnCount} 个，等待交互 ${status.waitingRequestCount} 个，其他 Runtime ${status.activeRuntimeCount} 个。`,
-    buttons: ['退出界面，任务继续运行', '停止任务并退出', '取消'],
+    detail: `正在执行的轮次 ${status.activeTurnCount} 个，等待交互 ${status.waitingRequestCount} 个，其他 Runtime ${status.activeRuntimeCount} 个，命令执行 ${status.activeCommandRunCount} 个。`,
+    buttons: ['退出界面，任务继续运行', '停止活动工作并退出', '取消'],
     defaultId: 0,
     cancelId: 2,
     noLink: true,
@@ -1772,9 +1772,9 @@ async function resolveDesktopQuitMode(): Promise<'continue_in_background' | 'upg
   if (result.response === 0) return 'continue_in_background';
   try {
     await runtime.stopActiveWork();
-    return 'final_quit';
+    return 'force_quit';
   } catch (error) {
-    dialog.showErrorBox('Zeus', `无法安全停止全部任务，应用将保持打开。\n\n${error instanceof Error ? error.message : String(error)}`);
+    dialog.showErrorBox('Zeus', `无法记录全部活动工作的中断状态，应用将保持打开。\n\n${error instanceof Error ? error.message : String(error)}`);
     return 'cancel';
   }
 }
@@ -1805,7 +1805,7 @@ app.on(
       conversationInputResources = undefined;
       await localServerRuntime?.close(mode);
       localServerRuntime = undefined;
-      if (mode === 'final_quit' && app.isPackaged) {
+      if ((mode === 'final_quit' || mode === 'force_quit') && app.isPackaged) {
         await cleanupStaleReleaseBackups(currentAppBundlePath()).catch((error: unknown) => {
           console.warn('Zeus 未能在执行宿主关闭后清理旧 App 备份。', error);
         });

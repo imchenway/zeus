@@ -7,7 +7,15 @@ import { fileURLToPath } from 'node:url';
 import { createCodexRuntimeGenerationManager } from '@zeus/ai-runtime';
 import { type BrowserAutomationPort, createZeusDataLayout, hasCodexFinalizationOwnershipClaim, type RunningZeusLocalServer, startZeusLocalServer, type ZeusDataLayout } from '@zeus/local-server';
 import { startDesktopBrowserAutomationBridge } from './browserAutomationBridge.js';
-import { createExecutionHostControlClient, executionHostProtocolVersion, type ExecutionHostRendezvous, type ExecutionHostWorkStatus, readExecutionHostRendezvous, writeExecutionHostBootstrap } from './executionHostProtocol.js';
+import {
+  createExecutionHostControlClient,
+  executionHostProtocolVersion,
+  type ExecutionHostRendezvous,
+  type ExecutionHostWorkStatus,
+  readExecutionHostRendezvous,
+  removeExecutionHostRendezvous,
+  writeExecutionHostBootstrap,
+} from './executionHostProtocol.js';
 
 export interface RendererLocalServerConfig {
   baseUrl: string;
@@ -36,7 +44,7 @@ export interface DesktopLocalServerRuntime {
   close: (mode?: DesktopLocalServerCloseMode) => Promise<void>;
 }
 
-export type DesktopLocalServerCloseMode = 'continue_in_background' | 'upgrade_handoff' | 'final_quit';
+export type DesktopLocalServerCloseMode = 'continue_in_background' | 'upgrade_handoff' | 'final_quit' | 'force_quit';
 
 interface ExecutionHostHandoffCheckpoint {
   sourceInstanceId: string;
@@ -279,15 +287,11 @@ export async function startDesktopLocalServer(options: StartDesktopLocalServerOp
       },
       refreshConfig,
       stopActiveWork: async () => {
-        let result;
         try {
-          result = await client.stopActiveWork();
+          await client.stopActiveWork();
         } catch {
           await recover(true);
-          result = await client.stopActiveWork();
-        }
-        if (result.failedTurns.length > 0) {
-          throw new Error(`Zeus 无法停止 ${result.failedTurns.length} 个执行轮次。`);
+          await client.stopActiveWork();
         }
       },
       close: (mode = 'final_quit') => {
@@ -324,7 +328,28 @@ export async function startDesktopLocalServer(options: StartDesktopLocalServerOp
             }
           }
           try {
-            if (mode === 'final_quit') await client.shutdown();
+            if (mode === 'force_quit') {
+              let status;
+              try {
+                status = await client.health();
+              } catch {
+                // 控制面已经不可达时不得按陈旧 PID 强杀；只清理当前实例的陈旧发现文件。
+                await removeExecutionHostRendezvous(options.userDataPath, connection.instanceId);
+                status = undefined;
+              }
+              if (status) {
+                if (status.instanceId !== connection.instanceId || status.pid !== connection.pid || connection.pid <= 1 || connection.pid === process.pid) {
+                  throw new Error('Zeus 拒绝强制结束身份不匹配的执行宿主。');
+                }
+                try {
+                  // 执行宿主以独立进程组启动；结束进程组才能同时收口其 Codex、Pi 和 Runtime 子进程。
+                  process.kill(-connection.pid, 'SIGKILL');
+                } catch (error) {
+                  if (!(error instanceof Error && 'code' in error && error.code === 'ESRCH')) throw error;
+                }
+                await removeExecutionHostRendezvous(options.userDataPath, connection.instanceId);
+              }
+            } else if (mode === 'final_quit') await client.shutdown();
             else await client.detach(leaseId);
           } catch (error) {
             errors.push(error);
