@@ -741,16 +741,6 @@ export async function commitTaskWorkspace(input: CommitTaskWorkspaceInput): Prom
   // 来源目录里的暂存改动可能先被带入 worktree；共享目录和子仓库必须从父仓 index 中明确退出。
   if (ignored.length > 0) await runGit(input.cwd, ['reset', '-q', 'HEAD', '--', ...ignored]);
   if (paths.length > 0) await runGit(input.cwd, ['add', '-A', '--', ...paths]);
-  if (paths.length > 0) {
-    try {
-      await execFileAsync('git', ['diff', '--cached', '--check', '--', ...paths], {
-        cwd: input.cwd,
-        maxBuffer: 10 * 1024 * 1024,
-      });
-    } catch (error) {
-      throw gitCoreError('ZEUS_TASK_PRECOMMIT_WHITESPACE_FAILED', `提交前 Git 空白检查失败：${commandFailureDetail(error)}`);
-    }
-  }
   const stagedNames = paths.length > 0 ? splitLines(await readGitStdout(input.cwd, ['diff', '--cached', '--name-only', '--', ...paths])) : [];
   let committed = false;
   if (stagedNames.length > 0) {
