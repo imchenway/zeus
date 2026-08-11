@@ -1,16 +1,17 @@
-import { type KeyboardEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { ArrowRightIcon as ArrowRight } from '@phosphor-icons/react/dist/csr/ArrowRight';
-import { CheckIcon as Check } from '@phosphor-icons/react/dist/csr/Check';
-import { CaretDownIcon as CaretDown } from '@phosphor-icons/react/dist/csr/CaretDown';
-import { InfoIcon as Info } from '@phosphor-icons/react/dist/csr/Info';
-import { PencilSimpleIcon as PencilSimple } from '@phosphor-icons/react/dist/csr/PencilSimple';
-import { QuestionIcon as Question } from '@phosphor-icons/react/dist/csr/Question';
-import { TerminalWindowIcon as TerminalWindow } from '@phosphor-icons/react/dist/csr/TerminalWindow';
-import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
-import { openExternalHttpsUrlInMain } from '../appShellBridge.js';
-import type { NativePendingRequest, NativePermissionMode } from './sessionTypes.js';
-import type { SessionUiLanguage } from './ThreadItemView.js';
-import { autosizeTextarea } from './textareaAutosize.js';
+import {type KeyboardEvent, useEffect, useLayoutEffect, useMemo, useRef, useState} from 'react';
+import {ArrowRightIcon as ArrowRight} from '@phosphor-icons/react/dist/csr/ArrowRight';
+import {CheckIcon as Check} from '@phosphor-icons/react/dist/csr/Check';
+import {CaretDownIcon as CaretDown} from '@phosphor-icons/react/dist/csr/CaretDown';
+import {InfoIcon as Info} from '@phosphor-icons/react/dist/csr/Info';
+import {PencilSimpleIcon as PencilSimple} from '@phosphor-icons/react/dist/csr/PencilSimple';
+import {QuestionIcon as Question} from '@phosphor-icons/react/dist/csr/Question';
+import {TerminalWindowIcon as TerminalWindow} from '@phosphor-icons/react/dist/csr/TerminalWindow';
+import {XIcon as X} from '@phosphor-icons/react/dist/csr/X';
+import {parseCanonicalRequestUserInputQuestions} from '@zeus/shared';
+import {openExternalHttpsUrlInMain} from '../appShellBridge.js';
+import type {NativePendingRequest, NativePermissionMode} from './sessionTypes.js';
+import type {SessionUiLanguage} from './ThreadItemView.js';
+import {autosizeTextarea} from './textareaAutosize.js';
 
 export interface RequestQuestionOption {
   label: string;
@@ -859,44 +860,17 @@ function updateQuestionAnswers(current: Record<string, string[]>, question: Requ
 }
 
 export function normalizeRequestQuestions(request: NativePendingRequest): RequestQuestion[] {
-  const envelopeKeys = ['threadId', 'turnId', 'itemId', 'questions', 'autoResolutionMs'];
-  if (Object.keys(request.payload).length !== envelopeKeys.length || !hasOnlyKeys(request.payload, envelopeKeys)) return [];
-  if (!nonEmptyString(request.payload.threadId) || !nonEmptyString(request.payload.turnId) || !nonEmptyString(request.payload.itemId)) return [];
-  if (request.payload.autoResolutionMs !== null && (typeof request.payload.autoResolutionMs !== 'number' || !Number.isFinite(request.payload.autoResolutionMs) || request.payload.autoResolutionMs < 0)) return [];
-  const rawQuestions = Array.isArray(request.payload.questions) ? request.payload.questions : [];
-  if (rawQuestions.length === 0) return [];
-  const normalized: RequestQuestion[] = [];
-  const questionIds = new Set<string>();
-  for (const entry of rawQuestions) {
-    if (!isRecord(entry)) return [];
-    const id = nonEmptyString(entry.id);
-    const header = nonEmptyString(entry.header);
-    const question = nonEmptyString(entry.question);
-    if (!id || !header || !question || questionIds.has(id) || typeof entry.isSecret !== 'boolean' || typeof entry.isOther !== 'boolean') return [];
-    if (entry.multiple !== undefined && typeof entry.multiple !== 'boolean') return [];
-
-    let options: RequestQuestionOption[];
-    if (entry.options === null) {
-      options = [];
-    } else if (Array.isArray(entry.options) && entry.options.length > 0) {
-      options = [];
-      const optionLabels = new Set<string>();
-      for (const option of entry.options) {
-        if (!isRecord(option)) return [];
-        const label = nonEmptyString(option.label);
-        if (!label || typeof option.description !== 'string' || optionLabels.has(label)) return [];
-        optionLabels.add(label);
-        options.push({ label, description: option.description });
-      }
-    } else {
-      return [];
-    }
-    const multiple = entry.multiple === true;
-    if (options.length === 0 && (entry.isOther || multiple)) return [];
-    questionIds.add(id);
-    normalized.push({ id, header, question, kind: options.length > 0 ? (multiple ? 'multiple' : 'single') : 'freeform', secret: entry.isSecret, allowOther: entry.isOther, options });
-  }
-  return normalized;
+    const parsed = parseCanonicalRequestUserInputQuestions(request.payload);
+    if (!parsed.ok) return [];
+    return parsed.questions.map((question) => ({
+        id: question.id,
+        header: question.header,
+        question: question.question,
+        kind: question.options === null ? 'freeform' : question.multiple ? 'multiple' : 'single',
+        secret: question.isSecret,
+        allowOther: question.isOther,
+        options: question.options ?? [],
+    }));
 }
 
 export function areRequiredRequestAnswersComplete(questions: readonly RequestQuestion[], answers: Record<string, string[]>, otherAnswers: Record<string, string> = {}): boolean {
@@ -1419,8 +1393,4 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 function stringValue(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value : null;
-}
-
-function nonEmptyString(value: unknown): string | null {
-  return typeof value === 'string' && value.trim() ? value.trim() : null;
 }

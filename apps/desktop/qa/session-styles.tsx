@@ -1,11 +1,15 @@
 import React from 'react';
-import { createRoot } from 'react-dom/client';
+import {createRoot} from 'react-dom/client';
 import '../src/renderer/styles.css';
 import '../src/renderer/session/session.css';
 import './session-styles.css';
-import { PendingRequestSurface } from '../src/renderer/session/PendingRequestSurface.js';
-import { type ConversationTreeRuntimeState, type ProjectConversationGroup, ProjectConversationTree } from '../src/renderer/session/ProjectConversationTree.js';
-import type { NativeConversationChoice, NativePendingRequest } from '../src/renderer/session/sessionTypes.js';
+import {PendingRequestSurface} from '../src/renderer/session/PendingRequestSurface.js';
+import {
+    type ConversationTreeRuntimeState,
+    type ProjectConversationGroup,
+    ProjectConversationTree
+} from '../src/renderer/session/ProjectConversationTree.js';
+import type {NativeConversationChoice, NativePendingRequest} from '../src/renderer/session/sessionTypes.js';
 
 const referenceBase = 'http://127.0.0.1:4181';
 
@@ -100,6 +104,41 @@ const commandRequest: NativePendingRequest = {
   resolvedAt: null,
 };
 
+const userInputRequest: NativePendingRequest = {
+    id: 'user-input-with-optional-metadata',
+    conversationId: 'input',
+    turnId: 'turn-input',
+    itemId: 'item-input',
+    generationId: 'generation-qa',
+    type: 'request_user_input',
+    status: 'pending',
+    payload: {
+        threadId: 'thread-input',
+        turnId: 'turn-input',
+        itemId: 'item-input',
+        questions: [
+            {
+                id: 'progress_copy',
+                header: '百分比显示',
+                question: '下载更新时，进度区域应保留哪些信息？',
+                options: [
+                    {label: '容量与百分比', description: '同时显示已下载容量、总容量和整数百分比。'},
+                    {label: '仅百分比', description: '只显示整数百分比，界面更简洁。'},
+                ],
+                isOther: true,
+                isSecret: false,
+            },
+        ],
+        isBlocking: false,
+        autoResolutionMs: null,
+    },
+    response: null,
+    containsSecret: false,
+    expiresAt: null,
+    createdAt: '2026-08-11T03:54:15.000Z',
+    resolvedAt: null,
+};
+
 function ReferencePanel(props: { title: string; src: string; className?: string }) {
   return (
     <section className={`qa-reference-panel ${props.className ?? ''}`}>
@@ -137,6 +176,14 @@ function App() {
           <PendingRequestSurface request={commandRequest} language="zh-CN" permissionMode="auto" onRespond={() => undefined} autoFocus={false} />
         </section>
       </section>
+
+        <section className="qa-comparison qa-approval-comparison">
+            <section className="qa-implementation-panel" data-testid="user-input-implementation">
+                <h2>真实请求结构：带 isBlocking 元数据</h2>
+                <PendingRequestSurface request={userInputRequest} language="zh-CN" permissionMode="auto"
+                                       onRespond={() => undefined} autoFocus={false}/>
+            </section>
+        </section>
     </main>
   );
 }
