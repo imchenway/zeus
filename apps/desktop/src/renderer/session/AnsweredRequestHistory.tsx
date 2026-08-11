@@ -2,7 +2,9 @@ import { CheckIcon as Check } from '@phosphor-icons/react/dist/csr/Check';
 import { CheckCircleIcon as CheckCircle } from '@phosphor-icons/react/dist/csr/CheckCircle';
 import { normalizeRequestQuestions, type RequestQuestion } from './PendingRequestSurface.js';
 import type { NativePendingRequest } from './sessionTypes.js';
+import type { NativeConversationAttachment } from './sessionTypes.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
+import { ConversationComposerAttachments } from './ConversationComposerAttachments.js';
 
 export interface AnsweredRequestHistoryProps {
   request: NativePendingRequest;
@@ -12,6 +14,7 @@ export interface AnsweredRequestHistoryProps {
 interface AnsweredQuestion {
   question: RequestQuestion;
   answers: string[] | null;
+  attachments: NativeConversationAttachment[];
 }
 
 const labels = {
@@ -24,6 +27,7 @@ const labels = {
     separator: '、',
     selected: '已选择',
     userChoice: '用户选择',
+    attachmentCount: (count: number) => `${count} 个附件`,
   },
   'en-US': {
     answered: 'Answered',
@@ -34,6 +38,7 @@ const labels = {
     separator: ', ',
     selected: 'Selected',
     userChoice: 'User choice',
+    attachmentCount: (count: number) => `${count} attachment${count === 1 ? '' : 's'}`,
   },
 } as const;
 
@@ -53,7 +58,7 @@ export function AnsweredRequestHistory(props: AnsweredRequestHistoryProps) {
         {entries.map((entry, index) => {
           const selectedAnswers = new Set(entry.answers ?? []);
           const optionLabels = new Set(entry.question.options.map((option) => option.label));
-          const customAnswers = entry.answers?.filter((answer) => !optionLabels.has(answer)) ?? [];
+          const customAnswers = entry.answers?.filter((answer) => !optionLabels.has(answer) && !(entry.attachments.length > 0 && (answer === '见附件' || answer === 'See attachments'))) ?? [];
           const showAnswerText = entry.question.kind === 'freeform' || entry.question.secret || entry.answers === null;
           return (
             <section key={entry.question.id}>
@@ -78,13 +83,14 @@ export function AnsweredRequestHistory(props: AnsweredRequestHistoryProps) {
                   })}
                 </ul>
               ) : null}
-              {showAnswerText ? <p>{answerText(entry, copy.secretAnswer, copy.redactedAnswer, copy.separator)}</p> : null}
+              {showAnswerText ? <p>{answerText(entry, copy.secretAnswer, copy.redactedAnswer, copy.separator, copy.attachmentCount)}</p> : null}
               {customAnswers.length > 0 ? (
                 <p className="session-answered-request-custom-answer">
                   <small>{copy.userChoice}</small>
                   <span>{customAnswers.join(copy.separator)}</span>
                 </p>
               ) : null}
+              {entry.attachments.length ? <ConversationComposerAttachments attachments={entry.attachments} language={props.language} disabled={false} className="session-answered-request-attachments" /> : null}
             </section>
           );
         })}
@@ -100,10 +106,33 @@ export function isAnsweredUserInputRequest(request: NativePendingRequest): boole
 function answeredQuestions(request: NativePendingRequest): AnsweredQuestion[] {
   const questions = normalizeRequestQuestions(request);
   const visibleAnswers = request.containsSecret ? nonSecretAnswers(request.response) : canonicalAnswers(request.response);
+  const visibleAttachments = request.containsSecret ? {} : canonicalAnswerAttachments(request.response);
   return questions.map((question) => ({
     question,
     answers: question.secret ? null : (visibleAnswers[question.id] ?? null),
+    attachments: question.secret ? [] : (visibleAttachments[question.id] ?? []),
   }));
+}
+
+function canonicalAnswerAttachments(response: Record<string, unknown> | null): Record<string, NativeConversationAttachment[]> {
+  if (!response || !isRecord(response.answerAttachments)) return {};
+  return Object.fromEntries(
+    Object.entries(response.answerAttachments).flatMap(([questionId, value]) => {
+      if (!Array.isArray(value)) return [];
+      const attachments = value.flatMap((entry) => normalizeAnswerAttachment(entry));
+      return attachments.length > 0 ? [[questionId, attachments]] : [];
+    }),
+  );
+}
+
+function normalizeAnswerAttachment(value: unknown): NativeConversationAttachment[] {
+  if (!isRecord(value) || typeof value.name !== 'string' || typeof value.mime !== 'string' || typeof value.size !== 'number' || !Number.isSafeInteger(value.size) || value.size < 0) return [];
+  const identity = typeof value.localPath === 'string' && value.localPath ? { localPath: value.localPath } : typeof value.uploadRef === 'string' && value.uploadRef ? { uploadRef: value.uploadRef } : null;
+  if (!identity) return [];
+  const kind = value.kind === 'image' || value.kind === 'file' || value.kind === 'directory' || value.kind === 'pasted_text' ? value.kind : undefined;
+  const source = value.source === 'picker' || value.source === 'paste' || value.source === 'drop' ? value.source : undefined;
+  const characterCount = typeof value.characterCount === 'number' && Number.isSafeInteger(value.characterCount) && value.characterCount >= 0 ? value.characterCount : undefined;
+  return [{ name: value.name, mime: value.mime, size: value.size, ...identity, ...(kind ? { kind } : {}), ...(source ? { source } : {}), ...(characterCount !== undefined ? { characterCount } : {}) }];
 }
 
 function canonicalAnswers(response: Record<string, unknown> | null): Record<string, string[]> {
@@ -125,8 +154,9 @@ function answerMap(value: Record<string, unknown>): Record<string, string[]> {
   );
 }
 
-function answerText(entry: AnsweredQuestion, secretAnswer: string, redactedAnswer: string, separator: string): string {
+function answerText(entry: AnsweredQuestion, secretAnswer: string, redactedAnswer: string, separator: string, attachmentCount: (count: number) => string): string {
   if (entry.question.secret) return secretAnswer;
+  if (entry.attachments.length > 0 && (!entry.answers?.length || (entry.answers.length === 1 && (entry.answers[0] === '见附件' || entry.answers[0] === 'See attachments')))) return attachmentCount(entry.attachments.length);
   return entry.answers?.length ? entry.answers.join(separator) : redactedAnswer;
 }
 

@@ -71,6 +71,11 @@ export interface NativeConversationAttachmentInput {
   taskPushAttachmentKey?: string;
 }
 
+export interface NativeQuestionAnswerAttachmentInput {
+  questionId: string;
+  attachments: NativeConversationAttachmentInput[];
+}
+
 export interface StartTaskConversationInput {
   conversationId?: string;
   submissionId?: string;
@@ -152,6 +157,8 @@ export interface SteerNativeMessageInput {
   expectedTurnId: string;
   idempotencyKey: string;
   clientUserMessageId: string;
+  /** 只用于询问回答附件的内部交付投影，普通消息 API 不接受该字段。 */
+  requestAnswerId?: string;
   providerWriteLifecycle?: NativeProviderWriteLifecycle;
 }
 
@@ -211,6 +218,9 @@ type NativeServerRequestResponse = CodexServerRequestResponse extends infer Resp
 export interface RespondNativeRequestInput {
   requestId: string;
   response: NativeServerRequestResponse;
+  answerAttachments?: NativeQuestionAnswerAttachmentInput[];
+  /** 仅用于已回答记录的受控展示元数据，不发送给 Provider。 */
+  answerAttachmentPresentation?: Record<string, Array<Record<string, unknown>>>;
   providerWriteLifecycle?: NativeProviderWriteLifecycle;
 }
 

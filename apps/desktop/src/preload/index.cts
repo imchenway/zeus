@@ -111,6 +111,7 @@ contextBridge.exposeInMainWorld('zeus', {
   readConversationClipboardResources: () => ipcRenderer.invoke('zeus:read-conversation-clipboard-resources'),
   getConversationResourcePreview: (resource: unknown) => ipcRenderer.invoke('zeus:get-conversation-resource-preview', resource),
   openConversationInputResource: (resource: unknown) => ipcRenderer.invoke('zeus:open-conversation-input-resource', resource),
+  discardConversationResources: (resources: unknown[]) => ipcRenderer.invoke('zeus:discard-conversation-resources', resources),
   chooseTaskAttachments: () => ipcRenderer.invoke('zeus:choose-task-attachments'),
   authorizeTaskFiles: (files: File[], source: 'paste' | 'drop') => authorizePendingResourceFiles(files, source, 'zeus:store-task-resource-paths', 'zeus:materialize-task-resources'),
   materializeTaskResources: (resources: unknown[]) => ipcRenderer.invoke('zeus:materialize-task-resources', resources),

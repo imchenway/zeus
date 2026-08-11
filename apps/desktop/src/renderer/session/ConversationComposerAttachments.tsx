@@ -1,11 +1,12 @@
-import type {NativeConversationAttachment} from './sessionTypes.js';
-import {PendingResourceCards, type PendingResourceCardItem} from '../ui/PendingResourceCards.js';
+import type { NativeConversationAttachment } from './sessionTypes.js';
+import { PendingResourceCards, type PendingResourceCardItem } from '../ui/PendingResourceCards.js';
 
 export interface ConversationComposerAttachmentsProps {
   attachments: NativeConversationAttachment[];
   language: 'zh-CN' | 'en-US';
   disabled: boolean;
-  onRemove: (attachment: NativeConversationAttachment) => void;
+  className?: string;
+  onRemove?: (attachment: NativeConversationAttachment) => void;
   onRestorePastedText?: (attachment: NativeConversationAttachment) => void;
 }
 
@@ -18,25 +19,31 @@ export function ConversationComposerAttachments(props: ConversationComposerAttac
       resources={resources}
       language={props.language}
       disabled={props.disabled}
-      className="session-composer-attachments"
+      className={['session-composer-attachments', props.className].filter(Boolean).join(' ')}
       onLoadPreview={async (resource) => {
         const attachment = byId.get(resource.id);
         if (!attachment || !window.zeus?.getConversationResourcePreview) return null;
         return window.zeus.getConversationResourcePreview({
-          ...(attachment.localPath ? {localPath: attachment.localPath} : {}),
-          ...(attachment.uploadRef ? {uploadRef: attachment.uploadRef} : {}),
+          ...(attachment.localPath ? { localPath: attachment.localPath } : {}),
+          ...(attachment.uploadRef ? { uploadRef: attachment.uploadRef } : {}),
         });
       }}
-      onRemove={(resource) => {
-        const attachment = byId.get(resource.id);
-        if (attachment) props.onRemove(attachment);
-      }}
-      onRestoreText={props.onRestorePastedText
-        ? (resource) => {
-            const attachment = byId.get(resource.id);
-            if (attachment) props.onRestorePastedText?.(attachment);
-          }
-        : undefined}
+      onRemove={
+        props.onRemove
+          ? (resource) => {
+              const attachment = byId.get(resource.id);
+              if (attachment) props.onRemove?.(attachment);
+            }
+          : undefined
+      }
+      onRestoreText={
+        props.onRestorePastedText
+          ? (resource) => {
+              const attachment = byId.get(resource.id);
+              if (attachment) props.onRestorePastedText?.(attachment);
+            }
+          : undefined
+      }
     />
   );
 }
@@ -48,8 +55,8 @@ function toPendingResource(attachment: NativeConversationAttachment): PendingRes
     kind: attachmentKind(attachment),
     mimeType: attachment.mime,
     size: attachment.size,
-    ...(attachment.characterCount !== undefined ? {characterCount: attachment.characterCount} : {}),
-    ...(attachment.restorableText ? {restorable: true} : {}),
+    ...(attachment.characterCount !== undefined ? { characterCount: attachment.characterCount } : {}),
+    ...(attachment.restorableText ? { restorable: true } : {}),
   };
 }
 

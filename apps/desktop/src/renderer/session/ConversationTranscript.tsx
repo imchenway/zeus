@@ -599,6 +599,7 @@ export function projectTranscriptRows(items: readonly NativeSessionItemBuffer[],
 }
 
 export function isVisibleTranscriptItem(item: NativeSessionItemBuffer): boolean {
+  if (typeof item.payload.requestAnswerId === 'string') return false;
   if (itemRole(item) !== 'commentary') return true;
   return transcriptItemText(item).trim().length > 0;
 }

@@ -18,6 +18,7 @@ import {
   isTaskAttachmentField,
   isTaskStatusFilter,
   normalizeTaskManagementStatusConfig,
+  parseCanonicalRequestUserInputQuestions,
   type ProjectCodeWorkspacePreference,
   type TaskAttachmentReference,
   type TaskAttachmentField,
@@ -4120,7 +4121,13 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           202,
           async (stableOperationId, lifecycle) => {
             const response = normalizeNativeServerRequestResponse(providerRequest.requestKind, request.body ?? {});
+            const project = projects.getById(conversation.projectId);
+            if (!project) throw nativeApiError('ZEUS_PROJECT_NOT_FOUND', 'Conversation project not found.');
+            const answerAttachmentInput = normalizeRequestUserInputAnswerAttachments(providerRequest, request.body ?? {}, project.localPath);
             if (conversation.agentKind === 'pi') {
+              if (answerAttachmentInput.groups.length > 0) {
+                throw nativeApiError('ZEUS_REQUEST_ANSWER_ATTACHMENTS_UNSUPPORTED', 'Pi request answers do not support structured attachments.');
+              }
               await lifecycle.markPrepared(startedResourceId);
               lifecycle.markRpcStarted(startedResourceId);
               await piNativeCoordinator.respondToRequest({ requestId: providerRequest.id, response });
@@ -4128,6 +4135,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
               await codexNativeCoordinator.respondToRequest({
                 requestId: providerRequest.id,
                 response,
+                ...(answerAttachmentInput.groups.length ? { answerAttachments: answerAttachmentInput.groups } : {}),
+                ...(Object.keys(answerAttachmentInput.presentation).length ? { answerAttachmentPresentation: answerAttachmentInput.presentation } : {}),
                 providerWriteLifecycle: {
                   markPrepared: () => lifecycle.markPrepared(startedResourceId),
                   markRpcStarted: () => lifecycle.markRpcStarted(startedResourceId),
@@ -13903,6 +13912,55 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       throw nativeApiError('ZEUS_INVALID_CLIENT_USER_MESSAGE_ID', 'clientUserMessageId must be a non-empty string no longer than 200 characters.');
     }
     return value;
+  }
+
+  function normalizeRequestUserInputAnswerAttachments(
+    providerRequest: NonNullable<ReturnType<ConversationServerRequestRepository['getById']>>,
+    body: Record<string, unknown>,
+    projectLocalPath: string,
+  ): {
+    groups: Array<{ questionId: string; attachments: NativeConversationAttachment[] }>;
+    presentation: Record<string, Array<Record<string, unknown>>>;
+  } {
+    if (body.answerAttachments === undefined) return { groups: [], presentation: {} };
+    if (providerRequest.requestKind !== 'request_user_input' || !isNativeApiRecord(body.answerAttachments)) {
+      throw nativeApiError('ZEUS_INVALID_SERVER_REQUEST_RESPONSE', 'answerAttachments must be a question-keyed object for request_user_input.');
+    }
+    const canonical = parseCanonicalRequestUserInputQuestions(parseJsonObject(providerRequest.payloadJson));
+    if (!canonical.ok) throw nativeApiError('ZEUS_INVALID_SERVER_REQUEST_RESPONSE', canonical.message);
+    const questions = new Map(canonical.questions.map((question) => [question.id, question]));
+    const groups: Array<{ questionId: string; attachments: NativeConversationAttachment[] }> = [];
+    const presentation: Record<string, Array<Record<string, unknown>>> = {};
+    let total = 0;
+    for (const [questionId, rawAttachments] of Object.entries(body.answerAttachments)) {
+      const question = questions.get(questionId);
+      if (!question) throw nativeApiError('ZEUS_INVALID_SERVER_REQUEST_RESPONSE', `Answer attachments do not belong to canonical question ${questionId}.`);
+      if (question.isSecret) throw nativeApiError('ZEUS_INVALID_SERVER_REQUEST_RESPONSE', `Sensitive question ${questionId} cannot include attachments.`);
+      if (!Array.isArray(rawAttachments) || rawAttachments.length === 0) {
+        throw nativeApiError('ZEUS_INVALID_SERVER_REQUEST_RESPONSE', `Answer attachment group ${questionId} must be a non-empty array.`);
+      }
+      total += rawAttachments.length;
+      if (total > 100) throw nativeApiError('ZEUS_INVALID_SERVER_REQUEST_RESPONSE', 'A request answer cannot include more than 100 attachments.');
+      const normalized = normalizeNativeConversationAttachments(rawAttachments, projectLocalPath);
+      groups.push({ questionId, attachments: normalized });
+      presentation[questionId] = normalized.map((attachment, index) => {
+        const raw = rawAttachments[index] as Record<string, unknown>;
+        const kind = raw.kind === 'image' || raw.kind === 'file' || raw.kind === 'directory' || raw.kind === 'pasted_text' ? raw.kind : undefined;
+        const source = raw.source === 'picker' || raw.source === 'paste' || raw.source === 'drop' ? raw.source : undefined;
+        const characterCount = typeof raw.characterCount === 'number' && Number.isSafeInteger(raw.characterCount) && raw.characterCount >= 0 ? raw.characterCount : undefined;
+        const uploadRef = typeof raw.uploadRef === 'string' && raw.uploadRef.trim() ? raw.uploadRef.trim() : undefined;
+        return {
+          name: attachment.name,
+          mime: attachment.mime,
+          size: attachment.size,
+          ...(kind ? { kind } : {}),
+          ...(source ? { source } : {}),
+          ...(characterCount !== undefined ? { characterCount } : {}),
+          ...(uploadRef ? { uploadRef } : attachment.localPath ? { localPath: attachment.localPath } : {}),
+        };
+      });
+    }
+    return { groups, presentation };
   }
 
   function normalizeNativeServerRequestResponse(requestKind: 'command' | 'file' | 'permissions' | 'request_user_input' | 'mcp', body: Record<string, unknown>): Parameters<typeof codexNativeCoordinator.respondToRequest>[0]['response'] {

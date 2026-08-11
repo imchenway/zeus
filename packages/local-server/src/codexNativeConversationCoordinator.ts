@@ -33,6 +33,7 @@ import type {
   InterruptNativeTurnInput,
   NativeAcceptedOperation,
   NativeConversationAttachmentInput,
+  NativeQuestionAnswerAttachmentInput,
   NativeConversationRunState,
   NativeProviderWriteLifecycle,
   NativeQueueSnapshot,
@@ -90,6 +91,7 @@ interface PersistedSubmissionInput {
   delivery?: 'queue' | 'steer_now';
   expectedTurnId?: string | null;
   taskPushLayout?: TaskPushMessageLayout;
+  requestAnswerId?: string;
 }
 
 interface NativeTurnResultWaiter {
@@ -637,6 +639,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       taskPushLayout?: TaskPushMessageLayout;
       origin?: 'implement_plan';
       planItemId?: string;
+      requestAnswerId?: string;
     },
     context: ConversationDispatchContext,
   ): ZeusConversationSubmissionRecord {
@@ -650,6 +653,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       ...(input.origin ? { origin: input.origin } : {}),
       ...(input.planItemId ? { planItemId: input.planItemId } : {}),
       ...(input.taskPushLayout ? { taskPushLayout: input.taskPushLayout } : {}),
+      ...(input.requestAnswerId ? { requestAnswerId: input.requestAnswerId } : {}),
     };
     return options.submissions.createOrGet({
       ...(input.submissionId ? { id: input.submissionId } : {}),
@@ -985,7 +989,9 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       ...(input.displayText ? { displayText: input.displayText } : {}),
       delivery: 'steer_now',
       expectedTurnId: input.expectedTurnId,
+      ...(input.requestAnswerId ? { requestAnswerId: input.requestAnswerId } : {}),
     };
+    const existingSubmission = input.requestAnswerId ? options.submissions.listByConversation(conversation.id).find((candidate) => candidate.idempotencyKey === input.idempotencyKey) : undefined;
     const submission = options.submissions.createOrGet({
       conversationId: conversation.id,
       idempotencyKey: input.idempotencyKey,
@@ -1003,6 +1009,17 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     });
     await persist();
     await input.providerWriteLifecycle?.markPrepared(submission.id);
+
+    if (existingSubmission) {
+      if (existingSubmission.status === 'dispatching' || existingSubmission.status === 'active') {
+        return accepted(existingSubmission, 'steering', conversation.providerThreadId, input.expectedTurnId);
+      }
+      if (existingSubmission.status === 'resolved' || existingSubmission.status === 'completed') {
+        return accepted(existingSubmission, 'steered', conversation.providerThreadId, input.expectedTurnId);
+      }
+      if (existingSubmission.status === 'queued') return accepted(existingSubmission, 'queued', conversation.providerThreadId, null);
+      throw coordinatorError('ZEUS_REQUEST_ANSWER_ATTACHMENT_DELIVERY_UNCERTAIN', 'The request answer attachment delivery result is uncertain and will not be repeated automatically.');
+    }
 
     const state = runStates.get(conversation.id) ?? inferRunState(conversation);
     if ((state.type !== 'active' && state.type !== 'waiting') || state.turnId !== input.expectedTurnId) {
@@ -1523,6 +1540,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         ...(submission && submissionBrowserComments(submission).length ? { browserComments: submissionBrowserComments(submission) } : {}),
         ...(typeof itemPayload.origin === 'string' ? { origin: itemPayload.origin } : {}),
         ...(typeof itemPayload.planItemId === 'string' ? { planItemId: itemPayload.planItemId } : {}),
+        ...(submission && typeof parseJsonRecord(submission.inputJson).requestAnswerId === 'string' ? { requestAnswerId: parseJsonRecord(submission.inputJson).requestAnswerId } : {}),
       },
       createdAt,
       providerThreadId,
@@ -1588,6 +1606,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       ...(isRecord(input.taskPushLayout) && input.taskPushLayout.kind === 'task_push' ? { taskPushLayout: input.taskPushLayout } : {}),
       ...(input.origin === 'implement_plan' ? { origin: input.origin } : {}),
       ...(typeof input.planItemId === 'string' ? { planItemId: input.planItemId } : {}),
+      ...(typeof input.requestAnswerId === 'string' ? { requestAnswerId: input.requestAnswerId } : {}),
     };
   }
 
@@ -1956,6 +1975,9 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       if (response.type !== 'request_user_input') throw invalidServerRequestResponse('Response type does not match the pending request_user_input request.');
       const validationError = validateCanonicalRequestUserInputAnswers(payload, response.answers);
       if (validationError) throw invalidServerRequestResponse(validationError);
+      validateRequestAnswerAttachments(request, payload, input.answerAttachments ?? []);
+    } else if (input.answerAttachments?.length) {
+      throw invalidServerRequestResponse('Only request_user_input responses can include answer attachments.');
     }
     const currentGenerationId = readyGenerationId();
     if (!options.manager.hasGeneration(request.transportGenerationId)) {
@@ -1975,6 +1997,9 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         input,
       });
     }
+    if (input.answerAttachments?.length) {
+      await deliverRequestAnswerAttachments(request, conversation, input.answerAttachments);
+    }
     await input.providerWriteLifecycle?.markPrepared(request.id);
     input.providerWriteLifecycle?.markRpcStarted(request.id);
     await persist();
@@ -1982,7 +2007,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     const effectiveResponse = stripRequestTransport(wireResponse);
     const secret = request.containsSecret && effectiveResponse.type === 'request_user_input';
     options.requests.resolve(request.id, {
-      response: effectiveResponse,
+      response: requestResponseWithAttachmentPresentation(effectiveResponse, input.answerAttachmentPresentation),
       isSecret: secret,
       ...(secret && effectiveResponse.type === 'request_user_input'
         ? { questionIds: Object.keys(effectiveResponse.answers), answerCount: Object.values(effectiveResponse.answers).reduce((total, answer) => total + answer.answers.length, 0) }
@@ -2035,6 +2060,66 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     };
   }
 
+  function validateRequestAnswerAttachments(request: ZeusConversationServerRequestRecord, payload: Record<string, unknown>, groups: NativeQuestionAnswerAttachmentInput[]): void {
+    if (groups.length === 0) return;
+    if (request.containsSecret) throw invalidServerRequestResponse('Sensitive request_user_input questions cannot include attachments.');
+    const canonical = parseCanonicalRequestUserInputQuestions(payload);
+    if (!canonical.ok) throw invalidServerRequestResponse(canonical.message);
+    const questions = new Map(canonical.questions.map((question) => [question.id, question]));
+    const seen = new Set<string>();
+    let attachmentCount = 0;
+    for (const group of groups) {
+      if (!group.questionId || seen.has(group.questionId)) throw invalidServerRequestResponse('Answer attachment question ids must be explicit and unique.');
+      const question = questions.get(group.questionId);
+      if (!question) throw invalidServerRequestResponse(`Answer attachments do not belong to canonical question ${group.questionId}.`);
+      if (question.isSecret) throw invalidServerRequestResponse(`Sensitive question ${group.questionId} cannot include attachments.`);
+      if (!Array.isArray(group.attachments) || group.attachments.length === 0) throw invalidServerRequestResponse(`Answer attachment group ${group.questionId} must not be empty.`);
+      seen.add(group.questionId);
+      attachmentCount += group.attachments.length;
+    }
+    if (attachmentCount > 100) throw invalidServerRequestResponse('A request_user_input response cannot include more than 100 attachments.');
+  }
+
+  async function deliverRequestAnswerAttachments(request: ZeusConversationServerRequestRecord, conversation: ZeusConversationWithMessagesRecord, groups: NativeQuestionAnswerAttachmentInput[]): Promise<void> {
+    const turn = request.turnId ? options.turns.getById(request.turnId) : undefined;
+    const providerTurnId = turn?.providerTurnId;
+    const state = runStates.get(conversation.id) ?? inferRunState(conversation);
+    if (!providerTurnId || state.type !== 'waiting' || state.turnId !== providerTurnId || state.requestId !== request.id) {
+      throw coordinatorError('ZEUS_REQUEST_ANSWER_ATTACHMENT_TURN_UNAVAILABLE', 'The current waiting turn is unavailable for request answer attachments.');
+    }
+    const attachments = flattenQuestionAnswerAttachments(groups);
+    const mapping = groups.map((group) => `- ${group.questionId}: ${group.attachments.map((attachment) => attachment.name).join('、')}`).join('\n');
+    const acceptance = await steerMessage({
+      conversationId: conversation.id,
+      content: `以下附件属于当前 request_user_input 的对应问题，请与随后提交的文字答案共同理解：\n${mapping}`,
+      displayText: '已提交询问回答附件',
+      attachments,
+      expectedTurnId: providerTurnId,
+      idempotencyKey: `request-answer-attachments:${request.id}`,
+      clientUserMessageId: `request-answer-attachments:${request.id}`,
+      requestAnswerId: request.id,
+    });
+    if (acceptance.status === 'steering' || acceptance.status === 'steered') return;
+    if (acceptance.submissionId) {
+      options.submissions.updateStatus(acceptance.submissionId, 'cancelled', { resolvedAt: now() });
+      await persist();
+    }
+    throw coordinatorError('ZEUS_REQUEST_ANSWER_ATTACHMENT_NOT_DELIVERED', 'Request answer attachments were not accepted by the current turn.');
+  }
+
+  function flattenQuestionAnswerAttachments(groups: NativeQuestionAnswerAttachmentInput[]): NativeConversationAttachmentInput[] {
+    const byIdentity = new Map<string, NativeConversationAttachmentInput>();
+    for (const attachment of groups.flatMap((group) => group.attachments)) {
+      const identity = attachment.authorizedPath ?? attachment.localPath ?? attachment.uploadRef ?? `${attachment.name}:${attachment.size}`;
+      if (!byIdentity.has(identity)) byIdentity.set(identity, attachment);
+    }
+    return [...byIdentity.values()];
+  }
+
+  function requestResponseWithAttachmentPresentation(response: RespondNativeRequestInput['response'], presentation: RespondNativeRequestInput['answerAttachmentPresentation']): unknown {
+    return presentation && Object.keys(presentation).length > 0 ? { ...response, answerAttachments: presentation } : response;
+  }
+
   function isInteractionRecoveryCheckpointRequest(request: ZeusConversationServerRequestRecord): boolean {
     if (!request.responseJson) return false;
     try {
@@ -2068,7 +2153,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     await inputValue.input.providerWriteLifecycle?.markPrepared(request.id);
     const secret = request.containsSecret && response.type === 'request_user_input';
     options.requests.resolve(request.id, {
-      response,
+      response: requestResponseWithAttachmentPresentation(response, inputValue.input.answerAttachmentPresentation),
       isSecret: secret,
       ...(secret && response.type === 'request_user_input' ? { questionIds: Object.keys(response.answers), answerCount: Object.values(response.answers).reduce((total, answer) => total + answer.answers.length, 0) } : {}),
       resolvedAt: now(),
@@ -2110,6 +2195,8 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         idempotencyKey: `interaction-recovery-response:${request.id}`,
         clientUserMessageId: `interaction-recovery-response:${request.id}`,
         displayText,
+        ...(inputValue.input.answerAttachments?.length ? { attachments: flattenQuestionAnswerAttachments(inputValue.input.answerAttachments) } : {}),
+        ...(inputValue.input.answerAttachments?.length ? { requestAnswerId: request.id } : {}),
       },
       context,
     );
@@ -3938,8 +4025,10 @@ function replayResolvedRequest(request: NonNullable<ReturnType<ConversationServe
     mcp: 'mcp',
   };
   if (response.type !== expectedType[request.requestKind]) return null;
+  const providerResponse = { ...response };
+  delete providerResponse.answerAttachments;
   return {
-    ...response,
+    ...providerResponse,
     generationId: request.transportGenerationId,
     requestId: providerRequestId,
   } as CodexServerRequestResponse;

@@ -1236,6 +1236,14 @@ function setupIpc(): void {
       return { opened: false, error: error instanceof Error ? error.message : 'open_conversation_input_resource_failed' };
     }
   });
+  ipcMain.handle('zeus:discard-conversation-resources', async (event, resources: unknown) => {
+    const requestingWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow) || !conversationInputResources) {
+      throw new Error('Conversation resource cleanup is unavailable for this window.');
+    }
+    const records = Array.isArray(resources) ? resources.flatMap((resource) => (resource && typeof resource === 'object' && !Array.isArray(resource) ? [resource as { localPath?: string; uploadRef?: string }] : [])) : [];
+    return conversationInputResources.discard(records);
+  });
   ipcMain.handle('zeus:choose-task-attachments', async () => {
     const selected = await dialog.showOpenDialog({
       title: '选择文件或文件夹',

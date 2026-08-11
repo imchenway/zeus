@@ -90,6 +90,7 @@ declare global {
       readConversationClipboardResources: () => Promise<{ resources: ConversationInputResourceBridge[]; text: string }>;
       getConversationResourcePreview: (resource: { localPath?: string; uploadRef?: string }) => Promise<{ previewUrl: string; mimeType: string } | null>;
       openConversationInputResource: (resource: { localPath?: string; uploadRef?: string }) => Promise<{ opened: boolean; error?: string }>;
+      discardConversationResources: (resources: Array<{ localPath?: string; uploadRef?: string }>) => Promise<{ discardedCount: number }>;
       chooseTaskAttachments: () => Promise<TaskInputResourceBridge[]>;
       authorizeTaskFiles: (
         files: File[],

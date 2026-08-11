@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID } from 'node:crypto';
-import { chmod, mkdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 'node:path';
 import { createConversationAttachmentGrant, resolveConversationAttachmentGrant } from '@zeus/local-server';
 import {
@@ -40,6 +40,7 @@ export interface ConversationInputResourceBroker {
   readClipboard(): Promise<{ resources: ConversationInputResource[]; text: string }>;
   resolve(resource: { localPath?: string; uploadRef?: string }): Promise<string | null>;
   preview(resource: { localPath?: string; uploadRef?: string }): Promise<{ previewUrl: string; mimeType: string } | null>;
+  discard(resources: Array<{ localPath?: string; uploadRef?: string }>): Promise<{ discardedCount: number }>;
 }
 
 export interface CreateConversationInputResourceBrokerOptions {
@@ -152,6 +153,26 @@ export function createConversationInputResourceBroker(options: CreateConversatio
       const data = await readFile(resolvedPath);
       const previewUrl = buildTaskAttachmentPreviewDataUrl(data, mimeType);
       return previewUrl ? { previewUrl, mimeType } : null;
+    },
+
+    async discard(resources) {
+      let discardedCount = 0;
+      for (const resource of resources.slice(0, maximumResourceCount)) {
+        // uploadRef 指向用户原文件，永远不由 Zeus 的草稿清理删除。
+        if (resource.uploadRef || typeof resource.localPath !== 'string' || !isAbsolute(resource.localPath)) continue;
+        try {
+          const canonicalPath = await realpath(resource.localPath);
+          const relativePath = relative(attachmentRoot, canonicalPath);
+          if (!relativePath || relativePath.startsWith('..') || isAbsolute(relativePath)) continue;
+          const pathStat = await stat(canonicalPath);
+          if (!pathStat.isFile()) continue;
+          await rm(canonicalPath, { force: true });
+          discardedCount += 1;
+        } catch {
+          // 资源已不存在或不属于托管根时保持安全无操作。
+        }
+      }
+      return { discardedCount };
     },
   };
 }
