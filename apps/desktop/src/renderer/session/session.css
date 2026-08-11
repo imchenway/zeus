@@ -1648,9 +1648,7 @@
 }
 
 .session-codex-parity-v1 .session-thread-item:hover .session-thread-item-actions,
-.session-codex-parity-v1 .session-thread-item:focus-within .session-thread-item-actions,
-.session-codex-parity-v1 .session-thread-item.is-latest .session-thread-item-actions,
-.session-codex-parity-v1 .session-thread-item.is-latest-assistant .session-thread-item-actions {
+.session-codex-parity-v1 .session-thread-item:focus-within .session-thread-item-actions {
   opacity: 1;
 }
 
@@ -7420,9 +7418,7 @@
 }
 
 .session-codex-parity-v1 .session-thread-item:hover .session-thread-item-actions,
-.session-codex-parity-v1 .session-thread-item:focus-within .session-thread-item-actions,
-.session-codex-parity-v1 .session-thread-item.is-latest .session-thread-item-actions,
-.session-codex-parity-v1 .session-thread-item.is-latest-assistant .session-thread-item-actions {
+.session-codex-parity-v1 .session-thread-item:focus-within .session-thread-item-actions {
   opacity: 1;
 }
 
