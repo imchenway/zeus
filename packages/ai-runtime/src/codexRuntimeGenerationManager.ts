@@ -290,6 +290,9 @@ export function createCodexRuntimeGenerationManager(): CodexAppServerManager {
     async readThread(input) {
       return routeThread(input.threadId).manager.readThread(input);
     },
+    async listThreadTurns(input) {
+      return routeThread(input.threadId).manager.listThreadTurns(input);
+    },
     async startTurn(input) {
       const entry = await migrateThreadToActive(input.threadId, input.cwd);
       const turn = await entry.manager.startTurn(input);

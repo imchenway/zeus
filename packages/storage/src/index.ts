@@ -849,7 +849,7 @@ export interface ZeusConversationTurnRecord {
   conversationId: string;
   providerThreadId: string;
   providerTurnId: string | null;
-  clientSubmissionId: string;
+  clientSubmissionId: string | null;
   status: ConversationTurnStatus;
   errorJson: string | null;
   planJson: string | null;
@@ -859,6 +859,15 @@ export interface ZeusConversationTurnRecord {
   updatedAt: string;
   agentKind: ConversationAgentKind | null;
   nativeRunId: string | null;
+}
+
+export interface ZeusConversationProviderSyncCheckpointRecord {
+  conversationId: string;
+  providerThreadId: string;
+  baselineTurnId: string | null;
+  lastSyncedTurnId: string | null;
+  initializedAt: string;
+  updatedAt: string;
 }
 
 export type ConversationItemType =
@@ -1489,6 +1498,7 @@ export async function createZeusDatabase(filePath: string): Promise<ZeusDatabase
     migrateCodexUsageLedgerSchema(zeusDb);
     migrateConversationStageSchema(zeusDb);
     migrateAgentRuntimeSchema(zeusDb);
+    migrateRemoteConversationTurnSchema(zeusDb);
     migrateTaskGitWorkspaceSchema(zeusDb);
     migrateMultiRepositoryTaskSchema(zeusDb);
     migrateCodexLegacyImportSchema(zeusDb);
@@ -2649,6 +2659,64 @@ function migrateAgentRuntimeSchema(db: ZeusDatabase): void {
     migrationId: '20260803_0001_agent_runtime_framework',
     description: '增加多 Agent 身份、原生会话映射与能力证据快照',
     checksumSource: 'agent_runtime_framework:conversation_identity,turn_identity,item_identity,capability_snapshot,backfill_codex_native',
+  });
+}
+
+function migrateRemoteConversationTurnSchema(db: ZeusDatabase): void {
+  const migrationId = '20260811_0003_remote_conversation_turns';
+  if (db.get<{ migration_id: string }>(`SELECT migration_id FROM schema_migrations WHERE migration_id = ?`, [migrationId])) return;
+
+  db.transaction(() => {
+    const turnColumns = db.select<{ name: string; notnull: number }>(`PRAGMA table_info(conversation_turns)`);
+    const clientSubmissionColumn = turnColumns.find((column) => column.name === 'client_submission_id');
+    if (!clientSubmissionColumn) throw new Error('conversation_turns 缺少 client_submission_id，无法迁移远程轮次来源。');
+
+    if (clientSubmissionColumn.notnull === 1) {
+      db.execute(`DROP INDEX IF EXISTS idx_conversation_turn_provider`);
+      db.execute(`DROP INDEX IF EXISTS idx_conversation_turn_active`);
+      db.execute(`DROP INDEX IF EXISTS idx_conversation_turn_agent_native_run`);
+      db.execute(`ALTER TABLE conversation_turns RENAME TO conversation_turns_remote_legacy`);
+      db.execute(`
+        CREATE TABLE conversation_turns (
+          id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, provider_thread_id TEXT NOT NULL,
+          provider_turn_id TEXT, client_submission_id TEXT, status TEXT NOT NULL,
+          error_json TEXT, plan_json TEXT, started_at TEXT, completed_at TEXT,
+          created_at TEXT NOT NULL, updated_at TEXT NOT NULL, agent_kind TEXT, native_run_id TEXT
+        )
+      `);
+      db.execute(`
+        INSERT INTO conversation_turns
+          (id, conversation_id, provider_thread_id, provider_turn_id, client_submission_id, status,
+           error_json, plan_json, started_at, completed_at, created_at, updated_at, agent_kind, native_run_id)
+        SELECT id, conversation_id, provider_thread_id, provider_turn_id, client_submission_id, status,
+               error_json, plan_json, started_at, completed_at, created_at, updated_at, agent_kind, native_run_id
+          FROM conversation_turns_remote_legacy
+      `);
+      const previousCount = db.countRows('conversation_turns_remote_legacy');
+      const migratedCount = db.countRows('conversation_turns');
+      if (previousCount !== migratedCount) throw new Error(`远程轮次来源迁移行数不一致：${previousCount} -> ${migratedCount}`);
+      db.execute(`DROP TABLE conversation_turns_remote_legacy`);
+    }
+
+    db.execute(`CREATE UNIQUE INDEX IF NOT EXISTS idx_conversation_turn_provider ON conversation_turns(provider_thread_id, provider_turn_id) WHERE provider_turn_id IS NOT NULL`);
+    db.execute(`CREATE INDEX IF NOT EXISTS idx_conversation_turn_active ON conversation_turns(conversation_id, status, created_at, id)`);
+    db.execute(`CREATE UNIQUE INDEX IF NOT EXISTS idx_conversation_turn_agent_native_run ON conversation_turns(agent_kind, provider_thread_id, native_run_id) WHERE agent_kind IS NOT NULL AND native_run_id IS NOT NULL`);
+    db.execute(`
+      CREATE TABLE IF NOT EXISTS conversation_provider_sync_checkpoints (
+        conversation_id TEXT PRIMARY KEY,
+        provider_thread_id TEXT NOT NULL,
+        baseline_turn_id TEXT,
+        last_synced_turn_id TEXT,
+        initialized_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    `);
+    db.execute(`CREATE INDEX IF NOT EXISTS idx_conversation_provider_sync_thread ON conversation_provider_sync_checkpoints(provider_thread_id)`);
+    recordSchemaMigration(db, {
+      migrationId,
+      description: '允许远程原生轮次不绑定本机提交并增加逐会话同步检查点',
+      checksumSource: 'conversation_turns:nullable_client_submission_id,conversation_provider_sync_checkpoints:baseline,last_synced:v1',
+    });
   });
 }
 
@@ -5649,13 +5717,20 @@ export class ConversationTurnRepository {
   ): ZeusConversationTurnRecord {
     const status = assertEnum(input.status, ['queued', 'dispatching', 'running', 'waiting', 'paused', 'completed', 'interrupted', 'failed'] as const, 'conversation turn status');
     const existing = input.providerTurnId ? this.db.get<DbConversationTurnRow>(`SELECT * FROM conversation_turns WHERE provider_thread_id = ? AND provider_turn_id = ?`, [input.providerThreadId, input.providerTurnId]) : undefined;
-    if (existing?.status === 'completed') return mapConversationTurnRow(existing);
+    if (existing?.status === 'completed') {
+      if (!existing.client_submission_id && input.clientSubmissionId) {
+        this.db.execute(`UPDATE conversation_turns SET client_submission_id = ?, updated_at = ? WHERE id = ?`, [input.clientSubmissionId, input.updatedAt, existing.id]);
+        return mapConversationTurnRow(this.db.get<DbConversationTurnRow>(`SELECT * FROM conversation_turns WHERE id = ?`, [existing.id])!);
+      }
+      return mapConversationTurnRow(existing);
+    }
     const id = existing?.id ?? input.id ?? `conversation_turn_${nanoid(12)}`;
     const errorJson = input.error === undefined ? null : JSON.stringify(input.error);
     this.db.execute(
       `INSERT INTO conversation_turns (id, conversation_id, provider_thread_id, provider_turn_id, client_submission_id, status, error_json, started_at, completed_at, created_at, updated_at, agent_kind, native_run_id)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET provider_thread_id = excluded.provider_thread_id, provider_turn_id = excluded.provider_turn_id,
+       client_submission_id = COALESCE(excluded.client_submission_id, conversation_turns.client_submission_id),
        status = excluded.status, error_json = excluded.error_json, started_at = COALESCE(excluded.started_at, conversation_turns.started_at),
        completed_at = excluded.completed_at, updated_at = excluded.updated_at, agent_kind = excluded.agent_kind, native_run_id = COALESCE(excluded.native_run_id, conversation_turns.native_run_id)`,
       [
@@ -5726,6 +5801,37 @@ export class ConversationTurnRepository {
          ORDER BY conversation_id, created_at, id`,
       )
       .map(mapConversationTurnRow);
+  }
+}
+
+export class ConversationProviderSyncCheckpointRepository {
+  constructor(private readonly db: ZeusDatabase) {}
+
+  getByConversation(conversationId: string): ZeusConversationProviderSyncCheckpointRecord | undefined {
+    const row = this.db.get<DbConversationProviderSyncCheckpointRow>(`SELECT * FROM conversation_provider_sync_checkpoints WHERE conversation_id = ?`, [conversationId]);
+    return row ? mapConversationProviderSyncCheckpointRow(row) : undefined;
+  }
+
+  initialize(input: { conversationId: string; providerThreadId: string; baselineTurnId: string | null; timestamp: string }): ZeusConversationProviderSyncCheckpointRecord {
+    this.db.execute(
+      `INSERT INTO conversation_provider_sync_checkpoints
+         (conversation_id, provider_thread_id, baseline_turn_id, last_synced_turn_id, initialized_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(conversation_id) DO NOTHING`,
+      [input.conversationId, input.providerThreadId, input.baselineTurnId, input.baselineTurnId, input.timestamp, input.timestamp],
+    );
+    const checkpoint = this.getByConversation(input.conversationId);
+    if (!checkpoint) throw new Error(`Provider 同步检查点创建失败：${input.conversationId}`);
+    if (checkpoint.providerThreadId !== input.providerThreadId) throw new Error(`Provider 同步检查点线程身份冲突：${input.conversationId}`);
+    return checkpoint;
+  }
+
+  advance(input: { conversationId: string; providerThreadId: string; lastSyncedTurnId: string; timestamp: string }): ZeusConversationProviderSyncCheckpointRecord {
+    const checkpoint = this.getByConversation(input.conversationId);
+    if (!checkpoint) throw new Error(`Provider 同步检查点不存在：${input.conversationId}`);
+    if (checkpoint.providerThreadId !== input.providerThreadId) throw new Error(`Provider 同步检查点线程身份冲突：${input.conversationId}`);
+    this.db.execute(`UPDATE conversation_provider_sync_checkpoints SET last_synced_turn_id = ?, updated_at = ? WHERE conversation_id = ?`, [input.lastSyncedTurnId, input.timestamp, input.conversationId]);
+    return this.getByConversation(input.conversationId)!;
   }
 }
 
@@ -7193,7 +7299,7 @@ interface DbConversationTurnRow {
   conversation_id: string;
   provider_thread_id: string;
   provider_turn_id: string | null;
-  client_submission_id: string;
+  client_submission_id: string | null;
   status: ConversationTurnStatus;
   error_json: string | null;
   plan_json: string | null;
@@ -7203,6 +7309,15 @@ interface DbConversationTurnRow {
   updated_at: string;
   agent_kind: ConversationAgentKind | null;
   native_run_id: string | null;
+}
+
+interface DbConversationProviderSyncCheckpointRow {
+  conversation_id: string;
+  provider_thread_id: string;
+  baseline_turn_id: string | null;
+  last_synced_turn_id: string | null;
+  initialized_at: string;
+  updated_at: string;
 }
 
 interface DbCodexUsageLedgerRow {
@@ -7720,6 +7835,17 @@ function mapConversationTurnRow(row: DbConversationTurnRow): ZeusConversationTur
     updatedAt: row.updated_at,
     agentKind: row.agent_kind,
     nativeRunId: row.native_run_id,
+  };
+}
+
+function mapConversationProviderSyncCheckpointRow(row: DbConversationProviderSyncCheckpointRow): ZeusConversationProviderSyncCheckpointRecord {
+  return {
+    conversationId: row.conversation_id,
+    providerThreadId: row.provider_thread_id,
+    baselineTurnId: row.baseline_turn_id,
+    lastSyncedTurnId: row.last_synced_turn_id,
+    initializedAt: row.initialized_at,
+    updatedAt: row.updated_at,
   };
 }
 

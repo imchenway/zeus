@@ -1914,6 +1914,22 @@
   white-space: nowrap;
 }
 
+/* 远程来源只做低干扰视觉提示，不把来源文字写进消息正文。 */
+.session-codex-parity-v1 .session-message-remote-origin {
+  align-items: center;
+  color: var(--session-message-action);
+  display: flex;
+  justify-content: flex-end;
+  margin-block-start: 4px;
+  min-block-size: 12px;
+}
+
+.session-codex-parity-v1 .session-message-remote-origin > svg {
+  block-size: 12px;
+  inline-size: 12px;
+  vector-effect: non-scaling-stroke;
+}
+
 .session-codex-parity-v1 .session-thread-item-assistant.is-message-expanded .session-markdown {
   inline-size: 100%;
 }
