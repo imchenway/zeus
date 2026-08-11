@@ -3,14 +3,17 @@ import { createPortal } from 'react-dom';
 import { ArrowSquareOutIcon as ArrowSquareOut } from '@phosphor-icons/react/dist/csr/ArrowSquareOut';
 import { CaretDownIcon as CaretDown } from '@phosphor-icons/react/dist/csr/CaretDown';
 import { FileIcon as File } from '@phosphor-icons/react/dist/csr/File';
+import { FileCodeIcon as FileCode } from '@phosphor-icons/react/dist/csr/FileCode';
 import { FolderIcon as Folder } from '@phosphor-icons/react/dist/csr/Folder';
 import { GearSixIcon as GearSix } from '@phosphor-icons/react/dist/csr/GearSix';
 import { GitBranchIcon as GitBranch } from '@phosphor-icons/react/dist/csr/GitBranch';
 import { GitDiffIcon as GitDiff } from '@phosphor-icons/react/dist/csr/GitDiff';
 import { GithubLogoIcon as GithubLogo } from '@phosphor-icons/react/dist/csr/GithubLogo';
 import { PlusIcon as Plus } from '@phosphor-icons/react/dist/csr/Plus';
+import { TerminalWindowIcon as TerminalWindow } from '@phosphor-icons/react/dist/csr/TerminalWindow';
 import { conversationAttachmentIdentity } from './ConversationComposerAttachments.js';
-import type { ConversationResource, NativeConversationChoice, NativeSessionState, TaskWorkspaceSnapshot, TaskWorkspacesSnapshot } from './sessionTypes.js';
+import { SessionCodeReviewDialog, type SessionCodeReviewSelection } from './SessionCodeReviewDialog.js';
+import type { CodexConversationCapabilities, ConversationResource, NativeConversationChoice, NativeSessionState, TaskWorkspaceSnapshot, TaskWorkspacesSnapshot } from './sessionTypes.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
 
 interface SessionQuickActionsCardProps {
@@ -21,10 +24,14 @@ interface SessionQuickActionsCardProps {
   persistentHost?: HTMLElement | null;
   forceCollapsed?: boolean;
   suppressed?: boolean;
+  capabilities?: CodexConversationCapabilities | null;
+  onLoadCapabilities?: (projectId: string) => Promise<CodexConversationCapabilities>;
   onLoadTaskWorkspaces?: (taskId: string) => Promise<TaskWorkspacesSnapshot>;
   onOpenTaskDetail?: (taskId: string) => void;
   onOpenGitReview?: (taskId: string, workspaceId: string | null, mode: 'commit' | 'push-only') => void;
   onOpenGitDelivery?: (taskId: string) => void;
+  onOpenProjectCommands?: () => void;
+  onStartCodeReview?: (selection: SessionCodeReviewSelection) => void | boolean | Promise<void | boolean>;
   onAddSources?: () => void | Promise<void>;
   onOpenSource?: (resource: ConversationResource) => void | Promise<void>;
 }
@@ -45,6 +52,7 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
   const [open, setOpen] = useState(false);
   const [hasPersistentSpace, setHasPersistentSpace] = useState(false);
   const [showAllSources, setShowAllSources] = useState(false);
+  const [reviewDialogOpen, setReviewDialogOpen] = useState(false);
   const [workspaces, setWorkspaces] = useState<TaskWorkspacesSnapshot | null>(null);
   const [workspaceState, setWorkspaceState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
@@ -90,6 +98,7 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
   useEffect(() => {
     setOpen(false);
     setShowAllSources(false);
+    setReviewDialogOpen(false);
     setWorkspaces(null);
     setWorkspaceState('idle');
     setWorkspaceError(null);
@@ -157,6 +166,16 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
     if (!taskId || !props.onOpenGitDelivery) return;
     setOpen(false);
     props.onOpenGitDelivery(taskId);
+  }
+
+  function openCommands(): void {
+    setOpen(false);
+    props.onOpenProjectCommands?.();
+  }
+
+  function openCodeReview(): void {
+    setOpen(false);
+    setReviewDialogOpen(true);
   }
 
   return (
@@ -231,6 +250,24 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
                   {workspace?.sourceBranch ? <small>{zh ? `来源 ${workspace.sourceBranch}` : `Source ${workspace.sourceBranch}`}</small> : null}
                 </span>
               </div>
+
+              <button type="button" className="session-quick-actions-row" onClick={openCommands}>
+                <TerminalWindow aria-hidden="true" weight="regular" />
+                <span className="session-quick-actions-copy">
+                  <strong>{zh ? '命令' : 'Commands'}</strong>
+                  <small>{zh ? '打开当前项目的完整命令中心' : 'Open the full command center for this project'}</small>
+                </span>
+                <ArrowSquareOut aria-hidden="true" weight="regular" />
+              </button>
+
+              <button type="button" className="session-quick-actions-row" onClick={openCodeReview}>
+                <FileCode aria-hidden="true" weight="regular" />
+                <span className="session-quick-actions-copy">
+                  <strong>{zh ? '代码审查' : 'Code review'}</strong>
+                  <small>{zh ? '新建 AI 会话审查当前完整变化' : 'Review all current changes in a new AI conversation'}</small>
+                </span>
+                <ArrowSquareOut aria-hidden="true" weight="regular" />
+              </button>
 
               <button
                 type="button"
@@ -308,6 +345,17 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
           </section>
         </SessionQuickActionsCardMount>
       ) : null}
+      <SessionCodeReviewDialog
+        open={reviewDialogOpen}
+        language={props.language}
+        conversation={props.conversation}
+        state={props.state}
+        workspace={workspace}
+        capabilities={props.capabilities ?? null}
+        onLoadCapabilities={props.onLoadCapabilities}
+        onClose={() => setReviewDialogOpen(false)}
+        onStart={props.onStartCodeReview}
+      />
     </div>
   );
 }

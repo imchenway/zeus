@@ -354,6 +354,172 @@
   }
 }
 
+/* ZEUS-0176：代码审查只在确认后创建独立会话；权限沿用当前会话并保持只读展示。 */
+.session-code-review-portal-root.macos-ai-app {
+  position: fixed;
+  inset: 0;
+  z-index: 122;
+  pointer-events: none;
+}
+
+.macos-ai-app .session-code-review-modal {
+  background: var(--zeus-product-panel);
+  border: 1px solid var(--zeus-product-line);
+  border-radius: 16px;
+  box-shadow: 0 24px 64px oklch(20% 0.01 255 / 0.25);
+  color: var(--zeus-product-text);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  inline-size: min(620px, calc(100vw - 40px));
+  max-block-size: min(720px, calc(100vh - 48px));
+  overflow: hidden;
+}
+
+.macos-ai-app .session-code-review-modal > header,
+.macos-ai-app .session-code-review-modal > footer {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  padding-inline: var(--zeus-solid-surface-edge);
+}
+
+.macos-ai-app .session-code-review-modal > header {
+  padding-block: 18px 9px;
+}
+
+.macos-ai-app .session-code-review-modal > footer {
+  padding-block: 9px 18px;
+}
+
+.macos-ai-app .session-code-review-modal > header > span {
+  display: grid;
+  gap: 3px;
+}
+
+.macos-ai-app .session-code-review-modal > header small,
+.macos-ai-app .session-code-review-modal > footer small,
+.macos-ai-app .session-code-review-tier-note,
+.macos-ai-app .session-code-review-message {
+  color: var(--zeus-product-muted);
+}
+
+.macos-ai-app .session-code-review-modal > header > button {
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  color: var(--zeus-product-muted);
+  font-size: 20px;
+  inline-size: 30px;
+  min-block-size: 30px;
+  padding: 0;
+}
+
+.macos-ai-app .session-code-review-modal > header > button:hover:not(:disabled) {
+  background: var(--zeus-control-bg-hover);
+  color: var(--zeus-product-text);
+}
+
+.macos-ai-app .session-code-review-body {
+  display: grid;
+  gap: 14px;
+  min-block-size: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 12px var(--zeus-solid-surface-edge);
+}
+
+.macos-ai-app .session-code-review-scope {
+  background: var(--zeus-product-panel-muted);
+  border: 1px solid var(--zeus-product-line-soft);
+  border-radius: 12px;
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+}
+
+.macos-ai-app .session-code-review-scope > span {
+  display: grid;
+  gap: 3px;
+}
+
+.macos-ai-app .session-code-review-scope > span small,
+.macos-ai-app .session-code-review-scope dt,
+.macos-ai-app .session-code-review-scope > p {
+  color: var(--zeus-product-muted);
+}
+
+.macos-ai-app .session-code-review-scope dl {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+}
+
+.macos-ai-app .session-code-review-scope dl > div {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: 68px minmax(0, 1fr);
+}
+
+.macos-ai-app .session-code-review-scope :where(dt, dd),
+.macos-ai-app .session-code-review-scope > p,
+.macos-ai-app .session-code-review-tier-note,
+.macos-ai-app .session-code-review-message,
+.macos-ai-app .session-code-review-error {
+  font-size: 12px;
+  line-height: 1.5;
+  margin: 0;
+}
+
+.macos-ai-app .session-code-review-scope dd {
+  margin: 0;
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+
+.macos-ai-app .session-code-review-scope > p {
+  border-block-start: 1px solid var(--zeus-product-line-soft);
+  padding-block-start: 9px;
+}
+
+.macos-ai-app .session-code-review-config {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.macos-ai-app .session-code-review-config > label {
+  color: var(--zeus-product-muted);
+  display: grid;
+  font-size: 12px;
+  gap: 6px;
+  min-inline-size: 0;
+}
+
+.macos-ai-app .session-code-review-error {
+  color: var(--zeus-product-danger, rgb(148 55 55));
+}
+
+.macos-ai-app .session-code-review-modal > footer > span {
+  display: inline-flex;
+  gap: 8px;
+}
+
+@media (max-width: 600px) {
+  .macos-ai-app .session-code-review-config {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .macos-ai-app .session-code-review-modal > footer {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .macos-ai-app .session-code-review-modal > footer > span {
+    justify-content: flex-end;
+  }
+}
+
 .session-codex-parity-v1 .ai-workspace {
   color: var(--session-text);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
