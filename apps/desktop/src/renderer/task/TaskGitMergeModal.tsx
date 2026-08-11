@@ -818,7 +818,7 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
           {conflictWorkspaceOpen && activeConflict ? (
             activeConflict.conflictFiles.length > 0 ? (
               <Button variant="primary" size="regular" busy={busyAction === 'conflict'} onClick={() => void saveResolution()} disabled={!conflict || unresolvedConflictBlocks > 0}>
-                {unresolvedConflictBlocks > 0 ? (zh ? `还有 ${unresolvedConflictBlocks} 个冲突未处理` : `${unresolvedConflictBlocks} conflict(s) unresolved`) : zh ? '保存结果并继续' : 'Save result and continue'}
+                {unresolvedConflictBlocks > 0 ? (zh ? `还有 ${unresolvedConflictBlocks} 个冲突未处理` : `${unresolvedConflictBlocks} conflict(s) unresolved`) : zh ? '保存该文件并继续' : 'Save file and continue'}
               </Button>
             ) : (
               <Button variant="primary" size="regular" busy={busyAction === 'merge'} onClick={() => void finalize()}>

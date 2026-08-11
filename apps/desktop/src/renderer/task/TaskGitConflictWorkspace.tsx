@@ -1,5 +1,6 @@
 import { ArrowLeftIcon as ArrowLeft } from '@phosphor-icons/react/dist/csr/ArrowLeft';
 import { ArrowRightIcon as ArrowRight } from '@phosphor-icons/react/dist/csr/ArrowRight';
+import { CheckCircleIcon as CheckCircle } from '@phosphor-icons/react/dist/csr/CheckCircle';
 import { MagicWandIcon as MagicWand } from '@phosphor-icons/react/dist/csr/MagicWand';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import { useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
@@ -13,6 +14,7 @@ import {
   type ConflictDocument,
   type ConflictSide,
   type ConflictSideState,
+  type SimpleConflictFailureReason,
   resolveSimpleConflictDocument,
   serializeConflictForAi,
 } from './taskConflictModel.js';
@@ -52,10 +54,13 @@ export function TaskGitConflictWorkspace(props: {
   const [viewMode, setViewMode] = useState<'focused' | 'full'>('focused');
   const [mergeFeedback, setMergeFeedback] = useState<string | null>(null);
   const [undoDraft, setUndoDraft] = useState<ConflictDocument | null>(null);
-  const activeBlock = blocks[Math.min(selectedBlockIndex, Math.max(0, blocks.length - 1))] ?? null;
+  const currentFileResolved = document !== null && unresolvedCount === 0;
+  const selectedBlock = blocks[Math.min(selectedBlockIndex, Math.max(0, blocks.length - 1))] ?? null;
+  const activeBlock = currentFileResolved ? null : selectedBlock;
   const deferredDocument = useDeferredValue(document);
   const simpleResolution = useMemo(() => (deferredDocument ? resolveSimpleConflictDocument(deferredDocument) : null), [deferredDocument]);
   const simpleResolutionReady = deferredDocument === document;
+  const simpleFailureText = simpleResolutionReady && simpleResolution && simpleResolution.resolved === 0 && unresolvedCount > 0 ? simpleConflictFailureText(simpleResolution.failureReasons, props.zh) : null;
 
   useEffect(() => {
     setMergeFeedback(null);
@@ -68,11 +73,20 @@ export function TaskGitConflictWorkspace(props: {
     if (selectedBlockIndex >= blocks.length && blocks.length > 0) setSelectedBlockIndex(blocks.length - 1);
   }, [blocks.length, selectedBlockIndex]);
 
-  function updateDocument(next: ConflictDocument, feedback?: string): void {
+  function selectNextPending(next: ConflictDocument, currentBlockId?: string): void {
+    const currentIndex = currentBlockId ? next.blocks.findIndex((block) => block.id === currentBlockId) : -1;
+    const nextIndex = next.blocks.findIndex((block, index) => block.status === 'pending' && index > currentIndex);
+    const fallbackIndex = next.blocks.findIndex((block) => block.status === 'pending');
+    const targetIndex = nextIndex >= 0 ? nextIndex : fallbackIndex;
+    if (targetIndex >= 0) setSelectedBlockIndex(targetIndex);
+  }
+
+  function updateDocument(next: ConflictDocument, feedback?: string, advanceFromBlockId?: string): void {
     if (!document || next === document) return;
     setUndoDraft(document);
     props.onDocumentChange(next);
     if (feedback) setMergeFeedback(feedback);
+    if (advanceFromBlockId) selectNextPending(next, advanceFromBlockId);
   }
 
   function chooseSide(block: ConflictBlock, side: ConflictSide, action: Exclude<ConflictSideState, 'pending'>): void {
@@ -87,7 +101,7 @@ export function TaskGitConflictWorkspace(props: {
       : props.zh
         ? `已${action === 'accepted' ? '选入' : '忽略'}${side === 'source' ? '目标分支' : '任务分支'}，保存前不会写入文件。`
         : `${action === 'accepted' ? 'Accepted' : 'Ignored'} the ${side === 'source' ? 'target' : 'task'} side. The file is unchanged until you save.`;
-    updateDocument(next, feedback);
+    updateDocument(next, feedback, nextBlock?.status === 'pending' ? undefined : block.id);
   }
 
   function mergeSimpleConflicts(): void {
@@ -95,6 +109,7 @@ export function TaskGitConflictWorkspace(props: {
     const result = simpleResolution;
     if (result.resolved > 0) props.onDocumentChange(result.document);
     if (result.resolved > 0) setUndoDraft(document);
+    if (result.resolved > 0) selectNextPending(result.document);
     setMergeFeedback(
       props.zh
         ? result.resolved > 0
@@ -121,6 +136,7 @@ export function TaskGitConflictWorkspace(props: {
     if (next === document) return;
     setUndoDraft(document);
     props.onDocumentChange(next);
+    if (activeBlock) selectNextPending(next, activeBlock.id);
     const manualCount = next.blocks.filter((block) => block.status === 'manual').length;
     setMergeFeedback(props.zh ? `中间编辑已记录，${manualCount} 个冲突块按手工结果处理，保存前不会写入文件。` : `The center edit is recorded. ${manualCount} conflict block(s) are now manual; the file is unchanged until you save.`);
   }
@@ -157,9 +173,9 @@ export function TaskGitConflictWorkspace(props: {
             <small>{props.zh ? `左：${props.integration.targetBranch} · 中：可编辑结果 · 右：${props.taskBranch}` : `Left: ${props.integration.targetBranch} · Center: editable result · Right: ${props.taskBranch}`}</small>
           </span>
           <span>
-            {mergeFeedback || noMarkerWarning ? (
+            {mergeFeedback || noMarkerWarning || simpleFailureText ? (
               <small className={`task-git-conflict-feedback${noMarkerWarning ? ' is-warning' : ''}`} role="status">
-                {noMarkerWarning ?? mergeFeedback}
+                {noMarkerWarning ?? mergeFeedback ?? simpleFailureText}
               </small>
             ) : null}
             <Button variant="secondary" size="compact" onClick={undoLastDraft} disabled={props.busy || undoDraft === null}>
@@ -193,9 +209,7 @@ export function TaskGitConflictWorkspace(props: {
                     ? props.zh
                       ? `可安全自动合并 ${simpleResolution.resolved} 个简单冲突`
                       : `Safely merge ${simpleResolution.resolved} simple conflict(s)`
-                    : props.zh
-                      ? '当前没有可安全自动合并的冲突，请手工编辑或使用 AI 处理'
-                      : 'No conflict can be merged safely. Edit manually or use AI.'
+                    : (simpleFailureText ?? (props.zh ? '当前没有可安全自动合并的冲突，请手工编辑或使用 AI 处理' : 'No conflict can be merged safely. Edit manually or use AI.'))
               }
               aria-label={props.zh ? '自动合并简单冲突' : 'Resolve simple conflicts'}
             >
@@ -217,7 +231,7 @@ export function TaskGitConflictWorkspace(props: {
           </span>
         </div>
 
-        {blocks.length > 0 ? (
+        {!currentFileResolved ? (
           <nav className="task-git-conflict-block-rail" aria-label={props.zh ? '冲突块' : 'Conflict blocks'}>
             {blocks.map((block, index) => (
               <section key={block.id} className={`task-git-conflict-block-status is-${block.status}${index === selectedBlockIndex ? ' is-active' : ''}`} aria-label={props.zh ? `冲突 ${index + 1}` : `Conflict ${index + 1}`}>
@@ -231,7 +245,7 @@ export function TaskGitConflictWorkspace(props: {
           </nav>
         ) : (
           <p className="task-git-conflict-resolved" role="status">
-            {props.zh ? '当前文件的冲突块已全部处理，请检查中间结果后保存。' : 'All conflict blocks in this file are resolved. Review the result, then save.'}
+            {props.zh ? '当前文件冲突已处理，但尚未保存。请检查中间结果后保存该文件并继续。' : 'Conflicts in this file are processed but not saved. Review the result, then save this file to continue.'}
           </p>
         )}
 
@@ -260,14 +274,30 @@ export function TaskGitConflictWorkspace(props: {
             onSideAction={chooseSide}
           />
         ) : (
-          <div className="task-git-conflict-review-complete">
-            <strong>{props.zh ? '当前文件没有未解决冲突' : 'No unresolved conflicts remain'}</strong>
-            <span>{props.zh ? '可以查看完整文件，或直接保存结果并继续。' : 'Review the full file or save the draft to continue.'}</span>
+          <div className="task-git-conflict-review-complete" role="status">
+            <CheckCircle aria-hidden="true" weight="fill" />
+            <strong>{props.zh ? '当前文件冲突已全部处理' : 'All conflicts in this file are processed'}</strong>
+            <span>{props.zh ? '结果仍是未保存的草稿。可先查看完整文件，确认后点击下方“保存该文件并继续”。' : 'The result is still an unsaved draft. Review the full file, then choose “Save file and continue” below.'}</span>
+            <Button variant="secondary" size="compact" onClick={() => setViewMode('full')} disabled={!document || props.busy}>
+              {props.zh ? '查看完整文件' : 'View full file'}
+            </Button>
           </div>
         )}
       </main>
     </div>
   );
+}
+
+function simpleConflictFailureText(reasons: Partial<Record<SimpleConflictFailureReason, number>>, zh: boolean): string {
+  const labels: Array<[SimpleConflictFailureReason, string, string]> = [
+    ['same_position_insertions', '同一位置新增内容的先后顺序不确定', 'different insertions at the same position have no certain order'],
+    ['overlapping_changes', '两侧修改范围重叠', 'changes from both sides overlap'],
+    ['base_unavailable', '共同基线不可用', 'the common base is unavailable'],
+    ['content_too_large', '内容超过安全分析上限', 'the content exceeds the safe analysis limit'],
+  ];
+  const details = labels.filter(([reason]) => (reasons[reason] ?? 0) > 0).map(([, chinese, english]) => (zh ? chinese : english));
+  if (details.length === 0) return zh ? '当前修改无法确定安全的自动合并结果，请人工确认。' : 'No deterministic safe merge was found; manual review is required.';
+  return zh ? `魔法棒未处理：${details.join('；')}，需要人工确认。` : `Magic merge skipped this conflict: ${details.join('; ')}. Manual review is required.`;
 }
 
 function FocusedConflictColumns(props: {

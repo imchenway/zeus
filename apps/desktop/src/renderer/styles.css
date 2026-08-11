@@ -13776,6 +13776,12 @@ a {
   text-align: center;
 }
 
+.macos-ai-app .task-git-conflict-review-complete > svg {
+  inline-size: 30px;
+  block-size: 30px;
+  color: var(--zeus-success-text, #347a4d);
+}
+
 .macos-ai-app .task-git-conflict-review-complete strong {
   color: var(--zeus-product-text);
 }
