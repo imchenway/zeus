@@ -1,7 +1,7 @@
-import {randomBytes, randomUUID} from 'node:crypto';
-import {chmod, mkdir, readFile, realpath, stat, writeFile} from 'node:fs/promises';
-import {basename, dirname, extname, isAbsolute, join, relative, resolve} from 'node:path';
-import {createConversationAttachmentGrant, resolveConversationAttachmentGrant} from '@zeus/local-server';
+import { randomBytes, randomUUID } from 'node:crypto';
+import { chmod, mkdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 'node:path';
+import { createConversationAttachmentGrant, resolveConversationAttachmentGrant } from '@zeus/local-server';
 import {
   buildTaskAttachmentPreviewDataUrl,
   coerceTaskClipboardAttachmentBuffer,
@@ -23,7 +23,7 @@ export type ConversationInputResource = {
   source: ConversationInputResourceSource;
   characterCount?: number;
   restorableText?: string;
-} & ({localPath: string; uploadRef?: never} | {localPath?: never; uploadRef: string});
+} & ({ localPath: string; uploadRef?: never } | { localPath?: never; uploadRef: string });
 
 export interface ConversationResourcePayload {
   name?: string;
@@ -37,8 +37,9 @@ export interface ConversationResourcePayload {
 export interface ConversationInputResourceBroker {
   describePaths(paths: string[], source: ConversationInputResourceSource): Promise<ConversationInputResource[]>;
   materialize(payloads: ConversationResourcePayload[]): Promise<ConversationInputResource[]>;
-  readClipboard(): Promise<{resources: ConversationInputResource[]; text: string}>;
-  preview(resource: {localPath?: string; uploadRef?: string}): Promise<{previewUrl: string; mimeType: string} | null>;
+  readClipboard(): Promise<{ resources: ConversationInputResource[]; text: string }>;
+  preview(resource: { localPath?: string; uploadRef?: string }): Promise<{ previewUrl: string; mimeType: string } | null>;
+  discard(resources: Array<{ localPath?: string; uploadRef?: string }>): Promise<{ discardedCount: number }>;
 }
 
 export interface CreateConversationInputResourceBrokerOptions {
@@ -54,9 +55,7 @@ const maximumBatchBytes = 256 * 1024 * 1024;
 const longPasteThreshold = 5_000;
 const maximumRestorableTextCharacters = 25_000;
 
-export function createConversationInputResourceBroker(
-  options: CreateConversationInputResourceBrokerOptions,
-): ConversationInputResourceBroker {
+export function createConversationInputResourceBroker(options: CreateConversationInputResourceBrokerOptions): ConversationInputResourceBroker {
   const attachmentRoot = resolve(options.attachmentRoot);
 
   return {
@@ -89,7 +88,7 @@ export function createConversationInputResourceBroker(
     },
 
     async materialize(payloads) {
-      await mkdir(attachmentRoot, {recursive: true, mode: 0o700});
+      await mkdir(attachmentRoot, { recursive: true, mode: 0o700 });
       const resources: ConversationInputResource[] = [];
       let batchBytes = 0;
       for (const [index, payload] of payloads.slice(0, maximumResourceCount).entries()) {
@@ -101,7 +100,7 @@ export function createConversationInputResourceBroker(
         const pastedText = text !== undefined || payload.kind === 'pasted_text';
         const safeName = sanitizeResourceName(payload.name || (pastedText ? 'Pasted text.txt' : `pasted-resource-${index + 1}`));
         const filePath = join(attachmentRoot, `${Date.now()}-${randomUUID()}-${safeName}`);
-        await writeFile(filePath, data, {mode: 0o600, flag: 'wx'});
+        await writeFile(filePath, data, { mode: 0o600, flag: 'wx' });
         const mime = pastedText ? 'text/plain' : normalizeMime(payload.type, filePath);
         resources.push({
           name: safeName,
@@ -109,8 +108,8 @@ export function createConversationInputResourceBroker(
           size: data.byteLength,
           kind: pastedText ? 'pasted_text' : mime.startsWith('image/') ? 'image' : 'file',
           source,
-          ...(pastedText ? {characterCount: text?.length ?? 0} : {}),
-          ...(pastedText && text !== undefined && text.length <= maximumRestorableTextCharacters ? {restorableText: text} : {}),
+          ...(pastedText ? { characterCount: text?.length ?? 0 } : {}),
+          ...(pastedText && text !== undefined && text.length <= maximumRestorableTextCharacters ? { restorableText: text } : {}),
           localPath: filePath,
         });
       }
@@ -120,23 +119,23 @@ export function createConversationInputResourceBroker(
     async readClipboard() {
       const referencedPaths = await readTaskClipboardFileReferencesFromClipboard(options.clipboard, options.clipboardReadOptions);
       if (referencedPaths.length > 0) {
-        return {resources: await this.describePaths(referencedPaths, 'paste'), text: ''};
+        return { resources: await this.describePaths(referencedPaths, 'paste'), text: '' };
       }
       const binaryResources = await readTaskClipboardAttachmentsFromClipboard(options.clipboard, options.clipboardReadOptions);
       if (binaryResources.length > 0) {
         return {
-          resources: await this.materialize(binaryResources.map((resource) => ({...resource, source: 'paste'}))),
+          resources: await this.materialize(binaryResources.map((resource) => ({ ...resource, source: 'paste' }))),
           text: '',
         };
       }
       const text = safelyReadClipboardText(options.clipboard);
       if (text.length >= longPasteThreshold) {
         return {
-          resources: await this.materialize([{name: 'Pasted text.txt', type: 'text/plain', text, source: 'paste', kind: 'pasted_text'}]),
+          resources: await this.materialize([{ name: 'Pasted text.txt', type: 'text/plain', text, source: 'paste', kind: 'pasted_text' }]),
           text: '',
         };
       }
-      return {resources: [], text};
+      return { resources: [], text };
     },
 
     async preview(resource) {
@@ -148,7 +147,27 @@ export function createConversationInputResourceBroker(
       if (!pathStat.isFile() || pathStat.size > maximumResourceBytes) return null;
       const data = await readFile(resolvedPath);
       const previewUrl = buildTaskAttachmentPreviewDataUrl(data, mimeType);
-      return previewUrl ? {previewUrl, mimeType} : null;
+      return previewUrl ? { previewUrl, mimeType } : null;
+    },
+
+    async discard(resources) {
+      let discardedCount = 0;
+      for (const resource of resources.slice(0, maximumResourceCount)) {
+        // uploadRef 指向用户原文件，永远不由 Zeus 的草稿清理删除。
+        if (resource.uploadRef || typeof resource.localPath !== 'string' || !isAbsolute(resource.localPath)) continue;
+        try {
+          const canonicalPath = await realpath(resource.localPath);
+          const relativePath = relative(attachmentRoot, canonicalPath);
+          if (!relativePath || relativePath.startsWith('..') || isAbsolute(relativePath)) continue;
+          const pathStat = await stat(canonicalPath);
+          if (!pathStat.isFile()) continue;
+          await rm(canonicalPath, { force: true });
+          discardedCount += 1;
+        } catch {
+          // 资源已不存在或不属于托管根时保持安全无操作。
+        }
+      }
+      return { discardedCount };
     },
   };
 }
@@ -166,10 +185,10 @@ export async function readOrCreateConversationAttachmentGrantSecret(filePath: st
     if (!isMissingFileError(error)) throw error;
   }
 
-  await mkdir(dirname(resolvedPath), {recursive: true, mode: 0o700});
+  await mkdir(dirname(resolvedPath), { recursive: true, mode: 0o700 });
   const secret = randomBytes(32).toString('base64url');
   try {
-    await writeFile(resolvedPath, `${secret}\n`, {encoding: 'utf8', mode: 0o600, flag: 'wx'});
+    await writeFile(resolvedPath, `${secret}\n`, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
     return secret;
   } catch (error) {
     if (!isExistingFileError(error)) throw error;
@@ -196,14 +215,8 @@ function sanitizeResourceName(value: string): string {
   return safeName || 'pasted-resource';
 }
 
-async function resolvePreviewPath(
-  resource: {localPath?: string; uploadRef?: string},
-  grantSecret: string,
-  attachmentRoot: string,
-): Promise<string | null> {
-  const granted = typeof resource.uploadRef === 'string'
-    ? resolveConversationAttachmentGrant(resource.uploadRef, grantSecret)
-    : null;
+async function resolvePreviewPath(resource: { localPath?: string; uploadRef?: string }, grantSecret: string, attachmentRoot: string): Promise<string | null> {
+  const granted = typeof resource.uploadRef === 'string' ? resolveConversationAttachmentGrant(resource.uploadRef, grantSecret) : null;
   const requested = granted ?? (typeof resource.localPath === 'string' ? resource.localPath : '');
   if (!requested || !isAbsolute(requested) || requested.includes('\0')) return null;
   try {

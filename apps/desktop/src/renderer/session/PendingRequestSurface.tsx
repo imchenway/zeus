@@ -4,14 +4,17 @@ import { CheckIcon as Check } from '@phosphor-icons/react/dist/csr/Check';
 import { CaretDownIcon as CaretDown } from '@phosphor-icons/react/dist/csr/CaretDown';
 import { InfoIcon as Info } from '@phosphor-icons/react/dist/csr/Info';
 import { PencilSimpleIcon as PencilSimple } from '@phosphor-icons/react/dist/csr/PencilSimple';
+import { PaperclipIcon as Paperclip } from '@phosphor-icons/react/dist/csr/Paperclip';
 import { QuestionIcon as Question } from '@phosphor-icons/react/dist/csr/Question';
 import { TerminalWindowIcon as TerminalWindow } from '@phosphor-icons/react/dist/csr/TerminalWindow';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import { parseCanonicalRequestUserInputQuestions } from '@zeus/shared';
 import { openExternalHttpsUrlInMain } from '../appShellBridge.js';
-import type { NativePendingRequest, NativePermissionMode } from './sessionTypes.js';
+import type { NativeConversationAttachment, NativePendingRequest, NativePermissionMode } from './sessionTypes.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
 import { autosizeTextarea } from './textareaAutosize.js';
+import { conversationAttachmentIdentity, ConversationComposerAttachments } from './ConversationComposerAttachments.js';
+import { useConversationInputResources } from './useConversationInputResources.js';
 
 export interface RequestQuestionOption {
   label: string;
@@ -41,6 +44,8 @@ export interface PendingRequestSurfaceProps {
   permissionMode?: NativePermissionMode;
   filePaths?: readonly string[];
   onSnooze?: () => void | Promise<void>;
+  onChooseAttachments?: () => Promise<NativeConversationAttachment[]>;
+  answerAttachmentsSupported?: boolean;
 }
 
 const OTHER_ANSWER = '__other__';
@@ -445,22 +450,52 @@ function RequestUserInputPanel(props: PendingRequestSurfaceProps & { questions: 
   const restored = useMemo(() => restoreRuiDraft(props.request.id, props.questions), [props.questions, props.request.id]);
   const [answers, setAnswers] = useState<Record<string, string[]>>(restored.answers);
   const [otherAnswers, setOtherAnswers] = useState<Record<string, string>>(restored.otherAnswers);
+  const [answerAttachments, setAnswerAttachments] = useState<Record<string, NativeConversationAttachment[]>>(restored.answerAttachments);
+  const [resourceError, setResourceError] = useState<string | null>(null);
   const [questionIndex, setQuestionIndex] = useState(0);
   const [remainingMs, setRemainingMs] = useState(() => requestRemainingMs(props.request));
   const [locallyResponding, setLocallyResponding] = useState(false);
   const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const freeformRef = useRef<HTMLInputElement | HTMLTextAreaElement | null>(null);
   const otherAnswerRef = useRef<HTMLInputElement | HTMLTextAreaElement | null>(null);
+  const attachmentTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const snoozedRef = useRef(props.request.autoResolutionState === 'snoozed');
   const snoozePromiseRef = useRef<Promise<void> | null>(null);
   const [, setLocallySnoozed] = useState(snoozedRef.current);
   const currentQuestion = props.questions[Math.min(questionIndex, props.questions.length - 1)]!;
   const selectedValues = answers[currentQuestion.id] ?? [];
   const currentOtherAnswer = otherAnswers[currentQuestion.id] ?? '';
-  const currentComplete = questionAnswerComplete(currentQuestion, selectedValues, otherAnswers[currentQuestion.id]);
-  const allComplete = areRequiredRequestAnswersComplete(props.questions, answers, otherAnswers);
+  const currentAttachments = answerAttachments[currentQuestion.id] ?? [];
+  const currentComplete = questionAnswerComplete(currentQuestion, selectedValues, otherAnswers[currentQuestion.id], currentAttachments);
+  const allComplete = areRequiredRequestAnswersComplete(props.questions, answers, otherAnswers, answerAttachments);
   const responding = props.busy === true || locallyResponding;
   const hasSensitiveDraft = props.questions.some((question) => question.secret && ((answers[question.id] ?? []).some((value) => Boolean(value.trim())) || Boolean(otherAnswers[question.id]?.trim())));
+  const otherSelected = selectedValues.includes(otherAnswerControlValue(currentQuestion));
+  const answerAttachmentsEnabled = props.answerAttachmentsSupported !== false && !currentQuestion.secret && (currentQuestion.kind === 'freeform' || currentQuestion.allowOther);
+
+  const inputResources = useConversationInputResources({
+    textareaRef: attachmentTextareaRef,
+    text: currentQuestion.kind === 'freeform' ? (selectedValues[0] ?? '') : currentOtherAnswer,
+    disabled: responding || !answerAttachmentsEnabled,
+    onTextChange: (value) => {
+      if (currentQuestion.kind === 'freeform') {
+        setAnswers((current) => ({ ...current, [currentQuestion.id]: [value] }));
+      } else {
+        setOtherAnswers((current) => ({ ...current, [currentQuestion.id]: value }));
+      }
+    },
+    onAddAttachments: (attachments) => {
+      setResourceError(null);
+      void snooze();
+      if (currentQuestion.kind !== 'freeform' && !otherSelected) {
+        const controlValue = otherAnswerControlValue(currentQuestion);
+        setAnswers((current) => updateQuestionAnswers(current, currentQuestion, controlValue, true));
+      }
+      setAnswerAttachments((current) => ({ ...current, [currentQuestion.id]: mergeAnswerAttachments(current[currentQuestion.id] ?? [], attachments) }));
+    },
+    onRemoveAttachment: (attachment) => removeAnswerAttachment(currentQuestion.id, attachment),
+    onError: setResourceError,
+  });
 
   useEffect(() => {
     if (props.autoFocus === false) return;
@@ -469,8 +504,8 @@ function RequestUserInputPanel(props: PendingRequestSurfaceProps & { questions: 
   }, [currentQuestion.id, currentQuestion.kind, props.autoFocus, props.request.id]);
 
   useEffect(() => {
-    persistRuiDraft(props.request.id, props.questions, answers, otherAnswers);
-  }, [answers, otherAnswers, props.questions, props.request.id]);
+    persistRuiDraft(props.request.id, props.questions, answers, otherAnswers, answerAttachments);
+  }, [answerAttachments, answers, otherAnswers, props.questions, props.request.id]);
 
   useLayoutEffect(() => {
     if (currentQuestion.secret || !(otherAnswerRef.current instanceof HTMLTextAreaElement)) return;
@@ -500,21 +535,22 @@ function RequestUserInputPanel(props: PendingRequestSurfaceProps & { questions: 
     return pending;
   }
 
-  async function finish(nextAnswers = answers, nextOtherAnswers = otherAnswers): Promise<void> {
+  async function finish(nextAnswers = answers, nextOtherAnswers = otherAnswers, nextAttachments = answerAttachments): Promise<void> {
     if (responding) return;
     setLocallyResponding(true);
     try {
       await (snoozePromiseRef.current ?? Promise.resolve());
+      const activeAttachments = activeRequestAnswerAttachments(props.questions, nextAnswers, nextAttachments);
+      await props.onRespond(props.request.id, buildPendingRequestResponse(props.request, nextAnswers, nextOtherAnswers, activeAttachments, props.language));
       clearRuiDraft(props.request.id);
-      await props.onRespond(props.request.id, buildPendingRequestResponse(props.request, nextAnswers, nextOtherAnswers));
     } finally {
       setLocallyResponding(false);
     }
   }
 
-  function advance(nextAnswers = answers, nextOtherAnswers = otherAnswers): void {
+  function advance(nextAnswers = answers, nextOtherAnswers = otherAnswers, nextAttachments = answerAttachments): void {
     if (questionIndex < props.questions.length - 1) setQuestionIndex((value) => value + 1);
-    else if (areRequiredRequestAnswersComplete(props.questions, nextAnswers, nextOtherAnswers)) void finish(nextAnswers, nextOtherAnswers);
+    else if (areRequiredRequestAnswersComplete(props.questions, nextAnswers, nextOtherAnswers, nextAttachments)) void finish(nextAnswers, nextOtherAnswers, nextAttachments);
   }
 
   function selectOption(optionLabel: string): void {
@@ -522,8 +558,40 @@ function RequestUserInputPanel(props: PendingRequestSurfaceProps & { questions: 
     snooze();
     const checked = !selectedValues.includes(optionLabel);
     const nextAnswers = updateQuestionAnswers(answers, currentQuestion, optionLabel, checked);
+    const switchingFromOther = currentQuestion.kind === 'single' && optionLabel !== otherAnswerControlValue(currentQuestion) && currentAttachments.length > 0;
+    const nextAttachments = switchingFromOther ? { ...answerAttachments, [currentQuestion.id]: [] } : answerAttachments;
     setAnswers(nextAnswers);
-    if (currentQuestion.kind === 'single' && optionLabel !== otherAnswerControlValue(currentQuestion)) advance(nextAnswers, otherAnswers);
+    if (switchingFromOther) {
+      setAnswerAttachments(nextAttachments);
+      void discardAnswerAttachmentResources(currentAttachments);
+    }
+    if (currentQuestion.kind === 'single' && optionLabel !== otherAnswerControlValue(currentQuestion)) advance(nextAnswers, otherAnswers, nextAttachments);
+  }
+
+  function removeAnswerAttachment(questionId: string, attachment: NativeConversationAttachment): void {
+    setAnswerAttachments((current) => ({
+      ...current,
+      [questionId]: (current[questionId] ?? []).filter((candidate) => conversationAttachmentIdentity(candidate) !== conversationAttachmentIdentity(attachment)),
+    }));
+    void discardAnswerAttachmentResources([attachment]);
+  }
+
+  async function chooseAnswerAttachments(): Promise<void> {
+    if (!answerAttachmentsEnabled || !props.onChooseAttachments) return;
+    setResourceError(null);
+    try {
+      const selected = await props.onChooseAttachments();
+      if (selected.length > 0) {
+        void snooze();
+        if (currentQuestion.kind !== 'freeform' && !otherSelected) {
+          const controlValue = otherAnswerControlValue(currentQuestion);
+          setAnswers((current) => updateQuestionAnswers(current, currentQuestion, controlValue, true));
+        }
+        setAnswerAttachments((current) => ({ ...current, [currentQuestion.id]: mergeAnswerAttachments(current[currentQuestion.id] ?? [], selected) }));
+      }
+    } catch (error) {
+      setResourceError(error instanceof Error ? error.message : String(error));
+    }
   }
 
   function handleAnswerInputKeyDown(event: KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>): void {
@@ -568,8 +636,9 @@ function RequestUserInputPanel(props: PendingRequestSurfaceProps & { questions: 
     setLocallyResponding(true);
     try {
       await (snoozePromiseRef.current ?? Promise.resolve());
-      clearRuiDraft(props.request.id);
       await props.onRespond(props.request.id, { type: 'userInput', answers: {} });
+      clearRuiDraft(props.request.id);
+      await discardAnswerAttachmentResources(Object.values(answerAttachments).flat());
     } finally {
       setLocallyResponding(false);
     }
@@ -681,28 +750,57 @@ function RequestUserInputPanel(props: PendingRequestSurfaceProps & { questions: 
                     onKeyDown={handleAnswerInputKeyDown}
                   />
                 ) : (
-                  <textarea
-                    ref={otherAnswerRef as React.RefObject<HTMLTextAreaElement>}
-                    rows={1}
-                    aria-label={`${zh ? '其他' : 'Other'}: ${currentQuestion.header}`}
-                    aria-keyshortcuts="Enter Shift+Enter"
-                    value={currentOtherAnswer}
-                    placeholder={copy.otherPlaceholder}
-                    readOnly={!selectedValues.includes(otherAnswerControlValue(currentQuestion))}
-                    onFocus={() => {
-                      if (!selectedValues.includes(otherAnswerControlValue(currentQuestion))) activateOtherAnswer();
-                    }}
-                    onChange={(event) => {
-                      const value = event.currentTarget.value;
-                      void snooze();
-                      setOtherAnswers((current) => ({
-                        ...current,
-                        [currentQuestion.id]: value,
-                      }));
-                    }}
-                    onKeyDown={handleAnswerInputKeyDown}
-                  />
+                  <div
+                    className="session-question-answer-editor"
+                    data-resource-dragging={inputResources.dragging || undefined}
+                    onDragEnter={inputResources.handleDragEnter}
+                    onDragOver={inputResources.handleDragOver}
+                    onDragLeave={inputResources.handleDragLeave}
+                    onDrop={inputResources.handleDrop}
+                  >
+                    <textarea
+                      ref={(element) => {
+                        otherAnswerRef.current = element;
+                        attachmentTextareaRef.current = element;
+                      }}
+                      rows={1}
+                      aria-label={`${zh ? '其他' : 'Other'}: ${currentQuestion.header}`}
+                      aria-keyshortcuts="Enter Shift+Enter"
+                      value={currentOtherAnswer}
+                      placeholder={copy.otherPlaceholder}
+                      readOnly={!otherSelected}
+                      onFocus={() => {
+                        if (!otherSelected) activateOtherAnswer();
+                      }}
+                      onChange={(event) => {
+                        const value = event.currentTarget.value;
+                        void snooze();
+                        setOtherAnswers((current) => ({
+                          ...current,
+                          [currentQuestion.id]: value,
+                        }));
+                      }}
+                      onPaste={inputResources.handlePaste}
+                      onKeyDown={(event) => {
+                        inputResources.handlePasteShortcut(event);
+                        handleAnswerInputKeyDown(event);
+                      }}
+                    />
+                    <ConversationComposerAttachments
+                      attachments={currentAttachments}
+                      language={props.language}
+                      disabled={responding || inputResources.processing}
+                      className="session-question-answer-attachments"
+                      onRemove={(attachment) => removeAnswerAttachment(currentQuestion.id, attachment)}
+                      onRestorePastedText={inputResources.restorePastedText}
+                    />
+                  </div>
                 )}
+                {answerAttachmentsEnabled && props.onChooseAttachments ? (
+                  <button type="button" className="session-question-attachment-button" aria-label={zh ? '添加附件' : 'Add attachment'} disabled={inputResources.processing} onClick={() => void chooseAnswerAttachments()}>
+                    <Paperclip aria-hidden="true" />
+                  </button>
+                ) : null}
               </div>
             ) : null}
             {currentQuestion.kind === 'freeform' ? (
@@ -724,25 +822,55 @@ function RequestUserInputPanel(props: PendingRequestSurfaceProps & { questions: 
                   onKeyDown={handleAnswerInputKeyDown}
                 />
               ) : (
-                <textarea
-                  ref={freeformRef as React.RefObject<HTMLTextAreaElement>}
-                  className="session-question-freeform"
-                  aria-keyshortcuts="Enter Shift+Enter"
-                  value={selectedValues[0] ?? ''}
-                  onChange={(event) => {
-                    const value = event.currentTarget.value;
-                    void snooze();
-                    setAnswers((current) => ({
-                      ...current,
-                      [currentQuestion.id]: [value],
-                    }));
-                  }}
-                  onKeyDown={handleAnswerInputKeyDown}
-                />
+                <div
+                  className="session-question-freeform-editor session-question-answer-editor"
+                  data-resource-dragging={inputResources.dragging || undefined}
+                  onDragEnter={inputResources.handleDragEnter}
+                  onDragOver={inputResources.handleDragOver}
+                  onDragLeave={inputResources.handleDragLeave}
+                  onDrop={inputResources.handleDrop}
+                >
+                  <textarea
+                    ref={(element) => {
+                      freeformRef.current = element;
+                      attachmentTextareaRef.current = element;
+                    }}
+                    className="session-question-freeform"
+                    aria-keyshortcuts="Enter Shift+Enter"
+                    value={selectedValues[0] ?? ''}
+                    onChange={(event) => {
+                      const value = event.currentTarget.value;
+                      void snooze();
+                      setAnswers((current) => ({
+                        ...current,
+                        [currentQuestion.id]: [value],
+                      }));
+                    }}
+                    onPaste={inputResources.handlePaste}
+                    onKeyDown={(event) => {
+                      inputResources.handlePasteShortcut(event);
+                      handleAnswerInputKeyDown(event);
+                    }}
+                  />
+                  <ConversationComposerAttachments
+                    attachments={currentAttachments}
+                    language={props.language}
+                    disabled={responding || inputResources.processing}
+                    className="session-question-answer-attachments"
+                    onRemove={(attachment) => removeAnswerAttachment(currentQuestion.id, attachment)}
+                    onRestorePastedText={inputResources.restorePastedText}
+                  />
+                  {answerAttachmentsEnabled && props.onChooseAttachments ? (
+                    <button type="button" className="session-question-attachment-button" aria-label={zh ? '添加附件' : 'Add attachment'} disabled={inputResources.processing} onClick={() => void chooseAnswerAttachments()}>
+                      <Paperclip aria-hidden="true" />
+                    </button>
+                  ) : null}
+                </div>
               )
             ) : null}
           </div>
           {currentQuestion.secret ? <small className="session-secret-hint">{zh ? '敏感回答仅发送给本机 app-server，不写入会话或草稿。' : 'Secret answers are sent locally and are never stored in the transcript or draft.'}</small> : null}
+          {resourceError ? <p role="alert">{resourceError}</p> : null}
           {props.error ? <p role="alert">{props.error}</p> : null}
           <footer>
             <span>
@@ -781,9 +909,10 @@ function recommendedOption(label: string): { label: string; recommended: boolean
   return { label: recommended ? label.replace(suffix, '') : label, recommended };
 }
 
-function questionAnswerComplete(question: RequestQuestion, values: string[], other: string | undefined): boolean {
-  if (values.length === 0 || values.some((value) => !value.trim())) return false;
-  return !values.includes(otherAnswerControlValue(question)) || Boolean(other?.trim());
+function questionAnswerComplete(question: RequestQuestion, values: string[], other: string | undefined, attachments: NativeConversationAttachment[] = []): boolean {
+  if (values.length === 0) return question.kind === 'freeform' && attachments.length > 0;
+  if (values.some((value) => !value.trim()) && !(question.kind === 'freeform' && attachments.length > 0)) return false;
+  return !values.includes(otherAnswerControlValue(question)) || Boolean(other?.trim()) || attachments.length > 0;
 }
 
 function requestRemainingMs(request: NativePendingRequest): number | null {
@@ -802,24 +931,33 @@ function restoreRuiDraft(
 ): {
   answers: Record<string, string[]>;
   otherAnswers: Record<string, string>;
+  answerAttachments: Record<string, NativeConversationAttachment[]>;
 } {
-  if (typeof window === 'undefined') return { answers: {}, otherAnswers: {} };
+  if (typeof window === 'undefined') return { answers: {}, otherAnswers: {}, answerAttachments: {} };
   try {
     const parsed = JSON.parse(window.localStorage.getItem(ruiDraftStorageKey(requestId)) ?? '{}') as {
       answers?: Record<string, string[]>;
       otherAnswers?: Record<string, string>;
+      answerAttachments?: Record<string, NativeConversationAttachment[]>;
     };
     const allowed = new Set(questions.filter((question) => !question.secret).map((question) => question.id));
     return {
       answers: Object.fromEntries(Object.entries(parsed.answers ?? {}).filter(([id, values]) => allowed.has(id) && Array.isArray(values) && values.every((value) => typeof value === 'string'))),
       otherAnswers: Object.fromEntries(Object.entries(parsed.otherAnswers ?? {}).filter(([id, value]) => allowed.has(id) && typeof value === 'string')),
+      answerAttachments: Object.fromEntries(
+        Object.entries(parsed.answerAttachments ?? {}).flatMap(([id, values]) => {
+          if (!allowed.has(id) || !Array.isArray(values)) return [];
+          const attachments = values.flatMap((value) => normalizeDraftAnswerAttachment(value));
+          return attachments.length > 0 ? [[id, attachments]] : [];
+        }),
+      ),
     };
   } catch {
-    return { answers: {}, otherAnswers: {} };
+    return { answers: {}, otherAnswers: {}, answerAttachments: {} };
   }
 }
 
-function persistRuiDraft(requestId: string, questions: RequestQuestion[], answers: Record<string, string[]>, otherAnswers: Record<string, string>): void {
+function persistRuiDraft(requestId: string, questions: RequestQuestion[], answers: Record<string, string[]>, otherAnswers: Record<string, string>, answerAttachments: Record<string, NativeConversationAttachment[]>): void {
   if (typeof window === 'undefined') return;
   const allowed = new Set(questions.filter((question) => !question.secret).map((question) => question.id));
   try {
@@ -828,6 +966,7 @@ function persistRuiDraft(requestId: string, questions: RequestQuestion[], answer
       JSON.stringify({
         answers: Object.fromEntries(Object.entries(answers).filter(([id]) => allowed.has(id))),
         otherAnswers: Object.fromEntries(Object.entries(otherAnswers).filter(([id]) => allowed.has(id))),
+        answerAttachments: Object.fromEntries(Object.entries(answerAttachments).filter(([id]) => allowed.has(id))),
       }),
     );
   } catch {
@@ -841,6 +980,57 @@ function clearRuiDraft(requestId: string): void {
     window.localStorage.removeItem(ruiDraftStorageKey(requestId));
   } catch {
     // 请求已经解决；无法清理旧草稿不影响权威状态。
+  }
+}
+
+function normalizeDraftAnswerAttachment(value: unknown): NativeConversationAttachment[] {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
+  const entry = value as Partial<NativeConversationAttachment>;
+  if (typeof entry.name !== 'string' || !entry.name || typeof entry.mime !== 'string' || !entry.mime || typeof entry.size !== 'number' || !Number.isSafeInteger(entry.size) || entry.size < 0) return [];
+  const identity = typeof entry.localPath === 'string' && entry.localPath ? { localPath: entry.localPath } : typeof entry.uploadRef === 'string' && entry.uploadRef ? { uploadRef: entry.uploadRef } : null;
+  if (!identity) return [];
+  const kind = entry.kind === 'image' || entry.kind === 'file' || entry.kind === 'directory' || entry.kind === 'pasted_text' ? entry.kind : undefined;
+  const source = entry.source === 'picker' || entry.source === 'paste' || entry.source === 'drop' ? entry.source : undefined;
+  const characterCount = typeof entry.characterCount === 'number' && Number.isSafeInteger(entry.characterCount) && entry.characterCount >= 0 ? entry.characterCount : undefined;
+  const restorableText = typeof entry.restorableText === 'string' && entry.restorableText.length <= 25_000 ? entry.restorableText : undefined;
+  return [
+    {
+      name: entry.name,
+      mime: entry.mime,
+      size: entry.size,
+      ...identity,
+      ...(kind ? { kind } : {}),
+      ...(source ? { source } : {}),
+      ...(characterCount !== undefined ? { characterCount } : {}),
+      ...(restorableText ? { restorableText } : {}),
+    },
+  ];
+}
+
+function mergeAnswerAttachments(current: NativeConversationAttachment[], added: NativeConversationAttachment[]): NativeConversationAttachment[] {
+  const byIdentity = new Map(current.map((attachment) => [conversationAttachmentIdentity(attachment), attachment]));
+  added.forEach((attachment) => byIdentity.set(conversationAttachmentIdentity(attachment), attachment));
+  return [...byIdentity.values()];
+}
+
+function activeRequestAnswerAttachments(questions: readonly RequestQuestion[], answers: Record<string, string[]>, answerAttachments: Record<string, NativeConversationAttachment[]>): Record<string, NativeConversationAttachment[]> {
+  return Object.fromEntries(
+    questions.flatMap((question) => {
+      if (question.secret) return [];
+      const attachments = answerAttachments[question.id] ?? [];
+      if (attachments.length === 0) return [];
+      const active = question.kind === 'freeform' || (answers[question.id] ?? []).includes(otherAnswerControlValue(question));
+      return active ? [[question.id, attachments]] : [];
+    }),
+  );
+}
+
+async function discardAnswerAttachmentResources(attachments: NativeConversationAttachment[]): Promise<void> {
+  if (attachments.length === 0 || !window.zeus?.discardConversationResources) return;
+  try {
+    await window.zeus.discardConversationResources(attachments.map((attachment) => ({ ...(attachment.localPath ? { localPath: attachment.localPath } : {}), ...(attachment.uploadRef ? { uploadRef: attachment.uploadRef } : {}) })));
+  } catch {
+    // 清理失败不能伪造回答失败；Main 仍会拒绝删除任何非托管资源。
   }
 }
 
@@ -873,19 +1063,45 @@ export function normalizeRequestQuestions(request: NativePendingRequest): Reques
   }));
 }
 
-export function areRequiredRequestAnswersComplete(questions: readonly RequestQuestion[], answers: Record<string, string[]>, otherAnswers: Record<string, string> = {}): boolean {
-  return validateRendererRequestAnswers(questions, answers, otherAnswers) === null;
+export function areRequiredRequestAnswersComplete(
+  questions: readonly RequestQuestion[],
+  answers: Record<string, string[]>,
+  otherAnswers: Record<string, string> = {},
+  answerAttachments: Record<string, NativeConversationAttachment[]> = {},
+): boolean {
+  return validateRendererRequestAnswers(questions, answers, otherAnswers, answerAttachments) === null;
 }
 
-export function buildPendingRequestResponse(request: NativePendingRequest, answers: Record<string, string[]>, otherAnswers: Record<string, string> = {}): Record<string, unknown> {
+export function buildPendingRequestResponse(
+  request: NativePendingRequest,
+  answers: Record<string, string[]>,
+  otherAnswers: Record<string, string> = {},
+  answerAttachments: Record<string, NativeConversationAttachment[]> = {},
+  language: SessionUiLanguage = 'zh-CN',
+): Record<string, unknown> {
   const kind = requestKind(request);
   if (kind === 'request_user_input') {
     const questions = normalizeRequestQuestions(request);
     if (questions.length === 0) throw new Error('The pending request does not contain a complete canonical question set.');
-    const validationError = validateRendererRequestAnswers(questions, answers, otherAnswers);
+    const validationError = validateRendererRequestAnswers(questions, answers, otherAnswers, answerAttachments);
     if (validationError) throw new Error(validationError);
-    const normalizedAnswers = Object.fromEntries(questions.map((question) => [question.id, { answers: answers[question.id]!.map((value) => (value === otherAnswerControlValue(question) ? otherAnswers[question.id]!.trim() : value)) }]));
-    return { type: 'userInput', answers: normalizedAnswers };
+    const attachmentOnlyLabel = language === 'zh-CN' ? '见附件' : 'See attachments';
+    const normalizedAnswers = Object.fromEntries(
+      questions.map((question) => {
+        const attachments = answerAttachments[question.id] ?? [];
+        const values = answers[question.id] ?? [];
+        const normalized = (values.length > 0 ? values : ['']).map((value) => {
+          if (value === otherAnswerControlValue(question)) return otherAnswers[question.id]?.trim() || (attachments.length > 0 ? attachmentOnlyLabel : '');
+          return value.trim() || (attachments.length > 0 ? attachmentOnlyLabel : '');
+        });
+        return [question.id, { answers: normalized }];
+      }),
+    );
+    return {
+      type: 'userInput',
+      answers: normalizedAnswers,
+      ...(Object.keys(answerAttachments).length > 0 ? { answerAttachments } : {}),
+    };
   }
   if (kind === 'unknown') throw new Error('Unsupported pending request type.');
   const requestedDecision = answers.decision?.[0];
@@ -916,18 +1132,22 @@ export function buildPendingRequestResponse(request: NativePendingRequest, answe
   return { type: kind, decision };
 }
 
-function validateRendererRequestAnswers(questions: readonly RequestQuestion[], answers: Record<string, string[]>, otherAnswers: Record<string, string>): string | null {
+function validateRendererRequestAnswers(questions: readonly RequestQuestion[], answers: Record<string, string[]>, otherAnswers: Record<string, string>, answerAttachments: Record<string, NativeConversationAttachment[]> = {}): string | null {
   if (questions.length === 0) return 'Answers must cover the complete canonical question set.';
   const answerIds = Object.keys(answers);
   const questionIds = questions.map((question) => question.id);
-  if (answerIds.length < questionIds.length || questionIds.some((id) => !(id in answers))) return 'Answers must cover the complete canonical question set.';
-  if (answerIds.length !== questionIds.length || answerIds.some((id) => !questionIds.includes(id))) return 'Answer ids must exactly match the canonical question ids.';
+  if (answerIds.some((id) => !questionIds.includes(id))) return 'Answer ids must exactly match the canonical question ids.';
+  if (Object.keys(answerAttachments).some((id) => !questionIds.includes(id))) return 'Answer attachment ids must match canonical question ids.';
 
   for (const question of questions) {
-    const values = answers[question.id];
-    if (!Array.isArray(values) || values.length === 0 || values.some((value) => typeof value !== 'string' || !value.trim())) return `Question ${question.id} requires a non-empty answer.`;
+    const values = answers[question.id] ?? [];
+    const attachments = answerAttachments[question.id] ?? [];
+    const attachmentOnlyFreeform = question.kind === 'freeform' && attachments.length > 0;
+    if (!Array.isArray(values) || (values.length === 0 && !attachmentOnlyFreeform) || values.some((value) => typeof value !== 'string' || (!value.trim() && !attachmentOnlyFreeform))) {
+      return `Question ${question.id} requires a non-empty answer.`;
+    }
     if (new Set(values).size !== values.length) return `Question ${question.id} answers must be unique.`;
-    if (question.kind !== 'multiple' && values.length !== 1) return `Question ${question.id} requires a single answer.`;
+    if (question.kind !== 'multiple' && values.length !== 1 && !attachmentOnlyFreeform) return `Question ${question.id} requires a single answer.`;
     if (question.kind === 'freeform') continue;
     const optionLabels = new Set(question.options.map((option) => option.label));
     for (const value of values) {
@@ -935,7 +1155,7 @@ function validateRendererRequestAnswers(questions: readonly RequestQuestion[], a
       if (value !== otherAnswerControlValue(question) || !question.allowOther) {
         return question.allowOther ? `Question ${question.id} Other answer must use the Other control.` : `Question ${question.id} answer must be an advertised option.`;
       }
-      if (!otherAnswers[question.id]?.trim()) return `Question ${question.id} requires a non-empty Other answer.`;
+      if (!otherAnswers[question.id]?.trim() && attachments.length === 0) return `Question ${question.id} requires a non-empty Other answer.`;
     }
   }
   return null;

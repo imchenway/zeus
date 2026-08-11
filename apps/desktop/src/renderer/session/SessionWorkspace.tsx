@@ -1785,6 +1785,8 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                       error={requestErrors[blockingPendingRequest.id]}
                       onRespond={(_requestId, response) => respond(blockingPendingRequest, response)}
                       onSnooze={actions.onSnoozeRequest ? () => actions.onSnoozeRequest?.(blockingPendingRequest.id) : undefined}
+                      onChooseAttachments={actions.onChooseStartAttachments}
+                      answerAttachmentsSupported={(props.state?.snapshot?.agent?.kind ?? props.conversation?.agent?.kind ?? 'codex') === 'codex'}
                     />
                     {renderQueuedConversationMessages()}
                   </section>
