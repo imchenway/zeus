@@ -88,7 +88,7 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
   const copy = labels[props.language];
   const [archivingConversationId, setArchivingConversationId] = useState<string | null>(null);
   const flattenedGroups = props.groups.map(flattenProjectConversations);
-  const conversationIds = flattenedGroups.flatMap((group) => group.conversations.map((entry) => entry.conversation.id));
+  const conversationIds = flattenedGroups.flatMap((group) => group.conversations.map((entry) => conversationNavigationId(entry.conversation)));
   const fallbackTabStopId = props.selectedConversationId && conversationIds.includes(props.selectedConversationId) ? null : (conversationIds[0] ?? null);
 
   async function archiveConversation(conversation: NativeConversationChoice): Promise<void> {
@@ -111,19 +111,20 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
           {conversations.length > 0 ? (
             <ul className="session-conversation-project-items">
               {conversations.map(({ conversation, displayTitle }) => {
-                const current = conversation.id === props.selectedConversationId;
-                const runtimeState = props.conversationStates?.[conversation.id] ?? conversationTreeRuntimeStateFromConversation(conversation);
+                const navigationId = conversationNavigationId(conversation);
+                const current = navigationId === props.selectedConversationId;
+                const runtimeState = props.conversationStates?.[navigationId] ?? props.conversationStates?.[conversation.id] ?? conversationTreeRuntimeStateFromConversation(conversation);
                 const archiveAvailable = conversationCanBeArchived(runtimeState);
                 const archiveUnavailableReason = runtimeState === 'legacy_readonly' ? copy.archiveLegacyUnavailable : copy.archiveUnavailable;
                 const archiving = archivingConversationId === conversation.id;
                 const archiveLabel = archiving ? copy.archiving : archiveAvailable ? copy.archive : archiveUnavailableReason;
                 return (
-                  <li className="session-conversation-tree-item" key={conversation.id}>
+                  <li className="session-conversation-tree-item" key={navigationId}>
                     <button
                       type="button"
                       className={`session-conversation-tree-row${current ? ' is-current' : ''}`}
                       aria-current={current ? 'page' : undefined}
-                      tabIndex={current || conversation.id === fallbackTabStopId ? 0 : -1}
+                      tabIndex={current || navigationId === fallbackTabStopId ? 0 : -1}
                       data-conversation-tree-item="true"
                       data-conversation-runtime-state={runtimeState}
                       onClick={() => props.onSelectConversation(conversation)}
@@ -131,7 +132,7 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
                       <strong title={displayTitle}>{displayTitle}</strong>
                       <ConversationRowState conversation={conversation} runtimeState={runtimeState} current={current} language={props.language} />
                     </button>
-                    {props.onArchiveConversation ? (
+                    {props.onArchiveConversation && !conversation.taskPushCreating ? (
                       <button
                         type="button"
                         className="session-conversation-archive-button"
@@ -156,6 +157,10 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
       ))}
     </nav>
   );
+}
+
+function conversationNavigationId(conversation: NativeConversationChoice): string {
+  return conversation.navigationId ?? conversation.id;
 }
 
 export function conversationCanBeArchived(runtimeState: ConversationTreeRuntimeState): boolean {

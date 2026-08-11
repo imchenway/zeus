@@ -827,6 +827,13 @@ export interface SessionWorkspaceProps {
   loadState?: 'empty' | 'loading' | 'error';
   loadError?: string | null;
   autoFocusNewConversation?: boolean;
+  creationStatus?: {
+    state: 'creating' | 'failed';
+    message: string;
+    error?: string | null;
+    retryLabel?: string;
+    onRetry?: () => void | Promise<void>;
+  };
   actions?: SessionWorkspaceActions;
 }
 
@@ -1753,6 +1760,20 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                     {renderConversationComposer()}
                   </>
                 )}
+                {props.creationStatus ? (
+                  <section className={`session-creation-status is-${props.creationStatus.state}`} role={props.creationStatus.state === 'failed' ? 'alert' : 'status'} aria-live="polite">
+                    {props.creationStatus.state === 'creating' ? <span className="session-command-spinner" aria-hidden="true" /> : <WarningCircle aria-hidden="true" weight="regular" />}
+                    <span>
+                      <strong>{props.creationStatus.message}</strong>
+                      {props.creationStatus.error ? <small>{props.creationStatus.error}</small> : null}
+                    </span>
+                    {props.creationStatus.state === 'failed' && props.creationStatus.onRetry ? (
+                      <button type="button" onClick={() => void props.creationStatus?.onRetry?.()}>
+                        {props.creationStatus.retryLabel ?? (props.language === 'zh-CN' ? '重试' : 'Retry')}
+                      </button>
+                    ) : null}
+                  </section>
+                ) : null}
                 {interruptArmed ? (
                   <p className="session-interrupt-confirm" role="status">
                     {copy.interruptConfirm}

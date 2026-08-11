@@ -12174,3 +12174,41 @@
   border-color: var(--session-line);
   box-shadow: none;
 }
+.session-creation-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 34px;
+  margin: 0 18px 12px;
+  padding: 7px 10px;
+  color: var(--session-text-muted);
+  border: 1px solid color-mix(in srgb, var(--session-line) 76%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--session-control) 82%, transparent);
+}
+
+.session-creation-status > span:nth-child(2) {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.session-creation-status strong,
+.session-creation-status small {
+  font: inherit;
+}
+
+.session-creation-status small {
+  color: var(--session-text-muted);
+  overflow-wrap: anywhere;
+}
+
+.session-creation-status.is-failed {
+  color: var(--session-danger);
+  border-color: color-mix(in srgb, var(--session-danger) 28%, var(--session-line));
+}
+
+.session-creation-status button {
+  margin-left: auto;
+  flex: 0 0 auto;
+}

@@ -229,8 +229,9 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
   const command = normalizeType(props.item.type) === 'commandexecution' || normalizeType(props.item.type) === 'command';
   const accessibleLabel = command ? (props.language === 'zh-CN' ? '命令执行' : 'Command execution') : label;
   const showVisibleRoleLabel = role !== 'user' && role !== 'assistant' && role !== 'commentary';
-  const showMeta = !command && (showVisibleRoleLabel || props.item.optimistic);
-  const optimisticStatus = props.item.optimistic ? optimisticDeliveryStatus(props.item, labels) : null;
+  // 任务首发消息已经是工作面的稳定内容，内部创建进度只在底部统一呈现。
+  const optimisticStatus = props.item.optimistic && !taskPushLayout ? optimisticDeliveryStatus(props.item, labels) : null;
+  const showMeta = !command && (showVisibleRoleLabel || Boolean(optimisticStatus));
   const messageTimestamp = formatMessageTimestamp(props.item, props.language);
   const timestampSource = props.item.updatedAt ?? primitiveText(props.item.payload.createdAt);
   const canEdit = role === 'user' && props.isLatestUser && Boolean(props.onEdit) && !props.item.optimistic;
