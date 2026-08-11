@@ -10,6 +10,7 @@ import type { DesktopReleaseUpdateStatus } from './releaseUpdateService.js';
 const execFile = promisify(execFileCallback);
 const caskToken = 'imchenway/tap/zeus';
 const commandOutputLimit = 8 * 1024 * 1024;
+const progressOutputLimit = 4 * 1024;
 const ansiEscapePattern = new RegExp(`${String.fromCharCode(27)}\\[[0-?]*[ -/]*[@-~]`, 'gu');
 
 export interface HomebrewUpdateProgress {
@@ -191,20 +192,35 @@ async function fetchCask(brewPath: string, expectedSizeBytes: number | null, onP
     });
     let stderr = '';
     let stdout = '';
+    let progressOutput = '';
+    let lastDownloadedBytes: number | undefined;
+    let lastTotalBytes: number | undefined;
     const timeout = setTimeout(() => child.kill('SIGTERM'), 15 * 60_000);
     const inspect = (chunk: Buffer) => {
-      const text = stripTerminalFormatting(chunk.toString('utf8'));
+      const rawText = chunk.toString('utf8');
+      const text = stripTerminalFormatting(rawText);
       stdout = appendBounded(stdout, text);
-      const parsed = parseHomebrewProgress(text, expectedSizeBytes);
-      if (parsed) onProgress({ phase: 'downloading', ...parsed });
+      progressOutput = appendTail(progressOutput, rawText, progressOutputLimit);
+      publishParsedProgress();
     };
     child.stdout.on('data', inspect);
     child.stderr.on('data', (chunk: Buffer) => {
-      const text = stripTerminalFormatting(chunk.toString('utf8'));
+      const rawText = chunk.toString('utf8');
+      const text = stripTerminalFormatting(rawText);
       stderr = appendBounded(stderr, text);
-      const parsed = parseHomebrewProgress(text, expectedSizeBytes);
-      if (parsed) onProgress({ phase: 'downloading', ...parsed });
+      progressOutput = appendTail(progressOutput, rawText, progressOutputLimit);
+      publishParsedProgress();
     });
+
+    /** Homebrew 的伪终端输出可能跨多个 data 事件，必须基于滚动缓冲解析完整进度。 */
+    function publishParsedProgress(): void {
+      const parsed = parseHomebrewProgress(stripTerminalFormatting(progressOutput), expectedSizeBytes);
+      if (!parsed || (parsed.downloadedBytes === lastDownloadedBytes && parsed.totalBytes === lastTotalBytes)) return;
+      lastDownloadedBytes = parsed.downloadedBytes;
+      lastTotalBytes = parsed.totalBytes;
+      onProgress({ phase: 'downloading', ...parsed });
+    }
+
     child.once('error', (error) => {
       clearTimeout(timeout);
       rejectFetch(error);
@@ -278,6 +294,11 @@ function stripTerminalFormatting(value: string): string {
 function appendBounded(current: string, next: string): string {
   const combined = `${current}${next}`;
   return combined.length <= commandOutputLimit ? combined : combined.slice(-commandOutputLimit);
+}
+
+function appendTail(current: string, next: string, limit: number): string {
+  const combined = `${current}${next}`;
+  return combined.length <= limit ? combined : combined.slice(-limit);
 }
 
 function formatCommandFailure(prefix: string, output: string, code: string | number | undefined, signal: string | undefined): string {
