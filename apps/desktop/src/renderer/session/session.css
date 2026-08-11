@@ -3165,34 +3165,6 @@
   position: relative;
 }
 
-.session-codex-parity-v1 .session-permission-confirmation {
-  background: var(--session-canvas);
-  border: 1px solid var(--session-line);
-  border-radius: 10px;
-  bottom: calc(100% + 8px);
-  box-shadow: 0 10px 30px var(--session-shadow);
-  color: var(--session-text);
-  display: grid;
-  font-size: 12px;
-  gap: 10px;
-  inline-size: min(320px, calc(100vw - 32px));
-  left: 0;
-  line-height: 1.45;
-  padding: 12px;
-  position: absolute;
-  z-index: 4;
-}
-
-.session-codex-parity-v1 .session-permission-confirmation-actions {
-  display: flex;
-  gap: 6px;
-  justify-content: flex-end;
-}
-
-.session-codex-parity-v1 .session-permission-confirmation-actions button {
-  min-block-size: 30px;
-}
-
 .session-codex-parity-v1 .session-primary-command-slot,
 .session-codex-parity-v1 .session-primary-command-slot button,
 .session-codex-parity-v1 .session-active-draft-submit {
@@ -8853,34 +8825,6 @@
   position: relative;
 }
 
-.session-codex-parity-v1 .session-permission-confirmation {
-  background: var(--session-canvas);
-  border: 1px solid var(--session-line);
-  border-radius: 10px;
-  bottom: calc(100% + 8px);
-  box-shadow: 0 10px 30px var(--session-shadow);
-  color: var(--session-text);
-  display: grid;
-  font-size: 12px;
-  gap: 10px;
-  inline-size: min(320px, calc(100vw - 32px));
-  left: 0;
-  line-height: 1.45;
-  padding: 12px;
-  position: absolute;
-  z-index: 4;
-}
-
-.session-codex-parity-v1 .session-permission-confirmation-actions {
-  display: flex;
-  gap: 6px;
-  justify-content: flex-end;
-}
-
-.session-codex-parity-v1 .session-permission-confirmation-actions button {
-  min-block-size: 30px;
-}
-
 .session-codex-parity-v1 .session-primary-command-slot,
 .session-codex-parity-v1 .session-primary-command-slot button,
 .session-codex-parity-v1 .session-active-draft-submit {
@@ -12375,4 +12319,174 @@
 .session-creation-status button {
   margin-left: auto;
   flex: 0 0 auto;
+}
+
+/* ZEUS-0181：完全访问属于会话级高风险切换，使用居中弹窗完整说明真实能力与风险。 */
+.session-permission-dialog-portal-root.macos-ai-app {
+  background: transparent;
+}
+
+.macos-ai-app .session-permission-dialog {
+  background: var(--zeus-solid-surface-bg);
+  border: 1px solid var(--zeus-product-line);
+  border-radius: 18px;
+  box-shadow: 0 28px 70px oklch(24% 0.008 255 / 0.22);
+  color: var(--zeus-product-text);
+  display: grid;
+  gap: 18px;
+  inline-size: min(620px, calc(100vw - 32px));
+  max-block-size: min(720px, calc(100vh - 40px));
+  overflow: auto;
+  padding: 24px;
+  pointer-events: auto;
+}
+
+.macos-ai-app .session-permission-dialog-header {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+}
+
+.macos-ai-app .session-permission-dialog-header > svg {
+  block-size: 27px;
+  color: var(--zeus-danger-text);
+  flex: 0 0 auto;
+  inline-size: 27px;
+}
+
+.macos-ai-app .session-permission-dialog-header > strong {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.018em;
+  line-height: 27px;
+}
+
+.macos-ai-app .session-permission-dialog-introduction,
+.macos-ai-app .session-permission-dialog-risk {
+  color: var(--zeus-product-muted);
+  font-size: 14px;
+  line-height: 21px;
+  margin: 0;
+}
+
+.macos-ai-app .session-permission-dialog-capabilities {
+  background: var(--zeus-product-panel-muted);
+  border: 1px solid var(--zeus-product-line-soft);
+  border-radius: 14px;
+  overflow: hidden;
+  padding-inline: 18px;
+}
+
+.macos-ai-app .session-permission-dialog-capability {
+  align-items: center;
+  display: grid;
+  gap: 14px;
+  grid-template-columns: 40px minmax(0, 1fr);
+  min-block-size: 72px;
+  padding-block: 10px;
+}
+
+.macos-ai-app .session-permission-dialog-capability + .session-permission-dialog-capability {
+  border-block-start: 1px solid var(--zeus-product-line-soft);
+}
+
+.macos-ai-app .session-permission-dialog-capability-icon {
+  align-items: center;
+  block-size: 36px;
+  border-radius: 10px;
+  display: inline-flex;
+  inline-size: 36px;
+  justify-content: center;
+}
+
+.macos-ai-app .session-permission-dialog-capability-icon[data-kind='files'],
+.macos-ai-app .session-permission-dialog-capability-icon[data-kind='internet'] {
+  background: color-mix(in oklch, var(--zeus-product-accent) 10%, transparent);
+  color: var(--zeus-product-accent);
+}
+
+.macos-ai-app .session-permission-dialog-capability-icon[data-kind='terminal'] {
+  background: color-mix(in oklch, var(--zeus-product-text) 8%, transparent);
+  color: var(--zeus-product-muted);
+}
+
+.macos-ai-app .session-permission-dialog-capability-icon > svg {
+  block-size: 23px;
+  inline-size: 23px;
+}
+
+.macos-ai-app .session-permission-dialog-capability > span:last-child {
+  display: grid;
+  gap: 2px;
+  min-inline-size: 0;
+}
+
+.macos-ai-app .session-permission-dialog-capability strong {
+  font-size: 14px;
+  font-weight: 680;
+  line-height: 20px;
+}
+
+.macos-ai-app .session-permission-dialog-capability small {
+  color: var(--zeus-product-muted);
+  font-size: 13px;
+  line-height: 19px;
+  overflow-wrap: anywhere;
+}
+
+.macos-ai-app .session-permission-dialog-risk {
+  padding-inline: 1px;
+}
+
+.macos-ai-app .session-permission-dialog-actions {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.macos-ai-app .session-permission-dialog-actions > .zeus-button {
+  min-inline-size: 108px;
+}
+
+.macos-ai-app .session-permission-dialog-actions > .zeus-button[data-button-variant='danger'] {
+  gap: 6px;
+}
+
+.macos-ai-app .session-permission-dialog-actions > .zeus-button svg {
+  block-size: 16px;
+  inline-size: 16px;
+}
+
+@media (max-width: 560px) {
+  .macos-ai-app .session-permission-dialog {
+    border-radius: 16px;
+    gap: 15px;
+    padding: 18px;
+  }
+
+  .macos-ai-app .session-permission-dialog-header > strong {
+    font-size: 18px;
+    line-height: 25px;
+  }
+
+  .macos-ai-app .session-permission-dialog-capabilities {
+    padding-inline: 14px;
+  }
+
+  .macos-ai-app .session-permission-dialog-capability {
+    gap: 11px;
+    grid-template-columns: 36px minmax(0, 1fr);
+    min-block-size: 66px;
+  }
+
+  .macos-ai-app .session-permission-dialog-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .macos-ai-app .session-permission-dialog-actions > .zeus-button {
+    inline-size: 100%;
+    min-inline-size: 0;
+  }
 }
