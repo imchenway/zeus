@@ -169,7 +169,6 @@ interface PersistedDraft {
   attachments: NativeConversationAttachment[];
   browserSubmission?: ZeusBrowserPreparedSubmission | null;
   pendingSend?: PendingSendEnvelope;
-  recoveryRequired?: NativeSessionError;
   recoveredSubmissionIds?: string[];
 }
 
@@ -191,7 +190,6 @@ export function createSessionController(options: CreateSessionControllerOptions)
   const storageKey = `zeus.native-session-draft:${options.projectId}:${options.conversationId}`;
   const persisted = readPersistedDraft(storage, storageKey);
   let pendingSend = persisted.pendingSend ?? null;
-  let recoveryRequired = persisted.recoveryRequired ?? null;
   const recoveredSubmissionIds = new Set(persisted.recoveredSubmissionIds ?? []);
   const initialCachedState =
     options.initialCachedState?.projectId === options.projectId &&
@@ -200,7 +198,6 @@ export function createSessionController(options: CreateSessionControllerOptions)
     options.initialCachedState.snapshot.id === options.conversationId
       ? options.initialCachedState
       : undefined;
-  if (!recoveryRequired && initialCachedState?.error?.recoveryRequired) recoveryRequired = initialCachedState.error;
   const initialOptimisticItems = (options.initialOptimisticState?.itemOrder ?? [])
     .map((key) => options.initialOptimisticState?.items[key])
     .filter((item): item is NonNullable<typeof item> => Boolean(item?.optimistic && item.conversationId === options.conversationId));
@@ -223,7 +220,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
     attachments: persisted.attachments,
     browserSubmission: persisted.browserSubmission ?? null,
     busyOperation: null,
-    error: recoveryRequired,
+    error: initialCachedState?.error?.recoveryRequired ? null : (initialCachedState?.error ?? null),
   };
   let socket: WebSocket | null = null;
   let socketLifecycle: SocketLifecycle | null = null;
@@ -248,14 +245,10 @@ export function createSessionController(options: CreateSessionControllerOptions)
   function dispatch(action: Parameters<typeof sessionReducer>[1]): void {
     const previousThreadId = state.providerThreadId;
     const previousTransportKind = state.snapshot?.transportKind ?? null;
-    const previousRecoveryRequired = recoveryRequired;
-    let next = sessionReducer(state, action);
-    if (next.error?.recoveryRequired) recoveryRequired = next.error;
-    if (recoveryRequired && !next.error?.recoveryRequired) next = { ...next, error: recoveryRequired };
-    if (next === state && recoveryRequired === previousRecoveryRequired) return;
+    const next = sessionReducer(state, action);
+    if (next === state) return;
     state = next;
     if (state.providerThreadId !== previousThreadId || (state.snapshot?.transportKind ?? null) !== previousTransportKind) identityEpoch += 1;
-    if (recoveryRequired && recoveryRequired !== previousRecoveryRequired) persistDraft();
     for (const listener of listeners) listener();
   }
 
@@ -264,7 +257,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
     const draft = state.draft;
     const attachments = state.attachments;
     const browserSubmission = state.browserSubmission;
-    if (!draft && attachments.length === 0 && !browserSubmission && !pendingSend && !recoveryRequired && recoveredSubmissionIds.size === 0) {
+    if (!draft && attachments.length === 0 && !browserSubmission && !pendingSend && recoveredSubmissionIds.size === 0) {
       storage.removeItem(storageKey);
       return;
     }
@@ -275,7 +268,6 @@ export function createSessionController(options: CreateSessionControllerOptions)
         attachments,
         ...(browserSubmission ? { browserSubmission } : {}),
         ...(pendingSend ? { pendingSend } : {}),
-        ...(recoveryRequired ? { recoveryRequired } : {}),
         ...(recoveredSubmissionIds.size > 0 ? { recoveredSubmissionIds: [...recoveredSubmissionIds] } : {}),
       } satisfies PersistedDraft),
     );
@@ -289,32 +281,6 @@ export function createSessionController(options: CreateSessionControllerOptions)
     dispatch({ type: 'attachments_changed', attachments: [] });
     dispatch({ type: 'browser_submission_changed', browserSubmission: null });
     recoveredSubmissionIds.clear();
-  }
-
-  function rememberRecoveryRequired(error: NativeSessionError): void {
-    if (error.recoveryRequired) recoveryRequired = error;
-  }
-
-  function reconcilePersistedRecovery(snapshot: NativeConversationSnapshot): void {
-    if (!recoveryRequired) return;
-    if (snapshotRequiresRecovery(snapshot)) {
-      persistDraft();
-      return;
-    }
-    if (pendingSend && acceptedEnvelopeIsDurable(snapshot, pendingSend)) {
-      void markEnvelopeBrowserCommentsSent(pendingSend);
-      clearDraftIfItStillMatches(pendingSend);
-      pendingSend = null;
-      recoveryRequired = null;
-      dispatch({ type: 'send_succeeded' });
-      persistDraft();
-      return;
-    }
-    // 权威快照已经证明原会话可继续时，只清理旧写入门禁；任何未发送内容仍需回到草稿并由用户确认。
-    pendingSend = null;
-    recoveryRequired = null;
-    dispatch({ type: 'send_succeeded' });
-    persistDraft();
   }
 
   async function recoverManualConfirmationDraft(snapshot: NativeConversationSnapshot): Promise<void> {
@@ -780,13 +746,12 @@ export function createSessionController(options: CreateSessionControllerOptions)
       if (disposed || token !== connectionToken) return;
       if (lifecycle.isDisconnected()) throw new SocketDisconnectedDuringHydrationError();
       dispatch({ type: 'snapshot_hydrated', snapshot: withoutResolvedRequests(snapshot) });
-      reconcilePersistedRecovery(snapshot);
       await recoverManualConfirmationDraft(snapshot);
       reconcilePersistedAcceptance(snapshot);
       for (const event of buffered) applyEvent(event);
       hydrating = false;
       ready = true;
-      dispatch({ type: 'transport_changed', transportState: 'ready', error: recoveryRequired });
+      dispatch({ type: 'transport_changed', transportState: 'ready', error: null });
     } catch (error) {
       hydrating = false;
       const shouldScheduleReconnect = !disposed && token === connectionToken && (error instanceof SocketDisconnectedDuringHydrationError || socketLifecycle?.isDisconnected() === true);
@@ -803,8 +768,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
     }
   }
 
-  function runOperation<T>(key: string, execute: () => Promise<T>, apply: (result: T) => void | Promise<void>, clearErrorOnSuccess = true, allowDuringRecovery = false): Promise<T> {
-    if (recoveryRequired && !allowDuringRecovery) return Promise.reject(sessionWriteBlockedError(recoveryRequired));
+  function runOperation<T>(key: string, execute: () => Promise<T>, apply: (result: T) => void | Promise<void>, clearErrorOnSuccess = true): Promise<T> {
     if (activeOperation) {
       if (activeOperation.key === key) return activeOperation.promise as Promise<T>;
       return Promise.reject(new Error(`Session operation already in progress: ${activeOperation.key}`));
@@ -818,7 +782,6 @@ export function createSessionController(options: CreateSessionControllerOptions)
       })
       .catch((error) => {
         const sessionError = toSessionError(error, true);
-        rememberRecoveryRequired(sessionError);
         dispatch({ type: 'operation_finished', operation: key, error: sessionError });
         persistDraft();
         throw error;
@@ -868,17 +831,17 @@ export function createSessionController(options: CreateSessionControllerOptions)
     },
     getState: () => state,
     setDraft(draft) {
-      if (pendingSend && pendingSend.deliveryState !== 'accepted' && !recoveryRequired && pendingSend.draft !== draft) pendingSend = null;
+      if (pendingSend && pendingSend.deliveryState !== 'accepted' && pendingSend.draft !== draft) pendingSend = null;
       dispatch({ type: 'draft_changed', draft });
       persistDraft();
     },
     setAttachments(attachments) {
-      if (pendingSend && pendingSend.deliveryState !== 'accepted' && !recoveryRequired && !sameAttachments(pendingSend.composerAttachments, attachments)) pendingSend = null;
+      if (pendingSend && pendingSend.deliveryState !== 'accepted' && !sameAttachments(pendingSend.composerAttachments, attachments)) pendingSend = null;
       dispatch({ type: 'attachments_changed', attachments: [...attachments] });
       persistDraft();
     },
     setBrowserSubmission(browserSubmission) {
-      if (pendingSend && pendingSend.deliveryState !== 'accepted' && !recoveryRequired && !sameBrowserSubmission(pendingSend.browserSubmission, browserSubmission)) {
+      if (pendingSend && pendingSend.deliveryState !== 'accepted' && !sameBrowserSubmission(pendingSend.browserSubmission, browserSubmission)) {
         pendingSend = null;
       }
       dispatch({
@@ -909,7 +872,6 @@ export function createSessionController(options: CreateSessionControllerOptions)
       });
     },
     send(delivery, expectedTurnId, settings) {
-      if (recoveryRequired) return Promise.reject(sessionWriteBlockedError(recoveryRequired));
       const normalizedExpectedTurnId = expectedTurnId || undefined;
       const requestedCollaborationMode = settings?.collaborationMode ?? state.snapshot?.collaborationMode ?? 'default';
       const requestedPermissionMode = settings?.permissionMode ?? state.snapshot?.nextTurnSettings?.permissionMode ?? state.snapshot?.permissionMode;
@@ -1045,7 +1007,6 @@ export function createSessionController(options: CreateSessionControllerOptions)
             const reconciliation = await reconcileFailedSend(envelope);
             if (reconciliation.kind === 'durable') return reconciliation.acceptance;
             const sessionError = toSessionError(error, true);
-            rememberRecoveryRequired(sessionError);
             dispatch(
               reconciliation.kind === 'unknown'
                 ? {
@@ -1088,7 +1049,6 @@ export function createSessionController(options: CreateSessionControllerOptions)
         () => options.client.deleteNativeQueuedSubmission(options.projectId, options.conversationId, submissionId),
         (queue) => dispatch({ type: 'queue_hydrated', queue }),
         false,
-        true,
       );
     },
     reorderQueue(orderedSubmissionIds) {
@@ -1120,7 +1080,6 @@ export function createSessionController(options: CreateSessionControllerOptions)
         'queue:recover',
         () => options.client.recoverNativeQueue(options.projectId, options.conversationId),
         (queue) => dispatch({ type: 'queue_hydrated', queue }),
-        true,
         true,
       );
     },
@@ -1217,7 +1176,6 @@ function readPersistedDraft(storage: SessionDraftStorage | undefined, key: strin
     const browserSubmission = isBrowserPreparedSubmission(parsed.browserSubmission) ? parsed.browserSubmission : null;
     const pendingCandidate = isPendingSendEnvelope(parsed.pendingSend) ? parsed.pendingSend : undefined;
     const pending = pendingCandidate ? { ...pendingCandidate, collaborationMode: pendingCandidate.collaborationMode ?? 'default' } : undefined;
-    const recoveryRequired = isPersistedRecoveryRequired(parsed.recoveryRequired) ? parsed.recoveryRequired : undefined;
     const recoveredSubmissionIds = Array.isArray(parsed.recoveredSubmissionIds) ? parsed.recoveredSubmissionIds.filter((id): id is string => typeof id === 'string' && Boolean(id)) : [];
     const persistedDraft = typeof parsed.draft === 'string' ? parsed.draft : '';
     const restorePendingInput = pending && pending.deliveryState !== 'accepted' && !persistedDraft && attachments.length === 0 && !browserSubmission;
@@ -1226,7 +1184,6 @@ function readPersistedDraft(storage: SessionDraftStorage | undefined, key: strin
       attachments: restorePendingInput ? pending.composerAttachments : attachments,
       browserSubmission: restorePendingInput ? pending.browserSubmission : browserSubmission,
       ...(pending ? { pendingSend: pending } : {}),
-      ...(recoveryRequired ? { recoveryRequired } : {}),
       ...(recoveredSubmissionIds.length > 0 ? { recoveredSubmissionIds } : {}),
     };
   } catch {
@@ -1287,18 +1244,6 @@ function isNativeOperationAcceptance(value: unknown): value is NativeOperationAc
   return typeof acceptance.operation === 'object' && acceptance.operation !== null && typeof acceptance.conversation === 'object' && acceptance.conversation !== null && typeof acceptance.conversation.id === 'string';
 }
 
-function isPersistedRecoveryRequired(value: unknown): value is NativeSessionError {
-  if (typeof value !== 'object' || value === null) return false;
-  const error = value as Partial<NativeSessionError>;
-  return (
-    typeof error.message === 'string' &&
-    (typeof error.code === 'string' || error.code === null) &&
-    error.recoveryRequired === true &&
-    error.retryable === false &&
-    (error.status === undefined || (typeof error.status === 'number' && Number.isFinite(error.status)))
-  );
-}
-
 function nativeOptimisticKey(state: NativeSessionState, clientUserMessageId: string): string {
   return [state.conversationId ?? 'pending-conversation', state.providerThreadId ?? 'pending-thread', `pending:${clientUserMessageId}`, clientUserMessageId].map((part) => encodeURIComponent(part)).join('/');
 }
@@ -1348,12 +1293,6 @@ function renderDeltaKey(event: NativeConversationEvent): string | null {
   return [conversationId, generationId, threadId, turnId, itemId].join(':');
 }
 
-function snapshotRequiresRecovery(snapshot: NativeConversationSnapshot): boolean {
-  return (
-    (snapshot.queue.state.type === 'paused' && snapshot.queue.state.reason === 'recovery_required') || snapshot.submissions.some((submission) => submission.status === 'recovery_required' || submission.pausedReason === 'recovery_required')
-  );
-}
-
 function snapshotItemClientUserMessageId(item: { type: string; payload: Record<string, unknown> }): string | null {
   const normalizedType = item.type.toLocaleLowerCase().replace(/[\s_\-/]+/gu, '');
   if (normalizedType !== 'usermessage' && normalizedType !== 'user') return null;
@@ -1365,31 +1304,15 @@ function isManualConfirmationSubmission(submission: NativeQueuedSubmission): boo
   return (submission.status === 'queued' || submission.status === 'paused') && submission.pausedReason === 'user_confirmation' && !submission.providerTurnId;
 }
 
-function sessionWriteBlockedError(error: NativeSessionError): Error & {
-  error: string | null;
-  recoveryRequired: true;
-  retryable: false;
-  status?: number;
-} {
-  return Object.assign(new Error(error.message), {
-    error: error.code,
-    recoveryRequired: true as const,
-    retryable: false as const,
-    ...(error.status === undefined ? {} : { status: error.status }),
-  });
-}
-
 function toSessionError(error: unknown, retryable: boolean): NativeSessionError {
   if (typeof error === 'object' && error !== null) {
-    const value = error as { message?: unknown; error?: unknown; recoveryRequired?: unknown; status?: unknown; operation?: unknown };
+    const value = error as { message?: unknown; error?: unknown; status?: unknown };
     const code = typeof value.error === 'string' ? value.error : null;
-    const operation = typeof value.operation === 'object' && value.operation !== null ? (value.operation as { status?: unknown }) : null;
-    const recoveryRequired = value.recoveryRequired === true || code === 'ZEUS_IDEMPOTENCY_RECOVERY_REQUIRED' || operation?.status === 'recovery_required';
     return {
       message: typeof value.message === 'string' ? value.message : String(error),
       code,
-      recoveryRequired,
-      retryable: !recoveryRequired && retryable,
+      recoveryRequired: false,
+      retryable,
       ...(typeof value.status === 'number' ? { status: value.status } : {}),
     };
   }

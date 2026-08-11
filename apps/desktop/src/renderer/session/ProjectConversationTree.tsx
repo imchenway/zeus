@@ -303,7 +303,6 @@ function flattenProjectConversations(project: ProjectConversationGroup): {
 
 /** 将当前已连接 controller 的权威状态映射为全局 source tree 的可读状态。 */
 export function conversationTreeRuntimeStateFromSession(state: NativeSessionState): ConversationTreeRuntimeState {
-  if (state.error?.recoveryRequired) return 'error';
   if (state.transportState === 'failed' || state.conversationState === 'turn_failed') return 'error';
   if (state.transportState === 'connecting' || state.transportState === 'hydrating' || state.transportState === 'disconnected') return 'connecting';
   if (state.transportState === 'reconnecting') return 'reconnecting';
@@ -330,7 +329,6 @@ export function conversationTreeRuntimeStateFromSnapshot(snapshot: NativeConvers
   const fallback = conversationTreeRuntimeStateFromConversation(snapshot);
   if (fallback === 'legacy_readonly' || fallback === 'error' || fallback === 'connecting' || fallback === 'reconnecting') return fallback;
   if (snapshot.queue.state.type === 'paused') {
-    if (snapshot.queue.state.reason === 'recovery_required') return 'error';
     if (snapshot.queue.state.reason === 'provider_archived') return snapshot.queue.submissions.length > 0 ? 'queued' : 'ready';
     return 'paused';
   }

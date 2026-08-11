@@ -155,13 +155,12 @@ export function sessionReducer(state: NativeSessionState, action: NativeSessionA
       };
     }
     case 'queue_hydrated': {
-      const recoveryError = recoveryErrorFromQueue(action.queue);
-      return { ...state, queue: action.queue, conversationState: conversationStateFromQueue(action.queue, state), ...(recoveryError ? { error: recoveryError } : {}) };
+      return { ...state, queue: action.queue, conversationState: conversationStateFromQueue(action.queue, state) };
     }
     case 'steering_submission_hydrated':
       return projectSteeringSubmission(state, action.submission, action.queue);
     case 'operation_started':
-      return { ...state, busyOperation: action.operation, error: state.error?.recoveryRequired ? state.error : null };
+      return { ...state, busyOperation: action.operation, error: null };
     case 'operation_finished':
       return state.busyOperation !== action.operation ? state : { ...state, busyOperation: null, error: action.error === undefined ? state.error : action.error };
     case 'interrupt_started':
@@ -417,7 +416,7 @@ function hydrateSnapshot(state: NativeSessionState, snapshot: NativeConversation
     transcriptRevision: state.transcriptRevision + 1,
     feedbackEpoch,
     visibleFeedbackEpoch: hasVisibleActiveFeedback ? feedbackEpoch : Math.min(state.visibleFeedbackEpoch, feedbackEpoch),
-    error: recoveryErrorFromSnapshot(snapshot),
+    error: null,
   };
 }
 
@@ -554,8 +553,7 @@ function reduceNativeEvent(state: NativeSessionState, event: NativeConversationE
       return { ...base, mcpStartup: providerValueFrom(payload) };
     case 'conversation.queue.changed': {
       const queue = isRecord(payload.queue) ? (payload.queue as unknown as NativeQueueSnapshot) : state.queue;
-      const recoveryError = queue ? recoveryErrorFromQueue(queue) : null;
-      return queue ? { ...base, queue, transcriptRevision: base.transcriptRevision + 1, conversationState: conversationStateFromQueue(queue, base), ...(recoveryError ? { error: recoveryError } : {}) } : base;
+      return queue ? { ...base, queue, transcriptRevision: base.transcriptRevision + 1, conversationState: conversationStateFromQueue(queue, base) } : base;
     }
     case 'conversation.submission.steering': {
       const submission = isRecord(payload.submission) ? (payload.submission as unknown as NativeQueuedSubmission) : null;
@@ -945,34 +943,10 @@ function conversationStateFromSnapshot(snapshot: NativeConversationSnapshot): Co
     case 'waiting':
       return snapshot.queue.state.reason === 'user_input' ? 'waiting_user_input' : 'waiting_approval';
     case 'paused':
-      return snapshot.queue.state.reason === 'recovery_required' ? 'turn_failed' : 'native_idle';
+      return 'native_idle';
     case 'idle':
       return 'native_idle';
   }
-}
-
-function recoveryErrorFromSnapshot(snapshot: NativeConversationSnapshot): NativeSessionError | null {
-  return (
-    recoveryErrorFromQueue(snapshot.queue) ??
-    (snapshot.submissions.some((submission) => submission.status === 'recovery_required' || submission.pausedReason === 'recovery_required')
-      ? {
-          message: 'The native conversation requires authoritative recovery before any further provider write.',
-          code: 'ZEUS_NATIVE_SNAPSHOT_RECOVERY_REQUIRED',
-          recoveryRequired: true,
-          retryable: false,
-        }
-      : null)
-  );
-}
-
-function recoveryErrorFromQueue(queue: NativeQueueSnapshot): NativeSessionError | null {
-  if (queue.state.type !== 'paused' || queue.state.reason !== 'recovery_required') return null;
-  return {
-    message: 'The native conversation requires authoritative recovery before any further provider write.',
-    code: 'ZEUS_NATIVE_SNAPSHOT_RECOVERY_REQUIRED',
-    recoveryRequired: true,
-    retryable: false,
-  };
 }
 
 function requestConversationState(requests: NativePendingRequest[]): ConversationState | null {
@@ -1033,7 +1007,7 @@ function conversationStateFromQueue(queue: NativeQueueSnapshot, state: NativeSes
     case 'waiting':
       return queue.state.reason === 'user_input' ? 'waiting_user_input' : 'waiting_approval';
     case 'paused':
-      return queue.state.reason === 'recovery_required' ? 'turn_failed' : 'native_idle';
+      return 'native_idle';
   }
 }
 
@@ -1053,12 +1027,11 @@ function isTerminalItemStatus(status: string): boolean {
 function sessionErrorFromPayload(payload: Record<string, unknown>): NativeSessionError {
   const nested = isRecord(payload.error) ? payload.error : null;
   const code = stringValue(nested?.error) ?? stringValue(payload.error);
-  const recoveryRequired = booleanValue(nested?.recoveryRequired) ?? booleanValue(payload.recoveryRequired) ?? false;
   return {
     message: stringValue(nested?.message) ?? stringValue(payload.message) ?? 'Codex native conversation failed',
     code,
-    recoveryRequired,
-    retryable: !recoveryRequired && (booleanValue(nested?.retryable) ?? booleanValue(payload.retryable) ?? false),
+    recoveryRequired: false,
+    retryable: booleanValue(nested?.retryable) ?? booleanValue(payload.retryable) ?? false,
   };
 }
 

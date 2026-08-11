@@ -922,14 +922,19 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         refreshed = await recoverPausedConversation(refreshed.id, 'submit');
       }
     } catch (error) {
-      markConversationRecoveryRequired(refreshed.id, error);
+      const failure = serializeError(error);
+      options.submissions.updateStatus(submission.id, 'failed', {
+        error: failure,
+        resolvedAt: now(),
+      });
       await persist();
-      options.broadcast('conversation.native.recovery_failed', {
+      options.broadcast('conversation.native.error', {
         conversationId: refreshed.id,
         providerThreadId: refreshed.providerThreadId,
-        error: serializeError(error),
+        error: { ...failure, recoveryRequired: false },
       });
-      return accepted(submission, 'recovery_required', refreshed.providerThreadId, null);
+      options.broadcast('conversation.queue.changed', { conversationId: refreshed.id });
+      throw error;
     }
     const state = runStates.get(conversation.id) ?? inferRunState(refreshed);
     runStates.set(conversation.id, state);
@@ -2669,7 +2674,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     });
   }
 
-  async function pauseConversationForInvalidAuthority(input: {
+  async function failInvalidInteractionAuthority(input: {
     conversation: ZeusConversationWithMessagesRecord;
     threadId: string;
     providerTurnId: string | null;
@@ -2678,32 +2683,38 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     error: Record<string, unknown>;
     timestamp: string;
   }): Promise<Record<string, unknown>> {
-    const recoveryError = { ...input.error };
-    if (input.request.status === 'pending') options.requests.fail(input.request.id, { error: recoveryError, resolvedAt: input.timestamp });
-    if (input.turn) options.turns.upsert({ ...input.turn, status: 'paused', error: recoveryError, updatedAt: input.timestamp });
-    for (const submission of options.submissions.listByConversation(input.conversation.id)) {
-      if (submission.status !== 'dispatching' && submission.status !== 'active' && submission.status !== 'queued') continue;
-      options.submissions.updateStatus(submission.id, 'paused', {
-        pausedReason: 'recovery_required',
-        error: recoveryError,
-        updatedAt: input.timestamp,
-      });
+    const interactionError: Record<string, unknown> = { ...input.error, recoveryRequired: false };
+    if (input.request.status === 'pending') options.requests.fail(input.request.id, { error: interactionError, resolvedAt: input.timestamp });
+    let interruptFailed = false;
+    if (input.providerTurnId) {
+      try {
+        await options.manager.interruptTurn({ threadId: input.threadId, turnId: input.providerTurnId });
+      } catch (error) {
+        interruptFailed = true;
+        interactionError.interruptError = serializeError(error);
+      }
+    }
+    if (input.turn) {
+      options.turns.upsert({ ...input.turn, status: 'failed', error: interactionError, completedAt: input.timestamp, updatedAt: input.timestamp });
+      const activeSubmission = options.submissions.getById(input.turn.clientSubmissionId);
+      if (activeSubmission && (activeSubmission.status === 'dispatching' || activeSubmission.status === 'active')) {
+        options.submissions.updateStatus(activeSubmission.id, 'failed', {
+          providerTurnId: input.providerTurnId,
+          error: interactionError,
+          resolvedAt: input.timestamp,
+          updatedAt: input.timestamp,
+        });
+      }
     }
     options.conversations.bindProvider(input.conversation.id, {
       providerId: 'codex',
       providerThreadId: input.threadId,
       providerModel: input.conversation.providerModel,
-      providerState: 'paused',
+      providerState: interruptFailed ? 'failed' : 'ready',
     });
-    runStates.set(input.conversation.id, { type: 'paused', reason: 'recovery_required' });
-    if (input.providerTurnId) {
-      try {
-        await options.manager.interruptTurn({ threadId: input.threadId, turnId: input.providerTurnId });
-      } catch (error) {
-        recoveryError.interruptError = serializeError(error);
-      }
-    }
-    return recoveryError;
+    runStates.set(input.conversation.id, { type: 'idle' });
+    options.broadcast('conversation.queue.changed', { conversationId: input.conversation.id });
+    return interactionError;
   }
 
   async function handleProviderEvent(event: CodexAppServerEvent, receiptEvents: readonly CodexAppServerEvent[] = [event]): Promise<void> {
@@ -2776,7 +2787,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         const durableThreadId = durableConversation?.providerThreadId ?? turn?.providerThreadId ?? threadId;
         const providerTurnId = turn?.providerTurnId ?? providerTurnIdFrom(params);
         if (durableConversation && durableThreadId) {
-          const recoveryError = await pauseConversationForInvalidAuthority({
+          const recoveryError = await failInvalidInteractionAuthority({
             conversation: durableConversation,
             threadId: durableThreadId,
             providerTurnId,
@@ -2785,7 +2796,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
             error: {
               error: 'ZEUS_CODEX_SERVER_REQUEST_IDENTITY_CONFLICT',
               message: 'The provider reused one generation-scoped request identity with conflicting method or payload authority.',
-              recoveryRequired: true,
+              recoveryRequired: false,
               generationId: event.generationId,
               providerRequestId: event.requestId,
               originalMethod: params.originalMethod,
@@ -3411,7 +3422,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         const currentGenerationId = readyGenerationId();
         const canonicalRui = requestKind === 'request_user_input' ? parseCanonicalRequestUserInputQuestions(params) : null;
         if (canonicalRui && !canonicalRui.ok) {
-          const recoveryError = await pauseConversationForInvalidAuthority({
+          const recoveryError = await failInvalidInteractionAuthority({
             conversation,
             threadId,
             providerTurnId,
@@ -3420,7 +3431,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
             error: {
               error: 'ZEUS_CODEX_REQUEST_USER_INPUT_ENVELOPE_INVALID',
               message: canonicalRui.message,
-              recoveryRequired: true,
+              recoveryRequired: false,
               generationId: event.generationId,
               providerRequestId: event.requestId,
             },
