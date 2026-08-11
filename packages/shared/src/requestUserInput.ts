@@ -25,7 +25,7 @@ export type CanonicalRequestUserInputQuestionsResult =
  * 未识别字段一律忽略，避免 Provider 增加元数据后把已经落库的问题藏掉。
  */
 export function parseCanonicalRequestUserInputQuestions(payload: unknown): CanonicalRequestUserInputQuestionsResult {
-    if (!isRecord(payload) || !Array.isArray(payload.questions) || payload.questions.length === 0) {
+  if (!isRecord(payload) || !Array.isArray(payload.questions) || payload.questions.length === 0) {
     return invalidQuestions('The pending request does not contain a complete canonical question set.');
   }
 
@@ -35,10 +35,10 @@ export function parseCanonicalRequestUserInputQuestions(payload: unknown): Canon
     if (!isRecord(rawQuestion)) return invalidQuestions('Every request_user_input question must be an object.');
     const id = nonEmptyString(rawQuestion.id);
     const question = nonEmptyString(rawQuestion.question);
-      if (!id || !question) return invalidQuestions('Every request_user_input question requires non-empty id and question fields.');
+    if (!id || !question) return invalidQuestions('Every request_user_input question requires non-empty id and question fields.');
     if (questionIds.has(id)) return invalidQuestions('request_user_input question ids must be unique.');
-      if (typeof rawQuestion.isSecret !== 'boolean') return invalidQuestions('Every request_user_input question requires a boolean isSecret field.');
-      const header = nonEmptyString(rawQuestion.header) ?? question;
+    if (typeof rawQuestion.isSecret !== 'boolean') return invalidQuestions('Every request_user_input question requires a boolean isSecret field.');
+    const header = nonEmptyString(rawQuestion.header) ?? question;
 
     let options: CanonicalRequestUserInputOption[] | null;
     if (rawQuestion.options === null) {
@@ -49,18 +49,18 @@ export function parseCanonicalRequestUserInputQuestions(payload: unknown): Canon
       for (const rawOption of rawQuestion.options) {
         if (!isRecord(rawOption)) return invalidQuestions(`Question ${id} contains an invalid option.`);
         const label = nonEmptyString(rawOption.label);
-          if (!label) return invalidQuestions(`Question ${id} contains an invalid option label.`);
+        if (!label) return invalidQuestions(`Question ${id} contains an invalid option label.`);
         if (optionLabels.has(label)) return invalidQuestions(`Question ${id} option labels must be unique.`);
         optionLabels.add(label);
-          options.push({label, description: typeof rawOption.description === 'string' ? rawOption.description : ''});
+        options.push({ label, description: typeof rawOption.description === 'string' ? rawOption.description : '' });
       }
     } else {
       return invalidQuestions(`Question ${id} options must be null or a non-empty canonical option array.`);
     }
 
-      const isOther = rawQuestion.isOther === true;
+    const isOther = rawQuestion.isOther === true;
     const multiple = rawQuestion.multiple === true;
-      if (options === null && (isOther || multiple)) {
+    if (options === null && (isOther || multiple)) {
       return invalidQuestions(`Freeform question ${id} cannot enable Other or multiple selection.`);
     }
     questionIds.add(id);
@@ -69,7 +69,7 @@ export function parseCanonicalRequestUserInputQuestions(payload: unknown): Canon
       header,
       question,
       options,
-        isOther,
+      isOther,
       isSecret: rawQuestion.isSecret,
       multiple,
     });

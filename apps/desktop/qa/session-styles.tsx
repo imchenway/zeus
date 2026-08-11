@@ -1,15 +1,11 @@
 import React from 'react';
-import {createRoot} from 'react-dom/client';
+import { createRoot } from 'react-dom/client';
 import '../src/renderer/styles.css';
 import '../src/renderer/session/session.css';
 import './session-styles.css';
-import {PendingRequestSurface} from '../src/renderer/session/PendingRequestSurface.js';
-import {
-    type ConversationTreeRuntimeState,
-    type ProjectConversationGroup,
-    ProjectConversationTree
-} from '../src/renderer/session/ProjectConversationTree.js';
-import type {NativeConversationChoice, NativePendingRequest} from '../src/renderer/session/sessionTypes.js';
+import { PendingRequestSurface } from '../src/renderer/session/PendingRequestSurface.js';
+import { type ConversationTreeRuntimeState, type ProjectConversationGroup, ProjectConversationTree } from '../src/renderer/session/ProjectConversationTree.js';
+import type { NativeConversationChoice, NativePendingRequest } from '../src/renderer/session/sessionTypes.js';
 
 const referenceBase = 'http://127.0.0.1:4181';
 
@@ -131,7 +127,7 @@ const userInputRequest: NativePendingRequest = {
     ],
     isBlocking: false,
     autoResolutionMs: null,
-      providerMetadataAddedLater: {ignoredByQuestionRenderer: true},
+    providerMetadataAddedLater: { ignoredByQuestionRenderer: true },
   },
   response: null,
   containsSecret: false,
