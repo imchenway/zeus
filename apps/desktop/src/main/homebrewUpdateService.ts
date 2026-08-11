@@ -64,7 +64,7 @@ export function createHomebrewUpdateService(options: CreateHomebrewUpdateService
       }
 
       onProgress({ phase: 'downloading', ...(artifact.sizeBytes === null ? {} : { totalBytes: artifact.sizeBytes }) });
-      await fetchCask(brewPath, artifact.sizeBytes, onProgress, options.testMode);
+      await fetchCask(brewPath, cachePath, artifact.sizeBytes, onProgress, options.testMode);
       onProgress({ phase: 'verifying' });
       if (!(await verifyArtifact(cachePath, artifact.sha256, artifact.sizeBytes))) {
         throw new Error('Homebrew 下载完成，但缓存安装包未通过发布清单校验。');
@@ -181,7 +181,7 @@ async function readCachePath(brewPath: string, testMode: boolean): Promise<strin
   return cachePath;
 }
 
-async function fetchCask(brewPath: string, expectedSizeBytes: number | null, onProgress: (progress: HomebrewUpdateProgress) => void, testMode: boolean): Promise<void> {
+async function fetchCask(brewPath: string, cachePath: string, expectedSizeBytes: number | null, onProgress: (progress: HomebrewUpdateProgress) => void, testMode: boolean): Promise<void> {
   const brewArgs = ['fetch', '--cask', '--retry', caskToken];
   const executable = !testMode && (await isExecutable('/usr/bin/script')) ? '/usr/bin/script' : brewPath;
   const args = executable === brewPath ? brewArgs : ['-q', '/dev/null', brewPath, ...brewArgs];
@@ -195,7 +195,14 @@ async function fetchCask(brewPath: string, expectedSizeBytes: number | null, onP
     let progressOutput = '';
     let lastDownloadedBytes: number | undefined;
     let lastTotalBytes: number | undefined;
+    let fetchFinished = false;
     const timeout = setTimeout(() => child.kill('SIGTERM'), 15 * 60_000);
+    const cacheProgressTimer =
+      expectedSizeBytes === null
+        ? undefined
+        : setInterval(() => {
+            void publishCachedProgress();
+          }, 100);
     const inspect = (chunk: Buffer) => {
       const rawText = chunk.toString('utf8');
       const text = stripTerminalFormatting(rawText);
@@ -215,18 +222,43 @@ async function fetchCask(brewPath: string, expectedSizeBytes: number | null, onP
     /** Homebrew 的伪终端输出可能跨多个 data 事件，必须基于滚动缓冲解析完整进度。 */
     function publishParsedProgress(): void {
       const parsed = parseHomebrewProgress(stripTerminalFormatting(progressOutput), expectedSizeBytes);
-      if (!parsed || (parsed.downloadedBytes === lastDownloadedBytes && parsed.totalBytes === lastTotalBytes)) return;
+      if (parsed) publishProgress(parsed);
+    }
+
+    /** Homebrew 下载会先写入缓存目标的 .incomplete 文件，文件大小是不依赖终端格式的真实进度事实。 */
+    async function publishCachedProgress(): Promise<void> {
+      if (fetchFinished || expectedSizeBytes === null) return;
+      try {
+        const partialArtifact = await stat(`${cachePath}.incomplete`);
+        if (fetchFinished || !partialArtifact.isFile()) return;
+        publishProgress({
+          downloadedBytes: Math.min(partialArtifact.size, expectedSizeBytes),
+          totalBytes: expectedSizeBytes,
+        });
+      } catch {
+        // 下载尚未创建临时文件时，继续等待 Homebrew 输出。
+      }
+    }
+
+    function publishProgress(parsed: { downloadedBytes: number; totalBytes?: number }): void {
+      if (parsed.downloadedBytes === lastDownloadedBytes && parsed.totalBytes === lastTotalBytes) return;
       lastDownloadedBytes = parsed.downloadedBytes;
       lastTotalBytes = parsed.totalBytes;
       onProgress({ phase: 'downloading', ...parsed });
     }
 
-    child.once('error', (error) => {
+    function stopProgressMonitoring(): void {
+      fetchFinished = true;
       clearTimeout(timeout);
+      if (cacheProgressTimer) clearInterval(cacheProgressTimer);
+    }
+
+    child.once('error', (error) => {
+      stopProgressMonitoring();
       rejectFetch(error);
     });
     child.once('exit', (code, signal) => {
-      clearTimeout(timeout);
+      stopProgressMonitoring();
       if (code === 0) resolveFetch();
       else rejectFetch(new Error(formatCommandFailure('Homebrew 下载更新失败', stderr || stdout, code ?? undefined, signal ?? undefined)));
     });

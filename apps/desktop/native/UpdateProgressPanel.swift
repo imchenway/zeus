@@ -51,8 +51,9 @@ private final class UpdateProgressPanelController: NSObject, NSApplicationDelega
         progressIndicator.maxValue = 1
         progressIndicator.isIndeterminate = true
         progressIndicator.startAnimation(nil)
-        progressLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
-        progressLabel.textColor = .tertiaryLabelColor
+        progressLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium)
+        progressLabel.textColor = .secondaryLabelColor
+        progressLabel.alignment = .right
 
         secondaryButton.bezelStyle = .rounded
         secondaryButton.target = self
