@@ -47,7 +47,8 @@ import '@xyflow/react/dist/style.css';
 import './styles.css';
 import './session/session.css';
 import './ui/primitives.css';
-import { notifyMainAppShellSettingsChanged, openExternalHttpsUrlInMain } from './appShellBridge.js';
+import { activateRequestingZeusWindowInMain, notifyMainAppShellSettingsChanged, openExternalHttpsUrlInMain } from './appShellBridge.js';
+import { completeCodexLoginHandoff } from './codexLoginHandoff.js';
 import { PENDING_RESOURCE_LONG_TEXT_THRESHOLD } from './ui/pendingResourcePolicy.js';
 import { TaskAttachmentPreviewList } from './task/TaskAttachmentPreviewList.js';
 import { type ConversationTreeRuntimeState, conversationTreeRuntimeStateFromConversation, conversationTreeRuntimeStateFromSession, type ProjectConversationGroup, ProjectConversationTree } from './session/ProjectConversationTree.js';
@@ -9628,7 +9629,7 @@ export function App(props: {
     const client = props.nativeConversationClient;
     const capabilities = taskModelPushCapabilities;
     const form = taskModelPushForm;
-    if (!task || !client || !capabilities || taskModelPushStatus === 'authenticating' || taskModelPushStatus === 'submitting' || taskModelPushDispatchingTaskIdsRef.current.has(task.id)) return;
+    if (!task || !client || !capabilities || taskModelPushStatus === 'authenticating' || taskModelPushStatus === 'authenticated' || taskModelPushStatus === 'submitting' || taskModelPushDispatchingTaskIdsRef.current.has(task.id)) return;
     const selectedModel = capabilities.models.find((model) => model.id === form.model || model.model === form.model);
     if (selectedModel?.agentKind !== 'pi' && capabilities.codexAccount.requiresOpenaiAuth && !capabilities.codexAccount.signedIn) {
       void authenticateCodexAndContinueTaskModelPush(task, client, capabilities, form);
@@ -9665,8 +9666,19 @@ export function App(props: {
           taskModelPushLoginIdRef.current = null;
           const updatedCapabilities = { ...capabilities, codexAccount: account };
           setTaskModelPushCapabilities(updatedCapabilities);
-          setTaskModelPushStatus('ready');
-          continueTaskModelPush(task, updatedCapabilities, form);
+          await completeCodexLoginHandoff({
+            isCurrent: () => taskModelPushLoginRequestRef.current === requestVersion,
+            showSuccess: () => {
+              setTaskModelPushStatus('authenticated');
+              setTaskModelPushError(null);
+            },
+            activateZeus: async () => {
+              const result = await activateRequestingZeusWindowInMain({ zeus: typeof window === 'undefined' ? undefined : window.zeus });
+              if (!result.activated) throw new Error(result.error ?? 'window_activation_failed');
+            },
+            recordActivationError: (error) => recordLocalError('codex-login-window-activation', error),
+            continueOriginalAction: () => continueTaskModelPush(task, updatedCapabilities, form),
+          });
           return;
         }
         await new Promise<void>((resolve) => window.setTimeout(resolve, 800));
