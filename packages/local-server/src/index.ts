@@ -31,6 +31,7 @@ import {
   type TaskPushRelatedContextOption,
   type TaskPushRelatedContextSelection,
   type TaskPushMessageLayout,
+  type TaskPushSupplementalAttachment,
   type TaskStatusFilter,
   validateCommandDefinitionInput,
 } from '@zeus/shared';
@@ -1574,6 +1575,7 @@ interface NativeConversationAttachment {
   size: number;
   localPath?: string;
   uploadRef?: string;
+  kind?: 'image' | 'file' | 'directory' | 'pasted_text';
   /** 仅由服务端验签后注入，用于精确授权持久化路径。 */
   authorizedPath?: string;
   taskPushAttachmentKey?: string;
@@ -1592,6 +1594,7 @@ type StartTaskConversationBody = (
       serviceTier?: string | null;
       workMode?: 'default' | 'plan';
       supplementalInfo?: string;
+      supplementalAttachments?: NativeConversationAttachment[];
       taskContext?: {
         revision: string;
         parentSelections: TaskPushParentContextSelection[];
@@ -14237,7 +14240,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         }
         const taskContextInput = resolveSelectedTaskPushContext(project, task, (body as Record<string, unknown>).taskContext);
         const currentAttachmentInput = normalizeTaskPushAttachments(task, project.localPath);
-        const attachmentInput = mergeTaskPushAttachmentInputs(currentAttachmentInput, taskContextInput.attachmentInput);
+        const supplementalAttachmentInput = normalizeTaskPushSupplementalAttachments(body.supplementalAttachments, project.localPath);
+        const attachmentInput = mergeTaskPushAttachmentInputs(currentAttachmentInput, taskContextInput.attachmentInput, supplementalAttachmentInput);
         const includedAttachmentKeys = new Set(attachmentInput.attachments.flatMap((attachment) => (attachment.taskPushAttachmentKey ? [attachment.taskPushAttachmentKey] : [])));
         const filterContextAttachments = <T extends TaskPushPromptParentContext | TaskPushPromptRelatedContext>(contexts: T[]): T[] =>
           contexts.map((context) => ({ ...context, attachments: context.attachments?.filter((attachment) => includedAttachmentKeys.has(attachment.key)) ?? [] }));
@@ -14247,6 +14251,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           currentAttachmentInput.promptAttachments.filter((attachment) => includedAttachmentKeys.has(attachment.key)),
           filterContextAttachments(taskContextInput.parentContexts),
           filterContextAttachments(taskContextInput.relatedContexts),
+          supplementalAttachmentInput.promptAttachments.filter((attachment) => includedAttachmentKeys.has(attachment.key)),
         );
         const taskPushPrompt = renderTaskPushLayoutText(taskPushLayout);
         if (selectedModel.agentKind !== 'pi') await assertCodexAccountReady();
@@ -16011,8 +16016,9 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     attachments: TaskPushPromptAttachment[],
     parentContexts: TaskPushPromptParentContext[] = [],
     relatedContexts: TaskPushPromptRelatedContext[] = [],
+    supplementalAttachments: TaskPushSupplementalAttachment[] = [],
   ): TaskPushMessageLayout {
-    return buildTaskPushLayout({ taskId: task.id, taskCode: task.taskCode, ...taskPushPromptContent(task), attachments, supplementalInfo, parentContexts, relatedContexts });
+    return buildTaskPushLayout({ taskId: task.id, taskCode: task.taskCode, ...taskPushPromptContent(task), attachments, supplementalInfo, supplementalAttachments, parentContexts, relatedContexts });
   }
 
   interface InspectedTaskPushAttachment {
@@ -16108,6 +16114,50 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         ...(entry.option.size !== undefined ? { size: entry.option.size } : {}),
       })),
     };
+  }
+
+  function normalizeTaskPushSupplementalAttachments(value: unknown, projectLocalPath: string): { attachments: NativeConversationAttachment[]; allowedRoots: string[]; promptAttachments: TaskPushSupplementalAttachment[] } {
+    if (value === undefined) return { attachments: [], allowedRoots: [], promptAttachments: [] };
+    if (!Array.isArray(value) || value.length > 100) {
+      throw nativeApiError('ZEUS_INVALID_TASK_PUSH', 'Task push supplementalAttachments must be an array with no more than 100 entries.');
+    }
+    const normalized = normalizeNativeConversationAttachments(value, projectLocalPath);
+    const keys = new Set<string>();
+    const paths = new Set<string>();
+    const attachments: NativeConversationAttachment[] = [];
+    const promptAttachments: TaskPushSupplementalAttachment[] = [];
+    for (const [index, attachment] of normalized.entries()) {
+      const raw = isNativeApiRecord(value[index]) ? value[index] : {};
+      const key = typeof raw.taskPushAttachmentKey === 'string' ? raw.taskPushAttachmentKey.trim() : '';
+      if (!/^task-push-supplemental-[a-z0-9-]{8,80}$/iu.test(key) || keys.has(key)) {
+        throw nativeApiError('ZEUS_INVALID_TASK_PUSH', `Supplemental attachment ${index} requires a unique task-push supplemental key.`);
+      }
+      keys.add(key);
+      const localPath = attachment.localPath;
+      if (!localPath || paths.has(localPath)) {
+        throw nativeApiError('ZEUS_INVALID_TASK_PUSH', `Supplemental attachment ${index} must resolve to a unique real resource.`);
+      }
+      paths.add(localPath);
+      const pathStat = statSync(localPath);
+      const directory = pathStat.isDirectory();
+      const requestedKind = raw.kind === 'image' || raw.kind === 'directory' || raw.kind === 'pasted_text' || raw.kind === 'file' ? raw.kind : attachment.mime.startsWith('image/') ? 'image' : 'file';
+      if ((requestedKind === 'directory') !== directory) {
+        throw nativeApiError('ZEUS_TASK_PUSH_ATTACHMENT_UNAVAILABLE', `附件“${attachment.name}”的资源类型与真实文件不一致，未创建会话。`);
+      }
+      const kind = directory ? 'directory' : requestedKind;
+      const actualSize = directory ? 0 : pathStat.size;
+      if (actualSize !== attachment.size || (!directory && actualSize === 0)) {
+        throw nativeApiError('ZEUS_TASK_PUSH_ATTACHMENT_UNAVAILABLE', `附件“${attachment.name}”已在粘贴后发生变化，未创建会话。`);
+      }
+      if (kind === 'image' && (directory || !hasTaskImageSignature(attachment.mime.toLowerCase(), readFileSync(localPath)))) {
+        throw nativeApiError('ZEUS_TASK_PUSH_ATTACHMENT_UNAVAILABLE', `附件“${attachment.name}”不是受支持的真实图片，未创建会话。`);
+      }
+      const normalizedAttachment = { ...attachment, size: actualSize, taskPushAttachmentKey: key };
+      attachments.push(normalizedAttachment);
+      promptAttachments.push({ key, name: attachment.name, kind, mimeType: attachment.mime, size: actualSize });
+    }
+    const allowedRoots = [realpathSync(projectLocalPath), ...trustedConversationAttachmentRoots].filter((root, index, roots) => roots.indexOf(root) === index);
+    return { attachments, allowedRoots: attachments.length > 0 ? allowedRoots : [], promptAttachments };
   }
 
   function listTaskPushAncestors(task: ZeusTaskRecord, projectId: string): ZeusTaskRecord[] {
@@ -16362,7 +16412,13 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     for (const input of inputs) {
       for (const attachment of input.attachments) {
         if (!attachment.localPath) throw nativeApiError('ZEUS_TASK_PUSH_ATTACHMENT_UNAVAILABLE', `附件“${attachment.name}”缺少服务端确认的真实路径，未创建会话。`);
-        if (!attachments.has(attachment.localPath)) attachments.set(attachment.localPath, attachment);
+        const identity = attachment.taskPushAttachmentKey ?? attachment.localPath;
+        const existing = attachments.get(identity);
+        if (existing) {
+          if (existing.localPath !== attachment.localPath) throw nativeApiError('ZEUS_INVALID_TASK_PUSH', `任务首发附件位置重复：${identity}`);
+          continue;
+        }
+        attachments.set(identity, attachment);
       }
       for (const root of input.allowedRoots) allowedRoots.add(root);
     }

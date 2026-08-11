@@ -93,6 +93,8 @@ import {
   resolveTaskModelPushInitialForm,
   selectedTaskPushParentContexts,
   selectedTaskPushRelatedContexts,
+  taskPushSupplementalLayoutAttachments,
+  taskPushSupplementalRequestAttachments,
   type TaskModelPushForm,
   TaskModelPushModal,
   type TaskModelPushModalStatus,
@@ -7086,6 +7088,7 @@ export function App(props: {
     parentContextSelections: {},
     relatedContextSelections: {},
     supplementalInfo: '',
+    supplementalAttachments: [],
   });
   const [taskModelPushStatus, setTaskModelPushStatus] = useState<TaskModelPushModalStatus>('loading');
   const [taskModelPushRefreshingRepositoryId, setTaskModelPushRefreshingRepositoryId] = useState<string | null>(null);
@@ -9531,6 +9534,7 @@ export function App(props: {
       parentContextSelections: {},
       relatedContextSelections: {},
       supplementalInfo: '',
+      supplementalAttachments: [],
     });
     setTaskModelPushStatus('loading');
     setTaskModelPushRefreshingRepositoryId(null);
@@ -9732,6 +9736,7 @@ export function App(props: {
                     })),
                   },
             ...(form.supplementalInfo.trim() ? { supplementalInfo: form.supplementalInfo.trim() } : {}),
+            ...(form.supplementalAttachments.length > 0 ? { supplementalAttachments: taskPushSupplementalRequestAttachments(form.supplementalAttachments) } : {}),
             taskContext: {
               revision: capabilities.taskContextRevision,
               parentSelections: capabilities.parentContextOptions.flatMap((option) => {
@@ -9753,14 +9758,15 @@ export function App(props: {
     const targetProject = snapshot.projects.find((project) => project.id === task.projectId);
     const parentContexts = selectedTaskPushParentContexts(capabilities.parentContextOptions, form.parentContextSelections);
     const relatedContexts = selectedTaskPushRelatedContexts(capabilities.relatedContextOptions, form.relatedContextSelections);
-    const layout = buildTaskModelPushLayout(task, form.supplementalInfo, capabilities.currentAttachmentOptions, parentContexts, relatedContexts);
+    const supplementalAttachments = taskPushSupplementalLayoutAttachments(form.supplementalAttachments);
+    const layout = buildTaskModelPushLayout(task, form.supplementalInfo, capabilities.currentAttachmentOptions, parentContexts, relatedContexts, supplementalAttachments);
     const pending: TrackedTaskModelPushState = {
       ...createTaskModelPushPendingState({
         task,
         projectName: targetProject?.name ?? task.projectId,
         request,
         form,
-        prompt: buildTaskModelPushMessage(task, form.supplementalInfo, capabilities.currentAttachmentOptions, parentContexts, relatedContexts),
+        prompt: buildTaskModelPushMessage(task, form.supplementalInfo, capabilities.currentAttachmentOptions, parentContexts, relatedContexts, supplementalAttachments),
         layout,
         currentAttachmentOptions: capabilities.currentAttachmentOptions,
         capabilities,
@@ -9996,8 +10002,8 @@ export function App(props: {
       setTaskModelPushStatus('ready');
       setTaskModelPushError(
         appShellSettings.appLanguage === 'zh-CN'
-          ? '任务上下文已刷新；模型、工作区、补充信息和仍有效的选择已保留，请重新确认。'
-          : 'Task context was refreshed. Model, workspace, supplemental information, and still-valid selections were preserved. Review and confirm again.',
+          ? '任务上下文已刷新；模型、工作区、补充信息、本次附件和仍有效的选择已保留，请重新确认。'
+          : 'Task context was refreshed. Model, workspace, supplemental information, attachments for this push, and still-valid selections were preserved. Review and confirm again.',
       );
     } catch (error) {
       if (taskModelPushCapabilityRequestRef.current !== requestVersion) return;

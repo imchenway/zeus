@@ -63,7 +63,7 @@ export function createTaskModelPushPendingState(input: {
     options.push(attachment);
     currentOptions.set(identity, options);
   }
-  const attachments = parseTaskAttachments(input.task.sourceContextJson).flatMap<NativeConversationAttachment>((attachment) => {
+  const currentAttachments = parseTaskAttachments(input.task.sourceContextJson).flatMap<NativeConversationAttachment>((attachment) => {
     const option = currentOptions.get(`${attachment.field}\0${attachment.name}`)?.shift();
     if (!option?.available) return [];
     return [
@@ -77,6 +77,7 @@ export function createTaskModelPushPendingState(input: {
       },
     ];
   });
+  const attachments = [...currentAttachments, ...input.form.supplementalAttachments];
   const navigationId = `task-push:${input.request.idempotencyKey}`;
   const choice = createPendingChoice(input.task, navigationId, input.request.model, input.form);
   return {

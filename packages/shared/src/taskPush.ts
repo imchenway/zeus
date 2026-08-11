@@ -9,6 +9,14 @@ export interface TaskPushPromptAttachment {
   size?: number;
 }
 
+export interface TaskPushSupplementalAttachment {
+  key: string;
+  name: string;
+  kind: 'image' | 'file' | 'directory' | 'pasted_text';
+  mimeType?: string;
+  size?: number;
+}
+
 /** 任务首发中可见的任务内容；运行配置不进入该契约。 */
 export interface TaskPushPromptTaskContent {
   taskTitle: string;
@@ -39,6 +47,7 @@ export interface TaskPushPromptInput extends TaskPushPromptTaskContent {
   taskId?: string;
   taskCode?: string;
   supplementalInfo?: string;
+  supplementalAttachments?: TaskPushSupplementalAttachment[];
   parentContexts?: TaskPushPromptParentContext[];
   relatedContexts?: TaskPushPromptRelatedContext[];
 }
@@ -114,6 +123,7 @@ export interface TaskPushMessageLayout {
   kind: 'task_push';
   blocks: TaskPushLayoutTaskBlock[];
   supplementalInfo: string;
+  supplementalAttachments: TaskPushSupplementalAttachment[];
 }
 
 export type TaskPushInputPart = { type: 'text'; text: string } | { type: 'attachment'; attachmentKey: string };
@@ -184,6 +194,7 @@ export function buildTaskPushLayout(input: TaskPushPromptInput): TaskPushMessage
       ...(input.relatedContexts ?? []).map((context) => buildTaskBlock({ ...context, contextKind: 'related' })),
     ],
     supplementalInfo: input.supplementalInfo?.trim() ?? '',
+    supplementalAttachments: input.supplementalAttachments ?? [],
   };
 }
 
@@ -211,7 +222,12 @@ export function buildTaskPushInputParts(layout: TaskPushMessageLayout): TaskPush
   const parts: TaskPushInputPart[] = [];
   const current = layout.blocks.find((block) => block.contextKind === 'current');
   if (current) appendTaskBlockParts(parts, current);
-  if (layout.supplementalInfo) pushText(parts, `补充信息：${layout.supplementalInfo}\n`);
+  const supplementalAttachments = layout.supplementalAttachments ?? [];
+  if (layout.supplementalInfo || supplementalAttachments.length > 0) {
+    pushText(parts, `补充信息：${supplementalAttachments.length > 0 ? '\n' : ''}`);
+    for (const attachment of supplementalAttachments) parts.push({ type: 'attachment', attachmentKey: attachment.key });
+    if (layout.supplementalInfo) pushText(parts, `${layout.supplementalInfo}\n`);
+  }
   const parents = layout.blocks.filter((block) => block.contextKind === 'parent');
   if (parents.length > 0) {
     pushText(parts, '\n父任务上下文：\n');

@@ -59,6 +59,16 @@ interface NativeConversationAttachmentBase {
 
 export type NativeConversationAttachment = NativeConversationAttachmentBase & ({ localPath: string; uploadRef?: never } | { localPath?: never; uploadRef: string });
 
+export type TaskPushSupplementalAttachmentDraft = NativeConversationAttachment & { taskPushAttachmentKey: string };
+
+export type TaskPushSupplementalAttachmentInput = {
+  taskPushAttachmentKey: string;
+  name: string;
+  mime: string;
+  size: number;
+  kind: 'image' | 'file' | 'directory' | 'pasted_text';
+} & ({ localPath: string; uploadRef?: never } | { localPath?: never; uploadRef: string });
+
 export interface NativeTurnSnapshot {
   id: string;
   providerTurnId: string | null;
@@ -723,6 +733,7 @@ export interface StartTaskModelPushRequest {
         }>;
       };
   supplementalInfo?: string;
+  supplementalAttachments?: TaskPushSupplementalAttachmentInput[];
   taskContext?: {
     revision: string;
     parentSelections: TaskPushParentContextSelection[];

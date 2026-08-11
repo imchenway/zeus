@@ -111,7 +111,9 @@ export interface ThreadItemViewProps {
 function taskPushMessageLayout(value: unknown): TaskPushMessageLayout | null {
   if (!value || typeof value !== 'object') return null;
   const candidate = value as Partial<TaskPushMessageLayout>;
-  return candidate.kind === 'task_push' && Array.isArray(candidate.blocks) && typeof candidate.supplementalInfo === 'string' ? (candidate as TaskPushMessageLayout) : null;
+  return candidate.kind === 'task_push' && Array.isArray(candidate.blocks) && typeof candidate.supplementalInfo === 'string' && (candidate.supplementalAttachments === undefined || Array.isArray(candidate.supplementalAttachments))
+    ? ({ ...candidate, supplementalAttachments: candidate.supplementalAttachments ?? [] } as TaskPushMessageLayout)
+    : null;
 }
 
 function resourceTaskPushAttachmentKey(resource: ConversationResource): string | null {
@@ -132,6 +134,7 @@ function TaskPushMessageContent(
     }),
   );
   const pendingImagesByKey = new Map(props.pendingAttachments.flatMap((attachment) => (attachment.taskPushAttachmentKey && isPendingImageAttachment(attachment) ? [[attachment.taskPushAttachmentKey, attachment] as const] : [])));
+  const supplementalAttachments = props.layout.supplementalAttachments ?? [];
   return (
     <div className="session-task-push-layout">
       {props.layout.blocks.map((block) => (
@@ -175,10 +178,43 @@ function TaskPushMessageContent(
           ) : null}
         </section>
       ))}
-      {props.layout.supplementalInfo ? (
+      {props.layout.supplementalInfo || supplementalAttachments.length > 0 ? (
         <section className="session-task-push-field">
           <strong>补充信息</strong>
-          <SafeMarkdown text={props.layout.supplementalInfo} language={props.language} resources={[]} />
+          <ConversationResourceCards
+            resources={supplementalAttachments.flatMap((attachment) => {
+              const resource = resourcesByKey.get(attachment.key);
+              return resource ? [resource] : [];
+            })}
+            language={props.language}
+            onOpenResource={props.onOpenResource}
+            onLoadResourcePreview={props.onLoadResourcePreview}
+          />
+          <ConversationPendingAttachmentImages
+            attachments={supplementalAttachments.flatMap((attachment) => {
+              const pending = pendingImagesByKey.get(attachment.key);
+              return pending ? [pending] : [];
+            })}
+            language={props.language}
+            onVisibleContentChange={props.onVisibleContentChange}
+          />
+          {supplementalAttachments
+            .filter((attachment) => !resourcesByKey.has(attachment.key) && !pendingImagesByKey.has(attachment.key))
+            .map((attachment) => (
+              <span key={attachment.key} className="session-task-push-resource-placeholder">
+                附件 · {attachment.name}
+              </span>
+            ))}
+          {props.layout.supplementalInfo ? (
+            <SafeMarkdown
+              text={props.layout.supplementalInfo}
+              language={props.language}
+              resources={supplementalAttachments.flatMap((attachment) => {
+                const resource = resourcesByKey.get(attachment.key);
+                return resource ? [resource] : [];
+              })}
+            />
+          ) : null}
         </section>
       ) : null}
     </div>
@@ -210,7 +246,7 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
   const pendingAttachments = role === 'user' ? nativeConversationAttachments(props.item.payload.attachments) : [];
   const hasAuthoritativeAttachmentResources = props.item.resources.some((resource) => resource.kind === 'attachment' && resource.presentation === 'card');
   const pendingImageAttachments = !taskPushLayout && !hasAuthoritativeAttachmentResources ? pendingAttachments.filter(isPendingImageAttachment) : [];
-  const taskPushAttachmentKeys = new Set(taskPushLayout?.blocks.flatMap((block) => block.attachments.map((attachment) => attachment.key)) ?? []);
+  const taskPushAttachmentKeys = new Set([...(taskPushLayout?.blocks.flatMap((block) => block.attachments.map((attachment) => attachment.key)) ?? []), ...(taskPushLayout?.supplementalAttachments ?? []).map((attachment) => attachment.key)]);
   const unplacedResources = taskPushLayout
     ? props.item.resources.filter((resource) => {
         const key = resourceTaskPushAttachmentKey(resource);

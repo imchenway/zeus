@@ -990,6 +990,21 @@ function setupIpc(): void {
     const record = resource && typeof resource === 'object' && !Array.isArray(resource) ? (resource as { localPath?: string; uploadRef?: string }) : {};
     return conversationInputResources.preview(record);
   });
+  ipcMain.handle('zeus:open-conversation-input-resource', async (event, resource: unknown) => {
+    const requestingWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow) || !conversationInputResources) {
+      return { opened: false, error: 'conversation_input_resource_unavailable' };
+    }
+    const record = resource && typeof resource === 'object' && !Array.isArray(resource) ? (resource as { localPath?: string; uploadRef?: string }) : {};
+    const path = await conversationInputResources.resolve(record);
+    if (!path) return { opened: false, error: 'conversation_input_resource_not_allowed' };
+    try {
+      const openError = await shell.openPath(path);
+      return openError ? { opened: false, error: openError } : { opened: true };
+    } catch (error) {
+      return { opened: false, error: error instanceof Error ? error.message : 'open_conversation_input_resource_failed' };
+    }
+  });
   ipcMain.handle('zeus:choose-task-attachments', async () => {
     const selected = await dialog.showOpenDialog({
       title: '选择文件或文件夹',
