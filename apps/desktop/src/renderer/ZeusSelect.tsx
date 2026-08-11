@@ -46,18 +46,73 @@ function filterSelectOptions<T extends string>(options: readonly ZeusSelectOptio
   return options.filter((option) => `${option.label} ${option.value}`.toLocaleLowerCase().includes(normalizedQuery));
 }
 
+function parseCssPixel(value: string): number {
+  const parsed = Number.parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
 function measurePopoverContentWidth(popover: HTMLElement, maxWidth: number): number {
   const previousWidth = popover.style.width;
   const previousMinWidth = popover.style.minWidth;
   const previousMaxWidth = popover.style.maxWidth;
+  const previousMeasuringState = popover.dataset.zeusSelectMeasuring;
+  const labelMeasurements: Array<{ option: HTMLElement; clone: HTMLElement }> = [];
+  popover.dataset.zeusSelectMeasuring = 'true';
   popover.style.width = 'max-content';
   popover.style.minWidth = '0px';
   popover.style.maxWidth = `${maxWidth}px`;
-  const measuredWidth = popover.getBoundingClientRect().width;
-  popover.style.width = previousWidth;
-  popover.style.minWidth = previousMinWidth;
-  popover.style.maxWidth = previousMaxWidth;
-  return measuredWidth;
+
+  try {
+    for (const label of popover.querySelectorAll<HTMLElement>('.zeus-select-option-label')) {
+      const option = label.closest<HTMLElement>('.zeus-select-option');
+      if (!option) continue;
+      const clone = label.cloneNode(true) as HTMLElement;
+      clone.style.inlineSize = 'max-content';
+      clone.style.maxInlineSize = 'none';
+      clone.style.minInlineSize = 'max-content';
+      clone.style.overflow = 'visible';
+      clone.style.pointerEvents = 'none';
+      clone.style.position = 'absolute';
+      clone.style.textOverflow = 'clip';
+      clone.style.visibility = 'hidden';
+      clone.style.whiteSpace = 'nowrap';
+      popover.appendChild(clone);
+      labelMeasurements.push({ option, clone });
+    }
+
+    const popoverStyle = window.getComputedStyle(popover);
+    const popoverHorizontalInset = parseCssPixel(popoverStyle.paddingInlineStart) + parseCssPixel(popoverStyle.paddingInlineEnd) + parseCssPixel(popoverStyle.borderInlineStartWidth) + parseCssPixel(popoverStyle.borderInlineEndWidth);
+    const searchRow = popover.querySelector<HTMLElement>('.zeus-select-search-row');
+    const searchMeasure = popover.querySelector<HTMLElement>('.zeus-select-search-width-measure');
+    let searchRowWidth = 0;
+    if (searchRow && searchMeasure) {
+      const searchRowStyle = window.getComputedStyle(searchRow);
+      const searchIcon = searchRow.querySelector<HTMLElement>('.zeus-select-search-icon');
+      const firstGridTrack = searchRowStyle.gridTemplateColumns.split(' ')[0];
+      const searchIconWidth = Math.max(searchIcon?.getBoundingClientRect().width ?? 0, parseCssPixel(firstGridTrack));
+      searchRowWidth = parseCssPixel(searchRowStyle.paddingInlineStart) + parseCssPixel(searchRowStyle.paddingInlineEnd) + searchIconWidth + parseCssPixel(searchRowStyle.columnGap) + searchMeasure.getBoundingClientRect().width;
+    }
+    let optionWidth = 0;
+    for (const { option, clone } of labelMeasurements) {
+      const optionStyle = window.getComputedStyle(option);
+      const gridColumnWidths = optionStyle.gridTemplateColumns.match(/\d+(?:\.\d+)?px/gu)?.map(parseCssPixel) ?? [];
+      const hasColor = option.querySelector('.zeus-select-option-color') !== null;
+      const markerWidth = hasColor ? (gridColumnWidths[0] ?? 10) : 0;
+      const checkWidth = gridColumnWidths.at(-1) ?? 16;
+      const gapCount = hasColor ? 2 : 1;
+      const rowWidth = parseCssPixel(optionStyle.paddingInlineStart) + parseCssPixel(optionStyle.paddingInlineEnd) + markerWidth + checkWidth + parseCssPixel(optionStyle.columnGap) * gapCount + clone.getBoundingClientRect().width;
+      optionWidth = Math.max(optionWidth, rowWidth);
+    }
+    const measuredWidth = popover.getBoundingClientRect().width;
+    return Math.min(Math.max(measuredWidth, optionWidth + popoverHorizontalInset, searchRowWidth + popoverHorizontalInset), maxWidth);
+  } finally {
+    for (const { clone } of labelMeasurements) clone.remove();
+    popover.style.width = previousWidth;
+    popover.style.minWidth = previousMinWidth;
+    popover.style.maxWidth = previousMaxWidth;
+    if (previousMeasuringState === undefined) delete popover.dataset.zeusSelectMeasuring;
+    else popover.dataset.zeusSelectMeasuring = previousMeasuringState;
+  }
 }
 
 export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
@@ -322,6 +377,9 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
               onChange={(event) => handleSearchChange(event.currentTarget.value)}
               onKeyDown={handleSearchKeyDown}
             />
+            <span className="zeus-select-search-width-measure" aria-hidden="true">
+              {searchPlaceholder}
+            </span>
           </span>
         ) : null}
         <span id={listboxId} className="zeus-select-listbox" role="listbox" aria-label={props.ariaLabel}>
