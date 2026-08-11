@@ -12535,3 +12535,56 @@
     min-inline-size: 0;
   }
 }
+
+/* ZEUS-0171：两个会话入口共用可读正文尺寸，过程内容保留次要色，普通答复单独增强清晰度。 */
+.session-codex-parity-v1 {
+  --session-answer-text: rgb(29 31 34);
+  --session-readable-font-size: 15px;
+}
+
+.session-codex-parity-v1 :where(.ai-workspace, .session-workspace-root) {
+  font-size: var(--session-readable-font-size);
+}
+
+.session-codex-parity-v1 .session-thread-item-assistant .session-markdown {
+  color: var(--session-answer-text);
+  font-weight: 400;
+}
+
+.session-codex-parity-v1 .session-commentary-flow {
+  color: var(--session-text-muted);
+}
+
+.session-codex-parity-v1
+  :where(
+    .session-commentary-flow .session-markdown,
+    .session-reasoning-summary,
+    .session-activity-group > details > summary,
+    .session-activity-live,
+    .session-activity-item-title,
+    .session-transcript-thinking,
+    .session-command-summary-copy strong,
+    .session-answered-request > details > summary,
+    .session-answered-request-body strong,
+    .session-answered-request-body p
+  ) {
+  font-size: inherit;
+}
+
+.session-codex-parity-v1 .session-command-summary-copy strong,
+.session-codex-parity-v1 .session-answered-request-summary > strong,
+.session-codex-parity-v1 .session-answered-request-body strong {
+  color: var(--session-text-muted);
+}
+
+.theme-dark.session-codex-parity-v1,
+.theme-dark .session-codex-parity-v1 {
+  --session-answer-text: var(--session-text);
+}
+
+@media (prefers-color-scheme: dark) {
+  .theme-system.session-codex-parity-v1,
+  .theme-system .session-codex-parity-v1 {
+    --session-answer-text: var(--session-text);
+  }
+}
