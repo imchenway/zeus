@@ -6,7 +6,7 @@ import remarkGfm from 'remark-gfm';
 import { MessageCheckIcon, MessageEditIcon, MessageExpandIcon, MessageThumbIcon } from './SessionMessageIcons.js';
 import type { NativeSessionItemBuffer } from './sessionTypes.js';
 import { autosizeTextarea } from './textareaAutosize.js';
-import type { ConversationFileLocation, ConversationOpenTarget, ConversationResource, ConversationResourcePreview } from '@zeus/shared';
+import type { ConversationFileLocation, ConversationOpenTarget, ConversationResource, ConversationResourcePreview, TaskPushMessageLayout } from '@zeus/shared';
 import { ConversationGeneratedImage, ConversationInlineResource, ConversationMarkdownImage, ConversationResourceCards, isImageResource } from './ConversationResources.js';
 
 export type SessionUiLanguage = 'zh-CN' | 'en-US';
@@ -108,6 +108,71 @@ export interface ThreadItemViewProps {
   onVisibleContentChange?: () => void;
 }
 
+function taskPushMessageLayout(value: unknown): TaskPushMessageLayout | null {
+  if (!value || typeof value !== 'object') return null;
+  const candidate = value as Partial<TaskPushMessageLayout>;
+  return candidate.kind === 'task_push' && Array.isArray(candidate.blocks) && typeof candidate.supplementalInfo === 'string' ? (candidate as TaskPushMessageLayout) : null;
+}
+
+function resourceTaskPushAttachmentKey(resource: ConversationResource): string | null {
+  return 'taskPushAttachmentKey' in resource && typeof resource.taskPushAttachmentKey === 'string' ? resource.taskPushAttachmentKey : null;
+}
+
+function TaskPushMessageContent(props: Pick<ThreadItemViewProps, 'language' | 'onOpenResource' | 'onLoadResourcePreview'> & { layout: TaskPushMessageLayout; resources: ConversationResource[] }) {
+  const resourcesByKey = new Map(
+    props.resources.flatMap((resource) => {
+      const key = resourceTaskPushAttachmentKey(resource);
+      return key ? [[key, resource] as const] : [];
+    }),
+  );
+  return (
+    <div className="session-task-push-layout">
+      {props.layout.blocks.map((block) => (
+        <section key={`${block.contextKind}:${block.taskId ?? 'current'}`} className="session-task-push-block">
+          <header>
+            <strong>{block.contextKind === 'current' ? block.taskTitle : `${block.contextKind === 'parent' ? '父任务' : '关联任务'}：${block.taskCode ?? block.taskId} · ${block.taskTitle}`}</strong>
+            <small>任务类型：{block.taskTypeLabel}</small>
+          </header>
+          {block.fields.map((field) => {
+            const resources = field.attachmentKeys.flatMap((key) => {
+              const resource = resourcesByKey.get(key);
+              return resource ? [resource] : [];
+            });
+            const attachmentNames = new Map(block.attachments.map((attachment) => [attachment.key, attachment.name]));
+            const missingAttachmentKeys = field.attachmentKeys.filter((key) => !resourcesByKey.has(key));
+            return (
+              <section key={field.field} className="session-task-push-field">
+                <strong>{field.label}</strong>
+                <ConversationResourceCards resources={resources} language={props.language} onOpenResource={props.onOpenResource} onLoadResourcePreview={props.onLoadResourcePreview} />
+                {missingAttachmentKeys.map((key) => (
+                  <span key={key} className="session-task-push-resource-placeholder">
+                    附件 · {attachmentNames.get(key) ?? key}
+                  </span>
+                ))}
+                <SafeMarkdown text={field.text} language={props.language} resources={resources} onOpenResource={props.onOpenResource} onLoadResourcePreview={props.onLoadResourcePreview} />
+              </section>
+            );
+          })}
+          {block.conversationPaths.length > 0 ? (
+            <section className="session-task-push-field">
+              <strong>会话文件路径</strong>
+              {block.conversationPaths.map((path) => (
+                <code key={path}>{path}</code>
+              ))}
+            </section>
+          ) : null}
+        </section>
+      ))}
+      {props.layout.supplementalInfo ? (
+        <section className="session-task-push-field">
+          <strong>补充信息</strong>
+          <SafeMarkdown text={props.layout.supplementalInfo} language={props.language} resources={[]} />
+        </section>
+      ) : null}
+    </div>
+  );
+}
+
 function optimisticDeliveryStatus(item: NativeSessionItemBuffer, labels: (typeof copy)[SessionUiLanguage]): string {
   const delivery = primitiveText(item.payload.delivery);
   if (delivery === 'steer_now') {
@@ -129,6 +194,14 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
   const editTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const articleRef = useRef<HTMLElement | null>(null);
   const role = itemRole(props.item);
+  const taskPushLayout = role === 'user' ? taskPushMessageLayout(props.item.payload.taskPushLayout) : null;
+  const taskPushAttachmentKeys = new Set(taskPushLayout?.blocks.flatMap((block) => block.attachments.map((attachment) => attachment.key)) ?? []);
+  const unplacedResources = taskPushLayout
+    ? props.item.resources.filter((resource) => {
+        const key = resourceTaskPushAttachmentKey(resource);
+        return !key || !taskPushAttachmentKeys.has(key);
+      })
+    : props.item.resources;
   const itemText = transcriptItemText(props.item);
   const commentary = role === 'commentary';
   const naturalLanguageStream = role === 'assistant' || commentary;
@@ -275,6 +348,8 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
             onLoadResourcePreview={props.onLoadResourcePreview}
           />
         </div>
+      ) : role === 'user' && taskPushLayout ? (
+        <TaskPushMessageContent layout={taskPushLayout} resources={props.item.resources} language={props.language} onOpenResource={props.onOpenResource} onLoadResourcePreview={props.onLoadResourcePreview} />
       ) : role === 'user' && visibleText ? (
         <SafeMarkdown text={visibleText} language={props.language} resources={props.item.resources} onOpenResource={props.onOpenResource} onLoadResourcePreview={props.onLoadResourcePreview} />
       ) : naturalLanguageStream && (visibleText || (streamActive && itemText)) ? (
@@ -291,9 +366,9 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
         <span className="session-thinking-indicator">{labels.thinking}</span>
       ) : null}
       {!command ? <TypedItemFacts item={props.item} role={role} language={props.language} /> : null}
-      <ItemAttachments item={props.item} label={labels.attachments} />
-      {role !== 'image' ? <ConversationResourceCards resources={props.item.resources} language={props.language} onOpenResource={props.onOpenResource} onLoadResourcePreview={props.onLoadResourcePreview} /> : null}
-      <ItemImages item={props.item} label={labels.conversationImage} />
+      {!taskPushLayout ? <ItemAttachments item={props.item} label={labels.attachments} /> : null}
+      {role !== 'image' ? <ConversationResourceCards resources={unplacedResources} language={props.language} onOpenResource={props.onOpenResource} onLoadResourcePreview={props.onLoadResourcePreview} /> : null}
+      {!taskPushLayout ? <ItemImages item={props.item} label={labels.conversationImage} /> : null}
       {hasActions ? (
         <footer className="session-thread-item-actions" data-message-actions={role}>
           {role === 'user' && messageTimestamp && timestampSource ? <MessageTimestamp dateTime={timestampSource} value={messageTimestamp} /> : null}

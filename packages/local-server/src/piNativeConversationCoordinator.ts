@@ -4,6 +4,7 @@ import { readdir, readFile, writeFile } from 'node:fs/promises';
 import { extname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import { type AgentImageInput, type AgentModelIdentity, type AgentRuntimeEvent, type AgentSessionIdentity, createPiSdkRuntimeDriver, modelRef, type PiZeusToolBroker, type PiZeusToolRequest, type PiZeusToolResult } from '@zeus/ai-runtime';
+import { buildTaskPushInputParts, type TaskPushMessageLayout } from '@zeus/shared';
 import type { ConversationItemRepository, ConversationRepository, ConversationServerRequestRepository, ConversationSubmissionRepository, ConversationTurnRepository, ZeusConversationWithMessagesRecord, ZeusDatabase } from '@zeus/storage';
 import type { ModelConnectionService } from './modelConnectionService.js';
 import type { NativeConversationAttachmentInput } from './codexNativeConversationContracts.js';
@@ -59,6 +60,7 @@ export interface StartPiConversationInput {
   environmentId?: string;
   attachments?: NativeConversationAttachmentInput[];
   allowedAttachmentRoots?: string[];
+  taskPushLayout?: TaskPushMessageLayout;
 }
 
 interface PiAttachmentResolution {
@@ -114,8 +116,9 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
   }
 
   async function startConversation(input: StartPiConversationInput) {
-    const attachmentInput = await resolvePiAttachmentInput(input.attachments ?? [], input.allowedAttachmentRoots ?? []);
-    const providerPrompt = appendPiAttachmentReferences(input.prompt, attachmentInput.pathReferences);
+    const orderedAttachments = input.taskPushLayout ? orderPiTaskPushAttachments(input.taskPushLayout, input.attachments ?? []) : (input.attachments ?? []);
+    const attachmentInput = await resolvePiAttachmentInput(orderedAttachments, input.allowedAttachmentRoots ?? []);
+    const providerPrompt = input.taskPushLayout ? renderPiTaskPushPrompt(input.taskPushLayout, attachmentInput.attachments) : appendPiAttachmentReferences(input.prompt, attachmentInput.pathReferences);
     const session = await driver.openSession({ cwd: input.cwd, model: input.model });
     const createdAt = options.now();
     options.conversations.create({
@@ -164,6 +167,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       input: {
         text: providerPrompt,
         ...(attachmentInput.attachments.length > 0 ? { attachments: attachmentInput.attachments } : {}),
+        ...(input.taskPushLayout ? { taskPushLayout: input.taskPushLayout } : {}),
         context: {
           projectLocalPath: input.cwd,
           model: input.model.modelId,
@@ -197,7 +201,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       agentKind: 'pi',
       nativeRunId: run.nativeRunId,
     });
-    appendUserProjection(input.conversationId, session.nativeSessionId, turn.id, run.nativeRunId, input.prompt, input.clientUserMessageId, createdAt, attachmentInput.attachments);
+    appendUserProjection(input.conversationId, session.nativeSessionId, turn.id, run.nativeRunId, input.prompt, input.clientUserMessageId, createdAt, attachmentInput.attachments, input.taskPushLayout);
     options.submissions.updateStatus(submission.id, 'active', { providerTurnId: run.nativeRunId, updatedAt: run.acceptedAt });
     runs.set(run.nativeRunId, { conversationId: input.conversationId, submissionId: submission.id, turnId: turn.id, providerTurnId: run.nativeRunId });
     await options.db.save();
@@ -366,7 +370,17 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     }
   }
 
-  function appendUserProjection(conversationId: string, threadId: string, turnId: string, providerTurnId: string, content: string, clientMessageId: string, createdAt: string, attachments: NativeConversationAttachmentInput[] = []): void {
+  function appendUserProjection(
+    conversationId: string,
+    threadId: string,
+    turnId: string,
+    providerTurnId: string,
+    content: string,
+    clientMessageId: string,
+    createdAt: string,
+    attachments: NativeConversationAttachmentInput[] = [],
+    taskPushLayout?: TaskPushMessageLayout,
+  ): void {
     const itemId = `pi_user_${clientMessageId}`;
     const attachmentMetadata = persistedPiAttachmentMetadata(attachments);
     options.items.upsertCompleted({
@@ -377,7 +391,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       providerItemId: itemId,
       itemType: 'userMessage',
       phase: 'prework',
-      payload: { clientUserMessageId: clientMessageId, agentKind: 'pi', ...(attachmentMetadata.length > 0 ? { attachments: attachmentMetadata } : {}) },
+      payload: { clientUserMessageId: clientMessageId, agentKind: 'pi', ...(attachmentMetadata.length > 0 ? { attachments: attachmentMetadata } : {}), ...(taskPushLayout ? { taskPushLayout } : {}) },
       textContent: content,
       completedAt: createdAt,
       updatedAt: createdAt,
@@ -389,7 +403,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       role: 'user',
       content,
       source: 'pi_sdk',
-      metadata: { clientUserMessageId: clientMessageId, agentKind: 'pi', cwd: contexts.get(threadId)?.cwd, ...(attachmentMetadata.length > 0 ? { attachments: attachmentMetadata } : {}) },
+      metadata: { clientUserMessageId: clientMessageId, agentKind: 'pi', cwd: contexts.get(threadId)?.cwd, ...(attachmentMetadata.length > 0 ? { attachments: attachmentMetadata } : {}), ...(taskPushLayout ? { taskPushLayout } : {}) },
       createdAt,
       providerThreadId: threadId,
       providerTurnId,
@@ -658,6 +672,25 @@ function appendPiAttachmentReferences(prompt: string, pathReferences: Array<{ na
   return `${prompt}\n\n附件路径（请按需读取）：\n${pathReferences.map((attachment) => `- ${attachment.name}: ${attachment.path}`).join('\n')}`;
 }
 
+function orderPiTaskPushAttachments(layout: TaskPushMessageLayout, attachments: NativeConversationAttachmentInput[]): NativeConversationAttachmentInput[] {
+  const byKey = new Map(attachments.flatMap((attachment) => (attachment.taskPushAttachmentKey ? [[attachment.taskPushAttachmentKey, attachment] as const] : [])));
+  return buildTaskPushInputParts(layout).flatMap((part) => (part.type === 'attachment' && byKey.has(part.attachmentKey) ? [byKey.get(part.attachmentKey)!] : []));
+}
+
+/** Pi SDK 图片字节通过独立数组传入；文字中的同序标记保留字段语义与资源对应。 */
+function renderPiTaskPushPrompt(layout: TaskPushMessageLayout, attachments: NativeConversationAttachmentInput[]): string {
+  const byKey = new Map(attachments.flatMap((attachment) => (attachment.taskPushAttachmentKey ? [[attachment.taskPushAttachmentKey, attachment] as const] : [])));
+  return buildTaskPushInputParts(layout)
+    .map((part) => {
+      if (part.type === 'text') return part.text;
+      const attachment = byKey.get(part.attachmentKey);
+      if (!attachment) throw piError('ZEUS_PI_ATTACHMENT_INPUT_INVALID', `Pi 任务首发缺少附件位置：${part.attachmentKey}`);
+      const imageMime = attachment.localPath ? resolvePiImageMime(attachment.mime, attachment.localPath) : null;
+      return imageMime ? `[图片：${attachment.name}]\n` : `[附件：${attachment.name} · ${attachment.localPath ?? ''}]\n`;
+    })
+    .join('');
+}
+
 function persistedPiAttachmentMetadata(attachments: NativeConversationAttachmentInput[]): Array<Record<string, unknown>> {
   return attachments.map((attachment) => ({
     name: attachment.name,
@@ -665,6 +698,7 @@ function persistedPiAttachmentMetadata(attachments: NativeConversationAttachment
     size: attachment.size,
     ...(attachment.localPath ? { localPath: attachment.localPath } : {}),
     ...(attachment.uploadRef ? { uploadRef: attachment.uploadRef } : {}),
+    ...(attachment.taskPushAttachmentKey ? { taskPushAttachmentKey: attachment.taskPushAttachmentKey } : {}),
   }));
 }
 

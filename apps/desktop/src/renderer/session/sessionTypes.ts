@@ -3,6 +3,8 @@ import type {
   NativeTokenUsageSnapshot as SharedNativeTokenUsageSnapshot,
   TaskPushParentContextOption,
   TaskPushParentContextSelection,
+  TaskPushRelatedContextOption,
+  TaskPushRelatedContextSelection,
   TurnChangeSet,
   ZeusBrowserComment,
   ZeusBrowserPreparedSubmission,
@@ -52,6 +54,7 @@ interface NativeConversationAttachmentBase {
   characterCount?: number;
   /** 仅保留 Codex App 同级可恢复范围内的粘贴文本，不写入服务端持久化附件。 */
   restorableText?: string;
+  taskPushAttachmentKey?: string;
 }
 
 export type NativeConversationAttachment = NativeConversationAttachmentBase & ({ localPath: string; uploadRef?: never } | { localPath?: never; uploadRef: string });
@@ -413,9 +416,12 @@ export interface CodexTaskPushCapabilities {
   projectId: string;
   taskId: string;
   canonicalPrompt: string;
+  taskContextRevision: string;
   parentContextRevision: string;
   repositoryRevision: string;
+  currentAttachmentOptions: TaskPushParentContextOption['attachments'];
   parentContextOptions: TaskPushParentContextOption[];
+  relatedContextOptions: TaskPushRelatedContextOption[];
   preferredModel: string;
   models: CodexTaskPushModelCapability[];
   codexAccount: CodexAccountSnapshot;
@@ -711,9 +717,10 @@ export interface StartTaskModelPushRequest {
         }>;
       };
   supplementalInfo?: string;
-  parentContext?: {
+  taskContext?: {
     revision: string;
-    selections: TaskPushParentContextSelection[];
+    parentSelections: TaskPushParentContextSelection[];
+    relatedSelections: TaskPushRelatedContextSelection[];
   };
   idempotencyKey: string;
   clientUserMessageId: string;

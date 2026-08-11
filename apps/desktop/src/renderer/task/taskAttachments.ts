@@ -1,13 +1,13 @@
-import type { TaskAttachmentReference } from '@zeus/shared';
+import { isTaskAttachmentField, type TaskAttachmentField, type TaskAttachmentReference } from '@zeus/shared';
 
 export type TaskAttachmentKind = TaskAttachmentReference['kind'];
 
 export type TaskResourcePayload = { name?: string; type?: string; data?: ArrayBuffer; text?: string; kind?: 'image' | 'file' | 'pasted_text' };
 
-export type TaskResourceAuthorizationResult = { resources: TaskAttachmentView[]; failedCount: number };
+export type TaskResourceAuthorizationResult = { resources: TaskAttachmentCandidate[]; failedCount: number };
 
 export interface TaskAttachmentRestoreTarget {
-  field: 'title' | 'description' | 'defectCurrentState' | 'defectExpectedOutcome' | 'defectReproductionSteps' | 'optimizationCurrentState' | 'optimizationExpectedOutcome' | 'tags';
+  field: TaskAttachmentField;
   start: number;
   end: number;
 }
@@ -19,6 +19,9 @@ export interface TaskAttachmentView extends TaskAttachmentReference {
   /** 记录超长文本原粘贴位置；持久化任务时主动剔除。 */
   restoreTarget?: TaskAttachmentRestoreTarget;
 }
+
+/** Main 只负责物化本机资源；字段归属由实际接收粘贴的 Renderer 控件补全。 */
+export type TaskAttachmentCandidate = Omit<TaskAttachmentView, 'field'>;
 
 export type PersistedTaskAttachment = TaskAttachmentReference;
 
@@ -33,13 +36,14 @@ export function normalizeTaskAttachment(rawAttachment: unknown): TaskAttachmentV
   const path = typeof attachment.path === 'string' ? attachment.path.trim() : '';
   if (!path) return undefined;
   const kind: TaskAttachmentKind = attachment.kind === 'image' || attachment.kind === 'directory' || attachment.kind === 'pasted_text' ? attachment.kind : 'file';
+  if (!isTaskAttachmentField(attachment.field)) return undefined;
   const name = typeof attachment.name === 'string' && attachment.name.trim() ? attachment.name.trim() : inferAttachmentName(path);
   const mimeType = typeof attachment.mimeType === 'string' && attachment.mimeType.trim() ? attachment.mimeType.trim() : undefined;
   const size = typeof attachment.size === 'number' && Number.isSafeInteger(attachment.size) && attachment.size >= 0 ? attachment.size : undefined;
   const characterCount = typeof attachment.characterCount === 'number' && Number.isSafeInteger(attachment.characterCount) && attachment.characterCount >= 0 ? attachment.characterCount : undefined;
   const previewUrl = typeof attachment.previewUrl === 'string' && attachment.previewUrl.startsWith('data:image/') ? attachment.previewUrl : undefined;
   const restorableText = typeof attachment.restorableText === 'string' ? attachment.restorableText : undefined;
-  return { path, name, kind, mimeType, size, characterCount, previewUrl, restorableText };
+  return { path, name, kind, field: attachment.field, mimeType, size, characterCount, previewUrl, restorableText };
 }
 
 export function toPersistedTaskAttachment(attachment: TaskAttachmentView): PersistedTaskAttachment {
@@ -47,6 +51,7 @@ export function toPersistedTaskAttachment(attachment: TaskAttachmentView): Persi
     path: attachment.path,
     name: attachment.name,
     kind: attachment.kind,
+    field: attachment.field,
     ...(attachment.mimeType ? { mimeType: attachment.mimeType } : {}),
     ...(attachment.size !== undefined ? { size: attachment.size } : {}),
     ...(attachment.characterCount !== undefined ? { characterCount: attachment.characterCount } : {}),
@@ -70,6 +75,10 @@ export function parseTaskAttachments(sourceContextJson?: string): TaskAttachment
     .map(normalizeTaskAttachment)
     .filter((attachment): attachment is TaskAttachmentView => Boolean(attachment))
     .slice(0, 24);
+}
+
+export function taskAttachmentsForField(attachments: readonly TaskAttachmentView[], field: TaskAttachmentField): TaskAttachmentView[] {
+  return attachments.filter((attachment) => attachment.field === field);
 }
 
 export function mergeTaskAttachments(existing: TaskAttachmentView[], additions: TaskAttachmentView[]): PersistedTaskAttachment[] {

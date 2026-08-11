@@ -4186,6 +4186,42 @@
   }
 }
 
+.session-codex-parity-v1 .session-task-push-layout,
+.session-codex-parity-v1 .session-task-push-block,
+.session-codex-parity-v1 .session-task-push-field {
+  display: grid;
+  gap: 8px;
+  min-inline-size: 0;
+}
+
+.session-codex-parity-v1 .session-task-push-block + .session-task-push-block {
+  margin-block-start: 8px;
+  padding-block-start: 14px;
+  border-block-start: 1px solid var(--session-line-soft);
+}
+
+.session-codex-parity-v1 .session-task-push-block > header {
+  display: grid;
+  gap: 3px;
+}
+
+.session-codex-parity-v1 .session-task-push-block > header small,
+.session-codex-parity-v1 .session-task-push-field > strong {
+  color: var(--session-text-muted);
+  font-size: 11px;
+}
+
+.session-codex-parity-v1 .session-task-push-field > code,
+.session-codex-parity-v1 .session-task-push-resource-placeholder {
+  overflow-wrap: anywhere;
+  padding: 7px 9px;
+  border: 1px solid var(--session-line-soft);
+  border-radius: 9px;
+  background: var(--session-surface-subtle);
+  color: var(--session-text-muted);
+  font-size: 11px;
+}
+
 /* 终态任务会话保留完整历史，但继续交互必须与重新打开任务同一步完成。 */
 .session-task-readonly-gate {
   align-items: center;

@@ -19,6 +19,7 @@ import type {
   NativeTurnSnapshot,
   TransportState,
 } from './sessionTypes.js';
+import type { TaskPushMessageLayout } from '@zeus/shared';
 import type { ZeusBrowserComment, ZeusBrowserPreparedSubmission } from '@zeus/shared';
 
 export type NativeSessionAction =
@@ -48,6 +49,7 @@ export type NativeSessionAction =
       browserComments: ZeusBrowserComment[];
       delivery: 'queue' | 'steer_now';
       previousConversationState: ConversationState;
+      taskPushLayout?: TaskPushMessageLayout;
     }
   | {
       type: 'send_failed';
@@ -765,6 +767,7 @@ function addOptimisticUserItem(state: NativeSessionState, action: Extract<Native
     payload: {
       attachments: action.submittedAttachments,
       delivery: action.delivery,
+      ...(action.taskPushLayout ? { taskPushLayout: action.taskPushLayout } : {}),
       ...(action.browserComments.length ? { browserComments: action.browserComments } : {}),
     },
     resources: [],

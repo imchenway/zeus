@@ -9,11 +9,21 @@ export const taskPriorityOrder = ['p0', 'p1', 'p2', 'p3', 'p4'] as const;
 
 export type TaskPriority = (typeof taskPriorityOrder)[number];
 
+/** 任务附件只能归属到可接收资源的内容字段，标题不在此集合中。 */
+export const taskAttachmentFieldOrder = ['description', 'defectCurrentState', 'defectExpectedOutcome', 'defectReproductionSteps', 'optimizationCurrentState', 'optimizationExpectedOutcome', 'tags'] as const;
+
+export type TaskAttachmentField = (typeof taskAttachmentFieldOrder)[number];
+
+export function isTaskAttachmentField(value: unknown): value is TaskAttachmentField {
+  return typeof value === 'string' && taskAttachmentFieldOrder.includes(value as TaskAttachmentField);
+}
+
 /** 任务附件关联只保存可持久化元数据；预览内容与可恢复正文不进入任务记录。 */
 export interface TaskAttachmentReference {
   path: string;
   name: string;
   kind: 'image' | 'file' | 'directory' | 'pasted_text';
+  field: TaskAttachmentField;
   mimeType?: string;
   size?: number;
   characterCount?: number;

@@ -38,6 +38,7 @@ interface AttachmentResourceCandidate extends ResourceCandidateBase {
   mimeType?: string;
   previewKind: 'image' | 'document' | 'none';
   iconKind: ConversationFileIconKind;
+  taskPushAttachmentKey?: string;
 }
 
 type ResourceCandidate = FileResourceCandidate | WebsiteResourceCandidate | AttachmentResourceCandidate;
@@ -328,6 +329,7 @@ export function toConversationResource(record: ZeusConversationResourceRecord): 
     previewKind,
     iconKind,
     ...(stringValue(display.mimeType) ? { mimeType: stringValue(display.mimeType)! } : {}),
+    ...(stringValue(display.taskPushAttachmentKey) ? { taskPushAttachmentKey: stringValue(display.taskPushAttachmentKey)! } : {}),
   } satisfies ConversationAttachmentResource;
 }
 
@@ -485,6 +487,7 @@ function normalizeAttachmentResource(input: { sourceIndex: number; value: Record
   if (!resolved) return null;
   const mimeType = stringValue(input.value.mime ?? input.value.mimeType) ?? undefined;
   const displayName = stringValue(input.value.name) ?? basename(resolved.absolutePath);
+  const taskPushAttachmentKey = stringValue(input.value.taskPushAttachmentKey) ?? undefined;
   return {
     kind: 'attachment',
     sourceIndex: input.sourceIndex,
@@ -496,6 +499,7 @@ function normalizeAttachmentResource(input: { sourceIndex: number; value: Record
     ...(mimeType ? { mimeType } : {}),
     previewKind: previewKindForPath(resolved.absolutePath, mimeType),
     iconKind: iconKindForPath(resolved.absolutePath, mimeType),
+    ...(taskPushAttachmentKey ? { taskPushAttachmentKey } : {}),
   };
 }
 
@@ -713,6 +717,7 @@ function displayForCandidate(candidate: ResourceCandidate): Record<string, unkno
     previewKind: candidate.previewKind,
     iconKind: candidate.iconKind,
     ...(candidate.mimeType ? { mimeType: candidate.mimeType } : {}),
+    ...(candidate.taskPushAttachmentKey ? { taskPushAttachmentKey: candidate.taskPushAttachmentKey } : {}),
   };
 }
 

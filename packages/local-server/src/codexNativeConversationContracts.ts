@@ -1,4 +1,5 @@
 import type { CodexServerRequestResponse } from '@zeus/ai-runtime';
+import type { TaskPushMessageLayout } from '@zeus/shared';
 import type { ConversationCollaborationMode, ConversationPermissionMode } from '@zeus/storage';
 
 export type NativeConversationRunState =
@@ -66,6 +67,8 @@ export interface NativeConversationAttachmentInput {
   uploadRef?: string;
   /** Local Server 验签后写入的精确路径授权；API 调用方不能自行声明。 */
   authorizedPath?: string;
+  /** 任务首发服务端快照中的附件位置身份；普通会话附件不填写。 */
+  taskPushAttachmentKey?: string;
 }
 
 export interface StartTaskConversationInput {
@@ -91,6 +94,7 @@ export interface StartTaskConversationInput {
   idempotencyKey: string;
   clientUserMessageId: string;
   attachments?: NativeConversationAttachmentInput[];
+  taskPushLayout?: TaskPushMessageLayout;
   /** 服务端预检后允许 Codex 读取附件的目录；不接受 Renderer 自报信任根。 */
   allowedAttachmentRoots?: string[];
   /** 用户明确触发并等待结果的任务操作直接创建 app-server thread/turn，不进入普通会话并发队列。 */

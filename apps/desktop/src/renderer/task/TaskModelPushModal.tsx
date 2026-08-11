@@ -1,13 +1,21 @@
 import { useMemo, type FormEvent, type KeyboardEvent } from 'react';
-import { buildTaskPushPrompt, type TaskPushParentContextOption, type TaskPushPromptParentContext } from '@zeus/shared';
+import {
+  buildTaskPushLayout,
+  renderTaskPushLayoutText,
+  type TaskPushContextOption,
+  type TaskPushMessageLayout,
+  type TaskPushParentContextOption,
+  type TaskPushPromptAttachment,
+  type TaskPushPromptParentContext,
+  type TaskPushPromptRelatedContext,
+  type TaskPushRelatedContextOption,
+} from '@zeus/shared';
 import type { TaskRecord } from '../apiClient.js';
 import type { CodexTaskPushCapabilities, NativePermissionMode, NativeServiceTierSelection } from '../session/sessionTypes.js';
 import { normalizeServiceTierSelection, serviceTierDescription, serviceTierOptions, serviceTierSelectionFromValue, serviceTierSelectionValue } from '../session/serviceTierSelection.js';
 import { Button } from '../ui/Button.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
 import { ZeusSelect } from '../ZeusSelect.js';
-import { TaskAttachmentPreviewList } from './TaskAttachmentPreviewList.js';
-import { parseTaskAttachments } from './taskAttachments.js';
 
 export interface TaskModelPushForm {
   model: string;
@@ -20,6 +28,7 @@ export interface TaskModelPushForm {
   directConcurrencyConfirmed: boolean;
   repositorySelections: Record<string, { sourceRef: string; branchName: string; includeLocalChanges: boolean }>;
   parentContextSelections: Record<string, { selected: boolean; conversationIds: string[]; attachmentKeys: string[] }>;
+  relatedContextSelections: Record<string, { selected: boolean; conversationIds: string[]; attachmentKeys: string[] }>;
   supplementalInfo: string;
 }
 
@@ -93,11 +102,25 @@ function taskPushCommonSourceLabel(source: TaskPushCommonSource, repositoryCount
 }
 
 export function buildTaskModelPushMessage(
-  task: Pick<TaskRecord, 'title' | 'taskType' | 'description' | 'defectCurrentState' | 'defectExpectedOutcome' | 'defectReproductionSteps' | 'optimizationCurrentState' | 'optimizationExpectedOutcome'>,
+  task: Pick<TaskRecord, 'id' | 'taskCode' | 'title' | 'taskType' | 'description' | 'defectCurrentState' | 'defectExpectedOutcome' | 'defectReproductionSteps' | 'optimizationCurrentState' | 'optimizationExpectedOutcome' | 'tags'>,
   supplementalInfo: string,
+  currentAttachments: TaskPushPromptAttachment[] = [],
   parentContexts: TaskPushPromptParentContext[] = [],
+  relatedContexts: TaskPushPromptRelatedContext[] = [],
 ): string {
-  return buildTaskPushPrompt({
+  return renderTaskPushLayoutText(buildTaskModelPushLayout(task, supplementalInfo, currentAttachments, parentContexts, relatedContexts));
+}
+
+export function buildTaskModelPushLayout(
+  task: Pick<TaskRecord, 'id' | 'taskCode' | 'title' | 'taskType' | 'description' | 'defectCurrentState' | 'defectExpectedOutcome' | 'defectReproductionSteps' | 'optimizationCurrentState' | 'optimizationExpectedOutcome' | 'tags'>,
+  supplementalInfo: string,
+  currentAttachments: TaskPushPromptAttachment[] = [],
+  parentContexts: TaskPushPromptParentContext[] = [],
+  relatedContexts: TaskPushPromptRelatedContext[] = [],
+): TaskPushMessageLayout {
+  return buildTaskPushLayout({
+    taskId: task.id,
+    taskCode: task.taskCode,
     taskTitle: task.title,
     taskType: task.taskType,
     taskDescription: task.description,
@@ -106,17 +129,32 @@ export function buildTaskModelPushMessage(
     defectReproductionSteps: task.defectReproductionSteps,
     optimizationCurrentState: task.optimizationCurrentState,
     optimizationExpectedOutcome: task.optimizationExpectedOutcome,
+    tags: task.tags,
+    attachments: currentAttachments,
     supplementalInfo,
     parentContexts,
+    relatedContexts,
   });
 }
 
 /** 按服务端给出的根到父顺序生成正文上下文；附件只走结构化通道，不进入文本。 */
 export function selectedTaskPushParentContexts(options: TaskPushParentContextOption[], selections: TaskModelPushForm['parentContextSelections']): TaskPushPromptParentContext[] {
+  return selectedTaskPushContexts(options, selections);
+}
+
+export function selectedTaskPushRelatedContexts(options: TaskPushRelatedContextOption[], selections: TaskModelPushForm['relatedContextSelections']): TaskPushPromptRelatedContext[] {
+  return selectedTaskPushContexts(options, selections);
+}
+
+function selectedTaskPushContexts<T extends TaskPushContextOption>(
+  options: T[],
+  selections: Record<string, { selected: boolean; conversationIds: string[]; attachmentKeys: string[] }>,
+): Array<TaskPushPromptParentContext | TaskPushPromptRelatedContext> {
   return options.flatMap((option) => {
     const selection = selections[option.taskId];
     if (!selection?.selected) return [];
     const selectedConversationIds = new Set(selection.conversationIds);
+    const selectedAttachmentKeys = new Set(selection.attachmentKeys);
     return [
       {
         taskId: option.taskId,
@@ -129,10 +167,172 @@ export function selectedTaskPushParentContexts(options: TaskPushParentContextOpt
         defectReproductionSteps: option.defectReproductionSteps,
         optimizationCurrentState: option.optimizationCurrentState,
         optimizationExpectedOutcome: option.optimizationExpectedOutcome,
+        tags: option.tags,
+        attachments: option.attachments.filter((attachment) => selectedAttachmentKeys.has(attachment.key) && attachment.available),
         conversationPaths: option.conversations.filter((conversation) => selectedConversationIds.has(conversation.id) && conversation.available && conversation.path).map((conversation) => conversation.path!),
       },
     ];
   });
+}
+
+type TaskPushContextSelections = TaskModelPushForm['parentContextSelections'];
+
+function taskPushAttachmentFieldLabel(field: TaskPushPromptAttachment['field'], zh: boolean): string {
+  const labels = zh
+    ? { description: '需求描述', defectCurrentState: '现状', defectExpectedOutcome: '预期', defectReproductionSteps: '复现步骤', optimizationCurrentState: '现状', optimizationExpectedOutcome: '预期', tags: '标签' }
+    : {
+        description: 'Description',
+        defectCurrentState: 'Current state',
+        defectExpectedOutcome: 'Expected outcome',
+        defectReproductionSteps: 'Reproduction steps',
+        optimizationCurrentState: 'Current state',
+        optimizationExpectedOutcome: 'Expected outcome',
+        tags: 'Tags',
+      };
+  return labels[field];
+}
+
+function TaskPushContextPicker(props: {
+  kind: 'parent' | 'related';
+  options: TaskPushContextOption[];
+  selections: TaskPushContextSelections;
+  busy: boolean;
+  zh: boolean;
+  onChange: (taskId: string, selection: TaskPushContextSelections[string]) => void;
+}) {
+  if (props.options.length === 0) return null;
+  const title = props.kind === 'parent' ? (props.zh ? '父任务上下文' : 'Parent task context') : props.zh ? '关联任务上下文' : 'Related task context';
+  const attachmentTitle = props.kind === 'parent' ? (props.zh ? '父任务附件' : 'Parent attachments') : props.zh ? '关联任务附件' : 'Related attachments';
+  return (
+    <section className="task-model-push-parent-context" aria-label={title}>
+      <span className="task-model-push-section-heading">
+        <strong>{title}</strong>
+        <small>{props.zh ? '默认全部不选；任务、会话和附件均需本次手动勾选' : 'Nothing is selected by default; select tasks, sessions, and attachments manually for this push'}</small>
+      </span>
+      <div className="task-model-push-parent-list">
+        {props.options.map((option) => {
+          const selection = props.selections[option.taskId] ?? { selected: false, conversationIds: [], attachmentKeys: [] };
+          const selectedConversations = new Set(selection.conversationIds);
+          const selectedAttachments = new Set(selection.attachmentKeys);
+          const updateResource = (field: 'conversationIds' | 'attachmentKeys', value: string, selected: boolean): void => {
+            const values = selection[field];
+            props.onChange(option.taskId, { ...selection, [field]: selected ? [...values.filter((entry) => entry !== value), value] : values.filter((entry) => entry !== value) });
+          };
+          return (
+            <fieldset key={option.taskId} className={selection.selected ? 'task-model-push-parent is-selected' : 'task-model-push-parent'}>
+              <legend>
+                <label>
+                  <input type="checkbox" checked={selection.selected} onChange={(event) => props.onChange(option.taskId, { selected: event.currentTarget.checked, conversationIds: [], attachmentKeys: [] })} disabled={props.busy} />
+                  <span>
+                    <strong>
+                      {option.taskCode} · {option.taskTitle}
+                    </strong>
+                    <small>{option.taskType === 'defect' ? (props.zh ? '缺陷' : 'Defect') : option.taskType === 'optimization' ? (props.zh ? '优化' : 'Optimization') : props.zh ? '需求' : 'Requirement'}</small>
+                  </span>
+                </label>
+              </legend>
+              {selection.selected ? (
+                <div className="task-model-push-parent-resources">
+                  <div>
+                    <strong>{props.zh ? '内部会话' : 'Sessions'}</strong>
+                    {option.conversations.length > 0 ? (
+                      option.conversations.map((conversation) => (
+                        <label key={conversation.id} className={!conversation.available ? 'is-unavailable' : undefined}>
+                          <input
+                            type="checkbox"
+                            checked={selectedConversations.has(conversation.id)}
+                            onChange={(event) => updateResource('conversationIds', conversation.id, event.currentTarget.checked)}
+                            disabled={props.busy || !conversation.available}
+                          />
+                          <span>
+                            <strong>{conversation.title}</strong>
+                            <small>
+                              {conversation.archived ? (props.zh ? '已归档 · ' : 'Archived · ') : ''}
+                              {conversation.available ? conversation.path : conversation.unavailableReason}
+                            </small>
+                          </span>
+                        </label>
+                      ))
+                    ) : (
+                      <small>{props.zh ? '没有会话' : 'No sessions'}</small>
+                    )}
+                  </div>
+                  <div>
+                    <strong>{attachmentTitle}</strong>
+                    {option.attachments.length > 0 ? (
+                      option.attachments.map((attachment) => (
+                        <label key={attachment.key} className={!attachment.available ? 'is-unavailable' : undefined}>
+                          <input
+                            type="checkbox"
+                            checked={selectedAttachments.has(attachment.key)}
+                            onChange={(event) => updateResource('attachmentKeys', attachment.key, event.currentTarget.checked)}
+                            disabled={props.busy || !attachment.available}
+                          />
+                          <span>
+                            <strong>{attachment.name}</strong>
+                            <small>
+                              {attachment.available ? `${taskPushAttachmentFieldLabel(attachment.field, props.zh)} · ${attachment.kind}${attachment.size !== undefined ? ` · ${attachment.size} B` : ''}` : attachment.unavailableReason}
+                            </small>
+                          </span>
+                        </label>
+                      ))
+                    ) : (
+                      <small>{props.zh ? '没有附件' : 'No attachments'}</small>
+                    )}
+                  </div>
+                </div>
+              ) : null}
+            </fieldset>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+export function TaskPushLayoutPreview(props: { layout: TaskPushMessageLayout; language: 'zh-CN' | 'en-US' }) {
+  const attachmentsByKey = new Map(props.layout.blocks.flatMap((block) => block.attachments).map((attachment) => [attachment.key, attachment]));
+  return (
+    <section className="task-model-push-canonical task-push-layout" aria-label={props.language === 'zh-CN' ? '将发送的任务内容' : 'Task content to send'}>
+      <strong>{props.language === 'zh-CN' ? '将发送的任务内容' : 'Task content to send'}</strong>
+      {props.layout.blocks.map((block) => (
+        <article key={`${block.contextKind}:${block.taskId ?? 'current'}`} className="task-push-layout-block">
+          <header>
+            <strong>{block.contextKind === 'current' ? block.taskTitle : `${block.contextKind === 'parent' ? '父任务' : '关联任务'}：${block.taskCode ?? block.taskId} · ${block.taskTitle}`}</strong>
+            <small>任务类型：{block.taskTypeLabel}</small>
+          </header>
+          {block.fields.map((field) => (
+            <section key={field.field} className="task-push-layout-field">
+              <strong>{field.label}</strong>
+              {field.attachmentKeys.map((key) => {
+                const attachment = attachmentsByKey.get(key);
+                return attachment ? (
+                  <span key={key} className="task-push-layout-attachment">
+                    {attachment.kind === 'image' ? '图片' : '附件'} · {attachment.name}
+                  </span>
+                ) : null;
+              })}
+              <p>{field.text}</p>
+            </section>
+          ))}
+          {block.conversationPaths.length > 0 ? (
+            <section className="task-push-layout-field">
+              <strong>会话文件路径</strong>
+              {block.conversationPaths.map((path) => (
+                <code key={path}>{path}</code>
+              ))}
+            </section>
+          ) : null}
+        </article>
+      ))}
+      {props.layout.supplementalInfo ? (
+        <section className="task-push-layout-field">
+          <strong>补充信息</strong>
+          <p>{props.layout.supplementalInfo}</p>
+        </section>
+      ) : null}
+    </section>
+  );
 }
 
 export function readTaskModelPushPreferences(storage: Pick<Storage, 'getItem'> | undefined, projectId: string): TaskModelPushPreferences | null {
@@ -198,6 +398,7 @@ export function resolveTaskModelPushInitialForm(capabilities: CodexTaskPushCapab
       }),
     ),
     parentContextSelections: {},
+    relatedContextSelections: {},
     supplementalInfo: '',
   };
 }
@@ -217,15 +418,12 @@ export function TaskModelPushModal(props: {
   onClose: () => void;
   onCancelAuthentication: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
-  onLoadAttachmentPreview?: (path: string) => Promise<{ previewUrl: string; mimeType: string } | null>;
-  onOpenAttachment?: (path: string) => Promise<{ opened: boolean; error?: string }>;
 }) {
   const commonSources = useMemo(() => resolveTaskPushCommonSources(props.capabilities?.repositories ?? []), [props.capabilities?.repositories]);
   if (!props.open || !props.task) return null;
   const zh = props.language === 'zh-CN';
   const authenticating = props.status === 'authenticating';
   const busy = authenticating || props.status === 'submitting';
-  const attachments = parseTaskAttachments(props.task.sourceContextJson);
   const selectedModel = props.capabilities?.models.find((model) => model.model === props.form.model || model.id === props.form.model);
   const codexLoginRequired = selectedModel?.agentKind !== 'pi' && props.capabilities?.codexAccount.requiresOpenaiAuth === true && !props.capabilities.codexAccount.signedIn;
   const repositories = props.capabilities?.repositories ?? [];
@@ -235,11 +433,11 @@ export function TaskModelPushModal(props: {
   const directWorkspaceBusy = (props.capabilities?.directWorkspace.activeWritableConversationCount ?? 0) > 0;
   const directWorkspaceNeedsConfirmation = directWorkspaceBusy && props.form.permissionMode !== 'read-only';
   const parentContextOptions = props.capabilities?.parentContextOptions ?? [];
+  const relatedContextOptions = props.capabilities?.relatedContextOptions ?? [];
+  const currentAttachments = props.capabilities?.currentAttachmentOptions ?? [];
   const selectedParentContexts = selectedTaskPushParentContexts(parentContextOptions, props.form.parentContextSelections);
-  const selectedParentAttachmentCount = parentContextOptions.reduce(
-    (count, option) => count + (props.form.parentContextSelections[option.taskId]?.selected ? (props.form.parentContextSelections[option.taskId]?.attachmentKeys.length ?? 0) : 0),
-    0,
-  );
+  const selectedRelatedContexts = selectedTaskPushRelatedContexts(relatedContextOptions, props.form.relatedContextSelections);
+  const taskPushLayout = buildTaskModelPushLayout(props.task, props.form.supplementalInfo, currentAttachments, selectedParentContexts, selectedRelatedContexts);
 
   function onModelChange(model: string): void {
     const capability = props.capabilities?.models.find((candidate) => candidate.model === model || candidate.id === model);
@@ -257,26 +455,9 @@ export function TaskModelPushModal(props: {
     if (event.key === 'Escape' && !busy) props.onClose();
   }
 
-  function toggleParentTask(option: TaskPushParentContextOption, selected: boolean): void {
-    props.onChange({
-      ...props.form,
-      parentContextSelections: {
-        ...props.form.parentContextSelections,
-        [option.taskId]: selected ? { selected: true, conversationIds: [], attachmentKeys: [] } : { selected: false, conversationIds: [], attachmentKeys: [] },
-      },
-    });
-  }
-
-  function toggleParentResource(taskId: string, field: 'conversationIds' | 'attachmentKeys', value: string, selected: boolean): void {
-    const current = props.form.parentContextSelections[taskId] ?? { selected: true, conversationIds: [], attachmentKeys: [] };
-    const values = current[field];
-    props.onChange({
-      ...props.form,
-      parentContextSelections: {
-        ...props.form.parentContextSelections,
-        [taskId]: { ...current, [field]: selected ? [...values.filter((entry) => entry !== value), value] : values.filter((entry) => entry !== value) },
-      },
-    });
+  function changeContextSelection(kind: 'parent' | 'related', taskId: string, next: { selected: boolean; conversationIds: string[]; attachmentKeys: string[] }): void {
+    const field = kind === 'parent' ? 'parentContextSelections' : 'relatedContextSelections';
+    props.onChange({ ...props.form, [field]: { ...props.form[field], [taskId]: next } });
   }
 
   function applyCommonSource(sourceKey: string): void {
@@ -662,120 +843,10 @@ export function TaskModelPushModal(props: {
             />
           </label>
 
-          {parentContextOptions.length > 0 ? (
-            <section className="task-model-push-parent-context" aria-labelledby="task-model-push-parent-context-title">
-              <span className="task-model-push-section-heading">
-                <strong id="task-model-push-parent-context-title">{zh ? '父任务上下文' : 'Parent task context'}</strong>
-                <small>{zh ? '默认全部不选；任务信息、会话路径和附件均按本次选择发送' : 'Nothing is selected by default; task details, session paths, and attachments are sent only when selected'}</small>
-              </span>
-              <div className="task-model-push-parent-list">
-                {parentContextOptions.map((option) => {
-                  const selection = props.form.parentContextSelections[option.taskId] ?? { selected: false, conversationIds: [], attachmentKeys: [] };
-                  const selectedConversations = new Set(selection.conversationIds);
-                  const selectedAttachments = new Set(selection.attachmentKeys);
-                  return (
-                    <fieldset key={option.taskId} className={selection.selected ? 'task-model-push-parent is-selected' : 'task-model-push-parent'}>
-                      <legend>
-                        <label>
-                          <input type="checkbox" checked={selection.selected} onChange={(event) => toggleParentTask(option, event.currentTarget.checked)} disabled={busy} />
-                          <span>
-                            <strong>
-                              {option.taskCode} · {option.taskTitle}
-                            </strong>
-                            <small>{option.taskType === 'defect' ? (zh ? '缺陷' : 'Defect') : option.taskType === 'optimization' ? (zh ? '优化' : 'Optimization') : zh ? '需求' : 'Requirement'}</small>
-                          </span>
-                        </label>
-                      </legend>
-                      {selection.selected ? (
-                        <div className="task-model-push-parent-resources">
-                          <div>
-                            <strong>{zh ? '内部会话' : 'Sessions'}</strong>
-                            {option.conversations.length > 0 ? (
-                              option.conversations.map((conversation) => (
-                                <label key={conversation.id} className={!conversation.available ? 'is-unavailable' : undefined}>
-                                  <input
-                                    type="checkbox"
-                                    checked={selectedConversations.has(conversation.id)}
-                                    onChange={(event) => toggleParentResource(option.taskId, 'conversationIds', conversation.id, event.currentTarget.checked)}
-                                    disabled={busy || !conversation.available}
-                                  />
-                                  <span>
-                                    <strong>{conversation.title}</strong>
-                                    <small>
-                                      {conversation.archived ? (zh ? '已归档 · ' : 'Archived · ') : ''}
-                                      {conversation.available ? conversation.path : conversation.unavailableReason}
-                                    </small>
-                                  </span>
-                                </label>
-                              ))
-                            ) : (
-                              <small>{zh ? '没有会话' : 'No sessions'}</small>
-                            )}
-                          </div>
-                          <div>
-                            <strong>{zh ? '父任务附件' : 'Parent attachments'}</strong>
-                            {option.attachments.length > 0 ? (
-                              option.attachments.map((attachment) => {
-                                const checked = selectedAttachments.has(attachment.key);
-                                return (
-                                  <label key={attachment.key} className={!attachment.available ? 'is-unavailable' : undefined}>
-                                    <input
-                                      type="checkbox"
-                                      checked={checked}
-                                      onChange={(event) => toggleParentResource(option.taskId, 'attachmentKeys', attachment.key, event.currentTarget.checked)}
-                                      disabled={busy || !attachment.available}
-                                    />
-                                    <span>
-                                      <strong>{attachment.name}</strong>
-                                      <small>{attachment.available ? `${attachment.kind}${attachment.size !== undefined ? ` · ${attachment.size} B` : ''}` : attachment.unavailableReason}</small>
-                                    </span>
-                                  </label>
-                                );
-                              })
-                            ) : (
-                              <small>{zh ? '没有附件' : 'No attachments'}</small>
-                            )}
-                          </div>
-                        </div>
-                      ) : null}
-                    </fieldset>
-                  );
-                })}
-              </div>
-            </section>
-          ) : null}
+          <TaskPushContextPicker kind="parent" options={parentContextOptions} selections={props.form.parentContextSelections} busy={busy} zh={zh} onChange={(taskId, selection) => changeContextSelection('parent', taskId, selection)} />
+          <TaskPushContextPicker kind="related" options={relatedContextOptions} selections={props.form.relatedContextSelections} busy={busy} zh={zh} onChange={(taskId, selection) => changeContextSelection('related', taskId, selection)} />
 
-          <section className="task-model-push-canonical">
-            <strong>{zh ? '将发送的任务内容' : 'Task content to send'}</strong>
-            <pre>{buildTaskModelPushMessage(props.task, props.form.supplementalInfo, selectedParentContexts)}</pre>
-          </section>
-
-          <section className="task-model-push-attachments">
-            <span>
-              <strong>{zh ? '附件' : 'Attachments'}</strong>
-              <small>{attachments.length + selectedParentAttachmentCount}</small>
-            </span>
-            {attachments.length > 0 ? (
-              <TaskAttachmentPreviewList
-                attachments={attachments}
-                mode="readonly"
-                onLoadPreview={props.onLoadAttachmentPreview}
-                onOpenAttachment={props.onOpenAttachment}
-                copy={{
-                  imageLabel: zh ? '图片' : 'Image',
-                  fileLabel: zh ? '文件' : 'File',
-                  openFileLabel: zh ? '打开附件' : 'Open attachment',
-                  openPreviewLabel: zh ? '预览附件' : 'Preview attachment',
-                  closePreviewLabel: zh ? '关闭预览' : 'Close preview',
-                  previewUnavailable: zh ? '无法预览' : 'Preview unavailable',
-                  localPathLabel: zh ? '本机路径' : 'Local path',
-                }}
-              />
-            ) : (
-              <small>{zh ? '无附件' : 'No attachments'}</small>
-            )}
-            {selectedParentAttachmentCount > 0 ? <small>{zh ? `另有 ${selectedParentAttachmentCount} 个父任务附件，将随本次推送发送。` : `${selectedParentAttachmentCount} parent attachment(s) will be sent with this push.`}</small> : null}
-          </section>
+          <TaskPushLayoutPreview layout={taskPushLayout} language={props.language} />
 
           {props.status === 'loading' ? <p className="task-model-push-message">{zh ? '正在连接 app-server 并读取可用模型…' : 'Connecting to app-server and loading models…'}</p> : null}
           {props.error ? (
