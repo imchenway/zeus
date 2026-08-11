@@ -1,63 +1,81 @@
-import { createHash, randomUUID } from 'node:crypto';
-import { realpathSync, statSync } from 'node:fs';
-import { dirname, extname, isAbsolute, relative, resolve } from 'node:path';
-import type { CodexAppServerEvent, CodexAppServerManager, CodexCommandApprovalDecision, CodexSandboxPolicy, CodexServerRequestResponse, CodexThreadSnapshot } from '@zeus/ai-runtime';
-import { calculateCacheHitRate, type NativeTokenUsageSnapshot, type TokenUsageBreakdown } from '@zeus/shared';
+import {createHash, randomUUID} from 'node:crypto';
+import {realpathSync, statSync} from 'node:fs';
+import {dirname, extname, isAbsolute, relative, resolve} from 'node:path';
+import type {
+    CodexAppServerEvent,
+    CodexAppServerManager,
+    CodexCommandApprovalDecision,
+    CodexSandboxPolicy,
+    CodexServerRequestResponse,
+    CodexThreadSnapshot
+} from '@zeus/ai-runtime';
+import {calculateCacheHitRate, type NativeTokenUsageSnapshot, type TokenUsageBreakdown} from '@zeus/shared';
 import {
-  type CodexMcpServerStartupState,
-  type ConversationCollaborationMode,
-  type ConversationItemPhase,
-  ConversationItemRepository,
-  type ConversationItemType,
-  type ConversationNextTurnSettings,
-  type ConversationPermissionMode,
-  ConversationPlanActionRepository,
-  ConversationRepository,
-  ConversationResourceRepository,
-  type ConversationServerRequestKind,
-  ConversationServerRequestRepository,
-  ConversationSubmissionRepository,
-  ConversationTurnRepository,
-  type ProviderEventReceiptInput,
-  ProviderEventReceiptRepository,
-  SettingRepository,
-  type ZeusConversationServerRequestRecord,
-  type ZeusConversationSubmissionRecord,
-  type ZeusConversationTurnRecord,
-  type ZeusConversationWithMessagesRecord,
-  type ZeusDatabase,
+    type CodexMcpServerStartupState,
+    type ConversationCollaborationMode,
+    type ConversationItemPhase,
+    ConversationItemRepository,
+    type ConversationItemType,
+    type ConversationNextTurnSettings,
+    type ConversationPermissionMode,
+    ConversationPlanActionRepository,
+    ConversationRepository,
+    ConversationResourceRepository,
+    type ConversationServerRequestKind,
+    ConversationServerRequestRepository,
+    ConversationSubmissionRepository,
+    ConversationTurnRepository,
+    type ProviderEventReceiptInput,
+    ProviderEventReceiptRepository,
+    SettingRepository,
+    type ZeusConversationServerRequestRecord,
+    type ZeusConversationSubmissionRecord,
+    type ZeusConversationTurnRecord,
+    type ZeusConversationWithMessagesRecord,
+    type ZeusDatabase,
 } from '@zeus/storage';
 import type {
-  ArchiveConversationInput,
-  CodexNativeConversationCoordinator,
-  InterruptNativeTurnInput,
-  NativeAcceptedOperation,
-  NativeConversationAttachmentInput,
-  NativeConversationRunState,
-  NativeProviderWriteLifecycle,
-  NativeQueueSnapshot,
-  NativeSubmissionError,
-  NativeTurnResult,
-  RecoverNativeQueueInput,
-  RespondNativeRequestInput,
-  RespondPlanImplementationRequestInput,
-  RestoreArchivedConversationInput,
-  SendQueuedNowInput,
-  SnoozeNativeRequestInput,
-  StartNativeEphemeralConversationInput,
-  StartProjectConversationInput,
-  StartTaskConversationInput,
-  SteerNativeMessageInput,
-  SubmitNativeMessageInput,
-  WaitForNativeTurnResultInput,
+    ArchiveConversationInput,
+    CodexNativeConversationCoordinator,
+    InterruptNativeTurnInput,
+    NativeAcceptedOperation,
+    NativeConversationAttachmentInput,
+    NativeConversationRunState,
+    NativeProviderWriteLifecycle,
+    NativeQueueSnapshot,
+    NativeSubmissionError,
+    NativeTurnResult,
+    RecoverNativeQueueInput,
+    RespondNativeRequestInput,
+    RespondPlanImplementationRequestInput,
+    RestoreArchivedConversationInput,
+    SendQueuedNowInput,
+    SnoozeNativeRequestInput,
+    StartNativeEphemeralConversationInput,
+    StartProjectConversationInput,
+    StartTaskConversationInput,
+    SteerNativeMessageInput,
+    SubmitNativeMessageInput,
+    WaitForNativeTurnResultInput,
 } from './codexNativeConversationContracts.js';
-import { parseCanonicalRequestUserInputQuestions, validateCanonicalRequestUserInputAnswers } from './codexNativeRuiValidation.js';
-import { chooseNativeUserMessageContent, resolveNativeUserMessageSubmission, type ResolvedNativeUserMessageSubmission } from './codexNativeUserMessageProjection.js';
-import type { BrowserAutomationPort } from './browserAutomation.js';
-import { zeusBrowserDynamicTools } from './browserDynamicTools.js';
-import { normalizeConversationResources, sanitizeConversationItemPayload, toConversationResource } from './conversationResources.js';
-import type { TurnChangeSetService } from './turnChangeSets.js';
-import type { CodexUsageService } from './codexUsageService.js';
+import {
+    parseCanonicalRequestUserInputQuestions,
+    validateCanonicalRequestUserInputAnswers
+} from './codexNativeRuiValidation.js';
+import {
+    chooseNativeUserMessageContent,
+    type ResolvedNativeUserMessageSubmission,
+    resolveNativeUserMessageSubmission
+} from './codexNativeUserMessageProjection.js';
+import type {BrowserAutomationPort} from './browserAutomation.js';
+import {zeusBrowserDynamicTools} from './browserDynamicTools.js';
+import {
+    normalizeConversationResources,
+    sanitizeConversationItemPayload,
+    toConversationResource
+} from './conversationResources.js';
+import type {TurnChangeSetService} from './turnChangeSets.js';
+import type {CodexUsageService} from './codexUsageService.js';
 
 interface ConversationDispatchContext {
   projectId: string;
@@ -3500,7 +3518,16 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
             });
             runStates.set(conversation.id, { type: 'waiting', turnId: providerTurnId, requestId: request.id, reason: requestKind === 'request_user_input' ? 'user_input' : 'approval' });
           }
-          broadcast = { type: 'conversation.request.created', payload: { conversationId: conversation.id, requestId: request.id, requestKind, providerTurnId } };
+            broadcast = {
+                type: 'conversation.request.created',
+                payload: {
+                    conversationId: conversation.id,
+                    requestId: request.id,
+                    requestKind,
+                    providerTurnId,
+                    request: nativePendingRequestProjection(request),
+                },
+            };
           scheduleAutoResolution(request);
         }
       }
@@ -3835,6 +3862,25 @@ function stripRequestTransport(response: CodexServerRequestResponse): RespondNat
   delete effectiveResponse.generationId;
   delete effectiveResponse.requestId;
   return effectiveResponse as RespondNativeRequestInput['response'];
+}
+
+function nativePendingRequestProjection(request: ZeusConversationServerRequestRecord): Record<string, unknown> {
+    return {
+        id: request.id,
+        conversationId: request.conversationId,
+        turnId: request.turnId,
+        itemId: request.itemId,
+        generationId: request.transportGenerationId,
+        type: request.requestKind === 'request_user_input' ? 'userInput' : request.requestKind === 'mcp' ? 'MCP' : request.requestKind,
+        status: request.status,
+        payload: parseJsonRecord(request.payloadJson),
+        response: request.responseJson ? parseJsonRecord(request.responseJson) : null,
+        containsSecret: request.containsSecret,
+        expiresAt: request.expiresAt,
+        autoResolutionState: request.autoResolutionState,
+        createdAt: request.createdAt,
+        resolvedAt: request.resolvedAt,
+    };
 }
 
 function buildInteractionRecoveryContinuation(request: ZeusConversationServerRequestRecord, response: RespondNativeRequestInput['response'], privacyNote?: string): string {

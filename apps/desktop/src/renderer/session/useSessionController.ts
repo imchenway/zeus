@@ -1,28 +1,28 @@
-import { useEffect, useMemo, useSyncExternalStore } from 'react';
-import type { ZeusBrowserPreparedSubmission } from '@zeus/shared';
-import { createInitialSessionState, sessionReducer } from './sessionReducer.js';
+import {useEffect, useMemo, useSyncExternalStore} from 'react';
+import type {ZeusBrowserPreparedSubmission} from '@zeus/shared';
+import {createInitialSessionState, sessionReducer} from './sessionReducer.js';
 import {
-  type CodexConversationCapabilities,
-  type ConversationResourcePreview,
-  isNativeConversationEvent,
-  type NativeCollaborationMode,
-  type NativeConversationAttachment,
-  type NativeConversationEvent,
-  type NativeConversationSnapshot,
-  type NativeNextTurnSettings,
-  type NativeOperationAcceptance,
-  type NativePendingRequest,
-  type NativePermissionMode,
-  type NativePlanImplementationRequest,
-  type NativeQueuedSubmission,
-  type NativeQueueSnapshot,
-  type NativeRealtimeEventEnvelope,
-  type NativeSessionError,
-  type NativeSessionState,
-  type NativeTurnSettingsSelection,
-  type SendNativeMessageRequest,
-  type TurnChangeSet,
-  type TurnChangeSetOperationResult,
+    type CodexConversationCapabilities,
+    type ConversationResourcePreview,
+    isNativeConversationEvent,
+    type NativeCollaborationMode,
+    type NativeConversationAttachment,
+    type NativeConversationEvent,
+    type NativeConversationSnapshot,
+    type NativeNextTurnSettings,
+    type NativeOperationAcceptance,
+    type NativePendingRequest,
+    type NativePermissionMode,
+    type NativePlanImplementationRequest,
+    type NativeQueuedSubmission,
+    type NativeQueueSnapshot,
+    type NativeRealtimeEventEnvelope,
+    type NativeSessionError,
+    type NativeSessionState,
+    type NativeTurnSettingsSelection,
+    type SendNativeMessageRequest,
+    type TurnChangeSet,
+    type TurnChangeSetOperationResult,
 } from './sessionTypes.js';
 
 export const reconnectBackoffMs = [250, 500, 1_000, 2_000, 5_000] as const;
@@ -234,6 +234,9 @@ export function createSessionController(options: CreateSessionControllerOptions)
   let resolveReconnectTimer: ((shouldContinue: boolean) => void) | null = null;
   let requestRefresh: Promise<void> | null = null;
   let requestRefreshAgain = false;
+    let requestRefreshRetryTimer: ReturnType<typeof setTimeout> | null = null;
+    let requestRefreshRetryAttempt = 0;
+    const requestsAwaitingDetails = new Set<string>();
   const resolvedRequestIds = new Set<string>();
   let targetedHydrationBuffer: NativeConversationEvent[] | null = null;
   const pendingRenderDeltas = new Map<string, NativeConversationEvent>();
@@ -372,11 +375,20 @@ export function createSessionController(options: CreateSessionControllerOptions)
     }
     const suppressRequestAuthority = event.type === 'conversation.request.created' && requestId !== null && resolvedRequestIds.has(requestId);
     dispatch({ type: 'event_received', event, ...(suppressRequestAuthority ? { suppressRequestAuthority: true } : {}) });
-    if (event.type === 'conversation.request.created' && !suppressRequestAuthority) void refreshPendingRequests();
+      if (event.type === 'conversation.request.created' && !suppressRequestAuthority && requestId) {
+          if (eventCarriesRequestDetails(event, requestId)) {
+              requestsAwaitingDetails.delete(requestId);
+          } else {
+              requestsAwaitingDetails.add(requestId);
+              void refreshPendingRequests();
+          }
+      }
   }
 
   function markRequestResolved(requestId: string, event?: NativeConversationEvent): void {
     resolvedRequestIds.add(requestId);
+      requestsAwaitingDetails.delete(requestId);
+      if (requestsAwaitingDetails.size === 0) cancelPendingRequestRefreshRetry();
     dispatch(event ? { type: 'event_received', event } : { type: 'request_resolved', requestId });
   }
 
@@ -580,12 +592,13 @@ export function createSessionController(options: CreateSessionControllerOptions)
           if (requestRefreshAgain) continue;
           return;
         }
-        dispatch({ type: 'pending_requests_hydrated', requests: snapshot.requests.filter((request) => !resolvedRequestIds.has(request.id)) });
+          const requests = snapshot.requests.filter((request) => !resolvedRequestIds.has(request.id));
+          dispatch({type: 'pending_requests_hydrated', requests});
+          for (const request of requests) requestsAwaitingDetails.delete(request.id);
       } while (requestRefreshAgain && !disposed && token === connectionToken);
     })()
       .catch(() => {
-        // Fail closed: keep the pending placeholder when its authoritative detail cannot
-        // be loaded. A later request event/reconnect will retry the projection.
+          schedulePendingRequestRefreshRetry();
       })
       .finally(() => {
         const shouldRefreshAgain = requestRefreshAgain && !disposed;
@@ -593,10 +606,30 @@ export function createSessionController(options: CreateSessionControllerOptions)
         if (shouldRefreshAgain) {
           requestRefreshAgain = false;
           void refreshPendingRequests();
+        } else if (requestsAwaitingDetails.size > 0) {
+            schedulePendingRequestRefreshRetry();
+        } else {
+            cancelPendingRequestRefreshRetry();
         }
       });
     return requestRefresh;
   }
+
+    function schedulePendingRequestRefreshRetry(): void {
+        if (disposed || requestsAwaitingDetails.size === 0 || requestRefreshRetryTimer) return;
+        const delay = Math.min(4_000, 250 * 2 ** requestRefreshRetryAttempt);
+        requestRefreshRetryAttempt = Math.min(5, requestRefreshRetryAttempt + 1);
+        requestRefreshRetryTimer = setTimeout(() => {
+            requestRefreshRetryTimer = null;
+            void refreshPendingRequests();
+        }, delay);
+    }
+
+    function cancelPendingRequestRefreshRetry(): void {
+        if (requestRefreshRetryTimer) clearTimeout(requestRefreshRetryTimer);
+        requestRefreshRetryTimer = null;
+        requestRefreshRetryAttempt = 0;
+    }
 
   function cancelReconnectLoop(): void {
     reconnectLoopEpoch += 1;
@@ -817,6 +850,8 @@ export function createSessionController(options: CreateSessionControllerOptions)
       if (renderDeltaTimer) clearTimeout(renderDeltaTimer);
       renderDeltaTimer = null;
       pendingRenderDeltas.clear();
+        cancelPendingRequestRefreshRetry();
+        requestsAwaitingDetails.clear();
       cancelReconnectLoop();
       connectionToken += 1;
       socketLifecycle?.markInactive();
@@ -1284,6 +1319,12 @@ function mergeAttachments(left: NativeConversationAttachment[], right: NativeCon
 function eventRequestId(event: NativeConversationEvent): string | null {
   const requestId = event.payload.requestId;
   return typeof requestId === 'string' && requestId.trim() ? requestId : null;
+}
+
+function eventCarriesRequestDetails(event: NativeConversationEvent, requestId: string): boolean {
+    if (event.type !== 'conversation.request.created' || typeof event.payload.request !== 'object' || event.payload.request === null) return false;
+    const request = event.payload.request as Partial<NativePendingRequest>;
+    return request.id === requestId && typeof request.payload === 'object' && request.payload !== null && Object.keys(request.payload).length > 0;
 }
 
 function renderDeltaKey(event: NativeConversationEvent): string | null {

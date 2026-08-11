@@ -1,16 +1,16 @@
-import { type KeyboardEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { ArrowRightIcon as ArrowRight } from '@phosphor-icons/react/dist/csr/ArrowRight';
-import { CheckIcon as Check } from '@phosphor-icons/react/dist/csr/Check';
-import { CaretDownIcon as CaretDown } from '@phosphor-icons/react/dist/csr/CaretDown';
-import { InfoIcon as Info } from '@phosphor-icons/react/dist/csr/Info';
-import { PencilSimpleIcon as PencilSimple } from '@phosphor-icons/react/dist/csr/PencilSimple';
-import { QuestionIcon as Question } from '@phosphor-icons/react/dist/csr/Question';
-import { TerminalWindowIcon as TerminalWindow } from '@phosphor-icons/react/dist/csr/TerminalWindow';
-import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
-import { openExternalHttpsUrlInMain } from '../appShellBridge.js';
-import type { NativePendingRequest, NativePermissionMode } from './sessionTypes.js';
-import type { SessionUiLanguage } from './ThreadItemView.js';
-import { autosizeTextarea } from './textareaAutosize.js';
+import {type KeyboardEvent, useEffect, useLayoutEffect, useMemo, useRef, useState} from 'react';
+import {ArrowRightIcon as ArrowRight} from '@phosphor-icons/react/dist/csr/ArrowRight';
+import {CheckIcon as Check} from '@phosphor-icons/react/dist/csr/Check';
+import {CaretDownIcon as CaretDown} from '@phosphor-icons/react/dist/csr/CaretDown';
+import {InfoIcon as Info} from '@phosphor-icons/react/dist/csr/Info';
+import {PencilSimpleIcon as PencilSimple} from '@phosphor-icons/react/dist/csr/PencilSimple';
+import {QuestionIcon as Question} from '@phosphor-icons/react/dist/csr/Question';
+import {TerminalWindowIcon as TerminalWindow} from '@phosphor-icons/react/dist/csr/TerminalWindow';
+import {XIcon as X} from '@phosphor-icons/react/dist/csr/X';
+import {openExternalHttpsUrlInMain} from '../appShellBridge.js';
+import type {NativePendingRequest, NativePermissionMode} from './sessionTypes.js';
+import type {SessionUiLanguage} from './ThreadItemView.js';
+import {autosizeTextarea} from './textareaAutosize.js';
 
 export interface RequestQuestionOption {
   label: string;
@@ -58,7 +58,6 @@ const labels = {
     submit: '提交回答',
     other: '其他',
     otherPlaceholder: '否，并告诉 Zeus 应该如何做得不同',
-    loading: '正在读取请求详情，详情完整前不能决策。',
     impact: '影响',
     secret: '敏感回答仅发送给当前本机 app-server，不会显示在会话记录中。',
     responding: '正在提交',
@@ -97,7 +96,6 @@ const labels = {
     submit: 'Submit answers',
     other: 'Other',
     otherPlaceholder: 'No, tell Zeus what to do differently',
-    loading: 'Loading request details. Decisions remain unavailable until details are complete.',
     impact: 'Impact',
     secret: 'Secret answers are sent only to the current local app-server and are not shown in the transcript.',
     responding: 'Submitting',
@@ -134,7 +132,7 @@ export function PendingRequestSurface(props: PendingRequestSurfaceProps) {
   const [mcpUrlError, setMcpUrlError] = useState<string | null>(null);
   const firstControlRef = useRef<HTMLInputElement | HTMLButtonElement | null>(null);
   const isRui = kind === 'request_user_input';
-  const hasDetails = isRui ? questions.length > 0 : Object.keys(props.request.payload).length > 0;
+    const hasDetails = isRui ? questions.length > 0 : hasPendingRequestDetails(props.request);
   const decisions = supportedRequestDecisions(props.request);
   const autofocusDecision = defaultAutofocusDecision(decisions);
 
@@ -164,14 +162,7 @@ export function PendingRequestSurface(props: PendingRequestSurfaceProps) {
     );
   }
 
-  if (!hasDetails) {
-    return (
-      <section className="session-pending-request session-pending-request-loading" role="status" aria-live="polite" aria-label={isRui ? copy.input : copy.approval}>
-        <strong>{isRui ? copy.input : copy.approval}</strong>
-        <p>{copy.loading}</p>
-      </section>
-    );
-  }
+    if (!hasDetails) return null;
 
   if (!isRui) {
     if (kind === 'command' || kind === 'file') {
@@ -1000,6 +991,11 @@ export function requestKind(request: NativePendingRequest): PendingRequestKind {
     default:
       return 'unknown';
   }
+}
+
+export function hasPendingRequestDetails(request: NativePendingRequest): boolean {
+    if (requestKind(request) === 'request_user_input') return normalizeRequestQuestions(request).length > 0;
+    return Object.keys(request.payload).length > 0;
 }
 
 export function supportedRequestDecisions(request: NativePendingRequest): SupportedRequestDecision[] {

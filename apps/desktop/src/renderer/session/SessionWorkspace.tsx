@@ -1,56 +1,94 @@
-import { type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { ArrowsClockwiseIcon as ArrowsClockwise } from '@phosphor-icons/react/dist/csr/ArrowsClockwise';
-import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/csr/WarningCircle';
-import { GlobeSimpleIcon as GlobeSimple } from '@phosphor-icons/react/dist/csr/GlobeSimple';
-import { animate as animateMotion, motion, useMotionValue, useTransform } from 'framer-motion';
-import type { ConversationFileLocation, ConversationOpenTarget, TurnChangeFile, ZeusBrowserPreparedSubmission } from '@zeus/shared';
-import { openConversationResourceInMain, openTurnChangeFileInMain } from '../appShellBridge.js';
-import { canSteerActiveTurn, type ComposerRuntimeSettings, ConversationComposer, resolveComposerKeyIntent } from './ConversationComposer.js';
-import { ConversationTranscript } from './ConversationTranscript.js';
-import { QueuedConversationMessages } from './QueuedConversationMessages.js';
-import { SessionPlanProgress } from './SessionActivity.js';
-import { LegacyConversationBanner } from './LegacyConversationBanner.js';
-import { PendingRequestSurface, requestKind } from './PendingRequestSurface.js';
-import { PermissionModeControl } from './PermissionModeControl.js';
-import { CollaborationModeControl } from './CollaborationModeControl.js';
-import { ComposerDropdown } from './ComposerDropdown.js';
-import { PlanImplementationRequestSurface } from './PlanImplementationRequestSurface.js';
-import { PlanWorkspace } from './PlanWorkspace.js';
-import { BrowserWorkspace } from './BrowserWorkspace.js';
-import { SourceWorkspace } from './SourceWorkspace.js';
-import { TurnDiffWorkspace } from './TurnChanges.js';
-import { defaultOpenTarget } from './ConversationResources.js';
+import {
+    type CSSProperties,
+    type KeyboardEvent as ReactKeyboardEvent,
+    type PointerEvent as ReactPointerEvent,
+    type ReactNode,
+    useEffect,
+    useLayoutEffect,
+    useMemo,
+    useRef,
+    useState
+} from 'react';
+import {ArrowsClockwiseIcon as ArrowsClockwise} from '@phosphor-icons/react/dist/csr/ArrowsClockwise';
+import {WarningCircleIcon as WarningCircle} from '@phosphor-icons/react/dist/csr/WarningCircle';
+import {GlobeSimpleIcon as GlobeSimple} from '@phosphor-icons/react/dist/csr/GlobeSimple';
+import {animate as animateMotion, motion, useMotionValue, useTransform} from 'framer-motion';
 import type {
-  CodexConversationCapabilities,
-  ConversationResource,
-  ConversationResourcePreview,
-  NativeCollaborationMode,
-  NativeConversationAttachment,
-  NativeConversationChoice,
-  NativeConversationStage,
-  NativeOperationAcceptance,
-  NativePendingRequest,
-  NativePermissionMode,
-  NativePlanImplementationRequest,
-  NativeSessionItemBuffer,
-  NativeSessionState,
-  NativeServiceTierSelection,
-  NativeTurnSettingsSelection,
-  SessionConversationOwner,
-  StartNativeConversationRequest,
-  StartProjectConversationRequest,
-  TaskWorkspacesSnapshot,
-  TurnChangeSet,
-  TurnChangeSetOperationResult,
+    ConversationFileLocation,
+    ConversationOpenTarget,
+    TurnChangeFile,
+    ZeusBrowserPreparedSubmission
+} from '@zeus/shared';
+import {openConversationResourceInMain, openTurnChangeFileInMain} from '../appShellBridge.js';
+import {
+    canSteerActiveTurn,
+    type ComposerRuntimeSettings,
+    ConversationComposer,
+    resolveComposerKeyIntent
+} from './ConversationComposer.js';
+import {ConversationTranscript} from './ConversationTranscript.js';
+import {QueuedConversationMessages} from './QueuedConversationMessages.js';
+import {SessionPlanProgress} from './SessionActivity.js';
+import {LegacyConversationBanner} from './LegacyConversationBanner.js';
+import {hasPendingRequestDetails, PendingRequestSurface, requestKind} from './PendingRequestSurface.js';
+import {PermissionModeControl} from './PermissionModeControl.js';
+import {CollaborationModeControl} from './CollaborationModeControl.js';
+import {ComposerDropdown} from './ComposerDropdown.js';
+import {PlanImplementationRequestSurface} from './PlanImplementationRequestSurface.js';
+import {PlanWorkspace} from './PlanWorkspace.js';
+import {BrowserWorkspace} from './BrowserWorkspace.js';
+import {SourceWorkspace} from './SourceWorkspace.js';
+import {TurnDiffWorkspace} from './TurnChanges.js';
+import {defaultOpenTarget} from './ConversationResources.js';
+import type {
+    CodexConversationCapabilities,
+    ConversationResource,
+    ConversationResourcePreview,
+    NativeCollaborationMode,
+    NativeConversationAttachment,
+    NativeConversationChoice,
+    NativeConversationStage,
+    NativeOperationAcceptance,
+    NativePendingRequest,
+    NativePermissionMode,
+    NativePlanImplementationRequest,
+    NativeServiceTierSelection,
+    NativeSessionItemBuffer,
+    NativeSessionState,
+    NativeTurnSettingsSelection,
+    SessionConversationOwner,
+    StartNativeConversationRequest,
+    StartProjectConversationRequest,
+    TaskWorkspacesSnapshot,
+    TurnChangeSet,
+    TurnChangeSetOperationResult,
 } from './sessionTypes.js';
-import { normalizeServiceTierSelection, readProjectServiceTierPreference, serviceTierDescription, serviceTierOptions, serviceTierSelectionFromValue, serviceTierSelectionValue, serviceTierWireOverride } from './serviceTierSelection.js';
-import { reconnectDelayMs, type SessionController, type SessionControllerClient, useSessionController } from './useSessionController.js';
-import { createSessionEscapeController, type SessionEscapeController, type SessionEscapeLayer, type SessionEscapeResult } from './useThreadScrollController.js';
-import { SafeMarkdown, type SessionUiLanguage } from './ThreadItemView.js';
-import { autosizeTextarea } from './textareaAutosize.js';
-import { ConversationComposerAttachments, conversationAttachmentIdentity } from './ConversationComposerAttachments.js';
-import { useConversationInputResources } from './useConversationInputResources.js';
-import { SessionQuickActionsCard } from './SessionQuickActionsCard.js';
+import {
+    normalizeServiceTierSelection,
+    readProjectServiceTierPreference,
+    serviceTierDescription,
+    serviceTierOptions,
+    serviceTierSelectionFromValue,
+    serviceTierSelectionValue,
+    serviceTierWireOverride
+} from './serviceTierSelection.js';
+import {
+    reconnectDelayMs,
+    type SessionController,
+    type SessionControllerClient,
+    useSessionController
+} from './useSessionController.js';
+import {
+    createSessionEscapeController,
+    type SessionEscapeController,
+    type SessionEscapeLayer,
+    type SessionEscapeResult
+} from './useThreadScrollController.js';
+import {SafeMarkdown, type SessionUiLanguage} from './ThreadItemView.js';
+import {autosizeTextarea} from './textareaAutosize.js';
+import {conversationAttachmentIdentity, ConversationComposerAttachments} from './ConversationComposerAttachments.js';
+import {useConversationInputResources} from './useConversationInputResources.js';
+import {SessionQuickActionsCard} from './SessionQuickActionsCard.js';
 
 export interface SessionWorkspaceTask {
   id: string;
@@ -1082,7 +1120,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const effectiveProviderState = props.state?.snapshot?.providerState ?? props.conversation?.providerState ?? null;
   const effectiveResumable = props.state?.snapshot ? !['closed', 'failed'].includes(effectiveProviderState ?? '') : effectiveProviderState === 'archived' ? true : props.conversation?.resumable;
   const nonResumableNative = Boolean(props.conversation && !legacy && !effectiveResumable);
-  const pendingRequests = props.state?.pendingRequests.filter((request) => request.status === 'pending') ?? [];
+    const pendingRequests = props.state?.pendingRequests.filter((request) => request.status === 'pending' && hasPendingRequestDetails(request)) ?? [];
   const pendingPlanImplementationRequests = props.state?.planImplementationRequests.filter((request) => request.status === 'pending').slice(-1) ?? [];
   const blockingPendingRequest = pendingRequests[0] ?? null;
   const blockingUserInputRequest = blockingPendingRequest && requestKind(blockingPendingRequest) === 'request_user_input' ? blockingPendingRequest : null;
