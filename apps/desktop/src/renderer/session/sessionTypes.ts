@@ -729,12 +729,15 @@ export interface StartTaskModelPushRequest {
 export type StartNativeConversationRequest =
   | {
       mode: 'create';
+      source?: 'code_review';
       content?: string;
       attachments?: NativeConversationAttachment[];
       inheritConversationId?: string;
       permissionMode: NativePermissionMode;
       collaborationMode: NativeCollaborationMode;
       serviceTier?: string | null;
+      model?: string;
+      effort?: string;
       idempotencyKey: string;
       clientUserMessageId: string;
       agentKind?: 'codex' | 'pi' | 'claude';

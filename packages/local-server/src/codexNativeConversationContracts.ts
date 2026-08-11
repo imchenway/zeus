@@ -84,6 +84,7 @@ export interface StartTaskConversationInput {
   writableRoots?: string[];
   taskTitle: string;
   prompt: string;
+  displayText?: string;
   model: string;
   effort?: string;
   serviceTier?: string | null;

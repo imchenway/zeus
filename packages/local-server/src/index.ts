@@ -1585,7 +1585,7 @@ type StartTaskConversationBody = (
       attachments?: NativeConversationAttachment[];
       inheritConversationId?: string;
       permissionMode?: ConversationPermissionMode;
-      source?: 'task_push';
+      source?: 'task_push' | 'code_review';
       model?: string;
       effort?: string;
       serviceTier?: string | null;
@@ -14301,6 +14301,104 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
                 clientUserMessageId,
                 providerWriteLifecycle: reservedLifecycle,
               });
+      } else if (body.source === 'code_review') {
+        if (body.attachments !== undefined) throw nativeApiError('ZEUS_INVALID_CODE_REVIEW', 'Code review attachments are not accepted; the server reviews the persisted workspace directly.');
+        if (body.collaborationMode !== undefined && body.collaborationMode !== 'default') {
+          throw nativeApiError('ZEUS_INVALID_CODE_REVIEW', 'Code review collaborationMode must be default.');
+        }
+        const inheritConversationId = typeof body.inheritConversationId === 'string' ? body.inheritConversationId.trim() : '';
+        const modelName = typeof body.model === 'string' ? body.model.trim() : '';
+        const effort = typeof body.effort === 'string' ? body.effort.trim() : '';
+        if (!inheritConversationId) throw nativeApiError('ZEUS_TASK_EXECUTION_CONTEXT_REQUIRED', 'Code review requires a source conversation with a persisted execution workspace.');
+        if (!modelName) throw nativeApiError('ZEUS_INVALID_CODE_REVIEW', 'Code review model is required.');
+
+        const sourceConversation = conversations.getById(inheritConversationId);
+        if (!sourceConversation || sourceConversation.projectId !== project.id || sourceConversation.taskId !== task.id) {
+          throw nativeApiError('ZEUS_TASK_EXECUTION_CONTEXT_INVALID', 'The code review source conversation does not belong to this task.');
+        }
+        if (!sourceConversation.workspaceId || !sourceConversation.environmentId) {
+          throw nativeApiError('ZEUS_TASK_EXECUTION_CONTEXT_REQUIRED', 'The code review source conversation has no exact persisted task environment and repository workspace.');
+        }
+        const sourceWorkspace = taskWorkspaces.getById(sourceConversation.workspaceId);
+        if (!sourceWorkspace || sourceWorkspace.projectId !== project.id || sourceWorkspace.taskId !== task.id || sourceWorkspace.environmentId !== sourceConversation.environmentId) {
+          throw nativeApiError('ZEUS_TASK_EXECUTION_CONTEXT_INVALID', 'The code review repository workspace is not part of the source conversation environment.');
+        }
+
+        const inheritedPermissionMode = conversations.getNextTurnSettings(sourceConversation.id)?.permissionMode ?? sourceConversation.permissionMode;
+        const permissionMode = body.permissionMode === undefined ? inheritedPermissionMode : parseConversationPermissionMode(body.permissionMode);
+        if (!permissionMode) throw nativeApiError('ZEUS_INVALID_PERMISSION_MODE', 'permissionMode must be read-only, auto, or full-access.');
+        if (permissionMode !== inheritedPermissionMode) {
+          throw nativeApiError('ZEUS_CODE_REVIEW_PERMISSION_MISMATCH', 'Code review permission must inherit the current source conversation permission.');
+        }
+
+        const capabilities = await resolveConversationCapabilities(project);
+        const selectedModel = capabilities.models.find((candidate) => candidate.model === modelName || candidate.id === modelName);
+        if (!selectedModel) throw nativeApiError('ZEUS_MODEL_UNAVAILABLE', `Configured review model is unavailable: ${modelName}`);
+        if (selectedModel.available === false) throw nativeApiError('ZEUS_MODEL_NOT_READY', selectedModel.availabilityReason || '所选模型当前不可运行。');
+        const selectedAgentKind = selectedModel.agentKind === 'pi' ? 'pi' : 'codex';
+        if (body.agentKind !== undefined && body.agentKind !== selectedAgentKind) {
+          throw nativeApiError('ZEUS_INVALID_AGENT_KIND', 'The requested review agent does not match the selected model.');
+        }
+        const selectedEffort = effort || selectedModel.defaultReasoningEffort || selectedModel.supportedReasoningEfforts[0] || '';
+        if (selectedEffort && !selectedModel.supportedReasoningEfforts.some((candidate) => candidate === selectedEffort)) {
+          throw nativeApiError('ZEUS_CODEX_EFFORT_UNAVAILABLE', `Configured review effort is unavailable: ${selectedEffort}`);
+        }
+        const requestedServiceTier = readServiceTierOverride(body);
+        const serviceTier = normalizeServiceTierForCapability(requestedServiceTier, selectedModel);
+        const inheritedEnvironment = await resolveTaskPushEnvironment(project, task, { mode: 'existing', environmentId: sourceConversation.environmentId }, stableOperationId);
+        const reviewWorkspace = inheritedEnvironment.workspaces.find((workspace) => workspace.id === sourceWorkspace.id);
+        if (!reviewWorkspace) throw nativeApiError('ZEUS_TASK_EXECUTION_CONTEXT_INVALID', 'The exact review repository could not be restored in the source environment.');
+        const prompt = createTaskCodeReviewPrompt(task, reviewWorkspace);
+        const displayText = '请审查当前工作区的完整代码变化。';
+        if (selectedAgentKind === 'codex') await assertCodexAccountReady();
+
+        nativeOperation =
+          selectedModel.agentKind === 'pi'
+            ? await piNativeCoordinator.startConversation({
+                conversationId: reservation.conversationId,
+                submissionId: reservation.submissionId,
+                projectId: project.id,
+                taskId: task.id,
+                taskTitle: task.title,
+                conversationTitle: `代码审查：${task.title}`,
+                cwd: inheritedEnvironment.cwd,
+                prompt,
+                displayText,
+                model: { sourceId: selectedModel.sourceId ?? null, modelId: selectedModel.model, displayName: selectedModel.displayName ?? null },
+                ...(selectedEffort ? { thinkingLevel: selectedEffort } : {}),
+                permissionMode,
+                idempotencyKey,
+                clientUserMessageId,
+                environmentId: inheritedEnvironment.environment.id,
+                workspaceId: reviewWorkspace.id,
+              })
+            : await codexNativeCoordinator.startTaskConversation({
+                conversationId: reservation.conversationId,
+                submissionId: reservation.submissionId,
+                projectId: project.id,
+                projectLocalPath: inheritedEnvironment.cwd,
+                taskId: task.id,
+                environmentId: inheritedEnvironment.environment.id,
+                workspaceId: reviewWorkspace.id,
+                writableRoots: inheritedEnvironment.writableRoots,
+                taskTitle: task.title,
+                conversationTitle: `代码审查：${task.title}`,
+                prompt,
+                displayText,
+                model: selectedModel.model,
+                ...(selectedEffort ? { effort: selectedEffort } : {}),
+                ...(requestedServiceTier.present ? { serviceTier } : {}),
+                allowCodeChanges: false,
+                allowTests: false,
+                allowGitCommit: false,
+                applyLegacyTaskGuards: false,
+                bypassConcurrency: true,
+                permissionMode,
+                workMode: 'default',
+                idempotencyKey,
+                clientUserMessageId,
+                providerWriteLifecycle: reservedLifecycle,
+              });
       } else {
         if (body.content !== undefined && typeof body.content !== 'string') throw nativeApiError('ZEUS_INVALID_CONVERSATION_START', 'Create content must be a string.');
         const collaborationMode = body.collaborationMode === undefined ? 'default' : parseConversationCollaborationMode(body.collaborationMode);
@@ -15844,6 +15942,45 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     if (!requested.present) return undefined;
     if (requested.value === null) return null;
     return capability.serviceTiers.some((tier) => tier.id === requested.value) ? requested.value : null;
+  }
+
+  /** 代码审查提示词由服务端基于冻结工作区生成，Renderer 不能扩大仓库或写操作范围。 */
+  function createTaskCodeReviewPrompt(task: ZeusTaskRecord, workspace: ZeusTaskWorkspaceRecord): string {
+    const repositoryRelativePath = workspace.repositoryRelativePath || '.';
+    return [
+      '# 代码审查任务',
+      '',
+      `任务：${task.taskCode} · ${task.title}`,
+      `唯一审查仓库：${workspace.repositoryName}（执行环境内相对路径：${repositoryRelativePath}）`,
+      `冻结来源基线：${workspace.sourceHeadSha}`,
+      `来源分支：${workspace.sourceBranch}`,
+      `任务分支：${workspace.branchName}`,
+      '',
+      '## 硬性边界',
+      '',
+      '- 只分析并报告，不修改、创建、删除或格式化任何文件。',
+      '- 不执行提交、推送、合入、回退或其他会改变 Git 状态的动作。',
+      `- 只审查 ${repositoryRelativePath} 这个仓库；同一执行环境中的其他仓库不属于本次范围。`,
+      '- 开始前通读适用于该仓库的 AGENTS.md、PROJECT-STYLE.md、CODE-GUIDELINES.md、DESIGN.md 和当前任务文档。',
+      '',
+      '## 审查范围',
+      '',
+      `以冻结来源提交 ${workspace.sourceHeadSha} 为基准，覆盖到当前现场的全部变化：基准之后已经提交的变化、暂存区变化、未暂存变化和未跟踪文件。`,
+      '使用只读 Git 命令核对真实差异和文件内容，不要只依赖摘要或当前会话描述。',
+      '',
+      '## 审查标准',
+      '',
+      '- 正确性与真实业务边界',
+      '- 安全、权限与失败语义',
+      '- 性能、并发与资源生命周期',
+      '- 可维护性、重复实现与项目约定',
+      '- 验证证据和仍未覆盖的风险',
+      '',
+      '## 输出要求',
+      '',
+      '先列问题，并按严重程度从高到低排序。每条问题必须包含严重程度、文件与行位置、直接证据、影响和建议修复方式。',
+      '如果没有发现问题，明确写明审查范围、核对过的证据以及仍然存在的残余风险。',
+    ].join('\n');
   }
 
   function taskPushPromptContent(task: ZeusTaskRecord) {

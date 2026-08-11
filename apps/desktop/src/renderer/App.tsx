@@ -10980,6 +10980,31 @@ export function App(props: {
     requestWorkspaceLeave(navigate);
   }
 
+  function openProjectCommands(projectId: string): void {
+    const project = snapshot.projects.find((candidate) => candidate.id === projectId);
+    if (!project) {
+      recordLocalError('project-commands-open', new Error('The conversation project is no longer available.'));
+      return;
+    }
+    const navigate = () => {
+      activeProjectIdRef.current = project.id;
+      setProjectDetail(project);
+      setConversationDraftOpen(false);
+      setActiveNavTarget('projects');
+      setActiveProjectSection('code');
+      setProjectCodeWorkspaceMode('commands');
+      setVisitedCodeWorkspaceModes((current) => new Set(current).add('commands'));
+      setProjectPanel(undefined);
+      if (typeof window !== 'undefined') window.history.replaceState(null, '', '#project-commands');
+      workspaceScrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+    };
+    if (project.id === activeProjectId && activeProjectSection === 'code' && projectCodeWorkspaceMode === 'commands') {
+      navigate();
+      return;
+    }
+    requestWorkspaceLeave(navigate);
+  }
+
   async function togglePinnedProject(projectId: string): Promise<void> {
     const currentIds = appShellSettings.pinnedProjectIds;
     const nextPinnedProjectIds = currentIds.includes(projectId) ? currentIds.filter((id) => id !== projectId) : [projectId, ...currentIds];
@@ -11227,6 +11252,7 @@ export function App(props: {
           onLoadTaskWorkspaces={props.nativeConversationClient.loadTaskGitWorkspaces}
           onOpenTaskGitReview={(taskId, workspaceId, mode) => setTaskGitReviewState({ taskId, workspaceId, mode })}
           onOpenTaskGitDelivery={(taskId) => setTaskGitMergeTaskId(taskId)}
+          onOpenProjectCommands={() => openProjectCommands(selectedNativeConversation.projectId)}
         />
       );
     }

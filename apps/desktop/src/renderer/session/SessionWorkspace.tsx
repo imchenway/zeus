@@ -51,6 +51,7 @@ import { autosizeTextarea } from './textareaAutosize.js';
 import { conversationAttachmentIdentity, ConversationComposerAttachments } from './ConversationComposerAttachments.js';
 import { useConversationInputResources } from './useConversationInputResources.js';
 import { SessionQuickActionsCard } from './SessionQuickActionsCard.js';
+import type { SessionCodeReviewSelection } from './SessionCodeReviewDialog.js';
 
 export interface SessionWorkspaceTask {
   id: string;
@@ -67,6 +68,7 @@ export type SessionStartMode = 'create' | 'resume' | 'reference_legacy';
 
 export interface SessionWorkspaceStartInput {
   mode: SessionStartMode;
+  source?: 'code_review';
   task: SessionWorkspaceTask;
   inheritConversationId?: string;
   conversation?: NativeConversationChoice;
@@ -76,6 +78,9 @@ export interface SessionWorkspaceStartInput {
   permissionMode: NativePermissionMode;
   collaborationMode: NativeCollaborationMode;
   serviceTierSelection: NativeServiceTierSelection;
+  model?: string;
+  effort?: string;
+  agentKind?: 'codex' | 'pi';
 }
 
 export interface ProjectSessionWorkspaceStartInput {
@@ -116,6 +121,7 @@ export interface SessionWorkspaceActions {
   onLoadTaskWorkspaces?: (taskId: string) => Promise<TaskWorkspacesSnapshot>;
   onOpenTaskGitReview?: (taskId: string, workspaceId: string | null, mode: 'commit' | 'push-only') => void;
   onOpenTaskGitDelivery?: (taskId: string) => void;
+  onOpenProjectCommands?: () => void;
   onOpenImportSettings?: (conversation: NativeConversationChoice) => void;
   onNextTurnSettingsChange?: (settings: ComposerRuntimeSettings) => void | Promise<void>;
   onPermissionModeChange?: (permissionMode: NativePermissionMode) => void | Promise<void>;
@@ -149,12 +155,16 @@ export interface NativeConversationStartStorage {
 type StartNativeConversationPayload =
   | {
       mode: 'create';
+      source?: 'code_review';
       content: string;
       attachments?: NativeConversationAttachment[];
       inheritConversationId?: string;
       permissionMode: NativePermissionMode;
       collaborationMode: NativeCollaborationMode;
       serviceTier?: string | null;
+      model?: string;
+      effort?: string;
+      agentKind?: 'codex' | 'pi';
     }
   | { mode: 'resume'; conversationId: string; content: string; collaborationMode: NativeCollaborationMode }
   | {
@@ -202,6 +212,7 @@ export interface ConnectedSessionWorkspaceProps {
   onLoadTaskWorkspaces?: SessionWorkspaceActions['onLoadTaskWorkspaces'];
   onOpenTaskGitReview?: SessionWorkspaceActions['onOpenTaskGitReview'];
   onOpenTaskGitDelivery?: SessionWorkspaceActions['onOpenTaskGitDelivery'];
+  onOpenProjectCommands?: SessionWorkspaceActions['onOpenProjectCommands'];
 }
 
 export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps) {
@@ -310,6 +321,7 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
         onLoadTaskWorkspaces: props.onLoadTaskWorkspaces,
         onOpenTaskGitReview: props.onOpenTaskGitReview,
         onOpenTaskGitDelivery: props.onOpenTaskGitDelivery,
+        onOpenProjectCommands: props.onOpenProjectCommands,
         onLoadCapabilities: props.client.loadCodexConversationCapabilities,
         onChooseStartAttachments: props.onChooseAttachments,
       }}
@@ -708,14 +720,21 @@ function buildStartNativeConversationPayload(input: SessionWorkspaceStartInput):
   const content = input.content.trim();
   if (input.mode === 'create') {
     if (!content && !input.attachments?.length) throw new Error('Native conversation start content or attachments are required.');
+    if (input.source === 'code_review' && (!input.inheritConversationId || !input.model)) {
+      throw new Error('Code review requires an inherited conversation and an explicit model.');
+    }
     return {
       mode: 'create',
+      ...(input.source ? { source: input.source } : {}),
       content,
       ...(input.attachments?.length ? { attachments: input.attachments } : {}),
       ...(input.inheritConversationId ? { inheritConversationId: input.inheritConversationId } : {}),
       permissionMode: input.permissionMode ?? 'auto',
       collaborationMode: input.collaborationMode ?? 'default',
       ...serviceTierWireOverride(input.serviceTierSelection),
+      ...(input.model ? { model: input.model } : {}),
+      ...(input.effort ? { effort: input.effort } : {}),
+      ...(input.agentKind ? { agentKind: input.agentKind } : {}),
     };
   }
   if (!content) throw new Error('Native conversation resume/reference content is required.');
@@ -768,7 +787,15 @@ function isStartNativeConversationRequest(value: unknown): value is StartNativeC
   if (request.mode === 'create') {
     return (
       (Boolean(request.content.trim()) || (Array.isArray(request.attachments) && request.attachments.length > 0)) &&
+      (request.source === undefined || request.source === 'code_review') &&
       (request.inheritConversationId === undefined || (typeof request.inheritConversationId === 'string' && Boolean(request.inheritConversationId))) &&
+      (request.source !== 'code_review' ||
+        (typeof request.inheritConversationId === 'string' &&
+          Boolean(request.inheritConversationId) &&
+          typeof request.model === 'string' &&
+          Boolean(request.model) &&
+          (request.effort === undefined || typeof request.effort === 'string') &&
+          (request.agentKind === 'codex' || request.agentKind === 'pi'))) &&
       permissionModeField(request.permissionMode) !== undefined &&
       (request.collaborationMode === 'default' || request.collaborationMode === 'plan') &&
       serviceTierOverrideField(request.serviceTier)
@@ -1606,10 +1633,29 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                 persistentHost={quickActionsPersistentHost}
                 forceCollapsed={contextOpen || contextMounted}
                 suppressed={props.quickActionsSuppressed}
+                capabilities={props.capabilities}
+                onLoadCapabilities={actions.onLoadCapabilities}
                 onLoadTaskWorkspaces={actions.onLoadTaskWorkspaces}
                 onOpenTaskDetail={actions.onOpenTaskDetail}
                 onOpenGitReview={actions.onOpenTaskGitReview}
                 onOpenGitDelivery={actions.onOpenTaskGitDelivery}
+                onOpenProjectCommands={actions.onOpenProjectCommands}
+                onStartCodeReview={(selection: SessionCodeReviewSelection) => {
+                  if (!props.task || !actions.onStartConversation) return false;
+                  return actions.onStartConversation({
+                    mode: 'create',
+                    source: 'code_review',
+                    task: props.task,
+                    inheritConversationId: props.conversation?.id,
+                    content: props.language === 'zh-CN' ? '请审查当前工作区的完整代码变化。' : 'Review all code changes in the current workspace.',
+                    permissionMode: selection.permissionMode,
+                    collaborationMode: 'default',
+                    serviceTierSelection: selection.serviceTierSelection,
+                    model: selection.model,
+                    effort: selection.effort,
+                    agentKind: selection.agentKind,
+                  });
+                }}
                 onAddSources={actions.onChooseAttachments}
                 onOpenSource={(resource) => openConversationResource(resource, defaultOpenTarget(resource))}
               />
