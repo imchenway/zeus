@@ -206,6 +206,7 @@ import {
   type UpdateTaskRelationshipsRequest,
   type UpdateTaskRequest,
   ZeusApiError,
+  type ZeusRealtimeConnectionState,
   type ZeusRealtimeEvent,
 } from './apiClient.js';
 
@@ -6556,7 +6557,7 @@ export function App(props: {
   initialNativeConversationChoices?: NativeConversationChoicesSnapshot[];
   initialNativeProjectConversationChoices?: NativeProjectConversationChoicesSnapshot[];
   initialSelectedNativeConversationId?: string;
-  onSubscribeRealtimeEvents?: (onEvent: (event: ZeusRealtimeEvent) => void) => (() => void) | void;
+  onSubscribeRealtimeEvents?: (onEvent: (event: ZeusRealtimeEvent) => void, onConnectionState: (state: ZeusRealtimeConnectionState) => void) => (() => void) | void;
   onArchiveGraphConversation?: (projectId: string, conversationId: string) => Promise<GraphConversationHistoryItem>;
   onRestoreGraphConversation?: (projectId: string, conversationId: string) => Promise<GraphConversationHistoryItem>;
   onCreateTaskFromGraphConversation?: (projectId: string, conversationId: string) => Promise<DashboardSnapshot>;
@@ -6794,6 +6795,7 @@ export function App(props: {
   const [newConversationFocusRequest, setNewConversationFocusRequest] = useState(0);
   const [nativeConversationRuntimeStates, setNativeConversationRuntimeStates] = useState<Record<string, ConversationTreeRuntimeState>>({});
   const [nativeConversationTaskRunStatuses, setNativeConversationTaskRunStatuses] = useState<Record<string, TaskAgentRunStatus>>({});
+  const [nativeConversationStatusSyncState, setNativeConversationStatusSyncState] = useState<ZeusRealtimeConnectionState | 'syncing'>(() => (props.onSubscribeRealtimeEvents ? 'connecting' : 'connected'));
   const nativeConversationHotCacheRef = useRef<SessionHotCache>(new Map());
   const [sessionSourceRailOpen, setSessionSourceRailOpen] = useState(false);
   const [compactSessionViewport, setCompactSessionViewport] = useState(() => typeof window !== 'undefined' && window.matchMedia?.('(max-width: 759px)').matches === true);
@@ -7477,6 +7479,19 @@ export function App(props: {
       })),
     [focusedArchivedConversation, nativeConversationChoicesByProject, nativeConversationChoicesByTask, orderedProjects, snapshot.tasks],
   );
+  const reconcileNativeConversationProjectionStates = useCallback((choices: readonly NativeConversationChoice[]): void => {
+    if (choices.length === 0) return;
+    setNativeConversationRuntimeStates((current) => {
+      const next = { ...current };
+      for (const conversation of choices) next[conversation.id] = conversationTreeRuntimeStateFromConversation(conversation);
+      return next;
+    });
+    setNativeConversationTaskRunStatuses((current) => {
+      const next = { ...current };
+      for (const conversation of choices) next[conversation.id] = taskAgentRunStatusFromConversation(conversation);
+      return next;
+    });
+  }, []);
   const recordNativeConversationRuntimeState = useCallback((conversationId: string, state: NativeSessionState): void => {
     rememberSessionHotState(nativeConversationHotCacheRef.current, conversationId, state);
     const runtimeState = conversationTreeRuntimeStateFromSession(state);
@@ -7525,6 +7540,7 @@ export function App(props: {
         });
         if (mergedProjectChoices) setNativeConversationChoicesByProject((current) => ({ ...current, [projectId]: mergedProjectChoices }));
         if (mergedTaskChoices.length > 0) setNativeConversationChoicesByTask((current) => ({ ...current, ...Object.fromEntries(mergedTaskChoices) }));
+        reconcileNativeConversationProjectionStates([...(mergedProjectChoices?.choices ?? []), ...mergedTaskChoices.flatMap(([, choices]) => choices.choices)]);
         if (mergedProjectChoices) setNativeConversationChoiceProjectStates((current) => ({ ...current, [projectId]: completeNativeConversationChoiceTaskLoad(current[projectId]) }));
         if (mergedTaskChoices.length > 0) {
           setNativeConversationChoiceTaskStates((current) => ({
@@ -7550,7 +7566,52 @@ export function App(props: {
     return () => {
       cancelled = true;
     };
-  }, [activeProjectId, activeProjectSection, currentProjectTaskIdsSignature, nativeConversationChoiceLoadCoordinator, nativeProjectConversationChoiceLoadCoordinator, props.nativeConversationClient]);
+  }, [
+    activeProjectId,
+    activeProjectSection,
+    currentProjectTaskIdsSignature,
+    nativeConversationChoiceLoadCoordinator,
+    nativeProjectConversationChoiceLoadCoordinator,
+    props.nativeConversationClient,
+    reconcileNativeConversationProjectionStates,
+  ]);
+
+  const reconcileNativeConversationProjectSnapshot = useCallback(
+    async (projectId: string): Promise<void> => {
+      const client = props.nativeConversationClient;
+      if (!client) return;
+      const projectRequestVersion = nativeProjectConversationChoiceLoadCoordinator.begin(projectId);
+      const loaded = await client.loadProjectConversationChoiceGroups(projectId);
+      const projectChoices = nativeProjectConversationChoiceLoadCoordinator.commit(projectId, projectRequestVersion, loaded.projectChoices);
+      const taskChoices = Object.entries(loaded.taskChoicesByTaskId).flatMap(([taskId, choices]) => {
+        const requestVersion = nativeConversationChoiceLoadCoordinator.begin(taskId);
+        const merged = nativeConversationChoiceLoadCoordinator.commit(taskId, requestVersion, choices);
+        return merged ? ([[taskId, merged]] as const) : [];
+      });
+
+      if (projectChoices) {
+        setNativeConversationChoicesByProject((current) => {
+          const next = { ...current, [projectId]: projectChoices };
+          nativeConversationChoicesByProjectRef.current = next;
+          return next;
+        });
+        setNativeConversationChoiceProjectStates((current) => ({ ...current, [projectId]: completeNativeConversationChoiceTaskLoad(current[projectId]) }));
+      }
+      if (taskChoices.length > 0) {
+        setNativeConversationChoicesByTask((current) => {
+          const next = { ...current, ...Object.fromEntries(taskChoices) };
+          nativeConversationChoicesByTaskRef.current = next;
+          return next;
+        });
+        setNativeConversationChoiceTaskStates((current) => ({
+          ...current,
+          ...Object.fromEntries(taskChoices.map(([taskId]) => [taskId, completeNativeConversationChoiceTaskLoad(current[taskId])])),
+        }));
+      }
+      reconcileNativeConversationProjectionStates([...(projectChoices?.choices ?? []), ...taskChoices.flatMap(([, choices]) => choices.choices)]);
+    },
+    [nativeConversationChoiceLoadCoordinator, nativeProjectConversationChoiceLoadCoordinator, props.nativeConversationClient, reconcileNativeConversationProjectionStates],
+  );
 
   const nativeSessionTaskRecord = selectedNativeConversation?.taskId
     ? snapshot.tasks.find((task) => task.id === selectedNativeConversation.taskId)
@@ -7687,12 +7748,8 @@ export function App(props: {
             });
             setNativeConversationChoiceProjectStates((current) => ({ ...current, [projectId]: completeNativeConversationChoiceTaskLoad(current[projectId]) }));
           }
-          if (selectedNativeConversationIdRef.current !== conversationId) {
-            const runtimeState = conversationTreeRuntimeStateFromConversation(metadata);
-            setNativeConversationRuntimeStates((current) => (current[conversationId] === runtimeState ? current : { ...current, [conversationId]: runtimeState }));
-            const taskRunStatus = taskAgentRunStatusFromConversation(metadata);
-            setNativeConversationTaskRunStatuses((current) => (current[conversationId] === taskRunStatus ? current : { ...current, [conversationId]: taskRunStatus }));
-          }
+          // 轻量元数据是全部列表投影的权威收口；当前打开会话也必须覆盖旧缓存，避免控制器与任务表长期分裂。
+          reconcileNativeConversationProjectionStates([metadata]);
         })
         .catch((error: unknown) => recordLocalError('conversation-list-realtime-refresh', error))
         .finally(() => {
@@ -7701,97 +7758,145 @@ export function App(props: {
           refreshNativeConversationList(projectId, conversationId);
         });
     };
-    const unsubscribe = subscribeRealtimeEvents((event) => {
-      if (event.type === 'codex.usage.changed') setCodexUsageRevision((current) => current + 1);
-      if (typeof event.payload.projectId === 'string' && isProjectConversationAttentionState(event.payload.conversationAttentionState)) {
-        const projectId = event.payload.projectId;
-        const attentionState = event.payload.conversationAttentionState;
-        setSnapshot((current) =>
-          current.conversationAttentionByProject[projectId] === attentionState
-            ? current
-            : {
-                ...current,
-                conversationAttentionByProject: {
-                  ...current.conversationAttentionByProject,
-                  [projectId]: attentionState,
-                },
-              },
-        );
-      }
-      if (shouldRefreshNativeConversationListForRealtimeEvent(event)) {
-        refreshNativeConversationList(event.payload.projectId as string, event.payload.conversationId as string);
-      }
-      if (event.type === 'conversation.thread.archived' && typeof event.payload.conversationId === 'string') {
-        const conversationId = event.payload.conversationId;
-        const taskId = typeof event.payload.taskId === 'string' ? event.payload.taskId : null;
-        const projectId = typeof event.payload.projectId === 'string' ? event.payload.projectId : null;
-        if (taskId) nativeConversationChoiceLoadCoordinator.forget(taskId, conversationId);
-        else if (projectId) nativeProjectConversationChoiceLoadCoordinator.forget(projectId, conversationId);
-        setNativeConversationChoicesByProject((current) =>
-          Object.fromEntries(
-            Object.entries(current).map(([projectId, choices]) => [
-              projectId,
-              { ...choices, choices: choices.choices.filter((choice) => choice.id !== conversationId), items: choices.items.filter((choice) => choice.id !== conversationId) },
-            ]),
-          ),
-        );
-        setNativeConversationChoicesByTask((current) =>
-          Object.fromEntries(
-            Object.entries(current).map(([taskId, choices]) => [taskId, { ...choices, choices: choices.choices.filter((choice) => choice.id !== conversationId), items: choices.items.filter((choice) => choice.id !== conversationId) }]),
-          ),
-        );
-        if (selectedNativeConversationIdRef.current === conversationId) {
-          selectedNativeConversationIdRef.current = null;
-          setSelectedNativeConversationId(null);
-          setFocusedArchivedConversation(null);
-          setConversationDraftOpen(false);
-        }
-        void refreshArchivedConversations();
-      }
-      if (event.type === 'conversation.thread.unarchived') {
-        const taskId = typeof event.payload.taskId === 'string' ? event.payload.taskId : null;
-        const projectId = typeof event.payload.projectId === 'string' ? event.payload.projectId : null;
-        if (taskId) void refreshNativeConversationChoices(taskId);
-        else if (projectId) void refreshNativeProjectConversationChoices(projectId);
-        void refreshArchivedConversations();
-      }
-      if (event.type === 'conversation.turn.completed' && typeof event.payload.conversationId === 'string') {
-        const conversationId = event.payload.conversationId;
-        const hasUnreadCompletion = event.payload.status === 'completed' && event.payload.hasUnreadCompletion !== false;
-        if (hasUnreadCompletion) {
-          const selected = selectedNativeConversationIdRef.current === conversationId;
-          setNativeConversationCompletionUnread(conversationId, !selected);
-          if (selected && typeof event.payload.projectId === 'string') {
-            acknowledgeNativeConversationCompletion(event.payload.projectId, conversationId);
-          }
-        }
-      }
-      if (event.type === 'task.updated' && typeof event.payload.taskId === 'string' && props.onLoadTask) {
-        const taskId = event.payload.taskId;
-        if (!pendingRealtimeTaskRefreshIdsRef.current.has(taskId)) {
-          pendingRealtimeTaskRefreshIdsRef.current.add(taskId);
-          void props
-            .onLoadTask(taskId)
-            .then(mergeTaskRecord)
-            .catch((error: unknown) => recordLocalError('task-realtime-refresh', error))
-            .finally(() => {
-              pendingRealtimeTaskRefreshIdsRef.current.delete(taskId);
-            });
-        }
-      }
-      const conversation = selectedTaskConversationRef.current;
-      if (isRuntimeConversationOutputEvent(event, conversation)) {
-        queueRuntimeConversationEvent(event);
+    let connectionState: ZeusRealtimeConnectionState = 'connecting';
+    let statusSyncGeneration = 0;
+    let statusSyncAttempt = 0;
+    let statusSyncRetryTimer: number | undefined;
+    const clearStatusSyncRetry = (): void => {
+      if (statusSyncRetryTimer !== undefined) window.clearTimeout(statusSyncRetryTimer);
+      statusSyncRetryTimer = undefined;
+    };
+    const synchronizeActiveProjectConversationStatus = (): void => {
+      clearStatusSyncRetry();
+      if (connectionState !== 'connected') return;
+      const projectId = activeProjectIdRef.current;
+      if (!projectId) {
+        setNativeConversationStatusSyncState('connected');
         return;
       }
-      if (!shouldRefreshConversationForRuntimeEvent(event, conversation)) return;
-      if (!conversation) return;
-      flushRuntimeConversationEvents();
-      setGraphConversations((current) => current.map((candidate) => (candidate.id === conversation.id ? applyRuntimeEndedEventToConversation(candidate, event) : candidate)));
-      setSelectedGraphConversation((current) => (current?.id === conversation.id ? applyRuntimeEndedEventToConversation(current, event) : current));
-    });
+      const generation = ++statusSyncGeneration;
+      setNativeConversationStatusSyncState('syncing');
+      void reconcileNativeConversationProjectSnapshot(projectId).then(
+        () => {
+          if (connectionState !== 'connected' || generation !== statusSyncGeneration) return;
+          statusSyncAttempt = 0;
+          setNativeConversationStatusSyncState('connected');
+        },
+        (error: unknown) => {
+          if (connectionState !== 'connected' || generation !== statusSyncGeneration) return;
+          console.warn('会话状态权威快照校准失败，将自动重试。', error);
+          const delay = Math.min(1_000 * 2 ** Math.min(statusSyncAttempt, 3), 8_000);
+          statusSyncAttempt += 1;
+          statusSyncRetryTimer = window.setTimeout(synchronizeActiveProjectConversationStatus, delay);
+        },
+      );
+    };
+    const unsubscribe = subscribeRealtimeEvents(
+      (event) => {
+        if (event.type === 'codex.usage.changed') setCodexUsageRevision((current) => current + 1);
+        if (typeof event.payload.projectId === 'string' && isProjectConversationAttentionState(event.payload.conversationAttentionState)) {
+          const projectId = event.payload.projectId;
+          const attentionState = event.payload.conversationAttentionState;
+          setSnapshot((current) =>
+            current.conversationAttentionByProject[projectId] === attentionState
+              ? current
+              : {
+                  ...current,
+                  conversationAttentionByProject: {
+                    ...current.conversationAttentionByProject,
+                    [projectId]: attentionState,
+                  },
+                },
+          );
+        }
+        if (shouldRefreshNativeConversationListForRealtimeEvent(event)) {
+          refreshNativeConversationList(event.payload.projectId as string, event.payload.conversationId as string);
+        }
+        if (event.type === 'conversation.thread.archived' && typeof event.payload.conversationId === 'string') {
+          const conversationId = event.payload.conversationId;
+          const taskId = typeof event.payload.taskId === 'string' ? event.payload.taskId : null;
+          const projectId = typeof event.payload.projectId === 'string' ? event.payload.projectId : null;
+          if (taskId) nativeConversationChoiceLoadCoordinator.forget(taskId, conversationId);
+          else if (projectId) nativeProjectConversationChoiceLoadCoordinator.forget(projectId, conversationId);
+          setNativeConversationChoicesByProject((current) =>
+            Object.fromEntries(
+              Object.entries(current).map(([projectId, choices]) => [
+                projectId,
+                { ...choices, choices: choices.choices.filter((choice) => choice.id !== conversationId), items: choices.items.filter((choice) => choice.id !== conversationId) },
+              ]),
+            ),
+          );
+          setNativeConversationChoicesByTask((current) =>
+            Object.fromEntries(
+              Object.entries(current).map(([taskId, choices]) => [taskId, { ...choices, choices: choices.choices.filter((choice) => choice.id !== conversationId), items: choices.items.filter((choice) => choice.id !== conversationId) }]),
+            ),
+          );
+          if (selectedNativeConversationIdRef.current === conversationId) {
+            selectedNativeConversationIdRef.current = null;
+            setSelectedNativeConversationId(null);
+            setFocusedArchivedConversation(null);
+            setConversationDraftOpen(false);
+          }
+          void refreshArchivedConversations();
+        }
+        if (event.type === 'conversation.thread.unarchived') {
+          const taskId = typeof event.payload.taskId === 'string' ? event.payload.taskId : null;
+          const projectId = typeof event.payload.projectId === 'string' ? event.payload.projectId : null;
+          if (taskId) void refreshNativeConversationChoices(taskId);
+          else if (projectId) void refreshNativeProjectConversationChoices(projectId);
+          void refreshArchivedConversations();
+        }
+        if (event.type === 'conversation.turn.completed' && typeof event.payload.conversationId === 'string') {
+          const conversationId = event.payload.conversationId;
+          const hasUnreadCompletion = event.payload.status === 'completed' && event.payload.hasUnreadCompletion !== false;
+          if (hasUnreadCompletion) {
+            const selected = selectedNativeConversationIdRef.current === conversationId;
+            setNativeConversationCompletionUnread(conversationId, !selected);
+            if (selected && typeof event.payload.projectId === 'string') {
+              acknowledgeNativeConversationCompletion(event.payload.projectId, conversationId);
+            }
+          }
+        }
+        if (event.type === 'task.updated' && typeof event.payload.taskId === 'string' && props.onLoadTask) {
+          const taskId = event.payload.taskId;
+          if (!pendingRealtimeTaskRefreshIdsRef.current.has(taskId)) {
+            pendingRealtimeTaskRefreshIdsRef.current.add(taskId);
+            void props
+              .onLoadTask(taskId)
+              .then(mergeTaskRecord)
+              .catch((error: unknown) => recordLocalError('task-realtime-refresh', error))
+              .finally(() => {
+                pendingRealtimeTaskRefreshIdsRef.current.delete(taskId);
+              });
+          }
+        }
+        const conversation = selectedTaskConversationRef.current;
+        if (isRuntimeConversationOutputEvent(event, conversation)) {
+          queueRuntimeConversationEvent(event);
+          return;
+        }
+        if (!shouldRefreshConversationForRuntimeEvent(event, conversation)) return;
+        if (!conversation) return;
+        flushRuntimeConversationEvents();
+        setGraphConversations((current) => current.map((candidate) => (candidate.id === conversation.id ? applyRuntimeEndedEventToConversation(candidate, event) : candidate)));
+        setSelectedGraphConversation((current) => (current?.id === conversation.id ? applyRuntimeEndedEventToConversation(current, event) : current));
+      },
+      (state) => {
+        connectionState = state;
+        statusSyncGeneration += 1;
+        clearStatusSyncRetry();
+        if (state === 'connected') {
+          statusSyncAttempt = 0;
+          synchronizeActiveProjectConversationStatus();
+          return;
+        }
+        setNativeConversationStatusSyncState(state);
+      },
+    );
     return () => {
       if (runtimeConversationFlushTimer) window.clearTimeout(runtimeConversationFlushTimer);
+      clearStatusSyncRetry();
+      statusSyncGeneration += 1;
       pendingRuntimeConversationEvents = [];
       if (unsubscribe) unsubscribe();
     };
@@ -7803,6 +7908,8 @@ export function App(props: {
     props.nativeConversationClient,
     props.onLoadTask,
     props.onSubscribeRealtimeEvents,
+    reconcileNativeConversationProjectSnapshot,
+    reconcileNativeConversationProjectionStates,
     setNativeConversationCompletionUnread,
   ]);
 
@@ -11309,6 +11416,12 @@ export function App(props: {
       <output className="sr-only" aria-live="polite" aria-atomic="true">
         {taskModelPushAnnouncement}
       </output>
+      {nativeConversationStatusSyncState !== 'connected' ? (
+        <output className="conversation-status-sync-indicator" data-state={nativeConversationStatusSyncState} role="status" aria-live="polite" aria-atomic="true">
+          <span className="conversation-status-sync-spinner" aria-hidden="true" />
+          <span>{appShellSettings.appLanguage === 'zh-CN' ? '正在同步会话状态' : 'Syncing conversation status'}</span>
+        </output>
+      ) : null}
       <ProjectCreateDialog
         open={projectCreateDialogOpen}
         form={projectCreateForm}
