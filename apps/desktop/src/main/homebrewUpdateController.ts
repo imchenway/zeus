@@ -222,8 +222,7 @@ function progressCopy(language: 'zh-CN' | 'en-US', progress: HomebrewUpdateProgr
     state: 'downloading',
     title: zh ? '正在下载 Zeus 更新' : 'Downloading Zeus Update',
     detail: zh ? `正在通过 Homebrew 下载 Zeus ${update.latestVersion}；你可以继续使用 Zeus。` : `Downloading Zeus ${update.latestVersion} with Homebrew. You can keep using Zeus.`,
-    ...(ratio === undefined ? {} : { progress: ratio }),
-    ...(downloadedBytes === undefined ? {} : { progressText: formatBytes(language, downloadedBytes, totalBytes) }),
+    ...(ratio === undefined ? {} : { progress: ratio, progressText: formatPercent(ratio) }),
   };
 }
 
@@ -238,11 +237,6 @@ function failedCopy(language: 'zh-CN' | 'en-US', error: unknown): NativeUpdatePr
   };
 }
 
-function formatBytes(language: 'zh-CN' | 'en-US', downloadedBytes: number, totalBytes?: number): string {
-  const formatter = new Intl.NumberFormat(language === 'zh-CN' ? 'zh-CN' : 'en-US', { maximumFractionDigits: 1 });
-  const downloaded = `${formatter.format(downloadedBytes / 1024 / 1024)} MB`;
-  if (!totalBytes) return language === 'zh-CN' ? `已下载 ${downloaded}` : `${downloaded} downloaded`;
-  const total = `${formatter.format(totalBytes / 1024 / 1024)} MB`;
-  const percent = Math.min(100, Math.floor((downloadedBytes / totalBytes) * 100));
-  return `${downloaded} / ${total} · ${percent}%`;
+function formatPercent(ratio: number): string {
+  return `${Math.min(100, Math.floor(Math.max(0, ratio) * 100))}%`;
 }
