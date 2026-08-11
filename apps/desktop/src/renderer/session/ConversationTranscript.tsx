@@ -65,7 +65,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   const lastUserKey = [...items].reverse().find((entry) => `${entry.type}`.toLocaleLowerCase().includes('user'))?.key;
   const answeredRequests = useMemo(() => props.state.pendingRequests.filter(isAnsweredUserInputRequest), [props.state.pendingRequests]);
   const transcriptRows = useMemo(() => projectTranscriptRows(items, answeredRequests), [answeredRequests, items]);
-  const turnRows = useMemo(() => projectTranscriptTurnRows(transcriptRows), [transcriptRows]);
+  const turnRows = useMemo(() => projectTranscriptTurnRows(transcriptRows, props.state.activeTurnId), [props.state.activeTurnId, transcriptRows]);
   const turnWorkIds = useMemo(() => new Set(turnRows.filter((row): row is TranscriptTurnWorkRow => row.kind === 'turn_work').map((row) => row.turnId)), [turnRows]);
   const renderedTurnIds = useMemo(
     () =>
@@ -493,34 +493,48 @@ function renderTurnArtifacts(turnId: string, props: ConversationTranscriptProps,
   );
 }
 
-export function projectTranscriptTurnRows(rows: readonly TranscriptRow[]): TranscriptTurnRow[] {
-  const workRowsByTurn = new Map<string, TranscriptRow[]>();
-  const firstWorkRowKeyByTurn = new Map<string, string>();
-  const workRowKeys = new Set<string>();
+export function projectTranscriptTurnRows(rows: readonly TranscriptRow[], activeTurnId: string | null = null): TranscriptTurnRow[] {
+  const finalAnswerTurnIds = new Set(rows.flatMap((row) => (row.kind === 'item' && isFinalAnswerItem(row.item) ? [row.item.turnId] : [])));
+  const activeTurnOpeningUserRowKey = activeTurnId ? rows.find((row) => row.kind === 'item' && row.item.turnId === activeTurnId && itemRole(row.item) === 'user')?.key : undefined;
+  const liveTurnRows = activeTurnId && !finalAnswerTurnIds.has(activeTurnId) ? rows.filter((row) => row.key !== activeTurnOpeningUserRowKey && transcriptRowTurnId(row) === activeTurnId && isLiveTurnTimelineRow(row)) : [];
+  const liveTurnRowKeys = new Set(liveTurnRows.map((row) => row.key));
+  const firstLiveTurnRowKey = liveTurnRows[0]?.key;
+  const workRowsByFinalTurn = new Map<string, TranscriptRow[]>();
+  const firstWorkRowKeyByFinalTurn = new Map<string, string>();
+  const finalWorkRowKeys = new Set<string>();
   for (const row of rows) {
-    if (!isTurnProcessRow(row)) continue;
     const turnId = transcriptRowTurnId(row);
-    if (!turnId) continue;
-    const workRows = workRowsByTurn.get(turnId) ?? [];
+    if (!turnId || !finalAnswerTurnIds.has(turnId) || !isTurnProcessRow(row)) continue;
+    const workRows = workRowsByFinalTurn.get(turnId) ?? [];
     workRows.push(row);
-    workRowsByTurn.set(turnId, workRows);
-    firstWorkRowKeyByTurn.set(turnId, firstWorkRowKeyByTurn.get(turnId) ?? row.key);
-    workRowKeys.add(row.key);
+    workRowsByFinalTurn.set(turnId, workRows);
+    firstWorkRowKeyByFinalTurn.set(turnId, firstWorkRowKeyByFinalTurn.get(turnId) ?? row.key);
+    finalWorkRowKeys.add(row.key);
   }
 
   const projected: TranscriptTurnRow[] = [];
-  const emittedWorkTurns = new Set<string>();
+  const emittedFinalWorkTurns = new Set<string>();
   for (const row of rows) {
-    const turnId = transcriptRowTurnId(row);
-    const workRows = turnId ? workRowsByTurn.get(turnId) : undefined;
-    if (turnId && workRows && firstWorkRowKeyByTurn.get(turnId) === row.key && !emittedWorkTurns.has(turnId)) {
-      projected.push({ kind: 'turn_work', key: `turn-work:${turnId}`, turnId, rows: workRows });
-      emittedWorkTurns.add(turnId);
+    if (activeTurnId && firstLiveTurnRowKey === row.key) {
+      projected.push({ kind: 'turn_work', key: `turn-work-live:${activeTurnId}`, turnId: activeTurnId, rows: liveTurnRows });
     }
-    if (workRowKeys.has(row.key)) continue;
+    if (liveTurnRowKeys.has(row.key)) continue;
+    const turnId = transcriptRowTurnId(row);
+    const finalWorkRows = turnId ? workRowsByFinalTurn.get(turnId) : undefined;
+    if (turnId && finalWorkRows && firstWorkRowKeyByFinalTurn.get(turnId) === row.key && !emittedFinalWorkTurns.has(turnId)) {
+      projected.push({ kind: 'turn_work', key: `turn-work-final:${turnId}`, turnId, rows: finalWorkRows });
+      emittedFinalWorkTurns.add(turnId);
+    }
+    if (finalWorkRowKeys.has(row.key)) continue;
     projected.push(row);
   }
   return projected;
+}
+
+function isLiveTurnTimelineRow(row: TranscriptRow): boolean {
+  if (row.kind === 'answered_request' || row.kind === 'activity') return true;
+  // 计划是需要独立审核的产物，不属于仍在展开的过程正文。
+  return row.item.type !== 'plan' && !isFinalAnswerItem(row.item);
 }
 
 function isTurnProcessRow(row: TranscriptRow): boolean {
@@ -532,7 +546,7 @@ function isTurnProcessRow(row: TranscriptRow): boolean {
 }
 
 function transcriptRowTurnId(row: TranscriptRow): string | null {
-  if (row.kind === 'answered_request') return null;
+  if (row.kind === 'answered_request') return row.request.turnId;
   return row.kind === 'item' ? row.item.turnId : (row.items[0]?.turnId ?? null);
 }
 
@@ -560,8 +574,9 @@ export function projectTranscriptRows(items: readonly NativeSessionItemBuffer[],
   };
   const timeline: Array<{ kind: 'item'; item: NativeSessionItemBuffer } | { kind: 'answered_request'; request: NativePendingRequest }> = items.map((item) => ({ kind: 'item', item }));
   for (const request of [...answeredRequests].sort((left, right) => (left.resolvedAt ?? left.createdAt).localeCompare(right.resolvedAt ?? right.createdAt))) {
-    const resolvedAt = request.resolvedAt ?? request.createdAt;
-    const insertionIndex = timeline.findIndex((entry) => entry.kind === 'item' && (entry.item.updatedAt ?? '') >= resolvedAt);
+    const requestTimelineAt = request.resolvedAt ?? request.createdAt;
+    // 已回答询问按答案提交时间落位；普通条目使用首次进入时间线的稳定时间，不能用流式更新后的时间重排。
+    const insertionIndex = timeline.findIndex((entry) => entry.kind === 'item' && (entry.item.timelineAt ?? entry.item.updatedAt ?? '') >= requestTimelineAt);
     timeline.splice(insertionIndex < 0 ? timeline.length : insertionIndex, 0, { kind: 'answered_request', request });
   }
   for (const entry of timeline) {

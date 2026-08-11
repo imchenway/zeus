@@ -934,6 +934,8 @@ export interface NativeSessionItemBuffer {
   optimistic?: boolean;
   clientUserMessageId?: string;
   durableClientUserMessageId?: string;
+  /** 条目首次进入会话顺序的稳定时间，后续流式更新不得覆盖。 */
+  timelineAt?: string;
   updatedAt?: string;
 }
 
