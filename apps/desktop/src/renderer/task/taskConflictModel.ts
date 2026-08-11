@@ -3,6 +3,14 @@ import type { TaskIntegrationConflictFile } from '../session/sessionTypes.js';
 export type ConflictSide = 'source' | 'task';
 export type ConflictSideState = 'pending' | 'accepted' | 'ignored';
 export type ConflictBlockStatus = 'pending' | 'resolved' | 'manual';
+export type SimpleConflictFailureReason = 'base_unavailable' | 'same_position_insertions' | 'overlapping_changes' | 'content_too_large';
+
+export interface SimpleConflictResolution {
+  document: ConflictDocument;
+  resolved: number;
+  remaining: number;
+  failureReasons: Partial<Record<SimpleConflictFailureReason, number>>;
+}
 
 export interface ConflictBlock {
   id: string;
@@ -61,6 +69,16 @@ interface MergeEdit {
   start: number;
   end: number;
   replacement: string[];
+}
+
+interface SimpleBlockMergeResult {
+  content: string | null;
+  reason: SimpleConflictFailureReason | null;
+}
+
+interface TokenMergeResult {
+  content: string[] | null;
+  reason: Extract<SimpleConflictFailureReason, 'same_position_insertions' | 'overlapping_changes'> | null;
 }
 
 export function countConflictBlocks(content: string): number {
@@ -227,26 +245,30 @@ export function applyConflictDocumentEdit(document: ConflictDocument, nextConten
   return { ...document, visibleContent: nextContent, blocks };
 }
 
-export function resolveSimpleConflictDocument(document: ConflictDocument): { document: ConflictDocument; resolved: number; remaining: number } {
+export function resolveSimpleConflictDocument(document: ConflictDocument): SimpleConflictResolution {
   let next = document;
   let resolved = 0;
+  const failureReasons: Partial<Record<SimpleConflictFailureReason, number>> = {};
   for (const block of [...document.blocks].sort((left, right) => right.visibleStart - left.visibleStart)) {
     if (block.status !== 'pending') continue;
-    const merged = mergeSimpleBlock(block.base, block.source, block.task);
-    if (merged === null) continue;
+    const result = block.baseAvailable ? tryMergeSimpleBlock(block.base, block.source, block.task) : { content: null, reason: 'base_unavailable' as const };
+    if (result.content === null) {
+      if (result.reason) failureReasons[result.reason] = (failureReasons[result.reason] ?? 0) + 1;
+      continue;
+    }
     const resolvedBlock = {
       ...block,
-      visibleText: merged,
+      visibleText: result.content,
       sourceState: 'accepted' as const,
       taskState: 'accepted' as const,
       status: 'resolved' as const,
       combinationError: false,
     };
     const index = next.blocks.findIndex((candidate) => candidate.id === block.id);
-    next = replaceBlock(next, index, merged, resolvedBlock);
+    next = replaceBlock(next, index, result.content, resolvedBlock);
     resolved += 1;
   }
-  return { document: next, resolved, remaining: countUnresolvedConflictBlocks(next) };
+  return { document: next, resolved, remaining: countUnresolvedConflictBlocks(next), failureReasons };
 }
 
 export function resolveSimpleConflictDraft(content: string, fullBase: string): { content: string; resolved: number; remaining: number } {
@@ -388,36 +410,81 @@ function baseSimilarity(baseInput: string, variantInput: string): number {
 }
 
 function mergeSimpleBlock(baseInput: string, sourceInput: string, taskInput: string): string | null {
-  if (sourceInput === taskInput) return sourceInput;
-  if (sourceInput === baseInput) return taskInput;
-  if (taskInput === baseInput) return sourceInput;
+  return tryMergeSimpleBlock(baseInput, sourceInput, taskInput).content;
+}
+
+function tryMergeSimpleBlock(baseInput: string, sourceInput: string, taskInput: string): SimpleBlockMergeResult {
+  if (sourceInput === taskInput) return { content: sourceInput, reason: null };
+  if (sourceInput === baseInput) return { content: taskInput, reason: null };
+  if (taskInput === baseInput) return { content: sourceInput, reason: null };
   const lineEnding = sourceInput.includes('\r\n') || taskInput.includes('\r\n') || baseInput.includes('\r\n') ? '\r\n' : '\n';
   const base = tokenizeMergeContent(normalizeLineEndings(baseInput));
   const source = tokenizeMergeContent(normalizeLineEndings(sourceInput));
   const task = tokenizeMergeContent(normalizeLineEndings(taskInput));
-  if (base.length + source.length + task.length > 36_000) return null;
+  if (base.length + source.length + task.length > 36_000) return { content: null, reason: 'content_too_large' };
+  const sourceSemantic = withoutWhitespace(source);
+  const taskSemantic = withoutWhitespace(task);
+  if (sameTokens(sourceSemantic, taskSemantic)) {
+    if (canPreferCosmeticVariant(baseInput, sourceInput, taskInput)) {
+      const content = sourceInput.length <= taskInput.length ? sourceInput : taskInput;
+      return { content, reason: null };
+    }
+    return { content: null, reason: 'overlapping_changes' };
+  }
   const strict = mergeTokenChanges(base, source, task, false);
-  if (strict !== null) return strict.join('').replace(/\n/gu, lineEnding);
+  if (strict.content !== null) return { content: strict.content.join('').replace(/\n/gu, lineEnding), reason: null };
   const whitespaceTolerant = mergeTokenChanges(base, source, task, true);
-  return whitespaceTolerant === null ? null : whitespaceTolerant.join('').replace(/\n/gu, lineEnding);
+  if (whitespaceTolerant.content === null) return { content: null, reason: whitespaceTolerant.reason };
+
+  // 忽略空白只用于寻找对齐点；最终语义令牌必须与严格三方合并一致，避免重复插入正文。
+  const semantic = mergeTokenChanges(withoutWhitespace(base), sourceSemantic, taskSemantic, false);
+  if (semantic.content === null || !sameTokens(withoutWhitespace(whitespaceTolerant.content), semantic.content)) {
+    return { content: null, reason: semantic.reason ?? strict.reason ?? 'overlapping_changes' };
+  }
+  return { content: whitespaceTolerant.content.join('').replace(/\n/gu, lineEnding), reason: null };
 }
 
 function tokenizeMergeContent(content: string): string[] {
-  return content.match(/\n|[ \t]+|[\p{L}\p{N}_$]+|[^\p{L}\p{N}_$ \t\n]/gu) ?? [];
+  return content.match(/\n|[ \t]+|[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}]|[\p{L}\p{N}_$]+|[^\p{L}\p{N}_$ \t\n]/gu) ?? [];
 }
 
-function mergeTokenChanges(base: string[], source: string[], task: string[], ignoreWhitespace: boolean): string[] | null {
+function mergeTokenChanges(base: string[], source: string[], task: string[], ignoreWhitespace: boolean): TokenMergeResult {
   const sourceEdits = buildMergeEdits(base, source, ignoreWhitespace);
   const taskEdits = buildMergeEdits(base, task, ignoreWhitespace);
   const edits: MergeEdit[] = [];
   for (const edit of [...sourceEdits, ...taskEdits]) {
     if (edits.some((existing) => sameMergeEdit(existing, edit))) continue;
-    if (edits.some((existing) => mergeEditsConflict(existing, edit))) return null;
+    const conflicting = edits.find((existing) => mergeEditsConflict(existing, edit));
+    if (conflicting) {
+      const samePositionInsertions = conflicting.start === conflicting.end && edit.start === edit.end && conflicting.start === edit.start;
+      return { content: null, reason: samePositionInsertions ? 'same_position_insertions' : 'overlapping_changes' };
+    }
     edits.push(edit);
   }
   const result = [...base];
   edits.sort((left, right) => right.start - left.start || right.end - left.end).forEach((edit) => result.splice(edit.start, edit.end - edit.start, ...edit.replacement));
-  return result;
+  return { content: result, reason: null };
+}
+
+function withoutWhitespace(tokens: string[]): string[] {
+  return tokens.filter((token) => !/^\s+$/u.test(token));
+}
+
+function sameTokens(left: string[], right: string[]): boolean {
+  return left.length === right.length && left.every((token, index) => token === right[index]);
+}
+
+function canPreferCosmeticVariant(base: string, source: string, task: string): boolean {
+  const normalizedSource = normalizeLineEndings(source);
+  const normalizedTask = normalizeLineEndings(task);
+  if (/['"`]/u.test(`${normalizedSource}${normalizedTask}`)) return false;
+  const sourceLines = normalizedSource.split('\n');
+  const taskLines = normalizedTask.split('\n');
+  if (sourceLines.length === taskLines.length) {
+    return sourceLines.every((line, index) => line.match(/^[ \t]*/u)?.[0] === taskLines[index].match(/^[ \t]*/u)?.[0]);
+  }
+  const normalizedBase = normalizeLineEndings(base);
+  return normalizedBase.endsWith('\n') && normalizedSource === normalizedBase.slice(0, -1) && normalizedTask === `\n${normalizedSource}`;
 }
 
 function buildMergeEdits(base: string[], variant: string[], ignoreWhitespace: boolean): MergeEdit[] {
@@ -465,42 +532,70 @@ function mergeEditsConflict(left: MergeEdit, right: MergeEdit): boolean {
 }
 
 function diffLines(before: string[], after: string[]): DiffOperation[] {
-  if (before.length === 0) return after.map((text) => ({ type: 'insert' as const, text }));
-  if (after.length === 0) return before.map((text) => ({ type: 'delete' as const, text }));
-  if (before.length * after.length > 200_000) {
-    return [...before.map((text) => ({ type: 'delete' as const, text })), ...after.map((text) => ({ type: 'insert' as const, text }))];
-  }
-  const table = Array.from({ length: before.length + 1 }, () => new Uint32Array(after.length + 1));
-  for (let beforeIndex = before.length - 1; beforeIndex >= 0; beforeIndex -= 1) {
-    for (let afterIndex = after.length - 1; afterIndex >= 0; afterIndex -= 1) {
-      table[beforeIndex][afterIndex] = before[beforeIndex] === after[afterIndex] ? table[beforeIndex + 1][afterIndex + 1] + 1 : Math.max(table[beforeIndex + 1][afterIndex], table[beforeIndex][afterIndex + 1]);
+  // Myers 最短编辑路径避免中等冲突块落入旧的二维矩阵上限。
+  const maximum = before.length + after.length;
+  let frontier = new Map<number, number>([[1, 0]]);
+  const trace: Array<Map<number, number>> = [];
+  for (let distance = 0; distance <= maximum; distance += 1) {
+    const next = new Map<number, number>();
+    for (let diagonal = -distance; diagonal <= distance; diagonal += 2) {
+      const down = diagonal === -distance || (diagonal !== distance && (frontier.get(diagonal - 1) ?? -1) < (frontier.get(diagonal + 1) ?? -1));
+      let beforeIndex = down ? (frontier.get(diagonal + 1) ?? 0) : (frontier.get(diagonal - 1) ?? 0) + 1;
+      let afterIndex = beforeIndex - diagonal;
+      while (beforeIndex < before.length && afterIndex < after.length && before[beforeIndex] === after[afterIndex]) {
+        beforeIndex += 1;
+        afterIndex += 1;
+      }
+      next.set(diagonal, beforeIndex);
+      if (beforeIndex >= before.length && afterIndex >= after.length) {
+        trace.push(next);
+        return backtrackDiff(trace, before, after);
+      }
     }
+    trace.push(next);
+    frontier = next;
   }
+  return [];
+}
+
+function backtrackDiff(trace: Array<Map<number, number>>, before: string[], after: string[]): DiffOperation[] {
   const operations: DiffOperation[] = [];
-  let beforeIndex = 0;
-  let afterIndex = 0;
-  while (beforeIndex < before.length && afterIndex < after.length) {
-    if (before[beforeIndex] === after[afterIndex]) {
-      operations.push({ type: 'equal', text: before[beforeIndex] });
-      beforeIndex += 1;
-      afterIndex += 1;
-    } else if (table[beforeIndex + 1][afterIndex] >= table[beforeIndex][afterIndex + 1]) {
-      operations.push({ type: 'delete', text: before[beforeIndex] });
-      beforeIndex += 1;
+  let beforeIndex = before.length;
+  let afterIndex = after.length;
+  for (let distance = trace.length - 1; distance > 0; distance -= 1) {
+    const previous = trace[distance - 1];
+    const diagonal = beforeIndex - afterIndex;
+    const down = diagonal === -distance || (diagonal !== distance && (previous.get(diagonal - 1) ?? -1) < (previous.get(diagonal + 1) ?? -1));
+    const previousDiagonal = down ? diagonal + 1 : diagonal - 1;
+    const previousBeforeIndex = previous.get(previousDiagonal) ?? 0;
+    const previousAfterIndex = previousBeforeIndex - previousDiagonal;
+    while (beforeIndex > previousBeforeIndex && afterIndex > previousAfterIndex) {
+      operations.push({ type: 'equal', text: before[beforeIndex - 1] });
+      beforeIndex -= 1;
+      afterIndex -= 1;
+    }
+    if (down) {
+      operations.push({ type: 'insert', text: after[afterIndex - 1] });
+      afterIndex -= 1;
     } else {
-      operations.push({ type: 'insert', text: after[afterIndex] });
-      afterIndex += 1;
+      operations.push({ type: 'delete', text: before[beforeIndex - 1] });
+      beforeIndex -= 1;
     }
   }
-  while (beforeIndex < before.length) {
-    operations.push({ type: 'delete', text: before[beforeIndex] });
-    beforeIndex += 1;
+  while (beforeIndex > 0 && afterIndex > 0) {
+    operations.push({ type: 'equal', text: before[beforeIndex - 1] });
+    beforeIndex -= 1;
+    afterIndex -= 1;
   }
-  while (afterIndex < after.length) {
-    operations.push({ type: 'insert', text: after[afterIndex] });
-    afterIndex += 1;
+  while (beforeIndex > 0) {
+    operations.push({ type: 'delete', text: before[beforeIndex - 1] });
+    beforeIndex -= 1;
   }
-  return operations;
+  while (afterIndex > 0) {
+    operations.push({ type: 'insert', text: after[afterIndex - 1] });
+    afterIndex -= 1;
+  }
+  return operations.reverse();
 }
 
 function normalizeLineEndings(content: string): string {
