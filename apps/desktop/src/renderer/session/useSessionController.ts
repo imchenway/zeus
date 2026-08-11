@@ -38,6 +38,7 @@ export interface SessionControllerClient {
   loadNativeConversation(projectId: string, conversationId: string): Promise<NativeConversationSnapshot>;
   loadNativePendingRequests(projectId: string, conversationId: string): Promise<{ conversationId: string; requests: NativePendingRequest[] }>;
   loadConversationResourcePreview?(projectId: string, conversationId: string, resourceId: string): Promise<ConversationResourcePreview>;
+  loadTurnChangeFilePreview?(projectId: string, conversationId: string, turnId: string, changeSetId: string, fileId: string): Promise<ConversationResourcePreview>;
   loadTurnChangeSet?(projectId: string, conversationId: string, turnId: string): Promise<TurnChangeSet>;
   operateTurnChangeSet?(
     projectId: string,

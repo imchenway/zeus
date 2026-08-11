@@ -32,7 +32,7 @@ import {
   type TaskClipboardAttachmentPayload,
 } from './taskClipboard.js';
 import { type BrowserHost, createBrowserHost } from './browserHost.js';
-import { type ConversationResourceRequest, listConversationResourceOpenTargets, openConversationResource, type OpenConversationResourceRequest } from './conversationResourceOpen.js';
+import { type ConversationResourceRequest, listConversationResourceOpenTargets, openConversationResource, type OpenConversationResourceRequest, openTurnChangeFile, type OpenTurnChangeFileRequest } from './conversationResourceOpen.js';
 import {
   type ConversationInputResourceBroker,
   type ConversationInputResourceSource,
@@ -843,6 +843,13 @@ function setupIpc(): void {
       throw new Error('Conversation resource request came from an untrusted window.');
     }
     return openConversationResource(request, conversationResourceOpenServices(requestingWindow));
+  });
+  ipcMain.handle('zeus:turn-change-file:open', (event, request: OpenTurnChangeFileRequest) => {
+    const requestingWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow)) {
+      throw new Error('Turn change file request came from an untrusted window.');
+    }
+    return openTurnChangeFile(request, conversationResourceOpenServices(requestingWindow));
   });
   ipcMain.handle('zeus:window-drag-start', (event, point: unknown) => {
     const window = BrowserWindow.fromWebContents(event.sender);

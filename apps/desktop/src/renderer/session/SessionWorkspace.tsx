@@ -4,7 +4,7 @@ import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/c
 import { GlobeSimpleIcon as GlobeSimple } from '@phosphor-icons/react/dist/csr/GlobeSimple';
 import { animate as animateMotion, motion, useMotionValue, useTransform } from 'framer-motion';
 import type { ConversationFileLocation, ConversationOpenTarget, TurnChangeFile, ZeusBrowserPreparedSubmission } from '@zeus/shared';
-import { openConversationResourceInMain } from '../appShellBridge.js';
+import { openConversationResourceInMain, openTurnChangeFileInMain } from '../appShellBridge.js';
 import { canSteerActiveTurn, type ComposerRuntimeSettings, ConversationComposer, resolveComposerKeyIntent } from './ConversationComposer.js';
 import { ConversationTranscript } from './ConversationTranscript.js';
 import { QueuedConversationMessages } from './QueuedConversationMessages.js';
@@ -130,6 +130,7 @@ export interface SessionWorkspaceActions {
   ) => void | Promise<void>;
   onSnoozeRequest?: (requestId: string) => void | Promise<void>;
   onOpenResource?: (resource: ConversationResource, target: ConversationOpenTarget, location?: ConversationFileLocation) => Promise<ConversationResourceOpenActionResult>;
+  onOpenTurnChangeFile?: (changeSet: TurnChangeSet, file: TurnChangeFile, target: ConversationOpenTarget, location?: ConversationFileLocation) => Promise<ConversationResourceOpenActionResult>;
   onLoadResourcePreview?: (resource: ConversationResource) => Promise<ConversationResourcePreview>;
   onOperateTurnChangeSet?: (changeSet: TurnChangeSet, action: 'undo' | 'reapply') => Promise<TurnChangeSetOperationResult>;
 }
@@ -274,6 +275,27 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
         onLoadResourcePreview: async (resource) => {
           if (!props.client.loadConversationResourcePreview) throw new Error('conversation_resource_preview_unavailable');
           return props.client.loadConversationResourcePreview(props.conversation.projectId, props.conversation.id, resource.id);
+        },
+        onOpenTurnChangeFile: async (changeSet, file, target, location) => {
+          const result = await openTurnChangeFileInMain({
+            zeus: window.zeus,
+            projectId: props.conversation.projectId,
+            conversationId: props.conversation.id,
+            turnId: changeSet.providerTurnId,
+            changeSetId: changeSet.id,
+            fileId: file.id,
+            target,
+            ...(location ? { location } : {}),
+          });
+          if (!result.opened) throw new Error(result.error ?? 'turn_change_file_open_failed');
+          if (result.mode !== 'zeus_source') return { opened: true, mode: result.mode };
+          if (!props.client.loadTurnChangeFilePreview) throw new Error('turn_change_file_preview_unavailable');
+          const preview = await props.client.loadTurnChangeFilePreview(props.conversation.projectId, props.conversation.id, changeSet.providerTurnId, changeSet.id, file.id);
+          return {
+            opened: true,
+            mode: result.mode,
+            preview: location ? { ...preview, location } : preview,
+          };
         },
         onOperateTurnChangeSet: async (changeSet, action) => {
           if (!props.client.operateTurnChangeSet) throw new Error('turn_change_set_operation_unavailable');
@@ -1415,14 +1437,19 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   }
 
   async function openTurnChangeFile(changeSet: TurnChangeSet, file: TurnChangeFile, line?: number): Promise<void> {
-    const candidatePaths = new Set([file.newPath, file.oldPath].filter((path): path is string => Boolean(path)).map(normalizeProjectRelativePath));
-    const resource = Object.values(props.state?.items ?? {})
-      .flatMap((item) => item.resources)
-      .find((candidate) => candidate.kind === 'file' && candidate.turnId === changeSet.turnId && candidatePaths.has(normalizeProjectRelativePath(candidate.projectRelativePath)));
-    if (!resource) {
-      throw new Error(props.language === 'zh-CN' ? '无法取得此变更文件的受信打开权限。' : 'No trusted open authority is available for this changed file.');
+    if (!actions.onOpenTurnChangeFile) throw new Error('turn_change_file_open_unavailable');
+    contextReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const result = await actions.onOpenTurnChangeFile(changeSet, file, line ? 'zeus_source' : 'preferred', line ? { line } : undefined);
+    if (!result.opened) throw new Error('turn_change_file_open_failed');
+    if (result.mode === 'zeus_source' && result.preview) {
+      setContextFullWidth(false);
+      setContextWorkspace({ kind: 'source', preview: result.preview });
+      return;
     }
-    await openConversationResource(resource, line ? 'zeus_source' : defaultOpenTarget(resource), line ? { line } : undefined);
+    if (result.mode === 'zeus_browser') {
+      setContextFullWidth(false);
+      setContextWorkspace({ kind: 'browser' });
+    }
   }
 
   async function operateTurnChangeSet(changeSet: TurnChangeSet, action: 'undo' | 'reapply'): Promise<TurnChangeSetOperationResult> {

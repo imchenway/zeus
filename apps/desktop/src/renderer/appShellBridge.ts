@@ -49,6 +49,13 @@ export interface AppShellBridgeWindow {
       mode?: 'zeus_source' | 'zeus_browser' | 'external' | 'file' | 'clipboard';
       error?: string;
     }>;
+    openTurnChangeFile?: (request: { projectId: string; conversationId: string; turnId: string; changeSetId: string; fileId: string; target: ConversationOpenTarget; location?: ConversationFileLocation }) => Promise<{
+      opened: boolean;
+      resourceId: string;
+      target: ConversationOpenTarget;
+      mode?: 'zeus_source' | 'zeus_browser' | 'external' | 'file' | 'clipboard';
+      error?: string;
+    }>;
     revealProjectInFinder?: (projectPath: string) => Promise<ProjectRevealResult>;
   };
 }
@@ -100,6 +107,30 @@ export async function openConversationResourceInMain(input: { zeus: AppShellBrid
     projectId: input.projectId,
     conversationId: input.conversationId,
     resourceId: input.resourceId,
+    target: input.target,
+    ...(input.location ? { location: input.location } : {}),
+  });
+}
+
+export async function openTurnChangeFileInMain(input: {
+  zeus: AppShellBridgeWindow['zeus'];
+  projectId: string;
+  conversationId: string;
+  turnId: string;
+  changeSetId: string;
+  fileId: string;
+  target: ConversationOpenTarget;
+  location?: ConversationFileLocation;
+}) {
+  if (!input.zeus?.openTurnChangeFile) {
+    return { opened: false, resourceId: `turn_change_file_open_${input.fileId}`, target: input.target, error: 'turn_change_file_open_unavailable' } as const;
+  }
+  return input.zeus.openTurnChangeFile({
+    projectId: input.projectId,
+    conversationId: input.conversationId,
+    turnId: input.turnId,
+    changeSetId: input.changeSetId,
+    fileId: input.fileId,
     target: input.target,
     ...(input.location ? { location: input.location } : {}),
   });

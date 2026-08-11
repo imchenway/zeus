@@ -100,6 +100,7 @@ contextBridge.exposeInMainWorld('zeus', {
   openExternalHttpsUrl: (url: string) => ipcRenderer.invoke('zeus:open-external-https-url', url),
   listConversationResourceOpenTargets: (request: unknown) => ipcRenderer.invoke('zeus:conversation-resource:list-open-targets', request),
   openConversationResource: (request: unknown) => ipcRenderer.invoke('zeus:conversation-resource:open', request),
+  openTurnChangeFile: (request: unknown) => ipcRenderer.invoke('zeus:turn-change-file:open', request),
   exportMermaidDiagramToFile: (payload: unknown) => ipcRenderer.invoke('zeus:export-mermaid-diagram', payload),
   exportPlantUmlDiagramToFile: (payload: unknown) => ipcRenderer.invoke('zeus:export-plantuml-diagram', payload),
   notifyAppShellSettingsChanged: (settings: unknown) => ipcRenderer.invoke('zeus:app-shell-settings-changed', settings),
