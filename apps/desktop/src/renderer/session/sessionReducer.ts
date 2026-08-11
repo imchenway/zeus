@@ -281,6 +281,7 @@ function hydrateSnapshot(state: NativeSessionState, snapshot: NativeConversation
     const turnId = providerTurnIdByLocalId.get(item.turnId) ?? item.turnId;
     const itemId = item.providerItemId ?? item.id;
     const key = nativeSessionItemKey(snapshot.id, threadId, turnId, itemId);
+    const timelineAt = item.startedAt ?? item.updatedAt;
     const itemClientId = isUserMessageType(item.type) ? (stringValue(item.payload.clientId) ?? stringValue(item.payload.clientUserMessageId)) : null;
     if (itemClientId && providerUserItemKeyByClientId.has(itemClientId)) continue;
     items[key] = {
@@ -297,10 +298,11 @@ function hydrateSnapshot(state: NativeSessionState, snapshot: NativeConversation
       text: item.text,
       payload: item.payload,
       resources: item.resources ?? [],
+      timelineAt,
       updatedAt: item.updatedAt,
       ...(itemClientId ? { clientUserMessageId: itemClientId, durableClientUserMessageId: itemClientId } : {}),
     };
-    orderedItems.push({ key, timestamp: item.startedAt ?? item.updatedAt, stableIndex: stableIndexForClient(itemClientId) });
+    orderedItems.push({ key, timestamp: timelineAt, stableIndex: stableIndexForClient(itemClientId) });
     if (item.providerItemId) providerItemKeyById.set(item.providerItemId, key);
     if (itemClientId) {
       durableClientIds.add(itemClientId);
@@ -355,6 +357,7 @@ function hydrateSnapshot(state: NativeSessionState, snapshot: NativeConversation
       optimistic: false,
       ...(clientUserMessageId ? { clientUserMessageId } : {}),
       ...(message.providerItemId ? { providerItemId: message.providerItemId } : {}),
+      timelineAt: message.createdAt,
       updatedAt: message.createdAt,
     };
     orderedItems.push({ key, timestamp: message.createdAt, stableIndex: stableIndexForClient(clientUserMessageId) });
@@ -704,6 +707,8 @@ function reduceItemEvent(state: NativeSessionState, event: NativeConversationEve
     payload: completed ? (incomingPayload ?? previous?.payload ?? matchedUserItem?.payload ?? {}) : mergeProgressPayload(previous?.payload ?? matchedUserItem?.payload, incomingPayload),
     resources: completed ? (incomingResources ?? previous?.resources ?? matchedUserItem?.resources ?? []) : (previous?.resources ?? matchedUserItem?.resources ?? incomingResources ?? []),
     ...(resolvedClientId ? { clientUserMessageId: resolvedClientId, durableClientUserMessageId: resolvedClientId, optimistic: false } : {}),
+    // 首次事件确定条目的时间线位置；delta/completed 只更新内容，不能让历史位置漂移。
+    timelineAt: previous?.timelineAt ?? matchedUserItem?.timelineAt ?? event.createdAt,
     updatedAt: event.createdAt,
   };
   const isNew = previous === undefined;
@@ -847,6 +852,7 @@ function steeringSubmissionItem(conversationId: string, threadId: string, submis
     optimistic: true,
     clientUserMessageId: submission.clientUserMessageId,
     durableClientUserMessageId: submission.clientUserMessageId,
+    timelineAt: submission.createdAt ?? submission.updatedAt,
     updatedAt: submission.updatedAt ?? submission.createdAt,
   };
 }
