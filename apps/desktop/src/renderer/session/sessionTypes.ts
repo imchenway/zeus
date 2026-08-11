@@ -253,6 +253,10 @@ export interface NativeConversationMessage {
 
 export interface NativeConversationChoice {
   id: string;
+  /** Renderer 的稳定导航身份；真实会话接管本地首发工作面时保持不变。 */
+  navigationId?: string;
+  /** 只表示本地首发工作面，禁止用该身份调用真实会话接口。 */
+  taskPushCreating?: boolean;
   projectId: string;
   taskId: string | null;
   workspaceId?: string | null;

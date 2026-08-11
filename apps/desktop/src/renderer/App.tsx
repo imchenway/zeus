@@ -73,6 +73,7 @@ import type {
   NativeProjectConversationChoicesSnapshot,
   NativeServiceTierSelection,
   NativeSessionState,
+  NativeTurnSettingsSelection,
   SessionConversationOwner,
   StartTaskModelPushRequest,
 } from './session/sessionTypes.js';
@@ -96,7 +97,18 @@ import {
   type TaskModelPushModalStatus,
   writeTaskModelPushPreferences,
 } from './task/TaskModelPushModal.js';
-import { acceptTaskModelPushPendingState, createTaskModelPushPendingState, failTaskModelPushPendingState, retryTaskModelPushPendingState, type TaskModelPushPendingState } from './task/TaskModelPushPendingWorkspace.js';
+import {
+  acceptTaskModelPushPendingState,
+  attachTaskModelPushChoice,
+  createTaskModelPushPendingState,
+  enqueueTaskModelPushMessage,
+  failTaskModelPushPendingState,
+  retryTaskModelPushPendingState,
+  updateTaskModelPushAttachments,
+  updateTaskModelPushDeferredMessages,
+  updateTaskModelPushDraft,
+  type TaskModelPushPendingState,
+} from './task/TaskModelPushPendingWorkspace.js';
 import { TaskWorkspace } from './task/TaskWorkspace.js';
 import { LegacyChatImportSettings } from './settings/LegacyChatImportSettings.js';
 import { CodexConfigImportSettings } from './settings/CodexConfigImportSettings.js';
@@ -292,16 +304,6 @@ type TaskModelPushNavigationTarget = {
   taskDetailPaneTaskId?: string;
 };
 type TrackedTaskModelPushState = TaskModelPushPendingState & { origin: TaskModelPushNavigationTarget };
-
-function taskModelPushNavigationTargetEqual(left: TaskModelPushNavigationTarget, right: TaskModelPushNavigationTarget): boolean {
-  return (
-    left.projectId === right.projectId &&
-    left.activeNavTarget === right.activeNavTarget &&
-    left.activeProjectSection === right.activeProjectSection &&
-    left.selectedConversationId === right.selectedConversationId &&
-    left.taskDetailPaneTaskId === right.taskDetailPaneTaskId
-  );
-}
 type NativeConversationAppClient = SessionControllerClient &
   Pick<
     DashboardClient,
@@ -782,7 +784,7 @@ export function resolveSessionDrawerInitialFocusTarget(drawer: HTMLElement): HTM
 
 export function resolveSelectedNativeConversationForProject(choices: NativeConversationChoice[], selectedConversationId: string | null, activeProjectId: string | undefined): NativeConversationChoice | null {
   if (!selectedConversationId || !activeProjectId) return null;
-  return choices.find((conversation) => conversation.id === selectedConversationId && conversation.projectId === activeProjectId) ?? null;
+  return choices.find((conversation) => (conversation.navigationId ?? conversation.id) === selectedConversationId && conversation.projectId === activeProjectId) ?? null;
 }
 
 export function resolveTaskConversationToView(snapshot: NativeConversationChoicesSnapshot | undefined): NativeConversationChoice | null {
@@ -7081,6 +7083,7 @@ export function App(props: {
   const [taskModelPushRefreshingRepositoryId, setTaskModelPushRefreshingRepositoryId] = useState<string | null>(null);
   const [taskModelPushError, setTaskModelPushError] = useState<string | null>(null);
   const [taskModelPushPendingByTask, setTaskModelPushPendingByTask] = useState<Record<string, TrackedTaskModelPushState>>({});
+  const taskModelPushPendingByTaskRef = useRef<Record<string, TrackedTaskModelPushState>>({});
   const [taskModelPushAnnouncement, setTaskModelPushAnnouncement] = useState('');
   const [taskGitReviewState, setTaskGitReviewState] = useState<{
     taskId: string;
@@ -7093,6 +7096,7 @@ export function App(props: {
   const taskModelPushLoginIdRef = useRef<string | null>(null);
   const taskModelPushEnvelopeRef = useRef(new Map<string, { fingerprint: string; request: StartTaskModelPushRequest }>());
   const taskModelPushDispatchingTaskIdsRef = useRef(new Set<string>());
+  const taskModelPushDeferredDispatchingTaskIdsRef = useRef(new Set<string>());
   const pendingProjectServiceTierPreferencesRef = useRef(new Map<string, { projectId: string; clientUserMessageId: string; selection: NativeServiceTierSelection }>());
   const taskCreateTitleInputRef = useRef<HTMLInputElement | null>(null);
   const taskCreateReturnFocusRef = useRef<HTMLElement | null>(null);
@@ -7359,6 +7363,17 @@ export function App(props: {
     selectedConversationId: selectedNativeConversationId,
     taskDetailPaneTaskId,
   };
+  useEffect(() => {
+    taskModelPushPendingByTaskRef.current = taskModelPushPendingByTask;
+  }, [taskModelPushPendingByTask]);
+
+  function updateTaskModelPushPendingByTask(update: (current: Record<string, TrackedTaskModelPushState>) => Record<string, TrackedTaskModelPushState>): void {
+    setTaskModelPushPendingByTask((current) => {
+      const next = update(current);
+      taskModelPushPendingByTaskRef.current = next;
+      return next;
+    });
+  }
   const graphViewRequestVersionRef = useRef(0);
   const graphSearchRequestVersionRef = useRef(0);
   const graphQuestionRequestVersionRef = useRef(0);
@@ -7397,23 +7412,37 @@ export function App(props: {
   }, [activeProjectId, graphProjectId]);
   const currentProjectTasks = useMemo(() => (activeProjectId ? snapshot.tasks.filter((task) => task.projectId === activeProjectId) : snapshot.tasks), [activeProjectId, snapshot.tasks]);
   const currentProjectTaskIdsSignature = useMemo(() => JSON.stringify(currentProjectTasks.map((task) => task.id)), [currentProjectTasks]);
-  const currentTaskConversationChoices = useMemo(() => Object.fromEntries(currentProjectTasks.map((task) => [task.id, nativeConversationChoicesByTask[task.id]?.choices ?? []])), [currentProjectTasks, nativeConversationChoicesByTask]);
+  const projectedTaskConversationChoices = useMemo(
+    () =>
+      Object.fromEntries(
+        snapshot.tasks.map((task) => {
+          const pending = taskModelPushPendingByTask[task.id];
+          const choices = nativeConversationChoicesByTask[task.id]?.choices ?? [];
+          if (!pending) return [task.id, choices];
+          return [task.id, [pending.choice, ...choices.filter((choice) => choice.id !== pending.choice.id)]];
+        }),
+      ) as Record<string, NativeConversationChoice[]>,
+    [nativeConversationChoicesByTask, snapshot.tasks, taskModelPushPendingByTask],
+  );
+  const currentTaskConversationChoices = useMemo(() => Object.fromEntries(currentProjectTasks.map((task) => [task.id, projectedTaskConversationChoices[task.id] ?? []])), [currentProjectTasks, projectedTaskConversationChoices]);
   const nativeConversationChoices = useMemo(() => {
     // 常规分组接口只返回未归档会话；从终态任务详情显式打开的归档会话必须在当前工作区存活，不能被随后的分组刷新抹掉。
     const choicesById = new Map<string, NativeConversationChoice>();
     if (focusedArchivedConversation) choicesById.set(focusedArchivedConversation.id, focusedArchivedConversation);
-    for (const choice of [...Object.values(nativeConversationChoicesByProject), ...Object.values(nativeConversationChoicesByTask)].flatMap((entry) => entry.choices)) {
+    for (const choice of Object.values(nativeConversationChoicesByProject).flatMap((entry) => entry.choices)) {
       choicesById.set(choice.id, choice);
     }
+    for (const choices of Object.values(projectedTaskConversationChoices)) {
+      for (const choice of choices) choicesById.set(choice.navigationId ?? choice.id, choice);
+    }
     return [...choicesById.values()].sort(compareConversationStageUpdatedDesc);
-  }, [focusedArchivedConversation, nativeConversationChoicesByProject, nativeConversationChoicesByTask]);
+  }, [focusedArchivedConversation, nativeConversationChoicesByProject, projectedTaskConversationChoices]);
   const selectedNativeConversation = useMemo(
     () => resolveSelectedNativeConversationForProject(nativeConversationChoices, selectedNativeConversationId, activeProjectId),
     [activeProjectId, nativeConversationChoices, selectedNativeConversationId],
   );
-  const selectedTaskModelPushOperation = selectedNativeConversation?.taskId ? taskModelPushPendingByTask[selectedNativeConversation.taskId] : undefined;
-  const selectedTaskModelPushOptimisticState =
-    selectedTaskModelPushOperation?.status === 'accepted' && selectedTaskModelPushOperation.choice?.id === selectedNativeConversation?.id ? (selectedTaskModelPushOperation.session ?? undefined) : undefined;
+  const selectedTaskModelPushOperation = Object.values(taskModelPushPendingByTask).find((pending) => pending.navigationId === selectedNativeConversationId);
+  const selectedTaskModelPushOptimisticState = selectedTaskModelPushOperation?.status === 'accepted' && selectedTaskModelPushOperation.choice.id === selectedNativeConversation?.id ? selectedTaskModelPushOperation.session : undefined;
   useEffect(() => {
     function onCommitShortcut(event: globalThis.KeyboardEvent): void {
       if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== 'k') return;
@@ -7453,7 +7482,7 @@ export function App(props: {
   );
 
   useEffect(() => {
-    if (!selectedNativeConversation?.hasUnreadCompletion) return;
+    if (!selectedNativeConversation?.hasUnreadCompletion || selectedNativeConversation.taskPushCreating) return;
     acknowledgeNativeConversationCompletion(selectedNativeConversation.projectId, selectedNativeConversation.id);
   }, [acknowledgeNativeConversationCompletion, selectedNativeConversation]);
   const nativeConversationGroups = useMemo<ProjectConversationGroup[]>(
@@ -7465,7 +7494,7 @@ export function App(props: {
         tasks: snapshot.tasks
           .filter((task) => task.projectId === project.id)
           .map((task) => {
-            const conversations = [...(nativeConversationChoicesByTask[task.id]?.choices ?? [])];
+            const conversations = [...(projectedTaskConversationChoices[task.id] ?? [])];
             if (focusedArchivedConversation?.taskId === task.id && !conversations.some((conversation) => conversation.id === focusedArchivedConversation.id)) {
               conversations.push(focusedArchivedConversation);
             }
@@ -7477,7 +7506,7 @@ export function App(props: {
             };
           }),
       })),
-    [focusedArchivedConversation, nativeConversationChoicesByProject, nativeConversationChoicesByTask, orderedProjects, snapshot.tasks],
+    [focusedArchivedConversation, nativeConversationChoicesByProject, orderedProjects, projectedTaskConversationChoices, snapshot.tasks],
   );
   const reconcileNativeConversationProjectionStates = useCallback((choices: readonly NativeConversationChoice[]): void => {
     if (choices.length === 0) return;
@@ -7637,7 +7666,7 @@ export function App(props: {
     : nativeSessionProject
       ? { kind: 'project', projectId: nativeSessionProject.id, projectName: nativeSessionProject.name }
       : undefined;
-  const nativeSessionChoices = nativeSessionTask ? (nativeConversationChoicesByTask[nativeSessionTask.id]?.choices ?? []) : nativeSessionProject ? (nativeConversationChoicesByProject[nativeSessionProject.id]?.choices ?? []) : [];
+  const nativeSessionChoices = nativeSessionTask ? (projectedTaskConversationChoices[nativeSessionTask.id] ?? []) : nativeSessionProject ? (nativeConversationChoicesByProject[nativeSessionProject.id]?.choices ?? []) : [];
   const nativeSessionChoiceTaskState = nativeSessionTask ? nativeConversationChoiceTaskStates[nativeSessionTask.id] : nativeSessionProject ? nativeConversationChoiceProjectStates[nativeSessionProject.id] : undefined;
   const nativeLegacyMessages = useMemo(() => {
     const entries: Array<[string, Array<{ id: string; role: string; content: string }>]> = [...graphConversations, ...(selectedGraphConversation ? [selectedGraphConversation] : [])].map((conversation) => [
@@ -9063,7 +9092,7 @@ export function App(props: {
       await client.archiveNativeConversation(conversation.projectId, conversation.id);
       if (conversation.taskId) nativeConversationChoiceLoadCoordinator.forget(conversation.taskId, conversation.id);
       else nativeProjectConversationChoiceLoadCoordinator.forget(conversation.projectId, conversation.id);
-      if (selectedNativeConversationIdRef.current === conversation.id) {
+      if (selectedNativeConversationIdRef.current === (conversation.navigationId ?? conversation.id)) {
         selectedNativeConversationIdRef.current = null;
         setSelectedNativeConversationId(null);
         setFocusedArchivedConversation(null);
@@ -9099,10 +9128,11 @@ export function App(props: {
     const task = conversation.taskId ? snapshot.tasks.find((candidate) => candidate.id === conversation.taskId) : undefined;
     if (task) setTaskDetail(task);
     else setTaskDetail(undefined);
-    selectedNativeConversationIdRef.current = conversation.id;
-    setSelectedNativeConversationId(conversation.id);
+    const navigationId = conversation.navigationId ?? conversation.id;
+    selectedNativeConversationIdRef.current = navigationId;
+    setSelectedNativeConversationId(navigationId);
     setFocusedArchivedConversation(conversation.archived ? conversation : null);
-    if (conversation.hasUnreadCompletion) acknowledgeNativeConversationCompletion(conversation.projectId, conversation.id);
+    if (!conversation.taskPushCreating && conversation.hasUnreadCompletion) acknowledgeNativeConversationCompletion(conversation.projectId, conversation.id);
     setConversationDraftOpen(false);
     if (navigation === 'page') {
       setActiveNavTarget('conversations');
@@ -9719,15 +9749,25 @@ export function App(props: {
         prompt: buildTaskModelPushMessage(task, form.supplementalInfo, capabilities.currentAttachmentOptions, parentContexts, relatedContexts),
         layout,
         currentAttachmentOptions: capabilities.currentAttachmentOptions,
+        capabilities,
       }),
       origin: taskModelPushNavigationRef.current,
     };
-    setTaskModelPushPendingByTask((current) => ({ ...current, [task.id]: pending }));
+    updateTaskModelPushPendingByTask((current) => ({ ...current, [task.id]: pending }));
     setTaskModelPushAnnouncement(appShellSettings.appLanguage === 'zh-CN' ? `${task.title}：正在后台创建会话。` : `${task.title}: Creating conversation in the background.`);
-    // 提交后立即关闭弹窗并把耗时工作留在后台，当前页面不能等待或跳转。
+    // 用户确认后立即进入稳定工作面；此后的真实身份接管不得再导航、滚动或夺取焦点。
     taskModelPushCapabilityRequestRef.current += 1;
     setTaskModelPushTaskId(null);
     setTaskModelPushCapabilities(null);
+    if (targetProject) {
+      activeProjectIdRef.current = targetProject.id;
+      setProjectDetail(targetProject);
+    }
+    setTaskDetailPaneTaskId(undefined);
+    setConversationDrawer(undefined);
+    void selectNativeConversation(pending.choice);
+    if (typeof window !== 'undefined') window.history.replaceState(null, '', '#project-sessions');
+    workspaceScrollRef.current?.scrollTo({ top: 0, behavior: 'auto' });
     void dispatchTaskModelPush(pending);
   }
 
@@ -9767,11 +9807,10 @@ export function App(props: {
           },
         };
       });
-      setTaskModelPushPendingByTask((current) => {
-        const active = current[pending.task.id];
-        if (active?.request.idempotencyKey !== pending.request.idempotencyKey) return current;
-        return { ...current, [pending.task.id]: { ...acceptTaskModelPushPendingState(active, choice), origin: active.origin } };
-      });
+      const active = taskModelPushPendingByTaskRef.current[pending.task.id];
+      if (!active || active.request.idempotencyKey !== pending.request.idempotencyKey) return;
+      const attached: TrackedTaskModelPushState = { ...attachTaskModelPushChoice(active, choice), origin: active.origin };
+      updateTaskModelPushPendingByTask((current) => ({ ...current, [pending.task.id]: attached }));
       setTaskModelPushAnnouncement(appShellSettings.appLanguage === 'zh-CN' ? `${pending.task.title}：会话已创建。` : `${pending.task.title}: Conversation created.`);
       const submissionStatus = typeof acceptance.submission?.status === 'string' ? acceptance.submission.status : null;
       if (submissionStatus === 'active') {
@@ -9779,19 +9818,8 @@ export function App(props: {
         writeTaskModelPushPreferences(browserNativeConversationStartStorage(), pending.task.projectId, pending.form);
         writeProjectServiceTierPreference(browserNativeConversationStartStorage(), pending.task.projectId, pending.form.serviceTier);
       }
-      if (taskModelPushNavigationTargetEqual(pending.origin, taskModelPushNavigationRef.current)) {
-        const targetProject = snapshot.projects.find((project) => project.id === choice.projectId);
-        if (targetProject) {
-          activeProjectIdRef.current = targetProject.id;
-          setProjectDetail(targetProject);
-        }
-        setTaskDetailPaneTaskId(undefined);
-        setConversationDrawer(undefined);
-        await selectNativeConversation(choice);
-        if (typeof window !== 'undefined') window.history.replaceState(null, '', '#project-sessions');
-        // 真实会话成功后直接定位，避免额外滚动动画造成页面迟滞感。
-        workspaceScrollRef.current?.scrollTo({ top: 0, behavior: 'auto' });
-      }
+      // 真实会话只接管内部读写身份，绝不根据完成时的页面状态再次导航或滚动。
+      await flushTaskModelPushDeferredMessages(attached);
       void refreshNativeConversationChoices(pending.task.id).catch((error: unknown) => recordLocalError('task-model-push-history-refresh', error));
       if (props.onLoadTask) {
         void props
@@ -9801,10 +9829,90 @@ export function App(props: {
       }
     } catch (error) {
       if (error instanceof ZeusApiError && (error.error === 'ZEUS_TASK_PUSH_CONTEXT_CHANGED' || error.error === 'ZEUS_TASK_PUSH_PARENT_CONTEXT_CHANGED')) {
-        void refreshChangedTaskModelPushParentContext(pending);
+        taskModelPushDispatchingTaskIdsRef.current.delete(pending.task.id);
+        updateTaskModelPushPendingByTask((current) => {
+          const active = current[pending.task.id];
+          if (!active || active.request.idempotencyKey !== pending.request.idempotencyKey) return current;
+          const message = appShellSettings.appLanguage === 'zh-CN' ? '任务上下文已变化。当前内容已保留，请重新确认有效的上下文后重试。' : 'Task context changed. Your content is preserved; review the valid context before retrying.';
+          return {
+            ...current,
+            [pending.task.id]: {
+              ...failTaskModelPushPendingState(active, message),
+              contextRefreshRequired: true,
+              origin: active.origin,
+            },
+          };
+        });
         return;
       }
       failTaskModelPushDispatch(pending, redactLocalUiErrorMessage(errorToLocalUiMessage(error)));
+    }
+  }
+
+  async function flushTaskModelPushDeferredMessages(pending: TrackedTaskModelPushState): Promise<void> {
+    const client = props.nativeConversationClient;
+    if (!client || pending.choice.id === pending.navigationId || taskModelPushDeferredDispatchingTaskIdsRef.current.has(pending.task.id)) return;
+    taskModelPushDeferredDispatchingTaskIdsRef.current.add(pending.task.id);
+    try {
+      while (true) {
+        const current = taskModelPushPendingByTaskRef.current[pending.task.id];
+        if (!current || current.request.idempotencyKey !== pending.request.idempotencyKey) return;
+        const message = current.deferredMessages.find((entry) => entry.status === 'queued');
+        if (!message) {
+          const completed: TrackedTaskModelPushState = { ...acceptTaskModelPushPendingState(current), origin: current.origin };
+          updateTaskModelPushPendingByTask((states) => ({ ...states, [pending.task.id]: completed }));
+          return;
+        }
+        updateTaskModelPushPendingByTask((states) => {
+          const active = states[pending.task.id];
+          if (!active) return states;
+          return {
+            ...states,
+            [pending.task.id]: {
+              ...updateTaskModelPushDeferredMessages(active, (messages) => messages.map((entry) => (entry.id === message.id ? { ...entry, status: 'sending', error: null } : entry))),
+              origin: active.origin,
+            },
+          };
+        });
+        try {
+          const acceptance = await client.sendNativeMessage(current.task.projectId, current.choice.id, {
+            content: message.content,
+            attachments: message.attachments,
+            delivery: message.delivery,
+            ...(message.settings?.model ? { model: message.settings.model } : {}),
+            ...(message.settings?.agentKind ? { agentKind: message.settings.agentKind } : {}),
+            ...(message.settings?.effort ? { effort: message.settings.effort } : {}),
+            ...(message.settings && Object.prototype.hasOwnProperty.call(message.settings, 'serviceTier') ? { serviceTier: message.settings.serviceTier } : {}),
+            ...(message.settings?.permissionMode ? { permissionMode: message.settings.permissionMode } : {}),
+            collaborationMode: message.settings?.collaborationMode ?? (current.form.workMode === 'plan' ? 'plan' : 'default'),
+            idempotencyKey: message.idempotencyKey,
+            clientUserMessageId: message.clientUserMessageId,
+          });
+          if (acceptance.operation.status !== 'accepted') throw new Error('Deferred task-push message was not durably accepted.');
+          updateTaskModelPushPendingByTask((states) => {
+            const active = states[pending.task.id];
+            if (!active) return states;
+            return {
+              ...states,
+              [pending.task.id]: {
+                ...updateTaskModelPushDeferredMessages(active, (messages) => messages.map((entry) => (entry.id === message.id ? { ...entry, status: 'accepted', error: null } : entry))),
+                origin: active.origin,
+              },
+            };
+          });
+        } catch (error) {
+          const messageText = redactLocalUiErrorMessage(errorToLocalUiMessage(error));
+          updateTaskModelPushPendingByTask((states) => {
+            const active = states[pending.task.id];
+            if (!active) return states;
+            const failedWithMessage = updateTaskModelPushDeferredMessages(active, (messages) => messages.map((entry) => (entry.id === message.id ? { ...entry, status: 'failed', error: messageText } : entry)));
+            return { ...states, [pending.task.id]: { ...failTaskModelPushPendingState(failedWithMessage, messageText), origin: active.origin } };
+          });
+          return;
+        }
+      }
+    } finally {
+      taskModelPushDeferredDispatchingTaskIdsRef.current.delete(pending.task.id);
     }
   }
 
@@ -9812,7 +9920,7 @@ export function App(props: {
     const client = props.nativeConversationClient;
     taskModelPushDispatchingTaskIdsRef.current.delete(pending.task.id);
     taskModelPushEnvelopeRef.current.delete(pending.task.id);
-    setTaskModelPushPendingByTask((current) => {
+    updateTaskModelPushPendingByTask((current) => {
       const active = current[pending.task.id];
       if (active?.request.idempotencyKey !== pending.request.idempotencyKey) return current;
       const next = { ...current };
@@ -9886,26 +9994,95 @@ export function App(props: {
 
   function failTaskModelPushDispatch(pending: TrackedTaskModelPushState, message: string): void {
     taskModelPushDispatchingTaskIdsRef.current.delete(pending.task.id);
-    const failed = failTaskModelPushPendingState(pending, message);
-    setTaskModelPushPendingByTask((current) => {
+    updateTaskModelPushPendingByTask((current) => {
       const active = current[pending.task.id];
       if (active?.request.idempotencyKey !== pending.request.idempotencyKey) return current;
-      return { ...current, [pending.task.id]: { ...failed, origin: active.origin } };
+      return { ...current, [pending.task.id]: { ...failTaskModelPushPendingState(active, message), origin: active.origin } };
     });
-    setTaskModelPushAnnouncement(appShellSettings.appLanguage === 'zh-CN' ? `${pending.task.title}：会话创建失败，可以在任务详情重试。` : `${pending.task.title}: Conversation creation failed. Retry from task details.`);
+    setTaskModelPushAnnouncement(appShellSettings.appLanguage === 'zh-CN' ? `${pending.task.title}：会话创建失败，可以在当前工作面重试。` : `${pending.task.title}: Conversation creation failed. Retry in the current workspace.`);
   }
 
   function retryTaskModelPush(taskId: string): void {
-    const pending = taskModelPushPendingByTask[taskId];
-    if (!pending || pending.status !== 'failed' || taskModelPushDispatchingTaskIdsRef.current.has(taskId)) return;
+    const pending = taskModelPushPendingByTaskRef.current[taskId];
+    if (!pending || pending.status !== 'failed') return;
+    if (pending.contextRefreshRequired) {
+      void refreshChangedTaskModelPushParentContext(pending);
+      return;
+    }
     const retrying: TrackedTaskModelPushState = {
-      ...retryTaskModelPushPendingState(pending),
-      origin: taskModelPushNavigationRef.current,
+      ...retryTaskModelPushPendingState({
+        ...pending,
+        deferredMessages: pending.deferredMessages.map((message) => (message.status === 'failed' ? { ...message, status: 'queued', error: null } : message)),
+      }),
+      origin: pending.origin,
     };
+    updateTaskModelPushPendingByTask((current) => ({ ...current, [taskId]: retrying }));
+    if (retrying.choice.id !== retrying.navigationId) {
+      void flushTaskModelPushDeferredMessages(retrying);
+      return;
+    }
+    if (taskModelPushDispatchingTaskIdsRef.current.has(taskId)) return;
     taskModelPushDispatchingTaskIdsRef.current.add(taskId);
-    setTaskModelPushPendingByTask((current) => ({ ...current, [taskId]: retrying }));
     setTaskModelPushAnnouncement(appShellSettings.appLanguage === 'zh-CN' ? `${retrying.task.title}：正在重试创建会话。` : `${retrying.task.title}: Retrying conversation creation.`);
     void dispatchTaskModelPush(retrying);
+  }
+
+  function mutateTaskModelPushPending(taskId: string, update: (pending: TrackedTaskModelPushState) => TaskModelPushPendingState): void {
+    updateTaskModelPushPendingByTask((current) => {
+      const pending = current[taskId];
+      if (!pending) return current;
+      return { ...current, [taskId]: { ...update(pending), origin: pending.origin } };
+    });
+  }
+
+  function submitTaskModelPushPendingMessage(taskId: string, delivery: 'queue' | 'steer_now', settings?: NativeTurnSettingsSelection): void {
+    const pending = taskModelPushPendingByTaskRef.current[taskId];
+    if (!pending) return;
+    const content = pending.session.draft;
+    const attachments = [...pending.session.attachments];
+    if (!content.trim() && attachments.length === 0) return;
+    mutateTaskModelPushPending(taskId, (current) =>
+      enqueueTaskModelPushMessage(current, {
+        id: createSessionOperationId(),
+        idempotencyKey: createSessionOperationId(),
+        clientUserMessageId: createSessionOperationId(),
+        content,
+        attachments,
+        delivery,
+        ...(settings ? { settings } : {}),
+      }),
+    );
+    queueMicrotask(() => {
+      const current = taskModelPushPendingByTaskRef.current[taskId];
+      if (current?.choice.id !== current?.navigationId) void flushTaskModelPushDeferredMessages(current);
+    });
+  }
+
+  function editTaskModelPushPendingMessage(taskId: string, messageId: string, content: string): void {
+    mutateTaskModelPushPending(taskId, (pending) => updateTaskModelPushDeferredMessages(pending, (messages) => messages.map((message) => (message.id === messageId ? { ...message, content } : message))));
+  }
+
+  function deleteTaskModelPushPendingMessage(taskId: string, messageId: string): void {
+    mutateTaskModelPushPending(taskId, (pending) => updateTaskModelPushDeferredMessages(pending, (messages) => messages.filter((message) => message.id !== messageId)));
+  }
+
+  function reorderTaskModelPushPendingMessages(taskId: string, orderedIds: string[]): void {
+    mutateTaskModelPushPending(taskId, (pending) =>
+      updateTaskModelPushDeferredMessages(pending, (messages) => {
+        const byId = new Map(messages.map((message) => [message.id, message]));
+        return [...orderedIds.flatMap((id) => (byId.has(id) ? [byId.get(id)!] : [])), ...messages.filter((message) => !orderedIds.includes(message.id))];
+      }),
+    );
+  }
+
+  function steerTaskModelPushPendingMessage(taskId: string, messageId: string): void {
+    mutateTaskModelPushPending(taskId, (pending) =>
+      updateTaskModelPushDeferredMessages(pending, (messages) => messages.map((message) => (message.id === messageId ? { ...message, delivery: 'steer_now', status: 'queued', error: null } : message))),
+    );
+    queueMicrotask(() => {
+      const current = taskModelPushPendingByTaskRef.current[taskId];
+      if (current?.choice.id !== current?.navigationId) void flushTaskModelPushDeferredMessages(current);
+    });
   }
 
   function toggleTaskSelection(taskId: string, selected: boolean): void {
@@ -11295,10 +11472,72 @@ export function App(props: {
             onAction: () => reopenTaskFromConversation(nativeSessionTask.id, selectedNativeConversation.id),
           }
         : undefined;
+    if (selectedTaskModelPushOperation && selectedTaskModelPushOperation.status !== 'accepted' && nativeSessionOwner) {
+      const pending = selectedTaskModelPushOperation;
+      const updateAttachments = (attachments: NativeConversationAttachment[]): void => {
+        mutateTaskModelPushPending(pending.task.id, (current) => updateTaskModelPushAttachments(current, attachments));
+      };
+      return (
+        <SessionWorkspace
+          key={pending.navigationId}
+          language={appShellSettings.appLanguage}
+          state={pending.session}
+          conversation={pending.choice}
+          task={nativeSessionTask}
+          owner={nativeSessionOwner}
+          tasks={currentProjectTasks.map((task) => createSessionWorkspaceTask(task, appShellSettings, appShellSettings.appLanguage))}
+          choices={nativeSessionChoices}
+          capabilities={pending.capabilities}
+          quickActionsSuppressed={Boolean(taskDetailPaneTaskId)}
+          creationStatus={
+            pending.status === 'failed'
+              ? {
+                  state: 'failed',
+                  message: appShellSettings.appLanguage === 'zh-CN' ? '会话创建失败' : 'Conversation creation failed',
+                  error: pending.error,
+                  retryLabel: pending.contextRefreshRequired ? (appShellSettings.appLanguage === 'zh-CN' ? '重新确认' : 'Review') : appShellSettings.appLanguage === 'zh-CN' ? '重试' : 'Retry',
+                  onRetry: () => retryTaskModelPush(pending.task.id),
+                }
+              : {
+                  state: 'creating',
+                  message: appShellSettings.appLanguage === 'zh-CN' ? '正在创建会话' : 'Creating conversation',
+                }
+          }
+          actions={{
+            onDraftChange: (draft) => mutateTaskModelPushPending(pending.task.id, (current) => updateTaskModelPushDraft(current, draft)),
+            onSubmit: (delivery, settings) => submitTaskModelPushPendingMessage(pending.task.id, delivery, settings),
+            onChooseAttachments: props.onChooseConversationResources
+              ? async () => {
+                  const attachments = await chooseNativeConversationAttachments();
+                  const current = taskModelPushPendingByTaskRef.current[pending.task.id];
+                  if (!current) return;
+                  updateAttachments([...current.session.attachments, ...attachments]);
+                }
+              : undefined,
+            onAddAttachments: (attachments) => {
+              const current = taskModelPushPendingByTaskRef.current[pending.task.id];
+              if (!current) return;
+              updateAttachments([...current.session.attachments, ...attachments]);
+            },
+            onRemoveAttachment: (attachment) => {
+              const current = taskModelPushPendingByTaskRef.current[pending.task.id];
+              if (!current) return;
+              updateAttachments(current.session.attachments.filter((candidate) => !(candidate.name === attachment.name && candidate.localPath === attachment.localPath && candidate.uploadRef === attachment.uploadRef)));
+            },
+            onEditQueuedSubmission: (messageId, content) => editTaskModelPushPendingMessage(pending.task.id, messageId, content),
+            onDeleteQueuedSubmission: (messageId) => deleteTaskModelPushPendingMessage(pending.task.id, messageId),
+            onSendQueuedNow: (messageId) => steerTaskModelPushPendingMessage(pending.task.id, messageId),
+            onReorderQueue: (orderedIds) => reorderTaskModelPushPendingMessages(pending.task.id, orderedIds),
+            onOpenTaskDetail,
+            onOpenTaskGitDelivery: (taskId) => setTaskGitMergeTaskId(taskId),
+          }}
+        />
+      );
+    }
     if (selectedNativeConversation && props.nativeConversationClient && selectedNativeConversation.transportKind === 'codex_native' && !selectedNativeConversation.readOnly && nativeSessionOwner) {
       return (
         <ConnectedSessionWorkspace
-          key={selectedNativeConversation.id}
+          key={selectedNativeConversation.navigationId ?? selectedNativeConversation.id}
           language={appShellSettings.appLanguage}
           client={props.nativeConversationClient}
           conversation={selectedNativeConversation}
@@ -11315,12 +11554,6 @@ export function App(props: {
             if (selectedTaskModelPushOperation?.status === 'accepted' && selectedTaskModelPushOperation.choice?.id === conversationId && selectHasConfirmedUserMessage(state, selectedTaskModelPushOperation.request.clientUserMessageId)) {
               writeTaskModelPushPreferences(browserNativeConversationStartStorage(), selectedTaskModelPushOperation.task.projectId, selectedTaskModelPushOperation.form);
               writeProjectServiceTierPreference(browserNativeConversationStartStorage(), selectedTaskModelPushOperation.task.projectId, selectedTaskModelPushOperation.form.serviceTier);
-              setTaskModelPushPendingByTask((current) => {
-                if (current[selectedTaskModelPushOperation.task.id]?.request.idempotencyKey !== selectedTaskModelPushOperation.request.idempotencyKey) return current;
-                const next = { ...current };
-                delete next[selectedTaskModelPushOperation.task.id];
-                return next;
-              });
             }
             const pendingPreference = pendingProjectServiceTierPreferencesRef.current.get(conversationId);
             if (pendingPreference && selectHasConfirmedUserMessage(state, pendingPreference.clientUserMessageId)) {
