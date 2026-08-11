@@ -73,6 +73,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
       new Set(turnRows.flatMap((row) => (row.kind === 'answered_request' ? [] : [row.kind === 'turn_work' ? row.turnId : row.kind === 'item' ? row.item.turnId : row.items[0]?.turnId]).filter((turnId): turnId is string => Boolean(turnId)))),
     [turnRows],
   );
+  const activeTurnHasRenderedRow = Boolean(props.state.activeTurnId && renderedTurnIds.has(props.state.activeTurnId));
   const lastItemKeyByTurn = useMemo(() => Object.fromEntries(items.map((item) => [item.turnId, item.key])), [items]);
   const orphanFailedTurns = useMemo(() => {
     const visibleTurnIds = new Set(items.map((item) => item.turnId));
@@ -237,11 +238,11 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
           {immediateOptimisticItems.map((item) => (
             <ThreadItemView key={item.key} item={item} language={props.language} isLatest onVisibleContentChange={maintainLatestPosition} />
           ))}
-          {showThinking && props.state.activeTurnId && props.state.turnsByProviderId[props.state.activeTurnId] && !renderedTurnIds.has(props.state.activeTurnId) ? (
+          {showThinking && props.state.activeTurnId && props.state.turnsByProviderId[props.state.activeTurnId] && !activeTurnHasRenderedRow ? (
             <SessionTurnDuration turn={props.state.turnsByProviderId[props.state.activeTurnId]} requests={props.state.pendingRequests} language={props.language}>
               <TranscriptThinking language={props.language} />
             </SessionTurnDuration>
-          ) : showThinking ? (
+          ) : showThinking && !activeTurnHasRenderedRow ? (
             <TranscriptThinking language={props.language} />
           ) : null}
           {queuedOptimisticItems.map((item) => (
