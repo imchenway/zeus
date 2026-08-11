@@ -299,7 +299,6 @@ export function TaskPushLayoutPreview(props: { layout: TaskPushMessageLayout; la
         <article key={`${block.contextKind}:${block.taskId ?? 'current'}`} className="task-push-layout-block">
           <header>
             <strong>{block.contextKind === 'current' ? block.taskTitle : `${block.contextKind === 'parent' ? '父任务' : '关联任务'}：${block.taskCode ?? block.taskId} · ${block.taskTitle}`}</strong>
-            <small>任务类型：{block.taskTypeLabel}</small>
           </header>
           {block.fields.map((field) => (
             <section key={field.field} className="task-push-layout-field">
@@ -312,7 +311,7 @@ export function TaskPushLayoutPreview(props: { layout: TaskPushMessageLayout; la
                   </span>
                 ) : null;
               })}
-              <p>{field.text}</p>
+              {field.text ? <p>{field.text}</p> : null}
             </section>
           ))}
           {block.conversationPaths.length > 0 ? (

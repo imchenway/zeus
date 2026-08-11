@@ -12668,9 +12668,27 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     });
   }
 
+  function taskPushContentAttachmentFields(taskType: ZeusTaskRecord['taskType']): ReadonlySet<TaskAttachmentField> {
+    return new Set<TaskAttachmentField>(
+      taskType === 'defect'
+        ? (['defectCurrentState', 'defectExpectedOutcome', 'defectReproductionSteps'] as const)
+        : taskType === 'optimization'
+          ? (['optimizationCurrentState', 'optimizationExpectedOutcome'] as const)
+          : (['description'] as const),
+    );
+  }
+
   function getNonCodexTaskAttachmentsUnsupportedMessage(adapterId: NonCodexAiCliAdapterId, task: ZeusTaskRecord): string | null {
     const sourceContext = parseTaskSourceContext(task);
-    return Array.isArray(sourceContext.attachments) && sourceContext.attachments.length > 0 ? `Runtime adapter ${adapterId} 不支持任务附件，未启动会话。` : null;
+    const contentFields = taskPushContentAttachmentFields(task.taskType);
+    const hasTaskPushAttachments =
+      Array.isArray(sourceContext.attachments) &&
+      sourceContext.attachments.some((attachment) => {
+        const candidate = isNativeApiRecord(attachment) ? attachment : {};
+        const field = isTaskAttachmentField(candidate.field) ? candidate.field : historicalTaskAttachmentField(task.taskType);
+        return contentFields.has(field);
+      });
+    return hasTaskPushAttachments ? `Runtime adapter ${adapterId} 不支持任务附件，未启动会话。` : null;
   }
 
   function assertNonCodexTaskAttachmentsSupported(adapterId: NonCodexAiCliAdapterId, task: ZeusTaskRecord): void {
@@ -14248,6 +14266,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           filterContextAttachments(taskContextInput.parentContexts),
           filterContextAttachments(taskContextInput.relatedContexts),
         );
+        const taskPushAttachmentKeys = new Set(taskPushLayout.blocks.flatMap((block) => block.attachments.map((attachment) => attachment.key)));
+        const taskPushAttachments = attachmentInput.attachments.filter((attachment) => attachment.taskPushAttachmentKey && taskPushAttachmentKeys.has(attachment.taskPushAttachmentKey));
         const taskPushPrompt = renderTaskPushLayoutText(taskPushLayout);
         if (selectedModel.agentKind !== 'pi') await assertCodexAccountReady();
         const taskEnvironment = directWorkspace ? null : await resolveTaskPushEnvironment(project, task, body.workspace, stableOperationId);
@@ -14264,7 +14284,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
                 taskPushLayout,
                 model: { sourceId: selectedModel.sourceId ?? null, modelId: selectedModel.model, displayName: selectedModel.displayName ?? null },
                 ...(selectedEffort ? { thinkingLevel: selectedEffort } : {}),
-                attachments: attachmentInput.attachments,
+                attachments: taskPushAttachments,
                 allowedAttachmentRoots: attachmentInput.allowedRoots,
                 permissionMode,
                 idempotencyKey,
@@ -14292,7 +14312,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
                 taskTitle: task.title,
                 prompt: taskPushPrompt,
                 taskPushLayout,
-                attachments: attachmentInput.attachments,
+                attachments: taskPushAttachments,
                 allowedAttachmentRoots: attachmentInput.allowedRoots,
                 model: selectedModel.model,
                 ...(selectedEffort ? { effort: selectedEffort } : {}),
@@ -16076,14 +16096,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     const sourceContext = parseTaskSourceContext(task);
     const rawAttachments = Array.isArray(sourceContext.attachments) ? sourceContext.attachments : [];
     const allowedRoots = taskPushTrustedAttachmentRoots(projectLocalPath);
-    const activeFields = new Set<TaskAttachmentField>([
-      'tags',
-      ...(task.taskType === 'defect'
-        ? (['defectCurrentState', 'defectExpectedOutcome', 'defectReproductionSteps'] as const)
-        : task.taskType === 'optimization'
-          ? (['optimizationCurrentState', 'optimizationExpectedOutcome'] as const)
-          : (['description'] as const)),
-    ]);
+    const activeFields = taskPushContentAttachmentFields(task.taskType);
     return {
       inspected: rawAttachments.map((attachment, index) => inspectTaskPushAttachment(task, attachment, index, allowedRoots)).filter((attachment) => activeFields.has(attachment.option.field)),
       allowedRoots,

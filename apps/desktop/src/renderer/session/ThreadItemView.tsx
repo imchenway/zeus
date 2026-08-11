@@ -138,7 +138,6 @@ function TaskPushMessageContent(
         <section key={`${block.contextKind}:${block.taskId ?? 'current'}`} className="session-task-push-block">
           <header>
             <strong>{block.contextKind === 'current' ? block.taskTitle : `${block.contextKind === 'parent' ? '父任务' : '关联任务'}：${block.taskCode ?? block.taskId} · ${block.taskTitle}`}</strong>
-            <small>任务类型：{block.taskTypeLabel}</small>
           </header>
           {block.fields.map((field) => {
             const resources = field.attachmentKeys.flatMap((key) => {
@@ -161,7 +160,7 @@ function TaskPushMessageContent(
                     附件 · {attachmentNames.get(key) ?? key}
                   </span>
                 ))}
-                <SafeMarkdown text={field.text} language={props.language} resources={resources} onOpenResource={props.onOpenResource} onLoadResourcePreview={props.onLoadResourcePreview} />
+                {field.text ? <SafeMarkdown text={field.text} language={props.language} resources={resources} onOpenResource={props.onOpenResource} onLoadResourcePreview={props.onLoadResourcePreview} /> : null}
               </section>
             );
           })}
