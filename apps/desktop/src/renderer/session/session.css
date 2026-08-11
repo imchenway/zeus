@@ -87,7 +87,7 @@
   inline-size: min(360px, calc(100vw - 32px));
   inset-block-start: calc(100% + 8px);
   inset-inline-end: 0;
-  max-block-size: min(620px, calc(100vh - 86px));
+  max-block-size: min(620px, var(--session-quick-actions-available-height, calc(100vh - 86px)));
   overflow-x: hidden;
   overflow-y: auto;
   padding: 14px;
@@ -96,12 +96,25 @@
   z-index: 80;
 }
 
+.session-codex-parity-v1 .session-quick-actions-card[data-sources-expanded='true'] {
+  display: flex;
+  flex-direction: column;
+  overflow-y: hidden;
+}
+
+.session-codex-parity-v1 .session-quick-actions-card[data-sources-expanded='true'] > header,
+.session-codex-parity-v1 .session-quick-actions-card[data-sources-expanded='true'] > .session-quick-actions-list,
+.session-codex-parity-v1 .session-quick-actions-card[data-sources-expanded='true'] .session-quick-actions-sources > header,
+.session-codex-parity-v1 .session-quick-actions-card[data-sources-expanded='true'] .session-quick-actions-view-all {
+  flex: 0 0 auto;
+}
+
 /* ZEUS-0160：宽屏空闲区直接承载环境卡；右侧工作面或窄窗口继续使用顶部按钮。 */
 .session-codex-parity-v1 .session-quick-actions-card[data-presentation='persistent'] {
   inline-size: 300px;
   inset-block-start: 16px;
   inset-inline-end: 16px;
-  max-block-size: calc(100vh - 90px);
+  max-block-size: var(--session-quick-actions-available-height, calc(100vh - 90px));
   pointer-events: auto;
   position: absolute;
 }
@@ -149,6 +162,8 @@
   color: var(--session-text-muted);
   display: inline-flex;
   justify-content: center;
+  min-block-size: 28px;
+  min-inline-size: 28px;
   padding: 0;
 }
 
@@ -246,6 +261,14 @@
   padding-block-start: 10px;
 }
 
+.session-codex-parity-v1 .session-quick-actions-card[data-sources-expanded='true'] .session-quick-actions-sources {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-block-size: 0;
+  overflow: hidden;
+}
+
 .session-codex-parity-v1 .session-quick-actions-sources > header {
   min-block-size: 30px;
   padding-inline: 2px;
@@ -257,6 +280,14 @@
   list-style: none;
   margin: 2px 0 0;
   padding: 0;
+}
+
+.session-codex-parity-v1 .session-quick-actions-card[data-sources-expanded='true'] .session-quick-actions-sources ol {
+  flex: 1 1 auto;
+  min-block-size: 0;
+  overscroll-behavior: contain;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 
 .session-codex-parity-v1 .session-quick-actions-sources li > :where(button, span) {
@@ -279,14 +310,33 @@
   color: var(--session-text);
 }
 
-.session-codex-parity-v1 .session-quick-actions-sources li svg {
+.session-codex-parity-v1 .session-quick-actions-source-visual {
+  align-items: center;
+  background: var(--session-control);
+  border: 1px solid var(--session-line);
+  border-radius: 5px;
+  block-size: 26px;
+  box-sizing: border-box;
+  color: var(--session-text-muted);
+  display: inline-flex;
+  flex: 0 0 26px;
+  inline-size: 26px;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.session-codex-parity-v1 .session-quick-actions-source-visual img {
+  block-size: 100%;
+  inline-size: 100%;
+  object-fit: contain;
+}
+
+.session-codex-parity-v1 .session-quick-actions-source-visual svg {
   block-size: 16px;
-  flex: 0 0 auto;
   inline-size: 16px;
 }
 
-.session-codex-parity-v1 .session-quick-actions-sources li span > span,
-.session-codex-parity-v1 .session-quick-actions-sources li button > span {
+.session-codex-parity-v1 .session-quick-actions-source-label {
   flex: 1 1 auto;
   max-inline-size: 100%;
   min-inline-size: 0;
@@ -328,11 +378,6 @@
 .session-codex-parity-v1 .session-quick-actions-view-all svg {
   block-size: 15px;
   inline-size: 15px;
-  transition: transform 140ms var(--session-ease-out);
-}
-
-.session-codex-parity-v1 .session-quick-actions-view-all[aria-expanded='true'] svg {
-  transform: rotate(180deg);
 }
 
 @media (max-width: 760px) {
