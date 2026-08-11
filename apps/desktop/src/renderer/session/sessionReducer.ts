@@ -395,8 +395,15 @@ function hydrateSnapshot(state: NativeSessionState, snapshot: NativeConversation
   }
   const pendingRequests = normalizePendingRequestsWithMaps(snapshot.requests, providerTurnIdByLocalId, providerItemIdByLocalId);
   const itemOrder = orderedItems.sort((left, right) => left.timestamp.localeCompare(right.timestamp) || left.stableIndex - right.stableIndex).map((entry) => entry.key);
-  const feedbackEpoch = activeTurnId ? state.feedbackEpoch + 1 : state.feedbackEpoch;
-  const hasVisibleActiveFeedback = activeTurnId ? Object.values(items).some((item) => item.turnId === activeTurnId && item.status === 'in_progress' && itemProvidesVisibleFeedback(item)) : false;
+  const activeTurnChanged = Boolean(activeTurnId && state.activeTurnId !== activeTurnId);
+  const requestResolvedBySnapshot = Boolean(
+    activeTurnId && pendingRequests.some((request) => request.turnId === activeTurnId && request.status === 'resolved' && state.pendingRequests.some((previous) => previous.id === request.id && previous.status !== 'resolved')),
+  );
+  const feedbackEpoch = activeTurnChanged || requestResolvedBySnapshot ? state.feedbackEpoch + 1 : state.feedbackEpoch;
+  const latestResolutionAt = activeTurnId ? latestResolvedRequestAt(pendingRequests, activeTurnId) : null;
+  const hasVisibleActiveFeedback = activeTurnId
+    ? Object.values(items).some((item) => item.turnId === activeTurnId && itemProvidesVisibleFeedback(item) && (!latestResolutionAt || (item.updatedAt ?? item.timelineAt ?? '') >= latestResolutionAt))
+    : false;
   return {
     ...state,
     projectId: snapshot.projectId,
@@ -744,6 +751,15 @@ function itemProvidesVisibleFeedback(item: NativeSessionItemBuffer): boolean {
   if (type === 'usermessage' || type === 'user') return false;
   if (item.text.trim()) return true;
   return ['commandexecution', 'command', 'mcptoolcall', 'dynamictoolcall', 'websearch', 'imageview', 'imagegeneration', 'toolcall', 'tool', 'filechange', 'file'].includes(type);
+}
+
+function latestResolvedRequestAt(requests: readonly NativePendingRequest[], turnId: string): string | null {
+  let latest: string | null = null;
+  for (const request of requests) {
+    if (request.turnId !== turnId || request.status !== 'resolved' || !request.resolvedAt) continue;
+    if (!latest || request.resolvedAt > latest) latest = request.resolvedAt;
+  }
+  return latest;
 }
 
 function mergeProgressPayload(previous: Record<string, unknown> | undefined, incoming: Record<string, unknown> | null): Record<string, unknown> {
