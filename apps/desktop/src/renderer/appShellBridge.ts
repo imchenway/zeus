@@ -28,6 +28,11 @@ export interface ExternalHttpsOpenResult {
   error?: string;
 }
 
+export interface RequestingWindowActivationResult {
+  activated: boolean;
+  error?: string;
+}
+
 export interface ProjectRevealResult {
   revealed: boolean;
   path?: string;
@@ -42,6 +47,7 @@ export interface AppShellBridgeWindow {
     onTaskTableLayoutCloseRequested?: (listener: () => void) => () => void;
     openGraphSource?: (source: GraphSourceOpenRequest) => Promise<GraphSourceOpenResult>;
     openExternalHttpsUrl?: (url: string) => Promise<ExternalHttpsOpenResult>;
+    activateRequestingWindow?: () => Promise<RequestingWindowActivationResult>;
     listConversationResourceOpenTargets?: (request: { projectId: string; conversationId: string; resourceId: string }) => Promise<{ resourceId: string; targets: ConversationResourceOpenTarget[] }>;
     openConversationResource?: (request: { projectId: string; conversationId: string; resourceId: string; target: ConversationOpenTarget; location?: ConversationFileLocation }) => Promise<{
       opened: boolean;
@@ -84,6 +90,12 @@ export async function openExternalHttpsUrlInMain(input: { zeus: AppShellBridgeWi
   if (!url) return { opened: false, error: 'external_url_not_allowed' };
   if (!input.zeus?.openExternalHttpsUrl) return { opened: false, error: 'external_open_unavailable' };
   return input.zeus.openExternalHttpsUrl(url);
+}
+
+/** 外部登录完成后只激活发起请求的受信 Zeus 窗口；非 Electron 预览环境安全降级。 */
+export async function activateRequestingZeusWindowInMain(input: { zeus: AppShellBridgeWindow['zeus'] }): Promise<RequestingWindowActivationResult> {
+  if (!input.zeus?.activateRequestingWindow) return { activated: false, error: 'window_activation_unavailable' };
+  return input.zeus.activateRequestingWindow();
 }
 
 export async function listConversationResourceOpenTargetsInMain(input: {

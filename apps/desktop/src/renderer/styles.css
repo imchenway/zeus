@@ -12999,6 +12999,12 @@ a {
   display: grid;
   gap: 3px;
 }
+.macos-ai-app .task-model-push-account.is-success {
+  border-color: color-mix(in oklab, var(--zeus-status-success-text) 36%, var(--zeus-product-line-soft));
+}
+.macos-ai-app .task-model-push-account.is-success strong {
+  color: var(--zeus-status-success-text);
+}
 .macos-ai-app .task-model-push-account small,
 .macos-ai-app .task-model-push-account p {
   margin: 0;

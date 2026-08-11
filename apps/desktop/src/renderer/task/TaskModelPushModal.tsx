@@ -36,7 +36,7 @@ export interface TaskModelPushForm {
   supplementalAttachments: TaskPushSupplementalAttachmentDraft[];
 }
 
-export type TaskModelPushModalStatus = 'loading' | 'ready' | 'authenticating' | 'submitting' | 'error';
+export type TaskModelPushModalStatus = 'loading' | 'ready' | 'authenticating' | 'authenticated' | 'submitting' | 'error';
 
 export type TaskModelPushPreferences = Pick<TaskModelPushForm, 'model' | 'effort' | 'workMode' | 'permissionMode'> & {
   workspaceMode?: 'direct' | 'worktree';
@@ -501,7 +501,8 @@ export function TaskModelPushModal(props: {
   if (!props.open || !props.task) return null;
   const zh = props.language === 'zh-CN';
   const authenticating = props.status === 'authenticating';
-  const busy = authenticating || props.status === 'submitting' || inputResources.processing;
+  const authenticated = props.status === 'authenticated';
+  const busy = authenticating || authenticated || props.status === 'submitting' || inputResources.processing;
   const selectedModel = props.capabilities?.models.find((model) => model.model === props.form.model || model.id === props.form.model);
   const codexLoginRequired = selectedModel?.agentKind !== 'pi' && props.capabilities?.codexAccount.requiresOpenaiAuth === true && !props.capabilities.codexAccount.signedIn;
   const repositories = props.capabilities?.repositories ?? [];
@@ -892,20 +893,32 @@ export function TaskModelPushModal(props: {
               : serviceTierDescription(props.form.serviceTier, selectedModel, props.language)}
           </p>
 
-          {codexLoginRequired || authenticating ? (
-            <section className="task-model-push-account" aria-live="polite">
+          {codexLoginRequired || authenticating || authenticated ? (
+            <section className={`task-model-push-account${authenticated ? ' is-success' : ''}`} role="status" aria-live="polite" aria-atomic="true">
               <span>
-                <strong>{zh ? 'Zeus 专属 Codex 需要登录' : 'Sign in to Codex for Zeus'}</strong>
-                <small>{zh ? 'Zeus 与 Codex App 使用独立账号状态，不会复制或覆盖 Codex App 的登录信息。' : 'Zeus keeps a separate account state and does not copy or overwrite the Codex App sign-in.'}</small>
+                <strong>{authenticated ? (zh ? '登录成功，正在继续' : 'Signed in, continuing') : zh ? 'Zeus 专属 Codex 需要登录' : 'Sign in to Codex for Zeus'}</strong>
+                <small>
+                  {authenticated
+                    ? zh
+                      ? 'Zeus 已验证专属 Codex 账号，正在恢复刚才的配置并创建会话。'
+                      : 'Zeus verified its Codex account and is restoring your configuration to create the conversation.'
+                    : zh
+                      ? 'Zeus 与 Codex App 使用独立账号状态，不会复制或覆盖 Codex App 的登录信息。'
+                      : 'Zeus keeps a separate account state and does not copy or overwrite the Codex App sign-in.'}
+                </small>
               </span>
               <p>
-                {authenticating
+                {authenticated
                   ? zh
-                    ? '浏览器已打开。完成登录后，这里会自动继续创建当前会话。'
-                    : 'Your browser is open. This conversation will be created automatically after sign-in.'
-                  : zh
-                    ? '点击“登录并继续”后会打开官方登录页；当前模型、工作区、补充信息和本次附件都会保留。'
-                    : 'Choose “Sign in and continue” to open the official sign-in page. Your configuration, supplemental information, and attachments for this push will be preserved.'}
+                    ? '无需再次确认，请稍候。'
+                    : 'No further confirmation is needed.'
+                  : authenticating
+                    ? zh
+                      ? '官方登录页已打开。完成后无需点击网页中的“打开 ChatGPT”或“打开 Codex”，Zeus 会自动返回并继续。'
+                      : 'The official sign-in page is open. You do not need to choose “Open ChatGPT” or “Open Codex”; Zeus will return and continue automatically.'
+                    : zh
+                      ? '点击“登录并继续”会打开官方登录页。完成后无需点击网页中的其他按钮，Zeus 会自动返回；当前模型、工作区、权限、补充信息和本次附件都会保留。'
+                      : 'Choose “Sign in and continue” to open the official sign-in page. You do not need to choose another button there; Zeus will return automatically and preserve your model, workspace, permissions, supplemental information, and attachments for this push.'}
               </p>
             </section>
           ) : null}
@@ -984,17 +997,21 @@ export function TaskModelPushModal(props: {
                 ? zh
                   ? '等待登录…'
                   : 'Waiting for sign-in…'
-                : props.status === 'submitting'
+                : authenticated
                   ? zh
-                    ? '正在创建…'
-                    : 'Creating…'
-                  : codexLoginRequired
+                    ? '登录成功，正在继续…'
+                    : 'Signed in, continuing…'
+                  : props.status === 'submitting'
                     ? zh
-                      ? '登录并继续'
-                      : 'Sign in and continue'
-                    : zh
-                      ? '创建新会话'
-                      : 'Create conversation'}
+                      ? '正在创建…'
+                      : 'Creating…'
+                    : codexLoginRequired
+                      ? zh
+                        ? '登录并继续'
+                        : 'Sign in and continue'
+                      : zh
+                        ? '创建新会话'
+                        : 'Create conversation'}
             </Button>
           </span>
         </footer>

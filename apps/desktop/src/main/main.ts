@@ -1094,6 +1094,13 @@ function setupIpc(): void {
       openExternal: (url) => shell.openExternal(url),
     });
   });
+  ipcMain.handle('zeus:activate-requesting-window', (event) => {
+    const requestingWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow)) return { activated: false, error: 'window_activation_untrusted_sender' };
+    // 只允许 Renderer 激活自身所属窗口，登录完成后不能借 IPC 指定或抢占其他窗口。
+    revealMainWindow(requestingWindow);
+    return { activated: true };
+  });
   ipcMain.handle('zeus:release:download-update', (event) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
     if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow)) throw new Error('Release update request came from an untrusted window.');

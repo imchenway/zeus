@@ -130,6 +130,7 @@ contextBridge.exposeInMainWorld('zeus', {
   exportPatchToFile: (patch: unknown) => ipcRenderer.invoke('zeus:export-patch', patch),
   openGraphSource: (source: unknown) => ipcRenderer.invoke('zeus:open-graph-source', source),
   openExternalHttpsUrl: (url: string) => ipcRenderer.invoke('zeus:open-external-https-url', url),
+  activateRequestingWindow: () => ipcRenderer.invoke('zeus:activate-requesting-window'),
   listConversationResourceOpenTargets: (request: unknown) => ipcRenderer.invoke('zeus:conversation-resource:list-open-targets', request),
   openConversationResource: (request: unknown) => ipcRenderer.invoke('zeus:conversation-resource:open', request),
   openTurnChangeFile: (request: unknown) => ipcRenderer.invoke('zeus:turn-change-file:open', request),
