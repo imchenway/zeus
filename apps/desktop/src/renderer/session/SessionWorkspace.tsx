@@ -52,6 +52,7 @@ import { conversationAttachmentIdentity, ConversationComposerAttachments } from 
 import { useConversationInputResources } from './useConversationInputResources.js';
 import { SessionQuickActionsCard } from './SessionQuickActionsCard.js';
 import type { SessionCodeReviewSelection } from './SessionCodeReviewDialog.js';
+import { conversationDisplayTitle } from './conversationDisplayTitle.js';
 
 export interface SessionWorkspaceTask {
   id: string;
@@ -1062,7 +1063,7 @@ export function createSessionHeaderSnapshot(
   const taskTitle = task?.title ?? (owner?.kind === 'task' ? owner.taskTitle : null);
   return {
     conversationId: conversation.id,
-    title: taskTitle ?? conversation.title,
+    title: conversationDisplayTitle(conversation.title, taskTitle),
     contextLabel: taskId ? null : ((owner?.kind === 'project' ? owner.projectName : null) ?? conversation.summary ?? conversation.projectId),
     taskId,
     taskManagementStatus: task?.managementStatus ?? null,

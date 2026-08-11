@@ -681,6 +681,8 @@ export interface TaskIntegrationConflictAiSession {
   status: string;
 }
 
+export type TaskIntegrationConflictPermissionMode = Exclude<NativePermissionMode, 'read-only'>;
+
 export interface CodexConversationCapabilities {
   generationId: string;
   initializedAt: string;

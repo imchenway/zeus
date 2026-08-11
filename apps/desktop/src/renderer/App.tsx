@@ -79,6 +79,7 @@ import type {
 } from './session/sessionTypes.js';
 import { selectHasConfirmedUserMessage } from './session/sessionSelectors.js';
 import { compareConversationStageUpdatedDesc } from './session/conversationOrdering.js';
+import { conversationDisplayTitle } from './session/conversationDisplayTitle.js';
 import { rememberSessionHotState, type SessionHotCache } from './session/sessionHotCache.js';
 import { readProjectServiceTierPreference, serviceTierWireOverride, writeProjectServiceTierPreference } from './session/serviceTierSelection.js';
 import type { SessionControllerClient } from './session/useSessionController.js';
@@ -14180,7 +14181,7 @@ export function App(props: {
                             return (
                               <span className="settings-archived-conversation-item" key={conversation.id}>
                                 <span className="settings-archived-conversation-copy">
-                                  <strong>{task?.title ?? conversation.title}</strong>
+                                  <strong>{conversationDisplayTitle(conversation.title, task?.title)}</strong>
                                   <small>
                                     {task
                                       ? settingsWorkspaceCopy.data.archivedConversationContext(project?.name ?? conversation.projectId, task.taskCode ?? task.id)

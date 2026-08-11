@@ -74,7 +74,7 @@ import { resolveConversationAttachmentGrant } from './conversationAttachmentGran
 import { createModelConnectionService, type SaveModelConnectionRequest } from './modelConnectionService.js';
 import { createPiNativeConversationCoordinator } from './piNativeConversationCoordinator.js';
 import { generateReleaseNotesWithDeepSeek } from './releaseNotesGeneration.js';
-import { buildTaskConflictAiPrompt } from './taskConflictAi.js';
+import { buildTaskConflictAiConversationTitle, buildTaskConflictAiPrompt, matchesTaskConflictAiConversationTitle } from './taskConflictAi.js';
 import { createMacOSKeychainStore, getSecretPresenceLabel, type SecretPresenceLabel } from '@zeus/security-core';
 import {
   buildGitPatchExport,
@@ -1496,6 +1496,7 @@ interface ResolveTaskIntegrationConflictBody {
 
 interface AssistTaskIntegrationConflictBody {
   content?: string;
+  permissionMode?: unknown;
 }
 
 interface CreateRuntimeSessionBody {
@@ -5312,6 +5313,11 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       const content = request.body?.content;
       if (typeof content !== 'string') return reply.code(400).send({ error: 'ZEUS_TASK_CONFLICT_CONTENT_REQUIRED', message: 'Conflict draft content is required.' });
       if (content.length > 2_000_000) return reply.code(413).send({ error: 'ZEUS_TASK_CONFLICT_TOO_LARGE', message: '当前冲突草稿过大，无法交给 AI 处理。' });
+      const permissionMode = parseConversationPermissionMode(request.body?.permissionMode);
+      if (!permissionMode) return reply.code(400).send({ error: 'ZEUS_INVALID_PERMISSION_MODE', message: 'permissionMode must be read-only, auto, or full-access.' });
+      if (permissionMode === 'read-only') {
+        return reply.code(400).send({ error: 'ZEUS_CONFLICT_AI_WRITE_PERMISSION_REQUIRED', message: '冲突处理需要修改并暂存隔离合并工作区，请选择自动或完全访问。' });
+      }
       try {
         const running = taskConflictAiOperations.get(resolved.integration.id);
         if (running) {
@@ -5341,12 +5347,11 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         await assertTaskIntegrationStillCurrent(resolved.project, resolved.workspace, resolved.integration);
         await writeTaskIntegrationDraft(resolved.integration.integrationPath, path, content);
         const prompt = buildTaskConflictAiPrompt({
-          path,
           targetBranch: resolved.integration.targetBranch,
           taskBranch: resolved.workspace.branchName,
           mode: resolved.integration.mode,
-          conflictFiles: resolved.integration.conflictFiles,
         });
+        const conversationTitle = buildTaskConflictAiConversationTitle({ taskBranch: resolved.workspace.branchName, targetBranch: resolved.integration.targetBranch });
         const conversationId = randomUUID();
         const submissionId = randomUUID();
         const operation =
@@ -5357,12 +5362,12 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
                 projectId: resolved.project.id,
                 taskId: resolved.task.id,
                 taskTitle: resolved.task.title,
-                conversationTitle: `本地合入：${resolved.workspace.branchName} → ${resolved.integration.targetBranch}`,
+                conversationTitle,
                 cwd: resolved.integration.integrationPath,
                 prompt,
                 model: { sourceId: modelConversation.modelSourceId, modelId, displayName: null },
                 ...(settings?.effort ? { thinkingLevel: settings.effort } : {}),
-                permissionMode: 'auto',
+                permissionMode,
                 idempotencyKey: randomUUID(),
                 clientUserMessageId: randomUUID(),
                 workspaceId: resolved.workspace.id,
@@ -5376,7 +5381,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
                 taskId: resolved.task.id,
                 workspaceId: resolved.workspace.id,
                 ...(resolved.workspace.environmentId ? { environmentId: resolved.workspace.environmentId } : {}),
-                conversationTitle: `本地合入：${resolved.workspace.branchName} → ${resolved.integration.targetBranch}`,
+                conversationTitle,
                 taskTitle: resolved.task.title,
                 prompt,
                 writableRoots: [resolved.integration.integrationPath],
@@ -5386,7 +5391,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
                 allowCodeChanges: true,
                 allowTests: true,
                 allowGitCommit: false,
-                permissionMode: 'auto',
+                permissionMode,
                 applyLegacyTaskGuards: false,
                 // 冲突处理是用户显式发起的本地合入操作，直接进入可见会话。
                 bypassConcurrency: true,
@@ -5407,7 +5412,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         recordTaskEvent({
           taskId: resolved.task.id,
           eventType: 'task.git_integration.ai_started',
-          title: `AI 已开始处理本地合入冲突`,
+          title: '冲突处理：AI 已开始处理本地合入',
           payload: {
             integrationId: resolved.integration.id,
             workspaceId: resolved.workspace.id,
@@ -13421,7 +13426,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   function taskConflictIntegrationForConversation(conversation: ZeusConversationRecord): ZeusTaskIntegrationRecord | null {
     const tracked = [...taskConflictAiOperations.entries()].find(([, operation]) => operation.conversationId === conversation.id);
     if (tracked) return taskIntegrations.getById(tracked[0]) ?? null;
-    if (!conversation.taskId || !conversation.workspaceId || !conversation.title.startsWith('本地合入：')) return null;
+    if (!conversation.taskId || !conversation.workspaceId) return null;
     const workspace = taskWorkspaces.getById(conversation.workspaceId);
     if (!workspace) return null;
     return (
@@ -13429,7 +13434,10 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         .listByTask(conversation.taskId)
         .find(
           (integration) =>
-            integration.workspaceId === conversation.workspaceId && integration.state === 'conflicted' && Boolean(integration.integrationPath) && conversation.title === `本地合入：${workspace.branchName} → ${integration.targetBranch}`,
+            integration.workspaceId === conversation.workspaceId &&
+            integration.state === 'conflicted' &&
+            Boolean(integration.integrationPath) &&
+            matchesTaskConflictAiConversationTitle({ title: conversation.title, taskBranch: workspace.branchName, targetBranch: integration.targetBranch }),
         ) ?? null
     );
   }
@@ -15814,7 +15822,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         recordTaskEvent({
           taskId: task.id,
           eventType: 'task.git_integration.local_sync_pending',
-          title: 'AI 已解决冲突，合入结果等待同步到本地目标分支',
+          title: '冲突处理：AI 已解决冲突，合入结果等待同步到本地目标分支',
           payload: { integrationId: integration.id, workspaceId: workspace.id, conversationId, targetBranch: integration.targetBranch, resultHeadSha: finalized.resultHeadSha },
         });
         await db.save();
@@ -15824,7 +15832,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       recordTaskEvent({
         taskId: task.id,
         eventType: 'task.git_integration.ai_merged',
-        title: `AI 已处理冲突并本地合入 ${integration.targetBranch}`,
+        title: `冲突处理：AI 已完成本地合入 ${integration.targetBranch}`,
         payload: {
           integrationId: integration.id,
           workspaceId: workspace.id,
@@ -15847,7 +15855,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         recordTaskEvent({
           taskId: integration.taskId,
           eventType: 'task.git_integration.ai_failed',
-          title: 'AI 本地合入未完成',
+          title: '冲突处理：AI 本地合入未完成',
           payload: {
             integrationId: integration.id,
             workspaceId: integration.workspaceId,
