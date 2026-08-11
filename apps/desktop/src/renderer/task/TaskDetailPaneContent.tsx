@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
-import { isTaskPriority, type TaskAttachmentReference, type TaskManagementStatusDefinition } from '@zeus/shared';
+import { isTaskPriority, type TaskAttachmentField, type TaskAttachmentReference, type TaskManagementStatusDefinition } from '@zeus/shared';
 import { ZeusApiError, type TaskEventRecord, type TaskManagementStatus, type TaskPriority, type TaskRecord, type TaskType, type UpdateTaskRelationshipsRequest, type UpdateTaskRequest } from '../apiClient.js';
 import type { NativeConversationChoice } from '../session/sessionTypes.js';
 import { compareConversationCreatedAsc } from '../session/conversationOrdering.js';
@@ -7,7 +7,16 @@ import { Button } from '../ui/Button.js';
 import { PENDING_RESOURCE_LONG_TEXT_THRESHOLD } from '../ui/pendingResourcePolicy.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 import { TaskAttachmentPreviewList } from './TaskAttachmentPreviewList.js';
-import { mergeTaskAttachments, parseTaskAttachments, toPersistedTaskAttachment, type TaskAttachmentView, type TaskResourceAuthorizationResult, type TaskResourcePayload } from './taskAttachments.js';
+import {
+  mergeTaskAttachments,
+  parseTaskAttachments,
+  taskAttachmentsForField,
+  toPersistedTaskAttachment,
+  type TaskAttachmentCandidate,
+  type TaskAttachmentView,
+  type TaskResourceAuthorizationResult,
+  type TaskResourcePayload,
+} from './taskAttachments.js';
 import { formatTaskSource, formatTaskType, formatTaskUpdatedAt, resolveTaskManagementStatus, taskTypes, type TaskSourceLabels } from './taskWorkspaceModel.js';
 
 export interface TaskDetailPaneCopy {
@@ -72,10 +81,9 @@ export interface TaskDetailPaneContentProps {
   onCreateChild: (taskId: string) => void;
   onDeleteTask: (taskId: string) => void;
   onManagementStatusChange: (taskId: string, status: TaskManagementStatus, expectedUpdatedAt: string) => Promise<TaskEditResult | undefined>;
-  onChooseAttachments?: () => Promise<TaskAttachmentView[]>;
   onAuthorizeFiles?: (files: File[], source: 'paste') => Promise<TaskResourceAuthorizationResult>;
-  onMaterializeResources?: (resources: TaskResourcePayload[]) => Promise<TaskAttachmentView[]>;
-  onReadClipboardResources?: () => Promise<{ resources: TaskAttachmentView[]; text: string }>;
+  onMaterializeResources?: (resources: TaskResourcePayload[]) => Promise<TaskAttachmentCandidate[]>;
+  onReadClipboardResources?: () => Promise<{ resources: TaskAttachmentCandidate[]; text: string }>;
   onReloadConversations?: (taskId: string) => void;
   onLoadAttachmentPreview?: (path: string) => Promise<{ previewUrl: string; mimeType: string } | null>;
   onOpenAttachment?: (path: string) => Promise<{ opened: boolean; error?: string }>;
@@ -102,6 +110,7 @@ type TaskEditCopy = {
 
 type TaskTypedContentField = {
   key: string;
+  field: TaskAttachmentField;
   label: string;
   value: string;
   buildPatch: (value: string) => Omit<UpdateTaskRequest, 'expectedUpdatedAt'>;
@@ -227,6 +236,42 @@ function TaskEditFeedback(props: { state: TaskFieldSaveState; copy: TaskEditCopy
 
 function TaskSaveSpinner() {
   return <span className="task-save-spinner" aria-hidden="true" />;
+}
+
+function TaskDetailFieldAttachments(props: {
+  field: TaskAttachmentField;
+  attachments: TaskAttachmentView[];
+  copy: TaskDetailPaneCopy;
+  editCopy: TaskEditCopy;
+  disabled: boolean;
+  onRemove: (path: string) => void;
+  onLoadPreview?: (path: string) => Promise<{ previewUrl: string; mimeType: string } | null>;
+  onOpenAttachment?: (path: string) => Promise<{ opened: boolean; error?: string }>;
+}) {
+  const attachments = taskAttachmentsForField(props.attachments, props.field);
+  if (attachments.length === 0) return null;
+  return (
+    <div className="task-detail-field-attachments">
+      <TaskAttachmentPreviewList
+        attachments={attachments}
+        mode="editable"
+        disabled={props.disabled}
+        onRemove={props.onRemove}
+        onLoadPreview={props.onLoadPreview}
+        onOpenAttachment={props.onOpenAttachment}
+        copy={{
+          imageLabel: props.copy.imageAttachmentLabel ?? '图片',
+          fileLabel: props.copy.fileAttachmentLabel ?? '文件',
+          openFileLabel: props.copy.openFileAttachmentLabel ?? '打开附件',
+          openPreviewLabel: props.copy.previewAttachmentLabel ?? '放大预览附件',
+          closePreviewLabel: props.copy.previewCloseLabel ?? '关闭附件预览',
+          previewUnavailable: props.copy.previewUnavailableLabel ?? '无法预览，本机路径已保存',
+          localPathLabel: props.copy.localPathLabel ?? '本机路径',
+          removeLabel: props.editCopy.removeAttachment,
+        }}
+      />
+    </div>
+  );
 }
 
 function InlineTaskTextField(props: {
@@ -707,11 +752,11 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
     return zh ? '无法读取或保存粘贴附件，请重试。' : 'The pasted attachment could not be read or saved. Try again.';
   }
 
-  async function pasteTaskDetailResources(request: TaskAttachmentPasteRequest): Promise<TaskAttachmentPasteResult> {
+  async function pasteTaskDetailResources(field: TaskAttachmentField, request: TaskAttachmentPasteRequest): Promise<TaskAttachmentPasteResult> {
     const retryOperation = async () => {
-      await pasteTaskDetailResources(request);
+      await pasteTaskDetailResources(field, request);
     };
-    let additions: TaskAttachmentView[] = [];
+    let additions: TaskAttachmentCandidate[] = [];
     let failedCount = 0;
     let text = request.plainText;
     let nativeReadFailed = false;
@@ -752,7 +797,10 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
         return { insertText: text };
       }
 
-      const nextAttachments = mergeTaskAttachments(desiredAttachmentsRef.current, additions);
+      const nextAttachments = mergeTaskAttachments(
+        desiredAttachmentsRef.current,
+        additions.map((attachment) => ({ ...attachment, field })),
+      );
       const result = await saveAttachmentReferences(nextAttachments, props.task.updatedAt ?? '');
       if (!result) {
         attachmentPasteRetryRef.current = null;
@@ -780,18 +828,6 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
       attachmentPasteRetryRef.current = retryOperation;
       setAttachmentSaveState({ kind: 'error', message: taskPasteErrorMessage() });
       return {};
-    }
-  }
-
-  async function chooseAttachments(): Promise<void> {
-    if (!props.onChooseAttachments) return;
-    try {
-      const additions = await props.onChooseAttachments();
-      if (additions.length === 0) return;
-      const nextAttachments = mergeTaskAttachments(taskAttachments, additions);
-      await saveAttachmentReferences(nextAttachments, props.task.updatedAt ?? '');
-    } catch (error) {
-      setAttachmentSaveState({ kind: 'error', message: taskEditErrorMessage(error, editCopy.saveFailed) });
     }
   }
 
@@ -840,6 +876,7 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
       ? [
           {
             key: 'defect-current-state',
+            field: 'defectCurrentState',
             label: zh ? '现状' : 'Current state',
             value: props.task.defectCurrentState ?? '',
             buildPatch: (defectCurrentState) => ({ defectCurrentState }),
@@ -847,6 +884,7 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
           },
           {
             key: 'defect-expected-outcome',
+            field: 'defectExpectedOutcome',
             label: zh ? '预期' : 'Expected outcome',
             value: props.task.defectExpectedOutcome ?? '',
             buildPatch: (defectExpectedOutcome) => ({ defectExpectedOutcome }),
@@ -854,6 +892,7 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
           },
           {
             key: 'defect-reproduction-steps',
+            field: 'defectReproductionSteps',
             label: zh ? '复现步骤' : 'Reproduction steps',
             value: props.task.defectReproductionSteps ?? '',
             buildPatch: (defectReproductionSteps) => ({ defectReproductionSteps }),
@@ -864,6 +903,7 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
         ? [
             {
               key: 'optimization-current-state',
+              field: 'optimizationCurrentState',
               label: zh ? '现状' : 'Current state',
               value: props.task.optimizationCurrentState ?? '',
               buildPatch: (optimizationCurrentState) => ({ optimizationCurrentState }),
@@ -871,6 +911,7 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
             },
             {
               key: 'optimization-expected-outcome',
+              field: 'optimizationExpectedOutcome',
               label: zh ? '预期' : 'Expected outcome',
               value: props.task.optimizationExpectedOutcome ?? '',
               buildPatch: (optimizationExpectedOutcome) => ({ optimizationExpectedOutcome }),
@@ -880,6 +921,7 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
         : [
             {
               key: 'requirement-description',
+              field: 'description',
               label: zh ? '需求描述' : 'Requirement description',
               value: props.task.description ?? '',
               buildPatch: (description) => ({ description }),
@@ -905,7 +947,6 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
             buildPatch={(title) => ({ title: title.trim() })}
             valueFromTask={(task) => task.title}
             onSave={(input) => props.onUpdateTaskContent(props.task.id, input)}
-            onPasteResources={pasteTaskDetailResources}
           />
         </span>
         <span className="task-detail-pane-status-control">
@@ -979,6 +1020,16 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
           <span className="task-detail-section-heading">
             <strong>{field.label}</strong>
           </span>
+          <TaskDetailFieldAttachments
+            field={field.field}
+            attachments={taskAttachments}
+            copy={props.copy}
+            editCopy={editCopy}
+            disabled={props.busy || attachmentSaveState.kind === 'saving'}
+            onRemove={(path) => void removeAttachment(path)}
+            onLoadPreview={props.onLoadAttachmentPreview}
+            onOpenAttachment={props.onOpenAttachment}
+          />
           <InlineTaskTextField
             task={props.task}
             label={`${zh ? '编辑' : 'Edit'}${zh ? '' : ' '}${field.label}`}
@@ -990,7 +1041,7 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
             buildPatch={field.buildPatch}
             valueFromTask={field.valueFromTask}
             onSave={(input) => props.onUpdateTaskContent(props.task.id, input)}
-            onPasteResources={pasteTaskDetailResources}
+            onPasteResources={(request) => pasteTaskDetailResources(field.field, request)}
           />
         </section>
       ))}
@@ -1000,6 +1051,16 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
           <strong>{zh ? '标签' : 'Tags'}</strong>
           <small>{props.task.tags?.length ?? 0}</small>
         </span>
+        <TaskDetailFieldAttachments
+          field="tags"
+          attachments={taskAttachments}
+          copy={props.copy}
+          editCopy={editCopy}
+          disabled={props.busy || attachmentSaveState.kind === 'saving'}
+          onRemove={(path) => void removeAttachment(path)}
+          onLoadPreview={props.onLoadAttachmentPreview}
+          onOpenAttachment={props.onOpenAttachment}
+        />
         <InlineTaskTextField
           task={props.task}
           label={editCopy.editTags}
@@ -1021,9 +1082,24 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
           buildPatch={(tags) => ({ tags: normalizeTaskTagsInput(tags) })}
           valueFromTask={(task) => taskTagsDraft(task.tags)}
           onSave={(input) => props.onUpdateTaskContent(props.task.id, input)}
-          onPasteResources={pasteTaskDetailResources}
+          onPasteResources={(request) => pasteTaskDetailResources('tags', request)}
         />
       </section>
+
+      {undoAttachment || attachmentSaveState.kind === 'saving' || attachmentSaveState.kind === 'error' || attachmentSaveState.kind === 'conflict' ? (
+        <section className="task-detail-attachment-feedback" aria-live="polite" aria-busy={attachmentSaveState.kind === 'saving' || undefined}>
+          {attachmentSaveState.kind === 'saving' ? <TaskSaveSpinner /> : null}
+          {undoAttachment ? (
+            <span className="task-detail-attachment-undo">
+              <small role="status">{zh ? `已解除 ${undoAttachment.name} 的任务关联。` : `Removed ${undoAttachment.name} from this task.`}</small>
+              <Button variant="secondary" size="compact" onClick={() => void restoreRemovedAttachment()}>
+                {editCopy.undoAttachment}
+              </Button>
+            </span>
+          ) : null}
+          <TaskEditFeedback state={attachmentSaveState} copy={editCopy} statusId={attachmentStatusId} onRetry={retryAttachmentSave} onLoadLatest={loadLatestAttachments} />
+        </section>
+      ) : null}
 
       <section className="task-detail-block task-detail-relationships" aria-label={zh ? '任务关系' : 'Task relationships'}>
         <span className="task-detail-section-heading">
@@ -1101,54 +1177,6 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
           ))}
         </div>
         <TaskEditFeedback state={relationshipSaveState} copy={editCopy} statusId={`${attachmentStatusId}-relationships`} />
-      </section>
-
-      <section className="task-detail-block task-detail-attachments" aria-label={props.copy.attachmentsTitle ?? '图片与附件'} aria-busy={attachmentSaveState.kind === 'saving' || undefined}>
-        <span className="task-detail-section-heading">
-          <span>
-            <strong>{props.copy.attachmentsTitle ?? '图片与附件'}</strong>
-            <small>{taskAttachments.length}</small>
-          </span>
-          {props.onChooseAttachments ? (
-            <Button variant="secondary" size="compact" onClick={() => void chooseAttachments()} busy={attachmentSaveState.kind === 'saving'} disabled={props.busy}>
-              {editCopy.addAttachment}
-            </Button>
-          ) : null}
-          {attachmentSaveState.kind === 'saving' ? <TaskSaveSpinner /> : null}
-        </span>
-        {taskAttachments.length > 0 ? (
-          <TaskAttachmentPreviewList
-            attachments={taskAttachments}
-            mode="editable"
-            disabled={props.busy || attachmentSaveState.kind === 'saving'}
-            onRemove={(path) => void removeAttachment(path)}
-            onLoadPreview={props.onLoadAttachmentPreview}
-            onOpenAttachment={props.onOpenAttachment}
-            copy={{
-              imageLabel: props.copy.imageAttachmentLabel ?? '图片',
-              fileLabel: props.copy.fileAttachmentLabel ?? '文件',
-              openFileLabel: props.copy.openFileAttachmentLabel ?? '打开附件',
-              openPreviewLabel: props.copy.previewAttachmentLabel ?? '放大预览附件',
-              closePreviewLabel: props.copy.previewCloseLabel ?? '关闭附件预览',
-              previewUnavailable: props.copy.previewUnavailableLabel ?? '无法预览，本机路径已保存',
-              localPathLabel: props.copy.localPathLabel ?? '本机路径',
-              removeLabel: editCopy.removeAttachment,
-            }}
-          />
-        ) : (
-          <p className="task-detail-attachment-empty">{zh ? '暂无附件，可以添加本机图片或文件。' : 'No attachments. Add a local image or file.'}</p>
-        )}
-        {undoAttachment ? (
-          <span className="task-detail-attachment-undo">
-            <small role="status" aria-live="polite">
-              {zh ? `已解除 ${undoAttachment.name} 的任务关联。` : `Removed ${undoAttachment.name} from this task.`}
-            </small>
-            <Button variant="secondary" size="compact" onClick={() => void restoreRemovedAttachment()}>
-              {editCopy.undoAttachment}
-            </Button>
-          </span>
-        ) : null}
-        <TaskEditFeedback state={attachmentSaveState} copy={editCopy} statusId={attachmentStatusId} onRetry={retryAttachmentSave} onLoadLatest={loadLatestAttachments} />
       </section>
 
       <section className="task-detail-block task-detail-conversations" aria-label={props.copy.conversationsTitle}>

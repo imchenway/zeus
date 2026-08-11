@@ -7,21 +7,30 @@ import { basename, dirname, isAbsolute, join, parse, relative, resolve, sep } fr
 import { getNextTaskStatus, type TaskStatus } from '@zeus/task-core';
 import {
   buildTaskCommitMessageSuggestion,
+  buildTaskPushLayout,
+  renderTaskPushLayoutText,
   cloneTaskManagementStatusConfig,
   type CommandDefinition,
   commandNeedsHighRiskConfirmation,
   type ConversationResource,
   type ConversationResourcePreview,
   defaultTaskManagementStatusConfig,
+  isTaskAttachmentField,
   isTaskStatusFilter,
   normalizeTaskManagementStatusConfig,
   type ProjectCodeWorkspacePreference,
   type TaskAttachmentReference,
+  type TaskAttachmentField,
   type TaskManagementStatusConfig,
   type TaskPushParentAttachmentOption,
   type TaskPushParentContextOption,
   type TaskPushParentContextSelection,
+  type TaskPushPromptAttachment,
   type TaskPushPromptParentContext,
+  type TaskPushPromptRelatedContext,
+  type TaskPushRelatedContextOption,
+  type TaskPushRelatedContextSelection,
+  type TaskPushMessageLayout,
   type TaskStatusFilter,
   validateCommandDefinitionInput,
 } from '@zeus/shared';
@@ -1406,7 +1415,7 @@ function normalizeTaskAttachmentReferences(value: unknown): TaskAttachmentRefere
     const path = typeof attachment.path === 'string' ? attachment.path.trim() : '';
     const name = typeof attachment.name === 'string' ? attachment.name.trim() : '';
     const kind = attachment.kind;
-    if (!path || !name || (kind !== 'image' && kind !== 'file' && kind !== 'directory' && kind !== 'pasted_text')) return null;
+    if (!path || !name || !isTaskAttachmentField(attachment.field) || (kind !== 'image' && kind !== 'file' && kind !== 'directory' && kind !== 'pasted_text')) return null;
     if (attachment.mimeType !== undefined && typeof attachment.mimeType !== 'string') return null;
     if (attachment.size !== undefined && (!Number.isSafeInteger(attachment.size) || Number(attachment.size) < 0)) return null;
     if (attachment.characterCount !== undefined && (!Number.isSafeInteger(attachment.characterCount) || Number(attachment.characterCount) < 0)) return null;
@@ -1414,6 +1423,7 @@ function normalizeTaskAttachmentReferences(value: unknown): TaskAttachmentRefere
       path,
       name,
       kind,
+      field: attachment.field,
       ...(typeof attachment.mimeType === 'string' && attachment.mimeType.trim() ? { mimeType: attachment.mimeType.trim() } : {}),
       ...(typeof attachment.size === 'number' ? { size: attachment.size } : {}),
       ...(typeof attachment.characterCount === 'number' ? { characterCount: attachment.characterCount } : {}),
@@ -1565,6 +1575,7 @@ interface NativeConversationAttachment {
   uploadRef?: string;
   /** 仅由服务端验签后注入，用于精确授权持久化路径。 */
   authorizedPath?: string;
+  taskPushAttachmentKey?: string;
 }
 
 type StartTaskConversationBody = (
@@ -1580,6 +1591,11 @@ type StartTaskConversationBody = (
       serviceTier?: string | null;
       workMode?: 'default' | 'plan';
       supplementalInfo?: string;
+      taskContext?: {
+        revision: string;
+        parentSelections: TaskPushParentContextSelection[];
+        relatedSelections: TaskPushRelatedContextSelection[];
+      };
       workspace?:
         | { mode: 'direct'; confirmConcurrentWrites?: boolean }
         | {
@@ -1724,7 +1740,15 @@ function prepareTaskAttachmentRoot(path: string | undefined): string | undefined
 type ManagedTaskAttachmentRepairResult = {
   repairedAttachmentCount: number;
   repairedTaskCount: number;
+  repairedPathCount: number;
+  repairedFieldCount: number;
 };
+
+function historicalTaskAttachmentField(taskType: unknown): TaskAttachmentField {
+  if (taskType === 'defect') return 'defectCurrentState';
+  if (taskType === 'optimization') return 'optimizationCurrentState';
+  return 'description';
+}
 
 function inspectTaskManagedResource(resourcePath: string): { bytes: number; digest: string } {
   const resource = lstatSync(resourcePath);
@@ -1789,11 +1813,12 @@ function resolveCurrentManagedTaskAttachmentPath(attachment: Record<string, unkn
   }
 }
 
-function repairMovedTaskAttachmentReferences(db: ZeusDatabase, taskAttachmentRoot: string | undefined): ManagedTaskAttachmentRepairResult {
-  if (!taskAttachmentRoot) return { repairedAttachmentCount: 0, repairedTaskCount: 0 };
+function repairTaskAttachmentReferences(db: ZeusDatabase, taskAttachmentRoot: string | undefined): ManagedTaskAttachmentRepairResult {
   let repairedAttachmentCount = 0;
   let repairedTaskCount = 0;
-  for (const row of db.select<{ id: string; source_context_json: string }>(`SELECT id, source_context_json
+  let repairedPathCount = 0;
+  let repairedFieldCount = 0;
+  for (const row of db.select<{ id: string; task_type: string; source_context_json: string }>(`SELECT id, task_type, source_context_json
                                                                               FROM tasks
                                                                               WHERE deleted_at IS NULL`)) {
     let sourceContext: Record<string, unknown>;
@@ -1806,15 +1831,32 @@ function repairMovedTaskAttachmentReferences(db: ZeusDatabase, taskAttachmentRoo
     }
     if (!Array.isArray(sourceContext.attachments)) continue;
     let taskChanged = false;
-    const attachments = sourceContext.attachments.map((rawAttachment) => {
+    const repairedAttachments = sourceContext.attachments.map((rawAttachment) => {
       if (!rawAttachment || typeof rawAttachment !== 'object' || Array.isArray(rawAttachment)) return rawAttachment;
       const attachment = rawAttachment as Record<string, unknown>;
       const currentPath = resolveCurrentManagedTaskAttachmentPath(attachment, taskAttachmentRoot);
-      if (!currentPath || currentPath === attachment.path) return rawAttachment;
+      const field = isTaskAttachmentField(attachment.field) ? attachment.field : historicalTaskAttachmentField(row.task_type);
+      const pathChanged = Boolean(currentPath && currentPath !== attachment.path);
+      const fieldChanged = field !== attachment.field;
+      if (!pathChanged && !fieldChanged) return rawAttachment;
       taskChanged = true;
       repairedAttachmentCount += 1;
-      return { ...attachment, path: currentPath };
+      if (pathChanged) repairedPathCount += 1;
+      if (fieldChanged) repairedFieldCount += 1;
+      return { ...attachment, ...(currentPath ? { path: currentPath } : {}), field };
     });
+    const attachmentsByPath = new Map<string, unknown>();
+    const attachmentsWithoutPath: unknown[] = [];
+    for (const attachment of repairedAttachments) {
+      const path = attachment && typeof attachment === 'object' && !Array.isArray(attachment) && typeof (attachment as Record<string, unknown>).path === 'string' ? String((attachment as Record<string, unknown>).path).trim() : '';
+      if (path) attachmentsByPath.set(path, attachment);
+      else attachmentsWithoutPath.push(attachment);
+    }
+    const attachments = [...attachmentsByPath.values(), ...attachmentsWithoutPath];
+    if (attachments.length !== repairedAttachments.length) {
+      taskChanged = true;
+      repairedAttachmentCount += repairedAttachments.length - attachments.length;
+    }
     if (!taskChanged) continue;
     db.execute(
       `UPDATE tasks
@@ -1824,7 +1866,7 @@ function repairMovedTaskAttachmentReferences(db: ZeusDatabase, taskAttachmentRoo
     );
     repairedTaskCount += 1;
   }
-  return { repairedAttachmentCount, repairedTaskCount };
+  return { repairedAttachmentCount, repairedTaskCount, repairedPathCount, repairedFieldCount };
 }
 
 function hasTaskImageSignature(mime: string, bytes: Buffer): boolean {
@@ -1903,10 +1945,12 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   const dataLayout = options.dataLayout ?? createZeusDataLayoutForDatabase(options.dbPath);
   if (resolve(dataLayout.database) !== resolve(options.dbPath)) throw new Error('Zeus 数据路径登记表与数据库路径不一致。');
   const taskAttachmentRoot = prepareTaskAttachmentRoot(options.taskAttachmentRoot ?? dataLayout.taskAttachments);
-  const attachmentRepair = repairMovedTaskAttachmentReferences(db, taskAttachmentRoot);
+  const attachmentRepair = repairTaskAttachmentReferences(db, taskAttachmentRoot);
   if (attachmentRepair.repairedAttachmentCount > 0) {
     await db.save();
-    console.info(`Zeus 已恢复 ${attachmentRepair.repairedTaskCount} 个历史任务中的 ${attachmentRepair.repairedAttachmentCount} 个托管附件引用。`);
+    console.info(
+      `Zeus 已修复 ${attachmentRepair.repairedTaskCount} 个历史任务中的 ${attachmentRepair.repairedAttachmentCount} 个附件引用（路径 ${attachmentRepair.repairedPathCount} 个，字段归属 ${attachmentRepair.repairedFieldCount} 个）。`,
+    );
   }
   const projects = new ProjectRepository(db);
   const projectRepositories = new ProjectRepositoryRegistrationRepository(db);
@@ -5901,6 +5945,17 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         message: 'priority must be one of p0, p1, p2, p3 or p4',
       });
     }
+    if (body.sourceContext !== undefined && (!body.sourceContext || typeof body.sourceContext !== 'object' || Array.isArray(body.sourceContext))) {
+      return reply.code(400).send({ error: 'ZEUS_INVALID_TASK_SOURCE_CONTEXT', message: 'Task source context must be an object.' });
+    }
+    const sourceContext = { ...(body.sourceContext ?? {}) };
+    if (Object.prototype.hasOwnProperty.call(sourceContext, 'attachments')) {
+      const attachments = normalizeTaskAttachmentReferences(sourceContext.attachments);
+      if (attachments === null) {
+        return reply.code(400).send({ error: 'ZEUS_INVALID_TASK_ATTACHMENTS', message: 'Task attachments must contain at most 24 valid field-owned attachment references.' });
+      }
+      sourceContext.attachments = attachments;
+    }
     let task: ZeusTaskRecord;
     try {
       task = tasks.create({
@@ -5916,7 +5971,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         optimizationCurrentState: body.optimizationCurrentState,
         optimizationExpectedOutcome: body.optimizationExpectedOutcome,
         createdFrom: 'user',
-        sourceContext: body.sourceContext ?? {},
+        sourceContext,
         tags: body.tags,
         priority: body.priority,
         allowCodeChanges: body.allowCodeChanges,
@@ -6657,13 +6712,21 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       }
       const attachments = body.attachments === undefined ? undefined : normalizeTaskAttachmentReferences(body.attachments);
       if (attachments === null) {
-        return reply.code(400).send({ error: 'ZEUS_INVALID_TASK_ATTACHMENTS', message: 'Task attachments must contain at most 24 valid attachment references.' });
+        return reply.code(400).send({ error: 'ZEUS_INVALID_TASK_ATTACHMENTS', message: 'Task attachments must contain at most 24 valid field-owned attachment references.' });
       }
       if (body.sourceContext !== undefined && (!body.sourceContext || typeof body.sourceContext !== 'object' || Array.isArray(body.sourceContext))) {
         return reply.code(400).send({ error: 'ZEUS_INVALID_TASK_SOURCE_CONTEXT', message: 'Task source context must be an object.' });
       }
       if (body.sourceContext !== undefined && attachments !== undefined) {
         return reply.code(400).send({ error: 'ZEUS_AMBIGUOUS_TASK_CONTEXT_UPDATE', message: 'sourceContext and attachments cannot be updated in the same request.' });
+      }
+      let sourceContext = body.sourceContext;
+      if (sourceContext && Object.prototype.hasOwnProperty.call(sourceContext, 'attachments')) {
+        const normalizedAttachments = normalizeTaskAttachmentReferences(sourceContext.attachments);
+        if (normalizedAttachments === null) {
+          return reply.code(400).send({ error: 'ZEUS_INVALID_TASK_ATTACHMENTS', message: 'Task source context contains invalid field-owned attachment references.' });
+        }
+        sourceContext = { ...sourceContext, attachments: normalizedAttachments };
       }
       if ([body.allowCodeChanges, body.allowTests, body.allowGitCommit].some((value) => value !== undefined && typeof value !== 'boolean')) {
         return reply.code(400).send({
@@ -6686,7 +6749,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           priority: body.priority,
           tags: body.tags,
           attachments,
-          sourceContext: body.sourceContext,
+          sourceContext,
           allowCodeChanges: body.allowCodeChanges,
           allowTests: body.allowTests,
           allowGitCommit: body.allowGitCommit,
@@ -14164,8 +14227,20 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         if (activeDirectWrites > 0 && body.workspace.confirmConcurrentWrites !== true) {
           throw nativeApiError('ZEUS_DIRECT_WORKSPACE_CONCURRENCY_CONFIRMATION_REQUIRED', `${activeDirectWrites} writable conversation(s) already use this project directory. Confirm concurrent writes before continuing.`);
         }
-        const parentContextInput = resolveSelectedTaskPushParentContext(project, task, (body as Record<string, unknown>).parentContext);
-        const attachmentInput = mergeTaskPushAttachmentInputs(normalizeTaskPushAttachments(task, project.localPath), parentContextInput.attachmentInput);
+        const taskContextInput = resolveSelectedTaskPushContext(project, task, (body as Record<string, unknown>).taskContext);
+        const currentAttachmentInput = normalizeTaskPushAttachments(task, project.localPath);
+        const attachmentInput = mergeTaskPushAttachmentInputs(currentAttachmentInput, taskContextInput.attachmentInput);
+        const includedAttachmentKeys = new Set(attachmentInput.attachments.flatMap((attachment) => (attachment.taskPushAttachmentKey ? [attachment.taskPushAttachmentKey] : [])));
+        const filterContextAttachments = <T extends TaskPushPromptParentContext | TaskPushPromptRelatedContext>(contexts: T[]): T[] =>
+          contexts.map((context) => ({ ...context, attachments: context.attachments?.filter((attachment) => includedAttachmentKeys.has(attachment.key)) ?? [] }));
+        const taskPushLayout = buildTaskPushLayoutForTask(
+          task,
+          supplementalInfo,
+          currentAttachmentInput.promptAttachments.filter((attachment) => includedAttachmentKeys.has(attachment.key)),
+          filterContextAttachments(taskContextInput.parentContexts),
+          filterContextAttachments(taskContextInput.relatedContexts),
+        );
+        const taskPushPrompt = renderTaskPushLayoutText(taskPushLayout);
         if (selectedModel.agentKind !== 'pi') await assertCodexAccountReady();
         const taskEnvironment = directWorkspace ? null : await resolveTaskPushEnvironment(project, task, body.workspace, stableOperationId);
         nativeOperation =
@@ -14177,7 +14252,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
                 taskId: task.id,
                 taskTitle: task.title,
                 cwd: taskEnvironment?.cwd ?? project.localPath,
-                prompt: buildTaskPushPrompt(task, supplementalInfo, parentContextInput.parentContexts),
+                prompt: taskPushPrompt,
+                taskPushLayout,
                 model: { sourceId: selectedModel.sourceId ?? null, modelId: selectedModel.model, displayName: selectedModel.displayName ?? null },
                 ...(selectedEffort ? { thinkingLevel: selectedEffort } : {}),
                 attachments: attachmentInput.attachments,
@@ -14206,7 +14282,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
                     }
                   : { writableRoots: [project.localPath] }),
                 taskTitle: task.title,
-                prompt: buildTaskPushPrompt(task, supplementalInfo, parentContextInput.parentContexts),
+                prompt: taskPushPrompt,
+                taskPushLayout,
                 attachments: attachmentInput.attachments,
                 allowedAttachmentRoots: attachmentInput.allowedRoots,
                 model: selectedModel.model,
@@ -14858,7 +14935,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   }
 
   async function resolveTaskPushCapabilities(project: ZeusProjectRecord, task: ZeusTaskRecord) {
-    const parentContext = resolveTaskPushParentContextState(project, task);
+    const taskContext = resolveTaskPushContextState(project, task);
+    const currentAttachments = inspectTaskPushAttachments(task, project.localPath).inspected;
     const [capabilities, synchronizedRepositories] = await Promise.all([resolveConversationCapabilities(project), synchronizeDiscoveredProjectRepositories(project)]);
     const repositoryCapabilities = await mapTaskRepositoriesWithConcurrency(synchronizedRepositories, ({ record, discovered }) => resolveTaskPushRepositoryCapability(project, task, record, false, discovered));
     const registeredRepositories = synchronizedRepositories.map(({ record }) => record);
@@ -14867,8 +14945,11 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       ...capabilities,
       taskId: task.id,
       canonicalPrompt: createTaskRuntimePrompt(task),
-      parentContextRevision: parentContext.revision,
-      parentContextOptions: parentContext.options,
+      taskContextRevision: taskContext.revision,
+      parentContextRevision: taskContext.revision,
+      parentContextOptions: taskContext.parent.options,
+      relatedContextOptions: taskContext.related.options,
+      currentAttachmentOptions: currentAttachments.map((attachment) => attachment.option),
       repositoryRevision: taskPushRepositoryRevision(registeredRepositories),
       repositories: repositoryCapabilities,
       directWorkspace: {
@@ -15775,11 +15856,18 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       defectReproductionSteps: task.defectReproductionSteps,
       optimizationCurrentState: task.optimizationCurrentState,
       optimizationExpectedOutcome: task.optimizationExpectedOutcome,
+      tags: task.tags,
     };
   }
 
-  function buildTaskPushPrompt(task: ZeusTaskRecord, supplementalInfo: string, parentContexts: TaskPushPromptParentContext[] = []): string {
-    return buildAiRuntimePrompt({ ...taskPushPromptContent(task), supplementalInfo, parentContexts });
+  function buildTaskPushLayoutForTask(
+    task: ZeusTaskRecord,
+    supplementalInfo: string,
+    attachments: TaskPushPromptAttachment[],
+    parentContexts: TaskPushPromptParentContext[] = [],
+    relatedContexts: TaskPushPromptRelatedContext[] = [],
+  ): TaskPushMessageLayout {
+    return buildTaskPushLayout({ taskId: task.id, taskCode: task.taskCode, ...taskPushPromptContent(task), attachments, supplementalInfo, parentContexts, relatedContexts });
   }
 
   interface InspectedTaskPushAttachment {
@@ -15797,9 +15885,10 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     const path = resolveCurrentManagedTaskAttachmentPath(candidate, taskAttachmentRoot) ?? storedPath;
     const name = typeof candidate.name === 'string' && candidate.name.trim() ? candidate.name.trim() : path ? parse(path).base : `附件 ${index + 1}`;
     const kind = candidate.kind === 'image' || candidate.kind === 'directory' || candidate.kind === 'pasted_text' ? candidate.kind : 'file';
-    const key = `parent-attachment-${createHash('sha256').update(`${task.id}\0${index}\0${name}`).digest('hex').slice(0, 24)}`;
+    const field = isTaskAttachmentField(candidate.field) ? candidate.field : historicalTaskAttachmentField(task.taskType);
+    const key = `task-attachment-${createHash('sha256').update(`${task.id}\0${index}\0${name}`).digest('hex').slice(0, 24)}`;
     const unavailable = (reason: string): InspectedTaskPushAttachment => ({
-      option: { key, name, kind, available: false, unavailableReason: reason },
+      option: { key, field, name, kind, available: false, unavailableReason: reason },
     });
     if (!path || !isAbsolute(path)) return unavailable('附件没有可验证的本机绝对路径。');
     try {
@@ -15823,6 +15912,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       return {
         option: {
           key,
+          field,
           name,
           kind: normalizedKind,
           ...(storedMime ? { mimeType: storedMime } : {}),
@@ -15830,7 +15920,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           available: true,
           unavailableReason: null,
         },
-        attachment: { name, mime, size: resource.isDirectory() ? 0 : resource.size, localPath: canonicalPath },
+        attachment: { name, mime, size: resource.isDirectory() ? 0 : resource.size, localPath: canonicalPath, taskPushAttachmentKey: key },
       };
     } catch {
       return unavailable('附件已缺失或当前不可读取。');
@@ -15841,23 +15931,45 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     const sourceContext = parseTaskSourceContext(task);
     const rawAttachments = Array.isArray(sourceContext.attachments) ? sourceContext.attachments : [];
     const allowedRoots = taskPushTrustedAttachmentRoots(projectLocalPath);
-    return { inspected: rawAttachments.map((attachment, index) => inspectTaskPushAttachment(task, attachment, index, allowedRoots)), allowedRoots };
+    const activeFields = new Set<TaskAttachmentField>([
+      'tags',
+      ...(task.taskType === 'defect'
+        ? (['defectCurrentState', 'defectExpectedOutcome', 'defectReproductionSteps'] as const)
+        : task.taskType === 'optimization'
+          ? (['optimizationCurrentState', 'optimizationExpectedOutcome'] as const)
+          : (['description'] as const)),
+    ]);
+    return {
+      inspected: rawAttachments.map((attachment, index) => inspectTaskPushAttachment(task, attachment, index, allowedRoots)).filter((attachment) => activeFields.has(attachment.option.field)),
+      allowedRoots,
+    };
   }
 
-  function normalizeTaskPushAttachments(task: ZeusTaskRecord, projectLocalPath: string): { attachments: NativeConversationAttachment[]; allowedRoots: string[] } {
+  function normalizeTaskPushAttachments(task: ZeusTaskRecord, projectLocalPath: string): { attachments: NativeConversationAttachment[]; allowedRoots: string[]; promptAttachments: TaskPushPromptAttachment[] } {
     const { inspected, allowedRoots } = inspectTaskPushAttachments(task, projectLocalPath);
     const unavailable = inspected.filter((entry) => !entry.attachment).map((entry) => entry.option.name);
     if (unavailable.length > 0) {
       throw nativeApiError('ZEUS_TASK_PUSH_ATTACHMENT_UNAVAILABLE', `以下附件不可用，未创建会话：${unavailable.join('、')}`);
     }
-    return { attachments: inspected.flatMap((entry) => (entry.attachment ? [entry.attachment] : [])), allowedRoots };
+    return {
+      attachments: inspected.flatMap((entry) => (entry.attachment ? [entry.attachment] : [])),
+      allowedRoots,
+      promptAttachments: inspected.map((entry) => ({
+        key: entry.option.key,
+        field: entry.option.field,
+        name: entry.option.name,
+        kind: entry.option.kind,
+        ...(entry.option.mimeType ? { mimeType: entry.option.mimeType } : {}),
+        ...(entry.option.size !== undefined ? { size: entry.option.size } : {}),
+      })),
+    };
   }
 
   function listTaskPushAncestors(task: ZeusTaskRecord, projectId: string): ZeusTaskRecord[] {
     const ancestors: ZeusTaskRecord[] = [];
     const seen = new Set([task.id]);
     let parentTaskId = task.parentTaskId;
-    while (parentTaskId && ancestors.length < 2) {
+    while (parentTaskId) {
       if (seen.has(parentTaskId)) break;
       seen.add(parentTaskId);
       const parent = tasks.getById(parentTaskId);
@@ -15927,6 +16039,63 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     return { options, revision, tasksById, attachmentsByTaskId };
   }
 
+  interface TaskPushRelatedContextState {
+    options: TaskPushRelatedContextOption[];
+    revision: string;
+    tasksById: Map<string, ZeusTaskRecord>;
+    attachmentsByTaskId: Map<string, InspectedTaskPushAttachment[]>;
+  }
+
+  function resolveTaskPushRelatedContextState(project: ZeusProjectRecord, task: ZeusTaskRecord, ancestorTaskIds: ReadonlySet<string>): TaskPushRelatedContextState {
+    const relatedTasks = (task.relatedTaskIds ?? [])
+      .map((taskId) => tasks.getById(taskId))
+      .filter((relatedTask): relatedTask is ZeusTaskRecord => relatedTask !== undefined)
+      .filter((relatedTask) => relatedTask.projectId === project.id && !ancestorTaskIds.has(relatedTask.id))
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+    const tasksById = new Map<string, ZeusTaskRecord>();
+    const attachmentsByTaskId = new Map<string, InspectedTaskPushAttachment[]>();
+    const revisionResources: unknown[] = [];
+    const options = relatedTasks.map((relatedTask): TaskPushRelatedContextOption => {
+      tasksById.set(relatedTask.id, relatedTask);
+      const inspectedAttachments = inspectTaskPushAttachments(relatedTask, project.localPath).inspected;
+      attachmentsByTaskId.set(relatedTask.id, inspectedAttachments);
+      const conversationOptions = conversations.listAllByTask(relatedTask.id).map((conversation) => {
+        const availability = inspectTaskPushConversationPath(conversation);
+        revisionResources.push({ type: 'conversation', taskId: relatedTask.id, id: conversation.id, path: availability.path, available: availability.available, archived: conversation.archived });
+        return { id: conversation.id, title: conversation.title, createdAt: conversation.createdAt, archived: conversation.archived, ...availability };
+      });
+      for (const attachment of inspectedAttachments) {
+        revisionResources.push({ type: 'attachment', taskId: relatedTask.id, option: attachment.option, localPath: attachment.attachment?.localPath ?? null });
+      }
+      return {
+        taskId: relatedTask.id,
+        taskCode: relatedTask.taskCode,
+        updatedAt: relatedTask.updatedAt,
+        ...taskPushPromptContent(relatedTask),
+        conversations: conversationOptions,
+        attachments: inspectedAttachments.map((entry) => entry.option),
+      };
+    });
+    const revision = createHash('sha256').update(JSON.stringify({ options, revisionResources })).digest('hex');
+    return { options, revision, tasksById, attachmentsByTaskId };
+  }
+
+  interface TaskPushContextState {
+    revision: string;
+    parent: TaskPushParentContextState;
+    related: TaskPushRelatedContextState;
+  }
+
+  function resolveTaskPushContextState(project: ZeusProjectRecord, task: ZeusTaskRecord): TaskPushContextState {
+    const parent = resolveTaskPushParentContextState(project, task);
+    const related = resolveTaskPushRelatedContextState(project, task, new Set(parent.options.map((option) => option.taskId)));
+    const currentAttachments = inspectTaskPushAttachments(task, project.localPath).inspected.map((attachment) => ({ option: attachment.option, localPath: attachment.attachment?.localPath ?? null }));
+    const revision = createHash('sha256')
+      .update(JSON.stringify({ current: { updatedAt: task.updatedAt, content: taskPushPromptContent(task), attachments: currentAttachments }, parent: parent.revision, related: related.revision }))
+      .digest('hex');
+    return { revision, parent, related };
+  }
+
   function parseTaskPushSelectionStringArray(value: unknown, field: string): string[] {
     if (!Array.isArray(value) || !value.every((entry) => typeof entry === 'string' && entry.trim())) {
       throw nativeApiError('ZEUS_INVALID_TASK_PUSH_PARENT_CONTEXT', `${field} must be an array of non-empty strings.`);
@@ -15936,18 +16105,11 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     return normalized;
   }
 
-  function resolveSelectedTaskPushParentContext(
-    project: ZeusProjectRecord,
-    task: ZeusTaskRecord,
-    value: unknown,
-  ): { parentContexts: TaskPushPromptParentContext[]; attachmentInput: { attachments: NativeConversationAttachment[]; allowedRoots: string[] } } {
-    if (value === undefined) return { parentContexts: [], attachmentInput: { attachments: [], allowedRoots: [] } };
-    if (!isNativeApiRecord(value) || typeof value.revision !== 'string' || !Array.isArray(value.selections)) {
-      throw nativeApiError('ZEUS_INVALID_TASK_PUSH_PARENT_CONTEXT', 'parentContext must contain a revision and selections array.');
-    }
-    const selections = value.selections.map((rawSelection): TaskPushParentContextSelection => {
+  function parseTaskPushContextSelections(value: unknown, field: string): TaskPushParentContextSelection[] {
+    if (!Array.isArray(value)) throw nativeApiError('ZEUS_INVALID_TASK_PUSH_CONTEXT', `${field} must be an array.`);
+    const selections = value.map((rawSelection): TaskPushParentContextSelection => {
       if (!isNativeApiRecord(rawSelection) || typeof rawSelection.taskId !== 'string' || !rawSelection.taskId.trim()) {
-        throw nativeApiError('ZEUS_INVALID_TASK_PUSH_PARENT_CONTEXT', 'Each parent context selection requires taskId.');
+        throw nativeApiError('ZEUS_INVALID_TASK_PUSH_CONTEXT', `Each ${field} selection requires taskId.`);
       }
       return {
         taskId: rawSelection.taskId.trim(),
@@ -15956,59 +16118,97 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       };
     });
     if (new Set(selections.map((selection) => selection.taskId)).size !== selections.length) {
-      throw nativeApiError('ZEUS_INVALID_TASK_PUSH_PARENT_CONTEXT', 'parentContext contains duplicate task selections.');
+      throw nativeApiError('ZEUS_INVALID_TASK_PUSH_CONTEXT', `${field} contains duplicate task selections.`);
     }
-    const state = resolveTaskPushParentContextState(project, task);
+    return selections;
+  }
+
+  function resolveSelectedTaskPushContext(
+    project: ZeusProjectRecord,
+    task: ZeusTaskRecord,
+    value: unknown,
+  ): {
+    parentContexts: TaskPushPromptParentContext[];
+    relatedContexts: TaskPushPromptRelatedContext[];
+    attachmentInput: { attachments: NativeConversationAttachment[]; allowedRoots: string[] };
+  } {
+    if (value === undefined) return { parentContexts: [], relatedContexts: [], attachmentInput: { attachments: [], allowedRoots: [] } };
+    if (!isNativeApiRecord(value) || typeof value.revision !== 'string') {
+      throw nativeApiError('ZEUS_INVALID_TASK_PUSH_CONTEXT', 'taskContext must contain a revision.');
+    }
+    const parentSelections = parseTaskPushContextSelections(value.parentSelections, 'parentSelections');
+    const relatedSelections = parseTaskPushContextSelections(value.relatedSelections, 'relatedSelections');
+    const state = resolveTaskPushContextState(project, task);
     if (value.revision !== state.revision) {
-      for (const selection of selections) {
-        const option = state.options.find((candidate) => candidate.taskId === selection.taskId);
-        if (!option) continue;
-        const attachmentByKey = new Map((state.attachmentsByTaskId.get(option.taskId) ?? []).map((attachment) => [attachment.option.key, attachment]));
-        for (const attachmentKey of selection.attachmentKeys) {
-          const attachment = attachmentByKey.get(attachmentKey);
-          if (!attachment?.attachment) {
-            const name = attachment?.option.name ?? `选择标识 ${attachmentKey}`;
-            throw nativeApiError('ZEUS_TASK_PUSH_ATTACHMENT_UNAVAILABLE', `父任务 ${option.taskCode} 的附件“${name}”已失效，未创建会话。`);
-          }
-        }
-      }
-      throw nativeApiError('ZEUS_TASK_PUSH_PARENT_CONTEXT_CHANGED', '父任务上下文已变化，请刷新弹窗后重新确认。');
+      throw nativeApiError('ZEUS_TASK_PUSH_CONTEXT_CHANGED', '任务上下文已变化，请刷新弹窗后重新确认。');
     }
-    const selectionByTaskId = new Map(selections.map((selection) => [selection.taskId, selection]));
-    for (const selection of selections) {
-      if (!state.tasksById.has(selection.taskId)) {
-        throw nativeApiError('ZEUS_TASK_PUSH_PARENT_CONTEXT_CHANGED', '父任务上下文已变化，请刷新弹窗后重新确认。');
-      }
-    }
+
     const selectedAttachments: NativeConversationAttachment[] = [];
-    const parentContexts: TaskPushPromptParentContext[] = [];
-    for (const option of state.options) {
-      const selection = selectionByTaskId.get(option.taskId);
-      if (!selection) continue;
-      const conversationById = new Map(option.conversations.map((conversation) => [conversation.id, conversation]));
-      const conversationPaths = selection.conversationIds.map((conversationId) => {
-        const conversation = conversationById.get(conversationId);
-        if (!conversation?.available || !conversation.path) {
-          throw nativeApiError('ZEUS_TASK_PUSH_PARENT_CONTEXT_CHANGED', `父任务 ${option.taskCode} 的会话文件已变化，请刷新后重试。`);
-        }
-        return conversation.path;
-      });
-      const attachmentByKey = new Map((state.attachmentsByTaskId.get(option.taskId) ?? []).map((attachment) => [attachment.option.key, attachment]));
-      for (const attachmentKey of selection.attachmentKeys) {
-        const attachment = attachmentByKey.get(attachmentKey);
-        if (!attachment?.attachment) {
-          const name = attachment?.option.name ?? attachmentKey;
-          throw nativeApiError('ZEUS_TASK_PUSH_ATTACHMENT_UNAVAILABLE', `父任务 ${option.taskCode} 的附件“${name}”已失效，未创建会话。`);
-        }
-        selectedAttachments.push(attachment.attachment);
+    const allowedRoots = new Set<string>();
+    const resolveSelections = <T extends TaskPushPromptParentContext | TaskPushPromptRelatedContext>(input: {
+      kindLabel: string;
+      options: Array<TaskPushParentContextOption | TaskPushRelatedContextOption>;
+      tasksById: Map<string, ZeusTaskRecord>;
+      attachmentsByTaskId: Map<string, InspectedTaskPushAttachment[]>;
+      selections: Array<TaskPushParentContextSelection | TaskPushRelatedContextSelection>;
+    }): T[] => {
+      const selectionByTaskId = new Map(input.selections.map((selection) => [selection.taskId, selection]));
+      for (const selection of input.selections) {
+        if (!input.tasksById.has(selection.taskId)) throw nativeApiError('ZEUS_TASK_PUSH_CONTEXT_CHANGED', `${input.kindLabel}选项已变化，请刷新后重试。`);
       }
-      const parentTask = state.tasksById.get(option.taskId)!;
-      parentContexts.push({ taskId: option.taskId, taskCode: option.taskCode, ...taskPushPromptContent(parentTask), conversationPaths });
-    }
-    return {
-      parentContexts,
-      attachmentInput: { attachments: selectedAttachments, allowedRoots: selectedAttachments.length > 0 ? taskPushTrustedAttachmentRoots(project.localPath) : [] },
+      const contexts: Array<TaskPushPromptParentContext | TaskPushPromptRelatedContext> = [];
+      for (const option of input.options) {
+        const selection = selectionByTaskId.get(option.taskId);
+        if (!selection) continue;
+        const conversationById = new Map(option.conversations.map((conversation) => [conversation.id, conversation]));
+        const conversationPaths = selection.conversationIds.map((conversationId) => {
+          const conversation = conversationById.get(conversationId);
+          if (!conversation?.available || !conversation.path) {
+            throw nativeApiError('ZEUS_TASK_PUSH_CONTEXT_CHANGED', `${input.kindLabel} ${option.taskCode} 的会话文件已变化，请刷新后重试。`);
+          }
+          allowedRoots.add(dirname(conversation.path));
+          return conversation.path;
+        });
+        const attachmentByKey = new Map((input.attachmentsByTaskId.get(option.taskId) ?? []).map((attachment) => [attachment.option.key, attachment]));
+        const promptAttachments: TaskPushPromptAttachment[] = [];
+        for (const attachmentKey of selection.attachmentKeys) {
+          const inspected = attachmentByKey.get(attachmentKey);
+          if (!inspected?.attachment) {
+            const name = inspected?.option.name ?? attachmentKey;
+            throw nativeApiError('ZEUS_TASK_PUSH_ATTACHMENT_UNAVAILABLE', `${input.kindLabel} ${option.taskCode} 的附件“${name}”已失效，未创建会话。`);
+          }
+          selectedAttachments.push(inspected.attachment);
+          promptAttachments.push({
+            key: inspected.option.key,
+            field: inspected.option.field,
+            name: inspected.option.name,
+            kind: inspected.option.kind,
+            ...(inspected.option.mimeType ? { mimeType: inspected.option.mimeType } : {}),
+            ...(inspected.option.size !== undefined ? { size: inspected.option.size } : {}),
+          });
+        }
+        const contextTask = input.tasksById.get(option.taskId)!;
+        contexts.push({ taskId: option.taskId, taskCode: option.taskCode, ...taskPushPromptContent(contextTask), attachments: promptAttachments, conversationPaths });
+      }
+      return contexts as T[];
     };
+
+    const parentContexts = resolveSelections<TaskPushPromptParentContext>({
+      kindLabel: '父任务',
+      options: state.parent.options,
+      tasksById: state.parent.tasksById,
+      attachmentsByTaskId: state.parent.attachmentsByTaskId,
+      selections: parentSelections,
+    });
+    const relatedContexts = resolveSelections<TaskPushPromptRelatedContext>({
+      kindLabel: '关联任务',
+      options: state.related.options,
+      tasksById: state.related.tasksById,
+      attachmentsByTaskId: state.related.attachmentsByTaskId,
+      selections: relatedSelections,
+    });
+    for (const root of selectedAttachments.length > 0 ? taskPushTrustedAttachmentRoots(project.localPath) : []) allowedRoots.add(root);
+    return { parentContexts, relatedContexts, attachmentInput: { attachments: selectedAttachments, allowedRoots: [...allowedRoots] } };
   }
 
   function mergeTaskPushAttachmentInputs(...inputs: Array<{ attachments: NativeConversationAttachment[]; allowedRoots: string[] }>) {
@@ -16017,7 +16217,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     for (const input of inputs) {
       for (const attachment of input.attachments) {
         if (!attachment.localPath) throw nativeApiError('ZEUS_TASK_PUSH_ATTACHMENT_UNAVAILABLE', `附件“${attachment.name}”缺少服务端确认的真实路径，未创建会话。`);
-        attachments.set(attachment.localPath, attachment);
+        if (!attachments.has(attachment.localPath)) attachments.set(attachment.localPath, attachment);
       }
       for (const root of input.allowedRoots) allowedRoots.add(root);
     }
@@ -18274,6 +18474,7 @@ function importLocalBusinessData(db: ZeusDatabase, snapshot: LocalDataExportSnap
     );
   }
   for (const task of tasks) {
+    const taskType = isTaskType(task.taskType) ? task.taskType : 'requirement';
     db.execute(
       `INSERT OR REPLACE INTO tasks (id, project_id, title, task_type, description, defect_current_state, defect_expected_outcome, defect_reproduction_steps,
         optimization_current_state, optimization_expected_outcome, management_status, status, tags_json, template_id, task_code, task_sequence, priority, created_from, source_context_json, archived, created_at, updated_at, deleted_at)
@@ -18282,7 +18483,7 @@ function importLocalBusinessData(db: ZeusDatabase, snapshot: LocalDataExportSnap
         task.id,
         task.projectId,
         task.title,
-        isTaskType(task.taskType) ? task.taskType : 'requirement',
+        taskType,
         task.description,
         task.defectCurrentState ?? '',
         task.defectExpectedOutcome ?? '',
@@ -18297,7 +18498,7 @@ function importLocalBusinessData(db: ZeusDatabase, snapshot: LocalDataExportSnap
         task.taskSequence ?? null,
         task.priority ?? 'normal',
         task.createdFrom,
-        task.sourceContextJson,
+        normalizeImportedTaskSourceContextJson(task.sourceContextJson, taskType),
         task.createdAt,
         task.updatedAt,
       ],
@@ -18345,6 +18546,23 @@ function importLocalBusinessData(db: ZeusDatabase, snapshot: LocalDataExportSnap
     taskTemplates: taskTemplates.length,
     commandDefinitions: importedCommandDefinitions,
   };
+}
+
+/** 旧备份可能没有字段归属；导入时立即按任务类型固定归类，不等待下次启动。 */
+function normalizeImportedTaskSourceContextJson(sourceContextJson: string, taskType: unknown): string {
+  try {
+    const parsed = JSON.parse(sourceContextJson) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return '{}';
+    const sourceContext = parsed as Record<string, unknown>;
+    if (!Array.isArray(sourceContext.attachments)) return JSON.stringify(sourceContext);
+    const field = historicalTaskAttachmentField(taskType);
+    const attachments = sourceContext.attachments.map((attachment) =>
+      attachment && typeof attachment === 'object' && !Array.isArray(attachment) && !isTaskAttachmentField((attachment as Record<string, unknown>).field) ? { ...(attachment as Record<string, unknown>), field } : attachment,
+    );
+    return JSON.stringify({ ...sourceContext, attachments });
+  } catch {
+    return '{}';
+  }
 }
 
 function isPortableCommandDefinition(value: unknown): value is CommandDefinition {

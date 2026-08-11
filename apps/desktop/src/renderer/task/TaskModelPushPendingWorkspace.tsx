@@ -1,4 +1,5 @@
 import type { TaskRecord } from '../apiClient.js';
+import type { TaskPushContextAttachmentOption, TaskPushMessageLayout } from '@zeus/shared';
 import { createInitialSessionState, sessionReducer } from '../session/sessionReducer.js';
 import type { NativeConversationAttachment, NativeConversationChoice, NativeSessionState, StartTaskModelPushRequest } from '../session/sessionTypes.js';
 import type { TaskModelPushForm } from './TaskModelPushModal.js';
@@ -12,6 +13,7 @@ export interface TaskModelPushPendingState {
   request: StartTaskModelPushRequest;
   form: TaskModelPushForm;
   prompt: string;
+  layout: TaskPushMessageLayout;
   attachments: NativeConversationAttachment[];
   choice: NativeConversationChoice | null;
   session: NativeSessionState | null;
@@ -19,13 +21,36 @@ export interface TaskModelPushPendingState {
   error: string | null;
 }
 
-export function createTaskModelPushPendingState(input: { task: TaskRecord; projectName: string; request: StartTaskModelPushRequest; form: TaskModelPushForm; prompt: string }): TaskModelPushPendingState {
-  const attachments = parseTaskAttachments(input.task.sourceContextJson).map<NativeConversationAttachment>((attachment) => ({
-    name: attachment.name,
-    mime: attachment.mimeType ?? (attachment.kind === 'image' ? 'image/*' : 'application/octet-stream'),
-    size: 0,
-    localPath: attachment.path,
-  }));
+export function createTaskModelPushPendingState(input: {
+  task: TaskRecord;
+  projectName: string;
+  request: StartTaskModelPushRequest;
+  form: TaskModelPushForm;
+  prompt: string;
+  layout: TaskPushMessageLayout;
+  currentAttachmentOptions: TaskPushContextAttachmentOption[];
+}): TaskModelPushPendingState {
+  const currentOptions = new Map<string, TaskPushContextAttachmentOption[]>();
+  for (const attachment of input.currentAttachmentOptions) {
+    const identity = `${attachment.field}\0${attachment.name}`;
+    const options = currentOptions.get(identity) ?? [];
+    options.push(attachment);
+    currentOptions.set(identity, options);
+  }
+  const attachments = parseTaskAttachments(input.task.sourceContextJson).flatMap<NativeConversationAttachment>((attachment) => {
+    const option = currentOptions.get(`${attachment.field}\0${attachment.name}`)?.shift();
+    if (!option?.available) return [];
+    return [
+      {
+        name: attachment.name,
+        mime: attachment.mimeType ?? (attachment.kind === 'image' ? 'image/*' : 'application/octet-stream'),
+        size: option.size ?? 0,
+        kind: attachment.kind,
+        localPath: attachment.path,
+        taskPushAttachmentKey: option.key,
+      },
+    ];
+  });
   return {
     ...input,
     attachments,
@@ -69,13 +94,14 @@ export function acceptTaskModelPushPendingState(pending: TaskModelPushPendingSta
       pending.request,
       pending.prompt,
       pending.attachments,
+      pending.layout,
     ),
     status: 'accepted',
     error: null,
   };
 }
 
-function buildOptimisticTaskPushSession(choice: NativeConversationChoice, request: StartTaskModelPushRequest, prompt: string, attachments: NativeConversationAttachment[]): NativeSessionState {
+function buildOptimisticTaskPushSession(choice: NativeConversationChoice, request: StartTaskModelPushRequest, prompt: string, attachments: NativeConversationAttachment[], layout: TaskPushMessageLayout): NativeSessionState {
   const base: NativeSessionState = {
     ...createInitialSessionState(),
     transportState: 'ready',
@@ -97,5 +123,6 @@ function buildOptimisticTaskPushSession(choice: NativeConversationChoice, reques
     browserComments: [],
     delivery: 'queue',
     previousConversationState: 'native_idle',
+    taskPushLayout: layout,
   });
 }

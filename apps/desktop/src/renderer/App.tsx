@@ -1,7 +1,6 @@
 import {
   type ClipboardEvent as ReactClipboardEvent,
   type CSSProperties,
-  type DragEvent as ReactDragEvent,
   type FormEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
@@ -87,9 +86,11 @@ import { TaskGitReviewModal } from './task/TaskGitReviewModal.js';
 import { TaskGitMergeModal } from './task/TaskGitMergeModal.js';
 import {
   buildTaskModelPushMessage,
+  buildTaskModelPushLayout,
   readTaskModelPushPreferences,
   resolveTaskModelPushInitialForm,
   selectedTaskPushParentContexts,
+  selectedTaskPushRelatedContexts,
   type TaskModelPushForm,
   TaskModelPushModal,
   type TaskModelPushModalStatus,
@@ -105,7 +106,15 @@ import { ModelConnectionsSettingsPane } from './settings/ModelConnectionsSetting
 import { ProjectModelsSettings } from './settings/ProjectModelsSettings.js';
 import { TaskManagementStatusEditor } from './settings/TaskManagementStatusEditor.js';
 import { CodexUsageSettingsPane, ZeusUsageTitlebar } from './settings/CodexUsageSettingsPane.js';
-import { type TaskAttachmentRestoreTarget, type TaskAttachmentView, type TaskResourceAuthorizationResult, type TaskResourcePayload, toPersistedTaskAttachment } from './task/taskAttachments.js';
+import {
+  type TaskAttachmentCandidate,
+  type TaskAttachmentRestoreTarget,
+  type TaskAttachmentView,
+  type TaskResourceAuthorizationResult,
+  type TaskResourcePayload,
+  taskAttachmentsForField,
+  toPersistedTaskAttachment,
+} from './task/taskAttachments.js';
 import {
   defaultTaskTableEnumSortOrders,
   filterVisibleTasks,
@@ -243,6 +252,7 @@ type InlineRecoveryAction = {
 };
 type ControlBusyProps = { 'aria-busy'?: true; 'data-loading'?: 'true' };
 type TaskCreateAttachment = TaskAttachmentView;
+type TaskCreateAttachmentCandidate = TaskAttachmentCandidate;
 type TaskCreateFormState = {
   parentTaskId: string | null;
   title: string;
@@ -258,6 +268,7 @@ type TaskCreateFormState = {
   attachments: TaskCreateAttachment[];
 };
 type TaskCreateTextField = Extract<keyof TaskCreateFormState, 'title' | 'description' | 'defectCurrentState' | 'defectExpectedOutcome' | 'defectReproductionSteps' | 'optimizationCurrentState' | 'optimizationExpectedOutcome' | 'tags'>;
+type TaskCreateAttachmentField = Exclude<TaskCreateTextField, 'title'>;
 type TaskCreateDraft = {
   parentTaskId: string | null;
   title: string;
@@ -5673,6 +5684,44 @@ const graphViewOptions: Array<{ type: GraphViewType }> = [{ type: 'architecture'
 
 const codeMapToolPanels: Array<{ id: CodeMapToolPanel }> = [{ id: 'runtime' }, { id: 'search' }, { id: 'qa' }, { id: 'mermaid' }, { id: 'entities' }];
 
+function TaskCreateFieldAttachments(props: {
+  field: TaskCreateAttachmentField;
+  attachments: TaskCreateAttachment[];
+  copy: ReturnType<typeof getLanguageCopy>['taskWorkspace'];
+  disabled: boolean;
+  onRemove: (path: string) => void;
+  onRestoreText: (attachment: TaskCreateAttachment) => void;
+  onLoadPreview?: (path: string) => Promise<{ previewUrl: string; mimeType: string } | null>;
+  onOpenAttachment?: (path: string) => Promise<{ opened: boolean; error?: string }>;
+}) {
+  const attachments = taskAttachmentsForField(props.attachments, props.field);
+  if (attachments.length === 0) return null;
+  return (
+    <div className="task-create-field-attachments">
+      <TaskAttachmentPreviewList
+        attachments={attachments}
+        mode="editable"
+        disabled={props.disabled}
+        onRemove={props.onRemove}
+        onRestoreText={props.onRestoreText}
+        onLoadPreview={props.onLoadPreview}
+        onOpenAttachment={props.onOpenAttachment}
+        copy={{
+          imageLabel: props.copy.taskCreateImageAttachment,
+          fileLabel: props.copy.taskCreateFileAttachment,
+          openFileLabel: props.copy.taskCreateOpenAttachment,
+          removeLabel: props.copy.taskCreateRemoveAttachment,
+          openPreviewLabel: props.copy.taskCreatePreviewAttachment,
+          closePreviewLabel: props.copy.taskCreatePreviewClose,
+          previewUnavailable: props.copy.taskCreatePreviewUnavailable,
+          localPathLabel: props.copy.taskCreateLocalPathLabel,
+          addedStatus: props.copy.taskCreateAttachmentAddedStatus,
+        }}
+      />
+    </div>
+  );
+}
+
 function TaskCreateModal(props: {
   open: boolean;
   copy: ReturnType<typeof getLanguageCopy>['taskWorkspace'];
@@ -5685,10 +5734,9 @@ function TaskCreateModal(props: {
   onTaskTypeChange: (taskType: TaskType | '') => void;
   onPriorityChange: (priority: TaskPriority) => void;
   onParentChange: (parentTaskId: string | null) => void;
-  onChooseAttachments: () => void;
   onAuthorizeFiles: (files: File[], source: 'paste' | 'drop') => Promise<TaskResourceAuthorizationResult>;
-  onMaterializeResources: (resources: TaskResourcePayload[]) => Promise<TaskCreateAttachment[]>;
-  onReadClipboardResources: () => Promise<{ resources: TaskCreateAttachment[]; text: string }>;
+  onMaterializeResources: (resources: TaskResourcePayload[]) => Promise<TaskCreateAttachmentCandidate[]>;
+  onReadClipboardResources: () => Promise<{ resources: TaskCreateAttachmentCandidate[]; text: string }>;
   onAddAttachments: (attachments: TaskCreateAttachment[]) => void;
   onLoadAttachmentPreview?: (path: string) => Promise<{ previewUrl: string; mimeType: string } | null>;
   onOpenAttachment?: (path: string) => Promise<{ opened: boolean; error?: string }>;
@@ -5698,7 +5746,6 @@ function TaskCreateModal(props: {
 }) {
   const pasteShortcutFallbackTokenRef = useRef(0);
   const [resourceProcessingCount, setResourceProcessingCount] = useState(0);
-  const [resourceDragDepth, setResourceDragDepth] = useState(0);
   const taskTypeOptions = useMemo(() => [{ value: '' as const, label: props.copy.taskCreateTypePlaceholder, disabled: true }, ...props.copy.taskCreateTypeOptions], [props.copy.taskCreateTypeOptions, props.copy.taskCreateTypePlaceholder]);
   if (!props.open) return null;
   const describedBy = props.error ? 'task-create-error' : undefined;
@@ -5788,7 +5835,7 @@ function TaskCreateModal(props: {
       }
       if (pastedFiles.length > 0) {
         const result = await props.onAuthorizeFiles(pastedFiles, 'paste');
-        if (result.resources.length > 0) props.onAddAttachments(result.resources);
+        if (result.resources.length > 0) props.onAddAttachments(withTaskAttachmentField(result.resources, pasteTarget.field));
         return;
       }
       const text = nativeResult.text || plainText;
@@ -5800,40 +5847,6 @@ function TaskCreateModal(props: {
         }
       }
       insertTaskCreatePlainTextPaste(pasteTarget.field, pasteTarget.control, text);
-    });
-  }
-
-  function handleTaskCreateDragEnter(event: ReactDragEvent<HTMLFormElement>): void {
-    const dataTransfer = event.dataTransfer;
-    if (interactionBusy || !taskCreateDataTransferHasFiles(dataTransfer)) return;
-    event.preventDefault();
-    setResourceDragDepth((current) => current + 1);
-  }
-
-  function handleTaskCreateDragOver(event: ReactDragEvent<HTMLFormElement>): void {
-    const dataTransfer = event.dataTransfer;
-    if (interactionBusy || !taskCreateDataTransferHasFiles(dataTransfer)) return;
-    event.preventDefault();
-    dataTransfer.dropEffect = 'copy';
-  }
-
-  function handleTaskCreateDragLeave(event: ReactDragEvent<HTMLFormElement>): void {
-    const dataTransfer = event.dataTransfer;
-    if (!taskCreateDataTransferHasFiles(dataTransfer)) return;
-    event.preventDefault();
-    setResourceDragDepth((current) => Math.max(0, current - 1));
-  }
-
-  function handleTaskCreateDrop(event: ReactDragEvent<HTMLFormElement>): void {
-    const dataTransfer = event.dataTransfer;
-    if (interactionBusy || !taskCreateDataTransferHasFiles(dataTransfer)) return;
-    event.preventDefault();
-    setResourceDragDepth(0);
-    const files = taskCreateDataTransferFiles(dataTransfer);
-    if (files.length === 0) return;
-    void runTaskResourceOperation(async () => {
-      const result = await props.onAuthorizeFiles(files, 'drop');
-      if (result.resources.length > 0) props.onAddAttachments(result.resources);
     });
   }
 
@@ -5879,12 +5892,7 @@ function TaskCreateModal(props: {
         aria-modal="true"
         aria-labelledby="task-create-modal-title"
         aria-describedby={describedBy}
-        data-resource-dragging={resourceDragDepth > 0 ? 'true' : undefined}
         onPaste={handleTaskCreateClipboardPaste}
-        onDragEnter={handleTaskCreateDragEnter}
-        onDragOver={handleTaskCreateDragOver}
-        onDragLeave={handleTaskCreateDragLeave}
-        onDrop={handleTaskCreateDrop}
         onSubmit={(event) => {
           if (resourcesBusy) {
             event.preventDefault();
@@ -5967,6 +5975,16 @@ function TaskCreateModal(props: {
           {props.form.taskType === 'requirement' ? (
             <div className="task-create-field task-create-description-field">
               <span id="task-create-description-label">{props.copy.taskCreateDescriptionLabel}</span>
+              <TaskCreateFieldAttachments
+                field="description"
+                attachments={props.form.attachments}
+                copy={props.copy}
+                disabled={interactionBusy}
+                onRemove={props.onRemoveAttachment}
+                onRestoreText={restoreTaskCreateText}
+                onLoadPreview={props.onLoadAttachmentPreview}
+                onOpenAttachment={props.onOpenAttachment}
+              />
               <textarea
                 id="task-create-description-input"
                 className="task-create-description-input"
@@ -5982,6 +6000,16 @@ function TaskCreateModal(props: {
             <>
               <div className="task-create-field task-create-description-field">
                 <span id="task-create-defect-current-state-label">{props.copy.taskCreateCurrentStateLabel}</span>
+                <TaskCreateFieldAttachments
+                  field="defectCurrentState"
+                  attachments={props.form.attachments}
+                  copy={props.copy}
+                  disabled={interactionBusy}
+                  onRemove={props.onRemoveAttachment}
+                  onRestoreText={restoreTaskCreateText}
+                  onLoadPreview={props.onLoadAttachmentPreview}
+                  onOpenAttachment={props.onOpenAttachment}
+                />
                 <textarea
                   id="task-create-defect-current-state-input"
                   className="task-create-description-input"
@@ -5994,6 +6022,16 @@ function TaskCreateModal(props: {
               </div>
               <div className="task-create-field task-create-description-field">
                 <span id="task-create-defect-expected-outcome-label">{props.copy.taskCreateExpectedOutcomeLabel}</span>
+                <TaskCreateFieldAttachments
+                  field="defectExpectedOutcome"
+                  attachments={props.form.attachments}
+                  copy={props.copy}
+                  disabled={interactionBusy}
+                  onRemove={props.onRemoveAttachment}
+                  onRestoreText={restoreTaskCreateText}
+                  onLoadPreview={props.onLoadAttachmentPreview}
+                  onOpenAttachment={props.onOpenAttachment}
+                />
                 <textarea
                   id="task-create-defect-expected-outcome-input"
                   className="task-create-description-input"
@@ -6006,6 +6044,16 @@ function TaskCreateModal(props: {
               </div>
               <div className="task-create-field task-create-description-field">
                 <span id="task-create-defect-reproduction-steps-label">{props.copy.taskCreateReproductionStepsLabel}</span>
+                <TaskCreateFieldAttachments
+                  field="defectReproductionSteps"
+                  attachments={props.form.attachments}
+                  copy={props.copy}
+                  disabled={interactionBusy}
+                  onRemove={props.onRemoveAttachment}
+                  onRestoreText={restoreTaskCreateText}
+                  onLoadPreview={props.onLoadAttachmentPreview}
+                  onOpenAttachment={props.onOpenAttachment}
+                />
                 <textarea
                   id="task-create-defect-reproduction-steps-input"
                   className="task-create-description-input"
@@ -6022,6 +6070,16 @@ function TaskCreateModal(props: {
             <>
               <div className="task-create-field task-create-description-field">
                 <span id="task-create-optimization-current-state-label">{props.copy.taskCreateCurrentStateLabel}</span>
+                <TaskCreateFieldAttachments
+                  field="optimizationCurrentState"
+                  attachments={props.form.attachments}
+                  copy={props.copy}
+                  disabled={interactionBusy}
+                  onRemove={props.onRemoveAttachment}
+                  onRestoreText={restoreTaskCreateText}
+                  onLoadPreview={props.onLoadAttachmentPreview}
+                  onOpenAttachment={props.onOpenAttachment}
+                />
                 <textarea
                   id="task-create-optimization-current-state-input"
                   className="task-create-description-input"
@@ -6034,6 +6092,16 @@ function TaskCreateModal(props: {
               </div>
               <div className="task-create-field task-create-description-field">
                 <span id="task-create-optimization-expected-outcome-label">{props.copy.taskCreateExpectedOutcomeLabel}</span>
+                <TaskCreateFieldAttachments
+                  field="optimizationExpectedOutcome"
+                  attachments={props.form.attachments}
+                  copy={props.copy}
+                  disabled={interactionBusy}
+                  onRemove={props.onRemoveAttachment}
+                  onRestoreText={restoreTaskCreateText}
+                  onLoadPreview={props.onLoadAttachmentPreview}
+                  onOpenAttachment={props.onOpenAttachment}
+                />
                 <textarea
                   id="task-create-optimization-expected-outcome-input"
                   className="task-create-description-input"
@@ -6048,6 +6116,16 @@ function TaskCreateModal(props: {
           ) : null}
           <div className="task-create-field task-create-tags-field">
             <span id="task-create-tags-label">{props.copy.taskCreateTagsLabel}</span>
+            <TaskCreateFieldAttachments
+              field="tags"
+              attachments={props.form.attachments}
+              copy={props.copy}
+              disabled={interactionBusy}
+              onRemove={props.onRemoveAttachment}
+              onRestoreText={restoreTaskCreateText}
+              onLoadPreview={props.onLoadAttachmentPreview}
+              onOpenAttachment={props.onOpenAttachment}
+            />
             <input
               id="task-create-tags-input"
               className="task-create-tags-input"
@@ -6058,39 +6136,6 @@ function TaskCreateModal(props: {
               disabled={interactionBusy}
             />
           </div>
-          <section className="task-create-attachments" aria-label={props.copy.taskCreateAttachmentsLabel}>
-            <div className="task-create-attachments-heading">
-              <span>
-                <strong>{props.copy.taskCreateAttachmentsLabel}</strong>
-                <small>{props.copy.taskCreateAttachmentsHint}</small>
-              </span>
-              <button type="button" className="task-create-attachment-picker" onClick={props.onChooseAttachments} disabled={interactionBusy}>
-                {props.copy.taskCreateChooseAttachments}
-              </button>
-            </div>
-            {props.form.attachments.length > 0 ? (
-              <TaskAttachmentPreviewList
-                attachments={props.form.attachments}
-                mode="editable"
-                disabled={interactionBusy}
-                onRemove={props.onRemoveAttachment}
-                onRestoreText={restoreTaskCreateText}
-                onLoadPreview={props.onLoadAttachmentPreview}
-                onOpenAttachment={props.onOpenAttachment}
-                copy={{
-                  imageLabel: props.copy.taskCreateImageAttachment,
-                  fileLabel: props.copy.taskCreateFileAttachment,
-                  openFileLabel: props.copy.taskCreateOpenAttachment,
-                  removeLabel: props.copy.taskCreateRemoveAttachment,
-                  openPreviewLabel: props.copy.taskCreatePreviewAttachment,
-                  closePreviewLabel: props.copy.taskCreatePreviewClose,
-                  previewUnavailable: props.copy.taskCreatePreviewUnavailable,
-                  localPathLabel: props.copy.taskCreateLocalPathLabel,
-                  addedStatus: props.copy.taskCreateAttachmentAddedStatus,
-                }}
-              />
-            ) : null}
-          </section>
           {props.error ? (
             <p className="task-create-error" id="task-create-error" role="alert">
               {props.error}
@@ -6329,10 +6374,9 @@ function safelyReadClipboardData(clipboardData: DataTransfer, type: string): str
   }
 }
 
-function resolveTaskCreatePasteField(target: EventTarget): { field: TaskCreateTextField; control: HTMLInputElement | HTMLTextAreaElement } | undefined {
+function resolveTaskCreatePasteField(target: EventTarget): { field: TaskCreateAttachmentField; control: HTMLInputElement | HTMLTextAreaElement } | undefined {
   if (!(target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement)) return undefined;
-  const fieldByControlId = new Map<TaskCreateTextField, string>([
-    ['title', 'task-create-title-input'],
+  const fieldByControlId = new Map<TaskCreateAttachmentField, string>([
     ['description', 'task-create-description-input'],
     ['defectCurrentState', 'task-create-defect-current-state-input'],
     ['defectExpectedOutcome', 'task-create-defect-expected-outcome-input'],
@@ -6347,7 +6391,7 @@ function resolveTaskCreatePasteField(target: EventTarget): { field: TaskCreateTe
   return undefined;
 }
 
-function captureTaskAttachmentRestoreTarget(field: TaskCreateTextField, control: HTMLInputElement | HTMLTextAreaElement): TaskAttachmentRestoreTarget {
+function captureTaskAttachmentRestoreTarget(field: TaskCreateAttachmentField, control: HTMLInputElement | HTMLTextAreaElement): TaskAttachmentRestoreTarget {
   const start = control.selectionStart ?? control.value.length;
   return {
     field,
@@ -6356,8 +6400,12 @@ function captureTaskAttachmentRestoreTarget(field: TaskCreateTextField, control:
   };
 }
 
-function withTaskAttachmentRestoreTarget(attachments: TaskCreateAttachment[], restoreTarget: TaskAttachmentRestoreTarget): TaskCreateAttachment[] {
-  return attachments.map((attachment) => (attachment.restorableText ? { ...attachment, restoreTarget } : attachment));
+function withTaskAttachmentField(attachments: TaskCreateAttachmentCandidate[], field: TaskCreateAttachmentField): TaskCreateAttachment[] {
+  return attachments.map((attachment) => ({ ...attachment, field }));
+}
+
+function withTaskAttachmentRestoreTarget(attachments: TaskCreateAttachmentCandidate[], restoreTarget: TaskAttachmentRestoreTarget): TaskCreateAttachment[] {
+  return attachments.map((attachment) => ({ ...attachment, field: restoreTarget.field, ...(attachment.restorableText ? { restoreTarget } : {}) }));
 }
 
 function taskCreateDataTransferFiles(dataTransfer: DataTransfer): File[] {
@@ -6375,10 +6423,6 @@ function taskCreateDataTransferFiles(dataTransfer: DataTransfer): File[] {
     seen.add(fingerprint);
     return true;
   });
-}
-
-function taskCreateDataTransferHasFiles(dataTransfer: DataTransfer): boolean {
-  return dataTransfer.types.includes('Files') || dataTransfer.files.length > 0;
 }
 
 function taskCreateControlId(field: TaskCreateTextField): string {
@@ -6542,11 +6586,11 @@ export function App(props: {
   onLoadArchivedProjects?: () => Promise<ProjectRecord[]>;
   onLoadArchivedTasks?: (projectId: string) => Promise<TaskRecord[]>;
   onSetProjectDefaultTemplate?: (projectId: string, templateId: string | null) => Promise<DashboardSnapshot>;
-  onChooseTaskAttachments?: () => Promise<TaskCreateAttachment[]>;
+  onChooseTaskAttachments?: () => Promise<TaskCreateAttachmentCandidate[]>;
   onChooseConversationResources?: () => Promise<NativeConversationAttachment[]>;
   onAuthorizeTaskFiles?: (files: File[], source: 'paste' | 'drop') => Promise<TaskResourceAuthorizationResult>;
-  onMaterializeTaskResources?: (resources: TaskResourcePayload[]) => Promise<TaskCreateAttachment[]>;
-  onReadTaskClipboardResources?: () => Promise<{ resources: TaskCreateAttachment[]; text: string }>;
+  onMaterializeTaskResources?: (resources: TaskResourcePayload[]) => Promise<TaskCreateAttachmentCandidate[]>;
+  onReadTaskClipboardResources?: () => Promise<{ resources: TaskCreateAttachmentCandidate[]; text: string }>;
   onLoadTaskAttachmentPreview?: (path: string) => Promise<{ previewUrl: string; mimeType: string } | null>;
   onOpenTaskAttachment?: (path: string) => Promise<{ opened: boolean; error?: string }>;
   onCreateTaskDraft?: (projectId: string, draft: TaskCreateDraft) => Promise<DashboardSnapshot>;
@@ -7028,6 +7072,7 @@ export function App(props: {
     directConcurrencyConfirmed: false,
     repositorySelections: {},
     parentContextSelections: {},
+    relatedContextSelections: {},
     supplementalInfo: '',
   });
   const [taskModelPushStatus, setTaskModelPushStatus] = useState<TaskModelPushModalStatus>('loading');
@@ -8775,18 +8820,6 @@ export function App(props: {
     if (attachments.length > 0) setTaskCreateError('');
   }
 
-  async function chooseTaskCreateAttachments(): Promise<void> {
-    if (!props.onChooseTaskAttachments) return;
-    try {
-      const selectedAttachments = await props.onChooseTaskAttachments();
-      mergeTaskCreateAttachments(selectedAttachments);
-      setTaskCreateError('');
-    } catch (error) {
-      recordLocalError('renderer-action', error);
-      setTaskCreateError(taskWorkspaceCopy.taskCreateAttachmentPickerFailed);
-    }
-  }
-
   async function authorizeTaskCreateFiles(files: File[], source: 'paste' | 'drop'): Promise<TaskResourceAuthorizationResult> {
     if (!props.onAuthorizeTaskFiles || files.length === 0) return { resources: [], failedCount: files.length };
     try {
@@ -8803,7 +8836,7 @@ export function App(props: {
     }
   }
 
-  async function materializeTaskCreateResources(resources: TaskResourcePayload[]): Promise<TaskCreateAttachment[]> {
+  async function materializeTaskCreateResources(resources: TaskResourcePayload[]): Promise<TaskCreateAttachmentCandidate[]> {
     if (!props.onMaterializeTaskResources || resources.length === 0) return [];
     try {
       const savedAttachments = await props.onMaterializeTaskResources(resources);
@@ -8816,7 +8849,7 @@ export function App(props: {
     }
   }
 
-  async function readTaskCreateClipboardResources(): Promise<{ resources: TaskCreateAttachment[]; text: string }> {
+  async function readTaskCreateClipboardResources(): Promise<{ resources: TaskCreateAttachmentCandidate[]; text: string }> {
     if (!props.onReadTaskClipboardResources) return { resources: [], text: '' };
     try {
       const result = await props.onReadTaskClipboardResources();
@@ -9345,6 +9378,7 @@ export function App(props: {
       directConcurrencyConfirmed: false,
       repositorySelections: {},
       parentContextSelections: {},
+      relatedContextSelections: {},
       supplementalInfo: '',
     });
     setTaskModelPushStatus('loading');
@@ -9519,7 +9553,7 @@ export function App(props: {
 
   function continueTaskModelPush(task: TaskRecord, capabilities: CodexTaskPushCapabilities, form: TaskModelPushForm): void {
     if (taskModelPushDispatchingTaskIdsRef.current.has(task.id)) return;
-    const fingerprint = JSON.stringify({ taskId: task.id, projectId: task.projectId, parentContextRevision: capabilities.parentContextRevision, repositoryRevision: capabilities.repositoryRevision, form });
+    const fingerprint = JSON.stringify({ taskId: task.id, projectId: task.projectId, taskContextRevision: capabilities.taskContextRevision, repositoryRevision: capabilities.repositoryRevision, form });
     const persistedEnvelope = taskModelPushEnvelopeRef.current.get(task.id);
     const request: StartTaskModelPushRequest =
       persistedEnvelope?.fingerprint === fingerprint
@@ -9547,17 +9581,17 @@ export function App(props: {
                     })),
                   },
             ...(form.supplementalInfo.trim() ? { supplementalInfo: form.supplementalInfo.trim() } : {}),
-            ...(capabilities.parentContextOptions.length > 0
-              ? {
-                  parentContext: {
-                    revision: capabilities.parentContextRevision,
-                    selections: capabilities.parentContextOptions.flatMap((option) => {
-                      const selection = form.parentContextSelections[option.taskId];
-                      return selection?.selected ? [{ taskId: option.taskId, conversationIds: selection.conversationIds, attachmentKeys: selection.attachmentKeys }] : [];
-                    }),
-                  },
-                }
-              : {}),
+            taskContext: {
+              revision: capabilities.taskContextRevision,
+              parentSelections: capabilities.parentContextOptions.flatMap((option) => {
+                const selection = form.parentContextSelections[option.taskId];
+                return selection?.selected ? [{ taskId: option.taskId, conversationIds: selection.conversationIds, attachmentKeys: selection.attachmentKeys }] : [];
+              }),
+              relatedSelections: capabilities.relatedContextOptions.flatMap((option) => {
+                const selection = form.relatedContextSelections[option.taskId];
+                return selection?.selected ? [{ taskId: option.taskId, conversationIds: selection.conversationIds, attachmentKeys: selection.attachmentKeys }] : [];
+              }),
+            },
             idempotencyKey: createSessionOperationId(),
             clientUserMessageId: createSessionOperationId(),
           };
@@ -9566,13 +9600,18 @@ export function App(props: {
     setTaskModelPushStatus('submitting');
     setTaskModelPushError(null);
     const targetProject = snapshot.projects.find((project) => project.id === task.projectId);
+    const parentContexts = selectedTaskPushParentContexts(capabilities.parentContextOptions, form.parentContextSelections);
+    const relatedContexts = selectedTaskPushRelatedContexts(capabilities.relatedContextOptions, form.relatedContextSelections);
+    const layout = buildTaskModelPushLayout(task, form.supplementalInfo, capabilities.currentAttachmentOptions, parentContexts, relatedContexts);
     const pending: TrackedTaskModelPushState = {
       ...createTaskModelPushPendingState({
         task,
         projectName: targetProject?.name ?? task.projectId,
         request,
         form,
-        prompt: buildTaskModelPushMessage(task, form.supplementalInfo, selectedTaskPushParentContexts(capabilities.parentContextOptions, form.parentContextSelections)),
+        prompt: buildTaskModelPushMessage(task, form.supplementalInfo, capabilities.currentAttachmentOptions, parentContexts, relatedContexts),
+        layout,
+        currentAttachmentOptions: capabilities.currentAttachmentOptions,
       }),
       origin: taskModelPushNavigationRef.current,
     };
@@ -9654,7 +9693,7 @@ export function App(props: {
           .catch((error: unknown) => recordLocalError('task-model-push-task-refresh', error));
       }
     } catch (error) {
-      if (error instanceof ZeusApiError && error.error === 'ZEUS_TASK_PUSH_PARENT_CONTEXT_CHANGED') {
+      if (error instanceof ZeusApiError && (error.error === 'ZEUS_TASK_PUSH_CONTEXT_CHANGED' || error.error === 'ZEUS_TASK_PUSH_PARENT_CONTEXT_CHANGED')) {
         void refreshChangedTaskModelPushParentContext(pending);
         return;
       }
@@ -9677,7 +9716,7 @@ export function App(props: {
     setTaskModelPushCapabilities(null);
     setTaskModelPushForm(pending.form);
     setTaskModelPushStatus('loading');
-    setTaskModelPushError(appShellSettings.appLanguage === 'zh-CN' ? '父任务上下文已变化，正在刷新选项；当前配置会保留。' : 'Parent task context changed. Refreshing options while preserving your configuration.');
+    setTaskModelPushError(appShellSettings.appLanguage === 'zh-CN' ? '任务上下文已变化，正在刷新选项；当前配置会保留。' : 'Task context changed. Refreshing options while preserving your configuration.');
     if (!client) {
       setTaskModelPushStatus('error');
       return;
@@ -9705,13 +9744,31 @@ export function App(props: {
           ];
         }),
       );
+      const relatedContextSelections = Object.fromEntries(
+        capabilities.relatedContextOptions.flatMap((option) => {
+          const previous = pending.form.relatedContextSelections[option.taskId];
+          if (!previous?.selected) return [];
+          const conversationIds = new Set(option.conversations.filter((conversation) => conversation.available).map((conversation) => conversation.id));
+          const attachmentKeys = new Set(option.attachments.filter((attachment) => attachment.available).map((attachment) => attachment.key));
+          return [
+            [
+              option.taskId,
+              {
+                selected: true,
+                conversationIds: previous.conversationIds.filter((id) => conversationIds.has(id)),
+                attachmentKeys: previous.attachmentKeys.filter((key) => attachmentKeys.has(key)),
+              },
+            ],
+          ];
+        }),
+      );
       setTaskModelPushCapabilities(capabilities);
-      setTaskModelPushForm({ ...pending.form, parentContextSelections });
+      setTaskModelPushForm({ ...pending.form, parentContextSelections, relatedContextSelections });
       setTaskModelPushStatus('ready');
       setTaskModelPushError(
         appShellSettings.appLanguage === 'zh-CN'
-          ? '父任务上下文已刷新；模型、工作区、补充信息和仍有效的选择已保留，请重新确认。'
-          : 'Parent task context was refreshed. Model, workspace, supplemental information, and still-valid selections were preserved. Review and confirm again.',
+          ? '任务上下文已刷新；模型、工作区、补充信息和仍有效的选择已保留，请重新确认。'
+          : 'Task context was refreshed. Model, workspace, supplemental information, and still-valid selections were preserved. Review and confirm again.',
       );
     } catch (error) {
       if (taskModelPushCapabilityRequestRef.current !== requestVersion) return;
@@ -12242,7 +12299,6 @@ export function App(props: {
                     onTaskTypeChange={updateTaskCreateType}
                     onPriorityChange={updateTaskCreatePriority}
                     onParentChange={(parentTaskId) => setTaskCreateForm((current) => ({ ...current, parentTaskId }))}
-                    onChooseAttachments={() => void chooseTaskCreateAttachments()}
                     onAuthorizeFiles={authorizeTaskCreateFiles}
                     onMaterializeResources={materializeTaskCreateResources}
                     onReadClipboardResources={readTaskCreateClipboardResources}
@@ -12337,8 +12393,6 @@ export function App(props: {
                 onClose={closeTaskModelPush}
                 onCancelAuthentication={cancelTaskModelPushAuthentication}
                 onSubmit={(event) => void submitTaskModelPush(event)}
-                onLoadAttachmentPreview={props.onLoadTaskAttachmentPreview}
-                onOpenAttachment={props.onOpenTaskAttachment}
               />
               <TaskGitMergeModal
                 open={Boolean(taskGitMergeTaskId)}
@@ -12398,7 +12452,6 @@ export function App(props: {
                     onCreateChild={(taskId) => openTaskCreateModal(taskId)}
                     onDeleteTask={(taskId) => setTaskDeleteDialogTaskId(taskId)}
                     onManagementStatusChange={(taskId, status, expectedUpdatedAt) => updateTaskManagementStatus(taskId, status, { expectedUpdatedAt })}
-                    onChooseAttachments={props.onChooseTaskAttachments}
                     onAuthorizeFiles={props.onAuthorizeTaskFiles}
                     onMaterializeResources={props.onMaterializeTaskResources}
                     onReadClipboardResources={props.onReadTaskClipboardResources}

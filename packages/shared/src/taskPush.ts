@@ -1,6 +1,15 @@
-import type { TaskType } from './index.js';
+import type { TaskAttachmentField, TaskType } from './index.js';
 
-/** 子任务首发正文中可发送的任务字段；运行配置与附件不进入这段文本。 */
+export interface TaskPushPromptAttachment {
+  key: string;
+  field: TaskAttachmentField;
+  name: string;
+  kind: 'image' | 'file' | 'directory' | 'pasted_text';
+  mimeType?: string;
+  size?: number;
+}
+
+/** 任务首发中可见的任务内容；运行配置不进入该契约。 */
 export interface TaskPushPromptTaskContent {
   taskTitle: string;
   taskType: TaskType;
@@ -10,21 +19,31 @@ export interface TaskPushPromptTaskContent {
   defectReproductionSteps?: string;
   optimizationCurrentState?: string;
   optimizationExpectedOutcome?: string;
+  tags?: string[];
+  attachments?: TaskPushPromptAttachment[];
 }
 
-/** 用户显式选择后写入首发正文的单个祖先任务上下文。 */
 export interface TaskPushPromptParentContext extends TaskPushPromptTaskContent {
   taskId: string;
   taskCode: string;
   conversationPaths: string[];
 }
 
-export interface TaskPushPromptInput extends TaskPushPromptTaskContent {
-  supplementalInfo?: string;
-  parentContexts?: TaskPushPromptParentContext[];
+export interface TaskPushPromptRelatedContext extends TaskPushPromptTaskContent {
+  taskId: string;
+  taskCode: string;
+  conversationPaths: string[];
 }
 
-export interface TaskPushParentConversationOption {
+export interface TaskPushPromptInput extends TaskPushPromptTaskContent {
+  taskId?: string;
+  taskCode?: string;
+  supplementalInfo?: string;
+  parentContexts?: TaskPushPromptParentContext[];
+  relatedContexts?: TaskPushPromptRelatedContext[];
+}
+
+export interface TaskPushContextConversationOption {
   id: string;
   title: string;
   createdAt: string;
@@ -34,60 +53,194 @@ export interface TaskPushParentConversationOption {
   unavailableReason: string | null;
 }
 
-export interface TaskPushParentAttachmentOption {
-  key: string;
-  name: string;
-  kind: 'image' | 'file' | 'directory' | 'pasted_text';
-  mimeType?: string;
-  size?: number;
+export type TaskPushParentConversationOption = TaskPushContextConversationOption;
+
+export interface TaskPushContextAttachmentOption extends TaskPushPromptAttachment {
   available: boolean;
   unavailableReason: string | null;
 }
 
-/** 弹窗中展示的祖先任务选项，顺序固定为根任务到直接父任务。 */
-export interface TaskPushParentContextOption extends TaskPushPromptTaskContent {
+export type TaskPushParentAttachmentOption = TaskPushContextAttachmentOption;
+
+export interface TaskPushContextOption extends TaskPushPromptTaskContent {
   taskId: string;
   taskCode: string;
-  depth: number;
-  conversations: TaskPushParentConversationOption[];
-  attachments: TaskPushParentAttachmentOption[];
+  conversations: TaskPushContextConversationOption[];
+  attachments: TaskPushContextAttachmentOption[];
 }
 
-export interface TaskPushParentContextSelection {
+/** 父任务顺序固定为根任务到直接父任务。 */
+export interface TaskPushParentContextOption extends TaskPushContextOption {
+  depth: number;
+}
+
+/** 关联任务按任务详情的稳定展示顺序返回。 */
+export interface TaskPushRelatedContextOption extends TaskPushContextOption {
+  updatedAt: string;
+}
+
+export interface TaskPushContextSelection {
   taskId: string;
   conversationIds: string[];
   attachmentKeys: string[];
 }
 
-function appendTaskContent(lines: string[], input: TaskPushPromptTaskContent): void {
-  lines.push(`任务标题：${input.taskTitle.trim()}`);
-  if (input.taskType === 'defect') {
-    lines.push('任务类型：缺陷', `现状：${input.defectCurrentState?.trim() || '未提供'}`, `预期：${input.defectExpectedOutcome?.trim() || '未提供'}`, `复现步骤：${input.defectReproductionSteps?.trim() || '未提供'}`);
-  } else if (input.taskType === 'optimization') {
-    lines.push('任务类型：优化', `现状：${input.optimizationCurrentState?.trim() || '未提供'}`, `预期：${input.optimizationExpectedOutcome?.trim() || '未提供'}`);
-  } else {
-    lines.push('任务类型：需求', `需求描述：${input.taskDescription?.trim() || '未提供'}`);
+export type TaskPushParentContextSelection = TaskPushContextSelection;
+export type TaskPushRelatedContextSelection = TaskPushContextSelection;
+
+export type TaskPushLayoutContextKind = 'current' | 'parent' | 'related';
+
+export interface TaskPushLayoutField {
+  field: TaskAttachmentField;
+  label: string;
+  text: string;
+  attachmentKeys: string[];
+}
+
+export interface TaskPushLayoutTaskBlock {
+  contextKind: TaskPushLayoutContextKind;
+  taskId?: string;
+  taskCode?: string;
+  taskTitle: string;
+  taskType: TaskType;
+  taskTypeLabel: string;
+  fields: TaskPushLayoutField[];
+  attachments: TaskPushPromptAttachment[];
+  conversationPaths: string[];
+}
+
+/** 排队、Provider 派发和已发消息共用的任务首发快照。 */
+export interface TaskPushMessageLayout {
+  kind: 'task_push';
+  blocks: TaskPushLayoutTaskBlock[];
+  supplementalInfo: string;
+}
+
+export type TaskPushInputPart = { type: 'text'; text: string } | { type: 'attachment'; attachmentKey: string };
+
+const taskTypeLabels: Record<TaskType, string> = {
+  requirement: '需求',
+  defect: '缺陷',
+  optimization: '优化',
+};
+
+function activeTaskFields(input: TaskPushPromptTaskContent): Array<{ field: TaskAttachmentField; label: string; text: string }> {
+  const typedFields: Array<{ field: TaskAttachmentField; label: string; text: string }> =
+    input.taskType === 'defect'
+      ? [
+          { field: 'defectCurrentState', label: '现状', text: input.defectCurrentState?.trim() || '未提供' },
+          { field: 'defectExpectedOutcome', label: '预期', text: input.defectExpectedOutcome?.trim() || '未提供' },
+          { field: 'defectReproductionSteps', label: '复现步骤', text: input.defectReproductionSteps?.trim() || '未提供' },
+        ]
+      : input.taskType === 'optimization'
+        ? [
+            { field: 'optimizationCurrentState', label: '现状', text: input.optimizationCurrentState?.trim() || '未提供' },
+            { field: 'optimizationExpectedOutcome', label: '预期', text: input.optimizationExpectedOutcome?.trim() || '未提供' },
+          ]
+        : [{ field: 'description', label: '需求描述', text: input.taskDescription?.trim() || '未提供' }];
+  return [
+    ...typedFields,
+    {
+      field: 'tags',
+      label: '标签',
+      text:
+        input.tags
+          ?.map((tag) => tag.trim())
+          .filter(Boolean)
+          .join('，') || '未提供',
+    },
+  ];
+}
+
+function buildTaskBlock(input: TaskPushPromptTaskContent & { contextKind: TaskPushLayoutContextKind; taskId?: string; taskCode?: string; conversationPaths?: string[] }): TaskPushLayoutTaskBlock {
+  const activeFields = activeTaskFields(input);
+  const activeFieldNames = new Set(activeFields.map((field) => field.field));
+  const attachments = (input.attachments ?? []).filter((attachment) => activeFieldNames.has(attachment.field));
+  const attachmentKeysByField = new Map<TaskAttachmentField, string[]>();
+  for (const attachment of attachments) {
+    const keys = attachmentKeysByField.get(attachment.field) ?? [];
+    keys.push(attachment.key);
+    attachmentKeysByField.set(attachment.field, keys);
+  }
+  return {
+    contextKind: input.contextKind,
+    ...(input.taskId ? { taskId: input.taskId } : {}),
+    ...(input.taskCode ? { taskCode: input.taskCode } : {}),
+    taskTitle: input.taskTitle.trim(),
+    taskType: input.taskType,
+    taskTypeLabel: taskTypeLabels[input.taskType],
+    fields: activeFields.map((field) => ({ ...field, attachmentKeys: attachmentKeysByField.get(field.field) ?? [] })),
+    attachments,
+    conversationPaths: input.conversationPaths ?? [],
+  };
+}
+
+export function buildTaskPushLayout(input: TaskPushPromptInput): TaskPushMessageLayout {
+  return {
+    kind: 'task_push',
+    blocks: [
+      buildTaskBlock({ ...input, contextKind: 'current' }),
+      ...(input.parentContexts ?? []).map((context) => buildTaskBlock({ ...context, contextKind: 'parent' })),
+      ...(input.relatedContexts ?? []).map((context) => buildTaskBlock({ ...context, contextKind: 'related' })),
+    ],
+    supplementalInfo: input.supplementalInfo?.trim() ?? '',
+  };
+}
+
+function pushText(parts: TaskPushInputPart[], text: string): void {
+  const previous = parts.at(-1);
+  if (previous?.type === 'text') previous.text += text;
+  else parts.push({ type: 'text', text });
+}
+
+function appendTaskBlockParts(parts: TaskPushInputPart[], block: TaskPushLayoutTaskBlock): void {
+  if (block.contextKind === 'current') pushText(parts, `${block.taskTitle}\n`);
+  else pushText(parts, `${block.contextKind === 'parent' ? '父任务' : '关联任务'}：${block.taskCode ?? block.taskId ?? ''} · ${block.taskTitle}\n`);
+  pushText(parts, `任务类型：${block.taskTypeLabel}\n`);
+  for (const field of block.fields) {
+    pushText(parts, `${field.label}：\n`);
+    for (const attachmentKey of field.attachmentKeys) parts.push({ type: 'attachment', attachmentKey });
+    pushText(parts, `${field.text}\n`);
+  }
+  if (block.conversationPaths.length > 0) {
+    pushText(parts, `会话文件路径：\n${block.conversationPaths.map((path) => `- ${path}`).join('\n')}\n`);
   }
 }
 
-/** 构造子任务首发正文；未选择祖先任务时保持既有正文逐字不变。 */
-export function buildTaskPushPrompt(input: TaskPushPromptInput): string {
-  const lines: string[] = [];
-  appendTaskContent(lines, input);
-  if (input.supplementalInfo?.trim()) lines.push(`补充信息：${input.supplementalInfo.trim()}`);
-  const parentContexts = input.parentContexts ?? [];
-  if (parentContexts.length === 0) return lines.join('\n');
-
-  lines.push('', '父任务上下文：');
-  for (const [index, parent] of parentContexts.entries()) {
-    if (index > 0) lines.push('');
-    lines.push(`父任务：${parent.taskCode.trim()} · ${parent.taskTitle.trim()}`);
-    const parentLines: string[] = [];
-    appendTaskContent(parentLines, parent);
-    lines.push(...parentLines.slice(1));
-    if (parent.conversationPaths.length > 0) {
-      lines.push('会话文件路径：', ...parent.conversationPaths.map((path) => `- ${path}`));
-    }
+export function buildTaskPushInputParts(layout: TaskPushMessageLayout): TaskPushInputPart[] {
+  const parts: TaskPushInputPart[] = [];
+  const current = layout.blocks.find((block) => block.contextKind === 'current');
+  if (current) appendTaskBlockParts(parts, current);
+  if (layout.supplementalInfo) pushText(parts, `补充信息：${layout.supplementalInfo}\n`);
+  const parents = layout.blocks.filter((block) => block.contextKind === 'parent');
+  if (parents.length > 0) {
+    pushText(parts, '\n父任务上下文：\n');
+    parents.forEach((block, index) => {
+      if (index > 0) pushText(parts, '\n');
+      appendTaskBlockParts(parts, block);
+    });
   }
-  return lines.join('\n');
+  const related = layout.blocks.filter((block) => block.contextKind === 'related');
+  if (related.length > 0) {
+    pushText(parts, '\n关联任务上下文：\n');
+    related.forEach((block, index) => {
+      if (index > 0) pushText(parts, '\n');
+      appendTaskBlockParts(parts, block);
+    });
+  }
+  const last = parts.at(-1);
+  if (last?.type === 'text') last.text = last.text.trimEnd();
+  return parts;
+}
+
+/** 纯文本投影只用于摘要与兼容显示；附件位置以布局快照为准。 */
+export function renderTaskPushLayoutText(layout: TaskPushMessageLayout): string {
+  return buildTaskPushInputParts(layout)
+    .filter((part): part is Extract<TaskPushInputPart, { type: 'text' }> => part.type === 'text')
+    .map((part) => part.text)
+    .join('');
+}
+
+export function buildTaskPushPrompt(input: TaskPushPromptInput): string {
+  return renderTaskPushLayoutText(buildTaskPushLayout(input));
 }

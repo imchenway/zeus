@@ -12843,19 +12843,51 @@ a {
   opacity: 0.66;
 }
 
-.macos-ai-app .task-model-push-canonical pre {
-  max-block-size: 180px;
+.macos-ai-app .task-push-layout {
+  max-block-size: 420px;
   overflow: auto;
-  margin: 0;
   padding: 10px 12px;
   border: 1px solid var(--zeus-product-line-soft);
   border-radius: 10px;
   background: var(--zeus-product-panel-muted);
-  color: var(--zeus-product-text);
-  font: inherit;
-  font-size: 12px;
-  line-height: 1.6;
+}
+
+.macos-ai-app .task-push-layout-block,
+.macos-ai-app .task-push-layout-field {
+  display: grid;
+  gap: 6px;
+  min-inline-size: 0;
+}
+
+.macos-ai-app .task-push-layout-block + .task-push-layout-block {
+  padding-block-start: 12px;
+  border-block-start: 1px solid var(--zeus-product-line-soft);
+}
+
+.macos-ai-app .task-push-layout-block > header {
+  display: grid;
+  gap: 2px;
+}
+
+.macos-ai-app .task-push-layout-block > header small,
+.macos-ai-app .task-push-layout-field > strong {
+  color: var(--zeus-product-muted);
+  font-size: 11px;
+}
+
+.macos-ai-app .task-push-layout-field p {
+  margin: 0;
   white-space: pre-wrap;
+}
+
+.macos-ai-app .task-push-layout-field code,
+.macos-ai-app .task-push-layout-attachment {
+  overflow-wrap: anywhere;
+  padding: 6px 8px;
+  border: 1px solid var(--zeus-product-line-soft);
+  border-radius: 8px;
+  background: var(--zeus-product-panel);
+  font-size: 11px;
 }
 
 .macos-ai-app .task-model-push-attachments > span {
@@ -14355,6 +14387,17 @@ a {
   min-block-size: 92px;
   resize: none;
   padding: 9px 10px;
+}
+
+.macos-ai-app .task-create-field-attachments,
+.macos-ai-app .task-detail-field-attachments {
+  display: grid;
+  gap: 6px;
+  min-inline-size: 0;
+}
+
+.macos-ai-app .task-detail-attachment-feedback {
+  margin-block-start: 4px;
 }
 
 .macos-ai-app .task-create-attachments {

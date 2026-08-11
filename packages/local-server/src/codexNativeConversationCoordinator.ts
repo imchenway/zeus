@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { realpathSync, statSync } from 'node:fs';
 import { dirname, extname, isAbsolute, relative, resolve } from 'node:path';
 import type { CodexAppServerEvent, CodexAppServerManager, CodexCommandApprovalDecision, CodexSandboxPolicy, CodexServerRequestResponse, CodexThreadSnapshot } from '@zeus/ai-runtime';
-import { calculateCacheHitRate, type NativeTokenUsageSnapshot, type TokenUsageBreakdown } from '@zeus/shared';
+import { buildTaskPushInputParts, calculateCacheHitRate, type NativeTokenUsageSnapshot, type TaskPushMessageLayout, type TokenUsageBreakdown } from '@zeus/shared';
 import {
   type CodexMcpServerStartupState,
   type ConversationCollaborationMode,
@@ -89,6 +89,7 @@ interface PersistedSubmissionInput {
   planItemId?: string;
   delivery?: 'queue' | 'steer_now';
   expectedTurnId?: string | null;
+  taskPushLayout?: TaskPushMessageLayout;
 }
 
 interface NativeTurnResultWaiter {
@@ -489,6 +490,15 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     return text;
   }
 
+  function submissionTaskPushLayout(submission: ZeusConversationSubmissionRecord): TaskPushMessageLayout | null {
+    const value = parseJsonRecord(submission.inputJson).taskPushLayout;
+    if (value === undefined) return null;
+    if (!isRecord(value) || value.kind !== 'task_push' || !Array.isArray(value.blocks) || typeof value.supplementalInfo !== 'string') {
+      throw coordinatorError('ZEUS_NATIVE_PERSISTED_STATE_INVALID', 'Persisted task push layout is invalid.');
+    }
+    return value as unknown as TaskPushMessageLayout;
+  }
+
   function submissionAttachments(submission: ZeusConversationSubmissionRecord): NativeConversationAttachmentInput[] {
     const value = parseJsonRecord(submission.inputJson).attachments;
     if (value === undefined) return [];
@@ -511,6 +521,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       if ((localPath ? 1 : 0) + (uploadRef ? 1 : 0) !== 1) throw coordinatorError('ZEUS_NATIVE_ATTACHMENT_INPUT_INVALID', 'Durable native attachment identity is invalid.');
       const authorizedPath = typeof attachment.authorizedPath === 'string' && attachment.authorizedPath ? attachment.authorizedPath : undefined;
       if (authorizedPath && (!localPath || uploadRef)) throw coordinatorError('ZEUS_NATIVE_ATTACHMENT_INPUT_INVALID', 'Durable native attachment path authority is invalid.');
+      const taskPushAttachmentKey = typeof attachment.taskPushAttachmentKey === 'string' && attachment.taskPushAttachmentKey.trim() ? attachment.taskPushAttachmentKey.trim() : undefined;
       return {
         name: attachment.name,
         mime: attachment.mime,
@@ -518,6 +529,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         ...(localPath ? { localPath } : {}),
         ...(uploadRef ? { uploadRef } : {}),
         ...(authorizedPath ? { authorizedPath } : {}),
+        ...(taskPushAttachmentKey ? { taskPushAttachmentKey } : {}),
       };
     });
   }
@@ -533,14 +545,14 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
 
   function submissionProviderInput(submission: ZeusConversationSubmissionRecord, context: ConversationDispatchContext): Array<Record<string, unknown>> {
     const text = volatileSubmissionText.get(submission.id) ?? submissionText(submission);
-    const inputs: Array<Record<string, unknown>> = text.trim() ? [{ type: 'text', text }] : [];
+    const attachments = submissionAttachments(submission);
     const allowedRoots = [...(context.allowedAttachmentRoots?.length ? context.allowedAttachmentRoots : [context.projectLocalPath]), ...(options.trustedAttachmentRoots ?? [])]
       .map(existingDirectoryRealpath)
       .filter((root, index, roots): root is string => Boolean(root) && roots.indexOf(root) === index);
-    if (allowedRoots.length === 0 && submissionAttachments(submission).length > 0) {
+    if (allowedRoots.length === 0 && attachments.length > 0) {
       throw coordinatorError('ZEUS_NATIVE_ATTACHMENT_PROJECT_UNAVAILABLE', 'No trusted attachment root can be resolved.');
     }
-    for (const attachment of submissionAttachments(submission)) {
+    const providerAttachment = (attachment: NativeConversationAttachmentInput): Record<string, unknown> => {
       if (attachment.uploadRef) {
         throw coordinatorError('ZEUS_NATIVE_ATTACHMENT_UPLOAD_UNSUPPORTED', 'Native attachment uploadRef has no provider resolver.');
       }
@@ -557,8 +569,24 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       } catch {
         throw coordinatorError('ZEUS_NATIVE_ATTACHMENT_PATH_UNAVAILABLE', 'Native attachment must resolve to an authorized file or directory.');
       }
-      if (isSupportedLocalImageAttachment(attachment, canonicalPath)) inputs.push({ type: 'localImage', path: canonicalPath });
-      else inputs.push({ type: 'mention', name: attachment.name, path: canonicalPath });
+      return isSupportedLocalImageAttachment(attachment, canonicalPath) ? { type: 'localImage', path: canonicalPath } : { type: 'mention', name: attachment.name, path: canonicalPath };
+    };
+    const taskPushLayout = submissionTaskPushLayout(submission);
+    const inputs: Array<Record<string, unknown>> = [];
+    if (taskPushLayout) {
+      const attachmentsByKey = new Map(attachments.flatMap((attachment) => (attachment.taskPushAttachmentKey ? [[attachment.taskPushAttachmentKey, attachment] as const] : [])));
+      for (const part of buildTaskPushInputParts(taskPushLayout)) {
+        if (part.type === 'text') {
+          if (part.text) inputs.push({ type: 'text', text: part.text });
+          continue;
+        }
+        const attachment = attachmentsByKey.get(part.attachmentKey);
+        if (!attachment) throw coordinatorError('ZEUS_NATIVE_PERSISTED_STATE_INVALID', `Task push attachment placement is missing: ${part.attachmentKey}`);
+        inputs.push(providerAttachment(attachment));
+      }
+    } else {
+      if (text.trim()) inputs.push({ type: 'text', text });
+      for (const attachment of attachments) inputs.push(providerAttachment(attachment));
     }
     if (inputs.length === 0) throw coordinatorError('ZEUS_INVALID_CONVERSATION_MESSAGE', 'Native submission requires text or attachments.');
     return inputs;
@@ -606,6 +634,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       attachments?: NativeConversationAttachmentInput[];
       browserComments?: Record<string, unknown>[];
       displayText?: string;
+      taskPushLayout?: TaskPushMessageLayout;
       origin?: 'implement_plan';
       planItemId?: string;
     },
@@ -620,6 +649,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       ...(input.displayText ? { displayText: input.displayText } : {}),
       ...(input.origin ? { origin: input.origin } : {}),
       ...(input.planItemId ? { planItemId: input.planItemId } : {}),
+      ...(input.taskPushLayout ? { taskPushLayout: input.taskPushLayout } : {}),
     };
     return options.submissions.createOrGet({
       ...(input.submissionId ? { id: input.submissionId } : {}),
@@ -1489,6 +1519,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         ...(existingProviderMessage ? parseJsonRecord(existingProviderMessage.metadataJson) : {}),
         ...(clientMessageId ? { clientUserMessageId: clientMessageId } : {}),
         ...(submission ? { attachments: submissionAttachments(submission) } : {}),
+        ...(submission && submissionTaskPushLayout(submission) ? { taskPushLayout: submissionTaskPushLayout(submission) } : {}),
         ...(submission && submissionBrowserComments(submission).length ? { browserComments: submissionBrowserComments(submission) } : {}),
         ...(typeof itemPayload.origin === 'string' ? { origin: itemPayload.origin } : {}),
         ...(typeof itemPayload.planItemId === 'string' ? { planItemId: itemPayload.planItemId } : {}),
@@ -1554,6 +1585,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     const input = parseJsonRecord(submission.inputJson);
     return {
       ...(typeof input.displayText === 'string' && input.displayText.trim() ? { displayText: input.displayText } : {}),
+      ...(isRecord(input.taskPushLayout) && input.taskPushLayout.kind === 'task_push' ? { taskPushLayout: input.taskPushLayout } : {}),
       ...(input.origin === 'implement_plan' ? { origin: input.origin } : {}),
       ...(typeof input.planItemId === 'string' ? { planItemId: input.planItemId } : {}),
     };

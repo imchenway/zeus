@@ -44,6 +44,7 @@ export interface ConversationAttachmentResource extends ConversationResourceBase
   mimeType?: string;
   previewKind: 'image' | 'document' | 'none';
   iconKind: ConversationFileIconKind;
+  taskPushAttachmentKey?: string;
 }
 
 export type ConversationResource = ConversationFileResource | ConversationWebsiteResource | ConversationAttachmentResource;
