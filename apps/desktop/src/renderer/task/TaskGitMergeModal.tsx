@@ -50,6 +50,58 @@ interface DeliveryFile {
 interface DeliveryFeedback {
   tone: 'success' | 'warning' | 'info';
   text: string;
+  actionLabel?: string;
+  onAction?: () => void;
+}
+
+export interface PendingConflictAiStart {
+  idempotencyKey: string;
+  taskId: string;
+  projectId: string;
+  integrationId: string;
+  path: string;
+  content: string;
+  permissionMode: TaskIntegrationConflictPermissionMode;
+}
+
+const pendingConflictAiStartPrefix = 'zeus.conflict-ai-start:';
+
+export function persistPendingConflictAiStart(input: PendingConflictAiStart): () => void {
+  if (typeof window === 'undefined') throw new Error('冲突处理准备状态需要本机持久存储。');
+  const key = `${pendingConflictAiStartPrefix}${encodeURIComponent(input.idempotencyKey)}`;
+  window.localStorage.setItem(key, JSON.stringify(input));
+  return () => window.localStorage.removeItem(key);
+}
+
+export function listPendingConflictAiStarts(): PendingConflictAiStart[] {
+  if (typeof window === 'undefined') return [];
+  const pending: PendingConflictAiStart[] = [];
+  for (let index = 0; index < window.localStorage.length; index += 1) {
+    const key = window.localStorage.key(index);
+    if (!key?.startsWith(pendingConflictAiStartPrefix)) continue;
+    try {
+      const parsed = JSON.parse(window.localStorage.getItem(key) ?? '') as Partial<PendingConflictAiStart>;
+      if (
+        typeof parsed.idempotencyKey === 'string' &&
+        typeof parsed.taskId === 'string' &&
+        typeof parsed.projectId === 'string' &&
+        typeof parsed.integrationId === 'string' &&
+        typeof parsed.path === 'string' &&
+        typeof parsed.content === 'string' &&
+        (parsed.permissionMode === 'auto' || parsed.permissionMode === 'full-access')
+      ) {
+        pending.push(parsed as PendingConflictAiStart);
+      }
+    } catch {
+      // 无法读取的旧信封不参与自动派发，也不影响其他待启动操作。
+    }
+  }
+  return pending;
+}
+
+export function clearPendingConflictAiStart(idempotencyKey: string): void {
+  if (typeof window === 'undefined') return;
+  window.localStorage.removeItem(`${pendingConflictAiStartPrefix}${encodeURIComponent(idempotencyKey)}`);
 }
 
 interface ConflictDraft {
@@ -63,7 +115,9 @@ interface TaskGitMergeModalProps {
   task: TaskRecord | null;
   projectName?: string;
   client: DeliveryClient | null;
+  executionReady?: boolean;
   onChanged?: () => void | Promise<void>;
+  onQueueConflictAiStart?: (input: PendingConflictAiStart) => () => void;
   onOpenConversation: (taskId: string, conversationId: string) => void | Promise<void>;
   onClose: () => void;
 }
@@ -404,7 +458,22 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
     setBusyAction('ai');
     setError(null);
     try {
-      const operation = await props.client.startTaskIntegrationConflictAi(props.task.id, activeConflict.id, conflictPath, content, permissionMode);
+      const idempotencyKey = crypto.randomUUID();
+      if (props.executionReady === false) {
+        if (!props.onQueueConflictAiStart) throw new Error(zh ? '当前操作暂时无法进入准备队列。' : 'This operation cannot be queued yet.');
+        const cancel = props.onQueueConflictAiStart({ idempotencyKey, taskId: props.task.id, projectId: props.task.projectId, integrationId: activeConflict.id, path: conflictPath, content, permissionMode });
+        setFeedback({
+          tone: 'info',
+          text: zh ? '正在准备，完成后自动开始。' : 'Preparing. This will start automatically when ready.',
+          actionLabel: zh ? '取消' : 'Cancel',
+          onAction: () => {
+            cancel();
+            setFeedback(null);
+          },
+        });
+        return;
+      }
+      const operation = await props.client.startTaskIntegrationConflictAi(props.task.id, activeConflict.id, conflictPath, content, permissionMode, idempotencyKey);
       await props.onOpenConversation(props.task.id, operation.conversationId);
     } catch (reason) {
       setError(errorMessage(reason, zh));
@@ -781,7 +850,16 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
         </div>
 
         <div className="task-git-merge-status" aria-live="polite">
-          {feedback ? <p className={`task-git-delivery-feedback is-${feedback.tone}`}>{feedback.text}</p> : null}
+          {feedback ? (
+            <div className={`task-git-delivery-feedback is-${feedback.tone}`}>
+              <span>{feedback.text}</span>
+              {feedback.actionLabel && feedback.onAction ? (
+                <button type="button" onClick={feedback.onAction}>
+                  {feedback.actionLabel}
+                </button>
+              ) : null}
+            </div>
+          ) : null}
           {error && workspaceIndex ? (
             <p className="task-git-merge-error" role="alert">
               {error}

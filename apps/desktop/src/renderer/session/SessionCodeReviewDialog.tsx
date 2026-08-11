@@ -30,19 +30,20 @@ interface SessionCodeReviewDialogProps {
   capabilities: CodexConversationCapabilities | null;
   onLoadCapabilities?: (projectId: string) => Promise<CodexConversationCapabilities>;
   onClose: () => void;
-  onStart?: (selection: SessionCodeReviewSelection) => void | boolean | Promise<void | boolean>;
+  onStart?: (selection: SessionCodeReviewSelection) => void | boolean | { state: 'preparing'; cancel: () => void } | Promise<void | boolean | { state: 'preparing'; cancel: () => void }>;
 }
 
 export function SessionCodeReviewDialog(props: SessionCodeReviewDialogProps) {
   const zh = props.language === 'zh-CN';
-  const permissionMode = resolveInheritedPermissionMode(props.conversation, props.state);
+  const permissionMode: NativePermissionMode = 'read-only';
   const inheritedModel = props.state.snapshot?.nextTurnSettings?.model ?? props.state.providerSettings?.model ?? props.conversation.providerModel ?? '';
   const inheritedEffort = props.state.snapshot?.nextTurnSettings?.effort ?? props.state.providerSettings?.effort ?? '';
   const inheritedServiceTier = props.state.snapshot?.nextTurnSettings?.serviceTier ?? props.state.providerSettings?.serviceTier;
   const [capabilities, setCapabilities] = useState<CodexConversationCapabilities | null>(null);
   const [form, setForm] = useState<SessionCodeReviewForm | null>(null);
-  const [status, setStatus] = useState<'loading' | 'ready' | 'submitting' | 'error'>('loading');
+  const [status, setStatus] = useState<'loading' | 'ready' | 'submitting' | 'preparing' | 'error'>('loading');
   const [error, setError] = useState<string | null>(null);
+  const [cancelPreparation, setCancelPreparation] = useState<(() => void) | null>(null);
 
   useEffect(() => {
     if (!props.open) {
@@ -50,6 +51,7 @@ export function SessionCodeReviewDialog(props: SessionCodeReviewDialogProps) {
       setForm(null);
       setStatus('loading');
       setError(null);
+      setCancelPreparation(null);
       return;
     }
 
@@ -96,6 +98,11 @@ export function SessionCodeReviewDialog(props: SessionCodeReviewDialogProps) {
   if (!props.open) return null;
   const busy = status === 'submitting';
 
+  function close(): void {
+    cancelPreparation?.();
+    props.onClose();
+  }
+
   function changeModel(model: string): void {
     if (!form) return;
     const capability = findModel(capabilities, model);
@@ -126,6 +133,11 @@ export function SessionCodeReviewDialog(props: SessionCodeReviewDialogProps) {
         permissionMode,
       });
       if (accepted === false) throw new Error(zh ? '代码审查会话未被接受，请查看当前错误提示。' : 'The code review conversation was not accepted. Check the current error notice.');
+      if (accepted && typeof accepted === 'object' && accepted.state === 'preparing') {
+        setCancelPreparation(() => accepted.cancel);
+        setStatus('preparing');
+        return;
+      }
       props.onClose();
     } catch (reason) {
       setStatus('error');
@@ -136,18 +148,18 @@ export function SessionCodeReviewDialog(props: SessionCodeReviewDialogProps) {
   function handleKeyDown(event: KeyboardEvent<HTMLFormElement>): void {
     if (event.key !== 'Escape' || busy) return;
     event.preventDefault();
-    props.onClose();
+    close();
   }
 
   return (
-    <ModalPortal rootClassName="session-code-review-portal-root" dismissDisabled={busy} onDismiss={props.onClose}>
+    <ModalPortal rootClassName="session-code-review-portal-root" dismissDisabled={busy} onDismiss={close}>
       <form className="session-code-review-modal zeus-solid-form-surface" role="dialog" aria-modal="true" aria-labelledby="session-code-review-title" onSubmit={(event) => void submit(event)} onKeyDown={handleKeyDown}>
         <header>
           <span>
             <strong id="session-code-review-title">{zh ? '开始代码审查' : 'Start code review'}</strong>
             <small>{zh ? '创建独立 AI 会话，并复用当前执行环境' : 'Create an independent AI conversation in the current execution environment'}</small>
           </span>
-          <button type="button" aria-label={zh ? '关闭' : 'Close'} onClick={props.onClose} disabled={busy}>
+          <button type="button" aria-label={zh ? '关闭' : 'Close'} onClick={close} disabled={busy}>
             ×
           </button>
         </header>
@@ -241,6 +253,11 @@ export function SessionCodeReviewDialog(props: SessionCodeReviewDialogProps) {
             </p>
           ) : null}
           {status === 'loading' ? <p className="session-code-review-message">{zh ? '正在读取当前模型配置…' : 'Loading the current model configuration…'}</p> : null}
+          {status === 'preparing' ? (
+            <p className="session-code-review-message" role="status">
+              {zh ? '正在准备，完成后自动开始。' : 'Preparing. This will start automatically when ready.'}
+            </p>
+          ) : null}
           {error ? (
             <p className="session-code-review-error" role="alert">
               {error}
@@ -249,12 +266,20 @@ export function SessionCodeReviewDialog(props: SessionCodeReviewDialogProps) {
         </div>
 
         <footer>
-          <small>{zh ? '确认后会切换到新建的审查会话。' : 'After confirmation, Zeus switches to the new review conversation.'}</small>
+          <small>
+            {status === 'preparing'
+              ? zh
+                ? '准备期间不会创建半成品会话。'
+                : 'No partial conversation is created while preparing.'
+              : zh
+                ? '确认后会切换到新建的审查会话。'
+                : 'After confirmation, Zeus switches to the new review conversation.'}
+          </small>
           <span>
-            <Button type="button" size="compact" onClick={props.onClose} disabled={busy}>
+            <Button type="button" size="compact" onClick={close} disabled={busy}>
               {zh ? '取消' : 'Cancel'}
             </Button>
-            <Button type="submit" variant="primary" size="compact" busy={busy} disabled={!form || !selectedModel || status === 'loading'}>
+            <Button type="submit" variant="primary" size="compact" busy={busy} disabled={!form || !selectedModel || status === 'loading' || status === 'preparing'}>
               {busy ? (zh ? '正在启动…' : 'Starting…') : zh ? '确认并开始审查' : 'Confirm and start review'}
             </Button>
           </span>
@@ -283,12 +308,8 @@ function findModel(capabilities: CodexConversationCapabilities | null, model: st
   return capabilities?.models.find((candidate) => candidate.id === model || candidate.model === model);
 }
 
-function resolveInheritedPermissionMode(conversation: NativeConversationChoice, state: NativeSessionState): NativePermissionMode {
-  return state.snapshot?.nextTurnSettings?.permissionMode ?? state.snapshot?.permissionMode ?? conversation.permissionMode ?? 'read-only';
-}
-
 function permissionModeLabel(permissionMode: NativePermissionMode, zh: boolean): string {
-  if (permissionMode === 'full-access') return zh ? '完全访问（继承当前会话）' : 'Full access (inherited)';
-  if (permissionMode === 'auto') return zh ? '自动（继承当前会话）' : 'Auto (inherited)';
-  return zh ? '只读（继承当前会话）' : 'Read only (inherited)';
+  if (permissionMode === 'full-access') return zh ? '完全访问' : 'Full access';
+  if (permissionMode === 'auto') return zh ? '自动' : 'Auto';
+  return zh ? '只读（固定）' : 'Read only (fixed)';
 }

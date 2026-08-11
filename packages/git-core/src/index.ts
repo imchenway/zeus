@@ -959,6 +959,75 @@ export async function startTaskBranchIntegration(input: {
   };
 }
 
+/**
+ * 为一次 AI 冲突处理创建独立 detached worktree；不创建临时分支，
+ * 并只使用合入记录冻结的两个提交，避免后续分支移动改变本次尝试。
+ */
+export async function startTaskIntegrationAttempt(input: {
+  repositoryPath: string;
+  projectSlug: string;
+  integrationId: string;
+  attemptId: string;
+  targetBranch: string;
+  targetHeadSha: string;
+  taskBranch: string;
+  taskHeadSha: string;
+  mode: 'merge' | 'squash';
+  commitMessage: string;
+}): Promise<TaskBranchIntegrationStartResult> {
+  const context = await getGitRepositoryContext(input.repositoryPath);
+  if (!context.isRepository) throw gitCoreError('ZEUS_GIT_REPOSITORY_REQUIRED', 'The selected project is not a Git repository.');
+  const targetBranch = await assertGitBranchFormat(context.topLevel, input.targetBranch, 'target branch');
+  const taskBranch = await assertGitBranchFormat(context.topLevel, input.taskBranch, 'task branch');
+  const targetHeadSha = await resolveCommit(context.topLevel, requireGitObjectId(input.targetHeadSha, 'target head'));
+  const taskHeadSha = await resolveCommit(context.topLevel, requireGitObjectId(input.taskHeadSha, 'task head'));
+  const integrationPath = join(dirname(context.topLevel), '.zeus-worktrees', safePathSegment(input.projectSlug || basename(context.topLevel)), '.integration-attempts', safePathSegment(input.integrationId), safePathSegment(input.attemptId));
+  const registered = context.worktrees.find((entry) => canonicalFilesystemPath(entry.path) === canonicalFilesystemPath(integrationPath));
+  if (registered) {
+    const conflictFiles = splitLines(await readGitStdout(integrationPath, ['diff', '--name-only', '--diff-filter=U']));
+    return {
+      integrationPath,
+      targetBranch,
+      targetHeadSha,
+      taskBranch,
+      taskHeadSha,
+      mode: input.mode,
+      state: conflictFiles.length > 0 ? 'conflicted' : 'ready',
+      resultHeadSha: conflictFiles.length > 0 ? null : await resolveCommit(integrationPath, 'HEAD'),
+      conflictFiles,
+    };
+  }
+  await mkdir(dirname(integrationPath), { recursive: true });
+  await runGit(context.topLevel, ['worktree', 'add', '--detach', integrationPath, targetHeadSha]);
+  try {
+    if (input.mode === 'merge') {
+      await runGit(integrationPath, ['-c', 'merge.conflictStyle=diff3', 'merge', '--no-ff', '--no-edit', taskHeadSha]);
+    } else {
+      await runGit(integrationPath, ['-c', 'merge.conflictStyle=diff3', 'merge', '--squash', taskHeadSha]);
+      const staged = splitLines(await readGitStdout(integrationPath, ['diff', '--cached', '--name-only']));
+      if (staged.length > 0) await runGit(integrationPath, ['commit', '-m', requireSafeGitText(input.commitMessage, 'commit message')]);
+    }
+  } catch (error) {
+    const conflictFiles = splitLines(await readGitStdout(integrationPath, ['diff', '--name-only', '--diff-filter=U']));
+    if (conflictFiles.length === 0) {
+      await cleanupTaskIntegrationWorktree({ repositoryPath: context.topLevel, integrationPath }).catch(() => undefined);
+      throw error;
+    }
+    return { integrationPath, targetBranch, targetHeadSha, taskBranch, taskHeadSha, mode: input.mode, state: 'conflicted', resultHeadSha: null, conflictFiles };
+  }
+  return {
+    integrationPath,
+    targetBranch,
+    targetHeadSha,
+    taskBranch,
+    taskHeadSha,
+    mode: input.mode,
+    state: 'ready',
+    resultHeadSha: await resolveCommit(integrationPath, 'HEAD'),
+    conflictFiles: [],
+  };
+}
+
 /** 读取三方冲突内容：source 是目标分支，task 是任务分支，result 是当前可编辑结果。 */
 export async function readTaskIntegrationConflict(integrationPath: string, path: string): Promise<TaskIntegrationConflictFile> {
   const safePath = requireSafeWorkspacePath(path);
@@ -1041,6 +1110,20 @@ export async function finalizeTaskBranchIntegration(input: { repositoryPath: str
     remoteHeadSha: null,
     ...localSync,
   };
+}
+
+/** 只回收已登记在 Zeus worktree 容器内的临时合入目录。 */
+export async function cleanupTaskIntegrationWorktree(input: { repositoryPath: string; integrationPath: string }): Promise<boolean> {
+  const context = await getGitRepositoryContext(input.repositoryPath);
+  if (!context.isRepository) throw gitCoreError('ZEUS_GIT_REPOSITORY_REQUIRED', 'The selected project is not a Git repository.');
+  const integrationPath = resolve(input.integrationPath);
+  const containerRoot = resolve(join(dirname(context.topLevel), '.zeus-worktrees'));
+  if (!isPathInside(containerRoot, integrationPath)) throw gitCoreError('ZEUS_GIT_PATH_INVALID', 'Integration worktree is outside the Zeus worktree container.');
+  const registered = context.worktrees.find((entry) => canonicalFilesystemPath(entry.path) === canonicalFilesystemPath(integrationPath));
+  if (!registered) return false;
+  await runGit(context.topLevel, ['worktree', 'remove', '--force', integrationPath]);
+  await rm(integrationPath, { recursive: true, force: true });
+  return true;
 }
 
 /** 本地合入完成后尽力同步来源分支；任何本地风险都降级为待同步，不反写用户现场。 */

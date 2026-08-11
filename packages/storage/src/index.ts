@@ -190,6 +190,7 @@ export interface UpdateTaskEnvironmentInput {
 export type TaskIntegrationMode = 'merge' | 'squash';
 export type TaskIntegrationState = 'preparing' | 'conflicted' | 'pending_local_sync' | 'merged' | 'failed';
 export type TaskIntegrationLocalSyncStatus = 'synced' | 'pending';
+export type TaskIntegrationAttemptState = 'preparing' | 'active' | 'completed' | 'failed' | 'stale';
 
 export interface ZeusTaskIntegrationRecord {
   id: string;
@@ -233,6 +234,38 @@ export interface UpdateTaskIntegrationInput {
   localHeadSha?: string | null;
   localWorktreePath?: string | null;
   conflictFiles?: string[];
+  lastError?: string | null;
+}
+
+export interface ZeusTaskIntegrationAttemptRecord {
+  id: string;
+  integrationId: string;
+  conversationId: string;
+  submissionId: string;
+  worktreePath: string;
+  targetHeadSha: string;
+  taskHeadSha: string;
+  state: TaskIntegrationAttemptState;
+  resultHeadSha: string | null;
+  lastError: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateTaskIntegrationAttemptInput {
+  id: string;
+  integrationId: string;
+  conversationId: string;
+  submissionId: string;
+  worktreePath: string;
+  targetHeadSha: string;
+  taskHeadSha: string;
+  state?: TaskIntegrationAttemptState;
+}
+
+export interface UpdateTaskIntegrationAttemptInput {
+  state?: TaskIntegrationAttemptState;
+  resultHeadSha?: string | null;
   lastError?: string | null;
 }
 
@@ -2119,6 +2152,25 @@ function migrateTaskGitWorkspaceSchema(db: ZeusDatabase): void {
   db.execute(`CREATE INDEX IF NOT EXISTS idx_task_integrations_task_state ON task_integrations(task_id, state, updated_at)`);
   db.execute(`DROP INDEX IF EXISTS idx_task_integrations_active_workspace_target`);
   db.execute(`CREATE UNIQUE INDEX IF NOT EXISTS idx_task_integrations_active_workspace_target ON task_integrations(workspace_id, target_branch) WHERE state IN ('preparing', 'conflicted', 'pending_local_sync')`);
+  db.execute(`
+    CREATE TABLE IF NOT EXISTS task_integration_attempts (
+      id TEXT PRIMARY KEY,
+      integration_id TEXT NOT NULL,
+      conversation_id TEXT NOT NULL,
+      submission_id TEXT NOT NULL,
+      worktree_path TEXT NOT NULL,
+      target_head_sha TEXT NOT NULL,
+      task_head_sha TEXT NOT NULL,
+      state TEXT NOT NULL,
+      result_head_sha TEXT,
+      last_error TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+  `);
+  db.execute(`CREATE UNIQUE INDEX IF NOT EXISTS idx_task_integration_attempts_conversation ON task_integration_attempts(conversation_id)`);
+  db.execute(`CREATE UNIQUE INDEX IF NOT EXISTS idx_task_integration_attempts_worktree ON task_integration_attempts(worktree_path)`);
+  db.execute(`CREATE INDEX IF NOT EXISTS idx_task_integration_attempts_integration_state ON task_integration_attempts(integration_id, state, updated_at)`);
   recordSchemaMigration(db, {
     migrationId: '20260731_0001_task_git_workspaces',
     description: '增加可跨会话复用的任务分支与 worktree 生命周期记录',
@@ -2133,6 +2185,11 @@ function migrateTaskGitWorkspaceSchema(db: ZeusDatabase): void {
     migrationId: '20260807_0003_task_integration_task_head',
     description: '冻结任务分支合入候选使用的精确提交',
     checksumSource: 'task_integrations:task_head_sha',
+  });
+  recordSchemaMigration(db, {
+    migrationId: '20260811_0001_task_integration_attempts',
+    description: '记录每次 AI 冲突处理的独立 worktree 与会话身份',
+    checksumSource: 'task_integration_attempts:integration_id,conversation_id,submission_id,worktree_path,target_head_sha,task_head_sha,state,result_head_sha,last_error',
   });
 }
 
@@ -4040,6 +4097,55 @@ export class TaskIntegrationRepository {
       ],
     );
     return this.getById(integrationId)!;
+  }
+}
+
+const selectTaskIntegrationAttemptFields = `id, integration_id, conversation_id, submission_id, worktree_path,
+  target_head_sha, task_head_sha, state, result_head_sha, last_error, created_at, updated_at`;
+
+/** 每次显式 AI 冲突处理都拥有独立 worktree；记录用于重启后的恢复与过期判定。 */
+export class TaskIntegrationAttemptRepository {
+  constructor(private readonly db: ZeusDatabase) {}
+
+  create(input: CreateTaskIntegrationAttemptInput): ZeusTaskIntegrationAttemptRecord {
+    const timestamp = nowIso();
+    const state = assertEnum(input.state ?? 'preparing', ['preparing', 'active', 'completed', 'failed', 'stale'] as const, 'task integration attempt state');
+    this.db.execute(
+      `INSERT INTO task_integration_attempts
+       (id, integration_id, conversation_id, submission_id, worktree_path, target_head_sha, task_head_sha, state,
+        result_head_sha, last_error, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)`,
+      [input.id, input.integrationId, input.conversationId, input.submissionId, input.worktreePath, input.targetHeadSha, input.taskHeadSha, state, timestamp, timestamp],
+    );
+    return this.getById(input.id)!;
+  }
+
+  getById(attemptId: string): ZeusTaskIntegrationAttemptRecord | undefined {
+    const row = this.db.get<DbTaskIntegrationAttemptRow>(`SELECT ${selectTaskIntegrationAttemptFields} FROM task_integration_attempts WHERE id = ?`, [attemptId]);
+    return row ? mapTaskIntegrationAttemptRow(row) : undefined;
+  }
+
+  getByConversationId(conversationId: string): ZeusTaskIntegrationAttemptRecord | undefined {
+    const row = this.db.get<DbTaskIntegrationAttemptRow>(`SELECT ${selectTaskIntegrationAttemptFields} FROM task_integration_attempts WHERE conversation_id = ?`, [conversationId]);
+    return row ? mapTaskIntegrationAttemptRow(row) : undefined;
+  }
+
+  listByIntegration(integrationId: string): ZeusTaskIntegrationAttemptRecord[] {
+    return this.db.select<DbTaskIntegrationAttemptRow>(`SELECT ${selectTaskIntegrationAttemptFields} FROM task_integration_attempts WHERE integration_id = ? ORDER BY created_at, id`, [integrationId]).map(mapTaskIntegrationAttemptRow);
+  }
+
+  update(attemptId: string, input: UpdateTaskIntegrationAttemptInput): ZeusTaskIntegrationAttemptRecord {
+    const existing = this.getById(attemptId);
+    if (!existing) throw new Error(`Zeus task integration attempt not found: ${attemptId}`);
+    const state = input.state ? assertEnum(input.state, ['preparing', 'active', 'completed', 'failed', 'stale'] as const, 'task integration attempt state') : existing.state;
+    this.db.execute(`UPDATE task_integration_attempts SET state = ?, result_head_sha = ?, last_error = ?, updated_at = ? WHERE id = ?`, [
+      state,
+      'resultHeadSha' in input ? (input.resultHeadSha ?? null) : existing.resultHeadSha,
+      'lastError' in input ? (input.lastError ?? null) : existing.lastError,
+      nowIso(),
+      attemptId,
+    ]);
+    return this.getById(attemptId)!;
   }
 }
 
@@ -7431,6 +7537,21 @@ interface DbTaskIntegrationRow {
   updated_at: string;
 }
 
+interface DbTaskIntegrationAttemptRow {
+  id: string;
+  integration_id: string;
+  conversation_id: string;
+  submission_id: string;
+  worktree_path: string;
+  target_head_sha: string;
+  task_head_sha: string;
+  state: TaskIntegrationAttemptState;
+  result_head_sha: string | null;
+  last_error: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 interface DbTaskTemplateRow {
   id: string;
   name: string;
@@ -7975,6 +8096,23 @@ function mapTaskIntegrationRow(row: DbTaskIntegrationRow): ZeusTaskIntegrationRe
     localHeadSha: row.local_head_sha,
     localWorktreePath: row.local_worktree_path,
     conflictFiles,
+    lastError: row.last_error,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapTaskIntegrationAttemptRow(row: DbTaskIntegrationAttemptRow): ZeusTaskIntegrationAttemptRecord {
+  return {
+    id: row.id,
+    integrationId: row.integration_id,
+    conversationId: row.conversation_id,
+    submissionId: row.submission_id,
+    worktreePath: row.worktree_path,
+    targetHeadSha: row.target_head_sha,
+    taskHeadSha: row.task_head_sha,
+    state: assertEnum(row.state, ['preparing', 'active', 'completed', 'failed', 'stale'] as const, 'task integration attempt state'),
+    resultHeadSha: row.result_head_sha,
     lastError: row.last_error,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
