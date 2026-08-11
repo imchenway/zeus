@@ -71,6 +71,10 @@ export interface StartPiConversationInput {
   attachments?: NativeConversationAttachmentInput[];
   allowedAttachmentRoots?: string[];
   taskPushLayout?: TaskPushMessageLayout;
+  providerWriteLifecycle?: {
+    markPrepared(submissionId: string): Promise<void>;
+    markRpcStarted(submissionId: string): void;
+  };
 }
 
 interface PiAttachmentResolution {
@@ -129,6 +133,8 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     const orderedAttachments = input.taskPushLayout ? orderPiTaskPushAttachments(input.taskPushLayout, input.attachments ?? []) : (input.attachments ?? []);
     const attachmentInput = await resolvePiAttachmentInput(orderedAttachments, input.allowedAttachmentRoots ?? []);
     const providerPrompt = input.taskPushLayout ? renderPiTaskPushPrompt(input.taskPushLayout, attachmentInput.attachments) : appendPiAttachmentReferences(input.prompt, attachmentInput.pathReferences);
+    await input.providerWriteLifecycle?.markPrepared(input.submissionId);
+    input.providerWriteLifecycle?.markRpcStarted(input.submissionId);
     const session = await driver.openSession({ cwd: input.cwd, model: input.model });
     const createdAt = options.now();
     options.conversations.create({

@@ -1495,7 +1495,7 @@ export interface DashboardClient {
     },
   ) => Promise<{ integration: TaskIntegrationRecord; result?: TaskIntegrationResult }>;
   loadTaskIntegrationConflict: (taskId: string, integrationId: string, path: string) => Promise<TaskIntegrationConflictFile>;
-  startTaskIntegrationConflictAi: (taskId: string, integrationId: string, path: string, content: string, permissionMode: TaskIntegrationConflictPermissionMode) => Promise<TaskIntegrationConflictAiSession>;
+  startTaskIntegrationConflictAi: (taskId: string, integrationId: string, path: string, content: string, permissionMode: TaskIntegrationConflictPermissionMode, idempotencyKey: string) => Promise<TaskIntegrationConflictAiSession>;
   resolveTaskIntegrationConflict: (taskId: string, integrationId: string, path: string, content: string) => Promise<{ integration: TaskIntegrationRecord; result: { path: string; remainingConflictFiles: string[] } }>;
   finalizeTaskIntegration: (
     taskId: string,
@@ -1980,9 +1980,10 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
         body: JSON.stringify(input),
       }),
     loadTaskIntegrationConflict: (taskId, integrationId, path) => request<TaskIntegrationConflictFile>(`/api/tasks/${encodeURIComponent(taskId)}/integrations/${encodeURIComponent(integrationId)}/conflict?path=${encodeURIComponent(path)}`),
-    startTaskIntegrationConflictAi: (taskId, integrationId, path, content, permissionMode) =>
+    startTaskIntegrationConflictAi: (taskId, integrationId, path, content, permissionMode, idempotencyKey) =>
       request<TaskIntegrationConflictAiSession>(`/api/tasks/${encodeURIComponent(taskId)}/integrations/${encodeURIComponent(integrationId)}/conflict/ai-session?path=${encodeURIComponent(path)}`, {
         method: 'POST',
+        headers: { 'idempotency-key': idempotencyKey },
         body: JSON.stringify({ content, permissionMode }),
       }),
     resolveTaskIntegrationConflict: (taskId, integrationId, path, content) =>

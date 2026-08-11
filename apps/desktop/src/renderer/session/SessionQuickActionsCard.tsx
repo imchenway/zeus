@@ -42,7 +42,7 @@ interface SessionQuickActionsCardProps {
   onOpenGitReview?: (taskId: string, workspaceId: string | null, mode: 'commit' | 'push-only') => void;
   onOpenGitDelivery?: (taskId: string, workspaceId: string | null) => void;
   onOpenProjectCommands?: () => void;
-  onStartCodeReview?: (selection: SessionCodeReviewSelection) => void | boolean | Promise<void | boolean>;
+  onStartCodeReview?: (selection: SessionCodeReviewSelection) => void | boolean | { state: 'preparing'; cancel: () => void } | Promise<void | boolean | { state: 'preparing'; cancel: () => void }>;
   onAddSources?: () => void | Promise<void>;
   onOpenSource?: (resource: ConversationResource) => void | Promise<void>;
   onLoadResourcePreview?: (resource: ConversationResource) => Promise<ConversationResourcePreview>;

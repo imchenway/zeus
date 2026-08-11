@@ -55,9 +55,11 @@ import {
   ConnectedSessionWorkspace,
   createNativeConversationStartEnvelopeManager,
   createProjectConversationStartEnvelopeManager,
+  isDurableNativeConversationAcceptance,
   loadLegacyConversationDetail,
   nativeConversationChoiceFromAcceptance,
   type NativeConversationStartStorage,
+  type NativeConversationStartPreparation,
   type ProjectSessionWorkspaceStartInput,
   SessionWorkspace,
   type SessionWorkspaceActions,
@@ -86,7 +88,7 @@ import { readProjectServiceTierPreference, serviceTierWireOverride, writeProject
 import type { SessionControllerClient } from './session/useSessionController.js';
 import { TaskDetailPaneContent, type TaskEditResult } from './task/TaskDetailPaneContent.js';
 import { TaskGitReviewModal } from './task/TaskGitReviewModal.js';
-import { TaskGitMergeModal } from './task/TaskGitMergeModal.js';
+import { clearPendingConflictAiStart, listPendingConflictAiStarts, persistPendingConflictAiStart, TaskGitMergeModal } from './task/TaskGitMergeModal.js';
 import {
   buildTaskModelPushMessage,
   buildTaskModelPushLayout,
@@ -6823,6 +6825,8 @@ export function App(props: {
   const nativeConversationChoiceLoadCoordinator = useRef(createNativeConversationChoiceLoadCoordinator()).current;
   const nativeProjectConversationChoiceLoadCoordinator = useRef(createNativeProjectConversationChoiceLoadCoordinator()).current;
   const nativeConversationStartEnvelopeManager = useMemo(() => createNativeConversationStartEnvelopeManager({ storage: browserNativeConversationStartStorage(), createId: createSessionOperationId }), []);
+  const recoveringNativeConversationStartsRef = useRef<Set<string>>(new Set());
+  const recoveringConflictAiStartsRef = useRef<Set<string>>(new Set());
   const projectConversationStartEnvelopeManager = useMemo(() => createProjectConversationStartEnvelopeManager({ storage: browserNativeConversationStartStorage(), createId: createSessionOperationId }), []);
   useEffect(() => {
     if (activeProjectSection !== 'sessions' || activeNavTarget === 'settings') setSessionSourceRailOpen(false);
@@ -7407,6 +7411,78 @@ export function App(props: {
   useEffect(() => {
     activeProjectIdRef.current = activeProjectId;
   }, [activeProjectId]);
+  useEffect(() => {
+    const client = props.nativeConversationClient;
+    if (!client || props.executionHostTransition?.state !== 'current') return;
+    let disposed = false;
+    for (const task of snapshot.tasks) {
+      const request = nativeConversationStartEnvelopeManager.pending({ id: task.id, projectId: task.projectId });
+      if (!request || request.mode !== 'create' || request.source !== 'code_review' || recoveringNativeConversationStartsRef.current.has(request.idempotencyKey)) continue;
+      recoveringNativeConversationStartsRef.current.add(request.idempotencyKey);
+      void client
+        .startNativeConversation(task.id, request)
+        .then(async (acceptance) => {
+          if (!isDurableNativeConversationAcceptance(request, acceptance)) throw new Error('代码审查会话尚未获得持久接受结果。');
+          nativeConversationStartEnvelopeManager.clearPending({ id: task.id, projectId: task.projectId }, request, acceptance);
+          const choice = await client.loadNativeConversationChoice(task.projectId, acceptance.conversation.id);
+          if (disposed) return;
+          nativeConversationChoiceLoadCoordinator.preserveAccepted(choice);
+          setNativeConversationChoicesByTask((current) => {
+            const prior = current[task.id];
+            const choices = [choice, ...(prior?.choices ?? []).filter((candidate) => candidate.id !== choice.id)];
+            return { ...current, [task.id]: { taskId: task.id, projectId: task.projectId, hasHistory: true, requiresChoice: choices.length > 1, choices, items: choices } };
+          });
+          setNativeConversationChoiceTaskStates((current) => ({ ...current, [task.id]: completeNativeConversationChoiceTaskLoad(current[task.id]) }));
+          if (activeProjectIdRef.current === task.projectId) {
+            setSelectedNativeConversationId(choice.id);
+            setConversationDraftOpen(false);
+            setTaskDetail(task);
+          }
+        })
+        .catch((error) => {
+          if (disposed) return;
+          const message = redactLocalUiErrorMessage(errorToLocalUiMessage(error));
+          setNativeConversationChoiceTaskStates((current) => ({ ...current, [task.id]: failNativeConversationChoiceTaskLoad(current[task.id], message) }));
+          recordLocalError('native-code-review-recovery', error);
+        })
+        .finally(() => recoveringNativeConversationStartsRef.current.delete(request.idempotencyKey));
+    }
+    return () => {
+      disposed = true;
+    };
+  }, [nativeConversationChoiceLoadCoordinator, nativeConversationStartEnvelopeManager, props.executionHostTransition?.state, props.nativeConversationClient, snapshot.tasks]);
+  useEffect(() => {
+    const client = props.nativeConversationClient;
+    if (!client || props.executionHostTransition?.state !== 'current') return;
+    let disposed = false;
+    for (const pending of listPendingConflictAiStarts()) {
+      if (recoveringConflictAiStartsRef.current.has(pending.idempotencyKey)) continue;
+      const task = snapshot.tasks.find((candidate) => candidate.id === pending.taskId && candidate.projectId === pending.projectId);
+      if (!task) {
+        clearPendingConflictAiStart(pending.idempotencyKey);
+        continue;
+      }
+      recoveringConflictAiStartsRef.current.add(pending.idempotencyKey);
+      void client
+        .startTaskIntegrationConflictAi(pending.taskId, pending.integrationId, pending.path, pending.content, pending.permissionMode, pending.idempotencyKey)
+        .then(async (operation) => {
+          clearPendingConflictAiStart(pending.idempotencyKey);
+          if (disposed) return;
+          await openTaskConflictAiConversation(pending.taskId, operation.conversationId);
+        })
+        .catch((error) => {
+          if (error instanceof ZeusApiError && error.status >= 400 && error.status < 500) clearPendingConflictAiStart(pending.idempotencyKey);
+          if (disposed) return;
+          const message = redactLocalUiErrorMessage(errorToLocalUiMessage(error));
+          setNativeConversationChoiceTaskStates((current) => ({ ...current, [pending.taskId]: failNativeConversationChoiceTaskLoad(current[pending.taskId], message) }));
+          recordLocalError('native-conflict-ai-recovery', error);
+        })
+        .finally(() => recoveringConflictAiStartsRef.current.delete(pending.idempotencyKey));
+    }
+    return () => {
+      disposed = true;
+    };
+  }, [props.executionHostTransition?.state, props.nativeConversationClient, snapshot.tasks]);
   // 图谱视图必须同时匹配当前项目 id 与响应元数据，避免切换项目后把 Zeus 或其他项目图谱挂到当前代码页。
   const activeGraphView = graphView && graphProjectId === activeProjectId && isProjectGraphViewForProject(graphView, selectedProject, { requireProjectIdentity: orderedProjects.length > 1 }) ? graphView : undefined;
   useEffect(() => {
@@ -9314,13 +9390,30 @@ export function App(props: {
     return props.onChooseConversationResources?.() ?? [];
   }
 
-  async function startNativeConversation(input: SessionWorkspaceStartInput): Promise<boolean> {
+  async function startNativeConversation(input: SessionWorkspaceStartInput): Promise<boolean | NativeConversationStartPreparation> {
     const client = props.nativeConversationClient;
     if (!client) {
       recordLocalError('native-conversation-start', new Error('Codex native app-server client is unavailable.'));
       return false;
     }
     setNativeConversationChoiceTaskStates((current) => ({ ...current, [input.task.id]: beginNativeConversationChoiceTaskLoad(current[input.task.id]) }));
+    if (input.source === 'code_review' && props.executionHostTransition?.state === 'draining_previous') {
+      try {
+        const request = nativeConversationStartEnvelopeManager.prepare(input);
+        return {
+          state: 'preparing',
+          cancel: () => {
+            nativeConversationStartEnvelopeManager.discardPending(input.task, request);
+            setNativeConversationChoiceTaskStates((current) => ({ ...current, [input.task.id]: completeNativeConversationChoiceTaskLoad(current[input.task.id]) }));
+          },
+        };
+      } catch (error) {
+        const message = redactLocalUiErrorMessage(errorToLocalUiMessage(error));
+        setNativeConversationChoiceTaskStates((current) => ({ ...current, [input.task.id]: failNativeConversationChoiceTaskLoad(current[input.task.id], message) }));
+        recordLocalError('native-code-review-prepare', error);
+        return false;
+      }
+    }
     let refreshError: unknown | null = null;
     try {
       const result = await startNativeConversationWithDurableAcceptance({
@@ -12847,6 +12940,8 @@ export function App(props: {
                 projectName={snapshot.projects.find((project) => project.id === snapshot.tasks.find((task) => task.id === taskGitMergeTaskId)?.projectId)?.name}
                 currentConversationWorkspaceId={selectedNativeConversation?.taskId === taskGitMergeTaskId ? selectedNativeConversation.workspaceId : null}
                 client={props.nativeConversationClient ?? null}
+                executionReady={props.executionHostTransition?.state !== 'draining_previous'}
+                onQueueConflictAiStart={persistPendingConflictAiStart}
                 onChanged={() =>
                   taskGitMergeTaskId
                     ? Promise.all([

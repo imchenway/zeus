@@ -94,7 +94,7 @@ export interface ProjectSessionWorkspaceStartInput {
 }
 
 export interface SessionWorkspaceActions {
-  onStartConversation?: (input: SessionWorkspaceStartInput) => void | boolean | Promise<void | boolean>;
+  onStartConversation?: (input: SessionWorkspaceStartInput) => void | boolean | NativeConversationStartPreparation | Promise<void | boolean | NativeConversationStartPreparation>;
   onStartProjectConversation?: (input: ProjectSessionWorkspaceStartInput) => void | boolean | Promise<void | boolean>;
   onLoadCapabilities?: (projectId: string) => Promise<CodexConversationCapabilities>;
   onReconnect?: () => void | Promise<void>;
@@ -139,6 +139,11 @@ export interface SessionWorkspaceActions {
   onOpenTurnChangeFile?: (changeSet: TurnChangeSet, file: TurnChangeFile, target: ConversationOpenTarget, location?: ConversationFileLocation) => Promise<ConversationResourceOpenActionResult>;
   onLoadResourcePreview?: (resource: ConversationResource) => Promise<ConversationResourcePreview>;
   onOperateTurnChangeSet?: (changeSet: TurnChangeSet, action: 'undo' | 'reapply') => Promise<TurnChangeSetOperationResult>;
+}
+
+export interface NativeConversationStartPreparation {
+  state: 'preparing';
+  cancel: () => void;
 }
 
 export interface ConversationResourceOpenActionResult {
@@ -186,6 +191,9 @@ interface PersistedNativeConversationStartEnvelope {
 export interface NativeConversationStartEnvelopeManager {
   prepare(input: SessionWorkspaceStartInput): StartNativeConversationRequest;
   clearAccepted(input: SessionWorkspaceStartInput, request: StartNativeConversationRequest, acceptance: NativeOperationAcceptance): boolean;
+  pending(task: Pick<SessionWorkspaceTask, 'id' | 'projectId'>): StartNativeConversationRequest | null;
+  clearPending(task: Pick<SessionWorkspaceTask, 'id' | 'projectId'>, request: StartNativeConversationRequest, acceptance: NativeOperationAcceptance): boolean;
+  discardPending(task: Pick<SessionWorkspaceTask, 'id' | 'projectId'>, request: StartNativeConversationRequest): boolean;
 }
 
 export async function loadLegacyConversationDetail<T>(conversation: NativeConversationChoice, load: (projectId: string, sourceConversationId: string) => Promise<T>): Promise<{ sourceConversationId: string; detail: T }> {
@@ -739,6 +747,34 @@ export function createNativeConversationStartEnvelopeManager(options: { storage?
         return false;
       }
     },
+    pending(task) {
+      if (!options.storage) return null;
+      return readPersistedNativeConversationStartEnvelope(options.storage, startNativeConversationStorageKey(task))?.request ?? null;
+    },
+    clearPending(task, request, acceptance) {
+      if (!options.storage || !isDurableNativeConversationAcceptance(request, acceptance)) return false;
+      const storageKey = startNativeConversationStorageKey(task);
+      const persisted = readPersistedNativeConversationStartEnvelope(options.storage, storageKey);
+      if (!persisted || persisted.request.idempotencyKey !== request.idempotencyKey || persisted.request.clientUserMessageId !== request.clientUserMessageId) return false;
+      try {
+        options.storage.removeItem(storageKey);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    discardPending(task, request) {
+      if (!options.storage) return false;
+      const storageKey = startNativeConversationStorageKey(task);
+      const persisted = readPersistedNativeConversationStartEnvelope(options.storage, storageKey);
+      if (!persisted || persisted.request.idempotencyKey !== request.idempotencyKey || persisted.request.clientUserMessageId !== request.clientUserMessageId) return false;
+      try {
+        options.storage.removeItem(storageKey);
+        return true;
+      } catch {
+        return false;
+      }
+    },
   };
 }
 
@@ -790,7 +826,7 @@ function startNativeConversationFingerprint(input: SessionWorkspaceStartInput, p
   return JSON.stringify({ projectId: input.task.projectId, taskId: input.task.id, payload });
 }
 
-function startNativeConversationStorageKey(task: SessionWorkspaceTask): string {
+function startNativeConversationStorageKey(task: Pick<SessionWorkspaceTask, 'id' | 'projectId'>): string {
   return `zeus.native-conversation-start:v1:${encodeURIComponent(task.projectId)}:${encodeURIComponent(task.id)}`;
 }
 
@@ -2097,7 +2133,7 @@ function NewConversationComposer(props: {
     setSubmitting(true);
     setLocalError(null);
     try {
-      let accepted: void | boolean;
+      let accepted: void | boolean | NativeConversationStartPreparation;
       if (props.owner.kind === 'project') {
         if (!props.onStartProject) throw new Error('Project conversation start is unavailable.');
         accepted = await props.onStartProject({ owner: props.owner, content, attachments, permissionMode, collaborationMode, serviceTierSelection });

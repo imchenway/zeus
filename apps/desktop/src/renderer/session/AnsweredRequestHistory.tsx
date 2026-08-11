@@ -1,4 +1,4 @@
-import { CaretDownIcon as CaretDown } from '@phosphor-icons/react/dist/csr/CaretDown';
+import { CheckIcon as Check } from '@phosphor-icons/react/dist/csr/Check';
 import { CheckCircleIcon as CheckCircle } from '@phosphor-icons/react/dist/csr/CheckCircle';
 import { normalizeRequestQuestions, type RequestQuestion } from './PendingRequestSurface.js';
 import type { NativePendingRequest } from './sessionTypes.js';
@@ -22,6 +22,8 @@ const labels = {
     redactedAnswer: '回答已提交，历史内容已脱敏',
     region: '已回答询问',
     separator: '、',
+    selected: '已选择',
+    userChoice: '用户选择',
   },
   'en-US': {
     answered: 'Answered',
@@ -30,6 +32,8 @@ const labels = {
     redactedAnswer: 'Answer submitted; historical content is redacted',
     region: 'Answered questions',
     separator: ', ',
+    selected: 'Selected',
+    userChoice: 'User choice',
   },
 } as const;
 
@@ -37,32 +41,54 @@ export function AnsweredRequestHistory(props: AnsweredRequestHistoryProps) {
   const copy = labels[props.language];
   const entries = answeredQuestions(props.request);
   if (entries.length === 0) return null;
-  const first = entries[0]!;
-  const summaryAnswer = answerText(first, copy.secretAnswer, copy.redactedAnswer, copy.separator);
-  const summaryPrefix = entries.length === 1 ? copy.answered : copy.answeredCount(entries.length);
+  const heading = entries.length === 1 ? copy.answered : copy.answeredCount(entries.length);
 
   return (
     <article className="session-answered-request" aria-label={copy.region}>
-      <details>
-        <summary>
-          <CheckCircle aria-hidden="true" />
-          <span className="session-answered-request-summary">
-            <span>{summaryPrefix}</span>
-            <strong>{first.question.question}</strong>
-            <span>{summaryAnswer}</span>
-          </span>
-          <CaretDown className="session-answered-request-caret" aria-hidden="true" />
-        </summary>
-        <div className="session-answered-request-body">
-          {entries.map((entry, index) => (
+      <header className="session-answered-request-heading">
+        <CheckCircle aria-hidden="true" />
+        <strong>{heading}</strong>
+      </header>
+      <div className="session-answered-request-body">
+        {entries.map((entry, index) => {
+          const selectedAnswers = new Set(entry.answers ?? []);
+          const optionLabels = new Set(entry.question.options.map((option) => option.label));
+          const customAnswers = entry.answers?.filter((answer) => !optionLabels.has(answer)) ?? [];
+          const showAnswerText = entry.question.kind === 'freeform' || entry.question.secret || entry.answers === null;
+          return (
             <section key={entry.question.id}>
               <small>{entry.question.header || `${index + 1}`}</small>
               <strong>{entry.question.question}</strong>
-              <p>{answerText(entry, copy.secretAnswer, copy.redactedAnswer, copy.separator)}</p>
+              {entry.question.options.length > 0 ? (
+                <ul className="session-answered-request-options">
+                  {entry.question.options.map((option) => {
+                    const selected = !entry.question.secret && selectedAnswers.has(option.label);
+                    return (
+                      <li key={option.label} className={selected ? 'is-selected' : undefined}>
+                        <span className="session-answered-request-option-marker" aria-hidden="true">
+                          {selected ? <Check weight="bold" /> : null}
+                        </span>
+                        <span>
+                          <strong>{option.label}</strong>
+                          {option.description ? <small>{option.description}</small> : null}
+                        </span>
+                        {selected ? <em>{copy.selected}</em> : null}
+                      </li>
+                    );
+                  })}
+                </ul>
+              ) : null}
+              {showAnswerText ? <p>{answerText(entry, copy.secretAnswer, copy.redactedAnswer, copy.separator)}</p> : null}
+              {customAnswers.length > 0 ? (
+                <p className="session-answered-request-custom-answer">
+                  <small>{copy.userChoice}</small>
+                  <span>{customAnswers.join(copy.separator)}</span>
+                </p>
+              ) : null}
             </section>
-          ))}
-        </div>
-      </details>
+          );
+        })}
+      </div>
     </article>
   );
 }

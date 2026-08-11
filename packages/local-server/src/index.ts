@@ -82,6 +82,7 @@ import {
   buildTaskBranchName,
   buildTaskEnvironmentRootPath,
   cleanupPreparedTaskWorktree,
+  cleanupTaskIntegrationWorktree,
   commitTaskWorkspace,
   completeTaskIntegrationCommit,
   confirmGitOperation,
@@ -119,6 +120,7 @@ import {
   rejectGitOperation,
   removeTaskWorktreeForTerminalStatus,
   startTaskBranchIntegration,
+  startTaskIntegrationAttempt,
   writeTaskIntegrationResolution,
   writeTaskIntegrationDraft,
 } from '@zeus/git-core';
@@ -158,6 +160,7 @@ import {
   type SqlValue,
   TaskEnvironmentRepository,
   TaskEventRepository,
+  TaskIntegrationAttemptRepository,
   TaskIntegrationRepository,
   type TaskManagementStatus,
   type TaskPriority,
@@ -1591,7 +1594,7 @@ type StartTaskConversationBody = (
       attachments?: NativeConversationAttachment[];
       inheritConversationId?: string;
       permissionMode?: ConversationPermissionMode;
-      source?: 'task_push' | 'code_review';
+      source?: 'task_push' | 'code_review' | 'conflict_resolution';
       model?: string;
       effort?: string;
       serviceTier?: string | null;
@@ -1603,6 +1606,9 @@ type StartTaskConversationBody = (
         parentSelections: TaskPushParentContextSelection[];
         relatedSelections: TaskPushRelatedContextSelection[];
       };
+      integrationId?: string;
+      conflictPath?: string;
+      conflictContent?: string;
       workspace?:
         | { mode: 'direct'; confirmConcurrentWrites?: boolean }
         | {
@@ -1968,6 +1974,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   const taskConversationExecutionContextPromises = new Map<string, Promise<{ projectLocalPath: string; writableRoots: string[] } | null>>();
   const taskConversationReopenInProgressIds = new Set<string>();
   const taskIntegrations = new TaskIntegrationRepository(db);
+  const taskIntegrationAttempts = new TaskIntegrationAttemptRepository(db);
   const taskConflictAiOperations = new Map<string, { conversationId: string; submissionId: string; running: boolean; finalizing: boolean }>();
   const taskEvents = new TaskEventRepository(db);
   const taskTemplates = new TaskTemplateRepository(db);
@@ -2689,14 +2696,14 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           ? conversations.listNativeBoundRecords('codex').map((conversation) => conversation.id)
           : [];
     if ((mappedType === 'conversation.turn.started' || mappedType === 'conversation.turn.completed') && typeof payload.conversationId === 'string') {
-      for (const [integrationId, operation] of taskConflictAiOperations) {
+      for (const [attemptId, operation] of taskConflictAiOperations) {
         if (operation.conversationId !== payload.conversationId) continue;
         if (mappedType === 'conversation.turn.started') {
           operation.running = true;
           continue;
         }
         operation.running = false;
-        if (payload.status === 'completed') scheduleTaskIntegrationAiFinalization(integrationId, operation.conversationId);
+        if (payload.status === 'completed') scheduleTaskIntegrationAiFinalization(attemptId, operation.conversationId);
       }
     }
     if (mappedType !== 'conversation.item.delta') flushPendingNativeDeltaEvents();
@@ -5352,135 +5359,37 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     async (request: FastifyRequest<{ Params: { taskId: string; integrationId: string }; Querystring: { path?: string }; Body: AssistTaskIntegrationConflictBody }>, reply) => {
       const resolved = resolveTaskIntegrationRequest(request.params.taskId, request.params.integrationId);
       if ('error' in resolved) return reply.code(resolved.status).send(resolved.error);
-      if (!resolved.integration.integrationPath) return reply.code(409).send({ error: 'ZEUS_TASK_INTEGRATION_PATH_UNAVAILABLE', message: 'Integration worktree is unavailable.' });
-      if (resolved.integration.state !== 'conflicted' || resolved.integration.conflictFiles.length === 0) {
-        return reply.code(409).send({ error: 'ZEUS_TASK_INTEGRATION_NOT_CONFLICTED', message: '当前合入没有待 AI 处理的冲突。' });
-      }
       const path = request.query.path?.trim();
       if (!path) return reply.code(400).send({ error: 'ZEUS_GIT_PATH_REQUIRED', message: 'path is required' });
-      if (!resolved.integration.conflictFiles.includes(path)) return reply.code(404).send({ error: 'ZEUS_TASK_CONFLICT_NOT_FOUND', message: '当前文件已不在待处理冲突列表中。' });
       const content = request.body?.content;
       if (typeof content !== 'string') return reply.code(400).send({ error: 'ZEUS_TASK_CONFLICT_CONTENT_REQUIRED', message: 'Conflict draft content is required.' });
-      if (content.length > 2_000_000) return reply.code(413).send({ error: 'ZEUS_TASK_CONFLICT_TOO_LARGE', message: '当前冲突草稿过大，无法交给 AI 处理。' });
       const permissionMode = parseConversationPermissionMode(request.body?.permissionMode);
       if (!permissionMode) return reply.code(400).send({ error: 'ZEUS_INVALID_PERMISSION_MODE', message: 'permissionMode must be read-only, auto, or full-access.' });
-      if (permissionMode === 'read-only') {
-        return reply.code(400).send({ error: 'ZEUS_CONFLICT_AI_WRITE_PERMISSION_REQUIRED', message: '冲突处理需要修改并暂存隔离合并工作区，请选择自动或完全访问。' });
-      }
+      const idempotencyKey = readIdempotencyKey(request);
+      if (!idempotencyKey) return reply.code(400).send({ error: 'ZEUS_IDEMPOTENCY_KEY_REQUIRED', message: 'Idempotency-Key header is required.' });
       try {
-        const running = taskConflictAiOperations.get(resolved.integration.id);
-        if (running) {
-          const existingConversation = conversations.getById(running.conversationId);
-          if (existingConversation) {
-            return {
-              path,
-              agentKind: existingConversation.agentKind === 'pi' ? 'pi' : 'codex',
-              modelSourceId: existingConversation.modelSourceId,
-              modelId: existingConversation.modelId ?? existingConversation.providerModel ?? '',
-              conversationId: existingConversation.id,
-              status: 'active',
-            };
-          }
-          taskConflictAiOperations.delete(resolved.integration.id);
+        const accepted = await executeTaskConversationIdempotent(
+          resolved.project,
+          resolved.task,
+          { mode: 'create', source: 'conflict_resolution', integrationId: resolved.integration.id, conflictPath: path, conflictContent: content, permissionMode },
+          idempotencyKey,
+        );
+        const acceptance = accepted.body;
+        if (!isNativeApiRecord(acceptance) || !isNativeApiRecord(acceptance.conversation) || typeof acceptance.conversation.id !== 'string') {
+          throw nativeApiError('ZEUS_NATIVE_ACCEPTANCE_NOT_DURABLE', 'Conflict conversation acceptance did not return the reserved conversation.');
         }
-        const modelConversation = conversations
-          .listByTask(resolved.task.id)
-          .filter((conversation) => (conversation.agentKind === 'codex' || conversation.agentKind === 'pi') && Boolean(conversation.modelId ?? conversation.providerModel))
-          .sort((left, right) => Number(right.workspaceId === resolved.workspace.id) - Number(left.workspaceId === resolved.workspace.id))[0];
-        if (!modelConversation || (modelConversation.agentKind !== 'codex' && modelConversation.agentKind !== 'pi')) {
-          throw nativeApiError('ZEUS_CONFLICT_AI_MODEL_SELECTION_REQUIRED', '这条任务开发线没有可沿用的 AI 模型，请先选择模型。');
-        }
-        const modelId = modelConversation.modelId ?? modelConversation.providerModel;
-        if (!modelId) throw nativeApiError('ZEUS_CONFLICT_AI_MODEL_SELECTION_REQUIRED', '这条任务开发线没有可沿用的 AI 模型，请先选择模型。');
-        const settings = conversations.getNextTurnSettings(modelConversation.id);
-        await assertTaskIntegrationStillCurrent(resolved.project, resolved.workspace, resolved.integration);
-        await writeTaskIntegrationDraft(resolved.integration.integrationPath, path, content);
-        const prompt = buildTaskConflictAiPrompt({
-          targetBranch: resolved.integration.targetBranch,
-          taskBranch: resolved.workspace.branchName,
-          mode: resolved.integration.mode,
-        });
-        const conversationTitle = buildTaskConflictAiConversationTitle({ taskBranch: resolved.workspace.branchName, targetBranch: resolved.integration.targetBranch });
-        const conversationId = randomUUID();
-        const submissionId = randomUUID();
-        const operation =
-          modelConversation.agentKind === 'pi'
-            ? await piNativeCoordinator.startConversation({
-                conversationId,
-                submissionId,
-                projectId: resolved.project.id,
-                taskId: resolved.task.id,
-                taskTitle: resolved.task.title,
-                conversationTitle,
-                cwd: resolved.integration.integrationPath,
-                prompt,
-                model: { sourceId: modelConversation.modelSourceId, modelId, displayName: null },
-                ...(settings?.effort ? { thinkingLevel: settings.effort } : {}),
-                permissionMode,
-                idempotencyKey: randomUUID(),
-                clientUserMessageId: randomUUID(),
-                workspaceId: resolved.workspace.id,
-                ...(resolved.workspace.environmentId ? { environmentId: resolved.workspace.environmentId } : {}),
-              })
-            : await codexNativeCoordinator.startTaskConversation({
-                conversationId,
-                submissionId,
-                projectId: resolved.project.id,
-                projectLocalPath: resolved.integration.integrationPath,
-                taskId: resolved.task.id,
-                workspaceId: resolved.workspace.id,
-                ...(resolved.workspace.environmentId ? { environmentId: resolved.workspace.environmentId } : {}),
-                conversationTitle,
-                taskTitle: resolved.task.title,
-                prompt,
-                writableRoots: [resolved.integration.integrationPath],
-                model: modelId,
-                ...(settings?.effort ? { effort: settings.effort } : {}),
-                ...(settings && Object.prototype.hasOwnProperty.call(settings, 'serviceTier') ? { serviceTier: settings.serviceTier } : {}),
-                allowCodeChanges: true,
-                allowTests: true,
-                allowGitCommit: false,
-                permissionMode,
-                applyLegacyTaskGuards: false,
-                // 冲突处理是用户显式发起的本地合入操作，直接进入可见会话。
-                bypassConcurrency: true,
-                idempotencyKey: randomUUID(),
-                clientUserMessageId: randomUUID(),
-              });
-        const submissionError = toNativeSubmissionError(conversationSubmissions.getById(operation.submissionId)?.errorJson ?? null);
-        if (submissionError) throw nativeApiError(submissionError.code, submissionError.message);
-        taskConflictAiOperations.set(resolved.integration.id, {
-          conversationId: operation.conversationId,
-          submissionId: operation.submissionId,
-          running: operation.status === 'active' || operation.status === 'queued',
-          finalizing: false,
-        });
-        if (conversationSubmissions.getById(operation.submissionId)?.status === 'completed') {
-          scheduleTaskIntegrationAiFinalization(resolved.integration.id, operation.conversationId);
-        }
-        recordTaskEvent({
-          taskId: resolved.task.id,
-          eventType: 'task.git_integration.ai_started',
-          title: '冲突处理：AI 已开始处理本地合入',
-          payload: {
-            integrationId: resolved.integration.id,
-            workspaceId: resolved.workspace.id,
-            conversationId: operation.conversationId,
-            targetBranch: resolved.integration.targetBranch,
-            taskBranch: resolved.workspace.branchName,
-          },
-        });
-        await db.save();
-        return {
+        const conversation = conversations.getById(acceptance.conversation.id);
+        if (!conversation) throw nativeApiError('ZEUS_NATIVE_ACCEPTANCE_NOT_DURABLE', 'Conflict conversation acceptance was not persisted.');
+        return reply.code(accepted.statusCode).send({
           path,
-          agentKind: modelConversation.agentKind,
-          modelSourceId: modelConversation.modelSourceId,
-          modelId,
-          conversationId: operation.conversationId,
-          status: operation.status,
-        };
+          agentKind: conversation.agentKind === 'pi' ? 'pi' : 'codex',
+          modelSourceId: conversation.modelSourceId,
+          modelId: conversation.modelId ?? conversation.providerModel ?? '',
+          conversationId: conversation.id,
+          status: conversation.status,
+        });
       } catch (error) {
-        return sendTaskGitApiError(reply, error);
+        return sendNativeConversationApiError(reply, error);
       }
     },
   );
@@ -5490,10 +5399,6 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     async (request: FastifyRequest<{ Params: { taskId: string; integrationId: string }; Querystring: { path?: string }; Body: ResolveTaskIntegrationConflictBody }>, reply) => {
       const resolved = resolveTaskIntegrationRequest(request.params.taskId, request.params.integrationId);
       if ('error' in resolved) return reply.code(resolved.status).send(resolved.error);
-      const aiOperation = taskConflictAiOperations.get(resolved.integration.id);
-      if (aiOperation?.running || aiOperation?.finalizing) {
-        return reply.code(409).send({ error: 'ZEUS_TASK_INTEGRATION_AI_BUSY', message: 'AI 正在对应会话中处理本地合入，请先在会话中完成或中断本轮操作。' });
-      }
       if (!resolved.integration.integrationPath) return reply.code(409).send({ error: 'ZEUS_TASK_INTEGRATION_PATH_UNAVAILABLE', message: 'Integration worktree is unavailable.' });
       if (typeof request.body?.content !== 'string') return reply.code(400).send({ error: 'ZEUS_TASK_CONFLICT_CONTENT_REQUIRED', message: 'Resolved content is required.' });
       const path = request.query.path?.trim();
@@ -5521,10 +5426,6 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     const resolved = resolveTaskIntegrationRequest(request.params.taskId, request.params.integrationId);
     if ('error' in resolved) return reply.code(resolved.status).send(resolved.error);
     const { task, project, integration, workspace } = resolved;
-    const aiOperation = taskConflictAiOperations.get(integration.id);
-    if (aiOperation?.running || aiOperation?.finalizing) {
-      return reply.code(409).send({ error: 'ZEUS_TASK_INTEGRATION_AI_BUSY', message: 'AI 正在对应会话中处理本地合入，请先在会话中完成或中断本轮操作。' });
-    }
     if (!integration.integrationPath) return reply.code(409).send({ error: 'ZEUS_TASK_INTEGRATION_PATH_UNAVAILABLE', message: 'Integration worktree is unavailable.' });
     try {
       await assertTaskIntegrationStillCurrent(project, workspace, integration);
@@ -13490,23 +13391,32 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     };
   }
 
-  function taskConflictIntegrationForConversation(conversation: ZeusConversationRecord): ZeusTaskIntegrationRecord | null {
+  function taskConflictExecutionForConversation(conversation: ZeusConversationRecord): { operationId: string; integration: ZeusTaskIntegrationRecord; worktreePath: string } | null {
+    const persistedAttempt = taskIntegrationAttempts.getByConversationId(conversation.id);
+    if (persistedAttempt) {
+      const integration = taskIntegrations.getById(persistedAttempt.integrationId);
+      return integration ? { operationId: persistedAttempt.id, integration, worktreePath: persistedAttempt.worktreePath } : null;
+    }
     const tracked = [...taskConflictAiOperations.entries()].find(([, operation]) => operation.conversationId === conversation.id);
-    if (tracked) return taskIntegrations.getById(tracked[0]) ?? null;
+    if (tracked) {
+      const attempt = taskIntegrationAttempts.getById(tracked[0]);
+      const integration = taskIntegrations.getById(attempt?.integrationId ?? tracked[0]);
+      const worktreePath = attempt?.worktreePath ?? integration?.integrationPath;
+      if (integration && worktreePath) return { operationId: tracked[0], integration, worktreePath };
+    }
     if (!conversation.taskId || !conversation.workspaceId) return null;
     const workspace = taskWorkspaces.getById(conversation.workspaceId);
     if (!workspace) return null;
-    return (
-      taskIntegrations
-        .listByTask(conversation.taskId)
-        .find(
-          (integration) =>
-            integration.workspaceId === conversation.workspaceId &&
-            integration.state === 'conflicted' &&
-            Boolean(integration.integrationPath) &&
-            matchesTaskConflictAiConversationTitle({ title: conversation.title, taskBranch: workspace.branchName, targetBranch: integration.targetBranch }),
-        ) ?? null
-    );
+    const integration = taskIntegrations
+      .listByTask(conversation.taskId)
+      .find(
+        (candidate) =>
+          candidate.workspaceId === conversation.workspaceId &&
+          candidate.state === 'conflicted' &&
+          Boolean(candidate.integrationPath) &&
+          matchesTaskConflictAiConversationTitle({ title: conversation.title, taskBranch: workspace.branchName, targetBranch: candidate.targetBranch }),
+      );
+    return integration?.integrationPath ? { operationId: integration.id, integration, worktreePath: integration.integrationPath } : null;
   }
 
   function resolveNativeConversationExecutionRoot(conversation: ZeusConversationRecord): string | null {
@@ -13519,8 +13429,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     const environment = conversation.environmentId ? taskEnvironments.getById(conversation.environmentId) : undefined;
     const project = projects.getById(conversation.projectId);
     if (conversation.taskId) {
-      const conflictIntegration = taskConflictIntegrationForConversation(conversation);
-      if (conflictIntegration?.integrationPath && existsSync(conflictIntegration.integrationPath)) return resolve(conflictIntegration.integrationPath);
+      const conflictExecution = taskConflictExecutionForConversation(conversation);
+      if (conflictExecution) return existsSync(conflictExecution.worktreePath) ? resolve(conflictExecution.worktreePath) : null;
       const projectPath = project?.localPath ? resolve(project.localPath) : null;
       const environmentPath = environment?.rootPath ? resolve(environment.rootPath) : null;
       if (environmentPath && existsSync(environmentPath) && environmentPath !== projectPath) return environmentPath;
@@ -13558,12 +13468,15 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       if (taskManagementStatusIsTerminal(task) && !taskConversationReopenInProgressIds.has(conversation.id)) {
         throw nativeApiError('ZEUS_TASK_REOPEN_REQUIRED', 'This task is completed or cancelled. Reopen the task and restore this conversation in the same action.');
       }
-      const conflictIntegration = taskConflictIntegrationForConversation(conversation);
-      if (conflictIntegration?.integrationPath && existsSync(conflictIntegration.integrationPath)) {
+      const conflictExecution = taskConflictExecutionForConversation(conversation);
+      if (conflictExecution && !existsSync(conflictExecution.worktreePath)) {
+        throw nativeApiError('ZEUS_NATIVE_CONVERSATION_WORKTREE_UNAVAILABLE', 'The isolated conflict attempt is no longer writable.');
+      }
+      if (conflictExecution) {
         const latestSubmission = conversationSubmissions.listByConversation(conversation.id).at(-1);
-        const operation = taskConflictAiOperations.get(conflictIntegration.id);
+        const operation = taskConflictAiOperations.get(conflictExecution.operationId);
         if (!operation) {
-          taskConflictAiOperations.set(conflictIntegration.id, {
+          taskConflictAiOperations.set(conflictExecution.operationId, {
             conversationId: conversation.id,
             submissionId: latestSubmission?.id ?? '',
             running:
@@ -13576,7 +13489,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
             finalizing: false,
           });
         }
-        return { projectLocalPath: resolve(conflictIntegration.integrationPath), writableRoots: [resolve(conflictIntegration.integrationPath)] };
+        return { projectLocalPath: resolve(conflictExecution.worktreePath), writableRoots: [resolve(conflictExecution.worktreePath)] };
       }
       if (workspace.state === 'discarded' || environment?.state === 'failed') {
         throw nativeApiError('ZEUS_NATIVE_CONVERSATION_WORKTREE_UNAVAILABLE', 'The task workspace was discarded and cannot be restored for this conversation.');
@@ -14240,6 +14153,98 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     }
   }
 
+  interface NativeTaskConversationStartPlan {
+    agentKind: 'codex' | 'pi';
+    conversationId: string;
+    submissionId: string;
+    projectId: string;
+    taskId: string;
+    taskTitle: string;
+    conversationTitle?: string;
+    cwd: string;
+    prompt: string;
+    displayText?: string;
+    model: { sourceId: string | null; modelId: string; displayName: string | null };
+    effort?: string;
+    serviceTier?: string | null;
+    serviceTierPresent?: boolean;
+    permissionMode: ConversationPermissionMode;
+    workMode?: ConversationCollaborationMode;
+    environmentId?: string;
+    workspaceId?: string;
+    writableRoots: string[];
+    allowCodeChanges: boolean;
+    allowTests: boolean;
+    allowGitCommit: boolean;
+    attachments?: NativeConversationAttachment[];
+    allowedAttachmentRoots?: string[];
+    taskPushLayout?: TaskPushMessageLayout;
+    legacyReference?: { conversationId: string; messageIds: string[] };
+    bypassConcurrency: boolean;
+    idempotencyKey: string;
+    clientUserMessageId: string;
+    providerWriteLifecycle: { markPrepared(submissionId: string): Promise<void>; markRpcStarted(submissionId: string): void };
+  }
+
+  /** 专用入口只生成计划；Provider 分流、身份和持久接受生命周期统一在此执行。 */
+  async function startNativeTaskConversationFromPlan(plan: NativeTaskConversationStartPlan) {
+    if (plan.agentKind === 'pi') {
+      return piNativeCoordinator.startConversation({
+        conversationId: plan.conversationId,
+        submissionId: plan.submissionId,
+        projectId: plan.projectId,
+        taskId: plan.taskId,
+        taskTitle: plan.taskTitle,
+        ...(plan.conversationTitle ? { conversationTitle: plan.conversationTitle } : {}),
+        cwd: plan.cwd,
+        prompt: plan.prompt,
+        ...(plan.displayText ? { displayText: plan.displayText } : {}),
+        model: plan.model,
+        ...(plan.effort ? { thinkingLevel: plan.effort } : {}),
+        ...(plan.attachments ? { attachments: plan.attachments } : {}),
+        ...(plan.allowedAttachmentRoots ? { allowedAttachmentRoots: plan.allowedAttachmentRoots } : {}),
+        ...(plan.taskPushLayout ? { taskPushLayout: plan.taskPushLayout } : {}),
+        permissionMode: plan.permissionMode,
+        idempotencyKey: plan.idempotencyKey,
+        clientUserMessageId: plan.clientUserMessageId,
+        ...(plan.environmentId ? { environmentId: plan.environmentId } : {}),
+        ...(plan.workspaceId ? { workspaceId: plan.workspaceId } : {}),
+        providerWriteLifecycle: plan.providerWriteLifecycle,
+      });
+    }
+    return codexNativeCoordinator.startTaskConversation({
+      conversationId: plan.conversationId,
+      submissionId: plan.submissionId,
+      projectId: plan.projectId,
+      projectLocalPath: plan.cwd,
+      taskId: plan.taskId,
+      ...(plan.environmentId ? { environmentId: plan.environmentId } : {}),
+      ...(plan.workspaceId ? { workspaceId: plan.workspaceId } : {}),
+      writableRoots: plan.writableRoots,
+      taskTitle: plan.taskTitle,
+      ...(plan.conversationTitle ? { conversationTitle: plan.conversationTitle } : {}),
+      prompt: plan.prompt,
+      ...(plan.displayText ? { displayText: plan.displayText } : {}),
+      ...(plan.attachments ? { attachments: plan.attachments } : {}),
+      ...(plan.allowedAttachmentRoots ? { allowedAttachmentRoots: plan.allowedAttachmentRoots } : {}),
+      ...(plan.taskPushLayout ? { taskPushLayout: plan.taskPushLayout } : {}),
+      model: plan.model.modelId,
+      ...(plan.effort ? { effort: plan.effort } : {}),
+      ...(plan.serviceTierPresent ? { serviceTier: plan.serviceTier ?? null } : {}),
+      allowCodeChanges: plan.allowCodeChanges,
+      allowTests: plan.allowTests,
+      allowGitCommit: plan.allowGitCommit,
+      permissionMode: plan.permissionMode,
+      ...(plan.workMode ? { workMode: plan.workMode } : {}),
+      applyLegacyTaskGuards: false,
+      bypassConcurrency: plan.bypassConcurrency,
+      idempotencyKey: plan.idempotencyKey,
+      clientUserMessageId: plan.clientUserMessageId,
+      ...(plan.legacyReference ? { legacyReference: plan.legacyReference } : {}),
+      providerWriteLifecycle: plan.providerWriteLifecycle,
+    });
+  }
+
   async function acceptTaskConversation(
     project: ZeusProjectRecord,
     task: ZeusTaskRecord,
@@ -14269,6 +14274,9 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     };
     let nativeOperation: { conversationId: string; submissionId: string; providerThreadId: string | null; providerTurnId: string | null; status: string };
     if (body.mode === 'create') {
+      if (body.source !== undefined && body.source !== 'task_push' && body.source !== 'code_review' && body.source !== 'conflict_resolution') {
+        throw nativeApiError('ZEUS_UNSUPPORTED_CONVERSATION_SOURCE', 'The current execution service does not support this conversation source.');
+      }
       if (body.source === 'task_push') {
         if (body.content !== undefined || body.attachments !== undefined) {
           throw nativeApiError('ZEUS_INVALID_TASK_PUSH', 'Task push content and attachments are assembled by the server from the canonical task record.');
@@ -14322,64 +14330,39 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         const taskPushPrompt = renderTaskPushLayoutText(taskPushLayout);
         if (selectedModel.agentKind !== 'pi') await assertCodexAccountReady();
         const taskEnvironment = directWorkspace ? null : await resolveTaskPushEnvironment(project, task, body.workspace, stableOperationId);
-        nativeOperation =
-          selectedModel.agentKind === 'pi'
-            ? await piNativeCoordinator.startConversation({
-                conversationId: reservation.conversationId,
-                submissionId: reservation.submissionId,
-                projectId: project.id,
-                taskId: task.id,
-                taskTitle: task.title,
-                cwd: taskEnvironment?.cwd ?? project.localPath,
-                prompt: taskPushPrompt,
-                taskPushLayout,
-                model: { sourceId: selectedModel.sourceId ?? null, modelId: selectedModel.model, displayName: selectedModel.displayName ?? null },
-                ...(selectedEffort ? { thinkingLevel: selectedEffort } : {}),
-                attachments: taskPushAttachments,
-                allowedAttachmentRoots: attachmentInput.allowedRoots,
-                permissionMode,
-                idempotencyKey,
-                clientUserMessageId,
-                ...(taskEnvironment
-                  ? {
-                      environmentId: taskEnvironment.environment.id,
-                      ...(taskEnvironment.workspaces[0] ? { workspaceId: taskEnvironment.workspaces[0].id } : {}),
-                    }
-                  : {}),
-              })
-            : await codexNativeCoordinator.startTaskConversation({
-                conversationId: reservation.conversationId,
-                submissionId: reservation.submissionId,
-                projectId: project.id,
-                projectLocalPath: taskEnvironment?.cwd ?? project.localPath,
-                taskId: task.id,
-                ...(taskEnvironment
-                  ? {
-                      environmentId: taskEnvironment.environment.id,
-                      ...(taskEnvironment.workspaces[0] ? { workspaceId: taskEnvironment.workspaces[0].id } : {}),
-                      writableRoots: taskEnvironment.writableRoots,
-                    }
-                  : { writableRoots: [project.localPath] }),
-                taskTitle: task.title,
-                prompt: taskPushPrompt,
-                taskPushLayout,
-                attachments: taskPushAttachments,
-                allowedAttachmentRoots: attachmentInput.allowedRoots,
-                model: selectedModel.model,
-                ...(selectedEffort ? { effort: selectedEffort } : {}),
-                ...(requestedServiceTier.present ? { serviceTier } : {}),
-                workMode,
-                // 兼容字段在该链路中不参与权限或提示词决策；权限完全取自弹窗的 permissionMode。
-                allowCodeChanges: false,
-                allowTests: false,
-                allowGitCommit: false,
-                applyLegacyTaskGuards: false,
-                bypassConcurrency: true,
-                permissionMode,
-                idempotencyKey,
-                clientUserMessageId,
-                providerWriteLifecycle: reservedLifecycle,
-              });
+        nativeOperation = await startNativeTaskConversationFromPlan({
+          agentKind: selectedModel.agentKind === 'pi' ? 'pi' : 'codex',
+          conversationId: reservation.conversationId,
+          submissionId: reservation.submissionId,
+          projectId: project.id,
+          taskId: task.id,
+          taskTitle: task.title,
+          cwd: taskEnvironment?.cwd ?? project.localPath,
+          prompt: taskPushPrompt,
+          taskPushLayout,
+          model: { sourceId: selectedModel.sourceId ?? null, modelId: selectedModel.model, displayName: selectedModel.displayName ?? null },
+          ...(selectedEffort ? { effort: selectedEffort } : {}),
+          serviceTier,
+          serviceTierPresent: requestedServiceTier.present,
+          permissionMode,
+          workMode,
+          ...(taskEnvironment
+            ? {
+                environmentId: taskEnvironment.environment.id,
+                ...(taskEnvironment.workspaces[0] ? { workspaceId: taskEnvironment.workspaces[0].id } : {}),
+              }
+            : {}),
+          writableRoots: taskEnvironment?.writableRoots ?? [project.localPath],
+          allowCodeChanges: false,
+          allowTests: false,
+          allowGitCommit: false,
+          attachments: taskPushAttachments,
+          allowedAttachmentRoots: attachmentInput.allowedRoots,
+          bypassConcurrency: true,
+          idempotencyKey,
+          clientUserMessageId,
+          providerWriteLifecycle: reservedLifecycle,
+        });
       } else if (body.source === 'code_review') {
         if (body.attachments !== undefined) throw nativeApiError('ZEUS_INVALID_CODE_REVIEW', 'Code review attachments are not accepted; the server reviews the persisted workspace directly.');
         if (body.collaborationMode !== undefined && body.collaborationMode !== 'default') {
@@ -14403,11 +14386,10 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           throw nativeApiError('ZEUS_TASK_EXECUTION_CONTEXT_INVALID', 'The code review repository workspace is not part of the source conversation environment.');
         }
 
-        const inheritedPermissionMode = conversations.getNextTurnSettings(sourceConversation.id)?.permissionMode ?? sourceConversation.permissionMode;
-        const permissionMode = body.permissionMode === undefined ? inheritedPermissionMode : parseConversationPermissionMode(body.permissionMode);
+        const permissionMode = body.permissionMode === undefined ? 'read-only' : parseConversationPermissionMode(body.permissionMode);
         if (!permissionMode) throw nativeApiError('ZEUS_INVALID_PERMISSION_MODE', 'permissionMode must be read-only, auto, or full-access.');
-        if (permissionMode !== inheritedPermissionMode) {
-          throw nativeApiError('ZEUS_CODE_REVIEW_PERMISSION_MISMATCH', 'Code review permission must inherit the current source conversation permission.');
+        if (permissionMode !== 'read-only') {
+          throw nativeApiError('ZEUS_CODE_REVIEW_PERMISSION_MISMATCH', 'Code review permission is fixed to read-only.');
         }
 
         const capabilities = await resolveConversationCapabilities(project);
@@ -14427,57 +14409,160 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         const inheritedEnvironment = await resolveTaskPushEnvironment(project, task, { mode: 'existing', environmentId: sourceConversation.environmentId }, stableOperationId);
         const reviewWorkspace = inheritedEnvironment.workspaces.find((workspace) => workspace.id === sourceWorkspace.id);
         if (!reviewWorkspace) throw nativeApiError('ZEUS_TASK_EXECUTION_CONTEXT_INVALID', 'The exact review repository could not be restored in the source environment.');
+        const reviewCwd = reviewWorkspace.worktreePath?.trim();
+        if (!reviewCwd || !existsSync(reviewCwd)) throw nativeApiError('ZEUS_TASK_EXECUTION_CONTEXT_REQUIRED', 'The exact code review worktree is unavailable.');
         const prompt = createTaskCodeReviewPrompt(task, reviewWorkspace);
         const displayText = '请审查当前工作区的完整代码变化。';
         if (selectedAgentKind === 'codex') await assertCodexAccountReady();
 
-        nativeOperation =
-          selectedModel.agentKind === 'pi'
-            ? await piNativeCoordinator.startConversation({
-                conversationId: reservation.conversationId,
-                submissionId: reservation.submissionId,
-                projectId: project.id,
-                taskId: task.id,
-                taskTitle: task.title,
-                conversationTitle: `代码审查：${task.title}`,
-                cwd: inheritedEnvironment.cwd,
-                prompt,
-                displayText,
-                model: { sourceId: selectedModel.sourceId ?? null, modelId: selectedModel.model, displayName: selectedModel.displayName ?? null },
-                ...(selectedEffort ? { thinkingLevel: selectedEffort } : {}),
-                permissionMode,
-                idempotencyKey,
-                clientUserMessageId,
-                environmentId: inheritedEnvironment.environment.id,
-                workspaceId: reviewWorkspace.id,
-              })
-            : await codexNativeCoordinator.startTaskConversation({
-                conversationId: reservation.conversationId,
-                submissionId: reservation.submissionId,
-                projectId: project.id,
-                projectLocalPath: inheritedEnvironment.cwd,
-                taskId: task.id,
-                environmentId: inheritedEnvironment.environment.id,
-                workspaceId: reviewWorkspace.id,
-                writableRoots: inheritedEnvironment.writableRoots,
-                taskTitle: task.title,
-                conversationTitle: `代码审查：${task.title}`,
-                prompt,
-                displayText,
-                model: selectedModel.model,
-                ...(selectedEffort ? { effort: selectedEffort } : {}),
-                ...(requestedServiceTier.present ? { serviceTier } : {}),
-                allowCodeChanges: false,
-                allowTests: false,
-                allowGitCommit: false,
-                applyLegacyTaskGuards: false,
-                bypassConcurrency: true,
-                permissionMode,
-                workMode: 'default',
-                idempotencyKey,
-                clientUserMessageId,
-                providerWriteLifecycle: reservedLifecycle,
-              });
+        nativeOperation = await startNativeTaskConversationFromPlan({
+          agentKind: selectedAgentKind,
+          conversationId: reservation.conversationId,
+          submissionId: reservation.submissionId,
+          projectId: project.id,
+          taskId: task.id,
+          taskTitle: task.title,
+          conversationTitle: `代码审查：${task.title}`,
+          cwd: reviewCwd,
+          prompt,
+          displayText,
+          model: { sourceId: selectedModel.sourceId ?? null, modelId: selectedModel.model, displayName: selectedModel.displayName ?? null },
+          ...(selectedEffort ? { effort: selectedEffort } : {}),
+          serviceTier,
+          serviceTierPresent: requestedServiceTier.present,
+          permissionMode,
+          workMode: 'default',
+          environmentId: inheritedEnvironment.environment.id,
+          workspaceId: reviewWorkspace.id,
+          writableRoots: [],
+          allowCodeChanges: false,
+          allowTests: false,
+          allowGitCommit: false,
+          bypassConcurrency: true,
+          idempotencyKey,
+          clientUserMessageId,
+          providerWriteLifecycle: reservedLifecycle,
+        });
+      } else if (body.source === 'conflict_resolution') {
+        const integrationId = typeof body.integrationId === 'string' ? body.integrationId.trim() : '';
+        const conflictPath = typeof body.conflictPath === 'string' ? body.conflictPath.trim() : '';
+        const conflictContent = typeof body.conflictContent === 'string' ? body.conflictContent : null;
+        if (!integrationId || !conflictPath || conflictContent === null) {
+          throw nativeApiError('ZEUS_INVALID_CONFLICT_AI_START', 'Conflict resolution requires integrationId, conflictPath, and conflictContent.');
+        }
+        if (conflictContent.length > 2_000_000) throw nativeApiError('ZEUS_TASK_CONFLICT_TOO_LARGE', '当前冲突草稿过大，无法交给 AI 处理。');
+        const resolved = resolveTaskIntegrationRequest(task.id, integrationId);
+        if ('error' in resolved) throw nativeApiError(resolved.error.error, resolved.error.message);
+        if (resolved.project.id !== project.id || resolved.integration.state !== 'conflicted' || !resolved.integration.conflictFiles.includes(conflictPath)) {
+          throw nativeApiError('ZEUS_TASK_INTEGRATION_NOT_CONFLICTED', '当前合入没有这项待 AI 处理的冲突。');
+        }
+        const permissionMode = parseConversationPermissionMode(body.permissionMode);
+        if (!permissionMode || permissionMode === 'read-only') {
+          throw nativeApiError('ZEUS_CONFLICT_AI_WRITE_PERMISSION_REQUIRED', '冲突处理需要修改并暂存隔离合并工作区，请选择自动或完全访问。');
+        }
+        await assertTaskIntegrationStillCurrent(project, resolved.workspace, resolved.integration);
+        if (!resolved.integration.taskHeadSha) throw nativeApiError('ZEUS_TASK_HEAD_CHANGED', 'The integration does not contain a frozen task HEAD. Rebuild it before starting AI conflict resolution.');
+
+        const modelConversation = conversations
+          .listByTask(task.id)
+          .filter((conversation) => (conversation.agentKind === 'codex' || conversation.agentKind === 'pi') && Boolean(conversation.modelId ?? conversation.providerModel))
+          .sort((left, right) => Number(right.workspaceId === resolved.workspace.id) - Number(left.workspaceId === resolved.workspace.id))[0];
+        if (!modelConversation || (modelConversation.agentKind !== 'codex' && modelConversation.agentKind !== 'pi')) {
+          throw nativeApiError('ZEUS_CONFLICT_AI_MODEL_SELECTION_REQUIRED', '这条任务开发线没有可沿用的 AI 模型，请先选择模型。');
+        }
+        const modelId = modelConversation.modelId ?? modelConversation.providerModel;
+        if (!modelId) throw nativeApiError('ZEUS_CONFLICT_AI_MODEL_SELECTION_REQUIRED', '这条任务开发线没有可沿用的 AI 模型，请先选择模型。');
+        const settings = conversations.getNextTurnSettings(modelConversation.id);
+        const attemptId = `task_integration_attempt_${createHash('sha256').update(`${stableOperationId}\0${integrationId}`).digest('hex').slice(0, 20)}`;
+        const repositoryPath = resolved.workspace.repositoryPath || project.localPath;
+        const existingAttempt = taskIntegrationAttempts.getById(attemptId);
+        const started = await startTaskIntegrationAttempt({
+          repositoryPath,
+          projectSlug: project.slug,
+          integrationId,
+          attemptId,
+          targetBranch: resolved.integration.targetBranch,
+          targetHeadSha: resolved.integration.targetHeadSha,
+          taskBranch: resolved.workspace.branchName,
+          taskHeadSha: resolved.integration.taskHeadSha,
+          mode: resolved.integration.mode,
+          commitMessage: `${task.taskCode}: 合入 ${resolved.workspace.branchName}`,
+        });
+        if (started.state !== 'conflicted' || !started.conflictFiles.includes(conflictPath)) {
+          if (!existingAttempt) {
+            await cleanupTaskIntegrationWorktree({ repositoryPath, integrationPath: started.integrationPath }).catch(() => undefined);
+          }
+          throw nativeApiError('ZEUS_TASK_CONFLICT_NOT_FOUND', '独立冲突处理现场中已没有当前待处理文件。');
+        }
+        if (existingAttempt) {
+          if (
+            existingAttempt.integrationId !== integrationId ||
+            existingAttempt.conversationId !== reservation.conversationId ||
+            existingAttempt.submissionId !== reservation.submissionId ||
+            resolve(existingAttempt.worktreePath) !== resolve(started.integrationPath)
+          ) {
+            throw nativeApiError('ZEUS_NATIVE_RESERVED_RESOURCE_CONFLICT', 'The persisted conflict attempt does not match the reserved conversation resources.');
+          }
+        } else {
+          taskIntegrationAttempts.create({
+            id: attemptId,
+            integrationId,
+            conversationId: reservation.conversationId,
+            submissionId: reservation.submissionId,
+            worktreePath: started.integrationPath,
+            targetHeadSha: started.targetHeadSha,
+            taskHeadSha: started.taskHeadSha,
+          });
+          await db.save();
+        }
+        await writeTaskIntegrationDraft(started.integrationPath, conflictPath, conflictContent);
+        const prompt = buildTaskConflictAiPrompt({ targetBranch: resolved.integration.targetBranch, taskBranch: resolved.workspace.branchName, mode: resolved.integration.mode });
+        const selectedAgentKind = modelConversation.agentKind;
+        if (selectedAgentKind === 'codex') await assertCodexAccountReady();
+        nativeOperation = await startNativeTaskConversationFromPlan({
+          agentKind: selectedAgentKind,
+          conversationId: reservation.conversationId,
+          submissionId: reservation.submissionId,
+          projectId: project.id,
+          taskId: task.id,
+          taskTitle: task.title,
+          conversationTitle: buildTaskConflictAiConversationTitle({ taskBranch: resolved.workspace.branchName, targetBranch: resolved.integration.targetBranch }),
+          cwd: started.integrationPath,
+          prompt,
+          displayText: '请处理当前本地合入中的全部冲突。',
+          model: { sourceId: modelConversation.modelSourceId, modelId, displayName: null },
+          ...(settings?.effort ? { effort: settings.effort } : {}),
+          ...(settings && Object.prototype.hasOwnProperty.call(settings, 'serviceTier') ? { serviceTier: settings.serviceTier, serviceTierPresent: true } : {}),
+          permissionMode,
+          workMode: 'default',
+          ...(resolved.workspace.environmentId ? { environmentId: resolved.workspace.environmentId } : {}),
+          workspaceId: resolved.workspace.id,
+          writableRoots: [started.integrationPath],
+          allowCodeChanges: true,
+          allowTests: true,
+          allowGitCommit: false,
+          bypassConcurrency: true,
+          idempotencyKey,
+          clientUserMessageId,
+          providerWriteLifecycle: reservedLifecycle,
+        });
+        taskIntegrationAttempts.update(attemptId, { state: nativeOperation.status === 'failed' ? 'failed' : 'active', lastError: null });
+        taskConflictAiOperations.set(attemptId, {
+          conversationId: nativeOperation.conversationId,
+          submissionId: nativeOperation.submissionId,
+          running: nativeOperation.status === 'active' || nativeOperation.status === 'queued',
+          finalizing: false,
+        });
+        if (conversationSubmissions.getById(nativeOperation.submissionId)?.status === 'completed') {
+          scheduleTaskIntegrationAiFinalization(attemptId, nativeOperation.conversationId);
+        }
+        recordTaskEvent({
+          taskId: task.id,
+          eventType: 'task.git_integration.ai_started',
+          title: '冲突处理：AI 已开始处理独立合入尝试',
+          payload: { integrationId, attemptId, workspaceId: resolved.workspace.id, conversationId: nativeOperation.conversationId, targetBranch: resolved.integration.targetBranch, taskBranch: resolved.workspace.branchName },
+        });
+        await db.save();
       } else {
         if (body.content !== undefined && typeof body.content !== 'string') throw nativeApiError('ZEUS_INVALID_CONVERSATION_START', 'Create content must be a string.');
         const collaborationMode = body.collaborationMode === undefined ? 'default' : parseConversationCollaborationMode(body.collaborationMode);
@@ -14510,30 +14595,33 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
             stableOperationId,
           );
         }
-        nativeOperation = await codexNativeCoordinator.startTaskConversation({
+        nativeOperation = await startNativeTaskConversationFromPlan({
+          agentKind: 'codex',
           conversationId: reservation.conversationId,
           submissionId: reservation.submissionId,
           projectId: project.id,
-          projectLocalPath: inheritedEnvironment?.cwd ?? project.localPath,
           taskId: task.id,
+          taskTitle: task.title,
+          cwd: inheritedEnvironment?.cwd ?? project.localPath,
+          prompt: content,
+          model: { sourceId: selectedModel.sourceId ?? null, modelId: selectedModel.model, displayName: selectedModel.displayName ?? null },
+          serviceTier,
+          serviceTierPresent: requestedServiceTier.present,
+          permissionMode,
+          workMode: collaborationMode,
           ...(inheritedEnvironment
             ? {
                 environmentId: inheritedEnvironment.environment.id,
                 ...(inheritedEnvironment.workspaces[0] ? { workspaceId: inheritedEnvironment.workspaces[0].id } : {}),
-                writableRoots: inheritedEnvironment.writableRoots,
               }
             : {}),
-          taskTitle: task.title,
-          prompt: content,
-          attachments,
-          ...(canonicalAttachmentInput?.allowedRoots.length ? { allowedAttachmentRoots: canonicalAttachmentInput.allowedRoots } : {}),
-          model: selectedModel.model,
-          ...(requestedServiceTier.present ? { serviceTier } : {}),
+          writableRoots: inheritedEnvironment?.writableRoots ?? [project.localPath],
           allowCodeChanges: task.allowCodeChanges,
           allowTests: task.allowTests,
           allowGitCommit: task.allowGitCommit,
-          permissionMode,
-          workMode: collaborationMode,
+          attachments,
+          ...(canonicalAttachmentInput?.allowedRoots.length ? { allowedAttachmentRoots: canonicalAttachmentInput.allowedRoots } : {}),
+          bypassConcurrency: false,
           idempotencyKey,
           clientUserMessageId,
           providerWriteLifecycle: reservedLifecycle,
@@ -15841,23 +15929,144 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     return error instanceof Error && typeof (error as Error & { code?: unknown }).code === 'string' ? String((error as Error & { code: string }).code) : 'ZEUS_TASK_GIT_OPERATION_FAILED';
   }
 
-  function scheduleTaskIntegrationAiFinalization(integrationId: string, conversationId: string): void {
-    const operation = taskConflictAiOperations.get(integrationId);
+  function scheduleTaskIntegrationAiFinalization(operationId: string, conversationId: string): void {
+    const operation = taskConflictAiOperations.get(operationId);
     if (!operation || operation.conversationId !== conversationId || operation.finalizing) return;
     operation.finalizing = true;
-    void finalizeTaskIntegrationAfterAi(integrationId, conversationId).finally(() => {
-      const current = taskConflictAiOperations.get(integrationId);
+    void finalizeTaskIntegrationAfterAi(operationId, conversationId).finally(() => {
+      const current = taskConflictAiOperations.get(operationId);
       if (!current || current.conversationId !== conversationId) return;
-      const integration = taskIntegrations.getById(integrationId);
-      if (!integration || integration.state !== 'conflicted') {
-        taskConflictAiOperations.delete(integrationId);
+      const attempt = taskIntegrationAttempts.getById(operationId);
+      if (attempt && (attempt.state === 'completed' || attempt.state === 'failed' || attempt.state === 'stale')) {
+        taskConflictAiOperations.delete(operationId);
+        return;
+      }
+      const integration = taskIntegrations.getById(operationId);
+      if (!attempt && (!integration || integration.state !== 'conflicted')) {
+        taskConflictAiOperations.delete(operationId);
         return;
       }
       current.finalizing = false;
     });
   }
 
-  async function finalizeTaskIntegrationAfterAi(integrationId: string, conversationId: string): Promise<void> {
+  async function finalizeTaskIntegrationAfterAi(operationId: string, conversationId: string): Promise<void> {
+    const attempt = taskIntegrationAttempts.getById(operationId);
+    if (attempt) return finalizeTaskIntegrationAttemptAfterAi(attempt.id, conversationId);
+    return finalizeLegacyTaskIntegrationAfterAi(operationId, conversationId);
+  }
+
+  async function finalizeTaskIntegrationAttemptAfterAi(attemptId: string, conversationId: string): Promise<void> {
+    const attempt = taskIntegrationAttempts.getById(attemptId);
+    if (!attempt || attempt.conversationId !== conversationId || attempt.state === 'completed' || attempt.state === 'failed') return;
+    const integration = taskIntegrations.getById(attempt.integrationId);
+    if (attempt.state === 'stale') {
+      if (integration) await cleanupTaskIntegrationAttemptWorktree(attempt.worktreePath, integration).catch(() => undefined);
+      return;
+    }
+    if (!integration || integration.state !== 'conflicted') {
+      taskIntegrationAttempts.update(attempt.id, { state: 'stale', lastError: '目标合入已经由其他尝试完成或失效。' });
+      await db.save();
+      return;
+    }
+    try {
+      const resolved = resolveTaskIntegrationRequest(integration.taskId, integration.id);
+      if ('error' in resolved) throw nativeApiError(resolved.error.error, resolved.error.message);
+      const { task, project, workspace } = resolved;
+      if (attempt.targetHeadSha !== integration.targetHeadSha || attempt.taskHeadSha !== integration.taskHeadSha) {
+        throw nativeApiError('ZEUS_TASK_INTEGRATION_ATTEMPT_STALE', 'The conflict attempt no longer matches the frozen integration commits.');
+      }
+      await assertTaskIntegrationStillCurrent(project, workspace, integration);
+      const commit = await completeTaskIntegrationCommit({
+        integrationPath: attempt.worktreePath,
+        mode: integration.mode,
+        commitMessage: `${task.taskCode}: 合入 ${workspace.branchName}`,
+      });
+      const finalized = await finalizeTaskBranchIntegration({
+        repositoryPath: workspace.repositoryPath || project.localPath,
+        integrationPath: attempt.worktreePath,
+        targetBranch: integration.targetBranch,
+        targetHeadSha: attempt.targetHeadSha,
+        resultHeadSha: commit.resultHeadSha,
+      });
+      const pendingLocalSync = finalized.localSyncStatus === 'pending';
+      if (integration.integrationPath && resolve(integration.integrationPath) !== resolve(attempt.worktreePath)) {
+        await cleanupTaskIntegrationWorktree({ repositoryPath: workspace.repositoryPath || project.localPath, integrationPath: integration.integrationPath });
+      }
+      taskIntegrationAttempts.update(attempt.id, { state: 'completed', resultHeadSha: finalized.resultHeadSha, lastError: null });
+      taskIntegrations.update(integration.id, {
+        integrationPath: pendingLocalSync ? attempt.worktreePath : null,
+        resultHeadSha: finalized.resultHeadSha,
+        state: pendingLocalSync ? 'pending_local_sync' : 'merged',
+        localSyncStatus: finalized.localSyncStatus,
+        localHeadSha: finalized.localHeadSha,
+        localWorktreePath: finalized.localWorktreePath,
+        conflictFiles: [],
+        lastError: null,
+      });
+      for (const other of taskIntegrationAttempts.listByIntegration(integration.id)) {
+        if (other.id === attempt.id || other.state === 'completed' || other.state === 'failed' || other.state === 'stale') continue;
+        taskIntegrationAttempts.update(other.id, { state: 'stale', lastError: '另一条冲突处理尝试已先完成安全落地。' });
+      }
+      if (pendingLocalSync) {
+        recordTaskEvent({
+          taskId: task.id,
+          eventType: 'task.git_integration.local_sync_pending',
+          title: '冲突处理：AI 已解决冲突，合入结果等待同步到本地目标分支',
+          payload: { integrationId: integration.id, attemptId: attempt.id, workspaceId: workspace.id, conversationId, targetBranch: integration.targetBranch, resultHeadSha: finalized.resultHeadSha },
+        });
+        await db.save();
+        return;
+      }
+      const taskWorktreeReclaimed = integration.targetBranch === workspace.sourceBranch ? await markTaskWorkspaceDelivered(workspace) : false;
+      recordTaskEvent({
+        taskId: task.id,
+        eventType: 'task.git_integration.ai_merged',
+        title: `冲突处理：AI 已完成本地合入 ${integration.targetBranch}`,
+        payload: {
+          integrationId: integration.id,
+          attemptId: attempt.id,
+          workspaceId: workspace.id,
+          conversationId,
+          mode: integration.mode,
+          sourceDelivered: integration.targetBranch === workspace.sourceBranch,
+          taskWorktreeReclaimed,
+          remotePushed: false,
+          ...finalized,
+        },
+      });
+      await db.save();
+    } catch (error) {
+      const stale = isStaleTaskIntegrationError(error) || taskGitErrorCode(error) === 'ZEUS_TASK_INTEGRATION_ATTEMPT_STALE';
+      taskIntegrationAttempts.update(attempt.id, {
+        state: stale ? 'stale' : 'active',
+        lastError: error instanceof Error ? error.message : 'AI 本地合入未完成。',
+      });
+      const latestIntegration = taskIntegrations.getById(attempt.integrationId);
+      if (stale && latestIntegration?.state === 'conflicted') {
+        taskIntegrations.update(latestIntegration.id, { state: 'failed', lastError: error instanceof Error ? error.message : 'Task integration became stale.' });
+      }
+      if (latestIntegration) {
+        recordTaskEvent({
+          taskId: latestIntegration.taskId,
+          eventType: 'task.git_integration.ai_failed',
+          title: stale ? '冲突处理：当前尝试已过期' : '冲突处理：AI 本地合入未完成',
+          payload: { integrationId: latestIntegration.id, attemptId: attempt.id, workspaceId: latestIntegration.workspaceId, conversationId, error: error instanceof Error ? error.message : 'AI 本地合入未完成。' },
+        });
+      }
+      await db.save();
+      if (stale && latestIntegration) await cleanupTaskIntegrationAttemptWorktree(attempt.worktreePath, latestIntegration).catch(() => undefined);
+    }
+  }
+
+  async function cleanupTaskIntegrationAttemptWorktree(worktreePath: string, integration: ZeusTaskIntegrationRecord): Promise<void> {
+    const workspace = taskWorkspaces.getById(integration.workspaceId);
+    const project = projects.getById(integration.projectId);
+    if (!workspace || !project || !existsSync(worktreePath)) return;
+    await cleanupTaskIntegrationWorktree({ repositoryPath: workspace.repositoryPath || project.localPath, integrationPath: worktreePath });
+  }
+
+  async function finalizeLegacyTaskIntegrationAfterAi(integrationId: string, conversationId: string): Promise<void> {
     try {
       const currentIntegration = taskIntegrations.getById(integrationId);
       if (!currentIntegration || currentIntegration.state !== 'conflicted') return;
