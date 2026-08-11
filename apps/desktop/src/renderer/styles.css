@@ -7750,6 +7750,32 @@ a {
   transform-origin: bottom center;
 }
 
+.macos-ai-app .zeus-select-popover[data-zeus-select-measuring='true'] .zeus-select-search-row,
+.macos-ai-app .zeus-select-popover[data-zeus-select-measuring='true'] .zeus-select-listbox,
+.macos-ai-app .zeus-select-popover[data-zeus-select-measuring='true'] .zeus-select-option,
+.macos-ai-app .zeus-select-popover[data-zeus-select-measuring='true'] .zeus-select-option-group,
+.macos-ai-app .zeus-select-popover[data-zeus-select-measuring='true'] .zeus-select-empty {
+  inline-size: max-content;
+}
+
+.macos-ai-app .zeus-select-popover[data-zeus-select-measuring='true'] .zeus-select-option {
+  grid-template-columns: max-content 16px;
+}
+
+.macos-ai-app .zeus-select-popover[data-zeus-select-measuring='true'] .zeus-select-option:has(.zeus-select-option-color) {
+  grid-template-columns: 10px max-content 16px;
+}
+
+.macos-ai-app .zeus-select-popover[data-zeus-select-measuring='true'] .zeus-select-option-label {
+  inline-size: max-content;
+  overflow: visible;
+  text-overflow: clip;
+}
+
+.macos-ai-app .zeus-select-popover[data-zeus-select-measuring='true'] .zeus-select-search-input {
+  inline-size: max-content;
+}
+
 .macos-ai-app .zeus-select-popover::before {
   background: var(--zeus-select-popover-bg);
   border-block-start: 1px solid oklch(84% 0.001 255 / 0.9);
@@ -7818,6 +7844,18 @@ a {
   min-block-size: 24px;
   min-inline-size: 0;
   padding: 0;
+}
+
+.macos-ai-app .zeus-select-search-width-measure {
+  color: transparent;
+  font-size: 13px;
+  font-weight: 560;
+  inset: 0 auto auto 0;
+  letter-spacing: inherit;
+  pointer-events: none;
+  position: absolute;
+  visibility: hidden;
+  white-space: nowrap;
 }
 
 .macos-ai-app .zeus-select-search-input::placeholder {
