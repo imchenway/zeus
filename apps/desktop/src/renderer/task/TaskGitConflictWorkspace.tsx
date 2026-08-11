@@ -6,6 +6,7 @@ import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import { useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
 import type { TaskIntegrationConflictPermissionMode, TaskIntegrationRecord } from '../session/sessionTypes.js';
 import { Button } from '../ui/Button.js';
+import { ModalPortal } from '../ui/ModalPortal.js';
 import {
   applyConflictDocumentEdit,
   applyConflictSideAction,
@@ -242,7 +243,7 @@ export function TaskGitConflictWorkspace(props: {
         </div>
 
         {aiPermissionOpen ? (
-          <section className="task-git-conflict-ai-permission-backdrop" role="presentation">
+          <ModalPortal rootClassName="task-git-conflict-ai-permission-portal-root" backdropClassName="task-git-conflict-ai-permission-backdrop" onDismiss={() => (props.aiBusy ? undefined : setAiPermissionOpen(false))}>
             <section
               ref={aiPermissionDialogRef}
               className="task-git-conflict-ai-permission"
@@ -282,12 +283,12 @@ export function TaskGitConflictWorkspace(props: {
                 <Button variant="secondary" size="regular" onClick={() => setAiPermissionOpen(false)} disabled={props.aiBusy}>
                   {props.zh ? '取消' : 'Cancel'}
                 </Button>
-                <Button variant="primary" size="regular" busy={props.aiBusy} onClick={() => void askAi()}>
+                <Button variant={aiPermissionMode === 'full-access' ? 'danger' : 'primary'} size="regular" busy={props.aiBusy} onClick={() => void askAi()}>
                   {props.zh ? `以${aiPermissionMode === 'auto' ? '自动' : '完全访问'}权限开始` : `Start with ${aiPermissionMode === 'auto' ? 'auto' : 'full access'}`}
                 </Button>
               </footer>
             </section>
-          </section>
+          </ModalPortal>
         ) : null}
 
         {!currentFileResolved ? (

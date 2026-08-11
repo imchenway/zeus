@@ -13964,20 +13964,15 @@ body[data-surface='task-git-delivery'] .task-git-delivery-layout {
 }
 
 .macos-ai-app .task-git-conflict-ai-permission-backdrop {
-  position: absolute;
-  inset: 0;
-  z-index: 4;
   display: grid;
   place-items: center;
-  padding: 24px;
-  background: var(--zeus-overlay-backdrop-bg);
-  backdrop-filter: var(--zeus-overlay-backdrop-filter);
+  padding: 20px;
 }
 
 .macos-ai-app .task-git-conflict-ai-permission {
-  inline-size: min(520px, 100%);
+  inline-size: min(440px, 100%);
   display: grid;
-  gap: 16px;
+  gap: 14px;
   padding: 20px;
   border: 1px solid var(--zeus-product-line);
   border-radius: 14px;
@@ -14017,21 +14012,39 @@ body[data-surface='task-git-delivery'] .task-git-delivery-layout {
 .macos-ai-app .task-git-conflict-ai-permission label {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
-  gap: 10px;
-  padding: 11px 12px;
+  align-items: center;
+  gap: 9px;
+  min-block-size: 48px;
+  padding: 8px 10px;
   border: 1px solid var(--zeus-product-line-soft);
   border-radius: 10px;
-  background: var(--zeus-product-panel-muted);
+  background: transparent;
   cursor: pointer;
 }
 
 .macos-ai-app .task-git-conflict-ai-permission label.is-selected {
-  border-color: color-mix(in oklab, var(--zeus-accent, #3977db) 58%, var(--zeus-product-line));
-  background: color-mix(in oklab, var(--zeus-accent, #3977db) 8%, var(--zeus-product-panel));
+  border-color: color-mix(in oklab, var(--zeus-accent, #3977db) 34%, var(--zeus-product-line));
+  background: color-mix(in oklab, var(--zeus-accent, #3977db) 5%, var(--zeus-product-panel));
 }
 
 .macos-ai-app .task-git-conflict-ai-permission label > input {
-  margin-block-start: 3px;
+  appearance: none;
+  inline-size: 14px;
+  block-size: 14px;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--zeus-product-line);
+  border-radius: 50%;
+  background: var(--zeus-product-panel);
+  box-shadow: none;
+}
+
+.macos-ai-app .task-git-conflict-ai-permission label > input:checked {
+  border: 4px solid var(--zeus-accent, #3977db);
+}
+
+.macos-ai-app .task-git-conflict-ai-permission label:focus-within {
+  box-shadow: var(--zeus-control-focus);
 }
 
 .macos-ai-app .task-git-conflict-ai-permission label > span {

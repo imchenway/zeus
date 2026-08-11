@@ -7104,6 +7104,7 @@ export function App(props: {
     mode: 'commit' | 'commit-only' | 'push-only' | 'delivery';
   } | null>(null);
   const [taskGitMergeTaskId, setTaskGitMergeTaskId] = useState<string | null>(null);
+  const [taskGitDeliveryRevision, setTaskGitDeliveryRevision] = useState(0);
   const taskGitDeliveryChangedRef = useRef<(taskId: string) => void>(() => undefined);
   const taskGitDeliveryConversationRef = useRef<(input: { taskId: string; conversationId: string }) => void>(() => undefined);
   const taskModelPushCapabilityRequestRef = useRef(0);
@@ -7916,6 +7917,10 @@ export function App(props: {
               acknowledgeNativeConversationCompletion(event.payload.projectId, conversationId);
             }
           }
+        }
+        if (event.type === 'task.git_delivery.changed' && typeof event.payload.taskId === 'string') {
+          setTaskGitDeliveryRevision((current) => current + 1);
+          taskGitDeliveryChangedRef.current(event.payload.taskId);
         }
         if (event.type === 'task.updated' && typeof event.payload.taskId === 'string' && props.onLoadTask) {
           const taskId = event.payload.taskId;
@@ -12846,6 +12851,7 @@ export function App(props: {
                 task={snapshot.tasks.find((task) => task.id === taskGitMergeTaskId) ?? null}
                 projectName={snapshot.projects.find((project) => project.id === snapshot.tasks.find((task) => task.id === taskGitMergeTaskId)?.projectId)?.name}
                 currentConversationWorkspaceId={selectedNativeConversation?.taskId === taskGitMergeTaskId ? selectedNativeConversation.workspaceId : null}
+                refreshRevision={taskGitDeliveryRevision}
                 client={props.nativeConversationClient ?? null}
                 onChanged={() =>
                   taskGitMergeTaskId

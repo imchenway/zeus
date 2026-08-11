@@ -236,6 +236,23 @@ export interface UpdateTaskIntegrationInput {
   lastError?: string | null;
 }
 
+export type TaskIntegrationAiRunState = 'preparing' | 'active' | 'finalizing' | 'completed' | 'failed' | 'superseded';
+
+export interface ZeusTaskIntegrationAiRunRecord {
+  id: string;
+  integrationId: string;
+  conversationId: string;
+  submissionId: string | null;
+  integrationPath: string | null;
+  targetHeadSha: string;
+  taskHeadSha: string;
+  state: TaskIntegrationAiRunState;
+  resultHeadSha: string | null;
+  lastError: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface ZeusTaskTemplateRecord {
   id: string;
   name: string;
@@ -2119,10 +2136,32 @@ function migrateTaskGitWorkspaceSchema(db: ZeusDatabase): void {
   db.execute(`CREATE INDEX IF NOT EXISTS idx_task_integrations_task_state ON task_integrations(task_id, state, updated_at)`);
   db.execute(`DROP INDEX IF EXISTS idx_task_integrations_active_workspace_target`);
   db.execute(`CREATE UNIQUE INDEX IF NOT EXISTS idx_task_integrations_active_workspace_target ON task_integrations(workspace_id, target_branch) WHERE state IN ('preparing', 'conflicted', 'pending_local_sync')`);
+  db.execute(`
+    CREATE TABLE IF NOT EXISTS task_integration_ai_runs (
+      id TEXT PRIMARY KEY,
+      integration_id TEXT NOT NULL,
+      conversation_id TEXT NOT NULL UNIQUE,
+      submission_id TEXT,
+      integration_path TEXT,
+      target_head_sha TEXT NOT NULL,
+      task_head_sha TEXT NOT NULL,
+      state TEXT NOT NULL,
+      result_head_sha TEXT,
+      last_error TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+  `);
+  db.execute(`CREATE INDEX IF NOT EXISTS idx_task_integration_ai_runs_integration_state ON task_integration_ai_runs(integration_id, state, updated_at)`);
   recordSchemaMigration(db, {
     migrationId: '20260731_0001_task_git_workspaces',
     description: '增加可跨会话复用的任务分支与 worktree 生命周期记录',
     checksumSource: 'task_workspaces,task_integrations,conversations.workspace_id,project_branch,worktree_path,task_state,integration_state',
+  });
+  recordSchemaMigration(db, {
+    migrationId: '20260811_0004_task_integration_ai_runs',
+    description: '记录每条 AI 冲突处理会话独占的隔离合入现场与收尾状态',
+    checksumSource: 'task_integration_ai_runs:integration,conversation,submission,path,heads,state,result,error',
   });
   recordSchemaMigration(db, {
     migrationId: '20260803_0002_task_integration_local_sync',
@@ -4040,6 +4079,48 @@ export class TaskIntegrationRepository {
       ],
     );
     return this.getById(integrationId)!;
+  }
+}
+
+/** AI 冲突处理运行记录把每条会话绑定到自己的隔离合入现场。 */
+export class TaskIntegrationAiRunRepository {
+  constructor(private readonly db: ZeusDatabase) {}
+
+  create(input: Omit<ZeusTaskIntegrationAiRunRecord, 'createdAt' | 'updatedAt' | 'submissionId' | 'integrationPath' | 'resultHeadSha' | 'lastError'>): ZeusTaskIntegrationAiRunRecord {
+    const timestamp = nowIso();
+    this.db.execute(
+      `INSERT INTO task_integration_ai_runs
+       (id, integration_id, conversation_id, submission_id, integration_path, target_head_sha, task_head_sha, state, result_head_sha, last_error, created_at, updated_at)
+       VALUES (?, ?, ?, NULL, NULL, ?, ?, ?, NULL, NULL, ?, ?)`,
+      [input.id, input.integrationId, input.conversationId, input.targetHeadSha, input.taskHeadSha, input.state, timestamp, timestamp],
+    );
+    return this.getById(input.id)!;
+  }
+
+  getById(id: string): ZeusTaskIntegrationAiRunRecord | undefined {
+    const row = this.db.get<DbTaskIntegrationAiRunRow>(`SELECT * FROM task_integration_ai_runs WHERE id = ?`, [id]);
+    return row ? mapTaskIntegrationAiRunRow(row) : undefined;
+  }
+
+  getByConversationId(conversationId: string): ZeusTaskIntegrationAiRunRecord | undefined {
+    const row = this.db.get<DbTaskIntegrationAiRunRow>(`SELECT * FROM task_integration_ai_runs WHERE conversation_id = ?`, [conversationId]);
+    return row ? mapTaskIntegrationAiRunRow(row) : undefined;
+  }
+
+  update(id: string, input: Partial<Pick<ZeusTaskIntegrationAiRunRecord, 'submissionId' | 'integrationPath' | 'state' | 'resultHeadSha' | 'lastError'>>): ZeusTaskIntegrationAiRunRecord {
+    const existing = this.getById(id);
+    if (!existing) throw new Error(`Zeus task integration AI run not found: ${id}`);
+    const state = input.state ? assertEnum(input.state, ['preparing', 'active', 'finalizing', 'completed', 'failed', 'superseded'] as const, 'task integration AI run state') : existing.state;
+    this.db.execute(`UPDATE task_integration_ai_runs SET submission_id = ?, integration_path = ?, state = ?, result_head_sha = ?, last_error = ?, updated_at = ? WHERE id = ?`, [
+      input.submissionId === undefined ? existing.submissionId : input.submissionId,
+      input.integrationPath === undefined ? existing.integrationPath : input.integrationPath,
+      state,
+      input.resultHeadSha === undefined ? existing.resultHeadSha : input.resultHeadSha,
+      input.lastError === undefined ? existing.lastError : input.lastError,
+      nowIso(),
+      id,
+    ]);
+    return this.getById(id)!;
   }
 }
 
@@ -7431,6 +7512,21 @@ interface DbTaskIntegrationRow {
   updated_at: string;
 }
 
+interface DbTaskIntegrationAiRunRow {
+  id: string;
+  integration_id: string;
+  conversation_id: string;
+  submission_id: string | null;
+  integration_path: string | null;
+  target_head_sha: string;
+  task_head_sha: string;
+  state: TaskIntegrationAiRunState;
+  result_head_sha: string | null;
+  last_error: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 interface DbTaskTemplateRow {
   id: string;
   name: string;
@@ -7975,6 +8071,23 @@ function mapTaskIntegrationRow(row: DbTaskIntegrationRow): ZeusTaskIntegrationRe
     localHeadSha: row.local_head_sha,
     localWorktreePath: row.local_worktree_path,
     conflictFiles,
+    lastError: row.last_error,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapTaskIntegrationAiRunRow(row: DbTaskIntegrationAiRunRow): ZeusTaskIntegrationAiRunRecord {
+  return {
+    id: row.id,
+    integrationId: row.integration_id,
+    conversationId: row.conversation_id,
+    submissionId: row.submission_id,
+    integrationPath: row.integration_path,
+    targetHeadSha: row.target_head_sha,
+    taskHeadSha: row.task_head_sha,
+    state: assertEnum(row.state, ['preparing', 'active', 'finalizing', 'completed', 'failed', 'superseded'] as const, 'task integration AI run state'),
+    resultHeadSha: row.result_head_sha,
     lastError: row.last_error,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
