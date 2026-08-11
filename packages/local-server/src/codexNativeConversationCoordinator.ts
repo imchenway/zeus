@@ -493,10 +493,10 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   function submissionTaskPushLayout(submission: ZeusConversationSubmissionRecord): TaskPushMessageLayout | null {
     const value = parseJsonRecord(submission.inputJson).taskPushLayout;
     if (value === undefined) return null;
-    if (!isRecord(value) || value.kind !== 'task_push' || !Array.isArray(value.blocks) || typeof value.supplementalInfo !== 'string') {
+    if (!isRecord(value) || value.kind !== 'task_push' || !Array.isArray(value.blocks) || typeof value.supplementalInfo !== 'string' || (value.supplementalAttachments !== undefined && !Array.isArray(value.supplementalAttachments))) {
       throw coordinatorError('ZEUS_NATIVE_PERSISTED_STATE_INVALID', 'Persisted task push layout is invalid.');
     }
-    return value as unknown as TaskPushMessageLayout;
+    return { ...value, supplementalAttachments: value.supplementalAttachments ?? [] } as unknown as TaskPushMessageLayout;
   }
 
   function submissionAttachments(submission: ZeusConversationSubmissionRecord): NativeConversationAttachmentInput[] {

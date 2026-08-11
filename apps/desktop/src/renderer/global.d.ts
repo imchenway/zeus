@@ -79,6 +79,7 @@ declare global {
       ) => Promise<ConversationInputResourceBridge[]>;
       readConversationClipboardResources: () => Promise<{ resources: ConversationInputResourceBridge[]; text: string }>;
       getConversationResourcePreview: (resource: { localPath?: string; uploadRef?: string }) => Promise<{ previewUrl: string; mimeType: string } | null>;
+      openConversationInputResource: (resource: { localPath?: string; uploadRef?: string }) => Promise<{ opened: boolean; error?: string }>;
       chooseTaskAttachments: () => Promise<TaskInputResourceBridge[]>;
       authorizeTaskFiles: (
         files: File[],

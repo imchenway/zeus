@@ -12720,6 +12720,119 @@ a {
   padding: 9px 10px;
 }
 
+.macos-ai-app .task-model-push-supplement > label {
+  color: var(--zeus-product-muted);
+  font-size: 12px;
+}
+
+.macos-ai-app .task-model-push-supplemental-resources {
+  min-inline-size: 0;
+}
+
+.macos-ai-app .task-model-push-supplemental-resources .pending-resource-strip {
+  max-block-size: 178px;
+  overflow-y: auto;
+  padding-block: 1px;
+}
+
+.macos-ai-app .task-model-push-supplement-error {
+  margin: 0;
+  color: var(--zeus-danger-text);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.task-model-push-attachment-dialog {
+  inline-size: min(680px, calc(100vw - 32px));
+  max-inline-size: calc(100vw - 32px);
+  max-block-size: calc(100vh - 32px);
+  padding: 0;
+  border: 1px solid var(--zeus-product-line);
+  border-radius: 14px;
+  background: var(--zeus-product-panel);
+  color: var(--zeus-product-text);
+  box-shadow: 0 24px 64px oklch(20% 0.01 255 / 0.25);
+}
+
+.task-model-push-attachment-dialog::backdrop {
+  background: var(--zeus-overlay-backdrop-bg);
+  backdrop-filter: var(--zeus-overlay-backdrop-filter);
+}
+
+.task-model-push-attachment-sheet {
+  display: grid;
+  max-block-size: calc(100vh - 32px);
+  overflow: hidden;
+}
+
+.task-model-push-attachment-sheet > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-block-end: 1px solid var(--zeus-product-line-soft);
+}
+
+.task-model-push-attachment-sheet > header > span {
+  display: grid;
+  min-inline-size: 0;
+  gap: 2px;
+}
+
+.task-model-push-attachment-sheet > header strong,
+.task-model-push-attachment-sheet > header small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-model-push-attachment-sheet > header small {
+  color: var(--zeus-product-muted);
+  font-size: 11px;
+}
+
+.task-model-push-attachment-sheet > header button {
+  min-inline-size: 28px;
+  min-block-size: 28px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--zeus-product-muted);
+}
+
+.task-model-push-attachment-sheet > header button:hover {
+  background: var(--zeus-product-panel-muted);
+  color: var(--zeus-product-text);
+}
+
+.task-model-push-attachment-sheet > header button:focus-visible {
+  outline: none;
+  box-shadow: var(--zeus-control-focus);
+}
+
+.task-model-push-attachment-stage {
+  display: grid;
+  place-items: center;
+  min-block-size: 260px;
+  max-block-size: calc(100vh - 112px);
+  overflow: auto;
+  padding: 18px;
+  background: var(--zeus-product-panel-muted);
+}
+
+.task-model-push-attachment-stage img {
+  display: block;
+  max-inline-size: 100%;
+  max-block-size: calc(100vh - 148px);
+  object-fit: contain;
+}
+
+.task-model-push-attachment-stage p {
+  margin: 0;
+  color: var(--zeus-product-muted);
+}
+
 .macos-ai-app .task-model-push-canonical,
 .macos-ai-app .task-model-push-attachments,
 .macos-ai-app .task-model-push-parent-context {

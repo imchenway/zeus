@@ -1,4 +1,4 @@
-import { useMemo, type FormEvent, type KeyboardEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type Dispatch, type FormEvent, type KeyboardEvent, type SetStateAction } from 'react';
 import {
   buildTaskPushLayout,
   renderTaskPushLayoutText,
@@ -9,13 +9,16 @@ import {
   type TaskPushPromptParentContext,
   type TaskPushPromptRelatedContext,
   type TaskPushRelatedContextOption,
+  type TaskPushSupplementalAttachment,
 } from '@zeus/shared';
 import type { TaskRecord } from '../apiClient.js';
-import type { CodexTaskPushCapabilities, NativePermissionMode, NativeServiceTierSelection } from '../session/sessionTypes.js';
+import type { CodexTaskPushCapabilities, NativeConversationAttachment, NativePermissionMode, NativeServiceTierSelection, TaskPushSupplementalAttachmentDraft, TaskPushSupplementalAttachmentInput } from '../session/sessionTypes.js';
+import { useConversationInputResources } from '../session/useConversationInputResources.js';
 import { normalizeServiceTierSelection, serviceTierDescription, serviceTierOptions, serviceTierSelectionFromValue, serviceTierSelectionValue } from '../session/serviceTierSelection.js';
 import { Button } from '../ui/Button.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
 import { ZeusSelect } from '../ZeusSelect.js';
+import { TaskPushSupplementalAttachmentCards } from './TaskPushSupplementalAttachmentCards.js';
 
 export interface TaskModelPushForm {
   model: string;
@@ -30,6 +33,7 @@ export interface TaskModelPushForm {
   parentContextSelections: Record<string, { selected: boolean; conversationIds: string[]; attachmentKeys: string[] }>;
   relatedContextSelections: Record<string, { selected: boolean; conversationIds: string[]; attachmentKeys: string[] }>;
   supplementalInfo: string;
+  supplementalAttachments: TaskPushSupplementalAttachmentDraft[];
 }
 
 export type TaskModelPushModalStatus = 'loading' | 'ready' | 'authenticating' | 'submitting' | 'error';
@@ -107,8 +111,9 @@ export function buildTaskModelPushMessage(
   currentAttachments: TaskPushPromptAttachment[] = [],
   parentContexts: TaskPushPromptParentContext[] = [],
   relatedContexts: TaskPushPromptRelatedContext[] = [],
+  supplementalAttachments: TaskPushSupplementalAttachment[] = [],
 ): string {
-  return renderTaskPushLayoutText(buildTaskModelPushLayout(task, supplementalInfo, currentAttachments, parentContexts, relatedContexts));
+  return renderTaskPushLayoutText(buildTaskModelPushLayout(task, supplementalInfo, currentAttachments, parentContexts, relatedContexts, supplementalAttachments));
 }
 
 export function buildTaskModelPushLayout(
@@ -117,6 +122,7 @@ export function buildTaskModelPushLayout(
   currentAttachments: TaskPushPromptAttachment[] = [],
   parentContexts: TaskPushPromptParentContext[] = [],
   relatedContexts: TaskPushPromptRelatedContext[] = [],
+  supplementalAttachments: TaskPushSupplementalAttachment[] = [],
 ): TaskPushMessageLayout {
   return buildTaskPushLayout({
     taskId: task.id,
@@ -132,9 +138,54 @@ export function buildTaskModelPushLayout(
     tags: task.tags,
     attachments: currentAttachments,
     supplementalInfo,
+    supplementalAttachments,
     parentContexts,
     relatedContexts,
   });
+}
+
+export function taskPushSupplementalLayoutAttachments(attachments: TaskPushSupplementalAttachmentDraft[]): TaskPushSupplementalAttachment[] {
+  return attachments.map((attachment) => ({
+    key: attachment.taskPushAttachmentKey,
+    name: attachment.name,
+    kind: attachment.kind ?? (attachment.mime === 'inode/directory' ? 'directory' : attachment.mime.startsWith('image/') ? 'image' : 'file'),
+    mimeType: attachment.mime,
+    size: attachment.size,
+  }));
+}
+
+export function taskPushSupplementalRequestAttachments(attachments: TaskPushSupplementalAttachmentDraft[]): TaskPushSupplementalAttachmentInput[] {
+  return attachments.map((attachment) => {
+    const metadata = {
+      taskPushAttachmentKey: attachment.taskPushAttachmentKey,
+      name: attachment.name,
+      mime: attachment.mime,
+      size: attachment.size,
+      kind: attachment.kind ?? (attachment.mime === 'inode/directory' ? ('directory' as const) : attachment.mime.startsWith('image/') ? ('image' as const) : ('file' as const)),
+    };
+    if (attachment.localPath) return { ...metadata, localPath: attachment.localPath };
+    if (attachment.uploadRef) return { ...metadata, uploadRef: attachment.uploadRef };
+    throw new Error('本次推送附件缺少本机资源身份。');
+  });
+}
+
+function supplementalAttachmentIdentity(attachment: NativeConversationAttachment): string {
+  return attachment.localPath ?? attachment.uploadRef;
+}
+
+function createSupplementalAttachmentKey(): string {
+  const id = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  return `task-push-supplemental-${id}`;
+}
+
+function mergeSupplementalAttachments(current: TaskPushSupplementalAttachmentDraft[], added: NativeConversationAttachment[]): TaskPushSupplementalAttachmentDraft[] {
+  const byIdentity = new Map(current.map((attachment) => [supplementalAttachmentIdentity(attachment), attachment]));
+  for (const attachment of added) {
+    const identity = supplementalAttachmentIdentity(attachment);
+    if (byIdentity.has(identity)) continue;
+    byIdentity.set(identity, { ...attachment, taskPushAttachmentKey: createSupplementalAttachmentKey() });
+  }
+  return [...byIdentity.values()];
 }
 
 /** 按服务端给出的根到父顺序生成正文上下文；附件只走结构化通道，不进入文本。 */
@@ -291,7 +342,8 @@ function TaskPushContextPicker(props: {
 }
 
 export function TaskPushLayoutPreview(props: { layout: TaskPushMessageLayout; language: 'zh-CN' | 'en-US' }) {
-  const attachmentsByKey = new Map(props.layout.blocks.flatMap((block) => block.attachments).map((attachment) => [attachment.key, attachment]));
+  const supplementalAttachments = props.layout.supplementalAttachments ?? [];
+  const attachmentsByKey = new Map([...props.layout.blocks.flatMap((block) => block.attachments), ...supplementalAttachments].map((attachment) => [attachment.key, attachment]));
   return (
     <section className="task-model-push-canonical task-push-layout" aria-label={props.language === 'zh-CN' ? '将发送的任务内容' : 'Task content to send'}>
       <strong>{props.language === 'zh-CN' ? '将发送的任务内容' : 'Task content to send'}</strong>
@@ -325,10 +377,15 @@ export function TaskPushLayoutPreview(props: { layout: TaskPushMessageLayout; la
           ) : null}
         </article>
       ))}
-      {props.layout.supplementalInfo ? (
+      {props.layout.supplementalInfo || supplementalAttachments.length > 0 ? (
         <section className="task-push-layout-field">
           <strong>补充信息</strong>
-          <p>{props.layout.supplementalInfo}</p>
+          {supplementalAttachments.map((attachment) => (
+            <span key={attachment.key} className="task-push-layout-attachment">
+              {attachment.kind === 'image' ? '图片' : '附件'} · {attachment.name}
+            </span>
+          ))}
+          {props.layout.supplementalInfo ? <p>{props.layout.supplementalInfo}</p> : null}
         </section>
       ) : null}
     </section>
@@ -400,6 +457,7 @@ export function resolveTaskModelPushInitialForm(capabilities: CodexTaskPushCapab
     parentContextSelections: {},
     relatedContextSelections: {},
     supplementalInfo: '',
+    supplementalAttachments: [],
   };
 }
 
@@ -413,17 +471,38 @@ export function TaskModelPushModal(props: {
   status: TaskModelPushModalStatus;
   refreshingRepositoryId: string | null;
   error: string | null;
-  onChange: (next: TaskModelPushForm) => void;
+  onChange: Dispatch<SetStateAction<TaskModelPushForm>>;
   onRefreshRepository: (repositoryId: string) => void;
   onClose: () => void;
   onCancelAuthentication: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
   const commonSources = useMemo(() => resolveTaskPushCommonSources(props.capabilities?.repositories ?? []), [props.capabilities?.repositories]);
+  const supplementalTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const [supplementalResourceError, setSupplementalResourceError] = useState<string | null>(null);
+  const resourceInputDisabled = !props.open || props.status === 'authenticating' || props.status === 'submitting';
+  const inputResources = useConversationInputResources({
+    textareaRef: supplementalTextareaRef,
+    text: props.form.supplementalInfo,
+    disabled: resourceInputDisabled,
+    onTextChange: (supplementalInfo) => props.onChange((current) => ({ ...current, supplementalInfo })),
+    onAddAttachments: (attachments) => {
+      setSupplementalResourceError(null);
+      props.onChange((current) => ({ ...current, supplementalAttachments: mergeSupplementalAttachments(current.supplementalAttachments, attachments) }));
+    },
+    onRemoveAttachment: (attachment) => {
+      const identity = supplementalAttachmentIdentity(attachment);
+      props.onChange((current) => ({ ...current, supplementalAttachments: current.supplementalAttachments.filter((candidate) => supplementalAttachmentIdentity(candidate) !== identity) }));
+    },
+    onError: setSupplementalResourceError,
+  });
+  useEffect(() => {
+    setSupplementalResourceError(null);
+  }, [props.open, props.task?.id]);
   if (!props.open || !props.task) return null;
   const zh = props.language === 'zh-CN';
   const authenticating = props.status === 'authenticating';
-  const busy = authenticating || props.status === 'submitting';
+  const busy = authenticating || props.status === 'submitting' || inputResources.processing;
   const selectedModel = props.capabilities?.models.find((model) => model.model === props.form.model || model.id === props.form.model);
   const codexLoginRequired = selectedModel?.agentKind !== 'pi' && props.capabilities?.codexAccount.requiresOpenaiAuth === true && !props.capabilities.codexAccount.signedIn;
   const repositories = props.capabilities?.repositories ?? [];
@@ -437,7 +516,7 @@ export function TaskModelPushModal(props: {
   const currentAttachments = props.capabilities?.currentAttachmentOptions ?? [];
   const selectedParentContexts = selectedTaskPushParentContexts(parentContextOptions, props.form.parentContextSelections);
   const selectedRelatedContexts = selectedTaskPushRelatedContexts(relatedContextOptions, props.form.relatedContextSelections);
-  const taskPushLayout = buildTaskModelPushLayout(props.task, props.form.supplementalInfo, currentAttachments, selectedParentContexts, selectedRelatedContexts);
+  const taskPushLayout = buildTaskModelPushLayout(props.task, props.form.supplementalInfo, currentAttachments, selectedParentContexts, selectedRelatedContexts, taskPushSupplementalLayoutAttachments(props.form.supplementalAttachments));
 
   function onModelChange(model: string): void {
     const capability = props.capabilities?.models.find((candidate) => candidate.model === model || candidate.id === model);
@@ -826,22 +905,44 @@ export function TaskModelPushModal(props: {
                     ? '浏览器已打开。完成登录后，这里会自动继续创建当前会话。'
                     : 'Your browser is open. This conversation will be created automatically after sign-in.'
                   : zh
-                    ? '点击“登录并继续”后会打开官方登录页；当前模型、工作区和补充信息都会保留。'
-                    : 'Choose “Sign in and continue” to open the official sign-in page. Your current configuration will be preserved.'}
+                    ? '点击“登录并继续”后会打开官方登录页；当前模型、工作区、补充信息和本次附件都会保留。'
+                    : 'Choose “Sign in and continue” to open the official sign-in page. Your configuration, supplemental information, and attachments for this push will be preserved.'}
               </p>
             </section>
           ) : null}
 
-          <label className="task-model-push-supplement">
-            <span>{zh ? '补充信息（可选）' : 'Supplemental information (optional)'}</span>
+          <section className="task-model-push-supplement" aria-busy={inputResources.processing || undefined} aria-labelledby="task-model-push-supplement-label">
+            <label id="task-model-push-supplement-label" htmlFor="task-model-push-supplement-input">
+              {zh ? '补充信息（可选）' : 'Supplemental information (optional)'}
+            </label>
+            <TaskPushSupplementalAttachmentCards
+              attachments={props.form.supplementalAttachments}
+              language={props.language}
+              disabled={busy}
+              onRemove={(attachment) => {
+                const identity = supplementalAttachmentIdentity(attachment);
+                props.onChange((current) => ({ ...current, supplementalAttachments: current.supplementalAttachments.filter((candidate) => supplementalAttachmentIdentity(candidate) !== identity) }));
+              }}
+              onRestoreText={inputResources.restorePastedText}
+              onError={setSupplementalResourceError}
+            />
             <textarea
+              ref={supplementalTextareaRef}
+              id="task-model-push-supplement-input"
               value={props.form.supplementalInfo}
               maxLength={20_000}
               onChange={(event) => props.onChange({ ...props.form, supplementalInfo: event.target.value })}
+              onPaste={inputResources.handlePaste}
+              onKeyDown={inputResources.handlePasteShortcut}
               disabled={busy}
               placeholder={zh ? '仅影响本次推送，不会修改任务本身。' : 'Applies only to this push and does not modify the task.'}
             />
-          </label>
+            {supplementalResourceError ? (
+              <p className="task-model-push-supplement-error" role="alert">
+                {supplementalResourceError}
+              </p>
+            ) : null}
+          </section>
 
           <TaskPushContextPicker kind="parent" options={parentContextOptions} selections={props.form.parentContextSelections} busy={busy} zh={zh} onChange={(taskId, selection) => changeContextSelection('parent', taskId, selection)} />
           <TaskPushContextPicker kind="related" options={relatedContextOptions} selections={props.form.relatedContextSelections} busy={busy} zh={zh} onChange={(taskId, selection) => changeContextSelection('related', taskId, selection)} />
