@@ -121,7 +121,7 @@ export interface SessionWorkspaceActions {
   onOpenTaskDetail?: (taskId: string) => void;
   onLoadTaskWorkspaces?: (taskId: string) => Promise<TaskWorkspacesSnapshot>;
   onOpenTaskGitReview?: (taskId: string, workspaceId: string | null, mode: 'commit' | 'push-only') => void;
-  onOpenTaskGitDelivery?: (taskId: string) => void;
+  onOpenTaskGitDelivery?: (taskId: string, workspaceId?: string | null) => void;
   onOpenProjectCommands?: () => void;
   onOpenImportSettings?: (conversation: NativeConversationChoice) => void;
   onNextTurnSettingsChange?: (settings: ComposerRuntimeSettings) => void | Promise<void>;

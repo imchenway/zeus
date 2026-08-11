@@ -39,6 +39,16 @@ declare global {
     zeus?: {
       appName: 'Zeus';
       getLocalServerConfig: () => Promise<DashboardClientOptions>;
+      openTaskGitDeliveryWindow: (input: { taskId: string; workspaceId?: string | null }) => Promise<{ opened: true; reused: boolean; taskId: string }>;
+      closeTaskGitDeliveryWindow: () => Promise<{ closed: true; taskId: string }>;
+      getTaskGitDeliveryCurrentContext: () => Promise<{ taskId: string | null; workspaceId: string | null }>;
+      notifyTaskGitDeliveryCurrentContext: (context: { taskId: string | null; workspaceId: string | null }) => void;
+      notifyTaskGitDeliveryChanged: (taskId: string) => void;
+      openTaskGitDeliveryConversation: (input: { taskId: string; conversationId: string }) => Promise<{ opened: true }>;
+      onTaskGitDeliveryCurrentContext: (listener: (context: { taskId: string | null; workspaceId: string | null }) => void) => () => void;
+      onTaskGitDeliveryAppearance: (listener: (settings: { language: 'zh-CN' | 'en-US'; appearance: 'light' | 'dark' | 'system' }) => void) => () => void;
+      onTaskGitDeliveryChanged: (listener: (taskId: string) => void) => () => void;
+      onOpenTaskGitDeliveryConversation: (listener: (input: { taskId: string; conversationId: string }) => void) => () => void;
       hideMenuBarUsage: () => Promise<{ hidden: true }>;
       showMainWindowFromMenuBarUsage: () => Promise<{ shown: boolean }>;
       openMenuBarUsageSettings: (category: 'usage' | 'runtime') => Promise<{ opened: boolean; category: 'usage' | 'runtime' }>;
@@ -151,6 +161,7 @@ declare global {
       exportPlantUmlDiagramToFile: (payload: { fileName: string; mimeType: 'text/vnd.plantuml'; content: string }) => Promise<{ saved: boolean; filePath: string | null }>;
       notifyAppShellSettingsChanged: (settings: {
         appLanguage: 'zh-CN' | 'en-US';
+        appearance: 'light' | 'dark' | 'system';
         webviewDebugEnabled: boolean;
         multiWindowEnabled: boolean;
         backgroundModeEnabled: boolean;

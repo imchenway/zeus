@@ -52,6 +52,12 @@ let mainWindow: BrowserWindow | undefined;
 const windows = new Set<BrowserWindow>();
 let tray: Tray | undefined;
 let menuBarUsageWindow: BrowserWindow | undefined;
+const taskGitDeliveryWindows = new Map<string, BrowserWindow>();
+const taskGitDeliveryTaskByWindowId = new Map<number, string>();
+const taskGitDeliveryWindowSaveTimers = new Map<number, ReturnType<typeof setTimeout>>();
+const taskGitDeliveryWindowPersistenceGates = new Map<number, WindowStatePersistenceGate>();
+const mainWindowTaskGitContexts = new Map<number, TaskGitDeliveryCurrentContext>();
+let currentTaskGitDeliveryContext: TaskGitDeliveryCurrentContext = { taskId: null, workspaceId: null };
 let menuBarUsageMenu: Menu | undefined;
 let localServerRuntime: DesktopLocalServerRuntime | undefined;
 let releaseUpdateService: ReleaseUpdateService | undefined;
@@ -91,6 +97,12 @@ const savedDisplayAvailabilityTimeoutMs = 2_000;
 const testDistributionName = 'Zeus Test';
 const menuBarUsageWindowSize = { width: 360, height: 520 } as const;
 const menuBarUsageWindowGap = 6;
+const taskGitDeliveryMinimumSize = { width: 920, height: 640 } as const;
+
+interface TaskGitDeliveryCurrentContext {
+  taskId: string | null;
+  workspaceId: string | null;
+}
 
 function isTestDistribution(): boolean {
   if (!app.isPackaged) return false;
@@ -230,6 +242,61 @@ function mainWindowStatePath(): string {
   return join(app.getPath('userData'), 'main-window-state.json');
 }
 
+function taskGitDeliveryWindowStatePath(): string {
+  return join(app.getPath('userData'), 'task-git-delivery-window-state.json');
+}
+
+function persistTaskGitDeliveryWindowState(window: BrowserWindow): boolean {
+  if (window.isDestroyed()) return false;
+  const bounds = window.getNormalBounds();
+  const state = createPersistedMainWindowState({
+    bounds,
+    display: screen.getDisplayMatching(bounds),
+    isMaximized: window.isMaximized(),
+    isFullScreen: window.isFullScreen(),
+  });
+  if (!state || !writePersistedMainWindowState(taskGitDeliveryWindowStatePath(), state)) return false;
+  taskGitDeliveryWindowPersistenceGates.get(window.id)?.markPersisted();
+  return true;
+}
+
+function flushTaskGitDeliveryWindowState(window: BrowserWindow): void {
+  const timer = taskGitDeliveryWindowSaveTimers.get(window.id);
+  if (timer) clearTimeout(timer);
+  taskGitDeliveryWindowSaveTimers.delete(window.id);
+  if (!taskGitDeliveryWindowPersistenceGates.get(window.id)?.shouldPersist()) return;
+  persistTaskGitDeliveryWindowState(window);
+}
+
+function scheduleTaskGitDeliveryWindowStateSave(window: BrowserWindow): void {
+  if (!taskGitDeliveryWindowPersistenceGates.get(window.id)?.recordChange()) return;
+  const pendingTimer = taskGitDeliveryWindowSaveTimers.get(window.id);
+  if (pendingTimer) clearTimeout(pendingTimer);
+  const timer = setTimeout(() => {
+    taskGitDeliveryWindowSaveTimers.delete(window.id);
+    persistTaskGitDeliveryWindowState(window);
+  }, windowStateSaveDelayMs);
+  timer.unref();
+  taskGitDeliveryWindowSaveTimers.set(window.id, timer);
+}
+
+function registerTaskGitDeliveryWindowStatePersistence(window: BrowserWindow): void {
+  const gate = createWindowStatePersistenceGate();
+  taskGitDeliveryWindowPersistenceGates.set(window.id, gate);
+  const scheduleSave = () => scheduleTaskGitDeliveryWindowStateSave(window);
+  window.on('move', scheduleSave);
+  window.on('resize', scheduleSave);
+  window.on('maximize', scheduleSave);
+  window.on('unmaximize', scheduleSave);
+  window.on('enter-full-screen', scheduleSave);
+  window.on('leave-full-screen', scheduleSave);
+  window.on('close', () => flushTaskGitDeliveryWindowState(window));
+  const timer = setTimeout(() => {
+    if (!window.isDestroyed()) gate.activate();
+  }, windowStateActivationDelayMs);
+  timer.unref();
+}
+
 function persistMainWindowState(window: BrowserWindow): boolean {
   if (window.isDestroyed()) return false;
   const bounds = window.getNormalBounds();
@@ -366,10 +433,116 @@ function configureWindowSecurity(window: BrowserWindow, rendererUrl: string): vo
   window.webContents.session.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
 }
 
-function rendererEntryUrl(surface?: 'menu-bar-usage'): string {
+function rendererEntryUrl(surface?: 'menu-bar-usage' | 'task-git-delivery', parameters?: Record<string, string>): string {
   const url = new URL(process.env.ZEUS_DEV_SERVER_URL ?? pathToFileURL(join(desktopRoot(), 'dist/renderer/index.html')).toString());
   if (surface) url.searchParams.set('surface', surface);
+  for (const [key, value] of Object.entries(parameters ?? {})) url.searchParams.set(key, value);
   return url.toString();
+}
+
+function normalizeTaskGitDeliveryContext(value: unknown): TaskGitDeliveryCurrentContext | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const candidate = value as { taskId?: unknown; workspaceId?: unknown };
+  const taskId = candidate.taskId === null ? null : typeof candidate.taskId === 'string' && candidate.taskId.trim() ? candidate.taskId : undefined;
+  const workspaceId = candidate.workspaceId === null ? null : typeof candidate.workspaceId === 'string' && candidate.workspaceId.trim() ? candidate.workspaceId : undefined;
+  if (taskId === undefined || workspaceId === undefined || (!taskId && workspaceId)) return undefined;
+  return { taskId, workspaceId };
+}
+
+function broadcastTaskGitDeliveryCurrentContext(context: TaskGitDeliveryCurrentContext): void {
+  currentTaskGitDeliveryContext = context;
+  for (const window of taskGitDeliveryWindows.values()) {
+    if (!window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send('zeus:task-git-delivery:current-context', context);
+  }
+}
+
+function initialTaskGitDeliveryWindowBounds(parent: BrowserWindow): { bounds: Electron.Rectangle; isMaximized: boolean; isFullScreen: boolean } {
+  const persisted = readPersistedMainWindowState(taskGitDeliveryWindowStatePath());
+  if (persisted) {
+    const resolved = resolveMainWindowState(persisted, screen.getAllDisplays(), screen.getDisplayMatching(parent.getBounds()));
+    return { bounds: resolved.bounds, isMaximized: resolved.isMaximized, isFullScreen: resolved.isFullScreen };
+  }
+  const workArea = screen.getDisplayMatching(parent.getBounds()).workArea;
+  const width = Math.min(workArea.width, Math.max(Math.min(taskGitDeliveryMinimumSize.width, workArea.width), Math.round(workArea.width * 0.9)));
+  const height = Math.min(workArea.height, Math.max(Math.min(taskGitDeliveryMinimumSize.height, workArea.height), Math.round(workArea.height * 0.9)));
+  return {
+    bounds: {
+      x: Math.round(workArea.x + (workArea.width - width) / 2),
+      y: Math.round(workArea.y + (workArea.height - height) / 2),
+      width,
+      height,
+    },
+    isMaximized: false,
+    isFullScreen: false,
+  };
+}
+
+function revealTaskGitDeliveryWindow(window: BrowserWindow): void {
+  if (window.isDestroyed()) return;
+  if (window.isMinimized()) window.restore();
+  window.show();
+  window.focus();
+  app.focus({ steal: true });
+}
+
+async function openTaskGitDeliveryWindow(parent: BrowserWindow, taskId: string): Promise<{ opened: true; reused: boolean; taskId: string }> {
+  const existing = taskGitDeliveryWindows.get(taskId);
+  if (existing && !existing.isDestroyed()) {
+    revealTaskGitDeliveryWindow(existing);
+    return { opened: true, reused: true, taskId };
+  }
+
+  const restored = initialTaskGitDeliveryWindowBounds(parent);
+  const window = new BrowserWindow({
+    ...restored.bounds,
+    minWidth: Math.min(taskGitDeliveryMinimumSize.width, restored.bounds.width),
+    minHeight: Math.min(taskGitDeliveryMinimumSize.height, restored.bounds.height),
+    parent,
+    modal: false,
+    title: appShellSettings.appLanguage === 'zh-CN' ? '代码交付 · Zeus' : 'Code Delivery · Zeus',
+    show: false,
+    resizable: true,
+    minimizable: true,
+    maximizable: true,
+    fullscreenable: true,
+    webPreferences: {
+      preload: join(desktopRoot(), 'dist/preload/index.cjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      webSecurity: true,
+      allowRunningInsecureContent: false,
+    },
+  });
+  taskGitDeliveryWindows.set(taskId, window);
+  taskGitDeliveryTaskByWindowId.set(window.id, taskId);
+  registerTaskGitDeliveryWindowStatePersistence(window);
+  window.on('closed', () => {
+    const timer = taskGitDeliveryWindowSaveTimers.get(window.id);
+    if (timer) clearTimeout(timer);
+    taskGitDeliveryWindowSaveTimers.delete(window.id);
+    taskGitDeliveryWindowPersistenceGates.delete(window.id);
+    taskGitDeliveryTaskByWindowId.delete(window.id);
+    if (taskGitDeliveryWindows.get(taskId) === window) taskGitDeliveryWindows.delete(taskId);
+  });
+  window.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedUrl, isMainFrame) => {
+    if (isMainFrame && errorCode !== -3) console.warn(`Zeus 代码交付窗口加载失败：${validatedUrl} ${errorDescription} (${errorCode})`);
+  });
+  window.once('ready-to-show', () => {
+    if (restored.isMaximized) window.maximize();
+    if (restored.isFullScreen) window.setFullScreen(true);
+    revealTaskGitDeliveryWindow(window);
+    window.webContents.send('zeus:task-git-delivery:current-context', currentTaskGitDeliveryContext);
+  });
+  const rendererUrl = rendererEntryUrl('task-git-delivery', { taskId });
+  configureWindowSecurity(window, rendererUrl);
+  try {
+    await window.loadURL(rendererUrl);
+  } catch (error) {
+    window.destroy();
+    throw error;
+  }
+  return { opened: true, reused: false, taskId };
 }
 
 /** 创建 Zeus 主窗口；preload 会读取 Main 中启动的本地服务配置。 */
@@ -427,6 +600,10 @@ async function createWindow(): Promise<void> {
 
   windows.add(window);
   mainWindow = window;
+  window.on('focus', () => {
+    const context = mainWindowTaskGitContexts.get(window.id);
+    if (context) broadcastTaskGitDeliveryCurrentContext(context);
+  });
   const sourceWatcherKey = window.webContents.id;
   window.on('closed', () => {
     browserHost?.unregisterWindow(window);
@@ -444,6 +621,7 @@ async function createWindow(): Promise<void> {
     pendingTaskTableLayoutWindowCloseIds.delete(window.id);
     projectSourceWatchers.get(sourceWatcherKey)?.watcher.close();
     projectSourceWatchers.delete(sourceWatcherKey);
+    mainWindowTaskGitContexts.delete(window.id);
     rendererBootstrapMonitor.dispose(window);
     windows.delete(window);
     if (mainWindow === window) mainWindow = [...windows].at(-1);
@@ -651,6 +829,59 @@ function setupIpc(): void {
       throw new Error('Zeus local server is not ready');
     }
     return localServerRuntime.refreshConfig();
+  });
+  ipcMain.handle('zeus:task-git-delivery:open', async (event, input: unknown) => {
+    const requestingWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow)) throw new Error('代码交付窗口请求来自不受信任的主窗口。');
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw new TypeError('代码交付窗口请求无效。');
+    const candidate = input as { taskId?: unknown; workspaceId?: unknown };
+    if (typeof candidate.taskId !== 'string' || !candidate.taskId.trim()) throw new TypeError('代码交付任务身份无效。');
+    if (candidate.workspaceId !== undefined && candidate.workspaceId !== null && (typeof candidate.workspaceId !== 'string' || !candidate.workspaceId.trim())) throw new TypeError('代码交付工作区身份无效。');
+    if (typeof candidate.workspaceId === 'string') {
+      const context = { taskId: candidate.taskId, workspaceId: candidate.workspaceId };
+      mainWindowTaskGitContexts.set(requestingWindow.id, context);
+      broadcastTaskGitDeliveryCurrentContext(context);
+    }
+    return openTaskGitDeliveryWindow(requestingWindow, candidate.taskId);
+  });
+  ipcMain.handle('zeus:task-git-delivery:close', (event) => {
+    const requestingWindow = BrowserWindow.fromWebContents(event.sender);
+    const taskId = requestingWindow ? taskGitDeliveryTaskByWindowId.get(requestingWindow.id) : undefined;
+    if (!requestingWindow || requestingWindow.isDestroyed() || !taskId) throw new Error('当前窗口不是受信任的代码交付窗口。');
+    requestingWindow.close();
+    return { closed: true, taskId };
+  });
+  ipcMain.handle('zeus:task-git-delivery:get-current-context', (event) => {
+    const requestingWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!requestingWindow || requestingWindow.isDestroyed() || !taskGitDeliveryTaskByWindowId.has(requestingWindow.id)) throw new Error('当前会话上下文请求来自不受信任的代码交付窗口。');
+    return currentTaskGitDeliveryContext;
+  });
+  ipcMain.on('zeus:task-git-delivery:current-context-changed', (event, value: unknown) => {
+    const requestingWindow = BrowserWindow.fromWebContents(event.sender);
+    const context = normalizeTaskGitDeliveryContext(value);
+    if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow) || !context) return;
+    mainWindowTaskGitContexts.set(requestingWindow.id, context);
+    if (requestingWindow.isFocused() || requestingWindow === mainWindow) broadcastTaskGitDeliveryCurrentContext(context);
+  });
+  ipcMain.on('zeus:task-git-delivery:changed', (event, taskId: unknown) => {
+    const requestingWindow = BrowserWindow.fromWebContents(event.sender);
+    const ownedTaskId = requestingWindow ? taskGitDeliveryTaskByWindowId.get(requestingWindow.id) : undefined;
+    if (!ownedTaskId || taskId !== ownedTaskId) return;
+    for (const window of windows) {
+      if (!window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send('zeus:task-git-delivery:changed', ownedTaskId);
+    }
+  });
+  ipcMain.handle('zeus:task-git-delivery:open-conversation', async (event, input: unknown) => {
+    const requestingWindow = BrowserWindow.fromWebContents(event.sender);
+    const ownedTaskId = requestingWindow ? taskGitDeliveryTaskByWindowId.get(requestingWindow.id) : undefined;
+    if (!ownedTaskId || !input || typeof input !== 'object' || Array.isArray(input)) throw new Error('冲突处理会话请求来自不受信任的代码交付窗口。');
+    const candidate = input as { taskId?: unknown; conversationId?: unknown };
+    if (candidate.taskId !== ownedTaskId || typeof candidate.conversationId !== 'string' || !candidate.conversationId.trim()) throw new TypeError('冲突处理会话身份无效。');
+    await requestMainWindow();
+    if (!mainWindow || mainWindow.isDestroyed()) throw new Error('Zeus 主窗口当前不可用。');
+    revealMainWindow(mainWindow);
+    mainWindow.webContents.send('zeus:task-git-delivery:open-conversation', { taskId: ownedTaskId, conversationId: candidate.conversationId });
+    return { opened: true };
   });
   ipcMain.handle('zeus:menu-bar-usage:hide', (event) => {
     requireMenuBarUsageWindow(event);
@@ -1159,7 +1390,7 @@ function setupIpc(): void {
       writeTextFile: (path, content) => writeFile(path, content, 'utf8'),
     }),
   );
-  ipcMain.handle('zeus:app-shell-settings-changed', (_event, settings: Partial<MainAppShellSettings>) => {
+  ipcMain.handle('zeus:app-shell-settings-changed', (_event, settings: Partial<MainAppShellSettings> & { appearance?: unknown }) => {
     appShellSettings = {
       appLanguage: settings.appLanguage === 'en-US' ? 'en-US' : 'zh-CN',
       webviewDebugEnabled: settings.webviewDebugEnabled === true,
@@ -1168,6 +1399,12 @@ function setupIpc(): void {
       desktopNotificationsEnabled: typeof settings.desktopNotificationsEnabled === 'boolean' ? settings.desktopNotificationsEnabled : appShellSettings.desktopNotificationsEnabled,
       openAtLoginEnabled: typeof settings.openAtLoginEnabled === 'boolean' ? settings.openAtLoginEnabled : appShellSettings.openAtLoginEnabled,
     };
+    const deliveryAppearance = settings.appearance === 'light' || settings.appearance === 'dark' ? settings.appearance : 'system';
+    for (const window of taskGitDeliveryWindows.values()) {
+      if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
+        window.webContents.send('zeus:task-git-delivery:appearance', { language: appShellSettings.appLanguage, appearance: deliveryAppearance });
+      }
+    }
     setupMenu();
     setupTraySafely();
     applySystemNotificationBridge();
@@ -1631,7 +1868,7 @@ async function initializeApplication(): Promise<void> {
     onRestarted: () => {
       // 本地服务异常重启后，依赖旧 WebSocket 的系统通知桥必须重建，避免继续挂在旧端口。
       applySystemNotificationBridge();
-      for (const window of windows) {
+      for (const window of [...windows, ...taskGitDeliveryWindows.values()]) {
         if (window.isDestroyed() || window.webContents.isDestroyed()) continue;
         // 宿主端点完成交接后由 Main 刷新真实 BrowserWindow，避免 Renderer 自导航留下空白页。
         window.webContents.reloadIgnoringCache();

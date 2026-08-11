@@ -9,10 +9,12 @@ interface TaskWorkspaceBranchGroup<Workspace extends TaskWorkspaceIndexSnapshot>
 export function TaskWorkspaceBranchList<Workspace extends TaskWorkspaceIndexSnapshot>(props: {
   workspaces: Workspace[];
   selectedWorkspaceId: string;
+  currentConversationWorkspaceId?: string | null;
   zh: boolean;
   disabled?: boolean;
   stateLabel: (workspace: Workspace, zh: boolean) => string;
   onSelect: (workspaceId: string) => void;
+  onCopyBranch?: (branchName: string) => void | Promise<void>;
 }) {
   const groups = useMemo(() => groupTaskWorkspacesByCurrentBranch(props.workspaces), [props.workspaces]);
 
@@ -23,14 +25,25 @@ export function TaskWorkspaceBranchList<Workspace extends TaskWorkspaceIndexSnap
       </strong>
       {groups.map((group) => {
         const selected = group.workspaces.some((workspace) => workspace.id === props.selectedWorkspaceId);
+        const currentConversation = group.workspaces.some((workspace) => workspace.id === props.currentConversationWorkspaceId);
         return (
           <section
             key={group.branchName}
-            className={`task-git-workspace-branch-group${selected ? ' is-active' : ''}`}
+            className={`task-git-workspace-branch-group${selected ? ' is-active' : ''}${currentConversation ? ' is-current-conversation' : ''}`}
             aria-label={props.zh ? `${group.branchName}，${group.workspaces.length} 个仓库` : `${group.branchName}, ${group.workspaces.length} ${group.workspaces.length === 1 ? 'repository' : 'repositories'}`}
           >
             <header>
-              <strong title={group.branchName}>{group.branchName}</strong>
+              <span>
+                <strong>{group.branchName}</strong>
+                <span className="task-git-workspace-branch-actions">
+                  {currentConversation ? <small className="task-git-current-conversation-badge">{props.zh ? '当前会话' : 'Current session'}</small> : null}
+                  {props.onCopyBranch ? (
+                    <button type="button" onClick={() => void props.onCopyBranch?.(group.branchName)} disabled={props.disabled} aria-label={props.zh ? `复制分支名 ${group.branchName}` : `Copy branch name ${group.branchName}`}>
+                      {props.zh ? '复制' : 'Copy'}
+                    </button>
+                  ) : null}
+                </span>
+              </span>
               <small>{props.zh ? `${group.workspaces.length} 个仓库` : `${group.workspaces.length} ${group.workspaces.length === 1 ? 'repository' : 'repositories'}`}</small>
             </header>
             <div>

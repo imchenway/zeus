@@ -7104,6 +7104,8 @@ export function App(props: {
     mode: 'commit' | 'commit-only' | 'push-only' | 'delivery';
   } | null>(null);
   const [taskGitMergeTaskId, setTaskGitMergeTaskId] = useState<string | null>(null);
+  const taskGitDeliveryChangedRef = useRef<(taskId: string) => void>(() => undefined);
+  const taskGitDeliveryConversationRef = useRef<(input: { taskId: string; conversationId: string }) => void>(() => undefined);
   const taskModelPushCapabilityRequestRef = useRef(0);
   const taskModelPushLoginRequestRef = useRef(0);
   const taskModelPushLoginIdRef = useRef<string | null>(null);
@@ -7456,6 +7458,20 @@ export function App(props: {
     () => resolveSelectedNativeConversationForProject(nativeConversationChoices, selectedNativeConversationId, activeProjectId),
     [activeProjectId, nativeConversationChoices, selectedNativeConversationId],
   );
+  useEffect(() => {
+    window.zeus?.notifyTaskGitDeliveryCurrentContext?.({
+      taskId: selectedNativeConversation?.taskId ?? null,
+      workspaceId: selectedNativeConversation?.workspaceId ?? null,
+    });
+  }, [selectedNativeConversation?.taskId, selectedNativeConversation?.workspaceId]);
+  useEffect(() => {
+    const disposeChanged = window.zeus?.onTaskGitDeliveryChanged?.((taskId) => taskGitDeliveryChangedRef.current(taskId));
+    const disposeConversation = window.zeus?.onOpenTaskGitDeliveryConversation?.((input) => taskGitDeliveryConversationRef.current(input));
+    return () => {
+      disposeChanged?.();
+      disposeConversation?.();
+    };
+  }, []);
   const selectedTaskModelPushOperation = Object.values(taskModelPushPendingByTask).find((pending) => pending.navigationId === selectedNativeConversationId);
   const selectedTaskModelPushOptimisticState = selectedTaskModelPushOperation?.status === 'accepted' && selectedTaskModelPushOperation.choice.id === selectedNativeConversation?.id ? selectedTaskModelPushOperation.session : undefined;
   useEffect(() => {
@@ -9242,6 +9258,26 @@ export function App(props: {
     workspaceScrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
+  function openTaskGitDelivery(taskId: string, workspaceId?: string | null): void {
+    if (!window.zeus?.openTaskGitDeliveryWindow) {
+      setTaskGitMergeTaskId(taskId);
+      return;
+    }
+    void window.zeus.openTaskGitDeliveryWindow({ taskId, workspaceId }).catch((error: unknown) => {
+      recordLocalError('task-git-delivery-window-open', error);
+      setTaskGitMergeTaskId(taskId);
+    });
+  }
+
+  taskGitDeliveryChangedRef.current = (taskId) => {
+    void Promise.all([refreshNativeConversationChoices(taskId), props.onLoadTaskEvents && taskDetailPaneTaskId === taskId ? props.onLoadTaskEvents(taskId).then(setTaskEvents) : Promise.resolve()]).catch((error: unknown) =>
+      recordLocalError('task-git-delivery-projection-refresh', error),
+    );
+  };
+  taskGitDeliveryConversationRef.current = ({ taskId, conversationId }) => {
+    void openTaskConflictAiConversation(taskId, conversationId);
+  };
+
   async function openTaskConversationDrawer(taskId: string, conversationId: string): Promise<void> {
     const conversation = nativeConversationChoicesByTask[taskId]?.choices.find((candidate) => candidate.id === conversationId);
     if (!conversation) return;
@@ -10139,7 +10175,7 @@ export function App(props: {
       onSendQueuedNow: (messageId) => steerTaskModelPushPendingMessage(pending.task.id, messageId),
       onReorderQueue: (orderedIds) => reorderTaskModelPushPendingMessages(pending.task.id, orderedIds),
       onOpenTaskDetail,
-      onOpenTaskGitDelivery: (taskId) => setTaskGitMergeTaskId(taskId),
+      onOpenTaskGitDelivery: (taskId, workspaceId) => openTaskGitDelivery(taskId, workspaceId),
     };
   }
 
@@ -10536,6 +10572,7 @@ export function App(props: {
         zeus: window.zeus,
         settings: {
           appLanguage: savedSettings.appLanguage,
+          appearance: savedSettings.appearance,
           webviewDebugEnabled: savedSettings.webviewDebugEnabled,
           multiWindowEnabled: savedSettings.multiWindowEnabled,
           backgroundModeEnabled: savedSettings.backgroundModeEnabled,
@@ -11592,7 +11629,7 @@ export function App(props: {
           onOpenTaskDetail={onOpenTaskDetail}
           onLoadTaskWorkspaces={props.nativeConversationClient.loadTaskGitWorkspaces}
           onOpenTaskGitReview={(taskId, workspaceId, mode) => setTaskGitReviewState({ taskId, workspaceId, mode })}
-          onOpenTaskGitDelivery={(taskId) => setTaskGitMergeTaskId(taskId)}
+          onOpenTaskGitDelivery={(taskId, workspaceId) => openTaskGitDelivery(taskId, workspaceId)}
         />
       );
     }
@@ -11641,7 +11678,7 @@ export function App(props: {
           onOpenTaskDetail={onOpenTaskDetail}
           onLoadTaskWorkspaces={props.nativeConversationClient.loadTaskGitWorkspaces}
           onOpenTaskGitReview={(taskId, workspaceId, mode) => setTaskGitReviewState({ taskId, workspaceId, mode })}
-          onOpenTaskGitDelivery={(taskId) => setTaskGitMergeTaskId(taskId)}
+          onOpenTaskGitDelivery={(taskId, workspaceId) => openTaskGitDelivery(taskId, workspaceId)}
           onOpenProjectCommands={() => openProjectCommands(selectedNativeConversation.projectId)}
         />
       );
@@ -12808,6 +12845,7 @@ export function App(props: {
                 language={appShellSettings.appLanguage}
                 task={snapshot.tasks.find((task) => task.id === taskGitMergeTaskId) ?? null}
                 projectName={snapshot.projects.find((project) => project.id === snapshot.tasks.find((task) => task.id === taskGitMergeTaskId)?.projectId)?.name}
+                currentConversationWorkspaceId={selectedNativeConversation?.taskId === taskGitMergeTaskId ? selectedNativeConversation.workspaceId : null}
                 client={props.nativeConversationClient ?? null}
                 onChanged={() =>
                   taskGitMergeTaskId
@@ -12853,7 +12891,7 @@ export function App(props: {
                     onOpenConversation={(taskId, conversationId) => void openTaskConversation(taskId, conversationId)}
                     onPushNewConversation={(taskId) => void openTaskModelPush(taskId)}
                     onRetryModelPush={retryTaskModelPush}
-                    onOpenCodeDelivery={(taskId) => setTaskGitMergeTaskId(taskId)}
+                    onOpenCodeDelivery={(taskId) => openTaskGitDelivery(taskId)}
                     onCommitCode={(taskId) => setTaskGitReviewState({ taskId, mode: 'commit-only' })}
                     onPushCode={(taskId) => setTaskGitReviewState({ taskId, mode: 'push-only' })}
                     onUpdateTaskContent={updateTaskContent}

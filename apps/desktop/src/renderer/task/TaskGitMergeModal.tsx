@@ -46,7 +46,6 @@ interface DeliveryFile {
   deletions: number;
   workingFile?: TaskGitFileStatus;
 }
-
 interface DeliveryFeedback {
   tone: 'success' | 'warning' | 'info';
   text: string;
@@ -62,6 +61,7 @@ interface TaskGitMergeModalProps {
   language: 'zh-CN' | 'en-US';
   task: TaskRecord | null;
   projectName?: string;
+  currentConversationWorkspaceId?: string | null;
   client: DeliveryClient | null;
   onChanged?: () => void | Promise<void>;
   onOpenConversation: (taskId: string, conversationId: string) => void | Promise<void>;
@@ -78,12 +78,13 @@ export function TaskGitMergeModal(props: TaskGitMergeModalProps) {
 
 function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
   const zh = props.language === 'zh-CN';
+  const initialConversationWorkspaceIdRef = useRef(props.currentConversationWorkspaceId);
   const [workspaceIndex, setWorkspaceIndex] = useState<TaskWorkspaceIndexCollection | null>(null);
   const [workspaceDetails, setWorkspaceDetails] = useState<Record<string, TaskWorkspaceSnapshot>>({});
   const [detailStates, setDetailStates] = useState<Record<string, 'loading' | 'error'>>({});
   const [integrations, setIntegrations] = useState<TaskIntegrationRecord[]>([]);
   const [workspaceId, setWorkspaceId] = useState('');
-  const [diffScope, setDiffScope] = useState<DiffScope>('committed');
+  const [diffScope, setDiffScope] = useState<DiffScope>('working');
   const [selectedFile, setSelectedFile] = useState('');
   const [selectedPaths, setSelectedPaths] = useState<string[]>([]);
   const [fileDiff, setFileDiff] = useState<TaskGitDiffSummary | null>(null);
@@ -154,7 +155,8 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
         setWorkspaceDetails({});
         setDetailStates({});
         setIntegrations(integrationSnapshot.items);
-        const firstWorkspace = workspaceSnapshot.items.find((workspace) => workspace.state !== 'discarded') ?? workspaceSnapshot.items[0];
+        const preferredWorkspace = workspaceSnapshot.items.find((workspace) => workspace.id === initialConversationWorkspaceIdRef.current && workspace.state !== 'discarded');
+        const firstWorkspace = preferredWorkspace ?? workspaceSnapshot.items.find((workspace) => workspace.state !== 'discarded') ?? workspaceSnapshot.items[0];
         const recoverable = findRecoverableIntegration(integrationSnapshot.items, firstWorkspace?.id);
         setWorkspaceId(firstWorkspace?.id ?? '');
         setIntegration(recoverable ?? null);
@@ -273,6 +275,7 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
 
   async function reload(preferredWorkspaceId = workspaceId): Promise<void> {
     if (!props.task || !props.client) return;
+    setDiffScope('working');
     const [workspaceSnapshot, integrationSnapshot, detailSnapshot] = await Promise.all([
       props.client.loadTaskGitWorkspaceIndex(props.task.id),
       props.client.loadTaskIntegrations(props.task.id),
@@ -302,7 +305,6 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
       });
       await reload(selectedWorkspace.id);
       await props.onChanged?.();
-      setDiffScope('committed');
       const formattedCount = response.result.formattedPaths.length;
       setFeedback({
         tone: 'success',
@@ -489,7 +491,7 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
     rememberConflictDraft();
     const nextWorkspace = workspaceIndex?.items.find((workspace) => workspace.id === nextId) ?? null;
     setWorkspaceId(nextId);
-    setDiffScope('committed');
+    setDiffScope('working');
     const recoverable = findRecoverableIntegration(integrations, nextId);
     setIntegration(recoverable ?? null);
     setMode(recoverable?.mode ?? 'merge');
@@ -525,6 +527,16 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
   }
 
   const integrationResult = deliveredIntegration ?? (selectedWorkspace?.state === 'merged' ? integrations.find((candidate) => candidate.workspaceId === selectedWorkspace.id && candidate.state === 'merged') : null);
+
+  async function copyBranchName(branchName: string): Promise<void> {
+    try {
+      if (window.zeus?.writeClipboardText) await window.zeus.writeClipboardText(branchName);
+      else await navigator.clipboard.writeText(branchName);
+      setFeedback({ tone: 'info', text: zh ? `已复制分支名：${branchName}` : `Copied branch name: ${branchName}` });
+    } catch {
+      setError(zh ? '复制分支名失败，请稍后重试。' : 'The branch name could not be copied. Try again.');
+    }
+  }
 
   return (
     <ModalPortal rootClassName="task-git-merge-portal-root" backdropClassName="task-git-merge-backdrop" dismissDisabled={dismissDisabled} onDismiss={props.onClose}>
@@ -571,10 +583,12 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
                 <TaskWorkspaceBranchList
                   workspaces={workspaceIndex?.items ?? []}
                   selectedWorkspaceId={workspaceId}
+                  currentConversationWorkspaceId={props.currentConversationWorkspaceId}
                   zh={zh}
                   disabled={busy}
                   stateLabel={(workspace, localizedZh) => workspaceStateLabel(workspace, workspaceDetails[workspace.id], detailStates[workspace.id], localizedZh, findRecoverableIntegration(integrations, workspace.id))}
                   onSelect={selectWorkspace}
+                  onCopyBranch={copyBranchName}
                 />
 
                 <main className="task-git-review-main">
@@ -625,6 +639,11 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
                           : zh
                             ? '工作区没有未提交变化。'
                             : 'The workspace has no uncommitted changes.'}
+                        {diffScope === 'working' && committedFiles.length > 0 ? (
+                          <Button variant="secondary" size="compact" onClick={() => setDiffScope('committed')} disabled={busy}>
+                            {zh ? `查看已提交成果（${committedFiles.length}）` : `View committed result (${committedFiles.length})`}
+                          </Button>
+                        ) : null}
                       </p>
                     ) : null}
                   </section>
