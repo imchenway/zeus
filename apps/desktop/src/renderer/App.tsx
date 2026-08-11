@@ -60,6 +60,7 @@ import {
   type NativeConversationStartStorage,
   type ProjectSessionWorkspaceStartInput,
   SessionWorkspace,
+  type SessionWorkspaceActions,
   type SessionWorkspaceStartInput,
   type SessionWorkspaceTask,
   startNativeConversationWithDurableAcceptance,
@@ -107,6 +108,7 @@ import {
   enqueueTaskModelPushMessage,
   failTaskModelPushPendingState,
   retryTaskModelPushPendingState,
+  taskModelPushHasRealChoice,
   updateTaskModelPushAttachments,
   updateTaskModelPushDeferredMessages,
   updateTaskModelPushDraft,
@@ -7380,16 +7382,12 @@ export function App(props: {
     selectedConversationId: selectedNativeConversationId,
     taskDetailPaneTaskId,
   };
-  useEffect(() => {
-    taskModelPushPendingByTaskRef.current = taskModelPushPendingByTask;
-  }, [taskModelPushPendingByTask]);
-
-  function updateTaskModelPushPendingByTask(update: (current: Record<string, TrackedTaskModelPushState>) => Record<string, TrackedTaskModelPushState>): void {
-    setTaskModelPushPendingByTask((current) => {
-      const next = update(current);
-      taskModelPushPendingByTaskRef.current = next;
-      return next;
-    });
+  function updateTaskModelPushPendingByTask(update: (current: Record<string, TrackedTaskModelPushState>) => Record<string, TrackedTaskModelPushState>): Record<string, TrackedTaskModelPushState> {
+    // ref 是首发操作的同步事实源；React state 只负责投影，不能再把较旧提交反写进 ref。
+    const next = update(taskModelPushPendingByTaskRef.current);
+    taskModelPushPendingByTaskRef.current = next;
+    setTaskModelPushPendingByTask(next);
+    return next;
   }
   const graphViewRequestVersionRef = useRef(0);
   const graphSearchRequestVersionRef = useRef(0);
@@ -9829,8 +9827,13 @@ export function App(props: {
       });
       const active = taskModelPushPendingByTaskRef.current[pending.task.id];
       if (!active || active.request.idempotencyKey !== pending.request.idempotencyKey) return;
-      const attached: TrackedTaskModelPushState = { ...attachTaskModelPushChoice(active, choice), origin: active.origin };
-      updateTaskModelPushPendingByTask((current) => ({ ...current, [pending.task.id]: attached }));
+      const attachedStates = updateTaskModelPushPendingByTask((current) => {
+        const currentOperation = current[pending.task.id];
+        if (!currentOperation || currentOperation.request.idempotencyKey !== pending.request.idempotencyKey) return current;
+        return { ...current, [pending.task.id]: { ...attachTaskModelPushChoice(currentOperation, choice), origin: currentOperation.origin } };
+      });
+      const attached = attachedStates[pending.task.id];
+      if (!attached || !taskModelPushHasRealChoice(attached)) throw new Error('Real task-push conversation was not attached atomically.');
       setTaskModelPushAnnouncement(appShellSettings.appLanguage === 'zh-CN' ? `${pending.task.title}：会话已创建。` : `${pending.task.title}: Conversation created.`);
       const submissionStatus = typeof acceptance.submission?.status === 'string' ? acceptance.submission.status : null;
       if (submissionStatus === 'active') {
@@ -9871,12 +9874,13 @@ export function App(props: {
 
   async function flushTaskModelPushDeferredMessages(pending: TrackedTaskModelPushState): Promise<void> {
     const client = props.nativeConversationClient;
-    if (!client || pending.choice.id === pending.navigationId || taskModelPushDeferredDispatchingTaskIdsRef.current.has(pending.task.id)) return;
+    if (!client || !taskModelPushHasRealChoice(pending) || taskModelPushDeferredDispatchingTaskIdsRef.current.has(pending.task.id)) return;
     taskModelPushDeferredDispatchingTaskIdsRef.current.add(pending.task.id);
     try {
       while (true) {
         const current = taskModelPushPendingByTaskRef.current[pending.task.id];
         if (!current || current.request.idempotencyKey !== pending.request.idempotencyKey) return;
+        if (!taskModelPushHasRealChoice(current) || current.choice.id !== pending.choice.id) return;
         const message = current.deferredMessages.find((entry) => entry.status === 'queued');
         if (!message) {
           const completed: TrackedTaskModelPushState = { ...acceptTaskModelPushPendingState(current), origin: current.origin };
@@ -10037,7 +10041,7 @@ export function App(props: {
       origin: pending.origin,
     };
     updateTaskModelPushPendingByTask((current) => ({ ...current, [taskId]: retrying }));
-    if (retrying.choice.id !== retrying.navigationId) {
+    if (taskModelPushHasRealChoice(retrying)) {
       void flushTaskModelPushDeferredMessages(retrying);
       return;
     }
@@ -10074,7 +10078,7 @@ export function App(props: {
     );
     queueMicrotask(() => {
       const current = taskModelPushPendingByTaskRef.current[taskId];
-      if (current?.choice.id !== current?.navigationId) void flushTaskModelPushDeferredMessages(current);
+      if (current && taskModelPushHasRealChoice(current)) void flushTaskModelPushDeferredMessages(current);
     });
   }
 
@@ -10101,8 +10105,42 @@ export function App(props: {
     );
     queueMicrotask(() => {
       const current = taskModelPushPendingByTaskRef.current[taskId];
-      if (current?.choice.id !== current?.navigationId) void flushTaskModelPushDeferredMessages(current);
+      if (current && taskModelPushHasRealChoice(current)) void flushTaskModelPushDeferredMessages(current);
     });
+  }
+
+  function taskModelPushWorkspaceActions(pending: TrackedTaskModelPushState, onOpenTaskDetail: (taskId: string) => void): SessionWorkspaceActions {
+    const updateAttachments = (attachments: NativeConversationAttachment[]): void => {
+      mutateTaskModelPushPending(pending.task.id, (current) => updateTaskModelPushAttachments(current, attachments));
+    };
+    return {
+      onDraftChange: (draft) => mutateTaskModelPushPending(pending.task.id, (current) => updateTaskModelPushDraft(current, draft)),
+      onSubmit: (delivery, settings) => submitTaskModelPushPendingMessage(pending.task.id, delivery, settings),
+      onChooseAttachments: props.onChooseConversationResources
+        ? async () => {
+            const attachments = await chooseNativeConversationAttachments();
+            const current = taskModelPushPendingByTaskRef.current[pending.task.id];
+            if (!current) return;
+            updateAttachments([...current.session.attachments, ...attachments]);
+          }
+        : undefined,
+      onAddAttachments: (attachments) => {
+        const current = taskModelPushPendingByTaskRef.current[pending.task.id];
+        if (!current) return;
+        updateAttachments([...current.session.attachments, ...attachments]);
+      },
+      onRemoveAttachment: (attachment) => {
+        const current = taskModelPushPendingByTaskRef.current[pending.task.id];
+        if (!current) return;
+        updateAttachments(current.session.attachments.filter((candidate) => !(candidate.name === attachment.name && candidate.localPath === attachment.localPath && candidate.uploadRef === attachment.uploadRef)));
+      },
+      onEditQueuedSubmission: (messageId, content) => editTaskModelPushPendingMessage(pending.task.id, messageId, content),
+      onDeleteQueuedSubmission: (messageId) => deleteTaskModelPushPendingMessage(pending.task.id, messageId),
+      onSendQueuedNow: (messageId) => steerTaskModelPushPendingMessage(pending.task.id, messageId),
+      onReorderQueue: (orderedIds) => reorderTaskModelPushPendingMessages(pending.task.id, orderedIds),
+      onOpenTaskDetail,
+      onOpenTaskGitDelivery: (taskId) => setTaskGitMergeTaskId(taskId),
+    };
   }
 
   function toggleTaskSelection(taskId: string, selected: boolean): void {
@@ -11517,22 +11555,22 @@ export function App(props: {
             onAction: () => reopenTaskFromConversation(nativeSessionTask.id, selectedNativeConversation.id),
           }
         : undefined;
-    if (selectedTaskModelPushOperation && selectedTaskModelPushOperation.status !== 'accepted' && nativeSessionOwner) {
+    if (selectedTaskModelPushOperation && (!taskModelPushHasRealChoice(selectedTaskModelPushOperation) || selectedTaskModelPushOperation.status !== 'accepted') && nativeSessionOwner && props.nativeConversationClient) {
       const pending = selectedTaskModelPushOperation;
-      const updateAttachments = (attachments: NativeConversationAttachment[]): void => {
-        mutateTaskModelPushPending(pending.task.id, (current) => updateTaskModelPushAttachments(current, attachments));
-      };
       return (
-        <SessionWorkspace
+        <ConnectedSessionWorkspace
           key={pending.navigationId}
           language={appShellSettings.appLanguage}
-          state={pending.session}
+          client={props.nativeConversationClient}
+          controllerEnabled={false}
+          localState={pending.session}
           conversation={pending.choice}
           task={nativeSessionTask}
           owner={nativeSessionOwner}
-          tasks={currentProjectTasks.map((task) => createSessionWorkspaceTask(task, appShellSettings, appShellSettings.appLanguage))}
           choices={nativeSessionChoices}
-          capabilities={pending.capabilities}
+          initialOptimisticState={pending.session}
+          initialCapabilities={pending.capabilities}
+          stableConversationId={pending.navigationId}
           quickActionsSuppressed={Boolean(taskDetailPaneTaskId)}
           creationStatus={
             pending.status === 'failed'
@@ -11548,34 +11586,13 @@ export function App(props: {
                   message: appShellSettings.appLanguage === 'zh-CN' ? '正在创建会话' : 'Creating conversation',
                 }
           }
-          actions={{
-            onDraftChange: (draft) => mutateTaskModelPushPending(pending.task.id, (current) => updateTaskModelPushDraft(current, draft)),
-            onSubmit: (delivery, settings) => submitTaskModelPushPendingMessage(pending.task.id, delivery, settings),
-            onChooseAttachments: props.onChooseConversationResources
-              ? async () => {
-                  const attachments = await chooseNativeConversationAttachments();
-                  const current = taskModelPushPendingByTaskRef.current[pending.task.id];
-                  if (!current) return;
-                  updateAttachments([...current.session.attachments, ...attachments]);
-                }
-              : undefined,
-            onAddAttachments: (attachments) => {
-              const current = taskModelPushPendingByTaskRef.current[pending.task.id];
-              if (!current) return;
-              updateAttachments([...current.session.attachments, ...attachments]);
-            },
-            onRemoveAttachment: (attachment) => {
-              const current = taskModelPushPendingByTaskRef.current[pending.task.id];
-              if (!current) return;
-              updateAttachments(current.session.attachments.filter((candidate) => !(candidate.name === attachment.name && candidate.localPath === attachment.localPath && candidate.uploadRef === attachment.uploadRef)));
-            },
-            onEditQueuedSubmission: (messageId, content) => editTaskModelPushPendingMessage(pending.task.id, messageId, content),
-            onDeleteQueuedSubmission: (messageId) => deleteTaskModelPushPendingMessage(pending.task.id, messageId),
-            onSendQueuedNow: (messageId) => steerTaskModelPushPendingMessage(pending.task.id, messageId),
-            onReorderQueue: (orderedIds) => reorderTaskModelPushPendingMessages(pending.task.id, orderedIds),
-            onOpenTaskDetail,
-            onOpenTaskGitDelivery: (taskId) => setTaskGitMergeTaskId(taskId),
-          }}
+          localActions={taskModelPushWorkspaceActions(pending, onOpenTaskDetail)}
+          onStartConversation={startNativeConversation}
+          onStartProjectConversation={startProjectConversation}
+          onOpenTaskDetail={onOpenTaskDetail}
+          onLoadTaskWorkspaces={props.nativeConversationClient.loadTaskGitWorkspaces}
+          onOpenTaskGitReview={(taskId, workspaceId, mode) => setTaskGitReviewState({ taskId, workspaceId, mode })}
+          onOpenTaskGitDelivery={(taskId) => setTaskGitMergeTaskId(taskId)}
         />
       );
     }
@@ -11585,12 +11602,25 @@ export function App(props: {
           key={selectedNativeConversation.navigationId ?? selectedNativeConversation.id}
           language={appShellSettings.appLanguage}
           client={props.nativeConversationClient}
+          controllerEnabled={!selectedTaskModelPushOperation || (selectedTaskModelPushOperation.status === 'accepted' && taskModelPushHasRealChoice(selectedTaskModelPushOperation))}
+          localState={selectedTaskModelPushOperation?.session}
+          localActions={selectedTaskModelPushOperation ? taskModelPushWorkspaceActions(selectedTaskModelPushOperation, onOpenTaskDetail) : undefined}
           conversation={selectedNativeConversation}
           task={nativeSessionTask}
           owner={nativeSessionOwner}
           choices={nativeSessionChoices}
           initialCachedState={nativeConversationHotCacheRef.current.get(selectedNativeConversation.id)?.state}
           initialOptimisticState={selectedTaskModelPushOptimisticState}
+          initialCapabilities={selectedTaskModelPushOperation?.capabilities}
+          stableConversationId={selectedTaskModelPushOperation?.navigationId}
+          creationStatus={
+            selectedTaskModelPushOperation
+              ? {
+                  state: 'creating',
+                  message: appShellSettings.appLanguage === 'zh-CN' ? '正在创建会话' : 'Creating conversation',
+                }
+              : undefined
+          }
           readOnlyGate={taskReadOnlyGate}
           quickActionsSuppressed={Boolean(taskDetailPaneTaskId)}
           onChooseAttachments={props.onChooseConversationResources ? chooseNativeConversationAttachments : undefined}

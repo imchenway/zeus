@@ -123,12 +123,19 @@ export function attachTaskModelPushChoice(pending: TaskModelPushPendingState, ch
 }
 
 export function acceptTaskModelPushPendingState(pending: TaskModelPushPendingState): TaskModelPushPendingState {
+  if (!taskModelPushHasRealChoice(pending)) {
+    throw new Error('Task model push cannot be accepted before a real conversation and provider thread are attached.');
+  }
   return {
     ...pending,
     choice: { ...pending.choice, taskPushCreating: false },
     status: 'accepted',
     error: null,
   };
+}
+
+export function taskModelPushHasRealChoice(pending: TaskModelPushPendingState): boolean {
+  return pending.choice.id !== pending.navigationId && Boolean(pending.choice.providerThreadId);
 }
 
 export function updateTaskModelPushDraft(pending: TaskModelPushPendingState, draft: string): TaskModelPushPendingState {
