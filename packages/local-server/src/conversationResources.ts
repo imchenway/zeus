@@ -68,6 +68,11 @@ export interface ConversationResourceOpenIntent {
   authority: Record<string, unknown>;
 }
 
+export interface ConversationFileOpenGrant {
+  resource: ConversationFileResource;
+  intent: ConversationResourceOpenIntent;
+}
+
 const markdownLinkPattern = /\[([^\]\n]+)\]\(([^)\n]+)\)/gu;
 const maximumResourceUrlLength = 8_192;
 const maximumResourcesPerItem = 128;
@@ -338,6 +343,52 @@ export function toConversationResourceOpenIntent(record: ZeusConversationResourc
     display: parseJsonRecord(record.displayJson),
     target: parseJsonRecord(record.targetJson),
     authority: parseJsonRecord(record.authorityJson),
+  };
+}
+
+/**
+ * 变更审核只传递变更身份与项目相对路径；绝对路径和允许根只留在受信服务内。
+ */
+export function createConversationFileOpenGrant(input: {
+  id: string;
+  projectId: string;
+  projectRoot: string;
+  conversationId: string;
+  turnId: string;
+  itemId: string;
+  projectRelativePath: string;
+  now: string;
+}): ConversationFileOpenGrant | null {
+  const candidate = normalizeFileChangeResource({ sourceIndex: 0, path: input.projectRelativePath, projectRoot: input.projectRoot });
+  if (!candidate) return null;
+  const resource: ConversationFileResource = {
+    id: input.id,
+    projectId: input.projectId,
+    conversationId: input.conversationId,
+    turnId: input.turnId,
+    itemId: input.itemId,
+    kind: 'file',
+    presentation: 'inline',
+    displayName: candidate.displayName,
+    projectRelativePath: candidate.projectRelativePath,
+    iconKind: candidate.iconKind,
+    createdAt: input.now,
+    updatedAt: input.now,
+  };
+  return {
+    resource,
+    intent: {
+      id: input.id,
+      projectId: input.projectId,
+      conversationId: input.conversationId,
+      turnId: input.turnId,
+      itemId: input.itemId,
+      kind: 'file',
+      presentation: 'inline',
+      display: displayForCandidate(candidate),
+      target: targetForCandidate(candidate),
+      authority: authorityForCandidate(candidate),
+    },
   };
 }
 

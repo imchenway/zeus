@@ -176,7 +176,7 @@ import {
 import { createCodexNativeConversationCoordinator } from './codexNativeConversationCoordinator.js';
 import { createCodexUsageService } from './codexUsageService.js';
 import { chooseNativeUserMessageContent, resolveNativeUserMessageSubmission } from './codexNativeUserMessageProjection.js';
-import { normalizeConversationResources, sanitizeConversationItemPayload, toConversationResource, toConversationResourceOpenIntent } from './conversationResources.js';
+import { createConversationFileOpenGrant, type ConversationFileOpenGrant, normalizeConversationResources, sanitizeConversationItemPayload, toConversationResource, toConversationResourceOpenIntent } from './conversationResources.js';
 import { changeSetErrorStatus, createTurnChangeSetService, errorCode as turnChangeSetErrorCode, projectHistoricalTurnChangeSet } from './turnChangeSets.js';
 import { createCommandCenter } from './commandCenter.js';
 import { migrateLegacyCodexThreads } from './legacyCodexThreadMigration.js';
@@ -2183,6 +2183,9 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   for (const conversation of conversations.listNativeBoundRecords()) {
     const project = projects.getById(conversation.projectId);
     if (!project) continue;
+    const conversationExecutionRoot = resolveNativeConversationExecutionRoot(conversation);
+    // 任务会话的文件属于独立 worktree；执行根不可恢复时不能回退到项目主目录重写资源。
+    if (!conversationExecutionRoot) continue;
     const submissions = conversationSubmissions.listByConversation(conversation.id);
     const existingResourcesByItem = new Map<string, ReturnType<typeof conversationResources.listByItem>>();
     for (const resource of conversationResources.listByConversation(conversation.id)) {
@@ -2195,7 +2198,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       const payload = parseJsonObject(item.payloadJson);
       const normalized = normalizeConversationResources({
         projectId: conversation.projectId,
-        projectRoot: project.localPath,
+        projectRoot: conversationExecutionRoot,
         conversationId: conversation.id,
         turnId: item.turnId,
         item,
@@ -3452,6 +3455,101 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         error: code || 'ZEUS_CONVERSATION_RESOURCE_PREVIEW_FAILED',
         message: error instanceof Error ? error.message : 'Conversation resource preview failed',
       });
+    }
+  });
+
+  type TurnChangeFileOpenParams = { projectId: string; conversationId: string; turnId: string; changeSetId: string; fileId: string };
+
+  function turnChangeFileOpenError(code: string, message: string, statusCode: number): Error & { code: string; statusCode: number } {
+    return Object.assign(new Error(message), { code, statusCode });
+  }
+
+  function resolveTurnChangeFileOpenGrant(params: TurnChangeFileOpenParams): ConversationFileOpenGrant {
+    const conversation = conversations.getById(params.conversationId);
+    if (!conversation || conversation.projectId !== params.projectId) {
+      throw turnChangeFileOpenError('ZEUS_CONVERSATION_NOT_FOUND', 'Conversation not found.', 404);
+    }
+    const turn = conversationTurns.listByConversation(conversation.id).find((candidate) => candidate.id === params.turnId || candidate.providerTurnId === params.turnId);
+    if (!turn) throw turnChangeFileOpenError('ZEUS_CONVERSATION_TURN_NOT_FOUND', 'Conversation turn not found.', 404);
+    const changeSet = turnChangeSets.getByTurn(conversation.id, turn.id);
+    if (!changeSet || changeSet.id !== params.changeSetId || changeSet.projectId !== params.projectId) {
+      throw turnChangeFileOpenError('ZEUS_TURN_CHANGE_SET_NOT_FOUND', 'Turn change set not found.', 404);
+    }
+    const file = turnChangeFiles.getById(params.fileId);
+    if (!file || file.changeSetId !== changeSet.id) {
+      throw turnChangeFileOpenError('ZEUS_TURN_CHANGE_FILE_NOT_FOUND', 'Turn change file not found.', 404);
+    }
+    if (changeSet.state === 'capturing' || changeSet.state === 'undoing' || changeSet.state === 'reapplying') {
+      throw turnChangeFileOpenError('ZEUS_TURN_CHANGE_FILE_TRANSITIONING', 'The changed file is currently being updated. Try again after the operation finishes.', 409);
+    }
+    const currentPath = changeSet.state === 'undone' ? file.oldPath : file.newPath;
+    if (!currentPath) {
+      throw turnChangeFileOpenError('ZEUS_TURN_CHANGE_FILE_NOT_PRESENT', 'The changed file does not exist in the current workspace state.', 409);
+    }
+    const executionRoot = resolveNativeConversationExecutionRoot(conversation);
+    if (!executionRoot) {
+      throw turnChangeFileOpenError('ZEUS_TURN_CHANGE_FILE_ROOT_UNAVAILABLE', 'The current workspace for this conversation is unavailable.', 409);
+    }
+    const grant = createConversationFileOpenGrant({
+      id: `turn_change_file_open_${file.id}`,
+      projectId: params.projectId,
+      projectRoot: executionRoot,
+      conversationId: conversation.id,
+      turnId: turn.id,
+      itemId: file.sourceItemId ?? file.id,
+      projectRelativePath: currentPath,
+      now: now().toISOString(),
+    });
+    if (!grant) {
+      throw turnChangeFileOpenError('ZEUS_TURN_CHANGE_FILE_PATH_FORBIDDEN', 'The changed file path is outside the current workspace.', 403);
+    }
+    const absolutePath = typeof grant.intent.target.absolutePath === 'string' ? grant.intent.target.absolutePath : '';
+    const allowedRoot = typeof grant.intent.authority.allowedRoot === 'string' ? grant.intent.authority.allowedRoot : '';
+    let rootRealPath: string;
+    let fileRealPath: string;
+    try {
+      rootRealPath = realpathSync(allowedRoot);
+    } catch {
+      throw turnChangeFileOpenError('ZEUS_TURN_CHANGE_FILE_ROOT_UNAVAILABLE', 'The current workspace for this conversation is unavailable.', 409);
+    }
+    try {
+      fileRealPath = realpathSync(absolutePath);
+    } catch {
+      throw turnChangeFileOpenError('ZEUS_TURN_CHANGE_FILE_NOT_PRESENT', 'The changed file does not exist in the current workspace state.', 409);
+    }
+    if (!isPathInsideRoot(fileRealPath, rootRealPath) || fileRealPath === rootRealPath) {
+      throw turnChangeFileOpenError('ZEUS_TURN_CHANGE_FILE_PATH_FORBIDDEN', 'The changed file resolves outside the current workspace.', 403);
+    }
+    if (!statSync(fileRealPath).isFile()) {
+      throw turnChangeFileOpenError('ZEUS_TURN_CHANGE_FILE_NOT_FILE', 'The changed path is not a regular file.', 409);
+    }
+    return grant;
+  }
+
+  function sendTurnChangeFileOpenError(reply: FastifyReply, error: unknown) {
+    const code = error instanceof Error && 'code' in error ? String((error as Error & { code?: unknown }).code ?? '') : '';
+    const explicitStatus = error instanceof Error && 'statusCode' in error && typeof (error as Error & { statusCode?: unknown }).statusCode === 'number' ? (error as Error & { statusCode: number }).statusCode : null;
+    const status = explicitStatus ?? (code === 'ZEUS_CONVERSATION_RESOURCE_FORBIDDEN' ? 403 : code === 'ZEUS_CONVERSATION_RESOURCE_TOO_LARGE' ? 413 : 409);
+    return reply.code(status).send({
+      error: code || 'ZEUS_TURN_CHANGE_FILE_OPEN_FAILED',
+      message: error instanceof Error ? error.message : 'Turn change file open failed.',
+    });
+  }
+
+  server.get('/api/projects/:projectId/conversations/:conversationId/turns/:turnId/change-set/:changeSetId/files/:fileId/open-intent', async (request: FastifyRequest<{ Params: TurnChangeFileOpenParams }>, reply) => {
+    try {
+      return resolveTurnChangeFileOpenGrant(request.params).intent;
+    } catch (error) {
+      return sendTurnChangeFileOpenError(reply, error);
+    }
+  });
+
+  server.get('/api/projects/:projectId/conversations/:conversationId/turns/:turnId/change-set/:changeSetId/files/:fileId/preview', async (request: FastifyRequest<{ Params: TurnChangeFileOpenParams }>, reply) => {
+    try {
+      const grant = resolveTurnChangeFileOpenGrant(request.params);
+      return readConversationResourcePreview(grant.resource, grant.intent);
+    } catch (error) {
+      return sendTurnChangeFileOpenError(reply, error);
     }
   });
 

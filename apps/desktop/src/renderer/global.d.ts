@@ -137,6 +137,13 @@ declare global {
         mode?: 'zeus_source' | 'zeus_browser' | 'external' | 'file' | 'clipboard';
         error?: string;
       }>;
+      openTurnChangeFile: (request: { projectId: string; conversationId: string; turnId: string; changeSetId: string; fileId: string; target: ConversationOpenTarget; location?: ConversationFileLocation }) => Promise<{
+        opened: boolean;
+        resourceId: string;
+        target: ConversationOpenTarget;
+        mode?: 'zeus_source' | 'zeus_browser' | 'external' | 'file' | 'clipboard';
+        error?: string;
+      }>;
       exportMermaidDiagramToFile: (payload: { fileName: string; mimeType: 'text/vnd.mermaid'; content: string }) => Promise<{ saved: boolean; filePath: string | null }>;
       exportPlantUmlDiagramToFile: (payload: { fileName: string; mimeType: 'text/vnd.plantuml'; content: string }) => Promise<{ saved: boolean; filePath: string | null }>;
       notifyAppShellSettingsChanged: (settings: {

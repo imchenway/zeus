@@ -1506,6 +1506,7 @@ export interface DashboardClient {
   archiveNativeConversation: (projectId: string, conversationId: string) => Promise<GraphConversationHistoryItem>;
   restoreConversationArchive: (projectId: string, conversationId: string) => Promise<GraphConversationHistoryItem>;
   loadConversationResourcePreview: (projectId: string, conversationId: string, resourceId: string) => Promise<ConversationResourcePreview>;
+  loadTurnChangeFilePreview: (projectId: string, conversationId: string, turnId: string, changeSetId: string, fileId: string) => Promise<ConversationResourcePreview>;
   loadTurnChangeSet: (projectId: string, conversationId: string, turnId: string) => Promise<TurnChangeSet>;
   operateTurnChangeSet: (
     projectId: string,
@@ -1929,6 +1930,10 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
     restoreConversationArchive: (projectId, conversationId) => request<GraphConversationHistoryItem>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/restore`, { method: 'POST' }),
     loadConversationResourcePreview: (projectId, conversationId, resourceId) =>
       request<ConversationResourcePreview>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/resources/${encodeURIComponent(resourceId)}/preview`),
+    loadTurnChangeFilePreview: (projectId, conversationId, turnId, changeSetId, fileId) =>
+      request<ConversationResourcePreview>(
+        `/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/turns/${encodeURIComponent(turnId)}/change-set/${encodeURIComponent(changeSetId)}/files/${encodeURIComponent(fileId)}/preview`,
+      ),
     loadTurnChangeSet: (projectId, conversationId, turnId) => request<TurnChangeSet>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/turns/${encodeURIComponent(turnId)}/change-set`),
     operateTurnChangeSet: (projectId, conversationId, turnId, action, input) =>
       request<TurnChangeSetOperationResult>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/turns/${encodeURIComponent(turnId)}/change-set/${action}`, {
