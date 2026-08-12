@@ -2468,6 +2468,13 @@ function migrateCodexNativeConversationSchema(db: ZeusDatabase): void {
   }
 
   db.execute(`
+    CREATE TABLE IF NOT EXISTS conversation_session_file_edit_grants (
+      conversation_id TEXT PRIMARY KEY, project_id TEXT NOT NULL,
+      enabled INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL
+    )
+  `);
+
+  db.execute(`
     CREATE TABLE IF NOT EXISTS conversation_plan_actions (
       id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, turn_id TEXT NOT NULL,
       plan_item_id TEXT NOT NULL, status TEXT NOT NULL, submission_id TEXT,
@@ -5116,6 +5123,18 @@ export class ConversationRepository {
     } catch {
       return undefined;
     }
+  }
+
+  hasSessionFileEditGrant(conversationId: string): boolean {
+    return this.db.get<{ enabled: number }>(`SELECT enabled FROM conversation_session_file_edit_grants WHERE conversation_id = ?`, [conversationId])?.enabled === 1;
+  }
+
+  setSessionFileEditGrant(conversationId: string, projectId: string, enabled: boolean): void {
+    this.db.execute(
+      `INSERT INTO conversation_session_file_edit_grants (conversation_id, project_id, enabled, updated_at) VALUES (?, ?, ?, ?)
+       ON CONFLICT(conversation_id) DO UPDATE SET project_id = excluded.project_id, enabled = excluded.enabled, updated_at = excluded.updated_at`,
+      [conversationId, projectId, enabled ? 1 : 0, nowIso()],
+    );
   }
 
   /** 完成未读是列表阅读状态，不得改变会话活跃时间或排序。 */

@@ -790,6 +790,8 @@ export interface StartProjectConversationRequest {
   permissionMode: NativePermissionMode;
   collaborationMode: NativeCollaborationMode;
   serviceTier?: string | null;
+  model?: string;
+  effort?: string;
   idempotencyKey: string;
   clientUserMessageId: string;
 }

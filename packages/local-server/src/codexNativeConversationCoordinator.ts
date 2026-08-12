@@ -1963,6 +1963,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     const response = input.response;
     let wireResponse = { ...response, generationId: request.transportGenerationId, requestId: providerRequestId } as CodexServerRequestResponse;
     const payload = parseJsonRecord(request.payloadJson);
+    const grantSessionFileEdits = request.requestKind === 'file' && response.type === 'file' && response.decision === 'acceptForSession';
 
     if (request.requestKind === 'command') {
       if (response.type !== 'command') throw invalidServerRequestResponse('Response type does not match the pending command approval.');
@@ -2021,12 +2022,17 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         });
       }
       const recoveredRequest = options.requests.getById(request.id) ?? request;
-      return respondAfterInteractionRecovery({
+      const recovered = await respondAfterInteractionRecovery({
         request: recoveredRequest,
         conversation,
         response: stripRequestTransport(wireResponse),
         input,
       });
+      if (grantSessionFileEdits) {
+        options.conversations.setSessionFileEditGrant(conversation.id, conversation.projectId, true);
+        await persist();
+      }
+      return recovered;
     }
     if (input.answerAttachments?.length) {
       await deliverRequestAnswerAttachments(request, conversation, input.answerAttachments);
@@ -2035,6 +2041,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     input.providerWriteLifecycle?.markRpcStarted(request.id);
     await persist();
     await options.manager.respondToServerRequest(wireResponse);
+    if (grantSessionFileEdits) options.conversations.setSessionFileEditGrant(conversation.id, conversation.projectId, true);
     const effectiveResponse = stripRequestTransport(wireResponse);
     const secret = request.containsSecret && effectiveResponse.type === 'request_user_input';
     options.requests.resolve(request.id, {
@@ -3941,7 +3948,20 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
             broadcast = { type: 'conversation.native.error', payload: { conversationId: conversation.id, providerThreadId: threadId, providerTurnId, ...recoveryError } };
           }
         } else if (request.status === 'pending') {
-          if (providerTurnId && turn) {
+          const sessionFileEditGrantApplies =
+            requestKind === 'file' &&
+            options.conversations.hasSessionFileEditGrant(conversation.id) &&
+            hasAuditableFileApprovalTarget(params, conversation, contexts.get(conversation.id) ?? contextFromConversation(conversation), options.items);
+          let automaticallyApproved = false;
+          if (sessionFileEditGrantApplies) {
+            try {
+              await respondToRequest({ requestId: request.id, response: { type: 'file', decision: 'accept' } });
+              automaticallyApproved = true;
+            } catch {
+              // Provider 拒绝自动答复时保留真实待授权弹窗，禁止伪造已允许状态。
+            }
+          }
+          if (!automaticallyApproved && providerTurnId && turn) {
             options.turns.upsert({ ...turn, status: 'waiting', updatedAt: event.receivedAt });
             options.conversations.bindProvider(conversation.id, {
               providerId: 'codex',
@@ -3951,17 +3971,19 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
             });
             runStates.set(conversation.id, { type: 'waiting', turnId: providerTurnId, requestId: request.id, reason: requestKind === 'request_user_input' ? 'user_input' : 'approval' });
           }
-          broadcast = {
-            type: 'conversation.request.created',
-            payload: {
-              conversationId: conversation.id,
-              requestId: request.id,
-              requestKind,
-              providerTurnId,
-              request: nativePendingRequestProjection(request),
-            },
-          };
-          scheduleAutoResolution(request);
+          if (!automaticallyApproved) {
+            broadcast = {
+              type: 'conversation.request.created',
+              payload: {
+                conversationId: conversation.id,
+                requestId: request.id,
+                requestKind,
+                providerTurnId,
+                request: nativePendingRequestProjection(request),
+              },
+            };
+            scheduleAutoResolution(request);
+          }
         }
       }
     }

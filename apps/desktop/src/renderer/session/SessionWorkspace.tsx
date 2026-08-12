@@ -43,7 +43,16 @@ import type {
   TurnChangeSet,
   TurnChangeSetOperationResult,
 } from './sessionTypes.js';
-import { normalizeServiceTierSelection, readProjectServiceTierPreference, serviceTierDescription, serviceTierOptions, serviceTierSelectionFromValue, serviceTierSelectionValue, serviceTierWireOverride } from './serviceTierSelection.js';
+import {
+  normalizeServiceTierSelection,
+  readProjectServiceTierPreference,
+  selectionFromEffectiveServiceTier,
+  serviceTierDescription,
+  serviceTierOptions,
+  serviceTierSelectionFromValue,
+  serviceTierSelectionValue,
+  serviceTierWireOverride,
+} from './serviceTierSelection.js';
 import { reconnectDelayMs, type SessionController, type SessionControllerClient, useSessionController } from './useSessionController.js';
 import { createSessionEscapeController, type SessionEscapeController, type SessionEscapeLayer, type SessionEscapeResult } from './useThreadScrollController.js';
 import { SafeMarkdown, type SessionUiLanguage } from './ThreadItemView.js';
@@ -53,6 +62,7 @@ import { useConversationInputResources } from './useConversationInputResources.j
 import { SessionQuickActionsCard } from './SessionQuickActionsCard.js';
 import type { SessionCodeReviewSelection } from './SessionCodeReviewDialog.js';
 import { conversationDisplayTitle } from './conversationDisplayTitle.js';
+import { conversationRuntimePreferenceKind, readConversationRuntimePreferences, writeConversationRuntimePreferences } from './conversationRuntimePreferences.js';
 import { resolveModelCapability } from './modelSelection.js';
 
 export interface SessionWorkspaceTask {
@@ -92,6 +102,8 @@ export interface ProjectSessionWorkspaceStartInput {
   permissionMode: NativePermissionMode;
   collaborationMode: NativeCollaborationMode;
   serviceTierSelection: NativeServiceTierSelection;
+  model?: string;
+  effort?: string;
 }
 
 export interface SessionWorkspaceActions {
@@ -269,6 +281,8 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
   }, [props.controllerEnabled, props.conversation.id, props.onStateChange, state]);
   useEffect(() => {
     if (props.controllerEnabled === false || !props.localState) return;
+    // 权威会话已经接管后，创建期 localState 只能作为历史展示，不能再把旧草稿写回真实会话。
+    if (controller.getState().snapshot?.id === props.conversation.id) return;
     // 权威快照接管前继续承接用户输入，避免同一工作面切换读写身份时丢失草稿或附件。
     controller.setDraft(props.localState.draft);
     controller.setAttachments(props.localState.attachments);
@@ -636,6 +650,8 @@ function buildProjectConversationStartPayload(input: ProjectSessionWorkspaceStar
     attachments: input.attachments,
     permissionMode: input.permissionMode ?? 'auto',
     collaborationMode: input.collaborationMode ?? 'default',
+    ...(input.model ? { model: input.model } : {}),
+    ...(input.effort ? { effort: input.effort } : {}),
     ...serviceTierWireOverride(input.serviceTierSelection),
   };
 }
@@ -666,6 +682,8 @@ function isProjectConversationStartRequest(value: unknown): value is StartProjec
     permissionModeField(value.permissionMode) !== undefined &&
     (value.collaborationMode === 'default' || value.collaborationMode === 'plan') &&
     serviceTierOverrideField(value.serviceTier) &&
+    (value.model === undefined || typeof value.model === 'string') &&
+    (value.effort === undefined || typeof value.effort === 'string') &&
     typeof value.idempotencyKey === 'string' &&
     Boolean(value.idempotencyKey) &&
     typeof value.clientUserMessageId === 'string' &&
@@ -1250,6 +1268,17 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     const conversationId = props.state?.conversationId ?? props.conversation?.id;
     if (!props.state || !projectId || !conversationId || legacy || interactionReadOnly) return;
     writeConversationNextTurnSettings(browserConversationStorage(), projectId, conversationId, settings);
+    const capability = props.capabilities?.models.find((candidate) => candidate.model === settings.model || candidate.id === settings.model);
+    const preferenceKind = conversationRuntimePreferenceKind(owner, props.conversation?.title);
+    const currentPreference = readConversationRuntimePreferences(browserConversationStorage(), projectId, preferenceKind);
+    writeConversationRuntimePreferences(browserConversationStorage(), projectId, preferenceKind, {
+      model: settings.model,
+      ...(settings.effort ? { effort: settings.effort } : {}),
+      serviceTier: selectionFromEffectiveServiceTier(settings.serviceTier, capability),
+      permissionMode: settings.permissionMode,
+      collaborationMode: settings.collaborationMode,
+      ...(currentPreference?.workspaceMode ? { workspaceMode: currentPreference.workspaceMode } : {}),
+    });
     lastNextTurnSettingsSyncRef.current = null;
     setComposerRuntimeSettings(settings);
   }
@@ -2083,6 +2112,8 @@ function NewConversationComposer(props: {
   const [permissionMode, setPermissionMode] = useState<NativePermissionMode>('auto');
   const [collaborationMode, setCollaborationMode] = useState<NativeCollaborationMode>('default');
   const [capabilities, setCapabilities] = useState<CodexConversationCapabilities | null>(props.capabilities ?? null);
+  const [selectedModelId, setSelectedModelId] = useState('');
+  const [selectedEffort, setSelectedEffort] = useState('');
   const [serviceTierSelection, setServiceTierSelection] = useState<NativeServiceTierSelection>(() => readProjectServiceTierPreference(browserConversationStorage(), props.owner?.projectId ?? ''));
   const [serviceTierDowngraded, setServiceTierDowngraded] = useState(false);
   const [isComposing, setIsComposing] = useState(false);
@@ -2110,7 +2141,12 @@ function NewConversationComposer(props: {
   useEffect(() => {
     const projectId = props.owner?.projectId;
     if (!projectId) return;
-    setServiceTierSelection(readProjectServiceTierPreference(browserConversationStorage(), projectId));
+    const remembered = readConversationRuntimePreferences(browserConversationStorage(), projectId, conversationRuntimePreferenceKind(props.owner));
+    setSelectedModelId(remembered?.model ?? '');
+    setSelectedEffort(remembered?.effort ?? '');
+    setPermissionMode(remembered?.permissionMode ?? 'auto');
+    setCollaborationMode(remembered?.collaborationMode ?? 'default');
+    setServiceTierSelection(remembered?.serviceTier ?? readProjectServiceTierPreference(browserConversationStorage(), projectId));
     setServiceTierDowngraded(false);
     if (props.capabilities) {
       setCapabilities(props.capabilities);
@@ -2130,15 +2166,36 @@ function NewConversationComposer(props: {
     };
   }, [props.capabilities, props.onLoadCapabilities, props.owner?.projectId]);
 
-  const selectedModel = capabilities?.models.find((model) => model.model === capabilities.preferredModel || model.id === capabilities.preferredModel) ?? capabilities?.models[0] ?? null;
+  const selectedModel =
+    capabilities?.models.find((model) => model.model === selectedModelId || model.id === selectedModelId) ??
+    capabilities?.models.find((model) => model.model === capabilities.preferredModel || model.id === capabilities.preferredModel) ??
+    capabilities?.models[0] ??
+    null;
 
   useEffect(() => {
     if (!selectedModel) return;
+    if (selectedModelId !== selectedModel.id) setSelectedModelId(selectedModel.id);
+    if (!selectedModel.supportedReasoningEfforts.includes(selectedEffort)) setSelectedEffort(selectedModel.defaultReasoningEffort ?? selectedModel.supportedReasoningEfforts[0] ?? '');
     const normalized = normalizeServiceTierSelection(serviceTierSelection, selectedModel);
     if (!normalized.downgraded) return;
     setServiceTierSelection(normalized.selection);
     setServiceTierDowngraded(true);
-  }, [selectedModel, serviceTierSelection]);
+  }, [selectedEffort, selectedModel, selectedModelId, serviceTierSelection]);
+
+  useEffect(() => {
+    const projectId = props.owner?.projectId;
+    if (!projectId || !selectedModel) return;
+    const preferenceKind = conversationRuntimePreferenceKind(props.owner);
+    const currentPreference = readConversationRuntimePreferences(browserConversationStorage(), projectId, preferenceKind);
+    writeConversationRuntimePreferences(browserConversationStorage(), projectId, preferenceKind, {
+      model: selectedModel.id,
+      ...(selectedEffort ? { effort: selectedEffort } : {}),
+      serviceTier: serviceTierSelection,
+      permissionMode,
+      collaborationMode,
+      ...(currentPreference?.workspaceMode ? { workspaceMode: currentPreference.workspaceMode } : {}),
+    });
+  }, [collaborationMode, permissionMode, props.owner, selectedEffort, selectedModel, serviceTierSelection]);
 
   useLayoutEffect(() => {
     if (textareaRef.current) autosizeTextarea(textareaRef.current);
@@ -2161,7 +2218,7 @@ function NewConversationComposer(props: {
       let accepted: void | boolean | NativeConversationStartPreparation;
       if (props.owner.kind === 'project') {
         if (!props.onStartProject) throw new Error('Project conversation start is unavailable.');
-        accepted = await props.onStartProject({ owner: props.owner, content, attachments, permissionMode, collaborationMode, serviceTierSelection });
+        accepted = await props.onStartProject({ owner: props.owner, content, attachments, permissionMode, collaborationMode, serviceTierSelection, model: selectedModel?.id, effort: selectedEffort || undefined });
       } else {
         if (!props.task || !props.onStartTask) throw new Error('Task conversation start is unavailable.');
         accepted = await props.onStartTask({
@@ -2173,6 +2230,8 @@ function NewConversationComposer(props: {
           permissionMode,
           collaborationMode,
           serviceTierSelection,
+          model: selectedModel?.id,
+          effort: selectedEffort || undefined,
         });
       }
       if (accepted === false) return;
@@ -2249,6 +2308,27 @@ function NewConversationComposer(props: {
                 <span aria-hidden="true">＋</span>
               </button>
             ) : null}
+            <ComposerDropdown
+              label={props.language === 'zh-CN' ? '模型' : 'Model'}
+              value={selectedModel?.id ?? ''}
+              options={(capabilities?.models ?? []).map((model) => ({ value: model.id, label: model.displayName ?? model.model }))}
+              disabled={submitting || !props.owner || !selectedModel}
+              onChange={(value) => {
+                const nextModel = capabilities?.models.find((model) => model.id === value || model.model === value);
+                setSelectedModelId(nextModel?.id ?? value);
+                setSelectedEffort(nextModel?.defaultReasoningEffort ?? nextModel?.supportedReasoningEfforts[0] ?? '');
+                const normalized = normalizeServiceTierSelection(serviceTierSelection, nextModel);
+                setServiceTierSelection(normalized.selection);
+                setServiceTierDowngraded(normalized.downgraded);
+              }}
+            />
+            <ComposerDropdown
+              label={props.language === 'zh-CN' ? '推理强度' : 'Reasoning effort'}
+              value={selectedEffort}
+              options={(selectedModel?.supportedReasoningEfforts ?? []).map((effort) => ({ value: effort, label: effort }))}
+              disabled={submitting || !props.owner || !selectedEffort}
+              onChange={setSelectedEffort}
+            />
             <ComposerDropdown
               label={props.language === 'zh-CN' ? '服务档位' : 'Service tier'}
               value={serviceTierSelectionValue(serviceTierSelection)}
