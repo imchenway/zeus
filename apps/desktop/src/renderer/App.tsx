@@ -892,6 +892,11 @@ function createSessionWorkspaceTask(task: TaskRecord, settings: AppShellSettings
       label: formatConfiguredTaskManagementStatus(definition ?? managementStatusId, config, language),
       color: definition?.color ?? '#6b7280',
     },
+    managementStatusOptions: config.statuses.map((status) => ({
+      id: status.id,
+      label: formatConfiguredTaskManagementStatus(status, config, language),
+      color: status.color,
+    })),
   };
 }
 const taskAgentRunStatusLabels: Record<AppLanguage, Record<TaskAgentRunStatus, string>> = {
@@ -11749,6 +11754,7 @@ export function App(props: {
           initialCapabilities={pending.capabilities}
           stableConversationId={pending.navigationId}
           quickActionsSuppressed={Boolean(taskDetailPaneTaskId)}
+          taskManagementStatusChangeBusy={updatingTaskBusy}
           creationStatus={
             pending.status === 'failed'
               ? {
@@ -11767,6 +11773,7 @@ export function App(props: {
           onStartConversation={startNativeConversation}
           onStartProjectConversation={startProjectConversation}
           onOpenTaskDetail={onOpenTaskDetail}
+          onTaskManagementStatusChange={(taskId, status) => updateTaskManagementStatus(taskId, status)}
           onLoadTaskWorkspaces={props.nativeConversationClient.loadTaskGitWorkspaces}
           onOpenTaskGitReview={(taskId, workspaceId, mode) => setTaskGitReviewState({ taskId, workspaceId, mode })}
           onOpenTaskGitDelivery={(taskId, workspaceId) => openTaskGitDelivery(taskId, workspaceId)}
@@ -11801,6 +11808,7 @@ export function App(props: {
           }
           readOnlyGate={taskReadOnlyGate}
           quickActionsSuppressed={Boolean(taskDetailPaneTaskId)}
+          taskManagementStatusChangeBusy={updatingTaskBusy}
           onChooseAttachments={props.onChooseConversationResources ? chooseNativeConversationAttachments : undefined}
           onStateChange={(conversationId, state) => {
             recordNativeConversationRuntimeState(conversationId, state);
@@ -11811,6 +11819,7 @@ export function App(props: {
           onStartConversation={startNativeConversation}
           onStartProjectConversation={startProjectConversation}
           onOpenTaskDetail={onOpenTaskDetail}
+          onTaskManagementStatusChange={(taskId, status) => updateTaskManagementStatus(taskId, status)}
           onLoadTaskWorkspaces={props.nativeConversationClient.loadTaskGitWorkspaces}
           onOpenTaskGitReview={(taskId, workspaceId, mode) => setTaskGitReviewState({ taskId, workspaceId, mode })}
           onOpenTaskGitDelivery={(taskId, workspaceId) => openTaskGitDelivery(taskId, workspaceId)}
@@ -11831,6 +11840,7 @@ export function App(props: {
         choices={nativeSessionChoices}
         suppressComposer={Boolean(taskReadOnlyGate)}
         quickActionsSuppressed={Boolean(taskDetailPaneTaskId)}
+        taskManagementStatusChangeBusy={updatingTaskBusy}
         readOnlyGate={taskReadOnlyGate}
         autoFocusNewConversation={conversationDraftOpen}
         legacyMessages={nativeLegacyMessages}
@@ -11856,6 +11866,7 @@ export function App(props: {
           onStartConversation: startNativeConversation,
           onStartProjectConversation: startProjectConversation,
           onOpenTaskDetail,
+          onTaskManagementStatusChange: (taskId, status) => updateTaskManagementStatus(taskId, status),
           onLoadCapabilities: props.nativeConversationClient?.loadCodexConversationCapabilities,
           onChooseStartAttachments: props.onChooseConversationResources ? chooseNativeConversationAttachments : undefined,
           onOpenImportSettings: () => {

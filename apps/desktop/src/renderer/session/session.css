@@ -820,10 +820,13 @@
   gap: 6px;
 }
 
-/* ZEUS-0161：任务管理状态紧跟任务标题，颜色继续来自项目状态配置。 */
+/* ZEUS-0215：会话标题状态复用任务状态下拉，颜色和选项继续来自项目配置。 */
 .session-codex-parity-v1 .session-thread-task-status {
   flex: 0 0 auto;
+  inline-size: auto;
   min-block-size: 24px;
+  min-inline-size: 0;
+  pointer-events: auto;
   white-space: nowrap;
 }
 
