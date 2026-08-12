@@ -7,7 +7,6 @@ import { useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode,
 import type { TaskIntegrationConflictPermissionMode, TaskIntegrationRecord } from '../session/sessionTypes.js';
 import { Button } from '../ui/Button.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
-import { readConversationRuntimePreferences, writeConversationRuntimePreferences } from '../session/conversationRuntimePreferences.js';
 import {
   applyConflictDocumentEdit,
   applyConflictSideAction,
@@ -57,11 +56,7 @@ export function TaskGitConflictWorkspace(props: {
   const [mergeFeedback, setMergeFeedback] = useState<string | null>(null);
   const [undoDraft, setUndoDraft] = useState<ConflictDocument | null>(null);
   const [aiPermissionOpen, setAiPermissionOpen] = useState(false);
-  const [aiPermissionMode, setAiPermissionMode] = useState<TaskIntegrationConflictPermissionMode>(() => {
-    const remembered = readConversationRuntimePreferences(browserStorage(), props.integration.projectId, 'conflict_resolution')?.permissionMode;
-    return remembered === 'full-access' ? 'full-access' : 'auto';
-  });
-  const aiPermissionDialogRef = useRef<HTMLElement | null>(null);
+  const [aiPermissionMode, setAiPermissionMode] = useState<TaskIntegrationConflictPermissionMode>('auto');
   const currentFileResolved = document !== null && unresolvedCount === 0;
   const selectedBlock = blocks[Math.min(selectedBlockIndex, Math.max(0, blocks.length - 1))] ?? null;
   const activeBlock = currentFileResolved ? null : selectedBlock;
@@ -79,23 +74,8 @@ export function TaskGitConflictWorkspace(props: {
   }, [props.conflictPath, document?.fingerprint]);
 
   useEffect(() => {
-    const current = readConversationRuntimePreferences(browserStorage(), props.integration.projectId, 'conflict_resolution');
-    writeConversationRuntimePreferences(browserStorage(), props.integration.projectId, 'conflict_resolution', {
-      ...(current ?? {}),
-      serviceTier: current?.serviceTier ?? { type: 'standard' },
-      permissionMode: aiPermissionMode,
-      collaborationMode: current?.collaborationMode ?? 'default',
-    });
-  }, [aiPermissionMode, props.integration.projectId]);
-
-  useEffect(() => {
     if (selectedBlockIndex >= blocks.length && blocks.length > 0) setSelectedBlockIndex(blocks.length - 1);
   }, [blocks.length, selectedBlockIndex]);
-
-  useEffect(() => {
-    if (!aiPermissionOpen) return;
-    aiPermissionDialogRef.current?.querySelector<HTMLInputElement>('input:checked')?.focus();
-  }, [aiPermissionOpen]);
 
   function selectNextPending(next: ConflictDocument, currentBlockId?: string): void {
     const currentIndex = currentBlockId ? next.blocks.findIndex((block) => block.id === currentBlockId) : -1;
@@ -173,6 +153,16 @@ export function TaskGitConflictWorkspace(props: {
     setMergeFeedback(props.zh ? '已撤销上一次冲突草稿操作。' : 'The last conflict draft action was undone.');
   }
 
+  function selectAdjacentBlock(direction: -1 | 1): void {
+    if (blocks.length === 0) return;
+    setSelectedBlockIndex((current) => Math.min(blocks.length - 1, Math.max(0, current + direction)));
+  }
+
+  function openAiPermissionDialog(): void {
+    setAiPermissionMode('auto');
+    setAiPermissionOpen(true);
+  }
+
   const noMarkerWarning = document?.visibleContent.match(/^(?:<<<<<<<|=======|>>>>>>>)/mu)
     ? props.zh
       ? '中间结果仍包含冲突标记，请手工清理后再保存。'
@@ -182,12 +172,17 @@ export function TaskGitConflictWorkspace(props: {
   return (
     <div className="task-git-conflict-layout">
       <aside className="task-git-conflict-files">
-        <strong>
-          {props.zh ? '冲突文件' : 'Conflicted files'} <small>{props.integration.conflictFiles.length}</small>
-        </strong>
+        <header>
+          <span>
+            <strong>{props.zh ? '冲突文件' : 'Conflicted files'}</strong>
+            <small>{props.integration.conflictFiles.length}</small>
+          </span>
+          <small>{props.zh ? `当前文件 ${unresolvedCount} 个待处理` : `${unresolvedCount} unresolved in current file`}</small>
+        </header>
         {props.integration.conflictFiles.map((path) => (
           <button key={path} type="button" className={path === props.conflictPath ? 'is-active' : ''} onClick={() => props.onSelectPath(path)}>
-            {path}
+            <span>{path}</span>
+            <small>{path === props.conflictPath ? (currentFileResolved ? (props.zh ? '已处理' : 'Processed') : props.zh ? `${unresolvedCount} 个冲突` : `${unresolvedCount} conflicts`) : props.zh ? '待处理' : 'Pending'}</small>
           </button>
         ))}
       </aside>
@@ -195,34 +190,32 @@ export function TaskGitConflictWorkspace(props: {
         <div className="task-git-conflict-toolbar">
           <span>
             <strong>{props.conflictPath}</strong>
-            <small>{props.zh ? `左：${props.integration.targetBranch} · 中：可编辑结果 · 右：${props.taskBranch}` : `Left: ${props.integration.targetBranch} · Center: editable result · Right: ${props.taskBranch}`}</small>
+            <small>{props.zh ? `${props.taskBranch} → ${props.integration.targetBranch} · 本地合入` : `${props.taskBranch} → ${props.integration.targetBranch} · local merge`}</small>
           </span>
           <span>
-            {mergeFeedback || noMarkerWarning || simpleFailureText ? (
-              <small className={`task-git-conflict-feedback${noMarkerWarning ? ' is-warning' : ''}`} role="status">
-                {noMarkerWarning ?? mergeFeedback ?? simpleFailureText}
-              </small>
-            ) : null}
-            <Button variant="secondary" size="compact" onClick={undoLastDraft} disabled={props.busy || undoDraft === null}>
-              {props.zh ? '撤销' : 'Undo'}
-            </Button>
-            <Button variant="secondary" size="compact" onClick={() => setViewMode((current) => (current === 'focused' ? 'full' : 'focused'))} disabled={!document}>
-              {viewMode === 'focused' ? (props.zh ? '查看完整文件' : 'View full file') : props.zh ? '返回冲突' : 'Back to conflict'}
-            </Button>
-            <Button
-              variant="secondary"
-              size="compact"
-              busy={props.aiBusy}
-              onClick={() => setAiPermissionOpen(true)}
-              disabled={!document || props.busy || unresolvedCount === 0}
-              title={
-                props.zh
-                  ? `打开会话，由 AI 处理全部冲突、生成合入提交并完成合入来源分支 ${props.integration.targetBranch}；不会推送远端`
-                  : `Open a conversation and let AI resolve every conflict, create the merge commit, and complete the local merge into source branch ${props.integration.targetBranch}; no remote push`
-              }
-            >
-              {props.zh ? 'AI 处理' : 'Resolve with AI'}
-            </Button>
+            <span className="task-git-conflict-navigation" aria-label={props.zh ? '冲突导航' : 'Conflict navigation'}>
+              <button type="button" onClick={() => selectAdjacentBlock(-1)} disabled={props.busy || selectedBlockIndex <= 0} aria-label={props.zh ? '上一个冲突' : 'Previous conflict'} title={props.zh ? '上一个冲突' : 'Previous conflict'}>
+                <ArrowLeft aria-hidden="true" />
+              </button>
+              <small>{blocks.length > 0 ? `${Math.min(selectedBlockIndex + 1, blocks.length)} / ${blocks.length}` : '0 / 0'}</small>
+              <button
+                type="button"
+                onClick={() => selectAdjacentBlock(1)}
+                disabled={props.busy || selectedBlockIndex >= blocks.length - 1}
+                aria-label={props.zh ? '下一个冲突' : 'Next conflict'}
+                title={props.zh ? '下一个冲突' : 'Next conflict'}
+              >
+                <ArrowRight aria-hidden="true" />
+              </button>
+            </span>
+            <span className="task-git-conflict-view-switch" aria-label={props.zh ? '文件视图' : 'File view'}>
+              <button type="button" className={viewMode === 'focused' ? 'is-active' : ''} onClick={() => setViewMode('focused')} disabled={!document}>
+                {props.zh ? '当前冲突' : 'Current conflict'}
+              </button>
+              <button type="button" className={viewMode === 'full' ? 'is-active' : ''} onClick={() => setViewMode('full')} disabled={!document}>
+                {props.zh ? '完整文件' : 'Full file'}
+              </button>
+            </span>
             <Button
               variant="secondary"
               size="compact"
@@ -240,30 +233,39 @@ export function TaskGitConflictWorkspace(props: {
                       : `Safely merge ${simpleResolution.resolved} simple conflict(s)`
                     : (simpleFailureText ?? (props.zh ? '当前没有可安全自动合并的冲突，请手工编辑或使用 AI 处理' : 'No conflict can be merged safely. Edit manually or use AI.'))
               }
-              aria-label={props.zh ? '自动合并简单冲突' : 'Resolve simple conflicts'}
             >
               <MagicWand aria-hidden="true" weight="regular" />
-              <span>
-                {!simpleResolutionReady
-                  ? props.zh
-                    ? '正在分析…'
-                    : 'Checking…'
-                  : simpleResolution && simpleResolution.resolved > 0
-                    ? props.zh
-                      ? `合并 ${simpleResolution.resolved} 个简单冲突`
-                      : `Resolve ${simpleResolution.resolved} simple conflict(s)`
-                    : props.zh
-                      ? '无可自动合并项'
-                      : 'No safe auto-merge'}
-              </span>
+              <span>{props.zh ? '合并简单冲突' : 'Merge simple conflicts'}</span>
+            </Button>
+            <Button
+              variant="primary"
+              size="compact"
+              busy={props.aiBusy}
+              onClick={openAiPermissionDialog}
+              disabled={!document || props.busy || unresolvedCount === 0}
+              title={
+                props.zh
+                  ? `打开会话，由 AI 处理全部冲突、生成合入提交并完成合入来源分支 ${props.integration.targetBranch}；不会推送远端`
+                  : `Open a conversation and let AI resolve every conflict, create the merge commit, and complete the local merge into source branch ${props.integration.targetBranch}; no remote push`
+              }
+            >
+              {props.zh ? 'AI 处理' : 'Resolve with AI'}
+            </Button>
+            <Button variant="secondary" size="compact" onClick={undoLastDraft} disabled={props.busy || undoDraft === null} aria-label={props.zh ? '撤销上一次草稿操作' : 'Undo the last draft action'}>
+              {props.zh ? '撤销' : 'Undo'}
             </Button>
           </span>
         </div>
 
+        {mergeFeedback || noMarkerWarning || simpleFailureText ? (
+          <p className={`task-git-conflict-feedback${noMarkerWarning ? ' is-warning' : ''}`} role="status">
+            {noMarkerWarning ?? mergeFeedback ?? simpleFailureText}
+          </p>
+        ) : null}
+
         {aiPermissionOpen ? (
           <ModalPortal rootClassName="task-git-conflict-ai-permission-portal-root" backdropClassName="task-git-conflict-ai-permission-backdrop" onDismiss={() => (props.aiBusy ? undefined : setAiPermissionOpen(false))}>
             <section
-              ref={aiPermissionDialogRef}
               className="task-git-conflict-ai-permission"
               role="dialog"
               aria-modal="true"
@@ -276,13 +278,11 @@ export function TaskGitConflictWorkspace(props: {
             >
               <span>
                 <strong id="task-git-conflict-ai-permission-title">{props.zh ? '选择本次冲突处理权限' : 'Choose conflict resolution permissions'}</strong>
-                <small>
-                  {props.zh
-                    ? 'AI 需要修改、暂存并在 Zeus 隔离合并工作区生成合入提交。来源分支由 Zeus 复验后更新；该选择只用于本次冲突处理会话。'
-                    : 'AI needs to edit, stage, and create the merge commit in the isolated Zeus integration worktree. Zeus updates the source branch after verification; this choice applies only to this conflict resolution conversation.'}
+                <small id="task-git-conflict-ai-permission-description">
+                  {props.zh ? 'AI 将在隔离合入工作区修改并暂存文件。该选择只用于本次会话。' : 'AI will edit and stage files in an isolated integration worktree. This choice applies only to this conversation.'}
                 </small>
               </span>
-              <fieldset>
+              <fieldset aria-describedby="task-git-conflict-ai-permission-description">
                 <legend>{props.zh ? '权限模式' : 'Permission mode'}</legend>
                 <label className={aiPermissionMode === 'auto' ? 'is-selected' : ''}>
                   <input type="radio" name="task-conflict-ai-permission" value="auto" checked={aiPermissionMode === 'auto'} onChange={() => setAiPermissionMode('auto')} disabled={props.aiBusy} />
@@ -303,7 +303,7 @@ export function TaskGitConflictWorkspace(props: {
                 <Button variant="secondary" size="regular" onClick={() => setAiPermissionOpen(false)} disabled={props.aiBusy}>
                   {props.zh ? '取消' : 'Cancel'}
                 </Button>
-                <Button variant={aiPermissionMode === 'full-access' ? 'danger' : 'primary'} size="regular" busy={props.aiBusy} onClick={() => void askAi()}>
+                <Button variant="primary" size="regular" busy={props.aiBusy} onClick={() => void askAi()}>
                   {props.zh ? `以${aiPermissionMode === 'auto' ? '自动' : '完全访问'}权限开始` : `Start with ${aiPermissionMode === 'auto' ? 'auto' : 'full access'}`}
                 </Button>
               </footer>
@@ -311,23 +311,15 @@ export function TaskGitConflictWorkspace(props: {
           </ModalPortal>
         ) : null}
 
-        {!currentFileResolved ? (
-          <nav className="task-git-conflict-block-rail" aria-label={props.zh ? '冲突块' : 'Conflict blocks'}>
-            {blocks.map((block, index) => (
-              <section key={block.id} className={`task-git-conflict-block-status is-${block.status}${index === selectedBlockIndex ? ' is-active' : ''}`} aria-label={props.zh ? `冲突 ${index + 1}` : `Conflict ${index + 1}`}>
-                <button type="button" className="task-git-conflict-block-location" onClick={() => setSelectedBlockIndex(index)}>
-                  {props.zh ? `冲突 ${index + 1} · 第 ${block.startLine} 行` : `Conflict ${index + 1} · line ${block.startLine}`}
-                </button>
-                <span className="task-git-conflict-block-state">{conflictStatusLabel(block.status, props.zh)}</span>
-                {block.combinationError ? <small>{props.zh ? '重叠修改需手工处理' : 'Overlapping edits need manual review'}</small> : null}
-              </section>
-            ))}
-          </nav>
-        ) : (
+        {currentFileResolved ? (
           <p className="task-git-conflict-resolved" role="status">
             {props.zh ? '当前文件冲突已处理，但尚未保存。请检查中间结果后保存该文件并继续。' : 'Conflicts in this file are processed but not saved. Review the result, then save this file to continue.'}
           </p>
-        )}
+        ) : activeBlock?.combinationError ? (
+          <p className="task-git-conflict-resolved is-warning" role="status">
+            {props.zh ? `冲突 ${selectedBlockIndex + 1} 的两侧修改重叠，需要检查中间结果。` : `Conflict ${selectedBlockIndex + 1} has overlapping edits; review the merge result.`}
+          </p>
+        ) : null}
 
         {viewMode === 'full' ? (
           <FullFileColumns
@@ -366,14 +358,6 @@ export function TaskGitConflictWorkspace(props: {
       </main>
     </div>
   );
-}
-
-function browserStorage(): Storage | undefined {
-  try {
-    return typeof window === 'undefined' ? undefined : window.localStorage;
-  } catch {
-    return undefined;
-  }
 }
 
 function simpleConflictFailureText(reasons: Partial<Record<SimpleConflictFailureReason, number>>, zh: boolean): string {
@@ -711,12 +695,6 @@ function countLines(content: string, offset: number): number {
 
 function countNewlines(content: string): number {
   return (content.match(/\n/gu) ?? []).length;
-}
-
-function conflictStatusLabel(status: ConflictBlock['status'], zh: boolean): string {
-  if (status === 'manual') return zh ? '手工处理' : 'Manual';
-  if (status === 'resolved') return zh ? '已处理' : 'Resolved';
-  return zh ? '未处理' : 'Pending';
 }
 
 function sideStateLabel(state: ConflictSideState): string {

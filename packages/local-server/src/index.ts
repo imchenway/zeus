@@ -14474,6 +14474,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     taskPushLayout?: TaskPushMessageLayout;
     legacyReference?: { conversationId: string; messageIds: string[] };
     bypassConcurrency: boolean;
+    deferInitialDispatch?: boolean;
     idempotencyKey: string;
     clientUserMessageId: string;
     providerWriteLifecycle: { markPrepared(submissionId: string): Promise<void>; markRpcStarted(submissionId: string): void };
@@ -14531,6 +14532,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       ...(plan.workMode ? { workMode: plan.workMode } : {}),
       applyLegacyTaskGuards: false,
       bypassConcurrency: plan.bypassConcurrency,
+      ...(plan.deferInitialDispatch ? { deferInitialDispatch: true } : {}),
       idempotencyKey: plan.idempotencyKey,
       clientUserMessageId: plan.clientUserMessageId,
       ...(plan.legacyReference ? { legacyReference: plan.legacyReference } : {}),
@@ -14842,6 +14844,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           allowTests: true,
           allowGitCommit: true,
           bypassConcurrency: true,
+          deferInitialDispatch: true,
           idempotencyKey,
           clientUserMessageId,
           providerWriteLifecycle: reservedLifecycle,

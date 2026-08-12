@@ -484,6 +484,7 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
       }
       const operation = await props.client.startTaskIntegrationConflictAi(props.task.id, activeConflict.id, conflictPath, content, permissionMode, idempotencyKey);
       await props.onOpenConversation(props.task.id, operation.conversationId);
+      props.onClose();
     } catch (reason) {
       setError(errorMessage(reason, zh));
       throw reason;
@@ -628,8 +629,9 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
               {unresolvedConflict ? (zh ? '解决合入冲突' : 'Resolve Merge Conflicts') : conflictReadyToFinalize ? (zh ? '确认完成合入' : 'Confirm Merge Completion') : zh ? '代码交付' : 'Code Delivery'}
             </strong>
             <small>
-              {props.projectName ? `${props.projectName} · ` : ''}
-              {props.task.taskCode ?? props.task.id} · {props.task.title}
+              {unresolvedConflict
+                ? `${selectedWorkspace?.branchName ?? props.task.taskCode ?? props.task.id} → ${unresolvedConflict.targetBranch} · ${zh ? '本地合入' : 'local merge'}`
+                : `${props.projectName ? `${props.projectName} · ` : ''}${props.task.taskCode ?? props.task.id} · ${props.task.title}`}
             </small>
           </span>
           {!standaloneWindow ? (
