@@ -1,6 +1,8 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { FolderIcon as Folder } from '@phosphor-icons/react/dist/csr/Folder';
 import { GlobeSimpleIcon as GlobeSimple } from '@phosphor-icons/react/dist/csr/GlobeSimple';
+import { EyeIcon as Eye } from '@phosphor-icons/react/dist/csr/Eye';
+import { ShieldCheckIcon as ShieldCheck } from '@phosphor-icons/react/dist/csr/ShieldCheck';
 import { TerminalWindowIcon as TerminalWindow } from '@phosphor-icons/react/dist/csr/TerminalWindow';
 import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/csr/WarningCircle';
 import { Button } from '../ui/Button.js';
@@ -71,6 +73,8 @@ export function PermissionModeControl(props: PermissionModeControlProps) {
     { value: 'auto', label: copy.auto },
     { value: 'full-access', label: copy.fullAccess },
   ] as const;
+  const selectedLabel = options.find((option) => option.value === props.value)?.label ?? copy.label;
+  const triggerIcon = props.value === 'read-only' ? <Eye weight="regular" /> : props.value === 'full-access' ? <WarningCircle weight="fill" /> : <ShieldCheck weight="regular" />;
 
   function closeConfirmation(next?: NativePermissionMode): void {
     setConfirmingFullAccess(false);
@@ -86,7 +90,11 @@ export function PermissionModeControl(props: PermissionModeControlProps) {
       <ComposerDropdown
         triggerRef={triggerRef}
         label={copy.label}
-        title={props.disabled ? copy.locked : undefined}
+        title={props.disabled ? copy.locked : `${copy.label}：${selectedLabel}`}
+        triggerLabel={`${copy.label}：${selectedLabel}`}
+        triggerIcon={triggerIcon}
+        hideSelectedLabel
+        className="session-permission-dropdown"
         value={props.value}
         options={options}
         disabled={props.disabled}

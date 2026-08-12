@@ -2,6 +2,7 @@ import { type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type Poin
 import { ArrowsClockwiseIcon as ArrowsClockwise } from '@phosphor-icons/react/dist/csr/ArrowsClockwise';
 import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/csr/WarningCircle';
 import { GlobeSimpleIcon as GlobeSimple } from '@phosphor-icons/react/dist/csr/GlobeSimple';
+import { LightningIcon as Lightning } from '@phosphor-icons/react/dist/csr/Lightning';
 import { animate as animateMotion, motion, useMotionValue, useTransform } from 'framer-motion';
 import type { ConversationFileLocation, ConversationOpenTarget, TurnChangeFile, ZeusBrowserPreparedSubmission } from '@zeus/shared';
 import { openConversationResourceInMain, openTurnChangeFileInMain } from '../appShellBridge.js';
@@ -48,7 +49,6 @@ import {
   normalizeServiceTierSelection,
   readProjectServiceTierPreference,
   selectionFromEffectiveServiceTier,
-  serviceTierDescription,
   serviceTierOptions,
   serviceTierSelectionFromValue,
   serviceTierSelectionValue,
@@ -59,6 +59,7 @@ import { createSessionEscapeController, type SessionEscapeController, type Sessi
 import { SafeMarkdown, type SessionUiLanguage } from './ThreadItemView.js';
 import { autosizeTextarea } from './textareaAutosize.js';
 import { conversationAttachmentIdentity, ConversationComposerAttachments } from './ConversationComposerAttachments.js';
+import { ContextUsageIndicator } from './ContextUsageIndicator.js';
 import { useConversationInputResources } from './useConversationInputResources.js';
 import { SessionQuickActionsCard } from './SessionQuickActionsCard.js';
 import type { SessionCodeReviewSelection } from './SessionCodeReviewDialog.js';
@@ -2188,6 +2189,10 @@ function NewConversationComposer(props: {
     capabilities?.models.find((model) => model.model === capabilities.preferredModel || model.id === capabilities.preferredModel) ??
     capabilities?.models[0] ??
     null;
+  const serviceTierValue = serviceTierSelectionValue(serviceTierSelection);
+  const serviceTierItems = serviceTierOptions(selectedModel, props.language, true);
+  const serviceTierLabel = serviceTierItems.find((option) => option.value === serviceTierValue)?.label ?? serviceTierValue;
+  const selectedModelLabel = selectedModel ? `${selectedModel.sourceName ? `${selectedModel.sourceName} / ` : ''}${selectedModel.displayName ?? selectedModel.model}` : '';
 
   useEffect(() => {
     if (!selectedModel) return;
@@ -2325,41 +2330,51 @@ function NewConversationComposer(props: {
                 <span aria-hidden="true">＋</span>
               </button>
             ) : null}
-            <ComposerDropdown
-              label={props.language === 'zh-CN' ? '模型' : 'Model'}
-              value={selectedModel?.id ?? ''}
-              options={(capabilities?.models ?? []).map((model) => ({ value: model.id, label: model.displayName ?? model.model }))}
-              disabled={submitting || !props.owner || !selectedModel}
-              onChange={(value) => {
-                const nextModel = capabilities?.models.find((model) => model.id === value || model.model === value);
-                setSelectedModelId(nextModel?.id ?? value);
-                setSelectedEffort(nextModel?.defaultReasoningEffort ?? nextModel?.supportedReasoningEfforts[0] ?? '');
-                const normalized = normalizeServiceTierSelection(serviceTierSelection, nextModel);
-                setServiceTierSelection(normalized.selection);
-                setServiceTierDowngraded(normalized.downgraded);
-              }}
-            />
-            <ComposerDropdown
-              label={props.language === 'zh-CN' ? '推理强度' : 'Reasoning effort'}
-              value={selectedEffort}
-              options={(selectedModel?.supportedReasoningEfforts ?? []).map((effort) => ({ value: effort, label: effort }))}
-              disabled={submitting || !props.owner || !selectedEffort}
-              onChange={setSelectedEffort}
-            />
-            <ComposerDropdown
-              label={props.language === 'zh-CN' ? '服务档位' : 'Service tier'}
-              value={serviceTierSelectionValue(serviceTierSelection)}
-              options={serviceTierOptions(selectedModel, props.language, true)}
-              disabled={submitting || !props.owner}
-              onChange={(value) => {
-                setServiceTierSelection(serviceTierSelectionFromValue(value));
-                setServiceTierDowngraded(false);
-              }}
-            />
             <PermissionModeControl language={props.language} value={permissionMode} disabled={submitting || !props.owner} onChange={setPermissionMode} />
             <CollaborationModeControl language={props.language} value={collaborationMode} disabled={submitting || !props.owner} onChange={setCollaborationMode} />
           </span>
           <span className="session-composer-trailing-actions">
+            <span className="session-composer-runtime-settings">
+              <ContextUsageIndicator usage={null} language={props.language} />
+              <ComposerDropdown
+                label={props.language === 'zh-CN' ? '服务档位' : 'Service tier'}
+                triggerLabel={`${props.language === 'zh-CN' ? '服务档位' : 'Service tier'}：${serviceTierLabel}`}
+                triggerIcon={<Lightning weight={serviceTierSelection.type === 'catalog' ? 'fill' : 'regular'} />}
+                hideSelectedLabel
+                className="session-composer-service-tier-dropdown"
+                value={serviceTierValue}
+                options={serviceTierItems}
+                disabled={submitting || !props.owner}
+                onChange={(value) => {
+                  setServiceTierSelection(serviceTierSelectionFromValue(value));
+                  setServiceTierDowngraded(false);
+                }}
+              />
+              <ComposerDropdown
+                label={props.language === 'zh-CN' ? '模型' : 'Model'}
+                triggerLabel={`${props.language === 'zh-CN' ? '模型' : 'Model'}：${selectedModelLabel}`}
+                className="session-composer-model-dropdown"
+                value={selectedModel?.id ?? ''}
+                options={(capabilities?.models ?? []).map((model) => ({ value: model.id, label: `${model.sourceName ? `${model.sourceName} / ` : ''}${model.displayName ?? model.model}` }))}
+                disabled={submitting || !props.owner || !selectedModel}
+                onChange={(value) => {
+                  const nextModel = capabilities?.models.find((model) => model.id === value || model.model === value);
+                  setSelectedModelId(nextModel?.id ?? value);
+                  setSelectedEffort(nextModel?.defaultReasoningEffort ?? nextModel?.supportedReasoningEfforts[0] ?? '');
+                  const normalized = normalizeServiceTierSelection(serviceTierSelection, nextModel);
+                  setServiceTierSelection(normalized.selection);
+                  setServiceTierDowngraded(normalized.downgraded);
+                }}
+              />
+              <ComposerDropdown
+                label={props.language === 'zh-CN' ? '推理强度' : 'Reasoning effort'}
+                triggerLabel={`${props.language === 'zh-CN' ? '推理强度' : 'Reasoning effort'}：${selectedEffort}`}
+                value={selectedEffort}
+                options={(selectedModel?.supportedReasoningEfforts ?? []).map((effort) => ({ value: effort, label: effort }))}
+                disabled={submitting || !props.owner || !selectedEffort}
+                onChange={setSelectedEffort}
+              />
+            </span>
             <span className="session-primary-command-slot" data-primary-command-slot="true">
               <button
                 type="button"
@@ -2374,13 +2389,11 @@ function NewConversationComposer(props: {
             </span>
           </span>
         </div>
-        <small className="session-service-tier-note" role={serviceTierDowngraded ? 'status' : undefined}>
-          {serviceTierDowngraded
-            ? props.language === 'zh-CN'
-              ? '当前模型不支持原 Fast 档位，已切换为标准。'
-              : 'The current model does not support the previous Fast tier. Standard is selected.'
-            : serviceTierDescription(serviceTierSelection, selectedModel, props.language)}
-        </small>
+        {serviceTierDowngraded ? (
+          <small className="session-service-tier-note" role="status">
+            {props.language === 'zh-CN' ? '当前模型不支持原 Fast 档位，已切换为标准。' : 'The current model does not support the previous Fast tier. Standard is selected.'}
+          </small>
+        ) : null}
       </div>
     </section>
   );
