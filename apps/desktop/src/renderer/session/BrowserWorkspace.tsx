@@ -1,26 +1,19 @@
-import {useEffect, useLayoutEffect, useRef, useState, type FormEvent} from 'react';
-import {ArrowLeftIcon as ArrowLeft} from '@phosphor-icons/react/dist/csr/ArrowLeft';
-import {ArrowRightIcon as ArrowRight} from '@phosphor-icons/react/dist/csr/ArrowRight';
-import {ArrowsClockwiseIcon as ArrowsClockwise} from '@phosphor-icons/react/dist/csr/ArrowsClockwise';
-import {ArrowsInSimpleIcon as ArrowsInSimple} from '@phosphor-icons/react/dist/csr/ArrowsInSimple';
-import {ArrowsOutSimpleIcon as ArrowsOutSimple} from '@phosphor-icons/react/dist/csr/ArrowsOutSimple';
-import {ChatCircleIcon as ChatCircle} from '@phosphor-icons/react/dist/csr/ChatCircle';
-import {CrosshairSimpleIcon as CrosshairSimple} from '@phosphor-icons/react/dist/csr/CrosshairSimple';
-import {DotsThreeVerticalIcon as DotsThreeVertical} from '@phosphor-icons/react/dist/csr/DotsThreeVertical';
-import {GlobeSimpleIcon as GlobeSimple} from '@phosphor-icons/react/dist/csr/GlobeSimple';
-import {PlusIcon as Plus} from '@phosphor-icons/react/dist/csr/Plus';
-import {RectangleIcon as Rectangle} from '@phosphor-icons/react/dist/csr/Rectangle';
-import {SidebarSimpleIcon as SidebarSimple} from '@phosphor-icons/react/dist/csr/SidebarSimple';
-import {TrashIcon as Trash} from '@phosphor-icons/react/dist/csr/Trash';
-import {XIcon as X} from '@phosphor-icons/react/dist/csr/X';
-import type {
-  ZeusBrowserApprovalDecision,
-  ZeusBrowserApprovalRequest,
-  ZeusBrowserCommand,
-  ZeusBrowserConversationSnapshot,
-  ZeusBrowserEvent,
-  ZeusBrowserPreparedSubmission,
-} from '@zeus/shared';
+import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from 'react';
+import { ArrowLeftIcon as ArrowLeft } from '@phosphor-icons/react/dist/csr/ArrowLeft';
+import { ArrowRightIcon as ArrowRight } from '@phosphor-icons/react/dist/csr/ArrowRight';
+import { ArrowsClockwiseIcon as ArrowsClockwise } from '@phosphor-icons/react/dist/csr/ArrowsClockwise';
+import { ArrowsInSimpleIcon as ArrowsInSimple } from '@phosphor-icons/react/dist/csr/ArrowsInSimple';
+import { ArrowsOutSimpleIcon as ArrowsOutSimple } from '@phosphor-icons/react/dist/csr/ArrowsOutSimple';
+import { ChatCircleIcon as ChatCircle } from '@phosphor-icons/react/dist/csr/ChatCircle';
+import { CrosshairSimpleIcon as CrosshairSimple } from '@phosphor-icons/react/dist/csr/CrosshairSimple';
+import { DotsThreeVerticalIcon as DotsThreeVertical } from '@phosphor-icons/react/dist/csr/DotsThreeVertical';
+import { GlobeSimpleIcon as GlobeSimple } from '@phosphor-icons/react/dist/csr/GlobeSimple';
+import { PlusIcon as Plus } from '@phosphor-icons/react/dist/csr/Plus';
+import { RectangleIcon as Rectangle } from '@phosphor-icons/react/dist/csr/Rectangle';
+import { SidebarSimpleIcon as SidebarSimple } from '@phosphor-icons/react/dist/csr/SidebarSimple';
+import { TrashIcon as Trash } from '@phosphor-icons/react/dist/csr/Trash';
+import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
+import type { ZeusBrowserApprovalDecision, ZeusBrowserApprovalRequest, ZeusBrowserCommand, ZeusBrowserConversationSnapshot, ZeusBrowserEvent, ZeusBrowserPreparedSubmission } from '@zeus/shared';
 
 interface BrowserWorkspaceProps {
   conversationId: string;
@@ -148,7 +141,7 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
       .getBrowserSnapshot(props.conversationId)
       .then(async (current) => {
         if (!active) return;
-        const resolved = current.tabs.length ? current : await bridge.openBrowserTab!({conversationId: props.conversationId});
+        const resolved = current.tabs.length ? current : await bridge.openBrowserTab!({ conversationId: props.conversationId });
         if (active) setSnapshot(resolved);
       })
       .catch((loadError) => {
@@ -175,7 +168,7 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
         .runBrowserCommand({
           conversationId: props.conversationId,
           tabId,
-          command: {action: 'set_annotation_mode', enabled: !annotationMode},
+          command: { action: 'set_annotation_mode', enabled: !annotationMode },
         })
         .then(setSnapshot)
         .catch((shortcutError) => setError(shortcutError instanceof Error ? shortcutError.message : String(shortcutError)));
@@ -183,6 +176,15 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
     window.addEventListener('keydown', handleShortcut);
     return () => window.removeEventListener('keydown', handleShortcut);
   }, [activeTab?.annotationMode, activeTab?.id, props.conversationId]);
+
+  useEffect(() => {
+    const tabId = activeTab?.id;
+    const bridge = window.zeus;
+    if (!tabId || !bridge?.onNativeCloseActiveContextTab) return;
+    return bridge.onNativeCloseActiveContextTab(() => {
+      void closeTab(tabId);
+    });
+  }, [activeTab?.id]);
 
   useLayoutEffect(() => {
     const bridge = window.zeus;
@@ -195,14 +197,12 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
       frame = requestAnimationFrame(() => {
         if (closedTabIdsRef.current.has(tabId)) return;
         const rect = viewport.getBoundingClientRect();
-        void bridge
-          .setBrowserLayout!({
-            conversationId: props.conversationId,
-            tabId,
-            visible: !props.suspended,
-            bounds: {x: rect.x, y: rect.y, width: rect.width, height: rect.height},
-          })
-          .catch((layoutError) => setError(layoutError instanceof Error ? layoutError.message : String(layoutError)));
+        void bridge.setBrowserLayout!({
+          conversationId: props.conversationId,
+          tabId,
+          visible: !props.suspended,
+          bounds: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+        }).catch((layoutError) => setError(layoutError instanceof Error ? layoutError.message : String(layoutError)));
       });
     };
     const observer = new ResizeObserver(apply);
@@ -220,7 +220,7 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
           conversationId: props.conversationId,
           tabId,
           visible: false,
-          bounds: {x: rect.x, y: rect.y, width: Math.max(1, rect.width), height: Math.max(1, rect.height)},
+          bounds: { x: rect.x, y: rect.y, width: Math.max(1, rect.width), height: Math.max(1, rect.height) },
         })
         .catch(() => undefined);
     };
@@ -244,23 +244,23 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
 
   async function navigate(event: FormEvent): Promise<void> {
     event.preventDefault();
-    if (address.trim()) await command({action: 'navigate', url: address});
+    if (address.trim()) await command({ action: 'navigate', url: address });
   }
 
   async function activateTab(tabId: string): Promise<void> {
-    if (window.zeus?.activateBrowserTab) setSnapshot(await window.zeus.activateBrowserTab({conversationId: props.conversationId, tabId}));
+    if (window.zeus?.activateBrowserTab) setSnapshot(await window.zeus.activateBrowserTab({ conversationId: props.conversationId, tabId }));
   }
 
   async function addTab(): Promise<void> {
-    if (window.zeus?.openBrowserTab) setSnapshot(await window.zeus.openBrowserTab({conversationId: props.conversationId}));
+    if (window.zeus?.openBrowserTab) setSnapshot(await window.zeus.openBrowserTab({ conversationId: props.conversationId }));
   }
 
   async function closeTab(tabId: string): Promise<void> {
-    if (!window.zeus?.closeBrowserTab) return;
+    if (!window.zeus?.closeBrowserTab || closedTabIdsRef.current.has(tabId)) return;
     closedTabIdsRef.current.add(tabId);
     let next: ZeusBrowserConversationSnapshot;
     try {
-      next = await window.zeus.closeBrowserTab({conversationId: props.conversationId, tabId});
+      next = await window.zeus.closeBrowserTab({ conversationId: props.conversationId, tabId });
     } catch (closeError) {
       closedTabIdsRef.current.delete(tabId);
       setError(closeError instanceof Error ? closeError.message : String(closeError));
@@ -293,14 +293,14 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
   async function clearComments(): Promise<void> {
     if (!draftComments.length || !window.confirm(labels.clearConfirm)) return;
     setCommentsOpen(false);
-    await command({action: 'clear_comments'});
+    await command({ action: 'clear_comments' });
   }
 
   async function focusNextComment(): Promise<void> {
     if (!draftComments.length) return;
     const comment = draftComments[focusCursorRef.current % draftComments.length];
     focusCursorRef.current = (focusCursorRef.current + 1) % draftComments.length;
-    if (comment) await command({action: 'focus_comment', commentId: comment.id});
+    if (comment) await command({ action: 'focus_comment', commentId: comment.id });
   }
 
   async function respondToApproval(request: ZeusBrowserApprovalRequest, decision: ZeusBrowserApprovalDecision): Promise<void> {
@@ -313,7 +313,7 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
       );
       if (!confirmed) return;
     }
-    await window.zeus.respondToBrowserApproval({requestId: request.id, decision});
+    await window.zeus.respondToBrowserApproval({ requestId: request.id, decision });
   }
 
   if (!snapshot || !activeTab) {
@@ -349,12 +349,7 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
         </button>
         <span className="browser-tab-strip-spacer" aria-hidden="true" />
         <span className="browser-view-actions">
-          <button
-            type="button"
-            aria-label={props.expanded ? labels.collapse : labels.expand}
-            title={props.expanded ? labels.collapse : labels.expand}
-            onClick={props.onToggleExpanded}
-          >
+          <button type="button" aria-label={props.expanded ? labels.collapse : labels.expand} title={props.expanded ? labels.collapse : labels.expand} onClick={props.onToggleExpanded}>
             {props.expanded ? <ArrowsInSimple aria-hidden="true" weight="regular" /> : <ArrowsOutSimple aria-hidden="true" weight="regular" />}
           </button>
           <button type="button" aria-label={labels.resetSize} title={labels.resetSize} onClick={props.onResetSize}>
@@ -369,7 +364,7 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
       {activeTab.annotationMode && draftComments.length > 0 ? (
         <div className="browser-toolbar browser-annotation-toolbar">
           <span className="browser-annotation-actions browser-annotation-actions-leading">
-            <button type="button" aria-label={labels.exit} title={labels.exit} onClick={() => void command({action: 'set_annotation_mode', enabled: false})}>
+            <button type="button" aria-label={labels.exit} title={labels.exit} onClick={() => void command({ action: 'set_annotation_mode', enabled: false })}>
               <X aria-hidden="true" weight="bold" />
             </button>
             <button type="button" aria-label={labels.clear} title={labels.clear} disabled={draftComments.length === 0} onClick={() => void clearComments()}>
@@ -404,13 +399,13 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
       ) : (
         <div className="browser-toolbar browser-navigation-toolbar">
           <span className="browser-navigation-actions">
-            <button type="button" aria-label={labels.back} title={labels.back} disabled={!activeTab.canGoBack} onClick={() => void command({action: 'back'})}>
+            <button type="button" aria-label={labels.back} title={labels.back} disabled={!activeTab.canGoBack} onClick={() => void command({ action: 'back' })}>
               <ArrowLeft aria-hidden="true" weight="regular" />
             </button>
-            <button type="button" aria-label={labels.forward} title={labels.forward} disabled={!activeTab.canGoForward} onClick={() => void command({action: 'forward'})}>
+            <button type="button" aria-label={labels.forward} title={labels.forward} disabled={!activeTab.canGoForward} onClick={() => void command({ action: 'forward' })}>
               <ArrowRight aria-hidden="true" weight="regular" />
             </button>
-            <button type="button" aria-label={labels.reload} title={labels.reload} onClick={() => void command(activeTab.loading ? {action: 'stop'} : {action: 'reload'})}>
+            <button type="button" aria-label={labels.reload} title={labels.reload} onClick={() => void command(activeTab.loading ? { action: 'stop' } : { action: 'reload' })}>
               {activeTab.loading ? <X aria-hidden="true" weight="regular" /> : <ArrowsClockwise aria-hidden="true" weight="regular" />}
             </button>
           </span>
@@ -434,7 +429,7 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
               aria-label={activeTab.annotationMode ? labels.annotatingMode : labels.annotate}
               aria-pressed={activeTab.annotationMode}
               title={activeTab.annotationMode ? labels.annotatingMode : labels.annotate}
-              onClick={() => void command({action: 'set_annotation_mode', enabled: !activeTab.annotationMode})}
+              onClick={() => void command({ action: 'set_annotation_mode', enabled: !activeTab.annotationMode })}
             >
               <span className="browser-annotate-icon" aria-hidden="true">
                 <ChatCircle weight="regular" />
@@ -449,15 +444,7 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
                 if (!event.currentTarget.contains(event.relatedTarget)) setMoreOpen(false);
               }}
             >
-              <button
-                type="button"
-                className="browser-more-trigger"
-                aria-label={labels.more}
-                title={labels.more}
-                aria-haspopup="menu"
-                aria-expanded={moreOpen}
-                onClick={() => setMoreOpen((open) => !open)}
-              >
+              <button type="button" className="browser-more-trigger" aria-label={labels.more} title={labels.more} aria-haspopup="menu" aria-expanded={moreOpen} onClick={() => setMoreOpen((open) => !open)}>
                 <DotsThreeVertical aria-hidden="true" weight="bold" />
               </button>
               {moreOpen ? (
@@ -465,13 +452,17 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
                   <button type="button" role="menuitem" onClick={() => void addTab().finally(() => setMoreOpen(false))}>
                     {labels.newTab}
                   </button>
-                  <button type="button" role="menuitem" onClick={() => void command({action: 'reload'}).finally(() => setMoreOpen(false))}>
+                  <button type="button" role="menuitem" onClick={() => void command({ action: 'reload' }).finally(() => setMoreOpen(false))}>
                     {labels.reload}
                   </button>
-                  <button type="button" role="menuitem" onClick={() => {
-                    setMoreOpen(false);
-                    props.onClose();
-                  }}>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setMoreOpen(false);
+                      props.onClose();
+                    }}
+                  >
                     {labels.close}
                   </button>
                 </span>
@@ -524,12 +515,12 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
               <ol className="browser-comment-list">
                 {draftComments.map((comment) => (
                   <li key={comment.id}>
-                    <button type="button" className="browser-comment-focus" onClick={() => void command({action: 'focus_comment', commentId: comment.id})}>
+                    <button type="button" className="browser-comment-focus" onClick={() => void command({ action: 'focus_comment', commentId: comment.id })}>
                       <span>{comment.number}</span>
                       <strong>{comment.body}</strong>
                       <small>{comment.anchor.accessibleName || comment.anchor.immediateText || comment.anchor.kind}</small>
                     </button>
-                    <button type="button" className="browser-comment-delete" aria-label={labels.delete} title={labels.delete} onClick={() => void command({action: 'delete_comment', commentId: comment.id})}>
+                    <button type="button" className="browser-comment-delete" aria-label={labels.delete} title={labels.delete} onClick={() => void command({ action: 'delete_comment', commentId: comment.id })}>
                       <Trash aria-hidden="true" weight="regular" />
                     </button>
                   </li>

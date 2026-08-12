@@ -164,6 +164,13 @@ export class BrowserHost implements BrowserAutomationPort {
     }
   }
 
+  /** 判断当前键盘焦点是否位于该窗口正在显示的内置浏览器标签。 */
+  isVisibleTabFocused(window: BrowserWindow): boolean {
+    const tabId = this.visibleTabByWindow.get(window.id);
+    const contents = tabId ? this.tabs.get(tabId)?.view?.webContents : undefined;
+    return Boolean(contents && !contents.isDestroyed() && contents.isFocused());
+  }
+
   registerIpc(): void {
     if (this.ipcRegistered) return;
     this.ipcRegistered = true;
