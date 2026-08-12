@@ -12493,19 +12493,20 @@
   box-shadow: none;
 }
 .session-creation-status {
-  display: flex;
   align-items: center;
-  gap: 10px;
-  min-height: 34px;
-  margin: 0 18px 12px;
-  padding: 7px 10px;
+  display: grid;
+  flex: 0 0 auto;
+  gap: 9px;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  inline-size: min(var(--session-thread-max), 100%);
+  margin-inline: auto;
+  min-block-size: 32px;
+  padding: 4px 0;
   color: var(--session-text-muted);
-  border: 1px solid color-mix(in srgb, var(--session-line) 76%, transparent);
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--session-control) 82%, transparent);
+  font-size: 12px;
 }
 
-.session-creation-status > span:nth-child(2) {
+.session-creation-status-copy {
   display: grid;
   gap: 2px;
   min-width: 0;
@@ -12523,12 +12524,65 @@
 
 .session-creation-status.is-failed {
   color: var(--session-danger);
-  border-color: color-mix(in srgb, var(--session-danger) 28%, var(--session-line));
 }
 
 .session-creation-status button {
-  margin-left: auto;
+  background: transparent;
+  border: 1px solid var(--session-line);
+  border-radius: 7px;
+  color: var(--session-text);
   flex: 0 0 auto;
+  min-block-size: 28px;
+  padding-inline: 9px;
+}
+
+.session-connection-symbol {
+  animation: session-connection-pulse 1200ms ease-in-out infinite;
+  block-size: 20px;
+  display: block;
+  inline-size: 20px;
+}
+
+.session-connection-symbol svg {
+  block-size: 100%;
+  inline-size: 100%;
+  overflow: visible;
+}
+
+.session-connection-symbol path {
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-width: 1.7;
+}
+
+.session-creation-failure-symbol {
+  align-items: center;
+  block-size: 18px;
+  border: 1.4px solid currentColor;
+  border-radius: 999px;
+  display: inline-flex;
+  font-size: 11px;
+  font-weight: 700;
+  inline-size: 18px;
+  justify-content: center;
+}
+
+@keyframes session-connection-pulse {
+  0%,
+  100% {
+    opacity: 0.42;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .session-connection-symbol {
+    animation: none;
+    opacity: 1;
+  }
 }
 
 /* ZEUS-0181：完全访问属于会话级高风险切换，使用居中弹窗完整说明真实能力与风险。 */

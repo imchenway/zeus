@@ -6,7 +6,7 @@ import { animate as animateMotion, motion, useMotionValue, useTransform } from '
 import type { ConversationFileLocation, ConversationOpenTarget, TurnChangeFile, ZeusBrowserPreparedSubmission } from '@zeus/shared';
 import { openConversationResourceInMain, openTurnChangeFileInMain } from '../appShellBridge.js';
 import { canSteerActiveTurn, type ComposerRuntimeSettings, ConversationComposer, resolveComposerKeyIntent } from './ConversationComposer.js';
-import { ConversationTranscript } from './ConversationTranscript.js';
+import { ConversationTranscript, type SessionCreationStatus } from './ConversationTranscript.js';
 import { QueuedConversationMessages } from './QueuedConversationMessages.js';
 import { SessionPlanProgress } from './SessionActivity.js';
 import { LegacyConversationBanner } from './LegacyConversationBanner.js';
@@ -286,8 +286,20 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
   const displayedConversation = props.stableConversationId ? { ...props.conversation, id: props.stableConversationId } : props.conversation;
   const controllerReady = props.controllerEnabled !== false && state.transportState === 'ready' && state.snapshot?.id === props.conversation.id;
   const controllerFailed = props.controllerEnabled !== false && state.transportState === 'failed';
-  const controllerVisible = controllerReady || controllerFailed;
+  const controllerVisible = controllerReady || (controllerFailed && !props.creationStatus);
   const displayedState = controllerVisible ? state : (props.localState ?? state);
+  const displayedCreationStatus: SessionCreationStatus | undefined =
+    controllerFailed && props.creationStatus
+      ? {
+          state: 'failed',
+          message: props.language === 'zh-CN' ? '连接失败' : 'Connection failed',
+          error: state.error?.message,
+          retryLabel: props.language === 'zh-CN' ? '重新连接' : 'Reconnect',
+          onRetry: () => controller.reconnect(),
+        }
+      : controllerVisible
+        ? undefined
+        : props.creationStatus;
   return (
     <SessionWorkspace
       language={props.language}
@@ -300,7 +312,7 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
       suppressComposer={Boolean(props.readOnlyGate)}
       quickActionsSuppressed={props.quickActionsSuppressed}
       readOnlyGate={props.readOnlyGate}
-      creationStatus={controllerVisible ? undefined : props.creationStatus}
+      creationStatus={displayedCreationStatus}
       onLatestContentVisibilityChange={props.onLatestContentVisibilityChange}
       actions={{
         ...(controllerVisible ? createConnectedSessionActions({ controller, state, onChooseAttachments: props.onChooseAttachments }) : props.localActions),
@@ -966,13 +978,7 @@ export interface SessionWorkspaceProps {
   loadError?: string | null;
   autoFocusNewConversation?: boolean;
   onLatestContentVisibilityChange?: (visible: boolean) => void;
-  creationStatus?: {
-    state: 'creating' | 'failed';
-    message: string;
-    error?: string | null;
-    retryLabel?: string;
-    onRetry?: () => void | Promise<void>;
-  };
+  creationStatus?: SessionCreationStatus;
   actions?: SessionWorkspaceActions;
 }
 
@@ -1873,6 +1879,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                   state={props.state}
                   language={props.language}
                   onLatestContentVisibilityChange={props.onLatestContentVisibilityChange}
+                  creationStatus={props.creationStatus}
                   onEditUserItem={interactionReadOnly ? undefined : actions.onEditUserItem}
                   onRetryItem={interactionReadOnly ? undefined : actions.onRetryItem}
                   openPlanItemId={planWorkspaceItemId}
@@ -1933,20 +1940,6 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                     {renderConversationComposer()}
                   </>
                 )}
-                {props.creationStatus ? (
-                  <section className={`session-creation-status is-${props.creationStatus.state}`} role={props.creationStatus.state === 'failed' ? 'alert' : 'status'} aria-live="polite">
-                    {props.creationStatus.state === 'creating' ? <span className="session-command-spinner" aria-hidden="true" /> : <WarningCircle aria-hidden="true" weight="regular" />}
-                    <span>
-                      <strong>{props.creationStatus.message}</strong>
-                      {props.creationStatus.error ? <small>{props.creationStatus.error}</small> : null}
-                    </span>
-                    {props.creationStatus.state === 'failed' && props.creationStatus.onRetry ? (
-                      <button type="button" onClick={() => void props.creationStatus?.onRetry?.()}>
-                        {props.creationStatus.retryLabel ?? (props.language === 'zh-CN' ? '重试' : 'Retry')}
-                      </button>
-                    ) : null}
-                  </section>
-                ) : null}
                 {interruptArmed ? (
                   <p className="session-interrupt-confirm" role="status">
                     {copy.interruptConfirm}

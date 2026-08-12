@@ -22,7 +22,24 @@ export interface ConversationTranscriptProps {
   onReviewTurnChanges?: (changeSet: TurnChangeSet, fileId?: string) => void;
   onOperateTurnChangeSet?: (changeSet: TurnChangeSet, action: 'undo' | 'reapply') => Promise<TurnChangeSetOperationResult>;
   onLatestContentVisibilityChange?: (visible: boolean) => void;
+  creationStatus?: SessionCreationStatus;
 }
+
+export interface SessionCreationStatus {
+  state: 'creating' | 'failed';
+  message: string;
+  error?: string | null;
+  retryLabel?: string;
+  onRetry?: () => void | Promise<void>;
+}
+
+const sessionConnectionSymbol = (
+  <span className="session-connection-symbol" aria-hidden="true">
+    <svg viewBox="0 0 24 24">
+      <path d="M4.5 9.6a11.5 11.5 0 0 1 15 0M7.8 13a6.7 6.7 0 0 1 8.4 0M11.1 16.4a1.45 1.45 0 0 1 1.8 0" />
+    </svg>
+  </span>
+);
 
 export function ConversationTranscript(props: ConversationTranscriptProps) {
   const containerRef = useRef<HTMLElement | null>(null);
@@ -179,7 +196,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     maintainLatestPosition();
     const container = containerRef.current;
     if (container) reportLatestContentVisibility(container);
-  }, [maintainLatestPosition, props.state.transcriptRevision, reportLatestContentVisibility]);
+  }, [maintainLatestPosition, props.creationStatus?.error, props.creationStatus?.state, props.state.transcriptRevision, reportLatestContentVisibility]);
 
   return (
     <>
@@ -259,6 +276,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
           {immediateOptimisticItems.map((item) => (
             <ThreadItemView key={item.key} item={item} language={props.language} isLatest onVisibleContentChange={maintainLatestPosition} />
           ))}
+          {props.creationStatus ? <SessionCreationNotice status={props.creationStatus} language={props.language} /> : null}
           {showThinking && props.state.activeTurnId && props.state.turnsByProviderId[props.state.activeTurnId] && !activeTurnHasRenderedRow ? (
             <SessionTurnDuration turn={props.state.turnsByProviderId[props.state.activeTurnId]} requests={props.state.pendingRequests} language={props.language}>
               <TranscriptThinking language={props.language} />
@@ -291,6 +309,29 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
         </button>
       </div>
     </>
+  );
+}
+
+function SessionCreationNotice(props: { status: SessionCreationStatus; language: SessionUiLanguage }) {
+  return (
+    <section className={`session-creation-status is-${props.status.state}`} role={props.status.state === 'failed' ? 'alert' : 'status'} aria-live="polite">
+      {props.status.state === 'creating' ? (
+        sessionConnectionSymbol
+      ) : (
+        <span className="session-creation-failure-symbol" aria-hidden="true">
+          !
+        </span>
+      )}
+      <span className="session-creation-status-copy">
+        <strong>{props.status.message}</strong>
+        {props.status.error ? <small>{props.status.error}</small> : null}
+      </span>
+      {props.status.state === 'failed' && props.status.onRetry ? (
+        <button type="button" onClick={() => void props.status.onRetry?.()}>
+          {props.status.retryLabel ?? (props.language === 'zh-CN' ? '重试' : 'Retry')}
+        </button>
+      ) : null}
+    </section>
   );
 }
 
