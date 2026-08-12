@@ -1221,7 +1221,6 @@ export interface ProjectGitRepositoryWorkbenchItem {
   id: string;
   name: string;
   relativePath: string;
-  localPath: string;
   snapshot: ProjectGitRepositorySnapshot;
 }
 
@@ -1431,6 +1430,14 @@ export interface DashboardClientOptions {
   apiToken: string;
   executionHostTransition?: ExecutionHostTransition;
   refreshLocalServerConfig?: () => Promise<DashboardClientOptions>;
+  projectGitWorkbench?: ProjectGitWorkbenchBridge;
+}
+
+export interface ProjectGitWorkbenchBridge {
+  loadWorkbench: (projectId: string) => Promise<ProjectGitWorkbenchSnapshot>;
+  loadCommit: (projectId: string, repositoryId: string, commitHash: string) => Promise<ProjectGitCommitDetail>;
+  loadComparison: (projectId: string, repositoryId: string, ref: string, mode: 'current' | 'working-tree') => Promise<GitDiffSummary>;
+  execute: (projectId: string, repositoryId: string, action: ProjectGitAction) => Promise<ProjectGitActionResponse>;
 }
 
 export interface ExecutionHostTransition {
@@ -1852,7 +1859,7 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
         try {
           const refreshLocalServerConfig = currentOptions.refreshLocalServerConfig;
           const refreshed = await refreshLocalServerConfig();
-          currentOptions = { ...refreshed, refreshLocalServerConfig };
+          currentOptions = { ...refreshed, refreshLocalServerConfig, projectGitWorkbench: currentOptions.projectGitWorkbench };
         } catch {
           if (active && generation === connectionGeneration) scheduleReconnect();
           return;
@@ -1916,7 +1923,7 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
       // 本地服务由 Electron Main 监管，异常重启后端口可能变化；失败时只刷新一次配置并重试，避免静默死循环。
       const refreshLocalServerConfig = currentOptions.refreshLocalServerConfig;
       const refreshed = await refreshLocalServerConfig();
-      currentOptions = { ...refreshed, refreshLocalServerConfig };
+      currentOptions = { ...refreshed, refreshLocalServerConfig, projectGitWorkbench: currentOptions.projectGitWorkbench };
       return requestOnce<T>(path, init);
     }
   }
@@ -2540,11 +2547,15 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
       }),
     loadGitDiff: () => request<GitDiffSummary>('/api/git/diff'),
     loadProjectGitStatus: (projectId) => request<GitStatusSummary>(`/api/projects/${projectId}/git/status`),
-    loadProjectGitWorkbench: (projectId) => request<ProjectGitWorkbenchSnapshot>(`/api/projects/${projectId}/git/workbench`),
-    loadProjectGitCommit: (projectId, repositoryId, commitHash) => request<ProjectGitCommitDetail>(`/api/projects/${projectId}/git/workbench/repositories/${encodeURIComponent(repositoryId)}/commits/${encodeURIComponent(commitHash)}`),
+    loadProjectGitWorkbench: (projectId) => currentOptions.projectGitWorkbench?.loadWorkbench(projectId) ?? request<ProjectGitWorkbenchSnapshot>(`/api/projects/${projectId}/git/workbench`),
+    loadProjectGitCommit: (projectId, repositoryId, commitHash) =>
+      currentOptions.projectGitWorkbench?.loadCommit(projectId, repositoryId, commitHash) ??
+      request<ProjectGitCommitDetail>(`/api/projects/${projectId}/git/workbench/repositories/${encodeURIComponent(repositoryId)}/commits/${encodeURIComponent(commitHash)}`),
     loadProjectGitComparisonDiff: (projectId, repositoryId, ref, mode) =>
+      currentOptions.projectGitWorkbench?.loadComparison(projectId, repositoryId, ref, mode) ??
       request<GitDiffSummary>(`/api/projects/${projectId}/git/workbench/repositories/${encodeURIComponent(repositoryId)}/compare?ref=${encodeURIComponent(ref)}&mode=${mode}`),
     executeProjectGitAction: (projectId, repositoryId, input) =>
+      currentOptions.projectGitWorkbench?.execute(projectId, repositoryId, input) ??
       request<ProjectGitActionResponse>(`/api/projects/${projectId}/git/workbench/repositories/${encodeURIComponent(repositoryId)}/actions`, {
         method: 'POST',
         body: JSON.stringify(input),

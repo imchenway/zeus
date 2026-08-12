@@ -54,6 +54,10 @@ declare global {
         comparisonRef?: string;
         comparisonMode?: 'current' | 'working-tree';
       }) => Promise<{ opened: true }>;
+      loadProjectGitWorkbench: (projectId: string) => Promise<import('./apiClient.js').ProjectGitWorkbenchSnapshot>;
+      loadProjectGitCommit: (input: { projectId: string; repositoryId: string; commitHash: string }) => Promise<import('./apiClient.js').ProjectGitCommitDetail>;
+      loadProjectGitComparisonDiff: (input: { projectId: string; repositoryId: string; ref: string; mode: 'current' | 'working-tree' }) => Promise<import('./apiClient.js').GitDiffSummary>;
+      executeProjectGitAction: (input: { projectId: string; repositoryId: string; action: import('./apiClient.js').ProjectGitAction }) => Promise<import('./apiClient.js').ProjectGitActionResponse>;
       onTaskGitDeliveryCurrentContext: (listener: (context: { taskId: string | null; workspaceId: string | null }) => void) => () => void;
       onTaskGitDeliveryAppearance: (listener: (settings: { language: 'zh-CN' | 'en-US'; appearance: 'light' | 'dark' | 'system' }) => void) => () => void;
       onTaskGitDeliveryChanged: (listener: (taskId: string) => void) => () => void;
