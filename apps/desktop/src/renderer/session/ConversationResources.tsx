@@ -53,8 +53,9 @@ function ConversationPendingAttachmentImage(props: { attachment: NativeConversat
     let active = true;
     setPreviewUrl(null);
     setFailed(false);
-    const loadPreview = window.zeus?.getConversationResourcePreview;
-    if (!loadPreview) {
+    const loadConversationPreview = window.zeus?.getConversationResourcePreview;
+    const loadTaskPreview = window.zeus?.getTaskAttachmentPreview;
+    if (!loadConversationPreview && (!props.attachment.localPath || !loadTaskPreview)) {
       setFailed(true);
       setLoading(false);
       return () => {
@@ -62,10 +63,7 @@ function ConversationPendingAttachmentImage(props: { attachment: NativeConversat
       };
     }
     setLoading(true);
-    void loadPreview({
-      ...(props.attachment.localPath ? { localPath: props.attachment.localPath } : {}),
-      ...(props.attachment.uploadRef ? { uploadRef: props.attachment.uploadRef } : {}),
-    })
+    void loadPendingAttachmentPreview(props.attachment, loadConversationPreview, loadTaskPreview)
       .then((preview) => {
         if (!active) return;
         if (!preview?.previewUrl || !preview.mimeType.startsWith('image/')) {
@@ -119,6 +117,26 @@ function ConversationPendingAttachmentImage(props: { attachment: NativeConversat
 
 function pendingAttachmentIdentity(attachment: NativeConversationAttachment): string {
   return attachment.localPath ?? attachment.uploadRef;
+}
+
+async function loadPendingAttachmentPreview(
+  attachment: NativeConversationAttachment,
+  loadConversationPreview: NonNullable<typeof window.zeus>['getConversationResourcePreview'] | undefined,
+  loadTaskPreview: NonNullable<typeof window.zeus>['getTaskAttachmentPreview'] | undefined,
+): Promise<{ previewUrl: string; mimeType: string } | null> {
+  if (loadConversationPreview) {
+    try {
+      const preview = await loadConversationPreview({
+        ...(attachment.localPath ? { localPath: attachment.localPath } : {}),
+        ...(attachment.uploadRef ? { uploadRef: attachment.uploadRef } : {}),
+      });
+      if (preview) return preview;
+    } catch {
+      // 两类附件使用独立受信目录；会话预览拒绝任务附件后继续走任务附件复验。
+    }
+  }
+  if (!attachment.localPath || !loadTaskPreview) return null;
+  return loadTaskPreview(attachment.localPath);
 }
 
 export function ConversationInlineResource(

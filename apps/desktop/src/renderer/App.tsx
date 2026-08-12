@@ -11766,7 +11766,7 @@ export function App(props: {
                 }
               : {
                   state: 'creating',
-                  message: appShellSettings.appLanguage === 'zh-CN' ? '正在创建会话' : 'Creating conversation',
+                  message: appShellSettings.appLanguage === 'zh-CN' ? '正在连接' : 'Connecting',
                 }
           }
           localActions={taskModelPushWorkspaceActions(pending, onOpenTaskDetail)}
@@ -11802,7 +11802,7 @@ export function App(props: {
             selectedTaskModelPushOperation
               ? {
                   state: 'creating',
-                  message: appShellSettings.appLanguage === 'zh-CN' ? '正在创建会话' : 'Creating conversation',
+                  message: appShellSettings.appLanguage === 'zh-CN' ? '正在连接' : 'Connecting',
                 }
               : undefined
           }
