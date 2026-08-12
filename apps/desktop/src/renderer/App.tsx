@@ -6790,7 +6790,7 @@ export function App(props: {
   const [selectedNativeConversationId, setSelectedNativeConversationId] = useState<string | null>(() => props.initialSelectedNativeConversationId ?? null);
   const selectedNativeConversationIdRef = useRef<string | null>(props.initialSelectedNativeConversationId ?? null);
   const [latestConversationContentVisible, setLatestConversationContentVisible] = useState(false);
-  const [zeusWindowForeground, setZeusWindowForeground] = useState(() => typeof document !== 'undefined' && document.visibilityState === 'visible' && document.hasFocus());
+  const [zeusWindowForeground, setZeusWindowForeground] = useState(false);
   const [focusedArchivedConversation, setFocusedArchivedConversation] = useState<NativeConversationChoice | null>(null);
   const [archivedConversations, setArchivedConversations] = useState<NativeConversationChoice[]>([]);
   const [archivedConversationLoadState, setArchivedConversationLoadState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
@@ -7566,6 +7566,23 @@ export function App(props: {
   }, [selectedNativeConversationId]);
 
   useEffect(() => {
+    const bridge = window.zeus;
+    if (bridge?.getRequestingWindowForeground && bridge.onRequestingWindowForegroundChanged) {
+      let active = true;
+      const dispose = bridge.onRequestingWindowForegroundChanged((foreground) => {
+        if (active) setZeusWindowForeground(foreground);
+      });
+      void bridge
+        .getRequestingWindowForeground()
+        .then(({ foreground }) => {
+          if (active) setZeusWindowForeground(foreground);
+        })
+        .catch((error: unknown) => recordLocalError('requesting-window-foreground', error));
+      return () => {
+        active = false;
+        dispose();
+      };
+    }
     const synchronizeForeground = () => setZeusWindowForeground(document.visibilityState === 'visible' && document.hasFocus());
     window.addEventListener('focus', synchronizeForeground);
     window.addEventListener('blur', synchronizeForeground);
