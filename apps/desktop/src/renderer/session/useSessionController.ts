@@ -114,7 +114,7 @@ export interface SessionController {
   setAttachments(attachments: NativeConversationAttachment[]): void;
   setBrowserSubmission(browserSubmission: ZeusBrowserPreparedSubmission | null): void;
 
-  send(delivery: 'queue' | 'steer_now', expectedTurnId?: string, settings?: NativeTurnSettingsSelection): Promise<NativeOperationAcceptance>;
+  send(delivery: 'queue' | 'steer_now', expectedTurnId?: string, settings?: NativeTurnSettingsSelection): Promise<NativeOperationAcceptance | void>;
   editQueuedSubmission(submissionId: string, content: string): Promise<NativeQueueSnapshot>;
   deleteQueuedSubmission(submissionId: string): Promise<NativeQueueSnapshot>;
   reorderQueue(orderedSubmissionIds: string[]): Promise<NativeQueueSnapshot>;
@@ -171,6 +171,7 @@ interface PersistedDraft {
   attachments: NativeConversationAttachment[];
   browserSubmission?: ZeusBrowserPreparedSubmission | null;
   pendingSend?: PendingSendEnvelope;
+  deferredSends?: PendingSendEnvelope[];
   recoveredSubmissionIds?: string[];
 }
 
@@ -192,6 +193,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
   const storageKey = `zeus.native-session-draft:${options.projectId}:${options.conversationId}`;
   const persisted = readPersistedDraft(storage, storageKey);
   let pendingSend = persisted.pendingSend ?? null;
+  let deferredSends = persisted.deferredSends ?? [];
   const recoveredSubmissionIds = new Set(persisted.recoveredSubmissionIds ?? []);
   const initialCachedState =
     options.initialCachedState?.projectId === options.projectId &&
@@ -225,6 +227,27 @@ export function createSessionController(options: CreateSessionControllerOptions)
     busyOperation: null,
     error: initialCachedState?.error?.recoveryRequired ? null : (initialCachedState?.error ?? null),
   };
+  if (deferredSends.length > 0) {
+    const currentDraft = state.draft;
+    const currentAttachments = state.attachments;
+    const currentBrowserSubmission = state.browserSubmission;
+    for (const envelope of deferredSends) {
+      state = sessionReducer(state, {
+        type: 'send_started',
+        clientUserMessageId: envelope.clientUserMessageId,
+        durableClientUserMessageId: envelope.clientUserMessageId,
+        draft: envelope.displayText,
+        attachments: envelope.composerAttachments,
+        submittedAttachments: envelope.attachments,
+        browserSubmission: envelope.browserSubmission,
+        browserComments: envelope.browserSubmission?.comments ?? [],
+        delivery: envelope.delivery,
+        previousConversationState: state.conversationState,
+        queuedUntilHydrated: true,
+      });
+    }
+    state = { ...state, draft: currentDraft, attachments: currentAttachments, browserSubmission: currentBrowserSubmission };
+  }
   let socket: WebSocket | null = null;
   let socketLifecycle: SocketLifecycle | null = null;
   let connectionToken = 0;
@@ -265,7 +288,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
     const draft = state.draft;
     const attachments = state.attachments;
     const browserSubmission = state.browserSubmission;
-    if (!draft && attachments.length === 0 && !browserSubmission && !pendingSend && recoveredSubmissionIds.size === 0) {
+    if (!draft && attachments.length === 0 && !browserSubmission && !pendingSend && deferredSends.length === 0 && recoveredSubmissionIds.size === 0) {
       storage.removeItem(storageKey);
       return;
     }
@@ -276,6 +299,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
         attachments,
         ...(browserSubmission ? { browserSubmission } : {}),
         ...(pendingSend ? { pendingSend } : {}),
+        ...(deferredSends.length > 0 ? { deferredSends } : {}),
         ...(recoveredSubmissionIds.size > 0 ? { recoveredSubmissionIds: [...recoveredSubmissionIds] } : {}),
       } satisfies PersistedDraft),
     );
@@ -790,6 +814,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
       hydrating = false;
       ready = true;
       dispatch({ type: 'transport_changed', transportState: 'ready', error: null });
+      void flushDeferredSends();
     } catch (error) {
       hydrating = false;
       const shouldScheduleReconnect = !disposed && token === connectionToken && (error instanceof SocketDisconnectedDuringHydrationError || socketLifecycle?.isDisconnected() === true);
@@ -829,6 +854,101 @@ export function createSessionController(options: CreateSessionControllerOptions)
       });
     activeOperation = { key, promise };
     return promise;
+  }
+
+  function submitEnvelope(envelope: PendingSendEnvelope): Promise<NativeOperationAcceptance> {
+    pendingSend = envelope;
+    persistDraft();
+    const operation = `send:${envelope.fingerprint}`;
+    const previousConversationState = state.conversationState;
+    return runOperation(
+      operation,
+      async () => {
+        dispatch({
+          type: 'send_started',
+          clientUserMessageId: envelope.clientUserMessageId,
+          durableClientUserMessageId: envelope.clientUserMessageId,
+          draft: envelope.displayText,
+          attachments: envelope.composerAttachments,
+          submittedAttachments: envelope.attachments,
+          browserSubmission: envelope.browserSubmission,
+          browserComments: envelope.browserSubmission?.comments ?? [],
+          delivery: envelope.delivery,
+          previousConversationState,
+        });
+        if (envelope.deliveryState === 'accepted' && envelope.acceptance) {
+          dispatch({ type: 'send_accepted', clientUserMessageId: envelope.clientUserMessageId, status: acceptedStatus(envelope.acceptance) });
+          void markEnvelopeBrowserCommentsSent(envelope);
+          return envelope.acceptance;
+        }
+        try {
+          const acceptance = await options.client.sendNativeMessage(options.projectId, options.conversationId, {
+            content: envelope.content,
+            ...(envelope.displayText ? { displayText: envelope.displayText } : {}),
+            attachments: envelope.attachments,
+            ...(envelope.browserSubmission?.comments.length ? { browserComments: envelope.browserSubmission.comments } : {}),
+            delivery: envelope.delivery,
+            ...(envelope.expectedTurnId ? { expectedTurnId: envelope.expectedTurnId } : {}),
+            ...(envelope.model ? { model: envelope.model } : {}),
+            ...(envelope.agentKind ? { agentKind: envelope.agentKind } : {}),
+            ...(envelope.effort ? { effort: envelope.effort } : {}),
+            ...(Object.prototype.hasOwnProperty.call(envelope, 'serviceTier') ? { serviceTier: envelope.serviceTier } : {}),
+            ...(envelope.permissionMode ? { permissionMode: envelope.permissionMode } : {}),
+            collaborationMode: envelope.collaborationMode,
+            idempotencyKey: envelope.idempotencyKey,
+            clientUserMessageId: envelope.clientUserMessageId,
+          });
+          pendingSend = { ...envelope, deliveryState: 'accepted', acceptance };
+          dispatch({ type: 'send_accepted', clientUserMessageId: envelope.clientUserMessageId, status: acceptedStatus(acceptance) });
+          void markEnvelopeBrowserCommentsSent(pendingSend);
+          persistDraft();
+          return acceptance;
+        } catch (error) {
+          const reconciliation = await reconcileFailedSend(envelope);
+          if (reconciliation.kind === 'durable') return reconciliation.acceptance;
+          const sessionError = toSessionError(error, true);
+          dispatch(
+            reconciliation.kind === 'unknown'
+              ? {
+                  type: 'send_uncertain',
+                  clientUserMessageId: envelope.clientUserMessageId,
+                  draft: envelope.draft,
+                  attachments: envelope.composerAttachments,
+                  browserSubmission: envelope.browserSubmission,
+                  previousConversationState,
+                  error: sessionError,
+                }
+              : {
+                  type: 'send_failed',
+                  clientUserMessageId: envelope.clientUserMessageId,
+                  draft: envelope.draft,
+                  attachments: envelope.composerAttachments,
+                  browserSubmission: envelope.browserSubmission,
+                  previousConversationState,
+                  error: sessionError,
+                },
+          );
+          persistDraft();
+          throw error;
+        }
+      },
+      () => reconcileAcceptedSend(),
+      false,
+    );
+  }
+
+  async function flushDeferredSends(): Promise<void> {
+    if (disposed || state.transportState !== 'ready' || !state.snapshot || activeOperation || pendingSend) return;
+    while (!disposed && state.transportState === 'ready' && state.snapshot && deferredSends.length > 0 && !activeOperation && !pendingSend) {
+      const envelope = deferredSends[0]!;
+      deferredSends = deferredSends.slice(1);
+      persistDraft();
+      try {
+        await submitEnvelope(envelope);
+      } catch {
+        return;
+      }
+    }
   }
 
   const controller: SessionController = {
@@ -1003,83 +1123,29 @@ export function createSessionController(options: CreateSessionControllerOptions)
         };
       }
       const envelope = pendingSend;
-      persistDraft();
-      const operation = `send:${envelope.fingerprint}`;
-      const previousConversationState = state.conversationState;
-      return runOperation(
-        operation,
-        async () => {
-          dispatch({
-            type: 'send_started',
-            clientUserMessageId: envelope.clientUserMessageId,
-            durableClientUserMessageId: envelope.clientUserMessageId,
-            draft: envelope.displayText,
-            attachments: envelope.composerAttachments,
-            submittedAttachments: envelope.attachments,
-            browserSubmission: envelope.browserSubmission,
-            browserComments: envelope.browserSubmission?.comments ?? [],
-            delivery,
-            previousConversationState,
-          });
-          if (envelope.deliveryState === 'accepted' && envelope.acceptance) {
-            dispatch({ type: 'send_accepted', clientUserMessageId: envelope.clientUserMessageId, status: acceptedStatus(envelope.acceptance) });
-            void markEnvelopeBrowserCommentsSent(envelope);
-            return envelope.acceptance;
-          }
-          try {
-            const acceptance = await options.client.sendNativeMessage(options.projectId, options.conversationId, {
-              content: envelope.content,
-              ...(envelope.displayText ? { displayText: envelope.displayText } : {}),
-              attachments: envelope.attachments,
-              ...(envelope.browserSubmission?.comments.length ? { browserComments: envelope.browserSubmission.comments } : {}),
-              delivery: envelope.delivery,
-              ...(envelope.expectedTurnId ? { expectedTurnId: envelope.expectedTurnId } : {}),
-              ...(envelope.model ? { model: envelope.model } : {}),
-              ...(envelope.agentKind ? { agentKind: envelope.agentKind } : {}),
-              ...(envelope.effort ? { effort: envelope.effort } : {}),
-              ...(Object.prototype.hasOwnProperty.call(envelope, 'serviceTier') ? { serviceTier: envelope.serviceTier } : {}),
-              ...(envelope.permissionMode ? { permissionMode: envelope.permissionMode } : {}),
-              collaborationMode: envelope.collaborationMode,
-              idempotencyKey: envelope.idempotencyKey,
-              clientUserMessageId: envelope.clientUserMessageId,
-            });
-            pendingSend = { ...envelope, deliveryState: 'accepted', acceptance };
-            dispatch({ type: 'send_accepted', clientUserMessageId: envelope.clientUserMessageId, status: acceptedStatus(acceptance) });
-            void markEnvelopeBrowserCommentsSent(pendingSend);
-            persistDraft();
-            return acceptance;
-          } catch (error) {
-            const reconciliation = await reconcileFailedSend(envelope);
-            if (reconciliation.kind === 'durable') return reconciliation.acceptance;
-            const sessionError = toSessionError(error, true);
-            dispatch(
-              reconciliation.kind === 'unknown'
-                ? {
-                    type: 'send_uncertain',
-                    clientUserMessageId: envelope.clientUserMessageId,
-                    draft: envelope.draft,
-                    attachments: envelope.composerAttachments,
-                    browserSubmission: envelope.browserSubmission,
-                    previousConversationState,
-                    error: sessionError,
-                  }
-                : {
-                    type: 'send_failed',
-                    clientUserMessageId: envelope.clientUserMessageId,
-                    draft: envelope.draft,
-                    attachments: envelope.composerAttachments,
-                    browserSubmission: envelope.browserSubmission,
-                    previousConversationState,
-                    error: sessionError,
-                  },
-            );
-            persistDraft();
-            throw error;
-          }
-        },
-        () => reconcileAcceptedSend(),
-        false,
-      );
+      if (state.transportState !== 'ready' || state.snapshot?.id !== options.conversationId) {
+        pendingSend = null;
+        deferredSends = [...deferredSends, envelope];
+        dispatch({
+          type: 'send_started',
+          clientUserMessageId: envelope.clientUserMessageId,
+          durableClientUserMessageId: envelope.clientUserMessageId,
+          draft: envelope.displayText,
+          attachments: envelope.composerAttachments,
+          submittedAttachments: envelope.attachments,
+          browserSubmission: envelope.browserSubmission,
+          browserComments: envelope.browserSubmission?.comments ?? [],
+          delivery: envelope.delivery,
+          previousConversationState: state.conversationState,
+          queuedUntilHydrated: true,
+        });
+        persistDraft();
+        return Promise.resolve();
+      }
+      return submitEnvelope(envelope).then((acceptance) => {
+        void flushDeferredSends();
+        return acceptance;
+      });
     },
     editQueuedSubmission(submissionId, content) {
       return runOperation(
@@ -1226,6 +1292,7 @@ function readPersistedDraft(storage: SessionDraftStorage | undefined, key: strin
     const browserSubmission = isBrowserPreparedSubmission(parsed.browserSubmission) ? parsed.browserSubmission : null;
     const pendingCandidate = isPendingSendEnvelope(parsed.pendingSend) ? parsed.pendingSend : undefined;
     const pending = pendingCandidate ? { ...pendingCandidate, collaborationMode: pendingCandidate.collaborationMode ?? 'default' } : undefined;
+    const deferredSends = Array.isArray(parsed.deferredSends) ? parsed.deferredSends.filter(isPendingSendEnvelope).map((envelope) => ({ ...envelope, collaborationMode: envelope.collaborationMode ?? 'default' })) : [];
     const recoveredSubmissionIds = Array.isArray(parsed.recoveredSubmissionIds) ? parsed.recoveredSubmissionIds.filter((id): id is string => typeof id === 'string' && Boolean(id)) : [];
     const persistedDraft = typeof parsed.draft === 'string' ? parsed.draft : '';
     const restorePendingInput = pending && pending.deliveryState !== 'accepted' && !persistedDraft && attachments.length === 0 && !browserSubmission;
@@ -1234,6 +1301,7 @@ function readPersistedDraft(storage: SessionDraftStorage | undefined, key: strin
       attachments: restorePendingInput ? pending.composerAttachments : attachments,
       browserSubmission: restorePendingInput ? pending.browserSubmission : browserSubmission,
       ...(pending ? { pendingSend: pending } : {}),
+      ...(deferredSends.length > 0 ? { deferredSends } : {}),
       ...(recoveredSubmissionIds.length > 0 ? { recoveredSubmissionIds } : {}),
     };
   } catch {

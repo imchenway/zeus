@@ -226,6 +226,10 @@ export interface ConnectedSessionWorkspaceProps {
   localState?: NativeSessionState;
   localActions?: SessionWorkspaceActions;
   creationStatus?: SessionWorkspaceProps['creationStatus'];
+  /** 会话首次读取期间只投影目标输入区和底部状态。 */
+  transitionDock?: boolean;
+  suppressComposer?: boolean;
+  suppressInputComposer?: boolean;
   stableConversationId?: string;
   onStartConversation?: SessionWorkspaceActions['onStartConversation'];
   onStartProjectConversation?: SessionWorkspaceActions['onStartProjectConversation'];
@@ -287,7 +291,8 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
   const controllerReady = props.controllerEnabled !== false && state.transportState === 'ready' && state.snapshot?.id === props.conversation.id;
   const controllerFailed = props.controllerEnabled !== false && state.transportState === 'failed';
   const controllerVisible = controllerReady || controllerFailed;
-  const displayedState = controllerVisible ? state : (props.localState ?? state);
+  const controllerInteractive = controllerVisible || props.transitionDock;
+  const displayedState = props.transitionDock ? state : controllerVisible ? state : (props.localState ?? state);
   return (
     <SessionWorkspace
       language={props.language}
@@ -297,14 +302,16 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
       owner={props.owner}
       choices={props.choices}
       capabilities={capabilities}
-      suppressComposer={Boolean(props.readOnlyGate)}
+      suppressComposer={props.suppressComposer || Boolean(props.readOnlyGate)}
+      suppressInputComposer={props.suppressInputComposer}
+      transitionDock={props.transitionDock}
       quickActionsSuppressed={props.quickActionsSuppressed}
       readOnlyGate={props.readOnlyGate}
       creationStatus={controllerVisible ? undefined : props.creationStatus}
       onLatestContentVisibilityChange={props.onLatestContentVisibilityChange}
       actions={{
-        ...(controllerVisible ? createConnectedSessionActions({ controller, state, onChooseAttachments: props.onChooseAttachments }) : props.localActions),
-        ...(controllerVisible
+        ...(controllerInteractive ? createConnectedSessionActions({ controller, state, onChooseAttachments: props.onChooseAttachments }) : props.localActions),
+        ...(controllerInteractive
           ? {
               onOpenResource: async (resource, target, location) => {
                 const result = await openConversationResourceInMain({
@@ -957,6 +964,9 @@ export interface SessionWorkspaceProps {
   tasks?: SessionWorkspaceTask[];
   choices?: NativeConversationChoice[];
   suppressComposer?: boolean;
+  /** 只隐藏普通输入框，审批、回答等旧正文动作仍保持可用。 */
+  suppressInputComposer?: boolean;
+  transitionDock?: boolean;
   quickActionsSuppressed?: boolean;
   readOnlyGate?: SessionReadOnlyGate;
   capabilities?: CodexConversationCapabilities | null;
@@ -1684,6 +1694,24 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     );
   }
 
+  if (props.transitionDock && props.state) {
+    const failed = props.state.transportState === 'failed';
+    return (
+      <section className="session-switch-target-dock" aria-label={props.language === 'zh-CN' ? '目标会话输入' : 'Target conversation input'} onKeyDownCapture={handleWorkspaceKeyDownCapture}>
+        {renderConversationComposer()}
+        <section className={`session-switch-status${failed ? ' is-failed' : ''}`} role={failed ? 'alert' : 'status'} aria-live="polite">
+          {failed ? <WarningCircle aria-hidden="true" weight="regular" /> : <span className="session-command-spinner" aria-hidden="true" />}
+          <span>{failed ? (props.language === 'zh-CN' ? '目标会话加载失败' : 'Target conversation failed to load') : props.language === 'zh-CN' ? '正在加载' : 'Loading'}</span>
+          {failed && actions.onReconnect ? (
+            <button type="button" onClick={() => void actions.onReconnect?.()}>
+              {props.language === 'zh-CN' ? '重试' : 'Retry'}
+            </button>
+          ) : null}
+        </section>
+      </section>
+    );
+  }
+
   return (
     <section
       className="session-workspace-root"
@@ -1927,7 +1955,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                     {renderQueuedConversationMessages()}
                   </section>
                 ) : null}
-                {props.suppressComposer || blockingUserInputRequest ? null : (
+                {props.suppressComposer || props.suppressInputComposer || blockingUserInputRequest ? null : (
                   <>
                     {renderQueuedConversationMessages()}
                     {renderConversationComposer()}
