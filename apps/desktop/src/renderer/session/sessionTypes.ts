@@ -434,6 +434,7 @@ export interface CodexTaskPushCapabilities {
   parentContextRevision: string;
   repositoryRevision: string;
   currentAttachmentOptions: TaskPushParentContextOption['attachments'];
+  currentConversationOptions: TaskPushParentContextOption['conversations'];
   parentContextOptions: TaskPushParentContextOption[];
   relatedContextOptions: TaskPushRelatedContextOption[];
   preferredModel: string;
@@ -736,6 +737,7 @@ export interface StartTaskModelPushRequest {
   supplementalAttachments?: TaskPushSupplementalAttachmentInput[];
   taskContext?: {
     revision: string;
+    currentConversationIds: string[];
     parentSelections: TaskPushParentContextSelection[];
     relatedSelections: TaskPushRelatedContextSelection[];
   };

@@ -12911,6 +12911,10 @@ a {
   padding-block-start: 8px;
 }
 
+.macos-ai-app .task-model-push-current-conversations .task-model-push-parent-resources {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .macos-ai-app .task-model-push-parent-resources > div {
   display: grid;
   align-content: start;
