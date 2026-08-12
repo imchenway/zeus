@@ -55,6 +55,8 @@ const copy = {
     complexityTruncated: '内容过于复杂，已截断',
     queued: '排队中',
     sending: '发送中',
+    sendFailed: '发送失败',
+    sendUnconfirmed: '发送结果待确认',
     steering: '引导中',
     steerUnconfirmed: '引导结果待确认',
     remoteDevice: '由远程设备发送',
@@ -91,6 +93,8 @@ const copy = {
     complexityTruncated: 'Content complexity truncated',
     queued: 'Queued',
     sending: 'Sending',
+    sendFailed: 'Send failed',
+    sendUnconfirmed: 'Send outcome unconfirmed',
     steering: 'Steering',
     steerUnconfirmed: 'Steer outcome unconfirmed',
     remoteDevice: 'Sent from a remote device',
@@ -224,10 +228,12 @@ function TaskPushMessageContent(
 
 function optimisticDeliveryStatus(item: NativeSessionItemBuffer, labels: (typeof copy)[SessionUiLanguage]): string {
   const delivery = primitiveText(item.payload.delivery);
+  if (item.status === 'failed') return labels.sendFailed;
   if (delivery === 'steer_now') {
     const unconfirmed = item.status === 'paused' || item.status === 'unconfirmed' || primitiveText(item.payload.pausedReason) === 'recovery_required';
     return unconfirmed ? labels.steerUnconfirmed : labels.steering;
   }
+  if (item.status === 'paused' || item.status === 'unconfirmed' || primitiveText(item.payload.pausedReason) === 'recovery_required') return labels.sendUnconfirmed;
   return item.status === 'queued' ? labels.queued : labels.sending;
 }
 

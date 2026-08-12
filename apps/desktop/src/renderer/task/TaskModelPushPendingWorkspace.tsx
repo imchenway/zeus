@@ -271,6 +271,7 @@ function buildPendingTaskPushSession(choice: NativeConversationChoice, request: 
     browserComments: [],
     delivery: 'queue',
     previousConversationState: 'active_prework',
+    startedAt: new Date().toISOString(),
     taskPushLayout: layout,
   });
 }
