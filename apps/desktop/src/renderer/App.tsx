@@ -253,6 +253,20 @@ type MainNavTarget = 'projects' | 'conversations' | 'settings';
 type LegacyMainNavTarget = MainNavTarget | 'dashboard' | 'tasks' | 'code-map' | 'runtime' | 'git-diff' | 'telegram' | 'settings-data';
 type ProjectWorkspaceSection = 'tasks' | 'git' | 'code' | 'sessions' | 'project-settings';
 type ProjectCodeWorkspaceMode = 'source' | 'graph' | 'commands';
+type ProjectWorkspaceEntryId = 'tasks' | 'git' | 'source' | 'graph' | 'commands';
+type ProjectWorkspaceEntry = Readonly<{
+  id: ProjectWorkspaceEntryId;
+  shortcutKey: '1' | '2' | '3' | '4' | '5';
+  section: ProjectWorkspaceSection;
+  codeMode: ProjectCodeWorkspaceMode | undefined;
+}>;
+const PROJECT_WORKSPACE_ENTRIES = [
+  { id: 'tasks', shortcutKey: '1', section: 'tasks', codeMode: undefined },
+  { id: 'git', shortcutKey: '2', section: 'git', codeMode: undefined },
+  { id: 'source', shortcutKey: '3', section: 'code', codeMode: 'source' },
+  { id: 'graph', shortcutKey: '4', section: 'code', codeMode: 'graph' },
+  { id: 'commands', shortcutKey: '5', section: 'code', codeMode: 'commands' },
+] as const satisfies readonly ProjectWorkspaceEntry[];
 type ProjectDetailPanel = 'diff' | 'edit' | 'config' | 'archive' | undefined;
 type ConversationDrawer = 'runtime' | 'context' | 'changes' | 'templates' | undefined;
 type TaskConversationDrawerTarget = Readonly<{ taskId: string; conversationId: string }> | undefined;
@@ -7531,6 +7545,17 @@ export function App(props: {
   }, []);
   const selectedTaskModelPushOperation = Object.values(taskModelPushPendingByTask).find((pending) => pending.navigationId === selectedNativeConversationId);
   const selectedTaskModelPushOptimisticState = selectedTaskModelPushOperation?.status === 'accepted' && selectedTaskModelPushOperation.choice.id === selectedNativeConversation?.id ? selectedTaskModelPushOperation.session : undefined;
+  useEffect(() => {
+    function onProjectWorkspaceShortcut(event: globalThis.KeyboardEvent): void {
+      if (!event.metaKey || event.ctrlKey || event.altKey || event.shiftKey || event.repeat) return;
+      const entry = PROJECT_WORKSPACE_ENTRIES.find((candidate) => candidate.shortcutKey === event.key);
+      if (!entry || activeNavTarget === 'settings' || !selectedProject || document.querySelector('[aria-modal="true"]')) return;
+      event.preventDefault();
+      openProjectSection(selectedProject, entry.section, entry.codeMode);
+    }
+    window.addEventListener('keydown', onProjectWorkspaceShortcut);
+    return () => window.removeEventListener('keydown', onProjectWorkspaceShortcut);
+  }, [activeNavTarget, selectedProject]);
   useEffect(() => {
     function onCommitShortcut(event: globalThis.KeyboardEvent): void {
       if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== 'k') return;
@@ -18049,23 +18074,41 @@ function ProjectWorkspaceModeToolbar(props: {
   onOpen: (section: ProjectWorkspaceSection, codeMode?: ProjectCodeWorkspaceMode) => void;
 }) {
   const zh = props.language === 'zh-CN';
-  const items = [
-    { id: 'tasks', label: zh ? '任务' : 'Tasks', section: 'tasks' as const, icon: <WorkspaceTasksIcon aria-hidden="true" /> },
-    { id: 'git', label: 'Git', section: 'git' as const, icon: <WorkspaceGitIcon aria-hidden="true" /> },
-    { id: 'source', label: zh ? '源码' : 'Source', section: 'code' as const, codeMode: 'source' as const, icon: <WorkspaceSourceIcon aria-hidden="true" /> },
-    { id: 'graph', label: zh ? '图谱' : 'Graph', section: 'code' as const, codeMode: 'graph' as const, icon: <WorkspaceGraphIcon aria-hidden="true" /> },
-    { id: 'commands', label: zh ? '命令' : 'Commands', section: 'code' as const, codeMode: 'commands' as const, icon: <WorkspaceCommandsIcon aria-hidden="true" /> },
-  ];
+  const labels: Record<ProjectWorkspaceEntryId, string> = {
+    tasks: zh ? '任务' : 'Tasks',
+    git: 'Git',
+    source: zh ? '源码' : 'Source',
+    graph: zh ? '图谱' : 'Graph',
+    commands: zh ? '命令' : 'Commands',
+  };
+  const icons: Record<ProjectWorkspaceEntryId, ReactNode> = {
+    tasks: <WorkspaceTasksIcon aria-hidden="true" />,
+    git: <WorkspaceGitIcon aria-hidden="true" />,
+    source: <WorkspaceSourceIcon aria-hidden="true" />,
+    graph: <WorkspaceGraphIcon aria-hidden="true" />,
+    commands: <WorkspaceCommandsIcon aria-hidden="true" />,
+  };
   return (
     <header className="project-workspace-mode-toolbar">
       <strong title={props.project.localPath}>{props.project.name}</strong>
       <nav aria-label={zh ? '项目工作区' : 'Project workspace'}>
-        {items.map((item) => {
+        {PROJECT_WORKSPACE_ENTRIES.map((item) => {
           const active = props.section === item.section && (item.section !== 'code' || props.codeMode === item.codeMode);
+          const label = labels[item.id];
+          const shortcutLabel = zh ? `${label}（⌘${item.shortcutKey}）` : `${label} (⌘${item.shortcutKey})`;
           return (
-            <button key={item.id} type="button" className={active ? 'is-active' : ''} aria-current={active ? 'page' : undefined} title={item.label} onClick={() => props.onOpen(item.section, item.codeMode)}>
-              <span aria-hidden="true">{item.icon}</span>
-              {item.label}
+            <button
+              key={item.id}
+              type="button"
+              className={active ? 'is-active' : ''}
+              aria-label={shortcutLabel}
+              aria-current={active ? 'page' : undefined}
+              aria-keyshortcuts={`Meta+${item.shortcutKey}`}
+              title={shortcutLabel}
+              onClick={() => props.onOpen(item.section, item.codeMode)}
+            >
+              <span aria-hidden="true">{icons[item.id]}</span>
+              {label}
             </button>
           );
         })}
