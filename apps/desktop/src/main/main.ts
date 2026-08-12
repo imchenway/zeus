@@ -53,6 +53,7 @@ const windows = new Set<BrowserWindow>();
 let tray: Tray | undefined;
 let menuBarUsageWindow: BrowserWindow | undefined;
 const taskGitDeliveryWindows = new Map<string, BrowserWindow>();
+const projectGitDiffWindows = new Set<BrowserWindow>();
 const taskGitDeliveryTaskByWindowId = new Map<number, string>();
 const taskGitDeliveryWindowSaveTimers = new Map<number, ReturnType<typeof setTimeout>>();
 const taskGitDeliveryWindowPersistenceGates = new Map<number, WindowStatePersistenceGate>();
@@ -433,11 +434,68 @@ function configureWindowSecurity(window: BrowserWindow, rendererUrl: string): vo
   window.webContents.session.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
 }
 
-function rendererEntryUrl(surface?: 'menu-bar-usage' | 'task-git-delivery', parameters?: Record<string, string>): string {
+function rendererEntryUrl(surface?: 'menu-bar-usage' | 'task-git-delivery' | 'project-git-diff', parameters?: Record<string, string>): string {
   const url = new URL(process.env.ZEUS_DEV_SERVER_URL ?? pathToFileURL(join(desktopRoot(), 'dist/renderer/index.html')).toString());
   if (surface) url.searchParams.set('surface', surface);
   for (const [key, value] of Object.entries(parameters ?? {})) url.searchParams.set(key, value);
   return url.toString();
+}
+
+async function openProjectGitDiffWindow(
+  parent: BrowserWindow,
+  input: {
+    projectId: string;
+    repositoryId: string;
+    filePath: string;
+    stage: 'combined' | 'staged' | 'unstaged';
+    commitHash?: string;
+    comparisonRef?: string;
+    comparisonMode?: 'current' | 'working-tree';
+  },
+): Promise<{ opened: true }> {
+  const workArea = screen.getDisplayMatching(parent.getBounds()).workArea;
+  const width = Math.min(workArea.width, Math.max(900, Math.round(workArea.width * 0.84)));
+  const height = Math.min(workArea.height, Math.max(620, Math.round(workArea.height * 0.82)));
+  const window = new BrowserWindow({
+    x: Math.round(workArea.x + (workArea.width - width) / 2),
+    y: Math.round(workArea.y + (workArea.height - height) / 2),
+    width,
+    height,
+    minWidth: Math.min(760, width),
+    minHeight: Math.min(520, height),
+    parent,
+    modal: false,
+    title: appShellSettings.appLanguage === 'zh-CN' ? '仓库差异 · Zeus' : 'Repository Diff · Zeus',
+    show: false,
+    titleBarStyle: 'hiddenInset',
+    trafficLightPosition: { x: 14, y: 16 },
+    webPreferences: {
+      preload: join(desktopRoot(), 'dist/preload/index.cjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      webSecurity: true,
+      allowRunningInsecureContent: false,
+    },
+  });
+  projectGitDiffWindows.add(window);
+  window.on('closed', () => projectGitDiffWindows.delete(window));
+  const rendererUrl = rendererEntryUrl('project-git-diff', {
+    projectId: input.projectId,
+    repositoryId: input.repositoryId,
+    filePath: input.filePath,
+    stage: input.stage,
+    ...(input.commitHash ? { commitHash: input.commitHash } : {}),
+    ...(input.comparisonRef ? { comparisonRef: input.comparisonRef } : {}),
+    ...(input.comparisonMode ? { comparisonMode: input.comparisonMode } : {}),
+  });
+  configureWindowSecurity(window, rendererUrl);
+  window.once('ready-to-show', () => {
+    window.show();
+    window.focus();
+  });
+  await window.loadURL(rendererUrl);
+  return { opened: true };
 }
 
 function normalizeTaskGitDeliveryContext(value: unknown): TaskGitDeliveryCurrentContext | undefined {
@@ -505,6 +563,8 @@ async function openTaskGitDeliveryWindow(parent: BrowserWindow, taskId: string):
     minimizable: true,
     maximizable: true,
     fullscreenable: true,
+    titleBarStyle: 'hiddenInset',
+    trafficLightPosition: { x: 14, y: 16 },
     webPreferences: {
       preload: join(desktopRoot(), 'dist/preload/index.cjs'),
       contextIsolation: true,
@@ -843,6 +903,24 @@ function setupIpc(): void {
       broadcastTaskGitDeliveryCurrentContext(context);
     }
     return openTaskGitDeliveryWindow(requestingWindow, candidate.taskId);
+  });
+  ipcMain.handle('zeus:project-git-diff:open', async (event, input: unknown) => {
+    const requestingWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow)) throw new Error('仓库差异窗口请求来自不受信任的主窗口。');
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw new TypeError('仓库差异窗口请求无效。');
+    const candidate = input as Record<string, unknown>;
+    const required = ['projectId', 'repositoryId', 'filePath'] as const;
+    for (const key of required) if (typeof candidate[key] !== 'string') throw new TypeError(`仓库差异窗口缺少 ${key}。`);
+    const stage = candidate.stage === 'staged' || candidate.stage === 'unstaged' ? candidate.stage : 'combined';
+    return openProjectGitDiffWindow(requestingWindow, {
+      projectId: candidate.projectId as string,
+      repositoryId: candidate.repositoryId as string,
+      filePath: candidate.filePath as string,
+      stage,
+      ...(typeof candidate.commitHash === 'string' && candidate.commitHash ? { commitHash: candidate.commitHash } : {}),
+      ...(typeof candidate.comparisonRef === 'string' && candidate.comparisonRef ? { comparisonRef: candidate.comparisonRef } : {}),
+      ...(candidate.comparisonMode === 'working-tree' ? { comparisonMode: 'working-tree' as const } : candidate.comparisonMode === 'current' ? { comparisonMode: 'current' as const } : {}),
+    });
   });
   ipcMain.handle('zeus:task-git-delivery:close', (event) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);

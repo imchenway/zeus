@@ -108,8 +108,8 @@ export function TaskGitConflictWorkspace(props: {
         ? `冲突 ${blockNumber} 的两侧修改重叠，未自动覆盖中间内容，请直接编辑中间区域。`
         : `Conflict ${blockNumber} has overlapping edits. The center was kept unchanged; edit it manually.`
       : props.zh
-        ? `已${action === 'accepted' ? '选入' : '忽略'}${side === 'source' ? '目标分支' : '任务分支'}，保存前不会写入文件。`
-        : `${action === 'accepted' ? 'Accepted' : 'Ignored'} the ${side === 'source' ? 'target' : 'task'} side. The file is unchanged until you save.`;
+        ? `已${action === 'accepted' ? '选入' : '忽略'}${side === 'source' ? '来源分支' : '任务分支'}，保存前不会写入文件。`
+        : `${action === 'accepted' ? 'Accepted' : 'Ignored'} the ${side === 'source' ? 'source' : 'task'} side. The file is unchanged until you save.`;
     updateDocument(next, feedback, nextBlock?.status === 'pending' ? undefined : block.id);
   }
 
@@ -319,7 +319,7 @@ export function TaskGitConflictWorkspace(props: {
             path={props.conflictPath}
             document={document}
             disabled={!document || props.busy}
-            targetTitle={props.zh ? '目标分支' : 'Target branch'}
+            targetTitle={props.zh ? '来源分支' : 'Source branch'}
             resultTitle={props.zh ? '合并结果（可编辑）' : 'Merge result (editable)'}
             taskTitle={props.zh ? '任务分支' : 'Task branch'}
             initialBlock={activeBlock}
@@ -332,7 +332,7 @@ export function TaskGitConflictWorkspace(props: {
             document={document}
             block={activeBlock}
             disabled={props.busy}
-            targetTitle={props.zh ? '目标分支（只读）' : 'Target branch (read-only)'}
+            targetTitle={props.zh ? '来源分支（只读）' : 'Source branch (read-only)'}
             resultTitle={props.zh ? '合并结果（可编辑）' : 'Merge result (editable)'}
             taskTitle={props.zh ? '任务分支（只读）' : 'Task branch (read-only)'}
             onResultChange={editDocument}
@@ -579,10 +579,10 @@ function FullFilePane(props: {
               const top = countNewlines(props.content.slice(0, block.visibleStart)) * 18.6 - scrollTop;
               return (
                 <span key={block.id} className={`task-git-conflict-full-control is-${block.status}`} style={{ top }}>
-                  <button type="button" onClick={() => props.onSideAction?.(block, 'source', 'accepted')} disabled={props.readOnly} aria-label="选入目标分支" title="选入目标分支">
+                  <button type="button" onClick={() => props.onSideAction?.(block, 'source', 'accepted')} disabled={props.readOnly} aria-label="选入来源分支" title="选入来源分支">
                     <ArrowRight aria-hidden="true" />
                   </button>
-                  <button type="button" onClick={() => props.onSideAction?.(block, 'source', 'ignored')} disabled={props.readOnly} aria-label="忽略目标分支" title="忽略目标分支">
+                  <button type="button" onClick={() => props.onSideAction?.(block, 'source', 'ignored')} disabled={props.readOnly} aria-label="忽略来源分支" title="忽略来源分支">
                     <X aria-hidden="true" />
                   </button>
                   <button type="button" onClick={() => props.onSideAction?.(block, 'task', 'ignored')} disabled={props.readOnly} aria-label="忽略任务分支" title="忽略任务分支">

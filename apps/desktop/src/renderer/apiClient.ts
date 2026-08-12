@@ -248,6 +248,7 @@ export interface DashboardSnapshot {
       subject: string;
       author: string;
       authoredAt: string;
+      parentHashes: string[];
     }>;
   };
   graph: { nodeCount: number; edgeCount: number; viewCount: number };
@@ -1182,6 +1183,90 @@ export interface ProjectGitSnapshotResult {
 
 export type GitStatusSummary = DashboardSnapshot['git'];
 
+export interface ProjectGitStashEntry {
+  ref: string;
+  hash: string;
+  subject: string;
+  author: string;
+  authoredAt: string;
+}
+
+export interface ProjectGitRepositorySnapshot {
+  branch: string;
+  headSha: string;
+  upstream: string | null;
+  ahead: number;
+  behind: number;
+  clean: boolean;
+  fileStatuses: NonNullable<DashboardSnapshot['git']['fileStatuses']>;
+  conflictFiles: string[];
+  localBranches: string[];
+  remoteBranches: string[];
+  remotes: string[];
+  tags: string[];
+  recentCommits: NonNullable<DashboardSnapshot['git']['recentCommits']>;
+  outgoingCommits: NonNullable<DashboardSnapshot['git']['recentCommits']>;
+  stashes: ProjectGitStashEntry[];
+  diff: GitDiffSummary;
+  stagedDiff: GitDiffSummary;
+  unstagedDiff: GitDiffSummary;
+}
+
+export interface ProjectGitRepositoryWorkbenchItem {
+  id: string;
+  name: string;
+  relativePath: string;
+  localPath: string;
+  snapshot: ProjectGitRepositorySnapshot;
+}
+
+export interface ProjectGitWorkbenchSnapshot {
+  projectId: string;
+  projectName: string;
+  refreshedAt: string;
+  repositories: ProjectGitRepositoryWorkbenchItem[];
+}
+
+export type ProjectGitAction =
+  | { type: 'fetch'; remote?: string }
+  | { type: 'stage'; paths: string[] }
+  | { type: 'unstage'; paths: string[] }
+  | { type: 'commit'; message: string }
+  | { type: 'push'; remote?: string; targetBranch?: string; forceWithLease?: boolean; pushTags?: boolean }
+  | { type: 'pull'; remote?: string; targetBranch?: string; strategy: 'rebase' | 'merge' }
+  | { type: 'checkout'; branchName: string }
+  | { type: 'create_branch'; branchName: string; baseRef?: string; trackRemote?: boolean }
+  | { type: 'delete_branch'; branchName: string }
+  | { type: 'merge'; branchName: string }
+  | { type: 'rebase'; branchName: string }
+  | { type: 'stash'; message?: string; includeUntracked?: boolean }
+  | { type: 'apply_stash'; stashRef: string; pop?: boolean }
+  | { type: 'drop_stash'; stashRef: string };
+
+export interface ProjectGitActionResponse {
+  projectId: string;
+  repositoryId: string;
+  repositoryName: string;
+  result: {
+    action: ProjectGitAction['type'];
+    outcome: 'completed' | 'conflict';
+    branch: string;
+    headSha: string;
+    conflictFiles: string[];
+    stdout: string;
+    stderr: string;
+  };
+  snapshot: ProjectGitRepositorySnapshot;
+}
+
+export interface ProjectGitCommitDetail {
+  commit: NonNullable<DashboardSnapshot['git']['recentCommits']>[number];
+  body: string;
+  parentHashes: string[];
+  files: Array<{ path: string; additions: number; deletions: number }>;
+  diff: GitDiffSummary;
+}
+
 export type HighRiskGitOperation = 'commit' | 'stash' | 'apply_stash' | 'rollback' | 'branch' | 'switch_branch' | 'pull' | 'push';
 
 export interface GitOperationConfirmation {
@@ -1705,6 +1790,10 @@ export interface DashboardClient {
   createTaskFromTemplate: (templateId: string, input: CreateTaskFromTemplateRequest) => Promise<TaskRecord>;
   loadGitDiff: () => Promise<GitDiffSummary>;
   loadProjectGitStatus: (projectId: string) => Promise<GitStatusSummary>;
+  loadProjectGitWorkbench: (projectId: string) => Promise<ProjectGitWorkbenchSnapshot>;
+  loadProjectGitCommit: (projectId: string, repositoryId: string, commitHash: string) => Promise<ProjectGitCommitDetail>;
+  loadProjectGitComparisonDiff: (projectId: string, repositoryId: string, ref: string, mode: 'current' | 'working-tree') => Promise<GitDiffSummary>;
+  executeProjectGitAction: (projectId: string, repositoryId: string, input: ProjectGitAction) => Promise<ProjectGitActionResponse>;
   loadProjectGitDiff: (projectId: string) => Promise<GitDiffSummary>;
   createProjectGitSnapshot: (projectId: string, taskId: string) => Promise<ProjectGitSnapshotResult>;
   exportProjectGitPatch: (projectId: string) => Promise<GitPatchExport>;
@@ -2442,6 +2531,15 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
       }),
     loadGitDiff: () => request<GitDiffSummary>('/api/git/diff'),
     loadProjectGitStatus: (projectId) => request<GitStatusSummary>(`/api/projects/${projectId}/git/status`),
+    loadProjectGitWorkbench: (projectId) => request<ProjectGitWorkbenchSnapshot>(`/api/projects/${projectId}/git/workbench`),
+    loadProjectGitCommit: (projectId, repositoryId, commitHash) => request<ProjectGitCommitDetail>(`/api/projects/${projectId}/git/workbench/repositories/${encodeURIComponent(repositoryId)}/commits/${encodeURIComponent(commitHash)}`),
+    loadProjectGitComparisonDiff: (projectId, repositoryId, ref, mode) =>
+      request<GitDiffSummary>(`/api/projects/${projectId}/git/workbench/repositories/${encodeURIComponent(repositoryId)}/compare?ref=${encodeURIComponent(ref)}&mode=${mode}`),
+    executeProjectGitAction: (projectId, repositoryId, input) =>
+      request<ProjectGitActionResponse>(`/api/projects/${projectId}/git/workbench/repositories/${encodeURIComponent(repositoryId)}/actions`, {
+        method: 'POST',
+        body: JSON.stringify(input),
+      }),
     loadProjectGitDiff: (projectId) => request<GitDiffSummary>(`/api/projects/${projectId}/git/diff`),
     createProjectGitSnapshot: (projectId, taskId) => request<ProjectGitSnapshotResult>(`/api/projects/${projectId}/git/snapshot`, { method: 'POST', body: JSON.stringify({ taskId }) }),
     // 项目级 patch 导出走后端 readonly 路由，renderer 不拼接或执行任何 Git 命令。

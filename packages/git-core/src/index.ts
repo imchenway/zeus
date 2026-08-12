@@ -208,6 +208,68 @@ export interface GitRecentCommit {
   subject: string;
   author: string;
   authoredAt: string;
+  parentHashes: string[];
+}
+
+export interface ProjectGitStashEntry {
+  ref: string;
+  hash: string;
+  subject: string;
+  author: string;
+  authoredAt: string;
+}
+
+export interface ProjectGitRepositorySnapshot {
+  branch: string;
+  headSha: string;
+  upstream: string | null;
+  ahead: number;
+  behind: number;
+  clean: boolean;
+  fileStatuses: GitFileStatus[];
+  conflictFiles: string[];
+  localBranches: string[];
+  remoteBranches: string[];
+  remotes: string[];
+  tags: string[];
+  recentCommits: GitRecentCommit[];
+  outgoingCommits: GitRecentCommit[];
+  stashes: ProjectGitStashEntry[];
+  diff: GitDiffSummary;
+  stagedDiff: GitDiffSummary;
+  unstagedDiff: GitDiffSummary;
+}
+
+export type ProjectGitAction =
+  | { type: 'fetch'; remote?: string }
+  | { type: 'stage'; paths: string[] }
+  | { type: 'unstage'; paths: string[] }
+  | { type: 'commit'; message: string }
+  | { type: 'push'; remote?: string; targetBranch?: string; forceWithLease?: boolean; pushTags?: boolean }
+  | { type: 'pull'; remote?: string; targetBranch?: string; strategy: 'rebase' | 'merge' }
+  | { type: 'checkout'; branchName: string }
+  | { type: 'create_branch'; branchName: string; baseRef?: string; trackRemote?: boolean }
+  | { type: 'delete_branch'; branchName: string }
+  | { type: 'merge'; branchName: string }
+  | { type: 'rebase'; branchName: string }
+  | { type: 'stash'; message?: string; includeUntracked?: boolean }
+  | { type: 'apply_stash'; stashRef: string; pop?: boolean }
+  | { type: 'drop_stash'; stashRef: string };
+
+export interface ProjectGitActionResult extends GitRunnerResult {
+  action: ProjectGitAction['type'];
+  outcome: 'completed' | 'conflict';
+  branch: string;
+  headSha: string;
+  conflictFiles: string[];
+}
+
+export interface ProjectGitCommitDetail {
+  commit: GitRecentCommit;
+  body: string;
+  parentHashes: string[];
+  files: Array<{ path: string; additions: number; deletions: number }>;
+  diff: GitDiffSummary;
 }
 
 export interface GitDiffSummary {
@@ -1028,7 +1090,7 @@ export async function startTaskIntegrationAttempt(input: {
   };
 }
 
-/** 读取三方冲突内容：source 是目标分支，task 是任务分支，result 是当前可编辑结果。 */
+/** 读取三方冲突内容：source 是来源分支，task 是任务分支，result 是当前可编辑结果。 */
 export async function readTaskIntegrationConflict(integrationPath: string, path: string): Promise<TaskIntegrationConflictFile> {
   const safePath = requireSafeWorkspacePath(path);
   const conflicts = splitLines(await readGitStdout(integrationPath, ['diff', '--name-only', '--diff-filter=U']));
@@ -1079,7 +1141,7 @@ export async function completeTaskIntegrationCommit(input: { integrationPath: st
   return { resultHeadSha: await resolveCommit(input.integrationPath, 'HEAD') };
 }
 
-/** 重新校验目标分支提交后只同步本地来源分支；远端推送由独立用户动作完成。 */
+/** 重新校验来源分支提交后只同步本地来源分支；远端推送由独立用户动作完成。 */
 export async function finalizeTaskBranchIntegration(input: { repositoryPath: string; integrationPath: string; targetBranch: string; targetHeadSha: string; resultHeadSha: string }): Promise<FinalizedTaskBranchIntegration> {
   const targetBranch = await assertGitBranchFormat(input.repositoryPath, input.targetBranch, 'target branch');
   const resultHeadSha = requireGitObjectId(input.resultHeadSha, 'integration result');
@@ -1093,7 +1155,7 @@ export async function finalizeTaskBranchIntegration(input: { repositoryPath: str
     targetHeadSha: input.targetHeadSha,
     resultHeadSha,
   });
-  // 本地目标分支暂时不安全时保留隔离合入结果，待用户清理原工作区后重试同步。
+  // 本地来源分支暂时不安全时保留隔离合入结果，待用户清理原工作区后重试同步。
   if (localSync.localSyncStatus === 'synced') {
     const context = await getGitRepositoryContext(input.repositoryPath);
     const registered = context.worktrees.find((entry) => canonicalFilesystemPath(entry.path) === canonicalFilesystemPath(input.integrationPath));
@@ -1378,6 +1440,24 @@ async function runGit(cwd: string, args: string[]): Promise<GitRunnerResult> {
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Git command failed.';
     throw gitCoreError('ZEUS_GIT_COMMAND_FAILED', message);
+  }
+}
+
+/** 合并类命令遇到真实冲突时保留现场并返回输出；其他失败仍按错误处理。 */
+async function runGitPreservingConflict(cwd: string, args: string[]): Promise<GitRunnerResult> {
+  try {
+    return await defaultGitCommandRunner(cwd, args);
+  } catch (error) {
+    const status = await getGitStatus(cwd).catch(() => emptyGitStatus());
+    if (status.conflictFiles.length === 0) {
+      const message = error instanceof Error ? error.message : 'Git command failed.';
+      throw gitCoreError('ZEUS_GIT_COMMAND_FAILED', message);
+    }
+    const candidate = error as { stdout?: unknown; stderr?: unknown; message?: unknown };
+    return {
+      stdout: typeof candidate.stdout === 'string' ? candidate.stdout : '',
+      stderr: typeof candidate.stderr === 'string' ? candidate.stderr : typeof candidate.message === 'string' ? candidate.message : 'Git operation stopped on conflicts.',
+    };
   }
 }
 
@@ -1690,10 +1770,10 @@ function gitCoreError(code: string, message: string): Error & { code: string } {
 export async function getGitStatus(cwd: string): Promise<GitStatusSummary> {
   try {
     const branch = (await execFileAsync('git', ['branch', '--show-current'], { cwd })).stdout.trim() || 'detached';
-    const porcelain = (await execFileAsync('git', ['status', '--porcelain', '-z'], { cwd })).stdout;
+    const porcelain = (await execFileAsync('git', ['status', '--porcelain', '-z', '--untracked-files=all'], { cwd })).stdout;
     const parsedStatus = parseGitPorcelainStatus(porcelain);
     const remoteBranches = splitLines(await readGitStdout(cwd, ['branch', '-r', '--format=%(refname:short)']));
-    const recentCommits = parseRecentCommits(await readGitStdout(cwd, ['log', '-n', '5', '--pretty=format:%H%x1f%h%x1f%s%x1f%an%x1f%aI']));
+    const recentCommits = parseRecentCommits(await readGitStdout(cwd, ['-c', 'core.quotePath=false', 'log', '-n', '5', '--pretty=format:%H%x1f%h%x1f%s%x1f%an%x1f%aI%x1f%P']));
     return {
       isRepository: true,
       branch,
@@ -1704,6 +1784,192 @@ export async function getGitStatus(cwd: string): Promise<GitStatusSummary> {
   } catch {
     return emptyGitStatus();
   }
+}
+
+/** 为项目 Git 工作台读取单仓完整快照；所有字段都来自当前本机仓库。 */
+export async function getProjectGitRepositorySnapshot(cwd: string): Promise<ProjectGitRepositorySnapshot> {
+  const context = await getGitRepositoryContext(cwd);
+  if (!context.isRepository) throw gitCoreError('ZEUS_GIT_REPOSITORY_REQUIRED', 'The selected directory is not a Git repository.');
+  const [status, diff, stagedDiffText, unstagedDiffText, upstreamText, tagsText, stashText, recentText] = await Promise.all([
+    getGitStatus(context.topLevel),
+    getGitDiff(context.topLevel),
+    readGitStdout(context.topLevel, ['-c', 'core.quotePath=false', 'diff', '--cached', '--', '.']),
+    readGitStdout(context.topLevel, ['-c', 'core.quotePath=false', 'diff', '--', '.']),
+    readGitStdout(context.topLevel, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}']),
+    readGitStdout(context.topLevel, ['tag', '--sort=-creatordate']),
+    readGitStdout(context.topLevel, ['stash', 'list', '--format=%gd%x1f%H%x1f%s%x1f%an%x1f%aI']),
+    readGitStdout(context.topLevel, ['-c', 'core.quotePath=false', 'log', '--topo-order', '-n', '200', '--date=iso-strict', '--pretty=format:%H%x1f%h%x1f%s%x1f%an%x1f%aI%x1f%P']),
+  ]);
+  const upstream = upstreamText || null;
+  const divergence = upstream ? await readGitStdout(context.topLevel, ['rev-list', '--left-right', '--count', `${upstream}...HEAD`]) : '';
+  const [behindText = '0', aheadText = '0'] = divergence.split(/\s+/u);
+  const outgoingText = upstream
+    ? await readGitStdout(context.topLevel, ['-c', 'core.quotePath=false', 'log', '--topo-order', '-n', '200', '--date=iso-strict', '--pretty=format:%H%x1f%h%x1f%s%x1f%an%x1f%aI%x1f%P', `${upstream}..HEAD`])
+    : '';
+  return {
+    branch: context.branch,
+    headSha: context.headSha,
+    upstream,
+    ahead: Number.parseInt(aheadText, 10) || 0,
+    behind: Number.parseInt(behindText, 10) || 0,
+    clean: status.clean,
+    fileStatuses: status.fileStatuses,
+    conflictFiles: status.conflictFiles,
+    localBranches: context.localBranches,
+    remoteBranches: context.remoteBranches,
+    remotes: context.remotes,
+    tags: splitLines(tagsText),
+    recentCommits: parseRecentCommits(recentText),
+    outgoingCommits: parseRecentCommits(outgoingText),
+    stashes: parseProjectGitStashes(stashText),
+    diff,
+    stagedDiff: diffSummaryFromText(stagedDiffText),
+    unstagedDiff: diffSummaryFromText(unstagedDiffText),
+  };
+}
+
+/** 执行项目 Git 工作台白名单动作；调用方不能传入任意子命令或任意工作目录。 */
+export async function executeProjectGitAction(cwd: string, action: ProjectGitAction): Promise<ProjectGitActionResult> {
+  const context = await getGitRepositoryContext(cwd);
+  if (!context.isRepository) throw gitCoreError('ZEUS_GIT_REPOSITORY_REQUIRED', 'The selected directory is not a Git repository.');
+  const repositoryPath = context.topLevel;
+  let args: string[];
+  switch (action.type) {
+    case 'fetch': {
+      const remote = requireKnownRemote(context, action.remote);
+      args = ['fetch', '--prune', remote];
+      break;
+    }
+    case 'stage':
+      args = ['add', '-A', '--', ...requireRepositoryPaths(repositoryPath, action.paths)];
+      break;
+    case 'unstage':
+      args = ['restore', '--staged', '--', ...requireRepositoryPaths(repositoryPath, action.paths)];
+      break;
+    case 'commit':
+      args = ['commit', '-m', requireSafeGitText(action.message, 'commit message')];
+      break;
+    case 'push': {
+      const remote = requireKnownRemote(context, action.remote);
+      const targetBranch = await assertGitBranchFormat(repositoryPath, action.targetBranch?.trim() || context.branch, 'push target branch');
+      const sourceBranch = await assertGitBranchFormat(repositoryPath, context.branch, 'current branch');
+      args = ['push', ...(action.forceWithLease ? ['--force-with-lease'] : []), ...(action.pushTags ? ['--follow-tags'] : []), remote, `${sourceBranch}:refs/heads/${targetBranch}`];
+      break;
+    }
+    case 'pull': {
+      const remote = requireKnownRemote(context, action.remote);
+      const targetBranch = await assertGitBranchFormat(repositoryPath, action.targetBranch?.trim() || context.branch, 'pull branch');
+      args = ['pull', action.strategy === 'rebase' ? '--rebase' : '--no-rebase', remote, targetBranch];
+      break;
+    }
+    case 'checkout':
+      args = ['switch', await assertGitBranchFormat(repositoryPath, action.branchName, 'branch')];
+      break;
+    case 'create_branch': {
+      const branchName = await assertGitBranchFormat(repositoryPath, action.branchName, 'branch');
+      const baseRef = action.baseRef?.trim() ? await assertGitBranchFormat(repositoryPath, action.baseRef.trim(), 'base branch') : null;
+      if (baseRef) await resolveCommit(repositoryPath, baseRef);
+      args = ['switch', '-c', branchName, ...(action.trackRemote ? ['--track'] : []), ...(baseRef ? [baseRef] : [])];
+      break;
+    }
+    case 'delete_branch':
+      args = ['branch', '-d', await assertNamedBranchExists(repositoryPath, action.branchName)];
+      break;
+    case 'merge':
+      args = ['merge', '--no-edit', await assertGitBranchFormat(repositoryPath, action.branchName, 'merge branch')];
+      break;
+    case 'rebase':
+      args = ['rebase', await assertGitBranchFormat(repositoryPath, action.branchName, 'rebase branch')];
+      break;
+    case 'stash':
+      args = ['stash', 'push', ...(action.includeUntracked ? ['-u'] : []), '-m', requireSafeGitText(action.message || 'Zeus shelf', 'stash message')];
+      break;
+    case 'apply_stash':
+      args = ['stash', action.pop ? 'pop' : 'apply', requireStashRef(action.stashRef)];
+      break;
+    case 'drop_stash':
+      args = ['stash', 'drop', requireStashRef(action.stashRef)];
+      break;
+  }
+  const conflictCapable = action.type === 'pull' || action.type === 'merge' || action.type === 'rebase' || action.type === 'apply_stash';
+  const output = conflictCapable ? await runGitPreservingConflict(repositoryPath, args) : await runGit(repositoryPath, args);
+  const nextContext = await getGitRepositoryContext(repositoryPath);
+  const nextStatus = await getGitStatus(repositoryPath);
+  return {
+    action: action.type,
+    outcome: nextStatus.conflictFiles.length > 0 ? 'conflict' : 'completed',
+    branch: nextContext.branch,
+    headSha: nextContext.headSha,
+    conflictFiles: nextStatus.conflictFiles,
+    ...output,
+  };
+}
+
+/** 读取一个精确提交的文件和差异，供独立 Repository Diff 与日志检查器复用。 */
+export async function getProjectGitCommitDetail(cwd: string, commitHash: string): Promise<ProjectGitCommitDetail> {
+  const context = await getGitRepositoryContext(cwd);
+  if (!context.isRepository) throw gitCoreError('ZEUS_GIT_REPOSITORY_REQUIRED', 'The selected directory is not a Git repository.');
+  const commit = await resolveCommit(context.topLevel, commitHash);
+  const [metadata, numstat, diffText] = await Promise.all([
+    requireGitStdout(context.topLevel, ['-c', 'core.quotePath=false', 'show', '-s', '--date=iso-strict', '--format=%H%x1f%h%x1f%s%x1f%an%x1f%aI%x1f%P%x1f%B', commit]),
+    readGitStdout(context.topLevel, ['-c', 'core.quotePath=false', 'show', '--format=', '--numstat', commit]),
+    readGitStdout(context.topLevel, ['-c', 'core.quotePath=false', 'show', '--format=', '--no-ext-diff', '--find-renames', commit]),
+  ]);
+  const [hash = commit, shortHash = commit.slice(0, 8), subject = '', author = '', authoredAt = '', parents = '', ...bodyParts] = metadata.split('\x1f');
+  const files = splitLines(numstat).flatMap((line) => {
+    const [added = '', deleted = '', path = ''] = line.split('\t');
+    if (!path) return [];
+    return [{ path, additions: added === '-' ? 0 : Number.parseInt(added, 10) || 0, deletions: deleted === '-' ? 0 : Number.parseInt(deleted, 10) || 0 }];
+  });
+  return {
+    commit: { hash, shortHash, subject, author, authoredAt, parentHashes: splitLines(parents.replace(/\s+/gu, '\n')) },
+    body: bodyParts.join('\x1f').trim(),
+    parentHashes: splitLines(parents.replace(/\s+/gu, '\n')),
+    files,
+    diff: { isRepository: true, files: files.map((file) => file.path), diffText, fileDiffs: parseGitUnifiedDiff(diffText) },
+  };
+}
+
+/** 读取所选分支与当前分支或工作区的差异；只解析受 Git 校验的 ref。 */
+export async function getProjectGitComparisonDiff(cwd: string, branchName: string, mode: 'current' | 'working-tree'): Promise<GitDiffSummary> {
+  const context = await getGitRepositoryContext(cwd);
+  if (!context.isRepository) throw gitCoreError('ZEUS_GIT_REPOSITORY_REQUIRED', 'The selected directory is not a Git repository.');
+  const branch = await assertGitBranchFormat(context.topLevel, branchName, 'comparison branch');
+  const args = mode === 'working-tree' ? ['-c', 'core.quotePath=false', 'diff', '--no-ext-diff', '--find-renames', branch, '--', '.'] : ['-c', 'core.quotePath=false', 'diff', '--no-ext-diff', '--find-renames', `${branch}..HEAD`, '--', '.'];
+  return diffSummaryFromText(await readGitStdout(context.topLevel, args));
+}
+
+function parseProjectGitStashes(stdout: string): ProjectGitStashEntry[] {
+  return splitLines(stdout)
+    .map((line) => {
+      const [ref = '', hash = '', subject = '', author = '', authoredAt = ''] = line.split('\x1f');
+      return { ref, hash, subject, author, authoredAt };
+    })
+    .filter((entry) => entry.ref.length > 0 && entry.hash.length > 0);
+}
+
+function requireKnownRemote(context: GitRepositoryContext, requested?: string): string {
+  const remote = requested?.trim() || (context.remotes.includes('origin') ? 'origin' : context.remotes[0]);
+  if (!remote || !context.remotes.includes(remote)) throw gitCoreError('ZEUS_GIT_REMOTE_REQUIRED', 'A configured repository remote is required.');
+  return remote;
+}
+
+function requireRepositoryPaths(repositoryPath: string, paths: string[]): string[] {
+  const normalized = Array.from(new Set(paths.map((path) => path.trim()).filter(Boolean)));
+  if (normalized.length === 0) throw gitCoreError('ZEUS_GIT_PATH_REQUIRED', 'At least one repository path is required.');
+  for (const path of normalized) {
+    if (isAbsolute(path) || path.includes('\0')) throw gitCoreError('ZEUS_GIT_PATH_INVALID', `Invalid repository path: ${path}`);
+    const target = resolve(repositoryPath, path);
+    const targetRelative = relative(repositoryPath, target);
+    if (targetRelative === '..' || targetRelative.startsWith(`..${sep}`) || isAbsolute(targetRelative)) throw gitCoreError('ZEUS_GIT_PATH_INVALID', `Repository path is outside the selected repository: ${path}`);
+  }
+  return normalized;
+}
+
+function requireStashRef(value: string): string {
+  const normalized = value.trim();
+  if (!/^stash@\{\d+\}$/u.test(normalized)) throw gitCoreError('ZEUS_GIT_STASH_REF_INVALID', `Invalid stash reference: ${normalized}`);
+  return normalized;
 }
 
 /** 只读获取指定目录此刻所在的 Git 分支，供会话界面展示真实执行现场。 */
@@ -1795,8 +2061,8 @@ async function readGitStdout(cwd: string, args: string[]): Promise<string> {
 function parseRecentCommits(stdout: string): GitRecentCommit[] {
   return splitLines(stdout)
     .map((line) => {
-      const [hash = '', shortHash = '', subject = '', author = '', authoredAt = ''] = line.split('\x1f');
-      return { hash, shortHash, subject, author, authoredAt };
+      const [hash = '', shortHash = '', subject = '', author = '', authoredAt = '', parents = ''] = line.split('\x1f');
+      return { hash, shortHash, subject, author, authoredAt, parentHashes: parents.trim() ? parents.trim().split(/\s+/u) : [] };
     })
     .filter((commit) => commit.hash.length > 0);
 }
@@ -1818,24 +2084,32 @@ function emptyGitStatus(): GitStatusSummary {
 export async function getGitDiff(cwd: string): Promise<GitDiffSummary> {
   try {
     await execFileAsync('git', ['rev-parse', '--is-inside-work-tree'], { cwd });
-    const names = (await execFileAsync('git', ['diff', '--name-only'], { cwd })).stdout.trim();
-    const stagedNames = (await execFileAsync('git', ['diff', '--cached', '--name-only'], { cwd })).stdout.trim();
+    const names = (await execFileAsync('git', ['-c', 'core.quotePath=false', 'diff', '--name-only'], { cwd })).stdout.trim();
+    const stagedNames = (await execFileAsync('git', ['-c', 'core.quotePath=false', 'diff', '--cached', '--name-only'], { cwd })).stdout.trim();
+    const porcelain = (await execFileAsync('git', ['status', '--porcelain', '-z', '--untracked-files=all'], { cwd })).stdout;
+    const untrackedPaths = parseGitPorcelainStatus(porcelain)
+      .fileStatuses.filter((file) => file.indexStatus === '?')
+      .map((file) => file.path);
     const diffText = (
-      await execFileAsync('git', ['diff', '--', '.'], {
+      await execFileAsync('git', ['-c', 'core.quotePath=false', 'diff', '--', '.'], {
         cwd,
         maxBuffer: 10 * 1024 * 1024,
       })
     ).stdout;
     const stagedDiffText = (
-      await execFileAsync('git', ['diff', '--cached', '--', '.'], {
+      await execFileAsync('git', ['-c', 'core.quotePath=false', 'diff', '--cached', '--', '.'], {
         cwd,
         maxBuffer: 10 * 1024 * 1024,
       })
     ).stdout;
-    const combinedDiffText = [diffText, stagedDiffText].filter(Boolean).join('\n');
+    const untrackedDiffs: string[] = [];
+    for (const path of untrackedPaths.slice(0, 200)) {
+      untrackedDiffs.push(await readGitDiffAllowChanges(cwd, ['-c', 'core.quotePath=false', 'diff', '--no-index', '--', '/dev/null', path]));
+    }
+    const combinedDiffText = [diffText, stagedDiffText, ...untrackedDiffs].filter(Boolean).join('\n');
     return {
       isRepository: true,
-      files: Array.from(new Set([...splitLines(names), ...splitLines(stagedNames)])),
+      files: Array.from(new Set([...splitLines(names), ...splitLines(stagedNames), ...untrackedPaths])),
       diffText: combinedDiffText,
       fileDiffs: parseGitUnifiedDiff(combinedDiffText),
     };

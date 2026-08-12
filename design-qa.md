@@ -651,3 +651,48 @@ final result: passed
 - 后续若出现天然带结构化来源的测试会话，可补充非空来源列表的 GUI 证据。
 
 final result: passed
+
+# ZEUS-0196 项目 Git 工作台设计验收
+
+## 对比对象
+
+- 来源图：`/Users/david/Library/Containers/com.wiheads.paste/Data/tmp/images/iShot Pro 2026-08-12 16.22.15.png`，用于分支目录和对象右键菜单关系。
+- 来源图：`/Users/david/Library/Containers/com.wiheads.paste/Data/tmp/images/IntelliJ IDEA 2026-08-12 16.22.28.png`，用于真实提交图谱、无横向行线和变更文件目录树关系。
+- 实现图：`docs/assets/ZEUS-0196/implementation-branch-context-and-graph.png`。
+- 实现图：`docs/assets/ZEUS-0196/implementation-native-side-by-side-diff.png`。
+- 实现图：`docs/assets/ZEUS-0196/implementation-branch-comparison-diff.png`。
+- 实现图：`docs/assets/ZEUS-0196/implementation-log-file-tree.png`。
+- 实现载体：隔离 `Zeus Test.app`，外接显示器，浅色模式，真实 ZEUS-0196 仓库。
+
+## Findings
+
+- 未发现阻断本轮三项需求交付的 P0、P1 或 P2 问题。
+- 初次独立 Diff 运行时发现辅助窗口没有加载主样式，表现为浏览器默认 HTML；补充正式样式入口、重新打包后复验通过。
+- 初次分支比较使用三点范围，在 `main` 恰好是当前分支祖先时返回空结果；修正为所选分支与当前 `HEAD` 的两点差异后，多文件列表和双栏内容均真实出现。
+- 初次图谱在多次合流后保留了重复轨道；最终改为当前提交出列、父提交去重入列，已存在父线直接合流，测试包中轨道会在共同父提交处收束。
+
+## 必查表面
+
+- 字体与排版：继续使用 Zeus 系统字体和既有产品令牌，没有复刻 IDEA 的颜色、字号或重蓝选中态。
+- 布局：分支按目录展开，右键菜单在指针附近出现；日志采用仓库分支、图谱提交、提交详情三栏；独立 Diff 采用文件导航加左右双栏。
+- 图谱：基于最近 200 条真实提交的父 SHA 与拓扑顺序绘制轨道、分叉和合流；重复父轨道会去重收束，提交行无横向分割线。
+- 内容：中文分支、提交、文件路径保持原文；未使用写死分支、占位提交或伪造测试数据。
+- 交互：双击变更文件打开新的 macOS 窗口；默认左右两栏，工具栏可切统一视图；分支“比较”打开多文件只读窗口。
+- 安全：验收没有触发 Git 写动作；所有写能力仍经项目仓库复验和白名单动作执行。
+
+## Implementation Checklist
+
+- [x] IDEA 式分支对象右键菜单，不使用分支选择弹窗。
+- [x] 真实父提交拓扑线和合流线，重复父线收束，提交行移除横线。
+- [x] 本地变更和提交变更文件按目录树排列。
+- [x] 文件双击打开独立 macOS Diff 窗口。
+- [x] Diff 默认左右两栏，多文件保留导航，可切统一视图。
+- [x] `pnpm lint`、`pnpm typecheck`、`pnpm build`、`pnpm package:mac` 通过。
+- [x] 最终 `Zeus Test.app` 在外接显示器完成真实运行复验。
+
+## Follow-up Polish
+
+- 超过 200 条提交的历史可后续按滚动增量加载。
+- 词级差异高亮、空白策略和逐个差异快捷导航可作为独立增强继续补齐。
+
+final result: passed

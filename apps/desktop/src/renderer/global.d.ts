@@ -45,6 +45,15 @@ declare global {
       notifyTaskGitDeliveryCurrentContext: (context: { taskId: string | null; workspaceId: string | null }) => void;
       notifyTaskGitDeliveryChanged: (taskId: string) => void;
       openTaskGitDeliveryConversation: (input: { taskId: string; conversationId: string }) => Promise<{ opened: true }>;
+      openProjectGitDiffWindow: (input: {
+        projectId: string;
+        repositoryId: string;
+        filePath: string;
+        stage: 'combined' | 'staged' | 'unstaged';
+        commitHash?: string;
+        comparisonRef?: string;
+        comparisonMode?: 'current' | 'working-tree';
+      }) => Promise<{ opened: true }>;
       onTaskGitDeliveryCurrentContext: (listener: (context: { taskId: string | null; workspaceId: string | null }) => void) => () => void;
       onTaskGitDeliveryAppearance: (listener: (settings: { language: 'zh-CN' | 'en-US'; appearance: 'light' | 'dark' | 'system' }) => void) => () => void;
       onTaskGitDeliveryChanged: (listener: (taskId: string) => void) => () => void;

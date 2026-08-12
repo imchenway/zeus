@@ -235,7 +235,8 @@
 }
 
 /* 旧页面尚未迁移为 Button 的危险动作仍强制消费同一语义色和危险焦点环，禁止出现浅色描边。 */
-.macos-ai-app :where(
+.macos-ai-app
+  :where(
     .settings-danger-row .settings-row-action-rail > button,
     .git-confirmation-risk-rail > button,
     .git-confirmation-command-rail > button,
@@ -249,7 +250,8 @@
   color: var(--zeus-control-danger-text);
 }
 
-.macos-ai-app :where(
+.macos-ai-app
+  :where(
     .settings-danger-row .settings-row-action-rail > button,
     .git-confirmation-risk-rail > button,
     .git-confirmation-command-rail > button,
@@ -262,7 +264,8 @@
   color: var(--zeus-control-danger-text);
 }
 
-.macos-ai-app :where(
+.macos-ai-app
+  :where(
     .settings-danger-row .settings-row-action-rail > button,
     .git-confirmation-risk-rail > button,
     .git-confirmation-command-rail > button,
@@ -293,6 +296,16 @@
     background-color var(--zeus-source-list-row-motion),
     border-color var(--zeus-source-list-row-motion),
     color var(--zeus-source-list-row-motion);
+}
+
+.macos-ai-app .zeus-source-list-row:has(> .zeus-source-list-row-disclosure) {
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+}
+
+.macos-ai-app .zeus-source-list-row-disclosure {
+  align-items: center;
+  display: flex;
+  justify-content: center;
 }
 
 .macos-ai-app .zeus-source-list-row[data-source-list-surface='fill']:hover,
