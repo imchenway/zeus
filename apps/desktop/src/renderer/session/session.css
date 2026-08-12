@@ -12371,6 +12371,10 @@
   margin: 0;
 }
 
+.session-codex-parity-v1 .session-turn-duration > details {
+  display: grid;
+}
+
 .session-codex-parity-v1 .session-turn-duration::before,
 .session-codex-parity-v1 .session-turn-duration::after {
   content: none;
@@ -12440,6 +12444,16 @@
   gap: 14px;
   min-inline-size: 0;
   padding-block-start: 6px;
+}
+
+.session-codex-parity-v1 .session-turn-duration[data-active='true'] > details > summary {
+  order: 2;
+}
+
+.session-codex-parity-v1 .session-turn-duration[data-active='true'] .session-turn-duration-body {
+  order: 1;
+  padding-block-end: 6px;
+  padding-block-start: 0;
 }
 
 .session-codex-parity-v1
