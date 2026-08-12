@@ -123,3 +123,5 @@
 - 冲突已按语义合并：保留主线 ZEUS-0187 的本次推送附件和 ZEUS-0190 的精简提示词契约，同时接入 ZEUS-0185 的当前任务历史会话候选、选择、服务端复验和布局路径。
 - `git diff --name-only --diff-filter=U` 与 `git ls-files -u` 均为空，`git diff --cached --check` 通过。
 - 基于合并后的本地 `main` 执行 `pnpm lint`、`pnpm typecheck`、`pnpm build`，均通过；构建仅保留既有 Vite 大分块提示。
+- 本地 `main` 已通过 merge commit `27f39ba` 接收任务分支，任务分支已成为 `main` 的祖先；主工作树干净。
+- 未执行远端推送；`origin/main` 仍停留在合入前的 `b4a440a`。
