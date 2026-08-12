@@ -9892,74 +9892,102 @@ export function App(props: {
 
   function continueTaskModelPush(task: TaskRecord, capabilities: CodexTaskPushCapabilities, form: TaskModelPushForm): void {
     if (taskModelPushDispatchingTaskIdsRef.current.has(task.id)) return;
-    const fingerprint = JSON.stringify({ taskId: task.id, projectId: task.projectId, taskContextRevision: capabilities.taskContextRevision, repositoryRevision: capabilities.repositoryRevision, form });
-    const persistedEnvelope = taskModelPushEnvelopeRef.current.get(task.id);
-    const request: StartTaskModelPushRequest =
-      persistedEnvelope?.fingerprint === fingerprint
-        ? persistedEnvelope.request
-        : {
-            agentKind: capabilities.models.find((model) => model.id === form.model || model.model === form.model)?.agentKind ?? 'codex',
-            mode: 'create',
-            source: 'task_push',
-            model: form.model,
-            ...(form.effort ? { effort: form.effort } : {}),
-            ...serviceTierWireOverride(form.serviceTier),
-            workMode: form.workMode,
-            permissionMode: form.permissionMode,
-            workspace:
-              form.workspaceMode === 'direct'
-                ? { mode: 'direct', confirmConcurrentWrites: form.directConcurrencyConfirmed }
-                : {
-                    mode: 'create',
-                    repositoryRevision: capabilities.repositoryRevision,
-                    repositories: capabilities.repositories.map((repository) => ({
-                      repositoryId: repository.id,
-                      sourceRef: form.repositorySelections[repository.id]?.sourceRef ?? '',
-                      branchName: form.repositorySelections[repository.id]?.branchName ?? '',
-                      includeLocalChanges: form.repositorySelections[repository.id]?.includeLocalChanges === true,
-                    })),
-                  },
-            ...(form.supplementalInfo.trim() ? { supplementalInfo: form.supplementalInfo.trim() } : {}),
-            ...(form.supplementalAttachments.length > 0 ? { supplementalAttachments: taskPushSupplementalRequestAttachments(form.supplementalAttachments) } : {}),
-            taskContext: {
-              revision: capabilities.taskContextRevision,
-              currentConversationIds: form.currentConversationIds,
-              parentSelections: capabilities.parentContextOptions.flatMap((option) => {
-                const selection = form.parentContextSelections[option.taskId];
-                return selection?.selected ? [{ taskId: option.taskId, conversationIds: selection.conversationIds, attachmentKeys: selection.attachmentKeys }] : [];
-              }),
-              relatedSelections: capabilities.relatedContextOptions.flatMap((option) => {
-                const selection = form.relatedContextSelections[option.taskId];
-                return selection?.selected ? [{ taskId: option.taskId, conversationIds: selection.conversationIds, attachmentKeys: selection.attachmentKeys }] : [];
-              }),
-            },
-            idempotencyKey: createSessionOperationId(),
-            clientUserMessageId: createSessionOperationId(),
-          };
-    taskModelPushEnvelopeRef.current.set(task.id, { fingerprint, request });
-    taskModelPushDispatchingTaskIdsRef.current.add(task.id);
-    setTaskModelPushStatus('submitting');
-    setTaskModelPushError(null);
-    const targetProject = snapshot.projects.find((project) => project.id === task.projectId);
-    const currentConversationPaths = selectedTaskPushCurrentConversationPaths(capabilities.currentConversationOptions, form.currentConversationIds);
-    const parentContexts = selectedTaskPushParentContexts(capabilities.parentContextOptions, form.parentContextSelections);
-    const relatedContexts = selectedTaskPushRelatedContexts(capabilities.relatedContextOptions, form.relatedContextSelections);
-    const supplementalAttachments = taskPushSupplementalLayoutAttachments(form.supplementalAttachments);
-    const layout = buildTaskModelPushLayout(task, form.supplementalInfo, capabilities.currentAttachmentOptions, currentConversationPaths, parentContexts, relatedContexts, supplementalAttachments);
-    const pending: TrackedTaskModelPushState = {
-      ...createTaskModelPushPendingState({
-        task,
-        projectName: targetProject?.name ?? task.projectId,
-        request,
-        form,
-        prompt: buildTaskModelPushMessage(task, form.supplementalInfo, capabilities.currentAttachmentOptions, currentConversationPaths, parentContexts, relatedContexts, supplementalAttachments),
-        layout,
-        currentAttachmentOptions: capabilities.currentAttachmentOptions,
-        capabilities,
-      }),
-      origin: taskModelPushNavigationRef.current,
-    };
-    updateTaskModelPushPendingByTask((current) => ({ ...current, [task.id]: pending }));
+    const previousPending = taskModelPushPendingByTaskRef.current[task.id];
+    let prepared: { pending: TrackedTaskModelPushState; targetProject: (typeof snapshot.projects)[number] | undefined } | null = null;
+    try {
+      const fingerprint = JSON.stringify({ taskId: task.id, projectId: task.projectId, taskContextRevision: capabilities.taskContextRevision, repositoryRevision: capabilities.repositoryRevision, form });
+      const persistedEnvelope = taskModelPushEnvelopeRef.current.get(task.id);
+      const request: StartTaskModelPushRequest =
+        persistedEnvelope?.fingerprint === fingerprint
+          ? persistedEnvelope.request
+          : {
+              agentKind: capabilities.models.find((model) => model.id === form.model || model.model === form.model)?.agentKind ?? 'codex',
+              mode: 'create',
+              source: 'task_push',
+              model: form.model,
+              ...(form.effort ? { effort: form.effort } : {}),
+              ...serviceTierWireOverride(form.serviceTier),
+              workMode: form.workMode,
+              permissionMode: form.permissionMode,
+              workspace:
+                form.workspaceMode === 'direct'
+                  ? { mode: 'direct', confirmConcurrentWrites: form.directConcurrencyConfirmed }
+                  : {
+                      mode: 'create',
+                      repositoryRevision: capabilities.repositoryRevision,
+                      repositories: capabilities.repositories.map((repository) => ({
+                        repositoryId: repository.id,
+                        sourceRef: form.repositorySelections[repository.id]?.sourceRef ?? '',
+                        branchName: form.repositorySelections[repository.id]?.branchName ?? '',
+                        includeLocalChanges: form.repositorySelections[repository.id]?.includeLocalChanges === true,
+                      })),
+                    },
+              ...(form.supplementalInfo.trim() ? { supplementalInfo: form.supplementalInfo.trim() } : {}),
+              ...(form.supplementalAttachments.length > 0 ? { supplementalAttachments: taskPushSupplementalRequestAttachments(form.supplementalAttachments) } : {}),
+              taskContext: {
+                revision: capabilities.taskContextRevision,
+                currentConversationIds: form.currentConversationIds,
+                parentSelections: capabilities.parentContextOptions.flatMap((option) => {
+                  const selection = form.parentContextSelections[option.taskId];
+                  return selection?.selected ? [{ taskId: option.taskId, conversationIds: selection.conversationIds, attachmentKeys: selection.attachmentKeys }] : [];
+                }),
+                relatedSelections: capabilities.relatedContextOptions.flatMap((option) => {
+                  const selection = form.relatedContextSelections[option.taskId];
+                  return selection?.selected ? [{ taskId: option.taskId, conversationIds: selection.conversationIds, attachmentKeys: selection.attachmentKeys }] : [];
+                }),
+              },
+              idempotencyKey: createSessionOperationId(),
+              clientUserMessageId: createSessionOperationId(),
+            };
+      const targetProject = snapshot.projects.find((project) => project.id === task.projectId);
+      const currentConversationPaths = selectedTaskPushCurrentConversationPaths(capabilities.currentConversationOptions, form.currentConversationIds);
+      const parentContexts = selectedTaskPushParentContexts(capabilities.parentContextOptions, form.parentContextSelections);
+      const relatedContexts = selectedTaskPushRelatedContexts(capabilities.relatedContextOptions, form.relatedContextSelections);
+      const supplementalAttachments = taskPushSupplementalLayoutAttachments(form.supplementalAttachments);
+      const layout = buildTaskModelPushLayout(task, form.supplementalInfo, capabilities.currentAttachmentOptions, currentConversationPaths, parentContexts, relatedContexts, supplementalAttachments);
+      const pending: TrackedTaskModelPushState = {
+        ...createTaskModelPushPendingState({
+          task,
+          projectName: targetProject?.name ?? task.projectId,
+          request,
+          form,
+          prompt: buildTaskModelPushMessage(task, form.supplementalInfo, capabilities.currentAttachmentOptions, currentConversationPaths, parentContexts, relatedContexts, supplementalAttachments),
+          layout,
+          currentAttachmentOptions: capabilities.currentAttachmentOptions,
+          capabilities,
+        }),
+        origin: taskModelPushNavigationRef.current,
+      };
+
+      // 只有首发请求和待处理工作面都准备成功后，才锁定弹窗并进入创建态。
+      taskModelPushEnvelopeRef.current.set(task.id, { fingerprint, request });
+      taskModelPushDispatchingTaskIdsRef.current.add(task.id);
+      setTaskModelPushStatus('submitting');
+      setTaskModelPushError(null);
+      updateTaskModelPushPendingByTask((current) => ({ ...current, [task.id]: pending }));
+      prepared = { pending, targetProject };
+    } catch (error) {
+      taskModelPushEnvelopeRef.current.delete(task.id);
+      taskModelPushDispatchingTaskIdsRef.current.delete(task.id);
+      updateTaskModelPushPendingByTask((current) => {
+        if (previousPending) return { ...current, [task.id]: previousPending };
+        if (!current[task.id]) return current;
+        const next = { ...current };
+        delete next[task.id];
+        return next;
+      });
+      setTaskModelPushTaskId(task.id);
+      setTaskModelPushCapabilities(capabilities);
+      setTaskModelPushForm(form);
+      setTaskModelPushStatus('error');
+      const message = redactLocalUiErrorMessage(errorToLocalUiMessage(error));
+      setTaskModelPushError(appShellSettings.appLanguage === 'zh-CN' ? `创建准备失败：${message}` : `Conversation preparation failed: ${message}`);
+      return;
+    }
+    if (!prepared) return;
+    const { pending, targetProject } = prepared;
+    // 本地待处理态建立后立即发出真实请求，界面导航不得成为创建任务的前置条件。
+    void dispatchTaskModelPush(pending);
     setTaskModelPushAnnouncement(appShellSettings.appLanguage === 'zh-CN' ? `${task.title}：正在后台创建会话。` : `${task.title}: Creating conversation in the background.`);
     // 用户确认后立即进入稳定工作面；此后的真实身份接管不得再导航、滚动或夺取焦点。
     taskModelPushCapabilityRequestRef.current += 1;
@@ -9974,7 +10002,6 @@ export function App(props: {
     void selectNativeConversation(pending.choice);
     if (typeof window !== 'undefined') window.history.replaceState(null, '', '#project-sessions');
     workspaceScrollRef.current?.scrollTo({ top: 0, behavior: 'auto' });
-    void dispatchTaskModelPush(pending);
   }
 
   async function dispatchTaskModelPush(pending: TrackedTaskModelPushState): Promise<void> {
