@@ -5,6 +5,7 @@ import type { AddressInfo } from 'node:net';
 import { dirname, join } from 'node:path';
 import { createReconnectableBrowserAutomationProxy } from './browserAutomationBridge.js';
 import {
+  currentExecutionHostCapabilities,
   type ExecutionHostBrowserBridgeRegistration,
   type ExecutionHostControlStatus,
   type ExecutionHostLeaseStatus,
@@ -77,6 +78,7 @@ async function runExecutionHost(): Promise<void> {
       pid: process.pid,
       appVersion: bootstrap.appVersion,
       startedAt,
+      capabilities: currentExecutionHostCapabilities,
       uiLease: {
         connected: uiLease !== null,
         leaseId: uiLease?.leaseId ?? null,
@@ -94,6 +96,7 @@ async function runExecutionHost(): Promise<void> {
       connected: uiLease !== null,
       leaseId: uiLease?.leaseId ?? null,
       lastHeartbeatAt: uiLease?.lastHeartbeatAt ?? null,
+      capabilities: currentExecutionHostCapabilities,
     };
   }
 

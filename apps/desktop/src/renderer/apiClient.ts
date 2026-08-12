@@ -1437,6 +1437,9 @@ export interface ExecutionHostTransition {
   state: 'current' | 'draining_previous';
   currentAppVersion: string;
   hostAppVersion: string;
+  capabilities: {
+    nativeConversationSources: Array<'task_push' | 'code_review' | 'conflict_resolution'>;
+  };
 }
 
 export class ZeusApiError extends Error {
