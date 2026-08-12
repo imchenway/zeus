@@ -2159,8 +2159,22 @@ function startSystemNotificationBridge(config: { baseUrl: string; apiToken: stri
         ).WebSocket(url, protocol),
       showNotification: (payload) => {
         // 系统通知只展示真实事件摘要，不包含 token、证书、命令明文等敏感数据。
-        new Notification(payload).show();
+        const notification = new Notification({ title: payload.title, body: payload.body });
+        if (payload.projectId && payload.conversationId) {
+          notification.on('click', () => {
+            void requestMainWindow().then(() => {
+              if (!mainWindow || mainWindow.isDestroyed()) return;
+              revealMainWindow(mainWindow);
+              mainWindow.webContents.send('zeus:conversation-notification:open', {
+                projectId: payload.projectId,
+                conversationId: payload.conversationId,
+              });
+            });
+          });
+        }
+        notification.show();
       },
+      shouldNotify: () => !BrowserWindow.getAllWindows().some((window) => !window.isDestroyed() && window.isFocused()),
     });
   } catch {
     return undefined;

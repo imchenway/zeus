@@ -6,6 +6,8 @@ export interface ZeusRealtimeEvent {
 export interface ZeusSystemNotificationPayload {
   title: string;
   body: string;
+  projectId?: string;
+  conversationId?: string;
 }
 
 export interface ZeusSystemNotificationSocket {
@@ -18,6 +20,7 @@ export interface CreateSystemNotificationBridgeOptions {
   apiToken: string;
   openWebSocket: (url: string, protocol: string) => ZeusSystemNotificationSocket;
   showNotification: (payload: ZeusSystemNotificationPayload) => void;
+  shouldNotify?: () => boolean;
   onError?: (error: unknown) => void;
 }
 
@@ -86,6 +89,20 @@ export function buildSystemNotificationFromRealtimeEvent(event: ZeusRealtimeEven
       body: joinNotificationParts(readString(payload.sessionId), readString(payload.error, '请回到 Zeus 查看日志')),
     };
   }
+  if (event.type === 'conversation.attention.changed') {
+    return conversationNotification(payload, 'Zeus 有新回复', '模型已回复，请回到会话查看。');
+  }
+  if (event.type === 'conversation.request.created') {
+    const userInput = readString(payload.requestKind) === 'request_user_input';
+    return conversationNotification(payload, userInput ? 'Zeus 等待你的回答' : 'Zeus 等待审批', userInput ? '会话需要你补充信息。' : '会话需要你确认后才能继续。');
+  }
+  if (event.type === 'conversation.turn.completed') {
+    if (payload.notificationEligible !== true) return null;
+    const status = readString(payload.status);
+    if (status === 'failed') return conversationNotification(payload, 'Zeus 会话失败', '本轮执行失败，请回到会话查看详情。');
+    if (status === 'interrupted') return conversationNotification(payload, 'Zeus 会话已中断', '本轮执行已中断。');
+    if (status === 'completed') return conversationNotification(payload, 'Zeus 会话已完成', '本轮执行已经完成。');
+  }
   return null;
 }
 
@@ -95,11 +112,23 @@ export function buildSystemNotificationFromRealtimeEvent(event: ZeusRealtimeEven
 export function createSystemNotificationBridge(options: CreateSystemNotificationBridgeOptions): SystemNotificationBridge {
   const url = `${options.baseUrl.replace(/^http/u, 'ws')}/api/events`;
   const socket = options.openWebSocket(url, buildZeusWebSocketProtocol(options.apiToken));
+  const notifiedOrdinaryTurns = new Set<string>();
+  const deliveredKeys = new Set<string>();
   socket.addEventListener('message', (message) => {
     try {
       const event = JSON.parse(message.data) as ZeusRealtimeEvent;
+      if (options.shouldNotify && !options.shouldNotify()) return;
+      const notificationKey = conversationNotificationKey(event);
+      if (notificationKey?.suppressBecauseOrdinary && notifiedOrdinaryTurns.has(notificationKey.turnKey)) return;
+      if (notificationKey && deliveredKeys.has(notificationKey.key)) return;
       const notification = buildSystemNotificationFromRealtimeEvent(event);
-      if (notification) options.showNotification(notification);
+      if (notification) {
+        if (notificationKey) {
+          deliveredKeys.add(notificationKey.key);
+          if (notificationKey.ordinary) notifiedOrdinaryTurns.add(notificationKey.turnKey);
+        }
+        options.showNotification(notification);
+      }
     } catch (error) {
       options.onError?.(error);
     }
@@ -109,6 +138,33 @@ export function createSystemNotificationBridge(options: CreateSystemNotification
       socket.close();
     },
   };
+}
+
+function conversationNotification(payload: Record<string, unknown>, title: string, fallbackBody: string): ZeusSystemNotificationPayload {
+  return {
+    title,
+    body: readString(payload.conversationTitle, fallbackBody),
+    ...(typeof payload.projectId === 'string' ? { projectId: payload.projectId } : {}),
+    ...(typeof payload.conversationId === 'string' ? { conversationId: payload.conversationId } : {}),
+  };
+}
+
+function conversationNotificationKey(event: ZeusRealtimeEvent): { key: string; turnKey: string; ordinary: boolean; suppressBecauseOrdinary: boolean } | null {
+  const payload = event.payload ?? {};
+  const conversationId = readString(payload.conversationId);
+  if (!conversationId) return null;
+  const turnId = readString(payload.turnId, readString(payload.providerTurnId, 'conversation'));
+  const turnKey = `${conversationId}:${turnId}`;
+  if (event.type === 'conversation.attention.changed') return { key: `ordinary:${turnKey}`, turnKey, ordinary: true, suppressBecauseOrdinary: false };
+  if (event.type === 'conversation.request.created') {
+    const requestId = readString(payload.requestId, turnId);
+    return { key: `request:${conversationId}:${requestId}`, turnKey, ordinary: false, suppressBecauseOrdinary: false };
+  }
+  if (event.type === 'conversation.turn.completed') {
+    const status = readString(payload.status);
+    return { key: `terminal:${turnKey}:${status}`, turnKey, ordinary: false, suppressBecauseOrdinary: status === 'completed' };
+  }
+  return null;
 }
 
 function buildZeusWebSocketProtocol(apiToken: string): string {

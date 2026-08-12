@@ -2738,7 +2738,13 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       });
       runStates.set(conversation.id, classification === 'failed' ? { type: 'paused', reason: 'recovery_required' } : interruptedWithQueue ? { type: 'paused', reason: 'interrupted' } : { type: 'idle' });
       if (!wasTerminal) options.changeSets?.seal({ conversation, turn, timestamp });
-      if (classification === 'completed' && !wasTerminal) options.conversations.setCompletionUnread(conversation.id, true);
+      if (!wasTerminal) {
+        options.conversations.markAttentionUnread(conversation.id, {
+          kind: classification,
+          turnId: providerTurn.id,
+          occurredAt: completedAt ?? timestamp,
+        });
+      }
       if (stateChanged) {
         options.broadcast('conversation.turn.completed', {
           conversationId: conversation.id,
@@ -3421,7 +3427,13 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         providerState: failed ? 'failed' : unconfirmedSteering.length > 0 || (interrupted && hasInterruptedQueue) ? 'paused' : 'ready',
       });
       const ephemeral = contexts.get(conversation.id)?.ephemeral === true;
-      if (!failed && !interrupted && !ephemeral) options.conversations.setCompletionUnread(conversation.id, true);
+      if (!ephemeral) {
+        options.conversations.markAttentionUnread(conversation.id, {
+          kind: failed ? 'failed' : interrupted ? 'interrupted' : 'completed',
+          turnId: providerTurnId,
+          occurredAt: timestamp,
+        });
+      }
       const resultKey = `${conversation.id}:${providerTurnId}`;
       if (failure) {
         failedTurnResults.set(resultKey, failure);
@@ -3462,7 +3474,8 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
           providerTurnId,
           status: terminalStatus,
           completedAt: timestamp,
-          hasUnreadCompletion: options.conversations.getById(conversation.id)?.completionUnread === true,
+          hasUnreadAttention: options.conversations.getById(conversation.id)?.attentionUnread === true,
+          notificationEligible: true,
         },
       };
       queueChangedAfterTurn = interrupted;
@@ -3692,6 +3705,23 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         delta: params.delta,
         updatedAt: event.receivedAt,
       });
+      if (event.method === 'item/agentMessage/delta' && params.delta.trim()) {
+        const previousRevision = options.conversations.getById(conversation.id)?.attentionRevision ?? 0;
+        const attention = options.conversations.markAttentionUnread(conversation.id, {
+          kind: 'unread',
+          turnId: providerTurnId,
+          occurredAt: event.receivedAt,
+        });
+        if (attention.attentionRevision !== previousRevision) {
+          options.broadcast('conversation.attention.changed', {
+            conversationId: conversation.id,
+            providerThreadId: threadId,
+            providerTurnId,
+            attentionKind: attention.attentionKind,
+            attentionRevision: attention.attentionRevision,
+          });
+        }
+      }
       broadcast = {
         type: 'conversation.item.updated',
         payload: {
@@ -3749,6 +3779,23 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
           providerTurnId,
           providerItemId,
         });
+        if (item.textContent.trim()) {
+          const previousRevision = options.conversations.getById(conversation.id)?.attentionRevision ?? 0;
+          const attention = options.conversations.markAttentionUnread(conversation.id, {
+            kind: 'unread',
+            turnId: providerTurnId,
+            occurredAt: event.receivedAt,
+          });
+          if (attention.attentionRevision !== previousRevision) {
+            options.broadcast('conversation.attention.changed', {
+              conversationId: conversation.id,
+              providerThreadId: threadId,
+              providerTurnId,
+              attentionKind: attention.attentionKind,
+              attentionRevision: attention.attentionRevision,
+            });
+          }
+        }
       }
       if (item.itemType === 'fileChange') {
         options.changeSets?.capture({
@@ -3960,6 +4007,13 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
             } catch {
               // Provider 拒绝自动答复时保留真实待授权弹窗，禁止伪造已允许状态。
             }
+          }
+          if (!automaticallyApproved) {
+            options.conversations.markAttentionUnread(conversation.id, {
+              kind: 'unread',
+              turnId: providerTurnId,
+              occurredAt: event.receivedAt,
+            });
           }
           if (!automaticallyApproved && providerTurnId && turn) {
             options.turns.upsert({ ...turn, status: 'waiting', updatedAt: event.receivedAt });

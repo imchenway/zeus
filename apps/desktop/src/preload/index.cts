@@ -81,6 +81,11 @@ contextBridge.exposeInMainWorld('zeus', {
     ipcRenderer.on('zeus:task-git-delivery:open-conversation', handler);
     return () => ipcRenderer.removeListener('zeus:task-git-delivery:open-conversation', handler);
   },
+  onOpenConversationNotification: (listener: (input: unknown) => void) => {
+    const handler = (_event: unknown, input: unknown) => listener(input);
+    ipcRenderer.on('zeus:conversation-notification:open', handler);
+    return () => ipcRenderer.removeListener('zeus:conversation-notification:open', handler);
+  },
   hideMenuBarUsage: () => ipcRenderer.invoke('zeus:menu-bar-usage:hide'),
   showMainWindowFromMenuBarUsage: () => ipcRenderer.invoke('zeus:menu-bar-usage:show-main'),
   openMenuBarUsageSettings: (category: 'usage' | 'runtime') => ipcRenderer.invoke('zeus:menu-bar-usage:open-settings', category),

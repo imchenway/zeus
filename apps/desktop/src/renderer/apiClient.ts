@@ -224,6 +224,7 @@ export interface DashboardSnapshot {
   projects: ProjectRecord[];
   tasks: TaskRecord[];
   conversationAttentionByProject: Record<string, ProjectConversationAttentionState>;
+  conversationUnreadCountByProject: Record<string, number>;
   runtime: {
     aiCli: { available: boolean; reason: string };
     telegram: { enabled: boolean; reason: string };
@@ -253,7 +254,7 @@ export interface DashboardSnapshot {
   graph: { nodeCount: number; edgeCount: number; viewCount: number };
 }
 
-export type ProjectConversationAttentionState = 'idle' | 'running' | 'reply_required';
+export type ProjectConversationAttentionState = 'idle' | 'running' | 'unread' | 'completed' | 'failed' | 'interrupted' | 'reply_required';
 
 export interface SecretPresence {
   configured: boolean;
@@ -1523,7 +1524,7 @@ export interface DashboardClient {
     action: 'undo' | 'reapply',
     input: { changeSetId: string; expectedState: 'applied' | 'undone'; idempotencyKey: string },
   ) => Promise<TurnChangeSetOperationResult>;
-  acknowledgeNativeConversationCompletion: (projectId: string, conversationId: string) => Promise<void>;
+  acknowledgeNativeConversationAttention: (projectId: string, conversationId: string, expectedRevision: number) => Promise<{ acknowledged: boolean; conversation: NativeConversationChoice }>;
   restoreArchivedNativeConversation: (projectId: string, conversationId: string) => Promise<NativeConversationSnapshot>;
   updateNativePermissionMode: (projectId: string, conversationId: string, permissionMode: NativePermissionMode) => Promise<NativeConversationSnapshot>;
   updateNativeCollaborationMode: (projectId: string, conversationId: string, collaborationMode: NativeCollaborationMode) => Promise<NativeConversationSnapshot>;
@@ -2029,7 +2030,11 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
         method: 'POST',
         body: JSON.stringify(input),
       }),
-    acknowledgeNativeConversationCompletion: (projectId, conversationId) => request<void>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/completion-acknowledgement`, { method: 'PUT' }),
+    acknowledgeNativeConversationAttention: (projectId, conversationId, expectedRevision) =>
+      request<{ acknowledged: boolean; conversation: NativeConversationChoice }>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/attention-acknowledgement`, {
+        method: 'PUT',
+        body: JSON.stringify({ expectedRevision }),
+      }),
     restoreArchivedNativeConversation: (projectId, conversationId) =>
       request<NativeConversationSnapshot>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/provider-thread/restore`, { method: 'POST' }),
     updateNativePermissionMode: (projectId, conversationId, permissionMode) =>
@@ -2509,6 +2514,7 @@ export function normalizeDashboardSnapshot(snapshot: DashboardSnapshot): Dashboa
   return {
     ...snapshot,
     conversationAttentionByProject: snapshot.conversationAttentionByProject && typeof snapshot.conversationAttentionByProject === 'object' ? snapshot.conversationAttentionByProject : {},
+    conversationUnreadCountByProject: snapshot.conversationUnreadCountByProject && typeof snapshot.conversationUnreadCountByProject === 'object' ? snapshot.conversationUnreadCountByProject : {},
   };
 }
 
@@ -2599,6 +2605,7 @@ export function createEmptyDashboardSnapshot(): DashboardSnapshot {
     projects: [],
     tasks: [],
     conversationAttentionByProject: {},
+    conversationUnreadCountByProject: {},
     runtime: {
       aiCli: {
         available: false,

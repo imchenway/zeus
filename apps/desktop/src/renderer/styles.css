@@ -7206,11 +7206,28 @@ a {
   color: var(--session-accent);
 }
 
+.macos-ai-app .session-conversation-status-pill.is-completed {
+  background: color-mix(in srgb, var(--session-accent) 12%, transparent);
+  color: var(--session-accent);
+}
+
+.macos-ai-app .session-conversation-status-pill.is-failed,
+.macos-ai-app .session-conversation-status-pill.is-interrupted {
+  background: color-mix(in srgb, var(--session-danger) 12%, transparent);
+  color: var(--session-danger);
+}
+
 .macos-ai-app .session-conversation-unread-dot {
   background: var(--session-accent);
   block-size: 8px;
   border-radius: 999px;
   inline-size: 8px;
+}
+
+.macos-ai-app .session-latest-content-marker {
+  block-size: 1px;
+  display: block;
+  inline-size: 100%;
 }
 
 .macos-ai-app .session-conversation-tree-state.is-muted {
@@ -18573,7 +18590,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   color: var(--zeus-control-disabled-text);
 }
 
-/* 项目会话入口只保留红点或运行动效；待回复红点由聚合状态直接覆盖运行动效。 */
+/* 项目会话入口显示未读会话数；没有未读时，运行态仍保留轻量动效。 */
 .macos-ai-app.zeus-shell .project-first-sidebar .project-session-attention-indicator {
   block-size: 9px;
   box-sizing: border-box;
@@ -18582,10 +18599,31 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   vertical-align: middle;
 }
 
+.macos-ai-app.zeus-shell .project-first-sidebar .project-session-attention-indicator[data-has-count='true'] {
+  align-items: center;
+  background: var(--zeus-product-accent);
+  border-radius: 999px;
+  color: white;
+  display: inline-flex;
+  font-size: 9px;
+  font-weight: 700;
+  inline-size: auto;
+  justify-content: center;
+  line-height: 16px;
+  min-inline-size: 16px;
+  padding-inline: 4px;
+}
+
 .macos-ai-app.zeus-shell .project-first-sidebar .project-session-attention-indicator[data-attention-state='reply_required'] {
   background: var(--zeus-danger-text);
   border-radius: 999px;
   box-shadow: 0 0 0 2px color-mix(in oklch, var(--zeus-danger-text) 14%, transparent);
+}
+
+.macos-ai-app.zeus-shell .project-first-sidebar .project-session-attention-indicator[data-attention-state='reply_required'][data-has-count='true'],
+.macos-ai-app.zeus-shell .project-first-sidebar .project-session-attention-indicator[data-attention-state='failed'][data-has-count='true'],
+.macos-ai-app.zeus-shell .project-first-sidebar .project-session-attention-indicator[data-attention-state='interrupted'][data-has-count='true'] {
+  background: var(--zeus-danger-text);
 }
 
 .macos-ai-app.zeus-shell .project-first-sidebar .project-session-attention-indicator[data-attention-state='running'] {
