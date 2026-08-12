@@ -12449,6 +12449,12 @@
   margin-inline: 0;
 }
 
+/* 用户中途引导仍是用户消息；进入当前轮次的网格过程区后继续保持右对齐。 */
+.session-codex-parity-v1 .session-turn-duration-body > .session-thread-item-user {
+  justify-self: end;
+  margin-inline: 0 !important;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .session-codex-parity-v1 .session-turn-duration-caret {
     transition: none;
