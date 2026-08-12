@@ -90,6 +90,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
   const busy = Boolean(props.state.busyOperation);
   const writable = props.readOnly !== true && props.state.conversationState !== 'legacy_readonly';
   const hasDraft = props.state.draft.trim().length > 0 || props.state.attachments.length > 0 || Boolean(props.state.browserSubmission);
+  const showSendCommand = !active || hasDraft;
   const selectedCapability = resolveModelCapability(props.capabilities?.models, selectedModel);
   const settingsWritable = props.readOnly !== true && Boolean(selectedCapability);
   const modelOptions = props.capabilities?.models.length
@@ -321,7 +322,11 @@ export function ConversationComposer(props: ConversationComposerProps) {
               ) : null}
             </span>
             <span className="session-primary-command-slot" data-primary-command-slot="true">
-              {active ? (
+              {showSendCommand ? (
+                <button type="button" className="session-send-button" aria-label={copy.send} onClick={() => submit('queue')} disabled={!writable || !hasDraft || busy} aria-busy={busy || undefined}>
+                  {busy ? <span className="session-command-spinner" aria-hidden="true" /> : <span aria-hidden="true">↑</span>}
+                </button>
+              ) : (
                 <button
                   type="button"
                   className="session-stop-button"
@@ -330,10 +335,6 @@ export function ConversationComposer(props: ConversationComposerProps) {
                   disabled={!writable || !props.state.activeTurnId || props.state.startedTurnId !== props.state.activeTurnId || busy}
                 >
                   <span aria-hidden="true" />
-                </button>
-              ) : (
-                <button type="button" className="session-send-button" aria-label={copy.send} onClick={() => submit('queue')} disabled={!writable || !hasDraft || busy} aria-busy={busy || undefined}>
-                  {busy ? <span className="session-command-spinner" aria-hidden="true" /> : <span aria-hidden="true">↑</span>}
                 </button>
               )}
             </span>
