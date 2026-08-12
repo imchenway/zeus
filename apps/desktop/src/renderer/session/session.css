@@ -6675,16 +6675,6 @@
   font-weight: 590;
 }
 
-.session-answered-request-custom-answer {
-  display: grid;
-  gap: 2px;
-  padding-inline-start: 25px;
-}
-
-.session-answered-request-custom-answer small {
-  font-size: 11px;
-}
-
 @media (max-width: 760px) {
   .session-answered-request-options > li {
     grid-template-columns: 17px minmax(0, 1fr);

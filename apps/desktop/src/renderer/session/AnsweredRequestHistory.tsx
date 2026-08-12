@@ -58,13 +58,13 @@ export function AnsweredRequestHistory(props: AnsweredRequestHistoryProps) {
         {entries.map((entry, index) => {
           const selectedAnswers = new Set(entry.answers ?? []);
           const optionLabels = new Set(entry.question.options.map((option) => option.label));
-          const customAnswers = entry.answers?.filter((answer) => !optionLabels.has(answer) && !(entry.attachments.length > 0 && (answer === '见附件' || answer === 'See attachments'))) ?? [];
+          const customAnswers = entry.question.options.length > 0 ? (entry.answers?.filter((answer) => !optionLabels.has(answer) && !(entry.attachments.length > 0 && (answer === '见附件' || answer === 'See attachments'))) ?? []) : [];
           const showAnswerText = entry.question.kind === 'freeform' || entry.question.secret || entry.answers === null;
           return (
             <section key={entry.question.id}>
               <small>{entry.question.header || `${index + 1}`}</small>
               <strong>{entry.question.question}</strong>
-              {entry.question.options.length > 0 ? (
+              {entry.question.options.length > 0 || customAnswers.length > 0 ? (
                 <ul className="session-answered-request-options">
                   {entry.question.options.map((option) => {
                     const selected = !entry.question.secret && selectedAnswers.has(option.label);
@@ -81,15 +81,21 @@ export function AnsweredRequestHistory(props: AnsweredRequestHistoryProps) {
                       </li>
                     );
                   })}
+                  {customAnswers.length > 0 ? (
+                    <li className="is-selected is-custom-answer">
+                      <span className="session-answered-request-option-marker" aria-hidden="true">
+                        <Check weight="bold" />
+                      </span>
+                      <span>
+                        <strong>{customAnswers.join(copy.separator)}</strong>
+                        <small>{copy.userChoice}</small>
+                      </span>
+                      <em>{copy.selected}</em>
+                    </li>
+                  ) : null}
                 </ul>
               ) : null}
               {showAnswerText ? <p>{answerText(entry, copy.secretAnswer, copy.redactedAnswer, copy.separator, copy.attachmentCount)}</p> : null}
-              {customAnswers.length > 0 ? (
-                <p className="session-answered-request-custom-answer">
-                  <small>{copy.userChoice}</small>
-                  <span>{customAnswers.join(copy.separator)}</span>
-                </p>
-              ) : null}
               {entry.attachments.length ? <ConversationComposerAttachments attachments={entry.attachments} language={props.language} disabled={false} className="session-answered-request-attachments" /> : null}
             </section>
           );
