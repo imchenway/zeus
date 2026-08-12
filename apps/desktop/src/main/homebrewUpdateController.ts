@@ -13,7 +13,6 @@ interface CreateHomebrewUpdateControllerOptions {
   loadUpdateStatus: () => Promise<DesktopReleaseUpdateStatus>;
   homebrew: HomebrewUpdateService;
   currentVersion: string;
-  bundleId: string;
   canInstall: () => void;
   onInstallReady: () => void;
   notifyReady: (showProgress: () => void) => void;
@@ -124,11 +123,11 @@ export function createHomebrewUpdateController(options: CreateHomebrewUpdateCont
       options.canInstall();
       phase = 'installing';
       await publish(copyFor(options.language(), 'installing', options.currentVersion, prepared.update));
-      await options.homebrew.install(prepared, (progress) => {
+      const installed = await options.homebrew.install(prepared, (progress) => {
         void publish(progressCopy(options.language(), progress, prepared!.update));
       });
       const currentHost = await ensureHost();
-      currentHost.relaunchAfterProcessExit({ pid: process.pid, bundleId: options.bundleId });
+      currentHost.relaunchAfterProcessExit({ pid: process.pid, ...installed });
       options.onInstallReady();
     } catch (error) {
       phase = 'failed';

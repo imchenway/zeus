@@ -120,10 +120,12 @@ private final class UpdateProgressPanelController: NSObject, NSApplicationDelega
             panel.orderOut(nil)
         case "relaunch":
             guard let pid = command["pid"] as? Int,
-                  let bundleId = command["bundleId"] as? String
+                  let appPath = command["appPath"] as? String,
+                  let bundleId = command["bundleId"] as? String,
+                  let version = command["version"] as? String
             else { return }
             awaitingRelaunch = true
-            waitForExitAndRelaunch(pid: Int32(pid), bundleId: bundleId)
+            waitForExitAndRelaunch(pid: Int32(pid), appPath: appPath, bundleId: bundleId, version: version)
         case "quit":
             NSApp.terminate(nil)
         default:
@@ -211,6 +213,8 @@ private final class UpdateProgressPanelController: NSObject, NSApplicationDelega
             emit(action: "restart")
         case localized("retry"):
             emit(action: "retry")
+        case localized("close"):
+            NSApp.terminate(nil)
         default:
             panel.orderOut(nil)
             emit(action: "close")
@@ -227,6 +231,7 @@ private final class UpdateProgressPanelController: NSObject, NSApplicationDelega
         case "ok": return english ? "OK" : "好"
         case "close": return english ? "Close" : "关闭"
         case "retry": return english ? "Try Again" : "重试"
+        case "relaunchFailed": return english ? "The Updated Zeus Could Not Be Opened" : "无法打开更新后的 Zeus"
         default: return key
         }
     }
@@ -238,20 +243,78 @@ private final class UpdateProgressPanelController: NSObject, NSApplicationDelega
         FileHandle.standardOutput.write(Data("\(line)\n".utf8))
     }
 
-    private func waitForExitAndRelaunch(pid: Int32, bundleId: String) {
+    private func waitForExitAndRelaunch(pid: Int32, appPath: String, bundleId: String, version: String) {
         panel.orderOut(nil)
         DispatchQueue.global(qos: .userInitiated).async {
             let deadline = Date().addingTimeInterval(120)
             while Date() < deadline && kill(pid, 0) == 0 {
                 Thread.sleep(forTimeInterval: 0.2)
             }
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-            process.arguments = ["-b", bundleId]
-            try? process.run()
-            DispatchQueue.main.async {
-                NSApp.terminate(nil)
+            guard kill(pid, 0) != 0 else {
+                self.showRelaunchFailure(self.language == "en-US" ? "The previous Zeus process did not exit in time." : "原 Zeus 进程未能及时退出。")
+                return
             }
+            let appURL = URL(fileURLWithPath: appPath).standardizedFileURL
+            guard let validationFailure = self.validateRelaunchTarget(appURL: appURL, bundleId: bundleId, version: version) else {
+                let configuration = NSWorkspace.OpenConfiguration()
+                configuration.activates = true
+                // 禁止 macOS 用另一位置已经运行的同身份应用替代本次精确更新目标。
+                configuration.allowsRunningApplicationSubstitution = false
+                NSWorkspace.shared.openApplication(at: appURL, configuration: configuration) { [weak self] application, error in
+                    guard let self else { return }
+                    if let error {
+                        self.showRelaunchFailure(error.localizedDescription)
+                        return
+                    }
+                    guard let runningURL = application?.bundleURL?.standardizedFileURL,
+                          runningURL.resolvingSymlinksInPath().path == appURL.resolvingSymlinksInPath().path,
+                          application?.bundleIdentifier == bundleId,
+                          self.validateRelaunchTarget(appURL: runningURL, bundleId: bundleId, version: version) == nil
+                    else {
+                        self.showRelaunchFailure(self.language == "en-US" ? "macOS did not open the Zeus app that was just updated." : "macOS 未启动刚刚更新的 Zeus App。")
+                        return
+                    }
+                    DispatchQueue.main.async {
+                        NSApp.terminate(nil)
+                    }
+                }
+                return
+            }
+            self.showRelaunchFailure(validationFailure)
+        }
+    }
+
+    /** 旧进程退出后再次读取磁盘身份，禁止路径在安装复验与重启之间发生漂移。 */
+    private func validateRelaunchTarget(appURL: URL, bundleId: String, version: String) -> String? {
+        var isDirectory: ObjCBool = false
+        guard appURL.pathExtension == "app",
+              FileManager.default.fileExists(atPath: appURL.path, isDirectory: &isDirectory),
+              isDirectory.boolValue,
+              let bundle = Bundle(url: appURL)
+        else {
+            return language == "en-US" ? "The updated Zeus app is missing." : "刚刚更新的 Zeus App 不存在。"
+        }
+        let actualBundleId = bundle.bundleIdentifier ?? ""
+        let shortVersion = bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
+        let bundleVersion = bundle.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? ""
+        guard actualBundleId == bundleId, shortVersion == version, bundleVersion == version else {
+            return language == "en-US"
+                ? "The updated Zeus app identity or version does not match the completed update."
+                : "刚刚更新的 Zeus App 身份或版本与本次更新不一致。"
+        }
+        return nil
+    }
+
+    private func showRelaunchFailure(_ reason: String) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.titleLabel.stringValue = self.localized("relaunchFailed")
+            self.detailLabel.stringValue = reason
+            self.progressIndicator.stopAnimation(nil)
+            self.progressIndicator.isHidden = true
+            self.progressLabel.isHidden = true
+            self.setButtons(secondary: nil, primary: self.localized("close"))
+            self.showPanel()
         }
     }
 }
