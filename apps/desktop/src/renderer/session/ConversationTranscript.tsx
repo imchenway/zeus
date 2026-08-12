@@ -21,10 +21,12 @@ export interface ConversationTranscriptProps {
   onLoadResourcePreview?: (resource: ConversationResource) => Promise<ConversationResourcePreview>;
   onReviewTurnChanges?: (changeSet: TurnChangeSet, fileId?: string) => void;
   onOperateTurnChangeSet?: (changeSet: TurnChangeSet, action: 'undo' | 'reapply') => Promise<TurnChangeSetOperationResult>;
+  onLatestContentVisibilityChange?: (visible: boolean) => void;
 }
 
 export function ConversationTranscript(props: ConversationTranscriptProps) {
   const containerRef = useRef<HTMLElement | null>(null);
+  const latestContentMarkerRef = useRef<HTMLSpanElement | null>(null);
   const previousTurnIdRef = useRef<string | null>(null);
   const activeTurnTrackingInitializedRef = useRef(false);
   const pendingTurnPositionRef = useRef(false);
@@ -93,6 +95,25 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     setReturnToLatestVisible(false);
   }, [scrollController]);
 
+  const reportLatestContentVisibility = useCallback(
+    (container: HTMLElement) => {
+      const current = metrics(container);
+      const marker = latestContentMarkerRef.current;
+      const markerRect = marker?.getBoundingClientRect();
+      const topElement = markerRect ? document.elementFromPoint(markerRect.left + Math.max(0.5, markerRect.width / 2), markerRect.top + Math.max(0.25, markerRect.height / 2)) : null;
+      const markerVisible = Boolean(markerRect && markerRect.bottom >= 0 && markerRect.top <= window.innerHeight && topElement && (topElement === marker || marker?.contains(topElement) || container.contains(topElement)));
+      props.onLatestContentVisibilityChange?.(current.scrollHeight - current.scrollTop - current.clientHeight <= 24 && markerVisible);
+    },
+    [props.onLatestContentVisibilityChange],
+  );
+
+  useEffect(
+    () => () => {
+      props.onLatestContentVisibilityChange?.(false);
+    },
+    [props.onLatestContentVisibilityChange],
+  );
+
   useLayoutEffect(() => {
     const container = containerRef.current;
     const conversationId = props.state.conversationId;
@@ -156,7 +177,9 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
 
   useLayoutEffect(() => {
     maintainLatestPosition();
-  }, [maintainLatestPosition, props.state.transcriptRevision]);
+    const container = containerRef.current;
+    if (container) reportLatestContentVisibility(container);
+  }, [maintainLatestPosition, props.state.transcriptRevision, reportLatestContentVisibility]);
 
   return (
     <>
@@ -173,6 +196,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
           onScroll={(event) => {
             const mode = scrollController.onUserScroll(metrics(event.currentTarget));
             setReturnToLatestVisible(mode.mode === 'static');
+            reportLatestContentVisibility(event.currentTarget);
           }}
         >
           {turnRows.length > 0 ? (
@@ -246,6 +270,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
             <ThreadItemView key={item.key} item={item} language={props.language} onVisibleContentChange={maintainLatestPosition} />
           ))}
           {turnSpacerHeight > 0 && props.state.activeTurnId ? <span className="session-latest-turn-spacer" style={{ blockSize: `${turnSpacerHeight}px` }} aria-hidden="true" /> : null}
+          <span ref={latestContentMarkerRef} className="session-latest-content-marker" aria-hidden="true" />
         </section>
         <button
           type="button"

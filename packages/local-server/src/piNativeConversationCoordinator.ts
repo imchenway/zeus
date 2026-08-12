@@ -362,6 +362,20 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         providerTurnId: run.providerTurnId,
         providerItemId: itemId,
       });
+      const previousRevision = options.conversations.getById(run.conversationId)?.attentionRevision ?? 0;
+      const attention = options.conversations.markAttentionUnread(run.conversationId, {
+        kind: 'unread',
+        turnId: run.providerTurnId,
+        occurredAt: event.createdAt,
+      });
+      await options.db.save();
+      if (attention.attentionRevision !== previousRevision) {
+        publish('conversation.attention.changed', run.conversationId, {
+          turnId: run.providerTurnId,
+          attentionKind: attention.attentionKind,
+          attentionRevision: attention.attentionRevision,
+        });
+      }
       publish(isToolUseStage ? 'conversation.item.started' : 'conversation.item.completed', run.conversationId, {
         turnId: run.providerTurnId,
         itemId,
@@ -398,9 +412,14 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         options.submissions.updateStatus(run.submissionId, failed ? 'failed' : 'completed', { ...(failed ? { error: payload } : {}), resolvedAt: event.createdAt, updatedAt: event.createdAt });
         options.conversations.updateAgentRuntime(run.conversationId, { providerState: failed ? 'failed' : 'ready', status: failed ? 'failed' : 'open' });
       }
+      options.conversations.markAttentionUnread(run.conversationId, {
+        kind: status,
+        turnId: run.providerTurnId,
+        occurredAt: event.createdAt,
+      });
       runs.delete(event.nativeRunId);
       await options.db.save();
-      publish('conversation.turn.completed', run.conversationId, { turnId: run.providerTurnId, submissionId: run.submissionId, status, completedAt: event.createdAt });
+      publish('conversation.turn.completed', run.conversationId, { turnId: run.providerTurnId, submissionId: run.submissionId, status, completedAt: event.createdAt, notificationEligible: true });
       if (interrupted) publish('conversation.queue.changed', run.conversationId, { turnId: run.providerTurnId, submissionId: run.submissionId });
     }
   }
@@ -561,6 +580,11 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       status: 'pending',
       createdAt: timestamp,
     });
+    options.conversations.markAttentionUnread(context.conversationId, {
+      kind: 'unread',
+      turnId: activeRun.providerTurnId,
+      occurredAt: timestamp,
+    });
     await options.db.save();
     publish('conversation.request.created', context.conversationId, {
       requestId: persisted.id,
@@ -610,10 +634,15 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         const turn = options.turns.getById(run.turnId);
         if (turn) options.turns.upsert({ ...turn, status: 'interrupted', completedAt: timestamp, updatedAt: timestamp, agentKind: 'pi', nativeRunId: input.providerTurnId });
         settleInterruptedRun(run, timestamp);
+        options.conversations.markAttentionUnread(run.conversationId, {
+          kind: 'interrupted',
+          turnId: run.providerTurnId,
+          occurredAt: timestamp,
+        });
         runs.delete(input.providerTurnId);
         interruptedRuns.delete(input.providerTurnId);
         await options.db.save();
-        publish('conversation.turn.completed', run.conversationId, { turnId: run.providerTurnId, submissionId: run.submissionId, status: 'interrupted', completedAt: timestamp });
+        publish('conversation.turn.completed', run.conversationId, { turnId: run.providerTurnId, submissionId: run.submissionId, status: 'interrupted', completedAt: timestamp, notificationEligible: true });
         publish('conversation.queue.changed', run.conversationId, { turnId: run.providerTurnId, submissionId: run.submissionId });
       }
       return { submissionId: run.submissionId };

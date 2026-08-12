@@ -26,6 +26,7 @@ import type {
   ConversationResourcePreview,
   NativeCollaborationMode,
   NativeConversationAttachment,
+  NativeConversationAttentionKind,
   NativeConversationChoice,
   NativeConversationStage,
   NativeOperationAcceptance,
@@ -242,6 +243,7 @@ export interface ConnectedSessionWorkspaceProps {
   onOpenTaskGitReview?: SessionWorkspaceActions['onOpenTaskGitReview'];
   onOpenTaskGitDelivery?: SessionWorkspaceActions['onOpenTaskGitDelivery'];
   onOpenProjectCommands?: SessionWorkspaceActions['onOpenProjectCommands'];
+  onLatestContentVisibilityChange?: (visible: boolean) => void;
 }
 
 export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps) {
@@ -306,6 +308,7 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
       quickActionsSuppressed={props.quickActionsSuppressed}
       readOnlyGate={props.readOnlyGate}
       creationStatus={controllerVisible ? undefined : props.creationStatus}
+      onLatestContentVisibilityChange={props.onLatestContentVisibilityChange}
       actions={{
         ...(controllerVisible ? createConnectedSessionActions({ controller, state, onChooseAttachments: props.onChooseAttachments }) : props.localActions),
         ...(controllerVisible
@@ -513,7 +516,11 @@ export function nativeConversationChoiceFromAcceptance(acceptance: NativeOperati
     createdAt: stringField(conversation.createdAt) ?? now,
     updatedAt: stringField(conversation.updatedAt) ?? now,
     archived: conversation.archived === true,
-    hasUnreadCompletion: conversation.hasUnreadCompletion === true,
+    hasUnreadAttention: conversation.hasUnreadAttention === true,
+    attentionKind: conversationAttentionKindField(conversation.attentionKind),
+    attentionRevision: typeof conversation.attentionRevision === 'number' ? conversation.attentionRevision : 0,
+    attentionTurnId: nullableStringField(conversation.attentionTurnId),
+    attentionUpdatedAt: nullableStringField(conversation.attentionUpdatedAt),
     pendingRequestKind: conversation.pendingRequestKind === 'user_input' ? 'user_input' : conversation.pendingRequestKind === 'approval' ? 'approval' : null,
     resumable: conversation.resumable !== false,
     readOnly: conversation.readOnly === true,
@@ -615,7 +622,11 @@ export function projectConversationChoiceFromAcceptance(acceptance: NativeOperat
     createdAt: stringField(conversation.createdAt) ?? now,
     updatedAt: stringField(conversation.updatedAt) ?? now,
     archived: conversation.archived === true,
-    hasUnreadCompletion: conversation.hasUnreadCompletion === true,
+    hasUnreadAttention: conversation.hasUnreadAttention === true,
+    attentionKind: conversationAttentionKindField(conversation.attentionKind),
+    attentionRevision: typeof conversation.attentionRevision === 'number' ? conversation.attentionRevision : 0,
+    attentionTurnId: nullableStringField(conversation.attentionTurnId),
+    attentionUpdatedAt: nullableStringField(conversation.attentionUpdatedAt),
     pendingRequestKind: conversation.pendingRequestKind === 'user_input' ? 'user_input' : conversation.pendingRequestKind === 'approval' ? 'approval' : null,
     resumable: conversation.resumable !== false,
     readOnly: conversation.readOnly === true,
@@ -732,6 +743,10 @@ function nativeAgentAndModelIdentity(conversation: Record<string, unknown>): Pic
 
 function permissionModeField(value: unknown): NativePermissionMode | undefined {
   return value === 'read-only' || value === 'auto' || value === 'full-access' ? value : undefined;
+}
+
+function conversationAttentionKindField(value: unknown): NativeConversationAttentionKind {
+  return value === 'unread' || value === 'completed' || value === 'failed' || value === 'interrupted' ? value : 'none';
 }
 
 function conversationStageField(value: unknown): NativeConversationStage | undefined {
@@ -957,6 +972,7 @@ export interface SessionWorkspaceProps {
   loadState?: 'empty' | 'loading' | 'error';
   loadError?: string | null;
   autoFocusNewConversation?: boolean;
+  onLatestContentVisibilityChange?: (visible: boolean) => void;
   creationStatus?: {
     state: 'creating' | 'failed';
     message: string;
@@ -1863,6 +1879,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                 <ConversationTranscript
                   state={props.state}
                   language={props.language}
+                  onLatestContentVisibilityChange={props.onLatestContentVisibilityChange}
                   onEditUserItem={interactionReadOnly ? undefined : actions.onEditUserItem}
                   onRetryItem={interactionReadOnly ? undefined : actions.onRetryItem}
                   openPlanItemId={planWorkspaceItemId}

@@ -49,6 +49,7 @@ declare global {
       onTaskGitDeliveryAppearance: (listener: (settings: { language: 'zh-CN' | 'en-US'; appearance: 'light' | 'dark' | 'system' }) => void) => () => void;
       onTaskGitDeliveryChanged: (listener: (taskId: string) => void) => () => void;
       onOpenTaskGitDeliveryConversation: (listener: (input: { taskId: string; conversationId: string }) => void) => () => void;
+      onOpenConversationNotification: (listener: (input: { projectId: string; conversationId: string }) => void) => () => void;
       hideMenuBarUsage: () => Promise<{ hidden: true }>;
       showMainWindowFromMenuBarUsage: () => Promise<{ shown: boolean }>;
       openMenuBarUsageSettings: (category: 'usage' | 'runtime') => Promise<{ opened: boolean; category: 'usage' | 'runtime' }>;

@@ -229,7 +229,11 @@ export interface NativeConversationSnapshot {
   createdAt: string;
   updatedAt: string;
   archived: boolean;
-  hasUnreadCompletion: boolean;
+  hasUnreadAttention: boolean;
+  attentionKind: NativeConversationAttentionKind;
+  attentionRevision: number;
+  attentionTurnId: string | null;
+  attentionUpdatedAt: string | null;
   pendingRequestKind: 'approval' | 'user_input' | null;
   messages: NativeConversationMessage[];
   turns: NativeTurnSnapshot[];
@@ -286,7 +290,11 @@ export interface NativeConversationChoice {
   createdAt: string;
   updatedAt: string;
   archived: boolean;
-  hasUnreadCompletion: boolean;
+  hasUnreadAttention: boolean;
+  attentionKind: NativeConversationAttentionKind;
+  attentionRevision: number;
+  attentionTurnId: string | null;
+  attentionUpdatedAt: string | null;
   pendingRequestKind: 'approval' | 'user_input' | null;
   /** 服务端基于队列、轮次和请求元数据计算的列表状态，避免列表刷新读取完整会话。 */
   listRuntimeState?: 'connecting' | 'reconnecting' | 'paused' | 'queued' | 'ready' | 'streaming' | 'pending_approval' | 'pending_user_input' | 'error' | 'legacy_readonly';
@@ -841,13 +849,15 @@ interface NativeEvent<Type extends string, Payload extends NativeEventIdentity> 
   createdAt: string;
 }
 
+export type NativeConversationAttentionKind = 'none' | 'unread' | 'completed' | 'failed' | 'interrupted';
+
 type NativeTurnEventPayload = NativeEventIdentity & {
   turnId: string;
   status?: string;
   submissionId?: string;
   startedAt?: string;
   completedAt?: string;
-  hasUnreadCompletion?: boolean;
+  hasUnreadAttention?: boolean;
 };
 type NativeItemEventPayload = NativeEventIdentity & {
   turnId: string;
