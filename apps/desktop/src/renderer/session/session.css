@@ -12672,6 +12672,7 @@
 /* ZEUS-0171：两个会话入口共用可读正文尺寸，过程内容保留次要色，普通答复单独增强清晰度。 */
 .session-codex-parity-v1 {
   --session-answer-text: rgb(29 31 34);
+  --session-process-text: color-mix(in srgb, var(--session-text) 72%, var(--session-text-muted));
   --session-readable-font-size: 15px;
 }
 
@@ -12685,23 +12686,26 @@
 }
 
 .session-codex-parity-v1 .session-commentary-flow {
-  color: var(--session-text-muted);
+  color: var(--session-process-text);
 }
 
-.session-codex-parity-v1
-  :where(
-    .session-commentary-flow .session-markdown,
-    .session-reasoning-summary,
-    .session-activity-group > details > summary,
-    .session-activity-live,
-    .session-activity-item-title,
-    .session-transcript-thinking,
-    .session-command-summary-copy strong,
-    .session-answered-request > details > summary,
-    .session-answered-request-body strong,
-    .session-answered-request-body p
-  ) {
-  font-size: inherit;
+/* ZEUS-0213：使用与原规则相同或更高的优先级，避免 :where() 使可读过程退回到 13–14px。 */
+.session-codex-parity-v1 .session-commentary-flow .session-markdown,
+.session-codex-parity-v1 .session-reasoning-summary,
+.session-codex-parity-v1 .session-activity-group > details > summary,
+.session-codex-parity-v1 .session-activity-live,
+.session-codex-parity-v1 .session-activity-item-title,
+.session-codex-parity-v1 .session-transcript-thinking,
+.session-codex-parity-v1 .session-command-summary-copy strong,
+.session-codex-parity-v1 .session-answered-request > details > summary,
+.session-codex-parity-v1 .session-answered-request-body strong,
+.session-codex-parity-v1 .session-answered-request-body p {
+  font-size: var(--session-readable-font-size);
+}
+
+.session-codex-parity-v1 .session-commentary-flow .session-markdown {
+  font-weight: 400;
+  line-height: 1.6;
 }
 
 .session-codex-parity-v1 .session-command-summary-copy strong,
