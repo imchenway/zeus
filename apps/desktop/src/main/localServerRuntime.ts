@@ -1,29 +1,22 @@
-import {spawn} from 'node:child_process';
-import {randomBytes, randomUUID} from 'node:crypto';
-import {mkdir, writeFile} from 'node:fs/promises';
-import {dirname, join} from 'node:path';
-import {homedir} from 'node:os';
-import {fileURLToPath} from 'node:url';
-import {createCodexRuntimeGenerationManager} from '@zeus/ai-runtime';
+import { spawn } from 'node:child_process';
+import { randomBytes, randomUUID } from 'node:crypto';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
+import { homedir } from 'node:os';
+import { fileURLToPath } from 'node:url';
+import { createCodexRuntimeGenerationManager } from '@zeus/ai-runtime';
+import { type BrowserAutomationPort, createZeusDataLayout, hasCodexFinalizationOwnershipClaim, type RunningZeusLocalServer, startZeusLocalServer, type ZeusDataLayout } from '@zeus/local-server';
+import { startDesktopBrowserAutomationBridge } from './browserAutomationBridge.js';
 import {
-    type BrowserAutomationPort,
-    createZeusDataLayout,
-    hasCodexFinalizationOwnershipClaim,
-    type RunningZeusLocalServer,
-    startZeusLocalServer,
-    type ZeusDataLayout
-} from '@zeus/local-server';
-import {startDesktopBrowserAutomationBridge} from './browserAutomationBridge.js';
-import {
-    createExecutionHostControlClient,
-    currentExecutionHostCapabilities,
-    type ExecutionHostCapabilities,
-    executionHostProtocolVersion,
-    type ExecutionHostRendezvous,
-    type ExecutionHostWorkStatus,
-    readExecutionHostRendezvous,
-    removeExecutionHostRendezvous,
-    writeExecutionHostBootstrap,
+  createExecutionHostControlClient,
+  currentExecutionHostCapabilities,
+  type ExecutionHostCapabilities,
+  executionHostProtocolVersion,
+  type ExecutionHostRendezvous,
+  type ExecutionHostWorkStatus,
+  readExecutionHostRendezvous,
+  removeExecutionHostRendezvous,
+  writeExecutionHostBootstrap,
 } from './executionHostProtocol.js';
 
 export interface RendererLocalServerConfig {
@@ -139,9 +132,9 @@ export async function startDesktopLocalServer(options: StartDesktopLocalServerOp
   const browserBridge = await startDesktopBrowserAutomationBridge(options.browserAutomation);
   const leaseId = randomUUID();
   let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
-    let handoffTimer: ReturnType<typeof setInterval> | undefined;
+  let handoffTimer: ReturnType<typeof setInterval> | undefined;
   let heartbeatCyclePromise: Promise<void> | undefined;
-    let handoffProbePromise: Promise<void> | undefined;
+  let handoffProbePromise: Promise<void> | undefined;
   let recoveryPromise: Promise<void> | undefined;
   let handoffPromise: Promise<void> | undefined;
   let closePromise: Promise<void> | undefined;
@@ -201,8 +194,8 @@ export async function startDesktopLocalServer(options: StartDesktopLocalServerOp
       const previousClient = client;
       const switching = (async () => {
         const checkpoint = work.waitingRequestCount > 0 ? await captureExecutionHostHandoffCheckpoint(connection) : { sourceInstanceId: connection.instanceId, capturedAt: new Date().toISOString(), requests: [] };
-          // 旧宿主没有一次性快照接口时继续安全运行，不能退化为逐会话扫描并拖死 UI 心跳。
-          if (!checkpoint) return;
+        // 旧宿主没有一次性快照接口时继续安全运行，不能退化为逐会话扫描并拖死 UI 心跳。
+        if (!checkpoint) return;
         const confirmed = await previousClient.health();
         // 枚举待回复项后再次确认：若此时出现新的真实执行，本轮交接立即让路，不中断它。
         if (hasEffectfulExecution(confirmed.work) || confirmed.work.waitingRequestCount !== checkpoint.requests.length) return;
@@ -253,8 +246,8 @@ export async function startDesktopLocalServer(options: StartDesktopLocalServerOp
 
     const refreshConfig = async (): Promise<RendererLocalServerConfig> => {
       if (closing) throw new Error('Zeus execution-host connection is closing.');
-        // 交接可能需要等待旧宿主排空；Renderer 配置读取不得因此阻塞。
-        if (handoffPromise) return cloneRendererLocalServerConfig(config);
+      // 交接可能需要等待旧宿主排空；Renderer 配置读取不得因此阻塞。
+      if (handoffPromise) return cloneRendererLocalServerConfig(config);
       const advertised = await readExecutionHostRendezvous(options.userDataPath);
       if (advertised && connectionChanged(advertised)) await recover(true);
       else {
@@ -272,22 +265,22 @@ export async function startDesktopLocalServer(options: StartDesktopLocalServerOp
       try {
         await client.heartbeat(leaseId);
       } catch {
-          // 旧宿主正在退出时由交接链负责注册新宿主，避免恢复链与交接争抢唯一 SQLite 写入者。
-          if (handoffPromise) return;
+        // 旧宿主正在退出时由交接链负责注册新宿主，避免恢复链与交接争抢唯一 SQLite 写入者。
+        if (handoffPromise) return;
         await recover(false);
       }
     };
 
-      const probeHostHandoff = async (): Promise<void> => {
-          if (closing || handoffPromise || recoveryPromise || connection.appVersion === currentAppVersion) return;
-          const probeClient = client;
-          const probedInstanceId = connection.instanceId;
-          const status = await probeClient.health();
-          // 心跳可能在探测期间完成重连；旧宿主状态不得驱动新宿主交接。
-          if (client !== probeClient || connection.instanceId !== probedInstanceId) return;
-          // 交接在独立任务中推进；无论快照多慢，1 秒心跳都不等待它。
-          await handoffPreviousHostIfSafe(status.work);
-      };
+    const probeHostHandoff = async (): Promise<void> => {
+      if (closing || handoffPromise || recoveryPromise || connection.appVersion === currentAppVersion) return;
+      const probeClient = client;
+      const probedInstanceId = connection.instanceId;
+      const status = await probeClient.health();
+      // 心跳可能在探测期间完成重连；旧宿主状态不得驱动新宿主交接。
+      if (client !== probeClient || connection.instanceId !== probedInstanceId) return;
+      // 交接在独立任务中推进；无论快照多慢，1 秒心跳都不等待它。
+      await handoffPreviousHostIfSafe(status.work);
+    };
 
     heartbeatTimer = setInterval(() => {
       if (heartbeatCyclePromise || closing) return;
@@ -299,15 +292,15 @@ export async function startDesktopLocalServer(options: StartDesktopLocalServerOp
     }, 1_000);
     heartbeatTimer.unref();
 
-      handoffTimer = setInterval(() => {
-          if (handoffProbePromise || handoffPromise || closing) return;
-          const probe = probeHostHandoff().finally(() => {
-              if (handoffProbePromise === probe) handoffProbePromise = undefined;
-          });
-          handoffProbePromise = probe;
-          void probe.catch(() => undefined);
-      }, 1_000);
-      handoffTimer.unref();
+    handoffTimer = setInterval(() => {
+      if (handoffProbePromise || handoffPromise || closing) return;
+      const probe = probeHostHandoff().finally(() => {
+        if (handoffProbePromise === probe) handoffProbePromise = undefined;
+      });
+      handoffProbePromise = probe;
+      void probe.catch(() => undefined);
+    }, 1_000);
+    handoffTimer.unref();
 
     return {
       dbPath: connection.dbPath,
@@ -339,10 +332,10 @@ export async function startDesktopLocalServer(options: StartDesktopLocalServerOp
             clearInterval(heartbeatTimer);
             heartbeatTimer = undefined;
           }
-            if (handoffTimer) {
-                clearInterval(handoffTimer);
-                handoffTimer = undefined;
-            }
+          if (handoffTimer) {
+            clearInterval(handoffTimer);
+            handoffTimer = undefined;
+          }
           const errors: unknown[] = [];
           const pendingHeartbeat = heartbeatCyclePromise;
           if (pendingHeartbeat) {
@@ -360,12 +353,12 @@ export async function startDesktopLocalServer(options: StartDesktopLocalServerOp
               errors.push(error);
             }
           }
-            const pendingHandoffProbe = handoffProbePromise;
-            if (pendingHandoffProbe) {
-                try {
-                    await pendingHandoffProbe;
-                } catch (error) {
-                    errors.push(error);
+          const pendingHandoffProbe = handoffProbePromise;
+          if (pendingHandoffProbe) {
+            try {
+              await pendingHandoffProbe;
+            } catch (error) {
+              errors.push(error);
             }
           }
           const pendingHandoff = handoffPromise;
@@ -711,16 +704,16 @@ function hasEffectfulExecution(work: ExecutionHostWorkStatus): boolean {
 }
 
 async function captureExecutionHostHandoffCheckpoint(connection: ExecutionHostRendezvous): Promise<ExecutionHostHandoffCheckpoint | null> {
-    try {
-        const checkpoint = await requestExecutionHostApi<unknown>(connection, '/api/execution-host/handoff-checkpoint');
-        if (!isExecutionHostHandoffCheckpoint(checkpoint) || checkpoint.sourceInstanceId !== connection.instanceId) {
-            throw new Error('Zeus execution-host returned an invalid handoff checkpoint.');
-        }
-        return checkpoint;
-    } catch (error) {
-        if (error instanceof Error && 'statusCode' in error && error.statusCode === 404) return null;
-        throw error;
+  try {
+    const checkpoint = await requestExecutionHostApi<unknown>(connection, '/api/execution-host/handoff-checkpoint');
+    if (!isExecutionHostHandoffCheckpoint(checkpoint) || checkpoint.sourceInstanceId !== connection.instanceId) {
+      throw new Error('Zeus execution-host returned an invalid handoff checkpoint.');
     }
+    return checkpoint;
+  } catch (error) {
+    if (error instanceof Error && 'statusCode' in error && error.statusCode === 404) return null;
+    throw error;
+  }
 }
 
 async function restoreExecutionHostHandoffCheckpoint(connection: ExecutionHostRendezvous, checkpoint: ExecutionHostHandoffCheckpoint): Promise<void> {
@@ -744,27 +737,27 @@ async function requestExecutionHostApi<T>(connection: ExecutionHostRendezvous, p
     signal: AbortSignal.timeout(10_000),
   });
   const payload = (await response.json().catch(() => ({}))) as unknown;
-    if (!response.ok) throw Object.assign(new Error(`Zeus execution-host handoff API failed with HTTP ${response.status}.`), {statusCode: response.status});
+  if (!response.ok) throw Object.assign(new Error(`Zeus execution-host handoff API failed with HTTP ${response.status}.`), { statusCode: response.status });
   return payload as T;
 }
 
 function isExecutionHostHandoffCheckpoint(value: unknown): value is ExecutionHostHandoffCheckpoint {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-    const checkpoint = value as Record<string, unknown>;
-    if (typeof checkpoint.sourceInstanceId !== 'string' || !checkpoint.sourceInstanceId || typeof checkpoint.capturedAt !== 'string' || !Number.isFinite(Date.parse(checkpoint.capturedAt)) || !Array.isArray(checkpoint.requests)) return false;
-    return checkpoint.requests.every((candidate) => {
-        if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return false;
-        const request = candidate as Record<string, unknown>;
-        return (
-            typeof request.id === 'string' &&
-            Boolean(request.id.trim()) &&
-            typeof request.conversationId === 'string' &&
-            Boolean(request.conversationId.trim()) &&
-            typeof request.transportGenerationId === 'string' &&
-            Boolean(request.transportGenerationId.trim()) &&
-            ['command', 'file', 'permissions', 'request_user_input', 'mcp'].includes(String(request.requestKind))
-        );
-    });
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const checkpoint = value as Record<string, unknown>;
+  if (typeof checkpoint.sourceInstanceId !== 'string' || !checkpoint.sourceInstanceId || typeof checkpoint.capturedAt !== 'string' || !Number.isFinite(Date.parse(checkpoint.capturedAt)) || !Array.isArray(checkpoint.requests)) return false;
+  return checkpoint.requests.every((candidate) => {
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return false;
+    const request = candidate as Record<string, unknown>;
+    return (
+      typeof request.id === 'string' &&
+      Boolean(request.id.trim()) &&
+      typeof request.conversationId === 'string' &&
+      Boolean(request.conversationId.trim()) &&
+      typeof request.transportGenerationId === 'string' &&
+      Boolean(request.transportGenerationId.trim()) &&
+      ['command', 'file', 'permissions', 'request_user_input', 'mcp'].includes(String(request.requestKind))
+    );
+  });
 }
 
 async function waitForExecutionHostExit(userDataPath: string, instanceId: string): Promise<void> {
