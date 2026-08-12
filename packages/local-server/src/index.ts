@@ -13426,7 +13426,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           candidate.workspaceId === conversation.workspaceId &&
           candidate.state === 'conflicted' &&
           Boolean(candidate.integrationPath) &&
-          matchesTaskConflictAiConversationTitle({ title: conversation.title, taskBranch: workspace.branchName, targetBranch: candidate.targetBranch }),
+          matchesTaskConflictAiConversationTitle({ title: conversation.title, taskBranch: workspace.branchName, sourceBranch: candidate.targetBranch }),
       );
     return integration?.integrationPath ? { operationId: integration.id, integration, worktreePath: integration.integrationPath } : null;
   }
@@ -14577,7 +14577,13 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           await db.save();
         }
         await writeTaskIntegrationDraft(started.integrationPath, conflictPath, conflictContent);
-        const prompt = buildTaskConflictAiPrompt({ targetBranch: resolved.integration.targetBranch, taskBranch: resolved.workspace.branchName, mode: resolved.integration.mode });
+        const conflictCommitMessage = `${task.taskCode}: 合入 ${resolved.workspace.branchName}`;
+        const prompt = buildTaskConflictAiPrompt({
+          sourceBranch: resolved.integration.targetBranch,
+          taskBranch: resolved.workspace.branchName,
+          mode: resolved.integration.mode,
+          commitMessage: conflictCommitMessage,
+        });
         const selectedAgentKind = modelConversation.agentKind;
         if (selectedAgentKind === 'codex') await assertCodexAccountReady();
         nativeOperation = await startNativeTaskConversationFromPlan({
@@ -14587,10 +14593,10 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           projectId: project.id,
           taskId: task.id,
           taskTitle: task.title,
-          conversationTitle: buildTaskConflictAiConversationTitle({ taskBranch: resolved.workspace.branchName, targetBranch: resolved.integration.targetBranch }),
+          conversationTitle: buildTaskConflictAiConversationTitle({ taskBranch: resolved.workspace.branchName, sourceBranch: resolved.integration.targetBranch }),
           cwd: started.integrationPath,
           prompt,
-          displayText: '请处理当前本地合入中的全部冲突。',
+          displayText: `请处理全部冲突并完成 ${resolved.workspace.branchName} 合入来源分支 ${resolved.integration.targetBranch}。`,
           model: { sourceId: modelConversation.modelSourceId, modelId, displayName: null },
           ...(settings?.effort ? { effort: settings.effort } : {}),
           ...(settings && Object.prototype.hasOwnProperty.call(settings, 'serviceTier') ? { serviceTier: settings.serviceTier, serviceTierPresent: true } : {}),
@@ -14601,7 +14607,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           writableRoots: [started.integrationPath],
           allowCodeChanges: true,
           allowTests: true,
-          allowGitCommit: false,
+          allowGitCommit: true,
           bypassConcurrency: true,
           idempotencyKey,
           clientUserMessageId,

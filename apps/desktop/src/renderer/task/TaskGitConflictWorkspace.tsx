@@ -200,7 +200,11 @@ export function TaskGitConflictWorkspace(props: {
               busy={props.aiBusy}
               onClick={() => setAiPermissionOpen(true)}
               disabled={!document || props.busy || unresolvedCount === 0}
-              title={props.zh ? `打开会话，由 AI 完成本地合入 ${props.integration.targetBranch}；不会推送远端` : `Open a conversation and let AI complete the local merge into ${props.integration.targetBranch}; no remote push`}
+              title={
+                props.zh
+                  ? `打开会话，由 AI 处理全部冲突、生成合入提交并完成合入来源分支 ${props.integration.targetBranch}；不会推送远端`
+                  : `Open a conversation and let AI resolve every conflict, create the merge commit, and complete the local merge into source branch ${props.integration.targetBranch}; no remote push`
+              }
             >
               {props.zh ? 'AI 处理' : 'Resolve with AI'}
             </Button>
@@ -258,7 +262,9 @@ export function TaskGitConflictWorkspace(props: {
               <span>
                 <strong id="task-git-conflict-ai-permission-title">{props.zh ? '选择本次冲突处理权限' : 'Choose conflict resolution permissions'}</strong>
                 <small>
-                  {props.zh ? 'AI 需要修改并暂存 Zeus 隔离合并工作区。该选择只用于本次冲突处理会话。' : 'AI needs to edit and stage the isolated Zeus integration worktree. This choice applies only to this conflict resolution conversation.'}
+                  {props.zh
+                    ? 'AI 需要修改、暂存并在 Zeus 隔离合并工作区生成合入提交。来源分支由 Zeus 复验后更新；该选择只用于本次冲突处理会话。'
+                    : 'AI needs to edit, stage, and create the merge commit in the isolated Zeus integration worktree. Zeus updates the source branch after verification; this choice applies only to this conflict resolution conversation.'}
                 </small>
               </span>
               <fieldset>
