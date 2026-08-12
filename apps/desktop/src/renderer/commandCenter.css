@@ -67,6 +67,10 @@
   color: var(--zeus-control-danger-text);
 }
 
+.command-run-failure {
+  white-space: pre-line;
+}
+
 .command-definition-list,
 .command-run-history {
   background: var(--zeus-product-panel);

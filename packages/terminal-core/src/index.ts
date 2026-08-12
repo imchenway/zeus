@@ -25,7 +25,34 @@ export interface AppendTerminalBufferChunkResult {
  */
 export function normalizeTerminalChunk(chunk: unknown): string {
   const text = chunk instanceof Uint8Array ? Buffer.from(chunk).toString('utf8') : String(chunk);
-  return stripAnsiControlSequences(text).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  // 独立回车符表示“回到当前行行首”，是 Git 等命令原地刷新百分比的真实终端语义，不能改成新行。
+  return stripAnsiControlSequences(text).replace(/\r\n/g, '\n');
+}
+
+/**
+ * 将已采集的终端文本投影为用户当时在终端中看到的结果。
+ * 独立回车符会覆盖当前逻辑行，因此连续百分比只保留最后一次。
+ */
+export function projectTerminalOutput(input: string): string {
+  const completedLines: string[] = [];
+  let currentLine = '';
+  for (const character of input) {
+    if (character === '\r') {
+      currentLine = '';
+      continue;
+    }
+    if (character === '\n') {
+      completedLines.push(currentLine);
+      currentLine = '';
+      continue;
+    }
+    if (character === '\b') {
+      currentLine = currentLine.slice(0, -1);
+      continue;
+    }
+    currentLine += character;
+  }
+  return completedLines.length > 0 ? `${completedLines.join('\n')}\n${currentLine}` : currentLine;
 }
 
 /**
@@ -34,7 +61,7 @@ export function normalizeTerminalChunk(chunk: unknown): string {
 export function appendTerminalBufferChunk(existingEvents: TerminalBufferEvent[], input: AppendTerminalBufferChunkInput): AppendTerminalBufferChunkResult {
   const maxEvents = input.maxEvents && input.maxEvents > 0 ? input.maxEvents : 500;
   const startSeq = existingEvents.reduce((max, event) => Math.max(max, event.seq), 0);
-  const lines = normalizeTerminalChunk(input.chunk)
+  const lines = projectTerminalOutput(normalizeTerminalChunk(input.chunk))
     .split('\n')
     .filter((line) => line.length > 0);
   const appended = lines.map((content, index) => ({

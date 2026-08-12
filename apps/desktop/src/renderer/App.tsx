@@ -17,6 +17,7 @@ import { createPortal } from 'react-dom';
 import { FolderIcon as Folder } from '@phosphor-icons/react/dist/csr/Folder';
 import { FolderOpenIcon as FolderOpen } from '@phosphor-icons/react/dist/csr/FolderOpen';
 import { FolderPlusIcon as FolderPlus } from '@phosphor-icons/react/dist/csr/FolderPlus';
+import { projectTerminalOutput } from '@zeus/terminal-core';
 import { MagnifyingGlassIcon as MagnifyingGlass } from '@phosphor-icons/react/dist/csr/MagnifyingGlass';
 import { PencilSimpleIcon as PencilSimple } from '@phosphor-icons/react/dist/csr/PencilSimple';
 import { PlusIcon as Plus } from '@phosphor-icons/react/dist/csr/Plus';
@@ -7147,6 +7148,7 @@ export function App(props: {
   const [runtimeLogCopyStatus, setRuntimeLogCopyStatus] = useState<RuntimeLogCopyStatusState>({ kind: 'idle' });
   const runtimeLogExportStatusCopy = formatRuntimeLogExportStatus(runtimeLogExportStatus, sessionWorkspaceCopy.runtimeDrawer);
   const runtimeLogCopyStatusCopy = formatRuntimeLogCopyStatus(runtimeLogCopyStatus, sessionWorkspaceCopy.runtimeDrawer);
+  const projectedRuntimeLogOutput = useMemo(() => projectTerminalOutput(joinRuntimeLogEntries(runtimeLogs.filter((entry) => runtimeLogMatches(entry, runtimeLogSearchQuery)))).slice(-64 * 1024), [runtimeLogSearchQuery, runtimeLogs]);
   const [securitySecrets, setSecuritySecrets] = useState<SecuritySecretsSnapshot>(
     () =>
       props.initialSecuritySecrets ?? {
@@ -13370,21 +13372,7 @@ export function App(props: {
                           </div>
                           <div className="runtime-log-stream" aria-label={sessionWorkspaceCopy.runtimeDrawer.rawOutputAria}>
                             <RuntimeXtermPane logs={runtimeLogs} enabled={runtimeStatus?.terminal?.provider === 'node-pty' && runtimeStatus.terminal.pty.available === true} ariaLabel={sessionWorkspaceCopy.runtimeDrawer.terminalAria} />
-                            {!runtimeLogsCollapsed ? (
-                              runtimeLogs
-                                .filter((entry) => runtimeLogMatches(entry, runtimeLogSearchQuery))
-                                .slice(-8)
-                                .map((entry) => {
-                                  const tone = classifyRuntimeLog(entry);
-                                  return (
-                                    <code className={`runtime-log-line ${tone}`} key={entry.id}>
-                                      {formatRuntimeLogLine(entry)}
-                                    </code>
-                                  );
-                                })
-                            ) : (
-                              <span>{sessionWorkspaceCopy.runtimeDrawer.collapsedLogs}</span>
-                            )}
+                            {!runtimeLogsCollapsed ? <code className="runtime-log-line output">{projectedRuntimeLogOutput}</code> : <span>{sessionWorkspaceCopy.runtimeDrawer.collapsedLogs}</span>}
                           </div>
                         </section>
                       ) : null}
@@ -14618,18 +14606,24 @@ function formatRuntimeLogLine(entry: AiRuntimeLogEntry): string {
   return `${entry.createdAt} · ${entry.stream}: ${entry.text}`;
 }
 
+function joinRuntimeLogEntries(entries: AiRuntimeLogEntry[]): string {
+  let output = '';
+  for (const entry of entries) {
+    if (entry.stream !== 'system') {
+      output += entry.text;
+      continue;
+    }
+    if (output && !output.endsWith('\n') && !output.endsWith('\r')) output += '\n';
+    output += entry.text;
+    if (!output.endsWith('\n')) output += '\n';
+  }
+  return output;
+}
+
 function runtimeLogMatches(entry: AiRuntimeLogEntry, query: string): boolean {
   const normalized = query.trim().toLowerCase();
   if (!normalized) return true;
   return `${entry.stream} ${entry.text} ${entry.createdAt}`.toLowerCase().includes(normalized);
-}
-
-function classifyRuntimeLog(entry: AiRuntimeLogEntry): 'error' | 'command' | 'ai' | 'output' {
-  const text = entry.text.trim();
-  if (entry.stream === 'stderr' || /(^|\b)(error|failed|exception)(\b|:)/iu.test(text)) return 'error';
-  if (entry.stream === 'system' || text.startsWith('$') || text.startsWith('>')) return 'command';
-  if (/^(AI|Assistant|Codex):/iu.test(text)) return 'ai';
-  return 'output';
 }
 
 function toSafeAppShellImport(
@@ -16491,7 +16485,10 @@ function RuntimeXtermPane(props: { logs: AiRuntimeLogEntry[]; enabled: boolean; 
         theme: { background: '#0f172a', foreground: '#dbeafe' },
       });
       terminal.open(terminalRef.current);
-      for (const entry of props.logs.slice(-80)) terminal.writeln(formatRuntimeLogLine(entry));
+      for (const entry of props.logs.slice(-80)) {
+        if (entry.stream === 'system') terminal.write(`\r\n${entry.text}\r\n`);
+        else terminal.write(entry.text.replace(/\n/gu, '\r\n'));
+      }
     });
     return () => {
       disposed = true;

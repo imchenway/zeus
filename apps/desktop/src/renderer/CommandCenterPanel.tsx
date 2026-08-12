@@ -7,6 +7,7 @@ import { PlusIcon as Plus } from '@phosphor-icons/react/dist/csr/Plus';
 import { StopIcon as Stop } from '@phosphor-icons/react/dist/csr/Stop';
 import { TrashIcon as Trash } from '@phosphor-icons/react/dist/csr/Trash';
 import { commandNeedsHighRiskConfirmation, type CommandRiskFlags } from '@zeus/shared';
+import { projectTerminalOutput } from '@zeus/terminal-core';
 import type { CommandDefinition, CommandDefinitionInput, CommandParameterDefinition, CommandRun, CommandRunDetail, DashboardClient, ProjectConfig, ProjectRecord, SaveProjectConfigRequest } from './apiClient.js';
 import { Button } from './ui/Button.js';
 import { ModalPortal } from './ui/ModalPortal.js';
@@ -125,6 +126,11 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
   const canMaintain = props.mode === 'global' || Boolean(props.project);
   const activeRuns = useMemo(() => runs.filter((run) => run.status === 'running'), [runs]);
   const selectedRunIsActive = runs.some((run) => run.id === selectedRunId && run.status === 'running');
+  const projectedRunLogContent = useMemo(() => {
+    if (!runDetail) return '';
+    const raw = `${runDetail.logsTruncated ? (zh ? '…仅显示最新日志，完整历史已保存在 Runtime 日志中。\n' : '…Showing recent logs only. The complete history remains in Runtime logs.\n') : ''}${joinRuntimeLogEntries(runDetail.logs)}`;
+    return projectTerminalOutput(raw);
+  }, [runDetail, zh]);
 
   useEffect(() => {
     let active = true;
@@ -558,17 +564,7 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
                     </div>
                   </dl>
                   {runDetail.run.failureReason ? <p className="command-run-failure">{runDetail.run.failureReason}</p> : null}
-                  <CommandRunLog
-                    runId={runDetail.run.id}
-                    ariaLabel={zh ? '终端日志' : 'Terminal logs'}
-                    content={
-                      runDetail.logs.length > 0
-                        ? `${runDetail.logsTruncated ? (zh ? '…仅显示最新日志，完整历史已保存在 Runtime 日志中。\n' : '…Showing recent logs only. The complete history remains in Runtime logs.\n') : ''}${runDetail.logs.map((log) => log.text).join('')}`
-                        : zh
-                          ? '暂无日志。'
-                          : 'No logs yet.'
-                    }
-                  />
+                  <CommandRunLog runId={runDetail.run.id} ariaLabel={zh ? '终端日志' : 'Terminal logs'} content={runDetail.logs.length > 0 ? projectedRunLogContent : zh ? '暂无日志。' : 'No logs yet.'} />
                   {runDetail.artifacts.length > 0 ? (
                     <section className="command-artifacts" aria-label={zh ? '命令产物' : 'Command artifacts'}>
                       <strong>{zh ? '产物' : 'Artifacts'}</strong>
@@ -1065,6 +1061,20 @@ function boundDisplayedCommandRunLogs(logs: CommandRunDetail['logs']): { items: 
   }
   items.reverse();
   return { items, truncated };
+}
+
+function joinRuntimeLogEntries(logs: CommandRunDetail['logs']): string {
+  let output = '';
+  for (const log of logs) {
+    if (log.stream !== 'system') {
+      output += log.text;
+      continue;
+    }
+    if (output && !output.endsWith('\n') && !output.endsWith('\r')) output += '\n';
+    output += log.text;
+    if (!output.endsWith('\n')) output += '\n';
+  }
+  return output;
 }
 
 function formatRunTime(value: string): string {
