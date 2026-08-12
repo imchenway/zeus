@@ -53,6 +53,7 @@ import { useConversationInputResources } from './useConversationInputResources.j
 import { SessionQuickActionsCard } from './SessionQuickActionsCard.js';
 import type { SessionCodeReviewSelection } from './SessionCodeReviewDialog.js';
 import { conversationDisplayTitle } from './conversationDisplayTitle.js';
+import { resolveModelCapability } from './modelSelection.js';
 
 export interface SessionWorkspaceTask {
   id: string;
@@ -492,6 +493,7 @@ export function nativeConversationChoiceFromAcceptance(acceptance: NativeOperati
       id: stringField(nativeSession.id) ?? stringField(conversation.providerThreadId) ?? stringField(provider.threadId),
       path: nullableStringField(nativeSession.path),
     },
+    ...nativeAgentAndModelIdentity(conversation),
     permissionMode: permissionModeField(conversation.permissionMode),
     collaborationMode: conversation.collaborationMode === 'plan' ? 'plan' : 'default',
     createdAt: stringField(conversation.createdAt) ?? now,
@@ -593,6 +595,7 @@ export function projectConversationChoiceFromAcceptance(acceptance: NativeOperat
       id: stringField(nativeSession.id) ?? stringField(conversation.providerThreadId) ?? stringField(provider.threadId),
       path: nullableStringField(nativeSession.path),
     },
+    ...nativeAgentAndModelIdentity(conversation),
     permissionMode: permissionModeField(conversation.permissionMode),
     collaborationMode: conversation.collaborationMode === 'plan' ? 'plan' : 'default',
     createdAt: stringField(conversation.createdAt) ?? now,
@@ -687,6 +690,26 @@ function stringField(value: unknown): string | null {
 
 function nullableStringField(value: unknown): string | null {
   return value === null ? null : stringField(value);
+}
+
+function nativeAgentAndModelIdentity(conversation: Record<string, unknown>): Pick<NativeConversationChoice, 'agent' | 'model'> {
+  const agent = isRecord(conversation.agent) ? conversation.agent : {};
+  const model = isRecord(conversation.model) ? conversation.model : {};
+  const agentKind = agent.kind === 'codex' || agent.kind === 'pi' || agent.kind === 'claude' ? agent.kind : null;
+  const agentTransport = agent.transport === 'app_server' || agent.transport === 'rpc' || agent.transport === 'sdk' ? agent.transport : null;
+  const supportStatus = agent.supportStatus === 'framework_only' || agent.supportStatus === 'experimental' || agent.supportStatus === 'verified' ? agent.supportStatus : 'unavailable';
+  return {
+    agent: {
+      kind: agentKind,
+      transport: agentTransport,
+      supportStatus,
+      capabilitySnapshotId: nullableStringField(agent.capabilitySnapshotId),
+    },
+    model: {
+      sourceId: nullableStringField(model.sourceId),
+      id: nullableStringField(model.id),
+    },
+  };
 }
 
 function permissionModeField(value: unknown): NativePermissionMode | undefined {
@@ -2324,10 +2347,8 @@ function composerRuntimeSettingsFromState(state: NativeSessionState, capabilitie
   const source = state.snapshot?.nextTurnSettings;
   const requestedModel = source?.model ?? state.providerSettings?.model;
   if (!requestedModel) return null;
-  const capability =
-    capabilities?.models.find((candidate) => candidate.model === requestedModel || candidate.id === requestedModel) ??
-    capabilities?.models.find((candidate) => candidate.model === capabilities.preferredModel || candidate.id === capabilities.preferredModel);
-  const model = capability?.model ?? requestedModel;
+  const capability = resolveModelCapability(capabilities?.models, requestedModel) ?? resolveModelCapability(capabilities?.models, capabilities?.preferredModel);
+  const model = capability?.id ?? requestedModel;
   const requestedEffort = source?.effort ?? state.providerSettings?.effort;
   const effort = requestedEffort && (!capability || capability.supportedReasoningEfforts.includes(requestedEffort)) ? requestedEffort : (capability?.defaultReasoningEffort ?? capability?.supportedReasoningEfforts[0]);
   const hasSourceServiceTier = source ? Object.prototype.hasOwnProperty.call(source, 'serviceTier') : false;
