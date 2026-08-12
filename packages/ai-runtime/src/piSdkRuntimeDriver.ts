@@ -412,13 +412,20 @@ function createZeusTools(getEntry: () => PiSessionEntry | null, broker: PiZeusTo
 
 function toPiModelConfig(model: ConfiguredModelDefinition) {
   const supportedLevels = new Set(model.capability.reasoning.levels);
+  const levelMap = model.capability.reasoning.levelMap;
+  const thinkingLevelMap = Object.fromEntries(
+    [...piThinkingLevels].map((level) => {
+      if (!supportedLevels.has(level)) return [level, null];
+      return [level, Object.prototype.hasOwnProperty.call(levelMap, level) ? levelMap[level] : level];
+    }),
+  );
   return {
     id: model.id,
     name: model.displayName,
     reasoning: model.capability.reasoning.state === 'supported',
-    thinkingLevelMap: Object.fromEntries([...piThinkingLevels].map((level) => [level, supportedLevels.has(level) ? (level === 'off' ? 'none' : level) : null])),
-    // 模型是否接受图片由实际运行内核和服务商判断，不使用本地能力档案预先拦截。
-    input: ['text', 'image'] as Array<'text' | 'image'>,
+    thinkingLevelMap,
+    // 明确不支持图片时只注册文本输入；目录未知时保留运行探测机会。
+    input: (model.capability.imageInput.state === 'unsupported' ? ['text'] : ['text', 'image']) as Array<'text' | 'image'>,
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: model.contextWindow,
     maxTokens: model.maxTokens,
