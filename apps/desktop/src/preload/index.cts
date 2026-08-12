@@ -61,6 +61,7 @@ contextBridge.exposeInMainWorld('zeus', {
   notifyTaskGitDeliveryCurrentContext: (context: unknown) => ipcRenderer.send('zeus:task-git-delivery:current-context-changed', context),
   notifyTaskGitDeliveryChanged: (taskId: string) => ipcRenderer.send('zeus:task-git-delivery:changed', taskId),
   openTaskGitDeliveryConversation: (input: unknown) => ipcRenderer.invoke('zeus:task-git-delivery:open-conversation', input),
+  openProjectGitDiffWindow: (input: unknown) => ipcRenderer.invoke('zeus:project-git-diff:open', input),
   onTaskGitDeliveryCurrentContext: (listener: (context: unknown) => void) => {
     const handler = (_event: unknown, context: unknown) => listener(context);
     ipcRenderer.on('zeus:task-git-delivery:current-context', handler);

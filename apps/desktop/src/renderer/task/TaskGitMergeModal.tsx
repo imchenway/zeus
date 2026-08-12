@@ -133,6 +133,7 @@ export function TaskGitMergeModal(props: TaskGitMergeModalProps) {
 
 function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
   const zh = props.language === 'zh-CN';
+  const standaloneWindow = typeof document !== 'undefined' && document.body.dataset.surface === 'task-git-delivery';
   const initialConversationWorkspaceIdRef = useRef(props.currentConversationWorkspaceId);
   const [workspaceIndex, setWorkspaceIndex] = useState<TaskWorkspaceIndexCollection | null>(null);
   const [workspaceDetails, setWorkspaceDetails] = useState<Record<string, TaskWorkspaceSnapshot>>({});
@@ -305,14 +306,14 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
           setConflictDocument(savedDraft.document);
           setFeedback({
             tone: 'warning',
-            text: zh ? '目标分支更新后已按最新提交重建；相同冲突的草稿已回填，请重新确认并保存。' : 'The target advanced and the candidate was rebuilt. A matching draft was restored; review and save it again.',
+            text: zh ? '来源分支更新后已按最新提交重建；相同冲突的草稿已回填，请重新确认并保存。' : 'The source advanced and the candidate was rebuilt. A matching draft was restored; review and save it again.',
           });
         } else {
           setConflictDocument(createConflictDocument(next));
           if (savedDraft) {
             setFeedback({
               tone: 'warning',
-              text: zh ? '目标分支更新后冲突内容已经变化，旧草稿未自动套用，请重新处理。' : 'The conflict changed after rebuilding, so the previous draft was not applied.',
+              text: zh ? '来源分支更新后冲突内容已经变化，旧草稿未自动套用，请重新处理。' : 'The conflict changed after rebuilding from the source branch, so the previous draft was not applied.',
             });
           }
         }
@@ -617,6 +618,11 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
     <ModalPortal rootClassName="task-git-merge-portal-root" backdropClassName="task-git-merge-backdrop" dismissDisabled={dismissDisabled} onDismiss={props.onClose}>
       <section className={`task-git-merge-modal task-git-delivery-modal${conflictWorkspaceOpen && activeConflict ? ' is-conflicted' : ''}`} role="dialog" aria-modal="true" aria-labelledby="task-git-merge-title">
         <header className="task-git-merge-header">
+          {standaloneWindow ? (
+            <button type="button" className="task-git-window-back" aria-label={zh ? '返回任务' : 'Back to task'} onClick={props.onClose} disabled={dismissDisabled}>
+              ‹
+            </button>
+          ) : null}
           <span>
             <strong id="task-git-merge-title">
               {unresolvedConflict ? (zh ? '解决合入冲突' : 'Resolve Merge Conflicts') : conflictReadyToFinalize ? (zh ? '确认完成合入' : 'Confirm Merge Completion') : zh ? '代码交付' : 'Code Delivery'}
@@ -626,9 +632,11 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
               {props.task.taskCode ?? props.task.id} · {props.task.title}
             </small>
           </span>
-          <button type="button" aria-label={zh ? '关闭' : 'Close'} onClick={props.onClose} disabled={dismissDisabled}>
-            ×
-          </button>
+          {!standaloneWindow ? (
+            <button type="button" aria-label={zh ? '关闭' : 'Close'} onClick={props.onClose} disabled={dismissDisabled}>
+              ×
+            </button>
+          ) : null}
         </header>
 
         <div className="task-git-merge-content">
@@ -908,7 +916,7 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
             )
           ) : pendingLocalSync ? (
             <Button variant="primary" size="regular" busy={busyAction === 'merge'} onClick={() => void finalize()}>
-              {zh ? '重新同步本地目标分支' : 'Retry local target sync'}
+              {zh ? '重新同步本地来源分支' : 'Retry local source sync'}
             </Button>
           ) : null}
         </footer>
@@ -971,7 +979,7 @@ function ConflictCompletion(props: { zh: boolean; targetBranch: string; taskBran
       </p>
       <dl>
         <div>
-          <dt>{props.zh ? '目标分支' : 'Target branch'}</dt>
+          <dt>{props.zh ? '来源分支' : 'Source branch'}</dt>
           <dd>{props.targetBranch}</dd>
         </div>
         <div>

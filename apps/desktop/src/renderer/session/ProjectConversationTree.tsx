@@ -31,10 +31,12 @@ export interface ProjectConversationTreeProps {
   selectedConversationId?: string | null;
   conversationStates?: Record<string, ConversationTreeRuntimeState>;
   onSelectConversation: (conversation: NativeConversationChoice) => void;
-  onStartConversation: (taskId: string) => void;
+  onStartConversation?: (taskId: string) => void;
   onArchiveConversation?: (conversation: NativeConversationChoice) => Promise<void> | void;
   language: SessionUiLanguage;
   compactProjectLabel?: boolean;
+  query?: string;
+  showEmptyState?: boolean;
 }
 
 const labels = {
@@ -88,7 +90,11 @@ interface FlattenedConversation {
 export function ProjectConversationTree(props: ProjectConversationTreeProps) {
   const copy = labels[props.language];
   const [archivingConversationId, setArchivingConversationId] = useState<string | null>(null);
-  const flattenedGroups = props.groups.map(flattenProjectConversations);
+  const normalizedQuery = props.query?.trim().toLocaleLowerCase() ?? '';
+  const flattenedGroups = props.groups.map(flattenProjectConversations).map((group) => ({
+    ...group,
+    conversations: normalizedQuery ? group.conversations.filter((entry) => entry.displayTitle.toLocaleLowerCase().includes(normalizedQuery)) : group.conversations,
+  }));
   const conversationIds = flattenedGroups.flatMap((group) => group.conversations.map((entry) => conversationNavigationId(entry.conversation)));
   const fallbackTabStopId = props.selectedConversationId && conversationIds.includes(props.selectedConversationId) ? null : (conversationIds[0] ?? null);
 
@@ -108,7 +114,7 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
     <nav className="session-project-conversation-tree" aria-label={copy.aria} onKeyDown={handleTreeKeyDown}>
       {flattenedGroups.map(({ project, conversations }) => (
         <section className="session-conversation-project-group" key={project.projectId} aria-label={project.projectName}>
-          <ProjectConversationHeader project={project} language={props.language} onStartConversation={props.onStartConversation} />
+          {!props.compactProjectLabel && props.onStartConversation ? <ProjectConversationHeader project={project} language={props.language} onStartConversation={props.onStartConversation} /> : null}
           {conversations.length > 0 ? (
             <ul className="session-conversation-project-items">
               {conversations.map(({ conversation, displayTitle }) => {
@@ -151,9 +157,9 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
                 );
               })}
             </ul>
-          ) : (
+          ) : props.showEmptyState !== false ? (
             <p className="session-conversation-project-empty">{copy.empty}</p>
-          )}
+          ) : null}
         </section>
       ))}
     </nav>

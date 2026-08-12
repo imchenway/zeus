@@ -324,6 +324,34 @@ async function renderTaskGitDeliveryWithClient(client: DashboardClient, taskId: 
   );
 }
 
+async function renderProjectGitDiffWithClient(client: DashboardClient, parameters: URLSearchParams): Promise<void> {
+  const [{ ProjectGitDiffWindow }, appShellSettings] = await Promise.all([import('./git/ProjectGitDiffViewer.js'), client.loadAppShellSettings()]);
+  const projectId = parameters.get('projectId')?.trim();
+  const repositoryId = parameters.get('repositoryId')?.trim();
+  const filePath = parameters.get('filePath') ?? '';
+  if (!projectId || !repositoryId) throw new Error('仓库差异窗口缺少项目或仓库身份。');
+  const stage = parameters.get('stage') === 'staged' || parameters.get('stage') === 'unstaged' ? (parameters.get('stage') as 'staged' | 'unstaged') : 'combined';
+  const root = document.getElementById('root');
+  if (!root) throw new Error('Zeus renderer root element is missing');
+  document.body.dataset.surface = 'project-git-diff';
+  createRoot(root).render(
+    <RendererErrorBoundary appLanguage={appShellSettings.appLanguage} onFatalError={(message) => console.error('Zeus 仓库差异窗口渲染失败', message)}>
+      <ProjectGitDiffWindow
+        client={client}
+        projectId={projectId}
+        repositoryId={repositoryId}
+        filePath={filePath}
+        stage={stage}
+        commitHash={parameters.get('commitHash') ?? undefined}
+        comparisonRef={parameters.get('comparisonRef') ?? undefined}
+        comparisonMode={parameters.get('comparisonMode') === 'working-tree' ? 'working-tree' : 'current'}
+        language={appShellSettings.appLanguage}
+      />
+      <RendererBootstrapReady />
+    </RendererErrorBoundary>,
+  );
+}
+
 /** React 首次 commit 后再通知 Main；在此之前的模块、加载和渲染异常都由启动监控器兜底。 */
 function RendererBootstrapReady(): null {
   useEffect(() => {
@@ -365,12 +393,16 @@ async function hydrateRenderer(): Promise<void> {
     await renderTaskGitDeliveryWithClient(client, taskId);
     return;
   }
+  if (surface === 'project-git-diff') {
+    await renderProjectGitDiffWithClient(client, parameters);
+    return;
+  }
   await renderWithClient(client, config.executionHostTransition);
 }
 
 hydrateRenderer().catch((error: unknown) => {
   const surface = new URLSearchParams(window.location.search).get('surface');
-  const auxiliarySurface = surface === 'menu-bar-usage' || surface === 'task-git-delivery';
+  const auxiliarySurface = surface === 'menu-bar-usage' || surface === 'task-git-delivery' || surface === 'project-git-diff';
   console.error(surface === 'menu-bar-usage' ? 'Zeus menu bar usage hydration failed' : surface === 'task-git-delivery' ? 'Zeus task Git delivery hydration failed' : 'Zeus dashboard hydration failed', error);
   if (surface === 'task-git-delivery') {
     const root = document.getElementById('root');

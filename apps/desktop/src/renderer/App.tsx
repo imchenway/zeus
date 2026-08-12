@@ -24,6 +24,11 @@ import { PlusIcon as Plus } from '@phosphor-icons/react/dist/csr/Plus';
 import { PushPinIcon as PushPin } from '@phosphor-icons/react/dist/csr/PushPin';
 import { PushPinSlashIcon as PushPinSlash } from '@phosphor-icons/react/dist/csr/PushPinSlash';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
+import { CheckSquareIcon as WorkspaceTasksIcon } from '@phosphor-icons/react/dist/csr/CheckSquare';
+import { GitBranchIcon as WorkspaceGitIcon } from '@phosphor-icons/react/dist/csr/GitBranch';
+import { CodeIcon as WorkspaceSourceIcon } from '@phosphor-icons/react/dist/csr/Code';
+import { GraphIcon as WorkspaceGraphIcon } from '@phosphor-icons/react/dist/csr/Graph';
+import { TerminalWindowIcon as WorkspaceCommandsIcon } from '@phosphor-icons/react/dist/csr/TerminalWindow';
 import {
   buildMermaidDiagramExport,
   buildMermaidDiagramSource,
@@ -53,6 +58,7 @@ import { completeCodexLoginHandoff } from './codexLoginHandoff.js';
 import { PENDING_RESOURCE_LONG_TEXT_THRESHOLD } from './ui/pendingResourcePolicy.js';
 import { TaskAttachmentPreviewList } from './task/TaskAttachmentPreviewList.js';
 import { type ConversationTreeRuntimeState, conversationTreeRuntimeStateFromConversation, conversationTreeRuntimeStateFromSession, type ProjectConversationGroup, ProjectConversationTree } from './session/ProjectConversationTree.js';
+import { ProjectGitWorkbench } from './git/ProjectGitWorkbench.js';
 import {
   ConnectedSessionWorkspace,
   createNativeConversationStartEnvelopeManager,
@@ -245,7 +251,7 @@ export {
 
 type MainNavTarget = 'projects' | 'conversations' | 'settings';
 type LegacyMainNavTarget = MainNavTarget | 'dashboard' | 'tasks' | 'code-map' | 'runtime' | 'git-diff' | 'telegram' | 'settings-data';
-type ProjectWorkspaceSection = 'tasks' | 'code' | 'sessions' | 'project-settings';
+type ProjectWorkspaceSection = 'tasks' | 'git' | 'code' | 'sessions' | 'project-settings';
 type ProjectCodeWorkspaceMode = 'source' | 'graph' | 'commands';
 type ProjectDetailPanel = 'diff' | 'edit' | 'config' | 'archive' | undefined;
 type ConversationDrawer = 'runtime' | 'context' | 'changes' | 'templates' | undefined;
@@ -347,6 +353,9 @@ type NativeConversationAppClient = SessionControllerClient &
     | 'saveProjectModelSelection'
     | 'loadProjectWorkspaceConfig'
     | 'saveProjectWorkspaceConfig'
+    | 'loadProjectGitWorkbench'
+    | 'loadProjectGitCommit'
+    | 'executeProjectGitAction'
     | 'acknowledgeNativeConversationAttention'
     | 'loadTaskGitWorkspaces'
     | 'loadTaskGitWorkspaceIndex'
@@ -1152,6 +1161,7 @@ const languageCopy = {
       labelSeparator: '：',
       sections: {
         tasks: '任务',
+        git: 'Git',
         code: '代码',
         sessions: '会话',
         commands: '命令',
@@ -2609,6 +2619,7 @@ const languageCopy = {
       labelSeparator: ': ',
       sections: {
         tasks: 'Tasks',
+        git: 'Git',
         code: 'Code',
         sessions: 'Sessions',
         commands: 'Commands',
@@ -3921,7 +3932,7 @@ const languageCopy = {
       renameRequired: string;
       pinned: string;
       labelSeparator: string;
-      sections: Record<'tasks' | 'code' | 'sessions' | 'commands', string>;
+      sections: Record<'tasks' | 'git' | 'code' | 'sessions' | 'commands', string>;
       current: string;
       conversationRunning: string;
       conversationReplyRequired: string;
@@ -5623,8 +5634,7 @@ function inferInitialProjectSection(props: {
     return 'sessions';
   if (props.initialArchivedProjects?.length) return 'code';
   if (props.initialGraphView || props.initialGraphAnswer || props.initialGraphConversations?.length || props.initialGitDiff || props.initialGitConfirmation) return 'code';
-  const firstProject = props.snapshot?.projects[0];
-  return firstProject && firstProject.scanStatus === 'not_scanned' ? 'code' : 'sessions';
+  return 'tasks';
 }
 
 function syncRecordFromSnapshot<T extends { id: string }>(current: T | undefined, records: T[]): T | undefined {
@@ -6801,14 +6811,10 @@ export function App(props: {
   const [nativeConversationTaskRunStatuses, setNativeConversationTaskRunStatuses] = useState<Record<string, TaskAgentRunStatus>>({});
   const [nativeConversationStatusSyncState, setNativeConversationStatusSyncState] = useState<ZeusRealtimeConnectionState | 'syncing'>(() => (props.onSubscribeRealtimeEvents ? 'connecting' : 'connected'));
   const nativeConversationHotCacheRef = useRef<SessionHotCache>(new Map());
-  const [sessionSourceRailOpen, setSessionSourceRailOpen] = useState(false);
-  const [compactSessionViewport, setCompactSessionViewport] = useState(() => typeof window !== 'undefined' && window.matchMedia?.('(max-width: 759px)').matches === true);
   const [projectSidebarViewportWidth, setProjectSidebarViewportWidth] = useState(() => (typeof window === 'undefined' ? 1440 : window.innerWidth));
   const [projectSidebarPreferredWidth, setProjectSidebarPreferredWidth] = useState(() => readProjectSidebarPreferredWidth(browserProjectSidebarWidthStorage()));
   const [projectSidebarResizing, setProjectSidebarResizing] = useState(false);
   const projectSidebarCommittedWidthRef = useRef(projectSidebarPreferredWidth);
-  const sessionSourceRailTriggerRef = useRef<HTMLButtonElement | null>(null);
-  const sessionSourceRailRef = useRef<HTMLElement | null>(null);
   const projectSidebarDragCleanupRef = useRef<(() => void) | null>(null);
   const nativeConversationChoiceLoadCoordinator = useRef(createNativeConversationChoiceLoadCoordinator()).current;
   const nativeProjectConversationChoiceLoadCoordinator = useRef(createNativeProjectConversationChoiceLoadCoordinator()).current;
@@ -6817,30 +6823,12 @@ export function App(props: {
   const recoveringConflictAiStartsRef = useRef<Set<string>>(new Set());
   const projectConversationStartEnvelopeManager = useMemo(() => createProjectConversationStartEnvelopeManager({ storage: browserNativeConversationStartStorage(), createId: createSessionOperationId }), []);
   useEffect(() => {
-    if (activeProjectSection !== 'sessions' || activeNavTarget === 'settings') setSessionSourceRailOpen(false);
-  }, [activeNavTarget, activeProjectSection]);
-  useEffect(() => {
-    if (typeof window === 'undefined' || !window.matchMedia) return;
-    const media = window.matchMedia('(max-width: 759px)');
-    const update = () => setCompactSessionViewport(media.matches);
-    update();
-    media.addEventListener?.('change', update);
-    return () => media.removeEventListener?.('change', update);
-  }, []);
-  useEffect(() => {
     if (typeof window === 'undefined') return;
     const updateProjectSidebarViewportWidth = () => setProjectSidebarViewportWidth(window.innerWidth);
     window.addEventListener('resize', updateProjectSidebarViewportWidth);
     return () => window.removeEventListener('resize', updateProjectSidebarViewportWidth);
   }, []);
   useEffect(() => () => projectSidebarDragCleanupRef.current?.(), []);
-  useEffect(() => {
-    if (!compactSessionViewport || !sessionSourceRailOpen) return;
-    const drawer = sessionSourceRailRef.current;
-    if (!drawer) return;
-    // click 默认焦点会在 handler 后落回触发器；下一帧再把焦点送进会话中栏抽屉。
-    return scheduleSessionDrawerInitialFocus(resolveSessionDrawerInitialFocusTarget(drawer));
-  }, [compactSessionViewport, sessionSourceRailOpen]);
   const [graphConversationSearch, setGraphConversationSearch] = useState('');
   const [graphNodeTaskFeedback, setGraphNodeTaskFeedback] = useState<GraphNodeTaskFeedback>('idle');
   const [graphSourceOpenFeedback, setGraphSourceOpenFeedback] = useState<GraphSourceOpenFeedback>('idle');
@@ -9424,30 +9412,6 @@ export function App(props: {
     await selectNativeConversation(conversation, 'preserve');
   }
 
-  function prepareNativeConversationForTask(taskId: string): void {
-    const task = snapshot.tasks.find((candidate) => candidate.id === taskId);
-    if (!task) return;
-    const targetProject = snapshot.projects.find((project) => project.id === task.projectId);
-    if (targetProject) {
-      activeProjectIdRef.current = targetProject.id;
-      setProjectDetail(targetProject);
-    }
-    setTaskDetail(task);
-    setSelectedNativeConversationId(null);
-    setFocusedArchivedConversation(null);
-    setConversationDraftOpen(true);
-    setNewConversationFocusRequest((current) => current + 1);
-    setActiveNavTarget('conversations');
-    setActiveProjectSection('sessions');
-    setTaskConversationDrawerTarget(undefined);
-    setConversationDrawer(undefined);
-    setTaskDetailPaneTaskId(undefined);
-    if (typeof window !== 'undefined') {
-      window.history.replaceState(null, '', '#project-sessions');
-    }
-    workspaceScrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
-  }
-
   async function chooseNativeConversationAttachments(): Promise<NativeConversationAttachment[]> {
     return props.onChooseConversationResources?.() ?? [];
   }
@@ -11532,25 +11496,23 @@ export function App(props: {
     requestWorkspaceLeave(navigate);
   }
 
-  function openProjectSection(project: ProjectRecord, section: ProjectWorkspaceSection): void {
+  function openProjectSection(project: ProjectRecord, section: ProjectWorkspaceSection, codeMode: ProjectCodeWorkspaceMode = 'source'): void {
     const navigate = () => {
       activeProjectIdRef.current = project.id;
       setProjectDetail(project);
       setConversationDraftOpen(false);
-      setActiveNavTarget(section === 'project-settings' || section === 'code' ? 'projects' : 'conversations');
+      setActiveNavTarget(section === 'sessions' ? 'conversations' : 'projects');
       setActiveProjectSection(section);
       if (section === 'code') {
-        setProjectCodeWorkspaceMode('source');
-        setVisitedCodeWorkspaceModes((current) => new Set(current).add('source'));
+        setProjectCodeWorkspaceMode(codeMode);
+        setVisitedCodeWorkspaceModes((current) => new Set(current).add(codeMode));
       }
       setProjectPanel(section === 'project-settings' ? 'config' : undefined);
       if (section === 'project-settings') void loadProjectConfig(project.id);
-      if (typeof window !== 'undefined') {
-        window.history.replaceState(null, '', `#project-${section}`);
-      }
+      if (typeof window !== 'undefined') window.history.replaceState(null, '', section === 'code' ? (codeMode === 'commands' ? '#project-commands' : `#project-code-${codeMode}`) : `#project-${section}`);
       workspaceScrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
     };
-    if (project.id === activeProjectId && section === activeProjectSection) {
+    if (project.id === activeProjectId && section === activeProjectSection && (section !== 'code' || codeMode === projectCodeWorkspaceMode)) {
       navigate();
       return;
     }
@@ -11940,7 +11902,6 @@ export function App(props: {
       className={`zeus-shell ai-native-shell macos-ai-app codex-thread-workbench code-map-product-shell theme-${appShellSettings.appearance}${activeNavTarget === 'settings' ? ' settings-dedicated-shell' : ''}${activeProjectSection === 'sessions' && activeNavTarget !== 'settings' ? ' session-codex-parity-v1' : ''}`}
       data-theme={appShellSettings.appearance}
       data-language={appShellSettings.appLanguage}
-      data-session-source-rail={sessionSourceRailOpen ? 'open' : 'hidden'}
       data-project-sidebar-resizing={projectSidebarResizing ? 'true' : 'false'}
       style={projectSidebarShellStyle}
       lang={uiCopy.documentLang}
@@ -12007,11 +11968,16 @@ export function App(props: {
           collapsedProjectIds={appShellSettings.collapsedProjectIds}
           conversationAttentionByProject={snapshot.conversationAttentionByProject}
           conversationUnreadCountByProject={snapshot.conversationUnreadCountByProject ?? {}}
+          conversationGroups={nativeConversationGroups}
+          selectedConversationId={selectedNativeConversationId}
+          conversationStates={nativeConversationRuntimeStates}
           appLanguage={appShellSettings.appLanguage}
           canCreateProject={projectCreationReady && !creatingProjectBusy}
           createProjectBusy={creatingProjectBusy}
           onCreateProject={openProjectCreateDialog}
           onCreateConversation={prepareNewConversationDraft}
+          onSelectConversation={(conversation) => void selectNativeConversation(conversation)}
+          onArchiveConversation={archiveConversation}
           onNavigate={handleMainNavigate}
           onOpenProjectSection={openProjectSection}
           onTogglePinnedProject={togglePinnedProject}
@@ -12039,23 +12005,15 @@ export function App(props: {
           onPointerDown={handleProjectSidebarResizePointerDown}
         />
       ) : null}
-      {activeProjectSection === 'sessions' && activeNavTarget !== 'settings' ? (
-        <button
-          type="button"
-          className="session-mobile-source-backdrop"
-          aria-label={appShellSettings.appLanguage === 'zh-CN' ? '关闭会话列表' : 'Close conversation list'}
-          aria-hidden={sessionSourceRailOpen ? undefined : true}
-          tabIndex={sessionSourceRailOpen ? 0 : -1}
-          onClick={() => {
-            setSessionSourceRailOpen(false);
-            sessionSourceRailTriggerRef.current?.focus();
-          }}
-        />
-      ) : null}
-
       <section className="workspace ai-workspace" ref={workspaceScrollRef}>
-        {activeProjectSection === 'sessions' && activeNavTarget !== 'settings' ? (
-          <SessionMobileSourceTrigger triggerRef={sessionSourceRailTriggerRef} language={appShellSettings.appLanguage} open={sessionSourceRailOpen} onOpen={() => setSessionSourceRailOpen(true)} />
+        {activeNavTarget !== 'settings' && selectedProject ? (
+          <ProjectWorkspaceModeToolbar
+            project={selectedProject}
+            section={activeProjectSection}
+            codeMode={projectCodeWorkspaceMode}
+            language={appShellSettings.appLanguage}
+            onOpen={(section, codeMode) => openProjectSection(selectedProject, section, codeMode)}
+          />
         ) : null}
         {localError ? (
           <section className="inline-status failed" aria-label={uiCopy.localOperationFailed}>
@@ -12065,31 +12023,6 @@ export function App(props: {
 
         {activeNavTarget !== 'settings' && activeProjectSection === 'code' && selectedProject ? (
           <section className="workspace-view workspace-view-project-code project-code-workspace" aria-label={codeWorkspaceCopy.projectCodeAria}>
-            <header className="project-code-mode-toolbar">
-              <span>
-                <strong>{appShellSettings.appLanguage === 'zh-CN' ? '代码工作台' : 'Code workspace'}</strong>
-                <small>{selectedProject.name}</small>
-              </span>
-              <nav aria-label={appShellSettings.appLanguage === 'zh-CN' ? '代码工作区模式' : 'Code workspace mode'}>
-                {(
-                  [
-                    ['source', appShellSettings.appLanguage === 'zh-CN' ? '源码' : 'Source'],
-                    ['graph', appShellSettings.appLanguage === 'zh-CN' ? '图谱' : 'Graph'],
-                    ['commands', appShellSettings.appLanguage === 'zh-CN' ? '命令' : 'Commands'],
-                  ] as const
-                ).map(([mode, label]) => (
-                  <button
-                    type="button"
-                    key={mode}
-                    className={projectCodeWorkspaceMode === mode ? 'active' : ''}
-                    aria-current={projectCodeWorkspaceMode === mode ? 'page' : undefined}
-                    onClick={() => void selectProjectCodeWorkspaceMode(mode)}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </nav>
-            </header>
             <div className="project-code-mode-host">
               <div className="project-code-mode-pane" hidden={projectCodeWorkspaceMode !== 'source'}>
                 <ProjectSourceWorkspace
@@ -12124,6 +12057,12 @@ export function App(props: {
                 </div>
               ) : null}
             </div>
+          </section>
+        ) : null}
+
+        {activeNavTarget !== 'settings' && activeProjectSection === 'git' && selectedProject && props.nativeConversationClient ? (
+          <section className="workspace-view workspace-view-project-git">
+            <ProjectGitWorkbench project={selectedProject} client={props.nativeConversationClient} language={appShellSettings.appLanguage} />
           </section>
         ) : null}
 
@@ -12814,60 +12753,6 @@ export function App(props: {
             className={`workspace-view ${activeProjectSection === 'tasks' ? 'workspace-view-project-tasks' : 'workspace-view-project-sessions'}`}
             aria-label={activeProjectSection === 'tasks' ? taskWorkspaceCopy.viewAria : sessionWorkspaceCopy.viewAria}
           >
-            {activeProjectSection === 'sessions' ? (
-              <aside
-                id="session-project-conversation-list"
-                ref={sessionSourceRailRef}
-                className="workspace-list-pane session-list-pane"
-                aria-label={sessionWorkspaceCopy.listAria}
-                aria-hidden={compactSessionViewport && !sessionSourceRailOpen ? true : undefined}
-                aria-modal={compactSessionViewport && sessionSourceRailOpen ? true : undefined}
-                role={compactSessionViewport && sessionSourceRailOpen ? 'dialog' : undefined}
-                inert={compactSessionViewport && !sessionSourceRailOpen ? true : undefined}
-                tabIndex={-1}
-                onKeyDownCapture={(event) => {
-                  if (!compactSessionViewport || !sessionSourceRailOpen) return;
-                  if (event.key === 'Escape') {
-                    event.preventDefault();
-                    setSessionSourceRailOpen(false);
-                    sessionSourceRailTriggerRef.current?.focus();
-                    return;
-                  }
-                  if (event.key !== 'Tab') return;
-                  const focusable = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled), [tabindex="0"]')).filter((element) => !element.hidden);
-                  if (focusable.length === 0) {
-                    event.preventDefault();
-                    event.currentTarget.focus();
-                    return;
-                  }
-                  const first = focusable[0];
-                  const last = focusable[focusable.length - 1];
-                  if (event.shiftKey && document.activeElement === first) {
-                    event.preventDefault();
-                    last?.focus();
-                  } else if (!event.shiftKey && document.activeElement === last) {
-                    event.preventDefault();
-                    first?.focus();
-                  }
-                }}
-              >
-                <ProjectConversationTree
-                  groups={nativeConversationGroups.filter((group) => group.projectId === activeProjectId)}
-                  selectedConversationId={selectedNativeConversationId}
-                  conversationStates={nativeConversationRuntimeStates}
-                  onSelectConversation={(conversation) => {
-                    selectNativeConversation(conversation);
-                    setSessionSourceRailOpen(false);
-                  }}
-                  onStartConversation={(taskId) => {
-                    prepareNativeConversationForTask(taskId);
-                    setSessionSourceRailOpen(false);
-                  }}
-                  onArchiveConversation={archiveConversation}
-                  language={appShellSettings.appLanguage}
-                />
-              </aside>
-            ) : null}
             <section
               className={`workspace-detail-pane ${activeProjectSection === 'tasks' ? 'task-management-detail-pane' : 'conversation-detail-pane'}`}
               aria-label={activeProjectSection === 'tasks' ? taskWorkspaceCopy.detailAria : sessionWorkspaceCopy.detailAria}
@@ -18182,6 +18067,39 @@ function ProjectRenameDialog(props: {
   return surface;
 }
 
+function ProjectWorkspaceModeToolbar(props: {
+  project: ProjectRecord;
+  section: ProjectWorkspaceSection;
+  codeMode: ProjectCodeWorkspaceMode;
+  language: AppLanguage;
+  onOpen: (section: ProjectWorkspaceSection, codeMode?: ProjectCodeWorkspaceMode) => void;
+}) {
+  const zh = props.language === 'zh-CN';
+  const items = [
+    { id: 'tasks', label: zh ? '任务' : 'Tasks', section: 'tasks' as const, icon: <WorkspaceTasksIcon aria-hidden="true" /> },
+    { id: 'git', label: 'Git', section: 'git' as const, icon: <WorkspaceGitIcon aria-hidden="true" /> },
+    { id: 'source', label: zh ? '源码' : 'Source', section: 'code' as const, codeMode: 'source' as const, icon: <WorkspaceSourceIcon aria-hidden="true" /> },
+    { id: 'graph', label: zh ? '图谱' : 'Graph', section: 'code' as const, codeMode: 'graph' as const, icon: <WorkspaceGraphIcon aria-hidden="true" /> },
+    { id: 'commands', label: zh ? '命令' : 'Commands', section: 'code' as const, codeMode: 'commands' as const, icon: <WorkspaceCommandsIcon aria-hidden="true" /> },
+  ];
+  return (
+    <header className="project-workspace-mode-toolbar">
+      <strong title={props.project.localPath}>{props.project.name}</strong>
+      <nav aria-label={zh ? '项目工作区' : 'Project workspace'}>
+        {items.map((item) => {
+          const active = props.section === item.section && (item.section !== 'code' || props.codeMode === item.codeMode);
+          return (
+            <button key={item.id} type="button" className={active ? 'is-active' : ''} aria-current={active ? 'page' : undefined} title={item.label} onClick={() => props.onOpen(item.section, item.codeMode)}>
+              <span aria-hidden="true">{item.icon}</span>
+              {item.label}
+            </button>
+          );
+        })}
+      </nav>
+    </header>
+  );
+}
+
 function SidebarNav(props: {
   activeNavTarget: WorkspaceViewId;
   activeProjectId?: string;
@@ -18191,11 +18109,16 @@ function SidebarNav(props: {
   collapsedProjectIds: string[];
   conversationAttentionByProject: Record<string, ProjectConversationAttentionState>;
   conversationUnreadCountByProject: Record<string, number>;
+  conversationGroups: ProjectConversationGroup[];
+  selectedConversationId?: string | null;
+  conversationStates: Record<string, ConversationTreeRuntimeState>;
   appLanguage: AppLanguage;
   canCreateProject: boolean;
   createProjectBusy: boolean;
   onCreateProject: () => void;
   onCreateConversation: () => void;
+  onSelectConversation: (conversation: NativeConversationChoice) => void;
+  onArchiveConversation: (conversation: NativeConversationChoice) => Promise<void>;
   onNavigate: (target: WorkspaceViewId) => void;
   onOpenProjectSection: (project: ProjectRecord, section: ProjectWorkspaceSection) => void;
   onTogglePinnedProject: (projectId: string) => void;
@@ -18419,7 +18342,13 @@ function SidebarNav(props: {
   const visibleProjects = projectSearchQuery.trim()
     ? props.projects.filter((project) => {
         const query = projectSearchQuery.trim().toLocaleLowerCase();
-        return project.name.toLocaleLowerCase().includes(query) || project.localPath.toLocaleLowerCase().includes(query);
+        const group = props.conversationGroups.find((candidate) => candidate.projectId === project.id);
+        const conversationMatches = [...(group?.conversations ?? []), ...(group?.tasks.flatMap((task) => task.conversations) ?? [])].some((conversation) =>
+          conversationDisplayTitle(conversation.title, group?.tasks.find((task) => task.taskId === conversation.taskId)?.taskTitle)
+            .toLocaleLowerCase()
+            .includes(query),
+        );
+        return project.name.toLocaleLowerCase().includes(query) || project.localPath.toLocaleLowerCase().includes(query) || conversationMatches;
       })
     : props.projects;
   // macOS 红黄绿窗口按钮属于系统层：侧栏只保留 44px 顶部安全区，避开交通灯但不再保留整行死空间。
@@ -18487,6 +18416,8 @@ function SidebarNav(props: {
             const menuPosition = projectMenuPositions.get(project.id);
             const conversationAttentionState = props.conversationAttentionByProject[project.id] ?? 'idle';
             const conversationUnreadCount = props.conversationUnreadCountByProject[project.id] ?? 0;
+            const conversationGroup = props.conversationGroups.find((group) => group.projectId === project.id);
+            const projectMatchesSearch = project.name.toLocaleLowerCase().includes(projectSearchQuery.trim().toLocaleLowerCase()) || project.localPath.toLocaleLowerCase().includes(projectSearchQuery.trim().toLocaleLowerCase());
             const projectMorePopover =
               menuVisible && menuPosition ? (
                 <div
@@ -18562,6 +18493,18 @@ function SidebarNav(props: {
                   level="root"
                   surface="fill"
                   expanded={expanded}
+                  className={isActiveProject && props.activeProjectSection !== 'sessions' ? 'is-active-project-root' : undefined}
+                  disclosure={
+                    <button
+                      type="button"
+                      className="project-disclosure-button"
+                      aria-label={`${expanded ? copy.collapseProjectPrefix : copy.expandProjectPrefix}${copy.labelSeparator}${project.name}`}
+                      aria-expanded={expanded}
+                      onClick={() => props.onToggleProjectCollapsed(project.id)}
+                    >
+                      <span aria-hidden="true">›</span>
+                    </button>
+                  }
                   icon={
                     <svg className="native-folder-icon zeus-avatar-token" viewBox="0 0 20 20" focusable="false" aria-hidden="true">
                       <path d="M2.8 6.4h5.1l1.4 1.5h7.9v7.7a1.4 1.4 0 0 1-1.4 1.4H4.2a1.4 1.4 0 0 1-1.4-1.4Z" />
@@ -18573,8 +18516,8 @@ function SidebarNav(props: {
                     type: 'button',
                     tabIndex: isActiveProject ? 0 : -1,
                     'data-source-list-item': 'true',
-                    'aria-label': `${expanded ? copy.collapseProjectPrefix : copy.expandProjectPrefix}${copy.labelSeparator}${project.name}`,
-                    onClick: () => props.onToggleProjectCollapsed(project.id),
+                    'aria-label': `${copy.sections.tasks}${copy.labelSeparator}${project.name}`,
+                    onClick: () => props.onOpenProjectSection(project, 'tasks'),
                   }}
                   actions={
                     <>
@@ -18606,54 +18549,36 @@ function SidebarNav(props: {
                   }
                 />
                 {expanded ? (
-                  <div className="project-section-menu animated-project-menu" data-inline-rail-keyboard="horizontal" aria-label={`${project.name} ${copy.projectMenuSuffix}`} onKeyDown={handleInlineRailKeyboardNavigation}>
-                    {(
-                      [
-                        { id: 'tasks', label: copy.sections.tasks, icon: '✓' },
-                        { id: 'code', label: copy.sections.code, icon: '⌘' },
-                        {
-                          id: 'sessions',
-                          label: copy.sections.sessions,
-                          icon: (
-                            <svg data-project-section-icon="sessions" aria-hidden="true" focusable="false" viewBox="0 0 16 16">
-                              <path d="M3.25 3.5h9.5a.75.75 0 0 1 .75.75V9.5a.75.75 0 0 1-.75.75H7.1L4 11.75l.65-3h-1.4A.75.75 0 0 1 2.5 8V4.25a.75.75 0 0 1 .75-.75Z" />
-                            </svg>
-                          ),
-                        },
-                      ] satisfies Array<{ id: ProjectWorkspaceSection; label: string; icon: ReactNode }>
-                    ).map((item) => {
-                      const current = isActiveProject && props.activeProjectSection === item.id;
-                      const attentionState = item.id === 'sessions' ? conversationAttentionState : 'idle';
-                      const attentionLabel =
-                        attentionState === 'reply_required'
-                          ? copy.conversationReplyRequired
-                          : attentionState === 'running'
-                            ? copy.conversationRunning
-                            : attentionState !== 'idle'
-                              ? props.appLanguage === 'zh-CN'
+                  <div className="project-sidebar-conversations animated-project-menu">
+                    {conversationGroup ? (
+                      <ProjectConversationTree
+                        groups={[conversationGroup]}
+                        selectedConversationId={props.selectedConversationId}
+                        conversationStates={props.conversationStates}
+                        onSelectConversation={props.onSelectConversation}
+                        onArchiveConversation={props.onArchiveConversation}
+                        language={props.appLanguage}
+                        compactProjectLabel
+                        showEmptyState={false}
+                        query={projectMatchesSearch ? '' : projectSearchQuery}
+                      />
+                    ) : null}
+                    {conversationAttentionState !== 'idle' ? (
+                      <span
+                        className="project-conversation-group-attention"
+                        title={
+                          conversationAttentionState === 'reply_required'
+                            ? copy.conversationReplyRequired
+                            : conversationAttentionState === 'running'
+                              ? copy.conversationRunning
+                              : props.appLanguage === 'zh-CN'
                                 ? `${conversationUnreadCount} 个未读会话`
                                 : `${conversationUnreadCount} unread conversations`
-                              : undefined;
-                      return (
-                        <SourceListRow
-                          level="nested"
-                          surface="fill"
-                          selected={current}
-                          icon={item.icon}
-                          label={item.label}
-                          state={attentionState === 'idle' ? current ? copy.current : undefined : <SidebarConversationAttentionIndicator state={attentionState} unreadCount={conversationUnreadCount} />}
-                          buttonProps={{
-                            type: 'button',
-                            'aria-current': current ? 'page' : undefined,
-                            'aria-label': attentionLabel ? `${item.label}${copy.labelSeparator}${attentionLabel}` : undefined,
-                            tabIndex: current ? 0 : -1,
-                            'data-inline-rail-item': 'true',
-                            onClick: () => props.onOpenProjectSection(project, item.id),
-                          }}
-                          key={item.id}
-                        />
-                      );
-                    })}
+                        }
+                      >
+                        <SidebarConversationAttentionIndicator state={conversationAttentionState} unreadCount={conversationUnreadCount} />
+                      </span>
+                    ) : null}
                   </div>
                 ) : null}
               </section>

@@ -8,6 +8,7 @@ interface SourceListRowCommonProps {
   surface: 'content' | 'fill';
   icon: ReactNode;
   label: ReactNode;
+  disclosure?: ReactNode;
   state?: ReactNode;
   actions?: ReactNode;
   expanded?: boolean;
@@ -41,7 +42,8 @@ export function SourceListRow(props: SourceListRowProps) {
       data-selected={props.level === 'nested' && props.selected ? 'true' : undefined}
       data-expanded={props.expanded === undefined ? undefined : props.expanded ? 'true' : 'false'}
     >
-      <button {...buttonProps} className={mainClassName} aria-expanded={props.expanded}>
+      {props.disclosure ? <div className="zeus-source-list-row-disclosure">{props.disclosure}</div> : null}
+      <button {...buttonProps} className={mainClassName} aria-expanded={props.disclosure ? undefined : props.expanded}>
         <span className="zeus-source-list-row-icon" aria-hidden="true">
           {props.icon}
         </span>
