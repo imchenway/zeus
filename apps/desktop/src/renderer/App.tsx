@@ -93,6 +93,7 @@ import { clearPendingConflictAiStart, listPendingConflictAiStarts, persistPendin
 import {
   buildTaskModelPushMessage,
   buildTaskModelPushLayout,
+  normalizeTaskModelPushCapabilities,
   readTaskModelPushPreferences,
   resolveTaskModelPushInitialForm,
   selectedTaskPushCurrentConversationPaths,
@@ -9702,7 +9703,7 @@ export function App(props: {
     }
     try {
       // 与 Codex App 一致：打开 composer 时只连接并读取能力，不提前创建 thread/turn。
-      const capabilities = await client.loadCodexTaskPushCapabilities(task.projectId, task.id);
+      const capabilities = normalizeTaskModelPushCapabilities(await client.loadCodexTaskPushCapabilities(task.projectId, task.id));
       if (taskModelPushCapabilityRequestRef.current !== requestVersion) return;
       const remembered = readTaskModelPushPreferences(browserNativeConversationStartStorage(), task.projectId);
       setTaskModelPushCapabilities(capabilities);
@@ -9871,6 +9872,7 @@ export function App(props: {
 
   function continueTaskModelPush(task: TaskRecord, capabilities: CodexTaskPushCapabilities, form: TaskModelPushForm): void {
     if (taskModelPushDispatchingTaskIdsRef.current.has(task.id)) return;
+    capabilities = normalizeTaskModelPushCapabilities(capabilities);
     const fingerprint = JSON.stringify({ taskId: task.id, projectId: task.projectId, taskContextRevision: capabilities.taskContextRevision, repositoryRevision: capabilities.repositoryRevision, form });
     const persistedEnvelope = taskModelPushEnvelopeRef.current.get(task.id);
     const request: StartTaskModelPushRequest =
@@ -10129,7 +10131,7 @@ export function App(props: {
     const requestVersion = taskModelPushCapabilityRequestRef.current + 1;
     taskModelPushCapabilityRequestRef.current = requestVersion;
     try {
-      const capabilities = await client.loadCodexTaskPushCapabilities(pending.task.projectId, pending.task.id);
+      const capabilities = normalizeTaskModelPushCapabilities(await client.loadCodexTaskPushCapabilities(pending.task.projectId, pending.task.id));
       if (taskModelPushCapabilityRequestRef.current !== requestVersion) return;
       const availableCurrentConversationIds = new Set(capabilities.currentConversationOptions.filter((conversation) => conversation.available).map((conversation) => conversation.id));
       const currentConversationIds = pending.form.currentConversationIds.filter((id) => availableCurrentConversationIds.has(id));
