@@ -62,8 +62,15 @@ interface PiSessionEntry {
   cwd: string;
   session: AgentSession;
   activeRunId: string | null;
+  pendingFailure: PiTerminalFailure | null;
   sequence: number;
   unsubscribe: () => void;
+}
+
+interface PiTerminalFailure {
+  code: string;
+  message: string;
+  providerStatus: string;
 }
 
 const piThinkingLevels = new Set<PiThinkingLevel>(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
@@ -149,6 +156,7 @@ export function createPiSdkRuntimeDriver(options: CreatePiSdkRuntimeDriverOption
       cwd: input.cwd,
       session,
       activeRunId: null,
+      pendingFailure: null,
       sequence: 0,
       unsubscribe: () => undefined,
     };
@@ -160,8 +168,15 @@ export function createPiSdkRuntimeDriver(options: CreatePiSdkRuntimeDriverOption
 
   function publishPiEvent(entry: PiSessionEntry, event: AgentSessionEvent): void {
     const nativeRunId = entry.activeRunId;
+    const messageFailure = piMessageFailure(event);
+    if (messageFailure) entry.pendingFailure = messageFailure;
+    else if (event.type === 'message_end' && event.message.role === 'assistant') entry.pendingFailure = null;
+    const terminalFailure = event.type === 'agent_settled' ? entry.pendingFailure : null;
     if (event.type === 'agent_settled' || event.type === 'agent_end') {
-      if (event.type === 'agent_settled') entry.activeRunId = null;
+      if (event.type === 'agent_settled') {
+        entry.activeRunId = null;
+        entry.pendingFailure = null;
+      }
     }
     const envelope: AgentRuntimeEvent = {
       agentKind: 'pi',
@@ -169,8 +184,8 @@ export function createPiSdkRuntimeDriver(options: CreatePiSdkRuntimeDriverOption
       nativeSessionId: entry.identity.nativeSessionId,
       nativeRunId,
       sequence: (entry.sequence += 1),
-      type: event.type,
-      payload: event,
+      type: terminalFailure ? 'runtime_error' : event.type,
+      payload: terminalFailure ?? event,
       createdAt: now(),
     };
     for (const listener of listeners) listener(envelope);
@@ -189,6 +204,7 @@ export function createPiSdkRuntimeDriver(options: CreatePiSdkRuntimeDriverOption
     }
     const nativeRunId = mode === 'steer' ? entry.activeRunId! : `pi_run_${randomUUID()}`;
     entry.activeRunId = nativeRunId;
+    entry.pendingFailure = null;
     const acceptedAt = now();
     const images = input.images?.map((image): { type: 'image'; data: string; mimeType: string } => ({ type: 'image', data: image.data, mimeType: image.mimeType }));
     const operation = mode === 'steer' ? entry.session.steer(input.content, images) : mode === 'follow_up' ? entry.session.followUp(input.content, images) : entry.session.prompt(input.content, images?.length ? { images } : undefined);
@@ -400,7 +416,7 @@ function toPiModelConfig(model: ConfiguredModelDefinition) {
     id: model.id,
     name: model.displayName,
     reasoning: model.capability.reasoning.state === 'supported',
-    thinkingLevelMap: Object.fromEntries([...piThinkingLevels].map((level) => [level, supportedLevels.has(level) ? level : null])),
+    thinkingLevelMap: Object.fromEntries([...piThinkingLevels].map((level) => [level, supportedLevels.has(level) ? (level === 'off' ? 'none' : level) : null])),
     // 模型是否接受图片由实际运行内核和服务商判断，不使用本地能力档案预先拦截。
     input: ['text', 'image'] as Array<'text' | 'image'>,
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
@@ -412,6 +428,16 @@ function toPiModelConfig(model: ConfiguredModelDefinition) {
       supportsUsageInStreaming: model.capability.usage.state !== 'unsupported',
       supportsStrictMode: false,
     },
+  };
+}
+
+/** Pi 会把供应商请求失败包装成空正文的 assistant message；在适配层恢复为公共失败终态。 */
+function piMessageFailure(event: AgentSessionEvent): PiTerminalFailure | null {
+  if (event.type !== 'message_end' || event.message.role !== 'assistant' || event.message.stopReason !== 'error') return null;
+  return {
+    code: 'ZEUS_PI_MODEL_REQUEST_FAILED',
+    message: event.message.errorMessage?.trim() || 'Pi 模型请求失败，但运行内核没有提供具体原因。',
+    providerStatus: event.message.stopReason,
   };
 }
 

@@ -16,6 +16,7 @@ import type { TaskRecord } from '../apiClient.js';
 import type { CodexTaskPushCapabilities, NativeConversationAttachment, NativePermissionMode, NativeServiceTierSelection, TaskPushSupplementalAttachmentDraft, TaskPushSupplementalAttachmentInput } from '../session/sessionTypes.js';
 import { useConversationInputResources } from '../session/useConversationInputResources.js';
 import { normalizeServiceTierSelection, serviceTierDescription, serviceTierOptions, serviceTierSelectionFromValue, serviceTierSelectionValue } from '../session/serviceTierSelection.js';
+import { resolveModelCapability } from '../session/modelSelection.js';
 import { Button } from '../ui/Button.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
 import { ZeusSelect } from '../ZeusSelect.js';
@@ -552,7 +553,7 @@ export function TaskModelPushModal(props: {
   const authenticating = props.status === 'authenticating';
   const authenticated = props.status === 'authenticated';
   const busy = authenticating || authenticated || props.status === 'submitting' || inputResources.processing;
-  const selectedModel = props.capabilities?.models.find((model) => model.model === props.form.model || model.id === props.form.model);
+  const selectedModel = resolveModelCapability(props.capabilities?.models, props.form.model);
   const codexLoginRequired = selectedModel?.agentKind !== 'pi' && props.capabilities?.codexAccount.requiresOpenaiAuth === true && !props.capabilities.codexAccount.signedIn;
   const repositories = props.capabilities?.repositories ?? [];
   const selectedCommonSourceKey = resolveSelectedTaskPushCommonSourceKey(repositories, props.form.repositorySelections, commonSources);
@@ -578,7 +579,7 @@ export function TaskModelPushModal(props: {
   );
 
   function onModelChange(model: string): void {
-    const capability = props.capabilities?.models.find((candidate) => candidate.model === model || candidate.id === model);
+    const capability = resolveModelCapability(props.capabilities?.models, model);
     const normalizedTier = normalizeServiceTierSelection(props.form.serviceTier, capability);
     props.onChange({
       ...props.form,

@@ -256,6 +256,18 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       dispatchedAt: createdAt,
     });
     const run = await driver.startRun({ session: context.session, content: input.content, clientRequestId: input.clientUserMessageId, model: input.model, ...(input.thinkingLevel ? { thinkingLevel: input.thinkingLevel } : {}) });
+    const providerModel = input.model.sourceId ? modelRef(input.model.sourceId, input.model.modelId) : input.model.modelId;
+    options.conversations.updateAgentRuntime(input.conversation.id, {
+      modelSourceId: input.model.sourceId,
+      modelId: input.model.modelId,
+      providerModel,
+    });
+    options.conversations.updateNextTurnSettings(input.conversation.id, {
+      model: providerModel,
+      ...(input.thinkingLevel ? { effort: input.thinkingLevel } : {}),
+      permissionMode: input.conversation.permissionMode,
+      collaborationMode: input.conversation.collaborationMode,
+    });
     const turn = options.turns.upsert({
       conversationId: input.conversation.id,
       providerThreadId: context.session.nativeSessionId,

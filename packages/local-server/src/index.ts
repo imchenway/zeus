@@ -13696,7 +13696,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     if (requestedModel || requestedEffort || requestedServiceTier.present) {
       const capabilities = await resolveConversationCapabilities(project);
       const model = requestedModel ?? conversation.providerModel ?? capabilities.preferredModel;
-      const capability = capabilities.models.find((candidate) => candidate.model === model || candidate.id === model);
+      const capability = resolveModelCapability(capabilities.models, model);
       if (!capability) throw nativeApiError('ZEUS_INVALID_CONVERSATION_SETTINGS', 'Selected Codex model is not available in the current app-server generation.');
       if (capability.available === false) throw nativeApiError('ZEUS_MODEL_NOT_READY', capability.availabilityReason || '所选模型当前不可运行。');
       if (requestedEffort && !capability.supportedReasoningEfforts.some((effort) => effort === requestedEffort)) {
@@ -14089,7 +14089,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       throw nativeApiError('ZEUS_INVALID_CONVERSATION_START', 'Project conversation content or attachments are required.');
     }
     const capabilities = await resolveConversationCapabilities(project);
-    const selectedModel = capabilities.models.find((candidate) => candidate.model === capabilities.preferredModel || candidate.id === capabilities.preferredModel) ?? capabilities.models[0]!;
+    const selectedModel = resolveModelCapability(capabilities.models, capabilities.preferredModel) ?? capabilities.models[0]!;
     const requestedServiceTier = readServiceTierOverride(body);
     const serviceTier = normalizeServiceTierForCapability(requestedServiceTier, selectedModel);
     const clientUserMessageId = normalizeNativeClientUserMessageId(body.clientUserMessageId, `native-client-${createHash('sha256').update(`${project.id}\0${idempotencyKey}`).digest('hex').slice(0, 24)}`);
@@ -14355,7 +14355,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         // 提交阶段只需要复验模型、账户和附件能力；仓库发现与远端刷新由
         // resolveTaskPushEnvironment 在冻结工作区引用时统一完成，不能在这里重复执行。
         const capabilities = await resolveTaskPushExecutionCapabilities(project);
-        const selectedModel = capabilities.models.find((candidate) => candidate.model === modelName || candidate.id === modelName);
+        const selectedModel = resolveModelCapability(capabilities.models, modelName);
         if (!selectedModel) throw nativeApiError('ZEUS_CODEX_MODEL_UNAVAILABLE', `Configured Codex model is unavailable: ${modelName}`);
         if (selectedModel.available === false) throw nativeApiError('ZEUS_MODEL_NOT_READY', selectedModel.availabilityReason || '所选模型当前不可运行。');
         const requestedServiceTier = readServiceTierOverride(body);
@@ -14456,7 +14456,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         }
 
         const capabilities = await resolveConversationCapabilities(project);
-        const selectedModel = capabilities.models.find((candidate) => candidate.model === modelName || candidate.id === modelName);
+        const selectedModel = resolveModelCapability(capabilities.models, modelName);
         if (!selectedModel) throw nativeApiError('ZEUS_MODEL_UNAVAILABLE', `Configured review model is unavailable: ${modelName}`);
         if (selectedModel.available === false) throw nativeApiError('ZEUS_MODEL_NOT_READY', selectedModel.availabilityReason || '所选模型当前不可运行。');
         const selectedAgentKind = selectedModel.agentKind === 'pi' ? 'pi' : 'codex';
@@ -14644,7 +14644,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         const attachments = canonicalAttachmentInput?.attachments ?? explicitAttachments;
         const content = explicitContent || createTaskRuntimePrompt(task);
         const capabilities = await resolveConversationCapabilities(project);
-        const selectedModel = capabilities.models.find((candidate) => candidate.model === capabilities.preferredModel || candidate.id === capabilities.preferredModel) ?? capabilities.models[0]!;
+        const selectedModel = resolveModelCapability(capabilities.models, capabilities.preferredModel) ?? capabilities.models[0]!;
         const requestedServiceTier = readServiceTierOverride(body);
         const serviceTier = normalizeServiceTierForCapability(requestedServiceTier, selectedModel);
         const inheritConversationId = typeof body.inheritConversationId === 'string' ? body.inheritConversationId.trim() : '';
@@ -16224,6 +16224,15 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     }
   }
 
+  function resolveModelCapability<T extends { id: string; model: string }>(models: readonly T[], identity: string | null | undefined): T | null {
+    const normalized = identity?.trim();
+    if (!normalized) return null;
+    const exact = models.find((candidate) => candidate.id === normalized);
+    if (exact) return exact;
+    const legacyMatches = models.filter((candidate) => candidate.model === normalized);
+    return legacyMatches.length === 1 ? legacyMatches[0]! : null;
+  }
+
   async function resolveConversationCapabilities(project: ZeusProjectRecord) {
     const piSelection = await modelConnections.getProjectSelection(project.id);
     const piCatalog = await modelConnections.listSelectableModels();
@@ -16275,7 +16284,10 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     const configuredModel = projectConfig.defaultModel ?? runtimeSettings.adapterModels.codex;
     const preferredModel =
       models.find((candidate) => candidate.id === piSelection.defaultModelRef && candidate.available !== false)?.id ??
-      models.find((candidate) => (candidate.model === configuredModel || candidate.id === configuredModel) && candidate.available !== false)?.id ??
+      resolveModelCapability(
+        models.filter((candidate) => candidate.available !== false),
+        configuredModel,
+      )?.id ??
       models.find((candidate) => candidate.available !== false)?.id ??
       models[0]!.id;
     return {

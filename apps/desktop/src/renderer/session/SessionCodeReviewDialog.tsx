@@ -1,6 +1,7 @@
 import { type FormEvent, type KeyboardEvent, useEffect, useMemo, useState } from 'react';
 import type { CodexConversationCapabilities, CodexTaskPushModelCapability, NativeConversationChoice, NativePermissionMode, NativeServiceTierSelection, NativeSessionState, TaskWorkspaceSnapshot } from './sessionTypes.js';
 import { normalizeServiceTierSelection, serviceTierDescription, serviceTierOptions, serviceTierSelectionFromValue, serviceTierSelectionValue } from './serviceTierSelection.js';
+import { resolveModelCapability } from './modelSelection.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
 import { Button } from '../ui/Button.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
@@ -304,8 +305,7 @@ function resolveInitialForm(capabilities: CodexConversationCapabilities, inherit
 }
 
 function findModel(capabilities: CodexConversationCapabilities | null, model: string | null | undefined): CodexTaskPushModelCapability | undefined {
-  if (!model) return undefined;
-  return capabilities?.models.find((candidate) => candidate.id === model || candidate.model === model);
+  return resolveModelCapability(capabilities?.models, model) ?? undefined;
 }
 
 function permissionModeLabel(permissionMode: NativePermissionMode, zh: boolean): string {

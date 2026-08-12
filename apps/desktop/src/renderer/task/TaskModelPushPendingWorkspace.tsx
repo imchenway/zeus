@@ -3,6 +3,7 @@ import type { TaskPushContextAttachmentOption, TaskPushMessageLayout } from '@ze
 import { createInitialSessionState, sessionReducer } from '../session/sessionReducer.js';
 import type {
   CodexConversationCapabilities,
+  CodexTaskPushModelCapability,
   CodexTaskPushCapabilities,
   NativeConversationAttachment,
   NativeConversationChoice,
@@ -11,6 +12,7 @@ import type {
   NativeTurnSettingsSelection,
   StartTaskModelPushRequest,
 } from '../session/sessionTypes.js';
+import { resolveModelCapability } from '../session/modelSelection.js';
 import type { TaskModelPushForm } from './TaskModelPushModal.js';
 import { parseTaskAttachments } from './taskAttachments.js';
 
@@ -79,12 +81,14 @@ export function createTaskModelPushPendingState(input: {
   });
   const attachments = [...currentAttachments, ...input.form.supplementalAttachments];
   const navigationId = `task-push:${input.request.idempotencyKey}`;
-  const choice = createPendingChoice(input.task, navigationId, input.request.model, input.form);
+  const capabilities = conversationCapabilities(input.capabilities);
+  const selectedModel = resolveModelCapability(capabilities.models, input.request.model);
+  const choice = createPendingChoice(input.task, navigationId, input.request.model, input.form, selectedModel);
   return {
     ...input,
     navigationId,
     attachments,
-    capabilities: conversationCapabilities(input.capabilities),
+    capabilities,
     choice,
     session: buildPendingTaskPushSession(choice, input.request, input.prompt, attachments, input.layout),
     deferredMessages: [],
@@ -190,8 +194,10 @@ export function updateTaskModelPushDeferredMessages(pending: TaskModelPushPendin
   };
 }
 
-function createPendingChoice(task: TaskRecord, navigationId: string, model: string, form: TaskModelPushForm): NativeConversationChoice {
+function createPendingChoice(task: TaskRecord, navigationId: string, model: string, form: TaskModelPushForm, capability: CodexTaskPushModelCapability | null): NativeConversationChoice {
   const now = new Date().toISOString();
+  const agentKind = capability?.agentKind === 'pi' ? 'pi' : 'codex';
+  const modelSourceId = capability?.sourceId ?? (agentKind === 'codex' ? 'codex' : null);
   return {
     id: navigationId,
     navigationId,
@@ -204,7 +210,7 @@ function createPendingChoice(task: TaskRecord, navigationId: string, model: stri
     stage: 'connecting',
     stageUpdatedAt: now,
     transportKind: 'codex_native',
-    providerId: 'codex',
+    providerId: agentKind === 'pi' ? `pi:${modelSourceId ?? 'custom'}` : 'codex',
     providerThreadId: null,
     providerModel: model,
     providerState: 'creating',
@@ -219,6 +225,16 @@ function createPendingChoice(task: TaskRecord, navigationId: string, model: stri
     readOnly: false,
     permissionMode: form.permissionMode,
     collaborationMode: form.workMode === 'plan' ? 'plan' : 'default',
+    agent: {
+      kind: agentKind,
+      transport: agentKind === 'pi' ? 'sdk' : 'app_server',
+      supportStatus: agentKind === 'pi' ? 'experimental' : 'verified',
+      capabilitySnapshotId: null,
+    },
+    model: {
+      sourceId: modelSourceId,
+      id: capability?.model ?? model,
+    },
   };
 }
 

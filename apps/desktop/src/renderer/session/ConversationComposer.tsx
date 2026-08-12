@@ -9,6 +9,7 @@ import type { SessionUiLanguage } from './ThreadItemView.js';
 import { autosizeTextarea } from './textareaAutosize.js';
 import { CollaborationModeControl } from './CollaborationModeControl.js';
 import { ConversationComposerAttachments } from './ConversationComposerAttachments.js';
+import { resolveModelCapability } from './modelSelection.js';
 import { useConversationInputResources } from './useConversationInputResources.js';
 import { normalizeServiceTierSelection, selectionFromEffectiveServiceTier, serviceTierDescription, serviceTierOptions, serviceTierSelectionFromValue, serviceTierSelectionValue, serviceTierWireOverride } from './serviceTierSelection.js';
 
@@ -80,7 +81,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
   const initialEffort = resolveComposerEffort(props.capabilities, initialModel, props.runtimeSettings?.effort ?? props.state.providerSettings?.effort);
   const initialServiceTier = selectionFromEffectiveServiceTier(
     props.runtimeSettings && Object.prototype.hasOwnProperty.call(props.runtimeSettings, 'serviceTier') ? props.runtimeSettings.serviceTier : props.state.providerSettings?.serviceTier,
-    props.capabilities?.models.find((model) => model.model === initialModel || model.id === initialModel),
+    resolveModelCapability(props.capabilities?.models, initialModel),
   );
   const fallbackRef = useRef<HTMLTextAreaElement | null>(null);
   const textareaRef = props.textareaRef ?? fallbackRef;
@@ -96,7 +97,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
   const writable = props.readOnly !== true && props.state.conversationState !== 'legacy_readonly';
   const hasDraft = props.state.draft.trim().length > 0 || props.state.attachments.length > 0 || Boolean(props.state.browserSubmission);
   const steerAllowed = canSteerActiveTurn(props.state) && props.readOnly !== true;
-  const selectedCapability = props.capabilities?.models.find((candidate) => candidate.model === selectedModel || candidate.id === selectedModel) ?? null;
+  const selectedCapability = resolveModelCapability(props.capabilities?.models, selectedModel);
   const settingsWritable = props.readOnly !== true && Boolean(selectedCapability);
   const modelOptions = props.capabilities?.models.length
     ? props.capabilities.models.map((capability) => ({
@@ -129,7 +130,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
         : props.state.snapshot?.nextTurnSettings && Object.prototype.hasOwnProperty.call(props.state.snapshot.nextTurnSettings, 'serviceTier')
           ? props.state.snapshot.nextTurnSettings.serviceTier
           : props.state.providerSettings?.serviceTier,
-      props.capabilities?.models.find((model) => model.model === nextModel || model.id === nextModel),
+      resolveModelCapability(props.capabilities?.models, nextModel),
     );
     if (nextModel !== selectedModel) setSelectedModel(nextModel);
     if (nextEffort !== selectedEffort) setSelectedEffort(nextEffort);
@@ -265,7 +266,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
                 options={modelOptions}
                 disabled={!settingsWritable}
                 onChange={(model) => {
-                  const capability = props.capabilities?.models.find((candidate) => candidate.model === model || candidate.id === model);
+                  const capability = resolveModelCapability(props.capabilities?.models, model);
                   const effort = capability?.defaultReasoningEffort ?? capability?.supportedReasoningEfforts[0] ?? '';
                   const normalizedTier = normalizeServiceTierSelection(selectedServiceTier, capability);
                   setSelectedModel(model);
@@ -446,13 +447,13 @@ export function canSteerActiveTurn(state: NativeSessionState): boolean {
 
 function resolveComposerModel(capabilities: CodexConversationCapabilities | null | undefined, providerModel: string | undefined): string {
   const normalized = providerModel?.trim();
-  if (normalized && capabilities?.models.some((candidate) => candidate.model === normalized || candidate.id === normalized))
-    return capabilities.models.find((candidate) => candidate.model === normalized || candidate.id === normalized)?.id ?? normalized;
+  const capability = resolveModelCapability(capabilities?.models, normalized);
+  if (capability) return capability.id;
   return capabilities?.preferredModel ?? capabilities?.models[0]?.id ?? normalized ?? '';
 }
 
 function resolveComposerEffort(capabilities: CodexConversationCapabilities | null | undefined, model: string, providerEffort: string | undefined): string {
-  const capability = capabilities?.models.find((candidate) => candidate.model === model || candidate.id === model);
+  const capability = resolveModelCapability(capabilities?.models, model);
   const normalized = providerEffort?.trim();
   if (normalized && capability?.supportedReasoningEfforts.includes(normalized)) return normalized;
   return capability?.defaultReasoningEffort ?? capability?.supportedReasoningEfforts[0] ?? normalized ?? '';
