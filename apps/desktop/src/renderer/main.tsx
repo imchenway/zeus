@@ -380,6 +380,16 @@ async function hydrateRenderer(): Promise<void> {
   const client = createDashboardClient({
     ...config,
     refreshLocalServerConfig: window.zeus.getLocalServerConfig,
+    ...(window.zeus.loadProjectGitWorkbench
+      ? {
+          projectGitWorkbench: {
+            loadWorkbench: window.zeus.loadProjectGitWorkbench,
+            loadCommit: (projectId, repositoryId, commitHash) => window.zeus!.loadProjectGitCommit({ projectId, repositoryId, commitHash }),
+            loadComparison: (projectId, repositoryId, ref, mode) => window.zeus!.loadProjectGitComparisonDiff({ projectId, repositoryId, ref, mode }),
+            execute: (projectId, repositoryId, action) => window.zeus!.executeProjectGitAction({ projectId, repositoryId, action }),
+          },
+        }
+      : {}),
   });
   const parameters = new URLSearchParams(window.location.search);
   const surface = parameters.get('surface');

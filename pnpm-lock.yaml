@@ -144,6 +144,9 @@ importers:
       '@zeus/diagram-engine':
         specifier: workspace:*
         version: link:../../packages/diagram-engine
+      '@zeus/git-core':
+        specifier: workspace:*
+        version: link:../../packages/git-core
       '@zeus/local-server':
         specifier: workspace:*
         version: link:../../packages/local-server

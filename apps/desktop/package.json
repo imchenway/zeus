@@ -29,6 +29,7 @@
     "@xyflow/react": "^12.11.0",
     "@zeus/ai-runtime": "workspace:*",
     "@zeus/diagram-engine": "workspace:*",
+    "@zeus/git-core": "workspace:*",
     "@zeus/local-server": "workspace:*",
     "@zeus/shared": "workspace:*",
     "@zeus/terminal-core": "workspace:*",

@@ -46,6 +46,7 @@ import { createHomebrewUpdateController, type HomebrewUpdateController } from '.
 import { type ZeusDataLayout } from '@zeus/local-server';
 import { prepareZeusDataRoot } from './zeusDataMigration.js';
 import { ProjectSourceWorkspaceService } from './projectSourceWorkspace.js';
+import { ProjectGitWorkbenchService, type ProjectGitProjectIdentity } from './projectGitWorkbench.js';
 import type { CreateProjectSourceEntryInput, MoveProjectSourceEntryInput, SaveProjectSourceFileInput, TrashProjectSourceEntryInput } from '@zeus/shared';
 
 let mainWindow: BrowserWindow | undefined;
@@ -69,6 +70,7 @@ let systemNotificationBridge: SystemNotificationBridge | undefined;
 let zeusDataRootPath: string | undefined;
 let zeusDataLayout: ZeusDataLayout | undefined;
 let projectSourceWorkspace: ProjectSourceWorkspaceService | undefined;
+let projectGitWorkbench: ProjectGitWorkbenchService | undefined;
 let fatalStartup = false;
 let appShellSettings: MainAppShellSettings = {
   appLanguage: 'zh-CN',
@@ -870,6 +872,10 @@ function conversationResourceOpenServices(requestingWindow: BrowserWindow) {
 }
 
 async function loadProjectRootForSourceWorkspace(projectId: string): Promise<string> {
+  return (await loadProjectIdentity(projectId)).localPath;
+}
+
+async function loadProjectIdentity(projectId: string): Promise<ProjectGitProjectIdentity> {
   if (!localServerRuntime) throw new Error('Zeus local server is not ready.');
   const config = await localServerRuntime.refreshConfig();
   const response = await fetch(`${config.baseUrl}/api/projects/${encodeURIComponent(projectId)}`, {
@@ -881,8 +887,8 @@ async function loadProjectRootForSourceWorkspace(projectId: string): Promise<str
       code: typeof payload.error === 'string' ? payload.error : 'ZEUS_PROJECT_NOT_FOUND',
     });
   }
-  if (typeof payload.localPath !== 'string' || !payload.localPath.trim()) throw new Error('项目目录不可用。');
-  return payload.localPath;
+  if (payload.id !== projectId || typeof payload.name !== 'string' || !payload.name.trim() || typeof payload.localPath !== 'string' || !payload.localPath.trim()) throw new Error('项目身份或项目目录不可用。');
+  return { id: projectId, name: payload.name, localPath: payload.localPath };
 }
 
 function requireProjectSourceWorkspace(event: Electron.IpcMainInvokeEvent): ProjectSourceWorkspaceService {
@@ -891,6 +897,13 @@ function requireProjectSourceWorkspace(event: Electron.IpcMainInvokeEvent): Proj
     throw new Error('项目源码请求来自不受信任窗口或源码服务尚未就绪。');
   }
   return projectSourceWorkspace;
+}
+
+function requireProjectGitWorkbench(event: Electron.IpcMainInvokeEvent): ProjectGitWorkbenchService {
+  const requestingWindow = BrowserWindow.fromWebContents(event.sender);
+  const trustedWindow = requestingWindow && !requestingWindow.isDestroyed() && (windows.has(requestingWindow) || projectGitDiffWindows.has(requestingWindow));
+  if (!trustedWindow || !projectGitWorkbench) throw new Error('项目 Git 请求来自不受信任窗口或 Git 服务尚未就绪。');
+  return projectGitWorkbench;
 }
 
 function auditProjectSourceStructure(action: 'create' | 'move' | 'trash', projectId: string, relativePath: string, targetRelativePath?: string): void {
@@ -936,6 +949,32 @@ function setupIpc(): void {
       ...(typeof candidate.comparisonRef === 'string' && candidate.comparisonRef ? { comparisonRef: candidate.comparisonRef } : {}),
       ...(candidate.comparisonMode === 'working-tree' ? { comparisonMode: 'working-tree' as const } : candidate.comparisonMode === 'current' ? { comparisonMode: 'current' as const } : {}),
     });
+  });
+  ipcMain.handle('zeus:project-git:load-workbench', (event, projectId: unknown) => {
+    if (typeof projectId !== 'string') throw new TypeError('项目 Git 工作台请求缺少项目身份。');
+    return requireProjectGitWorkbench(event).loadWorkbench(projectId);
+  });
+  ipcMain.handle('zeus:project-git:load-commit', (event, input: unknown) => {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw new TypeError('项目 Git 提交请求无效。');
+    const candidate = input as Record<string, unknown>;
+    if (typeof candidate.projectId !== 'string' || typeof candidate.repositoryId !== 'string' || typeof candidate.commitHash !== 'string') throw new TypeError('项目 Git 提交请求身份无效。');
+    return requireProjectGitWorkbench(event).loadCommit(candidate.projectId, candidate.repositoryId, candidate.commitHash);
+  });
+  ipcMain.handle('zeus:project-git:load-comparison', (event, input: unknown) => {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw new TypeError('项目 Git 比较请求无效。');
+    const candidate = input as Record<string, unknown>;
+    if (typeof candidate.projectId !== 'string' || typeof candidate.repositoryId !== 'string' || typeof candidate.ref !== 'string' || (candidate.mode !== 'current' && candidate.mode !== 'working-tree')) {
+      throw new TypeError('项目 Git 比较请求身份无效。');
+    }
+    return requireProjectGitWorkbench(event).loadComparison(candidate.projectId, candidate.repositoryId, candidate.ref, candidate.mode);
+  });
+  ipcMain.handle('zeus:project-git:execute-action', (event, input: unknown) => {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw new TypeError('项目 Git 动作请求无效。');
+    const candidate = input as Record<string, unknown>;
+    if (typeof candidate.projectId !== 'string' || typeof candidate.repositoryId !== 'string' || !candidate.action || typeof candidate.action !== 'object' || Array.isArray(candidate.action)) {
+      throw new TypeError('项目 Git 动作请求身份无效。');
+    }
+    return requireProjectGitWorkbench(event).execute(candidate.projectId, candidate.repositoryId, candidate.action);
   });
   ipcMain.handle('zeus:task-git-delivery:close', (event) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
@@ -1990,6 +2029,7 @@ async function initializeApplication(): Promise<void> {
     loadProjectRoot: loadProjectRootForSourceWorkspace,
     trashItem: (path) => shell.trashItem(path),
   });
+  projectGitWorkbench = new ProjectGitWorkbenchService(loadProjectIdentity);
   if (app.isPackaged) {
     releaseUpdateService = createReleaseUpdateService({
       userDataPath,
