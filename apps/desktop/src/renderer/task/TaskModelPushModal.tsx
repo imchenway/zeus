@@ -48,6 +48,7 @@ export type TaskModelPushPreferences = Pick<TaskModelPushForm, 'model' | 'effort
 
 type TaskPushRepositoryCapability = CodexTaskPushCapabilities['repositories'][number];
 type TaskPushSourceRef = TaskPushRepositoryCapability['sourceRefs'][number];
+type TaskPushContextCapability = CodexTaskPushCapabilities['parentContextOptions'][number] | CodexTaskPushCapabilities['relatedContextOptions'][number];
 
 interface TaskPushCommonSource {
   key: string;
@@ -58,6 +59,22 @@ interface TaskPushCommonSource {
 }
 
 const preferencesKeyPrefix = 'zeus.task-model-push-preferences:v1:';
+
+/** 统一兼容混合版本运行服务缺失的可选上下文集合；模型与仓库等创建必需能力仍保持严格校验。 */
+export function normalizeTaskModelPushCapabilities(capabilities: CodexTaskPushCapabilities): CodexTaskPushCapabilities {
+  const normalizeContext = <T extends TaskPushContextCapability>(option: T): T => ({
+    ...option,
+    conversations: Array.isArray(option.conversations) ? option.conversations : [],
+    attachments: Array.isArray(option.attachments) ? option.attachments : [],
+  });
+  return {
+    ...capabilities,
+    currentAttachmentOptions: Array.isArray(capabilities.currentAttachmentOptions) ? capabilities.currentAttachmentOptions : [],
+    currentConversationOptions: Array.isArray(capabilities.currentConversationOptions) ? capabilities.currentConversationOptions : [],
+    parentContextOptions: Array.isArray(capabilities.parentContextOptions) ? capabilities.parentContextOptions.map(normalizeContext) : [],
+    relatedContextOptions: Array.isArray(capabilities.relatedContextOptions) ? capabilities.relatedContextOptions.map(normalizeContext) : [],
+  };
+}
 
 function taskPushSourceIdentity(source: TaskPushSourceRef): string {
   return JSON.stringify([source.kind, source.kind === 'remote' ? source.group : '', source.label]);

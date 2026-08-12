@@ -14560,7 +14560,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           filterContextAttachments(taskContextInput.relatedContexts),
           supplementalAttachmentInput.promptAttachments.filter((attachment) => includedAttachmentKeys.has(attachment.key)),
         );
-        const taskPushAttachmentKeys = new Set(taskPushLayout.blocks.flatMap((block) => block.attachments.map((attachment) => attachment.key)));
+        const taskPushAttachmentKeys = new Set([...taskPushLayout.blocks.flatMap((block) => block.attachments.map((attachment) => attachment.key)), ...(taskPushLayout.supplementalAttachments ?? []).map((attachment) => attachment.key)]);
         const taskPushAttachments = attachmentInput.attachments.filter((attachment) => attachment.taskPushAttachmentKey && taskPushAttachmentKeys.has(attachment.taskPushAttachmentKey));
         const taskPushPrompt = renderTaskPushLayoutText(taskPushLayout);
         if (selectedModel.agentKind !== 'pi') await assertCodexAccountReady();
