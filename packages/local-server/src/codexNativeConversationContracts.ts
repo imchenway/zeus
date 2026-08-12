@@ -105,6 +105,8 @@ export interface StartTaskConversationInput {
   allowedAttachmentRoots?: string[];
   /** 用户明确触发并等待结果的任务操作直接创建 app-server thread/turn，不进入普通会话并发队列。 */
   bypassConcurrency?: boolean;
+  /** 会话与首条消息持久接受后立即返回，由后台队列启动 Provider；用于先进入会话再展示准备结果。 */
+  deferInitialDispatch?: boolean;
   /** Codex composer 的协作模式，仅用于显式任务推送。 */
   workMode?: 'default' | 'plan';
   /** 新推送链路不再读取任务表中的 allow* 兼容字段。 */

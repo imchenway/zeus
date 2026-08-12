@@ -769,6 +769,11 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     await persist();
     await input.providerWriteLifecycle?.markPrepared(submission.id);
     if (!hasConcurrency(context)) return accepted(submission, 'queued', null, null);
+    if (input.deferInitialDispatch) {
+      // 冲突会话先把稳定身份和用户消息交给界面，Provider 启动失败由会话队列继续呈现和恢复。
+      requestQueueDrain();
+      return accepted(submission, 'queued', null, null);
+    }
     return dispatchSubmission(conversation, submission, input.providerWriteLifecycle);
   }
 
