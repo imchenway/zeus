@@ -45,6 +45,8 @@ export interface AppShellBridgeWindow {
     notifyTaskTableLayoutDirty?: (dirty: boolean) => void;
     resolveTaskTableLayoutCloseRequest?: (proceed: boolean) => void;
     onTaskTableLayoutCloseRequested?: (listener: () => void) => () => void;
+    getRequestingWindowForeground?: () => Promise<{ foreground: boolean }>;
+    onRequestingWindowForegroundChanged?: (listener: (foreground: boolean) => void) => () => void;
     openGraphSource?: (source: GraphSourceOpenRequest) => Promise<GraphSourceOpenResult>;
     openExternalHttpsUrl?: (url: string) => Promise<ExternalHttpsOpenResult>;
     activateRequestingWindow?: () => Promise<RequestingWindowActivationResult>;

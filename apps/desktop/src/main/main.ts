@@ -104,6 +104,17 @@ interface TaskGitDeliveryCurrentContext {
   workspaceId: string | null;
 }
 
+/** macOS 以应用是否活跃为准；其他平台退化为是否存在聚焦窗口。 */
+function isZeusApplicationForeground(): boolean {
+  if (process.platform === 'darwin') return app.isActive();
+  return BrowserWindow.getAllWindows().some((window) => !window.isDestroyed() && window.isFocused());
+}
+
+/** 已读还要求当前 Renderer 所属窗口本身就是 Zeus 的前台窗口。 */
+function isRequestingWindowForeground(window: BrowserWindow | null): boolean {
+  return Boolean(window && !window.isDestroyed() && isZeusApplicationForeground() && window.isFocused());
+}
+
 function isTestDistribution(): boolean {
   if (!app.isPackaged) return false;
   const executablePath = process.execPath;
@@ -601,8 +612,12 @@ async function createWindow(): Promise<void> {
   windows.add(window);
   mainWindow = window;
   window.on('focus', () => {
+    window.webContents.send('zeus:requesting-window-foreground-changed', true);
     const context = mainWindowTaskGitContexts.get(window.id);
     if (context) broadcastTaskGitDeliveryCurrentContext(context);
+  });
+  window.on('blur', () => {
+    window.webContents.send('zeus:requesting-window-foreground-changed', false);
   });
   const sourceWatcherKey = window.webContents.id;
   window.on('closed', () => {
@@ -1426,6 +1441,9 @@ function setupIpc(): void {
     applyLoginItemSettings();
     return { applied: true };
   });
+  ipcMain.handle('zeus:requesting-window-foreground', (event) => ({
+    foreground: isRequestingWindowForeground(BrowserWindow.fromWebContents(event.sender)),
+  }));
   browserHost?.registerIpc();
 }
 
@@ -2174,7 +2192,7 @@ function startSystemNotificationBridge(config: { baseUrl: string; apiToken: stri
         }
         notification.show();
       },
-      shouldNotify: () => !BrowserWindow.getAllWindows().some((window) => !window.isDestroyed() && window.isFocused()),
+      shouldNotify: () => !isZeusApplicationForeground(),
     });
   } catch {
     return undefined;

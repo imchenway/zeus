@@ -86,6 +86,12 @@ contextBridge.exposeInMainWorld('zeus', {
     ipcRenderer.on('zeus:conversation-notification:open', handler);
     return () => ipcRenderer.removeListener('zeus:conversation-notification:open', handler);
   },
+  getRequestingWindowForeground: () => ipcRenderer.invoke('zeus:requesting-window-foreground'),
+  onRequestingWindowForegroundChanged: (listener: (foreground: boolean) => void) => {
+    const handler = (_event: unknown, foreground: boolean) => listener(foreground);
+    ipcRenderer.on('zeus:requesting-window-foreground-changed', handler);
+    return () => ipcRenderer.removeListener('zeus:requesting-window-foreground-changed', handler);
+  },
   hideMenuBarUsage: () => ipcRenderer.invoke('zeus:menu-bar-usage:hide'),
   showMainWindowFromMenuBarUsage: () => ipcRenderer.invoke('zeus:menu-bar-usage:show-main'),
   openMenuBarUsageSettings: (category: 'usage' | 'runtime') => ipcRenderer.invoke('zeus:menu-bar-usage:open-settings', category),
