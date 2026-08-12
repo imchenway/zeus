@@ -157,7 +157,7 @@ function TaskPushMessageContent(
             const missingAttachmentKeys = field.attachmentKeys.filter((key) => !resourcesByKey.has(key) && !pendingImagesByKey.has(key));
             return (
               <section key={field.field} className="session-task-push-field">
-                <strong>{field.label}</strong>
+                <strong>{field.label}：</strong>
                 <ConversationResourceCards resources={resources} language={props.language} onOpenResource={props.onOpenResource} onLoadResourcePreview={props.onLoadResourcePreview} />
                 <ConversationPendingAttachmentImages attachments={pendingImages} language={props.language} onVisibleContentChange={props.onVisibleContentChange} />
                 {missingAttachmentKeys.map((key) => (
@@ -171,7 +171,7 @@ function TaskPushMessageContent(
           })}
           {block.conversationPaths.length > 0 ? (
             <section className="session-task-push-field">
-              <strong>会话文件路径</strong>
+              <strong>{block.contextKind === 'current' ? '当前任务历史会话信息：' : '会话文件路径：'}</strong>
               {block.conversationPaths.map((path) => (
                 <code key={path}>{path}</code>
               ))}
@@ -181,7 +181,7 @@ function TaskPushMessageContent(
       ))}
       {props.layout.supplementalInfo || supplementalAttachments.length > 0 ? (
         <section className="session-task-push-field">
-          <strong>补充信息</strong>
+          <strong>补充信息：</strong>
           <ConversationResourceCards
             resources={supplementalAttachments.flatMap((attachment) => {
               const resource = resourcesByKey.get(attachment.key);

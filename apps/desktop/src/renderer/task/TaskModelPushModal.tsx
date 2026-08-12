@@ -404,7 +404,7 @@ export function TaskPushLayoutPreview(props: { layout: TaskPushMessageLayout; la
           </header>
           {block.fields.map((field) => (
             <section key={field.field} className="task-push-layout-field">
-              <strong>{field.label}</strong>
+              <strong>{field.label}：</strong>
               {field.attachmentKeys.map((key) => {
                 const attachment = attachmentsByKey.get(key);
                 return attachment ? (
@@ -418,7 +418,7 @@ export function TaskPushLayoutPreview(props: { layout: TaskPushMessageLayout; la
           ))}
           {block.conversationPaths.length > 0 ? (
             <section className="task-push-layout-field">
-              <strong>{block.contextKind === 'current' ? '当前任务历史会话信息' : '会话文件路径'}</strong>
+              <strong>{block.contextKind === 'current' ? '当前任务历史会话信息：' : '会话文件路径：'}</strong>
               {block.conversationPaths.map((path) => (
                 <code key={path}>{path}</code>
               ))}
@@ -428,7 +428,7 @@ export function TaskPushLayoutPreview(props: { layout: TaskPushMessageLayout; la
       ))}
       {props.layout.supplementalInfo || supplementalAttachments.length > 0 ? (
         <section className="task-push-layout-field">
-          <strong>补充信息</strong>
+          <strong>补充信息：</strong>
           {supplementalAttachments.map((attachment) => (
             <span key={attachment.key} className="task-push-layout-attachment">
               {attachment.kind === 'image' ? '图片' : '附件'} · {attachment.name}

@@ -13007,11 +13007,23 @@ a {
   gap: 2px;
 }
 
-.macos-ai-app .task-push-layout-field > strong {
+.macos-ai-app .task-push-layout-block > header > strong {
   color: var(--zeus-product-text);
-  font-size: 15px;
+  font-size: 17px;
   font-weight: 650;
-  line-height: 22px;
+  line-height: 24px;
+}
+
+.macos-ai-app .task-push-layout-field {
+  gap: 4px;
+  padding-inline-start: 12px;
+}
+
+.macos-ai-app .task-push-layout-field > strong {
+  color: var(--zeus-product-muted);
+  font-size: 13px;
+  font-weight: 550;
+  line-height: 19px;
 }
 
 .macos-ai-app .task-push-layout-field p {
