@@ -16,6 +16,8 @@ import {
 import {startDesktopBrowserAutomationBridge} from './browserAutomationBridge.js';
 import {
     createExecutionHostControlClient,
+    currentExecutionHostCapabilities,
+    type ExecutionHostCapabilities,
     executionHostProtocolVersion,
     type ExecutionHostRendezvous,
     type ExecutionHostWorkStatus,
@@ -31,6 +33,7 @@ export interface RendererLocalServerConfig {
     state: 'current' | 'draining_previous';
     currentAppVersion: string;
     hostAppVersion: string;
+    capabilities: ExecutionHostCapabilities;
   };
 }
 
@@ -153,11 +156,11 @@ export async function startDesktopLocalServer(options: StartDesktopLocalServerOp
       token: browserBridge.token,
       appVersion: options.appVersion?.trim() || '0.0.0',
     };
-    await client.registerBrowserBridge(registration);
+    let lease = await client.registerBrowserBridge(registration);
     const config: RendererLocalServerConfig = {
       baseUrl: connection.baseUrl,
       apiToken: connection.apiToken,
-      executionHostTransition: buildExecutionHostTransition(currentAppVersion, connection.appVersion),
+      executionHostTransition: buildExecutionHostTransition(currentAppVersion, connection.appVersion, lease.capabilities),
     };
     const executionHost = {
       mode: 'detached' as const,
@@ -177,13 +180,14 @@ export async function startDesktopLocalServer(options: StartDesktopLocalServerOp
 
     const attach = async (next: ExecutionHostRendezvous): Promise<void> => {
       const nextClient = createExecutionHostControlClient(next);
-      await nextClient.registerBrowserBridge(registration);
+      const nextLease = await nextClient.registerBrowserBridge(registration);
       const changed = connectionChanged(next);
       connection = next;
       client = nextClient;
+      lease = nextLease;
       config.baseUrl = next.baseUrl;
       config.apiToken = next.apiToken;
-      config.executionHostTransition = buildExecutionHostTransition(currentAppVersion, next.appVersion);
+      config.executionHostTransition = buildExecutionHostTransition(currentAppVersion, next.appVersion, nextLease.capabilities);
       executionHost.instanceId = next.instanceId;
       executionHost.pid = next.pid;
       executionHost.protocolVersion = next.protocolVersion;
@@ -222,7 +226,8 @@ export async function startDesktopLocalServer(options: StartDesktopLocalServerOp
       const recovering = (async () => {
         if (!discoverCurrent) {
           try {
-            await client.registerBrowserBridge(registration);
+            lease = await client.registerBrowserBridge(registration);
+            config.executionHostTransition = buildExecutionHostTransition(currentAppVersion, connection.appVersion, lease.capabilities);
             return;
           } catch {
             // 当前控制端点已经不可用时，继续通过安全 rendezvous 发现唯一宿主。
@@ -455,7 +460,7 @@ export async function startOwnedDesktopLocalServer(options: StartDesktopLocalSer
   const config: RendererLocalServerConfig = {
     baseUrl: currentServer.baseUrl,
     apiToken,
-    executionHostTransition: buildExecutionHostTransition(options.appVersion?.trim() || '0.0.0', options.appVersion?.trim() || '0.0.0'),
+    executionHostTransition: buildExecutionHostTransition(options.appVersion?.trim() || '0.0.0', options.appVersion?.trim() || '0.0.0', currentExecutionHostCapabilities),
   };
 
   async function launchServer(): Promise<RunningZeusLocalServer> {
@@ -653,18 +658,49 @@ async function connectOrLaunchExecutionHost(options: StartDesktopLocalServerOpti
   throw new Error('Zeus execution-host did not become ready within 20 seconds.');
 }
 
-function buildExecutionHostTransition(currentAppVersion: string, hostAppVersion: string): RendererLocalServerConfig['executionHostTransition'] {
+function buildExecutionHostTransition(currentAppVersion: string, hostAppVersion: string, reportedCapabilities?: ExecutionHostCapabilities): RendererLocalServerConfig['executionHostTransition'] {
   return {
     state: currentAppVersion === hostAppVersion ? 'current' : 'draining_previous',
     currentAppVersion,
     hostAppVersion,
+    capabilities: resolveExecutionHostCapabilities(hostAppVersion, reportedCapabilities),
   };
+}
+
+function resolveExecutionHostCapabilities(hostAppVersion: string, reported?: ExecutionHostCapabilities): ExecutionHostCapabilities {
+  if (reported && Array.isArray(reported.nativeConversationSources)) {
+    const supported = new Set(currentExecutionHostCapabilities.nativeConversationSources);
+    return {
+      nativeConversationSources: reported.nativeConversationSources.filter((source) => supported.has(source)),
+    };
+  }
+
+  // 0.2.37 首次完整交付 code_review/conflict_resolution 主链；更旧宿主缺少能力表时继续 fail-closed。
+  const legacySources: ExecutionHostCapabilities['nativeConversationSources'] = ['task_push'];
+  if (isVersionAtLeast(hostAppVersion, [0, 2, 37])) legacySources.push('code_review', 'conflict_resolution');
+  return { nativeConversationSources: legacySources };
+}
+
+function isVersionAtLeast(value: string, minimum: readonly [number, number, number]): boolean {
+  const match = /^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/.exec(value.trim());
+  if (!match) return false;
+  const actual = [Number(match[1]), Number(match[2]), Number(match[3])] as const;
+  for (let index = 0; index < minimum.length; index += 1) {
+    if (actual[index]! > minimum[index]!) return true;
+    if (actual[index]! < minimum[index]!) return false;
+  }
+  return true;
 }
 
 function cloneRendererLocalServerConfig(config: RendererLocalServerConfig): RendererLocalServerConfig {
   return {
     ...config,
-    executionHostTransition: { ...config.executionHostTransition },
+    executionHostTransition: {
+      ...config.executionHostTransition,
+      capabilities: {
+        nativeConversationSources: [...config.executionHostTransition.capabilities.nativeConversationSources],
+      },
+    },
   };
 }
 

@@ -7,6 +7,16 @@ import { createLegacyFlatZeusDataLayout, createZeusDataLayout } from '@zeus/loca
 export const executionHostProtocolVersion = 1;
 export const executionHostRendezvousFileName = 'rendezvous.json';
 
+export type ExecutionHostNativeConversationSource = 'task_push' | 'code_review' | 'conflict_resolution';
+
+export interface ExecutionHostCapabilities {
+  nativeConversationSources: ExecutionHostNativeConversationSource[];
+}
+
+export const currentExecutionHostCapabilities: ExecutionHostCapabilities = {
+  nativeConversationSources: ['task_push', 'code_review', 'conflict_resolution'],
+};
+
 export interface ExecutionHostBootstrap {
   protocolVersion: number;
   requestedInstanceId: string;
@@ -75,6 +85,8 @@ export interface ExecutionHostControlStatus {
   pid: number;
   appVersion: string;
   startedAt: string;
+  /** 旧宿主没有该字段时由 Main 使用已验证的发布边界兼容收敛。 */
+  capabilities?: ExecutionHostCapabilities;
   uiLease: {
     connected: boolean;
     leaseId: string | null;
@@ -90,6 +102,8 @@ export interface ExecutionHostLeaseStatus {
   connected: boolean;
   leaseId: string | null;
   lastHeartbeatAt: string | null;
+  /** 只表达宿主真实声明的业务能力，不用 App 版本差异代替。 */
+  capabilities?: ExecutionHostCapabilities;
 }
 
 export interface ExecutionHostBrowserBridgeRegistration {

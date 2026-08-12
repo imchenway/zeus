@@ -799,6 +799,12 @@ function browserNativeConversationStartStorage(): NativeConversationStartStorage
   }
 }
 
+function executionHostSupportsConversationSource(transition: ExecutionHostTransition | undefined, source: 'task_push' | 'code_review' | 'conflict_resolution'): boolean {
+  // 非 Electron 渲染面没有宿主交接事实时保留既有行为；正式应用始终由 Main 传入已复验能力。
+  if (!transition) return true;
+  return transition.capabilities.nativeConversationSources.includes(source);
+}
+
 export function SessionMobileSourceTrigger(props: { language: AppLanguage; open: boolean; onOpen: () => void; triggerRef?: RefObject<HTMLButtonElement | null> }) {
   return (
     <button ref={props.triggerRef} type="button" className="session-mobile-source-trigger" aria-expanded={props.open} aria-controls="session-project-conversation-list" onClick={props.onOpen}>
@@ -7417,7 +7423,7 @@ export function App(props: {
   }, [activeProjectId]);
   useEffect(() => {
     const client = props.nativeConversationClient;
-    if (!client || props.executionHostTransition?.state !== 'current') return;
+    if (!client || !executionHostSupportsConversationSource(props.executionHostTransition, 'code_review')) return;
     let disposed = false;
     for (const task of snapshot.tasks) {
       const request = nativeConversationStartEnvelopeManager.pending({ id: task.id, projectId: task.projectId });
@@ -7454,10 +7460,10 @@ export function App(props: {
     return () => {
       disposed = true;
     };
-  }, [nativeConversationChoiceLoadCoordinator, nativeConversationStartEnvelopeManager, props.executionHostTransition?.state, props.nativeConversationClient, snapshot.tasks]);
+  }, [nativeConversationChoiceLoadCoordinator, nativeConversationStartEnvelopeManager, props.executionHostTransition, props.nativeConversationClient, snapshot.tasks]);
   useEffect(() => {
     const client = props.nativeConversationClient;
-    if (!client || props.executionHostTransition?.state !== 'current') return;
+    if (!client || !executionHostSupportsConversationSource(props.executionHostTransition, 'conflict_resolution')) return;
     let disposed = false;
     for (const pending of listPendingConflictAiStarts()) {
       if (recoveringConflictAiStartsRef.current.has(pending.idempotencyKey)) continue;
@@ -7486,7 +7492,7 @@ export function App(props: {
     return () => {
       disposed = true;
     };
-  }, [props.executionHostTransition?.state, props.nativeConversationClient, snapshot.tasks]);
+  }, [props.executionHostTransition, props.nativeConversationClient, snapshot.tasks]);
   // 图谱视图必须同时匹配当前项目 id 与响应元数据，避免切换项目后把 Zeus 或其他项目图谱挂到当前代码页。
   const activeGraphView = graphView && graphProjectId === activeProjectId && isProjectGraphViewForProject(graphView, selectedProject, { requireProjectIdentity: orderedProjects.length > 1 }) ? graphView : undefined;
   useEffect(() => {
@@ -9479,7 +9485,7 @@ export function App(props: {
       return false;
     }
     setNativeConversationChoiceTaskStates((current) => ({ ...current, [input.task.id]: beginNativeConversationChoiceTaskLoad(current[input.task.id]) }));
-    if (input.source === 'code_review' && props.executionHostTransition?.state === 'draining_previous') {
+    if (input.source === 'code_review' && !executionHostSupportsConversationSource(props.executionHostTransition, 'code_review')) {
       try {
         const request = nativeConversationStartEnvelopeManager.prepare(input);
         return {
@@ -13057,7 +13063,7 @@ export function App(props: {
                 currentConversationWorkspaceId={selectedNativeConversation?.taskId === taskGitMergeTaskId ? selectedNativeConversation.workspaceId : null}
                 refreshRevision={taskGitDeliveryRevision}
                 client={props.nativeConversationClient ?? null}
-                executionReady={props.executionHostTransition?.state !== 'draining_previous'}
+                executionReady={executionHostSupportsConversationSource(props.executionHostTransition, 'conflict_resolution')}
                 onQueueConflictAiStart={persistPendingConflictAiStart}
                 onChanged={() =>
                   taskGitMergeTaskId
