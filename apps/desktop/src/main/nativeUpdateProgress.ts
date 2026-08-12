@@ -17,7 +17,7 @@ export interface NativeUpdateProgressHost {
   show(): void;
   hide(): void;
   update(state: NativeUpdateProgressState): void;
-  relaunchAfterProcessExit(input: { pid: number; bundleId: string }): void;
+  relaunchAfterProcessExit(input: { pid: number; appPath: string; bundleId: string; version: string }): void;
   close(): void;
   onAction(listener: (action: NativeUpdateProgressAction) => void): () => void;
   onExit(listener: () => void): () => void;

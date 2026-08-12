@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { createReadStream, constants as fsConstants } from 'node:fs';
 import { access, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { isAbsolute, relative, resolve } from 'node:path';
+import { isAbsolute, join, relative, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import type { DesktopReleaseUpdateStatus } from './releaseUpdateService.js';
 
@@ -25,14 +25,21 @@ export interface HomebrewPreparedUpdate {
   cachePath: string;
 }
 
+export interface HomebrewInstalledUpdate {
+  appPath: string;
+  bundleId: string;
+  version: string;
+}
+
 export interface HomebrewUpdateService {
   prepare(update: DesktopReleaseUpdateStatus, onProgress: (progress: HomebrewUpdateProgress) => void): Promise<HomebrewPreparedUpdate>;
-  install(prepared: HomebrewPreparedUpdate, onProgress: (progress: HomebrewUpdateProgress) => void): Promise<void>;
+  install(prepared: HomebrewPreparedUpdate, onProgress: (progress: HomebrewUpdateProgress) => void): Promise<HomebrewInstalledUpdate>;
 }
 
 interface CreateHomebrewUpdateServiceOptions {
   currentAppPath: string;
   currentAppVersion: string;
+  bundleId: string;
   testMode: boolean;
 }
 
@@ -92,8 +99,42 @@ export function createHomebrewUpdateService(options: CreateHomebrewUpdateService
       if (!options.testMode && installed.appTarget !== resolve(options.currentAppPath)) {
         throw new Error('Homebrew 安装后的 Zeus App 位置与当前日常正式应用不一致。');
       }
+      if (!installed.appTarget) throw new Error('Homebrew 安装后没有返回 Zeus App 的精确位置。');
+      return inspectInstalledApp(installed.appTarget, options.bundleId, prepared.update.latestVersion);
     },
   };
+}
+
+/** 安装登记不能代替磁盘事实；退出旧进程前必须复验将要重启的真实 App。 */
+async function inspectInstalledApp(appPath: string, expectedBundleId: string, expectedVersion: string): Promise<HomebrewInstalledUpdate> {
+  const resolvedAppPath = resolve(appPath);
+  const appStat = await stat(resolvedAppPath).catch(() => null);
+  if (!appStat?.isDirectory()) throw new Error('Homebrew 安装后的 Zeus App 不存在。');
+  const infoPlistPath = join(resolvedAppPath, 'Contents', 'Info.plist');
+  const [bundleId, shortVersion, bundleVersion] = await Promise.all([readPlistString(infoPlistPath, 'CFBundleIdentifier'), readPlistString(infoPlistPath, 'CFBundleShortVersionString'), readPlistString(infoPlistPath, 'CFBundleVersion')]);
+  if (bundleId !== expectedBundleId) {
+    throw new Error(`Homebrew 安装后的 Zeus App 身份不一致：expected=${expectedBundleId} actual=${bundleId}`);
+  }
+  if (shortVersion !== expectedVersion || bundleVersion !== expectedVersion) {
+    throw new Error(`Homebrew 安装后的 Zeus App 版本不一致：expected=${expectedVersion} actual=${shortVersion} (${bundleVersion})`);
+  }
+  return { appPath: resolvedAppPath, bundleId, version: expectedVersion };
+}
+
+async function readPlistString(infoPlistPath: string, key: string): Promise<string> {
+  try {
+    const { stdout } = await execFile('/usr/bin/plutil', ['-extract', key, 'raw', '-o', '-', infoPlistPath], {
+      encoding: 'utf8',
+      timeout: 10_000,
+      maxBuffer: 64 * 1024,
+    });
+    const value = stdout.trim();
+    if (!value) throw new Error('值为空');
+    return value;
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`无法读取 Homebrew 安装后的 Zeus App 身份字段 ${key}：${detail}`);
+  }
 }
 
 function assertUpdateCanUseHomebrew(update: DesktopReleaseUpdateStatus, options: CreateHomebrewUpdateServiceOptions): void {

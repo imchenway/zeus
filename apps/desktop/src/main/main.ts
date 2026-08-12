@@ -1923,10 +1923,10 @@ async function initializeApplication(): Promise<void> {
       homebrew: createHomebrewUpdateService({
         currentAppPath: currentAppBundlePath(),
         currentAppVersion: app.getVersion(),
+        bundleId: isTestDistribution() ? 'dev.hypha.zeus.test' : 'dev.hypha.zeus',
         testMode: isTestDistribution(),
       }),
       currentVersion: app.getVersion(),
-      bundleId: isTestDistribution() ? 'dev.hypha.zeus.test' : 'dev.hypha.zeus',
       canInstall: () => {
         if (taskTableLayoutDirtyWindowIds.size > 0 || [...unsavedChangeKeysByWindow.values()].some((keys) => keys.size > 0)) {
           throw new Error('请先保存或放弃尚未保存的界面更改，再安装更新。');
