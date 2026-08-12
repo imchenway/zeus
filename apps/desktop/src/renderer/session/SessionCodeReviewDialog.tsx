@@ -1,6 +1,6 @@
 import { type FormEvent, type KeyboardEvent, useEffect, useMemo, useState } from 'react';
 import type { CodexConversationCapabilities, CodexTaskPushModelCapability, NativeConversationChoice, NativePermissionMode, NativeServiceTierSelection, NativeSessionState, TaskWorkspaceSnapshot } from './sessionTypes.js';
-import { normalizeServiceTierSelection, serviceTierDescription, serviceTierOptions, serviceTierSelectionFromValue, serviceTierSelectionValue } from './serviceTierSelection.js';
+import { normalizeServiceTierSelection, serviceTierOptions, serviceTierSelectionFromValue, serviceTierSelectionValue } from './serviceTierSelection.js';
 import { resolveModelCapability } from './modelSelection.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
 import { Button } from '../ui/Button.js';
@@ -243,12 +243,12 @@ export function SessionCodeReviewDialog(props: SessionCodeReviewDialogProps) {
               </label>
             ) : null}
             <label>
-              <span>{zh ? '服务档位' : 'Service tier'}</span>
+              <span>{zh ? '速度' : 'Speed'}</span>
               <ZeusSelect
                 size="regular"
-                ariaLabel={zh ? '代码审查服务档位' : 'Code review service tier'}
-                value={serviceTierSelectionValue(form?.serviceTierSelection ?? { type: 'follow' })}
-                options={serviceTierOptions(selectedModel, props.language, true)}
+                ariaLabel={zh ? '代码审查速度' : 'Code review speed'}
+                value={serviceTierSelectionValue(form?.serviceTierSelection ?? { type: 'standard' })}
+                options={serviceTierOptions(selectedModel, props.language)}
                 onChange={(value) =>
                   setForm((current) =>
                     current
@@ -266,15 +266,6 @@ export function SessionCodeReviewDialog(props: SessionCodeReviewDialogProps) {
             </label>
           </section>
 
-          {form && selectedModel ? (
-            <p className="session-code-review-tier-note" role={form.serviceTierDowngraded ? 'status' : undefined}>
-              {form.serviceTierDowngraded
-                ? zh
-                  ? '所选模型不支持原服务档位，已切换为标准档位。'
-                  : 'The selected model does not support the inherited service tier, so Standard is selected.'
-                : serviceTierDescription(form.serviceTierSelection, selectedModel, props.language)}
-            </p>
-          ) : null}
           {status === 'loading' ? <p className="session-code-review-message">{zh ? '正在读取当前模型配置…' : 'Loading the current model configuration…'}</p> : null}
           {status === 'preparing' ? (
             <p className="session-code-review-message" role="status">
@@ -324,7 +315,7 @@ function resolveInitialForm(capabilities: CodexConversationCapabilities, inherit
   const selectedModel = findModel(capabilities, inheritedModel) ?? findModel(capabilities, capabilities.preferredModel) ?? capabilities.models[0];
   if (!selectedModel) throw new Error('No review model is available.');
   const effort = selectedModel.supportedReasoningEfforts.includes(inheritedEffort) ? inheritedEffort : (selectedModel.defaultReasoningEffort ?? selectedModel.supportedReasoningEfforts[0] ?? '');
-  const inheritedSelection: NativeServiceTierSelection = inheritedServiceTier === undefined ? { type: 'follow' } : inheritedServiceTier ? { type: 'catalog', id: inheritedServiceTier } : { type: 'standard' };
+  const inheritedSelection: NativeServiceTierSelection = inheritedServiceTier ? { type: 'catalog', id: inheritedServiceTier } : { type: 'standard' };
   const normalizedTier = normalizeServiceTierSelection(inheritedSelection, selectedModel);
   return {
     model: selectedModel.id,

@@ -32,7 +32,8 @@ export function readConversationRuntimePreferences(storage: Pick<Storage, 'getIt
     return {
       ...(parsed.model ? { model: parsed.model } : {}),
       ...(parsed.effort ? { effort: parsed.effort } : {}),
-      serviceTier: parsed.serviceTier,
+      // 历史“跟随 Codex”偏好迁移为明确的标准速度，后续只保存标准或 Fast。
+      serviceTier: parsed.serviceTier.type === 'follow' ? { type: 'standard' } : parsed.serviceTier,
       permissionMode: parsed.permissionMode,
       collaborationMode: parsed.collaborationMode,
       ...(parsed.workspaceMode === 'direct' || parsed.workspaceMode === 'worktree' ? { workspaceMode: parsed.workspaceMode } : {}),
@@ -44,7 +45,7 @@ export function readConversationRuntimePreferences(storage: Pick<Storage, 'getIt
 
 export function writeConversationRuntimePreferences(storage: Pick<Storage, 'setItem'> | undefined, projectId: string, kind: ConversationRuntimePreferenceKind, preferences: ConversationRuntimePreferences): void {
   if (!storage || !projectId) return;
-  storage.setItem(preferenceKey(projectId, kind), JSON.stringify(preferences));
+  storage.setItem(preferenceKey(projectId, kind), JSON.stringify({ ...preferences, serviceTier: preferences.serviceTier.type === 'follow' ? { type: 'standard' } : preferences.serviceTier }));
 }
 
 function preferenceKey(projectId: string, kind: ConversationRuntimePreferenceKind): string {

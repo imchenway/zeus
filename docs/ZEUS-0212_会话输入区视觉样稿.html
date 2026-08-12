@@ -278,7 +278,6 @@
       }
       .icon-btn.fast {
         color: var(--orange);
-        background: var(--orange-soft);
       }
       .icon-btn.context {
         color: #737a84;
@@ -289,11 +288,9 @@
       }
       .icon-btn.access {
         color: var(--red);
-        background: var(--red-soft);
       }
       .icon-btn.plan {
-        color: #777c83;
-        background: #f1f2f2;
+        color: var(--orange);
       }
       .model-btn {
         max-width: 280px;
@@ -500,10 +497,10 @@
                       <path d="M9.2 12.1 11 14l4-4.2" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" />
                     </svg>
                   </button>
-                  <button class="icon-btn plan" aria-label="计划模式关闭">
+                  <button class="icon-btn plan" aria-label="计划模式开启">
                     <svg viewBox="0 0 24 24" fill="none">
-                      <path d="M8.8 17h6.4M9.6 20h4.8M8.4 14.6C6.9 13.5 6 11.8 6 9.9A6 6 0 0 1 18 10c0 1.9-.9 3.6-2.4 4.6-.6.4-.8.8-.8 1.4H9.2c0-.6-.2-1-.8-1.4Z" stroke-width="1.7" stroke-linecap="round" />
-                    </svg>
+                      <path d="M8.8 17h6.4M9.6 20h4.8M8.4 14.6C6.9 13.5 6 11.8 6 9.9A6 6 0 0 1 18 10c0 1.9-.9 3.6-2.4 4.6-.6.4-.8.8-.8 1.4H9.2c0-.6-.2-1-.8-1.4Z" stroke-width="1.7" stroke-linecap="round" /></svg
+                    >✦
                   </button>
                 </span>
                 <span class="spacer"></span>
@@ -523,7 +520,7 @@
                 <button class="stop" aria-label="停止生成"></button>
               </div>
             </div>
-            <div class="tooltip-row" aria-label="图标状态说明"><span>◯ 上下文待首轮更新</span><span>⚡ Fast</span><span>🛡 完全访问</span><span>💡 计划关闭</span></div>
+            <div class="tooltip-row" aria-label="图标状态说明"><span>◯ 上下文待首轮更新</span><span>⚡ Fast</span><span>🛡 完全访问</span><span>💡 计划开启</span></div>
           </div>
 
           <div class="annotation">
@@ -533,9 +530,8 @@
               <div class="decision"><b>后续消息</b><span>排在输入框上方；“引导”跟着具体消息走。</span></div>
               <div class="decision"><b>下一轮配置</b><span>速度、权限、计划用颜色和图形表达当前状态。</span></div>
               <div class="decision"><b>上下文占用</b><span>圆环位于速度左侧；无数据时保留灰色空环，悬停显示真实细节。</span></div>
-              <div class="decision"><b>实际档位</b><span>正常时静默；只有降级、不同步等异常才直接提示。</span></div>
+              <div class="decision"><b>速度切换</b><span>点击闪电直接切换标准 / Fast，不打开菜单，也不显示底部状态行。</span></div>
             </div>
-            <div class="abnormal"><b>异常示例</b><span>请求 Fast，当前实际为 Standard。正常情况下这一行完全不出现。</span></div>
           </div>
         </article>
       </section>

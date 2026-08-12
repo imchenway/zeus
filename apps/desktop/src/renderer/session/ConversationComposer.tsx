@@ -1,7 +1,6 @@
 import { type KeyboardEvent, type RefObject, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ChatCircleIcon as ChatCircle } from '@phosphor-icons/react/dist/csr/ChatCircle';
 import { GlobeSimpleIcon as GlobeSimple } from '@phosphor-icons/react/dist/csr/GlobeSimple';
-import { LightningIcon as Lightning } from '@phosphor-icons/react/dist/csr/Lightning';
 import type { ZeusBrowserPreparedSubmission } from '@zeus/shared';
 import type { CodexConversationCapabilities, NativeCollaborationMode, NativeConversationAttachment, NativePermissionMode, NativeServiceTierSelection, NativeSessionState, NativeTurnSettingsSelection } from './sessionTypes.js';
 import { ComposerDropdown } from './ComposerDropdown.js';
@@ -11,9 +10,10 @@ import { autosizeTextarea } from './textareaAutosize.js';
 import { CollaborationModeControl } from './CollaborationModeControl.js';
 import { ConversationComposerAttachments } from './ConversationComposerAttachments.js';
 import { ContextUsageIndicator } from './ContextUsageIndicator.js';
+import { ServiceTierToggle } from './ServiceTierToggle.js';
 import { resolveModelCapability } from './modelSelection.js';
 import { useConversationInputResources } from './useConversationInputResources.js';
-import { normalizeServiceTierSelection, selectionFromEffectiveServiceTier, serviceTierOptions, serviceTierSelectionFromValue, serviceTierSelectionValue, serviceTierWireOverride } from './serviceTierSelection.js';
+import { normalizeServiceTierSelection, selectionFromEffectiveServiceTier, serviceTierSelectionValue, serviceTierWireOverride } from './serviceTierSelection.js';
 
 export type ComposerKeyIntent = 'submit' | 'newline' | 'escape' | 'ignore';
 export interface ComposerRuntimeSettings {
@@ -55,7 +55,6 @@ const labels = {
     interruptConfirm: '再次按 Escape 停止当前响应',
     model: '模型',
     effort: '推理强度',
-    serviceTier: '服务档位',
     unsynced: '未同步',
   },
   'en-US': {
@@ -68,7 +67,6 @@ const labels = {
     interruptConfirm: 'Press Escape again to stop the current response',
     model: 'Model',
     effort: 'Reasoning effort',
-    serviceTier: 'Service tier',
     unsynced: 'Not synced',
   },
 } as const;
@@ -88,7 +86,6 @@ export function ConversationComposer(props: ConversationComposerProps) {
   const [selectedModel, setSelectedModel] = useState(initialModel);
   const [selectedEffort, setSelectedEffort] = useState(initialEffort);
   const [selectedServiceTier, setSelectedServiceTier] = useState<NativeServiceTierSelection>(initialServiceTier);
-  const [serviceTierDowngraded, setServiceTierDowngraded] = useState(false);
   const active = props.state.conversationState === 'active_prework' || props.state.conversationState === 'active_final_answer';
   const busy = Boolean(props.state.busyOperation);
   const writable = props.readOnly !== true && props.state.conversationState !== 'legacy_readonly';
@@ -104,9 +101,6 @@ export function ConversationComposer(props: ConversationComposerProps) {
     : [{ value: selectedModel, label: selectedModel || copy.unsynced }];
   const selectedModelLabel = modelOptions.find((option) => option.value === selectedModel)?.label ?? selectedModel ?? copy.unsynced;
   const effortOptions = selectedCapability?.supportedReasoningEfforts.map((effort) => ({ value: effort, label: effort })) ?? [];
-  const tierOptions = serviceTierOptions(selectedCapability, props.language, false);
-  const selectedServiceTierValue = serviceTierSelectionValue(selectedServiceTier);
-  const selectedServiceTierLabel = tierOptions.find((option) => option.value === selectedServiceTierValue)?.label ?? selectedServiceTierValue;
   const inputResources = useConversationInputResources({
     textareaRef,
     text: props.state.draft,
@@ -119,8 +113,6 @@ export function ConversationComposer(props: ConversationComposerProps) {
     onRemoveAttachment: (attachment) => props.onRemoveAttachment?.(attachment),
     onError: setInputResourceError,
   });
-  const serviceTierStatus = serviceTierStatusMessage(serviceTierDowngraded, selectedServiceTier, props.state.providerSettings, selectedCapability, props.language);
-
   useEffect(() => {
     const nextModel = resolveComposerModel(props.capabilities, props.runtimeSettings?.model ?? props.state.snapshot?.nextTurnSettings?.model ?? props.state.providerSettings?.model);
     const nextEffort = resolveComposerEffort(props.capabilities, nextModel, props.runtimeSettings?.effort ?? props.state.snapshot?.nextTurnSettings?.effort ?? props.state.providerSettings?.effort);
@@ -287,19 +279,13 @@ export function ConversationComposer(props: ConversationComposerProps) {
           <span className="session-composer-trailing-actions">
             <span className="session-composer-runtime-settings">
               <ContextUsageIndicator usage={props.state.tokenUsage} language={props.language} />
-              <ComposerDropdown
-                label={copy.serviceTier}
-                triggerLabel={`${copy.serviceTier}：${selectedServiceTierLabel}`}
-                triggerIcon={<Lightning weight={selectedServiceTier.type === 'catalog' ? 'fill' : 'regular'} />}
-                hideSelectedLabel
-                className="session-composer-service-tier-dropdown"
-                value={selectedServiceTierValue}
-                options={tierOptions}
+              <ServiceTierToggle
+                language={props.language}
+                model={selectedCapability}
+                value={selectedServiceTier}
                 disabled={!settingsWritable}
-                onChange={(value) => {
-                  const selection = serviceTierSelectionFromValue(value);
+                onChange={(selection) => {
                   setSelectedServiceTier(selection);
-                  setServiceTierDowngraded(false);
                   props.onRuntimeSettingsChange?.({ model: selectedModel, effort: selectedEffort, ...serviceTierWireOverride(selection), permissionMode: props.permissionMode, collaborationMode: props.collaborationMode });
                 }}
               />
@@ -317,7 +303,6 @@ export function ConversationComposer(props: ConversationComposerProps) {
                   setSelectedModel(model);
                   setSelectedEffort(effort);
                   setSelectedServiceTier(normalizedTier.selection);
-                  setServiceTierDowngraded(normalizedTier.downgraded);
                   props.onRuntimeSettingsChange?.({ model, agentKind: capability?.agentKind, effort, ...serviceTierWireOverride(normalizedTier.selection), permissionMode: props.permissionMode, collaborationMode: props.collaborationMode });
                 }}
               />
@@ -354,43 +339,9 @@ export function ConversationComposer(props: ConversationComposerProps) {
             </span>
           </span>
         </div>
-        {serviceTierStatus ? (
-          <small className="session-service-tier-note" role="status">
-            {serviceTierStatus}
-          </small>
-        ) : null}
       </div>
     </section>
   );
-}
-
-function serviceTierStatusMessage(
-  downgraded: boolean,
-  selection: NativeServiceTierSelection,
-  settings: NativeSessionState['providerSettings'],
-  model: CodexConversationCapabilities['models'][number] | null,
-  language: SessionUiLanguage,
-): string | null {
-  if (downgraded) {
-    return language === 'zh-CN' ? '所选模型不支持原 Fast 档位，已保留模型并切换为标准。' : 'The selected model does not support the previous Fast tier. The model was kept and Standard was selected.';
-  }
-  if (!settings || !Object.prototype.hasOwnProperty.call(settings, 'serviceTier')) {
-    return language === 'zh-CN' ? '服务档位尚未与运行时同步。' : 'The service tier has not synced with the runtime yet.';
-  }
-  if (selection.type === 'follow') return null;
-  const requested = selection.type === 'standard' ? null : selection.id;
-  const effective = !settings.serviceTier || settings.serviceTier === 'default' ? null : settings.serviceTier;
-  if (requested === effective) return null;
-  const requestedLabel = selection.type === 'standard' ? (language === 'zh-CN' ? '标准' : 'Standard') : (model?.serviceTiers.find((tier) => tier.id === selection.id)?.name ?? selection.id);
-  return language === 'zh-CN' ? `请求 ${requestedLabel}，${effectiveServiceTierLabel(settings, model, language)}。` : `Requested ${requestedLabel}; ${effectiveServiceTierLabel(settings, model, language)}.`;
-}
-
-function effectiveServiceTierLabel(settings: NativeSessionState['providerSettings'], model: CodexConversationCapabilities['models'][number] | null, language: SessionUiLanguage): string {
-  const prefix = language === 'zh-CN' ? '实际' : 'Effective';
-  if (!settings || !Object.prototype.hasOwnProperty.call(settings, 'serviceTier')) return `${prefix}：${language === 'zh-CN' ? '未同步' : 'Not synced'}`;
-  const serviceTier = settings.serviceTier;
-  if (!serviceTier || serviceTier === 'default') return `${prefix}：${language === 'zh-CN' ? '标准' : 'Standard'}`;
-  return `${prefix}：${model?.serviceTiers.find((tier) => tier.id === serviceTier)?.name ?? serviceTier}`;
 }
 
 function BrowserSubmissionAttachment(props: { submission: ZeusBrowserPreparedSubmission; language: SessionUiLanguage; disabled: boolean; onRemove?: () => void }) {

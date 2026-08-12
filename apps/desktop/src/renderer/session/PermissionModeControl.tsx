@@ -74,7 +74,7 @@ export function PermissionModeControl(props: PermissionModeControlProps) {
     { value: 'full-access', label: copy.fullAccess },
   ] as const;
   const selectedLabel = options.find((option) => option.value === props.value)?.label ?? copy.label;
-  const triggerIcon = props.value === 'read-only' ? <Eye weight="regular" /> : props.value === 'full-access' ? <WarningCircle weight="fill" /> : <ShieldCheck weight="regular" />;
+  const triggerIcon = props.value === 'read-only' ? <Eye weight="regular" /> : <ShieldCheck weight={props.value === 'full-access' ? 'fill' : 'regular'} />;
 
   function closeConfirmation(next?: NativePermissionMode): void {
     setConfirmingFullAccess(false);

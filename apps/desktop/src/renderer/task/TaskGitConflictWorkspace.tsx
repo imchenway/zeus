@@ -82,7 +82,7 @@ export function TaskGitConflictWorkspace(props: {
     const current = readConversationRuntimePreferences(browserStorage(), props.integration.projectId, 'conflict_resolution');
     writeConversationRuntimePreferences(browserStorage(), props.integration.projectId, 'conflict_resolution', {
       ...(current ?? {}),
-      serviceTier: current?.serviceTier ?? { type: 'follow' },
+      serviceTier: current?.serviceTier ?? { type: 'standard' },
       permissionMode: aiPermissionMode,
       collaborationMode: current?.collaborationMode ?? 'default',
     });

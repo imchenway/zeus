@@ -8,7 +8,10 @@ export function CollaborationModeControl(props: { language: SessionUiLanguage; v
   const title = props.language === 'zh-CN' ? `计划模式：${plan ? '开启' : '关闭'}；${action}` : `Plan mode: ${plan ? 'on' : 'off'}; ${action}`;
   return (
     <button type="button" className="session-collaboration-mode" data-active={plan || undefined} aria-pressed={plan} aria-label={action} title={title} disabled={props.disabled} onClick={() => void props.onChange(plan ? 'default' : 'plan')}>
-      <Lightbulb aria-hidden="true" weight={plan ? 'fill' : 'regular'} />
+      <span className="session-collaboration-mode-icon" aria-hidden="true">
+        <Lightbulb weight={plan ? 'fill' : 'regular'} />
+        {plan ? <span className="session-collaboration-mode-spark" /> : null}
+      </span>
     </button>
   );
 }
