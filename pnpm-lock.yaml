@@ -150,6 +150,9 @@ importers:
       '@zeus/shared':
         specifier: workspace:*
         version: link:../../packages/shared
+      '@zeus/terminal-core':
+        specifier: workspace:*
+        version: link:../../packages/terminal-core
       codemirror:
         specifier: ^6.0.2
         version: 6.0.2

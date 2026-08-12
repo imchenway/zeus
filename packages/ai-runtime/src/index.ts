@@ -19,6 +19,7 @@ export * from './piRpcProtocol.js';
 export * from './modelConnectionCatalog.js';
 export * from './piSdkRuntimeDriver.js';
 export { expandCliSearchPath } from './cliSearchPath.js';
+export { projectTerminalOutput } from '@zeus/terminal-core';
 
 export interface AiCliDescriptor {
   name: string;
@@ -685,11 +686,6 @@ export function createAiRuntimeSessionManager(options: CreateAiRuntimeSessionMan
     if (closed) return;
     const text = normalizeProcessChunk(value);
     appendLog(sessionId, stream, text);
-    const parsed = parseAiRuntimeOutputState(text);
-    if (parsed.state !== 'running') {
-      // 解析只提供状态提示，不能替代真实 CLI 输出或任务结论。
-      appendLog(sessionId, 'system', `AI Runtime 输出状态：${parsed.state} · ${parsed.reason}`);
-    }
   }
 
   function runtimeSignalErrorCode(error: unknown): string | null {

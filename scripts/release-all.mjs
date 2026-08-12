@@ -4,7 +4,6 @@ import { spawn, spawnSync } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, extname, isAbsolute, join, resolve, sep } from 'node:path';
-import { createInterface } from 'node:readline';
 
 const repositoryRoot = resolve(import.meta.dirname, '..');
 const repository = 'imchenway/zeus';
@@ -12,13 +11,18 @@ const releaseFiles = ['package.json', 'apps/desktop/package.json'];
 const formatExtensions = new Set(['.ts', '.tsx', '.cts', '.cjs', '.mjs', '.js', '.json', '.yml', '.yaml']);
 const isolatedSourceEnvironment = 'ZEUS_RELEASE_ISOLATED_SOURCE';
 const isolationValidationEnvironment = 'ZEUS_RELEASE_VALIDATE_ISOLATION';
+const remoteReadTimeoutMs = 60_000;
+const remoteReadAttempts = 3;
+let activeReleaseStage = '初始化发布';
+let activeReleaseState = null;
 
 main().catch((error) => {
-  console.error(error instanceof Error ? error.message : String(error));
+  console.error(formatReleaseFailure(error));
   process.exitCode = 1;
 });
 
 async function main() {
+  announceReleaseStage('检查本地发布条件');
   const outputDirectory = resolveOutputDirectory();
   mkdirSync(outputDirectory, { recursive: true, mode: 0o700 });
   assertRepositoryPreflight();
@@ -35,13 +39,17 @@ async function main() {
   }
   assertGitHubAuthentication();
 
+  announceReleaseStage('读取 GitHub 当前稳定版');
   const stableRelease = readLatestStableRelease();
+  announceReleaseStage('同步远程 main 与稳定标签');
   fetchReleaseFacts(stableRelease.tag);
   const publicCommit = git(['rev-parse', `${stableRelease.tag}^{commit}`]);
   const headSha = initialHeadSha;
+  announceReleaseStage('核对本地 main 与 origin/main');
   assertMainRelationship(headSha);
   const packageVersion = readMatchingPackageVersion();
   const nextVersion = resolveTargetVersion(stableRelease.version);
+  announceReleaseStage('恢复或创建发布状态');
   const state = resolveReleaseState({ stableRelease, publicCommit, headSha, packageVersion, nextVersion });
 
   if (state.type === 'already_published') {
@@ -65,16 +73,24 @@ async function main() {
   }
 
   const releaseState = state.value;
+  activeReleaseState = releaseState;
   assertResumeWorktree(releaseState);
+  announceReleaseStage('整理发布候选格式');
   formatReleaseCandidate(releaseState);
+  announceReleaseStage('执行候选前置检查');
   await ensureCandidatePreflight(releaseState);
   console.log(`Zeus 端到端发布：${releaseState.baseTag}..${releaseState.sourceHead.slice(0, 12)} → ${releaseState.tag}`);
   console.log('发布说明模型：Zeus DeepSeek deepseek-v4-flash；不可用时自动使用确定性模板。');
 
+  announceReleaseStage('生成 Release notes');
   await ensureReleaseNotes(releaseState);
+  announceReleaseStage('写入版本并创建发布提交');
   await ensureReleaseCommit(releaseState);
+  announceReleaseStage('执行本地快速发布门禁');
   ensureFastLocalGate(releaseState);
+  announceReleaseStage('安全推送 main');
   ensureMainPushed(releaseState);
+  announceReleaseStage('创建并回验公开发布');
   await ensurePublished(releaseState);
 
   releaseState.phase = 'completed';
@@ -267,8 +283,7 @@ function inspectCommittedCandidateWhitespace(headSha) {
 }
 
 function assertGitHubAuthentication() {
-  const result = capture('gh', ['auth', 'status', '--hostname', 'github.com'], true);
-  if (result.status !== 0) throw new Error(`GitHub CLI 未完成可用登录：${result.stderr.trim() || result.stdout.trim() || result.status}`);
+  captureRemoteRead('检查 GitHub CLI 登录状态', 'gh', ['auth', 'status', '--hostname', 'github.com']);
 }
 
 function readLatestStableRelease() {
@@ -280,7 +295,7 @@ function readLatestStableRelease() {
 }
 
 function fetchReleaseFacts(tag) {
-  runGit(['fetch', 'origin', 'refs/heads/main:refs/remotes/origin/main', `refs/tags/${tag}:refs/tags/${tag}`]);
+  runRemoteReadInherited('同步远程 main 与稳定标签', 'git', ['--no-pager', 'fetch', 'origin', 'refs/heads/main:refs/remotes/origin/main', `refs/tags/${tag}:refs/tags/${tag}`]);
 }
 
 function assertMainRelationship(headSha) {
@@ -644,7 +659,7 @@ function ensureMainPushed(state) {
   if (!remoteMainSha || capture('git', ['merge-base', '--is-ancestor', remoteMainSha, state.releaseCommit], true).status !== 0) {
     throw new Error(`推送前 origin/main 已领先或分叉，拒绝自动合并或强推：remote=${remoteMainSha ?? 'missing'} release=${state.releaseCommit}`);
   }
-  runGit(['push', 'origin', 'refs/heads/main:refs/heads/main']);
+  pushMainWithVerification(state);
   const pushedSha = resolveRemoteReference('refs/heads/main');
   if (pushedSha !== state.releaseCommit) throw new Error(`main 推送后远端提交不一致：expected=${state.releaseCommit} actual=${pushedSha ?? 'missing'}`);
   state.phase = 'main_pushed';
@@ -751,20 +766,32 @@ function writeState(state) {
 }
 
 async function runStage(label, command, args, env, options = {}) {
+  activeReleaseStage = label;
   console.log(`\n[${label}] ${command} ${args.join(' ')}`);
   await new Promise((resolveRun, rejectRun) => {
     const child = spawn(command, args, { cwd: options.cwd ?? repositoryRoot, env, stdio: ['ignore', 'pipe', 'pipe'] });
-    const stdout = createInterface({ input: child.stdout });
-    const stderr = createInterface({ input: child.stderr });
-    stdout.on('line', (line) => {
-      if (line.startsWith('ZEUS_ARTIFACT_FILE=') && !options.preserveArtifactLines) console.log(`[内部阶段产物] ${line.slice('ZEUS_ARTIFACT_FILE='.length)}`);
-      else console.log(line);
+    let stderrTail = '';
+    child.stdout.on('data', (chunk) => {
+      const text = String(chunk);
+      const visible = options.preserveArtifactLines ? text : text.replace(/(^|\n)ZEUS_ARTIFACT_FILE=([^\r\n]+)/gu, '$1[内部阶段产物] $2');
+      process.stdout.write(visible);
     });
-    stderr.on('line', (line) => console.error(line));
+    child.stderr.on('data', (chunk) => {
+      const text = String(chunk);
+      stderrTail = `${stderrTail}${text}`.slice(-4_000);
+      process.stderr.write(text);
+    });
     child.once('error', rejectRun);
     child.once('exit', (code, signal) => {
       if (code === 0) resolveRun();
-      else rejectRun(new Error(`${label}失败${signal ? `，信号 ${signal}` : `，退出码 ${code ?? 'unknown'}`}。`));
+      else {
+        const reason = `${label}失败${signal ? `，信号 ${signal}` : `，退出码 ${code ?? 'unknown'}`}。`;
+        const error = new Error(reason);
+        error.command = [command, ...args].join(' ');
+        error.technicalDetail = stderrTail.trim() || reason;
+        error.userReason = `${reason}请查看本阶段末尾的原始输出。`;
+        rejectRun(error);
+      }
     });
   });
 }
@@ -807,6 +834,41 @@ function run(command, args) {
   if (result.status !== 0) throw new Error(`${command} ${args.join(' ')} 执行失败，退出码 ${result.status ?? 'unknown'}。`);
 }
 
+function runRemoteReadInherited(label, command, args, timeout = remoteReadTimeoutMs, attempts = remoteReadAttempts) {
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    if (attempt > 1) console.error(`远程只读操作正在重试：${label}（第 ${attempt}/${attempts} 次，每次最多 ${Math.round(timeout / 1_000)} 秒）`);
+    const result = spawnSync(command, args, {
+      cwd: repositoryRoot,
+      encoding: 'utf8',
+      stdio: 'inherit',
+      timeout,
+    });
+    if (!result.error && result.status === 0) return;
+    if (isTransientRemoteFailure(result) && attempt < attempts) continue;
+    throw releaseCommandError(label, command, args, result, timeout, attempt, attempts);
+  }
+}
+
+function pushMainWithVerification(state) {
+  const args = ['--no-pager', 'push', 'origin', 'refs/heads/main:refs/heads/main'];
+  const timeout = 180_000;
+  const result = spawnSync('git', args, {
+    cwd: repositoryRoot,
+    encoding: 'utf8',
+    stdio: 'inherit',
+    timeout,
+  });
+  if (!result.error && result.status === 0) return;
+  const remoteMainSha = resolveRemoteReference('refs/heads/main');
+  if (remoteMainSha === state.releaseCommit) {
+    console.log(`main 推送返回异常，但远程已复验为目标提交 ${state.releaseCommit.slice(0, 12)}，继续安全续跑。`);
+    return;
+  }
+  const error = releaseCommandError('安全推送 main', 'git', args, result, timeout, 1, 1);
+  error.userReason = `${error.userReason}远程 main 仍未复验为目标提交，脚本不会盲目重复推送。`;
+  throw error;
+}
+
 function runGit(args) {
   run('git', ['--no-pager', ...args]);
 }
@@ -829,12 +891,12 @@ function git(args) {
 }
 
 function gh(args) {
-  return capture('gh', args).stdout.trim();
+  return captureRemoteRead('读取 GitHub 发布事实', 'gh', args).stdout.trim();
 }
 
 function resolveRemoteReference(reference) {
-  const result = capture('git', ['ls-remote', 'origin', reference], true);
-  return result.status === 0 ? result.stdout.trim().split(/\s+/u)[0] || null : null;
+  const result = captureRemoteRead(`读取远程引用 ${reference}`, 'git', ['ls-remote', 'origin', reference]);
+  return result.stdout.trim().split(/\s+/u)[0] || null;
 }
 
 function resolveLocalTagSha(tag) {
@@ -851,4 +913,63 @@ function assertAncestor(ancestor, descendant) {
 function resolveOutputDirectory() {
   const commandRunDirectory = process.env.ZEUS_COMMAND_RUN_DIR?.trim();
   return commandRunDirectory ? resolve(commandRunDirectory) : mkdtempSync(join(tmpdir(), 'zeus-release-all-'));
+}
+
+function captureRemoteRead(label, command, args, timeout = remoteReadTimeoutMs, attempts = remoteReadAttempts) {
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    if (attempt > 1) console.error(`远程只读操作正在重试：${label}（第 ${attempt}/${attempts} 次，每次最多 ${Math.round(timeout / 1_000)} 秒）`);
+    const result = spawnSync(command, args, {
+      cwd: repositoryRoot,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout,
+      maxBuffer: 16 * 1024 * 1024,
+    });
+    if (!result.error && result.status === 0) return { status: result.status, stdout: result.stdout ?? '', stderr: result.stderr ?? '' };
+    if (isTransientRemoteFailure(result) && attempt < attempts) continue;
+    throw releaseCommandError(label, command, args, result, timeout, attempt, attempts);
+  }
+  throw new Error(`${label}未返回结果。`);
+}
+
+function isTransientRemoteFailure(result) {
+  if (result.error?.code === 'ETIMEDOUT') return true;
+  const detail = `${result.stderr ?? ''}\n${result.stdout ?? ''}\n${result.error?.message ?? ''}`;
+  return /(timed?\s*out|timeout|connection reset|connection closed|temporary failure|could not resolve host|network is unreachable|http 5\d\d|tls.*closed)/iu.test(detail);
+}
+
+function releaseCommandError(label, command, args, result, timeout, attempt, attempts) {
+  const timedOut = result.error?.code === 'ETIMEDOUT';
+  const detail = String(result.stderr ?? '').trim() || String(result.stdout ?? '').trim() || result.error?.message || `退出码 ${result.status ?? 'unknown'}`;
+  const error = new Error(`${label}失败：${detail}`);
+  error.name = 'ReleaseCommandError';
+  error.command = [command, ...args].join(' ');
+  error.technicalDetail = detail;
+  error.userReason = timedOut ? `${label}在 ${Math.round(timeout / 1_000)} 秒内没有响应，已尝试 ${attempt}/${attempts} 次。` : `${label}未完成：${detail}`;
+  return error;
+}
+
+function announceReleaseStage(label) {
+  activeReleaseStage = label;
+  console.log(`\n发布阶段：${label}`);
+}
+
+function formatReleaseFailure(error) {
+  const failure = error && typeof error === 'object' ? error : null;
+  const reason = typeof failure?.userReason === 'string' ? failure.userReason : error instanceof Error ? error.message : String(error);
+  const detail = typeof failure?.command === 'string' ? `${failure.command}${failure.technicalDetail ? ` · ${failure.technicalDetail}` : ''}` : error instanceof Error ? error.message : String(error);
+  return ['', '发布失败', `阶段：${activeReleaseStage}`, `原因：${reason}`, `影响：${describeReleaseFailureImpact(activeReleaseState)}`, `下一步：${describeReleaseRecovery(activeReleaseState)}`, `技术详情：${detail}`].join('\n');
+}
+
+function describeReleaseFailureImpact(state) {
+  if (!state) return '尚未创建或改写发布版本，未执行发布提交、push、GitHub Release 或 Homebrew Tap 写入。';
+  if (['initialized', 'notes_generated'].includes(state.phase)) return `已保留 ${state.tag} 的本地恢复状态，尚未推送 main 或创建公开发布。`;
+  if (['release_committed', 'gate_passed'].includes(state.phase)) return `本地 ${state.tag} 发布提交已形成，但未确认 main 已推送，也未确认公开发布完成。`;
+  if (state.phase === 'main_pushed') return `main 已推送到 ${state.releaseCommit?.slice(0, 12) ?? '目标提交'}，公开 Release 与 Homebrew Tap 尚未确认完成。`;
+  if (['published', 'completed'].includes(state.phase)) return `${state.tag} 已进入公开发布收尾阶段；必须以公开回验结果确认最终状态。`;
+  return `已保留 ${state.tag} 的发布恢复状态，未完成阶段不会被冒充为成功。`;
+}
+
+function describeReleaseRecovery(state) {
+  return state ? '排除上述原因后重新运行 pnpm release；脚本会读取本地恢复状态，并在继续任何远程写入前复验外部事实。' : '检查网络与 GitHub 访问后重新运行 pnpm release；本次没有需要回滚的远程写入。';
 }

@@ -31,6 +31,7 @@
     "@zeus/diagram-engine": "workspace:*",
     "@zeus/local-server": "workspace:*",
     "@zeus/shared": "workspace:*",
+    "@zeus/terminal-core": "workspace:*",
     "codemirror": "^6.0.2",
     "framer-motion": "12.42.0",
     "graphology": "^0.26.0",

@@ -15,7 +15,7 @@ import {
   type CommandRunTrigger,
   type CommandScope,
 } from '@zeus/shared';
-import type { AiRuntimeLogEntry, AiRuntimeSession, AiRuntimeSessionManager } from '@zeus/ai-runtime';
+import { projectTerminalOutput, type AiRuntimeLogEntry, type AiRuntimeSession, type AiRuntimeSessionManager } from '@zeus/ai-runtime';
 import {
   CommandArtifactRepository,
   CommandDefinitionRepository,
@@ -451,6 +451,7 @@ export function createCommandCenter(options: CommandCenterOptions): CommandCente
     clearRunTimeout(run.id);
     options.revokeReleaseNotesCapability?.(run.id);
     const endedAt = session.endedAt ?? now().toISOString();
+    const readableFailure = extractReadableReleaseFailure(artifactBuffers.get(session.id) ?? '');
     const next =
       session.status === 'exited' && session.exitCode === 0
         ? { status: 'succeeded' as const, exitCode: 0, endedAt, failureReason: null }
@@ -460,7 +461,7 @@ export function createCommandCenter(options: CommandCenterOptions): CommandCente
               status: 'failed' as const,
               exitCode: session.exitCode ?? null,
               endedAt,
-              failureReason: session.status === 'failed' ? 'Runtime 执行失败' : `命令退出码 ${session.exitCode ?? 'unknown'}`,
+              failureReason: readableFailure ?? (session.status === 'failed' ? 'Runtime 执行失败；请展开原始日志查看失败命令和恢复建议。' : `命令退出码 ${session.exitCode ?? 'unknown'}；请展开原始日志查看原因。`),
             };
     const updated = runs.update(run.id, next);
     appendRunAudit(`command.run.${updated.status}`, updated);
@@ -753,6 +754,18 @@ export function createCommandCenter(options: CommandCenterOptions): CommandCente
   }
 
   return { handleRuntimeSessionChange, handleRuntimeLog, stopActiveRuns, close };
+}
+
+function extractReadableReleaseFailure(raw: string): string | null {
+  const output = projectTerminalOutput(raw);
+  const marker = '\n发布失败\n';
+  const markerIndex = `\n${output}`.lastIndexOf(marker);
+  if (markerIndex < 0) return null;
+  const block = `\n${output}`
+    .slice(markerIndex + 1)
+    .split(/\n(?=\s*ELIFECYCLE\b|npm error\b)/u, 1)[0]
+    ?.trim();
+  return block ? block.slice(0, 2_000) : null;
 }
 
 function isReleaseCommand(command: string): boolean {
