@@ -5,6 +5,7 @@ import { GlobeSimpleIcon as GlobeSimple } from '@phosphor-icons/react/dist/csr/G
 import { animate as animateMotion, motion, useMotionValue, useTransform } from 'framer-motion';
 import type { ConversationFileLocation, ConversationOpenTarget, TurnChangeFile, ZeusBrowserPreparedSubmission } from '@zeus/shared';
 import { openConversationResourceInMain, openTurnChangeFileInMain } from '../appShellBridge.js';
+import { ZeusSelect } from '../ZeusSelect.js';
 import { canSteerActiveTurn, type ComposerRuntimeSettings, ConversationComposer, resolveComposerKeyIntent } from './ConversationComposer.js';
 import { ConversationTranscript } from './ConversationTranscript.js';
 import { QueuedConversationMessages } from './QueuedConversationMessages.js';
@@ -59,15 +60,18 @@ import { conversationDisplayTitle } from './conversationDisplayTitle.js';
 import { conversationRuntimePreferenceKind, readConversationRuntimePreferences, writeConversationRuntimePreferences } from './conversationRuntimePreferences.js';
 import { resolveModelCapability } from './modelSelection.js';
 
+export interface SessionWorkspaceTaskManagementStatus {
+  id: string;
+  label: string;
+  color: string;
+}
+
 export interface SessionWorkspaceTask {
   id: string;
   projectId: string;
   title: string;
-  managementStatus?: {
-    id: string;
-    label: string;
-    color: string;
-  };
+  managementStatus?: SessionWorkspaceTaskManagementStatus;
+  managementStatusOptions?: readonly SessionWorkspaceTaskManagementStatus[];
 }
 
 export type SessionStartMode = 'create' | 'resume' | 'reference_legacy';
@@ -126,6 +130,7 @@ export interface SessionWorkspaceActions {
   onRetryItem?: (item: NativeSessionItemBuffer) => void;
   onSelectTask?: (task: SessionWorkspaceTask) => void;
   onOpenTaskDetail?: (taskId: string) => void;
+  onTaskManagementStatusChange?: (taskId: string, status: string) => void | Promise<unknown>;
   onLoadTaskWorkspaces?: (taskId: string) => Promise<TaskWorkspacesSnapshot>;
   onOpenTaskGitReview?: (taskId: string, workspaceId: string | null, mode: 'commit' | 'push-only') => void;
   onOpenTaskGitDelivery?: (taskId: string, workspaceId?: string | null) => void;
@@ -230,6 +235,8 @@ export interface ConnectedSessionWorkspaceProps {
   onStartConversation?: SessionWorkspaceActions['onStartConversation'];
   onStartProjectConversation?: SessionWorkspaceActions['onStartProjectConversation'];
   onOpenTaskDetail?: SessionWorkspaceActions['onOpenTaskDetail'];
+  onTaskManagementStatusChange?: SessionWorkspaceActions['onTaskManagementStatusChange'];
+  taskManagementStatusChangeBusy?: boolean;
   quickActionsSuppressed?: boolean;
   readOnlyGate?: SessionReadOnlyGate;
   onLoadTaskWorkspaces?: SessionWorkspaceActions['onLoadTaskWorkspaces'];
@@ -299,6 +306,7 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
       capabilities={capabilities}
       suppressComposer={Boolean(props.readOnlyGate)}
       quickActionsSuppressed={props.quickActionsSuppressed}
+      taskManagementStatusChangeBusy={props.taskManagementStatusChangeBusy}
       readOnlyGate={props.readOnlyGate}
       creationStatus={controllerVisible ? undefined : props.creationStatus}
       onLatestContentVisibilityChange={props.onLatestContentVisibilityChange}
@@ -363,6 +371,7 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
         onStartConversation: props.onStartConversation,
         onStartProjectConversation: props.onStartProjectConversation,
         onOpenTaskDetail: props.onOpenTaskDetail,
+        onTaskManagementStatusChange: props.onTaskManagementStatusChange,
         onLoadTaskWorkspaces: props.onLoadTaskWorkspaces,
         onOpenTaskGitReview: props.onOpenTaskGitReview,
         onOpenTaskGitDelivery: props.onOpenTaskGitDelivery,
@@ -958,6 +967,7 @@ export interface SessionWorkspaceProps {
   choices?: NativeConversationChoice[];
   suppressComposer?: boolean;
   quickActionsSuppressed?: boolean;
+  taskManagementStatusChangeBusy?: boolean;
   readOnlyGate?: SessionReadOnlyGate;
   capabilities?: CodexConversationCapabilities | null;
   choicesKnown?: boolean;
@@ -1158,6 +1168,7 @@ export interface SessionHeaderSnapshot {
   contextLabel: string | null;
   taskId: string | null;
   taskManagementStatus: SessionWorkspaceTask['managementStatus'] | null;
+  taskManagementStatusOptions: SessionWorkspaceTask['managementStatusOptions'];
   status: SessionWorkspaceStatus;
 }
 
@@ -1178,6 +1189,7 @@ export function createSessionHeaderSnapshot(
     contextLabel: taskId ? null : ((owner?.kind === 'project' ? owner.projectName : null) ?? conversation.summary ?? conversation.projectId),
     taskId,
     taskManagementStatus: task?.managementStatus ?? null,
+    taskManagementStatusOptions: task?.managementStatusOptions,
     status: sessionStatus(state, loadState, labels[language]),
   };
 }
@@ -1711,7 +1723,26 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
               ) : (
                 <strong title={displayedHeader.title}>{displayedHeader.title}</strong>
               )}
-              {displayedHeader.taskManagementStatus ? (
+              {displayedHeader.taskId && displayedHeader.taskManagementStatus && displayedHeader.taskManagementStatusOptions?.length && actions.onTaskManagementStatusChange ? (
+                <ZeusSelect
+                  size="compact"
+                  ariaLabel={props.language === 'zh-CN' ? `修改任务状态：${displayedHeader.title}` : `Change task status: ${displayedHeader.title}`}
+                  value={displayedHeader.taskManagementStatus.id}
+                  options={displayedHeader.taskManagementStatusOptions.map((status) => ({
+                    value: status.id,
+                    label: status.label,
+                    color: status.color,
+                  }))}
+                  onChange={(status) => {
+                    if (!displayedHeader.taskId || status === displayedHeader.taskManagementStatus?.id) return;
+                    void Promise.resolve(actions.onTaskManagementStatusChange?.(displayedHeader.taskId, status)).catch(() => undefined);
+                  }}
+                  className="task-status-select task-status-custom session-thread-task-status"
+                  style={{ '--task-status-tone': displayedHeader.taskManagementStatus.color } as CSSProperties}
+                  disabled={props.taskManagementStatusChangeBusy}
+                  searchable={false}
+                />
+              ) : displayedHeader.taskManagementStatus ? (
                 <span
                   className="task-status-chip task-status-custom session-thread-task-status"
                   style={{ '--task-status-tone': displayedHeader.taskManagementStatus.color } as CSSProperties}
