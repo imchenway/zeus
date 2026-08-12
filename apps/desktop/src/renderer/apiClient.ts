@@ -290,6 +290,10 @@ export interface ModelConnectionModel {
       levels: ModelThinkingLevel[];
       defaultLevel: ModelThinkingLevel;
       thinkingFormat: ModelThinkingFormat;
+      levelMap: Partial<Record<ModelThinkingLevel, string | null>>;
+      source: ModelCapabilityEvidence['source'];
+      checkedAt: string | null;
+      reason: string;
     };
     tools: ModelCapabilityEvidence;
     imageInput: ModelCapabilityEvidence;

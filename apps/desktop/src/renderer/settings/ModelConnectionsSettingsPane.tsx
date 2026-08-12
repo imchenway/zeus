@@ -1,15 +1,5 @@
 import { useEffect, useState } from 'react';
-import type {
-  DashboardClient,
-  ModelCapabilityState,
-  ModelConnectionDiagnostic,
-  ModelConnectionModel,
-  ModelConnectionRecord,
-  ModelConnectionTemplateId,
-  ModelThinkingFormat,
-  ModelThinkingLevel,
-  SaveModelConnectionRequest,
-} from '../apiClient.js';
+import type { DashboardClient, ModelCapabilityEvidence, ModelConnectionDiagnostic, ModelConnectionModel, ModelConnectionRecord, ModelConnectionTemplateId, ModelThinkingFormat, SaveModelConnectionRequest } from '../apiClient.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 import { Button } from '../ui/Button.js';
 
@@ -25,14 +15,6 @@ const templateDefaults: Record<ModelConnectionTemplateId, { name: string; baseUr
   kimi: { name: 'Kimi', baseUrl: 'https://api.moonshot.cn/v1', modelsPath: '/models', thinkingFormat: 'openai' },
   zai: { name: 'Z.AI / GLM', baseUrl: 'https://api.z.ai/api/paas/v4', modelsPath: '/models', thinkingFormat: 'zai' },
 };
-
-const thinkingLevels: ModelThinkingLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
-const capabilityStates: Array<{ value: ModelCapabilityState; zh: string; en: string }> = [
-  { value: 'unverified', zh: '未验证', en: 'Unverified' },
-  { value: 'supported', zh: '支持', en: 'Supported' },
-  { value: 'unsupported', zh: '不支持', en: 'Unsupported' },
-];
-const thinkingFormats: ModelThinkingFormat[] = ['openai', 'deepseek', 'qwen', 'zai', 'openrouter', 'together', 'qwen-chat-template', 'string-thinking', 'ant-ling'];
 
 type ModelConnectionClient = Pick<
   DashboardClient,
@@ -321,7 +303,9 @@ export function ModelConnectionsSettingsPane(props: { language: 'zh-CN' | 'en-US
             <header>
               <span>
                 <strong>{zh ? '模型与能力档案' : 'Models and capability profiles'}</strong>
-                <small>{zh ? '高速标签属于模型本身；首版 Pi Chat 不显示 Fast 服务档位。' : 'Speed labels describe models. Pi Chat does not expose a Fast service tier.'}</small>
+                <small>
+                  {zh ? 'Zeus 根据渠道、模型档案和运行结果自动识别能力，不需要手工配置技术参数。' : 'Zeus identifies capabilities from the channel, model profile, and runtime results. Technical parameters are not configured manually.'}
+                </small>
               </span>
               {draft.templateId === 'custom' ? (
                 <span className="model-add-row">
@@ -393,15 +377,6 @@ export function ModelConnectionsSettingsPane(props: { language: 'zh-CN' | 'en-US
 function ModelDefinitionEditor(props: { language: 'zh-CN' | 'en-US'; model: ModelConnectionModel; readOnly: boolean; onChange: (model: ModelConnectionModel) => void; onRemove: () => void }) {
   const zh = props.language === 'zh-CN';
   const model = props.model;
-  const updateEvidence = (field: 'tools' | 'imageInput', state: ModelCapabilityState): void => {
-    props.onChange({
-      ...model,
-      capability: {
-        ...model.capability,
-        [field]: { source: 'manual', state, checkedAt: null, reason: zh ? '由用户手工声明，等待真实运行探针。' : 'Declared manually; awaiting a runtime probe.' },
-      },
-    });
-  };
   return (
     <article className="model-definition-card">
       <header>
@@ -415,110 +390,27 @@ function ModelDefinitionEditor(props: { language: 'zh-CN' | 'en-US'; model: Mode
           </button>
         )}
       </header>
-      {props.readOnly ? (
-        <p>
-          {zh ? '思考深度' : 'Reasoning effort'}：{model.capability.reasoning.state === 'supported' ? model.capability.reasoning.levels.join(' / ') : zh ? '能力待确认，会话中隐藏' : 'Unverified; hidden in conversations'} ·{' '}
-          {zh ? '工具' : 'Tools'}：{model.capability.tools.state} · {zh ? '图片' : 'Images'}：{model.capability.imageInput.state}
-        </p>
-      ) : (
-        <div className="model-definition-grid">
-          <label>
-            <span>{zh ? '显示名称' : 'Display name'}</span>
-            <input value={model.displayName} onChange={(event) => props.onChange({ ...model, displayName: event.currentTarget.value })} />
-          </label>
-          <label>
-            <span>{zh ? '速度标签' : 'Speed label'}</span>
-            <ZeusSelect<ModelConnectionModel['speedLabel']>
-              ariaLabel={zh ? '速度标签' : 'Speed label'}
-              size="regular"
-              value={model.speedLabel}
-              onChange={(speedLabel) => props.onChange({ ...model, speedLabel })}
-              options={(['standard', 'high_speed', 'flash', 'turbo'] as const).map((value) => ({ value, label: value }))}
-            />
-          </label>
-          <label>
-            <span>{zh ? '思考能力' : 'Reasoning'}</span>
-            <ZeusSelect
-              ariaLabel={zh ? '思考能力' : 'Reasoning'}
-              size="regular"
-              value={model.capability.reasoning.state}
-              onChange={(state) =>
-                props.onChange({
-                  ...model,
-                  capability: {
-                    ...model.capability,
-                    reasoning: { ...model.capability.reasoning, state, levels: state === 'supported' ? model.capability.reasoning.levels : ['off'], defaultLevel: state === 'supported' ? model.capability.reasoning.defaultLevel : 'off' },
-                  },
-                })
-              }
-              options={capabilityStates.map((state) => ({ value: state.value, label: zh ? state.zh : state.en }))}
-            />
-          </label>
-          <label>
-            <span>{zh ? '思考参数格式' : 'Thinking format'}</span>
-            <ZeusSelect
-              ariaLabel={zh ? '思考参数格式' : 'Thinking format'}
-              size="regular"
-              value={model.capability.reasoning.thinkingFormat}
-              onChange={(thinkingFormat) => props.onChange({ ...model, capability: { ...model.capability, reasoning: { ...model.capability.reasoning, thinkingFormat } } })}
-              options={thinkingFormats.map((value) => ({ value, label: value }))}
-            />
-          </label>
-          <label>
-            <span>{zh ? '推理等级' : 'Reasoning levels'}</span>
-            <input
-              disabled={model.capability.reasoning.state !== 'supported'}
-              value={model.capability.reasoning.levels.join(', ')}
-              onChange={(event) => {
-                const levels = thinkingLevels.filter((level) =>
-                  event.currentTarget.value
-                    .split(',')
-                    .map((item) => item.trim())
-                    .includes(level),
-                );
-                const effective: ModelThinkingLevel[] = levels.length > 0 ? levels : ['off'];
-                props.onChange({
-                  ...model,
-                  capability: {
-                    ...model.capability,
-                    reasoning: { ...model.capability.reasoning, levels: effective, defaultLevel: effective.includes(model.capability.reasoning.defaultLevel) ? model.capability.reasoning.defaultLevel : effective[0]! },
-                  },
-                });
-              }}
-            />
-          </label>
-          <label>
-            <span>{zh ? '默认推理等级' : 'Default reasoning'}</span>
-            <ZeusSelect
-              ariaLabel={zh ? '默认推理等级' : 'Default reasoning'}
-              size="regular"
-              value={model.capability.reasoning.defaultLevel}
-              onChange={(defaultLevel) => props.onChange({ ...model, capability: { ...model.capability, reasoning: { ...model.capability.reasoning, defaultLevel } } })}
-              options={model.capability.reasoning.levels.map((value) => ({ value, label: value }))}
-            />
-          </label>
-          <label>
-            <span>{zh ? '工具调用' : 'Tool calling'}</span>
-            <ZeusSelect
-              ariaLabel={zh ? '工具调用' : 'Tool calling'}
-              size="regular"
-              value={model.capability.tools.state}
-              onChange={(state) => updateEvidence('tools', state)}
-              options={capabilityStates.map((state) => ({ value: state.value, label: zh ? state.zh : state.en }))}
-            />
-          </label>
-          <label>
-            <span>{zh ? '图片输入' : 'Image input'}</span>
-            <ZeusSelect
-              ariaLabel={zh ? '图片输入' : 'Image input'}
-              size="regular"
-              value={model.capability.imageInput.state}
-              onChange={(state) => updateEvidence('imageInput', state)}
-              options={capabilityStates.map((state) => ({ value: state.value, label: zh ? state.zh : state.en }))}
-            />
-          </label>
+      <dl className="model-capability-summary">
+        <div>
+          <dt>{zh ? '推理' : 'Reasoning'}</dt>
+          <dd>
+            {model.capability.reasoning.state === 'supported'
+              ? `${model.capability.reasoning.levels.join(' / ')} · ${zh ? '默认' : 'default'} ${model.capability.reasoning.defaultLevel}`
+              : capabilityStateLabel(model.capability.reasoning.state, zh)}
+          </dd>
+          <small>{model.capability.reasoning.reason}</small>
         </div>
-      )}
+        <div>
+          <dt>{zh ? '工具调用' : 'Tool calling'}</dt>
+          <dd>{capabilityStateLabel(model.capability.tools.state, zh)}</dd>
+          <small>{model.capability.tools.reason}</small>
+        </div>
+        <div>
+          <dt>{zh ? '图片输入' : 'Image input'}</dt>
+          <dd>{capabilityStateLabel(model.capability.imageInput.state, zh)}</dd>
+          <small>{model.capability.imageInput.reason}</small>
+        </div>
+      </dl>
     </article>
   );
 }
@@ -531,7 +423,7 @@ function createModel(id: string, thinkingFormat: ModelThinkingFormat): ModelConn
   const lower = id.toLowerCase();
   const speedLabel: ModelConnectionModel['speedLabel'] =
     lower.includes('highspeed') || lower.includes('high-speed') || lower.includes('fast') ? 'high_speed' : lower.includes('flash') ? 'flash' : lower.includes('turbo') ? 'turbo' : 'standard';
-  const evidence = (reason: string) => ({ source: 'manual' as const, state: 'unverified' as const, checkedAt: null, reason });
+  const evidence = (reason: string) => ({ source: 'catalog' as const, state: 'unverified' as const, checkedAt: null, reason });
   return {
     id,
     displayName: id,
@@ -540,7 +432,16 @@ function createModel(id: string, thinkingFormat: ModelThinkingFormat): ModelConn
     maxTokens: 8_192,
     speedLabel,
     capability: {
-      reasoning: { state: 'unverified', levels: ['off'], defaultLevel: 'off', thinkingFormat },
+      reasoning: {
+        state: 'unverified',
+        levels: ['off'],
+        defaultLevel: 'off',
+        thinkingFormat,
+        levelMap: { off: null },
+        source: 'catalog',
+        checkedAt: null,
+        reason: zhModelCapabilityPendingReason,
+      },
       tools: evidence('等待真实工具闭环探针。'),
       imageInput: evidence('等待真实图片输入探针。'),
       streaming: evidence('等待真实流式输出探针。'),
@@ -549,11 +450,19 @@ function createModel(id: string, thinkingFormat: ModelThinkingFormat): ModelConn
   };
 }
 
+const zhModelCapabilityPendingReason = '待 Zeus 根据渠道和模型档案自动识别。';
+
+function capabilityStateLabel(state: ModelCapabilityEvidence['state'], zh: boolean): string {
+  if (state === 'supported') return zh ? '支持' : 'Supported';
+  if (state === 'unsupported') return zh ? '不支持' : 'Unsupported';
+  return zh ? '待检测' : 'Pending detection';
+}
+
 function cloneModel(model: ModelConnectionModel): ModelConnectionModel {
   return {
     ...model,
     capability: {
-      reasoning: { ...model.capability.reasoning, levels: [...model.capability.reasoning.levels] },
+      reasoning: { ...model.capability.reasoning, levels: [...model.capability.reasoning.levels], levelMap: { ...model.capability.reasoning.levelMap } },
       tools: { ...model.capability.tools },
       imageInput: { ...model.capability.imageInput },
       streaming: { ...model.capability.streaming },

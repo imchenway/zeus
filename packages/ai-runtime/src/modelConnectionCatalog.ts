@@ -1,3 +1,10 @@
+import { getSupportedThinkingLevels, type Api, type Model } from '@earendil-works/pi-ai';
+import { DEEPSEEK_MODELS } from '@earendil-works/pi-ai/providers/deepseek.models';
+import { MOONSHOTAI_MODELS } from '@earendil-works/pi-ai/providers/moonshotai.models';
+import { OPENCODE_MODELS } from '@earendil-works/pi-ai/providers/opencode.models';
+import { QWEN_TOKEN_PLAN_CN_MODELS } from '@earendil-works/pi-ai/providers/qwen-token-plan-cn.models';
+import { ZAI_MODELS } from '@earendil-works/pi-ai/providers/zai.models';
+
 export type ModelConnectionTemplateId = 'custom' | 'deepseek' | 'bailian' | 'kimi' | 'zai';
 
 export type ModelCapabilityState = 'supported' | 'unsupported' | 'unverified';
@@ -19,6 +26,10 @@ export interface ConfiguredModelCapability {
     levels: PiThinkingLevel[];
     defaultLevel: PiThinkingLevel;
     thinkingFormat: OpenAiThinkingFormat;
+    levelMap: Partial<Record<PiThinkingLevel, string | null>>;
+    source: ModelCapabilityEvidence['source'];
+    checkedAt: string | null;
+    reason: string;
   };
   tools: ModelCapabilityEvidence;
   imageInput: ModelCapabilityEvidence;
@@ -88,6 +99,13 @@ const thinkingLevels = new Set<PiThinkingLevel>(['off', 'minimal', 'low', 'mediu
 const thinkingFormats = new Set<OpenAiThinkingFormat>(['openai', 'openrouter', 'deepseek', 'together', 'zai', 'qwen', 'qwen-chat-template', 'string-thinking', 'ant-ling']);
 const capabilityStates = new Set<ModelCapabilityState>(['supported', 'unsupported', 'unverified']);
 const speedLabels = new Set<ConfiguredModelDefinition['speedLabel']>(['standard', 'high_speed', 'flash', 'turbo']);
+const automaticModelCatalogs: Record<ModelConnectionTemplateId, Readonly<Record<string, Model<Api>>>> = {
+  custom: normalizeModelCatalog(OPENCODE_MODELS),
+  deepseek: normalizeModelCatalog(DEEPSEEK_MODELS),
+  bailian: normalizeModelCatalog(QWEN_TOKEN_PLAN_CN_MODELS),
+  kimi: normalizeModelCatalog(MOONSHOTAI_MODELS),
+  zai: normalizeModelCatalog(ZAI_MODELS),
+};
 
 export const modelConnectionTemplates: Record<Exclude<ModelConnectionTemplateId, 'custom'>, { name: string; baseUrl: string; modelsPath: string; thinkingFormat: OpenAiThinkingFormat }> = {
   deepseek: {
@@ -138,7 +156,7 @@ export function normalizeModelConnection(input: SaveModelConnectionInput, option
   const name = normalizeSingleLine(input.name || template?.name || '', '连接名称', 80);
   const baseUrl = normalizeModelBaseUrl(input.baseUrl || template?.baseUrl || '');
   const modelsPath = normalizeModelsPath(input.modelsPath ?? template?.modelsPath ?? '/models');
-  const models = normalizeConfiguredModels(input.models ?? [], template?.thinkingFormat ?? 'openai').map((model) => applyTemplateReasoningProfile(model, templateId));
+  const models = normalizeConfiguredModels(input.models ?? [], template?.thinkingFormat ?? 'openai').map((model) => applyAutomaticCapabilityProfile(model, templateId));
   return {
     id: normalizeIdentifier(options.id, '连接 ID'),
     name,
@@ -241,11 +259,20 @@ export function createConfiguredModelDefinition(id: string, input: Partial<Confi
       capability:
         input.capability ??
         ({
-          reasoning: { state: 'unverified', levels: ['off'], defaultLevel: 'off', thinkingFormat },
-          tools: evidence('unverified', 'manual', '等待真实工具闭环探针。'),
-          imageInput: evidence('unverified', 'manual', '等待真实图片输入探针。'),
-          streaming: evidence('unverified', 'manual', '等待真实流式输出探针。'),
-          usage: evidence('unverified', 'manual', '等待真实用量字段探针。'),
+          reasoning: {
+            state: 'unverified',
+            levels: ['off'],
+            defaultLevel: 'off',
+            thinkingFormat,
+            levelMap: { off: null },
+            source: 'catalog',
+            checkedAt: null,
+            reason: '模型目录只证明 ID 存在，待 Zeus 自动识别能力。',
+          },
+          tools: evidence('unverified', 'catalog', '模型目录未提供工具能力证据，等待真实工具闭环探针。'),
+          imageInput: evidence('unverified', 'catalog', '模型目录未提供图片能力证据，等待真实图片输入探针。'),
+          streaming: evidence('unverified', 'catalog', '等待真实流式输出探针。'),
+          usage: evidence('unverified', 'catalog', '等待真实用量字段探针。'),
         } satisfies ConfiguredModelCapability),
     },
     thinkingFormat,
@@ -257,14 +284,14 @@ export function mergeDiscoveredModels(existing: readonly ConfiguredModelDefiniti
   for (const rawId of modelIds) {
     const id = rawId.trim();
     if (!id || byId.has(id)) continue;
-    byId.set(id, applyTemplateReasoningProfile(createConfiguredModelDefinition(id, {}, thinkingFormat), templateId));
+    byId.set(id, applyAutomaticCapabilityProfile(createConfiguredModelDefinition(id, {}, thinkingFormat), templateId));
   }
-  return [...byId.values()].map((model) => applyTemplateReasoningProfile(model, templateId));
+  return [...byId.values()].map((model) => applyAutomaticCapabilityProfile(model, templateId));
 }
 
 export function createTemplateConfiguredModelDefinition(id: string, templateId: ModelConnectionTemplateId): ConfiguredModelDefinition {
   const thinkingFormat = templateId === 'custom' ? 'openai' : modelConnectionTemplates[templateId].thinkingFormat;
-  return applyTemplateReasoningProfile(createConfiguredModelDefinition(id, {}, thinkingFormat), templateId);
+  return applyAutomaticCapabilityProfile(createConfiguredModelDefinition(id, {}, thinkingFormat), templateId);
 }
 
 export function modelConnectionSecretAccount(connectionId: string): string {
@@ -297,37 +324,96 @@ function normalizeConfiguredModel(value: ConfiguredModelDefinition, fallbackThin
   return { id, displayName, enabled: value.enabled !== false, contextWindow, maxTokens, speedLabel, capability };
 }
 
-/** 仅替换历史系统默认值，用户已经编辑过的能力配置保持原样。 */
-function applyTemplateReasoningProfile(model: ConfiguredModelDefinition, templateId: ModelConnectionTemplateId): ConfiguredModelDefinition {
-  const reasoning = model.capability.reasoning;
-  if (reasoning.state !== 'unverified' || reasoning.levels.length !== 1 || reasoning.levels[0] !== 'off' || reasoning.defaultLevel !== 'off') return model;
+/** 根据渠道和已知模型档案自动生成能力，未知能力保持未验证。 */
+function applyAutomaticCapabilityProfile(model: ConfiguredModelDefinition, templateId: ModelConnectionTemplateId): ConfiguredModelDefinition {
   const normalizedId = model.id.toLowerCase();
-  let levels: PiThinkingLevel[] | null = null;
-  let thinkingFormat = reasoning.thinkingFormat;
-  if (templateId === 'deepseek' && /^deepseek-v4-flash(?:-|$)/u.test(normalizedId)) {
-    levels = ['low', 'high', 'max'];
-    thinkingFormat = 'deepseek';
-  } else if (templateId === 'deepseek' && /^deepseek-v4-pro(?:-|$)/u.test(normalizedId)) {
-    levels = ['high', 'max'];
-    thinkingFormat = 'deepseek';
-  } else if (templateId === 'bailian' && /^deepseek-v4-(?:flash|pro)(?:-|$)/u.test(normalizedId)) {
-    // 百炼会把 low/medium 合并为 high、xhigh 合并为 max，界面只展示真实不同的档位。
-    levels = ['high', 'max'];
-    thinkingFormat = 'qwen';
+  const baseModel = discardManualCapabilityClaims(model);
+  const catalogModel = automaticModelCatalogs[templateId][normalizedId];
+  if (catalogModel) {
+    const levels = getSupportedThinkingLevels(catalogModel) as PiThinkingLevel[];
+    const reasoningState: ModelCapabilityState = catalogModel.reasoning ? 'supported' : 'unsupported';
+    const effectiveLevels: PiThinkingLevel[] = reasoningState === 'supported' ? levels : ['off'];
+    const defaultLevel = preferredCatalogReasoningLevel(normalizedId, effectiveLevels);
+    const levelMap: Partial<Record<PiThinkingLevel, string | null>> = {};
+    for (const level of effectiveLevels) levelMap[level] = catalogModel.thinkingLevelMap?.[level] ?? level;
+    const catalogEvidence = (state: ModelCapabilityState, reason: string): ModelCapabilityEvidence => ({ source: 'catalog', state, checkedAt: null, reason });
+    return {
+      ...baseModel,
+      displayName: catalogModel.name,
+      contextWindow: catalogModel.contextWindow,
+      maxTokens: catalogModel.maxTokens,
+      capability: {
+        ...baseModel.capability,
+        reasoning:
+          baseModel.capability.reasoning.source === 'probe'
+            ? baseModel.capability.reasoning
+            : {
+                state: reasoningState,
+                levels: effectiveLevels,
+                defaultLevel,
+                thinkingFormat: catalogThinkingFormat(catalogModel, baseModel.capability.reasoning.thinkingFormat),
+                levelMap,
+                source: 'catalog',
+                checkedAt: null,
+                reason: '由 Zeus 内置模型目录自动识别；当前第三方接入渠道仍需真实运行验证。',
+              },
+        imageInput:
+          baseModel.capability.imageInput.source === 'probe'
+            ? baseModel.capability.imageInput
+            : catalogEvidence(catalogModel.input.includes('image') ? 'supported' : 'unsupported', `模型目录声明${catalogModel.input.includes('image') ? '支持' : '不支持'}图片输入；当前接入渠道待真实运行验证。`),
+      },
+    };
   }
-  if (!levels) return model;
+  return baseModel;
+}
+
+/** 旧版界面留下的手工能力声明不再参与运行；只有目录、模板或真实探针可以形成能力证据。 */
+function discardManualCapabilityClaims(model: ConfiguredModelDefinition): ConfiguredModelDefinition {
+  const reasoning = model.capability.reasoning;
+  const resetEvidence = (value: ModelCapabilityEvidence, reason: string): ModelCapabilityEvidence => (value.source === 'manual' ? evidence('unverified', 'catalog', reason) : value);
   return {
     ...model,
     capability: {
       ...model.capability,
-      reasoning: { state: 'supported', levels, defaultLevel: 'high', thinkingFormat },
+      reasoning:
+        reasoning.source === 'manual'
+          ? {
+              state: 'unverified',
+              levels: ['off'],
+              defaultLevel: 'off',
+              thinkingFormat: reasoning.thinkingFormat,
+              levelMap: { off: null },
+              source: 'catalog',
+              checkedAt: null,
+              reason: '旧版手工声明已停用，待 Zeus 自动识别推理能力。',
+            }
+          : reasoning,
+      tools: resetEvidence(model.capability.tools, '旧版手工声明已停用，等待真实工具闭环探针。'),
+      imageInput: resetEvidence(model.capability.imageInput, '旧版手工声明已停用，等待真实图片输入探针。'),
+      streaming: resetEvidence(model.capability.streaming, '旧版手工声明已停用，等待真实流式输出探针。'),
+      usage: resetEvidence(model.capability.usage, '旧版手工声明已停用，等待真实用量字段探针。'),
     },
   };
 }
 
+function preferredCatalogReasoningLevel(modelId: string, levels: readonly PiThinkingLevel[]): PiThinkingLevel {
+  const preferences: PiThinkingLevel[] = modelId === 'gpt-5.6-sol' ? ['low', 'medium', 'high', 'off'] : ['medium', 'high', 'low', 'off'];
+  return preferences.find((level) => levels.includes(level)) ?? levels[0]!;
+}
+
+function normalizeModelCatalog(catalog: object): Readonly<Record<string, Model<Api>>> {
+  const models = Object.values(catalog as Record<string, Model<Api>>);
+  return Object.fromEntries(models.map((model) => [model.id.toLowerCase(), model]));
+}
+
+function catalogThinkingFormat(model: Model<Api>, fallback: OpenAiThinkingFormat): OpenAiThinkingFormat {
+  const compat = isRecord(model.compat) ? model.compat : {};
+  return thinkingFormats.has(compat.thinkingFormat as OpenAiThinkingFormat) ? (compat.thinkingFormat as OpenAiThinkingFormat) : fallback;
+}
+
 function normalizeCapability(value: ConfiguredModelCapability, fallbackThinkingFormat: OpenAiThinkingFormat): ConfiguredModelCapability {
-  const source: Record<string, unknown> = isRecord(value) ? value : {};
-  const reasoningSource: Record<string, unknown> = isRecord(source.reasoning) ? source.reasoning : {};
+  const capabilitySource: Record<string, unknown> = isRecord(value) ? value : {};
+  const reasoningSource: Record<string, unknown> = isRecord(capabilitySource.reasoning) ? capabilitySource.reasoning : {};
   const reasoningState = normalizeCapabilityState(reasoningSource.state);
   const levels: PiThinkingLevel[] = [];
   if (Array.isArray(reasoningSource.levels)) {
@@ -339,12 +425,29 @@ function normalizeCapability(value: ConfiguredModelCapability, fallbackThinkingF
   const requestedDefault = thinkingLevels.has(reasoningSource.defaultLevel as PiThinkingLevel) ? (reasoningSource.defaultLevel as PiThinkingLevel) : effectiveLevels[0]!;
   const defaultLevel = effectiveLevels.includes(requestedDefault) ? requestedDefault : effectiveLevels[0]!;
   const thinkingFormat = thinkingFormats.has(reasoningSource.thinkingFormat as OpenAiThinkingFormat) ? (reasoningSource.thinkingFormat as OpenAiThinkingFormat) : fallbackThinkingFormat;
+  const levelMapSource = isRecord(reasoningSource.levelMap) ? reasoningSource.levelMap : {};
+  const levelMap: Partial<Record<PiThinkingLevel, string | null>> = {};
+  for (const level of thinkingLevels) {
+    const mapped = levelMapSource[level];
+    if (mapped === null || typeof mapped === 'string') levelMap[level] = mapped;
+    else if (effectiveLevels.includes(level)) levelMap[level] = level;
+  }
+  const reasoningEvidenceSource = reasoningSource.source === 'template' || reasoningSource.source === 'catalog' || reasoningSource.source === 'probe' ? reasoningSource.source : 'manual';
   return {
-    reasoning: { state: reasoningState, levels: effectiveLevels, defaultLevel, thinkingFormat },
-    tools: normalizeEvidence(source.tools, '等待真实工具闭环探针。'),
-    imageInput: normalizeEvidence(source.imageInput, '等待真实图片输入探针。'),
-    streaming: normalizeEvidence(source.streaming, '等待真实流式输出探针。'),
-    usage: normalizeEvidence(source.usage, '等待真实用量字段探针。'),
+    reasoning: {
+      state: reasoningState,
+      levels: effectiveLevels,
+      defaultLevel,
+      thinkingFormat,
+      levelMap,
+      source: reasoningEvidenceSource,
+      checkedAt: normalizeIsoDate(reasoningSource.checkedAt),
+      reason: typeof reasoningSource.reason === 'string' && reasoningSource.reason.trim() ? reasoningSource.reason.trim().slice(0, 500) : '待 Zeus 自动识别推理能力。',
+    },
+    tools: normalizeEvidence(capabilitySource.tools, '等待真实工具闭环探针。'),
+    imageInput: normalizeEvidence(capabilitySource.imageInput, '等待真实图片输入探针。'),
+    streaming: normalizeEvidence(capabilitySource.streaming, '等待真实流式输出探针。'),
+    usage: normalizeEvidence(capabilitySource.usage, '等待真实用量字段探针。'),
   };
 }
 

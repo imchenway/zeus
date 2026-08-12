@@ -1008,22 +1008,19 @@ a {
   min-inline-size: 0;
 }
 
-.macos-ai-app .model-connection-field-grid,
-.macos-ai-app .model-definition-grid {
+.macos-ai-app .model-connection-field-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
 }
 
-.macos-ai-app .model-connection-field-grid label,
-.macos-ai-app .model-definition-grid label {
+.macos-ai-app .model-connection-field-grid label {
   display: grid;
   gap: 5px;
   min-inline-size: 0;
 }
 
-.macos-ai-app .model-connection-field-grid label > span,
-.macos-ai-app .model-definition-grid label > span {
+.macos-ai-app .model-connection-field-grid label > span {
   color: var(--zeus-product-muted);
   font-size: 11px;
 }
@@ -1066,6 +1063,40 @@ a {
   min-block-size: 24px;
   min-inline-size: 24px;
   padding: 0;
+}
+
+.macos-ai-app .model-capability-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.macos-ai-app .model-capability-summary > div {
+  display: grid;
+  align-content: start;
+  gap: 3px;
+  min-inline-size: 0;
+  padding: 8px 9px;
+  border: 1px solid var(--zeus-product-line);
+  border-radius: 8px;
+  background: var(--zeus-product-subtle, var(--zeus-product-panel));
+}
+
+.macos-ai-app .model-capability-summary dt,
+.macos-ai-app .model-capability-summary small {
+  color: var(--zeus-product-muted);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.macos-ai-app .model-capability-summary dd {
+  margin: 0;
+  color: var(--zeus-product-text);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 18px;
+  overflow-wrap: anywhere;
 }
 
 .macos-ai-app .model-connection-diagnostic,
@@ -1135,7 +1166,7 @@ a {
 @media (max-width: 780px) {
   .macos-ai-app .model-connections-layout,
   .macos-ai-app .model-connection-field-grid,
-  .macos-ai-app .model-definition-grid,
+  .macos-ai-app .model-capability-summary,
   .macos-ai-app .project-model-settings {
     grid-template-columns: minmax(0, 1fr);
   }
