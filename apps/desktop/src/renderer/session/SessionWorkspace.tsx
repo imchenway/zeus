@@ -1194,6 +1194,8 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const [requestErrors, setRequestErrors] = useState<Record<string, string>>({});
   const [interruptArmed, setInterruptArmed] = useState(false);
   const [contextWorkspace, setContextWorkspace] = useState<SessionContextWorkspace>({ kind: 'none' });
+  const contextWorkspaceRef = useRef<SessionContextWorkspace>(contextWorkspace);
+  contextWorkspaceRef.current = contextWorkspace;
   const [contextMounted, setContextMounted] = useState(false);
   const [quickActionsPersistentHost, setQuickActionsPersistentHost] = useState<HTMLDivElement | null>(null);
   const [contextFullWidth, setContextFullWidth] = useState(false);
@@ -1368,6 +1370,29 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     window.addEventListener('keydown', handleShortcut);
     return () => window.removeEventListener('keydown', handleShortcut);
   }, [legacy]);
+
+  useEffect(() => {
+    if (contextWorkspace.kind === 'none') {
+      window.zeus?.notifySessionContextActivity?.({ active: false, kind: 'none' });
+    }
+  }, [contextWorkspace.kind]);
+
+  useEffect(() => {
+    const bridge = window.zeus;
+    if (!bridge?.onNativeCloseActiveContextTab) return;
+    return bridge.onNativeCloseActiveContextTab(() => {
+      const current = contextWorkspaceRef.current;
+      if (current.kind === 'none' || current.kind === 'browser') return;
+      closeContextWorkspace();
+    });
+  }, [props.conversation?.id]);
+
+  useEffect(
+    () => () => {
+      window.zeus?.notifySessionContextActivity?.({ active: false, kind: 'none' });
+    },
+    [],
+  );
 
   useEffect(() => {
     if (displayedHeader?.conversationId === currentHeader?.conversationId) return;
@@ -1635,6 +1660,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   }
 
   function closeContextWorkspace(options: { focusComposer?: boolean } = {}): void {
+    window.zeus?.notifySessionContextActivity?.({ active: false, kind: 'none' });
     setContextWorkspace({ kind: 'none' });
     setContextFullWidth(false);
     const target = options.focusComposer ? composerRef.current : contextReturnFocusRef.current;
@@ -1691,6 +1717,16 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
       data-transport-state={props.state?.transportState ?? props.loadState ?? 'empty'}
       data-conversation-state={props.state?.conversationState ?? (legacy ? 'legacy_readonly' : 'empty')}
       onKeyDownCapture={handleWorkspaceKeyDownCapture}
+      onPointerDownCapture={(event) => {
+        if (!contextOpen || !(event.target instanceof Element)) return;
+        const active = Boolean(event.target.closest('.session-context-sidecar'));
+        window.zeus?.notifySessionContextActivity?.({ active, kind: active ? contextWorkspace.kind : 'none' });
+      }}
+      onFocusCapture={(event) => {
+        if (!contextOpen || !(event.target instanceof Element)) return;
+        const active = Boolean(event.target.closest('.session-context-sidecar'));
+        window.zeus?.notifySessionContextActivity?.({ active, kind: active ? contextWorkspace.kind : 'none' });
+      }}
     >
       {displayedHeader ? (
         <header className="session-thread-header" data-motion-title={titleMotion}>

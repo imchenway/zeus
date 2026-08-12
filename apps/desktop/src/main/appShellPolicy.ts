@@ -16,6 +16,7 @@ export interface AppShellMenuActions {
   openSettings: () => void | Promise<void>;
   checkForUpdates: () => void | Promise<void>;
   openLogsDirectory: () => void | Promise<void>;
+  closeFocusedWindow: () => void;
   quit: () => void;
 }
 
@@ -95,7 +96,14 @@ export function buildAppShellMenuTemplate(actions: AppShellMenuActions): AppShel
     },
     {
       label: 'Window',
-      submenu: [{ role: 'minimize' }, { role: 'close' }],
+      submenu: [
+        { role: 'minimize' },
+        {
+          label: 'Close',
+          accelerator: 'CommandOrControl+W',
+          click: actions.closeFocusedWindow,
+        },
+      ],
     },
   ];
 }

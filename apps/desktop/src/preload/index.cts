@@ -152,6 +152,7 @@ contextBridge.exposeInMainWorld('zeus', {
   notifyTaskTableLayoutDirty: (dirty: boolean) => ipcRenderer.send('zeus:task-table-layout-dirty-changed', dirty),
   setUnsavedChangeState: (key: string, dirty: boolean) => ipcRenderer.send('zeus:unsaved-change-state', { key, dirty }),
   notifySensitiveRequestDraft: (payload: { requestId: string; present: boolean }) => ipcRenderer.send('zeus:sensitive-request-draft-changed', payload),
+  notifySessionContextActivity: (payload: unknown) => ipcRenderer.send('zeus:session-context-activity-changed', payload),
   resolveTaskTableLayoutCloseRequest: (proceed: boolean) => ipcRenderer.send('zeus:task-table-layout-close-resolution', { proceed }),
   resolveUnsavedChangesCloseRequest: (proceed: boolean) => ipcRenderer.send('zeus:unsaved-changes-close-resolution', { proceed }),
   onTaskTableLayoutCloseRequested: (listener: () => void) => {
@@ -172,6 +173,11 @@ contextBridge.exposeInMainWorld('zeus', {
     const handler = () => listener();
     ipcRenderer.on('zeus:native-new-conversation', handler);
     return () => ipcRenderer.removeListener('zeus:native-new-conversation', handler);
+  },
+  onNativeCloseActiveContextTab: (listener: () => void) => {
+    const handler = () => listener();
+    ipcRenderer.on('zeus:session-context-close-active-tab', handler);
+    return () => ipcRenderer.removeListener('zeus:session-context-close-active-tab', handler);
   },
   getBrowserSnapshot: (conversationId: string) => ipcRenderer.invoke('zeus:browser:get-snapshot', conversationId),
   openBrowserTab: (input: unknown) => ipcRenderer.invoke('zeus:browser:open-tab', input),

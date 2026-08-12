@@ -58,6 +58,8 @@ const taskGitDeliveryTaskByWindowId = new Map<number, string>();
 const taskGitDeliveryWindowSaveTimers = new Map<number, ReturnType<typeof setTimeout>>();
 const taskGitDeliveryWindowPersistenceGates = new Map<number, WindowStatePersistenceGate>();
 const mainWindowTaskGitContexts = new Map<number, TaskGitDeliveryCurrentContext>();
+type SessionContextKind = 'browser' | 'plan' | 'source' | 'turn_diff' | 'none';
+const sessionContextActivityByWindow = new Map<number, { active: boolean; kind: SessionContextKind }>();
 let currentTaskGitDeliveryContext: TaskGitDeliveryCurrentContext = { taskId: null, workspaceId: null };
 let menuBarUsageMenu: Menu | undefined;
 let localServerRuntime: DesktopLocalServerRuntime | undefined;
@@ -697,6 +699,7 @@ async function createWindow(): Promise<void> {
     projectSourceWatchers.get(sourceWatcherKey)?.watcher.close();
     projectSourceWatchers.delete(sourceWatcherKey);
     mainWindowTaskGitContexts.delete(window.id);
+    sessionContextActivityByWindow.delete(window.id);
     rendererBootstrapMonitor.dispose(window);
     windows.delete(window);
     if (mainWindow === window) mainWindow = [...windows].at(-1);
@@ -768,10 +771,23 @@ function setupMenu(): void {
         showMainWindow: () => {
           void requestMainWindow();
         },
+        closeFocusedWindow: closeFocusedWindowOrContextTab,
         quit: () => app.quit(),
       }) as Electron.MenuItemConstructorOptions[],
     ),
   );
+}
+
+/** 右侧会话工作面活动时关闭其当前标签，否则沿用 macOS 的关闭窗口语义。 */
+function closeFocusedWindowOrContextTab(): void {
+  const window = BrowserWindow.getFocusedWindow();
+  if (!window || window.isDestroyed()) return;
+  const contextActivity = sessionContextActivityByWindow.get(window.id);
+  if (browserHost?.isVisibleTabFocused(window) || contextActivity?.active) {
+    window.webContents.send('zeus:session-context-close-active-tab');
+    return;
+  }
+  window.close();
 }
 
 /** Cmd+N 是会话级动作：恢复主窗口并通知 Renderer 打开新会话草稿，不再创建额外窗口。 */
@@ -1132,6 +1148,14 @@ function setupIpc(): void {
     else requestIds.delete(requestId);
     if (requestIds.size > 0) sensitiveRequestDraftIdsByWindow.set(requestingWindow.id, requestIds);
     else sensitiveRequestDraftIdsByWindow.delete(requestingWindow.id);
+  });
+  ipcMain.on('zeus:session-context-activity-changed', (event, payload: unknown) => {
+    const requestingWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow) || !payload || typeof payload !== 'object') return;
+    const value = payload as { active?: unknown; kind?: unknown };
+    const kind = value.kind;
+    if (kind !== 'browser' && kind !== 'plan' && kind !== 'source' && kind !== 'turn_diff' && kind !== 'none') return;
+    sessionContextActivityByWindow.set(requestingWindow.id, { active: value.active === true && kind !== 'none', kind });
   });
   ipcMain.on('zeus:task-table-layout-close-resolution', (event, resolution: unknown) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);

@@ -185,6 +185,7 @@ declare global {
       notifyTaskTableLayoutDirty: (dirty: boolean) => void;
       setUnsavedChangeState: (key: string, dirty: boolean) => void;
       notifySensitiveRequestDraft: (payload: { requestId: string; present: boolean }) => void;
+      notifySessionContextActivity: (payload: { active: boolean; kind: 'browser' | 'plan' | 'source' | 'turn_diff' | 'none' }) => void;
       resolveTaskTableLayoutCloseRequest: (proceed: boolean) => void;
       resolveUnsavedChangesCloseRequest: (proceed: boolean) => void;
       onTaskTableLayoutCloseRequested: (listener: () => void) => () => void;
@@ -200,6 +201,7 @@ declare global {
       moveWindowDrag: (point: { screenX: number; screenY: number }) => Promise<{ dragging: boolean; x?: number; y?: number }>;
       endWindowDrag: () => Promise<{ dragging: false }>;
       onNativeNewConversation: (listener: () => void) => () => void;
+      onNativeCloseActiveContextTab: (listener: () => void) => () => void;
       getBrowserSnapshot: (conversationId: string) => Promise<ZeusBrowserConversationSnapshot>;
       openBrowserTab: (input: { conversationId: string; url?: string }) => Promise<ZeusBrowserConversationSnapshot>;
       activateBrowserTab: (input: { conversationId: string; tabId: string }) => Promise<ZeusBrowserConversationSnapshot>;
