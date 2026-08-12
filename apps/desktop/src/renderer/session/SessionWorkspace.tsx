@@ -2,7 +2,6 @@ import { type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type Poin
 import { ArrowsClockwiseIcon as ArrowsClockwise } from '@phosphor-icons/react/dist/csr/ArrowsClockwise';
 import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/csr/WarningCircle';
 import { GlobeSimpleIcon as GlobeSimple } from '@phosphor-icons/react/dist/csr/GlobeSimple';
-import { LightningIcon as Lightning } from '@phosphor-icons/react/dist/csr/Lightning';
 import { animate as animateMotion, motion, useMotionValue, useTransform } from 'framer-motion';
 import type { ConversationFileLocation, ConversationOpenTarget, TurnChangeFile, ZeusBrowserPreparedSubmission } from '@zeus/shared';
 import { openConversationResourceInMain, openTurnChangeFileInMain } from '../appShellBridge.js';
@@ -45,21 +44,14 @@ import type {
   TurnChangeSet,
   TurnChangeSetOperationResult,
 } from './sessionTypes.js';
-import {
-  normalizeServiceTierSelection,
-  readProjectServiceTierPreference,
-  selectionFromEffectiveServiceTier,
-  serviceTierOptions,
-  serviceTierSelectionFromValue,
-  serviceTierSelectionValue,
-  serviceTierWireOverride,
-} from './serviceTierSelection.js';
+import { normalizeServiceTierSelection, selectionFromEffectiveServiceTier, serviceTierWireOverride } from './serviceTierSelection.js';
 import { reconnectDelayMs, type SessionController, type SessionControllerClient, useSessionController } from './useSessionController.js';
 import { createSessionEscapeController, type SessionEscapeController, type SessionEscapeLayer, type SessionEscapeResult } from './useThreadScrollController.js';
 import { SafeMarkdown, type SessionUiLanguage } from './ThreadItemView.js';
 import { autosizeTextarea } from './textareaAutosize.js';
 import { conversationAttachmentIdentity, ConversationComposerAttachments } from './ConversationComposerAttachments.js';
 import { ContextUsageIndicator } from './ContextUsageIndicator.js';
+import { ServiceTierToggle } from './ServiceTierToggle.js';
 import { useConversationInputResources } from './useConversationInputResources.js';
 import { SessionQuickActionsCard } from './SessionQuickActionsCard.js';
 import type { SessionCodeReviewSelection } from './SessionCodeReviewDialog.js';
@@ -2132,8 +2124,7 @@ function NewConversationComposer(props: {
   const [capabilities, setCapabilities] = useState<CodexConversationCapabilities | null>(props.capabilities ?? null);
   const [selectedModelId, setSelectedModelId] = useState('');
   const [selectedEffort, setSelectedEffort] = useState('');
-  const [serviceTierSelection, setServiceTierSelection] = useState<NativeServiceTierSelection>(() => readProjectServiceTierPreference(browserConversationStorage(), props.owner?.projectId ?? ''));
-  const [serviceTierDowngraded, setServiceTierDowngraded] = useState(false);
+  const [serviceTierSelection, setServiceTierSelection] = useState<NativeServiceTierSelection>({ type: 'standard' });
   const [isComposing, setIsComposing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
@@ -2164,8 +2155,7 @@ function NewConversationComposer(props: {
     setSelectedEffort(remembered?.effort ?? '');
     setPermissionMode(remembered?.permissionMode ?? 'auto');
     setCollaborationMode(remembered?.collaborationMode ?? 'default');
-    setServiceTierSelection(remembered?.serviceTier ?? readProjectServiceTierPreference(browserConversationStorage(), projectId));
-    setServiceTierDowngraded(false);
+    setServiceTierSelection(remembered?.serviceTier ?? { type: 'standard' });
     if (props.capabilities) {
       setCapabilities(props.capabilities);
       return;
@@ -2189,9 +2179,6 @@ function NewConversationComposer(props: {
     capabilities?.models.find((model) => model.model === capabilities.preferredModel || model.id === capabilities.preferredModel) ??
     capabilities?.models[0] ??
     null;
-  const serviceTierValue = serviceTierSelectionValue(serviceTierSelection);
-  const serviceTierItems = serviceTierOptions(selectedModel, props.language, true);
-  const serviceTierLabel = serviceTierItems.find((option) => option.value === serviceTierValue)?.label ?? serviceTierValue;
   const selectedModelLabel = selectedModel ? `${selectedModel.sourceName ? `${selectedModel.sourceName} / ` : ''}${selectedModel.displayName ?? selectedModel.model}` : '';
 
   useEffect(() => {
@@ -2201,7 +2188,6 @@ function NewConversationComposer(props: {
     const normalized = normalizeServiceTierSelection(serviceTierSelection, selectedModel);
     if (!normalized.downgraded) return;
     setServiceTierSelection(normalized.selection);
-    setServiceTierDowngraded(true);
   }, [selectedEffort, selectedModel, selectedModelId, serviceTierSelection]);
 
   useEffect(() => {
@@ -2336,20 +2322,7 @@ function NewConversationComposer(props: {
           <span className="session-composer-trailing-actions">
             <span className="session-composer-runtime-settings">
               <ContextUsageIndicator usage={null} language={props.language} />
-              <ComposerDropdown
-                label={props.language === 'zh-CN' ? '服务档位' : 'Service tier'}
-                triggerLabel={`${props.language === 'zh-CN' ? '服务档位' : 'Service tier'}：${serviceTierLabel}`}
-                triggerIcon={<Lightning weight={serviceTierSelection.type === 'catalog' ? 'fill' : 'regular'} />}
-                hideSelectedLabel
-                className="session-composer-service-tier-dropdown"
-                value={serviceTierValue}
-                options={serviceTierItems}
-                disabled={submitting || !props.owner}
-                onChange={(value) => {
-                  setServiceTierSelection(serviceTierSelectionFromValue(value));
-                  setServiceTierDowngraded(false);
-                }}
-              />
+              <ServiceTierToggle language={props.language} model={selectedModel} value={serviceTierSelection} disabled={submitting || !props.owner} onChange={setServiceTierSelection} />
               <ComposerDropdown
                 label={props.language === 'zh-CN' ? '模型' : 'Model'}
                 triggerLabel={`${props.language === 'zh-CN' ? '模型' : 'Model'}：${selectedModelLabel}`}
@@ -2363,7 +2336,6 @@ function NewConversationComposer(props: {
                   setSelectedEffort(nextModel?.defaultReasoningEffort ?? nextModel?.supportedReasoningEfforts[0] ?? '');
                   const normalized = normalizeServiceTierSelection(serviceTierSelection, nextModel);
                   setServiceTierSelection(normalized.selection);
-                  setServiceTierDowngraded(normalized.downgraded);
                 }}
               />
               <ComposerDropdown
@@ -2389,11 +2361,6 @@ function NewConversationComposer(props: {
             </span>
           </span>
         </div>
-        {serviceTierDowngraded ? (
-          <small className="session-service-tier-note" role="status">
-            {props.language === 'zh-CN' ? '当前模型不支持原 Fast 档位，已切换为标准。' : 'The current model does not support the previous Fast tier. Standard is selected.'}
-          </small>
-        ) : null}
       </div>
     </section>
   );

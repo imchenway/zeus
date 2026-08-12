@@ -15,7 +15,7 @@ import {
 import type { TaskRecord } from '../apiClient.js';
 import type { CodexTaskPushCapabilities, NativeConversationAttachment, NativePermissionMode, NativeServiceTierSelection, TaskPushSupplementalAttachmentDraft, TaskPushSupplementalAttachmentInput } from '../session/sessionTypes.js';
 import { useConversationInputResources } from '../session/useConversationInputResources.js';
-import { normalizeServiceTierSelection, serviceTierDescription, serviceTierOptions, serviceTierSelectionFromValue, serviceTierSelectionValue } from '../session/serviceTierSelection.js';
+import { normalizeServiceTierSelection, serviceTierOptions, serviceTierSelectionFromValue, serviceTierSelectionValue } from '../session/serviceTierSelection.js';
 import { readConversationRuntimePreferences, writeConversationRuntimePreferences } from '../session/conversationRuntimePreferences.js';
 import { resolveModelCapability } from '../session/modelSelection.js';
 import { Button } from '../ui/Button.js';
@@ -462,7 +462,7 @@ export function readTaskModelPushPreferences(storage: Pick<Storage, 'getItem'> |
     return {
       model: value.model,
       effort: value.effort,
-      serviceTier: value.serviceTier?.type === 'catalog' && typeof value.serviceTier.id === 'string' ? value.serviceTier : value.serviceTier?.type === 'standard' ? { type: 'standard' } : { type: 'follow' },
+      serviceTier: value.serviceTier?.type === 'catalog' && typeof value.serviceTier.id === 'string' ? value.serviceTier : { type: 'standard' },
       workMode: value.workMode,
       permissionMode: value.permissionMode,
       ...(value.workspaceMode === 'direct' || value.workspaceMode === 'worktree' ? { workspaceMode: value.workspaceMode } : {}),
@@ -495,7 +495,7 @@ export function writeTaskModelPushPreferences(storage: Pick<Storage, 'getItem' |
   );
 }
 
-export function resolveTaskModelPushInitialForm(capabilities: CodexTaskPushCapabilities, remembered: TaskModelPushPreferences | null, serviceTier: NativeServiceTierSelection = { type: 'follow' }): TaskModelPushForm {
+export function resolveTaskModelPushInitialForm(capabilities: CodexTaskPushCapabilities, remembered: TaskModelPushPreferences | null, serviceTier: NativeServiceTierSelection = { type: 'standard' }): TaskModelPushForm {
   const rememberedModel = capabilities.models.find((model) => model.model === remembered?.model || model.id === remembered?.model);
   const selectedModel = rememberedModel ?? capabilities.models.find((model) => model.model === capabilities.preferredModel || model.id === capabilities.preferredModel) ?? capabilities.models[0];
   if (!selectedModel) throw new Error('Codex app-server did not report an available model.');
@@ -925,12 +925,12 @@ export function TaskModelPushModal(props: {
               </label>
             ) : null}
             <label>
-              <span>{zh ? '服务档位' : 'Service tier'}</span>
+              <span>{zh ? '速度' : 'Speed'}</span>
               <ZeusSelect
                 size="regular"
-                ariaLabel={zh ? '服务档位' : 'Service tier'}
+                ariaLabel={zh ? '速度' : 'Speed'}
                 value={serviceTierSelectionValue(props.form.serviceTier)}
-                options={serviceTierOptions(selectedModel, props.language, true)}
+                options={serviceTierOptions(selectedModel, props.language)}
                 onChange={(value) => props.onChange({ ...props.form, serviceTier: serviceTierSelectionFromValue(value), serviceTierDowngraded: false })}
                 disabled={!selectedModel || busy}
                 searchable={false}
@@ -968,14 +968,6 @@ export function TaskModelPushModal(props: {
               />
             </label>
           </div>
-
-          <p className="task-model-push-message" role={props.form.serviceTierDowngraded ? 'status' : undefined}>
-            {props.form.serviceTierDowngraded
-              ? zh
-                ? '所选模型不支持原 Fast 档位，已保留模型并切换为标准。'
-                : 'The selected model does not support the previous Fast tier. The model was kept and the tier changed to Standard.'
-              : serviceTierDescription(props.form.serviceTier, selectedModel, props.language)}
-          </p>
 
           {codexLoginRequired || authenticating || authenticated ? (
             <section className={`task-model-push-account${authenticated ? ' is-success' : ''}`} role="status" aria-live="polite" aria-atomic="true">
