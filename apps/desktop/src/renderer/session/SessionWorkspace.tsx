@@ -1204,13 +1204,13 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
 
   useEffect(() => {
     if (!props.state || legacy || composerRuntimeSettings) return;
-    const snapshotSettings = composerRuntimeSettingsFromState(props.state, props.capabilities);
+    const snapshotSettings = composerRuntimeSettingsFromState(props.state, props.capabilities, props.conversation);
     const projectId = props.state.projectId ?? props.conversation?.projectId;
     const conversationId = props.state.conversationId ?? props.conversation?.id;
     if (!snapshotSettings || !projectId || !conversationId) return;
     writeConversationNextTurnSettings(browserConversationStorage(), projectId, conversationId, snapshotSettings);
     setComposerRuntimeSettings(snapshotSettings);
-  }, [composerRuntimeSettings, legacy, props.capabilities, props.state]);
+  }, [composerRuntimeSettings, legacy, props.capabilities, props.conversation?.collaborationMode, props.conversation?.permissionMode, props.state]);
 
   useEffect(() => {
     if (!props.state || legacy || interactionReadOnly || !composerRuntimeSettings || !actions.onNextTurnSettingsChange) return;
@@ -1601,8 +1601,8 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
         onRemoveBrowserSubmission={actions.onRemoveBrowserSubmission}
         runtimeSettings={composerRuntimeSettings}
         onRuntimeSettingsChange={updateComposerRuntimeSettings}
-        permissionMode={composerRuntimeSettings?.permissionMode ?? props.state.snapshot?.nextTurnSettings?.permissionMode ?? props.state.snapshot?.permissionMode ?? 'read-only'}
-        collaborationMode={composerRuntimeSettings?.collaborationMode ?? props.state.snapshot?.nextTurnSettings?.collaborationMode ?? props.state.snapshot?.collaborationMode ?? 'default'}
+        permissionMode={composerRuntimeSettings?.permissionMode ?? props.state.snapshot?.nextTurnSettings?.permissionMode ?? props.state.snapshot?.permissionMode ?? props.conversation?.permissionMode ?? 'read-only'}
+        collaborationMode={composerRuntimeSettings?.collaborationMode ?? props.state.snapshot?.nextTurnSettings?.collaborationMode ?? props.state.snapshot?.collaborationMode ?? props.conversation?.collaborationMode ?? 'default'}
       />
     );
   }
@@ -2320,7 +2320,11 @@ function writeConversationNextTurnSettings(storage: Pick<Storage, 'setItem'> | u
   storage.setItem(conversationNextTurnSettingsStorageKey(projectId, conversationId), JSON.stringify(settings));
 }
 
-function composerRuntimeSettingsFromState(state: NativeSessionState, capabilities: CodexConversationCapabilities | null | undefined): ComposerRuntimeSettings | null {
+function composerRuntimeSettingsFromState(
+  state: NativeSessionState,
+  capabilities: CodexConversationCapabilities | null | undefined,
+  conversation: Pick<NativeConversationChoice, 'permissionMode' | 'collaborationMode'> | null | undefined,
+): ComposerRuntimeSettings | null {
   const source = state.snapshot?.nextTurnSettings;
   const requestedModel = source?.model ?? state.providerSettings?.model;
   if (!requestedModel) return null;
@@ -2338,8 +2342,10 @@ function composerRuntimeSettingsFromState(state: NativeSessionState, capabilitie
     model,
     ...(effort ? { effort } : {}),
     ...(hasSourceServiceTier || hasProviderServiceTier ? { serviceTier } : {}),
-    permissionMode: source?.permissionMode ?? state.snapshot?.permissionMode ?? 'read-only',
-    collaborationMode: source?.collaborationMode ?? state.snapshot?.collaborationMode ?? 'default',
+    // 任务首发创建期还没有服务端快照，先使用本次已确认的会话选择；
+    // 快照到达后仍由服务端权限覆盖，缺失事实继续安全回退为只读。
+    permissionMode: source?.permissionMode ?? state.snapshot?.permissionMode ?? conversation?.permissionMode ?? 'read-only',
+    collaborationMode: source?.collaborationMode ?? state.snapshot?.collaborationMode ?? conversation?.collaborationMode ?? 'default',
   };
 }
 
