@@ -12951,7 +12951,14 @@ export function App(props: {
                 status={taskModelPushStatus}
                 refreshingRepositoryId={taskModelPushRefreshingRepositoryId}
                 error={taskModelPushError}
-                onChange={setTaskModelPushForm}
+                onChange={(nextForm) => {
+                  setTaskModelPushForm((current) => {
+                    const resolved = typeof nextForm === 'function' ? nextForm(current) : nextForm;
+                    const task = snapshot.tasks.find((candidate) => candidate.id === taskModelPushTaskId);
+                    if (task) writeTaskModelPushPreferences(browserNativeConversationStartStorage(), task.projectId, resolved);
+                    return resolved;
+                  });
+                }}
                 onRefreshRepository={(repositoryId) => void refreshTaskModelPushRepository(repositoryId)}
                 onClose={closeTaskModelPush}
                 onCancelAuthentication={cancelTaskModelPushAuthentication}

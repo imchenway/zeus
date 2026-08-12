@@ -16,6 +16,7 @@ import type { TaskRecord } from '../apiClient.js';
 import type { CodexTaskPushCapabilities, NativeConversationAttachment, NativePermissionMode, NativeServiceTierSelection, TaskPushSupplementalAttachmentDraft, TaskPushSupplementalAttachmentInput } from '../session/sessionTypes.js';
 import { useConversationInputResources } from '../session/useConversationInputResources.js';
 import { normalizeServiceTierSelection, serviceTierDescription, serviceTierOptions, serviceTierSelectionFromValue, serviceTierSelectionValue } from '../session/serviceTierSelection.js';
+import { readConversationRuntimePreferences, writeConversationRuntimePreferences } from '../session/conversationRuntimePreferences.js';
 import { Button } from '../ui/Button.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
 import { ZeusSelect } from '../ZeusSelect.js';
@@ -40,7 +41,7 @@ export interface TaskModelPushForm {
 
 export type TaskModelPushModalStatus = 'loading' | 'ready' | 'authenticating' | 'authenticated' | 'submitting' | 'error';
 
-export type TaskModelPushPreferences = Pick<TaskModelPushForm, 'model' | 'effort' | 'workMode' | 'permissionMode'> & {
+export type TaskModelPushPreferences = Pick<TaskModelPushForm, 'model' | 'effort' | 'serviceTier' | 'workMode' | 'permissionMode'> & {
   workspaceMode?: 'direct' | 'worktree';
 };
 
@@ -442,6 +443,17 @@ export function TaskPushLayoutPreview(props: { layout: TaskPushMessageLayout; la
 export function readTaskModelPushPreferences(storage: Pick<Storage, 'getItem'> | undefined, projectId: string): TaskModelPushPreferences | null {
   if (!storage) return null;
   try {
+    const current = readConversationRuntimePreferences(storage, projectId, 'task_development');
+    if (current?.model) {
+      return {
+        model: current.model,
+        effort: current.effort ?? '',
+        serviceTier: current.serviceTier,
+        workMode: current.collaborationMode,
+        permissionMode: current.permissionMode,
+        ...(current.workspaceMode ? { workspaceMode: current.workspaceMode } : {}),
+      };
+    }
     const value = JSON.parse(storage.getItem(`${preferencesKeyPrefix}${encodeURIComponent(projectId)}`) ?? 'null') as Partial<TaskModelPushPreferences> | null;
     if (!value || typeof value.model !== 'string' || typeof value.effort !== 'string') return null;
     if (value.workMode !== 'default' && value.workMode !== 'plan') return null;
@@ -449,6 +461,7 @@ export function readTaskModelPushPreferences(storage: Pick<Storage, 'getItem'> |
     return {
       model: value.model,
       effort: value.effort,
+      serviceTier: value.serviceTier?.type === 'catalog' && typeof value.serviceTier.id === 'string' ? value.serviceTier : value.serviceTier?.type === 'standard' ? { type: 'standard' } : { type: 'follow' },
       workMode: value.workMode,
       permissionMode: value.permissionMode,
       ...(value.workspaceMode === 'direct' || value.workspaceMode === 'worktree' ? { workspaceMode: value.workspaceMode } : {}),
@@ -460,11 +473,20 @@ export function readTaskModelPushPreferences(storage: Pick<Storage, 'getItem'> |
 
 export function writeTaskModelPushPreferences(storage: Pick<Storage, 'getItem' | 'setItem'> | undefined, projectId: string, form: TaskModelPushForm): void {
   if (!storage) return;
+  writeConversationRuntimePreferences(storage, projectId, 'task_development', {
+    model: form.model,
+    ...(form.effort ? { effort: form.effort } : {}),
+    serviceTier: form.serviceTier,
+    permissionMode: form.permissionMode,
+    collaborationMode: form.workMode,
+    workspaceMode: form.workspaceMode,
+  });
   storage.setItem(
     `${preferencesKeyPrefix}${encodeURIComponent(projectId)}`,
     JSON.stringify({
       model: form.model,
       effort: form.effort,
+      serviceTier: form.serviceTier,
       workMode: form.workMode,
       permissionMode: form.permissionMode,
       workspaceMode: form.workspaceMode,
@@ -477,11 +499,13 @@ export function resolveTaskModelPushInitialForm(capabilities: CodexTaskPushCapab
   const selectedModel = rememberedModel ?? capabilities.models.find((model) => model.model === capabilities.preferredModel || model.id === capabilities.preferredModel) ?? capabilities.models[0];
   if (!selectedModel) throw new Error('Codex app-server did not report an available model.');
   const effort = rememberedModel && remembered && selectedModel.supportedReasoningEfforts.includes(remembered.effort) ? remembered.effort : (selectedModel.defaultReasoningEffort ?? selectedModel.supportedReasoningEfforts[0] ?? '');
+  const requestedServiceTier = remembered?.serviceTier ?? serviceTier;
+  const normalizedServiceTier = normalizeServiceTierSelection(requestedServiceTier, selectedModel);
   return {
     model: selectedModel.id,
     effort,
-    serviceTier: normalizeServiceTierSelection(serviceTier, selectedModel).selection,
-    serviceTierDowngraded: serviceTier.type === 'catalog' && !selectedModel.serviceTiers.some((tier) => tier.id === serviceTier.id),
+    serviceTier: normalizedServiceTier.selection,
+    serviceTierDowngraded: normalizedServiceTier.downgraded,
     workMode: remembered?.workMode ?? 'default',
     // 用户已确认：项目没有成功记忆时，权限必须回退为只读。
     permissionMode: remembered?.permissionMode ?? 'read-only',

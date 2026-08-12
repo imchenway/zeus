@@ -5,6 +5,7 @@ import type { SessionUiLanguage } from './ThreadItemView.js';
 import { Button } from '../ui/Button.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
 import { ZeusSelect } from '../ZeusSelect.js';
+import { readConversationRuntimePreferences, writeConversationRuntimePreferences } from './conversationRuntimePreferences.js';
 
 export interface SessionCodeReviewSelection {
   agentKind: 'codex' | 'pi';
@@ -58,8 +59,18 @@ export function SessionCodeReviewDialog(props: SessionCodeReviewDialogProps) {
     let active = true;
     const acceptCapabilities = (nextCapabilities: CodexConversationCapabilities): void => {
       if (!active) return;
+      const remembered = readConversationRuntimePreferences(browserStorage(), props.conversation.projectId, 'code_review');
       setCapabilities(nextCapabilities);
-      setForm((current) => current ?? resolveInitialForm(nextCapabilities, inheritedModel, inheritedEffort, inheritedServiceTier));
+      setForm(
+        (current) =>
+          current ??
+          resolveInitialForm(
+            nextCapabilities,
+            remembered?.model ?? inheritedModel,
+            remembered?.effort ?? inheritedEffort,
+            remembered?.serviceTier.type === 'catalog' ? remembered.serviceTier.id : remembered?.serviceTier.type === 'standard' ? null : inheritedServiceTier,
+          ),
+      );
       setStatus('ready');
       setError(null);
     };
@@ -95,6 +106,17 @@ export function SessionCodeReviewDialog(props: SessionCodeReviewDialogProps) {
   }, [inheritedEffort, inheritedModel, inheritedServiceTier, props.capabilities, props.conversation.projectId, props.onLoadCapabilities, props.open, zh]);
 
   const selectedModel = useMemo(() => findModel(capabilities, form?.model), [capabilities, form?.model]);
+
+  useEffect(() => {
+    if (!props.open || !form) return;
+    writeConversationRuntimePreferences(browserStorage(), props.conversation.projectId, 'code_review', {
+      model: form.model,
+      ...(form.effort ? { effort: form.effort } : {}),
+      serviceTier: form.serviceTierSelection,
+      permissionMode,
+      collaborationMode: 'default',
+    });
+  }, [form, permissionMode, props.conversation.projectId, props.open]);
   if (!props.open) return null;
   const busy = status === 'submitting';
 
@@ -287,6 +309,14 @@ export function SessionCodeReviewDialog(props: SessionCodeReviewDialogProps) {
       </form>
     </ModalPortal>
   );
+}
+
+function browserStorage(): Storage | undefined {
+  try {
+    return typeof window === 'undefined' ? undefined : window.localStorage;
+  } catch {
+    return undefined;
+  }
 }
 
 function resolveInitialForm(capabilities: CodexConversationCapabilities, inheritedModel: string, inheritedEffort: string, inheritedServiceTier: string | null | undefined): SessionCodeReviewForm {

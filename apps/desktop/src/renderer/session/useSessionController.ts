@@ -245,6 +245,8 @@ export function createSessionController(options: CreateSessionControllerOptions)
   const pendingRenderDeltas = new Map<string, NativeConversationEvent>();
   let renderDeltaTimer: ReturnType<typeof setTimeout> | null = null;
   let activeOperation: { key: string; promise: Promise<unknown> } | null = null;
+  let nextTurnSettingsWrite: Promise<NativeNextTurnSettings> | null = null;
+  let nextTurnSettingsRevision = 0;
   const listeners = new Set<() => void>();
   const createId = options.createId ?? defaultCreateId;
 
@@ -904,8 +906,13 @@ export function createSessionController(options: CreateSessionControllerOptions)
       );
     },
     setNextTurnSettings(settings) {
-      return options.client.updateNativeNextTurnSettings(options.projectId, options.conversationId, settings).then((updated) => {
-        if (!disposed) dispatch({ type: 'next_turn_settings_changed', settings: updated });
+      const revision = ++nextTurnSettingsRevision;
+      // 同一会话的快速连续选择必须按用户操作顺序落盘，避免较慢的旧请求最后返回并覆盖新选择。
+      const previous = nextTurnSettingsWrite;
+      const write = (previous ? previous.catch(() => undefined) : Promise.resolve()).then(() => options.client.updateNativeNextTurnSettings(options.projectId, options.conversationId, settings));
+      nextTurnSettingsWrite = write;
+      return write.then((updated) => {
+        if (!disposed && revision === nextTurnSettingsRevision) dispatch({ type: 'next_turn_settings_changed', settings: updated });
         return updated;
       });
     },

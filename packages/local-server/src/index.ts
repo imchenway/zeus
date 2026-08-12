@@ -1641,6 +1641,8 @@ interface StartProjectConversationBody {
   permissionMode?: ConversationPermissionMode;
   collaborationMode?: ConversationCollaborationMode;
   serviceTier?: string | null;
+  model?: string;
+  effort?: string;
   clientUserMessageId?: string;
   agentKind?: 'codex' | 'pi' | 'claude';
 }
@@ -3362,6 +3364,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         permissionMode,
         collaborationMode,
       };
+      const previousPermissionMode = conversations.getNextTurnSettings(conversation.id)?.permissionMode ?? conversation.permissionMode;
+      if (previousPermissionMode !== permissionMode) conversations.setSessionFileEditGrant(conversation.id, conversation.projectId, false);
       conversations.updateNextTurnSettings(conversation.id, settings);
       await db.save();
       return settings;
@@ -3387,6 +3391,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       if (runState.type !== 'idle') {
         return reply.code(409).send({ error: 'ZEUS_NATIVE_PERMISSION_MODE_IN_PROGRESS', message: 'Conversation permission mode can change only while the conversation is idle.' });
       }
+      if (conversation.permissionMode !== permissionMode) conversations.setSessionFileEditGrant(conversation.id, conversation.projectId, false);
       const updated = conversations.updatePermissionMode(conversation.id, permissionMode);
       await db.save();
       return toNativeConversationSnapshot(updated);
@@ -14089,7 +14094,13 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       throw nativeApiError('ZEUS_INVALID_CONVERSATION_START', 'Project conversation content or attachments are required.');
     }
     const capabilities = await resolveConversationCapabilities(project);
-    const selectedModel = capabilities.models.find((candidate) => candidate.model === capabilities.preferredModel || candidate.id === capabilities.preferredModel) ?? capabilities.models[0]!;
+    const requestedModel = typeof body.model === 'string' && body.model.trim() ? body.model.trim() : capabilities.preferredModel;
+    const selectedModel = capabilities.models.find((candidate) => candidate.model === requestedModel || candidate.id === requestedModel) ?? capabilities.models[0]!;
+    if (selectedModel.available === false) throw nativeApiError('ZEUS_MODEL_NOT_READY', selectedModel.availabilityReason || '所选模型当前不可运行。');
+    const requestedEffort = typeof body.effort === 'string' && body.effort.trim() ? body.effort.trim() : null;
+    if (requestedEffort && !selectedModel.supportedReasoningEfforts.some((effort) => effort === requestedEffort)) {
+      throw nativeApiError('ZEUS_INVALID_CONVERSATION_SETTINGS', 'Selected reasoning effort is not supported by the selected Codex model.');
+    }
     const requestedServiceTier = readServiceTierOverride(body);
     const serviceTier = normalizeServiceTierForCapability(requestedServiceTier, selectedModel);
     const clientUserMessageId = normalizeNativeClientUserMessageId(body.clientUserMessageId, `native-client-${createHash('sha256').update(`${project.id}\0${idempotencyKey}`).digest('hex').slice(0, 24)}`);
@@ -14112,6 +14123,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       prompt: content,
       attachments,
       model: selectedModel.model,
+      effort: requestedEffort ?? selectedModel.defaultReasoningEffort ?? selectedModel.supportedReasoningEfforts[0] ?? undefined,
       ...(requestedServiceTier.present ? { serviceTier } : {}),
       permissionMode,
       collaborationMode,

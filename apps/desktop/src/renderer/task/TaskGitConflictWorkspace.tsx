@@ -7,6 +7,7 @@ import { useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode,
 import type { TaskIntegrationConflictPermissionMode, TaskIntegrationRecord } from '../session/sessionTypes.js';
 import { Button } from '../ui/Button.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
+import { readConversationRuntimePreferences, writeConversationRuntimePreferences } from '../session/conversationRuntimePreferences.js';
 import {
   applyConflictDocumentEdit,
   applyConflictSideAction,
@@ -56,7 +57,10 @@ export function TaskGitConflictWorkspace(props: {
   const [mergeFeedback, setMergeFeedback] = useState<string | null>(null);
   const [undoDraft, setUndoDraft] = useState<ConflictDocument | null>(null);
   const [aiPermissionOpen, setAiPermissionOpen] = useState(false);
-  const [aiPermissionMode, setAiPermissionMode] = useState<TaskIntegrationConflictPermissionMode>('auto');
+  const [aiPermissionMode, setAiPermissionMode] = useState<TaskIntegrationConflictPermissionMode>(() => {
+    const remembered = readConversationRuntimePreferences(browserStorage(), props.integration.projectId, 'conflict_resolution')?.permissionMode;
+    return remembered === 'full-access' ? 'full-access' : 'auto';
+  });
   const aiPermissionDialogRef = useRef<HTMLElement | null>(null);
   const currentFileResolved = document !== null && unresolvedCount === 0;
   const selectedBlock = blocks[Math.min(selectedBlockIndex, Math.max(0, blocks.length - 1))] ?? null;
@@ -73,6 +77,16 @@ export function TaskGitConflictWorkspace(props: {
     setUndoDraft(null);
     setAiPermissionOpen(false);
   }, [props.conflictPath, document?.fingerprint]);
+
+  useEffect(() => {
+    const current = readConversationRuntimePreferences(browserStorage(), props.integration.projectId, 'conflict_resolution');
+    writeConversationRuntimePreferences(browserStorage(), props.integration.projectId, 'conflict_resolution', {
+      ...(current ?? {}),
+      serviceTier: current?.serviceTier ?? { type: 'follow' },
+      permissionMode: aiPermissionMode,
+      collaborationMode: current?.collaborationMode ?? 'default',
+    });
+  }, [aiPermissionMode, props.integration.projectId]);
 
   useEffect(() => {
     if (selectedBlockIndex >= blocks.length && blocks.length > 0) setSelectedBlockIndex(blocks.length - 1);
@@ -352,6 +366,14 @@ export function TaskGitConflictWorkspace(props: {
       </main>
     </div>
   );
+}
+
+function browserStorage(): Storage | undefined {
+  try {
+    return typeof window === 'undefined' ? undefined : window.localStorage;
+  } catch {
+    return undefined;
+  }
 }
 
 function simpleConflictFailureText(reasons: Partial<Record<SimpleConflictFailureReason, number>>, zh: boolean): string {
