@@ -159,7 +159,9 @@ interface PendingSendEnvelope {
   collaborationMode: NativeCollaborationMode;
   idempotencyKey: string;
   clientUserMessageId: string;
-  deliveryState?: 'pending' | 'accepted';
+  startedAt?: string;
+  deliveryState?: 'pending' | 'accepted' | 'failed' | 'uncertain';
+  deliveryError?: NativeSessionError;
   acceptance?: NativeOperationAcceptance;
   browserCommentsMarked?: boolean;
 }
@@ -225,6 +227,34 @@ export function createSessionController(options: CreateSessionControllerOptions)
     busyOperation: null,
     error: initialCachedState?.error?.recoveryRequired ? null : (initialCachedState?.error ?? null),
   };
+  if ((pendingSend?.deliveryState === 'failed' || pendingSend?.deliveryState === 'uncertain') && pendingSend.deliveryError) {
+    const previousConversationState = state.conversationState;
+    const startedAt = pendingSend.startedAt ?? new Date().toISOString();
+    const deliveryError = pendingSend.deliveryError;
+    pendingSend = { ...pendingSend, startedAt };
+    state = sessionReducer(state, {
+      type: 'send_started',
+      clientUserMessageId: pendingSend.clientUserMessageId,
+      durableClientUserMessageId: pendingSend.clientUserMessageId,
+      draft: pendingSend.displayText,
+      attachments: pendingSend.composerAttachments,
+      submittedAttachments: pendingSend.attachments,
+      browserSubmission: pendingSend.browserSubmission,
+      browserComments: pendingSend.browserSubmission?.comments ?? [],
+      delivery: pendingSend.delivery,
+      previousConversationState,
+      startedAt,
+    });
+    state = sessionReducer(state, {
+      type: pendingSend.deliveryState === 'failed' ? 'send_failed' : 'send_uncertain',
+      clientUserMessageId: pendingSend.clientUserMessageId,
+      draft: pendingSend.draft,
+      attachments: pendingSend.composerAttachments,
+      browserSubmission: pendingSend.browserSubmission,
+      previousConversationState,
+      error: deliveryError,
+    });
+  }
   let socket: WebSocket | null = null;
   let socketLifecycle: SocketLifecycle | null = null;
   let connectionToken = 0;
@@ -461,6 +491,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
       browserComments: envelope.browserSubmission?.comments ?? [],
       delivery: envelope.delivery,
       previousConversationState: state.conversationState,
+      startedAt: envelope.startedAt ?? new Date().toISOString(),
     });
     dispatch({ type: 'send_accepted', clientUserMessageId: envelope.clientUserMessageId, status: acceptedStatus(envelope.acceptance) });
   }
@@ -1000,6 +1031,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
           // provider 尚未接受的失败提交只调整服务档位时，沿用原幂等身份重试。
           idempotencyKey: reusableIdentity?.idempotencyKey ?? createId(),
           clientUserMessageId: reusableIdentity?.clientUserMessageId ?? createId(),
+          startedAt: reusableIdentity?.startedAt ?? new Date().toISOString(),
         };
       }
       const envelope = pendingSend;
@@ -1020,6 +1052,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
             browserComments: envelope.browserSubmission?.comments ?? [],
             delivery,
             previousConversationState,
+            startedAt: envelope.startedAt ?? new Date().toISOString(),
           });
           if (envelope.deliveryState === 'accepted' && envelope.acceptance) {
             dispatch({ type: 'send_accepted', clientUserMessageId: envelope.clientUserMessageId, status: acceptedStatus(envelope.acceptance) });
@@ -1052,6 +1085,11 @@ export function createSessionController(options: CreateSessionControllerOptions)
             const reconciliation = await reconcileFailedSend(envelope);
             if (reconciliation.kind === 'durable') return reconciliation.acceptance;
             const sessionError = toSessionError(error, true);
+            pendingSend = {
+              ...envelope,
+              deliveryState: reconciliation.kind === 'unknown' ? 'uncertain' : 'failed',
+              deliveryError: sessionError,
+            };
             dispatch(
               reconciliation.kind === 'unknown'
                 ? {
@@ -1263,10 +1301,25 @@ function isPendingSendEnvelope(value: unknown): value is PendingSendEnvelope {
     (pending.collaborationMode === undefined || pending.collaborationMode === 'default' || pending.collaborationMode === 'plan') &&
     typeof pending.idempotencyKey === 'string' &&
     typeof pending.clientUserMessageId === 'string' &&
-    (pending.deliveryState === undefined || pending.deliveryState === 'pending' || pending.deliveryState === 'accepted') &&
+    (pending.startedAt === undefined || typeof pending.startedAt === 'string') &&
+    (pending.deliveryState === undefined || pending.deliveryState === 'pending' || pending.deliveryState === 'accepted' || pending.deliveryState === 'failed' || pending.deliveryState === 'uncertain') &&
+    (pending.deliveryError === undefined || isNativeSessionError(pending.deliveryError)) &&
     (pending.acceptance === undefined || isNativeOperationAcceptance(pending.acceptance)) &&
     (pending.browserCommentsMarked === undefined || typeof pending.browserCommentsMarked === 'boolean') &&
-    (pending.deliveryState !== 'accepted' || isNativeOperationAcceptance(pending.acceptance))
+    (pending.deliveryState !== 'accepted' || isNativeOperationAcceptance(pending.acceptance)) &&
+    ((pending.deliveryState !== 'failed' && pending.deliveryState !== 'uncertain') || isNativeSessionError(pending.deliveryError))
+  );
+}
+
+function isNativeSessionError(value: unknown): value is NativeSessionError {
+  if (typeof value !== 'object' || value === null) return false;
+  const error = value as Partial<NativeSessionError>;
+  return (
+    typeof error.message === 'string' &&
+    (error.code === null || typeof error.code === 'string') &&
+    typeof error.recoveryRequired === 'boolean' &&
+    typeof error.retryable === 'boolean' &&
+    (error.status === undefined || typeof error.status === 'number')
   );
 }
 

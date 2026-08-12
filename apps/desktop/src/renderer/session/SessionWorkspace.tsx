@@ -1874,7 +1874,17 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                   language={props.language}
                   onLatestContentVisibilityChange={props.onLatestContentVisibilityChange}
                   onEditUserItem={interactionReadOnly ? undefined : actions.onEditUserItem}
-                  onRetryItem={interactionReadOnly ? undefined : actions.onRetryItem}
+                  onRetryItem={
+                    interactionReadOnly
+                      ? undefined
+                      : (item) => {
+                          if (actions.onRetryItem) {
+                            actions.onRetryItem(item);
+                            return;
+                          }
+                          composerRef.current?.focus();
+                        }
+                  }
                   openPlanItemId={planWorkspaceItemId}
                   onOpenPlan={(item) => {
                     contextReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;

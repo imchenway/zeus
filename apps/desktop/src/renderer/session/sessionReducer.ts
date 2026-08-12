@@ -49,6 +49,7 @@ export type NativeSessionAction =
       browserComments: ZeusBrowserComment[];
       delivery: 'queue' | 'steer_now';
       previousConversationState: ConversationState;
+      startedAt: string;
       taskPushLayout?: TaskPushMessageLayout;
     }
   | {
@@ -192,12 +193,24 @@ export function sessionReducer(state: NativeSessionState, action: NativeSessionA
     case 'send_failed': {
       const optimisticEntry = optimisticUserItemEntry(state, action.clientUserMessageId);
       const optimisticKey = optimisticEntry?.[0] ?? optimisticUserItemKey(state, action.clientUserMessageId);
-      const items = { ...state.items };
-      if (optimisticEntry) delete items[optimisticKey];
+      const optimistic = optimisticEntry?.[1];
       return {
         ...state,
-        items,
-        itemOrder: state.itemOrder.filter((key) => key !== optimisticKey),
+        ...(optimistic
+          ? {
+              items: {
+                ...state.items,
+                [optimisticKey]: {
+                  ...optimistic,
+                  status: 'failed',
+                  payload: {
+                    ...optimistic.payload,
+                    deliveryError: action.error,
+                  },
+                },
+              },
+            }
+          : {}),
         transcriptRevision: state.transcriptRevision + (optimisticEntry ? 1 : 0),
         conversationState: action.previousConversationState,
         draft: action.draft,
@@ -219,6 +232,10 @@ export function sessionReducer(state: NativeSessionState, action: NativeSessionA
                 [optimisticKey]: {
                   ...optimistic,
                   status: 'unconfirmed',
+                  payload: {
+                    ...optimistic.payload,
+                    deliveryError: action.error,
+                  },
                 },
               },
             }
@@ -799,6 +816,8 @@ function addOptimisticUserItem(state: NativeSessionState, action: Extract<Native
     optimistic: true,
     clientUserMessageId: action.clientUserMessageId,
     durableClientUserMessageId: action.durableClientUserMessageId,
+    timelineAt: action.startedAt,
+    updatedAt: action.startedAt,
   };
   const keepActiveState =
     action.previousConversationState === 'active_prework' || action.previousConversationState === 'active_final_answer' || action.previousConversationState === 'waiting_approval' || action.previousConversationState === 'waiting_user_input';

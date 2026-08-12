@@ -2,7 +2,17 @@ import { Fragment, type ReactNode, useCallback, useEffect, useLayoutEffect, useM
 import { isOperationalActivityItem, SessionActivityGroup, SessionTurnDuration } from './SessionActivity.js';
 import { itemRole, type SessionUiLanguage, ThreadItemView, transcriptItemText } from './ThreadItemView.js';
 import { PlanSummary } from './PlanSummary.js';
-import type { ConversationResource, ConversationResourcePreview, NativePendingRequest, NativeSessionItemBuffer, NativeSessionState, NativeTurnFailureSnapshot, TurnChangeSet, TurnChangeSetOperationResult } from './sessionTypes.js';
+import type {
+  ConversationResource,
+  ConversationResourcePreview,
+  NativePendingRequest,
+  NativeSessionError,
+  NativeSessionItemBuffer,
+  NativeSessionState,
+  NativeTurnFailureSnapshot,
+  TurnChangeSet,
+  TurnChangeSetOperationResult,
+} from './sessionTypes.js';
 import type { ConversationFileLocation, ConversationOpenTarget } from '@zeus/shared';
 import { useThreadScrollController } from './useThreadScrollController.js';
 import { TurnChangeCard } from './TurnChanges.js';
@@ -257,7 +267,12 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
             <TurnFailureCard key={`turn-failure:${turn.providerTurnId ?? turn.id}`} failure={turn.error!} language={props.language} providerErrors={providerErrorItemsByTurn.get(turn.providerTurnId ?? '')} />
           ))}
           {immediateOptimisticItems.map((item) => (
-            <ThreadItemView key={item.key} item={item} language={props.language} isLatest onVisibleContentChange={maintainLatestPosition} />
+            <Fragment key={item.key}>
+              <ThreadItemView item={item} language={props.language} isLatest onVisibleContentChange={maintainLatestPosition} />
+              {!showThinking || item.status === 'failed' || item.status === 'unconfirmed' || item.status === 'paused' ? (
+                <PendingMessageDeliveryFeedback item={item} stateError={props.state.error} language={props.language} onReturnToComposer={props.onRetryItem ? () => props.onRetryItem?.(item) : undefined} />
+              ) : null}
+            </Fragment>
           ))}
           {showThinking && props.state.activeTurnId && props.state.turnsByProviderId[props.state.activeTurnId] && !activeTurnHasRenderedRow ? (
             <SessionTurnDuration turn={props.state.turnsByProviderId[props.state.activeTurnId]} requests={props.state.pendingRequests} language={props.language}>
@@ -501,6 +516,105 @@ function TranscriptThinking(props: { language: SessionUiLanguage }): ReactNode {
       {props.language === 'zh-CN' ? '正在思考' : 'Thinking'}
     </p>
   );
+}
+
+function PendingMessageDeliveryFeedback(props: { item: NativeSessionItemBuffer; stateError: NativeSessionError | null; language: SessionUiLanguage; onReturnToComposer?: () => void }): ReactNode {
+  const zh = props.language === 'zh-CN';
+  const deliveryError = nativeSessionErrorFrom(props.item.payload.deliveryError) ?? (props.stateError?.code === 'ZEUS_NATIVE_ACCEPTANCE_HYDRATION_PENDING' ? props.stateError : null);
+  const unconfirmed = props.item.status === 'unconfirmed' || props.item.status === 'paused';
+  const failed = props.item.status === 'failed';
+  const delivery = typeof props.item.payload.delivery === 'string' ? props.item.payload.delivery : 'queue';
+  const reason = deliveryError ? messageDeliveryFailureReason(deliveryError, zh) : null;
+  const title = failed
+    ? zh
+      ? '消息发送失败'
+      : 'Message send failed'
+    : unconfirmed
+      ? zh
+        ? '发送结果待确认'
+        : 'Send outcome unconfirmed'
+      : deliveryError?.code === 'ZEUS_NATIVE_ACCEPTANCE_HYDRATION_PENDING'
+        ? zh
+          ? '消息已接收，正在确认记录'
+          : 'Message accepted; confirming its record'
+        : delivery === 'steer_now'
+          ? zh
+            ? '正在把消息交给当前回复'
+            : 'Sending the message to the current response'
+          : props.item.status === 'pending'
+            ? zh
+              ? '正在发送消息'
+              : 'Sending message'
+            : zh
+              ? '消息已接收，正在启动处理'
+              : 'Message accepted; starting processing';
+  const guidance = failed
+    ? zh
+      ? '内容已保留在输入框中，可修改后重新发送。'
+      : 'The content remains in the composer so you can edit and send it again.'
+    : unconfirmed
+      ? zh
+        ? 'Zeus 不会自动重发，避免模型收到重复消息。'
+        : 'Zeus will not resend automatically, preventing duplicate model input.'
+      : null;
+
+  return (
+    <section
+      className="session-message-delivery-feedback"
+      data-state={failed ? 'failed' : unconfirmed ? 'unconfirmed' : 'pending'}
+      role={failed || unconfirmed ? 'alert' : 'status'}
+      aria-live={failed || unconfirmed ? 'assertive' : 'polite'}
+    >
+      <span className="session-thinking-pulse" aria-hidden="true" />
+      <span>
+        <strong>{title}</strong>
+        {reason ? <small>{reason}</small> : null}
+        {guidance ? <small>{guidance}</small> : null}
+        {failed && props.onReturnToComposer ? (
+          <button type="button" onClick={props.onReturnToComposer}>
+            {zh ? '回到输入框' : 'Return to composer'}
+          </button>
+        ) : null}
+        {deliveryError && reason !== deliveryError.message ? (
+          <details>
+            <summary>{zh ? '技术详情' : 'Technical details'}</summary>
+            <code>{[deliveryError.code, deliveryError.message].filter(Boolean).join(': ')}</code>
+          </details>
+        ) : null}
+      </span>
+    </section>
+  );
+}
+
+function nativeSessionErrorFrom(value: unknown): NativeSessionError | null {
+  if (!value || typeof value !== 'object') return null;
+  const error = value as Partial<NativeSessionError>;
+  if (typeof error.message !== 'string') return null;
+  return {
+    message: error.message,
+    code: typeof error.code === 'string' ? error.code : null,
+    recoveryRequired: error.recoveryRequired === true,
+    retryable: error.retryable !== false,
+    ...(typeof error.status === 'number' ? { status: error.status } : {}),
+  };
+}
+
+function messageDeliveryFailureReason(error: NativeSessionError, zh: boolean): string {
+  switch (error.code) {
+    case 'ZEUS_NATIVE_CONVERSATION_WORKTREE_UNAVAILABLE':
+      return zh ? '当前会话的执行目录不可用，Zeus 没有把消息交给模型。' : 'The execution directory is unavailable, so Zeus did not send the message to the model.';
+    case 'ZEUS_TASK_REOPEN_REQUIRED':
+      return zh ? '任务已经完成或取消，需要先重新打开任务才能继续。' : 'The task is completed or cancelled and must be reopened before continuing.';
+    case 'ZEUS_NATIVE_ACCEPTANCE_HYDRATION_PENDING':
+      return zh ? 'Zeus 已接收消息，但暂时无法读取它的持久记录。' : 'Zeus accepted the message but cannot read its durable record yet.';
+    case 'ZEUS_CODEX_LOGIN_REQUIRED':
+      return zh ? 'Zeus 的 Codex 登录尚未就绪，消息没有进入模型处理。' : 'The Zeus Codex login is not ready, so the model did not receive the message.';
+    case 'ZEUS_TASK_INTEGRATION_AI_BUSY':
+      return zh ? '冲突处理现场正在收尾，暂时不能开始下一轮。' : 'The conflict workspace is being finalized and cannot start another turn yet.';
+    default:
+      if (error.status === 429) return zh ? '当前请求过多，Zeus 暂时无法开始处理。' : 'Too many requests are active, so Zeus cannot start processing yet.';
+      return error.message;
+  }
 }
 
 function renderTurnArtifacts(turnId: string, props: ConversationTranscriptProps, lastItemKey: string | undefined, providerErrors?: readonly NativeSessionItemBuffer[]): ReactNode {
