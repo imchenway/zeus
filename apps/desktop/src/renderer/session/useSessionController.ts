@@ -1089,10 +1089,11 @@ export function createSessionController(options: CreateSessionControllerOptions)
       );
     },
     deleteQueuedSubmission(submissionId) {
+      const clientUserMessageId = state.queue?.submissions.find((submission) => submission.id === submissionId)?.clientUserMessageId;
       return runOperation(
         `queue:delete:${submissionId}`,
         () => options.client.deleteNativeQueuedSubmission(options.projectId, options.conversationId, submissionId),
-        (queue) => dispatch({ type: 'queue_hydrated', queue }),
+        (queue) => dispatch({ type: 'queued_submission_deleted', submissionId, ...(clientUserMessageId ? { clientUserMessageId } : {}), queue }),
         false,
       );
     },

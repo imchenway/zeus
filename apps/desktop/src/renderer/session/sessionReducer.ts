@@ -28,6 +28,7 @@ export type NativeSessionAction =
   | { type: 'next_turn_settings_changed'; settings: NativeNextTurnSettings }
   | { type: 'pending_requests_hydrated'; requests: NativePendingRequest[]; turns?: NativeTurnSnapshot[]; items?: NativeItemSnapshot[] }
   | { type: 'queue_hydrated'; queue: NativeQueueSnapshot }
+  | { type: 'queued_submission_deleted'; submissionId: string; clientUserMessageId?: string; queue: NativeQueueSnapshot }
   | { type: 'steering_submission_hydrated'; submission: NativeQueuedSubmission; queue?: NativeQueueSnapshot }
   | { type: 'operation_started'; operation: string }
   | { type: 'operation_finished'; operation: string; error?: NativeSessionError | null }
@@ -159,6 +160,8 @@ export function sessionReducer(state: NativeSessionState, action: NativeSessionA
     case 'queue_hydrated': {
       return { ...state, queue: action.queue, conversationState: conversationStateFromQueue(action.queue, state) };
     }
+    case 'queued_submission_deleted':
+      return removeQueuedSubmissionProjection(state, action.submissionId, action.clientUserMessageId, action.queue);
     case 'steering_submission_hydrated':
       return projectSteeringSubmission(state, action.submission, action.queue);
     case 'operation_started':
@@ -848,6 +851,27 @@ function projectSteeringSubmission(state: NativeSessionState, submission: Native
     items,
     itemOrder,
     ...(queue ? { queue, conversationState: conversationStateFromQueue(queue, state) } : {}),
+    transcriptRevision: state.transcriptRevision + 1,
+  };
+}
+
+function removeQueuedSubmissionProjection(state: NativeSessionState, submissionId: string, requestedClientUserMessageId: string | undefined, queue: NativeQueueSnapshot): NativeSessionState {
+  const clientUserMessageId = requestedClientUserMessageId ?? state.queue?.submissions.find((submission) => submission.id === submissionId)?.clientUserMessageId;
+  const removedKeys = Object.entries(state.items)
+    .filter(([, item]) => item.optimistic && isUserMessageItem(item) && ((clientUserMessageId ? userMessageClientIds(item).includes(clientUserMessageId) : false) || stringValue(item.payload.submissionId) === submissionId))
+    .map(([key]) => key);
+  if (removedKeys.length === 0) {
+    return { ...state, queue, conversationState: conversationStateFromQueue(queue, state) };
+  }
+  const removedKeySet = new Set(removedKeys);
+  const items = { ...state.items };
+  for (const key of removedKeys) delete items[key];
+  return {
+    ...state,
+    items,
+    itemOrder: state.itemOrder.filter((key) => !removedKeySet.has(key)),
+    queue,
+    conversationState: conversationStateFromQueue(queue, state),
     transcriptRevision: state.transcriptRevision + 1,
   };
 }
