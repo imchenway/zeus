@@ -135,6 +135,7 @@ import {
   CommandDefinitionRepository,
   CommandRunRepository,
   type ConversationCollaborationMode,
+  type ConversationAttentionKind,
   ConversationItemRepository,
   type ConversationNextTurnSettings,
   type ConversationPermissionMode,
@@ -219,7 +220,16 @@ export { createLegacyFlatZeusDataLayout, createZeusDataLayout, createZeusDataLay
 export type { ZeusDataLayout, ZeusDataLayoutKind, ZeusDataLifecycle, ZeusDataOwner, ZeusDataPathDescriptor, ZeusDataPathKey } from './zeusDataLayout.js';
 
 export const zeusLocalServerHost = '127.0.0.1' as const;
-const nativeConversationAttentionEventTypes = new Set(['conversation.turn.started', 'conversation.turn.completed', 'conversation.queue.changed', 'conversation.request.created', 'conversation.request.resolved', 'conversation.native.error']);
+const nativeConversationAttentionEventTypes = new Set([
+  'conversation.turn.started',
+  'conversation.turn.completed',
+  'conversation.queue.changed',
+  'conversation.request.created',
+  'conversation.request.resolved',
+  'conversation.native.error',
+  'conversation.attention.changed',
+  'conversation.attention.acknowledged',
+]);
 
 /**
  * 非枚举启动失败元数据：表示新 local-server 已取得并尝试完成 Codex finalization。
@@ -548,6 +558,7 @@ export interface DashboardSnapshot {
   projects: ZeusProjectRecord[];
   tasks: ZeusTaskRecord[];
   conversationAttentionByProject: Record<string, ProjectConversationAttentionState>;
+  conversationUnreadCountByProject: Record<string, number>;
   runtime: {
     aiCli: { available: boolean; reason: string };
     telegram: { enabled: boolean; reason: string };
@@ -556,7 +567,7 @@ export interface DashboardSnapshot {
   graph: { nodeCount: number; edgeCount: number; viewCount: number };
 }
 
-type ProjectConversationAttentionState = 'idle' | 'running' | 'reply_required';
+type ProjectConversationAttentionState = 'idle' | 'running' | 'unread' | 'completed' | 'failed' | 'interrupted' | 'reply_required';
 
 interface RuntimeStatusSnapshot {
   aiCli: { name: string; command: string; available: boolean; reason: string };
@@ -2728,7 +2739,16 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
               queue: toNativeQueueApiSnapshot(conversation),
             }
           : {}),
-        ...(nativeConversationAttentionEventTypes.has(mappedType) ? { conversationAttentionState: buildProjectConversationAttentionByProject([conversation.projectId])[conversation.projectId] ?? 'idle' } : {}),
+        ...(nativeConversationAttentionEventTypes.has(mappedType)
+          ? {
+              conversationAttentionState: buildProjectConversationAttentionByProject([conversation.projectId])[conversation.projectId] ?? 'idle',
+              conversationUnreadCount: buildProjectConversationUnreadCountByProject([conversation.projectId])[conversation.projectId] ?? 0,
+              conversationTitle: conversation.title,
+              hasUnreadAttention: conversation.attentionUnread,
+              attentionKind: conversation.attentionKind,
+              attentionRevision: conversation.attentionRevision,
+            }
+          : {}),
         projectId: conversation.projectId,
         conversationId: conversation.id,
         ...(typeof payload.threadId === 'string'
@@ -3176,6 +3196,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       projects: currentProjects,
       tasks: currentProjects.flatMap((project) => tasks.listByProject(project.id)),
       conversationAttentionByProject: buildProjectConversationAttentionByProject(currentProjects.map((project) => project.id)),
+      conversationUnreadCountByProject: buildProjectConversationUnreadCountByProject(currentProjects.map((project) => project.id)),
       runtime: {
         aiCli: await toRuntimeStatus(runtimeSettings),
         telegram: getTelegramConfigurationState(await readTelegramToken(), telegramSecuritySettings.allowedUserIds),
@@ -3426,10 +3447,11 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   );
 
   server.put(
-    '/api/projects/:projectId/conversations/:conversationId/completion-acknowledgement',
+    '/api/projects/:projectId/conversations/:conversationId/attention-acknowledgement',
     async (
       request: FastifyRequest<{
         Params: { projectId: string; conversationId: string };
+        Body: { expectedRevision?: unknown };
       }>,
       reply,
     ) => {
@@ -3440,11 +3462,25 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           message: 'Native conversation not found',
         });
       }
-      if (conversation.completionUnread) {
-        conversations.setCompletionUnread(conversation.id, false);
-        await db.save();
+      const expectedRevision = request.body?.expectedRevision;
+      if (!Number.isSafeInteger(expectedRevision) || (expectedRevision as number) < 0) {
+        return reply.code(400).send({
+          error: 'ZEUS_INVALID_ATTENTION_REVISION',
+          message: 'expectedRevision must be a non-negative safe integer',
+        });
       }
-      return reply.code(204).send();
+      const result = conversations.acknowledgeAttention(conversation.id, expectedRevision as number);
+      if (result.acknowledged) {
+        await db.save();
+        publishNativeConversationEvent('conversation.attention.acknowledged', {
+          conversationId: conversation.id,
+          attentionRevision: result.conversation.attentionRevision,
+        });
+      }
+      return {
+        acknowledged: result.acknowledged,
+        conversation: toNativeConversationChoice(result.conversation, buildNativeConversationChoiceProjectionContext(conversation.projectId)),
+      };
     },
   );
 
@@ -13016,7 +13052,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     };
   }
 
-  /** 侧边栏只聚合用户可进入的会话；待回复覆盖运行中，暂停、失败和完成未读不参与。 */
+  /** 侧边栏只聚合用户可进入的会话；需要用户处理的状态优先于结果和普通未读。 */
   function buildProjectConversationAttentionByProject(projectIds: readonly string[]): Record<string, ProjectConversationAttentionState> {
     const targetProjectIds = new Set(projectIds);
     const states = new Map<string, ProjectConversationAttentionState>(projectIds.map((projectId) => [projectId, 'idle']));
@@ -13032,18 +13068,57 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       // Codex 会话创建后的 starting 不会随每轮执行收敛；只有旧 Runtime 会话继续以记录状态表达真实进程阶段。
       const legacyRuntimeRunning = conversation.transportKind === 'legacy_cli' && (conversation.status === 'starting' || conversation.status === 'running');
       const running = runningSubmissionConversationIds.has(conversation.id) || conversation.providerState === 'binding' || conversation.providerState === 'active' || legacyRuntimeRunning;
-      if (!replyRequired && !running) continue;
       const firstSubmission = conversationSubmissions.getFirstByConversation(conversation.id);
       const context = firstSubmission ? parseJsonObject(firstSubmission.inputJson).context : undefined;
       if (isNativeApiRecord(context) && context.ephemeral === true) continue;
       if (replyRequired) {
         states.set(conversation.projectId, 'reply_required');
-      } else if (states.get(conversation.projectId) === 'idle') {
+      } else if (states.get(conversation.projectId) !== 'reply_required' && conversation.attentionUnread) {
+        const attentionState = toProjectConversationAttentionState(conversation.attentionKind);
+        if (projectConversationAttentionPriority(attentionState) > projectConversationAttentionPriority(states.get(conversation.projectId) ?? 'idle')) {
+          states.set(conversation.projectId, attentionState);
+        }
+      } else if (running && states.get(conversation.projectId) === 'idle') {
         states.set(conversation.projectId, 'running');
       }
     }
 
     return Object.fromEntries(states);
+  }
+
+  function buildProjectConversationUnreadCountByProject(projectIds: readonly string[]): Record<string, number> {
+    const targetProjectIds = new Set(projectIds);
+    const counts = new Map<string, number>(projectIds.map((projectId) => [projectId, 0]));
+    for (const conversation of conversations.listUnarchivedRecords()) {
+      if (!targetProjectIds.has(conversation.projectId) || !conversation.attentionUnread) continue;
+      const firstSubmission = conversationSubmissions.getFirstByConversation(conversation.id);
+      const context = firstSubmission ? parseJsonObject(firstSubmission.inputJson).context : undefined;
+      if (isNativeApiRecord(context) && context.ephemeral === true) continue;
+      counts.set(conversation.projectId, (counts.get(conversation.projectId) ?? 0) + 1);
+    }
+    return Object.fromEntries(counts);
+  }
+
+  function toProjectConversationAttentionState(kind: ConversationAttentionKind): ProjectConversationAttentionState {
+    return kind === 'none' ? 'unread' : kind;
+  }
+
+  function projectConversationAttentionPriority(state: ProjectConversationAttentionState): number {
+    switch (state) {
+      case 'reply_required':
+        return 6;
+      case 'failed':
+      case 'interrupted':
+        return 5;
+      case 'completed':
+        return 4;
+      case 'unread':
+        return 3;
+      case 'running':
+        return 2;
+      default:
+        return 1;
+    }
   }
 
   function toNativeConversationSummary(conversation: ZeusConversationRecord, context?: NativeConversationChoiceProjectionContext) {
@@ -13073,7 +13148,11 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       legacySourceConversationId: conversation.legacySourceConversationId,
       permissionMode: conversation.permissionMode,
       collaborationMode: conversation.collaborationMode,
-      hasUnreadCompletion: conversation.completionUnread,
+      hasUnreadAttention: conversation.attentionUnread,
+      attentionKind: conversation.attentionKind,
+      attentionRevision: conversation.attentionRevision,
+      attentionTurnId: conversation.attentionTurnId,
+      attentionUpdatedAt: conversation.attentionUpdatedAt,
       pendingRequestKind,
       provider: {
         id: conversation.providerId,

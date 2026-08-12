@@ -346,7 +346,7 @@ type NativeConversationAppClient = SessionControllerClient &
     | 'saveProjectModelSelection'
     | 'loadProjectWorkspaceConfig'
     | 'saveProjectWorkspaceConfig'
-    | 'acknowledgeNativeConversationCompletion'
+    | 'acknowledgeNativeConversationAttention'
     | 'loadTaskGitWorkspaces'
     | 'loadTaskGitWorkspaceIndex'
     | 'loadTaskGitWorkspaceSnapshot'
@@ -617,10 +617,12 @@ const nativeConversationListLifecycleEventTypes = new Set([
   'conversation.request.created',
   'conversation.request.resolved',
   'conversation.native.error',
+  'conversation.attention.changed',
+  'conversation.attention.acknowledged',
 ]);
 
 function isProjectConversationAttentionState(value: unknown): value is ProjectConversationAttentionState {
-  return value === 'idle' || value === 'running' || value === 'reply_required';
+  return value === 'idle' || value === 'running' || value === 'unread' || value === 'completed' || value === 'failed' || value === 'interrupted' || value === 'reply_required';
 }
 
 export function shouldRefreshNativeConversationListForRealtimeEvent(event: ZeusRealtimeEvent): boolean {
@@ -800,25 +802,6 @@ export function resolveSelectedNativeConversationForProject(choices: NativeConve
 export function resolveTaskConversationToView(snapshot: NativeConversationChoicesSnapshot | undefined): NativeConversationChoice | null {
   if (!snapshot?.choices.length) return null;
   return [...snapshot.choices].sort(compareConversationStageUpdatedDesc)[0] ?? null;
-}
-
-export function updateConversationChoiceCompletionUnread<
-  Snapshot extends {
-    choices: NativeConversationChoice[];
-    items: NativeConversationChoice[];
-  },
->(snapshot: Snapshot, conversationId: string, hasUnreadCompletion: boolean): Snapshot {
-  const update = (choice: NativeConversationChoice) =>
-    choice.id === conversationId && choice.hasUnreadCompletion !== hasUnreadCompletion
-      ? {
-          ...choice,
-          hasUnreadCompletion,
-        }
-      : choice;
-  const choices = snapshot.choices.map(update);
-  const items = snapshot.items.map(update);
-  if (choices.every((choice, index) => choice === snapshot.choices[index]) && items.every((choice, index) => choice === snapshot.items[index])) return snapshot;
-  return { ...snapshot, choices, items };
 }
 
 function upsertTaskConversationChoiceSnapshot(taskId: string, snapshot: NativeConversationChoicesSnapshot | undefined, metadata: NativeConversationChoice): NativeConversationChoicesSnapshot {
@@ -6805,6 +6788,8 @@ export function App(props: {
   );
   const [selectedNativeConversationId, setSelectedNativeConversationId] = useState<string | null>(() => props.initialSelectedNativeConversationId ?? null);
   const selectedNativeConversationIdRef = useRef<string | null>(props.initialSelectedNativeConversationId ?? null);
+  const [latestConversationContentVisible, setLatestConversationContentVisible] = useState(false);
+  const [zeusWindowForeground, setZeusWindowForeground] = useState(() => typeof document !== 'undefined' && document.visibilityState === 'visible' && document.hasFocus());
   const [focusedArchivedConversation, setFocusedArchivedConversation] = useState<NativeConversationChoice | null>(null);
   const [archivedConversations, setArchivedConversations] = useState<NativeConversationChoice[]>([]);
   const [archivedConversationLoadState, setArchivedConversationLoadState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
@@ -7114,6 +7099,7 @@ export function App(props: {
   const [taskGitDeliveryRevision, setTaskGitDeliveryRevision] = useState(0);
   const taskGitDeliveryChangedRef = useRef<(taskId: string) => void>(() => undefined);
   const taskGitDeliveryConversationRef = useRef<(input: { taskId: string; conversationId: string }) => void>(() => undefined);
+  const conversationNotificationRef = useRef<(input: { projectId: string; conversationId: string }) => void>(() => undefined);
   const taskModelPushCapabilityRequestRef = useRef(0);
   const taskModelPushLoginRequestRef = useRef(0);
   const taskModelPushLoginIdRef = useRef<string | null>(null);
@@ -7547,9 +7533,11 @@ export function App(props: {
   useEffect(() => {
     const disposeChanged = window.zeus?.onTaskGitDeliveryChanged?.((taskId) => taskGitDeliveryChangedRef.current(taskId));
     const disposeConversation = window.zeus?.onOpenTaskGitDeliveryConversation?.((input) => taskGitDeliveryConversationRef.current(input));
+    const disposeNotification = window.zeus?.onOpenConversationNotification?.((input) => conversationNotificationRef.current(input));
     return () => {
       disposeChanged?.();
       disposeConversation?.();
+      disposeNotification?.();
     };
   }, []);
   const selectedTaskModelPushOperation = Object.values(taskModelPushPendingByTask).find((pending) => pending.navigationId === selectedNativeConversationId);
@@ -7572,30 +7560,50 @@ export function App(props: {
   }, [selectedNativeConversation?.taskId, selectedNativeConversation?.workspaceId]);
   useEffect(() => {
     selectedNativeConversationIdRef.current = selectedNativeConversationId;
+    setLatestConversationContentVisible(false);
   }, [selectedNativeConversationId]);
 
-  const setNativeConversationCompletionUnread = useCallback((conversationId: string, hasUnreadCompletion: boolean): void => {
-    setNativeConversationChoicesByProject((current) => Object.fromEntries(Object.entries(current).map(([projectId, snapshot]) => [projectId, updateConversationChoiceCompletionUnread(snapshot, conversationId, hasUnreadCompletion)])));
-    setNativeConversationChoicesByTask((current) => Object.fromEntries(Object.entries(current).map(([taskId, snapshot]) => [taskId, updateConversationChoiceCompletionUnread(snapshot, conversationId, hasUnreadCompletion)])));
+  useEffect(() => {
+    const synchronizeForeground = () => setZeusWindowForeground(document.visibilityState === 'visible' && document.hasFocus());
+    window.addEventListener('focus', synchronizeForeground);
+    window.addEventListener('blur', synchronizeForeground);
+    document.addEventListener('visibilitychange', synchronizeForeground);
+    return () => {
+      window.removeEventListener('focus', synchronizeForeground);
+      window.removeEventListener('blur', synchronizeForeground);
+      document.removeEventListener('visibilitychange', synchronizeForeground);
+    };
   }, []);
 
-  const acknowledgeNativeConversationCompletion = useCallback(
-    (projectId: string, conversationId: string): void => {
+  const acknowledgeNativeConversationAttention = useCallback(
+    (projectId: string, conversationId: string, expectedRevision: number): void => {
       const client = props.nativeConversationClient;
       if (!client) return;
-      setNativeConversationCompletionUnread(conversationId, false);
-      void client.acknowledgeNativeConversationCompletion(projectId, conversationId).catch((error: unknown) => {
-        setNativeConversationCompletionUnread(conversationId, true);
-        recordLocalError('conversation-completion-acknowledgement', error);
-      });
+      void client
+        .acknowledgeNativeConversationAttention(projectId, conversationId, expectedRevision)
+        .then(({ conversation }) => {
+          if (conversation.projectId !== projectId || conversation.id !== conversationId) return;
+          if (conversation.taskId) {
+            setNativeConversationChoicesByTask((current) => ({
+              ...current,
+              [conversation.taskId!]: upsertTaskConversationChoiceSnapshot(conversation.taskId!, current[conversation.taskId!], conversation),
+            }));
+          } else {
+            setNativeConversationChoicesByProject((current) => ({
+              ...current,
+              [projectId]: upsertProjectConversationChoiceSnapshot(current[projectId], conversation),
+            }));
+          }
+        })
+        .catch((error: unknown) => recordLocalError('conversation-attention-acknowledgement', error));
     },
-    [props.nativeConversationClient, setNativeConversationCompletionUnread],
+    [props.nativeConversationClient],
   );
 
   useEffect(() => {
-    if (!selectedNativeConversation?.hasUnreadCompletion || selectedNativeConversation.taskPushCreating) return;
-    acknowledgeNativeConversationCompletion(selectedNativeConversation.projectId, selectedNativeConversation.id);
-  }, [acknowledgeNativeConversationCompletion, selectedNativeConversation]);
+    if (!selectedNativeConversation?.hasUnreadAttention || selectedNativeConversation.taskPushCreating || !zeusWindowForeground || !latestConversationContentVisible) return;
+    acknowledgeNativeConversationAttention(selectedNativeConversation.projectId, selectedNativeConversation.id, selectedNativeConversation.attentionRevision);
+  }, [acknowledgeNativeConversationAttention, latestConversationContentVisible, selectedNativeConversation, zeusWindowForeground]);
   const nativeConversationGroups = useMemo<ProjectConversationGroup[]>(
     () =>
       orderedProjects.map((project) => ({
@@ -7949,6 +7957,21 @@ export function App(props: {
                 },
           );
         }
+        if (typeof event.payload.projectId === 'string' && typeof event.payload.conversationUnreadCount === 'number') {
+          const projectId = event.payload.projectId;
+          const unreadCount = Math.max(0, Math.floor(event.payload.conversationUnreadCount));
+          setSnapshot((current) =>
+            current.conversationUnreadCountByProject?.[projectId] === unreadCount
+              ? current
+              : {
+                  ...current,
+                  conversationUnreadCountByProject: {
+                    ...(current.conversationUnreadCountByProject ?? {}),
+                    [projectId]: unreadCount,
+                  },
+                },
+          );
+        }
         if (shouldRefreshNativeConversationListForRealtimeEvent(event)) {
           refreshNativeConversationList(event.payload.projectId as string, event.payload.conversationId as string);
         }
@@ -7985,17 +8008,6 @@ export function App(props: {
           if (taskId) void refreshNativeConversationChoices(taskId);
           else if (projectId) void refreshNativeProjectConversationChoices(projectId);
           void refreshArchivedConversations();
-        }
-        if (event.type === 'conversation.turn.completed' && typeof event.payload.conversationId === 'string') {
-          const conversationId = event.payload.conversationId;
-          const hasUnreadCompletion = event.payload.status === 'completed' && event.payload.hasUnreadCompletion !== false;
-          if (hasUnreadCompletion) {
-            const selected = selectedNativeConversationIdRef.current === conversationId;
-            setNativeConversationCompletionUnread(conversationId, !selected);
-            if (selected && typeof event.payload.projectId === 'string') {
-              acknowledgeNativeConversationCompletion(event.payload.projectId, conversationId);
-            }
-          }
         }
         if (event.type === 'task.git_delivery.changed' && typeof event.payload.taskId === 'string') {
           setTaskGitDeliveryRevision((current) => current + 1);
@@ -8045,7 +8057,6 @@ export function App(props: {
       if (unsubscribe) unsubscribe();
     };
   }, [
-    acknowledgeNativeConversationCompletion,
     mergeTaskRecord,
     nativeConversationChoiceLoadCoordinator,
     nativeProjectConversationChoiceLoadCoordinator,
@@ -8054,7 +8065,6 @@ export function App(props: {
     props.onSubscribeRealtimeEvents,
     reconcileNativeConversationProjectSnapshot,
     reconcileNativeConversationProjectionStates,
-    setNativeConversationCompletionUnread,
   ]);
 
   const taskDetailPaneTask = taskDetailPaneTaskId ? (taskDetail?.id === taskDetailPaneTaskId ? taskDetail : snapshot.tasks.find((task) => task.id === taskDetailPaneTaskId)) : undefined;
@@ -9247,7 +9257,6 @@ export function App(props: {
     selectedNativeConversationIdRef.current = navigationId;
     setSelectedNativeConversationId(navigationId);
     setFocusedArchivedConversation(conversation.archived ? conversation : null);
-    if (!conversation.taskPushCreating && conversation.hasUnreadCompletion) acknowledgeNativeConversationCompletion(conversation.projectId, conversation.id);
     setConversationDraftOpen(false);
     if (navigation === 'page') {
       setActiveNavTarget('conversations');
@@ -9360,6 +9369,32 @@ export function App(props: {
   };
   taskGitDeliveryConversationRef.current = ({ taskId, conversationId }) => {
     void openTaskConflictAiConversation(taskId, conversationId);
+  };
+  conversationNotificationRef.current = ({ projectId, conversationId }) => {
+    const client = props.nativeConversationClient;
+    if (!client) return;
+    void client
+      .loadNativeConversationChoice(projectId, conversationId)
+      .then(async (conversation) => {
+        if (conversation.projectId !== projectId || conversation.id !== conversationId) return;
+        const project = snapshot.projects.find((candidate) => candidate.id === projectId);
+        if (!project) return;
+        activeProjectIdRef.current = projectId;
+        setProjectDetail(project);
+        if (conversation.taskId) {
+          setNativeConversationChoicesByTask((current) => ({
+            ...current,
+            [conversation.taskId!]: upsertTaskConversationChoiceSnapshot(conversation.taskId!, current[conversation.taskId!], conversation),
+          }));
+        } else {
+          setNativeConversationChoicesByProject((current) => ({
+            ...current,
+            [projectId]: upsertProjectConversationChoiceSnapshot(current[projectId], conversation),
+          }));
+        }
+        await selectNativeConversation(conversation);
+      })
+      .catch((error: unknown) => recordLocalError('conversation-notification-open', error));
   };
 
   async function openTaskConversationDrawer(taskId: string, conversationId: string): Promise<void> {
@@ -11747,6 +11782,7 @@ export function App(props: {
           onLoadTaskWorkspaces={props.nativeConversationClient.loadTaskGitWorkspaces}
           onOpenTaskGitReview={(taskId, workspaceId, mode) => setTaskGitReviewState({ taskId, workspaceId, mode })}
           onOpenTaskGitDelivery={(taskId, workspaceId) => openTaskGitDelivery(taskId, workspaceId)}
+          onLatestContentVisibilityChange={setLatestConversationContentVisible}
         />
       );
     }
@@ -11797,6 +11833,7 @@ export function App(props: {
           onOpenTaskGitReview={(taskId, workspaceId, mode) => setTaskGitReviewState({ taskId, workspaceId, mode })}
           onOpenTaskGitDelivery={(taskId, workspaceId) => openTaskGitDelivery(taskId, workspaceId)}
           onOpenProjectCommands={() => openProjectCommands(selectedNativeConversation.projectId)}
+          onLatestContentVisibilityChange={setLatestConversationContentVisible}
         />
       );
     }
@@ -11832,6 +11869,7 @@ export function App(props: {
               : 'empty'
         }
         loadError={selectedNativeConversation && (selectedNativeConversation.readOnly || selectedNativeConversation.transportKind !== 'codex_native') ? nativeLegacyMessageError : nativeSessionChoiceTaskState?.error}
+        onLatestContentVisibilityChange={setLatestConversationContentVisible}
         actions={{
           onStartConversation: startNativeConversation,
           onStartProjectConversation: startProjectConversation,
@@ -11922,6 +11960,7 @@ export function App(props: {
           pinnedProjectIds={appShellSettings.pinnedProjectIds}
           collapsedProjectIds={appShellSettings.collapsedProjectIds}
           conversationAttentionByProject={snapshot.conversationAttentionByProject}
+          conversationUnreadCountByProject={snapshot.conversationUnreadCountByProject ?? {}}
           appLanguage={appShellSettings.appLanguage}
           canCreateProject={projectCreationReady && !creatingProjectBusy}
           createProjectBusy={creatingProjectBusy}
@@ -18103,6 +18142,7 @@ function SidebarNav(props: {
   pinnedProjectIds: string[];
   collapsedProjectIds: string[];
   conversationAttentionByProject: Record<string, ProjectConversationAttentionState>;
+  conversationUnreadCountByProject: Record<string, number>;
   appLanguage: AppLanguage;
   canCreateProject: boolean;
   createProjectBusy: boolean;
@@ -18398,6 +18438,7 @@ function SidebarNav(props: {
             const menuVisible = menuOpen || menuClosing;
             const menuPosition = projectMenuPositions.get(project.id);
             const conversationAttentionState = props.conversationAttentionByProject[project.id] ?? 'idle';
+            const conversationUnreadCount = props.conversationUnreadCountByProject[project.id] ?? 0;
             const projectMorePopover =
               menuVisible && menuPosition ? (
                 <div
@@ -18535,7 +18576,16 @@ function SidebarNav(props: {
                     ).map((item) => {
                       const current = isActiveProject && props.activeProjectSection === item.id;
                       const attentionState = item.id === 'sessions' ? conversationAttentionState : 'idle';
-                      const attentionLabel = attentionState === 'reply_required' ? copy.conversationReplyRequired : attentionState === 'running' ? copy.conversationRunning : undefined;
+                      const attentionLabel =
+                        attentionState === 'reply_required'
+                          ? copy.conversationReplyRequired
+                          : attentionState === 'running'
+                            ? copy.conversationRunning
+                            : attentionState !== 'idle'
+                              ? props.appLanguage === 'zh-CN'
+                                ? `${conversationUnreadCount} 个未读会话`
+                                : `${conversationUnreadCount} unread conversations`
+                              : undefined;
                       return (
                         <SourceListRow
                           level="nested"
@@ -18543,7 +18593,7 @@ function SidebarNav(props: {
                           selected={current}
                           icon={item.icon}
                           label={item.label}
-                          state={attentionState === 'idle' ? current ? copy.current : undefined : <SidebarConversationAttentionIndicator state={attentionState} />}
+                          state={attentionState === 'idle' ? current ? copy.current : undefined : <SidebarConversationAttentionIndicator state={attentionState} unreadCount={conversationUnreadCount} />}
                           buttonProps={{
                             type: 'button',
                             'aria-current': current ? 'page' : undefined,
@@ -18587,8 +18637,13 @@ function SidebarNav(props: {
   );
 }
 
-function SidebarConversationAttentionIndicator(props: { state: Exclude<ProjectConversationAttentionState, 'idle'> }) {
-  return <span className="project-session-attention-indicator" data-attention-state={props.state} aria-hidden="true" />;
+function SidebarConversationAttentionIndicator(props: { state: Exclude<ProjectConversationAttentionState, 'idle'>; unreadCount: number }) {
+  const visibleCount = props.unreadCount > 99 ? '99+' : props.unreadCount > 0 ? String(props.unreadCount) : '';
+  return (
+    <span className="project-session-attention-indicator" data-attention-state={props.state} data-has-count={visibleCount ? 'true' : undefined} aria-hidden="true">
+      {visibleCount}
+    </span>
+  );
 }
 
 function InlineRecoveryPrompt(props: { title: string; body: string; actions: InlineRecoveryAction[]; className?: string }) {

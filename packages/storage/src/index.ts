@@ -605,7 +605,11 @@ export interface ZeusConversationRecord {
   permissionMode: ConversationPermissionMode;
   collaborationMode: ConversationCollaborationMode;
   nextTurnSettingsJson: string;
-  completionUnread: boolean;
+  attentionUnread: boolean;
+  attentionKind: ConversationAttentionKind;
+  attentionRevision: number;
+  attentionTurnId: string | null;
+  attentionUpdatedAt: string | null;
   agentKind: ConversationAgentKind | null;
   agentTransport: ConversationAgentTransport | null;
   modelSourceId: string | null;
@@ -622,6 +626,7 @@ export type ConversationAgentTransport = 'app_server' | 'rpc' | 'sdk';
 export type ConversationProviderState = 'unbound' | 'binding' | 'ready' | 'active' | 'waiting' | 'paused' | 'archived' | 'closed' | 'failed';
 export type ConversationPermissionMode = 'read-only' | 'auto' | 'full-access';
 export type ConversationCollaborationMode = 'default' | 'plan';
+export type ConversationAttentionKind = 'none' | 'unread' | 'completed' | 'failed' | 'interrupted';
 
 export interface ConversationNextTurnSettings {
   model: string;
@@ -2348,6 +2353,10 @@ function migrateCodexNativeConversationSchema(db: ZeusDatabase): void {
     `ALTER TABLE conversations ADD COLUMN collaboration_mode TEXT NOT NULL DEFAULT 'default'`,
     `ALTER TABLE conversations ADD COLUMN next_turn_settings_json TEXT NOT NULL DEFAULT '{}'`,
     `ALTER TABLE conversations ADD COLUMN completion_unread INTEGER NOT NULL DEFAULT 0`,
+    `ALTER TABLE conversations ADD COLUMN attention_kind TEXT NOT NULL DEFAULT 'none'`,
+    `ALTER TABLE conversations ADD COLUMN attention_revision INTEGER NOT NULL DEFAULT 0`,
+    `ALTER TABLE conversations ADD COLUMN attention_turn_id TEXT`,
+    `ALTER TABLE conversations ADD COLUMN attention_updated_at TEXT`,
   ]) {
     try {
       db.execute(statement);
@@ -2525,6 +2534,20 @@ function migrateCodexNativeConversationSchema(db: ZeusDatabase): void {
     description: '增加会话成功完成未读状态',
     checksumSource: 'conversations:completion_unread:successful_turn_completion,acknowledgement:v1',
   });
+  const attentionMigrationId = '20260812_0001_conversation_attention_unread';
+  if (!db.get<{ migration_id: string }>(`SELECT migration_id FROM schema_migrations WHERE migration_id = ?`, [attentionMigrationId])) {
+    // 历史完成未读继续保留为“已完成”专属关注状态；没有历史未读的会话保持无关注。
+    db.execute(`UPDATE conversations
+                   SET attention_kind = 'completed',
+                       attention_revision = CASE WHEN attention_revision < 1 THEN 1 ELSE attention_revision END,
+                       attention_updated_at = COALESCE(attention_updated_at, updated_at)
+                 WHERE completion_unread = 1 AND attention_kind = 'none'`);
+    recordSchemaMigration(db, {
+      migrationId: attentionMigrationId,
+      description: '把完成未读提升为跨模型会话关注状态并增加并发已读版本',
+      checksumSource: 'conversations:completion_unread_as_attention,attention_kind,attention_revision,attention_turn_id,attention_updated_at:v1',
+    });
+  }
   recordSchemaMigration(db, {
     migrationId: '20260804_0001_conversation_next_turn_settings',
     description: '增加会话下一轮配置持久化',
@@ -4847,7 +4870,7 @@ export class TerminalEventRepository {
 
 const selectConversationFields = `id, project_id, task_id, session_id, title, summary, status, stage, stage_updated_at, created_at, updated_at, archived,
   transport_kind, provider_id, provider_thread_id, provider_thread_path, provider_model, provider_state,
-  provider_protocol_version, provider_binary_version, legacy_source_conversation_id, provider_settings_json, provider_token_usage_json, permission_mode, collaboration_mode, next_turn_settings_json, completion_unread, workspace_id, environment_id,
+  provider_protocol_version, provider_binary_version, legacy_source_conversation_id, provider_settings_json, provider_token_usage_json, permission_mode, collaboration_mode, next_turn_settings_json, completion_unread, attention_kind, attention_revision, attention_turn_id, attention_updated_at, workspace_id, environment_id,
   agent_kind, agent_transport, model_source_id, model_id, native_session_id, native_session_path, capability_snapshot_id`;
 const selectConversationMessageFields = `id, conversation_id, role, content, source, metadata_json, created_at,
   provider_thread_id, provider_turn_id, provider_item_id, client_message_id`;
@@ -5026,7 +5049,11 @@ export class ConversationRepository {
       permissionMode,
       collaborationMode,
       nextTurnSettingsJson: '{}',
-      completionUnread: false,
+      attentionUnread: false,
+      attentionKind: 'none',
+      attentionRevision: 0,
+      attentionTurnId: null,
+      attentionUpdatedAt: null,
       agentKind,
       agentTransport,
       modelSourceId: input.modelSourceId ?? null,
@@ -5118,15 +5145,45 @@ export class ConversationRepository {
     }
   }
 
-  /** 完成未读是列表阅读状态，不得改变会话活跃时间或排序。 */
-  setCompletionUnread(conversationId: string, completionUnread: boolean): ZeusConversationWithMessagesRecord {
-    if (!this.db.get<{ id: string }>(`SELECT id FROM conversations WHERE id = ?`, [conversationId])) {
+  /** 关注未读是阅读事实，不得改变会话活跃时间或阶段排序。相同轮次与类型重复到达时保持幂等。 */
+  markAttentionUnread(conversationId: string, input: { kind: Exclude<ConversationAttentionKind, 'none'>; turnId?: string | null; occurredAt: string }): ZeusConversationWithMessagesRecord {
+    const kind = assertEnum(input.kind, ['unread', 'completed', 'failed', 'interrupted'] as const, 'conversation attention kind');
+    const current = this.db.get<{ completion_unread: number; attention_kind: ConversationAttentionKind; attention_revision: number; attention_turn_id: string | null }>(
+      `SELECT completion_unread, attention_kind, attention_revision, attention_turn_id FROM conversations WHERE id = ?`,
+      [conversationId],
+    );
+    if (!current) {
       throw new Error(`Zeus conversation not found: ${conversationId}`);
     }
-    this.db.execute(`UPDATE conversations SET completion_unread = ? WHERE id = ?`, [completionUnread ? 1 : 0, conversationId]);
+    const turnId = input.turnId ?? null;
+    if (!(current.completion_unread === 1 && current.attention_kind === kind && current.attention_turn_id === turnId)) {
+      this.db.execute(
+        `UPDATE conversations
+            SET completion_unread = 1,
+                attention_kind = ?,
+                attention_revision = attention_revision + 1,
+                attention_turn_id = ?,
+                attention_updated_at = ?
+          WHERE id = ?`,
+        [kind, turnId, input.occurredAt, conversationId],
+      );
+    }
     const updated = this.getById(conversationId);
     if (!updated) throw new Error(`Zeus conversation not found: ${conversationId}`);
     return updated;
+  }
+
+  /** 只确认调用方实际看见的关注版本；期间若有新回复到达，旧确认不得把它清掉。 */
+  acknowledgeAttention(conversationId: string, expectedRevision: number): { acknowledged: boolean; conversation: ZeusConversationWithMessagesRecord } {
+    const current = this.db.get<{ completion_unread: number; attention_revision: number }>(`SELECT completion_unread, attention_revision FROM conversations WHERE id = ?`, [conversationId]);
+    if (!current) throw new Error(`Zeus conversation not found: ${conversationId}`);
+    const acknowledged = current.completion_unread === 1 && current.attention_revision === expectedRevision;
+    if (acknowledged) {
+      this.db.execute(`UPDATE conversations SET completion_unread = 0, attention_kind = 'none', attention_turn_id = NULL WHERE id = ? AND attention_revision = ?`, [conversationId, expectedRevision]);
+    }
+    const conversation = this.getById(conversationId);
+    if (!conversation) throw new Error(`Zeus conversation not found: ${conversationId}`);
+    return { acknowledged, conversation };
   }
 
   appendMessage(input: AppendConversationMessageInput): ZeusConversationMessageRecord {
@@ -7253,6 +7310,10 @@ interface DbConversationRow {
   collaboration_mode: ConversationCollaborationMode;
   next_turn_settings_json: string;
   completion_unread: number;
+  attention_kind: ConversationAttentionKind;
+  attention_revision: number;
+  attention_turn_id: string | null;
+  attention_updated_at: string | null;
   agent_kind: ConversationAgentKind | null;
   agent_transport: ConversationAgentTransport | null;
   model_source_id: string | null;
@@ -7772,7 +7833,11 @@ function mapConversationRow(row: DbConversationRow): ZeusConversationRecord {
     permissionMode: assertEnum(row.permission_mode, ['read-only', 'auto', 'full-access'] as const, 'conversation permission mode'),
     collaborationMode: assertEnum(row.collaboration_mode, ['default', 'plan'] as const, 'conversation collaboration mode'),
     nextTurnSettingsJson: row.next_turn_settings_json,
-    completionUnread: row.completion_unread === 1,
+    attentionUnread: row.completion_unread === 1,
+    attentionKind: assertEnum(row.attention_kind, ['none', 'unread', 'completed', 'failed', 'interrupted'] as const, 'conversation attention kind'),
+    attentionRevision: row.attention_revision,
+    attentionTurnId: row.attention_turn_id,
+    attentionUpdatedAt: row.attention_updated_at,
     agentKind: row.agent_kind,
     agentTransport: row.agent_transport,
     modelSourceId: row.model_source_id,

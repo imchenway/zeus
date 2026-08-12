@@ -269,8 +269,23 @@ function ConversationRowState(props: { conversation: NativeConversationChoice; r
       </span>
     );
   }
-  if (props.runtimeState === 'ready' && props.conversation.hasUnreadCompletion && !props.current) {
-    return <span className="session-conversation-unread-dot" aria-label={props.language === 'zh-CN' ? '模型已响应完成' : 'Model response completed'} />;
+  if (props.conversation.hasUnreadAttention) {
+    if (props.conversation.attentionKind === 'failed' || props.conversation.attentionKind === 'interrupted' || props.conversation.attentionKind === 'completed') {
+      const attentionLabel =
+        props.conversation.attentionKind === 'failed'
+          ? props.language === 'zh-CN'
+            ? '失败'
+            : 'Failed'
+          : props.conversation.attentionKind === 'interrupted'
+            ? props.language === 'zh-CN'
+              ? '已中断'
+              : 'Interrupted'
+            : props.language === 'zh-CN'
+              ? '已完成'
+              : 'Completed';
+      return <span className={`session-conversation-status-pill is-${props.conversation.attentionKind}`}>{attentionLabel}</span>;
+    }
+    return <span className="session-conversation-unread-dot" aria-label={props.language === 'zh-CN' ? '有未读回复' : 'Unread reply'} />;
   }
   if (props.runtimeState === 'error') {
     return (

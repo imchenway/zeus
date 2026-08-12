@@ -9,7 +9,7 @@ import type { NativeConversationChoice, NativePendingRequest } from '../src/rend
 
 const referenceBase = 'http://127.0.0.1:4181';
 
-function conversation(id: string, taskId: string, updatedAt: string, hasUnreadCompletion = false): NativeConversationChoice {
+function conversation(id: string, taskId: string, updatedAt: string, hasUnreadAttention = false): NativeConversationChoice {
   return {
     id,
     projectId: 'project-zeus',
@@ -27,7 +27,11 @@ function conversation(id: string, taskId: string, updatedAt: string, hasUnreadCo
     createdAt: updatedAt,
     updatedAt,
     archived: false,
-    hasUnreadCompletion,
+    hasUnreadAttention,
+    attentionKind: hasUnreadAttention ? 'unread' : 'none',
+    attentionRevision: hasUnreadAttention ? 1 : 0,
+    attentionTurnId: null,
+    attentionUpdatedAt: hasUnreadAttention ? updatedAt : null,
     pendingRequestKind: null,
     resumable: true,
     readOnly: false,
