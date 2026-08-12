@@ -12673,6 +12673,52 @@
   }
 }
 
+/* ZEUS-0224：首次读取目标会话时保留旧正文，底部只接管目标输入与加载状态。 */
+.session-codex-parity-v1 .session-switch-stack {
+  display: flex;
+  flex: 1 1 auto;
+  inline-size: 100%;
+  min-block-size: 0;
+  min-inline-size: 0;
+  overflow: hidden;
+  position: relative;
+}
+
+.session-codex-parity-v1 .session-switch-target-dock {
+  background: linear-gradient(to bottom, transparent, var(--session-canvas) 18px);
+  display: grid;
+  inset: auto 0 0;
+  padding-block-start: 18px;
+  position: absolute;
+  z-index: 40;
+}
+
+.session-codex-parity-v1 .session-switch-status {
+  align-items: center;
+  color: var(--session-text-muted);
+  display: flex;
+  font-size: 12px;
+  gap: 7px;
+  justify-content: center;
+  min-block-size: 28px;
+  padding: 2px 18px 8px;
+}
+
+.session-codex-parity-v1 .session-switch-status.is-failed {
+  color: var(--session-danger);
+}
+
+.session-codex-parity-v1 .session-switch-status button {
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  margin-inline-start: 4px;
+  padding: 2px 5px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
 /* ZEUS-0181：完全访问属于会话级高风险切换，使用居中弹窗完整说明真实能力与风险。 */
 .session-permission-dialog-portal-root.macos-ai-app {
   background: transparent;

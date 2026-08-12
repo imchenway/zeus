@@ -51,6 +51,7 @@ export type NativeSessionAction =
       delivery: 'queue' | 'steer_now';
       previousConversationState: ConversationState;
       startedAt: string;
+      queuedUntilHydrated?: boolean;
       taskPushLayout?: TaskPushMessageLayout;
     }
   | {
@@ -806,7 +807,7 @@ function addOptimisticUserItem(state: NativeSessionState, action: Extract<Native
     turnId: `pending:${action.clientUserMessageId}`,
     itemId: action.clientUserMessageId,
     type: 'userMessage',
-    status: 'pending',
+    status: action.queuedUntilHydrated ? 'queued' : 'pending',
     phase: 'prework',
     text: action.draft,
     payload: {
@@ -829,7 +830,7 @@ function addOptimisticUserItem(state: NativeSessionState, action: Extract<Native
     items: { ...state.items, [key]: item },
     itemOrder: existingOptimisticEntry || state.items[key] ? state.itemOrder : [...state.itemOrder, key],
     transcriptRevision: state.transcriptRevision + 1,
-    conversationState: keepActiveState ? action.previousConversationState : 'starting_turn',
+    conversationState: action.queuedUntilHydrated ? action.previousConversationState : keepActiveState ? action.previousConversationState : 'starting_turn',
     draft: '',
     attachments: [],
     browserSubmission: null,
