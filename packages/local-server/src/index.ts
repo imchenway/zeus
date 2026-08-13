@@ -13351,7 +13351,6 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     if (pendingRequestKind === 'approval') return { runtimeState: 'pending_approval', taskRunStatus: 'waiting_approval' };
     if (submissions.some((submission) => submission.status === 'dispatching' || submission.status === 'active')) return { runtimeState: 'streaming', taskRunStatus: 'running' };
     if (submissions.some((submission) => submission.status === 'queued')) return { runtimeState: 'queued', taskRunStatus: 'running' };
-    if (providerState.includes('active') || providerState.includes('running') || providerState.includes('starting')) return { runtimeState: 'streaming', taskRunStatus: 'running' };
     return { runtimeState: 'ready', taskRunStatus: 'idle' };
   }
 

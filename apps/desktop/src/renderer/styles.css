@@ -1033,7 +1033,9 @@ a {
   outline: 0;
 }
 .project-sidebar-conversations {
-  margin: 1px 0 5px 20px;
+  container-name: project-sidebar-conversations;
+  container-type: inline-size;
+  margin: 1px 0 5px 6px;
   min-width: 0;
   position: relative;
 }
@@ -1048,7 +1050,7 @@ a {
 }
 .project-sidebar-conversations .session-conversation-tree-row {
   min-height: 26px;
-  padding: 4px 28px 4px 7px;
+  padding: 4px 6px 4px 4px;
 }
 .project-sidebar-conversations .session-conversation-tree-row strong {
   font-size: 12px;
@@ -1057,10 +1059,63 @@ a {
 .project-sidebar-conversations .session-conversation-archive-button {
   right: 4px;
 }
-.project-conversation-group-attention {
-  position: absolute;
-  right: 5px;
-  top: -25px;
+.project-sidebar-conversations .session-conversation-runtime-chip {
+  min-block-size: 20px;
+  padding: 2px 7px;
+}
+.project-sidebar-conversations .session-conversation-runtime-chip strong {
+  font-size: 10px;
+  white-space: nowrap;
+}
+.project-sidebar-conversations .session-conversation-runtime-chip .task-run-status-spinner,
+.project-sidebar-conversations .session-conversation-runtime-chip .task-run-status-mark {
+  block-size: 12px;
+  inline-size: 12px;
+}
+.project-sidebar-conversations .session-conversation-show-more {
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  color: var(--zeus-product-muted);
+  font-size: 11px;
+  font-weight: 560;
+  margin-block-start: 2px;
+  min-block-size: 24px;
+  padding-inline: 6px;
+  text-align: start;
+  width: 100%;
+}
+.project-sidebar-conversations .session-conversation-show-more:where(:hover, :focus-visible) {
+  background: var(--zeus-source-list-hover);
+  color: var(--zeus-product-text);
+  outline: 0;
+}
+@container project-sidebar-conversations (max-width: 250px) {
+  .macos-ai-app .session-conversation-runtime-chip {
+    justify-content: center;
+    padding-inline: 4px;
+  }
+  .macos-ai-app .session-conversation-runtime-chip strong {
+    display: none;
+  }
+  .macos-ai-app .session-conversation-runtime-chip .task-run-status-mark {
+    display: block;
+  }
+  .macos-ai-app .session-conversation-status-pill.is-completed {
+    align-items: center;
+    display: inline-flex;
+    font-size: 0;
+    justify-content: center;
+    min-block-size: 20px;
+    padding-inline: 6px;
+  }
+  .macos-ai-app .session-conversation-status-pill.is-completed::before {
+    background: currentcolor;
+    block-size: 7px;
+    border-radius: 999px;
+    content: '';
+    inline-size: 7px;
+  }
 }
 .project-first-sidebar .is-active-project-root {
   background: var(--zeus-source-list-selected);
@@ -8830,6 +8885,10 @@ body[data-surface='project-git-diff'] #root {
     transition: none;
   }
 
+  .macos-ai-app .session-conversation-runtime-chip {
+    transition: none;
+  }
+
   .macos-ai-app .session-conversation-state-spinner,
   .macos-ai-app .session-conversation-archive-spinner {
     animation: none;
@@ -12586,6 +12645,10 @@ body[data-surface='project-git-diff'] #root {
   min-block-size: 24px;
   max-inline-size: 100%;
   padding: 3px 8px;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease;
 }
 
 .macos-ai-app .task-status-chip strong {
@@ -12623,6 +12686,15 @@ body[data-surface='project-git-diff'] #root {
   color: var(--task-status-tone);
   flex: 0 0 auto;
   inline-size: 14px;
+}
+
+.macos-ai-app .task-run-status-mark {
+  background: currentcolor;
+  block-size: 7px;
+  border-radius: 999px;
+  display: none;
+  flex: 0 0 auto;
+  inline-size: 7px;
 }
 
 .macos-ai-app .task-priority-chip {
