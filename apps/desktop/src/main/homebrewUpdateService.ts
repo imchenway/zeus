@@ -1,6 +1,6 @@
 import { execFile as execFileCallback, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { createReadStream, constants as fsConstants } from 'node:fs';
+import { createReadStream, constants as fsConstants, type Stats } from 'node:fs';
 import { access, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative, resolve } from 'node:path';
@@ -23,6 +23,7 @@ export interface HomebrewPreparedUpdate {
   update: DesktopReleaseUpdateStatus;
   brewPath: string;
   cachePath: string;
+  verifiedArtifact: VerifiedArtifactIdentity;
 }
 
 export interface HomebrewInstalledUpdate {
@@ -52,41 +53,53 @@ interface HomebrewCaskInfo {
   appTarget: string | null;
 }
 
+interface VerifiedArtifactIdentity {
+  device: number;
+  inode: number;
+  size: number;
+  modifiedAtMs: number;
+  changedAtMs: number;
+}
+
 /** Homebrew 继续拥有 Cask 版本登记；Zeus 只编排预取、复验和用户确认后的安装。 */
 export function createHomebrewUpdateService(options: CreateHomebrewUpdateServiceOptions): HomebrewUpdateService {
   return {
     async prepare(update, onProgress) {
       assertUpdateCanUseHomebrew(update, options);
       const brewPath = await resolveHomebrewBinary(options.testMode);
-      onProgress({ phase: 'updating' });
-      await runBrew(brewPath, ['update'], { timeoutMs: 5 * 60_000, allowAutoUpdate: true });
-
-      const cask = await inspectCask(brewPath);
-      validateCask(cask, update, options.currentAppPath, options.currentAppVersion, options.testMode);
+      let cask = await inspectCask(brewPath);
+      await validateManagedCask(cask, options);
+      if (!caskMatchesRelease(cask, update)) {
+        onProgress({ phase: 'updating' });
+        await runBrew(brewPath, ['update'], { timeoutMs: 5 * 60_000, allowAutoUpdate: true });
+        cask = await inspectCask(brewPath);
+      }
+      validateCask(cask, update, options.currentAppPath, options.testMode);
       const cachePath = await readCachePath(brewPath, options.testMode);
       const artifact = update.artifact!;
-      if (await verifyArtifact(cachePath, artifact.sha256, artifact.sizeBytes)) {
-        onProgress({ phase: 'verifying' });
-        return { update, brewPath, cachePath };
-      }
+      onProgress({ phase: 'verifying' });
+      const cachedArtifact = await verifyArtifact(cachePath, artifact.sha256, artifact.sizeBytes);
+      if (cachedArtifact) return { update, brewPath, cachePath, verifiedArtifact: cachedArtifact };
 
       onProgress({ phase: 'downloading', ...(artifact.sizeBytes === null ? {} : { totalBytes: artifact.sizeBytes }) });
       await fetchCask(brewPath, cachePath, artifact.sizeBytes, onProgress, options.testMode);
       onProgress({ phase: 'verifying' });
-      if (!(await verifyArtifact(cachePath, artifact.sha256, artifact.sizeBytes))) {
-        throw new Error('Homebrew 下载完成，但缓存安装包未通过发布清单校验。');
-      }
-      return { update, brewPath, cachePath };
+      const downloadedArtifact = await verifyArtifact(cachePath, artifact.sha256, artifact.sizeBytes);
+      if (!downloadedArtifact) throw new Error('Homebrew 下载完成，但缓存安装包未通过发布清单校验。');
+      return { update, brewPath, cachePath, verifiedArtifact: downloadedArtifact };
     },
 
     async install(prepared, onProgress) {
       assertUpdateCanUseHomebrew(prepared.update, options);
       const artifact = prepared.update.artifact!;
-      if (!(await verifyArtifact(prepared.cachePath, artifact.sha256, artifact.sizeBytes))) {
-        throw new Error('已预取的更新包已变化或不完整，请重新下载。');
+      if (!(await matchesArtifactIdentity(prepared.cachePath, prepared.verifiedArtifact))) {
+        const reverifiedArtifact = await verifyArtifact(prepared.cachePath, artifact.sha256, artifact.sizeBytes);
+        if (!reverifiedArtifact) throw new Error('已预取的更新包已变化或不完整，请重新下载。');
+        prepared.verifiedArtifact = reverifiedArtifact;
       }
       const beforeInstall = await inspectCask(prepared.brewPath);
-      validateCask(beforeInstall, prepared.update, options.currentAppPath, options.currentAppVersion, options.testMode);
+      await validateManagedCask(beforeInstall, options);
+      validateCask(beforeInstall, prepared.update, options.currentAppPath, options.testMode);
       onProgress({ phase: 'installing' });
       await runBrew(prepared.brewPath, ['upgrade', '--cask', '--no-quit', '--yes', '--require-sha', caskToken], {
         timeoutMs: 15 * 60_000,
@@ -146,6 +159,16 @@ function assertUpdateCanUseHomebrew(update: DesktopReleaseUpdateStatus, options:
   if (update.artifact.arch !== expectedArch) throw new Error('更新安装包与当前 Mac 架构不一致。');
 }
 
+/** 版本漂移可以由 Homebrew 收敛，但当前 App 的路径、身份和实际版本必须可信。 */
+async function validateManagedCask(cask: HomebrewCaskInfo, options: CreateHomebrewUpdateServiceOptions): Promise<void> {
+  if (cask.tap !== 'imchenway/tap') throw new Error('Zeus 只允许使用 imchenway/tap 中的正式 Cask 升级。');
+  if (!cask.installedVersion) throw new Error('当前 Zeus 没有目标 Homebrew Cask 管理收据，不能自动接管安装。');
+  if (!options.testMode && cask.appTarget !== resolve(options.currentAppPath)) {
+    throw new Error('Homebrew Cask 管理的 Zeus App 不是当前正在使用的日常正式应用。');
+  }
+  await inspectInstalledApp(options.currentAppPath, options.bundleId, options.currentAppVersion);
+}
+
 async function resolveHomebrewBinary(testMode: boolean): Promise<string> {
   const testOverride = process.env.ZEUS_HOMEBREW_BIN?.trim();
   if (testOverride) {
@@ -198,18 +221,20 @@ async function inspectCask(brewPath: string): Promise<HomebrewCaskInfo> {
   };
 }
 
-function validateCask(cask: HomebrewCaskInfo, update: DesktopReleaseUpdateStatus, currentAppPath: string, currentAppVersion: string, testMode: boolean): void {
-  const artifact = update.artifact!;
+function validateCask(cask: HomebrewCaskInfo, update: DesktopReleaseUpdateStatus, currentAppPath: string, testMode: boolean): void {
   if (cask.tap !== 'imchenway/tap') throw new Error('Zeus 只允许使用 imchenway/tap 中的正式 Cask 升级。');
-  if (cask.installedVersion !== currentAppVersion) {
-    throw new Error(`当前 Zeus 不是由目标 Homebrew Cask 以同一版本管理：app=${currentAppVersion} cask=${cask.installedVersion ?? 'none'}`);
-  }
-  if (cask.version !== update.latestVersion || cask.sha256 !== artifact.sha256 || cask.url !== artifact.downloadUrl) {
+  if (!cask.installedVersion) throw new Error('当前 Zeus 没有目标 Homebrew Cask 管理收据，不能自动接管安装。');
+  if (!caskMatchesRelease(cask, update)) {
     throw new Error('Homebrew Cask 与 Zeus 发布清单不一致，为避免安装错误版本已停止升级。');
   }
   if (!testMode && cask.appTarget !== resolve(currentAppPath)) {
     throw new Error('Homebrew Cask 管理的 Zeus App 不是当前正在使用的日常正式应用。');
   }
+}
+
+function caskMatchesRelease(cask: HomebrewCaskInfo, update: DesktopReleaseUpdateStatus): boolean {
+  const artifact = update.artifact!;
+  return cask.version === update.latestVersion && cask.sha256 === artifact.sha256 && cask.url === artifact.downloadUrl;
 }
 
 async function readCachePath(brewPath: string, testMode: boolean): Promise<string> {
@@ -243,7 +268,7 @@ async function fetchCask(brewPath: string, cachePath: string, expectedSizeBytes:
         ? undefined
         : setInterval(() => {
             void publishCachedProgress();
-          }, 100);
+          }, 500);
     const inspect = (chunk: Buffer) => {
       const rawText = chunk.toString('utf8');
       const text = stripTerminalFormatting(rawText);
@@ -332,16 +357,43 @@ function homebrewEnvironment(allowAutoUpdate: boolean): NodeJS.ProcessEnv {
   };
 }
 
-async function verifyArtifact(path: string, expectedSha256: string, expectedSizeBytes: number | null): Promise<boolean> {
+async function verifyArtifact(path: string, expectedSha256: string, expectedSizeBytes: number | null): Promise<VerifiedArtifactIdentity | null> {
   try {
-    const fileStat = await stat(path);
-    if (!fileStat.isFile() || (expectedSizeBytes !== null && fileStat.size !== expectedSizeBytes)) return false;
+    const before = await stat(path);
+    if (!before.isFile() || (expectedSizeBytes !== null && before.size !== expectedSizeBytes)) return null;
     const hash = createHash('sha256');
     for await (const chunk of createReadStream(path)) hash.update(chunk as Buffer);
-    return hash.digest('hex') === expectedSha256;
+    if (hash.digest('hex') !== expectedSha256) return null;
+    const after = await stat(path);
+    const beforeIdentity = artifactIdentity(before);
+    const afterIdentity = artifactIdentity(after);
+    return sameArtifactIdentity(beforeIdentity, afterIdentity) && after.isFile() ? afterIdentity : null;
+  } catch {
+    return null;
+  }
+}
+
+async function matchesArtifactIdentity(path: string, expected: VerifiedArtifactIdentity): Promise<boolean> {
+  try {
+    const current = await stat(path);
+    return current.isFile() && sameArtifactIdentity(artifactIdentity(current), expected);
   } catch {
     return false;
   }
+}
+
+function artifactIdentity(fileStat: Stats): VerifiedArtifactIdentity {
+  return {
+    device: fileStat.dev,
+    inode: fileStat.ino,
+    size: fileStat.size,
+    modifiedAtMs: fileStat.mtimeMs,
+    changedAtMs: fileStat.ctimeMs,
+  };
+}
+
+function sameArtifactIdentity(left: VerifiedArtifactIdentity, right: VerifiedArtifactIdentity): boolean {
+  return left.device === right.device && left.inode === right.inode && left.size === right.size && left.modifiedAtMs === right.modifiedAtMs && left.changedAtMs === right.changedAtMs;
 }
 
 function parseHomebrewProgress(text: string, expectedSizeBytes: number | null): { downloadedBytes: number; totalBytes?: number } | null {
