@@ -1596,6 +1596,9 @@ function setupIpc(): void {
         window.webContents.send('zeus:task-git-delivery:appearance', { language: appShellSettings.appLanguage, appearance: deliveryAppearance });
       }
     }
+    if (menuBarUsageWindow && !menuBarUsageWindow.isDestroyed() && !menuBarUsageWindow.webContents.isDestroyed()) {
+      menuBarUsageWindow.webContents.send('zeus:menu-bar-usage:settings', { language: appShellSettings.appLanguage, appearance: deliveryAppearance });
+    }
     setupMenu();
     setupTraySafely();
     applySystemNotificationBridge();

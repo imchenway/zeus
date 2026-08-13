@@ -39,6 +39,8 @@ const copy = {
     retry: '重试',
     stale: '上次成功结果',
     failed: '暂时无法更新用量',
+    failedDetail: '未能读取本地用量数据，请重试。',
+    codexOnlyCompatibility: '当前旧执行宿主仅能汇总 Codex；安全交接后恢复全部供应源。',
     updated: '更新于',
     resets: '重置于',
     subscription: '订阅账户',
@@ -74,6 +76,8 @@ const copy = {
     retry: 'Retry',
     stale: 'Last successful result',
     failed: 'Usage cannot be updated',
+    failedDetail: 'Local usage data could not be read. Please retry.',
+    codexOnlyCompatibility: 'The current legacy host can summarize Codex only. All providers return after a safe handoff.',
     updated: 'Updated',
     resets: 'Resets',
     subscription: 'Subscription',
@@ -84,12 +88,15 @@ const copy = {
 } as const;
 
 export function MenuBarUsageWindow(props: { client: UsageClient; language: Language; appearance: Appearance }) {
-  const text = copy[props.language];
+  const [surfaceSettings, setSurfaceSettings] = useState<{ language: Language; appearance: Appearance }>({ language: props.language, appearance: props.appearance });
+  const text = copy[surfaceSettings.language];
   const [snapshot, setSnapshot] = useState<UsageOverviewSnapshot | null>(() => readStoredSnapshot());
   const [selection, setSelection] = useState(() => readStoredSelection());
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const requestRef = useRef<Promise<void> | null>(null);
+
+  useEffect(() => window.zeus?.onMenuBarUsageSettingsChanged?.(setSurfaceSettings), []);
 
   const load = useCallback(() => {
     if (requestRef.current) return requestRef.current;
@@ -147,9 +154,10 @@ export function MenuBarUsageWindow(props: { client: UsageClient; language: Langu
   const selectedProvider = snapshot?.providers.find((provider) => provider.providerId === selection) ?? null;
   const updatedAt = selectedProvider?.updatedAt ?? snapshot?.updatedAt;
   const stale = Boolean(selectedProvider?.stale || error);
+  const freshness = updatedAt ? formatUpdatedAt(updatedAt, surfaceSettings.language, stale ? text.stale : text.updated) : loading ? text.loading : error ? text.failed : text.loading;
 
   return (
-    <main className="menu-bar-usage-root" data-appearance={props.appearance} lang={props.language} aria-label={props.language === 'zh-CN' ? 'Zeus 菜单栏用量浮窗' : 'Zeus menu bar usage'}>
+    <main className="menu-bar-usage-root" data-appearance={surfaceSettings.appearance} lang={surfaceSettings.language} aria-label={surfaceSettings.language === 'zh-CN' ? 'Zeus 菜单栏用量浮窗' : 'Zeus menu bar usage'}>
       <section className="menu-bar-usage-surface">
         <header className="menu-bar-usage-header">
           <span className="menu-bar-usage-identity">
@@ -161,9 +169,9 @@ export function MenuBarUsageWindow(props: { client: UsageClient; language: Langu
               <small>{selectedProvider?.name ?? text.allProviders}</small>
             </span>
           </span>
-          <span className="menu-bar-usage-freshness" data-loading={loading ? 'true' : 'false'} data-stale={stale ? 'true' : 'false'} aria-live="polite">
+          <span className="menu-bar-usage-freshness" data-loading={loading ? 'true' : 'false'} data-stale={stale && !loading ? 'true' : 'false'} aria-live="polite">
             <i aria-hidden="true" />
-            {updatedAt ? formatUpdatedAt(updatedAt, props.language, stale ? text.stale : text.updated) : text.loading}
+            {freshness}
           </span>
         </header>
 
@@ -178,22 +186,31 @@ export function MenuBarUsageWindow(props: { client: UsageClient; language: Langu
           ))}
         </nav>
 
-        {error ? (
-          <div className="menu-bar-usage-notice" data-tone="error" role="alert">
-            <span>{text.failed}</span>
-            <button type="button" onClick={() => void load()} disabled={loading}>
-              {text.retry}
-            </button>
-          </div>
-        ) : null}
+        <div className="menu-bar-usage-status-stack">
+          {snapshot?.providerCoverage === 'codex-only-compatibility' ? (
+            <div className="menu-bar-usage-notice" data-tone="warning" role="status">
+              <span>{text.codexOnlyCompatibility}</span>
+            </div>
+          ) : null}
+          {error && snapshot ? (
+            <div className="menu-bar-usage-notice" data-tone="error" role="alert">
+              <span>{text.failed}</span>
+              <button type="button" onClick={() => void load()} disabled={loading}>
+                {text.retry}
+              </button>
+            </div>
+          ) : null}
+        </div>
 
         <div className="menu-bar-usage-content" role="tabpanel">
-          {!snapshot ? (
+          {!snapshot && error ? (
+            <UsageLoadFailure language={surfaceSettings.language} loading={loading} onRetry={load} />
+          ) : !snapshot ? (
             <UsageSkeleton label={text.loading} />
           ) : selectedProvider ? (
-            <ProviderDetail provider={selectedProvider} language={props.language} />
+            <ProviderDetail provider={selectedProvider} language={surfaceSettings.language} />
           ) : (
-            <AllProviders providers={snapshot.providers} language={props.language} onSelect={select} />
+            <AllProviders providers={snapshot.providers} language={surfaceSettings.language} onSelect={select} />
           )}
         </div>
 
@@ -213,6 +230,19 @@ export function MenuBarUsageWindow(props: { client: UsageClient; language: Langu
         </footer>
       </section>
     </main>
+  );
+}
+
+function UsageLoadFailure(props: { language: Language; loading: boolean; onRetry: () => Promise<void> }) {
+  const text = copy[props.language];
+  return (
+    <div className="menu-bar-usage-load-failure" role="alert">
+      <strong>{text.failed}</strong>
+      <span>{text.failedDetail}</span>
+      <button type="button" onClick={() => void props.onRetry()} disabled={props.loading}>
+        {props.loading ? text.loading : text.retry}
+      </button>
+    </div>
   );
 }
 

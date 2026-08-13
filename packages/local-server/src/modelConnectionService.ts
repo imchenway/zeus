@@ -41,6 +41,7 @@ export interface ModelConnectionDiagnostic {
 }
 
 export interface ModelConnectionService {
+  listMetadata(): ModelConnectionRecord[];
   list(): Promise<ModelConnectionRecord[]>;
   get(id: string): Promise<ModelConnectionRecord | undefined>;
   create(input: SaveModelConnectionRequest): Promise<ModelConnectionRecord>;
@@ -135,6 +136,10 @@ export function createModelConnectionService(options: { settings: SettingReposit
   }
 
   return {
+    listMetadata() {
+      // 用量汇总只需要供应源身份，不应为展示名称触发钥匙串读取。
+      return readStored();
+    },
     async list() {
       return hydrate();
     },
