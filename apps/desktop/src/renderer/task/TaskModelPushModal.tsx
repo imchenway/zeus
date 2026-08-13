@@ -42,6 +42,11 @@ export interface TaskModelPushForm {
 
 export type TaskModelPushModalStatus = 'loading' | 'ready' | 'authenticating' | 'authenticated' | 'submitting' | 'error';
 
+export interface TaskModelPushStatusConfirmation {
+  currentStatusLabel: string;
+  targetStatusLabel: string;
+}
+
 export type TaskModelPushPreferences = Pick<TaskModelPushForm, 'model' | 'effort' | 'serviceTier' | 'workMode' | 'permissionMode'> & {
   workspaceMode?: 'direct' | 'worktree';
 };
@@ -568,10 +573,14 @@ export function TaskModelPushModal(props: {
   status: TaskModelPushModalStatus;
   refreshingRepositoryId: string | null;
   error: string | null;
+  statusConfirmation?: TaskModelPushStatusConfirmation | null;
   onChange: Dispatch<SetStateAction<TaskModelPushForm>>;
   onRefreshRepository: (repositoryId: string) => void;
   onClose: () => void;
   onCancelAuthentication: () => void;
+  onConfirmStatusChange: () => void;
+  onPreserveStatus: () => void;
+  onBackFromStatusConfirmation: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
   const commonSources = useMemo(() => resolveTaskPushCommonSources(props.capabilities?.repositories ?? []), [props.capabilities?.repositories]);
@@ -1077,52 +1086,76 @@ export function TaskModelPushModal(props: {
           ) : null}
         </div>
 
-        <footer className="task-model-push-footer">
-          <small>{zh ? '确认后会创建新会话并立即进入；历史会话不会被覆盖。' : 'A new conversation will be created and opened; history remains unchanged.'}</small>
-          <span>
-            <Button variant="secondary" size="regular" onClick={authenticating ? props.onCancelAuthentication : props.onClose} disabled={props.status === 'submitting'}>
-              {authenticating ? (zh ? '取消登录' : 'Cancel sign-in') : zh ? '取消' : 'Cancel'}
-            </Button>
-            <Button
-              type="submit"
-              variant="primary"
-              size="regular"
-              busy={busy}
-              disabled={
-                busy ||
-                props.status === 'loading' ||
-                !props.form.model ||
-                (props.form.workspaceMode === 'direct'
-                  ? directWorkspaceNeedsConfirmation && !props.form.directConcurrencyConfirmed
-                  : repositories.length === 0 ||
-                    repositories.some((repository) => {
-                      const selection = props.form.repositorySelections[repository.id];
-                      return !selection?.sourceRef || !selection.branchName.trim();
-                    }))
-              }
-            >
-              {authenticating
-                ? zh
-                  ? '等待登录…'
-                  : 'Waiting for sign-in…'
-                : authenticated
+        {props.statusConfirmation ? (
+          <footer className="task-model-push-footer task-model-push-status-confirmation" aria-live="polite">
+            <span className="task-model-push-status-confirmation-copy">
+              <strong>{zh ? `任务当前为“${props.statusConfirmation.currentStatusLabel}”` : `The task is currently “${props.statusConfirmation.currentStatusLabel}”`}</strong>
+              <small>
+                {zh
+                  ? `请选择本次推送是否同时改为“${props.statusConfirmation.targetStatusLabel}”。保留当前状态也会照常创建新会话。`
+                  : `Choose whether this push should also move the task to “${props.statusConfirmation.targetStatusLabel}”. Keeping the current status still creates the conversation.`}
+              </small>
+            </span>
+            <span>
+              <Button variant="secondary" size="regular" onClick={props.onBackFromStatusConfirmation}>
+                {zh ? '返回' : 'Back'}
+              </Button>
+              <Button variant="secondary" size="regular" onClick={props.onPreserveStatus}>
+                {zh ? `保留“${props.statusConfirmation.currentStatusLabel}”并推送` : `Keep “${props.statusConfirmation.currentStatusLabel}” and push`}
+              </Button>
+              <Button variant="primary" size="regular" onClick={props.onConfirmStatusChange}>
+                {zh ? `改为“${props.statusConfirmation.targetStatusLabel}”并推送` : `Move to “${props.statusConfirmation.targetStatusLabel}” and push`}
+              </Button>
+            </span>
+          </footer>
+        ) : (
+          <footer className="task-model-push-footer">
+            <small>{zh ? '确认后会创建新会话并立即进入；历史会话不会被覆盖。' : 'A new conversation will be created and opened; history remains unchanged.'}</small>
+            <span>
+              <Button variant="secondary" size="regular" onClick={authenticating ? props.onCancelAuthentication : props.onClose} disabled={props.status === 'submitting'}>
+                {authenticating ? (zh ? '取消登录' : 'Cancel sign-in') : zh ? '取消' : 'Cancel'}
+              </Button>
+              <Button
+                type="submit"
+                variant="primary"
+                size="regular"
+                busy={busy}
+                disabled={
+                  busy ||
+                  props.status === 'loading' ||
+                  !props.form.model ||
+                  (props.form.workspaceMode === 'direct'
+                    ? directWorkspaceNeedsConfirmation && !props.form.directConcurrencyConfirmed
+                    : repositories.length === 0 ||
+                      repositories.some((repository) => {
+                        const selection = props.form.repositorySelections[repository.id];
+                        return !selection?.sourceRef || !selection.branchName.trim();
+                      }))
+                }
+              >
+                {authenticating
                   ? zh
-                    ? '登录成功，正在继续…'
-                    : 'Signed in, continuing…'
-                  : props.status === 'submitting'
+                    ? '等待登录…'
+                    : 'Waiting for sign-in…'
+                  : authenticated
                     ? zh
-                      ? '正在创建…'
-                      : 'Creating…'
-                    : codexLoginRequired
+                      ? '登录成功，正在继续…'
+                      : 'Signed in, continuing…'
+                    : props.status === 'submitting'
                       ? zh
-                        ? '登录并继续'
-                        : 'Sign in and continue'
-                      : zh
-                        ? '创建新会话'
-                        : 'Create conversation'}
-            </Button>
-          </span>
-        </footer>
+                        ? '正在创建…'
+                        : 'Creating…'
+                      : codexLoginRequired
+                        ? zh
+                          ? '登录并继续'
+                          : 'Sign in and continue'
+                        : zh
+                          ? '创建新会话'
+                          : 'Create conversation'}
+              </Button>
+            </span>
+          </footer>
+        )}
       </form>
     </ModalPortal>
   );

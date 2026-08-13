@@ -15258,6 +15258,31 @@ body[data-surface='project-git-diff'] #root {
   gap: 8px;
 }
 
+.macos-ai-app .task-model-push-status-confirmation {
+  align-items: flex-end;
+  padding-block-start: 12px;
+}
+
+.macos-ai-app .task-model-push-status-confirmation-copy {
+  display: grid;
+  gap: 3px;
+  min-inline-size: 0;
+}
+
+.macos-ai-app .task-model-push-status-confirmation-copy strong {
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.macos-ai-app .task-model-push-status-confirmation-copy small {
+  line-height: 1.45;
+}
+
+.macos-ai-app .task-model-push-status-confirmation > span:last-child {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 @media (max-width: 680px) {
   .macos-ai-app .task-model-push-config-grid,
   .macos-ai-app .task-model-push-workspace-grid,

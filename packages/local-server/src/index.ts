@@ -1428,6 +1428,10 @@ interface UpdateTaskManagementStatusBody {
   reopenConversationId?: string;
 }
 
+interface SyncTaskModelPushManagementStatusBody {
+  expectedStatus?: TaskManagementStatus;
+}
+
 interface UpdateTaskBody {
   expectedUpdatedAt?: string;
   title?: string;
@@ -3498,6 +3502,67 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       conversations.updateNextTurnSettings(conversation.id, settings);
       await db.save();
       return settings;
+    },
+  );
+
+  server.post(
+    '/api/tasks/:taskId/model-push-management-status',
+    async (
+      request: FastifyRequest<{
+        Params: { taskId: string };
+        Body: SyncTaskModelPushManagementStatusBody;
+      }>,
+      reply,
+    ) => {
+      const existing = tasks.getById(request.params.taskId);
+      if (!existing) return reply.code(404).send({ error: 'ZEUS_TASK_NOT_FOUND', message: 'Task not found' });
+      if (!isTaskManagementStatus(request.body?.expectedStatus)) {
+        return reply.code(400).send({
+          error: 'ZEUS_INVALID_TASK_MANAGEMENT_STATUS',
+          message: 'expectedStatus must be a valid task management status.',
+        });
+      }
+      const projectStatusConfig = resolveTaskManagementStatusConfigForProject(existing.projectId);
+      const targetStatus = projectStatusConfig.roles.pushedStatusId;
+      if (existing.managementStatus === targetStatus) {
+        return { state: 'synced' as const, task: existing, targetStatus };
+      }
+      if (existing.managementStatus !== request.body.expectedStatus) {
+        return { state: 'superseded' as const, task: existing, targetStatus };
+      }
+      const updated = tasks.updateManagementStatus(existing.id, targetStatus, existing.updatedAt);
+      recordTaskEvent({
+        taskId: updated.id,
+        eventType: 'task.management_status.changed',
+        title: '任务确认推送，管理状态已更新',
+        payload: {
+          from: existing.managementStatus,
+          to: updated.managementStatus,
+          trigger: 'task.model_push.confirmed',
+        },
+      });
+      appendAuditLog({
+        actorType: 'local_api',
+        action: 'task.management_status.changed',
+        resourceType: 'task',
+        resourceId: updated.id,
+        payload: {
+          taskId: updated.id,
+          projectId: updated.projectId,
+          from: existing.managementStatus,
+          to: updated.managementStatus,
+          trigger: 'task.model_push.confirmed',
+        },
+      });
+      publishRealtimeEvent('task.updated', {
+        taskId: updated.id,
+        projectId: updated.projectId,
+        managementStatus: updated.managementStatus,
+        changedFields: ['managementStatus'],
+        updatedAt: updated.updatedAt,
+      });
+      await db.save();
+      return { state: 'synced' as const, task: updated, targetStatus };
     },
   );
 
@@ -15152,43 +15217,6 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         }
       }
       if (nativeOperation.status === 'active') {
-        const latestTask = tasks.getById(task.id);
-        const projectStatusConfig = resolveTaskManagementStatusConfigForProject(task.projectId);
-        if (latestTask?.managementStatus === projectStatusConfig.roles.defaultStatusId) {
-          const updatedTask = tasks.updateManagementStatus(latestTask.id, projectStatusConfig.roles.pushedStatusId, latestTask.updatedAt);
-          recordTaskEvent({
-            taskId: updatedTask.id,
-            eventType: 'task.management_status.changed',
-            title: '任务推送成功，管理状态已更新',
-            payload: {
-              from: latestTask.managementStatus,
-              to: updatedTask.managementStatus,
-              trigger: 'task.model_push.started',
-              conversationId: conversation.id,
-            },
-          });
-          appendAuditLog({
-            actorType: 'system',
-            action: 'task.management_status.changed',
-            resourceType: 'task',
-            resourceId: updatedTask.id,
-            payload: {
-              taskId: updatedTask.id,
-              projectId: updatedTask.projectId,
-              from: latestTask.managementStatus,
-              to: updatedTask.managementStatus,
-              trigger: 'task.model_push.started',
-              conversationId: conversation.id,
-            },
-          });
-          publishRealtimeEvent('task.updated', {
-            taskId: updatedTask.id,
-            projectId: updatedTask.projectId,
-            managementStatus: updatedTask.managementStatus,
-            changedFields: ['managementStatus'],
-            updatedAt: updatedTask.updatedAt,
-          });
-        }
         const runningTask = moveTaskTowardRunning(task.id, 'task.model_push.started');
         recordTaskEvent({
           taskId: runningTask.id,
@@ -17113,8 +17141,9 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     const parent = resolveTaskPushParentContextState(project, task);
     const related = resolveTaskPushRelatedContextState(project, task, new Set(parent.options.map((option) => option.taskId)));
     const currentAttachments = inspectTaskPushAttachments(task, project.localPath).inspected.map((attachment) => ({ option: attachment.option, localPath: attachment.attachment?.localPath ?? null }));
+    // 管理状态不属于首发正文；修订只绑定真实输入资源，避免推送确认时的状态同步使同一次首发失效。
     const revision = createHash('sha256')
-      .update(JSON.stringify({ current: { updatedAt: task.updatedAt, content: taskPushPromptContent(task), attachments: currentAttachments, conversations: current.revision }, parent: parent.revision, related: related.revision }))
+      .update(JSON.stringify({ current: { content: taskPushPromptContent(task), attachments: currentAttachments, conversations: current.revision }, parent: parent.revision, related: related.revision }))
       .digest('hex');
     return { revision, current, parent, related };
   }

@@ -1587,6 +1587,7 @@ export interface DashboardClient {
   loadCodexUsageAnalytics: (input: { range: CodexUsageRange; projectId?: string; model?: string }) => Promise<CodexUsageAnalyticsSnapshot>;
   startCodexChatGptLogin: () => Promise<CodexChatGptLogin>;
   cancelCodexChatGptLogin: (loginId: string) => Promise<void>;
+  syncTaskModelPushManagementStatus: (taskId: string, expectedStatus: TaskManagementStatus) => Promise<{ state: 'synced' | 'superseded'; task: TaskRecord; targetStatus: TaskManagementStatus }>;
   startTaskModelPush: (taskId: string, input: StartTaskModelPushRequest) => Promise<NativeOperationAcceptance>;
   loadTaskGitWorkspaces: (taskId: string) => Promise<TaskWorkspacesSnapshot>;
   loadTaskGitWorkspaceIndex: (taskId: string) => Promise<TaskWorkspaceIndexCollection>;
@@ -2058,6 +2059,11 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
     cancelCodexChatGptLogin: async (loginId) => {
       await request<{ cancelled: true }>(`/api/codex/account/login/${encodeURIComponent(loginId)}/cancel`, { method: 'POST' });
     },
+    syncTaskModelPushManagementStatus: (taskId, expectedStatus) =>
+      request<{ state: 'synced' | 'superseded'; task: TaskRecord; targetStatus: TaskManagementStatus }>(`/api/tasks/${encodeURIComponent(taskId)}/model-push-management-status`, {
+        method: 'POST',
+        body: JSON.stringify({ expectedStatus }),
+      }),
     startTaskModelPush: (taskId, input) => {
       const { idempotencyKey, ...body } = input;
       return request<NativeOperationAcceptance>(`/api/tasks/${encodeURIComponent(taskId)}/conversations`, {

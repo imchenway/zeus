@@ -316,7 +316,7 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
           retryLabel: props.language === 'zh-CN' ? '重新连接' : 'Reconnect',
           onRetry: () => controller.reconnect(),
         }
-      : controllerVisible
+      : controllerVisible && props.creationStatus?.state !== 'warning'
         ? undefined
         : props.creationStatus;
   return (
