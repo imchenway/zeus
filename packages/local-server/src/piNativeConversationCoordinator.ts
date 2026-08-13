@@ -195,7 +195,6 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         status: 'queued',
         input: {
           text: input.prompt,
-          ...(input.displayText ? { displayText: input.displayText } : {}),
           context: {
             projectId: input.projectId,
             taskId: input.taskId ?? null,
@@ -308,7 +307,6 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         requestHash: input.idempotencyKey,
         input: {
           text: providerPrompt,
-          ...(input.displayText ? { displayText: input.displayText } : {}),
           ...(attachmentInput.attachments.length > 0 ? { attachments: attachmentInput.attachments } : {}),
           ...(input.taskPushLayout ? { taskPushLayout: input.taskPushLayout } : {}),
           context: {
