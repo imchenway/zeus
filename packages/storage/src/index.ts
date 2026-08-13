@@ -264,6 +264,9 @@ export interface CreateTaskIntegrationAttemptInput {
 }
 
 export interface UpdateTaskIntegrationAttemptInput {
+  worktreePath?: string;
+  targetHeadSha?: string;
+  taskHeadSha?: string;
   state?: TaskIntegrationAttemptState;
   resultHeadSha?: string | null;
   lastError?: string | null;
@@ -313,6 +316,7 @@ export interface ProjectArchiveConfirmation {
 }
 
 export interface CreateTaskInput {
+  id?: string;
   projectId: string;
   parentTaskId?: string | null;
   title: string;
@@ -361,6 +365,7 @@ export interface CreateTaskTemplateInput {
 }
 
 export interface CreateTaskFromTemplateInput {
+  id?: string;
   projectId: string;
   template: ZeusTaskTemplateRecord;
   managementStatus?: TaskManagementStatus;
@@ -758,6 +763,11 @@ export interface BindConversationProviderInput {
   providerState: ConversationProviderState;
   providerProtocolVersion?: string | null;
   providerBinaryVersion?: string | null;
+}
+
+export interface BindPiConversationProviderInput extends BindConversationProviderInput {
+  modelSourceId: string | null;
+  modelId: string;
 }
 
 export interface ProviderSequenceSnapshot {
@@ -3369,7 +3379,7 @@ export class TaskRepository {
       const parentTaskId = input.parentTaskId ?? null;
       if (parentTaskId) this.assertValidParent(input.projectId, '__new_task__', parentTaskId, 1);
       const record: ZeusTaskRecord = {
-        id: `task_${nanoid(12)}`,
+        id: input.id ?? `task_${nanoid(12)}`,
         projectId: input.projectId,
         taskCode: formatTaskCode(taskSequence),
         taskSequence,
@@ -3438,6 +3448,7 @@ export class TaskRepository {
     const variables = input.variables ?? {};
     const description = renderPromptTemplate(input.template.promptTemplate, variables);
     return this.create({
+      ...(input.id ? { id: input.id } : {}),
       projectId: input.projectId,
       title: input.title ?? input.template.name,
       taskType: 'requirement',
@@ -4233,11 +4244,19 @@ export class TaskIntegrationAttemptRepository {
     return this.db.select<DbTaskIntegrationAttemptRow>(`SELECT ${selectTaskIntegrationAttemptFields} FROM task_integration_attempts WHERE integration_id = ? ORDER BY created_at, id`, [integrationId]).map(mapTaskIntegrationAttemptRow);
   }
 
+  listByState(stateValue: TaskIntegrationAttemptState): ZeusTaskIntegrationAttemptRecord[] {
+    const state = assertEnum(stateValue, ['preparing', 'active', 'completed', 'failed', 'stale'] as const, 'task integration attempt state');
+    return this.db.select<DbTaskIntegrationAttemptRow>(`SELECT ${selectTaskIntegrationAttemptFields} FROM task_integration_attempts WHERE state = ? ORDER BY created_at, id`, [state]).map(mapTaskIntegrationAttemptRow);
+  }
+
   update(attemptId: string, input: UpdateTaskIntegrationAttemptInput): ZeusTaskIntegrationAttemptRecord {
     const existing = this.getById(attemptId);
     if (!existing) throw new Error(`Zeus task integration attempt not found: ${attemptId}`);
     const state = input.state ? assertEnum(input.state, ['preparing', 'active', 'completed', 'failed', 'stale'] as const, 'task integration attempt state') : existing.state;
-    this.db.execute(`UPDATE task_integration_attempts SET state = ?, result_head_sha = ?, last_error = ?, updated_at = ? WHERE id = ?`, [
+    this.db.execute(`UPDATE task_integration_attempts SET worktree_path = ?, target_head_sha = ?, task_head_sha = ?, state = ?, result_head_sha = ?, last_error = ?, updated_at = ? WHERE id = ?`, [
+      input.worktreePath ?? existing.worktreePath,
+      input.targetHeadSha ?? existing.targetHeadSha,
+      input.taskHeadSha ?? existing.taskHeadSha,
       state,
       'resultHeadSha' in input ? (input.resultHeadSha ?? null) : existing.resultHeadSha,
       'lastError' in input ? (input.lastError ?? null) : existing.lastError,
@@ -5255,6 +5274,36 @@ export class ConversationRepository {
         input.providerProtocolVersion ?? null,
         input.providerBinaryVersion ?? null,
         input.providerModel ?? null,
+        input.providerThreadId,
+        input.providerThreadPath ?? null,
+        timestamp,
+        conversationId,
+      ],
+    );
+    syncConversationStage(this.db, conversationId, timestamp);
+    const updated = this.getById(conversationId);
+    if (!updated) throw new Error(`Zeus conversation not found: ${conversationId}`);
+    return updated;
+  }
+
+  /** Pi 准备完成后绑定 SDK 会话，同时保留此前已经展示给用户的 Zeus 会话身份。 */
+  bindPiProvider(conversationId: string, input: BindPiConversationProviderInput): ZeusConversationWithMessagesRecord {
+    assertEnum(input.providerState, ['unbound', 'binding', 'ready', 'active', 'waiting', 'paused', 'archived', 'closed', 'failed'] as const, 'conversation provider state');
+    const timestamp = nowIso();
+    this.db.execute(
+      `UPDATE conversations SET transport_kind = 'codex_native', provider_id = ?, provider_thread_id = ?, provider_thread_path = COALESCE(?, provider_thread_path),
+       provider_model = ?, provider_state = ?, provider_protocol_version = COALESCE(?, provider_protocol_version), provider_binary_version = COALESCE(?, provider_binary_version),
+       agent_kind = 'pi', agent_transport = 'sdk', model_source_id = ?, model_id = ?, native_session_id = ?, native_session_path = COALESCE(?, native_session_path), updated_at = ? WHERE id = ?`,
+      [
+        input.providerId,
+        input.providerThreadId,
+        input.providerThreadPath ?? null,
+        input.providerModel ?? input.modelId,
+        input.providerState,
+        input.providerProtocolVersion ?? null,
+        input.providerBinaryVersion ?? null,
+        input.modelSourceId,
+        input.modelId,
         input.providerThreadId,
         input.providerThreadPath ?? null,
         timestamp,

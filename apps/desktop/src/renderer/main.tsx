@@ -68,16 +68,18 @@ async function renderWithClient(client: DashboardClient, executionHostTransition
         onReadTaskClipboardResources={() => window.zeus?.readTaskClipboardResources?.() ?? Promise.resolve({ resources: [], text: '' })}
         onLoadTaskAttachmentPreview={(path) => window.zeus?.getTaskAttachmentPreview?.(path) ?? Promise.resolve(null)}
         onOpenTaskAttachment={(path) => window.zeus?.openTaskAttachment?.(path) ?? Promise.resolve({ opened: false, error: 'open_attachment_unavailable' })}
-        onCreateTaskFromGraphNode={async (nodeId, projectId) => {
+        onCreateTaskFromGraphNode={async (nodeId, projectId, idempotencyKey) => {
           await client.createTaskFromGraphNode(nodeId, {
             projectId,
             intent: buildGraphNodeTaskIntent(appShellSettings.appLanguage),
+            idempotencyKey,
           });
           return client.loadDashboard();
         }}
-        onCreateTaskFromTemplate={async (templateId, projectId) => {
+        onCreateTaskFromTemplate={async (templateId, projectId, idempotencyKey) => {
           const templateTaskDraft = buildTemplateTaskDraft(appShellSettings.appLanguage);
           await client.createTaskFromTemplate(templateId, {
+            idempotencyKey,
             projectId,
             title: templateTaskDraft.title,
             variables: {
@@ -89,8 +91,9 @@ async function renderWithClient(client: DashboardClient, executionHostTransition
         }}
         onChooseConversationResources={() => window.zeus?.chooseConversationResources?.() ?? Promise.resolve([])}
         onChooseTaskAttachments={() => window.zeus?.chooseTaskAttachments?.() ?? Promise.resolve([])}
-        onCreateTaskDraft={async (projectId, draft) => {
+        onCreateTaskDraft={async (projectId, draft, idempotencyKey) => {
           await client.createTask({
+            idempotencyKey,
             projectId,
             parentTaskId: draft.parentTaskId,
             title: draft.title,
@@ -188,8 +191,8 @@ async function renderWithClient(client: DashboardClient, executionHostTransition
         onSubscribeRealtimeEvents={(onEvent, onConnectionState) => client.subscribeEvents(onEvent, onConnectionState)}
         onArchiveGraphConversation={(projectId, conversationId) => client.archiveGraphConversation(projectId, conversationId)}
         onRestoreGraphConversation={(projectId, conversationId) => client.restoreGraphConversation(projectId, conversationId)}
-        onCreateTaskFromGraphConversation={async (projectId, conversationId) => {
-          await client.createTaskFromGraphConversation(projectId, conversationId, { intent: buildGraphConversationTaskIntent(appShellSettings.appLanguage) });
+        onCreateTaskFromGraphConversation={async (projectId, conversationId, idempotencyKey) => {
+          await client.createTaskFromGraphConversation(projectId, conversationId, { intent: buildGraphConversationTaskIntent(appShellSettings.appLanguage), idempotencyKey });
           return client.loadDashboard();
         }}
         onOpenGraphSource={(source) => openGraphSourceInMain({ zeus: window.zeus, source })}
@@ -240,8 +243,8 @@ async function renderWithClient(client: DashboardClient, executionHostTransition
         onArchiveRuntimeSession={(sessionId) => client.archiveRuntimeSession(sessionId)}
         onRestoreRuntimeSession={(sessionId) => client.restoreRuntimeSession(sessionId)}
         onDeleteRuntimeSession={(sessionId) => client.deleteRuntimeSession(sessionId)}
-        onCreateTaskFromRuntimeSession={async (sessionId, input) => {
-          await client.createTaskFromRuntimeSession(sessionId, input);
+        onCreateTaskFromRuntimeSession={async (sessionId, input, idempotencyKey) => {
+          await client.createTaskFromRuntimeSession(sessionId, { ...input, idempotencyKey });
           return client.loadDashboard();
         }}
         onLoadSecuritySecrets={() => client.loadSecuritySecrets()}

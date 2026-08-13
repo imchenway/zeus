@@ -228,7 +228,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
         <strong>{zh ? '无法读取项目 Git 现场' : 'Project Git state is unavailable'}</strong>
         <span>{error}</span>
         <Button variant="secondary" onClick={() => void loadWorkbench()}>
-          {zh ? '重试' : 'Retry'}
+          {zh ? '重新读取' : 'Reload'}
         </Button>
       </section>
     );

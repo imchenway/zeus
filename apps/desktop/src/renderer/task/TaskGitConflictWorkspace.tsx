@@ -46,7 +46,7 @@ export function TaskGitConflictWorkspace(props: {
   conflict: ConflictDocument | null;
   onSelectPath: (path: string) => void;
   onDocumentChange: (document: ConflictDocument) => void;
-  onAskAi: (content: string, permissionMode: TaskIntegrationConflictPermissionMode) => Promise<void>;
+  onAskAi: (content: string, fingerprint: string, permissionMode: TaskIntegrationConflictPermissionMode) => Promise<void>;
 }) {
   const document = props.conflict;
   const blocks = document?.blocks ?? [];
@@ -128,7 +128,7 @@ export function TaskGitConflictWorkspace(props: {
   async function askAi(): Promise<void> {
     if (!document) return;
     try {
-      await props.onAskAi(serializeConflictForAi(document), aiPermissionMode);
+      await props.onAskAi(serializeConflictForAi(document), document.fingerprint, aiPermissionMode);
       setAiPermissionOpen(false);
     } catch {
       // 具体失败原因由代码交付弹窗统一展示，避免在两个状态区重复报错。

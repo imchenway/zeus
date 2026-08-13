@@ -27,6 +27,9 @@ const labels = {
     interrupted: '当前回复已中断，后续消息已暂停。',
     transportUnavailable: '连接恢复后继续处理后续消息。',
     providerArchived: '原会话已归档，恢复后由你确认发送。',
+    conflictPreparing: '正在准备最新冲突现场，消息会在准备完成后按顺序发送。',
+    conflictPreparationFailed: '冲突现场准备失败，当前会话和消息均已保留。',
+    retryPreparation: '重试准备',
     uncertain: '部分消息的接收结果尚未确认，不会自动重发。',
     confirmationRequired: '这些消息需要你确认后再发送。',
     edit: '编辑',
@@ -56,6 +59,9 @@ const labels = {
     interrupted: 'The current response was interrupted. Follow-ups are paused.',
     transportUnavailable: 'Follow-ups continue after the connection recovers.',
     providerArchived: 'The original conversation is archived. Restore it to confirm sending.',
+    conflictPreparing: 'Preparing the latest conflict workspace. Messages will send in order when it is ready.',
+    conflictPreparationFailed: 'Conflict workspace preparation failed. This conversation and its messages were preserved.',
+    retryPreparation: 'Retry preparation',
     uncertain: 'Some message delivery results are unconfirmed and will not resend automatically.',
     confirmationRequired: 'These messages need your confirmation before sending.',
     edit: 'Edit',
@@ -210,6 +216,10 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
                     <button type="button" onClick={() => void props.onRetry?.()} disabled={!writable || busy || !props.onRetry}>
                       {copy.retry}
                     </button>
+                  ) : index === 0 && props.state.queue?.state.type === 'paused' && props.state.queue.state.reason === 'conflict_preparation_failed' ? (
+                    <button type="button" onClick={() => void props.onResume?.()} disabled={!writable || busy || !props.onResume}>
+                      {copy.retryPreparation}
+                    </button>
                   ) : null}
                   {active && submission.status === 'queued' ? (
                     <button
@@ -269,6 +279,8 @@ function describeQueueState(state: NativeSessionState, queue: readonly NativeQue
     if (runState.reason === 'interrupted') return copy.interrupted;
     if (runState.reason === 'transport_unavailable') return copy.transportUnavailable;
     if (runState.reason === 'provider_archived') return copy.providerArchived;
+    if (runState.reason === 'conflict_preparing') return copy.conflictPreparing;
+    if (runState.reason === 'conflict_preparation_failed') return copy.conflictPreparationFailed;
     return copy.uncertain;
   }
   return queue.every((submission) => submission.pausedReason === 'user_confirmation') ? copy.confirmationRequired : copy.waitingCapacity;

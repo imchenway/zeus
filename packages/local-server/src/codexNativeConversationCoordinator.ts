@@ -81,6 +81,7 @@ interface ConversationDispatchContext {
   applyLegacyTaskGuards?: boolean;
   ephemeral?: boolean;
   additionalContext?: Record<string, unknown>;
+  holdDispatch?: boolean;
 }
 
 interface PersistedSubmissionInput {
@@ -94,6 +95,7 @@ interface PersistedSubmissionInput {
   delivery?: 'queue' | 'steer_now';
   expectedTurnId?: string | null;
   taskPushLayout?: TaskPushMessageLayout;
+  internalOperation?: boolean;
   requestAnswerId?: string;
 }
 
@@ -465,6 +467,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       ...(context.applyLegacyTaskGuards === false ? { applyLegacyTaskGuards: false } : {}),
       ...(context.ephemeral === true ? { ephemeral: true } : {}),
       ...(isRecord(context.additionalContext) ? { additionalContext: context.additionalContext } : {}),
+      ...(context.holdDispatch === true ? { holdDispatch: true } : {}),
     };
   }
 
@@ -663,6 +666,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       origin?: 'implement_plan';
       planItemId?: string;
       requestAnswerId?: string;
+      internalOperation?: boolean;
     },
     context: ConversationDispatchContext,
   ): ZeusConversationSubmissionRecord {
@@ -677,7 +681,15 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       ...(input.planItemId ? { planItemId: input.planItemId } : {}),
       ...(input.taskPushLayout ? { taskPushLayout: input.taskPushLayout } : {}),
       ...(input.requestAnswerId ? { requestAnswerId: input.requestAnswerId } : {}),
+      ...(input.internalOperation ? { internalOperation: true } : {}),
     };
+    const existing = input.submissionId ? options.submissions.getById(input.submissionId) : undefined;
+    if (existing) {
+      if (existing.conversationId !== conversationId || existing.idempotencyKey !== input.idempotencyKey) {
+        throw coordinatorError('ZEUS_NATIVE_RESERVED_RESOURCE_CONFLICT', 'Reserved submission id is already owned by another conversation operation.');
+      }
+      return options.submissions.updateQueuedInput(existing.id, { requestHash: requestHash(payload), input: payload });
+    }
     return options.submissions.createOrGet({
       ...(input.submissionId ? { id: input.submissionId } : {}),
       conversationId,
@@ -721,8 +733,9 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
 
   async function startTaskConversation(input: StartTaskConversationInput): Promise<NativeAcceptedOperation> {
     assertOpen();
-    await assertCodexAccountReady(input.modelSourceId ?? null, input.model);
-    const additionalContext = resolveLegacyReference(input);
+    if (!input.holdDispatch) await assertCodexAccountReady(input.modelSourceId ?? null, input.model);
+    const legacyContext = resolveLegacyReference(input);
+    const additionalContext = input.additionalContext ? { ...input.additionalContext, ...(legacyContext ? { legacyReference: legacyContext } : {}) } : legacyContext;
     const existingConversation = input.conversationId ? options.conversations.getById(input.conversationId) : undefined;
     const permissionMode = existingConversation?.permissionMode ?? input.permissionMode ?? (input.allowCodeChanges ? 'auto' : 'read-only');
     const context: ConversationDispatchContext = {
@@ -745,6 +758,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       ...(input.applyLegacyTaskGuards === false ? { applyLegacyTaskGuards: false } : {}),
       ...(input.ephemeral ? { ephemeral: true } : {}),
       ...(additionalContext ? { additionalContext } : {}),
+      ...(input.holdDispatch ? { holdDispatch: true } : {}),
     };
     if (
       existingConversation &&
@@ -781,10 +795,11 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     options.conversations.updateNextTurnSettings(conversation.id, nextTurnSettingsFromContext(context));
     contexts.set(conversation.id, context);
     runStates.set(conversation.id, { type: 'idle' });
+    if (!input.holdDispatch) releaseHeldSubmissions(conversation.id, context);
     const submission = createSubmission(conversation.id, input.prompt, input, context);
     await persist();
     await input.providerWriteLifecycle?.markPrepared(submission.id);
-    if (!hasConcurrency(context)) return accepted(submission, 'queued', null, null);
+    if (input.holdDispatch || !hasConcurrency(context)) return accepted(submission, 'queued', null, null);
     if (input.deferInitialDispatch) {
       // 冲突会话先把稳定身份和用户消息交给界面，Provider 启动失败由会话队列继续呈现和恢复。
       requestQueueDrain();
@@ -977,6 +992,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     const submission = createSubmission(conversation.id, input.content, input, context);
     await persist();
     await input.providerWriteLifecycle?.markPrepared(submission.id);
+    if (context.holdDispatch) return accepted(submission, 'queued', conversation.providerThreadId, null);
     try {
       await ensureGenerationReconciled();
     } catch {
@@ -1551,7 +1567,13 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     content: string;
   }
 
-  function projectProviderUserMessage(conversation: ZeusConversationWithMessagesRecord, turn: ZeusConversationTurnRecord, itemPayload: Record<string, unknown>, providerContent: string, providerItemId: string): NativeUserMessageProjection {
+  function projectProviderUserMessage(
+    conversation: ZeusConversationWithMessagesRecord,
+    turn: ZeusConversationTurnRecord,
+    itemPayload: Record<string, unknown>,
+    providerContent: string,
+    providerItemId: string,
+  ): NativeUserMessageProjection | null {
     const existingProviderMessage = conversation.messages.find((message) => message.providerItemId === providerItemId);
     const existingClientIds = new Set(
       conversation.messages
@@ -1569,6 +1591,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       existingClientMessageIds: existingClientIds,
     });
     const submissionInput = resolved.submission ? parseJsonRecord(resolved.submission.inputJson) : {};
+    if (submissionInput.internalOperation === true) return null;
     return {
       ...resolved,
       content: chooseNativeUserMessageContent({
@@ -2635,6 +2658,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
             }
           }
           const context = { ...contextFromSubmission(submission), permissionMode: conversation.permissionMode };
+          if (context.holdDispatch) continue;
           contexts.set(conversation.id, context);
           runStates.set(conversation.id, state);
           if (state.type !== 'idle' || !hasConcurrency(context)) continue;
@@ -2660,6 +2684,17 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       if (!current || compareConversationQueueOrder(submission, current) < 0) heads.set(submission.conversationId, submission);
     }
     return [...heads.values()].sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
+  }
+
+  function releaseHeldSubmissions(conversationId: string, context: ConversationDispatchContext): void {
+    for (const submission of options.submissions.listByConversation(conversationId)) {
+      if (submission.providerTurnId || (submission.status !== 'queued' && submission.status !== 'paused' && submission.status !== 'failed')) continue;
+      const input = parseJsonRecord(submission.inputJson) as unknown as PersistedSubmissionInput;
+      if (!isRecord(input.context)) continue;
+      const nextInput: PersistedSubmissionInput = { ...input, context: { ...input.context, ...context } };
+      delete nextInput.context.holdDispatch;
+      options.submissions.updateQueuedInput(submission.id, { requestHash: requestHash(nextInput), input: nextInput });
+    }
   }
 
   function compareConversationQueueOrder(left: ZeusConversationSubmissionRecord, right: ZeusConversationSubmissionRecord): number {
@@ -2928,6 +2963,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     const presentedItemPayload = sanitizeConversationItemPayload(itemType === 'userMessage' ? { ...itemPayload, ...submissionPresentation(conversation.id, turn, itemPayload) } : itemPayload);
     const existing = options.items.getByProvider(providerThreadId, providerItemId);
     const userMessageProjection = itemType === 'userMessage' ? projectProviderUserMessage(conversation, turn, presentedItemPayload, itemText(itemPayload), providerItemId) : null;
+    if (itemType === 'userMessage' && !userMessageProjection) return;
     const completedProjection = userMessageProjection
       ? { ...completedItemProjection(existing, presentedItemPayload, itemType), textContent: userMessageProjection.content }
       : completedItemProjection(existing, presentedItemPayload, itemType);
@@ -3644,6 +3680,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       const presentedItemPayload = sanitizeConversationItemPayload(itemPayload.type === 'userMessage' ? { ...itemPayload, ...submissionPresentation(conversation.id, turn, itemPayload) } : itemPayload);
       const itemType = itemTypeFromValue(itemPayload.type);
       const userMessageProjection = itemType === 'userMessage' ? projectProviderUserMessage(conversation, turn, presentedItemPayload, itemText(itemPayload), providerItemId) : null;
+      if (itemType === 'userMessage' && !userMessageProjection) return;
       const item = userMessageProjection
         ? options.items.upsertProgress({
             conversationId: conversation.id,
@@ -3901,6 +3938,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       const itemType = itemTypeFromValue(itemPayload.type);
       const existing = options.items.getByProvider(threadId, providerItemId);
       const userMessageProjection = itemType === 'userMessage' ? projectProviderUserMessage(conversation, turn, presentedItemPayload, itemText(itemPayload), providerItemId) : null;
+      if (itemType === 'userMessage' && !userMessageProjection) return;
       const completedProjection = userMessageProjection
         ? { ...completedItemProjection(existing, presentedItemPayload, itemType), textContent: userMessageProjection.content }
         : completedItemProjection(existing, presentedItemPayload, itemType);

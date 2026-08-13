@@ -1302,7 +1302,7 @@ const languageCopy = {
       taskListErrorToolbarStatus: '任务暂不可用',
       taskListErrorTitle: '无法读取任务列表',
       taskListErrorHelp: '请重试，或在项目设置中确认本机路径权限。错误详情只进入本机日志，不在普通界面暴露堆栈。',
-      taskListErrorRetry: '重试',
+      taskListErrorRetry: '重新读取',
       taskListErrorProjectSettings: '项目设置',
       noResultsTitle: '没有匹配任务',
       noResultsHelp: '筛选条件已即时应用；调整搜索、状态或标签即可恢复列表。',
@@ -1724,7 +1724,7 @@ const languageCopy = {
       drawerLabel: '项目抽屉',
       graphDrawerAria: '代码图谱',
       scanning: '扫描中',
-      retryScan: '重试扫描',
+      retryScan: '重新扫描',
       openCodeMap: '打开代码图谱',
       scanCurrentRepository: '扫描当前仓库',
       projectSettingsAria: '项目设置',
@@ -6641,7 +6641,7 @@ export function App(props: {
   onSubscribeRealtimeEvents?: (onEvent: (event: ZeusRealtimeEvent) => void, onConnectionState: (state: ZeusRealtimeConnectionState) => void) => (() => void) | void;
   onArchiveGraphConversation?: (projectId: string, conversationId: string) => Promise<GraphConversationHistoryItem>;
   onRestoreGraphConversation?: (projectId: string, conversationId: string) => Promise<GraphConversationHistoryItem>;
-  onCreateTaskFromGraphConversation?: (projectId: string, conversationId: string) => Promise<DashboardSnapshot>;
+  onCreateTaskFromGraphConversation?: (projectId: string, conversationId: string, idempotencyKey: string) => Promise<DashboardSnapshot>;
   onChooseProjectDirectory?: () => Promise<string | null>;
   onCreateCurrentProject?: (request: CreateProjectRequest) => Promise<DashboardSnapshot>;
   onLoadProjects?: (query?: string) => Promise<ProjectRecord[]>;
@@ -6675,7 +6675,7 @@ export function App(props: {
   onReadTaskClipboardResources?: () => Promise<{ resources: TaskCreateAttachmentCandidate[]; text: string }>;
   onLoadTaskAttachmentPreview?: (path: string) => Promise<{ previewUrl: string; mimeType: string } | null>;
   onOpenTaskAttachment?: (path: string) => Promise<{ opened: boolean; error?: string }>;
-  onCreateTaskDraft?: (projectId: string, draft: TaskCreateDraft) => Promise<DashboardSnapshot>;
+  onCreateTaskDraft?: (projectId: string, draft: TaskCreateDraft, idempotencyKey: string) => Promise<DashboardSnapshot>;
   onLoadTasks?: (projectId: string, query?: string, managementStatus?: TaskManagementStatus, tag?: string, sortBy?: 'createdAt' | 'updatedAt' | 'title' | 'managementStatus') => Promise<TaskRecord[]>;
   onLoadTask?: (taskId: string) => Promise<TaskRecord>;
   onUpdateTask?: (taskId: string, input: UpdateTaskRequest) => Promise<DashboardSnapshot>;
@@ -6687,13 +6687,13 @@ export function App(props: {
   onContinueTask?: (taskId: string) => Promise<TaskRuntimeControlHandlerResult>;
   onCancelTask?: (taskId: string) => Promise<DashboardSnapshot>;
   onRetryTask?: (taskId: string) => Promise<DashboardSnapshot>;
-  onCreateTaskFromGraphNode?: (nodeId: string, projectId: string) => Promise<DashboardSnapshot>;
+  onCreateTaskFromGraphNode?: (nodeId: string, projectId: string, idempotencyKey: string) => Promise<DashboardSnapshot>;
   onOpenGraphSource?: (source: { projectRoot?: string; sourceRef: string; lineStart?: number }) => Promise<{
     opened: boolean;
     filePath: string | null;
     lineStart?: number | null;
   }>;
-  onCreateTaskFromTemplate?: (templateId: string, projectId: string) => Promise<DashboardSnapshot>;
+  onCreateTaskFromTemplate?: (templateId: string, projectId: string, idempotencyKey: string) => Promise<DashboardSnapshot>;
   onLoadGitDiff?: () => Promise<GitDiffSummary>;
   onExportGitPatch?: () => Promise<GitPatchExport>;
   onExportPatchFile?: (patch: GitPatchExport) => Promise<{ saved: boolean; filePath: string | null }>;
@@ -6761,7 +6761,7 @@ export function App(props: {
   onArchiveRuntimeSession?: (sessionId: string) => Promise<AiRuntimeSession>;
   onRestoreRuntimeSession?: (sessionId: string) => Promise<AiRuntimeSession>;
   onDeleteRuntimeSession?: (sessionId: string) => Promise<AiRuntimeSession>;
-  onCreateTaskFromRuntimeSession?: (sessionId: string, input: { title?: string; instruction?: string }) => Promise<DashboardSnapshot>;
+  onCreateTaskFromRuntimeSession?: (sessionId: string, input: { title?: string; instruction?: string }, idempotencyKey: string) => Promise<DashboardSnapshot>;
   onLoadSecuritySecrets?: () => Promise<SecuritySecretsSnapshot>;
   onLoadSecurityAuditLogs?: () => Promise<SecurityAuditLogEntry[]>;
   onLoadReleaseStatus?: () => Promise<ReleaseStatusSnapshot>;
@@ -6892,6 +6892,11 @@ export function App(props: {
   const nativeConversationStartEnvelopeManager = useMemo(() => createNativeConversationStartEnvelopeManager({ storage: browserNativeConversationStartStorage(), createId: createSessionOperationId }), []);
   const recoveringNativeConversationStartsRef = useRef<Set<string>>(new Set());
   const recoveringConflictAiStartsRef = useRef<Set<string>>(new Set());
+  const taskCreationIdentityRef = useRef<{ signature: string; idempotencyKey: string } | null>(null);
+  const graphNodeTaskIdentityRef = useRef<Map<string, string>>(new Map());
+  const templateTaskIdentityRef = useRef<Map<string, string>>(new Map());
+  const graphConversationTaskIdentityRef = useRef<Map<string, string>>(new Map());
+  const runtimeTaskIdentityRef = useRef<Map<string, string>>(new Map());
   const projectConversationStartEnvelopeManager = useMemo(() => createProjectConversationStartEnvelopeManager({ storage: browserNativeConversationStartStorage(), createId: createSessionOperationId }), []);
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -7563,7 +7568,7 @@ export function App(props: {
       }
       recoveringConflictAiStartsRef.current.add(pending.idempotencyKey);
       void client
-        .startTaskIntegrationConflictAi(pending.taskId, pending.integrationId, pending.path, pending.content, pending.permissionMode, pending.idempotencyKey)
+        .startTaskIntegrationConflictAi(pending.taskId, pending.integrationId, pending.path, pending.content, pending.fingerprint, pending.permissionMode, pending.idempotencyKey)
         .then(async (operation) => {
           clearPendingConflictAiStart(pending.idempotencyKey);
           if (disposed) return;
@@ -9207,7 +9212,10 @@ export function App(props: {
     setGraphNodeTaskFeedback('creating');
     setActionState('creating-task');
     try {
-      const nextSnapshot = await props.onCreateTaskFromGraphNode(nodeId, activeProjectId);
+      const identityKey = `${activeProjectId}:${nodeId}`;
+      const idempotencyKey = graphNodeTaskIdentityRef.current.get(identityKey) ?? createSessionOperationId();
+      graphNodeTaskIdentityRef.current.set(identityKey, idempotencyKey);
+      const nextSnapshot = await props.onCreateTaskFromGraphNode(nodeId, activeProjectId, idempotencyKey);
       const createdTask = selectCreatedGraphNodeTask(nextSnapshot, previousTaskIds, activeProjectId);
       setSnapshot(nextSnapshot);
       if (createdTask) {
@@ -9219,6 +9227,7 @@ export function App(props: {
         setTaskDetail(createdTask);
       }
       setGraphNodeTaskFeedback('created');
+      graphNodeTaskIdentityRef.current.delete(identityKey);
       setActionState('idle');
     } catch (error) {
       setGraphNodeTaskFeedback('failed');
@@ -9230,7 +9239,10 @@ export function App(props: {
     if (!props.onCreateTaskFromGraphConversation || !activeProjectId) return;
     setActionState('creating-task');
     try {
-      setSnapshot(await props.onCreateTaskFromGraphConversation(activeProjectId, conversationId));
+      const idempotencyKey = graphConversationTaskIdentityRef.current.get(conversationId) ?? createSessionOperationId();
+      graphConversationTaskIdentityRef.current.set(conversationId, idempotencyKey);
+      setSnapshot(await props.onCreateTaskFromGraphConversation(activeProjectId, conversationId, idempotencyKey));
+      graphConversationTaskIdentityRef.current.delete(conversationId);
       setActionState('idle');
     } catch (error) {
       recordLocalError('renderer-action', error);
@@ -9242,7 +9254,11 @@ export function App(props: {
     const previousTaskIds = new Set(snapshot.tasks.map((task) => task.id));
     setActionState('creating-task');
     try {
-      const nextSnapshot = await props.onCreateTaskDraft(activeProjectId, draft);
+      const signature = JSON.stringify(draft);
+      const previousIdentity = taskCreationIdentityRef.current;
+      const identity = previousIdentity?.signature === signature ? previousIdentity : { signature, idempotencyKey: createSessionOperationId() };
+      taskCreationIdentityRef.current = identity;
+      const nextSnapshot = await props.onCreateTaskDraft(activeProjectId, draft, identity.idempotencyKey);
       const createdTask = selectCreatedProjectTask(nextSnapshot, previousTaskIds, activeProjectId);
       setSnapshot(nextSnapshot);
       if (createdTask) {
@@ -9258,6 +9274,7 @@ export function App(props: {
         }
       }
       setActionState('idle');
+      taskCreationIdentityRef.current = null;
       return true;
     } catch (error) {
       setTaskCreateError(taskWorkspaceCopy.taskCreateSubmitFailed);
@@ -11738,8 +11755,11 @@ export function App(props: {
     if (!props.onCreateTaskFromRuntimeSession) return;
     setActionState('creating-task');
     try {
-      const nextSnapshot = await props.onCreateTaskFromRuntimeSession(session.id, buildRuntimeSessionTaskDraft(session, appShellSettings.appLanguage));
+      const idempotencyKey = runtimeTaskIdentityRef.current.get(session.id) ?? createSessionOperationId();
+      runtimeTaskIdentityRef.current.set(session.id, idempotencyKey);
+      const nextSnapshot = await props.onCreateTaskFromRuntimeSession(session.id, buildRuntimeSessionTaskDraft(session, appShellSettings.appLanguage), idempotencyKey);
       setSnapshot(nextSnapshot);
+      runtimeTaskIdentityRef.current.delete(session.id);
       setActionState('idle');
     } catch (error) {
       recordLocalError('renderer-action', error);
@@ -11940,7 +11960,10 @@ export function App(props: {
     if (!props.onCreateTaskFromTemplate || !activeProjectId) return;
     setActionState('creating-task');
     try {
-      const nextSnapshot = await props.onCreateTaskFromTemplate(templateId, activeProjectId);
+      const identityKey = `${activeProjectId}:${templateId}`;
+      const idempotencyKey = templateTaskIdentityRef.current.get(identityKey) ?? createSessionOperationId();
+      templateTaskIdentityRef.current.set(identityKey, idempotencyKey);
+      const nextSnapshot = await props.onCreateTaskFromTemplate(templateId, activeProjectId, idempotencyKey);
       setConversationDraftOpen(false);
       setSnapshot(nextSnapshot);
       const latestTaskId = nextSnapshot.tasks.at(-1)?.id;
@@ -11948,6 +11971,7 @@ export function App(props: {
         setTaskEvents(await props.onLoadTaskEvents(latestTaskId));
       }
       setActionState('idle');
+      templateTaskIdentityRef.current.delete(identityKey);
     } catch (error) {
       recordLocalError('renderer-action', error);
     }

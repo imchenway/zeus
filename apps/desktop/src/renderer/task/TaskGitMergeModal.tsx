@@ -60,6 +60,7 @@ export interface PendingConflictAiStart {
   integrationId: string;
   path: string;
   content: string;
+  fingerprint: string;
   permissionMode: TaskIntegrationConflictPermissionMode;
 }
 
@@ -87,6 +88,7 @@ export function listPendingConflictAiStarts(): PendingConflictAiStart[] {
         typeof parsed.integrationId === 'string' &&
         typeof parsed.path === 'string' &&
         typeof parsed.content === 'string' &&
+        typeof parsed.fingerprint === 'string' &&
         (parsed.permissionMode === 'auto' || parsed.permissionMode === 'full-access')
       ) {
         pending.push(parsed as PendingConflictAiStart);
@@ -462,7 +464,7 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
     }
   }
 
-  async function startAiConflictSession(content: string, permissionMode: TaskIntegrationConflictPermissionMode): Promise<void> {
+  async function startAiConflictSession(content: string, fingerprint: string, permissionMode: TaskIntegrationConflictPermissionMode): Promise<void> {
     if (!props.task || !props.client || !activeConflict || !conflictPath) throw new Error(zh ? '当前没有可处理的冲突。' : 'No conflict is available.');
     setBusyAction('ai');
     setError(null);
@@ -470,7 +472,7 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
       const idempotencyKey = crypto.randomUUID();
       if (props.executionReady === false) {
         if (!props.onQueueConflictAiStart) throw new Error(zh ? '当前操作暂时无法进入准备队列。' : 'This operation cannot be queued yet.');
-        const cancel = props.onQueueConflictAiStart({ idempotencyKey, taskId: props.task.id, projectId: props.task.projectId, integrationId: activeConflict.id, path: conflictPath, content, permissionMode });
+        const cancel = props.onQueueConflictAiStart({ idempotencyKey, taskId: props.task.id, projectId: props.task.projectId, integrationId: activeConflict.id, path: conflictPath, content, fingerprint, permissionMode });
         setFeedback({
           tone: 'info',
           text: zh ? '正在准备，完成后自动开始。' : 'Preparing. This will start automatically when ready.',
@@ -482,7 +484,7 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
         });
         return;
       }
-      const operation = await props.client.startTaskIntegrationConflictAi(props.task.id, activeConflict.id, conflictPath, content, permissionMode, idempotencyKey);
+      const operation = await props.client.startTaskIntegrationConflictAi(props.task.id, activeConflict.id, conflictPath, content, fingerprint, permissionMode, idempotencyKey);
       await props.onOpenConversation(props.task.id, operation.conversationId);
       props.onClose();
     } catch (reason) {

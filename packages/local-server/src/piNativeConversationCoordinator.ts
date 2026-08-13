@@ -3,7 +3,18 @@ import { realpathSync, statSync } from 'node:fs';
 import { readdir, readFile, writeFile } from 'node:fs/promises';
 import { extname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
-import { type AgentImageInput, type AgentModelIdentity, type AgentRuntimeEvent, type AgentSessionIdentity, createPiSdkRuntimeDriver, modelRef, type PiZeusToolBroker, type PiZeusToolRequest, type PiZeusToolResult } from '@zeus/ai-runtime';
+import {
+  type AgentImageInput,
+  type AgentModelIdentity,
+  type AgentRuntimeEvent,
+  type AgentSessionIdentity,
+  createPiSdkRuntimeDriver,
+  modelRef,
+  parseModelRef,
+  type PiZeusToolBroker,
+  type PiZeusToolRequest,
+  type PiZeusToolResult,
+} from '@zeus/ai-runtime';
 import { buildTaskPushInputParts, emptyTokenUsageBreakdown, type CodexUsageEstimate, type TaskPushMessageLayout, type TokenUsageBreakdown } from '@zeus/shared';
 import type {
   CodexUsageLedgerRepository,
@@ -77,6 +88,9 @@ export interface StartPiConversationInput {
   attachments?: NativeConversationAttachmentInput[];
   allowedAttachmentRoots?: string[];
   taskPushLayout?: TaskPushMessageLayout;
+  holdDispatch?: boolean;
+  additionalContext?: Record<string, unknown>;
+  internalOperation?: boolean;
   providerWriteLifecycle?: {
     markPrepared(submissionId: string): Promise<void>;
     markRpcStarted(submissionId: string): void;
@@ -136,6 +150,72 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
   }
 
   async function startConversation(input: StartPiConversationInput) {
+    const existingConversation = options.conversations.getById(input.conversationId);
+    if (existingConversation && (existingConversation.projectId !== input.projectId || existingConversation.taskId !== (input.taskId ?? null) || existingConversation.agentKind !== 'pi')) {
+      throw piError('ZEUS_NATIVE_RESERVED_RESOURCE_CONFLICT', '预留的 Pi 会话身份已经属于其他业务操作。');
+    }
+    if (input.holdDispatch) {
+      if (!existingConversation) {
+        options.conversations.create({
+          id: input.conversationId,
+          projectId: input.projectId,
+          ...(input.taskId ? { taskId: input.taskId } : {}),
+          ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
+          ...(input.environmentId ? { environmentId: input.environmentId } : {}),
+          title: input.conversationTitle?.trim().slice(0, 80) || input.taskTitle || input.prompt.slice(0, 80) || 'Pi 会话',
+          summary: input.prompt.slice(0, 240),
+          status: 'starting',
+          transportKind: 'codex_native',
+          providerId: `pi:${input.model.sourceId ?? 'custom'}`,
+          providerModel: input.model.sourceId ? modelRef(input.model.sourceId, input.model.modelId) : input.model.modelId,
+          providerState: 'unbound',
+          permissionMode: input.permissionMode,
+          collaborationMode: 'default',
+          agentKind: 'pi',
+          agentTransport: 'sdk',
+          modelSourceId: input.model.sourceId ?? undefined,
+          modelId: input.model.modelId,
+        });
+      }
+      options.conversations.updateNextTurnSettings(input.conversationId, {
+        model: input.model.sourceId ? modelRef(input.model.sourceId, input.model.modelId) : input.model.modelId,
+        ...(input.thinkingLevel ? { effort: input.thinkingLevel } : {}),
+        permissionMode: input.permissionMode,
+        collaborationMode: 'default',
+      });
+      const createdAt = options.now();
+      const submission = options.submissions.createOrGet({
+        id: input.submissionId,
+        conversationId: input.conversationId,
+        idempotencyKey: input.idempotencyKey,
+        requestHash: input.idempotencyKey,
+        clientMessageId: input.clientUserMessageId,
+        kind: 'message',
+        requestedDelivery: 'queue',
+        status: 'queued',
+        input: {
+          text: input.prompt,
+          ...(input.displayText ? { displayText: input.displayText } : {}),
+          context: {
+            projectId: input.projectId,
+            taskId: input.taskId ?? null,
+            projectLocalPath: input.cwd,
+            model: input.model.modelId,
+            modelSourceId: input.model.sourceId,
+            agentKind: 'pi',
+            thinkingLevel: input.thinkingLevel,
+            permissionMode: input.permissionMode,
+            holdDispatch: true,
+            ...(input.additionalContext ? { additionalContext: input.additionalContext } : {}),
+          },
+          ...(input.internalOperation ? { internalOperation: true } : {}),
+        },
+        createdAt,
+      });
+      await options.db.save();
+      await input.providerWriteLifecycle?.markPrepared(input.submissionId);
+      return { conversationId: input.conversationId, submissionId: submission.id, providerThreadId: null, providerTurnId: null, status: 'queued' as const };
+    }
     const orderedAttachments = input.taskPushLayout ? orderPiTaskPushAttachments(input.taskPushLayout, input.attachments ?? []) : (input.attachments ?? []);
     const attachmentInput = await resolvePiAttachmentInput(orderedAttachments, input.allowedAttachmentRoots ?? []);
     const providerPrompt = input.taskPushLayout ? renderPiTaskPushPrompt(input.taskPushLayout, attachmentInput.attachments) : appendPiAttachmentReferences(input.prompt, attachmentInput.pathReferences);
@@ -143,31 +223,45 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     input.providerWriteLifecycle?.markRpcStarted(input.submissionId);
     const session = await driver.openSession({ cwd: input.cwd, model: input.model });
     const createdAt = options.now();
-    options.conversations.create({
-      id: input.conversationId,
-      projectId: input.projectId,
-      ...(input.taskId ? { taskId: input.taskId } : {}),
-      ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
-      ...(input.environmentId ? { environmentId: input.environmentId } : {}),
-      title: input.conversationTitle?.trim().slice(0, 80) || input.taskTitle || input.prompt.slice(0, 80) || 'Pi 会话',
-      status: 'running',
-      transportKind: 'codex_native',
-      providerId: `pi:${input.model.sourceId ?? 'custom'}`,
-      providerThreadId: session.nativeSessionId,
-      ...(session.nativeSessionPath ? { providerThreadPath: session.nativeSessionPath } : {}),
-      providerModel: input.model.sourceId ? modelRef(input.model.sourceId, input.model.modelId) : input.model.modelId,
-      providerState: 'active',
-      providerProtocolVersion: 'sdk',
-      providerBinaryVersion: 'pi-sdk-0.83.0',
-      permissionMode: input.permissionMode,
-      collaborationMode: 'default',
-      agentKind: 'pi',
-      agentTransport: 'sdk',
-      modelSourceId: input.model.sourceId ?? undefined,
-      modelId: input.model.modelId,
-      nativeSessionId: session.nativeSessionId,
-      nativeSessionPath: session.nativeSessionPath ?? undefined,
-    });
+    if (existingConversation) {
+      options.conversations.bindPiProvider(input.conversationId, {
+        providerId: `pi:${input.model.sourceId ?? 'custom'}`,
+        providerThreadId: session.nativeSessionId,
+        ...(session.nativeSessionPath ? { providerThreadPath: session.nativeSessionPath } : {}),
+        providerModel: input.model.sourceId ? modelRef(input.model.sourceId, input.model.modelId) : input.model.modelId,
+        providerState: 'active',
+        providerProtocolVersion: 'sdk',
+        providerBinaryVersion: 'pi-sdk-0.83.0',
+        modelSourceId: input.model.sourceId,
+        modelId: input.model.modelId,
+      });
+    } else {
+      options.conversations.create({
+        id: input.conversationId,
+        projectId: input.projectId,
+        ...(input.taskId ? { taskId: input.taskId } : {}),
+        ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
+        ...(input.environmentId ? { environmentId: input.environmentId } : {}),
+        title: input.conversationTitle?.trim().slice(0, 80) || input.taskTitle || input.prompt.slice(0, 80) || 'Pi 会话',
+        status: 'running',
+        transportKind: 'codex_native',
+        providerId: `pi:${input.model.sourceId ?? 'custom'}`,
+        providerThreadId: session.nativeSessionId,
+        ...(session.nativeSessionPath ? { providerThreadPath: session.nativeSessionPath } : {}),
+        providerModel: input.model.sourceId ? modelRef(input.model.sourceId, input.model.modelId) : input.model.modelId,
+        providerState: 'active',
+        providerProtocolVersion: 'sdk',
+        providerBinaryVersion: 'pi-sdk-0.83.0',
+        permissionMode: input.permissionMode,
+        collaborationMode: 'default',
+        agentKind: 'pi',
+        agentTransport: 'sdk',
+        modelSourceId: input.model.sourceId ?? undefined,
+        modelId: input.model.modelId,
+        nativeSessionId: session.nativeSessionId,
+        nativeSessionPath: session.nativeSessionPath ?? undefined,
+      });
+    }
     options.conversations.updateNextTurnSettings(input.conversationId, {
       model: input.model.sourceId ? modelRef(input.model.sourceId, input.model.modelId) : input.model.modelId,
       ...(input.thinkingLevel ? { effort: input.thinkingLevel } : {}),
@@ -183,7 +277,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       attachmentRoots: attachmentInput.allowedRoots,
       session,
     });
-    const submission = options.submissions.createOrGet({
+    let submission = options.submissions.createOrGet({
       id: input.submissionId,
       conversationId: input.conversationId,
       idempotencyKey: input.idempotencyKey,
@@ -204,10 +298,34 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
           thinkingLevel: input.thinkingLevel,
           ...(attachmentInput.allowedRoots.length > 0 ? { allowedAttachmentRoots: attachmentInput.allowedRoots } : {}),
         },
+        ...(input.internalOperation ? { internalOperation: true } : {}),
       },
       createdAt,
       dispatchedAt: createdAt,
     });
+    if (submission.status === 'queued' || submission.status === 'paused' || submission.status === 'failed') {
+      submission = options.submissions.updateQueuedInput(submission.id, {
+        requestHash: input.idempotencyKey,
+        input: {
+          text: providerPrompt,
+          ...(input.displayText ? { displayText: input.displayText } : {}),
+          ...(attachmentInput.attachments.length > 0 ? { attachments: attachmentInput.attachments } : {}),
+          ...(input.taskPushLayout ? { taskPushLayout: input.taskPushLayout } : {}),
+          context: {
+            projectId: input.projectId,
+            taskId: input.taskId ?? null,
+            projectLocalPath: input.cwd,
+            model: input.model.modelId,
+            modelSourceId: input.model.sourceId,
+            agentKind: 'pi',
+            thinkingLevel: input.thinkingLevel,
+            permissionMode: input.permissionMode,
+            ...(attachmentInput.allowedRoots.length > 0 ? { allowedAttachmentRoots: attachmentInput.allowedRoots } : {}),
+          },
+        },
+      });
+      submission = options.submissions.updateStatus(submission.id, 'dispatching', { dispatchedAt: createdAt, updatedAt: createdAt });
+    }
     const run = await driver.startRun({
       session,
       content: providerPrompt,
@@ -229,7 +347,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       agentKind: 'pi',
       nativeRunId: run.nativeRunId,
     });
-    appendUserProjection(input.conversationId, session.nativeSessionId, turn.id, run.nativeRunId, input.prompt, input.clientUserMessageId, createdAt, attachmentInput.attachments, input.taskPushLayout);
+    if (!input.internalOperation) appendUserProjection(input.conversationId, session.nativeSessionId, turn.id, run.nativeRunId, input.prompt, input.clientUserMessageId, createdAt, attachmentInput.attachments, input.taskPushLayout);
     options.submissions.updateStatus(submission.id, 'active', { providerTurnId: run.nativeRunId, updatedAt: run.acceptedAt });
     runs.set(run.nativeRunId, {
       conversationId: input.conversationId,
@@ -319,6 +437,81 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     await options.db.save();
     publish('conversation.turn.started', input.conversation.id, { turnId: run.nativeRunId, submissionId: submission.id, status: 'running', startedAt: run.acceptedAt });
     return { conversationId: input.conversation.id, submissionId: submission.id, providerThreadId: context.session.nativeSessionId, providerTurnId: run.nativeRunId, status: 'active' as const };
+  }
+
+  async function queueHeldMessage(input: {
+    conversation: ZeusConversationWithMessagesRecord;
+    submissionId: string;
+    content: string;
+    model: AgentModelIdentity;
+    thinkingLevel?: string;
+    permissionMode?: 'read-only' | 'auto' | 'full-access';
+    idempotencyKey: string;
+    clientUserMessageId: string;
+  }) {
+    const first = options.submissions.getFirstByConversation(input.conversation.id);
+    const firstInput = first ? asRecord(JSON.parse(first.inputJson)) : {};
+    const firstContext = asRecord(firstInput.context);
+    const cwd = typeof firstContext.projectLocalPath === 'string' ? firstContext.projectLocalPath : process.cwd();
+    const createdAt = options.now();
+    const submission = options.submissions.createOrGet({
+      id: input.submissionId,
+      conversationId: input.conversation.id,
+      idempotencyKey: input.idempotencyKey,
+      requestHash: input.idempotencyKey,
+      clientMessageId: input.clientUserMessageId,
+      kind: 'message',
+      requestedDelivery: 'queue',
+      status: 'queued',
+      input: {
+        text: input.content,
+        context: {
+          projectId: input.conversation.projectId,
+          taskId: input.conversation.taskId,
+          projectLocalPath: cwd,
+          model: input.model.modelId,
+          modelSourceId: input.model.sourceId,
+          agentKind: 'pi',
+          thinkingLevel: input.thinkingLevel,
+          permissionMode: input.permissionMode ?? input.conversation.permissionMode,
+          holdDispatch: true,
+        },
+      },
+      createdAt,
+    });
+    const providerModel = input.model.sourceId ? modelRef(input.model.sourceId, input.model.modelId) : input.model.modelId;
+    options.conversations.updateNextTurnSettings(input.conversation.id, {
+      model: providerModel,
+      ...(input.thinkingLevel ? { effort: input.thinkingLevel } : {}),
+      permissionMode: input.permissionMode ?? input.conversation.permissionMode,
+      collaborationMode: input.conversation.collaborationMode,
+    });
+    await options.db.save();
+    return { conversationId: input.conversation.id, submissionId: submission.id, providerThreadId: null, providerTurnId: null, status: 'queued' as const };
+  }
+
+  async function dispatchNextQueued(conversationId: string): Promise<void> {
+    if ([...runs.values()].some((run) => run.conversationId === conversationId)) return;
+    const conversation = options.conversations.getById(conversationId);
+    if (!conversation?.nativeSessionId || conversation.agentKind !== 'pi') return;
+    const next = options.submissions.listQueueByConversation(conversationId).find((submission) => submission.status === 'queued' && !submission.providerTurnId);
+    if (!next) return;
+    const persisted = asRecord(JSON.parse(next.inputJson));
+    const content = typeof persisted.text === 'string' ? persisted.text : '';
+    const settings = options.conversations.getNextTurnSettings(conversationId);
+    const selectedModelRef = settings?.model ? parseModelRef(settings.model) : null;
+    const selectedModel = selectedModelRef
+      ? { sourceId: selectedModelRef.sourceId, modelId: selectedModelRef.modelId, displayName: null }
+      : { sourceId: conversation.modelSourceId, modelId: settings?.model ?? conversation.modelId ?? conversation.providerModel ?? '', displayName: null };
+    await submitMessage({
+      conversation,
+      submissionId: next.id,
+      content,
+      model: selectedModel,
+      ...(settings?.effort ? { thinkingLevel: settings.effort } : {}),
+      idempotencyKey: next.idempotencyKey,
+      clientUserMessageId: next.clientMessageId,
+    });
   }
 
   async function steerMessage(input: { conversation: ZeusConversationWithMessagesRecord; submissionId: string; content: string; expectedTurnId: string; idempotencyKey: string; clientUserMessageId: string }) {
@@ -462,6 +655,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       if (run.usage.totalTokens > 0) options.publish('usage.changed', { providerId: `pi:${run.sourceId}`, conversationId: run.conversationId, updatedAt: event.createdAt });
       publish('conversation.turn.completed', run.conversationId, { turnId: run.providerTurnId, submissionId: run.submissionId, status, completedAt: event.createdAt, notificationEligible: true });
       if (interrupted) publish('conversation.queue.changed', run.conversationId, { turnId: run.providerTurnId, submissionId: run.submissionId });
+      if (!failed && !interrupted) void dispatchNextQueued(run.conversationId).catch(() => undefined);
     }
   }
 
@@ -657,6 +851,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     repairPersistedAgentMessageProjections,
     startConversation,
     submitMessage,
+    queueHeldMessage,
     steerMessage,
     async interruptTurn(input: { conversation: ZeusConversationWithMessagesRecord; providerTurnId: string }): Promise<{ submissionId: string | null }> {
       const run = runs.get(input.providerTurnId);
