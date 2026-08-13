@@ -84,6 +84,8 @@ export interface StartTaskConversationInput {
   taskId: string;
   workspaceId?: string;
   environmentId?: string;
+  /** 任务会话执行现场的持久语义；直接目录不得因缺少 worktree 记录而被判定为现场丢失。 */
+  executionWorkspaceMode?: 'direct' | 'worktree';
   conversationTitle?: string;
   /** 多仓任务只把逐仓 worktree 与显式共享目录授予写权限。 */
   writableRoots?: string[];

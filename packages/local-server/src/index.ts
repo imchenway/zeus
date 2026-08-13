@@ -13613,6 +13613,30 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     return integration?.integrationPath ? { operationId: integration.id, integration, worktreePath: integration.integrationPath } : null;
   }
 
+  function taskConversationExecutionWorkspaceMode(conversation: ZeusConversationRecord, project: ZeusProjectRecord | undefined): 'direct' | 'worktree' | null {
+    const submissions = [...conversationSubmissions.listByConversation(conversation.id)].sort((left, right) => right.createdAt.localeCompare(left.createdAt) || right.id.localeCompare(left.id));
+    for (const submission of submissions) {
+      const input = parseJsonObject(submission.inputJson);
+      const context = isNativeApiRecord(input.context) ? input.context : null;
+      if (context?.executionWorkspaceMode === 'direct' || context?.executionWorkspaceMode === 'worktree') {
+        return context.executionWorkspaceMode;
+      }
+    }
+    // 旧 Worktree 会话已有精确工作区身份，可以安全沿用并在后续复验真实目录。
+    if (conversation.workspaceId || conversation.environmentId) return 'worktree';
+    if (!project) return null;
+    const initialSubmission = submissions.at(-1);
+    const initialInput = initialSubmission ? parseJsonObject(initialSubmission.inputJson) : {};
+    const initialContext = isNativeApiRecord(initialInput.context) ? initialInput.context : null;
+    const taskPushLayout = isNativeApiRecord(initialInput.taskPushLayout) ? initialInput.taskPushLayout : null;
+    const persistedPath = typeof initialContext?.projectLocalPath === 'string' ? resolve(initialContext.projectLocalPath) : null;
+    if (taskPushLayout?.kind === 'task_push' && persistedPath === resolve(project.localPath)) {
+      // 兼容修复前已经持久接受的直接目录首发；仅凭缺少 workspace 记录不能获得此身份。
+      return 'direct';
+    }
+    return null;
+  }
+
   function resolveNativeConversationExecutionRoot(conversation: ZeusConversationRecord): string | null {
     const contextualSubmission = conversationSubmissions.listByConversation(conversation.id).find((submission) => {
       const context = parseJsonObject(submission.inputJson).context;
@@ -13625,6 +13649,11 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     if (conversation.taskId) {
       const conflictExecution = taskConflictExecutionForConversation(conversation);
       if (conflictExecution) return existsSync(conflictExecution.worktreePath) ? resolve(conflictExecution.worktreePath) : null;
+      const executionMode = taskConversationExecutionWorkspaceMode(conversation, project);
+      if (executionMode === 'direct') {
+        const projectPath = project?.localPath ? resolve(project.localPath) : null;
+        return projectPath && existsSync(projectPath) && statSync(projectPath).isDirectory() ? projectPath : null;
+      }
       const projectPath = project?.localPath ? resolve(project.localPath) : null;
       const environmentPath = environment?.rootPath ? resolve(environment.rootPath) : null;
       if (environmentPath && existsSync(environmentPath) && environmentPath !== projectPath) return environmentPath;
@@ -13643,7 +13672,10 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
             : (project?.localPath ?? projectRoot);
   }
 
-  async function ensureNativeConversationExecutionContext(input: { conversationId: string; mode: 'reconcile' | 'submit' | 'dispatch' | 'recover_queue' | 'restore' }): Promise<{ projectLocalPath: string; writableRoots: string[] } | null> {
+  async function ensureNativeConversationExecutionContext(input: {
+    conversationId: string;
+    mode: 'reconcile' | 'submit' | 'dispatch' | 'recover_queue' | 'restore';
+  }): Promise<{ projectLocalPath: string; writableRoots: string[]; executionWorkspaceMode?: 'direct' | 'worktree' } | null> {
     const lockConversation = conversations.getById(input.conversationId);
     const lockKey = `${lockConversation?.projectId ?? 'conversation'}:${lockConversation?.environmentId ?? lockConversation?.workspaceId ?? input.conversationId}`;
     const existing = taskConversationExecutionContextPromises.get(lockKey);
@@ -13656,11 +13688,29 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       const workspace = conversation.workspaceId ? taskWorkspaces.getById(conversation.workspaceId) : undefined;
       const environmentId = conversation.environmentId ?? workspace?.environmentId ?? null;
       const environment = environmentId ? taskEnvironments.getById(environmentId) : undefined;
-      if (!project || !task || !workspace) {
+      if (!project || !task) {
         throw nativeApiError('ZEUS_NATIVE_CONVERSATION_WORKTREE_UNAVAILABLE', 'The task conversation no longer has a recoverable task workspace.');
       }
       if (taskManagementStatusIsTerminal(task) && !taskConversationReopenInProgressIds.has(conversation.id)) {
         throw nativeApiError('ZEUS_TASK_REOPEN_REQUIRED', 'This task is completed or cancelled. Reopen the task and restore this conversation in the same action.');
+      }
+      const executionMode = taskConversationExecutionWorkspaceMode(conversation, project);
+      if (executionMode === 'direct') {
+        if (workspace || environment) {
+          throw nativeApiError('ZEUS_NATIVE_CONVERSATION_WORKTREE_UNAVAILABLE', 'The direct-directory conversation conflicts with a persisted task workspace.');
+        }
+        const projectPath = resolve(project.localPath);
+        if (!existsSync(projectPath) || !statSync(projectPath).isDirectory()) {
+          throw nativeApiError('ZEUS_NATIVE_CONVERSATION_WORKTREE_UNAVAILABLE', 'The direct project directory is unavailable for this conversation.');
+        }
+        return {
+          projectLocalPath: projectPath,
+          writableRoots: [projectPath],
+          executionWorkspaceMode: 'direct' as const,
+        };
+      }
+      if (!workspace || executionMode !== 'worktree') {
+        throw nativeApiError('ZEUS_NATIVE_CONVERSATION_WORKTREE_UNAVAILABLE', 'The task conversation no longer has a recoverable task workspace.');
       }
       const conflictExecution = taskConflictExecutionForConversation(conversation);
       if (conflictExecution && !existsSync(conflictExecution.worktreePath)) {
@@ -13683,7 +13733,11 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
             finalizing: false,
           });
         }
-        return { projectLocalPath: resolve(conflictExecution.worktreePath), writableRoots: [resolve(conflictExecution.worktreePath)] };
+        return {
+          projectLocalPath: resolve(conflictExecution.worktreePath),
+          writableRoots: [resolve(conflictExecution.worktreePath)],
+          executionWorkspaceMode: 'worktree' as const,
+        };
       }
       if (workspace.state === 'discarded' || environment?.state === 'failed') {
         throw nativeApiError('ZEUS_NATIVE_CONVERSATION_WORKTREE_UNAVAILABLE', 'The task workspace was discarded and cannot be restored for this conversation.');
@@ -13769,7 +13823,11 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         },
       });
       const writableRoots = environment ? resolveTaskEnvironmentWritableRoots(project, updatedWorkspaces) : updatedWorkspaces.flatMap((entry) => (entry.worktreePath ? [entry.worktreePath] : []));
-      return { projectLocalPath: environment ? environmentRoot : resolve(updatedWorkspaces[0]?.worktreePath ?? environmentRoot), writableRoots };
+      return {
+        projectLocalPath: environment ? environmentRoot : resolve(updatedWorkspaces[0]?.worktreePath ?? environmentRoot),
+        writableRoots,
+        executionWorkspaceMode: 'worktree' as const,
+      };
     })();
     taskConversationExecutionContextPromises.set(lockKey, promise);
     try {
@@ -14422,6 +14480,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     workMode?: ConversationCollaborationMode;
     environmentId?: string;
     workspaceId?: string;
+    executionWorkspaceMode?: 'direct' | 'worktree';
     writableRoots: string[];
     allowCodeChanges: boolean;
     allowTests: boolean;
@@ -14471,6 +14530,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       taskId: plan.taskId,
       ...(plan.environmentId ? { environmentId: plan.environmentId } : {}),
       ...(plan.workspaceId ? { workspaceId: plan.workspaceId } : {}),
+      ...(plan.executionWorkspaceMode ? { executionWorkspaceMode: plan.executionWorkspaceMode } : {}),
       writableRoots: plan.writableRoots,
       taskTitle: plan.taskTitle,
       ...(plan.conversationTitle ? { conversationTitle: plan.conversationTitle } : {}),
@@ -14605,6 +14665,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
                 ...(taskEnvironment.workspaces[0] ? { workspaceId: taskEnvironment.workspaces[0].id } : {}),
               }
             : {}),
+          executionWorkspaceMode: directWorkspace ? 'direct' : 'worktree',
           writableRoots: taskEnvironment?.writableRoots ?? [project.localPath],
           allowCodeChanges: false,
           allowTests: false,
@@ -14687,6 +14748,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           workMode: 'default',
           environmentId: inheritedEnvironment.environment.id,
           workspaceId: reviewWorkspace.id,
+          executionWorkspaceMode: 'worktree',
           writableRoots: [],
           allowCodeChanges: false,
           allowTests: false,
@@ -14796,6 +14858,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           workMode: 'default',
           ...(resolved.workspace.environmentId ? { environmentId: resolved.workspace.environmentId } : {}),
           workspaceId: resolved.workspace.id,
+          executionWorkspaceMode: 'worktree',
           writableRoots: [started.integrationPath],
           allowCodeChanges: true,
           allowTests: true,
@@ -14875,6 +14938,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
                 ...(inheritedEnvironment.workspaces[0] ? { workspaceId: inheritedEnvironment.workspaces[0].id } : {}),
               }
             : {}),
+          executionWorkspaceMode: inheritedEnvironment ? 'worktree' : 'direct',
           writableRoots: inheritedEnvironment?.writableRoots ?? [project.localPath],
           allowCodeChanges: task.allowCodeChanges,
           allowTests: task.allowTests,
@@ -14935,6 +14999,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         allowGitCommit: task.allowGitCommit,
         permissionMode,
         workMode: collaborationMode,
+        executionWorkspaceMode: 'direct',
         idempotencyKey,
         clientUserMessageId,
         legacyReference: { conversationId: selected.id, messageIds },
@@ -17076,6 +17141,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       projectId: project.id,
       projectLocalPath: project.localPath,
       taskId: task.id,
+      executionWorkspaceMode: 'direct',
       taskTitle: task.title,
       prompt,
       attachments: attachmentInput.attachments,

@@ -65,6 +65,7 @@ interface ConversationDispatchContext {
   projectId: string;
   projectLocalPath: string;
   taskId: string | null;
+  executionWorkspaceMode?: 'direct' | 'worktree';
   model: string;
   effort?: string;
   serviceTier?: string | null;
@@ -135,7 +136,10 @@ export interface CreateCodexNativeConversationCoordinatorOptions {
   trustedAttachmentRoots?: string[];
   generatedImageRoot?: string;
   getProjectRoot?: (projectId: string) => string | null;
-  ensureExecutionContext?: (input: { conversationId: string; mode: 'reconcile' | 'submit' | 'dispatch' | 'recover_queue' | 'restore' }) => Promise<{ projectLocalPath: string; writableRoots?: string[] } | null>;
+  ensureExecutionContext?: (input: {
+    conversationId: string;
+    mode: 'reconcile' | 'submit' | 'dispatch' | 'recover_queue' | 'restore';
+  }) => Promise<{ projectLocalPath: string; writableRoots?: string[]; executionWorkspaceMode?: 'direct' | 'worktree' } | null>;
 }
 
 export interface CodexNativeConversationRuntime extends CodexNativeConversationCoordinator {
@@ -441,6 +445,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       projectId: requireString(typeof context.projectId === 'string' && context.projectId ? context.projectId : conversationProjectId, 'submission projectId'),
       projectLocalPath: requireString(context.projectLocalPath, 'submission projectLocalPath'),
       taskId: typeof context.taskId === 'string' ? context.taskId : null,
+      ...(context.executionWorkspaceMode === 'direct' || context.executionWorkspaceMode === 'worktree' ? { executionWorkspaceMode: context.executionWorkspaceMode } : {}),
       model: requireString(context.model, 'submission model'),
       ...(typeof context.effort === 'string' ? { effort: context.effort } : {}),
       ...(Object.prototype.hasOwnProperty.call(context, 'serviceTier') && (context.serviceTier === null || typeof context.serviceTier === 'string') ? { serviceTier: context.serviceTier } : {}),
@@ -471,6 +476,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         ...current,
         projectLocalPath: resolve(resolved.projectLocalPath),
         ...(resolved.writableRoots ? { writableRoots: resolved.writableRoots.map((root) => resolve(root)) } : {}),
+        ...(resolved.executionWorkspaceMode ? { executionWorkspaceMode: resolved.executionWorkspaceMode } : {}),
       };
       contexts.set(conversationId, next);
       for (const submission of options.submissions.listByConversation(conversationId)) {
@@ -480,6 +486,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
           ...submissionContext,
           projectLocalPath: next.projectLocalPath,
           ...(next.writableRoots ? { writableRoots: next.writableRoots } : {}),
+          ...(next.executionWorkspaceMode ? { executionWorkspaceMode: next.executionWorkspaceMode } : {}),
         });
       }
       await persist();
@@ -717,6 +724,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       projectId: input.projectId,
       projectLocalPath: resolve(input.projectLocalPath),
       taskId: input.taskId,
+      ...(input.executionWorkspaceMode ? { executionWorkspaceMode: input.executionWorkspaceMode } : {}),
       model: input.model,
       ...(input.effort ? { effort: input.effort } : {}),
       ...(Object.prototype.hasOwnProperty.call(input, 'serviceTier') ? { serviceTier: input.serviceTier } : {}),
@@ -1158,8 +1166,22 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     const state = runStates.get(conversation.id) ?? inferRunState(conversation);
     if (state.type !== 'paused' || state.reason !== 'recovery_required') return conversation;
     await ensureConversationExecutionContext(conversation.id, mode);
-    const providerThreadId = requireString(conversation.providerThreadId, 'provider thread id');
     const context = contexts.get(conversation.id) ?? contextFromConversation(conversation);
+    if (!conversation.providerThreadId) {
+      const recoverableBeforeProviderStart =
+        context.executionWorkspaceMode === 'direct' &&
+        options.submissions.listByConversation(conversation.id).some((submission) => {
+          if (submission.status !== 'paused' || submission.providerTurnId || submission.pausedReason !== 'recovery_required') return false;
+          return submission.errorJson ? parseJsonRecord(submission.errorJson).code === 'ZEUS_NATIVE_CONVERSATION_WORKTREE_UNAVAILABLE' : false;
+        });
+      if (!recoverableBeforeProviderStart) {
+        throw coordinatorError('ZEUS_NATIVE_UNKNOWN_DISPATCH_WINDOW', 'The paused conversation has no provider thread that can be safely resumed.');
+      }
+      // 该错误发生在 Provider RPC 之前；恢复原提交是安全重试，不会重复创建线程或重复发送。
+      runStates.set(conversation.id, { type: 'idle' });
+      return conversation;
+    }
+    const providerThreadId = requireString(conversation.providerThreadId, 'provider thread id');
     const resumed = await options.manager.resumeThread({ threadId: providerThreadId, cwd: context.projectLocalPath });
     persistThreadProviderSettings(conversation.id, resumed);
     await enqueueProviderTurnReconciliation(requireConversation(conversation.id));

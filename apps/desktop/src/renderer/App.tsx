@@ -10136,15 +10136,30 @@ export function App(props: {
       if (acceptance.operation.status !== 'accepted' || acceptance.operation.idempotencyKey !== pending.request.idempotencyKey) {
         throw new Error('Task model push did not return a durable accepted operation.');
       }
+      let choice = nativeConversationChoiceFromAcceptance(acceptance, pending.task);
+      if (!choice.providerThreadId) {
+        const submission = acceptance.submission;
+        const submissionError = submission && typeof submission.error === 'object' && submission.error !== null ? (submission.error as Record<string, unknown>) : {};
+        const recoverableDirectDirectoryFailure =
+          submission?.status === 'paused' && submission.pausedReason === 'recovery_required' && submissionError.code === 'ZEUS_NATIVE_CONVERSATION_WORKTREE_UNAVAILABLE' && submissionError.recoveryRequired === true;
+        if (!recoverableDirectDirectoryFailure) {
+          const reason = typeof submissionError.message === 'string' && submissionError.message.trim() ? submissionError.message : null;
+          throw new Error(
+            reason ??
+              (appShellSettings.appLanguage === 'zh-CN'
+                ? '会话已被服务端接受，但 Provider 尚未建立，当前状态不能安全自动重试。'
+                : 'The conversation was accepted, but the provider was not established and the current state cannot be retried safely.'),
+          );
+        }
+        // 原提交在 Provider RPC 前失败；恢复同一会话和提交，避免另建会话或重复首条消息。
+        await client.recoverNativeQueue(pending.task.projectId, acceptance.conversation.id);
+        choice = await client.loadNativeConversationChoice(pending.task.projectId, acceptance.conversation.id);
+        if (!choice.providerThreadId) {
+          throw new Error(appShellSettings.appLanguage === 'zh-CN' ? '直接目录已恢复，但 Provider 线程仍未建立。' : 'The direct directory was restored, but the provider thread is still unavailable.');
+        }
+      }
       taskModelPushEnvelopeRef.current.delete(pending.task.id);
       taskModelPushDispatchingTaskIdsRef.current.delete(pending.task.id);
-      const provider = typeof acceptance.conversation.provider === 'object' && acceptance.conversation.provider !== null ? (acceptance.conversation.provider as Record<string, unknown>) : {};
-      const providerThreadId = (typeof acceptance.conversation.providerThreadId === 'string' && acceptance.conversation.providerThreadId) || (typeof provider.threadId === 'string' && provider.threadId) || null;
-      if (!providerThreadId) {
-        throw new Error(appShellSettings.appLanguage === 'zh-CN' ? 'app-server 未能创建真实会话，消息尚未发送。请检查连接后重试。' : 'app-server did not create a real conversation. Check the connection and retry.');
-      }
-
-      const choice = nativeConversationChoiceFromAcceptance(acceptance, pending.task);
       nativeConversationChoiceLoadCoordinator.preserveAccepted(choice);
       setNativeConversationChoicesByTask((current) => {
         const prior = current[pending.task.id];
