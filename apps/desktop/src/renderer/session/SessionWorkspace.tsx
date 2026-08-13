@@ -2802,6 +2802,9 @@ function sessionStatus(state: NativeSessionState | null, loadState: SessionWorks
       kind: 'busy',
       label: copy.queued,
     };
+  if (state.queue?.state.type === 'paused' && state.queue.state.reason === 'recovery_required') {
+    return { kind: 'error', label: copy.failed };
+  }
   switch (state.conversationState) {
     case 'native_loading':
       return { kind: 'busy', label: copy.loading };

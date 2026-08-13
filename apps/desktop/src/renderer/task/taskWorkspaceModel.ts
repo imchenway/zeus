@@ -798,6 +798,7 @@ export function taskAgentRunStatusFromSession(state: NativeSessionState): TaskAg
   if (state.error || state.transportState === 'failed' || state.conversationState === 'turn_failed') return 'failed';
   if (state.transportState === 'reconnecting') return 'reconnecting';
   if (state.transportState === 'connecting' || state.transportState === 'hydrating' || state.transportState === 'disconnected') return 'connecting';
+  if (state.queue?.state.type === 'paused' && state.queue.state.reason === 'recovery_required') return 'failed';
   if (state.queue?.state.type === 'paused') return 'paused';
   if (state.conversationState === 'waiting_user_input') return 'waiting_user';
   if (state.conversationState === 'waiting_approval') return 'waiting_approval';
