@@ -3288,7 +3288,7 @@
   opacity: 0.55;
 }
 
-.session-codex-parity-v1 .session-composer-dropdown-menu {
+.session-codex-parity-v1 .session-composer-dropdown .session-composer-dropdown-menu {
   background: var(--session-canvas);
   border: 1px solid var(--session-line);
   border-radius: 10px;
@@ -4776,6 +4776,85 @@
     max-inline-size: 100%;
     min-block-size: 128px;
   }
+}
+
+/* 模型菜单按供应商呈现；搜索区与列表区分离，键盘焦点只进入真实控件。 */
+.session-codex-parity-v1 .session-composer-dropdown-menu {
+  gap: 0;
+  max-block-size: min(280px, calc(100vh - 180px));
+  overflow: hidden;
+  padding: 0;
+}
+
+.session-codex-parity-v1 .session-composer-dropdown-search {
+  border-block-end: 1px solid var(--session-line);
+  display: block;
+  padding: 6px;
+}
+
+.session-codex-parity-v1 .session-composer-dropdown-search input {
+  background: var(--session-control);
+  border: 1px solid var(--session-line);
+  border-radius: 6px;
+  color: var(--session-text);
+  font: inherit;
+  inline-size: 100%;
+  min-block-size: 30px;
+  min-inline-size: 180px;
+  outline: 0;
+  padding: 5px 8px;
+}
+
+.session-codex-parity-v1 .session-composer-dropdown-search input:focus-visible {
+  border-color: var(--session-accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--session-accent) 18%, transparent);
+}
+
+.session-codex-parity-v1 .session-composer-dropdown-options {
+  display: grid;
+  gap: 2px;
+  max-block-size: min(232px, calc(100vh - 228px));
+  overflow-y: auto;
+  padding: 5px;
+}
+
+.session-codex-parity-v1 .session-composer-dropdown-group {
+  color: var(--session-text-muted);
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  padding: 7px 8px 3px;
+}
+
+.session-codex-parity-v1 .session-composer-dropdown .session-composer-dropdown-option {
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: var(--session-text);
+  cursor: pointer;
+  inline-size: 100%;
+  justify-content: flex-start;
+  min-block-size: 30px;
+  padding: 5px 8px !important;
+  text-align: start;
+  white-space: nowrap;
+}
+
+.session-codex-parity-v1 .session-composer-dropdown .session-composer-dropdown-option:hover,
+.session-codex-parity-v1 .session-composer-dropdown .session-composer-dropdown-option:focus-visible,
+.session-codex-parity-v1 .session-composer-dropdown .session-composer-dropdown-option[aria-selected='true'] {
+  background: var(--session-selected);
+}
+
+.session-codex-parity-v1 .session-composer-dropdown-empty {
+  color: var(--session-text-muted);
+  font-size: 11px;
+  padding: 10px 8px;
+}
+
+.session-codex-parity-v1 .session-composer-dropdown.session-composer-model-dropdown .session-composer-dropdown-option {
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 @media (prefers-reduced-motion: reduce) {

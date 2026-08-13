@@ -21,6 +21,7 @@ import { resolveModelCapability } from '../session/modelSelection.js';
 import { Button } from '../ui/Button.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
 import { ZeusSelect } from '../ZeusSelect.js';
+import { presentModelOptions } from '../modelOptionPresentation.js';
 import { TaskPushSupplementalAttachmentCards } from './TaskPushSupplementalAttachmentCards.js';
 
 export interface TaskModelPushForm {
@@ -525,8 +526,9 @@ export function writeTaskModelPushPreferences(storage: Pick<Storage, 'getItem' |
 }
 
 export function resolveTaskModelPushInitialForm(capabilities: CodexTaskPushCapabilities, remembered: TaskModelPushPreferences | null, serviceTier: NativeServiceTierSelection = { type: 'standard' }): TaskModelPushForm {
-  const rememberedModel = capabilities.models.find((model) => model.model === remembered?.model || model.id === remembered?.model);
-  const selectedModel = rememberedModel ?? capabilities.models.find((model) => model.model === capabilities.preferredModel || model.id === capabilities.preferredModel) ?? capabilities.models[0];
+  const availableModels = capabilities.models.filter((model) => model.available !== false);
+  const rememberedModel = resolveModelCapability(availableModels, remembered?.model);
+  const selectedModel = rememberedModel ?? resolveModelCapability(availableModels, capabilities.preferredModel) ?? availableModels[0];
   if (!selectedModel) throw new Error('Codex app-server did not report an available model.');
   const effort = rememberedModel && remembered && selectedModel.supportedReasoningEfforts.includes(remembered.effort) ? remembered.effort : (selectedModel.defaultReasoningEffort ?? selectedModel.supportedReasoningEfforts[0] ?? '');
   const requestedServiceTier = remembered?.serviceTier ?? serviceTier;
@@ -605,12 +607,28 @@ export function TaskModelPushModal(props: {
   useEffect(() => {
     setSupplementalResourceError(null);
   }, [props.open, props.task?.id]);
+  const requestedModel = resolveModelCapability(props.capabilities?.models, props.form.model);
+  const modelPresentation = useMemo(() => presentModelOptions(props.capabilities?.models ?? [], requestedModel?.id ?? props.form.model, props.language), [props.capabilities?.models, props.form.model, props.language, requestedModel?.id]);
+  const selectedModel = resolveModelCapability(modelPresentation.models, modelPresentation.selectedId);
+  useEffect(() => {
+    if (!props.open || !selectedModel || props.form.model === selectedModel.id) return;
+    props.onChange((current) => {
+      if (current.model === selectedModel.id) return current;
+      const normalizedTier = normalizeServiceTierSelection(current.serviceTier, selectedModel);
+      return {
+        ...current,
+        model: selectedModel.id,
+        effort: selectedModel.defaultReasoningEffort ?? selectedModel.supportedReasoningEfforts[0] ?? '',
+        serviceTier: normalizedTier.selection,
+        serviceTierDowngraded: normalizedTier.downgraded,
+      };
+    });
+  }, [props.form.model, props.onChange, props.open, selectedModel]);
   if (!props.open || !props.task) return null;
   const zh = props.language === 'zh-CN';
   const authenticating = props.status === 'authenticating';
   const authenticated = props.status === 'authenticated';
   const busy = authenticating || authenticated || props.status === 'submitting' || inputResources.processing;
-  const selectedModel = resolveModelCapability(props.capabilities?.models, props.form.model);
   const codexLoginRequired = selectedModel?.agentKind !== 'pi' && selectedModel?.sourceId === 'codex' && props.capabilities?.codexAccount.requiresOpenaiAuth === true && !props.capabilities.codexAccount.signedIn;
   const repositories = props.capabilities?.repositories ?? [];
   const selectedCommonSourceKey = resolveSelectedTaskPushCommonSourceKey(repositories, props.form.repositorySelections, commonSources);
@@ -928,15 +946,12 @@ export function TaskModelPushModal(props: {
               <ZeusSelect
                 size="regular"
                 ariaLabel={zh ? '模型' : 'Model'}
-                value={props.form.model}
-                options={(props.capabilities?.models ?? []).map((model) => ({
-                  value: model.id,
-                  label: `${model.sourceName ? `${model.sourceName} / ` : ''}${model.displayName ?? model.model}${model.speedLabel && model.speedLabel !== 'standard' ? ` · ${model.speedLabel}` : ''}`,
-                  disabled: model.available === false,
-                }))}
+                value={modelPresentation.selectedId || props.form.model}
+                options={modelPresentation.options}
+                triggerLabel={modelPresentation.triggerLabel}
                 onChange={onModelChange}
-                disabled={!props.capabilities || busy}
-                searchPlaceholder={zh ? '搜索模型' : 'Search models'}
+                disabled={!props.capabilities || modelPresentation.options.length === 0 || busy}
+                searchPlaceholder={zh ? '搜索供应商或模型' : 'Search providers or models'}
                 emptyLabel={zh ? '没有匹配模型' : 'No matching models'}
               />
             </label>

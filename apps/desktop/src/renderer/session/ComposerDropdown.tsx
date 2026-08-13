@@ -1,9 +1,11 @@
 import { CaretDownIcon } from '@phosphor-icons/react/dist/csr/CaretDown';
-import { type KeyboardEvent, type ReactNode, type RefObject, useEffect, useId, useRef, useState } from 'react';
+import { Fragment, type KeyboardEvent, type ReactNode, type RefObject, useEffect, useId, useMemo, useRef, useState } from 'react';
 
 export interface ComposerDropdownOption<Value extends string = string> {
   value: Value;
   label: string;
+  group?: string;
+  searchText?: string;
 }
 
 export interface ComposerDropdownProps<Value extends string = string> {
@@ -14,26 +16,37 @@ export interface ComposerDropdownProps<Value extends string = string> {
   title?: string;
   className?: string;
   triggerLabel?: string;
+  displayLabel?: string;
   triggerIcon?: ReactNode;
   hideSelectedLabel?: boolean;
   triggerRef?: RefObject<HTMLButtonElement | null>;
+  searchable?: boolean;
+  searchPlaceholder?: string;
+  emptyLabel?: string;
   onChange: (value: Value) => void | Promise<void>;
+}
+
+function filterOptions<Value extends string>(options: readonly ComposerDropdownOption<Value>[], query: string): readonly ComposerDropdownOption<Value>[] {
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  if (!normalizedQuery) return options;
+  return options.filter((option) => `${option.group ?? ''} ${option.label} ${option.searchText ?? ''} ${option.value}`.toLocaleLowerCase().includes(normalizedQuery));
 }
 
 export function ComposerDropdown<Value extends string>(props: ComposerDropdownProps<Value>) {
   const generatedId = useId();
   const menuId = `session-composer-dropdown-${generatedId.replaceAll(':', '')}`;
+  const listboxId = `${menuId}-listbox`;
   const rootRef = useRef<HTMLSpanElement | null>(null);
   const fallbackTriggerRef = useRef<HTMLButtonElement | null>(null);
   const triggerRef = props.triggerRef ?? fallbackTriggerRef;
-  const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
-  const selectedIndex = Math.max(
-    0,
-    props.options.findIndex((option) => option.value === props.value),
-  );
+  const searchRef = useRef<HTMLInputElement | null>(null);
+  const optionRefs = useRef(new Map<Value, HTMLButtonElement>());
+  const selectedOption = props.options.find((option) => option.value === props.value) ?? props.options[0];
+  const searchable = props.searchable ?? props.options.length > 8;
   const [open, setOpen] = useState(false);
-  const [activeIndex, setActiveIndex] = useState(selectedIndex);
-  const selectedOption = props.options[selectedIndex] ?? props.options[0];
+  const [query, setQuery] = useState('');
+  const [activeValue, setActiveValue] = useState<Value>(selectedOption?.value ?? props.value);
+  const visibleOptions = useMemo(() => (searchable ? filterOptions(props.options, query) : props.options), [props.options, query, searchable]);
 
   useEffect(() => {
     if (props.disabled && open) setOpen(false);
@@ -49,14 +62,26 @@ export function ComposerDropdown<Value extends string>(props: ComposerDropdownPr
   }, [open]);
 
   useEffect(() => {
-    if (!open) return;
-    optionRefs.current[activeIndex]?.focus();
-    optionRefs.current[activeIndex]?.scrollIntoView({ block: 'nearest' });
-  }, [activeIndex, open]);
+    if (!open || !searchable) return;
+    searchRef.current?.focus();
+  }, [open, searchable]);
 
-  function openMenu(index = selectedIndex): void {
+  useEffect(() => {
+    if (!open || searchable) return;
+    const element = optionRefs.current.get(activeValue);
+    element?.focus();
+    element?.scrollIntoView({ block: 'nearest' });
+  }, [activeValue, open, searchable]);
+
+  useEffect(() => {
+    if (visibleOptions.some((option) => option.value === activeValue)) return;
+    setActiveValue(visibleOptions[0]?.value ?? props.value);
+  }, [activeValue, props.value, visibleOptions]);
+
+  function openMenu(nextValue = selectedOption?.value ?? props.value): void {
     if (props.disabled || props.options.length === 0) return;
-    setActiveIndex(index);
+    setQuery('');
+    setActiveValue(nextValue);
     setOpen(true);
   }
 
@@ -66,8 +91,13 @@ export function ComposerDropdown<Value extends string>(props: ComposerDropdownPr
   }
 
   function moveActive(delta: number): void {
-    if (props.options.length === 0) return;
-    setActiveIndex((current) => (current + delta + props.options.length) % props.options.length);
+    if (visibleOptions.length === 0) return;
+    const currentIndex = visibleOptions.findIndex((option) => option.value === activeValue);
+    const nextIndex = (Math.max(0, currentIndex) + delta + visibleOptions.length) % visibleOptions.length;
+    const nextValue = visibleOptions[nextIndex]?.value;
+    if (nextValue === undefined) return;
+    setActiveValue(nextValue);
+    requestAnimationFrame(() => optionRefs.current.get(nextValue)?.focus());
   }
 
   function selectOption(option: ComposerDropdownOption<Value>): void {
@@ -78,13 +108,13 @@ export function ComposerDropdown<Value extends string>(props: ComposerDropdownPr
   function handleTriggerKeyDown(event: KeyboardEvent<HTMLButtonElement>): void {
     if (event.key === 'ArrowUp') {
       event.preventDefault();
-      openMenu(selectedIndex === 0 ? props.options.length - 1 : selectedIndex - 1);
-    } else if (event.key === 'ArrowDown') {
+      openMenu(props.options.at(-1)?.value ?? props.value);
+    } else if (event.key === 'ArrowDown' || event.key === 'Enter' || event.key === ' ') {
       event.preventDefault();
-      openMenu(Math.min(selectedIndex + 1, props.options.length - 1));
+      openMenu();
     } else if (event.key === 'Home' || event.key === 'End') {
       event.preventDefault();
-      openMenu(event.key === 'Home' ? 0 : props.options.length - 1);
+      openMenu(event.key === 'Home' ? (props.options[0]?.value ?? props.value) : (props.options.at(-1)?.value ?? props.value));
     }
   }
 
@@ -97,7 +127,11 @@ export function ComposerDropdown<Value extends string>(props: ComposerDropdownPr
       moveActive(1);
     } else if (event.key === 'Home' || event.key === 'End') {
       event.preventDefault();
-      setActiveIndex(event.key === 'Home' ? 0 : props.options.length - 1);
+      const nextValue = event.key === 'Home' ? visibleOptions[0]?.value : visibleOptions.at(-1)?.value;
+      if (nextValue !== undefined) {
+        setActiveValue(nextValue);
+        requestAnimationFrame(() => optionRefs.current.get(nextValue)?.focus());
+      }
     } else if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault();
       selectOption(option);
@@ -106,6 +140,26 @@ export function ComposerDropdown<Value extends string>(props: ComposerDropdownPr
       closeMenu();
     } else if (event.key === 'Tab') {
       setOpen(false);
+    }
+  }
+
+  function handleSearchKeyDown(event: KeyboardEvent<HTMLInputElement>): void {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeMenu();
+    } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      const nextValue = event.key === 'ArrowDown' ? visibleOptions[0]?.value : visibleOptions.at(-1)?.value;
+      if (nextValue !== undefined) {
+        setActiveValue(nextValue);
+        requestAnimationFrame(() => optionRefs.current.get(nextValue)?.focus());
+      }
+    } else if (event.key === 'Enter') {
+      const activeOption = visibleOptions.find((option) => option.value === activeValue) ?? visibleOptions[0];
+      if (activeOption && query.trim()) {
+        event.preventDefault();
+        selectOption(activeOption);
+      }
     }
   }
 
@@ -125,7 +179,7 @@ export function ComposerDropdown<Value extends string>(props: ComposerDropdownPr
         aria-label={props.triggerLabel ?? props.label}
         aria-haspopup="listbox"
         aria-expanded={open}
-        aria-controls={menuId}
+        aria-controls={listboxId}
         title={props.title ?? props.triggerLabel}
         disabled={props.disabled}
         onClick={() => (open ? closeMenu(false) : openMenu())}
@@ -136,27 +190,50 @@ export function ComposerDropdown<Value extends string>(props: ComposerDropdownPr
             {props.triggerIcon}
           </span>
         ) : null}
-        {props.hideSelectedLabel ? null : <span>{selectedOption?.label ?? props.value}</span>}
+        {props.hideSelectedLabel ? null : <span>{props.displayLabel ?? selectedOption?.label ?? props.value}</span>}
         <CaretDownIcon size={12} weight="regular" aria-hidden="true" />
       </button>
-      <span id={menuId} className="session-composer-dropdown-menu" role="listbox" aria-label={props.label} hidden={!open}>
-        {props.options.map((option, index) => (
-          <button
-            key={option.value}
-            ref={(element) => {
-              optionRefs.current[index] = element;
-            }}
-            type="button"
-            role="option"
-            aria-selected={option.value === props.value}
-            data-value={option.value}
-            tabIndex={open && index === activeIndex ? 0 : -1}
-            onClick={() => selectOption(option)}
-            onKeyDown={(event) => handleOptionKeyDown(event, option)}
-          >
-            {option.label}
-          </button>
-        ))}
+      <span id={menuId} className="session-composer-dropdown-menu" hidden={!open}>
+        {searchable ? (
+          <label className="session-composer-dropdown-search">
+            <span className="sr-only">{props.searchPlaceholder ?? props.label}</span>
+            <input ref={searchRef} type="search" aria-controls={listboxId} placeholder={props.searchPlaceholder ?? props.label} value={query} onChange={(event) => setQuery(event.currentTarget.value)} onKeyDown={handleSearchKeyDown} />
+          </label>
+        ) : null}
+        <span id={listboxId} className="session-composer-dropdown-options" role="listbox" aria-label={props.label}>
+          {visibleOptions.length > 0 ? (
+            visibleOptions.map((option, index) => (
+              <Fragment key={`${option.value}-${index}`}>
+                {option.group && visibleOptions[index - 1]?.group !== option.group ? (
+                  <span className="session-composer-dropdown-group" role="presentation">
+                    {option.group}
+                  </span>
+                ) : null}
+                <button
+                  ref={(element) => {
+                    if (element) optionRefs.current.set(option.value, element);
+                    else optionRefs.current.delete(option.value);
+                  }}
+                  type="button"
+                  className="session-composer-dropdown-option"
+                  role="option"
+                  aria-label={option.group ? `${option.group}: ${option.label}` : option.label}
+                  aria-selected={option.value === props.value}
+                  data-value={option.value}
+                  tabIndex={open && option.value === activeValue ? 0 : -1}
+                  onClick={() => selectOption(option)}
+                  onKeyDown={(event) => handleOptionKeyDown(event, option)}
+                >
+                  {option.label}
+                </button>
+              </Fragment>
+            ))
+          ) : (
+            <span className="session-composer-dropdown-empty" role="status">
+              {props.emptyLabel ?? 'No matching options'}
+            </span>
+          )}
+        </span>
       </span>
     </span>
   );

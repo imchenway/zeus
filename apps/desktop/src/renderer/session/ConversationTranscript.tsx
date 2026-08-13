@@ -413,7 +413,7 @@ function TurnFailureCard(props: { failure: NativeTurnFailureSnapshot; language: 
 function failureCopy(category: NativeTurnFailureSnapshot['category'], zh: boolean): { reason: string; recovery: string } {
   if (category === 'authentication')
     return zh
-      ? { reason: '登录状态或 API Key 未通过认证，模型服务拒绝了本轮请求。', recovery: '请完成对应运行内核的登录，或检查模型连接中的 API Key，然后重新发送。' }
+      ? { reason: '登录状态或 API Key 未通过认证，模型服务拒绝了本轮请求。', recovery: '请完成对应运行内核的登录，或检查模型供应商中的 API Key，然后重新发送。' }
       : { reason: 'The model service rejected this turn because the login or API key was not accepted.', recovery: 'Sign in to the selected runtime or check the model connection API key, then send again.' };
   if (category === 'rate_limit')
     return zh

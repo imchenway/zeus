@@ -153,7 +153,7 @@ export function parseModelRef(value: string): { sourceId: string; modelId: strin
 export function normalizeModelConnection(input: SaveModelConnectionInput, options: { id: string; apiKeyConfigured: boolean; createdAt: string; updatedAt: string }): ModelConnectionRecord {
   const templateId = normalizeTemplateId(input.templateId);
   const template = templateId === 'custom' ? null : modelConnectionTemplates[templateId];
-  const name = normalizeSingleLine(input.name || template?.name || '', '连接名称', 80);
+  const name = normalizeSingleLine(input.name || template?.name || '', '供应商名称', 80);
   const baseUrl = normalizeModelBaseUrl(input.baseUrl || template?.baseUrl || '');
   const modelsPath = normalizeModelsPath(input.modelsPath ?? template?.modelsPath ?? '/models');
   const models = normalizeConfiguredModels(input.models ?? [], template?.thinkingFormat ?? 'openai').map((model) => applyAutomaticCapabilityProfile(model, templateId));
@@ -237,9 +237,9 @@ export function listSelectableConnectionModels(connections: readonly ModelConnec
       const imageInput = agentKind === 'codex' ? 'unsupported' : model.capability.imageInput.state;
       const available = connection.enabled && connection.apiKeyConfigured && model.enabled;
       const availabilityReason = !connection.enabled
-        ? '模型连接已停用。'
+        ? '模型供应商已停用。'
         : !connection.apiKeyConfigured
-          ? '模型连接尚未配置 API Key。'
+          ? '模型供应商尚未配置 API Key。'
           : !model.enabled
             ? '模型已停用。'
             : tools === 'unsupported'

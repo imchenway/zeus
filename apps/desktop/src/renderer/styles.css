@@ -2967,7 +2967,7 @@ body[data-surface='project-git-diff'] #root {
   }
 }
 
-/* 用户自定义模型连接：左侧选连接，右侧编辑连接和模型能力。 */
+/* 用户自定义模型供应商：左侧选供应商，右侧编辑服务地址和模型能力。 */
 .macos-ai-app .model-connections-settings {
   gap: 16px;
 }
@@ -7732,6 +7732,19 @@ body[data-surface='project-git-diff'] #root {
   .macos-ai-app .project-archive-command-rail {
     justify-content: flex-start;
   }
+}
+
+/* 项目模型只展示可运行项，供应商标题在多供应商时承担分组层级。 */
+.macos-ai-app .project-model-provider-group {
+  display: grid;
+  gap: 6px;
+}
+
+.macos-ai-app .project-model-provider-heading {
+  color: var(--zeus-product-muted);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  padding: 4px 2px 0;
 }
 /* 2026-06-20 项目行内恢复提示命名最终覆盖：项目选择空态使用 inline recovery row 与 command rail，不再复用旧 prompt/guide/launch/notice/action-row 或块状 empty guidance 样式族。 */
 .macos-ai-app .project-inline-recovery-row {

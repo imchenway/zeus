@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { DashboardClient, ProjectModelSelection, SelectablePiModel } from '../apiClient.js';
+import { presentModelOptions } from '../modelOptionPresentation.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 import { Button } from '../ui/Button.js';
 
@@ -27,8 +28,14 @@ export function ProjectModelsSettings(props: { projectId: string; language: 'zh-
     void Promise.all([props.client.loadSelectablePiModels(), props.client.loadProjectModelSelection(props.projectId)])
       .then(([catalog, nextSelection]) => {
         if (!active) return;
+        const availableRefs = new Set(catalog.filter((model) => model.available).map((model) => model.id));
+        const allowedModelRefs = nextSelection.allowedModelRefs.filter((modelRef) => availableRefs.has(modelRef));
         setModels(catalog);
-        setSelection(nextSelection);
+        setSelection({
+          ...nextSelection,
+          allowedModelRefs,
+          defaultModelRef: nextSelection.defaultModelRef && allowedModelRefs.includes(nextSelection.defaultModelRef) ? nextSelection.defaultModelRef : (allowedModelRefs[0] ?? null),
+        });
         setStatus('ready');
       })
       .catch((error: unknown) => {
@@ -41,8 +48,11 @@ export function ProjectModelsSettings(props: { projectId: string; language: 'zh-
     };
   }, [props.client, props.projectId]);
 
-  const selectedModels = useMemo(() => models.filter((model) => selection.allowedModelRefs.includes(model.id)), [models, selection.allowedModelRefs]);
+  const presentation = useMemo(() => presentModelOptions(models, selection.defaultModelRef ?? selection.allowedModelRefs[0] ?? '', props.language), [models, props.language, selection.allowedModelRefs, selection.defaultModelRef]);
+  const selectedModels = useMemo(() => presentation.models.filter((model) => selection.allowedModelRefs.includes(model.id)), [presentation.models, selection.allowedModelRefs]);
   const defaultModelRef = selection.defaultModelRef && selection.allowedModelRefs.includes(selection.defaultModelRef) ? selection.defaultModelRef : (selection.allowedModelRefs[0] ?? '');
+  const defaultPresentation = useMemo(() => presentModelOptions(selectedModels, defaultModelRef, props.language), [defaultModelRef, props.language, selectedModels]);
+  const optionLabels = useMemo(() => new Map(presentation.options.map((option) => [option.value, option.label])), [presentation.options]);
 
   function toggleModel(modelRef: string, checked: boolean): void {
     setSelection((current) => {
@@ -78,18 +88,22 @@ export function ProjectModelsSettings(props: { projectId: string; language: 'zh-
       </span>
       <div className="project-model-settings-body">
         {status === 'loading' ? <small>{zh ? '正在读取模型…' : 'Loading models…'}</small> : null}
-        {status !== 'loading' && models.length === 0 ? <small>{zh ? '请先在系统设置的“模型供应商”中添加连接和模型。' : 'Add a connection and models under Model providers in system settings first.'}</small> : null}
-        <fieldset className="project-model-choice-list" disabled={status !== 'ready'}>
-          {models.map((model) => (
-            <label key={model.id}>
-              <input type="checkbox" checked={selection.allowedModelRefs.includes(model.id)} onChange={(event) => toggleModel(model.id, event.currentTarget.checked)} />
-              <span>
-                <strong>{model.displayName}</strong>
-                <small>
-                  {model.sourceName} · {formatSpeed(model.speedLabel, zh)} · {model.available ? (zh ? '可运行' : 'Ready') : model.availabilityReason}
-                </small>
-              </span>
-            </label>
+        {status !== 'loading' && presentation.models.length === 0 ? (
+          <small>{zh ? '没有可运行模型，请到系统设置的“模型供应商”检查供应商、密钥和模型状态。' : 'No runnable models. Check the provider, key, and model status under Model providers in system settings.'}</small>
+        ) : null}
+        <fieldset className="project-model-choice-list" aria-label={zh ? '可运行模型' : 'Runnable models'} disabled={status !== 'ready'}>
+          {presentation.groups.map((group) => (
+            <section key={group.providerName} className="project-model-provider-group" aria-label={group.providerName}>
+              {presentation.showProviderGroups ? <strong className="project-model-provider-heading">{group.providerName}</strong> : null}
+              {group.models.map((model) => (
+                <label key={model.id}>
+                  <input type="checkbox" checked={selection.allowedModelRefs.includes(model.id)} onChange={(event) => toggleModel(model.id, event.currentTarget.checked)} />
+                  <span>
+                    <strong>{optionLabels.get(model.id) ?? model.displayName}</strong>
+                  </span>
+                </label>
+              ))}
+            </section>
           ))}
         </fieldset>
         {selectedModels.length > 0 ? (
@@ -100,7 +114,10 @@ export function ProjectModelsSettings(props: { projectId: string; language: 'zh-
               size="roomy"
               value={defaultModelRef}
               onChange={(value) => setSelection((current) => ({ ...current, defaultModelRef: value }))}
-              options={selectedModels.map((model) => ({ value: model.id, label: `${model.sourceName} / ${model.displayName}` }))}
+              options={defaultPresentation.options}
+              triggerLabel={defaultPresentation.triggerLabel}
+              searchPlaceholder={zh ? '搜索供应商或模型' : 'Search providers or models'}
+              emptyLabel={zh ? '没有匹配模型' : 'No matching models'}
             />
           </label>
         ) : null}
@@ -113,11 +130,4 @@ export function ProjectModelsSettings(props: { projectId: string; language: 'zh-
       </div>
     </section>
   );
-}
-
-function formatSpeed(speed: SelectablePiModel['speedLabel'], zh: boolean): string {
-  if (speed === 'standard') return zh ? '标准模型' : 'Standard model';
-  if (speed === 'high_speed') return zh ? '高速模型' : 'High-speed model';
-  if (speed === 'flash') return 'Flash';
-  return 'Turbo';
 }

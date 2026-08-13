@@ -7,6 +7,7 @@ export interface ZeusSelectOption<T extends string> {
   color?: string;
   disabled?: boolean;
   group?: string;
+  searchText?: string;
 }
 
 export interface ZeusSelectProps<T extends string> {
@@ -43,7 +44,7 @@ function focusElement(element: HTMLElement | undefined): void {
 function filterSelectOptions<T extends string>(options: readonly ZeusSelectOption<T>[], query: string): readonly ZeusSelectOption<T>[] {
   const normalizedQuery = query.trim().toLocaleLowerCase();
   if (!normalizedQuery) return options;
-  return options.filter((option) => `${option.label} ${option.value}`.toLocaleLowerCase().includes(normalizedQuery));
+  return options.filter((option) => `${option.group ?? ''} ${option.label} ${option.searchText ?? ''} ${option.value}`.toLocaleLowerCase().includes(normalizedQuery));
 }
 
 function parseCssPixel(value: string): number {
