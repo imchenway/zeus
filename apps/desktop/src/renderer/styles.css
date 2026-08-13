@@ -3147,6 +3147,40 @@ body[data-surface='project-git-diff'] #root {
   flex-wrap: wrap;
 }
 
+.macos-ai-app .model-connection-http-risk-dialog {
+  border: 1px solid var(--zeus-product-line);
+  border-radius: 14px;
+  box-shadow: 0 24px 58px oklch(28% 0.008 255 / 0.18);
+  display: grid;
+  gap: 18px;
+  inline-size: min(460px, calc(100vw - 32px));
+  padding: 20px;
+}
+
+.macos-ai-app .model-connection-http-risk-dialog header {
+  display: grid;
+  gap: 8px;
+}
+
+.macos-ai-app .model-connection-http-risk-dialog header strong {
+  font-size: 15px;
+  line-height: 20px;
+}
+
+.macos-ai-app .model-connection-http-risk-dialog header p {
+  color: var(--zeus-product-muted);
+  font-size: 12px;
+  line-height: 18px;
+  margin: 0;
+}
+
+.macos-ai-app .model-connection-http-risk-dialog footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
 .macos-ai-app .project-model-settings {
   display: grid;
   grid-template-columns: minmax(180px, 0.85fr) minmax(260px, 1.25fr);

@@ -326,6 +326,7 @@ export interface SaveModelConnectionRequest {
   enabled: boolean;
   models: ModelConnectionModel[];
   apiKey?: string;
+  allowInsecureHttp?: boolean;
 }
 
 export interface ModelConnectionDiagnostic {

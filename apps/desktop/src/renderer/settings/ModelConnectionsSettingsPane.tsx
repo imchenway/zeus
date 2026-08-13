@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { DashboardClient, ModelCapabilityEvidence, ModelConnectionDiagnostic, ModelConnectionModel, ModelConnectionRecord, ModelConnectionTemplateId, ModelThinkingFormat, SaveModelConnectionRequest } from '../apiClient.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 import { Button } from '../ui/Button.js';
+import { ModalPortal } from '../ui/ModalPortal.js';
 
 interface ModelConnectionDraft extends SaveModelConnectionRequest {
   id: string | null;
@@ -29,6 +30,7 @@ export function ModelConnectionsSettingsPane(props: { language: 'zh-CN' | 'en-US
   const [status, setStatus] = useState<'idle' | 'loading' | 'saving' | 'refreshing' | 'deleting'>('loading');
   const [message, setMessage] = useState<string | null>(null);
   const [diagnostic, setDiagnostic] = useState<ModelConnectionDiagnostic | null>(null);
+  const [pendingInsecureHttpSave, setPendingInsecureHttpSave] = useState<SaveModelConnectionRequest | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -108,20 +110,23 @@ export function ModelConnectionsSettingsPane(props: { language: 'zh-CN' | 'en-US
     if (selected) selectConnection(selected);
   }
 
-  async function save(): Promise<void> {
+  function createSaveInput(): SaveModelConnectionRequest {
+    return {
+      name: draft.name,
+      templateId: draft.templateId,
+      baseUrl: draft.baseUrl,
+      modelsPath: draft.modelsPath,
+      enabled: draft.enabled,
+      models: draft.models,
+      ...(draft.apiKey.trim() ? { apiKey: draft.apiKey.trim() } : {}),
+    };
+  }
+
+  async function persistConnection(input: SaveModelConnectionRequest): Promise<void> {
     if (!props.client || busy) return;
     setStatus('saving');
     setMessage(null);
     try {
-      const input: SaveModelConnectionRequest = {
-        name: draft.name,
-        templateId: draft.templateId,
-        baseUrl: draft.baseUrl,
-        modelsPath: draft.modelsPath,
-        enabled: draft.enabled,
-        models: draft.models,
-        ...(draft.apiKey.trim() ? { apiKey: draft.apiKey.trim() } : {}),
-      };
       const saved = draft.id ? await props.client.updateModelConnection(draft.id, input) : await props.client.createModelConnection(input);
       await reloadConnections(saved.id);
       setDraft((value) => ({ ...value, id: saved.id, apiKey: '' }));
@@ -131,6 +136,15 @@ export function ModelConnectionsSettingsPane(props: { language: 'zh-CN' | 'en-US
     } finally {
       setStatus('idle');
     }
+  }
+
+  async function save(): Promise<void> {
+    const input = createSaveInput();
+    if (requiresInsecureHttpConfirmation(input.baseUrl, current?.baseUrl)) {
+      setPendingInsecureHttpSave(input);
+      return;
+    }
+    await persistConnection(input);
   }
 
   async function refreshModels(): Promise<void> {
@@ -370,8 +384,47 @@ export function ModelConnectionsSettingsPane(props: { language: 'zh-CN' | 'en-US
           </footer>
         </section>
       </div>
+      {pendingInsecureHttpSave ? (
+        <ModalPortal rootClassName="model-connection-http-risk-portal" dismissDisabled={busy} onDismiss={() => setPendingInsecureHttpSave(null)}>
+          <section className="model-connection-http-risk-dialog zeus-solid-form-surface" role="dialog" aria-modal="true" aria-labelledby="model-connection-http-risk-title" aria-describedby="model-connection-http-risk-description">
+            <header>
+              <strong id="model-connection-http-risk-title">{zh ? '确认使用明文 HTTP' : 'Confirm unencrypted HTTP'}</strong>
+              <p id="model-connection-http-risk-description">
+                {zh
+                  ? 'HTTP 不会加密传输。API Key、请求内容和模型回复可能被同一网络中的其他人读取或篡改。请只在你信任该服务和网络时继续。'
+                  : 'HTTP traffic is not encrypted. Other people on the network may read or alter the API key, request content, and model responses. Continue only if you trust the service and network.'}
+              </p>
+            </header>
+            <footer>
+              <Button variant="secondary" onClick={() => setPendingInsecureHttpSave(null)} disabled={busy}>
+                {zh ? '取消' : 'Cancel'}
+              </Button>
+              <Button
+                variant="danger"
+                busy={busy}
+                onClick={() => {
+                  const input = pendingInsecureHttpSave;
+                  setPendingInsecureHttpSave(null);
+                  void persistConnection({ ...input, allowInsecureHttp: true });
+                }}
+              >
+                {zh ? '仍然保存' : 'Save anyway'}
+              </Button>
+            </footer>
+          </section>
+        </ModalPortal>
+      ) : null}
     </section>
   );
+}
+
+function requiresInsecureHttpConfirmation(baseUrl: string, existingBaseUrl?: string): boolean {
+  try {
+    const normalized = new URL(baseUrl.trim()).toString().replace(/\/+$/u, '');
+    return normalized.startsWith('http://') && normalized !== existingBaseUrl;
+  } catch {
+    return false;
+  }
 }
 
 function ModelDefinitionEditor(props: { language: 'zh-CN' | 'en-US'; model: ModelConnectionModel; readOnly: boolean; onChange: (model: ModelConnectionModel) => void; onRemove: () => void }) {
