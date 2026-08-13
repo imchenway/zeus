@@ -47,29 +47,34 @@ const groups: ProjectConversationGroup[] = [
   {
     projectId: 'project-zeus',
     projectName: 'zeus',
+    taskStatuses: [{ id: 'in_development', label: '开发中' }],
     tasks: [
       {
         taskId: 'task-approval',
         taskCode: 'TASK-20260722-001',
         taskTitle: '检查未提交变更',
+        managementStatus: 'in_development',
         conversations: [approvalConversation],
       },
       {
         taskId: 'task-input',
         taskCode: 'TASK-20260722-002',
         taskTitle: '修复已有维护单回调',
+        managementStatus: 'in_development',
         conversations: [inputConversation],
       },
       {
         taskId: 'task-unread',
         taskCode: 'TASK-20260722-003',
         taskTitle: '优化归档会话恢复继续',
+        managementStatus: 'in_development',
         conversations: [unreadConversation],
       },
       {
         taskId: 'task-running',
         taskCode: 'TASK-20260722-004',
         taskTitle: '优化 Codex 会话列表样式',
+        managementStatus: 'in_development',
         conversations: [runningConversation],
       },
     ],
