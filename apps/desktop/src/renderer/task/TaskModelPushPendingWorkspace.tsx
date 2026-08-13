@@ -15,7 +15,6 @@ import type {
 import { resolveModelCapability } from '../session/modelSelection.js';
 import type { TaskModelPushForm } from './TaskModelPushModal.js';
 import { parseTaskAttachments } from './taskAttachments.js';
-import type { TaskManagementStatus } from '@zeus/shared';
 
 export type TaskModelPushPendingStatus = 'submitting' | 'failed' | 'accepted';
 
@@ -45,12 +44,6 @@ export interface TaskModelPushPendingState {
   session: NativeSessionState;
   deferredMessages: TaskModelPushDeferredMessage[];
   contextRefreshRequired: boolean;
-  managementStatusSync: {
-    fromStatus: TaskManagementStatus;
-    targetStatus: TaskManagementStatus;
-    state: 'syncing' | 'synced' | 'failed' | 'superseded';
-    error: string | null;
-  } | null;
   status: TaskModelPushPendingStatus;
   error: string | null;
 }
@@ -64,7 +57,6 @@ export function createTaskModelPushPendingState(input: {
   layout: TaskPushMessageLayout;
   currentAttachmentOptions: TaskPushContextAttachmentOption[];
   capabilities: CodexTaskPushCapabilities;
-  managementStatusSync: TaskModelPushPendingState['managementStatusSync'];
 }): TaskModelPushPendingState {
   const currentOptions = new Map<string, TaskPushContextAttachmentOption[]>();
   for (const attachment of input.currentAttachmentOptions) {
@@ -104,10 +96,6 @@ export function createTaskModelPushPendingState(input: {
     status: 'submitting',
     error: null,
   };
-}
-
-export function updateTaskModelPushManagementStatusSync(pending: TaskModelPushPendingState, update: NonNullable<TaskModelPushPendingState['managementStatusSync']>): TaskModelPushPendingState {
-  return { ...pending, managementStatusSync: update };
 }
 
 export function retryTaskModelPushPendingState(pending: TaskModelPushPendingState): TaskModelPushPendingState {

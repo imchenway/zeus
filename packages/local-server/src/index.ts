@@ -1429,10 +1429,6 @@ interface UpdateTaskManagementStatusBody {
   reopenConversationId?: string;
 }
 
-interface SyncTaskModelPushManagementStatusBody {
-  expectedStatus?: TaskManagementStatus;
-}
-
 interface UpdateTaskBody {
   expectedUpdatedAt?: string;
   title?: string;
@@ -3504,67 +3500,6 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       conversations.updateNextTurnSettings(conversation.id, settings);
       await db.save();
       return settings;
-    },
-  );
-
-  server.post(
-    '/api/tasks/:taskId/model-push-management-status',
-    async (
-      request: FastifyRequest<{
-        Params: { taskId: string };
-        Body: SyncTaskModelPushManagementStatusBody;
-      }>,
-      reply,
-    ) => {
-      const existing = tasks.getById(request.params.taskId);
-      if (!existing) return reply.code(404).send({ error: 'ZEUS_TASK_NOT_FOUND', message: 'Task not found' });
-      if (!isTaskManagementStatus(request.body?.expectedStatus)) {
-        return reply.code(400).send({
-          error: 'ZEUS_INVALID_TASK_MANAGEMENT_STATUS',
-          message: 'expectedStatus must be a valid task management status.',
-        });
-      }
-      const projectStatusConfig = resolveTaskManagementStatusConfigForProject(existing.projectId);
-      const targetStatus = projectStatusConfig.roles.pushedStatusId;
-      if (existing.managementStatus === targetStatus) {
-        return { state: 'synced' as const, task: existing, targetStatus };
-      }
-      if (existing.managementStatus !== request.body.expectedStatus) {
-        return { state: 'superseded' as const, task: existing, targetStatus };
-      }
-      const updated = tasks.updateManagementStatus(existing.id, targetStatus, existing.updatedAt);
-      recordTaskEvent({
-        taskId: updated.id,
-        eventType: 'task.management_status.changed',
-        title: '任务确认推送，管理状态已更新',
-        payload: {
-          from: existing.managementStatus,
-          to: updated.managementStatus,
-          trigger: 'task.model_push.confirmed',
-        },
-      });
-      appendAuditLog({
-        actorType: 'local_api',
-        action: 'task.management_status.changed',
-        resourceType: 'task',
-        resourceId: updated.id,
-        payload: {
-          taskId: updated.id,
-          projectId: updated.projectId,
-          from: existing.managementStatus,
-          to: updated.managementStatus,
-          trigger: 'task.model_push.confirmed',
-        },
-      });
-      publishRealtimeEvent('task.updated', {
-        taskId: updated.id,
-        projectId: updated.projectId,
-        managementStatus: updated.managementStatus,
-        changedFields: ['managementStatus'],
-        updatedAt: updated.updatedAt,
-      });
-      await db.save();
-      return { state: 'synced' as const, task: updated, targetStatus };
     },
   );
 

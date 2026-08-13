@@ -122,7 +122,6 @@ import {
   type TaskModelPushForm,
   TaskModelPushModal,
   type TaskModelPushModalStatus,
-  type TaskModelPushStatusConfirmation,
   writeTaskModelPushPreferences,
 } from './task/TaskModelPushModal.js';
 import {
@@ -136,7 +135,6 @@ import {
   updateTaskModelPushAttachments,
   updateTaskModelPushDeferredMessages,
   updateTaskModelPushDraft,
-  updateTaskModelPushManagementStatusSync,
   type TaskModelPushPendingState,
 } from './task/TaskModelPushPendingWorkspace.js';
 import { TaskWorkspace } from './task/TaskWorkspace.js';
@@ -357,11 +355,6 @@ type TaskModelPushNavigationTarget = {
   selectedConversationId: string | null;
   taskDetailPaneTaskId?: string;
 };
-type TaskModelPushStatusDecision = TaskModelPushStatusConfirmation & {
-  taskId: string;
-  fromStatus: TaskManagementStatus;
-  targetStatus: TaskManagementStatus;
-};
 type TrackedTaskModelPushState = TaskModelPushPendingState & { origin: TaskModelPushNavigationTarget };
 type NativeConversationAppClient = SessionControllerClient &
   Pick<
@@ -383,7 +376,6 @@ type NativeConversationAppClient = SessionControllerClient &
     | 'loadCodexUsageAnalytics'
     | 'startCodexChatGptLogin'
     | 'cancelCodexChatGptLogin'
-    | 'syncTaskModelPushManagementStatus'
     | 'startTaskModelPush'
     | 'loadModelConnections'
     | 'createModelConnection'
@@ -7170,7 +7162,6 @@ export function App(props: {
     supplementalAttachments: [],
   });
   const [taskModelPushStatus, setTaskModelPushStatus] = useState<TaskModelPushModalStatus>('loading');
-  const [taskModelPushStatusDecision, setTaskModelPushStatusDecision] = useState<TaskModelPushStatusDecision | null>(null);
   const [taskModelPushRefreshingRepositoryId, setTaskModelPushRefreshingRepositoryId] = useState<string | null>(null);
   const [taskModelPushError, setTaskModelPushError] = useState<string | null>(null);
   const [taskModelPushPendingByTask, setTaskModelPushPendingByTask] = useState<Record<string, TrackedTaskModelPushState>>({});
@@ -7192,10 +7183,6 @@ export function App(props: {
   const taskModelPushEnvelopeRef = useRef(new Map<string, { fingerprint: string; request: StartTaskModelPushRequest }>());
   const taskModelPushDispatchingTaskIdsRef = useRef(new Set<string>());
   const taskModelPushDeferredDispatchingTaskIdsRef = useRef(new Set<string>());
-  const taskModelPushStatusProjectionRef = useRef(new Map<string, { fromStatus: TaskManagementStatus; targetStatus: TaskManagementStatus }>());
-  const taskModelPushStatusSyncRetryTimersRef = useRef(new Map<string, number>());
-  const taskModelPushStatusSyncAttemptsRef = useRef(new Map<string, number>());
-  const taskModelPushStatusSyncInFlightIdsRef = useRef(new Set<string>());
   const taskCreateTitleInputRef = useRef<HTMLInputElement | null>(null);
   const taskCreateReturnFocusRef = useRef<HTMLElement | null>(null);
   const [dataPortabilityStatus, setDataPortabilityStatus] = useState<DataPortabilityStatusState>({ kind: 'idle' });
@@ -7492,13 +7479,6 @@ export function App(props: {
     setTaskModelPushPendingByTask(next);
     return next;
   }
-  useEffect(
-    () => () => {
-      for (const timer of taskModelPushStatusSyncRetryTimersRef.current.values()) window.clearTimeout(timer);
-      taskModelPushStatusSyncRetryTimersRef.current.clear();
-    },
-    [],
-  );
   const graphViewRequestVersionRef = useRef(0);
   const graphSearchRequestVersionRef = useRef(0);
   const graphQuestionRequestVersionRef = useRef(0);
@@ -8010,34 +7990,13 @@ export function App(props: {
     selectedTaskConversationRef.current = selectedTaskConversation;
   }, [selectedTaskConversation]);
 
-  const projectTaskModelPushManagementStatus = useCallback((task: TaskRecord): TaskRecord => {
-    const projection = taskModelPushStatusProjectionRef.current.get(task.id);
-    if (!projection) return task;
-    const actualStatus = resolveTaskManagementStatus(task);
-    if (actualStatus === projection.targetStatus) {
-      taskModelPushStatusProjectionRef.current.delete(task.id);
-      return task;
-    }
-    if (actualStatus === projection.fromStatus) return { ...task, managementStatus: projection.targetStatus };
-    taskModelPushStatusProjectionRef.current.delete(task.id);
-    const retryTimer = taskModelPushStatusSyncRetryTimersRef.current.get(task.id);
-    if (retryTimer !== undefined) window.clearTimeout(retryTimer);
-    taskModelPushStatusSyncRetryTimersRef.current.delete(task.id);
-    taskModelPushStatusSyncAttemptsRef.current.delete(task.id);
-    return task;
+  const mergeTaskRecord = useCallback((task: TaskRecord): void => {
+    setSnapshot((current) => ({
+      ...current,
+      tasks: current.tasks.some((candidate) => candidate.id === task.id) ? current.tasks.map((candidate) => (candidate.id === task.id ? task : candidate)) : [...current.tasks, task],
+    }));
+    setTaskDetail((current) => (current?.id === task.id ? task : current));
   }, []);
-
-  const mergeTaskRecord = useCallback(
-    (task: TaskRecord): void => {
-      const projectedTask = projectTaskModelPushManagementStatus(task);
-      setSnapshot((current) => ({
-        ...current,
-        tasks: current.tasks.some((candidate) => candidate.id === task.id) ? current.tasks.map((candidate) => (candidate.id === task.id ? projectedTask : candidate)) : [...current.tasks, projectedTask],
-      }));
-      setTaskDetail((current) => (current?.id === task.id ? projectedTask : current));
-    },
-    [projectTaskModelPushManagementStatus],
-  );
 
   useEffect(() => {
     const subscribeRealtimeEvents = props.onSubscribeRealtimeEvents;
@@ -8245,9 +8204,9 @@ export function App(props: {
             // 任务事件已经是服务端确认事实，先收口终态成员资格，再用完整任务读取补齐其余字段。
             setSnapshot((current) => ({
               ...current,
-              tasks: current.tasks.map((task) => (task.id === taskId ? projectTaskModelPushManagementStatus({ ...task, managementStatus: incomingManagementStatus, ...(updatedAt ? { updatedAt } : {}) }) : task)),
+              tasks: current.tasks.map((task) => (task.id === taskId ? { ...task, managementStatus: incomingManagementStatus, ...(updatedAt ? { updatedAt } : {}) } : task)),
             }));
-            setTaskDetail((current) => (current?.id === taskId ? projectTaskModelPushManagementStatus({ ...current, managementStatus: incomingManagementStatus, ...(updatedAt ? { updatedAt } : {}) }) : current));
+            setTaskDetail((current) => (current?.id === taskId ? { ...current, managementStatus: incomingManagementStatus, ...(updatedAt ? { updatedAt } : {}) } : current));
             void refreshNativeConversationChoices(taskId).catch((error: unknown) => recordLocalError('task-conversation-realtime-refresh', error));
           }
           if (!pendingRealtimeTaskRefreshIdsRef.current.has(taskId)) {
@@ -9884,8 +9843,6 @@ export function App(props: {
 
   async function updateTaskManagementStatus(taskId: string, status: TaskManagementStatus, options: { expectedUpdatedAt?: string; reopenConversationId?: string } = {}): Promise<TaskEditResult | undefined> {
     const currentTask = (taskDetail?.id === taskId ? taskDetail : undefined) ?? snapshot.tasks.find((task) => task.id === taskId);
-    const activePushStatusSync = taskModelPushPendingByTaskRef.current[taskId]?.managementStatusSync;
-    if (activePushStatusSync && status !== activePushStatusSync.targetStatus) supersedeTaskModelPushStatusSync(taskId);
     if (!props.onUpdateTaskManagementStatus || !currentTask || resolveTaskManagementStatus(currentTask) === status) return;
     const updateManagementStatus = props.onUpdateTaskManagementStatus;
     const projectStatusConfig = resolveTaskManagementStatusConfig(appShellSettings, currentTask.projectId);
@@ -9995,7 +9952,6 @@ export function App(props: {
       supplementalAttachments: [],
     });
     setTaskModelPushStatus('loading');
-    setTaskModelPushStatusDecision(null);
     setTaskModelPushRefreshingRepositoryId(null);
     setTaskModelPushError(null);
     taskModelPushEnvelopeRef.current.delete(task.id);
@@ -10031,7 +9987,6 @@ export function App(props: {
     if (taskModelPushTaskId) taskModelPushEnvelopeRef.current.delete(taskModelPushTaskId);
     setTaskModelPushTaskId(null);
     setTaskModelPushCapabilities(null);
-    setTaskModelPushStatusDecision(null);
     setTaskModelPushRefreshingRepositoryId(null);
     setTaskModelPushError(null);
   }
@@ -10091,52 +10046,20 @@ export function App(props: {
     const client = props.nativeConversationClient;
     const capabilities = taskModelPushCapabilities;
     const form = taskModelPushForm;
-    if (
-      !task ||
-      !client ||
-      !capabilities ||
-      taskModelPushStatusDecision ||
-      taskModelPushStatus === 'authenticating' ||
-      taskModelPushStatus === 'authenticated' ||
-      taskModelPushStatus === 'submitting' ||
-      taskModelPushDispatchingTaskIdsRef.current.has(task.id)
-    )
-      return;
-    const statusConfig = resolveTaskManagementStatusConfig(appShellSettings, task.projectId);
-    const currentStatus = resolveTaskManagementStatus(task);
-    if (currentStatus !== statusConfig.roles.defaultStatusId && currentStatus !== statusConfig.roles.pushedStatusId) {
-      setTaskModelPushStatusDecision({
-        taskId: task.id,
-        fromStatus: currentStatus,
-        targetStatus: statusConfig.roles.pushedStatusId,
-        currentStatusLabel: formatConfiguredTaskManagementStatus(currentStatus, statusConfig, appShellSettings.appLanguage),
-        targetStatusLabel: formatConfiguredTaskManagementStatus(statusConfig.roles.pushedStatusId, statusConfig, appShellSettings.appLanguage),
-      });
-      return;
-    }
-    proceedTaskModelPush(task, client, capabilities, form, currentStatus === statusConfig.roles.defaultStatusId);
+    if (!task || !client || !capabilities || taskModelPushStatus === 'authenticating' || taskModelPushStatus === 'authenticated' || taskModelPushStatus === 'submitting' || taskModelPushDispatchingTaskIdsRef.current.has(task.id)) return;
+    proceedTaskModelPush(task, client, capabilities, form);
   }
 
-  function resolveTaskModelPushStatusDecision(moveToPushedStatus: boolean): void {
-    const decision = taskModelPushStatusDecision;
-    const task = snapshot.tasks.find((candidate) => candidate.id === decision?.taskId);
-    const client = props.nativeConversationClient;
-    const capabilities = taskModelPushCapabilities;
-    if (!decision || !task || !client || !capabilities) return;
-    setTaskModelPushStatusDecision(null);
-    proceedTaskModelPush(task, client, capabilities, taskModelPushForm, moveToPushedStatus);
-  }
-
-  function proceedTaskModelPush(task: TaskRecord, client: NativeConversationAppClient, capabilities: CodexTaskPushCapabilities, form: TaskModelPushForm, moveToPushedStatus: boolean): void {
+  function proceedTaskModelPush(task: TaskRecord, client: NativeConversationAppClient, capabilities: CodexTaskPushCapabilities, form: TaskModelPushForm): void {
     const selectedModel = capabilities.models.find((model) => model.id === form.model || model.model === form.model);
     if (selectedModel?.agentKind !== 'pi' && selectedModel?.sourceId === 'codex' && capabilities.codexAccount.requiresOpenaiAuth && !capabilities.codexAccount.signedIn) {
-      void authenticateCodexAndContinueTaskModelPush(task, client, capabilities, form, moveToPushedStatus);
+      void authenticateCodexAndContinueTaskModelPush(task, client, capabilities, form);
       return;
     }
-    continueTaskModelPush(task, capabilities, form, moveToPushedStatus);
+    continueTaskModelPush(task, capabilities, form);
   }
 
-  async function authenticateCodexAndContinueTaskModelPush(task: TaskRecord, client: NativeConversationAppClient, capabilities: CodexTaskPushCapabilities, form: TaskModelPushForm, moveToPushedStatus: boolean): Promise<void> {
+  async function authenticateCodexAndContinueTaskModelPush(task: TaskRecord, client: NativeConversationAppClient, capabilities: CodexTaskPushCapabilities, form: TaskModelPushForm): Promise<void> {
     const requestVersion = taskModelPushLoginRequestRef.current + 1;
     taskModelPushLoginRequestRef.current = requestVersion;
     taskModelPushLoginIdRef.current = null;
@@ -10175,7 +10098,7 @@ export function App(props: {
               if (!result.activated) throw new Error(result.error ?? 'window_activation_failed');
             },
             recordActivationError: (error) => recordLocalError('codex-login-window-activation', error),
-            continueOriginalAction: () => continueTaskModelPush(task, updatedCapabilities, form, moveToPushedStatus),
+            continueOriginalAction: () => continueTaskModelPush(task, updatedCapabilities, form),
           });
           return;
         }
@@ -10212,7 +10135,7 @@ export function App(props: {
     if (client && loginId) void client.cancelCodexChatGptLogin(loginId).catch((error) => recordLocalError('codex-login-cancel', error));
   }
 
-  function continueTaskModelPush(task: TaskRecord, capabilities: CodexTaskPushCapabilities, form: TaskModelPushForm, moveToPushedStatus: boolean): void {
+  function continueTaskModelPush(task: TaskRecord, capabilities: CodexTaskPushCapabilities, form: TaskModelPushForm): void {
     if (taskModelPushDispatchingTaskIdsRef.current.has(task.id)) return;
     capabilities = normalizeTaskModelPushCapabilities(capabilities);
     const previousPending = taskModelPushPendingByTaskRef.current[task.id];
@@ -10268,13 +10191,9 @@ export function App(props: {
       const relatedContexts = selectedTaskPushRelatedContexts(capabilities.relatedContextOptions, form.relatedContextSelections);
       const supplementalAttachments = taskPushSupplementalLayoutAttachments(form.supplementalAttachments);
       const layout = buildTaskModelPushLayout(task, form.supplementalInfo, capabilities.currentAttachmentOptions, currentConversationPaths, parentContexts, relatedContexts, supplementalAttachments);
-      const statusConfig = resolveTaskManagementStatusConfig(appShellSettings, task.projectId);
-      const fromStatus = resolveTaskManagementStatus(task);
-      const targetStatus = statusConfig.roles.pushedStatusId;
-      const projectedTask = moveToPushedStatus ? { ...task, managementStatus: targetStatus } : task;
       const pending: TrackedTaskModelPushState = {
         ...createTaskModelPushPendingState({
-          task: projectedTask,
+          task,
           projectName: targetProject?.name ?? task.projectId,
           request,
           form,
@@ -10282,14 +10201,6 @@ export function App(props: {
           layout,
           currentAttachmentOptions: capabilities.currentAttachmentOptions,
           capabilities,
-          managementStatusSync: moveToPushedStatus
-            ? {
-                fromStatus,
-                targetStatus,
-                state: 'syncing',
-                error: null,
-              }
-            : null,
         }),
         origin: taskModelPushNavigationRef.current,
       };
@@ -10321,20 +10232,8 @@ export function App(props: {
     }
     if (!prepared) return;
     const { pending, targetProject } = prepared;
-    if (pending.managementStatusSync) {
-      taskModelPushStatusProjectionRef.current.set(pending.task.id, {
-        fromStatus: pending.managementStatusSync.fromStatus,
-        targetStatus: pending.managementStatusSync.targetStatus,
-      });
-      setSnapshot((current) => ({
-        ...current,
-        tasks: current.tasks.map((candidate) => (candidate.id === pending.task.id ? { ...candidate, managementStatus: pending.managementStatusSync!.targetStatus } : candidate)),
-      }));
-      setTaskDetail((current) => (current?.id === pending.task.id ? { ...current, managementStatus: pending.managementStatusSync!.targetStatus } : current));
-    }
     // 本地待处理态建立后立即发出真实请求，界面导航不得成为创建任务的前置条件。
     void dispatchTaskModelPush(pending);
-    if (pending.managementStatusSync) void synchronizeTaskModelPushManagementStatus(pending.task.id);
     setTaskModelPushAnnouncement(appShellSettings.appLanguage === 'zh-CN' ? `${task.title}：正在后台创建会话。` : `${task.title}: Creating conversation in the background.`);
     // 用户确认后立即进入稳定工作面；此后的真实身份接管不得再导航、滚动或夺取焦点。
     taskModelPushCapabilityRequestRef.current += 1;
@@ -10349,103 +10248,6 @@ export function App(props: {
     void selectNativeConversation(pending.choice);
     if (typeof window !== 'undefined') window.history.replaceState(null, '', '#project-sessions');
     workspaceScrollRef.current?.scrollTo({ top: 0, behavior: 'auto' });
-  }
-
-  function clearTaskModelPushStatusSyncRetry(taskId: string): void {
-    const timer = taskModelPushStatusSyncRetryTimersRef.current.get(taskId);
-    if (timer !== undefined) window.clearTimeout(timer);
-    taskModelPushStatusSyncRetryTimersRef.current.delete(taskId);
-  }
-
-  function setTaskModelPushStatusSyncState(taskId: string, state: NonNullable<TaskModelPushPendingState['managementStatusSync']>['state'], error: string | null, task?: TaskRecord): void {
-    updateTaskModelPushPendingByTask((current) => {
-      const pending = current[taskId];
-      if (!pending?.managementStatusSync || pending.managementStatusSync.state === 'superseded') return current;
-      return {
-        ...current,
-        [taskId]: {
-          ...updateTaskModelPushManagementStatusSync(pending, { ...pending.managementStatusSync, state, error }),
-          ...(task ? { task: state === 'superseded' ? task : { ...task, managementStatus: pending.managementStatusSync.targetStatus } } : {}),
-          origin: pending.origin,
-        },
-      };
-    });
-  }
-
-  function scheduleTaskModelPushStatusSyncRetry(taskId: string): void {
-    clearTaskModelPushStatusSyncRetry(taskId);
-    const attempt = taskModelPushStatusSyncAttemptsRef.current.get(taskId) ?? 0;
-    const delay = Math.min(1_000 * 2 ** Math.min(attempt, 3), 8_000);
-    taskModelPushStatusSyncAttemptsRef.current.set(taskId, attempt + 1);
-    taskModelPushStatusSyncRetryTimersRef.current.set(
-      taskId,
-      window.setTimeout(() => {
-        taskModelPushStatusSyncRetryTimersRef.current.delete(taskId);
-        void synchronizeTaskModelPushManagementStatus(taskId);
-      }, delay),
-    );
-  }
-
-  async function synchronizeTaskModelPushManagementStatus(taskId: string, manual = false): Promise<void> {
-    const pending = taskModelPushPendingByTaskRef.current[taskId];
-    const sync = pending?.managementStatusSync;
-    if (!pending || !sync || sync.state === 'synced' || sync.state === 'superseded' || taskModelPushStatusSyncInFlightIdsRef.current.has(taskId)) return;
-    const client = props.nativeConversationClient;
-    if (!client) {
-      const message = appShellSettings.appLanguage === 'zh-CN' ? '本机服务暂时不可用，任务状态尚未同步。' : 'The local service is unavailable, so the task status has not synced.';
-      setTaskModelPushStatusSyncState(taskId, 'failed', message);
-      scheduleTaskModelPushStatusSyncRetry(taskId);
-      return;
-    }
-    if (manual) taskModelPushStatusSyncAttemptsRef.current.set(taskId, 0);
-    clearTaskModelPushStatusSyncRetry(taskId);
-    setTaskModelPushStatusSyncState(taskId, 'syncing', null);
-    taskModelPushStatusSyncInFlightIdsRef.current.add(taskId);
-    try {
-      await enqueueTaskMutation(taskId, async () => {
-        const result = await client.syncTaskModelPushManagementStatus(taskId, sync.fromStatus);
-        recordTaskMutationVersion(taskId, pending.task.updatedAt, result.task.updatedAt);
-        const active = taskModelPushPendingByTaskRef.current[taskId];
-        if (!active?.managementStatusSync || active.managementStatusSync.state === 'superseded') return;
-        taskModelPushStatusProjectionRef.current.delete(taskId);
-        taskModelPushStatusSyncAttemptsRef.current.delete(taskId);
-        if (result.state === 'superseded') {
-          setTaskModelPushStatusSyncState(taskId, 'superseded', null, result.task);
-          mergeTaskRecord(result.task);
-          return;
-        }
-        setTaskModelPushStatusSyncState(taskId, 'synced', null, result.task);
-        mergeTaskRecord(result.task);
-        refreshOpenTaskEvents(taskId);
-      });
-    } catch (error) {
-      const active = taskModelPushPendingByTaskRef.current[taskId];
-      if (!active?.managementStatusSync || active.managementStatusSync.state === 'superseded') return;
-      const message = redactLocalUiErrorMessage(errorToLocalUiMessage(error));
-      setTaskModelPushStatusSyncState(taskId, 'failed', message);
-      scheduleTaskModelPushStatusSyncRetry(taskId);
-    } finally {
-      taskModelPushStatusSyncInFlightIdsRef.current.delete(taskId);
-    }
-  }
-
-  function supersedeTaskModelPushStatusSync(taskId: string): void {
-    const pending = taskModelPushPendingByTaskRef.current[taskId];
-    if (!pending?.managementStatusSync || pending.managementStatusSync.state === 'superseded') return;
-    clearTaskModelPushStatusSyncRetry(taskId);
-    taskModelPushStatusSyncAttemptsRef.current.delete(taskId);
-    taskModelPushStatusProjectionRef.current.delete(taskId);
-    updateTaskModelPushPendingByTask((current) => {
-      const active = current[taskId];
-      if (!active?.managementStatusSync) return current;
-      return {
-        ...current,
-        [taskId]: {
-          ...updateTaskModelPushManagementStatusSync(active, { ...active.managementStatusSync, state: 'superseded', error: null }),
-          origin: active.origin,
-        },
-      };
-    });
   }
 
   async function dispatchTaskModelPush(pending: TrackedTaskModelPushState): Promise<void> {
@@ -10724,16 +10526,6 @@ export function App(props: {
     taskModelPushDispatchingTaskIdsRef.current.add(taskId);
     setTaskModelPushAnnouncement(appShellSettings.appLanguage === 'zh-CN' ? `${retrying.task.title}：正在重试创建会话。` : `${retrying.task.title}: Retrying conversation creation.`);
     void dispatchTaskModelPush(retrying);
-  }
-
-  async function retryTaskModelPushAfterStatusSync(taskId: string): Promise<void> {
-    const pending = taskModelPushPendingByTaskRef.current[taskId];
-    if (!pending) return;
-    if (pending.managementStatusSync?.state === 'failed') {
-      await synchronizeTaskModelPushManagementStatus(taskId, true);
-      if (taskModelPushPendingByTaskRef.current[taskId]?.managementStatusSync?.state === 'failed') return;
-    }
-    retryTaskModelPush(taskId);
   }
 
   function mutateTaskModelPushPending(taskId: string, update: (pending: TrackedTaskModelPushState) => TaskModelPushPendingState): void {
@@ -12299,16 +12091,6 @@ export function App(props: {
             onAction: () => reopenTaskFromConversation(nativeSessionTask.id, selectedNativeConversation.id),
           }
         : undefined;
-    const taskModelPushStatusSyncWarning =
-      selectedTaskModelPushOperation?.managementStatusSync?.state === 'failed'
-        ? {
-            state: 'warning' as const,
-            message: appShellSettings.appLanguage === 'zh-CN' ? '任务状态未同步' : 'Task status has not synced',
-            error: selectedTaskModelPushOperation.managementStatusSync.error,
-            retryLabel: appShellSettings.appLanguage === 'zh-CN' ? '重试同步' : 'Retry sync',
-            onRetry: () => synchronizeTaskModelPushManagementStatus(selectedTaskModelPushOperation.task.id, true),
-          }
-        : undefined;
     if (selectedTaskModelPushOperation && (!taskModelPushHasRealChoice(selectedTaskModelPushOperation) || selectedTaskModelPushOperation.status !== 'accepted') && nativeSessionOwner && props.nativeConversationClient) {
       const pending = selectedTaskModelPushOperation;
       return (
@@ -12331,17 +12113,10 @@ export function App(props: {
             pending.status === 'failed'
               ? {
                   state: 'failed',
-                  message:
-                    pending.managementStatusSync?.state === 'failed'
-                      ? appShellSettings.appLanguage === 'zh-CN'
-                        ? '会话创建失败，任务状态也未同步'
-                        : 'Conversation creation failed and the task status did not sync'
-                      : appShellSettings.appLanguage === 'zh-CN'
-                        ? '会话创建失败'
-                        : 'Conversation creation failed',
-                  error: pending.managementStatusSync?.state === 'failed' ? [pending.error, pending.managementStatusSync.error].filter(Boolean).join(' · ') : pending.error,
+                  message: appShellSettings.appLanguage === 'zh-CN' ? '会话创建失败' : 'Conversation creation failed',
+                  error: pending.error,
                   retryLabel: pending.contextRefreshRequired ? (appShellSettings.appLanguage === 'zh-CN' ? '重新确认' : 'Review') : appShellSettings.appLanguage === 'zh-CN' ? '重试' : 'Retry',
-                  onRetry: () => retryTaskModelPushAfterStatusSync(pending.task.id),
+                  onRetry: () => retryTaskModelPush(pending.task.id),
                 }
               : {
                   state: 'creating',
@@ -12378,13 +12153,12 @@ export function App(props: {
           initialCapabilities={selectedTaskModelPushOperation?.capabilities}
           stableConversationId={selectedTaskModelPushOperation?.navigationId}
           creationStatus={
-            taskModelPushStatusSyncWarning ??
-            (selectedTaskModelPushOperation
+            selectedTaskModelPushOperation
               ? {
                   state: 'creating',
                   message: appShellSettings.appLanguage === 'zh-CN' ? '正在连接' : 'Connecting',
                 }
-              : undefined)
+              : undefined
           }
           readOnlyGate={taskReadOnlyGate}
           quickActionsSuppressed={Boolean(taskDetailPaneTaskId)}
@@ -13549,7 +13323,6 @@ export function App(props: {
                 status={taskModelPushStatus}
                 refreshingRepositoryId={taskModelPushRefreshingRepositoryId}
                 error={taskModelPushError}
-                statusConfirmation={taskModelPushStatusDecision}
                 onChange={(nextForm) => {
                   setTaskModelPushForm((current) => {
                     const resolved = typeof nextForm === 'function' ? nextForm(current) : nextForm;
@@ -13561,9 +13334,6 @@ export function App(props: {
                 onRefreshRepository={(repositoryId) => void refreshTaskModelPushRepository(repositoryId)}
                 onClose={closeTaskModelPush}
                 onCancelAuthentication={cancelTaskModelPushAuthentication}
-                onConfirmStatusChange={() => resolveTaskModelPushStatusDecision(true)}
-                onPreserveStatus={() => resolveTaskModelPushStatusDecision(false)}
-                onBackFromStatusConfirmation={() => setTaskModelPushStatusDecision(null)}
                 onSubmit={(event) => void submitTaskModelPush(event)}
               />
               <TaskGitMergeModal
