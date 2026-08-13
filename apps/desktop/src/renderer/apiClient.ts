@@ -1196,8 +1196,15 @@ export interface ProjectGitStashEntry {
   authoredAt: string;
 }
 
+export interface ProjectGitRecentRef {
+  ref: string;
+  kind: 'local' | 'remote' | 'tag' | 'revision';
+}
+
 export interface ProjectGitRepositorySnapshot {
   branch: string;
+  detached: boolean;
+  headTags: string[];
   headSha: string;
   upstream: string | null;
   ahead: number;
@@ -1209,6 +1216,7 @@ export interface ProjectGitRepositorySnapshot {
   remoteBranches: string[];
   remotes: string[];
   tags: string[];
+  recentRefs: ProjectGitRecentRef[];
   recentCommits: NonNullable<DashboardSnapshot['git']['recentCommits']>;
   outgoingCommits: NonNullable<DashboardSnapshot['git']['recentCommits']>;
   stashes: ProjectGitStashEntry[];
@@ -1238,8 +1246,10 @@ export type ProjectGitAction =
   | { type: 'commit'; message: string }
   | { type: 'push'; remote?: string; targetBranch?: string; forceWithLease?: boolean; pushTags?: boolean }
   | { type: 'pull'; remote?: string; targetBranch?: string; strategy: 'rebase' | 'merge' }
-  | { type: 'checkout'; branchName: string }
-  | { type: 'create_branch'; branchName: string; baseRef?: string; trackRemote?: boolean }
+  | { type: 'update'; strategy: 'merge' | 'rebase' | 'reset'; smart?: boolean }
+  | { type: 'checkout'; branchName: string; smart?: boolean }
+  | { type: 'checkout_revision'; revision: string; smart?: boolean }
+  | { type: 'create_branch'; branchName: string; baseRef?: string; trackRemote?: boolean; smart?: boolean }
   | { type: 'delete_branch'; branchName: string }
   | { type: 'merge'; branchName: string }
   | { type: 'rebase'; branchName: string }

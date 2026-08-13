@@ -1113,6 +1113,7 @@ a {
   align-items: center;
   display: flex;
   gap: 6px;
+  margin-left: auto;
 }
 .project-git-toolbar-actions .zeus-button svg {
   height: 12px;
@@ -1120,6 +1121,200 @@ a {
 }
 .project-git-menu-anchor {
   position: relative;
+}
+.project-git-branch-trigger {
+  align-items: center;
+  background: var(--zeus-control-bg);
+  border: 1px solid var(--zeus-control-border);
+  border-radius: 7px;
+  color: var(--zeus-product-text);
+  display: flex;
+  flex: 0 1 280px;
+  font: inherit;
+  gap: 7px;
+  margin-left: 24px;
+  min-height: 29px;
+  min-width: 126px;
+  padding: 4px 9px;
+}
+.project-git-branch-trigger:hover,
+.project-git-branch-trigger.is-open {
+  background: var(--zeus-source-list-hover);
+  border-color: color-mix(in srgb, var(--zeus-product-accent) 55%, var(--zeus-control-border));
+}
+.project-git-branch-trigger > span {
+  font-size: 12px;
+  font-weight: 640;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.project-git-branch-trigger > svg {
+  flex: 0 0 auto;
+  height: 14px;
+  width: 14px;
+}
+.project-git-branch-trigger > svg:last-child {
+  color: var(--zeus-product-muted);
+  margin-left: auto;
+}
+.project-git-branch-popover {
+  background: var(--zeus-solid-surface-bg, var(--zeus-product-panel));
+  border: 1px solid var(--zeus-popover-line, var(--zeus-product-line));
+  border-radius: 12px;
+  box-shadow: 0 20px 56px oklch(18% 0.01 255 / 0.25);
+  display: flex;
+  flex-direction: column;
+  max-height: min(600px, calc(100vh - 16px));
+  overflow: hidden;
+  position: fixed;
+  width: min(520px, calc(100vw - 16px));
+  z-index: 120;
+}
+.project-git-branch-search {
+  align-items: center;
+  border-bottom: 1px solid var(--zeus-product-line);
+  display: flex;
+  gap: 8px;
+  padding: 10px 12px;
+}
+.project-git-branch-search svg {
+  color: var(--zeus-product-muted);
+  flex: 0 0 auto;
+  height: 17px;
+  width: 17px;
+}
+.project-git-branch-search input {
+  background: transparent;
+  border: 0;
+  color: inherit;
+  flex: 1;
+  font: inherit;
+  font-size: 13px;
+  min-width: 0;
+  outline: 0;
+}
+.project-git-branch-popover-scroll {
+  overflow: auto;
+  padding: 6px;
+}
+.project-git-branch-actions,
+.project-git-branch-repository,
+.project-git-branch-group {
+  display: flex;
+  flex-direction: column;
+}
+.project-git-branch-actions,
+.project-git-branch-repository {
+  border-bottom: 1px solid var(--zeus-product-line);
+  padding: 4px 0 7px;
+}
+.project-git-branch-repository:last-child {
+  border-bottom: 0;
+}
+.project-git-branch-actions button,
+.project-git-branch-group > button,
+.project-git-common-branch > button,
+.project-git-common-branch-actions button {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  color: inherit;
+  display: flex;
+  font: inherit;
+  font-size: 12px;
+  gap: 7px;
+  min-height: 29px;
+  min-width: 0;
+  overflow: hidden;
+  padding: 4px 9px;
+  text-align: left;
+  width: 100%;
+}
+.project-git-branch-actions button:hover:not(:disabled),
+.project-git-branch-group > button:hover:not(:disabled),
+.project-git-common-branch > button:hover:not(:disabled),
+.project-git-common-branch-actions button:hover:not(:disabled) {
+  background: var(--zeus-source-list-hover);
+}
+.project-git-branch-actions button:disabled,
+.project-git-branch-group > button:disabled,
+.project-git-common-branch-actions button:disabled {
+  color: var(--zeus-product-muted);
+}
+.project-git-branch-repository > header {
+  align-items: baseline;
+  display: flex;
+  gap: 8px;
+  padding: 7px 9px 4px;
+}
+.project-git-branch-repository > header strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.project-git-branch-repository > header small {
+  color: var(--zeus-product-muted);
+  margin-left: auto;
+  max-width: 58%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.project-git-branch-group > strong {
+  color: var(--zeus-product-muted);
+  font-size: 10px;
+  font-weight: 680;
+  letter-spacing: 0.03em;
+  padding: 7px 9px 3px;
+  text-transform: uppercase;
+}
+.project-git-branch-group > button svg,
+.project-git-common-branch > button svg {
+  color: var(--zeus-product-muted);
+  flex: 0 0 auto;
+  height: 14px;
+  width: 14px;
+}
+.project-git-branch-group > button > span,
+.project-git-common-branch > button > span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.project-git-branch-group > button > small {
+  color: var(--zeus-product-accent);
+  margin-left: auto;
+}
+.project-git-branch-group > button > svg:last-child,
+.project-git-common-branch > button > svg:last-child {
+  margin-left: auto;
+}
+.project-git-branch-group > button.is-current,
+.project-git-common-branch > button.is-current {
+  background: var(--zeus-source-list-selected);
+}
+.project-git-common-branch-actions {
+  display: grid;
+  gap: 2px;
+  grid-template-columns: 1fr 1fr;
+  padding: 2px 8px 6px 30px;
+}
+.project-git-common-branch-actions button {
+  background: var(--zeus-product-panel-muted);
+  justify-content: center;
+  min-height: 27px;
+}
+.project-git-branch-empty {
+  color: var(--zeus-product-muted);
+  line-height: 1.5;
+  margin: 0;
+  padding: 18px 12px;
 }
 .project-git-tabs {
   align-items: end;
@@ -1753,7 +1948,9 @@ a {
 }
 .project-git-branch-dialog,
 .project-git-commit-dialog,
-.project-git-push-dialog {
+.project-git-push-dialog,
+.project-git-update-dialog,
+.project-git-reference-dialog {
   background: var(--zeus-solid-surface-bg, var(--zeus-product-panel));
   border: 1px solid var(--zeus-product-line);
   border-radius: 13px;
@@ -1766,7 +1963,9 @@ a {
 }
 .project-git-branch-dialog > header,
 .project-git-commit-dialog > header,
-.project-git-push-dialog > header {
+.project-git-push-dialog > header,
+.project-git-update-dialog > header,
+.project-git-reference-dialog > header {
   display: flex;
   flex-direction: column;
   gap: 3px;
@@ -1774,12 +1973,16 @@ a {
 }
 .project-git-branch-dialog header small,
 .project-git-commit-dialog header small,
-.project-git-push-dialog header small {
+.project-git-push-dialog header small,
+.project-git-update-dialog header small,
+.project-git-reference-dialog header small {
   color: var(--zeus-product-muted);
 }
 .project-git-branch-dialog > footer,
 .project-git-commit-dialog > footer,
-.project-git-push-dialog > footer {
+.project-git-push-dialog > footer,
+.project-git-update-dialog > footer,
+.project-git-reference-dialog > footer {
   align-items: center;
   display: flex;
   gap: 8px;
@@ -1905,6 +2108,106 @@ a {
   gap: 7px;
   padding-top: 10px;
 }
+.project-git-update-dialog main,
+.project-git-reference-dialog main {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-height: 500px;
+  overflow: auto;
+  padding: 8px 20px;
+}
+.project-git-update-strategies {
+  border: 0;
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+}
+.project-git-update-strategies legend,
+.project-git-update-repositories > strong {
+  font-size: 11px;
+  font-weight: 680;
+  padding: 0 0 5px;
+}
+.project-git-update-strategies > label {
+  align-items: start;
+  border: 1px solid var(--zeus-product-line);
+  border-radius: 8px;
+  display: flex;
+  gap: 8px;
+  padding: 9px 10px;
+}
+.project-git-update-strategies > label.is-current {
+  background: var(--zeus-source-list-selected);
+  border-color: color-mix(in srgb, var(--zeus-product-accent) 48%, var(--zeus-product-line));
+}
+.project-git-update-strategies > label span,
+.project-git-reference-dialog main > label {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+}
+.project-git-update-strategies small,
+.project-git-update-repositories small {
+  color: var(--zeus-product-muted);
+}
+.project-git-update-repositories {
+  display: flex;
+  flex-direction: column;
+}
+.project-git-update-repositories > span {
+  align-items: center;
+  border-bottom: 1px solid var(--zeus-product-line-soft);
+  display: grid;
+  gap: 3px 8px;
+  grid-template-columns: 18px minmax(120px, 0.7fr) minmax(150px, 1fr) auto auto;
+  min-height: 40px;
+}
+.project-git-update-repositories > span > svg {
+  color: var(--zeus-product-muted);
+  height: 14px;
+  width: 14px;
+}
+.project-git-update-repositories em,
+.project-git-update-repositories i {
+  font-size: 10px;
+  font-style: normal;
+}
+.project-git-update-repositories em {
+  color: var(--zeus-product-muted);
+}
+.project-git-update-repositories i.is-completed {
+  color: var(--zeus-control-success-text);
+}
+.project-git-update-repositories i.is-conflict,
+.project-git-update-repositories i.is-error {
+  color: var(--zeus-control-danger-text);
+}
+.project-git-update-reset-confirm {
+  align-items: start;
+  background: var(--zeus-control-danger-bg);
+  border: 1px solid var(--zeus-control-danger-line);
+  border-radius: 8px;
+  color: var(--zeus-control-danger-text);
+  display: flex;
+  gap: 8px;
+  line-height: 1.45;
+  padding: 10px;
+}
+.project-git-reference-dialog {
+  width: min(520px, calc(100vw - 48px));
+}
+.project-git-reference-dialog main :where(input, select) {
+  background: var(--zeus-control-bg);
+  border: 1px solid var(--zeus-control-border);
+  border-radius: 6px;
+  color: inherit;
+  font: inherit;
+  min-height: 32px;
+  padding: 5px 8px;
+}
 
 @media (max-width: 980px) {
   .project-git-log-layout {
@@ -1921,6 +2224,28 @@ a {
   }
   .project-workspace-mode-toolbar > strong {
     display: none;
+  }
+  .project-git-branch-trigger {
+    flex-basis: 190px;
+    margin-left: 10px;
+  }
+}
+@media (max-width: 760px) {
+  .project-git-project-identity,
+  .project-git-toolbar-actions > .zeus-button:not(:last-child) {
+    display: none;
+  }
+  .project-git-branch-trigger {
+    flex: 1;
+    margin-left: 0;
+  }
+  .project-git-update-repositories > span {
+    align-items: start;
+    grid-template-columns: 18px minmax(0, 1fr) auto;
+    padding: 7px 0;
+  }
+  .project-git-update-repositories > span :where(small, em) {
+    grid-column: 2;
   }
 }
 @media (prefers-reduced-motion: reduce) {

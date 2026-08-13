@@ -37,6 +37,7 @@ export interface GitRepositoryContext {
   isRepository: boolean;
   topLevel: string;
   branch: string;
+  detached: boolean;
   headSha: string;
   localBranches: string[];
   remoteBranches: string[];
@@ -219,8 +220,15 @@ export interface ProjectGitStashEntry {
   authoredAt: string;
 }
 
+export interface ProjectGitRecentRef {
+  ref: string;
+  kind: 'local' | 'remote' | 'tag' | 'revision';
+}
+
 export interface ProjectGitRepositorySnapshot {
   branch: string;
+  detached: boolean;
+  headTags: string[];
   headSha: string;
   upstream: string | null;
   ahead: number;
@@ -232,6 +240,7 @@ export interface ProjectGitRepositorySnapshot {
   remoteBranches: string[];
   remotes: string[];
   tags: string[];
+  recentRefs: ProjectGitRecentRef[];
   recentCommits: GitRecentCommit[];
   outgoingCommits: GitRecentCommit[];
   stashes: ProjectGitStashEntry[];
@@ -247,8 +256,10 @@ export type ProjectGitAction =
   | { type: 'commit'; message: string }
   | { type: 'push'; remote?: string; targetBranch?: string; forceWithLease?: boolean; pushTags?: boolean }
   | { type: 'pull'; remote?: string; targetBranch?: string; strategy: 'rebase' | 'merge' }
-  | { type: 'checkout'; branchName: string }
-  | { type: 'create_branch'; branchName: string; baseRef?: string; trackRemote?: boolean }
+  | { type: 'update'; strategy: 'merge' | 'rebase' | 'reset'; smart?: boolean }
+  | { type: 'checkout'; branchName: string; smart?: boolean }
+  | { type: 'checkout_revision'; revision: string; smart?: boolean }
+  | { type: 'create_branch'; branchName: string; baseRef?: string; trackRemote?: boolean; smart?: boolean }
   | { type: 'delete_branch'; branchName: string }
   | { type: 'merge'; branchName: string }
   | { type: 'rebase'; branchName: string }
@@ -327,14 +338,15 @@ export async function getGitRepositoryContext(cwd: string): Promise<GitRepositor
       readGitStdout(topLevel, ['remote']),
       requireGitStdout(topLevel, ['worktree', 'list', '--porcelain']),
     ]);
+    const detached = rawBranch.length === 0;
     const branch = rawBranch || 'detached';
     const localBranches = splitLines(rawLocalBranches);
     const remoteBranches = splitLines(rawRemoteBranches).filter((ref) => !ref.endsWith('/HEAD'));
     const remotes = splitLines(rawRemotes);
     const worktrees = parseGitWorktreeList(rawWorktrees);
-    return { isRepository: true, topLevel, branch, headSha, localBranches, remoteBranches, remotes, worktrees };
+    return { isRepository: true, topLevel, branch, detached, headSha, localBranches, remoteBranches, remotes, worktrees };
   } catch {
-    return { isRepository: false, topLevel: '', branch: '', headSha: '', localBranches: [], remoteBranches: [], remotes: [], worktrees: [] };
+    return { isRepository: false, topLevel: '', branch: '', detached: false, headSha: '', localBranches: [], remoteBranches: [], remotes: [], worktrees: [] };
   }
 }
 
@@ -1466,10 +1478,11 @@ async function requireGitStdout(cwd: string, args: string[]): Promise<string> {
 }
 
 async function resolveCommit(cwd: string, ref: string): Promise<string> {
+  const normalized = requireSafeGitText(ref, 'Git revision');
   try {
-    return await requireGitStdout(cwd, ['rev-parse', '--verify', `${ref}^{commit}`]);
+    return await requireGitStdout(cwd, ['rev-parse', '--verify', '--end-of-options', `${normalized}^{commit}`]);
   } catch {
-    throw gitCoreError('ZEUS_GIT_REF_NOT_FOUND', `Git ref does not resolve to a commit: ${ref}`);
+    throw gitCoreError('ZEUS_GIT_REF_NOT_FOUND', `Git ref does not resolve to a commit: ${normalized}`);
   }
 }
 
@@ -1790,13 +1803,15 @@ export async function getGitStatus(cwd: string): Promise<GitStatusSummary> {
 export async function getProjectGitRepositorySnapshot(cwd: string): Promise<ProjectGitRepositorySnapshot> {
   const context = await getGitRepositoryContext(cwd);
   if (!context.isRepository) throw gitCoreError('ZEUS_GIT_REPOSITORY_REQUIRED', 'The selected directory is not a Git repository.');
-  const [status, diff, stagedDiffText, unstagedDiffText, upstreamText, tagsText, stashText, recentText] = await Promise.all([
+  const [status, diff, stagedDiffText, unstagedDiffText, upstreamText, tagsText, headTagsText, reflogText, stashText, recentText] = await Promise.all([
     getGitStatus(context.topLevel),
     getGitDiff(context.topLevel),
     readGitStdout(context.topLevel, ['-c', 'core.quotePath=false', 'diff', '--cached', '--', '.']),
     readGitStdout(context.topLevel, ['-c', 'core.quotePath=false', 'diff', '--', '.']),
     readGitStdout(context.topLevel, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}']),
     readGitStdout(context.topLevel, ['tag', '--sort=-creatordate']),
+    readGitStdout(context.topLevel, ['tag', '--points-at', 'HEAD', '--sort=-creatordate']),
+    readGitStdout(context.topLevel, ['reflog', '-n', '120', '--format=%gs']),
     readGitStdout(context.topLevel, ['stash', 'list', '--format=%gd%x1f%H%x1f%s%x1f%an%x1f%aI']),
     readGitStdout(context.topLevel, ['-c', 'core.quotePath=false', 'log', '--topo-order', '-n', '200', '--date=iso-strict', '--pretty=format:%H%x1f%h%x1f%s%x1f%an%x1f%aI%x1f%P']),
   ]);
@@ -1806,8 +1821,12 @@ export async function getProjectGitRepositorySnapshot(cwd: string): Promise<Proj
   const outgoingText = upstream
     ? await readGitStdout(context.topLevel, ['-c', 'core.quotePath=false', 'log', '--topo-order', '-n', '200', '--date=iso-strict', '--pretty=format:%H%x1f%h%x1f%s%x1f%an%x1f%aI%x1f%P', `${upstream}..HEAD`])
     : '';
+  const tags = splitLines(tagsText);
+  const recentRefs = await readProjectGitRecentRefs(context.topLevel, reflogText, context, tags);
   return {
     branch: context.branch,
+    detached: context.detached,
+    headTags: splitLines(headTagsText),
     headSha: context.headSha,
     upstream,
     ahead: Number.parseInt(aheadText, 10) || 0,
@@ -1818,7 +1837,8 @@ export async function getProjectGitRepositorySnapshot(cwd: string): Promise<Proj
     localBranches: context.localBranches,
     remoteBranches: context.remoteBranches,
     remotes: context.remotes,
-    tags: splitLines(tagsText),
+    tags,
+    recentRefs,
     recentCommits: parseRecentCommits(recentText),
     outgoingCommits: parseRecentCommits(outgoingText),
     stashes: parseProjectGitStashes(stashText),
@@ -1850,6 +1870,7 @@ export async function executeProjectGitAction(cwd: string, action: ProjectGitAct
       args = ['commit', '-m', requireSafeGitText(action.message, 'commit message')];
       break;
     case 'push': {
+      requireNamedCurrentBranch(context);
       const remote = requireKnownRemote(context, action.remote);
       const targetBranch = await assertGitBranchFormat(repositoryPath, action.targetBranch?.trim() || context.branch, 'push target branch');
       const sourceBranch = await assertGitBranchFormat(repositoryPath, context.branch, 'current branch');
@@ -1857,18 +1878,25 @@ export async function executeProjectGitAction(cwd: string, action: ProjectGitAct
       break;
     }
     case 'pull': {
+      requireNamedCurrentBranch(context);
       const remote = requireKnownRemote(context, action.remote);
       const targetBranch = await assertGitBranchFormat(repositoryPath, action.targetBranch?.trim() || context.branch, 'pull branch');
       args = ['pull', action.strategy === 'rebase' ? '--rebase' : '--no-rebase', remote, targetBranch];
       break;
     }
+    case 'update':
+      return finishProjectGitAction(repositoryPath, action.type, await executeProjectGitUpdate(repositoryPath, action.strategy, action.smart === true));
     case 'checkout':
       args = ['switch', await assertGitBranchFormat(repositoryPath, action.branchName, 'branch')];
       break;
+    case 'checkout_revision':
+      args = ['switch', '--detach', await resolveCommit(repositoryPath, action.revision)];
+      break;
     case 'create_branch': {
       const branchName = await assertGitBranchFormat(repositoryPath, action.branchName, 'branch');
-      const baseRef = action.baseRef?.trim() ? await assertGitBranchFormat(repositoryPath, action.baseRef.trim(), 'base branch') : null;
-      if (baseRef) await resolveCommit(repositoryPath, baseRef);
+      const requestedBase = action.baseRef?.trim() || '';
+      const baseRef = requestedBase ? (action.trackRemote ? await assertGitBranchFormat(repositoryPath, requestedBase, 'base branch') : await resolveCommit(repositoryPath, requestedBase)) : null;
+      if (action.trackRemote && baseRef) await resolveCommit(repositoryPath, baseRef);
       args = ['switch', '-c', branchName, ...(action.trackRemote ? ['--track'] : []), ...(baseRef ? [baseRef] : [])];
       break;
     }
@@ -1892,17 +1920,122 @@ export async function executeProjectGitAction(cwd: string, action: ProjectGitAct
       break;
   }
   const conflictCapable = action.type === 'pull' || action.type === 'merge' || action.type === 'rebase' || action.type === 'apply_stash';
-  const output = conflictCapable ? await runGitPreservingConflict(repositoryPath, args) : await runGit(repositoryPath, args);
+  const operation = () => (conflictCapable ? runGitPreservingConflict(repositoryPath, args) : runGit(repositoryPath, args));
+  const smart = (action.type === 'checkout' || action.type === 'checkout_revision' || action.type === 'create_branch') && action.smart === true;
+  const output = smart ? await runWithSmartStash(repositoryPath, action.type === 'checkout_revision' ? 'Checkout Revision' : 'Checkout', operation) : await operation();
+  return finishProjectGitAction(repositoryPath, action.type, output);
+}
+
+async function finishProjectGitAction(repositoryPath: string, action: ProjectGitAction['type'], output: GitRunnerResult): Promise<ProjectGitActionResult> {
   const nextContext = await getGitRepositoryContext(repositoryPath);
   const nextStatus = await getGitStatus(repositoryPath);
   return {
-    action: action.type,
+    action,
     outcome: nextStatus.conflictFiles.length > 0 ? 'conflict' : 'completed',
     branch: nextContext.branch,
     headSha: nextContext.headSha,
     conflictFiles: nextStatus.conflictFiles,
     ...output,
   };
+}
+
+async function executeProjectGitUpdate(repositoryPath: string, strategy: 'merge' | 'rebase' | 'reset', smart: boolean): Promise<GitRunnerResult> {
+  const context = await getGitRepositoryContext(repositoryPath);
+  requireNamedCurrentBranch(context);
+  const upstream = await readGitStdout(repositoryPath, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}']);
+  if (!upstream) throw gitCoreError('ZEUS_GIT_UPSTREAM_REQUIRED', `Current branch ${context.branch} does not track a remote branch.`);
+  await resolveCommit(repositoryPath, upstream);
+  const operation = async (): Promise<GitRunnerResult> => {
+    const fetched = await runGit(repositoryPath, ['fetch', '--all', '--prune']);
+    const integrated =
+      strategy === 'reset'
+        ? await runGit(repositoryPath, ['reset', '--hard', upstream])
+        : strategy === 'rebase'
+          ? await runGitPreservingConflict(repositoryPath, ['rebase', upstream])
+          : await runGitPreservingConflict(repositoryPath, ['merge', '--no-edit', upstream]);
+    return combineGitRunnerResults(fetched, integrated);
+  };
+  return smart ? runWithSmartStash(repositoryPath, 'Smart Update', operation) : operation();
+}
+
+async function runWithSmartStash(repositoryPath: string, label: string, operation: () => Promise<GitRunnerResult>): Promise<GitRunnerResult> {
+  const before = await getGitStatus(repositoryPath);
+  if (before.conflictFiles.length > 0) throw gitCoreError('ZEUS_GIT_CONFLICT_IN_PROGRESS', 'Resolve the current Git conflicts before starting another smart operation.');
+  if (before.clean) return operation();
+  const message = `Zeus ${label} ${new Date().toISOString()}`;
+  const saved = await runGit(repositoryPath, ['stash', 'push', '-u', '-m', message]);
+  const stashHash = await requireGitStdout(repositoryPath, ['rev-parse', 'refs/stash']);
+  let operated: GitRunnerResult;
+  try {
+    operated = await operation();
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : 'Git operation failed.';
+    const operatedStatus = await getGitStatus(repositoryPath).catch(() => emptyGitStatus());
+    if (operatedStatus.conflictFiles.length === 0) {
+      try {
+        const restoration = await restoreSmartStash(repositoryPath, stashHash);
+        if (restoration.conflict) return combineGitRunnerResults(saved, restoration.output, { stdout: '', stderr: `${reason} Restoring local changes caused conflicts; stash ${stashHash.slice(0, 8)} was preserved.` });
+        throw gitCoreError('ZEUS_GIT_SMART_OPERATION_FAILED', `${reason} Local changes were restored.`);
+      } catch (restoreError) {
+        if (restoreError instanceof Error && 'code' in restoreError && restoreError.code === 'ZEUS_GIT_SMART_OPERATION_FAILED') throw restoreError;
+        const restoreReason = restoreError instanceof Error ? restoreError.message : 'Local changes could not be restored.';
+        throw gitCoreError('ZEUS_GIT_SMART_OPERATION_FAILED', `${reason} ${restoreReason} Local changes remain saved in stash ${stashHash.slice(0, 8)}.`);
+      }
+    }
+    throw gitCoreError('ZEUS_GIT_SMART_OPERATION_FAILED', `${reason} Local changes remain saved in stash ${stashHash.slice(0, 8)}.`);
+  }
+  const operatedStatus = await getGitStatus(repositoryPath);
+  if (operatedStatus.conflictFiles.length > 0) {
+    return combineGitRunnerResults(saved, operated, {
+      stdout: '',
+      stderr: `Local changes remain saved in stash ${stashHash.slice(0, 8)} until the update conflict is resolved.`,
+    });
+  }
+  const restoration = await restoreSmartStash(repositoryPath, stashHash);
+  if (restoration.conflict) {
+    return combineGitRunnerResults(saved, operated, restoration.output, {
+      stdout: '',
+      stderr: `Restoring local changes caused conflicts. Stash ${stashHash.slice(0, 8)} was preserved.`,
+    });
+  }
+  return combineGitRunnerResults(saved, operated, restoration.output);
+}
+
+async function restoreSmartStash(repositoryPath: string, stashHash: string): Promise<{ output: GitRunnerResult; conflict: boolean }> {
+  const restored = await runGitPreservingConflict(repositoryPath, ['stash', 'apply', '--index', stashHash]);
+  const restoredStatus = await getGitStatus(repositoryPath);
+  if (restoredStatus.conflictFiles.length > 0) return { output: restored, conflict: true };
+  const stashList = await readGitStdout(repositoryPath, ['stash', 'list', '--format=%gd%x1f%H']);
+  const stashRef = splitLines(stashList)
+    .map((line) => line.split('\x1f'))
+    .find(([, hash]) => hash === stashHash)?.[0];
+  let dropped: GitRunnerResult = { stdout: '', stderr: '' };
+  if (stashRef) {
+    try {
+      dropped = await runGit(repositoryPath, ['stash', 'drop', stashRef]);
+    } catch (error) {
+      dropped = { stdout: '', stderr: `Local changes were restored, but temporary stash ${stashHash.slice(0, 8)} could not be removed: ${error instanceof Error ? error.message : 'unknown error'}` };
+    }
+  }
+  return { output: combineGitRunnerResults(restored, dropped), conflict: false };
+}
+
+function combineGitRunnerResults(...results: GitRunnerResult[]): GitRunnerResult {
+  return {
+    stdout: results
+      .map((result) => result.stdout.trim())
+      .filter(Boolean)
+      .join('\n'),
+    stderr: results
+      .map((result) => result.stderr.trim())
+      .filter(Boolean)
+      .join('\n'),
+  };
+}
+
+function requireNamedCurrentBranch(context: GitRepositoryContext): string {
+  if (context.detached) throw gitCoreError('ZEUS_GIT_NAMED_BRANCH_REQUIRED', 'This action requires a current named branch. Create or check out a local branch first.');
+  return context.branch;
 }
 
 /** 读取一个精确提交的文件和差异，供独立 Repository Diff 与日志检查器复用。 */
@@ -1946,6 +2079,31 @@ function parseProjectGitStashes(stdout: string): ProjectGitStashEntry[] {
       return { ref, hash, subject, author, authoredAt };
     })
     .filter((entry) => entry.ref.length > 0 && entry.hash.length > 0);
+}
+
+async function readProjectGitRecentRefs(cwd: string, reflog: string, context: GitRepositoryContext, tags: string[]): Promise<ProjectGitRecentRef[]> {
+  const local = new Set(context.localBranches);
+  const remote = new Set(context.remoteBranches);
+  const tagSet = new Set(tags);
+  const candidates = splitLines(reflog)
+    .flatMap((subject) => {
+      const match = /^checkout: moving from .+ to (.+)$/u.exec(subject);
+      return match?.[1]?.trim() ? [match[1].trim()] : [];
+    })
+    .filter((ref, index, values) => ref !== context.branch && values.indexOf(ref) === index)
+    .slice(0, 12);
+  const resolved = await Promise.all(
+    candidates.map(async (ref): Promise<ProjectGitRecentRef | null> => {
+      const kind: ProjectGitRecentRef['kind'] = local.has(ref) ? 'local' : remote.has(ref) ? 'remote' : tagSet.has(ref) ? 'tag' : 'revision';
+      try {
+        await resolveCommit(cwd, ref);
+        return { ref, kind };
+      } catch {
+        return null;
+      }
+    }),
+  );
+  return resolved.filter((item): item is ProjectGitRecentRef => item !== null);
 }
 
 function requireKnownRemote(context: GitRepositoryContext, requested?: string): string {
