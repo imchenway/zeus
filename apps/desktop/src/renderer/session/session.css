@@ -5701,6 +5701,38 @@
   line-height: 19px;
 }
 
+/* 普通用户消息把附件作为一个整体放在正文上方，图片缩略图使用更紧凑的气泡尺寸。 */
+.session-codex-parity-v1 .session-user-message-attachments {
+  display: grid;
+  gap: 10px;
+  margin-block-end: 10px;
+  min-inline-size: 0;
+}
+
+.session-codex-parity-v1 .session-user-message-attachments:empty {
+  display: none;
+}
+
+.session-codex-parity-v1 .session-user-message-attachments > .session-resource-card-list {
+  grid-template-columns: repeat(auto-fit, minmax(min(96px, 100%), 165px));
+  margin-block: 0;
+}
+
+.session-codex-parity-v1 .session-user-message-attachments .session-resource-image {
+  inline-size: min(165px, 100%);
+  max-block-size: min(38vh, 165px);
+  min-block-size: 84px;
+}
+
+.session-codex-parity-v1 .session-user-message-attachments .session-resource-image > img {
+  max-block-size: min(38vh, 165px);
+}
+
+.session-codex-parity-v1 .session-user-message-attachments .session-resource-image-placeholder {
+  min-block-size: 84px;
+  padding: 14px;
+}
+
 .session-codex-parity-v1 .session-open-with {
   flex: 0 0 auto;
   position: relative;
