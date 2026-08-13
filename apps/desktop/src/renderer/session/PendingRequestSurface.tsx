@@ -49,6 +49,8 @@ export interface PendingRequestSurfaceProps {
 }
 
 const OTHER_ANSWER = '__other__';
+const ANSWER_SHORTCUT_PROTECTION_MS = 1_000;
+const DIRECT_ANSWER_SHORTCUTS = ['1', '2', '3'] as const;
 const supportedDecisionOrder: SupportedRequestDecision[] = ['accept', 'acceptWithExecpolicyAmendment', 'acceptForSession', 'decline', 'cancel'];
 
 const labels = {
@@ -497,6 +499,7 @@ function RequestUserInputPanel(props: PendingRequestSurfaceProps & { questions: 
   const freeformRef = useRef<HTMLInputElement | HTMLTextAreaElement | null>(null);
   const otherAnswerRef = useRef<HTMLInputElement | HTMLTextAreaElement | null>(null);
   const attachmentTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const answerShortcutsEnabledRef = useRef(false);
   const snoozedRef = useRef(props.request.autoResolutionState === 'snoozed');
   const snoozePromiseRef = useRef<Promise<void> | null>(null);
   const [, setLocallySnoozed] = useState(snoozedRef.current);
@@ -542,6 +545,18 @@ function RequestUserInputPanel(props: PendingRequestSurfaceProps & { questions: 
     if (currentQuestion.kind === 'freeform') freeformRef.current?.focus();
     else optionRefs.current[0]?.focus();
   }, [currentQuestion.id, currentQuestion.kind, props.autoFocus, props.request.id]);
+
+  useEffect(() => {
+    // 询问可能在用户连续输入时异步替换会话输入框；固定保护期内不接受任何答题快捷键。
+    answerShortcutsEnabledRef.current = false;
+    const timer = window.setTimeout(() => {
+      answerShortcutsEnabledRef.current = true;
+    }, ANSWER_SHORTCUT_PROTECTION_MS);
+    return () => {
+      window.clearTimeout(timer);
+      answerShortcutsEnabledRef.current = false;
+    };
+  }, [props.request.id]);
 
   useEffect(() => {
     persistRuiDraft(props.request.id, props.questions, answers, otherAnswers, answerAttachments);
@@ -653,8 +668,30 @@ function RequestUserInputPanel(props: PendingRequestSurfaceProps & { questions: 
   function handleKeyboard(event: KeyboardEvent<HTMLElement>): void {
     // 即使后续新增输入控件时遗漏局部处理，外层也不能把编辑按键解释成答案快捷键。
     if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || (event.target instanceof HTMLElement && event.target.isContentEditable)) return;
-    if (event.key >= '1' && event.key <= '9') {
-      const index = Number(event.key) - 1;
+    const targetIsAnswerButton = event.target instanceof HTMLButtonElement && optionRefs.current.includes(event.target);
+    const hasModifier = event.metaKey || event.ctrlKey || event.altKey || event.shiftKey;
+    const directOptionIndex = hasModifier ? -1 : DIRECT_ANSWER_SHORTCUTS.indexOf(event.key as (typeof DIRECT_ANSWER_SHORTCUTS)[number]);
+    const isArrowShortcut = !hasModifier && (event.key === 'ArrowDown' || event.key === 'ArrowUp');
+    const isEnterShortcut = event.key === 'Enter' && targetIsAnswerButton;
+
+    // 原生按钮会用空格生成点击；答案行统一只允许 Enter 激活键盘当前项。
+    if ((event.key === ' ' || event.key === 'Spacebar') && targetIsAnswerButton) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+    if ((directOptionIndex >= 0 || isArrowShortcut || isEnterShortcut) && !answerShortcutsEnabledRef.current) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+    if (isEnterShortcut && hasModifier) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+    if (directOptionIndex >= 0) {
+      const index = directOptionIndex;
       const option = optionRefs.current[index];
       if (option) {
         event.preventDefault();
@@ -662,13 +699,20 @@ function RequestUserInputPanel(props: PendingRequestSurfaceProps & { questions: 
       }
       return;
     }
-    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+    if (!isArrowShortcut) return;
     const available = optionRefs.current.filter((entry): entry is HTMLButtonElement => Boolean(entry));
     if (available.length === 0) return;
     event.preventDefault();
     const activeIndex = available.indexOf(document.activeElement as HTMLButtonElement);
     const delta = event.key === 'ArrowDown' ? 1 : -1;
     available[(activeIndex + delta + available.length) % available.length]?.focus();
+  }
+
+  function handleKeyboardKeyUp(event: KeyboardEvent<HTMLElement>): void {
+    if ((event.key !== ' ' && event.key !== 'Spacebar') || !(event.target instanceof HTMLButtonElement) || !optionRefs.current.includes(event.target)) return;
+    // Chromium 在 keyup 阶段完成按钮的空格激活；再次阻止默认行为，避免生成延迟点击。
+    event.preventDefault();
+    event.stopPropagation();
   }
 
   async function skip(): Promise<void> {
@@ -711,7 +755,7 @@ function RequestUserInputPanel(props: PendingRequestSurfaceProps & { questions: 
   }
 
   return (
-    <section className="session-request-user-input-surface" onKeyDown={handleKeyboard}>
+    <section className="session-request-user-input-surface" onKeyDown={handleKeyboard} onKeyUp={handleKeyboardKeyUp}>
       <p className="session-question-status" role="status">
         <Question aria-hidden="true" />
         {responding ? (zh ? '正在处理回答' : 'Processing response') : zh ? `正在询问 ${props.questions.length} 个问题` : `Asking ${props.questions.length} question${props.questions.length === 1 ? '' : 's'}`}
