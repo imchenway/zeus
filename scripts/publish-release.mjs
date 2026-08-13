@@ -381,6 +381,11 @@ function validateReleaseNotesFile(path, version) {
   }
   const leakedCommentary = markdown.match(/用户要求只返回|confidence\s*[=:：]|uncertainties\s*[=:：]|以下无其他字段|最终正文如上/iu)?.[0];
   if (leakedCommentary) throw new Error(`Release notes 混入生成过程说明“${leakedCommentary}”。`);
+  const draftOnlyPublicationState = markdown.match(/本次发布前需完成以下验证流程|将由\s*(?:Release Workflow|发布流程)|发布流程将在草稿通过后执行|尚未发生/iu)?.[0];
+  if (draftOnlyPublicationState) throw new Error(`Release notes 包含只在草稿阶段成立的表述“${draftOnlyPublicationState}”。`);
+  if (/对\s*DMG\s*进行开发者签名和 Apple 公证/iu.test(markdown)) {
+    throw new Error('Release notes 无条件承诺 Developer ID 签名与 Apple 公证。');
+  }
 }
 
 function validateLocalGateSummary(path, version, headSha) {

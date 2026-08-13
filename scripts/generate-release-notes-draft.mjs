@@ -153,14 +153,14 @@ function buildPrompt(currentEvidencePath, currentEvidence) {
 1. 先完整读取生成证据，再按需只读检查真实 Git diff、相关任务文档、package.json、apps/desktop/electron-builder.yml 和上一版本 Release notes。
 2. 不得读取或复用 ${ignoredReleaseNotes}、docs/release.md 中目标版本的发布结果，也不得以目标版本的升级发布结果文档反推正文。
 3. 用用户能理解的功能和交互变化组织内容，不把 commit subject、文件清单或内部实现名直接当作发布卖点。
-4. 只写证据支持的事实；发布验证章节描述本次公开前必经的门禁与回验，不得伪造当前尚未发生的结果。版本写入、发布门禁、正式制品和公开发布尚未执行，是本生成阶段的预期流程状态，不属于用户向变更事实的不确定性，也不得因此降低 confidence 或写入 uncertainties。
+4. 只写证据支持的事实；发布验证章节使用发布后仍然成立的门禁契约表述，说明公开 Release 只有在固定候选通过哪些检查后才会创建。不得写当前生成阶段、草稿状态、尚未发生或将在稍后执行，也不得把门禁写成已经取得的结果。
 5. 当前公开制品若仍是 ad-hoc、未公证，只能描述为手动升级，不得声称应用内自动安装可用。
 6. 必须使用简体中文，标题必须精确为“# Zeus ${releaseVersion} 更新内容”。
 7. 必须包含“## 如何升级”“## 系统要求与已知限制”“## 发布验证”三个二级标题；前面按真实变化生成一至四个用户向主题。
 8. “如何升级”必须包含 Homebrew 命令 \`brew upgrade --cask imchenway/tap/zeus\` 和版本化 DMG 手动升级方式，并原样包含文件名 \`Zeus-${releaseVersion}-arm64.dmg\`。
 9. 不写营销套话，不虚构性能数字，不使用源码行号或内部任务编号充当用户说明。
-10. 这是草稿，不要写 GitHub Release 已发布、Tap 已同步或用户已经完成升级。
-${automatedRelease ? '11. 本次用于无人值守发布。confidence 只评价正文中的用户向变更事实；这些事实均有明确证据时设为 high 且 uncertainties 返回空数组。版本写入、后续门禁、正式制品和公开发布将在草稿通过后由编排器执行，它们尚未发生是确定的流程阶段，不是 uncertainty；必须在“发布验证”中准确写成后续动作。任何用户向变更事实的疑点都必须放入 uncertainties，禁止用“待确认”“待验证”“TODO”“TBD”等占位语掩盖。已有证据支持的限制影响可以如实使用“可能”等概率表达。' : '11. 发布验证没有同一候选提交证据时，保留“待发布门禁确认”。'}
+10. 这是最终公开正文的候选版本，不要写 GitHub Release 已发布、Tap 已同步或用户已经完成升级，也不要留下只在草稿阶段成立的时态。
+${automatedRelease ? '11. 本次用于无人值守发布。confidence 只评价正文中的用户向变更事实；这些事实均有明确证据时设为 high 且 uncertainties 返回空数组。发布门禁必须先完成才允许创建公开 Release，因此“发布验证”应写成长期有效的公开条件，不写“将执行”“尚未发生”或草稿通过后的步骤。任何用户向变更事实的疑点都必须放入 uncertainties，禁止用“待确认”“待验证”“TODO”“TBD”等占位语掩盖。已有证据支持的限制影响可以如实使用“可能”等概率表达。' : '11. 发布验证没有同一候选提交证据时，保留“待发布门禁确认”。'}
 
 你无法读取本机文件，只能使用下面随请求提供的真实证据。最终只返回一个 JSON 对象，不要使用 Markdown 代码围栏；字段为 markdown、confidence、uncertainties。
 
@@ -283,7 +283,7 @@ async function requestDeepSeekReleaseNotes(prompt) {
 }
 
 function buildDeterministicFallback() {
-  const validationLine = automatedRelease ? '- 公开前将由 Release Workflow 对固定候选提交执行类型检查、正式打包、DMG 完整性和更新清单一致性校验。' : '- 当前为候选草稿，正式结果待发布门禁确认。';
+  const validationLine = automatedRelease ? '- 公开 Release 只在固定候选提交通过类型检查、正式打包、DMG 完整性和更新清单一致性校验后创建。' : '- 当前为候选草稿，正式结果待发布门禁确认。';
   return {
     markdown: [
       `# Zeus ${releaseVersion} 更新内容`,
@@ -306,7 +306,7 @@ function buildDeterministicFallback() {
       '## 发布验证',
       '',
       validationLine,
-      '- 发布完成后将核对 GitHub 资产服务端摘要、更新清单与 Homebrew Cask。',
+      '- 公开资产必须与 GitHub 服务端摘要、更新清单和 Homebrew Cask 保持一致。',
       '',
     ].join('\n'),
     confidence: 'high',
@@ -341,6 +341,13 @@ function validateDraft(markdown) {
   const unresolvedMarker = markdown.match(unresolvedMarkerPattern)?.[0];
   if (automatedRelease && unresolvedMarker) {
     throw new Error(`自动发布内容包含未解决占位“${unresolvedMarker}”，拒绝进入版本写入阶段。`);
+  }
+  const draftOnlyPublicationState = markdown.match(/本次发布前需完成以下验证流程|将由\s*(?:Release Workflow|发布流程)|发布流程将在草稿通过后执行|尚未发生/iu)?.[0];
+  if (automatedRelease && draftOnlyPublicationState) {
+    throw new Error(`自动发布内容包含只在草稿阶段成立的表述“${draftOnlyPublicationState}”，拒绝进入版本写入阶段。`);
+  }
+  if (/对\s*DMG\s*进行开发者签名和 Apple 公证/iu.test(markdown)) {
+    throw new Error('发布内容无条件承诺 Developer ID 签名与 Apple 公证，拒绝进入版本写入阶段。');
   }
   if (markdown.length > 32_000) throw new Error('发布内容超过 32,000 字符，拒绝作为命令产物。');
   if (/docs\/releases\/v[^\s]+\.md|TASK_\d+/u.test(markdown)) {
