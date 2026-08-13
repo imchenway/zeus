@@ -251,16 +251,17 @@ export interface ConnectedSessionWorkspaceProps {
 }
 
 export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps) {
+  const controllerEnabled = props.controllerEnabled !== false;
   // 真实 id 到达时只重建内部 controller，外层工作面和输入 DOM 保持同一 React 身份。
-  const initialCachedState = useMemo(() => props.initialCachedState, [props.controllerEnabled, props.conversation.id]);
-  const initialOptimisticState = useMemo(() => props.initialOptimisticState, [props.controllerEnabled, props.conversation.id]);
+  const initialCachedState = useMemo(() => props.initialCachedState, [props.conversation.id, props.conversation.projectId]);
+  const initialOptimisticState = useMemo(() => props.initialOptimisticState, [props.conversation.id, props.conversation.projectId]);
   const { state, controller } = useSessionController({
     client: props.client,
     projectId: props.conversation.projectId,
     conversationId: props.conversation.id,
     initialCachedState,
     initialOptimisticState,
-    enabled: props.controllerEnabled,
+    enabled: controllerEnabled,
   });
   const [capabilities, setCapabilities] = useState<CodexConversationCapabilities | null>(props.initialCapabilities ?? null);
   useEffect(() => {
@@ -282,22 +283,23 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
     };
   }, [props.client, props.conversation.projectId]);
   useEffect(() => {
-    if (props.controllerEnabled === false) return;
+    if (!controllerEnabled) return;
     props.onStateChange?.(props.conversation.id, state);
-  }, [props.controllerEnabled, props.conversation.id, props.onStateChange, state]);
+  }, [controllerEnabled, props.conversation.id, props.onStateChange, state]);
   useEffect(() => {
-    if (props.controllerEnabled === false || !props.localState) return;
+    if (!controllerEnabled || !props.localState) return;
     // 权威会话已经接管后，创建期 localState 只能作为历史展示，不能再把旧草稿写回真实会话。
     if (controller.getState().snapshot?.id === props.conversation.id) return;
     // 权威快照接管前继续承接用户输入，避免同一工作面切换读写身份时丢失草稿或附件。
     controller.setDraft(props.localState.draft);
     controller.setAttachments(props.localState.attachments);
     controller.setBrowserSubmission(props.localState.browserSubmission);
-  }, [controller, props.controllerEnabled, props.localState?.attachments, props.localState?.browserSubmission, props.localState?.draft]);
+  }, [controller, controllerEnabled, props.localState?.attachments, props.localState?.browserSubmission, props.localState?.draft]);
   const displayedConversation = props.stableConversationId ? { ...props.conversation, id: props.stableConversationId } : props.conversation;
-  const controllerReady = props.controllerEnabled !== false && state.transportState === 'ready' && state.snapshot?.id === props.conversation.id;
-  const controllerFailed = props.controllerEnabled !== false && state.transportState === 'failed';
-  const controllerVisible = controllerReady || (controllerFailed && !props.creationStatus);
+  const controllerHasSnapshot = controllerEnabled && state.snapshot?.id === props.conversation.id;
+  const controllerFailed = controllerEnabled && state.transportState === 'failed';
+  // 已经取得的完整正文始终优先于首发本地投影；后台校准只更新状态，不能让消息区退回第一条消息。
+  const controllerVisible = controllerHasSnapshot || (controllerFailed && !props.creationStatus);
   const controllerInteractive = controllerVisible || props.transitionDock;
   const displayedState = props.transitionDock ? state : controllerVisible ? state : (props.localState ?? state);
   const displayedCreationStatus: SessionCreationStatus | undefined =

@@ -278,11 +278,15 @@ function hydrateSnapshot(state: NativeSessionState, snapshot: NativeConversation
   const items: Record<string, NativeSessionItemBuffer> = {};
   const orderedItems: Array<{ key: string; timestamp: string; stableIndex: number }> = [];
   const threadId = snapshot.providerThreadId ?? 'unbound-thread';
-  const previousOptimisticStableIndexes = new Map<string, number>();
+  const previousUserItemKeys = new Map<string, string>();
+  const previousUserStableIndexes = new Map<string, number>();
   state.itemOrder.forEach((key, index) => {
     const item = state.items[key];
-    if (!item?.optimistic || item.conversationId !== snapshot.id) return;
-    for (const clientId of userMessageClientIds(item)) previousOptimisticStableIndexes.set(clientId, index);
+    if (!item || item.conversationId !== snapshot.id || !isUserMessageItem(item)) return;
+    for (const clientId of userMessageClientIds(item)) {
+      previousUserItemKeys.set(clientId, key);
+      previousUserStableIndexes.set(clientId, index);
+    }
   });
   let stableIndex = 0;
   const providerItemKeyById = new Map<string, string>();
@@ -290,7 +294,7 @@ function hydrateSnapshot(state: NativeSessionState, snapshot: NativeConversation
   const durableClientIds = new Set<string>();
   const durableUserClientIds = new Set<string>();
   const stableIndexForClient = (clientId: string | null): number => {
-    const previousIndex = clientId ? previousOptimisticStableIndexes.get(clientId) : undefined;
+    const previousIndex = clientId ? previousUserStableIndexes.get(clientId) : undefined;
     if (previousIndex !== undefined) {
       stableIndex = Math.max(stableIndex, previousIndex + 1);
       return previousIndex;
@@ -301,10 +305,11 @@ function hydrateSnapshot(state: NativeSessionState, snapshot: NativeConversation
   for (const item of snapshot.items) {
     const turnId = providerTurnIdByLocalId.get(item.turnId) ?? item.turnId;
     const itemId = item.providerItemId ?? item.id;
-    const key = nativeSessionItemKey(snapshot.id, threadId, turnId, itemId);
     const timelineAt = item.startedAt ?? item.updatedAt;
     const itemClientId = isUserMessageType(item.type) ? (stringValue(item.payload.clientId) ?? stringValue(item.payload.clientUserMessageId)) : null;
     if (itemClientId && providerUserItemKeyByClientId.has(itemClientId)) continue;
+    // 同一条用户消息从本地发送态交接为 Provider item 时沿用可见身份，避免气泡被卸载后重建。
+    const key = (itemClientId ? previousUserItemKeys.get(itemClientId) : undefined) ?? nativeSessionItemKey(snapshot.id, threadId, turnId, itemId);
     items[key] = {
       key,
       conversationId: snapshot.id,
@@ -361,7 +366,7 @@ function hydrateSnapshot(state: NativeSessionState, snapshot: NativeConversation
       }
     }
     const turnId = `message:${message.id}`;
-    const key = nativeSessionItemKey(snapshot.id, threadId, turnId, message.id);
+    const key = (clientUserMessageId ? previousUserItemKeys.get(clientUserMessageId) : undefined) ?? nativeSessionItemKey(snapshot.id, threadId, turnId, message.id);
     items[key] = {
       key,
       conversationId: snapshot.id,
@@ -391,7 +396,7 @@ function hydrateSnapshot(state: NativeSessionState, snapshot: NativeConversation
     const pendingStatus = submission.status === 'dispatching' || submission.status === 'active' || (submission.status === 'paused' && submission.pausedReason === 'recovery_required');
     if (!pendingStatus || !clientUserMessageId || !providerTurnId || durableClientIds.has(clientUserMessageId)) continue;
     const itemId = `${submission.delivery === 'steer_now' ? 'steering' : 'submission'}:${submission.id}`;
-    const key = nativeSessionItemKey(snapshot.id, threadId, providerTurnId, itemId);
+    const key = previousUserItemKeys.get(clientUserMessageId) ?? nativeSessionItemKey(snapshot.id, threadId, providerTurnId, itemId);
     items[key] = submissionUserMessageItem(snapshot.id, threadId, submission, key, itemId);
     orderedItems.push({ key, timestamp: submission.createdAt ?? snapshot.updatedAt, stableIndex: stableIndexForClient(clientUserMessageId) });
     durableClientIds.add(clientUserMessageId);
@@ -415,7 +420,9 @@ function hydrateSnapshot(state: NativeSessionState, snapshot: NativeConversation
     terminalTurnIds[turn.providerTurnId] = terminalStatus(turn.status);
   }
   const pendingRequests = normalizePendingRequestsWithMaps(snapshot.requests, providerTurnIdByLocalId, providerItemIdByLocalId);
-  const itemOrder = orderedItems.sort((left, right) => left.timestamp.localeCompare(right.timestamp) || left.stableIndex - right.stableIndex).map((entry) => entry.key);
+  const projectedItemOrder = orderedItems.sort((left, right) => left.timestamp.localeCompare(right.timestamp) || left.stableIndex - right.stableIndex).map((entry) => entry.key);
+  const stableItems = reuseEquivalentSessionItems(state.items, items);
+  const itemOrder = sameStringArray(state.itemOrder, projectedItemOrder) ? state.itemOrder : projectedItemOrder;
   const activeTurnChanged = Boolean(activeTurnId && state.activeTurnId !== activeTurnId);
   const requestResolvedBySnapshot = Boolean(
     activeTurnId && pendingRequests.some((request) => request.turnId === activeTurnId && request.status === 'resolved' && state.pendingRequests.some((previous) => previous.id === request.id && previous.status !== 'resolved')),
@@ -436,7 +443,7 @@ function hydrateSnapshot(state: NativeSessionState, snapshot: NativeConversation
     turnsByProviderId,
     changeSetsByProviderId,
     terminalTurnIds,
-    items,
+    items: stableItems,
     itemOrder,
     queue: snapshot.queue,
     pendingRequests,
@@ -446,11 +453,62 @@ function hydrateSnapshot(state: NativeSessionState, snapshot: NativeConversation
     rateLimits: snapshot.rateLimits ?? null,
     mcpStartup: snapshot.mcpStartup ?? null,
     conversationState: requestConversationState(pendingRequests) ?? conversationStateFromSnapshot(snapshot),
-    transcriptRevision: state.transcriptRevision + 1,
+    transcriptRevision: state.transcriptRevision + (stableItems === state.items && itemOrder === state.itemOrder ? 0 : 1),
     feedbackEpoch,
     visibleFeedbackEpoch: hasVisibleActiveFeedback ? feedbackEpoch : Math.min(state.visibleFeedbackEpoch, feedbackEpoch),
     error: null,
   };
+}
+
+/** 权威快照内容未变化时复用历史条目，避免后台校准重新解析整段 Markdown。 */
+function reuseEquivalentSessionItems(previous: Record<string, NativeSessionItemBuffer>, projected: Record<string, NativeSessionItemBuffer>): Record<string, NativeSessionItemBuffer> {
+  const projectedKeys = Object.keys(projected);
+  const previousKeys = Object.keys(previous);
+  let reusedCount = 0;
+  const stable: Record<string, NativeSessionItemBuffer> = {};
+  for (const key of projectedKeys) {
+    const candidate = projected[key]!;
+    const existing = previous[key];
+    if (existing && equivalentSessionItem(existing, candidate)) {
+      stable[key] = existing;
+      reusedCount += 1;
+    } else {
+      stable[key] = candidate;
+    }
+  }
+  return reusedCount === projectedKeys.length && projectedKeys.length === previousKeys.length ? previous : stable;
+}
+
+function equivalentSessionItem(left: NativeSessionItemBuffer, right: NativeSessionItemBuffer): boolean {
+  return (
+    left.key === right.key &&
+    left.conversationId === right.conversationId &&
+    left.threadId === right.threadId &&
+    left.turnId === right.turnId &&
+    left.itemId === right.itemId &&
+    left.providerItemId === right.providerItemId &&
+    left.localItemId === right.localItemId &&
+    left.type === right.type &&
+    left.status === right.status &&
+    left.phase === right.phase &&
+    left.text === right.text &&
+    left.optimistic === right.optimistic &&
+    left.clientUserMessageId === right.clientUserMessageId &&
+    left.durableClientUserMessageId === right.durableClientUserMessageId &&
+    left.timelineAt === right.timelineAt &&
+    left.updatedAt === right.updatedAt &&
+    sameSerializableValue(left.payload, right.payload) &&
+    sameSerializableValue(left.resources, right.resources)
+  );
+}
+
+function sameSerializableValue(left: unknown, right: unknown): boolean {
+  if (left === right) return true;
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function sameStringArray(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
 function reduceNativeEvent(state: NativeSessionState, event: NativeConversationEvent, suppressRequestAuthority = false): NativeSessionState {
@@ -702,21 +760,24 @@ function reduceItemEvent(state: NativeSessionState, event: NativeConversationEve
   const itemId = stringValue(payload.itemId);
   if (!conversationId || !threadId || !turnId || !itemId) return state;
 
-  const key = nativeSessionItemKey(conversationId, threadId, turnId, itemId);
-  const previous = state.items[key];
+  const providerKey = nativeSessionItemKey(conversationId, threadId, turnId, itemId);
+  const providerItem = state.items[providerKey];
   const completed = event.type === 'conversation.item.completed';
-  if (previous && isTerminalItemStatus(previous.status) && !completed) return state;
   const incomingText = stringValue(payload.textContent) ?? '';
   const incomingType = stringValue(payload.itemType);
   const incomingPayload = isRecord(payload.itemPayload) ? payload.itemPayload : null;
   const incomingResources = Array.isArray(payload.itemResources) ? payload.itemResources : null;
-  const effectiveType = completed ? (incomingType ?? previous?.type ?? 'providerItem') : (previous?.type ?? incomingType ?? 'providerItem');
-  const providerClientId = isUserMessageType(effectiveType) && incomingPayload ? stringValue(incomingPayload.clientId) : null;
+  const effectiveType = completed ? (incomingType ?? providerItem?.type ?? 'providerItem') : (providerItem?.type ?? incomingType ?? 'providerItem');
+  const providerClientId = isUserMessageType(effectiveType) && incomingPayload ? (stringValue(incomingPayload.clientId) ?? stringValue(incomingPayload.clientUserMessageId)) : null;
   const matchedUserEntry = isUserMessageType(effectiveType)
     ? Object.entries(state.items).find(([, item]) => isUserMessageItem(item) && ((providerClientId !== null && userMessageClientIds(item).includes(providerClientId)) || (!item.optimistic && item.providerItemId === itemId)))
     : undefined;
   const optimisticEntry = matchedUserEntry?.[1].optimistic ? matchedUserEntry : undefined;
   const matchedUserItem = matchedUserEntry?.[1];
+  const matchedKey = matchedUserEntry?.[0];
+  const key = matchedKey ?? providerKey;
+  const previous = state.items[key] ?? providerItem;
+  if (previous && isTerminalItemStatus(previous.status) && !completed) return state;
   const optimisticText = optimisticEntry?.[1].text ?? '';
   const matchedUserText = matchedUserItem?.text ?? '';
   const resolvedClientId = matchedUserItem?.clientUserMessageId ?? matchedUserItem?.durableClientUserMessageId ?? providerClientId;
@@ -740,7 +801,6 @@ function reduceItemEvent(state: NativeSessionState, event: NativeConversationEve
     updatedAt: event.createdAt,
   };
   const isNew = previous === undefined;
-  const matchedKey = matchedUserEntry?.[0];
   const items = { ...state.items, [key]: next };
   if (matchedKey && matchedKey !== key) delete items[matchedKey];
   const itemOrder = matchedKey && matchedKey !== key ? [...new Set(state.itemOrder.map((entry) => (entry === matchedKey ? key : entry)))] : isNew ? [...state.itemOrder, key] : state.itemOrder;
