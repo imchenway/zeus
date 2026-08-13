@@ -602,7 +602,7 @@ export function TaskModelPushModal(props: {
   const authenticated = props.status === 'authenticated';
   const busy = authenticating || authenticated || props.status === 'submitting' || inputResources.processing;
   const selectedModel = resolveModelCapability(props.capabilities?.models, props.form.model);
-  const codexLoginRequired = selectedModel?.agentKind !== 'pi' && props.capabilities?.codexAccount.requiresOpenaiAuth === true && !props.capabilities.codexAccount.signedIn;
+  const codexLoginRequired = selectedModel?.agentKind !== 'pi' && selectedModel?.sourceId === 'codex' && props.capabilities?.codexAccount.requiresOpenaiAuth === true && !props.capabilities.codexAccount.signedIn;
   const repositories = props.capabilities?.repositories ?? [];
   const selectedCommonSourceKey = resolveSelectedTaskPushCommonSourceKey(repositories, props.form.repositorySelections, commonSources);
   const selectedCommonSource = commonSources.find((source) => source.key === selectedCommonSourceKey);

@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { realpathSync, statSync } from 'node:fs';
 import { dirname, extname, isAbsolute, relative, resolve } from 'node:path';
-import type { CodexAppServerEvent, CodexAppServerManager, CodexCommandApprovalDecision, CodexSandboxPolicy, CodexServerRequestResponse, CodexThreadSnapshot, CodexTurnSnapshot } from '@zeus/ai-runtime';
+import type { CodexAppServerEvent, CodexAppServerManager, CodexCommandApprovalDecision, CodexResponsesRuntime, CodexSandboxPolicy, CodexServerRequestResponse, CodexThreadSnapshot, CodexTurnSnapshot } from '@zeus/ai-runtime';
 import { buildTaskPushInputParts, calculateCacheHitRate, type NativeTokenUsageSnapshot, type TaskPushMessageLayout, type TokenUsageBreakdown } from '@zeus/shared';
 import {
   type CodexMcpServerStartupState,
@@ -67,6 +67,7 @@ interface ConversationDispatchContext {
   taskId: string | null;
   executionWorkspaceMode?: 'direct' | 'worktree';
   model: string;
+  modelSourceId: string | null;
   effort?: string;
   serviceTier?: string | null;
   allowCodeChanges: boolean;
@@ -140,6 +141,7 @@ export interface CreateCodexNativeConversationCoordinatorOptions {
     conversationId: string;
     mode: 'reconcile' | 'submit' | 'dispatch' | 'recover_queue' | 'restore';
   }) => Promise<{ projectLocalPath: string; writableRoots?: string[]; executionWorkspaceMode?: 'direct' | 'worktree' } | null>;
+  resolveResponsesRuntime?: (input: { modelSourceId: string | null; model: string }) => Promise<CodexResponsesRuntime | null>;
 }
 
 export interface CodexNativeConversationRuntime extends CodexNativeConversationCoordinator {
@@ -447,6 +449,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       taskId: typeof context.taskId === 'string' ? context.taskId : null,
       ...(context.executionWorkspaceMode === 'direct' || context.executionWorkspaceMode === 'worktree' ? { executionWorkspaceMode: context.executionWorkspaceMode } : {}),
       model: requireString(context.model, 'submission model'),
+      modelSourceId: typeof context.modelSourceId === 'string' ? context.modelSourceId : (options.conversations.getById(submission.conversationId)?.modelSourceId ?? null),
       ...(typeof context.effort === 'string' ? { effort: context.effort } : {}),
       ...(Object.prototype.hasOwnProperty.call(context, 'serviceTier') && (context.serviceTier === null || typeof context.serviceTier === 'string') ? { serviceTier: context.serviceTier } : {}),
       allowCodeChanges: context.allowCodeChanges === true,
@@ -716,7 +719,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
 
   async function startTaskConversation(input: StartTaskConversationInput): Promise<NativeAcceptedOperation> {
     assertOpen();
-    await assertCodexAccountReady();
+    await assertCodexAccountReady(input.modelSourceId ?? null, input.model);
     const additionalContext = resolveLegacyReference(input);
     const existingConversation = input.conversationId ? options.conversations.getById(input.conversationId) : undefined;
     const permissionMode = existingConversation?.permissionMode ?? input.permissionMode ?? (input.allowCodeChanges ? 'auto' : 'read-only');
@@ -726,6 +729,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       taskId: input.taskId,
       ...(input.executionWorkspaceMode ? { executionWorkspaceMode: input.executionWorkspaceMode } : {}),
       model: input.model,
+      modelSourceId: input.modelSourceId ?? null,
       ...(input.effort ? { effort: input.effort } : {}),
       ...(Object.prototype.hasOwnProperty.call(input, 'serviceTier') ? { serviceTier: input.serviceTier } : {}),
       allowCodeChanges: input.allowCodeChanges,
@@ -764,6 +768,8 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         transportKind: 'codex_native',
         providerId: 'codex',
         providerModel: input.model,
+        modelSourceId: input.modelSourceId ?? undefined,
+        modelId: input.model,
         providerState: 'unbound',
         legacySourceConversationId: input.legacyReference?.conversationId,
         permissionMode,
@@ -787,7 +793,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
 
   async function startProjectConversation(input: StartProjectConversationInput): Promise<NativeAcceptedOperation> {
     assertOpen();
-    await assertCodexAccountReady();
+    await assertCodexAccountReady(input.modelSourceId ?? null, input.model);
     const title = projectConversationTitle(input.prompt, input.attachments);
     const existingConversation = input.conversationId ? options.conversations.getById(input.conversationId) : undefined;
     const permissionMode = existingConversation?.permissionMode ?? input.permissionMode ?? 'auto';
@@ -796,6 +802,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       projectLocalPath: resolve(input.projectLocalPath),
       taskId: null,
       model: input.model,
+      modelSourceId: input.modelSourceId ?? null,
       ...(input.effort ? { effort: input.effort } : {}),
       ...(Object.prototype.hasOwnProperty.call(input, 'serviceTier') ? { serviceTier: input.serviceTier } : {}),
       allowCodeChanges: permissionMode !== 'read-only',
@@ -818,6 +825,8 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         transportKind: 'codex_native',
         providerId: 'codex',
         providerModel: input.model,
+        modelSourceId: input.modelSourceId ?? undefined,
+        modelId: input.model,
         providerState: 'unbound',
         permissionMode,
         collaborationMode: context.workMode,
@@ -845,20 +854,26 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   }
 
   /** 创建任何产品会话前复验账号，避免先持久化一条必然失败的占位会话。 */
-  async function assertCodexAccountReady(): Promise<void> {
+  async function assertCodexAccountReady(modelSourceId: string | null, model: string): Promise<void> {
+    if (options.resolveResponsesRuntime && (await options.resolveResponsesRuntime({ modelSourceId, model }))) return;
     const account = await options.manager.readAccount({ refreshToken: true });
     if (!account.requiresOpenaiAuth || account.signedIn) return;
     throw coordinatorError('ZEUS_CODEX_LOGIN_REQUIRED', 'Zeus 专属 Codex 尚未登录。请先完成登录，再创建会话。');
   }
 
+  async function responsesRuntimeFor(context: Pick<ConversationDispatchContext, 'modelSourceId' | 'model'>): Promise<CodexResponsesRuntime | null> {
+    return options.resolveResponsesRuntime?.({ modelSourceId: context.modelSourceId, model: context.model }) ?? null;
+  }
+
   async function startEphemeralConversation(input: StartNativeEphemeralConversationInput): Promise<NativeAcceptedOperation> {
     assertOpen();
-    await assertCodexAccountReady();
+    await assertCodexAccountReady(null, input.model);
     const context: ConversationDispatchContext = {
       projectId: input.projectId,
       projectLocalPath: resolve(input.projectLocalPath),
       taskId: null,
       model: input.model,
+      modelSourceId: null,
       ...(input.effort ? { effort: input.effort } : {}),
       ...(Object.prototype.hasOwnProperty.call(input, 'serviceTier') ? { serviceTier: input.serviceTier } : {}),
       allowCodeChanges: false,
@@ -951,6 +966,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       permissionMode: input.permissionMode ?? previousContext.permissionMode,
       workMode: input.collaborationMode ?? conversation.collaborationMode,
       ...(input.model ? { model: input.model } : {}),
+      ...(Object.prototype.hasOwnProperty.call(input, 'modelSourceId') ? { modelSourceId: input.modelSourceId ?? null } : {}),
       ...(input.effort ? { effort: input.effort } : {}),
       ...(Object.prototype.hasOwnProperty.call(input, 'serviceTier') ? { serviceTier: input.serviceTier } : {}),
     };
@@ -1182,7 +1198,8 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       return conversation;
     }
     const providerThreadId = requireString(conversation.providerThreadId, 'provider thread id');
-    const resumed = await options.manager.resumeThread({ threadId: providerThreadId, cwd: context.projectLocalPath });
+    const responsesRuntime = await responsesRuntimeFor(context);
+    const resumed = await options.manager.resumeThread({ threadId: providerThreadId, cwd: context.projectLocalPath, ...(responsesRuntime ? { responsesRuntime } : {}) });
     persistThreadProviderSettings(conversation.id, resumed);
     await enqueueProviderTurnReconciliation(requireConversation(conversation.id));
     const snapshot = await options.manager.readThread({ threadId: providerThreadId });
@@ -1301,6 +1318,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       await persist();
       if (!conversation.providerThreadId) {
         const profile = providerPermissionProfile(context);
+        const responsesRuntime = await responsesRuntimeFor(context);
         const thread = await options.manager.startThread({
           model: context.model,
           ...(Object.prototype.hasOwnProperty.call(context, 'serviceTier') ? { serviceTier: context.serviceTier } : {}),
@@ -1311,6 +1329,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
           developerInstructions: developerInstructionsFor(context, options.browserAutomation !== undefined),
           ephemeral: context.ephemeral,
           ...(options.browserAutomation ? { dynamicTools: zeusBrowserDynamicTools() } : {}),
+          ...(responsesRuntime ? { responsesRuntime } : {}),
         });
         conversation = options.conversations.bindProvider(conversation.id, {
           providerId: 'codex',
@@ -1941,8 +1960,16 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     const context = contexts.get(conversation.id) ?? contextFromConversation(conversation);
     contexts.set(conversation.id, context);
     try {
+      const responsesRuntime = await responsesRuntimeFor(context);
+      if (responsesRuntime) {
+        await options.manager.ensureReady({
+          commandPath: commandPath(),
+          ...(options.externalAgentHome ? { externalAgentHome: options.externalAgentHome } : {}),
+          providerEnvironment: responsesRuntime.environment,
+        });
+      }
       await options.manager.unarchiveThread({ threadId: providerThreadId });
-      const resumed = await options.manager.resumeThread({ threadId: providerThreadId, cwd: context.projectLocalPath });
+      const resumed = await options.manager.resumeThread({ threadId: providerThreadId, cwd: context.projectLocalPath, ...(responsesRuntime ? { responsesRuntime } : {}) });
       persistThreadProviderSettings(conversation.id, resumed);
       await enqueueProviderTurnReconciliation(requireConversation(conversation.id));
       const snapshot = await options.manager.readThread({ threadId: providerThreadId });
@@ -2554,17 +2581,23 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   async function ensureGenerationReconciled(force = false): Promise<void> {
     const capabilities = await options.manager.ensureReady({ commandPath: commandPath(), ...(options.externalAgentHome ? { externalAgentHome: options.externalAgentHome } : {}) });
     if (!force && reconciledGenerationId === capabilities.generationId) return;
-    const targetGenerationId = capabilities.generationId;
+    const initialGenerationId = capabilities.generationId;
     const reconcile = generationReconcileChain
       .catch(() => undefined)
       .then(async () => {
-        if (!force && reconciledGenerationId === targetGenerationId) return;
-        await reconcileBoundConversations(targetGenerationId);
-        const current = options.manager.getState();
-        if (current.type !== 'ready' || current.generationId !== targetGenerationId) {
-          throw coordinatorError('ZEUS_CODEX_GENERATION_CHANGED_DURING_RECOVERY', 'Codex app-server generation changed during native conversation recovery.');
+        if (!force && reconciledGenerationId === initialGenerationId) return;
+        let targetGenerationId = initialGenerationId;
+        for (let pass = 0; pass < 3; pass += 1) {
+          await reconcileBoundConversations(targetGenerationId);
+          const current = options.manager.getState();
+          if (current.type !== 'ready') throw coordinatorError('ZEUS_CODEX_GENERATION_CHANGED_DURING_RECOVERY', 'Codex app-server generation changed during native conversation recovery.');
+          if (current.generationId === targetGenerationId) {
+            reconciledGenerationId = targetGenerationId;
+            return;
+          }
+          targetGenerationId = current.generationId;
         }
-        reconciledGenerationId = targetGenerationId;
+        throw coordinatorError('ZEUS_CODEX_GENERATION_CHANGED_DURING_RECOVERY', 'Codex app-server generation did not stabilize during native conversation recovery.');
       });
     generationReconcileChain = reconcile.catch(() => undefined);
     await reconcile;
@@ -2582,7 +2615,14 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         const contextual = options.submissions.listByConversation(conversation.id).find((submission) => isRecord(parseJsonRecord(submission.inputJson).context));
         if (contextual && !contexts.has(conversation.id)) contexts.set(conversation.id, contextFromSubmission(contextual));
         const providerThreadId = requireString(conversation.providerThreadId, 'provider thread id');
-        const resumed = await options.manager.resumeThread({ threadId: providerThreadId, ...(contexts.get(conversation.id)?.projectLocalPath ? { cwd: contexts.get(conversation.id)!.projectLocalPath } : {}) });
+        const context = contexts.get(conversation.id) ?? contextFromConversation(conversation);
+        contexts.set(conversation.id, context);
+        const responsesRuntime = await responsesRuntimeFor(context);
+        const resumed = await options.manager.resumeThread({
+          threadId: providerThreadId,
+          ...(context.projectLocalPath ? { cwd: context.projectLocalPath } : {}),
+          ...(responsesRuntime ? { responsesRuntime } : {}),
+        });
         persistThreadProviderSettings(conversation.id, resumed);
         const authoritativeGenerationId = options.manager.generationForThread(providerThreadId) ?? generationId;
         await enqueueProviderTurnReconciliation(requireConversation(conversation.id));

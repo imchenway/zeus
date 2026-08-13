@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import {
   buildModelsUrl,
   createTemplateConfiguredModelDefinition,
-  listSelectablePiModels,
+  listSelectableConnectionModels,
   mergeDiscoveredModels,
   modelConnectionSecretAccount,
   modelConnectionTemplates,
@@ -15,7 +15,7 @@ import {
   type ModelConnectionTemplateId,
   type ProjectModelSelection,
   type SaveModelConnectionInput,
-  type SelectablePiModel,
+  type SelectableConnectionModel,
 } from '@zeus/ai-runtime';
 import type { SecretStore } from '@zeus/security-core';
 import type { SettingRepository } from '@zeus/storage';
@@ -49,7 +49,7 @@ export interface ModelConnectionService {
   clearApiKey(id: string): Promise<ModelConnectionRecord>;
   refreshModels(id: string): Promise<ModelCatalogRefreshResult>;
   diagnose(id: string): Promise<ModelConnectionDiagnostic>;
-  listSelectableModels(): Promise<SelectablePiModel[]>;
+  listSelectableModels(): Promise<SelectableConnectionModel[]>;
   getProjectSelection(projectId: string): Promise<ProjectModelSelection>;
   saveProjectSelection(projectId: string, value: unknown): Promise<ProjectModelSelection>;
   loadRuntimeConnections(): Promise<Array<ModelConnectionRecord & { apiKey?: string }>>;
@@ -196,7 +196,7 @@ export function createModelConnectionService(options: { settings: SettingReposit
       }
     },
     async listSelectableModels() {
-      return listSelectablePiModels(await hydrate());
+      return listSelectableConnectionModels(await hydrate());
     },
     async getProjectSelection(projectId) {
       const models = await this.listSelectableModels();

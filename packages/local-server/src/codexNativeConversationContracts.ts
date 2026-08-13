@@ -93,6 +93,7 @@ export interface StartTaskConversationInput {
   prompt: string;
   displayText?: string;
   model: string;
+  modelSourceId?: string | null;
   effort?: string;
   serviceTier?: string | null;
   allowCodeChanges: boolean;
@@ -125,6 +126,7 @@ export interface StartProjectConversationInput {
   projectLocalPath: string;
   prompt: string;
   model: string;
+  modelSourceId?: string | null;
   effort?: string;
   serviceTier?: string | null;
   permissionMode?: ConversationPermissionMode;
@@ -143,6 +145,7 @@ export interface SubmitNativeMessageInput {
   attachments?: NativeConversationAttachmentInput[];
   browserComments?: Record<string, unknown>[];
   model?: string;
+  modelSourceId?: string | null;
   effort?: string;
   serviceTier?: string | null;
   permissionMode?: ConversationPermissionMode;

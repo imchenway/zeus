@@ -144,6 +144,20 @@ export interface CodexDynamicToolNamespaceSpec {
 
 export type CodexDynamicToolSpec = CodexDynamicToolFunctionSpec | CodexDynamicToolNamespaceSpec;
 
+export interface CodexResponsesModelProvider {
+  id: string;
+  name: string;
+  baseUrl: string;
+  envKey: string;
+  modelContextWindow: number;
+}
+
+export interface CodexResponsesRuntime {
+  provider: CodexResponsesModelProvider;
+  /** 仅注入 app-server 子进程，不进入 thread config、日志或持久化记录。 */
+  environment: Record<string, string>;
+}
+
 export interface CodexThreadStartInput {
   model: string;
   serviceTier?: string | null;
@@ -152,10 +166,17 @@ export interface CodexThreadStartInput {
   approvalsReviewer?: string;
   sandbox: CodexSandboxPolicy;
   config?: never;
+  responsesRuntime?: CodexResponsesRuntime;
   baseInstructions?: string;
   developerInstructions?: string;
   ephemeral?: boolean;
   dynamicTools?: CodexDynamicToolSpec[];
+}
+
+export interface CodexThreadResumeInput {
+  threadId: string;
+  cwd?: string;
+  responsesRuntime?: CodexResponsesRuntime;
 }
 
 export interface CodexThreadSnapshot {
@@ -302,14 +323,14 @@ export interface CodexRemoteControlClientsPage {
 }
 
 export interface CodexAppServerManager {
-  ensureReady(input: { commandPath: string; externalAgentHome?: string; remoteControl?: boolean }): Promise<CodexCapabilitiesSnapshot>;
+  ensureReady(input: { commandPath: string; externalAgentHome?: string; remoteControl?: boolean; providerEnvironment?: Record<string, string> }): Promise<CodexCapabilitiesSnapshot>;
   readAccount(input?: { refreshToken?: boolean }): Promise<CodexAccountSnapshot>;
   readAccountRateLimits(): Promise<CodexAccountRateLimitsSnapshot>;
   readAccountUsage(): Promise<CodexAccountUsageSnapshot>;
   startChatGptLogin(): Promise<CodexChatGptLogin>;
   cancelChatGptLogin(input: { loginId: string }): Promise<void>;
   startThread(input: CodexThreadStartInput): Promise<CodexThreadSnapshot>;
-  resumeThread(input: { threadId: string; cwd?: string }): Promise<CodexThreadSnapshot>;
+  resumeThread(input: CodexThreadResumeInput): Promise<CodexThreadSnapshot>;
   archiveThread(input: { threadId: string }): Promise<void>;
   unarchiveThread(input: { threadId: string }): Promise<CodexThreadSnapshot>;
   readThread(input: { threadId: string }): Promise<CodexThreadSnapshot>;
@@ -405,11 +426,13 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
   const pendingInterrupts = new Set<string>();
   const startedTurns = new Set<string>();
   const threadModels = new Map<string, string>();
+  const threadResponsesProviders = new Map<string, CodexResponsesModelProvider>();
   let state: CodexTransportState = { type: 'idle' };
   let child: CodexAppServerProcess | null = null;
   let commandPath: string | null = null;
   let externalAgentHome: string | null = null;
   let remoteControlTransport = false;
+  let providerEnvironment: Record<string, string> = {};
   let readyPromise: Promise<CodexCapabilitiesSnapshot> | null = null;
   let restartTimer: ReturnType<typeof setTimeout> | null = null;
   let rejectScheduledRestart: ((error: Error) => void) | null = null;
@@ -440,6 +463,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
       ...process.env,
       PATH: expandCliSearchPath(),
       ...(externalAgentHome === null ? {} : { ZEUS_CODEX_EXTERNAL_AGENT_HOME: externalAgentHome }),
+      ...providerEnvironment,
     };
     const spawned = remoteControlTransport ? spawnRemoteControlCodexAppServer(command, { env }) : spawn(command, ['app-server', ...(options.appServerFlags ?? []), '--listen', 'stdio://'], { env });
     trackProcessExit(spawned);
@@ -759,9 +783,14 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
       if (commandPath !== null && remoteControlTransport !== requestedRemoteControlTransport) {
         return Promise.reject(managerError('ZEUS_CODEX_REMOTE_CONTROL_TRANSPORT_CHANGED', 'Codex remote-control transport cannot change while the manager is active.'));
       }
+      const requestedProviderEnvironment = input.providerEnvironment === undefined ? providerEnvironment : normalizeProviderEnvironment(input.providerEnvironment);
+      if (commandPath !== null && !sameStringRecord(providerEnvironment, requestedProviderEnvironment)) {
+        return Promise.reject(managerError('ZEUS_CODEX_PROVIDER_ENVIRONMENT_CHANGED', 'Codex provider environment cannot change while the manager is active.'));
+      }
       commandPath = input.commandPath;
       externalAgentHome = requestedExternalAgentHome;
       remoteControlTransport = requestedRemoteControlTransport;
+      providerEnvironment = requestedProviderEnvironment;
       if (remoteControlTransport) remoteControlEnabled = true;
       if (state.type === 'ready') return Promise.resolve(state.capabilities);
       if (readyPromise) return readyPromise;
@@ -805,8 +834,14 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
     },
     async startThread(input) {
       const capabilities = await awaitCapabilities();
-      const model = requireModel(capabilities, input.model);
-      validateServiceTier(model, input.serviceTier);
+      const responsesProvider = input.responsesRuntime ? normalizeResponsesProvider(input.responsesRuntime.provider) : null;
+      if (responsesProvider) {
+        if (!providerEnvironment[responsesProvider.envKey]) throw managerError('ZEUS_CODEX_PROVIDER_CREDENTIAL_UNAVAILABLE', 'Responses 自定义 Provider 的进程凭据不可用。');
+        if (input.serviceTier !== undefined && input.serviceTier !== null) throw managerError('ZEUS_CODEX_SERVICE_TIER_UNAVAILABLE', 'Responses 自定义 Provider 不支持 Codex service tier。');
+      } else {
+        const model = requireModel(capabilities, input.model);
+        validateServiceTier(model, input.serviceTier);
+      }
       if (input.config !== undefined) throw managerError('ZEUS_CODEX_CONFIG_UNAVAILABLE', 'Raw Codex thread config overrides are not supported.');
       const sandbox = normalizeThreadSandbox(input.sandbox);
       const response = asRecord(
@@ -815,6 +850,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
           'thread/start',
           compactObject({
             model: input.model,
+            modelProvider: responsesProvider?.id,
             serviceTier: input.serviceTier,
             cwd: input.cwd,
             approvalPolicy: input.approvalPolicy,
@@ -825,26 +861,42 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
             developerInstructions: input.developerInstructions,
             ephemeral: input.ephemeral,
             dynamicTools: input.dynamicTools,
+            config: responsesProvider ? responsesProviderConfig(responsesProvider) : undefined,
           }),
         ),
       );
       const thread = parseThread(response.thread);
       const responseModel = typeof response.model === 'string' ? response.model : input.model;
       threadModels.set(thread.id, responseModel);
+      if (responsesProvider) threadResponsesProviders.set(thread.id, responsesProvider);
       return attachThreadProviderSettings(thread, capabilities.generationId, response, responseModel);
     },
     async resumeThread(input) {
       const capabilities = await awaitCapabilities();
-      const response = asRecord(await rpc(capabilities.generationId, 'thread/resume', compactObject({ threadId: input.threadId, cwd: input.cwd })));
+      const responsesProvider = input.responsesRuntime ? normalizeResponsesProvider(input.responsesRuntime.provider) : threadResponsesProviders.get(input.threadId);
+      const response = asRecord(
+        await rpc(
+          capabilities.generationId,
+          'thread/resume',
+          compactObject({
+            threadId: input.threadId,
+            cwd: input.cwd,
+            modelProvider: responsesProvider?.id,
+            config: responsesProvider ? responsesProviderConfig(responsesProvider) : undefined,
+          }),
+        ),
+      );
       const thread = parseThread(response.thread);
       const responseModel = typeof response.model === 'string' ? response.model : threadModels.get(thread.id);
       if (responseModel) threadModels.set(thread.id, responseModel);
+      if (responsesProvider) threadResponsesProviders.set(thread.id, responsesProvider);
       return responseModel ? attachThreadProviderSettings(thread, capabilities.generationId, response, responseModel) : thread;
     },
     async archiveThread(input) {
       const capabilities = await awaitCapabilities();
       await rpc(capabilities.generationId, 'thread/archive', { threadId: input.threadId });
       threadModels.delete(input.threadId);
+      threadResponsesProviders.delete(input.threadId);
     },
     async unarchiveThread(input) {
       const capabilities = await awaitCapabilities();
@@ -870,8 +922,9 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
     async startTurn(input) {
       const capabilities = await awaitCapabilities();
       const modelName = input.model ?? threadModels.get(input.threadId);
-      const model = modelName ? requireModel(capabilities, modelName) : null;
-      if (input.effort !== undefined) {
+      const responsesProvider = threadResponsesProviders.get(input.threadId);
+      const model = !responsesProvider && modelName ? requireModel(capabilities, modelName) : null;
+      if (input.effort !== undefined && !responsesProvider) {
         const supportedEfforts = model?.supportedReasoningEfforts ?? [];
         if (!model || !supportedEfforts.includes(input.effort)) {
           throw Object.assign(new Error(`Configured Codex effort is unavailable: ${input.effort}`), {
@@ -880,11 +933,11 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
           });
         }
       }
-      if (input.serviceTier !== undefined) {
+      if (input.serviceTier !== undefined && !responsesProvider) {
         if (!model) throw managerError('ZEUS_CODEX_MODEL_UNAVAILABLE', 'Codex service tier validation requires a known model.');
         validateServiceTier(model, input.serviceTier);
       }
-      if (input.collaborationMode) {
+      if (input.collaborationMode && !responsesProvider) {
         const collaborationModel = requireModel(capabilities, input.collaborationMode.settings.model);
         const collaborationEffort = input.collaborationMode.settings.reasoning_effort;
         if (collaborationEffort !== null && !collaborationModel.supportedReasoningEfforts.includes(collaborationEffort)) {
@@ -1309,6 +1362,58 @@ function validateServiceTier(model: CodexModelCapability, serviceTier: string | 
     code: 'ZEUS_CODEX_SERVICE_TIER_UNAVAILABLE',
     supportedServiceTiers: model.serviceTiers.map((tier) => tier.id),
   });
+}
+
+function normalizeResponsesProvider(provider: CodexResponsesModelProvider): CodexResponsesModelProvider {
+  const id = provider.id.trim();
+  const name = provider.name.trim();
+  const envKey = provider.envKey.trim();
+  if (!/^[a-z0-9_-]{1,100}$/iu.test(id) || !name || name.length > 100) throw managerError('ZEUS_CODEX_PROVIDER_INVALID', 'Responses 自定义 Provider 身份无效。');
+  if (!/^ZEUS_MODEL_CONNECTION_[A-Z0-9_]+_API_KEY$/u.test(envKey)) throw managerError('ZEUS_CODEX_PROVIDER_INVALID', 'Responses 自定义 Provider 环境变量名无效。');
+  let url: URL;
+  try {
+    url = new URL(provider.baseUrl);
+  } catch {
+    throw managerError('ZEUS_CODEX_PROVIDER_INVALID', 'Responses 自定义 Provider 地址无效。');
+  }
+  if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash) throw managerError('ZEUS_CODEX_PROVIDER_INVALID', 'Responses 自定义 Provider 必须使用无凭据的 HTTPS 地址。');
+  if (!Number.isSafeInteger(provider.modelContextWindow) || provider.modelContextWindow < 1_000 || provider.modelContextWindow > 10_000_000) {
+    throw managerError('ZEUS_CODEX_PROVIDER_INVALID', 'Responses 自定义 Provider 上下文窗口无效。');
+  }
+  return { id, name, baseUrl: url.toString().replace(/\/+$/u, ''), envKey, modelContextWindow: provider.modelContextWindow };
+}
+
+function responsesProviderConfig(provider: CodexResponsesModelProvider): Record<string, JsonValue> {
+  return {
+    model_provider: provider.id,
+    model_context_window: provider.modelContextWindow,
+    model_providers: {
+      [provider.id]: {
+        name: provider.name,
+        base_url: provider.baseUrl,
+        env_key: provider.envKey,
+        wire_api: 'responses',
+        requires_openai_auth: false,
+      },
+    },
+  };
+}
+
+function normalizeProviderEnvironment(value: Record<string, string>): Record<string, string> {
+  const normalized: Record<string, string> = {};
+  for (const [key, secret] of Object.entries(value).sort(([left], [right]) => left.localeCompare(right))) {
+    if (!/^ZEUS_MODEL_CONNECTION_[A-Z0-9_]+_API_KEY$/u.test(key) || typeof secret !== 'string' || !secret.trim()) {
+      throw managerError('ZEUS_CODEX_PROVIDER_ENVIRONMENT_INVALID', 'Codex provider environment contains an invalid entry.');
+    }
+    normalized[key] = secret;
+  }
+  return normalized;
+}
+
+function sameStringRecord(left: Record<string, string>, right: Record<string, string>): boolean {
+  const leftKeys = Object.keys(left);
+  const rightKeys = Object.keys(right);
+  return leftKeys.length === rightKeys.length && leftKeys.every((key) => left[key] === right[key]);
 }
 
 function attachThreadProviderSettings(thread: CodexThreadSnapshot, generationId: string, response: Record<string, unknown>, model: string): CodexThreadSnapshot {

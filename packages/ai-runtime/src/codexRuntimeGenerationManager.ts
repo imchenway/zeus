@@ -4,6 +4,7 @@ import {
   type CodexAppServerManager,
   type CodexCapabilitiesSnapshot,
   type CodexServerRequestResponse,
+  type CodexResponsesModelProvider,
   type CodexTransportState,
   type ExternalAgentImportEvent,
 } from './codexAppServerManager.js';
@@ -13,6 +14,7 @@ interface RuntimeEntry {
   commandPath: string;
   externalAgentHome: string | null;
   remoteControl: boolean;
+  providerEnvironment: Record<string, string>;
   capabilities: CodexCapabilitiesSnapshot;
   threads: Set<string>;
   activeTurns: Map<string, string>;
@@ -36,10 +38,11 @@ const supportedServerRequestMethods = new Set([
  * 让一个执行宿主同时持有多个 Codex app-server。
  * 新线程和已经空闲的旧线程迁移到当前运行时；正在执行或等待交互的线程固定在原运行时，直至自然排空。
  */
-export function createCodexRuntimeGenerationManager(): CodexAppServerManager {
+export function createCodexRuntimeGenerationManager(options: { accountFingerprintSalt?: string } = {}): CodexAppServerManager {
   const entries = new Set<RuntimeEntry>();
   const entriesByGeneration = new Map<string, RuntimeEntry>();
   const entriesByThread = new Map<string, RuntimeEntry>();
+  const responsesProvidersByThread = new Map<string, CodexResponsesModelProvider>();
   const listeners = new Set<(event: CodexAppServerEvent) => void>();
   const externalImportListeners = new Set<(event: ExternalAgentImportEvent) => void>();
   let activeEntry: RuntimeEntry | null = null;
@@ -98,7 +101,12 @@ export function createCodexRuntimeGenerationManager(): CodexAppServerManager {
     const mapped = entriesByThread.get(threadId);
     if (mapped === active) return active;
     if (mapped && isPinned(mapped, threadId)) return mapped;
-    await active.manager.resumeThread({ threadId, ...(cwd ? { cwd } : {}) });
+    const responsesProvider = responsesProvidersByThread.get(threadId);
+    await active.manager.resumeThread({
+      threadId,
+      ...(cwd ? { cwd } : {}),
+      ...(responsesProvider ? { responsesRuntime: { provider: responsesProvider, environment: active.providerEnvironment } } : {}),
+    });
     bindThread(active, threadId);
     if (mapped) void tryDrain(mapped);
     return active;
@@ -159,24 +167,32 @@ export function createCodexRuntimeGenerationManager(): CodexAppServerManager {
     }
   }
 
-  async function activate(input: { commandPath: string; externalAgentHome?: string; remoteControl?: boolean }): Promise<CodexCapabilitiesSnapshot> {
+  async function activate(input: { commandPath: string; externalAgentHome?: string; remoteControl?: boolean; providerEnvironment?: Record<string, string> }): Promise<CodexCapabilitiesSnapshot> {
     if (preparingForShutdown) throw managerError('ZEUS_CODEX_CLOSED', 'Codex runtime generation manager is closing.');
     const requestedHome = input.externalAgentHome ?? null;
     const requestedRemoteControl = input.remoteControl ?? remoteControlEnabled;
-    const normalizedInput = { ...input, remoteControl: requestedRemoteControl };
-    if (activeEntry && activeEntry.commandPath === input.commandPath && activeEntry.externalAgentHome === requestedHome && activeEntry.remoteControl === requestedRemoteControl) {
+    const requestedProviderEnvironment = input.providerEnvironment ?? activeEntry?.providerEnvironment ?? {};
+    const normalizedInput = { ...input, remoteControl: requestedRemoteControl, providerEnvironment: requestedProviderEnvironment };
+    if (
+      activeEntry &&
+      activeEntry.commandPath === input.commandPath &&
+      activeEntry.externalAgentHome === requestedHome &&
+      activeEntry.remoteControl === requestedRemoteControl &&
+      sameStringRecord(activeEntry.providerEnvironment, requestedProviderEnvironment)
+    ) {
       const capabilities = await activeEntry.manager.ensureReady(normalizedInput);
       activeEntry.capabilities = capabilities;
       rememberGeneration(activeEntry, capabilities.generationId);
       return capabilities;
     }
 
-    const manager = createCodexAppServerManager();
+    const manager = createCodexAppServerManager({ ...(options.accountFingerprintSalt ? { accountFingerprintSalt: options.accountFingerprintSalt } : {}) });
     const provisional: RuntimeEntry = {
       manager,
       commandPath: input.commandPath,
       externalAgentHome: requestedHome,
       remoteControl: requestedRemoteControl,
+      providerEnvironment: { ...requestedProviderEnvironment },
       capabilities: {
         generationId: '',
         initializedAt: '',
@@ -230,6 +246,12 @@ export function createCodexRuntimeGenerationManager(): CodexAppServerManager {
     }
   }
 
+  function enqueueActivation(input: { commandPath: string; externalAgentHome?: string; remoteControl?: boolean; providerEnvironment?: Record<string, string> }): Promise<CodexCapabilitiesSnapshot> {
+    const activation = activationChain.then(() => activate(input));
+    activationChain = activation.catch(() => undefined);
+    return activation;
+  }
+
   function entryForGeneration(generationId: string): RuntimeEntry | null {
     const entry = entriesByGeneration.get(generationId);
     if (!entry) return null;
@@ -238,9 +260,7 @@ export function createCodexRuntimeGenerationManager(): CodexAppServerManager {
 
   return {
     ensureReady(input) {
-      const activation = activationChain.then(() => activate(input));
-      activationChain = activation.catch(() => undefined);
-      return activation;
+      return enqueueActivation(input);
     },
     async readAccount(input = {}) {
       return requireActiveEntry().manager.readAccount(input);
@@ -258,17 +278,37 @@ export function createCodexRuntimeGenerationManager(): CodexAppServerManager {
       await requireActiveEntry().manager.cancelChatGptLogin(input);
     },
     async startThread(input) {
+      if (input.responsesRuntime) {
+        const current = requireActiveEntry();
+        await enqueueActivation({
+          commandPath: current.commandPath,
+          ...(current.externalAgentHome ? { externalAgentHome: current.externalAgentHome } : {}),
+          remoteControl: current.remoteControl,
+          providerEnvironment: input.responsesRuntime.environment,
+        });
+      }
       const entry = requireActiveEntry();
       const thread = await entry.manager.startThread(input);
       bindThread(entry, thread.id);
+      if (input.responsesRuntime) responsesProvidersByThread.set(thread.id, input.responsesRuntime.provider);
       return thread;
     },
     async resumeThread(input) {
       const mapped = entriesByThread.get(input.threadId);
       if (mapped && isPinned(mapped, input.threadId)) return mapped.manager.resumeThread(input);
+      if (input.responsesRuntime) {
+        const current = requireActiveEntry();
+        await enqueueActivation({
+          commandPath: current.commandPath,
+          ...(current.externalAgentHome ? { externalAgentHome: current.externalAgentHome } : {}),
+          remoteControl: current.remoteControl,
+          providerEnvironment: input.responsesRuntime.environment,
+        });
+      }
       const active = requireActiveEntry();
       const thread = await active.manager.resumeThread(input);
       bindThread(active, thread.id);
+      if (input.responsesRuntime) responsesProvidersByThread.set(thread.id, input.responsesRuntime.provider);
       if (mapped && mapped !== active) void tryDrain(mapped);
       return thread;
     },
@@ -276,6 +316,7 @@ export function createCodexRuntimeGenerationManager(): CodexAppServerManager {
       const entry = routeThread(input.threadId);
       await entry.manager.archiveThread(input);
       entriesByThread.delete(input.threadId);
+      responsesProvidersByThread.delete(input.threadId);
       entry.threads.delete(input.threadId);
       void tryDrain(entry);
     },
@@ -411,6 +452,7 @@ export function createCodexRuntimeGenerationManager(): CodexAppServerManager {
         entries.clear();
         entriesByGeneration.clear();
         entriesByThread.clear();
+        responsesProvidersByThread.clear();
         listeners.clear();
         externalImportListeners.clear();
         activeEntry = null;
@@ -430,6 +472,12 @@ function turnKey(threadId: string, turnId: string): string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function sameStringRecord(left: Record<string, string>, right: Record<string, string>): boolean {
+  const leftKeys = Object.keys(left);
+  const rightKeys = Object.keys(right);
+  return leftKeys.length === rightKeys.length && leftKeys.every((key) => left[key] === right[key]);
 }
 
 function managerError(code: string, message: string): Error & { code: string } {

@@ -36,6 +36,18 @@ Codex native 会话的服务档位以当前 app-server `model/list` 目录为能
 
 目录驱动的优点是 UI 与 Runtime 能力自动同步；缺点是必须处理目录缺失、过期与异常响应，不能把缓存目录当作永久能力。
 
+## Responses 兼容模型路由
+
+模型连接不是天然属于 Pi。Zeus 在“接入渠道、模型、服务端点和当前 App Server 版本”已经形成真实兼容证据时，才把新会话交给 App Server；其他模型连接继续由 Pi 运行。当前已验收的范围仅包括 DeepSeek 模板、`https://api.deepseek.com` 官方端点以及 `deepseek-v4-flash`、`deepseek-v4-pro` 两个模型。百炼、代理地址、自定义渠道和其他模型不能继承这份证据。
+
+- 新建会话持久化实际 `agentKind`、模型来源和模型 ID；已经建立的 Pi 会话不迁移。
+- App Server 使用 `wire_api = "responses"` 的自定义模型供应商配置，API Key 只从 Zeus 安全存储注入专属子进程环境，不进入 thread config。
+- 自定义 Responses 供应商不要求 OpenAI 账号登录，也不能使用 Codex service tier。
+- 同一会话不能切换 App Server 模型渠道；失败后保留原会话错误，不跨内核自动重放。
+- 当前 DeepSeek Responses 路由支持文本和工具，不声明图片或文件输入能力。
+
+优点是兼容模型可以复用 App Server 的会话恢复、工具和状态闭环，用户不必手选运行内核。缺点是 Zeus 必须随供应商接口和 App Server 版本变化重新验收并维护精确边界，新旧会话也可能在一段时间内由不同内核运行。
+
 ## Prompt 生成
 
 正式任务首发的用户输入只包含任务标题、任务描述和任务附件：
