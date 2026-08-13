@@ -37,7 +37,7 @@ export interface ConversationTranscriptProps {
 }
 
 export interface SessionCreationStatus {
-  state: 'creating' | 'failed';
+  state: 'creating' | 'failed' | 'warning';
   message: string;
   error?: string | null;
   retryLabel?: string;
@@ -341,7 +341,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
 
 function SessionCreationNotice(props: { status: SessionCreationStatus; language: SessionUiLanguage }) {
   return (
-    <section className={`session-creation-status is-${props.status.state}`} role={props.status.state === 'failed' ? 'alert' : 'status'} aria-live="polite">
+    <section className={`session-creation-status is-${props.status.state}`} role={props.status.state === 'creating' ? 'status' : 'alert'} aria-live="polite">
       {props.status.state === 'creating' ? (
         sessionConnectionSymbol
       ) : (
@@ -353,7 +353,7 @@ function SessionCreationNotice(props: { status: SessionCreationStatus; language:
         <strong>{props.status.message}</strong>
         {props.status.error ? <small>{props.status.error}</small> : null}
       </span>
-      {props.status.state === 'failed' && props.status.onRetry ? (
+      {props.status.state !== 'creating' && props.status.onRetry ? (
         <button type="button" onClick={() => void props.status.onRetry?.()}>
           {props.status.retryLabel ?? (props.language === 'zh-CN' ? '重试' : 'Retry')}
         </button>

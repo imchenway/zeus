@@ -13191,6 +13191,10 @@
   color: var(--session-danger);
 }
 
+.session-creation-status.is-warning {
+  color: var(--session-warning);
+}
+
 .session-creation-status button {
   background: transparent;
   border: 1px solid var(--session-line);
