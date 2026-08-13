@@ -229,6 +229,7 @@ export interface ProjectGitRepositorySnapshot {
   fileStatuses: GitFileStatus[];
   conflictFiles: string[];
   localBranches: string[];
+  checkedOutBranches: string[];
   remoteBranches: string[];
   remotes: string[];
   tags: string[];
@@ -1816,6 +1817,7 @@ export async function getProjectGitRepositorySnapshot(cwd: string): Promise<Proj
     fileStatuses: status.fileStatuses,
     conflictFiles: status.conflictFiles,
     localBranches: context.localBranches,
+    checkedOutBranches: context.worktrees.flatMap((worktree) => (worktree.branch ? [worktree.branch] : [])),
     remoteBranches: context.remoteBranches,
     remotes: context.remotes,
     tags: splitLines(tagsText),

@@ -4391,6 +4391,304 @@
   }
 }
 
+/* ZEUS-0236：新会话执行上下文位于输入正文上方，项目与分支都使用真实可切换事实。 */
+.session-codex-parity-v1 .session-new-conversation-context {
+  align-items: center;
+  background: color-mix(in srgb, var(--session-line-soft) 58%, transparent);
+  border-radius: 13px 13px 0 0;
+  display: flex;
+  gap: 4px;
+  margin: -10px -10px 0;
+  min-block-size: 44px;
+  padding: 7px 12px;
+  position: relative;
+}
+
+.session-codex-parity-v1 .session-new-conversation-context::after {
+  background: var(--session-line-soft);
+  block-size: 1px;
+  content: '';
+  inset-block-end: 0;
+  inset-inline: 12px;
+  position: absolute;
+}
+
+.session-codex-parity-v1 .session-new-conversation-context-control {
+  display: inline-flex;
+  min-inline-size: 0;
+  position: relative;
+}
+
+.session-codex-parity-v1 .session-new-conversation-context-trigger {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  color: var(--session-text);
+  cursor: default;
+  display: inline-flex;
+  font: inherit;
+  font-size: 13px;
+  gap: 7px;
+  min-block-size: 30px;
+  min-inline-size: 0;
+  padding: 0 8px;
+}
+
+.session-codex-parity-v1 .session-new-conversation-context-trigger:hover:not(:disabled),
+.session-codex-parity-v1 .session-new-conversation-context-trigger[aria-expanded='true'] {
+  background: color-mix(in srgb, var(--session-selected) 72%, transparent);
+}
+
+.session-codex-parity-v1 .session-new-conversation-context-trigger:focus-visible {
+  box-shadow: 0 0 0 2px var(--session-focus-outline);
+  outline: none;
+}
+
+.session-codex-parity-v1 .session-new-conversation-context-trigger:disabled {
+  color: var(--session-text-muted);
+  cursor: not-allowed;
+}
+
+.session-codex-parity-v1 .session-new-conversation-context-trigger > svg:first-child {
+  block-size: 17px;
+  flex: 0 0 auto;
+  inline-size: 17px;
+}
+
+.session-codex-parity-v1 .session-new-conversation-context-trigger > svg:last-child:not(:first-child) {
+  block-size: 13px;
+  color: var(--session-text-muted);
+  inline-size: 13px;
+}
+
+.session-codex-parity-v1 .session-new-conversation-context-trigger > span {
+  max-inline-size: min(240px, 28vw);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-codex-parity-v1 .session-new-conversation-context-popover {
+  background: var(--session-canvas);
+  border: 1px solid var(--session-line);
+  border-radius: 14px;
+  box-shadow: 0 16px 42px var(--session-shadow);
+  display: grid;
+  gap: 8px;
+  inset-block-start: calc(100% + 7px);
+  inset-inline-start: 0;
+  max-block-size: min(450px, calc(100vh - 180px));
+  min-inline-size: min(360px, calc(100vw - 48px));
+  padding: 10px;
+  position: absolute;
+  z-index: 40;
+}
+
+.session-codex-parity-v1 .session-new-conversation-context-popover.is-branch {
+  min-inline-size: min(400px, calc(100vw - 48px));
+}
+
+.session-codex-parity-v1 .session-new-conversation-context-search {
+  align-items: center;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--session-text-muted);
+  display: grid;
+  gap: 8px;
+  grid-template-columns: 18px minmax(0, 1fr);
+  padding: 2px 5px;
+}
+
+.session-codex-parity-v1 .session-new-conversation-context-search:focus-within {
+  border-color: var(--session-line);
+  box-shadow: 0 0 0 2px var(--session-focus-outline);
+}
+
+.session-codex-parity-v1 .session-new-conversation-context-search > svg {
+  block-size: 17px;
+  inline-size: 17px;
+}
+
+.session-codex-parity-v1 .session-new-conversation-context-search input,
+.session-codex-parity-v1 .session-new-conversation-context-create input {
+  background: transparent;
+  border: 0;
+  color: var(--session-text);
+  font: inherit;
+  font-size: 14px;
+  inline-size: 100%;
+  min-block-size: 32px;
+  outline: none;
+}
+
+.session-codex-parity-v1 .session-new-conversation-context-heading {
+  color: var(--session-text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  padding-inline: 7px;
+}
+
+.session-codex-parity-v1 .session-new-conversation-context-options {
+  display: grid;
+  gap: 2px;
+  max-block-size: 280px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.session-codex-parity-v1 .session-new-conversation-context-options > button,
+.session-codex-parity-v1 .session-new-conversation-context-create > button {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  color: var(--session-text);
+  display: grid;
+  font: inherit;
+  font-size: 14px;
+  gap: 9px;
+  grid-template-columns: 20px minmax(0, 1fr) 20px;
+  min-block-size: 38px;
+  padding: 5px 8px;
+  text-align: start;
+}
+
+.session-codex-parity-v1 .session-new-conversation-context-options > button:hover:not(:disabled),
+.session-codex-parity-v1 .session-new-conversation-context-create > button:hover:not(:disabled) {
+  background: var(--session-selected);
+}
+
+.session-codex-parity-v1 .session-new-conversation-context-options > button:focus-visible,
+.session-codex-parity-v1 .session-new-conversation-context-create button:focus-visible,
+.session-codex-parity-v1 .session-new-conversation-context-create input:focus-visible {
+  box-shadow: 0 0 0 2px var(--session-focus-outline);
+  outline: none;
+}
+
+.session-codex-parity-v1 .session-new-conversation-context-options > button:disabled {
+  color: var(--session-text-muted);
+  cursor: not-allowed;
+}
+
+.session-codex-parity-v1 .session-new-conversation-context-options > button > svg,
+.session-codex-parity-v1 .session-new-conversation-context-create > button > svg {
+  block-size: 18px;
+  inline-size: 18px;
+}
+
+.session-codex-parity-v1 .session-new-conversation-context-options > button > span {
+  display: grid;
+  min-inline-size: 0;
+}
+
+.session-codex-parity-v1 .session-new-conversation-context-options > button > span:only-of-type {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-codex-parity-v1 .session-new-conversation-context-options strong {
+  font-size: 13px;
+  font-weight: 550;
+}
+
+.session-codex-parity-v1 .session-new-conversation-context-options small {
+  color: var(--session-text-muted);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-codex-parity-v1 .session-new-conversation-context-create {
+  border-block-start: 1px solid var(--session-line-soft);
+  padding-block-start: 6px;
+}
+
+.session-codex-parity-v1 .session-new-conversation-context-create > button {
+  grid-template-columns: 20px minmax(0, 1fr);
+  inline-size: 100%;
+}
+
+.session-codex-parity-v1 .session-new-conversation-context-create form {
+  align-items: center;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.session-codex-parity-v1 .session-new-conversation-context-create form input {
+  border: 1px solid var(--session-line);
+  border-radius: 8px;
+  padding-inline: 9px;
+}
+
+.session-codex-parity-v1 .session-new-conversation-context-create form button {
+  background: var(--session-accent);
+  border: 0;
+  border-radius: 8px;
+  color: var(--session-canvas);
+  font: inherit;
+  min-block-size: 34px;
+  padding-inline: 12px;
+}
+
+.session-codex-parity-v1 .session-new-conversation-context-empty,
+.session-codex-parity-v1 .session-new-conversation-context-error {
+  color: var(--session-text-muted);
+  font-size: 12px;
+  margin: 0;
+  overflow-wrap: anywhere;
+  padding: 8px;
+}
+
+.session-codex-parity-v1 .session-new-conversation-context-error {
+  color: var(--session-danger);
+  flex-basis: 100%;
+}
+
+.session-codex-parity-v1 .session-new-conversation-context:has(.session-new-conversation-context-error) {
+  flex-wrap: wrap;
+}
+
+.session-codex-parity-v1 .session-new-conversation-context-spinner {
+  animation: session-context-spin 900ms linear infinite;
+}
+
+@keyframes session-context-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .session-codex-parity-v1 .session-new-conversation-context-spinner {
+    animation: none;
+  }
+}
+
+@media (max-width: 559px) {
+  .session-codex-parity-v1 .session-new-conversation-context {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .session-codex-parity-v1 .session-new-conversation-context-control,
+  .session-codex-parity-v1 .session-new-conversation-context-trigger {
+    inline-size: 100%;
+  }
+
+  .session-codex-parity-v1 .session-new-conversation-context-trigger > span {
+    max-inline-size: none;
+  }
+
+  .session-codex-parity-v1 .session-new-conversation-context-popover {
+    inset-inline-start: 0;
+    min-inline-size: min(340px, calc(100vw - 40px));
+  }
+}
+
 .session-codex-parity-v1 .session-generated-image-list {
   display: grid;
   gap: 12px;

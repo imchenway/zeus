@@ -205,6 +205,8 @@ import {
   type ProjectConfig,
   type ProjectConversationAttentionState,
   type ProjectDatabaseSecretSnapshot,
+  type ProjectGitAction,
+  type ProjectGitActionResponse,
   type ProjectRecord,
   type ReleaseStatusSnapshot,
   type ReleaseUpdateStatusSnapshot,
@@ -9620,6 +9622,52 @@ export function App(props: {
     workspaceScrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
   }, []);
 
+  const selectNewConversationProject = useCallback(
+    (projectId: string): void => {
+      const project = snapshot.projects.find((candidate) => candidate.id === projectId);
+      if (!project || project.id === activeProjectIdRef.current) return;
+      // 新会话项目选择与全局当前项目使用同一事实；只切换执行上下文，不卸载 composer，保留未发送文字和附件。
+      activeProjectIdRef.current = project.id;
+      setProjectDetail(project);
+      setTaskDetail(undefined);
+      setTaskDetailPaneTaskId(undefined);
+      setSelectedNativeConversationId(null);
+      setFocusedArchivedConversation(null);
+      setConversationDrawer(undefined);
+      setConversationDraftOpen(true);
+      setActiveNavTarget('conversations');
+      setActiveProjectSection('sessions');
+      if (typeof window !== 'undefined') window.history.replaceState(null, '', '#project-sessions');
+    },
+    [snapshot.projects],
+  );
+
+  const executeNewConversationProjectGit = useCallback(
+    async (projectId: string, repositoryId: string, action: ProjectGitAction): Promise<ProjectGitActionResponse> => {
+      const client = props.nativeConversationClient;
+      if (!client) throw new Error('Project Git actions are unavailable.');
+      if (action.type === 'checkout' || action.type === 'create_branch') {
+        const unsafeStates = new Set<ConversationTreeRuntimeState>(['connecting', 'reconnecting', 'paused', 'queued', 'streaming', 'pending_approval', 'pending_user_input']);
+        let conversations: NativeConversationChoice[];
+        try {
+          conversations = (await client.loadProjectConversationChoices(projectId)).choices;
+        } catch {
+          // 分支切换前必须拿到项目会话的当前事实；无法确认时保持原分支，避免与后台写入并发。
+          throw new Error('暂时无法确认项目会话状态，请稍后重试分支切换。');
+        }
+        const activeConversation = conversations.find((conversation) => {
+          const runtimeState = nativeConversationRuntimeStates[conversation.id] ?? conversationTreeRuntimeStateFromConversation(conversation);
+          return unsafeStates.has(runtimeState);
+        });
+        if (activeConversation) {
+          throw new Error('项目中仍有会话可能写入当前工作目录，请先等待会话结束或停止会话后再切换分支。');
+        }
+      }
+      return client.executeProjectGitAction(projectId, repositoryId, action);
+    },
+    [nativeConversationRuntimeStates, props.nativeConversationClient],
+  );
+
   useEffect(() => {
     const unsubscribe = window.zeus?.onNativeNewConversation?.(() => prepareNewConversationDraft());
     return () => {
@@ -11966,12 +12014,13 @@ export function App(props: {
     }
     return (
       <SessionWorkspace
-        key={`new-conversation-${nativeSessionOwner?.kind ?? 'none'}-${nativeSessionOwner?.kind === 'task' ? nativeSessionOwner.taskId : (nativeSessionOwner?.projectId ?? 'none')}-${newConversationFocusRequest}`}
+        key={`new-conversation-${newConversationFocusRequest}`}
         language={appShellSettings.appLanguage}
         state={null}
         conversation={selectedNativeConversation}
         task={nativeSessionTask}
         owner={nativeSessionOwner}
+        projects={snapshot.projects}
         tasks={currentProjectTasks.map((task) => createSessionWorkspaceTask(task, appShellSettings, appShellSettings.appLanguage))}
         choices={nativeSessionChoices}
         suppressComposer={Boolean(taskReadOnlyGate)}
@@ -12004,6 +12053,9 @@ export function App(props: {
           onOpenTaskDetail,
           onTaskManagementStatusChange: (taskId, status) => updateTaskManagementStatus(taskId, status),
           onLoadCapabilities: props.nativeConversationClient?.loadCodexConversationCapabilities,
+          onSelectNewConversationProject: selectNewConversationProject,
+          onLoadNewConversationProjectGit: props.nativeConversationClient?.loadProjectGitWorkbench,
+          onExecuteNewConversationProjectGit: props.nativeConversationClient ? executeNewConversationProjectGit : undefined,
           onChooseStartAttachments: props.onChooseConversationResources ? chooseNativeConversationAttachments : undefined,
           onOpenImportSettings: () => {
             setSettingsCategory('runtime');
