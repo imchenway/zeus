@@ -6833,6 +6833,7 @@ export function App(props: {
   const [latestConversationContentVisible, setLatestConversationContentVisible] = useState(false);
   const [zeusWindowForeground, setZeusWindowForeground] = useState(false);
   const [focusedArchivedConversation, setFocusedArchivedConversation] = useState<NativeConversationChoice | null>(null);
+  const [optimisticTerminalTaskStatuses, setOptimisticTerminalTaskStatuses] = useState<Record<string, TaskManagementStatus>>({});
   const [archivedConversations, setArchivedConversations] = useState<NativeConversationChoice[]>([]);
   const [archivedConversationLoadState, setArchivedConversationLoadState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
   const [restoringArchivedConversationId, setRestoringArchivedConversationId] = useState<string | null>(null);
@@ -7515,6 +7516,20 @@ export function App(props: {
   }, [activeProjectId, graphProjectId]);
   const currentProjectTasks = useMemo(() => (activeProjectId ? snapshot.tasks.filter((task) => task.projectId === activeProjectId) : snapshot.tasks), [activeProjectId, snapshot.tasks]);
   const currentProjectTaskIdsSignature = useMemo(() => JSON.stringify(currentProjectTasks.map((task) => task.id)), [currentProjectTasks]);
+  const terminalTaskIds = useMemo(
+    () =>
+      new Set(
+        snapshot.tasks
+          .filter((task) => {
+            const config = resolveTaskManagementStatusConfig(appShellSettings, task.projectId);
+            const status = resolveTaskManagementStatus(task);
+            return status === config.roles.completedStatusId || status === config.roles.cancelledStatusId;
+          })
+          .map((task) => task.id),
+      ),
+    [appShellSettings, snapshot.tasks],
+  );
+  const conversationTreeHiddenTaskIds = useMemo(() => new Set([...terminalTaskIds, ...Object.keys(optimisticTerminalTaskStatuses)]), [optimisticTerminalTaskStatuses, terminalTaskIds]);
   const projectedTaskConversationChoices = useMemo(
     () =>
       Object.fromEntries(
@@ -7529,21 +7544,33 @@ export function App(props: {
   );
   const currentTaskConversationChoices = useMemo(() => Object.fromEntries(currentProjectTasks.map((task) => [task.id, projectedTaskConversationChoices[task.id] ?? []])), [currentProjectTasks, projectedTaskConversationChoices]);
   const nativeConversationChoices = useMemo(() => {
-    // 常规分组接口只返回未归档会话；从终态任务详情显式打开的归档会话必须在当前工作区存活，不能被随后的分组刷新抹掉。
+    // 归档焦点属于工作区当前对象，不属于活跃会话树；最后写入可避免迟到的普通快照覆盖只读身份。
     const choicesById = new Map<string, NativeConversationChoice>();
-    if (focusedArchivedConversation) choicesById.set(focusedArchivedConversation.id, focusedArchivedConversation);
     for (const choice of Object.values(nativeConversationChoicesByProject).flatMap((entry) => entry.choices)) {
       choicesById.set(choice.id, choice);
     }
     for (const choices of Object.values(projectedTaskConversationChoices)) {
       for (const choice of choices) choicesById.set(choice.navigationId ?? choice.id, choice);
     }
+    if (focusedArchivedConversation) choicesById.set(focusedArchivedConversation.navigationId ?? focusedArchivedConversation.id, focusedArchivedConversation);
     return [...choicesById.values()].sort(compareConversationStageUpdatedDesc);
   }, [focusedArchivedConversation, nativeConversationChoicesByProject, projectedTaskConversationChoices]);
   const selectedNativeConversation = useMemo(
     () => resolveSelectedNativeConversationForProject(nativeConversationChoices, selectedNativeConversationId, activeProjectId),
     [activeProjectId, nativeConversationChoices, selectedNativeConversationId],
   );
+  useEffect(() => {
+    if (!selectedNativeConversation?.taskId) return;
+    const taskId = selectedNativeConversation.taskId;
+    if (conversationTreeHiddenTaskIds.has(taskId)) {
+      setFocusedArchivedConversation((current) => (current?.id === selectedNativeConversation.id && current.archived && current.readOnly ? current : { ...selectedNativeConversation, archived: true, readOnly: true }));
+      return;
+    }
+    const activeChoice = projectedTaskConversationChoices[taskId]?.find(
+      (conversation) => (conversation.navigationId ?? conversation.id) === (selectedNativeConversation.navigationId ?? selectedNativeConversation.id) && !conversation.archived,
+    );
+    if (activeChoice) setFocusedArchivedConversation((current) => (current?.id === selectedNativeConversation.id ? null : current));
+  }, [conversationTreeHiddenTaskIds, projectedTaskConversationChoices, selectedNativeConversation]);
   useEffect(() => {
     window.zeus?.notifyTaskGitDeliveryCurrentContext?.({
       taskId: selectedNativeConversation?.taskId ?? null,
@@ -7661,23 +7688,17 @@ export function App(props: {
       orderedProjects.map((project) => ({
         projectId: project.id,
         projectName: project.name,
-        conversations: [...(nativeConversationChoicesByProject[project.id]?.choices ?? [])].sort(compareConversationStageUpdatedDesc),
+        conversations: [...(nativeConversationChoicesByProject[project.id]?.choices ?? [])].filter((conversation) => !conversation.archived).sort(compareConversationStageUpdatedDesc),
         tasks: snapshot.tasks
           .filter((task) => task.projectId === project.id)
-          .map((task) => {
-            const conversations = [...(projectedTaskConversationChoices[task.id] ?? [])];
-            if (focusedArchivedConversation?.taskId === task.id && !conversations.some((conversation) => conversation.id === focusedArchivedConversation.id)) {
-              conversations.push(focusedArchivedConversation);
-            }
-            return {
-              taskId: task.id,
-              taskCode: task.taskCode?.trim() || task.id,
-              taskTitle: task.title,
-              conversations: conversations.sort(compareConversationStageUpdatedDesc),
-            };
-          }),
+          .map((task) => ({
+            taskId: task.id,
+            taskCode: task.taskCode?.trim() || task.id,
+            taskTitle: task.title,
+            conversations: conversationTreeHiddenTaskIds.has(task.id) ? [] : [...(projectedTaskConversationChoices[task.id] ?? [])].filter((conversation) => !conversation.archived).sort(compareConversationStageUpdatedDesc),
+          })),
       })),
-    [focusedArchivedConversation, nativeConversationChoicesByProject, orderedProjects, projectedTaskConversationChoices, snapshot.tasks],
+    [conversationTreeHiddenTaskIds, nativeConversationChoicesByProject, orderedProjects, projectedTaskConversationChoices, snapshot.tasks],
   );
   const reconcileNativeConversationProjectionStates = useCallback((choices: readonly NativeConversationChoice[]): void => {
     if (choices.length === 0) return;
@@ -7818,13 +7839,16 @@ export function App(props: {
     : conversationDraftOpen && taskDetail && (!activeProjectId || taskDetail.projectId === activeProjectId)
       ? taskDetail
       : undefined;
-  const nativeSessionTaskStatusConfig = nativeSessionTaskRecord ? resolveTaskManagementStatusConfig(appShellSettings, nativeSessionTaskRecord.projectId) : null;
+  const optimisticNativeSessionTaskStatus = nativeSessionTaskRecord ? optimisticTerminalTaskStatuses[nativeSessionTaskRecord.id] : undefined;
+  const effectiveNativeSessionTaskRecord = nativeSessionTaskRecord && optimisticNativeSessionTaskStatus ? { ...nativeSessionTaskRecord, managementStatus: optimisticNativeSessionTaskStatus } : nativeSessionTaskRecord;
+  const nativeSessionTaskStatusConfig = effectiveNativeSessionTaskRecord ? resolveTaskManagementStatusConfig(appShellSettings, effectiveNativeSessionTaskRecord.projectId) : null;
   const nativeSessionTaskReadOnly = Boolean(
-    nativeSessionTaskRecord &&
+    effectiveNativeSessionTaskRecord &&
     nativeSessionTaskStatusConfig &&
-    (resolveTaskManagementStatus(nativeSessionTaskRecord) === nativeSessionTaskStatusConfig.roles.completedStatusId || resolveTaskManagementStatus(nativeSessionTaskRecord) === nativeSessionTaskStatusConfig.roles.cancelledStatusId),
+    (resolveTaskManagementStatus(effectiveNativeSessionTaskRecord) === nativeSessionTaskStatusConfig.roles.completedStatusId ||
+      resolveTaskManagementStatus(effectiveNativeSessionTaskRecord) === nativeSessionTaskStatusConfig.roles.cancelledStatusId),
   );
-  const nativeSessionTask: SessionWorkspaceTask | null = nativeSessionTaskRecord ? createSessionWorkspaceTask(nativeSessionTaskRecord, appShellSettings, appShellSettings.appLanguage) : null;
+  const nativeSessionTask: SessionWorkspaceTask | null = effectiveNativeSessionTaskRecord ? createSessionWorkspaceTask(effectiveNativeSessionTaskRecord, appShellSettings, appShellSettings.appLanguage) : null;
   const nativeSessionProject = activeProjectId ? snapshot.projects.find((project) => project.id === activeProjectId) : undefined;
   const nativeSessionOwner: SessionConversationOwner | undefined = nativeSessionTask
     ? {
@@ -8067,6 +8091,17 @@ export function App(props: {
         }
         if (event.type === 'task.updated' && typeof event.payload.taskId === 'string' && props.onLoadTask) {
           const taskId = event.payload.taskId;
+          if (typeof event.payload.managementStatus === 'string') {
+            const managementStatus = event.payload.managementStatus;
+            const updatedAt = typeof event.payload.updatedAt === 'string' ? event.payload.updatedAt : undefined;
+            // 任务事件已经是服务端确认事实，先收口终态成员资格，再用完整任务读取补齐其余字段。
+            setSnapshot((current) => ({
+              ...current,
+              tasks: current.tasks.map((task) => (task.id === taskId ? { ...task, managementStatus, ...(updatedAt ? { updatedAt } : {}) } : task)),
+            }));
+            setTaskDetail((current) => (current?.id === taskId ? { ...current, managementStatus, ...(updatedAt ? { updatedAt } : {}) } : current));
+            void refreshNativeConversationChoices(taskId).catch((error: unknown) => recordLocalError('task-conversation-realtime-refresh', error));
+          }
           if (!pendingRealtimeTaskRefreshIdsRef.current.has(taskId)) {
             pendingRealtimeTaskRefreshIdsRef.current.add(taskId);
             void props
@@ -9642,6 +9677,15 @@ export function App(props: {
     const updateManagementStatus = props.onUpdateTaskManagementStatus;
     const projectStatusConfig = resolveTaskManagementStatusConfig(appShellSettings, currentTask.projectId);
     const statusLabel = formatConfiguredTaskManagementStatus(status, projectStatusConfig, appShellSettings.appLanguage);
+    const terminalStatus = status === projectStatusConfig.roles.completedStatusId || status === projectStatusConfig.roles.cancelledStatusId;
+    const clearOptimisticTerminalStatus = (): void =>
+      setOptimisticTerminalTaskStatuses((current) => {
+        if (!(taskId in current)) return current;
+        const next = { ...current };
+        delete next[taskId];
+        return next;
+      });
+    if (terminalStatus) setOptimisticTerminalTaskStatuses((current) => (current[taskId] === status ? current : { ...current, [taskId]: status }));
     return enqueueTaskMutation(taskId, async () => {
       const expectedUpdatedAt = resolveTaskMutationVersion(taskId, options.expectedUpdatedAt ?? currentTask.updatedAt ?? '');
       setActionState('updating-task');
@@ -9650,7 +9694,6 @@ export function App(props: {
         try {
           nextSnapshot = await updateManagementStatus(taskId, status, expectedUpdatedAt, undefined, options.reopenConversationId);
         } catch (error) {
-          const terminalStatus = status === projectStatusConfig.roles.completedStatusId || status === projectStatusConfig.roles.cancelledStatusId;
           if (!(terminalStatus && error instanceof ZeusApiError && error.error === 'ZEUS_TASK_WORKTREE_CLEANUP_CONFIRMATION_REQUIRED')) throw error;
           const confirmed = window.confirm(
             appShellSettings.appLanguage === 'zh-CN'
@@ -9658,6 +9701,7 @@ export function App(props: {
               : `This task has local changes or active sessions. Continuing will stop and archive related sessions, permanently delete uncommitted and untracked files in the task worktrees, and mark the task as “${statusLabel}”. Continue?`,
           );
           if (!confirmed) {
+            clearOptimisticTerminalStatus();
             setActionState('idle');
             return undefined;
           }
@@ -9671,16 +9715,19 @@ export function App(props: {
           status !== projectStatusConfig.roles.completedStatusId &&
           status !== projectStatusConfig.roles.cancelledStatusId;
         if (reopeningTask) await refreshNativeConversationChoices(taskId);
+        clearOptimisticTerminalStatus();
         setActionState('idle');
         return { kind: 'updated', task: updatedTask };
       } catch (error) {
         if (error instanceof ZeusApiError && error.error === 'ZEUS_TASK_EDIT_CONFLICT') {
           const latest = await loadLatestTaskAfterConflict(taskId);
           if (latest) {
+            clearOptimisticTerminalStatus();
             setActionState('idle');
             return { kind: 'conflict', latest };
           }
         }
+        clearOptimisticTerminalStatus();
         recordLocalError('task-management-status-update', error);
         throw error;
       }
@@ -13099,6 +13146,7 @@ export function App(props: {
                     priorityOptions={taskWorkspaceCopy.taskCreatePriorityOptions}
                     busy={updatingTaskBusy}
                     terminalReadOnly={
+                      Boolean(optimisticTerminalTaskStatuses[taskDetailPaneTask.id]) ||
                       resolveTaskManagementStatus(taskDetailPaneTask) === activeTaskManagementStatusConfig.roles.completedStatusId ||
                       resolveTaskManagementStatus(taskDetailPaneTask) === activeTaskManagementStatusConfig.roles.cancelledStatusId
                     }

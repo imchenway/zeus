@@ -5,6 +5,7 @@ import { CircleNotchIcon as CircleNotch } from '@phosphor-icons/react/dist/csr/C
 import { FolderIcon as Folder } from '@phosphor-icons/react/dist/csr/Folder';
 import { PlusIcon as Plus } from '@phosphor-icons/react/dist/csr/Plus';
 import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/csr/WarningCircle';
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import type { NativeConversationChoice, NativeConversationSnapshot, NativeSessionState } from './sessionTypes.js';
 import { compareConversationStageUpdatedDesc } from './conversationOrdering.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
@@ -89,6 +90,7 @@ interface FlattenedConversation {
 
 export function ProjectConversationTree(props: ProjectConversationTreeProps) {
   const copy = labels[props.language];
+  const reduceMotion = useReducedMotion();
   const [archivingConversationId, setArchivingConversationId] = useState<string | null>(null);
   const normalizedQuery = props.query?.trim().toLocaleLowerCase() ?? '';
   const flattenedGroups = props.groups.map(flattenProjectConversations).map((group) => ({
@@ -115,8 +117,8 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
       {flattenedGroups.map(({ project, conversations }) => (
         <section className="session-conversation-project-group" key={project.projectId} aria-label={project.projectName}>
           {!props.compactProjectLabel && props.onStartConversation ? <ProjectConversationHeader project={project} language={props.language} onStartConversation={props.onStartConversation} /> : null}
-          {conversations.length > 0 ? (
-            <ul className="session-conversation-project-items">
+          <ul className="session-conversation-project-items">
+            <AnimatePresence initial={false}>
               {conversations.map(({ conversation, displayTitle }) => {
                 const navigationId = conversationNavigationId(conversation);
                 const current = navigationId === props.selectedConversationId;
@@ -126,7 +128,15 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
                 const archiving = archivingConversationId === conversation.id;
                 const archiveLabel = archiving ? copy.archiving : archiveAvailable ? copy.archive : archiveUnavailableReason;
                 return (
-                  <li className="session-conversation-tree-item" key={navigationId}>
+                  <motion.li
+                    className="session-conversation-tree-item"
+                    key={navigationId}
+                    layout={reduceMotion ? false : 'position'}
+                    initial={reduceMotion ? false : { opacity: 0, height: 0, overflow: 'hidden' }}
+                    animate={reduceMotion ? { opacity: 1 } : { opacity: 1, height: 'auto', overflow: 'visible' }}
+                    exit={reduceMotion ? { opacity: 0, transition: { duration: 0 } } : { opacity: 0, height: 0, overflow: 'hidden', transition: { duration: 0.16, ease: [0.22, 1, 0.36, 1] } }}
+                    transition={reduceMotion ? { duration: 0 } : { layout: { duration: 0.16, ease: [0.22, 1, 0.36, 1] }, opacity: { duration: 0.12 }, height: { duration: 0.16, ease: [0.22, 1, 0.36, 1] } }}
+                  >
                     <button
                       type="button"
                       className={`session-conversation-tree-row${current ? ' is-current' : ''}`}
@@ -153,13 +163,12 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
                         {archiving ? <CircleNotch className="session-conversation-archive-spinner" aria-hidden="true" /> : <Archive aria-hidden="true" />}
                       </button>
                     ) : null}
-                  </li>
+                  </motion.li>
                 );
               })}
-            </ul>
-          ) : props.showEmptyState !== false ? (
-            <p className="session-conversation-project-empty">{copy.empty}</p>
-          ) : null}
+            </AnimatePresence>
+          </ul>
+          {conversations.length === 0 && props.showEmptyState !== false ? <p className="session-conversation-project-empty">{copy.empty}</p> : null}
         </section>
       ))}
     </nav>
