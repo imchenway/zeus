@@ -147,6 +147,14 @@ contextBridge.exposeInMainWorld('zeus', {
   openGraphSource: (source: unknown) => ipcRenderer.invoke('zeus:open-graph-source', source),
   openExternalHttpsUrl: (url: string) => ipcRenderer.invoke('zeus:open-external-https-url', url),
   activateRequestingWindow: () => ipcRenderer.invoke('zeus:activate-requesting-window'),
+  getAutomaticUpdateIndicator: () => ipcRenderer.invoke('zeus:automatic-update-indicator:get'),
+  openAutomaticUpdateIndicator: () => ipcRenderer.invoke('zeus:automatic-update-indicator:open'),
+  recordManualUpdateCheck: () => ipcRenderer.invoke('zeus:automatic-update-indicator:record-manual-check'),
+  onAutomaticUpdateIndicatorChanged: (listener: (state: unknown) => void) => {
+    const handler = (_event: unknown, state: unknown) => listener(state);
+    ipcRenderer.on('zeus:automatic-update-indicator:changed', handler);
+    return () => ipcRenderer.removeListener('zeus:automatic-update-indicator:changed', handler);
+  },
   listConversationResourceOpenTargets: (request: unknown) => ipcRenderer.invoke('zeus:conversation-resource:list-open-targets', request),
   openConversationResource: (request: unknown) => ipcRenderer.invoke('zeus:conversation-resource:open', request),
   openTurnChangeFile: (request: unknown) => ipcRenderer.invoke('zeus:turn-change-file:open', request),

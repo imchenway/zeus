@@ -36,6 +36,20 @@ export interface HomebrewUpdateService {
   install(prepared: HomebrewPreparedUpdate, onProgress: (progress: HomebrewUpdateProgress) => void): Promise<HomebrewInstalledUpdate>;
 }
 
+export class HomebrewUpdateError extends Error {
+  constructor(
+    message: string,
+    readonly kind: 'transient_download' | 'structural',
+  ) {
+    super(message);
+    this.name = 'HomebrewUpdateError';
+  }
+}
+
+export function isTransientHomebrewDownloadError(error: unknown): boolean {
+  return error instanceof HomebrewUpdateError && error.kind === 'transient_download';
+}
+
 interface CreateHomebrewUpdateServiceOptions {
   currentAppPath: string;
   currentAppVersion: string;
@@ -296,14 +310,25 @@ async function fetchCask(brewPath: string, cachePath: string, expectedSizeBytes:
 
     child.once('error', (error) => {
       stopProgressMonitoring();
-      rejectFetch(error);
+      const kind = isTransientDownloadFailure(error.message, typeof (error as NodeJS.ErrnoException).code === 'string' ? (error as NodeJS.ErrnoException).code : undefined) ? 'transient_download' : 'structural';
+      rejectFetch(new HomebrewUpdateError(`Homebrew 下载更新失败：${error.message}`, kind));
     });
     child.once('exit', (code, signal) => {
       stopProgressMonitoring();
       if (code === 0) resolveFetch();
-      else rejectFetch(new Error(formatCommandFailure('Homebrew 下载更新失败', stderr || stdout, code ?? undefined, signal ?? undefined)));
+      else {
+        const detail = stderr || stdout;
+        const kind = isTransientDownloadFailure(detail, signal ?? undefined) ? 'transient_download' : 'structural';
+        rejectFetch(new HomebrewUpdateError(formatCommandFailure('Homebrew 下载更新失败', detail, code ?? undefined, signal ?? undefined), kind));
+      }
     });
   });
+}
+
+/** 只有明确的网络中断、服务端暂时不可用或下载超时才进入后台重试。 */
+function isTransientDownloadFailure(detail: string, codeOrSignal?: string): boolean {
+  if (codeOrSignal === 'SIGTERM' || ['EAI_AGAIN', 'ECONNABORTED', 'ECONNRESET', 'ENETDOWN', 'ENETUNREACH', 'ETIMEDOUT'].includes(codeOrSignal ?? '')) return true;
+  return /(?:curl:\s*\((?:5|6|7|18|28|35|47|52|55|56|92)\)|http[^\n]*(?:408|425|429|5\d\d)|could not resolve|connection (?:reset|refused|timed out)|network is unreachable|operation timed out|temporary failure)/iu.test(detail);
 }
 
 async function runBrew(brewPath: string, args: string[], options: { timeoutMs: number; allowAutoUpdate: boolean }): Promise<{ stdout: string; stderr: string }> {

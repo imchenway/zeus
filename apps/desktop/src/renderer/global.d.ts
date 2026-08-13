@@ -160,6 +160,28 @@ declare global {
       }>;
       openExternalHttpsUrl: (url: string) => Promise<{ opened: boolean; url?: string; error?: string }>;
       activateRequestingWindow: () => Promise<{ activated: boolean; error?: string }>;
+      getAutomaticUpdateIndicator: () => Promise<{
+        phase: 'idle' | 'available' | 'preparing' | 'retrying' | 'ready' | 'failed';
+        currentVersion: string;
+        latestVersion: string | null;
+        detail: string;
+        updatedAt: string;
+        progress?: number;
+        retryAt?: string;
+      } | null>;
+      openAutomaticUpdateIndicator: () => Promise<{ opened: boolean }>;
+      recordManualUpdateCheck: () => Promise<{ recorded: boolean }>;
+      onAutomaticUpdateIndicatorChanged: (
+        listener: (state: {
+          phase: 'idle' | 'available' | 'preparing' | 'retrying' | 'ready' | 'failed';
+          currentVersion: string;
+          latestVersion: string | null;
+          detail: string;
+          updatedAt: string;
+          progress?: number;
+          retryAt?: string;
+        }) => void,
+      ) => () => void;
       listConversationResourceOpenTargets: (request: { projectId: string; conversationId: string; resourceId: string }) => Promise<{ resourceId: string; targets: ConversationResourceOpenTarget[] }>;
       openConversationResource: (request: { projectId: string; conversationId: string; resourceId: string; target: ConversationOpenTarget; location?: ConversationFileLocation }) => Promise<{
         opened: boolean;

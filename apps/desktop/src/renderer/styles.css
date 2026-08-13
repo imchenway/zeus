@@ -8816,6 +8816,84 @@ body[data-surface='project-git-diff'] #root {
   padding-block-start: 8px;
 }
 
+.macos-ai-app.zeus-shell .project-first-sidebar .automatic-update-indicator {
+  flex: 0 0 auto;
+  min-inline-size: 0;
+  padding-block-start: 8px;
+}
+
+.macos-ai-app.zeus-shell .project-first-sidebar .automatic-update-indicator button {
+  align-items: center;
+  background: color-mix(in oklch, var(--zeus-product-accent) 9%, transparent);
+  border: 1px solid color-mix(in oklch, var(--zeus-product-accent) 24%, transparent);
+  border-radius: 8px;
+  color: var(--zeus-product-text);
+  display: grid;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 560;
+  gap: 8px;
+  grid-template-columns: 22px minmax(0, 1fr);
+  inline-size: 100%;
+  min-block-size: 30px;
+  padding: 3px 6px 3px 0;
+  text-align: start;
+}
+
+.macos-ai-app.zeus-shell .project-first-sidebar .automatic-update-indicator button:hover,
+.macos-ai-app.zeus-shell .project-first-sidebar .automatic-update-indicator button:focus-visible {
+  background: color-mix(in oklch, var(--zeus-product-accent) 15%, transparent);
+  border-color: color-mix(in oklch, var(--zeus-product-accent) 38%, transparent);
+}
+
+.macos-ai-app.zeus-shell .project-first-sidebar .automatic-update-indicator button > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.macos-ai-app.zeus-shell .project-first-sidebar .automatic-update-indicator-icon {
+  align-items: center;
+  color: var(--zeus-product-accent);
+  display: inline-flex;
+  inline-size: 22px;
+  justify-content: center;
+}
+
+.macos-ai-app.zeus-shell .project-first-sidebar .automatic-update-indicator-icon svg {
+  block-size: 15px;
+  inline-size: 15px;
+}
+
+.macos-ai-app.zeus-shell .project-first-sidebar .automatic-update-indicator[data-phase='ready'] button {
+  background: color-mix(in oklch, var(--zeus-control-success-text) 9%, transparent);
+  border-color: color-mix(in oklch, var(--zeus-control-success-text) 24%, transparent);
+}
+
+.macos-ai-app.zeus-shell .project-first-sidebar .automatic-update-indicator[data-phase='ready'] .automatic-update-indicator-icon {
+  color: var(--zeus-control-success-text);
+}
+
+.macos-ai-app.zeus-shell .project-first-sidebar .automatic-update-indicator[data-phase='failed'] .automatic-update-indicator-icon {
+  color: var(--zeus-control-danger-text);
+}
+
+.macos-ai-app.zeus-shell .project-first-sidebar .automatic-update-indicator-spinner {
+  animation: zeus-automatic-update-spin 1s linear infinite;
+}
+
+@keyframes zeus-automatic-update-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .macos-ai-app.zeus-shell .project-first-sidebar .automatic-update-indicator-spinner {
+    animation: none;
+  }
+}
+
 .macos-ai-app.zeus-shell .project-first-sidebar .project-global-settings button {
   align-items: center;
   background: transparent;
