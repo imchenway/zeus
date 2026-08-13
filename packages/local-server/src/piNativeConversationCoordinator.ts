@@ -67,7 +67,6 @@ export interface StartPiConversationInput {
   conversationTitle?: string;
   cwd: string;
   prompt: string;
-  displayText?: string;
   model: AgentModelIdentity;
   thinkingLevel?: string;
   permissionMode: 'read-only' | 'auto' | 'full-access';
@@ -195,7 +194,6 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       status: 'dispatching',
       input: {
         text: providerPrompt,
-        ...(input.displayText ? { displayText: input.displayText } : {}),
         ...(attachmentInput.attachments.length > 0 ? { attachments: attachmentInput.attachments } : {}),
         ...(input.taskPushLayout ? { taskPushLayout: input.taskPushLayout } : {}),
         context: {
