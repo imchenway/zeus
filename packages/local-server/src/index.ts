@@ -16459,7 +16459,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   async function resolveConversationCapabilities(project: ZeusProjectRecord) {
     const piSelection = await modelConnections.getProjectSelection(project.id);
     const piCatalog = await modelConnections.listSelectableModels();
-    const allowedPi = piCatalog.filter((model) => piSelection.allowedModelRefs.includes(model.id));
+    const allowedPi = piCatalog.filter((model) => model.available && piSelection.allowedModelRefs.includes(model.id));
     const codexCapabilities = codexNativeEnabled ? await codexAppServerManager.ensureReady({ commandPath: currentCodexRuntimeCommandPath(), ...(codexExternalAgentHome ? { externalAgentHome: codexExternalAgentHome } : {}) }) : null;
     const codexAccount = codexCapabilities
       ? await codexAppServerManager.readAccount()

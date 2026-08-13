@@ -125,7 +125,7 @@ export function ModelConnectionsSettingsPane(props: { language: 'zh-CN' | 'en-US
       const saved = draft.id ? await props.client.updateModelConnection(draft.id, input) : await props.client.createModelConnection(input);
       await reloadConnections(saved.id);
       setDraft((value) => ({ ...value, id: saved.id, apiKey: '' }));
-      setMessage(zh ? '连接配置已保存。' : 'Connection saved.');
+      setMessage(zh ? '供应商配置已保存。' : 'Provider saved.');
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error));
     } finally {
@@ -184,7 +184,7 @@ export function ModelConnectionsSettingsPane(props: { language: 'zh-CN' | 'en-US
       setConnections(items);
       setDraft(emptyDraft());
       setDiagnostic(null);
-      setMessage(zh ? '连接已删除。' : 'Connection deleted.');
+      setMessage(zh ? '供应商已删除。' : 'Provider deleted.');
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error));
     } finally {
@@ -197,16 +197,16 @@ export function ModelConnectionsSettingsPane(props: { language: 'zh-CN' | 'en-US
       <header className="settings-section-heading model-connections-heading">
         <span>
           <strong>{zh ? '模型供应商' : 'Model providers'}</strong>
-          <small>{zh ? '配置一次连接，项目再选择多个可用模型。API Key 只保存到本机钥匙串。' : 'Configure connections once, then let each project select multiple models. API keys stay in the local Keychain.'}</small>
+          <small>{zh ? '配置供应商后，各项目可选择多个可运行模型。API Key 只保存到本机钥匙串。' : 'Configure providers once, then let each project select multiple runnable models. API keys stay in the local Keychain.'}</small>
         </span>
         <Button variant="secondary" size="compact" onClick={() => setDraft(emptyDraft())} disabled={busy}>
-          {zh ? '新建连接' : 'New connection'}
+          {zh ? '新建供应商' : 'New provider'}
         </Button>
       </header>
 
       <div className="model-connections-layout">
-        <nav className="model-connection-list" aria-label={zh ? '模型连接列表' : 'Model connection list'}>
-          {connections.length === 0 ? <p>{zh ? '还没有模型连接。' : 'No model connections yet.'}</p> : null}
+        <nav className="model-connection-list" aria-label={zh ? '模型供应商列表' : 'Model provider list'}>
+          {connections.length === 0 ? <p>{zh ? '还没有模型供应商。' : 'No model providers yet.'}</p> : null}
           {connections.map((connection) => (
             <button key={connection.id} type="button" className={draft.id === connection.id ? 'selected' : ''} onClick={() => selectConnection(connection)}>
               <span>
@@ -220,7 +220,7 @@ export function ModelConnectionsSettingsPane(props: { language: 'zh-CN' | 'en-US
           ))}
         </nav>
 
-        <section className="model-connection-editor" aria-label={zh ? '模型连接编辑器' : 'Model connection editor'}>
+        <section className="model-connection-editor" aria-label={zh ? '模型供应商编辑器' : 'Model provider editor'}>
           <div className="model-connection-field-grid">
             <label>
               <span>{zh ? '快捷模板' : 'Template'}</span>
@@ -241,7 +241,7 @@ export function ModelConnectionsSettingsPane(props: { language: 'zh-CN' | 'en-US
             {draft.templateId === 'custom' ? (
               <>
                 <label>
-                  <span>{zh ? '连接名称' : 'Connection name'}</span>
+                  <span>{zh ? '供应商名称' : 'Provider name'}</span>
                   <input
                     value={draft.name}
                     onChange={(event) => {
@@ -296,7 +296,7 @@ export function ModelConnectionsSettingsPane(props: { language: 'zh-CN' | 'en-US
                 setDraft((value) => ({ ...value, enabled }));
               }}
             />
-            <span>{zh ? '允许项目使用此连接' : 'Allow projects to use this connection'}</span>
+            <span>{zh ? '允许项目使用此供应商' : 'Allow projects to use this provider'}</span>
           </label>
 
           <section className="model-definition-section">
@@ -349,13 +349,13 @@ export function ModelConnectionsSettingsPane(props: { language: 'zh-CN' | 'en-US
           ) : null}
           <footer className="model-connection-actions">
             <Button variant="primary" size="compact" onClick={() => void save()} disabled={busy || !draft.name.trim() || !draft.baseUrl.trim()} busy={status === 'saving'}>
-              {zh ? '保存连接' : 'Save connection'}
+              {zh ? '保存供应商' : 'Save provider'}
             </Button>
             <Button variant="secondary" size="compact" onClick={() => void refreshModels()} disabled={busy || !draft.id || !current?.apiKeyConfigured} busy={status === 'refreshing'}>
               {zh ? '获取模型' : 'Fetch models'}
             </Button>
             <Button variant="secondary" size="compact" onClick={() => void diagnose()} disabled={busy || !draft.id}>
-              {zh ? '连接诊断' : 'Diagnose'}
+              {zh ? '服务诊断' : 'Diagnose service'}
             </Button>
             {draft.id && current?.apiKeyConfigured ? (
               <Button variant="secondary" size="compact" onClick={() => void clearApiKey()} disabled={busy}>
@@ -364,7 +364,7 @@ export function ModelConnectionsSettingsPane(props: { language: 'zh-CN' | 'en-US
             ) : null}
             {draft.id ? (
               <Button variant="danger" size="compact" onClick={() => void removeConnection()} disabled={busy} busy={status === 'deleting'}>
-                {zh ? '删除连接' : 'Delete'}
+                {zh ? '删除供应商' : 'Delete provider'}
               </Button>
             ) : null}
           </footer>

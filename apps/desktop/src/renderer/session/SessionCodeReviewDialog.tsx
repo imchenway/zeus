@@ -7,6 +7,7 @@ import { Button } from '../ui/Button.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 import { readConversationRuntimePreferences, writeConversationRuntimePreferences } from './conversationRuntimePreferences.js';
+import { presentModelOptions } from '../modelOptionPresentation.js';
 
 export interface SessionCodeReviewSelection {
   agentKind: 'codex' | 'pi';
@@ -106,7 +107,8 @@ export function SessionCodeReviewDialog(props: SessionCodeReviewDialogProps) {
     };
   }, [inheritedEffort, inheritedModel, inheritedServiceTier, props.capabilities, props.conversation.projectId, props.onLoadCapabilities, props.open, zh]);
 
-  const selectedModel = useMemo(() => findModel(capabilities, form?.model), [capabilities, form?.model]);
+  const modelPresentation = useMemo(() => presentModelOptions(capabilities?.models ?? [], form?.model ?? '', props.language), [capabilities?.models, form?.model, props.language]);
+  const selectedModel = useMemo(() => resolveModelCapability(modelPresentation.models, modelPresentation.selectedId) ?? undefined, [modelPresentation.models, modelPresentation.selectedId]);
 
   useEffect(() => {
     if (!props.open || !form) return;
@@ -216,16 +218,13 @@ export function SessionCodeReviewDialog(props: SessionCodeReviewDialogProps) {
               <ZeusSelect
                 size="regular"
                 ariaLabel={zh ? '代码审查模型' : 'Code review model'}
-                value={form?.model ?? ''}
-                options={(capabilities?.models ?? []).map((model) => ({
-                  value: model.id,
-                  label: model.displayName ?? model.model,
-                  disabled: model.available === false,
-                  group: model.sourceName,
-                }))}
+                value={modelPresentation.selectedId || form?.model || ''}
+                options={modelPresentation.options}
+                triggerLabel={modelPresentation.triggerLabel}
                 onChange={changeModel}
-                disabled={!form || busy}
-                searchPlaceholder={zh ? '搜索模型' : 'Search models'}
+                disabled={!form || modelPresentation.options.length === 0 || busy}
+                searchPlaceholder={zh ? '搜索供应商或模型' : 'Search providers or models'}
+                emptyLabel={zh ? '没有匹配模型' : 'No matching models'}
               />
             </label>
             {selectedModel && selectedModel.supportedReasoningEfforts.length > 0 ? (
@@ -312,7 +311,7 @@ function browserStorage(): Storage | undefined {
 }
 
 function resolveInitialForm(capabilities: CodexConversationCapabilities, inheritedModel: string, inheritedEffort: string, inheritedServiceTier: string | null | undefined): SessionCodeReviewForm {
-  const selectedModel = findModel(capabilities, inheritedModel) ?? findModel(capabilities, capabilities.preferredModel) ?? capabilities.models[0];
+  const selectedModel = findModel(capabilities, inheritedModel) ?? findModel(capabilities, capabilities.preferredModel) ?? capabilities.models.find((model) => model.available !== false);
   if (!selectedModel) throw new Error('No review model is available.');
   const effort = selectedModel.supportedReasoningEfforts.includes(inheritedEffort) ? inheritedEffort : (selectedModel.defaultReasoningEffort ?? selectedModel.supportedReasoningEfforts[0] ?? '');
   const inheritedSelection: NativeServiceTierSelection = inheritedServiceTier ? { type: 'catalog', id: inheritedServiceTier } : { type: 'standard' };
@@ -326,7 +325,12 @@ function resolveInitialForm(capabilities: CodexConversationCapabilities, inherit
 }
 
 function findModel(capabilities: CodexConversationCapabilities | null, model: string | null | undefined): CodexTaskPushModelCapability | undefined {
-  return resolveModelCapability(capabilities?.models, model) ?? undefined;
+  return (
+    resolveModelCapability(
+      capabilities?.models.filter((candidate) => candidate.available !== false),
+      model,
+    ) ?? undefined
+  );
 }
 
 function permissionModeLabel(permissionMode: NativePermissionMode, zh: boolean): string {

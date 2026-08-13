@@ -58,6 +58,7 @@ import type { SessionCodeReviewSelection } from './SessionCodeReviewDialog.js';
 import { conversationDisplayTitle } from './conversationDisplayTitle.js';
 import { conversationRuntimePreferenceKind, readConversationRuntimePreferences, writeConversationRuntimePreferences } from './conversationRuntimePreferences.js';
 import { resolveModelCapability } from './modelSelection.js';
+import { presentModelOptions } from '../modelOptionPresentation.js';
 
 export interface SessionWorkspaceTask {
   id: string;
@@ -2174,12 +2175,10 @@ function NewConversationComposer(props: {
     };
   }, [props.capabilities, props.onLoadCapabilities, props.owner?.projectId]);
 
-  const selectedModel =
-    capabilities?.models.find((model) => model.model === selectedModelId || model.id === selectedModelId) ??
-    capabilities?.models.find((model) => model.model === capabilities.preferredModel || model.id === capabilities.preferredModel) ??
-    capabilities?.models[0] ??
-    null;
-  const selectedModelLabel = selectedModel ? `${selectedModel.sourceName ? `${selectedModel.sourceName} / ` : ''}${selectedModel.displayName ?? selectedModel.model}` : '';
+  const preferredModel = resolveModelCapability(capabilities?.models, selectedModelId) ?? resolveModelCapability(capabilities?.models, capabilities?.preferredModel);
+  const modelPresentation = useMemo(() => presentModelOptions(capabilities?.models ?? [], preferredModel?.id ?? selectedModelId, props.language), [capabilities?.models, preferredModel?.id, props.language, selectedModelId]);
+  const selectedModel = resolveModelCapability(modelPresentation.models, modelPresentation.selectedId) ?? modelPresentation.models[0] ?? null;
+  const selectedModelLabel = selectedModel ? modelPresentation.triggerLabel : '';
 
   useEffect(() => {
     if (!selectedModel) return;
@@ -2326,12 +2325,16 @@ function NewConversationComposer(props: {
               <ComposerDropdown
                 label={props.language === 'zh-CN' ? '模型' : 'Model'}
                 triggerLabel={`${props.language === 'zh-CN' ? '模型' : 'Model'}：${selectedModelLabel}`}
+                displayLabel={selectedModelLabel}
                 className="session-composer-model-dropdown"
                 value={selectedModel?.id ?? ''}
-                options={(capabilities?.models ?? []).map((model) => ({ value: model.id, label: `${model.sourceName ? `${model.sourceName} / ` : ''}${model.displayName ?? model.model}` }))}
+                options={modelPresentation.options}
                 disabled={submitting || !props.owner || !selectedModel}
+                searchable
+                searchPlaceholder={props.language === 'zh-CN' ? '搜索供应商或模型' : 'Search providers or models'}
+                emptyLabel={props.language === 'zh-CN' ? '没有匹配模型' : 'No matching models'}
                 onChange={(value) => {
-                  const nextModel = capabilities?.models.find((model) => model.id === value || model.model === value);
+                  const nextModel = resolveModelCapability(modelPresentation.models, value);
                   setSelectedModelId(nextModel?.id ?? value);
                   setSelectedEffort(nextModel?.defaultReasoningEffort ?? nextModel?.supportedReasoningEfforts[0] ?? '');
                   const normalized = normalizeServiceTierSelection(serviceTierSelection, nextModel);

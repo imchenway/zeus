@@ -1,4 +1,4 @@
-import { type KeyboardEvent, type RefObject, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { type KeyboardEvent, type RefObject, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ChatCircleIcon as ChatCircle } from '@phosphor-icons/react/dist/csr/ChatCircle';
 import { GlobeSimpleIcon as GlobeSimple } from '@phosphor-icons/react/dist/csr/GlobeSimple';
 import type { ZeusBrowserPreparedSubmission } from '@zeus/shared';
@@ -14,6 +14,7 @@ import { ServiceTierToggle } from './ServiceTierToggle.js';
 import { resolveModelCapability } from './modelSelection.js';
 import { useConversationInputResources } from './useConversationInputResources.js';
 import { normalizeServiceTierSelection, selectionFromEffectiveServiceTier, serviceTierSelectionValue, serviceTierWireOverride } from './serviceTierSelection.js';
+import { presentModelOptions } from '../modelOptionPresentation.js';
 
 export type ComposerKeyIntent = 'submit' | 'newline' | 'escape' | 'ignore';
 export interface ComposerRuntimeSettings {
@@ -56,6 +57,8 @@ const labels = {
     model: '模型',
     effort: '推理强度',
     unsynced: '未同步',
+    searchModel: '搜索供应商或模型',
+    noModel: '没有匹配模型',
   },
   'en-US': {
     input: 'Message Codex',
@@ -68,6 +71,8 @@ const labels = {
     model: 'Model',
     effort: 'Reasoning effort',
     unsynced: 'Not synced',
+    searchModel: 'Search providers or models',
+    noModel: 'No matching models',
   },
 } as const;
 
@@ -90,16 +95,12 @@ export function ConversationComposer(props: ConversationComposerProps) {
   const busy = Boolean(props.state.busyOperation);
   const writable = props.readOnly !== true && props.state.conversationState !== 'legacy_readonly';
   const hasDraft = props.state.draft.trim().length > 0 || props.state.attachments.length > 0 || Boolean(props.state.browserSubmission);
-  const selectedCapability = resolveModelCapability(props.capabilities?.models, selectedModel);
+  const modelPresentation = useMemo(() => presentModelOptions(props.capabilities?.models ?? [], selectedModel, props.language), [props.capabilities?.models, props.language, selectedModel]);
+  const effectiveModel = modelPresentation.selectedId || selectedModel;
+  const selectedCapability = resolveModelCapability(modelPresentation.models, effectiveModel);
   const settingsWritable = props.readOnly !== true && Boolean(selectedCapability);
-  const modelOptions = props.capabilities?.models.length
-    ? props.capabilities.models.map((capability) => ({
-        value: capability.id,
-        label: `${capability.sourceName ? `${capability.sourceName} / ` : ''}${capability.displayName ?? capability.model}`,
-        disabled: capability.available === false,
-      }))
-    : [{ value: selectedModel, label: selectedModel || copy.unsynced }];
-  const selectedModelLabel = modelOptions.find((option) => option.value === selectedModel)?.label ?? selectedModel ?? copy.unsynced;
+  const modelOptions = modelPresentation.options;
+  const selectedModelLabel = modelPresentation.triggerLabel || copy.unsynced;
   const effortOptions = selectedCapability?.supportedReasoningEfforts.map((effort) => ({ value: effort, label: effort })) ?? [];
   const inputResources = useConversationInputResources({
     textareaRef,
@@ -154,9 +155,9 @@ export function ConversationComposer(props: ConversationComposerProps) {
 
   function submit(nextDelivery: 'queue' | 'steer_now'): void {
     const settings =
-      nextDelivery === 'queue' && selectedModel
+      nextDelivery === 'queue' && effectiveModel
         ? {
-            model: selectedModel,
+            model: effectiveModel,
             agentKind: selectedCapability?.agentKind,
             ...(selectedEffort ? { effort: selectedEffort } : {}),
             ...serviceTierWireOverride(selectedServiceTier),
@@ -175,7 +176,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
       if (props.state.draft.trim() === '/plan' && !props.state.browserSubmission && props.onRuntimeSettingsChange) {
         props.onDraftChange('');
         props.onRuntimeSettingsChange({
-          model: selectedModel,
+          model: effectiveModel,
           effort: selectedEffort,
           ...serviceTierWireOverride(selectedServiceTier),
           permissionMode: props.permissionMode,
@@ -253,7 +254,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
               disabled={props.readOnly === true || !props.onRuntimeSettingsChange}
               onChange={(permissionMode) =>
                 props.onRuntimeSettingsChange?.({
-                  model: selectedModel,
+                  model: effectiveModel,
                   effort: selectedEffort,
                   ...serviceTierWireOverride(selectedServiceTier),
                   permissionMode,
@@ -267,7 +268,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
               disabled={props.readOnly === true || !props.onRuntimeSettingsChange}
               onChange={(collaborationMode) =>
                 props.onRuntimeSettingsChange?.({
-                  model: selectedModel,
+                  model: effectiveModel,
                   effort: selectedEffort,
                   ...serviceTierWireOverride(selectedServiceTier),
                   permissionMode: props.permissionMode,
@@ -286,16 +287,20 @@ export function ConversationComposer(props: ConversationComposerProps) {
                 disabled={!settingsWritable}
                 onChange={(selection) => {
                   setSelectedServiceTier(selection);
-                  props.onRuntimeSettingsChange?.({ model: selectedModel, effort: selectedEffort, ...serviceTierWireOverride(selection), permissionMode: props.permissionMode, collaborationMode: props.collaborationMode });
+                  props.onRuntimeSettingsChange?.({ model: effectiveModel, effort: selectedEffort, ...serviceTierWireOverride(selection), permissionMode: props.permissionMode, collaborationMode: props.collaborationMode });
                 }}
               />
               <ComposerDropdown
                 label={copy.model}
                 triggerLabel={`${copy.model}：${selectedModelLabel}`}
+                displayLabel={selectedModelLabel}
                 className="session-composer-model-dropdown"
-                value={selectedModel}
+                value={effectiveModel}
                 options={modelOptions}
                 disabled={!settingsWritable}
+                searchable
+                searchPlaceholder={copy.searchModel}
+                emptyLabel={copy.noModel}
                 onChange={(model) => {
                   const capability = resolveModelCapability(props.capabilities?.models, model);
                   const effort = capability?.defaultReasoningEffort ?? capability?.supportedReasoningEfforts[0] ?? '';
@@ -315,7 +320,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
                   disabled={!settingsWritable}
                   onChange={(effort) => {
                     setSelectedEffort(effort);
-                    props.onRuntimeSettingsChange?.({ model: selectedModel, effort, ...serviceTierWireOverride(selectedServiceTier), permissionMode: props.permissionMode, collaborationMode: props.collaborationMode });
+                    props.onRuntimeSettingsChange?.({ model: effectiveModel, effort, ...serviceTierWireOverride(selectedServiceTier), permissionMode: props.permissionMode, collaborationMode: props.collaborationMode });
                   }}
                 />
               ) : null}
@@ -400,9 +405,10 @@ export function canSteerActiveTurn(state: NativeSessionState): boolean {
 
 function resolveComposerModel(capabilities: CodexConversationCapabilities | null | undefined, providerModel: string | undefined): string {
   const normalized = providerModel?.trim();
-  const capability = resolveModelCapability(capabilities?.models, normalized);
+  const availableModels = capabilities?.models.filter((model) => model.available !== false);
+  const capability = resolveModelCapability(availableModels, normalized);
   if (capability) return capability.id;
-  return capabilities?.preferredModel ?? capabilities?.models[0]?.id ?? normalized ?? '';
+  return resolveModelCapability(availableModels, capabilities?.preferredModel)?.id ?? availableModels?.[0]?.id ?? normalized ?? '';
 }
 
 function resolveComposerEffort(capabilities: CodexConversationCapabilities | null | undefined, model: string, providerEffort: string | undefined): string {
