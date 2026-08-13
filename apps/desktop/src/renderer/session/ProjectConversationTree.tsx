@@ -449,6 +449,7 @@ export function conversationTreeRuntimeStateFromSession(state: NativeSessionStat
   if (state.snapshot?.providerState === 'archived' || (state.queue?.state.type === 'paused' && state.queue.state.reason === 'provider_archived')) {
     return (state.queue?.submissions.length ?? 0) > 0 ? 'queued' : 'ready';
   }
+  if (state.queue?.state.type === 'paused' && state.queue.state.reason === 'recovery_required') return 'error';
   const pendingRequest = state.pendingRequests.find((request) => request.status === 'pending');
   if (pendingRequest?.type === 'request_user_input' || pendingRequest?.type === 'userInput' || state.conversationState === 'waiting_user_input') return 'pending_user_input';
   if (pendingRequest || state.conversationState === 'waiting_approval') return 'pending_approval';
@@ -470,6 +471,7 @@ export function conversationTreeRuntimeStateFromSnapshot(snapshot: NativeConvers
   if (fallback === 'legacy_readonly' || fallback === 'error' || fallback === 'connecting' || fallback === 'reconnecting') return fallback;
   if (snapshot.queue.state.type === 'paused') {
     if (snapshot.queue.state.reason === 'provider_archived') return snapshot.queue.submissions.length > 0 ? 'queued' : 'ready';
+    if (snapshot.queue.state.reason === 'recovery_required') return 'error';
     return 'paused';
   }
   const pendingRequest = snapshot.requests.find((request) => request.status === 'pending');
