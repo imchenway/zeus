@@ -29,6 +29,8 @@ import {
 } from '@zeus/storage';
 
 const MAX_COMMAND_RUN_LOG_PAYLOAD_BYTES = 4 * 1024 * 1024;
+const MAX_COMMAND_RUN_CLIPBOARD_BYTES = 32 * 1024 * 1024;
+const COMMAND_RUN_LOG_COPY_PAGE_SIZE = 2_000;
 
 interface CommandCenterOptions {
   server: FastifyInstance;
@@ -154,6 +156,20 @@ export function createCommandCenter(options: CommandCenterOptions): CommandCente
       hasMoreLogs: logPage.hasMore,
       logsTruncated: logPage.truncated || boundedLogs.truncated,
     };
+  });
+
+  options.server.get('/api/command-runs/:runId/terminal-output', async (request: FastifyRequest<{ Params: { runId: string } }>, reply) => {
+    const run = runs.getById(request.params.runId);
+    if (!run) return notFound(reply, 'ZEUS_COMMAND_RUN_NOT_FOUND', 'Command run not found');
+    if (!run.runtimeSessionId) return { content: '', byteLength: 0 };
+    const projection = projectCompleteCommandRunOutput(options.runtimeSessions, run.runtimeSessionId, MAX_COMMAND_RUN_CLIPBOARD_BYTES);
+    if (projection.exceeded) {
+      return reply.code(413).send({
+        error: 'ZEUS_COMMAND_RUN_LOG_COPY_TOO_LARGE',
+        message: 'Command run output exceeds the 32 MiB clipboard limit. Export the complete Runtime log instead.',
+      });
+    }
+    return { content: projection.content, byteLength: projection.byteLength };
   });
 
   options.server.post('/api/command-runs/:runId/stop', async (request: FastifyRequest<{ Params: { runId: string } }>, reply) => {
@@ -989,6 +1005,109 @@ function boundCommandRunLogs(items: ZeusRuntimeLogRecord[], afterSeq: number, ne
     });
   }
   return { items: selected, truncated: true };
+}
+
+interface CommandRunOutputProjection {
+  content: string;
+  byteLength: number;
+  exceeded: boolean;
+}
+
+/** 按持久序号同步读取一次快照；路由执行期间不让新日志插入当前剪贴板内容。 */
+function projectCompleteCommandRunOutput(runtimeSessions: RuntimeSessionRepository, sessionId: string, byteLimit: number): CommandRunOutputProjection {
+  const projector = new BoundedTerminalOutputProjector(byteLimit);
+  let afterSeq = 0;
+  let snapshotLastSeq: number | undefined;
+  let hasRawContent = false;
+  let lastRawCharacter = '';
+
+  while (true) {
+    const remainingEvents = snapshotLastSeq === undefined ? COMMAND_RUN_LOG_COPY_PAGE_SIZE : Math.max(0, snapshotLastSeq - afterSeq);
+    if (remainingEvents === 0) break;
+    const page = runtimeSessions.searchLogs(sessionId, { afterSeq, limit: Math.min(COMMAND_RUN_LOG_COPY_PAGE_SIZE, remainingEvents) });
+    snapshotLastSeq ??= page.total;
+    // searchLogs 内部先读 MAX(seq) 再读正文；两条语句之间新增的尾部日志不能混入已冻结快照。
+    const snapshotItems = page.items.slice(0, Math.max(0, snapshotLastSeq - afterSeq));
+    for (const log of snapshotItems) {
+      if (log.stream === 'system' && hasRawContent && lastRawCharacter !== '\n' && lastRawCharacter !== '\r' && !projector.write('\n')) return projector.exceededResult();
+      if (log.text && !projector.write(log.text)) return projector.exceededResult();
+      if (log.text) {
+        hasRawContent = true;
+        lastRawCharacter = log.text.at(-1) ?? lastRawCharacter;
+      }
+      if (log.stream === 'system' && lastRawCharacter !== '\n') {
+        if (!projector.write('\n')) return projector.exceededResult();
+        hasRawContent = true;
+        lastRawCharacter = '\n';
+      }
+    }
+    const snapshotNextSeq = Math.min(page.nextSeq, snapshotLastSeq);
+    if (snapshotNextSeq >= snapshotLastSeq || snapshotNextSeq <= afterSeq) break;
+    afterSeq = snapshotNextSeq;
+  }
+
+  return projector.result();
+}
+
+/** 逐块投影终端覆盖语义，避免为复制另外拼接一份无上限的原始日志。 */
+class BoundedTerminalOutputProjector {
+  private readonly completedParts: string[] = [];
+  private completedBytes = 0;
+  private currentLine = '';
+  private currentLineBytes = 0;
+  private currentLineExceeded = false;
+
+  constructor(private readonly byteLimit: number) {}
+
+  write(input: string): boolean {
+    for (const segment of input.split(/([\r\n\b])/u)) {
+      if (!segment) continue;
+      if (segment === '\r') {
+        this.currentLine = '';
+        this.currentLineBytes = 0;
+        this.currentLineExceeded = false;
+        continue;
+      }
+      if (segment === '\n') {
+        if (this.currentLineExceeded || this.completedBytes + this.currentLineBytes + 1 > this.byteLimit) return false;
+        this.completedParts.push(this.currentLine, '\n');
+        this.completedBytes += this.currentLineBytes + 1;
+        this.currentLine = '';
+        this.currentLineBytes = 0;
+        continue;
+      }
+      if (segment === '\b') {
+        if (this.currentLineExceeded || !this.currentLine) continue;
+        this.currentLine = this.currentLine.slice(0, -1);
+        this.currentLineBytes = Buffer.byteLength(this.currentLine, 'utf8');
+        continue;
+      }
+      if (this.currentLineExceeded) continue;
+      const nextBytes = Buffer.byteLength(segment, 'utf8');
+      if (this.completedBytes + this.currentLineBytes + nextBytes > this.byteLimit) {
+        this.currentLine = '';
+        this.currentLineBytes = 0;
+        this.currentLineExceeded = true;
+        continue;
+      }
+      this.currentLine += segment;
+      this.currentLineBytes += nextBytes;
+    }
+    return true;
+  }
+
+  result(): CommandRunOutputProjection {
+    if (this.currentLineExceeded || this.completedBytes + this.currentLineBytes > this.byteLimit) return this.exceededResult();
+    return {
+      content: `${this.completedParts.join('')}${this.currentLine}`,
+      byteLength: this.completedBytes + this.currentLineBytes,
+      exceeded: false,
+    };
+  }
+
+  exceededResult(): CommandRunOutputProjection {
+    return { content: '', byteLength: 0, exceeded: true };
+  }
 }
 
 function parseBoundedCommandRunInteger(value: string | undefined, fallback: number, minimum: number, maximum: number): number {

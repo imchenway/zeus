@@ -806,6 +806,11 @@ export interface CommandRunDetail {
   logsTruncated?: boolean;
 }
 
+export interface CommandRunTerminalOutput {
+  content: string;
+  byteLength: number;
+}
+
 export interface LoadCommandRunOptions {
   afterSeq?: number;
   logLimit?: number;
@@ -1686,6 +1691,7 @@ export interface DashboardClient {
   startCommandRun: (projectId: string, commandId: string, input: StartCommandRunRequest) => Promise<CommandRun>;
   loadCommandRuns: (projectId: string, limit?: number) => Promise<CommandRun[]>;
   loadCommandRun: (runId: string, options?: LoadCommandRunOptions) => Promise<CommandRunDetail>;
+  loadCommandRunTerminalOutput: (runId: string) => Promise<CommandRunTerminalOutput>;
   stopCommandRun: (runId: string) => Promise<CommandRun>;
   loadCommandArtifact: (artifactId: string) => Promise<Blob>;
   loadRuntimeAdapters: () => Promise<AiRuntimeAdapterDescriptor[]>;
@@ -2272,6 +2278,7 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
       const query = params.size > 0 ? `?${params.toString()}` : '';
       return request<CommandRunDetail>(`/api/command-runs/${encodeURIComponent(runId)}${query}`);
     },
+    loadCommandRunTerminalOutput: (runId) => request<CommandRunTerminalOutput>(`/api/command-runs/${encodeURIComponent(runId)}/terminal-output`),
     stopCommandRun: (runId) => request<CommandRun>(`/api/command-runs/${encodeURIComponent(runId)}/stop`, { method: 'POST' }),
     loadCommandArtifact: (artifactId) => requestBlob(`/api/command-artifacts/${encodeURIComponent(artifactId)}/content`),
     loadRuntimeAdapters: () => request<AiRuntimeAdapterDescriptor[]>('/api/runtime/adapters'),

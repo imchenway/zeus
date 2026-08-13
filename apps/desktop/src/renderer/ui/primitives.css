@@ -12,6 +12,20 @@
   --zeus-source-list-root-row-radius: 10px;
   --zeus-source-list-row-radius: 8px;
   --zeus-source-list-row-motion: 140ms var(--zeus-motion-ease-out);
+  user-select: none;
+}
+
+/* Zeus 默认使用 App 式界面选择边界；只有真正需要复制的内容显式恢复选文。 */
+.macos-ai-app :where(input, textarea, [contenteditable='true'], [data-zeus-selectable='text'], pre, code),
+.macos-ai-app :where(.zeus-fidelity-text, .zeus-fidelity-markdown, .session-task-push-layout, .session-command-output, .session-turn-diff-content, .session-source-workspace),
+.macos-ai-app :where(.project-source-code-editor, .project-git-diff-window, .project-git-change-diff, .task-git-review-diff, .task-git-highlighted-code, .runtime-log-stream, .xterm-runtime-pane) {
+  user-select: text;
+}
+
+/* 原生控件的选中语义不能被子节点的技术文本样式重新打开。 */
+.macos-ai-app :where(button, select, option),
+.macos-ai-app :where(button, select, option) * {
+  user-select: none;
 }
 
 /* 保真正文保留来源中的全部空白；软换行只改变显示，不改写原始内容。 */

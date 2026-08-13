@@ -1,14 +1,28 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { ClockCounterClockwiseIcon as ClockCounterClockwise } from '@phosphor-icons/react/dist/csr/ClockCounterClockwise';
+import { CheckIcon as CheckGlyph } from '@phosphor-icons/react/dist/csr/Check';
+import { CopyIcon as Copy } from '@phosphor-icons/react/dist/csr/Copy';
 import { GlobeIcon as Globe } from '@phosphor-icons/react/dist/csr/Globe';
 import { PencilSimpleIcon as PencilSimple } from '@phosphor-icons/react/dist/csr/PencilSimple';
 import { PlayIcon as Play } from '@phosphor-icons/react/dist/csr/Play';
 import { PlusIcon as Plus } from '@phosphor-icons/react/dist/csr/Plus';
 import { StopIcon as Stop } from '@phosphor-icons/react/dist/csr/Stop';
 import { TrashIcon as Trash } from '@phosphor-icons/react/dist/csr/Trash';
+import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/csr/WarningCircle';
 import { commandNeedsHighRiskConfirmation, type CommandRiskFlags } from '@zeus/shared';
 import { projectTerminalOutput } from '@zeus/terminal-core';
-import type { CommandDefinition, CommandDefinitionInput, CommandParameterDefinition, CommandRun, CommandRunDetail, DashboardClient, ProjectConfig, ProjectRecord, SaveProjectConfigRequest } from './apiClient.js';
+import {
+  ZeusApiError,
+  type CommandDefinition,
+  type CommandDefinitionInput,
+  type CommandParameterDefinition,
+  type CommandRun,
+  type CommandRunDetail,
+  type DashboardClient,
+  type ProjectConfig,
+  type ProjectRecord,
+  type SaveProjectConfigRequest,
+} from './apiClient.js';
 import { Button } from './ui/Button.js';
 import { ModalPortal } from './ui/ModalPortal.js';
 import './commandCenter.css';
@@ -71,10 +85,39 @@ function CommandRunDurationValue(props: { run: CommandRun; zh: boolean }) {
   return <span className="command-run-duration">{formatRunDuration(props.run, nowMs, props.zh)}</span>;
 }
 
-function CommandRunLog(props: { runId: string; content: string; ariaLabel: string }) {
+type CommandRunCopyState = 'idle' | 'copying' | 'copied' | 'too_large' | 'failed';
+
+function constrainSelectionToContainer(container: HTMLElement): void {
+  const selection = window.getSelection();
+  if (!selection || selection.isCollapsed || selection.rangeCount === 0) return;
+  const range = selection.getRangeAt(0);
+  if (!range.intersectsNode(container)) return;
+  const constrained = range.cloneRange();
+  if (!container.contains(constrained.startContainer)) constrained.setStart(container, 0);
+  if (!container.contains(constrained.endContainer)) constrained.setEnd(container, container.childNodes.length);
+  if (constrained.startContainer === range.startContainer && constrained.startOffset === range.startOffset && constrained.endContainer === range.endContainer && constrained.endOffset === range.endOffset) return;
+  selection.removeAllRanges();
+  selection.addRange(constrained);
+}
+
+function beginCommandRunLogSelection(event: ReactPointerEvent<HTMLPreElement>): void {
+  if (event.button !== 0) return;
+  const container = event.currentTarget;
+  const finish = () => {
+    window.removeEventListener('pointercancel', cancel, true);
+    // Chromium 没有实现 user-select: contain；松开鼠标时把跨界选区夹回日志正文。
+    constrainSelectionToContainer(container);
+  };
+  const cancel = () => window.removeEventListener('pointerup', finish, true);
+  window.addEventListener('pointerup', finish, { capture: true, once: true });
+  window.addEventListener('pointercancel', cancel, { capture: true, once: true });
+}
+
+function CommandRunLog(props: { runId: string; content: string; ariaLabel: string; hasLogs: boolean; client: DashboardClient; zh: boolean }) {
   const containerRef = useRef<HTMLPreElement>(null);
   const followedRunIdRef = useRef(props.runId);
   const shouldFollowLatestRef = useRef(true);
+  const [copyState, setCopyState] = useState<CommandRunCopyState>('idle');
 
   useLayoutEffect(() => {
     const container = containerRef.current;
@@ -86,21 +129,82 @@ function CommandRunLog(props: { runId: string; content: string; ariaLabel: strin
     if (shouldFollowLatestRef.current) container.scrollTo({ top: container.scrollHeight, behavior: 'instant' });
   }, [props.content, props.runId]);
 
+  const copyLabel =
+    copyState === 'copying'
+      ? props.zh
+        ? '正在复制…'
+        : 'Copying…'
+      : copyState === 'copied'
+        ? props.zh
+          ? '已复制'
+          : 'Copied'
+        : copyState === 'too_large'
+          ? props.zh
+            ? '日志过大，请导出'
+            : 'Too large; export logs'
+          : copyState === 'failed'
+            ? props.zh
+              ? '复制失败，请重试'
+              : 'Copy failed; retry'
+            : props.zh
+              ? '复制全部日志'
+              : 'Copy all logs';
+
+  async function copyCompleteLog(): Promise<void> {
+    if (!props.hasLogs || copyState === 'copying') return;
+    setCopyState('copying');
+    try {
+      const output = await props.client.loadCommandRunTerminalOutput(props.runId);
+      if (!output.content || !(await writeCommandRunClipboard(output.content))) throw new Error('Clipboard write failed');
+      setCopyState('copied');
+    } catch (error) {
+      setCopyState(error instanceof ZeusApiError && error.error === 'ZEUS_COMMAND_RUN_LOG_COPY_TOO_LARGE' ? 'too_large' : 'failed');
+    }
+  }
+
   return (
-    <pre
-      ref={containerRef}
-      className="command-run-log"
-      aria-label={props.ariaLabel}
-      onScroll={(event) => {
-        const container = event.currentTarget;
-        const distanceFromBottom = Math.max(0, container.scrollHeight - container.clientHeight - container.scrollTop);
-        // 用户主动上滚时保留历史阅读位置；手动回到底部后恢复跟随。
-        shouldFollowLatestRef.current = distanceFromBottom <= COMMAND_RUN_LOG_FOLLOW_DISTANCE_PX;
-      }}
-    >
-      {props.content}
-    </pre>
+    <section className="command-run-log-shell" aria-label={props.ariaLabel}>
+      <header className="command-run-log-toolbar">
+        <strong>{props.ariaLabel}</strong>
+        <Button className="command-run-copy-action" size="compact" busy={copyState === 'copying'} disabled={!props.hasLogs} data-copy-state={copyState} aria-label={copyLabel} title={copyLabel} onClick={() => void copyCompleteLog()}>
+          {copyState === 'copied' ? <CheckGlyph aria-hidden="true" /> : copyState === 'too_large' || copyState === 'failed' ? <WarningCircle aria-hidden="true" /> : <Copy aria-hidden="true" />}
+          <span>{copyLabel}</span>
+        </Button>
+      </header>
+      <span className="visually-hidden" role="status" aria-live="polite" aria-atomic="true">
+        {copyState === 'idle' ? '' : copyLabel}
+      </span>
+      <pre
+        ref={containerRef}
+        className="command-run-log"
+        onPointerDown={beginCommandRunLogSelection}
+        onScroll={(event) => {
+          const container = event.currentTarget;
+          const distanceFromBottom = Math.max(0, container.scrollHeight - container.clientHeight - container.scrollTop);
+          // 用户主动上滚时保留历史阅读位置；手动回到底部后恢复跟随。
+          shouldFollowLatestRef.current = distanceFromBottom <= COMMAND_RUN_LOG_FOLLOW_DISTANCE_PX;
+        }}
+      >
+        {props.content}
+      </pre>
+    </section>
   );
+}
+
+async function writeCommandRunClipboard(content: string): Promise<boolean> {
+  try {
+    const result = await window.zeus?.writeClipboardText?.(content);
+    if (result?.written) return true;
+  } catch {
+    // Electron 原生桥不可用时再尝试 Web Clipboard API。
+  }
+  try {
+    if (!navigator.clipboard?.writeText) return false;
+    await navigator.clipboard.writeText(content);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function CommandCenterPanel(props: CommandCenterPanelProps) {
@@ -564,7 +668,15 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
                     </div>
                   </dl>
                   {runDetail.run.failureReason ? <p className="command-run-failure">{runDetail.run.failureReason}</p> : null}
-                  <CommandRunLog runId={runDetail.run.id} ariaLabel={zh ? '终端日志' : 'Terminal logs'} content={runDetail.logs.length > 0 ? projectedRunLogContent : zh ? '暂无日志。' : 'No logs yet.'} />
+                  <CommandRunLog
+                    key={runDetail.run.id}
+                    runId={runDetail.run.id}
+                    ariaLabel={zh ? '终端日志' : 'Terminal logs'}
+                    content={runDetail.logs.length > 0 ? projectedRunLogContent : zh ? '暂无日志。' : 'No logs yet.'}
+                    hasLogs={runDetail.logTotal > 0}
+                    client={props.client}
+                    zh={zh}
+                  />
                   {runDetail.artifacts.length > 0 ? (
                     <section className="command-artifacts" aria-label={zh ? '命令产物' : 'Command artifacts'}>
                       <strong>{zh ? '产物' : 'Artifacts'}</strong>
