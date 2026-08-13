@@ -66,6 +66,7 @@ declare global {
       getRequestingWindowForeground: () => Promise<{ foreground: boolean }>;
       onRequestingWindowForegroundChanged: (listener: (foreground: boolean) => void) => () => void;
       hideMenuBarUsage: () => Promise<{ hidden: true }>;
+      onMenuBarUsageSettingsChanged: (listener: (settings: { language: 'zh-CN' | 'en-US'; appearance: 'light' | 'dark' | 'system' }) => void) => () => void;
       showMainWindowFromMenuBarUsage: () => Promise<{ shown: boolean }>;
       openMenuBarUsageSettings: (category: 'usage' | 'runtime') => Promise<{ opened: boolean; category: 'usage' | 'runtime' }>;
       quitFromMenuBarUsage: () => Promise<{ quitting: true }>;

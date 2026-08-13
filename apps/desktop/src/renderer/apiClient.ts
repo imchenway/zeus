@@ -1984,6 +1984,17 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
     return (await response.json()) as T;
   }
 
+  async function loadUsageOverview(): Promise<UsageOverviewSnapshot> {
+    try {
+      return await request<UsageOverviewSnapshot>('/api/usage-overview');
+    } catch (error) {
+      if (!(error instanceof ZeusApiError) || error.status !== 404) throw error;
+      // 交接中的旧执行宿主没有统一用量路由，使用其真实 Codex 七日统计保持只读兼容。
+      const analytics = await request<CodexUsageAnalyticsSnapshot>('/api/codex/usage-analytics?range=7d');
+      return normalizeLegacyCodexUsageOverview(analytics);
+    }
+  }
+
   async function requestBlob(path: string): Promise<Blob> {
     const response = await fetch(`${currentOptions.baseUrl}${path}`, {
       headers: { authorization: `Bearer ${currentOptions.apiToken}` },
@@ -2035,7 +2046,7 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
     loadCodexConversationCapabilities: (projectId) => request<CodexConversationCapabilities>(`/api/projects/${encodeURIComponent(projectId)}/codex-conversation-capabilities`),
     loadCodexAccount: () => request<CodexAccountSnapshot>('/api/codex/account'),
     loadCodexUsageSummary: () => request<CodexUsageSummarySnapshot>('/api/codex/usage-summary'),
-    loadUsageOverview: () => request<UsageOverviewSnapshot>('/api/usage-overview'),
+    loadUsageOverview,
     loadCodexUsageAnalytics: (input) => {
       const query = new URLSearchParams({ range: input.range });
       if (input.projectId) query.set('projectId', input.projectId);
@@ -2684,6 +2695,58 @@ function isLikelyLocalServerConnectionError(error: unknown): boolean {
   if (!(error instanceof TypeError)) return false;
   const message = error.message.toLowerCase();
   return message.includes('fetch') || message.includes('network') || message.includes('failed');
+}
+
+function normalizeLegacyCodexUsageOverview(analytics: CodexUsageAnalyticsSnapshot): UsageOverviewSnapshot {
+  const today = localDateKey(new Date());
+  const todayLocal = analytics.local.daily.find((bucket) => bucket.date === today) ?? emptyLocalUsageTotals();
+  return {
+    providers: [
+      {
+        providerId: 'codex',
+        sourceId: 'codex',
+        name: 'Codex',
+        kind: 'subscription',
+        deleted: false,
+        planType: analytics.official.planType,
+        officialState: analytics.official.state,
+        rateLimitWindows: analytics.official.rateLimitWindows,
+        officialCreditBalance: analytics.official.creditBalance,
+        officialCreditsUnlimited: analytics.official.creditsUnlimited,
+        todayLocal,
+        sevenDayLocal: analytics.local.totals,
+        dailyLocal: analytics.local.daily,
+        collectionStartedAt: analytics.local.collectionStartedAt,
+        updatedAt: analytics.updatedAt,
+        stale: analytics.official.stale,
+        error: analytics.official.error,
+      },
+    ],
+    updatedAt: analytics.updatedAt,
+    providerCoverage: 'codex-only-compatibility',
+  };
+}
+
+function emptyLocalUsageTotals() {
+  return {
+    totalTokens: 0,
+    inputTokens: 0,
+    cachedInputTokens: 0,
+    cacheWriteInputTokens: 0,
+    outputTokens: 0,
+    reasoningOutputTokens: 0,
+    conversationCount: 0,
+    turnCount: 0,
+    cacheHitRate: null,
+    estimatedCredits: null,
+    apiEquivalentUsd: null,
+    cacheSavingsUsd: null,
+    priceCoverage: null,
+  };
+}
+
+function localDateKey(value: Date): string {
+  return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`;
 }
 
 async function decodeWebSocketMessage(data: MessageEvent['data']): Promise<string | null> {

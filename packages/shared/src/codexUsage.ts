@@ -98,6 +98,7 @@ export interface UsageProviderSummary {
 export interface UsageOverviewSnapshot {
   providers: UsageProviderSummary[];
   updatedAt: string;
+  providerCoverage: 'all-recorded' | 'codex-only-compatibility';
 }
 
 export interface CodexLocalUsageTotals extends TokenUsageBreakdown {

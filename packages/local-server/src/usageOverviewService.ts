@@ -21,7 +21,7 @@ export function createUsageOverviewService(options: CreateUsageOverviewServiceOp
   async function read(): Promise<UsageOverviewSnapshot> {
     const readAt = now();
     const allRows = options.ledger.list();
-    const connections = await options.modelConnections.list();
+    const connections = options.modelConnections.listMetadata();
     const connectionNames = new Map(connections.map((connection) => [connection.id, connection.name]));
     const official = options.codexUsage.readCachedOfficialUsage();
     const groups = groupRows(allRows, (row) => row.providerId);
@@ -57,6 +57,7 @@ export function createUsageOverviewService(options: CreateUsageOverviewServiceOp
       .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
     return {
       providers,
+      providerCoverage: 'all-recorded',
       updatedAt:
         providers
           .map((provider) => provider.updatedAt)

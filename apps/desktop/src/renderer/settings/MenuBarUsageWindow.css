@@ -202,6 +202,19 @@ body:has(.menu-bar-usage-root),
   font-size: 10.5px;
 }
 
+.menu-bar-usage-status-stack {
+  min-block-size: 0;
+}
+
+.menu-bar-usage-notice[data-tone='warning'] {
+  color: var(--usage-muted);
+  line-height: 1.4;
+}
+
+.menu-bar-usage-status-stack .menu-bar-usage-notice + .menu-bar-usage-notice {
+  margin-block-start: -2px;
+}
+
 .menu-bar-usage-notice button {
   min-block-size: 24px;
   padding: 0 4px;
@@ -240,6 +253,38 @@ body:has(.menu-bar-usage-root),
   color: var(--usage-muted);
   font-size: 11px;
   line-height: 1.45;
+}
+
+.menu-bar-usage-load-failure {
+  display: grid;
+  min-block-size: 190px;
+  place-content: center;
+  justify-items: center;
+  gap: 6px;
+  padding: 24px;
+  text-align: center;
+}
+
+.menu-bar-usage-load-failure strong {
+  color: var(--usage-danger);
+  font-size: 14px;
+}
+
+.menu-bar-usage-load-failure span {
+  color: var(--usage-muted);
+  font-size: 11px;
+}
+
+.menu-bar-usage-load-failure button {
+  min-block-size: 28px;
+  margin-block-start: 6px;
+  padding: 4px 12px;
+  border: 1px solid var(--usage-line);
+  border-radius: 8px;
+  background: var(--usage-panel-strong);
+  color: var(--usage-text);
+  font: inherit;
+  font-weight: 650;
 }
 
 .menu-bar-usage-provider-list {
