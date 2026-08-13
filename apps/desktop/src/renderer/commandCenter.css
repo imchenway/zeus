@@ -257,14 +257,69 @@
   overflow-wrap: anywhere;
 }
 
-.command-run-log {
+.command-run-log-shell {
   background: #111419;
   border-radius: 10px;
   color: #e7ecf3;
+  margin: 14px 0 0;
+  overflow: hidden;
+}
+
+.command-run-log-toolbar {
+  align-items: center;
+  border-bottom: 1px solid rgb(255 255 255 / 0.1);
+  display: flex;
+  justify-content: space-between;
+  min-height: 40px;
+  padding: 5px 7px 5px 12px;
+}
+
+.command-run-log-toolbar > strong {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.command-run-copy-action.zeus-button[data-zeus-primitive='button'] {
+  background: transparent;
+  border-color: transparent;
+  color: #cbd5e1;
+  font-size: 12px;
+  gap: 6px;
+  min-block-size: 28px;
+  padding-inline: 8px;
+}
+
+.command-run-copy-action.zeus-button[data-zeus-primitive='button']:hover:not(:disabled) {
+  background: rgb(255 255 255 / 0.08);
+  border-color: rgb(255 255 255 / 0.1);
+  color: #f8fafc;
+}
+
+.command-run-copy-action.zeus-button[data-zeus-primitive='button']:focus-visible {
+  box-shadow: 0 0 0 2px rgb(147 197 253 / 0.65);
+}
+
+.command-run-copy-action[data-copy-state='copied'] {
+  color: #a7f3d0 !important;
+}
+
+.command-run-copy-action:is([data-copy-state='too_large'], [data-copy-state='failed']) {
+  color: #fecaca !important;
+}
+
+.command-run-copy-action svg {
+  block-size: 15px;
+  flex: 0 0 auto;
+  inline-size: 15px;
+}
+
+.command-run-log {
+  background: transparent;
+  color: inherit;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 12px;
   line-height: 1.55;
-  margin: 14px 0 0;
+  margin: 0;
   max-height: 280px;
   min-height: 92px;
   overflow: auto;
