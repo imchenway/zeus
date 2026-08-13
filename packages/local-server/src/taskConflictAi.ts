@@ -1,10 +1,13 @@
-export function buildTaskConflictAiConversationTitle(input: { sourceBranch: string; taskBranch: string }): string {
-  return `冲突处理：${input.taskBranch} 合入来源分支 ${input.sourceBranch}`.slice(0, 80);
+export function buildTaskConflictAiConversationTitle(input: { taskTitle: string }): string {
+  return `冲突处理：${input.taskTitle.trim()}`.slice(0, 80);
 }
 
-export function matchesTaskConflictAiConversationTitle(input: { title: string; sourceBranch: string; taskBranch: string }): boolean {
-  const legacyTitles = [`冲突处理：本地合入 ${input.taskBranch} → ${input.sourceBranch}`, `本地合入：${input.taskBranch} → ${input.sourceBranch}`].map((title) => title.slice(0, 80));
-  return input.title === buildTaskConflictAiConversationTitle(input) || legacyTitles.includes(input.title);
+export function matchesTaskConflictAiConversationTitle(input: { title: string; taskTitle?: string | null; sourceBranch: string; taskBranch: string }): boolean {
+  const legacyTitles = [`冲突处理：${input.taskBranch} 合入来源分支 ${input.sourceBranch}`, `冲突处理：本地合入 ${input.taskBranch} → ${input.sourceBranch}`, `本地合入：${input.taskBranch} → ${input.sourceBranch}`].map((title) =>
+    title.slice(0, 80),
+  );
+  const taskTitle = input.taskTitle?.trim();
+  return (taskTitle ? input.title === buildTaskConflictAiConversationTitle({ taskTitle }) : false) || legacyTitles.includes(input.title);
 }
 
 export function buildTaskConflictAiPrompt(input: { sourceBranch: string; taskBranch: string; mode: 'merge' | 'squash'; commitMessage: string }): string {

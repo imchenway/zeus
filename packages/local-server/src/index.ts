@@ -13601,15 +13601,19 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     if (!conversation.taskId || !conversation.workspaceId) return null;
     const workspace = taskWorkspaces.getById(conversation.workspaceId);
     if (!workspace) return null;
-    const integration = taskIntegrations
-      .listByTask(conversation.taskId)
-      .find(
-        (candidate) =>
-          candidate.workspaceId === conversation.workspaceId &&
-          candidate.state === 'conflicted' &&
-          Boolean(candidate.integrationPath) &&
-          matchesTaskConflictAiConversationTitle({ title: conversation.title, taskBranch: workspace.branchName, sourceBranch: candidate.targetBranch }),
-      );
+    const taskTitle = tasks.getById(conversation.taskId)?.title;
+    const integration = taskIntegrations.listByTask(conversation.taskId).find(
+      (candidate) =>
+        candidate.workspaceId === conversation.workspaceId &&
+        candidate.state === 'conflicted' &&
+        Boolean(candidate.integrationPath) &&
+        matchesTaskConflictAiConversationTitle({
+          title: conversation.title,
+          taskTitle,
+          taskBranch: workspace.branchName,
+          sourceBranch: candidate.targetBranch,
+        }),
+    );
     return integration?.integrationPath ? { operationId: integration.id, integration, worktreePath: integration.integrationPath } : null;
   }
 
@@ -14785,7 +14789,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           projectId: project.id,
           taskId: task.id,
           taskTitle: task.title,
-          conversationTitle: buildTaskConflictAiConversationTitle({ taskBranch: resolved.workspace.branchName, sourceBranch: resolved.integration.targetBranch }),
+          conversationTitle: buildTaskConflictAiConversationTitle({ taskTitle: task.title }),
           cwd: started.integrationPath,
           prompt,
           displayText: `请处理全部冲突并完成 ${resolved.workspace.branchName} 合入来源分支 ${resolved.integration.targetBranch}。`,
