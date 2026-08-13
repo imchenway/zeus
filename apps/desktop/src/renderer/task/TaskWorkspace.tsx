@@ -17,6 +17,7 @@ import type {
 } from '../apiClient.js';
 import type { NativeConversationChoice } from '../session/sessionTypes.js';
 import { Button } from '../ui/Button.js';
+import { useNewItemMotionIds } from '../ui/useNewItemMotion.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 import {
   clampTaskTableColumnWidth,
@@ -486,6 +487,7 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
   const taskListLoading = taskListState === 'loading';
   const taskListError = taskListState === 'error';
   const showEmptyState = !taskListLoading && !taskListError && model.visibleTasks.length === 0;
+  const enteringTaskIds = useNewItemMotionIds(props.tasks.map((task) => task.id));
   // visual thesis: 任务表格像 macOS 原生工作台，选择列稳定，批量栏只在选择后低噪音出现，任务列表空态必须保持轻量行。
   // content plan: 顶部仍只服务筛选与新建；选择后追加批量状态、删除与结果提示；单任务详情在右侧悬浮抽屉中展开。
   // interaction thesis: checkbox 只负责选择，行内容负责打开详情，执行反馈通过 aria-live 告知而不打断表格浏览。
@@ -1113,6 +1115,8 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
                   tabIndex={task.id === keyboardEntryTaskId ? 0 : -1}
                   data-source-list-item="true"
                   data-task-row-action={row.action}
+                  data-motion-surface="list-item"
+                  data-motion-state={enteringTaskIds.has(task.id) ? 'entering' : undefined}
                   onClick={(event) => {
                     event.currentTarget.focus();
                     props.onOpenTaskDetail(task.id);

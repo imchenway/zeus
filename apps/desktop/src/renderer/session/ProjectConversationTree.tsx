@@ -10,6 +10,7 @@ import type { NativeConversationChoice, NativeConversationSnapshot, NativeSessio
 import { compareConversationStageUpdatedDesc } from './conversationOrdering.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
 import { conversationDisplayTitle } from './conversationDisplayTitle.js';
+import { useNewItemMotionIds } from '../ui/useNewItemMotion.js';
 
 export interface ProjectConversationTaskGroup {
   taskId: string;
@@ -98,6 +99,8 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
     conversations: normalizedQuery ? group.conversations.filter((entry) => entry.displayTitle.toLocaleLowerCase().includes(normalizedQuery)) : group.conversations,
   }));
   const conversationIds = flattenedGroups.flatMap((group) => group.conversations.map((entry) => conversationNavigationId(entry.conversation)));
+  const allConversationIds = props.groups.flatMap((group) => flattenProjectConversations(group).conversations.map((entry) => conversationNavigationId(entry.conversation)));
+  const enteringConversationIds = useNewItemMotionIds(allConversationIds);
   const fallbackTabStopId = props.selectedConversationId && conversationIds.includes(props.selectedConversationId) ? null : (conversationIds[0] ?? null);
 
   async function archiveConversation(conversation: NativeConversationChoice): Promise<void> {
@@ -132,10 +135,12 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
                     className="session-conversation-tree-item"
                     key={navigationId}
                     layout={reduceMotion ? false : 'position'}
-                    initial={reduceMotion ? false : { opacity: 0, height: 0, overflow: 'hidden' }}
+                    initial={false}
                     animate={reduceMotion ? { opacity: 1 } : { opacity: 1, height: 'auto', overflow: 'visible' }}
                     exit={reduceMotion ? { opacity: 0, transition: { duration: 0 } } : { opacity: 0, height: 0, overflow: 'hidden', transition: { duration: 0.16, ease: [0.22, 1, 0.36, 1] } }}
                     transition={reduceMotion ? { duration: 0 } : { layout: { duration: 0.16, ease: [0.22, 1, 0.36, 1] }, opacity: { duration: 0.12 }, height: { duration: 0.16, ease: [0.22, 1, 0.36, 1] } }}
+                    data-motion-surface="list-item"
+                    data-motion-state={enteringConversationIds.has(navigationId) ? 'entering' : undefined}
                   >
                     <button
                       type="button"
