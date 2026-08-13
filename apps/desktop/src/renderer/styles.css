@@ -14492,6 +14492,17 @@ body[data-surface='project-git-diff'] #root {
   gap: 10px;
 }
 
+.macos-ai-app .task-model-push-context-empty {
+  margin: 0;
+  padding: 10px;
+  border: 1px solid var(--zeus-control-border);
+  border-radius: 10px;
+  background: var(--zeus-control-bg);
+  color: var(--zeus-product-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .macos-ai-app .task-model-push-parent {
   min-inline-size: 0;
   margin: 0;
