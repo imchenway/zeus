@@ -91,7 +91,6 @@ export interface StartTaskConversationInput {
   writableRoots?: string[];
   taskTitle: string;
   prompt: string;
-  displayText?: string;
   model: string;
   modelSourceId?: string | null;
   effort?: string;

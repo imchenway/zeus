@@ -14598,7 +14598,6 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     conversationTitle?: string;
     cwd: string;
     prompt: string;
-    displayText?: string;
     model: { sourceId: string | null; modelId: string; displayName: string | null };
     effort?: string;
     serviceTier?: string | null;
@@ -14623,7 +14622,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     providerWriteLifecycle: { markPrepared(submissionId: string): Promise<void>; markRpcStarted(submissionId: string): void };
   }
 
-  /** 专用入口只生成计划；Provider 分流、身份和持久接受生命周期统一在此执行。 */
+  /** 专用入口只生成计划；首发可见正文与实际提示词同源，Provider 分流和持久接受生命周期统一在此执行。 */
   async function startNativeTaskConversationFromPlan(plan: NativeTaskConversationStartPlan) {
     if (plan.agentKind === 'pi') {
       return piNativeCoordinator.startConversation({
@@ -14635,7 +14634,6 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         ...(plan.conversationTitle ? { conversationTitle: plan.conversationTitle } : {}),
         cwd: plan.cwd,
         prompt: plan.prompt,
-        ...(plan.displayText ? { displayText: plan.displayText } : {}),
         model: plan.model,
         ...(plan.effort ? { thinkingLevel: plan.effort } : {}),
         ...(plan.attachments ? { attachments: plan.attachments } : {}),
@@ -14662,7 +14660,6 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       taskTitle: plan.taskTitle,
       ...(plan.conversationTitle ? { conversationTitle: plan.conversationTitle } : {}),
       prompt: plan.prompt,
-      ...(plan.displayText ? { displayText: plan.displayText } : {}),
       ...(plan.attachments ? { attachments: plan.attachments } : {}),
       ...(plan.allowedAttachmentRoots ? { allowedAttachmentRoots: plan.allowedAttachmentRoots } : {}),
       ...(plan.taskPushLayout ? { taskPushLayout: plan.taskPushLayout } : {}),
@@ -14854,7 +14851,6 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         const reviewCwd = reviewWorkspace.worktreePath?.trim();
         if (!reviewCwd || !existsSync(reviewCwd)) throw nativeApiError('ZEUS_TASK_EXECUTION_CONTEXT_REQUIRED', 'The exact code review worktree is unavailable.');
         const prompt = createTaskCodeReviewPrompt(task, reviewWorkspace);
-        const displayText = '请审查当前工作区的完整代码变化。';
         if (selectedAgentKind === 'codex') await assertCodexAccountReady(selectedModel.sourceId ?? null, selectedModel.model);
 
         nativeOperation = await startNativeTaskConversationFromPlan({
@@ -14867,7 +14863,6 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           conversationTitle: `代码审查：${task.title}`,
           cwd: reviewCwd,
           prompt,
-          displayText,
           model: { sourceId: selectedModel.sourceId ?? null, modelId: selectedModel.model, displayName: selectedModel.displayName ?? null },
           ...(selectedEffort ? { effort: selectedEffort } : {}),
           serviceTier,
@@ -14978,7 +14973,6 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           conversationTitle: buildTaskConflictAiConversationTitle({ taskTitle: task.title }),
           cwd: started.integrationPath,
           prompt,
-          displayText: `请处理全部冲突并完成 ${resolved.workspace.branchName} 合入来源分支 ${resolved.integration.targetBranch}。`,
           model: { sourceId: modelConversation.modelSourceId, modelId, displayName: null },
           ...(settings?.effort ? { effort: settings.effort } : {}),
           ...(settings && Object.prototype.hasOwnProperty.call(settings, 'serviceTier') ? { serviceTier: settings.serviceTier, serviceTierPresent: true } : {}),
