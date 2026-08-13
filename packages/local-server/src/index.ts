@@ -8106,7 +8106,15 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         action: 'model.connection.created',
         resourceType: 'model_connection',
         resourceId: connection.id,
-        payload: { name: connection.name, templateId: connection.templateId, baseUrl: connection.baseUrl, modelCount: connection.models.length, apiKeyConfigured: connection.apiKeyConfigured },
+        payload: {
+          name: connection.name,
+          templateId: connection.templateId,
+          baseUrl: connection.baseUrl,
+          modelCount: connection.models.length,
+          apiKeyConfigured: connection.apiKeyConfigured,
+          transportProtocol: new URL(connection.baseUrl).protocol.replace(':', ''),
+          insecureHttpAcknowledged: connection.baseUrl.startsWith('http://') && request.body?.allowInsecureHttp === true,
+        },
       });
       return reply.code(201).send(connection);
     } catch (error) {
@@ -8122,7 +8130,15 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         action: 'model.connection.updated',
         resourceType: 'model_connection',
         resourceId: connection.id,
-        payload: { name: connection.name, templateId: connection.templateId, baseUrl: connection.baseUrl, modelCount: connection.models.length, apiKeyConfigured: connection.apiKeyConfigured },
+        payload: {
+          name: connection.name,
+          templateId: connection.templateId,
+          baseUrl: connection.baseUrl,
+          modelCount: connection.models.length,
+          apiKeyConfigured: connection.apiKeyConfigured,
+          transportProtocol: new URL(connection.baseUrl).protocol.replace(':', ''),
+          insecureHttpAcknowledged: connection.baseUrl.startsWith('http://') && request.body?.allowInsecureHttp === true,
+        },
       });
       return connection;
     } catch (error) {

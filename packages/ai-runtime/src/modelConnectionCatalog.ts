@@ -482,8 +482,7 @@ function normalizeModelBaseUrl(value: unknown): string {
   } catch {
     throw new Error('服务地址必须是完整 URL。');
   }
-  const local = url.hostname === 'localhost' || url.hostname === '127.0.0.1' || url.hostname === '::1';
-  if (url.protocol !== 'https:' && !(local && url.protocol === 'http:')) throw new Error('远程模型服务必须使用 HTTPS；HTTP 只允许本机地址。');
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') throw new Error('服务地址只支持 HTTP 或 HTTPS。');
   if (url.username || url.password || url.hash || url.search) throw new Error('服务地址不能包含账号、密码、查询参数或片段。');
   return url.toString().replace(/\/+$/u, '');
 }

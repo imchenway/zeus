@@ -22,6 +22,7 @@ import type { SettingRepository } from '@zeus/storage';
 
 export interface SaveModelConnectionRequest extends SaveModelConnectionInput {
   apiKey?: string;
+  allowInsecureHttp?: boolean;
 }
 
 export interface ModelCatalogRefreshResult {
@@ -101,6 +102,10 @@ export function createModelConnectionService(options: { settings: SettingReposit
       createdAt: existing?.createdAt ?? timestamp,
       updatedAt: timestamp,
     });
+    const requiresInsecureHttpConfirmation = record.baseUrl.startsWith('http://') && record.baseUrl !== existing?.baseUrl;
+    if (requiresInsecureHttpConfirmation && input.allowInsecureHttp !== true) {
+      throw serviceError('ZEUS_MODEL_CONNECTION_INSECURE_HTTP_CONFIRMATION_REQUIRED', 'HTTP 不会加密传输 API Key、请求内容或模型回复，请确认风险后再保存。', 409);
+    }
     const records = readStored();
     const index = records.findIndex((candidate) => candidate.id === id);
     if (index >= 0) records[index] = record;
