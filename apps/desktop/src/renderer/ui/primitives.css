@@ -436,8 +436,12 @@
     color var(--zeus-source-list-row-motion);
 }
 
-.macos-ai-app .zeus-source-list-row:has(> .zeus-source-list-row-disclosure) {
+.macos-ai-app .zeus-source-list-row[data-disclosure-placement='leading'] {
   grid-template-columns: 18px minmax(0, 1fr) auto;
+}
+
+.macos-ai-app .zeus-source-list-row[data-disclosure-placement='trailing'] {
+  grid-template-columns: minmax(0, 1fr) auto 18px;
 }
 
 .macos-ai-app .zeus-source-list-row-disclosure {

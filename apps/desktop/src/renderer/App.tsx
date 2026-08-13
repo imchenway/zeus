@@ -157,6 +157,7 @@ import { ZeusSelect } from './ZeusSelect.js';
 import { Button, type ButtonVariant } from './ui/Button.js';
 import { ModalPortal } from './ui/ModalPortal.js';
 import { SourceListRow } from './ui/SourceListRow.js';
+import { taskAgentRunStatusLabels } from './task/TaskRunStatusChip.js';
 import { WorkspaceDrawer } from './ui/WorkspaceDrawer.js';
 import { useNewItemMotionIds } from './ui/useNewItemMotion.js';
 import { CommandCenterPanel } from './CommandCenterPanel.js';
@@ -928,32 +929,6 @@ function createSessionWorkspaceTask(task: TaskRecord, settings: AppShellSettings
     })),
   };
 }
-const taskAgentRunStatusLabels: Record<AppLanguage, Record<TaskAgentRunStatus, string>> = {
-  'zh-CN': {
-    not_started: '未启动',
-    connecting: '正在连接',
-    reconnecting: '正在重连',
-    running: '运行中',
-    waiting_user: '等待用户回复',
-    waiting_approval: '等待授权',
-    paused: '已暂停',
-    idle: '等待新指令',
-    failed: '运行失败',
-    legacy_readonly: '旧会话只读',
-  },
-  'en-US': {
-    not_started: 'Not started',
-    connecting: 'Connecting',
-    reconnecting: 'Reconnecting',
-    running: 'Running',
-    waiting_user: 'Waiting for user',
-    waiting_approval: 'Waiting for approval',
-    paused: 'Paused',
-    idle: 'Waiting for instructions',
-    failed: 'Run failed',
-    legacy_readonly: 'Legacy read-only',
-  },
-};
 const graphNodeTypeFilterValues = ['', 'file', 'function', 'package', 'api', 'table', 'column', 'control_flow', 'aggregate'] as const;
 const graphEdgeTypeFilterValues = [
   '',
@@ -7990,9 +7965,26 @@ export function App(props: {
     let statusSyncGeneration = 0;
     let statusSyncAttempt = 0;
     let statusSyncRetryTimer: number | undefined;
+    let statusSnapshotTimer: number | undefined;
+    let statusSnapshotRunning = false;
     const clearStatusSyncRetry = (): void => {
       if (statusSyncRetryTimer !== undefined) window.clearTimeout(statusSyncRetryTimer);
       statusSyncRetryTimer = undefined;
+    };
+    const clearStatusSnapshotTimer = (): void => {
+      if (statusSnapshotTimer !== undefined) window.clearInterval(statusSnapshotTimer);
+      statusSnapshotTimer = undefined;
+    };
+    const quietlyReconcileActiveProjectConversationStatus = (): void => {
+      if (connectionState !== 'connected' || statusSnapshotRunning) return;
+      const projectId = activeProjectIdRef.current;
+      if (!projectId) return;
+      statusSnapshotRunning = true;
+      void reconcileNativeConversationProjectSnapshot(projectId)
+        .catch((error: unknown) => recordLocalError('conversation-status-periodic-reconciliation', error))
+        .finally(() => {
+          statusSnapshotRunning = false;
+        });
     };
     const synchronizeActiveProjectConversationStatus = (): void => {
       clearStatusSyncRetry();
@@ -8135,14 +8127,19 @@ export function App(props: {
         if (state === 'connected') {
           statusSyncAttempt = 0;
           synchronizeActiveProjectConversationStatus();
+          clearStatusSnapshotTimer();
+          // 实时终态事件偶发缺失时，后台完整快照负责自动收敛，用户无需点击会话触发修正。
+          statusSnapshotTimer = window.setInterval(quietlyReconcileActiveProjectConversationStatus, 10_000);
           return;
         }
+        clearStatusSnapshotTimer();
         setNativeConversationStatusSyncState(state);
       },
     );
     return () => {
       if (runtimeConversationFlushTimer) window.clearTimeout(runtimeConversationFlushTimer);
       clearStatusSyncRetry();
+      clearStatusSnapshotTimer();
       statusSyncGeneration += 1;
       pendingRuntimeConversationEvents = [];
       if (unsubscribe) unsubscribe();
@@ -12188,8 +12185,6 @@ export function App(props: {
           projects={orderedProjects}
           pinnedProjectIds={appShellSettings.pinnedProjectIds}
           collapsedProjectIds={appShellSettings.collapsedProjectIds}
-          conversationAttentionByProject={snapshot.conversationAttentionByProject}
-          conversationUnreadCountByProject={snapshot.conversationUnreadCountByProject ?? {}}
           conversationGroups={nativeConversationGroups}
           selectedConversationId={selectedNativeConversationId}
           conversationStates={nativeConversationRuntimeStates}
@@ -18348,8 +18343,6 @@ function SidebarNav(props: {
   projects: ProjectRecord[];
   pinnedProjectIds: string[];
   collapsedProjectIds: string[];
-  conversationAttentionByProject: Record<string, ProjectConversationAttentionState>;
-  conversationUnreadCountByProject: Record<string, number>;
   conversationGroups: ProjectConversationGroup[];
   selectedConversationId?: string | null;
   conversationStates: Record<string, ConversationTreeRuntimeState>;
@@ -18377,6 +18370,7 @@ function SidebarNav(props: {
   const [projectMenuPositions, setProjectMenuPositions] = useState<Map<string, { left: number; top: number }>>(() => new Map());
   const [projectSearchOpen, setProjectSearchOpen] = useState(false);
   const [projectSearchQuery, setProjectSearchQuery] = useState('');
+  const [visibleConversationCountByProject, setVisibleConversationCountByProject] = useState<Record<string, number>>({});
   const [projectRenameTarget, setProjectRenameTarget] = useState<ProjectRecord | undefined>();
   const [projectRenameDraft, setProjectRenameDraft] = useState('');
   const [projectRenameBusy, setProjectRenameBusy] = useState(false);
@@ -18384,6 +18378,12 @@ function SidebarNav(props: {
   const openProjectMenuIdsRef = useRef(openProjectMenuIds);
   const projectMenuButtonRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
   const projectMenuCloseTimerRefs = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  const previousActiveProjectIdRef = useRef(props.activeProjectId);
+  useEffect(() => {
+    if (previousActiveProjectIdRef.current === props.activeProjectId) return;
+    previousActiveProjectIdRef.current = props.activeProjectId;
+    setVisibleConversationCountByProject({});
+  }, [props.activeProjectId]);
   useEffect(() => {
     openProjectMenuIdsRef.current = openProjectMenuIds;
   }, [openProjectMenuIds]);
@@ -18656,8 +18656,6 @@ function SidebarNav(props: {
             const menuClosing = closingProjectMenuIds.has(project.id);
             const menuVisible = menuOpen || menuClosing;
             const menuPosition = projectMenuPositions.get(project.id);
-            const conversationAttentionState = props.conversationAttentionByProject[project.id] ?? 'idle';
-            const conversationUnreadCount = props.conversationUnreadCountByProject[project.id] ?? 0;
             const conversationGroup = props.conversationGroups.find((group) => group.projectId === project.id);
             const projectMatchesSearch = project.name.toLocaleLowerCase().includes(projectSearchQuery.trim().toLocaleLowerCase()) || project.localPath.toLocaleLowerCase().includes(projectSearchQuery.trim().toLocaleLowerCase());
             const projectMorePopover =
@@ -18753,6 +18751,7 @@ function SidebarNav(props: {
                       <span aria-hidden="true">›</span>
                     </button>
                   }
+                  disclosurePlacement="trailing"
                   icon={
                     <svg className="native-folder-icon zeus-avatar-token" viewBox="0 0 20 20" focusable="false" aria-hidden="true">
                       <path d="M2.8 6.4h5.1l1.4 1.5h7.9v7.7a1.4 1.4 0 0 1-1.4 1.4H4.2a1.4 1.4 0 0 1-1.4-1.4Z" />
@@ -18809,23 +18808,14 @@ function SidebarNav(props: {
                         compactProjectLabel
                         showEmptyState={false}
                         query={projectMatchesSearch ? '' : projectSearchQuery}
-                      />
-                    ) : null}
-                    {conversationAttentionState !== 'idle' ? (
-                      <span
-                        className="project-conversation-group-attention"
-                        title={
-                          conversationAttentionState === 'reply_required'
-                            ? copy.conversationReplyRequired
-                            : conversationAttentionState === 'running'
-                              ? copy.conversationRunning
-                              : props.appLanguage === 'zh-CN'
-                                ? `${conversationUnreadCount} 个未读会话`
-                                : `${conversationUnreadCount} unread conversations`
+                        visibleConversationCount={visibleConversationCountByProject[project.id] ?? 6}
+                        onShowMore={() =>
+                          setVisibleConversationCountByProject((current) => ({
+                            ...current,
+                            [project.id]: (current[project.id] ?? 6) + 10,
+                          }))
                         }
-                      >
-                        <SidebarConversationAttentionIndicator state={conversationAttentionState} unreadCount={conversationUnreadCount} />
-                      </span>
+                      />
                     ) : null}
                   </div>
                 ) : null}
@@ -18855,15 +18845,6 @@ function SidebarNav(props: {
         onSubmit={(event) => void submitProjectRename(event)}
       />
     </aside>
-  );
-}
-
-function SidebarConversationAttentionIndicator(props: { state: Exclude<ProjectConversationAttentionState, 'idle'>; unreadCount: number }) {
-  const visibleCount = props.unreadCount > 99 ? '99+' : props.unreadCount > 0 ? String(props.unreadCount) : '';
-  return (
-    <span className="project-session-attention-indicator" data-attention-state={props.state} data-has-count={visibleCount ? 'true' : undefined} aria-hidden="true">
-      {visibleCount}
-    </span>
   );
 }
 

@@ -1,16 +1,16 @@
 import { type KeyboardEvent, useEffect, useRef, useState } from 'react';
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { ArchiveIcon as Archive } from '@phosphor-icons/react/dist/csr/Archive';
-import { ArrowSquareOutIcon as ArrowSquareOut } from '@phosphor-icons/react/dist/csr/ArrowSquareOut';
 import { CircleNotchIcon as CircleNotch } from '@phosphor-icons/react/dist/csr/CircleNotch';
 import { FolderIcon as Folder } from '@phosphor-icons/react/dist/csr/Folder';
 import { PlusIcon as Plus } from '@phosphor-icons/react/dist/csr/Plus';
-import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/csr/WarningCircle';
-import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import type { NativeConversationChoice, NativeConversationSnapshot, NativeSessionState } from './sessionTypes.js';
 import { compareConversationStageUpdatedDesc } from './conversationOrdering.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
 import { conversationDisplayTitle } from './conversationDisplayTitle.js';
 import { useNewItemMotionIds } from '../ui/useNewItemMotion.js';
+import type { TaskAgentRunStatus } from '../apiClient.js';
+import { TaskRunStatusChip, taskAgentRunStatusLabels } from '../task/TaskRunStatusChip.js';
 
 export interface ProjectConversationTaskGroup {
   taskId: string;
@@ -39,6 +39,8 @@ export interface ProjectConversationTreeProps {
   compactProjectLabel?: boolean;
   query?: string;
   showEmptyState?: boolean;
+  visibleConversationCount?: number;
+  onShowMore?: () => void;
 }
 
 const labels = {
@@ -61,6 +63,7 @@ const labels = {
     archiveUnavailable: '会话仍在运行、排队或等待处理，暂时不能归档',
     archiveLegacyUnavailable: '旧版只读会话无法与 Codex 线程同步归档',
     archiving: '正在归档',
+    showMore: '展开更多',
   },
   'en-US': {
     aria: 'Project conversations',
@@ -81,6 +84,7 @@ const labels = {
     archiveUnavailable: 'This conversation is running, queued, or waiting and cannot be archived yet',
     archiveLegacyUnavailable: 'Legacy read-only conversations cannot be archived together with their Codex thread',
     archiving: 'Archiving',
+    showMore: 'Show more',
   },
 } as const;
 
@@ -96,7 +100,7 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
   const normalizedQuery = props.query?.trim().toLocaleLowerCase() ?? '';
   const flattenedGroups = props.groups.map(flattenProjectConversations).map((group) => ({
     ...group,
-    conversations: normalizedQuery ? group.conversations.filter((entry) => entry.displayTitle.toLocaleLowerCase().includes(normalizedQuery)) : group.conversations,
+    conversations: normalizedQuery ? group.conversations.filter((entry) => entry.displayTitle.toLocaleLowerCase().includes(normalizedQuery)) : group.conversations.slice(0, props.visibleConversationCount ?? group.conversations.length),
   }));
   const conversationIds = flattenedGroups.flatMap((group) => group.conversations.map((entry) => conversationNavigationId(entry.conversation)));
   const allConversationIds = props.groups.flatMap((group) => flattenProjectConversations(group).conversations.map((entry) => conversationNavigationId(entry.conversation)));
@@ -152,7 +156,7 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
                       onClick={() => props.onSelectConversation(conversation)}
                     >
                       <strong title={displayTitle}>{displayTitle}</strong>
-                      <ConversationRowState conversation={conversation} runtimeState={runtimeState} current={current} language={props.language} />
+                      <ConversationRowState conversation={conversation} runtimeState={runtimeState} language={props.language} />
                     </button>
                     {props.onArchiveConversation && !conversation.taskPushCreating ? (
                       <button
@@ -174,6 +178,11 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
             </AnimatePresence>
           </ul>
           {conversations.length === 0 && props.showEmptyState !== false ? <p className="session-conversation-project-empty">{copy.empty}</p> : null}
+          {!normalizedQuery && props.onShowMore && (props.visibleConversationCount ?? conversations.length) < flattenProjectConversations(project).conversations.length ? (
+            <button type="button" className="session-conversation-show-more" onClick={props.onShowMore}>
+              {copy.showMore}
+            </button>
+          ) : null}
         </section>
       ))}
     </nav>
@@ -271,58 +280,30 @@ function ProjectConversationHeader(props: { project: ProjectConversationGroup; l
   );
 }
 
-function ConversationRowState(props: { conversation: NativeConversationChoice; runtimeState: ConversationTreeRuntimeState; current: boolean; language: SessionUiLanguage }) {
-  const copy = labels[props.language];
-  const active = ['connecting', 'reconnecting', 'streaming', 'pending_approval', 'pending_user_input'].includes(props.runtimeState);
-  if (props.runtimeState === 'pending_approval' || props.runtimeState === 'pending_user_input') {
-    return (
-      <span className="session-conversation-tree-state">
-        <span className={`session-conversation-status-pill is-${props.runtimeState}`}>{copy[props.runtimeState]}</span>
-        <CircleNotch className="session-conversation-state-spinner" aria-hidden="true" />
-      </span>
-    );
-  }
-  if (active) {
-    return (
-      <span className="session-conversation-tree-state" aria-label={copy[props.runtimeState]}>
-        <CircleNotch className="session-conversation-state-spinner" aria-hidden="true" />
-      </span>
-    );
+function ConversationRowState(props: { conversation: NativeConversationChoice; runtimeState: ConversationTreeRuntimeState; language: SessionUiLanguage }) {
+  const runStatus = taskRunStatusFromConversationTreeState(props.runtimeState);
+  if (runStatus !== 'idle') {
+    return <TaskRunStatusChip className="session-conversation-runtime-chip" status={runStatus} label={taskAgentRunStatusLabels[props.language][runStatus]} />;
   }
   if (props.conversation.hasUnreadAttention) {
-    if (props.conversation.attentionKind === 'failed' || props.conversation.attentionKind === 'interrupted' || props.conversation.attentionKind === 'completed') {
-      const attentionLabel =
-        props.conversation.attentionKind === 'failed'
-          ? props.language === 'zh-CN'
-            ? '失败'
-            : 'Failed'
-          : props.conversation.attentionKind === 'interrupted'
-            ? props.language === 'zh-CN'
-              ? '已中断'
-              : 'Interrupted'
-            : props.language === 'zh-CN'
-              ? '已完成'
-              : 'Completed';
-      return <span className={`session-conversation-status-pill is-${props.conversation.attentionKind}`}>{attentionLabel}</span>;
-    }
+    if (props.conversation.attentionKind === 'failed') return <TaskRunStatusChip className="session-conversation-runtime-chip" status="failed" label={taskAgentRunStatusLabels[props.language].failed} />;
+    if (props.conversation.attentionKind === 'interrupted') return <TaskRunStatusChip className="session-conversation-runtime-chip" status="paused" label={taskAgentRunStatusLabels[props.language].paused} />;
+    if (props.conversation.attentionKind === 'completed') return <span className="session-conversation-status-pill is-completed">{props.language === 'zh-CN' ? '已完成' : 'Completed'}</span>;
     return <span className="session-conversation-unread-dot" aria-label={props.language === 'zh-CN' ? '有未读回复' : 'Unread reply'} />;
   }
-  if (props.runtimeState === 'error') {
-    return (
-      <span className="session-conversation-tree-state" aria-label={copy.error}>
-        <WarningCircle aria-hidden="true" />
-      </span>
-    );
-  }
-  if (props.runtimeState === 'legacy_readonly') {
-    return (
-      <span className="session-conversation-tree-state is-muted" aria-label={copy.legacy_readonly}>
-        <ArrowSquareOut aria-hidden="true" />
-      </span>
-    );
-  }
-  if (props.runtimeState === 'paused' || props.runtimeState === 'queued') return <span className="session-conversation-tree-state is-muted">{copy[props.runtimeState]}</span>;
   return null;
+}
+
+function taskRunStatusFromConversationTreeState(runtimeState: ConversationTreeRuntimeState): TaskAgentRunStatus {
+  if (runtimeState === 'connecting') return 'connecting';
+  if (runtimeState === 'reconnecting') return 'reconnecting';
+  if (runtimeState === 'streaming' || runtimeState === 'queued') return 'running';
+  if (runtimeState === 'pending_user_input') return 'waiting_user';
+  if (runtimeState === 'pending_approval') return 'waiting_approval';
+  if (runtimeState === 'paused') return 'paused';
+  if (runtimeState === 'error') return 'failed';
+  if (runtimeState === 'legacy_readonly') return 'legacy_readonly';
+  return 'idle';
 }
 
 function flattenProjectConversations(project: ProjectConversationGroup): {
@@ -398,7 +379,6 @@ export function conversationTreeRuntimeStateFromConversation(
   if (conversation.pendingRequestKind === 'approval') return 'pending_approval';
   if (providerState.includes('user_input')) return 'pending_user_input';
   if (providerState.includes('waiting')) return 'pending_approval';
-  if (providerState.includes('active') || providerState.includes('running') || providerState.includes('starting')) return 'streaming';
   return 'ready';
 }
 

@@ -9,6 +9,7 @@ interface SourceListRowCommonProps {
   icon: ReactNode;
   label: ReactNode;
   disclosure?: ReactNode;
+  disclosurePlacement?: 'leading' | 'trailing';
   state?: ReactNode;
   actions?: ReactNode;
   expanded?: boolean;
@@ -41,8 +42,9 @@ export function SourceListRow(props: SourceListRowProps) {
       data-source-list-surface={props.surface}
       data-selected={props.level === 'nested' && props.selected ? 'true' : undefined}
       data-expanded={props.expanded === undefined ? undefined : props.expanded ? 'true' : 'false'}
+      data-disclosure-placement={props.disclosure ? (props.disclosurePlacement ?? 'leading') : undefined}
     >
-      {props.disclosure ? <div className="zeus-source-list-row-disclosure">{props.disclosure}</div> : null}
+      {props.disclosure && props.disclosurePlacement !== 'trailing' ? <div className="zeus-source-list-row-disclosure">{props.disclosure}</div> : null}
       <button {...buttonProps} className={mainClassName} aria-expanded={props.disclosure ? undefined : props.expanded}>
         <span className="zeus-source-list-row-icon" aria-hidden="true">
           {props.icon}
@@ -51,6 +53,7 @@ export function SourceListRow(props: SourceListRowProps) {
         {props.state ? <span className="zeus-source-list-row-state">{props.state}</span> : null}
       </button>
       {props.actions ? <div className="zeus-source-list-row-actions">{props.actions}</div> : null}
+      {props.disclosure && props.disclosurePlacement === 'trailing' ? <div className="zeus-source-list-row-disclosure">{props.disclosure}</div> : null}
     </div>
   );
 }

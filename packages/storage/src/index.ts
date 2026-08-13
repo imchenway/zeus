@@ -4922,7 +4922,7 @@ function deriveConversationStageProjection(db: ZeusDatabase, conversationId: str
     `SELECT dispatched_at, updated_at FROM conversation_submissions WHERE conversation_id = ? AND status = 'active' ORDER BY updated_at DESC, id DESC LIMIT 1`,
     [conversationId],
   );
-  if (activeTurn || activeSubmission || conversation.provider_state === 'active' || conversation.status === 'running') {
+  if (activeTurn || activeSubmission) {
     return {
       stage: 'running',
       evidenceAt: latestIso(activeTurn?.started_at, activeTurn?.updated_at, activeSubmission?.dispatched_at, activeSubmission?.updated_at, conversation.created_at),
@@ -4951,22 +4951,16 @@ function deriveConversationStageProjection(db: ZeusDatabase, conversationId: str
   const terminalEvidenceAt = latestIso(latestTurn?.completed_at, latestTurn?.updated_at, latestSubmission?.resolved_at, latestSubmission?.updated_at, conversation.created_at);
   if (conversation.provider_state === 'paused') return { stage: 'paused', evidenceAt: terminalEvidenceAt };
   if (conversation.provider_state === 'failed' || conversation.status === 'failed') return { stage: 'failed', evidenceAt: terminalEvidenceAt };
-  if (conversation.provider_state === 'waiting') return { stage: 'waiting_approval', evidenceAt: terminalEvidenceAt };
   if (conversation.provider_state === 'closed') return { stage: 'completed', evidenceAt: terminalEvidenceAt };
   if (conversation.transport_kind === 'legacy_cli') return { stage: 'completed', evidenceAt: conversation.created_at };
-  if (conversation.provider_state === 'binding' || conversation.provider_state === 'unbound' || conversation.status === 'starting') {
-    return { stage: 'connecting', evidenceAt: conversation.created_at };
-  }
-  if (conversation.provider_state === 'ready') {
-    if (latestTurn?.status === 'failed') return { stage: 'failed', evidenceAt: terminalEvidenceAt };
-    if (latestTurn?.status === 'paused' || latestTurn?.status === 'interrupted') return { stage: 'paused', evidenceAt: terminalEvidenceAt };
-    if (latestTurn?.status === 'completed') return { stage: 'completed', evidenceAt: terminalEvidenceAt };
-    return { stage: 'ready', evidenceAt: terminalEvidenceAt };
-  }
   if (latestTurn?.status === 'waiting') return { stage: 'waiting_approval', evidenceAt: terminalEvidenceAt };
   if (latestTurn?.status === 'failed' || latestSubmission?.status === 'failed') return { stage: 'failed', evidenceAt: terminalEvidenceAt };
   if (latestTurn?.status === 'paused' || latestTurn?.status === 'interrupted' || latestSubmission?.status === 'paused') return { stage: 'paused', evidenceAt: terminalEvidenceAt };
   if (latestTurn?.status === 'completed' || latestSubmission?.status === 'completed') return { stage: 'completed', evidenceAt: terminalEvidenceAt };
+  if (conversation.provider_state === 'binding' || conversation.provider_state === 'unbound' || conversation.status === 'starting') {
+    return { stage: 'connecting', evidenceAt: conversation.created_at };
+  }
+  if (conversation.provider_state === 'ready') return { stage: 'ready', evidenceAt: terminalEvidenceAt };
   return { stage: 'created', evidenceAt: conversation.created_at };
 }
 

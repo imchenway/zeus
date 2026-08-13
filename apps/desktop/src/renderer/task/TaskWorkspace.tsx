@@ -1,5 +1,4 @@
 import { type CSSProperties, type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, useCallback, useEffect, useId, useRef, useState } from 'react';
-import { CircleNotchIcon as CircleNotch } from '@phosphor-icons/react/dist/csr/CircleNotch';
 import { isTaskPriority } from '@zeus/shared';
 import type { TaskManagementStatusDefinition } from '@zeus/shared';
 import type {
@@ -40,18 +39,7 @@ import {
   taskManagementStatuses,
   toggleTaskTableColumn,
 } from './taskWorkspaceModel.js';
-
-type TaskSemanticTone = 'neutral' | 'blue' | 'violet' | 'green' | 'amber' | 'orange' | 'red';
-
-const animatedTaskRunStatuses = new Set<TaskAgentRunStatus>(['connecting', 'reconnecting', 'running', 'waiting_user', 'waiting_approval']);
-
-function taskRunStatusTone(status: TaskAgentRunStatus): TaskSemanticTone {
-  if (status === 'connecting' || status === 'reconnecting' || status === 'running') return 'blue';
-  if (status === 'waiting_user' || status === 'waiting_approval' || status === 'paused') return 'amber';
-  if (status === 'failed') return 'red';
-  if (status === 'idle') return 'green';
-  return 'neutral';
-}
+import { TaskRunStatusChip, type TaskSemanticTone } from './TaskRunStatusChip.js';
 
 function taskBranchStatusTone(status: TaskBranchStatus): TaskSemanticTone {
   if (status === 'action_required') return 'red';
@@ -1163,25 +1151,19 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
                             <strong>{cell.primary}</strong>
                           </span>
                         ) : columnKey === 'runStatus' ? (
-                          runStatusConversationId && props.onOpenTaskConversation ? (
-                            <button
-                              type="button"
-                              className={`task-status-chip task-run-status-chip task-run-status-action task-status-tone-${taskRunStatusTone(runStatus)}`}
-                              aria-label={props.copy.openRunStatusConversationAria(task.title, cell.primary)}
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                props.onOpenTaskConversation?.(task.id, runStatusConversationId);
-                              }}
-                            >
-                              {animatedTaskRunStatuses.has(runStatus) ? <CircleNotch className="session-conversation-state-spinner task-run-status-spinner" aria-hidden="true" /> : null}
-                              <strong>{cell.primary}</strong>
-                            </button>
-                          ) : (
-                            <span className={`task-status-chip task-run-status-chip task-status-tone-${taskRunStatusTone(runStatus)}`}>
-                              {animatedTaskRunStatuses.has(runStatus) ? <CircleNotch className="session-conversation-state-spinner task-run-status-spinner" aria-hidden="true" /> : null}
-                              <strong>{cell.primary}</strong>
-                            </span>
-                          )
+                          <TaskRunStatusChip
+                            status={runStatus}
+                            label={cell.primary}
+                            ariaLabel={runStatusConversationId && props.onOpenTaskConversation ? props.copy.openRunStatusConversationAria(task.title, cell.primary) : cell.primary}
+                            onClick={
+                              runStatusConversationId && props.onOpenTaskConversation
+                                ? (event) => {
+                                    event.stopPropagation();
+                                    props.onOpenTaskConversation?.(task.id, runStatusConversationId);
+                                  }
+                                : undefined
+                            }
+                          />
                         ) : columnKey === 'priority' ? (
                           <TaskPriorityControl
                             task={task}

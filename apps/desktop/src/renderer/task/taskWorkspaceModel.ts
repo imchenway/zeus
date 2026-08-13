@@ -817,7 +817,6 @@ export function taskAgentRunStatusFromConversation(conversation: Pick<NativeConv
   if (providerState.includes('paused') || recordState.includes('paused')) return 'paused';
   if (conversation.pendingRequestKind === 'user_input' || providerState.includes('user_input') || providerState.includes('user input')) return 'waiting_user';
   if (conversation.pendingRequestKind === 'approval' || providerState.includes('approval') || providerState.includes('waiting')) return 'waiting_approval';
-  if (providerState.includes('active') || providerState.includes('running') || providerState.includes('starting')) return 'running';
   return 'idle';
 }
 
