@@ -10002,7 +10002,7 @@ export function App(props: {
     const form = taskModelPushForm;
     if (!task || !client || !capabilities || taskModelPushStatus === 'authenticating' || taskModelPushStatus === 'authenticated' || taskModelPushStatus === 'submitting' || taskModelPushDispatchingTaskIdsRef.current.has(task.id)) return;
     const selectedModel = capabilities.models.find((model) => model.id === form.model || model.model === form.model);
-    if (selectedModel?.agentKind !== 'pi' && capabilities.codexAccount.requiresOpenaiAuth && !capabilities.codexAccount.signedIn) {
+    if (selectedModel?.agentKind !== 'pi' && selectedModel?.sourceId === 'codex' && capabilities.codexAccount.requiresOpenaiAuth && !capabilities.codexAccount.signedIn) {
       void authenticateCodexAndContinueTaskModelPush(task, client, capabilities, form);
       return;
     }

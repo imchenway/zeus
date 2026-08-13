@@ -76,13 +76,13 @@ export interface ProjectModelSelection {
   defaultModelRef: string | null;
 }
 
-export interface SelectablePiModel {
+export interface SelectableConnectionModel {
   id: string;
   model: string;
   displayName: string;
   sourceId: string;
   sourceName: string;
-  agentKind: 'pi';
+  agentKind: 'codex' | 'pi';
   enabled: boolean;
   available: boolean;
   availabilityReason: string;
@@ -211,9 +211,30 @@ export function normalizeProjectModelSelection(projectId: string, value: unknown
   };
 }
 
-export function listSelectablePiModels(connections: readonly ModelConnectionRecord[]): SelectablePiModel[] {
+const officialDeepSeekResponsesModelIds = new Set(['deepseek-v4-flash', 'deepseek-v4-pro']);
+
+/** 只有 DeepSeek 官方域名上的 V4 模型可以继承官方 Responses 兼容证据。 */
+export function isOfficialDeepSeekResponsesModel(connection: Pick<ModelConnectionRecord, 'templateId' | 'baseUrl'>, modelId: string): boolean {
+  if (connection.templateId !== 'deepseek' || !officialDeepSeekResponsesModelIds.has(modelId.trim().toLowerCase())) return false;
+  try {
+    const url = new URL(connection.baseUrl);
+    const path = url.pathname.replace(/\/+$/u, '');
+    return url.protocol === 'https:' && url.hostname === 'api.deepseek.com' && url.port === '' && (path === '' || path === '/v1');
+  } catch {
+    return false;
+  }
+}
+
+export function modelConnectionAgentKind(connection: Pick<ModelConnectionRecord, 'templateId' | 'baseUrl'>, modelId: string): 'codex' | 'pi' {
+  return isOfficialDeepSeekResponsesModel(connection, modelId) ? 'codex' : 'pi';
+}
+
+export function listSelectableConnectionModels(connections: readonly ModelConnectionRecord[]): SelectableConnectionModel[] {
   return connections.flatMap((connection) =>
     connection.models.map((model) => {
+      const agentKind = modelConnectionAgentKind(connection, model.id);
+      const tools = agentKind === 'codex' ? 'supported' : model.capability.tools.state;
+      const imageInput = agentKind === 'codex' ? 'unsupported' : model.capability.imageInput.state;
       const available = connection.enabled && connection.apiKeyConfigured && model.enabled;
       const availabilityReason = !connection.enabled
         ? '模型连接已停用。'
@@ -221,26 +242,28 @@ export function listSelectablePiModels(connections: readonly ModelConnectionReco
           ? '模型连接尚未配置 API Key。'
           : !model.enabled
             ? '模型已停用。'
-            : model.capability.tools.state === 'unsupported'
+            : tools === 'unsupported'
               ? '模型明确不支持工具调用，只能保存在诊断目录中。'
-              : '模型已配置；真实外部能力仍以运行探针结果为准。';
+              : agentKind === 'codex'
+                ? 'Zeus 已完成该 DeepSeek 官方 V4 模型的 Responses 兼容验收；新会话使用 Codex App Server。'
+                : '模型已配置；真实外部能力仍以运行探针结果为准。';
       return {
         id: modelRef(connection.id, model.id),
         model: model.id,
         displayName: model.displayName,
         sourceId: connection.id,
         sourceName: connection.name,
-        agentKind: 'pi' as const,
+        agentKind,
         enabled: connection.enabled && model.enabled,
-        available: available && model.capability.tools.state !== 'unsupported',
+        available: available && tools !== 'unsupported',
         availabilityReason,
         supportedReasoningEfforts: model.capability.reasoning.state === 'supported' ? [...model.capability.reasoning.levels] : [],
         defaultReasoningEffort: model.capability.reasoning.state === 'supported' ? model.capability.reasoning.defaultLevel : null,
         serviceTiers: [] as [],
         defaultServiceTier: null,
         speedLabel: model.speedLabel,
-        tools: model.capability.tools.state,
-        imageInput: model.capability.imageInput.state,
+        tools,
+        imageInput,
       };
     }),
   );

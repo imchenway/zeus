@@ -62,13 +62,15 @@ import {
   type CodexRemoteControlClient,
   type CodexRemoteControlPairing,
   type CodexRemoteControlStatus,
+  type CodexResponsesRuntime,
   createAgentCapabilityCatalog,
   createAiRuntimeSessionManager,
-  createCodexAppServerManager,
+  createCodexRuntimeGenerationManager,
   createNonCodexAiCliAdapterInvocation,
   createOptionalNodePtyRuntimeSpawn,
   expandCliSearchPath,
   isNonCodexAiCliAdapterId,
+  isOfficialDeepSeekResponsesModel,
   listAiCliAdapters,
   type NonCodexAiCliAdapterId,
 } from '@zeus/ai-runtime';
@@ -2349,7 +2351,39 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     settings.setJson(codexAccountFingerprintSaltKey, codexAccountFingerprintSalt);
     await db.save();
   }
-  const codexAppServerManager = options.codexAppServerManager ?? createCodexAppServerManager({ accountFingerprintSalt: codexAccountFingerprintSalt });
+  const codexAppServerManager = options.codexAppServerManager ?? createCodexRuntimeGenerationManager({ accountFingerprintSalt: codexAccountFingerprintSalt });
+
+  async function resolveResponsesRuntime(input: { modelSourceId: string | null; model: string }): Promise<CodexResponsesRuntime | null> {
+    if (!input.modelSourceId || input.modelSourceId === 'codex') return null;
+    const connections = await modelConnections.loadRuntimeConnections();
+    const connection = connections.find((candidate) => candidate.id === input.modelSourceId);
+    const model = connection?.models.find((candidate) => candidate.id === input.model);
+    if (!connection || !model || !isOfficialDeepSeekResponsesModel(connection, model.id)) return null;
+    if (!connection.enabled || !model.enabled || !connection.apiKey) {
+      throw nativeApiError('ZEUS_CODEX_PROVIDER_CREDENTIAL_UNAVAILABLE', 'DeepSeek 官方 Responses 会话缺少可用的连接或 API Key。');
+    }
+    const environment: Record<string, string> = {};
+    for (const candidate of connections) {
+      if (!candidate.enabled || !candidate.apiKey || !candidate.models.some((item) => item.enabled && isOfficialDeepSeekResponsesModel(candidate, item.id))) continue;
+      environment[deepSeekResponsesEnvKey(candidate.id)] = candidate.apiKey;
+    }
+    const identity = createHash('sha256').update(connection.id).digest('hex').slice(0, 24);
+    return {
+      provider: {
+        id: `zeus_deepseek_${identity}`,
+        name: `DeepSeek · ${connection.name}`,
+        baseUrl: 'https://api.deepseek.com',
+        envKey: deepSeekResponsesEnvKey(connection.id),
+        modelContextWindow: model.contextWindow,
+      },
+      environment,
+    };
+  }
+
+  function deepSeekResponsesEnvKey(connectionId: string): string {
+    const identity = createHash('sha256').update(connectionId).digest('hex').slice(0, 24).toUpperCase();
+    return `ZEUS_MODEL_CONNECTION_${identity}_API_KEY`;
+  }
   const codexUsageService = createCodexUsageService({
     manager: codexAppServerManager,
     ledger: codexUsageLedger,
@@ -2400,6 +2434,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       syncCheckpoints: conversationProviderSyncCheckpoints,
       settings,
       usage: codexUsageService,
+      resolveResponsesRuntime,
       browserAutomation: options.browserAutomation,
       trustedAttachmentRoots: trustedConversationAttachmentRoots,
       generatedImageRoot,
@@ -13964,6 +13999,9 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     if (selectedAgentKind !== (conversation.agentKind === 'pi' ? 'pi' : 'codex')) {
       throw nativeApiError('ZEUS_AGENT_SWITCH_REQUIRES_NEW_CONVERSATION', '不能在同一会话内切换 Codex 与 Pi，请新建会话。');
     }
+    if (selectedAgentKind === 'codex' && selectedModel && (selectedModelSourceId ?? 'codex') !== (conversation.modelSourceId ?? 'codex')) {
+      throw nativeApiError('ZEUS_PROVIDER_SWITCH_REQUIRES_NEW_CONVERSATION', '不能在同一会话内切换 Codex App Server 的模型渠道，请新建会话。');
+    }
     const nativeOperation =
       conversation.agentKind === 'pi'
         ? delivery === 'steer_now'
@@ -14003,6 +14041,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
               attachments,
               browserComments,
               ...(selectedModel ? { model: selectedModel } : {}),
+              ...(selectedModel ? { modelSourceId: selectedModelSourceId } : {}),
               ...(selectedEffort ? { effort: selectedEffort } : {}),
               ...(requestedServiceTier.present ? { serviceTier: selectedServiceTier ?? null } : {}),
               ...(permissionMode ? { permissionMode } : {}),
@@ -14370,6 +14409,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       prompt: content,
       attachments,
       model: selectedModel.model,
+      modelSourceId: selectedModel.sourceId ?? null,
       effort: requestedEffort ?? selectedModel.defaultReasoningEffort ?? selectedModel.supportedReasoningEfforts[0] ?? undefined,
       ...(requestedServiceTier.present ? { serviceTier } : {}),
       permissionMode,
@@ -14551,6 +14591,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       ...(plan.allowedAttachmentRoots ? { allowedAttachmentRoots: plan.allowedAttachmentRoots } : {}),
       ...(plan.taskPushLayout ? { taskPushLayout: plan.taskPushLayout } : {}),
       model: plan.model.modelId,
+      modelSourceId: plan.model.sourceId,
       ...(plan.effort ? { effort: plan.effort } : {}),
       ...(plan.serviceTierPresent ? { serviceTier: plan.serviceTier ?? null } : {}),
       allowCodeChanges: plan.allowCodeChanges,
@@ -14652,7 +14693,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         const taskPushAttachmentKeys = new Set([...taskPushLayout.blocks.flatMap((block) => block.attachments.map((attachment) => attachment.key)), ...(taskPushLayout.supplementalAttachments ?? []).map((attachment) => attachment.key)]);
         const taskPushAttachments = attachmentInput.attachments.filter((attachment) => attachment.taskPushAttachmentKey && taskPushAttachmentKeys.has(attachment.taskPushAttachmentKey));
         const taskPushPrompt = renderTaskPushLayoutText(taskPushLayout);
-        if (selectedModel.agentKind !== 'pi') await assertCodexAccountReady();
+        if (selectedModel.agentKind !== 'pi') await assertCodexAccountReady(selectedModel.sourceId ?? null, selectedModel.model);
         const taskEnvironment = directWorkspace ? null : await resolveTaskPushEnvironment(project, task, body.workspace, stableOperationId);
         nativeOperation = await startNativeTaskConversationFromPlan({
           agentKind: selectedModel.agentKind === 'pi' ? 'pi' : 'codex',
@@ -14737,7 +14778,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         if (!reviewCwd || !existsSync(reviewCwd)) throw nativeApiError('ZEUS_TASK_EXECUTION_CONTEXT_REQUIRED', 'The exact code review worktree is unavailable.');
         const prompt = createTaskCodeReviewPrompt(task, reviewWorkspace);
         const displayText = '请审查当前工作区的完整代码变化。';
-        if (selectedAgentKind === 'codex') await assertCodexAccountReady();
+        if (selectedAgentKind === 'codex') await assertCodexAccountReady(selectedModel.sourceId ?? null, selectedModel.model);
 
         nativeOperation = await startNativeTaskConversationFromPlan({
           agentKind: selectedAgentKind,
@@ -14848,7 +14889,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           commitMessage: conflictCommitMessage,
         });
         const selectedAgentKind = modelConversation.agentKind;
-        if (selectedAgentKind === 'codex') await assertCodexAccountReady();
+        if (selectedAgentKind === 'codex') await assertCodexAccountReady(modelConversation.modelSourceId, modelId);
         nativeOperation = await startNativeTaskConversationFromPlan({
           agentKind: selectedAgentKind,
           conversationId: reservation.conversationId,
@@ -16554,9 +16595,9 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   }
 
   async function resolveConversationCapabilities(project: ZeusProjectRecord) {
-    const piSelection = await modelConnections.getProjectSelection(project.id);
-    const piCatalog = await modelConnections.listSelectableModels();
-    const allowedPi = piCatalog.filter((model) => piSelection.allowedModelRefs.includes(model.id));
+    const connectionSelection = await modelConnections.getProjectSelection(project.id);
+    const connectionCatalog = await modelConnections.listSelectableModels();
+    const allowedConnectionModels = connectionCatalog.filter((model) => connectionSelection.allowedModelRefs.includes(model.id));
     const codexCapabilities = codexNativeEnabled ? await codexAppServerManager.ensureReady({ commandPath: currentCodexRuntimeCommandPath(), ...(codexExternalAgentHome ? { externalAgentHome: codexExternalAgentHome } : {}) }) : null;
     const codexAccount = codexCapabilities
       ? await codexAppServerManager.readAccount()
@@ -16581,11 +16622,11 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       serviceTiers: model.serviceTiers.map((tier) => ({ ...tier })),
       ...(model.defaultServiceTier !== undefined ? { defaultServiceTier: model.defaultServiceTier } : {}),
     }));
-    const piModels = allowedPi.map((model) => ({
+    const connectionModels = allowedConnectionModels.map((model) => ({
       id: model.id,
       model: model.model,
       displayName: model.displayName,
-      agentKind: 'pi' as const,
+      agentKind: model.agentKind,
       sourceId: model.sourceId,
       sourceName: model.sourceName,
       available: model.available,
@@ -16598,12 +16639,12 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       tools: model.tools,
       imageInput: model.imageInput,
     }));
-    const models = [...codexModels, ...piModels];
+    const models = [...codexModels, ...connectionModels];
     if (models.length === 0) throw nativeApiError('ZEUS_MODEL_UNAVAILABLE', '当前项目没有可用的 Codex 或 Pi 模型。');
     const projectConfig = readProjectConfig(project.id);
     const configuredModel = projectConfig.defaultModel ?? runtimeSettings.adapterModels.codex;
     const preferredModel =
-      models.find((candidate) => candidate.id === piSelection.defaultModelRef && candidate.available !== false)?.id ??
+      models.find((candidate) => candidate.id === connectionSelection.defaultModelRef && candidate.available !== false)?.id ??
       resolveModelCapability(
         models.filter((candidate) => candidate.available !== false),
         configuredModel,
@@ -16620,7 +16661,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     };
   }
 
-  async function assertCodexAccountReady(): Promise<void> {
+  async function assertCodexAccountReady(modelSourceId: string | null = 'codex', model = ''): Promise<void> {
+    if (model && (await resolveResponsesRuntime({ modelSourceId, model }))) return;
     const account = await codexAppServerManager.readAccount({ refreshToken: true });
     if (!account.requiresOpenaiAuth || account.signedIn) return;
     throw nativeApiError('ZEUS_CODEX_LOGIN_REQUIRED', 'Zeus 专属 Codex 尚未登录。请先完成登录，再创建会话。');
