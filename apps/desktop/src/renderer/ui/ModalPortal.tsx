@@ -1,5 +1,6 @@
 import { useEffect, useRef, type KeyboardEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
+import { useNativeCloseLayer } from './nativeCloseLayer.js';
 
 export interface ModalPortalProps {
   rootClassName?: string;
@@ -11,6 +12,10 @@ export interface ModalPortalProps {
 
 export function ModalPortal(props: ModalPortalProps) {
   const rootRef = useRef<HTMLDivElement>(null);
+
+  useNativeCloseLayer(true, () => {
+    if (!props.dismissDisabled) props.onDismiss?.();
+  });
 
   useEffect(() => {
     const root = rootRef.current;

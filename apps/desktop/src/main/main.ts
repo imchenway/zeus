@@ -61,6 +61,7 @@ const taskGitDeliveryWindowPersistenceGates = new Map<number, WindowStatePersist
 const mainWindowTaskGitContexts = new Map<number, TaskGitDeliveryCurrentContext>();
 type SessionContextKind = 'browser' | 'plan' | 'source' | 'turn_diff' | 'none';
 const sessionContextActivityByWindow = new Map<number, { active: boolean; kind: SessionContextKind }>();
+const appCloseLayerActivityByWindow = new Map<number, boolean>();
 let currentTaskGitDeliveryContext: TaskGitDeliveryCurrentContext = { taskId: null, workspaceId: null };
 let menuBarUsageMenu: Menu | undefined;
 let localServerRuntime: DesktopLocalServerRuntime | undefined;
@@ -494,7 +495,10 @@ async function openProjectGitDiffWindow(
     },
   });
   projectGitDiffWindows.add(window);
-  window.on('closed', () => projectGitDiffWindows.delete(window));
+  window.on('closed', () => {
+    projectGitDiffWindows.delete(window);
+    appCloseLayerActivityByWindow.delete(window.id);
+  });
   const rendererUrl = rendererEntryUrl('project-git-diff', {
     projectId: input.projectId,
     repositoryId: input.repositoryId,
@@ -598,6 +602,7 @@ async function openTaskGitDeliveryWindow(parent: BrowserWindow, taskId: string):
     taskGitDeliveryWindowSaveTimers.delete(window.id);
     taskGitDeliveryWindowPersistenceGates.delete(window.id);
     taskGitDeliveryTaskByWindowId.delete(window.id);
+    appCloseLayerActivityByWindow.delete(window.id);
     if (taskGitDeliveryWindows.get(taskId) === window) taskGitDeliveryWindows.delete(taskId);
   });
   window.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedUrl, isMainFrame) => {
@@ -702,6 +707,7 @@ async function createWindow(): Promise<void> {
     projectSourceWatchers.delete(sourceWatcherKey);
     mainWindowTaskGitContexts.delete(window.id);
     sessionContextActivityByWindow.delete(window.id);
+    appCloseLayerActivityByWindow.delete(window.id);
     rendererBootstrapMonitor.dispose(window);
     windows.delete(window);
     if (mainWindow === window) mainWindow = [...windows].at(-1);
@@ -780,16 +786,24 @@ function setupMenu(): void {
   );
 }
 
-/** 右侧会话工作面活动时关闭其当前标签，否则沿用 macOS 的关闭窗口语义。 */
+/** Cmd+W 依次关闭最上层模态层、活动的会话右侧标签和当前 macOS 窗口。 */
 function closeFocusedWindowOrContextTab(): void {
   const window = BrowserWindow.getFocusedWindow();
   if (!window || window.isDestroyed()) return;
+  if (appCloseLayerActivityByWindow.get(window.id)) {
+    window.webContents.send('zeus:app-close-frontmost-layer');
+    return;
+  }
   const contextActivity = sessionContextActivityByWindow.get(window.id);
   if (browserHost?.isVisibleTabFocused(window) || contextActivity?.active) {
     window.webContents.send('zeus:session-context-close-active-tab');
     return;
   }
   window.close();
+}
+
+function isTrustedZeusRendererWindow(window: BrowserWindow): boolean {
+  return windows.has(window) || taskGitDeliveryTaskByWindowId.has(window.id) || projectGitDiffWindows.has(window) || menuBarUsageWindow === window;
 }
 
 /** Cmd+N 是会话级动作：恢复主窗口并通知 Renderer 打开新会话草稿，不再创建额外窗口。 */
@@ -1195,6 +1209,12 @@ function setupIpc(): void {
     const kind = value.kind;
     if (kind !== 'browser' && kind !== 'plan' && kind !== 'source' && kind !== 'turn_diff' && kind !== 'none') return;
     sessionContextActivityByWindow.set(requestingWindow.id, { active: value.active === true && kind !== 'none', kind });
+  });
+  ipcMain.on('zeus:app-close-layer-activity-changed', (event, active: unknown) => {
+    const requestingWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!requestingWindow || requestingWindow.isDestroyed() || !isTrustedZeusRendererWindow(requestingWindow) || typeof active !== 'boolean') return;
+    if (active) appCloseLayerActivityByWindow.set(requestingWindow.id, true);
+    else appCloseLayerActivityByWindow.delete(requestingWindow.id);
   });
   ipcMain.on('zeus:task-table-layout-close-resolution', (event, resolution: unknown) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
@@ -1655,6 +1675,7 @@ async function createMenuBarUsageWindow(): Promise<BrowserWindow> {
   window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   window.on('blur', () => hideMenuBarUsageWindow());
   window.on('closed', () => {
+    appCloseLayerActivityByWindow.delete(window.id);
     if (menuBarUsageWindow === window) menuBarUsageWindow = undefined;
   });
   window.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedUrl, isMainFrame) => {

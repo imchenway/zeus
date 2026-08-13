@@ -2,6 +2,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState, type MouseEve
 import type { TaskPushSupplementalAttachmentDraft } from '../session/sessionTypes.js';
 import { conversationAttachmentIdentity } from '../session/ConversationComposerAttachments.js';
 import { PendingResourceCards, type PendingResourceCardItem } from '../ui/PendingResourceCards.js';
+import { useNativeCloseLayer } from '../ui/nativeCloseLayer.js';
 
 export function TaskPushSupplementalAttachmentCards(props: {
   attachments: TaskPushSupplementalAttachmentDraft[];
@@ -34,6 +35,8 @@ export function TaskPushSupplementalAttachmentCards(props: {
       })),
     [props.attachments],
   );
+
+  useNativeCloseLayer(Boolean(previewAttachment), closePreview);
 
   const loadPreview = useCallback(async (attachment: TaskPushSupplementalAttachmentDraft) => {
     const bridge = window.zeus?.getConversationResourcePreview;
