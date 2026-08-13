@@ -54,7 +54,6 @@ const copy = {
     details: '技术详情',
     complexityTruncated: '内容过于复杂，已截断',
     queued: '排队中',
-    sending: '发送中',
     sendFailed: '发送失败',
     sendUnconfirmed: '发送结果待确认',
     steering: '引导中',
@@ -92,7 +91,6 @@ const copy = {
     details: 'Technical details',
     complexityTruncated: 'Content complexity truncated',
     queued: 'Queued',
-    sending: 'Sending',
     sendFailed: 'Send failed',
     sendUnconfirmed: 'Send outcome unconfirmed',
     steering: 'Steering',
@@ -227,7 +225,7 @@ function TaskPushMessageContent(
   );
 }
 
-function optimisticDeliveryStatus(item: NativeSessionItemBuffer, labels: (typeof copy)[SessionUiLanguage]): string {
+function optimisticDeliveryStatus(item: NativeSessionItemBuffer, labels: (typeof copy)[SessionUiLanguage]): string | null {
   const delivery = primitiveText(item.payload.delivery);
   if (item.status === 'failed') return labels.sendFailed;
   if (delivery === 'steer_now') {
@@ -235,7 +233,7 @@ function optimisticDeliveryStatus(item: NativeSessionItemBuffer, labels: (typeof
     return unconfirmed ? labels.steerUnconfirmed : labels.steering;
   }
   if (item.status === 'paused' || item.status === 'unconfirmed' || primitiveText(item.payload.pausedReason) === 'recovery_required') return labels.sendUnconfirmed;
-  return item.status === 'queued' ? labels.queued : labels.sending;
+  return item.status === 'queued' ? labels.queued : null;
 }
 
 export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemViewProps) {

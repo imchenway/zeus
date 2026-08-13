@@ -35,7 +35,7 @@ export function ConversationPendingAttachmentImages(props: { attachments: Native
   const images = props.attachments.filter(isPendingImageAttachment);
   if (images.length === 0) return null;
   return (
-    <section className="session-resource-card-list session-pending-attachment-images" aria-label={props.language === 'zh-CN' ? '发送中的图片' : 'Images being sent'}>
+    <section className="session-resource-card-list session-pending-attachment-images" aria-label={props.language === 'zh-CN' ? '待处理图片' : 'Pending images'}>
       {images.map((attachment) => (
         <ConversationPendingAttachmentImage key={pendingAttachmentIdentity(attachment)} attachment={attachment} language={props.language} onVisibleContentChange={props.onVisibleContentChange} />
       ))}

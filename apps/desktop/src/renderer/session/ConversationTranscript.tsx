@@ -105,12 +105,6 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   const answeredRequests = useMemo(() => props.state.pendingRequests.filter(isAnsweredUserInputRequest), [props.state.pendingRequests]);
   const transcriptRows = useMemo(() => projectTranscriptRows(items, answeredRequests), [answeredRequests, items]);
   const turnRows = useMemo(() => projectTranscriptTurnRows(transcriptRows, props.state.activeTurnId), [props.state.activeTurnId, transcriptRows]);
-  const renderedTurnIds = useMemo(
-    () =>
-      new Set(turnRows.flatMap((row) => (row.kind === 'answered_request' ? [] : [row.kind === 'turn_work' ? row.turnId : row.kind === 'item' ? row.item.turnId : row.items[0]?.turnId]).filter((turnId): turnId is string => Boolean(turnId)))),
-    [turnRows],
-  );
-  const activeTurnHasRenderedRow = Boolean(props.state.activeTurnId && renderedTurnIds.has(props.state.activeTurnId));
   const lastItemKeyByTurn = useMemo(() => Object.fromEntries(items.map((item) => [item.turnId, item.key])), [items]);
   const orphanFailedTurns = useMemo(() => {
     const visibleTurnIds = new Set(items.map((item) => item.turnId));
@@ -118,7 +112,8 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
       .filter((turn) => turn.status === 'failed' && turn.error && !visibleTurnIds.has(turn.providerTurnId ?? ''))
       .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
   }, [items, props.state.turnsByProviderId]);
-  const showThinking = shouldShowTranscriptThinking(props.state);
+  const showActiveStatus = shouldShowTranscriptThinking(props.state, items);
+  const activeStatusKind = props.state.conversationState === 'starting_turn' ? 'starting' : 'thinking';
   const historyHydrated = props.state.snapshot !== null;
   const historyUnavailable = !historyHydrated && (props.state.transportState === 'reconnecting' || props.state.transportState === 'failed');
   const latestSubmittedMessageId = [...taskPushOptimisticItems, ...immediateOptimisticItems, ...queuedOptimisticItems].at(-1)?.clientUserMessageId ?? null;
@@ -246,7 +241,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
                   return (
                     <Fragment key={row.key}>
                       {row.rows.map((child) => (
-                        <Fragment key={child.key}>{renderTranscriptRow(child, transcriptRowRenderOptions(props, items, showThinking, lastUserKey, true, enteringItemIds, maintainLatestPosition))}</Fragment>
+                        <Fragment key={child.key}>{renderTranscriptRow(child, transcriptRowRenderOptions(props, items, showActiveStatus, lastUserKey, true, enteringItemIds, maintainLatestPosition))}</Fragment>
                       ))}
                     </Fragment>
                   );
@@ -255,7 +250,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
                 const active = isActiveSessionTurn(turn);
                 const process = row.rows.map((child) => (
                   <Fragment key={child.key}>
-                    {renderTranscriptRow(child, transcriptRowRenderOptions(props, items, showThinking && props.state.activeTurnId === row.turnId, lastUserKey, true, enteringItemIds, maintainLatestPosition))}
+                    {renderTranscriptRow(child, transcriptRowRenderOptions(props, items, showActiveStatus && props.state.activeTurnId === row.turnId, lastUserKey, true, enteringItemIds, maintainLatestPosition))}
                   </Fragment>
                 ));
                 return (
@@ -263,7 +258,6 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
                     {active ? (
                       <SessionTurnDuration turn={turn} requests={props.state.pendingRequests} language={props.language}>
                         {process}
-                        {showThinking && props.state.activeTurnId === row.turnId ? <TranscriptThinking language={props.language} /> : null}
                       </SessionTurnDuration>
                     ) : (
                       <SessionTurnProcessDisclosure language={props.language}>{process}</SessionTurnProcessDisclosure>
@@ -283,15 +277,15 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
               const closesVisibleTurn = lastItemKeyByTurn[lastRowItem.turnId] === lastRowItem.key;
               return (
                 <Fragment key={row.key}>
-                  {renderTranscriptRow(row, transcriptRowRenderOptions(props, items, showThinking, lastUserKey, false, enteringItemIds, maintainLatestPosition))}
+                  {renderTranscriptRow(row, transcriptRowRenderOptions(props, items, showActiveStatus, lastUserKey, false, enteringItemIds, maintainLatestPosition))}
                   {closesVisibleTurn ? renderTurnArtifacts(lastRowItem.turnId, props, lastRowItem.key, providerErrorItemsByTurn.get(lastRowItem.turnId)) : null}
                   {closesVisibleTurn && turn && !isActiveSessionTurn(turn) ? <SessionTurnDuration turn={turn} requests={props.state.pendingRequests} language={props.language} /> : null}
                 </Fragment>
               );
             })
-          ) : !showThinking && immediateOptimisticItems.length === 0 && queuedOptimisticItems.length === 0 && queuedSubmissions.length === 0 && historyHydrated ? (
+          ) : !showActiveStatus && immediateOptimisticItems.length === 0 && queuedOptimisticItems.length === 0 && queuedSubmissions.length === 0 && historyHydrated ? (
             <p className="session-transcript-empty">{props.language === 'zh-CN' ? '发送第一条消息后，真实 app-server 对话会显示在这里。' : 'Send the first message to begin the real app-server transcript.'}</p>
-          ) : !showThinking && historyUnavailable ? (
+          ) : !showActiveStatus && historyUnavailable ? (
             <p className="session-transcript-empty" role="status">
               {props.language === 'zh-CN' ? '历史消息暂不可用；连接恢复后会自动显示。' : 'History is temporarily unavailable and will reappear after the connection recovers.'}
             </p>
@@ -302,19 +296,13 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
           {immediateOptimisticItems.map((item) => (
             <Fragment key={item.key}>
               <ThreadItemView item={item} language={props.language} isLatest animateEntrance={enteringItemIds.has(item.key)} onVisibleContentChange={maintainLatestPosition} />
-              {!showThinking || item.status === 'failed' || item.status === 'unconfirmed' || item.status === 'paused' ? (
+              {!showActiveStatus || item.status === 'failed' || item.status === 'unconfirmed' || item.status === 'paused' ? (
                 <PendingMessageDeliveryFeedback item={item} stateError={props.state.error} language={props.language} onReturnToComposer={props.onRetryItem ? () => props.onRetryItem?.(item) : undefined} />
               ) : null}
             </Fragment>
           ))}
           {props.creationStatus ? <SessionCreationNotice status={props.creationStatus} language={props.language} /> : null}
-          {showThinking && props.state.activeTurnId && props.state.turnsByProviderId[props.state.activeTurnId] && !activeTurnHasRenderedRow ? (
-            <SessionTurnDuration turn={props.state.turnsByProviderId[props.state.activeTurnId]} requests={props.state.pendingRequests} language={props.language}>
-              <TranscriptThinking language={props.language} />
-            </SessionTurnDuration>
-          ) : showThinking && !activeTurnHasRenderedRow ? (
-            <TranscriptThinking language={props.language} />
-          ) : null}
+          {showActiveStatus ? <TranscriptActiveStatus language={props.language} kind={activeStatusKind} /> : null}
           {queuedOptimisticItems.map((item) => (
             <ThreadItemView key={item.key} item={item} language={props.language} animateEntrance={enteringItemIds.has(item.key)} onVisibleContentChange={maintainLatestPosition} />
           ))}
@@ -575,11 +563,11 @@ function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOpt
   );
 }
 
-function TranscriptThinking(props: { language: SessionUiLanguage }): ReactNode {
+function TranscriptActiveStatus(props: { language: SessionUiLanguage; kind: 'starting' | 'thinking' }): ReactNode {
   return (
     <p className="session-transcript-thinking" role="status" aria-live="polite">
       <span className="session-thinking-pulse" aria-hidden="true" />
-      {props.language === 'zh-CN' ? '正在思考' : 'Thinking'}
+      {props.kind === 'starting' ? (props.language === 'zh-CN' ? '正在启动处理' : 'Starting processing') : props.language === 'zh-CN' ? '正在思考' : 'Thinking'}
     </p>
   );
 }
@@ -819,10 +807,18 @@ export function isVisibleTranscriptItem(item: NativeSessionItemBuffer): boolean 
   return transcriptItemText(item).trim().length > 0;
 }
 
-export function shouldShowTranscriptThinking(state: NativeSessionState): boolean {
+export function shouldShowTranscriptThinking(state: NativeSessionState, items: readonly NativeSessionItemBuffer[] = Object.values(state.items)): boolean {
   if (state.conversationState !== 'starting_turn' && state.conversationState !== 'active_prework' && state.conversationState !== 'active_final_answer') return false;
-  if (!state.activeTurnId) return true;
-  return state.visibleFeedbackEpoch < state.feedbackEpoch;
+  if (state.conversationState === 'starting_turn' || !state.activeTurnId) return true;
+  return !items.some((item) => item.turnId === state.activeTurnId && itemIsOngoingVisibleFeedback(item));
+}
+
+function itemIsOngoingVisibleFeedback(item: NativeSessionItemBuffer): boolean {
+  if (item.status === 'completed' || item.status === 'failed' || item.status === 'interrupted') return false;
+  if (itemRole(item) === 'user') return false;
+  if (isOperationalActivityItem(item)) return true;
+  if (itemRole(item) === 'assistant') return true;
+  return transcriptItemText(item).trim().length > 0;
 }
 
 export interface CompletedItemAnnouncementTracker {

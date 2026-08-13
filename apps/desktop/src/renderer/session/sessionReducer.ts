@@ -1087,7 +1087,9 @@ function applyProviderIdentityChange(state: NativeSessionState, payload: Record<
 function activeTurnFromSnapshot(snapshot: NativeConversationSnapshot): string | null {
   if (snapshot.queue.state.type === 'active' || snapshot.queue.state.type === 'waiting') return snapshot.queue.state.turnId;
   const active = [...snapshot.turns].reverse().find((turn) => turn.status === 'running' || turn.status === 'waiting');
-  return active?.providerTurnId ?? null;
+  if (active?.providerTurnId) return active.providerTurnId;
+  const activeSubmission = [...snapshot.submissions].reverse().find((submission) => submission.status === 'active' && submission.providerTurnId);
+  return activeSubmission?.providerTurnId ?? null;
 }
 
 function conversationStateFromSnapshot(snapshot: NativeConversationSnapshot): ConversationState {
@@ -1095,6 +1097,8 @@ function conversationStateFromSnapshot(snapshot: NativeConversationSnapshot): Co
   const requestState = requestConversationState(snapshot.requests);
   if (requestState) return requestState;
   if (snapshot.status === 'failed' || snapshot.providerState === 'failed') return 'turn_failed';
+  if (activeTurnFromSnapshot(snapshot) && snapshot.queue.state.type === 'idle') return 'active_prework';
+  if (snapshot.submissions.some((submission) => submission.status === 'dispatching' && !submission.providerTurnId)) return 'starting_turn';
   switch (snapshot.queue.state.type) {
     case 'dispatching':
       return 'starting_turn';
