@@ -54,6 +54,7 @@ import type {
   CodexUsageAnalyticsSnapshot,
   CodexUsageRange,
   CodexUsageSummarySnapshot,
+  UsageOverviewSnapshot,
 } from '@zeus/shared';
 
 export type {
@@ -1560,6 +1561,7 @@ export interface DashboardClient {
   loadCodexConversationCapabilities: (projectId: string) => Promise<CodexConversationCapabilities>;
   loadCodexAccount: () => Promise<CodexAccountSnapshot>;
   loadCodexUsageSummary: () => Promise<CodexUsageSummarySnapshot>;
+  loadUsageOverview: () => Promise<UsageOverviewSnapshot>;
   loadCodexUsageAnalytics: (input: { range: CodexUsageRange; projectId?: string; model?: string }) => Promise<CodexUsageAnalyticsSnapshot>;
   startCodexChatGptLogin: () => Promise<CodexChatGptLogin>;
   cancelCodexChatGptLogin: (loginId: string) => Promise<void>;
@@ -2011,6 +2013,7 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
     loadCodexConversationCapabilities: (projectId) => request<CodexConversationCapabilities>(`/api/projects/${encodeURIComponent(projectId)}/codex-conversation-capabilities`),
     loadCodexAccount: () => request<CodexAccountSnapshot>('/api/codex/account'),
     loadCodexUsageSummary: () => request<CodexUsageSummarySnapshot>('/api/codex/usage-summary'),
+    loadUsageOverview: () => request<UsageOverviewSnapshot>('/api/usage-overview'),
     loadCodexUsageAnalytics: (input) => {
       const query = new URLSearchParams({ range: input.range });
       if (input.projectId) query.set('projectId', input.projectId);

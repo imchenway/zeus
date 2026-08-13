@@ -356,6 +356,7 @@ type NativeConversationAppClient = SessionControllerClient &
     | 'refreshTaskPushRepositoryRemote'
     | 'loadCodexAccount'
     | 'loadCodexUsageSummary'
+    | 'loadUsageOverview'
     | 'loadCodexUsageAnalytics'
     | 'startCodexChatGptLogin'
     | 'cancelCodexChatGptLogin'
