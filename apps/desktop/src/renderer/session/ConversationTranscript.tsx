@@ -81,16 +81,24 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
       }),
     [collapsedErrorItems, props.state.turnsByProviderId],
   );
+  const taskPushOptimisticItems = useMemo(() => transcriptItems.filter((entry) => entry.optimistic && isTaskPushUserMessageItem(entry)), [transcriptItems]);
   const items = useMemo(
     () =>
       latestReasoningItemsByTurn(
-        transcriptItems.filter((entry) => !entry.optimistic),
+        transcriptItems.filter((entry) => !entry.optimistic || isTaskPushUserMessageItem(entry)),
         props.state.activeTurnId,
       ),
     [props.state.activeTurnId, transcriptItems],
   );
-  const immediateOptimisticItems = useMemo(() => transcriptItems.filter((entry) => entry.optimistic && entry.status !== 'queued' && !queuedClientIds.has(entry.clientUserMessageId ?? '')), [queuedClientIds, transcriptItems]);
-  const queuedOptimisticItems = useMemo(() => transcriptItems.filter((entry) => entry.optimistic && entry.status === 'queued' && !queuedClientIds.has(entry.clientUserMessageId ?? '')), [queuedClientIds, transcriptItems]);
+  const taskPushOptimisticKeys = useMemo(() => new Set(taskPushOptimisticItems.map((entry) => entry.key)), [taskPushOptimisticItems]);
+  const immediateOptimisticItems = useMemo(
+    () => transcriptItems.filter((entry) => entry.optimistic && entry.status !== 'queued' && !taskPushOptimisticKeys.has(entry.key) && !queuedClientIds.has(entry.clientUserMessageId ?? '')),
+    [queuedClientIds, taskPushOptimisticKeys, transcriptItems],
+  );
+  const queuedOptimisticItems = useMemo(
+    () => transcriptItems.filter((entry) => entry.optimistic && entry.status === 'queued' && !taskPushOptimisticKeys.has(entry.key) && !queuedClientIds.has(entry.clientUserMessageId ?? '')),
+    [queuedClientIds, taskPushOptimisticKeys, transcriptItems],
+  );
   const lastUserKey = [...items].reverse().find((entry) => `${entry.type}`.toLocaleLowerCase().includes('user'))?.key;
   const answeredRequests = useMemo(() => props.state.pendingRequests.filter(isAnsweredUserInputRequest), [props.state.pendingRequests]);
   const transcriptRows = useMemo(() => projectTranscriptRows(items, answeredRequests), [answeredRequests, items]);
@@ -112,7 +120,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   const showThinking = shouldShowTranscriptThinking(props.state);
   const historyHydrated = props.state.snapshot !== null;
   const historyUnavailable = !historyHydrated && (props.state.transportState === 'reconnecting' || props.state.transportState === 'failed');
-  const latestSubmittedMessageId = [...immediateOptimisticItems, ...queuedOptimisticItems].at(-1)?.clientUserMessageId ?? null;
+  const latestSubmittedMessageId = [...taskPushOptimisticItems, ...immediateOptimisticItems, ...queuedOptimisticItems].at(-1)?.clientUserMessageId ?? null;
   const maintainLatestPosition = useCallback(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -534,19 +542,25 @@ function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOpt
   if (normalizeItemType(row.item.type) === 'reasoning') {
     return <SessionReasoningSummary item={row.item} language={options.props.language} status={reasoningSummaryStatus(row.item, options.props.state)} />;
   }
+  const showTaskPushDeliveryFeedback = row.item.optimistic && isTaskPushUserMessageItem(row.item) && (!options.showThinking || row.item.status === 'failed' || row.item.status === 'unconfirmed' || row.item.status === 'paused');
   return (
-    <ThreadItemView
-      item={row.item}
-      language={options.props.language}
-      isLatest={!options.insideWork && row.item.key === options.items[options.items.length - 1]?.key && !options.showThinking}
-      showAssistantActions={!options.insideWork && itemRole(row.item) === 'assistant' && !options.showThinking}
-      isLatestUser={row.item.key === options.lastUserKey}
-      onEdit={options.props.onEditUserItem}
-      onRetry={options.props.onRetryItem}
-      onOpenResource={options.props.onOpenResource}
-      onLoadResourcePreview={options.props.onLoadResourcePreview}
-      onVisibleContentChange={options.onVisibleContentChange}
-    />
+    <>
+      <ThreadItemView
+        item={row.item}
+        language={options.props.language}
+        isLatest={!options.insideWork && row.item.key === options.items[options.items.length - 1]?.key && !options.showThinking}
+        showAssistantActions={!options.insideWork && itemRole(row.item) === 'assistant' && !options.showThinking}
+        isLatestUser={row.item.key === options.lastUserKey}
+        onEdit={options.props.onEditUserItem}
+        onRetry={options.props.onRetryItem}
+        onOpenResource={options.props.onOpenResource}
+        onLoadResourcePreview={options.props.onLoadResourcePreview}
+        onVisibleContentChange={options.onVisibleContentChange}
+      />
+      {showTaskPushDeliveryFeedback ? (
+        <PendingMessageDeliveryFeedback item={row.item} stateError={options.props.state.error} language={options.props.language} onReturnToComposer={options.props.onRetryItem ? () => options.props.onRetryItem?.(row.item) : undefined} />
+      ) : null}
+    </>
   );
 }
 
@@ -565,6 +579,8 @@ function PendingMessageDeliveryFeedback(props: { item: NativeSessionItemBuffer; 
   const unconfirmed = props.item.status === 'unconfirmed' || props.item.status === 'paused';
   const failed = props.item.status === 'failed';
   const delivery = typeof props.item.payload.delivery === 'string' ? props.item.payload.delivery : 'queue';
+  // 乐观消息已经即时展示正文，普通发送阶段不再重复显示过程提示。
+  if (props.item.status === 'pending' && delivery !== 'steer_now' && !deliveryError) return null;
   const reason = deliveryError ? messageDeliveryFailureReason(deliveryError, zh) : null;
   const title = failed
     ? zh
@@ -582,13 +598,9 @@ function PendingMessageDeliveryFeedback(props: { item: NativeSessionItemBuffer; 
           ? zh
             ? '正在把消息交给当前回复'
             : 'Sending the message to the current response'
-          : props.item.status === 'pending'
-            ? zh
-              ? '正在发送消息'
-              : 'Sending message'
-            : zh
-              ? '消息已接收，正在启动处理'
-              : 'Message accepted; starting processing';
+          : zh
+            ? '消息已接收，正在启动处理'
+            : 'Message accepted; starting processing';
   const guidance = failed
     ? zh
       ? '内容已保留在输入框中，可修改后重新发送。'
@@ -768,7 +780,7 @@ export function projectTranscriptRows(items: readonly NativeSessionItemBuffer[],
     const item = entry.item;
     if (!isOperationalActivityItem(item)) {
       flushActivity();
-      rows.push({ kind: 'item', key: item.key, item });
+      rows.push({ kind: 'item', key: transcriptItemRenderKey(item), item });
       continue;
     }
     if (activity.length > 0 && activity[activity.length - 1]!.turnId !== item.turnId) flushActivity();
@@ -776,6 +788,18 @@ export function projectTranscriptRows(items: readonly NativeSessionItemBuffer[],
   }
   flushActivity();
   return rows;
+}
+
+function transcriptItemRenderKey(item: NativeSessionItemBuffer): string {
+  const clientUserMessageId = itemRole(item) === 'user' ? (item.clientUserMessageId ?? item.durableClientUserMessageId) : null;
+  // 用户消息的可见身份来自客户端消息 id；Provider 技术条目接管时不能替换整个消息节点。
+  return clientUserMessageId ? `user-message:${encodeURIComponent(clientUserMessageId)}` : item.key;
+}
+
+function isTaskPushUserMessageItem(item: NativeSessionItemBuffer): boolean {
+  if (itemRole(item) !== 'user') return false;
+  const layout = item.payload.taskPushLayout;
+  return Boolean(layout && typeof layout === 'object' && !Array.isArray(layout) && (layout as Record<string, unknown>).kind === 'task_push');
 }
 
 export function isVisibleTranscriptItem(item: NativeSessionItemBuffer): boolean {

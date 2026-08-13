@@ -279,10 +279,14 @@ function hydrateSnapshot(state: NativeSessionState, snapshot: NativeConversation
   const orderedItems: Array<{ key: string; timestamp: string; stableIndex: number }> = [];
   const threadId = snapshot.providerThreadId ?? 'unbound-thread';
   const previousOptimisticStableIndexes = new Map<string, number>();
+  const previousUserItemsByClientId = new Map<string, NativeSessionItemBuffer>();
   state.itemOrder.forEach((key, index) => {
     const item = state.items[key];
-    if (!item?.optimistic || item.conversationId !== snapshot.id) return;
-    for (const clientId of userMessageClientIds(item)) previousOptimisticStableIndexes.set(clientId, index);
+    if (!item || !isUserMessageItem(item)) return;
+    for (const clientId of userMessageClientIds(item)) {
+      previousUserItemsByClientId.set(clientId, item);
+      if (item.optimistic && item.conversationId === snapshot.id) previousOptimisticStableIndexes.set(clientId, index);
+    }
   });
   let stableIndex = 0;
   const providerItemKeyById = new Map<string, string>();
@@ -304,6 +308,7 @@ function hydrateSnapshot(state: NativeSessionState, snapshot: NativeConversation
     const key = nativeSessionItemKey(snapshot.id, threadId, turnId, itemId);
     const timelineAt = item.startedAt ?? item.updatedAt;
     const itemClientId = isUserMessageType(item.type) ? (stringValue(item.payload.clientId) ?? stringValue(item.payload.clientUserMessageId)) : null;
+    const previousUserItem = itemClientId ? previousUserItemsByClientId.get(itemClientId) : undefined;
     if (itemClientId && providerUserItemKeyByClientId.has(itemClientId)) continue;
     items[key] = {
       key,
@@ -317,7 +322,7 @@ function hydrateSnapshot(state: NativeSessionState, snapshot: NativeConversation
       status: item.status,
       phase: item.phase,
       text: item.text,
-      payload: item.payload,
+      payload: previousUserItem ? mergeStableUserMessagePresentation(previousUserItem.payload, item.payload) : item.payload,
       resources: item.resources ?? [],
       timelineAt,
       updatedAt: item.updatedAt,
@@ -362,6 +367,7 @@ function hydrateSnapshot(state: NativeSessionState, snapshot: NativeConversation
     }
     const turnId = `message:${message.id}`;
     const key = nativeSessionItemKey(snapshot.id, threadId, turnId, message.id);
+    const previousUserItem = message.role === 'user' && clientUserMessageId ? previousUserItemsByClientId.get(clientUserMessageId) : undefined;
     items[key] = {
       key,
       conversationId: snapshot.id,
@@ -373,7 +379,7 @@ function hydrateSnapshot(state: NativeSessionState, snapshot: NativeConversation
       status: 'completed',
       phase: stringValue(message.metadata.phase) ?? 'prework',
       text: message.content,
-      payload: message.metadata,
+      payload: previousUserItem ? mergeStableUserMessagePresentation(previousUserItem.payload, message.metadata) : message.metadata,
       resources: message.resources ?? [],
       optimistic: false,
       ...(clientUserMessageId ? { clientUserMessageId } : {}),
@@ -392,7 +398,14 @@ function hydrateSnapshot(state: NativeSessionState, snapshot: NativeConversation
     if (!pendingStatus || !clientUserMessageId || !providerTurnId || durableClientIds.has(clientUserMessageId)) continue;
     const itemId = `${submission.delivery === 'steer_now' ? 'steering' : 'submission'}:${submission.id}`;
     const key = nativeSessionItemKey(snapshot.id, threadId, providerTurnId, itemId);
-    items[key] = submissionUserMessageItem(snapshot.id, threadId, submission, key, itemId);
+    const submissionItem = submissionUserMessageItem(snapshot.id, threadId, submission, key, itemId);
+    const previousUserItem = previousUserItemsByClientId.get(clientUserMessageId);
+    items[key] = previousUserItem
+      ? {
+          ...submissionItem,
+          payload: mergeStableUserMessagePresentation(previousUserItem.payload, submissionItem.payload),
+        }
+      : submissionItem;
     orderedItems.push({ key, timestamp: submission.createdAt ?? snapshot.updatedAt, stableIndex: stableIndexForClient(clientUserMessageId) });
     durableClientIds.add(clientUserMessageId);
   }
@@ -711,7 +724,7 @@ function reduceItemEvent(state: NativeSessionState, event: NativeConversationEve
   const incomingPayload = isRecord(payload.itemPayload) ? payload.itemPayload : null;
   const incomingResources = Array.isArray(payload.itemResources) ? payload.itemResources : null;
   const effectiveType = completed ? (incomingType ?? previous?.type ?? 'providerItem') : (previous?.type ?? incomingType ?? 'providerItem');
-  const providerClientId = isUserMessageType(effectiveType) && incomingPayload ? stringValue(incomingPayload.clientId) : null;
+  const providerClientId = isUserMessageType(effectiveType) && incomingPayload ? (stringValue(incomingPayload.clientId) ?? stringValue(incomingPayload.clientUserMessageId)) : null;
   const matchedUserEntry = isUserMessageType(effectiveType)
     ? Object.entries(state.items).find(([, item]) => isUserMessageItem(item) && ((providerClientId !== null && userMessageClientIds(item).includes(providerClientId)) || (!item.optimistic && item.providerItemId === itemId)))
     : undefined;
@@ -732,7 +745,11 @@ function reduceItemEvent(state: NativeSessionState, event: NativeConversationEve
     phase: stringValue(payload.phase) ?? previous?.phase ?? matchedUserItem?.phase ?? 'prework',
     text: completed ? incomingText || previous?.text || matchedUserText || optimisticText : reconcileCumulativeText(previous?.text ?? matchedUserText ?? optimisticText, incomingText),
     // 进行中事件以 started 的类型壳为基础合并权威进度字段；completed 仍是最终投影。
-    payload: completed ? (incomingPayload ?? previous?.payload ?? matchedUserItem?.payload ?? {}) : mergeProgressPayload(previous?.payload ?? matchedUserItem?.payload, incomingPayload),
+    payload: completed
+      ? isUserMessageType(effectiveType)
+        ? mergeStableUserMessagePresentation(previous?.payload ?? matchedUserItem?.payload, incomingPayload)
+        : (incomingPayload ?? previous?.payload ?? matchedUserItem?.payload ?? {})
+      : mergeProgressPayload(previous?.payload ?? matchedUserItem?.payload, incomingPayload),
     resources: completed ? (incomingResources ?? previous?.resources ?? matchedUserItem?.resources ?? []) : (previous?.resources ?? matchedUserItem?.resources ?? incomingResources ?? []),
     ...(resolvedClientId ? { clientUserMessageId: resolvedClientId, durableClientUserMessageId: resolvedClientId, optimistic: false } : {}),
     // 首次事件确定条目的时间线位置；delta/completed 只更新内容，不能让历史位置漂移。
@@ -792,6 +809,16 @@ function mergeProgressPayload(previous: Record<string, unknown> | undefined, inc
     ...previous,
     ...incoming,
     ...(previousPresentation || incomingPresentation ? { presentation: { ...(previousPresentation ?? {}), ...(incomingPresentation ?? {}) } } : {}),
+  };
+}
+
+function mergeStableUserMessagePresentation(previous: Record<string, unknown> | undefined, incoming: Record<string, unknown> | null): Record<string, unknown> {
+  const next = incoming ?? {};
+  if (!previous) return next;
+  return {
+    ...next,
+    ...(next.taskPushLayout === undefined && previous.taskPushLayout !== undefined ? { taskPushLayout: previous.taskPushLayout } : {}),
+    ...(next.attachments === undefined && previous.attachments !== undefined ? { attachments: previous.attachments } : {}),
   };
 }
 
