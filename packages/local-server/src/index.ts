@@ -15366,10 +15366,17 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         if (strategy !== 'rebase' && strategy !== 'merge') throw nativeApiError('ZEUS_GIT_PULL_STRATEGY_INVALID', 'Pull strategy must be rebase or merge.');
         return { type: 'pull', remote: stringValue('remote'), targetBranch: stringValue('targetBranch'), strategy };
       }
+      case 'update': {
+        const strategy = value.strategy;
+        if (strategy !== 'merge' && strategy !== 'rebase' && strategy !== 'reset') throw nativeApiError('ZEUS_GIT_UPDATE_STRATEGY_INVALID', 'Update strategy must be merge, rebase, or reset.');
+        return { type: 'update', strategy, smart: value.smart === true };
+      }
       case 'checkout':
-        return { type: 'checkout', branchName: stringValue('branchName') ?? '' };
+        return { type: 'checkout', branchName: stringValue('branchName') ?? '', smart: value.smart === true };
+      case 'checkout_revision':
+        return { type: 'checkout_revision', revision: stringValue('revision') ?? '', smart: value.smart === true };
       case 'create_branch':
-        return { type: 'create_branch', branchName: stringValue('branchName') ?? '', baseRef: stringValue('baseRef'), trackRemote: value.trackRemote === true };
+        return { type: 'create_branch', branchName: stringValue('branchName') ?? '', baseRef: stringValue('baseRef'), trackRemote: value.trackRemote === true, smart: value.smart === true };
       case 'delete_branch':
         return { type: 'delete_branch', branchName: stringValue('branchName') ?? '' };
       case 'merge':

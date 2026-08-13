@@ -143,10 +143,16 @@ function parseProjectGitAction(value: unknown): ProjectGitAction {
       if (value.strategy !== 'rebase' && value.strategy !== 'merge') throw projectGitError('ZEUS_GIT_PULL_STRATEGY_INVALID', '拉取策略必须是 merge 或 rebase。');
       return { type: 'pull', remote: stringValue('remote'), targetBranch: stringValue('targetBranch'), strategy: value.strategy };
     }
+    case 'update': {
+      if (value.strategy !== 'merge' && value.strategy !== 'rebase' && value.strategy !== 'reset') throw projectGitError('ZEUS_GIT_UPDATE_STRATEGY_INVALID', '更新策略必须是 merge、rebase 或 reset。');
+      return { type: 'update', strategy: value.strategy, smart: value.smart === true };
+    }
     case 'checkout':
-      return { type: 'checkout', branchName: stringValue('branchName') ?? '' };
+      return { type: 'checkout', branchName: stringValue('branchName') ?? '', smart: value.smart === true };
+    case 'checkout_revision':
+      return { type: 'checkout_revision', revision: stringValue('revision') ?? '', smart: value.smart === true };
     case 'create_branch':
-      return { type: 'create_branch', branchName: stringValue('branchName') ?? '', baseRef: stringValue('baseRef'), trackRemote: value.trackRemote === true };
+      return { type: 'create_branch', branchName: stringValue('branchName') ?? '', baseRef: stringValue('baseRef'), trackRemote: value.trackRemote === true, smart: value.smart === true };
     case 'delete_branch':
       return { type: 'delete_branch', branchName: stringValue('branchName') ?? '' };
     case 'merge':
