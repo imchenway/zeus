@@ -223,17 +223,17 @@ export function SessionPlanProgress(props: { plan: NativeTurnPlanSnapshot; langu
   );
 }
 
+export function isActiveSessionTurn(turn: NativeTurnSnapshot): boolean {
+  return !turn.completedAt && (turn.status === 'running' || turn.status === 'waiting' || turn.status === 'dispatching');
+}
+
 export function SessionTurnDuration(props: { turn: NativeTurnSnapshot; requests: NativePendingRequest[]; language: SessionUiLanguage; children?: ReactNode }) {
   const [now, setNow] = useState(() => Date.now());
-  const active = !props.turn.completedAt && (props.turn.status === 'running' || props.turn.status === 'waiting' || props.turn.status === 'dispatching');
-  const [open, setOpen] = useState(active);
+  const active = isActiveSessionTurn(props.turn);
   useEffect(() => {
     if (!active) return;
     const timer = window.setInterval(() => setNow(Date.now()), 1_000);
     return () => window.clearInterval(timer);
-  }, [active]);
-  useEffect(() => {
-    setOpen(active);
   }, [active]);
   const duration = useMemo(() => turnDurationMs(props.turn, props.requests, now), [now, props.requests, props.turn]);
   if (duration === null) return null;
@@ -241,22 +241,29 @@ export function SessionTurnDuration(props: { turn: NativeTurnSnapshot; requests:
   const label = props.language === 'zh-CN' ? `已处理 ${value}` : active ? `Processing for ${value}` : `Processed in ${value}`;
   const hasDetails = props.children !== undefined && props.children !== null;
   const time = <time dateTime={`PT${Math.max(0, Math.round(duration / 1_000))}S`}>{label}</time>;
-  const summary = (
-    <summary aria-label={label}>
-      {time}
-      {hasDetails ? <CaretDown className="session-turn-duration-caret" aria-hidden="true" weight="bold" /> : null}
-    </summary>
-  );
   return (
     <section className="session-turn-duration" data-active={active || undefined}>
-      {hasDetails ? (
-        <details open={active || open} onToggle={(event) => setOpen(event.currentTarget.open)}>
-          {summary}
-          <div className="session-turn-duration-body">{props.children}</div>
-        </details>
-      ) : (
-        <p>{time}</p>
-      )}
+      {hasDetails ? <div className="session-turn-duration-body">{props.children}</div> : null}
+      <p>{time}</p>
+    </section>
+  );
+}
+
+export function SessionTurnProcessDisclosure(props: { language: SessionUiLanguage; children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  const bodyId = useId();
+  const label = props.language === 'zh-CN' ? (open ? '收起思考过程' : '查看思考过程') : open ? 'Hide thinking process' : 'View thinking process';
+  return (
+    <section className="session-turn-process" data-open={open || undefined}>
+      <div className="session-turn-process-control">
+        <button type="button" aria-expanded={open} aria-controls={bodyId} onClick={() => setOpen((value) => !value)}>
+          <span>{label}</span>
+          <CaretDown className="session-turn-process-caret" aria-hidden="true" weight="bold" />
+        </button>
+      </div>
+      <div id={bodyId} className="session-turn-process-body" hidden={!open}>
+        {props.children}
+      </div>
     </section>
   );
 }
