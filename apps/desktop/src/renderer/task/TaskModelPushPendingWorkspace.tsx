@@ -308,5 +308,6 @@ function conversationCapabilities(capabilities: CodexTaskPushCapabilities): Code
     preferredModel: capabilities.preferredModel,
     models: capabilities.models,
     codexAccount: capabilities.codexAccount,
+    goals: { supported: false, enabled: false, stage: null },
   };
 }

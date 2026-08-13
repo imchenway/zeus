@@ -93,6 +93,7 @@ export function buildSystemNotificationFromRealtimeEvent(event: ZeusRealtimeEven
     return conversationNotification(payload, 'Zeus 有新回复', '模型已回复，请回到会话查看。');
   }
   if (event.type === 'conversation.request.created') {
+    if (payload.notificationEligible === false) return null;
     const userInput = readString(payload.requestKind) === 'request_user_input';
     return conversationNotification(payload, userInput ? 'Zeus 等待你的回答' : 'Zeus 等待审批', userInput ? '会话需要你补充信息。' : '会话需要你确认后才能继续。');
   }
@@ -102,6 +103,15 @@ export function buildSystemNotificationFromRealtimeEvent(event: ZeusRealtimeEven
     if (status === 'failed') return conversationNotification(payload, 'Zeus 会话失败', '本轮执行失败，请回到会话查看详情。');
     if (status === 'interrupted') return conversationNotification(payload, 'Zeus 会话已中断', '本轮执行已中断。');
     if (status === 'completed') return conversationNotification(payload, 'Zeus 会话已完成', '本轮执行已经完成。');
+  }
+  if (event.type === 'conversation.goal.updated') {
+    if (payload.notificationEligible !== true) return null;
+    const goal = isRecord(payload.goal) ? payload.goal : {};
+    const status = readString(goal.status);
+    if (status === 'complete') return conversationNotification(payload, 'Zeus 目标已完成', '目标已经达到停止条件。');
+    if (status === 'blocked') return conversationNotification(payload, 'Zeus 目标需要处理', '目标遇到阻塞，需要你处理。');
+    if (status === 'usageLimited') return conversationNotification(payload, 'Zeus 目标用量受限', '目标因账户用量限制暂停。');
+    if (status === 'budgetLimited') return conversationNotification(payload, 'Zeus 目标预算受限', '目标因令牌预算限制暂停。');
   }
   return null;
 }
@@ -157,6 +167,7 @@ function conversationNotificationKey(event: ZeusRealtimeEvent): { key: string; t
   const turnKey = `${conversationId}:${turnId}`;
   if (event.type === 'conversation.attention.changed') return { key: `ordinary:${turnKey}`, turnKey, ordinary: true, suppressBecauseOrdinary: false };
   if (event.type === 'conversation.request.created') {
+    if (payload.notificationEligible === false) return null;
     const requestId = readString(payload.requestId, turnId);
     return { key: `request:${conversationId}:${requestId}`, turnKey, ordinary: false, suppressBecauseOrdinary: false };
   }
@@ -164,7 +175,17 @@ function conversationNotificationKey(event: ZeusRealtimeEvent): { key: string; t
     const status = readString(payload.status);
     return { key: `terminal:${turnKey}:${status}`, turnKey, ordinary: false, suppressBecauseOrdinary: status === 'completed' };
   }
+  if (event.type === 'conversation.goal.updated') {
+    if (payload.notificationEligible !== true) return null;
+    const goal = isRecord(payload.goal) ? payload.goal : {};
+    const updatedAt = typeof goal.providerUpdatedAt === 'number' ? goal.providerUpdatedAt : readString(payload.updatedAt, 'current');
+    return { key: `goal:${conversationId}:${readString(goal.status)}:${String(updatedAt)}`, turnKey, ordinary: false, suppressBecauseOrdinary: false };
+  }
   return null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function buildZeusWebSocketProtocol(apiToken: string): string {

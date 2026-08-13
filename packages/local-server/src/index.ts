@@ -141,6 +141,7 @@ import {
   CommandRunRepository,
   type ConversationCollaborationMode,
   type ConversationAttentionKind,
+  ConversationGoalRepository,
   ConversationItemRepository,
   type ConversationNextTurnSettings,
   type ConversationPermissionMode,
@@ -234,6 +235,8 @@ const nativeConversationAttentionEventTypes = new Set([
   'conversation.native.error',
   'conversation.attention.changed',
   'conversation.attention.acknowledged',
+  'conversation.goal.updated',
+  'conversation.goal.cleared',
 ]);
 
 /**
@@ -1628,6 +1631,7 @@ type StartTaskConversationBody = (
       integrationId?: string;
       conflictPath?: string;
       conflictContent?: string;
+      goalObjective?: string;
       workspace?:
         | { mode: 'direct'; confirmConcurrentWrites?: boolean }
         | {
@@ -1661,6 +1665,7 @@ interface StartProjectConversationBody {
   effort?: string;
   clientUserMessageId?: string;
   agentKind?: 'codex' | 'pi' | 'claude';
+  goalObjective?: string;
 }
 
 interface TaskConversationAcceptanceReservation {
@@ -2007,6 +2012,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   const settings = new SettingRepository(db);
   const auditLogs = new AuditLogRepository(db);
   const conversations = new ConversationRepository(db);
+  const conversationGoals = new ConversationGoalRepository(db);
   const codexUsageLedger = new CodexUsageLedgerRepository(db);
   const codexLegacyImports = new CodexLegacyImportRepository(db);
   const conversationTurns = new ConversationTurnRepository(db);
@@ -2344,6 +2350,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       submissions: conversationSubmissions,
       requests: conversationRequests,
       planActions: conversationPlanActions,
+      goals: conversationGoals,
       receipts: providerEventReceipts,
       syncCheckpoints: conversationProviderSyncCheckpoints,
       settings,
@@ -3120,6 +3127,14 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   server.post('/api/execution-host/stop-active', async (): Promise<ExecutionHostStopResult> => {
     const requestedAt = now().toISOString();
     const failedTurns: ExecutionHostStopResult['failedTurns'] = [];
+    for (const goal of conversationGoals.listActive()) {
+      await codexNativeCoordinator.pauseGoal({ conversationId: goal.conversationId }).catch((error) => {
+        publishNativeConversationEvent('conversation.goal.pause_failed', {
+          conversationId: goal.conversationId,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      });
+    }
     const recoverableSubmissions = conversationSubmissions.listRecoverable();
     const activeSubmissions = recoverableSubmissions.filter((submission) => (submission.status === 'dispatching' || submission.status === 'active') && submission.providerTurnId);
     const requestedTurns = new Set<string>();
@@ -3455,6 +3470,66 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       return toNativeConversationSnapshot(updated);
     },
   );
+
+  server.get('/api/projects/:projectId/conversations/:conversationId/goal', async (request: FastifyRequest<{ Params: { projectId: string; conversationId: string } }>, reply) => {
+    const conversation = conversations.getById(request.params.conversationId);
+    if (!conversation || conversation.projectId !== request.params.projectId || conversation.transportKind !== 'codex_native') {
+      return reply.code(404).send({ error: 'ZEUS_NATIVE_CONVERSATION_NOT_FOUND', message: 'Native conversation not found' });
+    }
+    try {
+      const goal = conversation.agentKind === 'codex' ? await codexNativeCoordinator.readGoal({ conversationId: conversation.id }) : null;
+      return { goal, timeline: conversationGoals.listEvents(conversation.id), capability: conversationGoalCapability(conversation) };
+    } catch (error) {
+      return sendNativeConversationApiError(reply, error);
+    }
+  });
+
+  server.put('/api/projects/:projectId/conversations/:conversationId/goal', async (request: FastifyRequest<{ Params: { projectId: string; conversationId: string }; Body: { objective?: unknown } }>, reply) => {
+    const conversation = conversations.getById(request.params.conversationId);
+    if (!conversation || conversation.projectId !== request.params.projectId || conversation.transportKind !== 'codex_native') {
+      return reply.code(404).send({ error: 'ZEUS_NATIVE_CONVERSATION_NOT_FOUND', message: 'Native conversation not found' });
+    }
+    try {
+      const objective = parseGoalObjective(request.body?.objective);
+      if (!objective) throw nativeApiError('ZEUS_CODEX_GOAL_OBJECTIVE_INVALID', '目标不能为空。');
+      const goal = await codexNativeCoordinator.setGoal({ conversationId: conversation.id, objective });
+      return { goal, timeline: conversationGoals.listEvents(conversation.id), capability: conversationGoalCapability(conversation) };
+    } catch (error) {
+      return sendNativeConversationApiError(reply, error);
+    }
+  });
+
+  for (const action of ['pause', 'resume'] as const) {
+    server.post(`/api/projects/:projectId/conversations/:conversationId/goal/${action}`, async (request: FastifyRequest<{ Params: { projectId: string; conversationId: string } }>, reply) => {
+      const conversation = conversations.getById(request.params.conversationId);
+      if (!conversation || conversation.projectId !== request.params.projectId || conversation.transportKind !== 'codex_native') {
+        return reply.code(404).send({ error: 'ZEUS_NATIVE_CONVERSATION_NOT_FOUND', message: 'Native conversation not found' });
+      }
+      try {
+        const goal = action === 'pause' ? await codexNativeCoordinator.pauseGoal({ conversationId: conversation.id }) : await codexNativeCoordinator.resumeGoal({ conversationId: conversation.id });
+        return { goal, timeline: conversationGoals.listEvents(conversation.id), capability: conversationGoalCapability(conversation) };
+      } catch (error) {
+        return sendNativeConversationApiError(reply, error);
+      }
+    });
+  }
+
+  server.delete('/api/projects/:projectId/conversations/:conversationId/goal', async (request: FastifyRequest<{ Params: { projectId: string; conversationId: string }; Body: { confirmUnfinished?: unknown } }>, reply) => {
+    const conversation = conversations.getById(request.params.conversationId);
+    if (!conversation || conversation.projectId !== request.params.projectId || conversation.transportKind !== 'codex_native') {
+      return reply.code(404).send({ error: 'ZEUS_NATIVE_CONVERSATION_NOT_FOUND', message: 'Native conversation not found' });
+    }
+    try {
+      const current = await codexNativeCoordinator.readGoal({ conversationId: conversation.id });
+      if (current && current.status !== 'complete' && request.body?.confirmUnfinished !== true) {
+        return reply.code(409).send({ error: 'ZEUS_CODEX_GOAL_CLEAR_CONFIRMATION_REQUIRED', message: '清除未完成目标前必须确认。' });
+      }
+      const result = await codexNativeCoordinator.clearGoal({ conversationId: conversation.id });
+      return { ...result, goal: null, timeline: conversationGoals.listEvents(conversation.id), capability: conversationGoalCapability(conversation) };
+    } catch (error) {
+      return sendNativeConversationApiError(reply, error);
+    }
+  });
 
   server.put(
     '/api/projects/:projectId/conversations/:conversationId/attention-acknowledgement',
@@ -13467,6 +13542,9 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       ...(rateLimits ? { rateLimits } : {}),
       ...(mcpStartup ? { mcpStartup } : {}),
       executionContext,
+      goal: conversationGoals.get(conversation.id) ?? null,
+      goalTimeline: conversationGoals.listEvents(conversation.id),
+      goalCapability: conversationGoalCapability(conversation),
       messages: conversation.messages.map((message) => {
         const providerItem = message.providerItemId ? itemByProviderItemId.get(message.providerItemId) : undefined;
         const metadata = parseJsonObject(message.metadataJson);
@@ -13544,6 +13622,19 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         resolvedAt: request.resolvedAt,
         updatedAt: request.updatedAt,
       })),
+    };
+  }
+
+  function conversationGoalCapability(conversation: ZeusConversationRecord) {
+    if (conversation.agentKind !== 'codex' && conversation.providerId !== 'codex') {
+      return { supported: false, enabled: false, stage: null, reason: 'agent_unsupported' as const };
+    }
+    const state = codexAppServerManager.getState();
+    if (state.type !== 'ready') return { supported: false, enabled: false, stage: null, reason: 'unverified' as const };
+    const goals = state.capabilities.goals;
+    return {
+      ...goals,
+      reason: goals.supported && goals.enabled ? ('available' as const) : goals.supported ? ('disabled' as const) : ('app_server_unsupported' as const),
     };
   }
 
@@ -14263,6 +14354,10 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     }
     const requestedServiceTier = readServiceTierOverride(body);
     const serviceTier = normalizeServiceTierForCapability(requestedServiceTier, selectedModel);
+    const goalObjective = parseGoalObjective(body.goalObjective);
+    if (goalObjective && (selectedModel.agentKind !== 'codex' || capabilities.goals?.enabled !== true)) {
+      throw nativeApiError('ZEUS_CODEX_GOALS_UNAVAILABLE', '当前 Agent 或 app-server 不支持原生目标。');
+    }
     const clientUserMessageId = normalizeNativeClientUserMessageId(body.clientUserMessageId, `native-client-${createHash('sha256').update(`${project.id}\0${idempotencyKey}`).digest('hex').slice(0, 24)}`);
     const resourceId = encodeProjectConversationAcceptanceReservation(reservation);
     const reservedLifecycle = {
@@ -14290,6 +14385,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       idempotencyKey,
       clientUserMessageId,
       providerWriteLifecycle: reservedLifecycle,
+      ...(goalObjective ? { goalObjective } : {}),
     });
     const conversation = conversations.getById(nativeOperation.conversationId);
     const submission = conversationSubmissions.getById(nativeOperation.submissionId);
@@ -14418,6 +14514,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     idempotencyKey: string;
     clientUserMessageId: string;
     providerWriteLifecycle: { markPrepared(submissionId: string): Promise<void>; markRpcStarted(submissionId: string): void };
+    goalObjective?: string;
   }
 
   /** 专用入口只生成计划；Provider 分流、身份和持久接受生命周期统一在此执行。 */
@@ -14476,6 +14573,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       clientUserMessageId: plan.clientUserMessageId,
       ...(plan.legacyReference ? { legacyReference: plan.legacyReference } : {}),
       providerWriteLifecycle: plan.providerWriteLifecycle,
+      ...(plan.goalObjective ? { goalObjective: plan.goalObjective } : {}),
     });
   }
 
@@ -14817,6 +14915,10 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         const content = explicitContent || createTaskRuntimePrompt(task);
         const capabilities = await resolveConversationCapabilities(project);
         const selectedModel = resolveModelCapability(capabilities.models, capabilities.preferredModel) ?? capabilities.models[0]!;
+        const goalObjective = parseGoalObjective(body.goalObjective);
+        if (goalObjective && (selectedModel.agentKind !== 'codex' || capabilities.goals?.enabled !== true)) {
+          throw nativeApiError('ZEUS_CODEX_GOALS_UNAVAILABLE', '当前 Agent 或 app-server 不支持原生目标。');
+        }
         const requestedServiceTier = readServiceTierOverride(body);
         const serviceTier = normalizeServiceTierForCapability(requestedServiceTier, selectedModel);
         const inheritConversationId = typeof body.inheritConversationId === 'string' ? body.inheritConversationId.trim() : '';
@@ -14866,6 +14968,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           idempotencyKey,
           clientUserMessageId,
           providerWriteLifecycle: reservedLifecycle,
+          ...(goalObjective ? { goalObjective } : {}),
         });
       }
     } else if (body.mode === 'resume') {
@@ -15317,6 +15420,14 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
 
   function parseConversationCollaborationMode(value: unknown): ConversationCollaborationMode | null {
     return value === 'default' || value === 'plan' ? value : null;
+  }
+
+  function parseGoalObjective(value: unknown): string | undefined {
+    if (value === undefined) return undefined;
+    if (typeof value !== 'string') throw nativeApiError('ZEUS_CODEX_GOAL_OBJECTIVE_INVALID', '目标必须是文本。');
+    const objective = value.trim();
+    if (!objective || [...objective].length > 4_000) throw nativeApiError('ZEUS_CODEX_GOAL_OBJECTIVE_INVALID', '目标必须为 1 到 4000 个字符。');
+    return objective;
   }
 
   function isNativeApiRecord(value: unknown): value is Record<string, unknown> {
@@ -16520,6 +16631,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       preferredModel,
       models,
       codexAccount,
+      goals: codexCapabilities?.goals ?? { supported: false, enabled: false, stage: null },
     };
   }
 

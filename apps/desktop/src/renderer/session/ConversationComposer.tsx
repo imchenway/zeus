@@ -42,6 +42,8 @@ export interface ConversationComposerProps {
   readOnly?: boolean;
   permissionMode: NativePermissionMode;
   collaborationMode: NativeCollaborationMode;
+  goalAvailable?: boolean;
+  onOpenGoal?: () => void;
 }
 
 const labels = {
@@ -56,6 +58,7 @@ const labels = {
     model: '模型',
     effort: '推理强度',
     unsynced: '未同步',
+    goal: '目标',
   },
   'en-US': {
     input: 'Message Codex',
@@ -68,6 +71,7 @@ const labels = {
     model: 'Model',
     effort: 'Reasoning effort',
     unsynced: 'Not synced',
+    goal: 'Goal',
   },
 } as const;
 
@@ -183,6 +187,11 @@ export function ConversationComposer(props: ConversationComposerProps) {
         });
         return;
       }
+      if (props.state.draft.trim() === '/goal' && !props.state.browserSubmission && props.goalAvailable && props.onOpenGoal) {
+        props.onDraftChange('');
+        props.onOpenGoal();
+        return;
+      }
       if (writable && hasDraft && !busy) submit('queue');
       return;
     }
@@ -275,6 +284,12 @@ export function ConversationComposer(props: ConversationComposerProps) {
                 })
               }
             />
+            {props.goalAvailable ? (
+              <button type="button" className="session-goal-trigger" aria-haspopup="dialog" onClick={props.onOpenGoal} disabled={!props.onOpenGoal || props.readOnly === true}>
+                <span aria-hidden="true">◎</span>
+                <span>{copy.goal}</span>
+              </button>
+            ) : null}
           </span>
           <span className="session-composer-trailing-actions">
             <span className="session-composer-runtime-settings">

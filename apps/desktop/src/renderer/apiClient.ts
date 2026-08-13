@@ -12,6 +12,7 @@ import type {
   NativeConversationChoice,
   NativeConversationChoicesSnapshot,
   NativeConversationSnapshot,
+  NativeGoalResponse,
   NativeNextTurnSettings,
   NativeOperationAcceptance,
   NativePendingRequest,
@@ -1613,6 +1614,11 @@ export interface DashboardClient {
   restoreArchivedNativeConversation: (projectId: string, conversationId: string) => Promise<NativeConversationSnapshot>;
   updateNativePermissionMode: (projectId: string, conversationId: string, permissionMode: NativePermissionMode) => Promise<NativeConversationSnapshot>;
   updateNativeCollaborationMode: (projectId: string, conversationId: string, collaborationMode: NativeCollaborationMode) => Promise<NativeConversationSnapshot>;
+  loadNativeGoal: (projectId: string, conversationId: string) => Promise<NativeGoalResponse>;
+  setNativeGoal: (projectId: string, conversationId: string, objective: string) => Promise<NativeGoalResponse>;
+  pauseNativeGoal: (projectId: string, conversationId: string) => Promise<NativeGoalResponse>;
+  resumeNativeGoal: (projectId: string, conversationId: string) => Promise<NativeGoalResponse>;
+  clearNativeGoal: (projectId: string, conversationId: string, confirmUnfinished: boolean) => Promise<NativeGoalResponse & { cleared: boolean }>;
   updateNativeNextTurnSettings: (projectId: string, conversationId: string, settings: NativeNextTurnSettings) => Promise<NativeNextTurnSettings>;
   loadCodexLegacyImports: () => Promise<CodexLegacyImportSnapshot>;
   startCodexLegacyImport: (sourceConversationIds: string[]) => Promise<CodexLegacyImportResult>;
@@ -2135,6 +2141,19 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
       request<NativeConversationSnapshot>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/collaboration-mode`, {
         method: 'PATCH',
         body: JSON.stringify({ collaborationMode }),
+      }),
+    loadNativeGoal: (projectId, conversationId) => request<NativeGoalResponse>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/goal`),
+    setNativeGoal: (projectId, conversationId, objective) =>
+      request<NativeGoalResponse>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/goal`, {
+        method: 'PUT',
+        body: JSON.stringify({ objective }),
+      }),
+    pauseNativeGoal: (projectId, conversationId) => request<NativeGoalResponse>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/goal/pause`, { method: 'POST' }),
+    resumeNativeGoal: (projectId, conversationId) => request<NativeGoalResponse>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/goal/resume`, { method: 'POST' }),
+    clearNativeGoal: (projectId, conversationId, confirmUnfinished) =>
+      request<NativeGoalResponse & { cleared: boolean }>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/goal`, {
+        method: 'DELETE',
+        body: JSON.stringify({ confirmUnfinished }),
       }),
     updateNativeNextTurnSettings: (projectId, conversationId, settings) =>
       request<NativeNextTurnSettings>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/next-turn-settings`, {

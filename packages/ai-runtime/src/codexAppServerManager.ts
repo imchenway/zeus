@@ -71,6 +71,24 @@ export interface CodexCapabilitiesSnapshot {
   initializedAt: string;
   models: CodexModelCapability[];
   supportedModels: string[];
+  goals: {
+    supported: boolean;
+    enabled: boolean;
+    stage: 'beta' | 'underDevelopment' | 'stable' | 'deprecated' | 'removed' | null;
+  };
+}
+
+export type CodexThreadGoalStatus = 'active' | 'paused' | 'blocked' | 'usageLimited' | 'budgetLimited' | 'complete';
+
+export interface CodexThreadGoal {
+  threadId: string;
+  objective: string;
+  status: CodexThreadGoalStatus;
+  tokenBudget: number | null;
+  tokensUsed: number;
+  timeUsedSeconds: number;
+  createdAt: number;
+  updatedAt: number;
 }
 
 export interface CodexAccountSnapshot {
@@ -313,6 +331,9 @@ export interface CodexAppServerManager {
   archiveThread(input: { threadId: string }): Promise<void>;
   unarchiveThread(input: { threadId: string }): Promise<CodexThreadSnapshot>;
   readThread(input: { threadId: string }): Promise<CodexThreadSnapshot>;
+  readThreadGoal(input: { threadId: string }): Promise<CodexThreadGoal | null>;
+  setThreadGoal(input: { threadId: string; objective?: string; status?: CodexThreadGoalStatus; tokenBudget?: number | null }): Promise<CodexThreadGoal>;
+  clearThreadGoal(input: { threadId: string }): Promise<{ cleared: boolean }>;
   listThreadTurns(input: { threadId: string; cursor?: string | null; limit?: number | null; sortDirection?: 'asc' | 'desc' | null; itemsView?: 'notLoaded' | 'summary' | 'full' | null }): Promise<CodexThreadTurnsPage>;
   startTurn(input: CodexTurnStartInput): Promise<CodexTurnSnapshot>;
   steerTurn(input: CodexTurnSteerInput): Promise<{ turnId: string }>;
@@ -487,12 +508,14 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
       write({ method: 'initialized' });
       const modelList = await rpc(generationId, 'model/list', {});
       const models = parseModels(modelList);
+      const goals = await readGoalCapability(generationId);
       if (remoteControlEnabled || remoteControlTransport) await rpc(generationId, 'remoteControl/enable', {});
       const capabilities: CodexCapabilitiesSnapshot = {
         generationId,
         initializedAt: now(),
         models,
         supportedModels: models.map((model) => model.model),
+        goals,
       };
       if (child !== spawned) throw managerError('ZEUS_CODEX_GENERATION_EXITED', 'Codex app-server generation changed during initialization.');
       state = { type: 'ready', generationId, capabilities };
@@ -591,6 +614,24 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
         reject(asError(error));
       }
     });
+  }
+
+  async function readGoalCapability(generationId: string): Promise<CodexCapabilitiesSnapshot['goals']> {
+    try {
+      const response = asRecord(await rpc(generationId, 'experimentalFeature/list', { limit: 200 }));
+      if (!Array.isArray(response.data)) return { supported: false, enabled: false, stage: null };
+      const goal = response.data.find((entry) => isRecord(entry) && entry.name === 'goals');
+      if (!isRecord(goal)) return { supported: false, enabled: false, stage: null };
+      const stage = goal.stage === 'beta' || goal.stage === 'underDevelopment' || goal.stage === 'stable' || goal.stage === 'deprecated' || goal.stage === 'removed' ? goal.stage : null;
+      return {
+        supported: stage !== null && stage !== 'removed',
+        enabled: goal.enabled === true,
+        stage,
+      };
+    } catch {
+      // 旧版 app-server 没有实验能力目录时，目标入口保持隐藏。
+      return { supported: false, enabled: false, stage: null };
+    }
   }
 
   function handleWireMessage(generationId: string, message: CodexWireMessage): void {
@@ -855,6 +896,26 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
       const capabilities = await awaitCapabilities();
       const response = asRecord(await rpc(capabilities.generationId, 'thread/read', { threadId: input.threadId, includeTurns: true }));
       return parseThread(response.thread);
+    },
+    async readThreadGoal(input) {
+      const capabilities = await awaitCapabilities();
+      assertGoalsEnabled(capabilities);
+      const response = asRecord(await rpc(capabilities.generationId, 'thread/goal/get', input));
+      return response.goal === null ? null : parseThreadGoal(response.goal);
+    },
+    async setThreadGoal(input) {
+      const capabilities = await awaitCapabilities();
+      assertGoalsEnabled(capabilities);
+      if (input.objective !== undefined) validateGoalObjective(input.objective);
+      const response = asRecord(await rpc(capabilities.generationId, 'thread/goal/set', compactObject(input)));
+      return parseThreadGoal(response.goal);
+    },
+    async clearThreadGoal(input) {
+      const capabilities = await awaitCapabilities();
+      assertGoalsEnabled(capabilities);
+      const response = asRecord(await rpc(capabilities.generationId, 'thread/goal/clear', input));
+      if (typeof response.cleared !== 'boolean') throw managerError('ZEUS_CODEX_INVALID_RESPONSE', 'Codex thread/goal/clear response omitted cleared.');
+      return { cleared: response.cleared };
     },
     async listThreadTurns(input) {
       const capabilities = await awaitCapabilities();
@@ -1337,6 +1398,48 @@ function parseTurn(value: unknown, threadId: string): CodexTurnSnapshot {
   const turn = asRecord(value);
   if (typeof turn.id !== 'string') throw managerError('ZEUS_CODEX_INVALID_RESPONSE', 'Codex turn response omitted id.');
   return { ...turn, id: turn.id, threadId };
+}
+
+function assertGoalsEnabled(capabilities: CodexCapabilitiesSnapshot): void {
+  if (capabilities.goals.supported && capabilities.goals.enabled) return;
+  throw managerError('ZEUS_CODEX_GOALS_UNAVAILABLE', '当前 Codex app-server 未启用原生目标能力。');
+}
+
+function validateGoalObjective(objective: string): void {
+  const normalized = objective.trim();
+  if (!normalized || [...normalized].length > 4_000) {
+    throw managerError('ZEUS_CODEX_GOAL_OBJECTIVE_INVALID', '目标必须为 1 到 4000 个字符。');
+  }
+}
+
+function parseThreadGoal(value: unknown): CodexThreadGoal {
+  const goal = asRecord(value);
+  const statuses: readonly CodexThreadGoalStatus[] = ['active', 'paused', 'blocked', 'usageLimited', 'budgetLimited', 'complete'];
+  if (
+    typeof goal.threadId !== 'string' ||
+    typeof goal.objective !== 'string' ||
+    !statuses.includes(goal.status as CodexThreadGoalStatus) ||
+    (goal.tokenBudget !== null && (!Number.isSafeInteger(goal.tokenBudget) || Number(goal.tokenBudget) <= 0)) ||
+    !Number.isSafeInteger(goal.tokensUsed) ||
+    Number(goal.tokensUsed) < 0 ||
+    typeof goal.timeUsedSeconds !== 'number' ||
+    !Number.isFinite(goal.timeUsedSeconds) ||
+    Number(goal.timeUsedSeconds) < 0 ||
+    typeof goal.createdAt !== 'number' ||
+    typeof goal.updatedAt !== 'number'
+  ) {
+    throw managerError('ZEUS_CODEX_INVALID_RESPONSE', 'Codex thread goal response is invalid.');
+  }
+  return {
+    threadId: goal.threadId,
+    objective: goal.objective,
+    status: goal.status as CodexThreadGoalStatus,
+    tokenBudget: goal.tokenBudget === null ? null : Number(goal.tokenBudget),
+    tokensUsed: Number(goal.tokensUsed),
+    timeUsedSeconds: Number(goal.timeUsedSeconds),
+    createdAt: goal.createdAt,
+    updatedAt: goal.updatedAt,
+  };
 }
 
 function parseAccountSnapshot(value: unknown, generationId: string, accountFingerprintSalt: string): CodexAccountSnapshot {

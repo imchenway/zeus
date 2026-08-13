@@ -10,6 +10,7 @@ import {
   type NativeConversationEvent,
   type NativeConversationSnapshot,
   type NativeNextTurnSettings,
+  type NativeGoalResponse,
   type NativeOperationAcceptance,
   type NativePendingRequest,
   type NativePermissionMode,
@@ -52,6 +53,11 @@ export interface SessionControllerClient {
   updateNativePermissionMode(projectId: string, conversationId: string, permissionMode: NativePermissionMode): Promise<NativeConversationSnapshot>;
 
   updateNativeCollaborationMode(projectId: string, conversationId: string, collaborationMode: NativeCollaborationMode): Promise<NativeConversationSnapshot>;
+  loadNativeGoal(projectId: string, conversationId: string): Promise<NativeGoalResponse>;
+  setNativeGoal(projectId: string, conversationId: string, objective: string): Promise<NativeGoalResponse>;
+  pauseNativeGoal(projectId: string, conversationId: string): Promise<NativeGoalResponse>;
+  resumeNativeGoal(projectId: string, conversationId: string): Promise<NativeGoalResponse>;
+  clearNativeGoal(projectId: string, conversationId: string, confirmUnfinished: boolean): Promise<NativeGoalResponse & { cleared: boolean }>;
   updateNativeNextTurnSettings(projectId: string, conversationId: string, settings: NativeNextTurnSettings): Promise<NativeNextTurnSettings>;
   connectEvents(onEvent: (event: NativeRealtimeEventEnvelope) => void, options?: { afterEventId?: string }): WebSocket;
   sendNativeMessage(projectId: string, conversationId: string, input: SendNativeMessageRequest): Promise<NativeOperationAcceptance>;
