@@ -12107,11 +12107,15 @@
   }
 }
 
-/* ZEUS-0101：统一选项行对齐，并让操作区保持在自由输入框下方。 */
+/* ZEUS-0240：统一选项行对齐，并把询问操作收进当前内容的行尾。 */
 .session-codex-parity-v1 .session-rui-request .session-question-options {
   column-gap: 8px;
   grid-template-columns: 32px fit-content(15rem) minmax(0, 1fr) auto;
   row-gap: 6px;
+}
+
+.session-codex-parity-v1 .session-rui-request .session-question-options[data-actions-placement='options'] {
+  grid-template-columns: 32px fit-content(15rem) minmax(0, 1fr) auto auto;
 }
 
 .session-codex-parity-v1 .session-rui-request .session-question-option {
@@ -12122,6 +12126,10 @@
   transition:
     background-color 120ms cubic-bezier(0.22, 1, 0.36, 1),
     transform 120ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.session-codex-parity-v1 .session-rui-request .session-question-options[data-actions-placement='options'] .session-question-option {
+  grid-column: 1 / 5;
 }
 
 .session-codex-parity-v1 .session-rui-request .session-question-option:active:not(:disabled) {
@@ -12159,6 +12167,22 @@
   grid-column: 2;
 }
 
+.session-codex-parity-v1 .session-rui-request .session-question-other {
+  grid-template-columns: 32px minmax(0, 1fr) auto auto;
+}
+
+.session-codex-parity-v1 .session-rui-request .session-question-other > :where(input, textarea) {
+  grid-column: 2;
+}
+
+.session-codex-parity-v1 .session-rui-request .session-question-other > .session-question-attachment-button {
+  grid-column: 3;
+}
+
+.session-codex-parity-v1 .session-rui-request .session-question-other > .session-rui-inline-actions {
+  grid-column: 4;
+}
+
 .session-codex-parity-v1 .session-rui-request .session-question-other[data-selected='true'] > .session-question-answer-editor,
 .session-codex-parity-v1 .session-rui-request .session-question-freeform-editor {
   border-color: var(--session-line);
@@ -12184,12 +12208,38 @@
 
 .session-codex-parity-v1 .session-rui-request .session-question-freeform-editor {
   grid-column: 1 / -1;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
 }
 
-.session-codex-parity-v1 .session-rui-request .session-question-freeform-editor > textarea,
+.session-codex-parity-v1 .session-rui-request .session-question-freeform-editor > textarea {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.session-codex-parity-v1 .session-rui-request .session-question-secret-freeform-editor {
+  border-color: transparent;
+  padding: 0;
+}
+
+.session-codex-parity-v1 .session-rui-request .session-question-secret-freeform-editor > input.session-question-freeform {
+  grid-column: 1;
+  grid-row: 1;
+  min-inline-size: 0;
+}
+
 .session-codex-parity-v1 .session-rui-request .session-question-freeform-editor > .session-question-answer-attachments {
   grid-column: 1 / -1;
+  grid-row: 2;
+}
+
+.session-codex-parity-v1 .session-rui-request .session-question-freeform-editor > .session-question-attachment-button {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.session-codex-parity-v1 .session-rui-request .session-question-freeform-editor > .session-rui-inline-actions {
+  grid-column: 3;
+  grid-row: 1;
 }
 
 .session-codex-parity-v1 .session-rui-request .session-question-answer-attachments {
@@ -12244,32 +12294,69 @@
   max-inline-size: 100%;
 }
 
-.session-codex-parity-v1 .session-rui-request footer {
-  padding: 10px 6px 0;
+.session-codex-parity-v1 .session-rui-request .session-question-options[data-actions-placement='options'] > .session-rui-inline-actions {
+  align-self: center;
+  grid-column: 5;
+  justify-self: end;
 }
 
-.session-codex-parity-v1 .session-rui-request footer button {
+.session-codex-parity-v1 .session-rui-inline-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 8px;
+  justify-content: flex-end;
+  min-inline-size: max-content;
+  white-space: nowrap;
+}
+
+.session-codex-parity-v1 .session-rui-inline-actions button {
+  align-items: center;
+  appearance: none;
+  background: var(--session-canvas);
+  block-size: 28px;
+  border: 1px solid var(--session-line);
+  border-radius: 999px;
+  box-sizing: border-box;
+  cursor: pointer;
+  display: inline-flex;
+  font-weight: 620;
+  justify-content: center;
+  max-block-size: 28px;
+  min-block-size: 28px;
+  padding-inline: 11px;
   transition:
     background-color 120ms cubic-bezier(0.22, 1, 0.36, 1),
     border-color 120ms cubic-bezier(0.22, 1, 0.36, 1),
     transform 120ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-.session-codex-parity-v1 .session-rui-request footer button:hover:not(:disabled) {
+.session-codex-parity-v1 .session-rui-inline-actions button[type='submit'] {
+  background: var(--session-text);
+  border-color: var(--session-text);
+  color: var(--session-canvas);
+}
+
+.session-codex-parity-v1 .session-rui-inline-actions button:hover:not(:disabled) {
   background: var(--session-control-hover);
 }
 
-.session-codex-parity-v1 .session-rui-request footer button:active:not(:disabled) {
+.session-codex-parity-v1 .session-rui-inline-actions button:active:not(:disabled) {
   transform: scale(0.97);
 }
 
-.session-codex-parity-v1 .session-rui-request footer button[type='submit']:hover:not(:disabled) {
+.session-codex-parity-v1 .session-rui-inline-actions button[type='submit']:hover:not(:disabled) {
   background: color-mix(in oklab, var(--session-text) 88%, var(--session-canvas));
+}
+
+.session-codex-parity-v1 .session-rui-inline-actions button:focus-visible {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--session-accent) 24%, transparent);
+  outline: none;
 }
 
 @media (prefers-reduced-motion: reduce) {
   .session-codex-parity-v1 .session-rui-request .session-question-option,
-  .session-codex-parity-v1 .session-rui-request footer button {
+  .session-codex-parity-v1 .session-rui-inline-actions button {
     transition: none;
   }
 }
@@ -12365,13 +12452,37 @@
 }
 
 .session-codex-parity-v1 .session-compact-approval-actions {
-  margin-block-start: 2px;
+  flex-wrap: nowrap;
+  margin-block-start: 0;
+  min-inline-size: max-content;
+  white-space: nowrap;
+}
+
+.session-codex-parity-v1 .session-compact-approval-decision-row {
+  align-items: center;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-inline-size: 0;
+}
+
+.session-codex-parity-v1 .session-compact-approval-target {
+  min-inline-size: 0;
+  overflow: hidden;
+}
+
+.session-codex-parity-v1 .session-compact-approval-target > :where(.session-file-approval-targets, .session-request-preview) {
+  inline-size: 100%;
+  margin: 0;
 }
 
 .session-codex-parity-v1 .session-compact-approval-actions button {
+  block-size: 28px;
+  box-sizing: border-box;
   font-size: 13px;
   font-weight: 560;
   line-height: 18px;
+  max-block-size: 28px;
   min-block-size: 28px;
 }
 
@@ -12381,7 +12492,15 @@
 }
 
 .session-codex-parity-v1 .session-approval-grant-control {
+  align-items: stretch;
+  block-size: 28px;
   gap: 0;
+}
+
+.session-codex-parity-v1 .session-approval-grant-control > button {
+  block-size: 28px;
+  max-block-size: 28px;
+  min-block-size: 28px;
 }
 
 .session-codex-parity-v1 .session-approval-grant-control > .session-request-accept {
@@ -12431,7 +12550,7 @@
   }
 
   .session-codex-parity-v1 .session-compact-approval-actions {
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
   }
 }
 

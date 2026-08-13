@@ -1,4 +1,4 @@
-import { type KeyboardEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { type CSSProperties, type KeyboardEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ArrowRightIcon as ArrowRight } from '@phosphor-icons/react/dist/csr/ArrowRight';
 import { CheckIcon as Check } from '@phosphor-icons/react/dist/csr/Check';
 import { CaretDownIcon as CaretDown } from '@phosphor-icons/react/dist/csr/CaretDown';
@@ -339,7 +339,6 @@ function CompactApprovalPanel(props: CompactApprovalPanelProps) {
           </span>
         </header>
         <h2 className="session-compact-approval-question zeus-fidelity-text">{props.kind === 'command' ? copy.commandQuestion : copy.fileQuestion}</h2>
-        {props.kind === 'file' ? props.filePaths.length > 0 ? <FileApprovalTargetList paths={props.filePaths} moreLabel={copy.moreFiles} /> : null : <pre className="session-request-preview">{preview}</pre>}
         {props.incompleteApproval ? (
           <p className="session-request-invalid" role="alert">
             <strong>{copy.incompleteApproval}</strong>
@@ -347,64 +346,69 @@ function CompactApprovalPanel(props: CompactApprovalPanelProps) {
           </p>
         ) : null}
         {props.error ? <p role="alert">{props.error}</p> : null}
-        <div ref={rootRef} className="session-compact-approval-actions" role="group" aria-label={copy.approval}>
-          {failClosedDecision ? (
-            <button ref={failClosedRef} type="button" className="session-request-decline" onClick={() => choose(failClosedDecision)}>
-              {copy[failClosedDecision]}
-            </button>
-          ) : null}
-          <div className="session-approval-grant-control">
-            {hasAllowOnce ? (
-              <button type="button" className="session-request-accept" onClick={() => choose('accept')}>
-                {props.busy ? copy.responding : copy.accept}
-              </button>
-            ) : grantDecisions.length > 0 ? (
-              <button ref={menuTriggerRef} type="button" className="session-request-grant-menu-trigger" aria-expanded={menuOpen} aria-haspopup="menu" onClick={() => (menuOpen ? setMenuOpen(false) : openMenu())}>
-                {copy.grantOptions}
-                <CaretDown aria-hidden="true" />
+        <div className="session-compact-approval-decision-row">
+          <div className="session-compact-approval-target">
+            {props.kind === 'file' ? props.filePaths.length > 0 ? <FileApprovalTargetList paths={props.filePaths} moreLabel={copy.moreFiles} /> : null : <pre className="session-request-preview">{preview}</pre>}
+          </div>
+          <div ref={rootRef} className="session-compact-approval-actions" role="group" aria-label={copy.approval}>
+            {failClosedDecision ? (
+              <button ref={failClosedRef} type="button" className="session-request-decline" onClick={() => choose(failClosedDecision)}>
+                {copy[failClosedDecision]}
               </button>
             ) : null}
-            {hasAllowOnce && menuDecisions.length > 1 ? (
-              <button ref={menuTriggerRef} type="button" className="session-request-grant-chevron" aria-label={copy.grantOptions} aria-expanded={menuOpen} aria-haspopup="menu" onClick={() => (menuOpen ? setMenuOpen(false) : openMenu())}>
-                <CaretDown aria-hidden="true" />
-              </button>
-            ) : null}
-            {menuDecisions.length > (hasAllowOnce ? 1 : 0) ? (
-              <div className="session-approval-grant-menu" role="menu" hidden={!menuOpen} onKeyDown={handleMenuKeyDown}>
-                {menuDecisions.map((decision, index) => (
-                  <button
-                    key={decision}
-                    ref={(element) => {
-                      menuItemRefs.current[index] = element;
-                    }}
-                    type="button"
-                    role="menuitem"
-                    onClick={() => choose(decision)}
-                  >
-                    <span className="session-approval-grant-menu-label">
-                      <span>{props.kind === 'file' && decision === 'acceptForSession' ? copy.allowAllEdits : copy[decision]}</span>
-                      {props.kind === 'file' && decision === 'acceptForSession' ? (
-                        <span className="session-approval-grant-info" role="img" aria-label={copy.allEditScope} title={copy.allEditScope}>
+            <div className="session-approval-grant-control">
+              {hasAllowOnce ? (
+                <button type="button" className="session-request-accept" onClick={() => choose('accept')}>
+                  {props.busy ? copy.responding : copy.accept}
+                </button>
+              ) : grantDecisions.length > 0 ? (
+                <button ref={menuTriggerRef} type="button" className="session-request-grant-menu-trigger" aria-expanded={menuOpen} aria-haspopup="menu" onClick={() => (menuOpen ? setMenuOpen(false) : openMenu())}>
+                  {copy.grantOptions}
+                  <CaretDown aria-hidden="true" />
+                </button>
+              ) : null}
+              {hasAllowOnce && menuDecisions.length > 1 ? (
+                <button ref={menuTriggerRef} type="button" className="session-request-grant-chevron" aria-label={copy.grantOptions} aria-expanded={menuOpen} aria-haspopup="menu" onClick={() => (menuOpen ? setMenuOpen(false) : openMenu())}>
+                  <CaretDown aria-hidden="true" />
+                </button>
+              ) : null}
+              {menuDecisions.length > (hasAllowOnce ? 1 : 0) ? (
+                <div className="session-approval-grant-menu" role="menu" hidden={!menuOpen} onKeyDown={handleMenuKeyDown}>
+                  {menuDecisions.map((decision, index) => (
+                    <button
+                      key={decision}
+                      ref={(element) => {
+                        menuItemRefs.current[index] = element;
+                      }}
+                      type="button"
+                      role="menuitem"
+                      onClick={() => choose(decision)}
+                    >
+                      <span className="session-approval-grant-menu-label">
+                        <span>{props.kind === 'file' && decision === 'acceptForSession' ? copy.allowAllEdits : copy[decision]}</span>
+                        {props.kind === 'file' && decision === 'acceptForSession' ? (
+                          <span className="session-approval-grant-info" role="img" aria-label={copy.allEditScope} title={copy.allEditScope}>
+                            <Info aria-hidden="true" />
+                          </span>
+                        ) : null}
+                      </span>
+                      {decision === 'acceptWithExecpolicyAmendment' && amendment ? (
+                        <small>
                           <Info aria-hidden="true" />
-                        </span>
+                          {copy.similarCommandRule}: {amendment.acceptWithExecpolicyAmendment.execpolicy_amendment.join(' ')}
+                        </small>
                       ) : null}
-                    </span>
-                    {decision === 'acceptWithExecpolicyAmendment' && amendment ? (
-                      <small>
-                        <Info aria-hidden="true" />
-                        {copy.similarCommandRule}: {amendment.acceptWithExecpolicyAmendment.execpolicy_amendment.join(' ')}
-                      </small>
-                    ) : null}
-                  </button>
-                ))}
-              </div>
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+            {extraFailClosedDecision ? (
+              <button type="button" className="session-request-decline" onClick={() => choose(extraFailClosedDecision)}>
+                {copy[extraFailClosedDecision]}
+              </button>
             ) : null}
           </div>
-          {extraFailClosedDecision ? (
-            <button type="button" className="session-request-decline" onClick={() => choose(extraFailClosedDecision)}>
-              {copy[extraFailClosedDecision]}
-            </button>
-          ) : null}
         </div>
       </fieldset>
     </section>
@@ -444,6 +448,40 @@ function approvalPathParts(path: string): { directory: string; name: string } {
   return match ? { directory: match[1]!, name: match[2]! } : { directory: '', name: path };
 }
 
+interface RequestUserInputActionsProps {
+  language: SessionUiLanguage;
+  questionIndex: number;
+  questionCount: number;
+  responding: boolean;
+  currentComplete: boolean;
+  allComplete: boolean;
+  showSubmit: boolean;
+  style?: CSSProperties;
+  onPrevious: () => void;
+  onSkip: () => void;
+}
+
+function RequestUserInputActions(props: RequestUserInputActionsProps) {
+  const zh = props.language === 'zh-CN';
+  return (
+    <div className="session-rui-inline-actions" role="group" aria-label={zh ? '询问操作' : 'Question actions'} style={props.style}>
+      {props.questionIndex > 0 ? (
+        <button type="button" onClick={props.onPrevious}>
+          {zh ? '上一个' : 'Previous'}
+        </button>
+      ) : null}
+      <button type="button" onClick={props.onSkip}>
+        {zh ? '跳过' : 'Skip'}
+      </button>
+      {props.showSubmit ? (
+        <button type="submit" disabled={!props.currentComplete || (props.questionIndex === props.questionCount - 1 && !props.allComplete)}>
+          {props.responding ? (zh ? '正在提交' : 'Submitting') : props.questionIndex === props.questionCount - 1 ? (zh ? '提交' : 'Submit') : zh ? '继续' : 'Continue'}
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
 function RequestUserInputPanel(props: PendingRequestSurfaceProps & { questions: RequestQuestion[] }) {
   const zh = props.language === 'zh-CN';
   const copy = labels[props.language];
@@ -472,6 +510,8 @@ function RequestUserInputPanel(props: PendingRequestSurfaceProps & { questions: 
   const hasSensitiveDraft = props.questions.some((question) => question.secret && ((answers[question.id] ?? []).some((value) => Boolean(value.trim())) || Boolean(otherAnswers[question.id]?.trim())));
   const otherSelected = selectedValues.includes(otherAnswerControlValue(currentQuestion));
   const answerAttachmentsEnabled = props.answerAttachmentsSupported !== false && !currentQuestion.secret && (currentQuestion.kind === 'freeform' || currentQuestion.allowOther);
+  const actionsPlacement = currentQuestion.kind === 'freeform' ? 'freeform' : currentQuestion.allowOther ? 'other' : 'options';
+  const showSubmitAction = currentQuestion.kind !== 'single' || otherSelected;
 
   const inputResources = useConversationInputResources({
     textareaRef: attachmentTextareaRef,
@@ -650,6 +690,26 @@ function RequestUserInputPanel(props: PendingRequestSurfaceProps & { questions: 
     window.requestAnimationFrame(() => otherAnswerRef.current?.focus());
   }
 
+  function renderActions(style?: CSSProperties) {
+    return (
+      <RequestUserInputActions
+        language={props.language}
+        questionIndex={questionIndex}
+        questionCount={props.questions.length}
+        responding={responding}
+        currentComplete={currentComplete}
+        allComplete={allComplete}
+        showSubmit={showSubmitAction}
+        style={style}
+        onPrevious={() => {
+          void snooze();
+          setQuestionIndex((value) => Math.max(0, value - 1));
+        }}
+        onSkip={() => void skip()}
+      />
+    );
+  }
+
   return (
     <section className="session-request-user-input-surface" onKeyDown={handleKeyboard}>
       <p className="session-question-status" role="status">
@@ -678,7 +738,7 @@ function RequestUserInputPanel(props: PendingRequestSurfaceProps & { questions: 
               <X aria-hidden="true" />
             </button>
           </header>
-          <div className="session-question-options">
+          <div className="session-question-options" data-actions-placement={actionsPlacement}>
             {currentQuestion.options.map((option, optionIndex) => {
               const checked = selectedValues.includes(option.label);
               const presentation = recommendedOption(option.label);
@@ -801,26 +861,30 @@ function RequestUserInputPanel(props: PendingRequestSurfaceProps & { questions: 
                     <Paperclip aria-hidden="true" />
                   </button>
                 ) : null}
+                {actionsPlacement === 'other' ? renderActions() : null}
               </div>
             ) : null}
             {currentQuestion.kind === 'freeform' ? (
               currentQuestion.secret ? (
-                <input
-                  ref={freeformRef as React.RefObject<HTMLInputElement>}
-                  className="session-question-freeform"
-                  aria-keyshortcuts="Enter"
-                  {...answerInputSecurityAttributes(true)}
-                  value={selectedValues[0] ?? ''}
-                  onChange={(event) => {
-                    const value = event.currentTarget.value;
-                    void snooze();
-                    setAnswers((current) => ({
-                      ...current,
-                      [currentQuestion.id]: [value],
-                    }));
-                  }}
-                  onKeyDown={handleAnswerInputKeyDown}
-                />
+                <div className="session-question-freeform-editor session-question-secret-freeform-editor session-question-answer-editor">
+                  <input
+                    ref={freeformRef as React.RefObject<HTMLInputElement>}
+                    className="session-question-freeform"
+                    aria-keyshortcuts="Enter"
+                    {...answerInputSecurityAttributes(true)}
+                    value={selectedValues[0] ?? ''}
+                    onChange={(event) => {
+                      const value = event.currentTarget.value;
+                      void snooze();
+                      setAnswers((current) => ({
+                        ...current,
+                        [currentQuestion.id]: [value],
+                      }));
+                    }}
+                    onKeyDown={handleAnswerInputKeyDown}
+                  />
+                  {actionsPlacement === 'freeform' ? renderActions() : null}
+                </div>
               ) : (
                 <div
                   className="session-question-freeform-editor session-question-answer-editor"
@@ -865,38 +929,15 @@ function RequestUserInputPanel(props: PendingRequestSurfaceProps & { questions: 
                       <Paperclip aria-hidden="true" />
                     </button>
                   ) : null}
+                  {actionsPlacement === 'freeform' ? renderActions() : null}
                 </div>
               )
             ) : null}
+            {actionsPlacement === 'options' ? renderActions({ gridRow: currentQuestion.options.length }) : null}
           </div>
           {currentQuestion.secret ? <small className="session-secret-hint">{zh ? '敏感回答仅发送给本机 app-server，不写入会话或草稿。' : 'Secret answers are sent locally and are never stored in the transcript or draft.'}</small> : null}
           {resourceError ? <p role="alert">{resourceError}</p> : null}
           {props.error ? <p role="alert">{props.error}</p> : null}
-          <footer>
-            <span>
-              {questionIndex > 0 ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    void snooze();
-                    setQuestionIndex((value) => Math.max(0, value - 1));
-                  }}
-                >
-                  {zh ? '上一个' : 'Previous'}
-                </button>
-              ) : null}
-            </span>
-            <span>
-              <button type="button" onClick={() => void skip()}>
-                {zh ? '跳过' : 'Skip'}
-              </button>
-              {(currentQuestion.kind !== 'single' || selectedValues.includes(otherAnswerControlValue(currentQuestion))) && (
-                <button type="submit" disabled={!currentComplete || (questionIndex === props.questions.length - 1 && !allComplete)}>
-                  {responding ? (zh ? '正在提交' : 'Submitting') : questionIndex === props.questions.length - 1 ? (zh ? '提交' : 'Submit') : zh ? '继续' : 'Continue'}
-                </button>
-              )}
-            </span>
-          </footer>
         </fieldset>
       </form>
     </section>
