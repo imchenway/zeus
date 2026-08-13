@@ -631,8 +631,8 @@ async function createWindow(): Promise<void> {
   const restoredWindowState = await resolveMainWindowStateForLaunch(persistedWindowState);
   const window = new BrowserWindow({
     ...restoredWindowState.bounds,
-    // 2026-06-18 窗口根层响应式最终覆盖：允许紧凑窗口真实触发 renderer 的窄屏结构，而不是在 Main 进程强制桌面最小尺寸。
-    minWidth: 360,
+    // ZEUS-0240：询问与授权的输入、目标和操作必须保持同行，640px 是仍可完整操作的主窗口下限。
+    minWidth: 640,
     minHeight: 560,
     title: desktopDisplayName(),
     // 隐藏 macOS 原生标题栏，让内容贴近窗口顶部；标题仅保留给系统菜单与辅助功能。
