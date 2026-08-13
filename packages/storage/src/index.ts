@@ -817,6 +817,7 @@ export interface UpsertCodexUsageLedgerInput {
 }
 
 export interface ListCodexUsageLedgerInput {
+  providerId?: string | null;
   accountScopeId?: string | null;
   since?: string | null;
   projectId?: string | null;
@@ -5911,7 +5912,7 @@ export class ConversationProviderSyncCheckpointRepository {
   }
 }
 
-/** Codex 用量账本不建立外键，被引用对象删除后仍保留真实历史消耗。 */
+/** 供应源用量账本不建立外键，被引用对象删除后仍保留真实历史消耗。 */
 export class CodexUsageLedgerRepository {
   constructor(private readonly db: ZeusDatabase) {}
 
@@ -5919,7 +5920,7 @@ export class CodexUsageLedgerRepository {
     validateTokenUsageBreakdown(input.usage);
     validateCodexUsageEstimate(input.estimate);
     if (![input.providerId, input.accountScopeId, input.projectId, input.conversationId, input.providerThreadId, input.providerTurnId, input.model].every((value) => value.trim())) {
-      throw new Error('Codex usage ledger identity is incomplete');
+      throw new Error('Usage ledger identity is incomplete');
     }
     const existing = this.findByProviderTurn(input.providerId, input.providerThreadId, input.providerTurnId);
     const timestamp = nowIso();
@@ -5979,6 +5980,10 @@ export class CodexUsageLedgerRepository {
   list(input: ListCodexUsageLedgerInput = {}): CodexUsageLedgerRecord[] {
     const clauses: string[] = [];
     const values: SQLInputValue[] = [];
+    if (input.providerId) {
+      clauses.push('provider_id = ?');
+      values.push(input.providerId);
+    }
     if (input.accountScopeId) {
       clauses.push('account_scope_id = ?');
       values.push(input.accountScopeId);

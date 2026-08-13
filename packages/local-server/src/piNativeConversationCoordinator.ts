@@ -4,8 +4,9 @@ import { readdir, readFile, writeFile } from 'node:fs/promises';
 import { extname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import { type AgentImageInput, type AgentModelIdentity, type AgentRuntimeEvent, type AgentSessionIdentity, createPiSdkRuntimeDriver, modelRef, type PiZeusToolBroker, type PiZeusToolRequest, type PiZeusToolResult } from '@zeus/ai-runtime';
-import { buildTaskPushInputParts, type TaskPushMessageLayout } from '@zeus/shared';
+import { buildTaskPushInputParts, emptyTokenUsageBreakdown, type CodexUsageEstimate, type TaskPushMessageLayout, type TokenUsageBreakdown } from '@zeus/shared';
 import type {
+  CodexUsageLedgerRepository,
   ConversationItemRepository,
   ConversationRepository,
   ConversationServerRequestRepository,
@@ -32,9 +33,14 @@ interface PiConversationContext {
 
 interface PiRunContext {
   conversationId: string;
+  projectId: string;
   submissionId: string;
   turnId: string;
   providerTurnId: string;
+  providerThreadId: string;
+  sourceId: string;
+  modelId: string;
+  usage: TokenUsageBreakdown;
 }
 
 export interface CreatePiNativeConversationCoordinatorOptions {
@@ -45,6 +51,7 @@ export interface CreatePiNativeConversationCoordinatorOptions {
   submissions: ConversationSubmissionRepository;
   requests: ConversationServerRequestRepository;
   modelConnections: ModelConnectionService;
+  usageLedger: CodexUsageLedgerRepository;
   agentDirectory: string;
   sessionDirectory: string;
   now: () => string;
@@ -226,7 +233,17 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     });
     appendUserProjection(input.conversationId, session.nativeSessionId, turn.id, run.nativeRunId, input.prompt, input.clientUserMessageId, createdAt, attachmentInput.attachments, input.taskPushLayout);
     options.submissions.updateStatus(submission.id, 'active', { providerTurnId: run.nativeRunId, updatedAt: run.acceptedAt });
-    runs.set(run.nativeRunId, { conversationId: input.conversationId, submissionId: submission.id, turnId: turn.id, providerTurnId: run.nativeRunId });
+    runs.set(run.nativeRunId, {
+      conversationId: input.conversationId,
+      projectId: input.projectId,
+      submissionId: submission.id,
+      turnId: turn.id,
+      providerTurnId: run.nativeRunId,
+      providerThreadId: session.nativeSessionId,
+      sourceId: input.model.sourceId ?? 'custom',
+      modelId: input.model.modelId,
+      usage: emptyTokenUsageBreakdown(),
+    });
     await options.db.save();
     publish('conversation.turn.started', input.conversationId, { turnId: run.nativeRunId, submissionId: submission.id, status: 'running', startedAt: run.acceptedAt });
     return { conversationId: input.conversationId, submissionId: submission.id, providerThreadId: session.nativeSessionId, providerTurnId: run.nativeRunId, status: 'active' as const };
@@ -290,7 +307,17 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       modelId: input.model.modelId,
       providerModel: input.model.sourceId ? modelRef(input.model.sourceId, input.model.modelId) : input.model.modelId,
     });
-    runs.set(run.nativeRunId, { conversationId: input.conversation.id, submissionId: submission.id, turnId: turn.id, providerTurnId: run.nativeRunId });
+    runs.set(run.nativeRunId, {
+      conversationId: input.conversation.id,
+      projectId: input.conversation.projectId,
+      submissionId: submission.id,
+      turnId: turn.id,
+      providerTurnId: run.nativeRunId,
+      providerThreadId: context.session.nativeSessionId,
+      sourceId: input.model.sourceId ?? 'custom',
+      modelId: input.model.modelId,
+      usage: emptyTokenUsageBreakdown(),
+    });
     await options.db.save();
     publish('conversation.turn.started', input.conversation.id, { turnId: run.nativeRunId, submissionId: submission.id, status: 'running', startedAt: run.acceptedAt });
     return { conversationId: input.conversation.id, submissionId: submission.id, providerThreadId: context.session.nativeSessionId, providerTurnId: run.nativeRunId, status: 'active' as const };
@@ -331,6 +358,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     if (event.type === 'message_end') {
       const message = asRecord(payload.message);
       if (message.role !== 'assistant') return;
+      addUsage(run.usage, readPiUsage(message.usage));
       const text = messageText(message);
       if (!text) return;
       const itemId = `pi_message_${event.nativeRunId}`;
@@ -417,8 +445,23 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         turnId: run.providerTurnId,
         occurredAt: event.createdAt,
       });
+      if (run.usage.totalTokens > 0) {
+        options.usageLedger.upsert({
+          providerId: `pi:${run.sourceId}`,
+          accountScopeId: run.sourceId,
+          projectId: run.projectId,
+          conversationId: run.conversationId,
+          providerThreadId: run.providerThreadId,
+          providerTurnId: run.providerTurnId,
+          model: run.modelId,
+          usage: run.usage,
+          estimate: unavailablePriceEstimate(run.modelId, run.usage.totalTokens),
+          occurredAt: event.createdAt,
+        });
+      }
       runs.delete(event.nativeRunId);
       await options.db.save();
+      if (run.usage.totalTokens > 0) options.publish('usage.changed', { providerId: `pi:${run.sourceId}`, conversationId: run.conversationId, updatedAt: event.createdAt });
       publish('conversation.turn.completed', run.conversationId, { turnId: run.providerTurnId, submissionId: run.submissionId, status, completedAt: event.createdAt, notificationEligible: true });
       if (interrupted) publish('conversation.queue.changed', run.conversationId, { turnId: run.providerTurnId, submissionId: run.submissionId });
     }
@@ -667,6 +710,61 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       for (const pending of pendingApprovals.values()) pending.resolve(false);
       pendingApprovals.clear();
       await driver.close({ mode: 'final' });
+    },
+  };
+}
+
+function readPiUsage(value: unknown): TokenUsageBreakdown | null {
+  const usage = asRecord(value);
+  const input = safeTokenCount(usage.input);
+  const output = safeTokenCount(usage.output);
+  const cacheRead = safeTokenCount(usage.cacheRead);
+  const cacheWrite = safeTokenCount(usage.cacheWrite);
+  const reasoning = safeTokenCount(usage.reasoning);
+  const reportedTotal = safeTokenCount(usage.totalTokens);
+  const totalTokens = Math.max(reportedTotal, input + output + cacheRead + cacheWrite);
+  if (totalTokens === 0) return null;
+  return {
+    totalTokens,
+    inputTokens: input + cacheRead + cacheWrite,
+    cachedInputTokens: cacheRead,
+    cacheWriteInputTokens: cacheWrite,
+    outputTokens: output,
+    reasoningOutputTokens: Math.min(reasoning, output),
+  };
+}
+
+function safeTokenCount(value: unknown): number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : 0;
+}
+
+function addUsage(target: TokenUsageBreakdown, value: TokenUsageBreakdown | null): void {
+  if (!value) return;
+  target.totalTokens += value.totalTokens;
+  target.inputTokens += value.inputTokens;
+  target.cachedInputTokens += value.cachedInputTokens;
+  target.cacheWriteInputTokens += value.cacheWriteInputTokens;
+  target.outputTokens += value.outputTokens;
+  target.reasoningOutputTokens += value.reasoningOutputTokens;
+}
+
+function unavailablePriceEstimate(model: string, billableTokens: number): CodexUsageEstimate {
+  return {
+    credits: null,
+    apiEquivalentUsd: null,
+    cacheSavingsUsd: null,
+    pricedTokens: 0,
+    billableTokens,
+    coverage: billableTokens > 0 ? 0 : null,
+    rateSnapshot: {
+      catalogDate: 'unavailable',
+      model,
+      normalizedModel: null,
+      serviceTier: null,
+      longContext: false,
+      creditsPerMillion: null,
+      usdPerMillion: null,
+      sourceUrls: [],
     },
   };
 }

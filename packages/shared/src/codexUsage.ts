@@ -66,9 +66,38 @@ export interface CodexOfficialUsageSnapshot {
   longestStreakDays: number | null;
   dailyUsageBuckets: Array<{ startDate: string; tokens: number }> | null;
   rateLimitWindows: CodexOfficialRateWindow[];
+  creditBalance: string | null;
+  creditsUnlimited: boolean;
   fetchedAt: string | null;
   stale: boolean;
   error: string | null;
+}
+
+export type UsageProviderKind = 'subscription' | 'api';
+
+export interface UsageProviderSummary {
+  providerId: string;
+  sourceId: string;
+  name: string;
+  kind: UsageProviderKind;
+  deleted: boolean;
+  planType: string | null;
+  officialState: CodexOfficialUsageSnapshot['state'] | null;
+  rateLimitWindows: CodexOfficialRateWindow[];
+  officialCreditBalance: string | null;
+  officialCreditsUnlimited: boolean;
+  todayLocal: CodexLocalUsageTotals;
+  sevenDayLocal: CodexLocalUsageTotals;
+  dailyLocal: CodexLocalUsageDay[];
+  collectionStartedAt: string | null;
+  updatedAt: string;
+  stale: boolean;
+  error: string | null;
+}
+
+export interface UsageOverviewSnapshot {
+  providers: UsageProviderSummary[];
+  updatedAt: string;
 }
 
 export interface CodexLocalUsageTotals extends TokenUsageBreakdown {

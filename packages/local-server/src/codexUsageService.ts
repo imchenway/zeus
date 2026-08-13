@@ -49,6 +49,7 @@ export interface CodexUsageService {
     occurredAt: string;
   }): Promise<NativeTokenUsageSnapshot>;
   refreshOfficialUsage(): Promise<CodexOfficialUsageSnapshot>;
+  readCachedOfficialUsage(): CodexOfficialUsageSnapshot;
   handleSparseRateLimitUpdate(): void;
   handleAccountChanged(): void;
   readSummary(): Promise<CodexUsageSummarySnapshot>;
@@ -117,6 +118,8 @@ export function createCodexUsageService(options: CreateCodexUsageServiceOptions)
         longestStreakDays: usage?.summary.longestStreakDays ?? previous?.longestStreakDays ?? null,
         dailyUsageBuckets: usage ? usage.dailyUsageBuckets : (previous?.dailyUsageBuckets ?? null),
         rateLimitWindows: limits ? flattenRateLimitWindows(limits) : (previous?.rateLimitWindows ?? []),
+        creditBalance: limits ? readCreditBalance(limits) : (previous?.creditBalance ?? null),
+        creditsUnlimited: limits ? readCreditsUnlimited(limits) : (previous?.creditsUnlimited ?? false),
         fetchedAt,
         stale: usageResult.status === 'rejected' || limitsResult.status === 'rejected',
         error: [usageResult, limitsResult].map(settledError).filter(Boolean).join('；') || null,
@@ -193,6 +196,11 @@ export function createCodexUsageService(options: CreateCodexUsageServiceOptions)
     handleSparseRateLimitUpdate();
   }
 
+  function readCachedOfficialUsage(): CodexOfficialUsageSnapshot {
+    const cached = cachedOfficial();
+    return cached ? { ...cached, creditBalance: cached.creditBalance ?? null, creditsUnlimited: cached.creditsUnlimited ?? false } : emptyOfficial('unavailable', null, null, null, true, null);
+  }
+
   async function readSummary(): Promise<CodexUsageSummarySnapshot> {
     const [official] = await Promise.all([refreshOfficialUsage()]);
     const today = localDate(new Date());
@@ -202,7 +210,7 @@ export function createCodexUsageService(options: CreateCodexUsageServiceOptions)
     return {
       providerId: 'codex',
       official,
-      officialTodayTokens: buckets.find((bucket) => bucket.startDate === today)?.tokens ?? (official.dailyUsageBuckets ? 0 : null),
+      officialTodayTokens: buckets.find((bucket) => bucket.startDate === today)?.tokens ?? null,
       officialSevenDayTokens: official.dailyUsageBuckets ? buckets.filter((bucket) => bucket.startDate >= sevenDayStart).reduce((sum, bucket) => sum + bucket.tokens, 0) : null,
       localSevenDay: aggregateRows(rows),
       updatedAt: now(),
@@ -241,7 +249,7 @@ export function createCodexUsageService(options: CreateCodexUsageServiceOptions)
     };
   }
 
-  return { recordTurn, refreshOfficialUsage, handleSparseRateLimitUpdate, handleAccountChanged, readSummary, readAnalytics };
+  return { recordTurn, refreshOfficialUsage, readCachedOfficialUsage, handleSparseRateLimitUpdate, handleAccountChanged, readSummary, readAnalytics };
 }
 
 function emptyOfficial(state: CodexOfficialUsageSnapshot['state'], accountScopeId: string | null, accountType: string | null, planType: string | null, stale: boolean, error: string | null): CodexOfficialUsageSnapshot {
@@ -257,10 +265,28 @@ function emptyOfficial(state: CodexOfficialUsageSnapshot['state'], accountScopeI
     longestStreakDays: null,
     dailyUsageBuckets: null,
     rateLimitWindows: [],
+    creditBalance: null,
+    creditsUnlimited: false,
     fetchedAt: null,
     stale,
     error,
   };
+}
+
+function readCreditBalance(snapshot: CodexAccountRateLimitsSnapshot): string | null {
+  return (
+    rateLimitBuckets(snapshot)
+      .map((bucket) => bucket.credits?.balance ?? null)
+      .find((balance): balance is string => Boolean(balance)) ?? null
+  );
+}
+
+function readCreditsUnlimited(snapshot: CodexAccountRateLimitsSnapshot): boolean {
+  return rateLimitBuckets(snapshot).some((bucket) => bucket.credits?.unlimited === true);
+}
+
+function rateLimitBuckets(snapshot: CodexAccountRateLimitsSnapshot) {
+  return snapshot.rateLimitsByLimitId ? Object.values(snapshot.rateLimitsByLimitId) : [snapshot.rateLimits];
 }
 
 function flattenRateLimitWindows(snapshot: CodexAccountRateLimitsSnapshot): CodexOfficialUsageSnapshot['rateLimitWindows'] {

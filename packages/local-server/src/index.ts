@@ -197,6 +197,7 @@ import {
 } from '@zeus/storage';
 import { createCodexNativeConversationCoordinator } from './codexNativeConversationCoordinator.js';
 import { createCodexUsageService } from './codexUsageService.js';
+import { createUsageOverviewService } from './usageOverviewService.js';
 import { chooseNativeUserMessageContent, resolveNativeUserMessageSubmission } from './codexNativeUserMessageProjection.js';
 import { type ConversationFileOpenGrant, createConversationFileOpenGrant, normalizeConversationResources, sanitizeConversationItemPayload, toConversationResource, toConversationResourceOpenIntent } from './conversationResources.js';
 import { changeSetErrorStatus, createTurnChangeSetService, errorCode as turnChangeSetErrorCode, projectHistoricalTurnChangeSet } from './turnChangeSets.js';
@@ -2153,6 +2154,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     submissions: conversationSubmissions,
     requests: conversationRequests,
     modelConnections,
+    usageLedger: codexUsageLedger,
     agentDirectory: piAgentDirectory,
     sessionDirectory: piSessionDirectory,
     now: () => now().toISOString(),
@@ -2328,6 +2330,26 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     persist: () => db.save(),
     now: () => now().toISOString(),
   });
+  const usageOverviewService = createUsageOverviewService({
+    ledger: codexUsageLedger,
+    codexUsage: codexUsageService,
+    modelConnections,
+    now,
+  });
+  let usageRefreshTimer: ReturnType<typeof setInterval> | undefined;
+  const refreshOfficialUsageInBackground = async (): Promise<void> => {
+    await codexAppServerManager
+      .ensureReady({
+        commandPath: currentCodexRuntimeCommandPath(),
+        ...(codexExternalAgentHome ? { externalAgentHome: codexExternalAgentHome } : {}),
+      })
+      .catch(() => undefined);
+    const official = await codexUsageService.refreshOfficialUsage();
+    publishRealtimeEvent('usage.changed', { providerId: 'codex', scope: 'official', stale: official.stale, updatedAt: now().toISOString() });
+  };
+  void refreshOfficialUsageInBackground().catch(() => undefined);
+  usageRefreshTimer = setInterval(() => void refreshOfficialUsageInBackground().catch(() => undefined), 60_000);
+  usageRefreshTimer.unref?.();
   let codexNativeCoordinator: ReturnType<typeof createCodexNativeConversationCoordinator>;
   try {
     codexNativeCoordinator = createCodexNativeConversationCoordinator({
@@ -6492,6 +6514,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     return codexUsageService.readSummary();
   });
 
+  server.get('/api/usage-overview', async () => usageOverviewService.read());
+
   server.get(
     '/api/codex/usage-analytics',
     async (
@@ -10380,6 +10404,10 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     const cleanupErrors: unknown[] = [];
     flushPendingNativeDeltaEvents();
     commandCenter.close();
+    if (usageRefreshTimer) {
+      clearInterval(usageRefreshTimer);
+      usageRefreshTimer = undefined;
+    }
     if (telegramPollingTimer) {
       clearInterval(telegramPollingTimer);
       telegramPollingTimer = undefined;
