@@ -19,6 +19,7 @@ import { TurnChangeCard } from './TurnChanges.js';
 import { visibleQueuedSubmissions } from './QueuedConversationMessages.js';
 import { latestReasoningItemsByTurn, reasoningSummaryStatus, SessionReasoningSummary } from './SessionReasoningSummary.js';
 import { AnsweredRequestHistory, isAnsweredUserInputRequest } from './AnsweredRequestHistory.js';
+import { useNewItemMotionIds } from '../ui/useNewItemMotion.js';
 
 export interface ConversationTranscriptProps {
   state: NativeSessionState;
@@ -91,6 +92,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   );
   const immediateOptimisticItems = useMemo(() => transcriptItems.filter((entry) => entry.optimistic && entry.status !== 'queued' && !queuedClientIds.has(entry.clientUserMessageId ?? '')), [queuedClientIds, transcriptItems]);
   const queuedOptimisticItems = useMemo(() => transcriptItems.filter((entry) => entry.optimistic && entry.status === 'queued' && !queuedClientIds.has(entry.clientUserMessageId ?? '')), [queuedClientIds, transcriptItems]);
+  const enteringItemIds = useNewItemMotionIds([...items, ...immediateOptimisticItems, ...queuedOptimisticItems].map((item) => item.key));
   const lastUserKey = [...items].reverse().find((entry) => `${entry.type}`.toLocaleLowerCase().includes('user'))?.key;
   const answeredRequests = useMemo(() => props.state.pendingRequests.filter(isAnsweredUserInputRequest), [props.state.pendingRequests]);
   const transcriptRows = useMemo(() => projectTranscriptRows(items, answeredRequests), [answeredRequests, items]);
@@ -237,7 +239,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
                   return (
                     <Fragment key={row.key}>
                       {row.rows.map((child) => (
-                        <Fragment key={child.key}>{renderTranscriptRow(child, transcriptRowRenderOptions(props, items, showThinking, lastUserKey, true, maintainLatestPosition))}</Fragment>
+                        <Fragment key={child.key}>{renderTranscriptRow(child, transcriptRowRenderOptions(props, items, showThinking, lastUserKey, true, enteringItemIds, maintainLatestPosition))}</Fragment>
                       ))}
                     </Fragment>
                   );
@@ -248,7 +250,9 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
                   <Fragment key={row.key}>
                     <SessionTurnDuration turn={turn} requests={props.state.pendingRequests} language={props.language}>
                       {row.rows.map((child) => (
-                        <Fragment key={child.key}>{renderTranscriptRow(child, transcriptRowRenderOptions(props, items, showThinking && props.state.activeTurnId === row.turnId, lastUserKey, true, maintainLatestPosition))}</Fragment>
+                        <Fragment key={child.key}>
+                          {renderTranscriptRow(child, transcriptRowRenderOptions(props, items, showThinking && props.state.activeTurnId === row.turnId, lastUserKey, true, enteringItemIds, maintainLatestPosition))}
+                        </Fragment>
                       ))}
                       {showThinking && props.state.activeTurnId === row.turnId ? <TranscriptThinking language={props.language} /> : null}
                     </SessionTurnDuration>
@@ -268,7 +272,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
                       {showThinking && props.state.activeTurnId === lastRowItem.turnId ? <TranscriptThinking language={props.language} /> : null}
                     </SessionTurnDuration>
                   ) : null}
-                  {renderTranscriptRow(row, transcriptRowRenderOptions(props, items, showThinking, lastUserKey, false, maintainLatestPosition))}
+                  {renderTranscriptRow(row, transcriptRowRenderOptions(props, items, showThinking, lastUserKey, false, enteringItemIds, maintainLatestPosition))}
                   {closesVisibleTurn ? renderTurnArtifacts(lastRowItem.turnId, props, lastRowItem.key, providerErrorItemsByTurn.get(lastRowItem.turnId)) : null}
                 </Fragment>
               );
@@ -285,7 +289,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
           ))}
           {immediateOptimisticItems.map((item) => (
             <Fragment key={item.key}>
-              <ThreadItemView item={item} language={props.language} isLatest onVisibleContentChange={maintainLatestPosition} />
+              <ThreadItemView item={item} language={props.language} isLatest animateEntrance={enteringItemIds.has(item.key)} onVisibleContentChange={maintainLatestPosition} />
               {!showThinking || item.status === 'failed' || item.status === 'unconfirmed' || item.status === 'paused' ? (
                 <PendingMessageDeliveryFeedback item={item} stateError={props.state.error} language={props.language} onReturnToComposer={props.onRetryItem ? () => props.onRetryItem?.(item) : undefined} />
               ) : null}
@@ -300,7 +304,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
             <TranscriptThinking language={props.language} />
           ) : null}
           {queuedOptimisticItems.map((item) => (
-            <ThreadItemView key={item.key} item={item} language={props.language} onVisibleContentChange={maintainLatestPosition} />
+            <ThreadItemView key={item.key} item={item} language={props.language} animateEntrance={enteringItemIds.has(item.key)} onVisibleContentChange={maintainLatestPosition} />
           ))}
           {turnSpacerHeight > 0 && props.state.activeTurnId ? <span className="session-latest-turn-spacer" style={{ blockSize: `${turnSpacerHeight}px` }} aria-hidden="true" /> : null}
           <span ref={latestContentMarkerRef} className="session-latest-content-marker" aria-hidden="true" />
@@ -511,6 +515,7 @@ interface TranscriptRowRenderOptions {
   showThinking: boolean;
   lastUserKey: string | undefined;
   insideWork: boolean;
+  enteringItemIds: ReadonlySet<string>;
   onVisibleContentChange: () => void;
 }
 
@@ -520,9 +525,10 @@ function transcriptRowRenderOptions(
   showThinking: boolean,
   lastUserKey: string | undefined,
   insideWork: boolean,
+  enteringItemIds: ReadonlySet<string>,
   onVisibleContentChange: () => void,
 ): TranscriptRowRenderOptions {
-  return { props, items, showThinking, lastUserKey, insideWork, onVisibleContentChange };
+  return { props, items, showThinking, lastUserKey, insideWork, enteringItemIds, onVisibleContentChange };
 }
 
 function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOptions): ReactNode {
@@ -539,6 +545,7 @@ function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOpt
       item={row.item}
       language={options.props.language}
       isLatest={!options.insideWork && row.item.key === options.items[options.items.length - 1]?.key && !options.showThinking}
+      animateEntrance={options.enteringItemIds.has(row.item.key)}
       showAssistantActions={!options.insideWork && itemRole(row.item) === 'assistant' && !options.showThinking}
       isLatestUser={row.item.key === options.lastUserKey}
       onEdit={options.props.onEditUserItem}

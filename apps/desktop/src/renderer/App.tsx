@@ -158,6 +158,7 @@ import { Button, type ButtonVariant } from './ui/Button.js';
 import { ModalPortal } from './ui/ModalPortal.js';
 import { SourceListRow } from './ui/SourceListRow.js';
 import { WorkspaceDrawer } from './ui/WorkspaceDrawer.js';
+import { useNewItemMotionIds } from './ui/useNewItemMotion.js';
 import { CommandCenterPanel } from './CommandCenterPanel.js';
 import { ProjectSourceWorkspace, type ProjectSourceWorkspaceHandle } from './code/ProjectSourceWorkspace.js';
 import { ArchitectureGraphCanvas, buildArchitectureLayerModel, canRenderArchitectureLayerModel, type ArchitectureLayerModel } from './graph/ArchitectureGraphCanvas.js';
@@ -18490,6 +18491,7 @@ function SidebarNav(props: {
         return project.name.toLocaleLowerCase().includes(query) || project.localPath.toLocaleLowerCase().includes(query) || conversationMatches;
       })
     : props.projects;
+  const enteringProjectIds = useNewItemMotionIds(props.projects.map((project) => project.id));
   // macOS 红黄绿窗口按钮属于系统层：侧栏只保留 44px 顶部安全区，避开交通灯但不再保留整行死空间。
   const titlebarProtectedSidebarStyle = {
     '--zeus-hidden-titlebar-safe-top': '44px',
@@ -18627,7 +18629,13 @@ function SidebarNav(props: {
                 </div>
               ) : null;
             return (
-              <section className="project-sidebar-item" key={project.id} aria-label={`${copy.projects}${copy.labelSeparator}${project.name}`}>
+              <section
+                className="project-sidebar-item"
+                key={project.id}
+                aria-label={`${copy.projects}${copy.labelSeparator}${project.name}`}
+                data-motion-surface="list-item"
+                data-motion-state={enteringProjectIds.has(project.id) ? 'entering' : undefined}
+              >
                 <SourceListRow
                   level="root"
                   surface="fill"

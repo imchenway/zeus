@@ -1,5 +1,12 @@
 /* Zeus 交互原语层最后加载。业务页面可以选择显式变体，但不能重新定义核心状态。 */
 .macos-ai-app {
+  --zeus-motion-duration-state: 120ms;
+  --zeus-motion-duration-object: 180ms;
+  --zeus-motion-duration-workspace: 240ms;
+  --zeus-motion-duration-layer-enter: 220ms;
+  --zeus-motion-duration-layer-exit: 170ms;
+  --zeus-motion-ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --zeus-motion-ease-in: cubic-bezier(0.4, 0, 1, 1);
   --zeus-button-motion: 120ms var(--zeus-motion-ease-out);
   --zeus-control-danger-focus: 0 0 0 2px color-mix(in oklch, var(--zeus-control-danger-line) 42%, transparent);
   --zeus-overlay-backdrop-bg: oklch(18% 0.006 255 / 0.22);
@@ -12,6 +19,123 @@
   --zeus-source-list-root-row-radius: 10px;
   --zeus-source-list-row-radius: 8px;
   --zeus-source-list-row-motion: 140ms var(--zeus-motion-ease-out);
+}
+
+@keyframes zeus-workspace-focus-enter {
+  from {
+    opacity: 0.62;
+    transform: translate3d(0, 10px, 0) scale(0.998);
+  }
+
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes zeus-panel-focus-enter {
+  from {
+    opacity: 0.58;
+    transform: translate3d(0, 7px, 0);
+  }
+
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes zeus-object-enter {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 6px, 0) scale(0.992);
+  }
+
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes zeus-side-panel-enter {
+  from {
+    opacity: 0;
+    transform: translate3d(14px, 0, 0);
+  }
+
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes zeus-modal-backdrop-enter {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes zeus-modal-dialog-enter {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 12px, 0) scale(0.975);
+  }
+
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+/* 壳层保持稳定：只有真实变化的工作面、设置内容和会话主体进入。 */
+.macos-ai-app :where(.workspace-view-project-tasks, .workspace-view-project-git, .workspace-view-project-settings),
+.session-codex-parity-v1 .session-workspace-root {
+  animation: zeus-workspace-focus-enter var(--zeus-motion-duration-workspace) var(--zeus-motion-ease-out) both;
+}
+
+.macos-ai-app .project-code-mode-pane:not([hidden]),
+.macos-ai-app .settings-content-column > .settings-product-pane,
+.macos-ai-app .workspace-view-settings > .settings-sidebar-shell {
+  animation: zeus-panel-focus-enter var(--zeus-motion-duration-workspace) var(--zeus-motion-ease-out) both;
+}
+
+/* 首批历史列表保持静止；只有由组件确认的真实新增对象播放一次入场。 */
+.macos-ai-app [data-motion-surface='list-item'][data-motion-state='entering'] {
+  animation: zeus-object-enter var(--zeus-motion-duration-object) var(--zeus-motion-ease-out) both;
+  transform-origin: center top;
+}
+
+/* 局部状态与底部交互坞只表达对象形成，不改变现有布局或业务进度。 */
+.macos-ai-app :where(.inline-status, .project-inline-recovery-row, .task-list-state-row),
+.macos-ai-app .task-table-bulk-action-bar,
+.session-codex-parity-v1 .session-interaction-dock,
+.session-codex-parity-v1 .session-switch-target-dock,
+.session-codex-parity-v1 :where(.session-queued-messages, .session-creation-status, .session-transport-failure) {
+  animation: zeus-object-enter var(--zeus-motion-duration-object) var(--zeus-motion-ease-out) both;
+}
+
+.macos-ai-app .code-map-floating-surface {
+  animation: zeus-side-panel-enter var(--zeus-motion-duration-layer-enter) var(--zeus-motion-ease-out) both;
+}
+
+.macos-ai-app .project-source-tree-backdrop {
+  animation: zeus-modal-backdrop-enter var(--zeus-motion-duration-object) var(--zeus-motion-ease-out) both;
+}
+
+.macos-ai-app :where(.project-workspace-mode-toolbar button, .settings-section-button, .task-table-status-segment) {
+  transition:
+    background-color var(--zeus-motion-duration-state) var(--zeus-motion-ease-out),
+    border-color var(--zeus-motion-duration-state) var(--zeus-motion-ease-out),
+    color var(--zeus-motion-duration-state) var(--zeus-motion-ease-out),
+    box-shadow var(--zeus-motion-duration-state) var(--zeus-motion-ease-out);
+}
+
+.macos-ai-app details[open] > :not(summary) {
+  animation: zeus-panel-focus-enter var(--zeus-motion-duration-object) var(--zeus-motion-ease-out) both;
 }
 
 /* 保真正文保留来源中的全部空白；软换行只改变显示，不改写原始内容。 */
@@ -583,6 +707,7 @@
 }
 
 .zeus-modal-portal-root.macos-ai-app[data-zeus-primitive='modal'] .zeus-modal-backdrop {
+  animation: zeus-modal-backdrop-enter var(--zeus-motion-duration-layer-enter) var(--zeus-motion-ease-out) both;
   backdrop-filter: var(--zeus-overlay-backdrop-filter);
   background: var(--zeus-overlay-backdrop-bg);
   display: grid;
@@ -591,6 +716,11 @@
   place-items: center;
   pointer-events: auto;
   position: absolute;
+}
+
+.zeus-modal-portal-root.macos-ai-app[data-zeus-primitive='modal'] .zeus-modal-backdrop > [role='dialog'] {
+  animation: zeus-modal-dialog-enter var(--zeus-motion-duration-layer-enter) var(--zeus-motion-ease-out) both;
+  transform-origin: center center;
 }
 
 @media (max-width: 560px) {
@@ -606,9 +736,9 @@
 
 /* Drawer：形态和尺寸由类型化 data 属性决定；所有生产抽屉统一使用可见且虚化的遮罩。 */
 .workspace-drawer-portal-root.macos-ai-app[data-zeus-primitive='drawer'] {
-  --zeus-drawer-enter-duration: 220ms;
-  --zeus-drawer-exit-duration: 180ms;
-  --zeus-drawer-motion-ease: cubic-bezier(0.16, 1, 0.3, 1);
+  --zeus-drawer-enter-duration: var(--zeus-motion-duration-layer-enter);
+  --zeus-drawer-exit-duration: var(--zeus-motion-duration-layer-exit);
+  --zeus-drawer-motion-ease: var(--zeus-motion-ease-out);
   --zeus-drawer-sidebar-inline-size: 236px;
   --zeus-drawer-workspace-inline-size: calc(100vw - var(--zeus-drawer-sidebar-inline-size));
   background: transparent;
@@ -798,9 +928,32 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .macos-ai-app :where(.workspace-view-project-tasks, .workspace-view-project-git, .workspace-view-project-settings),
+  .session-codex-parity-v1 .session-workspace-root,
+  .macos-ai-app .project-code-mode-pane:not([hidden]),
+  .macos-ai-app .settings-content-column > .settings-product-pane,
+  .macos-ai-app .workspace-view-settings > .settings-sidebar-shell,
+  .macos-ai-app [data-motion-surface='list-item'][data-motion-state='entering'],
+  .macos-ai-app :where(.inline-status, .project-inline-recovery-row, .task-list-state-row),
+  .macos-ai-app .task-table-bulk-action-bar,
+  .session-codex-parity-v1 .session-interaction-dock,
+  .session-codex-parity-v1 .session-switch-target-dock,
+  .session-codex-parity-v1 :where(.session-queued-messages, .session-creation-status, .session-transport-failure),
+  .macos-ai-app .code-map-floating-surface,
+  .macos-ai-app .project-source-tree-backdrop,
+  .macos-ai-app details[open] > :not(summary),
+  .zeus-modal-portal-root.macos-ai-app[data-zeus-primitive='modal'] .zeus-modal-backdrop,
+  .zeus-modal-portal-root.macos-ai-app[data-zeus-primitive='modal'] .zeus-modal-backdrop > [role='dialog'] {
+    animation: none !important;
+    transform: none !important;
+    will-change: auto !important;
+  }
+
   .macos-ai-app .zeus-button[data-zeus-primitive='button'],
   .macos-ai-app .zeus-source-list-row,
-  .macos-ai-app .zeus-source-list-row-main {
+  .macos-ai-app .zeus-source-list-row-main,
+  .macos-ai-app .project-source-tree,
+  .macos-ai-app :where(.project-workspace-mode-toolbar button, .settings-section-button, .task-table-status-segment) {
     transition: none;
     will-change: auto;
   }

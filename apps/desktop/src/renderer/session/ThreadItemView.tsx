@@ -105,6 +105,7 @@ export interface ThreadItemViewProps {
   item: NativeSessionItemBuffer;
   language: SessionUiLanguage;
   isLatest?: boolean;
+  animateEntrance?: boolean;
   showAssistantActions?: boolean;
   isLatestUser?: boolean;
   onEdit?: (item: NativeSessionItemBuffer, content: string) => void | Promise<void>;
@@ -351,7 +352,7 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
   return (
     <article
       ref={articleRef}
-      className={`session-thread-item session-thread-item-${role}${props.isLatest ? ' is-latest' : ''}${messageExpanded ? ' is-message-expanded' : ''}${hasActions ? ' has-message-actions' : ''}${editing ? ' is-editing' : ''}`}
+      className={`session-thread-item session-thread-item-${role}${props.isLatest ? ' is-latest' : ''}${props.animateEntrance ? ' is-entering' : ''}${messageExpanded ? ' is-message-expanded' : ''}${hasActions ? ' has-message-actions' : ''}${editing ? ' is-editing' : ''}`}
       data-item-status={props.item.status}
       data-item-phase={props.item.phase}
       data-item-type={props.item.type}

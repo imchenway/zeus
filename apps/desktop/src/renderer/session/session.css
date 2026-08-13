@@ -1260,16 +1260,19 @@
 }
 
 .session-codex-parity-v1 .session-thread-item {
-  animation: session-markdown-block-reveal 150ms var(--session-ease-out) both;
   min-inline-size: 0;
   position: relative;
+}
+
+.session-codex-parity-v1 .session-thread-item.is-entering {
+  animation: session-markdown-block-reveal 150ms var(--session-ease-out) both;
 }
 
 .session-codex-parity-v1 .session-thread-item.has-message-actions {
   margin-block-end: 20px;
 }
 
-.session-codex-parity-v1 .session-thread-item.is-latest {
+.session-codex-parity-v1 .session-thread-item.is-latest.is-entering {
   animation: session-latest-turn-enter 500ms var(--session-ease-out) both;
 }
 
@@ -7504,16 +7507,19 @@
 }
 
 .session-codex-parity-v1 .session-thread-item {
-  animation: session-markdown-block-reveal 150ms var(--session-ease-out) both;
   min-inline-size: 0;
   position: relative;
+}
+
+.session-codex-parity-v1 .session-thread-item.is-entering {
+  animation: session-markdown-block-reveal 150ms var(--session-ease-out) both;
 }
 
 .session-codex-parity-v1 .session-thread-item.has-message-actions {
   margin-block-end: 20px;
 }
 
-.session-codex-parity-v1 .session-thread-item.is-latest {
+.session-codex-parity-v1 .session-thread-item.is-latest.is-entering {
   animation: session-latest-turn-enter 500ms var(--session-ease-out) both;
 }
 
