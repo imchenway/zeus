@@ -16,13 +16,20 @@ export interface ProjectConversationTaskGroup {
   taskId: string;
   taskCode: string;
   taskTitle: string;
+  managementStatus: string;
   conversations: NativeConversationChoice[];
+}
+
+export interface ProjectConversationStatusDefinition {
+  id: string;
+  label: string;
 }
 
 export interface ProjectConversationGroup {
   projectId: string;
   projectName: string;
   conversations?: NativeConversationChoice[];
+  taskStatuses: ProjectConversationStatusDefinition[];
   tasks: ProjectConversationTaskGroup[];
 }
 
@@ -41,6 +48,9 @@ export interface ProjectConversationTreeProps {
   showEmptyState?: boolean;
   visibleConversationCount?: number;
   onShowMore?: () => void;
+  organization?: 'flat' | 'task_status';
+  collapsedStatusIdsByProject?: Record<string, string[]>;
+  onToggleStatusGroup?: (projectId: string, statusId: string) => void;
 }
 
 const labels = {
@@ -64,6 +74,8 @@ const labels = {
     archiveLegacyUnavailable: '旧版只读会话无法与 Codex 线程同步归档',
     archiving: '正在归档',
     showMore: '展开更多',
+    expandStatusGroup: '展开任务状态分组',
+    collapseStatusGroup: '折叠任务状态分组',
   },
   'en-US': {
     aria: 'Project conversations',
@@ -85,6 +97,8 @@ const labels = {
     archiveLegacyUnavailable: 'Legacy read-only conversations cannot be archived together with their Codex thread',
     archiving: 'Archiving',
     showMore: 'Show more',
+    expandStatusGroup: 'Expand task status group',
+    collapseStatusGroup: 'Collapse task status group',
   },
 } as const;
 
@@ -93,17 +107,35 @@ interface FlattenedConversation {
   displayTitle: string;
 }
 
+interface FlattenedStatusGroup {
+  statusId: string;
+  statusLabel: string;
+  conversations: FlattenedConversation[];
+}
+
+interface FlattenedProjectConversations {
+  project: ProjectConversationGroup;
+  flatConversations: FlattenedConversation[];
+  projectConversations: FlattenedConversation[];
+  statusGroups: FlattenedStatusGroup[];
+}
+
 export function ProjectConversationTree(props: ProjectConversationTreeProps) {
   const copy = labels[props.language];
   const reduceMotion = useReducedMotion();
   const [archivingConversationId, setArchivingConversationId] = useState<string | null>(null);
   const normalizedQuery = props.query?.trim().toLocaleLowerCase() ?? '';
-  const flattenedGroups = props.groups.map(flattenProjectConversations).map((group) => ({
-    ...group,
-    conversations: normalizedQuery ? group.conversations.filter((entry) => entry.displayTitle.toLocaleLowerCase().includes(normalizedQuery)) : group.conversations.slice(0, props.visibleConversationCount ?? group.conversations.length),
-  }));
-  const conversationIds = flattenedGroups.flatMap((group) => group.conversations.map((entry) => conversationNavigationId(entry.conversation)));
-  const allConversationIds = props.groups.flatMap((group) => flattenProjectConversations(group).conversations.map((entry) => conversationNavigationId(entry.conversation)));
+  const organization = props.organization ?? 'flat';
+  const flattenedGroups = props.groups
+    .map((project) => flattenProjectConversations(project, normalizedQuery))
+    .map((group) => (normalizedQuery ? group : limitFlattenedProjectConversations(group, organization, props.visibleConversationCount)));
+  const visibleConversations = flattenedGroups.flatMap((group) => {
+    if (organization === 'flat') return group.flatConversations;
+    const collapsedStatusIds = props.collapsedStatusIdsByProject?.[group.project.projectId] ?? [];
+    return [...group.projectConversations, ...group.statusGroups.filter((statusGroup) => !collapsedStatusIds.includes(statusGroup.statusId)).flatMap((statusGroup) => statusGroup.conversations)];
+  });
+  const conversationIds = visibleConversations.map((entry) => conversationNavigationId(entry.conversation));
+  const allConversationIds = props.groups.flatMap((project) => flattenProjectConversations(project, '').flatConversations.map((entry) => conversationNavigationId(entry.conversation)));
   const enteringConversationIds = useNewItemMotionIds(allConversationIds);
   const fallbackTabStopId = props.selectedConversationId && conversationIds.includes(props.selectedConversationId) ? null : (conversationIds[0] ?? null);
 
@@ -119,66 +151,112 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
     }
   }
 
+  function renderConversationItems(conversations: FlattenedConversation[]) {
+    return conversations.map(({ conversation, displayTitle }) => {
+      const navigationId = conversationNavigationId(conversation);
+      const current = navigationId === props.selectedConversationId;
+      const runtimeState = props.conversationStates?.[navigationId] ?? props.conversationStates?.[conversation.id] ?? conversationTreeRuntimeStateFromConversation(conversation);
+      const archiveAvailable = conversationCanBeArchived(runtimeState);
+      const archiveUnavailableReason = runtimeState === 'legacy_readonly' ? copy.archiveLegacyUnavailable : copy.archiveUnavailable;
+      const archiving = archivingConversationId === conversation.id;
+      const archiveLabel = archiving ? copy.archiving : archiveAvailable ? copy.archive : archiveUnavailableReason;
+      return (
+        <motion.li
+          className="session-conversation-tree-item"
+          key={navigationId}
+          layout={reduceMotion ? false : 'position'}
+          initial={false}
+          animate={reduceMotion ? { opacity: 1 } : { opacity: 1, height: 'auto', overflow: 'visible' }}
+          exit={reduceMotion ? { opacity: 0, transition: { duration: 0 } } : { opacity: 0, height: 0, overflow: 'hidden', transition: { duration: 0.16, ease: [0.22, 1, 0.36, 1] } }}
+          transition={reduceMotion ? { duration: 0 } : { layout: { duration: 0.16, ease: [0.22, 1, 0.36, 1] }, opacity: { duration: 0.12 }, height: { duration: 0.16, ease: [0.22, 1, 0.36, 1] } }}
+          data-motion-surface="list-item"
+          data-motion-state={enteringConversationIds.has(navigationId) ? 'entering' : undefined}
+        >
+          <button
+            type="button"
+            className={`session-conversation-tree-row${current ? ' is-current' : ''}`}
+            aria-current={current ? 'page' : undefined}
+            tabIndex={current || navigationId === fallbackTabStopId ? 0 : -1}
+            data-conversation-tree-item="true"
+            data-conversation-runtime-state={runtimeState}
+            onClick={() => props.onSelectConversation(conversation)}
+          >
+            <strong title={displayTitle}>{displayTitle}</strong>
+            <ConversationRowState conversation={conversation} runtimeState={runtimeState} language={props.language} />
+          </button>
+          {props.onArchiveConversation && !conversation.taskPushCreating ? (
+            <button
+              type="button"
+              className="session-conversation-archive-button"
+              aria-disabled={!archiveAvailable || archiving}
+              aria-label={`${archiveLabel}: ${displayTitle}`}
+              title={archiveLabel}
+              onClick={() => {
+                if (archiveAvailable && !archiving) void archiveConversation(conversation);
+              }}
+            >
+              {archiving ? <CircleNotch className="session-conversation-archive-spinner" aria-hidden="true" /> : <Archive aria-hidden="true" />}
+            </button>
+          ) : null}
+        </motion.li>
+      );
+    });
+  }
+
   return (
     <nav className="session-project-conversation-tree" aria-label={copy.aria} onKeyDown={handleTreeKeyDown}>
-      {flattenedGroups.map(({ project, conversations }) => (
+      {flattenedGroups.map(({ project, flatConversations, projectConversations, statusGroups }) => (
         <section className="session-conversation-project-group" key={project.projectId} aria-label={project.projectName}>
           {!props.compactProjectLabel && props.onStartConversation ? <ProjectConversationHeader project={project} language={props.language} onStartConversation={props.onStartConversation} /> : null}
-          <ul className="session-conversation-project-items">
-            <AnimatePresence initial={false}>
-              {conversations.map(({ conversation, displayTitle }) => {
-                const navigationId = conversationNavigationId(conversation);
-                const current = navigationId === props.selectedConversationId;
-                const runtimeState = props.conversationStates?.[navigationId] ?? props.conversationStates?.[conversation.id] ?? conversationTreeRuntimeStateFromConversation(conversation);
-                const archiveAvailable = conversationCanBeArchived(runtimeState);
-                const archiveUnavailableReason = runtimeState === 'legacy_readonly' ? copy.archiveLegacyUnavailable : copy.archiveUnavailable;
-                const archiving = archivingConversationId === conversation.id;
-                const archiveLabel = archiving ? copy.archiving : archiveAvailable ? copy.archive : archiveUnavailableReason;
+          {organization === 'flat' ? (
+            <ul className="session-conversation-project-items">
+              <AnimatePresence initial={false}>{renderConversationItems(flatConversations)}</AnimatePresence>
+            </ul>
+          ) : (
+            <>
+              {projectConversations.length > 0 ? (
+                <ul className="session-conversation-project-items session-conversation-project-direct-items">
+                  <AnimatePresence initial={false}>{renderConversationItems(projectConversations)}</AnimatePresence>
+                </ul>
+              ) : null}
+              {statusGroups.map((statusGroup) => {
+                const collapsed = props.collapsedStatusIdsByProject?.[project.projectId]?.includes(statusGroup.statusId) ?? false;
+                const actionLabel = `${collapsed ? copy.expandStatusGroup : copy.collapseStatusGroup}: ${statusGroup.statusLabel}`;
                 return (
-                  <motion.li
-                    className="session-conversation-tree-item"
-                    key={navigationId}
-                    layout={reduceMotion ? false : 'position'}
-                    initial={false}
-                    animate={reduceMotion ? { opacity: 1 } : { opacity: 1, height: 'auto', overflow: 'visible' }}
-                    exit={reduceMotion ? { opacity: 0, transition: { duration: 0 } } : { opacity: 0, height: 0, overflow: 'hidden', transition: { duration: 0.16, ease: [0.22, 1, 0.36, 1] } }}
-                    transition={reduceMotion ? { duration: 0 } : { layout: { duration: 0.16, ease: [0.22, 1, 0.36, 1] }, opacity: { duration: 0.12 }, height: { duration: 0.16, ease: [0.22, 1, 0.36, 1] } }}
-                    data-motion-surface="list-item"
-                    data-motion-state={enteringConversationIds.has(navigationId) ? 'entering' : undefined}
-                  >
+                  <section className="session-conversation-status-group" key={statusGroup.statusId} aria-label={statusGroup.statusLabel}>
                     <button
                       type="button"
-                      className={`session-conversation-tree-row${current ? ' is-current' : ''}`}
-                      aria-current={current ? 'page' : undefined}
-                      tabIndex={current || navigationId === fallbackTabStopId ? 0 : -1}
-                      data-conversation-tree-item="true"
-                      data-conversation-runtime-state={runtimeState}
-                      onClick={() => props.onSelectConversation(conversation)}
+                      className="session-conversation-status-group-toggle"
+                      aria-expanded={!collapsed}
+                      aria-label={actionLabel}
+                      title={actionLabel}
+                      onClick={() => props.onToggleStatusGroup?.(project.projectId, statusGroup.statusId)}
                     >
-                      <strong title={displayTitle}>{displayTitle}</strong>
-                      <ConversationRowState conversation={conversation} runtimeState={runtimeState} language={props.language} />
+                      <span className="session-conversation-status-group-chevron" aria-hidden="true">
+                        ›
+                      </span>
+                      <strong>{statusGroup.statusLabel}</strong>
                     </button>
-                    {props.onArchiveConversation && !conversation.taskPushCreating ? (
-                      <button
-                        type="button"
-                        className="session-conversation-archive-button"
-                        aria-disabled={!archiveAvailable || archiving}
-                        aria-label={`${archiveLabel}: ${displayTitle}`}
-                        title={archiveLabel}
-                        onClick={() => {
-                          if (archiveAvailable && !archiving) void archiveConversation(conversation);
-                        }}
-                      >
-                        {archiving ? <CircleNotch className="session-conversation-archive-spinner" aria-hidden="true" /> : <Archive aria-hidden="true" />}
-                      </button>
-                    ) : null}
-                  </motion.li>
+                    <AnimatePresence initial={false}>
+                      {!collapsed ? (
+                        <motion.div
+                          className="session-conversation-status-group-content"
+                          initial={reduceMotion ? false : { opacity: 0, height: 0, overflow: 'hidden' }}
+                          animate={reduceMotion ? { opacity: 1 } : { opacity: 1, height: 'auto', overflow: 'visible' }}
+                          exit={reduceMotion ? { opacity: 0, transition: { duration: 0 } } : { opacity: 0, height: 0, overflow: 'hidden', transition: { duration: 0.16, ease: [0.22, 1, 0.36, 1] } }}
+                          transition={reduceMotion ? { duration: 0 } : { duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
+                        >
+                          <ul className="session-conversation-project-items">{renderConversationItems(statusGroup.conversations)}</ul>
+                        </motion.div>
+                      ) : null}
+                    </AnimatePresence>
+                  </section>
                 );
               })}
-            </AnimatePresence>
-          </ul>
-          {conversations.length === 0 && props.showEmptyState !== false ? <p className="session-conversation-project-empty">{copy.empty}</p> : null}
-          {!normalizedQuery && props.onShowMore && (props.visibleConversationCount ?? conversations.length) < flattenProjectConversations(project).conversations.length ? (
+            </>
+          )}
+          {visibleConversationCount({ flatConversations, projectConversations, statusGroups }, organization) === 0 && props.showEmptyState !== false ? <p className="session-conversation-project-empty">{copy.empty}</p> : null}
+          {!normalizedQuery && props.onShowMore && visibleConversationCount({ flatConversations, projectConversations, statusGroups }, organization) < flattenProjectConversations(project, '').flatConversations.length ? (
             <button type="button" className="session-conversation-show-more" onClick={props.onShowMore}>
               {copy.showMore}
             </button>
@@ -306,21 +384,61 @@ function taskRunStatusFromConversationTreeState(runtimeState: ConversationTreeRu
   return 'idle';
 }
 
-function flattenProjectConversations(project: ProjectConversationGroup): {
-  project: ProjectConversationGroup;
-  conversations: FlattenedConversation[];
-} {
-  const taskById = new Map(project.tasks.map((task) => [task.taskId, task]));
-  const conversations = [...(project.conversations ?? []), ...project.tasks.flatMap((task) => task.conversations)]
-    .map((conversation): FlattenedConversation => {
-      const task = conversation.taskId ? taskById.get(conversation.taskId) : undefined;
-      return {
-        conversation,
-        displayTitle: conversationDisplayTitle(conversation.title, task?.taskTitle),
-      };
-    })
+function flattenProjectConversations(project: ProjectConversationGroup, normalizedQuery: string): FlattenedProjectConversations {
+  const matchesQuery = (entry: FlattenedConversation) => !normalizedQuery || entry.displayTitle.toLocaleLowerCase().includes(normalizedQuery);
+  const projectConversations = (project.conversations ?? [])
+    .map((conversation): FlattenedConversation => ({ conversation, displayTitle: conversationDisplayTitle(conversation.title) }))
+    .filter(matchesQuery)
     .sort((left, right) => compareConversationStageUpdatedDesc(left.conversation, right.conversation));
-  return { project, conversations };
+  const statusDefinitions = [...project.taskStatuses];
+  const statusLabels = new Map(statusDefinitions.map((status) => [status.id, status.label]));
+  const taskConversations = project.tasks.flatMap((task) => {
+    if (!statusLabels.has(task.managementStatus)) {
+      statusDefinitions.push({ id: task.managementStatus, label: task.managementStatus });
+      statusLabels.set(task.managementStatus, task.managementStatus);
+    }
+    return task.conversations
+      .map((conversation): FlattenedConversation & { managementStatus: string } => ({
+        conversation,
+        displayTitle: conversationDisplayTitle(conversation.title, task.taskTitle),
+        managementStatus: task.managementStatus,
+      }))
+      .filter(matchesQuery);
+  });
+  const statusGroups = statusDefinitions
+    .map(
+      (status): FlattenedStatusGroup => ({
+        statusId: status.id,
+        statusLabel: status.label,
+        conversations: taskConversations.filter((entry) => entry.managementStatus === status.id).sort((left, right) => compareConversationStageUpdatedDesc(left.conversation, right.conversation)),
+      }),
+    )
+    .filter((statusGroup) => statusGroup.conversations.length > 0);
+  const flatConversations = [...projectConversations, ...taskConversations].sort((left, right) => compareConversationStageUpdatedDesc(left.conversation, right.conversation));
+  return { project, flatConversations, projectConversations, statusGroups };
+}
+
+function limitFlattenedProjectConversations(group: FlattenedProjectConversations, organization: 'flat' | 'task_status', maxCount?: number): FlattenedProjectConversations {
+  if (maxCount === undefined) return group;
+  const safeMaxCount = Math.max(0, maxCount);
+  if (organization === 'flat') return { ...group, flatConversations: group.flatConversations.slice(0, safeMaxCount) };
+
+  let remaining = safeMaxCount;
+  const projectConversations = group.projectConversations.slice(0, remaining);
+  remaining -= projectConversations.length;
+  const statusGroups = group.statusGroups
+    .map((statusGroup) => {
+      const conversations = statusGroup.conversations.slice(0, remaining);
+      remaining -= conversations.length;
+      return { ...statusGroup, conversations };
+    })
+    .filter((statusGroup) => statusGroup.conversations.length > 0);
+  return { ...group, flatConversations: group.flatConversations.slice(0, safeMaxCount), projectConversations, statusGroups };
+}
+
+function visibleConversationCount(group: Pick<FlattenedProjectConversations, 'flatConversations' | 'projectConversations' | 'statusGroups'>, organization: 'flat' | 'task_status'): number {
+  if (organization === 'flat') return group.flatConversations.length;
+  return group.projectConversations.length + group.statusGroups.reduce((count, statusGroup) => count + statusGroup.conversations.length, 0);
 }
 
 /** 将当前已连接 controller 的权威状态映射为全局 source tree 的可读状态。 */

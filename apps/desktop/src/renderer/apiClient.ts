@@ -576,6 +576,8 @@ export interface AppShellSettings {
   defaultProjectId: string | null;
   pinnedProjectIds: string[];
   collapsedProjectIds: string[];
+  sidebarConversationOrganization: 'flat' | 'task_status';
+  sidebarConversationCollapsedStatusIdsByProject: Record<string, string[]>;
   defaultModel: string | null;
   defaultTaskTemplateId: string | null;
   taskTableColumns?: TaskTableColumnPreferences;
@@ -609,6 +611,8 @@ export type UpdateAppShellSettingsRequest = Pick<
   defaultProjectId?: string | null;
   pinnedProjectIds?: string[];
   collapsedProjectIds?: string[];
+  sidebarConversationOrganization?: 'flat' | 'task_status';
+  sidebarConversationCollapsedStatusIdsByProject?: Record<string, string[]>;
   defaultModel?: string | null;
   defaultTaskTemplateId?: string | null;
   taskTableColumns?: Partial<TaskTableColumnPreferences>;

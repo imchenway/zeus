@@ -1044,6 +1044,30 @@ function normalizeTaskExpandedIdsByProject(value: unknown): Record<string, strin
   return normalized;
 }
 
+function normalizeSidebarConversationOrganization(value: unknown): 'flat' | 'task_status' {
+  return value === 'task_status' ? 'task_status' : 'flat';
+}
+
+function normalizeSidebarConversationCollapsedStatusIdsByProject(value: unknown): Record<string, string[]> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const normalized: Record<string, string[]> = {};
+  for (const [projectId, statusIds] of Object.entries(value)) {
+    const normalizedProjectId = projectId.trim();
+    const invalidProjectId = !normalizedProjectId || normalizedProjectId.length > 160 || Array.from(normalizedProjectId).some((character) => character.charCodeAt(0) <= 31 || character.charCodeAt(0) === 127);
+    if (invalidProjectId || !Array.isArray(statusIds)) continue;
+    normalized[normalizedProjectId] = [
+      ...new Set(
+        statusIds
+          .filter((statusId): statusId is string => typeof statusId === 'string')
+          .map((statusId) => statusId.trim())
+          .filter((statusId) => Boolean(statusId) && statusId.length <= 160 && !Array.from(statusId).some((character) => character.charCodeAt(0) <= 31 || character.charCodeAt(0) === 127)),
+      ),
+    ].slice(0, 100);
+    if (Object.keys(normalized).length >= 100) break;
+  }
+  return normalized;
+}
+
 function normalizeTaskManagementStatusByProject(value: unknown, template: TaskManagementStatusConfig): Record<string, TaskManagementStatusConfig> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
   const normalized: Record<string, TaskManagementStatusConfig> = {};
@@ -1116,6 +1140,8 @@ interface AppShellSettingsSnapshot {
   defaultProjectId: string | null;
   pinnedProjectIds: string[];
   collapsedProjectIds: string[];
+  sidebarConversationOrganization: 'flat' | 'task_status';
+  sidebarConversationCollapsedStatusIdsByProject: Record<string, string[]>;
   defaultModel: string | null;
   defaultTaskTemplateId: string | null;
   taskTableColumns: TaskTableColumnPreferences;
@@ -1155,6 +1181,8 @@ interface UpdateAppShellSettingsBody {
   defaultProjectId?: string | null;
   pinnedProjectIds?: string[];
   collapsedProjectIds?: string[];
+  sidebarConversationOrganization?: 'flat' | 'task_status';
+  sidebarConversationCollapsedStatusIdsByProject?: Record<string, string[]>;
   defaultModel?: string | null;
   defaultTaskTemplateId?: string | null;
   taskTableColumns?: Partial<TaskTableColumnPreferences>;
@@ -2122,9 +2150,11 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         JSON.stringify(persistedAppShellSettings.taskManagementStatusByProject) !== JSON.stringify(appShellSettings.taskManagementStatusByProject) ||
         JSON.stringify(persistedAppShellSettings.taskStatusFilterByProject) !== JSON.stringify(appShellSettings.taskStatusFilterByProject) ||
         JSON.stringify(persistedAppShellSettings.taskViewModeByProject) !== JSON.stringify(appShellSettings.taskViewModeByProject) ||
-        JSON.stringify(persistedAppShellSettings.taskExpandedIdsByProject) !== JSON.stringify(appShellSettings.taskExpandedIdsByProject)))
+        JSON.stringify(persistedAppShellSettings.taskExpandedIdsByProject) !== JSON.stringify(appShellSettings.taskExpandedIdsByProject) ||
+        persistedAppShellSettings.sidebarConversationOrganization !== appShellSettings.sidebarConversationOrganization ||
+        JSON.stringify(persistedAppShellSettings.sidebarConversationCollapsedStatusIdsByProject) !== JSON.stringify(appShellSettings.sidebarConversationCollapsedStatusIdsByProject)))
   ) {
-    // 旧列键、旧默认顺序、新增列宽和项目筛选偏好都只迁移一次并立即落库，避免每次启动重复改写本机视图配置。
+    // 旧列键、旧默认顺序、新增列宽、项目筛选和侧栏会话组织偏好都只迁移一次并立即落库，避免每次启动重复改写本机视图配置。
     settings.setJson(appShellSettingsKey, appShellSettings);
     await db.save();
   }
@@ -8326,6 +8356,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         defaultProjectId: appShellSettings.defaultProjectId,
         pinnedProjectIds: appShellSettings.pinnedProjectIds,
         collapsedProjectIds: appShellSettings.collapsedProjectIds,
+        sidebarConversationOrganization: appShellSettings.sidebarConversationOrganization,
+        sidebarConversationCollapsedStatusIdsByProject: appShellSettings.sidebarConversationCollapsedStatusIdsByProject,
         defaultModel: appShellSettings.defaultModel,
         defaultTaskTemplateId: appShellSettings.defaultTaskTemplateId,
         taskTableColumns: appShellSettings.taskTableColumns,
@@ -11042,6 +11074,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       defaultProjectId: normalizeDefaultProjectId(value?.defaultProjectId),
       pinnedProjectIds: normalizeProjectPreferenceIds(value?.pinnedProjectIds),
       collapsedProjectIds: normalizeProjectPreferenceIds(value?.collapsedProjectIds),
+      sidebarConversationOrganization: normalizeSidebarConversationOrganization(value?.sidebarConversationOrganization),
+      sidebarConversationCollapsedStatusIdsByProject: normalizeSidebarConversationCollapsedStatusIdsByProject(value?.sidebarConversationCollapsedStatusIdsByProject),
       defaultModel: normalizeAppShellDefaultModel(value?.defaultModel),
       defaultTaskTemplateId: normalizeDefaultTaskTemplateId(value?.defaultTaskTemplateId),
       taskTableColumns: normalizeTaskTableColumnPreferences(value?.taskTableColumns),
@@ -11082,6 +11116,12 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         defaultProjectId: input.defaultProjectId === null ? null : typeof input.defaultProjectId === 'string' ? input.defaultProjectId : current.defaultProjectId,
         pinnedProjectIds: Array.isArray(input.pinnedProjectIds) ? normalizeProjectPreferenceIds(input.pinnedProjectIds) : current.pinnedProjectIds,
         collapsedProjectIds: Array.isArray(input.collapsedProjectIds) ? normalizeProjectPreferenceIds(input.collapsedProjectIds) : current.collapsedProjectIds,
+        sidebarConversationOrganization: Object.prototype.hasOwnProperty.call(input, 'sidebarConversationOrganization')
+          ? normalizeSidebarConversationOrganization(input.sidebarConversationOrganization)
+          : current.sidebarConversationOrganization,
+        sidebarConversationCollapsedStatusIdsByProject: Object.prototype.hasOwnProperty.call(input, 'sidebarConversationCollapsedStatusIdsByProject')
+          ? normalizeSidebarConversationCollapsedStatusIdsByProject(input.sidebarConversationCollapsedStatusIdsByProject)
+          : current.sidebarConversationCollapsedStatusIdsByProject,
         defaultModel: input.defaultModel === null ? null : typeof input.defaultModel === 'string' ? input.defaultModel : current.defaultModel,
         defaultTaskTemplateId: input.defaultTaskTemplateId === null ? null : typeof input.defaultTaskTemplateId === 'string' ? input.defaultTaskTemplateId : current.defaultTaskTemplateId,
         // taskTableColumns 支持局部保存；columnWidths 只有显式传入时才替换，空对象用于明确恢复默认列宽。

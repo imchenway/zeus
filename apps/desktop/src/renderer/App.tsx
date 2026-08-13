@@ -683,6 +683,8 @@ type AppShellSettingsSavePayload = Pick<
   | 'defaultProjectId'
   | 'pinnedProjectIds'
   | 'collapsedProjectIds'
+  | 'sidebarConversationOrganization'
+  | 'sidebarConversationCollapsedStatusIdsByProject'
   | 'defaultModel'
   | 'defaultTaskTemplateId'
   | 'taskTableColumns'
@@ -1134,6 +1136,8 @@ const languageCopy = {
       selectLocalRepository: '选择真实本地代码库',
       noProjectMatches: '没有匹配项目',
       addProject: '新增项目',
+      groupConversationsByTaskStatus: '按任务状态分组会话',
+      showConversationsFlat: '平铺显示会话',
       createDialogTitle: '创建项目',
       createNameLabel: '项目名称',
       createNamePlaceholder: '项目名称',
@@ -2592,6 +2596,8 @@ const languageCopy = {
       selectLocalRepository: 'Choose local repository',
       noProjectMatches: 'No matching projects',
       addProject: 'Add project',
+      groupConversationsByTaskStatus: 'Group conversations by task status',
+      showConversationsFlat: 'Show conversations as a flat list',
       createDialogTitle: 'Create project',
       createNameLabel: 'Project name',
       createNamePlaceholder: 'Project name',
@@ -3907,6 +3913,8 @@ const languageCopy = {
       selectLocalRepository: string;
       noProjectMatches: string;
       addProject: string;
+      groupConversationsByTaskStatus: string;
+      showConversationsFlat: string;
       createDialogTitle: string;
       createNameLabel: string;
       createNamePlaceholder: string;
@@ -5105,6 +5113,30 @@ function normalizeTaskExpandedIdsByProject(value: unknown): Record<string, strin
   );
 }
 
+function normalizeSidebarConversationOrganization(value: unknown): AppShellSettings['sidebarConversationOrganization'] {
+  return value === 'task_status' ? 'task_status' : 'flat';
+}
+
+function normalizeSidebarConversationCollapsedStatusIdsByProject(value: unknown): Record<string, string[]> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([projectId, statusIds]) => Boolean(projectId.trim()) && projectId.length <= 160 && Array.isArray(statusIds))
+      .slice(0, 100)
+      .map(([projectId, statusIds]) => [
+        projectId.trim(),
+        [
+          ...new Set(
+            (statusIds as unknown[])
+              .filter((statusId): statusId is string => typeof statusId === 'string')
+              .map((statusId) => statusId.trim())
+              .filter((statusId) => Boolean(statusId) && statusId.length <= 160),
+          ),
+        ].slice(0, 100),
+      ]),
+  );
+}
+
 function normalizeCodeWorkspaceByProject(value: unknown): Record<string, ProjectCodeWorkspacePreference> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
   return Object.fromEntries(
@@ -5148,6 +5180,8 @@ function normalizeRendererAppShellSettings(settings: AppShellSettings): AppShell
   return {
     ...settings,
     collapsedProjectIds: Array.isArray(settings.collapsedProjectIds) ? [...new Set(settings.collapsedProjectIds.filter((id): id is string => typeof id === 'string' && Boolean(id.trim())).map((id) => id.trim()))].slice(0, 100) : [],
+    sidebarConversationOrganization: normalizeSidebarConversationOrganization(settings.sidebarConversationOrganization),
+    sidebarConversationCollapsedStatusIdsByProject: normalizeSidebarConversationCollapsedStatusIdsByProject(settings.sidebarConversationCollapsedStatusIdsByProject),
     taskTableColumns: normalizeTaskTableColumnPreferences(settings.taskTableColumns),
     taskTableColumnsByProject,
     taskTableEnumSortOrders: normalizeTaskTableEnumSortOrders(settings.taskTableEnumSortOrders),
@@ -5177,6 +5211,8 @@ export function toAppShellSettingsSavePayload(settings: AppShellSettings, taskMa
     defaultProjectId: settings.defaultProjectId,
     pinnedProjectIds: settings.pinnedProjectIds,
     collapsedProjectIds: settings.collapsedProjectIds,
+    sidebarConversationOrganization: normalizeSidebarConversationOrganization(settings.sidebarConversationOrganization),
+    sidebarConversationCollapsedStatusIdsByProject: normalizeSidebarConversationCollapsedStatusIdsByProject(settings.sidebarConversationCollapsedStatusIdsByProject),
     defaultModel: settings.defaultModel,
     defaultTaskTemplateId: settings.defaultTaskTemplateId,
     // 任务字段偏好属于本机 app shell 设置；任何通用设置保存都必须带上，避免后续保存把字段配置丢掉。
@@ -5232,6 +5268,8 @@ export function resolveTaskTableColumnsSaveResponse(input: { currentSettings: Ap
     taskViewModeByProject: currentSettings.taskViewModeByProject,
     taskExpandedIdsByProject: currentSettings.taskExpandedIdsByProject,
     codeWorkspaceByProject: currentSettings.codeWorkspaceByProject,
+    sidebarConversationOrganization: currentSettings.sidebarConversationOrganization,
+    sidebarConversationCollapsedStatusIdsByProject: currentSettings.sidebarConversationCollapsedStatusIdsByProject,
   };
 }
 
@@ -5248,6 +5286,8 @@ export function mergeAppShellSettingsSaveResponse(input: { currentSettings: AppS
     taskViewModeByProject: currentSettings.taskViewModeByProject,
     taskExpandedIdsByProject: currentSettings.taskExpandedIdsByProject,
     codeWorkspaceByProject: currentSettings.codeWorkspaceByProject,
+    sidebarConversationOrganization: currentSettings.sidebarConversationOrganization,
+    sidebarConversationCollapsedStatusIdsByProject: currentSettings.sidebarConversationCollapsedStatusIdsByProject,
   };
 }
 
@@ -6958,6 +6998,8 @@ export function App(props: {
         defaultProjectId: null,
         pinnedProjectIds: [],
         collapsedProjectIds: [],
+        sidebarConversationOrganization: 'flat',
+        sidebarConversationCollapsedStatusIdsByProject: {},
         defaultModel: null,
         defaultTaskTemplateId: null,
         taskTableColumns: normalizeTaskTableColumnPreferences(),
@@ -7012,6 +7054,8 @@ export function App(props: {
               taskStatusFilterByProject: latest.taskStatusFilterByProject,
               taskViewModeByProject: latest.taskViewModeByProject,
               taskExpandedIdsByProject: latest.taskExpandedIdsByProject,
+              sidebarConversationOrganization: latest.sidebarConversationOrganization,
+              sidebarConversationCollapsedStatusIdsByProject: latest.sidebarConversationCollapsedStatusIdsByProject,
             }));
           })
           .catch((error) => recordLocalError('renderer-action', error));
@@ -7027,6 +7071,22 @@ export function App(props: {
   );
   const [taskStatusSettingsTargetId, setTaskStatusSettingsTargetId] = useState<string>(() => snapshot.projects[0]?.id ?? '__template__');
   const [taskManagementStatusReplacements, setTaskManagementStatusReplacements] = useState<Record<string, Record<string, string>>>({});
+  const taskManagementStatusReplacementsRef = useRef(taskManagementStatusReplacements);
+  const sidebarConversationPreferenceSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
+  taskManagementStatusReplacementsRef.current = taskManagementStatusReplacements;
+  const persistSidebarConversationPreferences = useCallback((): void => {
+    const saveAppShellSettings = props.onSaveAppShellSettings;
+    if (!saveAppShellSettings) return;
+    sidebarConversationPreferenceSaveQueueRef.current = sidebarConversationPreferenceSaveQueueRef.current
+      .catch(() => undefined)
+      .then(async () => {
+        const latestSettings = appShellSettingsRef.current;
+        await saveAppShellSettings(toAppShellSettingsSavePayload(latestSettings, taskManagementStatusReplacementsRef.current));
+      })
+      .catch((error: unknown) => {
+        recordLocalError('sidebar-conversation-preference-save', error);
+      });
+  }, [props.onSaveAppShellSettings]);
   useEffect(() => {
     setAppShellSettings((current) => {
       const template = resolveTaskManagementStatusConfig(current);
@@ -7664,20 +7724,37 @@ export function App(props: {
   }, [acknowledgeNativeConversationAttention, latestConversationContentVisible, selectedNativeConversation, zeusWindowForeground]);
   const nativeConversationGroups = useMemo<ProjectConversationGroup[]>(
     () =>
-      orderedProjects.map((project) => ({
-        projectId: project.id,
-        projectName: project.name,
-        conversations: [...(nativeConversationChoicesByProject[project.id]?.choices ?? [])].filter((conversation) => !conversation.archived).sort(compareConversationStageUpdatedDesc),
-        tasks: snapshot.tasks
-          .filter((task) => task.projectId === project.id)
-          .map((task) => ({
-            taskId: task.id,
-            taskCode: task.taskCode?.trim() || task.id,
-            taskTitle: task.title,
-            conversations: conversationTreeHiddenTaskIds.has(task.id) ? [] : [...(projectedTaskConversationChoices[task.id] ?? [])].filter((conversation) => !conversation.archived).sort(compareConversationStageUpdatedDesc),
+      orderedProjects.map((project) => {
+        const statusConfig = resolveTaskManagementStatusConfig(appShellSettings, project.id);
+        return {
+          projectId: project.id,
+          projectName: project.name,
+          conversations: [...(nativeConversationChoicesByProject[project.id]?.choices ?? [])].filter((conversation) => !conversation.archived).sort(compareConversationStageUpdatedDesc),
+          taskStatuses: statusConfig.statuses.map((status) => ({
+            id: status.id,
+            label: formatConfiguredTaskManagementStatus(status, statusConfig, appShellSettings.appLanguage),
           })),
-      })),
-    [conversationTreeHiddenTaskIds, nativeConversationChoicesByProject, orderedProjects, projectedTaskConversationChoices, snapshot.tasks],
+          tasks: snapshot.tasks
+            .filter((task) => task.projectId === project.id)
+            .map((task) => ({
+              taskId: task.id,
+              taskCode: task.taskCode?.trim() || task.id,
+              taskTitle: task.title,
+              managementStatus: resolveTaskManagementStatus(task),
+              conversations: conversationTreeHiddenTaskIds.has(task.id) ? [] : [...(projectedTaskConversationChoices[task.id] ?? [])].filter((conversation) => !conversation.archived).sort(compareConversationStageUpdatedDesc),
+            })),
+        };
+      }),
+    [
+      appShellSettings.appLanguage,
+      appShellSettings.taskManagementStatusByProject,
+      appShellSettings.taskManagementStatusTemplate,
+      conversationTreeHiddenTaskIds,
+      nativeConversationChoicesByProject,
+      orderedProjects,
+      projectedTaskConversationChoices,
+      snapshot.tasks,
+    ],
   );
   const reconcileNativeConversationProjectionStates = useCallback((choices: readonly NativeConversationChoice[]): void => {
     if (choices.length === 0) return;
@@ -10960,6 +11037,8 @@ export function App(props: {
         taskStatusFilterByProject: currentSettings.taskStatusFilterByProject,
         taskViewModeByProject: currentSettings.taskViewModeByProject,
         taskExpandedIdsByProject: currentSettings.taskExpandedIdsByProject,
+        sidebarConversationOrganization: currentSettings.sidebarConversationOrganization,
+        sidebarConversationCollapsedStatusIdsByProject: currentSettings.sidebarConversationCollapsedStatusIdsByProject,
       }));
       const savedPreferences = resolveTaskTableColumnsForProject(savedSettings, activeProjectId);
       setTaskTableLayoutDraft({ projectId: activeProjectId, preferences: savedPreferences });
@@ -11721,6 +11800,33 @@ export function App(props: {
     }
   }
 
+  function toggleSidebarConversationOrganization(): void {
+    const currentSettings = appShellSettingsRef.current;
+    const nextSettings = normalizeRendererAppShellSettings({
+      ...currentSettings,
+      sidebarConversationOrganization: currentSettings.sidebarConversationOrganization === 'task_status' ? 'flat' : 'task_status',
+    });
+    appShellSettingsRef.current = nextSettings;
+    setAppShellSettings(nextSettings);
+    persistSidebarConversationPreferences();
+  }
+
+  function toggleSidebarConversationStatusGroup(projectId: string, statusId: string): void {
+    const currentSettings = appShellSettingsRef.current;
+    const currentStatusIds = currentSettings.sidebarConversationCollapsedStatusIdsByProject[projectId] ?? [];
+    const nextStatusIds = currentStatusIds.includes(statusId) ? currentStatusIds.filter((candidate) => candidate !== statusId) : [...currentStatusIds, statusId];
+    const nextSettings = normalizeRendererAppShellSettings({
+      ...currentSettings,
+      sidebarConversationCollapsedStatusIdsByProject: {
+        ...currentSettings.sidebarConversationCollapsedStatusIdsByProject,
+        [projectId]: nextStatusIds,
+      },
+    });
+    appShellSettingsRef.current = nextSettings;
+    setAppShellSettings(nextSettings);
+    persistSidebarConversationPreferences();
+  }
+
   function repositoryPickerLabel(): string {
     if (actionState === 'creating-project') return uiCopy.sidebar.creatingRepository;
     return uiCopy.sidebar.selectRepository;
@@ -12185,6 +12291,8 @@ export function App(props: {
           projects={orderedProjects}
           pinnedProjectIds={appShellSettings.pinnedProjectIds}
           collapsedProjectIds={appShellSettings.collapsedProjectIds}
+          conversationOrganization={appShellSettings.sidebarConversationOrganization}
+          collapsedConversationStatusIdsByProject={appShellSettings.sidebarConversationCollapsedStatusIdsByProject}
           conversationGroups={nativeConversationGroups}
           selectedConversationId={selectedNativeConversationId}
           conversationStates={nativeConversationRuntimeStates}
@@ -12199,6 +12307,8 @@ export function App(props: {
           onOpenProjectSection={openProjectSection}
           onTogglePinnedProject={togglePinnedProject}
           onToggleProjectCollapsed={(projectId) => void toggleCollapsedProject(projectId)}
+          onToggleConversationOrganization={toggleSidebarConversationOrganization}
+          onToggleConversationStatusGroup={toggleSidebarConversationStatusGroup}
           onRevealProjectInFinder={(projectPath) => revealProjectInFinder(projectPath)}
           onRenameProject={(projectId, displayName) => renameProjectDisplayName(projectId, displayName)}
           onPrepareProjectDelete={setPendingProjectDeleteId}
@@ -14836,6 +14946,8 @@ function toSafeAppShellImport(
       | 'defaultProjectId'
       | 'pinnedProjectIds'
       | 'collapsedProjectIds'
+      | 'sidebarConversationOrganization'
+      | 'sidebarConversationCollapsedStatusIdsByProject'
       | 'defaultModel'
       | 'defaultTaskTemplateId'
       | 'taskTableColumns'
@@ -14863,6 +14975,8 @@ function toSafeAppShellImport(
     defaultProjectId: typeof raw.defaultProjectId === 'string' ? raw.defaultProjectId : null,
     pinnedProjectIds: Array.isArray(raw.pinnedProjectIds) ? raw.pinnedProjectIds.filter((id): id is string => typeof id === 'string') : [],
     collapsedProjectIds: Array.isArray(raw.collapsedProjectIds) ? raw.collapsedProjectIds.filter((id): id is string => typeof id === 'string') : [],
+    sidebarConversationOrganization: normalizeSidebarConversationOrganization(raw.sidebarConversationOrganization),
+    sidebarConversationCollapsedStatusIdsByProject: normalizeSidebarConversationCollapsedStatusIdsByProject(raw.sidebarConversationCollapsedStatusIdsByProject),
     defaultModel: typeof raw.defaultModel === 'string' ? raw.defaultModel : null,
     defaultTaskTemplateId: typeof raw.defaultTaskTemplateId === 'string' ? raw.defaultTaskTemplateId : null,
     taskTableColumns: normalizeTaskTableColumnPreferences(raw.taskTableColumns),
@@ -18343,6 +18457,8 @@ function SidebarNav(props: {
   projects: ProjectRecord[];
   pinnedProjectIds: string[];
   collapsedProjectIds: string[];
+  conversationOrganization: AppShellSettings['sidebarConversationOrganization'];
+  collapsedConversationStatusIdsByProject: Record<string, string[]>;
   conversationGroups: ProjectConversationGroup[];
   selectedConversationId?: string | null;
   conversationStates: Record<string, ConversationTreeRuntimeState>;
@@ -18357,6 +18473,8 @@ function SidebarNav(props: {
   onOpenProjectSection: (project: ProjectRecord, section: ProjectWorkspaceSection) => void;
   onTogglePinnedProject: (projectId: string) => void;
   onToggleProjectCollapsed: (projectId: string) => void;
+  onToggleConversationOrganization: () => void;
+  onToggleConversationStatusGroup: (projectId: string, statusId: string) => void;
   onRevealProjectInFinder: (projectPath: string) => Promise<void>;
   onRenameProject: (projectId: string, displayName: string) => Promise<void>;
   onPrepareProjectDelete: (projectId: string) => void;
@@ -18637,9 +18755,29 @@ function SidebarNav(props: {
       <section className="project-sidebar-list zeus-source-list" role="navigation" data-source-list-keyboard="vertical" aria-label={copy.projectListLabel} onKeyDown={handleSourceListKeyboardNavigation}>
         <div className="project-sidebar-heading">
           <span>{copy.projects}</span>
-          <button type="button" className="project-add-button" aria-label={copy.addProject} title={copy.addProject} onClick={props.onCreateProject} disabled={!props.canCreateProject} {...controlBusyProps(props.createProjectBusy)}>
-            <Plus aria-hidden="true" weight="regular" />
-          </button>
+          <span className="project-sidebar-heading-actions">
+            <button
+              type="button"
+              className="project-conversation-organization-button"
+              aria-label={props.conversationOrganization === 'task_status' ? copy.showConversationsFlat : copy.groupConversationsByTaskStatus}
+              title={props.conversationOrganization === 'task_status' ? copy.showConversationsFlat : copy.groupConversationsByTaskStatus}
+              onClick={props.onToggleConversationOrganization}
+            >
+              {props.conversationOrganization === 'task_status' ? (
+                <svg viewBox="0 0 20 20" focusable="false" aria-hidden="true">
+                  <path d="M4 5.2h12M4 10h12M4 14.8h12" />
+                </svg>
+              ) : (
+                <svg viewBox="0 0 20 20" focusable="false" aria-hidden="true">
+                  <path d="M6.2 4.4h9.8M6.2 7.2h7.2M6.2 12.8h9.8M6.2 15.6h7.2" />
+                  <path d="m3.5 4.4 1.2 1.4-1.2 1.4M3.5 12.8l1.2 1.4-1.2 1.4" />
+                </svg>
+              )}
+            </button>
+            <button type="button" className="project-add-button" aria-label={copy.addProject} title={copy.addProject} onClick={props.onCreateProject} disabled={!props.canCreateProject} {...controlBusyProps(props.createProjectBusy)}>
+              <Plus aria-hidden="true" weight="regular" />
+            </button>
+          </span>
         </div>
         {props.projects.length === 0 ? null : visibleProjects.length === 0 ? (
           <section className="project-inline-recovery-row project-search-empty-row" aria-label={copy.noProjectMatches}>
@@ -18815,6 +18953,9 @@ function SidebarNav(props: {
                             [project.id]: (current[project.id] ?? 6) + 10,
                           }))
                         }
+                        organization={props.conversationOrganization}
+                        collapsedStatusIdsByProject={props.collapsedConversationStatusIdsByProject}
+                        onToggleStatusGroup={props.onToggleConversationStatusGroup}
                       />
                     ) : null}
                   </div>

@@ -1117,6 +1117,65 @@ a {
     inline-size: 7px;
   }
 }
+.project-sidebar-conversations .session-conversation-status-group {
+  display: grid;
+  min-inline-size: 0;
+}
+.project-sidebar-conversations .session-conversation-status-group + .session-conversation-status-group {
+  margin-block-start: 2px;
+}
+.project-sidebar-conversations .session-conversation-status-group-toggle {
+  align-items: center;
+  appearance: none;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  color: var(--zeus-product-subtle);
+  display: grid;
+  font-size: 12px;
+  font-weight: 620;
+  gap: 3px;
+  grid-template-columns: 13px minmax(0, 1fr);
+  inline-size: 100%;
+  min-block-size: 24px;
+  padding: 0 6px 0 3px;
+  text-align: start;
+}
+.project-sidebar-conversations .session-conversation-status-group-toggle:hover,
+.project-sidebar-conversations .session-conversation-status-group-toggle:focus-visible {
+  background: var(--zeus-source-list-hover);
+  color: var(--zeus-product-muted);
+}
+.project-sidebar-conversations .session-conversation-status-group-toggle:focus-visible {
+  box-shadow: var(--zeus-control-focus);
+  outline: 0;
+}
+.project-sidebar-conversations .session-conversation-status-group-toggle strong {
+  font: inherit;
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.project-sidebar-conversations .session-conversation-status-group-chevron {
+  display: inline-block;
+  font-size: 17px;
+  font-weight: 400;
+  line-height: 1;
+  text-align: center;
+  transform: rotate(0deg);
+  transition: transform 120ms var(--zeus-motion-ease-out);
+}
+.project-sidebar-conversations .session-conversation-status-group-toggle[aria-expanded='true'] .session-conversation-status-group-chevron {
+  transform: rotate(90deg);
+}
+.project-sidebar-conversations .session-conversation-status-group-content {
+  margin-inline-start: 10px;
+  min-inline-size: 0;
+}
+.project-sidebar-conversations .session-conversation-project-direct-items:not(:empty) {
+  margin-block-end: 2px;
+}
 .project-first-sidebar .is-active-project-root {
   background: var(--zeus-source-list-selected);
   border-color: var(--zeus-product-line-soft);
@@ -20332,12 +20391,20 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   }
 }
 
-/* 2026-07-29 项目新增入口：标题行仅增加明确的加号动作，不引入无功能的折叠或更多菜单。 */
+/* 项目标题行承载全局会话组织切换与新增项目，两项都保持低噪音小图标。 */
 .macos-ai-app.zeus-shell .project-first-sidebar .project-sidebar-heading {
-  grid-template-columns: minmax(0, 1fr) 28px;
+  grid-template-columns: minmax(0, 1fr) auto;
 }
 
-.macos-ai-app.zeus-shell .project-first-sidebar .project-add-button {
+.macos-ai-app.zeus-shell .project-first-sidebar .project-sidebar-heading-actions {
+  align-items: center;
+  display: grid;
+  gap: 1px;
+  grid-auto-flow: column;
+  grid-auto-columns: 28px;
+}
+
+.macos-ai-app.zeus-shell .project-first-sidebar :where(.project-conversation-organization-button, .project-add-button) {
   align-items: center;
   appearance: none;
   background: transparent;
@@ -20355,17 +20422,23 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
     color 120ms var(--zeus-motion-ease-out);
 }
 
-.macos-ai-app.zeus-shell .project-first-sidebar .project-add-button svg {
+.macos-ai-app.zeus-shell .project-first-sidebar :where(.project-conversation-organization-button, .project-add-button) svg {
   block-size: 18px;
+  fill: none;
   inline-size: 18px;
+  stroke: currentcolor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.45;
+  vector-effect: non-scaling-stroke;
 }
 
-.macos-ai-app.zeus-shell .project-first-sidebar .project-add-button:hover:not(:disabled) {
+.macos-ai-app.zeus-shell .project-first-sidebar :where(.project-conversation-organization-button, .project-add-button):hover:not(:disabled) {
   background: var(--zeus-native-row-hover);
   color: var(--zeus-product-text);
 }
 
-.macos-ai-app.zeus-shell .project-first-sidebar .project-add-button:focus-visible {
+.macos-ai-app.zeus-shell .project-first-sidebar :where(.project-conversation-organization-button, .project-add-button):focus-visible {
   box-shadow: var(--zeus-control-focus);
   outline: 0;
 }
@@ -20374,6 +20447,12 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   background: transparent;
   border-color: transparent;
   color: var(--zeus-control-disabled-text);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .project-sidebar-conversations .session-conversation-status-group-chevron {
+    transition: none;
+  }
 }
 
 /* 项目会话入口显示未读会话数；没有未读时，运行态仍保留轻量动效。 */
