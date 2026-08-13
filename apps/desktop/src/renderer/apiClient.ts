@@ -1206,6 +1206,8 @@ export interface ProjectGitRepositorySnapshot {
   fileStatuses: NonNullable<DashboardSnapshot['git']['fileStatuses']>;
   conflictFiles: string[];
   localBranches: string[];
+  /** 同一 Git 仓库中已经由任一 worktree 检出的本地分支；混合版本宿主缺失时按空集合降级。 */
+  checkedOutBranches?: string[];
   remoteBranches: string[];
   remotes: string[];
   tags: string[];

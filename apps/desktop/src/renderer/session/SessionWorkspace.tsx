@@ -4,6 +4,7 @@ import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/c
 import { GlobeSimpleIcon as GlobeSimple } from '@phosphor-icons/react/dist/csr/GlobeSimple';
 import { animate as animateMotion, motion, useMotionValue, useTransform } from 'framer-motion';
 import type { ConversationFileLocation, ConversationOpenTarget, TurnChangeFile, ZeusBrowserPreparedSubmission } from '@zeus/shared';
+import type { ProjectGitAction, ProjectGitActionResponse, ProjectGitWorkbenchSnapshot, ProjectRecord } from '../apiClient.js';
 import { openConversationResourceInMain, openTurnChangeFileInMain } from '../appShellBridge.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 import { canSteerActiveTurn, type ComposerRuntimeSettings, ConversationComposer, resolveComposerKeyIntent } from './ConversationComposer.js';
@@ -59,6 +60,7 @@ import type { SessionCodeReviewSelection } from './SessionCodeReviewDialog.js';
 import { conversationDisplayTitle } from './conversationDisplayTitle.js';
 import { conversationRuntimePreferenceKind, readConversationRuntimePreferences, writeConversationRuntimePreferences } from './conversationRuntimePreferences.js';
 import { resolveModelCapability } from './modelSelection.js';
+import { NewConversationExecutionContext } from './NewConversationExecutionContext.js';
 
 export interface SessionWorkspaceTaskManagementStatus {
   id: string;
@@ -108,6 +110,9 @@ export interface SessionWorkspaceActions {
   onStartConversation?: (input: SessionWorkspaceStartInput) => void | boolean | NativeConversationStartPreparation | Promise<void | boolean | NativeConversationStartPreparation>;
   onStartProjectConversation?: (input: ProjectSessionWorkspaceStartInput) => void | boolean | Promise<void | boolean>;
   onLoadCapabilities?: (projectId: string) => Promise<CodexConversationCapabilities>;
+  onSelectNewConversationProject?: (projectId: string) => void;
+  onLoadNewConversationProjectGit?: (projectId: string) => Promise<ProjectGitWorkbenchSnapshot>;
+  onExecuteNewConversationProjectGit?: (projectId: string, repositoryId: string, action: ProjectGitAction) => Promise<ProjectGitActionResponse>;
   onReconnect?: () => void | Promise<void>;
   onDraftChange?: (draft: string) => void;
   onSubmit?: (delivery: 'queue' | 'steer_now', settings?: NativeTurnSettingsSelection) => void | Promise<void>;
@@ -983,6 +988,7 @@ export interface SessionWorkspaceProps {
   task: SessionWorkspaceTask | null;
   owner?: SessionConversationOwner;
   tasks?: SessionWorkspaceTask[];
+  projects?: readonly Pick<ProjectRecord, 'id' | 'name' | 'localPath'>[];
   choices?: NativeConversationChoice[];
   suppressComposer?: boolean;
   /** 只隐藏普通输入框，审批、回答等旧正文动作仍保持可用。 */
@@ -2121,6 +2127,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
           language={props.language}
           owner={owner}
           task={props.task}
+          projects={props.projects}
           autoFocus={props.autoFocusNewConversation}
           loadState={props.loadState}
           loadError={props.loadError}
@@ -2128,6 +2135,9 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
           onStartTask={actions.onStartConversation}
           onStartProject={actions.onStartProjectConversation}
           onLoadCapabilities={actions.onLoadCapabilities}
+          onSelectProject={actions.onSelectNewConversationProject}
+          onLoadProjectGit={actions.onLoadNewConversationProjectGit}
+          onExecuteProjectGit={actions.onExecuteNewConversationProjectGit}
           onChooseAttachments={actions.onChooseStartAttachments}
         />
       )}
@@ -2199,6 +2209,7 @@ function NewConversationComposer(props: {
   language: SessionUiLanguage;
   owner?: SessionConversationOwner;
   task: SessionWorkspaceTask | null;
+  projects?: readonly Pick<ProjectRecord, 'id' | 'name' | 'localPath'>[];
   inheritConversationId?: string;
   autoFocus?: boolean;
   docked?: boolean;
@@ -2210,21 +2221,27 @@ function NewConversationComposer(props: {
   onStartTask?: SessionWorkspaceActions['onStartConversation'];
   onStartProject?: SessionWorkspaceActions['onStartProjectConversation'];
   onLoadCapabilities?: SessionWorkspaceActions['onLoadCapabilities'];
+  onSelectProject?: SessionWorkspaceActions['onSelectNewConversationProject'];
+  onLoadProjectGit?: SessionWorkspaceActions['onLoadNewConversationProjectGit'];
+  onExecuteProjectGit?: SessionWorkspaceActions['onExecuteNewConversationProjectGit'];
   onChooseAttachments?: SessionWorkspaceActions['onChooseStartAttachments'];
   onAccepted?: () => void | Promise<void>;
 }) {
   const copy = labels[props.language];
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const runtimePreferencesInitializedRef = useRef(false);
   const [content, setContent] = useState(() => props.initialContent ?? '');
   const [attachments, setAttachments] = useState<NativeConversationAttachment[]>(() => [...(props.initialAttachments ?? [])]);
   const [permissionMode, setPermissionMode] = useState<NativePermissionMode>('auto');
   const [collaborationMode, setCollaborationMode] = useState<NativeCollaborationMode>('default');
   const [capabilities, setCapabilities] = useState<CodexConversationCapabilities | null>(props.capabilities ?? null);
+  const [capabilitiesLoading, setCapabilitiesLoading] = useState(!props.capabilities);
   const [selectedModelId, setSelectedModelId] = useState('');
   const [selectedEffort, setSelectedEffort] = useState('');
   const [serviceTierSelection, setServiceTierSelection] = useState<NativeServiceTierSelection>({ type: 'standard' });
   const [isComposing, setIsComposing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [executionContextBusy, setExecutionContextBusy] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
   const inputResources = useConversationInputResources({
     textareaRef,
@@ -2248,16 +2265,22 @@ function NewConversationComposer(props: {
   useEffect(() => {
     const projectId = props.owner?.projectId;
     if (!projectId) return;
-    const remembered = readConversationRuntimePreferences(browserConversationStorage(), projectId, conversationRuntimePreferenceKind(props.owner));
-    setSelectedModelId(remembered?.model ?? '');
-    setSelectedEffort(remembered?.effort ?? '');
-    setPermissionMode(remembered?.permissionMode ?? 'auto');
-    setCollaborationMode(remembered?.collaborationMode ?? 'default');
-    setServiceTierSelection(remembered?.serviceTier ?? { type: 'standard' });
+    if (!runtimePreferencesInitializedRef.current) {
+      const remembered = readConversationRuntimePreferences(browserConversationStorage(), projectId, conversationRuntimePreferenceKind(props.owner));
+      setSelectedModelId(remembered?.model ?? '');
+      setSelectedEffort(remembered?.effort ?? '');
+      setPermissionMode(remembered?.permissionMode ?? 'auto');
+      setCollaborationMode(remembered?.collaborationMode ?? 'default');
+      setServiceTierSelection(remembered?.serviceTier ?? { type: 'standard' });
+      runtimePreferencesInitializedRef.current = true;
+    }
     if (props.capabilities) {
       setCapabilities(props.capabilities);
+      setCapabilitiesLoading(false);
       return;
     }
+    setCapabilities(null);
+    setCapabilitiesLoading(true);
     let active = true;
     void props
       .onLoadCapabilities?.(projectId)
@@ -2266,6 +2289,9 @@ function NewConversationComposer(props: {
       })
       .catch((error: unknown) => {
         if (active) setLocalError(error instanceof Error ? error.message : String(error));
+      })
+      .finally(() => {
+        if (active) setCapabilitiesLoading(false);
       });
     return () => {
       active = false;
@@ -2317,7 +2343,7 @@ function NewConversationComposer(props: {
   }, []);
 
   async function submit(): Promise<void> {
-    if (!props.owner || submitting || (!content.trim() && attachments.length === 0)) return;
+    if (!props.owner || submitting || executionContextBusy || capabilitiesLoading || !selectedModel || (!content.trim() && attachments.length === 0)) return;
     setSubmitting(true);
     setLocalError(null);
     try {
@@ -2353,7 +2379,7 @@ function NewConversationComposer(props: {
     <section
       className="session-composer-shell session-new-conversation-composer"
       aria-label={copy.newInput}
-      aria-busy={submitting || inputResources.processing || undefined}
+      aria-busy={submitting || executionContextBusy || capabilitiesLoading || inputResources.processing || undefined}
       data-resource-dragging={inputResources.dragging ? 'true' : 'false'}
       onDragEnter={inputResources.handleDragEnter}
       onDragOver={inputResources.handleDragOver}
@@ -2373,6 +2399,18 @@ function NewConversationComposer(props: {
         onRestorePastedText={inputResources.restorePastedText}
       />
       <div className="session-composer-input-frame">
+        {props.owner?.kind === 'project' && props.projects?.length ? (
+          <NewConversationExecutionContext
+            language={props.language}
+            projectId={props.owner.projectId}
+            projects={props.projects}
+            disabled={submitting}
+            onSelectProject={props.onSelectProject}
+            onLoadProjectGit={props.onLoadProjectGit}
+            onExecuteProjectGit={props.onExecuteProjectGit}
+            onBusyChange={setExecutionContextBusy}
+          />
+        ) : null}
         <textarea
           ref={textareaRef}
           aria-label={copy.newInput}
@@ -2451,7 +2489,7 @@ function NewConversationComposer(props: {
                 className="session-send-button"
                 aria-label={copy.send}
                 onClick={() => void submit()}
-                disabled={submitting || inputResources.processing || !props.owner || (!content.trim() && attachments.length === 0)}
+                disabled={submitting || executionContextBusy || capabilitiesLoading || inputResources.processing || !props.owner || !selectedModel || (!content.trim() && attachments.length === 0)}
                 aria-busy={submitting || undefined}
               >
                 {submitting ? <span className="session-command-spinner" aria-hidden="true" /> : <span aria-hidden="true">↑</span>}
