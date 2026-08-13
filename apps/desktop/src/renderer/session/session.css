@@ -1242,6 +1242,7 @@
     .session-question-panel,
     .session-plan-progress,
     .session-turn-change-card,
+    .session-turn-process,
     .session-turn-duration,
     .session-transcript-empty,
     .session-queued-messages,
@@ -7487,6 +7488,7 @@
     .session-question-panel,
     .session-plan-progress,
     .session-turn-change-card,
+    .session-turn-process,
     .session-turn-duration,
     .session-transcript-empty,
     .session-latest-turn-spacer
@@ -12469,18 +12471,16 @@
 }
 
 .session-codex-parity-v1 .session-turn-duration {
-  display: block;
+  align-items: stretch;
+  display: grid;
+  gap: 0;
   inline-size: min(var(--session-thread-max), 100%);
+  justify-content: stretch;
   margin-block: 2px;
 }
 
-.session-codex-parity-v1 .session-turn-duration > details,
 .session-codex-parity-v1 .session-turn-duration > p {
   margin: 0;
-}
-
-.session-codex-parity-v1 .session-turn-duration > details {
-  display: grid;
 }
 
 .session-codex-parity-v1 .session-turn-duration::before,
@@ -12489,7 +12489,6 @@
   display: none;
 }
 
-.session-codex-parity-v1 .session-turn-duration > details > summary,
 .session-codex-parity-v1 .session-turn-duration > p {
   align-items: center;
   color: var(--session-text-muted);
@@ -12497,21 +12496,10 @@
   font-size: 11px;
   gap: 10px;
   justify-content: center;
-  list-style: none;
   min-block-size: 22px;
   padding: 0 2px;
 }
 
-.session-codex-parity-v1 .session-turn-duration > details > summary {
-  cursor: pointer;
-}
-
-.session-codex-parity-v1 .session-turn-duration > details > summary::-webkit-details-marker {
-  display: none;
-}
-
-.session-codex-parity-v1 .session-turn-duration > details > summary::before,
-.session-codex-parity-v1 .session-turn-duration > details > summary::after,
 .session-codex-parity-v1 .session-turn-duration > p::before,
 .session-codex-parity-v1 .session-turn-duration > p::after {
   background: var(--session-line-soft);
@@ -12519,27 +12507,6 @@
   content: '';
   flex: 1 1 0;
   max-inline-size: 72px;
-}
-
-.session-codex-parity-v1 .session-turn-duration > details > summary:hover {
-  color: var(--session-text);
-}
-
-.session-codex-parity-v1 .session-turn-duration > details > summary:focus-visible {
-  border-radius: 7px;
-  outline: 2px solid var(--session-focus-outline);
-  outline-offset: 2px;
-}
-
-.session-codex-parity-v1 .session-turn-duration-caret {
-  block-size: 13px;
-  flex: 0 0 auto;
-  inline-size: 13px;
-  transition: transform 140ms var(--session-ease-out);
-}
-
-.session-codex-parity-v1 .session-turn-duration > details[open] .session-turn-duration-caret {
-  transform: rotate(180deg);
 }
 
 .session-codex-parity-v1 .session-turn-duration time {
@@ -12551,21 +12518,11 @@
   display: grid;
   gap: 14px;
   min-inline-size: 0;
-  padding-block-start: 6px;
-}
-
-.session-codex-parity-v1 .session-turn-duration[data-active='true'] > details > summary {
-  order: 2;
-}
-
-.session-codex-parity-v1 .session-turn-duration[data-active='true'] .session-turn-duration-body {
-  order: 1;
   padding-block-end: 6px;
-  padding-block-start: 0;
 }
 
 .session-codex-parity-v1
-  .session-turn-duration-body
+  :where(.session-turn-duration-body, .session-turn-process-body)
   > :where(.session-thread-item, .session-activity-group, .session-reasoning-summary, .session-plan-summary, .session-plan-entry, .session-question-panel, .session-plan-progress, .session-transcript-thinking) {
   inline-size: 100%;
   margin-inline: 0;
@@ -12577,8 +12534,79 @@
   margin-inline: 0 !important;
 }
 
+.session-codex-parity-v1 .session-turn-process {
+  display: grid;
+  inline-size: min(var(--session-thread-max), 100%);
+  margin-block: 2px;
+  min-inline-size: 0;
+}
+
+.session-codex-parity-v1 .session-turn-process-control {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  min-block-size: 24px;
+}
+
+.session-codex-parity-v1 .session-turn-process-control::before,
+.session-codex-parity-v1 .session-turn-process-control::after {
+  background: var(--session-line-soft);
+  block-size: 1px;
+  content: '';
+  flex: 1 1 0;
+  max-inline-size: 72px;
+}
+
+.session-codex-parity-v1 .session-turn-process-control > button {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  color: var(--session-text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  flex: 0 0 auto;
+  font: inherit;
+  font-size: 11px;
+  gap: 6px;
+  min-block-size: 24px;
+  padding: 0 4px;
+}
+
+.session-codex-parity-v1 .session-turn-process-control > button:hover {
+  color: var(--session-text);
+}
+
+.session-codex-parity-v1 .session-turn-process-control > button:focus-visible {
+  outline: 2px solid var(--session-focus-outline);
+  outline-offset: 2px;
+}
+
+.session-codex-parity-v1 .session-turn-process-caret {
+  block-size: 13px;
+  flex: 0 0 auto;
+  inline-size: 13px;
+  transition: transform 140ms var(--session-ease-out);
+}
+
+.session-codex-parity-v1 .session-turn-process[data-open='true'] .session-turn-process-caret {
+  transform: rotate(180deg);
+}
+
+.session-codex-parity-v1 .session-turn-process-body {
+  display: grid;
+  gap: 14px;
+  min-inline-size: 0;
+  padding-block: 6px 2px;
+}
+
+.session-codex-parity-v1 .session-turn-process-body[hidden] {
+  display: none;
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .session-codex-parity-v1 .session-turn-duration-caret {
+  .session-codex-parity-v1 .session-turn-process-caret {
     transition: none;
   }
 }

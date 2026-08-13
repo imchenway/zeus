@@ -1,5 +1,5 @@
 import { Fragment, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { isOperationalActivityItem, SessionActivityGroup, SessionTurnDuration } from './SessionActivity.js';
+import { isActiveSessionTurn, isOperationalActivityItem, SessionActivityGroup, SessionTurnDuration, SessionTurnProcessDisclosure } from './SessionActivity.js';
 import { itemRole, type SessionUiLanguage, ThreadItemView, transcriptItemText } from './ThreadItemView.js';
 import { PlanSummary } from './PlanSummary.js';
 import type {
@@ -95,7 +95,6 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   const answeredRequests = useMemo(() => props.state.pendingRequests.filter(isAnsweredUserInputRequest), [props.state.pendingRequests]);
   const transcriptRows = useMemo(() => projectTranscriptRows(items, answeredRequests), [answeredRequests, items]);
   const turnRows = useMemo(() => projectTranscriptTurnRows(transcriptRows, props.state.activeTurnId), [props.state.activeTurnId, transcriptRows]);
-  const turnWorkIds = useMemo(() => new Set(turnRows.filter((row): row is TranscriptTurnWorkRow => row.kind === 'turn_work').map((row) => row.turnId)), [turnRows]);
   const renderedTurnIds = useMemo(
     () =>
       new Set(turnRows.flatMap((row) => (row.kind === 'answered_request' ? [] : [row.kind === 'turn_work' ? row.turnId : row.kind === 'item' ? row.item.turnId : row.items[0]?.turnId]).filter((turnId): turnId is string => Boolean(turnId)))),
@@ -243,16 +242,26 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
                   );
                 }
                 const containsLastItem = row.rows.some((child) => transcriptRowContainsItemKey(child, lastItemKeyByTurn[row.turnId]));
-                const renderMarkers = !turnRows.some((candidate) => candidate.kind === 'item' && isFinalAnswerItem(candidate.item) && candidate.item.turnId === row.turnId) && containsLastItem;
+                const active = isActiveSessionTurn(turn);
+                const process = row.rows.map((child) => (
+                  <Fragment key={child.key}>{renderTranscriptRow(child, transcriptRowRenderOptions(props, items, showThinking && props.state.activeTurnId === row.turnId, lastUserKey, true, maintainLatestPosition))}</Fragment>
+                ));
                 return (
                   <Fragment key={row.key}>
-                    <SessionTurnDuration turn={turn} requests={props.state.pendingRequests} language={props.language}>
-                      {row.rows.map((child) => (
-                        <Fragment key={child.key}>{renderTranscriptRow(child, transcriptRowRenderOptions(props, items, showThinking && props.state.activeTurnId === row.turnId, lastUserKey, true, maintainLatestPosition))}</Fragment>
-                      ))}
-                      {showThinking && props.state.activeTurnId === row.turnId ? <TranscriptThinking language={props.language} /> : null}
-                    </SessionTurnDuration>
-                    {renderMarkers ? renderTurnArtifacts(row.turnId, props, lastItemKeyByTurn[row.turnId], providerErrorItemsByTurn.get(row.turnId)) : null}
+                    {active ? (
+                      <SessionTurnDuration turn={turn} requests={props.state.pendingRequests} language={props.language}>
+                        {process}
+                        {showThinking && props.state.activeTurnId === row.turnId ? <TranscriptThinking language={props.language} /> : null}
+                      </SessionTurnDuration>
+                    ) : (
+                      <SessionTurnProcessDisclosure language={props.language}>{process}</SessionTurnProcessDisclosure>
+                    )}
+                    {!active && containsLastItem ? (
+                      <>
+                        {renderTurnArtifacts(row.turnId, props, lastItemKeyByTurn[row.turnId], providerErrorItemsByTurn.get(row.turnId))}
+                        <SessionTurnDuration turn={turn} requests={props.state.pendingRequests} language={props.language} />
+                      </>
+                    ) : null}
                   </Fragment>
                 );
               }
@@ -260,16 +269,11 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
               const lastRowItem = rowItems[rowItems.length - 1]!;
               const turn = props.state.turnsByProviderId[lastRowItem.turnId];
               const closesVisibleTurn = lastItemKeyByTurn[lastRowItem.turnId] === lastRowItem.key;
-              const finalAnswer = row.kind === 'item' && isFinalAnswerItem(row.item);
               return (
                 <Fragment key={row.key}>
-                  {finalAnswer && turn && !turnWorkIds.has(lastRowItem.turnId) ? (
-                    <SessionTurnDuration turn={turn} requests={props.state.pendingRequests} language={props.language}>
-                      {showThinking && props.state.activeTurnId === lastRowItem.turnId ? <TranscriptThinking language={props.language} /> : null}
-                    </SessionTurnDuration>
-                  ) : null}
                   {renderTranscriptRow(row, transcriptRowRenderOptions(props, items, showThinking, lastUserKey, false, maintainLatestPosition))}
                   {closesVisibleTurn ? renderTurnArtifacts(lastRowItem.turnId, props, lastRowItem.key, providerErrorItemsByTurn.get(lastRowItem.turnId)) : null}
+                  {closesVisibleTurn && turn && !isActiveSessionTurn(turn) ? <SessionTurnDuration turn={turn} requests={props.state.pendingRequests} language={props.language} /> : null}
                 </Fragment>
               );
             })
