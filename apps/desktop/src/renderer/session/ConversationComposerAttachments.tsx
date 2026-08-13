@@ -5,7 +5,9 @@ export interface ConversationComposerAttachmentsProps {
   attachments: NativeConversationAttachment[];
   language: 'zh-CN' | 'en-US';
   disabled: boolean;
+  ariaLabel?: string;
   className?: string;
+  onActivate?: (attachment: NativeConversationAttachment, trigger: HTMLButtonElement) => void;
   onRemove?: (attachment: NativeConversationAttachment) => void;
   onRestorePastedText?: (attachment: NativeConversationAttachment) => void;
 }
@@ -18,6 +20,7 @@ export function ConversationComposerAttachments(props: ConversationComposerAttac
     <PendingResourceCards
       resources={resources}
       language={props.language}
+      ariaLabel={props.ariaLabel}
       disabled={props.disabled}
       className={['session-composer-attachments', props.className].filter(Boolean).join(' ')}
       onLoadPreview={async (resource) => {
@@ -28,6 +31,14 @@ export function ConversationComposerAttachments(props: ConversationComposerAttac
           ...(attachment.uploadRef ? { uploadRef: attachment.uploadRef } : {}),
         });
       }}
+      onActivate={
+        props.onActivate
+          ? (resource, trigger) => {
+              const attachment = byId.get(resource.id);
+              if (attachment) props.onActivate?.(attachment, trigger);
+            }
+          : undefined
+      }
       onRemove={
         props.onRemove
           ? (resource) => {
