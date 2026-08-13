@@ -258,7 +258,6 @@ function selectedTaskPushContexts<T extends TaskPushContextOption>(
 type TaskPushContextSelections = TaskModelPushForm['parentContextSelections'];
 
 function TaskPushCurrentConversationPicker(props: { options: TaskPushContextConversationOption[]; selectedIds: string[]; busy: boolean; zh: boolean; onChange: (conversationIds: string[]) => void }) {
-  if (props.options.length === 0) return null;
   const selectedIds = new Set(props.selectedIds);
   return (
     <section className="task-model-push-parent-context task-model-push-current-conversations" aria-label={props.zh ? '当前任务历史会话信息' : 'Current task conversation history'}>
@@ -267,29 +266,37 @@ function TaskPushCurrentConversationPicker(props: { options: TaskPushContextConv
         <small>{props.zh ? '选择本次需要发送的历史会话' : 'Select the previous conversations to send with this task'}</small>
       </span>
       <div className="task-model-push-parent-list">
-        <fieldset className="task-model-push-parent is-selected">
-          <div className="task-model-push-parent-resources">
-            <div>
-              {props.options.map((conversation) => (
-                <label key={conversation.id} className={!conversation.available ? 'is-unavailable' : undefined}>
-                  <input
-                    type="checkbox"
-                    checked={selectedIds.has(conversation.id)}
-                    onChange={(event) => props.onChange(event.currentTarget.checked ? [...props.selectedIds.filter((id) => id !== conversation.id), conversation.id] : props.selectedIds.filter((id) => id !== conversation.id))}
-                    disabled={props.busy || !conversation.available}
-                  />
-                  <span>
-                    <strong>{conversation.title}</strong>
-                    <small>
-                      {conversation.archived ? (props.zh ? '已归档 · ' : 'Archived · ') : ''}
-                      {conversation.available ? conversation.path : conversation.unavailableReason}
-                    </small>
-                  </span>
-                </label>
-              ))}
+        {props.options.length > 0 ? (
+          <fieldset className="task-model-push-parent is-selected">
+            <div className="task-model-push-parent-resources">
+              <div>
+                {props.options.map((conversation) => (
+                  <label key={conversation.id} className={!conversation.available ? 'is-unavailable' : undefined}>
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.has(conversation.id)}
+                      onChange={(event) => props.onChange(event.currentTarget.checked ? [...props.selectedIds.filter((id) => id !== conversation.id), conversation.id] : props.selectedIds.filter((id) => id !== conversation.id))}
+                      disabled={props.busy || !conversation.available}
+                    />
+                    <span>
+                      <strong>{conversation.title}</strong>
+                      <small>
+                        {conversation.archived ? (props.zh ? '已归档 · ' : 'Archived · ') : ''}
+                        {conversation.available ? conversation.path : conversation.unavailableReason}
+                      </small>
+                    </span>
+                  </label>
+                ))}
+              </div>
             </div>
-          </div>
-        </fieldset>
+          </fieldset>
+        ) : (
+          <p className="task-model-push-context-empty" role="status">
+            {props.zh
+              ? '当前任务还没有关联会话。先从当前任务创建一次会话；会话建立后，可在这里选择它作为本次推送的上下文。'
+              : 'This task has no associated conversations yet. Create a conversation from this task first, then select it here as context for a later push.'}
+          </p>
+        )}
       </div>
     </section>
   );
