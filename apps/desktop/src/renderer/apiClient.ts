@@ -936,6 +936,7 @@ export interface LoadRuntimeSessionsRequest {
 }
 
 export interface CreateTaskFromRuntimeSessionRequest {
+  idempotencyKey: string;
   title?: string;
   instruction?: string;
 }
@@ -1061,6 +1062,7 @@ export interface GraphConversationHistoryPage {
 }
 
 export interface CreateTaskFromGraphConversationRequest {
+  idempotencyKey: string;
   intent?: string;
 }
 
@@ -1343,6 +1345,7 @@ export interface LoadProjectsRequest {
 }
 
 export interface CreateTaskRequest {
+  idempotencyKey: string;
   projectId: string;
   parentTaskId?: string | null;
   title: string;
@@ -1406,6 +1409,7 @@ export interface UpdateTaskRequest {
 export interface CreateTaskFromGraphNodeRequest {
   projectId: string;
   intent?: string;
+  idempotencyKey: string;
 }
 
 export interface CreateProjectGraphTaskRequest {
@@ -1427,6 +1431,7 @@ export interface CreateTaskTemplateRequest {
 }
 
 export interface CreateTaskFromTemplateRequest {
+  idempotencyKey: string;
   projectId: string;
   title?: string;
   variables?: Record<string, string>;
@@ -1602,7 +1607,15 @@ export interface DashboardClient {
     },
   ) => Promise<{ integration: TaskIntegrationRecord; result?: TaskIntegrationResult }>;
   loadTaskIntegrationConflict: (taskId: string, integrationId: string, path: string) => Promise<TaskIntegrationConflictFile>;
-  startTaskIntegrationConflictAi: (taskId: string, integrationId: string, path: string, content: string, permissionMode: TaskIntegrationConflictPermissionMode, idempotencyKey: string) => Promise<TaskIntegrationConflictAiSession>;
+  startTaskIntegrationConflictAi: (
+    taskId: string,
+    integrationId: string,
+    path: string,
+    content: string,
+    fingerprint: string,
+    permissionMode: TaskIntegrationConflictPermissionMode,
+    idempotencyKey: string,
+  ) => Promise<TaskIntegrationConflictAiSession>;
   resolveTaskIntegrationConflict: (taskId: string, integrationId: string, path: string, content: string) => Promise<{ integration: TaskIntegrationRecord; result: { path: string; remainingConflictFiles: string[] } }>;
   finalizeTaskIntegration: (
     taskId: string,
@@ -2092,11 +2105,11 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
         body: JSON.stringify(input),
       }),
     loadTaskIntegrationConflict: (taskId, integrationId, path) => request<TaskIntegrationConflictFile>(`/api/tasks/${encodeURIComponent(taskId)}/integrations/${encodeURIComponent(integrationId)}/conflict?path=${encodeURIComponent(path)}`),
-    startTaskIntegrationConflictAi: (taskId, integrationId, path, content, permissionMode, idempotencyKey) =>
+    startTaskIntegrationConflictAi: (taskId, integrationId, path, content, fingerprint, permissionMode, idempotencyKey) =>
       request<TaskIntegrationConflictAiSession>(`/api/tasks/${encodeURIComponent(taskId)}/integrations/${encodeURIComponent(integrationId)}/conflict/ai-session?path=${encodeURIComponent(path)}`, {
         method: 'POST',
         headers: { 'idempotency-key': idempotencyKey },
-        body: JSON.stringify({ content, permissionMode }),
+        body: JSON.stringify({ content, fingerprint, permissionMode }),
       }),
     resolveTaskIntegrationConflict: (taskId, integrationId, path, content) =>
       request<{ integration: TaskIntegrationRecord; result: { path: string; remainingConflictFiles: string[] } }>(
@@ -2338,11 +2351,14 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
       request<AiRuntimeSession>(`/api/runtime/sessions/${sessionId}`, {
         method: 'DELETE',
       }),
-    createTaskFromRuntimeSession: (sessionId, input) =>
-      request<TaskRecord>(`/api/runtime/sessions/${sessionId}/tasks`, {
+    createTaskFromRuntimeSession: (sessionId, input) => {
+      const { idempotencyKey, ...body } = input;
+      return request<TaskRecord>(`/api/runtime/sessions/${sessionId}/tasks`, {
         method: 'POST',
-        body: JSON.stringify(input),
-      }),
+        headers: { 'idempotency-key': idempotencyKey },
+        body: JSON.stringify(body),
+      });
+    },
     loadSecuritySecrets: () => request<SecuritySecretsSnapshot>('/api/security/secrets'),
     loadSecurityAuditLogs: () => request<SecurityAuditLogEntry[]>('/api/security/audit-logs'),
     loadReleaseStatus: () => request<ReleaseStatusSnapshot>('/api/release/status'),
@@ -2442,7 +2458,11 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
       }),
     archiveGraphConversation: (projectId, conversationId) => request<GraphConversationHistoryItem>(`/api/projects/${projectId}/conversations/${conversationId}/archive`, { method: 'POST' }),
     restoreGraphConversation: (projectId, conversationId) => request<GraphConversationHistoryItem>(`/api/projects/${projectId}/conversations/${conversationId}/restore`, { method: 'POST' }),
-    createTaskFromGraphConversation: (projectId, conversationId, input) => request<TaskRecord>(`/api/projects/${projectId}/conversations/${conversationId}/tasks`, { method: 'POST', body: JSON.stringify(input ?? {}) }),
+    createTaskFromGraphConversation: (projectId, conversationId, input) => {
+      const idempotencyKey = input?.idempotencyKey ?? crypto.randomUUID();
+      const body = input?.intent === undefined ? {} : { intent: input.intent };
+      return request<TaskRecord>(`/api/projects/${projectId}/conversations/${conversationId}/tasks`, { method: 'POST', headers: { 'idempotency-key': idempotencyKey }, body: JSON.stringify(body) });
+    },
     loadGraphEdgeDetail: (edgeId) => request<GraphEdgeDetail>(`/api/graph/edges/${edgeId}`),
     loadGraphNeighborhood: (nodeId, depth = 1) => request<GraphNeighborhood>(`/api/graph/nodes/${nodeId}/neighborhood?depth=${depth}`),
     loadProjects: (input) => request<ProjectRecord[]>(`/api/projects${input?.query ? `?query=${encodeURIComponent(input.query)}` : ''}`),
@@ -2497,11 +2517,14 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
       }),
     loadProjectScanStatus: (projectId) => request<ProjectScanStatus>(`/api/projects/${projectId}/scan-status`),
     loadProjectOverview: (projectId) => request<ProjectOverview>(`/api/projects/${projectId}/overview`),
-    createTask: (input) =>
-      request<TaskRecord>('/api/tasks', {
+    createTask: (input) => {
+      const { idempotencyKey, ...body } = input;
+      return request<TaskRecord>('/api/tasks', {
         method: 'POST',
-        body: JSON.stringify(input),
-      }),
+        headers: { 'idempotency-key': idempotencyKey },
+        body: JSON.stringify(body),
+      });
+    },
     loadTasks: (input) =>
       request<TaskRecord[]>(
         `/api/tasks?projectId=${encodeURIComponent(input.projectId)}${input.query ? `&query=${encodeURIComponent(input.query)}` : ''}${input.managementStatus ? `&managementStatus=${encodeURIComponent(input.managementStatus)}` : ''}${input.tag ? `&tag=${encodeURIComponent(input.tag)}` : ''}${input.sortBy ? `&sortBy=${encodeURIComponent(input.sortBy)}` : ''}${input.sortDirection ? `&sortDirection=${encodeURIComponent(input.sortDirection)}` : ''}`,
@@ -2534,11 +2557,14 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
       }),
     cancelTask: (taskId) => request<TaskRecord>(`/api/tasks/${taskId}/cancel`, { method: 'POST' }),
     retryTask: (taskId) => request<TaskRecord>(`/api/tasks/${taskId}/retry`, { method: 'POST' }),
-    createTaskFromGraphNode: (nodeId, input) =>
-      request<TaskRecord>(`/api/graph/nodes/${nodeId}/tasks`, {
+    createTaskFromGraphNode: (nodeId, input) => {
+      const { idempotencyKey, ...body } = input;
+      return request<TaskRecord>(`/api/graph/nodes/${nodeId}/tasks`, {
         method: 'POST',
-        body: JSON.stringify(input),
-      }),
+        headers: { 'idempotency-key': idempotencyKey },
+        body: JSON.stringify(body),
+      });
+    },
     // 项目级图谱任务接口对齐设计书 7.7；renderer 只传意图和节点/视图 id，不拼装图谱上下文。
     createProjectTaskFromGraphNode: (projectId, nodeId, input) => request<TaskRecord>(`/api/projects/${projectId}/graph/nodes/${nodeId}/create-task`, { method: 'POST', body: JSON.stringify(input ?? {}) }),
     createProjectTaskFromGraphView: (projectId, viewId, input) => request<TaskRecord>(`/api/projects/${projectId}/graph/views/${viewId}/create-task`, { method: 'POST', body: JSON.stringify(input ?? {}) }),
@@ -2552,11 +2578,14 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
         method: 'POST',
         body: JSON.stringify(input),
       }),
-    createTaskFromTemplate: (templateId, input) =>
-      request<TaskRecord>(`/api/task-templates/${templateId}/tasks`, {
+    createTaskFromTemplate: (templateId, input) => {
+      const { idempotencyKey, ...body } = input;
+      return request<TaskRecord>(`/api/task-templates/${templateId}/tasks`, {
         method: 'POST',
-        body: JSON.stringify(input),
-      }),
+        headers: { 'idempotency-key': idempotencyKey },
+        body: JSON.stringify(body),
+      });
+    },
     loadGitDiff: () => request<GitDiffSummary>('/api/git/diff'),
     loadProjectGitStatus: (projectId) => request<GitStatusSummary>(`/api/projects/${projectId}/git/status`),
     loadProjectGitWorkbench: (projectId) => currentOptions.projectGitWorkbench?.loadWorkbench(projectId) ?? request<ProjectGitWorkbenchSnapshot>(`/api/projects/${projectId}/git/workbench`),

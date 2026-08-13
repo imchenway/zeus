@@ -7,7 +7,7 @@ export type NativeConversationRunState =
   | { type: 'dispatching'; submissionId: string }
   | { type: 'active'; turnId: string; phase: 'prework' | 'final_answer' }
   | { type: 'waiting'; turnId: string; requestId: string; reason: 'approval' | 'user_input' }
-  | { type: 'paused'; reason: 'interrupted' | 'transport_unavailable' | 'provider_archived' | 'recovery_required' };
+  | { type: 'paused'; reason: 'interrupted' | 'transport_unavailable' | 'provider_archived' | 'recovery_required' | 'conflict_preparing' | 'conflict_preparation_failed' };
 
 export type NativeOperationStatus = 'queued' | 'active' | 'steering' | 'steered' | 'interrupted' | 'responded' | 'provider_archived' | 'recovery_required';
 
@@ -107,6 +107,12 @@ export interface StartTaskConversationInput {
   bypassConcurrency?: boolean;
   /** 会话与首条消息持久接受后立即返回，由后台队列启动 Provider；用于先进入会话再展示准备结果。 */
   deferInitialDispatch?: boolean;
+  /** 执行现场尚未就绪时只持久接受消息；释放前所有队列消息都不得派发。 */
+  holdDispatch?: boolean;
+  /** 由专用业务入口保存的可恢复准备信封，不参与用户消息正文。 */
+  additionalContext?: Record<string, unknown>;
+  /** 后台追赶分支产生的 Provider turn，不投影成新的用户消息。 */
+  internalOperation?: boolean;
   /** Codex composer 的协作模式，仅用于显式任务推送。 */
   workMode?: 'default' | 'plan';
   /** 新推送链路不再读取任务表中的 allow* 兼容字段。 */

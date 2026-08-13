@@ -1738,7 +1738,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
         onDelete={actions.onDeleteQueuedSubmission}
         onSendNow={actions.onSendQueuedNow}
         onReorder={actions.onReorderQueue}
-        onResume={actions.onResumeQueue}
+        onResume={props.state.queue?.state.type === 'paused' && props.state.queue.state.reason === 'conflict_preparation_failed' ? actions.onRecoverQueue : actions.onResumeQueue}
         onRetry={actions.onRestoreArchivedConversation}
       />
     );
