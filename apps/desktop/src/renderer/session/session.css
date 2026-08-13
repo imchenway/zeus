@@ -821,13 +821,21 @@
 }
 
 /* ZEUS-0215：会话标题状态复用任务状态下拉，颜色和选项继续来自项目配置。 */
-.session-codex-parity-v1 .session-thread-task-status {
+.session-codex-parity-v1 .session-thread-task-status.zeus-select,
+.session-codex-parity-v1 .session-thread-task-status.task-status-chip {
   flex: 0 0 auto;
   inline-size: auto;
+  max-inline-size: min(180px, 42%);
   min-block-size: 24px;
   min-inline-size: 0;
   pointer-events: auto;
   white-space: nowrap;
+}
+
+/* 标题栏是紧凑工具区，不继承表单下拉填满容器的宽度。 */
+.session-codex-parity-v1 .session-thread-task-status.zeus-select > .zeus-select-trigger {
+  inline-size: auto;
+  min-inline-size: 0;
 }
 
 .session-codex-parity-v1 .session-thread-status-warning {
