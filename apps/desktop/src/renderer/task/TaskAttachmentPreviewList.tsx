@@ -1,6 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type RefObject, type SyntheticEvent } from 'react';
 import type { TaskAttachmentView } from './taskAttachments.js';
-import {PendingResourceCards, type PendingResourceCardItem} from '../ui/PendingResourceCards.js';
+import { PendingResourceCards, type PendingResourceCardItem } from '../ui/PendingResourceCards.js';
+import { useNativeCloseLayer } from '../ui/nativeCloseLayer.js';
 
 export type TaskAttachmentPreviewItem = TaskAttachmentView;
 
@@ -48,6 +49,8 @@ export function TaskAttachmentPreviewList(props: TaskAttachmentPreviewListProps)
   const previewFailed = previewAttachment ? failedPreviewPaths.has(previewAttachment.path) || (!previewSrc && !props.onLoadPreview) : false;
   const listClassName = ['task-attachment-preview-list', props.className].filter(Boolean).join(' ');
   const addedStatus = useMemo(() => props.copy.addedStatus?.(props.attachments.length), [props.attachments.length, props.copy]);
+
+  useNativeCloseLayer(Boolean(previewAttachment), closeAttachmentPreview);
 
   useEffect(() => {
     if (!props.onLoadPreview) return;
@@ -139,10 +142,10 @@ export function TaskAttachmentPreviewList(props: TaskAttachmentPreviewListProps)
       name: attachment.name,
       kind: attachment.kind,
       mimeType: attachment.mimeType,
-      ...(attachment.size !== undefined ? {size: attachment.size} : {}),
-      ...(attachment.characterCount !== undefined ? {characterCount: attachment.characterCount} : {}),
-      ...(previewUrl ? {previewUrl} : {}),
-      ...(attachment.restorableText ? {restorable: true} : {}),
+      ...(attachment.size !== undefined ? { size: attachment.size } : {}),
+      ...(attachment.characterCount !== undefined ? { characterCount: attachment.characterCount } : {}),
+      ...(previewUrl ? { previewUrl } : {}),
+      ...(attachment.restorableText ? { restorable: true } : {}),
       title: attachment.path,
     };
   });
@@ -158,15 +161,15 @@ export function TaskAttachmentPreviewList(props: TaskAttachmentPreviewListProps)
         resources={resources}
         language={language}
         disabled={props.disabled}
-        onRemove={props.mode === 'editable' && props.onRemove
-          ? (resource) => props.onRemove?.(resource.id)
-          : undefined}
-        onRestoreText={props.mode === 'editable' && props.onRestoreText
-          ? (resource) => {
-              const attachment = attachmentsByPath.get(resource.id);
-              if (attachment) props.onRestoreText?.(attachment);
-            }
-          : undefined}
+        onRemove={props.mode === 'editable' && props.onRemove ? (resource) => props.onRemove?.(resource.id) : undefined}
+        onRestoreText={
+          props.mode === 'editable' && props.onRestoreText
+            ? (resource) => {
+                const attachment = attachmentsByPath.get(resource.id);
+                if (attachment) props.onRestoreText?.(attachment);
+              }
+            : undefined
+        }
         onActivate={(resource, trigger) => {
           const attachment = attachmentsByPath.get(resource.id);
           if (!attachment) return;
@@ -228,12 +231,7 @@ function renderTaskAttachmentPreviewDialog(input: {
         </header>
         <div className="task-attachment-zoom-stage">
           {input.previewAttachment && !input.previewFailed && input.previewSrc ? (
-            <img
-              className="task-attachment-zoom-image"
-              src={input.previewSrc}
-              alt={input.previewAttachment.name}
-              onError={() => input.markPreviewFailed(input.previewAttachment!.path)}
-            />
+            <img className="task-attachment-zoom-image" src={input.previewSrc} alt={input.previewAttachment.name} onError={() => input.markPreviewFailed(input.previewAttachment!.path)} />
           ) : (
             <p className="task-attachment-zoom-fallback">{input.copy.previewUnavailable}</p>
           )}

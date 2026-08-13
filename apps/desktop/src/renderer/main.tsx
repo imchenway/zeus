@@ -3,6 +3,9 @@ import { createRoot } from 'react-dom/client';
 import { RendererErrorBoundary } from './ErrorBoundary.js';
 import { createDashboardClient, type DashboardClient, type ExecutionHostTransition } from './apiClient.js';
 import { openGraphSourceInMain, revealProjectInFinderInMain } from './appShellBridge.js';
+import { initializeNativeCloseLayerRouting } from './ui/nativeCloseLayer.js';
+
+initializeNativeCloseLayerRouting();
 
 async function renderWithClient(client: DashboardClient, executionHostTransition?: ExecutionHostTransition): Promise<void> {
   const { App, buildGraphConversationTaskIntent, buildGraphNodeTaskIntent, buildProjectDirectoryResolution, buildTemplateTaskDraft } = await import('./App.js');
