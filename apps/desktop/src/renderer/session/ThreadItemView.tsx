@@ -253,6 +253,7 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
   const pendingAttachments = role === 'user' ? nativeConversationAttachments(props.item.payload.attachments) : [];
   const hasAuthoritativeAttachmentResources = props.item.resources.some((resource) => resource.kind === 'attachment' && resource.presentation === 'card');
   const pendingImageAttachments = !taskPushLayout && !hasAuthoritativeAttachmentResources ? pendingAttachments.filter(isPendingImageAttachment) : [];
+  const showUserMessageAttachmentGroup = role === 'user' && !taskPushLayout;
   const taskPushAttachmentKeys = new Set([...(taskPushLayout?.blocks.flatMap((block) => block.attachments.map((attachment) => attachment.key)) ?? []), ...(taskPushLayout?.supplementalAttachments ?? []).map((attachment) => attachment.key)]);
   const unplacedResources = taskPushLayout
     ? props.item.resources.filter((resource) => {
@@ -368,6 +369,14 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
           ) : null}
         </header>
       ) : null}
+      {showUserMessageAttachmentGroup ? (
+        <div className="session-user-message-attachments">
+          <ItemAttachments item={props.item} label={labels.attachments} hideImages={pendingImageAttachments.length > 0} />
+          <ConversationPendingAttachmentImages attachments={pendingImageAttachments} language={props.language} onVisibleContentChange={props.onVisibleContentChange} />
+          <ConversationResourceCards resources={unplacedResources} language={props.language} onOpenResource={props.onOpenResource} onLoadResourcePreview={props.onLoadResourcePreview} />
+          <ItemImages item={props.item} label={labels.conversationImage} />
+        </div>
+      ) : null}
       {editing ? (
         <form className="session-user-message-editor" onSubmit={(event) => void submitEditedMessage(event)}>
           <label className="session-sr-only" htmlFor={`session-edit-${props.item.itemId}`}>
@@ -434,10 +443,12 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
         <span className="session-thinking-indicator">{labels.thinking}</span>
       ) : null}
       {!command ? <TypedItemFacts item={props.item} role={role} language={props.language} /> : null}
-      {!taskPushLayout ? <ItemAttachments item={props.item} label={labels.attachments} hideImages={pendingImageAttachments.length > 0} /> : null}
-      <ConversationPendingAttachmentImages attachments={pendingImageAttachments} language={props.language} onVisibleContentChange={props.onVisibleContentChange} />
-      {role !== 'image' ? <ConversationResourceCards resources={unplacedResources} language={props.language} onOpenResource={props.onOpenResource} onLoadResourcePreview={props.onLoadResourcePreview} /> : null}
-      {!taskPushLayout ? <ItemImages item={props.item} label={labels.conversationImage} /> : null}
+      {!showUserMessageAttachmentGroup && !taskPushLayout ? <ItemAttachments item={props.item} label={labels.attachments} hideImages={pendingImageAttachments.length > 0} /> : null}
+      {!showUserMessageAttachmentGroup ? <ConversationPendingAttachmentImages attachments={pendingImageAttachments} language={props.language} onVisibleContentChange={props.onVisibleContentChange} /> : null}
+      {!showUserMessageAttachmentGroup && role !== 'image' ? (
+        <ConversationResourceCards resources={unplacedResources} language={props.language} onOpenResource={props.onOpenResource} onLoadResourcePreview={props.onLoadResourcePreview} />
+      ) : null}
+      {!showUserMessageAttachmentGroup && !taskPushLayout ? <ItemImages item={props.item} label={labels.conversationImage} /> : null}
       {remoteDeviceInput ? (
         <span className="session-message-remote-origin" aria-label={labels.remoteDevice} title={labels.remoteDevice}>
           <MessageRemoteDeviceIcon />
