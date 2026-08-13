@@ -33,6 +33,18 @@ export interface RequestingWindowActivationResult {
   error?: string;
 }
 
+export type AutomaticUpdateIndicatorPhase = 'idle' | 'available' | 'preparing' | 'retrying' | 'ready' | 'failed';
+
+export interface AutomaticUpdateIndicatorState {
+  phase: AutomaticUpdateIndicatorPhase;
+  currentVersion: string;
+  latestVersion: string | null;
+  detail: string;
+  updatedAt: string;
+  progress?: number;
+  retryAt?: string;
+}
+
 export interface ProjectRevealResult {
   revealed: boolean;
   path?: string;
@@ -50,6 +62,10 @@ export interface AppShellBridgeWindow {
     openGraphSource?: (source: GraphSourceOpenRequest) => Promise<GraphSourceOpenResult>;
     openExternalHttpsUrl?: (url: string) => Promise<ExternalHttpsOpenResult>;
     activateRequestingWindow?: () => Promise<RequestingWindowActivationResult>;
+    getAutomaticUpdateIndicator?: () => Promise<AutomaticUpdateIndicatorState | null>;
+    openAutomaticUpdateIndicator?: () => Promise<{ opened: boolean }>;
+    recordManualUpdateCheck?: () => Promise<{ recorded: boolean }>;
+    onAutomaticUpdateIndicatorChanged?: (listener: (state: AutomaticUpdateIndicatorState) => void) => () => void;
     listConversationResourceOpenTargets?: (request: { projectId: string; conversationId: string; resourceId: string }) => Promise<{ resourceId: string; targets: ConversationResourceOpenTarget[] }>;
     openConversationResource?: (request: { projectId: string; conversationId: string; resourceId: string; target: ConversationOpenTarget; location?: ConversationFileLocation }) => Promise<{
       opened: boolean;
@@ -98,6 +114,18 @@ export async function openExternalHttpsUrlInMain(input: { zeus: AppShellBridgeWi
 export async function activateRequestingZeusWindowInMain(input: { zeus: AppShellBridgeWindow['zeus'] }): Promise<RequestingWindowActivationResult> {
   if (!input.zeus?.activateRequestingWindow) return { activated: false, error: 'window_activation_unavailable' };
   return input.zeus.activateRequestingWindow();
+}
+
+export async function loadAutomaticUpdateIndicatorFromMain(input: { zeus: AppShellBridgeWindow['zeus'] }): Promise<AutomaticUpdateIndicatorState | null> {
+  return input.zeus?.getAutomaticUpdateIndicator ? input.zeus.getAutomaticUpdateIndicator() : null;
+}
+
+export async function openAutomaticUpdateIndicatorInMain(input: { zeus: AppShellBridgeWindow['zeus'] }): Promise<{ opened: boolean }> {
+  return input.zeus?.openAutomaticUpdateIndicator ? input.zeus.openAutomaticUpdateIndicator() : { opened: false };
+}
+
+export async function recordManualUpdateCheckInMain(input: { zeus: AppShellBridgeWindow['zeus'] }): Promise<{ recorded: boolean }> {
+  return input.zeus?.recordManualUpdateCheck ? input.zeus.recordManualUpdateCheck() : { recorded: false };
 }
 
 export async function listConversationResourceOpenTargetsInMain(input: {

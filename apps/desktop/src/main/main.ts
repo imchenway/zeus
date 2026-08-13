@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, Notification, screen, session, shell, Tray } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, Notification, powerMonitor, screen, session, shell, Tray } from 'electron';
 import { execFile as execFileCallback } from 'node:child_process';
 import { chmodSync, constants as fsConstants, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, type FSWatcher } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
@@ -42,7 +42,8 @@ import {
 } from './conversationInputResources.js';
 import { cleanupStaleReleaseBackups, createReleaseUpdateService, type ReleaseUpdateService } from './releaseUpdateService.js';
 import { createHomebrewUpdateService } from './homebrewUpdateService.js';
-import { createHomebrewUpdateController, type HomebrewUpdateController } from './homebrewUpdateController.js';
+import { createHomebrewUpdateController, type HomebrewUpdateController, type HomebrewUpdateIndicatorState } from './homebrewUpdateController.js';
+import { createAutomaticUpdateScheduler, type AutomaticUpdateScheduler } from './automaticUpdateScheduler.js';
 import { type ZeusDataLayout } from '@zeus/local-server';
 import { prepareZeusDataRoot } from './zeusDataMigration.js';
 import { ProjectSourceWorkspaceService } from './projectSourceWorkspace.js';
@@ -67,6 +68,8 @@ let menuBarUsageMenu: Menu | undefined;
 let localServerRuntime: DesktopLocalServerRuntime | undefined;
 let releaseUpdateService: ReleaseUpdateService | undefined;
 let homebrewUpdateController: HomebrewUpdateController | undefined;
+let automaticUpdateScheduler: AutomaticUpdateScheduler | undefined;
+let automaticUpdateIndicatorState: HomebrewUpdateIndicatorState | undefined;
 let browserHost: BrowserHost | undefined;
 let conversationInputResources: ConversationInputResourceBroker | undefined;
 let systemNotificationBridge: SystemNotificationBridge | undefined;
@@ -104,6 +107,8 @@ const testDistributionName = 'Zeus Test';
 const menuBarUsageWindowSize = { width: 360, height: 520 } as const;
 const menuBarUsageWindowGap = 6;
 const taskGitDeliveryMinimumSize = { width: 920, height: 640 } as const;
+const automaticUpdateIntervalMs = 60 * 60_000;
+const automaticUpdateInitialDelayMs = 15_000;
 
 interface TaskGitDeliveryCurrentContext {
   taskId: string | null;
@@ -129,6 +134,24 @@ function isTestDistribution(): boolean {
 
 function desktopDisplayName(): string {
   return isTestDistribution() ? testDistributionName : 'Zeus';
+}
+
+function broadcastAutomaticUpdateIndicator(state: HomebrewUpdateIndicatorState): void {
+  automaticUpdateIndicatorState = { ...state };
+  for (const window of windows) {
+    if (window.isDestroyed() || window.webContents.isDestroyed()) continue;
+    window.webContents.send('zeus:automatic-update-indicator:changed', automaticUpdateIndicatorState);
+  }
+}
+
+function automaticUpdateTiming(defaultValue: number, environmentName: 'ZEUS_AUTO_UPDATE_INTERVAL_MS' | 'ZEUS_AUTO_UPDATE_INITIAL_DELAY_MS', allowTestOverride: boolean): number {
+  if (!allowTestOverride) return defaultValue;
+  const value = Number(process.env[environmentName]);
+  return Number.isSafeInteger(value) && value >= 250 ? value : defaultValue;
+}
+
+function handleAutomaticUpdateResume(): void {
+  automaticUpdateScheduler?.checkIfDue();
 }
 
 function defaultTestDataRoot(): string {
@@ -1295,6 +1318,23 @@ function setupIpc(): void {
     }
     return releaseUpdateService.install();
   });
+  ipcMain.handle('zeus:automatic-update-indicator:get', (event) => {
+    const requestingWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow)) throw new Error('Automatic update status request came from an untrusted window.');
+    return automaticUpdateIndicatorState ?? homebrewUpdateController?.getIndicatorState() ?? null;
+  });
+  ipcMain.handle('zeus:automatic-update-indicator:open', async (event) => {
+    const requestingWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow)) throw new Error('Automatic update open request came from an untrusted window.');
+    await homebrewUpdateController?.showOrCheck();
+    return { opened: Boolean(homebrewUpdateController) };
+  });
+  ipcMain.handle('zeus:automatic-update-indicator:record-manual-check', (event) => {
+    const requestingWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow)) throw new Error('Automatic update scheduling request came from an untrusted window.');
+    automaticUpdateScheduler?.recordCheckCompleted();
+    return { recorded: Boolean(automaticUpdateScheduler) };
+  });
   ipcMain.handle('zeus:conversation-resource:list-open-targets', (event, request: ConversationResourceRequest) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
     if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow)) {
@@ -2124,18 +2164,30 @@ async function initializeApplication(): Promise<void> {
         taskTableLayoutQuitApproved = true;
         setImmediate(() => app.quit());
       },
-      notifyReady: (showProgress) => {
-        if (!appShellSettings.desktopNotificationsEnabled || !Notification.isSupported()) return;
-        const notification = new Notification({
-          title: appShellSettings.appLanguage === 'zh-CN' ? 'Zeus 更新已下载' : 'Zeus Update Downloaded',
-          body: appShellSettings.appLanguage === 'zh-CN' ? '更新已通过校验，等待你选择何时重启。' : 'The update passed verification and is waiting for you to choose when to restart.',
-        });
-        notification.on('click', showProgress);
-        notification.show();
-      },
     });
   }
   appShellSettings = await loadMainAppShellSettings(localServerRuntime.config);
+  if (homebrewUpdateController && (!isTestDistribution() || allowUntrustedReleaseUpdateTest)) {
+    automaticUpdateScheduler = createAutomaticUpdateScheduler({
+      statePath: join(dataLayout.releaseUpdates, 'automatic-update-state.json'),
+      intervalMs: automaticUpdateTiming(automaticUpdateIntervalMs, 'ZEUS_AUTO_UPDATE_INTERVAL_MS', allowUntrustedReleaseUpdateTest),
+      initialDelayMs: automaticUpdateTiming(automaticUpdateInitialDelayMs, 'ZEUS_AUTO_UPDATE_INITIAL_DELAY_MS', allowUntrustedReleaseUpdateTest),
+      controller: homebrewUpdateController,
+      onIndicatorChange: broadcastAutomaticUpdateIndicator,
+      notifyReady: (latestVersion, showProgress) => {
+        if (isZeusApplicationForeground() || !appShellSettings.desktopNotificationsEnabled || !Notification.isSupported()) return false;
+        const notification = new Notification({
+          title: appShellSettings.appLanguage === 'zh-CN' ? 'Zeus 更新已下载' : 'Zeus Update Downloaded',
+          body: appShellSettings.appLanguage === 'zh-CN' ? `Zeus ${latestVersion} 已通过校验，等待你选择何时重启。` : `Zeus ${latestVersion} passed verification and is waiting for you to choose when to restart.`,
+        });
+        notification.on('click', showProgress);
+        notification.show();
+        return true;
+      },
+    });
+    await automaticUpdateScheduler.start();
+    powerMonitor.on('resume', handleAutomaticUpdateResume);
+  }
   applyLoginItemSettings();
   setupMenu();
   setupIpc();
@@ -2234,6 +2286,9 @@ app.on(
     },
     resolveQuitMode: resolveDesktopQuitMode,
     closeLocalServer: async (mode) => {
+      automaticUpdateScheduler?.stop();
+      automaticUpdateScheduler = undefined;
+      powerMonitor.removeListener('resume', handleAutomaticUpdateResume);
       if (mode !== 'upgrade_handoff') homebrewUpdateController?.close();
       homebrewUpdateController = undefined;
       await browserHost?.close();

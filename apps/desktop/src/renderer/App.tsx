@@ -24,6 +24,10 @@ import { PlusIcon as Plus } from '@phosphor-icons/react/dist/csr/Plus';
 import { PushPinIcon as PushPin } from '@phosphor-icons/react/dist/csr/PushPin';
 import { PushPinSlashIcon as PushPinSlash } from '@phosphor-icons/react/dist/csr/PushPinSlash';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
+import { CheckCircleIcon as CheckCircle } from '@phosphor-icons/react/dist/csr/CheckCircle';
+import { DownloadSimpleIcon as DownloadSimple } from '@phosphor-icons/react/dist/csr/DownloadSimple';
+import { SpinnerGapIcon as SpinnerGap } from '@phosphor-icons/react/dist/csr/SpinnerGap';
+import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/csr/WarningCircle';
 import { CheckSquareIcon as WorkspaceTasksIcon } from '@phosphor-icons/react/dist/csr/CheckSquare';
 import { GitBranchIcon as WorkspaceGitIcon } from '@phosphor-icons/react/dist/csr/GitBranch';
 import { CodeIcon as WorkspaceSourceIcon } from '@phosphor-icons/react/dist/csr/Code';
@@ -53,7 +57,15 @@ import '@xyflow/react/dist/style.css';
 import './styles.css';
 import './session/session.css';
 import './ui/primitives.css';
-import { activateRequestingZeusWindowInMain, notifyMainAppShellSettingsChanged, openExternalHttpsUrlInMain } from './appShellBridge.js';
+import {
+  activateRequestingZeusWindowInMain,
+  loadAutomaticUpdateIndicatorFromMain,
+  notifyMainAppShellSettingsChanged,
+  openAutomaticUpdateIndicatorInMain,
+  openExternalHttpsUrlInMain,
+  recordManualUpdateCheckInMain,
+  type AutomaticUpdateIndicatorState,
+} from './appShellBridge.js';
 import { completeCodexLoginHandoff } from './codexLoginHandoff.js';
 import { PENDING_RESOURCE_LONG_TEXT_THRESHOLD } from './ui/pendingResourcePolicy.js';
 import { TaskAttachmentPreviewList } from './task/TaskAttachmentPreviewList.js';
@@ -7247,6 +7259,7 @@ export function App(props: {
       },
   );
   const [releaseUpdateCheckState, setReleaseUpdateCheckState] = useState<'idle' | 'loading' | 'failed'>('idle');
+  const [automaticUpdateIndicator, setAutomaticUpdateIndicator] = useState<AutomaticUpdateIndicatorState | null>(null);
   const [telegramTokenInput, setTelegramTokenInput] = useState('');
   const [telegramPollingStatus, setTelegramPollingStatus] = useState<TelegramPollingStatus>({
     running: false,
@@ -7268,6 +7281,22 @@ export function App(props: {
   const [actionState, setActionState] = useState<
     'idle' | 'creating-project' | 'creating-task' | 'loading-diff' | 'loading-runtime' | 'loading-templates' | 'updating-task' | 'creating-git-confirmation' | 'confirming-git-operation' | 'executing-git-operation' | 'failed'
   >('idle');
+  useEffect(() => {
+    let active = true;
+    const bridge = globalThis.window.zeus;
+    void loadAutomaticUpdateIndicatorFromMain({ zeus: bridge })
+      .then((state) => {
+        if (active) setAutomaticUpdateIndicator(state);
+      })
+      .catch(() => undefined);
+    const unsubscribe = bridge?.onAutomaticUpdateIndicatorChanged?.((state) => {
+      if (active) setAutomaticUpdateIndicator(state);
+    });
+    return () => {
+      active = false;
+      unsubscribe?.();
+    };
+  }, []);
   const creatingProjectBusy = actionState === 'creating-project';
   const creatingTaskBusy = actionState === 'creating-task';
   const updatingTaskBusy = actionState === 'updating-task';
@@ -10890,6 +10919,7 @@ export function App(props: {
     try {
       const update = await props.onCheckReleaseUpdate();
       setReleaseUpdateStatus(update);
+      void recordManualUpdateCheckInMain({ zeus: globalThis.window.zeus });
       setReleaseUpdateCheckState('idle');
     } catch (error) {
       setReleaseUpdateCheckState('failed');
@@ -12311,6 +12341,7 @@ export function App(props: {
           conversationGroups={nativeConversationGroups}
           selectedConversationId={selectedNativeConversationId}
           conversationStates={nativeConversationRuntimeStates}
+          automaticUpdateIndicator={automaticUpdateIndicator}
           appLanguage={appShellSettings.appLanguage}
           canCreateProject={projectCreationReady && !creatingProjectBusy}
           createProjectBusy={creatingProjectBusy}
@@ -12319,6 +12350,7 @@ export function App(props: {
           onSelectConversation={(conversation) => void selectNativeConversation(conversation)}
           onArchiveConversation={archiveConversation}
           onNavigate={handleMainNavigate}
+          onOpenAutomaticUpdate={() => void openAutomaticUpdateIndicatorInMain({ zeus: globalThis.window.zeus })}
           onOpenProjectSection={openProjectSection}
           onTogglePinnedProject={togglePinnedProject}
           onToggleProjectCollapsed={(projectId) => void toggleCollapsedProject(projectId)}
@@ -18477,6 +18509,7 @@ function SidebarNav(props: {
   conversationGroups: ProjectConversationGroup[];
   selectedConversationId?: string | null;
   conversationStates: Record<string, ConversationTreeRuntimeState>;
+  automaticUpdateIndicator: AutomaticUpdateIndicatorState | null;
   appLanguage: AppLanguage;
   canCreateProject: boolean;
   createProjectBusy: boolean;
@@ -18485,6 +18518,7 @@ function SidebarNav(props: {
   onSelectConversation: (conversation: NativeConversationChoice) => void;
   onArchiveConversation: (conversation: NativeConversationChoice) => Promise<void>;
   onNavigate: (target: WorkspaceViewId) => void;
+  onOpenAutomaticUpdate: () => void;
   onOpenProjectSection: (project: ProjectRecord, section: ProjectWorkspaceSection) => void;
   onTogglePinnedProject: (projectId: string) => void;
   onToggleProjectCollapsed: (projectId: string) => void;
@@ -18981,6 +19015,7 @@ function SidebarNav(props: {
         )}
       </section>
 
+      <AutomaticUpdateIndicatorButton state={props.automaticUpdateIndicator} language={props.appLanguage} onOpen={props.onOpenAutomaticUpdate} />
       <section className="project-global-settings" aria-label={copy.globalSettingsLabel}>
         <button type="button" className={props.activeNavTarget === 'settings' ? 'active' : ''} onClick={() => props.onNavigate('settings')}>
           <span aria-hidden="true">⚙</span>
@@ -19001,6 +19036,54 @@ function SidebarNav(props: {
         onSubmit={(event) => void submitProjectRename(event)}
       />
     </aside>
+  );
+}
+
+function AutomaticUpdateIndicatorButton(props: { state: AutomaticUpdateIndicatorState | null; language: AppLanguage; onOpen: () => void }) {
+  if (!props.state || props.state.phase === 'idle') return null;
+  const zh = props.language === 'zh-CN';
+  const version = props.state.latestVersion ?? props.state.currentVersion;
+  const progress = props.state.progress === undefined ? null : `${Math.min(100, Math.floor(Math.max(0, props.state.progress) * 100))}%`;
+  const label =
+    props.state.phase === 'ready'
+      ? zh
+        ? `Zeus ${version} 等待重启`
+        : `Zeus ${version} ready to restart`
+      : props.state.phase === 'failed'
+        ? zh
+          ? `Zeus ${version} 下载失败`
+          : `Zeus ${version} download failed`
+        : props.state.phase === 'retrying'
+          ? zh
+            ? `Zeus ${version} 等待重试`
+            : `Zeus ${version} waiting to retry`
+          : props.state.phase === 'preparing'
+            ? zh
+              ? `正在下载 Zeus ${version}${progress ? ` · ${progress}` : ''}`
+              : `Downloading Zeus ${version}${progress ? ` · ${progress}` : ''}`
+            : zh
+              ? `Zeus ${version} 可用`
+              : `Zeus ${version} available`;
+  const icon =
+    props.state.phase === 'ready' ? (
+      <CheckCircle aria-hidden="true" weight="fill" />
+    ) : props.state.phase === 'failed' ? (
+      <WarningCircle aria-hidden="true" weight="fill" />
+    ) : props.state.phase === 'preparing' || props.state.phase === 'retrying' ? (
+      <SpinnerGap className="automatic-update-indicator-spinner" aria-hidden="true" />
+    ) : (
+      <DownloadSimple aria-hidden="true" />
+    );
+  const actionHint = zh ? '点击打开更新窗口' : 'Open the update window';
+  return (
+    <section className="automatic-update-indicator" data-phase={props.state.phase} aria-live="polite" aria-atomic="true">
+      <button type="button" title={`${props.state.detail} ${actionHint}`} aria-label={zh ? `${label}。${props.state.detail} ${actionHint}` : `${label}. ${props.state.detail} ${actionHint}`} onClick={props.onOpen}>
+        <span className="automatic-update-indicator-icon" aria-hidden="true">
+          {icon}
+        </span>
+        <span>{label}</span>
+      </button>
+    </section>
   );
 }
 
