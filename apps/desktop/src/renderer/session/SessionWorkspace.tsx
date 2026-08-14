@@ -1,7 +1,10 @@
 import { type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { ArrowUpIcon as ArrowUp } from '@phosphor-icons/react/dist/csr/ArrowUp';
 import { ArrowsClockwiseIcon as ArrowsClockwise } from '@phosphor-icons/react/dist/csr/ArrowsClockwise';
+import { CircleNotchIcon as CircleNotch } from '@phosphor-icons/react/dist/csr/CircleNotch';
 import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/csr/WarningCircle';
 import { GlobeSimpleIcon as GlobeSimple } from '@phosphor-icons/react/dist/csr/GlobeSimple';
+import { PaperclipIcon as Paperclip } from '@phosphor-icons/react/dist/csr/Paperclip';
 import { animate as animateMotion, motion, useMotionValue, useTransform } from 'framer-motion';
 import type { ConversationFileLocation, ConversationOpenTarget, TurnChangeFile, ZeusBrowserPreparedSubmission } from '@zeus/shared';
 import type { ProjectGitAction, ProjectGitActionResponse, ProjectGitWorkbenchSnapshot, ProjectRecord } from '../apiClient.js';
@@ -2438,6 +2441,7 @@ function NewConversationComposer(props: {
             {props.onChooseAttachments ? (
               <button
                 type="button"
+                className="session-attachment-button"
                 aria-label={copy.attach}
                 disabled={submitting || inputResources.processing || !props.owner}
                 onClick={async () => {
@@ -2451,7 +2455,7 @@ function NewConversationComposer(props: {
                   }
                 }}
               >
-                <span aria-hidden="true">＋</span>
+                <Paperclip aria-hidden="true" weight="regular" />
               </button>
             ) : null}
             <PermissionModeControl language={props.language} value={permissionMode} disabled={submitting || !props.owner} onChange={setPermissionMode} />
@@ -2494,7 +2498,7 @@ function NewConversationComposer(props: {
                 disabled={submitting || executionContextBusy || capabilitiesLoading || inputResources.processing || !props.owner || !selectedModel || (!content.trim() && attachments.length === 0)}
                 aria-busy={submitting || undefined}
               >
-                {submitting ? <span className="session-command-spinner" aria-hidden="true" /> : <span aria-hidden="true">↑</span>}
+                {submitting ? <CircleNotch className="session-command-spinner" aria-hidden="true" weight="bold" /> : <ArrowUp aria-hidden="true" weight="bold" />}
               </button>
             </span>
           </span>

@@ -1,4 +1,5 @@
-import { useId } from 'react';
+import { type CSSProperties, useId, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { NativeTokenUsageSnapshot } from './sessionTypes.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
 
@@ -6,6 +7,10 @@ type ContextUsageSeverity = 'unavailable' | 'normal' | 'warning' | 'danger';
 
 export function ContextUsageIndicator(props: { usage: NativeTokenUsageSnapshot | null; language: SessionUiLanguage }) {
   const tooltipId = `session-context-usage-${useId().replaceAll(':', '')}`;
+  const indicatorRef = useRef<HTMLSpanElement | null>(null);
+  const tooltipRef = useRef<HTMLSpanElement | null>(null);
+  const [tooltipOpen, setTooltipOpen] = useState(false);
+  const [tooltipPosition, setTooltipPosition] = useState<{ left: number; top: number } | null>(null);
   const used = props.usage?.last.inputTokens ?? null;
   const capacity = props.usage?.modelContextWindow ?? null;
   const available = used !== null && capacity !== null && capacity > 0;
@@ -14,36 +19,94 @@ export function ContextUsageIndicator(props: { usage: NativeTokenUsageSnapshot |
   const severity = contextUsageSeverity(ratio);
   const copy = contextUsageCopy(props.language, used, capacity, ratio, severity);
 
+  useLayoutEffect(() => {
+    if (!tooltipOpen) {
+      setTooltipPosition(null);
+      return;
+    }
+    const position = (): void => {
+      const indicator = indicatorRef.current;
+      const tooltip = tooltipRef.current;
+      if (!indicator || !tooltip) return;
+      const indicatorRect = indicator.getBoundingClientRect();
+      const tooltipRect = tooltip.getBoundingClientRect();
+      const margin = 8;
+      const gap = 8;
+      const left = Math.max(margin, Math.min(indicatorRect.right - tooltipRect.width, window.innerWidth - tooltipRect.width - margin));
+      const above = indicatorRect.top - tooltipRect.height - gap;
+      const below = indicatorRect.bottom + gap;
+      const top = above >= margin ? above : Math.max(margin, Math.min(below, window.innerHeight - tooltipRect.height - margin));
+      setTooltipPosition({ left, top });
+    };
+    position();
+    window.addEventListener('resize', position);
+    window.addEventListener('scroll', position, true);
+    return () => {
+      window.removeEventListener('resize', position);
+      window.removeEventListener('scroll', position, true);
+    };
+  }, [capacity, props.language, tooltipOpen, used]);
+
+  const tooltip = (
+    <span ref={tooltipRef} id={tooltipId} className="session-context-usage-tooltip" role="tooltip" style={contextUsageTooltipPositionStyle(tooltipPosition)}>
+      <strong aria-hidden="true">{copy.title}</strong>
+      {available ? (
+        <dl>
+          <div>
+            <dt>{copy.percentageLabel}</dt>
+            <dd>{copy.percentage}</dd>
+          </div>
+          <div>
+            <dt>{copy.usedLabel}</dt>
+            <dd>{copy.used}</dd>
+          </div>
+          <div>
+            <dt>{copy.remainingLabel}</dt>
+            <dd>{copy.remaining}</dd>
+          </div>
+        </dl>
+      ) : (
+        <span>{copy.empty}</span>
+      )}
+      {copy.risk ? <small>{copy.risk}</small> : null}
+    </span>
+  );
+
   return (
-    <span className="session-context-usage-indicator" data-available={available ? 'true' : 'false'} data-severity={severity} tabIndex={0} role="img" aria-label={copy.accessibleLabel}>
+    <span
+      ref={indicatorRef}
+      className="session-context-usage-indicator"
+      data-available={available ? 'true' : 'false'}
+      data-severity={severity}
+      tabIndex={0}
+      role="img"
+      aria-label={copy.accessibleLabel}
+      aria-describedby={tooltipOpen ? tooltipId : undefined}
+      onPointerEnter={() => setTooltipOpen(true)}
+      onPointerLeave={(event) => {
+        if (document.activeElement !== event.currentTarget) setTooltipOpen(false);
+      }}
+      onFocus={() => setTooltipOpen(true)}
+      onBlur={() => setTooltipOpen(false)}
+    >
       <svg viewBox="0 0 24 24" aria-hidden="true">
         <circle className="session-context-usage-track" cx="12" cy="12" r="8.5" />
         <circle className="session-context-usage-value" cx="12" cy="12" r="8.5" pathLength="100" strokeDasharray={`${progress} 100`} />
+        <circle className="session-context-usage-core" cx="12" cy="12" r="1.7" />
       </svg>
-      <span id={tooltipId} className="session-context-usage-tooltip" role="tooltip">
-        <strong aria-hidden="true">{copy.title}</strong>
-        {available ? (
-          <dl>
-            <div>
-              <dt>{copy.percentageLabel}</dt>
-              <dd>{copy.percentage}</dd>
-            </div>
-            <div>
-              <dt>{copy.usedLabel}</dt>
-              <dd>{copy.used}</dd>
-            </div>
-            <div>
-              <dt>{copy.remainingLabel}</dt>
-              <dd>{copy.remaining}</dd>
-            </div>
-          </dl>
-        ) : (
-          <span>{copy.empty}</span>
-        )}
-        {copy.risk ? <small>{copy.risk}</small> : null}
-      </span>
+      {tooltipOpen && typeof document !== 'undefined' && document.body ? createPortal(<span className={contextUsagePortalClassName(indicatorRef.current)}>{tooltip}</span>, document.body) : null}
     </span>
   );
+}
+
+function contextUsageTooltipPositionStyle(position: { left: number; top: number } | null): CSSProperties {
+  return position ? { left: position.left, top: position.top } : { left: 0, top: 0, visibility: 'hidden' };
+}
+
+function contextUsagePortalClassName(indicator: HTMLElement | null): string {
+  const app = indicator?.closest('.session-codex-parity-v1') ?? document.querySelector('.macos-ai-app.zeus-shell');
+  const theme = app?.classList.contains('theme-dark') ? 'theme-dark' : app?.classList.contains('theme-light') ? 'theme-light' : 'theme-system';
+  return `session-context-usage-tooltip-portal session-codex-parity-v1 ${theme}`;
 }
 
 function contextUsageSeverity(ratio: number | null): ContextUsageSeverity {

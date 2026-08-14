@@ -1,4 +1,4 @@
-import { LightbulbIcon as Lightbulb } from '@phosphor-icons/react/dist/csr/Lightbulb';
+import { ListChecksIcon as ListChecks } from '@phosphor-icons/react/dist/csr/ListChecks';
 import type { NativeCollaborationMode } from './sessionTypes.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
 
@@ -9,8 +9,7 @@ export function CollaborationModeControl(props: { language: SessionUiLanguage; v
   return (
     <button type="button" className="session-collaboration-mode" data-active={plan || undefined} aria-pressed={plan} aria-label={action} title={title} disabled={props.disabled} onClick={() => void props.onChange(plan ? 'default' : 'plan')}>
       <span className="session-collaboration-mode-icon" aria-hidden="true">
-        <Lightbulb weight={plan ? 'fill' : 'regular'} />
-        {plan ? <span className="session-collaboration-mode-spark" /> : null}
+        <ListChecks weight={plan ? 'bold' : 'regular'} />
       </span>
     </button>
   );

@@ -1,6 +1,10 @@
 import { type KeyboardEvent, type RefObject, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ChatCircleIcon as ChatCircle } from '@phosphor-icons/react/dist/csr/ChatCircle';
+import { ArrowUpIcon as ArrowUp } from '@phosphor-icons/react/dist/csr/ArrowUp';
+import { CircleNotchIcon as CircleNotch } from '@phosphor-icons/react/dist/csr/CircleNotch';
 import { GlobeSimpleIcon as GlobeSimple } from '@phosphor-icons/react/dist/csr/GlobeSimple';
+import { PaperclipIcon as Paperclip } from '@phosphor-icons/react/dist/csr/Paperclip';
+import { SquareIcon as Square } from '@phosphor-icons/react/dist/csr/Square';
 import type { ZeusBrowserPreparedSubmission } from '@zeus/shared';
 import type { CodexConversationCapabilities, NativeCollaborationMode, NativeConversationAttachment, NativePermissionMode, NativeServiceTierSelection, NativeSessionState, NativeTurnSettingsSelection } from './sessionTypes.js';
 import { ComposerDropdown } from './ComposerDropdown.js';
@@ -235,6 +239,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
             {props.onChooseAttachments ? (
               <button
                 type="button"
+                className="session-attachment-button"
                 aria-label={copy.attach}
                 onClick={() => {
                   setInputResourceError(null);
@@ -244,7 +249,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
                 }}
                 disabled={!writable || busy || inputResources.processing}
               >
-                <span aria-hidden="true">＋</span>
+                <Paperclip aria-hidden="true" weight="regular" />
               </button>
             ) : null}
             <PermissionModeControl
@@ -329,11 +334,11 @@ export function ConversationComposer(props: ConversationComposerProps) {
                   onClick={() => props.state.activeTurnId && void props.onInterrupt(props.state.activeTurnId)}
                   disabled={!writable || !props.state.activeTurnId || props.state.startedTurnId !== props.state.activeTurnId || busy}
                 >
-                  <span aria-hidden="true" />
+                  <Square aria-hidden="true" weight="fill" />
                 </button>
               ) : (
                 <button type="button" className="session-send-button" aria-label={copy.send} onClick={() => submit('queue')} disabled={!writable || !hasDraft || busy} aria-busy={busy || undefined}>
-                  {busy ? <span className="session-command-spinner" aria-hidden="true" /> : <span aria-hidden="true">↑</span>}
+                  {busy ? <CircleNotch className="session-command-spinner" aria-hidden="true" weight="bold" /> : <ArrowUp aria-hidden="true" weight="bold" />}
                 </button>
               )}
             </span>

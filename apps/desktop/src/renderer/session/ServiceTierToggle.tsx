@@ -1,4 +1,4 @@
-import { LightningIcon as Lightning } from '@phosphor-icons/react/dist/csr/Lightning';
+import { GaugeIcon as Gauge } from '@phosphor-icons/react/dist/csr/Gauge';
 import { fastServiceTier } from './serviceTierSelection.js';
 import type { CodexTaskPushModelCapability, NativeServiceTierSelection } from './sessionTypes.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
@@ -31,7 +31,7 @@ export function ServiceTierToggle(props: {
       disabled={props.disabled || unsupported}
       onClick={() => void props.onChange(active ? { type: 'standard' } : { type: 'catalog', id: fast!.id })}
     >
-      <Lightning aria-hidden="true" weight={active ? 'fill' : 'regular'} />
+      <Gauge aria-hidden="true" weight={active ? 'bold' : 'regular'} />
     </button>
   );
 }
