@@ -127,6 +127,7 @@ import {
   readTaskIntegrationConflict,
   reclaimDeliveredTaskWorktree,
   reclaimTaskWorktree,
+  refreshConflictTaskWorkspace,
   rejectGitOperation,
   removeTaskWorktreeForTerminalStatus,
   startTaskBranchIntegration,
@@ -2823,7 +2824,10 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           continue;
         }
         operation.running = false;
-        if (payload.status === 'completed') scheduleTaskIntegrationAiFinalization(attemptId, operation.conversationId);
+        // 命名冲突开发线由用户在会话中通过“代码交付”提交和合入，回合结束不能自动收口。
+        if (payload.status === 'completed' && !taskIntegrationAttempts.getById(attemptId)) {
+          scheduleTaskIntegrationAiFinalization(attemptId, operation.conversationId);
+        }
       }
     }
     if (mappedType !== 'conversation.item.delta') flushPendingNativeDeltaEvents();
@@ -5566,6 +5570,40 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         error: 'ZEUS_TASK_WORKTREE_UNAVAILABLE',
         message: 'Task worktree is unavailable before delivery preparation completed.',
       });
+    }
+    if (workspace.kind === 'conflict') {
+      const baseWorkspace = workspace.baseWorkspaceId ? taskWorkspaces.getById(workspace.baseWorkspaceId) : undefined;
+      if (!baseWorkspace || baseWorkspace.taskId !== task.id || baseWorkspace.projectId !== project.id) {
+        return reply.code(409).send({ error: 'ZEUS_CONFLICT_BASE_WORKSPACE_UNAVAILABLE', message: '冲突处理开发线对应的原任务分支不可用。' });
+      }
+      if (!workspace.worktreePath) {
+        return reply.code(409).send({ error: 'ZEUS_TASK_WORKTREE_UNAVAILABLE', message: '冲突处理开发线的 Worktree 不可用。' });
+      }
+      try {
+        const refreshed = await refreshConflictTaskWorkspace({
+          cwd: workspace.worktreePath,
+          sourceBranch: workspace.sourceBranch,
+          taskBranch: baseWorkspace.branchName,
+        });
+        taskWorkspaces.update(workspace.id, { headSha: refreshed.headSha, state: 'ready', lastError: null });
+        if (refreshed.conflictFiles.length > 0) {
+          recordTaskEvent({
+            taskId: task.id,
+            eventType: 'task.git_workspace.refresh_conflicted',
+            title: '冲突处理开发线追赶后出现新冲突',
+            payload: { workspaceId: workspace.id, baseWorkspaceId: baseWorkspace.id, conflictFiles: refreshed.conflictFiles },
+          });
+          await db.save();
+          return reply.code(409).send({
+            error: 'ZEUS_TASK_WORKSPACE_CONFLICTED',
+            message: '来源分支或任务分支已推进并产生新冲突，请回到原冲突处理会话继续处理。',
+            conflictFiles: refreshed.conflictFiles,
+          });
+        }
+        await db.save();
+      } catch (error) {
+        return sendTaskGitApiError(reply, error);
+      }
     }
     const requestedTargetBranch = request.body?.targetBranch?.trim();
     const targetBranch = workspace.sourceBranch;
@@ -15197,6 +15235,44 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         const settings = conversations.getNextTurnSettings(modelConversation.id);
         const attemptId = `task_integration_attempt_${createHash('sha256').update(`${stableOperationId}\0${integrationId}`).digest('hex').slice(0, 20)}`;
         const repositoryPath = resolved.workspace.repositoryPath || project.localPath;
+        const conflictWorkspaceId = `task_workspace_${createHash('sha256').update(`${stableOperationId}\0conflict-workspace`).digest('hex').slice(0, 24)}`;
+        let conflictWorkspace = taskWorkspaces.getById(conflictWorkspaceId);
+        if (conflictWorkspace) {
+          if (conflictWorkspace.kind !== 'conflict' || conflictWorkspace.baseWorkspaceId !== resolved.workspace.id) {
+            throw nativeApiError('ZEUS_NATIVE_RESERVED_RESOURCE_CONFLICT', 'The persisted conflict workspace does not match the reserved operation.');
+          }
+        } else {
+          const repository = await getGitRepositoryContext(repositoryPath);
+          if (!repository.isRepository) throw nativeApiError('ZEUS_GIT_REPOSITORY_REQUIRED', 'The task repository is unavailable.');
+          const baseName = `${resolved.workspace.branchName}-merge`;
+          const usedBranchNames = new Set([
+            ...repository.localBranches,
+            ...taskWorkspaces
+              .listByTask(task.id)
+              .filter((candidate) => candidate.repositoryPath === resolved.workspace.repositoryPath)
+              .map((candidate) => candidate.branchName),
+          ]);
+          let conflictBranch = baseName;
+          for (let suffix = 2; usedBranchNames.has(conflictBranch); suffix += 1) conflictBranch = `${baseName}-${suffix}`;
+          const sourceHeadSha = (await getGitBranchHead(repositoryPath, resolved.integration.targetBranch).catch(() => null)) ?? resolved.integration.targetHeadSha;
+          conflictWorkspace = taskWorkspaces.create({
+            id: conflictWorkspaceId,
+            projectId: project.id,
+            taskId: task.id,
+            kind: 'conflict',
+            baseWorkspaceId: resolved.workspace.id,
+            ...(resolved.workspace.repositoryId ? { repositoryId: resolved.workspace.repositoryId } : {}),
+            repositoryName: resolved.workspace.repositoryName,
+            repositoryRelativePath: resolved.workspace.repositoryRelativePath,
+            repositoryPath: resolved.workspace.repositoryPath,
+            branchName: conflictBranch,
+            sourceBranch: resolved.integration.targetBranch,
+            sourceHeadSha,
+            remoteName: resolved.workspace.remoteName,
+            remoteBranch: conflictBranch,
+            state: 'ready',
+          });
+        }
         const existingAttempt = taskIntegrationAttempts.getById(attemptId);
         if (existingAttempt) {
           if (existingAttempt.integrationId !== integrationId || existingAttempt.conversationId !== reservation.conversationId || existingAttempt.submissionId !== reservation.submissionId) {
@@ -15207,6 +15283,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         const prompt = buildTaskConflictAiPrompt({
           sourceBranch: resolved.integration.targetBranch,
           taskBranch: resolved.workspace.branchName,
+          conflictBranch: conflictWorkspace.branchName,
           mode: resolved.integration.mode,
           commitMessage: conflictCommitMessage,
         });
@@ -15227,13 +15304,12 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           ...(settings && Object.prototype.hasOwnProperty.call(settings, 'serviceTier') ? { serviceTier: settings.serviceTier, serviceTierPresent: true } : {}),
           permissionMode,
           workMode: 'default',
-          ...(resolved.workspace.environmentId ? { environmentId: resolved.workspace.environmentId } : {}),
-          workspaceId: resolved.workspace.id,
+          workspaceId: conflictWorkspace.id,
           executionWorkspaceMode: 'worktree',
           writableRoots: [],
           allowCodeChanges: true,
           allowTests: true,
-          allowGitCommit: true,
+          allowGitCommit: false,
           bypassConcurrency: true,
           holdDispatch: true,
           additionalContext: {
@@ -15244,6 +15320,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
               conflictContent,
               conflictFingerprint,
               repositoryPath,
+              conflictWorkspaceId: conflictWorkspace.id,
             },
           },
           idempotencyKey,
@@ -15274,7 +15351,16 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           taskId: task.id,
           eventType: 'task.git_integration.ai_accepted',
           title: '冲突处理：已进入会话，正在准备最新合入现场',
-          payload: { integrationId, attemptId, workspaceId: resolved.workspace.id, conversationId: nativeOperation.conversationId, targetBranch: resolved.integration.targetBranch, taskBranch: resolved.workspace.branchName },
+          payload: {
+            integrationId,
+            attemptId,
+            workspaceId: conflictWorkspace.id,
+            baseWorkspaceId: resolved.workspace.id,
+            conversationId: nativeOperation.conversationId,
+            targetBranch: resolved.integration.targetBranch,
+            taskBranch: resolved.workspace.branchName,
+            conflictBranch: conflictWorkspace.branchName,
+          },
         });
         await db.save();
         setImmediate(() => {
@@ -16315,6 +16401,10 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
 
   /** 任务分支本地合入来源分支后回收干净任务目录；清理失败不能反写成合入失败。 */
   async function markTaskWorkspaceDelivered(workspace: ZeusTaskWorkspaceRecord): Promise<boolean> {
+    if (workspace.kind === 'conflict') {
+      taskWorkspaces.update(workspace.id, { state: 'ready', lastError: null });
+      return false;
+    }
     if (!workspace.worktreePath) {
       taskWorkspaces.update(workspace.id, { state: 'merged', lastError: null });
       reconcileTaskEnvironmentState(workspace.environmentId);
@@ -16500,21 +16590,24 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
 
   async function inspectTaskTerminalCleanup(taskId: string, fallbackRepositoryPath: string) {
     const workspacePlans = await Promise.all(
-      taskWorkspaces.listByTask(taskId).map(async (workspace) => {
-        if (!workspace.worktreePath) return { workspace, repositoryPath: workspace.repositoryPath || fallbackRepositoryPath, headSha: workspace.headSha, force: false };
-        try {
-          const review = await readTaskWorkspaceReview(workspace);
-          return {
-            workspace,
-            repositoryPath: workspace.repositoryPath || fallbackRepositoryPath,
-            headSha: review.headSha,
-            force: !review.clean,
-          };
-        } catch {
-          // 无法读取的任务目录不能被当作干净目录；只有用户确认后才允许强制移除。
-          return { workspace, repositoryPath: workspace.repositoryPath || fallbackRepositoryPath, headSha: workspace.headSha, force: true };
-        }
-      }),
+      taskWorkspaces
+        .listByTask(taskId)
+        .filter((workspace) => workspace.kind !== 'conflict')
+        .map(async (workspace) => {
+          if (!workspace.worktreePath) return { workspace, repositoryPath: workspace.repositoryPath || fallbackRepositoryPath, headSha: workspace.headSha, force: false };
+          try {
+            const review = await readTaskWorkspaceReview(workspace);
+            return {
+              workspace,
+              repositoryPath: workspace.repositoryPath || fallbackRepositoryPath,
+              headSha: review.headSha,
+              force: !review.clean,
+            };
+          } catch {
+            // 无法读取的任务目录不能被当作干净目录；只有用户确认后才允许强制移除。
+            return { workspace, repositoryPath: workspace.repositoryPath || fallbackRepositoryPath, headSha: workspace.headSha, force: true };
+          }
+        }),
     );
     const taskConversations = conversations.listByTask(taskId);
     const activeConversationCount = taskConversations.filter((conversation) => taskConversationHasActiveWork(conversation)).length;
@@ -16714,38 +16807,26 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     if ('error' in resolved) return failTaskIntegrationAiPreparation(input, resolved.error.message);
     const { project, task, workspace } = resolved;
     const repositoryPath = workspace.repositoryPath || project.localPath;
+    const conversation = conversations.getById(attempt.conversationId);
+    const conflictWorkspace = conversation?.workspaceId ? taskWorkspaces.getById(conversation.workspaceId) : undefined;
+    if (!conflictWorkspace || conflictWorkspace.kind !== 'conflict' || conflictWorkspace.baseWorkspaceId !== workspace.id) {
+      return failTaskIntegrationAiPreparation(input, '冲突处理会话没有绑定有效的命名冲突开发线。');
+    }
     try {
-      let started: Awaited<ReturnType<typeof startTaskIntegrationAttempt>>;
-      for (;;) {
-        const [targetHeadSha, taskHeadSha] = await Promise.all([getGitBranchHead(repositoryPath, integration.targetBranch), getGitBranchHead(repositoryPath, workspace.branchName)]);
-        const currentAttempt = taskIntegrationAttempts.getById(input.attemptId);
-        if (!currentAttempt || currentAttempt.state === 'completed') return;
-        if (currentAttempt.worktreePath && existsSync(currentAttempt.worktreePath)) {
-          await cleanupTaskIntegrationAttemptWorktree(currentAttempt.worktreePath, integration).catch(() => undefined);
-        }
-        started = await startTaskIntegrationAttempt({
-          repositoryPath,
-          projectSlug: project.slug,
-          integrationId: integration.id,
-          attemptId: input.attemptId,
-          targetBranch: integration.targetBranch,
-          targetHeadSha,
-          taskBranch: workspace.branchName,
-          taskHeadSha,
-          mode: integration.mode,
-          commitMessage: `${task.taskCode}: 合入 ${workspace.branchName}`,
-        });
-        const [latestTargetHeadSha, latestTaskHeadSha] = await Promise.all([getGitBranchHead(repositoryPath, integration.targetBranch), getGitBranchHead(repositoryPath, workspace.branchName)]);
-        if (latestTargetHeadSha === targetHeadSha && latestTaskHeadSha === taskHeadSha) break;
-        await cleanupTaskIntegrationWorktree({ repositoryPath, integrationPath: started.integrationPath }).catch(() => undefined);
-        recordTaskEvent({
-          taskId: task.id,
-          eventType: 'task.git_integration.ai_generation_advanced',
-          title: '冲突处理：分支已推进，继续准备最新合入现场',
-          payload: { integrationId: integration.id, attemptId: input.attemptId, conversationId: attempt.conversationId, targetHeadSha: latestTargetHeadSha, taskHeadSha: latestTaskHeadSha },
-        });
-        await db.save();
-      }
+      const [targetHeadSha, taskHeadSha] = await Promise.all([getGitBranchHead(repositoryPath, integration.targetBranch), getGitBranchHead(repositoryPath, workspace.branchName)]);
+      const started = await startTaskIntegrationAttempt({
+        repositoryPath,
+        projectSlug: project.slug,
+        integrationId: integration.id,
+        attemptId: input.attemptId,
+        conflictBranch: conflictWorkspace.branchName,
+        targetBranch: integration.targetBranch,
+        targetHeadSha,
+        taskBranch: workspace.branchName,
+        taskHeadSha,
+        mode: integration.mode,
+        commitMessage: `${task.taskCode}: 合入 ${workspace.branchName}`,
+      });
 
       if (started.state === 'conflicted' && started.conflictFiles.includes(input.conflictPath)) {
         const latestConflict = await readTaskIntegrationConflict(started.integrationPath, input.conflictPath);
@@ -16758,6 +16839,12 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         targetHeadSha: started.targetHeadSha,
         taskHeadSha: started.taskHeadSha,
         state: 'active',
+        lastError: null,
+      });
+      taskWorkspaces.update(conflictWorkspace.id, {
+        worktreePath: started.integrationPath,
+        headSha: started.resultHeadSha ?? started.targetHeadSha,
+        state: 'ready',
         lastError: null,
       });
       const settings = conversations.getNextTurnSettings(attempt.conversationId);
@@ -16773,6 +16860,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       const prompt = buildTaskConflictAiPrompt({
         sourceBranch: integration.targetBranch,
         taskBranch: workspace.branchName,
+        conflictBranch: conflictWorkspace.branchName,
         mode: integration.mode,
         commitMessage: `${task.taskCode}: 合入 ${workspace.branchName}`,
       });
@@ -16791,12 +16879,11 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         ...(settings && Object.prototype.hasOwnProperty.call(settings, 'serviceTier') ? { serviceTier: settings.serviceTier, serviceTierPresent: true } : {}),
         permissionMode: settings?.permissionMode ?? conversations.getById(attempt.conversationId)?.permissionMode ?? 'auto',
         workMode: settings?.collaborationMode ?? 'default',
-        ...(workspace.environmentId ? { environmentId: workspace.environmentId } : {}),
-        workspaceId: workspace.id,
+        workspaceId: conflictWorkspace.id,
         writableRoots: [started.integrationPath],
         allowCodeChanges: true,
         allowTests: true,
-        allowGitCommit: true,
+        allowGitCommit: false,
         bypassConcurrency: true,
         deferInitialDispatch: true,
         idempotencyKey: input.dispatchIdempotencyKey ?? input.idempotencyKey,
@@ -16810,11 +16897,20 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         taskId: task.id,
         eventType: 'task.git_integration.ai_started',
         title: '冲突处理：最新合入现场已准备，AI 开始处理',
-        payload: { integrationId: integration.id, attemptId: input.attemptId, workspaceId: workspace.id, conversationId: attempt.conversationId, targetHeadSha: started.targetHeadSha, taskHeadSha: started.taskHeadSha },
+        payload: {
+          integrationId: integration.id,
+          attemptId: input.attemptId,
+          workspaceId: conflictWorkspace.id,
+          baseWorkspaceId: workspace.id,
+          conversationId: attempt.conversationId,
+          conflictBranch: conflictWorkspace.branchName,
+          targetHeadSha: started.targetHeadSha,
+          taskHeadSha: started.taskHeadSha,
+        },
       });
       await db.save();
-      if (conversationSubmissions.getById(operation.submissionId)?.status === 'completed') scheduleTaskIntegrationAiFinalization(input.attemptId, attempt.conversationId);
     } catch (error) {
+      taskWorkspaces.update(conflictWorkspace.id, { state: 'failed', lastError: error instanceof Error ? error.message : '无法准备冲突处理开发线。' });
       await failTaskIntegrationAiPreparation(input, error instanceof Error ? error.message : '无法准备冲突处理现场。');
     }
   }

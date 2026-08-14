@@ -516,6 +516,8 @@ export interface TaskWorkspaceRecord {
   id: string;
   projectId: string;
   taskId: string;
+  kind: 'task' | 'conflict';
+  baseWorkspaceId: string | null;
   environmentId: string | null;
   repositoryId: string | null;
   repositoryName: string;

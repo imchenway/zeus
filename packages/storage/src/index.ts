@@ -91,6 +91,7 @@ export interface ZeusTaskRecord {
 }
 
 export type TaskWorkspaceState = 'ready' | 'reclaimed' | 'merged' | 'discarded' | 'failed';
+export type TaskWorkspaceKind = 'task' | 'conflict';
 export type TaskEnvironmentState = 'ready' | 'reclaimed' | 'failed';
 
 /** 一次任务推送的内部聚合记录，用于关联多个仓库工作区。 */
@@ -113,6 +114,8 @@ export interface ZeusTaskWorkspaceRecord {
   id: string;
   projectId: string;
   taskId: string;
+  kind: TaskWorkspaceKind;
+  baseWorkspaceId: string | null;
   environmentId: string | null;
   repositoryId: string | null;
   repositoryName: string;
@@ -135,6 +138,8 @@ export interface CreateTaskWorkspaceInput {
   id?: string;
   projectId: string;
   taskId: string;
+  kind?: TaskWorkspaceKind;
+  baseWorkspaceId?: string;
   environmentId?: string;
   repositoryId?: string;
   repositoryName?: string;
@@ -2139,6 +2144,8 @@ function migrateTaskGitWorkspaceSchema(db: ZeusDatabase): void {
       id TEXT PRIMARY KEY,
       project_id TEXT NOT NULL,
       task_id TEXT NOT NULL,
+      workspace_kind TEXT NOT NULL DEFAULT 'task',
+      base_workspace_id TEXT,
       branch_name TEXT NOT NULL,
       source_branch TEXT NOT NULL,
       source_head_sha TEXT NOT NULL,
@@ -2152,6 +2159,14 @@ function migrateTaskGitWorkspaceSchema(db: ZeusDatabase): void {
       updated_at TEXT NOT NULL
     )
   `);
+  for (const statement of [`ALTER TABLE task_workspaces ADD COLUMN workspace_kind TEXT NOT NULL DEFAULT 'task'`, `ALTER TABLE task_workspaces ADD COLUMN base_workspace_id TEXT`]) {
+    try {
+      db.execute(statement);
+    } catch {
+      // SQLite 不支持 ADD COLUMN IF NOT EXISTS；字段存在时保留当前数据。
+    }
+  }
+  db.execute(`UPDATE task_workspaces SET workspace_kind = 'task' WHERE workspace_kind IS NULL OR workspace_kind NOT IN ('task', 'conflict')`);
   const usesRepositoryScopedWorkspaces = Boolean(db.get<{ name: string }>(`SELECT name FROM pragma_table_info('task_workspaces') WHERE name = 'repository_id'`));
   if (usesRepositoryScopedWorkspaces) {
     // 多仓模型允许同一项目的不同仓库使用同名任务分支，旧项目级唯一索引必须先移除。
@@ -2246,6 +2261,11 @@ function migrateTaskGitWorkspaceSchema(db: ZeusDatabase): void {
     migrationId: '20260811_0001_task_integration_attempts',
     description: '记录每次 AI 冲突处理的独立 worktree 与会话身份',
     checksumSource: 'task_integration_attempts:integration_id,conversation_id,submission_id,worktree_path,target_head_sha,task_head_sha,state,result_head_sha,last_error',
+  });
+  recordSchemaMigration(db, {
+    migrationId: '20260814_0002_conflict_task_workspaces',
+    description: '把 AI 冲突处理现场登记为带来源任务开发线的持久命名工作区',
+    checksumSource: 'task_workspaces:workspace_kind,base_workspace_id:task,conflict',
   });
 }
 
@@ -4065,7 +4085,7 @@ export class TaskEnvironmentRepository {
   }
 }
 
-const selectTaskWorkspaceFields = `id, project_id, task_id, branch_name, source_branch, source_head_sha, remote_name,
+const selectTaskWorkspaceFields = `id, project_id, task_id, workspace_kind, base_workspace_id, branch_name, source_branch, source_head_sha, remote_name,
   remote_branch, worktree_path, head_sha, state, last_error, created_at, updated_at,
   environment_id, repository_id, repository_name, repository_relative_path, repository_path`;
 
@@ -4080,6 +4100,8 @@ export class TaskWorkspaceRepository {
       id: input.id ?? `task_workspace_${nanoid(12)}`,
       projectId: input.projectId,
       taskId: input.taskId,
+      kind: assertEnum(input.kind ?? 'task', ['task', 'conflict'] as const, 'task workspace kind'),
+      baseWorkspaceId: input.baseWorkspaceId ?? null,
       environmentId: input.environmentId ?? null,
       repositoryId: input.repositoryId ?? null,
       repositoryName: input.repositoryName ?? '项目仓库',
@@ -4099,14 +4121,16 @@ export class TaskWorkspaceRepository {
     };
     this.db.execute(
       `INSERT INTO task_workspaces
-       (id, project_id, task_id, branch_name, source_branch, source_head_sha, remote_name, remote_branch,
+       (id, project_id, task_id, workspace_kind, base_workspace_id, branch_name, source_branch, source_head_sha, remote_name, remote_branch,
         worktree_path, head_sha, state, last_error, created_at, updated_at,
         environment_id, repository_id, repository_name, repository_relative_path, repository_path)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)`,
       [
         record.id,
         record.projectId,
         record.taskId,
+        record.kind,
+        record.baseWorkspaceId,
         record.branchName,
         record.sourceBranch,
         record.sourceHeadSha,
@@ -7906,6 +7930,8 @@ interface DbTaskWorkspaceRow {
   id: string;
   project_id: string;
   task_id: string;
+  workspace_kind: TaskWorkspaceKind;
+  base_workspace_id: string | null;
   environment_id: string | null;
   repository_id: string | null;
   repository_name: string;
@@ -8476,6 +8502,8 @@ function mapTaskWorkspaceRow(row: DbTaskWorkspaceRow): ZeusTaskWorkspaceRecord {
     id: row.id,
     projectId: row.project_id,
     taskId: row.task_id,
+    kind: assertEnum(row.workspace_kind, ['task', 'conflict'] as const, 'task workspace kind'),
+    baseWorkspaceId: row.base_workspace_id,
     environmentId: row.environment_id,
     repositoryId: row.repository_id,
     repositoryName: row.repository_name,

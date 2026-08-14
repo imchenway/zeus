@@ -245,8 +245,8 @@ export function TaskGitConflictWorkspace(props: {
               disabled={!document || props.busy || unresolvedCount === 0}
               title={
                 props.zh
-                  ? `打开会话，由 AI 处理全部冲突、生成合入提交并完成合入来源分支 ${props.integration.targetBranch}；不会推送远端`
-                  : `Open a conversation and let AI resolve every conflict, create the merge commit, and complete the local merge into source branch ${props.integration.targetBranch}; no remote push`
+                  ? `新建命名冲突分支，由 AI 处理全部冲突；随后可在会话中通过代码交付合入 ${props.integration.targetBranch}`
+                  : `Create a named conflict branch for AI resolution, then deliver it into ${props.integration.targetBranch} from the conversation`
               }
             >
               {props.zh ? 'AI 处理' : 'Resolve with AI'}
@@ -279,7 +279,7 @@ export function TaskGitConflictWorkspace(props: {
               <span>
                 <strong id="task-git-conflict-ai-permission-title">{props.zh ? '选择本次冲突处理权限' : 'Choose conflict resolution permissions'}</strong>
                 <small id="task-git-conflict-ai-permission-description">
-                  {props.zh ? 'AI 将在隔离合入工作区修改并暂存文件。该选择只用于本次会话。' : 'AI will edit and stage files in an isolated integration worktree. This choice applies only to this conversation.'}
+                  {props.zh ? 'AI 将在新建的命名冲突分支中修改并暂存文件；分支和会话会继续保留。' : 'AI will edit and stage files on a new named conflict branch that remains available to this conversation.'}
                 </small>
               </span>
               <fieldset aria-describedby="task-git-conflict-ai-permission-description">
@@ -288,7 +288,7 @@ export function TaskGitConflictWorkspace(props: {
                   <input type="radio" name="task-conflict-ai-permission" value="auto" checked={aiPermissionMode === 'auto'} onChange={() => setAiPermissionMode('auto')} disabled={props.aiBusy} />
                   <span>
                     <strong>{props.zh ? '自动（推荐）' : 'Auto (recommended)'}</strong>
-                    <small>{props.zh ? '只写入隔离工作区，超出范围的操作仍需确认。' : 'Writes only inside the isolated worktree; out-of-scope actions still require approval.'}</small>
+                    <small>{props.zh ? '只写入本次新建的冲突分支，超出范围的操作仍需确认。' : 'Writes only to the new conflict branch; out-of-scope actions still require approval.'}</small>
                   </span>
                 </label>
                 <label className={aiPermissionMode === 'full-access' ? 'is-selected' : ''}>
