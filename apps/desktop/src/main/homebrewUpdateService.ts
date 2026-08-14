@@ -81,12 +81,12 @@ export function createHomebrewUpdateService(options: CreateHomebrewUpdateService
     async prepare(update, onProgress) {
       assertUpdateCanUseHomebrew(update, options);
       const brewPath = await resolveHomebrewBinary(options.testMode);
-      let cask = await inspectCask(brewPath);
+      let cask = await retryOperation(() => inspectCask(brewPath), 2);
       await validateManagedCask(cask, options);
       if (!caskMatchesRelease(cask, update)) {
         onProgress({ phase: 'updating' });
-        await runBrew(brewPath, ['update'], { timeoutMs: 5 * 60_000, allowAutoUpdate: true });
-        cask = await inspectCask(brewPath);
+        await retryOperation(() => runBrew(brewPath, ['update'], { timeoutMs: 5 * 60_000, allowAutoUpdate: true }), 2);
+        cask = await retryOperation(() => inspectCask(brewPath), 2);
       }
       validateCask(cask, update, options.currentAppPath, options.testMode);
       const cachePath = await readCachePath(brewPath, options.testMode);
@@ -96,7 +96,7 @@ export function createHomebrewUpdateService(options: CreateHomebrewUpdateService
       if (cachedArtifact) return { update, brewPath, cachePath, verifiedArtifact: cachedArtifact };
 
       onProgress({ phase: 'downloading', ...(artifact.sizeBytes === null ? {} : { totalBytes: artifact.sizeBytes }) });
-      await fetchCask(brewPath, cachePath, artifact.sizeBytes, onProgress, options.testMode);
+      await retryOperation(() => fetchCask(brewPath, cachePath, artifact.sizeBytes, onProgress, options.testMode), 2, isTransientHomebrewDownloadError);
       onProgress({ phase: 'verifying' });
       const downloadedArtifact = await verifyArtifact(cachePath, artifact.sha256, artifact.sizeBytes);
       if (!downloadedArtifact) throw new Error('Homebrew 下载完成，但缓存安装包未通过发布清单校验。');
@@ -252,7 +252,7 @@ function caskMatchesRelease(cask: HomebrewCaskInfo, update: DesktopReleaseUpdate
 }
 
 async function readCachePath(brewPath: string, testMode: boolean): Promise<string> {
-  const { stdout } = await runBrew(brewPath, ['--cache', '--cask', caskToken], { timeoutMs: 60_000, allowAutoUpdate: false });
+  const { stdout } = await retryOperation(() => runBrew(brewPath, ['--cache', '--cask', caskToken], { timeoutMs: 60_000, allowAutoUpdate: false }), 2);
   const cachePath = resolve(stdout.trim());
   if (!stdout.trim() || !isAbsolute(stdout.trim())) throw new Error('Homebrew 没有返回有效的 Zeus 缓存路径。');
   if (testMode && process.env.ZEUS_HOMEBREW_BIN?.trim() && !isUnderTemporaryDirectory(cachePath)) {
@@ -459,6 +459,25 @@ function formatCommandFailure(prefix: string, output: string, code: string | num
     .slice(-3)
     .join(' ');
   return `${prefix}${code === undefined ? '' : ` (code ${code})`}${signal ? ` (signal ${signal})` : ''}${summary ? `：${summary}` : '。'}`;
+}
+
+/** 只为检查、缓存定位和明确的瞬时下载故障做短重试；安装命令不进入此流程。 */
+async function retryOperation<T>(operation: () => Promise<T>, retryCount: number, shouldRetry: (error: unknown) => boolean = () => true): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= retryCount; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+      if (attempt === retryCount || !shouldRetry(error)) break;
+      await delay(attempt === 0 ? 400 : 1_200);
+    }
+  }
+  throw lastError;
+}
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolveDelay) => setTimeout(resolveDelay, milliseconds));
 }
 
 async function isExecutable(path: string): Promise<boolean> {

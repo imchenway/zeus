@@ -5,17 +5,29 @@ private final class UpdateProgressPanelController: NSObject, NSApplicationDelega
     private let panel: NSPanel
     private let titleLabel = NSTextField(labelWithString: "")
     private let detailLabel = NSTextField(wrappingLabelWithString: "")
+    private let progressCaptionLabel = NSTextField(labelWithString: "")
     private let progressIndicator = NSProgressIndicator()
     private let progressLabel = NSTextField(labelWithString: "")
+    private let progressRow = NSStackView()
+    private let detailsButton = NSButton(title: "", target: nil, action: nil)
+    private let copyDetailsButton = NSButton(title: "", target: nil, action: nil)
+    private let detailsActionRow = NSStackView()
+    private let technicalDetailsView = NSTextView()
+    private let technicalDetailsScrollView = NSScrollView()
     private let secondaryButton = NSButton(title: "", target: nil, action: nil)
     private let primaryButton = NSButton(title: "", target: nil, action: nil)
+    private let buttonRow = NSStackView()
+    private let contentStack = NSStackView()
     private var language = "zh-CN"
     private var awaitingRelaunch = false
+    private var currentState = "checking"
+    private var technicalDetail = ""
+    private var detailsExpanded = false
 
     override init() {
         panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 440, height: 210),
-            styleMask: [.titled, .closable, .utilityWindow],
+            contentRect: NSRect(x: 0, y: 0, width: 480, height: 176),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
@@ -40,13 +52,20 @@ private final class UpdateProgressPanelController: NSObject, NSApplicationDelega
         panel.hidesOnDeactivate = false
         panel.collectionBehavior = [.fullScreenAuxiliary, .moveToActiveSpace]
         panel.delegate = self
+        panel.tabbingMode = .disallowed
+        panel.contentMinSize = NSSize(width: 440, height: 136)
+        panel.contentMaxSize = NSSize(width: 760, height: 540)
 
-        titleLabel.font = NSFont.systemFont(ofSize: 15, weight: .semibold)
+        titleLabel.font = NSFont.systemFont(ofSize: 17, weight: .semibold)
         titleLabel.maximumNumberOfLines = 1
         detailLabel.font = NSFont.systemFont(ofSize: 13)
         detailLabel.textColor = .secondaryLabelColor
         detailLabel.maximumNumberOfLines = 3
+        progressCaptionLabel.font = NSFont.systemFont(ofSize: 12, weight: .medium)
+        progressCaptionLabel.textColor = .secondaryLabelColor
+        progressCaptionLabel.lineBreakMode = .byTruncatingTail
         progressIndicator.style = .bar
+        progressIndicator.controlSize = .small
         progressIndicator.minValue = 0
         progressIndicator.maxValue = 1
         progressIndicator.isIndeterminate = true
@@ -54,37 +73,104 @@ private final class UpdateProgressPanelController: NSObject, NSApplicationDelega
         progressLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium)
         progressLabel.textColor = .secondaryLabelColor
         progressLabel.alignment = .right
+        progressLabel.setContentHuggingPriority(.required, for: .horizontal)
+        progressLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+
+        let progressSpacer = NSView()
+        progressSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        progressSpacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        progressRow.setViews([progressCaptionLabel, progressSpacer, progressLabel], in: .leading)
+        progressRow.orientation = .horizontal
+        progressRow.alignment = .centerY
+        progressRow.spacing = 8
+
+        detailsButton.bezelStyle = .inline
+        detailsButton.controlSize = .small
+        detailsButton.font = NSFont.systemFont(ofSize: 12, weight: .medium)
+        detailsButton.contentTintColor = .secondaryLabelColor
+        detailsButton.target = self
+        detailsButton.action = #selector(toggleDetails)
+        copyDetailsButton.bezelStyle = .inline
+        copyDetailsButton.controlSize = .small
+        copyDetailsButton.font = NSFont.systemFont(ofSize: 12, weight: .medium)
+        copyDetailsButton.contentTintColor = .secondaryLabelColor
+        copyDetailsButton.target = self
+        copyDetailsButton.action = #selector(copyDetails)
+
+        let detailsSpacer = NSView()
+        detailsSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        detailsSpacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        detailsActionRow.setViews([detailsButton, detailsSpacer, copyDetailsButton], in: .leading)
+        detailsActionRow.orientation = .horizontal
+        detailsActionRow.alignment = .centerY
+        detailsActionRow.spacing = 8
+
+        technicalDetailsView.isEditable = false
+        technicalDetailsView.isSelectable = true
+        technicalDetailsView.drawsBackground = false
+        technicalDetailsView.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+        technicalDetailsView.textColor = .secondaryLabelColor
+        technicalDetailsView.textContainerInset = NSSize(width: 8, height: 7)
+        technicalDetailsView.isHorizontallyResizable = false
+        technicalDetailsView.isVerticallyResizable = true
+        technicalDetailsView.autoresizingMask = [.width]
+        technicalDetailsView.textContainer?.widthTracksTextView = true
+        technicalDetailsScrollView.documentView = technicalDetailsView
+        technicalDetailsScrollView.borderType = .lineBorder
+        technicalDetailsScrollView.hasVerticalScroller = true
+        technicalDetailsScrollView.drawsBackground = false
 
         secondaryButton.bezelStyle = .rounded
+        secondaryButton.controlSize = .regular
+        secondaryButton.font = NSFont.systemFont(ofSize: 13, weight: .medium)
         secondaryButton.target = self
         secondaryButton.action = #selector(secondaryAction)
         primaryButton.bezelStyle = .rounded
+        primaryButton.controlSize = .regular
+        primaryButton.font = NSFont.systemFont(ofSize: 13, weight: .medium)
         primaryButton.keyEquivalent = "\r"
         primaryButton.target = self
         primaryButton.action = #selector(primaryAction)
 
-        let buttonRow = NSStackView(views: [secondaryButton, primaryButton])
+        let buttonSpacer = NSView()
+        buttonSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        buttonSpacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        buttonRow.setViews([buttonSpacer, secondaryButton, primaryButton], in: .leading)
         buttonRow.orientation = .horizontal
         buttonRow.alignment = .centerY
         buttonRow.spacing = 8
-        buttonRow.setHuggingPriority(.required, for: .horizontal)
 
-        let content = NSStackView(views: [titleLabel, detailLabel, progressIndicator, progressLabel, buttonRow])
-        content.orientation = .vertical
-        content.alignment = .leading
-        content.spacing = 10
-        content.edgeInsets = NSEdgeInsets(top: 22, left: 24, bottom: 18, right: 24)
-        content.translatesAutoresizingMaskIntoConstraints = false
-        panel.contentView = content
+        contentStack.setViews([titleLabel, detailLabel, progressRow, progressIndicator, detailsActionRow, technicalDetailsScrollView, buttonRow], in: .leading)
+        contentStack.orientation = .vertical
+        contentStack.alignment = .leading
+        contentStack.spacing = 11
+        contentStack.detachesHiddenViews = true
+        contentStack.translatesAutoresizingMaskIntoConstraints = false
+
+        let contentView = NSView()
+        panel.contentView = contentView
+        contentView.addSubview(contentStack)
 
         NSLayoutConstraint.activate([
-            content.widthAnchor.constraint(equalToConstant: 440),
-            titleLabel.widthAnchor.constraint(equalToConstant: 392),
-            detailLabel.widthAnchor.constraint(equalToConstant: 392),
-            progressIndicator.widthAnchor.constraint(equalToConstant: 392),
-            progressLabel.widthAnchor.constraint(equalToConstant: 392),
-            buttonRow.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -24),
+            contentStack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 20),
+            contentStack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 24),
+            contentStack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -24),
+            contentStack.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -18),
+            titleLabel.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
+            detailLabel.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
+            progressRow.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
+            progressIndicator.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
+            detailsActionRow.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
+            technicalDetailsScrollView.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
+            technicalDetailsScrollView.heightAnchor.constraint(equalToConstant: 112),
+            buttonRow.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
+            secondaryButton.heightAnchor.constraint(equalToConstant: 30),
+            secondaryButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 76),
+            primaryButton.heightAnchor.constraint(equalToConstant: 30),
+            primaryButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 76),
         ])
+        detailsActionRow.isHidden = true
+        technicalDetailsScrollView.isHidden = true
         setButtons(secondary: nil, primary: nil)
     }
 
@@ -135,9 +221,12 @@ private final class UpdateProgressPanelController: NSObject, NSApplicationDelega
 
     private func applyState(_ command: [String: Any]) {
         let state = command["state"] as? String ?? "checking"
+        currentState = state
         titleLabel.stringValue = command["title"] as? String ?? localized("softwareUpdate")
         detailLabel.stringValue = command["detail"] as? String ?? ""
+        progressCaptionLabel.stringValue = command["progressCaption"] as? String ?? ""
         progressLabel.stringValue = command["progressText"] as? String ?? ""
+        updateTechnicalDetail(command["technicalDetail"] as? String ?? "")
 
         if let progress = command["progress"] as? Double {
             progressIndicator.stopAnimation(nil)
@@ -150,42 +239,47 @@ private final class UpdateProgressPanelController: NSObject, NSApplicationDelega
 
         switch state {
         case "available":
+            progressRow.isHidden = true
             progressIndicator.isHidden = true
-            progressLabel.isHidden = true
             setButtons(secondary: localized("later"), primary: localized("download"))
         case "ready":
-            progressIndicator.isHidden = false
-            progressLabel.isHidden = false
-            progressIndicator.stopAnimation(nil)
-            progressIndicator.isIndeterminate = false
-            progressIndicator.doubleValue = 1
+            progressRow.isHidden = true
+            progressIndicator.isHidden = true
             setButtons(secondary: localized("later"), primary: localized("restart"))
         case "upToDate":
+            progressRow.isHidden = true
             progressIndicator.isHidden = true
-            progressLabel.isHidden = true
             setButtons(secondary: nil, primary: localized("ok"))
         case "failed":
+            progressRow.isHidden = true
             progressIndicator.isHidden = true
-            progressLabel.isHidden = false
             setButtons(secondary: localized("close"), primary: localized("retry"))
         case "installing":
+            progressRow.isHidden = false
             progressIndicator.isHidden = false
-            progressLabel.isHidden = false
             setButtons(secondary: nil, primary: nil)
         default:
+            progressRow.isHidden = false
             progressIndicator.isHidden = false
-            progressLabel.isHidden = false
             setButtons(secondary: nil, primary: nil)
         }
+        refreshDetailsControls()
+        fitPanelToContent(animated: panel.isVisible)
         if command["present"] as? Bool ?? true {
             showPanel()
         }
     }
 
     private func showPanel() {
-        guard !panel.isVisible else { return }
-        panel.center()
-        panel.makeKeyAndOrderFront(nil)
+        if panel.isMiniaturized {
+            panel.deminiaturize(nil)
+        }
+        if !panel.isVisible {
+            panel.center()
+            panel.makeKeyAndOrderFront(nil)
+        } else {
+            panel.makeKey()
+        }
         NSApp.activate(ignoringOtherApps: true)
     }
 
@@ -194,13 +288,14 @@ private final class UpdateProgressPanelController: NSObject, NSApplicationDelega
         secondaryButton.title = secondary ?? ""
         primaryButton.isHidden = primary == nil
         primaryButton.title = primary ?? ""
+        buttonRow.isHidden = secondary == nil && primary == nil
     }
 
     @objc private func secondaryAction() {
-        if primaryButton.title == localized("retry") {
+        panel.orderOut(nil)
+        if currentState == "failed" {
             emit(action: "close")
         } else {
-            panel.orderOut(nil)
             emit(action: "later")
         }
     }
@@ -221,6 +316,55 @@ private final class UpdateProgressPanelController: NSObject, NSApplicationDelega
         }
     }
 
+    @objc private func toggleDetails() {
+        detailsExpanded.toggle()
+        refreshDetailsControls()
+        fitPanelToContent(animated: true)
+    }
+
+    @objc private func copyDetails() {
+        guard !technicalDetail.isEmpty else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(technicalDetail, forType: .string)
+        copyDetailsButton.title = localized("copied")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) { [weak self] in
+            guard let self, !self.copyDetailsButton.isHidden else { return }
+            self.copyDetailsButton.title = self.localized("copyDetails")
+        }
+    }
+
+    private func updateTechnicalDetail(_ nextDetail: String) {
+        if technicalDetail != nextDetail {
+            detailsExpanded = false
+        }
+        technicalDetail = nextDetail
+        technicalDetailsView.string = nextDetail
+    }
+
+    private func refreshDetailsControls() {
+        let canShowDetails = currentState == "failed" && !technicalDetail.isEmpty
+        detailsActionRow.isHidden = !canShowDetails
+        technicalDetailsScrollView.isHidden = !canShowDetails || !detailsExpanded
+        detailsButton.title = localized(detailsExpanded ? "hideDetails" : "showDetails")
+        detailsButton.image = NSImage(systemSymbolName: detailsExpanded ? "chevron.down" : "chevron.right", accessibilityDescription: nil)
+        detailsButton.imagePosition = .imageLeading
+        copyDetailsButton.title = localized("copyDetails")
+        copyDetailsButton.isHidden = !detailsExpanded
+    }
+
+    private func fitPanelToContent(animated: Bool) {
+        guard let contentView = panel.contentView else { return }
+        contentView.layoutSubtreeIfNeeded()
+        let targetContentHeight = min(max(contentStack.fittingSize.height + 38, panel.contentMinSize.height), panel.contentMaxSize.height)
+        let currentContentWidth = min(max(panel.contentLayoutRect.width, panel.contentMinSize.width), panel.contentMaxSize.width)
+        let targetFrame = panel.frameRect(forContentRect: NSRect(x: 0, y: 0, width: currentContentWidth, height: targetContentHeight))
+        var nextFrame = panel.frame
+        let topEdge = nextFrame.maxY
+        nextFrame.size.height = targetFrame.height
+        nextFrame.origin.y = topEdge - targetFrame.height
+        panel.setFrame(nextFrame, display: true, animate: animated)
+    }
+
     private func localized(_ key: String) -> String {
         let english = language == "en-US"
         switch key {
@@ -231,6 +375,10 @@ private final class UpdateProgressPanelController: NSObject, NSApplicationDelega
         case "ok": return english ? "OK" : "好"
         case "close": return english ? "Close" : "关闭"
         case "retry": return english ? "Try Again" : "重试"
+        case "showDetails": return english ? "Show Details" : "查看详情"
+        case "hideDetails": return english ? "Hide Details" : "收起详情"
+        case "copyDetails": return english ? "Copy Details" : "复制详情"
+        case "copied": return english ? "Copied" : "已复制"
         case "relaunchFailed": return english ? "The Updated Zeus Could Not Be Opened" : "无法打开更新后的 Zeus"
         default: return key
         }
@@ -308,12 +456,18 @@ private final class UpdateProgressPanelController: NSObject, NSApplicationDelega
     private func showRelaunchFailure(_ reason: String) {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
+            self.currentState = "failed"
             self.titleLabel.stringValue = self.localized("relaunchFailed")
-            self.detailLabel.stringValue = reason
+            self.detailLabel.stringValue = self.language == "en-US"
+                ? "The update was installed, but the updated Zeus could not be opened."
+                : "更新已经安装，但新版 Zeus 未能打开。"
+            self.updateTechnicalDetail(reason)
             self.progressIndicator.stopAnimation(nil)
             self.progressIndicator.isHidden = true
-            self.progressLabel.isHidden = true
+            self.progressRow.isHidden = true
             self.setButtons(secondary: nil, primary: self.localized("close"))
+            self.refreshDetailsControls()
+            self.fitPanelToContent(animated: false)
             self.showPanel()
         }
     }
