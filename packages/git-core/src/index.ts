@@ -756,6 +756,31 @@ export async function getGitBranchHead(repositoryPath: string, branchName: strin
   return resolveCommit(context.topLevel, localBranchRef(safeBranch));
 }
 
+/**
+ * 代码交付前让冲突处理开发线同时包含最新来源分支和原任务分支。
+ * 新冲突保留在当前命名 worktree，交回原会话继续处理。
+ */
+export async function refreshConflictTaskWorkspace(input: { cwd: string; sourceBranch: string; taskBranch: string }): Promise<{ headSha: string; conflictFiles: string[] }> {
+  const review = await getTaskWorkspaceReview(input.cwd);
+  if (review.branch === 'detached') throw gitCoreError('ZEUS_TASK_WORKSPACE_DETACHED', 'Conflict workspace must stay on a named branch.');
+  if (review.conflictFiles.length > 0) return { headSha: review.headSha, conflictFiles: review.conflictFiles };
+  if (!review.clean) throw gitCoreError('ZEUS_TASK_WORKSPACE_DIRTY', 'Commit or discard every conflict workspace change before refreshing its branches.');
+
+  for (const branch of [input.sourceBranch, input.taskBranch]) {
+    const safeBranch = await assertNamedBranchExists(input.cwd, branch);
+    const branchHeadSha = await resolveCommit(input.cwd, localBranchRef(safeBranch));
+    if (await gitCommitIsAncestor(input.cwd, branchHeadSha, 'HEAD')) continue;
+    try {
+      await runGit(input.cwd, ['-c', 'merge.conflictStyle=diff3', 'merge', '--no-ff', '--no-edit', branchHeadSha]);
+    } catch (error) {
+      const conflictFiles = splitLines(await readGitStdout(input.cwd, ['diff', '--name-only', '--diff-filter=U']));
+      if (conflictFiles.length === 0) throw error;
+      return { headSha: await resolveCommit(input.cwd, 'HEAD'), conflictFiles };
+    }
+  }
+  return { headSha: await resolveCommit(input.cwd, 'HEAD'), conflictFiles: [] };
+}
+
 /** 只读查询远端命名分支提交；远端分支不存在时返回 null。 */
 export async function getRemoteBranchHead(cwd: string, remoteName: string, remoteBranch: string): Promise<string | null> {
   return readRemoteHead(cwd, remoteName, remoteBranch);
@@ -813,12 +838,25 @@ export async function commitTaskWorkspace(input: CommitTaskWorkspaceInput): Prom
     throw gitCoreError('ZEUS_TASK_GIT_PATH_INVALID', 'Shared paths and nested repositories cannot be committed from their parent workspace.');
   }
   const formattedPaths = await formatTaskCommitPaths(input.cwd, paths);
+  const mergeHeadSha = await readGitStdout(input.cwd, ['rev-parse', '-q', '--verify', 'MERGE_HEAD']);
+  if (mergeHeadSha) {
+    const selected = new Set(paths);
+    const mergePaths = [...review.stagedFiles, ...review.unstagedFiles, ...review.untrackedFiles].map((file) => file.path).filter((path) => !ignored.some((ignoredPath) => path === ignoredPath || path.startsWith(`${ignoredPath}/`)));
+    const omitted = mergePaths.filter((path) => !selected.has(path));
+    if (omitted.length > 0) {
+      throw gitCoreError('ZEUS_TASK_MERGE_COMMIT_INCOMPLETE', `Merge commits must include every changed path: ${omitted.join(', ')}`);
+    }
+  }
   // 来源目录里的暂存改动可能先被带入 worktree；共享目录和子仓库必须从父仓 index 中明确退出。
   if (ignored.length > 0) await runGit(input.cwd, ['reset', '-q', 'HEAD', '--', ...ignored]);
   if (paths.length > 0) await runGit(input.cwd, ['add', '-A', '--', ...paths]);
   const stagedNames = paths.length > 0 ? splitLines(await readGitStdout(input.cwd, ['diff', '--cached', '--name-only', '--', ...paths])) : [];
   let committed = false;
-  if (stagedNames.length > 0) {
+  if (mergeHeadSha) {
+    // 合并提交不能按路径局部提交；即使冲突全部选择来源侧而没有净差异，也必须结束 MERGE_HEAD。
+    await runGit(input.cwd, ['commit', '-m', requireSafeGitText(input.message, 'commit message')]);
+    committed = true;
+  } else if (stagedNames.length > 0) {
     // 只提交用户本次选中的路径；其他预先暂存的改动继续留在 index，不得绕过本次门禁混入提交。
     await runGit(input.cwd, ['commit', '-m', requireSafeGitText(input.message, 'commit message'), '--', ...paths]);
     committed = true;
@@ -1034,10 +1072,7 @@ export async function startTaskBranchIntegration(input: {
   };
 }
 
-/**
- * 为一次 AI 冲突处理创建独立 detached worktree；不创建临时分支，
- * 并只使用合入记录冻结的两个提交，避免后续分支移动改变本次尝试。
- */
+/** 为一次 AI 冲突处理创建独立命名分支和持久 worktree。 */
 export async function startTaskIntegrationAttempt(input: {
   repositoryPath: string;
   projectSlug: string;
@@ -1047,6 +1082,7 @@ export async function startTaskIntegrationAttempt(input: {
   targetHeadSha: string;
   taskBranch: string;
   taskHeadSha: string;
+  conflictBranch: string;
   mode: 'merge' | 'squash';
   commitMessage: string;
 }): Promise<TaskBranchIntegrationStartResult> {
@@ -1054,11 +1090,15 @@ export async function startTaskIntegrationAttempt(input: {
   if (!context.isRepository) throw gitCoreError('ZEUS_GIT_REPOSITORY_REQUIRED', 'The selected project is not a Git repository.');
   const targetBranch = await assertGitBranchFormat(context.topLevel, input.targetBranch, 'target branch');
   const taskBranch = await assertGitBranchFormat(context.topLevel, input.taskBranch, 'task branch');
+  const conflictBranch = await assertGitBranchFormat(context.topLevel, input.conflictBranch, 'conflict branch');
   const targetHeadSha = await resolveCommit(context.topLevel, requireGitObjectId(input.targetHeadSha, 'target head'));
   const taskHeadSha = await resolveCommit(context.topLevel, requireGitObjectId(input.taskHeadSha, 'task head'));
   const integrationPath = join(dirname(context.topLevel), '.zeus-worktrees', safePathSegment(input.projectSlug || basename(context.topLevel)), '.integration-attempts', safePathSegment(input.integrationId), safePathSegment(input.attemptId));
   const registered = context.worktrees.find((entry) => canonicalFilesystemPath(entry.path) === canonicalFilesystemPath(integrationPath));
   if (registered) {
+    if (registered.branch !== conflictBranch || registered.detached) {
+      throw gitCoreError('ZEUS_TASK_CONFLICT_BRANCH_MISMATCH', 'The conflict worktree is not attached to its recorded conflict branch.');
+    }
     const conflictFiles = splitLines(await readGitStdout(integrationPath, ['diff', '--name-only', '--diff-filter=U']));
     return {
       integrationPath,
@@ -1073,7 +1113,8 @@ export async function startTaskIntegrationAttempt(input: {
     };
   }
   await mkdir(dirname(integrationPath), { recursive: true });
-  await runGit(context.topLevel, ['worktree', 'add', '--detach', integrationPath, targetHeadSha]);
+  if (context.localBranches.includes(conflictBranch)) await runGit(context.topLevel, ['worktree', 'add', integrationPath, conflictBranch]);
+  else await runGit(context.topLevel, ['worktree', 'add', '-b', conflictBranch, integrationPath, targetHeadSha]);
   try {
     if (input.mode === 'merge') {
       await runGit(integrationPath, ['-c', 'merge.conflictStyle=diff3', 'merge', '--no-ff', '--no-edit', taskHeadSha]);
@@ -1452,6 +1493,17 @@ async function runGit(cwd: string, args: string[]): Promise<GitRunnerResult> {
     return await defaultGitCommandRunner(cwd, args);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Git command failed.';
+    throw gitCoreError('ZEUS_GIT_COMMAND_FAILED', message);
+  }
+}
+
+async function gitCommitIsAncestor(cwd: string, ancestor: string, descendant: string): Promise<boolean> {
+  try {
+    await execFileAsync('git', ['merge-base', '--is-ancestor', ancestor, descendant], { cwd });
+    return true;
+  } catch (error) {
+    if ((error as { code?: unknown }).code === 1) return false;
+    const message = error instanceof Error ? error.message : 'Git ancestry check failed.';
     throw gitCoreError('ZEUS_GIT_COMMAND_FAILED', message);
   }
 }
