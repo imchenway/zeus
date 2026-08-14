@@ -2064,7 +2064,8 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
         method: 'POST',
         body: JSON.stringify({}),
       }),
-    loadCodexConversationCapabilities: (projectId) => request<CodexConversationCapabilities>(`/api/projects/${encodeURIComponent(projectId)}/codex-conversation-capabilities`),
+    loadCodexConversationCapabilities: async (projectId) =>
+      normalizeCodexConversationCapabilities(await request<CodexConversationCapabilities>(`/api/projects/${encodeURIComponent(projectId)}/codex-conversation-capabilities`)),
     loadCodexAccount: () => request<CodexAccountSnapshot>('/api/codex/account'),
     loadCodexUsageSummary: () => request<CodexUsageSummarySnapshot>('/api/codex/usage-summary'),
     loadUsageOverview,
@@ -2707,6 +2708,21 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
         method: 'POST',
         body: JSON.stringify(input),
       }),
+  };
+}
+
+/**
+ * 升级后的界面可能继续连接升级前启动的执行宿主；在 API 边界补齐新增能力，避免业务组件直接读取缺失字段而崩溃。
+ */
+function normalizeCodexConversationCapabilities(capabilities: CodexConversationCapabilities): CodexConversationCapabilities {
+  if (capabilities.goals && typeof capabilities.goals.supported === 'boolean' && typeof capabilities.goals.enabled === 'boolean') return capabilities;
+  return {
+    ...capabilities,
+    goals: {
+      supported: false,
+      enabled: false,
+      stage: null,
+    },
   };
 }
 

@@ -1330,11 +1330,12 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const turnDiffChangeSet = contextWorkspace.kind === 'turn_diff' ? (props.state?.changeSetsByProviderId[contextWorkspace.turnId] ?? null) : null;
   const dockedPlan = props.state ? selectDockedTurnPlan(props.state) : null;
   const goal = props.state?.snapshot?.goal ?? null;
+  const capabilityGoals = props.capabilities?.goals;
   const goalCapability =
     props.state?.snapshot?.goalCapability ??
     ({
-      ...(props.capabilities?.goals ?? { supported: false, enabled: false, stage: null }),
-      reason: props.capabilities?.goals.supported && props.capabilities.goals.enabled ? 'available' : props.capabilities?.goals.supported ? 'disabled' : 'unverified',
+      ...(capabilityGoals ?? { supported: false, enabled: false, stage: null }),
+      reason: capabilityGoals?.supported && capabilityGoals?.enabled ? 'available' : capabilityGoals?.supported ? 'disabled' : 'unverified',
     } as const);
   const selectedComposerModel = resolveModelCapability(props.capabilities?.models, composerRuntimeSettings?.model ?? props.state?.snapshot?.nextTurnSettings?.model ?? props.state?.providerSettings?.model);
   const goalAvailable = !legacy && goalCapability.supported && goalCapability.enabled && (selectedComposerModel?.agentKind ?? props.state?.snapshot?.agent?.kind ?? props.conversation?.agent?.kind) === 'codex';
@@ -2464,7 +2465,7 @@ function NewConversationComposer(props: {
   const modelPresentation = useMemo(() => presentModelOptions(capabilities?.models ?? [], preferredModel?.id ?? selectedModelId, props.language), [capabilities?.models, preferredModel?.id, props.language, selectedModelId]);
   const selectedModel = resolveModelCapability(modelPresentation.models, modelPresentation.selectedId) ?? modelPresentation.models[0] ?? null;
   const selectedModelLabel = selectedModel ? modelPresentation.triggerLabel : '';
-  const goalAvailable = Boolean(capabilities?.goals.supported && capabilities.goals.enabled && selectedModel?.agentKind !== 'pi');
+  const goalAvailable = Boolean(capabilities?.goals?.supported && capabilities?.goals?.enabled && selectedModel?.agentKind !== 'pi');
 
   useEffect(() => {
     if (!selectedModel) return;

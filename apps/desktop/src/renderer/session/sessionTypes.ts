@@ -755,7 +755,8 @@ export interface CodexConversationCapabilities {
   preferredModel: string;
   models: CodexTaskPushModelCapability[];
   codexAccount: CodexAccountSnapshot;
-  goals: {
+  /** 长任务执行宿主可能来自升级前版本，旧能力响应没有目标字段。 */
+  goals?: {
     supported: boolean;
     enabled: boolean;
     stage: 'beta' | 'underDevelopment' | 'stable' | 'deprecated' | 'removed' | null;
