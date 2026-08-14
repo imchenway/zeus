@@ -3115,6 +3115,271 @@
   z-index: 5;
 }
 
+.session-codex-parity-v1 .session-goal-trigger,
+.session-codex-parity-v1 .session-goal-rail {
+  min-width: 24px;
+  min-height: 24px;
+  border: 1px solid color-mix(in srgb, var(--session-accent, #5f75ff) 24%, transparent);
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--session-accent, #5f75ff) 7%, transparent);
+}
+
+.session-codex-parity-v1 .session-goal-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border-radius: 8px;
+  font-size: 12px;
+}
+
+.session-codex-parity-v1 .session-goal-rail {
+  width: min(100%, 760px);
+  margin: 0 auto 8px;
+  padding: 9px 12px;
+  border-radius: 12px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  text-align: left;
+}
+
+.session-goal-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #8b91a7;
+}
+
+.session-goal-status-dot.is-active {
+  background: #5f75ff;
+  box-shadow: 0 0 0 4px rgb(95 117 255 / 12%);
+}
+.session-goal-status-dot.is-complete {
+  background: #32a875;
+}
+.session-goal-status-dot.is-blocked,
+.session-goal-status-dot.is-usageLimited,
+.session-goal-status-dot.is-budgetLimited {
+  background: #d99132;
+}
+
+.session-goal-rail-copy {
+  min-width: 0;
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.session-goal-rail-copy strong {
+  flex: 0 0 auto;
+  font-size: 12px;
+  color: var(--text-primary);
+}
+.session-goal-rail-copy span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+.session-goal-rail-meta {
+  font-size: 11px;
+  white-space: nowrap;
+  color: var(--text-tertiary);
+}
+
+.session-goal-portal-root {
+  z-index: 1600;
+}
+.session-goal-backdrop {
+  background: rgb(12 14 21 / 46%);
+  backdrop-filter: blur(6px);
+}
+
+.session-goal-panel {
+  width: min(620px, calc(100vw - 32px));
+  max-height: min(760px, calc(100vh - 40px));
+  overflow: auto;
+  border-radius: 18px;
+  padding: 22px;
+  box-shadow: 0 24px 80px rgb(8 10 18 / 28%);
+}
+
+.session-goal-panel-header,
+.session-goal-panel-actions,
+.session-goal-metrics,
+.session-goal-timeline li,
+.session-goal-clear-confirm {
+  display: flex;
+  align-items: center;
+}
+
+.session-goal-panel-header {
+  justify-content: space-between;
+  gap: 20px;
+}
+.session-goal-panel-header h2 {
+  margin: 2px 0 0;
+  font-size: 22px;
+}
+.session-goal-eyebrow {
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+.session-goal-status {
+  padding: 4px 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  background: var(--surface-muted);
+}
+.session-goal-status.is-active {
+  color: #5269ec;
+  background: rgb(95 117 255 / 12%);
+}
+.session-goal-status.is-complete {
+  color: #23825a;
+  background: rgb(50 168 117 / 12%);
+}
+.session-goal-description {
+  margin: 14px 0 18px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+
+.session-goal-objective-field {
+  display: grid;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.session-goal-objective-field textarea {
+  min-height: 150px;
+  resize: vertical;
+  padding: 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  background: var(--surface-muted);
+  color: var(--text-primary);
+  font: inherit;
+  font-weight: 400;
+  line-height: 1.55;
+}
+.session-goal-objective-field small {
+  justify-self: end;
+  font-weight: 400;
+  color: var(--text-tertiary);
+}
+
+.session-goal-metrics {
+  gap: 0;
+  margin: 16px 0;
+  padding: 12px 0;
+  border-block: 1px solid var(--border-subtle);
+}
+.session-goal-metrics div {
+  min-width: 0;
+  flex: 1;
+  padding: 0 12px;
+  border-left: 1px solid var(--border-subtle);
+}
+.session-goal-metrics div:first-child {
+  border-left: 0;
+  padding-left: 0;
+}
+.session-goal-metrics dt {
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+.session-goal-metrics dd {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.session-goal-timeline {
+  margin-top: 16px;
+}
+.session-goal-timeline h3 {
+  margin: 0 0 8px;
+  font-size: 12px;
+}
+.session-goal-timeline ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.session-goal-timeline li {
+  justify-content: space-between;
+  min-height: 28px;
+  gap: 12px;
+  font-size: 12px;
+}
+.session-goal-timeline time {
+  color: var(--text-tertiary);
+}
+.session-goal-error {
+  color: var(--danger);
+  font-size: 12px;
+}
+.session-goal-clear-confirm {
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 16px 0;
+  padding: 12px;
+  border-radius: 12px;
+  background: rgb(205 72 72 / 9%);
+}
+.session-goal-clear-confirm strong,
+.session-goal-clear-confirm p {
+  flex-basis: 100%;
+  margin: 0;
+}
+.session-goal-clear-confirm p {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+.session-goal-panel-actions {
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 20px;
+}
+.session-goal-panel-actions button,
+.session-goal-clear-confirm button {
+  min-height: 32px;
+  padding: 6px 12px;
+  border-radius: 9px;
+}
+.session-goal-panel-actions .is-primary {
+  color: white;
+  background: var(--session-accent, #5f75ff);
+}
+.session-goal-panel-actions .is-danger-quiet,
+.session-goal-clear-confirm .is-danger {
+  color: #b43d3d;
+}
+
+@media (max-width: 720px) {
+  .session-goal-rail {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+  .session-goal-rail-meta {
+    display: none;
+  }
+  .session-goal-metrics {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .session-goal-metrics div {
+    padding: 0;
+    border-left: 0;
+  }
+}
+
 .session-codex-parity-v1 .session-interaction-dock {
   flex: 0 0 auto;
   inline-size: min(var(--session-composer-max), calc(100% - (2 * var(--session-gutter))));

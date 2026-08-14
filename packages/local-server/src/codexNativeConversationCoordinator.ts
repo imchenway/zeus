@@ -1,11 +1,13 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { realpathSync, statSync } from 'node:fs';
 import { dirname, extname, isAbsolute, relative, resolve } from 'node:path';
-import type { CodexAppServerEvent, CodexAppServerManager, CodexCommandApprovalDecision, CodexResponsesRuntime, CodexSandboxPolicy, CodexServerRequestResponse, CodexThreadSnapshot, CodexTurnSnapshot } from '@zeus/ai-runtime';
+import type { CodexAppServerEvent, CodexAppServerManager, CodexCommandApprovalDecision, CodexResponsesRuntime, CodexSandboxPolicy, CodexServerRequestResponse, CodexThreadGoal, CodexThreadSnapshot, CodexTurnSnapshot } from '@zeus/ai-runtime';
 import { buildTaskPushInputParts, calculateCacheHitRate, type NativeTokenUsageSnapshot, type TaskPushMessageLayout, type TokenUsageBreakdown } from '@zeus/shared';
 import {
   type CodexMcpServerStartupState,
   type ConversationCollaborationMode,
+  type ConversationGoalEventKind,
+  ConversationGoalRepository,
   type ConversationItemPhase,
   ConversationItemRepository,
   type ConversationItemType,
@@ -98,6 +100,7 @@ interface PersistedSubmissionInput {
   taskPushLayout?: TaskPushMessageLayout;
   internalOperation?: boolean;
   requestAnswerId?: string;
+  goalObjective?: string;
 }
 
 interface NativeTurnResultWaiter {
@@ -127,6 +130,7 @@ export interface CreateCodexNativeConversationCoordinatorOptions {
   submissions: ConversationSubmissionRepository;
   requests: ConversationServerRequestRepository;
   planActions?: ConversationPlanActionRepository;
+  goals?: ConversationGoalRepository;
   receipts?: ProviderEventReceiptRepository;
   syncCheckpoints?: ConversationProviderSyncCheckpointRepository;
   settings: SettingRepository;
@@ -167,6 +171,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   const now = options.now ?? (() => new Date().toISOString());
   const operationId = options.operationId ?? randomUUID;
   const planActions = options.planActions ?? new ConversationPlanActionRepository(options.db);
+  const goals = options.goals ?? new ConversationGoalRepository(options.db);
   const resources = options.resources ?? new ConversationResourceRepository(options.db);
   const receipts = options.receipts ?? new ProviderEventReceiptRepository(options.db);
   const syncCheckpoints = options.syncCheckpoints ?? new ConversationProviderSyncCheckpointRepository(options.db);
@@ -337,7 +342,15 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   }
 
   function requiresImmediatePersist(event: CodexAppServerEvent, createdPlanImplementationRequest: unknown): boolean {
-    return event.requestId !== undefined || event.method === 'turn/started' || event.method === 'turn/completed' || event.method === 'serverRequest/resolved' || createdPlanImplementationRequest !== null;
+    return (
+      event.requestId !== undefined ||
+      event.method === 'turn/started' ||
+      event.method === 'turn/completed' ||
+      event.method === 'thread/goal/updated' ||
+      event.method === 'thread/goal/cleared' ||
+      event.method === 'serverRequest/resolved' ||
+      createdPlanImplementationRequest !== null
+    );
   }
 
   function syncItemResources(
@@ -519,6 +532,15 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     return text;
   }
 
+  function submissionGoalObjective(submission: ZeusConversationSubmissionRecord): string | null {
+    const value = parseJsonRecord(submission.inputJson).goalObjective;
+    if (value === undefined) return null;
+    if (typeof value !== 'string' || !value.trim() || [...value.trim()].length > 4_000) {
+      throw coordinatorError('ZEUS_CODEX_GOAL_OBJECTIVE_INVALID', '目标必须为 1 到 4000 个字符。');
+    }
+    return value.trim();
+  }
+
   function submissionTaskPushLayout(submission: ZeusConversationSubmissionRecord): TaskPushMessageLayout | null {
     const value = parseJsonRecord(submission.inputJson).taskPushLayout;
     if (value === undefined) return null;
@@ -679,6 +701,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       planItemId?: string;
       requestAnswerId?: string;
       internalOperation?: boolean;
+      goalObjective?: string;
     },
     context: ConversationDispatchContext,
   ): ZeusConversationSubmissionRecord {
@@ -695,6 +718,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       ...(input.taskPushLayout ? { taskPushLayout: input.taskPushLayout } : {}),
       ...(input.requestAnswerId ? { requestAnswerId: input.requestAnswerId } : {}),
       ...(input.internalOperation ? { internalOperation: true } : {}),
+      ...(input.goalObjective ? { goalObjective: input.goalObjective } : {}),
     };
     const existing = input.submissionId ? options.submissions.getById(input.submissionId) : undefined;
     if (existing) {
@@ -893,6 +917,117 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
 
   async function responsesRuntimeFor(context: Pick<ConversationDispatchContext, 'modelSourceId' | 'model'>): Promise<CodexResponsesRuntime | null> {
     return options.resolveResponsesRuntime?.({ modelSourceId: context.modelSourceId, model: context.model }) ?? null;
+  }
+
+  function goalEventKind(previous: ReturnType<ConversationGoalRepository['get']>, next: CodexThreadGoal): ConversationGoalEventKind | undefined {
+    if (!previous) return 'created';
+    if (previous.objective !== next.objective) return 'edited';
+    if (previous.status === next.status) return undefined;
+    if (next.status === 'paused') return 'paused';
+    if (next.status === 'active') return 'resumed';
+    if (next.status === 'blocked') return 'blocked';
+    if (next.status === 'usageLimited') return 'usage_limited';
+    if (next.status === 'budgetLimited') return 'budget_limited';
+    return 'completed';
+  }
+
+  function projectGoal(conversationId: string, goal: CodexThreadGoal, providerTurnId: string | null, occurredAt: string) {
+    const previous = goals.get(conversationId);
+    if (previous && previous.providerUpdatedAt > goal.updatedAt) return previous;
+    const eventKind = goalEventKind(previous, goal);
+    const projected = goals.upsert(
+      {
+        conversationId,
+        providerThreadId: goal.threadId,
+        objective: goal.objective,
+        status: goal.status,
+        tokenBudget: goal.tokenBudget,
+        tokensUsed: goal.tokensUsed,
+        timeUsedSeconds: goal.timeUsedSeconds,
+        providerCreatedAt: goal.createdAt,
+        providerUpdatedAt: goal.updatedAt,
+      },
+      { ...(eventKind ? { eventKind } : {}), providerTurnId, occurredAt },
+    );
+    const terminalAttention = goal.status === 'complete' || goal.status === 'blocked' || goal.status === 'usageLimited' || goal.status === 'budgetLimited';
+    if (eventKind && terminalAttention) {
+      options.conversations.markAttentionUnread(conversationId, {
+        kind: goal.status === 'complete' ? 'completed' : 'unread',
+        turnId: providerTurnId,
+        occurredAt,
+      });
+    }
+    options.broadcast('conversation.goal.updated', {
+      conversationId,
+      goal: projected,
+      timeline: goals.listEvents(conversationId),
+      eventKind: eventKind ?? null,
+      notificationEligible: Boolean(eventKind && terminalAttention),
+    });
+    return projected;
+  }
+
+  async function requireGoalConversation(conversationId: string) {
+    assertOpen();
+    await ensureGenerationReconciled();
+    const conversation = requireConversation(conversationId);
+    if (!conversation.providerThreadId) throw coordinatorError('ZEUS_CODEX_GOAL_THREAD_REQUIRED', '创建目标前必须先建立原生会话。');
+    const capabilities = options.manager.getState();
+    if (capabilities.type !== 'ready' || !capabilities.capabilities.goals.supported || !capabilities.capabilities.goals.enabled) {
+      throw coordinatorError('ZEUS_CODEX_GOALS_UNAVAILABLE', '当前 Agent 或 app-server 不支持原生目标。');
+    }
+    return { conversation, threadId: conversation.providerThreadId };
+  }
+
+  async function setGoal(input: { conversationId: string; objective: string }) {
+    const objective = input.objective.trim();
+    if (!objective || [...objective].length > 4_000) throw coordinatorError('ZEUS_CODEX_GOAL_OBJECTIVE_INVALID', '目标必须为 1 到 4000 个字符。');
+    const { threadId } = await requireGoalConversation(input.conversationId);
+    const current = goals.get(input.conversationId) ?? (await options.manager.readThreadGoal({ threadId }).then((goal) => (goal ? projectGoal(input.conversationId, goal, null, now()) : undefined)));
+    if (current?.status === 'active' && current.objective !== objective) {
+      const paused = await options.manager.setThreadGoal({ threadId, status: 'paused' });
+      projectGoal(input.conversationId, paused, null, now());
+    }
+    const goal = await options.manager.setThreadGoal({ threadId, objective, ...(current ? {} : { status: 'active' as const }) });
+    const projected = projectGoal(input.conversationId, goal, null, now());
+    await persist();
+    return projected;
+  }
+
+  async function readGoal(input: { conversationId: string }) {
+    const { threadId } = await requireGoalConversation(input.conversationId);
+    const goal = await options.manager.readThreadGoal({ threadId });
+    if (!goal) {
+      goals.clear({ conversationId: input.conversationId, providerThreadId: threadId, occurredAt: now() });
+      await persist();
+      return null;
+    }
+    const projected = projectGoal(input.conversationId, goal, null, now());
+    await persist();
+    return projected;
+  }
+
+  async function pauseGoal(input: { conversationId: string }) {
+    const { threadId } = await requireGoalConversation(input.conversationId);
+    const projected = projectGoal(input.conversationId, await options.manager.setThreadGoal({ threadId, status: 'paused' }), null, now());
+    await persist();
+    return projected;
+  }
+
+  async function resumeGoal(input: { conversationId: string }) {
+    const { threadId } = await requireGoalConversation(input.conversationId);
+    const projected = projectGoal(input.conversationId, await options.manager.setThreadGoal({ threadId, status: 'active' }), null, now());
+    await persist();
+    return projected;
+  }
+
+  async function clearGoal(input: { conversationId: string }) {
+    const { threadId } = await requireGoalConversation(input.conversationId);
+    const result = await options.manager.clearThreadGoal({ threadId });
+    if (result.cleared) goals.clear({ conversationId: input.conversationId, providerThreadId: threadId, occurredAt: now() });
+    await persist();
+    options.broadcast('conversation.goal.cleared', { conversationId: input.conversationId, cleared: result.cleared, timeline: goals.listEvents(input.conversationId) });
+    return result;
   }
 
   async function startEphemeralConversation(input: StartNativeEphemeralConversationInput): Promise<NativeAcceptedOperation> {
@@ -1384,6 +1519,12 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         });
       }
       const providerThreadId = requireString(conversation.providerThreadId, 'provider thread id');
+      const initialGoalObjective = submissionGoalObjective(submission);
+      if (initialGoalObjective) {
+        const goal = await options.manager.setThreadGoal({ threadId: providerThreadId, objective: initialGoalObjective, status: 'active' });
+        projectGoal(conversation.id, goal, null, now());
+        await persist();
+      }
       const profile = providerPermissionProfile(context);
       const turn = await options.manager.startTurn({
         threadId: providerThreadId,
@@ -2944,7 +3085,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       });
       runStates.set(conversation.id, classification === 'failed' ? { type: 'paused', reason: 'recovery_required' } : interruptedWithQueue ? { type: 'paused', reason: 'interrupted' } : { type: 'idle' });
       if (!wasTerminal) options.changeSets?.seal({ conversation, turn, timestamp });
-      if (!wasTerminal) {
+      if (!wasTerminal && !goals.get(conversation.id)) {
         options.conversations.markAttentionUnread(conversation.id, {
           kind: classification,
           turnId: providerTurn.id,
@@ -3355,7 +3496,13 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     let queueChangedAfterTurn = false;
     let createdPlanImplementationRequest: ReturnType<ConversationPlanActionRepository['getById']> | null = null;
 
-    if (event.method === 'serverRequest/resolved') {
+    if (event.method === 'thread/goal/updated' && conversation && threadId) {
+      const goal = await options.manager.readThreadGoal({ threadId });
+      if (goal) projectGoal(conversation.id, goal, typeof params.turnId === 'string' ? params.turnId : null, event.receivedAt);
+    } else if (event.method === 'thread/goal/cleared' && conversation && threadId) {
+      const cleared = goals.clear({ conversationId: conversation.id, providerThreadId: threadId, occurredAt: event.receivedAt });
+      if (cleared) options.broadcast('conversation.goal.cleared', { conversationId: conversation.id, cleared: true, timeline: goals.listEvents(conversation.id) });
+    } else if (event.method === 'serverRequest/resolved') {
       const providerRequestId = typeof params.requestId === 'string' || typeof params.requestId === 'number' ? params.requestId : null;
       if (providerRequestId === null) throw coordinatorError('ZEUS_NATIVE_PROVIDER_EVENT_INVALID', 'Codex serverRequest/resolved omitted requestId.');
       const request = options.requests.getByProvider(event.generationId, providerRequestId);
@@ -3634,7 +3781,8 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         providerState: failed ? 'failed' : recoveryRequiredSubmissions.length > 0 || (interrupted && hasInterruptedQueue) ? 'paused' : 'ready',
       });
       const ephemeral = contexts.get(conversation.id)?.ephemeral === true;
-      if (!ephemeral) {
+      const conversationGoal = goals.get(conversation.id);
+      if (!ephemeral && !conversationGoal) {
         options.conversations.markAttentionUnread(conversation.id, {
           kind: failed ? 'failed' : interrupted ? 'interrupted' : 'completed',
           turnId: providerTurnId,
@@ -3682,11 +3830,11 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
           status: terminalStatus,
           completedAt: timestamp,
           hasUnreadAttention: options.conversations.getById(conversation.id)?.attentionUnread === true,
-          notificationEligible: true,
+          notificationEligible: !conversationGoal,
         },
       };
       queueChangedAfterTurn = interrupted || recoveryRequiredSubmissions.length > 0;
-      drainAfterTurn = !failed && !interrupted && recoveryRequiredSubmissions.length === 0;
+      drainAfterTurn = !failed && !interrupted && recoveryRequiredSubmissions.length === 0 && conversationGoal?.status !== 'active';
     } else if (event.method === 'item/started' && conversation && threadId) {
       const providerTurnId = providerTurnIdFrom(params);
       const itemPayload = isRecord(params.item) ? params.item : {};
@@ -3913,7 +4061,8 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         delta: params.delta,
         updatedAt: event.receivedAt,
       });
-      if (event.method === 'item/agentMessage/delta' && params.delta.trim()) {
+      // 目标存在期间，普通中间回复只更新会话进度；关注状态只由目标关键终态统一产生。
+      if (event.method === 'item/agentMessage/delta' && params.delta.trim() && !goals.get(conversation.id)) {
         const previousRevision = options.conversations.getById(conversation.id)?.attentionRevision ?? 0;
         const attention = options.conversations.markAttentionUnread(conversation.id, {
           kind: 'unread',
@@ -3988,7 +4137,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
           providerTurnId,
           providerItemId,
         });
-        if (item.textContent.trim()) {
+        if (item.textContent.trim() && !goals.get(conversation.id)) {
           const previousRevision = options.conversations.getById(conversation.id)?.attentionRevision ?? 0;
           const attention = options.conversations.markAttentionUnread(conversation.id, {
             kind: 'unread',
@@ -4217,7 +4366,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
               // Provider 拒绝自动答复时保留真实待授权弹窗，禁止伪造已允许状态。
             }
           }
-          if (!automaticallyApproved) {
+          if (!automaticallyApproved && !goals.get(conversation.id)) {
             options.conversations.markAttentionUnread(conversation.id, {
               kind: 'unread',
               turnId: providerTurnId,
@@ -4243,6 +4392,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
                 requestKind,
                 providerTurnId,
                 request: nativePendingRequestProjection(request),
+                notificationEligible: !goals.get(conversation.id),
               },
             };
             scheduleAutoResolution(request);
@@ -4432,6 +4582,11 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     snoozeRequest,
     respondToPlanImplementationRequest,
     reconcilePersistedTerminalSubmissions,
+    setGoal,
+    readGoal,
+    pauseGoal,
+    resumeGoal,
+    clearGoal,
     recover,
     capacityChanged,
     close(input = { mode: 'final' }) {

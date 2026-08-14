@@ -665,6 +665,8 @@ const nativeConversationListLifecycleEventTypes = new Set([
   'conversation.native.error',
   'conversation.attention.changed',
   'conversation.attention.acknowledged',
+  'conversation.goal.updated',
+  'conversation.goal.cleared',
 ]);
 
 function isProjectConversationAttentionState(value: unknown): value is ProjectConversationAttentionState {

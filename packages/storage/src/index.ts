@@ -632,6 +632,35 @@ export type ConversationProviderState = 'unbound' | 'binding' | 'ready' | 'activ
 export type ConversationPermissionMode = 'read-only' | 'auto' | 'full-access';
 export type ConversationCollaborationMode = 'default' | 'plan';
 export type ConversationAttentionKind = 'none' | 'unread' | 'completed' | 'failed' | 'interrupted';
+export type ConversationGoalStatus = 'active' | 'paused' | 'blocked' | 'usageLimited' | 'budgetLimited' | 'complete';
+export type ConversationGoalEventKind = 'created' | 'edited' | 'paused' | 'resumed' | 'blocked' | 'usage_limited' | 'budget_limited' | 'completed' | 'cleared';
+
+export interface ZeusConversationGoalRecord {
+  conversationId: string;
+  providerThreadId: string;
+  objective: string;
+  status: ConversationGoalStatus;
+  tokenBudget: number | null;
+  tokensUsed: number;
+  timeUsedSeconds: number;
+  providerCreatedAt: number;
+  providerUpdatedAt: number;
+  updatedAt: string;
+}
+
+export interface ZeusConversationGoalEventRecord {
+  id: string;
+  conversationId: string;
+  providerThreadId: string;
+  providerTurnId: string | null;
+  kind: ConversationGoalEventKind;
+  objective: string | null;
+  status: ConversationGoalStatus | null;
+  tokenBudget: number | null;
+  tokensUsed: number | null;
+  timeUsedSeconds: number | null;
+  occurredAt: string;
+}
 
 export interface ConversationNextTurnSettings {
   model: string;
@@ -1511,6 +1540,7 @@ export async function createZeusDatabase(filePath: string): Promise<ZeusDatabase
     migrateTaskManagementStatus(zeusDb);
     migrateTaskTypesAndContents(zeusDb);
     migrateCodexNativeConversationSchema(zeusDb);
+    migrateConversationGoalSchema(zeusDb);
     migrateCodexUsageLedgerSchema(zeusDb);
     migrateConversationStageSchema(zeusDb);
     migrateAgentRuntimeSchema(zeusDb);
@@ -2342,6 +2372,32 @@ function recordSchemaMigration(
   // migration 账本只记录结构版本，不写入项目/任务等业务假数据。
   const checksum = `sha256:${createHash('sha256').update(migration.checksumSource).digest('hex')}`;
   db.execute(`INSERT OR IGNORE INTO schema_migrations (migration_id, description, checksum, applied_at) VALUES (?, ?, ?, ?)`, [migration.migrationId, migration.description, checksum, nowIso()]);
+}
+
+function migrateConversationGoalSchema(db: ZeusDatabase): void {
+  db.execute(`
+    CREATE TABLE IF NOT EXISTS conversation_goals (
+      conversation_id TEXT PRIMARY KEY, provider_thread_id TEXT NOT NULL,
+      objective TEXT NOT NULL, status TEXT NOT NULL, token_budget INTEGER,
+      tokens_used INTEGER NOT NULL, time_used_seconds REAL NOT NULL,
+      provider_created_at REAL NOT NULL, provider_updated_at REAL NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+  `);
+  db.execute(`
+    CREATE TABLE IF NOT EXISTS conversation_goal_events (
+      id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, provider_thread_id TEXT NOT NULL,
+      provider_turn_id TEXT, kind TEXT NOT NULL, objective TEXT, status TEXT,
+      token_budget INTEGER, tokens_used INTEGER, time_used_seconds REAL,
+      occurred_at TEXT NOT NULL
+    )
+  `);
+  db.execute(`CREATE INDEX IF NOT EXISTS idx_conversation_goal_events_timeline ON conversation_goal_events(conversation_id, occurred_at, id)`);
+  recordSchemaMigration(db, {
+    migrationId: '20260813_0001_conversation_goals',
+    description: '增加原生会话目标投影与不可变时间线',
+    checksumSource: 'conversation_goals,conversation_goal_events',
+  });
 }
 
 function migrateCodexNativeConversationSchema(db: ZeusDatabase): void {
@@ -5821,6 +5877,115 @@ export class CodexLegacyImportRepository {
     const record = this.requireById(id);
     if (record.status !== from) throw new Error(`Invalid Codex legacy import transition: ${record.status} -> ${to}.`);
     return record;
+  }
+}
+
+export class ConversationGoalRepository {
+  constructor(private readonly db: ZeusDatabase) {}
+
+  get(conversationId: string): ZeusConversationGoalRecord | undefined {
+    const row = this.db.get<{
+      conversation_id: string;
+      provider_thread_id: string;
+      objective: string;
+      status: ConversationGoalStatus;
+      token_budget: number | null;
+      tokens_used: number;
+      time_used_seconds: number;
+      provider_created_at: number;
+      provider_updated_at: number;
+      updated_at: string;
+    }>(`SELECT * FROM conversation_goals WHERE conversation_id = ?`, [conversationId]);
+    return row
+      ? {
+          conversationId: row.conversation_id,
+          providerThreadId: row.provider_thread_id,
+          objective: row.objective,
+          status: assertEnum(row.status, ['active', 'paused', 'blocked', 'usageLimited', 'budgetLimited', 'complete'] as const, 'conversation goal status'),
+          tokenBudget: row.token_budget,
+          tokensUsed: row.tokens_used,
+          timeUsedSeconds: row.time_used_seconds,
+          providerCreatedAt: row.provider_created_at,
+          providerUpdatedAt: row.provider_updated_at,
+          updatedAt: row.updated_at,
+        }
+      : undefined;
+  }
+
+  listActive(): ZeusConversationGoalRecord[] {
+    const ids = this.db.select<{ conversation_id: string }>(`SELECT conversation_id FROM conversation_goals WHERE status = 'active' ORDER BY updated_at, conversation_id`);
+    return ids.flatMap((row) => {
+      const goal = this.get(row.conversation_id);
+      return goal ? [goal] : [];
+    });
+  }
+
+  upsert(goal: Omit<ZeusConversationGoalRecord, 'updatedAt'>, input: { eventKind?: ConversationGoalEventKind; providerTurnId?: string | null; occurredAt: string }): ZeusConversationGoalRecord {
+    const status = assertEnum(goal.status, ['active', 'paused', 'blocked', 'usageLimited', 'budgetLimited', 'complete'] as const, 'conversation goal status');
+    this.db.execute(
+      `INSERT INTO conversation_goals (conversation_id, provider_thread_id, objective, status, token_budget, tokens_used, time_used_seconds, provider_created_at, provider_updated_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(conversation_id) DO UPDATE SET provider_thread_id = excluded.provider_thread_id, objective = excluded.objective,
+       status = excluded.status, token_budget = excluded.token_budget, tokens_used = excluded.tokens_used,
+       time_used_seconds = excluded.time_used_seconds, provider_created_at = excluded.provider_created_at,
+       provider_updated_at = excluded.provider_updated_at, updated_at = excluded.updated_at`,
+      [goal.conversationId, goal.providerThreadId, goal.objective, status, goal.tokenBudget, goal.tokensUsed, goal.timeUsedSeconds, goal.providerCreatedAt, goal.providerUpdatedAt, input.occurredAt],
+    );
+    if (input.eventKind) this.appendEvent(goal.conversationId, goal.providerThreadId, input.eventKind, goal, input.providerTurnId ?? null, input.occurredAt);
+    return this.get(goal.conversationId)!;
+  }
+
+  clear(input: { conversationId: string; providerThreadId: string; providerTurnId?: string | null; occurredAt: string }): boolean {
+    const current = this.get(input.conversationId);
+    if (!current) return false;
+    this.db.execute(`DELETE FROM conversation_goals WHERE conversation_id = ?`, [input.conversationId]);
+    this.appendEvent(input.conversationId, input.providerThreadId, 'cleared', current, input.providerTurnId ?? null, input.occurredAt);
+    return true;
+  }
+
+  listEvents(conversationId: string): ZeusConversationGoalEventRecord[] {
+    return this.db
+      .select<{
+        id: string;
+        conversation_id: string;
+        provider_thread_id: string;
+        provider_turn_id: string | null;
+        kind: ConversationGoalEventKind;
+        objective: string | null;
+        status: ConversationGoalStatus | null;
+        token_budget: number | null;
+        tokens_used: number | null;
+        time_used_seconds: number | null;
+        occurred_at: string;
+      }>(`SELECT * FROM conversation_goal_events WHERE conversation_id = ? ORDER BY occurred_at, id`, [conversationId])
+      .map((row) => ({
+        id: row.id,
+        conversationId: row.conversation_id,
+        providerThreadId: row.provider_thread_id,
+        providerTurnId: row.provider_turn_id,
+        kind: assertEnum(row.kind, ['created', 'edited', 'paused', 'resumed', 'blocked', 'usage_limited', 'budget_limited', 'completed', 'cleared'] as const, 'conversation goal event kind'),
+        objective: row.objective,
+        status: row.status ? assertEnum(row.status, ['active', 'paused', 'blocked', 'usageLimited', 'budgetLimited', 'complete'] as const, 'conversation goal event status') : null,
+        tokenBudget: row.token_budget,
+        tokensUsed: row.tokens_used,
+        timeUsedSeconds: row.time_used_seconds,
+        occurredAt: row.occurred_at,
+      }));
+  }
+
+  private appendEvent(
+    conversationId: string,
+    providerThreadId: string,
+    kind: ConversationGoalEventKind,
+    goal: Pick<ZeusConversationGoalRecord, 'objective' | 'status' | 'tokenBudget' | 'tokensUsed' | 'timeUsedSeconds'>,
+    providerTurnId: string | null,
+    occurredAt: string,
+  ): void {
+    this.db.execute(
+      `INSERT INTO conversation_goal_events (id, conversation_id, provider_thread_id, provider_turn_id, kind, objective, status, token_budget, tokens_used, time_used_seconds, occurred_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [`conversation_goal_event_${nanoid(12)}`, conversationId, providerThreadId, providerTurnId, kind, goal.objective, goal.status, goal.tokenBudget, goal.tokensUsed, goal.timeUsedSeconds, occurredAt],
+    );
   }
 }
 

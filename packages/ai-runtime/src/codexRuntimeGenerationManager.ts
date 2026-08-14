@@ -19,6 +19,7 @@ interface RuntimeEntry {
   threads: Set<string>;
   activeTurns: Map<string, string>;
   completedTurns: Set<string>;
+  activeGoals: Set<string>;
   pendingRequests: Map<string, { generationId: string; threadId: string | null }>;
   unsubscribe: () => void;
   unsubscribeExternalImport: () => void;
@@ -82,7 +83,7 @@ export function createCodexRuntimeGenerationManager(options: { accountFingerprin
   }
 
   function isPinned(entry: RuntimeEntry, threadId: string): boolean {
-    if (entry.activeTurns.has(threadId)) return true;
+    if (entry.activeTurns.has(threadId) || entry.activeGoals.has(threadId)) return true;
     for (const request of entry.pendingRequests.values()) {
       if (request.threadId === threadId) return true;
     }
@@ -94,6 +95,13 @@ export function createCodexRuntimeGenerationManager(options: { accountFingerprin
     previous?.threads.delete(threadId);
     entriesByThread.set(threadId, entry);
     entry.threads.add(threadId);
+  }
+
+  async function syncThreadGoalPin(entry: RuntimeEntry, threadId: string): Promise<void> {
+    if (!entry.capabilities.goals.supported || !entry.capabilities.goals.enabled) return;
+    const goal = await entry.manager.readThreadGoal({ threadId }).catch(() => null);
+    if (goal?.status === 'active') entry.activeGoals.add(threadId);
+    else entry.activeGoals.delete(threadId);
   }
 
   async function migrateThreadToActive(threadId: string, cwd?: string): Promise<RuntimeEntry> {
@@ -108,6 +116,7 @@ export function createCodexRuntimeGenerationManager(options: { accountFingerprin
       ...(responsesProvider ? { responsesRuntime: { provider: responsesProvider, environment: active.providerEnvironment } } : {}),
     });
     bindThread(active, threadId);
+    await syncThreadGoalPin(active, threadId);
     if (mapped) void tryDrain(mapped);
     return active;
   }
@@ -146,6 +155,18 @@ export function createCodexRuntimeGenerationManager(options: { accountFingerprin
       for (const [key, request] of entry.pendingRequests) {
         if (request.threadId === threadId) entry.pendingRequests.delete(key);
       }
+      void tryDrain(entry);
+    }
+    if (event.method === 'thread/goal/updated' && threadId) {
+      const goal = isRecord(params.goal) ? params.goal : {};
+      if (goal.status === 'active') entry.activeGoals.add(threadId);
+      else {
+        entry.activeGoals.delete(threadId);
+        void tryDrain(entry);
+      }
+    }
+    if (event.method === 'thread/goal/cleared' && threadId) {
+      entry.activeGoals.delete(threadId);
       void tryDrain(entry);
     }
     for (const listener of listeners) {
@@ -198,10 +219,12 @@ export function createCodexRuntimeGenerationManager(options: { accountFingerprin
         initializedAt: '',
         models: [],
         supportedModels: [],
+        goals: { supported: false, enabled: false, stage: null },
       },
       threads: new Set<string>(),
       activeTurns: new Map<string, string>(),
       completedTurns: new Set<string>(),
+      activeGoals: new Set<string>(),
       pendingRequests: new Map<string, { generationId: string; threadId: string | null }>(),
       unsubscribe: () => undefined,
       unsubscribeExternalImport: () => undefined,
@@ -230,7 +253,7 @@ export function createCodexRuntimeGenerationManager(options: { accountFingerprin
   }
 
   async function tryDrain(entry: RuntimeEntry): Promise<void> {
-    if (entry === activeEntry || entry.closing || entry.activeTurns.size > 0 || entry.pendingRequests.size > 0) return;
+    if (entry === activeEntry || entry.closing || entry.activeTurns.size > 0 || entry.activeGoals.size > 0 || entry.pendingRequests.size > 0) return;
     entry.closing = true;
     for (const threadId of entry.threads) {
       if (entriesByThread.get(threadId) === entry) entriesByThread.delete(threadId);
@@ -309,6 +332,7 @@ export function createCodexRuntimeGenerationManager(options: { accountFingerprin
       const thread = await active.manager.resumeThread(input);
       bindThread(active, thread.id);
       if (input.responsesRuntime) responsesProvidersByThread.set(thread.id, input.responsesRuntime.provider);
+      await syncThreadGoalPin(active, thread.id);
       if (mapped && mapped !== active) void tryDrain(mapped);
       return thread;
     },
@@ -325,11 +349,29 @@ export function createCodexRuntimeGenerationManager(options: { accountFingerprin
       const previous = entriesByThread.get(input.threadId);
       const thread = await active.manager.unarchiveThread(input);
       bindThread(active, thread.id);
+      await syncThreadGoalPin(active, thread.id);
       if (previous && previous !== active) void tryDrain(previous);
       return thread;
     },
     async readThread(input) {
       return routeThread(input.threadId).manager.readThread(input);
+    },
+    async readThreadGoal(input) {
+      return routeThread(input.threadId).manager.readThreadGoal(input);
+    },
+    async setThreadGoal(input) {
+      const entry = await migrateThreadToActive(input.threadId);
+      const goal = await entry.manager.setThreadGoal(input);
+      if (goal.status === 'active') entry.activeGoals.add(input.threadId);
+      else entry.activeGoals.delete(input.threadId);
+      return goal;
+    },
+    async clearThreadGoal(input) {
+      const entry = await migrateThreadToActive(input.threadId);
+      const result = await entry.manager.clearThreadGoal(input);
+      if (result.cleared) entry.activeGoals.delete(input.threadId);
+      void tryDrain(entry);
+      return result;
     },
     async listThreadTurns(input) {
       return routeThread(input.threadId).manager.listThreadTurns(input);
@@ -430,7 +472,7 @@ export function createCodexRuntimeGenerationManager(options: { accountFingerprin
             commandPath: entry.commandPath,
             state: state.type,
             active: entry === activeEntry,
-            activeThreadCount: entry.activeTurns.size,
+            activeThreadCount: new Set([...entry.activeTurns.keys(), ...entry.activeGoals]).size,
             pendingRequestCount: entry.pendingRequests.size,
           };
         })

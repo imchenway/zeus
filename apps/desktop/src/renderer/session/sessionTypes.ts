@@ -31,6 +31,47 @@ export type ConversationState =
 export type ThreadFollowMode = 'static' | 'prework_watch' | 'prework_follow' | 'user_follow';
 export type NativePermissionMode = 'read-only' | 'auto' | 'full-access';
 export type NativeCollaborationMode = 'default' | 'plan';
+export type NativeGoalStatus = 'active' | 'paused' | 'blocked' | 'usageLimited' | 'budgetLimited' | 'complete';
+
+export interface NativeGoalSnapshot {
+  conversationId: string;
+  providerThreadId: string;
+  objective: string;
+  status: NativeGoalStatus;
+  tokenBudget: number | null;
+  tokensUsed: number;
+  timeUsedSeconds: number;
+  providerCreatedAt: number;
+  providerUpdatedAt: number;
+  updatedAt: string;
+}
+
+export interface NativeGoalTimelineEvent {
+  id: string;
+  conversationId: string;
+  providerThreadId: string;
+  providerTurnId: string | null;
+  kind: 'created' | 'edited' | 'paused' | 'resumed' | 'blocked' | 'usage_limited' | 'budget_limited' | 'completed' | 'cleared';
+  objective: string | null;
+  status: NativeGoalStatus | null;
+  tokenBudget: number | null;
+  tokensUsed: number | null;
+  timeUsedSeconds: number | null;
+  occurredAt: string;
+}
+
+export interface NativeGoalCapability {
+  supported: boolean;
+  enabled: boolean;
+  stage: 'beta' | 'underDevelopment' | 'stable' | 'deprecated' | 'removed' | null;
+  reason: 'available' | 'disabled' | 'agent_unsupported' | 'app_server_unsupported' | 'unverified';
+}
+
+export interface NativeGoalResponse {
+  goal: NativeGoalSnapshot | null;
+  timeline: NativeGoalTimelineEvent[];
+  capability: NativeGoalCapability;
+}
 
 export type NativeTurnPlanStepStatus = 'pending' | 'inProgress' | 'completed';
 
@@ -253,6 +294,9 @@ export interface NativeConversationSnapshot {
   executionContext?: NativeConversationExecutionContext;
   permissionMode?: NativePermissionMode;
   collaborationMode?: NativeCollaborationMode;
+  goal?: NativeGoalSnapshot | null;
+  goalTimeline?: NativeGoalTimelineEvent[];
+  goalCapability?: NativeGoalCapability;
 }
 
 export interface NativeConversationMessage {
@@ -711,6 +755,11 @@ export interface CodexConversationCapabilities {
   preferredModel: string;
   models: CodexTaskPushModelCapability[];
   codexAccount: CodexAccountSnapshot;
+  goals: {
+    supported: boolean;
+    enabled: boolean;
+    stage: 'beta' | 'underDevelopment' | 'stable' | 'deprecated' | 'removed' | null;
+  };
 }
 
 export interface NativeTurnSettingsSelection {
@@ -770,6 +819,7 @@ export type StartNativeConversationRequest =
       idempotencyKey: string;
       clientUserMessageId: string;
       agentKind?: 'codex' | 'pi' | 'claude';
+      goalObjective?: string;
     }
   | {
       mode: 'resume';
@@ -804,6 +854,7 @@ export interface StartProjectConversationRequest {
   effort?: string;
   idempotencyKey: string;
   clientUserMessageId: string;
+  goalObjective?: string;
 }
 
 export interface SendNativeMessageRequest {
@@ -917,6 +968,8 @@ export type NativeConversationEvent =
         collaborationMode: NativeCollaborationMode;
       }
     >
+  | NativeEvent<'conversation.goal.updated', NativeEventIdentity & { goal: NativeGoalSnapshot; timeline?: NativeGoalTimelineEvent[]; eventKind?: string | null; notificationEligible?: boolean }>
+  | NativeEvent<'conversation.goal.cleared', NativeEventIdentity & { cleared: boolean; timeline?: NativeGoalTimelineEvent[] }>
   | NativeEvent<'conversation.native.error', NativeEventIdentity & { turnId?: string; error?: string | Record<string, unknown>; message?: string; recoveryRequired?: boolean; retryable?: boolean }>;
 
 export const nativeConversationEventTypes = new Set<NativeConversationEvent['type']>([
@@ -940,6 +993,8 @@ export const nativeConversationEventTypes = new Set<NativeConversationEvent['typ
   'conversation.request.snoozed',
   'conversation.plan_implementation_request.changed',
   'conversation.collaboration_mode.changed',
+  'conversation.goal.updated',
+  'conversation.goal.cleared',
   'conversation.native.error',
 ]);
 

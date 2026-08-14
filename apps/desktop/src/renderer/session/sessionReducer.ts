@@ -757,6 +757,19 @@ function reduceNativeEvent(state: NativeSessionState, event: NativeConversationE
             snapshot: { ...base.snapshot, collaborationMode: payload.collaborationMode },
           }
         : base;
+    case 'conversation.goal.updated':
+      return base.snapshot && isRecord(payload.goal)
+        ? {
+            ...base,
+            snapshot: {
+              ...base.snapshot,
+              goal: payload.goal as unknown as NonNullable<NativeSessionState['snapshot']>['goal'],
+              ...(Array.isArray(payload.timeline) ? { goalTimeline: payload.timeline as NonNullable<NativeSessionState['snapshot']>['goalTimeline'] } : {}),
+            },
+          }
+        : base;
+    case 'conversation.goal.cleared':
+      return base.snapshot ? { ...base, snapshot: { ...base.snapshot, goal: null, ...(Array.isArray(payload.timeline) ? { goalTimeline: payload.timeline as NonNullable<NativeSessionState['snapshot']>['goalTimeline'] } : {}) } } : base;
     case 'conversation.native.error':
       return {
         ...base,

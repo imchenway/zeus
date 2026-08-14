@@ -1,6 +1,6 @@
 import type { CodexServerRequestResponse } from '@zeus/ai-runtime';
 import type { TaskPushMessageLayout } from '@zeus/shared';
-import type { ConversationCollaborationMode, ConversationPermissionMode } from '@zeus/storage';
+import type { ConversationCollaborationMode, ConversationPermissionMode, ZeusConversationGoalRecord } from '@zeus/storage';
 
 export type NativeConversationRunState =
   | { type: 'idle' }
@@ -123,6 +123,7 @@ export interface StartTaskConversationInput {
   legacyReference?: LegacyConversationReference;
   ephemeral?: boolean;
   providerWriteLifecycle?: NativeProviderWriteLifecycle;
+  goalObjective?: string;
 }
 
 export interface StartProjectConversationInput {
@@ -141,6 +142,12 @@ export interface StartProjectConversationInput {
   clientUserMessageId: string;
   attachments?: NativeConversationAttachmentInput[];
   providerWriteLifecycle?: NativeProviderWriteLifecycle;
+  goalObjective?: string;
+}
+
+export interface SetNativeGoalInput {
+  conversationId: string;
+  objective: string;
 }
 
 export interface SubmitNativeMessageInput {
@@ -288,6 +295,11 @@ export interface CodexNativeConversationCoordinator {
   snoozeRequest(input: SnoozeNativeRequestInput): Promise<void>;
 
   respondToPlanImplementationRequest(input: RespondPlanImplementationRequestInput): Promise<NativeAcceptedOperation>;
+  setGoal(input: SetNativeGoalInput): Promise<ZeusConversationGoalRecord>;
+  readGoal(input: { conversationId: string }): Promise<ZeusConversationGoalRecord | null>;
+  pauseGoal(input: { conversationId: string }): Promise<ZeusConversationGoalRecord>;
+  resumeGoal(input: { conversationId: string }): Promise<ZeusConversationGoalRecord>;
+  clearGoal(input: { conversationId: string }): Promise<{ cleared: boolean }>;
   recover(): Promise<void>;
   capacityChanged(): Promise<void>;
   close(): Promise<void>;

@@ -61,6 +61,7 @@ import type { SessionCodeReviewSelection } from './SessionCodeReviewDialog.js';
 import { conversationDisplayTitle } from './conversationDisplayTitle.js';
 import { conversationRuntimePreferenceKind, readConversationRuntimePreferences, writeConversationRuntimePreferences } from './conversationRuntimePreferences.js';
 import { resolveModelCapability } from './modelSelection.js';
+import { GoalPanel, GoalRail } from './GoalPanel.js';
 import { presentModelOptions } from '../modelOptionPresentation.js';
 import { NewConversationExecutionContext } from './NewConversationExecutionContext.js';
 
@@ -95,6 +96,7 @@ export interface SessionWorkspaceStartInput {
   model?: string;
   effort?: string;
   agentKind?: 'codex' | 'pi';
+  goalObjective?: string;
 }
 
 export interface ProjectSessionWorkspaceStartInput {
@@ -106,6 +108,7 @@ export interface ProjectSessionWorkspaceStartInput {
   serviceTierSelection: NativeServiceTierSelection;
   model?: string;
   effort?: string;
+  goalObjective?: string;
 }
 
 export interface SessionWorkspaceActions {
@@ -148,6 +151,10 @@ export interface SessionWorkspaceActions {
   onNextTurnSettingsChange?: (settings: ComposerRuntimeSettings) => void | Promise<void>;
   onPermissionModeChange?: (permissionMode: NativePermissionMode) => void | Promise<void>;
   onCollaborationModeChange?: (collaborationMode: NativeCollaborationMode) => void | Promise<void>;
+  onSetGoal?: (objective: string) => void | Promise<void>;
+  onPauseGoal?: () => void | Promise<void>;
+  onResumeGoal?: () => void | Promise<void>;
+  onClearGoal?: (confirmUnfinished: boolean) => void | Promise<void>;
   onRespondToPlanImplementationRequest?: (
     requestId: string,
     input: {
@@ -192,6 +199,7 @@ type StartNativeConversationPayload =
       model?: string;
       effort?: string;
       agentKind?: 'codex' | 'pi';
+      goalObjective?: string;
     }
   | { mode: 'resume'; conversationId: string; content: string; collaborationMode: NativeCollaborationMode }
   | {
@@ -396,6 +404,22 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
                   expectedState: action === 'undo' ? 'applied' : 'undone',
                   idempotencyKey: crypto.randomUUID(),
                 });
+              },
+              onSetGoal: async (objective) => {
+                await props.client.setNativeGoal(props.conversation.projectId, props.conversation.id, objective);
+                await controller.reconnect();
+              },
+              onPauseGoal: async () => {
+                await props.client.pauseNativeGoal(props.conversation.projectId, props.conversation.id);
+                await controller.reconnect();
+              },
+              onResumeGoal: async () => {
+                await props.client.resumeNativeGoal(props.conversation.projectId, props.conversation.id);
+                await controller.reconnect();
+              },
+              onClearGoal: async (confirmUnfinished) => {
+                await props.client.clearNativeGoal(props.conversation.projectId, props.conversation.id, confirmUnfinished);
+                await controller.reconnect();
               },
               ...(props.client.askNativeSideChat
                 ? {
@@ -706,6 +730,7 @@ function buildProjectConversationStartPayload(input: ProjectSessionWorkspaceStar
     ...(input.model ? { model: input.model } : {}),
     ...(input.effort ? { effort: input.effort } : {}),
     ...serviceTierWireOverride(input.serviceTierSelection),
+    ...(input.goalObjective ? { goalObjective: input.goalObjective } : {}),
   };
 }
 
@@ -737,6 +762,7 @@ function isProjectConversationStartRequest(value: unknown): value is StartProjec
     serviceTierOverrideField(value.serviceTier) &&
     (value.model === undefined || typeof value.model === 'string') &&
     (value.effort === undefined || typeof value.effort === 'string') &&
+    (value.goalObjective === undefined || (typeof value.goalObjective === 'string' && Boolean(value.goalObjective.trim()) && [...value.goalObjective].length <= 4_000)) &&
     typeof value.idempotencyKey === 'string' &&
     Boolean(value.idempotencyKey) &&
     typeof value.clientUserMessageId === 'string' &&
@@ -895,6 +921,7 @@ function buildStartNativeConversationPayload(input: SessionWorkspaceStartInput):
       ...(input.model ? { model: input.model } : {}),
       ...(input.effort ? { effort: input.effort } : {}),
       ...(input.agentKind ? { agentKind: input.agentKind } : {}),
+      ...(input.goalObjective ? { goalObjective: input.goalObjective } : {}),
     };
   }
   if (!content) throw new Error('Native conversation resume/reference content is required.');
@@ -958,7 +985,8 @@ function isStartNativeConversationRequest(value: unknown): value is StartNativeC
           (request.agentKind === 'codex' || request.agentKind === 'pi'))) &&
       permissionModeField(request.permissionMode) !== undefined &&
       (request.collaborationMode === 'default' || request.collaborationMode === 'plan') &&
-      serviceTierOverrideField(request.serviceTier)
+      serviceTierOverrideField(request.serviceTier) &&
+      (request.goalObjective === undefined || (typeof request.goalObjective === 'string' && Boolean(request.goalObjective.trim()) && [...request.goalObjective].length <= 4_000))
     );
   }
   if (!request.content.trim()) return false;
@@ -1258,6 +1286,9 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const [browserPaneShare, setBrowserPaneShare] = useState(56);
   const [browserResizing, setBrowserResizing] = useState(false);
   const [browserLayoutWidth, setBrowserLayoutWidth] = useState(0);
+  const [goalPanelOpen, setGoalPanelOpen] = useState(false);
+  const [goalBusy, setGoalBusy] = useState(false);
+  const [goalError, setGoalError] = useState<string | null>(null);
   const browserSplitRef = useRef<HTMLDivElement | null>(null);
   const browserResizeActiveRef = useRef(false);
   const browserMotionStopRef = useRef<(() => void) | null>(null);
@@ -1295,6 +1326,15 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const planWorkspaceItem = planWorkspaceItemId ? (Object.values(props.state?.items ?? {}).find((item) => item.type === 'plan' && (item.localItemId === planWorkspaceItemId || item.itemId === planWorkspaceItemId)) ?? null) : null;
   const turnDiffChangeSet = contextWorkspace.kind === 'turn_diff' ? (props.state?.changeSetsByProviderId[contextWorkspace.turnId] ?? null) : null;
   const dockedPlan = props.state ? selectDockedTurnPlan(props.state) : null;
+  const goal = props.state?.snapshot?.goal ?? null;
+  const goalCapability =
+    props.state?.snapshot?.goalCapability ??
+    ({
+      ...(props.capabilities?.goals ?? { supported: false, enabled: false, stage: null }),
+      reason: props.capabilities?.goals.supported && props.capabilities.goals.enabled ? 'available' : props.capabilities?.goals.supported ? 'disabled' : 'unverified',
+    } as const);
+  const selectedComposerModel = resolveModelCapability(props.capabilities?.models, composerRuntimeSettings?.model ?? props.state?.snapshot?.nextTurnSettings?.model ?? props.state?.providerSettings?.model);
+  const goalAvailable = !legacy && goalCapability.supported && goalCapability.enabled && (selectedComposerModel?.agentKind ?? props.state?.snapshot?.agent?.kind ?? props.conversation?.agent?.kind) === 'codex';
 
   useEffect(() => {
     contextReturnFocusRef.current = null;
@@ -1302,6 +1342,8 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     lastNextTurnSettingsSyncRef.current = null;
     setContextWorkspace({ kind: 'none' });
     setContextFullWidth(false);
+    setGoalPanelOpen(false);
+    setGoalError(null);
     browserMotionStopRef.current?.();
     browserMotionStopRef.current = null;
     browserVisibilityProgress.set(0);
@@ -1727,6 +1769,20 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     });
   }
 
+  async function runGoalAction(action: (() => void | Promise<void>) | undefined, closeAfter = false): Promise<void> {
+    if (!action || goalBusy) return;
+    setGoalBusy(true);
+    setGoalError(null);
+    try {
+      await action();
+      if (closeAfter) setGoalPanelOpen(false);
+    } catch (error) {
+      setGoalError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setGoalBusy(false);
+    }
+  }
+
   function addResponseAnnotation(anchor: Parameters<NonNullable<ConversationTranscriptProps['onAddResponseAnnotation']>>[0]): string {
     const id = crypto.randomUUID();
     const current = props.state?.contextDraft;
@@ -1777,6 +1833,11 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
         onRuntimeSettingsChange={updateComposerRuntimeSettings}
         permissionMode={composerRuntimeSettings?.permissionMode ?? props.state.snapshot?.nextTurnSettings?.permissionMode ?? props.state.snapshot?.permissionMode ?? props.conversation?.permissionMode ?? 'read-only'}
         collaborationMode={composerRuntimeSettings?.collaborationMode ?? props.state.snapshot?.nextTurnSettings?.collaborationMode ?? props.state.snapshot?.collaborationMode ?? props.conversation?.collaborationMode ?? 'default'}
+        goalAvailable={goalAvailable}
+        onOpenGoal={() => {
+          setGoalError(null);
+          setGoalPanelOpen(true);
+        }}
       />
     );
   }
@@ -1994,46 +2055,47 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
           ) : null}
         </>
       ) : props.state ? (
-        <div className="session-thread-split" data-context-open={contextOpen || undefined} data-context-full-width={contextFullWidth || undefined}>
-          <div className="session-thread-body">
-            <div
-              ref={browserSplitRef}
-              className="session-conversation-browser-layout"
-              data-browser-open={contextOpen || undefined}
-              data-browser-expanded={contextFullWidth || undefined}
-              data-context-kind={contextWorkspace.kind}
-              data-browser-resizing={browserResizing || undefined}
-            >
-              <div className="session-conversation-pane">
-                <SessionRuntimeDetails state={props.state} conversation={props.conversation} language={props.language} capabilities={props.capabilities} />
-                {(props.state.transportState === 'hydrating' || props.state.transportState === 'connecting') && !props.state.snapshot ? <SessionLoading language={props.language} /> : null}
-                {props.state.transportState === 'reconnecting' ? <SessionReconnectNotice language={props.language} attempt={props.state.reconnectAttempt} onReconnect={actions.onReconnect} /> : null}
-                {props.state.transportState === 'failed' ? (
-                  <section className="session-transport-failure" role="alert" data-retained-content={Boolean(props.state.snapshot) || undefined}>
-                    <WarningCircle aria-hidden="true" weight="regular" />
-                    <span className="session-transport-failure-copy">
-                      <strong>{isServerBusyError(props.state.error) ? copy.serverBusy : copy.failed}</strong>
-                      <p>{props.state.transportState === 'failed' && props.state.snapshot ? copy.refreshFailureHelp : isServerBusyError(props.state.error) ? copy.serverBusyHelp : (props.state.error?.message ?? copy.failureHelp)}</p>
-                      {errorMessage(props.state.error) || props.loadError ? (
-                        <details className="session-error-details">
-                          <summary>{copy.details}</summary>
-                          <p>{errorMessage(props.state.error) ?? props.loadError}</p>
-                        </details>
+        <>
+          <div className="session-thread-split" data-context-open={contextOpen || undefined} data-context-full-width={contextFullWidth || undefined}>
+            <div className="session-thread-body">
+              <div
+                ref={browserSplitRef}
+                className="session-conversation-browser-layout"
+                data-browser-open={contextOpen || undefined}
+                data-browser-expanded={contextFullWidth || undefined}
+                data-context-kind={contextWorkspace.kind}
+                data-browser-resizing={browserResizing || undefined}
+              >
+                <div className="session-conversation-pane">
+                  <SessionRuntimeDetails state={props.state} conversation={props.conversation} language={props.language} capabilities={props.capabilities} />
+                  {(props.state.transportState === 'hydrating' || props.state.transportState === 'connecting') && !props.state.snapshot ? <SessionLoading language={props.language} /> : null}
+                  {props.state.transportState === 'reconnecting' ? <SessionReconnectNotice language={props.language} attempt={props.state.reconnectAttempt} onReconnect={actions.onReconnect} /> : null}
+                  {props.state.transportState === 'failed' ? (
+                    <section className="session-transport-failure" role="alert" data-retained-content={Boolean(props.state.snapshot) || undefined}>
+                      <WarningCircle aria-hidden="true" weight="regular" />
+                      <span className="session-transport-failure-copy">
+                        <strong>{isServerBusyError(props.state.error) ? copy.serverBusy : copy.failed}</strong>
+                        <p>{props.state.transportState === 'failed' && props.state.snapshot ? copy.refreshFailureHelp : isServerBusyError(props.state.error) ? copy.serverBusyHelp : (props.state.error?.message ?? copy.failureHelp)}</p>
+                        {errorMessage(props.state.error) || props.loadError ? (
+                          <details className="session-error-details">
+                            <summary>{copy.details}</summary>
+                            <p>{errorMessage(props.state.error) ?? props.loadError}</p>
+                          </details>
+                        ) : null}
+                      </span>
+                      {actions.onReconnect ? (
+                        <button type="button" onClick={() => void actions.onReconnect?.()}>
+                          {copy.retry}
+                        </button>
                       ) : null}
-                    </span>
-                    {actions.onReconnect ? (
-                      <button type="button" onClick={() => void actions.onReconnect?.()}>
-                        {copy.retry}
-                      </button>
-                    ) : null}
-                  </section>
-                ) : null}
-                <div ref={setQuickActionsPersistentHost} className="session-quick-actions-persistent-host" />
-                <ConversationTranscript
-                  state={props.state}
-                  language={props.language}
-                  onLatestContentVisibilityChange={props.onLatestContentVisibilityChange}
-                  creationStatus={props.creationStatus}
+                    </section>
+                  ) : null}
+                  <div ref={setQuickActionsPersistentHost} className="session-quick-actions-persistent-host" />
+                  <ConversationTranscript
+                    state={props.state}
+                    language={props.language}
+                    onLatestContentVisibilityChange={props.onLatestContentVisibilityChange}
+                    creationStatus={props.creationStatus}
                   onEditUserItem={interactionReadOnly ? undefined : actions.onEditUserItem}
                   onRetryItem={
                     interactionReadOnly
@@ -2076,7 +2138,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                         }
                       : undefined
                   }
-                />
+                  />
                 {props.suppressComposer || !dockedPlan ? null : <SessionPlanProgress plan={dockedPlan} language={props.language} />}
                 {props.suppressComposer ? null : blockingPendingRequest ? (
                   <section className="session-interaction-dock" aria-label={props.language === 'zh-CN' ? '待处理交互' : 'Pending interaction'}>
@@ -2112,11 +2174,11 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                 ) : null}
                 {props.suppressComposer || props.suppressInputComposer || blockingUserInputRequest ? null : (
                   <>
-                    {renderQueuedConversationMessages()}
-                    {renderConversationComposer()}
-                  </>
-                )}
-                {interruptArmed ? (
+                    {renderQueuedConversationMessages()}{goal ? <GoalRail goal={goal} language={props.language} onOpen={() => setGoalPanelOpen(true)} /> : null}
+                      {renderConversationComposer()}
+                    </>
+                  )}
+                  {interruptArmed ? (
                   <p className="session-interrupt-confirm" role="status">
                     {copy.interruptConfirm}
                   </p>
@@ -2199,7 +2261,21 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
               ) : null}
             </div>
           </div>
-        </div>
+        </div><GoalPanel
+            open={goalPanelOpen}
+            language={props.language}
+            goal={goal}
+            timeline={props.state?.snapshot?.goalTimeline ?? []}
+            capability={goalCapability}
+            busy={goalBusy}
+            error={goalError}
+            onDismiss={() => setGoalPanelOpen(false)}
+            onSave={(objective) => runGoalAction(() => actions.onSetGoal?.(objective))}
+            onPause={() => runGoalAction(actions.onPauseGoal)}
+            onResume={() => runGoalAction(actions.onResumeGoal)}
+            onClear={(confirmUnfinished) => runGoalAction(() => actions.onClearGoal?.(confirmUnfinished), true)}
+          />
+        </>
       ) : (
         <NewConversationComposer
           language={props.language}
@@ -2322,6 +2398,8 @@ function NewConversationComposer(props: {
   const [submitting, setSubmitting] = useState(false);
   const [executionContextBusy, setExecutionContextBusy] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
+  const [goalPanelOpen, setGoalPanelOpen] = useState(false);
+  const [goalObjective, setGoalObjective] = useState('');
   const inputResources = useConversationInputResources({
     textareaRef,
     text: content,
@@ -2381,6 +2459,7 @@ function NewConversationComposer(props: {
   const modelPresentation = useMemo(() => presentModelOptions(capabilities?.models ?? [], preferredModel?.id ?? selectedModelId, props.language), [capabilities?.models, preferredModel?.id, props.language, selectedModelId]);
   const selectedModel = resolveModelCapability(modelPresentation.models, modelPresentation.selectedId) ?? modelPresentation.models[0] ?? null;
   const selectedModelLabel = selectedModel ? modelPresentation.triggerLabel : '';
+  const goalAvailable = Boolean(capabilities?.goals.supported && capabilities.goals.enabled && selectedModel?.agentKind !== 'pi');
 
   useEffect(() => {
     if (!selectedModel) return;
@@ -2427,7 +2506,17 @@ function NewConversationComposer(props: {
       let accepted: void | boolean | NativeConversationStartPreparation;
       if (props.owner.kind === 'project') {
         if (!props.onStartProject) throw new Error('Project conversation start is unavailable.');
-        accepted = await props.onStartProject({ owner: props.owner, content, attachments, permissionMode, collaborationMode, serviceTierSelection, model: selectedModel?.id, effort: selectedEffort || undefined });
+        accepted = await props.onStartProject({
+          owner: props.owner,
+          content,
+          attachments,
+          permissionMode,
+          collaborationMode,
+          serviceTierSelection,
+          model: selectedModel?.id,
+          effort: selectedEffort || undefined,
+          ...(goalObjective ? { goalObjective } : {}),
+        });
       } else {
         if (!props.task || !props.onStartTask) throw new Error('Task conversation start is unavailable.');
         accepted = await props.onStartTask({
@@ -2441,6 +2530,7 @@ function NewConversationComposer(props: {
           serviceTierSelection,
           model: selectedModel?.id,
           effort: selectedEffort || undefined,
+          ...(goalObjective ? { goalObjective } : {}),
         });
       }
       if (accepted === false) return;
@@ -2505,6 +2595,11 @@ function NewConversationComposer(props: {
             const intent = resolveComposerKeyIntent({ key: event.key, shiftKey: event.shiftKey, isComposing: isComposing || event.nativeEvent.isComposing, repeat: event.repeat });
             if (intent !== 'submit') return;
             event.preventDefault();
+            if (content.trim() === '/goal' && goalAvailable) {
+              setContent('');
+              setGoalPanelOpen(true);
+              return;
+            }
             void submit();
           }}
         />
@@ -2531,6 +2626,12 @@ function NewConversationComposer(props: {
             ) : null}
             <PermissionModeControl language={props.language} value={permissionMode} disabled={submitting || !props.owner} onChange={setPermissionMode} />
             <CollaborationModeControl language={props.language} value={collaborationMode} disabled={submitting || !props.owner} onChange={setCollaborationMode} />
+            {goalAvailable ? (
+              <button type="button" className="session-goal-trigger" aria-haspopup="dialog" disabled={submitting || !props.owner} onClick={() => setGoalPanelOpen(true)}>
+                <span aria-hidden="true">◎</span>
+                <span>{props.language === 'zh-CN' ? '目标' : 'Goal'}</span>
+              </button>
+            ) : null}
           </span>
           <span className="session-composer-trailing-actions">
             <span className="session-composer-runtime-settings">
@@ -2579,6 +2680,20 @@ function NewConversationComposer(props: {
           </span>
         </div>
       </div>
+      <GoalPanel
+        open={goalPanelOpen}
+        language={props.language}
+        goal={null}
+        timeline={[]}
+        capability={{ ...(capabilities?.goals ?? { supported: false, enabled: false, stage: null }), reason: goalAvailable ? 'available' : 'unverified' }}
+        initialObjective={goalObjective}
+        draftOnly
+        onDismiss={() => setGoalPanelOpen(false)}
+        onSave={(objective) => {
+          setGoalObjective(objective);
+          setGoalPanelOpen(false);
+        }}
+      />
     </section>
   );
 
@@ -2723,6 +2838,24 @@ function SessionRuntimeDetails(props: { state: NativeSessionState; conversation:
   const nativeSession = props.state.snapshot?.nativeSession ?? props.conversation?.nativeSession;
   const nativeSessionId = nativeSession?.id ?? props.state.providerThreadId ?? props.conversation?.providerThreadId ?? copy.unavailable;
   const nativeSessionPath = nativeSession?.path ?? copy.unavailable;
+  const goalCapability = props.state.snapshot?.goalCapability;
+  const goalCapabilityLabel = goalCapability
+    ? goalCapability.reason === 'available'
+      ? props.language === 'zh-CN'
+        ? '原生目标可用'
+        : 'Native goals available'
+      : goalCapability.reason === 'disabled'
+        ? props.language === 'zh-CN'
+          ? 'Codex 已支持，但当前未启用'
+          : 'Supported by Codex but currently disabled'
+        : goalCapability.reason === 'agent_unsupported'
+          ? props.language === 'zh-CN'
+            ? '当前 Agent 不支持原生目标'
+            : 'Current agent does not support native goals'
+          : props.language === 'zh-CN'
+            ? '当前 app-server 未验证目标能力，请升级 Codex 后重试'
+            : 'Goal support is unverified; upgrade Codex and retry'
+    : null;
   return (
     <details className="session-runtime-details" data-severity={warning ? 'warning' : 'ready'} aria-label={copy.runtimeDetails}>
       <summary>
@@ -2783,6 +2916,7 @@ function SessionRuntimeDetails(props: { state: NativeSessionState; conversation:
         {executionContext ? <RuntimeUsageRow label={copy.branch} value={<code title={executionBranch}>{executionBranch}</code>} /> : null}
         {nativeSession?.id || props.state.providerThreadId || props.conversation?.providerThreadId ? <RuntimeUsageRow label={copy.sessionId} value={<code title={nativeSessionId}>{nativeSessionId}</code>} /> : null}
         {nativeSession?.path ? <RuntimeUsageRow label={copy.jsonlPath} value={<code title={nativeSessionPath}>{nativeSessionPath}</code>} /> : null}
+        {goalCapabilityLabel ? <RuntimeUsageRow label={props.language === 'zh-CN' ? '目标能力' : 'Goal capability'} value={goalCapabilityLabel} /> : null}
         {mcpStartup ? (
           <div>
             <dt>{copy.mcpStartup}</dt>
