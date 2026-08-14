@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type RefObject, type SyntheticEvent } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type RefObject, type SyntheticEvent } from 'react';
 import type { TaskAttachmentView } from './taskAttachments.js';
 import { PendingResourceCards, type PendingResourceCardItem } from '../ui/PendingResourceCards.js';
 import { useNativeCloseLayer } from '../ui/nativeCloseLayer.js';
@@ -11,7 +11,10 @@ export interface TaskAttachmentPreviewListCopy {
   openFileLabel: string;
   openPreviewLabel: string;
   closePreviewLabel: string;
+  previewLoading: string;
   previewUnavailable: string;
+  previewLoadFailed: string;
+  retryPreviewLabel: string;
   localPathLabel: string;
   removeLabel?: string;
   addedStatus?: (count: number) => string;
@@ -39,52 +42,88 @@ export function TaskAttachmentPreviewList(props: TaskAttachmentPreviewListProps)
   const [previewAttachment, setPreviewAttachment] = useState<TaskAttachmentPreviewItem | null>(null);
   const [loadedPreviewUrls, setLoadedPreviewUrls] = useState<Map<string, string>>(() => new Map());
   const [loadingPreviewPaths, setLoadingPreviewPaths] = useState<Set<string>>(() => new Set());
-  const [failedPreviewPaths, setFailedPreviewPaths] = useState<Set<string>>(() => new Set());
+  const [previewFailures, setPreviewFailures] = useState<Map<string, TaskAttachmentPreviewFailure>>(() => new Map());
+  const loadedPreviewUrlsRef = useRef(loadedPreviewUrls);
+  const previewFailuresRef = useRef(previewFailures);
+  const previewRequestsRef = useRef<Map<string, symbol>>(new Map());
+  const previewLoaderRef = useRef(props.onLoadPreview);
+  const mountedRef = useRef(true);
   const dialogRef = useRef<HTMLDialogElement | null>(null);
   const lastPreviewTriggerRef = useRef<HTMLButtonElement | null>(null);
   const previewId = useId();
   const previewTitleId = `${previewId}-task-attachment-zoom-title`;
   const previewDescriptionId = `${previewId}-task-attachment-zoom-description`;
   const previewSrc = previewAttachment ? resolveTaskAttachmentPreviewSrc(previewAttachment, loadedPreviewUrls) : '';
-  const previewFailed = previewAttachment ? failedPreviewPaths.has(previewAttachment.path) || (!previewSrc && !props.onLoadPreview) : false;
+  const previewFailure = previewAttachment ? (previewFailures.get(previewAttachment.path) ?? (!previewSrc && !props.onLoadPreview ? 'unavailable' : undefined)) : undefined;
+  const previewLoading = Boolean(previewAttachment && !previewSrc && !previewFailure && (loadingPreviewPaths.has(previewAttachment.path) || props.onLoadPreview));
   const listClassName = ['task-attachment-preview-list', props.className].filter(Boolean).join(' ');
   const addedStatus = useMemo(() => props.copy.addedStatus?.(props.attachments.length), [props.attachments.length, props.copy]);
+  const previewCandidateSignature = props.attachments
+    .filter((attachment) => attachment.kind === 'image' && !attachment.previewUrl)
+    .map((attachment) => attachment.path)
+    .join('\0');
+  const previewLoaderAvailable = Boolean(props.onLoadPreview);
+
+  previewLoaderRef.current = props.onLoadPreview;
+  loadedPreviewUrlsRef.current = loadedPreviewUrls;
+  previewFailuresRef.current = previewFailures;
 
   useNativeCloseLayer(Boolean(previewAttachment), closeAttachmentPreview);
 
   useEffect(() => {
-    if (!props.onLoadPreview) return;
-    let cancelled = false;
-    for (const attachment of props.attachments) {
-      if (attachment.kind !== 'image') continue;
-      if (attachment.previewUrl || loadedPreviewUrls.has(attachment.path) || loadingPreviewPaths.has(attachment.path) || failedPreviewPaths.has(attachment.path)) continue;
-      setLoadingPreviewPaths((currentPaths) => new Set(currentPaths).add(attachment.path));
-      void props
-        .onLoadPreview(attachment.path)
-        .then((preview) => {
-          if (cancelled || !preview?.previewUrl) return;
-          setLoadedPreviewUrls((currentUrls) => {
-            const nextUrls = new Map(currentUrls);
-            nextUrls.set(attachment.path, preview.previewUrl);
-            return nextUrls;
-          });
-        })
-        .catch(() => {
-          if (!cancelled) markPreviewFailed(attachment.path);
-        })
-        .finally(() => {
-          if (cancelled) return;
-          setLoadingPreviewPaths((currentPaths) => {
-            const nextPaths = new Set(currentPaths);
-            nextPaths.delete(attachment.path);
-            return nextPaths;
-          });
-        });
-    }
+    mountedRef.current = true;
     return () => {
-      cancelled = true;
+      mountedRef.current = false;
     };
-  }, [failedPreviewPaths, loadedPreviewUrls, loadingPreviewPaths, props]);
+  }, []);
+
+  const requestAttachmentPreview = useCallback((path: string, force = false): void => {
+    const loadPreview = previewLoaderRef.current;
+    if (!loadPreview) return;
+    if (!force && (loadedPreviewUrlsRef.current.has(path) || previewFailuresRef.current.has(path) || previewRequestsRef.current.has(path))) return;
+
+    const requestToken = Symbol('task-attachment-preview-request');
+    previewRequestsRef.current.set(path, requestToken);
+    setLoadingPreviewPaths((currentPaths) => new Set(currentPaths).add(path));
+    setPreviewFailures((currentFailures) => {
+      const nextFailures = new Map(currentFailures);
+      nextFailures.delete(path);
+      previewFailuresRef.current = nextFailures;
+      return nextFailures;
+    });
+
+    void loadPreview(path)
+      .then((preview) => {
+        if (!mountedRef.current || previewRequestsRef.current.get(path) !== requestToken) return;
+        if (!preview?.previewUrl) {
+          markPreviewFailed(path, 'unavailable');
+          return;
+        }
+        setLoadedPreviewUrls((currentUrls) => {
+          const nextUrls = new Map(currentUrls);
+          nextUrls.set(path, preview.previewUrl);
+          loadedPreviewUrlsRef.current = nextUrls;
+          return nextUrls;
+        });
+      })
+      .catch(() => {
+        if (mountedRef.current && previewRequestsRef.current.get(path) === requestToken) markPreviewFailed(path, 'read_failed');
+      })
+      .finally(() => {
+        if (!mountedRef.current || previewRequestsRef.current.get(path) !== requestToken) return;
+        previewRequestsRef.current.delete(path);
+        setLoadingPreviewPaths((currentPaths) => {
+          const nextPaths = new Set(currentPaths);
+          nextPaths.delete(path);
+          return nextPaths;
+        });
+      });
+  }, []);
+
+  useEffect(() => {
+    if (!previewLoaderAvailable || !previewCandidateSignature) return;
+    for (const path of previewCandidateSignature.split('\0')) requestAttachmentPreview(path);
+  }, [previewCandidateSignature, previewLoaderAvailable, requestAttachmentPreview]);
 
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -92,12 +131,17 @@ export function TaskAttachmentPreviewList(props: TaskAttachmentPreviewListProps)
     dialog.showModal();
   }, [previewAttachment]);
 
-  function markPreviewFailed(path: string): void {
-    setFailedPreviewPaths((currentPaths) => {
-      const nextPaths = new Set(currentPaths);
-      nextPaths.add(path);
-      return nextPaths;
+  function markPreviewFailed(path: string, failure: TaskAttachmentPreviewFailure = 'unavailable'): void {
+    setPreviewFailures((currentFailures) => {
+      const nextFailures = new Map(currentFailures);
+      nextFailures.set(path, failure);
+      previewFailuresRef.current = nextFailures;
+      return nextFailures;
     });
+  }
+
+  function retryAttachmentPreview(path: string): void {
+    requestAttachmentPreview(path, true);
   }
 
   function openAttachmentPreview(attachment: TaskAttachmentPreviewItem, trigger: HTMLButtonElement): void {
@@ -182,7 +226,8 @@ export function TaskAttachmentPreviewList(props: TaskAttachmentPreviewListProps)
         previewTitleId,
         previewDescriptionId,
         previewAttachment,
-        previewFailed,
+        previewFailure,
+        previewLoading,
         previewSrc,
         copy: props.copy,
         closeAttachmentPreview,
@@ -190,24 +235,29 @@ export function TaskAttachmentPreviewList(props: TaskAttachmentPreviewListProps)
         handleDialogCancel,
         handleDialogPointerDown,
         markPreviewFailed,
+        retryAttachmentPreview,
       })}
     </div>
   );
 }
+
+type TaskAttachmentPreviewFailure = 'unavailable' | 'read_failed';
 
 function renderTaskAttachmentPreviewDialog(input: {
   dialogRef: RefObject<HTMLDialogElement | null>;
   previewTitleId: string;
   previewDescriptionId: string;
   previewAttachment: TaskAttachmentPreviewItem | null;
-  previewFailed: boolean;
+  previewFailure?: TaskAttachmentPreviewFailure;
+  previewLoading: boolean;
   previewSrc: string;
   copy: TaskAttachmentPreviewListCopy;
   closeAttachmentPreview: () => void;
   handleDialogClose: () => void;
   handleDialogCancel: (event: SyntheticEvent<HTMLDialogElement, Event>) => void;
   handleDialogPointerDown: (event: ReactMouseEvent<HTMLDialogElement>) => void;
-  markPreviewFailed: (path: string) => void;
+  markPreviewFailed: (path: string, failure?: TaskAttachmentPreviewFailure) => void;
+  retryAttachmentPreview: (path: string) => void;
 }) {
   return (
     <dialog
@@ -230,10 +280,24 @@ function renderTaskAttachmentPreviewDialog(input: {
           </button>
         </header>
         <div className="task-attachment-zoom-stage">
-          {input.previewAttachment && !input.previewFailed && input.previewSrc ? (
+          {input.previewAttachment && !input.previewFailure && input.previewSrc ? (
             <img className="task-attachment-zoom-image" src={input.previewSrc} alt={input.previewAttachment.name} onError={() => input.markPreviewFailed(input.previewAttachment!.path)} />
+          ) : input.previewAttachment && input.previewLoading ? (
+            <p className="task-attachment-zoom-state" role="status" aria-live="polite">
+              <span className="task-attachment-preview-spinner" aria-hidden="true" />
+              {input.copy.previewLoading}
+            </p>
           ) : (
-            <p className="task-attachment-zoom-fallback">{input.copy.previewUnavailable}</p>
+            <div className="task-attachment-zoom-state">
+              <p className="task-attachment-zoom-fallback" role="alert">
+                {input.previewFailure === 'read_failed' ? input.copy.previewLoadFailed : input.copy.previewUnavailable}
+              </p>
+              {input.previewAttachment ? (
+                <button type="button" className="task-attachment-preview-retry" onClick={() => input.retryAttachmentPreview(input.previewAttachment!.path)}>
+                  {input.copy.retryPreviewLabel}
+                </button>
+              ) : null}
+            </div>
           )}
         </div>
         {input.previewAttachment ? (

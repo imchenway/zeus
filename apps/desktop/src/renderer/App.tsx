@@ -1254,7 +1254,10 @@ const languageCopy = {
       taskCreateOpenAttachment: '打开附件',
       taskCreatePreviewAttachment: '放大预览附件',
       taskCreatePreviewClose: '关闭附件预览',
+      taskCreatePreviewLoading: '正在加载图片预览…',
       taskCreatePreviewUnavailable: '无法预览，本机路径已保存',
+      taskCreatePreviewLoadFailed: '读取图片失败，文件可能已移动、损坏或暂时不可用。',
+      taskCreatePreviewRetry: '重试预览',
       taskCreateLocalPathLabel: '本机路径',
       taskCreateAttachmentAddedStatus: (count: number) => `已添加 ${count} 个附件，图片可放大，文件可打开。`,
       taskCreateAttachmentPickerFailed: '无法打开附件选择器，请重试。',
@@ -1316,7 +1319,10 @@ const languageCopy = {
       openFileAttachmentLabel: '打开附件',
       previewAttachmentLabel: '放大预览附件',
       previewCloseLabel: '关闭附件预览',
-      previewUnavailableLabel: '无法预览，本机路径已保存',
+      previewLoadingLabel: '正在加载图片预览…',
+      previewUnavailableLabel: '无法读取图片预览。文件可能不是受支持的图片，或不在 Zeus 受信目录。',
+      previewLoadFailedLabel: '读取图片失败，文件可能已移动、损坏或暂时不可用。',
+      previewRetryLabel: '重试预览',
       localPathLabel: '本机路径',
       runtimeSessionNotStarted: '未启动 Runtime 会话',
       runtimeCommandMissing: '未记录运行命令',
@@ -2714,7 +2720,10 @@ const languageCopy = {
       taskCreateOpenAttachment: 'Open attachment',
       taskCreatePreviewAttachment: 'Preview attachment',
       taskCreatePreviewClose: 'Close attachment preview',
+      taskCreatePreviewLoading: 'Loading image preview…',
       taskCreatePreviewUnavailable: 'Preview unavailable. Local path saved.',
+      taskCreatePreviewLoadFailed: 'Unable to read the image. The file may have moved, be damaged, or be temporarily unavailable.',
+      taskCreatePreviewRetry: 'Retry preview',
       taskCreateLocalPathLabel: 'Local path',
       taskCreateAttachmentAddedStatus: (count: number) => `Added ${count} attachment${count === 1 ? '' : 's'}. Images preview larger; files open locally.`,
       taskCreateAttachmentPickerFailed: 'Unable to open the attachment picker. Try again.',
@@ -2776,7 +2785,10 @@ const languageCopy = {
       openFileAttachmentLabel: 'Open attachment',
       previewAttachmentLabel: 'Preview attachment',
       previewCloseLabel: 'Close attachment preview',
-      previewUnavailableLabel: 'Preview unavailable. Local path saved.',
+      previewLoadingLabel: 'Loading image preview…',
+      previewUnavailableLabel: 'Unable to read the image preview. The file may be unsupported or outside Zeus trusted storage.',
+      previewLoadFailedLabel: 'Unable to read the image. The file may have moved, be damaged, or be temporarily unavailable.',
+      previewRetryLabel: 'Retry preview',
       localPathLabel: 'Local path',
       runtimeSessionNotStarted: 'Runtime session not started',
       runtimeCommandMissing: 'No runtime command recorded',
@@ -4015,7 +4027,10 @@ const languageCopy = {
       taskCreateOpenAttachment: string;
       taskCreatePreviewAttachment: string;
       taskCreatePreviewClose: string;
+      taskCreatePreviewLoading: string;
       taskCreatePreviewUnavailable: string;
+      taskCreatePreviewLoadFailed: string;
+      taskCreatePreviewRetry: string;
       taskCreateLocalPathLabel: string;
       taskCreateAttachmentAddedStatus: (count: number) => string;
       taskCreateAttachmentPickerFailed: string;
@@ -4162,7 +4177,10 @@ const languageCopy = {
       openFileAttachmentLabel: string;
       previewAttachmentLabel: string;
       previewCloseLabel: string;
+      previewLoadingLabel: string;
       previewUnavailableLabel: string;
+      previewLoadFailedLabel: string;
+      previewRetryLabel: string;
       localPathLabel: string;
       projectLabel: string;
       templateLabel: string;
@@ -5775,7 +5793,10 @@ function TaskCreateFieldAttachments(props: {
           removeLabel: props.copy.taskCreateRemoveAttachment,
           openPreviewLabel: props.copy.taskCreatePreviewAttachment,
           closePreviewLabel: props.copy.taskCreatePreviewClose,
+          previewLoading: props.copy.taskCreatePreviewLoading,
           previewUnavailable: props.copy.taskCreatePreviewUnavailable,
+          previewLoadFailed: props.copy.taskCreatePreviewLoadFailed,
+          retryPreviewLabel: props.copy.taskCreatePreviewRetry,
           localPathLabel: props.copy.taskCreateLocalPathLabel,
           addedStatus: props.copy.taskCreateAttachmentAddedStatus,
         }}

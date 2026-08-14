@@ -49,7 +49,10 @@ export interface TaskDetailPaneCopy {
   openFileAttachmentLabel?: string;
   previewAttachmentLabel?: string;
   previewCloseLabel?: string;
+  previewLoadingLabel?: string;
   previewUnavailableLabel?: string;
+  previewLoadFailedLabel?: string;
+  previewRetryLabel?: string;
   localPathLabel?: string;
   sourceLabels?: TaskSourceLabels;
   updatedAtMissing?: string;
@@ -265,7 +268,10 @@ function TaskDetailFieldAttachments(props: {
           openFileLabel: props.copy.openFileAttachmentLabel ?? '打开附件',
           openPreviewLabel: props.copy.previewAttachmentLabel ?? '放大预览附件',
           closePreviewLabel: props.copy.previewCloseLabel ?? '关闭附件预览',
-          previewUnavailable: props.copy.previewUnavailableLabel ?? '无法预览，本机路径已保存',
+          previewLoading: props.copy.previewLoadingLabel ?? '正在加载图片预览…',
+          previewUnavailable: props.copy.previewUnavailableLabel ?? '无法读取图片预览。文件可能不是受支持的图片，或不在 Zeus 受信目录。',
+          previewLoadFailed: props.copy.previewLoadFailedLabel ?? '读取图片失败，文件可能已移动、损坏或暂时不可用。',
+          retryPreviewLabel: props.copy.previewRetryLabel ?? '重试预览',
           localPathLabel: props.copy.localPathLabel ?? '本机路径',
           removeLabel: props.editCopy.removeAttachment,
         }}
