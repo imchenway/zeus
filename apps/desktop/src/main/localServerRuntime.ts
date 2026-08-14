@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -11,6 +11,7 @@ import {
   createExecutionHostControlClient,
   currentExecutionHostCapabilities,
   type ExecutionHostCapabilities,
+  executionHostLockPath,
   executionHostProtocolVersion,
   type ExecutionHostRendezvous,
   type ExecutionHostWorkStatus,
@@ -412,7 +413,16 @@ export async function startDesktopLocalServer(options: StartDesktopLocalServerOp
   }
 }
 
-/** 独立执行宿主拥有 Local Server、SQLite 与 Codex app-server；该函数不能由 Renderer 生命周期直接关闭。 */
+/**
+ * 主进程内嵌启动前先清退旧版本遗留的独立宿主，避免升级后出现两个 SQLite 写入者。
+ * 独立宿主上的活动工作会先停止；这是移除后台常驻能力后的明确退出语义。
+ */
+export async function startEmbeddedDesktopLocalServer(options: StartDesktopLocalServerOptions): Promise<DesktopLocalServerRuntime> {
+  await retireDetachedExecutionHost(options.userDataPath);
+  return startOwnedDesktopLocalServer(options);
+}
+
+/** Local Server、SQLite 与 Codex app-server 由当前进程直接持有。 */
 export async function startOwnedDesktopLocalServer(options: StartDesktopLocalServerOptions): Promise<DesktopLocalServerRuntime> {
   const apiToken = options.apiToken ?? randomBytes(24).toString('base64url');
   const dataLayout = options.dataLayout ?? createZeusDataLayout(options.userDataPath);
@@ -784,6 +794,60 @@ async function readHealthyExecutionHost(userDataPath: string): Promise<Execution
     return rendezvous;
   } catch {
     return null;
+  }
+}
+
+async function retireDetachedExecutionHost(userDataPath: string): Promise<void> {
+  const deadline = Date.now() + 45_000;
+  while (Date.now() < deadline) {
+    const existing = await readHealthyExecutionHost(userDataPath);
+    if (existing) {
+      const client = createExecutionHostControlClient(existing);
+      await client.stopActiveWork();
+      await client.shutdown();
+      await waitForProcessExit(existing.pid, deadline);
+      await removeExecutionHostRendezvous(userDataPath, existing.instanceId);
+      return;
+    }
+
+    const advertised = await readExecutionHostRendezvous(userDataPath);
+    const lockOwnerPid = await readExecutionHostLockOwnerPid(userDataPath);
+    const advertisedPid = advertised?.pid ?? null;
+    if (!processExists(lockOwnerPid) && !processExists(advertisedPid)) {
+      if (advertised) await removeExecutionHostRendezvous(userDataPath, advertised.instanceId);
+      return;
+    }
+
+    // 旧宿主可能已持有单实例锁但仍在迁移数据库；等待其控制面就绪后再安全清退。
+    await wait(200);
+  }
+  throw new Error('Zeus 旧版 execution-host 在 45 秒内仍不可控，为避免两个 SQLite 写入者，已取消本次启动。');
+}
+
+async function readExecutionHostLockOwnerPid(userDataPath: string): Promise<number | null> {
+  try {
+    const value = JSON.parse(await readFile(executionHostLockPath(userDataPath), 'utf8')) as { pid?: unknown };
+    return typeof value.pid === 'number' && Number.isInteger(value.pid) && value.pid > 0 ? value.pid : null;
+  } catch {
+    return null;
+  }
+}
+
+async function waitForProcessExit(pid: number, deadline: number): Promise<void> {
+  while (Date.now() < deadline) {
+    if (!processExists(pid)) return;
+    await wait(200);
+  }
+  throw new Error(`Zeus 旧版 execution-host PID ${pid} 未能在 45 秒内退出。`);
+}
+
+function processExists(pid: number | null): boolean {
+  if (!pid || pid <= 1 || pid === process.pid) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error instanceof Error && 'code' in error && error.code === 'EPERM';
   }
 }
 

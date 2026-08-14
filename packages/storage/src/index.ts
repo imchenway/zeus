@@ -2716,6 +2716,8 @@ function migrateConversationStageSchema(db: ZeusDatabase): void {
 }
 
 function migrateAgentRuntimeSchema(db: ZeusDatabase): void {
+  const migrationId = '20260803_0001_agent_runtime_framework';
+  const needsIdentityBackfill = !db.get<{ migration_id: string }>(`SELECT migration_id FROM schema_migrations WHERE migration_id = ?`, [migrationId]);
   for (const statement of [
     `ALTER TABLE conversations ADD COLUMN agent_kind TEXT`,
     `ALTER TABLE conversations ADD COLUMN agent_transport TEXT`,
@@ -2755,25 +2757,30 @@ function migrateAgentRuntimeSchema(db: ZeusDatabase): void {
   db.execute(`CREATE UNIQUE INDEX IF NOT EXISTS idx_conversation_turn_agent_native_run ON conversation_turns(agent_kind, provider_thread_id, native_run_id) WHERE agent_kind IS NOT NULL AND native_run_id IS NOT NULL`);
   db.execute(`CREATE UNIQUE INDEX IF NOT EXISTS idx_conversation_item_agent_native_item ON conversation_items(agent_kind, provider_thread_id, native_item_id) WHERE agent_kind IS NOT NULL AND native_item_id IS NOT NULL`);
 
-  // 只回填有明确传输证据的 Codex 原生会话；历史 CLI 记录不猜测 Agent 或模型来源。
-  db.execute(`UPDATE conversations SET
-    agent_kind = COALESCE(agent_kind, 'codex'),
-    agent_transport = COALESCE(agent_transport, 'app_server'),
-    model_id = COALESCE(model_id, provider_model),
-    native_session_id = COALESCE(native_session_id, provider_thread_id),
-    native_session_path = COALESCE(native_session_path, provider_thread_path)
-    WHERE transport_kind = 'codex_native'`);
-  db.execute(`UPDATE conversation_turns SET
-    agent_kind = COALESCE(agent_kind, 'codex'),
-    native_run_id = COALESCE(native_run_id, provider_turn_id)
-    WHERE conversation_id IN (SELECT id FROM conversations WHERE agent_kind = 'codex')`);
-  db.execute(`UPDATE conversation_items SET
-    agent_kind = COALESCE(agent_kind, 'codex'),
-    native_item_id = COALESCE(native_item_id, provider_item_id)
-    WHERE conversation_id IN (SELECT id FROM conversations WHERE agent_kind = 'codex')`);
+  if (needsIdentityBackfill) {
+    // 只执行一次历史回填；字段已经完整的记录不再进入 UPDATE，避免启动时反复重写大体量会话正文页。
+    db.execute(`UPDATE conversations SET
+      agent_kind = COALESCE(agent_kind, 'codex'),
+      agent_transport = COALESCE(agent_transport, 'app_server'),
+      model_id = COALESCE(model_id, provider_model),
+      native_session_id = COALESCE(native_session_id, provider_thread_id),
+      native_session_path = COALESCE(native_session_path, provider_thread_path)
+      WHERE transport_kind = 'codex_native'
+        AND (agent_kind IS NULL OR agent_transport IS NULL OR model_id IS NULL OR native_session_id IS NULL OR native_session_path IS NULL)`);
+    db.execute(`UPDATE conversation_turns SET
+      agent_kind = COALESCE(agent_kind, 'codex'),
+      native_run_id = COALESCE(native_run_id, provider_turn_id)
+      WHERE conversation_id IN (SELECT id FROM conversations WHERE agent_kind = 'codex')
+        AND (agent_kind IS NULL OR native_run_id IS NULL)`);
+    db.execute(`UPDATE conversation_items SET
+      agent_kind = COALESCE(agent_kind, 'codex'),
+      native_item_id = COALESCE(native_item_id, provider_item_id)
+      WHERE conversation_id IN (SELECT id FROM conversations WHERE agent_kind = 'codex')
+        AND (agent_kind IS NULL OR native_item_id IS NULL)`);
+  }
 
   recordSchemaMigration(db, {
-    migrationId: '20260803_0001_agent_runtime_framework',
+    migrationId,
     description: '增加多 Agent 身份、原生会话映射与能力证据快照',
     checksumSource: 'agent_runtime_framework:conversation_identity,turn_identity,item_identity,capability_snapshot,backfill_codex_native',
   });

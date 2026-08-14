@@ -7,7 +7,7 @@ import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } 
 import { access, copyFile, cp, lstat, mkdir, readdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
-import { createBeforeQuitCleanupHandler, type DesktopLocalServerRuntime, parseCodexNativeEnabled, startDesktopLocalServer } from './localServerRuntime.js';
+import { createBeforeQuitCleanupHandler, type DesktopLocalServerRuntime, parseCodexNativeEnabled, startEmbeddedDesktopLocalServer } from './localServerRuntime.js';
 import { createStartupCoordinator } from './startupCoordinator.js';
 import { terminateAfterFatalStartup } from './fatalStartup.js';
 import { createRendererBootstrapMonitor } from './rendererBootstrapMonitor.js';
@@ -2085,7 +2085,8 @@ async function initializeApplication(): Promise<void> {
   const mainProjectRoot = resolveMainProjectRoot();
   const codexNativeEnabled = parseCodexNativeEnabled(process.env.ZEUS_CODEX_NATIVE_ENABLED);
   const allowUntrustedReleaseUpdateTest = isTestDistribution() && process.env.ZEUS_ALLOW_UNTRUSTED_UPDATE_TEST === '1';
-  localServerRuntime = await startDesktopLocalServer({
+  // Local Server、SQLite 与 Agent 调度直接由主进程持有，不再拉起同名 Zeus execution-host。
+  localServerRuntime = await startEmbeddedDesktopLocalServer({
     userDataPath,
     dataLayout,
     projectRoot: mainProjectRoot,
@@ -2241,8 +2242,8 @@ async function resolveDesktopQuitMode(): Promise<'continue_in_background' | 'upg
   try {
     status = await runtime.getStatus();
   } catch {
-    // 无法确认后台工作时优先保护执行，避免一次状态探测失败把长任务连带终止。
-    return 'continue_in_background';
+    // 执行已收回主进程；状态不明时保持应用打开，不能再假装界面退出后任务仍会继续。
+    return 'cancel';
   }
   if (!status.hasActiveWork) return 'final_quit';
   const options = {
@@ -2250,15 +2251,14 @@ async function resolveDesktopQuitMode(): Promise<'continue_in_background' | 'upg
     title: '仍有任务正在运行',
     message: '退出 Zeus 时如何处理正在运行的任务？',
     detail: `正在执行的轮次 ${status.activeTurnCount} 个，等待交互 ${status.waitingRequestCount} 个，其他 Runtime ${status.activeRuntimeCount} 个，命令执行 ${status.activeCommandRunCount} 个。`,
-    buttons: ['退出界面，任务继续运行', '停止活动工作并退出', '取消'],
-    defaultId: 0,
-    cancelId: 2,
+    buttons: ['停止活动工作并退出', '取消'],
+    defaultId: 1,
+    cancelId: 1,
     noLink: true,
   };
   const targetWindow = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
   const result = targetWindow ? await dialog.showMessageBox(targetWindow, options) : await dialog.showMessageBox(options);
-  if (result.response === 2) return 'cancel';
-  if (result.response === 0) return 'continue_in_background';
+  if (result.response === 1) return 'cancel';
   try {
     await runtime.stopActiveWork();
     return 'force_quit';
