@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ZEUS-0257 设计对照</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        background: #f4f5f7;
+        color: #24272b;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        margin: 0;
+        padding: 28px;
+      }
+      main {
+        display: grid;
+        gap: 22px;
+        margin: 0 auto;
+        max-width: 1380px;
+      }
+      h1 {
+        font-size: 20px;
+        margin: 0;
+      }
+      .comparison {
+        display: grid;
+        gap: 20px;
+        grid-template-columns: minmax(0, 1fr) auto auto;
+      }
+      figure {
+        margin: 0;
+        min-width: 0;
+      }
+      figcaption {
+        color: #62666c;
+        font-size: 13px;
+        font-weight: 600;
+        margin-bottom: 8px;
+      }
+      .panel {
+        background: white;
+        border: 1px solid #dfe2e6;
+        border-radius: 12px;
+        box-shadow: 0 8px 24px rgb(25 30 38 / 8%);
+        overflow: hidden;
+      }
+      .source img {
+        display: block;
+        height: auto;
+        width: 100%;
+      }
+      .crop {
+        height: 768px;
+        overflow: hidden;
+        position: relative;
+      }
+      .crop img {
+        display: block;
+        height: 768px;
+        max-width: none;
+        width: 854px;
+      }
+      .wide .crop {
+        width: 212px;
+      }
+      .narrow .crop {
+        width: 170px;
+      }
+      p {
+        color: #62666c;
+        font-size: 13px;
+        line-height: 1.6;
+        margin: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>ZEUS-0257：样式候选 1 与真实 Zeus Test.app 对照</h1>
+      <section class="comparison" aria-label="设计与实现对照">
+        <figure class="source">
+          <figcaption>选定设计稿：无底色语义图标</figcaption>
+          <div class="panel"><img src="./ZEUS-0257_样式候选_1.png" alt="样式候选 1" /></div>
+        </figure>
+        <figure class="wide">
+          <figcaption>真实界面：常规 248px</figcaption>
+          <div class="panel crop"><img src="./ZEUS-0257_真实界面_常规248px.png" alt="常规宽度真实界面" /></div>
+        </figure>
+        <figure class="narrow">
+          <figcaption>真实界面：最窄 200px</figcaption>
+          <div class="panel crop"><img src="./ZEUS-0257_真实界面_最窄200px.png" alt="最窄宽度真实界面" /></div>
+        </figure>
+      </section>
+      <p>真实界面保留现有 Zeus 字体、项目结构和归档入口，仅对比状态图标、标题空间与会话行纵向节奏。</p>
+    </main>
+  </body>
+</html>

@@ -1,0 +1,2885 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>方案图｜侧边栏会话状态呈现</title>
+    <style>
+      :root {
+        --ink: #102033;
+        --muted: #5a6c80;
+        --paper: #fbfdff;
+        --panel: rgba(255, 255, 255, 0.94);
+        --line: #8db3d8;
+        --blue: #176bb3;
+        --blue-soft: #e8f3ff;
+        --green: #16785c;
+        --green-soft: #e9f8f2;
+        --amber: #a86400;
+        --amber-soft: #fff6de;
+        --red: #aa3636;
+        --red-soft: #fff0f0;
+        --violet: #6554b2;
+        --violet-soft: #f1efff;
+        --shadow: 0 16px 42px rgba(20, 57, 92, 0.09);
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        color: var(--ink);
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'PingFang SC', 'Microsoft YaHei', Arial, sans-serif;
+        background:
+          radial-gradient(circle at 18% 3%, rgba(214, 233, 255, 0.78), transparent 30rem), radial-gradient(circle at 78% 6%, rgba(228, 246, 239, 0.8), transparent 28rem), linear-gradient(rgba(93, 133, 173, 0.045) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(93, 133, 173, 0.045) 1px, transparent 1px), linear-gradient(180deg, #fff 0%, #f7fbff 54%, #fbfdff 100%);
+        background-size:
+          auto,
+          auto,
+          28px 28px,
+          28px 28px,
+          auto;
+        overflow-x: clip;
+      }
+      main {
+        width: min(1280px, calc(100vw - 32px));
+        margin: 0 auto;
+        padding: 20px 0;
+      }
+      h1 {
+        margin: 0 0 10px;
+        font-size: clamp(24px, 2.8vw, 34px);
+        line-height: 1.18;
+        letter-spacing: -0.025em;
+      }
+      .summary {
+        margin: 0;
+        color: var(--muted);
+        line-height: 1.65;
+      }
+      .template-layout {
+        overflow: hidden;
+        border: 1px solid rgba(141, 179, 216, 0.58);
+        border-radius: 24px;
+        background: rgba(255, 255, 255, 0.8);
+        box-shadow: var(--shadow);
+      }
+      .flow-map {
+        display: block;
+        width: 100%;
+        height: auto;
+      }
+      .region-boundary {
+        fill: rgba(247, 251, 255, 0.74);
+        stroke: rgba(141, 179, 216, 0.72);
+        stroke-width: 1.5;
+      }
+      .region-boundary.feedback {
+        fill: rgba(241, 239, 255, 0.54);
+        stroke: rgba(101, 84, 178, 0.52);
+        stroke-dasharray: 8 7;
+      }
+      .region-boundary.matrix {
+        fill: rgba(247, 251, 255, 0.88);
+      }
+      .region-boundary.verdict {
+        fill: rgba(233, 248, 242, 0.46);
+      }
+      .region-boundary.action {
+        fill: rgba(255, 246, 222, 0.42);
+      }
+      .region-title {
+        fill: #38546f;
+        font-size: 16px;
+        font-weight: 850;
+        letter-spacing: 0.02em;
+      }
+      .node-shape {
+        fill: #fff;
+        stroke: #7eadd8;
+        stroke-width: 1.6;
+        filter: drop-shadow(0 5px 8px rgba(20, 57, 92, 0.11));
+        vector-effect: non-scaling-stroke;
+      }
+      .node-shape.outcome,
+      .node-shape.recommendation,
+      .node-shape.pass {
+        fill: var(--green-soft);
+        stroke: #4a9c82;
+      }
+      .node-shape.feedback,
+      .node-shape.conditional {
+        fill: var(--violet-soft);
+        stroke: #8174c5;
+      }
+      .node-shape.action {
+        fill: var(--amber-soft);
+        stroke: #c59b4a;
+      }
+      .node-shape.failure {
+        fill: var(--red-soft);
+        stroke: #cb7474;
+      }
+      .node-copy {
+        width: 100%;
+        height: 100%;
+      }
+      .node-link {
+        display: flex;
+        width: 100%;
+        height: 100%;
+        padding: 8px;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 4px;
+        border-radius: 14px;
+        color: inherit;
+        text-align: center;
+        text-decoration: none;
+        overflow: hidden;
+      }
+      .node-link:focus-visible {
+        outline: 4px solid #77b8f2;
+        outline-offset: -4px;
+      }
+      .node-link b {
+        display: block;
+        width: 100%;
+        font-size: 15px;
+        line-height: 1.18;
+        overflow-wrap: anywhere;
+      }
+      .node-link small {
+        display: block;
+        width: 100%;
+        color: var(--muted);
+        font-size: 11px;
+        line-height: 1.32;
+        overflow-wrap: anywhere;
+      }
+      .flow-route {
+        fill: none;
+        stroke: #176bb3;
+        stroke-width: 3;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+        vector-effect: non-scaling-stroke;
+      }
+      .flow-route.feedback {
+        stroke: #6554b2;
+        stroke-dasharray: 10 8;
+      }
+      .flow-route.pass {
+        stroke: #16785c;
+      }
+      .flow-route.failure {
+        stroke: #aa3636;
+      }
+      .flow-route.action {
+        stroke: #a86400;
+      }
+      .route-label rect {
+        fill: #fff;
+        stroke: rgba(141, 179, 216, 0.85);
+        stroke-width: 1;
+      }
+      .route-label text {
+        fill: #38546f;
+        font-size: 12px;
+        font-weight: 800;
+        text-anchor: middle;
+      }
+      .matrix-cell {
+        fill: #fff;
+        stroke: rgba(141, 179, 216, 0.72);
+        stroke-width: 1.35;
+      }
+      .matrix-cell-text {
+        fill: #38546f;
+        font-size: 12px;
+        font-weight: 760;
+        text-anchor: middle;
+      }
+      .row-label {
+        fill: #5a6c80;
+        font-size: 12px;
+        font-weight: 800;
+        text-anchor: middle;
+      }
+      .semantic-relation {
+        display: none;
+      }
+      [data-node-detail-region] {
+        margin-block: 1rem;
+        padding: 1rem;
+        border: 1px solid rgba(141, 179, 216, 0.55);
+        border-radius: 20px;
+        background: rgba(255, 255, 255, 0.86);
+      }
+      [data-node-detail-region] > header {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 1rem;
+      }
+      [data-node-detail-region] h2 {
+        margin: 0;
+        font-size: 1rem;
+      }
+      [data-node-detail-region] header p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 0.8rem;
+      }
+      [data-node-detail-grid] {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 0.65rem;
+        margin-top: 0.8rem;
+      }
+      [data-node-detail-grid] details {
+        border: 1px solid rgba(141, 179, 216, 0.56);
+        border-radius: 14px;
+        background: #fff;
+        padding: 0.7rem 0.8rem;
+      }
+      [data-node-detail-grid] summary {
+        cursor: pointer;
+        font-weight: 800;
+      }
+      [data-node-detail-grid] p {
+        margin: 0.5rem 0 0;
+        color: var(--muted);
+        line-height: 1.5;
+      }
+      .diagram-fallback {
+        display: none;
+        margin-block: 1rem;
+        padding: 0.9rem;
+        border: 1px solid rgba(141, 179, 216, 0.58);
+        border-radius: 18px;
+        background: #fff;
+      }
+      .diagram-fallback > summary {
+        cursor: pointer;
+        font-weight: 850;
+      }
+      .fallback-groups {
+        display: grid;
+        gap: 0.8rem;
+        margin-top: 0.8rem;
+      }
+      .fallback-group {
+        padding: 0.75rem;
+        border: 1px solid rgba(141, 179, 216, 0.5);
+        border-radius: 14px;
+        background: #f8fbff;
+      }
+      .fallback-group h3 {
+        margin: 0 0 0.5rem;
+        font-size: 0.88rem;
+      }
+      .fallback-nodes {
+        display: flex;
+        gap: 0.45rem;
+        flex-wrap: wrap;
+      }
+      .fallback-node {
+        padding: 0.45rem 0.6rem;
+        border: 1px solid rgba(141, 179, 216, 0.65);
+        border-radius: 999px;
+        background: #fff;
+        font-size: 0.78rem;
+        font-weight: 760;
+      }
+      .fallback-relations {
+        display: grid;
+        gap: 0.45rem;
+        margin: 0.75rem 0 0;
+        padding: 0;
+        list-style: none;
+      }
+      .fallback-relations li {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+        align-items: center;
+        gap: 0.45rem;
+        padding: 0.55rem 0.65rem;
+        border: 1px solid rgba(141, 179, 216, 0.5);
+        border-radius: 12px;
+        background: #fff;
+        color: #38546f;
+        font-size: 0.76rem;
+      }
+      .fallback-relations i {
+        position: relative;
+        display: block;
+        width: 2.4rem;
+        border-top: 3px solid #176bb3;
+      }
+      .fallback-relations i::after {
+        content: '';
+        position: absolute;
+        right: -1px;
+        top: -5px;
+        border-left: 8px solid #176bb3;
+        border-block: 5px solid transparent;
+      }
+      .fallback-matrix {
+        width: 100%;
+        border-collapse: separate;
+        border-spacing: 0.3rem;
+        margin-top: 0.7rem;
+      }
+      .fallback-matrix th,
+      .fallback-matrix td {
+        padding: 0.5rem;
+        border: 1px solid rgba(141, 179, 216, 0.55);
+        border-radius: 10px;
+        background: #fff;
+        text-align: center;
+        font-size: 0.75rem;
+      }
+      @media (max-width: 48rem) {
+        main {
+          width: min(100vw - 20px, 760px);
+          padding-block: 12px;
+        }
+        .template-layout {
+          display: none;
+        }
+        .diagram-fallback {
+          display: block;
+        }
+        [data-node-detail-region] > header {
+          align-items: flex-start;
+          flex-direction: column;
+        }
+        [data-node-detail-grid] {
+          grid-template-columns: 1fr;
+        }
+        .fallback-relations li {
+          grid-template-columns: minmax(0, 1fr) 2rem minmax(0, 1fr);
+        }
+      }
+      @media print {
+        .diagram-fallback {
+          display: none !important;
+        }
+        .template-layout {
+          display: block !important;
+        }
+        [data-node-detail-grid] {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
+      .node-hitbox {
+        fill: transparent;
+        stroke: none;
+      }
+      .root-shape {
+        fill: var(--red-soft);
+        stroke: #bb5757;
+        stroke-width: 1.8;
+        filter: drop-shadow(0 5px 8px rgba(90, 24, 24, 0.14));
+        vector-effect: non-scaling-stroke;
+      }
+      .decision-shape {
+        fill: var(--amber-soft);
+        stroke: #bd8a2d;
+        stroke-width: 1.8;
+        filter: drop-shadow(0 5px 8px rgba(90, 63, 12, 0.14));
+        vector-effect: non-scaling-stroke;
+      }
+      .timeline-spine {
+        fill: none;
+        stroke: rgba(23, 107, 179, 0.22);
+        stroke-width: 10;
+        stroke-linecap: round;
+      }
+      .timeline-tick {
+        stroke: #176bb3;
+        stroke-width: 2;
+      }
+      .route-label.success rect {
+        fill: var(--green-soft);
+        stroke: #4a9c82;
+      }
+      .route-label.failure rect {
+        fill: var(--red-soft);
+        stroke: #cb7474;
+      }
+      .root-cause {
+        fill: var(--red-soft);
+        stroke: #bb5757;
+      }
+      .verified {
+        fill: var(--green-soft);
+        stroke: #4a9c82;
+      }
+      .rollback {
+        fill: var(--red-soft);
+        stroke: #cb7474;
+      }
+      .recovery {
+        fill: var(--amber-soft);
+        stroke: #c59b4a;
+      }
+    </style>
+    <style data-artifact-shell-kernel="1">
+      [data-diagram-title-region] {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        grid-template-areas: 'copy controls';
+        align-items: start;
+        gap: 0.75rem 1.5rem;
+        max-inline-size: 100%;
+      }
+
+      [data-diagram-title-copy] {
+        grid-area: copy;
+        min-inline-size: 0;
+      }
+
+      [data-diagram-view-title='1'] {
+        display: flex;
+        min-inline-size: 0;
+        align-items: baseline;
+        flex-wrap: wrap;
+      }
+
+      [data-diagram-view-separator]::before {
+        content: '｜';
+        color: #7b93aa;
+        font-weight: 700;
+      }
+
+      [data-artifact-shell-controls] {
+        grid-area: controls;
+        display: flex;
+        min-inline-size: max-content;
+        max-inline-size: 100%;
+        align-items: flex-start;
+        justify-content: flex-end;
+      }
+
+      [data-artifact-shell-controls][data-controls-state='empty'] {
+        display: none;
+      }
+
+      [data-diagram-grid-surface='1'] {
+        background-image: linear-gradient(rgba(42, 105, 159, 0.045) 1px, transparent 1px), linear-gradient(90deg, rgba(42, 105, 159, 0.045) 1px, transparent 1px), linear-gradient(180deg, #fff, #f9fcff);
+        background-size:
+          24px 24px,
+          24px 24px,
+          auto;
+      }
+
+      [data-diagram-reading-guide='1'][data-reading-guide-for] {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        grid-template-areas: 'groups';
+        align-items: start;
+        gap: 0;
+        inline-size: fit-content;
+        max-inline-size: min(calc(100% - 1.5rem), calc(100vw - 2.75rem));
+        margin: 0.75rem 0.75rem 0;
+        padding: 0;
+        border: 0;
+        border-radius: 0;
+        background: transparent;
+        box-shadow: none;
+      }
+
+      [data-diagram-stage] > [data-diagram-reading-guide='1'][data-reading-guide-for] {
+        position: relative;
+        z-index: 4;
+        transform: translateX(var(--guide-scroll-offset, 0px));
+      }
+
+      [data-reading-guide-groups] {
+        grid-area: groups;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        grid-template-areas:
+          'relations'
+          'evidence';
+        align-items: start;
+        gap: 0.42rem;
+        min-inline-size: 0;
+      }
+
+      [data-reading-guide-group='relations'] {
+        grid-area: relations;
+      }
+
+      [data-reading-guide-group='evidence'] {
+        grid-area: evidence;
+      }
+
+      [data-reading-guide-group] {
+        display: flex;
+        align-items: center;
+        gap: 0.35rem 0.6rem;
+        min-inline-size: 0;
+        flex-wrap: wrap;
+      }
+
+      [data-reading-guide-group-title] {
+        display: inline-flex;
+        min-block-size: 1.35rem;
+        align-items: center;
+        padding: 0.12rem 0.38rem;
+        border: 1px solid #a8c4df;
+        border-radius: 0.3rem;
+        background: #e8f3ff;
+        color: #0c4f83;
+        font-size: 0.72rem;
+        font-weight: 900;
+        letter-spacing: 0.025em;
+        white-space: nowrap;
+        box-shadow: 0 0.08rem 0.2rem rgba(20, 57, 92, 0.08);
+      }
+
+      [data-reading-guide-item],
+      [data-diagram-reading-guide='1'] [data-evidence-id] {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        min-inline-size: 0;
+        padding: 0;
+        border: 0;
+        background: transparent;
+      }
+
+      [data-reading-guide-item] b,
+      [data-diagram-reading-guide='1'] [data-evidence-id] b {
+        margin: 0;
+        color: #38546f;
+        font-size: 0.7rem;
+        line-height: 1.25;
+        white-space: nowrap;
+      }
+
+      [data-diagram-reading-guide='1'] [data-evidence-id] span {
+        display: none;
+      }
+
+      [data-line-swatch] {
+        position: relative;
+        display: inline-block;
+        inline-size: 2rem;
+        block-size: 0.75rem;
+        flex: 0 0 auto;
+      }
+
+      [data-line-swatch]::before {
+        content: '';
+        position: absolute;
+        inset-inline: 0 0.32rem;
+        inset-block-start: 0.3rem;
+        border-block-start: 3px var(--guide-line-style, solid) var(--guide-line-color, #0877ff);
+      }
+
+      [data-line-swatch]::after {
+        content: '';
+        position: absolute;
+        inset-inline-end: 0;
+        inset-block-start: 0.06rem;
+        border-inline-start: 0.5rem solid var(--guide-line-color, #0877ff);
+        border-block: 0.34rem solid transparent;
+      }
+
+      [data-line-kind='line-02'] {
+        --guide-line-color: #00a56a;
+      }
+
+      [data-line-kind='line-03'] {
+        --guide-line-color: #7c3aed;
+        --guide-line-style: dashed;
+      }
+
+      [data-line-kind='line-04'] {
+        --guide-line-color: #f59e0b;
+        --guide-line-style: dotted;
+      }
+
+      [data-diagram-reading-guide='1'] [data-evidence-id]::before {
+        content: '';
+        inline-size: 0.68rem;
+        block-size: 0.68rem;
+        flex: 0 0 auto;
+        border: 2px solid;
+        border-radius: 0.3rem;
+        background: #fff;
+      }
+
+      [data-diagram-reading-guide='1'] [data-evidence-source-kind='file']::before {
+        border-color: #2787df;
+        background: #e8f3ff;
+      }
+
+      [data-diagram-reading-guide='1'] [data-evidence-source-kind='test']::before {
+        border-color: #20a476;
+        background: #e9f8f2;
+      }
+
+      [data-diagram-reading-guide='1'] [data-evidence-status='unresolved']::before {
+        border-color: #e49a10;
+        border-style: dashed;
+        background: #fff6de;
+      }
+
+      [data-diagram-controls],
+      [data-sequence-toolbar] {
+        position: relative;
+        display: none;
+        max-inline-size: 100%;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.375rem;
+        margin: 0;
+        padding: 0.35rem;
+        border: 1px solid rgba(141, 179, 216, 0.72);
+        border-radius: 0.625rem;
+        background: #fff;
+        box-shadow: 0 0.25rem 0.75rem rgba(20, 57, 92, 0.08);
+      }
+
+      [data-diagram-controls][data-diagram-controls-visible='true'],
+      [data-sequence-toolbar]:not([hidden]) {
+        display: inline-flex;
+      }
+
+      [data-diagram-controls] button,
+      [data-sequence-toolbar] button {
+        appearance: none;
+        min-block-size: 2.75rem;
+        padding-inline: 0.9rem;
+        border: 1px solid rgba(141, 179, 216, 0.78);
+        border-radius: 0.5rem;
+        background: #f7fbff;
+        color: #17324d;
+        font: inherit;
+        font-size: 0.8125rem;
+        font-weight: 750;
+        line-height: 1;
+        cursor: pointer;
+        transition:
+          background-color 0.16s ease,
+          border-color 0.16s ease,
+          box-shadow 0.16s ease;
+      }
+
+      [data-diagram-controls] button:hover,
+      [data-sequence-toolbar] button:hover {
+        border-color: #5f96c8;
+        background: #e8f3ff;
+      }
+
+      [data-diagram-controls] button[aria-pressed='true'],
+      [data-sequence-toolbar] button[aria-pressed='true'] {
+        border-color: #1f6fb2;
+        background: #1f6fb2;
+        color: #fff;
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.28);
+      }
+
+      [data-diagram-controls] button:focus-visible,
+      [data-sequence-toolbar] button:focus-visible {
+        outline: 3px solid #77b8f2;
+        outline-offset: 2px;
+      }
+
+      [data-diagram-controls] button:disabled,
+      [data-sequence-toolbar] button:disabled {
+        opacity: 0.48;
+        cursor: not-allowed;
+      }
+
+      [data-diagram-zoom-status],
+      [data-sequence-scale-status] {
+        position: absolute;
+        inline-size: 1px;
+        block-size: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip-path: inset(50%);
+        white-space: nowrap;
+        border: 0;
+      }
+
+      @media (max-width: 64rem) {
+        [data-diagram-title-region] {
+          grid-template-columns: minmax(0, 1fr);
+          grid-template-areas:
+            'copy'
+            'controls';
+        }
+
+        [data-artifact-shell-controls] {
+          min-inline-size: 0;
+          justify-content: flex-start;
+          justify-self: stretch;
+        }
+      }
+
+      @media (max-width: 48rem) {
+        [data-diagram-reading-guide='1'] {
+          inline-size: calc(100% - 1rem);
+          max-inline-size: calc(100% - 1rem);
+          margin: 0.5rem 0.5rem 0;
+        }
+
+        [data-reading-guide-group] {
+          align-items: flex-start;
+        }
+      }
+
+      @media print {
+        [data-diagram-title-region] {
+          display: block;
+        }
+
+        [data-artifact-shell-controls] {
+          display: none !important;
+        }
+
+        [data-diagram-reading-guide='1'] {
+          break-inside: avoid;
+          background: #fff;
+          box-shadow: none;
+        }
+      }
+    </style>
+    <style data-adaptive-viewport-kernel="1">
+      [data-diagram-canvas][data-diagram-contract='1'] {
+        --diagram-scale: 1;
+        box-sizing: border-box;
+        max-inline-size: 100%;
+        min-inline-size: 0;
+        transform-origin: top left;
+      }
+
+      [data-diagram-width='contained'] {
+        inline-size: 100%;
+        margin-inline: 0;
+      }
+      [data-diagram-width='auto'] {
+        inline-size: 100%;
+      }
+      [data-diagram-width='wide'] {
+        inline-size: 100%;
+        overflow-x: auto;
+        overflow-y: hidden;
+      }
+      [data-diagram-height='flow'] {
+        block-size: auto;
+      }
+      [data-diagram-height='auto'] {
+        max-block-size: clamp(32.5rem, 75vh, 56.25rem);
+        overflow: auto;
+      }
+      [data-diagram-height='scroll'] {
+        max-block-size: clamp(32.5rem, 75vh, 56.25rem);
+        overflow: auto;
+      }
+      [data-diagram-scaled='true'] > [data-diagram-stage] {
+        transform: scale(var(--diagram-scale));
+        transform-origin: top left;
+      }
+      .diagram-fallback {
+        display: none;
+      }
+
+      html:not(.vibe-js) [data-diagram-canvas] > [data-diagram-stage] {
+        display: none;
+      }
+
+      html:not(.vibe-js) [data-fallback-for] {
+        display: block;
+      }
+
+      @media (max-width: 48rem) {
+        [data-diagram-mobile='stack'] [data-diagram-group-id] {
+          position: static;
+        }
+        [data-diagram-mobile='summary'] {
+          overflow: auto;
+        }
+        [data-diagram-mobile='summary'] > [data-diagram-stage] {
+          display: block;
+          min-inline-size: max(var(--diagram-mobile-stage-min, 60rem), 100%) !important;
+        }
+      }
+
+      @media print {
+        [data-diagram-canvas] {
+          max-block-size: none;
+          overflow: visible;
+          transform: none;
+        }
+        [data-diagram-canvas] > [data-diagram-stage] {
+          display: none;
+        }
+        .diagram-fallback {
+          display: block;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        [data-diagram-canvas] {
+          scroll-behavior: auto;
+        }
+      }
+    </style>
+    <style data-progressive-disclosure-kernel="1">
+      [data-diagram-detail][hidden] {
+        display: none;
+      }
+      [data-diagram-detail]:target {
+        display: block;
+      }
+
+      [data-diagram-detail-trigger][data-detail-for] {
+        cursor: pointer;
+      }
+
+      [data-diagram-detail-trigger][data-detail-for]:focus-visible {
+        outline: 3px solid #0877ff;
+        outline-offset: 2px;
+      }
+
+      [data-node-detail-region] {
+        margin-block-start: 0.875rem;
+        padding: 0.875rem;
+        border: 1px solid rgba(141, 179, 216, 0.5);
+        border-radius: 1rem;
+        background: rgba(247, 251, 255, 0.84);
+      }
+
+      [data-node-detail-region] > header {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 0.4rem 1rem;
+        margin-block-end: 0.7rem;
+      }
+
+      [data-node-detail-region] h2 {
+        margin: 0;
+        color: #17324d;
+        font-size: 0.95rem;
+      }
+
+      [data-node-detail-region] header p {
+        margin: 0;
+        color: #5a6c80;
+        font-size: 0.75rem;
+      }
+
+      [data-node-detail-grid] {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr));
+        gap: 0.55rem;
+      }
+
+      details[data-diagram-detail] {
+        position: relative;
+        display: block;
+        min-inline-size: 0;
+        border: 1px solid rgba(141, 179, 216, 0.54);
+        border-radius: 0.8rem;
+        background: rgba(255, 255, 255, 0.96);
+        overflow: clip;
+      }
+
+      details[data-diagram-detail] > summary {
+        cursor: pointer;
+        padding: 0.7rem 0.8rem;
+        color: #17324d;
+        font-size: 0.8125rem;
+        font-weight: 780;
+      }
+
+      details[data-diagram-detail] > summary:focus-visible {
+        outline: 3px solid color-mix(in srgb, currentColor 58%, transparent);
+        outline-offset: 4px;
+      }
+
+      details[data-diagram-detail] > :not(summary, [data-diagram-detail-close]) {
+        margin: 0;
+        padding: 0 0.8rem 0.8rem;
+        color: #52677d;
+        font-size: 0.8rem;
+        line-height: 1.6;
+      }
+
+      [data-diagram-detail-close] {
+        display: none;
+      }
+
+      html[data-progressive-disclosure-enhanced='true'] [data-node-detail-region] {
+        position: fixed;
+        inset: 0;
+        z-index: 1000;
+        display: none;
+        margin: 0;
+        padding: 0;
+        border: 0;
+        border-radius: 0;
+        background: transparent;
+        pointer-events: none;
+      }
+
+      html[data-progressive-disclosure-enhanced='true'] [data-node-detail-region][data-runtime-active='true'] {
+        display: block;
+      }
+
+      html[data-progressive-disclosure-enhanced='true'] [data-node-detail-region] > header {
+        display: none;
+      }
+
+      html[data-progressive-disclosure-enhanced='true'] [data-node-detail-grid] {
+        position: fixed;
+        inset-block-start: var(--detail-top, 1rem);
+        inset-inline-start: var(--detail-left, 1rem);
+        z-index: 1;
+        display: block;
+        inline-size: var(--detail-width, min(22rem, calc(100vw - 1.5rem)));
+        max-block-size: min(26rem, calc(100vh - 1.5rem));
+        overflow: auto;
+        overscroll-behavior: contain;
+        border: 1px solid rgba(94, 151, 207, 0.72);
+        border-radius: 0.75rem;
+        background: #fff;
+        box-shadow: 0 1rem 2.5rem rgba(20, 57, 92, 0.22);
+        pointer-events: auto;
+      }
+
+      html[data-progressive-disclosure-enhanced='true'] [data-node-detail-grid]::before {
+        content: '';
+        position: sticky;
+        inset-block-start: 0;
+        z-index: 2;
+        display: block;
+        block-size: 0.24rem;
+        background: #0877ff;
+      }
+
+      html[data-progressive-disclosure-enhanced='true'] details[data-diagram-detail] {
+        display: none;
+        min-block-size: 0;
+        padding: 0.95rem 1rem 1rem;
+        border: 0;
+        border-radius: 0;
+        background: transparent;
+        overflow: visible;
+      }
+
+      html[data-progressive-disclosure-enhanced='true'] details[data-diagram-detail][data-runtime-open='true'] {
+        display: block;
+      }
+
+      html[data-progressive-disclosure-enhanced='true'] details[data-diagram-detail] > summary {
+        padding: 0.15rem 2.65rem 0.7rem 0.1rem;
+        border-block-end: 1px solid rgba(141, 179, 216, 0.48);
+        color: #102033;
+        font-size: 1rem;
+        font-weight: 850;
+        list-style: none;
+      }
+
+      html[data-progressive-disclosure-enhanced='true'] details[data-diagram-detail] > summary::-webkit-details-marker {
+        display: none;
+      }
+
+      html[data-progressive-disclosure-enhanced='true'] details[data-diagram-detail] > :not(summary, [data-diagram-detail-close]) {
+        padding: 0.8rem 0.1rem 0.05rem;
+        color: #38546f;
+        font-size: 0.84rem;
+        line-height: 1.68;
+      }
+
+      html[data-progressive-disclosure-enhanced='true'] [data-diagram-detail-close] {
+        position: absolute;
+        inset-block-start: 0.72rem;
+        inset-inline-end: 0.72rem;
+        display: grid;
+        inline-size: 2rem;
+        block-size: 2rem;
+        place-items: center;
+        padding: 0;
+        border: 1px solid rgba(94, 151, 207, 0.68);
+        border-radius: 999px;
+        background: #fff;
+        color: #17324d;
+        font: inherit;
+        font-size: 1.12rem;
+        line-height: 1;
+        cursor: pointer;
+        box-shadow: 0 0.3rem 0.8rem rgba(20, 57, 92, 0.1);
+      }
+
+      html[data-progressive-disclosure-enhanced='true'] [data-diagram-detail-close]:hover {
+        border-color: #0877ff;
+        background: #e8f3ff;
+      }
+
+      html[data-progressive-disclosure-enhanced='true'] [data-diagram-detail-close]:focus-visible {
+        outline: 3px solid #77b8f2;
+        outline-offset: 2px;
+      }
+
+      @media (max-width: 48rem) {
+        [data-node-detail-region] > header {
+          align-items: flex-start;
+          flex-direction: column;
+        }
+        [data-node-detail-grid] {
+          grid-template-columns: 1fr;
+        }
+        html[data-progressive-disclosure-enhanced='true'] [data-node-detail-grid] {
+          inline-size: var(--detail-width, min(21rem, calc(100vw - 1.25rem)));
+          max-block-size: min(22rem, calc(100vh - 1.25rem));
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        html[data-progressive-disclosure-enhanced='true'] [data-node-detail-grid] {
+          scroll-behavior: auto;
+        }
+      }
+
+      @media print {
+        [data-node-detail-region],
+        html[data-progressive-disclosure-enhanced='true'] [data-node-detail-region] {
+          position: static;
+          display: block;
+          margin-block-start: 0.875rem;
+          padding: 0.875rem;
+          border: 1px solid #b9cfe2;
+          background: #fff;
+          pointer-events: auto;
+        }
+        html[data-progressive-disclosure-enhanced='true'] [data-node-detail-region] > header {
+          display: flex;
+        }
+        [data-node-detail-grid],
+        html[data-progressive-disclosure-enhanced='true'] [data-node-detail-grid] {
+          position: static;
+          display: grid;
+          inline-size: auto;
+          max-block-size: none;
+          grid-template-columns: 1fr 1fr;
+          overflow: visible;
+          border: 0;
+          box-shadow: none;
+        }
+        html[data-progressive-disclosure-enhanced='true'] [data-node-detail-grid]::before {
+          display: none;
+        }
+        [data-diagram-detail][hidden],
+        html[data-progressive-disclosure-enhanced='true'] details[data-diagram-detail],
+        html[data-progressive-disclosure-enhanced='true'] details[data-diagram-detail][data-runtime-open='true'] {
+          display: block !important;
+          min-block-size: 0;
+          padding: 0;
+          border: 1px solid #b9cfe2;
+          border-radius: 0.8rem;
+        }
+        details[data-diagram-detail] > :not(summary, [data-diagram-detail-close]) {
+          display: block !important;
+        }
+        [data-diagram-detail-close] {
+          display: none !important;
+        }
+      }
+    </style>
+    <style data-semantic-relations-kernel="1">
+      [data-architecture-canvas='1'] [data-diagram-visible-relation-id] {
+        vector-effect: non-scaling-stroke;
+      }
+
+      [data-semantic-edge-ledger] {
+        grid-column: 1 / -1;
+        display: grid;
+        gap: 0.45rem;
+        margin-block-start: 1rem;
+        padding: 0.75rem 0 0;
+        border: 0;
+        border-block-start: 1px dashed rgba(90, 108, 128, 0.38);
+        border-radius: 0;
+        background: transparent;
+        box-shadow: none;
+        color: #5a6c80;
+      }
+      [data-semantic-edge-ledger] > h2 {
+        margin: 0;
+        color: #6b7c8e;
+        font-size: 0.68rem;
+        font-weight: 750;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+      [data-semantic-edge-grid] {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
+        gap: 0.25rem 1rem;
+      }
+      [data-semantic-edge] {
+        display: grid;
+        gap: 0.15rem;
+        min-inline-size: 0;
+        padding: 0.25rem 0;
+        border: 0;
+        border-radius: 0;
+        background: transparent;
+        box-shadow: none;
+      }
+      [data-semantic-edge-route] {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 1.25rem minmax(0, 1fr);
+        align-items: center;
+        gap: 0.25rem;
+      }
+      [data-semantic-edge-route] b {
+        min-inline-size: 0;
+        color: #52677b;
+        font-size: 0.68rem;
+        font-weight: 700;
+        line-height: 1.25;
+        overflow-wrap: anywhere;
+      }
+      [data-semantic-edge-route] b:last-child {
+        text-align: end;
+      }
+      [data-semantic-edge-route] i {
+        display: grid;
+        min-block-size: 1rem;
+        place-items: center;
+        color: #8293a5;
+        font-style: normal;
+        line-height: 1;
+      }
+      [data-semantic-edge-route] i::before {
+        content: '↪';
+      }
+      [data-semantic-edge-route] i::after {
+        content: none;
+      }
+      [data-semantic-edge-label] {
+        color: #738497;
+        font-size: 0.66rem;
+        line-height: 1.35;
+      }
+
+      @media (max-width: 48rem) {
+        [data-semantic-edge-grid] {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      @media print {
+        [data-semantic-edge-ledger] {
+          break-inside: avoid;
+          background: transparent;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main data-diagram-type="fault-debugging" data-template-family="fault-debugging" data-template-id="causal-chain" data-template-layout="causal-convergence-verification" data-template-contract-version="2">
+      <header data-diagram-title-region data-artifact-shell-title="1">
+        <div data-diagram-title-copy>
+          <h1 data-slot="title" data-diagram-view-title="1"><span data-diagram-view-type>方案图</span><span data-diagram-view-separator aria-hidden="true"></span><span data-diagram-view-subject>侧边栏会话状态呈现</span></h1>
+          <p class="summary" data-slot="summary">结论：侧边栏不再复用任务表的彩色胶囊，改用无底色的语义图标，让有状态与无状态会话始终共用同一行高。</p>
+        </div>
+        <div data-artifact-shell-controls aria-label="图表缩放控件">
+          <div data-diagram-controls="causal-chain" aria-label="图表缩放控件">
+            <button type="button" data-diagram-zoom-control="0.75" aria-pressed="false">75%</button><button type="button" data-diagram-zoom-control="0.9" aria-pressed="false">90%</button
+            ><button type="button" data-diagram-zoom-control="1" aria-pressed="false">100%</button><button type="button" data-diagram-zoom-control="fit" aria-pressed="true">自适应</button
+            ><output data-diagram-zoom-status aria-live="polite">适应宽度</output>
+          </div>
+        </div>
+      </header>
+
+      <div
+        data-diagram-canvas
+        data-diagram-contract="1"
+        data-diagram-id="causal-chain"
+        data-diagram-profile="graph"
+        data-diagram-width="contained"
+        data-diagram-height="flow"
+        data-diagram-mobile="summary"
+        data-diagram-controls-mode="persistent"
+        data-diagram-topology="evidence-root-cause-fix-verification"
+        data-primary-direction="west-to-east"
+      >
+        <section data-diagram-stage data-reading-guide="从现象到修复" class="template-layout causal-chain" aria-label="侧边栏状态控件问题与修复路径" data-diagram-grid-surface="1">
+          <section data-slot="evidence-and-notes" data-evidence-ledger="1" data-diagram-reading-guide="1" aria-label="图表阅读指南" data-reading-guide-for="causal-chain">
+            <div data-reading-guide-groups>
+              <div data-reading-guide-group="relations">
+                <span data-reading-guide-group-title>关系类型</span
+                ><span data-reading-guide-item data-line-kind="line-01" data-guide-relations="layout-relation-001 layout-relation-002 layout-relation-003 layout-relation-004"
+                  ><i data-line-swatch aria-hidden="true"></i><b>观察与候选原因</b></span
+                ><span data-reading-guide-item data-line-kind="line-02" data-guide-relations="layout-relation-005 layout-relation-006"><i data-line-swatch aria-hidden="true"></i><b>确认根因</b></span
+                ><span data-reading-guide-item data-line-kind="line-03" data-guide-relations="layout-relation-007"><i data-line-swatch aria-hidden="true"></i><b>修复动作</b></span
+                ><span data-reading-guide-item data-line-kind="line-04" data-guide-relations="layout-relation-008 layout-relation-009 layout-relation-010"><i data-line-swatch aria-hidden="true"></i><b>验证与反馈</b></span>
+              </div>
+              <div data-reading-guide-group="evidence">
+                <span data-reading-guide-group-title>证据状态</span>
+                <article
+                  data-evidence-id="evidence-observed-causal-chain"
+                  data-evidence-status="observed"
+                  data-evidence-for="layout-node-001 layout-node-002 layout-node-003 layout-node-004 layout-node-005 layout-node-006"
+                  data-evidence-source-kind="file"
+                  data-evidence-source="apps/desktop/src/renderer/styles.css:1035,9018,12972"
+                >
+                  <b>已观察实现</b>
+                </article>
+                <article data-evidence-id="evidence-check-causal-chain" data-evidence-status="observed" data-evidence-for="layout-node-006" data-evidence-source-kind="test" data-evidence-source="用户提供的宽与窄侧边栏截图">
+                  <b>已完成界面对照</b>
+                </article>
+                <article
+                  data-evidence-id="evidence-unresolved-causal-chain"
+                  data-evidence-status="unresolved"
+                  data-evidence-for="layout-node-007 layout-node-008 layout-node-009"
+                  data-evidence-source-kind="runtime"
+                  data-evidence-source="待用户选定方案后实现并在 Zeus Test.app 验收"
+                >
+                  <b>尚未实机验证</b>
+                </article>
+              </div>
+            </div>
+          </section>
+          <svg class="flow-map" data-diagram-svg="1" data-architecture-canvas="1" viewBox="0 0 1200 590" role="img" aria-labelledby="causal-svg-title causal-svg-desc" preserveAspectRatio="xMidYMid meet">
+            <title id="causal-svg-title">侧边栏会话状态从现有胶囊到语义图标的修复路径</title>
+            <desc id="causal-svg-desc">三条可观察现象收敛为两个候选原因，定位到任务状态胶囊被错用于紧凑侧边栏，并以无底色语义图标修复。</desc>
+            <defs>
+              <marker id="causal-chain-arrow-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#176bb3" /></marker>
+              <marker id="causal-chain-arrow-green" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#16785c" /></marker>
+              <marker id="causal-chain-arrow-red" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#aa3636" /></marker>
+              <marker id="causal-chain-arrow-amber" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#a86400" /></marker>
+              <marker id="causal-chain-arrow-violet" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#6554b2" /></marker>
+            </defs>
+            <g data-diagram-group-id="layout-group-001" data-semantic-role="已观察现象" data-diagram-rank="0" data-diagram-region="observations">
+              <rect class="region-boundary" data-architecture-boundary="layout-boundary-001" x="20" y="45" width="230" height="510" rx="22" />
+              <text class="region-title" x="36" y="71">已观察现象</text>
+            </g>
+            <g data-diagram-group-id="layout-group-002" data-semantic-role="候选原因" data-diagram-rank="1" data-diagram-region="hypotheses">
+              <rect class="region-boundary" data-architecture-boundary="layout-boundary-002" x="280" y="110" width="220" height="390" rx="22" />
+              <text class="region-title" x="296" y="136">候选原因</text>
+            </g>
+            <g data-diagram-group-id="layout-group-003" data-semantic-role="确认根因" data-diagram-rank="2" data-diagram-region="root-cause">
+              <rect class="region-boundary verdict" data-architecture-boundary="layout-boundary-003" x="540" y="210" width="240" height="220" rx="22" />
+              <text class="region-title" x="556" y="236">确认根因</text>
+            </g>
+            <g data-diagram-group-id="layout-group-004" data-semantic-role="推荐修复" data-diagram-rank="3" data-diagram-region="remediation">
+              <rect class="region-boundary action" data-architecture-boundary="layout-boundary-004" x="810" y="105" width="260" height="220" rx="22" />
+              <text class="region-title" x="826" y="131">推荐修复</text>
+            </g>
+            <g data-diagram-group-id="layout-group-005" data-semantic-role="验证标准" data-diagram-rank="4" data-diagram-region="verification">
+              <rect class="region-boundary verdict" data-architecture-boundary="layout-boundary-005" x="810" y="340" width="260" height="200" rx="22" />
+              <text class="region-title" x="826" y="366">验证标准</text>
+            </g>
+            <g data-diagram-group-id="layout-group-006" data-semantic-role="预期结果" data-diagram-rank="5" data-diagram-region="outcome">
+              <rect class="region-boundary verdict" data-architecture-boundary="layout-boundary-006" x="1070" y="220" width="120" height="220" rx="22" />
+              <text class="region-title" x="1086" y="246">结果</text>
+            </g>
+            <g aria-hidden="true">
+              <path
+                class="flow-route"
+                d="M220 140H260V200H300"
+                stroke="#176bb3"
+                marker-end="url(#causal-chain-arrow-blue)"
+                data-diagram-visible-relation-id="layout-relation-001"
+                data-from="layout-node-001"
+                data-to="layout-node-004"
+                data-relation-kind="supports"
+                data-primary-relation="true"
+              />
+              <path
+                class="flow-route"
+                d="M220 305H260V240H300"
+                stroke="#176bb3"
+                marker-end="url(#causal-chain-arrow-blue)"
+                data-diagram-visible-relation-id="layout-relation-002"
+                data-from="layout-node-002"
+                data-to="layout-node-004"
+                data-relation-kind="supports"
+                data-primary-relation="true"
+              />
+              <path
+                class="flow-route"
+                d="M220 305H260V400H300"
+                stroke="#176bb3"
+                marker-end="url(#causal-chain-arrow-blue)"
+                data-diagram-visible-relation-id="layout-relation-003"
+                data-from="layout-node-002"
+                data-to="layout-node-005"
+                data-relation-kind="supports"
+                data-primary-relation="true"
+              />
+              <path
+                class="flow-route"
+                d="M220 470H280V440H300"
+                stroke="#176bb3"
+                marker-end="url(#causal-chain-arrow-blue)"
+                data-diagram-visible-relation-id="layout-relation-004"
+                data-from="layout-node-003"
+                data-to="layout-node-005"
+                data-relation-kind="supports"
+                data-primary-relation="true"
+              />
+              <path
+                class="flow-route failure"
+                d="M480 210H520V295H560"
+                stroke="#aa3636"
+                marker-end="url(#causal-chain-arrow-red)"
+                data-diagram-visible-relation-id="layout-relation-005"
+                data-from="layout-node-004"
+                data-to="layout-node-006"
+                data-relation-kind="confirms"
+                data-primary-relation="true"
+              />
+              <path
+                class="flow-route failure"
+                d="M480 410H520V335H560"
+                stroke="#aa3636"
+                marker-end="url(#causal-chain-arrow-red)"
+                data-diagram-visible-relation-id="layout-relation-006"
+                data-from="layout-node-005"
+                data-to="layout-node-006"
+                data-relation-kind="confirms"
+                data-primary-relation="true"
+              />
+              <path
+                class="flow-route action"
+                d="M760 315H790V215H830"
+                stroke="#a86400"
+                marker-end="url(#causal-chain-arrow-amber)"
+                data-diagram-visible-relation-id="layout-relation-007"
+                data-from="layout-node-006"
+                data-to="layout-node-007"
+                data-relation-kind="repairs"
+                data-primary-relation="true"
+              />
+              <path
+                class="flow-route pass"
+                d="M940 265V370"
+                stroke="#16785c"
+                marker-end="url(#causal-chain-arrow-green)"
+                data-diagram-visible-relation-id="layout-relation-008"
+                data-from="layout-node-007"
+                data-to="layout-node-008"
+                data-relation-kind="verified-by"
+                data-primary-relation="true"
+              />
+              <path
+                class="flow-route pass"
+                d="M1050 420H1065V320H1080"
+                stroke="#16785c"
+                marker-end="url(#causal-chain-arrow-green)"
+                data-diagram-visible-relation-id="layout-relation-009"
+                data-from="layout-node-008"
+                data-to="layout-node-009"
+                data-relation-kind="produces"
+                data-primary-relation="true"
+              />
+              <path
+                class="flow-route feedback"
+                d="M830 420H780V300H940V265"
+                stroke="#6554b2"
+                marker-end="url(#causal-chain-arrow-violet)"
+                data-diagram-visible-relation-id="layout-relation-010"
+                data-from="layout-node-008"
+                data-to="layout-node-007"
+                data-relation-kind="refines"
+                data-primary-relation="false"
+              />
+            </g>
+            <g id="layout-node-001" data-diagram-node-id="layout-node-001" data-semantic-role="布局现象" data-diagram-rank="0" data-diagram-region="observations" data-detail-for="layout-detail-001" data-node-primary-label="行高不一致">
+              <rect class="node-shape" x="40" y="95" width="180" height="90" rx="18" />
+              <foreignObject x="48" y="103" width="164" height="74"
+                ><div class="node-copy">
+                  <a class="node-link" data-diagram-detail-trigger="primary" data-detail-for="layout-detail-001" href="#layout-detail-001" aria-expanded="false"
+                    ><b data-node-title data-slot="layout-slot-001">行高不一致</b><small data-node-summary>有状态行被控件撑高</small></a
+                  >
+                </div></foreignObject
+              >
+            </g>
+            <g
+              id="layout-node-002"
+              data-diagram-node-id="layout-node-002"
+              data-semantic-role="窄宽度现象"
+              data-diagram-rank="0"
+              data-diagram-region="observations"
+              data-detail-for="layout-detail-002"
+              data-node-primary-label="标题被过度挤压"
+            >
+              <rect class="node-shape" x="40" y="260" width="180" height="90" rx="18" />
+              <foreignObject x="48" y="268" width="164" height="74"
+                ><div class="node-copy">
+                  <a class="node-link" data-diagram-detail-trigger="primary" data-detail-for="layout-detail-002" href="#layout-detail-002" aria-expanded="false"
+                    ><b data-node-title data-slot="layout-slot-002">标题过度截断</b><small data-node-summary>方形状态块抢占宽度</small></a
+                  >
+                </div></foreignObject
+              >
+            </g>
+            <g id="layout-node-003" data-diagram-node-id="layout-node-003" data-semantic-role="视觉现象" data-diagram-rank="0" data-diagram-region="observations" data-detail-for="layout-detail-003" data-node-primary-label="彩色胶囊过重">
+              <rect class="node-shape" x="40" y="425" width="180" height="90" rx="18" />
+              <foreignObject x="48" y="433" width="164" height="74"
+                ><div class="node-copy">
+                  <a class="node-link" data-diagram-detail-trigger="primary" data-detail-for="layout-detail-003" href="#layout-detail-003" aria-expanded="false"
+                    ><b data-node-title data-slot="layout-slot-003">彩色胶囊过重</b><small data-node-summary>看起来像塞入小按钮</small></a
+                  >
+                </div></foreignObject
+              >
+            </g>
+            <g id="layout-node-004" data-diagram-node-id="layout-node-004" data-semantic-role="候选原因" data-diagram-rank="1" data-diagram-region="hypotheses" data-detail-for="layout-detail-004" data-node-primary-label="H1 尺寸相互撑大">
+              <rect class="node-shape" x="300" y="160" width="180" height="100" rx="18" />
+              <foreignObject x="308" y="168" width="164" height="84"
+                ><div class="node-copy">
+                  <a class="node-link" data-diagram-detail-trigger="primary" data-detail-for="layout-detail-004" href="#layout-detail-004" aria-expanded="false"
+                    ><b data-node-title data-slot="layout-slot-004">H1 尺寸叠加</b><small data-node-summary>行与胶囊各自带最小高度和内边距</small></a
+                  >
+                </div></foreignObject
+              >
+            </g>
+            <g id="layout-node-005" data-diagram-node-id="layout-node-005" data-semantic-role="候选原因" data-diagram-rank="1" data-diagram-region="hypotheses" data-detail-for="layout-detail-005" data-node-primary-label="H2 组件语义错配">
+              <rect class="node-shape" x="300" y="360" width="180" height="100" rx="18" />
+              <foreignObject x="308" y="368" width="164" height="84"
+                ><div class="node-copy">
+                  <a class="node-link" data-diagram-detail-trigger="primary" data-detail-for="layout-detail-005" href="#layout-detail-005" aria-expanded="false"
+                    ><b data-node-title data-slot="layout-slot-005">H2 语义错配</b><small data-node-summary>任务表胶囊被复用到紧凑源列表</small></a
+                  >
+                </div></foreignObject
+              >
+            </g>
+            <g id="layout-node-006" data-diagram-node-id="layout-node-006" data-semantic-role="确认根因" data-diagram-rank="2" data-diagram-region="root-cause" data-detail-for="layout-detail-006" data-node-primary-label="R1 任务胶囊被错用">
+              <rect class="node-hitbox" x="560" y="260" width="200" height="110" />
+              <polygon class="root-shape" points="588,260 732,260 760,315 732,370 588,370 560,315" />
+              <foreignObject x="590" y="278" width="140" height="74"
+                ><div class="node-copy">
+                  <a class="node-link" data-diagram-detail-trigger="primary" data-detail-for="layout-detail-006" href="#layout-detail-006" aria-expanded="false"
+                    ><b data-node-title data-slot="layout-slot-006">R1 胶囊错用</b><small data-node-summary>状态表达的视觉密度与侧边栏不匹配</small></a
+                  >
+                </div></foreignObject
+              >
+            </g>
+            <g id="layout-node-007" data-diagram-node-id="layout-node-007" data-semantic-role="推荐修复" data-diagram-rank="3" data-diagram-region="remediation" data-detail-for="layout-detail-007" data-node-primary-label="无底色语义图标">
+              <rect class="node-shape action" x="830" y="165" width="220" height="100" rx="18" />
+              <foreignObject x="838" y="173" width="204" height="84"
+                ><div class="node-copy">
+                  <a class="node-link" data-diagram-detail-trigger="primary" data-detail-for="layout-detail-007" href="#layout-detail-007" aria-expanded="false"
+                    ><b data-node-title data-slot="layout-slot-007">无底色语义图标</b><small data-node-summary>14px 图形、18px 固定槽位，文字转入提示</small></a
+                  >
+                </div></foreignObject
+              >
+            </g>
+            <g
+              id="layout-node-008"
+              data-diagram-node-id="layout-node-008"
+              data-semantic-role="验证标准"
+              data-diagram-rank="4"
+              data-diagram-region="verification"
+              data-detail-for="layout-detail-008"
+              data-node-primary-label="同行高与可辨识性"
+            >
+              <rect class="node-shape verified" x="830" y="370" width="220" height="100" rx="18" />
+              <foreignObject x="838" y="378" width="204" height="84"
+                ><div class="node-copy">
+                  <a class="node-link" data-diagram-detail-trigger="primary" data-detail-for="layout-detail-008" href="#layout-detail-008" aria-expanded="false"
+                    ><b data-node-title data-slot="layout-slot-008">同行高、可辨识</b><small data-node-summary>运行、等待、失败使用不同图形，颜色只辅助</small></a
+                  >
+                </div></foreignObject
+              >
+            </g>
+            <g id="layout-node-009" data-diagram-node-id="layout-node-009" data-semantic-role="预期结果" data-diagram-rank="5" data-diagram-region="outcome" data-detail-for="layout-detail-009" data-node-primary-label="紧凑稳定">
+              <rect class="node-shape outcome" x="1080" y="270" width="100" height="100" rx="50" />
+              <foreignObject x="1088" y="278" width="84" height="84"
+                ><div class="node-copy">
+                  <a class="node-link" data-diagram-detail-trigger="primary" data-detail-for="layout-detail-009" href="#layout-detail-009" aria-expanded="false"
+                    ><b data-node-title data-slot="layout-slot-009">紧凑</b><small data-node-summary>稳定单行</small></a
+                  >
+                </div></foreignObject
+              >
+            </g></svg
+          ><span class="semantic-relation" data-diagram-relation-id="layout-relation-001" data-from="layout-node-001" data-to="layout-node-004" data-relation-kind="supports" data-primary-relation="true" data-semantic="尺寸叠加支持 H1"
+            >行高异常指向尺寸叠加</span
+          >
+          <span class="semantic-relation" data-diagram-relation-id="layout-relation-002" data-from="layout-node-002" data-to="layout-node-004" data-relation-kind="supports" data-primary-relation="true" data-semantic="状态块宽高同时占用布局"
+            >标题挤压支持 H1</span
+          >
+          <span
+            class="semantic-relation"
+            data-diagram-relation-id="layout-relation-003"
+            data-from="layout-node-002"
+            data-to="layout-node-005"
+            data-relation-kind="supports"
+            data-primary-relation="true"
+            data-semantic="紧凑列表不需要完整文字胶囊"
+            >标题挤压支持 H2</span
+          >
+          <span class="semantic-relation" data-diagram-relation-id="layout-relation-004" data-from="layout-node-003" data-to="layout-node-005" data-relation-kind="supports" data-primary-relation="true" data-semantic="视觉重量超过源列表所需"
+            >彩色胶囊过重支持 H2</span
+          >
+          <span
+            class="semantic-relation"
+            data-diagram-relation-id="layout-relation-005"
+            data-from="layout-node-004"
+            data-to="layout-node-006"
+            data-relation-kind="confirms"
+            data-primary-relation="true"
+            data-semantic="CSS 最小高度和内边距确认布局机制"
+            >H1 构成根因的尺寸部分</span
+          >
+          <span
+            class="semantic-relation"
+            data-diagram-relation-id="layout-relation-006"
+            data-from="layout-node-005"
+            data-to="layout-node-006"
+            data-relation-kind="confirms"
+            data-primary-relation="true"
+            data-semantic="TaskRunStatusChip 确认组件复用边界"
+            >H2 构成根因的语义部分</span
+          >
+          <span
+            class="semantic-relation"
+            data-diagram-relation-id="layout-relation-007"
+            data-from="layout-node-006"
+            data-to="layout-node-007"
+            data-relation-kind="repairs"
+            data-primary-relation="true"
+            data-semantic="用侧边栏专用的状态标记替代任务胶囊"
+            >切断胶囊对行高与标题宽度的影响</span
+          >
+          <span
+            class="semantic-relation"
+            data-diagram-relation-id="layout-relation-008"
+            data-from="layout-node-007"
+            data-to="layout-node-008"
+            data-relation-kind="verified-by"
+            data-primary-relation="true"
+            data-semantic="使用同行高、不同状态和窄宽度验证"
+            >修复由同行高与可辨识性验证</span
+          >
+          <span
+            class="semantic-relation"
+            data-diagram-relation-id="layout-relation-009"
+            data-from="layout-node-008"
+            data-to="layout-node-009"
+            data-relation-kind="produces"
+            data-primary-relation="true"
+            data-semantic="完成后产生紧凑稳定侧边栏"
+            >验证通过产生稳定单行列表</span
+          >
+          <span
+            class="semantic-relation"
+            data-diagram-relation-id="layout-relation-010"
+            data-from="layout-node-008"
+            data-to="layout-node-007"
+            data-relation-kind="refines"
+            data-primary-relation="false"
+            data-semantic="图标可辨识性不足时迭代图形"
+            >可辨识性不足时调整图形，不恢复胶囊</span
+          >
+        </section>
+
+        <section data-node-detail-region data-detail-close-label="关闭详情" aria-label="问题与修复详情">
+          <header>
+            <h2 data-slot="layout-slot-010">节点详情</h2>
+            <p>点击上方节点查看依据与取舍。</p>
+          </header>
+          <div data-node-detail-grid>
+            <details id="layout-detail-001" data-diagram-detail="layout-detail-001" data-diagram-detail-id="layout-detail-001" data-detail-for="layout-node-001">
+              <summary>行高不一致</summary>
+              <p data-slot="layout-slot-011">项目侧边栏要求紧凑子行总高度为 26px，但有状态行由状态控件的总高度决定。</p>
+            </details>
+            <details id="layout-detail-002" data-diagram-detail="layout-detail-002" data-diagram-detail-id="layout-detail-002" data-detail-for="layout-node-002">
+              <summary>标题过度截断</summary>
+              <p data-slot="layout-slot-012">窄侧边栏仍为状态保留带内边距和边框的方形区域，标题可用宽度显著减少。</p>
+            </details>
+            <details id="layout-detail-003" data-diagram-detail="layout-detail-003" data-diagram-detail-id="layout-detail-003" data-detail-for="layout-node-003">
+              <summary>彩色胶囊过重</summary>
+              <p data-slot="layout-slot-013">彩色底、描边和大圆角同时出现，使状态的视觉优先级高于会话标题。</p>
+            </details>
+            <details id="layout-detail-004" data-diagram-detail="layout-detail-004" data-diagram-detail-id="layout-detail-004" data-detail-for="layout-node-004">
+              <summary>H1 尺寸叠加</summary>
+              <p data-slot="layout-slot-014">会话行、任务状态胶囊和侧边栏覆盖样式各自定义最小高度与内边距，组合后总尺寸不再受 26px 行高控制。</p>
+            </details>
+            <details id="layout-detail-005" data-diagram-detail="layout-detail-005" data-diagram-detail-id="layout-detail-005" data-detail-for="layout-node-005">
+              <summary>H2 语义错配</summary>
+              <p data-slot="layout-slot-015">任务表状态控件为大空间中快速扫描文字状态而设计；侧边栏只需要低噪音的注意提示，不应共用同一视觉形态。</p>
+            </details>
+            <details id="layout-detail-006" data-diagram-detail="layout-detail-006" data-diagram-detail-id="layout-detail-006" data-detail-for="layout-node-006">
+              <summary>R1 任务胶囊被错用</summary>
+              <p data-slot="layout-slot-016">根因不只是某个像素值过大，而是侧边栏直接复用了语义和密度都不匹配的任务状态胶囊。</p>
+            </details>
+            <details id="layout-detail-007" data-diagram-detail="layout-detail-007" data-diagram-detail-id="layout-detail-007" data-detail-for="layout-node-007">
+              <summary>无底色语义图标</summary>
+              <p data-slot="layout-slot-017">侧边栏状态使用 18px 固定槽位和 14px 图形，无底色、无描边；运行、等待、授权和失败用不同图形表达。</p>
+            </details>
+            <details id="layout-detail-008" data-diagram-detail="layout-detail-008" data-diagram-detail-id="layout-detail-008" data-detail-for="layout-node-008">
+              <summary>验证标准</summary>
+              <p data-slot="layout-slot-018">有状态、无状态、当前选中、最窄宽度、浅色、深色与减少动效下都要保持总行高相同。</p>
+            </details>
+            <details id="layout-detail-009" data-diagram-detail="layout-detail-009" data-diagram-detail-id="layout-detail-009" data-detail-for="layout-node-009">
+              <summary>预期结果</summary>
+              <p data-slot="layout-slot-019">会话标题重新成为主角，状态仍可快速辨识，列表密度不再因状态而跳变。</p>
+            </details>
+          </div>
+        </section>
+        <details class="diagram-fallback" open data-fallback-for="causal-chain">
+          <summary>移动端因果关系摘要</summary>
+          <div class="fallback-groups" role="img" aria-label="侧边栏状态控件问题与修复关系">
+            <section class="fallback-group">
+              <h3>已观察现象</h3>
+              <div class="fallback-nodes"><span class="fallback-node">行高不一致</span><span class="fallback-node">标题过度截断</span><span class="fallback-node">彩色胶囊过重</span></div>
+            </section>
+            <section class="fallback-group">
+              <h3>候选原因</h3>
+              <div class="fallback-nodes"><span class="fallback-node">H1 尺寸叠加</span><span class="fallback-node">H2 语义错配</span></div>
+            </section>
+            <section class="fallback-group">
+              <h3>确认根因</h3>
+              <div class="fallback-nodes"><span class="fallback-node">R1 胶囊错用</span></div>
+            </section>
+            <section class="fallback-group">
+              <h3>推荐修复</h3>
+              <div class="fallback-nodes"><span class="fallback-node">无底色语义图标</span></div>
+            </section>
+            <section class="fallback-group">
+              <h3>验证标准</h3>
+              <div class="fallback-nodes"><span class="fallback-node">同行高、可辨识</span></div>
+            </section>
+            <section class="fallback-group">
+              <h3>结果</h3>
+              <div class="fallback-nodes"><span class="fallback-node">紧凑稳定单行</span></div>
+            </section>
+            <ul class="fallback-relations">
+              <li data-fallback-relation-id="layout-relation-001" data-from="layout-node-001" data-to="layout-node-004" data-relation-kind="supports" data-primary-relation="true">
+                <b>行高不一致</b><i aria-hidden="true"></i><b>H1 尺寸叠加</b>
+              </li>
+              <li data-fallback-relation-id="layout-relation-002" data-from="layout-node-002" data-to="layout-node-004" data-relation-kind="supports" data-primary-relation="true">
+                <b>标题过度截断</b><i aria-hidden="true"></i><b>H1 尺寸叠加</b>
+              </li>
+              <li data-fallback-relation-id="layout-relation-003" data-from="layout-node-002" data-to="layout-node-005" data-relation-kind="supports" data-primary-relation="true">
+                <b>标题过度截断</b><i aria-hidden="true"></i><b>H2 语义错配</b>
+              </li>
+              <li data-fallback-relation-id="layout-relation-004" data-from="layout-node-003" data-to="layout-node-005" data-relation-kind="supports" data-primary-relation="true">
+                <b>彩色胶囊过重</b><i aria-hidden="true"></i><b>H2 语义错配</b>
+              </li>
+              <li data-fallback-relation-id="layout-relation-005" data-from="layout-node-004" data-to="layout-node-006" data-relation-kind="confirms" data-primary-relation="true">
+                <b>H1 尺寸叠加</b><i aria-hidden="true"></i><b>R1 胶囊错用</b>
+              </li>
+              <li data-fallback-relation-id="layout-relation-006" data-from="layout-node-005" data-to="layout-node-006" data-relation-kind="confirms" data-primary-relation="true">
+                <b>H2 语义错配</b><i aria-hidden="true"></i><b>R1 胶囊错用</b>
+              </li>
+              <li data-fallback-relation-id="layout-relation-007" data-from="layout-node-006" data-to="layout-node-007" data-relation-kind="repairs" data-primary-relation="true">
+                <b>R1 胶囊错用</b><i aria-hidden="true"></i><b>无底色语义图标</b>
+              </li>
+              <li data-fallback-relation-id="layout-relation-008" data-from="layout-node-007" data-to="layout-node-008" data-relation-kind="verified-by" data-primary-relation="true">
+                <b>无底色语义图标</b><i aria-hidden="true"></i><b>同行高、可辨识</b>
+              </li>
+              <li data-fallback-relation-id="layout-relation-009" data-from="layout-node-008" data-to="layout-node-009" data-relation-kind="produces" data-primary-relation="true">
+                <b>同行高、可辨识</b><i aria-hidden="true"></i><b>紧凑稳定单行</b>
+              </li>
+              <li data-fallback-relation-id="layout-relation-010" data-from="layout-node-008" data-to="layout-node-007" data-relation-kind="refines" data-primary-relation="false">
+                <b>同行高、可辨识</b><i aria-hidden="true"></i><b>无底色语义图标</b>
+              </li>
+            </ul>
+          </div>
+        </details>
+      </div>
+    </main>
+    <script data-adaptive-viewport-kernel="1">
+      (() => {
+        'use strict';
+        const allowed = new Set(['fit', '0.75', '0.9', '1']);
+        const managed = new Set();
+        const autoCentered = new WeakSet();
+        const requestedByCanvas = new WeakMap();
+        let resizeFrame = 0;
+
+        const stageFor = (canvas) => canvas.querySelector(':scope > [data-diagram-stage]');
+        const alignGuide = (canvas) => {
+          const stage = stageFor(canvas);
+          const guide = stage?.querySelector(":scope > [data-diagram-reading-guide='1']");
+          if (!guide) return;
+          const rawScale = canvas.hasAttribute('data-diagram-scaled') ? Number.parseFloat(getComputedStyle(canvas).getPropertyValue('--diagram-scale') || '1') : 1;
+          const scale = Number.isFinite(rawScale) && rawScale > 0 ? rawScale : 1;
+          guide.style.setProperty('--guide-scroll-offset', `${canvas.scrollLeft / scale}px`);
+        };
+        const controlsFor = (canvas, root = document) => Array.from(root.querySelectorAll('[data-diagram-controls]')).filter((controls) => controls.dataset.diagramControls === canvas.dataset.diagramId);
+        const reset = (canvas) => {
+          canvas.style.removeProperty('--diagram-scale');
+          canvas.removeAttribute('data-diagram-scaled');
+        };
+        const reflect = (controls, requested, applied, message) => {
+          controls.querySelectorAll('[data-diagram-zoom-control]').forEach((button) => {
+            button.setAttribute('aria-pressed', String(button.dataset.diagramZoomControl === requested && applied));
+          });
+          const status = controls.querySelector('[data-diagram-zoom-status]');
+          if (status) {
+            status.textContent = message;
+            if ('value' in status) status.value = message;
+          }
+        };
+        const revealControls = (canvas, visible, overflow, root = document) => {
+          controlsFor(canvas, root).forEach((controls) => {
+            controls.hidden = !visible;
+            controls.dataset.diagramControlsVisible = String(visible);
+            controls.dataset.diagramOverflow = String(overflow);
+          });
+        };
+        const retest = (canvas, requested = requestedByCanvas.get(canvas) || canvas.dataset.diagramZoom || 'fit') => {
+          reset(canvas);
+          if (!allowed.has(requested)) requested = 'fit';
+          requestedByCanvas.set(canvas, requested);
+          const stage = stageFor(canvas);
+          if (!stage || !canvas.clientWidth || !stage.scrollWidth) {
+            revealControls(canvas, false, false);
+            return false;
+          }
+          const overflow = stage.scrollWidth > canvas.clientWidth + 1;
+          const controlsVisible = true;
+          revealControls(canvas, controlsVisible, overflow);
+          const controls = controlsFor(canvas);
+          const scale = requested === 'fit' ? Math.min(1, canvas.clientWidth / stage.scrollWidth) : Number(requested);
+          const applied = Number.isFinite(scale) && scale >= 0.75 && scale <= 1;
+          if (applied) {
+            canvas.style.setProperty('--diagram-scale', String(scale));
+            canvas.setAttribute('data-diagram-scaled', 'true');
+          } else if (requested === 'fit' && canvas.dataset.primaryDirection === 'north-to-south' && !autoCentered.has(canvas)) {
+            canvas.scrollLeft = Math.max(0, (stage.scrollWidth - canvas.clientWidth) / 2);
+            autoCentered.add(canvas);
+          }
+          controls.forEach((item) => {
+            const message = applied
+              ? requested === 'fit'
+                ? overflow
+                  ? item.dataset.diagramStatusFit || 'Fit width'
+                  : item.dataset.diagramStatusFits || 'Fits at 100%'
+                : `${Number(requested) * 100}%`
+              : item.dataset.diagramStatusScroll || 'Scroll';
+            reflect(item, requested, applied, message);
+          });
+          alignGuide(canvas);
+          return applied;
+        };
+        const apply = (canvas, requested = 'fit') => {
+          if (!allowed.has(requested)) return false;
+          if (requested === 'fit') autoCentered.delete(canvas);
+          return retest(canvas, requested);
+        };
+        const scheduleRetest = () => {
+          if (resizeFrame) return;
+          resizeFrame = requestAnimationFrame(() => {
+            resizeFrame = 0;
+            managed.forEach((canvas) => retest(canvas));
+          });
+        };
+        const bind = (root = document) => {
+          root.querySelectorAll('[data-diagram-controls]').forEach((controls) => {
+            const id = controls.dataset.diagramControls;
+            const canvas = id ? Array.from(root.querySelectorAll('[data-diagram-id]')).find((candidate) => candidate.dataset.diagramId === id) : null;
+            if (!canvas || controls.dataset.diagramBound === 'true') return;
+            controls.dataset.diagramBound = 'true';
+            controls.hidden = true;
+            canvas.addEventListener('scroll', () => alignGuide(canvas), { passive: true });
+            controls.addEventListener('click', (event) => {
+              const button = event.target.closest('[data-diagram-zoom-control]');
+              if (!button || !controls.contains(button)) return;
+              const requested = button.dataset.diagramZoomControl;
+              apply(canvas, requested);
+            });
+          });
+        };
+        const resizeObserver = typeof ResizeObserver === 'function' ? new ResizeObserver(scheduleRetest) : null;
+        const enhance = (root = document) => {
+          bind(root);
+          root.querySelectorAll('[data-diagram-canvas][data-diagram-contract="1"]').forEach((canvas) => {
+            try {
+              if (!managed.has(canvas)) {
+                managed.add(canvas);
+                if (resizeObserver) {
+                  resizeObserver.observe(canvas);
+                  const stage = stageFor(canvas);
+                  if (stage) resizeObserver.observe(stage);
+                }
+              }
+              retest(canvas, canvas.dataset.diagramZoom || 'fit');
+            } catch (_error) {
+              reset(canvas);
+              revealControls(canvas, false, false, root);
+            }
+          });
+        };
+        if (!resizeObserver) globalThis.addEventListener('resize', scheduleRetest, { passive: true });
+        globalThis.VibeDiagramViewport = Object.freeze({ apply, bind, enhance, reset, retest });
+        if (document.readyState === 'loading') {
+          document.addEventListener('DOMContentLoaded', () => enhance(), { once: true });
+        } else {
+          enhance();
+        }
+      })();
+    </script>
+    <script data-progressive-disclosure-kernel="1">
+      (() => {
+        'use strict';
+        const activeByRoot = new WeakMap();
+        const returnFocusByRoot = new WeakMap();
+        const boundRoots = new WeakSet();
+        const lifecycleAuditByRoot = new WeakMap();
+        const isNativeDetails = (detail) => detail.matches('details');
+        const documentElementFor = (root) => (root.nodeType === Node.DOCUMENT_NODE ? root.documentElement : root.ownerDocument.documentElement);
+        const viewFor = (root) => (root.nodeType === Node.DOCUMENT_NODE ? root.defaultView : root.ownerDocument.defaultView);
+        const decodedHashFor = (view) => {
+          try {
+            return decodeURIComponent(view?.location.hash.slice(1) || '');
+          } catch (_error) {
+            return '';
+          }
+        };
+        const detailTriggerSelector = '[data-diagram-detail-trigger][data-detail-for]';
+        const triggersFor = (root, id) => Array.from(root.querySelectorAll(detailTriggerSelector)).filter((trigger) => trigger.dataset.detailFor === id);
+        const reflect = (root, id, expanded) => {
+          triggersFor(root, id).forEach((trigger) => {
+            trigger.setAttribute('aria-expanded', String(expanded));
+          });
+        };
+        const regionFor = (detail) => detail.closest('[data-node-detail-region]');
+        const gridFor = (detail) => detail.closest('[data-node-detail-grid]');
+        const portalRegions = (root) => {
+          const documentRoot = root.nodeType === Node.DOCUMENT_NODE ? root : root.ownerDocument;
+          const host = documentRoot?.body;
+          if (!host) return;
+          Array.from(root.querySelectorAll('[data-node-detail-region]')).forEach((region) => {
+            if (region.parentElement === host) return;
+            region.dataset.runtimeDetailPortal = 'true';
+            host.append(region);
+          });
+        };
+        const syncDocumentState = (root) => {
+          const documentElement = documentElementFor(root);
+          documentElement.setAttribute('data-progressive-disclosure-enhanced', 'true');
+          documentElement.toggleAttribute('data-progressive-disclosure-open', Boolean(root.querySelector("[data-node-detail-region][data-runtime-active='true']")));
+        };
+        const ensureCloseButton = (root, detail) => {
+          let button = detail.querySelector(':scope > [data-diagram-detail-close]');
+          if (button) return button;
+          const region = regionFor(detail);
+          button = detail.ownerDocument.createElement('button');
+          button.type = 'button';
+          button.dataset.diagramDetailClose = 'true';
+          button.setAttribute('aria-label', region?.dataset.detailCloseLabel || 'Close node details');
+          button.textContent = '×';
+          button.addEventListener('click', () => close(root, true));
+          detail.append(button);
+          return button;
+        };
+        const clamp = (value, minimum, maximum) => Math.min(Math.max(value, minimum), Math.max(minimum, maximum));
+        const place = (detail, trigger) => {
+          const grid = gridFor(detail);
+          const view = detail.ownerDocument.defaultView;
+          if (!grid || !view) return;
+          const margin = 12;
+          const gap = 10;
+          const viewportWidth = Math.max(0, view.innerWidth);
+          const viewportHeight = Math.max(0, view.innerHeight);
+          const width = Math.min(352, Math.max(240, viewportWidth - margin * 2));
+          grid.style.setProperty('--detail-width', `${width}px`);
+          grid.style.setProperty('--detail-left', `${margin}px`);
+          grid.style.setProperty('--detail-top', `${margin}px`);
+          const popupRect = grid.getBoundingClientRect();
+          const popupWidth = width;
+          const popupHeight = Math.min(popupRect.height || 240, Math.max(160, viewportHeight - margin * 2));
+          const triggerRect = trigger?.getBoundingClientRect();
+          let left = clamp((viewportWidth - popupWidth) / 2, margin, viewportWidth - popupWidth - margin);
+          let top = clamp((viewportHeight - popupHeight) / 2, margin, viewportHeight - popupHeight - margin);
+          let side = 'center';
+          if (triggerRect) {
+            if (viewportWidth >= 768 && triggerRect.right + gap + popupWidth <= viewportWidth - margin) {
+              left = triggerRect.right + gap;
+              side = 'right';
+            } else if (viewportWidth >= 768 && triggerRect.left - gap - popupWidth >= margin) {
+              left = triggerRect.left - gap - popupWidth;
+              side = 'left';
+            } else {
+              left = clamp(triggerRect.left + triggerRect.width / 2 - popupWidth / 2, margin, viewportWidth - popupWidth - margin);
+              side = 'center';
+            }
+            top = clamp(triggerRect.top + triggerRect.height / 2 - popupHeight / 2, margin, viewportHeight - popupHeight - margin);
+          }
+          left = clamp(left, margin, viewportWidth - popupWidth - margin);
+          top = clamp(top, margin, viewportHeight - popupHeight - margin);
+          grid.style.setProperty('--detail-left', `${Math.round(left)}px`);
+          grid.style.setProperty('--detail-top', `${Math.round(top)}px`);
+          const renderedRect = grid.getBoundingClientRect();
+          if (renderedRect.left < margin) left += margin - renderedRect.left;
+          if (renderedRect.right > viewportWidth - margin) {
+            left -= renderedRect.right - (viewportWidth - margin);
+          }
+          if (renderedRect.top < margin) top += margin - renderedRect.top;
+          if (renderedRect.bottom > viewportHeight - margin) {
+            top -= renderedRect.bottom - (viewportHeight - margin);
+          }
+          left = clamp(left, margin, viewportWidth - renderedRect.width - margin);
+          top = clamp(top, margin, viewportHeight - renderedRect.height - margin);
+          grid.style.setProperty('--detail-left', `${Math.round(left)}px`);
+          grid.style.setProperty('--detail-top', `${Math.round(top)}px`);
+          grid.dataset.popupSide = side;
+        };
+        const restoreDetail = (root, detail) => {
+          const id = detail.dataset.diagramDetail;
+          if (isNativeDetails(detail)) {
+            const wasOpen = detail.getAttribute('data-runtime-was-open') === 'true';
+            detail.open = wasOpen;
+            detail.removeAttribute('data-runtime-was-open');
+          } else {
+            const wasHidden = detail.getAttribute('data-runtime-was-hidden') === 'true';
+            detail.hidden = wasHidden;
+            detail.removeAttribute('data-runtime-was-hidden');
+          }
+          detail.removeAttribute('data-runtime-open');
+          detail.removeAttribute('role');
+          detail.removeAttribute('aria-modal');
+          const grid = gridFor(detail);
+          if (grid) {
+            grid.style.removeProperty('--detail-width');
+            grid.style.removeProperty('--detail-left');
+            grid.style.removeProperty('--detail-top');
+            delete grid.dataset.popupSide;
+          }
+          regionFor(detail)?.removeAttribute('data-runtime-active');
+          reflect(root, id, isNativeDetails(detail) && detail.open);
+        };
+        const close = (root = document, restoreFocus = true, clearHash = true) => {
+          const detail = activeByRoot.get(root);
+          if (!detail) return false;
+          const id = detail.dataset.diagramDetail;
+          restoreDetail(root, detail);
+          activeByRoot.delete(root);
+          syncDocumentState(root);
+          const view = viewFor(root);
+          if (clearHash && view && decodedHashFor(view) === id) {
+            view.history.replaceState(view.history.state, '', `${view.location.pathname}${view.location.search}`);
+          }
+          if (restoreFocus) {
+            const trigger = returnFocusByRoot.get(root);
+            if (trigger?.isConnected) trigger.focus({ preventScroll: true });
+          }
+          returnFocusByRoot.delete(root);
+          return true;
+        };
+        const reset = (root = document) => {
+          close(root, false);
+          root.querySelectorAll('[data-diagram-detail][data-runtime-open]').forEach((detail) => {
+            restoreDetail(root, detail);
+          });
+          root.querySelectorAll('[data-node-detail-region][data-runtime-active]').forEach((region) => {
+            region.removeAttribute('data-runtime-active');
+          });
+          syncDocumentState(root);
+        };
+        const open = (root, id, trigger = null, updateHash = true) => {
+          const detail = root.querySelector(`[data-diagram-detail="${CSS.escape(id)}"]`);
+          if (!detail) return false;
+          const previous = activeByRoot.get(root);
+          if (previous && previous !== detail) restoreDetail(root, previous);
+          if (!detail.hasAttribute('data-runtime-open')) {
+            if (isNativeDetails(detail)) {
+              detail.setAttribute('data-runtime-was-open', String(detail.open));
+            } else {
+              detail.setAttribute('data-runtime-was-hidden', String(detail.hidden));
+            }
+          }
+          if (isNativeDetails(detail)) {
+            detail.open = true;
+          } else {
+            detail.hidden = false;
+          }
+          detail.setAttribute('data-runtime-open', 'true');
+          detail.setAttribute('role', 'dialog');
+          detail.setAttribute('aria-modal', 'false');
+          regionFor(detail)?.setAttribute('data-runtime-active', 'true');
+          activeByRoot.set(root, detail);
+          returnFocusByRoot.set(root, trigger || detail.ownerDocument.activeElement);
+          ensureCloseButton(root, detail);
+          reflect(root, id, true);
+          syncDocumentState(root);
+          place(detail, trigger);
+          const view = viewFor(root);
+          if (updateHash && view) {
+            const nextHash = `#${encodeURIComponent(id)}`;
+            if (view.location.hash !== nextHash) {
+              view.history.pushState(view.history.state, '', nextHash);
+            }
+          }
+          const focusTarget = detail.querySelector('summary') || detail;
+          focusTarget.focus({ preventScroll: true });
+          return true;
+        };
+        const bind = (root = document) => {
+          const triggers = root.querySelectorAll(detailTriggerSelector);
+          if (!triggers.length) return;
+          portalRegions(root);
+          syncDocumentState(root);
+          triggers.forEach((trigger) => {
+            const id = trigger.dataset.detailFor;
+            const detail = id ? root.querySelector(`[data-diagram-detail="${CSS.escape(id)}"]`) : null;
+            if (!detail || trigger.dataset.diagramDetailBound === 'true') return;
+            trigger.dataset.diagramDetailBound = 'true';
+            trigger.setAttribute('aria-controls', detail.id);
+            reflect(root, id, false);
+            trigger.addEventListener('click', (event) => {
+              event.preventDefault();
+              open(root, id, trigger);
+            });
+            if (isNativeDetails(detail) && detail.dataset.diagramToggleBound !== 'true') {
+              detail.dataset.diagramToggleBound = 'true';
+              detail.addEventListener('toggle', () => {
+                const runtimeOpen = detail.getAttribute('data-runtime-open') === 'true';
+                if (runtimeOpen && !detail.open) close(root, true);
+                else reflect(root, id, detail.open);
+              });
+            }
+          });
+          if (boundRoots.has(root)) return;
+          boundRoots.add(root);
+          root.addEventListener('pointerdown', (event) => {
+            const detail = activeByRoot.get(root);
+            if (!detail) return;
+            const trigger = returnFocusByRoot.get(root);
+            if (!detail.contains(event.target) && !trigger?.contains(event.target)) {
+              close(root, false);
+            }
+          });
+          root.addEventListener('keydown', (event) => {
+            if (event.key === 'Escape' && close(root, true)) event.preventDefault();
+          });
+          const view = viewFor(root);
+          const openFromHash = () => {
+            if (!view?.location.hash) return false;
+            const id = decodedHashFor(view);
+            return open(root, id, null, false);
+          };
+          view?.addEventListener('hashchange', () => {
+            if (!openFromHash()) close(root, false, false);
+          });
+          const reposition = () => {
+            const detail = activeByRoot.get(root);
+            if (detail) place(detail, returnFocusByRoot.get(root));
+          };
+          view?.addEventListener('resize', reposition);
+          view?.addEventListener('scroll', reposition, true);
+          openFromHash();
+        };
+        const auditLifecycle = (root = document) => {
+          const view = viewFor(root);
+          const documentElement = documentElementFor(root);
+          const triggers = Array.from(root.querySelectorAll(detailTriggerSelector));
+          const auditKey = `${view?.innerWidth || 0}x${view?.innerHeight || 0}:${triggers.length}`;
+          const cached = lifecycleAuditByRoot.get(root);
+          if (cached?.key === auditKey) return cached.result;
+          const issues = new Set();
+          const originalHash = view?.location.hash || '';
+          const originalFocus = root.activeElement;
+          const uniqueTriggers = new Map();
+          triggers.forEach((trigger) => {
+            const id = (trigger.dataset.detailFor || '').trim();
+            if (id && !uniqueTriggers.has(id)) uniqueTriggers.set(id, trigger);
+          });
+          const viewportPlacement = (element) => {
+            if (!element || !view) {
+              return { fits: false, trace: 'missing' };
+            }
+            const rect = element.getBoundingClientRect();
+            const fits = rect.left >= -1 && rect.top >= -1 && rect.right <= view.innerWidth + 1 && rect.bottom <= view.innerHeight + 1;
+            return {
+              fits,
+              trace: [Math.round(rect.left), Math.round(rect.top), Math.round(rect.right), Math.round(rect.bottom), view.innerWidth, view.innerHeight].join(','),
+            };
+          };
+          uniqueTriggers.forEach((trigger, id) => {
+            if (!open(root, id, trigger, false)) {
+              issues.add(`open:${id}`);
+              return;
+            }
+            const detail = activeByRoot.get(root);
+            const grid = gridFor(detail);
+            if (detail?.dataset.diagramDetail !== id || detail.getAttribute('role') !== 'dialog' || !regionFor(detail)?.hasAttribute('data-runtime-active') || !detail.querySelector(':scope > [data-diagram-detail-close]')) {
+              issues.add(`dialog-state:${id}`);
+            }
+            place(detail, trigger);
+            const placement = viewportPlacement(grid);
+            if (!placement.fits) issues.add(`placement:${id}:${placement.trace}`);
+            if (!close(root, true, false)) issues.add(`close:${id}`);
+            if (root.activeElement !== trigger) issues.add(`focus-return:${id}`);
+          });
+          const first = uniqueTriggers.entries().next().value;
+          if (first) {
+            const [id, trigger] = first;
+            open(root, id, trigger, false);
+            root.dispatchEvent(new view.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+            if (activeByRoot.has(root) || root.activeElement !== trigger) {
+              issues.add(`escape:${id}`);
+              close(root, true, false);
+            }
+            open(root, id, trigger, false);
+            const pointerTarget = root.body || documentElement;
+            pointerTarget.dispatchEvent(new view.Event('pointerdown', { bubbles: true, cancelable: true }));
+            if (activeByRoot.has(root)) {
+              issues.add(`outside:${id}`);
+              close(root, false, false);
+            }
+            if (view?.history) {
+              view.history.replaceState(view.history.state, '', `#${encodeURIComponent(id)}`);
+              view.dispatchEvent(new view.HashChangeEvent('hashchange'));
+              if (activeByRoot.get(root)?.dataset.diagramDetail !== id) {
+                issues.add(`deep-link:${id}`);
+              }
+              close(root, false, false);
+              view.history.replaceState(view.history.state, '', `${view.location.pathname}${view.location.search}${originalHash}`);
+            }
+          }
+          if (originalFocus?.isConnected && typeof originalFocus.focus === 'function') {
+            originalFocus.focus({ preventScroll: true });
+          }
+          const ordered = Array.from(issues).sort();
+          const result = Object.freeze({
+            count: uniqueTriggers.size,
+            issues: Object.freeze(ordered),
+            passed: ordered.length === 0,
+          });
+          lifecycleAuditByRoot.set(root, { key: auditKey, result });
+          documentElement.dataset.detailLifecycleAudit = result.passed ? 'passed' : 'failed';
+          documentElement.dataset.detailLifecycleCount = String(result.count);
+          if (ordered.length) {
+            documentElement.dataset.detailLifecycleIssues = ordered.join('|').slice(0, 2048);
+          } else {
+            delete documentElement.dataset.detailLifecycleIssues;
+          }
+          return result;
+        };
+        const enhance = (root = document) => bind(root);
+        globalThis.VibeDiagramDisclosure = Object.freeze({
+          auditLifecycle,
+          bind,
+          close,
+          enhance,
+          open,
+          reset,
+        });
+        if (document.readyState === 'loading') {
+          document.addEventListener('DOMContentLoaded', () => enhance(), { once: true });
+        } else {
+          enhance();
+        }
+      })();
+    </script>
+    <script data-artifact-shell-preview-kernel="1">
+      (() => {
+        'use strict';
+        document.documentElement.classList.add('vibe-js');
+
+        const unresolvedCanvasText = /^\s*\{\{canvas-text-\d{3}\}\}\s*$/;
+        const detailTriggerSelector = '[data-diagram-detail-trigger]';
+        const declaredRelationSelector = '[data-diagram-relation-id]';
+        const geometricCarrierSelector = ['svg path[data-diagram-visible-relation-id]', 'svg line[data-diagram-visible-relation-id]', 'svg polyline[data-diagram-visible-relation-id]', 'svg polygon[data-diagram-visible-relation-id]'].join(
+          ', ',
+        );
+        const fallbackCarrierSelector = ['[data-fallback-relation-id]', '[data-visible-relation-kind="edge"][data-diagram-visible-relation-id]'].join(', ');
+        const auditRoots = '[data-diagram-canvas], [data-sequence-canvas]';
+        const epsilon = 1;
+        const permitsOverflow = (element, axis) => {
+          const owner = element.closest?.('[data-diagram-overflow-intent]');
+          const intent = owner?.dataset.diagramOverflowIntent || '';
+          return intent === 'both-scroll' || intent === `${axis}-scroll`;
+        };
+
+        const localizeShell = () => {
+          const language = (document.documentElement.lang || '').toLowerCase();
+          const isChinese = language === 'zh' || language.startsWith('zh-');
+          const groupLabels = {
+            relations: isChinese ? '\u5173\u7cfb\u7c7b\u578b' : 'Line types',
+            evidence: isChinese ? '\u8bc1\u636e\u72b6\u6001' : 'Evidence states',
+          };
+          document.querySelectorAll('[data-reading-guide-group]').forEach((group) => {
+            const label = group.querySelector(':scope > [data-reading-guide-group-title]');
+            const text = groupLabels[group.dataset.readingGuideGroup];
+            if (label && text) label.textContent = text;
+          });
+          const evidenceLabels = {
+            'evidence-observed': isChinese ? '\u7528\u6237\u63d0\u4f9b\u4e8b\u5b9e' : 'Observed implementation',
+            'evidence-check': isChinese ? '\u5df2\u5b8c\u6210\u68c0\u67e5' : 'Completed check',
+            'evidence-unresolved': isChinese ? '\u5c1a\u672a\u9a8c\u8bc1' : 'Not yet verified',
+          };
+          document.querySelectorAll('[data-evidence-id] > b').forEach((label) => {
+            const text = evidenceLabels[label.parentElement?.dataset.evidenceId];
+            if (text) label.textContent = text;
+          });
+          document.querySelectorAll("[data-diagram-zoom-control='fit'], [data-sequence-scale='fit']").forEach((button) => {
+            button.textContent = '\u81ea\u9002\u5e94';
+          });
+        };
+
+        const suppressUnfilledCanvasText = (root) => {
+          const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+          const unresolvedNodes = [];
+          while (walker.nextNode()) {
+            if (unresolvedCanvasText.test(walker.currentNode.nodeValue || '')) {
+              unresolvedNodes.push(walker.currentNode);
+            }
+          }
+          unresolvedNodes.forEach((node) => {
+            node.nodeValue = '';
+          });
+          if (unresolvedNodes.length) {
+            root.setAttribute('data-template-preview', 'unfilled');
+          }
+        };
+
+        const isVisible = (element) => {
+          const style = getComputedStyle(element);
+          const rect = element.getBoundingClientRect();
+          return style.display !== 'none' && style.visibility !== 'hidden' && Number.parseFloat(style.opacity || '1') > 0 && rect.width > epsilon && rect.height > epsilon;
+        };
+
+        const isRendered = (element) => {
+          const style = getComputedStyle(element);
+          return style.display !== 'none' && style.visibility !== 'hidden' && Number.parseFloat(style.opacity || '1') > 0 && element.getClientRects().length > 0;
+        };
+
+        const localNameOf = (element) => (element.localName || element.tagName || '').toLowerCase();
+
+        const overlaps = (left, right, inset = epsilon) => left.left + inset < right.right && left.right - inset > right.left && left.top + inset < right.bottom && left.bottom - inset > right.top;
+
+        const containsPoint = (rect, point, inset = 2) => point.x > rect.left + inset && point.x < rect.right - inset && point.y > rect.top + inset && point.y < rect.bottom - inset;
+
+        const escapesBounds = (outer, inner, tolerance = epsilon) => inner.left < outer.left - tolerance || inner.right > outer.right + tolerance || inner.top < outer.top - tolerance || inner.bottom > outer.bottom + tolerance;
+
+        const pointOnBoundary = (rect, point, tolerance = 6) => {
+          const withinHorizontal = point.x >= rect.left - tolerance && point.x <= rect.right + tolerance;
+          const withinVertical = point.y >= rect.top - tolerance && point.y <= rect.bottom + tolerance;
+          return (
+            (withinHorizontal && (Math.abs(point.y - rect.top) <= tolerance || Math.abs(point.y - rect.bottom) <= tolerance)) || (withinVertical && (Math.abs(point.x - rect.left) <= tolerance || Math.abs(point.x - rect.right) <= tolerance))
+          );
+        };
+
+        const numericAttribute = (element, name) => {
+          const value = Number.parseFloat(element.getAttribute(name) || '');
+          return Number.isFinite(value) ? value : null;
+        };
+
+        const parseColor = (value) => {
+          const normalized = (value || '').trim();
+          if (normalized === 'transparent' || normalized === 'none') {
+            return { red: 0, green: 0, blue: 0, alpha: 0 };
+          }
+          const hex = normalized.match(/^#([\da-f]{3,8})$/i);
+          if (hex) {
+            let payload = hex[1];
+            if (payload.length === 3 || payload.length === 4) {
+              payload = Array.from(payload, (part) => part + part).join('');
+            }
+            if (payload.length === 6 || payload.length === 8) {
+              return {
+                red: Number.parseInt(payload.slice(0, 2), 16) / 255,
+                green: Number.parseInt(payload.slice(2, 4), 16) / 255,
+                blue: Number.parseInt(payload.slice(4, 6), 16) / 255,
+                alpha: payload.length === 8 ? Number.parseInt(payload.slice(6, 8), 16) / 255 : 1,
+              };
+            }
+          }
+          const match = normalized.match(/rgba?\(\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)(?:\s*[,/]\s*(\d*(?:\.\d+)?))?\s*\)/);
+          if (!match) return null;
+          return {
+            red: Number(match[1]) / 255,
+            green: Number(match[2]) / 255,
+            blue: Number(match[3]) / 255,
+            alpha: match[4] === undefined || match[4] === '' ? 1 : Number(match[4]),
+          };
+        };
+
+        const pointOnScreen = (path, distance) => {
+          const point = path.getPointAtLength(distance);
+          const matrix = path.getScreenCTM();
+          if (!matrix) return null;
+          const transformed = new DOMPoint(point.x, point.y).matrixTransform(matrix);
+          return { x: transformed.x, y: transformed.y };
+        };
+
+        const auditDetailLinks = (canvas, addIssue) => {
+          const documentRoot = canvas.ownerDocument;
+          canvas.querySelectorAll(detailTriggerSelector).forEach((trigger) => {
+            const detailId = (trigger.dataset.detailFor || '').trim();
+            const triggerIdentity = (trigger.getAttribute('aria-label') || trigger.getAttribute('data-node-primary-label') || trigger.textContent || '').trim();
+            if (!detailId) {
+              addIssue('detail-trigger-target-empty', triggerIdentity || trigger.dataset.diagramDetailTrigger || 'unnamed-trigger');
+              return;
+            }
+            if (!triggerIdentity) {
+              addIssue('detail-trigger-empty', detailId);
+            }
+            const detail = documentRoot.getElementById(detailId);
+            if (!detail) {
+              addIssue('detail-target-missing', detailId);
+              return;
+            }
+            if (localNameOf(trigger) !== 'a' || trigger.getAttribute('href') !== `#${detailId}`) {
+              addIssue('detail-trigger-not-native-link', detailId);
+            }
+            if (localNameOf(detail) !== 'details' || detail.id !== detailId || detail.dataset.diagramDetail !== detailId) {
+              addIssue('detail-target-not-native-details', detailId);
+            }
+          });
+        };
+
+        const auditNodeGeometry = (canvas, addIssue) => {
+          const nodes = Array.from(canvas.querySelectorAll('[data-diagram-node-id]')).filter(isVisible);
+          for (let leftIndex = 0; leftIndex < nodes.length; leftIndex += 1) {
+            const left = nodes[leftIndex];
+            const leftRect = left.getBoundingClientRect();
+            for (let rightIndex = leftIndex + 1; rightIndex < nodes.length; rightIndex += 1) {
+              const right = nodes[rightIndex];
+              if (left.contains(right) || right.contains(left)) continue;
+              if (overlaps(leftRect, right.getBoundingClientRect(), 2)) {
+                addIssue('node-overlap', `${left.dataset.diagramNodeId || leftIndex}:${right.dataset.diagramNodeId || rightIndex}`);
+              }
+            }
+          }
+
+          nodes.forEach((node) => {
+            const nodeId = node.dataset.diagramNodeId || 'unnamed-node';
+            if (
+              'scrollWidth' in node &&
+              'clientWidth' in node &&
+              ((node.scrollWidth > node.clientWidth + epsilon && !permitsOverflow(node, 'horizontal')) || (node.scrollHeight > node.clientHeight + epsilon && !permitsOverflow(node, 'vertical')))
+            ) {
+              addIssue('node-content-overflow', nodeId);
+            }
+
+            node.querySelectorAll('*').forEach((content) => {
+              if (!isRendered(content)) return;
+              if (
+                'scrollWidth' in content &&
+                'clientWidth' in content &&
+                ((content.scrollWidth > content.clientWidth + epsilon && !permitsOverflow(content, 'horizontal')) || (content.scrollHeight > content.clientHeight + epsilon && !permitsOverflow(content, 'vertical')))
+              ) {
+                addIssue('node-content-overflow', nodeId);
+              }
+            });
+
+            const svgSurface = Array.from(node.children).find((child) => localNameOf(child) === 'rect' && isRendered(child));
+            if (!svgSurface) return;
+            const surfaceRect = svgSurface.getBoundingClientRect();
+            node.querySelectorAll('text, foreignObject').forEach((content) => {
+              if (!isRendered(content)) return;
+              const contentRect = content.getBoundingClientRect();
+              if (escapesBounds(surfaceRect, contentRect, 2)) {
+                addIssue('node-content-overflow', nodeId);
+              }
+            });
+          });
+
+          canvas.querySelectorAll('[data-architecture-landmark-for]').forEach((landmark) => {
+            if (!isRendered(landmark)) return;
+            const nodeId = (landmark.dataset.architectureLandmarkFor || '').trim();
+            const surface = Array.from(landmark.children).find((child) => localNameOf(child) === 'rect' && isRendered(child));
+            if (!surface) return;
+            const surfaceRect = surface.getBoundingClientRect();
+            landmark.querySelectorAll('text, foreignObject').forEach((content) => {
+              if (!isRendered(content)) return;
+              if (escapesBounds(surfaceRect, content.getBoundingClientRect(), 2)) {
+                addIssue('node-content-overflow', nodeId || 'unnamed-landmark');
+              }
+            });
+          });
+
+          canvas.querySelectorAll('foreignObject > *').forEach((content) => {
+            if (!isRendered(content)) return;
+            if (
+              'scrollWidth' in content &&
+              'clientWidth' in content &&
+              'scrollHeight' in content &&
+              'clientHeight' in content &&
+              ((content.scrollWidth > content.clientWidth + epsilon && !permitsOverflow(content, 'horizontal')) || (content.scrollHeight > content.clientHeight + epsilon && !permitsOverflow(content, 'vertical')))
+            ) {
+              addIssue('node-content-overflow', content.closest('[data-diagram-node-id]')?.dataset.diagramNodeId || localNameOf(content));
+            }
+          });
+
+          canvas.querySelectorAll("[data-diagram-detail-trigger='auxiliary']").forEach((trigger) => {
+            if (!isRendered(trigger)) return;
+            const svgSurface = trigger.querySelector('rect, path, polygon, circle, ellipse');
+            const surface = svgSurface || trigger;
+            const surfaceStyle = getComputedStyle(surface);
+            const color = parseColor(svgSurface ? surfaceStyle.fill || svgSurface.getAttribute('fill') || '' : surfaceStyle.backgroundColor);
+            if (!color || color.alpha < 0.85) {
+              addIssue('auxiliary-node-background-transparent', trigger.dataset.detailFor || 'unknown');
+              return;
+            }
+            const luminance = color.red * 0.2126 + color.green * 0.7152 + color.blue * 0.0722;
+            if (luminance < 0.72) {
+              addIssue('auxiliary-node-background-too-dark', trigger.dataset.detailFor || 'unknown');
+            }
+          });
+        };
+
+        const auditRoutes = (canvas, addIssue) => {
+          const nodeRects = new Map(
+            Array.from(canvas.querySelectorAll('[data-diagram-node-id]'))
+              .filter(isVisible)
+              .map((node) => [node.dataset.diagramNodeId, node.getBoundingClientRect()]),
+          );
+          canvas.querySelectorAll('[data-architecture-landmark-for]').forEach((landmark) => {
+            if (!isRendered(landmark)) return;
+            const nodeId = (landmark.dataset.architectureLandmarkFor || '').trim();
+            if (!nodeId) return;
+            const surface = Array.from(landmark.children).find((child) => localNameOf(child) === 'rect' && isRendered(child));
+            nodeRects.set(nodeId, (surface || landmark).getBoundingClientRect());
+          });
+          const labels = Array.from(canvas.querySelectorAll('svg text')).filter(isVisible);
+          const declaredRelations = Array.from(canvas.querySelectorAll(declaredRelationSelector));
+          const declaredById = new Map(declaredRelations.map((relation) => [(relation.dataset.diagramRelationId || '').trim(), relation]).filter(([relationId]) => Boolean(relationId)));
+          const declaredRelationIds = new Set(declaredById.keys());
+          const primaryStage = canvas.querySelector(':scope > [data-diagram-stage]') || canvas;
+          if (!isRendered(primaryStage)) {
+            const canvasId = canvas.dataset.diagramId || canvas.dataset.sequenceId || '';
+            const fallbackRoot = canvasId ? canvas.ownerDocument.querySelector(`[data-fallback-for="${CSS.escape(canvasId)}"]`) : null;
+            const fallbackByRelation = new Map();
+            if (fallbackRoot && isRendered(fallbackRoot)) {
+              fallbackRoot.querySelectorAll(fallbackCarrierSelector).forEach((carrier) => {
+                const relationId = (carrier.dataset.fallbackRelationId || carrier.dataset.diagramVisibleRelationId || '').trim();
+                if (!relationId) {
+                  addIssue('fallback-relation-id-missing', canvasId || 'unnamed-canvas');
+                  return;
+                }
+                const values = fallbackByRelation.get(relationId) || [];
+                values.push(carrier);
+                fallbackByRelation.set(relationId, values);
+                if (!declaredById.has(relationId)) {
+                  addIssue('fallback-relation-not-declared', relationId);
+                }
+              });
+            }
+            declaredById.forEach((declaration, relationId) => {
+              const fallbackCarriers = fallbackByRelation.get(relationId) || [];
+              if (!fallbackCarriers.length) {
+                addIssue('missing-geometric-carrier', relationId);
+                addIssue('declared-route-not-audited', relationId);
+                return;
+              }
+              if (fallbackCarriers.length !== 1) {
+                addIssue('fallback-relation-duplicate', relationId);
+                addIssue('declared-route-not-audited', relationId);
+                return;
+              }
+              const fallback = fallbackCarriers[0];
+              if ((fallback.dataset.from || '') !== (declaration.dataset.from || '') || (fallback.dataset.to || '') !== (declaration.dataset.to || '') || (fallback.dataset.relationKind || '') !== (declaration.dataset.relationKind || '')) {
+                addIssue('fallback-relation-not-equivalent', relationId);
+                addIssue('declared-route-not-audited', relationId);
+              }
+            });
+            return;
+          }
+
+          const carriers = Array.from(primaryStage.querySelectorAll(geometricCarrierSelector)).filter(isRendered);
+          const carriersByRelation = new Map();
+          carriers.forEach((carrier) => {
+            const relationId = (carrier.dataset.diagramVisibleRelationId || '').trim();
+            if (!relationId) return;
+            const values = carriersByRelation.get(relationId) || [];
+            values.push(carrier);
+            carriersByRelation.set(relationId, values);
+          });
+
+          declaredRelationIds.forEach((relationId) => {
+            if (!carriersByRelation.has(relationId)) {
+              addIssue('missing-geometric-carrier', relationId);
+            }
+          });
+
+          const auditedRelationIds = new Set();
+          carriers
+            .filter((carrier) => localNameOf(carrier) === 'path')
+            .forEach((path) => {
+              const relationId = path.dataset.diagramVisibleRelationId || 'unknown';
+              if (typeof path.getTotalLength !== 'function') return;
+              let length = Number.NaN;
+              try {
+                length = path.getTotalLength();
+              } catch (_error) {
+                return;
+              }
+              auditedRelationIds.add(relationId);
+              if (!Number.isFinite(length) || length < 24) {
+                addIssue('route-too-short', relationId);
+                return;
+              }
+              if (!path.getAttribute('marker-end')) {
+                addIssue('route-arrowhead-missing', relationId);
+              }
+              const sourceId = path.dataset.from || '';
+              const targetId = path.dataset.to || '';
+              const sourceRect = nodeRects.get(sourceId);
+              const targetRect = nodeRects.get(targetId);
+              const startPoint = pointOnScreen(path, 0);
+              const endPoint = pointOnScreen(path, length);
+              if (!sourceRect || !startPoint || !pointOnBoundary(sourceRect, startPoint)) {
+                addIssue('route-source-not-anchored', relationId);
+              }
+              if (!targetRect || !endPoint || !pointOnBoundary(targetRect, endPoint)) {
+                addIssue('route-target-not-anchored', relationId);
+              }
+              const sampleCount = Math.max(8, Math.min(96, Math.ceil(length / 12)));
+              for (let index = 1; index < sampleCount; index += 1) {
+                const progress = index / sampleCount;
+                const point = pointOnScreen(path, length * progress);
+                if (!point) break;
+                for (const [nodeId, rect] of nodeRects) {
+                  if ((nodeId === sourceId && progress < 0.08) || (nodeId === targetId && progress > 0.92)) {
+                    continue;
+                  }
+                  if (containsPoint(rect, point, 3)) {
+                    addIssue('route-crosses-node', `${relationId}:${nodeId}`);
+                  }
+                }
+                for (const label of labels) {
+                  if (label.dataset.routeLabelFor === relationId) continue;
+                  if (containsPoint(label.getBoundingClientRect(), point, 1)) {
+                    addIssue('route-crosses-label', relationId);
+                    break;
+                  }
+                }
+              }
+            });
+
+          declaredRelationIds.forEach((relationId) => {
+            if (!auditedRelationIds.has(relationId)) {
+              addIssue('declared-route-not-audited', relationId);
+            }
+          });
+        };
+
+        const auditUtilization = (canvas, addIssue) => {
+          const svg = canvas.querySelector('svg[data-architecture-canvas]');
+          if (!svg?.viewBox?.baseVal) return;
+          const boundaries = Array.from(svg.querySelectorAll('rect[data-architecture-boundary]'))
+            .map((rect) => ({
+              x: numericAttribute(rect, 'x'),
+              y: numericAttribute(rect, 'y'),
+              width: numericAttribute(rect, 'width'),
+              height: numericAttribute(rect, 'height'),
+            }))
+            .filter((item) => Object.values(item).every((value) => value !== null));
+          if (!boundaries.length) return;
+          const viewBox = svg.viewBox.baseVal;
+          const left = Math.min(...boundaries.map((item) => item.x));
+          const top = Math.min(...boundaries.map((item) => item.y));
+          const right = Math.max(...boundaries.map((item) => item.x + item.width));
+          const bottom = Math.max(...boundaries.map((item) => item.y + item.height));
+          const ratios = {
+            top: (top - viewBox.y) / viewBox.height,
+            bottom: (viewBox.y + viewBox.height - bottom) / viewBox.height,
+            horizontal: (right - left) / viewBox.width,
+          };
+          const thresholds = {
+            top: numericAttribute(canvas, 'data-max-top-whitespace-ratio'),
+            bottom: numericAttribute(canvas, 'data-max-bottom-whitespace-ratio'),
+            horizontal: numericAttribute(canvas, 'data-min-horizontal-utilization-ratio'),
+          };
+          if (thresholds.top !== null && ratios.top > thresholds.top + 0.0001) {
+            addIssue('canvas-top-whitespace', ratios.top.toFixed(4));
+          }
+          if (thresholds.bottom !== null && ratios.bottom > thresholds.bottom + 0.0001) {
+            addIssue('canvas-bottom-whitespace', ratios.bottom.toFixed(4));
+          }
+          if (thresholds.horizontal !== null && ratios.horizontal < thresholds.horizontal - 0.0001) {
+            addIssue('canvas-horizontal-underuse', ratios.horizontal.toFixed(4));
+          }
+        };
+
+        const controlsAreAvailable = (controls) => {
+          if (!controls) return false;
+          if (controls.hasAttribute('data-diagram-controls')) {
+            return controls.dataset.diagramControlsVisible === 'true';
+          }
+          return !controls.hidden;
+        };
+
+        const reflectTitleControlState = (controls) => {
+          const controlRegion = controls?.closest('[data-artifact-shell-controls]');
+          if (!controlRegion) return;
+          const hasVisibleControl = Array.from(controlRegion.querySelectorAll('[data-diagram-controls], [data-sequence-toolbar]')).some(controlsAreAvailable);
+          controlRegion.dataset.controlsState = hasVisibleControl ? 'active' : 'empty';
+        };
+
+        const localGuideFor = (canvas, canvasId) =>
+          canvas.querySelector(`:scope > [data-diagram-reading-guide='1'][data-reading-guide-for="${CSS.escape(canvasId)}"]`) ||
+          canvas.querySelector(`:scope > [data-diagram-stage] > [data-diagram-reading-guide='1'][data-reading-guide-for="${CSS.escape(canvasId)}"]`);
+
+        const usableLineColor = (value) => {
+          const normalized = String(value || '')
+            .trim()
+            .toLowerCase();
+          return normalized && normalized !== 'none' && normalized !== 'transparent' && normalized !== 'rgba(0, 0, 0, 0)';
+        };
+
+        const relationVisual = (relation) => {
+          const style = getComputedStyle(relation);
+          const color = [style.stroke, style.borderBlockStartColor, style.borderTopColor, style.color].find(usableLineColor) || '#0877ff';
+          const dash = String(style.strokeDasharray || '')
+            .trim()
+            .toLowerCase();
+          const borderStyle = [style.borderBlockStartStyle, style.borderTopStyle].find((value) => value && value !== 'none') || 'solid';
+          return {
+            color,
+            lineStyle: dash && dash !== 'none' && dash !== '0px' ? 'dashed' : borderStyle,
+          };
+        };
+
+        const auditGuideRelations = (canvas, guide, addIssue) => {
+          const items = Array.from(guide.querySelectorAll('[data-reading-guide-item]:has([data-line-swatch])'));
+          if (!items.some((item) => item.hasAttribute('data-guide-relations'))) return;
+          const covered = new Set();
+          items.forEach((item, index) => {
+            const ids = (item.dataset.guideRelations || '').trim().split(/\s+/).filter(Boolean);
+            if (!ids.length) {
+              addIssue('guide-relation-binding-missing', String(index + 1));
+              return;
+            }
+            const visuals = [];
+            ids.forEach((relationId) => {
+              const relation = canvas.querySelector(`[data-diagram-visible-relation-id="${CSS.escape(relationId)}"]`);
+              if (!relation) {
+                addIssue('guide-relation-target-missing', relationId);
+                return;
+              }
+              covered.add(relationId);
+              visuals.push(relationVisual(relation));
+            });
+            const signatures = new Set(visuals.map((visual) => `${visual.color}|${visual.lineStyle}`));
+            if (signatures.size > 1) {
+              addIssue('guide-relation-style-mismatch', String(index + 1));
+              return;
+            }
+            const visual = visuals[0];
+            if (visual) {
+              item.style.setProperty('--guide-line-color', visual.color);
+              item.style.setProperty('--guide-line-style', visual.lineStyle);
+            }
+          });
+          canvas.querySelectorAll('[data-diagram-visible-relation-id]').forEach((relation) => {
+            const relationId = relation.dataset.diagramVisibleRelationId || '';
+            if (relationId && !covered.has(relationId)) {
+              addIssue('guide-relation-uncovered', relationId);
+            }
+          });
+        };
+
+        const auditControls = (canvas, addIssue) => {
+          const controlScope = (canvas.dataset.diagramControlScope || '').trim();
+          if (controlScope === 'embedded') {
+            const composition = canvas.closest('[data-diagram-composition-root]');
+            const primary = composition?.querySelector('[data-diagram-control-scope="primary"]');
+            const primaryId = primary?.dataset.diagramId || primary?.dataset.sequenceId || '';
+            const primaryControls = primaryId ? document.querySelector(`[data-diagram-controls="${CSS.escape(primaryId)}"], [data-sequence-controls="${CSS.escape(primaryId)}"]`) : null;
+            if (!composition || !primary || !primaryControls) {
+              addIssue('embedded-control-scope-invalid', canvas.dataset.diagramId || canvas.dataset.sequenceId || 'unnamed-canvas');
+            }
+            return;
+          }
+          const canvasId = canvas.dataset.diagramId || canvas.dataset.sequenceId || '';
+          const controls = document.querySelector(`[data-diagram-controls="${CSS.escape(canvasId)}"], [data-sequence-controls="${CSS.escape(canvasId)}"]`);
+          if (!controls) {
+            addIssue('zoom-controls-missing', canvasId || 'unnamed-canvas');
+            return;
+          }
+          reflectTitleControlState(controls);
+          if (!controlsAreAvailable(controls)) {
+            addIssue('zoom-controls-not-visible', canvasId || 'unnamed-canvas');
+          }
+          const controlRegion = controls.closest('[data-artifact-shell-controls]');
+          const titleRegion = controlRegion?.closest("[data-artifact-shell-title='1']");
+          if (!controlRegion || !titleRegion) {
+            addIssue('title-control-region-missing', canvasId || 'unnamed-canvas');
+            return;
+          }
+          const scaleAttribute = controls.hasAttribute('data-sequence-toolbar') ? 'sequenceScale' : 'diagramZoomControl';
+          const scaleSelector = controls.hasAttribute('data-sequence-toolbar') ? '[data-sequence-scale]' : '[data-diagram-zoom-control]';
+          const scaleOrder = Array.from(controls.querySelectorAll(scaleSelector)).map((button) => button.dataset[scaleAttribute]);
+          if (scaleOrder.join('|') !== '0.75|0.9|1|fit') {
+            addIssue('zoom-control-order', scaleOrder.join('|') || 'empty');
+          }
+          const guide = localGuideFor(canvas, canvasId);
+          if (!guide) {
+            addIssue('local-reading-guide-missing', canvasId || 'unnamed-canvas');
+            return;
+          }
+          const gridSurface = guide.closest('[data-diagram-grid-surface="1"]');
+          if (!gridSurface || !canvas.contains(gridSurface)) {
+            addIssue('local-guide-grid-surface-missing', canvasId || 'unnamed-canvas');
+          } else {
+            const surfaceStyle = getComputedStyle(gridSurface);
+            const gridSizes = surfaceStyle.backgroundSize.split(',').map((value) => value.trim());
+            if (surfaceStyle.backgroundImage === 'none' || !gridSizes.some((value) => value === '24px 24px')) {
+              addIssue('local-guide-grid-pattern-missing', canvasId || 'unnamed-canvas');
+            }
+          }
+          auditGuideRelations(canvas, guide, addIssue);
+          if (isRendered(guide) && isRendered(canvas)) {
+            const guideRect = guide.getBoundingClientRect();
+            const canvasRect = canvas.getBoundingClientRect();
+            if (guideRect.left < canvasRect.left - epsilon || guideRect.top < canvasRect.top - epsilon || guideRect.right > canvasRect.right + epsilon || guideRect.bottom > canvasRect.bottom + epsilon) {
+              addIssue('local-guide-outside-canvas', `${Math.round(guideRect.left - canvasRect.left)}:${Math.round(guideRect.top - canvasRect.top)}`);
+            }
+          }
+        };
+
+        const audit = (canvas) => {
+          const issues = new Set();
+          const addIssue = (code, target) => issues.add(`${code}:${target}`);
+          auditDetailLinks(canvas, addIssue);
+          auditNodeGeometry(canvas, addIssue);
+          auditRoutes(canvas, addIssue);
+          auditUtilization(canvas, addIssue);
+          auditControls(canvas, addIssue);
+          if (document.documentElement.scrollWidth > document.documentElement.clientWidth + epsilon) {
+            addIssue('page-horizontal-overflow', document.documentElement.scrollWidth);
+          }
+          const ordered = Array.from(issues).sort();
+          canvas.setAttribute('data-computed-layout-audit', ordered.length ? 'failed' : 'passed');
+          canvas.setAttribute('data-computed-layout-issue-count', String(ordered.length));
+          if (ordered.length) {
+            canvas.dataset.computedLayoutIssues = ordered.join('|').slice(0, 2048);
+          } else {
+            delete canvas.dataset.computedLayoutIssues;
+          }
+          canvas.dispatchEvent(
+            new CustomEvent('vibe-diagram:layout-audit', {
+              bubbles: true,
+              detail: { issues: ordered, passed: ordered.length === 0 },
+            }),
+          );
+          return ordered;
+        };
+
+        const auditAll = (root = document) => {
+          const results = new Map();
+          root.querySelectorAll(auditRoots).forEach((canvas) => {
+            results.set(canvas.dataset.diagramId || canvas.dataset.sequenceId || 'canvas', audit(canvas));
+          });
+          const disclosure = globalThis.VibeDiagramDisclosure?.auditLifecycle?.(root);
+          const disclosureIssues = Array.isArray(disclosure?.issues) ? disclosure.issues : [];
+          const failures = Array.from(results.values()).reduce((total, issues) => total + issues.length, 0) + disclosureIssues.length;
+          document.documentElement.dataset.computedLayoutAudit = failures ? 'failed' : 'passed';
+          document.documentElement.dataset.computedLayoutIssueCount = String(failures);
+          if (disclosureIssues.length) {
+            document.documentElement.dataset.computedLayoutIssues = disclosureIssues
+              .map((issue) => `detail-lifecycle:${issue}`)
+              .join('|')
+              .slice(0, 2048);
+          } else {
+            delete document.documentElement.dataset.computedLayoutIssues;
+          }
+          return results;
+        };
+
+        const reflectDetailState = (detail) => {
+          if (!detail?.id) return;
+          document.querySelectorAll(`${detailTriggerSelector}[data-detail-for="${CSS.escape(detail.id)}"]`).forEach((trigger) => {
+            trigger.setAttribute('aria-expanded', detail.open ? 'true' : 'false');
+          });
+        };
+
+        const openDetailTarget = (trigger, { focus = true } = {}) => {
+          const detailId = (trigger?.dataset.detailFor || '').trim();
+          const detail = detailId ? document.getElementById(detailId) : null;
+          if (!detail || localNameOf(detail) !== 'details' || detail.dataset.diagramDetail !== detailId) {
+            return false;
+          }
+          detail.open = true;
+          reflectDetailState(detail);
+          if (focus) {
+            requestAnimationFrame(() => {
+              detail.querySelector('summary')?.focus({ preventScroll: true });
+            });
+          }
+          return true;
+        };
+
+        const enhanceDetailLinks = () => {
+          document.querySelectorAll('details[data-diagram-detail]').forEach((detail) => {
+            reflectDetailState(detail);
+            detail.addEventListener('toggle', () => reflectDetailState(detail));
+          });
+          document.addEventListener(
+            'click',
+            (event) => {
+              if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
+                return;
+              }
+              const trigger = event.target.closest?.(detailTriggerSelector);
+              if (trigger) openDetailTarget(trigger);
+            },
+            { capture: true },
+          );
+          const openHashTarget = () => {
+            const detailId = decodeURIComponent(location.hash.slice(1));
+            if (!detailId) return;
+            const trigger = document.querySelector(`${detailTriggerSelector}[data-detail-for="${CSS.escape(detailId)}"]`);
+            if (trigger) openDetailTarget(trigger, { focus: false });
+          };
+          addEventListener('hashchange', openHashTarget);
+          openHashTarget();
+        };
+
+        let auditQueued = false;
+        const scheduleAudit = () => {
+          if (auditQueued) return;
+          auditQueued = true;
+          requestAnimationFrame(() => {
+            auditQueued = false;
+            auditAll();
+          });
+        };
+
+        const enhance = () => {
+          localizeShell();
+          document.querySelectorAll(auditRoots).forEach(suppressUnfilledCanvasText);
+          if (!globalThis.VibeDiagramDisclosure) enhanceDetailLinks();
+          globalThis.VibeDiagramQuality = Object.freeze({ audit, auditAll, scheduleAudit });
+          scheduleAudit();
+          document.fonts?.ready.then(scheduleAudit, scheduleAudit);
+          if ('ResizeObserver' in globalThis) {
+            const observer = new ResizeObserver(scheduleAudit);
+            document.querySelectorAll(`${auditRoots}, [data-diagram-reading-guide="1"], [data-artifact-shell-controls]`).forEach((element) => observer.observe(element));
+          } else {
+            addEventListener('resize', scheduleAudit);
+          }
+          if ('MutationObserver' in globalThis) {
+            const observer = new MutationObserver(scheduleAudit);
+            document.querySelectorAll('[data-diagram-controls], [data-sequence-toolbar]').forEach((controls) =>
+              observer.observe(controls, {
+                attributes: true,
+                attributeFilter: ['hidden', 'data-diagram-controls-visible'],
+              }),
+            );
+          }
+        };
+
+        if (document.readyState === 'loading') {
+          document.addEventListener('DOMContentLoaded', enhance, { once: true });
+        } else {
+          enhance();
+        }
+      })();
+    </script>
+  </body>
+</html>
