@@ -71,8 +71,7 @@
   white-space: pre-line;
 }
 
-.command-definition-list,
-.command-run-history {
+.command-definition-list {
   background: var(--zeus-product-panel);
   border: 1px solid var(--zeus-control-border);
   border-radius: 14px;
@@ -109,8 +108,6 @@
 
 .command-definition-title,
 .command-definition-actions,
-.command-run-history > header,
-.command-run-history > header > span,
 .command-parameter-flags,
 .command-editor-form footer,
 .command-run-form footer {
@@ -143,13 +140,6 @@
   padding: 22px;
 }
 
-.command-run-history > header {
-  border-bottom: 1px solid var(--zeus-control-border);
-  justify-content: space-between;
-  min-height: 48px;
-  padding: 0 16px;
-}
-
 .command-run-layout {
   display: grid;
   grid-template-columns: minmax(220px, 32%) minmax(0, 1fr);
@@ -158,11 +148,14 @@
 
 .command-run-list {
   border-right: 1px solid var(--zeus-control-border);
+  list-style: none;
+  margin: 0;
   max-height: 480px;
   overflow: auto;
+  padding: 0;
 }
 
-.command-run-list > button {
+.command-run-list > li > button {
   align-items: center;
   appearance: none;
   background: transparent;
@@ -179,17 +172,17 @@
   width: 100%;
 }
 
-.command-run-list > button:hover,
-.command-run-list > button.selected {
+.command-run-list > li > button:hover,
+.command-run-list > li > button.selected {
   background: var(--zeus-product-panel-muted);
 }
 
-.command-run-list > button:focus-visible {
+.command-run-list > li > button:focus-visible {
   outline: 2px solid var(--zeus-control-focus);
   outline-offset: -2px;
 }
 
-.command-run-list > button > span:first-child {
+.command-run-list > li > button > span:first-child {
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -366,6 +359,35 @@
 
 .command-definition-modal {
   width: min(820px, calc(100vw - 40px));
+}
+
+.command-history-modal {
+  grid-template-rows: auto minmax(0, 1fr);
+  width: min(1080px, calc(100vw - 40px));
+}
+
+.command-history-modal-body {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.command-history-modal-body > .command-modal-error {
+  margin: 16px 18px 0;
+}
+
+.command-history-modal .command-run-layout {
+  height: min(600px, calc(100vh - 160px));
+  min-height: 360px;
+}
+
+.command-history-modal .command-run-list {
+  max-height: none;
+  min-height: 0;
+}
+
+.command-history-modal .command-run-detail {
+  min-height: 0;
+  overflow: auto;
 }
 
 .command-permission-modal {
@@ -633,6 +655,19 @@
   .command-run-detail dl,
   .command-run-form dl {
     grid-template-columns: 1fr;
+  }
+
+  .command-history-modal-body {
+    overflow: auto;
+  }
+
+  .command-history-modal .command-run-layout {
+    height: auto;
+    min-height: 0;
+  }
+
+  .command-history-modal .command-run-detail {
+    overflow: visible;
   }
 
   .command-modal {

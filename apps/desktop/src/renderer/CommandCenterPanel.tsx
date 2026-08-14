@@ -221,14 +221,17 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
   const [runningCommand, setRunningCommand] = useState<CommandDefinition | null>(null);
   const [runParameters, setRunParameters] = useState<Record<string, string | number | boolean>>({});
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  const [historyCommand, setHistoryCommand] = useState<CommandDefinition | null>(null);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [runDetail, setRunDetail] = useState<CommandRunDetail | null>(null);
   const [artifactPreviewUrls, setArtifactPreviewUrls] = useState<Record<string, string>>({});
   const artifactPreviewUrlsRef = useRef<Record<string, string>>({});
   const runLogCursorRef = useRef<{ runId: string | null; nextSeq: number }>({ runId: null, nextSeq: 0 });
+  const historyCommandIdRef = useRef<string | null>(null);
 
   const canMaintain = props.mode === 'global' || Boolean(props.project);
-  const activeRuns = useMemo(() => runs.filter((run) => run.status === 'running'), [runs]);
+  const historyRuns = useMemo(() => (historyCommand ? runs.filter((run) => run.commandId === historyCommand.id) : []), [historyCommand, runs]);
+  const activeHistoryRuns = useMemo(() => historyRuns.filter((run) => run.status === 'running'), [historyRuns]);
   const selectedRunIsActive = runs.some((run) => run.id === selectedRunId && run.status === 'running');
   const projectedRunLogContent = useMemo(() => {
     if (!runDetail) return '';
@@ -257,6 +260,9 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
   }, [props.client, props.mode, props.project?.id]);
 
   useEffect(() => {
+    historyCommandIdRef.current = null;
+    setHistoryCommand(null);
+    setSelectedRunId(null);
     if (props.mode !== 'project' || !props.project) {
       setRuns([]);
       return;
@@ -355,6 +361,38 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
     const items = await props.client.loadCommandRuns(props.project.id);
     setRuns(items);
     if (selectRunId) setSelectedRunId(selectRunId);
+  }
+
+  async function openRunHistory(command: CommandDefinition, selectRunId?: string): Promise<void> {
+    if (!props.project) return;
+    historyCommandIdRef.current = command.id;
+    setHistoryCommand(command);
+    setError(null);
+    setRunDetail(null);
+    runLogCursorRef.current = { runId: null, nextSeq: 0 };
+    const currentCommandRuns = runs.filter((run) => run.commandId === command.id);
+    setSelectedRunId(selectRunId ?? currentCommandRuns[0]?.id ?? null);
+    try {
+      const items = await props.client.loadCommandRuns(props.project.id);
+      if (historyCommandIdRef.current !== command.id) return;
+      const commandRuns = items.filter((run) => run.commandId === command.id);
+      setRuns(items);
+      setSelectedRunId(selectRunId ?? commandRuns[0]?.id ?? null);
+    } catch (loadError) {
+      setError(toMessage(loadError));
+    }
+  }
+
+  function closeRunHistory(): void {
+    historyCommandIdRef.current = null;
+    setHistoryCommand(null);
+    setSelectedRunId(null);
+    setRunDetail(null);
+  }
+
+  function selectHistoryRun(runId: string): void {
+    setSelectedRunId(runId);
+    setRunDetail((current) => (current?.run.id === runId ? current : null));
   }
 
   function openCreate(): void {
@@ -490,9 +528,10 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
         confirmationId: confirmation.id,
         parameters: runParameters,
       });
-      await reloadRuns(run.id);
+      const command = runningCommand;
       setRunningCommand(null);
-      setNotice(zh ? `已启动 ${runningCommand.title}。` : `${runningCommand.title} started.`);
+      await openRunHistory(command, run.id);
+      setNotice(zh ? `已启动 ${command.title}。` : `${command.title} started.`);
     } catch (runError) {
       setError(toMessage(runError));
       await reloadRuns().catch(() => undefined);
@@ -578,10 +617,15 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
                 </span>
                 <span className="command-definition-actions">
                   {props.mode === 'project' ? (
-                    <Button size="compact" onClick={() => void openRun(command)} disabled={!command.enabled || !props.project || busy}>
-                      <Play aria-hidden="true" />
-                      {zh ? '运行' : 'Run'}
-                    </Button>
+                    <>
+                      <Button size="compact" onClick={() => void openRunHistory(command)} disabled={!props.project || busy} aria-label={`${zh ? '查看执行历史' : 'View run history'} ${command.title}`} title={zh ? '执行历史' : 'Run history'}>
+                        <ClockCounterClockwise aria-hidden="true" />
+                      </Button>
+                      <Button size="compact" onClick={() => void openRun(command)} disabled={!command.enabled || !props.project || busy}>
+                        <Play aria-hidden="true" />
+                        {zh ? '运行' : 'Run'}
+                      </Button>
+                    </>
                   ) : null}
                   {editable ? (
                     <>
@@ -606,98 +650,6 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
           })
         )}
       </section>
-
-      {props.mode === 'project' ? (
-        <section className="command-run-history" aria-labelledby="command-run-history-title">
-          <header>
-            <span>
-              <ClockCounterClockwise aria-hidden="true" />
-              <strong id="command-run-history-title">{zh ? '执行历史' : 'Run history'}</strong>
-            </span>
-            {activeRuns.length > 0 ? <small>{zh ? `${activeRuns.length} 条运行中` : `${activeRuns.length} running`}</small> : null}
-          </header>
-          {runs.length === 0 ? (
-            <p className="command-center-empty">{zh ? '尚无执行记录。' : 'No run history.'}</p>
-          ) : (
-            <div className="command-run-layout">
-              <div className="command-run-list" role="list">
-                {runs.map((run) => (
-                  <button type="button" role="listitem" className={selectedRunId === run.id ? 'selected' : ''} onClick={() => setSelectedRunId(run.id)} key={run.id}>
-                    <span>
-                      <strong>{run.commandSnapshot.title}</strong>
-                      <small>
-                        {formatRunTime(run.createdAt)} · {zh ? '耗时' : 'Duration'} <CommandRunDurationValue run={run} zh={zh} />
-                      </small>
-                    </span>
-                    <span className={`command-run-status status-${run.status}`}>{runStatusLabel(run.status, zh)}</span>
-                  </button>
-                ))}
-              </div>
-              {runDetail ? (
-                <section className="command-run-detail" aria-label={zh ? '执行详情' : 'Run details'}>
-                  <header>
-                    <span>
-                      <strong>{runDetail.run.commandSnapshot.title}</strong>
-                      <small>{runDetail.run.cwd}</small>
-                    </span>
-                    {runDetail.run.status === 'running' ? (
-                      <Button variant="danger" size="compact" onClick={() => void stopRun(runDetail.run)} disabled={busy}>
-                        <Stop aria-hidden="true" />
-                        {zh ? '停止' : 'Stop'}
-                      </Button>
-                    ) : null}
-                  </header>
-                  <dl>
-                    <div>
-                      <dt>{zh ? '状态' : 'Status'}</dt>
-                      <dd>{runStatusLabel(runDetail.run.status, zh)}</dd>
-                    </div>
-                    <div>
-                      <dt>{zh ? '实际耗时' : 'Duration'}</dt>
-                      <dd>
-                        <CommandRunDurationValue run={runDetail.run} zh={zh} />
-                      </dd>
-                    </div>
-                    <div>
-                      <dt>{zh ? '超时上限' : 'Timeout limit'}</dt>
-                      <dd>{runDetail.run.timeoutSeconds}s</dd>
-                    </div>
-                    <div>
-                      <dt>{zh ? '退出码' : 'Exit code'}</dt>
-                      <dd>{runDetail.run.exitCode ?? '—'}</dd>
-                    </div>
-                  </dl>
-                  {runDetail.run.failureReason ? <p className="command-run-failure">{runDetail.run.failureReason}</p> : null}
-                  <CommandRunLog
-                    key={runDetail.run.id}
-                    runId={runDetail.run.id}
-                    ariaLabel={zh ? '终端日志' : 'Terminal logs'}
-                    content={runDetail.logs.length > 0 ? projectedRunLogContent : zh ? '暂无日志。' : 'No logs yet.'}
-                    hasLogs={runDetail.logTotal > 0}
-                    client={props.client}
-                    zh={zh}
-                  />
-                  {runDetail.artifacts.length > 0 ? (
-                    <section className="command-artifacts" aria-label={zh ? '命令产物' : 'Command artifacts'}>
-                      <strong>{zh ? '产物' : 'Artifacts'}</strong>
-                      {runDetail.artifacts.map((artifact) => (
-                        <div key={artifact.id}>
-                          <button type="button" onClick={() => void previewArtifact(artifact.id)}>
-                            {artifact.relativePath} · {formatBytes(artifact.byteLength)}
-                          </button>
-                          {artifact.mimeType?.startsWith('image/') && artifactPreviewUrls[artifact.id] ? <img src={artifactPreviewUrls[artifact.id]} alt={artifact.relativePath} /> : null}
-                        </div>
-                      ))}
-                    </section>
-                  ) : null}
-                </section>
-              ) : (
-                <p className="command-center-empty">{zh ? '选择一条记录查看终端日志与产物。' : 'Select a run to view logs and artifacts.'}</p>
-              )}
-            </div>
-          )}
-        </section>
-      ) : null}
 
       {editing ? (
         <CommandDefinitionModal
@@ -729,7 +681,159 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
           onSubmit={(event) => void submitRun(event)}
         />
       ) : null}
+
+      {historyCommand && props.project ? (
+        <CommandRunHistoryModal
+          command={historyCommand}
+          project={props.project}
+          runs={historyRuns}
+          activeRunCount={activeHistoryRuns.length}
+          selectedRunId={selectedRunId}
+          runDetail={runDetail}
+          projectedRunLogContent={projectedRunLogContent}
+          artifactPreviewUrls={artifactPreviewUrls}
+          client={props.client}
+          busy={busy}
+          error={error}
+          language={props.language}
+          onClose={closeRunHistory}
+          onSelectRun={selectHistoryRun}
+          onStopRun={(run) => void stopRun(run)}
+          onPreviewArtifact={(artifactId) => void previewArtifact(artifactId)}
+        />
+      ) : null}
     </section>
+  );
+}
+
+function CommandRunHistoryModal(props: {
+  command: CommandDefinition;
+  project: ProjectRecord;
+  runs: CommandRun[];
+  activeRunCount: number;
+  selectedRunId: string | null;
+  runDetail: CommandRunDetail | null;
+  projectedRunLogContent: string;
+  artifactPreviewUrls: Record<string, string>;
+  client: DashboardClient;
+  busy: boolean;
+  error: string | null;
+  language: 'zh-CN' | 'en-US';
+  onClose: () => void;
+  onSelectRun: (runId: string) => void;
+  onStopRun: (run: CommandRun) => void;
+  onPreviewArtifact: (artifactId: string) => void;
+}) {
+  const zh = props.language === 'zh-CN';
+  const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === 'Escape' && !props.busy) props.onClose();
+  };
+  return (
+    <ModalPortal rootClassName="command-modal-portal-root" backdropClassName="command-modal-backdrop" dismissDisabled={props.busy} onDismiss={props.onClose}>
+      <div className="command-modal command-history-modal zeus-solid-form-surface" role="dialog" aria-modal="true" aria-labelledby="command-history-modal-title" onKeyDown={handleKeyDown}>
+        <header className="command-modal-header">
+          <span>
+            <h3 id="command-history-modal-title">{zh ? `${props.command.title} · 执行历史` : `${props.command.title} · Run history`}</h3>
+            <p>
+              {props.project.name} · <code>{props.command.name}</code>
+              {props.activeRunCount > 0 ? ` · ${zh ? `${props.activeRunCount} 条运行中` : `${props.activeRunCount} running`}` : ''}
+            </p>
+          </span>
+          <button type="button" aria-label={zh ? '关闭执行历史' : 'Close run history'} onClick={props.onClose} disabled={props.busy}>
+            ×
+          </button>
+        </header>
+        <div className="command-history-modal-body">
+          {props.error ? (
+            <p className="command-modal-error" role="alert">
+              {props.error}
+            </p>
+          ) : null}
+          {props.runs.length === 0 ? (
+            <p className="command-center-empty">{zh ? '此命令在当前项目中尚无执行记录。' : 'This command has no run history in the current project.'}</p>
+          ) : (
+            <div className="command-run-layout">
+              <ul className="command-run-list" aria-label={zh ? '执行记录' : 'Run records'}>
+                {props.runs.map((run) => (
+                  <li key={run.id}>
+                    <button type="button" aria-pressed={props.selectedRunId === run.id} className={props.selectedRunId === run.id ? 'selected' : ''} onClick={() => props.onSelectRun(run.id)}>
+                      <span>
+                        <strong>{formatRunTime(run.createdAt)}</strong>
+                        <small>
+                          {zh ? '耗时' : 'Duration'} <CommandRunDurationValue run={run} zh={zh} />
+                        </small>
+                      </span>
+                      <span className={`command-run-status status-${run.status}`}>{runStatusLabel(run.status, zh)}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+              {props.runDetail ? (
+                <section className="command-run-detail" aria-label={zh ? '执行详情' : 'Run details'}>
+                  <header>
+                    <span>
+                      <strong>{props.runDetail.run.commandSnapshot.title}</strong>
+                      <small>{props.runDetail.run.cwd}</small>
+                    </span>
+                    {props.runDetail.run.status === 'running' ? (
+                      <Button variant="danger" size="compact" onClick={() => props.onStopRun(props.runDetail!.run)} disabled={props.busy}>
+                        <Stop aria-hidden="true" />
+                        {zh ? '停止' : 'Stop'}
+                      </Button>
+                    ) : null}
+                  </header>
+                  <dl>
+                    <div>
+                      <dt>{zh ? '状态' : 'Status'}</dt>
+                      <dd>{runStatusLabel(props.runDetail.run.status, zh)}</dd>
+                    </div>
+                    <div>
+                      <dt>{zh ? '实际耗时' : 'Duration'}</dt>
+                      <dd>
+                        <CommandRunDurationValue run={props.runDetail.run} zh={zh} />
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>{zh ? '超时上限' : 'Timeout limit'}</dt>
+                      <dd>{props.runDetail.run.timeoutSeconds}s</dd>
+                    </div>
+                    <div>
+                      <dt>{zh ? '退出码' : 'Exit code'}</dt>
+                      <dd>{props.runDetail.run.exitCode ?? '—'}</dd>
+                    </div>
+                  </dl>
+                  {props.runDetail.run.failureReason ? <p className="command-run-failure">{props.runDetail.run.failureReason}</p> : null}
+                  <CommandRunLog
+                    key={props.runDetail.run.id}
+                    runId={props.runDetail.run.id}
+                    ariaLabel={zh ? '终端日志' : 'Terminal logs'}
+                    content={props.runDetail.logs.length > 0 ? props.projectedRunLogContent : zh ? '暂无日志。' : 'No logs yet.'}
+                    hasLogs={props.runDetail.logTotal > 0}
+                    client={props.client}
+                    zh={zh}
+                  />
+                  {props.runDetail.artifacts.length > 0 ? (
+                    <section className="command-artifacts" aria-label={zh ? '命令产物' : 'Command artifacts'}>
+                      <strong>{zh ? '产物' : 'Artifacts'}</strong>
+                      {props.runDetail.artifacts.map((artifact) => (
+                        <div key={artifact.id}>
+                          <button type="button" onClick={() => props.onPreviewArtifact(artifact.id)}>
+                            {artifact.relativePath} · {formatBytes(artifact.byteLength)}
+                          </button>
+                          {artifact.mimeType?.startsWith('image/') && props.artifactPreviewUrls[artifact.id] ? <img src={props.artifactPreviewUrls[artifact.id]} alt={artifact.relativePath} /> : null}
+                        </div>
+                      ))}
+                    </section>
+                  ) : null}
+                </section>
+              ) : (
+                <p className="command-center-empty">{zh ? '选择一条记录查看终端日志与产物。' : 'Select a run to view logs and artifacts.'}</p>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </ModalPortal>
   );
 }
 
