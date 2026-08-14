@@ -2099,172 +2099,174 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                     language={props.language}
                     onLatestContentVisibilityChange={props.onLatestContentVisibilityChange}
                     creationStatus={props.creationStatus}
-                  onEditUserItem={interactionReadOnly ? undefined : actions.onEditUserItem}
-                  onRetryItem={
-                    interactionReadOnly
-                      ? undefined
-                      : (item) => {
-                          if (actions.onRetryItem) {
-                            actions.onRetryItem(item);
-                            return;
+                    onEditUserItem={interactionReadOnly ? undefined : actions.onEditUserItem}
+                    onRetryItem={
+                      interactionReadOnly
+                        ? undefined
+                        : (item) => {
+                            if (actions.onRetryItem) {
+                              actions.onRetryItem(item);
+                              return;
+                            }
+                            composerRef.current?.focus();
                           }
-                          composerRef.current?.focus();
-                        }
-                  }
-                  openPlanItemId={planWorkspaceItemId}
-                  onOpenPlan={(item) => {
-                    contextReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-                    setContextFullWidth(false);
-                    setContextWorkspace({ kind: 'plan', itemId: item.localItemId ?? item.itemId });
-                  }}
-                  onOpenResource={openConversationResource}
-                  onLoadResourcePreview={actions.onLoadResourcePreview}
-                  onReviewTurnChanges={(changeSet, fileId) => {
-                    contextReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-                    setContextFullWidth(false);
-                    setContextWorkspace({
-                      kind: 'turn_diff',
-                      turnId: changeSet.providerTurnId,
-                      ...(fileId ? { initialFileId: fileId } : {}),
-                    });
-                  }}
-                  onOperateTurnChangeSet={!interactionReadOnly && actions.onOperateTurnChangeSet ? operateTurnChangeSet : undefined}
-                  onAddResponseAnnotation={!interactionReadOnly && actions.onContextDraftChange ? addResponseAnnotation : undefined}
-                  onUpdateResponseAnnotation={!interactionReadOnly && actions.onContextDraftChange ? updateResponseAnnotation : undefined}
-                  onRemoveResponseAnnotation={!interactionReadOnly && actions.onContextDraftChange ? removeResponseAnnotation : undefined}
-                  onOpenSideChat={
-                    !interactionReadOnly && actions.onAskSideChat
-                      ? (selectedText) => {
-                          contextReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-                          setContextFullWidth(false);
-                          setContextWorkspace({ kind: 'side_chat', selectedText });
-                        }
-                      : undefined
-                  }
+                    }
+                    openPlanItemId={planWorkspaceItemId}
+                    onOpenPlan={(item) => {
+                      contextReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+                      setContextFullWidth(false);
+                      setContextWorkspace({ kind: 'plan', itemId: item.localItemId ?? item.itemId });
+                    }}
+                    onOpenResource={openConversationResource}
+                    onLoadResourcePreview={actions.onLoadResourcePreview}
+                    onReviewTurnChanges={(changeSet, fileId) => {
+                      contextReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+                      setContextFullWidth(false);
+                      setContextWorkspace({
+                        kind: 'turn_diff',
+                        turnId: changeSet.providerTurnId,
+                        ...(fileId ? { initialFileId: fileId } : {}),
+                      });
+                    }}
+                    onOperateTurnChangeSet={!interactionReadOnly && actions.onOperateTurnChangeSet ? operateTurnChangeSet : undefined}
+                    onAddResponseAnnotation={!interactionReadOnly && actions.onContextDraftChange ? addResponseAnnotation : undefined}
+                    onUpdateResponseAnnotation={!interactionReadOnly && actions.onContextDraftChange ? updateResponseAnnotation : undefined}
+                    onRemoveResponseAnnotation={!interactionReadOnly && actions.onContextDraftChange ? removeResponseAnnotation : undefined}
+                    onOpenSideChat={
+                      !interactionReadOnly && actions.onAskSideChat
+                        ? (selectedText) => {
+                            contextReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+                            setContextFullWidth(false);
+                            setContextWorkspace({ kind: 'side_chat', selectedText });
+                          }
+                        : undefined
+                    }
                   />
-                {props.suppressComposer || !dockedPlan ? null : <SessionPlanProgress plan={dockedPlan} language={props.language} />}
-                {props.suppressComposer ? null : blockingPendingRequest ? (
-                  <section className="session-interaction-dock" aria-label={props.language === 'zh-CN' ? '待处理交互' : 'Pending interaction'}>
-                    <PendingRequestSurface
-                      key={blockingPendingRequest.id}
-                      request={blockingPendingRequest}
-                      language={props.language}
-                      permissionMode={props.state?.snapshot?.permissionMode ?? 'read-only'}
-                      filePaths={linkedFileApprovalPaths(props.state, blockingPendingRequest)}
-                      autoFocus
-                      busy={isRequestResponseBusy(props.state?.busyOperation ?? null, blockingPendingRequest.id)}
-                      error={requestErrors[blockingPendingRequest.id]}
-                      onRespond={(_requestId, response) => respond(blockingPendingRequest, response)}
-                      onSnooze={actions.onSnoozeRequest ? () => actions.onSnoozeRequest?.(blockingPendingRequest.id) : undefined}
-                      onChooseAttachments={actions.onChooseStartAttachments}
-                      answerAttachmentsSupported={(props.state?.snapshot?.agent?.kind ?? props.conversation?.agent?.kind ?? 'codex') === 'codex'}
-                    />
-                    {renderQueuedConversationMessages()}
-                  </section>
-                ) : blockingPlanImplementationRequest ? (
-                  <section className="session-interaction-dock" aria-label={props.language === 'zh-CN' ? '待处理交互' : 'Pending interaction'}>
-                    <PlanImplementationRequestSurface
-                      key={blockingPlanImplementationRequest.id}
-                      request={blockingPlanImplementationRequest}
-                      language={props.language}
-                      autoFocus
-                      busy={isRequestResponseBusy(props.state?.busyOperation ?? null, blockingPlanImplementationRequest.id)}
-                      error={requestErrors[blockingPlanImplementationRequest.id]}
-                      onRespond={(_requestId, response) => respondToPlanImplementationRequest(blockingPlanImplementationRequest, response)}
-                    />
-                    {renderQueuedConversationMessages()}
-                  </section>
-                ) : null}
-                {props.suppressComposer || props.suppressInputComposer || blockingUserInputRequest ? null : (
-                  <>
-                    {renderQueuedConversationMessages()}{goal ? <GoalRail goal={goal} language={props.language} onOpen={() => setGoalPanelOpen(true)} /> : null}
+                  {props.suppressComposer || !dockedPlan ? null : <SessionPlanProgress plan={dockedPlan} language={props.language} />}
+                  {props.suppressComposer ? null : blockingPendingRequest ? (
+                    <section className="session-interaction-dock" aria-label={props.language === 'zh-CN' ? '待处理交互' : 'Pending interaction'}>
+                      <PendingRequestSurface
+                        key={blockingPendingRequest.id}
+                        request={blockingPendingRequest}
+                        language={props.language}
+                        permissionMode={props.state?.snapshot?.permissionMode ?? 'read-only'}
+                        filePaths={linkedFileApprovalPaths(props.state, blockingPendingRequest)}
+                        autoFocus
+                        busy={isRequestResponseBusy(props.state?.busyOperation ?? null, blockingPendingRequest.id)}
+                        error={requestErrors[blockingPendingRequest.id]}
+                        onRespond={(_requestId, response) => respond(blockingPendingRequest, response)}
+                        onSnooze={actions.onSnoozeRequest ? () => actions.onSnoozeRequest?.(blockingPendingRequest.id) : undefined}
+                        onChooseAttachments={actions.onChooseStartAttachments}
+                        answerAttachmentsSupported={(props.state?.snapshot?.agent?.kind ?? props.conversation?.agent?.kind ?? 'codex') === 'codex'}
+                      />
+                      {renderQueuedConversationMessages()}
+                    </section>
+                  ) : blockingPlanImplementationRequest ? (
+                    <section className="session-interaction-dock" aria-label={props.language === 'zh-CN' ? '待处理交互' : 'Pending interaction'}>
+                      <PlanImplementationRequestSurface
+                        key={blockingPlanImplementationRequest.id}
+                        request={blockingPlanImplementationRequest}
+                        language={props.language}
+                        autoFocus
+                        busy={isRequestResponseBusy(props.state?.busyOperation ?? null, blockingPlanImplementationRequest.id)}
+                        error={requestErrors[blockingPlanImplementationRequest.id]}
+                        onRespond={(_requestId, response) => respondToPlanImplementationRequest(blockingPlanImplementationRequest, response)}
+                      />
+                      {renderQueuedConversationMessages()}
+                    </section>
+                  ) : null}
+                  {props.suppressComposer || props.suppressInputComposer || blockingUserInputRequest ? null : (
+                    <>
+                      {renderQueuedConversationMessages()}
+                      {goal ? <GoalRail goal={goal} language={props.language} onOpen={() => setGoalPanelOpen(true)} /> : null}
                       {renderConversationComposer()}
                     </>
                   )}
                   {interruptArmed ? (
-                  <p className="session-interrupt-confirm" role="status">
-                    {copy.interruptConfirm}
-                  </p>
+                    <p className="session-interrupt-confirm" role="status">
+                      {copy.interruptConfirm}
+                    </p>
+                  ) : null}
+                </div>
+                {contextMounted && props.conversation ? (
+                  <motion.aside className="session-browser-sidecar session-context-sidecar" aria-label={contextWorkspaceLabel(contextWorkspace, props.language)} style={{ width: browserAnimatedWidth, opacity: browserVisibilityProgress }}>
+                    <div
+                      className="session-browser-resizer"
+                      role="separator"
+                      aria-label={props.language === 'zh-CN' ? '调整会话与浏览器宽度' : 'Resize conversation and browser'}
+                      aria-orientation="vertical"
+                      aria-valuemin={38}
+                      aria-valuemax={72}
+                      aria-valuenow={browserPaneShare}
+                      tabIndex={contextFullWidth ? -1 : 0}
+                      onPointerDown={handleBrowserResizePointerDown}
+                      onPointerMove={handleBrowserResizePointerMove}
+                      onPointerUp={finishBrowserResize}
+                      onPointerCancel={finishBrowserResize}
+                      onLostPointerCapture={() => {
+                        browserResizeActiveRef.current = false;
+                        setBrowserResizing(false);
+                      }}
+                      onKeyDown={handleBrowserResizeKeyDown}
+                    />
+                    <div className="session-browser-pane">
+                      {contextWorkspace.kind === 'browser' && actions.onStageBrowserComments ? (
+                        <BrowserWorkspace
+                          conversationId={props.state?.conversationId ?? props.conversation.id}
+                          language={props.language}
+                          disabled={interactionReadOnly || nonResumableNative}
+                          suspended={browserResizing}
+                          expanded={contextFullWidth}
+                          onClose={closeContextWorkspace}
+                          onToggleExpanded={() => setContextFullWidth((expanded) => !expanded)}
+                          onResetSize={() => {
+                            setBrowserPaneShare(56);
+                            setContextFullWidth(false);
+                          }}
+                          onStageComments={async (prepared) => {
+                            await actions.onStageBrowserComments?.(prepared);
+                            closeContextWorkspace({ focusComposer: true });
+                          }}
+                        />
+                      ) : null}
+                      {contextWorkspace.kind === 'plan' && planWorkspaceItem ? (
+                        <PlanWorkspace item={planWorkspaceItem} language={props.language} fullWidth={contextFullWidth} onFullWidthChange={setContextFullWidth} onClose={closeContextWorkspace} />
+                      ) : null}
+                      {contextWorkspace.kind === 'source' ? (
+                        <SourceWorkspace
+                          preview={contextWorkspace.preview}
+                          language={props.language}
+                          fullWidth={contextFullWidth}
+                          onFullWidthChange={setContextFullWidth}
+                          onClose={closeContextWorkspace}
+                          comments={props.state?.contextDraft.codeComments}
+                          onCommentsChange={!interactionReadOnly && actions.onContextDraftChange ? updateCodeComments : undefined}
+                        />
+                      ) : null}
+                      {contextWorkspace.kind === 'turn_diff' && turnDiffChangeSet ? (
+                        <TurnDiffWorkspace
+                          changeSet={turnDiffChangeSet}
+                          initialFileId={contextWorkspace.initialFileId}
+                          language={props.language}
+                          fullWidth={contextFullWidth}
+                          onFullWidthChange={setContextFullWidth}
+                          onClose={closeContextWorkspace}
+                          onOperate={!interactionReadOnly && actions.onOperateTurnChangeSet ? operateTurnChangeSet : undefined}
+                          onOpenFile={(file, line) => openTurnChangeFile(turnDiffChangeSet, file, line)}
+                          comments={props.state?.contextDraft.codeComments}
+                          onCommentsChange={!interactionReadOnly && actions.onContextDraftChange ? updateCodeComments : undefined}
+                        />
+                      ) : null}
+                      {contextWorkspace.kind === 'side_chat' && actions.onAskSideChat ? (
+                        <SideChatWorkspace selectedText={contextWorkspace.selectedText} language={props.language} onAsk={(question) => actions.onAskSideChat!(contextWorkspace.selectedText, question)} onClose={closeContextWorkspace} />
+                      ) : null}
+                    </div>
+                  </motion.aside>
                 ) : null}
               </div>
-              {contextMounted && props.conversation ? (
-                <motion.aside className="session-browser-sidecar session-context-sidecar" aria-label={contextWorkspaceLabel(contextWorkspace, props.language)} style={{ width: browserAnimatedWidth, opacity: browserVisibilityProgress }}>
-                  <div
-                    className="session-browser-resizer"
-                    role="separator"
-                    aria-label={props.language === 'zh-CN' ? '调整会话与浏览器宽度' : 'Resize conversation and browser'}
-                    aria-orientation="vertical"
-                    aria-valuemin={38}
-                    aria-valuemax={72}
-                    aria-valuenow={browserPaneShare}
-                    tabIndex={contextFullWidth ? -1 : 0}
-                    onPointerDown={handleBrowserResizePointerDown}
-                    onPointerMove={handleBrowserResizePointerMove}
-                    onPointerUp={finishBrowserResize}
-                    onPointerCancel={finishBrowserResize}
-                    onLostPointerCapture={() => {
-                      browserResizeActiveRef.current = false;
-                      setBrowserResizing(false);
-                    }}
-                    onKeyDown={handleBrowserResizeKeyDown}
-                  />
-                  <div className="session-browser-pane">
-                    {contextWorkspace.kind === 'browser' && actions.onStageBrowserComments ? (
-                      <BrowserWorkspace
-                        conversationId={props.state?.conversationId ?? props.conversation.id}
-                        language={props.language}
-                        disabled={interactionReadOnly || nonResumableNative}
-                        suspended={browserResizing}
-                        expanded={contextFullWidth}
-                        onClose={closeContextWorkspace}
-                        onToggleExpanded={() => setContextFullWidth((expanded) => !expanded)}
-                        onResetSize={() => {
-                          setBrowserPaneShare(56);
-                          setContextFullWidth(false);
-                        }}
-                        onStageComments={async (prepared) => {
-                          await actions.onStageBrowserComments?.(prepared);
-                          closeContextWorkspace({ focusComposer: true });
-                        }}
-                      />
-                    ) : null}
-                    {contextWorkspace.kind === 'plan' && planWorkspaceItem ? (
-                      <PlanWorkspace item={planWorkspaceItem} language={props.language} fullWidth={contextFullWidth} onFullWidthChange={setContextFullWidth} onClose={closeContextWorkspace} />
-                    ) : null}
-                    {contextWorkspace.kind === 'source' ? (
-                      <SourceWorkspace
-                        preview={contextWorkspace.preview}
-                        language={props.language}
-                        fullWidth={contextFullWidth}
-                        onFullWidthChange={setContextFullWidth}
-                        onClose={closeContextWorkspace}
-                        comments={props.state?.contextDraft.codeComments}
-                        onCommentsChange={!interactionReadOnly && actions.onContextDraftChange ? updateCodeComments : undefined}
-                      />
-                    ) : null}
-                    {contextWorkspace.kind === 'turn_diff' && turnDiffChangeSet ? (
-                      <TurnDiffWorkspace
-                        changeSet={turnDiffChangeSet}
-                        initialFileId={contextWorkspace.initialFileId}
-                        language={props.language}
-                        fullWidth={contextFullWidth}
-                        onFullWidthChange={setContextFullWidth}
-                        onClose={closeContextWorkspace}
-                        onOperate={!interactionReadOnly && actions.onOperateTurnChangeSet ? operateTurnChangeSet : undefined}
-                        onOpenFile={(file, line) => openTurnChangeFile(turnDiffChangeSet, file, line)}
-                        comments={props.state?.contextDraft.codeComments}
-                        onCommentsChange={!interactionReadOnly && actions.onContextDraftChange ? updateCodeComments : undefined}
-                      />
-                    ) : null}
-                    {contextWorkspace.kind === 'side_chat' && actions.onAskSideChat ? (
-                      <SideChatWorkspace selectedText={contextWorkspace.selectedText} language={props.language} onAsk={(question) => actions.onAskSideChat!(contextWorkspace.selectedText, question)} onClose={closeContextWorkspace} />
-                    ) : null}
-                  </div>
-                </motion.aside>
-              ) : null}
             </div>
           </div>
-        </div><GoalPanel
+          <GoalPanel
             open={goalPanelOpen}
             language={props.language}
             goal={goal}
