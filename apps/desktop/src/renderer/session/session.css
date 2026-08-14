@@ -14320,7 +14320,7 @@
 /* ZEUS-0171：两个会话入口共用可读正文尺寸，过程内容保留次要色，普通答复单独增强清晰度。 */
 .session-codex-parity-v1 {
   --session-answer-text: rgb(29 31 34);
-  --session-process-text: color-mix(in srgb, var(--session-text) 72%, var(--session-text-muted));
+  --session-process-text: var(--session-text-muted);
   --session-readable-font-size: 15px;
 }
 
@@ -14333,11 +14333,12 @@
   font-weight: 400;
 }
 
-.session-codex-parity-v1 .session-commentary-flow {
+.session-codex-parity-v1 .session-commentary-flow,
+.session-codex-parity-v1 .session-commentary-flow .session-markdown {
   color: var(--session-process-text);
 }
 
-/* ZEUS-0213：使用与原规则相同或更高的优先级，避免 :where() 使可读过程退回到 13–14px。 */
+/* ZEUS-0274：过程说明与顶层过程行共用正文尺寸，活动状态不得改变阅读层级。 */
 .session-codex-parity-v1 .session-commentary-flow .session-markdown,
 .session-codex-parity-v1 .session-reasoning-summary,
 .session-codex-parity-v1 .session-activity-group > details > summary,
@@ -14354,6 +14355,12 @@
 .session-codex-parity-v1 .session-commentary-flow .session-markdown {
   font-weight: 400;
   line-height: 1.6;
+}
+
+/* 多行摘要保持顶部锚定，图标只在首行行盒内居中。 */
+.session-codex-parity-v1 .session-reasoning-summary-icon {
+  block-size: 1.5em;
+  align-self: start;
 }
 
 .session-codex-parity-v1 .session-command-summary-copy strong,
