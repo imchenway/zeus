@@ -9,6 +9,8 @@ const repositoryRoot = resolve(import.meta.dirname, '..');
 const repository = 'imchenway/zeus';
 const releaseFiles = ['package.json', 'apps/desktop/package.json'];
 const formatExtensions = new Set(['.ts', '.tsx', '.cts', '.cjs', '.mjs', '.js', '.json', '.yml', '.yaml']);
+const documentationWhitespaceExtensions = new Set(['.md', '.mdx', '.markdown']);
+const documentationHtmlExtensions = new Set(['.html', '.htm']);
 const isolatedSourceEnvironment = 'ZEUS_RELEASE_ISOLATED_SOURCE';
 const isolationValidationEnvironment = 'ZEUS_RELEASE_VALIDATE_ISOLATION';
 const remoteReadTimeoutMs = 60_000;
@@ -274,12 +276,90 @@ function inspectCommittedCandidateWhitespace(headSha) {
   if (baseTagResult.status !== 0 || !/^v\d+\.\d+\.\d+$/u.test(baseTag)) {
     throw new Error(`发布前无法确认候选提交的本地稳定基线：${baseTagResult.stderr.trim() || baseTagResult.stdout.trim() || 'missing'}`);
   }
-  const result = capture('git', ['--no-pager', 'diff', '--check', `${baseTag}^{commit}`, headSha], true);
-  if (result.status === 0) {
-    console.log(`发布候选快速空白检查通过：${baseTag}..${headSha.slice(0, 12)}`);
+  const inspection = inspectGitDiffCheck({
+    label: '发布候选快速检查',
+    diffArgs: [`${baseTag}^{commit}`, headSha],
+    allowAutoFix: true,
+  });
+  if (inspection.autoFixable.length > 0) {
+    console.log(`发布候选存在可自动修复的源码空白问题，将进入自动格式化阶段：${baseTag}..${headSha.slice(0, 12)}（${inspection.autoFixable.length} 项）`);
     return;
   }
-  console.log(`发布候选存在可修复的格式或空白问题，将进入自动格式化阶段：${baseTag}..${headSha.slice(0, 12)}`);
+  const warningSuffix = inspection.warnings.length > 0 ? `，另有 ${inspection.warnings.length} 项文档空白警告` : '';
+  console.log(`发布候选快速检查通过：${baseTag}..${headSha.slice(0, 12)}${warningSuffix}`);
+}
+
+function inspectGitDiffCheck(input) {
+  const commandArgs = ['-c', 'core.quotePath=false', '--no-pager', 'diff', '--check', ...input.diffArgs];
+  const result = capture('git', commandArgs, true);
+  if (result.status === 0) return { warnings: [], autoFixable: [] };
+
+  const report = [result.stdout, result.stderr].filter(Boolean).join('\n').trim();
+  const issues = [];
+  const unparsed = [];
+  for (const reportLine of report.split(/\r?\n/u)) {
+    if (!reportLine || reportLine.startsWith('+') || reportLine.startsWith('-')) continue;
+    const match = reportLine.match(/^(.*):(\d+): (.+)$/u);
+    if (!match) {
+      unparsed.push(reportLine);
+      continue;
+    }
+    issues.push({ path: normalizeGitDiffCheckPath(match[1]), line: Number(match[2]), message: match[3] });
+  }
+  if (issues.length === 0 || unparsed.length > 0) {
+    throw new Error(`${input.label}无法解析 Git 候选检查结果：\n${report || `退出码 ${result.status}`}`);
+  }
+
+  const warnings = [];
+  const autoFixable = [];
+  const blocking = [];
+  for (const issue of issues) {
+    if (isDocumentationWhitespaceWarning(issue)) {
+      warnings.push(issue);
+      continue;
+    }
+    if (input.allowAutoFix && isAutoFixableWhitespaceIssue(issue)) {
+      autoFixable.push(issue);
+      continue;
+    }
+    blocking.push(issue);
+  }
+
+  if (warnings.length > 0) {
+    console.warn(`[文档空白警告，不阻断发布] ${warnings.length} 项\n${warnings.map(formatGitDiffCheckIssue).join('\n')}`);
+  }
+  if (blocking.length > 0) {
+    throw new Error(`${input.label}发现阻断发布的候选问题：\n${blocking.map(formatGitDiffCheckIssue).join('\n')}`);
+  }
+  return { warnings, autoFixable };
+}
+
+function isDocumentationWhitespaceWarning(issue) {
+  if (!isWhitespaceIssue(issue.message)) return false;
+  const extension = extname(issue.path).toLocaleLowerCase();
+  if (documentationWhitespaceExtensions.has(extension)) return true;
+  return documentationHtmlExtensions.has(extension) && issue.path.startsWith('docs/');
+}
+
+function normalizeGitDiffCheckPath(path) {
+  if (!path.startsWith('"') || !path.endsWith('"')) return path;
+  try {
+    return JSON.parse(path);
+  } catch {
+    return path.slice(1, -1);
+  }
+}
+
+function isAutoFixableWhitespaceIssue(issue) {
+  return isWhitespaceIssue(issue.message) && formatExtensions.has(extname(issue.path).toLocaleLowerCase());
+}
+
+function isWhitespaceIssue(message) {
+  return /^(?:trailing whitespace|new blank line at EOF|space before tab in indent)\.?$/u.test(message);
+}
+
+function formatGitDiffCheckIssue(issue) {
+  return `${issue.path}:${issue.line}: ${issue.message}`;
 }
 
 function assertGitHubAuthentication() {
@@ -490,6 +570,11 @@ function formatReleaseCandidate(state) {
     throw new Error(`自动格式化产生了候选范围之外的变更，拒绝提交：\n${unexpectedPaths.join('\n')}`);
   }
 
+  inspectGitDiffCheck({
+    label: '自动格式化后的发布候选检查',
+    diffArgs: [`${state.baseTag}^{commit}`],
+    allowAutoFix: false,
+  });
   runGit(['add', '--', ...formattedPaths]);
   runGit(['diff', '--cached', '--check', '--', ...formattedPaths]);
   runGit(['commit', '-m', `style(release): 自动修复 ${state.tag} 候选格式`, '--', ...formattedPaths]);
@@ -609,11 +694,15 @@ async function ensureCandidatePreflight(state) {
   const currentHead = git(['rev-parse', 'HEAD']);
   if (currentHead !== state.sourceHead) throw new Error(`快速前置检查发现候选提交漂移：expected=${state.sourceHead} actual=${currentHead}`);
   if (git(['status', '--short'])) throw new Error('快速前置检查要求发布候选工作区干净。');
-  runGit(['diff', '--check', `${state.baseTag}^{commit}`, state.sourceHead]);
+  inspectGitDiffCheck({
+    label: '候选前置检查',
+    diffArgs: [`${state.baseTag}^{commit}`, state.sourceHead],
+    allowAutoFix: false,
+  });
   if (resolveLocalTagSha(state.tag) || resolveRemoteReference(`refs/tags/${state.tag}`)) {
     throw new Error(`目标标签 ${state.tag} 已存在，拒绝把新候选写入同一版本。`);
   }
-  console.log('快速前置检查通过：候选提交、工作区、Git 空白错误和目标标签均正常。');
+  console.log('快速前置检查通过：候选提交、工作区、Git 候选检查和目标标签均正常。');
 }
 
 function ensureFastLocalGate(state) {
@@ -622,7 +711,11 @@ function ensureFastLocalGate(state) {
   if (resolveLocalTagSha(state.tag) || resolveRemoteReference(`refs/tags/${state.tag}`)) {
     throw new Error(`目标标签 ${state.tag} 已存在，但当前发布缺少可恢复的检查摘要。`);
   }
-  runGit(['diff', '--check', `${state.releaseCommit}^`, state.releaseCommit]);
+  inspectGitDiffCheck({
+    label: '发布提交空白检查',
+    diffArgs: [`${state.releaseCommit}^`, state.releaseCommit],
+    allowAutoFix: false,
+  });
   const gateDirectory = join(state.stateDirectory, 'gate');
   mkdirSync(gateDirectory, { recursive: true, mode: 0o700 });
   const summaryPath = join(gateDirectory, `Zeus-${state.version}-release-fast-preflight-summary.md`);
