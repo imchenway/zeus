@@ -17578,6 +17578,46 @@ body[data-surface='task-git-delivery'] .task-git-delivery-layout {
   line-height: 18px;
 }
 
+.macos-ai-app .task-attachment-zoom-state {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  max-inline-size: 420px;
+  margin: 0;
+  text-align: center;
+}
+
+.macos-ai-app .task-attachment-preview-spinner {
+  inline-size: 18px;
+  block-size: 18px;
+  border: 2px solid color-mix(in oklch, var(--zeus-product-muted) 34%, transparent);
+  border-block-start-color: var(--zeus-product-accent);
+  border-radius: 9999px;
+  animation: task-save-spinner-rotate 720ms linear infinite;
+}
+
+.macos-ai-app .task-attachment-preview-retry {
+  min-block-size: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--zeus-control-border);
+  border-radius: 7px;
+  background: var(--zeus-control-bg);
+  color: var(--zeus-product-text);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 620;
+}
+
+.macos-ai-app .task-attachment-preview-retry:hover {
+  border-color: var(--zeus-control-border-hover);
+  background: var(--zeus-control-bg-hover);
+}
+
+.macos-ai-app .task-attachment-preview-retry:focus-visible {
+  outline: 0;
+  box-shadow: var(--zeus-control-focus);
+}
+
 .macos-ai-app .task-attachment-zoom-path {
   display: grid;
   gap: 4px;
@@ -17662,7 +17702,8 @@ body[data-surface='task-git-delivery'] .task-git-delivery-layout {
 @media (prefers-reduced-motion: reduce) {
   .macos-ai-app .task-create-modal,
   .macos-ai-app .task-attachment-filmstrip,
-  .macos-ai-app .task-attachment-zoom-dialog {
+  .macos-ai-app .task-attachment-zoom-dialog,
+  .macos-ai-app .task-attachment-preview-spinner {
     transition: none;
     animation: none;
     transform: none;
