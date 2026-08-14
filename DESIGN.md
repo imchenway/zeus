@@ -212,7 +212,7 @@ content:
     - "真实 adapter id、model id、命令、路径、日志、枚举原值和用户输入保持事实，不硬翻译。"
     - "错误文案写清发生了什么、影响范围和下一步，不暴露密钥、完整 token 或无关堆栈。"
     - "空态说明这里会出现什么、为什么重要，以及第一步动作。"
-    - "任务说明、用户消息、智能体正文和思考摘要属于保真正文：保留原始空格、Tab、换行和连续空行，超宽长行允许视觉软换行；标题、按钮和表格摘要继续使用紧凑布局。"
+    - "任务说明、用户消息、智能体正文和思考摘要属于保真正文：保留原始空格、Tab、换行和连续空行，超宽长行允许视觉软换行；Markdown 段落、列表、引用和表格节点之间的结构空白不属于原文，不得显示为额外空行；标题、按钮和表格摘要继续使用紧凑布局。"
 quality_gates:
   must_have_states: ["loading", "empty", "error", "permission-denied", "external-wait"]
   must_have_accessibility: ["focus-visible", "keyboard-navigation", "aria-current-or-selected", "reduced-motion"]
