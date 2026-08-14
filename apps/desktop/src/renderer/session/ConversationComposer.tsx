@@ -105,6 +105,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
   const writable = props.readOnly !== true && props.state.conversationState !== 'legacy_readonly';
   const hasDraft =
     props.state.draft.trim().length > 0 || props.state.attachments.length > 0 || Boolean(props.state.browserSubmission) || props.state.contextDraft.responseAnnotations.length > 0 || props.state.contextDraft.codeComments.length > 0;
+  const showSendCommand = !active || hasDraft;
   const modelPresentation = useMemo(() => presentModelOptions(props.capabilities?.models ?? [], selectedModel, props.language), [props.capabilities?.models, props.language, selectedModel]);
   const effectiveModel = modelPresentation.selectedId || selectedModel;
   const selectedCapability = resolveModelCapability(modelPresentation.models, effectiveModel);
@@ -351,7 +352,11 @@ export function ConversationComposer(props: ConversationComposerProps) {
               ) : null}
             </span>
             <span className="session-primary-command-slot" data-primary-command-slot="true">
-              {active ? (
+              {showSendCommand ? (
+                <button type="button" className="session-send-button" aria-label={copy.send} onClick={() => submit('queue')} disabled={!writable || !hasDraft || busy} aria-busy={busy || undefined}>
+                  {busy ? <CircleNotch className="session-command-spinner" aria-hidden="true" weight="bold" /> : <ArrowUp aria-hidden="true" weight="bold" />}
+                </button>
+              ) : (
                 <button
                   type="button"
                   className="session-stop-button"
@@ -360,10 +365,6 @@ export function ConversationComposer(props: ConversationComposerProps) {
                   disabled={!writable || !props.state.activeTurnId || props.state.startedTurnId !== props.state.activeTurnId || busy}
                 >
                   <Square aria-hidden="true" weight="fill" />
-                </button>
-              ) : (
-                <button type="button" className="session-send-button" aria-label={copy.send} onClick={() => submit('queue')} disabled={!writable || !hasDraft || busy} aria-busy={busy || undefined}>
-                  {busy ? <CircleNotch className="session-command-spinner" aria-hidden="true" weight="bold" /> : <ArrowUp aria-hidden="true" weight="bold" />}
                 </button>
               )}
             </span>
