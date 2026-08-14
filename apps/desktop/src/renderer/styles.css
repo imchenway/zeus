@@ -1048,9 +1048,11 @@ a {
 .project-sidebar-conversations .session-conversation-project-items {
   gap: 1px;
 }
-.project-sidebar-conversations .session-conversation-tree-row {
-  min-height: 26px;
-  padding: 4px 6px 4px 4px;
+.macos-ai-app.zeus-shell .project-first-sidebar .project-sidebar-conversations .session-conversation-tree-row {
+  block-size: 28px;
+  box-sizing: border-box;
+  min-block-size: 28px;
+  padding: 0 6px 0 4px;
 }
 .project-sidebar-conversations .session-conversation-tree-row strong {
   font-size: 12px;
@@ -1059,18 +1061,41 @@ a {
 .project-sidebar-conversations .session-conversation-archive-button {
   right: 4px;
 }
-.project-sidebar-conversations .session-conversation-runtime-chip {
-  min-block-size: 20px;
-  padding: 2px 7px;
+.project-sidebar-conversations .session-conversation-status-icon {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  block-size: 18px;
+  color: var(--zeus-product-muted);
+  display: inline-flex;
+  flex: 0 0 18px;
+  inline-size: 18px;
+  justify-content: center;
+  padding: 0;
+  transition: color 120ms var(--zeus-motion-ease-out);
 }
-.project-sidebar-conversations .session-conversation-runtime-chip strong {
-  font-size: 10px;
-  white-space: nowrap;
+.project-sidebar-conversations .session-conversation-status-icon > svg {
+  block-size: 16px;
+  inline-size: 16px;
 }
-.project-sidebar-conversations .session-conversation-runtime-chip .task-run-status-spinner,
-.project-sidebar-conversations .session-conversation-runtime-chip .task-run-status-mark {
-  block-size: 12px;
-  inline-size: 12px;
+.project-sidebar-conversations .session-conversation-status-icon:is(.is-connecting, .is-reconnecting, .is-running) {
+  color: var(--zeus-task-status-blue);
+}
+.project-sidebar-conversations .session-conversation-status-icon:is(.is-waiting_user, .is-waiting_approval, .is-paused) {
+  color: var(--zeus-task-status-amber);
+}
+.project-sidebar-conversations .session-conversation-status-icon.is-failed {
+  color: var(--zeus-danger-text);
+}
+.project-sidebar-conversations .session-conversation-status-icon.is-completed {
+  color: var(--zeus-task-status-green);
+}
+.project-sidebar-conversations .session-conversation-status-icon.is-unread::before {
+  background: var(--session-accent);
+  block-size: 7px;
+  border-radius: 999px;
+  content: '';
+  inline-size: 7px;
 }
 .project-sidebar-conversations .session-conversation-show-more {
   background: transparent;
@@ -1089,33 +1114,6 @@ a {
   background: var(--zeus-source-list-hover);
   color: var(--zeus-product-text);
   outline: 0;
-}
-@container project-sidebar-conversations (max-width: 250px) {
-  .macos-ai-app .session-conversation-runtime-chip {
-    justify-content: center;
-    padding-inline: 4px;
-  }
-  .macos-ai-app .session-conversation-runtime-chip strong {
-    display: none;
-  }
-  .macos-ai-app .session-conversation-runtime-chip .task-run-status-mark {
-    display: block;
-  }
-  .macos-ai-app .session-conversation-status-pill.is-completed {
-    align-items: center;
-    display: inline-flex;
-    font-size: 0;
-    justify-content: center;
-    min-block-size: 20px;
-    padding-inline: 6px;
-  }
-  .macos-ai-app .session-conversation-status-pill.is-completed::before {
-    background: currentcolor;
-    block-size: 7px;
-    border-radius: 999px;
-    content: '';
-    inline-size: 7px;
-  }
 }
 .project-sidebar-conversations .session-conversation-status-group {
   display: grid;
@@ -9218,42 +9216,6 @@ body[data-surface='project-git-diff'] #root {
   }
 }
 
-.macos-ai-app .session-conversation-status-pill {
-  border-radius: 999px;
-  font-size: 10px;
-  font-weight: 650;
-  line-height: 18px;
-  padding-inline: 8px;
-}
-
-.macos-ai-app .session-conversation-status-pill.is-pending_approval {
-  background: color-mix(in srgb, var(--session-success) 14%, transparent);
-  color: var(--session-success);
-}
-
-.macos-ai-app .session-conversation-status-pill.is-pending_user_input {
-  background: color-mix(in srgb, var(--session-accent) 14%, transparent);
-  color: var(--session-accent);
-}
-
-.macos-ai-app .session-conversation-status-pill.is-completed {
-  background: color-mix(in srgb, var(--session-accent) 12%, transparent);
-  color: var(--session-accent);
-}
-
-.macos-ai-app .session-conversation-status-pill.is-failed,
-.macos-ai-app .session-conversation-status-pill.is-interrupted {
-  background: color-mix(in srgb, var(--session-danger) 12%, transparent);
-  color: var(--session-danger);
-}
-
-.macos-ai-app .session-conversation-unread-dot {
-  background: var(--session-accent);
-  block-size: 8px;
-  border-radius: 999px;
-  inline-size: 8px;
-}
-
 .macos-ai-app .session-latest-content-marker {
   block-size: 1px;
   display: block;
@@ -9269,7 +9231,7 @@ body[data-surface='project-git-diff'] #root {
     transition: none;
   }
 
-  .macos-ai-app .session-conversation-runtime-chip {
+  .macos-ai-app .session-conversation-status-icon {
     transition: none;
   }
 

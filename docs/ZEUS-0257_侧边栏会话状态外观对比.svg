@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="640" viewBox="0 0 760 640" role="img" aria-labelledby="title desc">
+  <title id="title">侧边栏会话状态外观对比</title>
+  <desc id="desc">左侧是当前的彩色图标胶囊，右侧是推荐的无底色语义图标。右侧保持所有会话同一行高，并为标题保留更多空间。</desc>
+  <rect width="760" height="640" fill="#f4f6f8"/>
+  <text x="40" y="45" fill="#1f252c" font-family="-apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif" font-size="24" font-weight="700">最窄侧边栏：现状与推荐方案</text>
+  <text x="40" y="72" fill="#6a737d" font-family="-apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif" font-size="14">同宽度、同标题、同状态；只对比状态表达。</text>
+
+  <g transform="translate(40 105)">
+    <text x="0" y="0" fill="#8d4040" font-family="-apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif" font-size="16" font-weight="700">现状：彩色图标胶囊</text>
+    <rect x="0" y="20" width="310" height="360" rx="18" fill="#fafafa" stroke="#d9dde2"/>
+    <text x="20" y="58" fill="#737b84" font-family="-apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif" font-size="14" font-weight="700">项目</text>
+    <path d="M20 83h18v14H20z M23 80h7l3 3h5" fill="none" stroke="#676f77" stroke-width="2" stroke-linejoin="round"/>
+    <text x="50" y="96" fill="#20252b" font-family="-apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif" font-size="17" font-weight="650">Zeus</text>
+    <text x="25" y="132" fill="#7d858d" font-family="-apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif" font-size="14" font-weight="650">开发中</text>
+
+    <rect x="18" y="146" width="274" height="58" rx="12" fill="#e9ebee" stroke="#d7dade"/>
+    <text x="30" y="181" fill="#171b20" font-family="-apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif" font-size="16" font-weight="650">侧边栏会话栏高度…</text>
+    <rect x="245" y="154" width="38" height="42" rx="10" fill="#edf5fb" stroke="#b6cde1" stroke-width="1.5"/>
+    <path d="M271 166a10 10 0 1 0 0 17" fill="none" stroke="#377fb9" stroke-width="2.2" stroke-linecap="round"/>
+
+    <text x="30" y="237" fill="#171b20" font-family="-apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif" font-size="16" font-weight="650">DeepSeek 支持优化…</text>
+    <rect x="245" y="214" width="38" height="42" rx="10" fill="#f5f0e8" stroke="#d2bf9a" stroke-width="1.5"/>
+    <path d="M271 226a10 10 0 1 0 0 17" fill="none" stroke="#9a6d18" stroke-width="2.2" stroke-linecap="round"/>
+
+    <text x="30" y="287" fill="#171b20" font-family="-apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif" font-size="16" font-weight="650">项目的排序</text>
+    <text x="30" y="337" fill="#171b20" font-family="-apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif" font-size="16" font-weight="650">会话过程优化…</text>
+    <rect x="245" y="314" width="38" height="42" rx="10" fill="#edf5fb" stroke="#b6cde1" stroke-width="1.5"/>
+    <path d="M271 326a10 10 0 1 0 0 17" fill="none" stroke="#377fb9" stroke-width="2.2" stroke-linecap="round"/>
+
+    <text x="0" y="415" fill="#8d4040" font-family="-apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif" font-size="14" font-weight="650">问题：状态像按钮，与标题争夺空间</text>
+  </g>
+
+  <g transform="translate(410 105)">
+    <text x="0" y="0" fill="#1f765d" font-family="-apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif" font-size="16" font-weight="700">推荐：无底色语义图标</text>
+    <rect x="0" y="20" width="310" height="360" rx="18" fill="#fafafa" stroke="#a9cdbf" stroke-width="1.5"/>
+    <text x="20" y="58" fill="#737b84" font-family="-apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif" font-size="14" font-weight="700">项目</text>
+    <path d="M20 83h18v14H20z M23 80h7l3 3h5" fill="none" stroke="#676f77" stroke-width="2" stroke-linejoin="round"/>
+    <text x="50" y="96" fill="#20252b" font-family="-apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif" font-size="17" font-weight="650">Zeus</text>
+    <text x="25" y="132" fill="#7d858d" font-family="-apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif" font-size="14" font-weight="650">开发中</text>
+
+    <rect x="18" y="146" width="274" height="38" rx="9" fill="#e9ebee" stroke="#d7dade"/>
+    <text x="30" y="171" fill="#171b20" font-family="-apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif" font-size="16" font-weight="650">侧边栏会话栏高度</text>
+    <path d="M270 157a8 8 0 1 0 0 16 M270 157h5v5" fill="none" stroke="#377fb9" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+
+    <text x="30" y="213" fill="#171b20" font-family="-apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif" font-size="16" font-weight="650">DeepSeek 支持优化</text>
+    <path d="M264 198h14v10h-8l-4 3v-3h-2z M271 201v3 M271 206h.01" fill="none" stroke="#927025" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+
+    <text x="30" y="255" fill="#171b20" font-family="-apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif" font-size="16" font-weight="650">项目的排序</text>
+    <text x="30" y="297" fill="#171b20" font-family="-apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif" font-size="16" font-weight="650">会话过程优化</text>
+    <path d="M271 282l8 14h-16z M271 287v4 M271 293h.01" fill="none" stroke="#a34545" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="30" y="339" fill="#171b20" font-family="-apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif" font-size="16" font-weight="650">版本混乱？无法更新？</text>
+
+    <text x="0" y="415" fill="#1f765d" font-family="-apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif" font-size="14" font-weight="650">收益：同行高、标题更完整、状态仍可辨识</text>
+  </g>
+
+  <g transform="translate(40 605)">
+    <circle cx="7" cy="-5" r="6" fill="#377fb9"/>
+    <text x="20" y="0" fill="#58626c" font-family="-apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif" font-size="13">运行：环形动态图标</text>
+    <path d="M210 -12h14v10h-8l-4 3v-3h-2z" fill="none" stroke="#927025" stroke-width="1.8"/>
+    <text x="236" y="0" fill="#58626c" font-family="-apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif" font-size="13">等待：气泡图标</text>
+    <path d="M430 -13l8 14h-16z" fill="none" stroke="#a34545" stroke-width="1.8"/>
+    <text x="452" y="0" fill="#58626c" font-family="-apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif" font-size="13">失败：警示图标</text>
+  </g>
+</svg>
