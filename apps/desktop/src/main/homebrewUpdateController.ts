@@ -82,7 +82,7 @@ export function createHomebrewUpdateController(options: CreateHomebrewUpdateCont
     lastFailureStep = 'check';
     await publish(copyFor(options.language(), 'checking', options.currentVersion));
     try {
-      const update = await options.loadUpdateStatus();
+      const update = await retryOperation(options.loadUpdateStatus, 2);
       currentUpdate = update;
       if (update.status === 'up_to_date') {
         phase = 'upToDate';
@@ -94,7 +94,7 @@ export function createHomebrewUpdateController(options: CreateHomebrewUpdateCont
       await publish(copyFor(options.language(), 'available', options.currentVersion, update));
     } catch (error) {
       phase = 'failed';
-      await publish(failedCopy(options.language(), error));
+      await publish(failedCopy(options.language(), error, 'check'));
     }
   }
 
@@ -112,7 +112,7 @@ export function createHomebrewUpdateController(options: CreateHomebrewUpdateCont
       if (wasHidden) options.notifyReady(() => void showCurrent());
     } catch (error) {
       phase = 'failed';
-      await publish(failedCopy(options.language(), error));
+      await publish(failedCopy(options.language(), error, 'prepare'));
     }
   }
 
@@ -131,7 +131,7 @@ export function createHomebrewUpdateController(options: CreateHomebrewUpdateCont
       options.onInstallReady();
     } catch (error) {
       phase = 'failed';
-      await publish(failedCopy(options.language(), error));
+      await publish(failedCopy(options.language(), error, 'install'));
     }
   }
 
@@ -163,6 +163,7 @@ function copyFor(language: 'zh-CN' | 'en-US', state: 'checking' | 'available' | 
       state,
       title: zh ? '正在检查更新' : 'Checking for Updates',
       detail: zh ? 'Zeus 正在读取公开稳定版发布清单。' : 'Zeus is reading the public stable release manifest.',
+      progressCaption: zh ? '正在读取发布清单' : 'Reading release manifest',
     };
   }
   if (state === 'available') {
@@ -186,14 +187,13 @@ function copyFor(language: 'zh-CN' | 'en-US', state: 'checking' | 'available' | 
       state,
       title: zh ? '更新已下载' : 'Update Downloaded',
       detail: zh ? `Zeus ${latestVersion} 已通过 Homebrew 校验。点击“立即重启”后才会安装并切换到新版。` : `Zeus ${latestVersion} passed Homebrew verification. It will only be installed after you choose Restart Now.`,
-      progress: 1,
-      progressText: zh ? '下载和校验已完成' : 'Download and verification complete',
     };
   }
   return {
     state,
     title: zh ? '正在安装更新' : 'Installing Update',
     detail: zh ? `Homebrew 正在使用已缓存的 Zeus ${latestVersion} 安装包。安装成功后 Zeus 会重新打开。` : `Homebrew is installing the cached Zeus ${latestVersion} update. Zeus will reopen after installation succeeds.`,
+    progressCaption: zh ? `正在安装 Zeus ${latestVersion}` : `Installing Zeus ${latestVersion}`,
   };
 }
 
@@ -204,6 +204,7 @@ function progressCopy(language: 'zh-CN' | 'en-US', progress: HomebrewUpdateProgr
       state: 'updating',
       title: zh ? '正在更新 Homebrew 信息' : 'Updating Homebrew Information',
       detail: zh ? 'Zeus 正在刷新公开 Cask，不会阻止你继续工作。' : 'Zeus is refreshing the public Cask without blocking your work.',
+      progressCaption: zh ? '正在更新 Homebrew 信息' : 'Updating Homebrew information',
     };
   }
   if (progress.phase === 'verifying') {
@@ -211,6 +212,7 @@ function progressCopy(language: 'zh-CN' | 'en-US', progress: HomebrewUpdateProgr
       state: 'verifying',
       title: zh ? '正在校验更新' : 'Verifying Update',
       detail: zh ? `Homebrew 与 Zeus 正在复验 ${update.artifact?.fileName ?? update.latestVersion} 的大小和 SHA-256。` : `Homebrew and Zeus are verifying the size and SHA-256 of ${update.artifact?.fileName ?? update.latestVersion}.`,
+      progressCaption: zh ? '正在校验下载内容' : 'Verifying downloaded update',
     };
   }
   if (progress.phase === 'installing') return copyFor(language, 'installing', update.currentVersion, update);
@@ -221,21 +223,55 @@ function progressCopy(language: 'zh-CN' | 'en-US', progress: HomebrewUpdateProgr
     state: 'downloading',
     title: zh ? '正在下载 Zeus 更新' : 'Downloading Zeus Update',
     detail: zh ? `正在通过 Homebrew 下载 Zeus ${update.latestVersion}；你可以继续使用 Zeus。` : `Downloading Zeus ${update.latestVersion} with Homebrew. You can keep using Zeus.`,
+    progressCaption: zh ? `正在下载 Zeus ${update.latestVersion}` : `Downloading Zeus ${update.latestVersion}`,
     ...(ratio === undefined ? {} : { progress: ratio, progressText: formatPercent(ratio) }),
   };
 }
 
-function failedCopy(language: 'zh-CN' | 'en-US', error: unknown): NativeUpdateProgressState {
+function failedCopy(language: 'zh-CN' | 'en-US', error: unknown, step: 'check' | 'prepare' | 'install'): NativeUpdateProgressState {
   const zh = language === 'zh-CN';
-  const detail = error instanceof Error ? error.message : String(error);
+  const technicalDetail = error instanceof Error ? error.message : String(error);
+  const copy = {
+    check: {
+      title: zh ? '无法检查更新' : 'Could Not Check for Updates',
+      detail: zh ? '暂时无法取得最新版本信息。Zeus 没有发生变化，你可以稍后重试。' : 'The latest version information is temporarily unavailable. Zeus was not changed; you can try again later.',
+    },
+    prepare: {
+      title: zh ? '更新下载失败' : 'Update Download Failed',
+      detail: zh ? 'Zeus 未被替换，你可以继续工作。' : 'Zeus was not replaced. You can keep working.',
+    },
+    install: {
+      title: zh ? '更新安装失败' : 'Update Installation Failed',
+      detail: zh ? 'Zeus 未完成替换，现有工作可以继续。' : 'Zeus was not replaced successfully. Your existing work can continue.',
+    },
+  }[step];
   return {
     state: 'failed',
-    title: zh ? '更新未能完成' : 'Update Could Not Be Completed',
-    detail: detail.trim() || (zh ? '请稍后重试。' : 'Try again later.'),
-    progressText: zh ? 'Zeus 未替换当前 App，现有工作可以继续。' : 'Zeus did not replace the current app. Existing work can continue.',
+    title: copy.title,
+    detail: copy.detail,
+    ...(technicalDetail.trim() ? { technicalDetail: technicalDetail.trim() } : {}),
   };
 }
 
 function formatPercent(ratio: number): string {
   return `${Math.min(100, Math.floor(Math.max(0, ratio) * 100))}%`;
+}
+
+/** 检查只读取外部事实；临时失败允许两次有限重试，不扩展到安装动作。 */
+async function retryOperation<T>(operation: () => Promise<T>, retryCount: number): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= retryCount; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+      if (attempt === retryCount) break;
+      await delay(attempt === 0 ? 400 : 1_200);
+    }
+  }
+  throw lastError;
+}
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolveDelay) => setTimeout(resolveDelay, milliseconds));
 }

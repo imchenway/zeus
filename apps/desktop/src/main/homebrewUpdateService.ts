@@ -59,9 +59,9 @@ export function createHomebrewUpdateService(options: CreateHomebrewUpdateService
       assertUpdateCanUseHomebrew(update, options);
       const brewPath = await resolveHomebrewBinary(options.testMode);
       onProgress({ phase: 'updating' });
-      await runBrew(brewPath, ['update'], { timeoutMs: 5 * 60_000, allowAutoUpdate: true });
+      await retryOperation(() => runBrew(brewPath, ['update'], { timeoutMs: 5 * 60_000, allowAutoUpdate: true }), 2);
 
-      const cask = await inspectCask(brewPath);
+      const cask = await retryOperation(() => inspectCask(brewPath), 2);
       validateCask(cask, update, options.currentAppPath, options.currentAppVersion, options.testMode);
       const cachePath = await readCachePath(brewPath, options.testMode);
       const artifact = update.artifact!;
@@ -71,7 +71,7 @@ export function createHomebrewUpdateService(options: CreateHomebrewUpdateService
       }
 
       onProgress({ phase: 'downloading', ...(artifact.sizeBytes === null ? {} : { totalBytes: artifact.sizeBytes }) });
-      await fetchCask(brewPath, cachePath, artifact.sizeBytes, onProgress, options.testMode);
+      await retryOperation(() => fetchCask(brewPath, cachePath, artifact.sizeBytes, onProgress, options.testMode), 2);
       onProgress({ phase: 'verifying' });
       if (!(await verifyArtifact(cachePath, artifact.sha256, artifact.sizeBytes))) {
         throw new Error('Homebrew 下载完成，但缓存安装包未通过发布清单校验。');
@@ -213,7 +213,7 @@ function validateCask(cask: HomebrewCaskInfo, update: DesktopReleaseUpdateStatus
 }
 
 async function readCachePath(brewPath: string, testMode: boolean): Promise<string> {
-  const { stdout } = await runBrew(brewPath, ['--cache', '--cask', caskToken], { timeoutMs: 60_000, allowAutoUpdate: false });
+  const { stdout } = await retryOperation(() => runBrew(brewPath, ['--cache', '--cask', caskToken], { timeoutMs: 60_000, allowAutoUpdate: false }), 2);
   const cachePath = resolve(stdout.trim());
   if (!stdout.trim() || !isAbsolute(stdout.trim())) throw new Error('Homebrew 没有返回有效的 Zeus 缓存路径。');
   if (testMode && process.env.ZEUS_HOMEBREW_BIN?.trim() && !isUnderTemporaryDirectory(cachePath)) {
@@ -382,6 +382,25 @@ function formatCommandFailure(prefix: string, output: string, code: string | num
     .slice(-3)
     .join(' ');
   return `${prefix}${code === undefined ? '' : ` (code ${code})`}${signal ? ` (signal ${signal})` : ''}${summary ? `：${summary}` : '。'}`;
+}
+
+/** 只读检查、缓存定位和下载可以安全复用现场重试；安装命令不会进入此方法。 */
+async function retryOperation<T>(operation: () => Promise<T>, retryCount: number): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= retryCount; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+      if (attempt === retryCount) break;
+      await delay(attempt === 0 ? 400 : 1_200);
+    }
+  }
+  throw lastError;
+}
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolveDelay) => setTimeout(resolveDelay, milliseconds));
 }
 
 async function isExecutable(path: string): Promise<boolean> {
