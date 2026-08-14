@@ -14151,7 +14151,7 @@
 
 .session-codex-parity-v1 .session-context-usage-indicator {
   align-items: center;
-  border-radius: 7px;
+  border-radius: 999px;
   color: color-mix(in srgb, var(--session-accent) 62%, var(--session-text-muted));
   display: inline-flex;
   flex: 0 0 auto;
@@ -14163,7 +14163,7 @@
 }
 
 .session-codex-parity-v1 .session-context-usage-indicator:hover {
-  background: transparent;
+  background: var(--session-selected);
 }
 
 .session-codex-parity-v1 .session-context-usage-indicator:focus-visible {
@@ -14183,8 +14183,8 @@
 }
 
 .session-codex-parity-v1 .session-context-usage-indicator > svg {
-  block-size: 20px;
-  inline-size: 20px;
+  block-size: 22px;
+  inline-size: 22px;
   transform: rotate(-90deg);
 }
 
@@ -14192,7 +14192,7 @@
 .session-codex-parity-v1 .session-context-usage-value {
   fill: none;
   stroke-linecap: round;
-  stroke-width: 2.5;
+  stroke-width: 3;
 }
 
 .session-codex-parity-v1 .session-context-usage-track {
@@ -14203,11 +14203,23 @@
   stroke: currentColor;
 }
 
+.session-codex-parity-v1 .session-context-usage-core {
+  fill: currentColor;
+  opacity: 0.72;
+}
+
+.session-context-usage-tooltip-portal.session-codex-parity-v1 {
+  color: var(--session-text);
+  inset: 0;
+  pointer-events: none;
+  position: fixed;
+  z-index: 10000;
+}
+
 .session-codex-parity-v1 .session-context-usage-tooltip {
   background: var(--session-solid-surface, var(--session-canvas));
   border: 1px solid var(--session-line);
   border-radius: 10px;
-  bottom: calc(100% + 8px);
   box-shadow: 0 10px 28px var(--session-shadow-soft);
   color: var(--session-text);
   display: grid;
@@ -14216,26 +14228,11 @@
   inline-size: max-content;
   max-inline-size: min(260px, calc(100vw - 32px));
   min-inline-size: 218px;
-  opacity: 0;
   padding: 10px 12px;
   pointer-events: none;
-  position: absolute;
-  right: 0;
+  position: fixed;
   text-align: start;
-  transform: translateY(3px);
-  transition:
-    opacity 120ms cubic-bezier(0.22, 1, 0.36, 1),
-    transform 120ms cubic-bezier(0.22, 1, 0.36, 1),
-    visibility 120ms;
-  visibility: hidden;
-  z-index: 40;
-}
-
-.session-codex-parity-v1 .session-context-usage-indicator:hover .session-context-usage-tooltip,
-.session-codex-parity-v1 .session-context-usage-indicator:focus-visible .session-context-usage-tooltip {
-  opacity: 1;
-  transform: translateY(0);
-  visibility: visible;
+  z-index: 1;
 }
 
 .session-codex-parity-v1 .session-context-usage-tooltip > strong {
@@ -14275,12 +14272,6 @@
   font-weight: 600;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .session-codex-parity-v1 .session-context-usage-tooltip {
-    transition: none;
-  }
-}
-
 @media (forced-colors: active) {
   .session-codex-parity-v1 .session-context-usage-indicator {
     color: CanvasText;
@@ -14293,6 +14284,8 @@
 }
 
 .session-codex-parity-v1 .session-composer-dropdown[data-icon-only='true'] .session-composer-dropdown-trigger {
+  block-size: 32px;
+  border-radius: 999px !important;
   inline-size: 32px;
   justify-content: center;
   padding: 0 !important;
@@ -14310,13 +14303,15 @@
 }
 
 .session-codex-parity-v1 .session-composer-dropdown-trigger-icon > svg {
-  block-size: 17px;
-  inline-size: 17px;
+  block-size: 18px;
+  inline-size: 18px;
 }
 
 .session-codex-parity-v1 .session-service-tier-toggle {
   align-items: center;
   background: transparent !important;
+  block-size: 32px;
+  border-radius: 999px !important;
   display: inline-flex;
   inline-size: 32px;
   justify-content: center;
@@ -14324,26 +14319,26 @@
 }
 
 .session-codex-parity-v1 .session-service-tier-toggle > svg {
-  block-size: 18px;
-  inline-size: 18px;
+  block-size: 21px;
+  inline-size: 21px;
 }
 
 .session-codex-parity-v1 .session-service-tier-toggle[data-active='true'] {
-  color: var(--session-warning);
+  color: var(--session-accent);
 }
 
 .session-codex-parity-v1 .session-service-tier-toggle:hover:not(:disabled) {
-  background: transparent !important;
+  background: var(--session-selected) !important;
   color: var(--session-text);
 }
 
 .session-codex-parity-v1 .session-service-tier-toggle[data-active='true']:hover:not(:disabled) {
-  color: var(--session-warning);
+  color: var(--session-accent);
 }
 
 .session-codex-parity-v1 .session-permission-dropdown[data-value='auto'] .session-composer-dropdown-trigger {
-  background: color-mix(in srgb, var(--session-accent) 10%, transparent);
-  color: var(--session-accent);
+  background: transparent;
+  color: var(--session-text-muted);
 }
 
 .session-codex-parity-v1 .session-permission-dropdown[data-value='full-access'] .session-composer-dropdown-trigger {
@@ -14353,7 +14348,7 @@
 
 .session-codex-parity-v1 .session-permission-dropdown[data-value='full-access'] .session-composer-dropdown-trigger:hover:not(:disabled),
 .session-codex-parity-v1 .session-permission-dropdown[data-value='full-access'][data-open='true'] .session-composer-dropdown-trigger {
-  background: transparent;
+  background: color-mix(in srgb, var(--session-danger) 10%, transparent);
   color: var(--session-danger);
 }
 
@@ -14380,6 +14375,8 @@
 
 .session-codex-parity-v1 .session-collaboration-mode {
   background: transparent !important;
+  block-size: 32px;
+  border-radius: 999px !important;
   gap: 0;
   inline-size: 32px;
   justify-content: center;
@@ -14387,7 +14384,11 @@
 }
 
 .session-codex-parity-v1 .session-collaboration-mode[data-active='true'] {
-  color: var(--session-warning);
+  color: var(--session-accent);
+}
+
+.session-codex-parity-v1 .session-collaboration-mode:hover:not(:disabled) {
+  background: var(--session-selected) !important;
 }
 
 .session-codex-parity-v1 .session-collaboration-mode-icon {
@@ -14397,67 +14398,58 @@
 }
 
 .session-codex-parity-v1 .session-collaboration-mode-icon > svg {
-  block-size: 18px;
-  inline-size: 18px;
+  block-size: 19px;
+  inline-size: 19px;
 }
 
-.session-codex-parity-v1 .session-collaboration-mode-spark,
-.session-codex-parity-v1 .session-collaboration-mode-spark::before,
-.session-codex-parity-v1 .session-collaboration-mode-spark::after {
-  background: currentColor;
-  border-radius: 999px;
-  content: '';
+.session-codex-parity-v1 .session-attachment-button {
+  align-items: center;
+  block-size: 32px;
+  border-radius: 999px !important;
+  display: inline-flex;
+  inline-size: 32px;
+  justify-content: center;
+  padding: 0 !important;
+}
+
+.session-codex-parity-v1 .session-attachment-button:hover:not(:disabled) {
+  background: var(--session-selected);
+  color: var(--session-text);
+}
+
+.session-codex-parity-v1 .session-attachment-button > svg {
+  block-size: 20px;
+  inline-size: 20px;
+}
+
+.session-codex-parity-v1 :where(.session-attachment-button, .session-service-tier-toggle, .session-collaboration-mode, .session-composer-dropdown[data-icon-only='true'] .session-composer-dropdown-trigger):focus-visible {
+  box-shadow: 0 0 0 2px var(--session-focus-outline);
+  outline: none;
+}
+
+.session-codex-parity-v1 .session-primary-command-slot,
+.session-codex-parity-v1 .session-primary-command-slot button {
+  block-size: 32px;
+  inline-size: 32px;
+}
+
+.session-codex-parity-v1 .session-send-button > svg {
+  block-size: 20px;
+  inline-size: 20px;
+}
+
+.session-codex-parity-v1 .session-stop-button > svg {
+  block-size: 12px;
+  inline-size: 12px;
+}
+
+.session-codex-parity-v1 .session-command-spinner {
+  animation: session-spinner 700ms linear infinite;
+  block-size: 19px;
+  border: 0;
+  border-radius: 0;
   display: block;
-  position: absolute;
-}
-
-.session-codex-parity-v1 .session-collaboration-mode-spark {
-  block-size: 4px;
-  inline-size: 1.5px;
-  inset-block-start: -3px;
-  inset-inline-end: -3px;
-  transform: rotate(28deg);
-  transform-origin: 0 10px;
-  animation: session-plan-spark 540ms cubic-bezier(0.22, 1, 0.36, 1) both;
-}
-
-.session-codex-parity-v1 .session-collaboration-mode-spark::before {
-  block-size: 1.5px;
-  inline-size: 4px;
-  inset-block-start: 7px;
-  inset-inline-start: 5px;
-}
-
-.session-codex-parity-v1 .session-collaboration-mode-spark::after {
-  block-size: 3px;
-  inline-size: 1.5px;
-  inset-block-start: 11px;
-  inset-inline-start: 1px;
-  transform: rotate(32deg);
-}
-
-@keyframes session-plan-spark {
-  0% {
-    opacity: 0;
-    transform: rotate(8deg) scale(0.45);
-  }
-
-  48% {
-    filter: drop-shadow(0 0 4px currentColor);
-    opacity: 1;
-    transform: rotate(28deg) scale(1.25);
-  }
-
-  100% {
-    opacity: 0.82;
-    transform: rotate(28deg) scale(1);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .session-codex-parity-v1 .session-collaboration-mode-spark {
-    animation: none;
-  }
+  inline-size: 19px;
 }
 
 @media (max-width: 559px) {
