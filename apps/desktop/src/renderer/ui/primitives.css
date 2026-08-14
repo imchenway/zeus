@@ -159,8 +159,8 @@
   white-space: break-spaces;
 }
 
-/* Markdown 继续使用既有安全解析，只让可阅读文字块遵循正文空白规则。 */
-.macos-ai-app .zeus-fidelity-markdown :where(h1, h2, h3, h4, p, li, blockquote, th, td) {
+/* 只在文字叶子中保留原始空白，避免把 Markdown 结构节点间的排版空白显示成空行。 */
+.macos-ai-app .zeus-fidelity-markdown :where(h1, h2, h3, h4, p, th, td) {
   overflow-wrap: anywhere;
   white-space: break-spaces;
 }
