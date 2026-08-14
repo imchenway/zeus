@@ -57,6 +57,7 @@ interface CreateBrowserHostOptions {
   preloadPath: string;
   attachmentRoot: string;
   defaultDownloadDirectory: string;
+  openExternal: (url: string) => Promise<void>;
   legacySystemDownloadDirectory?: string;
   now?: () => string;
 }
@@ -276,6 +277,17 @@ export class BrowserHost implements BrowserAutomationPort {
       const tab = this.requirePageTab(event);
       return this.savePageComment(tab, input as BrowserPageCommentInput);
     });
+    ipcMain.handle('zeus:browser-page:open-system-browser-link', async (event, input: unknown) => {
+      this.requirePageTab(event);
+      const url = normalizeExternalWebUrl(input);
+      if (!url) return { opened: false, error: 'external_url_not_allowed' };
+      try {
+        await this.options.openExternal(url);
+        return { opened: true, url };
+      } catch {
+        return { opened: false, error: 'external_url_open_failed' };
+      }
+    });
   }
 
   getSettings(): ZeusBrowserSettings {
@@ -424,6 +436,11 @@ export class BrowserHost implements BrowserAutomationPort {
     this.browserSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
       const tab = this.tabFromWebContents(webContents);
       if (!tab) {
+        callback(false);
+        return;
+      }
+      if (String(permission) === 'sensors') {
+        // 与 Codex 内置浏览器保持一致：网页可以继续访问，但不能读取本机传感器，也不打断用户。
         callback(false);
         return;
       }
@@ -1300,6 +1317,17 @@ function normalizeBrowserUrl(value: string): string {
   if ((url.protocol === 'http:' || url.protocol === 'https:') && (url.username || url.password)) throw new TypeError('Browser URLs with embedded credentials are not allowed.');
   if (url.protocol === 'about:' && url.href !== 'about:blank') throw new TypeError('Only about:blank is allowed.');
   return url.href;
+}
+
+function normalizeExternalWebUrl(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  try {
+    const url = new URL(value);
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) return null;
+    return url.href;
+  } catch {
+    return null;
+  }
 }
 
 function normalizeBounds(value: unknown): Rectangle {
