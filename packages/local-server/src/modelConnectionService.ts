@@ -128,13 +128,19 @@ export function createModelConnectionService(options: { settings: SettingReposit
         signal: controller.signal,
       });
       if (!response.ok) throw serviceError('ZEUS_MODEL_CATALOG_REQUEST_FAILED', `模型目录请求失败，HTTP ${response.status}。`, 502);
-      const payload: unknown = await response.json();
+      let payload: unknown;
+      try {
+        payload = await response.json();
+      } catch {
+        throw serviceError('ZEUS_MODEL_CATALOG_RESPONSE_INVALID', '模型目录没有返回有效的 JSON。', 502);
+      }
       if (!isRecord(payload) || !Array.isArray(payload.data)) throw serviceError('ZEUS_MODEL_CATALOG_RESPONSE_INVALID', '模型目录没有返回兼容的 data 数组。', 502);
       const ids = payload.data.flatMap((item) => (isRecord(item) && typeof item.id === 'string' && item.id.trim() ? [item.id.trim()] : []));
       return [...new Set(ids)].slice(0, 200);
     } catch (error) {
+      if (isServiceError(error)) throw error;
       if (error instanceof Error && error.name === 'AbortError') throw serviceError('ZEUS_MODEL_CATALOG_TIMEOUT', '模型目录请求在 15 秒内没有完成。', 504);
-      throw error;
+      throw normalizeModelCatalogFetchError(error, connection);
     } finally {
       clearTimeout(timeout);
     }
@@ -258,8 +264,76 @@ function serviceError(code: string, message: string, statusCode: number): Error 
   return Object.assign(new Error(message), { code, statusCode });
 }
 
+function isServiceError(error: unknown): error is Error & { code: string; statusCode: number } {
+  return error instanceof Error && 'code' in error && typeof error.code === 'string' && error.code.startsWith('ZEUS_') && 'statusCode' in error && typeof error.statusCode === 'number';
+}
+
 function readServiceCode(error: unknown): string {
   return typeof error === 'object' && error !== null && 'code' in error && typeof error.code === 'string' ? error.code : 'ZEUS_MODEL_CONNECTION_FAILED';
+}
+
+function normalizeModelCatalogFetchError(error: unknown, connection: Pick<ModelConnectionRecord, 'baseUrl'>): Error & { code: string; statusCode: number } {
+  const signals = collectErrorSignals(error);
+  const codes = new Set(signals.map((signal) => signal.code).filter((code): code is string => Boolean(code)));
+  const details = signals.map((signal) => signal.message.toLowerCase()).join('\n');
+
+  if (connection.baseUrl.startsWith('https://') && (codes.has('ERR_SSL_PACKET_LENGTH_TOO_LONG') || codes.has('ERR_SSL_WRONG_VERSION_NUMBER') || details.includes('packet length too long') || details.includes('wrong version number'))) {
+    return serviceError('ZEUS_MODEL_CATALOG_HTTPS_PROTOCOL_MISMATCH', '服务地址使用了 HTTPS，但目标端口没有提供可兼容的 HTTPS 服务。请先核对端口；如果该服务只支持明文 HTTP，请将服务地址改为 http:// 并重新保存。', 502);
+  }
+
+  if (
+    ['DEPTH_ZERO_SELF_SIGNED_CERT', 'SELF_SIGNED_CERT_IN_CHAIN', 'UNABLE_TO_GET_ISSUER_CERT', 'UNABLE_TO_GET_ISSUER_CERT_LOCALLY', 'UNABLE_TO_VERIFY_LEAF_SIGNATURE'].some((code) => codes.has(code)) ||
+    details.includes('self-signed certificate') ||
+    details.includes('unable to verify the first certificate')
+  ) {
+    return serviceError('ZEUS_MODEL_CATALOG_CERTIFICATE_UNTRUSTED', '服务端的 HTTPS 证书无法被本机信任。请为服务配置完整的可信证书链后重试。', 502);
+  }
+
+  if (codes.has('ERR_TLS_CERT_ALTNAME_INVALID') || details.includes('hostname/ip does not match certificate')) {
+    return serviceError('ZEUS_MODEL_CATALOG_CERTIFICATE_HOST_MISMATCH', '服务端 HTTPS 证书与当前主机名或 IP 不匹配。请使用证书包含的服务地址，或更换匹配的证书。', 502);
+  }
+
+  if (codes.has('CERT_HAS_EXPIRED') || details.includes('certificate has expired')) {
+    return serviceError('ZEUS_MODEL_CATALOG_CERTIFICATE_EXPIRED', '服务端 HTTPS 证书已过期。请更新证书后重试。', 502);
+  }
+
+  if (codes.has('ENOTFOUND') || codes.has('EAI_AGAIN')) {
+    return serviceError('ZEUS_MODEL_CATALOG_HOST_NOT_FOUND', '无法解析模型服务主机。请检查服务地址、DNS 和当前网络后重试。', 502);
+  }
+
+  if (codes.has('ECONNREFUSED')) {
+    return serviceError('ZEUS_MODEL_CATALOG_CONNECTION_REFUSED', '模型服务拒绝连接。请检查服务是否已启动，以及主机、端口和防火墙配置。', 502);
+  }
+
+  if (codes.has('UND_ERR_CONNECT_TIMEOUT') || codes.has('ETIMEDOUT')) {
+    return serviceError('ZEUS_MODEL_CATALOG_CONNECT_TIMEOUT', '在限定时间内无法连接模型服务。请检查服务地址、网络路由和防火墙后重试。', 504);
+  }
+
+  if (codes.has('ECONNRESET') || codes.has('UND_ERR_SOCKET')) {
+    return serviceError('ZEUS_MODEL_CATALOG_CONNECTION_RESET', '模型服务在请求期间中断了连接。请检查服务或网关状态后重试。', 502);
+  }
+
+  if ([...codes].some((code) => code.startsWith('ERR_SSL_') || code.startsWith('ERR_TLS_')) || details.includes('ssl routines') || details.includes('tls')) {
+    return serviceError('ZEUS_MODEL_CATALOG_TLS_FAILED', '与模型服务的 HTTPS 握手失败。请检查服务端 TLS 配置、证书和协议版本后重试。', 502);
+  }
+
+  return serviceError('ZEUS_MODEL_CATALOG_NETWORK_FAILED', '无法连接模型目录。请检查服务地址和当前网络后重试。', 502);
+}
+
+function collectErrorSignals(error: unknown): Array<{ code: string | null; message: string }> {
+  const signals: Array<{ code: string | null; message: string }> = [];
+  const seen = new Set<unknown>();
+  let current: unknown = error;
+  while (typeof current === 'object' && current !== null && !seen.has(current)) {
+    seen.add(current);
+    const candidate = current as { cause?: unknown; code?: unknown; message?: unknown };
+    signals.push({
+      code: typeof candidate.code === 'string' ? candidate.code : null,
+      message: typeof candidate.message === 'string' ? candidate.message : '',
+    });
+    current = candidate.cause;
+  }
+  return signals;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
